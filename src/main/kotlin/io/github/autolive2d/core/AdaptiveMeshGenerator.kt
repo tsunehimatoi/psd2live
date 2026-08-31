@@ -2,6 +2,7 @@ package io.github.autolive2d.core
 
 import org.umamo.format.art.analyzeAlpha
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.hypot
 import kotlin.math.max
@@ -12,10 +13,9 @@ import kotlin.math.sqrt
 /**
  * Deterministic silhouette-aware ArtMesh generation.
  *
- * The pipeline follows Stretchy Studio's useful parts: alpha contours, perimeter-proportional
- * edge samples, staggered interior samples, and Delaunay triangulation.  Unlike Stretchy's raw
- * Delaunay output, triangles are checked against a two-pixel alpha dilation so concave gaps and
- * transparent holes do not get bridged by visible geometry.
+ * The mesh follows only opaque islands' outer contours. Enclosed transparent regions are
+ * deliberately solidified before interior sampling and triangle validation: they do not create
+ * inner boundary vertices, radial connections, or holes in the resulting ArtMesh.
  */
 internal object AdaptiveMeshGenerator {
 	internal data class Result(
@@ -28,6 +28,63 @@ internal object AdaptiveMeshGenerator {
 	private data class Triangle(val a: Int, val b: Int, val c: Int)
 	private data class Edge(val low: Int, val high: Int)
 
+	/** Bit-packed alpha mask with every outer contour filled as one solid island. */
+	private class SolidAlphaMask(
+		val width: Int,
+		val height: Int,
+		rgba: ByteArray,
+		threshold: Int,
+		outerContours: List<IntArray>,
+	) {
+		private val words = LongArray((width * height + 63) ushr 6).also { destination ->
+			// Keep every thresholded source pixel, including antialiased extremities that may sit
+			// just outside a simplified contour.
+			for (index in 0 until width * height) {
+				if ((rgba[index * 4 + 3].toInt() and 0xff) >= threshold) set(destination, index)
+			}
+			// Filling only outer polygons intentionally covers all enclosed transparency. Inner
+			// contours are never passed here and therefore never become mesh topology.
+			for (contour in outerContours) rasterizeSolidContour(contour, destination)
+		}
+
+		fun isSolid(x: Int, y: Int): Boolean {
+			if (x !in 0 until width || y !in 0 until height) return false
+			val index = y * width + x
+			return (words[index ushr 6] and (1L shl (index and 63))) != 0L
+		}
+
+		private fun rasterizeSolidContour(contour: IntArray, destination: LongArray) {
+			val pointCount = contour.size / 2
+			if (pointCount < 3) return
+			val minimumY = (0 until pointCount).minOf { contour[it * 2 + 1] }.coerceAtLeast(0)
+			val maximumY = (0 until pointCount).maxOf { contour[it * 2 + 1] }.coerceAtMost(height)
+			for (pixelY in minimumY until maximumY) {
+				val scanY = pixelY + 0.5
+				val intersections = mutableListOf<Double>()
+				for (index in 0 until pointCount) {
+					val next = (index + 1) % pointCount
+					val x1 = contour[index * 2].toDouble()
+					val y1 = contour[index * 2 + 1].toDouble()
+					val x2 = contour[next * 2].toDouble()
+					val y2 = contour[next * 2 + 1].toDouble()
+					if ((y1 <= scanY && y2 > scanY) || (y2 <= scanY && y1 > scanY)) {
+						intersections += x1 + (scanY - y1) * (x2 - x1) / (y2 - y1)
+					}
+				}
+				intersections.sort()
+				for (pair in 0 until intersections.size / 2) {
+					val firstX = ceil(intersections[pair * 2] - 0.5).toInt().coerceAtLeast(0)
+					val lastX = (ceil(intersections[pair * 2 + 1] - 0.5).toInt() - 1).coerceAtMost(width - 1)
+					for (pixelX in firstX..lastX) set(destination, pixelY * width + pixelX)
+				}
+			}
+		}
+
+		private fun set(destination: LongArray, index: Int) {
+			destination[index ushr 6] = destination[index ushr 6] or (1L shl (index and 63))
+		}
+	}
+
 	fun generate(
 		width: Int,
 		height: Int,
@@ -38,26 +95,26 @@ internal object AdaptiveMeshGenerator {
 		if (width <= 0 || height <= 0) return null
 		val threshold = alphaThreshold.coerceIn(1, 255)
 		val alpha = analyzeAlpha(width, height, rgba, threshold, contourEpsilon = 1.25f) ?: return null
-		val usableContours = alpha.contours.filter { it.points.size >= 6 }
-		if (usableContours.isEmpty()) return null
+		val outerContours = alpha.contours.filter { !it.isHole && it.points.size >= 6 }
+		if (outerContours.isEmpty()) return null
+		val solidMask = SolidAlphaMask(width, height, rgba, threshold, outerContours.map { it.points })
 
-		val perimeters = usableContours.map { contourPerimeter(it.points) }
+		val perimeters = outerContours.map { contourPerimeter(it.points) }
 		val totalPerimeter = perimeters.sum().coerceAtLeast(1.0)
 		val edgeBudget = (totalPerimeter / max(4.0, spacing * 0.52)).roundToInt().coerceIn(12, 360)
 		val edgePoints = mutableListOf<Point>()
-		for (index in usableContours.indices) {
+		for (index in outerContours.indices) {
 			val rawCount = (edgeBudget * perimeters[index] / totalPerimeter).roundToInt()
-			val available = usableContours[index].points.size / 2
+			val available = outerContours[index].points.size / 2
 			val count = rawCount.coerceIn(min(3, available), min(180, available))
-			edgePoints += resampleClosedContour(usableContours[index].points, count)
+			edgePoints += resampleClosedContour(outerContours[index].points, count)
 		}
 
-		// Bowyer-Watson is intentionally dependency-free and quadratic.  Raise the sampling interval
-		// for huge layer rectangles so one full-canvas PSD layer cannot create tens of thousands of
-		// points and stall the export.  Contour points remain separately budgeted and are never dropped.
+		// Bowyer-Watson is intentionally dependency-free and quadratic. Raise the sampling interval
+		// for huge layers so one full-canvas PSD layer cannot create tens of thousands of points.
 		val budgetSpacing = sqrt(width.toDouble() * height / (1_200.0 * 0.8660254037844386))
 		val interiorSpacing = max(max(6.0, spacing.toDouble()), budgetSpacing)
-		val interiorPoints = sampleInterior(width, height, rgba, threshold, interiorSpacing)
+		val interiorPoints = sampleInterior(solidMask, interiorSpacing)
 		val edgePadding = min(8.0, max(2.0, spacing * 0.24))
 		val paddedInterior = interiorPoints.filter { point ->
 			edgePoints.none { edge -> squaredDistance(point, edge) < edgePadding * edgePadding }
@@ -66,7 +123,7 @@ internal object AdaptiveMeshGenerator {
 		if (points.size < 3 || points.size >= 65_535) return null
 
 		val triangles = delaunay(points).filter { triangle ->
-			triangleInsideDilatedAlpha(triangle, points, width, height, rgba, threshold)
+			triangleInsideDilatedSolid(triangle, points, solidMask)
 		}
 		if (triangles.isEmpty()) return null
 
@@ -78,11 +135,10 @@ internal object AdaptiveMeshGenerator {
 		val indices = IntArray(triangles.size * 3)
 		for (index in triangles.indices) {
 			val triangle = triangles[index]
-			// The previous regular grid used negative signed area in the raster's Y-down space.
-			// Preserve that winding so the renderer's front-face convention does not change.
-			val cross = cross(points[triangle.a], points[triangle.b], points[triangle.c])
+			// Preserve the renderer's negative signed-area winding in raster Y-down space.
+			val signedArea = cross(points[triangle.a], points[triangle.b], points[triangle.c])
 			indices[index * 3] = triangle.a
-			if (cross < 0.0) {
+			if (signedArea < 0.0) {
 				indices[index * 3 + 1] = triangle.b
 				indices[index * 3 + 2] = triangle.c
 			} else {
@@ -135,21 +191,15 @@ internal object AdaptiveMeshGenerator {
 		return result
 	}
 
-	private fun sampleInterior(
-		width: Int,
-		height: Int,
-		rgba: ByteArray,
-		threshold: Int,
-		spacing: Double,
-	): List<Point> {
+	private fun sampleInterior(mask: SolidAlphaMask, spacing: Double): List<Point> {
 		val points = mutableListOf<Point>()
-		val rowStep = spacing * 0.8660254037844386 // triangular/hexagonal packing
+		val rowStep = spacing * 0.8660254037844386
 		var row = 0
-		var y = min(height * 0.5, rowStep * 0.5)
-		while (y < height) {
+		var y = min(mask.height * 0.5, rowStep * 0.5)
+		while (y < mask.height) {
 			var x = spacing * 0.5 + if ((row and 1) == 0) 0.0 else spacing * 0.5
-			while (x < width) {
-				if (alphaAt(rgba, width, height, x, y) >= threshold) points += Point(x, y)
+			while (x < mask.width) {
+				if (mask.isSolid(floor(x).toInt(), floor(y).toInt())) points += Point(x, y)
 				x += spacing
 			}
 			row++
@@ -222,13 +272,10 @@ internal object AdaptiveMeshGenerator {
 		return pointSquared <= radiusSquared + max(1e-8, radiusSquared * 1e-10)
 	}
 
-	private fun triangleInsideDilatedAlpha(
+	private fun triangleInsideDilatedSolid(
 		triangle: Triangle,
 		points: List<Point>,
-		width: Int,
-		height: Int,
-		rgba: ByteArray,
-		threshold: Int,
+		mask: SolidAlphaMask,
 	): Boolean {
 		val a = points[triangle.a]
 		val b = points[triangle.b]
@@ -243,32 +290,18 @@ internal object AdaptiveMeshGenerator {
 			Point(a.x * 0.2 + b.x * 0.6 + c.x * 0.2, a.y * 0.2 + b.y * 0.6 + c.y * 0.2),
 			Point(a.x * 0.2 + b.x * 0.2 + c.x * 0.6, a.y * 0.2 + b.y * 0.2 + c.y * 0.6),
 		)
-		return samples.all { sample -> insideDilatedAlpha(rgba, width, height, sample.x, sample.y, threshold, 2) }
+		return samples.all { sample -> insideDilatedSolid(mask, sample.x, sample.y, 2) }
 	}
 
-	private fun insideDilatedAlpha(
-		rgba: ByteArray,
-		width: Int,
-		height: Int,
-		x: Double,
-		y: Double,
-		threshold: Int,
-		radius: Int,
-	): Boolean {
-		val centerX = floor(x).toInt().coerceIn(0, width - 1)
-		val centerY = floor(y).toInt().coerceIn(0, height - 1)
-		for (sampleY in max(0, centerY - radius)..min(height - 1, centerY + radius)) {
-			for (sampleX in max(0, centerX - radius)..min(width - 1, centerX + radius)) {
-				if ((rgba[(sampleY * width + sampleX) * 4 + 3].toInt() and 0xff) >= threshold) return true
+	private fun insideDilatedSolid(mask: SolidAlphaMask, x: Double, y: Double, radius: Int): Boolean {
+		val centerX = floor(x).toInt().coerceIn(0, mask.width - 1)
+		val centerY = floor(y).toInt().coerceIn(0, mask.height - 1)
+		for (sampleY in max(0, centerY - radius)..min(mask.height - 1, centerY + radius)) {
+			for (sampleX in max(0, centerX - radius)..min(mask.width - 1, centerX + radius)) {
+				if (mask.isSolid(sampleX, sampleY)) return true
 			}
 		}
 		return false
-	}
-
-	private fun alphaAt(rgba: ByteArray, width: Int, height: Int, x: Double, y: Double): Int {
-		val sampleX = floor(x).toInt().coerceIn(0, width - 1)
-		val sampleY = floor(y).toInt().coerceIn(0, height - 1)
-		return rgba[(sampleY * width + sampleX) * 4 + 3].toInt() and 0xff
 	}
 
 	private fun squaredDistance(a: Point, b: Point): Double {
