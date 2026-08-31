@@ -30,11 +30,8 @@ import org.umamo.runtime.model.WarpLatticeForm
 import org.umamo.runtime.model.withDerivedRenderRoot
 import kotlin.math.PI
 import kotlin.math.ceil
-import kotlin.math.cos
 import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.sin
-import kotlin.math.sqrt
 
 object StandardParameters {
 	val ANGLE_X = ParameterId("ParamAngleX")
@@ -56,7 +53,7 @@ object StandardParameters {
 	val HAIR_BACK = ParameterId("ParamHairBack")
 
 	val all = listOf(
-		Parameter(ANGLE_X, "角度 X", -30f, 30f, 0f),
+		Parameter(ANGLE_X, "角度 X", -45f, 45f, 0f),
 		Parameter(ANGLE_Y, "角度 Y", -30f, 30f, 0f),
 		Parameter(ANGLE_Z, "角度 Z", -30f, 30f, 0f),
 		Parameter(BODY_X, "身体角度 X", -10f, 10f, 0f),
@@ -80,6 +77,10 @@ data class BuiltRig(
 	val puppet: PuppetModel,
 	val pageByDrawableId: Map<String, Int>,
 	val sourceBoundsByDrawableId: Map<String, Bounds>,
+	val faceCenterX: Float,
+	val faceCenterY: Float,
+	val faceRadiusX: Float,
+	val faceRadiusY: Float,
 	val warnings: List<String>,
 )
 
@@ -87,10 +88,29 @@ object RigBuilder {
 	private val bodyWarpId = DeformerId("DeformBodyXY")
 	private val breathWarpId = DeformerId("DeformBodyZBreath")
 	private val headRotationId = DeformerId("DeformHeadRotation")
-	private val faceWarpId = DeformerId("DeformFace3D")
-	private val gazeWarpId = DeformerId("DeformEyeGaze")
-	private val frontHairWarpId = DeformerId("DeformHairFront")
-	private val backHairWarpId = DeformerId("DeformHairBack")
+	private val headWarpId = DeformerId("DeformHeadContainer")
+	private val faceWarpId = DeformerId("DeformFaceNinePose")
+	private val frontHairFollowWarpId = DeformerId("DeformHairFrontFollow")
+	private val frontHairPhysicsWarpId = DeformerId("DeformHairFrontPhysics")
+	private val backHairFollowWarpId = DeformerId("DeformHairBackFollow")
+	private val backHairPhysicsWarpId = DeformerId("DeformHairBackPhysics")
+
+	private val faceTags = setOf(
+		SemanticTag.FACE,
+		SemanticTag.FACE_DETAIL,
+		SemanticTag.IRIDES,
+		SemanticTag.EYEBROW,
+		SemanticTag.EYEWHITE,
+		SemanticTag.EYELASH,
+		SemanticTag.EYE_CLOSE,
+		SemanticTag.EYEWEAR,
+		SemanticTag.EARS,
+		SemanticTag.EARWEAR,
+		SemanticTag.NOSE,
+		SemanticTag.MOUTH,
+		SemanticTag.MOUTH_OPEN,
+		SemanticTag.MOUTH_CLOSE,
+	)
 
 	private data class MeshData(
 		val mesh: DrawableMesh,
@@ -102,24 +122,34 @@ object RigBuilder {
 		val characterFrame = analysis.anchors.character
 		val headCandidates = analysis.layers.filter { inferredGroup(it, analysis.anchors) == LayerGroup.HEAD && it.opaquePixels > 0 }
 		val headFrame = if (headCandidates.isEmpty()) analysis.anchors.face else headCandidates.map { it.bounds }.reduce(Bounds::union).expanded(0.025f)
-		val irisCandidates = analysis.layers.filter { it.semantic.tag == SemanticTag.IRIDES && it.opaquePixels > 0 }
-		val gazeFrame = if (irisCandidates.isEmpty()) analysis.anchors.face else irisCandidates.map { it.bounds }.reduce(Bounds::union).expanded(0.18f)
+		val faceRig = NinePoseFaceRig.from(analysis)
+		val faceCandidates = analysis.layers.filter { it.semantic.tag in faceTags && it.opaquePixels > 0 }
+		val faceFrame = (faceCandidates.map { it.bounds } + faceRig.face)
+			.reduce(Bounds::union)
+			.expanded(0.025f)
 		val frontHairCandidates = analysis.layers.filter { it.semantic.tag == SemanticTag.FRONT_HAIR && it.opaquePixels > 0 }
 		val backHairCandidates = analysis.layers.filter { it.semantic.tag == SemanticTag.BACK_HAIR && it.opaquePixels > 0 }
 		val frontHairFrame = frontHairCandidates.map { it.bounds }.takeIf { it.isNotEmpty() }?.reduce(Bounds::union)?.expanded(0.04f)
 		val backHairFrame = backHairCandidates.map { it.bounds }.takeIf { it.isNotEmpty() }?.reduce(Bounds::union)?.expanded(0.04f)
 
 		val headPartId = PartId("PartHead")
+		val facePartId = PartId("PartFace")
+		val frontHairPartId = PartId("PartHairFront")
+		val backHairPartId = PartId("PartHairBack")
+		val headAccessoryPartId = PartId("PartHeadAccessories")
 		val bodyPartId = PartId("PartBody")
 		val extraPartId = PartId("PartExtra")
 		val deformers = buildDeformers(
-			analysis,
+			faceRig,
 			characterFrame,
 			headFrame,
-			gazeFrame,
+			faceFrame,
 			frontHairFrame,
 			backHairFrame,
 			headPartId,
+			facePartId,
+			frontHairPartId,
+			backHairPartId,
 			bodyPartId,
 			config,
 		)
@@ -136,7 +166,7 @@ object RigBuilder {
 				warnings += "跳过空图层：${layer.source.name}"
 				continue
 			}
-			val parentAndFrame = parentAndFrame(layer, analysis.anchors, characterFrame, headFrame, gazeFrame, frontHairFrame, backHairFrame)
+			val parentAndFrame = parentAndFrame(layer, faceRig, analysis.anchors, characterFrame, headFrame, faceFrame, frontHairFrame, backHairFrame)
 			val id = uniqueDrawableId(layer, idCounts)
 			val meshData = buildGridMesh(
 				layer,
@@ -146,7 +176,7 @@ object RigBuilder {
 				config.meshSpacing,
 				config.alphaThreshold,
 			)
-			val geometryGrid = buildDrawableGeometry(layer, meshData, parentAndFrame.second, analysis.anchors)
+			val geometryGrid = buildDrawableGeometry(layer, meshData, parentAndFrame.second, faceRig)
 			val drawable = Drawable(
 				id = id,
 				name = layer.source.name,
@@ -186,8 +216,35 @@ object RigBuilder {
 				.filter { inferredGroup(classifiedByDrawable.getValue(it.id), analysis.anchors) == group }
 				.sortedBy { classifiedByDrawable.getValue(it.id).source.order }
 				.map { OrgChild.Drawable(it.id) }
+		fun headChildrenFor(predicate: (SemanticTag) -> Boolean): List<OrgChild> =
+			maskedDrawables
+				.filter { drawable ->
+					val layer = classifiedByDrawable.getValue(drawable.id)
+					inferredGroup(layer, analysis.anchors) == LayerGroup.HEAD && predicate(layer.semantic.tag)
+				}
+				.sortedBy { classifiedByDrawable.getValue(it.id).source.order }
+				.map { OrgChild.Drawable(it.id) }
 		val parts = listOf(
-			Part(headPartId, "头部", childrenFor(LayerGroup.HEAD), groupMode = PartGroupMode.PassThrough),
+			Part(
+				headPartId,
+				"头部",
+				listOf(
+					OrgChild.Part(backHairPartId),
+					OrgChild.Part(facePartId),
+					OrgChild.Part(frontHairPartId),
+					OrgChild.Part(headAccessoryPartId),
+				),
+				groupMode = PartGroupMode.PassThrough,
+			),
+			Part(backHairPartId, "后发", headChildrenFor { it == SemanticTag.BACK_HAIR }, groupMode = PartGroupMode.PassThrough),
+			Part(facePartId, "面部", headChildrenFor { it in faceTags }, groupMode = PartGroupMode.PassThrough),
+			Part(frontHairPartId, "前发", headChildrenFor { it == SemanticTag.FRONT_HAIR }, groupMode = PartGroupMode.PassThrough),
+			Part(
+				headAccessoryPartId,
+				"头部附件",
+				headChildrenFor { it !in faceTags && it != SemanticTag.FRONT_HAIR && it != SemanticTag.BACK_HAIR },
+				groupMode = PartGroupMode.PassThrough,
+			),
 			Part(extraPartId, "附加物", childrenFor(LayerGroup.EXTRA), groupMode = PartGroupMode.PassThrough),
 			Part(bodyPartId, "身体", childrenFor(LayerGroup.BODY) + childrenFor(LayerGroup.UNKNOWN), groupMode = PartGroupMode.PassThrough),
 		)
@@ -214,17 +271,29 @@ object RigBuilder {
 			// older Cubism 5 runtimes without relying on v6-only container fields.
 			runtimeTarget = RuntimeTarget.Cubism50,
 		).withDerivedRenderRoot()
-		return BuiltRig(puppet, pageByDrawable, sourceBoundsByDrawable, warnings)
+		return BuiltRig(
+			puppet,
+			pageByDrawable,
+			sourceBoundsByDrawable,
+			faceRig.centerX,
+			faceRig.centerY,
+			faceRig.radiusX,
+			faceRig.radiusY,
+			warnings,
+		)
 	}
 
 	private fun buildDeformers(
-		analysis: PipelineAnalysis,
+		faceRig: NinePoseFaceRig,
 		character: Bounds,
 		head: Bounds,
-		gaze: Bounds,
+		faceFrame: Bounds,
 		frontHair: Bounds?,
 		backHair: Bounds?,
 		headPartId: PartId,
+		facePartId: PartId,
+		frontHairPartId: PartId,
+		backHairPartId: PartId,
 		bodyPartId: PartId,
 		config: PipelineConfig,
 	): List<Deformer> {
@@ -257,70 +326,223 @@ object RigBuilder {
 		}
 		val breath = Deformer.Warp(breathWarpId, "身体 Z / 呼吸", bodyWarpId, bodyPartId, 6, 4, true, breathGrid)
 
-		val chinLocalX = normalizeX(analysis.anchors.chinX, character)
-		val chinLocalY = normalizeY(analysis.anchors.chinY, character)
+		val chinLocalX = normalizeX(faceRig.chinX, character)
+		val chinLocalY = normalizeY(faceRig.chinY, character)
 		val rotationGrid = oneDimGrid(StandardParameters.ANGLE_Z, floatArrayOf(-30f, 0f, 30f)) { value ->
 			RotationPivotForm(chinLocalX, chinLocalY, value, 1f)
 		}
 		val rotation = Deformer.Rotation(headRotationId, "头部 Z 旋转", breathWarpId, headPartId, 0f, rotationGrid)
 
+		// A real head container separates skull-following content from the facial surface.  It is the
+		// sole pixel-space child of the rotation deformer; all descendants use ordinary normalized
+		// warp coordinates.  Face, front hair and back hair are siblings below this node.
+		val headGrid = warpGrid(ninePoseAxes(), columns = 4, rows = 5) { u, v, values ->
+			val canvasX = head.left + u * head.width
+			val canvasY = head.top + v * head.height
+			val yaw = values[0] / 45f * config.headTurnStrength.coerceIn(0f, 2f)
+			val pitch = values[1] / 30f * config.headTurnStrength.coerceIn(0f, 2f)
+			val crownArch = sin(PI * u).toFloat().coerceAtLeast(0f)
+			val shellX = yaw * head.width * (0.009f + crownArch * 0.004f)
+			val shellY = -pitch * head.height * 0.008f
+			(canvasX - faceRig.chinX + shellX) to (canvasY - faceRig.chinY + shellY)
+		}
+		val headContainer = Deformer.Warp(headWarpId, "头部容器", headRotationId, headPartId, 5, 4, true, headGrid)
+
 		val faceGrid = warpGrid(
-			listOf(axis(StandardParameters.ANGLE_X, -30f, 0f, 30f), axis(StandardParameters.ANGLE_Y, -30f, 0f, 30f)),
+			ninePoseAxes(),
 			columns = 8,
 			rows = 8,
 		) { u, v, values ->
-			val canvasX = head.left + u * head.width
-			val canvasY = head.top + v * head.height
-			val projected = cylindricalFaceProject(canvasX, canvasY, analysis.anchors.face, values[0], values[1], config.headTurnStrength)
-			// A rotation deformer's children are pixel-sized offsets from its pivot (scale=1), while the
-			// pivot itself is expressed in its parent warp's normalized coordinates.  Mixing those two
-			// spaces made a 450 px head only ~0.2 units wide and therefore effectively invisible.
-			(projected.first - analysis.anchors.chinX) to (projected.second - analysis.anchors.chinY)
+			val canvasX = faceFrame.left + u * faceFrame.width
+			val canvasY = faceFrame.top + v * faceFrame.height
+			val projected = faceRig.surfacePoint(canvasX, canvasY, values[0], values[1], config.headTurnStrength)
+			normalizeX(projected.first, head) to normalizeY(projected.second, head)
 		}
-		val face = Deformer.Warp(faceWarpId, "面部 3D", headRotationId, headPartId, 8, 8, true, faceGrid)
+		val face = Deformer.Warp(faceWarpId, "面部九轴 / 经纬网", headWarpId, facePartId, 8, 8, true, faceGrid)
 
-		val deformers = mutableListOf<Deformer>(body, breath, rotation, face)
-		if (analysis.layers.any { it.semantic.tag == SemanticTag.IRIDES }) {
-			val gazeInHead = mapBounds(gaze, head)
-			val gazeGrid = warpGrid(
-				listOf(axis(StandardParameters.EYE_BALL_X, -1f, 0f, 1f), axis(StandardParameters.EYE_BALL_Y, -1f, 0f, 1f)),
-				2,
-				2,
-			) { u, v, values ->
-				(gazeInHead.left + u * gazeInHead.width + values[0] * gazeInHead.width * 0.09f) to
-					(gazeInHead.top + v * gazeInHead.height - values[1] * gazeInHead.height * 0.075f)
-			}
-			deformers += Deformer.Warp(gazeWarpId, "视线", faceWarpId, headPartId, 2, 2, true, gazeGrid)
+		val deformers = mutableListOf<Deformer>(body, breath, rotation, headContainer, face)
+		val primaryRegions = faceRig.regions.filter { it.feature != FaceFeature.IRIS }
+		for (region in primaryRegions) {
+			deformers += featureWarp(faceRig, region, faceWarpId, faceFrame, facePartId, config)
 		}
-		frontHair?.let { frame -> deformers += hairWarp(frontHairWarpId, "前发物理", StandardParameters.HAIR_FRONT, frame, head, headPartId, 0.055f) }
-		backHair?.let { frame -> deformers += hairWarp(backHairWarpId, "后发物理", StandardParameters.HAIR_BACK, frame, head, headPartId, 0.075f) }
+		for (irisRegion in faceRig.regions.filter { it.feature == FaceFeature.IRIS }) {
+			val eyeRegion = faceRig.regionFor(FaceFeature.EYE, irisRegion.side) ?: continue
+			val irisShape = featureWarp(
+				faceRig,
+				irisRegion,
+				featureWarpId(eyeRegion),
+				eyeRegion.bounds,
+				facePartId,
+				config,
+			)
+			deformers += irisShape
+			deformers += gazeWarp(irisRegion, irisShape.id, facePartId)
+		}
+		frontHair?.let { frame ->
+			deformers += hairFollowWarp(frontHairFollowWarpId, "前发头部跟随", frame, head, frontHairPartId, 0.014f, -0.006f)
+			deformers += hairPhysicsWarp(
+				frontHairPhysicsWarpId,
+				"前发物理摆动",
+				StandardParameters.HAIR_FRONT,
+				frontHairFollowWarpId,
+				frame,
+				frontHairPartId,
+				rows = 4,
+				swayRatio = 0.12f,
+				curlRatio = 0.030f,
+			)
+		}
+		backHair?.let { frame ->
+			deformers += hairFollowWarp(backHairFollowWarpId, "后发头部跟随", frame, head, backHairPartId, -0.018f, 0.004f)
+			deformers += hairPhysicsWarp(
+				backHairPhysicsWarpId,
+				"后发物理摆动",
+				StandardParameters.HAIR_BACK,
+				backHairFollowWarpId,
+				frame,
+				backHairPartId,
+				rows = 6,
+				swayRatio = 0.10f,
+				curlRatio = 0.025f,
+			)
+		}
 		return deformers
 	}
 
-	private fun hairWarp(id: DeformerId, name: String, parameter: ParameterId, frame: Bounds, head: Bounds, part: PartId, strength: Float): Deformer.Warp {
-		val inHead = mapBounds(frame, head)
-		val grid = warpGrid(listOf(axis(parameter, -1f, 0f, 1f)), 3, 5) { u, v, values ->
-			val weight = v * v
-			val swing = values[0]
-			(inHead.left + u * inHead.width + swing * strength * weight) to
-				(inHead.top + v * inHead.height + kotlin.math.abs(swing) * strength * 0.18f * weight)
+	private fun featureWarp(
+		faceRig: NinePoseFaceRig,
+		region: FaceRegion,
+		parent: DeformerId,
+		parentFrame: Bounds,
+		part: PartId,
+		config: PipelineConfig,
+	): Deformer.Warp {
+		val inParent = mapBounds(region.bounds, parentFrame)
+		val (columns, rows) = when (region.feature) {
+			FaceFeature.EYE, FaceFeature.MOUTH -> 4 to 3
+			FaceFeature.NOSE -> 3 to 4
+			else -> 3 to 3
 		}
-		return Deformer.Warp(id, name, faceWarpId, part, 5, 3, true, grid)
+		val geometry = warpGrid(ninePoseAxes(), columns, rows) { u, v, values ->
+			val offset = faceRig.featureOffset(region.feature, region.bounds, u, v, values[0], values[1], config.headTurnStrength)
+			(inParent.left + u * inParent.width + offset.first / parentFrame.width.coerceAtLeast(1e-4f)) to
+				(inParent.top + v * inParent.height + offset.second / parentFrame.height.coerceAtLeast(1e-4f))
+		}
+		val channels = if (region.feature == FaceFeature.EAR) {
+			ChannelGrids(
+				mapOf(
+					FormChannel.OPACITY to scalarGrid(StandardParameters.ANGLE_X, NinePoseFaceRig.angleXKeys) { angle ->
+						faceRig.earOpacity(region.bounds, angle, config.headTurnStrength)
+					},
+				),
+			)
+		} else ChannelGrids.Empty
+		return Deformer.Warp(
+			featureWarpId(region),
+			featureDisplayName(region),
+			parent,
+			part,
+			rows,
+			columns,
+			true,
+			geometry,
+			channels,
+		)
+	}
+
+	private fun gazeWarp(region: FaceRegion, parent: DeformerId, part: PartId): Deformer.Warp {
+		val geometry = warpGrid(
+			listOf(axis(StandardParameters.EYE_BALL_X, -1f, 0f, 1f), axis(StandardParameters.EYE_BALL_Y, -1f, 0f, 1f)),
+			2,
+			2,
+		) { u, v, values ->
+			(u + values[0] * 0.10f) to (v - values[1] * 0.085f)
+		}
+		return Deformer.Warp(gazeWarpId(region), "${sideDisplay(region.side)}视线", parent, part, 2, 2, true, geometry)
+	}
+
+	/** Head-angle following for one hair depth plane; deliberately independent of the face warp. */
+	private fun hairFollowWarp(
+		id: DeformerId,
+		name: String,
+		frame: Bounds,
+		head: Bounds,
+		part: PartId,
+		yawParallax: Float,
+		pitchParallax: Float,
+	): Deformer.Warp {
+		val inHead = mapBounds(frame, head)
+		val grid = warpGrid(
+			ninePoseAxes(),
+			3,
+			4,
+		) { u, v, values ->
+			val yaw = values[0] / 45f
+			val pitch = values[1] / 30f
+			val depthWeight = 0.62f + v * 0.38f
+			(inHead.left + u * inHead.width + yaw * yawParallax * depthWeight) to
+				(inHead.top + v * inHead.height + pitch * pitchParallax * (0.78f + v * 0.22f))
+		}
+		return Deformer.Warp(id, name, headWarpId, part, 4, 3, true, grid)
+	}
+
+	/**
+	 * StretchyStudio/Hiyori-style hair-tip warp.  The root row is pinned exactly; cubic falloff
+	 * keeps the upper mass stable and concentrates the physics response at the tips.  Magnitude is
+	 * based on min(width,height), preventing a short, wide fringe from floating as one skull chunk.
+	 */
+	private fun hairPhysicsWarp(
+		id: DeformerId,
+		name: String,
+		parameter: ParameterId,
+		parent: DeformerId,
+		frame: Bounds,
+		part: PartId,
+		rows: Int,
+		swayRatio: Float,
+		curlRatio: Float,
+	): Deformer.Warp {
+		val scale = minOf(frame.width, frame.height).coerceAtLeast(1f)
+		val normalizedSway = scale / frame.width.coerceAtLeast(1f) * swayRatio
+		val normalizedCurl = scale / frame.height.coerceAtLeast(1f) * curlRatio
+		val grid = warpGrid(listOf(axis(parameter, -1f, 0f, 1f)), columns = 3, rows = rows) { u, v, values ->
+			val swing = values[0]
+			val tipWeight = v * v * v
+			(u + swing * normalizedSway * tipWeight) to
+				(v + swing * normalizedCurl * tipWeight)
+		}
+		return Deformer.Warp(id, name, parent, part, rows, 3, true, grid)
 	}
 
 	private fun parentAndFrame(
 		layer: ClassifiedLayer,
+		faceRig: NinePoseFaceRig,
 		anchors: RigAnchors,
 		character: Bounds,
 		head: Bounds,
-		gaze: Bounds,
+		faceFrame: Bounds,
 		frontHair: Bounds?,
 		backHair: Bounds?,
 	): Pair<DeformerId, Bounds> = when (layer.semantic.tag) {
-		SemanticTag.IRIDES -> gazeWarpId to gaze
-		SemanticTag.FRONT_HAIR -> frontHair?.let { frontHairWarpId to it } ?: (faceWarpId to head)
-		SemanticTag.BACK_HAIR -> backHair?.let { backHairWarpId to it } ?: (faceWarpId to head)
-		else -> if (inferredGroup(layer, anchors) == LayerGroup.HEAD) faceWarpId to head else breathWarpId to character
+		SemanticTag.IRIDES -> faceRig.regionFor(FaceFeature.IRIS, layer.semantic.side)?.let { gazeWarpId(it) to it.bounds }
+			?: (faceWarpId to faceFrame)
+		SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE ->
+			faceRig.regionFor(FaceFeature.EYE, layer.semantic.side)?.let { featureWarpId(it) to it.bounds } ?: (faceWarpId to faceFrame)
+		SemanticTag.EYEBROW -> faceRig.regionFor(FaceFeature.BROW, layer.semantic.side)?.let { featureWarpId(it) to it.bounds }
+			?: (faceWarpId to faceFrame)
+		SemanticTag.NOSE -> faceRig.regionFor(FaceFeature.NOSE, layer.semantic.side)?.let { featureWarpId(it) to it.bounds }
+			?: (faceWarpId to faceFrame)
+		SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN, SemanticTag.MOUTH_CLOSE ->
+			faceRig.regionFor(FaceFeature.MOUTH, layer.semantic.side)?.let { featureWarpId(it) to it.bounds } ?: (faceWarpId to faceFrame)
+		SemanticTag.EARS, SemanticTag.EARWEAR -> faceRig.regionFor(FaceFeature.EAR, layer.semantic.side)?.let { featureWarpId(it) to it.bounds }
+			?: (faceWarpId to faceFrame)
+		SemanticTag.FRONT_HAIR -> frontHair?.let { frontHairPhysicsWarpId to it } ?: (headWarpId to head)
+		SemanticTag.BACK_HAIR -> backHair?.let { backHairPhysicsWarpId to it } ?: (headWarpId to head)
+		else -> when {
+			layer.semantic.tag in faceTags -> faceWarpId to faceFrame
+			inferredGroup(layer, anchors) == LayerGroup.HEAD -> headWarpId to head
+			else -> breathWarpId to character
+		}
 	}
 
 	private fun buildGridMesh(
@@ -416,18 +638,18 @@ object RigBuilder {
 		return MeshData(DrawableMesh(positions, uvs, indices), canvas)
 	}
 
-	private fun buildDrawableGeometry(layer: ClassifiedLayer, data: MeshData, parentFrame: Bounds, anchors: RigAnchors): KeyformGrid<MeshDeltaForm> {
+	private fun buildDrawableGeometry(layer: ClassifiedLayer, data: MeshData, parentFrame: Bounds, faceRig: NinePoseFaceRig): KeyformGrid<MeshDeltaForm> {
 		val tag = layer.semantic.tag
 		return when (tag) {
-			SemanticTag.EYEWHITE, SemanticTag.EYELASH -> eyeClosureGrid(layer, data, parentFrame, anchors)
-			SemanticTag.IRIDES -> eyeClosureGrid(layer, data, parentFrame, anchors)
+			SemanticTag.EYEWHITE, SemanticTag.EYELASH -> eyeClosureGrid(layer, data, parentFrame, faceRig)
+			SemanticTag.IRIDES -> eyeClosureGrid(layer, data, parentFrame, faceRig)
 			SemanticTag.EYEBROW -> eyebrowGrid(layer, data, parentFrame)
 			SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN, SemanticTag.MOUTH_CLOSE -> mouthGrid(data)
 			else -> zeroMeshGrid(data.mesh.positions.size)
 		}
 	}
 
-	private fun eyeClosureGrid(layer: ClassifiedLayer, data: MeshData, frame: Bounds, anchors: RigAnchors): KeyformGrid<MeshDeltaForm> {
+	private fun eyeClosureGrid(layer: ClassifiedLayer, data: MeshData, frame: Bounds, faceRig: NinePoseFaceRig): KeyformGrid<MeshDeltaForm> {
 		val parameter = if (layer.semantic.side == Side.LEFT) StandardParameters.EYE_L_OPEN else StandardParameters.EYE_R_OPEN
 		val axes = if (layer.semantic.side == Side.NONE) {
 			listOf(axis(StandardParameters.EYE_L_OPEN, 0f, 1f), axis(StandardParameters.EYE_R_OPEN, 0f, 1f))
@@ -441,7 +663,7 @@ object RigBuilder {
 				val openness = when (layer.semantic.side) {
 					Side.LEFT -> values[0]
 					Side.RIGHT -> values[0]
-					Side.NONE -> if (canvasX >= anchors.faceCenterX) values[0] else values[1]
+					Side.NONE -> if (canvasX >= faceRig.centerX) values[0] else values[1]
 				}
 				val currentY = data.mesh.positions[vertex + 1]
 				val targetY = if (layer.semantic.tag == SemanticTag.EYELASH && currentY > closeLocalY) currentY else closeLocalY
@@ -524,6 +746,49 @@ object RigBuilder {
 		)
 	}
 
+	private fun ninePoseAxes(): List<KeyformAxis> = listOf(
+		axis(StandardParameters.ANGLE_X, *NinePoseFaceRig.angleXKeys),
+		axis(StandardParameters.ANGLE_Y, *NinePoseFaceRig.angleYKeys),
+	)
+
+	private fun featureWarpId(region: FaceRegion): DeformerId {
+		val feature = when (region.feature) {
+			FaceFeature.EYE -> "EyeShape"
+			FaceFeature.IRIS -> "IrisPreserve"
+			FaceFeature.BROW -> "BrowShape"
+			FaceFeature.NOSE -> "NoseShape"
+			FaceFeature.MOUTH -> "MouthShape"
+			FaceFeature.EAR -> "EarOcclusion"
+		}
+		return DeformerId("Deform$feature${sideToken(region.side)}")
+	}
+
+	private fun gazeWarpId(region: FaceRegion): DeformerId = DeformerId("DeformEyeGaze${sideToken(region.side)}")
+
+	private fun featureDisplayName(region: FaceRegion): String {
+		val feature = when (region.feature) {
+			FaceFeature.EYE -> "眼形二次修正"
+			FaceFeature.IRIS -> "瞳孔二维保持"
+			FaceFeature.BROW -> "眉形二次修正"
+			FaceFeature.NOSE -> "鼻梁 / 鼻尖深度"
+			FaceFeature.MOUTH -> "嘴部圆柱曲线"
+			FaceFeature.EAR -> "耳朵遮挡"
+		}
+		return "${sideDisplay(region.side)}$feature"
+	}
+
+	private fun sideToken(side: Side): String = when (side) {
+		Side.LEFT -> "L"
+		Side.RIGHT -> "R"
+		Side.NONE -> "Both"
+	}
+
+	private fun sideDisplay(side: Side): String = when (side) {
+		Side.LEFT -> "左"
+		Side.RIGHT -> "右"
+		Side.NONE -> "双侧"
+	}
+
 	private fun uniqueDrawableId(layer: ClassifiedLayer, counts: MutableMap<String, Int>): DrawableId {
 		val side = when (layer.semantic.side) { Side.LEFT -> "L"; Side.RIGHT -> "R"; Side.NONE -> "" }
 		val rawBase = if (layer.semantic.tag == SemanticTag.UNKNOWN) "Layer" else layer.semantic.tag.name.lowercase().replace('_', ' ')
@@ -550,36 +815,6 @@ object RigBuilder {
 
 	private fun normalizeX(x: Float, frame: Bounds): Float = (x - frame.left) / frame.width.coerceAtLeast(1e-4f)
 	private fun normalizeY(y: Float, frame: Bounds): Float = (y - frame.top) / frame.height.coerceAtLeast(1e-4f)
-
-	internal fun cylindricalFaceProject(
-		canvasX: Float,
-		canvasY: Float,
-		face: Bounds,
-		angleX: Float,
-		angleY: Float,
-		strength: Float,
-	): Pair<Float, Float> {
-		// Stretchy's later face-parallax iterations found that a full ellipsoid plus perspective
-		// over-compresses the forehead/chin under AngleY.  A cylindrical dome (Z depends only on X)
-		// keeps horizontal facial features curved while preserving their vertical spacing.
-		if (angleX == 0f && angleY == 0f) return canvasX to canvasY
-		val radiusX = max(1f, face.width * 0.5f)
-		val radiusY = max(1f, face.height * 0.5f)
-		val x = (canvasX - face.centerX) / radiusX
-		val y = (canvasY - face.centerY) / radiusY
-		val clampedX = x.coerceIn(-1f, 1f)
-		val dome = sqrt(max(0f, 1f - clampedX * clampedX))
-		val z = 0.30f + (0.80f - 0.30f) * dome
-		val safeStrength = strength.coerceIn(0f, 2f)
-		val yaw = (angleX / 30f) * 15f * safeStrength * (PI / 180.0).toFloat()
-		// Positive Cubism AngleY means looking upward in the PSD/canvas Y-down coordinate system.
-		// The old implementation negated this angle, reversing the direction.
-		val pitch = (angleY / 30f) * 8f * safeStrength * (PI / 180.0).toFloat()
-		val turnedX = x * cos(yaw) + z * sin(yaw)
-		val turnedZ = -x * sin(yaw) + z * cos(yaw)
-		val turnedY = y * cos(pitch) - turnedZ * sin(pitch)
-		return (face.centerX + turnedX * radiusX) to (face.centerY + turnedY * radiusY)
-	}
 
 	private fun axis(parameter: ParameterId, vararg keys: Float) = KeyformAxis(parameter, keys)
 

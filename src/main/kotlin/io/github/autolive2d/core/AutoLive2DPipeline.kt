@@ -50,6 +50,8 @@ class AutoLive2DPipeline {
 		val exportPuppet = restMeshesToCanvasSpace(rig.puppet)
 		val baseName = safeBaseName(psd.fileName.toString().substringBeforeLast('.'))
 		val outputRoot = outputDirectory.toAbsolutePath().normalize()
+		val hasFrontHair = analysis.layers.any { it.semantic.tag == SemanticTag.FRONT_HAIR && it.opaquePixels > 0 }
+		val hasBackHair = analysis.layers.any { it.semantic.tag == SemanticTag.BACK_HAIR && it.opaquePixels > 0 }
 		Files.createDirectories(outputRoot)
 		val files = mutableListOf<ExportedFile>()
 		val warnings = (analysis.warnings + rig.warnings + neutralRig.warnings).toMutableList()
@@ -59,10 +61,7 @@ class AutoLive2DPipeline {
 			val pages = atlas.pages.mapIndexed { index, page ->
 				Moc3Sidecars.AtlasPage("$textureFolder/texture_${index.toString().padStart(2, '0')}.png", page.png)
 			}
-			val physics = if (config.generatePhysics) PhysicsGenerator.generate(
-				analysis.layers.any { it.semantic.tag == SemanticTag.FRONT_HAIR },
-				analysis.layers.any { it.semantic.tag == SemanticTag.BACK_HAIR },
-			) else null
+			val physics = if (config.generatePhysics) PhysicsGenerator.generate(hasFrontHair, hasBackHair) else null
 			val motionName = "$baseName.idle.motion3.json"
 			val motion = MotionGenerator.idle().also { Json.parseToJsonElement(it) }
 			val sidecars = buildList {
@@ -109,6 +108,9 @@ class AutoLive2DPipeline {
 				nowMillis = Instant.now().toEpochMilli(),
 				obfuscateKey = 0x42,
 			)
+			if (config.generatePhysics) {
+				Cmo3PhysicsInjector.inject(converted.model.root as CModelSource, hasFrontHair, hasBackHair)
+			}
 			val bytes = Cmo3.write(converted.model)
 			files += writeContained(outputRoot, "$baseName.cmo3", bytes)
 			warnings += converted.report.notices.map { noticeText("CMO3", it) }
@@ -206,6 +208,8 @@ class AutoLive2DPipeline {
 		val layers = analysis.layers.joinToString(",\n") { layer ->
 			"    {\"source\":${quote(layer.source.name)},\"tag\":${quote(layer.semantic.tag.canonicalName)},\"side\":${quote(layer.semantic.side.name)},\"drawable\":${quote(rig.puppet.drawables.firstOrNull { it.name == layer.source.name }?.id?.raw ?: "")}}"
 		}
+		val hasFrontHair = analysis.layers.any { it.semantic.tag == SemanticTag.FRONT_HAIR && it.opaquePixels > 0 }
+		val hasBackHair = analysis.layers.any { it.semantic.tag == SemanticTag.BACK_HAIR && it.opaquePixels > 0 }
 		return """
 		{
 		  "version": 1,
@@ -215,6 +219,9 @@ class AutoLive2DPipeline {
 		  "mocVersion": ${rig.puppet.runtimeTarget.mocVersion().byteValue},
 		  "canvas": {"width":${analysis.source.widthPx},"height":${analysis.source.heightPx}},
 		  "config": {"atlasSize":${config.atlasSize},"meshSpacing":${config.meshSpacing},"headTurnStrength":${config.headTurnStrength},"bodyStrength":${config.bodyStrength}},
+		  "faceRig": {"algorithm":"perspective-parallelogram-nine-pose-v2","angleX":[-45,0,45],"angleY":[-30,0,30],"centerX":${rig.faceCenterX},"centerY":${rig.faceCenterY},"radiusX":${rig.faceRadiusX},"radiusY":${rig.faceRadiusY}},
+		  "deformerHierarchy": {"head":"DeformHeadContainer","face":"DeformFaceNinePose","frontHair":["DeformHairFrontFollow","DeformHairFrontPhysics"],"backHair":["DeformHairBackFollow","DeformHairBackPhysics"]},
+		  "physics": {"enabled":${config.generatePhysics},"frontHair":$hasFrontHair,"backHair":$hasBackHair,"preset":"stretchystudio-hiyori-pendulum"},
 		  "summary": {"layers":${analysis.layers.size},"drawables":${rig.puppet.drawables.size},"deformers":${rig.puppet.deformers.size},"parameters":${rig.puppet.parameters.size},"atlasPages":${atlas.pages.size}},
 		  "layers": [
 		$layers

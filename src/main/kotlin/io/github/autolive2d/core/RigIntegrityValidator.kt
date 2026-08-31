@@ -87,8 +87,8 @@ object RigIntegrityValidator {
 		neutralBoundsByDrawableId: Map<String, Bounds>,
 	) {
 		val poses = listOf(
-			"AngleX=-30" to mapOf(StandardParameters.ANGLE_X to -30f),
-			"AngleX=30" to mapOf(StandardParameters.ANGLE_X to 30f),
+			"AngleX=-45" to mapOf(StandardParameters.ANGLE_X to -45f),
+			"AngleX=45" to mapOf(StandardParameters.ANGLE_X to 45f),
 			"AngleY=-30" to mapOf(StandardParameters.ANGLE_Y to -30f),
 			"AngleY=30" to mapOf(StandardParameters.ANGLE_Y to 30f),
 		)
