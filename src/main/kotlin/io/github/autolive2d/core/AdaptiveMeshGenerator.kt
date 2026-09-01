@@ -38,6 +38,8 @@ internal object AdaptiveMeshGenerator {
 	private const val CURVE_CHORD_ERROR = 0.85
 	private const val MAX_CURVE_DENSITY = 12.0
 	private const val MAX_BOUNDARY_POINTS_PER_LOOP = 480
+	private const val MAX_QUALITY_REFINEMENT_POINTS = 512
+	private const val MAX_INTERNAL_EDGE_FACTOR = 1.72
 	private const val GEOMETRY_EPSILON = 1e-8
 
 	/** Bit-packed alpha mask with every outer contour filled as a solid island. */
@@ -132,7 +134,7 @@ internal object AdaptiveMeshGenerator {
 			val interior = gridCandidates.filter { candidate ->
 				pointInPolygon(candidate, boundary) && distanceSquaredToLoop(candidate, boundary) >= edgeClearance * edgeClearance
 			}
-			val local = constrainedTriangulate(boundary, interior) ?: return null
+			val local = constrainedTriangulate(boundary, interior, gridSpacing) ?: return null
 			val offset = globalPoints.size
 			globalPoints += local.points
 			globalTriangles += local.triangles.map { triangle ->
@@ -433,7 +435,11 @@ internal object AdaptiveMeshGenerator {
 		return lerp(dense[low], dense[next], (target - cumulative[low]) / metric)
 	}
 
-	private fun constrainedTriangulate(boundary: List<Point>, interiorCandidates: List<Point>): LocalMesh? {
+	private fun constrainedTriangulate(
+		boundary: List<Point>,
+		interiorCandidates: List<Point>,
+		spacing: Double,
+	): LocalMesh? {
 		val points = boundary.toMutableList()
 		val triangles = earClip(boundary)?.toMutableList() ?: return null
 		val protectedEdges = boundary.indices.mapTo(linkedSetOf()) { index ->
@@ -441,11 +447,56 @@ internal object AdaptiveMeshGenerator {
 		}
 		for (candidate in interiorCandidates) insertInteriorPoint(candidate, points, triangles)
 		relaxToConstrainedDelaunay(points, triangles, protectedEdges)
+		var refinementBudget = MAX_QUALITY_REFINEMENT_POINTS
+		for (pass in 0 until 4) {
+			if (refinementBudget <= 0) break
+			val inserted = splitOverlongInternalEdges(
+				points,
+				triangles,
+				protectedEdges,
+				spacing,
+				refinementBudget,
+			)
+			if (inserted == 0) break
+			refinementBudget -= inserted
+			relaxToConstrainedDelaunay(points, triangles, protectedEdges)
+		}
 		val presentEdges = triangles.flatMapTo(hashSetOf()) { triangle -> triangleEdges(triangle) }
 		if (!presentEdges.containsAll(protectedEdges)) return null
 		return LocalMesh(points, triangles.filter { triangle ->
 			abs(cross(points[triangle.a], points[triangle.b], points[triangle.c])) > GEOMETRY_EPSILON
 		})
+	}
+
+	/**
+	 * A fixed interior grid can miss a thin diagonal corridor. Even after Delaunay convergence, such
+	 * a corridor may contain an edge many grid cells long. Bisect only unprotected internal edges;
+	 * the ordered Bezier boundary and every `(i,i+1)` constraint remain untouched.
+	 */
+	private fun splitOverlongInternalEdges(
+		points: MutableList<Point>,
+		triangles: MutableList<Triangle>,
+		protectedEdges: Set<Edge>,
+		spacing: Double,
+		budget: Int,
+	): Int {
+		if (budget <= 0) return 0
+		val maximumLengthSquared = spacing * spacing * MAX_INTERNAL_EDGE_FACTOR * MAX_INTERNAL_EDGE_FACTOR
+		var inserted = 0
+		while (inserted < budget) {
+			val edges = triangles.asSequence()
+				.flatMap { triangle -> triangleEdges(triangle).asSequence() }
+				.filter { edge -> edge !in protectedEdges }
+				.distinct()
+			val longest = edges.maxByOrNull { edge -> distanceSquared(points[edge.low], points[edge.high]) }
+				?: break
+			val lengthSquared = distanceSquared(points[longest.low], points[longest.high])
+			if (lengthSquared <= maximumLengthSquared) break
+			val midpoint = lerp(points[longest.low], points[longest.high], 0.5)
+			if (!insertInteriorPoint(midpoint, points, triangles)) break
+			inserted++
+		}
+		return inserted
 	}
 
 	private fun earClip(boundary: List<Point>): List<Triangle>? {
@@ -526,7 +577,11 @@ internal object AdaptiveMeshGenerator {
 		triangles: MutableList<Triangle>,
 		protectedEdges: Set<Edge>,
 	) {
-		repeat(14) {
+		// A fan created by ear clipping a long, narrow strand may advance only one diagonal per pass
+		// because adjacent triangles are deliberately not flipped together. A fixed 14-pass cap left
+		// the rest of the fan untouched. Scale the cap with topology and stop as soon as it converges.
+		val maximumPasses = (triangles.size * 2).coerceIn(32, 512)
+		repeat(maximumPasses) {
 			val adjacency = linkedMapOf<Edge, MutableList<Int>>()
 			for (index in triangles.indices) {
 				for (edge in triangleEdges(triangles[index])) adjacency.getOrPut(edge) { mutableListOf() } += index

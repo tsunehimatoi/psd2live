@@ -3,6 +3,7 @@ package io.github.autolive2d.core
 import kotlinx.serialization.json.Json
 import org.umamo.format.cmo3.Cmo3
 import org.umamo.format.cmo3.model.custom.CModelSource
+import org.umamo.format.art.SourceArt
 import org.umamo.format.moc3.Moc3
 import org.umamo.format.moc3.json.FileReferences
 import org.umamo.format.moc3.json.Model3Group
@@ -28,6 +29,18 @@ class AutoLive2DPipeline {
 		val bytes = Files.readAllBytes(psd)
 		require(PsdReader.matches(bytes)) { "不是有效的 PSD 文件：$psd" }
 		return CharacterAnalyzer.analyze(PsdReader.read(bytes), config)
+	}
+
+	fun buildPreview(psd: Path, config: PipelineConfig = PipelineConfig()): RigPreviewModel =
+		buildPreview(inspect(psd, config), config)
+
+	fun buildPreview(source: SourceArt, config: PipelineConfig = PipelineConfig()): RigPreviewModel =
+		buildPreview(CharacterAnalyzer.analyze(source, config), config)
+
+	fun buildPreview(analysis: PipelineAnalysis, config: PipelineConfig = PipelineConfig()): RigPreviewModel {
+		val atlas = AtlasPacker.pack(analysis.layers, config.atlasSize, config.texturePadding)
+		val rig = RigBuilder.build(analysis, atlas, config)
+		return RigPreviewModel(analysis, atlas, rig, config)
 	}
 
 	fun run(
@@ -130,7 +143,7 @@ class AutoLive2DPipeline {
 		Json.parseToJsonElement(report)
 		files += writeContained(outputRoot, "$baseName.autolive2d.json", report.encodeToByteArray())
 		progress.update("校验完成", 1.0)
-		return PipelineResult(analysis, files, warnings)
+		return PipelineResult(analysis, files, warnings, RigPreviewModel(analysis, atlas, rig, config))
 	}
 
 	private fun validateBundle(bundle: Moc3Sidecars.Bundle) {

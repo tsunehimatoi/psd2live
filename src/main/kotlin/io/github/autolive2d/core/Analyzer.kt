@@ -7,14 +7,27 @@ object CharacterAnalyzer {
 	fun analyze(source: SourceArt, config: PipelineConfig): PipelineAnalysis {
 		val initiallyClassified = source.layers
 			.filter { it.raster.width > 0 && it.raster.height > 0 }
-			.map { LayerClassifier.classify(it, config.alphaThreshold) }
+			.map { layer ->
+				LayerClassifier.classify(layer, config.alphaThreshold).withOverride(
+					config.layerOverrides[layer.id.raw],
+				)
+			}
 		val preliminaryFaceCenter = initiallyClassified
 			.filter { it.semantic.tag == SemanticTag.FACE && it.opaquePixels > 0 }
 			.maxByOrNull { it.opaquePixels }
 			?.centroidX
 			?: source.widthPx * 0.5f
 		val layers = initiallyClassified.flatMap { layer ->
-			ComponentSplitter.split(layer, preliminaryFaceCenter, config.alphaThreshold)
+			ComponentSplitter.split(layer, preliminaryFaceCenter, config.alphaThreshold).map { component ->
+				val directOverride = config.layerOverrides[component.source.id.raw]
+				val inheritedOverride = config.layerOverrides[layer.source.id.raw]
+				when {
+					directOverride != null -> component.withOverride(directOverride)
+					inheritedOverride != null && component.source.id != layer.source.id ->
+						component.withOverride(inheritedOverride, preserveSide = true)
+					else -> component.withOverride(inheritedOverride)
+				}
+			}
 		}
 		val warnings = mutableListOf<String>()
 		val nonEmpty = layers.filter { it.opaquePixels > 0 }
@@ -64,6 +77,20 @@ object CharacterAnalyzer {
 	}
 
 	private fun union(bounds: List<Bounds>): Bounds = bounds.reduce(Bounds::union)
+
+	private fun ClassifiedLayer.withOverride(
+		override: LayerClassificationOverride?,
+		preserveSide: Boolean = false,
+	): ClassifiedLayer {
+		if (override == null) return this
+		return copy(
+			semantic = semantic.copy(
+				tag = override.tag,
+				side = if (preserveSide) semantic.side else override.side,
+				confidence = 1f,
+			),
+		)
+	}
 
 	val EYE_TAGS = setOf(SemanticTag.IRIDES, SemanticTag.EYEBROW, SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE)
 	val MOUTH_TAGS = setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN, SemanticTag.MOUTH_CLOSE)

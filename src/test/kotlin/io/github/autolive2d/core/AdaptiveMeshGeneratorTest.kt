@@ -201,6 +201,108 @@ class AdaptiveMeshGeneratorTest {
 		assertTrue(pointCovered(mesh, 48f, 48f), "thin ring must become a stable solid mesh")
 	}
 
+	@Test
+	fun `deep open concavity does not leave long internal fan edges`() {
+		val width = 360
+		val height = 420
+		val polygon = arrayOf(
+			30f to 20f,
+			142f to 20f,
+			157f to 316f,
+			202f to 76f,
+			218f to 20f,
+			330f to 20f,
+			330f to 390f,
+			30f to 390f,
+		)
+		val rgba = ByteArray(width * height * 4)
+		for (y in 0 until height) for (x in 0 until width) {
+			if (insidePolygon(x + 0.5f, y + 0.5f, polygon)) rgba[(y * width + x) * 4 + 3] = 0xff.toByte()
+		}
+
+		val spacing = 64f
+		val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, height, rgba, 8, spacing))
+		val protected = mesh.boundaryLoops.flatMapTo(hashSetOf()) { loop ->
+			loop.indices.map { index ->
+				val a = loop[index]
+				val b = loop[(index + 1) % loop.size]
+				minOf(a, b) to maxOf(a, b)
+			}
+		}
+		var longestInternal = 0f
+		var worstLongSliver = 0f
+		for (offset in mesh.indices.indices step 3) {
+			val vertices = intArrayOf(mesh.indices[offset], mesh.indices[offset + 1], mesh.indices[offset + 2])
+			val edgeLengths = FloatArray(3)
+			for (edgeIndex in 0..2) {
+				val a = vertices[edgeIndex]
+				val b = vertices[(edgeIndex + 1) % 3]
+				val ax = mesh.positions[a * 2]
+				val ay = mesh.positions[a * 2 + 1]
+				val bx = mesh.positions[b * 2]
+				val by = mesh.positions[b * 2 + 1]
+				edgeLengths[edgeIndex] = kotlin.math.hypot(bx - ax, by - ay)
+				if ((minOf(a, b) to maxOf(a, b)) !in protected) longestInternal = maxOf(longestInternal, edgeLengths[edgeIndex])
+			}
+			val longest = edgeLengths.max()
+			val a = vertices[0] * 2
+			val b = vertices[1] * 2
+			val c = vertices[2] * 2
+			val areaTwice = abs(
+				(mesh.positions[b] - mesh.positions[a]) * (mesh.positions[c + 1] - mesh.positions[a + 1]) -
+					(mesh.positions[b + 1] - mesh.positions[a + 1]) * (mesh.positions[c] - mesh.positions[a]),
+			)
+			val altitude = areaTwice / longest.coerceAtLeast(1e-4f)
+			if (longest > spacing * 1.15f && altitude < spacing * 0.28f) {
+				worstLongSliver = maxOf(worstLongSliver, longest)
+			}
+		}
+		assertTrue(longestInternal <= spacing * 1.85f, "deep concavity left an internal edge of $longestInternal px")
+		assertTrue(worstLongSliver == 0f, "deep concavity left a long sliver triangle of $worstLongSliver px")
+	}
+
+	@Test
+	fun `long narrow diagonal strand converges instead of retaining an ear clipping fan`() {
+		val width = 600
+		val height = 1200
+		val strand = arrayOf(
+			140f to 23f,
+			440f to 1183f,
+			460f to 1177f,
+			160f to 17f,
+		)
+		val rgba = ByteArray(width * height * 4)
+		for (y in 0 until height) for (x in 0 until width) {
+			if (insidePolygon(x + 0.5f, y + 0.5f, strand)) rgba[(y * width + x) * 4 + 3] = 0xff.toByte()
+		}
+
+		val spacing = 32f
+		val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, height, rgba, 8, spacing))
+		val protected = mesh.boundaryLoops.flatMapTo(hashSetOf()) { loop ->
+			loop.indices.map { index ->
+				val a = loop[index]
+				val b = loop[(index + 1) % loop.size]
+				minOf(a, b) to maxOf(a, b)
+			}
+		}
+		var longestInternal = 0f
+		for (offset in mesh.indices.indices step 3) {
+			val vertices = intArrayOf(mesh.indices[offset], mesh.indices[offset + 1], mesh.indices[offset + 2])
+			for (edgeIndex in 0..2) {
+				val a = vertices[edgeIndex]
+				val b = vertices[(edgeIndex + 1) % 3]
+				if ((minOf(a, b) to maxOf(a, b)) in protected) continue
+				val dx = mesh.positions[a * 2] - mesh.positions[b * 2]
+				val dy = mesh.positions[a * 2 + 1] - mesh.positions[b * 2 + 1]
+				longestInternal = maxOf(longestInternal, kotlin.math.hypot(dx, dy))
+			}
+		}
+		assertTrue(
+			longestInternal <= spacing * 1.9f,
+			"ear-clipping fan did not converge; longest internal strand edge=$longestInternal",
+		)
+	}
+
 	private fun pointCovered(mesh: AdaptiveMeshGenerator.Result, x: Float, y: Float): Boolean {
 		fun cross(ax: Float, ay: Float, bx: Float, by: Float): Float = ax * by - ay * bx
 		for (triangleOffset in mesh.indices.indices step 3) {

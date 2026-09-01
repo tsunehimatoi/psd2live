@@ -5,8 +5,10 @@ import org.umamo.format.art.LayerBounds
 import org.umamo.format.art.LayerId
 import org.umamo.format.art.LayerRaster
 import org.umamo.format.art.SourceLayer
+import org.umamo.format.art.SourceArt
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class LayerClassifierTest {
 	@Test
@@ -33,6 +35,32 @@ class LayerClassifierTest {
 		val split = ComponentSplitter.split(original, 9f, 8)
 		assertEquals(listOf(Side.RIGHT, Side.LEFT), split.map { it.semantic.side })
 		assertEquals(2, split.size)
+	}
+
+	@Test
+	fun `manual semantic override is applied before component splitting`() {
+		val width = 24
+		val height = 12
+		val pixels = ByteArray(width * height * 4)
+		for (y in 3..8) {
+			for (x in 2..6) pixels[(y * width + x) * 4 + 3] = 0xff.toByte()
+			for (x in 17..21) pixels[(y * width + x) * 4 + 3] = 0xff.toByte()
+		}
+		val sourceLayer = layer("mystery", width, height, pixels)
+		val source = object : SourceArt {
+			override val layers = listOf(sourceLayer)
+			override val widthPx = width
+			override val heightPx = height
+		}
+		val analysis = CharacterAnalyzer.analyze(
+			source,
+			PipelineConfig(
+				layerOverrides = mapOf("mystery" to LayerClassificationOverride(SemanticTag.EYEBROW, Side.NONE)),
+			),
+		)
+		assertEquals(2, analysis.layers.size)
+		assertTrue(analysis.layers.all { it.semantic.tag == SemanticTag.EYEBROW })
+		assertEquals(setOf(Side.LEFT, Side.RIGHT), analysis.layers.map { it.semantic.side }.toSet())
 	}
 
 	private fun layer(name: String, width: Int, height: Int, rgba: ByteArray) = object : SourceLayer {

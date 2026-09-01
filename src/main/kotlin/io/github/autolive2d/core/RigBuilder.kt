@@ -77,6 +77,7 @@ data class BuiltRig(
 	val puppet: PuppetModel,
 	val pageByDrawableId: Map<String, Int>,
 	val sourceBoundsByDrawableId: Map<String, Bounds>,
+	val layerIdByDrawableId: Map<String, String>,
 	val faceCenterX: Float,
 	val faceCenterY: Float,
 	val faceRadiusX: Float,
@@ -158,6 +159,7 @@ object RigBuilder {
 		val drawables = mutableListOf<Drawable>()
 		val pageByDrawable = linkedMapOf<String, Int>()
 		val sourceBoundsByDrawable = linkedMapOf<String, Bounds>()
+		val layerIdByDrawable = linkedMapOf<String, String>()
 		val classifiedByDrawable = mutableMapOf<DrawableId, ClassifiedLayer>()
 		val orderedLayers = analysis.layers.sortedBy { it.source.order }
 		for ((drawIndex, layer) in orderedLayers.withIndex()) {
@@ -190,13 +192,14 @@ object RigBuilder {
 				// fresh CMO3 conversion lossless instead of reporting one advisory per drawable.
 				drawOrder = (orderedLayers.size - drawIndex).coerceAtMost(1000).toFloat(),
 				opacity = layer.source.opacity,
-				isVisible = layer.source.visible,
+				isVisible = layerVisibility(config, layer.source.id.raw, layer.source.visible),
 				texturePage = placement.page,
 			)
 			drawables += drawable
 			classifiedByDrawable[id] = layer
 			pageByDrawable[id.raw] = placement.page
 			sourceBoundsByDrawable[id.raw] = layer.bounds
+			layerIdByDrawable[id.raw] = layer.source.id.raw
 		}
 
 		val drawableByTagSide = drawables.groupBy { drawable ->
@@ -275,6 +278,7 @@ object RigBuilder {
 			puppet,
 			pageByDrawable,
 			sourceBoundsByDrawable,
+			layerIdByDrawable,
 			faceRig.centerX,
 			faceRig.centerY,
 			faceRig.radiusX,
@@ -883,6 +887,15 @@ object RigBuilder {
 	private fun inferredGroup(layer: ClassifiedLayer, anchors: RigAnchors): LayerGroup =
 		if (layer.semantic.tag.group != LayerGroup.UNKNOWN) layer.semantic.tag.group
 		else if (layer.bounds.centerY <= anchors.face.bottom) LayerGroup.HEAD else LayerGroup.BODY
+
+	private fun layerVisibility(config: PipelineConfig, layerId: String, fallback: Boolean): Boolean {
+		config.layerVisibility[layerId]?.let { return it }
+		val parentId = when {
+			layerId.endsWith(":l") || layerId.endsWith(":r") -> layerId.dropLast(2)
+			else -> null
+		}
+		return parentId?.let(config.layerVisibility::get) ?: fallback
+	}
 
 	private fun mapBounds(child: Bounds, parent: Bounds): Bounds = Bounds(
 		normalizeX(child.left, parent), normalizeY(child.top, parent),

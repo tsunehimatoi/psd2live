@@ -100,6 +100,15 @@ data class PipelineConfig(
 	val generatePhysics: Boolean = true,
 	val exportCmo3: Boolean = true,
 	val exportMoc3: Boolean = true,
+	/** Manual UI corrections, keyed by the stable source/virtual-layer id. */
+	val layerOverrides: Map<String, LayerClassificationOverride> = emptyMap(),
+	/** Photoshop-style layer-eye overrides; omitted entries retain their PSD visibility. */
+	val layerVisibility: Map<String, Boolean> = emptyMap(),
+)
+
+data class LayerClassificationOverride(
+	val tag: SemanticTag,
+	val side: Side,
 )
 
 data class AtlasPlacement(
@@ -125,15 +134,23 @@ data class PipelineAnalysis(
 	val preview: BufferedImage,
 )
 
+/** The exact atlas and rig shown by the workbench before export. */
+data class RigPreviewModel(
+	val analysis: PipelineAnalysis,
+	val atlas: PackedAtlas,
+	val rig: BuiltRig,
+	val config: PipelineConfig,
+)
+
 data class ExportedFile(val path: Path, val bytes: Long)
 
 data class PipelineResult(
 	val analysis: PipelineAnalysis,
 	val exportedFiles: List<ExportedFile>,
 	val warnings: List<String>,
+	val previewModel: RigPreviewModel,
 )
 
 fun interface ProgressListener {
 	fun update(stage: String, fraction: Double)
 }
-
