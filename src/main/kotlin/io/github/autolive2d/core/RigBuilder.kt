@@ -283,6 +283,107 @@ object RigBuilder {
 		)
 	}
 
+	/**
+	 * Body yaw keeps the two silhouette endpoints on every lattice row the same distance apart.
+	 * Perspective is expressed by an interior roll with zero endpoint weight, so +X and -X are
+	 * exact mirrors instead of the former signed global scale (`1 + kx * 0.025`).
+	 */
+	internal fun bodyWarpPoint(
+		character: Bounds,
+		u: Float,
+		v: Float,
+		bodyAngleX: Float,
+		bodyAngleY: Float,
+		strength: Float,
+	): Pair<Float, Float> {
+		val boundedStrength = strength.coerceIn(0f, 2f)
+		val yaw = bodyAngleX / 10f * boundedStrength
+		val pitch = bodyAngleY / 10f * boundedStrength
+		val torsoEnvelope = sin(PI * v).toFloat().coerceAtLeast(0f)
+		val endpointSafeRoll = 4f * u * (1f - u)
+		val endpointSafePitch = sin(2.0 * PI * v).toFloat()
+		val rowShift = yaw * character.width * 0.035f * torsoEnvelope
+		val perspectiveRoll = yaw * character.width * 0.015f * torsoEnvelope * endpointSafeRoll
+		val x = character.left + u * character.width + rowShift + perspectiveRoll
+		val y = character.top + v * character.height + pitch * character.height * 0.007f * endpointSafePitch
+		return x to y
+	}
+
+	/** Body Z is an odd row shift; Breath is deliberately non-negative and may expand the chest. */
+	internal fun bodySecondaryWarpPoint(
+		u: Float,
+		v: Float,
+		bodyAngleZ: Float,
+		breathValue: Float,
+		strength: Float,
+	): Pair<Float, Float> {
+		val boundedStrength = strength.coerceIn(0f, 2f)
+		val z = bodyAngleZ / 10f * boundedStrength
+		val breath = breathValue.coerceIn(0f, 1f) * boundedStrength
+		val chest = kotlin.math.exp(-((v - 0.42f) * (v - 0.42f)) / 0.035f)
+		val x = u + z * 0.018f * sin(PI * v).toFloat() + (u - 0.5f) * breath * chest * 0.025f
+		val y = v - breath * chest * 0.012f
+		return x to y
+	}
+
+	internal fun headContainerPoint(
+		head: Bounds,
+		originX: Float,
+		originY: Float,
+		u: Float,
+		v: Float,
+		angleX: Float,
+		angleY: Float,
+		strength: Float,
+	): Pair<Float, Float> {
+		val boundedStrength = strength.coerceIn(0f, 2f)
+		val canvasX = head.left + u * head.width
+		val canvasY = head.top + v * head.height
+		val yaw = angleX / 45f * boundedStrength
+		val pitch = angleY / 30f * boundedStrength
+		val crownArch = sin(PI * u).toFloat().coerceAtLeast(0f)
+		val shellX = yaw * head.width * (0.009f + crownArch * 0.004f)
+		val shellY = -pitch * head.height * 0.008f
+		return (canvasX - originX + shellX) to (canvasY - originY + shellY)
+	}
+
+	internal fun gazePoint(u: Float, v: Float, eyeX: Float, eyeY: Float): Pair<Float, Float> =
+		(u + eyeX * 0.10f) to (v - eyeY * 0.085f)
+
+	internal fun hairFollowPoint(
+		inHead: Bounds,
+		u: Float,
+		v: Float,
+		angleX: Float,
+		angleY: Float,
+		yawParallax: Float,
+		pitchParallax: Float,
+	): Pair<Float, Float> {
+		val yaw = angleX / 45f
+		val pitch = angleY / 30f
+		val yawDepthWeight = 0.62f + v * 0.38f
+		// Both endpoints receive the same vertical offset. The middle retains a depth bulge without
+		// turning signed pitch into a global height scale.
+		val pitchDepthWeight = 0.78f + sin(PI * v).toFloat().coerceAtLeast(0f) * 0.22f
+		return (inHead.left + u * inHead.width + yaw * yawParallax * yawDepthWeight) to
+			(inHead.top + v * inHead.height + pitch * pitchParallax * pitchDepthWeight)
+	}
+
+	internal fun hairPhysicsPoint(
+		u: Float,
+		v: Float,
+		swing: Float,
+		normalizedSway: Float,
+		normalizedCurl: Float,
+	): Pair<Float, Float> {
+		val tipWeight = v * v * v
+		val lateral = swing * normalizedSway * tipWeight
+		// A left/right pendulum has the same shortening in either direction. Squaring also keeps the
+		// neutral derivative continuous, unlike abs(swing).
+		val lift = swing * swing * normalizedCurl * tipWeight
+		return (u + lateral) to (v - lift)
+	}
+
 	private fun buildDeformers(
 		faceRig: NinePoseFaceRig,
 		character: Bounds,
@@ -302,13 +403,7 @@ object RigBuilder {
 			columns = 4,
 			rows = 6,
 		) { u, v, values ->
-			val kx = values[0] / 10f * config.bodyStrength
-			val ky = values[1] / 10f * config.bodyStrength
-			val bell = sin(PI * v).toFloat()
-			val perspective = (u - 0.5f) * kx * character.width * 0.025f
-			val x = character.left + u * character.width + kx * character.width * 0.035f * bell + perspective
-			val y = character.top + v * character.height + ky * character.height * 0.018f * (0.5f - v)
-			x to y
+			bodyWarpPoint(character, u, v, values[0], values[1], config.bodyStrength)
 		}
 		val body = Deformer.Warp(bodyWarpId, "身体 XY", null, bodyPartId, 6, 4, true, bodyGrid)
 
@@ -317,12 +412,7 @@ object RigBuilder {
 			columns = 4,
 			rows = 6,
 		) { u, v, values ->
-			val z = values[0] / 10f * config.bodyStrength
-			val breath = values[1] * config.bodyStrength
-			val chest = kotlin.math.exp(-((v - 0.42f) * (v - 0.42f)) / 0.035f)
-			val x = u + z * 0.018f * sin(PI * v).toFloat() + (u - 0.5f) * breath * chest * 0.025f
-			val y = v - breath * chest * 0.012f
-			x to y
+			bodySecondaryWarpPoint(u, v, values[0], values[1], config.bodyStrength)
 		}
 		val breath = Deformer.Warp(breathWarpId, "身体 Z / 呼吸", bodyWarpId, bodyPartId, 6, 4, true, breathGrid)
 
@@ -337,14 +427,7 @@ object RigBuilder {
 		// sole pixel-space child of the rotation deformer; all descendants use ordinary normalized
 		// warp coordinates.  Face, front hair and back hair are siblings below this node.
 		val headGrid = warpGrid(ninePoseAxes(), columns = 4, rows = 5) { u, v, values ->
-			val canvasX = head.left + u * head.width
-			val canvasY = head.top + v * head.height
-			val yaw = values[0] / 45f * config.headTurnStrength.coerceIn(0f, 2f)
-			val pitch = values[1] / 30f * config.headTurnStrength.coerceIn(0f, 2f)
-			val crownArch = sin(PI * u).toFloat().coerceAtLeast(0f)
-			val shellX = yaw * head.width * (0.009f + crownArch * 0.004f)
-			val shellY = -pitch * head.height * 0.008f
-			(canvasX - faceRig.chinX + shellX) to (canvasY - faceRig.chinY + shellY)
+			headContainerPoint(head, faceRig.chinX, faceRig.chinY, u, v, values[0], values[1], config.headTurnStrength)
 		}
 		val headContainer = Deformer.Warp(headWarpId, "头部容器", headRotationId, headPartId, 5, 4, true, headGrid)
 
@@ -456,7 +539,7 @@ object RigBuilder {
 			2,
 			2,
 		) { u, v, values ->
-			(u + values[0] * 0.10f) to (v - values[1] * 0.085f)
+			gazePoint(u, v, values[0], values[1])
 		}
 		return Deformer.Warp(gazeWarpId(region), "${sideDisplay(region.side)}视线", parent, part, 2, 2, true, geometry)
 	}
@@ -477,11 +560,7 @@ object RigBuilder {
 			3,
 			4,
 		) { u, v, values ->
-			val yaw = values[0] / 45f
-			val pitch = values[1] / 30f
-			val depthWeight = 0.62f + v * 0.38f
-			(inHead.left + u * inHead.width + yaw * yawParallax * depthWeight) to
-				(inHead.top + v * inHead.height + pitch * pitchParallax * (0.78f + v * 0.22f))
+			hairFollowPoint(inHead, u, v, values[0], values[1], yawParallax, pitchParallax)
 		}
 		return Deformer.Warp(id, name, headWarpId, part, 4, 3, true, grid)
 	}
@@ -506,10 +585,7 @@ object RigBuilder {
 		val normalizedSway = scale / frame.width.coerceAtLeast(1f) * swayRatio
 		val normalizedCurl = scale / frame.height.coerceAtLeast(1f) * curlRatio
 		val grid = warpGrid(listOf(axis(parameter, -1f, 0f, 1f)), columns = 3, rows = rows) { u, v, values ->
-			val swing = values[0]
-			val tipWeight = v * v * v
-			(u + swing * normalizedSway * tipWeight) to
-				(v + swing * normalizedCurl * tipWeight)
+			hairPhysicsPoint(u, v, values[0], normalizedSway, normalizedCurl)
 		}
 		return Deformer.Warp(id, name, parent, part, rows, 3, true, grid)
 	}

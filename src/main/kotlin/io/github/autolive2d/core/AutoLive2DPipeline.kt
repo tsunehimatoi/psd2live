@@ -44,6 +44,7 @@ class AutoLive2DPipeline {
 		val rig = RigBuilder.build(analysis, atlas, config)
 		val neutralRig = RigIntegrityValidator.validateNeutralPose("生成模型", rig.puppet, rig.sourceBoundsByDrawableId)
 		RigIntegrityValidator.validateHeadAnglePoses("生成模型", rig.puppet, neutralRig.boundsByDrawableId)
+		RigIntegrityValidator.validateDirectionalWarpDimensions("生成模型", rig.puppet)
 		progress.update("生成参数与关键形态", 0.58)
 		// CMO3's editable base mesh is canvas-space. The keyform absolutes remain in parent space;
 		// Umamo's conversion preserves that mixed-space invariant exactly.
@@ -93,6 +94,7 @@ class AutoLive2DPipeline {
 			val mocNeutral = RigIntegrityValidator.validateNeutralPose("MOC3 回读", reimported, rig.sourceBoundsByDrawableId)
 			warnings += mocNeutral.warnings
 			RigIntegrityValidator.validateHeadAnglePoses("MOC3 回读", reimported, mocNeutral.boundsByDrawableId)
+			RigIntegrityValidator.validateDirectionalWarpDimensions("MOC3 回读", reimported)
 		}
 		progress.update("导出 MOC3 文件族", 0.77)
 
@@ -120,6 +122,7 @@ class AutoLive2DPipeline {
 			val cmoNeutral = RigIntegrityValidator.validateNeutralPose("CMO3 回读", reimported, rig.sourceBoundsByDrawableId)
 			warnings += cmoNeutral.warnings
 			RigIntegrityValidator.validateHeadAnglePoses("CMO3 回读", reimported, cmoNeutral.boundsByDrawableId)
+			RigIntegrityValidator.validateDirectionalWarpDimensions("CMO3 回读", reimported)
 		}
 		progress.update("导出 CMO3 工程", 0.91)
 

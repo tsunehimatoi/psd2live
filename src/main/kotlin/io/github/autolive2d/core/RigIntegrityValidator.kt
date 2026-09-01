@@ -1,8 +1,12 @@
 package io.github.autolive2d.core
 
 import org.umamo.render.eval.CpuDeformationEvaluator
+import org.umamo.runtime.model.Deformer
 import org.umamo.runtime.model.DrawableId
+import org.umamo.runtime.model.ParameterId
 import org.umamo.runtime.model.PuppetModel
+import org.umamo.runtime.model.RotationPivotForm
+import org.umamo.runtime.model.WarpLatticeForm
 import kotlin.math.abs
 import kotlin.math.max
 
@@ -14,6 +18,8 @@ import kotlin.math.max
  * with the PSD layer bounds, so a broken parent-space conversion cannot be reported as a success.
  */
 object RigIntegrityValidator {
+	private enum class LatticeExtent { RowWidth, ColumnHeight }
+
 	data class Result(
 		val boundsByDrawableId: Map<String, Bounds>,
 		val warnings: List<String>,
@@ -119,6 +125,140 @@ object RigIntegrityValidator {
 					require(poseOpacity > 1e-3f) { "$label $poseName：${drawableId.raw} 在非零角度下透明度变为 0" }
 				}
 			}
+		}
+	}
+
+	/**
+	 * Guards directional parameters against accidental signed scale in authored and round-tripped
+	 * warp grids. Perspective feature warps and expression parameters are intentionally excluded:
+	 * near/far face sizes and MouthForm +/- are semantic differences, not mirror directions.
+	 */
+	fun validateDirectionalWarpDimensions(label: String, puppet: PuppetModel) {
+		val warps = puppet.deformers.filterIsInstance<Deformer.Warp>()
+		val byId = warps.associateBy { it.id.raw }
+
+		fun requireWarp(id: String): Deformer.Warp =
+			requireNotNull(byId[id]) { "$label：缺少方向尺寸校验所需变形器 $id" }
+
+		auditSymmetricExtent(label, requireWarp("DeformBodyXY"), StandardParameters.BODY_X, LatticeExtent.RowWidth, true)
+		auditSymmetricExtent(label, requireWarp("DeformBodyXY"), StandardParameters.BODY_Y, LatticeExtent.ColumnHeight, true)
+		auditSymmetricExtent(label, requireWarp("DeformBodyZBreath"), StandardParameters.BODY_Z, LatticeExtent.RowWidth, true)
+		auditSymmetricExtent(label, requireWarp("DeformHeadContainer"), StandardParameters.ANGLE_X, LatticeExtent.RowWidth, true)
+		auditSymmetricExtent(label, requireWarp("DeformHeadContainer"), StandardParameters.ANGLE_Y, LatticeExtent.ColumnHeight, true)
+
+		for (warp in warps.filter { it.id.raw.endsWith("Follow") && it.id.raw.startsWith("DeformHair") }) {
+			auditSymmetricExtent(label, warp, StandardParameters.ANGLE_X, LatticeExtent.RowWidth, true)
+			auditSymmetricExtent(label, warp, StandardParameters.ANGLE_Y, LatticeExtent.ColumnHeight, true)
+		}
+		for (warp in warps.filter { it.id.raw.startsWith("DeformEyeGaze") }) {
+			auditSymmetricExtent(label, warp, StandardParameters.EYE_BALL_X, LatticeExtent.RowWidth, true)
+			auditSymmetricExtent(label, warp, StandardParameters.EYE_BALL_Y, LatticeExtent.ColumnHeight, true)
+		}
+		for (warp in warps.filter { it.id.raw.endsWith("Physics") && it.id.raw.startsWith("DeformHair") }) {
+			val parameter = checkNotNull(warp.geometryGrid).axes.singleOrNull()?.parameterId
+				?: error("$label：${warp.id.raw} 的物理关键形态不是单轴")
+			auditSymmetricExtent(label, warp, parameter, LatticeExtent.RowWidth, true)
+			// Swing lift is even: +/- have equal height but both are deliberately shorter than neutral.
+			auditSymmetricExtent(label, warp, parameter, LatticeExtent.ColumnHeight, false)
+		}
+
+		for (rotation in puppet.deformers.filterIsInstance<Deformer.Rotation>()) {
+			val grid = rotation.geometryGrid ?: continue
+			for (cell in grid.cells) {
+				val form: RotationPivotForm = cell.form
+				require(form.scale.isFinite() && abs(form.scale - 1f) <= 1e-5f) {
+					"$label：${rotation.id.raw} 在 ${cell.coordinate.contentToString()} 引入了方向相关缩放 ${form.scale}"
+				}
+			}
+		}
+	}
+
+	private fun auditSymmetricExtent(
+		label: String,
+		warp: Deformer.Warp,
+		parameter: ParameterId,
+		extent: LatticeExtent,
+		mustEqualNeutral: Boolean,
+	) {
+		val grid = requireNotNull(warp.geometryGrid) { "$label：${warp.id.raw} 缺少关键形态" }
+		val axisIndex = grid.axes.indexOfFirst { it.parameterId == parameter }
+		require(axisIndex >= 0) { "$label：${warp.id.raw} 未绑定 ${parameter.raw}" }
+		val keys = grid.axes[axisIndex].keys
+		val negativeIndex = keys.indices.filter { keys[it] < 0f }.minByOrNull { keys[it] }
+		val positiveIndex = keys.indices.filter { keys[it] > 0f }.maxByOrNull { keys[it] }
+		val neutralIndex = keys.indices.minByOrNull { abs(keys[it]) }
+		require(negativeIndex != null && positiveIndex != null && neutralIndex != null) {
+			"$label：${warp.id.raw}/${parameter.raw} 缺少对称的负、零、正关键点"
+		}
+
+		val coordinate = IntArray(grid.axes.size)
+		fun visit(currentAxis: Int) {
+			if (currentAxis == grid.axes.size) {
+				fun formAt(index: Int): WarpLatticeForm {
+					coordinate[axisIndex] = index
+					val linear = grid.linearIndexOf(coordinate)
+					return requireNotNull(grid.cellsByLinearIndex[linear]) {
+						"$label：${warp.id.raw} 缺少关键形态 ${coordinate.contentToString()}"
+					}.form
+				}
+				val negative = latticeExtents(label, warp, formAt(negativeIndex), extent)
+				val positive = latticeExtents(label, warp, formAt(positiveIndex), extent)
+				val neutral = if (mustEqualNeutral) latticeExtents(label, warp, formAt(neutralIndex), extent) else null
+				for (index in negative.indices) {
+					requireNearlyEqual(label, warp, parameter, negative[index], positive[index], "负/正", index)
+					if (neutral != null) {
+						requireNearlyEqual(label, warp, parameter, negative[index], neutral[index], "负/零", index)
+					}
+				}
+				return
+			}
+			if (currentAxis == axisIndex) {
+				visit(currentAxis + 1)
+			} else {
+				for (keyIndex in grid.axes[currentAxis].keys.indices) {
+					coordinate[currentAxis] = keyIndex
+					visit(currentAxis + 1)
+				}
+			}
+		}
+		visit(0)
+	}
+
+	private fun latticeExtents(
+		label: String,
+		warp: Deformer.Warp,
+		form: WarpLatticeForm,
+		extent: LatticeExtent,
+	): FloatArray {
+		val points = form.controlPoints
+		val expected = (warp.columns + 1) * (warp.rows + 1) * 2
+		require(points.size == expected) { "$label：${warp.id.raw} 控制点数量 ${points.size} != $expected" }
+		return when (extent) {
+			LatticeExtent.RowWidth -> FloatArray(warp.rows + 1) { row ->
+				val left = row * (warp.columns + 1) * 2
+				val right = (row * (warp.columns + 1) + warp.columns) * 2
+				abs(points[right] - points[left])
+			}
+			LatticeExtent.ColumnHeight -> FloatArray(warp.columns + 1) { column ->
+				val top = column * 2 + 1
+				val bottom = (warp.rows * (warp.columns + 1) + column) * 2 + 1
+				abs(points[bottom] - points[top])
+			}
+		}
+	}
+
+	private fun requireNearlyEqual(
+		label: String,
+		warp: Deformer.Warp,
+		parameter: ParameterId,
+		first: Float,
+		second: Float,
+		pair: String,
+		index: Int,
+	) {
+		val tolerance = max(1f, max(abs(first), abs(second))) * 2e-4f
+		require(first.isFinite() && second.isFinite() && abs(first - second) <= tolerance) {
+			"$label：${warp.id.raw}/${parameter.raw} $pair 尺寸不对称（边 $index：$first vs $second）"
 		}
 	}
 
