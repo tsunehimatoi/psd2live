@@ -1,5 +1,6 @@
 package io.github.autolive2d.core
 
+import io.github.autolive2d.i18n.tr
 import org.umamo.format.art.LayerBlend
 import org.umamo.runtime.model.BlendMode
 import org.umamo.runtime.model.ChannelGrids
@@ -52,25 +53,26 @@ object StandardParameters {
 	val HAIR_FRONT = ParameterId("ParamHairFront")
 	val HAIR_BACK = ParameterId("ParamHairBack")
 
-	val all = listOf(
-		Parameter(ANGLE_X, "角度 X", -45f, 45f, 0f),
-		Parameter(ANGLE_Y, "角度 Y", -30f, 30f, 0f),
-		Parameter(ANGLE_Z, "角度 Z", -30f, 30f, 0f),
-		Parameter(BODY_X, "身体角度 X", -10f, 10f, 0f),
-		Parameter(BODY_Y, "身体角度 Y", -10f, 10f, 0f),
-		Parameter(BODY_Z, "身体角度 Z", -10f, 10f, 0f),
-		Parameter(EYE_L_OPEN, "左眼开合", 0f, 1f, 1f),
-		Parameter(EYE_R_OPEN, "右眼开合", 0f, 1f, 1f),
-		Parameter(EYE_BALL_X, "眼球 X", -1f, 1f, 0f),
-		Parameter(EYE_BALL_Y, "眼球 Y", -1f, 1f, 0f),
-		Parameter(BROW_L_Y, "左眉 Y", -1f, 1f, 0f),
-		Parameter(BROW_R_Y, "右眉 Y", -1f, 1f, 0f),
-		Parameter(MOUTH_FORM, "嘴型", -1f, 1f, 0f),
-		Parameter(MOUTH_OPEN, "嘴巴开合", 0f, 1f, 0f),
-		Parameter(BREATH, "呼吸", 0f, 1f, 0f),
-		Parameter(HAIR_FRONT, "前发摆动", -1f, 1f, 0f),
-		Parameter(HAIR_BACK, "后发摆动", -1f, 1f, 0f),
-	)
+	val all: List<Parameter>
+		get() = listOf(
+			Parameter(ANGLE_X, tr("model.parameter.angleX"), -45f, 45f, 0f),
+			Parameter(ANGLE_Y, tr("model.parameter.angleY"), -30f, 30f, 0f),
+			Parameter(ANGLE_Z, tr("model.parameter.angleZ"), -30f, 30f, 0f),
+			Parameter(BODY_X, tr("model.parameter.bodyX"), -10f, 10f, 0f),
+			Parameter(BODY_Y, tr("model.parameter.bodyY"), -10f, 10f, 0f),
+			Parameter(BODY_Z, tr("model.parameter.bodyZ"), -10f, 10f, 0f),
+			Parameter(EYE_L_OPEN, tr("model.parameter.eyeLOpen"), 0f, 1f, 1f),
+			Parameter(EYE_R_OPEN, tr("model.parameter.eyeROpen"), 0f, 1f, 1f),
+			Parameter(EYE_BALL_X, tr("model.parameter.eyeBallX"), -1f, 1f, 0f),
+			Parameter(EYE_BALL_Y, tr("model.parameter.eyeBallY"), -1f, 1f, 0f),
+			Parameter(BROW_L_Y, tr("model.parameter.browLY"), -1f, 1f, 0f),
+			Parameter(BROW_R_Y, tr("model.parameter.browRY"), -1f, 1f, 0f),
+			Parameter(MOUTH_FORM, tr("model.parameter.mouthForm"), -1f, 1f, 0f),
+			Parameter(MOUTH_OPEN, tr("model.parameter.mouthOpen"), 0f, 1f, 0f),
+			Parameter(BREATH, tr("model.parameter.breath"), 0f, 1f, 0f),
+			Parameter(HAIR_FRONT, tr("model.parameter.hairFront"), -1f, 1f, 0f),
+			Parameter(HAIR_BACK, tr("model.parameter.hairBack"), -1f, 1f, 0f),
+		)
 }
 
 data class BuiltRig(
@@ -165,7 +167,7 @@ object RigBuilder {
 		for ((drawIndex, layer) in orderedLayers.withIndex()) {
 			val placement = atlas.placementByLayerId[layer.source.id.raw]
 			if (placement == null || layer.opaquePixels == 0) {
-				warnings += "跳过空图层：${layer.source.name}"
+				warnings += tr("warning.emptyLayerSkipped", layer.source.name)
 				continue
 			}
 			val parentAndFrame = parentAndFrame(layer, faceRig, analysis.anchors, characterFrame, headFrame, faceFrame, frontHairFrame, backHairFrame)
@@ -230,7 +232,7 @@ object RigBuilder {
 		val parts = listOf(
 			Part(
 				headPartId,
-				"头部",
+				tr("model.part.head"),
 				listOf(
 					OrgChild.Part(backHairPartId),
 					OrgChild.Part(facePartId),
@@ -239,17 +241,17 @@ object RigBuilder {
 				),
 				groupMode = PartGroupMode.PassThrough,
 			),
-			Part(backHairPartId, "后发", headChildrenFor { it == SemanticTag.BACK_HAIR }, groupMode = PartGroupMode.PassThrough),
-			Part(facePartId, "面部", headChildrenFor { it in faceTags }, groupMode = PartGroupMode.PassThrough),
-			Part(frontHairPartId, "前发", headChildrenFor { it == SemanticTag.FRONT_HAIR }, groupMode = PartGroupMode.PassThrough),
+			Part(backHairPartId, tr("model.part.backHair"), headChildrenFor { it == SemanticTag.BACK_HAIR }, groupMode = PartGroupMode.PassThrough),
+			Part(facePartId, tr("model.part.face"), headChildrenFor { it in faceTags }, groupMode = PartGroupMode.PassThrough),
+			Part(frontHairPartId, tr("model.part.frontHair"), headChildrenFor { it == SemanticTag.FRONT_HAIR }, groupMode = PartGroupMode.PassThrough),
 			Part(
 				headAccessoryPartId,
-				"头部附件",
+				tr("model.part.headAccessories"),
 				headChildrenFor { it !in faceTags && it != SemanticTag.FRONT_HAIR && it != SemanticTag.BACK_HAIR },
 				groupMode = PartGroupMode.PassThrough,
 			),
-			Part(extraPartId, "附加物", childrenFor(LayerGroup.EXTRA), groupMode = PartGroupMode.PassThrough),
-			Part(bodyPartId, "身体", childrenFor(LayerGroup.BODY) + childrenFor(LayerGroup.UNKNOWN), groupMode = PartGroupMode.PassThrough),
+			Part(extraPartId, tr("model.part.extra"), childrenFor(LayerGroup.EXTRA), groupMode = PartGroupMode.PassThrough),
+			Part(bodyPartId, tr("model.part.body"), childrenFor(LayerGroup.BODY) + childrenFor(LayerGroup.UNKNOWN), groupMode = PartGroupMode.PassThrough),
 		)
 		val parameterTree = parameterTree()
 		val puppet = PuppetModel(
@@ -409,7 +411,7 @@ object RigBuilder {
 		) { u, v, values ->
 			bodyWarpPoint(character, u, v, values[0], values[1], config.bodyStrength)
 		}
-		val body = Deformer.Warp(bodyWarpId, "身体 XY", null, bodyPartId, 6, 4, true, bodyGrid)
+		val body = Deformer.Warp(bodyWarpId, tr("model.deformer.body"), null, bodyPartId, 6, 4, true, bodyGrid)
 
 		val breathGrid = warpGrid(
 			listOf(axis(StandardParameters.BODY_Z, -10f, 0f, 10f), axis(StandardParameters.BREATH, 0f, 0.5f, 1f)),
@@ -418,14 +420,14 @@ object RigBuilder {
 		) { u, v, values ->
 			bodySecondaryWarpPoint(u, v, values[0], values[1], config.bodyStrength)
 		}
-		val breath = Deformer.Warp(breathWarpId, "身体 Z / 呼吸", bodyWarpId, bodyPartId, 6, 4, true, breathGrid)
+		val breath = Deformer.Warp(breathWarpId, tr("model.deformer.breath"), bodyWarpId, bodyPartId, 6, 4, true, breathGrid)
 
 		val chinLocalX = normalizeX(faceRig.chinX, character)
 		val chinLocalY = normalizeY(faceRig.chinY, character)
 		val rotationGrid = oneDimGrid(StandardParameters.ANGLE_Z, floatArrayOf(-30f, 0f, 30f)) { value ->
 			RotationPivotForm(chinLocalX, chinLocalY, value, 1f)
 		}
-		val rotation = Deformer.Rotation(headRotationId, "头部 Z 旋转", breathWarpId, headPartId, 0f, rotationGrid)
+		val rotation = Deformer.Rotation(headRotationId, tr("model.deformer.headRotation"), breathWarpId, headPartId, 0f, rotationGrid)
 
 		// A real head container separates skull-following content from the facial surface.  It is the
 		// sole pixel-space child of the rotation deformer; all descendants use ordinary normalized
@@ -433,7 +435,7 @@ object RigBuilder {
 		val headGrid = warpGrid(ninePoseAxes(), columns = 4, rows = 5) { u, v, values ->
 			headContainerPoint(head, faceRig.chinX, faceRig.chinY, u, v, values[0], values[1], config.headTurnStrength)
 		}
-		val headContainer = Deformer.Warp(headWarpId, "头部容器", headRotationId, headPartId, 5, 4, true, headGrid)
+		val headContainer = Deformer.Warp(headWarpId, tr("model.deformer.headContainer"), headRotationId, headPartId, 5, 4, true, headGrid)
 
 		val faceGrid = warpGrid(
 			ninePoseAxes(),
@@ -445,7 +447,7 @@ object RigBuilder {
 			val projected = faceRig.surfacePoint(canvasX, canvasY, values[0], values[1], config.headTurnStrength)
 			normalizeX(projected.first, head) to normalizeY(projected.second, head)
 		}
-		val face = Deformer.Warp(faceWarpId, "面部九轴 / 经纬网", headWarpId, facePartId, 8, 8, true, faceGrid)
+		val face = Deformer.Warp(faceWarpId, tr("model.deformer.face"), headWarpId, facePartId, 8, 8, true, faceGrid)
 
 		val deformers = mutableListOf<Deformer>(body, breath, rotation, headContainer, face)
 		val primaryRegions = faceRig.regions.filter { it.feature != FaceFeature.IRIS }
@@ -466,10 +468,10 @@ object RigBuilder {
 			deformers += gazeWarp(irisRegion, irisShape.id, facePartId)
 		}
 		frontHair?.let { frame ->
-			deformers += hairFollowWarp(frontHairFollowWarpId, "前发头部跟随", frame, head, frontHairPartId, 0.014f, -0.006f)
+			deformers += hairFollowWarp(frontHairFollowWarpId, tr("model.deformer.frontHairFollow"), frame, head, frontHairPartId, 0.014f, -0.006f)
 			deformers += hairPhysicsWarp(
 				frontHairPhysicsWarpId,
-				"前发物理摆动",
+				tr("model.deformer.frontHairPhysics"),
 				StandardParameters.HAIR_FRONT,
 				frontHairFollowWarpId,
 				frame,
@@ -480,10 +482,10 @@ object RigBuilder {
 			)
 		}
 		backHair?.let { frame ->
-			deformers += hairFollowWarp(backHairFollowWarpId, "后发头部跟随", frame, head, backHairPartId, -0.018f, 0.004f)
+			deformers += hairFollowWarp(backHairFollowWarpId, tr("model.deformer.backHairFollow"), frame, head, backHairPartId, -0.018f, 0.004f)
 			deformers += hairPhysicsWarp(
 				backHairPhysicsWarpId,
-				"后发物理摆动",
+				tr("model.deformer.backHairPhysics"),
 				StandardParameters.HAIR_BACK,
 				backHairFollowWarpId,
 				frame,
@@ -545,7 +547,7 @@ object RigBuilder {
 		) { u, v, values ->
 			gazePoint(u, v, values[0], values[1])
 		}
-		return Deformer.Warp(gazeWarpId(region), "${sideDisplay(region.side)}视线", parent, part, 2, 2, true, geometry)
+		return Deformer.Warp(gazeWarpId(region), tr("model.deformer.gaze", sideDisplay(region.side)), parent, part, 2, 2, true, geometry)
 	}
 
 	/** Head-angle following for one hair depth plane; deliberately independent of the face warp. */
@@ -817,12 +819,12 @@ object RigBuilder {
 			ParameterGroupId(id), name, true, parameters.map { ParameterNode.Param(it) },
 		)
 		return listOf(
-			group("ParamGroupFace", "面部", listOf(StandardParameters.ANGLE_X, StandardParameters.ANGLE_Y, StandardParameters.ANGLE_Z)),
-			group("ParamGroupEyes", "眼睛", listOf(StandardParameters.EYE_L_OPEN, StandardParameters.EYE_R_OPEN, StandardParameters.EYE_BALL_X, StandardParameters.EYE_BALL_Y)),
-			group("ParamGroupBrows", "眉毛", listOf(StandardParameters.BROW_L_Y, StandardParameters.BROW_R_Y)),
-			group("ParamGroupMouth", "嘴巴", listOf(StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN)),
-			group("ParamGroupBody", "身体", listOf(StandardParameters.BODY_X, StandardParameters.BODY_Y, StandardParameters.BODY_Z, StandardParameters.BREATH)),
-			group("ParamGroupPhysics", "物理", listOf(StandardParameters.HAIR_FRONT, StandardParameters.HAIR_BACK)),
+			group("ParamGroupFace", tr("model.group.face"), listOf(StandardParameters.ANGLE_X, StandardParameters.ANGLE_Y, StandardParameters.ANGLE_Z)),
+			group("ParamGroupEyes", tr("model.group.eyes"), listOf(StandardParameters.EYE_L_OPEN, StandardParameters.EYE_R_OPEN, StandardParameters.EYE_BALL_X, StandardParameters.EYE_BALL_Y)),
+			group("ParamGroupBrows", tr("model.group.brows"), listOf(StandardParameters.BROW_L_Y, StandardParameters.BROW_R_Y)),
+			group("ParamGroupMouth", tr("model.group.mouth"), listOf(StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN)),
+			group("ParamGroupBody", tr("model.group.body"), listOf(StandardParameters.BODY_X, StandardParameters.BODY_Y, StandardParameters.BODY_Z, StandardParameters.BREATH)),
+			group("ParamGroupPhysics", tr("model.group.physics"), listOf(StandardParameters.HAIR_FRONT, StandardParameters.HAIR_BACK)),
 		)
 	}
 
@@ -847,14 +849,14 @@ object RigBuilder {
 
 	private fun featureDisplayName(region: FaceRegion): String {
 		val feature = when (region.feature) {
-			FaceFeature.EYE -> "眼形二次修正"
-			FaceFeature.IRIS -> "瞳孔二维保持"
-			FaceFeature.BROW -> "眉形二次修正"
-			FaceFeature.NOSE -> "鼻梁 / 鼻尖深度"
-			FaceFeature.MOUTH -> "嘴部圆柱曲线"
-			FaceFeature.EAR -> "耳朵遮挡"
+			FaceFeature.EYE -> tr("model.feature.eye")
+			FaceFeature.IRIS -> tr("model.feature.iris")
+			FaceFeature.BROW -> tr("model.feature.brow")
+			FaceFeature.NOSE -> tr("model.feature.nose")
+			FaceFeature.MOUTH -> tr("model.feature.mouth")
+			FaceFeature.EAR -> tr("model.feature.ear")
 		}
-		return "${sideDisplay(region.side)}$feature"
+		return tr("model.feature.name", sideDisplay(region.side), feature)
 	}
 
 	private fun sideToken(side: Side): String = when (side) {
@@ -863,11 +865,7 @@ object RigBuilder {
 		Side.NONE -> "Both"
 	}
 
-	private fun sideDisplay(side: Side): String = when (side) {
-		Side.LEFT -> "左"
-		Side.RIGHT -> "右"
-		Side.NONE -> "双侧"
-	}
+	private fun sideDisplay(side: Side): String = tr("side.${side.name.lowercase()}")
 
 	private fun uniqueDrawableId(layer: ClassifiedLayer, counts: MutableMap<String, Int>): DrawableId {
 		val side = when (layer.semantic.side) { Side.LEFT -> "L"; Side.RIGHT -> "R"; Side.NONE -> "" }

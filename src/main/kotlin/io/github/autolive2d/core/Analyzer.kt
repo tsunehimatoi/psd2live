@@ -1,5 +1,6 @@
 package io.github.autolive2d.core
 
+import io.github.autolive2d.i18n.tr
 import org.umamo.format.art.SourceArt
 import kotlin.math.max
 
@@ -31,7 +32,7 @@ object CharacterAnalyzer {
 		}
 		val warnings = mutableListOf<String>()
 		val nonEmpty = layers.filter { it.opaquePixels > 0 }
-		require(nonEmpty.isNotEmpty()) { "PSD 没有可见像素图层" }
+		require(nonEmpty.isNotEmpty()) { tr("error.psdNoVisibleLayers") }
 
 		val character = union(nonEmpty.map { it.bounds })
 		val explicitFace = nonEmpty.filter { it.semantic.tag == SemanticTag.FACE }
@@ -64,14 +65,14 @@ object CharacterAnalyzer {
 		)
 
 		val recognized = layers.count { it.semantic.tag != SemanticTag.UNKNOWN }
-		if (recognized < 4) warnings += "仅识别到 $recognized 个 See-Through 语义图层；未知图层会按位置归入头部或身体。"
-		if (explicitFace.isEmpty()) warnings += "缺少 face 图层：面部范围由头部图层包围盒估算。"
-		if (layers.none { it.semantic.tag in EYE_TAGS }) warnings += "缺少眼睛语义图层：眨眼与视线参数不会绑定到任何画元。"
-		if (layers.none { it.semantic.tag in MOUTH_TAGS }) warnings += "缺少 mouth/mouth_open/mouth_close：口型参数不会绑定到任何画元。"
+		if (recognized < 4) warnings += tr("warning.fewSemanticLayers", recognized)
+		if (explicitFace.isEmpty()) warnings += tr("warning.missingFace")
+		if (layers.none { it.semantic.tag in EYE_TAGS }) warnings += tr("warning.missingEyes")
+		if (layers.none { it.semantic.tag in MOUTH_TAGS }) warnings += tr("warning.missingMouth")
 		val duplicateBaseNames = layers.groupBy { it.semantic.normalizedName }.filterValues { it.size > 1 }.keys
-		if (duplicateBaseNames.isNotEmpty()) warnings += "检测到同名图层：${duplicateBaseNames.take(6).joinToString()}；已通过稳定图层 ID 区分。"
+		if (duplicateBaseNames.isNotEmpty()) warnings += tr("warning.duplicateLayers", duplicateBaseNames.take(6).joinToString())
 		val unknown = layers.filter { it.semantic.tag == SemanticTag.UNKNOWN }
-		if (unknown.isNotEmpty()) warnings += "${unknown.size} 个未知图层将保留并自动归组：${unknown.take(8).joinToString { it.source.name }}"
+		if (unknown.isNotEmpty()) warnings += tr("warning.unknownLayers", unknown.size, unknown.take(8).joinToString { it.source.name })
 
 		return PipelineAnalysis(source, layers, anchors, warnings, PreviewRenderer.composite(source))
 	}

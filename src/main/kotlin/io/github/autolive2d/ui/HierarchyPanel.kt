@@ -2,6 +2,7 @@ package io.github.autolive2d.ui
 
 import io.github.autolive2d.core.Bounds
 import io.github.autolive2d.core.RigPreviewModel
+import io.github.autolive2d.i18n.tr
 import org.umamo.render.eval.DeformedGeometry
 import org.umamo.runtime.model.Deformer
 import java.awt.BorderLayout
@@ -37,7 +38,7 @@ class HierarchyPanel(
 		override fun toString(): String = label
 	}
 
-	private val root = DefaultMutableTreeNode(HierarchyItem("模型层级", "root"))
+	private val root = DefaultMutableTreeNode(HierarchyItem(tr("canvas.hierarchy.root"), "root"))
 	private val treeModel = DefaultTreeModel(root)
 	private val tree = JTree(treeModel)
 	private val canvas = HierarchyCanvas(selection)
@@ -88,6 +89,12 @@ class HierarchyPanel(
 				changingSelection = false
 			}
 		}
+	}
+
+	fun refreshTranslations() {
+		root.userObject = HierarchyItem(tr("canvas.hierarchy.root"), "root")
+		treeModel.nodeChanged(root)
+		canvas.repaint()
 	}
 
 	private fun rebuildTree(model: RigPreviewModel?) {
@@ -276,7 +283,7 @@ class HierarchyPanel(
 
 		private fun paintEmpty(graphics: Graphics) {
 			graphics.color = Color(180, 184, 190)
-			val text = "分析 PSD 后显示变形器框与节点树"
+			val text = tr("canvas.hierarchy.empty")
 			val metrics = graphics.fontMetrics
 			graphics.drawString(text, (width - metrics.stringWidth(text)) / 2, height / 2)
 		}

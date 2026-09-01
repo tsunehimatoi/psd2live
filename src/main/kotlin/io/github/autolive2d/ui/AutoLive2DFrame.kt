@@ -6,6 +6,8 @@ import io.github.autolive2d.core.ProgressListener
 import io.github.autolive2d.core.RigPreviewModel
 import io.github.autolive2d.core.SemanticTag
 import io.github.autolive2d.core.Side
+import io.github.autolive2d.i18n.I18n
+import io.github.autolive2d.i18n.tr
 import java.awt.BorderLayout
 import java.awt.BasicStroke
 import java.awt.Color
@@ -36,6 +38,7 @@ import java.nio.file.Path
 import java.util.concurrent.ExecutionException
 import javax.swing.AbstractAction
 import javax.swing.BorderFactory
+import javax.swing.ButtonGroup
 import javax.swing.JButton
 import javax.swing.JCheckBox
 import javax.swing.DefaultCellEditor
@@ -51,6 +54,7 @@ import javax.swing.JOptionPane
 import javax.swing.JPanel
 import javax.swing.JProgressBar
 import javax.swing.JPopupMenu
+import javax.swing.JRadioButtonMenuItem
 import javax.swing.JScrollPane
 import javax.swing.JSpinner
 import javax.swing.JSplitPane
@@ -65,15 +69,19 @@ import javax.swing.Timer
 import javax.swing.filechooser.FileNameExtensionFilter
 import javax.swing.table.DefaultTableCellRenderer
 
-class AutoLive2DFrame : JFrame("AutoLive2D — PSD 全自动建模与绑定") {
+class AutoLive2DFrame : JFrame() {
 	private val pipeline = AutoLive2DPipeline()
 	private val inputField = JTextField()
 	private val outputField = JTextField()
-	private val analyzeButton = JButton("分析 PSD")
-	private val runButton = JButton("生成并导出")
-	private val openOutputButton = JButton("打开输出目录")
+	private val inputLabel = JLabel()
+	private val outputLabel = JLabel()
+	private val chooseInputButton = JButton()
+	private val chooseOutputButton = JButton()
+	private val analyzeButton = JButton()
+	private val runButton = JButton()
+	private val openOutputButton = JButton()
 	private val progressBar = JProgressBar(0, 100)
-	private val statusLabel = JLabel("就绪。可把 PSD 直接拖进窗口。")
+	private val statusLabel = JLabel()
 	private val selectionModel = ComponentSelectionModel()
 	private val layerTableModel = LayerTableModel()
 	private val layerTable = JTable(layerTableModel)
@@ -85,15 +93,23 @@ class AutoLive2DFrame : JFrame("AutoLive2D — PSD 全自动建模与绑定") {
 	private val meshSpinner = JSpinner(SpinnerNumberModel(64, 16, 256, 8))
 	private val headSpinner = JSpinner(SpinnerNumberModel(1.0, 0.0, 2.0, 0.1))
 	private val bodySpinner = JSpinner(SpinnerNumberModel(1.0, 0.0, 2.0, 0.1))
-	private val physicsCheck = JCheckBox("头发物理", true)
-	private val cmo3Check = JCheckBox("CMO3 可编辑工程", true)
-	private val moc3Check = JCheckBox("MOC3 运行时文件族", true)
+	private val atlasLabel = JLabel()
+	private val meshLabel = JLabel()
+	private val headLabel = JLabel()
+	private val bodyLabel = JLabel()
+	private val physicsCheck = JCheckBox("", true)
+	private val cmo3Check = JCheckBox("", true)
+	private val moc3Check = JCheckBox("", true)
 	private var activeWorker: SwingWorker<*, *>? = null
 	private var previewWorker: SwingWorker<RigPreviewModel, Void>? = null
 	private var previewGeneration = 0L
 	private var currentPreviewModel: RigPreviewModel? = null
 	private var currentInputPath: Path? = null
-	private val layerTableBorder = BorderFactory.createTitledBorder("See-Through 图层识别")
+	private val projectBorder = BorderFactory.createTitledBorder("")
+	private val settingsBorder = BorderFactory.createTitledBorder("")
+	private val layerTableBorder = BorderFactory.createTitledBorder("")
+	private val workspaceTabs = JTabbedPane()
+	private val layerPopup = JPopupMenu()
 	private val previewRefreshTimer = Timer(260) { rebuildPreviewFromEdits() }.apply { isRepeats = false }
 
 	init {
@@ -104,18 +120,32 @@ class AutoLive2DFrame : JFrame("AutoLive2D — PSD 全自动建模与绑定") {
 		contentPane = buildContent()
 		installActions()
 		installDropTarget()
+		refreshTexts()
 		pack()
 		setLocationRelativeTo(null)
 	}
 
 	private fun buildMenuBar(): JMenuBar = JMenuBar().apply {
-		add(JMenu("帮助").apply {
-			add(JMenuItem("关于 AutoLive2D").apply {
+		add(JMenu(tr("menu.language")).apply {
+			val group = ButtonGroup()
+			for (language in I18n.supportedLanguages) {
+				add(JRadioButtonMenuItem(tr(language.displayNameKey), language == I18n.currentLanguage).apply {
+					group.add(this)
+					addActionListener {
+						I18n.setLanguage(language)
+						refreshTexts()
+						if (currentPreviewModel != null) previewRefreshTimer.restart()
+					}
+				})
+			}
+		})
+		add(JMenu(tr("menu.help")).apply {
+			add(JMenuItem(tr("menu.about")).apply {
 				addActionListener {
 					JOptionPane.showMessageDialog(
 						this@AutoLive2DFrame,
-						"AutoLive2D 0.1.0\nPSD → 自动建模/绑定/动作 → CMO3 + MOC3\n\nGPL-3.0；本程序不提供任何担保。\n不包含 Live2D 官方 SDK。",
-						"关于 AutoLive2D",
+						tr("dialog.about.message"),
+						tr("dialog.about.title"),
 						JOptionPane.INFORMATION_MESSAGE,
 					)
 				}
@@ -131,33 +161,33 @@ class AutoLive2DFrame : JFrame("AutoLive2D — PSD 全自动建模与绑定") {
 	}
 
 	private fun buildFileBar(): JPanel = JPanel(GridBagLayout()).apply {
-		border = BorderFactory.createTitledBorder("项目")
+		border = projectBorder
 		val constraints = GridBagConstraints().apply {
 			insets = Insets(3, 5, 3, 5)
 			fill = GridBagConstraints.HORIZONTAL
 		}
-		fun addRow(row: Int, label: String, field: JTextField, buttonText: String, action: () -> Unit) {
+		fun addRow(row: Int, label: JLabel, field: JTextField, button: JButton, action: () -> Unit) {
 			constraints.gridy = row
 			constraints.gridx = 0
 			constraints.weightx = 0.0
-			add(JLabel(label), constraints)
+			add(label, constraints)
 			constraints.gridx = 1
 			constraints.weightx = 1.0
 			add(field, constraints)
 			constraints.gridx = 2
 			constraints.weightx = 0.0
-			add(JButton(buttonText).apply { addActionListener { action() } }, constraints)
+			add(button.apply { addActionListener { action() } }, constraints)
 		}
-		addRow(0, "PSD", inputField, "选择…", ::chooseInput)
-		addRow(1, "输出", outputField, "选择…", ::chooseOutput)
+		addRow(0, inputLabel, inputField, chooseInputButton, ::chooseInput)
+		addRow(1, outputLabel, outputField, chooseOutputButton, ::chooseOutput)
 	}
 
 	private fun buildWorkspace(): JSplitPane {
-		val leftTabs = JTabbedPane().apply {
-			addTab("层级", hierarchyPanel)
-			addTab("拓扑", topologyPanel)
-			addTab("预览", previewPanel)
-			addTab("日志", JScrollPane(logArea.apply {
+		workspaceTabs.apply {
+			addTab("", hierarchyPanel)
+			addTab("", topologyPanel)
+			addTab("", previewPanel)
+			addTab("", JScrollPane(logArea.apply {
 				isEditable = false
 				font = Font(Font.MONOSPACED, Font.PLAIN, 12)
 				lineWrap = true
@@ -174,26 +204,11 @@ class AutoLive2DFrame : JFrame("AutoLive2D — PSD 全自动建模与绑定") {
 			layerTable.foreground = Color(35, 38, 43)
 			layerTable.gridColor = Color(226, 228, 232)
 			layerTable.putClientProperty("terminateEditOnFocusLost", true)
-			layerTable.tableHeader.toolTipText = "眼睛：单击切换，Alt+单击仅显示/恢复，Shift+单击切换全部"
-			layerTable.columnModel.getColumn(0).apply {
-				minWidth = 32
-				maxWidth = 32
-				preferredWidth = 32
-				cellRenderer = VisibilityCellRenderer()
-			}
-			layerTable.columnModel.getColumn(1).preferredWidth = 28
-			layerTable.columnModel.getColumn(2).preferredWidth = 180
-			layerTable.columnModel.getColumn(3).preferredWidth = 115
-			layerTable.columnModel.getColumn(3).cellEditor = DefaultCellEditor(
-				JComboBox(SemanticTag.entries.map { it.canonicalName }.toTypedArray()),
-			)
-			layerTable.columnModel.getColumn(4).cellEditor = DefaultCellEditor(
-				JComboBox(Side.entries.map { it.name }.toTypedArray()),
-			)
 			val renderer = LayerRowRenderer()
 			layerTable.setDefaultRenderer(String::class.java, renderer)
 			layerTable.setDefaultRenderer(Int::class.javaObjectType, renderer)
 			layerTable.setDefaultRenderer(Float::class.javaObjectType, renderer)
+			configureLayerTableColumns()
 			add(JScrollPane(layerTable).apply { border = layerTableBorder }, BorderLayout.CENTER)
 			add(JPanel(FlowLayout(FlowLayout.RIGHT)).apply {
 				add(analyzeButton)
@@ -201,29 +216,29 @@ class AutoLive2DFrame : JFrame("AutoLive2D — PSD 全自动建模与绑定") {
 				add(openOutputButton)
 			}, BorderLayout.SOUTH)
 		}
-		return JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftTabs, right).apply {
+		return JSplitPane(JSplitPane.HORIZONTAL_SPLIT, workspaceTabs, right).apply {
 			resizeWeight = 0.55
 			dividerLocation = 650
 		}
 	}
 
 	private fun buildSettings(): JPanel = JPanel(GridBagLayout()).apply {
-		border = BorderFactory.createTitledBorder("自动绑定设置")
+		border = settingsBorder
 		val c = GridBagConstraints().apply {
 			insets = Insets(3, 5, 3, 5)
 			anchor = GridBagConstraints.WEST
 		}
-		fun addSetting(column: Int, row: Int, label: String, component: java.awt.Component) {
+		fun addSetting(column: Int, row: Int, label: JLabel, component: java.awt.Component) {
 			c.gridx = column * 2
 			c.gridy = row
-			add(JLabel(label), c)
+			add(label, c)
 			c.gridx++
 			add(component, c)
 		}
-		addSetting(0, 0, "贴图页", atlasSpinner)
-		addSetting(1, 0, "网格间距", meshSpinner)
-		addSetting(0, 1, "头部幅度", headSpinner)
-		addSetting(1, 1, "身体幅度", bodySpinner)
+		addSetting(0, 0, atlasLabel, atlasSpinner)
+		addSetting(1, 0, meshLabel, meshSpinner)
+		addSetting(0, 1, headLabel, headSpinner)
+		addSetting(1, 1, bodyLabel, bodySpinner)
 		c.gridx = 0
 		c.gridy = 2
 		c.gridwidth = 4
@@ -241,16 +256,85 @@ class AutoLive2DFrame : JFrame("AutoLive2D — PSD 全自动建模与绑定") {
 		add(progressBar, BorderLayout.EAST)
 	}
 
+	private fun configureLayerTableColumns() {
+		layerTable.tableHeader.toolTipText = tr("layers.visibility.headerTip")
+		layerTable.columnModel.getColumn(0).apply {
+			minWidth = 32
+			maxWidth = 32
+			preferredWidth = 32
+			cellRenderer = VisibilityCellRenderer()
+		}
+		layerTable.columnModel.getColumn(1).preferredWidth = 28
+		layerTable.columnModel.getColumn(2).preferredWidth = 180
+		layerTable.columnModel.getColumn(3).preferredWidth = 145
+		layerTable.columnModel.getColumn(3).cellEditor = DefaultCellEditor(
+			JComboBox(SemanticTag.entries.map { it.localizedName() }.toTypedArray()),
+		)
+		layerTable.columnModel.getColumn(4).cellEditor = DefaultCellEditor(
+			JComboBox(Side.entries.map { it.localizedName() }.toTypedArray()),
+		)
+	}
+
+	private fun refreshTexts() {
+		title = tr("app.title")
+		jMenuBar = buildMenuBar()
+		projectBorder.title = tr("project.title")
+		inputLabel.text = tr("project.input")
+		outputLabel.text = tr("project.output")
+		chooseInputButton.text = tr("action.choose")
+		chooseOutputButton.text = tr("action.choose")
+		analyzeButton.text = tr("action.analyze")
+		runButton.text = tr("action.generate")
+		openOutputButton.text = tr("action.openOutput")
+		settingsBorder.title = tr("settings.title")
+		atlasLabel.text = tr("settings.atlasSize")
+		meshLabel.text = tr("settings.meshSpacing")
+		headLabel.text = tr("settings.headStrength")
+		bodyLabel.text = tr("settings.bodyStrength")
+		physicsCheck.text = tr("settings.physics")
+		cmo3Check.text = tr("settings.cmo3")
+		moc3Check.text = tr("settings.moc3")
+		workspaceTabs.setTitleAt(0, tr("tab.hierarchy"))
+		workspaceTabs.setTitleAt(1, tr("tab.topology"))
+		workspaceTabs.setTitleAt(2, tr("tab.preview"))
+		workspaceTabs.setTitleAt(3, tr("tab.log"))
+		layerTableModel.languageChanged()
+		configureLayerTableColumns()
+		refreshLayerPopup()
+		hierarchyPanel.refreshTranslations()
+		topologyPanel.repaint()
+		previewPanel.repaint()
+		currentPreviewModel?.let {
+			applyLayerVisibility()
+			if (activeWorker == null) showAnalysisStatus(it)
+		} ?: run {
+			layerTableBorder.title = tr("layers.title")
+			if (activeWorker == null) statusLabel.text = tr("status.ready")
+		}
+		revalidate()
+		repaint()
+	}
+
+	private fun refreshLayerPopup() {
+		layerPopup.removeAll()
+		layerPopup.add(JMenuItem(tr("layers.popup.showOnly")).apply { addActionListener { layerTableModel.showOnly(selectedModelRows()) } })
+		layerPopup.add(JMenuItem(tr("layers.popup.showAll")).apply { addActionListener { layerTableModel.setAllVisible(true) } })
+		layerPopup.add(JMenuItem(tr("layers.popup.hideAll")).apply { addActionListener { layerTableModel.setAllVisible(false) } })
+		layerPopup.addSeparator()
+		layerPopup.add(JMenuItem(tr("layers.popup.invertVisibility")).apply { addActionListener { layerTableModel.invertVisibility() } })
+		layerPopup.add(JMenuItem(tr("layers.popup.invertSelection")).apply { addActionListener { invertTableSelection() } })
+	}
+
 	private fun installActions() {
 		analyzeButton.addActionListener { analyze() }
 		runButton.addActionListener { runPipeline() }
 		layerTableModel.onClassificationChanged = { _, _ ->
-			statusLabel.text = "识别已修改，正在更新层级、拓扑和预览…"
+			statusLabel.text = tr("status.classificationChanged")
 			previewRefreshTimer.restart()
 		}
 		layerTableModel.onVisibilityChanged = {
 			applyLayerVisibility()
-			statusLabel.text = "图层可见性已更新"
+			statusLabel.text = tr("status.visibilityChanged")
 			previewRefreshTimer.restart()
 		}
 		layerTable.selectionModel.addListSelectionListener { event ->
@@ -280,14 +364,7 @@ class AutoLive2DFrame : JFrame("AutoLive2D — PSD 全自动建模与绑定") {
 	}
 
 	private fun installLayerTableVisibilityActions() {
-		val popup = JPopupMenu().apply {
-			add(JMenuItem("仅显示选中图层").apply { addActionListener { layerTableModel.showOnly(selectedModelRows()) } })
-			add(JMenuItem("显示全部图层").apply { addActionListener { layerTableModel.setAllVisible(true) } })
-			add(JMenuItem("隐藏全部图层").apply { addActionListener { layerTableModel.setAllVisible(false) } })
-			addSeparator()
-			add(JMenuItem("反转可见性").apply { addActionListener { layerTableModel.invertVisibility() } })
-			add(JMenuItem("反选图层    Ctrl+Shift+I").apply { addActionListener { invertTableSelection() } })
-		}
+		refreshLayerPopup()
 		layerTable.addMouseListener(object : MouseAdapter() {
 			override fun mousePressed(event: MouseEvent) = showPopupIfNeeded(event)
 
@@ -315,7 +392,7 @@ class AutoLive2DFrame : JFrame("AutoLive2D — PSD 全自动建模与绑定") {
 				if (!event.isPopupTrigger) return
 				val row = layerTable.rowAtPoint(event.point)
 				if (row >= 0 && !layerTable.isRowSelected(row)) layerTable.setRowSelectionInterval(row, row)
-				popup.show(layerTable, event.x, event.y)
+				layerPopup.show(layerTable, event.x, event.y)
 			}
 		})
 
@@ -380,8 +457,8 @@ class AutoLive2DFrame : JFrame("AutoLive2D — PSD 全自动建模与绑定") {
 
 	private fun chooseInput() {
 		val chooser = JFileChooser().apply {
-			dialogTitle = "选择 See-Through PSD"
-			fileFilter = FileNameExtensionFilter("Photoshop 文档 (*.psd)", "psd")
+			dialogTitle = tr("dialog.choosePsd")
+			fileFilter = FileNameExtensionFilter(tr("dialog.psdFilter"), "psd")
 		}
 		if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) setInput(chooser.selectedFile.toPath())
 	}
@@ -395,7 +472,7 @@ class AutoLive2DFrame : JFrame("AutoLive2D — PSD 全自动建模与绑定") {
 
 	private fun chooseOutput() {
 		val chooser = JFileChooser().apply {
-			dialogTitle = "选择输出目录"
+			dialogTitle = tr("dialog.chooseOutput")
 			fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
 			outputPathOrNull()?.toFile()?.takeIf(File::exists)?.let { currentDirectory = it }
 		}
@@ -407,7 +484,7 @@ class AutoLive2DFrame : JFrame("AutoLive2D — PSD 全自动建模与绑定") {
 		val normalizedInput = input.toAbsolutePath().normalize()
 		if (currentInputPath != null && currentInputPath != normalizedInput) clearWorkbench()
 		val config = try { readConfig() } catch (failure: Exception) { return showFailure(failure) }
-		startWorker("正在分析 PSD 并生成可视化 Rig…", object : SwingWorker<RigPreviewModel, String>() {
+		startWorker(tr("status.analyzing"), object : SwingWorker<RigPreviewModel, String>() {
 			override fun doInBackground(): RigPreviewModel = pipeline.buildPreview(input, config)
 			override fun done() {
 				finishWorker()
@@ -421,11 +498,11 @@ class AutoLive2DFrame : JFrame("AutoLive2D — PSD 全自动建模与绑定") {
 
 	private fun runPipeline() {
 		val input = inputPathOrShowError() ?: return
-		val output = outputPathOrNull() ?: return showMessage("请选择输出目录。")
+		val output = outputPathOrNull() ?: return showMessage(tr("dialog.outputRequired"))
 		val config = try { readConfig() } catch (failure: Exception) { return showFailure(failure) }
-		if (!config.exportCmo3 && !config.exportMoc3) return showMessage("至少选择一种导出格式。")
+		if (!config.exportCmo3 && !config.exportMoc3) return showMessage(tr("dialog.exportFormatRequired"))
 		logArea.text = ""
-		startWorker("开始生成…", object : SwingWorker<io.github.autolive2d.core.PipelineResult, String>() {
+		startWorker(tr("status.generating"), object : SwingWorker<io.github.autolive2d.core.PipelineResult, String>() {
 			override fun doInBackground() = pipeline.run(input, output, config, ProgressListener { stage, fraction ->
 				setProgress((fraction * 100).toInt().coerceIn(0, 100))
 				publish(stage)
@@ -441,15 +518,20 @@ class AutoLive2DFrame : JFrame("AutoLive2D — PSD 全自动建模与绑定") {
 					val result = get()
 					currentInputPath = input.toAbsolutePath().normalize()
 					showPreviewModel(result.previewModel)
-					logArea.append("\n输出文件：\n")
+					logArea.append("\n${tr("log.outputFiles")}\n")
 					result.exportedFiles.forEach { logArea.append("• ${it.path}  (${it.bytes} bytes)\n") }
 					if (result.warnings.isNotEmpty()) {
-						logArea.append("\n警告：\n")
+						logArea.append("\n${tr("log.warnings")}\n")
 						result.warnings.forEach { logArea.append("• $it\n") }
 					}
-					statusLabel.text = "完成：${result.exportedFiles.size} 个文件，${result.warnings.size} 条提示"
+					statusLabel.text = tr("status.completed", result.exportedFiles.size, result.warnings.size)
 					progressBar.value = 100
-					JOptionPane.showMessageDialog(this@AutoLive2DFrame, "导出并回读校验完成。\n${result.exportedFiles.size} 个文件已写入：\n$output", "AutoLive2D", JOptionPane.INFORMATION_MESSAGE)
+					JOptionPane.showMessageDialog(
+						this@AutoLive2DFrame,
+						tr("dialog.exportSuccess", result.exportedFiles.size, output),
+						"AutoLive2D",
+						JOptionPane.INFORMATION_MESSAGE,
+					)
 				} catch (failure: Exception) { showFailure(unwrap(failure)) }
 			}
 		})
@@ -489,14 +571,25 @@ class AutoLive2DFrame : JFrame("AutoLive2D — PSD 全自动建模与绑定") {
 		hierarchyPanel.previewModel = model
 		topologyPanel.previewModel = model
 		previewPanel.previewModel = model
-		val recognized = analysis.layers.count { it.semantic.tag.canonicalName != "unknown" }
 		layerTable.revalidate()
 		layerTable.repaint()
-		statusLabel.text = "${analysis.source.widthPx}×${analysis.source.heightPx}，${analysis.layers.size} 个图层，识别 $recognized 个"
+		showAnalysisStatus(model)
 		if (appendLog) {
-			logArea.append("分析：${analysis.layers.size} 个图层；角色 ${analysis.anchors.character.width.toInt()}×${analysis.anchors.character.height.toInt()}\n")
-			analysis.warnings.forEach { logArea.append("警告：$it\n") }
+			logArea.append("${tr("log.analysis", analysis.layers.size, analysis.anchors.character.width.toInt(), analysis.anchors.character.height.toInt())}\n")
+			analysis.warnings.forEach { logArea.append("${tr("log.warning", it)}\n") }
 		}
+	}
+
+	private fun showAnalysisStatus(model: RigPreviewModel) {
+		val analysis = model.analysis
+		val recognized = analysis.layers.count { it.semantic.tag != SemanticTag.UNKNOWN }
+		statusLabel.text = tr(
+			"status.analysisSummary",
+			analysis.source.widthPx,
+			analysis.source.heightPx,
+			analysis.layers.size,
+			recognized,
+		)
 	}
 
 	private fun applyLayerVisibility() {
@@ -507,7 +600,7 @@ class AutoLive2DFrame : JFrame("AutoLive2D — PSD 全自动建模与绑定") {
 		layerTableModel.analysis?.let { analysis ->
 			val recognized = analysis.layers.count { it.semantic.tag != SemanticTag.UNKNOWN }
 			val unknown = analysis.layers.size - recognized
-			layerTableBorder.title = "See-Through 图层识别  ·  可见 ${visible.size}/${analysis.layers.size}  ·  已识别 $recognized  ·  未识别 $unknown（置后）"
+			layerTableBorder.title = tr("layers.summary", visible.size, analysis.layers.size, recognized, unknown)
 			layerTable.repaint()
 		}
 	}
@@ -516,12 +609,12 @@ class AutoLive2DFrame : JFrame("AutoLive2D — PSD 全自动建模与绑定") {
 		val previous = currentPreviewModel ?: return
 		if (activeWorker != null) return
 		val config = try { readConfig() } catch (failure: Exception) {
-			statusLabel.text = "无法更新预览：${failure.message ?: failure.javaClass.simpleName}"
+			statusLabel.text = tr("status.previewUpdateUnavailable", failure.message ?: failure.javaClass.simpleName)
 			return
 		}
 		val generation = ++previewGeneration
 		previewWorker?.cancel(true)
-		statusLabel.text = "正在应用图层修改…"
+		statusLabel.text = tr("status.applyingLayerChanges")
 		runButton.isEnabled = false
 		previewWorker = object : SwingWorker<RigPreviewModel, Void>() {
 			override fun doInBackground(): RigPreviewModel = pipeline.buildPreview(previous.analysis.source, config)
@@ -532,11 +625,11 @@ class AutoLive2DFrame : JFrame("AutoLive2D — PSD 全自动建模与绑定") {
 				runButton.isEnabled = activeWorker == null
 				try {
 					showPreviewModel(get(), appendLog = false)
-					statusLabel.text = "图层修改已实时应用到层级、拓扑和动态预览"
+					statusLabel.text = tr("status.layerChangesApplied")
 				} catch (failure: Exception) {
 					val detail = unwrap(failure).message ?: failure.javaClass.simpleName
-					statusLabel.text = "预览更新失败：$detail"
-					logArea.append("预览更新失败：$detail\n")
+					statusLabel.text = tr("status.previewUpdateFailed", detail)
+					logArea.append("${tr("log.previewUpdateFailed", detail)}\n")
 				}
 			}
 		}.also { it.execute() }
@@ -557,7 +650,7 @@ class AutoLive2DFrame : JFrame("AutoLive2D — PSD 全自动建模与绑定") {
 		previewPanel.previewModel = null
 		previewPanel.visibleLayerIds = null
 		selectionModel.select(null)
-		layerTableBorder.title = "See-Through 图层识别"
+		layerTableBorder.title = tr("layers.title")
 		layerTable.repaint()
 		runButton.isEnabled = activeWorker == null
 	}
@@ -576,9 +669,12 @@ class AutoLive2DFrame : JFrame("AutoLive2D — PSD 全自动建模与绑定") {
 
 	private fun inputPathOrShowError(): Path? {
 		val raw = inputField.text.trim()
-		if (raw.isEmpty()) { showMessage("请选择 PSD 文件。"); return null }
+		if (raw.isEmpty()) { showMessage(tr("dialog.inputRequired")); return null }
 		val path = Path.of(raw)
-		if (!Files.isRegularFile(path) || !path.fileName.toString().endsWith(".psd", true)) { showMessage("PSD 文件不存在或扩展名不正确：\n$path"); return null }
+		if (!Files.isRegularFile(path) || !path.fileName.toString().endsWith(".psd", true)) {
+			showMessage(tr("dialog.inputInvalid", path))
+			return null
+		}
 		return path
 	}
 
@@ -587,9 +683,9 @@ class AutoLive2DFrame : JFrame("AutoLive2D — PSD 全自动建模与绑定") {
 	private fun showFailure(failure: Throwable) {
 		finishWorker()
 		val detail = failure.message ?: failure.javaClass.simpleName
-		statusLabel.text = "失败：$detail"
-		logArea.append("失败：$detail\n")
-		JOptionPane.showMessageDialog(this, detail, "处理失败", JOptionPane.ERROR_MESSAGE)
+		statusLabel.text = tr("status.failed", detail)
+		logArea.append("${tr("log.failed", detail)}\n")
+		JOptionPane.showMessageDialog(this, detail, tr("dialog.failure.title"), JOptionPane.ERROR_MESSAGE)
 	}
 	private fun unwrap(failure: Exception): Throwable = if (failure is ExecutionException) failure.cause ?: failure else failure
 
@@ -630,7 +726,7 @@ class AutoLive2DFrame : JFrame("AutoLive2D — PSD 全自动建模与绑定") {
 			val component = super.getTableCellRendererComponent(table, "", isSelected, hasFocus, row, column) as JLabel
 			val visible = value == true
 			component.icon = EyeIcon(visible, if (visible) Color(70, 74, 82) else Color(145, 149, 156))
-			component.toolTipText = "单击显示/隐藏；Alt+单击仅显示此层/恢复；Shift+单击显示或隐藏全部"
+			component.toolTipText = tr("layers.visibility.cellTip")
 			component.background = if (isSelected) table.selectionBackground else Color.WHITE
 			component.foreground = if (isSelected) table.selectionForeground else table.foreground
 			return component

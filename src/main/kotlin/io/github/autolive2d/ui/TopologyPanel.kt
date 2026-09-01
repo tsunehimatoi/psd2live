@@ -1,6 +1,7 @@
 package io.github.autolive2d.ui
 
 import io.github.autolive2d.core.RigPreviewModel
+import io.github.autolive2d.i18n.tr
 import org.umamo.render.eval.DeformedGeometry
 import java.awt.BasicStroke
 import java.awt.Color
@@ -110,7 +111,7 @@ class TopologyPanel(
 	private fun paintLegend(g: Graphics2D, model: RigPreviewModel) {
 		val vertexCount = model.rig.puppet.drawables.sumOf { it.mesh?.vertexCount ?: 0 }
 		val triangleCount = model.rig.puppet.drawables.sumOf { it.mesh?.triangleCount ?: 0 }
-		val text = "${model.rig.puppet.drawables.size} 个 ArtMesh  ·  $vertexCount 顶点  ·  $triangleCount 三角面  ·  ${camera.zoomPercent}%"
+		val text = tr("canvas.topology.stats", model.rig.puppet.drawables.size, vertexCount, triangleCount, camera.zoomPercent)
 		g.color = Color(20, 22, 25, 190)
 		g.fillRoundRect(14, height - 38, g.fontMetrics.stringWidth(text) + 22, 25, 12, 12)
 		g.color = Color(215, 222, 231)
@@ -119,7 +120,7 @@ class TopologyPanel(
 
 	private fun paintEmpty(graphics: Graphics) {
 		graphics.color = Color(180, 184, 190)
-		val text = "分析 PSD 后显示全部 ArtMesh 拓扑"
+		val text = tr("canvas.topology.empty")
 		val metrics = graphics.fontMetrics
 		graphics.drawString(text, (width - metrics.stringWidth(text)) / 2, height / 2)
 	}

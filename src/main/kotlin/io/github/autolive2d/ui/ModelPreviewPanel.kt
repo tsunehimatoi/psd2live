@@ -2,6 +2,7 @@ package io.github.autolive2d.ui
 
 import io.github.autolive2d.core.RigPreviewModel
 import io.github.autolive2d.core.StandardParameters
+import io.github.autolive2d.i18n.tr
 import org.umamo.runtime.model.ParameterId
 import java.awt.Color
 import java.awt.Dimension
@@ -87,7 +88,7 @@ class ModelPreviewPanel : JPanel() {
 			paintStatus(g, model)
 		} catch (failure: RuntimeException) {
 			g.color = Color(235, 117, 117)
-			g.drawString("预览渲染失败：${failure.message ?: failure.javaClass.simpleName}", 18, 28)
+			g.drawString(tr("canvas.preview.failure", failure.message ?: failure.javaClass.simpleName), 18, 28)
 		} finally {
 			g.dispose()
 		}
@@ -144,9 +145,9 @@ class ModelPreviewPanel : JPanel() {
 
 	private fun paintStatus(g: Graphics2D, model: RigPreviewModel) {
 		val text = if (model.config.generatePhysics) {
-			"鼠标跟踪  ·  物理模拟  ·  ${camera.zoomPercent}%"
+			tr("canvas.preview.physicsOn", camera.zoomPercent)
 		} else {
-			"鼠标跟踪  ·  物理已关闭  ·  ${camera.zoomPercent}%"
+			tr("canvas.preview.physicsOff", camera.zoomPercent)
 		}
 		g.font = Font(Font.SANS_SERIF, Font.PLAIN, 12)
 		val metrics = g.fontMetrics
@@ -159,7 +160,7 @@ class ModelPreviewPanel : JPanel() {
 
 	private fun paintEmpty(graphics: Graphics) {
 		graphics.color = Color(180, 184, 190)
-		val text = "选择或拖入 See-Through PSD"
+		val text = tr("canvas.preview.empty")
 		val metrics = graphics.fontMetrics
 		graphics.drawString(text, (width - metrics.stringWidth(text)) / 2, height / 2)
 	}

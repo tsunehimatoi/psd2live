@@ -1,5 +1,6 @@
 package io.github.autolive2d.core
 
+import io.github.autolive2d.i18n.tr
 import java.awt.AlphaComposite
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
@@ -16,14 +17,14 @@ object AtlasPacker {
 	)
 
 	fun pack(layers: List<ClassifiedLayer>, requestedSize: Int, padding: Int): PackedAtlas {
-		require(requestedSize in 256..16384) { "贴图集尺寸必须为 256..16384" }
+		require(requestedSize in 256..16384) { tr("error.atlasSize") }
 		val items = layers
 			.filter { it.source.raster.width > 0 && it.source.raster.height > 0 && it.opaquePixels > 0 }
 			.map { Item(it, it.source.raster.width, it.source.raster.height) }
 			.sortedWith(compareByDescending<Item> { it.height }.thenByDescending { it.width }.thenBy { it.layer.source.id.raw })
 		val largest = items.maxOfOrNull { maxOf(it.width, it.height) + padding * 2 } ?: requestedSize
 		val pageSize = maxOf(requestedSize, nextPowerOfTwo(largest)).coerceAtMost(16384)
-		require(largest <= pageSize) { "存在超过 16384px 的图层，无法放入 Cubism 贴图页" }
+		require(largest <= pageSize) { tr("error.layerTooLarge") }
 		val pages = mutableListOf<MutablePage>()
 		val placements = linkedMapOf<String, AtlasPlacement>()
 
@@ -49,7 +50,7 @@ object AtlasPacker {
 		}
 		val encoded = pages.map { mutable ->
 			val output = ByteArrayOutputStream()
-			check(ImageIO.write(mutable.image, "png", output)) { "JVM 没有 PNG 编码器" }
+			check(ImageIO.write(mutable.image, "png", output)) { tr("error.pngEncoder") }
 			AtlasPage(mutable.image, output.toByteArray())
 		}
 		return PackedAtlas(encoded, placements)
@@ -65,4 +66,3 @@ object AtlasPacker {
 		try { block(this) } finally { dispose() }
 	}
 }
-

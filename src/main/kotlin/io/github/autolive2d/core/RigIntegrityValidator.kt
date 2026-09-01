@@ -1,5 +1,6 @@
 package io.github.autolive2d.core
 
+import io.github.autolive2d.i18n.tr
 import org.umamo.render.eval.CpuDeformationEvaluator
 import org.umamo.runtime.model.Deformer
 import org.umamo.runtime.model.DrawableId
@@ -41,7 +42,7 @@ object RigIntegrityValidator {
 				missing += drawable.id.raw
 				continue
 			}
-			require(positions.size % 2 == 0) { "$label：${drawable.id.raw} 的顶点数组长度不是偶数" }
+			require(positions.size % 2 == 0) { tr("validation.vertexArrayOdd", label, drawable.id.raw) }
 			var left = Float.POSITIVE_INFINITY
 			var top = Float.POSITIVE_INFINITY
 			var right = Float.NEGATIVE_INFINITY
@@ -49,7 +50,7 @@ object RigIntegrityValidator {
 			for (index in positions.indices step 2) {
 				val x = positions[index]
 				val y = -positions[index + 1] // evaluator world Y-up -> PSD/canvas Y-down
-				require(x.isFinite() && y.isFinite()) { "$label：${drawable.id.raw} 含 NaN/Infinity 顶点" }
+				require(x.isFinite() && y.isFinite()) { tr("validation.nonFiniteVertex", label, drawable.id.raw) }
 				left = minOf(left, x)
 				top = minOf(top, y)
 				right = maxOf(right, x)
@@ -58,7 +59,7 @@ object RigIntegrityValidator {
 			val actual = Bounds(left, top, right, bottom)
 			actualBounds[drawable.id.raw] = actual
 			require(actual.width > 1e-3f && actual.height > 1e-3f) {
-				"$label：${drawable.id.raw} 在默认姿态下已塌缩（${actual.width}×${actual.height}）"
+				tr("validation.neutralCollapsed", label, drawable.id.raw, actual.width, actual.height)
 			}
 
 			val expected = expectedBoundsByDrawableId[drawable.id.raw] ?: continue
@@ -68,16 +69,16 @@ object RigIntegrityValidator {
 			// Neutral forms are authored as identity.  A little numerical/interpolation drift is fine,
 			// but moving or resizing a layer by half its own size means the parent-space chain is broken.
 			require(centerError <= scale * 0.50f && sizeError <= scale * 0.50f) {
-				"$label：${drawable.id.raw} 默认姿态偏离 PSD；期望=$expected，实际=$actual"
+				tr("validation.neutralMismatch", label, drawable.id.raw, expected, actual)
 			}
 			if (centerError > scale * 0.04f || sizeError > scale * 0.04f) {
-				warnings += "$label：${drawable.id.raw} 默认姿态与 PSD 有明显偏差；期望=$expected，实际=$actual"
+				warnings += tr("validation.neutralWarning", label, drawable.id.raw, expected, actual)
 			}
 		}
 
-		require(missing.isEmpty()) { "$label：默认姿态缺少画元几何：${missing.joinToString()}" }
+		require(missing.isEmpty()) { tr("validation.missingNeutralGeometry", label, missing.joinToString()) }
 		require(actualBounds.size == puppet.drawables.count { it.mesh != null }) {
-			"$label：默认姿态几何数量不完整"
+			tr("validation.incompleteNeutralGeometry", label)
 		}
 		return Result(actualBounds, warnings)
 	}
@@ -104,7 +105,7 @@ object RigIntegrityValidator {
 		for ((poseName, parameters) in poses) {
 			val geometry = evaluator.evaluate(puppet, parameters)
 			require(geometry.worldPositions.keys == expectedIds) {
-				"$label $poseName：画元几何不完整；缺少=${(expectedIds - geometry.worldPositions.keys).joinToString { it.raw }}"
+				tr("validation.poseGeometryMissing", label, poseName, (expectedIds - geometry.worldPositions.keys).joinToString { it.raw })
 			}
 			for (drawableId in expectedIds) {
 				val positions = geometry.worldPositions.getValue(drawableId)
@@ -113,16 +114,16 @@ object RigIntegrityValidator {
 				val minimumWidth = max(1e-3f, neutral.width * 0.08f)
 				val minimumHeight = max(1e-3f, neutral.height * 0.08f)
 				require(actual.width >= minimumWidth && actual.height >= minimumHeight) {
-					"$label $poseName：${drawableId.raw} 在非零角度下消失或塌缩；默认=$neutral，实际=$actual"
+					tr("validation.poseCollapsed", label, poseName, drawableId.raw, neutral, actual)
 				}
 				require(actual.width <= neutral.width * 4f + 4f && actual.height <= neutral.height * 4f + 4f) {
-					"$label $poseName：${drawableId.raw} 在非零角度下异常放大；默认=$neutral，实际=$actual"
+					tr("validation.poseEnlarged", label, poseName, drawableId.raw, neutral, actual)
 				}
 				val neutralOpacity = neutralGeometry.opacity[drawableId] ?: 0f
 				val poseOpacity = geometry.opacity[drawableId]
-				require(poseOpacity != null && poseOpacity.isFinite()) { "$label $poseName：${drawableId.raw} 缺少有效透明度" }
+				require(poseOpacity != null && poseOpacity.isFinite()) { tr("validation.poseOpacityInvalid", label, poseName, drawableId.raw) }
 				if (neutralOpacity > 1e-3f) {
-					require(poseOpacity > 1e-3f) { "$label $poseName：${drawableId.raw} 在非零角度下透明度变为 0" }
+					require(poseOpacity > 1e-3f) { tr("validation.poseOpacityZero", label, poseName, drawableId.raw) }
 				}
 			}
 		}
@@ -138,7 +139,7 @@ object RigIntegrityValidator {
 		val byId = warps.associateBy { it.id.raw }
 
 		fun requireWarp(id: String): Deformer.Warp =
-			requireNotNull(byId[id]) { "$label：缺少方向尺寸校验所需变形器 $id" }
+			requireNotNull(byId[id]) { tr("validation.missingDirectionalWarp", label, id) }
 
 		auditSymmetricExtent(label, requireWarp("DeformBodyXY"), StandardParameters.BODY_X, LatticeExtent.RowWidth, true)
 		auditSymmetricExtent(label, requireWarp("DeformBodyXY"), StandardParameters.BODY_Y, LatticeExtent.ColumnHeight, true)
@@ -156,7 +157,7 @@ object RigIntegrityValidator {
 		}
 		for (warp in warps.filter { it.id.raw.endsWith("Physics") && it.id.raw.startsWith("DeformHair") }) {
 			val parameter = checkNotNull(warp.geometryGrid).axes.singleOrNull()?.parameterId
-				?: error("$label：${warp.id.raw} 的物理关键形态不是单轴")
+				?: error(tr("validation.physicsNotSingleAxis", label, warp.id.raw))
 			auditSymmetricExtent(label, warp, parameter, LatticeExtent.RowWidth, true)
 			// Swing lift is even: +/- have equal height but both are deliberately shorter than neutral.
 			auditSymmetricExtent(label, warp, parameter, LatticeExtent.ColumnHeight, false)
@@ -167,7 +168,7 @@ object RigIntegrityValidator {
 			for (cell in grid.cells) {
 				val form: RotationPivotForm = cell.form
 				require(form.scale.isFinite() && abs(form.scale - 1f) <= 1e-5f) {
-					"$label：${rotation.id.raw} 在 ${cell.coordinate.contentToString()} 引入了方向相关缩放 ${form.scale}"
+					tr("validation.directionalRotationScale", label, rotation.id.raw, cell.coordinate.contentToString(), form.scale)
 				}
 			}
 		}
@@ -180,15 +181,15 @@ object RigIntegrityValidator {
 		extent: LatticeExtent,
 		mustEqualNeutral: Boolean,
 	) {
-		val grid = requireNotNull(warp.geometryGrid) { "$label：${warp.id.raw} 缺少关键形态" }
+		val grid = requireNotNull(warp.geometryGrid) { tr("validation.missingKeyforms", label, warp.id.raw) }
 		val axisIndex = grid.axes.indexOfFirst { it.parameterId == parameter }
-		require(axisIndex >= 0) { "$label：${warp.id.raw} 未绑定 ${parameter.raw}" }
+		require(axisIndex >= 0) { tr("validation.parameterUnbound", label, warp.id.raw, parameter.raw) }
 		val keys = grid.axes[axisIndex].keys
 		val negativeIndex = keys.indices.filter { keys[it] < 0f }.minByOrNull { keys[it] }
 		val positiveIndex = keys.indices.filter { keys[it] > 0f }.maxByOrNull { keys[it] }
 		val neutralIndex = keys.indices.minByOrNull { abs(keys[it]) }
 		require(negativeIndex != null && positiveIndex != null && neutralIndex != null) {
-			"$label：${warp.id.raw}/${parameter.raw} 缺少对称的负、零、正关键点"
+			tr("validation.symmetricKeysMissing", label, warp.id.raw, parameter.raw)
 		}
 
 		val coordinate = IntArray(grid.axes.size)
@@ -198,16 +199,16 @@ object RigIntegrityValidator {
 					coordinate[axisIndex] = index
 					val linear = grid.linearIndexOf(coordinate)
 					return requireNotNull(grid.cellsByLinearIndex[linear]) {
-						"$label：${warp.id.raw} 缺少关键形态 ${coordinate.contentToString()}"
+						tr("validation.keyformCellMissing", label, warp.id.raw, coordinate.contentToString())
 					}.form
 				}
 				val negative = latticeExtents(label, warp, formAt(negativeIndex), extent)
 				val positive = latticeExtents(label, warp, formAt(positiveIndex), extent)
 				val neutral = if (mustEqualNeutral) latticeExtents(label, warp, formAt(neutralIndex), extent) else null
 				for (index in negative.indices) {
-					requireNearlyEqual(label, warp, parameter, negative[index], positive[index], "负/正", index)
+					requireNearlyEqual(label, warp, parameter, negative[index], positive[index], tr("validation.pair.negativePositive"), index)
 					if (neutral != null) {
-						requireNearlyEqual(label, warp, parameter, negative[index], neutral[index], "负/零", index)
+						requireNearlyEqual(label, warp, parameter, negative[index], neutral[index], tr("validation.pair.negativeNeutral"), index)
 					}
 				}
 				return
@@ -232,7 +233,7 @@ object RigIntegrityValidator {
 	): FloatArray {
 		val points = form.controlPoints
 		val expected = (warp.columns + 1) * (warp.rows + 1) * 2
-		require(points.size == expected) { "$label：${warp.id.raw} 控制点数量 ${points.size} != $expected" }
+		require(points.size == expected) { tr("validation.controlPointCount", label, warp.id.raw, points.size, expected) }
 		return when (extent) {
 			LatticeExtent.RowWidth -> FloatArray(warp.rows + 1) { row ->
 				val left = row * (warp.columns + 1) * 2
@@ -258,12 +259,12 @@ object RigIntegrityValidator {
 	) {
 		val tolerance = max(1f, max(abs(first), abs(second))) * 2e-4f
 		require(first.isFinite() && second.isFinite() && abs(first - second) <= tolerance) {
-			"$label：${warp.id.raw}/${parameter.raw} $pair 尺寸不对称（边 $index：$first vs $second）"
+			tr("validation.asymmetricExtent", label, warp.id.raw, parameter.raw, pair, index, first, second)
 		}
 	}
 
 	private fun evaluatedBounds(label: String, drawableId: DrawableId, positions: FloatArray): Bounds {
-		require(positions.size >= 2 && positions.size % 2 == 0) { "$label：${drawableId.raw} 的顶点数组无效" }
+		require(positions.size >= 2 && positions.size % 2 == 0) { tr("validation.invalidVertexArray", label, drawableId.raw) }
 		var left = Float.POSITIVE_INFINITY
 		var top = Float.POSITIVE_INFINITY
 		var right = Float.NEGATIVE_INFINITY
@@ -271,7 +272,7 @@ object RigIntegrityValidator {
 		for (index in positions.indices step 2) {
 			val x = positions[index]
 			val y = -positions[index + 1]
-			require(x.isFinite() && y.isFinite()) { "$label：${drawableId.raw} 含 NaN/Infinity 顶点" }
+			require(x.isFinite() && y.isFinite()) { tr("validation.nonFiniteVertex", label, drawableId.raw) }
 			left = minOf(left, x)
 			top = minOf(top, y)
 			right = maxOf(right, x)

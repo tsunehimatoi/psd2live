@@ -1,5 +1,6 @@
 package io.github.autolive2d.core
 
+import io.github.autolive2d.i18n.tr
 import org.umamo.format.cmo3.model.custom.CModelSource
 import org.umamo.format.cmo3.model.gen.CParameterSource
 import org.umamo.format.cmo3.model.gen.CParameterSourceSet
@@ -20,19 +21,19 @@ internal object Cmo3PhysicsInjector {
 	fun inject(root: CModelSource, hasFrontHair: Boolean, hasBackHair: Boolean): Int {
 		val rules = PhysicsGenerator.rules(hasFrontHair, hasBackHair)
 		val physicsSet = root.physicsSettingsSourceSet as? CPhysicsSettingsSourceSet
-			?: error("CMO3 缺少 physicsSettingsSourceSet")
+			?: error(tr("error.cmo3MissingPhysicsSet"))
 		// The pipeline only injects into its own fresh graph, so replace the known empty collection
 		// with the exact carray_list type expected by the editor instead of using an unsafe cast.
 		val sources = CArrayList<Any?>().also { physicsSet._sourceCubismPhysics = it }
 		if (rules.isEmpty()) return 0
 
 		val parameterSet = root.parameterSourceSet as? CParameterSourceSet
-			?: error("CMO3 缺少 parameterSourceSet")
+			?: error(tr("error.cmo3MissingParameterSet"))
 		val parameters = elements(parameterSet._sources).filterIsInstance<CParameterSource>()
 		val parameterById = parameters.associateBy { ((it.id as? Id)?.idstr).orEmpty() }
 		for (rule in rules) {
 			val output = parameterById[rule.outputParameter]
-				?: error("CMO3 物理输出参数不存在：${rule.outputParameter}")
+				?: error(tr("error.cmo3MissingPhysicsOutput", rule.outputParameter))
 			val setting = CPhysicsSettingsSource().apply {
 				name = rule.name
 				guid = guid("CPhysicsSettingsGuid", rule.name)
@@ -86,7 +87,7 @@ internal object Cmo3PhysicsInjector {
 		type: CPhysicsSourceType,
 		weight: Float,
 	): CPhysicsInput {
-		val parameter = parameterById[parameterId] ?: error("CMO3 物理输入参数不存在：$parameterId")
+		val parameter = parameterById[parameterId] ?: error(tr("error.cmo3MissingPhysicsInput", parameterId))
 		return CPhysicsInput().apply {
 			guid = guid("CPhysicsDataGuid", "in_${rule.id}_$parameterId")
 			source = parameter.guid

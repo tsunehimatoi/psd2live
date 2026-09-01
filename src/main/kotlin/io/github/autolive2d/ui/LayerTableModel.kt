@@ -5,12 +5,21 @@ import io.github.autolive2d.core.LayerClassificationOverride
 import io.github.autolive2d.core.PipelineAnalysis
 import io.github.autolive2d.core.SemanticTag
 import io.github.autolive2d.core.Side
+import io.github.autolive2d.i18n.tr
 import javax.swing.table.AbstractTableModel
 
 class LayerTableModel : AbstractTableModel() {
 	private data class Row(val sourceIndex: Int, val layer: ClassifiedLayer)
 
-	private val columns = arrayOf("", "#", "PSD 图层 / 组件", "语义（可编辑）", "侧别", "置信度", "像素")
+	private val columnKeys = arrayOf(
+		"layers.header.visibility",
+		"layers.header.number",
+		"layers.header.name",
+		"layers.header.semantic",
+		"layers.header.side",
+		"layers.header.confidence",
+		"layers.header.pixels",
+	)
 	private var rows = emptyList<Row>()
 	private val manualOverrides = linkedMapOf<String, LayerClassificationOverride>()
 	private val manualVisibility = linkedMapOf<String, Boolean>()
@@ -50,6 +59,8 @@ class LayerTableModel : AbstractTableModel() {
 		analysis = null
 		fireTableDataChanged()
 	}
+
+	fun languageChanged() = fireTableStructureChanged()
 
 	fun layerAt(modelRow: Int): ClassifiedLayer? = rows.getOrNull(modelRow)?.layer
 
@@ -102,8 +113,8 @@ class LayerTableModel : AbstractTableModel() {
 	}
 
 	override fun getRowCount(): Int = rows.size
-	override fun getColumnCount(): Int = columns.size
-	override fun getColumnName(column: Int): String = columns[column]
+	override fun getColumnCount(): Int = columnKeys.size
+	override fun getColumnName(column: Int): String = tr(columnKeys[column])
 	override fun getColumnClass(columnIndex: Int): Class<*> = when (columnIndex) {
 		0 -> Boolean::class.javaObjectType
 		1, 6 -> Int::class.javaObjectType
@@ -121,8 +132,8 @@ class LayerTableModel : AbstractTableModel() {
 			0 -> effectiveVisibility(layer)
 			1 -> row.sourceIndex + 1
 			2 -> layer.source.name
-			3 -> semantic.tag.canonicalName
-			4 -> semantic.side.name
+			3 -> semantic.tag.localizedName()
+			4 -> semantic.side.localizedName()
 			5 -> if (manualOverrides.containsKey(layer.source.id.raw)) 1f else layer.semantic.confidence
 			6 -> layer.opaquePixels
 			else -> ""
@@ -136,12 +147,13 @@ class LayerTableModel : AbstractTableModel() {
 			3 -> {
 				val raw = value?.toString() ?: return
 				val tag = SemanticTag.entries.firstOrNull {
-					it.canonicalName.equals(raw, true) || it.name.equals(raw, true)
+					it.canonicalName.equals(raw, true) || it.name.equals(raw, true) || it.localizedName() == raw
 				} ?: return
 				LayerClassificationOverride(tag, current.side)
 			}
 			4 -> {
-				val side = runCatching { Side.valueOf(value?.toString()?.uppercase() ?: return) }.getOrNull() ?: return
+				val raw = value?.toString() ?: return
+				val side = Side.entries.firstOrNull { it.name.equals(raw, true) || it.localizedName() == raw } ?: return
 				LayerClassificationOverride(current.tag, side)
 			}
 			else -> return
@@ -176,3 +188,7 @@ class LayerTableModel : AbstractTableModel() {
 		isolatedLayerId = null
 	}
 }
+
+internal fun SemanticTag.localizedName(): String = tr("semantic.${name.lowercase()}")
+
+internal fun Side.localizedName(): String = tr("side.${name.lowercase()}")

@@ -1,5 +1,6 @@
 package io.github.autolive2d.core
 
+import io.github.autolive2d.i18n.tr
 /**
  * Live2D physics3 hair presets derived from StretchyStudio's Hiyori-backed rules.
  *
@@ -21,10 +22,10 @@ object PhysicsGenerator {
 
 	internal fun rules(hasFrontHair: Boolean, hasBackHair: Boolean): List<HairRule> = buildList {
 		if (hasFrontHair) {
-			add(HairRule("PhysicsHairFront", "前发摆动", "ParamHairFront", 1.522f, 3f, 0.9f, -10f, 10f))
+			add(HairRule("PhysicsHairFront", tr("model.physics.frontHair"), "ParamHairFront", 1.522f, 3f, 0.9f, -10f, 10f))
 		}
 		if (hasBackHair) {
-			add(HairRule("PhysicsHairBack", "后发摆动", "ParamHairBack", 2.061f, 15f, 0.8f, -30f, 30f))
+			add(HairRule("PhysicsHairBack", tr("model.physics.backHair"), "ParamHairBack", 2.061f, 15f, 0.8f, -30f, 30f))
 		}
 	}
 

@@ -1,5 +1,6 @@
 package io.github.autolive2d.core
 
+import io.github.autolive2d.i18n.tr
 import kotlinx.serialization.json.Json
 import org.umamo.format.cmo3.Cmo3
 import org.umamo.format.cmo3.model.custom.CModelSource
@@ -25,9 +26,9 @@ import java.time.Instant
 
 class AutoLive2DPipeline {
 	fun inspect(psd: Path, config: PipelineConfig = PipelineConfig()): PipelineAnalysis {
-		require(Files.isRegularFile(psd)) { "PSD 文件不存在：$psd" }
+		require(Files.isRegularFile(psd)) { tr("error.psdMissing", psd) }
 		val bytes = Files.readAllBytes(psd)
-		require(PsdReader.matches(bytes)) { "不是有效的 PSD 文件：$psd" }
+		require(PsdReader.matches(bytes)) { tr("error.invalidPsd", psd) }
 		return CharacterAnalyzer.analyze(PsdReader.read(bytes), config)
 	}
 
@@ -49,16 +50,17 @@ class AutoLive2DPipeline {
 		config: PipelineConfig = PipelineConfig(),
 		progress: ProgressListener = ProgressListener { _, _ -> },
 	): PipelineResult {
-		progress.update("读取 PSD", 0.04)
+		progress.update(tr("progress.readPsd"), 0.04)
 		val analysis = inspect(psd, config)
-		progress.update("语义识别与左右拆分", 0.18)
+		progress.update(tr("progress.classify"), 0.18)
 		val atlas = AtlasPacker.pack(analysis.layers, config.atlasSize, config.texturePadding)
-		progress.update("生成贴图集", 0.38)
+		progress.update(tr("progress.atlas"), 0.38)
 		val rig = RigBuilder.build(analysis, atlas, config)
-		val neutralRig = RigIntegrityValidator.validateNeutralPose("生成模型", rig.puppet, rig.sourceBoundsByDrawableId)
-		RigIntegrityValidator.validateHeadAnglePoses("生成模型", rig.puppet, neutralRig.boundsByDrawableId)
-		RigIntegrityValidator.validateDirectionalWarpDimensions("生成模型", rig.puppet)
-		progress.update("生成参数与关键形态", 0.58)
+		val generatedLabel = tr("validation.generated")
+		val neutralRig = RigIntegrityValidator.validateNeutralPose(generatedLabel, rig.puppet, rig.sourceBoundsByDrawableId)
+		RigIntegrityValidator.validateHeadAnglePoses(generatedLabel, rig.puppet, neutralRig.boundsByDrawableId)
+		RigIntegrityValidator.validateDirectionalWarpDimensions(generatedLabel, rig.puppet)
+		progress.update(tr("progress.keyforms"), 0.58)
 		// CMO3's editable base mesh is canvas-space. The keyform absolutes remain in parent space;
 		// Umamo's conversion preserves that mixed-space invariant exactly.
 		val exportPuppet = restMeshesToCanvasSpace(rig.puppet)
@@ -104,12 +106,13 @@ class AutoLive2DPipeline {
 			val mocBytes = bundle.files.first { it.name == bundle.mocFileName }.bytes
 			val reimported = Moc3Import.fromMocDocument(Moc3.read(mocBytes), null)
 			validateRigShape("MOC3", exportPuppet, reimported)
-			val mocNeutral = RigIntegrityValidator.validateNeutralPose("MOC3 回读", reimported, rig.sourceBoundsByDrawableId)
+			val moc3Label = tr("validation.moc3Readback")
+			val mocNeutral = RigIntegrityValidator.validateNeutralPose(moc3Label, reimported, rig.sourceBoundsByDrawableId)
 			warnings += mocNeutral.warnings
-			RigIntegrityValidator.validateHeadAnglePoses("MOC3 回读", reimported, mocNeutral.boundsByDrawableId)
-			RigIntegrityValidator.validateDirectionalWarpDimensions("MOC3 回读", reimported)
+			RigIntegrityValidator.validateHeadAnglePoses(moc3Label, reimported, mocNeutral.boundsByDrawableId)
+			RigIntegrityValidator.validateDirectionalWarpDimensions(moc3Label, reimported)
 		}
-		progress.update("导出 MOC3 文件族", 0.77)
+		progress.update(tr("progress.exportMoc3"), 0.77)
 
 		if (config.exportCmo3) {
 			val pages = atlas.pages.map { page ->
@@ -129,26 +132,27 @@ class AutoLive2DPipeline {
 			val bytes = Cmo3.write(converted.model)
 			files += writeContained(outputRoot, "$baseName.cmo3", bytes)
 			warnings += converted.report.notices.map { noticeText("CMO3", it) }
-			val source = Cmo3.read(bytes).root as? CModelSource ?: error("CMO3 根节点不是 CModelSource")
+			val source = Cmo3.read(bytes).root as? CModelSource ?: error(tr("error.cmo3Root"))
 			val reimported = Cmo3Import.fromModelSource(source)
 			validateRigShape("CMO3", converted.puppet, reimported)
-			val cmoNeutral = RigIntegrityValidator.validateNeutralPose("CMO3 回读", reimported, rig.sourceBoundsByDrawableId)
+			val cmo3Label = tr("validation.cmo3Readback")
+			val cmoNeutral = RigIntegrityValidator.validateNeutralPose(cmo3Label, reimported, rig.sourceBoundsByDrawableId)
 			warnings += cmoNeutral.warnings
-			RigIntegrityValidator.validateHeadAnglePoses("CMO3 回读", reimported, cmoNeutral.boundsByDrawableId)
-			RigIntegrityValidator.validateDirectionalWarpDimensions("CMO3 回读", reimported)
+			RigIntegrityValidator.validateHeadAnglePoses(cmo3Label, reimported, cmoNeutral.boundsByDrawableId)
+			RigIntegrityValidator.validateDirectionalWarpDimensions(cmo3Label, reimported)
 		}
-		progress.update("导出 CMO3 工程", 0.91)
+		progress.update(tr("progress.exportCmo3"), 0.91)
 
 		val report = projectReport(baseName, analysis, rig, atlas, config, warnings)
 		Json.parseToJsonElement(report)
 		files += writeContained(outputRoot, "$baseName.autolive2d.json", report.encodeToByteArray())
-		progress.update("校验完成", 1.0)
+		progress.update(tr("progress.validated"), 1.0)
 		return PipelineResult(analysis, files, warnings, RigPreviewModel(analysis, atlas, rig, config))
 	}
 
 	private fun validateBundle(bundle: Moc3Sidecars.Bundle) {
 		val byName = bundle.files.associateBy { it.name }
-		require(byName.size == bundle.files.size) { "MOC3 文件族中存在重名文件" }
+		require(byName.size == bundle.files.size) { tr("error.bundleDuplicate") }
 		val manifestFile = bundle.files.single { it.name.endsWith(".model3.json") }
 		val manifest = Moc3.readModel3(manifestFile.bytes.decodeToString())
 		val references = buildList {
@@ -162,7 +166,7 @@ class AutoLive2DPipeline {
 			manifest.fileReferences.motions.orEmpty().values.flatten().forEach { add(it.file) }
 		}
 		val missing = references.filterNot(byName::containsKey)
-		require(missing.isEmpty()) { "model3.json 引用了缺失文件：${missing.joinToString()}" }
+		require(missing.isEmpty()) { tr("error.bundleMissing", missing.joinToString()) }
 		manifest.fileReferences.displayInfo?.let { Moc3.readCdi3(byName.getValue(it).bytes.decodeToString()) }
 		manifest.fileReferences.physics?.let { Moc3.readPhysics3(byName.getValue(it).bytes.decodeToString()) }
 		manifest.fileReferences.motions.orEmpty().values.flatten().forEach {
@@ -173,17 +177,17 @@ class AutoLive2DPipeline {
 	private fun validateRigShape(label: String, expected: PuppetModel, actual: PuppetModel) {
 		fun <T> requireSame(kind: String, left: Set<T>, right: Set<T>) {
 			require(left == right) {
-				"$label 回读后的 $kind 不一致；缺少=${left - right}，多出=${right - left}"
+				tr("error.rigShape", label, kind, left - right, right - left)
 			}
 		}
-		requireSame("参数", expected.parameters.map { it.id.raw }.toSet(), actual.parameters.map { it.id.raw }.toSet())
-		requireSame("变形器", expected.deformers.map { it.id.raw }.toSet(), actual.deformers.map { it.id.raw }.toSet())
-		requireSame("画元", expected.drawables.map { it.id.raw }.toSet(), actual.drawables.map { it.id.raw }.toSet())
+		requireSame(tr("validation.parameter"), expected.parameters.map { it.id.raw }.toSet(), actual.parameters.map { it.id.raw }.toSet())
+		requireSame(tr("validation.deformer"), expected.deformers.map { it.id.raw }.toSet(), actual.deformers.map { it.id.raw }.toSet())
+		requireSame(tr("validation.drawable"), expected.drawables.map { it.id.raw }.toSet(), actual.drawables.map { it.id.raw }.toSet())
 	}
 
 	private fun writeContained(root: Path, relativeName: String, bytes: ByteArray): ExportedFile {
 		val target = root.resolve(relativeName.replace('/', java.io.File.separatorChar)).normalize()
-		require(target.startsWith(root)) { "输出路径越界：$relativeName" }
+		require(target.startsWith(root)) { tr("error.outputEscapesRoot", relativeName) }
 		Files.createDirectories(target.parent)
 		Files.write(target, bytes, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)
 		return ExportedFile(target, bytes.size.toLong())
@@ -197,8 +201,8 @@ class AutoLive2DPipeline {
 	private fun noticeText(format: String, notice: ExportNotice): String =
 		when (notice) {
 			is ExportNotice.MissingSourceArt ->
-				"$format：未保留原始 PSD 源图编辑链；已从 ${notice.pageCount} 页贴图重建可编辑图层（模型/Rig 数据仍保留）"
-			else -> "$format：$notice"
+				tr("warning.sourceArtRebuilt", format, notice.pageCount)
+			else -> tr("warning.exportNotice", format, notice)
 		}
 
 	private fun projectReport(
