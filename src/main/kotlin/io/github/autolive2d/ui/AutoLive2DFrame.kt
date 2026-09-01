@@ -89,24 +89,15 @@ class AutoLive2DFrame : JFrame() {
 	private val topologyPanel = TopologyPanel(selectionModel)
 	private val previewPanel = ModelPreviewPanel()
 	private val logArea = JTextArea()
-	private val atlasSpinner = JSpinner(SpinnerNumberModel(4096, 256, 16384, 256))
-	private val meshSpinner = JSpinner(SpinnerNumberModel(64, 16, 256, 8))
-	private val headSpinner = JSpinner(SpinnerNumberModel(1.0, 0.0, 2.0, 0.1))
-	private val bodySpinner = JSpinner(SpinnerNumberModel(1.0, 0.0, 2.0, 0.1))
-	private val atlasLabel = JLabel()
-	private val meshLabel = JLabel()
-	private val headLabel = JLabel()
-	private val bodyLabel = JLabel()
-	private val physicsCheck = JCheckBox("", true)
-	private val cmo3Check = JCheckBox("", true)
-	private val moc3Check = JCheckBox("", true)
+	private val settingsPanel = RigSettingsPanel(onSettingsChanged = {
+		if (currentPreviewModel != null) previewRefreshTimer.restart()
+	})
 	private var activeWorker: SwingWorker<*, *>? = null
 	private var previewWorker: SwingWorker<RigPreviewModel, Void>? = null
 	private var previewGeneration = 0L
 	private var currentPreviewModel: RigPreviewModel? = null
 	private var currentInputPath: Path? = null
 	private val projectBorder = BorderFactory.createTitledBorder("")
-	private val settingsBorder = BorderFactory.createTitledBorder("")
 	private val layerTableBorder = BorderFactory.createTitledBorder("")
 	private val workspaceTabs = JTabbedPane()
 	private val layerPopup = JPopupMenu()
@@ -195,7 +186,7 @@ class AutoLive2DFrame : JFrame() {
 			}))
 		}
 		val right = JPanel(BorderLayout(6, 6)).apply {
-			add(buildSettings(), BorderLayout.NORTH)
+			add(settingsPanel, BorderLayout.NORTH)
 			layerTable.autoCreateRowSorter = true
 			layerTable.fillsViewportHeight = true
 			layerTable.selectionModel.selectionMode = javax.swing.ListSelectionModel.MULTIPLE_INTERVAL_SELECTION
@@ -220,33 +211,6 @@ class AutoLive2DFrame : JFrame() {
 			resizeWeight = 0.55
 			dividerLocation = 650
 		}
-	}
-
-	private fun buildSettings(): JPanel = JPanel(GridBagLayout()).apply {
-		border = settingsBorder
-		val c = GridBagConstraints().apply {
-			insets = Insets(3, 5, 3, 5)
-			anchor = GridBagConstraints.WEST
-		}
-		fun addSetting(column: Int, row: Int, label: JLabel, component: java.awt.Component) {
-			c.gridx = column * 2
-			c.gridy = row
-			add(label, c)
-			c.gridx++
-			add(component, c)
-		}
-		addSetting(0, 0, atlasLabel, atlasSpinner)
-		addSetting(1, 0, meshLabel, meshSpinner)
-		addSetting(0, 1, headLabel, headSpinner)
-		addSetting(1, 1, bodyLabel, bodySpinner)
-		c.gridx = 0
-		c.gridy = 2
-		c.gridwidth = 4
-		add(JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
-			add(physicsCheck)
-			add(cmo3Check)
-			add(moc3Check)
-		}, c)
 	}
 
 	private fun buildStatusBar(): JPanel = JPanel(BorderLayout(8, 0)).apply {
@@ -286,14 +250,7 @@ class AutoLive2DFrame : JFrame() {
 		analyzeButton.text = tr("action.analyze")
 		runButton.text = tr("action.generate")
 		openOutputButton.text = tr("action.openOutput")
-		settingsBorder.title = tr("settings.title")
-		atlasLabel.text = tr("settings.atlasSize")
-		meshLabel.text = tr("settings.meshSpacing")
-		headLabel.text = tr("settings.headStrength")
-		bodyLabel.text = tr("settings.bodyStrength")
-		physicsCheck.text = tr("settings.physics")
-		cmo3Check.text = tr("settings.cmo3")
-		moc3Check.text = tr("settings.moc3")
+		settingsPanel.refreshTexts()
 		workspaceTabs.setTitleAt(0, tr("tab.hierarchy"))
 		workspaceTabs.setTitleAt(1, tr("tab.topology"))
 		workspaceTabs.setTitleAt(2, tr("tab.preview"))
@@ -542,6 +499,7 @@ class AutoLive2DFrame : JFrame() {
 		activeWorker = worker
 		analyzeButton.isEnabled = false
 		runButton.isEnabled = false
+		settingsPanel.setControlsEnabled(false)
 		progressBar.value = 0
 		progressBar.isIndeterminate = indeterminate
 		statusLabel.text = message
@@ -555,6 +513,7 @@ class AutoLive2DFrame : JFrame() {
 		activeWorker = null
 		analyzeButton.isEnabled = true
 		runButton.isEnabled = true
+		settingsPanel.setControlsEnabled(true)
 		progressBar.isIndeterminate = false
 	}
 
@@ -655,14 +614,7 @@ class AutoLive2DFrame : JFrame() {
 		runButton.isEnabled = activeWorker == null
 	}
 
-	private fun readConfig() = PipelineConfig(
-		atlasSize = (atlasSpinner.value as Number).toInt(),
-		meshSpacing = (meshSpinner.value as Number).toInt(),
-		headTurnStrength = (headSpinner.value as Number).toFloat(),
-		bodyStrength = (bodySpinner.value as Number).toFloat(),
-		generatePhysics = physicsCheck.isSelected,
-		exportCmo3 = cmo3Check.isSelected,
-		exportMoc3 = moc3Check.isSelected,
+	private fun readConfig() = settingsPanel.buildConfig(
 		layerOverrides = layerTableModel.classificationOverrides,
 		layerVisibility = layerTableModel.visibilityOverrides,
 	)
