@@ -152,7 +152,7 @@ private fun ExportActionSection(
 		modifier = Modifier
 			.fillMaxWidth()
 			.padding(6.dp),
-		verticalArrangement = Arrangement.spacedBy(5.dp),
+		verticalArrangement = Arrangement.spacedBy(6.dp),
 	) {
 		// Output Directory Row
 		Row(
@@ -183,45 +183,252 @@ private fun ExportActionSection(
 			)
 		}
 
-		// Generate & Export Row
-		Row(
-			modifier = Modifier.fillMaxWidth(),
-			verticalAlignment = Alignment.CenterVertically,
-			horizontalArrangement = Arrangement.SpaceBetween,
+		// Collapsible or Compact Export Options Container
+		Column(
+			modifier = Modifier
+				.fillMaxWidth()
+				.background(colors.panelElevated, RoundedCornerShape(3.dp))
+				.border(BorderStroke(1.dp, colors.divider), RoundedCornerShape(3.dp))
+				.padding(6.dp),
 		) {
+			// Row 1: Mesh Only
 			Row(
+				modifier = Modifier.fillMaxWidth(),
 				verticalAlignment = Alignment.CenterVertically,
-				horizontalArrangement = Arrangement.spacedBy(10.dp),
 			) {
 				CompactCheckbox(
-					checked = state.generatePhysics,
-					onCheckedChange = { viewModel.setGeneratePhysics(it) },
-					label = tr("settings.physics"),
-					enabled = !isBusy,
-				)
-				CompactCheckbox(
-					checked = state.exportCmo3,
-					onCheckedChange = { viewModel.setExportCmo3(it) },
-					label = tr("settings.cmo3"),
-					enabled = !isBusy,
-				)
-				CompactCheckbox(
-					checked = state.exportMoc3,
-					onCheckedChange = { viewModel.setExportMoc3(it) },
-					label = tr("settings.moc3"),
+					checked = state.meshOnly,
+					onCheckedChange = { viewModel.setMeshOnly(it) },
+					label = tr("export.meshOnly"),
 					enabled = !isBusy,
 				)
 			}
 
-			CompactButton(
-				text = tr("action.generate"),
-				onClick = onGenerate,
-				enabled = state.inputPath.isNotBlank() &&
-					(state.exportCmo3 || state.exportMoc3) && !isBusy,
-				isPrimary = true,
-				height = 22.dp,
-			)
+			// Row 2: Motions (Collapsible, no master checkbox, disabled/grayed when meshOnly)
+			Row(
+				modifier = Modifier
+					.fillMaxWidth()
+					.clickable(enabled = !isBusy && !state.meshOnly) {
+						viewModel.setMotionSubExpanded(!state.motionSubExpanded)
+					}
+					.padding(vertical = 2.dp),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				IconChevron(
+					expanded = state.motionSubExpanded && !state.meshOnly,
+					modifier = Modifier.size(9.dp),
+					tint = if (!state.meshOnly) colors.textMuted else colors.textDisabled,
+				)
+				Spacer(Modifier.width(4.dp))
+				Text(
+					text = tr("export.motions"),
+					style = typography.body.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
+					color = if (!state.meshOnly) colors.textPrimary else colors.textDisabled,
+				)
+				if (!state.motionSubExpanded || state.meshOnly) {
+					Spacer(Modifier.width(6.dp))
+					val activeMotions = buildList {
+						if (state.motionIdle) add(tr("export.motion.idle"))
+						if (state.motionBlink) add(tr("export.motion.blink"))
+						if (state.motionNod) add(tr("export.motion.nod"))
+						if (state.motionShake) add(tr("export.motion.shake"))
+					}
+					Text(
+						text = if (state.meshOnly) "(${tr("export.disabled")})" else "(${activeMotions.joinToString(", ").ifEmpty { tr("export.none") }})",
+						style = typography.body.copy(fontSize = 10.sp),
+						color = colors.textMuted,
+					)
+				}
+			}
+
+			// Motion Sub-items (expanded)
+			if (state.motionSubExpanded && !state.meshOnly) {
+				Column(
+					modifier = Modifier
+						.fillMaxWidth()
+						.padding(start = 14.dp, top = 1.dp, bottom = 2.dp),
+					verticalArrangement = Arrangement.spacedBy(3.dp),
+				) {
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						horizontalArrangement = Arrangement.spacedBy(12.dp),
+					) {
+						CompactCheckbox(
+							checked = state.motionIdle,
+							onCheckedChange = { viewModel.setMotionIdle(it) },
+							label = tr("export.motion.idle"),
+							enabled = !isBusy,
+						)
+						CompactCheckbox(
+							checked = state.motionBlink,
+							onCheckedChange = { viewModel.setMotionBlink(it) },
+							label = tr("export.motion.blink"),
+							enabled = !isBusy,
+						)
+					}
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						horizontalArrangement = Arrangement.spacedBy(12.dp),
+					) {
+						CompactCheckbox(
+							checked = state.motionNod,
+							onCheckedChange = { viewModel.setMotionNod(it) },
+							label = tr("export.motion.nod"),
+							enabled = !isBusy,
+						)
+						CompactCheckbox(
+							checked = state.motionShake,
+							onCheckedChange = { viewModel.setMotionShake(it) },
+							label = tr("export.motion.shake"),
+							enabled = !isBusy,
+						)
+					}
+				}
+			}
+
+			// Row 3: Physics (Collapsible, no master checkbox, disabled/grayed when meshOnly)
+			Row(
+				modifier = Modifier
+					.fillMaxWidth()
+					.clickable(enabled = !isBusy && !state.meshOnly) {
+						viewModel.setPhysicsSubExpanded(!state.physicsSubExpanded)
+					}
+					.padding(vertical = 2.dp),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				IconChevron(
+					expanded = state.physicsSubExpanded && !state.meshOnly,
+					modifier = Modifier.size(9.dp),
+					tint = if (!state.meshOnly) colors.textMuted else colors.textDisabled,
+				)
+				Spacer(Modifier.width(4.dp))
+				Text(
+					text = tr("export.physics"),
+					style = typography.body.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
+					color = if (!state.meshOnly) colors.textPrimary else colors.textDisabled,
+				)
+				if (!state.physicsSubExpanded || state.meshOnly) {
+					Spacer(Modifier.width(6.dp))
+					val activePhysics = buildList {
+						if (state.physicsFrontHair) add(tr("export.physics.frontHair"))
+						if (state.physicsBackHair) add(tr("export.physics.backHair"))
+						if (state.physicsEyeJelly) add(tr("export.physics.eyeJelly"))
+					}
+					Text(
+						text = if (state.meshOnly) "(${tr("export.disabled")})" else "(${activePhysics.joinToString(", ").ifEmpty { tr("export.none") }})",
+						style = typography.body.copy(fontSize = 10.sp),
+						color = colors.textMuted,
+					)
+				}
+			}
+
+			// Physics Sub-items (expanded)
+			if (state.physicsSubExpanded && !state.meshOnly) {
+				Row(
+					modifier = Modifier
+						.fillMaxWidth()
+						.padding(start = 14.dp, top = 1.dp, bottom = 2.dp),
+					horizontalArrangement = Arrangement.spacedBy(10.dp),
+				) {
+					CompactCheckbox(
+						checked = state.physicsFrontHair,
+						onCheckedChange = { viewModel.setPhysicsFrontHair(it) },
+						label = tr("export.physics.frontHair"),
+						enabled = !isBusy,
+					)
+					CompactCheckbox(
+						checked = state.physicsBackHair,
+						onCheckedChange = { viewModel.setPhysicsBackHair(it) },
+						label = tr("export.physics.backHair"),
+						enabled = !isBusy,
+					)
+					CompactCheckbox(
+						checked = state.physicsEyeJelly,
+						onCheckedChange = { viewModel.setPhysicsEyeJelly(it) },
+						label = tr("export.physics.eyeJelly"),
+						enabled = !isBusy,
+					)
+				}
+			}
+
+			Divider(color = colors.divider.copy(alpha = 0.5f), thickness = 0.8.dp)
+
+			// Row 4: Generated Project Files Header (Collapsible)
+			Row(
+				modifier = Modifier
+					.fillMaxWidth()
+					.clickable(enabled = !isBusy) {
+						viewModel.setProjectOutputsExpanded(!state.projectOutputsExpanded)
+					}
+					.padding(vertical = 2.dp),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				IconChevron(
+					expanded = state.projectOutputsExpanded,
+					modifier = Modifier.size(9.dp),
+					tint = colors.textMuted,
+				)
+				Spacer(Modifier.width(4.dp))
+				Text(
+					text = tr("export.projectOutputs"),
+					style = typography.body.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
+					color = colors.textPrimary,
+				)
+				if (!state.projectOutputsExpanded) {
+					Spacer(Modifier.width(6.dp))
+					val activeOutputs = buildList {
+						if (state.exportMoc3) add("moc3")
+						if (state.exportCmo3) add("cmo3")
+						if (state.exportJson) add("json")
+					}
+					Text(
+						text = "(${activeOutputs.joinToString(", ").ifEmpty { "none" }})",
+						style = typography.body.copy(fontSize = 10.sp),
+						color = colors.textMuted,
+					)
+				}
+			}
+
+			// Project Files Sub-items (expanded)
+			if (state.projectOutputsExpanded) {
+				Row(
+					modifier = Modifier
+						.fillMaxWidth()
+						.padding(start = 14.dp, top = 1.dp, bottom = 2.dp),
+					horizontalArrangement = Arrangement.spacedBy(10.dp),
+				) {
+					CompactCheckbox(
+						checked = state.exportMoc3,
+						onCheckedChange = { viewModel.setExportMoc3(it) },
+						label = tr("export.moc3"),
+						enabled = !isBusy,
+					)
+					CompactCheckbox(
+						checked = state.exportCmo3,
+						onCheckedChange = { viewModel.setExportCmo3(it) },
+						label = tr("export.cmo3"),
+						enabled = !isBusy,
+					)
+					CompactCheckbox(
+						checked = state.exportJson,
+						onCheckedChange = { viewModel.setExportJson(it) },
+						label = tr("export.json"),
+						enabled = !isBusy,
+					)
+				}
+			}
 		}
+
+		// Large Generate & Export Action Button
+		CompactButton(
+			text = tr("action.generate"),
+			onClick = onGenerate,
+			enabled = state.inputPath.isNotBlank() &&
+				(state.exportCmo3 || state.exportMoc3 || state.exportJson) && !isBusy,
+			isPrimary = true,
+			height = 26.dp,
+			modifier = Modifier.fillMaxWidth(),
+		)
 	}
 }
 

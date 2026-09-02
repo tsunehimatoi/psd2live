@@ -31,9 +31,24 @@ data class AutoLive2DState(
 	val alphaThreshold: Int = 8,
 	val headStrength: Float = 1.0f,
 	val bodyStrength: Float = 1.0f,
+	val meshOnly: Boolean = false,
+	val generateDeformers: Boolean = true,
+	val exportMotions: Boolean = true,
+	val motionIdle: Boolean = true,
+	val motionBlink: Boolean = true,
+	val motionNod: Boolean = true,
+	val motionShake: Boolean = true,
 	val generatePhysics: Boolean = true,
+	val physicsFrontHair: Boolean = true,
+	val physicsBackHair: Boolean = true,
+	val physicsEyeJelly: Boolean = true,
 	val exportCmo3: Boolean = true,
 	val exportMoc3: Boolean = true,
+	val exportJson: Boolean = true,
+	val exportOptionsExpanded: Boolean = true,
+	val motionSubExpanded: Boolean = false,
+	val physicsSubExpanded: Boolean = false,
+	val projectOutputsExpanded: Boolean = false,
 	val advancedExpanded: Boolean = false,
 	val isAnalyzing: Boolean = false,
 	val isGenerating: Boolean = false,
@@ -61,19 +76,34 @@ data class AutoLive2DState(
 	val errorMessage: String? = null,
 	val successExportMessage: String? = null,
 ) {
-	fun buildConfig(): PipelineConfig = PipelineConfig(
-		atlasSize = atlasSize,
-		texturePadding = texturePadding,
-		meshSpacing = meshSpacing,
-		alphaThreshold = alphaThreshold,
-		headTurnStrength = headStrength,
-		bodyStrength = bodyStrength,
-		generatePhysics = generatePhysics,
-		exportCmo3 = exportCmo3,
-		exportMoc3 = exportMoc3,
-		layerOverrides = layerOverrides,
-		layerVisibility = layerVisibility,
-	)
+	fun buildConfig(): PipelineConfig {
+		val hasAnyMotion = motionIdle || motionBlink || motionNod || motionShake
+		val hasAnyPhysics = physicsFrontHair || physicsBackHair || physicsEyeJelly
+		return PipelineConfig(
+			atlasSize = atlasSize,
+			texturePadding = texturePadding,
+			meshSpacing = meshSpacing,
+			alphaThreshold = alphaThreshold,
+			headTurnStrength = headStrength,
+			bodyStrength = bodyStrength,
+			meshOnly = meshOnly,
+			generateDeformers = !meshOnly,
+			exportMotions = !meshOnly && hasAnyMotion,
+			motionIdle = motionIdle,
+			motionBlink = motionBlink,
+			motionNod = motionNod,
+			motionShake = motionShake,
+			generatePhysics = !meshOnly && hasAnyPhysics,
+			physicsFrontHair = physicsFrontHair,
+			physicsBackHair = physicsBackHair,
+			physicsEyeJelly = physicsEyeJelly,
+			exportCmo3 = exportCmo3,
+			exportMoc3 = exportMoc3,
+			exportJson = exportJson,
+			layerOverrides = layerOverrides,
+			layerVisibility = layerVisibility,
+		)
+	}
 
 	fun isLayerVisible(layerId: String, defaultVisible: Boolean = true): Boolean {
 		layerVisibility[layerId]?.let { return it }

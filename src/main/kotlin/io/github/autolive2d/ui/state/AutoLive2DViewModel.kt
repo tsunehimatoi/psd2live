@@ -162,8 +162,74 @@ class AutoLive2DViewModel : AutoCloseable {
 		schedulePreviewRebuild()
 	}
 
+	fun setMeshOnly(enabled: Boolean) {
+		_state.update { it.copy(meshOnly = enabled, generateDeformers = !enabled) }
+		schedulePreviewRebuild()
+	}
+
+	fun setGenerateDeformers(enabled: Boolean) {
+		_state.update { it.copy(generateDeformers = enabled) }
+		schedulePreviewRebuild()
+	}
+
+	fun setExportMotions(enabled: Boolean) {
+		_state.update { it.copy(exportMotions = enabled) }
+	}
+
+	fun setMotionIdle(enabled: Boolean) {
+		_state.update {
+			val next = it.copy(motionIdle = enabled)
+			next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake)
+		}
+	}
+
+	fun setMotionBlink(enabled: Boolean) {
+		_state.update {
+			val next = it.copy(motionBlink = enabled)
+			next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake)
+		}
+	}
+
+	fun setMotionNod(enabled: Boolean) {
+		_state.update {
+			val next = it.copy(motionNod = enabled)
+			next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake)
+		}
+	}
+
+	fun setMotionShake(enabled: Boolean) {
+		_state.update {
+			val next = it.copy(motionShake = enabled)
+			next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake)
+		}
+	}
+
 	fun setGeneratePhysics(enabled: Boolean) {
 		_state.update { it.copy(generatePhysics = enabled) }
+		schedulePreviewRebuild()
+	}
+
+	fun setPhysicsFrontHair(enabled: Boolean) {
+		_state.update {
+			val next = it.copy(physicsFrontHair = enabled)
+			next.copy(generatePhysics = next.physicsFrontHair || next.physicsBackHair || next.physicsEyeJelly)
+		}
+		schedulePreviewRebuild()
+	}
+
+	fun setPhysicsBackHair(enabled: Boolean) {
+		_state.update {
+			val next = it.copy(physicsBackHair = enabled)
+			next.copy(generatePhysics = next.physicsFrontHair || next.physicsBackHair || next.physicsEyeJelly)
+		}
+		schedulePreviewRebuild()
+	}
+
+	fun setPhysicsEyeJelly(enabled: Boolean) {
+		_state.update {
+			val next = it.copy(physicsEyeJelly = enabled)
+			next.copy(generatePhysics = next.physicsFrontHair || next.physicsBackHair || next.physicsEyeJelly)
+		}
 		schedulePreviewRebuild()
 	}
 
@@ -173,6 +239,26 @@ class AutoLive2DViewModel : AutoCloseable {
 
 	fun setExportMoc3(enabled: Boolean) {
 		_state.update { it.copy(exportMoc3 = enabled) }
+	}
+
+	fun setExportJson(enabled: Boolean) {
+		_state.update { it.copy(exportJson = enabled) }
+	}
+
+	fun setExportOptionsExpanded(expanded: Boolean) {
+		_state.update { it.copy(exportOptionsExpanded = expanded) }
+	}
+
+	fun setMotionSubExpanded(expanded: Boolean) {
+		_state.update { it.copy(motionSubExpanded = expanded) }
+	}
+
+	fun setPhysicsSubExpanded(expanded: Boolean) {
+		_state.update { it.copy(physicsSubExpanded = expanded) }
+	}
+
+	fun setProjectOutputsExpanded(expanded: Boolean) {
+		_state.update { it.copy(projectOutputsExpanded = expanded) }
 	}
 
 	fun setAdvancedExpanded(expanded: Boolean) {
@@ -188,9 +274,20 @@ class AutoLive2DViewModel : AutoCloseable {
 				alphaThreshold = 8,
 				headStrength = 1.0f,
 				bodyStrength = 1.0f,
+				meshOnly = false,
+				generateDeformers = true,
+				exportMotions = true,
+				motionIdle = true,
+				motionBlink = true,
+				motionNod = true,
+				motionShake = true,
 				generatePhysics = true,
+				physicsFrontHair = true,
+				physicsBackHair = true,
+				physicsEyeJelly = true,
 				exportCmo3 = true,
 				exportMoc3 = true,
+				exportJson = true,
 			)
 		}
 		schedulePreviewRebuild()

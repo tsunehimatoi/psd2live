@@ -135,6 +135,7 @@ object RigIntegrityValidator {
 	 * near/far face sizes and MouthForm +/- are semantic differences, not mirror directions.
 	 */
 	fun validateDirectionalWarpDimensions(label: String, puppet: PuppetModel) {
+		if (puppet.deformers.isEmpty()) return
 		val warps = puppet.deformers.filterIsInstance<Deformer.Warp>()
 		val byId = warps.associateBy { it.id.raw }
 

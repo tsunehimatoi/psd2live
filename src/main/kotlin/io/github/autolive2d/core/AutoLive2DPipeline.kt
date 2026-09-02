@@ -101,8 +101,11 @@ class AutoLive2DPipeline {
 				nowMillis = Instant.now().toEpochMilli(),
 				obfuscateKey = 0x42,
 			)
-			if (config.generatePhysics) {
-				Cmo3PhysicsInjector.inject(converted.model.root as CModelSource, hasFrontHair, hasBackHair, hasEyeJelly)
+			val useFrontHairPhysics = hasFrontHair && config.generatePhysics && config.physicsFrontHair && !config.meshOnly
+			val useBackHairPhysics = hasBackHair && config.generatePhysics && config.physicsBackHair && !config.meshOnly
+			val useEyeJellyPhysics = hasEyeJelly && config.generatePhysics && config.physicsEyeJelly && !config.meshOnly
+			if (useFrontHairPhysics || useBackHairPhysics || useEyeJellyPhysics) {
+				Cmo3PhysicsInjector.inject(converted.model.root as CModelSource, useFrontHairPhysics, useBackHairPhysics, useEyeJellyPhysics)
 			}
 			val bytes = Cmo3.write(converted.model)
 			files += writeContained(outputRoot, "$baseName.cmo3", bytes)
@@ -118,9 +121,11 @@ class AutoLive2DPipeline {
 		}
 		progress.update(tr("progress.exportCmo3"), 0.91)
 
-		val report = projectReport(baseName, analysis, rig, atlas, config, warnings)
-		Json.parseToJsonElement(report)
-		files += writeContained(outputRoot, "$baseName.autolive2d.json", report.encodeToByteArray())
+		if (config.exportJson) {
+			val report = projectReport(baseName, analysis, rig, atlas, config, warnings)
+			Json.parseToJsonElement(report)
+			files += writeContained(outputRoot, "$baseName.autolive2d.json", report.encodeToByteArray())
+		}
 		progress.update(tr("progress.validated"), 1.0)
 		return PipelineResult(analysis, files, warnings, RigPreviewModel(analysis, atlas, rig, config, runtimeBundle))
 	}
@@ -140,24 +145,56 @@ class AutoLive2DPipeline {
 		val hasFrontHair = analysis.layers.any { it.semantic.tag == SemanticTag.FRONT_HAIR && it.opaquePixels > 0 }
 		val hasBackHair = analysis.layers.any { it.semantic.tag == SemanticTag.BACK_HAIR && it.opaquePixels > 0 }
 		val hasEyeJelly = analysis.layers.any { it.semantic.tag == SemanticTag.IRIDES && it.opaquePixels > 0 }
-		val physics = if (config.generatePhysics) {
-			PhysicsGenerator.generate(hasFrontHair, hasBackHair, hasEyeJelly)?.let(CubismJson::normalize)
+		val useFrontHairPhysics = hasFrontHair && config.generatePhysics && config.physicsFrontHair && !config.meshOnly
+		val useBackHairPhysics = hasBackHair && config.generatePhysics && config.physicsBackHair && !config.meshOnly
+		val useEyeJellyPhysics = hasEyeJelly && config.generatePhysics && config.physicsEyeJelly && !config.meshOnly
+		val physics = if (useFrontHairPhysics || useBackHairPhysics || useEyeJellyPhysics) {
+			PhysicsGenerator.generate(useFrontHairPhysics, useBackHairPhysics, useEyeJellyPhysics)?.let(CubismJson::normalize)
 		} else null
-		val motionName = "$baseName.idle.motion3.json"
-		val motion = CubismJson.normalize(MotionGenerator.idle()).also { Json.parseToJsonElement(it) }
+
+		val motions = buildList<Pair<String, Pair<String, String>>> {
+			if (config.exportMotions && !config.meshOnly) {
+				if (config.motionIdle) {
+					val name = "$baseName.idle.motion3.json"
+					val json = CubismJson.normalize(MotionGenerator.idle()).also { Json.parseToJsonElement(it) }
+					add("Idle" to (name to json))
+				}
+				if (config.motionBlink) {
+					val name = "$baseName.blink.motion3.json"
+					val json = CubismJson.normalize(MotionGenerator.blink()).also { Json.parseToJsonElement(it) }
+					add("Blink" to (name to json))
+				}
+				if (config.motionNod) {
+					val name = "$baseName.nod.motion3.json"
+					val json = CubismJson.normalize(MotionGenerator.nod()).also { Json.parseToJsonElement(it) }
+					add("Nod" to (name to json))
+				}
+				if (config.motionShake) {
+					val name = "$baseName.shake.motion3.json"
+					val json = CubismJson.normalize(MotionGenerator.shake()).also { Json.parseToJsonElement(it) }
+					add("Shake" to (name to json))
+				}
+			}
+		}
+		val motionMap = if (motions.isNotEmpty()) {
+			motions.groupBy({ it.first }, { Model3Motion(file = it.second.first) })
+		} else null
+
 		val sidecars = buildList {
 			physics?.let {
 				Moc3.readPhysics3(it)
 				add(Moc3Sidecars.PassThroughSidecar(Moc3Sidecars.SidecarKind.Physics, "$baseName.physics3.json", it))
 			}
-			add(Moc3Sidecars.PassThroughSidecar(Moc3Sidecars.SidecarKind.Motion, motionName, motion))
+			for ((_, motionPair) in motions) {
+				add(Moc3Sidecars.PassThroughSidecar(Moc3Sidecars.SidecarKind.Motion, motionPair.first, motionPair.second))
+			}
 		}
 		val manifestTemplate = Model3Json(
 			version = 3,
 			fileReferences = FileReferences(
 				moc = "",
 				textures = emptyList(),
-				motions = mapOf("Idle" to listOf(Model3Motion(file = motionName))),
+				motions = motionMap,
 			),
 			groups = listOf(
 				Model3Group("Parameter", "EyeBlink", listOf("ParamEyeLOpen", "ParamEyeROpen")),
@@ -251,6 +288,9 @@ class AutoLive2DPipeline {
 		val hasFrontHair = analysis.layers.any { it.semantic.tag == SemanticTag.FRONT_HAIR && it.opaquePixels > 0 }
 		val hasBackHair = analysis.layers.any { it.semantic.tag == SemanticTag.BACK_HAIR && it.opaquePixels > 0 }
 		val hasEyeJelly = analysis.layers.any { it.semantic.tag == SemanticTag.IRIDES && it.opaquePixels > 0 }
+		val useFrontHair = hasFrontHair && config.generatePhysics && config.physicsFrontHair && !config.meshOnly
+		val useBackHair = hasBackHair && config.generatePhysics && config.physicsBackHair && !config.meshOnly
+		val useEyeJelly = hasEyeJelly && config.generatePhysics && config.physicsEyeJelly && !config.meshOnly
 		return """
 		{
 		  "version": 1,
@@ -259,10 +299,10 @@ class AutoLive2DPipeline {
 		  "runtimeTarget": ${quote(rig.puppet.runtimeTarget.name)},
 		  "mocVersion": ${rig.puppet.runtimeTarget.mocVersion().byteValue},
 		  "canvas": {"width":${analysis.source.widthPx},"height":${analysis.source.heightPx}},
-		  "config": {"atlasSize":${config.atlasSize},"meshSpacing":${config.meshSpacing},"headTurnStrength":${config.headTurnStrength},"bodyStrength":${config.bodyStrength}},
+		  "config": {"atlasSize":${config.atlasSize},"meshSpacing":${config.meshSpacing},"headTurnStrength":${config.headTurnStrength},"bodyStrength":${config.bodyStrength},"meshOnly":${config.meshOnly},"generateDeformers":${config.generateDeformers},"exportMotions":${config.exportMotions}},
 		  "faceRig": {"algorithm":"perspective-parallelogram-nine-pose-v2","angleX":[-45,0,45],"angleY":[-30,0,30],"initialAngleZ":${rig.initialHeadAngleZ},"centerX":${rig.faceCenterX},"centerY":${rig.faceCenterY},"radiusX":${rig.faceRadiusX},"radiusY":${rig.faceRadiusY}},
 		  "deformerHierarchy": {"head":"DeformHeadContainer","face":"DeformFaceNinePose","frontHair":["DeformHairFrontFollow","DeformHairFrontPhysics"],"backHair":["DeformHairBackFollow","DeformHairBackPhysics"]},
-		  "physics": {"enabled":${config.generatePhysics},"frontHair":$hasFrontHair,"backHair":$hasBackHair,"eyeJelly":$hasEyeJelly,"preset":"hair-and-eye-pendulum"},
+		  "physics": {"enabled":${config.generatePhysics && !config.meshOnly},"frontHair":$useFrontHair,"backHair":$useBackHair,"eyeJelly":$useEyeJelly,"preset":"hair-and-eye-pendulum"},
 		  "summary": {"layers":${analysis.layers.size},"drawables":${rig.puppet.drawables.size},"deformers":${rig.puppet.deformers.size},"parameters":${rig.puppet.parameters.size},"atlasPages":${atlas.pages.size}},
 		  "layers": [
 		$layers

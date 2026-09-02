@@ -31,9 +31,72 @@ class AutoLive2DViewModelTest {
 		assertEquals(8, config.alphaThreshold)
 		assertEquals(1.0f, config.headTurnStrength)
 		assertEquals(1.0f, config.bodyStrength)
+		assertFalse(config.meshOnly)
+		assertTrue(config.generateDeformers)
+		assertTrue(config.exportMotions)
+		assertTrue(config.motionIdle)
+		assertTrue(config.motionBlink)
+		assertTrue(config.motionNod)
+		assertTrue(config.motionShake)
 		assertTrue(config.generatePhysics)
+		assertTrue(config.physicsFrontHair)
+		assertTrue(config.physicsBackHair)
+		assertTrue(config.physicsEyeJelly)
 		assertTrue(config.exportCmo3)
 		assertTrue(config.exportMoc3)
+		assertTrue(config.exportJson)
+	}
+
+	@Test
+	fun `export options setters update state properly`() {
+		val vm = AutoLive2DViewModel()
+		try {
+			// Sub-items toggle updates parent exportMotions and generatePhysics
+			vm.setMotionIdle(false)
+			vm.setMotionBlink(false)
+			vm.setMotionNod(false)
+			vm.setMotionShake(false)
+			assertFalse(vm.state.value.exportMotions)
+			assertFalse(vm.state.value.buildConfig().exportMotions)
+
+			vm.setMotionIdle(true)
+			assertTrue(vm.state.value.exportMotions)
+			assertTrue(vm.state.value.buildConfig().exportMotions)
+
+			vm.setPhysicsFrontHair(false)
+			vm.setPhysicsBackHair(false)
+			vm.setPhysicsEyeJelly(false)
+			assertFalse(vm.state.value.generatePhysics)
+			assertFalse(vm.state.value.buildConfig().generatePhysics)
+
+			vm.setPhysicsEyeJelly(true)
+			assertTrue(vm.state.value.generatePhysics)
+			assertTrue(vm.state.value.buildConfig().generatePhysics)
+
+			// Setting meshOnly=true automatically deactivates deformers, motions, physics in buildConfig
+			vm.setMeshOnly(true)
+			val meshOnlyState = vm.state.value
+			assertTrue(meshOnlyState.meshOnly)
+			assertFalse(meshOnlyState.generateDeformers)
+			val meshOnlyConfig = meshOnlyState.buildConfig()
+			assertTrue(meshOnlyConfig.meshOnly)
+			assertFalse(meshOnlyConfig.generateDeformers)
+			assertFalse(meshOnlyConfig.exportMotions)
+			assertFalse(meshOnlyConfig.generatePhysics)
+
+			// Setting meshOnly=false restores deformers and evaluates motions/physics from sub-items
+			vm.setMeshOnly(false)
+			val restoredState = vm.state.value
+			assertFalse(restoredState.meshOnly)
+			assertTrue(restoredState.generateDeformers)
+			val restoredConfig = restoredState.buildConfig()
+			assertFalse(restoredConfig.meshOnly)
+			assertTrue(restoredConfig.generateDeformers)
+			assertTrue(restoredConfig.exportMotions)
+			assertTrue(restoredConfig.generatePhysics)
+		} finally {
+			vm.close()
+		}
 	}
 
 	@Test

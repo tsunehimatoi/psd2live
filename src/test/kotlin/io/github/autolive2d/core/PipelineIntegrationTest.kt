@@ -142,4 +142,66 @@ class PipelineIntegrationTest {
 		}
 		assertTrue(result.warnings.none { "FractionalDrawOrder" in it })
 	}
+
+	@Test
+	fun `mesh-only configuration exports minimal geometry and no deformers or physics`() {
+		val sample = Path.of("..", "Anime2.5DRig", "sample.psd").toAbsolutePath().normalize()
+		if (!Files.isRegularFile(sample)) return
+		val output = createTempDirectory("autolive2d-meshonly-")
+		val result = AutoLive2DPipeline().run(
+			sample,
+			output,
+			PipelineConfig(
+				atlasSize = 2048,
+				meshSpacing = 128,
+				meshOnly = true,
+				exportCmo3 = true,
+				exportMoc3 = true,
+				exportJson = true,
+			),
+		)
+		val byExtension = result.exportedFiles.associateBy { it.path.fileName.toString().substringAfter('.') }
+		val mocDocument = Moc3.read(Files.readAllBytes(checkNotNull(byExtension["moc3"]).path))
+		val mocPuppet = Moc3Import.fromMocDocument(mocDocument, null)
+		assertTrue(mocPuppet.deformers.isEmpty(), "Mesh-only mode must not produce deformers")
+		assertTrue(mocPuppet.drawables.all { it.parentDeformerId == null }, "Mesh-only drawables must not reference parent deformers")
+		assertTrue(result.exportedFiles.none { it.path.fileName.toString().endsWith(".physics3.json") }, "Mesh-only must not export physics")
+		assertTrue(result.exportedFiles.none { it.path.fileName.toString().endsWith(".motion3.json") }, "Mesh-only must not export motions")
+		assertTrue(result.exportedFiles.any { it.path.fileName.toString().endsWith(".autolive2d.json") }, "Must export autolive2d metadata json")
+	}
+
+	@Test
+	fun `fine-grained sub-motions and physics selections are exported correctly`() {
+		val sample = Path.of("..", "Anime2.5DRig", "sample.psd").toAbsolutePath().normalize()
+		if (!Files.isRegularFile(sample)) return
+		val output = createTempDirectory("autolive2d-granular-")
+		val result = AutoLive2DPipeline().run(
+			sample,
+			output,
+			PipelineConfig(
+				atlasSize = 2048,
+				meshSpacing = 128,
+				exportMotions = true,
+				motionIdle = false,
+				motionBlink = true,
+				motionNod = true,
+				motionShake = false,
+				generatePhysics = true,
+				physicsFrontHair = true,
+				physicsBackHair = false,
+				physicsEyeJelly = true,
+			),
+		)
+		assertTrue(result.exportedFiles.any { it.path.fileName.toString().endsWith(".blink.motion3.json") })
+		assertTrue(result.exportedFiles.any { it.path.fileName.toString().endsWith(".nod.motion3.json") })
+		assertTrue(result.exportedFiles.none { it.path.fileName.toString().endsWith(".idle.motion3.json") })
+		assertTrue(result.exportedFiles.none { it.path.fileName.toString().endsWith(".shake.motion3.json") })
+		val physicsFile = result.exportedFiles.firstOrNull { it.path.fileName.toString().endsWith(".physics3.json") }
+		if (physicsFile != null) {
+			val physics = Moc3.readPhysics3(Files.readString(physicsFile.path))
+			val ids = physics.physicsSettings.map { it.id }
+			assertTrue("PhysicsHairFront" in ids)
+			assertTrue("PhysicsHairBack" !in ids)
+		}
+	}
 }

@@ -161,20 +161,25 @@ object RigBuilder {
 		val headAccessoryPartId = PartId("PartHeadAccessories")
 		val bodyPartId = PartId("PartBody")
 		val extraPartId = PartId("PartExtra")
-		val deformers = buildDeformers(
-			faceRig,
-			characterFrame,
-			headFrame,
-			faceFrame,
-			frontHairFrame,
-			backHairFrame,
-			headPartId,
-			facePartId,
-			frontHairPartId,
-			backHairPartId,
-			bodyPartId,
-			config,
-		)
+		val shouldBuildDeformers = !config.meshOnly && config.generateDeformers
+		val deformers = if (shouldBuildDeformers) {
+			buildDeformers(
+				faceRig,
+				characterFrame,
+				headFrame,
+				faceFrame,
+				frontHairFrame,
+				backHairFrame,
+				headPartId,
+				facePartId,
+				frontHairPartId,
+				backHairPartId,
+				bodyPartId,
+				config,
+			)
+		} else {
+			emptyList()
+		}
 
 		val idCounts = mutableMapOf<String, Int>()
 		val drawables = mutableListOf<Drawable>()
@@ -193,33 +198,44 @@ object RigBuilder {
 			val rigLayer = rigLayerById.getValue(layer.source.id.raw)
 			val parentAndFrame = parentAndFrame(layer, faceRig, analysis.anchors, characterFrame, headFrame, faceFrame, frontHairFrame, backHairFrame)
 			val id = uniqueDrawableId(layer, idCounts)
+			val effectiveHeadSpace = if (isHeadLayer && shouldBuildDeformers) headSpace else null
 			val meshData = buildGridMesh(
 				layer,
 				parentAndFrame.second,
-				if (isHeadLayer) headSpace else null,
+				effectiveHeadSpace,
 				placement,
 				atlas.pages[placement.page].image.width,
 				config.meshSpacing,
 				config.alphaThreshold,
 			)
+			val effectiveMesh = if (shouldBuildDeformers) {
+				meshData.mesh
+			} else {
+				DrawableMesh(meshData.rigPositions, meshData.mesh.uvs, meshData.mesh.indices)
+			}
 			val mouthAperture = mouthApertureFor(rigLayer)
-			val geometryGrid = buildDrawableGeometry(
-				rigLayer,
-				meshData,
-				parentAndFrame.second,
-				faceRig,
-				matchingEyeWhiteBounds(rigLayer, eyeWhiteLayers),
-				mouthAperture,
-			)
+			val geometryGrid = if (config.meshOnly) {
+				zeroMeshGrid(effectiveMesh.positions.size)
+			} else {
+				buildDrawableGeometry(
+					rigLayer,
+					meshData,
+					parentAndFrame.second,
+					faceRig,
+					matchingEyeWhiteBounds(rigLayer, eyeWhiteLayers),
+					mouthAperture,
+				)
+			}
+			val channelGrids = if (config.meshOnly) ChannelGrids.Empty else buildChannels(layer)
 			val drawable = Drawable(
 				id = id,
 				name = layer.source.name,
-				parentDeformerId = parentAndFrame.first,
+				parentDeformerId = if (shouldBuildDeformers) parentAndFrame.first else null,
 				blendMode = blendMode(layer.source.blend),
 				maskedBy = emptyList(),
-				mesh = meshData.mesh,
+				mesh = effectiveMesh,
 				geometryGrid = geometryGrid,
-				channelGrids = buildChannels(layer),
+				channelGrids = channelGrids,
 				// Cubism Editor stores draw order as an integer. Keeping this integral also makes
 				// fresh CMO3 conversion lossless instead of reporting one advisory per drawable.
 				drawOrder = (orderedLayers.size - drawIndex).coerceAtMost(1000).toFloat(),
@@ -234,7 +250,8 @@ object RigBuilder {
 				layer,
 				meshData,
 				mouthAperture,
-				if (isHeadLayer) headSpace else null,
+				effectiveHeadSpace,
+				config.meshOnly,
 			)
 			layerIdByDrawable[id.raw] = layer.source.id.raw
 		}
@@ -1167,8 +1184,9 @@ object RigBuilder {
 		data: MeshData,
 		mouthAperture: Bounds?,
 		headSpace: HeadCoordinateSpace?,
+		meshOnly: Boolean = false,
 	): Bounds {
-		if (layer.semantic.tag !in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) || mouthAperture == null) return layer.bounds
+		if (meshOnly || layer.semantic.tag !in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) || mouthAperture == null) return layer.bounds
 		var left = Float.POSITIVE_INFINITY
 		var top = Float.POSITIVE_INFINITY
 		var right = Float.NEGATIVE_INFINITY

@@ -18,6 +18,19 @@ class GeneratorTest {
 	}
 
 	@Test
+	fun `sub-motions blink, nod, shake generate valid motion JSON`() {
+		val blinkRoot = Json.parseToJsonElement(MotionGenerator.blink()).jsonObject
+		assertEquals(3, blinkRoot.getValue("Version").jsonPrimitive.content.toInt())
+		assertEquals("false", blinkRoot.getValue("Meta").jsonObject.getValue("Loop").jsonPrimitive.content)
+
+		val nodRoot = Json.parseToJsonElement(MotionGenerator.nod()).jsonObject
+		assertEquals(3, nodRoot.getValue("Version").jsonPrimitive.content.toInt())
+
+		val shakeRoot = Json.parseToJsonElement(MotionGenerator.shake()).jsonObject
+		assertEquals(3, shakeRoot.getValue("Version").jsonPrimitive.content.toInt())
+	}
+
+	@Test
 	fun `hair physics follows physics3 schema`() {
 		val physics = assertNotNull(Moc3.readPhysics3(checkNotNull(PhysicsGenerator.generate(true, true))))
 		assertEquals(2, physics.meta.physicsSettingCount)

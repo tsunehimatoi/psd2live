@@ -44,11 +44,15 @@ fun main(arguments: Array<String>) {
 		meshSpacing = options.int("--mesh-spacing", 64),
 		headTurnStrength = options.float("--head-strength", 1f),
 		bodyStrength = options.float("--body-strength", 1f),
+		meshOnly = options.flags.contains("--mesh-only"),
+		generateDeformers = !options.flags.contains("--no-deformers"),
+		exportMotions = !options.flags.contains("--no-motions"),
 		generatePhysics = !options.flags.contains("--no-physics"),
 		exportCmo3 = !options.flags.contains("--no-cmo3"),
 		exportMoc3 = !options.flags.contains("--no-moc3"),
+		exportJson = !options.flags.contains("--no-json"),
 	)
-	require(config.exportCmo3 || config.exportMoc3) { tr("cli.exportFormatRequired") }
+	require(config.exportCmo3 || config.exportMoc3 || config.exportJson) { tr("cli.exportFormatRequired") }
 	val input = Path.of(options.required("--input"))
 	val output = Path.of(options.value("--output") ?: input.toAbsolutePath().parent.resolve("autolive2d-output").toString())
 	println(tr("cli.start", input.toAbsolutePath(), output.toAbsolutePath()))
@@ -78,7 +82,7 @@ private data class CliOptions(val values: Map<String, String>, val flags: Set<St
 	fun float(name: String, default: Float): Float = value(name)?.toFloatOrNull() ?: default
 
 	companion object {
-		private val flagNames = setOf("--no-physics", "--no-cmo3", "--no-moc3")
+		private val flagNames = setOf("--no-physics", "--no-cmo3", "--no-moc3", "--mesh-only", "--no-deformers", "--no-motions", "--no-json")
 		private val valueNames = setOf("--input", "--output", "--lang", "--atlas", "--mesh-spacing", "--head-strength", "--body-strength")
 		fun parse(arguments: Array<String>): CliOptions {
 			val values = linkedMapOf<String, String>()
