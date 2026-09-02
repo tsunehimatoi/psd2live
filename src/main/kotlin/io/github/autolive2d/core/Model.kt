@@ -3,6 +3,7 @@ package io.github.autolive2d.core
 import org.umamo.format.art.SourceArt
 import org.umamo.format.art.SourceLayer
 import java.awt.image.BufferedImage
+import java.io.ByteArrayOutputStream
 import java.nio.file.Path
 
 enum class SemanticTag(val canonicalName: String, val group: LayerGroup) {
@@ -109,6 +110,44 @@ data class PipelineConfig(
 	val layerVisibility: Map<String, Boolean> = emptyMap(),
 )
 
+/** One file from the MOC3 family consumed by the official Cubism runtime preview. */
+data class CubismRuntimeAsset(val path: String, val bytes: ByteArray)
+
+/**
+ * The exact runtime family prepared for export.  [encodePreviewBundle] only adds a small transport
+ * envelope; every embedded byte is the same byte later written to the output directory.
+ */
+data class CubismRuntimeBundle(
+	val manifestPath: String,
+	val assets: List<CubismRuntimeAsset>,
+) {
+	init {
+		require(manifestPath.isNotBlank()) { "Cubism preview manifest path is blank" }
+		require(assets.any { it.path == manifestPath }) { "Cubism preview manifest is missing: $manifestPath" }
+	}
+
+	fun encodePreviewBundle(): ByteArray = ByteArrayOutputStream().use { output ->
+		output.write("QDPREVIEW".encodeToByteArray())
+		output.writeLittleEndian(1, Int.SIZE_BYTES)
+		val manifest = manifestPath.encodeToByteArray()
+		output.writeLittleEndian(manifest.size.toLong(), Int.SIZE_BYTES)
+		output.writeLittleEndian(assets.size.toLong(), Int.SIZE_BYTES)
+		output.write(manifest)
+		for (asset in assets) {
+			val path = asset.path.encodeToByteArray()
+			output.writeLittleEndian(path.size.toLong(), Int.SIZE_BYTES)
+			output.writeLittleEndian(asset.bytes.size.toLong(), Long.SIZE_BYTES)
+			output.write(path)
+			output.write(asset.bytes)
+		}
+		output.toByteArray()
+	}
+
+	private fun ByteArrayOutputStream.writeLittleEndian(value: Long, byteCount: Int) {
+		for (index in 0 until byteCount) write((value ushr (index * 8)).toInt() and 0xff)
+	}
+}
+
 data class LayerClassificationOverride(
 	val tag: SemanticTag,
 	val side: Side,
@@ -143,6 +182,7 @@ data class RigPreviewModel(
 	val atlas: PackedAtlas,
 	val rig: BuiltRig,
 	val config: PipelineConfig,
+	val runtimeBundle: CubismRuntimeBundle,
 )
 
 data class ExportedFile(val path: Path, val bytes: Long)

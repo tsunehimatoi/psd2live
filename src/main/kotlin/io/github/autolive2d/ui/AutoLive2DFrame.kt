@@ -62,6 +62,7 @@ import javax.swing.JTabbedPane
 import javax.swing.JTable
 import javax.swing.JTextArea
 import javax.swing.JTextField
+import javax.swing.JToggleButton
 import javax.swing.KeyStroke
 import javax.swing.SpinnerNumberModel
 import javax.swing.SwingWorker
@@ -88,6 +89,12 @@ class AutoLive2DFrame : JFrame() {
 	private val hierarchyPanel = HierarchyPanel(selectionModel)
 	private val topologyPanel = TopologyPanel(selectionModel)
 	private val previewPanel = ModelPreviewPanel()
+	private val animationButton = JToggleButton().apply {
+		isSelected = true
+		isEnabled = false
+		margin = Insets(2, 9, 2, 9)
+	}
+	private val parameterPanel = ParameterPanel { overrides -> previewPanel.parameterOverrides = overrides }
 	private val logArea = JTextArea()
 	private val settingsPanel = RigSettingsPanel(onSettingsChanged = {
 		if (currentPreviewModel != null) previewRefreshTimer.restart()
@@ -100,10 +107,12 @@ class AutoLive2DFrame : JFrame() {
 	private val projectBorder = BorderFactory.createTitledBorder("")
 	private val layerTableBorder = BorderFactory.createTitledBorder("")
 	private val workspaceTabs = JTabbedPane()
+	private val inspectorTabs = JTabbedPane()
 	private val layerPopup = JPopupMenu()
 	private val previewRefreshTimer = Timer(260) { rebuildPreviewFromEdits() }.apply { isRepeats = false }
 
 	init {
+		previewPanel.onParameterValuesChanged = parameterPanel::updateLiveValues
 		defaultCloseOperation = EXIT_ON_CLOSE
 		minimumSize = Dimension(980, 680)
 		preferredSize = Dimension(1280, 820)
@@ -177,7 +186,7 @@ class AutoLive2DFrame : JFrame() {
 		workspaceTabs.apply {
 			addTab("", hierarchyPanel)
 			addTab("", topologyPanel)
-			addTab("", previewPanel)
+			addTab("", buildPreviewTab())
 			addTab("", JScrollPane(logArea.apply {
 				isEditable = false
 				font = Font(Font.MONOSPACED, Font.PLAIN, 12)
@@ -200,7 +209,11 @@ class AutoLive2DFrame : JFrame() {
 			layerTable.setDefaultRenderer(Int::class.javaObjectType, renderer)
 			layerTable.setDefaultRenderer(Float::class.javaObjectType, renderer)
 			configureLayerTableColumns()
-			add(JScrollPane(layerTable).apply { border = layerTableBorder }, BorderLayout.CENTER)
+			inspectorTabs.apply {
+				addTab("", JScrollPane(layerTable).apply { border = layerTableBorder })
+				addTab("", parameterPanel)
+			}
+			add(inspectorTabs, BorderLayout.CENTER)
 			add(JPanel(FlowLayout(FlowLayout.RIGHT)).apply {
 				add(analyzeButton)
 				add(runButton)
@@ -211,6 +224,14 @@ class AutoLive2DFrame : JFrame() {
 			resizeWeight = 0.55
 			dividerLocation = 650
 		}
+	}
+
+	private fun buildPreviewTab(): JPanel = JPanel(BorderLayout()).apply {
+		add(JPanel(FlowLayout(FlowLayout.RIGHT, 6, 4)).apply {
+			border = BorderFactory.createMatteBorder(0, 0, 1, 0, Color(218, 221, 226))
+			add(animationButton)
+		}, BorderLayout.NORTH)
+		add(previewPanel, BorderLayout.CENTER)
 	}
 
 	private fun buildStatusBar(): JPanel = JPanel(BorderLayout(8, 0)).apply {
@@ -255,10 +276,16 @@ class AutoLive2DFrame : JFrame() {
 		workspaceTabs.setTitleAt(1, tr("tab.topology"))
 		workspaceTabs.setTitleAt(2, tr("tab.preview"))
 		workspaceTabs.setTitleAt(3, tr("tab.log"))
+		inspectorTabs.setTitleAt(0, tr("tab.layers"))
+		inspectorTabs.setTitleAt(1, tr("tab.parameters"))
+		inspectorTabs.setToolTipTextAt(0, tr("tab.layers.tip"))
+		inspectorTabs.setToolTipTextAt(1, tr("tab.parameters.tip"))
 		layerTableModel.languageChanged()
 		configureLayerTableColumns()
 		refreshLayerPopup()
 		hierarchyPanel.refreshTranslations()
+		parameterPanel.refreshTexts()
+		refreshAnimationButton()
 		topologyPanel.repaint()
 		previewPanel.repaint()
 		currentPreviewModel?.let {
@@ -285,6 +312,10 @@ class AutoLive2DFrame : JFrame() {
 	private fun installActions() {
 		analyzeButton.addActionListener { analyze() }
 		runButton.addActionListener { runPipeline() }
+		animationButton.addActionListener {
+			previewPanel.animationEnabled = animationButton.isSelected
+			refreshAnimationButton()
+		}
 		layerTableModel.onClassificationChanged = { _, _ ->
 			statusLabel.text = tr("status.classificationChanged")
 			previewRefreshTimer.restart()
@@ -500,6 +531,7 @@ class AutoLive2DFrame : JFrame() {
 		analyzeButton.isEnabled = false
 		runButton.isEnabled = false
 		settingsPanel.setControlsEnabled(false)
+		parameterPanel.setControlsEnabled(false)
 		progressBar.value = 0
 		progressBar.isIndeterminate = indeterminate
 		statusLabel.text = message
@@ -514,6 +546,7 @@ class AutoLive2DFrame : JFrame() {
 		analyzeButton.isEnabled = true
 		runButton.isEnabled = true
 		settingsPanel.setControlsEnabled(true)
+		parameterPanel.setControlsEnabled(true)
 		progressBar.isIndeterminate = false
 	}
 
@@ -530,6 +563,8 @@ class AutoLive2DFrame : JFrame() {
 		hierarchyPanel.previewModel = model
 		topologyPanel.previewModel = model
 		previewPanel.previewModel = model
+		animationButton.isEnabled = true
+		parameterPanel.setPreviewModel(model)
 		layerTable.revalidate()
 		layerTable.repaint()
 		showAnalysisStatus(model)
@@ -608,10 +643,18 @@ class AutoLive2DFrame : JFrame() {
 		topologyPanel.visibleLayerIds = null
 		previewPanel.previewModel = null
 		previewPanel.visibleLayerIds = null
+		previewPanel.parameterOverrides = emptyMap()
+		animationButton.isEnabled = false
+		parameterPanel.clear()
 		selectionModel.select(null)
 		layerTableBorder.title = tr("layers.title")
 		layerTable.repaint()
 		runButton.isEnabled = activeWorker == null
+	}
+
+	private fun refreshAnimationButton() {
+		animationButton.text = tr(if (animationButton.isSelected) "preview.animation.pause" else "preview.animation.play")
+		animationButton.toolTipText = tr("preview.animation.tip")
 	}
 
 	private fun readConfig() = settingsPanel.buildConfig(

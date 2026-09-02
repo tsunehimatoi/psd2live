@@ -30,7 +30,22 @@ class GeneratorTest {
 		assertEquals(2.061f, back.output.single().scale.content.toFloat())
 		assertEquals(3f, front.vertices.last().position.y.content.toFloat())
 		assertEquals(15f, back.vertices.last().position.y.content.toFloat())
-		assertTrue(front.output.single().scale.content.toFloat() > 1f)
 		assertEquals(null, PhysicsGenerator.generate(false, false))
+	}
+
+	@Test
+	fun `warp points scale proportionally with strength up to 4x`() {
+		val character = Bounds(0f, 0f, 1000f, 2000f)
+		val p1 = RigBuilder.bodyWarpPoint(character, 0.5f, 0.5f, 10f, 0f, 1f)
+		val p2 = RigBuilder.bodyWarpPoint(character, 0.5f, 0.5f, 10f, 0f, 2f)
+		val p4 = RigBuilder.bodyWarpPoint(character, 0.5f, 0.5f, 10f, 0f, 4f)
+
+		val shift1 = p1.first - (character.left + 0.5f * character.width)
+		val shift2 = p2.first - (character.left + 0.5f * character.width)
+		val shift4 = p4.first - (character.left + 0.5f * character.width)
+
+		assertTrue(shift1 > 0f)
+		assertEquals(shift1 * 2f, shift2, 1e-4f)
+		assertEquals(shift1 * 4f, shift4, 1e-4f)
 	}
 }

@@ -41,7 +41,8 @@ class AutoLive2DPipeline {
 	fun buildPreview(analysis: PipelineAnalysis, config: PipelineConfig = PipelineConfig()): RigPreviewModel {
 		val atlas = AtlasPacker.pack(analysis.layers, config.atlasSize, config.texturePadding)
 		val rig = RigBuilder.build(analysis, atlas, config)
-		return RigPreviewModel(analysis, atlas, rig, config)
+		val runtimeBundle = buildRuntimeBundle("autolive2d-preview", analysis, atlas, rig, config).first
+		return RigPreviewModel(analysis, atlas, rig, config, runtimeBundle)
 	}
 
 	fun run(
@@ -71,39 +72,12 @@ class AutoLive2DPipeline {
 		Files.createDirectories(outputRoot)
 		val files = mutableListOf<ExportedFile>()
 		val warnings = (analysis.warnings + rig.warnings + neutralRig.warnings).toMutableList()
+		val (runtimeBundle, runtimeReport) = buildRuntimeBundle(baseName, analysis, atlas, rig, config)
 
 		if (config.exportMoc3) {
-			val textureFolder = "$baseName.${atlas.pages.firstOrNull()?.image?.width ?: config.atlasSize}"
-			val pages = atlas.pages.mapIndexed { index, page ->
-				Moc3Sidecars.AtlasPage("$textureFolder/texture_${index.toString().padStart(2, '0')}.png", page.png)
-			}
-			val physics = if (config.generatePhysics) PhysicsGenerator.generate(hasFrontHair, hasBackHair) else null
-			val motionName = "$baseName.idle.motion3.json"
-			val motion = MotionGenerator.idle().also { Json.parseToJsonElement(it) }
-			val sidecars = buildList {
-				physics?.let {
-					Moc3.readPhysics3(it)
-					add(Moc3Sidecars.PassThroughSidecar(Moc3Sidecars.SidecarKind.Physics, "$baseName.physics3.json", it))
-				}
-				add(Moc3Sidecars.PassThroughSidecar(Moc3Sidecars.SidecarKind.Motion, motionName, motion))
-			}
-			val manifestTemplate = Model3Json(
-				version = 3,
-				fileReferences = FileReferences(
-					moc = "",
-					textures = emptyList(),
-					motions = mapOf("Idle" to listOf(Model3Motion(file = motionName))),
-				),
-				groups = listOf(
-					Model3Group("Parameter", "EyeBlink", listOf("ParamEyeLOpen", "ParamEyeROpen")),
-					Model3Group("Parameter", "LipSync", listOf("ParamMouthOpenY")),
-				),
-			)
-			val bundle = Moc3Sidecars.bundle(exportPuppet, baseName, pages = pages, sidecars = sidecars, source = manifestTemplate)
-			validateBundle(bundle)
-			for (file in bundle.files) files += writeContained(outputRoot, file.name, file.bytes)
-			warnings += bundle.report.notices.map { noticeText("MOC3", it) }
-			val mocBytes = bundle.files.first { it.name == bundle.mocFileName }.bytes
+			for (file in runtimeBundle.assets) files += writeContained(outputRoot, file.path, file.bytes)
+			warnings += runtimeReport.notices.map { noticeText("MOC3", it) }
+			val mocBytes = runtimeBundle.assets.first { it.path.endsWith(".moc3") }.bytes
 			val reimported = Moc3Import.fromMocDocument(Moc3.read(mocBytes), null)
 			validateRigShape("MOC3", exportPuppet, reimported)
 			val moc3Label = tr("validation.moc3Readback")
@@ -147,7 +121,51 @@ class AutoLive2DPipeline {
 		Json.parseToJsonElement(report)
 		files += writeContained(outputRoot, "$baseName.autolive2d.json", report.encodeToByteArray())
 		progress.update(tr("progress.validated"), 1.0)
-		return PipelineResult(analysis, files, warnings, RigPreviewModel(analysis, atlas, rig, config))
+		return PipelineResult(analysis, files, warnings, RigPreviewModel(analysis, atlas, rig, config, runtimeBundle))
+	}
+
+	private fun buildRuntimeBundle(
+		baseName: String,
+		analysis: PipelineAnalysis,
+		atlas: PackedAtlas,
+		rig: BuiltRig,
+		config: PipelineConfig,
+	): Pair<CubismRuntimeBundle, org.umamo.interop.ExportReport> {
+		val exportPuppet = restMeshesToCanvasSpace(rig.puppet)
+		val textureFolder = "$baseName.${atlas.pages.firstOrNull()?.image?.width ?: config.atlasSize}"
+		val pages = atlas.pages.mapIndexed { index, page ->
+			Moc3Sidecars.AtlasPage("$textureFolder/texture_${index.toString().padStart(2, '0')}.png", page.png)
+		}
+		val hasFrontHair = analysis.layers.any { it.semantic.tag == SemanticTag.FRONT_HAIR && it.opaquePixels > 0 }
+		val hasBackHair = analysis.layers.any { it.semantic.tag == SemanticTag.BACK_HAIR && it.opaquePixels > 0 }
+		val physics = if (config.generatePhysics) {
+			PhysicsGenerator.generate(hasFrontHair, hasBackHair)?.let(CubismJson::normalize)
+		} else null
+		val motionName = "$baseName.idle.motion3.json"
+		val motion = CubismJson.normalize(MotionGenerator.idle()).also { Json.parseToJsonElement(it) }
+		val sidecars = buildList {
+			physics?.let {
+				Moc3.readPhysics3(it)
+				add(Moc3Sidecars.PassThroughSidecar(Moc3Sidecars.SidecarKind.Physics, "$baseName.physics3.json", it))
+			}
+			add(Moc3Sidecars.PassThroughSidecar(Moc3Sidecars.SidecarKind.Motion, motionName, motion))
+		}
+		val manifestTemplate = Model3Json(
+			version = 3,
+			fileReferences = FileReferences(
+				moc = "",
+				textures = emptyList(),
+				motions = mapOf("Idle" to listOf(Model3Motion(file = motionName))),
+			),
+			groups = listOf(
+				Model3Group("Parameter", "EyeBlink", listOf("ParamEyeLOpen", "ParamEyeROpen")),
+				Model3Group("Parameter", "LipSync", listOf("ParamMouthOpenY")),
+			),
+		)
+		val bundle = Moc3Sidecars.bundle(exportPuppet, baseName, pages = pages, sidecars = sidecars, source = manifestTemplate)
+		validateBundle(bundle)
+		val manifest = bundle.files.single { it.name.endsWith(".model3.json") }.name
+		return CubismRuntimeBundle(manifest, bundle.files.map { CubismRuntimeAsset(it.name, it.bytes) }) to bundle.report
 	}
 
 	private fun validateBundle(bundle: Moc3Sidecars.Bundle) {

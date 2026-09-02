@@ -21,6 +21,8 @@ internal class CanvasCamera(
 
 	val zoomPercent: Int get() = (zoom * 100.0).toInt()
 
+	data class CubismViewport(val scale: Float, val offsetX: Float, val offsetY: Float)
+
 	fun reset() {
 		zoom = 1.0
 		panX = 0.0
@@ -41,6 +43,28 @@ internal class CanvasCamera(
 			(height - canvasHeight * scale) * 0.5 + panY,
 			canvasWidth,
 			canvasHeight,
+		)
+	}
+
+	/** Converts this pixel-space workbench camera to the SDK renderer's normalized viewport. */
+	fun cubismViewport(model: RigPreviewModel, width: Int, height: Int): CubismViewport {
+		val safeWidth = width.coerceAtLeast(1).toDouble()
+		val safeHeight = height.coerceAtLeast(1).toDouble()
+		val viewportAspect = safeWidth / safeHeight
+		val canvasWidth = model.analysis.source.widthPx.coerceAtLeast(1).toDouble()
+		val canvasHeight = model.analysis.source.heightPx.coerceAtLeast(1).toDouble()
+		val modelAspect = canvasWidth / canvasHeight
+		val baseScaleX = if (viewportAspect >= 1.0) 1.0 / viewportAspect else 1.0
+		val baseScaleY = if (viewportAspect >= 1.0) 1.0 else viewportAspect
+		val fitScale = if (modelAspect > viewportAspect) {
+			1.0 / (baseScaleX * modelAspect) * 0.95
+		} else {
+			1.0 / baseScaleY * 0.95
+		}
+		return CubismViewport(
+			(fitScale * zoom).toFloat(),
+			(panX / (safeWidth * 0.5)).toFloat(),
+			(-panY / (safeHeight * 0.5)).toFloat(),
 		)
 	}
 

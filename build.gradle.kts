@@ -15,6 +15,7 @@ dependencies {
 	implementation("local.umamo:runtime:local")
 	implementation("local.umamo:interop:local")
 	implementation("local.umamo:render:local")
+    implementation("net.java.dev.jna:jna:5.18.0")
 	implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
 	testImplementation(kotlin("test"))
 }
@@ -30,6 +31,7 @@ distributions {
 			from("README.md")
 			from("LICENSE")
 			from("THIRD_PARTY_NOTICES.md")
+			from("licenses") { into("licenses") }
 			from("docs") { into("docs") }
 		}
 	}
@@ -37,4 +39,5 @@ distributions {
 
 tasks.test {
 	useJUnitPlatform()
+	systemProperty("autolive2d.cubism.smoke", System.getProperty("autolive2d.cubism.smoke", "false"))
 }

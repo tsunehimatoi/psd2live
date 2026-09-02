@@ -338,7 +338,7 @@ object RigBuilder {
 		bodyAngleY: Float,
 		strength: Float,
 	): Pair<Float, Float> {
-		val boundedStrength = strength.coerceIn(0f, 2f)
+		val boundedStrength = strength.coerceIn(0f, 4f)
 		val yaw = bodyAngleX / 10f * boundedStrength
 		val pitch = bodyAngleY / 10f * boundedStrength
 		val torsoEnvelope = sin(PI * v).toFloat().coerceAtLeast(0f)

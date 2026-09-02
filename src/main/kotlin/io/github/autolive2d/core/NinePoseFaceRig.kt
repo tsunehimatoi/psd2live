@@ -306,14 +306,14 @@ internal class NinePoseFaceRig(
 		val yaw = artisticYaw(angleX, strength)
 		if (yaw == 0f || abs(region.centerX - centerX) < radiusX * 0.08f) return 1f
 		val farSide = sign(region.centerX - centerX) * sign(yaw) > 0f
-		return if (farSide) 1f - abs(yaw) * 0.48f else 1f
+		return if (farSide) (1f - abs(yaw) * 0.48f).coerceIn(0f, 1f) else 1f
 	}
 
 	private fun artisticYaw(angleX: Float, strength: Float): Float =
-		(tanh(angleX / 32f) * strength.coerceIn(0f, 2f)).coerceIn(-1.15f, 1.15f)
+		(tanh(angleX / 32f) * strength.coerceIn(0f, 4f)).coerceIn(-4.6f, 4.6f)
 
 	private fun artisticPitch(angleY: Float, strength: Float): Float =
-		(tanh(angleY / 22f) * strength.coerceIn(0f, 2f)).coerceIn(-1.10f, 1.10f)
+		(tanh(angleY / 22f) * strength.coerceIn(0f, 4f)).coerceIn(-4.4f, 4.4f)
 
 	/** C1-continuous roll: short near-contour reveal, broad identity plateau, long far compression. */
 	private fun perspectiveRollProfile(orientedX: Float): Float {

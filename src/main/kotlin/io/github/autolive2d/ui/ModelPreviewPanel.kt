@@ -1,5 +1,7 @@
 package io.github.autolive2d.ui
 
+import io.github.autolive2d.core.CubismSdkFrame
+import io.github.autolive2d.core.CubismSdkPreviewSession
 import io.github.autolive2d.core.RigPreviewModel
 import io.github.autolive2d.core.StandardParameters
 import io.github.autolive2d.i18n.tr
@@ -14,10 +16,44 @@ import java.awt.event.MouseEvent
 import javax.swing.JPanel
 import javax.swing.Timer
 import kotlin.math.PI
+import kotlin.math.ceil
 import kotlin.math.sin
 
 class ModelPreviewPanel : JPanel() {
-	private val camera = CanvasCamera(::repaint)
+	private val camera = CanvasCamera(::cameraChanged)
+	private var sdkFrame: CubismSdkFrame? = null
+	private var sdkStatus: String? = null
+	private val sdkSession = CubismSdkPreviewSession(
+		onFrame = { frame ->
+			sdkFrame = frame
+			sdkStatus = "ready"
+			onParameterValuesChanged?.invoke(frame.parameters)
+			repaint()
+		},
+		onStatus = { status ->
+			sdkStatus = status
+			if (status != "ready") sdkFrame = null
+			repaint()
+		},
+	)
+
+	var onParameterValuesChanged: ((Map<ParameterId, Float>) -> Unit)? = null
+
+	var animationEnabled: Boolean = true
+		set(value) {
+			if (field == value) return
+			field = value
+			lastTick = System.nanoTime()
+			requestSdkFrame(0f)
+			repaint()
+		}
+
+	var parameterOverrides: Map<ParameterId, Float> = emptyMap()
+		set(value) {
+			field = value
+			requestSdkFrame(0f)
+			repaint()
+		}
 
 	var visibleLayerIds: Set<String>? = null
 		set(value) {
@@ -31,11 +67,18 @@ class ModelPreviewPanel : JPanel() {
 			field = value
 			if (sourceChanged) camera.reset()
 			resetMotion()
+			sdkFrame = null
+			sdkStatus = null
+			value?.let { model ->
+				sdkSession.load(model.runtimeBundle, model.rig.puppet.parameters.map { it.id })
+			}
 			repaint()
 		}
 
 	private val timer = Timer(33) {
-		advanceMotion()
+		val deltaTime = advanceMotion()
+		requestSdkFrame(deltaTime)
+		if (sdkFrame == null) previewModel?.let { onParameterValuesChanged?.invoke(currentParameters(it)) }
 		repaint()
 	}
 	private var pointerActive = false
@@ -83,8 +126,18 @@ class ModelPreviewPanel : JPanel() {
 			val model = previewModel ?: return paintEmpty(g)
 			val viewport = camera.viewport(model, width, height)
 			RigCanvasSupport.paintCanvasBoundary(g, viewport)
-			val geometry = RigCanvasSupport.evaluate(model, currentParameters(model))
-			RigCanvasSupport.paintTexturedRig(g, model, geometry, viewport, visibleLayerIds = visibleLayerIds)
+			val officialFrame = sdkFrame
+			val renderSize = renderPixelSize()
+			if (officialFrame != null &&
+				officialFrame.image.width == renderSize.width && officialFrame.image.height == renderSize.height
+			) {
+				g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC)
+				g.drawImage(officialFrame.image, 0, 0, width, height, null)
+			} else {
+				val parameters = currentParameters(model)
+				val geometry = RigCanvasSupport.evaluate(model, parameters)
+				RigCanvasSupport.paintTexturedRig(g, model, geometry, viewport, visibleLayerIds = visibleLayerIds)
+			}
 			paintStatus(g, model)
 		} catch (failure: RuntimeException) {
 			g.color = Color(235, 117, 117)
@@ -112,7 +165,7 @@ class ModelPreviewPanel : JPanel() {
 		return mapOf(
 			StandardParameters.ANGLE_X to followX * 38f,
 			StandardParameters.ANGLE_Y to -followY * 24f,
-			StandardParameters.ANGLE_Z to followX * -4f,
+			StandardParameters.ANGLE_Z to (sin(elapsed * PI / 1.5) * 2.0).toFloat(),
 			StandardParameters.BODY_X to (followX * 4f + sin(elapsed * 0.72).toFloat() * 1.2f),
 			StandardParameters.BODY_Y to -followY * 2f,
 			StandardParameters.BODY_Z to sin(elapsed * 0.92).toFloat() * 2.2f,
@@ -125,35 +178,74 @@ class ModelPreviewPanel : JPanel() {
 			StandardParameters.BREATH to ((sin(elapsed * 1.45) + 1.0) * 0.5).toFloat(),
 			StandardParameters.HAIR_FRONT to if (model.config.generatePhysics) frontHair.coerceIn(-1f, 1f) else 0f,
 			StandardParameters.HAIR_BACK to if (model.config.generatePhysics) backHair.coerceIn(-1f, 1f) else 0f,
-		)
+		) + parameterOverrides
 	}
 
-	private fun advanceMotion() {
+	private fun advanceMotion(): Float {
 		val now = System.nanoTime()
 		val dt = ((now - lastTick) / 1_000_000_000.0).coerceIn(0.001, 0.08).toFloat()
 		lastTick = now
-		elapsed += dt
-		val idleX = (sin(elapsed * 0.47) * 0.12).toFloat()
-		val idleY = (sin(elapsed * 0.31 + 1.1) * 0.08).toFloat()
+		if (animationEnabled) elapsed += dt
+		val idleX = if (animationEnabled) (sin(elapsed * 0.47) * 0.12).toFloat() else 0f
+		val idleY = if (animationEnabled) (sin(elapsed * 0.31 + 1.1) * 0.08).toFloat() else 0f
 		val targetX = if (pointerActive) pointerX else idleX
 		val targetY = if (pointerActive) pointerY else idleY
 		val response = (dt * 7.5f).coerceAtMost(1f)
 		previousFollowX = followX
 		followX += (targetX - followX) * response
 		followY += (targetY - followY) * response
-		val headVelocity = ((followX - previousFollowX) / dt).coerceIn(-5f, 5f)
-		val hairTarget = (-followX * 0.42f - headVelocity * 0.085f).coerceIn(-1f, 1f)
-		frontHairVelocity += ((hairTarget - frontHair) * 22f - frontHairVelocity * 7.2f) * dt
-		backHairVelocity += ((hairTarget - backHair) * 10f - backHairVelocity * 4.2f) * dt
-		frontHair += frontHairVelocity * dt
-		backHair += backHairVelocity * dt
+		if (animationEnabled) {
+			val headVelocity = ((followX - previousFollowX) / dt).coerceIn(-5f, 5f)
+			val hairTarget = (-followX * 0.42f - headVelocity * 0.085f).coerceIn(-1f, 1f)
+			frontHairVelocity += ((hairTarget - frontHair) * 22f - frontHairVelocity * 7.2f) * dt
+			backHairVelocity += ((hairTarget - backHair) * 10f - backHairVelocity * 4.2f) * dt
+			frontHair += frontHairVelocity * dt
+			backHair += backHairVelocity * dt
+		}
+		return dt
+	}
+
+	private fun requestSdkFrame(deltaTime: Float) {
+		val model = previewModel ?: return
+		val renderSize = renderPixelSize()
+		val sdkViewport = camera.cubismViewport(model, width, height)
+		sdkSession.render(
+			CubismSdkPreviewSession.RenderRequest(
+				width = renderSize.width,
+				height = renderSize.height,
+				scale = sdkViewport.scale,
+				offsetX = sdkViewport.offsetX,
+				offsetY = sdkViewport.offsetY,
+				deltaTime = deltaTime,
+				pointerX = if (pointerActive) followX else 0f,
+				pointerY = if (pointerActive) -followY else 0f,
+				animationEnabled = animationEnabled,
+				parameterOverrides = parameterOverrides,
+			),
+		)
+	}
+
+	private fun renderPixelSize(): Dimension {
+		val transform = graphicsConfiguration?.defaultTransform
+		val scaleX = transform?.scaleX?.coerceAtLeast(1.0) ?: 1.0
+		val scaleY = transform?.scaleY?.coerceAtLeast(1.0) ?: 1.0
+		return Dimension(
+			ceil(width.coerceAtLeast(1) * scaleX).toInt(),
+			ceil(height.coerceAtLeast(1) * scaleY).toInt(),
+		)
+	}
+
+	private fun cameraChanged() {
+		requestSdkFrame(0f)
+		repaint()
 	}
 
 	private fun paintStatus(g: Graphics2D, model: RigPreviewModel) {
-		val text = if (model.config.generatePhysics) {
-			tr("canvas.preview.physicsOn", camera.zoomPercent)
-		} else {
-			tr("canvas.preview.physicsOff", camera.zoomPercent)
+		val text = when {
+			sdkFrame != null -> tr("canvas.preview.cubism", camera.zoomPercent)
+			sdkStatus != null && sdkStatus != "ready" -> tr("canvas.preview.softwareFallback", camera.zoomPercent)
+			model.config.generatePhysics -> tr("canvas.preview.physicsOn", camera.zoomPercent)
+			else -> tr("canvas.preview.physicsOff", camera.zoomPercent)
 		}
 		g.font = Font(Font.SANS_SERIF, Font.PLAIN, 12)
 		val metrics = g.fontMetrics
@@ -162,6 +254,9 @@ class ModelPreviewPanel : JPanel() {
 		g.fillRoundRect(14, height - 38, pillWidth, 25, 12, 12)
 		g.color = Color(215, 222, 231)
 		g.drawString(text, 25, height - 21)
+		val error = sdkStatus?.takeIf { it != "ready" } ?: return
+		g.color = Color(235, 117, 117)
+		g.drawString(tr("canvas.preview.sdkFailure", error), 18, 28)
 	}
 
 	private fun paintEmpty(graphics: Graphics) {
