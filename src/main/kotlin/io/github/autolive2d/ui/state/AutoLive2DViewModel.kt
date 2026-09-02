@@ -3,6 +3,7 @@ package io.github.autolive2d.ui.state
 import io.github.autolive2d.core.AutoLive2DPipeline
 import io.github.autolive2d.core.CubismSdkFrame
 import io.github.autolive2d.core.CubismSdkPreviewSession
+import io.github.autolive2d.core.EyeJellyDynamics
 import io.github.autolive2d.core.LayerClassificationOverride
 import io.github.autolive2d.core.PipelineAnalysis
 import io.github.autolive2d.core.ProgressListener
@@ -66,6 +67,7 @@ class AutoLive2DViewModel : AutoCloseable {
 	private var frontHairVelocity = 0f
 	private var backHair = 0f
 	private var backHairVelocity = 0f
+	private val eyeJellyDynamics = EyeJellyDynamics()
 	private var elapsed = 0.0
 	private var lastTick = System.nanoTime()
 	private var lastSdkParameterPublishNanos = 0L
@@ -391,6 +393,7 @@ class AutoLive2DViewModel : AutoCloseable {
 		backHair = 0f
 		frontHairVelocity = 0f
 		backHairVelocity = 0f
+		eyeJellyDynamics.reset()
 		elapsed = 0.0
 
 		_state.update { current ->
@@ -646,6 +649,8 @@ class AutoLive2DViewModel : AutoCloseable {
 				val anim = current.animationEnabled
 				val tracking = current.mouseTrackingEnabled
 				if (anim) elapsed += dt
+				val blink = blinkAt(elapsed % 4.6)
+				eyeJellyDynamics.advance(blink, dt, anim && current.generatePhysics)
 
 				val idleX = if (anim) (sin(elapsed * 0.47) * 0.12).toFloat() else 0f
 				val idleY = if (anim) (sin(elapsed * 0.31 + 1.1) * 0.08).toFloat() else 0f
@@ -684,9 +689,7 @@ class AutoLive2DViewModel : AutoCloseable {
 
 	fun computeLiveParameters(model: RigPreviewModel): Map<ParameterId, Float> {
 		val phase = elapsed % 4.6
-		val blink = if (phase in 4.18..4.46) {
-			(1.0 - sin((phase - 4.18) / 0.28 * PI)).toFloat().coerceIn(0f, 1f)
-		} else 1f
+		val blink = blinkAt(phase)
 		val mouthPhase = elapsed % 5.8
 		val mouthOpen = if (mouthPhase in 1.25..2.45) {
 			sin((mouthPhase - 1.25) / 1.20 * PI).toFloat().coerceAtLeast(0f)
@@ -701,6 +704,7 @@ class AutoLive2DViewModel : AutoCloseable {
 			StandardParameters.BODY_Z to sin(elapsed * 0.92).toFloat() * 2.2f,
 			StandardParameters.EYE_BALL_X to followX.coerceIn(-1f, 1f),
 			StandardParameters.EYE_BALL_Y to (-followY).coerceIn(-1f, 1f),
+			StandardParameters.EYE_BALL_FORM to if (model.config.generatePhysics) eyeJellyDynamics.value else 0f,
 			StandardParameters.EYE_L_OPEN to blink,
 			StandardParameters.EYE_R_OPEN to blink,
 			StandardParameters.MOUTH_FORM to sin(elapsed * 0.41).toFloat() * 0.18f,
@@ -710,6 +714,10 @@ class AutoLive2DViewModel : AutoCloseable {
 			StandardParameters.HAIR_BACK to if (model.config.generatePhysics) backHair.coerceIn(-1f, 1f) else 0f,
 		)
 	}
+
+	private fun blinkAt(phase: Double): Float = if (phase in 4.18..4.46) {
+		(1.0 - sin((phase - 4.18) / 0.28 * PI)).toFloat().coerceIn(0f, 1f)
+	} else 1f
 
 	fun requestSdkFrame(
 		width: Int,

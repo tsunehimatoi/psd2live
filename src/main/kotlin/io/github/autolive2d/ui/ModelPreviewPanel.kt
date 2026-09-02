@@ -2,6 +2,7 @@ package io.github.autolive2d.ui
 
 import io.github.autolive2d.core.CubismSdkFrame
 import io.github.autolive2d.core.CubismSdkPreviewSession
+import io.github.autolive2d.core.EyeJellyDynamics
 import io.github.autolive2d.core.RigPreviewModel
 import io.github.autolive2d.core.StandardParameters
 import io.github.autolive2d.i18n.tr
@@ -91,6 +92,7 @@ class ModelPreviewPanel : JPanel() {
 	private var frontHairVelocity = 0f
 	private var backHair = 0f
 	private var backHairVelocity = 0f
+	private val eyeJellyDynamics = EyeJellyDynamics()
 	private var elapsed = 0.0
 	private var lastTick = System.nanoTime()
 
@@ -155,9 +157,7 @@ class ModelPreviewPanel : JPanel() {
 
 	private fun currentParameters(model: RigPreviewModel): Map<ParameterId, Float> {
 		val phase = elapsed % 4.6
-		val blink = if (phase in 4.18..4.46) {
-			(1.0 - sin((phase - 4.18) / 0.28 * PI)).toFloat().coerceIn(0f, 1f)
-		} else 1f
+		val blink = blinkAt(phase)
 		val mouthPhase = elapsed % 5.8
 		val mouthOpen = if (mouthPhase in 1.25..2.45) {
 			sin((mouthPhase - 1.25) / 1.20 * PI).toFloat().coerceAtLeast(0f)
@@ -171,6 +171,7 @@ class ModelPreviewPanel : JPanel() {
 			StandardParameters.BODY_Z to sin(elapsed * 0.92).toFloat() * 2.2f,
 			StandardParameters.EYE_BALL_X to followX.coerceIn(-1f, 1f),
 			StandardParameters.EYE_BALL_Y to (-followY).coerceIn(-1f, 1f),
+			StandardParameters.EYE_BALL_FORM to if (model.config.generatePhysics) eyeJellyDynamics.value else 0f,
 			StandardParameters.EYE_L_OPEN to blink,
 			StandardParameters.EYE_R_OPEN to blink,
 			StandardParameters.MOUTH_FORM to sin(elapsed * 0.41).toFloat() * 0.18f,
@@ -186,6 +187,8 @@ class ModelPreviewPanel : JPanel() {
 		val dt = ((now - lastTick) / 1_000_000_000.0).coerceIn(0.001, 0.08).toFloat()
 		lastTick = now
 		if (animationEnabled) elapsed += dt
+		val blink = blinkAt(elapsed % 4.6)
+		eyeJellyDynamics.advance(blink, dt, animationEnabled && previewModel?.config?.generatePhysics == true)
 		val idleX = if (animationEnabled) (sin(elapsed * 0.47) * 0.12).toFloat() else 0f
 		val idleY = if (animationEnabled) (sin(elapsed * 0.31 + 1.1) * 0.08).toFloat() else 0f
 		val targetX = if (pointerActive) pointerX else idleX
@@ -204,6 +207,10 @@ class ModelPreviewPanel : JPanel() {
 		}
 		return dt
 	}
+
+	private fun blinkAt(phase: Double): Float = if (phase in 4.18..4.46) {
+		(1.0 - sin((phase - 4.18) / 0.28 * PI)).toFloat().coerceIn(0f, 1f)
+	} else 1f
 
 	private fun requestSdkFrame(deltaTime: Float) {
 		val model = previewModel ?: return
@@ -275,6 +282,7 @@ class ModelPreviewPanel : JPanel() {
 		frontHairVelocity = 0f
 		backHair = 0f
 		backHairVelocity = 0f
+		eyeJellyDynamics.reset()
 		elapsed = 0.0
 		lastTick = System.nanoTime()
 	}

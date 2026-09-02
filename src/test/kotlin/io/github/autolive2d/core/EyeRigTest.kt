@@ -90,6 +90,18 @@ class EyeRigTest {
 		assertEquals(60f to 20f, neutral)
 	}
 
+	@Test
+	fun `software eye jelly rebounds after a blink and settles`() {
+		val dynamics = EyeJellyDynamics()
+		val samples = mutableListOf<Float>()
+		for (step in 0..5) samples += dynamics.advance(1f - step / 5f, 1f / 60f, true)
+		for (step in 0..5) samples += dynamics.advance(step / 5f, 1f / 60f, true)
+		repeat(120) { samples += dynamics.advance(1f, 1f / 60f, true) }
+		assertTrue(samples.min() < -0.15f, "closing should squash the pupil")
+		assertTrue(samples.max() > 0.08f, "opening should overshoot and rebound")
+		assertEquals(0f, samples.last(), 1e-4f, "the pupil must settle back to its authored shape")
+	}
+
 	private fun rectangleRaster(width: Int, height: Int, left: Int, top: Int, right: Int, bottom: Int): ByteArray {
 		val rgba = ByteArray(width * height * 4)
 		for (y in top until bottom) for (x in left until right) {
