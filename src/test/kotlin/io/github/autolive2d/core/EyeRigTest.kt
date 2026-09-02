@@ -45,7 +45,7 @@ class EyeRigTest {
 	}
 
 	@Test
-	fun `blink keeps iris geometry unchanged and hides it with the eye-white mask`() {
+	fun `blink drives iris only through jelly physics and hides it with the eye-white mask`() {
 		val art = object : SourceArt {
 			override val widthPx = 96
 			override val heightPx = 64
@@ -66,9 +66,28 @@ class EyeRigTest {
 		val eyeWhite = assertNotNull(drawableByTag[SemanticTag.EYEWHITE])
 		val geometry = assertNotNull(iris.geometryGrid)
 
-		assertTrue(geometry.axes.isEmpty(), "blink parameters must not deform the pupil")
-		assertTrue(geometry.cells.single().form.positionDeltas.all { it == 0f })
+		assertEquals(listOf(StandardParameters.EYE_BALL_FORM), geometry.axes.map { it.parameterId })
+		assertTrue(geometry.axes.none { it.parameterId in setOf(StandardParameters.EYE_L_OPEN, StandardParameters.EYE_R_OPEN) })
+		assertTrue(geometry.cells.single { it.coordinate.contentEquals(intArrayOf(1)) }.form.positionDeltas.all { it == 0f })
 		assertEquals(listOf(eyeWhite.id), iris.maskedBy)
+		val physics = assertNotNull(
+			org.umamo.format.moc3.Moc3.readPhysics3(
+				preview.runtimeBundle.assets.single { it.path.endsWith(".physics3.json") }.bytes.decodeToString(),
+			),
+		)
+		assertTrue(physics.physicsSettings.any { it.id == "PhysicsEyeJelly" })
+	}
+
+	@Test
+	fun `iris jelly keyform squashes and stretches around a fixed centre`() {
+		val pivotX = 50f
+		val pivotY = 30f
+		val top = RigBuilder.irisJellyPoint(50f, 20f, pivotX, pivotY, 1f)
+		val right = RigBuilder.irisJellyPoint(60f, 30f, pivotX, pivotY, 1f)
+		val neutral = RigBuilder.irisJellyPoint(60f, 20f, pivotX, pivotY, 0f)
+		assertEquals(18.9f, top.second, 1e-5f, "positive rebound should stretch vertically")
+		assertEquals(59.55f, right.first, 1e-5f, "vertical stretch should narrow slightly")
+		assertEquals(60f to 20f, neutral)
 	}
 
 	private fun rectangleRaster(width: Int, height: Int, left: Int, top: Int, right: Int, bottom: Int): ByteArray {

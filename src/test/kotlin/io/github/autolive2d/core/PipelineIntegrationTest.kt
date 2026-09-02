@@ -127,13 +127,16 @@ class PipelineIntegrationTest {
 		val expectedPhysics = listOf(
 			SemanticTag.FRONT_HAIR to "PhysicsHairFront",
 			SemanticTag.BACK_HAIR to "PhysicsHairBack",
+			SemanticTag.IRIDES to "PhysicsEyeJelly",
 		).filter { (tag, _) -> result.analysis.layers.any { it.semantic.tag == tag && it.opaquePixels > 0 } }
 		val physicsSet = cmoRoot.physicsSettingsSourceSet as CPhysicsSettingsSourceSet
 		val editableSettings = elements(physicsSet._sourceCubismPhysics).filterIsInstance<CPhysicsSettingsSource>()
 		assertEquals(expectedPhysics.map { it.second }.toSet(), editableSettings.map { (it.id as Id).idstr }.toSet())
 		for (setting in editableSettings) {
-			assertEquals(4, elements(setting.inputs).filterIsInstance<CPhysicsInput>().size)
-			assertTrue(elements(setting.outputs).filterIsInstance<CPhysicsOutput>().single().angleScale > 1f)
+			val id = (setting.id as Id).idstr
+			val expectedInputs = if (id == "PhysicsEyeJelly") 2 else 4
+			assertEquals(expectedInputs, elements(setting.inputs).filterIsInstance<CPhysicsInput>().size)
+			assertTrue(elements(setting.outputs).filterIsInstance<CPhysicsOutput>().single().angleScale > 0f)
 		}
 		assertTrue(result.warnings.none { "FractionalDrawOrder" in it })
 	}

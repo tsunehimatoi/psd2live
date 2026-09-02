@@ -18,8 +18,8 @@ import java.util.UUID
 
 /** Writes editable Cubism physics settings into a fresh CMO3 graph. */
 internal object Cmo3PhysicsInjector {
-	fun inject(root: CModelSource, hasFrontHair: Boolean, hasBackHair: Boolean): Int {
-		val rules = PhysicsGenerator.rules(hasFrontHair, hasBackHair)
+	fun inject(root: CModelSource, hasFrontHair: Boolean, hasBackHair: Boolean, hasEyeJelly: Boolean = false): Int {
+		val rules = PhysicsGenerator.rules(hasFrontHair, hasBackHair, hasEyeJelly)
 		val physicsSet = root.physicsSettingsSourceSet as? CPhysicsSettingsSourceSet
 			?: error(tr("error.cmo3MissingPhysicsSet"))
 		// The pipeline only injects into its own fresh graph, so replace the known empty collection
@@ -39,19 +39,14 @@ internal object Cmo3PhysicsInjector {
 				guid = guid("CPhysicsSettingsGuid", rule.name)
 				id = Id("CPhysicsSettingId").apply { idstr = rule.id }
 				inputs = CArrayList<Any?>(
-					listOf(
-						input(rule, parameterById, "ParamAngleX", CPhysicsSourceType.SRC_TO_X, 60f),
-						input(rule, parameterById, "ParamAngleZ", CPhysicsSourceType.SRC_TO_G_ANGLE, 60f),
-						input(rule, parameterById, "ParamBodyAngleX", CPhysicsSourceType.SRC_TO_X, 40f),
-						input(rule, parameterById, "ParamBodyAngleZ", CPhysicsSourceType.SRC_TO_G_ANGLE, 40f),
-					),
+					rule.inputs.map { inputRule -> input(rule, parameterById, inputRule) },
 				)
 				outputs = CArrayList<Any?>(
 					listOf(
 						CPhysicsOutput().apply {
 							guid = guid("CPhysicsDataGuid", "out_${rule.id}_${rule.outputParameter}")
 							destination = output.guid
-							vertexIndex = 1
+							vertexIndex = rule.outputVertexIndex
 							translationScale = vector(0f, 0f)
 							angleScale = rule.outputScale
 							weight = 100f
@@ -61,17 +56,14 @@ internal object Cmo3PhysicsInjector {
 					),
 				)
 				vertices = CArrayList<Any?>(
-					listOf(
-						vertex(rule, 0, 0f, 1f),
-						vertex(rule, 1, rule.length, rule.delay),
-					),
+					rule.vertices.mapIndexed { index, vertex -> vertex(rule, index, vertex) },
 				)
-				normalizedPositionValueMax = 10f
-				normalizedPositionValueMin = -10f
-				normalizedPositionDefaultValue = 0f
+				normalizedPositionValueMax = rule.positionMaximum
+				normalizedPositionValueMin = rule.positionMinimum
+				normalizedPositionDefaultValue = rule.positionDefault
 				normalizedAngleValueMax = rule.angleMaximum
 				normalizedAngleValueMin = rule.angleMinimum
-				normalizedAngleDefaultValue = 0f
+				normalizedAngleDefaultValue = rule.angleDefault
 			}
 			sources.add(setting)
 		}
@@ -81,32 +73,33 @@ internal object Cmo3PhysicsInjector {
 	}
 
 	private fun input(
-		rule: PhysicsGenerator.HairRule,
+		rule: PhysicsGenerator.PhysicsRule,
 		parameterById: Map<String, CParameterSource>,
-		parameterId: String,
-		type: CPhysicsSourceType,
-		weight: Float,
+		input: PhysicsGenerator.InputRule,
 	): CPhysicsInput {
-		val parameter = parameterById[parameterId] ?: error(tr("error.cmo3MissingPhysicsInput", parameterId))
+		val parameter = parameterById[input.parameter] ?: error(tr("error.cmo3MissingPhysicsInput", input.parameter))
 		return CPhysicsInput().apply {
-			guid = guid("CPhysicsDataGuid", "in_${rule.id}_$parameterId")
+			guid = guid("CPhysicsDataGuid", "in_${rule.id}_${input.parameter}")
 			source = parameter.guid
 			angleScale = 0f
 			translationScale = vector(0f, 0f)
-			this.weight = weight
-			this.type = type
-			isReverse = false
+			weight = input.weight
+			type = when (input.type) {
+				PhysicsGenerator.InputType.X -> CPhysicsSourceType.SRC_TO_X
+				PhysicsGenerator.InputType.ANGLE -> CPhysicsSourceType.SRC_TO_G_ANGLE
+			}
+			isReverse = input.reflect
 		}
 	}
 
-	private fun vertex(rule: PhysicsGenerator.HairRule, index: Int, y: Float, delay: Float): CPhysicsVertex =
+	private fun vertex(rule: PhysicsGenerator.PhysicsRule, index: Int, vertex: PhysicsGenerator.VertexRule): CPhysicsVertex =
 		CPhysicsVertex().apply {
 			guid = guid("CPhysicsDataGuid", "v${index}_${rule.id}")
-			position = vector(0f, y)
-			mobility = if (index == 0) 1f else 0.95f
-			this.delay = delay
-			acceleration = if (index == 0) 1f else 1.5f
-			radius = y
+			position = vector(0f, vertex.y)
+			mobility = vertex.mobility
+			delay = vertex.delay
+			acceleration = vertex.acceleration
+			radius = vertex.radius
 		}
 
 	private fun vector(x: Float, y: Float): GVector2 = GVector2().apply {

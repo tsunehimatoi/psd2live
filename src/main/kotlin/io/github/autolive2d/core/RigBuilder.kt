@@ -47,6 +47,7 @@ object StandardParameters {
 	val EYE_R_OPEN = ParameterId("ParamEyeROpen")
 	val EYE_BALL_X = ParameterId("ParamEyeBallX")
 	val EYE_BALL_Y = ParameterId("ParamEyeBallY")
+	val EYE_BALL_FORM = ParameterId("ParamEyeBallForm")
 	val BROW_L_Y = ParameterId("ParamBrowLY")
 	val BROW_R_Y = ParameterId("ParamBrowRY")
 	val MOUTH_FORM = ParameterId("ParamMouthForm")
@@ -67,6 +68,7 @@ object StandardParameters {
 			Parameter(EYE_R_OPEN, tr("model.parameter.eyeROpen"), 0f, 1f, 1f),
 			Parameter(EYE_BALL_X, tr("model.parameter.eyeBallX"), -1f, 1f, 0f),
 			Parameter(EYE_BALL_Y, tr("model.parameter.eyeBallY"), -1f, 1f, 0f),
+			Parameter(EYE_BALL_FORM, tr("model.parameter.eyeBallForm"), -1f, 1f, 0f),
 			Parameter(BROW_L_Y, tr("model.parameter.browLY"), -1f, 1f, 0f),
 			Parameter(BROW_R_Y, tr("model.parameter.browRY"), -1f, 1f, 0f),
 			Parameter(MOUTH_FORM, tr("model.parameter.mouthForm"), -1f, 1f, 0f),
@@ -782,9 +784,9 @@ object RigBuilder {
 		return when (tag) {
 			SemanticTag.EYEWHITE, SemanticTag.EYELASH ->
 				eyeClosureGrid(layer, data, parentFrame, faceRig, eyeWhiteBounds)
-			// The iris keeps its authored geometry. Eye-white clipping, not pupil deformation,
-			// removes it from view as the lid closes.
-			SemanticTag.IRIDES -> zeroMeshGrid(data.mesh.positions.size)
+			// Blink does not key the iris directly. The independent physics output supplies a small,
+			// delayed squash/stretch while eye-white clipping removes it as the lid closes.
+			SemanticTag.IRIDES -> irisJellyGrid(layer, data, parentFrame)
 			SemanticTag.EYEBROW -> eyebrowGrid(layer, data, parentFrame)
 			SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN -> mouthWholeGrid(data, parentFrame, mouthAperture ?: layer.bounds)
 			SemanticTag.MOUTH_CLOSE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE ->
@@ -935,6 +937,33 @@ object RigBuilder {
 		}
 	}
 
+	private fun irisJellyGrid(layer: ClassifiedLayer, data: MeshData, frame: Bounds): KeyformGrid<MeshDeltaForm> =
+		oneDimGrid(StandardParameters.EYE_BALL_FORM, floatArrayOf(-1f, 0f, 1f)) { value ->
+			val delta = FloatArray(data.mesh.positions.size)
+			for (index in data.canvasPositions.indices step 2) {
+				val sourceX = data.canvasPositions[index]
+				val sourceY = data.canvasPositions[index + 1]
+				val target = irisJellyPoint(sourceX, sourceY, layer.centroidX, layer.centroidY, value)
+				delta[index] = (target.first - sourceX) / frame.width.coerceAtLeast(1e-4f)
+				delta[index + 1] = (target.second - sourceY) / frame.height.coerceAtLeast(1e-4f)
+			}
+			MeshDeltaForm(delta)
+		}
+
+	/** A restrained squash/stretch: vertical rebound is stronger than horizontal compensation. */
+	internal fun irisJellyPoint(
+		sourceX: Float,
+		sourceY: Float,
+		pivotX: Float,
+		pivotY: Float,
+		jelly: Float,
+	): Pair<Float, Float> {
+		val amount = jelly.coerceIn(-1f, 1f)
+		val scaleX = 1f - amount * 0.045f
+		val scaleY = 1f + amount * 0.11f
+		return pivotX + (sourceX - pivotX) * scaleX to pivotY + (sourceY - pivotY) * scaleY
+	}
+
 	/**
 	 * The mouth bitmap is authored fully open. ParamMouthOpenY=1 preserves it exactly; zero compresses
 	 * the complete drawable to a roughly one-pixel seam. Optional teeth and tongue are intentionally
@@ -1009,7 +1038,7 @@ object RigBuilder {
 		)
 		return listOf(
 			group("ParamGroupFace", tr("model.group.face"), listOf(StandardParameters.ANGLE_X, StandardParameters.ANGLE_Y, StandardParameters.ANGLE_Z)),
-			group("ParamGroupEyes", tr("model.group.eyes"), listOf(StandardParameters.EYE_L_OPEN, StandardParameters.EYE_R_OPEN, StandardParameters.EYE_BALL_X, StandardParameters.EYE_BALL_Y)),
+			group("ParamGroupEyes", tr("model.group.eyes"), listOf(StandardParameters.EYE_L_OPEN, StandardParameters.EYE_R_OPEN, StandardParameters.EYE_BALL_X, StandardParameters.EYE_BALL_Y, StandardParameters.EYE_BALL_FORM)),
 			group("ParamGroupBrows", tr("model.group.brows"), listOf(StandardParameters.BROW_L_Y, StandardParameters.BROW_R_Y)),
 			group("ParamGroupMouth", tr("model.group.mouth"), listOf(StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN)),
 			group("ParamGroupBody", tr("model.group.body"), listOf(StandardParameters.BODY_X, StandardParameters.BODY_Y, StandardParameters.BODY_Z, StandardParameters.BREATH)),

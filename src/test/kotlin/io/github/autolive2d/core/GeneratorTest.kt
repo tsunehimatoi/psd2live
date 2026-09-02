@@ -34,6 +34,21 @@ class GeneratorTest {
 	}
 
 	@Test
+	fun `eye jelly physics uses blink inputs and a quick two-stage pendulum`() {
+		val physics = assertNotNull(Moc3.readPhysics3(checkNotNull(PhysicsGenerator.generate(false, false, true))))
+		assertEquals(1, physics.meta.physicsSettingCount)
+		assertEquals(2, physics.meta.totalInputCount)
+		assertEquals(3, physics.meta.vertexCount)
+		val eye = physics.physicsSettings.single { it.id == "PhysicsEyeJelly" }
+		assertEquals(listOf("ParamEyeLOpen", "ParamEyeROpen"), eye.input.map { it.source.id })
+		assertEquals(listOf("X", "X"), eye.input.map { it.type })
+		assertEquals("ParamEyeBallForm", eye.output.single().destination.id)
+		assertEquals(2, eye.output.single().vertexIndex)
+		assertEquals(0.32f, eye.output.single().scale.content.toFloat())
+		assertTrue(eye.vertices[1].delay.content.toFloat() < eye.vertices[2].delay.content.toFloat())
+	}
+
+	@Test
 	fun `warp points scale proportionally with strength up to 4x`() {
 		val character = Bounds(0f, 0f, 1000f, 2000f)
 		val p1 = RigBuilder.bodyWarpPoint(character, 0.5f, 0.5f, 10f, 0f, 1f)
