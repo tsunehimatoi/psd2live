@@ -131,6 +131,9 @@ object RigBuilder {
 		val headCandidates = analysis.layers.filter { inferredGroup(it, analysis.anchors) == LayerGroup.HEAD && it.opaquePixels > 0 }
 		val headFrame = if (headCandidates.isEmpty()) analysis.anchors.face else headCandidates.map { it.bounds }.reduce(Bounds::union).expanded(0.025f)
 		val faceRig = NinePoseFaceRig.from(analysis)
+		val eyeWhiteLayers = analysis.layers.filter {
+			it.semantic.tag == SemanticTag.EYEWHITE && it.opaquePixels > 0
+		}
 		val faceCandidates = analysis.layers.filter { it.semantic.tag in faceTags && it.opaquePixels > 0 }
 		val faceFrame = (faceCandidates.map { it.bounds } + faceRig.face)
 			.reduce(Bounds::union)
@@ -191,6 +194,7 @@ object RigBuilder {
 				meshData,
 				parentAndFrame.second,
 				faceRig,
+				matchingEyeWhiteBounds(layer, eyeWhiteLayers),
 				mouthAperture,
 			)
 			val drawable = Drawable(
@@ -771,12 +775,16 @@ object RigBuilder {
 		data: MeshData,
 		parentFrame: Bounds,
 		faceRig: NinePoseFaceRig,
+		eyeWhiteBounds: List<Bounds>,
 		mouthAperture: Bounds?,
 	): KeyformGrid<MeshDeltaForm> {
 		val tag = layer.semantic.tag
 		return when (tag) {
-			SemanticTag.EYEWHITE, SemanticTag.EYELASH -> eyeClosureGrid(layer, data, parentFrame, faceRig)
-			SemanticTag.IRIDES -> eyeClosureGrid(layer, data, parentFrame, faceRig)
+			SemanticTag.EYEWHITE, SemanticTag.EYELASH ->
+				eyeClosureGrid(layer, data, parentFrame, faceRig, eyeWhiteBounds)
+			// The iris keeps its authored geometry. Eye-white clipping, not pupil deformation,
+			// removes it from view as the lid closes.
+			SemanticTag.IRIDES -> zeroMeshGrid(data.mesh.positions.size)
 			SemanticTag.EYEBROW -> eyebrowGrid(layer, data, parentFrame)
 			SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN -> mouthWholeGrid(data, parentFrame, mouthAperture ?: layer.bounds)
 			SemanticTag.MOUTH_CLOSE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE ->
@@ -785,28 +793,136 @@ object RigBuilder {
 		}
 	}
 
-	private fun eyeClosureGrid(layer: ClassifiedLayer, data: MeshData, frame: Bounds, faceRig: NinePoseFaceRig): KeyformGrid<MeshDeltaForm> {
+	private fun eyeClosureGrid(
+		layer: ClassifiedLayer,
+		data: MeshData,
+		frame: Bounds,
+		faceRig: NinePoseFaceRig,
+		eyeWhiteBounds: List<Bounds>,
+	): KeyformGrid<MeshDeltaForm> {
 		val parameter = if (layer.semantic.side == Side.LEFT) StandardParameters.EYE_L_OPEN else StandardParameters.EYE_R_OPEN
+		val eyelashCenterline = if (layer.semantic.tag == SemanticTag.EYELASH) eyelashCenterline(layer) else null
 		val axes = if (layer.semantic.side == Side.NONE) {
 			listOf(axis(StandardParameters.EYE_L_OPEN, 0f, 1f), axis(StandardParameters.EYE_R_OPEN, 0f, 1f))
 		} else listOf(axis(parameter, 0f, 1f))
 		return grid(axes) { values ->
 			val delta = FloatArray(data.mesh.positions.size)
-			val closeCanvasY = layer.bounds.top + layer.bounds.height * 0.55f
-			val closeLocalY = normalizeY(closeCanvasY, frame)
 			for (vertex in data.mesh.positions.indices step 2) {
 				val canvasX = data.canvasPositions[vertex]
+				val canvasY = data.canvasPositions[vertex + 1]
 				val openness = when (layer.semantic.side) {
 					Side.LEFT -> values[0]
 					Side.RIGHT -> values[0]
 					Side.NONE -> if (canvasX >= faceRig.centerX) values[0] else values[1]
 				}
-				val currentY = data.mesh.positions[vertex + 1]
-				val targetY = if (layer.semantic.tag == SemanticTag.EYELASH && currentY > closeLocalY) currentY else closeLocalY
-				delta[vertex + 1] = (targetY - currentY) * (1f - openness)
+				val whiteBounds = eyeWhiteBounds.minByOrNull { abs(it.centerX - canvasX) } ?: layer.bounds
+				val closed = eyeClosurePoint(
+					canvasX,
+					canvasY,
+					layer.bounds,
+					whiteBounds,
+					layer.semantic.tag,
+					eyelashCenterline?.let { sampleCenterline(it, layer, canvasX) } ?: layer.centroidY,
+				)
+				delta[vertex] = (closed.first - canvasX) / frame.width.coerceAtLeast(1e-4f) * (1f - openness)
+				delta[vertex + 1] = (closed.second - canvasY) / frame.height.coerceAtLeast(1e-4f) * (1f - openness)
 			}
 			MeshDeltaForm(delta)
 		}
+	}
+
+	/**
+	 * Closed eyes share one curve derived from the eye-white bounds.  The common centre line is what
+	 * keeps the shrunken white behind the lash. Every eyelash vertex in the same vertical slice is
+	 * measured from the alpha-weighted source centreline, so the texture follows the target curve
+	 * instead of adding its authored curvature on top of it.
+	 */
+	internal fun eyeClosurePoint(
+		sourceX: Float,
+		sourceY: Float,
+		layerBounds: Bounds,
+		eyeWhiteBounds: Bounds,
+		tag: SemanticTag,
+		sourceAnchorY: Float = layerBounds.centerY,
+	): Pair<Float, Float> {
+		val halfWidth = (eyeWhiteBounds.width * 0.5f).coerceAtLeast(1e-4f)
+		val normalizedX = ((sourceX - eyeWhiteBounds.centerX) / halfWidth).coerceIn(-1f, 1f)
+		val arch = max(0f, 1f - normalizedX * normalizedX)
+		// Keep the trough at 72% of the eye-white height, but raise the endpoints from 48% to 34%.
+		// This deepens the U without increasing its centre travel and reduces movement at both corners.
+		val edgeY = eyeWhiteBounds.top + eyeWhiteBounds.height * 0.34f
+		val curveY = edgeY + max(1.5f, eyeWhiteBounds.height * 0.38f) * arch
+		val layerHeight = layerBounds.height.coerceAtLeast(1f)
+		val verticalScale = when (tag) {
+			SemanticTag.EYELASH -> 0.88f
+			SemanticTag.EYEWHITE -> (1.2f / layerHeight).coerceIn(0.015f, 0.55f)
+			else -> (1.2f / layerHeight).coerceIn(0.015f, 0.55f)
+		}
+		return sourceX to curveY + (sourceY - sourceAnchorY) * verticalScale
+	}
+
+	/** Alpha-weighted centre of every source column, with transparent gaps linearly bridged. */
+	private fun eyelashCenterline(layer: ClassifiedLayer): FloatArray? {
+		val width = layer.source.raster.width
+		val height = layer.source.raster.height
+		if (width <= 0 || height <= 0) return null
+		val rgba = layer.source.raster.rgba
+		val result = FloatArray(width) { Float.NaN }
+		for (x in 0 until width) {
+			var weightSum = 0f
+			var weightedY = 0f
+			for (y in 0 until height) {
+				val alpha = (rgba[(y * width + x) * 4 + 3].toInt() and 0xff).toFloat()
+				if (alpha == 0f) continue
+				weightSum += alpha
+				weightedY += (y + 0.5f) * alpha
+			}
+			if (weightSum > 0f) result[x] = layer.source.bounds.top + weightedY / weightSum
+		}
+		val first = result.indexOfFirst { !it.isNaN() }
+		if (first < 0) return null
+		for (x in 0 until first) result[x] = result[first]
+		var previous = first
+		for (x in first + 1 until width) {
+			if (result[x].isNaN()) continue
+			val gap = x - previous
+			if (gap > 1) {
+				val start = result[previous]
+				val end = result[x]
+				for (step in 1 until gap) result[previous + step] = start + (end - start) * step / gap
+			}
+			previous = x
+		}
+		for (x in previous + 1 until width) result[x] = result[previous]
+		return result
+	}
+
+	private fun sampleCenterline(centerline: FloatArray, layer: ClassifiedLayer, canvasX: Float): Float {
+		val sourceX = (canvasX - layer.source.bounds.left).coerceIn(0f, (centerline.size - 1).toFloat())
+		val left = sourceX.toInt()
+		val right = (left + 1).coerceAtMost(centerline.lastIndex)
+		return centerline[left] + (centerline[right] - centerline[left]) * (sourceX - left)
+	}
+
+	private fun matchingEyeWhiteBounds(
+		layer: ClassifiedLayer,
+		eyeWhites: List<ClassifiedLayer>,
+	): List<Bounds> {
+		if (eyeWhites.isEmpty()) return listOf(layer.bounds)
+		val sameVariantAndSide = eyeWhites.filter {
+			it.semantic.side == layer.semantic.side && it.semantic.variant == layer.semantic.variant
+		}
+		val sameSide = eyeWhites.filter { it.semantic.side == layer.semantic.side }
+		val unspecified = eyeWhites.filter { it.semantic.side == Side.NONE }
+		val candidates = when {
+			sameVariantAndSide.isNotEmpty() -> sameVariantAndSide
+			sameSide.isNotEmpty() -> sameSide
+			layer.semantic.side == Side.NONE -> eyeWhites
+			unspecified.isNotEmpty() -> unspecified
+			else -> eyeWhites
+		}
+		if (layer.semantic.side == Side.NONE && candidates.size > 1) return candidates.map { it.bounds }
+		return listOfNotNull(nearestLayer(layer, candidates)?.bounds)
 	}
 
 	private fun eyebrowGrid(layer: ClassifiedLayer, data: MeshData, frame: Bounds): KeyformGrid<MeshDeltaForm> {

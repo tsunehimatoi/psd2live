@@ -144,7 +144,7 @@ Root
 | `ParamAngleX` | 角度 X | `[-45, +45]` | 头部水平转动（九轴经纬网） |
 | `ParamAngleY` | 角度 Y | `[-30, +30]` | 头部垂直仰俯（V/^ 曲率） |
 | `ParamAngleZ` | 角度 Z | `[-30, +30]` | 头部平面倾斜旋转 |
-| `ParamEyeLOpen` / `ParamEyeROpen` | 左/右眼 开闭 | `[0, 1]` | 睫毛压低、虹膜垂直收缩 |
+| `ParamEyeLOpen` / `ParamEyeROpen` | 左/右眼 开闭 | `[0, 1]` | 睫毛沿原画中心轨迹轻微变细并弯曲为与收缩眼白重合的 U 形闭眼线；瞳孔保持原形并由眼白遮罩隐藏 |
 | `ParamEyeBallX` / `ParamEyeBallY` | 视线 X / Y | `[-1, +1]` | 瞳孔眼球追踪偏移 |
 | `ParamBrowLY` / `ParamBrowRY` | 左/右眉 上下 | `[-1, +1]` | 眉毛上下移动 |
 | `ParamMouthForm` | 嘴 变形 | `[-1, +1]` | 嘴角抬升/下压与横向宽度 |
