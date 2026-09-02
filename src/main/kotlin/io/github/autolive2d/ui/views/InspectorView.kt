@@ -79,9 +79,12 @@ import kotlin.math.roundToInt
 fun InspectorView(
 	state: AutoLive2DState,
 	viewModel: AutoLive2DViewModel,
+	onGenerate: () -> Unit = { viewModel.generateRig() },
+	onChooseOutput: () -> Unit = {},
 	modifier: Modifier = Modifier,
 ) {
 	val colors = LocalToolColors.current
+	var modelSettingsExpanded by remember { mutableStateOf(true) }
 
 	Column(
 		modifier = modifier
@@ -89,12 +92,27 @@ fun InspectorView(
 			.background(colors.panelBackground)
 			.border(BorderStroke(1.dp, colors.divider)),
 	) {
-		// 1. Settings Section (Collapsible / Compact)
-		SettingsSection(state, viewModel)
+		// 1. Output Directory & Generate/Export Row
+		ExportActionSection(
+			state = state,
+			viewModel = viewModel,
+			onGenerate = onGenerate,
+			onChooseOutput = onChooseOutput,
+		)
 
 		Divider(color = colors.divider, thickness = 1.dp)
 
-		// 2. Tabs Section: Layers & Parameters
+		// 2. Collapsible Model Settings Section (旧名自动绑定设置)
+		ModelSettingsSection(
+			state = state,
+			viewModel = viewModel,
+			isExpanded = modelSettingsExpanded,
+			onToggleExpand = { modelSettingsExpanded = !modelSettingsExpanded },
+		)
+
+		Divider(color = colors.divider, thickness = 1.dp)
+
+		// 3. Tabs Section: Layers & Parameters
 		val inspectorTabs = listOf(
 			tr("tab.layers"),
 			tr("tab.parameters"),
@@ -120,9 +138,11 @@ fun InspectorView(
 }
 
 @Composable
-private fun SettingsSection(
+private fun ExportActionSection(
 	state: AutoLive2DState,
 	viewModel: AutoLive2DViewModel,
+	onGenerate: () -> Unit,
+	onChooseOutput: () -> Unit,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -132,236 +152,38 @@ private fun SettingsSection(
 		modifier = Modifier
 			.fillMaxWidth()
 			.padding(6.dp),
-		verticalArrangement = Arrangement.spacedBy(4.dp),
+		verticalArrangement = Arrangement.spacedBy(5.dp),
 	) {
-		// Section Title + Reset to defaults Button
-		Row(
-			modifier = Modifier.fillMaxWidth(),
-			verticalAlignment = Alignment.CenterVertically,
-			horizontalArrangement = Arrangement.SpaceBetween,
-		) {
-			Text(
-				text = tr("settings.title"),
-				style = typography.header.copy(fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold),
-				color = colors.textPrimary,
-			)
-			CompactButton(
-				text = tr("settings.reset"),
-				onClick = { viewModel.resetSettingsToDefault() },
-				enabled = !isBusy,
-				leadingIcon = { IconReset(tint = colors.textPrimary) },
-				height = 20.dp,
-			)
-		}
-
-		// Form Row 1: Texture Size (Atlas)
-		val atlasOptions = listOf(1024, 2048, 4096, 8192, 16384)
+		// Output Directory Row
 		Row(
 			modifier = Modifier.fillMaxWidth(),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
 			Text(
-				text = tr("settings.atlasSize"),
+				text = tr("project.output"),
 				style = typography.body.copy(fontSize = 11.sp),
 				color = colors.textPrimary,
-				modifier = Modifier.width(85.dp),
-				textAlign = TextAlign.Right,
-			)
-			Spacer(Modifier.width(6.dp))
-			CompactDropdown(
-				items = atlasOptions,
-				selectedItem = state.atlasSize.takeIf { it in atlasOptions } ?: atlasOptions[2],
-				onItemSelected = { viewModel.setAtlasSize(it) },
-				itemLabel = { "${it} × ${it}" },
-				modifier = Modifier.weight(1f),
-				enabled = !isBusy,
-				height = 22.dp,
-			)
-			Spacer(Modifier.width(4.dp))
-			CompactNumberSpinner(
-				value = state.atlasSize.toDouble(),
-				onValueChange = { viewModel.setAtlasSize(it.toInt()) },
-				min = 256.0,
-				max = 16384.0,
-				step = 256.0,
-				decimals = 0,
-				enabled = !isBusy,
 				modifier = Modifier.width(65.dp),
-				height = 22.dp,
-			)
-		}
-
-		// Form Row 2: Mesh Spacing
-		Row(
-			modifier = Modifier.fillMaxWidth(),
-			verticalAlignment = Alignment.CenterVertically,
-		) {
-			Text(
-				text = tr("settings.meshSpacing"),
-				style = typography.body.copy(fontSize = 11.sp),
-				color = colors.textPrimary,
-				modifier = Modifier.width(85.dp),
 				textAlign = TextAlign.Right,
 			)
 			Spacer(Modifier.width(6.dp))
-			CompactSlider(
-				value = state.meshSpacing.toFloat(),
-				onValueChange = { viewModel.setMeshSpacing(it.roundToInt()) },
-				valueRange = 16f..128f,
-				enabled = !isBusy,
+			CompactTextField(
+				value = state.outputPath,
+				onValueChange = { viewModel.setOutputPath(it) },
+				placeholder = tr("dialog.chooseOutput"),
 				modifier = Modifier.weight(1f),
-			)
-			Spacer(Modifier.width(4.dp))
-			CompactNumberSpinner(
-				value = state.meshSpacing.toDouble(),
-				onValueChange = { viewModel.setMeshSpacing(it.toInt()) },
-				min = 16.0,
-				max = 128.0,
-				step = 8.0,
-				decimals = 0,
-				unit = tr("settings.unit.px"),
-				enabled = !isBusy,
-				modifier = Modifier.width(60.dp),
 				height = 22.dp,
 			)
-			Spacer(Modifier.width(3.dp))
-			// Quick chips
-			CompactButton(text = "32", onClick = { viewModel.setMeshSpacing(32) }, enabled = !isBusy, height = 20.dp)
-			Spacer(Modifier.width(2.dp))
-			CompactButton(text = "64", onClick = { viewModel.setMeshSpacing(64) }, enabled = !isBusy, height = 20.dp)
-			Spacer(Modifier.width(2.dp))
-			CompactButton(text = "96", onClick = { viewModel.setMeshSpacing(96) }, enabled = !isBusy, height = 20.dp)
-		}
-
-		// Form Row 3: Head Strength
-		Row(
-			modifier = Modifier.fillMaxWidth(),
-			verticalAlignment = Alignment.CenterVertically,
-		) {
-			Text(
-				text = tr("settings.headStrength"),
-				style = typography.body.copy(fontSize = 11.sp),
-				color = colors.textPrimary,
-				modifier = Modifier.width(85.dp),
-				textAlign = TextAlign.Right,
-			)
-			Spacer(Modifier.width(6.dp))
-			CompactSlider(
-				value = state.headStrength,
-				onValueChange = { viewModel.setHeadStrength(it) },
-				valueRange = 0.0f..4.0f,
-				enabled = !isBusy,
-				modifier = Modifier.weight(1f),
-			)
 			Spacer(Modifier.width(4.dp))
-			CompactNumberSpinner(
-				value = state.headStrength.toDouble(),
-				onValueChange = { viewModel.setHeadStrength(it.toFloat()) },
-				min = 0.0,
-				max = 4.0,
-				step = 0.05,
-				decimals = 2,
-				unit = tr("settings.unit.x"),
+			CompactButton(
+				text = tr("action.choose"),
+				onClick = onChooseOutput,
 				enabled = !isBusy,
-				modifier = Modifier.width(60.dp),
 				height = 22.dp,
 			)
 		}
 
-		// Form Row 4: Body Strength
-		Row(
-			modifier = Modifier.fillMaxWidth(),
-			verticalAlignment = Alignment.CenterVertically,
-		) {
-			Text(
-				text = tr("settings.bodyStrength"),
-				style = typography.body.copy(fontSize = 11.sp),
-				color = colors.textPrimary,
-				modifier = Modifier.width(85.dp),
-				textAlign = TextAlign.Right,
-			)
-			Spacer(Modifier.width(6.dp))
-			CompactSlider(
-				value = state.bodyStrength,
-				onValueChange = { viewModel.setBodyStrength(it) },
-				valueRange = 0.0f..4.0f,
-				enabled = !isBusy,
-				modifier = Modifier.weight(1f),
-			)
-			Spacer(Modifier.width(4.dp))
-			CompactNumberSpinner(
-				value = state.bodyStrength.toDouble(),
-				onValueChange = { viewModel.setBodyStrength(it.toFloat()) },
-				min = 0.0,
-				max = 4.0,
-				step = 0.05,
-				decimals = 2,
-				unit = tr("settings.unit.x"),
-				enabled = !isBusy,
-				modifier = Modifier.width(60.dp),
-				height = 22.dp,
-			)
-		}
-
-		// Advanced Toggle
-		Row(
-			modifier = Modifier
-				.fillMaxWidth()
-				.clickable { viewModel.setAdvancedExpanded(!state.advancedExpanded) }
-				.padding(vertical = 2.dp),
-			verticalAlignment = Alignment.CenterVertically,
-		) {
-			IconChevron(expanded = state.advancedExpanded, modifier = Modifier.size(9.dp), tint = colors.accent)
-			Spacer(Modifier.width(4.dp))
-			Text(
-				text = tr("settings.advanced"),
-				style = typography.caption.copy(fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold),
-				color = colors.accent,
-			)
-		}
-
-		if (state.advancedExpanded) {
-			Row(
-				modifier = Modifier
-					.fillMaxWidth()
-					.background(colors.panelElevated, RoundedCornerShape(2.dp))
-					.padding(4.dp),
-				verticalAlignment = Alignment.CenterVertically,
-				horizontalArrangement = Arrangement.spacedBy(6.dp),
-			) {
-				Text(text = tr("settings.texturePadding"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted)
-				CompactNumberSpinner(
-					value = state.texturePadding.toDouble(),
-					onValueChange = { viewModel.setTexturePadding(it.toInt()) },
-					min = 0.0,
-					max = 32.0,
-					step = 1.0,
-					decimals = 0,
-					unit = tr("settings.unit.px"),
-					enabled = !isBusy,
-					modifier = Modifier.width(55.dp),
-					height = 20.dp,
-				)
-
-				Spacer(Modifier.weight(1f))
-
-				Text(text = tr("settings.alphaThreshold"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted)
-				CompactNumberSpinner(
-					value = state.alphaThreshold.toDouble(),
-					onValueChange = { viewModel.setAlphaThreshold(it.toInt()) },
-					min = 0.0,
-					max = 255.0,
-					step = 1.0,
-					decimals = 0,
-					unit = tr("settings.unit.byte"),
-					enabled = !isBusy,
-					modifier = Modifier.width(60.dp),
-					height = 20.dp,
-				)
-			}
-		}
-
-		// Export Checkboxes Row & Generate Button
+		// Generate & Export Row
 		Row(
 			modifier = Modifier.fillMaxWidth(),
 			verticalAlignment = Alignment.CenterVertically,
@@ -393,12 +215,272 @@ private fun SettingsSection(
 
 			CompactButton(
 				text = tr("action.generate"),
-				onClick = { viewModel.generateRig() },
-				enabled = state.inputPath.isNotBlank() && state.outputPath.isNotBlank() &&
+				onClick = onGenerate,
+				enabled = state.inputPath.isNotBlank() &&
 					(state.exportCmo3 || state.exportMoc3) && !isBusy,
 				isPrimary = true,
 				height = 22.dp,
 			)
+		}
+	}
+}
+
+@Composable
+private fun ModelSettingsSection(
+	state: AutoLive2DState,
+	viewModel: AutoLive2DViewModel,
+	isExpanded: Boolean,
+	onToggleExpand: () -> Unit,
+) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	val isBusy = state.isAnalyzing || state.isGenerating
+
+	Column(
+		modifier = Modifier
+			.fillMaxWidth()
+			.padding(horizontal = 6.dp, vertical = 4.dp),
+		verticalArrangement = Arrangement.spacedBy(4.dp),
+	) {
+		// Header Row: Expand/Collapse Chevron + Title ("模型设置") + Reset Button
+		Row(
+			modifier = Modifier
+				.fillMaxWidth()
+				.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
+				.clickable(onClick = onToggleExpand)
+				.padding(vertical = 2.dp),
+			verticalAlignment = Alignment.CenterVertically,
+			horizontalArrangement = Arrangement.SpaceBetween,
+		) {
+			Row(
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.spacedBy(4.dp),
+			) {
+				IconChevron(expanded = isExpanded, modifier = Modifier.size(9.dp), tint = colors.textPrimary)
+				Text(
+					text = tr("settings.title"),
+					style = typography.header.copy(fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold),
+					color = colors.textPrimary,
+				)
+			}
+			if (isExpanded) {
+				CompactButton(
+					text = tr("settings.reset"),
+					onClick = { viewModel.resetSettingsToDefault() },
+					enabled = !isBusy,
+					leadingIcon = { IconReset(tint = colors.textPrimary) },
+					height = 20.dp,
+				)
+			}
+		}
+
+		if (isExpanded) {
+			// Form Row 1: Texture Size (Atlas)
+			val atlasOptions = listOf(1024, 2048, 4096, 8192, 16384)
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				Text(
+					text = tr("settings.atlasSize"),
+					style = typography.body.copy(fontSize = 11.sp),
+					color = colors.textPrimary,
+					modifier = Modifier.width(85.dp),
+					textAlign = TextAlign.Right,
+				)
+				Spacer(Modifier.width(6.dp))
+				CompactDropdown(
+					items = atlasOptions,
+					selectedItem = state.atlasSize.takeIf { it in atlasOptions } ?: atlasOptions[2],
+					onItemSelected = { viewModel.setAtlasSize(it) },
+					itemLabel = { "${it} × ${it}" },
+					modifier = Modifier.weight(1f),
+					enabled = !isBusy,
+					height = 22.dp,
+				)
+				Spacer(Modifier.width(4.dp))
+				CompactNumberSpinner(
+					value = state.atlasSize.toDouble(),
+					onValueChange = { viewModel.setAtlasSize(it.toInt()) },
+					min = 256.0,
+					max = 16384.0,
+					step = 256.0,
+					decimals = 0,
+					enabled = !isBusy,
+					modifier = Modifier.width(65.dp),
+					height = 22.dp,
+				)
+			}
+
+			// Form Row 2: Mesh Spacing
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				Text(
+					text = tr("settings.meshSpacing"),
+					style = typography.body.copy(fontSize = 11.sp),
+					color = colors.textPrimary,
+					modifier = Modifier.width(85.dp),
+					textAlign = TextAlign.Right,
+				)
+				Spacer(Modifier.width(6.dp))
+				CompactSlider(
+					value = state.meshSpacing.toFloat(),
+					onValueChange = { viewModel.setMeshSpacing(it.roundToInt()) },
+					valueRange = 16f..128f,
+					enabled = !isBusy,
+					modifier = Modifier.weight(1f),
+				)
+				Spacer(Modifier.width(4.dp))
+				CompactNumberSpinner(
+					value = state.meshSpacing.toDouble(),
+					onValueChange = { viewModel.setMeshSpacing(it.toInt()) },
+					min = 16.0,
+					max = 128.0,
+					step = 8.0,
+					decimals = 0,
+					unit = tr("settings.unit.px"),
+					enabled = !isBusy,
+					modifier = Modifier.width(60.dp),
+					height = 22.dp,
+				)
+				Spacer(Modifier.width(3.dp))
+				// Quick chips
+				CompactButton(text = "32", onClick = { viewModel.setMeshSpacing(32) }, enabled = !isBusy, height = 20.dp)
+				Spacer(Modifier.width(2.dp))
+				CompactButton(text = "64", onClick = { viewModel.setMeshSpacing(64) }, enabled = !isBusy, height = 20.dp)
+				Spacer(Modifier.width(2.dp))
+				CompactButton(text = "96", onClick = { viewModel.setMeshSpacing(96) }, enabled = !isBusy, height = 20.dp)
+			}
+
+			// Form Row 3: Head Strength
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				Text(
+					text = tr("settings.headStrength"),
+					style = typography.body.copy(fontSize = 11.sp),
+					color = colors.textPrimary,
+					modifier = Modifier.width(85.dp),
+					textAlign = TextAlign.Right,
+				)
+				Spacer(Modifier.width(6.dp))
+				CompactSlider(
+					value = state.headStrength,
+					onValueChange = { viewModel.setHeadStrength(it) },
+					valueRange = 0.0f..4.0f,
+					enabled = !isBusy,
+					modifier = Modifier.weight(1f),
+				)
+				Spacer(Modifier.width(4.dp))
+				CompactNumberSpinner(
+					value = state.headStrength.toDouble(),
+					onValueChange = { viewModel.setHeadStrength(it.toFloat()) },
+					min = 0.0,
+					max = 4.0,
+					step = 0.05,
+					decimals = 2,
+					unit = tr("settings.unit.x"),
+					enabled = !isBusy,
+					modifier = Modifier.width(60.dp),
+					height = 22.dp,
+				)
+			}
+
+			// Form Row 4: Body Strength
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				Text(
+					text = tr("settings.bodyStrength"),
+					style = typography.body.copy(fontSize = 11.sp),
+					color = colors.textPrimary,
+					modifier = Modifier.width(85.dp),
+					textAlign = TextAlign.Right,
+				)
+				Spacer(Modifier.width(6.dp))
+				CompactSlider(
+					value = state.bodyStrength,
+					onValueChange = { viewModel.setBodyStrength(it) },
+					valueRange = 0.0f..4.0f,
+					enabled = !isBusy,
+					modifier = Modifier.weight(1f),
+				)
+				Spacer(Modifier.width(4.dp))
+				CompactNumberSpinner(
+					value = state.bodyStrength.toDouble(),
+					onValueChange = { viewModel.setBodyStrength(it.toFloat()) },
+					min = 0.0,
+					max = 4.0,
+					step = 0.05,
+					decimals = 2,
+					unit = tr("settings.unit.x"),
+					enabled = !isBusy,
+					modifier = Modifier.width(60.dp),
+					height = 22.dp,
+				)
+			}
+
+			// Advanced Toggle
+			Row(
+				modifier = Modifier
+					.fillMaxWidth()
+					.clickable { viewModel.setAdvancedExpanded(!state.advancedExpanded) }
+					.padding(vertical = 2.dp),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				IconChevron(expanded = state.advancedExpanded, modifier = Modifier.size(9.dp), tint = colors.accent)
+				Spacer(Modifier.width(4.dp))
+				Text(
+					text = tr("settings.advanced"),
+					style = typography.caption.copy(fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold),
+					color = colors.accent,
+				)
+			}
+
+			if (state.advancedExpanded) {
+				Row(
+					modifier = Modifier
+						.fillMaxWidth()
+						.background(colors.panelElevated, RoundedCornerShape(2.dp))
+						.padding(4.dp),
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(6.dp),
+				) {
+					Text(text = tr("settings.texturePadding"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted)
+					CompactNumberSpinner(
+						value = state.texturePadding.toDouble(),
+						onValueChange = { viewModel.setTexturePadding(it.toInt()) },
+						min = 0.0,
+						max = 32.0,
+						step = 1.0,
+						decimals = 0,
+						unit = tr("settings.unit.px"),
+						enabled = !isBusy,
+						modifier = Modifier.width(55.dp),
+						height = 20.dp,
+					)
+
+					Spacer(Modifier.weight(1f))
+
+					Text(text = tr("settings.alphaThreshold"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted)
+					CompactNumberSpinner(
+						value = state.alphaThreshold.toDouble(),
+						onValueChange = { viewModel.setAlphaThreshold(it.toInt()) },
+						min = 0.0,
+						max = 255.0,
+						step = 1.0,
+						decimals = 0,
+						unit = tr("settings.unit.byte"),
+						enabled = !isBusy,
+						modifier = Modifier.width(60.dp),
+						height = 20.dp,
+					)
+				}
+			}
 		}
 	}
 }

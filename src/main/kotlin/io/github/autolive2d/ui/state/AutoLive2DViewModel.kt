@@ -29,12 +29,23 @@ import org.umamo.runtime.model.ParameterId
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.prefs.Preferences
 import kotlin.math.PI
 import kotlin.math.sin
 
 class AutoLive2DViewModel : AutoCloseable {
 	private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 	private val pipeline = AutoLive2DPipeline()
+	private val preferences by lazy { Preferences.userNodeForPackage(AutoLive2DViewModel::class.java) }
+
+	var lastExportDirectory: String?
+		get() = runCatching { preferences.get(PREF_LAST_EXPORT_DIR, null) }.getOrNull()?.takeIf(String::isNotBlank)
+		private set(value) {
+			runCatching {
+				if (value.isNullOrBlank()) preferences.remove(PREF_LAST_EXPORT_DIR)
+				else preferences.put(PREF_LAST_EXPORT_DIR, value.trim())
+			}
+		}
 
 	private val _state = MutableStateFlow(AutoLive2DState(statusText = tr("status.ready")))
 	val state: StateFlow<AutoLive2DState> = _state.asStateFlow()
@@ -112,7 +123,11 @@ class AutoLive2DViewModel : AutoCloseable {
 	}
 
 	fun setOutputPath(path: String) {
-		_state.update { it.copy(outputPath = path.trim()) }
+		val trimmed = path.trim()
+		if (trimmed.isNotBlank()) {
+			lastExportDirectory = trimmed
+		}
+		_state.update { it.copy(outputPath = trimmed) }
 	}
 
 	fun setAtlasSize(size: Int) {
@@ -495,17 +510,29 @@ class AutoLive2DViewModel : AutoCloseable {
 		}
 	}
 
-	fun generateRig() {
+	fun generateRig(targetOutputPath: String? = null) {
+		if (!targetOutputPath.isNullOrBlank()) {
+			setOutputPath(targetOutputPath)
+		}
 		val rawInput = _state.value.inputPath.trim()
 		if (rawInput.isEmpty()) {
 			_state.update { it.copy(errorMessage = tr("dialog.inputRequired")) }
 			return
 		}
-		val rawOutput = _state.value.outputPath.trim()
+		var rawOutput = _state.value.outputPath.trim()
 		if (rawOutput.isEmpty()) {
-			_state.update { it.copy(errorMessage = tr("dialog.outputRequired")) }
-			return
+			try {
+				val p = Path.of(rawInput)
+				val parent = p.toAbsolutePath().parent
+				val name = p.fileName.toString().substringBeforeLast('.')
+				rawOutput = parent.resolve("$name-autolive2d").toString()
+				setOutputPath(rawOutput)
+			} catch (_: Exception) {
+				_state.update { it.copy(errorMessage = tr("dialog.outputRequired")) }
+				return
+			}
 		}
+		lastExportDirectory = rawOutput
 		val input = Path.of(rawInput)
 		val output = Path.of(rawOutput)
 		val config = _state.value.buildConfig()
@@ -723,6 +750,7 @@ class AutoLive2DViewModel : AutoCloseable {
 
 	private companion object {
 		const val SDK_PARAMETER_PUBLISH_INTERVAL_NANOS = 33_333_333L
+		const val PREF_LAST_EXPORT_DIR = "last_export_dir"
 	}
 }
 

@@ -198,4 +198,24 @@ class AutoLive2DViewModelTest {
 			vm.close()
 		}
 	}
+
+	@Test
+	fun `output path and last export directory tracking work accurately`() {
+		val vm = AutoLive2DViewModel()
+		try {
+			vm.setInputPath("D:\\test\\sample.psd")
+			assertEquals("D:\\test\\sample.psd", vm.state.value.inputPath)
+			assertTrue(vm.state.value.outputPath.endsWith("sample-autolive2d"))
+
+			vm.setOutputPath("D:\\custom_export\\dir")
+			assertEquals("D:\\custom_export\\dir", vm.state.value.outputPath)
+			assertEquals("D:\\custom_export\\dir", vm.lastExportDirectory)
+
+			vm.generateRig("D:\\another_export\\dir")
+			assertEquals("D:\\another_export\\dir", vm.state.value.outputPath)
+			assertEquals("D:\\another_export\\dir", vm.lastExportDirectory)
+		} finally {
+			vm.close()
+		}
+	}
 }

@@ -64,14 +64,17 @@ object NativeFilePicker {
 		val title = tr("dialog.chooseOutput")
 		val isWindows = System.getProperty("os.name").orEmpty().contains("win", ignoreCase = true)
 
+		val initialFile = if (!initialPath.isNullOrBlank()) {
+			val f = File(initialPath)
+			if (f.exists() && f.isDirectory) f
+			else if (f.parentFile?.exists() == true && f.parentFile.isDirectory) f.parentFile
+			else null
+		} else null
+		val initialDir = initialFile?.absolutePath.orEmpty()
+
 		// On Windows, try native PowerShell FolderPicker for modern Windows 10/11 folder selection
 		if (isWindows) {
 			try {
-				val initialDir = if (!initialPath.isNullOrBlank()) {
-					val f = File(initialPath)
-					if (f.exists() && f.isDirectory) f.absolutePath else f.parent ?: ""
-				} else ""
-
 				val script = buildString {
 					append("Add-Type -AssemblyName System.Windows.Forms; ")
 					append("\$dialog = New-Object System.Windows.Forms.FolderBrowserDialog; ")
@@ -101,9 +104,8 @@ object NativeFilePicker {
 			val chooser = JFileChooser().apply {
 				dialogTitle = title
 				fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
-				if (!initialPath.isNullOrBlank()) {
-					val f = File(initialPath)
-					if (f.exists()) currentDirectory = if (f.isDirectory) f else f.parentFile
+				if (initialFile != null) {
+					currentDirectory = initialFile
 				}
 			}
 			if (chooser.showOpenDialog(window) == JFileChooser.APPROVE_OPTION) {
