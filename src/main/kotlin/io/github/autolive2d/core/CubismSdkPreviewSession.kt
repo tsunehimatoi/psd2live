@@ -6,17 +6,34 @@ import com.sun.jna.Native
 import com.sun.jna.Pointer
 import org.umamo.runtime.model.ParameterId
 import java.awt.image.BufferedImage
+import java.awt.image.DataBufferInt
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import javax.swing.SwingUtilities
 
 /** A frame evaluated and rendered by the official Cubism 5-r.5 runtime. */
 data class CubismSdkFrame(
 	val image: BufferedImage,
 	val parameters: Map<ParameterId, Float>,
+	val animationEnabled: Boolean = true,
+)
+
+internal data class CubismPointerTrackingBinding(
+	val parameterId: String,
+	val xScale: Float = 0f,
+	val yScale: Float = 0f,
+)
+
+internal val CUBISM_POINTER_TRACKING_BINDINGS = listOf(
+	CubismPointerTrackingBinding("ParamAngleX", xScale = 30f),
+	CubismPointerTrackingBinding("ParamAngleY", yScale = 30f),
+	CubismPointerTrackingBinding("ParamBodyAngleX", xScale = 10f),
+	CubismPointerTrackingBinding("ParamEyeBallX", xScale = 1f),
+	CubismPointerTrackingBinding("ParamEyeBallY", yScale = 1f),
 )
 
 /**
@@ -62,21 +79,44 @@ class CubismSdkPreviewSession(
 		val pointerY: Float,
 		val animationEnabled: Boolean = true,
 		val parameterOverrides: Map<ParameterId, Float>,
+		val frameTimeNanos: Long = System.nanoTime(),
+	)
+
+	private data class QueuedRender(
+		val generation: Long,
+		val request: RenderRequest,
+	)
+
+	private data class QueuedDelivery(
+		val generation: Long,
+		val frame: CubismSdkFrame,
 	)
 
 	private val executor = Executors.newSingleThreadExecutor { runnable ->
 		Thread(runnable, "cubism-sdk-preview").apply { isDaemon = true }
 	}
-	private val renderQueued = AtomicBoolean(false)
+	private val renderWorkerScheduled = AtomicBoolean(false)
+	private val latestRender = AtomicReference<QueuedRender?>()
+	private val deliveryScheduled = AtomicBoolean(false)
+	private val latestDelivery = AtomicReference<QueuedDelivery?>()
 	@Volatile private var generation = 0L
+	@Volatile private var loadedGeneration = -1L
 	@Volatile private var closed = false
 	private var api: Api? = null
 	private var model: Pointer? = null
 	private var parameterIds: List<ParameterId> = emptyList()
+	private var pixelMemory: Memory? = null
+	private var pixelMemoryCapacity = 0L
+	private var parameterMemory: Memory? = null
+	private var parameterMemoryCapacity = 0
+	private var lastRenderedFrameTimeNanos = 0L
+	private var previousFrameWasAnimated = false
 
 	fun load(bundle: CubismRuntimeBundle, parameters: List<ParameterId>) {
 		if (closed) return
 		val targetGeneration = ++generation
+		loadedGeneration = -1L
+		latestRender.set(null)
 		postStatus(null)
 		executor.execute {
 			if (closed || targetGeneration != generation) return@execute
@@ -97,10 +137,14 @@ class CubismSdkPreviewSession(
 					?: error(nativeError(native, "Cubism Core rejected the exported MOC3 model"))
 				model = loaded
 				parameterIds = parameters
+				loadedGeneration = targetGeneration
+				lastRenderedFrameTimeNanos = 0L
+				previousFrameWasAnimated = false
 				// The generated manifest always exposes this group. Cubism owns motion, blink and physics.
 				stage = "start generated idle motion"
 				native.Live2D_StartMotion(loaded, "Idle", 0, 3)
 				postStatus(if (targetGeneration == generation) "ready" else null)
+				scheduleRenderWorker()
 			} catch (failure: Throwable) {
 				postStatus("$stage: ${failure.message ?: failure.javaClass.simpleName}")
 			}
@@ -121,66 +165,115 @@ class CubismSdkPreviewSession(
 	}
 
 	fun render(request: RenderRequest) {
-		if (closed || request.width <= 0 || request.height <= 0 || !renderQueued.compareAndSet(false, true)) return
-		val targetGeneration = generation
-		executor.execute {
-			try {
-				if (closed || targetGeneration != generation) return@execute
-				val native = api ?: return@execute
-				val handle = model ?: return@execute
-				val deltaTime = if (request.animationEnabled) request.deltaTime.coerceIn(0f, 0.1f) else 0f
-				native.Live2D_Update(handle, deltaTime)
-				applyPointerTracking(native, handle, request.pointerX, request.pointerY)
-				for ((id, value) in request.parameterOverrides) {
-					native.Live2D_SetParameterValue(handle, id.raw, value)
-				}
-				if (request.pointerX != 0f || request.pointerY != 0f || request.parameterOverrides.isNotEmpty()) {
-					native.Live2D_RefreshModel(handle)
-				}
+		if (closed || request.width <= 0 || request.height <= 0) return
+		latestRender.set(QueuedRender(generation, request))
+		scheduleRenderWorker()
+	}
 
-				val pixelCount = Math.multiplyExact(Math.multiplyExact(request.width, request.height), 4)
-				val pixelMemory = Memory(pixelCount.toLong())
-				val ok = native.Live2D_RenderToRgba(
-					handle,
-					request.width,
-					request.height,
-					request.scale,
-					request.offsetX,
-					request.offsetY,
-					pixelMemory,
-				)
-				if (ok == 0) error(nativeError(native, "Cubism frame rendering failed"))
-				val values = copyParameterValues(native, handle)
-				val pixels = pixelMemory.getByteArray(0, pixelCount)
-				val frame = CubismSdkFrame(rgbaImage(request.width, request.height, pixels), values)
-				if (!closed && targetGeneration == generation) SwingUtilities.invokeLater { onFrame(frame) }
-			} catch (failure: Throwable) {
-				postStatus(failure.message ?: failure.javaClass.simpleName)
-			} finally {
-				renderQueued.set(false)
-			}
+	private fun scheduleRenderWorker() {
+		if (closed || loadedGeneration != generation || !renderWorkerScheduled.compareAndSet(false, true)) return
+		executor.execute(::drainRenderRequests)
+	}
+
+	private fun drainRenderRequests() {
+		try {
+			while (!closed) {
+				val queued = latestRender.getAndSet(null) ?: break
+				if (queued.generation != generation || queued.generation != loadedGeneration) break
+				renderFrame(queued)
+		}
+		} finally {
+			renderWorkerScheduled.set(false)
+			if (!closed && latestRender.get() != null && loadedGeneration == generation) scheduleRenderWorker()
 		}
 	}
 
-	/** Mirrors live2dview's inspector look tracking, intentionally without ParamAngleZ. */
-	private fun applyPointerTracking(native: Api, handle: Pointer, x: Float, y: Float) {
-		if (x == 0f && y == 0f) return
-		fun add(id: String, amount: Float) {
-			if (amount == 0f) return
-			val current = native.Live2D_GetParameterValue(handle, id)
-			native.Live2D_SetParameterValue(handle, id, current + amount)
+	private fun renderFrame(queued: QueuedRender) {
+		val request = queued.request
+		try {
+			if (closed || queued.generation != generation) return
+			val native = api ?: return
+			val handle = model ?: return
+			if (request.animationEnabled) {
+				// Feed test values into physics, then re-apply them after motion evaluation so the
+				// slider remains authoritative, matching live2dConverter's native preview path.
+				applyParameterValues(native, handle, request.parameterOverrides)
+				native.Live2D_Update(handle, animationDeltaTime(request))
+				applyPointerTracking(native, handle, request.pointerX, request.pointerY)
+				applyParameterValues(native, handle, request.parameterOverrides)
+			} else {
+				// Do not call Update(0): Cubism may still restore the paused motion's old values.
+				previousFrameWasAnimated = false
+				lastRenderedFrameTimeNanos = request.frameTimeNanos
+				applyParameterValues(native, handle, request.parameterOverrides)
+			}
+			if (request.pointerX != 0f || request.pointerY != 0f || request.parameterOverrides.isNotEmpty()) {
+				native.Live2D_RefreshModel(handle)
+			}
+
+			val pixelCount = Math.multiplyExact(Math.multiplyExact(request.width, request.height), 4)
+			val output = ensurePixelMemory(pixelCount.toLong())
+			val ok = native.Live2D_RenderToRgba(
+				handle,
+				request.width,
+				request.height,
+				request.scale,
+				request.offsetX,
+				request.offsetY,
+				output,
+			)
+			if (ok == 0) error(nativeError(native, "Cubism frame rendering failed"))
+			val frame = CubismSdkFrame(
+				image = rgbaImage(request.width, request.height, output),
+				parameters = copyParameterValues(native, handle),
+				animationEnabled = request.animationEnabled,
+			)
+			if (!closed && queued.generation == generation) postFrame(queued.generation, frame)
+		} catch (failure: Throwable) {
+			postStatus(failure.message ?: failure.javaClass.simpleName)
 		}
-		add("ParamAngleX", x * 30f)
-		add("ParamAngleY", y * 30f)
-		add("ParamBodyAngleX", x * 10f)
-		add("ParamEyeBallX", x)
-		add("ParamEyeBallY", y)
+	}
+
+	private fun animationDeltaTime(request: RenderRequest): Float {
+		val requested = request.deltaTime.coerceIn(0f, 0.1f)
+		val elapsed = if (previousFrameWasAnimated && lastRenderedFrameTimeNanos > 0L) {
+			((request.frameTimeNanos - lastRenderedFrameTimeNanos) / 1_000_000_000f).coerceIn(0.001f, 0.1f)
+		} else {
+			requested
+		}
+		lastRenderedFrameTimeNanos = request.frameTimeNanos
+		previousFrameWasAnimated = true
+		return elapsed
+	}
+
+	private fun applyParameterValues(native: Api, handle: Pointer, values: Map<ParameterId, Float>) {
+		for ((id, value) in values) native.Live2D_SetParameterValue(handle, id.raw, value)
+	}
+
+	/** Mouse look intentionally excludes ParamAngleZ; roll remains owned by motion/breath. */
+	private fun applyPointerTracking(native: Api, handle: Pointer, x: Float, y: Float) {
+		for (binding in CUBISM_POINTER_TRACKING_BINDINGS) {
+			val amount = x * binding.xScale + y * binding.yScale
+			if (amount == 0f) continue
+			val current = native.Live2D_GetParameterValue(handle, binding.parameterId)
+			native.Live2D_SetParameterValue(handle, binding.parameterId, current + amount)
+		}
+	}
+
+	private fun ensurePixelMemory(requiredBytes: Long): Memory {
+		val existing = pixelMemory
+		if (existing != null && pixelMemoryCapacity >= requiredBytes) return existing
+		existing?.close()
+		return Memory(requiredBytes).also {
+			pixelMemory = it
+			pixelMemoryCapacity = requiredBytes
+		}
 	}
 
 	private fun copyParameterValues(native: Api, handle: Pointer): Map<ParameterId, Float> {
 		val count = native.Live2D_GetParameterCount(handle).coerceAtLeast(0)
 		if (count == 0) return emptyMap()
-		val outputMemory = Memory(count.toLong() * Float.SIZE_BYTES)
+		val outputMemory = ensureParameterMemory(count)
 		val copied = native.Live2D_CopyParameterValues(handle, outputMemory, count).coerceIn(0, count)
 		val output = outputMemory.getFloatArray(0, copied)
 		return buildMap(minOf(copied, parameterIds.size)) {
@@ -188,19 +281,47 @@ class CubismSdkPreviewSession(
 		}
 	}
 
-	private fun rgbaImage(width: Int, height: Int, rgba: ByteArray): BufferedImage {
-		val image = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
-		val argb = IntArray(width * height)
-		for (index in argb.indices) {
-			val offset = index * 4
-			val red = rgba[offset].toInt() and 0xff
-			val green = rgba[offset + 1].toInt() and 0xff
-			val blue = rgba[offset + 2].toInt() and 0xff
-			val alpha = rgba[offset + 3].toInt() and 0xff
-			argb[index] = (alpha shl 24) or (red shl 16) or (green shl 8) or blue
+	private fun ensureParameterMemory(requiredFloats: Int): Memory {
+		val existing = parameterMemory
+		if (existing != null && parameterMemoryCapacity >= requiredFloats) return existing
+		existing?.close()
+		return Memory(requiredFloats.toLong() * Float.SIZE_BYTES).also {
+			parameterMemory = it
+			parameterMemoryCapacity = requiredFloats
 		}
-		image.setRGB(0, 0, width, height, argb, 0, width)
+	}
+
+	private fun rgbaImage(width: Int, height: Int, rgba: Memory): BufferedImage {
+		val image = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
+		val argb = (image.raster.dataBuffer as DataBufferInt).data
+		val rgbaInts = rgba.getByteBuffer(0, argb.size.toLong() * Int.SIZE_BYTES)
+			.order(java.nio.ByteOrder.LITTLE_ENDIAN)
+			.asIntBuffer()
+		rgbaInts.get(argb)
+		for (index in argb.indices) {
+			val abgr = argb[index]
+			argb[index] = (abgr and 0xff00ff00.toInt()) or
+				((abgr and 0x000000ff) shl 16) or
+				((abgr and 0x00ff0000) ushr 16)
+		}
 		return image
+	}
+
+	private fun postFrame(frameGeneration: Long, frame: CubismSdkFrame) {
+		latestDelivery.set(QueuedDelivery(frameGeneration, frame))
+		if (deliveryScheduled.compareAndSet(false, true)) SwingUtilities.invokeLater(::deliverLatestFrame)
+	}
+
+	private fun deliverLatestFrame() {
+		try {
+			val delivery = latestDelivery.getAndSet(null)
+			if (!closed && delivery != null && delivery.generation == generation) onFrame(delivery.frame)
+		} finally {
+			deliveryScheduled.set(false)
+			if (!closed && latestDelivery.get() != null && deliveryScheduled.compareAndSet(false, true)) {
+				SwingUtilities.invokeLater(::deliverLatestFrame)
+			}
+		}
 	}
 
 	private fun nativeError(native: Api, fallback: String): String =
@@ -214,6 +335,8 @@ class CubismSdkPreviewSession(
 		if (closed) return
 		closed = true
 		generation++
+		latestRender.set(null)
+		latestDelivery.set(null)
 		executor.execute {
 			val native = api
 			if (native != null) {
@@ -221,6 +344,10 @@ class CubismSdkPreviewSession(
 				model = null
 				native.Live2D_Shutdown()
 			}
+			pixelMemory?.close()
+			pixelMemory = null
+			parameterMemory?.close()
+			parameterMemory = null
 		}
 		executor.shutdown()
 	}

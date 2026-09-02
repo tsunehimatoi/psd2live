@@ -7,10 +7,21 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class CubismSdkPreviewSessionTest {
+	@Test
+	fun `mouse tracking never owns angle z`() {
+		val trackedIds = CUBISM_POINTER_TRACKING_BINDINGS.mapTo(linkedSetOf()) { it.parameterId }
+		assertEquals(
+			setOf("ParamAngleX", "ParamAngleY", "ParamBodyAngleX", "ParamEyeBallX", "ParamEyeBallY"),
+			trackedIds,
+		)
+		assertFalse("ParamAngleZ" in trackedIds)
+	}
+
 	@Test
 	fun `preview transport preserves every runtime asset byte`() {
 		val bundle = CubismRuntimeBundle(
@@ -67,8 +78,8 @@ class CubismSdkPreviewSessionTest {
 					offsetX = 0f,
 					offsetY = 0f,
 					deltaTime = 1f / 30f,
-					pointerX = 0f,
-					pointerY = 0f,
+					pointerX = 0.35f,
+					pointerY = -0.2f,
 					parameterOverrides = mapOf(ParameterId("ParamAngleX") to 20f),
 				),
 			)

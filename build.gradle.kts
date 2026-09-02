@@ -1,5 +1,7 @@
 plugins {
 	kotlin("jvm") version "2.4.10"
+	id("org.jetbrains.compose") version "1.11.1"
+	id("org.jetbrains.kotlin.plugin.compose") version "2.4.10"
 	application
 }
 
@@ -15,8 +17,15 @@ dependencies {
 	implementation("local.umamo:runtime:local")
 	implementation("local.umamo:interop:local")
 	implementation("local.umamo:render:local")
-    implementation("net.java.dev.jna:jna:5.18.0")
+	implementation("net.java.dev.jna:jna:5.18.0")
 	implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.11.0")
+	implementation(compose.desktop.currentOs)
+	implementation(compose.runtime)
+	implementation(compose.foundation)
+	implementation(compose.ui)
+	implementation(compose.material)
 	testImplementation(kotlin("test"))
 }
 

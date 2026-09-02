@@ -1,22 +1,37 @@
 package io.github.autolive2d
 
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowState
+import androidx.compose.ui.window.application
 import io.github.autolive2d.core.AutoLive2DPipeline
 import io.github.autolive2d.core.PipelineConfig
 import io.github.autolive2d.core.ProgressListener
 import io.github.autolive2d.i18n.AppLanguage
 import io.github.autolive2d.i18n.I18n
 import io.github.autolive2d.i18n.tr
-import io.github.autolive2d.ui.AutoLive2DFrame
+import io.github.autolive2d.ui.state.AutoLive2DViewModel
+import io.github.autolive2d.ui.views.AutoLive2DApp
 import java.nio.file.Path
-import javax.swing.SwingUtilities
-import javax.swing.UIManager
 import kotlin.io.path.absolutePathString
 
 fun main(arguments: Array<String>) {
 	configureLanguage(arguments)
 	if (arguments.isEmpty()) {
-		UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
-		SwingUtilities.invokeLater { AutoLive2DFrame().isVisible = true }
+		val viewModel = AutoLive2DViewModel()
+		application {
+			Window(
+				onCloseRequest = {
+					viewModel.close()
+					exitApplication()
+				},
+				title = tr("app.title"),
+				state = WindowState(size = DpSize(1280.dp, 820.dp)),
+			) {
+				AutoLive2DApp(viewModel = viewModel, window = window)
+			}
+		}
 		return
 	}
 	if (arguments.any { it == "--help" || it == "-h" }) {
