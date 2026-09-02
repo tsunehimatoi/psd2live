@@ -230,11 +230,13 @@ fun CanvasViewportComposable(
 							val geometry = RigCanvasSupport.evaluate(previewModel, state.parameterValues)
 							val drawableBounds = RigCanvasSupport.boundsByDrawable(geometry)
 							val hit = RigCanvasSupport.hitLayer(
-								previewModel,
-								drawableBounds,
-								viewport.canvasX(change.position.x.toInt()),
-								viewport.canvasY(change.position.y.toInt()),
-								state.effectiveVisibleLayerIds,
+								model = previewModel,
+								drawableBounds = drawableBounds,
+								canvasX = viewport.canvasX(change.position.x.toInt()),
+								canvasY = viewport.canvasY(change.position.y.toInt()),
+								visibleLayerIds = state.effectiveVisibleLayerIds,
+								currentSelectedLayerId = state.selectedLayerId,
+								geometry = geometry,
 							)
 							onLayerClicked(hit)
 						}
@@ -267,9 +269,8 @@ fun CanvasViewportComposable(
 			},
 	) {
 		Canvas(modifier = Modifier.fillMaxSize()) {
-			val w = size.width.toInt()
-			val h = size.height.toInt()
-			if (w <= 0 || h <= 0) return@Canvas
+			val w = size.width.toInt().coerceAtLeast(1)
+			val h = size.height.toInt().coerceAtLeast(1)
 
 			// 1. One cached texture fill replaces thousands of per-frame checkerboard draw calls.
 			drawRect(brush = checkerboardBrush)
@@ -318,15 +319,14 @@ fun CanvasViewportComposable(
 						val geometry = RigCanvasSupport.evaluate(model, state.parameterValues)
 						RigCanvasSupport.paintTexturedRig(g, model, geometry, viewport, 0.26f, state.effectiveVisibleLayerIds)
 
-						for (drawable in model.rig.puppet.drawables) {
-							val mesh = drawable.mesh ?: continue
-							val positions = geometry.worldPositions[drawable.id] ?: continue
-							val layerId = model.rig.layerIdByDrawableId[drawable.id.raw] ?: continue
-							if (layerId !in state.effectiveVisibleLayerIds) continue
-							val selected = state.selectedLayerId == layerId
+						fun drawMeshWireframe(drawable: org.umamo.runtime.model.Drawable, selected: Boolean) {
+							val mesh = drawable.mesh ?: return
+							val positions = geometry.worldPositions[drawable.id] ?: return
+							val layerId = model.rig.layerIdByDrawableId[drawable.id.raw] ?: return
+							if (layerId !in state.effectiveVisibleLayerIds) return
 							val awtColor = ComponentPalette.strong(layerId)
 							g.color = if (selected) awtColor.brighter() else awtColor
-							g.stroke = BasicStroke(if (selected) 2.1f else 0.85f)
+							g.stroke = BasicStroke(if (selected) 2.2f else 0.85f)
 							for (offset in mesh.indices.indices step 3) {
 								val a = mesh.indices[offset]
 								val b = mesh.indices[offset + 1]
@@ -349,6 +349,24 @@ fun CanvasViewportComposable(
 									viewport.x(positions[a * 2]).toInt(),
 									viewport.yFromWorld(positions[a * 2 + 1]).toInt(),
 								)
+							}
+						}
+
+						val selectedId = state.selectedLayerId
+						// First draw unselected drawables
+						for (drawable in model.rig.puppet.drawables) {
+							val layerId = model.rig.layerIdByDrawableId[drawable.id.raw]
+							if (layerId != selectedId) {
+								drawMeshWireframe(drawable, selected = false)
+							}
+						}
+						// Then draw selected drawables on top
+						if (selectedId != null) {
+							for (drawable in model.rig.puppet.drawables) {
+								val layerId = model.rig.layerIdByDrawableId[drawable.id.raw]
+								if (layerId == selectedId) {
+									drawMeshWireframe(drawable, selected = true)
+								}
 							}
 						}
 					} finally {

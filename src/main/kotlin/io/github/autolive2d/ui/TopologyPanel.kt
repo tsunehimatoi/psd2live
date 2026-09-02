@@ -55,15 +55,14 @@ class TopologyPanel(
 			val viewport = camera.viewport(model, width, height)
 			RigCanvasSupport.paintCanvasBoundary(g, viewport)
 			RigCanvasSupport.paintTexturedRig(g, model, currentGeometry, viewport, 0.26f, visibleLayerIds)
-			for (drawable in model.rig.puppet.drawables) {
-				val mesh = drawable.mesh ?: continue
-				val positions = currentGeometry.worldPositions[drawable.id] ?: continue
-				val layerId = model.rig.layerIdByDrawableId[drawable.id.raw] ?: continue
-				if (visibleLayerIds != null && layerId !in checkNotNull(visibleLayerIds)) continue
-				val selected = selection.selectedLayerId == layerId
+			fun drawDrawableWireframe(drawable: org.umamo.runtime.model.Drawable, selected: Boolean) {
+				val mesh = drawable.mesh ?: return
+				val positions = currentGeometry.worldPositions[drawable.id] ?: return
+				val layerId = model.rig.layerIdByDrawableId[drawable.id.raw] ?: return
+				if (visibleLayerIds != null && layerId !in checkNotNull(visibleLayerIds)) return
 				val color = ComponentPalette.strong(layerId)
 				g.color = if (selected) color.brighter() else color
-				g.stroke = BasicStroke(if (selected) 2.1f else 0.85f)
+				g.stroke = BasicStroke(if (selected) 2.2f else 0.85f)
 				for (offset in mesh.indices.indices step 3) {
 					val a = mesh.indices[offset]
 					val b = mesh.indices[offset + 1]
@@ -71,6 +70,22 @@ class TopologyPanel(
 					drawEdge(g, positions, a, b, viewport)
 					drawEdge(g, positions, b, c, viewport)
 					drawEdge(g, positions, c, a, viewport)
+				}
+			}
+
+			val selectedId = selection.selectedLayerId
+			for (drawable in model.rig.puppet.drawables) {
+				val layerId = model.rig.layerIdByDrawableId[drawable.id.raw]
+				if (layerId != selectedId) {
+					drawDrawableWireframe(drawable, selected = false)
+				}
+			}
+			if (selectedId != null) {
+				for (drawable in model.rig.puppet.drawables) {
+					val layerId = model.rig.layerIdByDrawableId[drawable.id.raw]
+					if (layerId == selectedId) {
+						drawDrawableWireframe(drawable, selected = true)
+					}
 				}
 			}
 			paintLegend(g, model)
@@ -84,11 +99,13 @@ class TopologyPanel(
 		val viewport = camera.viewport(model, width, height)
 		selection.select(
 			RigCanvasSupport.hitLayer(
-				model,
-				drawableBounds,
-				viewport.canvasX(event.x),
-				viewport.canvasY(event.y),
-				visibleLayerIds,
+				model = model,
+				drawableBounds = drawableBounds,
+				canvasX = viewport.canvasX(event.x),
+				canvasY = viewport.canvasY(event.y),
+				visibleLayerIds = visibleLayerIds,
+				currentSelectedLayerId = selection.selectedLayerId,
+				geometry = geometry,
 			),
 		)
 	}

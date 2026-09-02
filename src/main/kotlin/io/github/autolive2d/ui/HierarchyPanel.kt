@@ -253,11 +253,13 @@ class HierarchyPanel(
 			val viewport = camera.viewport(model, width, height)
 			selection.select(
 				RigCanvasSupport.hitLayer(
-					model,
-					drawableBounds,
-					viewport.canvasX(event.x),
-					viewport.canvasY(event.y),
-					visibleLayerIds,
+					model = model,
+					drawableBounds = drawableBounds,
+					canvasX = viewport.canvasX(event.x),
+					canvasY = viewport.canvasY(event.y),
+					visibleLayerIds = visibleLayerIds,
+					currentSelectedLayerId = selection.selectedLayerId,
+					geometry = geometry,
 				),
 			)
 		}

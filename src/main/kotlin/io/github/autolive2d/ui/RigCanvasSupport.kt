@@ -182,24 +182,94 @@ internal object RigCanvasSupport {
 		)
 	}
 
+	fun hitLayers(
+		model: RigPreviewModel,
+		drawableBounds: Map<String, Bounds>,
+		canvasX: Float,
+		canvasY: Float,
+		visibleLayerIds: Set<String>? = null,
+		geometry: DeformedGeometry? = null,
+	): List<String> {
+		val candidates = model.rig.puppet.drawables.asSequence()
+			.mapNotNull { drawable ->
+				val bounds = drawableBounds[drawable.id.raw] ?: return@mapNotNull null
+				if (canvasX !in bounds.left..bounds.right || canvasY !in bounds.top..bounds.bottom) return@mapNotNull null
+				val layerId = model.rig.layerIdByDrawableId[drawable.id.raw] ?: return@mapNotNull null
+				if (visibleLayerIds != null && layerId !in visibleLayerIds) return@mapNotNull null
+
+				if (geometry != null) {
+					val mesh = drawable.mesh
+					val positions = geometry.worldPositions[drawable.id]
+					if (mesh != null && positions != null && !isPointInMesh(canvasX, canvasY, positions, mesh.indices)) {
+						return@mapNotNull null
+					}
+				}
+
+				Triple(layerId, bounds.width * bounds.height, drawable.drawOrder)
+			}
+			.sortedWith(compareBy<Triple<String, Float, Float>> { it.second }.thenByDescending { it.third })
+			.map { it.first }
+			.distinct()
+			.toList()
+
+		if (candidates.isEmpty() && geometry != null) {
+			return hitLayers(model, drawableBounds, canvasX, canvasY, visibleLayerIds, geometry = null)
+		}
+		return candidates
+	}
+
 	fun hitLayer(
 		model: RigPreviewModel,
 		drawableBounds: Map<String, Bounds>,
 		canvasX: Float,
 		canvasY: Float,
 		visibleLayerIds: Set<String>? = null,
-	): String? = model.rig.puppet.drawables
-		.asSequence()
-		.mapNotNull { drawable ->
-			val bounds = drawableBounds[drawable.id.raw] ?: return@mapNotNull null
-			if (canvasX !in bounds.left..bounds.right || canvasY !in bounds.top..bounds.bottom) return@mapNotNull null
-			val layerId = model.rig.layerIdByDrawableId[drawable.id.raw] ?: return@mapNotNull null
-			if (visibleLayerIds != null && layerId !in visibleLayerIds) return@mapNotNull null
-			Triple(layerId, bounds.width * bounds.height, drawable.drawOrder)
+		currentSelectedLayerId: String? = null,
+		geometry: DeformedGeometry? = null,
+	): String? {
+		val candidates = hitLayers(model, drawableBounds, canvasX, canvasY, visibleLayerIds, geometry)
+		if (candidates.isEmpty()) return null
+		val currentIndex = if (currentSelectedLayerId != null) candidates.indexOf(currentSelectedLayerId) else -1
+		return if (currentIndex == -1) candidates.first() else candidates[(currentIndex + 1) % candidates.size]
+	}
+
+	private fun isPointInMesh(
+		canvasX: Float,
+		canvasY: Float,
+		positions: FloatArray,
+		indices: IntArray,
+	): Boolean {
+		for (offset in indices.indices step 3) {
+			val a = indices[offset]
+			val b = indices[offset + 1]
+			val c = indices[offset + 2]
+			if (a * 2 + 1 >= positions.size || b * 2 + 1 >= positions.size || c * 2 + 1 >= positions.size) continue
+			val x0 = positions[a * 2]
+			val y0 = -positions[a * 2 + 1]
+			val x1 = positions[b * 2]
+			val y1 = -positions[b * 2 + 1]
+			val x2 = positions[c * 2]
+			val y2 = -positions[c * 2 + 1]
+			if (isPointInTriangle(canvasX, canvasY, x0, y0, x1, y1, x2, y2)) {
+				return true
+			}
 		}
-		.sortedWith(compareBy<Triple<String, Float, Float>> { it.second }.thenByDescending { it.third })
-		.firstOrNull()
-		?.first
+		return false
+	}
+
+	private fun isPointInTriangle(
+		px: Float, py: Float,
+		x0: Float, y0: Float,
+		x1: Float, y1: Float,
+		x2: Float, y2: Float,
+	): Boolean {
+		val cross0 = (x1 - x0) * (py - y0) - (y1 - y0) * (px - x0)
+		val cross1 = (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1)
+		val cross2 = (x0 - x2) * (py - y2) - (y0 - y2) * (px - x2)
+		val hasNeg = (cross0 < -1e-4f) || (cross1 < -1e-4f) || (cross2 < -1e-4f)
+		val hasPos = (cross0 > 1e-4f) || (cross1 > 1e-4f) || (cross2 > 1e-4f)
+		return !(hasNeg && hasPos)
+	}
 
 	private fun positionsBounds(positions: FloatArray): Bounds? {
 		if (positions.size < 2) return null
