@@ -1,0 +1,50 @@
+{
+	"Version": 3,
+	"FileReferences": {
+		"Moc": "tml.moc3",
+		"Textures": [
+			"tml.4096/texture_00.png"
+		],
+		"Physics": "tml.physics3.json",
+		"DisplayInfo": "tml.cdi3.json",
+		"Motions": {
+			"Idle": [
+				{
+					"File": "tml.idle.motion3.json"
+				}
+			],
+			"Blink": [
+				{
+					"File": "tml.blink.motion3.json"
+				}
+			],
+			"Nod": [
+				{
+					"File": "tml.nod.motion3.json"
+				}
+			],
+			"Shake": [
+				{
+					"File": "tml.shake.motion3.json"
+				}
+			]
+		}
+	},
+	"Groups": [
+		{
+			"Target": "Parameter",
+			"Name": "EyeBlink",
+			"Ids": [
+				"ParamEyeLOpen",
+				"ParamEyeROpen"
+			]
+		},
+		{
+			"Target": "Parameter",
+			"Name": "LipSync",
+			"Ids": [
+				"ParamMouthOpenY"
+			]
+		}
+	]
+}

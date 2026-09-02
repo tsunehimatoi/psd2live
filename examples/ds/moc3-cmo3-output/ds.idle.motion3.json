@@ -1,0 +1,110 @@
+{
+    "Version": 3,
+    "Meta": {
+        "Duration": 6.0,
+        "Fps": 30.0,
+        "Loop": true,
+        "AreBeziersRestricted": true,
+        "CurveCount": 5,
+        "TotalSegmentCount": 18,
+        "TotalPointCount": 23,
+        "UserDataCount": 0,
+        "TotalUserDataSize": 0
+    },
+    "Curves": [
+        {
+            "Target": "Parameter",
+            "Id": "ParamBreath",
+            "Segments": [
+                0.0,
+                0.0,
+                0,
+                1.5,
+                1.0,
+                0,
+                3.0,
+                0.0,
+                0,
+                4.5,
+                1.0,
+                0,
+                6.0,
+                0.0
+            ]
+        },
+        {
+            "Target": "Parameter",
+            "Id": "ParamAngleZ",
+            "Segments": [
+                0.0,
+                -2.0,
+                0,
+                1.5,
+                2.0,
+                0,
+                3.0,
+                -2.0,
+                0,
+                4.5,
+                2.0,
+                0,
+                6.0,
+                -2.0
+            ]
+        },
+        {
+            "Target": "Parameter",
+            "Id": "ParamBodyAngleX",
+            "Segments": [
+                0.0,
+                -1.2,
+                0,
+                3.0,
+                1.2,
+                0,
+                6.0,
+                -1.2
+            ]
+        },
+        {
+            "Target": "Parameter",
+            "Id": "ParamEyeLOpen",
+            "Segments": [
+                0.0,
+                1.0,
+                0,
+                2.7,
+                1.0,
+                0,
+                2.78,
+                0.0,
+                0,
+                2.88,
+                1.0,
+                0,
+                6.0,
+                1.0
+            ]
+        },
+        {
+            "Target": "Parameter",
+            "Id": "ParamEyeROpen",
+            "Segments": [
+                0.0,
+                1.0,
+                0,
+                2.7,
+                1.0,
+                0,
+                2.78,
+                0.0,
+                0,
+                2.88,
+                1.0,
+                0,
+                6.0,
+                1.0
+            ]
+        }
+    ]
+}
