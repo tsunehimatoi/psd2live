@@ -14,10 +14,11 @@ AutoLive2D 是一个不使用 Web 技术的桌面流水线：导入采用 **See-
 - 读取 PSD 的 RGBA 图层、顺序、可见性、透明度、裁切范围、组路径和混合模式。
 - See-Through 英文命名，并兼容常见中文、日文别名与 `-l/-r`、`左/右` 后缀。
 - 对合并的双眼、眉毛、眼白、睫毛执行 8 邻域连通域左右拆分。
+- 将单张 `mouth` / `mouth_open` 直接视为完整口形，不做像素自动拆分；输入图按最大张口姿态处理，`ParamMouthOpenY` 从原图连续压缩到闭口嘴缝。若存在明确命名的 `tooth-t`、`tooth-b`、`tongue` 图层，则自动以 mouth 为 Cubism 剪切蒙版，并保持“牙 > 舌 > mouth”的绘制顺序。
 - 参考 Stretchy Studio 的外轮廓/内部采样思路，但重新设计边缘预处理、闭合曲线和三角化：原始 alpha 先经过 `[1,2,1]` 高斯滤波，再以图层 alpha 第 95 百分位的 45%（且不低于导入阈值）二值化，仅用于几何提取；纹理本身不修改。由此排除羽化尾部和零散低透明像素产生的四点小岛。每个保留的不透明岛拟合成周期三次 Bézier 闭合环，经两次限幅滤波后沿外法线扩展约 1.15px。平滑边缘与内部三角网格采用同一基础间距；局部曲率按弦高误差自适应，最高可加密 12 倍。手指尖端、指缝等跨尺度真实转角直接成为同一有序曲线上的分段点，不以后追加，也不与其他点合并。三角化采用耳切初始面、内部错列 Steiner 点和受约束 Lawson 翻边；翻边轮数按拓扑规模增长并一直运行到收敛，避免长窄发束残留耳切扇形。收敛后仍超过基础间距 1.72 倍的非边界内部边会在中点插入质量 Steiner 点，再重新 Delaunay 化；闭合环边不参与拆分，每对相邻边界点仍是不可翻转的真实三角边。封闭透明区继续按外轮廓实心填充，不生成孔洞内环。仅在退化或自交轮廓无法可靠三角化时回退到矩形网格。
 - 生成 17 个 Cubism 常用参数：头部 XYZ、身体 XYZ、双眼开合、视线 XY、双眉 Y、嘴型/嘴巴开合、呼吸、前后发摆动。
 - 生成 `AngleX {-45,0,+45} × AngleY {-30,0,+30}` 九个手工建模式关键姿态：8×8 面部经纬网负责轮廓和体积，眼/瞳孔/眉/鼻/嘴/耳的子 Warp 再按各自深度和二维保持率重画；四个斜角包含独立 XY 交叉修正项。
-- 眼白/睫毛/虹膜闭眼形变，闭眼图层和开闭嘴图层交叉淡化，虹膜按眼白裁切。
+- 眼白/睫毛/虹膜闭眼形变，完整 mouth 的开闭/嘴型形变，可选牙舌图层显隐，虹膜按眼白裁切。
 - 自动生成 `physics3.json` 和循环 `idle.motion3.json`。
 - MOC3 固定以 Cubism 5.0/MOC5 为兼容基线，不依赖 5.3 的 MOC6 扩展。
 - 导出后立即回读 MOC3、CMO3、model3、cdi3、physics3；除 ID/清单/JSON 外，还会求值默认姿态及 AngleX/AngleY 四个极限姿态，逐画元检查是否缺失、透明、塌缩或异常放大。
@@ -96,6 +97,7 @@ back hair, front hair, headwear, face, facedetail,
 irides, eyebrow, eyewhite, eyelash, eye_close,
 eyewear, ears, earwear, nose,
 mouth, mouth_open, mouth_close,
+tooth-t, tooth-b, tongue,
 neck, neckwear, topwear, handwear, bottomwear,
 legwear, footwear, tail, wings, objects
 ```
@@ -103,6 +105,17 @@ legwear, footwear, tail, wings, objects
 双侧图层用 `-l/-r`、`_left/_right` 或 `左/右`。后缀中的 L/R 指角色自身左右：角色左眼通常显示在画面的右边。未带侧别且包含两个分离区域的眼部图层会自动拆分。图层可以附加编号，如 `front hair 2`。
 
 未知图层不会丢弃：程序按它与面部范围的位置关系归入 Head 或 Body，并在报告中提示。
+
+## 整体口形与可选内部图层
+
+`mouth` 或 `mouth_open` 应提供最大张口时的完整图像。程序不再根据颜色猜测牙齿、舌头或口腔区域，也不会从该图层生成虚拟图层。
+
+1. mouth 画元绑定 `ParamMouthForm × ParamMouthOpenY`。`OpenY=1` 精确还原输入图；`OpenY=0` 将完整图像围绕中线压缩到约 1.25 像素高，并略微收窄，形成一条闭口线；中间关键形态使用平滑插值。
+2. `MouthForm` 只在同一个完整 mouth 网格上改变横向宽度和嘴角曲率。有没有额外牙舌图层都不改变 mouth 的关键形态与参数行为。
+3. 可选内部图层只识别三个明确名称：`tooth-t`（上牙）、`tooth-b`（下牙）、`tongue`（舌头）。三者的 `maskedBy` 指向同侧、同编号或位置最近的 `mouth` / `mouth_open`。
+4. 内部图层不建立复杂口形网格，只保留静态几何，并在接近闭口时淡出；实际可见范围由正在变形的 mouth 剪切蒙版决定。绘制顺序会统一调整为牙、舌、mouth，不依赖 PSD 中这四层原本的排列。
+
+若没有这三个内部图层，mouth 的整体开闭效果完全相同。`mouth_close` 仍可作为额外闭口素材按旧规则随 OpenY 淡出，但不是生成整体闭口线所必需的图层。
 
 ## 九轴面部算法
 

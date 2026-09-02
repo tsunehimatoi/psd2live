@@ -13,6 +13,7 @@ import org.umamo.interop.moc3.import.Moc3Import
 import org.umamo.runtime.model.Deformer
 import org.umamo.runtime.model.DeformerId
 import org.umamo.runtime.model.OrgChild
+import org.umamo.runtime.model.PuppetModel
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.createTempDirectory
@@ -38,6 +39,22 @@ class PipelineIntegrationTest {
 		val cmoDocument = Cmo3.read(Files.readAllBytes(checkNotNull(byExtension["cmo3"]).path))
 		val cmoRoot = cmoDocument.root as CModelSource
 		val mocPuppet = Moc3Import.fromMocDocument(mocDocument, null)
+		val tagByLayerId = result.analysis.layers.associate { it.source.id.raw to it.semantic.tag }
+		val mouthMaskIds = result.previewModel.rig.layerIdByDrawableId
+			.filterValues { tagByLayerId[it] in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) }
+			.keys
+		val mouthInternalIds = result.previewModel.rig.layerIdByDrawableId
+			.filterValues { tagByLayerId[it] in CharacterAnalyzer.MOUTH_COMPONENT_TAGS }
+			.keys
+		fun assertMouthMasks(puppet: PuppetModel, label: String) {
+			if (mouthInternalIds.isEmpty()) return
+			assertTrue(mouthMaskIds.isNotEmpty(), "$label lost the mouth clipping source")
+			for (drawable in puppet.drawables.filter { it.id.raw in mouthInternalIds }) {
+				assertTrue(drawable.maskedBy.isNotEmpty(), "$label ${drawable.id.raw} lost its clipping id")
+				assertTrue(drawable.maskedBy.all { it.raw in mouthMaskIds }, "$label ${drawable.id.raw} uses a non-mouth mask")
+			}
+		}
+		assertMouthMasks(mocPuppet, "MOC3")
 		val angleX = mocPuppet.parameters.single { it.id == StandardParameters.ANGLE_X }
 		assertEquals(-45f, angleX.min)
 		assertEquals(45f, angleX.max)
@@ -82,6 +99,7 @@ class PipelineIntegrationTest {
 		// coordinate swap in the lowering layer: +X/Y=0 must have horizontal rows, while +X/Y=-30
 		// must contain the signed diagonal correction rather than accidentally becoming the neutral row.
 		val cmoPuppet = EditableCmo3Import.fromModelSource(cmoRoot)
+		assertMouthMasks(cmoPuppet, "CMO3")
 		val eyeWarp = cmoPuppet.deformers.filterIsInstance<Deformer.Warp>().first { it.id.raw.startsWith("DeformEyeShape") }
 		val eyeGrid = checkNotNull(eyeWarp.geometryGrid)
 		assertEquals(StandardParameters.ANGLE_X, eyeGrid.axes[0].parameterId)

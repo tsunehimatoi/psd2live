@@ -25,6 +25,9 @@ object LayerClassifier {
 		names(SemanticTag.MOUTH, "mouth", "口", "嘴", "嘴巴")
 		names(SemanticTag.MOUTH_OPEN, "mouth open", "mouth_open", "mouth o", "mouth_o", "open mouth", "open_mouth", "张嘴", "張嘴", "开口", "開口", "口開き")
 		names(SemanticTag.MOUTH_CLOSE, "mouth close", "mouth_close", "mouth c", "mouth_c", "close mouth", "close_mouth", "闭嘴", "閉嘴", "闭口", "口閉じ")
+		names(SemanticTag.TOOTH_T, "tooth-t", "tooth_t", "tooth t", "upper tooth", "upper teeth", "上牙", "上歯")
+		names(SemanticTag.TOOTH_B, "tooth-b", "tooth_b", "tooth b", "lower tooth", "lower teeth", "下牙", "下歯")
+		names(SemanticTag.TONGUE, "tongue", "舌头", "舌頭", "舌")
 		names(SemanticTag.NECK, "neck", "脖子", "颈部", "頸部", "首")
 		names(SemanticTag.NECKWEAR, "neckwear", "collar", "scarf", "领饰", "領飾", "围巾")
 		names(SemanticTag.TOPWEAR, "topwear", "clothes", "cloth", "shirt", "jacket", "上衣", "衣服", "服装", "服裝", "服")
@@ -130,4 +133,3 @@ object LayerClassifier {
 		)
 	}
 }
-

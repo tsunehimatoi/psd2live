@@ -18,13 +18,13 @@ object CharacterAnalyzer {
 			.maxByOrNull { it.opaquePixels }
 			?.centroidX
 			?: source.widthPx * 0.5f
-		val layers = initiallyClassified.flatMap { layer ->
-			ComponentSplitter.split(layer, preliminaryFaceCenter, config.alphaThreshold).map { component ->
+		val layers = initiallyClassified.flatMap { original ->
+			ComponentSplitter.split(original, preliminaryFaceCenter, config.alphaThreshold).map { component ->
 				val directOverride = config.layerOverrides[component.source.id.raw]
-				val inheritedOverride = config.layerOverrides[layer.source.id.raw]
+				val inheritedOverride = config.layerOverrides[original.source.id.raw]
 				when {
 					directOverride != null -> component.withOverride(directOverride)
-					inheritedOverride != null && component.source.id != layer.source.id ->
+					inheritedOverride != null && component.source.id != original.source.id ->
 						component.withOverride(inheritedOverride, preserveSide = true)
 					else -> component.withOverride(inheritedOverride)
 				}
@@ -68,7 +68,7 @@ object CharacterAnalyzer {
 		if (recognized < 4) warnings += tr("warning.fewSemanticLayers", recognized)
 		if (explicitFace.isEmpty()) warnings += tr("warning.missingFace")
 		if (layers.none { it.semantic.tag in EYE_TAGS }) warnings += tr("warning.missingEyes")
-		if (layers.none { it.semantic.tag in MOUTH_TAGS }) warnings += tr("warning.missingMouth")
+		if (layers.none { it.semantic.tag in MOUTH_BASE_TAGS }) warnings += tr("warning.missingMouth")
 		val duplicateBaseNames = layers.groupBy { it.semantic.normalizedName }.filterValues { it.size > 1 }.keys
 		if (duplicateBaseNames.isNotEmpty()) warnings += tr("warning.duplicateLayers", duplicateBaseNames.take(6).joinToString())
 		val unknown = layers.filter { it.semantic.tag == SemanticTag.UNKNOWN }
@@ -94,5 +94,11 @@ object CharacterAnalyzer {
 	}
 
 	val EYE_TAGS = setOf(SemanticTag.IRIDES, SemanticTag.EYEBROW, SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE)
-	val MOUTH_TAGS = setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN, SemanticTag.MOUTH_CLOSE)
+	val MOUTH_COMPONENT_TAGS = setOf(
+		SemanticTag.TOOTH_T,
+		SemanticTag.TOOTH_B,
+		SemanticTag.TONGUE,
+	)
+	val MOUTH_BASE_TAGS = setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN, SemanticTag.MOUTH_CLOSE)
+	val MOUTH_TAGS = MOUTH_BASE_TAGS + MOUTH_COMPONENT_TAGS
 }

@@ -11,6 +11,7 @@ import java.awt.Color
 import java.awt.Graphics2D
 import java.awt.RenderingHints
 import java.awt.geom.AffineTransform
+import java.awt.geom.Area
 import java.awt.geom.Path2D
 import kotlin.math.abs
 
@@ -70,6 +71,7 @@ internal object RigCanvasSupport {
 		val drawables = model.rig.puppet.drawables
 			.filter { geometry.worldPositions.containsKey(it.id) && it.mesh != null }
 			.sortedBy { geometry.drawOrder[it.id] ?: it.drawOrder }
+		val drawableById = model.rig.puppet.drawables.associateBy { it.id }
 		val originalClip = g.clip
 		val originalComposite = g.composite
 		for (drawable in drawables) {
@@ -81,6 +83,9 @@ internal object RigCanvasSupport {
 			val atlas = model.atlas.pages.getOrNull(pageIndex)?.image ?: continue
 			val opacity = ((geometry.opacity[drawable.id] ?: drawable.opacity) * alpha).coerceIn(0f, 1f)
 			if (opacity <= 0.001f) continue
+			val maskClip = drawable.maskedBy
+				.takeIf { it.isNotEmpty() && !drawable.invertMask }
+				?.let { maskIds -> buildMaskArea(maskIds, drawableById, geometry, viewport) }
 			g.composite = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, opacity)
 			for (offset in mesh.indices.indices step 3) {
 				val ia = mesh.indices[offset]
@@ -104,12 +109,40 @@ internal object RigCanvasSupport {
 					closePath()
 				}
 				g.clip = originalClip
+				maskClip?.let(g::clip)
 				g.clip(triangle)
 				g.drawImage(atlas, transform, null)
 			}
 		}
 		g.clip = originalClip
 		g.composite = originalComposite
+	}
+
+	private fun buildMaskArea(
+		maskIds: List<org.umamo.runtime.model.DrawableId>,
+		drawableById: Map<org.umamo.runtime.model.DrawableId, org.umamo.runtime.model.Drawable>,
+		geometry: DeformedGeometry,
+		viewport: CanvasViewport,
+	): Area? {
+		val area = Area()
+		for (maskId in maskIds) {
+			val mask = drawableById[maskId] ?: continue
+			if (!mask.isVisible) continue
+			val mesh = mask.mesh ?: continue
+			val positions = geometry.worldPositions[maskId] ?: continue
+			for (offset in mesh.indices.indices step 3) {
+				val a = mesh.indices[offset] * 2
+				val b = mesh.indices[offset + 1] * 2
+				val c = mesh.indices[offset + 2] * 2
+				area.add(Area(Path2D.Double().apply {
+					moveTo(viewport.x(positions[a]), viewport.yFromWorld(positions[a + 1]))
+					lineTo(viewport.x(positions[b]), viewport.yFromWorld(positions[b + 1]))
+					lineTo(viewport.x(positions[c]), viewport.yFromWorld(positions[c + 1]))
+					closePath()
+				}))
+			}
+		}
+		return area.takeUnless { it.isEmpty }
 	}
 
 	fun boundsByDrawable(geometry: DeformedGeometry): Map<String, Bounds> = buildMap {

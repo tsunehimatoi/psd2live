@@ -105,6 +105,10 @@ class ModelPreviewPanel : JPanel() {
 		val blink = if (phase in 4.18..4.46) {
 			(1.0 - sin((phase - 4.18) / 0.28 * PI)).toFloat().coerceIn(0f, 1f)
 		} else 1f
+		val mouthPhase = elapsed % 5.8
+		val mouthOpen = if (mouthPhase in 1.25..2.45) {
+			sin((mouthPhase - 1.25) / 1.20 * PI).toFloat().coerceAtLeast(0f)
+		} else 0f
 		return mapOf(
 			StandardParameters.ANGLE_X to followX * 38f,
 			StandardParameters.ANGLE_Y to -followY * 24f,
@@ -116,6 +120,8 @@ class ModelPreviewPanel : JPanel() {
 			StandardParameters.EYE_BALL_Y to (-followY).coerceIn(-1f, 1f),
 			StandardParameters.EYE_L_OPEN to blink,
 			StandardParameters.EYE_R_OPEN to blink,
+			StandardParameters.MOUTH_FORM to sin(elapsed * 0.41).toFloat() * 0.18f,
+			StandardParameters.MOUTH_OPEN to mouthOpen,
 			StandardParameters.BREATH to ((sin(elapsed * 1.45) + 1.0) * 0.5).toFloat(),
 			StandardParameters.HAIR_FRONT to if (model.config.generatePhysics) frontHair.coerceIn(-1f, 1f) else 0f,
 			StandardParameters.HAIR_BACK to if (model.config.generatePhysics) backHair.coerceIn(-1f, 1f) else 0f,

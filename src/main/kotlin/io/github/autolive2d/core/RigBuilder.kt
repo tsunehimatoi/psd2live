@@ -30,8 +30,10 @@ import org.umamo.runtime.model.RuntimeTarget
 import org.umamo.runtime.model.WarpLatticeForm
 import org.umamo.runtime.model.withDerivedRenderRoot
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
+import kotlin.math.pow
 import kotlin.math.sin
 
 object StandardParameters {
@@ -113,6 +115,9 @@ object RigBuilder {
 		SemanticTag.MOUTH,
 		SemanticTag.MOUTH_OPEN,
 		SemanticTag.MOUTH_CLOSE,
+		SemanticTag.TOOTH_T,
+		SemanticTag.TOOTH_B,
+		SemanticTag.TONGUE,
 	)
 
 	private data class MeshData(
@@ -163,7 +168,7 @@ object RigBuilder {
 		val sourceBoundsByDrawable = linkedMapOf<String, Bounds>()
 		val layerIdByDrawable = linkedMapOf<String, String>()
 		val classifiedByDrawable = mutableMapOf<DrawableId, ClassifiedLayer>()
-		val orderedLayers = analysis.layers.sortedBy { it.source.order }
+		val orderedLayers = orderMouthLayers(analysis.layers.sortedBy { it.source.order })
 		for ((drawIndex, layer) in orderedLayers.withIndex()) {
 			val placement = atlas.placementByLayerId[layer.source.id.raw]
 			if (placement == null || layer.opaquePixels == 0) {
@@ -180,7 +185,14 @@ object RigBuilder {
 				config.meshSpacing,
 				config.alphaThreshold,
 			)
-			val geometryGrid = buildDrawableGeometry(layer, meshData, parentAndFrame.second, faceRig)
+			val mouthAperture = mouthApertureFor(layer)
+			val geometryGrid = buildDrawableGeometry(
+				layer,
+				meshData,
+				parentAndFrame.second,
+				faceRig,
+				mouthAperture,
+			)
 			val drawable = Drawable(
 				id = id,
 				name = layer.source.name,
@@ -200,7 +212,7 @@ object RigBuilder {
 			drawables += drawable
 			classifiedByDrawable[id] = layer
 			pageByDrawable[id.raw] = placement.page
-			sourceBoundsByDrawable[id.raw] = layer.bounds
+			sourceBoundsByDrawable[id.raw] = neutralValidationBounds(layer, meshData, mouthAperture)
 			layerIdByDrawable[id.raw] = layer.source.id.raw
 		}
 
@@ -208,12 +220,36 @@ object RigBuilder {
 			val semantic = classifiedByDrawable.getValue(drawable.id).semantic
 			semantic.tag to semantic.side
 		}
+		val mouthMasks = drawables.filter { drawable ->
+			classifiedByDrawable.getValue(drawable.id).semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)
+		}
 		val maskedDrawables = drawables.map { drawable ->
 			val semantic = classifiedByDrawable.getValue(drawable.id).semantic
-			if (semantic.tag != SemanticTag.IRIDES) return@map drawable
-			val exact = drawableByTagSide[SemanticTag.EYEWHITE to semantic.side].orEmpty()
-			val fallback = drawableByTagSide[SemanticTag.EYEWHITE to Side.NONE].orEmpty()
-			drawable.copy(maskedBy = (exact.ifEmpty { fallback }).map { it.id })
+			when {
+				semantic.tag == SemanticTag.IRIDES -> {
+					val exact = drawableByTagSide[SemanticTag.EYEWHITE to semantic.side].orEmpty()
+					val fallback = drawableByTagSide[SemanticTag.EYEWHITE to Side.NONE].orEmpty()
+					drawable.copy(maskedBy = (exact.ifEmpty { fallback }).map { it.id })
+				}
+				semantic.tag in CharacterAnalyzer.MOUTH_COMPONENT_TAGS -> {
+					val layer = classifiedByDrawable.getValue(drawable.id)
+					val exact = mouthMasks.filter { mask ->
+						val maskSemantic = classifiedByDrawable.getValue(mask.id).semantic
+						maskSemantic.side == semantic.side && maskSemantic.variant == semantic.variant
+					}
+					val sameSide = mouthMasks.filter { classifiedByDrawable.getValue(it.id).semantic.side == semantic.side }
+					val fallback = mouthMasks.filter { classifiedByDrawable.getValue(it.id).semantic.side == Side.NONE }
+					val masks = exact.ifEmpty { sameSide.ifEmpty { fallback.ifEmpty { mouthMasks } } }
+					val nearest = masks.minByOrNull { mask ->
+						val bounds = classifiedByDrawable.getValue(mask.id).bounds
+						val dx = bounds.centerX - layer.bounds.centerX
+						val dy = bounds.centerY - layer.bounds.centerY
+						dx * dx + dy * dy
+					}
+					drawable.copy(maskedBy = listOfNotNull(nearest?.id))
+				}
+				else -> drawable
+			}
 		}
 
 		fun childrenFor(group: LayerGroup): List<OrgChild> =
@@ -614,7 +650,8 @@ object RigBuilder {
 			?: (faceWarpId to faceFrame)
 		SemanticTag.NOSE -> faceRig.regionFor(FaceFeature.NOSE, layer.semantic.side)?.let { featureWarpId(it) to it.bounds }
 			?: (faceWarpId to faceFrame)
-		SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN, SemanticTag.MOUTH_CLOSE ->
+		SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN, SemanticTag.MOUTH_CLOSE,
+		SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE ->
 			faceRig.regionFor(FaceFeature.MOUTH, layer.semantic.side)?.let { featureWarpId(it) to it.bounds } ?: (faceWarpId to faceFrame)
 		SemanticTag.EARS, SemanticTag.EARWEAR -> faceRig.regionFor(FaceFeature.EAR, layer.semantic.side)?.let { featureWarpId(it) to it.bounds }
 			?: (faceWarpId to faceFrame)
@@ -639,10 +676,17 @@ object RigBuilder {
 		val height = max(1, layer.source.raster.height)
 		val semanticDensity = when (layer.semantic.tag) {
 			SemanticTag.FACE, SemanticTag.FRONT_HAIR, SemanticTag.BACK_HAIR, SemanticTag.TOPWEAR -> 0.65f
-			SemanticTag.IRIDES, SemanticTag.EYELASH, SemanticTag.EYEWHITE, SemanticTag.EYEBROW, SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN, SemanticTag.MOUTH_CLOSE -> 0.45f
+			SemanticTag.IRIDES, SemanticTag.EYELASH, SemanticTag.EYEWHITE, SemanticTag.EYEBROW,
+			SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN, SemanticTag.MOUTH_CLOSE,
+			SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE -> 0.45f
 			else -> 1f
 		}
 		val effectiveSpacing = max(12f, spacing * semanticDensity)
+		// Authored tooth layers may contain several disconnected teeth. Keep their complete texture;
+		// the mouth clipping id supplies the visible boundary.
+		if (layer.semantic.tag in setOf(SemanticTag.TOOTH_T, SemanticTag.TOOTH_B)) {
+			return buildRectangularFallbackMesh(layer, parentFrame, placement, atlasSize, effectiveSpacing)
+		}
 		val adaptive = AdaptiveMeshGenerator.generate(
 			width,
 			height,
@@ -720,13 +764,21 @@ object RigBuilder {
 		return MeshData(DrawableMesh(positions, uvs, indices), canvas)
 	}
 
-	private fun buildDrawableGeometry(layer: ClassifiedLayer, data: MeshData, parentFrame: Bounds, faceRig: NinePoseFaceRig): KeyformGrid<MeshDeltaForm> {
+	private fun buildDrawableGeometry(
+		layer: ClassifiedLayer,
+		data: MeshData,
+		parentFrame: Bounds,
+		faceRig: NinePoseFaceRig,
+		mouthAperture: Bounds?,
+	): KeyformGrid<MeshDeltaForm> {
 		val tag = layer.semantic.tag
 		return when (tag) {
 			SemanticTag.EYEWHITE, SemanticTag.EYELASH -> eyeClosureGrid(layer, data, parentFrame, faceRig)
 			SemanticTag.IRIDES -> eyeClosureGrid(layer, data, parentFrame, faceRig)
 			SemanticTag.EYEBROW -> eyebrowGrid(layer, data, parentFrame)
-			SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN, SemanticTag.MOUTH_CLOSE -> mouthGrid(data)
+			SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN -> mouthWholeGrid(data, parentFrame, mouthAperture ?: layer.bounds)
+			SemanticTag.MOUTH_CLOSE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE ->
+				zeroMeshGrid(data.mesh.positions.size)
 			else -> zeroMeshGrid(data.mesh.positions.size)
 		}
 	}
@@ -765,7 +817,12 @@ object RigBuilder {
 		}
 	}
 
-	private fun mouthGrid(data: MeshData): KeyformGrid<MeshDeltaForm> =
+	/**
+	 * The mouth bitmap is authored fully open. ParamMouthOpenY=1 preserves it exactly; zero compresses
+	 * the complete drawable to a roughly one-pixel seam. Optional teeth and tongue are intentionally
+	 * not morphed: the animated mouth drawable clips them and their opacity fades near the closed key.
+	 */
+	private fun mouthWholeGrid(data: MeshData, parentFrame: Bounds, aperture: Bounds): KeyformGrid<MeshDeltaForm> =
 		grid(
 			listOf(
 				axis(StandardParameters.MOUTH_FORM, -1f, 0f, 1f),
@@ -773,27 +830,38 @@ object RigBuilder {
 			),
 		) { values ->
 			val delta = FloatArray(data.mesh.positions.size)
-			val xs = data.mesh.positions.filterIndexed { index, _ -> index % 2 == 0 }
-			val ys = data.mesh.positions.filterIndexed { index, _ -> index % 2 == 1 }
-			val left = xs.minOrNull() ?: 0f
-			val right = xs.maxOrNull() ?: 1f
-			val top = ys.minOrNull() ?: 0f
-			val bottom = ys.maxOrNull() ?: 1f
-			val centerX = (left + right) * 0.5f
-			val width = (right - left).coerceAtLeast(1e-4f)
-			val height = (bottom - top).coerceAtLeast(1e-4f)
-			val form = values[0]
-			val open = values[1]
-			for (index in data.mesh.positions.indices step 2) {
-				val x = data.mesh.positions[index]
-				val y = data.mesh.positions[index + 1]
-				val fromCenter = (x - centerX) / (width * 0.5f)
-				val vertical = (y - top) / height
-				delta[index] = fromCenter * width * form * 0.055f
-				delta[index + 1] = (y - top) * open * open * 0.55f - kotlin.math.abs(fromCenter) * height * form * 0.10f * (1f - vertical * 0.35f)
+			for (index in data.canvasPositions.indices step 2) {
+				val sourceX = data.canvasPositions[index]
+				val sourceY = data.canvasPositions[index + 1]
+				val target = mouthWholePoint(sourceX, sourceY, aperture, values[0], values[1])
+				delta[index] = (target.first - sourceX) / parentFrame.width.coerceAtLeast(1e-4f)
+				delta[index + 1] = (target.second - sourceY) / parentFrame.height.coerceAtLeast(1e-4f)
 			}
 			MeshDeltaForm(delta)
 		}
+
+	internal fun mouthWholePoint(
+		sourceX: Float,
+		sourceY: Float,
+		aperture: Bounds,
+		mouthForm: Float,
+		mouthOpen: Float,
+	): Pair<Float, Float> {
+		val open = mouthOpen.coerceIn(0f, 1f)
+		val easedOpen = open * open * (3f - 2f * open)
+		val form = mouthForm.coerceIn(-1f, 1f)
+		val halfWidth = (aperture.width * 0.5f).coerceAtLeast(1e-4f)
+		val normalizedX = ((sourceX - aperture.centerX) / halfWidth).coerceIn(-1.25f, 1.25f)
+		val horizontalScale = 0.92f + easedOpen * 0.08f + form * 0.07f
+		val targetX = aperture.centerX + (sourceX - aperture.centerX) * horizontalScale
+		val seamY = aperture.top + aperture.height * 0.48f
+		val closedScale = (1.25f / aperture.height.coerceAtLeast(1f)).coerceIn(0.018f, 0.12f)
+		val verticalScale = closedScale + easedOpen * (1f - closedScale)
+		val cornerWeight = abs(normalizedX).toDouble().pow(1.55).toFloat().coerceAtMost(1.35f)
+		val expressionY = -form * aperture.height * (0.018f + cornerWeight * 0.105f) * (0.72f + easedOpen * 0.28f)
+		val targetY = seamY + (sourceY - seamY) * verticalScale + expressionY
+		return targetX to targetY
+	}
 
 	internal fun zeroMeshGrid(size: Int): KeyformGrid<MeshDeltaForm> =
 		KeyformGrid(emptyList(), listOf(KeyformCell(IntArray(0), MeshDeltaForm(FloatArray(size)))))
@@ -804,8 +872,11 @@ object RigBuilder {
 				val parameter = if (layer.semantic.side == Side.LEFT) StandardParameters.EYE_L_OPEN else StandardParameters.EYE_R_OPEN
 				scalarGrid(parameter, floatArrayOf(0f, 1f)) { open -> 1f - open }
 			}
-			SemanticTag.MOUTH_OPEN -> scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, 1f)) { it }
 			SemanticTag.MOUTH_CLOSE -> scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, 1f)) { 1f - it }
+			SemanticTag.TONGUE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B ->
+				scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, 0.15f, 1f)) { open ->
+					(open / 0.15f).coerceIn(0f, 1f)
+				}
 			else -> null
 		}
 		return opacityGrid?.let { ChannelGrids(mapOf(FormChannel.OPACITY to it)) } ?: ChannelGrids.Empty
@@ -893,6 +964,74 @@ object RigBuilder {
 			else -> null
 		}
 		return parentId?.let(config.layerVisibility::get) ?: fallback
+	}
+
+	private fun mouthApertureFor(layer: ClassifiedLayer): Bounds? {
+		if (layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)) return layer.bounds
+		return null
+	}
+
+	private fun neutralValidationBounds(layer: ClassifiedLayer, data: MeshData, mouthAperture: Bounds?): Bounds {
+		if (layer.semantic.tag !in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) || mouthAperture == null) return layer.bounds
+		var left = Float.POSITIVE_INFINITY
+		var top = Float.POSITIVE_INFINITY
+		var right = Float.NEGATIVE_INFINITY
+		var bottom = Float.NEGATIVE_INFINITY
+		for (index in data.canvasPositions.indices step 2) {
+			val point = mouthWholePoint(
+				data.canvasPositions[index],
+				data.canvasPositions[index + 1],
+				mouthAperture,
+				mouthForm = 0f,
+				mouthOpen = 0f,
+			)
+			left = minOf(left, point.first)
+			top = minOf(top, point.second)
+			right = maxOf(right, point.first)
+			bottom = maxOf(bottom, point.second)
+		}
+		return Bounds(left, top, right, bottom)
+	}
+
+	/** Places explicitly named mouth internals directly above their nearest mouth, independent of PSD order. */
+	private fun orderMouthLayers(layers: List<ClassifiedLayer>): List<ClassifiedLayer> {
+		val mouths = layers.filter { it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) }
+		if (mouths.isEmpty()) return layers
+		val assigned = linkedMapOf<String, MutableList<ClassifiedLayer>>()
+		val assignedInternalIds = mutableSetOf<String>()
+		for (internal in layers.filter { it.semantic.tag in CharacterAnalyzer.MOUTH_COMPONENT_TAGS }) {
+			val exact = mouths.filter { mouth ->
+				mouth.semantic.side == internal.semantic.side && mouth.semantic.variant == internal.semantic.variant
+			}
+			val sameSide = mouths.filter { it.semantic.side == internal.semantic.side }
+			val fallback = mouths.filter { it.semantic.side == Side.NONE }
+			val mouth = nearestLayer(internal, exact.ifEmpty { sameSide.ifEmpty { fallback.ifEmpty { mouths } } }) ?: continue
+			assigned.getOrPut(mouth.source.id.raw) { mutableListOf() } += internal
+			assignedInternalIds += internal.source.id.raw
+		}
+		return buildList {
+			for (layer in layers) {
+				if (layer.source.id.raw in assignedInternalIds) continue
+				assigned[layer.source.id.raw]
+					.orEmpty()
+					.sortedWith(compareBy<ClassifiedLayer> { mouthInternalPriority(it.semantic.tag) }.thenBy { it.source.order })
+					.forEach(::add)
+				add(layer)
+			}
+		}
+	}
+
+	private fun nearestLayer(source: ClassifiedLayer, candidates: List<ClassifiedLayer>): ClassifiedLayer? =
+		candidates.minByOrNull { candidate ->
+			val dx = candidate.bounds.centerX - source.bounds.centerX
+			val dy = candidate.bounds.centerY - source.bounds.centerY
+			dx * dx + dy * dy
+		}
+
+	private fun mouthInternalPriority(tag: SemanticTag): Int = when (tag) {
+		SemanticTag.TOOTH_T, SemanticTag.TOOTH_B -> 0
+		SemanticTag.TONGUE -> 1
+		else -> 2
 	}
 
 	private fun mapBounds(child: Bounds, parent: Bounds): Bounds = Bounds(
