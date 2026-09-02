@@ -72,9 +72,14 @@ class PipelineIntegrationTest {
 		assertEquals(DeformerId("DeformHeadRotation"), headContainer.parent)
 		assertEquals(listOf(StandardParameters.ANGLE_X, StandardParameters.ANGLE_Y), checkNotNull(headContainer.geometryGrid).axes.map { it.parameterId })
 		assertEquals(headContainer.id, faceNinePose.parent, "face must be a child surface of the head container")
-		val headPart = mocPuppet.parts.single { it.id.raw == "PartHead" }
-		val headSubparts = headPart.children.filterIsInstance<OrgChild.Part>().map { it.id.raw }.toSet()
-		assertTrue(setOf("PartFace", "PartHairFront", "PartHairBack", "PartHeadAccessories").all { it in headSubparts })
+
+		val headRotation = mocPuppet.deformers.filterIsInstance<Deformer.Rotation>().single { it.id.raw == "DeformHeadRotation" }
+		val rotationPivot = checkNotNull(headRotation.geometryGrid).cells.first().form
+		val character = result.analysis.anchors.character
+		val faceRig = NinePoseFaceRig.from(result.analysis)
+		val expectedPivotX = (faceRig.centerX - character.left) / character.width
+		val expectedPivotY = (faceRig.mouthLineY - character.top) / character.height
+		assertEquals(expectedPivotX, rotationPivot.originX, 1e-3f, "Head Z rotation pivot X must match faceRig.centerX")
 
 		fun assertHairChain(tag: SemanticTag, followId: String, physicsId: String, parameter: org.umamo.runtime.model.ParameterId) {
 			if (result.analysis.layers.none { it.semantic.tag == tag && it.opaquePixels > 0 }) return

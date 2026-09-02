@@ -458,10 +458,12 @@ object RigBuilder {
 		}
 		val breath = Deformer.Warp(breathWarpId, tr("model.deformer.breath"), bodyWarpId, bodyPartId, 6, 4, true, breathGrid)
 
-		val chinLocalX = normalizeX(faceRig.chinX, character)
-		val chinLocalY = normalizeY(faceRig.chinY, character)
+		val headPivotX = faceRig.centerX
+		val headPivotY = faceRig.mouthLineY
+		val headPivotLocalX = normalizeX(headPivotX, character)
+		val headPivotLocalY = normalizeY(headPivotY, character)
 		val rotationGrid = oneDimGrid(StandardParameters.ANGLE_Z, floatArrayOf(-30f, 0f, 30f)) { value ->
-			RotationPivotForm(chinLocalX, chinLocalY, value, 1f)
+			RotationPivotForm(headPivotLocalX, headPivotLocalY, value, 1f)
 		}
 		val rotation = Deformer.Rotation(headRotationId, tr("model.deformer.headRotation"), breathWarpId, headPartId, 0f, rotationGrid)
 
@@ -469,7 +471,7 @@ object RigBuilder {
 		// sole pixel-space child of the rotation deformer; all descendants use ordinary normalized
 		// warp coordinates.  Face, front hair and back hair are siblings below this node.
 		val headGrid = warpGrid(ninePoseAxes(), columns = 4, rows = 5) { u, v, values ->
-			headContainerPoint(head, faceRig.chinX, faceRig.chinY, u, v, values[0], values[1], config.headTurnStrength)
+			headContainerPoint(head, headPivotX, headPivotY, u, v, values[0], values[1], config.headTurnStrength)
 		}
 		val headContainer = Deformer.Warp(headWarpId, tr("model.deformer.headContainer"), headRotationId, headPartId, 5, 4, true, headGrid)
 
