@@ -77,9 +77,11 @@ class PipelineIntegrationTest {
 		val rotationPivot = checkNotNull(headRotation.geometryGrid).cells.first().form
 		val character = result.analysis.anchors.character
 		val faceRig = NinePoseFaceRig.from(result.analysis)
-		val expectedPivotX = (faceRig.centerX - character.left) / character.width
-		val expectedPivotY = (faceRig.mouthLineY - character.top) / character.height
-		assertEquals(expectedPivotX, rotationPivot.originX, 1e-3f, "Head Z rotation pivot X must match faceRig.centerX")
+		val pivotCanvas = faceRig.coordinateSpace.toCanvas(faceRig.centerX, faceRig.mouthLineY)
+		val expectedPivotX = (pivotCanvas.first - character.left) / character.width
+		val expectedPivotY = (pivotCanvas.second - character.top) / character.height
+		assertEquals(expectedPivotX, rotationPivot.originX, 1e-3f, "Head Z rotation pivot X must match the oriented face rig")
+		assertEquals(expectedPivotY, rotationPivot.originY, 1e-3f, "Head Z rotation pivot Y must match the oriented face rig")
 
 		fun assertHairChain(tag: SemanticTag, followId: String, physicsId: String, parameter: org.umamo.runtime.model.ParameterId) {
 			if (result.analysis.layers.none { it.semantic.tag == tag && it.opaquePixels > 0 }) return

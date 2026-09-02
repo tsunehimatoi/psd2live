@@ -89,6 +89,7 @@ data class BuiltRig(
 	val faceRadiusX: Float,
 	val faceRadiusY: Float,
 	val warnings: List<String>,
+	val initialHeadAngleZ: Float = 0f,
 )
 
 object RigBuilder {
@@ -124,24 +125,32 @@ object RigBuilder {
 
 	private data class MeshData(
 		val mesh: DrawableMesh,
-		val canvasPositions: FloatArray,
+		/** Source points expressed in the coordinate system of their parent frame. */
+		val rigPositions: FloatArray,
 	)
 
 	fun build(analysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig): BuiltRig {
 		val warnings = mutableListOf<String>()
 		val characterFrame = analysis.anchors.character
-		val headCandidates = analysis.layers.filter { inferredGroup(it, analysis.anchors) == LayerGroup.HEAD && it.opaquePixels > 0 }
-		val headFrame = if (headCandidates.isEmpty()) analysis.anchors.face else headCandidates.map { it.bounds }.reduce(Bounds::union).expanded(0.025f)
 		val faceRig = NinePoseFaceRig.from(analysis)
-		val eyeWhiteLayers = analysis.layers.filter {
+		val headSpace = faceRig.coordinateSpace
+		val rigLayerById = analysis.layers.associate { layer ->
+			val rigLayer = if (inferredGroup(layer, analysis.anchors) == LayerGroup.HEAD) layer.inHeadSpace(headSpace) else layer
+			layer.source.id.raw to rigLayer
+		}
+		val headCandidates = analysis.layers
+			.filter { inferredGroup(it, analysis.anchors) == LayerGroup.HEAD && it.opaquePixels > 0 }
+			.map { rigLayerById.getValue(it.source.id.raw) }
+		val headFrame = if (headCandidates.isEmpty()) faceRig.face else headCandidates.map { it.bounds }.reduce(Bounds::union).expanded(0.025f)
+		val eyeWhiteLayers = rigLayerById.values.filter {
 			it.semantic.tag == SemanticTag.EYEWHITE && it.opaquePixels > 0
 		}
-		val faceCandidates = analysis.layers.filter { it.semantic.tag in faceTags && it.opaquePixels > 0 }
+		val faceCandidates = rigLayerById.values.filter { it.semantic.tag in faceTags && it.opaquePixels > 0 }
 		val faceFrame = (faceCandidates.map { it.bounds } + faceRig.face)
 			.reduce(Bounds::union)
 			.expanded(0.025f)
-		val frontHairCandidates = analysis.layers.filter { it.semantic.tag == SemanticTag.FRONT_HAIR && it.opaquePixels > 0 }
-		val backHairCandidates = analysis.layers.filter { it.semantic.tag == SemanticTag.BACK_HAIR && it.opaquePixels > 0 }
+		val frontHairCandidates = rigLayerById.values.filter { it.semantic.tag == SemanticTag.FRONT_HAIR && it.opaquePixels > 0 }
+		val backHairCandidates = rigLayerById.values.filter { it.semantic.tag == SemanticTag.BACK_HAIR && it.opaquePixels > 0 }
 		val frontHairFrame = frontHairCandidates.map { it.bounds }.takeIf { it.isNotEmpty() }?.reduce(Bounds::union)?.expanded(0.04f)
 		val backHairFrame = backHairCandidates.map { it.bounds }.takeIf { it.isNotEmpty() }?.reduce(Bounds::union)?.expanded(0.04f)
 
@@ -180,23 +189,26 @@ object RigBuilder {
 				warnings += tr("warning.emptyLayerSkipped", layer.source.name)
 				continue
 			}
+			val isHeadLayer = inferredGroup(layer, analysis.anchors) == LayerGroup.HEAD
+			val rigLayer = rigLayerById.getValue(layer.source.id.raw)
 			val parentAndFrame = parentAndFrame(layer, faceRig, analysis.anchors, characterFrame, headFrame, faceFrame, frontHairFrame, backHairFrame)
 			val id = uniqueDrawableId(layer, idCounts)
 			val meshData = buildGridMesh(
 				layer,
 				parentAndFrame.second,
+				if (isHeadLayer) headSpace else null,
 				placement,
 				atlas.pages[placement.page].image.width,
 				config.meshSpacing,
 				config.alphaThreshold,
 			)
-			val mouthAperture = mouthApertureFor(layer)
+			val mouthAperture = mouthApertureFor(rigLayer)
 			val geometryGrid = buildDrawableGeometry(
-				layer,
+				rigLayer,
 				meshData,
 				parentAndFrame.second,
 				faceRig,
-				matchingEyeWhiteBounds(layer, eyeWhiteLayers),
+				matchingEyeWhiteBounds(rigLayer, eyeWhiteLayers),
 				mouthAperture,
 			)
 			val drawable = Drawable(
@@ -218,7 +230,12 @@ object RigBuilder {
 			drawables += drawable
 			classifiedByDrawable[id] = layer
 			pageByDrawable[id.raw] = placement.page
-			sourceBoundsByDrawable[id.raw] = neutralValidationBounds(layer, meshData, mouthAperture)
+			sourceBoundsByDrawable[id.raw] = neutralValidationBounds(
+				layer,
+				meshData,
+				mouthAperture,
+				if (isHeadLayer) headSpace else null,
+			)
 			layerIdByDrawable[id.raw] = layer.source.id.raw
 		}
 
@@ -318,16 +335,18 @@ object RigBuilder {
 			// older Cubism 5 runtimes without relying on v6-only container fields.
 			runtimeTarget = RuntimeTarget.Cubism50,
 		).withDerivedRenderRoot()
+		val faceCenterCanvas = faceRig.coordinateSpace.toCanvas(faceRig.centerX, faceRig.centerY)
 		return BuiltRig(
 			puppet,
 			pageByDrawable,
 			sourceBoundsByDrawable,
 			layerIdByDrawable,
-			faceRig.centerX,
-			faceRig.centerY,
+			faceCenterCanvas.first,
+			faceCenterCanvas.second,
 			faceRig.radiusX,
 			faceRig.radiusY,
 			warnings,
+			faceRig.initialAngleZ,
 		)
 	}
 
@@ -466,12 +485,20 @@ object RigBuilder {
 
 		val headPivotX = faceRig.centerX
 		val headPivotY = faceRig.mouthLineY
-		val headPivotLocalX = normalizeX(headPivotX, character)
-		val headPivotLocalY = normalizeY(headPivotY, character)
+		val headPivotCanvas = faceRig.coordinateSpace.toCanvas(headPivotX, headPivotY)
+		val headPivotLocalX = normalizeX(headPivotCanvas.first, character)
+		val headPivotLocalY = normalizeY(headPivotCanvas.second, character)
 		val rotationGrid = oneDimGrid(StandardParameters.ANGLE_Z, floatArrayOf(-30f, 0f, 30f)) { value ->
 			RotationPivotForm(headPivotLocalX, headPivotLocalY, value, 1f)
 		}
-		val rotation = Deformer.Rotation(headRotationId, tr("model.deformer.headRotation"), breathWarpId, headPartId, 0f, rotationGrid)
+		val rotation = Deformer.Rotation(
+			headRotationId,
+			tr("model.deformer.headRotation"),
+			breathWarpId,
+			headPartId,
+			faceRig.initialAngleZ,
+			rotationGrid,
+		)
 
 		// A real head container separates skull-following content from the facial surface.  It is the
 		// sole pixel-space child of the rotation deformer; all descendants use ordinary normalized
@@ -675,6 +702,7 @@ object RigBuilder {
 	private fun buildGridMesh(
 		layer: ClassifiedLayer,
 		parentFrame: Bounds,
+		headSpace: HeadCoordinateSpace?,
 		placement: AtlasPlacement,
 		atlasSize: Int,
 		spacing: Int,
@@ -693,7 +721,7 @@ object RigBuilder {
 		// Authored tooth layers may contain several disconnected teeth. Keep their complete texture;
 		// the mouth clipping id supplies the visible boundary.
 		if (layer.semantic.tag in setOf(SemanticTag.TOOTH_T, SemanticTag.TOOTH_B)) {
-			return buildRectangularFallbackMesh(layer, parentFrame, placement, atlasSize, effectiveSpacing)
+			return buildRectangularFallbackMesh(layer, parentFrame, headSpace, placement, atlasSize, effectiveSpacing)
 		}
 		val adaptive = AdaptiveMeshGenerator.generate(
 			width,
@@ -711,22 +739,24 @@ object RigBuilder {
 				val localY = adaptive.positions[index + 1].coerceIn(0f, height.toFloat())
 				val canvasX = layer.source.bounds.left + localX
 				val canvasY = layer.source.bounds.top + localY
-				positions[index] = normalizeX(canvasX, parentFrame)
-				positions[index + 1] = normalizeY(canvasY, parentFrame)
-				canvas[index] = canvasX
-				canvas[index + 1] = canvasY
+				val rigPoint = headSpace?.toAligned(canvasX, canvasY) ?: (canvasX to canvasY)
+				positions[index] = normalizeX(rigPoint.first, parentFrame)
+				positions[index + 1] = normalizeY(rigPoint.second, parentFrame)
+				canvas[index] = rigPoint.first
+				canvas[index + 1] = rigPoint.second
 				uvs[index] = (placement.x + localX) / atlasSize
 				uvs[index + 1] = (placement.y + localY) / atlasSize
 			}
 			return MeshData(DrawableMesh(positions, uvs, adaptive.indices), canvas)
 		}
-		return buildRectangularFallbackMesh(layer, parentFrame, placement, atlasSize, effectiveSpacing)
+		return buildRectangularFallbackMesh(layer, parentFrame, headSpace, placement, atlasSize, effectiveSpacing)
 	}
 
 	/** Conservative fallback for pathological alpha masks or degenerate one-pixel slivers. */
 	private fun buildRectangularFallbackMesh(
 		layer: ClassifiedLayer,
 		parentFrame: Bounds,
+		headSpace: HeadCoordinateSpace?,
 		placement: AtlasPlacement,
 		atlasSize: Int,
 		effectiveSpacing: Float,
@@ -746,10 +776,11 @@ object RigBuilder {
 				val u = column.toFloat() / columns
 				val canvasX = layer.source.bounds.left + u * width
 				val canvasY = layer.source.bounds.top + v * height
-				positions[vertex * 2] = normalizeX(canvasX, parentFrame)
-				positions[vertex * 2 + 1] = normalizeY(canvasY, parentFrame)
-				canvas[vertex * 2] = canvasX
-				canvas[vertex * 2 + 1] = canvasY
+				val rigPoint = headSpace?.toAligned(canvasX, canvasY) ?: (canvasX to canvasY)
+				positions[vertex * 2] = normalizeX(rigPoint.first, parentFrame)
+				positions[vertex * 2 + 1] = normalizeY(rigPoint.second, parentFrame)
+				canvas[vertex * 2] = rigPoint.first
+				canvas[vertex * 2 + 1] = rigPoint.second
 				uvs[vertex * 2] = (placement.x + u * width) / atlasSize
 				uvs[vertex * 2 + 1] = (placement.y + v * height) / atlasSize
 				vertex++
@@ -803,15 +834,19 @@ object RigBuilder {
 		eyeWhiteBounds: List<Bounds>,
 	): KeyformGrid<MeshDeltaForm> {
 		val parameter = if (layer.semantic.side == Side.LEFT) StandardParameters.EYE_L_OPEN else StandardParameters.EYE_R_OPEN
-		val eyelashCenterline = if (layer.semantic.tag == SemanticTag.EYELASH) eyelashCenterline(layer) else null
+		// Column sampling is defined in the source raster's canvas X axis.  Once the head has been
+		// aligned, the alpha-weighted centroid remains correct while that column function no longer is.
+		val eyelashCenterline = if (layer.semantic.tag == SemanticTag.EYELASH && faceRig.initialAngleZ == 0f) {
+			eyelashCenterline(layer)
+		} else null
 		val axes = if (layer.semantic.side == Side.NONE) {
 			listOf(axis(StandardParameters.EYE_L_OPEN, 0f, 1f), axis(StandardParameters.EYE_R_OPEN, 0f, 1f))
 		} else listOf(axis(parameter, 0f, 1f))
 		return grid(axes) { values ->
 			val delta = FloatArray(data.mesh.positions.size)
 			for (vertex in data.mesh.positions.indices step 2) {
-				val canvasX = data.canvasPositions[vertex]
-				val canvasY = data.canvasPositions[vertex + 1]
+				val canvasX = data.rigPositions[vertex]
+				val canvasY = data.rigPositions[vertex + 1]
 				val openness = when (layer.semantic.side) {
 					Side.LEFT -> values[0]
 					Side.RIGHT -> values[0]
@@ -940,9 +975,9 @@ object RigBuilder {
 	private fun irisJellyGrid(layer: ClassifiedLayer, data: MeshData, frame: Bounds): KeyformGrid<MeshDeltaForm> =
 		oneDimGrid(StandardParameters.EYE_BALL_FORM, floatArrayOf(-1f, 0f, 1f)) { value ->
 			val delta = FloatArray(data.mesh.positions.size)
-			for (index in data.canvasPositions.indices step 2) {
-				val sourceX = data.canvasPositions[index]
-				val sourceY = data.canvasPositions[index + 1]
+			for (index in data.rigPositions.indices step 2) {
+				val sourceX = data.rigPositions[index]
+				val sourceY = data.rigPositions[index + 1]
 				val target = irisJellyPoint(sourceX, sourceY, layer.centroidX, layer.centroidY, value)
 				delta[index] = (target.first - sourceX) / frame.width.coerceAtLeast(1e-4f)
 				delta[index + 1] = (target.second - sourceY) / frame.height.coerceAtLeast(1e-4f)
@@ -977,9 +1012,9 @@ object RigBuilder {
 			),
 		) { values ->
 			val delta = FloatArray(data.mesh.positions.size)
-			for (index in data.canvasPositions.indices step 2) {
-				val sourceX = data.canvasPositions[index]
-				val sourceY = data.canvasPositions[index + 1]
+			for (index in data.rigPositions.indices step 2) {
+				val sourceX = data.rigPositions[index]
+				val sourceY = data.rigPositions[index + 1]
 				val target = mouthWholePoint(sourceX, sourceY, aperture, values[0], values[1])
 				delta[index] = (target.first - sourceX) / parentFrame.width.coerceAtLeast(1e-4f)
 				delta[index + 1] = (target.second - sourceY) / parentFrame.height.coerceAtLeast(1e-4f)
@@ -1104,6 +1139,15 @@ object RigBuilder {
 		if (layer.semantic.tag.group != LayerGroup.UNKNOWN) layer.semantic.tag.group
 		else if (layer.bounds.centerY <= anchors.face.bottom) LayerGroup.HEAD else LayerGroup.BODY
 
+	private fun ClassifiedLayer.inHeadSpace(space: HeadCoordinateSpace): ClassifiedLayer {
+		val alignedCenter = space.toAligned(centroidX, centroidY)
+		return copy(
+			bounds = space.boundsToAligned(bounds),
+			centroidX = alignedCenter.first,
+			centroidY = alignedCenter.second,
+		)
+	}
+
 	private fun layerVisibility(config: PipelineConfig, layerId: String, fallback: Boolean): Boolean {
 		config.layerVisibility[layerId]?.let { return it }
 		val parentId = when {
@@ -1118,20 +1162,26 @@ object RigBuilder {
 		return null
 	}
 
-	private fun neutralValidationBounds(layer: ClassifiedLayer, data: MeshData, mouthAperture: Bounds?): Bounds {
+	private fun neutralValidationBounds(
+		layer: ClassifiedLayer,
+		data: MeshData,
+		mouthAperture: Bounds?,
+		headSpace: HeadCoordinateSpace?,
+	): Bounds {
 		if (layer.semantic.tag !in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) || mouthAperture == null) return layer.bounds
 		var left = Float.POSITIVE_INFINITY
 		var top = Float.POSITIVE_INFINITY
 		var right = Float.NEGATIVE_INFINITY
 		var bottom = Float.NEGATIVE_INFINITY
-		for (index in data.canvasPositions.indices step 2) {
-			val point = mouthWholePoint(
-				data.canvasPositions[index],
-				data.canvasPositions[index + 1],
+		for (index in data.rigPositions.indices step 2) {
+			val rigPoint = mouthWholePoint(
+				data.rigPositions[index],
+				data.rigPositions[index + 1],
 				mouthAperture,
 				mouthForm = 0f,
 				mouthOpen = 0f,
 			)
+			val point = headSpace?.toCanvas(rigPoint.first, rigPoint.second) ?: rigPoint
 			left = minOf(left, point.first)
 			top = minOf(top, point.second)
 			right = maxOf(right, point.first)

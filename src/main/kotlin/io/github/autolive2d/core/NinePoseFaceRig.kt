@@ -42,14 +42,30 @@ internal class NinePoseFaceRig(
 	val chinX: Float,
 	val chinY: Float,
 	val regions: List<FaceRegion>,
+	val coordinateSpace: HeadCoordinateSpace = HeadCoordinateSpace.Identity,
 ) {
+	val initialAngleZ: Float get() = coordinateSpace.angleDegrees
+
 	companion object {
 		val angleXKeys = floatArrayOf(-45f, 0f, 45f)
 		val angleYKeys = floatArrayOf(-30f, 0f, 30f)
 
 		fun from(analysis: PipelineAnalysis): NinePoseFaceRig {
-			val nonEmpty = analysis.layers.filter { it.opaquePixels > 0 }
-			val face = analysis.anchors.face
+			val initialAngleZ = HeadOrientationEstimator.estimate(analysis.layers, analysis.anchors.face)
+			val coordinateSpace = HeadCoordinateSpace(
+				initialAngleZ,
+				analysis.anchors.faceCenterX,
+				analysis.anchors.faceCenterY,
+			)
+			val nonEmpty = analysis.layers.filter { it.opaquePixels > 0 }.map { layer ->
+				val center = coordinateSpace.toAligned(layer.centroidX, layer.centroidY)
+				layer.copy(
+					bounds = coordinateSpace.boundsToAligned(layer.bounds),
+					centroidX = center.first,
+					centroidY = center.second,
+				)
+			}
+			val face = coordinateSpace.boundsToAligned(analysis.anchors.face)
 
 			fun unionOrNull(layers: List<ClassifiedLayer>): Bounds? =
 				layers.map { it.bounds }.takeIf { it.isNotEmpty() }?.reduce(Bounds::union)
@@ -99,7 +115,7 @@ internal class NinePoseFaceRig(
 			val eyeCenterX = when {
 				pairedEyes.size >= 2 -> pairedEyes.map { it.bounds.centerX }.average().toFloat()
 				eyeBounds != null -> eyeBounds.centerX
-				else -> analysis.anchors.faceCenterX
+				else -> coordinateSpace.toAligned(analysis.anchors.faceCenterX, analysis.anchors.faceCenterY).first
 			}
 			val eyeLineY = eyeBounds?.centerY ?: (face.top + face.height * 0.38f)
 			val noseBounds = unionOrNull(nonEmpty.filter { it.semantic.tag == SemanticTag.NOSE })
@@ -132,6 +148,7 @@ internal class NinePoseFaceRig(
 				chinX = chinX,
 				chinY = face.bottom,
 				regions = regions,
+				coordinateSpace = coordinateSpace,
 			)
 		}
 	}
