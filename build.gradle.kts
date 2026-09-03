@@ -2,7 +2,7 @@ plugins {
 	kotlin("jvm") version "2.4.10"
 	id("org.jetbrains.compose") version "1.11.1"
 	id("org.jetbrains.kotlin.plugin.compose") version "2.4.10"
-	application
+	distribution
 }
 
 group = "io.github.psd2live"
@@ -29,10 +29,6 @@ dependencies {
 	testImplementation(kotlin("test"))
 }
 
-application {
-	mainClass.set("io.github.psd2live.MainKt")
-	applicationDefaultJvmArgs = listOf("-Xmx8g", "-Dfile.encoding=UTF-8")
-}
 
 distributions {
 	main {
@@ -44,6 +40,30 @@ distributions {
 			from("THIRD_PARTY_NOTICES.md")
 			from("licenses") { into("licenses") }
 			from("docs") { into("docs") }
+			from("src/main/resources/cubism") { into("cubism") }
+		}
+	}
+}
+
+compose.desktop {
+	application {
+		mainClass = "io.github.psd2live.MainKt"
+		jvmArgs += listOf("-Xmx8g", "-Dfile.encoding=UTF-8")
+		nativeDistributions {
+			targetFormats(
+				org.jetbrains.compose.desktop.application.dsl.TargetFormat.Exe,
+				org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi,
+			)
+			packageName = "PSD2Live"
+			packageVersion = "0.1.0"
+			description = "PSD2Live - Automated Live2D Rigging Pipeline"
+			copyright = "© 2026 PSD2Live. Licensed under GPL-3.0."
+			vendor = "PSD2Live"
+
+			windows {
+				menuGroup = "PSD2Live"
+				upgradeUuid = "8e9c4b1a-2d3e-4f5a-6b7c-8d9e0f1a2b3c"
+			}
 		}
 	}
 }
