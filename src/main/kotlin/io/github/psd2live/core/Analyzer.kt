@@ -7,7 +7,7 @@ import kotlin.math.max
 object CharacterAnalyzer {
 	fun analyze(source: SourceArt, config: PipelineConfig): PipelineAnalysis {
 		val initiallyClassified = source.layers
-			.filter { it.raster.width > 0 && it.raster.height > 0 }
+			.filter { it.raster.width > 0 && it.raster.height > 0 && it.id.raw !in config.deletedLayerIds }
 			.map { layer ->
 				LayerClassifier.classify(layer, config.alphaThreshold).withOverride(
 					config.layerOverrides[layer.id.raw],
@@ -29,7 +29,7 @@ object CharacterAnalyzer {
 					else -> component.withOverride(inheritedOverride)
 				}
 			}
-		}
+		}.filter { it.source.id.raw !in config.deletedLayerIds }
 		val warnings = mutableListOf<String>()
 		val nonEmpty = layers.filter { it.opaquePixels > 0 }
 		require(nonEmpty.isNotEmpty()) { tr("error.psdNoVisibleLayers") }

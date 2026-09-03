@@ -124,6 +124,10 @@ data class PipelineConfig(
 	val layerOverrides: Map<String, LayerClassificationOverride> = emptyMap(),
 	/** Photoshop-style layer-eye overrides; omitted entries retain their PSD visibility. */
 	val layerVisibility: Map<String, Boolean> = emptyMap(),
+	/** Layers deleted by the user, excluded from atlas packing and rigging. */
+	val deletedLayerIds: Set<String> = emptySet(),
+	/** Manual parent deformer overrides (layerId or deformerId -> parentDeformerId or null for root). */
+	val parentOverrides: Map<String, String?> = emptyMap(),
 )
 
 /** One file from the MOC3 family consumed by the official Cubism runtime preview. */

@@ -1,4 +1,4 @@
-﻿package io.github.psd2live.ui.state
+package io.github.psd2live.ui.state
 
 import androidx.compose.runtime.Immutable
 import io.github.psd2live.core.LayerClassificationOverride
@@ -73,6 +73,8 @@ data class PSD2LiveState(
 	val activeWorkspaceTab: WorkspaceTab = WorkspaceTab.PREVIEW,
 	val activeInspectorTab: InspectorTab = InspectorTab.LAYERS,
 	val currentLanguage: AppLanguage = I18n.currentLanguage,
+	val deletedLayerIds: Set<String> = emptySet(),
+	val parentOverrides: Map<String, String?> = emptyMap(),
 	val errorMessage: String? = null,
 	val successExportMessage: String? = null,
 ) {
@@ -102,6 +104,8 @@ data class PSD2LiveState(
 			exportJson = exportJson,
 			layerOverrides = layerOverrides,
 			layerVisibility = layerVisibility,
+			deletedLayerIds = deletedLayerIds,
+			parentOverrides = parentOverrides,
 		)
 	}
 

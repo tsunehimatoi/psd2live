@@ -162,7 +162,7 @@ object RigBuilder {
 		val bodyPartId = PartId("PartBody")
 		val extraPartId = PartId("PartExtra")
 		val shouldBuildDeformers = !config.meshOnly && config.generateDeformers
-		val deformers = if (shouldBuildDeformers) {
+		val rawDeformers = if (shouldBuildDeformers) {
 			buildDeformers(
 				faceRig,
 				characterFrame,
@@ -179,6 +179,42 @@ object RigBuilder {
 			)
 		} else {
 			emptyList()
+		}
+
+		val deformers = if (config.parentOverrides.isEmpty()) rawDeformers else {
+			val deformerById = rawDeformers.associateBy { it.id.raw }
+			rawDeformers.map { deformer ->
+				if (config.parentOverrides.containsKey(deformer.id.raw)) {
+					val targetParentRaw = config.parentOverrides[deformer.id.raw]
+					val targetParentId = targetParentRaw?.takeIf { it.isNotBlank() && !it.equals("root", true) }?.let(::DeformerId)
+					if (targetParentId != null && wouldCreateCycle(deformer.id.raw, targetParentId.raw, deformerById, config.parentOverrides)) {
+						deformer
+					} else {
+						deformer.withParent(targetParentId)
+					}
+				} else deformer
+			}
+		}
+
+		val frameByDeformer = mutableMapOf<String, Bounds>()
+		frameByDeformer[bodyWarpId.raw] = characterFrame
+		frameByDeformer[breathWarpId.raw] = characterFrame
+		frameByDeformer[headRotationId.raw] = characterFrame
+		frameByDeformer[headWarpId.raw] = headFrame
+		frameByDeformer[faceWarpId.raw] = faceFrame
+		for (region in faceRig.regions) {
+			frameByDeformer[featureWarpId(region).raw] = region.bounds
+			if (region.feature == FaceFeature.IRIS) {
+				frameByDeformer[gazeWarpId(region).raw] = region.bounds
+			}
+		}
+		frontHairFrame?.let {
+			frameByDeformer[frontHairFollowWarpId.raw] = it
+			frameByDeformer[frontHairPhysicsWarpId.raw] = it
+		}
+		backHairFrame?.let {
+			frameByDeformer[backHairFollowWarpId.raw] = it
+			frameByDeformer[backHairPhysicsWarpId.raw] = it
 		}
 
 		val idCounts = mutableMapOf<String, Int>()
@@ -253,12 +289,27 @@ object RigBuilder {
 			}
 			val isHeadLayer = inferredGroup(layer, analysis.anchors) == LayerGroup.HEAD
 			val rigLayer = rigLayerById.getValue(layer.source.id.raw)
-			val parentAndFrame = parentAndFrame(layer, faceRig, analysis.anchors, characterFrame, headFrame, faceFrame, frontHairFrame, backHairFrame)
+			val defaultParentAndFrame = parentAndFrame(layer, faceRig, analysis.anchors, characterFrame, headFrame, faceFrame, frontHairFrame, backHairFrame)
+			val hasParentOverride = config.parentOverrides.containsKey(layer.source.id.raw)
+			val overrideParentRaw = config.parentOverrides[layer.source.id.raw]
+			val effectiveParentId: DeformerId? = if (hasParentOverride) {
+				overrideParentRaw?.takeIf { it.isNotBlank() && !it.equals("root", true) }?.let(::DeformerId)
+			} else {
+				defaultParentAndFrame.first
+			}
+			val effectiveParentFrame: Bounds = if (hasParentOverride && effectiveParentId != null) {
+				frameByDeformer[effectiveParentId.raw] ?: defaultParentAndFrame.second
+			} else if (hasParentOverride) {
+				characterFrame
+			} else {
+				defaultParentAndFrame.second
+			}
+
 			val id = uniqueDrawableId(layer, idCounts)
 			val effectiveHeadSpace = if (isHeadLayer && shouldBuildDeformers) headSpace else null
 			val meshData = buildGridMesh(
 				layer,
-				parentAndFrame.second,
+				effectiveParentFrame,
 				effectiveHeadSpace,
 				placement,
 				atlas.pages[placement.page].image.width,
@@ -277,7 +328,7 @@ object RigBuilder {
 				buildDrawableGeometry(
 					rigLayer,
 					meshData,
-					parentAndFrame.second,
+					effectiveParentFrame,
 					faceRig,
 					matchingEyeWhiteBounds(rigLayer, eyeWhiteLayers),
 					mouthAperture,
@@ -288,7 +339,7 @@ object RigBuilder {
 			val drawable = Drawable(
 				id = id,
 				name = layer.source.name,
-				parentDeformerId = if (shouldBuildDeformers) parentAndFrame.first else null,
+				parentDeformerId = if (shouldBuildDeformers) effectiveParentId else null,
 				blendMode = blendMode(layer.source.blend),
 				maskedBy = emptyList(),
 				mesh = effectiveMesh,
@@ -1385,5 +1436,31 @@ object RigBuilder {
 			controlPoints[index++] = result.second
 		}
 		WarpLatticeForm(controlPoints)
+	}
+
+	private fun Deformer.withParent(newParent: DeformerId?): Deformer = when (this) {
+		is Deformer.Warp -> copy(parent = newParent)
+		is Deformer.Rotation -> copy(parent = newParent)
+	}
+
+	internal fun wouldCreateCycle(
+		sourceId: String,
+		targetId: String,
+		deformerById: Map<String, Deformer>,
+		parentOverrides: Map<String, String?>,
+	): Boolean {
+		if (sourceId == targetId) return true
+		var current: String? = targetId
+		val visited = mutableSetOf(sourceId)
+		while (current != null) {
+			if (!visited.add(current)) return true
+			val override = if (parentOverrides.containsKey(current)) {
+				parentOverrides[current]?.takeIf { it.isNotBlank() && !it.equals("root", true) }
+			} else {
+				deformerById[current]?.parent?.raw
+			}
+			current = override
+		}
+		return false
 	}
 }

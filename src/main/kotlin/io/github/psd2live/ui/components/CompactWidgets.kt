@@ -1,4 +1,4 @@
-﻿package io.github.psd2live.ui.components
+package io.github.psd2live.ui.components
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -350,6 +350,35 @@ fun IconClose(
 		val h = size.height
 		drawLine(color = tint, start = Offset(w * 0.2f, h * 0.2f), end = Offset(w * 0.8f, h * 0.8f), strokeWidth = 1.3f, cap = StrokeCap.Round)
 		drawLine(color = tint, start = Offset(w * 0.8f, h * 0.2f), end = Offset(w * 0.2f, h * 0.8f), strokeWidth = 1.3f, cap = StrokeCap.Round)
+	}
+}
+
+/** Vector Trash Can / Delete Icon */
+@Composable
+fun IconTrash(
+	modifier: Modifier = Modifier.size(12.dp),
+	tint: Color = LocalToolColors.current.textMuted,
+) {
+	Canvas(modifier = modifier) {
+		val w = size.width
+		val h = size.height
+		val stroke = Stroke(width = 1.2f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+		// Can lid / handle
+		drawLine(color = tint, start = Offset(w * 0.38f, h * 0.12f), end = Offset(w * 0.62f, h * 0.12f), strokeWidth = 1.2f, cap = StrokeCap.Round)
+		drawLine(color = tint, start = Offset(w * 0.20f, h * 0.24f), end = Offset(w * 0.80f, h * 0.24f), strokeWidth = 1.2f, cap = StrokeCap.Round)
+		// Can body
+		val bodyPath = Path().apply {
+			moveTo(w * 0.28f, h * 0.24f)
+			lineTo(w * 0.32f, h * 0.86f)
+			quadraticTo(w * 0.33f, h * 0.92f, w * 0.40f, h * 0.92f)
+			lineTo(w * 0.60f, h * 0.92f)
+			quadraticTo(w * 0.67f, h * 0.92f, w * 0.68f, h * 0.86f)
+			lineTo(w * 0.72f, h * 0.24f)
+		}
+		drawPath(bodyPath, color = tint, style = stroke)
+		// Vertical slats inside bin
+		drawLine(color = tint, start = Offset(w * 0.43f, h * 0.38f), end = Offset(w * 0.43f, h * 0.78f), strokeWidth = 1.0f, cap = StrokeCap.Round)
+		drawLine(color = tint, start = Offset(w * 0.57f, h * 0.38f), end = Offset(w * 0.57f, h * 0.78f), strokeWidth = 1.0f, cap = StrokeCap.Round)
 	}
 }
 

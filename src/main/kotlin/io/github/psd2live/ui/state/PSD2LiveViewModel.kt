@@ -317,11 +317,21 @@ class PSD2LiveViewModel : AutoCloseable {
 	}
 
 	fun selectLayer(layerId: String?) {
-		_state.update { it.copy(selectedLayerId = layerId) }
+		_state.update {
+			it.copy(
+				selectedLayerId = layerId,
+				selectedDeformerId = if (layerId != null) null else it.selectedDeformerId,
+			)
+		}
 	}
 
 	fun selectDeformer(deformerId: String?) {
-		_state.update { it.copy(selectedDeformerId = deformerId) }
+		_state.update {
+			it.copy(
+				selectedDeformerId = deformerId,
+				selectedLayerId = if (deformerId != null) null else it.selectedLayerId,
+			)
+		}
 	}
 
 	fun toggleLayerVisibility(layerId: String) {
@@ -411,6 +421,87 @@ class PSD2LiveViewModel : AutoCloseable {
 				isolationSnapshot = null,
 				isolatedLayerId = null,
 				statusText = tr("status.visibilityChanged"),
+			)
+		}
+		schedulePreviewRebuild()
+	}
+
+	fun deleteLayer(layerId: String) {
+		val analysis = _state.value.analysis
+		val layerName = analysis?.layers?.firstOrNull { it.source.id.raw == layerId }?.source?.name ?: layerId
+		_state.update { current ->
+			current.copy(
+				deletedLayerIds = current.deletedLayerIds + layerId,
+				selectedLayerId = if (current.selectedLayerId == layerId) null else current.selectedLayerId,
+				statusText = tr("status.layerDeleted", layerName),
+			)
+		}
+		schedulePreviewRebuild()
+	}
+
+	fun restoreLayer(layerId: String) {
+		val analysis = _state.value.analysis
+		val layerName = analysis?.layers?.firstOrNull { it.source.id.raw == layerId }?.source?.name ?: layerId
+		_state.update { current ->
+			current.copy(
+				deletedLayerIds = current.deletedLayerIds - layerId,
+				statusText = tr("status.layerRestored", layerName),
+			)
+		}
+		schedulePreviewRebuild()
+	}
+
+	fun restoreAllDeletedLayers() {
+		_state.update { current ->
+			current.copy(
+				deletedLayerIds = emptySet(),
+				statusText = tr("status.allLayersRestored"),
+			)
+		}
+		schedulePreviewRebuild()
+	}
+
+	fun reparentItem(childId: String, newParentId: String?) {
+		val model = _state.value.previewModel
+		val isDeformer = model?.rig?.puppet?.deformers?.any { it.id.raw == childId } ?: false
+		val deformerById = model?.rig?.puppet?.deformers?.associateBy { it.id.raw } ?: emptyMap()
+
+		// If child is a deformer, check for cycle
+		if (isDeformer && newParentId != null) {
+			if (childId == newParentId) return
+			var cur: String? = newParentId
+			val visited = mutableSetOf(childId)
+			while (cur != null) {
+				if (!visited.add(cur)) return
+				cur = _state.value.parentOverrides[cur] ?: deformerById[cur]?.parent?.raw
+			}
+		}
+
+		_state.update { current ->
+			val updated = current.parentOverrides + (childId to newParentId)
+			current.copy(
+				parentOverrides = updated,
+				statusText = tr("status.hierarchyUpdated"),
+			)
+		}
+		schedulePreviewRebuild()
+	}
+
+	fun resetHierarchyOverrides() {
+		_state.update { current ->
+			current.copy(
+				parentOverrides = emptyMap(),
+				statusText = tr("status.hierarchyReset"),
+			)
+		}
+		schedulePreviewRebuild()
+	}
+
+	fun resetItemHierarchy(itemId: String) {
+		_state.update { current ->
+			current.copy(
+				parentOverrides = current.parentOverrides - itemId,
+				statusText = tr("status.hierarchyUpdated"),
 			)
 		}
 		schedulePreviewRebuild()

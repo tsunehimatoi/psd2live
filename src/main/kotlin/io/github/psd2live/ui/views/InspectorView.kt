@@ -69,6 +69,7 @@ import io.github.psd2live.ui.components.IconPause
 import io.github.psd2live.ui.components.IconPlay
 import io.github.psd2live.ui.components.IconReset
 import io.github.psd2live.ui.components.IconSearch
+import io.github.psd2live.ui.components.IconTrash
 import io.github.psd2live.ui.localizedName
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
@@ -832,6 +833,13 @@ private fun LayersTableView(
 				enabled = layers.isNotEmpty(),
 				height = 20.dp,
 			)
+			if (state.deletedLayerIds.isNotEmpty()) {
+				CompactButton(
+					text = tr("layers.restoreAll", state.deletedLayerIds.size),
+					onClick = { viewModel.restoreAllDeletedLayers() },
+					height = 20.dp,
+				)
+			}
 		}
 
 		// Table Header Row
@@ -852,6 +860,7 @@ private fun LayersTableView(
 			Text(text = tr("layers.header.type"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.width(62.dp).padding(horizontal = 2.dp))
 			Text(text = tr("layers.header.binding"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.weight(1.1f).padding(horizontal = 2.dp))
 			Text(text = tr("layers.header.paramId"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.width(52.dp).padding(horizontal = 2.dp))
+			Spacer(Modifier.width(22.dp))
 		}
 
 		if (layers.isEmpty()) {
@@ -1074,6 +1083,22 @@ private fun LayersTableView(
 									isMono = true,
 								)
 							}
+						}
+
+						Spacer(Modifier.width(2.dp))
+						// Delete layer button
+						Box(
+							modifier = Modifier
+								.size(20.dp)
+								.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
+								.clickable { viewModel.deleteLayer(layerId) }
+								.padding(2.dp),
+							contentAlignment = Alignment.Center,
+						) {
+							IconTrash(
+								modifier = Modifier.size(11.5.dp),
+								tint = colors.textMuted,
+							)
 						}
 					}
 					Divider(color = colors.divider.copy(alpha = 0.4f), thickness = 0.5.dp)

@@ -39,10 +39,12 @@ class PSD2LivePipeline {
 		buildPreview(CharacterAnalyzer.analyze(source, config), config)
 
 	fun buildPreview(analysis: PipelineAnalysis, config: PipelineConfig = PipelineConfig()): RigPreviewModel {
-		val atlas = AtlasPacker.pack(analysis.layers, config.atlasSize, config.texturePadding)
-		val rig = RigBuilder.build(analysis, atlas, config)
-		val runtimeBundle = buildRuntimeBundle("psd2live-preview", analysis, atlas, rig, config).first
-		return RigPreviewModel(analysis, atlas, rig, config, runtimeBundle)
+		val effectiveLayers = if (config.deletedLayerIds.isEmpty()) analysis.layers else analysis.layers.filter { it.source.id.raw !in config.deletedLayerIds }
+		val effectiveAnalysis = if (effectiveLayers.size != analysis.layers.size) analysis.copy(layers = effectiveLayers) else analysis
+		val atlas = AtlasPacker.pack(effectiveAnalysis.layers, config.atlasSize, config.texturePadding)
+		val rig = RigBuilder.build(effectiveAnalysis, atlas, config)
+		val runtimeBundle = buildRuntimeBundle("psd2live-preview", effectiveAnalysis, atlas, rig, config).first
+		return RigPreviewModel(effectiveAnalysis, atlas, rig, config, runtimeBundle)
 	}
 
 	fun run(
