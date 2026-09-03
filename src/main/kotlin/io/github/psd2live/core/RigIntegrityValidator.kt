@@ -1,4 +1,4 @@
-﻿package io.github.psd2live.core
+package io.github.psd2live.core
 
 import io.github.psd2live.i18n.tr
 import org.umamo.render.eval.CpuDeformationEvaluator
@@ -100,12 +100,18 @@ object RigIntegrityValidator {
 			"AngleY=30" to mapOf(StandardParameters.ANGLE_Y to 30f),
 		)
 		val evaluator = CpuDeformationEvaluator()
-		val expectedIds = puppet.drawables.filter { it.isVisible }.mapTo(linkedSetOf()) { it.id }
+		val expectedIds = puppet.drawables.filter { it.mesh != null }.mapTo(linkedSetOf()) { it.id }
 		val neutralGeometry = evaluator.evaluate(puppet, emptyMap())
 		for ((poseName, parameters) in poses) {
 			val geometry = evaluator.evaluate(puppet, parameters)
-			require(geometry.worldPositions.keys == expectedIds) {
-				tr("validation.poseGeometryMissing", label, poseName, (expectedIds - geometry.worldPositions.keys).joinToString { it.raw })
+			val missing = expectedIds - geometry.worldPositions.keys
+			val unexpected = geometry.worldPositions.keys - expectedIds
+			require(missing.isEmpty() && unexpected.isEmpty()) {
+				val details = buildList {
+					if (missing.isNotEmpty()) add(missing.joinToString { it.raw })
+					if (unexpected.isNotEmpty()) add("extra: " + unexpected.joinToString { it.raw })
+				}.joinToString("; ")
+				tr("validation.poseGeometryMissing", label, poseName, details)
 			}
 			for (drawableId in expectedIds) {
 				val positions = geometry.worldPositions.getValue(drawableId)

@@ -204,4 +204,27 @@ class PipelineIntegrationTest {
 			assertTrue("PhysicsHairBack" !in ids)
 		}
 	}
+
+	@Test
+	fun `hidden layer in layerVisibility does not trigger poseGeometryMissing error`() {
+		val sample = Path.of("..", "Anime2.5DRig", "sample.psd").toAbsolutePath().normalize()
+		if (!Files.isRegularFile(sample)) return
+		val analysis = PSD2LivePipeline().inspect(sample)
+		val hiddenLayerId = analysis.layers.first().source.id.raw
+		val output = createTempDirectory("psd2live-hidden-")
+		val result = PSD2LivePipeline().run(
+			sample,
+			output,
+			PipelineConfig(
+				atlasSize = 2048,
+				meshSpacing = 128,
+				layerVisibility = mapOf(hiddenLayerId to false),
+			),
+		)
+		assertTrue(result.exportedFiles.isNotEmpty())
+		val hiddenDrawable = result.previewModel.rig.puppet.drawables.first {
+			result.previewModel.rig.layerIdByDrawableId[it.id.raw] == hiddenLayerId
+		}
+		assertTrue(!hiddenDrawable.isVisible)
+	}
 }
