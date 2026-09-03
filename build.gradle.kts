@@ -5,7 +5,7 @@ plugins {
 	application
 }
 
-group = "io.github.autolive2d"
+group = "io.github.psd2live"
 version = "0.1.0"
 
 kotlin {
@@ -30,7 +30,7 @@ dependencies {
 }
 
 application {
-	mainClass.set("io.github.autolive2d.MainKt")
+	mainClass.set("io.github.psd2live.MainKt")
 	applicationDefaultJvmArgs = listOf("-Xmx8g", "-Dfile.encoding=UTF-8")
 }
 
@@ -50,5 +50,5 @@ distributions {
 
 tasks.test {
 	useJUnitPlatform()
-	systemProperty("autolive2d.cubism.smoke", System.getProperty("autolive2d.cubism.smoke", "false"))
+	systemProperty("psd2live.cubism.smoke", System.getProperty("psd2live.cubism.smoke", "false"))
 }

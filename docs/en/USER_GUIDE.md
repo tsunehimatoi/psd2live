@@ -1,8 +1,8 @@
-# AutoLive2D User Guide
+﻿# PSD2Live User Guide
 
 [中文](../zh/USER_GUIDE.md) | [日本語](../ja/USER_GUIDE.md)
 
-AutoLive2D provides both a modern desktop Graphical User Interface (GUI) and an automated Command Line Interface (CLI). This guide covers interface architecture, workflow, shortcuts, parameter tuning, and batch command usage.
+PSD2Live provides both a modern desktop Graphical User Interface (GUI) and an automated Command Line Interface (CLI). This guide covers interface architecture, workflow, shortcuts, parameter tuning, and batch command usage.
 
 ---
 
@@ -44,10 +44,10 @@ Double-click `run-gui.bat` in the repository root.
 ### 2. Gradle Command Line
 ```powershell
 # Windows (PowerShell)
-.\umamo\gradlew.bat -p .\autolive2d run
+.\umamo\gradlew.bat -p .\psd2live run
 
 # Linux / macOS (Bash)
-../umamo/gradlew -p ./autolive2d run
+../umamo/gradlew -p ./psd2live run
 ```
 
 ---
@@ -140,16 +140,16 @@ The main window is structured into a three-pane layout: **Left Workspace + Right
 
 ```powershell
 # Basic export
-.\umamo\gradlew.bat -p .\autolive2d run --args="--input D:/models/character.psd --output D:/dist/character"
+.\umamo\gradlew.bat -p .\psd2live run --args="--input D:/models/character.psd --output D:/dist/character"
 
 # Advanced configuration
-.\umamo\gradlew.bat -p .\autolive2d run --args="--input D:/models/character.psd --output D:/dist/character --atlas 8192 --mesh-spacing 48 --head-strength 1.2 --lang en"
+.\umamo\gradlew.bat -p .\psd2live run --args="--input D:/models/character.psd --output D:/dist/character --atlas 8192 --mesh-spacing 48 --head-strength 1.2 --lang en"
 ```
 
 | Option | Type | Default | Description |
 | :--- | :---: | :---: | :--- |
 | `--input <path>` | Path | *(Required)* | Input PSD file path |
-| `--output <path>` | Path | `PSD_DIR/autolive2d-output` | Destination output directory |
+| `--output <path>` | Path | `PSD_DIR/psd2live-output` | Destination output directory |
 | `--lang <zh\|en\|ja>` | String | System Locale | UI and log language (`zh` / `en` / `ja`) |
 | `--atlas <size>` | Int | `4096` | Texture atlas square dimension (`256 ~ 16384`) |
 | `--mesh-spacing <px>` | Int | `64` | Base mesh sampling spacing in pixels |

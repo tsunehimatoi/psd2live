@@ -1,8 +1,8 @@
-# AutoLive2D 变形器层级、算法数学原理与参数系统规范 (Deformer & Math Specification)
+﻿# PSD2Live 变形器层级、算法数学原理与参数系统规范 (Deformer & Math Specification)
 
 [English](../en/DEFORMER_AND_PARAMETER_SPEC.md) | [日本語](../ja/DEFORMER_AND_PARAMETER_SPEC.md)
 
-本文档面向对 Live2D 绑定架构、形变插值算法与物理动力学感兴趣的开发者和技术美术（Technical Artists），详细阐述 AutoLive2D 的变形器拓扑树、九轴面部经纬网数学模型、五官二维修形算法、物理摆锤系统以及完整性自检规范。
+本文档面向对 Live2D 绑定架构、形变插值算法与物理动力学感兴趣的开发者和技术美术（Technical Artists），详细阐述 PSD2Live 的变形器拓扑树、九轴面部经纬网数学模型、五官二维修形算法、物理摆锤系统以及完整性自检规范。
 
 ---
 
@@ -38,7 +38,7 @@
 
 ### 1. 变形器树形拓扑结构
 
-传统自动绑定工具往往将所有头部部件直接挂载在面部网格下，导致头发、头饰在头部转动时产生被面部拉扯挤压的异常失真。AutoLive2D 将**“头壳跟随 (Skull Follow)”**与**“面部表面 (Facial Surface)”**进行彻底解耦：
+传统自动绑定工具往往将所有头部部件直接挂载在面部网格下，导致头发、头饰在头部转动时产生被面部拉扯挤压的异常失真。PSD2Live 将**“头壳跟随 (Skull Follow)”**与**“面部表面 (Facial Surface)”**进行彻底解耦：
 
 ```text
 Root (Canvas Space)
@@ -73,7 +73,7 @@ Root (Canvas Space)
 
 ## 九轴面部经纬网数学模型 (Nine-Pose Face Rig)
 
-AutoLive2D 采用基于手工绑定理念的 **$8 \times 8$ 面部经纬网模型**：
+PSD2Live 采用基于手工绑定理念的 **$8 \times 8$ 面部经纬网模型**：
 
 ### 1. 轴向定义与关键帧
 - **水平偏航轴**：`ParamAngleX` $\in [-45^\circ, 0^\circ, +45^\circ]$

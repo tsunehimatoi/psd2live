@@ -1,6 +1,6 @@
-# Third-party Notices
+﻿# Third-party Notices
 
-AutoLive2D is licensed under GNU GPL version 3. See `LICENSE`.
+PSD2Live is licensed under GNU GPL version 3. See `LICENSE`.
 
 ## Umamo
 
@@ -10,7 +10,7 @@ The application links the local Umamo `format`, `runtime`, `interop`, and `rende
 
 Copyright (c) 2026 Nguyen Phan. Licensed under the MIT License.
 
-AutoLive2D independently implements concepts inspired by See-Through semantic organization, connected-component layer splitting, image analysis, atlas packing, and adaptive mesh generation. It does not embed Stretchy Studio's React/WebGL user interface.
+PSD2Live independently implements concepts inspired by See-Through semantic organization, connected-component layer splitting, image analysis, atlas packing, and adaptive mesh generation. It does not embed Stretchy Studio's React/WebGL user interface.
 
 ## Live2D Cubism
 

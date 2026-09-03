@@ -1,8 +1,8 @@
-# Deformer Hierarchy, Mathematical Formulations, and Parameter Specification
+﻿# Deformer Hierarchy, Mathematical Formulations, and Parameter Specification
 
 [中文](../zh/DEFORMER_AND_PARAMETER_SPEC.md) | [日本語](../ja/DEFORMER_AND_PARAMETER_SPEC.md)
 
-This specification documents the topological deformer hierarchy, 9-pose facial lattice mathematics, secondary feature warps, multi-pendulum dynamics, and automated geometric integrity gates implemented in AutoLive2D.
+This specification documents the topological deformer hierarchy, 9-pose facial lattice mathematics, secondary feature warps, multi-pendulum dynamics, and automated geometric integrity gates implemented in PSD2Live.
 
 ---
 
@@ -38,7 +38,7 @@ This specification documents the topological deformer hierarchy, 9-pose facial l
 
 ### 1. Deformer Tree Topology
 
-AutoLive2D completely decouples **Skull Follow** from **Facial Surface Warping**:
+PSD2Live completely decouples **Skull Follow** from **Facial Surface Warping**:
 
 ```text
 Root (Canvas Space)
@@ -73,7 +73,7 @@ Root (Canvas Space)
 
 ## Nine-Pose Facial Lattice Mathematics
 
-AutoLive2D utilizes an **$8 \times 8$ facial latitude/longitude lattice**:
+PSD2Live utilizes an **$8 \times 8$ facial latitude/longitude lattice**:
 
 ### 1. Axis Definitions & Standard Keyforms
 - **Yaw**: `ParamAngleX` $\in [-45^\circ, 0^\circ, +45^\circ]$
@@ -103,7 +103,7 @@ $$\Delta y_{\text{pitch}} = -\text{pitch} \cdot R_y \cdot 0.018 + \text{pitch} \
 where $\text{arch}_x = \max(0, 1 - x^2)^{1.30}$.
 
 ### 4. Diagonal Corner Interaction ($C_{xy}$)
-To prevent jaw skew and facial collapse on diagonal poses, AutoLive2D injects signed cross terms $C_{xy} = \text{yaw} \cdot \text{pitch}$:
+To prevent jaw skew and facial collapse on diagonal poses, PSD2Live injects signed cross terms $C_{xy} = \text{yaw} \cdot \text{pitch}$:
 $$\Delta x_{\text{corner}} = C_{xy} \cdot R_x \cdot \text{arch}_x \cdot (0.012 + 0.018 \cdot y_{\text{lower}})$$
 $$\Delta y_{\text{corner}} = C_{xy} \cdot R_y \cdot x \cdot \text{arch}_x \cdot 0.028 - |\text{yaw}| \cdot \text{pitch} \cdot R_y \cdot \text{arch}_x \cdot (0.007 + 0.008 \cdot y_{\text{lower}})$$
 

@@ -1,8 +1,8 @@
-# AutoLive2D
+﻿# PSD2Live
 
 [中文](README.md) | [English](README_en.md)
 
-AutoLive2D は、自動化された Live2D モデル生成パイプラインおよびデスクトップアプリケーションです。レイヤー分けされた PSD ファイルを入力として、レイヤーセマンティクスの自動認識、左右パーツの自動分離、適応型 Delaunay メッシュ生成、顔面 9 軸変形格子および分離型デフォーマ階層の構築、髪の多段物理演算、ぷるぷる瞳物理、およびシームレスな待機モーション生成を行い、編集可能な `.cmo3` プロジェクトおよび実行時 `.moc3` ファイル群をワンクリックで書き出します。
+PSD2Live は、自動化された Live2D モデル生成パイプラインおよびデスクトップアプリケーションです。レイヤー分けされた PSD ファイルを入力として、レイヤーセマンティクスの自動認識、左右パーツの自動分離、適応型 Delaunay メッシュ生成、顔面 9 軸変形格子および分離型デフォーマ階層の構築、髪の多段物理演算、ぷるぷる瞳物理、およびシームレスな待機モーション生成を行い、編集可能な `.cmo3` プロジェクトおよび実行時 `.moc3` ファイル群をワンクリックで書き出します。
 
 ---
 
@@ -41,10 +41,10 @@ AutoLive2D は、自動化された Live2D モデル生成パイプラインお�
 - **Gradle 起動**:
   ```powershell
   # Windows
-  .\umamo\gradlew.bat -p .\autolive2d run
+  .\umamo\gradlew.bat -p .\psd2live run
 
   # Linux / macOS
-  ../umamo/gradlew -p ./autolive2d run
+  ../umamo/gradlew -p ./psd2live run
   ```
 
 #### 主なショートカット
@@ -66,16 +66,16 @@ AutoLive2D は、自動化された Live2D モデル生成パイプラインお�
 
 ```powershell
 # 基本実行
-.\umamo\gradlew.bat -p .\autolive2d run --args="--input ./sample.psd --output ./output"
+.\umamo\gradlew.bat -p .\psd2live run --args="--input ./sample.psd --output ./output"
 
 # 詳細オプション指定
-.\umamo\gradlew.bat -p .\autolive2d run --args="--input ./sample.psd --output ./output --atlas 8192 --mesh-spacing 48 --head-strength 1.2 --lang ja"
+.\umamo\gradlew.bat -p .\psd2live run --args="--input ./sample.psd --output ./output --atlas 8192 --mesh-spacing 48 --head-strength 1.2 --lang ja"
 ```
 
 | オプション | 型 | 既定値 | 説明 |
 | :--- | :---: | :---: | :--- |
 | `--input <path>` | パス | *(必須)* | 入力 PSD ファイルパス |
-| `--output <path>` | パス | `PSD同階層/autolive2d-output` | 出力先ディレクトリ |
+| `--output <path>` | パス | `PSD同階層/psd2live-output` | 出力先ディレクトリ |
 | `--lang <zh\|en\|ja>` | 文字列 | システム言語 | 言語設定 (`zh` / `en` / `ja`) |
 | `--atlas <size>` | 整数 | `4096` | テクスチャアトラスサイズ (`256 ~ 16384`) |
 | `--mesh-spacing <px>` | 整数 | `64` | 基本メッシュ間隔（ピクセル） |
@@ -146,7 +146,7 @@ output_dir/
 ├── sample.physics3.json           # 物理演算構成ファイル (髪多段振り子 + 瞳物理)
 ├── sample.idle.motion3.json       # 6 秒シームレスループ待機モーション
 ├── sample.4096/texture_00.png     # テクスチャアトラス
-└── sample.autolive2d.json         # 診断レポートおよびマッピングメタデータ
+└── sample.psd2live.json         # 診断レポートおよびマッピングメタデータ
 ```
 
 ---
@@ -155,10 +155,10 @@ output_dir/
 
 ```powershell
 # 配布用 ZIP アーカイブの生成
-.\umamo\gradlew.bat -p .\autolive2d clean test distZip
+.\umamo\gradlew.bat -p .\psd2live clean test distZip
 
 # 単体テストの実行
-.\umamo\gradlew.bat -p .\autolive2d test
+.\umamo\gradlew.bat -p .\psd2live test
 ```
 
 ---
@@ -172,6 +172,6 @@ output_dir/
 
 ## 免責事項
 
-- AutoLive2D は独立して開発されたオープンソースプロジェクトであり、株式会社 Live2D およびその関連会社との提携、公認、または後援関係はありません。
+- PSD2Live は独立して開発されたオープンソースプロジェクトであり、株式会社 Live2D およびその関連会社との提携、公認、または後援関係はありません。
 - `Live2D`、`Cubism`、`.cmo3`、`.moc3` 等の名称および拡張子はフォーマット互换性の説明のみに使用されており、商標および知的財産権は各権利者に帰属します。本プロジェクトは公式の Live2D SDK を内包・再配布しません。
 - 本ソフトウェアは現状有姿で提供されます。本番利用の前に必ず元の PSD ファイルのバックアップを取り、対象アプリケーションで生成結果をご確認ください。

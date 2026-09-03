@@ -1,8 +1,8 @@
-# AutoLive2D PSD 图层规范与命名指南 (PSD Layer Specification)
+﻿# PSD2Live PSD 图层规范与命名指南 (PSD Layer Specification)
 
 [English](../en/PSD_LAYER_SPEC.md) | [日本語](../ja/PSD_LAYER_SPEC.md)
 
-AutoLive2D 采用 **See-Through** 语义规范作为标准命名风格，并深度兼容常见的中文、日文部件别名。本指南为画师（Illustrators）与模型师（Modelers）提供分层标准、命名约定、自动连通域拆分规则以及最佳实践。
+PSD2Live 采用 **See-Through** 语义规范作为标准命名风格，并深度兼容常见的中文、日文部件别名。本指南为画师（Illustrators）与模型师（Modelers）提供分层标准、命名约定、自动连通域拆分规则以及最佳实践。
 
 ---
 
@@ -39,7 +39,7 @@ AutoLive2D 采用 **See-Through** 语义规范作为标准命名风格，并深�
 
 ## 语义标签清单 (Semantic Tags)
 
-AutoLive2D 内置 31 种核心语义标签，并根据名称自动分类归入三大组织层级：
+PSD2Live 内置 31 种核心语义标签，并根据名称自动分类归入三大组织层级：
 
 ### 1. 头部组件 (Head Group)
 
@@ -89,14 +89,14 @@ AutoLive2D 内置 31 种核心语义标签，并根据名称自动分类归入�
 
 ## 侧别判定规则 (Side Matching)
 
-对于成对存在的对称部件（如眼睛、眉毛、耳朵等），AutoLive2D 支持多种前缀与后缀语法进行侧别声明：
+对于成对存在的对称部件（如眼睛、眉毛、耳朵等），PSD2Live 支持多种前缀与后缀语法进行侧别声明：
 
 ### 命名规则
 - **后缀语法**：`eyelash-l`, `eyelash-r`, `eyelash_left`, `eyelash_right`, `eyelash l`, `睫毛左`, `睫毛右`
 - **前缀语法**：`左-睫毛`, `右-睫毛`, `左睫毛`, `右睫毛`
 
 > **重要：左右方向标准**
-> AutoLive2D 严格遵循 **角色自身左右（Character's Own Left/Right）** 原则：
+> PSD2Live 严格遵循 **角色自身左右（Character's Own Left/Right）** 原则：
 > - **角色左侧 (`-l` / `LEFT`)**：通常位于画面**右侧**（观察者视角右侧）。
 > - **角色右侧 (`-r` / `RIGHT`)**：通常位于画面**左侧**（观察者视角左侧）。
 
@@ -132,7 +132,7 @@ AutoLive2D 内置 31 种核心语义标签，并根据名称自动分类归入�
 
 ### 2. 嘴巴与口腔系统 (Mouth & Internals)
 
-AutoLive2D 采用了**整体口形插值机制**：
+PSD2Live 采用了**整体口形插值机制**：
 
 ```text
 [方案 A: 经典一体化嘴巴 (强烈推荐)]

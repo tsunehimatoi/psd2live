@@ -1,8 +1,8 @@
-# AutoLive2D PSD Layer Specification
+﻿# PSD2Live PSD Layer Specification
 
 [中文](../zh/PSD_LAYER_SPEC.md) | [日本語](../ja/PSD_LAYER_SPEC.md)
 
-AutoLive2D adopts the **See-Through** semantic specification as its baseline naming standard, extended with multilingual English, Chinese, and Japanese aliases. This guide covers layering conventions, naming syntax, automated connected-component splitting, and best practices for artists and riggers.
+PSD2Live adopts the **See-Through** semantic specification as its baseline naming standard, extended with multilingual English, Chinese, and Japanese aliases. This guide covers layering conventions, naming syntax, automated connected-component splitting, and best practices for artists and riggers.
 
 ---
 
@@ -39,7 +39,7 @@ AutoLive2D adopts the **See-Through** semantic specification as its baseline nam
 
 ## Semantic Tag Directory
 
-AutoLive2D supports 31 core semantic tags organized across three groups:
+PSD2Live supports 31 core semantic tags organized across three groups:
 
 ### 1. Head Group
 
@@ -89,13 +89,13 @@ AutoLive2D supports 31 core semantic tags organized across three groups:
 
 ## Side Resolution Syntax
 
-For bilateral components (eyes, brows, ears), AutoLive2D supports both suffix and prefix naming conventions:
+For bilateral components (eyes, brows, ears), PSD2Live supports both suffix and prefix naming conventions:
 
 - **Suffix syntax**: `eyelash-l`, `eyelash-r`, `eyelash_left`, `eyelash_right`, `eyelash l`
 - **Prefix syntax**: `l-eyelash`, `r-eyelash`, `left_eyelash`, `right_eyelash`
 
 > **Note on Left/Right Orientation**:
-> AutoLive2D strictly adheres to the **Character's Own Left/Right** convention:
+> PSD2Live strictly adheres to the **Character's Own Left/Right** convention:
 > - **Character Left (`-l` / `LEFT`)**: Located on the **viewer's right**.
 > - **Character Right (`-r` / `RIGHT`)**: Located on the **viewer's left**.
 

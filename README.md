@@ -1,8 +1,8 @@
-# AutoLive2D
+﻿# PSD2Live
 
 [English](README_en.md) | [日本語](README_ja.md)
 
-AutoLive2D 是一个自动化的 Live2D 模型生成流水线与桌面应用。输入分层 PSD 文件，系统自动完成图层语义识别、连通域双侧拆分、自适应三角网格剖分、九轴面部经纬网与解耦变形器层级构建、头发多摆物理与果冻眼动力学模拟及循环待机动作生成，一键导出可编辑的 `.cmo3` 编辑器工程与运行时 `.moc3` 文件族。
+PSD2Live 是一个自动化的 Live2D 模型生成流水线与桌面应用。输入分层 PSD 文件，系统自动完成图层语义识别、连通域双侧拆分、自适应三角网格剖分、九轴面部经纬网与解耦变形器层级构建、头发多摆物理与果冻眼动力学模拟及循环待机动作生成，一键导出可编辑的 `.cmo3` 编辑器工程与运行时 `.moc3` 文件族。
 
 ---
 
@@ -41,10 +41,10 @@ AutoLive2D 是一个自动化的 Live2D 模型生成流水线与桌面应用。�
 - **Gradle 启动**：
   ```powershell
   # Windows
-  .\umamo\gradlew.bat -p .\autolive2d run
+  .\umamo\gradlew.bat -p .\psd2live run
 
   # Linux / macOS
-  ../umamo/gradlew -p ./autolive2d run
+  ../umamo/gradlew -p ./psd2live run
   ```
 
 #### 常用快捷键
@@ -66,16 +66,16 @@ AutoLive2D 是一个自动化的 Live2D 模型生成流水线与桌面应用。�
 
 ```powershell
 # 基础运行
-.\umamo\gradlew.bat -p .\autolive2d run --args="--input ./sample.psd --output ./output"
+.\umamo\gradlew.bat -p .\psd2live run --args="--input ./sample.psd --output ./output"
 
 # 进阶参数配置
-.\umamo\gradlew.bat -p .\autolive2d run --args="--input ./sample.psd --output ./output --atlas 8192 --mesh-spacing 48 --head-strength 1.2 --lang zh"
+.\umamo\gradlew.bat -p .\psd2live run --args="--input ./sample.psd --output ./output --atlas 8192 --mesh-spacing 48 --head-strength 1.2 --lang zh"
 ```
 
 | 参数 | 类型 | 默认值 | 说明 |
 | :--- | :---: | :---: | :--- |
 | `--input <path>` | 路径 | *(必需)* | 输入分层 PSD 文件路径 |
-| `--output <path>` | 路径 | `PSD同级/autolive2d-output` | 导出模型文件族的输出目录路径 |
+| `--output <path>` | 路径 | `PSD同级/psd2live-output` | 导出模型文件族的输出目录路径 |
 | `--lang <zh\|en\|ja>` | 字符串 | 系统语言 | 界面与日志语言（支持 `zh` / `en` / `ja`） |
 | `--atlas <size>` | 整数 | `4096` | 贴图集尺寸（`256 ~ 16384`） |
 | `--mesh-spacing <px>` | 整数 | `64` | 网格基础间距（像素） |
@@ -146,7 +146,7 @@ output_dir/
 ├── sample.physics3.json           # 物理模拟配置 (头发多摆 + 果冻眼)
 ├── sample.idle.motion3.json       # 6 秒无缝循环平滑待机动作
 ├── sample.4096/texture_00.png     # 纹理贴图集
-└── sample.autolive2d.json         # 诊断报告与映射元数据
+└── sample.psd2live.json         # 诊断报告与映射元数据
 ```
 
 ---
@@ -155,10 +155,10 @@ output_dir/
 
 ```powershell
 # 编译并打包独立运行 ZIP
-.\umamo\gradlew.bat -p .\autolive2d clean test distZip
+.\umamo\gradlew.bat -p .\psd2live clean test distZip
 
 # 运行全套单元测试
-.\umamo\gradlew.bat -p .\autolive2d test
+.\umamo\gradlew.bat -p .\psd2live test
 ```
 
 ---
@@ -172,6 +172,6 @@ output_dir/
 
 ## 免责声明
 
-- AutoLive2D 是独立开发的开源项目，与 Live2D Inc. 及其关联方不存在任何隶属、授权或赞助关系。
+- PSD2Live 是独立开发的开源项目，与 Live2D Inc. 及其关联方不存在任何隶属、授权或赞助关系。
 - `Live2D`、`Cubism`、`.cmo3`、`.moc3` 等名称与文件扩展名仅用于格式兼容性说明，其商标与知识产权归各自权利人所有。本项目不包含且不分发 Live2D 官方 SDK。
 - 本项目按“现状”提供，请在正式生产前备份原始 PSD 文件，并在目标软件中检查生成效果。

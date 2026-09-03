@@ -1,8 +1,8 @@
-# AutoLive2D ユーザー操作ガイド (User Guide)
+﻿# PSD2Live ユーザー操作ガイド (User Guide)
 
 [中文](../zh/USER_GUIDE.md) | [English](../en/USER_GUIDE.md)
 
-AutoLive2D は、モダンなデスクトップグラフィカルインターフェース（GUI）と自動化コマンドラインツール（CLI）を提供します。本ガイドでは、画面構成、操作手順、ショートカット、パラメータ調整、およびバッチ処理について解説します。
+PSD2Live は、モダンなデスクトップグラフィカルインターフェース（GUI）と自動化コマンドラインツール（CLI）を提供します。本ガイドでは、画面構成、操作手順、ショートカット、パラメータ調整、およびバッチ処理について解説します。
 
 ---
 
@@ -44,10 +44,10 @@ AutoLive2D は、モダンなデスクトップグラフィカルインターフ
 ### 2. Gradle コマンドライン起動
 ```powershell
 # Windows (PowerShell)
-.\umamo\gradlew.bat -p .\autolive2d run
+.\umamo\gradlew.bat -p .\psd2live run
 
 # Linux / macOS (Bash)
-../umamo/gradlew -p ./autolive2d run
+../umamo/gradlew -p ./psd2live run
 ```
 
 ---
@@ -140,16 +140,16 @@ AutoLive2D は、モダンなデスクトップグラフィカルインターフ
 
 ```powershell
 # 基本実行
-.\umamo\gradlew.bat -p .\autolive2d run --args="--input D:/models/character.psd --output D:/dist/character"
+.\umamo\gradlew.bat -p .\psd2live run --args="--input D:/models/character.psd --output D:/dist/character"
 
 # 詳細オプション指定
-.\umamo\gradlew.bat -p .\autolive2d run --args="--input D:/models/character.psd --output D:/dist/character --atlas 8192 --mesh-spacing 48 --head-strength 1.2 --lang ja"
+.\umamo\gradlew.bat -p .\psd2live run --args="--input D:/models/character.psd --output D:/dist/character --atlas 8192 --mesh-spacing 48 --head-strength 1.2 --lang ja"
 ```
 
 | オプション | 型 | 既定値 | 説明 |
 | :--- | :---: | :---: | :--- |
 | `--input <path>` | パス | *(必須)* | 入力 PSD ファイルパス |
-| `--output <path>` | パス | `PSD同階層/autolive2d-output` | 出力先ディレクトリ |
+| `--output <path>` | パス | `PSD同階層/psd2live-output` | 出力先ディレクトリ |
 | `--lang <zh\|en\|ja>` | 文字列 | システム言語 | 言語設定 (`zh` / `en` / `ja`) |
 | `--atlas <size>` | 整数 | `4096` | テクスチャアトラスサイズ (`256 ~ 16384`) |
 | `--mesh-spacing <px>` | 整数 | `64` | 基本メッシュ間隔（ピクセル） |

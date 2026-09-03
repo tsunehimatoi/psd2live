@@ -1,8 +1,8 @@
-# AutoLive2D
+﻿# PSD2Live
 
 [中文](README.md) | [日本語](README_ja.md)
 
-AutoLive2D is an automated Live2D model generation pipeline and desktop application. Given a layered PSD file, the system automatically performs semantic layer recognition, 8-connected bilateral splitting, adaptive Delaunay mesh triangulation, 9-pose facial lattice construction, multi-pendulum hair dynamics, and seamless idle loop generation, exporting both editable `.cmo3` editor projects and runtime `.moc3` file families.
+PSD2Live is an automated Live2D model generation pipeline and desktop application. Given a layered PSD file, the system automatically performs semantic layer recognition, 8-connected bilateral splitting, adaptive Delaunay mesh triangulation, 9-pose facial lattice construction, multi-pendulum hair dynamics, and seamless idle loop generation, exporting both editable `.cmo3` editor projects and runtime `.moc3` file families.
 
 ---
 
@@ -41,10 +41,10 @@ AutoLive2D is an automated Live2D model generation pipeline and desktop applicat
 - **Gradle Launch**:
   ```powershell
   # Windows
-  .\umamo\gradlew.bat -p .\autolive2d run
+  .\umamo\gradlew.bat -p .\psd2live run
 
   # Linux / macOS
-  ../umamo/gradlew -p ./autolive2d run
+  ../umamo/gradlew -p ./psd2live run
   ```
 
 #### Common Shortcuts
@@ -66,16 +66,16 @@ AutoLive2D is an automated Live2D model generation pipeline and desktop applicat
 
 ```powershell
 # Basic export
-.\umamo\gradlew.bat -p .\autolive2d run --args="--input ./sample.psd --output ./output"
+.\umamo\gradlew.bat -p .\psd2live run --args="--input ./sample.psd --output ./output"
 
 # Advanced configuration
-.\umamo\gradlew.bat -p .\autolive2d run --args="--input ./sample.psd --output ./output --atlas 8192 --mesh-spacing 48 --head-strength 1.2 --lang en"
+.\umamo\gradlew.bat -p .\psd2live run --args="--input ./sample.psd --output ./output --atlas 8192 --mesh-spacing 48 --head-strength 1.2 --lang en"
 ```
 
 | Option | Type | Default | Description |
 | :--- | :---: | :---: | :--- |
 | `--input <path>` | Path | *(Required)* | Input PSD file path |
-| `--output <path>` | Path | `PSD_DIR/autolive2d-output` | Destination output directory |
+| `--output <path>` | Path | `PSD_DIR/psd2live-output` | Destination output directory |
 | `--lang <zh\|en\|ja>` | String | System Locale | UI and log language (`zh` / `en` / `ja`) |
 | `--atlas <size>` | Int | `4096` | Texture atlas square dimension (`256 ~ 16384`) |
 | `--mesh-spacing <px>` | Int | `64` | Base mesh sampling spacing in pixels |
@@ -146,7 +146,7 @@ output_dir/
 ├── sample.physics3.json           # Physics configuration (hair pendulums + eye jelly)
 ├── sample.idle.motion3.json       # 6-second seamless looping idle motion
 ├── sample.4096/texture_00.png     # Texture atlas page
-└── sample.autolive2d.json         # Diagnostic report and mapping metadata
+└── sample.psd2live.json         # Diagnostic report and mapping metadata
 ```
 
 ---
@@ -155,10 +155,10 @@ output_dir/
 
 ```powershell
 # Compile and assemble standalone distribution ZIP
-.\umamo\gradlew.bat -p .\autolive2d clean test distZip
+.\umamo\gradlew.bat -p .\psd2live clean test distZip
 
 # Execute unit and integration tests
-.\umamo\gradlew.bat -p .\autolive2d test
+.\umamo\gradlew.bat -p .\psd2live test
 ```
 
 ---
@@ -172,6 +172,6 @@ output_dir/
 
 ## Disclaimer
 
-- AutoLive2D is an independent open-source project and is not affiliated with, endorsed by, or sponsored by Live2D Inc. or its affiliates.
+- PSD2Live is an independent open-source project and is not affiliated with, endorsed by, or sponsored by Live2D Inc. or its affiliates.
 - Names and file extensions such as `Live2D`, `Cubism`, `.cmo3`, and `.moc3` are used solely for format interoperability and compatibility descriptions. All trademarks and intellectual property rights belong to their respective holders. This project does not contain or redistribute the official proprietary Live2D Cubism SDK.
 - This software is provided "as is". Users should maintain backups of original PSD assets and inspect generated output in target applications prior to production use.

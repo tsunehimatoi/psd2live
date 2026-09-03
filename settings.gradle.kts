@@ -14,7 +14,7 @@ dependencyResolutionManagement {
 	}
 }
 
-rootProject.name = "autolive2d"
+rootProject.name = "psd2live"
 
 // Keep the new application independent while consuming Umamo's format/runtime
 // modules from the checked-out reference tree. Explicit substitution avoids

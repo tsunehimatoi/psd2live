@@ -1,14 +1,14 @@
-# Technical Implementation and Design Comparison
+﻿# Technical Implementation and Design Comparison
 
 [中文](../zh/IMPLEMENTATION_COMPARISON.md) | [日本語](../ja/IMPLEMENTATION_COMPARISON.md)
 
-This document outlines the architectural decisions, mathematical algorithms, and pipeline stage comparisons for AutoLive2D.
+This document outlines the architectural decisions, mathematical algorithms, and pipeline stage comparisons for PSD2Live.
 
 ---
 
 ## Pipeline Stage Comparison
 
-| Pipeline Stage | Conventional / Baseline Approach | AutoLive2D Algorithm & Architecture |
+| Pipeline Stage | Conventional / Baseline Approach | PSD2Live Algorithm & Architecture |
 | :--- | :--- | :--- |
 | **1. PSD Decoding** | Lightweight decoders with incomplete layer blend modes | Unified `PsdReader` pipeline extracting cropped RGBA, layer order, opacity, visibility, group hierarchies, clipping masks, and blend modes in a single pass. |
 | **2. Semantic Tagging** | Static English string matching without multilingual aliases or fault tolerance | Comprehensive normalization (NFKC, lowercase, copy suffix removal, longest prefix matching, and L/R suffix resolution) supporting 31 semantic tags while retaining unmapped layers. |
