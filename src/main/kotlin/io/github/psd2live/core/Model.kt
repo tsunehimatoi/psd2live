@@ -1,4 +1,4 @@
-﻿package io.github.psd2live.core
+package io.github.psd2live.core
 
 import org.umamo.format.art.SourceArt
 import org.umamo.format.art.SourceLayer
@@ -44,12 +44,17 @@ enum class LayerGroup { HEAD, BODY, EXTRA, UNKNOWN }
 
 enum class Side { LEFT, RIGHT, NONE }
 
+enum class LayerType { PRESET, TOGGLE, SWITCH }
+
 data class LayerSemantic(
 	val tag: SemanticTag,
 	val side: Side = Side.NONE,
 	val variant: Int? = null,
 	val normalizedName: String,
 	val confidence: Float,
+	val type: LayerType = LayerType.PRESET,
+	val parameter: String = "",
+	val switchId: Int = 0,
 )
 
 data class ClassifiedLayer(
@@ -160,9 +165,20 @@ data class CubismRuntimeBundle(
 }
 
 data class LayerClassificationOverride(
-	val tag: SemanticTag,
-	val side: Side,
-)
+	val type: LayerType = LayerType.PRESET,
+	val tag: SemanticTag = SemanticTag.UNKNOWN,
+	val side: Side = Side.NONE,
+	val parameter: String = "",
+	val switchId: Int = 0,
+) {
+	constructor(tag: SemanticTag, side: Side) : this(
+		type = LayerType.PRESET,
+		tag = tag,
+		side = side,
+		parameter = "",
+		switchId = 0,
+	)
+}
 
 data class AtlasPlacement(
 	val page: Int,

@@ -1,4 +1,4 @@
-﻿package io.github.psd2live.ui.views
+package io.github.psd2live.ui.views
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -42,10 +42,14 @@ import java.awt.Cursor
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material.DropdownMenu
+import androidx.compose.material.DropdownMenuItem
 import io.github.psd2live.core.ClassifiedLayer
 import io.github.psd2live.core.LayerClassificationOverride
+import io.github.psd2live.core.LayerType
 import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.Side
 import io.github.psd2live.i18n.tr
@@ -693,6 +697,75 @@ private fun ModelSettingsSection(
 }
 
 @Composable
+private fun CompactSwitchParamField(
+	value: String,
+	onValueChange: (String) -> Unit,
+	existingParams: List<String>,
+	modifier: Modifier = Modifier,
+	placeholder: String = tr("layers.param.placeholder.switch"),
+	height: Dp = 20.dp,
+	enabled: Boolean = true,
+) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	var expanded by remember { mutableStateOf(false) }
+
+	Box(modifier = modifier) {
+		CompactTextField(
+			value = value,
+			onValueChange = onValueChange,
+			placeholder = placeholder,
+			height = height,
+			enabled = enabled,
+			trailingIcon = {
+				Box(
+					modifier = Modifier
+						.size(16.dp)
+						.pointerHoverIcon(if (enabled) PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)) else PointerIcon.Default)
+						.clickable(enabled = enabled) { expanded = !expanded },
+					contentAlignment = Alignment.Center,
+				) {
+					IconChevron(expanded = expanded, modifier = Modifier.size(8.dp), tint = colors.textMuted)
+				}
+			},
+		)
+
+		DropdownMenu(
+			expanded = expanded,
+			onDismissRequest = { expanded = false },
+			modifier = Modifier
+				.background(colors.panelElevated)
+				.border(BorderStroke(1.dp, colors.border)),
+		) {
+			if (existingParams.isEmpty()) {
+				DropdownMenuItem(enabled = false, onClick = {}) {
+					Text(
+						text = tr("layers.switch.noExisting"),
+						style = typography.caption.copy(fontSize = 11.sp),
+						color = colors.textMuted,
+					)
+				}
+			} else {
+				existingParams.forEach { param ->
+					DropdownMenuItem(
+						onClick = {
+							onValueChange(param)
+							expanded = false
+						},
+					) {
+						Text(
+							text = param,
+							style = typography.body.copy(fontSize = 11.5.sp),
+							color = if (param == value) colors.accent else colors.textPrimary,
+						)
+					}
+				}
+			}
+		}
+	}
+}
+
+@Composable
 private fun LayersTableView(
 	state: PSD2LiveState,
 	viewModel: PSD2LiveViewModel,
@@ -702,9 +775,24 @@ private fun LayersTableView(
 	val analysis = state.analysis
 
 	val layers = analysis?.layers.orEmpty()
-	val recognized = layers.count { (state.layerOverrides[it.source.id.raw]?.tag ?: it.semantic.tag) != SemanticTag.UNKNOWN }
+	val recognized = layers.count { layer ->
+		val override = state.layerOverrides[layer.source.id.raw]
+		val type = override?.type ?: layer.semantic.type
+		if (type != LayerType.PRESET) true
+		else (override?.tag ?: layer.semantic.tag) != SemanticTag.UNKNOWN
+	}
 	val unknown = layers.size - recognized
 	val visibleCount = state.effectiveVisibleLayerIds.size
+
+	val existingSwitchParams = remember(state.layerOverrides, layers) {
+		val fromOverrides = state.layerOverrides.values
+			.filter { it.type == LayerType.SWITCH && it.parameter.isNotBlank() }
+			.map { it.parameter.trim() }
+		val fromLayers = layers
+			.filter { it.semantic.type == LayerType.SWITCH && it.semantic.parameter.isNotBlank() }
+			.map { it.semantic.parameter.trim() }
+		(fromOverrides + fromLayers).distinct().sorted()
+	}
 
 	Column(modifier = Modifier.fillMaxSize()) {
 		// Quick Actions Bar
@@ -759,10 +847,11 @@ private fun LayersTableView(
 			Box(modifier = Modifier.width(26.dp), contentAlignment = Alignment.Center) {
 				IconEye(visible = true, modifier = Modifier.size(13.dp), tint = colors.textMuted)
 			}
-			Text(text = tr("layers.header.number"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.width(24.dp))
-			Text(text = tr("layers.header.name"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.weight(1.2f))
-			Text(text = tr("layers.header.semantic"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.weight(1.0f))
-			Text(text = tr("layers.header.side"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.weight(0.7f))
+			Text(text = tr("layers.header.number"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.width(22.dp))
+			Text(text = tr("layers.header.name"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.weight(1.0f))
+			Text(text = tr("layers.header.type"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.width(62.dp).padding(horizontal = 2.dp))
+			Text(text = tr("layers.header.binding"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.weight(1.1f).padding(horizontal = 2.dp))
+			Text(text = tr("layers.header.paramId"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.width(52.dp).padding(horizontal = 2.dp))
 		}
 
 		if (layers.isEmpty()) {
@@ -780,8 +869,11 @@ private fun LayersTableView(
 					val isSelected = state.selectedLayerId == layerId
 					val isVisible = state.isLayerVisible(layerId, layer.source.visible)
 					val override = state.layerOverrides[layerId]
+					val currentType = override?.type ?: layer.semantic.type
 					val currentTag = override?.tag ?: layer.semantic.tag
 					val currentSide = override?.side ?: layer.semantic.side
+					val currentParam = override?.parameter ?: layer.semantic.parameter
+					val currentSwitchId = override?.switchId ?: layer.semantic.switchId
 
 					val rowBg = when {
 						isSelected -> colors.selection
@@ -792,7 +884,7 @@ private fun LayersTableView(
 					Row(
 						modifier = Modifier
 							.fillMaxWidth()
-							.height(24.dp)
+							.height(26.dp)
 							.background(rowBg)
 							.padding(horizontal = 4.dp),
 						verticalAlignment = Alignment.CenterVertically,
@@ -816,7 +908,7 @@ private fun LayersTableView(
 						// Index and Name area (clicking selects the layer)
 						Row(
 							modifier = Modifier
-								.weight(1.2f)
+								.weight(1.0f)
 								.fillMaxHeight()
 								.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
 								.clickable { viewModel.selectLayer(layerId) },
@@ -826,7 +918,7 @@ private fun LayersTableView(
 								text = "${index + 1}",
 								style = typography.monoSmall.copy(fontSize = 10.sp),
 								color = colors.textMuted,
-								modifier = Modifier.width(24.dp),
+								modifier = Modifier.width(22.dp),
 							)
 							Text(
 								text = layer.source.name,
@@ -837,29 +929,152 @@ private fun LayersTableView(
 							)
 						}
 
-						// Semantic Dropdown
+						// 1. Type Dropdown (预设 / 开关 / 切换)
 						CompactDropdown(
-							items = SemanticTag.entries,
-							selectedItem = currentTag,
-							onItemSelected = { nextTag ->
-								viewModel.setLayerClassification(layerId, LayerClassificationOverride(nextTag, currentSide))
+							items = LayerType.entries,
+							selectedItem = currentType,
+							onItemSelected = { nextType ->
+								viewModel.setLayerClassification(
+									layerId,
+									LayerClassificationOverride(
+										type = nextType,
+										tag = currentTag,
+										side = currentSide,
+										parameter = currentParam,
+										switchId = currentSwitchId,
+									),
+								)
 							},
 							itemLabel = { it.localizedName() },
-							modifier = Modifier.weight(1.0f).padding(horizontal = 2.dp),
+							modifier = Modifier.width(62.dp).padding(horizontal = 2.dp),
 							height = 20.dp,
 						)
 
-						// Side Dropdown
-						CompactDropdown(
-							items = Side.entries,
-							selectedItem = currentSide,
-							onItemSelected = { nextSide ->
-								viewModel.setLayerClassification(layerId, LayerClassificationOverride(currentTag, nextSide))
-							},
-							itemLabel = { it.localizedName() },
-							modifier = Modifier.weight(0.7f).padding(horizontal = 2.dp),
-							height = 20.dp,
-						)
+						// 2. Parameter Binding (参数关联 / 预设部件)
+						when (currentType) {
+							LayerType.PRESET -> {
+								CompactDropdown(
+									items = SemanticTag.entries,
+									selectedItem = currentTag,
+									onItemSelected = { nextTag ->
+										viewModel.setLayerClassification(
+											layerId,
+											LayerClassificationOverride(
+												type = LayerType.PRESET,
+												tag = nextTag,
+												side = currentSide,
+												parameter = currentParam,
+												switchId = currentSwitchId,
+											),
+										)
+									},
+									itemLabel = { it.localizedName() },
+									modifier = Modifier.weight(1.1f).padding(horizontal = 2.dp),
+									height = 20.dp,
+								)
+							}
+							LayerType.TOGGLE -> {
+								CompactTextField(
+									value = currentParam,
+									onValueChange = { nextParam ->
+										viewModel.setLayerClassification(
+											layerId,
+											LayerClassificationOverride(
+												type = LayerType.TOGGLE,
+												tag = currentTag,
+												side = currentSide,
+												parameter = nextParam,
+												switchId = currentSwitchId,
+											),
+										)
+									},
+									placeholder = tr("layers.param.placeholder.toggle"),
+									modifier = Modifier.weight(1.1f).padding(horizontal = 2.dp),
+									height = 20.dp,
+								)
+							}
+							LayerType.SWITCH -> {
+								CompactSwitchParamField(
+									value = currentParam,
+									onValueChange = { nextParam ->
+										viewModel.setLayerClassification(
+											layerId,
+											LayerClassificationOverride(
+												type = LayerType.SWITCH,
+												tag = currentTag,
+												side = currentSide,
+												parameter = nextParam,
+												switchId = currentSwitchId,
+											),
+										)
+									},
+									existingParams = existingSwitchParams,
+									modifier = Modifier.weight(1.1f).padding(horizontal = 2.dp),
+									height = 20.dp,
+								)
+							}
+						}
+
+						// 3. Associated ID / Side (关联 ID / 侧别)
+						when (currentType) {
+							LayerType.PRESET -> {
+								CompactDropdown(
+									items = Side.entries,
+									selectedItem = currentSide,
+									onItemSelected = { nextSide ->
+										viewModel.setLayerClassification(
+											layerId,
+											LayerClassificationOverride(
+												type = LayerType.PRESET,
+												tag = currentTag,
+												side = nextSide,
+												parameter = currentParam,
+												switchId = currentSwitchId,
+											),
+										)
+									},
+									itemLabel = { it.localizedName() },
+									modifier = Modifier.width(52.dp).padding(horizontal = 2.dp),
+									height = 20.dp,
+								)
+							}
+							LayerType.TOGGLE -> {
+								Box(
+									modifier = Modifier
+										.width(52.dp)
+										.height(20.dp)
+										.padding(horizontal = 2.dp),
+									contentAlignment = Alignment.Center,
+								) {
+									Text(
+										text = "-",
+										style = typography.caption.copy(fontSize = 11.sp),
+										color = colors.textDisabled,
+									)
+								}
+							}
+							LayerType.SWITCH -> {
+								CompactTextField(
+									value = currentSwitchId.toString(),
+									onValueChange = { input ->
+										val parsed = input.filter { it.isDigit() }.toIntOrNull() ?: 0
+										viewModel.setLayerClassification(
+											layerId,
+											LayerClassificationOverride(
+												type = LayerType.SWITCH,
+												tag = currentTag,
+												side = currentSide,
+												parameter = currentParam,
+												switchId = parsed,
+											),
+										)
+									},
+									modifier = Modifier.width(52.dp).padding(horizontal = 2.dp),
+									height = 20.dp,
+									isMono = true,
+								)
+							}
+						}
 					}
 					Divider(color = colors.divider.copy(alpha = 0.4f), thickness = 0.5.dp)
 				}

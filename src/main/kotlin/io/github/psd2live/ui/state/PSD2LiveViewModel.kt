@@ -1,4 +1,4 @@
-﻿package io.github.psd2live.ui.state
+package io.github.psd2live.ui.state
 
 import io.github.psd2live.core.PSD2LivePipeline
 import io.github.psd2live.core.CubismSdkFrame
@@ -883,12 +883,14 @@ internal fun mergeUnlockedParameterValues(
 	return if (changed) merged else current
 }
 
-internal fun parameterValuesForPreview(state: PSD2LiveState): Map<ParameterId, Float> =
-	if (state.animationEnabled) {
-		state.parameterValues.filterKeys { it in state.lockedParameters }
+internal fun parameterValuesForPreview(state: PSD2LiveState): Map<ParameterId, Float> {
+	val standardIds = StandardParameters.all.map { it.id }.toSet()
+	return if (state.animationEnabled) {
+		state.parameterValues.filterKeys { it in state.lockedParameters || it !in standardIds }
 	} else {
 		state.parameterValues
 	}
+}
 
 internal fun parameterValuesAfterPreviewFrame(
 	state: PSD2LiveState,

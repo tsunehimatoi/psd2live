@@ -1,6 +1,7 @@
-﻿package io.github.psd2live.ui
+package io.github.psd2live.ui
 
 import io.github.psd2live.core.LayerClassificationOverride
+import io.github.psd2live.core.LayerType
 import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.Side
 import io.github.psd2live.core.StandardParameters
@@ -134,8 +135,31 @@ class PSD2LiveViewModelTest {
 			assertTrue(vm.state.value.isLayerVisible("layer_1"))
 
 			vm.setLayerClassification("layer_2", LayerClassificationOverride(SemanticTag.FACE, Side.NONE))
+			assertEquals(LayerType.PRESET, vm.state.value.layerOverrides["layer_2"]?.type)
 			assertEquals(SemanticTag.FACE, vm.state.value.layerOverrides["layer_2"]?.tag)
 			assertEquals(Side.NONE, vm.state.value.layerOverrides["layer_2"]?.side)
+
+			vm.setLayerClassification(
+				"layer_3",
+				LayerClassificationOverride(
+					type = LayerType.TOGGLE,
+					parameter = "show_tears",
+				),
+			)
+			assertEquals(LayerType.TOGGLE, vm.state.value.layerOverrides["layer_3"]?.type)
+			assertEquals("show_tears", vm.state.value.layerOverrides["layer_3"]?.parameter)
+
+			vm.setLayerClassification(
+				"layer_4",
+				LayerClassificationOverride(
+					type = LayerType.SWITCH,
+					parameter = "arm_pose",
+					switchId = 2,
+				),
+			)
+			assertEquals(LayerType.SWITCH, vm.state.value.layerOverrides["layer_4"]?.type)
+			assertEquals("arm_pose", vm.state.value.layerOverrides["layer_4"]?.parameter)
+			assertEquals(2, vm.state.value.layerOverrides["layer_4"]?.switchId)
 		} finally {
 			vm.close()
 		}

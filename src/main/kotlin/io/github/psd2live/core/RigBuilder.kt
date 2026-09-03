@@ -1,4 +1,4 @@
-﻿package io.github.psd2live.core
+package io.github.psd2live.core
 
 import io.github.psd2live.i18n.tr
 import org.umamo.format.art.LayerBlend
@@ -187,6 +187,63 @@ object RigBuilder {
 		val sourceBoundsByDrawable = linkedMapOf<String, Bounds>()
 		val layerIdByDrawable = linkedMapOf<String, String>()
 		val classifiedByDrawable = mutableMapOf<DrawableId, ClassifiedLayer>()
+		// Discover custom toggle and switch parameters from overrides and layers
+		val customParams = mutableListOf<Parameter>()
+		val switchParamKeys = mutableMapOf<String, FloatArray>()
+
+		// 1. Toggles
+		val toggleParamNames = analysis.layers.mapNotNull { layer ->
+			val override = config.layerOverrides[layer.source.id.raw]
+			val type = override?.type ?: layer.semantic.type
+			val param = (override?.parameter ?: layer.semantic.parameter).trim()
+			if (type == LayerType.TOGGLE && param.isNotBlank()) param else null
+		}.distinct().sorted()
+
+		for (paramName in toggleParamNames) {
+			customParams += Parameter(
+				id = ParameterId(paramName),
+				name = paramName,
+				min = 0f,
+				max = 1f,
+				default = 0f,
+			)
+		}
+
+		// 2. Switches
+		val switchLayers = analysis.layers.filter { layer ->
+			val override = config.layerOverrides[layer.source.id.raw]
+			val type = override?.type ?: layer.semantic.type
+			val param = (override?.parameter ?: layer.semantic.parameter).trim()
+			type == LayerType.SWITCH && param.isNotBlank()
+		}
+		val switchLayersByParam = switchLayers.groupBy { layer ->
+			val override = config.layerOverrides[layer.source.id.raw]
+			(override?.parameter ?: layer.semantic.parameter).trim()
+		}
+
+		for ((paramName, layers) in switchLayersByParam) {
+			val ids = layers.map { layer ->
+				val override = config.layerOverrides[layer.source.id.raw]
+				override?.switchId ?: layer.semantic.switchId
+			}.distinct().sorted()
+
+			val minId = ids.minOrNull() ?: 0
+			val maxId = ids.maxOrNull() ?: 0
+			val keys = if (minId == maxId) {
+				floatArrayOf(minId.toFloat(), (minId + 1).toFloat())
+			} else {
+				(minId..maxId).map { it.toFloat() }.toFloatArray()
+			}
+			switchParamKeys[paramName] = keys
+			customParams += Parameter(
+				id = ParameterId(paramName),
+				name = paramName,
+				min = keys.first(),
+				max = keys.last(),
+				default = keys.first(),
+			)
+		}
+
 		val orderedLayers = orderMouthLayers(analysis.layers.sortedBy { it.source.order })
 		for ((drawIndex, layer) in orderedLayers.withIndex()) {
 			val placement = atlas.placementByLayerId[layer.source.id.raw]
@@ -226,7 +283,8 @@ object RigBuilder {
 					mouthAperture,
 				)
 			}
-			val channelGrids = if (config.meshOnly) ChannelGrids.Empty else buildChannels(layer)
+			val override = config.layerOverrides[layer.source.id.raw]
+			val channelGrids = if (config.meshOnly) ChannelGrids.Empty else buildChannels(layer, override, switchParamKeys)
 			val drawable = Drawable(
 				id = id,
 				name = layer.source.name,
@@ -329,9 +387,11 @@ object RigBuilder {
 			Part(extraPartId, tr("model.part.extra"), childrenFor(LayerGroup.EXTRA), groupMode = PartGroupMode.PassThrough),
 			Part(bodyPartId, tr("model.part.body"), childrenFor(LayerGroup.BODY) + childrenFor(LayerGroup.UNKNOWN), groupMode = PartGroupMode.PassThrough),
 		)
-		val parameterTree = parameterTree()
+		val standardIds = StandardParameters.all.map { it.id }.toSet()
+		val uniqueCustomParams = customParams.filter { it.id !in standardIds }
+		val parameterTree = parameterTree(uniqueCustomParams)
 		val puppet = PuppetModel(
-			parameters = StandardParameters.all,
+			parameters = StandardParameters.all + uniqueCustomParams,
 			parts = parts,
 			deformers = deformers,
 			drawables = maskedDrawables,
@@ -1065,18 +1125,45 @@ object RigBuilder {
 	internal fun zeroMeshGrid(size: Int): KeyformGrid<MeshDeltaForm> =
 		KeyformGrid(emptyList(), listOf(KeyformCell(IntArray(0), MeshDeltaForm(FloatArray(size)))))
 
-	private fun buildChannels(layer: ClassifiedLayer): ChannelGrids {
-		val opacityGrid = when (layer.semantic.tag) {
-			SemanticTag.EYE_CLOSE -> {
-				val parameter = if (layer.semantic.side == Side.LEFT) StandardParameters.EYE_L_OPEN else StandardParameters.EYE_R_OPEN
-				scalarGrid(parameter, floatArrayOf(0f, 1f)) { open -> 1f - open }
+	private fun buildChannels(
+		layer: ClassifiedLayer,
+		override: LayerClassificationOverride?,
+		switchParamKeys: Map<String, FloatArray>,
+	): ChannelGrids {
+		val type = override?.type ?: layer.semantic.type
+		val opacityGrid = when (type) {
+			LayerType.TOGGLE -> {
+				val paramName = (override?.parameter ?: layer.semantic.parameter).trim()
+				if (paramName.isNotBlank()) {
+					val parameter = ParameterId(paramName)
+					scalarGrid(parameter, floatArrayOf(0f, 1f)) { value -> value }
+				} else null
 			}
-			SemanticTag.MOUTH_CLOSE -> scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, 1f)) { 1f - it }
-			SemanticTag.TONGUE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B ->
-				scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, 0.15f, 1f)) { open ->
-					(open / 0.15f).coerceIn(0f, 1f)
+			LayerType.SWITCH -> {
+				val paramName = (override?.parameter ?: layer.semantic.parameter).trim()
+				val switchId = override?.switchId ?: layer.semantic.switchId
+				val keys = switchParamKeys[paramName]
+				if (paramName.isNotBlank() && keys != null && keys.isNotEmpty()) {
+					val parameter = ParameterId(paramName)
+					scalarGrid(parameter, keys) { key ->
+						if (key.toInt() == switchId) 1f else 0f
+					}
+				} else null
+			}
+			LayerType.PRESET -> {
+				when (layer.semantic.tag) {
+					SemanticTag.EYE_CLOSE -> {
+						val parameter = if (layer.semantic.side == Side.LEFT) StandardParameters.EYE_L_OPEN else StandardParameters.EYE_R_OPEN
+						scalarGrid(parameter, floatArrayOf(0f, 1f)) { open -> 1f - open }
+					}
+					SemanticTag.MOUTH_CLOSE -> scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, 1f)) { 1f - it }
+					SemanticTag.TONGUE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B ->
+						scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, 0.15f, 1f)) { open ->
+							(open / 0.15f).coerceIn(0f, 1f)
+						}
+					else -> null
 				}
-			else -> null
+			}
 		}
 		return opacityGrid?.let { ChannelGrids(mapOf(FormChannel.OPACITY to it)) } ?: ChannelGrids.Empty
 	}
@@ -1084,11 +1171,11 @@ object RigBuilder {
 	private fun scalarGrid(parameter: ParameterId, keys: FloatArray, value: (Float) -> Float): KeyformGrid<ChannelValue> =
 		oneDimGrid(parameter, keys) { key -> ChannelValue.Scalar(value(key)) }
 
-	private fun parameterTree(): List<ParameterNode> {
+	private fun parameterTree(customParameters: List<Parameter> = emptyList()): List<ParameterNode> {
 		fun group(id: String, name: String, parameters: List<ParameterId>) = ParameterNode.Group(
 			ParameterGroupId(id), name, true, parameters.map { ParameterNode.Param(it) },
 		)
-		return listOf(
+		val base = listOf(
 			group("ParamGroupFace", tr("model.group.face"), listOf(StandardParameters.ANGLE_X, StandardParameters.ANGLE_Y, StandardParameters.ANGLE_Z)),
 			group("ParamGroupEyes", tr("model.group.eyes"), listOf(StandardParameters.EYE_L_OPEN, StandardParameters.EYE_R_OPEN, StandardParameters.EYE_BALL_X, StandardParameters.EYE_BALL_Y, StandardParameters.EYE_BALL_FORM)),
 			group("ParamGroupBrows", tr("model.group.brows"), listOf(StandardParameters.BROW_L_Y, StandardParameters.BROW_R_Y)),
@@ -1096,6 +1183,11 @@ object RigBuilder {
 			group("ParamGroupBody", tr("model.group.body"), listOf(StandardParameters.BODY_X, StandardParameters.BODY_Y, StandardParameters.BODY_Z, StandardParameters.BREATH)),
 			group("ParamGroupPhysics", tr("model.group.physics"), listOf(StandardParameters.HAIR_FRONT, StandardParameters.HAIR_BACK)),
 		)
+		return if (customParameters.isNotEmpty()) {
+			base + group("ParamGroupCustom", tr("model.group.custom"), customParameters.map { it.id })
+		} else {
+			base
+		}
 	}
 
 	private fun ninePoseAxes(): List<KeyformAxis> = listOf(

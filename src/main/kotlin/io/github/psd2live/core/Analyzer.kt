@@ -1,4 +1,4 @@
-﻿package io.github.psd2live.core
+package io.github.psd2live.core
 
 import io.github.psd2live.i18n.tr
 import org.umamo.format.art.SourceArt
@@ -71,8 +71,7 @@ object CharacterAnalyzer {
 		if (layers.none { it.semantic.tag in MOUTH_BASE_TAGS }) warnings += tr("warning.missingMouth")
 		val duplicateBaseNames = layers.groupBy { it.semantic.normalizedName }.filterValues { it.size > 1 }.keys
 		if (duplicateBaseNames.isNotEmpty()) warnings += tr("warning.duplicateLayers", duplicateBaseNames.take(6).joinToString())
-		val unknown = layers.filter { it.semantic.tag == SemanticTag.UNKNOWN }
-		if (unknown.isNotEmpty()) warnings += tr("warning.unknownLayers", unknown.size, unknown.take(8).joinToString { it.source.name })
+		val unknown = layers.filter { it.semantic.type == LayerType.PRESET && it.semantic.tag == SemanticTag.UNKNOWN }
 
 		return PipelineAnalysis(source, layers, anchors, warnings, PreviewRenderer.composite(source))
 	}
@@ -89,6 +88,9 @@ object CharacterAnalyzer {
 				tag = override.tag,
 				side = if (preserveSide) semantic.side else override.side,
 				confidence = 1f,
+				type = override.type,
+				parameter = override.parameter,
+				switchId = override.switchId,
 			),
 		)
 	}
