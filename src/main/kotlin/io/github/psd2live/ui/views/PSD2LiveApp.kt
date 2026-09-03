@@ -1,4 +1,4 @@
-﻿package io.github.psd2live.ui.views
+package io.github.psd2live.ui.views
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -40,17 +40,23 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyShortcut
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.FrameWindowScope
-import androidx.compose.ui.window.MenuBar
+import androidx.compose.ui.window.WindowState
 import io.github.psd2live.i18n.AppLanguage
 import io.github.psd2live.i18n.I18n
 import io.github.psd2live.i18n.tr
+import io.github.psd2live.ui.components.AppTitleBar
 import io.github.psd2live.ui.components.CompactButton
 import io.github.psd2live.ui.components.CompactIconButton
 import io.github.psd2live.ui.components.IconClose
@@ -76,6 +82,11 @@ import javax.swing.JOptionPane
 fun FrameWindowScope.PSD2LiveApp(
 	viewModel: PSD2LiveViewModel,
 	window: ComposeWindow? = null,
+	windowState: WindowState? = null,
+	onCloseRequest: () -> Unit = {
+		viewModel.close()
+		window?.dispose()
+	},
 ) {
 	val state by viewModel.state.collectAsState()
 	var showAboutDialog by remember { mutableStateOf(false) }
@@ -144,77 +155,81 @@ fun FrameWindowScope.PSD2LiveApp(
 			}
 		}
 
-		// Menu Bar
-		MenuBar {
-			Menu(tr("menu.file")) {
-				Item(
-					text = tr("menu.file.openPsd"),
-					onClick = {
-						val selected = NativeFilePicker.choosePsdFile(window, state.inputPath)
-						if (!selected.isNullOrBlank()) {
-							viewModel.setInputPath(selected)
-							viewModel.analyze()
-						}
-					},
-					enabled = !isBusy,
-					shortcut = KeyShortcut(Key.O, ctrl = true),
-				)
-				Item(
-					text = tr("menu.file.reanalyze"),
-					onClick = { viewModel.analyze() },
-					enabled = hasInput && !isBusy,
-					shortcut = KeyShortcut(Key.R, ctrl = true),
-				)
-				Separator()
-				Item(
-					text = tr("menu.file.openOutput"),
-					onClick = { openFolder(state.outputPath) },
-					enabled = canOpenOutput,
-				)
-				Separator()
-				Item(
-					text = tr("menu.file.generate"),
-					onClick = { viewModel.generateRig() },
-					enabled = canGenerate,
-					shortcut = KeyShortcut(Key.G, ctrl = true),
-				)
-				Item(
-					text = tr("menu.file.exportTo"),
-					onClick = triggerExportTo,
-					enabled = canGenerate,
-					shortcut = KeyShortcut(Key.G, ctrl = true, shift = true),
-				)
-				Separator()
-				Item(
-					text = tr("menu.file.exit"),
-					onClick = {
-						viewModel.close()
-						window?.dispose()
-					},
-				)
-			}
-			Menu(tr("menu.language")) {
-				for (lang in I18n.supportedLanguages) {
-					Item(
-						text = tr(lang.displayNameKey),
-						onClick = { viewModel.setLanguage(lang) },
-					)
+		val onOpenPsdAction = {
+			if (!isBusy) {
+				val selected = NativeFilePicker.choosePsdFile(window, state.inputPath)
+				if (!selected.isNullOrBlank()) {
+					viewModel.setInputPath(selected)
+					viewModel.analyze()
 				}
-			}
-			Menu(tr("menu.help")) {
-				Item(
-					text = tr("menu.about"),
-					onClick = { showAboutDialog = true },
-				)
 			}
 		}
 
-		Box(modifier = Modifier.fillMaxSize()) {
+		val onReanalyzeAction = {
+			if (hasInput && !isBusy) {
+				viewModel.analyze()
+			}
+		}
+
+		val onGenerateAction = {
+			if (canGenerate) {
+				viewModel.generateRig()
+			}
+		}
+
+		Box(
+			modifier = Modifier
+				.fillMaxSize()
+				.border(BorderStroke(1.dp, colors.border))
+				.onPreviewKeyEvent { event ->
+					if (event.type == KeyEventType.KeyDown && event.isCtrlPressed) {
+						when (event.key) {
+							Key.O -> {
+								onOpenPsdAction()
+								true
+							}
+							Key.R -> {
+								onReanalyzeAction()
+								true
+							}
+							Key.G -> {
+								if (event.isShiftPressed) {
+									triggerExportTo()
+								} else {
+									onGenerateAction()
+								}
+								true
+							}
+							else -> false
+						}
+					} else false
+				},
+		) {
 			Column(
 				modifier = Modifier
 					.fillMaxSize()
 					.background(colors.windowBackground),
 			) {
+				// Custom Window Title Bar & Tool Menu Bar
+				if (windowState != null) {
+					AppTitleBar(
+						window = window,
+						windowState = windowState,
+						isBusy = isBusy,
+						hasInput = hasInput,
+						canOpenOutput = canOpenOutput,
+						canGenerate = canGenerate,
+						currentLanguage = currentLanguage,
+						onOpenPsd = onOpenPsdAction,
+						onReanalyze = onReanalyzeAction,
+						onOpenOutput = { openFolder(state.outputPath) },
+						onGenerate = onGenerateAction,
+						onExportTo = triggerExportTo,
+						onClose = onCloseRequest,
+						onSetLanguage = { viewModel.setLanguage(it) },
+						onShowAbout = { showAboutDialog = true },
+					)
+				}
 				// Main Center Area: Split Pane between Workspace (Left) and Inspector (Right)
 				BoxWithConstraints(
 					modifier = Modifier

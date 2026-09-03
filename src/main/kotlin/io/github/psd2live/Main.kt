@@ -1,4 +1,4 @@
-﻿package io.github.psd2live
+package io.github.psd2live
 
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -16,20 +16,30 @@ import io.github.psd2live.ui.views.PSD2LiveApp
 import java.nio.file.Path
 import kotlin.io.path.absolutePathString
 
+import androidx.compose.ui.window.rememberWindowState
+
 fun main(arguments: Array<String>) {
 	configureLanguage(arguments)
 	if (arguments.isEmpty()) {
 		val viewModel = PSD2LiveViewModel()
 		application {
+			val windowState = rememberWindowState(size = DpSize(1280.dp, 820.dp))
+			val closeApp = {
+				viewModel.close()
+				exitApplication()
+			}
 			Window(
-				onCloseRequest = {
-					viewModel.close()
-					exitApplication()
-				},
+				onCloseRequest = closeApp,
 				title = tr("app.title"),
-				state = WindowState(size = DpSize(1280.dp, 820.dp)),
+				state = windowState,
+				undecorated = true,
 			) {
-				PSD2LiveApp(viewModel = viewModel, window = window)
+				PSD2LiveApp(
+					viewModel = viewModel,
+					window = window,
+					windowState = windowState,
+					onCloseRequest = closeApp,
+				)
 			}
 		}
 		return
