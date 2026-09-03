@@ -1,4 +1,4 @@
-﻿# Third-party Notices
+# Third-party Notices
 
 PSD2Live is licensed under GNU GPL version 3. See `LICENSE`.
 
@@ -14,4 +14,9 @@ PSD2Live independently implements concepts inspired by See-Through semantic orga
 
 ## Live2D Cubism
 
-`Live2D`, `Cubism`, `.cmo3`, `.moc3`, and associated schema identifiers are trademarks or registered trademarks of Live2D Inc., used herein solely for format specification and interoperability purposes. This project is not affiliated with, endorsed by, or sponsored by Live2D Inc., and does not redistribute official proprietary SDK binaries.
+`Live2D`, `Cubism`, `.cmo3`, `.moc3`, and associated schema identifiers are trademarks or registered trademarks of Live2D Inc., used herein solely for format specification and interoperability purposes. This project is not affiliated with, endorsed by, or sponsored by Live2D Inc., and strictly complies with the Live2D Proprietary Software License: **it does not embed, include, or redistribute official proprietary Live2D Cubism SDK binaries, headers, or shader sources**.
+
+For instructions on configuring an official SDK runtime locally for official rendering and physical dynamics consistency verification (Ground Truth), see:
+- [Live2D SDK Setup Guide (English)](docs/en/CUBISM_SDK_SETUP.md)
+- [Live2D SDK 配置指南 (中文)](docs/zh/CUBISM_SDK_SETUP.md)
+- [Live2D SDK 設定・利用ガイド (日本語)](docs/ja/CUBISM_SDK_SETUP.md)

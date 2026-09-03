@@ -1,4 +1,4 @@
-﻿package io.github.psd2live.core
+package io.github.psd2live.core
 
 import com.sun.jna.Library
 import com.sun.jna.Memory
@@ -414,19 +414,55 @@ class CubismSdkPreviewSession(
 			require(System.getProperty("os.name").contains("windows", ignoreCase = true)) {
 				"Cubism SDK preview currently requires Windows x86-64"
 			}
+			val customPathStr = System.getProperty("psd2live.cubism.path")
+				?.ifBlank { null }
+				?: System.getenv("CUBISM_SDK_PATH")?.ifBlank { null }
+				?: System.getenv("LIVE2D_SDK_PATH")?.ifBlank { null }
+			val customDir = customPathStr?.let { Path.of(it) }
+
 			val directory = Files.createTempDirectory("psd2live-cubism-5-r5-")
-			for (relative in files) extract(directory, relative)
+			for (relative in files) extract(directory, relative, customDir)
 			System.setProperty("jna.library.path", directory.toString())
 			return Native.load(directory.resolve("live2d_renderer.dll").toString(), Api::class.java)
 		}
 
-		private fun extract(directory: Path, relative: String) {
+		private fun extract(directory: Path, relative: String, customDir: Path? = null) {
 			val target = directory.resolve(relative).normalize()
 			require(target.startsWith(directory)) { "Invalid Cubism runtime resource path: $relative" }
 			Files.createDirectories(target.parent)
+
+			// 1. External custom path configured via property or environment variable
+			if (customDir != null) {
+				val candidate = customDir.resolve(relative).normalize()
+				if (Files.isRegularFile(candidate)) {
+					Files.copy(candidate, target, StandardCopyOption.REPLACE_EXISTING)
+					target.toFile().deleteOnExit()
+					return
+				}
+			}
+
+			// 2. Local filesystem paths relative to working directory
+			val localCandidates = listOf(
+				Path.of("cubism", "windows-x86_64", relative),
+				Path.of("src", "main", "resources", "cubism", "windows-x86_64", relative),
+			)
+			for (localCandidate in localCandidates) {
+				if (Files.isRegularFile(localCandidate)) {
+					Files.copy(localCandidate, target, StandardCopyOption.REPLACE_EXISTING)
+					target.toFile().deleteOnExit()
+					return
+				}
+			}
+
+			// 3. Classpath resource
 			val resource = "/cubism/windows-x86_64/$relative"
 			val input = CubismSdkPreviewSession::class.java.getResourceAsStream(resource)
-				?: error("Missing Cubism SDK 5-r.5 runtime resource: $relative")
+				?: error(
+					"Missing Cubism SDK 5-r.5 runtime resource: $relative. " +
+						"Official Live2D SDK binaries are not distributed with PSD2Live. " +
+						"Please configure CUBISM_SDK_PATH or place binaries in src/main/resources/cubism/windows-x86_64/. " +
+						"See docs/zh/CUBISM_SDK_SETUP.md for setup instructions."
+				)
 			input.use { Files.copy(it, target, StandardCopyOption.REPLACE_EXISTING) }
 			target.toFile().deleteOnExit()
 		}

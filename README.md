@@ -11,6 +11,7 @@ PSD2Live 是一个自动化的 Live2D 模型生成流水线与桌面应用。输
 | 文档 | 描述 |
 | :--- | :--- |
 | [用户操作指南 (docs/zh/USER_GUIDE.md)](docs/zh/USER_GUIDE.md) | 桌面 GUI 布局、四大工作区面板、视口操作、快捷键及 CLI 参数说明 |
+| [Live2D SDK 配置指南 (docs/zh/CUBISM_SDK_SETUP.md)](docs/zh/CUBISM_SDK_SETUP.md) | 官方 Native SDK 许可政策、着色器提取与离屏硬件加速预览配置指南 |
 | [PSD 图层规范与命名指南 (docs/zh/PSD_LAYER_SPEC.md)](docs/zh/PSD_LAYER_SPEC.md) | 31 种语义标签中日英对照、侧别规则、连通域拆分与五官/头发分层规范 |
 | [变形器与算法数学规范 (docs/zh/DEFORMER_AND_PARAMETER_SPEC.md)](docs/zh/DEFORMER_AND_PARAMETER_SPEC.md) | 变形器拓扑树、九轴经纬网数学模型、C1 连续曲线、五官修形与动力学公式 |
 | [实现对比与设计决策 (docs/zh/IMPLEMENTATION_COMPARISON.md)](docs/zh/IMPLEMENTATION_COMPARISON.md) | 逐流程技术选型、格式不变性与自动化几何自检说明 |
@@ -23,7 +24,7 @@ PSD2Live 是一个自动化的 Live2D 模型生成流水线与桌面应用。输
 - **变形器 (Warp) 生成**：
   - **眼/口 变形**：眼睛与眉毛共享透视平面约束，瞳孔自动反向补偿防止挤压，睫毛沿 Alpha 权重中线弯曲生成平滑闭眼 U 形曲线；嘴部以最大张口为基准向中线平滑向心压缩闭合，牙齿与舌头自动以嘴部为剪切蒙版。
   - **九轴构建**：建立 `AngleX (±45°) × AngleY (±30°)` 8×8 面部经纬网，结合 C1 连续水平展开/压缩曲线（近侧展开、近眼宽平台保持、远侧透视压缩）、垂直 V/^ 仰俯曲率及四角 $C_{xy} = \text{yaw} \times \text{pitch}$ 交叉修正项。
-- **动画**：自动生成 6 秒无缝循环 `idle.motion3.json` 平滑待机动作，涵盖胸腔呼吸起伏、轻微头部/身体倾斜摇摆及自然眨眼；桌面 GUI 内置官方 Cubism 5-r.5 SDK 原生着色器离屏渲染引擎，支持实时鼠标视线追踪（Mouse Look）与动作回放。
+- **动画**：自动生成 6 秒无缝循环 `idle.motion3.json` 平滑待机动作，涵盖胸腔呼吸起伏、轻微头部/身体倾斜摇摆及自然眨眼；桌面 GUI 支持可选接入官方 Cubism 5-r.5 SDK 原生着色器离屏渲染引擎以获得 **100% 官方渲染与物理一致性验证（Ground Truth）**（本项目不包含且不分发官方 SDK 二进制，详见 [SDK配置指南](docs/zh/CUBISM_SDK_SETUP.md)；未配置时无缝自动回退为纯 CPU 高精度软件光栅化渲染），支持实时鼠标视线追踪（Mouse Look）与动作回放。
 - **物理**：前后发完全解耦独立跟随头壳，基于发根固定与 $v^3$ 立方发梢摆幅梯度的多摆物理系统；左右眼开合速度物理驱动二阶阻尼弹簧振子输出果冻眼挤压/回弹动力学（`ParamEyeBallForm`）。
 - **工程文件/运行时文件导出**：一键同步导出可在 Live2D Cubism Modeler 5 中二次编辑的 `.cmo3` 完整工程与运行时 `.moc3` 文件族（包含 `.model3.json`、`.cdi3.json`、`physics3.json`、`idle.motion3.json` 及纹理贴图集）；内置中立姿态保真、极限姿态完整性与变形器镜像对称性三道几何自检闸门。
 
@@ -33,7 +34,8 @@ PSD2Live 是一个自动化的 Live2D 模型生成流水线与桌面应用。输
 
 ### 环境要求
 - **Java Runtime**：JDK 21 或更高版本
-- **操作系统**：Windows 10/11 x64（原生预览引擎最佳体验），亦支持 Linux / macOS（软件光栅化渲染）
+- **操作系统**：Windows 10/11 x64（配置官方 Native SDK 时可实现与官方运行时 100% 像素级渲染与物理一致性对照），亦全面支持 Linux / macOS（内置 CPU 软件光栅化渲染）。
+- **Live2D 官方 SDK 说明**：本项目源码与发布包**不包含且不分发** Live2D 官方 SDK 专有二进制文件，开箱即可使用内置渲染与全部导出功能；如需开启官方渲染一致性验证，请参阅 [Live2D SDK 配置指南](docs/zh/CUBISM_SDK_SETUP.md)。
 
 ### 启动桌面应用 (GUI)
 

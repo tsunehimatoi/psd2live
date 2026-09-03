@@ -77,9 +77,11 @@ The main window is structured into a three-pane layout: **Left Workspace + Right
 - **Statistics Badge**: Displays active drawable count, total vertices, total triangles, and current zoom level.
 
 ### 3. Preview View
-- **Native Cubism 5-r.5 Engine**: On Windows x86-64, utilizes the official Live2D Cubism Core & Framework runtime library (`live2d_renderer.dll`) with offscreen OpenGL rendering. Automatically falls back to CPU rasterization on unsupported platforms.
+- **Native Cubism 5-r.5 Engine (Optional)**: On Windows x86-64, supports offscreen OpenGL rendering via JNA using the official Live2D Cubism Core & Framework library (`live2d_renderer.dll`) to achieve **100% faithful rendering and physical dynamics parity with the official runtime (Ground Truth)**.
+  - *Note: To comply with Live2D's Proprietary License, this repository does NOT include or redistribute official SDK binaries. See [Live2D Cubism SDK Configuration Guide](CUBISM_SDK_SETUP.md) for setup instructions.*
+- **Built-in Pure CPU Software Rasterizer**: Automatically active when the official SDK is absent or on non-Windows platforms (macOS / Linux); provides 100% out-of-the-box preview and slider inspection without any manual configuration.
 - **Interactive Features**: Real-time mouse gaze tracking, 6-second breathing/blink idle loop, and blink-driven eye jelly dynamics.
-- **FPS Badge**: Bottom-left pill displays current FPS, engine type (`Cubism 5-r.5 Native` or `Software Fallback`), and physics state.
+- **Status Badge**: Bottom-left pill displays current zoom percentage, underlying engine type (`Native Cubism` or `Software Fallback`), and physics state.
 
 ### 4. Log View
 - **Diagnostic Stream**: Full chronological execution log with color-coded warning (yellow) and error (red) highlighting.
@@ -180,5 +182,7 @@ The main window is structured into a three-pane layout: **Left Workspace + Right
   A: Iris layers are clipped by eye-white (`eyewhite`). Verify that an `eyewhite` layer is present so eye closure shrinks the clipping mask.
 - **Q: Exported `.cmo3` prompts about missing source art in Cubism Editor?**
   A: The base meshes are constructed from the generated atlas slices (`MissingSourceArt` is expected and normal). Keyforms, deformers, and parameters remain fully editable.
+- **Q: Why does the Preview viewport show "Software Rasterizer"? How do I enable official runtime consistency verification?**
+  A: PSD2Live strictly complies with open source licensing and Live2D's Proprietary License terms; **proprietary Live2D SDK binaries are NOT distributed with the source or releases**. Without the SDK, the application smoothly uses the built-in CPU software rasterizer (full model analysis, rigging, and `.cmo3`/`.moc3` exports are completely unaffected). If you want to enable official shader rendering to achieve **100% pixel-perfect parity with official game clients / Cubism Viewer (Ground Truth)**, please follow the [Live2D Cubism SDK Configuration Guide](CUBISM_SDK_SETUP.md).
 
 
