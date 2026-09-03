@@ -1,4 +1,4 @@
-﻿# PSD2Live PSD Layer Specification
+# PSD2Live PSD Layer Specification
 
 [中文](../zh/PSD_LAYER_SPEC.md) | [日本語](../ja/PSD_LAYER_SPEC.md)
 
@@ -9,6 +9,7 @@ PSD2Live adopts the **See-Through** semantic specification as its baseline namin
 ## Table of Contents
 
 - [General PSD Requirements](#general-psd-requirements)
+- [Character Pose & Composition Guidelines](#character-pose--composition-guidelines)
 - [Semantic Tag Directory](#semantic-tag-directory)
   - [1. Head Group](#1-head-group)
   - [2. Body Group](#2-body-group)
@@ -37,6 +38,22 @@ PSD2Live adopts the **See-Through** semantic specification as its baseline namin
 
 ---
 
+## Character Pose & Composition Guidelines
+
+To ensure automated rigging, 9-pose lattice fitting, and deformer hierarchies operate predictably, adhere to these composition constraints when preparing PSD artwork:
+
+### 1. Initial Head Tilt & Rotation Range Calibration
+- **Initial Tilt Permitted**: The character's head in the source artwork is permitted to have an initial tilt/roll angle (e.g., natural head tilts or expressive poses).
+- **Baseline Calibration**: The pipeline estimates the authored roll angle (`initialAngleZ`) from bilateral features (eye-white, pupil, eyelash baselines) and aligns the rotation deformer (`DeformHeadRotation`) pivot axis accordingly.
+- **Rotation Range**: Facial 9-pose deformation (`ParamAngleX` / `ParamAngleY`) and planar head rotation (`ParamAngleZ` $\in [-30^\circ, +30^\circ]$) **use the authored initial tilt as their neutral origin**, rather than forcibly snapping the head to a vertical orientation. Keep initial head roll within reasonable bounds (recommended within $\pm 25^\circ$) so bidirectional motion remains balanced.
+
+### 2. Body Pose Restrictions (Excessive Tilt Unsupported)
+- **Maintain Upright Stance**: The character's torso and body **must remain predominantly upright (vertical) or only slightly tilted**.
+- **Excessive Body Tilt Unsupported**: Avoid importing PSDs where the character's body is heavily tilted, reclining sideways, lying down, or leaning over at steep angles.
+- **Rationale**: Body yaw/pitch deformers (`ParamBodyAngleX` / `ParamBodyAngleY`) and chest breathing (`ParamBreath`, formulated with an envelope centered at vertical coordinate $v \approx 0.42$) assume vertical canvas coordinates. Severe body tilting causes breathing expansion to distort horizontally, produces non-linear shearing under torso rotation, and results in mesh tearing or severe surface folding.
+
+---
+
 ## Semantic Tag Directory
 
 PSD2Live supports 31 core semantic tags organized across three groups:
@@ -53,13 +70,13 @@ PSD2Live supports 31 core semantic tags organized across three groups:
 | `IRIDES` | `irides`, `iris`, `pupil` | 瞳孔, 虹膜, 眼珠 | 目, 瞳 | Gaze tracking + auto eye-white clipping + eye jelly physics |
 | `EYEBROW` | `eyebrow`, `brow` | 眉毛, 眉 | まゆ | Vertical brow movement and projective plane linkage |
 | `EYEWHITE` | `eyewhite`, `eye_white` | 眼白, 白眼 | 目白 | Shrinks on closure, serves as clipping mask for iris |
-| `EYELASH` | `eyelash`, `lash` | 睫毛 | まつ毛, まつげ | Eyelash centerline curves into smooth U-shaped closed eye line |
+| `EYELASH` | `eyelash`, `lash` | 睫毛 | まつ毛, まつげ | **Upper lashes only**; curves along alpha-weighted centerline into U-shape (no lower lashes) |
 | `EYE_CLOSE` | `eye_close`, `eye_c` | 闭眼, 閉眼 | 目閉じ, 閉じ目 | Optional closed eye art (fades in on blink) |
 | `EYEWEAR` | `eyewear`, `glasses` | 眼镜, 眼鏡 | メガネ | Eyeglasses on facial 9-pose lattice |
 | `EARS` | `ears`, `ear` | 耳朵, 耳 | 耳 | Negative depth shift + far ear opacity attenuation (~52%) |
 | `EARWEAR` | `earwear`, `earring` | 耳环, 耳饰 | イヤリング | Ear accessory follow |
 | `NOSE` | `nose` | 鼻子, 鼻 | 鼻 | Maximum perceived 3D depth shift (tip > bridge > root) |
-| `MOUTH` / `MOUTH_OPEN` | `mouth`, `mouth_open` | 嘴, 嘴巴, 口, 开口 | 口, 口開き | **Maximum open art**; `ParamMouthOpenY` compresses to center seam |
+| `MOUTH` / `MOUTH_OPEN` | `mouth`, `mouth_open` | 嘴, 嘴巴, 口, 开口 | 口, 口開き | **Fully open art (clean stroke outlines preferred)**; compresses to central seam |
 | `MOUTH_CLOSE`| `mouth_close`, `mouth_c` | 闭口, 闭嘴 | 口閉じ | Optional closed line art (fades out on mouth open) |
 | `TOOTH_T` | `tooth-t`, `upper tooth` | 上牙, 上歯 | 上歯 | Optional upper teeth (auto-clipped by mouth) |
 | `TOOTH_B` | `tooth-b`, `lower tooth` | 下牙, 下歯 | 下歯 | Optional lower teeth (auto-clipped by mouth) |
@@ -118,12 +135,16 @@ If an artist merges left and right features into a single layer without side suf
 ### 1. Eye System
 - **Eye-White (`eyewhite`)**: Clean, solid white eyeball geometry.
 - **Iris / Pupil (`irides`)**: Draw a complete circular iris even if partially obscured by eyelids. The pipeline automatically clips it using `eyewhite`.
-- **Eyelash (`eyelash`)**: Draw the standard open upper eyelash. On blink, the mesh tracks the alpha-weighted centerline to curve into a smooth U-shape.
+- **Eyelash (`eyelash`)**:
+  - **Upper eyelashes only**: The `eyelash` layer **must strictly contain only the upper eyelid and upper eyelashes**; do not include lower lashes or complete lower lid contours in this layer.
+  - **Blink Deformation Mechanism**: On blink closure, the pipeline samples the alpha-weighted centerline across vertical slices and morphs the mesh downward to match the eye-white's bottom U-shaped boundary. If lower lashes are included, the computed centroid is pulled downward to the middle of the eyeball, causing upper and lower lash elements to crush into each other, resulting in double images, distortion, or tearing.
+  - **Lower Lash Authoring**: If your character requires distinct lower lashes or lower eyeliner, place them into `facedetail` or an independent static layer so they remain exempt from blink compression.
 
 ### 2. Mouth & Oral System
 - **Integrated Mouth Approach (Recommended)**:
   - `mouth` / `mouth_open`: Authored as the **fully open** mouth including lips, teeth, tongue, and oral cavity.
-  - `ParamMouthOpenY` compresses the mesh toward the central seam upon closing.
+  - **Authoring as Open Mouth**: The open artwork serves as the baseline geometry ($\text{ParamMouthOpenY}=1$). When closed ($\text{ParamMouthOpenY}=0$), the mesh is centripetally compressed toward the horizontal midline into a ~1.25px seam. Drawing a closed mouth in the source art will leave the model unable to open its mouth.
+  - **Clean Outlines Preferred (Strokes Recommended)**: Defining clear, crisp stroke outlines along the outer lip contour is strongly recommended. During extreme centripetal compression, clean upper and lower outlines naturally fuse into a sharp, well-defined seam. Lineless soft gradients or feathered paint tend to blur, smudge, or blend unnaturally with surrounding skin tones upon compression.
   - Optional teeth (`tooth-t`/`tooth-b`) and tongue (`tongue`) automatically clip against the mouth mesh.
 
 ### 3. Hair System
@@ -155,8 +176,11 @@ Layers not matching any known semantic rules are classified as `UNKNOWN`:
 
 - [ ] Color mode is 8-bit RGB.
 - [ ] Opaque background layer is deleted (transparent background).
+- [ ] Character body is predominantly upright (no excessive tilt or horizontal reclining poses).
+- [ ] Initial head tilt is within natural range (rotation limits will calibrate to this initial angle).
+- [ ] Mouth is drawn fully open, preferably with clean outline strokes.
+- [ ] Eyelashes are restricted strictly to the upper eye region (no lower eyelashes merged).
 - [ ] Bilateral eye and brow layers are cleanly separated or clearly distinct across the midline.
-- [ ] Mouth is drawn in a fully open state.
 - [ ] Front and back hair are split into distinct layers.
 - [ ] Hidden draft and guide layers are removed.
 

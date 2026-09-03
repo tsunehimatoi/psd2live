@@ -1,4 +1,4 @@
-﻿# PSD2Live User Guide
+# PSD2Live User Guide
 
 [中文](../zh/USER_GUIDE.md) | [日本語](../ja/USER_GUIDE.md)
 
@@ -168,8 +168,17 @@ The main window is structured into a three-pane layout: **Left Workspace + Right
   A: Ensure JDK 21+ is installed and `JAVA_HOME` is configured.
 - **Q: Why are certain layers labeled as unknown?**
   A: Layers not matching known naming patterns are classified as unknown and assigned to head or body containers by spatial position. You can manually assign semantics in the Layers Table.
+- **Q: Why does the eyelash distort or tear on blink closure?**
+  A: Check if lower eyelashes or complete lower lid contours are included in the `eyelash` layer. The blink algorithm pulls the alpha-weighted centerline downward into a U-shape; merged lower lashes drag the centroid to the eyeball center and cause collision tearing. **Eyelashes must strictly be authored on the upper half of the eye**. Move lower lashes to `facedetail` or an independent static layer.
+- **Q: Why does the mouth look blurred or muddy when closed?**
+  A: The `mouth` layer must be drawn in a **fully open state**, and **crisp outline strokes on the lips are strongly recommended**. Upon closure, the mesh is centripetally compressed; clean outline strokes merge neatly into a sharp seam, whereas unbordered soft paint easily blurs or blends into adjacent skin.
+- **Q: If the source artwork has a tilted head, is it snapped upright? How are rotation ranges computed?**
+  A: The head is not forcibly straightened. The pipeline estimates the authored tilt (`initialAngleZ`) from facial baselines, aligning `DeformHeadRotation` to this tilt. The 9-pose facial lattice and `ParamAngleZ` ($\pm 30^\circ$) **calibrate their rotation limits around this initial angle as the neutral origin**. Keep initial head roll within natural limits ($\pm 25^\circ$).
+- **Q: Are heavily reclining, sideways, or horizontal character poses supported?**
+  A: **Excessive body tilt is not supported**. Torso kinematics (`ParamBodyAngleX/Y`) and chest breathing (`ParamBreath`) are formulated on a vertical canvas reference frame. Severe body tilts cause breathing to deform sideways and induce shear tearing under torso rotation. Keep character bodies predominantly upright.
 - **Q: Why does the pupil stay visible when the eye closes?**
   A: Iris layers are clipped by eye-white (`eyewhite`). Verify that an `eyewhite` layer is present so eye closure shrinks the clipping mask.
 - **Q: Exported `.cmo3` prompts about missing source art in Cubism Editor?**
   A: The base meshes are constructed from the generated atlas slices (`MissingSourceArt` is expected and normal). Keyforms, deformers, and parameters remain fully editable.
+
 

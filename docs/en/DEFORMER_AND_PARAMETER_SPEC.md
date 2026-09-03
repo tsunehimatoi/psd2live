@@ -1,4 +1,4 @@
-﻿# Deformer Hierarchy, Mathematical Formulations, and Parameter Specification
+# Deformer Hierarchy, Mathematical Formulations, and Parameter Specification
 
 [中文](../zh/DEFORMER_AND_PARAMETER_SPEC.md) | [日本語](../ja/DEFORMER_AND_PARAMETER_SPEC.md)
 
@@ -81,6 +81,10 @@ PSD2Live utilizes an **$8 \times 8$ facial latitude/longitude lattice**:
 - **Nine Standard Poses**:
   $$\{ \text{AngleX}_{-45}, \text{AngleX}_0, \text{AngleX}_{+45} \} \times \{ \text{AngleY}_{-30}, \text{AngleY}_0, \text{AngleY}_{+30} \}$$
 
+> [!NOTE]
+> **Initial Head Roll & Origin Alignment**:
+> The pipeline estimates authored head roll ($\text{initialAngleZ}$) from bilateral facial landmarks and aligns the `DeformHeadRotation` reference frame to it. The 9-pose lattice and planar rotation (`ParamAngleZ` $\in [-30^\circ, +30^\circ]$) operate in a roll-aligned coordinate space (`HeadCoordinateSpace`), treating the initial pose as the neutral origin to ensure symmetric rotation range without snapping the head upright.
+
 ### 2. C1-Continuous Horizontal Roll Profile
 
 On head yaw (e.g. $+X$ right turn):
@@ -138,6 +142,10 @@ Far-side ear opacity fades smoothly down to $\approx 52\%$ via `ChannelGrids.OPA
 ---
 
 ## Body Kinematics & Breathing Physics
+
+> [!IMPORTANT]
+> **Upright Body Assumption & Posture Restrictions**:
+> Body kinematics and breathing deformers are formulated on a vertical canvas coordinate frame (e.g., chest breathing expands along normalized height $v \approx 0.42$). Character source artwork must maintain a predominantly upright torso. Heavily tilted, sideways, or reclining postures produce lateral distortion and shear tearing, and are unsupported.
 
 ### 1. Body Yaw (BodyAngleX Bell-Curve Envelope)
 $\sin(\pi v)$ longitudinal envelope; row width remains invariant; exact mirror symmetry across positive and negative yaw.

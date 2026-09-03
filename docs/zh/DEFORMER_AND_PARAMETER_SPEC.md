@@ -1,4 +1,4 @@
-﻿# PSD2Live 变形器层级、算法数学原理与参数系统规范 (Deformer & Math Specification)
+# PSD2Live 变形器层级、算法数学原理与参数系统规范 (Deformer & Math Specification)
 
 [English](../en/DEFORMER_AND_PARAMETER_SPEC.md) | [日本語](../ja/DEFORMER_AND_PARAMETER_SPEC.md)
 
@@ -81,6 +81,10 @@ PSD2Live 采用基于手工绑定理念的 **$8 \times 8$ 面部经纬网模型*
 - **九个标准关键姿态**：
   $$\{ \text{AngleX}_{-45}, \text{AngleX}_0, \text{AngleX}_{+45} \} \times \{ \text{AngleY}_{-30}, \text{AngleY}_0, \text{AngleY}_{+30} \}$$
 
+> [!NOTE]
+> **初始头部倾角与基准轴向对齐**：
+> 系统通过双眼水平线与面部垂直特征自动估算原画中头部的初始倾斜角 $\text{initialAngleZ}$，并将旋转变形器（`DeformHeadRotation`）的基准轴心与其对齐。九轴经纬网与平面旋转（`ParamAngleZ` $\in [-30^\circ, +30^\circ]$）均在以该初始倾角为中立基准的局部对齐坐标系（`HeadCoordinateSpace`）中计算与展开。若原画立绘头部自带自然倾斜，转动范围将以此倾斜角度为中立原点展开，不会强行归正至垂直。
+
 ### 2. 水平 C1 连续分段透视曲线 (Horizontal Roll Profile)
 
 当头部向一侧偏航时（如右偏航 $+X$）：
@@ -157,6 +161,10 @@ $$\text{Depth}(\text{Nose Tip}) > \text{Depth}(\text{Nose Bridge}) > \text{Depth
 ---
 
 ## 身体动作与呼吸变形器数学原理
+
+> [!IMPORTANT]
+> **身体正立假设与姿态限制**：
+> 身体偏航、俯仰与呼吸膨胀算法均建立在垂直画布坐标轴向的解耦几何模型之上（例如呼吸起伏严格沿躯干垂直归一化高度 $v \approx 0.42$ 展开）。因此立绘原画中角色躯干必须保持基本垂直正立；过于倾斜、横躺或大幅度倒伏的躯干会导致投影空间横向扭曲，引发呼吸错位与网格撕裂，不受系统支持。
 
 ### 1. 身体水平偏航 (BodyAngleX 纵向钟形包络)
 - 采用纵向半正弦钟形包络 $\sin(\pi v)$ 约束躯干中间位移；

@@ -1,4 +1,4 @@
-﻿# デフォーマ階層・数理モデル・パラメータ仕様書 (Deformer & Math Specification)
+# デフォーマ階層・数理モデル・パラメータ仕様書 (Deformer & Math Specification)
 
 [中文](../zh/DEFORMER_AND_PARAMETER_SPEC.md) | [English](../en/DEFORMER_AND_PARAMETER_SPEC.md)
 
@@ -78,6 +78,10 @@ Root (Canvas Space)
 - **9 つの標準キーフォーム**:
   $$\{ \text{AngleX}_{-45}, \text{AngleX}_0, \text{AngleX}_{+45} \} \times \{ \text{AngleY}_{-30}, \text{AngleY}_0, \text{AngleY}_{+30} \}$$
 
+> [!NOTE]
+> **頭部の初期傾きと基準軸のアラインメント**：
+> システムは両目の水平基準線および顔の中心軸から頭部の初期回転角（$\text{initialAngleZ}$）を自動検出し、回転デフォーマ（`DeformHeadRotation`）のピボット基準角と一致させます。顔の 9 軸格子および平面回転（`ParamAngleZ` $\in [-30^\circ, +30^\circ]$）は、この初期角度をニュートラル基準とする局所空間（`HeadCoordinateSpace`）上で計算・展開されます。原画立ち絵の頭部が傾いている場合、その角度を基準原点として回転可動域が決定され、垂直へ強制補正されることはありません。
+
 ### 2. C1 連続水平 Roll 曲線
 
 頭部旋回時（$+X$ 旋回時など）：
@@ -119,6 +123,14 @@ $$\text{Depth}(\text{Nose Tip}) > \text{Depth}(\text{Nose Bridge}) > \text{Depth
 
 ### 5. 奥側耳の透過フェード
 奥側の耳は `ChannelGrids.OPACITY` により最大約 $52\%$ まで自動フェードアウトし、頭部による遮蔽を表現します。
+
+---
+
+## 体幹動作および呼吸デフォーマの原理
+
+> [!IMPORTANT]
+> **体幹の直立前提とポーズ制限**：
+> 体幹のヨー・ピッチおよび呼吸変形アルゴリズムは、垂直なキャンバス座標系を基準とする解耦幾何モデル上に構築されています（例：呼吸による膨張は胴体の正規化縦座標 $v \approx 0.42$ を中心に展開）。そのため、原画立ち絵では身体が原則として直立している必要があります。過度に傾いた姿勢、横たわり、斜めに寝そべった体幹は呼吸方向の横ズレやせん断破綻を招くため非対応です。
 
 ---
 

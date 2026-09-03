@@ -1,4 +1,4 @@
-﻿# PSD2Live
+# PSD2Live
 
 [中文](README.md) | [日本語](README_ja.md)
 
@@ -89,17 +89,26 @@ PSD2Live is an automated Live2D model generation pipeline and desktop applicatio
 
 ## PSD Naming Reference
 
+> [!TIP]
+> **Key PSD Artwork & Composition Guidelines**:
+> - **Mouth open with stroke outlines preferred**: Author the mouth in a fully open state; clean outline strokes along the lip contour ensure clean fusion into a crisp seam upon centripetal closure.
+> - **Eyelashes upper half only**: The `eyelash` layer must strictly contain upper eyelashes (no lower lashes) to ensure proper U-shaped blink curve morphing.
+> - **Initial head tilt supported**: Initial character head tilt is permitted; the pipeline automatically estimates this initial angle and uses it as the neutral origin to calibrate rotation limits.
+> - **Body must remain upright (excessive tilt unsupported)**: Kinematics and breathing rely on a vertical canvas frame; severely tilted or reclining poses are unsupported.
+> 
+> See [PSD Layer Specification (docs/en/PSD_LAYER_SPEC.md)](docs/en/PSD_LAYER_SPEC.md) for full rules.
+
 | Component | Recommended English | Aliases (ZH / JA) | Behavior |
 | :--- | :--- | :--- | :--- |
 | **Hair** | `front hair`, `back hair` | 前发, 后发, 前髪, 後ろ髪 | Head-follow Warp + $v^3$ tip multi-pendulum physics |
 | **Face** | `face`, `facedetail` | 脸, 脸部, 顔, 肌, チーク | Facial baseline and details |
-| **Eyes** | `eyewhite`, `eyelash`, `irides`, `eye_close` | 眼白, 睫毛, 瞳孔, 闭眼, 目, 瞳 | Auto bilateral split, iris clipping, smooth U-curve closure |
+| **Eyes** | `eyewhite`, `eyelash`, `irides`, `eye_close` | 眼白, 睫毛, 瞳孔, 闭眼, 目, 瞳 | Auto bilateral split, iris clipping, upper-lash smooth U-curve closure |
 | **Brows** | `eyebrow` | 眉, 眉毛, まゆ | Auto bilateral split and projective plane linkage |
 | **Nose** | `nose` | 鼻, 鼻子 | Maximum perceived 3D depth displacement |
-| **Mouth** | `mouth`, `mouth_open` | 嘴, 口, 张嘴, 口開き | Full open reference art; centripetal compression on closure |
+| **Mouth** | `mouth`, `mouth_open` | 嘴, 口, 张嘴, 口開き | Full open reference art (strokes preferred); centripetal compression |
 | **Oral Parts** | `tooth-t`, `tooth-b`, `tongue` | 上牙, 下牙, 舌头, 歯, 舌 | Optional components; auto-clipped by mouth |
 | **Ears** | `ears` | 耳, 耳朵 | Negative depth shift and far-side opacity attenuation |
-| **Body** | `neck`, `topwear`, `bottomwear`, `legwear` | 脖子, 上衣, 裤子, 裙子, 服 | Body kinematics, tilt, and chest breathing |
+| **Body** | `neck`, `topwear`, `bottomwear`, `legwear` | 脖子, 上衣, 裤子, 裙子, 服 | Body kinematics, tilt, and breathing (upright torso required) |
 | **Accessories** | `headwear`, `earwear`, `neckwear`, `tail`, `wings` | 头饰, 耳饰, 项链, 尾巴, 翅膀 | Parented to respective containers |
 
 ---
