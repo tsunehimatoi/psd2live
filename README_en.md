@@ -4,6 +4,12 @@
 
 PSD2Live is an automated Live2D model generation pipeline and desktop application. Given a layered PSD file, the system automatically performs semantic layer recognition, 8-connected bilateral splitting, adaptive Delaunay mesh triangulation, 9-pose facial lattice construction, multi-pendulum hair dynamics, and seamless idle loop generation, exporting both editable `.cmo3` editor projects and runtime `.moc3` file families.
 
+<p align="center">
+  <img src="docs/imgs/use.gif" alt="PSD2Live Workflow Demo" />
+  <br>
+  <em>End-to-end automated modeling, real-time gaze tracking, and dynamic preview</em>
+</p>
+
 ---
 
 ## Documentation Index
@@ -21,6 +27,12 @@ PSD2Live is an automated Live2D model generation pipeline and desktop applicatio
 ## Core Features
 
 - **Adaptive Mesh Generation**: Separable Gaussian alpha pre-filtering and adaptive binarization; periodic cubic Bézier fitting with physical support window corner detection and curvature-weighted adaptive resampling (up to 12x); constrained Delaunay triangulation with topology-convergent Lawson flips and overlong internal edge bisection.
+
+  <p align="center">
+    <img src="docs/imgs/mash.png" alt="Adaptive Mesh Triangulation & Topology View" />
+    <br>
+    <em>Desktop GUI Topology View: Semantic layer recognition & adaptive Delaunay mesh triangulation</em>
+  </p>
 - **Deformer (Warp) Generation**:
   - **Eye & Mouth Deformation**: Shared projective plane constraints for eyes and brows, iris counter-translation against perspective compression, and eyelash alpha-weighted centerline tracking for smooth closed U-curves; centripetal compression of full-open mouth toward central seam with auto-clipped teeth and tongue.
   - **Nine-Pose Lattice Construction**: `AngleX (±45°) × AngleY (±30°)` 8×8 facial lattice combining C1-continuous horizontal roll (near-side reveal, broad plateau preservation, far-side compression), vertical V/^ pitch curvature, and diagonal $C_{xy} = \text{yaw} \times \text{pitch}$ cross-terms.
