@@ -3,8 +3,10 @@ package io.github.autolive2d.core
 import org.umamo.runtime.model.ParameterId
 import java.nio.file.Path
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -14,6 +16,7 @@ import kotlin.test.assertTrue
 class CubismSdkPreviewSessionTest {
 	@Test
 	fun `mouse tracking never owns angle z`() {
+		assertEquals(0f, CUBISM_NATIVE_POINTER_Y, "native drag Y would introduce an AngleZ cross term")
 		val trackedIds = CUBISM_POINTER_TRACKING_BINDINGS.mapTo(linkedSetOf()) { it.parameterId }
 		assertEquals(
 			setOf("ParamAngleX", "ParamAngleY", "ParamBodyAngleX", "ParamEyeBallX", "ParamEyeBallY"),
@@ -48,13 +51,11 @@ class CubismSdkPreviewSessionTest {
 
 		val preview = AutoLive2DPipeline().buildPreview(Path.of("..", "Anime2.5DRig", "sample.psd"))
 		val ready = CountDownLatch(1)
-		val rendered = CountDownLatch(1)
 		val failure = AtomicReference<String?>()
-		val frame = AtomicReference<CubismSdkFrame?>()
+		val frames = LinkedBlockingQueue<CubismSdkFrame>()
 		val session = CubismSdkPreviewSession(
 			onFrame = {
-				frame.set(it)
-				rendered.countDown()
+				frames.offer(it)
 			},
 			onStatus = {
 				when {
@@ -83,13 +84,43 @@ class CubismSdkPreviewSessionTest {
 					parameterOverrides = mapOf(ParameterId("ParamAngleX") to 20f),
 				),
 			)
-			assertTrue(rendered.await(15, TimeUnit.SECONDS), "Cubism SDK frame timed out: ${failure.get()}")
-			val result = assertNotNull(frame.get())
+			val result = assertNotNull(frames.poll(15, TimeUnit.SECONDS), "Cubism SDK frame timed out: ${failure.get()}")
 			assertEquals(320, result.image.width)
 			assertEquals(20f, assertNotNull(result.parameters[ParameterId("ParamAngleX")]), 0.001f)
 			assertTrue((0 until result.image.height).any { y ->
 				(0 until result.image.width).any { x -> result.image.getRGB(x, y) ushr 24 != 0 }
 			})
+
+			// Drive the official look tracker in both directions. Look runs before physics in
+			// Cubism's scheduler, so at least one generated hair output must visibly respond.
+			val startNanos = System.nanoTime()
+			var maximumHairResponse = 0f
+			repeat(36) { index ->
+				session.render(
+					CubismSdkPreviewSession.RenderRequest(
+						width = 160,
+						height = 160,
+						scale = 0.95f,
+						offsetX = 0f,
+						offsetY = 0f,
+						deltaTime = 1f / 30f,
+						pointerX = if (index < 18) 0.9f else -0.9f,
+						pointerY = 0f,
+						parameterOverrides = emptyMap(),
+						frameTimeNanos = startNanos + (index + 1L) * 33_333_333L,
+					),
+				)
+				val physicsFrame = assertNotNull(
+					frames.poll(5, TimeUnit.SECONDS),
+					"Cubism SDK physics frame timed out at $index: ${failure.get()}",
+				)
+				maximumHairResponse = maxOf(
+					maximumHairResponse,
+					abs(physicsFrame.parameters[StandardParameters.HAIR_FRONT] ?: 0f),
+					abs(physicsFrame.parameters[StandardParameters.HAIR_BACK] ?: 0f),
+				)
+			}
+			assertTrue(maximumHairResponse > 0.02f, "mouse-driven hair physics did not respond: $maximumHairResponse")
 		} finally {
 			session.close()
 		}

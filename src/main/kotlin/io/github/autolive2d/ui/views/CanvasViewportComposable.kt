@@ -439,9 +439,12 @@ fun CanvasViewportComposable(
 			val fpsStr = if (fps > 0f) "%.1f FPS · ".format(fps) else ""
 			val badgeText = when (mode) {
 				WorkspaceTab.PREVIEW -> when {
-					sdkFrame != null -> "${fpsStr}${tr("canvas.preview.cubism", zoomPct)}"
+					sdkFrame != null -> "${fpsStr}${tr(
+						if (previewModel.hasRuntimePhysics) "canvas.preview.cubismPhysicsOn" else "canvas.preview.cubismPhysicsOff",
+						zoomPct,
+					)}"
 					state.sdkStatus != null && state.sdkStatus != "ready" -> "${fpsStr}${tr("canvas.preview.softwareFallback", zoomPct)}"
-					state.generatePhysics -> "${fpsStr}${tr("canvas.preview.physicsOn", zoomPct)}"
+					previewModel.hasRuntimePhysics -> "${fpsStr}${tr("canvas.preview.physicsOn", zoomPct)}"
 					else -> "${fpsStr}${tr("canvas.preview.physicsOff", zoomPct)}"
 				}
 				WorkspaceTab.TOPOLOGY -> {

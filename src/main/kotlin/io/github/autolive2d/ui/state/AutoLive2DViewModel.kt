@@ -747,7 +747,11 @@ class AutoLive2DViewModel : AutoCloseable {
 				val tracking = current.mouseTrackingEnabled
 				if (anim) elapsed += dt
 				val blink = blinkAt(elapsed % 4.6)
-				eyeJellyDynamics.advance(blink, dt, anim && current.generatePhysics)
+				eyeJellyDynamics.advance(
+					blink,
+					dt,
+					anim && current.generatePhysics && current.physicsEyeJelly,
+				)
 
 				val idleX = if (anim) (sin(elapsed * 0.47) * 0.12).toFloat() else 0f
 				val idleY = if (anim) (sin(elapsed * 0.31 + 1.1) * 0.08).toFloat() else 0f
@@ -801,14 +805,14 @@ class AutoLive2DViewModel : AutoCloseable {
 			StandardParameters.BODY_Z to sin(elapsed * 0.92).toFloat() * 2.2f,
 			StandardParameters.EYE_BALL_X to followX.coerceIn(-1f, 1f),
 			StandardParameters.EYE_BALL_Y to (-followY).coerceIn(-1f, 1f),
-			StandardParameters.EYE_BALL_FORM to if (model.config.generatePhysics) eyeJellyDynamics.value else 0f,
+			StandardParameters.EYE_BALL_FORM to if (model.config.generatePhysics && model.config.physicsEyeJelly) eyeJellyDynamics.value else 0f,
 			StandardParameters.EYE_L_OPEN to blink,
 			StandardParameters.EYE_R_OPEN to blink,
 			StandardParameters.MOUTH_FORM to sin(elapsed * 0.41).toFloat() * 0.18f,
 			StandardParameters.MOUTH_OPEN to mouthOpen,
 			StandardParameters.BREATH to ((sin(elapsed * 1.45) + 1.0) * 0.5).toFloat(),
-			StandardParameters.HAIR_FRONT to if (model.config.generatePhysics) frontHair.coerceIn(-1f, 1f) else 0f,
-			StandardParameters.HAIR_BACK to if (model.config.generatePhysics) backHair.coerceIn(-1f, 1f) else 0f,
+			StandardParameters.HAIR_FRONT to if (model.config.generatePhysics && model.config.physicsFrontHair) frontHair.coerceIn(-1f, 1f) else 0f,
+			StandardParameters.HAIR_BACK to if (model.config.generatePhysics && model.config.physicsBackHair) backHair.coerceIn(-1f, 1f) else 0f,
 		)
 	}
 
@@ -837,7 +841,10 @@ class AutoLive2DViewModel : AutoCloseable {
 				offsetX = offsetX,
 				offsetY = offsetY,
 				deltaTime = deltaTime,
-				pointerX = if (pointerActive && tracking) followX else 0f,
+				// Cubism receives the pointer target and performs its own critically damped tracking.
+				// X stays raw for native hair inertia; Y uses UI smoothing because it is applied
+				// separately to keep mouse tracking from owning ParamAngleZ.
+				pointerX = if (pointerActive && tracking) pointerX else 0f,
 				pointerY = if (pointerActive && tracking) -followY else 0f,
 				animationEnabled = current.animationEnabled,
 				parameterOverrides = previewValues,

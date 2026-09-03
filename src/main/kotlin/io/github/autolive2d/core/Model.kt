@@ -194,7 +194,11 @@ data class RigPreviewModel(
 	val rig: BuiltRig,
 	val config: PipelineConfig,
 	val runtimeBundle: CubismRuntimeBundle,
-)
+) {
+	/** True only when this exact preview bundle contains an active Cubism physics sidecar. */
+	val hasRuntimePhysics: Boolean
+		get() = runtimeBundle.assets.any { it.path.endsWith(".physics3.json", ignoreCase = true) }
+}
 
 data class ExportedFile(val path: Path, val bytes: Long)
 

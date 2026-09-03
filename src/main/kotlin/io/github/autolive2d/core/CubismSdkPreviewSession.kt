@@ -36,6 +36,9 @@ internal val CUBISM_POINTER_TRACKING_BINDINGS = listOf(
 	CubismPointerTrackingBinding("ParamEyeBallY", yScale = 1f),
 )
 
+/** Cubism maps a non-zero native Y target into ParamAngleZ through its XY cross term. */
+internal const val CUBISM_NATIVE_POINTER_Y = 0f
+
 /**
  * Serializes access to Cubism's hidden OpenGL context on one daemon thread.  The Java SDK release is
  * Android-only, so Windows uses the matching 5-r.5 desktop Core/Framework ABI behind this JVM adapter.
@@ -50,6 +53,7 @@ class CubismSdkPreviewSession(
 		fun Live2D_CreateModel(modelFilePath: String): Pointer?
 		fun Live2D_DestroyModel(handle: Pointer)
 		fun Live2D_Update(handle: Pointer, deltaTime: Float)
+		fun Live2D_SetDragging(handle: Pointer, x: Float, y: Float)
 		fun Live2D_StartMotion(handle: Pointer, group: String, index: Int, priority: Int): Int
 		fun Live2D_SetParameterValue(handle: Pointer, parameterId: String, value: Float)
 		fun Live2D_GetParameterValue(handle: Pointer, parameterId: String): Float
@@ -194,22 +198,34 @@ class CubismSdkPreviewSession(
 			if (closed || queued.generation != generation) return
 			val native = api ?: return
 			val handle = model ?: return
+			val needsRefresh: Boolean
 			if (request.animationEnabled) {
-				// Feed test values into physics, then re-apply them after motion evaluation so the
-				// slider remains authoritative, matching live2dConverter's native preview path.
-				applyParameterValues(native, handle, request.parameterOverrides)
+				// X runs through Cubism's look updater before physics so hair receives the head
+				// movement. Y is deliberately zero here because Cubism also maps it to AngleZ.
+				native.Live2D_SetDragging(handle, request.pointerX, CUBISM_NATIVE_POINTER_Y)
 				native.Live2D_Update(handle, animationDeltaTime(request))
-				applyPointerTracking(native, handle, request.pointerX, request.pointerY)
+				// Apply vertical head/eye tracking after the scheduler without touching AngleZ.
+				applyAnimatedVerticalTracking(native, handle, request.pointerY)
+				// Locked inspector values remain authoritative over motion/physics outputs.
 				applyParameterValues(native, handle, request.parameterOverrides)
+				needsRefresh = request.pointerY != 0f || request.parameterOverrides.isNotEmpty()
 			} else {
 				// Do not call Update(0): Cubism may still restore the paused motion's old values.
 				previousFrameWasAnimated = false
 				lastRenderedFrameTimeNanos = request.frameTimeNanos
 				applyParameterValues(native, handle, request.parameterOverrides)
+				// Paused previews cannot advance Cubism's smoothed drag manager. Apply the static
+				// look offsets directly so mouse tracking remains useful while inspecting a pose.
+				applyPausedPointerTracking(
+					native,
+					handle,
+					request.pointerX,
+					request.pointerY,
+					request.parameterOverrides,
+				)
+				needsRefresh = true
 			}
-			if (request.pointerX != 0f || request.pointerY != 0f || request.parameterOverrides.isNotEmpty()) {
-				native.Live2D_RefreshModel(handle)
-			}
+			if (needsRefresh) native.Live2D_RefreshModel(handle)
 
 			val pixelCount = Math.multiplyExact(Math.multiplyExact(request.width, request.height), 4)
 			val output = ensurePixelMemory(pixelCount.toLong())
@@ -250,13 +266,28 @@ class CubismSdkPreviewSession(
 		for ((id, value) in values) native.Live2D_SetParameterValue(handle, id.raw, value)
 	}
 
-	/** Mouse look intentionally excludes ParamAngleZ; roll remains owned by motion/breath. */
-	private fun applyPointerTracking(native: Api, handle: Pointer, x: Float, y: Float) {
+	private fun applyAnimatedVerticalTracking(native: Api, handle: Pointer, y: Float) {
+		if (y == 0f) return
 		for (binding in CUBISM_POINTER_TRACKING_BINDINGS) {
-			val amount = x * binding.xScale + y * binding.yScale
+			val amount = y * binding.yScale
 			if (amount == 0f) continue
 			val current = native.Live2D_GetParameterValue(handle, binding.parameterId)
 			native.Live2D_SetParameterValue(handle, binding.parameterId, current + amount)
+		}
+	}
+
+	/** Mouse look intentionally excludes ParamAngleZ; roll remains owned by motion/breath. */
+	private fun applyPausedPointerTracking(
+		native: Api,
+		handle: Pointer,
+		x: Float,
+		y: Float,
+		baseValues: Map<ParameterId, Float>,
+	) {
+		for (binding in CUBISM_POINTER_TRACKING_BINDINGS) {
+			val amount = x * binding.xScale + y * binding.yScale
+			val base = baseValues[ParameterId(binding.parameterId)] ?: 0f
+			native.Live2D_SetParameterValue(handle, binding.parameterId, base + amount)
 		}
 	}
 

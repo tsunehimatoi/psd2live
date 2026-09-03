@@ -171,14 +171,14 @@ class ModelPreviewPanel : JPanel() {
 			StandardParameters.BODY_Z to sin(elapsed * 0.92).toFloat() * 2.2f,
 			StandardParameters.EYE_BALL_X to followX.coerceIn(-1f, 1f),
 			StandardParameters.EYE_BALL_Y to (-followY).coerceIn(-1f, 1f),
-			StandardParameters.EYE_BALL_FORM to if (model.config.generatePhysics) eyeJellyDynamics.value else 0f,
+			StandardParameters.EYE_BALL_FORM to if (model.config.generatePhysics && model.config.physicsEyeJelly) eyeJellyDynamics.value else 0f,
 			StandardParameters.EYE_L_OPEN to blink,
 			StandardParameters.EYE_R_OPEN to blink,
 			StandardParameters.MOUTH_FORM to sin(elapsed * 0.41).toFloat() * 0.18f,
 			StandardParameters.MOUTH_OPEN to mouthOpen,
 			StandardParameters.BREATH to ((sin(elapsed * 1.45) + 1.0) * 0.5).toFloat(),
-			StandardParameters.HAIR_FRONT to if (model.config.generatePhysics) frontHair.coerceIn(-1f, 1f) else 0f,
-			StandardParameters.HAIR_BACK to if (model.config.generatePhysics) backHair.coerceIn(-1f, 1f) else 0f,
+			StandardParameters.HAIR_FRONT to if (model.config.generatePhysics && model.config.physicsFrontHair) frontHair.coerceIn(-1f, 1f) else 0f,
+			StandardParameters.HAIR_BACK to if (model.config.generatePhysics && model.config.physicsBackHair) backHair.coerceIn(-1f, 1f) else 0f,
 		) + parameterOverrides
 	}
 
@@ -188,7 +188,12 @@ class ModelPreviewPanel : JPanel() {
 		lastTick = now
 		if (animationEnabled) elapsed += dt
 		val blink = blinkAt(elapsed % 4.6)
-		eyeJellyDynamics.advance(blink, dt, animationEnabled && previewModel?.config?.generatePhysics == true)
+		val physicsConfig = previewModel?.config
+		eyeJellyDynamics.advance(
+			blink,
+			dt,
+			animationEnabled && physicsConfig?.generatePhysics == true && physicsConfig.physicsEyeJelly,
+		)
 		val idleX = if (animationEnabled) (sin(elapsed * 0.47) * 0.12).toFloat() else 0f
 		val idleY = if (animationEnabled) (sin(elapsed * 0.31 + 1.1) * 0.08).toFloat() else 0f
 		val targetX = if (pointerActive) pointerX else idleX
@@ -224,7 +229,7 @@ class ModelPreviewPanel : JPanel() {
 				offsetX = sdkViewport.offsetX,
 				offsetY = sdkViewport.offsetY,
 				deltaTime = deltaTime,
-				pointerX = if (pointerActive) followX else 0f,
+				pointerX = if (pointerActive) pointerX else 0f,
 				pointerY = if (pointerActive) -followY else 0f,
 				animationEnabled = animationEnabled,
 				parameterOverrides = parameterOverrides,
@@ -249,9 +254,12 @@ class ModelPreviewPanel : JPanel() {
 
 	private fun paintStatus(g: Graphics2D, model: RigPreviewModel) {
 		val text = when {
-			sdkFrame != null -> tr("canvas.preview.cubism", camera.zoomPercent)
+			sdkFrame != null -> tr(
+				if (model.hasRuntimePhysics) "canvas.preview.cubismPhysicsOn" else "canvas.preview.cubismPhysicsOff",
+				camera.zoomPercent,
+			)
 			sdkStatus != null && sdkStatus != "ready" -> tr("canvas.preview.softwareFallback", camera.zoomPercent)
-			model.config.generatePhysics -> tr("canvas.preview.physicsOn", camera.zoomPercent)
+			model.hasRuntimePhysics -> tr("canvas.preview.physicsOn", camera.zoomPercent)
 			else -> tr("canvas.preview.physicsOff", camera.zoomPercent)
 		}
 		g.font = Font(Font.SANS_SERIF, Font.PLAIN, 12)
