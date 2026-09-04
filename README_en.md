@@ -4,6 +4,9 @@
 
 PSD2Live is an automated Live2D model generation pipeline and desktop application. Given a layered PSD file, the system automatically performs semantic layer recognition, 8-connected bilateral splitting, adaptive Delaunay mesh triangulation, 9-pose facial lattice construction, multi-pendulum hair dynamics, and seamless idle loop generation, exporting both editable `.cmo3` editor projects and runtime `.moc3` file families.
 
+> [!IMPORTANT]
+> **Want to use the desktop app directly?** Windows 10/11 x64 users can download an executable from [Releases](https://github.com/tsunehimatoi/psd2live/releases/latest). Extract and run the portable ZIP, or choose the EXE or MSI installer. These packages include a Java runtime, so no source-build environment is required.
+
 <p align="center">
   <img src="docs/imgs/use.gif" alt="PSD2Live Workflow Demo" />
   <br>
@@ -47,15 +50,32 @@ PSD2Live is an automated Live2D model generation pipeline and desktop applicatio
 <p align="center">
   <img src="docs/imgs/agent.png" alt="PSD2Live AI Agent asset generation, integration, and multi-parameter render workflow" />
   <br>
-  <em>The Agent inspects model Views, generates assets through the host's native image capability, imports them as layers, and verifies multiple parameter poses</em>
+  <em>An end-to-end example of an Agent adding a hair clip to a Live2D character: it reads the project Skills and MCP tools, makes a plan, inspects an annotated front-hair View, generates the hair-clip image, adds it to the character's hair, and finally renders the result from other parameterized angles</em>
 </p>
+
+### Agent Example and Experiment Ideas
+
+Beyond adding a hair clip, try asking an Agent to:
+
+- separate the mouth into independently editable lips, inner mouth, teeth, and tongue layers;
+- separate the hair into front, side, back, ahoge, or other independently riggable strands, and reconstruct hidden regions;
+- add other hair accessories or decorations, then check occlusion, placement, and deformation across multiple parameter poses.
+
+> [!IMPORTANT]
+> These workflows require both the selected model and the Agent harness to expose a working image-generation capability. A model that can only understand text or images, but cannot generate and return an image, cannot complete asset creation and import.
+
+> [!WARNING]
+> Results depend on the model, image generator, Agent harness, prompt, and the quality of the original PSD layer separation. Different combinations can produce substantially different results, and a task may not succeed in one pass.
+
+> [!NOTE]
+> So far, only the end-to-end example shown above has been completed with Antigravity. Its image-generation quota ran out while preparing additional tasks; this quota is separate from its web quota and is relatively small. You are welcome to try more cases yourself, but be aware that Agent workflows can consume tokens very quickly.
 
 ---
 
 ## Quick Start
 
 ### Prerequisites
-- **Java Runtime**: JDK 21 or higher
+- **Java Runtime**: Windows packages downloaded from Releases include a runtime. JDK 21 or higher is required only when building or launching from source with Gradle.
 - **Operating System**: Windows 10/11 x64 (supports 100% pixel-perfect official rendering & physics parity when configured with official Native SDK), Linux / macOS (software rasterization)
 - **Live2D Official SDK Notice**: Source code and release packages **do NOT include or redistribute** official Live2D proprietary SDK binaries. Full pipeline generation and CPU preview work 100% out of the box. To enable official runtime consistency verification on Windows, please refer to the [Live2D SDK Setup Guide](docs/en/CUBISM_SDK_SETUP.md).
 

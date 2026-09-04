@@ -4,6 +4,9 @@
 
 PSD2Live 是一个自动化的 Live2D 模型生成流水线与桌面应用。输入分层 PSD 文件，系统自动完成图层语义识别、连通域双侧拆分、自适应三角网格剖分、九轴面部经纬网与解耦变形器层级构建、头发多摆物理与果冻眼动力学模拟及循环待机动作生成，一键导出可编辑的 `.cmo3` 编辑器工程与运行时 `.moc3` 文件族。
 
+> [!IMPORTANT]
+> **想直接使用桌面程序？** Windows 10/11 x64 用户请前往 [Releases](https://github.com/tsunehimatoi/psd2live/releases/latest) 下载可执行程序。便携版 ZIP 解压即用，也可选择 EXE 或 MSI 安装包；这些发布包已包含 Java 运行时，无需配置源码构建环境。
+
 <p align="center">
   <img src="docs/imgs/use.gif" alt="PSD2Live 操作演示" />
   <br>
@@ -47,15 +50,32 @@ PSD2Live 是一个自动化的 Live2D 模型生成流水线与桌面应用。输
 <p align="center">
   <img src="docs/imgs/agent.png" alt="PSD2Live AI Agent 素材生成、接入与多参数渲染流程" />
   <br>
-  <em>Agent 从模型 View 取证，经宿主原生图像能力生成素材，再回填图层并验证多参数姿态</em>
+  <em>一个 Agent 为 Live2D 角色添加发卡的完整示例：读取项目 Skill 与 MCP 工具、制定计划、查看带前发标注的模型 View、生成发卡图片并添加到角色头发上，最后获取其他参数视角下的渲染效果</em>
 </p>
+
+### Agent 示例与实验建议
+
+除了添加发卡，你还可以尝试让 Agent：
+
+- 将角色口腔拆分为嘴唇、口腔内部、牙齿和舌头等可独立编辑的图层；
+- 将头发拆分为前发、侧发、后发、呆毛或其他可独立绑定的发束，并补全被遮挡的区域；
+- 添加其他头饰或装饰物，再从多个参数姿态检查遮挡关系、位置和变形效果。
+
+> [!IMPORTANT]
+> 这类工作流要求所选模型及 Agent harness 能够实际调用图像生成能力。只有文本或视觉理解能力、但无法生成并返回图片的模型，不能完成素材创建与回填步骤。
+
+> [!WARNING]
+> 最终效果取决于模型、图像生成器、Agent harness、提示词和原始 PSD 的分层质量，不同组合的结果可能有明显差异，也不保证一次完成。
+
+> [!NOTE]
+> 测试使用Antigravity，它在我打算跑其他任务的时候额度耗尽了（Antigravity的图像生成是独立于web的独立额度，这个额度很少），因而只有一个测试案例，你可以自己尝试。*但是需要注意agent会飞快的吃掉你的token*。
 
 ---
 
 ## 快速上手
 
 ### 环境要求
-- **Java Runtime**：JDK 21 或更高版本
+- **Java Runtime**：从 Releases 下载的 Windows 发布包已包含运行时；仅从源码使用 Gradle 构建或启动时需要 JDK 21 或更高版本。
 - **操作系统**：Windows 10/11 x64（配置官方 Native SDK 时可实现与官方运行时 100% 像素级渲染与物理一致性对照），亦全面支持 Linux / macOS（内置 CPU 软件光栅化渲染）。
 - **Live2D 官方 SDK 说明**：本项目源码与发布包**不包含且不分发** Live2D 官方 SDK 专有二进制文件，开箱即可使用内置渲染与全部导出功能；如需开启官方渲染一致性验证，请参阅 [Live2D SDK 配置指南](docs/zh/CUBISM_SDK_SETUP.md)。
 
