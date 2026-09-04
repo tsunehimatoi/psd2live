@@ -325,6 +325,103 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace): Server {
 	}
 
 	server.addTool(
+		name = "object_get",
+		description = "Read an authoritative rig object (mesh, warp deformer, rotation deformer, part, glue) including its current keyforms, channels, deformer hierarchy, and geometry bounds.",
+		inputSchema = objectGetSchema(),
+		toolAnnotations = READ_ONLY,
+	) { request ->
+		mutationResult {
+			workspace.getObject(request.targetRef()).toJson()
+		}
+	}
+
+	server.addTool(
+		name = "keyform_set",
+		description = "Set or update keyform geometry and/or channels (opacity, draw order, multiply/screen color, glue intensity) on a target at an exact N-D parameter coordinate.",
+		inputSchema = keyformSetSchema(),
+		toolAnnotations = MUTATING,
+	) { request ->
+		mutationResult {
+			workspace.setKeyform(
+				AgentKeyformSetRequest(
+					expectedHistoryHeadNodeId = request.requiredString("expected_history_head_node_id"),
+					target = request.targetRef(),
+					coordinate = request.coordinateMap(),
+					geometry = request.optionalGeometry(),
+					channels = request.optionalChannels(),
+					taskId = request.optionalString("task_id"),
+				),
+			).toJson()
+		}
+	}
+
+	server.addTool(
+		name = "keyform_delete",
+		description = "Delete a keyform key or an entire parameter axis from a target's geometry grid or specific channel track.",
+		inputSchema = keyformDeleteSchema(),
+		toolAnnotations = MUTATING,
+	) { request ->
+		mutationResult {
+			workspace.deleteKeyform(
+				AgentKeyformDeleteRequest(
+					expectedHistoryHeadNodeId = request.requiredString("expected_history_head_node_id"),
+					target = request.targetRef(),
+					parameterId = request.requiredString("parameter_id"),
+					keyValue = request.optionalFloat("key_value"),
+					channel = request.optionalString("channel"),
+					taskId = request.optionalString("task_id"),
+				),
+			).toJson()
+		}
+	}
+
+	server.addTool(
+		name = "keyform_copy",
+		description = "Copy keyform geometry and/or channels from a source parameter coordinate to a destination parameter coordinate (on the same or another target).",
+		inputSchema = keyformCopySchema(),
+		toolAnnotations = MUTATING,
+	) { request ->
+		mutationResult {
+			workspace.copyKeyform(
+				AgentKeyformCopyRequest(
+					expectedHistoryHeadNodeId = request.requiredString("expected_history_head_node_id"),
+					sourceTarget = request.targetRef("source_target"),
+					sourceCoordinate = request.coordinateMap("source_coordinate"),
+					destinationTarget = if (request.hasTarget("destination_target")) request.targetRef("destination_target") else null,
+					destinationCoordinate = request.coordinateMap("destination_coordinate"),
+					channels = request.optionalStringList("channels"),
+					taskId = request.optionalString("task_id"),
+				),
+			).toJson()
+		}
+	}
+
+	server.addTool(
+		name = "rig_k_pose",
+		description = "Capture an explicit or current parameter pose deformation onto a target as keyform keys across all specified parameters.",
+		inputSchema = rigKPoseSchema(),
+		toolAnnotations = MUTATING,
+	) { request ->
+		mutationResult {
+			val params = if (request.arguments?.containsKey("parameters") == true) {
+				request.floatMap("parameters")
+			} else {
+				request.coordinateMap("coordinate")
+			}
+			workspace.rigKPose(
+				AgentRigKPoseRequest(
+					expectedHistoryHeadNodeId = request.requiredString("expected_history_head_node_id"),
+					target = request.targetRef(),
+					parameters = params,
+					geometry = request.optionalGeometry(),
+					channels = request.optionalChannels(),
+					taskId = request.optionalString("task_id"),
+				),
+			).toJson()
+		}
+	}
+
+	server.addTool(
 		name = "history_list",
 		description = "Read the append-only branch-preserving workspace history and current HEAD. Nodes cannot be edited or deleted.",
 		toolAnnotations = READ_ONLY,
@@ -802,6 +899,166 @@ private fun modelViewSchema(): ToolSchema = ToolSchema(
 	required = listOf("viewport"),
 )
 
+private fun targetSchemaProperty(description: String = "Authoritative rig target reference"): JsonObject = buildJsonObject {
+	put("type", "object")
+	put("description", description)
+	putJsonObject("properties") {
+		putJsonObject("kind") {
+			put("type", "string")
+			putJsonArray("enum") {
+				listOf("mesh", "warp", "rotation", "part", "glue").forEach { add(JsonPrimitive(it)) }
+			}
+			put("description", "Object type: mesh, warp, rotation, part, or glue")
+		}
+		putJsonObject("id") {
+			put("type", "string")
+			put("description", "Stable object ID (e.g. layer ID for mesh, deformer ID, part ID)")
+		}
+		putJsonObject("secondary_id") {
+			put("type", "string")
+			put("description", "Optional secondary ID for composite targets such as glue bindings")
+		}
+	}
+	putJsonArray("required") {
+		add(JsonPrimitive("kind"))
+		add(JsonPrimitive("id"))
+	}
+}
+
+private fun geometrySchemaProperty(): JsonObject = buildJsonObject {
+	put("type", "object")
+	put("description", "Keyform geometry deformation values")
+	putJsonObject("properties") {
+		putJsonObject("control_points") {
+			put("type", "array")
+			put("description", "Flat list of [x0, y0, x1, y1, ...] warp lattice control points")
+			putJsonObject("items") { put("type", "number") }
+		}
+		putJsonObject("origin_x") { put("type", "number"); put("description", "Rotation deformer pivot X") }
+		putJsonObject("origin_y") { put("type", "number"); put("description", "Rotation deformer pivot Y") }
+		putJsonObject("angle") { put("type", "number"); put("description", "Rotation angle in degrees") }
+		putJsonObject("scale") { put("type", "number"); put("description", "Rotation scale factor") }
+		putJsonObject("position_deltas") {
+			put("type", "array")
+			put("description", "Flat list of [dx0, dy0, dx1, dy1, ...] vertex deltas for ArtMesh")
+			putJsonObject("items") { put("type", "number") }
+		}
+	}
+}
+
+private fun channelsSchemaProperty(): JsonObject = buildJsonObject {
+	put("type", "object")
+	put("description", "Keyform visual/state channel values")
+	putJsonObject("properties") {
+		putJsonObject("opacity") { put("type", "number"); put("minimum", 0); put("maximum", 1) }
+		putJsonObject("draw_order") { put("type", "number") }
+		putJsonObject("multiply_color") {
+			put("type", "array")
+			put("description", "Normalized RGBA [r, g, b, a] multiply color")
+			putJsonObject("items") { put("type", "number") }
+		}
+		putJsonObject("screen_color") {
+			put("type", "array")
+			put("description", "Normalized RGB [r, g, b] screen color")
+			putJsonObject("items") { put("type", "number") }
+		}
+		putJsonObject("glue_intensity") { put("type", "number"); put("minimum", 0); put("maximum", 1) }
+		putJsonObject("flip_x") { put("type", "boolean") }
+		putJsonObject("flip_y") { put("type", "boolean") }
+	}
+}
+
+private fun objectGetSchema(): ToolSchema = ToolSchema(
+	properties = buildJsonObject {
+		put("target", targetSchemaProperty())
+		putJsonObject("kind") {
+			put("type", "string")
+			putJsonArray("enum") {
+				listOf("mesh", "warp", "rotation", "part", "glue").forEach { add(JsonPrimitive(it)) }
+			}
+		}
+		putJsonObject("id") { put("type", "string") }
+		putJsonObject("secondary_id") { put("type", "string") }
+	},
+)
+
+private fun keyformSetSchema(): ToolSchema = ToolSchema(
+	properties = buildJsonObject {
+		putJsonObject("expected_history_head_node_id") { put("type", "string") }
+		put("target", targetSchemaProperty())
+		putJsonObject("coordinate") {
+			put("type", "object")
+			put("description", "Keyform parameter coordinate, e.g. {\"ParamAngleX\": 0.0, \"ParamAngleY\": 1.0}")
+			putJsonObject("additionalProperties") { put("type", "number") }
+		}
+		put("geometry", geometrySchemaProperty())
+		put("channels", channelsSchemaProperty())
+		putJsonObject("task_id") { put("type", "string") }
+	},
+	required = listOf("expected_history_head_node_id", "coordinate"),
+)
+
+private fun keyformDeleteSchema(): ToolSchema = ToolSchema(
+	properties = buildJsonObject {
+		putJsonObject("expected_history_head_node_id") { put("type", "string") }
+		put("target", targetSchemaProperty())
+		putJsonObject("parameter_id") { put("type", "string") }
+		putJsonObject("key_value") {
+			put("type", "number")
+			put("description", "Specific key value to remove. If omitted, the entire parameter axis is deleted.")
+		}
+		putJsonObject("channel") {
+			put("type", "string")
+			put("description", "Optional channel name (e.g. opacity, draw_order). If omitted, operates on geometry.")
+		}
+		putJsonObject("task_id") { put("type", "string") }
+	},
+	required = listOf("expected_history_head_node_id", "parameter_id"),
+)
+
+private fun keyformCopySchema(): ToolSchema = ToolSchema(
+	properties = buildJsonObject {
+		putJsonObject("expected_history_head_node_id") { put("type", "string") }
+		put("source_target", targetSchemaProperty("Source target reference"))
+		putJsonObject("source_coordinate") {
+			put("type", "object")
+			putJsonObject("additionalProperties") { put("type", "number") }
+		}
+		put("destination_target", targetSchemaProperty("Destination target (defaults to source if omitted)"))
+		putJsonObject("destination_coordinate") {
+			put("type", "object")
+			putJsonObject("additionalProperties") { put("type", "number") }
+		}
+		putJsonObject("channels") {
+			put("type", "array")
+			put("description", "Optional list of channels to copy (e.g. [\"geometry\", \"opacity\"]). Null copies all.")
+			putJsonObject("items") { put("type", "string") }
+		}
+		putJsonObject("task_id") { put("type", "string") }
+	},
+	required = listOf("expected_history_head_node_id", "source_coordinate", "destination_coordinate"),
+)
+
+private fun rigKPoseSchema(): ToolSchema = ToolSchema(
+	properties = buildJsonObject {
+		putJsonObject("expected_history_head_node_id") { put("type", "string") }
+		put("target", targetSchemaProperty())
+		putJsonObject("parameters") {
+			put("type", "object")
+			put("description", "Pose parameters to set/capture, e.g. {\"ParamAngleX\": 30.0}")
+			putJsonObject("additionalProperties") { put("type", "number") }
+		}
+		putJsonObject("coordinate") {
+			put("type", "object")
+			putJsonObject("additionalProperties") { put("type", "number") }
+		}
+		put("geometry", geometrySchemaProperty())
+		put("channels", channelsSchemaProperty())
+		putJsonObject("task_id") { put("type", "string") }
+	},
+	required = listOf("expected_history_head_node_id"),
+)
+
 private suspend fun renderResult(block: suspend () -> AgentRenderedView): CallToolResult = try {
 	val view = block()
 	val metadata = view.toJson()
@@ -956,6 +1213,90 @@ private fun io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest.layerInsert
 	}
 }
 
+private fun io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest.hasTarget(prefix: String = "target"): Boolean {
+	if (arguments?.containsKey(prefix) == true) return true
+	if (arguments?.containsKey("${prefix}_kind") == true && arguments?.containsKey("${prefix}_id") == true) return true
+	if (prefix == "target" && arguments?.containsKey("kind") == true && arguments?.containsKey("id") == true) return true
+	return false
+}
+
+private fun io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest.targetRef(
+	prefix: String = "target",
+): AgentKeyformTargetRef {
+	val obj = (arguments?.get(prefix) ?: if (prefix == "source_target") arguments?.get("target") else null)?.jsonObject
+	if (obj != null) {
+		val kind = obj["kind"]?.jsonPrimitive?.contentOrNull
+			?: throw IllegalArgumentException("$prefix.kind is required")
+		val id = obj["id"]?.jsonPrimitive?.contentOrNull
+			?: throw IllegalArgumentException("$prefix.id is required")
+		val secondaryId = obj["secondary_id"]?.jsonPrimitive?.contentOrNull
+			?: obj["secondaryId"]?.jsonPrimitive?.contentOrNull
+		return AgentKeyformTargetRef(kind = kind, id = id, secondaryId = secondaryId)
+	}
+	val kind = arguments?.get("${prefix}_kind")?.jsonPrimitive?.contentOrNull
+		?: (if (prefix == "target" || prefix == "source_target") arguments?.get("target_kind")?.jsonPrimitive?.contentOrNull ?: arguments?.get("kind")?.jsonPrimitive?.contentOrNull else null)
+		?: throw IllegalArgumentException("Missing target kind")
+	val id = arguments?.get("${prefix}_id")?.jsonPrimitive?.contentOrNull
+		?: (if (prefix == "target" || prefix == "source_target") arguments?.get("target_id")?.jsonPrimitive?.contentOrNull ?: arguments?.get("id")?.jsonPrimitive?.contentOrNull else null)
+		?: throw IllegalArgumentException("Missing target id")
+	val secondaryId = arguments?.get("${prefix}_secondary_id")?.jsonPrimitive?.contentOrNull
+		?: (if (prefix == "target" || prefix == "source_target") arguments?.get("secondary_id")?.jsonPrimitive?.contentOrNull else null)
+	return AgentKeyformTargetRef(kind = kind, id = id, secondaryId = secondaryId)
+}
+
+private fun io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest.coordinateMap(
+	name: String = "coordinate",
+): Map<String, Float> {
+	val obj = arguments?.get(name)?.jsonObject
+		?: throw IllegalArgumentException("Missing required argument: $name")
+	return obj.mapValues { (k, v) ->
+		v.jsonPrimitive.floatOrNull ?: throw IllegalArgumentException("Coordinate $k must be numeric")
+	}
+}
+
+private fun io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest.optionalGeometry(
+	name: String = "geometry",
+): AgentKeyformGeometry? {
+	val obj = arguments?.get(name)?.jsonObject ?: return null
+	fun fl(key: String, alt: String? = null): Float? =
+		(obj[key] ?: alt?.let { obj[it] })?.jsonPrimitive?.floatOrNull
+	fun flList(key: String, alt: String? = null): List<Float>? {
+		val arr = (obj[key] ?: alt?.let { obj[it] })?.jsonArray ?: return null
+		return arr.map { it.jsonPrimitive.floatOrNull ?: throw IllegalArgumentException("$key must contain numbers") }
+	}
+	return AgentKeyformGeometry(
+		controlPoints = flList("control_points", "controlPoints"),
+		originX = fl("origin_x", "originX"),
+		originY = fl("origin_y", "originY"),
+		angle = fl("angle"),
+		scale = fl("scale"),
+		positionDeltas = flList("position_deltas", "positionDeltas"),
+	)
+}
+
+private fun io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest.optionalChannels(
+	name: String = "channels",
+): AgentKeyformChannels? {
+	val obj = arguments?.get(name)?.jsonObject ?: return null
+	fun fl(key: String, alt: String? = null): Float? =
+		(obj[key] ?: alt?.let { obj[it] })?.jsonPrimitive?.floatOrNull
+	fun bl(key: String, alt: String? = null): Boolean? =
+		(obj[key] ?: alt?.let { obj[it] })?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull()
+	fun flList(key: String, alt: String? = null): List<Float>? {
+		val arr = (obj[key] ?: alt?.let { obj[it] })?.jsonArray ?: return null
+		return arr.map { it.jsonPrimitive.floatOrNull ?: throw IllegalArgumentException("$key must contain numbers") }
+	}
+	return AgentKeyformChannels(
+		opacity = fl("opacity"),
+		drawOrder = fl("draw_order", "drawOrder"),
+		multiplyColor = flList("multiply_color", "multiplyColor"),
+		screenColor = flList("screen_color", "screenColor"),
+		glueIntensity = fl("glue_intensity", "glueIntensity"),
+		flipX = bl("flip_x", "flipX"),
+		flipY = bl("flip_y", "flipY"),
+	)
+}
+
 private fun AgentProjectSnapshot.toJson(
 	includeLayers: Boolean,
 	layers: List<AgentLayerSnapshot> = this.layers,
@@ -1070,6 +1411,75 @@ private fun AgentWorkspaceMutationResult.toJson(): JsonObject = buildJsonObject 
 	put("summary", summary)
 	putJsonArray("affectedLayerIds") { affectedLayerIds.forEach { add(JsonPrimitive(it)) } }
 	putJsonArray("affectedParameterIds") { affectedParameterIds.forEach { add(JsonPrimitive(it)) } }
+	putJsonArray("affectedObjectIds") { affectedObjectIds.forEach { add(JsonPrimitive(it)) } }
+}
+
+private fun AgentObjectSnapshot.toJson(): JsonObject = buildJsonObject {
+	putJsonObject("target") {
+		put("kind", target.kind)
+		put("id", target.id)
+		target.secondaryId?.let { put("secondaryId", it) }
+	}
+	put("name", name)
+	parentId?.let { put("parentId", it) }
+	partId?.let { put("partId", it) }
+	put("visible", visible)
+	if (topologyInfo.isNotEmpty()) {
+		putJsonObject("topologyInfo") {
+			topologyInfo.forEach { (k, v) -> put(k, v) }
+		}
+	}
+	geometry?.let { geom ->
+		putJsonObject("geometry") {
+			put("keyformCount", geom.keyformCount)
+			putJsonArray("axes") {
+				geom.axes.forEach { axis ->
+					add(buildJsonObject {
+						put("parameterId", axis.parameterId)
+						putJsonArray("keys") { axis.keys.forEach { k -> add(JsonPrimitive(k)) } }
+					})
+				}
+			}
+			putJsonArray("cells") {
+				geom.cells.forEach { cell ->
+					add(buildJsonObject {
+						putJsonObject("coordinate") {
+							cell.coordinate.forEach { (p, v) -> put(p, v) }
+						}
+						cell.originX?.let { put("originX", it) }
+						cell.originY?.let { put("originY", it) }
+						cell.angle?.let { put("angle", it) }
+						cell.scale?.let { put("scale", it) }
+						cell.controlPoints?.let { cps ->
+							putJsonArray("controlPoints") { cps.forEach { cp -> add(JsonPrimitive(cp)) } }
+						}
+						cell.positionDeltas?.let { pds ->
+							putJsonArray("positionDeltas") { pds.forEach { pd -> add(JsonPrimitive(pd)) } }
+						}
+					})
+				}
+			}
+		}
+	}
+	if (channels.isNotEmpty()) {
+		putJsonArray("channels") {
+			channels.forEach { track ->
+				add(buildJsonObject {
+					put("channel", track.channel)
+					put("staticValue", track.staticValue)
+					put("keyformCount", track.keyformCount)
+					putJsonArray("axes") {
+						track.axes.forEach { axis ->
+							add(buildJsonObject {
+								put("parameterId", axis.parameterId)
+								putJsonArray("keys") { axis.keys.forEach { k -> add(JsonPrimitive(k)) } }
+							})
+						}
+					}
+				})
+			}
+		}
+	}
 }
 
 private fun AgentTaskSnapshot.toJson(includeEvents: Boolean = true): JsonObject = buildJsonObject {
@@ -1213,5 +1623,5 @@ private val MUTATING = ToolAnnotations(
 )
 
 private val AGENT_INSTRUCTIONS = """
-	psd2live treats an authenticated Agent as the owner of the open workspace: every exposed workspace capability may be used without per-operation approval. The append-only persisted history store is the sole immutable boundary: inspect historyHeadNodeId, pass it to mutations, and use history_checkout rather than attempting to rewrite history. Read project_get_state before planning and wait while persistenceStatus is restoring. For multi-step work, call task_start with your own plan and keep task_update checkpoints current; task state is not an approval gate and its plan may be replaced as evidence changes. Use stable object IDs and direct View tools; never infer coordinates from application screenshots. View tools return one composited PNG plus a reversible pixel-to-canvas spatial reference, never a PSD. view_render_model requires an explicit canvas rectangle or object-relative focus frame in addition to pose, layer composition, and annotations. Preserve spatialReferenceId when generating a replacement PNG, stage it with asset_import_png, then add it with layer_add_from_asset. Generated pixel resolution is independent from canvas size; the importer maps the entire PNG or declared source_pixel_rect back to the referenced canvas rectangle and refuses silent aspect stretching. Mutations rebuild the actual source, mesh, rig, and export preview before committing history. Soft deletion remains recoverable. For hair separation, load the hair-separation prompt and inspect isolated, context, and posed model views before editing.
+	psd2live treats an authenticated Agent as the owner of the open workspace: every exposed workspace capability may be used without per-operation approval. The append-only persisted history store is the sole immutable boundary: inspect historyHeadNodeId, pass it to mutations, and use history_checkout rather than attempting to rewrite history. Read project_get_state before planning and wait while persistenceStatus is restoring. For multi-step work, call task_start with your own plan and keep task_update checkpoints current; task state is not an approval gate and its plan may be replaced as evidence changes. Use stable object IDs and direct View tools; never infer coordinates from application screenshots. View tools return one composited PNG plus a reversible pixel-to-canvas spatial reference, never a PSD. view_render_model requires an explicit canvas rectangle or object-relative focus frame in addition to pose, layer composition, and annotations. Preserve spatialReferenceId when generating a replacement PNG, stage it with asset_import_png, then add it with layer_add_from_asset. Generated pixel resolution is independent from canvas size; the importer maps the entire PNG or declared source_pixel_rect back to the referenced canvas rectangle and refuses silent aspect stretching. Mutations rebuild the actual source, mesh, rig, and export preview before committing history. Soft deletion remains recoverable. Use object_get, keyform_set, keyform_delete, keyform_copy, and rig_k_pose for bottom-level keyform geometry and visual channel editing across arbitrary N-dimensional parameter coordinates. For hair separation, load the hair-separation prompt and inspect isolated, context, and posed model views before editing.
 """.trimIndent()

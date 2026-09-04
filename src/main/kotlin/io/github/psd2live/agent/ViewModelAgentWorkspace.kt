@@ -3,15 +3,26 @@ package io.github.psd2live.agent
 import io.github.psd2live.core.Bounds
 import io.github.psd2live.core.PipelineConfig
 import io.github.psd2live.core.PreviewRenderer
+import io.github.psd2live.core.RigKeyformChannelsEdit
+import io.github.psd2live.core.RigKeyformCopyEdit
+import io.github.psd2live.core.RigKeyformDeleteEdit
+import io.github.psd2live.core.RigKeyformGeometryEdit
+import io.github.psd2live.core.RigKeyformSetEdit
 import io.github.psd2live.core.RigParameterEdit
+import io.github.psd2live.core.RigTargetKind
+import io.github.psd2live.core.RigTargetRef
+import io.github.psd2live.core.findDrawable
 import io.github.psd2live.history.StaleWorkspaceHeadException
 import io.github.psd2live.history.WorkspaceHistoryTree
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.state.PSD2LiveState
 import org.umamo.format.art.isEffectivelyVisible
 import org.umamo.format.art.SourceArt
+import org.umamo.runtime.model.Deformer
+import org.umamo.runtime.model.FormChannel
 import org.umamo.runtime.model.Parameter
 import org.umamo.runtime.model.ParameterKind
+import org.umamo.runtime.model.PuppetModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -426,6 +437,375 @@ class ViewModelAgentWorkspace(
 			affectedLayerIds = emptyList(),
 			summary = summary,
 			affectedParameterIds = listOf(parameterId),
+		)
+	}
+
+	override fun getObject(target: AgentKeyformTargetRef): AgentObjectSnapshot {
+		val state = viewModel.state.value
+		val rig = state.previewModel?.rig
+			?: throw IllegalStateException("No rig is loaded")
+		val puppet = rig.puppet
+		val kind = RigTargetKind.fromString(target.kind)
+
+		return when (kind) {
+			RigTargetKind.WARP_DEFORMER, RigTargetKind.ROTATION_DEFORMER -> {
+				val deformer = puppet.deformers.firstOrNull { it.id.raw == target.id }
+					?: throw IllegalArgumentException("Deformer not found: ${target.id}")
+				when (deformer) {
+					is Deformer.Warp -> {
+						val grid = deformer.geometryGrid
+						val topo = mapOf(
+							"type" to "warp",
+							"rows" to deformer.rows.toString(),
+							"columns" to deformer.columns.toString(),
+							"controlPointsCount" to (deformer.rows * deformer.columns).toString(),
+							"isQuadTransform" to deformer.isQuadTransform.toString(),
+						)
+						val geoSnapshot = grid?.let { g ->
+							AgentObjectGeometrySnapshot(
+								axes = g.axes.map { AgentObjectAxisSnapshot(it.parameterId.raw, it.keys.toList()) },
+								keyformCount = g.cells.size,
+								cells = g.cells.map { cell ->
+									val coord = g.axes.indices.associate { i -> g.axes[i].parameterId.raw to g.axes[i].keys[cell.coordinate[i]] }
+									AgentObjectCellSnapshot(
+										coordinate = coord,
+										controlPoints = cell.form.controlPoints.toList(),
+									)
+								},
+							)
+						}
+						val channelSnapshots = deformer.channelGrids.gridsByChannel.map { (ch, track) ->
+							AgentObjectChannelTrackSnapshot(
+								channel = ch.name.lowercase(),
+								staticValue = when (ch) {
+									FormChannel.OPACITY -> deformer.opacity.toString()
+									FormChannel.MULTIPLY_COLOR -> deformer.multiplyColor.toString()
+									FormChannel.SCREEN_COLOR -> deformer.screenColor.toString()
+									else -> ""
+								},
+								axes = track.axes.map { AgentObjectAxisSnapshot(it.parameterId.raw, it.keys.toList()) },
+								keyformCount = track.cells.size,
+							)
+						}
+						AgentObjectSnapshot(
+							target = target,
+							name = deformer.name,
+							parentId = deformer.parent?.raw,
+							partId = deformer.partId?.raw,
+							visible = deformer.isVisible,
+							topologyInfo = topo,
+							geometry = geoSnapshot,
+							channels = channelSnapshots,
+						)
+					}
+					is Deformer.Rotation -> {
+						val grid = deformer.geometryGrid
+						val topo = mapOf(
+							"type" to "rotation",
+							"baseAngle" to deformer.baseAngle.toString(),
+						)
+						val geoSnapshot = grid?.let { g ->
+							AgentObjectGeometrySnapshot(
+								axes = g.axes.map { AgentObjectAxisSnapshot(it.parameterId.raw, it.keys.toList()) },
+								keyformCount = g.cells.size,
+								cells = g.cells.map { cell ->
+									val coord = g.axes.indices.associate { i -> g.axes[i].parameterId.raw to g.axes[i].keys[cell.coordinate[i]] }
+									AgentObjectCellSnapshot(
+										coordinate = coord,
+										originX = cell.form.originX,
+										originY = cell.form.originY,
+										angle = cell.form.angle,
+										scale = cell.form.scale,
+									)
+								},
+							)
+						}
+						val channelSnapshots = deformer.channelGrids.gridsByChannel.map { (ch, track) ->
+							AgentObjectChannelTrackSnapshot(
+								channel = ch.name.lowercase(),
+								staticValue = when (ch) {
+									FormChannel.OPACITY -> deformer.opacity.toString()
+									FormChannel.MULTIPLY_COLOR -> deformer.multiplyColor.toString()
+									FormChannel.SCREEN_COLOR -> deformer.screenColor.toString()
+									FormChannel.FLIP_X -> deformer.flipX.toString()
+									FormChannel.FLIP_Y -> deformer.flipY.toString()
+									else -> ""
+								},
+								axes = track.axes.map { AgentObjectAxisSnapshot(it.parameterId.raw, it.keys.toList()) },
+								keyformCount = track.cells.size,
+							)
+						}
+						AgentObjectSnapshot(
+							target = target,
+							name = deformer.name,
+							parentId = deformer.parent?.raw,
+							partId = deformer.partId?.raw,
+							visible = deformer.isVisible,
+							topologyInfo = topo,
+							geometry = geoSnapshot,
+							channels = channelSnapshots,
+						)
+					}
+				}
+			}
+			RigTargetKind.ART_MESH -> {
+				val drawable = puppet.findDrawable(target.id)
+					?: puppet.drawables.firstOrNull { rig.layerIdByDrawableId[it.id.raw] == target.id }
+					?: throw IllegalArgumentException("Drawable not found: ${target.id}")
+				val grid = drawable.geometryGrid
+				val topo = mapOf(
+					"type" to "art_mesh",
+					"vertexCount" to (drawable.mesh?.vertexCount ?: 0).toString(),
+					"triangleCount" to (drawable.mesh?.triangleCount ?: 0).toString(),
+					"layerId" to (rig.layerIdByDrawableId[drawable.id.raw] ?: ""),
+				)
+				val geoSnapshot = grid?.let { g ->
+					AgentObjectGeometrySnapshot(
+						axes = g.axes.map { AgentObjectAxisSnapshot(it.parameterId.raw, it.keys.toList()) },
+						keyformCount = g.cells.size,
+						cells = g.cells.map { cell ->
+							val coord = g.axes.indices.associate { i -> g.axes[i].parameterId.raw to g.axes[i].keys[cell.coordinate[i]] }
+							AgentObjectCellSnapshot(
+								coordinate = coord,
+								positionDeltas = cell.form.positionDeltas.toList(),
+							)
+						},
+					)
+				}
+				val channelSnapshots = drawable.channelGrids.gridsByChannel.map { (ch, track) ->
+					AgentObjectChannelTrackSnapshot(
+						channel = ch.name.lowercase(),
+						staticValue = when (ch) {
+							FormChannel.OPACITY -> drawable.opacity.toString()
+							FormChannel.DRAW_ORDER -> drawable.drawOrder.toString()
+							FormChannel.MULTIPLY_COLOR -> drawable.multiplyColor.toString()
+							FormChannel.SCREEN_COLOR -> drawable.screenColor.toString()
+							else -> ""
+						},
+						axes = track.axes.map { AgentObjectAxisSnapshot(it.parameterId.raw, it.keys.toList()) },
+						keyformCount = track.cells.size,
+					)
+				}
+				AgentObjectSnapshot(
+					target = target,
+					name = drawable.name,
+					parentId = drawable.parentDeformerId?.raw,
+					partId = null,
+					visible = drawable.isVisible,
+					topologyInfo = topo,
+					geometry = geoSnapshot,
+					channels = channelSnapshots,
+				)
+			}
+			RigTargetKind.PART -> {
+				val part = puppet.parts.firstOrNull { it.id.raw == target.id }
+					?: throw IllegalArgumentException("Part not found: ${target.id}")
+				val channelSnapshots = part.channelGrids.gridsByChannel.map { (ch, track) ->
+					AgentObjectChannelTrackSnapshot(
+						channel = ch.name.lowercase(),
+						staticValue = when (ch) {
+							FormChannel.OPACITY -> part.composite.opacity.toString()
+							FormChannel.DRAW_ORDER -> part.drawOrder.toString()
+							FormChannel.MULTIPLY_COLOR -> part.composite.multiplyColor.toString()
+							FormChannel.SCREEN_COLOR -> part.composite.screenColor.toString()
+							else -> ""
+						},
+						axes = track.axes.map { AgentObjectAxisSnapshot(it.parameterId.raw, it.keys.toList()) },
+						keyformCount = track.cells.size,
+					)
+				}
+				AgentObjectSnapshot(
+					target = target,
+					name = part.name,
+					parentId = null,
+					partId = part.id.raw,
+					visible = part.isVisible,
+					topologyInfo = mapOf("type" to "part", "childrenCount" to part.children.size.toString()),
+					geometry = null,
+					channels = channelSnapshots,
+				)
+			}
+			RigTargetKind.GLUE -> {
+				val glue = puppet.glues.firstOrNull { it.meshA.raw == target.id && it.meshB.raw == target.secondaryId }
+					?: throw IllegalArgumentException("Glue not found: ${target.id} -> ${target.secondaryId}")
+				val channelSnapshots = glue.channelGrids.gridsByChannel.map { (ch, track) ->
+					AgentObjectChannelTrackSnapshot(
+						channel = ch.name.lowercase(),
+						staticValue = glue.intensity.toString(),
+						axes = track.axes.map { AgentObjectAxisSnapshot(it.parameterId.raw, it.keys.toList()) },
+						keyformCount = track.cells.size,
+					)
+				}
+				AgentObjectSnapshot(
+					target = target,
+					name = "Glue_${glue.meshA.raw}_${glue.meshB.raw}",
+					parentId = null,
+					partId = null,
+					visible = true,
+					topologyInfo = mapOf("type" to "glue", "meshA" to glue.meshA.raw, "meshB" to glue.meshB.raw),
+					geometry = null,
+					channels = channelSnapshots,
+				)
+			}
+		}
+	}
+
+	override suspend fun setKeyform(request: AgentKeyformSetRequest): AgentWorkspaceMutationResult {
+		val targetRef = RigTargetRef(
+			kind = RigTargetKind.fromString(request.target.kind),
+			id = request.target.id.trim(),
+			secondaryId = request.target.secondaryId?.trim(),
+		)
+		val geo = request.geometry?.let {
+			RigKeyformGeometryEdit(
+				controlPoints = it.controlPoints,
+				originX = it.originX,
+				originY = it.originY,
+				angle = it.angle,
+				scale = it.scale,
+				positionDeltas = it.positionDeltas,
+			)
+		}
+		val ch = request.channels?.let {
+			RigKeyformChannelsEdit(
+				opacity = it.opacity,
+				drawOrder = it.drawOrder,
+				multiplyColor = it.multiplyColor,
+				screenColor = it.screenColor,
+				glueIntensity = it.glueIntensity,
+				flipX = it.flipX,
+				flipY = it.flipY,
+			)
+		}
+		val edit = RigKeyformSetEdit(
+			target = targetRef,
+			coordinate = request.coordinate,
+			geometry = geo,
+			channels = ch,
+		)
+		val coordStr = request.coordinate.entries.joinToString(",") { "${it.key}=${it.value}" }
+		return mutateRigKeyform(
+			expectedHeadNodeId = request.expectedHistoryHeadNodeId,
+			taskId = request.taskId,
+			summary = "Set keyform on ${targetRef.id} at ($coordStr)",
+			affectedObjectId = targetRef.id,
+		) { document, _ ->
+			document.copy(rigEdits = document.rigEdits.setKeyform(edit))
+		}
+	}
+
+	override suspend fun deleteKeyform(request: AgentKeyformDeleteRequest): AgentWorkspaceMutationResult {
+		val targetRef = RigTargetRef(
+			kind = RigTargetKind.fromString(request.target.kind),
+			id = request.target.id.trim(),
+			secondaryId = request.target.secondaryId?.trim(),
+		)
+		val edit = RigKeyformDeleteEdit(
+			target = targetRef,
+			parameterId = request.parameterId.trim(),
+			keyValue = request.keyValue,
+			channel = request.channel?.trim(),
+		)
+		val detail = if (request.keyValue != null) "key ${request.keyValue} on ${request.parameterId}" else "axis ${request.parameterId}"
+		return mutateRigKeyform(
+			expectedHeadNodeId = request.expectedHistoryHeadNodeId,
+			taskId = request.taskId,
+			summary = "Deleted $detail on ${targetRef.id}",
+			affectedObjectId = targetRef.id,
+		) { document, _ ->
+			document.copy(rigEdits = document.rigEdits.deleteKeyform(edit))
+		}
+	}
+
+	override suspend fun copyKeyform(request: AgentKeyformCopyRequest): AgentWorkspaceMutationResult {
+		val srcTarget = RigTargetRef(
+			kind = RigTargetKind.fromString(request.sourceTarget.kind),
+			id = request.sourceTarget.id.trim(),
+			secondaryId = request.sourceTarget.secondaryId?.trim(),
+		)
+		val destTarget = request.destinationTarget?.let {
+			RigTargetRef(
+				kind = RigTargetKind.fromString(it.kind),
+				id = it.id.trim(),
+				secondaryId = it.secondaryId?.trim(),
+			)
+		} ?: srcTarget
+		val edit = RigKeyformCopyEdit(
+			sourceTarget = srcTarget,
+			sourceCoordinate = request.sourceCoordinate,
+			destinationTarget = destTarget,
+			destinationCoordinate = request.destinationCoordinate,
+			channels = request.channels,
+		)
+		return mutateRigKeyform(
+			expectedHeadNodeId = request.expectedHistoryHeadNodeId,
+			taskId = request.taskId,
+			summary = "Copied keyform from ${srcTarget.id} to ${destTarget.id}",
+			affectedObjectId = destTarget.id,
+		) { document, _ ->
+			document.copy(rigEdits = document.rigEdits.copyKeyform(edit))
+		}
+	}
+
+	override suspend fun rigKPose(request: AgentRigKPoseRequest): AgentWorkspaceMutationResult {
+		return setKeyform(
+			AgentKeyformSetRequest(
+				expectedHistoryHeadNodeId = request.expectedHistoryHeadNodeId,
+				target = request.target,
+				coordinate = request.parameters,
+				geometry = request.geometry,
+				channels = request.channels,
+				taskId = request.taskId,
+			),
+		)
+	}
+
+	private suspend fun mutateRigKeyform(
+		expectedHeadNodeId: String,
+		taskId: String?,
+		summary: String,
+		affectedObjectId: String,
+		mutation: (AgentWorkspaceDocument, PuppetModel) -> AgentWorkspaceDocument,
+	): AgentWorkspaceMutationResult = editMutex.withLock {
+		val before = snapshot()
+		val projectId = before.projectId ?: throw IllegalStateException("No PSD is loaded")
+		require(recoveringProjectId != projectId) { "Persisted workspace HEAD is still being restored; retry shortly" }
+		val current = viewModel.state.value
+		require(!current.isAnalyzing && !current.isGenerating) { "Workspace is busy" }
+		val puppet = current.previewModel?.rig?.puppet
+			?: throw IllegalStateException("No rig preview is available")
+		val baseDocument = documentFrom(current)
+		val tree = synchronized(historyLock) {
+			synchronizeHistory(projectId, before.revisionId, baseDocument).also {
+				if (it.head().node.id != expectedHeadNodeId) {
+					throw StaleWorkspaceHeadException(expectedHeadNodeId, it.head().node.id)
+				}
+			}
+		}
+		val nextDocument = mutation(baseDocument, puppet)
+		require(nextDocument != baseDocument) { "Rig edit did not change the workspace" }
+		val preview = viewModel.buildAgentWorkspacePreview(nextDocument.source, nextDocument.toConfig(current))
+		val nextRevision = revisionId(current, nextDocument)
+		val selection = synchronized(historyLock) {
+			applyPreviewOrThrow(preview, baseDocument, nextDocument, summary)
+			tree.commit(
+				expectedHeadNodeId = expectedHeadNodeId,
+				snapshot = nextDocument,
+				revisionId = nextRevision,
+				snapshotHash = nextRevision,
+				summary = summary,
+				actor = "agent",
+				taskId = taskId,
+			)
+		}
+		scheduleHistoryPersistence(projectId, tree)
+		viewModel.loadAgentWorkspacePreview(preview)
+		AgentWorkspaceMutationResult(
+			historyNodeId = selection.node.id,
+			revisionId = nextRevision,
+			affectedLayerIds = emptyList(),
+			summary = summary,
+			affectedObjectIds = listOf(affectedObjectId),
 		)
 	}
 

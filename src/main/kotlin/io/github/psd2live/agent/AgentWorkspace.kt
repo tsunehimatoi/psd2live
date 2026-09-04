@@ -107,9 +107,10 @@ data class AgentAddLayerRequest(
 data class AgentWorkspaceMutationResult(
 	val historyNodeId: String,
 	val revisionId: String,
-	val affectedLayerIds: List<String>,
+	val affectedLayerIds: List<String> = emptyList(),
 	val summary: String,
 	val affectedParameterIds: List<String> = emptyList(),
+	val affectedObjectIds: List<String> = emptyList(),
 )
 
 data class AgentCreateParameterRequest(
@@ -135,6 +136,107 @@ data class AgentUpdateParameterRequest(
 	val kind: String? = null,
 	val repeat: Boolean? = null,
 	val taskId: String? = null,
+)
+
+data class AgentKeyformTargetRef(
+	val kind: String,
+	val id: String,
+	val secondaryId: String? = null,
+)
+
+data class AgentKeyformGeometry(
+	val controlPoints: List<Float>? = null,
+	val originX: Float? = null,
+	val originY: Float? = null,
+	val angle: Float? = null,
+	val scale: Float? = null,
+	val positionDeltas: List<Float>? = null,
+)
+
+data class AgentKeyformChannels(
+	val opacity: Float? = null,
+	val drawOrder: Float? = null,
+	val multiplyColor: List<Float>? = null,
+	val screenColor: List<Float>? = null,
+	val glueIntensity: Float? = null,
+	val flipX: Boolean? = null,
+	val flipY: Boolean? = null,
+)
+
+data class AgentKeyformSetRequest(
+	val expectedHistoryHeadNodeId: String,
+	val target: AgentKeyformTargetRef,
+	val coordinate: Map<String, Float>,
+	val geometry: AgentKeyformGeometry? = null,
+	val channels: AgentKeyformChannels? = null,
+	val taskId: String? = null,
+)
+
+data class AgentKeyformDeleteRequest(
+	val expectedHistoryHeadNodeId: String,
+	val target: AgentKeyformTargetRef,
+	val parameterId: String,
+	val keyValue: Float? = null,
+	val channel: String? = null,
+	val taskId: String? = null,
+)
+
+data class AgentKeyformCopyRequest(
+	val expectedHistoryHeadNodeId: String,
+	val sourceTarget: AgentKeyformTargetRef,
+	val sourceCoordinate: Map<String, Float>,
+	val destinationTarget: AgentKeyformTargetRef? = null,
+	val destinationCoordinate: Map<String, Float>,
+	val channels: List<String>? = null,
+	val taskId: String? = null,
+)
+
+data class AgentRigKPoseRequest(
+	val expectedHistoryHeadNodeId: String,
+	val target: AgentKeyformTargetRef,
+	val parameters: Map<String, Float>,
+	val geometry: AgentKeyformGeometry? = null,
+	val channels: AgentKeyformChannels? = null,
+	val taskId: String? = null,
+)
+
+data class AgentObjectAxisSnapshot(
+	val parameterId: String,
+	val keys: List<Float>,
+)
+
+data class AgentObjectCellSnapshot(
+	val coordinate: Map<String, Float>,
+	val controlPoints: List<Float>? = null,
+	val originX: Float? = null,
+	val originY: Float? = null,
+	val angle: Float? = null,
+	val scale: Float? = null,
+	val positionDeltas: List<Float>? = null,
+)
+
+data class AgentObjectGeometrySnapshot(
+	val axes: List<AgentObjectAxisSnapshot>,
+	val keyformCount: Int,
+	val cells: List<AgentObjectCellSnapshot>,
+)
+
+data class AgentObjectChannelTrackSnapshot(
+	val channel: String,
+	val staticValue: String,
+	val axes: List<AgentObjectAxisSnapshot>,
+	val keyformCount: Int,
+)
+
+data class AgentObjectSnapshot(
+	val target: AgentKeyformTargetRef,
+	val name: String,
+	val parentId: String?,
+	val partId: String?,
+	val visible: Boolean,
+	val topologyInfo: Map<String, String> = emptyMap(),
+	val geometry: AgentObjectGeometrySnapshot? = null,
+	val channels: List<AgentObjectChannelTrackSnapshot> = emptyList(),
 )
 
 enum class AgentTaskStatus {
@@ -312,6 +414,26 @@ interface AgentWorkspace {
 		expectedHistoryHeadNodeId: String,
 		taskId: String? = null,
 	): AgentWorkspaceMutationResult = throw UnsupportedOperationException("Parameter editing is not available")
+
+	/** Inspect a target drawable, deformer, part, or glue: topology, geometry, and keyforms. */
+	fun getObject(target: AgentKeyformTargetRef): AgentObjectSnapshot =
+		throw UnsupportedOperationException("Object inspection is not available")
+
+	/** Set or update keyform geometry and/or channels at an exact N-D parameter coordinate. */
+	suspend fun setKeyform(request: AgentKeyformSetRequest): AgentWorkspaceMutationResult =
+		throw UnsupportedOperationException("Keyform editing is not available")
+
+	/** Delete a keyform key or parameter axis from a target. */
+	suspend fun deleteKeyform(request: AgentKeyformDeleteRequest): AgentWorkspaceMutationResult =
+		throw UnsupportedOperationException("Keyform editing is not available")
+
+	/** Copy keyform geometry and channels from source coordinate to destination coordinate. */
+	suspend fun copyKeyform(request: AgentKeyformCopyRequest): AgentWorkspaceMutationResult =
+		throw UnsupportedOperationException("Keyform editing is not available")
+
+	/** Capture the current pose deformation as a keyform (K rig). */
+	suspend fun rigKPose(request: AgentRigKPoseRequest): AgentWorkspaceMutationResult =
+		throw UnsupportedOperationException("Rig K pose is not available")
 
 	/** Move workspace HEAD to an immutable prior snapshot and rebuild the editable preview. */
 	suspend fun checkoutHistory(nodeId: String): AgentWorkspaceMutationResult =

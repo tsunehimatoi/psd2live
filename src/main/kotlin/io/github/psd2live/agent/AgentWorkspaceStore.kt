@@ -3,7 +3,14 @@ package io.github.psd2live.agent
 import io.github.psd2live.core.LayerClassificationOverride
 import io.github.psd2live.core.LayerType
 import io.github.psd2live.core.RigEditOverlay
+import io.github.psd2live.core.RigKeyformChannelsEdit
+import io.github.psd2live.core.RigKeyformCopyEdit
+import io.github.psd2live.core.RigKeyformDeleteEdit
+import io.github.psd2live.core.RigKeyformGeometryEdit
+import io.github.psd2live.core.RigKeyformSetEdit
 import io.github.psd2live.core.RigParameterEdit
+import io.github.psd2live.core.RigTargetKind
+import io.github.psd2live.core.RigTargetRef
 import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.Side
 import io.github.psd2live.history.WorkspaceHistoryNode
@@ -317,6 +324,80 @@ internal class AgentWorkspaceStore(
 			putJsonArray("deletedParameterIds") {
 				document.rigEdits.deletedParameterIds.sorted().forEach { add(JsonPrimitive(it)) }
 			}
+			putJsonArray("keyformSets") {
+				document.rigEdits.keyformSetEdits.forEach { set ->
+					add(buildJsonObject {
+						putJsonObject("target") {
+							put("kind", set.target.kind.name)
+							put("id", set.target.id)
+							set.target.secondaryId?.let { put("secondaryId", it) }
+						}
+						putJsonObject("coordinate") {
+							set.coordinate.toSortedMap().forEach { (k, v) -> put(k, v) }
+						}
+						set.geometry?.let { geo ->
+							putJsonObject("geometry") {
+								geo.controlPoints?.let { pts -> putJsonArray("controlPoints") { pts.forEach { add(JsonPrimitive(it)) } } }
+								geo.originX?.let { put("originX", it) }
+								geo.originY?.let { put("originY", it) }
+								geo.angle?.let { put("angle", it) }
+								geo.scale?.let { put("scale", it) }
+								geo.positionDeltas?.let { deltas -> putJsonArray("positionDeltas") { deltas.forEach { add(JsonPrimitive(it)) } } }
+							}
+						}
+						set.channels?.let { ch ->
+							putJsonObject("channels") {
+								ch.opacity?.let { put("opacity", it) }
+								ch.drawOrder?.let { put("drawOrder", it) }
+								ch.multiplyColor?.let { c -> putJsonArray("multiplyColor") { c.forEach { add(JsonPrimitive(it)) } } }
+								ch.screenColor?.let { c -> putJsonArray("screenColor") { c.forEach { add(JsonPrimitive(it)) } } }
+								ch.glueIntensity?.let { put("glueIntensity", it) }
+								ch.flipX?.let { put("flipX", it) }
+								ch.flipY?.let { put("flipY", it) }
+							}
+						}
+					})
+				}
+			}
+			putJsonArray("keyformDeletes") {
+				document.rigEdits.keyformDeleteEdits.forEach { del ->
+					add(buildJsonObject {
+						putJsonObject("target") {
+							put("kind", del.target.kind.name)
+							put("id", del.target.id)
+							del.target.secondaryId?.let { put("secondaryId", it) }
+						}
+						put("parameterId", del.parameterId)
+						del.keyValue?.let { put("keyValue", it) }
+						del.channel?.let { put("channel", it) }
+					})
+				}
+			}
+			putJsonArray("keyformCopies") {
+				document.rigEdits.keyformCopyEdits.forEach { copy ->
+					add(buildJsonObject {
+						putJsonObject("sourceTarget") {
+							put("kind", copy.sourceTarget.kind.name)
+							put("id", copy.sourceTarget.id)
+							copy.sourceTarget.secondaryId?.let { put("secondaryId", it) }
+						}
+						putJsonObject("sourceCoordinate") {
+							copy.sourceCoordinate.toSortedMap().forEach { (k, v) -> put(k, v) }
+						}
+						putJsonObject("destinationTarget") {
+							put("kind", copy.destinationTarget.kind.name)
+							put("id", copy.destinationTarget.id)
+							copy.destinationTarget.secondaryId?.let { put("secondaryId", it) }
+						}
+						putJsonObject("destinationCoordinate") {
+							copy.destinationCoordinate.toSortedMap().forEach { (k, v) -> put(k, v) }
+						}
+						copy.channels?.let { chList ->
+							putJsonArray("channels") { chList.forEach { add(JsonPrimitive(it)) } }
+						}
+					})
+				}
+			}
 		}
 	}
 
@@ -395,6 +476,72 @@ internal class AgentWorkspaceStore(
 				)
 			},
 			deletedParameterIds = rigEditObject.optionalArray("deletedParameterIds").map { it.jsonPrimitive.content }.toSet(),
+			keyformSetEdits = rigEditObject.optionalArray("keyformSets").map { element ->
+				val obj = element.jsonObject
+				val targetObj = obj.requiredObject("target")
+				val coordObj = obj.requiredObject("coordinate")
+				val geoObj = obj.optionalObject("geometry")
+				val chObj = obj.optionalObject("channels")
+				RigKeyformSetEdit(
+					target = RigTargetRef(
+						kind = enumValue(targetObj.requiredString("kind")),
+						id = targetObj.requiredString("id"),
+						secondaryId = targetObj.optionalString("secondaryId"),
+					),
+					coordinate = coordObj.mapValues { it.value.jsonPrimitive.floatOrNull ?: 0f },
+					geometry = if (geoObj.isEmpty()) null else RigKeyformGeometryEdit(
+						controlPoints = geoObj.optionalArray("controlPoints").mapNotNull { it.jsonPrimitive.floatOrNull }.takeIf { it.isNotEmpty() },
+						originX = geoObj.optionalFloat("originX"),
+						originY = geoObj.optionalFloat("originY"),
+						angle = geoObj.optionalFloat("angle"),
+						scale = geoObj.optionalFloat("scale"),
+						positionDeltas = geoObj.optionalArray("positionDeltas").mapNotNull { it.jsonPrimitive.floatOrNull }.takeIf { it.isNotEmpty() },
+					),
+					channels = if (chObj.isEmpty()) null else RigKeyformChannelsEdit(
+						opacity = chObj.optionalFloat("opacity"),
+						drawOrder = chObj.optionalFloat("drawOrder"),
+						multiplyColor = chObj.optionalArray("multiplyColor").mapNotNull { it.jsonPrimitive.floatOrNull }.takeIf { it.isNotEmpty() },
+						screenColor = chObj.optionalArray("screenColor").mapNotNull { it.jsonPrimitive.floatOrNull }.takeIf { it.isNotEmpty() },
+						glueIntensity = chObj.optionalFloat("glueIntensity"),
+						flipX = chObj.optionalBoolean("flipX"),
+						flipY = chObj.optionalBoolean("flipY"),
+					),
+				)
+			},
+			keyformDeleteEdits = rigEditObject.optionalArray("keyformDeletes").map { element ->
+				val obj = element.jsonObject
+				val targetObj = obj.requiredObject("target")
+				RigKeyformDeleteEdit(
+					target = RigTargetRef(
+						kind = enumValue(targetObj.requiredString("kind")),
+						id = targetObj.requiredString("id"),
+						secondaryId = targetObj.optionalString("secondaryId"),
+					),
+					parameterId = obj.requiredString("parameterId"),
+					keyValue = obj.optionalFloat("keyValue"),
+					channel = obj.optionalString("channel"),
+				)
+			},
+			keyformCopyEdits = rigEditObject.optionalArray("keyformCopies").map { element ->
+				val obj = element.jsonObject
+				val sourceTargetObj = obj.requiredObject("sourceTarget")
+				val destTargetObj = obj.requiredObject("destinationTarget")
+				RigKeyformCopyEdit(
+					sourceTarget = RigTargetRef(
+						kind = enumValue(sourceTargetObj.requiredString("kind")),
+						id = sourceTargetObj.requiredString("id"),
+						secondaryId = sourceTargetObj.optionalString("secondaryId"),
+					),
+					sourceCoordinate = obj.requiredObject("sourceCoordinate").mapValues { it.value.jsonPrimitive.floatOrNull ?: 0f },
+					destinationTarget = RigTargetRef(
+						kind = enumValue(destTargetObj.requiredString("kind")),
+						id = destTargetObj.requiredString("id"),
+						secondaryId = destTargetObj.optionalString("secondaryId"),
+					),
+					destinationCoordinate = obj.requiredObject("destinationCoordinate").mapValues { it.value.jsonPrimitive.floatOrNull ?: 0f },
+					channels = obj.optionalArray("channels").map { it.jsonPrimitive.content }.takeIf { it.isNotEmpty() },
+				)
+			},
 		)
 		return AgentWorkspaceDocument(
 			source = WorkspaceSourceArt(value.requiredInt("canvasWidth"), value.requiredInt("canvasHeight"), layers, groups),
@@ -586,3 +733,5 @@ private fun JsonObject.requiredBoolean(name: String): Boolean = this[name]?.json
 private fun JsonObject.requiredObject(name: String): JsonObject = this[name]?.jsonObject ?: AgentWorkspaceStore.invalid(name)
 private fun JsonObject.optionalObject(name: String): JsonObject = this[name]?.jsonObject ?: JsonObject(emptyMap())
 private fun JsonObject.optionalArray(name: String): JsonArray = this[name]?.jsonArray ?: JsonArray(emptyList())
+private fun JsonObject.optionalFloat(name: String): Float? = this[name]?.jsonPrimitive?.floatOrNull
+private fun JsonObject.optionalBoolean(name: String): Boolean? = this[name]?.jsonPrimitive?.booleanOrNull

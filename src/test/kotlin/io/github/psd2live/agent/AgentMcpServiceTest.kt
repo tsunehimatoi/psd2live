@@ -91,6 +91,11 @@ class AgentMcpServiceTest {
 			"parameter_create",
 			"parameter_update",
 			"parameter_delete",
+			"object_get",
+			"keyform_set",
+			"keyform_delete",
+			"keyform_copy",
+			"rig_k_pose",
 			"history_list",
 			"history_checkout",
 			"task_start",
@@ -109,6 +114,7 @@ class AgentMcpServiceTest {
 			"project_get_state",
 			"project_list_layers",
 			"project_list_parameters",
+			"object_get",
 			"history_list",
 			"task_get",
 			"task_list",
@@ -199,9 +205,134 @@ class AgentMcpServiceTest {
 		assertTrue(text.contains("occlusion", ignoreCase = true))
 	}
 
+	@Test
+	fun `calls object and keyform editing tools`() = runBlocking {
+		val getResult = client.callTool(
+			name = "object_get",
+			arguments = mapOf("kind" to "mesh", "id" to "hair-front"),
+		)
+		assertEquals(AgentKeyformTargetRef("mesh", "hair-front"), workspace.lastObjectTarget)
+		val getJson = getResult.structuredContent?.jsonObject
+		assertEquals("Hair Front", getJson?.get("name")?.jsonPrimitive?.content)
+
+		val setResult = client.callTool(
+			name = "keyform_set",
+			arguments = mapOf(
+				"expected_history_head_node_id" to "node-0",
+				"target" to mapOf("kind" to "warp", "id" to "warp_head"),
+				"coordinate" to mapOf("ParamAngleX" to 1.0),
+				"geometry" to mapOf("control_points" to listOf(0.0, 1.0)),
+				"channels" to mapOf("opacity" to 0.8),
+			),
+		)
+		val setJson = setResult.structuredContent?.jsonObject
+		assertEquals("node-1", setJson?.get("historyNodeId")?.jsonPrimitive?.content)
+		assertEquals(AgentKeyformTargetRef("warp", "warp_head"), workspace.lastKeyformSet?.target)
+		assertEquals(mapOf("ParamAngleX" to 1f), workspace.lastKeyformSet?.coordinate)
+		assertEquals(listOf(0f, 1f), workspace.lastKeyformSet?.geometry?.controlPoints)
+		assertEquals(0.8f, workspace.lastKeyformSet?.channels?.opacity)
+
+		val copyResult = client.callTool(
+			name = "keyform_copy",
+			arguments = mapOf(
+				"expected_history_head_node_id" to "node-1",
+				"source_target" to mapOf("kind" to "warp", "id" to "warp_head"),
+				"source_coordinate" to mapOf("ParamAngleX" to -1.0),
+				"destination_coordinate" to mapOf("ParamAngleX" to 1.0),
+			),
+		)
+		val copyJson = copyResult.structuredContent?.jsonObject
+		assertEquals("node-3", copyJson?.get("historyNodeId")?.jsonPrimitive?.content)
+		assertEquals(mapOf("ParamAngleX" to -1f), workspace.lastKeyformCopy?.sourceCoordinate)
+		assertEquals(mapOf("ParamAngleX" to 1f), workspace.lastKeyformCopy?.destinationCoordinate)
+
+		val deleteResult = client.callTool(
+			name = "keyform_delete",
+			arguments = mapOf(
+				"expected_history_head_node_id" to "node-2",
+				"target" to mapOf("kind" to "warp", "id" to "warp_head"),
+				"parameter_id" to "ParamAngleX",
+				"key_value" to 1.0,
+			),
+		)
+		val deleteJson = deleteResult.structuredContent?.jsonObject
+		assertEquals("node-2", deleteJson?.get("historyNodeId")?.jsonPrimitive?.content)
+		assertEquals("ParamAngleX", workspace.lastKeyformDelete?.parameterId)
+		assertEquals(1.0f, workspace.lastKeyformDelete?.keyValue)
+
+		val rigPoseResult = client.callTool(
+			name = "rig_k_pose",
+			arguments = mapOf(
+				"expected_history_head_node_id" to "node-3",
+				"target" to mapOf("kind" to "mesh", "id" to "hair-front"),
+				"parameters" to mapOf("ParamAngleX" to 15.0),
+			),
+		)
+		val rigJson = rigPoseResult.structuredContent?.jsonObject
+		assertEquals("node-4", rigJson?.get("historyNodeId")?.jsonPrimitive?.content)
+		assertEquals(mapOf("ParamAngleX" to 15.0f), workspace.lastRigKPose?.parameters)
+	}
+
 	private class FakeAgentWorkspace : AgentWorkspace {
 		var lastRenderedLayer: String? = null
 		var lastModelRequest: AgentModelViewRequest? = null
+		var lastObjectTarget: AgentKeyformTargetRef? = null
+		var lastKeyformSet: AgentKeyformSetRequest? = null
+		var lastKeyformDelete: AgentKeyformDeleteRequest? = null
+		var lastKeyformCopy: AgentKeyformCopyRequest? = null
+		var lastRigKPose: AgentRigKPoseRequest? = null
+
+		override fun getObject(target: AgentKeyformTargetRef): AgentObjectSnapshot {
+			lastObjectTarget = target
+			return AgentObjectSnapshot(
+				target = target,
+				name = "Hair Front",
+				parentId = "warp_head",
+				partId = "part_hair",
+				visible = true,
+				topologyInfo = mapOf("kind" to target.kind),
+			)
+		}
+
+		override suspend fun setKeyform(request: AgentKeyformSetRequest): AgentWorkspaceMutationResult {
+			lastKeyformSet = request
+			return AgentWorkspaceMutationResult(
+				historyNodeId = "node-1",
+				revisionId = "rev-1",
+				summary = "Set keyform",
+				affectedObjectIds = listOf(request.target.id),
+			)
+		}
+
+		override suspend fun deleteKeyform(request: AgentKeyformDeleteRequest): AgentWorkspaceMutationResult {
+			lastKeyformDelete = request
+			return AgentWorkspaceMutationResult(
+				historyNodeId = "node-2",
+				revisionId = "rev-2",
+				summary = "Delete keyform",
+				affectedObjectIds = listOf(request.target.id),
+			)
+		}
+
+		override suspend fun copyKeyform(request: AgentKeyformCopyRequest): AgentWorkspaceMutationResult {
+			lastKeyformCopy = request
+			return AgentWorkspaceMutationResult(
+				historyNodeId = "node-3",
+				revisionId = "rev-3",
+				summary = "Copy keyform",
+				affectedObjectIds = listOf(request.sourceTarget.id),
+			)
+		}
+
+		override suspend fun rigKPose(request: AgentRigKPoseRequest): AgentWorkspaceMutationResult {
+			lastRigKPose = request
+			return AgentWorkspaceMutationResult(
+				historyNodeId = "node-4",
+				revisionId = "rev-4",
+				summary = "Rig K pose",
+				affectedObjectIds = listOf(request.target.id),
+			)
+		}
 
 		override fun snapshot() = AgentProjectSnapshot(
 			projectId = "project-test",
