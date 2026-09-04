@@ -36,72 +36,75 @@ fun buildInstallationPrompt(
 ): String {
 	val proxyPath = "$projectDir/mcp_proxy.py"
 	val skillsPath = "$projectDir/.agent/skills"
+	val connectionInfo = AgentMcpConnectionInfo(endpoint, token)
+	val codexToml = connectionInfo.configToml
+	val geminiJson = connectionInfo.configGeminiJson
 
 	return when (language) {
 		AppLanguage.CHINESE -> """
-请将 PSD2Live 的 MCP 服务和 Live2D 绑骨技能 (Skill) 安装并配置到你自身环境中（系统级全局或当前应用/工作区）：
+请配置 PSD2Live MCP。PSD2Live 桌面应用必须保持运行。
 
-1. 配置 MCP 服务 (系统级或应用级)：
-   根据你的运行环境（如 Claude Desktop、Cursor、Antigravity、Windsurf、Cline / Roo Code 等），将 PSD2Live 添加到对应的 MCP 配置文件中：
-   - 方式一：SSE / HTTP 直连 (推荐)
-     - 名称: psd2live
-     - URL: $endpoint
-     - Headers: {"Authorization": "Bearer $token"}
-   - 方式二：Stdio 代理 (若环境仅支持 stdio 命令方式)
-     - 名称: psd2live
-     - 命令: python
-     - 参数: ["$proxyPath"]
+优先使用宿主原生支持的 Streamable HTTP：
 
-2. 安装工作区技能 (Skill)：
-   将本项目自带的 Live2D 自动化技能复制或链接至你的技能目录（如系统级 ~/.gemini/antigravity/skills/ 或 Cursor Rules / 项目技能库），以便自主调用绑骨与分层工具：
-   - $skillsPath/psd2live-rigging
-   - $skillsPath/hair-separation
+ChatGPT 桌面版 / Codex CLI / Codex IDE：将下列配置合并到 ~/.codex/config.toml（或受信任项目的 .codex/config.toml），保存后重启客户端并用 /mcp 检查连接：
+$codexToml
 
-请检测你当前所在的 Agent 宿主环境与配置文件位置，自动完成上述 MCP 与 Skill 的安装与配置。
+Gemini / Antigravity：将下列 psd2live 条目合并到 ~/.gemini/config/mcp_config.json，刷新 MCP Servers 并检查工具列表：
+$geminiJson
+
+其他支持 Streamable HTTP 的宿主：使用端点 $endpoint，并发送请求头 Authorization: Bearer $token。不要改成旧的 /sse 端点。
+
+技能安装：将以下目录复制到宿主官方的技能目录（例如 ~/.codex/skills/、~/.gemini/config/skills/ 或项目级技能目录）：
+- $skillsPath/psd2live-rigging
+- $skillsPath/hair-separation
+
+仅当宿主不支持 HTTP MCP 时，才使用 stdio 后备：python "$proxyPath"。代理会读取 PSD2LIVE_MCP_TOKEN，或在 Windows 上读取 PSD2Live 保存的令牌。
+
+修改前备份并合并配置，不要覆盖其他服务器，也不要修改任何宿主的程序文件、内部 RPC 或会话数据库。连接后先列出工具并读取 project_get_state。超时或断线后不要盲目重试写操作；重新连接并用 project_get_state/history_list 核对是否已提交。
 """.trimIndent()
 
 		AppLanguage.JAPANESE -> """
-PSD2Live の MCP サーバーおよび Live2D リギングスキル (Skill) を自身（システム全体または現在のアプリ／ワークスペース）にインストール・設定してください：
+PSD2Live MCP を設定してください。PSD2Live デスクトップアプリは起動したままにします。
 
-1. MCP サーバーの追加（システムまたはアプリレベル）：
-   ご利用のクライアント環境（Claude Desktop、Cursor、Antigravity、Windsurf、Cline / Roo Code など）の MCP 設定ファイルに追加してください：
-   - 方式 1: SSE / HTTP 直結（推奨）
-     - 名前: psd2live
-     - URL: $endpoint
-     - ヘッダー: {"Authorization": "Bearer $token"}
-   - 方式 2: Stdio プロキシ（stdio コマンドのみ対応の場合）
-     - 名前: psd2live
-     - コマンド: python
-     - 引数: ["$proxyPath"]
+ホストがネイティブ対応する Streamable HTTP を優先します。
 
-2. スキル (Skill) のインストール：
-   本プロジェクト付属の Live2D 自動リギングスキルを、ご自身のスキルディレクトリ（システム全体 ~/.gemini/antigravity/skills/ や Cursor / Claude ルール等）にコピーまたはリンクして有効化してください：
-   - $skillsPath/psd2live-rigging
-   - $skillsPath/hair-separation
+ChatGPT デスクトップ / Codex CLI / Codex IDE：次の設定を ~/.codex/config.toml（または信頼済みプロジェクトの .codex/config.toml）へマージし、クライアントを再起動して /mcp で接続を確認します：
+$codexToml
 
-現在のクライアント種別と設定ファイルのパスを判別し、上記 MCP とスキルのインストールを自動実行してください。
+Gemini / Antigravity：次の psd2live エントリを ~/.gemini/config/mcp_config.json へマージし、MCP Servers を更新してツール一覧を確認します：
+$geminiJson
+
+その他の Streamable HTTP 対応ホスト：エンドポイント $endpoint と Authorization: Bearer $token ヘッダーを使用します。旧 /sse エンドポイントには変更しません。
+
+スキル：次のディレクトリをホスト公式のスキルディレクトリ（例：~/.codex/skills/、~/.gemini/config/skills/、プロジェクト単位のディレクトリ）へコピーします：
+- $skillsPath/psd2live-rigging
+- $skillsPath/hair-separation
+
+HTTP MCP 非対応のホストでのみ stdio フォールバック python "$proxyPath" を使用します。プロキシは PSD2LIVE_MCP_TOKEN、または Windows 上で PSD2Live が保存したトークンを読み込みます。
+
+変更前に設定をバックアップして既存エントリへマージし、ホストのプログラム、内部 RPC、会話データベースは変更しません。接続後はツールを列挙して project_get_state を読みます。タイムアウトや切断後に書き込みを盲目的に再試行せず、再接続後に project_get_state/history_list でコミット状態を照合します。
 """.trimIndent()
 
 		AppLanguage.ENGLISH -> """
-Please install and configure the PSD2Live MCP server and Live2D rigging skills into yourself (system-level global or application/workspace-level):
+Configure PSD2Live MCP. Keep the PSD2Live desktop application running.
 
-1. Install MCP Server (System or Application Level):
-   Based on your host environment (e.g., Claude Desktop, Cursor, Antigravity, Windsurf, Cline / Roo Code), add PSD2Live to your MCP configuration:
-   - Method 1: SSE / HTTP Direct (Recommended)
-     - Name: psd2live
-     - URL: $endpoint
-     - Headers: {"Authorization": "Bearer $token"}
-   - Method 2: Stdio Proxy (If only command/stdio is supported)
-     - Name: psd2live
-     - Command: python
-     - Args: ["$proxyPath"]
+Prefer the host's native Streamable HTTP support.
 
-2. Install Skills:
-   Copy or link the Live2D automation skills from this project into your skill directory (e.g., system-level ~/.gemini/antigravity/skills/, Cursor Rules, or workspace rules) so they can be invoked automatically:
-   - $skillsPath/psd2live-rigging
-   - $skillsPath/hair-separation
+ChatGPT desktop / Codex CLI / Codex IDE: merge this into ~/.codex/config.toml (or .codex/config.toml in a trusted project), restart the client, and verify the connection with /mcp:
+$codexToml
 
-Please inspect your agent host environment and configuration file paths, then automatically complete the installation and setup for both the MCP server and skills.
+Gemini / Antigravity: merge this psd2live entry into ~/.gemini/config/mcp_config.json, refresh MCP Servers, and verify that the tool list loads:
+$geminiJson
+
+Other Streamable HTTP hosts: use endpoint $endpoint with the header Authorization: Bearer $token. Do not change it to the legacy /sse endpoint.
+
+Skills: copy these directories to the host's documented skill location, such as ~/.codex/skills/, ~/.gemini/config/skills/, or a project-scoped skill directory:
+- $skillsPath/psd2live-rigging
+- $skillsPath/hair-separation
+
+Use the stdio fallback, python "$proxyPath", only for hosts without HTTP MCP support. The proxy reads PSD2LIVE_MCP_TOKEN or, on Windows, the token saved by PSD2Live.
+
+Back up and merge configuration without replacing other servers. Do not modify any host's program files, internal RPCs, or conversation database. After connecting, list tools and read project_get_state. Never blindly retry a write after a timeout or disconnect; reconnect and reconcile project_get_state/history_list first.
 """.trimIndent()
 	}
 }
@@ -129,8 +132,9 @@ fun AgentConnectionDialog(
 			.getOrDefault(System.getProperty("user.dir")?.replace('\\', '/') ?: ".")
 	}
 	val proxyPath = "$projectDir/mcp_proxy.py"
-	val endpoint = connection?.endpoint ?: "http://127.0.0.1:23871/sse"
+	val endpoint = connection?.endpoint ?: "http://127.0.0.1:23871/mcp"
 	val token = connection?.token ?: ""
+	val geminiJson = remember(connection) { connection?.configGeminiJson.orEmpty() }
 
 	val stdioJson = remember(connection, proxyPath) {
 		"""
@@ -354,17 +358,17 @@ fun AgentConnectionDialog(
 							}
 						}
 
-						// TOML Config
+						// ChatGPT desktop / Codex HTTP Config
 						Column {
 							Row(
 								modifier = Modifier.fillMaxWidth(),
 								verticalAlignment = Alignment.CenterVertically,
 								horizontalArrangement = Arrangement.SpaceBetween,
 							) {
-								Text("Codex / Antigravity Config (TOML):", style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted)
+								Text(tr("dialog.agent.configCodex"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted)
 								CompactButton(
 									text = tr("dialog.agent.copyToml"),
-									onClick = { copyToClipboard(connection.configToml, "TOML") },
+									onClick = { copyToClipboard(connection.configToml, "ChatGPT / Codex TOML") },
 									height = 20.dp,
 									isPrimary = true,
 								)
@@ -385,6 +389,36 @@ fun AgentConnectionDialog(
 							}
 						}
 
+						// Gemini / Antigravity HTTP Config
+						Column {
+							Row(
+								modifier = Modifier.fillMaxWidth(),
+								verticalAlignment = Alignment.CenterVertically,
+								horizontalArrangement = Arrangement.SpaceBetween,
+							) {
+								Text(tr("dialog.agent.configGemini"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted)
+								CompactButton(
+									text = tr("dialog.agent.copyHttpJson"),
+									onClick = { copyToClipboard(geminiJson, "Gemini / Antigravity JSON") },
+									height = 20.dp,
+								)
+							}
+							Spacer(Modifier.height(3.dp))
+							Box(
+								modifier = Modifier
+									.fillMaxWidth()
+									.background(Color(0xFF141416), RoundedCornerShape(3.dp))
+									.border(BorderStroke(1.dp, colors.divider), RoundedCornerShape(3.dp))
+									.padding(8.dp),
+							) {
+								Text(
+									text = geminiJson,
+									style = typography.mono.copy(fontSize = 10.sp, lineHeight = 14.sp),
+									color = Color(0xFF9CDCFE),
+								)
+							}
+						}
+
 						// Stdio Proxy JSON Config
 						Column {
 							Row(
@@ -392,9 +426,9 @@ fun AgentConnectionDialog(
 								verticalAlignment = Alignment.CenterVertically,
 								horizontalArrangement = Arrangement.SpaceBetween,
 							) {
-								Text("Claude Desktop / Cursor Config (Stdio Proxy JSON):", style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted)
+								Text(tr("dialog.agent.configStdio"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted)
 								CompactButton(
-									text = tr("dialog.agent.copyJson"),
+									text = tr("dialog.agent.copyStdioJson"),
 									onClick = { copyToClipboard(stdioJson, "JSON") },
 									height = 20.dp,
 								)
@@ -488,4 +522,3 @@ fun AgentConnectionDialog(
 		}
 	}
 }
-

@@ -1,52 +1,39 @@
-# Hair Separation Skill
+# Hair Separation
 
-Use this skill when the user asks to split bangs, side hair, back hair, ponytails, or another compound hair layer into independently deformable pieces.
+Produce editable pieces through a non-destructive workflow. They must follow natural strand boundaries, remain complete behind neighbouring layers, keep stable roots, and accept independent meshes, deformers, parameters, and physics. Source preservation and occlusion completion are part of the result.
 
-## Goal
+## Establish state and evidence
 
-Produce editable hair pieces that follow natural strand boundaries, remain visually complete behind their neighbours, have stable roots, and can receive independent mesh, Warp Deformer, parameter, and Physics bindings.
-The entire workflow is non-destructive: every derived asset must retain its source and be removable as one undoable transaction.
-Occlusion order and hidden-area completion are part of the deliverable, not optional visual polish.
+- Discover the host and MCP capabilities rather than assuming a provider or tool name. Read `project_get_state` and `project_list_layers`, wait for restoration to finish, and identify targets by stable IDs.
+- For multi-step work, create a task with `task_start` and persist decisions, View IDs, asset IDs, derived layer IDs, and history nodes with `task_update`.
+- Inspect each target through `view_render_layer` and one or more focused `view_render_context` calls. Use `view_render_model` only when the full composition or a pose answers a concrete question.
+- Use `object_get` to determine whether the source is already split, keyed, masked, clipped, meshed, deformed, glued, or bound to physics. Identify strand direction, anatomical root, depth order, visible overlap, and missing occluded pixels.
 
-## Required evidence before editing
+## Reconstruct painted structure
 
-- Start a long task with your own plan and update it as visual evidence changes; task checkpoints are coordination records, not approval gates.
-- Read the current project and layer tree; identify targets by stable IDs rather than names alone.
-- Inspect each target as an isolated transparent PNG and in one or more focused context Views. Choose an object-relative scale below 1 when surrounding hair, face, and roots are needed; request the full character only when it answers a specific question.
-- Check whether the source is already split, keyed, masked, clipped, meshed, deformed, or bound to physics.
-- Determine the natural strand direction, root region, depth order, visible overlap, and missing occluded pixels.
+- Use the executing host's native reference-conditioned image generation or editing/inpainting capability. ChatGPT/Codex image tooling such as GPT Image 2 (`gpt-image-2`), Gemini/Antigravity image tooling, and equivalent capabilities from other hosts are all first-class routes; choose whichever capability is actually available.
+- Provide isolated and context Views as references, preserve the source style, and request transparent PNG output when supported. Do not depend on a hard-coded host-side image tool name.
+- Fully continue an occluded strand's curvature, volume, taper, texture, highlights, and root underneath the foreground piece. Keep the foreground contour self-contained and paint only intentional contact shading.
+- Never fake hidden structure with mask dilation, neighbouring-pixel smearing, repeated texture, or procedural vector/polygon drawing. If suitable image editing is unavailable, report the missing capability and stop at the last reversible state.
 
-## Planning constraints
+## Import without spatial drift
 
-- **Mandatory AI Image Inpainting (Multi-Agent Standard)**:
-  - Whichever AI agent platform is executing this skill (Google Gemini / Antigravity with `generate_image`, OpenAI ChatGPT with DALL-E / GPT-4o Image, Claude with sidecars, or custom diffusion APIs):
-  - The Agent MUST use its available multimodal AI image generation or inpainting tools conditioned on reference views (`view_render_layer` / `view_render_context` exports) to synthesize and inpaint occluded hair structures.
-  - Never substitute true strand completion with naive mask dilation or superficial reuse of neighboring surface pixels ("pseudo-overlap").
-- **True Crossing & Occlusion Completion (交叉穿插结构重绘)**:
-  - When hair strands cross (e.g. side hair emerging from beneath center bangs), the occluded strand MUST be fully reconstructed:
-    1. Continue the strand's natural 3D curvature, volume, and tapering back to its anatomical root under the overlapping piece.
-    2. Inpaint the complete hair texture, highlights, and contact ambient occlusion (AO) shadow beneath the crossing point.
-    3. Ensure the overlapping piece has clean, self-contained contour outlines and wrap-around back curvature.
-- Preserve the source layer and create derived layers. Removing the source from the working composition must be a reversible soft delete.
-- Preserve every source View's spatial reference. Generated PNG resolution may differ, but adding a derived piece must map it through pixel-to-canvas coordinates so its canvas position and size do not change. Never silently stretch an aspect-ratio mismatch.
-- Stage every generated piece with `asset_import_png`, using the originating `spatial_reference_id` and a `source_pixel_rect` only when the output represents a declared crop of that View. Add it with `layer_add_from_asset` and the current `expected_history_head_node_id`.
-- Prefer natural painted boundaries over equal-width slices.
-- Do not invent a preset for an unsupported shape. Keep unsupported pieces under the nearest reliable parent and mark them unknown.
-- Never remesh an object with keyforms unless all keyforms, glue, masks, and bindings can be transferred and validated.
-- Use tools to create pixels, masks, mesh, deformers, and physics. Do not simulate pixel or geometry edits in prose.
-- In the current build, adding a PNG runs the normal mesh/rig rebuild and soft deletion is reversible. Keyform editing and deformers can be authored via `keyform_set`, `keyform_copy`, `keyform_delete`, and `rig_k_pose`.
+- Preserve the originating View's `spatialReferenceId`. Output resolution may differ, but its pixel-to-canvas mapping, position, size, and aspect ratio must remain explicit.
+- Prefer transparent output. If background removal is necessary, clean the alpha edge, defringe it, and avoid baked gray or black halos.
+- Import each piece through `asset_import_png`. Use `source_pixel_rect` only for a declared crop of the View, then call `layer_add_from_asset` with the current `expected_history_head_node_id`.
+- Keep each asset tightly cropped enough for dense contour-following mesh generation. Verify placement and topology with a context View and `object_get`.
+- Preserve the source layer. Soft-delete it with `layer_soft_delete` only in a separate recoverable commit after all replacements are visibly correct.
 
-## Verification
+## Protect history and recover calls
 
-- Compare the neutral composite before and after separation.
-- **Isolated & Crossing Structure Inspection**:
-  - Individually inspect each transparent piece with adjacent foreground layers hidden (`include_layer_ids` or solo view). Verify that the hidden roots and crossing regions are fully painted, organic, and free of cut edges or repeated textures.
-- Inspect mesh flow and density before creating deformers. Verify that accessories and hair strands have dense, contour-hugging ArtMeshes.
-- Confirm every child mesh stays within its parent Warp at the full parameter range.
-- **Exaggerated Motion & Collision Check**:
-  - Test separated pieces under exaggerated sway poses (e.g. `ParamHairFront: ±1.0` or wide head angles) to ensure no holes, gaps, or tearing appear at the crossing points.
-- Complete only after every operation is recorded in history and the final views and validation report are available.
-- After adding all derived pieces, soft-delete the original in a separate recoverable commit only after a context View shows that placement and overlap are correct. Report the resulting history node IDs.
-- Attach every important View ID, staged asset ID, derived layer ID, and committed history node ID to the persisted task event log so work can continue across MCP reconnects and application restarts.
+- Refresh `historyHeadNodeId` before each mutation and use the returned history node as the next expected head.
+- On a stale-head error, refresh state/history and reconcile concurrent changes before issuing a new request.
+- Never blindly retry a mutation after a timeout or disconnect. Reconnect, inspect `project_get_state`, `history_list`, the task log, and affected objects to determine whether it committed. Only retry when evidence shows the intended change is absent. Read-only inspection/render calls may use a small bounded retry.
+- Never remesh a keyed object unless all keyforms, masks, glue, deformers, and bindings can be transferred and verified.
 
-If the available tools cannot produce or validate a required artifact, report the missing capability and stop at the last valid reversible state.
+## Verify
+
+- Compare the neutral composite before and after separation, then inspect every piece in isolation with foreground neighbours hidden.
+- Confirm hidden roots and crossing regions are complete, organic, and free of cut edges, repeated texture, gaps, alpha fringe, or unintended shadows.
+- Inspect mesh flow and density. Test exaggerated sway and head-angle poses with `view_render_model`; verify no holes or tearing appear and every child remains inside its parent deformer over the full range.
+- Complete only when validation Views and every committed history node are recorded in the task log.

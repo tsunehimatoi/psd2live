@@ -1,6 +1,8 @@
 package io.github.psd2live.agent
 
 import io.github.psd2live.core.Bounds
+import io.github.psd2live.i18n.AppLanguage
+import io.github.psd2live.ui.components.buildInstallationPrompt
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.defaultRequest
@@ -19,6 +21,7 @@ import io.modelcontextprotocol.kotlin.sdk.types.GetPromptRequestParams
 import io.modelcontextprotocol.kotlin.sdk.types.ImageContent
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -65,6 +68,42 @@ class AgentMcpServiceTest {
 		assertNotNull(client.serverCapabilities?.tools)
 		assertNotNull(client.serverCapabilities?.prompts)
 		assertNotNull(client.serverCapabilities?.resources)
+		val instructions = assertNotNull(client.serverInstructions)
+		val routingPreamble = instructions.take(512)
+		assertTrue(routingPreamble.contains("expected_history_head_node_id"))
+		assertTrue(routingPreamble.contains("Never blindly retry a mutation"))
+		assertTrue(instructions.contains("GPT Image 2"))
+		assertTrue(instructions.contains("Gemini/Antigravity"))
+	}
+
+	@Test
+	fun `emits native HTTP configs for Codex and Gemini hosts`() {
+		val config = Json.parseToJsonElement(service.connectionInfo.configGeminiJson).jsonObject
+		val server = config["mcpServers"]?.jsonObject?.get("psd2live")?.jsonObject
+		assertNotNull(server)
+		assertEquals(endpoint, server["serverUrl"]?.jsonPrimitive?.content)
+		assertEquals(
+			"Bearer $token",
+			server["headers"]?.jsonObject?.get("Authorization")?.jsonPrimitive?.content,
+		)
+		assertTrue("command" !in server)
+		assertTrue("/sse" !in service.connectionInfo.configGeminiJson)
+		assertTrue(service.connectionInfo.configToml.contains("url = \"$endpoint\""))
+		assertTrue(service.connectionInfo.configToml.contains("Authorization = \"Bearer $token\""))
+	}
+
+	@Test
+	fun `installation guide covers native HTTP hosts and stdio fallback`() {
+		AppLanguage.entries.forEach { language ->
+			val prompt = buildInstallationPrompt(endpoint, token, "D:/psd2live", language)
+			assertTrue(prompt.contains("ChatGPT"))
+			assertTrue(prompt.contains("Gemini"))
+			assertTrue(prompt.contains(endpoint))
+			assertTrue(prompt.contains("config.toml"))
+			assertTrue(prompt.contains("mcp_config.json"))
+			assertTrue(prompt.contains("mcp_proxy.py"))
+			assertTrue(prompt.contains("project_get_state"))
+		}
 	}
 
 	@Test

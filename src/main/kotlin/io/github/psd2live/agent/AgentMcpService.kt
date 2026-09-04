@@ -69,6 +69,29 @@ data class AgentMcpConnectionInfo(
 	val endpoint: String,
 	val token: String,
 ) {
+	val configGeminiJson: String
+		get() {
+			val endpointJson = JsonPrimitive(endpoint)
+			val authorizationJson = JsonPrimitive("Bearer $token")
+			return """
+				{
+				  "mcpServers": {
+				    "psd2live": {
+				      "serverUrl": $endpointJson,
+				      "headers": {
+				        "Authorization": $authorizationJson
+				      }
+				    }
+				  }
+				}
+			""".trimIndent()
+		}
+
+	// Kept for source compatibility with integrations created before the
+	// connection dialog exposed ChatGPT/Codex and Gemini as peer hosts.
+	val configAntigravityJson: String
+		get() = configGeminiJson
+
 	val configToml: String
 		get() = """
 			[mcp_servers.psd2live]
@@ -1623,5 +1646,11 @@ private val MUTATING = ToolAnnotations(
 )
 
 private val AGENT_INSTRUCTIONS = """
-	psd2live treats an authenticated Agent as the owner of the open workspace: every exposed workspace capability may be used without per-operation approval. The append-only persisted history store is the sole immutable boundary: inspect historyHeadNodeId, pass it to mutations, and use history_checkout rather than attempting to rewrite history. Read project_get_state before planning and wait while persistenceStatus is restoring. For multi-step work, call task_start with your own plan and keep task_update checkpoints current; task state is not an approval gate and its plan may be replaced as evidence changes. Use stable object IDs and direct View tools; never infer coordinates from application screenshots. View tools return one composited PNG plus a reversible pixel-to-canvas spatial reference, never a PSD. view_render_model requires an explicit canvas rectangle or object-relative focus frame in addition to pose, layer composition, and annotations. Preserve spatialReferenceId when generating a replacement PNG, stage it with asset_import_png, then add it with layer_add_from_asset. Generated pixel resolution is independent from canvas size; the importer maps the entire PNG or declared source_pixel_rect back to the referenced canvas rectangle and refuses silent aspect stretching. Mutations rebuild the actual source, mesh, rig, and export preview before committing history. Soft deletion remains recoverable. Use object_get, keyform_set, keyform_delete, keyform_copy, and rig_k_pose for bottom-level keyform geometry and visual channel editing across arbitrary N-dimensional parameter coordinates. For hair separation, load the hair-separation prompt and inspect isolated, context, and posed model views before editing.
+	PSD2Live exposes one authoritative local workspace. Before every mutation, call project_get_state, wait while persistenceStatus is restoring, and pass the current historyHeadNodeId as expected_history_head_node_id. Never blindly retry a mutation after a timeout, disconnect, or lost response: reconnect and inspect project_get_state, history_list, the task log, and affected objects to determine whether it committed. Read-only discovery and rendering may use a small bounded retry. A stale-head error requires refreshing and reconciling concurrent changes before a new request.
+
+	An authenticated Agent may use the exposed workspace capabilities without per-operation approval. History is append-only; use history_checkout to branch instead of rewriting prior nodes. For multi-step work, call task_start and keep task_update checkpoints current with View, asset, object, and history node IDs. Task state coordinates recovery and is not an approval gate.
+
+	Discover available host and MCP capabilities instead of assuming a provider or exact tool name. Use stable object IDs and direct View tools; never infer source coordinates from application screenshots. View tools return a composited PNG plus a reversible pixel-to-canvas spatial reference, not a PSD. Preserve spatialReferenceId when creating replacement pixels. Use the host's native reference-conditioned image generation/editing capability when artwork is needed; ChatGPT/Codex tooling such as GPT Image 2, Gemini/Antigravity image tooling, and equivalent capabilities from other hosts are first-class routes. Prefer transparent output and do not substitute procedural shapes for illustration or hidden-structure reconstruction.
+
+	Stage generated PNGs with asset_import_png, then add them through layer_add_from_asset. Pixel resolution is independent from canvas size; map the entire PNG or a declared source_pixel_rect back to its referenced canvas rectangle without silent aspect stretching. Mutations rebuild the actual source, mesh, rig, and export preview before committing history. Soft deletion remains recoverable. Use object_get, keyform_set, keyform_delete, keyform_copy, and rig_k_pose for geometry and visual channels at arbitrary N-dimensional parameter coordinates. For hair separation, load the hair-separation prompt and verify isolated, context, neutral, and extreme posed Views.
 """.trimIndent()
