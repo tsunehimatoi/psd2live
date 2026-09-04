@@ -515,7 +515,7 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace): Server {
 
 	server.addTool(
 		name = "view_render_layer",
-		description = "Render one layer directly from RGBA model data as transparent or checkerboard PNG. This is not a UI screenshot.",
+		description = "Render one layer directly from RGBA model data as transparent or checkerboard PNG. This is not a UI screenshot. For differences, separation, or missing-pixel completion, pass this View to Nano Banana Pro/NBP or GPT Image 2; never redraw it with Python/PIL/OpenCV.",
 		inputSchema = viewSchema(includeBackground = true),
 		toolAnnotations = READ_ONLY,
 	) { request ->
@@ -529,7 +529,7 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace): Server {
 
 	server.addTool(
 		name = "view_render_context",
-		description = "Composite visible layers into one focused PNG around a layer. object_scale below 1 includes surrounding context; this never returns a PSD or UI screenshot.",
+		description = "Composite visible layers into one focused PNG around a layer. object_scale below 1 includes surrounding context; this never returns a PSD or UI screenshot. Use it as a reference for Nano Banana Pro/NBP or GPT Image 2 when painted pixels must be changed or reconstructed.",
 		inputSchema = viewSchema(includeBackground = true, includeFocus = true),
 		toolAnnotations = READ_ONLY,
 	) { request ->
@@ -566,7 +566,7 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace): Server {
 
 	server.addTool(
 		name = "asset_import_png",
-		description = "Stage an Agent-generated transparent PNG using a View spatial reference. Pixel resolution may differ, but aspect and canvas placement are preserved. This does not change project history.",
+		description = "Stage a transparent PNG using a View spatial reference. Differences, separated painted parts, occlusion completion, and reconstructed pixels must come from an actual Nano Banana Pro/NBP, GPT Image 2, or equivalent host-native image-tool call—not Python/PIL/OpenCV/Matplotlib/SVG/Canvas drawing. Exact unchanged-pixel extraction and non-creative post-generation alpha cleanup are the only procedural exceptions. Pixel resolution may differ, but aspect and canvas placement are preserved. This does not change project history.",
 		inputSchema = pngImportSchema(),
 		toolAnnotations = MUTATING,
 	) { request ->
@@ -651,7 +651,7 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace): Server {
 
 	server.addPrompt(
 		name = "hair-separation",
-		description = "Expert workflow constraints for planning non-destructive hair separation and independent physics.",
+		description = "Mandatory workflow for non-destructive hair separation: call Nano Banana Pro/NBP or GPT Image 2 for every painted split or hidden-pixel completion; procedural drawing is forbidden.",
 	) {
 		GetPromptResult(
 			description = "psd2live hair separation skill",
@@ -1650,7 +1650,13 @@ private val AGENT_INSTRUCTIONS = """
 
 	An authenticated Agent may use the exposed workspace capabilities without per-operation approval. History is append-only; use history_checkout to branch instead of rewriting prior nodes. For multi-step work, call task_start and keep task_update checkpoints current with View, asset, object, and history node IDs. Task state coordinates recovery and is not an approval gate.
 
-	Discover available host and MCP capabilities instead of assuming a provider or exact tool name. Use stable object IDs and direct View tools; never infer source coordinates from application screenshots. View tools return a composited PNG plus a reversible pixel-to-canvas spatial reference, not a PSD. Preserve spatialReferenceId when creating replacement pixels. Use the host's native reference-conditioned image generation/editing capability when artwork is needed; ChatGPT/Codex tooling such as GPT Image 2, Gemini/Antigravity image tooling, and equivalent capabilities from other hosts are first-class routes. Prefer transparent output and do not substitute procedural shapes for illustration or hidden-structure reconstruction.
+	These instructions are mandatory whenever this PSD2Live MCP server is invoked, regardless of the task type. If the host supports skills, read psd2live-rigging before using any PSD2Live tool; also read hair-separation for hair work. This requirement is scoped to skill/MCP use and does not apply to unrelated repository programming.
+
+	IMAGE-GENERATOR GATE: Treat every painted difference or expression variant, part/layer split, overlap removal, occlusion completion, reconstruction, inpaint, outpaint, or new drawable as an image-generation/editing task. Before any shell or Python raster work, make an actual host image-tool call for every output piece that creates, guesses, reconstructs, or changes illustrated pixels. Use Nano Banana Pro (Nano Banana Pro/NBP) when exposed, otherwise GPT Image 2 (gpt-image-2), otherwise an equivalent host-native generator. In Codex/ChatGPT, load imagegen and call image_gen; in Gemini/Antigravity, call Nano Banana Pro when available. If a piece is missing or rejected, call the generator again.
+
+	The PSD2Live MCP server provides reference Views and imports outputs; it does not contain the host-private image generator. The absence of an image-generation tool in this MCP tool list is not evidence that the host lacks one: leave the MCP call chain, invoke Nano Banana Pro/NBP, GPT Image 2, or the host's image tool, then return to asset_import_png. Never use Python, PIL/Pillow, OpenCV, Matplotlib, SVG, Canvas, ImageMagick, shell scripts, procedural masks/polygons, dilation, smearing, or texture cloning to draw a draft, fallback, separated part, variant, or hidden structure. Code is allowed only for byte transport, diagnostics, exact unchanged-pixel extraction/cropping, and non-creative alpha cleanup after native generation. If no native image tool exists, stop at the last reversible state instead of fabricating artwork.
+
+	Discover available host and MCP capabilities instead of assuming an exact host-side tool name. Use stable object IDs and direct View tools; never infer source coordinates from application screenshots. View tools return a composited PNG plus a reversible pixel-to-canvas spatial reference, not a PSD. Preserve spatialReferenceId when creating replacement pixels. Prefer transparent output.
 
 	Stage generated PNGs with asset_import_png, then add them through layer_add_from_asset. Pixel resolution is independent from canvas size; map the entire PNG or a declared source_pixel_rect back to its referenced canvas rectangle without silent aspect stretching. Mutations rebuild the actual source, mesh, rig, and export preview before committing history. Soft deletion remains recoverable. Use object_get, keyform_set, keyform_delete, keyform_copy, and rig_k_pose for geometry and visual channels at arbitrary N-dimensional parameter coordinates. For hair separation, load the hair-separation prompt and verify isolated, context, neutral, and extreme posed Views.
 """.trimIndent()

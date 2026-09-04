@@ -73,7 +73,10 @@ class AgentMcpServiceTest {
 		assertTrue(routingPreamble.contains("expected_history_head_node_id"))
 		assertTrue(routingPreamble.contains("Never blindly retry a mutation"))
 		assertTrue(instructions.contains("GPT Image 2"))
-		assertTrue(instructions.contains("Gemini/Antigravity"))
+		assertTrue(instructions.contains("Nano Banana Pro"))
+		assertTrue(instructions.contains("load imagegen and call image_gen"))
+		assertTrue(instructions.contains("does not apply to unrelated repository programming"))
+		assertTrue(instructions.contains("Never use Python"))
 	}
 
 	@Test
@@ -103,6 +106,9 @@ class AgentMcpServiceTest {
 			assertTrue(prompt.contains("mcp_config.json"))
 			assertTrue(prompt.contains("mcp_proxy.py"))
 			assertTrue(prompt.contains("project_get_state"))
+			assertTrue(prompt.contains("Nano Banana Pro"))
+			assertTrue(prompt.contains("GPT Image 2"))
+			assertTrue(prompt.contains("Python"))
 		}
 	}
 
@@ -149,6 +155,11 @@ class AgentMcpServiceTest {
 			"layer_soft_delete",
 		)
 		assertEquals(expectedTools, tools.map { it.name }.toSet())
+		assertTrue(tools.single { it.name == "view_render_layer" }.description?.contains("Nano Banana Pro") == true)
+		assertTrue(tools.single { it.name == "view_render_context" }.description?.contains("GPT Image 2") == true)
+		val assetImportDescription = tools.single { it.name == "asset_import_png" }.description.orEmpty()
+		assertTrue(assetImportDescription.contains("Nano Banana Pro"))
+		assertTrue(assetImportDescription.contains("Python/PIL/OpenCV"))
 		val readOnlyToolNames = setOf(
 			"project_get_state",
 			"project_list_layers",
@@ -242,6 +253,10 @@ class AgentMcpServiceTest {
 		val text = assertIs<TextContent>(prompt.messages.single().content).text
 		assertTrue(text.contains("non-destructive", ignoreCase = true))
 		assertTrue(text.contains("occlusion", ignoreCase = true))
+		assertTrue(text.contains("Nano Banana Pro"))
+		assertTrue(text.contains("GPT Image 2"))
+		assertTrue(text.contains("call `image_gen`"))
+		assertTrue(text.contains("Python"))
 	}
 
 	@Test

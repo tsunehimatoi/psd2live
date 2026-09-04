@@ -2,13 +2,30 @@
 name: psd2live-rigging
 description: >-
   Operate the PSD2Live MCP server for visual inspection, non-destructive Live2D
-  rigging, parameter and keyform editing, image-assisted asset creation, and
-  history-safe recovery. Use when an agent must inspect or modify a PSD2Live model.
+  rigging, parameter and keyform editing, image differences, part separation,
+  image-assisted asset creation, and history-safe recovery. Use whenever an agent
+  invokes this skill or any PSD2Live MCP capability; do not use for ordinary repository work.
 ---
 
 # PSD2Live Rigging
 
-Use this workflow with any MCP-capable host. Select capabilities from the tools the host and server actually expose; no model vendor or exact host-side tool name is required.
+Use this workflow with any MCP-capable host. Discover the MCP tools the host exposes; for pixel creation, follow the explicit generator routing below.
+
+## Invocation boundary
+
+- Once this skill or any PSD2Live MCP capability is invoked, read and apply this entire file before proceeding, regardless of the model-editing task type.
+- This requirement begins at skill/MCP invocation. It does not apply to ordinary source-code, documentation, test, or configuration work that does not invoke the skill or MCP.
+- When the invoked task involves hair separation, also read `hair-separation` and apply both skills.
+
+## Route pixel-producing work before coding
+
+- Treat every painted-image difference or expression variant, part/layer split, overlap removal, occlusion completion, reconstruction, inpaint, outpaint, or new drawable as a native image-generation/editing task. This gate applies even if the user says only “diff”, “variant”, “split”, “separate”, “complete”, or “fill the hidden part”.
+- For every output piece or variant that creates, guesses, reconstructs, or changes illustrated pixels, make an actual host image-tool call. Preferred named generators are **Nano Banana Pro** (`Nano Banana Pro` or `NBP`) and **GPT Image 2** (`gpt-image-2`). Use an equivalent host-native image generator only when neither named route is exposed.
+- In Codex/ChatGPT, load the `imagegen` skill and call the available `image_gen` capability. Select Nano Banana Pro/NBP when the host exposes it; otherwise use GPT Image 2. In Gemini/Antigravity, call Nano Banana Pro directly when available.
+- The PSD2Live MCP server supplies reference Views and imports results; it does not expose the host-private image generator. Absence of an image-generation tool in the PSD2Live MCP tool list is not evidence that generation is unavailable. Leave the MCP tool chain, call the host image generator, then return to `asset_import_png`.
+- Do not use Python, PIL/Pillow, OpenCV, Matplotlib, SVG, Canvas, ImageMagick, shell scripts, or hand-authored polygons as the renderer for any such asset, including a draft, mask-painted substitute, or fallback. Code may only transport/decode bytes, copy or crop unchanged source pixels, calculate diagnostics, and perform non-creative alpha cleanup after the native generator returns.
+- The only no-generator exception is a provably exact extraction or crop in which every output color/alpha sample comes unchanged from already visible source pixels and no boundary, hidden structure, or painted detail is inferred. If uncertain, use Nano Banana Pro or GPT Image 2.
+- If neither named generator nor an equivalent native image capability is available, stop at the last reversible state and report the missing capability. Do not silently fall back to procedural drawing.
 
 ## Connect and recover safely
 
@@ -27,9 +44,9 @@ Use this workflow with any MCP-capable host. Select capabilities from the tools 
 
 ## Create or edit pixels through native image capability
 
-- When painted pixels are needed, use the executing host's available native image generation or image-editing capability with rendered PSD2Live Views as references. First-class routes include ChatGPT/Codex image tooling such as GPT Image 2 (`gpt-image-2`), Gemini/Antigravity image tooling, and equivalent native capabilities in other hosts. Capability availability, not provider order, decides the route.
-- Ask for the needed operation and constraints—reference-conditioned generation, editing/inpainting, style preservation, and transparent PNG—without assuming a particular host-side tool name.
-- Never replace illustration or hidden-structure reconstruction with formulaic PIL/OpenCV polygons, mask dilation, or other procedural stand-ins.
+- When painted pixels are needed, follow the mandatory routing gate above with rendered PSD2Live Views as references. Call Nano Banana Pro/NBP when exposed, otherwise GPT Image 2 (`gpt-image-2`), otherwise an equivalent native generator.
+- Resolve the actual Nano Banana Pro/NBP, GPT Image 2, or `image_gen` entry exposed by the host, then request reference-conditioned generation, editing/inpainting, style preservation, and transparent PNG output.
+- Never replace illustration or hidden-structure reconstruction with formulaic PIL/OpenCV polygons, mask dilation, or other procedural stand-ins. Re-read the routing gate before any shell or Python image-processing step.
 - If no usable image capability is available, report the missing capability and stop at the last valid reversible state instead of fabricating an asset.
 
 ## Stage generated assets correctly

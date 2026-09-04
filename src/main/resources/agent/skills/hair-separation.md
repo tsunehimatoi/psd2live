@@ -2,6 +2,14 @@
 
 Produce editable pieces through a non-destructive workflow. They must follow natural strand boundaries, remain complete behind neighbouring layers, keep stable roots, and accept independent meshes, deformers, parameters, and physics. Source preservation and occlusion completion are part of the result.
 
+## Mandatory image-generator gate
+
+- Read the `psd2live-rigging` skill first when the host supports skills. Hair separation, difference/variant creation, and occlusion completion are pixel-producing tasks, not geometry-only operations.
+- Before writing or running image-processing code, call a real host image generator/editor for every piece that needs a new boundary, inferred pixels, or completed hidden structure. Use **Nano Banana Pro** (`Nano Banana Pro`/`NBP`) when exposed, otherwise **GPT Image 2** (`gpt-image-2`), otherwise an equivalent host-native generator.
+- In Codex/ChatGPT, load `imagegen` and call `image_gen`; in Gemini/Antigravity, call Nano Banana Pro when available. PSD2Live MCP Views are reference inputs, not a substitute generator.
+- Python, PIL/Pillow, OpenCV, Matplotlib, SVG, Canvas, ImageMagick, shell scripts, masks, polygons, blur, dilation, and texture cloning must not draw, invent, or reconstruct the output. They are allowed only for byte transport, diagnostics, exact unchanged-pixel extraction, and non-creative alpha cleanup after native generation.
+- If a requested piece is omitted by the generator, call the generator again. Do not manufacture the missing piece procedurally. If no native generator is available, stop and report that blocker.
+
 ## Establish state and evidence
 
 - Discover the host and MCP capabilities rather than assuming a provider or tool name. Read `project_get_state` and `project_list_layers`, wait for restoration to finish, and identify targets by stable IDs.
@@ -11,10 +19,10 @@ Produce editable pieces through a non-destructive workflow. They must follow nat
 
 ## Reconstruct painted structure
 
-- Use the executing host's native reference-conditioned image generation or editing/inpainting capability. ChatGPT/Codex image tooling such as GPT Image 2 (`gpt-image-2`), Gemini/Antigravity image tooling, and equivalent capabilities from other hosts are all first-class routes; choose whichever capability is actually available.
-- Provide isolated and context Views as references, preserve the source style, and request transparent PNG output when supported. Do not depend on a hard-coded host-side image tool name.
+- Use Nano Banana Pro/NBP or GPT Image 2 (`gpt-image-2`) for reference-conditioned generation, editing, or inpainting. Use another host-native generator only when neither named generator is available.
+- Resolve the host's Nano Banana Pro/NBP, GPT Image 2, or `image_gen` entry. Provide isolated and context Views as references, preserve the source style, and request transparent PNG output when supported.
 - Fully continue an occluded strand's curvature, volume, taper, texture, highlights, and root underneath the foreground piece. Keep the foreground contour self-contained and paint only intentional contact shading.
-- Never fake hidden structure with mask dilation, neighbouring-pixel smearing, repeated texture, or procedural vector/polygon drawing. If suitable image editing is unavailable, report the missing capability and stop at the last reversible state.
+- Never fake hidden structure with mask dilation, neighbouring-pixel smearing, repeated texture, or procedural vector/polygon drawing. Each missing or rejected piece returns to the named generator. If suitable image editing is unavailable, report the missing capability and stop at the last reversible state.
 
 ## Import without spatial drift
 

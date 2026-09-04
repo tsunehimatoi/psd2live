@@ -58,6 +58,8 @@ $geminiJson
 - $skillsPath/psd2live-rigging
 - $skillsPath/hair-separation
 
+只要调用上述 Skill 或 PSD2Live MCP，就必须先完整读取 psd2live-rigging；头发任务还要读取 hair-separation。差分、拆分、遮挡补全或重建像素时，每个新素材都必须实际调用 Nano Banana Pro/NBP 或 GPT Image 2（gpt-image-2）；Codex/ChatGPT 中先加载 imagegen 再调用 image_gen。不得用 Python、PIL/OpenCV、Matplotlib、SVG 或 Canvas 绘制替代品。该要求仅在 Skill/MCP 被调用后生效，不影响普通编程任务。
+
 仅当宿主不支持 HTTP MCP 时，才使用 stdio 后备：python "$proxyPath"。代理会读取 PSD2LIVE_MCP_TOKEN，或在 Windows 上读取 PSD2Live 保存的令牌。
 
 修改前备份并合并配置，不要覆盖其他服务器，也不要修改任何宿主的程序文件、内部 RPC 或会话数据库。连接后先列出工具并读取 project_get_state。超时或断线后不要盲目重试写操作；重新连接并用 project_get_state/history_list 核对是否已提交。
@@ -80,6 +82,8 @@ $geminiJson
 - $skillsPath/psd2live-rigging
 - $skillsPath/hair-separation
 
+上記 Skill または PSD2Live MCP を使用するときは、最初に psd2live-rigging 全文を読み、髪の作業では hair-separation も読みます。差分、パーツ分割、オクルージョン補完、ピクセル再構築では、新しい各素材について Nano Banana Pro/NBP または GPT Image 2（gpt-image-2）を実際に呼び出します。Codex/ChatGPT では imagegen を読み込み image_gen を呼び出します。Python、PIL/OpenCV、Matplotlib、SVG、Canvas による代替描画は禁止です。この要件は Skill/MCP 使用時だけに適用し、通常のプログラミング作業には適用しません。
+
 HTTP MCP 非対応のホストでのみ stdio フォールバック python "$proxyPath" を使用します。プロキシは PSD2LIVE_MCP_TOKEN、または Windows 上で PSD2Live が保存したトークンを読み込みます。
 
 変更前に設定をバックアップして既存エントリへマージし、ホストのプログラム、内部 RPC、会話データベースは変更しません。接続後はツールを列挙して project_get_state を読みます。タイムアウトや切断後に書き込みを盲目的に再試行せず、再接続後に project_get_state/history_list でコミット状態を照合します。
@@ -101,6 +105,8 @@ Other Streamable HTTP hosts: use endpoint $endpoint with the header Authorizatio
 Skills: copy these directories to the host's documented skill location, such as ~/.codex/skills/, ~/.gemini/config/skills/, or a project-scoped skill directory:
 - $skillsPath/psd2live-rigging
 - $skillsPath/hair-separation
+
+Whenever either Skill or the PSD2Live MCP is invoked, first read psd2live-rigging in full; also read hair-separation for hair work. For differences, part separation, occlusion completion, or pixel reconstruction, make an actual Nano Banana Pro/NBP or GPT Image 2 (gpt-image-2) call for every new asset. In Codex/ChatGPT, load imagegen and call image_gen. Do not draw substitutes with Python, PIL/OpenCV, Matplotlib, SVG, or Canvas. This requirement starts only when a Skill/MCP is invoked and does not affect ordinary programming tasks.
 
 Use the stdio fallback, python "$proxyPath", only for hosts without HTTP MCP support. The proxy reads PSD2LIVE_MCP_TOKEN or, on Windows, the token saved by PSD2Live.
 
