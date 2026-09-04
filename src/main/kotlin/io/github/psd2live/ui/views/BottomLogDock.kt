@@ -117,7 +117,8 @@ fun BottomLogDock(
 						orientation = Orientation.Vertical,
 						state = rememberDraggableState { deltaY ->
 							// Dragging up increases height (deltaY is negative)
-							val newHeight = state.logPanelHeight - deltaY
+							val deltaDp = with(density) { deltaY.toDp() }
+							val newHeight = state.logPanelHeight - deltaDp.value
 							viewModel.setLogPanelHeight(newHeight)
 						},
 					),
