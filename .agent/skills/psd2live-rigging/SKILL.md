@@ -28,10 +28,22 @@ This skill guides the Agent in using the PSD2Live MCP server to autonomously ins
    - Every rendered view returns reversible `spatial` metadata (`pixelToCanvas` / `canvasToPixel`).
 
 3. **Asset Staging & Injection**:
-   - When generating replacement or separated art pieces (e.g. hair strands, expressions, clothing):
-     1. Pass the generated PNG bytes (base64) along with `spatial_reference_id` to `asset_import_png`.
+   - **Mandatory AI Image Generation & Inpainting (Multi-Agent Standard)**:
+     - Whichever AI agent platform is executing this skill (Google Gemini / Antigravity via `generate_image`, OpenAI ChatGPT via DALL-E / Image Generation tools, Claude with tool sidecars, or integrated image diffusion APIs):
+     - The Agent MUST invoke its available AI image generation or inpainting tools with visual reference conditioning (passing rendered context views, isolated layers, or visual style prompts) to author new accessories, clothing, hairpieces, expressions, or inpainted structures.
+     - NEVER substitute illustration with synthetic procedural scripts (e.g. formulaic PIL/OpenCV polygon drawing or mathematical shapes).
+   - **Universal Alpha & Background Cleanliness Pipeline**:
+     - When using image generation models that produce solid backdrops (e.g. ChatGPT DALL-E, standard diffusion outputs on solid white/black backgrounds):
+       1. The Agent must execute a clean alpha matting step (e.g. floodfill, contour extraction, or chromakey).
+       2. Perform alpha defringing / edge color bleeding (Alpha Bleed) along translucent borders to eliminate halo fringes.
+       3. NEVER burn soft gaussian-blurred shadows or semi-transparent gray halos into primary drawable layers; in Live2D's premultiplied alpha pipeline these turn into dirty dark halos. Use clean cel-shading contact lines or separate multiply layers.
+   - **ArtMesh Topology & Cropping**:
+     - Do not stage tiny accessories on huge empty transparent canvases without a declared crop; doing so causes `AdaptiveMeshGenerator` to produce coarse 3x3 (9-vertex) bounding-box meshes.
+     - Use tight pixel crops (`source_pixel_rect`) or tight canvas bounding frames with sufficient pixel density so that `AdaptiveMeshGenerator` builds fine, contour-hugging ArtMesh topology.
+   - **Ingestion Pipeline**:
+     1. Pass the generated PNG bytes (base64) along with `spatial_reference_id` (and `source_pixel_rect` if tightly cropped) to `asset_import_png`.
      2. Add it into the authoritative source model via `layer_add_from_asset`.
-     3. The pipeline automatically derives the mesh, bindings, and deformer hierarchies.
+     3. Verify the generated mesh topology via `object_get` to ensure vertex density conforms to the art's geometry.
      4. Soft-delete redundant original layers using `layer_soft_delete` (fully recoverable).
 
 4. **Cubism Parameter Authoring**:
