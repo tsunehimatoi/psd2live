@@ -108,13 +108,14 @@ fun WorkspaceView(
 		tr("tab.hierarchy"),
 		tr("tab.topology"),
 		tr("tab.preview"),
-		tr("tab.log"),
+		tr("tab.history"),
 	)
 	val selectedTabIndex = when (state.activeWorkspaceTab) {
 		WorkspaceTab.HIERARCHY -> 0
 		WorkspaceTab.TOPOLOGY -> 1
 		WorkspaceTab.PREVIEW -> 2
-		WorkspaceTab.LOG -> 3
+		WorkspaceTab.HISTORY -> 3
+		WorkspaceTab.LOG -> 2
 	}
 
 	Column(
@@ -132,13 +133,13 @@ fun WorkspaceView(
 					0 -> WorkspaceTab.HIERARCHY
 					1 -> WorkspaceTab.TOPOLOGY
 					2 -> WorkspaceTab.PREVIEW
-					else -> WorkspaceTab.LOG
+					else -> WorkspaceTab.HISTORY
 				}
 				viewModel.setWorkspaceTab(tab)
 			},
 		)
 
-		// Active Content
+		// Upper Main Workspace Area: Hierarchy, Topology, Preview, History
 		Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
 			when (state.activeWorkspaceTab) {
 				WorkspaceTab.HIERARCHY -> HierarchyView(state, viewModel)
@@ -154,9 +155,21 @@ fun WorkspaceView(
 					viewModel = viewModel,
 					onLayerClicked = { viewModel.selectLayer(it) },
 				)
-				WorkspaceTab.LOG -> LogView(state)
+				WorkspaceTab.HISTORY -> HistoryTreeView(state, viewModel)
+				WorkspaceTab.LOG -> CanvasViewportComposable(
+					mode = WorkspaceTab.PREVIEW,
+					state = state,
+					viewModel = viewModel,
+					onLayerClicked = { viewModel.selectLayer(it) },
+				)
 			}
 		}
+
+		// Independent Bottom Log Dock (underneath Hierarchy / Topology / Preview / History)
+		BottomLogDock(
+			state = state,
+			viewModel = viewModel,
+		)
 	}
 }
 
@@ -1313,73 +1326,6 @@ private fun DrawableTreeItem(
 						IconEye(visible = !isVisible, modifier = Modifier.size(12.dp), tint = colors.textMuted)
 						Text(if (isVisible) tr("layers.popup.hideAll") else tr("layers.popup.showAll"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
 					}
-				}
-			}
-		}
-	}
-}
-
-@Composable
-private fun LogView(state: PSD2LiveState) {
-	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-	val listState = rememberLazyListState()
-
-	LaunchedEffect(state.logLines.size) {
-		if (state.logLines.isNotEmpty()) {
-			listState.scrollToItem(state.logLines.size - 1)
-		}
-	}
-
-	fun copyAllLogs() {
-		val text = state.logLines.joinToString("\n")
-		val selection = StringSelection(text)
-		Toolkit.getDefaultToolkit().systemClipboard.setContents(selection, selection)
-	}
-
-	Column(modifier = Modifier.fillMaxSize().background(colors.inputBackground)) {
-		// Log Toolbar
-		Row(
-			modifier = Modifier
-				.fillMaxWidth()
-				.height(26.dp)
-				.background(colors.panelElevated)
-				.border(BorderStroke(1.dp, colors.divider))
-				.padding(horizontal = 8.dp),
-			verticalAlignment = Alignment.CenterVertically,
-			horizontalArrangement = Arrangement.SpaceBetween,
-		) {
-			Text(
-				text = "${state.logLines.size} lines",
-				style = typography.caption.copy(fontSize = 10.5.sp),
-				color = colors.textMuted,
-			)
-			CompactButton(
-				text = "Copy Log",
-				onClick = ::copyAllLogs,
-				height = 20.dp,
-			)
-		}
-
-		// Monospaced Log List
-		SelectionContainer(modifier = Modifier.fillMaxSize().padding(6.dp)) {
-			LazyColumn(
-				state = listState,
-				modifier = Modifier.fillMaxSize(),
-			) {
-				items(state.logLines) { line ->
-					val isWarn = line.contains("warning", ignoreCase = true) || line.contains("警告")
-					val isFail = line.contains("failed", ignoreCase = true) || line.contains("失败") || line.contains("error", ignoreCase = true)
-					val textColor = when {
-						isFail -> colors.error
-						isWarn -> colors.warning
-						else -> colors.textPrimary
-					}
-					Text(
-						text = line,
-						style = typography.mono.copy(fontSize = 11.sp, lineHeight = 16.sp),
-						color = textColor,
-					)
 				}
 			}
 		}

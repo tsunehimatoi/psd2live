@@ -10,11 +10,48 @@ import io.github.psd2live.i18n.AppLanguage
 import io.github.psd2live.i18n.I18n
 import org.umamo.runtime.model.ParameterId
 
+import io.github.psd2live.agent.AgentHistorySnapshot
+
 enum class WorkspaceTab {
 	HIERARCHY,
 	TOPOLOGY,
 	PREVIEW,
+	HISTORY,
 	LOG,
+}
+
+enum class LogSource {
+	SYSTEM,
+	MCP_SERVER,
+	AGENT,
+}
+
+enum class LogLevel {
+	INFO,
+	SUCCESS,
+	WARNING,
+	ERROR,
+}
+
+@Immutable
+data class AppLogEntry(
+	val id: String = java.util.UUID.randomUUID().toString(),
+	val timestamp: java.time.Instant = java.time.Instant.now(),
+	val source: LogSource = LogSource.SYSTEM,
+	val level: LogLevel = LogLevel.INFO,
+	val tag: String = "",
+	val message: String,
+	val detail: String? = null,
+	val imageBytes: ByteArray? = null,
+	val imageLabel: String? = null,
+) {
+	override fun equals(other: Any?): Boolean {
+		if (this === other) return true
+		if (other !is AppLogEntry) return false
+		return id == other.id
+	}
+
+	override fun hashCode(): Int = id.hashCode()
 }
 
 enum class InspectorTab {
@@ -60,6 +97,13 @@ data class PSD2LiveState(
 	val isIndeterminateProgress: Boolean = false,
 	val statusText: String = "",
 	val logLines: List<String> = emptyList(),
+	val logEntries: List<AppLogEntry> = emptyList(),
+	val logPanelExpanded: Boolean = true,
+	val logPanelHeight: Float = 190f,
+	val historySnapshot: AgentHistorySnapshot? = null,
+	val selectedHistoryNodeId: String? = null,
+	val lightboxImage: ByteArray? = null,
+	val lightboxTitle: String? = null,
 	val analysis: PipelineAnalysis? = null,
 	val previewModel: RigPreviewModel? = null,
 	val selectedLayerId: String? = null,

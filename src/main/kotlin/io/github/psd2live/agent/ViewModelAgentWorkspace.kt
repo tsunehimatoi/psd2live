@@ -235,6 +235,14 @@ class ViewModelAgentWorkspace(
 			?: throw IllegalArgumentException("Spatial reference not found for this workspace: ${request.spatialReferenceId}")
 		val imported = assetStore.import(request, spatial)
 		withContext(Dispatchers.IO) { workspaceStore.persistAsset(projectId, assetStore.require(imported.id)) }
+		viewModel.addLog(
+			message = "Agent Asset Import: ${imported.id} (${imported.pixelWidth}x${imported.pixelHeight})",
+			level = io.github.psd2live.ui.state.LogLevel.SUCCESS,
+			source = io.github.psd2live.ui.state.LogSource.AGENT,
+			tag = "Asset",
+			imageBytes = request.png,
+			imageLabel = "asset_import_png: ${imported.id}",
+		)
 		imported
 	}
 
@@ -274,6 +282,12 @@ class ViewModelAgentWorkspace(
 		}
 		scheduleHistoryPersistence(projectId, tree)
 		viewModel.loadAgentWorkspacePreview(preview)
+		viewModel.addLog(
+			message = "Agent Added Layer: '${request.name.trim()}' ($layerId, Tag: ${request.semanticTag})",
+			level = io.github.psd2live.ui.state.LogLevel.SUCCESS,
+			source = io.github.psd2live.ui.state.LogSource.AGENT,
+			tag = "Layer",
+		)
 		AgentWorkspaceMutationResult(selection.node.id, nextRevision, listOf(layerId), summary)
 	}
 
@@ -315,6 +329,12 @@ class ViewModelAgentWorkspace(
 		}
 		scheduleHistoryPersistence(projectId, tree)
 		viewModel.loadAgentWorkspacePreview(preview)
+		viewModel.addLog(
+			message = "Agent Soft-Deleted Layer: $layerId",
+			level = io.github.psd2live.ui.state.LogLevel.WARNING,
+			source = io.github.psd2live.ui.state.LogSource.AGENT,
+			tag = "Layer",
+		)
 		AgentWorkspaceMutationResult(selection.node.id, nextRevision, listOf(layerId), summary)
 	}
 
@@ -431,6 +451,12 @@ class ViewModelAgentWorkspace(
 		}
 		scheduleHistoryPersistence(projectId, tree)
 		viewModel.loadAgentWorkspacePreview(preview)
+		viewModel.addLog(
+			message = "Agent Parameter: $summary ($parameterId)",
+			level = io.github.psd2live.ui.state.LogLevel.INFO,
+			source = io.github.psd2live.ui.state.LogSource.AGENT,
+			tag = "Parameter",
+		)
 		AgentWorkspaceMutationResult(
 			historyNodeId = selection.node.id,
 			revisionId = nextRevision,
@@ -800,6 +826,12 @@ class ViewModelAgentWorkspace(
 		}
 		scheduleHistoryPersistence(projectId, tree)
 		viewModel.loadAgentWorkspacePreview(preview)
+		viewModel.addLog(
+			message = "Agent Keyform: $summary",
+			level = io.github.psd2live.ui.state.LogLevel.INFO,
+			source = io.github.psd2live.ui.state.LogSource.AGENT,
+			tag = "Keyform",
+		)
 		AgentWorkspaceMutationResult(
 			historyNodeId = selection.node.id,
 			revisionId = nextRevision,
@@ -830,6 +862,12 @@ class ViewModelAgentWorkspace(
 		}
 		scheduleHistoryPersistence(projectId, tree)
 		viewModel.loadAgentWorkspacePreview(preview)
+		viewModel.addLog(
+			message = "Checked out history node: $nodeId (${target.summary})",
+			level = io.github.psd2live.ui.state.LogLevel.SUCCESS,
+			source = io.github.psd2live.ui.state.LogSource.AGENT,
+			tag = "History",
+		)
 		AgentWorkspaceMutationResult(target.id, target.revisionId, emptyList(), "Checked out history node $nodeId")
 	}
 
@@ -1025,6 +1063,10 @@ class ViewModelAgentWorkspace(
 	) {
 		val state = tree.state()
 		schedulePersistence { workspaceStore.persistHistory(projectId, state) }
+		runCatching {
+			val snapshot = history()
+			viewModel.updateHistorySnapshot(snapshot)
+		}
 	}
 
 	private fun scheduleTaskPersistence(projectId: String, manager: AgentTaskManager) {
@@ -1053,6 +1095,14 @@ class ViewModelAgentWorkspace(
 			val projectId = projectId(state)
 			schedulePersistence { workspaceStore.persistSpatial(projectId, it.viewId, it.spatial) }
 		}
+		viewModel.addLog(
+			message = "MCP Render: [${it.kind}] ${it.viewId} (${it.renderedWidth}x${it.renderedHeight})",
+			level = io.github.psd2live.ui.state.LogLevel.INFO,
+			source = io.github.psd2live.ui.state.LogSource.MCP_SERVER,
+			tag = "Render",
+			imageBytes = it.png,
+			imageLabel = "${it.kind}: ${it.viewId}",
+		)
 	}
 
 	private fun applyPreviewOrThrow(

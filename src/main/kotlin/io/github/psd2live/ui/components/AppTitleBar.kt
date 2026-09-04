@@ -14,12 +14,14 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Divider
 import androidx.compose.material.Surface
@@ -32,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -80,6 +83,7 @@ fun AppTitleBar(
 	onClose: () -> Unit,
 	onSetLanguage: (AppLanguage) -> Unit,
 	onShowAgentConnection: () -> Unit,
+	onShowHistory: () -> Unit,
 	onShowAbout: () -> Unit,
 ) {
 	val colors = LocalToolColors.current
@@ -100,13 +104,22 @@ fun AppTitleBar(
 			.border(BorderStroke(1.dp, colors.divider)),
 		verticalAlignment = Alignment.CenterVertically,
 	) {
-		// --- LEFT: Application Menus ---
+		// --- LEFT: App Icon & Tool Menus ---
 		Row(
 			modifier = Modifier.fillMaxHeight(),
 			verticalAlignment = Alignment.CenterVertically,
-			horizontalArrangement = Arrangement.spacedBy(1.dp),
 		) {
-			Spacer(modifier = Modifier.width(4.dp))
+			// Window Icon / Branding mark
+			Box(
+				modifier = Modifier
+					.padding(start = 8.dp, end = 6.dp)
+					.size(16.dp),
+				contentAlignment = Alignment.Center,
+			) {
+				Canvas(modifier = Modifier.fillMaxSize()) {
+					drawCircle(color = colors.accent, radius = size.minDimension / 2.2f)
+				}
+			}
 
 			// 1. File Menu
 			TitleBarMenuItem(
@@ -118,12 +131,11 @@ fun AppTitleBar(
 				AppSeamlessDropdownMenu(
 					expanded = activeMenu == "file",
 					onDismissRequest = { activeMenu = null },
-					modifier = Modifier.widthIn(min = 200.dp, max = 280.dp),
+					modifier = Modifier.widthIn(min = 180.dp, max = 240.dp),
 				) {
 					AppMenuItem(
 						text = tr("menu.file.openPsd"),
 						shortcut = "Ctrl+O",
-						enabled = !isBusy,
 						onClick = {
 							activeMenu = null
 							onOpenPsd()
@@ -136,15 +148,6 @@ fun AppTitleBar(
 						onClick = {
 							activeMenu = null
 							onReanalyze()
-						},
-					)
-					AppMenuSeparator()
-					AppMenuItem(
-						text = tr("menu.file.openOutput"),
-						enabled = canOpenOutput,
-						onClick = {
-							activeMenu = null
-							onOpenOutput()
 						},
 					)
 					AppMenuSeparator()
@@ -166,6 +169,14 @@ fun AppTitleBar(
 							onExportTo()
 						},
 					)
+					AppMenuItem(
+						text = tr("menu.file.openOutput"),
+						enabled = canOpenOutput,
+						onClick = {
+							activeMenu = null
+							onOpenOutput()
+						},
+					)
 					AppMenuSeparator()
 					AppMenuItem(
 						text = tr("menu.file.exit"),
@@ -177,7 +188,36 @@ fun AppTitleBar(
 				}
 			}
 
-			// 2. Language Menu
+			// 2. Agent / MCP Menu (Dedicated top-level menu)
+			TitleBarMenuItem(
+				title = tr("menu.agent"),
+				isOpen = activeMenu == "agent",
+				onToggle = { activeMenu = if (activeMenu == "agent") null else "agent" },
+				onHoverWhenActive = { if (activeMenu != null && activeMenu != "agent") activeMenu = "agent" },
+			) {
+				AppSeamlessDropdownMenu(
+					expanded = activeMenu == "agent",
+					onDismissRequest = { activeMenu = null },
+					modifier = Modifier.widthIn(min = 180.dp, max = 260.dp),
+				) {
+					AppMenuItem(
+						text = tr("menu.agent.connection"),
+						onClick = {
+							activeMenu = null
+							onShowAgentConnection()
+						},
+					)
+					AppMenuItem(
+						text = tr("menu.agent.history"),
+						onClick = {
+							activeMenu = null
+							onShowHistory()
+						},
+					)
+				}
+			}
+
+			// 3. Language Menu
 			TitleBarMenuItem(
 				title = tr("menu.language"),
 				isOpen = activeMenu == "language",
@@ -202,7 +242,7 @@ fun AppTitleBar(
 				}
 			}
 
-			// 3. Help Menu
+			// 4. Help Menu
 			TitleBarMenuItem(
 				title = tr("menu.help"),
 				isOpen = activeMenu == "help",
@@ -212,16 +252,8 @@ fun AppTitleBar(
 				AppSeamlessDropdownMenu(
 					expanded = activeMenu == "help",
 					onDismissRequest = { activeMenu = null },
-					modifier = Modifier.widthIn(min = 140.dp, max = 220.dp),
+					modifier = Modifier.widthIn(min = 140.dp, max = 200.dp),
 				) {
-					AppMenuItem(
-						text = tr("menu.agentConnection"),
-						onClick = {
-							activeMenu = null
-							onShowAgentConnection()
-						},
-					)
-					AppMenuSeparator()
 					AppMenuItem(
 						text = tr("menu.about"),
 						onClick = {
@@ -296,6 +328,34 @@ fun AppTitleBar(
 			modifier = Modifier.fillMaxHeight(),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
+			// Agent MCP Quick Status Pill
+			Box(
+				modifier = Modifier
+					.padding(end = 12.dp)
+					.clip(RoundedCornerShape(10.dp))
+					.background(Color(0xFF14241E))
+					.border(BorderStroke(1.dp, Color(0xFF4EC9B0).copy(alpha = 0.6f)), RoundedCornerShape(10.dp))
+					.clickable(onClick = onShowAgentConnection)
+					.padding(horizontal = 7.dp, vertical = 2.5.dp),
+			) {
+				Row(
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(4.dp),
+				) {
+					Box(
+						modifier = Modifier
+							.size(6.dp)
+							.clip(CircleShape)
+							.background(Color(0xFF4EC9B0)),
+					)
+					Text(
+						text = "MCP :23871",
+						style = typography.monoSmall.copy(fontSize = 9.5.sp, fontWeight = FontWeight.Bold),
+						color = Color(0xFF4EC9B0),
+					)
+				}
+			}
+
 			// Minimize
 			WindowControlButton(
 				onClick = { windowState.isMinimized = true },

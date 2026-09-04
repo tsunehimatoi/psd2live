@@ -13,6 +13,8 @@ import io.github.psd2live.core.RigEditOverlay
 import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.Side
 import io.github.psd2live.core.StandardParameters
+import io.github.psd2live.agent.AgentWorkspace
+import io.github.psd2live.agent.AgentHistorySnapshot
 import io.github.psd2live.i18n.AppLanguage
 import io.github.psd2live.i18n.I18n
 import io.github.psd2live.i18n.tr
@@ -41,6 +43,15 @@ class PSD2LiveViewModel : AutoCloseable {
 	private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 	private val pipeline = PSD2LivePipeline()
 	private val preferences by lazy { Preferences.userNodeForPackage(PSD2LiveViewModel::class.java) }
+	private var agentWorkspace: AgentWorkspace? = null
+
+	fun attachAgentWorkspace(workspace: AgentWorkspace) {
+		agentWorkspace = workspace
+		runCatching {
+			val snapshot = workspace.history()
+			_state.update { it.copy(historySnapshot = snapshot) }
+		}
+	}
 
 	var lastExportDirectory: String?
 		get() = runCatching { preferences.get(PREF_LAST_EXPORT_DIR, null) }.getOrNull()?.takeIf(String::isNotBlank)
@@ -304,6 +315,110 @@ class PSD2LiveViewModel : AutoCloseable {
 
 	fun setWorkspaceTab(tab: WorkspaceTab) {
 		_state.update { it.copy(activeWorkspaceTab = tab) }
+	}
+
+	fun addLog(
+		message: String,
+		level: LogLevel = LogLevel.INFO,
+		source: LogSource = LogSource.SYSTEM,
+		tag: String = "",
+		imageBytes: ByteArray? = null,
+		imageLabel: String? = null,
+		detail: String? = null,
+	) {
+		val entry = AppLogEntry(
+			source = source,
+			level = level,
+			tag = tag,
+			message = message,
+			detail = detail,
+			imageBytes = imageBytes,
+			imageLabel = imageLabel,
+		)
+		_state.update { current ->
+			current.copy(
+				logLines = current.logLines + message,
+				logEntries = current.logEntries + entry,
+			)
+		}
+	}
+
+	fun clearLogs() {
+		_state.update { it.copy(logLines = emptyList(), logEntries = emptyList()) }
+	}
+
+	private fun PSD2LiveState.withLog(
+		message: String,
+		level: LogLevel = LogLevel.INFO,
+		tag: String = "System",
+	): PSD2LiveState {
+		val entry = AppLogEntry(source = LogSource.SYSTEM, level = level, tag = tag, message = message)
+		return copy(logLines = logLines + message, logEntries = logEntries + entry)
+	}
+
+	private fun PSD2LiveState.withLogs(
+		messages: List<String>,
+		level: LogLevel = LogLevel.INFO,
+		tag: String = "System",
+	): PSD2LiveState {
+		val entries = messages.map { AppLogEntry(source = LogSource.SYSTEM, level = level, tag = tag, message = it) }
+		return copy(logLines = logLines + messages, logEntries = logEntries + entries)
+	}
+
+	fun setLogPanelExpanded(expanded: Boolean) {
+		_state.update { it.copy(logPanelExpanded = expanded) }
+	}
+
+	fun setLogPanelHeight(height: Float) {
+		_state.update { it.copy(logPanelHeight = height.coerceIn(80f, 450f)) }
+	}
+
+	fun openLightbox(imageBytes: ByteArray, title: String? = null) {
+		_state.update { it.copy(lightboxImage = imageBytes, lightboxTitle = title) }
+	}
+
+	fun closeLightbox() {
+		_state.update { it.copy(lightboxImage = null, lightboxTitle = null) }
+	}
+
+	fun updateHistorySnapshot(snapshot: AgentHistorySnapshot) {
+		_state.update { it.copy(historySnapshot = snapshot) }
+	}
+
+	fun selectHistoryNode(nodeId: String?) {
+		_state.update { it.copy(selectedHistoryNodeId = nodeId) }
+	}
+
+	fun checkoutHistoryNode(nodeId: String) {
+		scope.launch {
+			try {
+				val ws = agentWorkspace ?: throw IllegalStateException("Agent workspace is not attached")
+				val result = withContext(Dispatchers.Default) {
+					ws.checkoutHistory(nodeId)
+				}
+				addLog(
+					message = "Checked out history node: $nodeId (${result.summary})",
+					level = LogLevel.SUCCESS,
+					source = LogSource.AGENT,
+					tag = "History",
+				)
+				_state.update { current ->
+					current.copy(
+						statusText = result.summary,
+						selectedHistoryNodeId = nodeId,
+					)
+				}
+			} catch (failure: Throwable) {
+				val err = failure.message ?: failure.javaClass.simpleName
+				addLog(
+					message = "History checkout failed: $err",
+					level = LogLevel.ERROR,
+					source = LogSource.AGENT,
+					tag = "History",
+				)
+				_state.update { it.copy(errorMessage = err) }
+			}
+		}
 	}
 
 	fun setInspectorTab(tab: InspectorTab) {
@@ -672,7 +787,7 @@ class PSD2LiveViewModel : AutoCloseable {
 						preview.analysis.layers.size,
 						recognized,
 					)
-					val logs = current.logLines + listOf(
+					val logLinesList = listOf(
 						tr(
 							"log.analysis",
 							preview.analysis.layers.size,
@@ -680,7 +795,7 @@ class PSD2LiveViewModel : AutoCloseable {
 							preview.analysis.anchors.character.height.toInt(),
 						),
 					) + preview.analysis.warnings.map { tr("log.warning", it) }
-					current.copy(
+					current.withLogs(logLinesList, level = LogLevel.INFO, tag = "Analysis").copy(
 						isAnalyzing = false,
 						isIndeterminateProgress = false,
 						analysis = preview.analysis,
@@ -688,7 +803,6 @@ class PSD2LiveViewModel : AutoCloseable {
 						loadedInputFileSignature = inputSignature,
 						previewModel = preview,
 						statusText = summary,
-						logLines = logs,
 						lockedParameters = emptySet(),
 						parameterValues = preview.rig.puppet.parameters.associate { it.id to it.default },
 					)
@@ -697,12 +811,11 @@ class PSD2LiveViewModel : AutoCloseable {
 			} catch (failure: Throwable) {
 				val detail = failure.message ?: failure.javaClass.simpleName
 				_state.update {
-					it.copy(
+					it.withLog(tr("log.failed", detail), level = LogLevel.ERROR, tag = "Analysis").copy(
 						isAnalyzing = false,
 						isIndeterminateProgress = false,
 						statusText = tr("status.failed", detail),
 						errorMessage = detail,
-						logLines = it.logLines + listOf(tr("log.failed", detail)),
 					)
 				}
 			}
@@ -744,12 +857,11 @@ class PSD2LiveViewModel : AutoCloseable {
 		activeWorkJob?.cancel()
 		activeWorkJob = scope.launch {
 			_state.update {
-				it.copy(
+				it.withLog(tr("status.generating"), level = LogLevel.INFO, tag = "Export").copy(
 					isGenerating = true,
 					isIndeterminateProgress = false,
 					progress = 0f,
 					statusText = tr("status.generating"),
-					logLines = it.logLines + listOf(tr("status.generating")),
 					errorMessage = null,
 					successExportMessage = null,
 				)
@@ -758,10 +870,9 @@ class PSD2LiveViewModel : AutoCloseable {
 				val result = withContext(Dispatchers.Default) {
 					val progress = ProgressListener { stage, fraction ->
 							_state.update {
-								it.copy(
+								it.withLog("%3d%%  %s".format((fraction * 100).toInt(), stage), level = LogLevel.INFO, tag = "Export").copy(
 									progress = fraction.toFloat().coerceIn(0f, 1f),
 									statusText = stage,
-									logLines = it.logLines + listOf("%3d%%  %s".format((fraction * 100).toInt(), stage)),
 								)
 							}
 						}
@@ -772,12 +883,12 @@ class PSD2LiveViewModel : AutoCloseable {
 					}
 				}
 				_state.update { current ->
-					val logs = current.logLines + listOf(
+					val outputLogs = listOf(
 						tr("log.outputFiles"),
 					) + result.exportedFiles.map { "• ${it.path} (${it.bytes} bytes)" } +
 						(if (result.warnings.isNotEmpty()) listOf(tr("log.warnings")) + result.warnings.map { "• $it" } else emptyList())
 					val summary = tr("status.completed", result.exportedFiles.size, result.warnings.size)
-					current.copy(
+					current.withLogs(outputLogs, level = if (result.warnings.isNotEmpty()) LogLevel.WARNING else LogLevel.SUCCESS, tag = "Export").copy(
 						isGenerating = false,
 						progress = 1f,
 						analysis = result.previewModel.analysis,
@@ -787,7 +898,6 @@ class PSD2LiveViewModel : AutoCloseable {
 						}.getOrNull(),
 						previewModel = result.previewModel,
 						statusText = summary,
-						logLines = logs,
 						successExportMessage = tr("dialog.exportSuccess", result.exportedFiles.size, output),
 					)
 				}
@@ -795,11 +905,10 @@ class PSD2LiveViewModel : AutoCloseable {
 			} catch (failure: Throwable) {
 				val detail = failure.message ?: failure.javaClass.simpleName
 				_state.update {
-					it.copy(
+					it.withLog(tr("log.failed", detail), level = LogLevel.ERROR, tag = "Export").copy(
 						isGenerating = false,
 						statusText = tr("status.failed", detail),
 						errorMessage = detail,
-						logLines = it.logLines + listOf(tr("log.failed", detail)),
 					)
 				}
 			}

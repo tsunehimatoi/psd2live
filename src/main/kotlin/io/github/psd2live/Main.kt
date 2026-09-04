@@ -24,9 +24,11 @@ fun main(arguments: Array<String>) {
 	configureLanguage(arguments)
 	if (arguments.isEmpty()) {
 		val viewModel = PSD2LiveViewModel()
+		val agentWorkspace = ViewModelAgentWorkspace(viewModel)
+		viewModel.attachAgentWorkspace(agentWorkspace)
 		var agentMcpService: AgentMcpService? = null
 		val agentMcpStartup = runCatching {
-			AgentMcpService(ViewModelAgentWorkspace(viewModel))
+			AgentMcpService(agentWorkspace)
 				.also { agentMcpService = it }
 				.start()
 		}

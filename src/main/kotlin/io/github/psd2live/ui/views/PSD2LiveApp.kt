@@ -57,12 +57,15 @@ import io.github.psd2live.i18n.AppLanguage
 import io.github.psd2live.i18n.I18n
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.agent.AgentMcpConnectionInfo
+import io.github.psd2live.ui.components.AgentConnectionDialog
 import io.github.psd2live.ui.components.AppTitleBar
 import io.github.psd2live.ui.components.CompactButton
 import io.github.psd2live.ui.components.CompactIconButton
 import io.github.psd2live.ui.components.IconClose
+import io.github.psd2live.ui.components.ImageLightboxDialog
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
+import io.github.psd2live.ui.state.WorkspaceTab
 import io.github.psd2live.ui.theme.CompactToolTheme
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
@@ -234,6 +237,7 @@ fun FrameWindowScope.PSD2LiveApp(
 						onClose = onCloseRequest,
 						onSetLanguage = { viewModel.setLanguage(it) },
 						onShowAgentConnection = { showAgentDialog = true },
+						onShowHistory = { viewModel.setWorkspaceTab(WorkspaceTab.HISTORY) },
 						onShowAbout = { showAboutDialog = true },
 					)
 				}
@@ -328,25 +332,18 @@ fun FrameWindowScope.PSD2LiveApp(
 		}
 
 		if (showAgentDialog) {
-			val connection = agentConnectionInfo
-			val message = if (connection != null) {
-				tr("dialog.agent.message", connection.endpoint, connection.token, connection.configToml)
-			} else {
-				tr("dialog.agent.unavailable", agentStartupError ?: tr("dialog.agent.unknownError"))
-			}
-			ModalDialog(
-				title = tr("dialog.agent.title"),
-				message = message,
+			AgentConnectionDialog(
+				connection = agentConnectionInfo,
+				startupError = agentStartupError,
 				onDismiss = { showAgentDialog = false },
-				extraAction = connection?.let {
-					{
-						CompactButton(
-							text = tr("dialog.agent.copyConfig"),
-							onClick = { copyToClipboard(it.configToml) },
-							height = 24.dp,
-						)
-					}
-				},
+			)
+		}
+
+		state.lightboxImage?.let { imgBytes ->
+			ImageLightboxDialog(
+				imageBytes = imgBytes,
+				title = state.lightboxTitle,
+				onDismiss = { viewModel.closeLightbox() },
 			)
 		}
 	}
