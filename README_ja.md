@@ -16,7 +16,8 @@ PSD2Live は、自動化された Live2D モデル生成パイプラインおよ
 
 | ドキュメント | 概要 |
 | :--- | :--- |
-| [ユーザー操作ガイド (docs/ja/USER_GUIDE.md)](docs/ja/USER_GUIDE.md) | デスクトップ GUI 構成、4 つのワークスペース画面、キャンバス操作、ショートカットおよび CLI リファレンス |
+| [ユーザー操作ガイド (docs/ja/USER_GUIDE.md)](docs/ja/USER_GUIDE.md) | デスクトップ GUI、バージョン履歴ツリー、独立ログドック、Agent / MCP 接続、ショートカットおよび CLI リファレンス |
+| [Agent / MCP 製品・技術設計（中国語）](docs/zh/AGENT_ARCHITECTURE.md) | 実装済み MCP ツール、永続ワークスペース／履歴、画像ワークフロー、ロードマップ |
 | [Live2D SDK 設定・利用ガイド (docs/ja/CUBISM_SDK_SETUP.md)](docs/ja/CUBISM_SDK_SETUP.md) | 公式 Native SDK ライセンス方針、シェーダー抽出、およびハードウェア高速化描画の設定手順 |
 | [PSD レイヤー仕様および命名規則 (docs/ja/PSD_LAYER_SPEC.md)](docs/ja/PSD_LAYER_SPEC.md) | 31 種のセマンティックタグ、左右判定規則、連結成分自動分離、およびパーツ別レイヤー設計 |
 | [デフォーマ階層・数理モデル・パラメータ仕様書 (docs/ja/DEFORMER_AND_PARAMETER_SPEC.md)](docs/ja/DEFORMER_AND_PARAMETER_SPEC.md) | デフォーマツリー構造、顔面 9 軸数理モデル、C1 連続曲線、パーツ別変形および物理演算仕様 |
@@ -29,16 +30,25 @@ PSD2Live は、自動化された Live2D モデル生成パイプラインおよ
 - **適応型メッシュ生成**: Alpha ガウス平滑化と適応的二値化；周期的 3 次 Bézier 曲線フィッティングによる角点検出と適応サンプリング（最大 12 倍）；位相適応型 Lawson 辺反転と超長辺中点二分割を備えた拘束付き Delaunay 三角化。
 
   <p align="center">
-    <img src="docs/imgs/mash.png" alt="適応型メッシュ生成とトポロジービュー" />
+    <img src="docs/imgs/mesh22.png" width="32%" alt="22 px 高密度適応メッシュ" />
+    <img src="docs/imgs/mesh64.png" width="32%" alt="64 px バランス型適応メッシュ" />
+    <img src="docs/imgs/mesh115.png" width="32%" alt="115 px 低密度適応メッシュ" />
     <br>
-    <em>デスクトップ GUI トポロジービュー：レイヤー自動認識と適応型 Delaunay メッシュ生成</em>
+    <em>メッシュ間隔 22 / 64 / 115 px：精細な輪郭から軽量トポロジーまでの密度比較</em>
   </p>
 - **デフォーマ (Warp) 生成**:
   - **目／口の変形**: 目・眉の透視拘束面、瞳の奥側位置補正、まつ毛の Alpha 重心追従による滑らかな閉眼 U 字曲線；口の最大開口状態から中心線への向心閉口補間、歯・舌パーツの自動クリッピング。
   - **9 軸格子の構築**: `AngleX (±45°) × AngleY (±30°)` 8×8 顔面格子、C1 連続水平 Roll 曲線（手前展開、幅維持プラトー、奥側透視圧縮）、垂直 V/^ 仰俯曲率、斜め 4 隅の $C_{xy} = \text{yaw} \times \text{pitch}$ 相互干渉補正。
 - **アニメーション**: 呼吸・微小な頭部/身体の揺れ・自然なまばたきを含む 6 秒間のシームレスループ `idle.motion3.json` を自動生成；デスクトップ GUI では公式 Cubism 5-r.5 SDK ネイティブ描画との連携による **100% 公式描画・物理挙動の一致性検証（Ground Truth）** に対応（本プロジェクトには公式専有 SDK バイナリは含まれず配布も行いません。詳細は [SDK設定ガイド](docs/ja/CUBISM_SDK_SETUP.md) を参照。未設定時は純 CPU 高精度ソフトウェアラスタライザーへ自動フォールバックします）；リアルタイム視線追従（Mouse Look）に対応。
 - **物理演算**: 前髪・後ろ髪を頭部追従デフォーマへ独立配置し、毛根固定と $v^3$ 立方先端揺れ物理を適用；まばたき速度連動の 2 階減衰振動子による瞳ぷるぷる物理（`ParamEyeBallForm`）。
+- **編集可能な Agent / MCP ワークスペース**: Bearer Token で保護されたローカル Streamable HTTP MCP により、ChatGPT/Codex、Gemini/Antigravity、その他の MCP ホストからプロジェクトを調査し、可逆なキャンバス座標付き PNG View の取得、透明素材の追加、パラメータ管理、ArtMesh・Warp/Rotation デフォーマ・Part・Glue の多次元キーフォーム編集を行えます。全変更は再開可能なタスク記録と、永続化された追記専用の分岐履歴へ保存されます。
 - **プロジェクト／ランタイム書き出し**: Live2D Cubism Modeler 5 で編集可能な `.cmo3` プロジェクトおよび実行時 `.moc3` ファイル群（`.model3.json`、`.cdi3.json`、`physics3.json`、`idle.motion3.json`、テクスチャアトラス）をワンクリックで同時出力；中立姿勢・極限姿勢・対称性の 3 段階自動検証ゲートを内包。
+
+<p align="center">
+  <img src="docs/imgs/agent.png" alt="PSD2Live AI Agent の素材生成・統合・複数パラメータ描画ワークフロー" />
+  <br>
+  <em>Agent がモデル View を確認し、ホストのネイティブ画像機能で素材を生成してレイヤーへ追加し、複数姿勢を検証</em>
+</p>
 
 ---
 
@@ -73,6 +83,17 @@ PSD2Live は、自動化された Live2D モデル生成パイプラインおよ
 | **再解析** | `Ctrl + R` |
 | **生成して書き出し** | `Ctrl + G` |
 | **指定先へ書き出し** | `Ctrl + Shift + G` |
+
+#### AI Agent / MCP ホストへの接続
+
+1. PSD2Live デスクトップアプリを起動したまま、**Agent / MCP → Agent / MCP 接続とプロンプト…** を開きます。
+2. ChatGPT デスクトップ／Codex では HTTP TOML、Gemini／Antigravity では HTTP JSON をコピーします。その他の Streamable HTTP 対応ホストでは、表示されたエンドポイントと `Authorization: Bearer <token>` ヘッダーを使用し、旧 `/sse` へ変更しないでください。
+3. HTTP MCP 非対応ホストでのみ Stdio JSON を使用します。Python 3 でリポジトリ直下の `mcp_proxy.py` を起動し、`PSD2LIVE_MCP_TOKEN` を読み取ります。Windows では PSD2Live が保存した Token も利用できます。
+4. ドメイン作業には `.agent/skills/psd2live-rigging` と `.agent/skills/hair-separation` をホスト公式の Skill ディレクトリへ配置します。接続後はツール一覧を取得し、最初に `project_get_state` を呼び出します。
+
+現在の MCP は、プロジェクト／レイヤー／パラメータ参照、オブジェクトとキーフォーム編集、パラメータ CRUD、モデルデータ PNG View、透明素材インポート、ソフト削除、再開可能タスク、追記専用の分岐履歴を提供します。プロジェクトの `HEAD` を進める編集には必ず最新の `expected_history_head_node_id` が必要です。タイムアウトや切断後は、再試行前に `project_get_state` と `history_list` でコミット状態を確認してください。
+
+PSD2Live が提供するのは View、空間マッピング、素材インポートであり、ホスト固有の画像生成器ではありません。描画差分、パーツ分割、オクルージョン補完、ピクセル再構築では Nano Banana Pro/NBP、GPT Image 2（`gpt-image-2`）、または同等のホストネイティブ画像ツールを実際に呼び出し、その透明 PNG を `asset_import_png` へ渡します。Python、PIL/OpenCV、SVG、Canvas で代替画像を描かないでください。詳細は [ユーザー操作ガイド](docs/ja/USER_GUIDE.md) を参照してください。
 
 ---
 

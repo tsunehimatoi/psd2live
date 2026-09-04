@@ -1,6 +1,7 @@
 # psd2live Agent：产品与技术设计
 
-状态：第一阶段实现中（MCP 基础、参数清单和参数化 Agent View 已落地）  
+状态：Phase 0 / 0.5 已落地；Phase 1 已完成参数 CRUD、对象级 K 帧编辑、持久化分支历史与桌面历史/日志界面，完整 Domain Command/Transaction 仍在扩展中
+
 目标：把规范 PSD 转换为可继续精修、可重新导入、可复用的 60%～80% Live2D 工程，同时尽量消除建模师的重复劳动。
 
 ## 1. 产品边界
@@ -83,7 +84,7 @@ Cubism Physics 的输出对象是已经制作好摆动 keyform 的参数；输�
 ```text
 内置 Chat（Responses API / 可替换模型） ─┐
                                          ├─ Agent Runtime
-ChatGPT Desktop / Codex / 其他 Agent ─ MCP┘   ├─ Skill Registry
+ChatGPT/Codex/Gemini/其他 Agent ─── MCP┘   ├─ Skill Registry
                                               ├─ Planner / Workspace Authority
                                               ├─ Task Orchestrator
                                               └─ Tool Registry
@@ -110,7 +111,9 @@ ChatGPT Desktop / Codex / 其他 Agent ─ MCP┘   ├─ Skill Registry
 - Tool/Skill/History 共用：同一任务可以从桌面 Agent 发起，在 psd2live 内查看和撤销；
 - MCP 是控制平面，不是大文件传输协议。大图、PSD 和 checkpoint 存在工作区 Asset Store；Tool 返回短元数据、`ImageContent` 预览和有时效的本机资源引用。
 
-ChatGPT Desktop、Codex CLI 和 IDE 扩展目前均支持本机 MCP；Streamable HTTP 支持 Bearer Token，服务端 `instructions` 会成为跨工具约束。默认单工具超时为 60 秒，所以长任务必须异步化。参见 [OpenAI MCP 文档](https://learn.chatgpt.com/zh-Hans/docs/extend/mcp)。服务实现使用 [官方 MCP Kotlin SDK](https://github.com/modelcontextprotocol/kotlin-sdk)。
+当前桌面应用直接在 `127.0.0.1:23871/mcp` 提供带 Bearer Token 的 Streamable HTTP。ChatGPT Desktop / Codex 使用连接窗口生成的 TOML，Gemini / Antigravity 使用 HTTP JSON；其他 HTTP 宿主传递相同端点和 `Authorization` 请求头。只有宿主不支持 HTTP MCP 时才使用仓库根目录的 `mcp_proxy.py` 把逐行 stdio JSON-RPC 桥接到 HTTP。代理会维护 MCP Session、转发协议版本、在认证失败时重新读取 Token，并且只自动重试协议发现和只读 Tool；写调用超时后必须重新读取工程与历史，不能盲目重放。
+
+顶部 **Agent / MCP → Agent / MCP 连接与安装…** 会显示在线状态、端点、Token、三类可复制配置和多宿主安装 Prompt。Token 由 Java Preferences 持久化；它代表当前本机工作区写权限，不应写入仓库或公开。服务端 `instructions` 与项目级 Skill 会成为跨工具约束。默认单工具超时为 60 秒，所以长任务必须通过检查点恢复。服务实现使用 [官方 MCP Kotlin SDK](https://github.com/modelcontextprotocol/kotlin-sdk)。
 
 ## 4. 工作区领域模型
 
@@ -192,18 +195,17 @@ Tool 应小而可组合。Skill 负责组合顺序和判断，不把整个工作
 
 ### 5.1 读取和 Agent View
 
-| Tool | 作用 |
-|---|---|
-| `project_get_state` | 当前工程、revision、任务和选择摘要 |
-| `project_list_layers` | 稳定 ID、语义、层级、bounds、可见性 |
-| `project_list_parameters` | 全部参数 ID、范围、默认值、当前值与类型 |
-| `object_get` / `graph_query` | 读取 Mesh、Deformer、参数、物理关系 |
-| `view_render_layer` | 从 RGBA 模型数据直出透明/棋盘 PNG，不截 UI |
-| `view_render_context` | 以指定部件为中心，按相对缩放观察周围上下文 |
-| `view_render_model` | 在指定参数姿态和取景窗口内，合并指定图层并标注部件 |
-| `view_render_structure` | Mesh/Warp/旋转中心/父子边界标注 |
-| `view_render_motion` | 参数扫描或物理仿真的帧序列/联系表 |
-| `validate_project` | 可编辑性、结构、性能、导出完整性检查 |
+| Tool | 状态 | 作用 |
+|---|---|---|
+| `project_get_state` | 已实现 | 当前工程、revision、持久化状态、历史 HEAD、任务和选择摘要 |
+| `project_list_layers` | 已实现 | 稳定 ID、语义、层级、bounds、可见性与软删除状态 |
+| `project_list_parameters` | 已实现 | 全部参数 ID、范围、默认值、当前值与类型 |
+| `object_get` | 已实现 | 读取 `mesh`、`warp`、`rotation`、`part`、`glue` 的层级、拓扑、几何、通道与现有 K 帧 |
+| `view_render_layer` | 已实现 | 从 RGBA 模型数据直出透明/棋盘 PNG，不截 UI |
+| `view_render_context` | 已实现 | 以指定部件为中心，按相对缩放观察周围上下文 |
+| `view_render_model` | 已实现 | 在指定参数姿态和取景窗口内，合并指定图层并标注部件 |
+| `graph_query` / `view_render_structure` | 规划中 | 图查询与 Mesh/Warp/旋转中心/父子边界标注 |
+| `view_render_motion` / `validate_project` | 规划中 | 参数扫描、物理帧序列和工程完整性检查 |
 
 `project_list_layers` 同时返回源层的 `rasterWidth/rasterHeight`、画布 `bounds` 和 `sourcePixelToCanvas`，明确区分源像素尺寸与模型中的实际尺寸。每个 View 返回 `viewId`、`revisionId`、`objectIds`、PNG 像素尺寸、完整画布尺寸、请求/实际取景 `viewRect`、`focusRect`、`canvasUnitsPerPixelX/Y`、可逆的 `pixelToCanvas` / `canvasToPixel` 仿射矩阵和 SHA-256。Agent 因而可以对精确对象采取下一步操作，不依赖屏幕坐标、截图或像素尺寸猜测。
 
@@ -284,42 +286,38 @@ Tool 应小而可组合。Skill 负责组合顺序和判断，不把整个工作
 
 ### 5.2 素材与透明图层
 
-| Tool | 作用 |
-|---|---|
-| `selection_propose` | 根据语义和图像提出 mask/路径，不改工程 |
-| `selection_refine` | Warp 笔刷、膨胀/腐蚀、羽化、路径点编辑 |
-| `asset_split_preview` | 以 mask 把一层拆为多个派生资产，生成接缝预览 |
-| `asset_inpaint_occlusion` | 对明确 mask 内的被遮挡区域补全，保留生成来源 |
-| `asset_add_layer` | 把已验收资产加入工作区和层级 |
-| `asset_soft_delete_layer` | 从当前工作区隐藏原层，历史中永久可恢复 |
-| `asset_export_import_psd` | 导出规范 RGB/8-bit/sRGB 导入 PSD 与 manifest |
+| Tool | 状态 | 作用 |
+|---|---|---|
+| `asset_import_png` | 已实现 | 使用 View 的 `spatial_reference_id` 暂存透明 PNG；本身不移动历史 HEAD |
+| `layer_add_from_asset` | 已实现 | 把暂存资产加入权威源图层，生成 Mesh/Rig 并追加历史节点 |
+| `layer_soft_delete` | 已实现 | 从当前工作区移除图层但保留像素与历史恢复能力 |
+| `selection_propose` / `selection_refine` | 规划中 | 根据语义和图像提出、细化 mask/路径 |
+| `asset_split_preview` / `asset_inpaint_occlusion` | 规划中 | 内建切分预览与补全 Provider 接口 |
+| `asset_export_import_psd` | 规划中 | 导出规范 RGB/8-bit/sRGB 导入 PSD 与 manifest |
 
 透明图层的正确交付链路是：
 
 1. 软件从 PSD 解码得到原生 RGBA，按 Agent 指定取景合成为 PNG，并通过 MCP `ImageContent` 给 Agent 看；
-2. Agent 调用选择/路径工具描述“哪里切”和“遮挡关系”，不传 UI 截图坐标；
-3. 确定性切分优先保留原像素；仅缺失区域交给内部可替换的图像编辑 Provider；
-4. Provider 输出 RGBA 后进入 Asset Store，alpha、色彩空间、边缘污染和接缝由程序检查；
-5. Agent 用独立视图和聚焦上下文视图验收；生成 PNG 通过 `spatialReferenceId` 保持原画布位置和尺寸，再提交事务；
-6. PSD Writer 从 Asset Store + Layer Tree 生成透明分层 PSD；MCP 只返回资产 ID、预览和导出路径。
+2. Agent 保留 View 的 `spatialReferenceId` 和像素↔画布映射，不使用 UI 截图坐标；
+3. 只要任务会产生绘制差分、拆分边界、遮挡补全、重建像素或新 drawable，Agent 必须离开 PSD2Live Tool 链，实际调用宿主暴露的 Nano Banana Pro/NBP、GPT Image 2（`gpt-image-2`）或等效原生图片生成/编辑能力；
+4. 禁止用 Python、PIL/Pillow、OpenCV、Matplotlib、SVG、Canvas、ImageMagick、脚本或手写多边形绘制替代素材。唯一无需生成器的情形，是所有输出 RGBA 样本均原样来自已可见源像素的严格裁剪/提取；生成后可做非创作性的 Alpha 清理；
+5. Agent 把透明 PNG 以 Base64 或 data URI 传给 `asset_import_png`，再用 `layer_add_from_asset` 加入图层；若只输出 View 子区域，必须声明 `source_pixel_rect`；
+6. Agent 用独立 View、上下文 View 和参数姿态 View 验证位置、边缘、遮挡和 Mesh，并在确认替代层有效后单独调用 `layer_soft_delete`；每个写入节点均可通过历史树恢复。
 
-推荐让 psd2live 自己接图像生成 API，而不是要求 ChatGPT Desktop 把一次图像生成结果的二进制“塞回”MCP。这样模型供应商可替换、任务可恢复，所有生成结果也能进入统一历史。若外部 Agent 已有生成能力，可另提供 `asset_import`，接受本机临时文件 URI 或分块上传；不建议把数十 MB base64 放进 Tool 参数。
+当前设计明确把图片生成路由留给宿主：PSD2Live MCP 负责权威模型取证、空间映射、素材暂存与工程写入，不假装暴露宿主私有的图像模型。若宿主没有任何可用的原生图片能力，Agent 必须停在最后一个可恢复状态并报告缺失能力。未来内置 Provider 仍须遵守相同来源、历史和验证契约。
 
 ### 5.3 Mesh、Warp 与绑定
 
-| Tool | 作用 |
-|---|---|
-| `mesh_generate_preview` | 按部件策略生成 Mesh 草案和质量报告 |
-| `mesh_move_vertices` / `mesh_brush` | 可编辑的局部拓扑和变形工具 |
-| `deformer_create_warp` | 创建有语义用途、范围和分割数的 Warp |
-| `deformer_fit_children` | 在所有待建 keyform 的包围范围内适配父 Warp |
-| `hierarchy_reparent` | 带无环/类型/越界检查的父子调整 |
-| `parameter_create` / `parameter_update` / `parameter_delete` | 创建、修改或删除任意参数；Agent 可显式指定 ID、范围、默认值与类型 |
-| `keyform_set` / `keyform_delete` / `keyform_copy` | 在精确参数坐标为通道或几何写入、删除、复制 K 帧 |
-| `keyform_interpolate` / `keyform_apply_template` | 生成中间形、组合角或拟合标准模板，不烘焙最终画面 |
-| `rig_k_pose` | 把当前对象在给定多参数姿态的形变写成 Keyform（“K rig”） |
-| `physics_create_group` | 创建输入、摆锤、输出及约束 |
-| `physics_simulate` | 扫描输入、FPS 和极限姿势，输出诊断 |
+| Tool | 状态 | 作用 |
+|---|---|---|
+| `parameter_create` / `parameter_update` / `parameter_delete` | 已实现 | 创建、修改或删除参数；参数编辑会持久化并随历史恢复与导出 |
+| `object_get` | 已实现 | 按稳定对象 ID 读取拓扑、父子、bounds、几何与通道 K 帧 |
+| `keyform_set` / `keyform_delete` / `keyform_copy` | 已实现 | 在精确 N 维参数坐标写入、删除或跨对象复制几何/通道 K 帧 |
+| `rig_k_pose` | 已实现 | 在给定多参数姿态写入对象几何与通道，作为 K rig 便捷入口 |
+| `mesh_generate_preview` / `mesh_move_vertices` / `mesh_brush` | 规划中 | 分部件 Mesh 草案、局部拓扑和笔刷变形 |
+| `deformer_create_warp` / `deformer_fit_children` / `hierarchy_reparent` | 规划中 | Deformer 创建、范围适配与父子调整 |
+| `keyform_interpolate` / `keyform_apply_template` | 规划中 | 中间形、组合角和标准模板拟合 |
+| `physics_create_group` / `physics_simulate` | 规划中 | 物理组创建、输入扫描和质量诊断 |
 
 模板必须是可解释的数据：适用部件、锚点、控制点、参数范围、keyform、允许缩放范围和失败条件。Cubism 官方模板同样需要先对齐布局，应用后再整理绘制顺序、父子层级与 ArtMesh；因此模板拟合低于阈值时应停止并交给人工，不能强行生成。参见 [How to Apply Model Templates](https://docs.live2d.com/en/cubism-editor-manual/applying-the-model-template/)。
 
@@ -329,14 +327,14 @@ Tool 应小而可组合。Skill 负责组合顺序和判断，不把整个工作
 {
   "tool": "parameter_create",
   "arguments": {
-    "expected_revision_id": "revision-123",
-    "id": "ParamHairFrontLeft01",
+    "expected_history_head_node_id": "node-123",
+    "parameter_id": "ParamHairFrontLeft01",
     "name": "左前发 01 摆动",
     "min": -1,
     "default": 0,
     "max": 1,
     "kind": "normal",
-    "group_id": "ParamGroupHair"
+    "repeat": false
   }
 }
 ```
@@ -345,58 +343,56 @@ Tool 应小而可组合。Skill 负责组合顺序和判断，不把整个工作
 {
   "tool": "keyform_set",
   "arguments": {
-    "expected_revision_id": "revision-124",
-    "target": {"kind": "warp_deformer", "id": "HairFrontLeft01_Warp"},
+    "expected_history_head_node_id": "node-124",
+    "target": {"kind": "warp", "id": "HairFrontLeft01_Warp"},
     "coordinate": {"ParamHairFrontLeft01": 1, "ParamAngleX": 10},
     "geometry": {
-      "space": "parent",
-      "mode": "absolute",
-      "control_points": [[120.0, 88.0], [146.5, 92.0], [171.0, 101.0]]
+      "control_points": [120.0, 88.0, 146.5, 92.0, 171.0, 101.0]
     }
   }
 }
 ```
 
-`keyform_set` 允许 Agent 写入单参数或多参数组合角的精确坐标，目标可为 ArtMesh、Warp、Rotation、Part、Glue 或其他可 K 通道；可写内容包括几何、opacity、draw order、multiply/screen color、反转等模型支持的全部通道。`rig_k_pose` 是其高层便捷形式：把 Agent 通过 Warp 笔刷/变形工具形成的当前编辑缓冲区，在指定参数坐标捕获为 Keyform。高层工具不限制底层工具，二者最终进入同一个 Domain Command。
+`keyform_set` 允许 Agent 写入单参数或多参数组合角的精确坐标，当前 `target.kind` 为 `mesh`、`warp`、`rotation`、`part` 或 `glue`。几何字段按对象类型使用：ArtMesh 为扁平 `position_deltas`，Warp 为扁平 `control_points`，Rotation 为 `origin_x`、`origin_y`、`angle`、`scale`；通道包括 opacity、draw order、multiply/screen color、glue intensity 与翻转。`rig_k_pose` 使用同一底层写入机制，把显式或当前参数姿态记录为 Keyform。所有编辑保存为 `RigEditOverlay`，在 Pipeline 重建、历史检出、重启恢复和导出时重放。
 
 程序仅检查结构不变量：参数 ID 唯一、`min ≤ default ≤ max`、坐标有限、顶点/控制点数量与目标拓扑一致、引用有效。诸如“这个摆幅是否好看”属于 Agent 与建模师的判断，不成为权限门。
 
 ### 5.4 事务与长任务
 
-Agent 拥有完整写权限，但写工具仍携带 `expectedRevisionId`：这不是审批，而是防止长任务把基于旧视图计算的结果覆盖用户或另一个任务刚完成的修改。推荐协议：
+Agent 拥有完整写权限，但当前所有会追加工程历史节点的编辑工具都携带 `expected_history_head_node_id`：这不是审批，而是防止长任务把基于旧视图计算的结果覆盖用户或另一个任务刚完成的修改。调用方先从 `project_get_state` 或 `history_list` 取得 HEAD，每次成功后再使用响应中的新 `historyNodeId`。HEAD 不一致会返回 stale-head 错误，Agent 必须刷新工程并重新协调计划。`asset_import_png` 只暂存资产，`task_update` 只追加任务事件，二者不移动工程 HEAD。
+
+单个工程编辑 Tool 当前就是一个原子提交：先在不可变工作副本上应用编辑并重建 Rig，成功后追加历史节点；失败不会留下半成品。下列多命令 Transaction 是后续扩展协议：
 
 ```text
-transaction_begin(expectedRevisionId, parentNodeId = HEAD)
+transaction_begin(expectedHistoryHeadNodeId)
   → 多个 domain command
   → 可选 validate / view  # Agent 自主决定何时检查
   → transaction_commit(message) # 追加一个历史节点并移动 HEAD
   或 transaction_cancel
 ```
 
-单个写 Tool 默认也是一个原子事务；Agent 不需要先调用 preview 或取得批准。事务用于把“拆三层 + 生成 Mesh + 建 Warp + K 帧”等多步工作合并为一个可撤回节点。命令中途失败时只丢弃未提交工作副本，不产生半成品状态。
+多命令事务将用于把“拆三层 + 生成 Mesh + 建 Warp + K 帧”等多步工作合并为一个可撤回节点；它尚未作为 MCP Tool 暴露。Agent 不需要先取得逐操作批准，但在当前版本中每个写 Tool 会分别产生历史节点。
 
 历史 Tool 的最小契约为：
 
 | Tool | 作用 |
 |---|---|
-| `history_list` | 返回 node、parent、revision、summary、task 和当前 HEAD；只读（已实现） |
-| `history_diff` | 比较两个节点的层、资产、Mesh、Rig、参数与 Physics 变化；只读 |
-| `history_checkout` | 把工作区 HEAD 切到指定节点并恢复其快照；不会删除任何分支 |
+| `history_list` | 已实现；返回 node、parent、revision、summary、task 和当前 HEAD，只读 |
+| `history_checkout` | 已实现；把工作区 HEAD 切到指定节点并恢复其快照，不会删除任何分支 |
+| `history_diff` | 规划中；比较两个节点的层、资产、Mesh、Rig、参数与 Physics 变化，只读 |
 
 `history_checkout` 是工作区写操作，但不是 History Store 写操作。切换之后若 Agent 继续调用 `parameter_create` 或 `keyform_set`，提交节点的 `parentId` 就是所切换到的节点。
 
-耗时任务不得占住一次 MCP 调用：
+耗时任务不得占住一次 MCP 调用。当前已实现 `task_start`、`task_update`、`task_get`、`task_list`，用于保存 Agent 自己制定且可替换的计划、状态、进度、消息和产物 ID；它们是恢复检查点，不是审批或固定工作流。下列细粒度控制接口仍在规划中：
 
 ```text
-task_start(kind, plan, expectedRevisionId) → taskId
-task_get(taskId)                           → stage/progress/checkpoint/artifacts
 task_events(taskId, cursor)                → 增量日志与待验收项
 task_continue(taskId, decision)            → 接受、修改条件或继续
 task_cancel(taskId)                        → 安全取消并回滚未提交事务
 task_resume(taskId)                        → 从持久 checkpoint 恢复
 ```
 
-任务状态为 `PLANNING → INSPECTING → EXECUTING → VALIDATING → COMMITTING → DONE`，并允许进入 `WAITING_FOR_USER`、`FAILED_ROLLED_BACK`、`CANCELLED`。`WAITING_FOR_USER` 只用于确实缺少创作意图或外部输入，不是普通写操作的审批门。每一阶段保存 Skill 版本、工具参数、输入 revision 和产物 hash。
+当前任务状态由 Agent 通过 `task_update` 写入，并作为追加事件保留；Agent 可以替换动态计划，关联 View、Asset、Layer 与 History Node 等产物 ID。更完整的暂停、恢复、取消执行器仍属于后续阶段。`WAITING_FOR_USER` 只应用于确实缺少创作意图或外部输入，不是普通写操作的审批门。
 
 ## 6. Skill 与 Prompt 工程
 
@@ -408,6 +404,8 @@ Skill 是领域作业指导，不是固定脚本。它应声明：
 - 必须调用的验证器；
 - 可接受的质量阈值；
 - 对用户的完成报告格式。
+
+仓库当前提供 `.agent/skills/psd2live-rigging` 与 `.agent/skills/hair-separation`。连接窗口的“安装 Prompt”要求把它们复制到宿主官方 Skill 目录；任何 Agent 一旦调用 PSD2Live MCP，就先完整读取 `psd2live-rigging`，头发任务还要读取 `hair-separation`。两个 Skill 都强制执行宿主原生图片生成路由、最新 HEAD 并发边界、断线后查证和最终 View 验证；这些规则不影响不调用 MCP 的普通代码或文档工作。
 
 例如“把刘海拆为三片并有独立物理”应由 Skill 引导 Agent 动态决定分割线、内外顺序、补全范围、Mesh 策略和物理参数；程序只强制不可变源、事务、alpha/拓扑/越界/物理约束。这样既保留模型判断力，也不把安全性寄托在 Prompt 是否听话上。
 
@@ -425,22 +423,21 @@ Skill 是领域作业指导，不是固定脚本。它应声明：
 
 用户：`把刘海拆分为三片，并且有独立物理`
 
-1. 加载 `hair-separation` Skill，读取工程 revision；
-2. 查询前发候选层和遮挡图，获取透明独立视图、整体高亮视图；
-3. 判断素材是否完整；若原画已缺少不可推断的关键信息，转为待用户确认，不生成伪细节；
-4. 生成三条可编辑分割路径和层级草案；
-5. 预览三个保留重叠的 mask，确定内外遮挡；
-6. 仅对因拆分暴露的区域做局部补全；
-7. 做透明边、颜色、接缝和整体还原度验证；
-8. 在未提交事务内加入三层，原层软删除；
-9. 分别生成用途匹配的 Mesh，检查退化/未闭合/过密；
-10. 为三片创建独立局部 Warp，并挂到公共前发跟随 Warp 下；
-11. 生成三个独立摆动参数/keyform，可共享物理输入但输出独立；
-12. 模拟静止、慢转、快转和极值，检查露底、穿插、超调、越界；
-13. 生成 before/after、结构图、运动联系表和 diff；修正阻断性错误后一次提交为新的历史节点；
-14. 通知完成，并提供该节点 ID、继续调节和 `history_checkout` 撤回入口。
+1. 完整读取 `psd2live-rigging` 与 `hair-separation`，调用 `project_get_state`，并以 `task_start` 保存动态计划；
+2. 查询前发候选层，获取透明独立 View、周围上下文 View，并用 `object_get` 检查现有 Mesh、Deformer 与 K 帧；
+3. 判断素材是否完整，确定三片的根部、自然走向、交叠和缺失遮挡区；
+4. 对每个需要新边界或隐藏像素的输出，实际调用宿主的 Nano Banana Pro/NBP、GPT Image 2 或等效原生图片编辑能力，生成保留风格与完整根部的透明 PNG；
+5. 通过 `asset_import_png` 保留空间参考，再以最新 HEAD 分别调用 `layer_add_from_asset`；每次成功后把 View、Asset、Layer 与 History Node 写入 `task_update`；
+6. 重新渲染独立和上下文 View，检查透明边、颜色、接缝、遮挡与整体还原度；确认三层正确后再单独软删除原层；
+7. 分别生成用途匹配的 Mesh，检查退化/未闭合/过密；
+8. 为三片创建独立局部 Warp，并挂到公共前发跟随 Warp 下；
+9. 生成三个独立摆动参数/keyform，可共享物理输入但输出独立；已有目标的对象级 K 帧可用 `keyform_set` / `rig_k_pose` 写入；
+10. 渲染中立、慢转、快转和极值，检查露底、穿插、超调、越界；
+11. 记录最终 View 与节点 ID，并提供继续调节和 `history_checkout` 恢复入口。
 
-如果步骤 7、9 或 12 失败，任务停在预览态，不对当前工程宣称完成。
+当前公开 Tool 已覆盖步骤 1～6、已有对象的 K 帧编辑和姿态 View；步骤 7～9 中“新建/改 Mesh、创建 Deformer、创建 Physics”仍属于 Phase 2～3 的扩展能力。Agent 不得把尚未暴露的能力描述为已经完成。
+
+如果图像、拓扑或极限姿态验证失败，任务停在最后一个可恢复节点，不对当前工程宣称完成。
 
 ## 8. Cubism 兼容策略
 
@@ -453,16 +450,20 @@ psd2live 采用两层兼容：
 
 所有能力先在内部领域模型完成；导入 Cubism 后再做一次 ID 映射和 round-trip 验证。不能把 Alpha API 作为唯一数据真相，也不能让直接 Cubism 编辑绕过 psd2live 的 Command Log。
 
-## 9. Chat 界面
+## 9. 桌面交互与未来 Chat
 
-Chat 不应只有消息气泡。最小产品包含：
+当前桌面端已完成：
 
-- 对话区：用户意图、Agent 简洁结论；
-- 计划卡：动态步骤、当前阶段、可取消/继续；
-- Tool 时间线：读取、生成、验证、提交及耗时；
-- Artifact 面板：透明层、上下文高亮、Mesh/Warp、运动预览；
-- Diff 面板：新增/软删除层、父子变化、参数和物理变化；
-- 历史树：查看当前 HEAD 与所有分支、比较节点、跳转恢复；普通工作区操作不弹审批卡；
+- 顶级 **Agent / MCP** 菜单、在线状态徽标，以及连接配置/安装 Prompt 双页对话框；
+- 主工作区 **History** 标签：绘制完整分支树，支持平移、缩放、搜索、节点详情、复制 ID 与检出恢复；
+- 四个主视图下方的独立日志坞：折叠、拖动高度、按系统/Agent/图片筛选、清空和复制；
+- MCP View 与导入资产的行内缩略图，以及带棋盘背景、尺寸/大小和复制功能的图片灯箱；
+- GUI 与 MCP 共用同一历史快照和 `RigEditOverlay`，历史检出后重建当前可编辑模型。
+
+内置 Chat 仍在规划中，并且不应只有消息气泡。后续产品界面包含：
+
+- 对话区、动态计划卡与可取消/继续状态；
+- Tool 时间线、Artifact 面板和结构/运动 Diff；
 - 外部副作用提示：仅当任务要覆盖工作区外文件、发布或调用付费第三方服务时提示边界，不限制工作区内权限；
 - Provider 设置：OpenAI API、自定义兼容 API 或“仅外部 MCP Agent”。
 
@@ -471,13 +472,15 @@ Chat 不应只有消息气泡。最小产品包含：
 ### Phase 0：已落地的垂直切片
 
 - 应用启动时在 `127.0.0.1:23871/mcp` 启动 Streamable HTTP MCP；
-- Bearer Token 持久化，本机 Help 菜单显示端点与配置；
+- Bearer Token 持久化；顶部 Agent / MCP 菜单提供端点、Token、Codex TOML、Gemini/Antigravity HTTP JSON、通用 Stdio JSON 和多语言安装 Prompt；
+- `mcp_proxy.py` 为仅支持 Stdio 的宿主维护 Session、协议版本和 Token 刷新，并只对安全只读请求作有限重试；
 - `project_get_state`、`project_list_layers`、`project_list_parameters`；
 - `view_render_layer` 透明/棋盘图层直出；
 - `view_render_context` 支持按部件、相对缩放率和长宽比聚焦周围区域；
 - `view_render_model` 支持显式参数姿态、图层叠加集合、部件标注、画布矩形或部件聚焦取景；
 - 所有 View 合成为 PNG，并返回像素↔画布的可逆空间映射与压缩后实际分辨率；
 - `hair-separation` MCP Prompt 和项目 Manifest Resource；
+- 项目级 `psd2live-rigging` / `hair-separation` Skill 已落地，并强制把绘制差分、拆分和遮挡补全路由到宿主原生图片工具；
 - 服务端 instructions 明确认证 Agent 的工作区所有者权限与不可改写历史边界；
 - 使用官方 Kotlin MCP Client 做端到端握手与 Tool 测试。
 
@@ -489,18 +492,21 @@ Chat 不应只有消息气泡。最小产品包含：
 - `history_list` 与 `history_checkout` 接入追加式、保留分支的 History Tree，写命令使用 `expected_history_head_node_id` 防止长任务覆盖并发修改；
 - GUI 导出当前权威 SourceArt，派生层不会因重新读取原 PSD 而丢失。
 - `task_start`、`task_update`、`task_get`、`task_list` 保存 Agent 自己生成且可动态替换的计划、阶段、进度、事件与产物引用；它不是审批或固定流程引擎。
+- GUI 日志坞会接收系统、MCP、Agent 事件与图片；View/Asset 可以行内预览并打开图片灯箱。
 
 历史树、暂存 Asset、任务检查点与 View 空间参考现已落到本机 Project Store：Windows 默认位于 `%LOCALAPPDATA%/PSD2Live/agent-workspaces`，也可用 JVM 属性 `psd2live.agent.store` 指定。历史节点、快照和 RGBA Blob 只创建不覆盖；RGBA 以原始字节 SHA-256 寻址并 GZIP 压缩去重，只有 HEAD 与任务检查点使用原子替换。关闭应用时先等待持久化队列排空。
 
 Project ID 同时包含规范化 PSD 路径和加载时的文件签名，避免同路径 PSD 已被画师替换后自动套用旧工程。再次加载同一版本 PSD 时，程序在后台重建持久化 HEAD；如果建模师已在恢复期间修改结构，CAS 会拒绝覆盖，并把当前状态保留为新分支。`project_get_state.persistenceStatus` 返回 `ready`、`saving`、`restoring` 或 `error`。
 
-### Phase 1：全权限 Domain Kernel 与不可变历史树
+### Phase 1：全权限 Domain Kernel 与不可变历史树（进行中）
 
 - 已完成 History Tree、Asset、View 空间参考和长任务检查点持久化；继续把完整 Project Graph、Command 与多命令 Transaction 纳入同一格式；
+- 已完成参数 `create/update/delete`，以及 `mesh/warp/rotation/part/glue` 的 `object_get`；
+- 已完成 `keyform_set`、`keyform_copy`、`keyform_delete` 与 `rig_k_pose`，可持久化几何和可视通道编辑，并在 Pipeline 重建、历史检出、重启和导出时重放；
+- 已完成桌面 History 分支树、节点详情与检出恢复；
 - 把现有 UI 的可见性、重命名、父子修改、软删除迁移到 Command；
-- revision 并发检查；
-- 首批写 Tool：参数 CRUD、参数姿态、Keyform/K rig、图层与层级编辑；
-- 补齐 `history_diff` 与历史树磁盘存储；现有 `history_list` / `history_checkout` 已支持撤回后继续编辑保留分支；
+- 继续将所有写 Tool 统一到 `expected_history_head_node_id` 并发边界；
+- 补齐 `history_diff`；现有 `history_list` / `history_checkout` 已支持撤回后继续编辑保留分支；
 - 已支持重启后恢复工程和 Agent 任务；继续补迁移版本、存储维护与损坏恢复工具。
 
 ### Phase 2：透明素材闭环
@@ -520,7 +526,7 @@ Project ID 同时包含规范化 PSD 路径和加载时的文件签名，避免�
 ### Phase 4：产品化 Agent
 
 - 内置 Chat、模型 Provider、Skill 管理和 Eval；
-- 长任务 UI、历史树、费用/Token/图像生成预算；
+- 长任务 UI、结构/运动 Diff、费用/Token/图像生成预算；历史树与日志/图片浏览已提前落地；
 - CubismBridge 全能力矩阵与 round-trip 测试；
 - 团队规范包、可观测性和匿名失败样本回收（明确 opt-in）。
 

@@ -2,7 +2,7 @@
 
 [English](../en/USER_GUIDE.md) | [日本語](../ja/USER_GUIDE.md)
 
-PSD2Live 提供了现代化的桌面图形交互界面（GUI）与自动化命令行批处理工具（CLI）。本指南详细介绍界面布局、四大工作区面板、视口交互、快捷键、参数微调与导出流程。
+PSD2Live 提供桌面图形交互界面（GUI）、自动化命令行批处理工具（CLI），以及供外部 AI 宿主使用的本机 MCP 工作区。本指南介绍四个主工作区、独立日志坞、Agent 连接与恢复、视口交互、参数微调和导出流程。
 
 ---
 
@@ -15,7 +15,9 @@ PSD2Live 提供了现代化的桌面图形交互界面（GUI）与自动化命�
   - [1. 层级视图 (Hierarchy)](#1-层级视图-hierarchy)
   - [2. 拓扑视图 (Topology)](#2-拓扑视图-topology)
   - [3. 预览视图 (Preview)](#3-预览视图-preview)
-  - [4. 日志视图 (Log)](#4-日志视图-log)
+  - [4. 历史记录视图 (History)](#4-历史记录视图-history)
+- [独立日志坞](#独立日志坞)
+- [连接 AI Agent / MCP](#连接-ai-agent--mcp)
 - [视口交互与常用快捷键](#视口交互与常用快捷键)
 - [右侧检视器面板](#右侧检视器面板)
   - [导出控制区域](#导出控制区域)
@@ -54,11 +56,12 @@ PSD2Live 提供了现代化的桌面图形交互界面（GUI）与自动化命�
 
 ## 桌面 GUI 概览
 
-应用主窗口采用经典的三栏布局：**左侧主工作区 + 右侧检视器面板 + 底部状态栏**。
+应用主窗口采用 **左侧主工作区 + 右侧检视器面板 + 底部独立日志坞与状态栏** 布局。
 
 - **顶部菜单栏**：
   - **文件 (File)**：`打开 PSD...` (`Ctrl + O`)、`重新分析` (`Ctrl + R`)、`打开输出目录`、`生成并导出` (`Ctrl + G`)、`导出到...` (`Ctrl + Shift + G`)、`退出`。
   - **语言 (Language)**：支持简体中文 (`zh`)、英文 (`en`)、日文 (`ja`) 实时无缝切换。
+  - **Agent / MCP**：打开连接与技能配置，或直接切换到版本历史树；右上角状态徽标可再次打开连接窗口。
   - **帮助 (Help)**：版本信息、第三方组件与许可证说明。
 - **工作区分隔条**：鼠标拖拽可自由调节左侧工作区与右侧检视器的宽度比例（`25% ~ 85%`）。
 
@@ -86,9 +89,53 @@ PSD2Live 提供了现代化的桌面图形交互界面（GUI）与自动化命�
   - 眨眼速度物理驱动果冻眼挤压回弹（`ParamEyeBallForm`）。
 - **状态指示徽标**：左下角常驻显示当前视口缩放比、底层渲染引擎类型（`原生 Cubism` 或 `软件光栅化`）以及物理计算状态。
 
-### 4. 日志视图 (Log)
-- **实时诊断流**：按时间顺序展示图层语义识别、连通域拆分、网格生成及导出校验的详细信息，包含黄色警告与红色错误高亮。
-- **一键复制日志**：单机工具栏“复制日志”按钮即可将完整诊断输出复制至剪贴板。
+### 4. 历史记录视图 (History)
+- **追加式分支树**：显示系统、用户与 Agent 产生的全部不可变节点，绿色 `HEAD` 标记当前工作区版本；从旧节点继续编辑会产生新分支，原分支不会被删除。
+- **导航与定位**：拖动画布平移，通过 `-` / `+` 缩放或重置视图，并按摘要、节点 ID 或操作者搜索。
+- **检查与恢复**：点选节点可查看节点 ID、父节点、版本 Hash、操作者与时间；“恢复到此版本”会重建该节点对应的可编辑素材与 Rig。恢复不会删除任何节点。
+
+## 独立日志坞
+
+日志不再占用主工作区标签，而是常驻于层级、拓扑、预览和历史视图下方：
+
+- 点击标题栏左侧箭头可折叠/展开；拖动上边缘可在 `80 ~ 450 px` 范围内调整高度。
+- 可按“全部”“系统”“Agent / MCP”“仅图片”筛选，也可搜索消息、标签与详情并切换自动滚动；标题栏显示日志数与图片数。
+- View 渲染和素材导入结果以内嵌缩略图显示，点击后可在带棋盘背景的灯箱中查看尺寸与文件大小，或复制图片。
+- “清空”只清除当前界面日志，“复制日志”复制当前筛选后的文本，不会修改版本历史或任务记录。
+
+## 连接 AI Agent / MCP
+
+<p align="center">
+  <img src="../imgs/agent.png" alt="PSD2Live AI Agent 素材生成、接入与多参数渲染流程" />
+  <br>
+  <em>从模型 View 取证，到宿主原生图片生成、图层回填和多参数姿态验证</em>
+</p>
+
+PSD2Live 启动时会在 `127.0.0.1:23871/mcp` 提供带 Bearer Token 的 Streamable HTTP MCP。应用必须保持运行；Token 视同本机工作区写权限，不要公开或提交到版本库。
+
+1. 打开顶部 **Agent / MCP → Agent / MCP 连接与安装…**。
+2. 在“连接配置”页复制对应配置；优先使用原生 Streamable HTTP：
+   - ChatGPT Desktop / Codex：把 HTTP TOML 合并到 `~/.codex/config.toml`，或受信任项目的 `.codex/config.toml`，重启客户端后用 `/mcp` 检查。
+   - Gemini / Antigravity：把 HTTP JSON 中的 `psd2live` 条目合并到 `~/.gemini/config/mcp_config.json`，刷新 MCP Servers。
+   - 其他 HTTP 宿主：使用界面显示的端点，并发送 `Authorization: Bearer <Token>`；不要使用旧 `/sse` 地址。
+   - 仅支持 Stdio 的宿主：复制 Stdio JSON，通过 Python 3 运行仓库根目录的 `mcp_proxy.py`。代理读取 `PSD2LIVE_MCP_ENDPOINT`（默认上述地址）、`PSD2LIVE_MCP_TOKEN` 和可选的 `PSD2LIVE_MCP_TIMEOUT`；Windows 上未设置 Token 时会尝试读取 PSD2Live 保存的凭据。
+3. 在“安装 Prompt”页复制完整安装说明。需要领域工作流时，把 `.agent/skills/psd2live-rigging` 和 `.agent/skills/hair-separation` 复制到宿主官方 Skill 目录；连接后先列出工具并调用 `project_get_state`。
+
+当前工具覆盖：
+
+| 能力 | 工具 |
+| :--- | :--- |
+| 工程取证 | `project_get_state`、`project_list_layers`、`project_list_parameters`、`object_get` |
+| 参数与 K 帧 | `parameter_create`、`parameter_update`、`parameter_delete`、`keyform_set`、`keyform_copy`、`keyform_delete`、`rig_k_pose` |
+| 模型 View | `view_render_layer`、`view_render_context`、`view_render_model` |
+| 透明素材与图层 | `asset_import_png`、`layer_add_from_asset`、`layer_soft_delete` |
+| 恢复与长任务 | `history_list`、`history_checkout`、`task_start`、`task_update`、`task_get`、`task_list` |
+
+每次会推进工程 `HEAD` 的编辑操作必须携带当前 `expected_history_head_node_id`，成功后使用返回的新节点作为下一次写入基准。暂存 PNG 与任务事件不会移动 `HEAD`。若请求超时、断线或会话失效，写入结果可能未知；重新连接后先检查 `project_get_state`、`history_list`、任务记录和目标对象，再决定是否重试。Stdio 代理只会自动重试只读调用，不会盲目重放编辑操作。
+
+PNG View 来自模型数据而非 UI 截图，并携带可逆的像素↔画布映射。`asset_import_png` 会通过 `spatial_reference_id` 保留位置和尺寸；若只返回 View 的一个裁剪区域，还须声明 `source_pixel_rect`，长宽比不一致会被拒绝而不是拉伸。差分、部件拆分、遮挡补全或像素重建必须实际调用宿主原生的 Nano Banana Pro/NBP、GPT Image 2（`gpt-image-2`）或等效图片工具；PSD2Live MCP 只负责 View 与导入，不能用 Python、PIL/OpenCV、SVG 或 Canvas 绘制替代素材。
+
+历史树、任务、空间参考和按 SHA-256 去重的 RGBA 素材会持久化。Windows 默认目录是 `%LOCALAPPDATA%/PSD2Live/agent-workspaces`，可通过 JVM 属性 `psd2live.agent.store` 修改。重新载入路径和文件签名均相同的 PSD 时，会恢复最后的 `HEAD`。
 
 ---
 
@@ -140,7 +187,8 @@ PSD2Live 提供了现代化的桌面图形交互界面（GUI）与自动化命�
    - 在图层表格中核验五官与部件语义分类，对未命中（`unknown`）图层进行手动重新指定；
    - 在拓扑视图中检查自动生成的三角剖分精度与边界贴合；
    - 在预览视图中测试鼠标视线跟随、面部九轴转动与物理摆动效果；
-3. **导出模型**：配置贴图集尺寸与目标路径，点击 `Ctrl + G`（或“生成并导出模型”），系统将同步导出 `.cmo3` 编辑器工程与 `.moc3` 运行时资产族。
+3. **可选 Agent 精修**：连接 MCP 宿主，用模型 View 取证并进行参数、K 帧或素材修改；在历史树中确认当前 `HEAD`，必要时恢复旧节点后从该处建立分支。
+4. **导出模型**：配置贴图集尺寸与目标路径，点击 `Ctrl + G`（或“生成并导出模型”），系统将同步导出 `.cmo3` 编辑器工程与 `.moc3` 运行时资产族。
 
 ---
 
@@ -171,6 +219,12 @@ PSD2Live 提供了现代化的桌面图形交互界面（GUI）与自动化命�
 ---
 
 ## 常见问题与 FAQ
+
+- **Q: Agent 无法连接，或重新连接后返回会话已过期？**
+  A: 确认 PSD2Live 保持运行，并从连接窗口重新复制当前端点和 Token。原生 HTTP 宿主应连接 `/mcp` 而非 `/sse`；Stdio 宿主应使用 `mcp_proxy.py`。会话失效后重新初始化，并在继续写入前读取 `project_get_state` 与 `history_list`。
+
+- **Q: 恢复旧历史节点会删除后续修改吗？**
+  A: 不会。历史节点只追加、不改写。恢复只移动工作区 `HEAD`；从旧节点继续编辑会建立新分支，原来的后续分支仍可查看与恢复。
 
 - **Q: 启动时提示 Java 运行时版本错误？**  
   A: 请确保系统中安装了 JDK 21 或更高版本，且环境变量 `JAVA_HOME` 正确指向该 JDK 路径。

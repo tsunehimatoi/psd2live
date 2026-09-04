@@ -17,7 +17,7 @@ PSD2Live 是一个自动化的 Live2D 模型生成流水线与桌面应用。输
 | 文档 | 描述 |
 | :--- | :--- |
 | [Agent / MCP 产品与技术设计 (docs/zh/AGENT_ARCHITECTURE.md)](docs/zh/AGENT_ARCHITECTURE.md) | 从 PSD 理解、透明素材生成、可撤销长任务到 Cubism 导出的 Agent 架构、工具契约与实施阶段 |
-| [用户操作指南 (docs/zh/USER_GUIDE.md)](docs/zh/USER_GUIDE.md) | 桌面 GUI 布局、四大工作区面板、视口操作、快捷键及 CLI 参数说明 |
+| [用户操作指南 (docs/zh/USER_GUIDE.md)](docs/zh/USER_GUIDE.md) | 桌面 GUI、版本历史树、独立日志坞、Agent / MCP 连接、快捷键及 CLI 参数说明 |
 | [Live2D SDK 配置指南 (docs/zh/CUBISM_SDK_SETUP.md)](docs/zh/CUBISM_SDK_SETUP.md) | 官方 Native SDK 许可政策、着色器提取与离屏硬件加速预览配置指南 |
 | [PSD 图层规范与命名指南 (docs/zh/PSD_LAYER_SPEC.md)](docs/zh/PSD_LAYER_SPEC.md) | 31 种语义标签中日英对照、侧别规则、连通域拆分与五官/头发分层规范 |
 | [变形器与算法数学规范 (docs/zh/DEFORMER_AND_PARAMETER_SPEC.md)](docs/zh/DEFORMER_AND_PARAMETER_SPEC.md) | 变形器拓扑树、九轴经纬网数学模型、C1 连续曲线、五官修形与动力学公式 |
@@ -30,16 +30,25 @@ PSD2Live 是一个自动化的 Live2D 模型生成流水线与桌面应用。输
 - **自适应网格剖分**：基于可分离高斯平滑滤波与 95th 百分位自适应二值化消除边缘噪点；采用带物理窗口角点识别的周期三次 Bézier 曲线拟合与曲率加权加密采样（最高 12 倍）；执行受约束 Delaunay 剖分结合拓扑动态收敛 Lawson 翻边与超长内部边中点二分细分。
 
   <p align="center">
-    <img src="docs/imgs/mash.png" alt="自适应三角网格剖分与拓扑视图" />
+    <img src="docs/imgs/mesh22.png" width="32%" alt="22 px 高密度自适应网格" />
+    <img src="docs/imgs/mesh64.png" width="32%" alt="64 px 平衡型自适应网格" />
+    <img src="docs/imgs/mesh115.png" width="32%" alt="115 px 低密度自适应网格" />
     <br>
-    <em>桌面 GUI 拓扑视图：图层语义识别与自适应 Delaunay 三角网格剖分</em>
+    <em>网格间距 22 / 64 / 115 px：从精细轮廓到轻量拓扑的密度对比</em>
   </p>
 - **变形器 (Warp) 生成**：
   - **眼/口 变形**：眼睛与眉毛共享透视平面约束，瞳孔自动反向补偿防止挤压，睫毛沿 Alpha 权重中线弯曲生成平滑闭眼 U 形曲线；嘴部以最大张口为基准向中线平滑向心压缩闭合，牙齿与舌头自动以嘴部为剪切蒙版。
   - **九轴构建**：建立 `AngleX (±45°) × AngleY (±30°)` 8×8 面部经纬网，结合 C1 连续水平展开/压缩曲线（近侧展开、近眼宽平台保持、远侧透视压缩）、垂直 V/^ 仰俯曲率及四角 $C_{xy} = \text{yaw} \times \text{pitch}$ 交叉修正项。
 - **动画**：自动生成 6 秒无缝循环 `idle.motion3.json` 平滑待机动作，涵盖胸腔呼吸起伏、轻微头部/身体倾斜摇摆及自然眨眼；桌面 GUI 支持可选接入官方 Cubism 5-r.5 SDK 原生着色器离屏渲染引擎以获得 **100% 官方渲染与物理一致性验证（Ground Truth）**（本项目不包含且不分发官方 SDK 二进制，详见 [SDK配置指南](docs/zh/CUBISM_SDK_SETUP.md)；未配置时无缝自动回退为纯 CPU 高精度软件光栅化渲染），支持实时鼠标视线追踪（Mouse Look）与动作回放。
 - **物理**：前后发完全解耦独立跟随头壳，基于发根固定与 $v^3$ 立方发梢摆幅梯度的多摆物理系统；左右眼开合速度物理驱动二阶阻尼弹簧振子输出果冻眼挤压/回弹动力学（`ParamEyeBallForm`）。
+- **Agent / MCP 可编辑工作区**：应用启动后在本机提供带 Bearer Token 的 Streamable HTTP MCP。ChatGPT/Codex、Gemini/Antigravity 或其他 MCP 宿主可读取工程与参数、渲染带可逆画布映射的 PNG View、导入透明素材、增删参数，以及针对 ArtMesh、Warp、Rotation、Part、Glue 写入、复制或删除多参数 K 帧。每次修改都会进入追加式分支历史；版本树、长任务检查点和素材均可持久化恢复。
 - **工程文件/运行时文件导出**：一键同步导出可在 Live2D Cubism Modeler 5 中二次编辑的 `.cmo3` 完整工程与运行时 `.moc3` 文件族（包含 `.model3.json`、`.cdi3.json`、`physics3.json`、`idle.motion3.json` 及纹理贴图集）；内置中立姿态保真、极限姿态完整性与变形器镜像对称性三道几何自检闸门。
+
+<p align="center">
+  <img src="docs/imgs/agent.png" alt="PSD2Live AI Agent 素材生成、接入与多参数渲染流程" />
+  <br>
+  <em>Agent 从模型 View 取证，经宿主原生图像能力生成素材，再回填图层并验证多参数姿态</em>
+</p>
 
 ---
 
@@ -75,9 +84,16 @@ PSD2Live 是一个自动化的 Live2D 模型生成流水线与桌面应用。输
 | **生成并导出** | `Ctrl + G` |
 | **导出到...** | `Ctrl + Shift + G` |
 
-#### 连接 ChatGPT Desktop / Codex
+#### 连接 AI Agent / MCP
 
-GUI 启动时会在本机回环地址启动带 Bearer Token 的 Streamable HTTP MCP 服务。打开 **帮助 → Agent / MCP 连接**，即可查看端点并复制配置。当前已开放工程状态、图层/参数清单，以及模型数据直出的 PNG View：Agent 可指定参数姿态、合成图层、标注部件、画布坐标取景，或按部件与相对缩放率观察周围。View 返回完整像素↔画布映射，因此 Agent 生成不同分辨率的 PNG 仍能按原画布位置和尺寸回填；长宽比不一致不会被静默拉伸。`asset_import_png` 与 `layer_add_from_asset` 会把生成图规范化成真正的源图层并重建 Mesh/Rig，`layer_soft_delete`、`history_list`、`history_checkout` 提供可分支恢复的修改闭环。历史快照、去重 RGBA、暂存 Asset、View 空间参考和长任务检查点会持久化到本机；再次加载同一版本 PSD 时自动恢复最后的 HEAD。认证后的 Agent 按“工作区所有者”设计，不做逐操作审批；历史节点本身不可改写。完整设计与阶段计划见 [Agent / MCP 产品与技术设计](docs/zh/AGENT_ARCHITECTURE.md)。
+1. 保持 PSD2Live 桌面应用运行，打开顶部 **Agent / MCP → Agent / MCP 连接与安装…**。
+2. 在“连接配置”页复制宿主对应的配置：ChatGPT Desktop / Codex 使用 HTTP TOML，Gemini / Antigravity 使用 HTTP JSON。其他支持 Streamable HTTP 的宿主使用界面显示的端点和 `Authorization: Bearer <Token>` 请求头；不要改成旧 `/sse` 地址。
+3. 仅当宿主不支持 HTTP MCP 时，复制 Stdio JSON，通过 Python 3 运行仓库根目录的 `mcp_proxy.py`。代理优先读取 `PSD2LIVE_MCP_TOKEN`；Windows 上也可读取 PSD2Live 已保存的 Token。
+4. 如需领域工作流，把 `.agent/skills/psd2live-rigging` 与 `.agent/skills/hair-separation` 复制到宿主官方技能目录。连接后先列出工具并调用 `project_get_state`。
+
+当前 MCP 支持工程/图层/参数读取、对象与 K 帧编辑、参数 CRUD、模型数据 PNG View、透明素材导入、软删除、可恢复任务，以及追加式分支历史。每个会推进工程 `HEAD` 的编辑操作都要携带最新的 `expected_history_head_node_id`；超时或断线后先用 `project_get_state` 和 `history_list` 确认是否已经提交，不能盲目重试。
+
+PSD2Live MCP 负责模型 View、空间映射与素材回填，不提供宿主私有的图片生成器。差分、部件拆分、遮挡补全或像素重建应实际调用宿主原生的 Nano Banana Pro/NBP、GPT Image 2（`gpt-image-2`）或等效图片能力，再把透明 PNG 交给 `asset_import_png`；不得用 Python、PIL/OpenCV、SVG 或 Canvas 绘制替代素材。详细界面与配置说明见 [用户操作指南](docs/zh/USER_GUIDE.md)，工具契约与实施状态见 [Agent / MCP 产品与技术设计](docs/zh/AGENT_ARCHITECTURE.md)。
 
 ---
 

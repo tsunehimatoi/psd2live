@@ -16,7 +16,8 @@ PSD2Live is an automated Live2D model generation pipeline and desktop applicatio
 
 | Document | Description |
 | :--- | :--- |
-| [User Guide (docs/en/USER_GUIDE.md)](docs/en/USER_GUIDE.md) | Desktop GUI layout, 4 workspace views, viewport navigation, shortcuts, and CLI reference |
+| [User Guide (docs/en/USER_GUIDE.md)](docs/en/USER_GUIDE.md) | Desktop GUI, version-history tree, independent log dock, Agent/MCP connection, shortcuts, and CLI reference |
+| [Agent / MCP Product & Technical Design (Chinese)](docs/zh/AGENT_ARCHITECTURE.md) | Implemented MCP tools, persistent workspace/history model, image workflow, and delivery roadmap |
 | [Live2D SDK Setup Guide (docs/en/CUBISM_SDK_SETUP.md)](docs/en/CUBISM_SDK_SETUP.md) | Official Native SDK license policy, shader extraction, and hardware-accelerated preview setup |
 | [PSD Layer Specification (docs/en/PSD_LAYER_SPEC.md)](docs/en/PSD_LAYER_SPEC.md) | 31 semantic tags, side resolution rules, connected-component splitting, and layering guidelines |
 | [Deformer & Math Specification (docs/en/DEFORMER_AND_PARAMETER_SPEC.md)](docs/en/DEFORMER_AND_PARAMETER_SPEC.md) | Deformer tree topology, 9-pose facial lattice math, C1 roll curve, feature warps, and physics |
@@ -29,16 +30,25 @@ PSD2Live is an automated Live2D model generation pipeline and desktop applicatio
 - **Adaptive Mesh Generation**: Separable Gaussian alpha pre-filtering and adaptive binarization; periodic cubic Bézier fitting with physical support window corner detection and curvature-weighted adaptive resampling (up to 12x); constrained Delaunay triangulation with topology-convergent Lawson flips and overlong internal edge bisection.
 
   <p align="center">
-    <img src="docs/imgs/mash.png" alt="Adaptive Mesh Triangulation & Topology View" />
+    <img src="docs/imgs/mesh22.png" width="32%" alt="22 px high-density adaptive mesh" />
+    <img src="docs/imgs/mesh64.png" width="32%" alt="64 px balanced adaptive mesh" />
+    <img src="docs/imgs/mesh115.png" width="32%" alt="115 px low-density adaptive mesh" />
     <br>
-    <em>Desktop GUI Topology View: Semantic layer recognition & adaptive Delaunay mesh triangulation</em>
+    <em>Mesh spacing at 22 / 64 / 115 px: density comparison from detailed contours to lightweight topology</em>
   </p>
 - **Deformer (Warp) Generation**:
   - **Eye & Mouth Deformation**: Shared projective plane constraints for eyes and brows, iris counter-translation against perspective compression, and eyelash alpha-weighted centerline tracking for smooth closed U-curves; centripetal compression of full-open mouth toward central seam with auto-clipped teeth and tongue.
   - **Nine-Pose Lattice Construction**: `AngleX (±45°) × AngleY (±30°)` 8×8 facial lattice combining C1-continuous horizontal roll (near-side reveal, broad plateau preservation, far-side compression), vertical V/^ pitch curvature, and diagonal $C_{xy} = \text{yaw} \times \text{pitch}$ cross-terms.
 - **Animation**: Automated generation of a 6-second seamless looping `idle.motion3.json` covering breathing, subtle head/body sway, and natural eye blinks; desktop GUI supports optional integration with official Cubism 5-r.5 SDK native offscreen OpenGL rendering for **100% official rendering & physical dynamics parity (Ground Truth)** (this project does NOT include or redistribute proprietary SDK binaries, see [SDK Setup Guide](docs/en/CUBISM_SDK_SETUP.md); automatically falls back to pure CPU high-precision software rasterization when SDK is absent) with live mouse gaze tracking (Mouse Look).
 - **Physics**: Decoupled front and back hair following the head container with root-pinned, $v^3$ cubic tip sway multi-pendulum dynamics; eyelid closure velocity driving second-order damped harmonic oscillators for pupil jelly squash/stretch dynamics (`ParamEyeBallForm`).
+- **Editable Agent / MCP Workspace**: A bearer-authenticated local Streamable HTTP MCP lets ChatGPT/Codex, Gemini/Antigravity, and other MCP hosts inspect the project, render spatially reversible PNG Views, import transparent assets, manage parameters, and edit multidimensional keyforms on meshes, warp/rotation deformers, parts, and glue. Every mutation enters a persistent, append-only branch history with resumable task checkpoints.
 - **Project & Runtime Export**: Synchronized one-click export of editable Live2D Cubism Modeler 5 `.cmo3` projects and `.moc3` runtime families (`.model3.json`, `.cdi3.json`, `physics3.json`, `idle.motion3.json`, and texture atlases); enforced three-stage geometric integrity gates (neutral pose fidelity, extreme angle bounds, and warp lattice mirror symmetry).
+
+<p align="center">
+  <img src="docs/imgs/agent.png" alt="PSD2Live AI Agent asset generation, integration, and multi-parameter render workflow" />
+  <br>
+  <em>The Agent inspects model Views, generates assets through the host's native image capability, imports them as layers, and verifies multiple parameter poses</em>
+</p>
 
 ---
 
@@ -73,6 +83,17 @@ PSD2Live is an automated Live2D model generation pipeline and desktop applicatio
 | **Reanalyze** | `Ctrl + R` |
 | **Generate & Export** | `Ctrl + G` |
 | **Export To...** | `Ctrl + Shift + G` |
+
+#### Connecting an AI Agent / MCP Host
+
+1. Keep the PSD2Live desktop app running and open **Agent / MCP → Agent / MCP Connection & Prompts…**.
+2. Copy the matching configuration: HTTP TOML for ChatGPT desktop/Codex, or HTTP JSON for Gemini/Antigravity. Other Streamable HTTP hosts use the displayed endpoint and `Authorization: Bearer <token>` header; do not change it to the legacy `/sse` endpoint.
+3. Use the Stdio JSON fallback only for hosts without HTTP MCP support. It runs the repository-root `mcp_proxy.py` with Python 3 and reads `PSD2LIVE_MCP_TOKEN`; on Windows it can also read the token saved by PSD2Live.
+4. For domain workflows, install `.agent/skills/psd2live-rigging` and `.agent/skills/hair-separation` in the host's documented skill directory. List tools and call `project_get_state` first.
+
+The MCP currently exposes project/layer/parameter reads, object and keyform editing, parameter CRUD, model-data PNG Views, transparent-asset import, soft deletion, resumable tasks, and append-only branch history. Every project edit that advances `HEAD` must use the latest `expected_history_head_node_id`. After a timeout or disconnect, inspect `project_get_state` and `history_list` before deciding whether to retry.
+
+PSD2Live provides Views, spatial mapping, and asset import; it does not expose a host-private image generator. For painted differences, part separation, occlusion completion, or pixel reconstruction, actually call Nano Banana Pro/NBP, GPT Image 2 (`gpt-image-2`), or an equivalent host-native image tool, then import the transparent PNG with `asset_import_png`. Do not draw substitutes with Python, PIL/OpenCV, SVG, or Canvas. See the [User Guide](docs/en/USER_GUIDE.md) for the complete workflow.
 
 ---
 
