@@ -5,6 +5,7 @@ import io.github.psd2live.core.LayerClassificationOverride
 import io.github.psd2live.core.PipelineAnalysis
 import io.github.psd2live.core.PipelineConfig
 import io.github.psd2live.core.RigPreviewModel
+import io.github.psd2live.core.RigEditOverlay
 import io.github.psd2live.i18n.AppLanguage
 import io.github.psd2live.i18n.I18n
 import org.umamo.runtime.model.ParameterId
@@ -24,6 +25,9 @@ enum class InspectorTab {
 @Immutable
 data class PSD2LiveState(
 	val inputPath: String = "",
+	/** Input identity that produced [analysis]; remains stable while the user edits the next path field. */
+	val loadedInputPath: String? = null,
+	val loadedInputFileSignature: String? = null,
 	val outputPath: String = "",
 	val atlasSize: Int = 4096,
 	val meshSpacing: Int = 64,
@@ -75,6 +79,8 @@ data class PSD2LiveState(
 	val currentLanguage: AppLanguage = I18n.currentLanguage,
 	val deletedLayerIds: Set<String> = emptySet(),
 	val parentOverrides: Map<String, String?> = emptyMap(),
+	/** Durable parameter/keyform edits replayed after each generated-rig rebuild. */
+	val rigEdits: RigEditOverlay = RigEditOverlay.Empty,
 	val errorMessage: String? = null,
 	val successExportMessage: String? = null,
 ) {
@@ -106,6 +112,7 @@ data class PSD2LiveState(
 			layerVisibility = layerVisibility,
 			deletedLayerIds = deletedLayerIds,
 			parentOverrides = parentOverrides,
+			rigEdits = rigEdits,
 		)
 	}
 

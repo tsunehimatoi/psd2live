@@ -5,6 +5,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
+import io.github.psd2live.agent.AgentMcpService
+import io.github.psd2live.agent.ViewModelAgentWorkspace
 import io.github.psd2live.core.PSD2LivePipeline
 import io.github.psd2live.core.PipelineConfig
 import io.github.psd2live.core.ProgressListener
@@ -22,9 +24,16 @@ fun main(arguments: Array<String>) {
 	configureLanguage(arguments)
 	if (arguments.isEmpty()) {
 		val viewModel = PSD2LiveViewModel()
+		var agentMcpService: AgentMcpService? = null
+		val agentMcpStartup = runCatching {
+			AgentMcpService(ViewModelAgentWorkspace(viewModel))
+				.also { agentMcpService = it }
+				.start()
+		}
 		application {
 			val windowState = rememberWindowState(size = DpSize(1280.dp, 820.dp))
 			val closeApp = {
+				agentMcpService?.close()
 				viewModel.close()
 				exitApplication()
 			}
@@ -39,6 +48,8 @@ fun main(arguments: Array<String>) {
 					window = window,
 					windowState = windowState,
 					onCloseRequest = closeApp,
+					agentConnectionInfo = agentMcpStartup.getOrNull(),
+					agentStartupError = agentMcpStartup.exceptionOrNull()?.message,
 				)
 			}
 		}

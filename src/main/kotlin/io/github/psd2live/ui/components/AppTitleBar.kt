@@ -79,6 +79,7 @@ fun AppTitleBar(
 	onExportTo: () -> Unit,
 	onClose: () -> Unit,
 	onSetLanguage: (AppLanguage) -> Unit,
+	onShowAgentConnection: () -> Unit,
 	onShowAbout: () -> Unit,
 ) {
 	val colors = LocalToolColors.current
@@ -213,6 +214,14 @@ fun AppTitleBar(
 					onDismissRequest = { activeMenu = null },
 					modifier = Modifier.widthIn(min = 140.dp, max = 220.dp),
 				) {
+					AppMenuItem(
+						text = tr("menu.agentConnection"),
+						onClick = {
+							activeMenu = null
+							onShowAgentConnection()
+						},
+					)
+					AppMenuSeparator()
 					AppMenuItem(
 						text = tr("menu.about"),
 						onClick = {

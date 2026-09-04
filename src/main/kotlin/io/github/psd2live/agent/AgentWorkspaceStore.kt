@@ -1,0 +1,588 @@
+package io.github.psd2live.agent
+
+import io.github.psd2live.core.LayerClassificationOverride
+import io.github.psd2live.core.LayerType
+import io.github.psd2live.core.RigEditOverlay
+import io.github.psd2live.core.RigParameterEdit
+import io.github.psd2live.core.SemanticTag
+import io.github.psd2live.core.Side
+import io.github.psd2live.history.WorkspaceHistoryNode
+import io.github.psd2live.history.WorkspaceHistorySelection
+import io.github.psd2live.history.WorkspaceHistoryState
+import io.github.psd2live.history.WorkspaceHistoryTree
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.floatOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
+import org.umamo.format.art.ChannelMask
+import org.umamo.format.art.LayerBlend
+import org.umamo.format.art.LayerBounds
+import org.umamo.format.art.LayerId
+import org.umamo.format.art.LayerRaster
+import org.umamo.format.art.SourceGroup
+import org.umamo.format.art.SourceLayer
+import org.umamo.format.art.SourceLayerKind
+import org.umamo.runtime.model.ParameterKind
+import java.io.ByteArrayOutputStream
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
+import java.security.MessageDigest
+import java.time.Instant
+import java.util.UUID
+import java.util.zip.GZIPInputStream
+import java.util.zip.GZIPOutputStream
+
+/**
+ * Disk repository for Agent workspace state. History node, snapshot, raster and staged-asset files
+ * are immutable/content-addressed. Only HEAD and the task checkpoint document are atomically replaced.
+ */
+internal class AgentWorkspaceStore(
+	private val root: Path = defaultRoot(),
+) {
+	private val json = Json { ignoreUnknownKeys = true }
+
+	@Synchronized
+	fun loadHistory(projectId: String): WorkspaceHistoryTree<AgentWorkspaceDocument>? {
+		val project = projectRoot(projectId)
+		val headFile = project.resolve("HEAD.json")
+		val nodesDirectory = project.resolve("history/nodes")
+		if (!Files.isRegularFile(headFile) || !Files.isDirectory(nodesDirectory)) return null
+		val headId = readJson(headFile).requiredString("headNodeId")
+		val nodeFiles = Files.list(nodesDirectory).use { stream ->
+			stream.filter(Files::isRegularFile).sorted().toList()
+		}
+		if (nodeFiles.isEmpty()) return null
+		val nodes = nodeFiles.map { nodeFile ->
+			val nodeJson = readJson(nodeFile)
+			WorkspaceHistoryNode(
+				id = nodeJson.requiredString("id"),
+				parentId = nodeJson.optionalString("parentId"),
+				revisionId = nodeJson.requiredString("revisionId"),
+				snapshotHash = nodeJson.requiredString("snapshotHash"),
+				summary = nodeJson.requiredString("summary"),
+				actor = nodeJson.requiredString("actor"),
+				taskId = nodeJson.optionalString("taskId"),
+				createdAt = Instant.parse(nodeJson.requiredString("createdAt")),
+			)
+		}.sortedWith(compareBy<WorkspaceHistoryNode> { it.createdAt }.thenBy { it.id })
+		val documents = mutableMapOf<String, AgentWorkspaceDocument>()
+		val rasters = mutableMapOf<String, ByteArray>()
+		val selections = nodes.map { node ->
+			val snapshotFile = project.resolve("history/snapshots/${fileKey(node.snapshotHash)}.json")
+			require(Files.isRegularFile(snapshotFile)) { "History snapshot is missing for ${node.id}" }
+			val document = documents.getOrPut(node.snapshotHash) {
+				decodeDocument(readJson(snapshotFile), project, rasters)
+			}
+			WorkspaceHistorySelection(node, document)
+		}
+		return WorkspaceHistoryTree.restore(selections, headId)
+	}
+
+	@Synchronized
+	fun persistHistory(projectId: String, state: WorkspaceHistoryState<AgentWorkspaceDocument>) {
+		val project = projectRoot(projectId)
+		for (selection in state.selections) {
+			val snapshotPath = project.resolve("history/snapshots/${fileKey(selection.node.snapshotHash)}.json")
+			if (!Files.isRegularFile(snapshotPath)) {
+				val snapshotBytes = encodeDocument(selection.snapshot, project).toString().encodeToByteArray()
+				writeImmutable(snapshotPath, snapshotBytes)
+			}
+			val nodePath = project.resolve("history/nodes/${fileKey(selection.node.id)}.json")
+			if (!Files.isRegularFile(nodePath)) {
+				writeImmutable(nodePath, encodeNode(selection.node).toString().encodeToByteArray())
+			}
+		}
+		writeAtomic(
+			project.resolve("HEAD.json"),
+			buildJsonObject {
+				put("version", STORE_VERSION)
+				put("headNodeId", state.headNodeId)
+			}.toString().encodeToByteArray(),
+		)
+	}
+
+	@Synchronized
+	fun persistAsset(projectId: String, asset: AgentPngAsset) {
+		val project = projectRoot(projectId)
+		val blobHash = persistRaster(project, asset.rgba)
+		val value = asset.public
+		val metadata = buildJsonObject {
+			put("version", STORE_VERSION)
+			put("id", value.id)
+			put("sha256", value.sha256)
+			put("pixelWidth", value.pixelWidth)
+			put("pixelHeight", value.pixelHeight)
+			put("rgbaBlob", blobHash)
+			put("coordinateSpace", value.placement.coordinateSpace)
+			put("sourceViewId", value.placement.sourceViewId)
+			putBounds("canvasRect", value.placement.canvasRect.left, value.placement.canvasRect.top, value.placement.canvasRect.right, value.placement.canvasRect.bottom)
+		}
+		writeImmutable(project.resolve("assets/${fileKey(value.id)}.json"), metadata.toString().encodeToByteArray())
+	}
+
+	@Synchronized
+	fun loadAsset(projectId: String, assetId: String): AgentPngAsset? {
+		val project = projectRoot(projectId)
+		val file = project.resolve("assets/${fileKey(assetId)}.json")
+		if (!Files.isRegularFile(file)) return null
+		val objectValue = readJson(file)
+		require(objectValue.requiredString("id") == assetId) { "Stored asset identity mismatch" }
+		val width = objectValue.requiredInt("pixelWidth")
+		val height = objectValue.requiredInt("pixelHeight")
+		val rect = objectValue.requiredObject("canvasRect")
+		val bounds = io.github.psd2live.core.Bounds(rect.requiredFloat("left"), rect.requiredFloat("top"), rect.requiredFloat("right"), rect.requiredFloat("bottom"))
+		val placement = AgentCanvasPlacement(
+			coordinateSpace = objectValue.requiredString("coordinateSpace"),
+			canvasRect = bounds,
+			imagePixelWidth = width,
+			imagePixelHeight = height,
+			canvasUnitsPerPixelX = bounds.width / width,
+			canvasUnitsPerPixelY = bounds.height / height,
+			sourceViewId = objectValue.requiredString("sourceViewId"),
+		)
+		return AgentPngAsset(
+			public = AgentImportedPngAsset(assetId, objectValue.requiredString("sha256"), width, height, placement),
+			rgba = loadRaster(project, objectValue.requiredString("rgbaBlob"), width, height),
+		)
+	}
+
+	@Synchronized
+	fun persistSpatial(projectId: String, viewId: String, spatial: AgentViewSpatialMetadata) {
+		val project = projectRoot(projectId)
+		val metadata = buildJsonObject {
+			put("version", STORE_VERSION)
+			put("viewId", viewId)
+			put("coordinateSpace", spatial.coordinateSpace)
+			put("pixelWidth", spatial.pixelWidth)
+			put("pixelHeight", spatial.pixelHeight)
+			put("canvasWidth", spatial.canvasWidth)
+			put("canvasHeight", spatial.canvasHeight)
+			putBounds("requestedViewRect", spatial.requestedViewRect.left, spatial.requestedViewRect.top, spatial.requestedViewRect.right, spatial.requestedViewRect.bottom)
+			putBounds("viewRect", spatial.viewRect.left, spatial.viewRect.top, spatial.viewRect.right, spatial.viewRect.bottom)
+			spatial.focusRect?.let { putBounds("focusRect", it.left, it.top, it.right, it.bottom) }
+			putJsonArray("focusLayerIds") { spatial.focusLayerIds.forEach { add(JsonPrimitive(it)) } }
+			spatial.objectScale?.let { put("objectScale", it) }
+			put("canvasUnitsPerPixelX", spatial.canvasUnitsPerPixelX)
+			put("canvasUnitsPerPixelY", spatial.canvasUnitsPerPixelY)
+		}
+		writeImmutable(project.resolve("views/${fileKey(viewId)}.json"), metadata.toString().encodeToByteArray())
+	}
+
+	@Synchronized
+	fun loadSpatial(projectId: String, viewId: String): AgentViewSpatialMetadata? {
+		val file = projectRoot(projectId).resolve("views/${fileKey(viewId)}.json")
+		if (!Files.isRegularFile(file)) return null
+		val metadata = readJson(file)
+		require(metadata.requiredString("viewId") == viewId) { "Stored View identity mismatch" }
+		fun bounds(name: String): io.github.psd2live.core.Bounds {
+			val value = metadata.requiredObject(name)
+			return io.github.psd2live.core.Bounds(
+				value.requiredFloat("left"),
+				value.requiredFloat("top"),
+				value.requiredFloat("right"),
+				value.requiredFloat("bottom"),
+			)
+		}
+		return AgentViewSpatialMetadata(
+			coordinateSpace = metadata.requiredString("coordinateSpace"),
+			pixelWidth = metadata.requiredInt("pixelWidth"),
+			pixelHeight = metadata.requiredInt("pixelHeight"),
+			canvasWidth = metadata.requiredFloat("canvasWidth"),
+			canvasHeight = metadata.requiredFloat("canvasHeight"),
+			requestedViewRect = bounds("requestedViewRect"),
+			viewRect = bounds("viewRect"),
+			focusRect = metadata["focusRect"]?.let { bounds("focusRect") },
+			focusLayerIds = metadata.optionalArray("focusLayerIds").map { it.jsonPrimitive.content },
+			objectScale = metadata["objectScale"]?.jsonPrimitive?.floatOrNull,
+			canvasUnitsPerPixelX = metadata.requiredFloat("canvasUnitsPerPixelX"),
+			canvasUnitsPerPixelY = metadata.requiredFloat("canvasUnitsPerPixelY"),
+		)
+	}
+
+	@Synchronized
+	fun persistTasks(projectId: String, tasks: List<AgentTaskSnapshot>) {
+		val project = projectRoot(projectId)
+		writeAtomic(project.resolve("tasks.json"), buildJsonObject {
+			put("version", STORE_VERSION)
+			putJsonArray("tasks") { tasks.forEach { add(encodeTask(it)) } }
+		}.toString().encodeToByteArray())
+	}
+
+	@Synchronized
+	fun loadTasks(projectId: String): List<AgentTaskSnapshot> {
+		val file = projectRoot(projectId).resolve("tasks.json")
+		if (!Files.isRegularFile(file)) return emptyList()
+		return readJson(file).optionalArray("tasks").map(::decodeTask)
+	}
+
+	private fun encodeDocument(document: AgentWorkspaceDocument, project: Path): JsonObject = buildJsonObject {
+		put("version", STORE_VERSION)
+		put("canvasWidth", document.source.widthPx)
+		put("canvasHeight", document.source.heightPx)
+		putJsonArray("groups") {
+			document.source.groups.forEach { group ->
+				add(buildJsonObject {
+					put("path", group.path)
+					put("name", group.name)
+					put("visible", group.visible)
+					put("opacity", group.opacity)
+					put("clipped", group.clipped)
+					put("blend", group.blend.name)
+					put("passThrough", group.passThrough)
+				})
+			}
+		}
+		putJsonArray("layers") {
+			document.source.layers.forEach { layer ->
+				val workspaceLayer = layer as? AgentWorkspaceSourceLayer
+				val blobHash = persistRaster(project, layer.raster.rgba)
+				add(buildJsonObject {
+					put("id", layer.id.raw)
+					put("name", layer.name)
+					put("groupPath", layer.groupPath)
+					put("kind", layer.kind.name)
+					put("visible", layer.visible)
+					put("order", layer.order)
+					put("left", layer.bounds.left)
+					put("top", layer.bounds.top)
+					put("width", layer.bounds.width)
+					put("height", layer.bounds.height)
+					put("opacity", layer.opacity)
+					put("clipped", layer.clipped)
+					put("blend", layer.blend.name)
+					put("channelRed", layer.channelMask.red)
+					put("channelGreen", layer.channelMask.green)
+					put("channelBlue", layer.channelMask.blue)
+					put("channelAlpha", layer.channelMask.alpha)
+					put("rasterWidth", layer.raster.width)
+					put("rasterHeight", layer.raster.height)
+					put("rgbaBlob", blobHash)
+					put("derived", workspaceLayer?.derived == true)
+					workspaceLayer?.sourceAssetId?.let { put("sourceAssetId", it) }
+					workspaceLayer?.sourceSpatialReferenceId?.let { put("sourceSpatialReferenceId", it) }
+				})
+			}
+		}
+		putJsonObject("layerVisibility") { document.layerVisibility.toSortedMap().forEach { (id, visible) -> put(id, visible) } }
+		putJsonArray("deletedLayerIds") { document.deletedLayerIds.sorted().forEach { add(JsonPrimitive(it)) } }
+		putJsonObject("layerOverrides") {
+			document.layerOverrides.toSortedMap().forEach { (id, override) ->
+				put(id, buildJsonObject {
+					put("type", override.type.name)
+					put("tag", override.tag.name)
+					put("side", override.side.name)
+					put("parameter", override.parameter)
+					put("switchId", override.switchId)
+				})
+			}
+		}
+		putJsonObject("parentOverrides") {
+			document.parentOverrides.toSortedMap().forEach { (id, parent) ->
+				if (parent == null) put(id, JsonNull) else put(id, parent)
+			}
+		}
+		putJsonObject("rigEdits") {
+			putJsonArray("parameters") {
+				document.rigEdits.parameterEdits.forEach { edit ->
+					add(buildJsonObject {
+						put("id", edit.id)
+						put("name", edit.name)
+						put("min", edit.min)
+						put("max", edit.max)
+						put("default", edit.default)
+						put("kind", edit.kind.name)
+						put("repeat", edit.repeat)
+						put("created", edit.created)
+					})
+				}
+			}
+			putJsonArray("deletedParameterIds") {
+				document.rigEdits.deletedParameterIds.sorted().forEach { add(JsonPrimitive(it)) }
+			}
+		}
+	}
+
+	private fun decodeDocument(
+		value: JsonObject,
+		project: Path,
+		rasterCache: MutableMap<String, ByteArray> = mutableMapOf(),
+	): AgentWorkspaceDocument {
+		val layers: List<SourceLayer> = value.optionalArray("layers").map { element ->
+			val layer = element.jsonObject
+			val rasterWidth = layer.requiredInt("rasterWidth")
+			val rasterHeight = layer.requiredInt("rasterHeight")
+			val blobHash = layer.requiredString("rgbaBlob")
+			WorkspaceSourceLayer(
+				id = LayerId(layer.requiredString("id")),
+				name = layer.requiredString("name"),
+				groupPath = layer.requiredString("groupPath"),
+				kind = enumValue(layer.requiredString("kind")),
+				visible = layer.requiredBoolean("visible"),
+				order = layer.requiredInt("order"),
+				bounds = LayerBounds(layer.requiredInt("left"), layer.requiredInt("top"), layer.requiredInt("width"), layer.requiredInt("height")),
+				opacity = layer.requiredFloat("opacity"),
+				clipped = layer.requiredBoolean("clipped"),
+				blend = enumValue(layer.requiredString("blend")),
+				channelMask = ChannelMask(
+					red = layer.requiredBoolean("channelRed"),
+					green = layer.requiredBoolean("channelGreen"),
+					blue = layer.requiredBoolean("channelBlue"),
+					alpha = layer.requiredBoolean("channelAlpha"),
+				),
+				raster = LayerRaster(
+					rasterWidth,
+					rasterHeight,
+					rasterCache.getOrPut(blobHash) { loadRaster(project, blobHash, rasterWidth, rasterHeight) },
+				),
+				sourceAssetId = layer.optionalString("sourceAssetId"),
+				sourceSpatialReferenceId = layer.optionalString("sourceSpatialReferenceId"),
+				derived = layer.requiredBoolean("derived"),
+			)
+		}
+		val groups: List<SourceGroup> = value.optionalArray("groups").map { element ->
+			val group = element.jsonObject
+			WorkspaceSourceGroup(
+				path = group.requiredString("path"),
+				name = group.requiredString("name"),
+				visible = group.requiredBoolean("visible"),
+				opacity = group.requiredFloat("opacity"),
+				clipped = group.requiredBoolean("clipped"),
+				blend = enumValue(group.requiredString("blend")),
+				passThrough = group.requiredBoolean("passThrough"),
+			)
+		}
+		val overrides = value.optionalObject("layerOverrides").mapValues { (_, element) ->
+			val override = element.jsonObject
+			LayerClassificationOverride(
+				type = enumValue(override.requiredString("type")),
+				tag = enumValue(override.requiredString("tag")),
+				side = enumValue(override.requiredString("side")),
+				parameter = override.requiredString("parameter"),
+				switchId = override.requiredInt("switchId"),
+			)
+		}
+		val rigEditObject = value.optionalObject("rigEdits")
+		val rigEdits = RigEditOverlay(
+			parameterEdits = rigEditObject.optionalArray("parameters").map { element ->
+				val edit = element.jsonObject
+				RigParameterEdit(
+					id = edit.requiredString("id"),
+					name = edit.requiredString("name"),
+					min = edit.requiredFloat("min"),
+					max = edit.requiredFloat("max"),
+					default = edit.requiredFloat("default"),
+					kind = enumValue<ParameterKind>(edit.requiredString("kind")),
+					repeat = edit.requiredBoolean("repeat"),
+					created = edit.requiredBoolean("created"),
+				)
+			},
+			deletedParameterIds = rigEditObject.optionalArray("deletedParameterIds").map { it.jsonPrimitive.content }.toSet(),
+		)
+		return AgentWorkspaceDocument(
+			source = WorkspaceSourceArt(value.requiredInt("canvasWidth"), value.requiredInt("canvasHeight"), layers, groups),
+			layerVisibility = value.optionalObject("layerVisibility").mapValues { it.value.jsonPrimitive.booleanOrNull ?: invalid("layerVisibility.${it.key}") },
+			deletedLayerIds = value.optionalArray("deletedLayerIds").map { it.jsonPrimitive.content }.toSet(),
+			layerOverrides = overrides,
+			parentOverrides = value.optionalObject("parentOverrides").mapValues { it.value.jsonPrimitive.contentOrNull },
+			rigEdits = rigEdits,
+		)
+	}
+
+	private fun encodeNode(node: WorkspaceHistoryNode): JsonObject = buildJsonObject {
+		put("version", STORE_VERSION)
+		put("id", node.id)
+		node.parentId?.let { put("parentId", it) }
+		put("revisionId", node.revisionId)
+		put("snapshotHash", node.snapshotHash)
+		put("summary", node.summary)
+		put("actor", node.actor)
+		node.taskId?.let { put("taskId", it) }
+		put("createdAt", node.createdAt.toString())
+	}
+
+	private fun encodeTask(task: AgentTaskSnapshot): JsonObject = buildJsonObject {
+		put("id", task.id)
+		put("objective", task.objective)
+		putJsonArray("plan") { task.plan.forEach { add(JsonPrimitive(it)) } }
+		put("status", task.status.name)
+		task.currentStep?.let { put("currentStep", it) }
+		put("progress", task.progress)
+		put("inputRevisionId", task.inputRevisionId)
+		put("inputHistoryHeadNodeId", task.inputHistoryHeadNodeId)
+		put("createdAt", task.createdAt)
+		put("updatedAt", task.updatedAt)
+		putJsonArray("artifactIds") { task.artifactIds.forEach { add(JsonPrimitive(it)) } }
+		putJsonArray("events") {
+			task.events.forEach { event ->
+				add(buildJsonObject {
+					put("sequence", event.sequence)
+					put("createdAt", event.createdAt)
+					put("status", event.status.name)
+					put("message", event.message)
+					putJsonArray("artifactIds") { event.artifactIds.forEach { add(JsonPrimitive(it)) } }
+				})
+			}
+		}
+	}
+
+	private fun decodeTask(element: JsonElement): AgentTaskSnapshot {
+		val task = element.jsonObject
+		return AgentTaskSnapshot(
+			id = task.requiredString("id"),
+			objective = task.requiredString("objective"),
+			plan = task.optionalArray("plan").map { it.jsonPrimitive.content },
+			status = enumValue(task.requiredString("status")),
+			currentStep = task["currentStep"]?.jsonPrimitive?.intOrNull,
+			progress = task.requiredFloat("progress"),
+			inputRevisionId = task.requiredString("inputRevisionId"),
+			inputHistoryHeadNodeId = task.requiredString("inputHistoryHeadNodeId"),
+			createdAt = task.requiredString("createdAt"),
+			updatedAt = task.requiredString("updatedAt"),
+			artifactIds = task.optionalArray("artifactIds").map { it.jsonPrimitive.content },
+			events = task.optionalArray("events").map { eventElement ->
+				val event = eventElement.jsonObject
+				AgentTaskEventSnapshot(
+					sequence = event.requiredLong("sequence"),
+					createdAt = event.requiredString("createdAt"),
+					status = enumValue(event.requiredString("status")),
+					message = event.requiredString("message"),
+					artifactIds = event.optionalArray("artifactIds").map { it.jsonPrimitive.content },
+				)
+			},
+		)
+	}
+
+	private fun persistRaster(project: Path, rgba: ByteArray): String {
+		val hash = sha256(rgba)
+		val path = project.resolve("blobs/${fileKey(hash)}.rgba.gz")
+		if (Files.isRegularFile(path)) return hash
+		val compressed = ByteArrayOutputStream().use { output ->
+			GZIPOutputStream(output).use { it.write(rgba) }
+			output.toByteArray()
+		}
+		writeImmutable(path, compressed)
+		return hash
+	}
+
+	private fun loadRaster(project: Path, hash: String, width: Int, height: Int): ByteArray {
+		val expected = Math.multiplyExact(Math.multiplyExact(width, height), 4)
+		require(expected > 0) { "Stored raster dimensions must be positive" }
+		val file = project.resolve("blobs/${fileKey(hash)}.rgba.gz")
+		require(Files.isRegularFile(file)) { "Stored raster blob is missing: $hash" }
+		val rgba = GZIPInputStream(Files.newInputStream(file)).use { input -> input.readNBytes(expected + 1) }
+		require(rgba.size == expected) { "Stored raster length mismatch for $hash" }
+		require(sha256(rgba) == hash) { "Stored raster hash mismatch for $hash" }
+		return rgba
+	}
+
+	private fun projectRoot(projectId: String): Path {
+		require(projectId.matches(Regex("[A-Za-z0-9._-]+"))) { "Invalid project ID" }
+		val normalizedRoot = root.toAbsolutePath().normalize()
+		return normalizedRoot.resolve(projectId).normalize().also { path ->
+			require(path.startsWith(normalizedRoot)) { "Project store path escapes its root" }
+		}
+	}
+
+	private fun readJson(path: Path): JsonObject = json.parseToJsonElement(Files.readString(path)).jsonObject
+
+	private fun writeImmutable(path: Path, bytes: ByteArray) {
+		if (Files.isRegularFile(path)) {
+			require(Files.readAllBytes(path).contentEquals(bytes)) { "Immutable workspace record changed: ${path.fileName}" }
+			return
+		}
+		writeAtomic(path, bytes, replace = false)
+	}
+
+	private fun writeAtomic(path: Path, bytes: ByteArray, replace: Boolean = true) {
+		Files.createDirectories(path.parent)
+		val temporary = path.parent.resolve(".${path.fileName}.${UUID.randomUUID()}.tmp")
+		try {
+			Files.write(temporary, bytes, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
+			val options = if (replace) {
+				arrayOf(StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+			} else {
+				arrayOf(StandardCopyOption.ATOMIC_MOVE)
+			}
+			try {
+				Files.move(temporary, path, *options)
+			} catch (_: AtomicMoveNotSupportedException) {
+				if (replace) Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING)
+				else Files.move(temporary, path)
+			}
+		} finally {
+			Files.deleteIfExists(temporary)
+		}
+	}
+
+	private fun fileKey(value: String): String = sha256(value.encodeToByteArray())
+
+	private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
+		.digest(bytes).joinToString("") { "%02x".format(it.toInt() and 0xff) }
+
+	private fun kotlinx.serialization.json.JsonObjectBuilder.putBounds(
+		name: String,
+		left: Float,
+		top: Float,
+		right: Float,
+		bottom: Float,
+	) = putJsonObject(name) {
+		put("left", left)
+		put("top", top)
+		put("right", right)
+		put("bottom", bottom)
+	}
+
+	companion object {
+		const val STORE_VERSION = 1
+
+		fun defaultRoot(): Path {
+			System.getProperty("psd2live.agent.store")?.takeIf(String::isNotBlank)?.let { return Path.of(it) }
+			val localAppData = System.getenv("LOCALAPPDATA")?.takeIf(String::isNotBlank)
+			return if (localAppData != null) Path.of(localAppData, "PSD2Live", "agent-workspaces")
+			else Path.of(System.getProperty("user.home"), ".psd2live", "agent-workspaces")
+		}
+
+		inline fun <reified T : Enum<T>> enumValue(raw: String): T =
+			runCatching { enumValueOf<T>(raw) }.getOrElse { invalid("enum value '$raw'") }
+
+		fun invalid(field: String): Nothing = throw IllegalArgumentException("Invalid workspace store field: $field")
+	}
+}
+
+internal data class WorkspaceSourceGroup(
+	override val path: String,
+	override val name: String,
+	override val visible: Boolean,
+	override val opacity: Float,
+	override val clipped: Boolean,
+	override val blend: LayerBlend,
+	override val passThrough: Boolean,
+) : SourceGroup
+
+private fun JsonObject.requiredString(name: String): String = this[name]?.jsonPrimitive?.contentOrNull ?: AgentWorkspaceStore.invalid(name)
+private fun JsonObject.optionalString(name: String): String? = this[name]?.jsonPrimitive?.contentOrNull
+private fun JsonObject.requiredInt(name: String): Int = this[name]?.jsonPrimitive?.intOrNull ?: AgentWorkspaceStore.invalid(name)
+private fun JsonObject.requiredLong(name: String): Long = this[name]?.jsonPrimitive?.longOrNull ?: AgentWorkspaceStore.invalid(name)
+private fun JsonObject.requiredFloat(name: String): Float = this[name]?.jsonPrimitive?.floatOrNull ?: AgentWorkspaceStore.invalid(name)
+private fun JsonObject.requiredBoolean(name: String): Boolean = this[name]?.jsonPrimitive?.booleanOrNull ?: AgentWorkspaceStore.invalid(name)
+private fun JsonObject.requiredObject(name: String): JsonObject = this[name]?.jsonObject ?: AgentWorkspaceStore.invalid(name)
+private fun JsonObject.optionalObject(name: String): JsonObject = this[name]?.jsonObject ?: JsonObject(emptyMap())
+private fun JsonObject.optionalArray(name: String): JsonArray = this[name]?.jsonArray ?: JsonArray(emptyList())

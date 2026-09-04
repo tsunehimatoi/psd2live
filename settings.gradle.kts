@@ -25,6 +25,6 @@ includeBuild("../umamo") {
 		substitute(module("local.umamo:runtime")).using(project(":runtime"))
 		substitute(module("local.umamo:interop")).using(project(":interop"))
 		substitute(module("local.umamo:render")).using(project(":render"))
+		substitute(module("local.umamo:edit")).using(project(":edit"))
 	}
 }
-

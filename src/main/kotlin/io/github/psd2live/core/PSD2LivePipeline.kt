@@ -42,7 +42,7 @@ class PSD2LivePipeline {
 		val effectiveLayers = if (config.deletedLayerIds.isEmpty()) analysis.layers else analysis.layers.filter { it.source.id.raw !in config.deletedLayerIds }
 		val effectiveAnalysis = if (effectiveLayers.size != analysis.layers.size) analysis.copy(layers = effectiveLayers) else analysis
 		val atlas = AtlasPacker.pack(effectiveAnalysis.layers, config.atlasSize, config.texturePadding)
-		val rig = RigBuilder.build(effectiveAnalysis, atlas, config)
+		val rig = RigBuilder.build(effectiveAnalysis, atlas, config).withRigEdits(config.rigEdits)
 		val runtimeBundle = buildRuntimeBundle("psd2live-preview", effectiveAnalysis, atlas, rig, config).first
 		return RigPreviewModel(effectiveAnalysis, atlas, rig, config, runtimeBundle)
 	}
@@ -55,10 +55,45 @@ class PSD2LivePipeline {
 	): PipelineResult {
 		progress.update(tr("progress.readPsd"), 0.04)
 		val analysis = inspect(psd, config)
+		return exportAnalysis(
+			analysis = analysis,
+			baseName = safeBaseName(psd.fileName.toString().substringBeforeLast('.')),
+			outputDirectory = outputDirectory,
+			config = config,
+			progress = progress,
+		)
+	}
+
+	/** Export the current authoritative source, including Agent-created layers, without rereading the PSD. */
+	fun run(
+		source: SourceArt,
+		sourceName: String,
+		outputDirectory: Path,
+		config: PipelineConfig = PipelineConfig(),
+		progress: ProgressListener = ProgressListener { _, _ -> },
+	): PipelineResult {
+		progress.update(tr("progress.readPsd"), 0.04)
+		val analysis = CharacterAnalyzer.analyze(source, config)
+		return exportAnalysis(
+			analysis = analysis,
+			baseName = safeBaseName(sourceName.substringBeforeLast('.')),
+			outputDirectory = outputDirectory,
+			config = config,
+			progress = progress,
+		)
+	}
+
+	private fun exportAnalysis(
+		analysis: PipelineAnalysis,
+		baseName: String,
+		outputDirectory: Path,
+		config: PipelineConfig,
+		progress: ProgressListener,
+	): PipelineResult {
 		progress.update(tr("progress.classify"), 0.18)
 		val atlas = AtlasPacker.pack(analysis.layers, config.atlasSize, config.texturePadding)
 		progress.update(tr("progress.atlas"), 0.38)
-		val rig = RigBuilder.build(analysis, atlas, config)
+		val rig = RigBuilder.build(analysis, atlas, config).withRigEdits(config.rigEdits)
 		val generatedLabel = tr("validation.generated")
 		val neutralRig = RigIntegrityValidator.validateNeutralPose(generatedLabel, rig.puppet, rig.sourceBoundsByDrawableId)
 		RigIntegrityValidator.validateHeadAnglePoses(generatedLabel, rig.puppet, neutralRig.boundsByDrawableId)
@@ -67,7 +102,6 @@ class PSD2LivePipeline {
 		// CMO3's editable base mesh is canvas-space. The keyform absolutes remain in parent space;
 		// Umamo's conversion preserves that mixed-space invariant exactly.
 		val exportPuppet = restMeshesToCanvasSpace(rig.puppet)
-		val baseName = safeBaseName(psd.fileName.toString().substringBeforeLast('.'))
 		val outputRoot = outputDirectory.toAbsolutePath().normalize()
 		val hasFrontHair = analysis.layers.any { it.semantic.tag == SemanticTag.FRONT_HAIR && it.opaquePixels > 0 }
 		val hasBackHair = analysis.layers.any { it.semantic.tag == SemanticTag.BACK_HAIR && it.opaquePixels > 0 }
@@ -140,6 +174,7 @@ class PSD2LivePipeline {
 		config: PipelineConfig,
 	): Pair<CubismRuntimeBundle, org.umamo.interop.ExportReport> {
 		val exportPuppet = restMeshesToCanvasSpace(rig.puppet)
+		val parameterIds = rig.puppet.parameters.mapTo(linkedSetOf()) { it.id.raw }
 		val textureFolder = "$baseName.${atlas.pages.firstOrNull()?.image?.width ?: config.atlasSize}"
 		val pages = atlas.pages.mapIndexed { index, page ->
 			Moc3Sidecars.AtlasPage("$textureFolder/texture_${index.toString().padStart(2, '0')}.png", page.png)
@@ -151,30 +186,38 @@ class PSD2LivePipeline {
 		val useBackHairPhysics = hasBackHair && config.generatePhysics && config.physicsBackHair && !config.meshOnly
 		val useEyeJellyPhysics = hasEyeJelly && config.generatePhysics && config.physicsEyeJelly && !config.meshOnly
 		val physics = if (useFrontHairPhysics || useBackHairPhysics || useEyeJellyPhysics) {
-			PhysicsGenerator.generate(useFrontHairPhysics, useBackHairPhysics, useEyeJellyPhysics)?.let(CubismJson::normalize)
+			PhysicsGenerator.generate(useFrontHairPhysics, useBackHairPhysics, useEyeJellyPhysics, parameterIds)?.let(CubismJson::normalize)
 		} else null
 
 		val motions = buildList<Pair<String, Pair<String, String>>> {
 			if (config.exportMotions && !config.meshOnly) {
 				if (config.motionIdle) {
 					val name = "$baseName.idle.motion3.json"
-					val json = CubismJson.normalize(MotionGenerator.idle()).also { Json.parseToJsonElement(it) }
-					add("Idle" to (name to json))
+					MotionGenerator.idle(parameterIds)?.let { motion ->
+						val json = CubismJson.normalize(motion).also { Json.parseToJsonElement(it) }
+						add("Idle" to (name to json))
+					}
 				}
 				if (config.motionBlink) {
 					val name = "$baseName.blink.motion3.json"
-					val json = CubismJson.normalize(MotionGenerator.blink()).also { Json.parseToJsonElement(it) }
-					add("Blink" to (name to json))
+					MotionGenerator.blink(parameterIds)?.let { motion ->
+						val json = CubismJson.normalize(motion).also { Json.parseToJsonElement(it) }
+						add("Blink" to (name to json))
+					}
 				}
 				if (config.motionNod) {
 					val name = "$baseName.nod.motion3.json"
-					val json = CubismJson.normalize(MotionGenerator.nod()).also { Json.parseToJsonElement(it) }
-					add("Nod" to (name to json))
+					MotionGenerator.nod(parameterIds)?.let { motion ->
+						val json = CubismJson.normalize(motion).also { Json.parseToJsonElement(it) }
+						add("Nod" to (name to json))
+					}
 				}
 				if (config.motionShake) {
 					val name = "$baseName.shake.motion3.json"
-					val json = CubismJson.normalize(MotionGenerator.shake()).also { Json.parseToJsonElement(it) }
-					add("Shake" to (name to json))
+					MotionGenerator.shake(parameterIds)?.let { motion ->
+						val json = CubismJson.normalize(motion).also { Json.parseToJsonElement(it) }
+						add("Shake" to (name to json))
+					}
 				}
 			}
 		}
@@ -198,10 +241,14 @@ class PSD2LivePipeline {
 				textures = emptyList(),
 				motions = motionMap,
 			),
-			groups = listOf(
-				Model3Group("Parameter", "EyeBlink", listOf("ParamEyeLOpen", "ParamEyeROpen")),
-				Model3Group("Parameter", "LipSync", listOf("ParamMouthOpenY")),
-			),
+			groups = buildList {
+				listOf("ParamEyeLOpen", "ParamEyeROpen").filter(parameterIds::contains).takeIf(List<String>::isNotEmpty)?.let {
+					add(Model3Group("Parameter", "EyeBlink", it))
+				}
+				listOf("ParamMouthOpenY").filter(parameterIds::contains).takeIf(List<String>::isNotEmpty)?.let {
+					add(Model3Group("Parameter", "LipSync", it))
+				}
+			},
 		)
 		val bundle = Moc3Sidecars.bundle(exportPuppet, baseName, pages = pages, sidecars = sidecars, source = manifestTemplate)
 		validateBundle(bundle)

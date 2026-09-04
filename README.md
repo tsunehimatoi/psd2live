@@ -16,6 +16,7 @@ PSD2Live 是一个自动化的 Live2D 模型生成流水线与桌面应用。输
 
 | 文档 | 描述 |
 | :--- | :--- |
+| [Agent / MCP 产品与技术设计 (docs/zh/AGENT_ARCHITECTURE.md)](docs/zh/AGENT_ARCHITECTURE.md) | 从 PSD 理解、透明素材生成、可撤销长任务到 Cubism 导出的 Agent 架构、工具契约与实施阶段 |
 | [用户操作指南 (docs/zh/USER_GUIDE.md)](docs/zh/USER_GUIDE.md) | 桌面 GUI 布局、四大工作区面板、视口操作、快捷键及 CLI 参数说明 |
 | [Live2D SDK 配置指南 (docs/zh/CUBISM_SDK_SETUP.md)](docs/zh/CUBISM_SDK_SETUP.md) | 官方 Native SDK 许可政策、着色器提取与离屏硬件加速预览配置指南 |
 | [PSD 图层规范与命名指南 (docs/zh/PSD_LAYER_SPEC.md)](docs/zh/PSD_LAYER_SPEC.md) | 31 种语义标签中日英对照、侧别规则、连通域拆分与五官/头发分层规范 |
@@ -73,6 +74,10 @@ PSD2Live 是一个自动化的 Live2D 模型生成流水线与桌面应用。输
 | **重新分析** | `Ctrl + R` |
 | **生成并导出** | `Ctrl + G` |
 | **导出到...** | `Ctrl + Shift + G` |
+
+#### 连接 ChatGPT Desktop / Codex
+
+GUI 启动时会在本机回环地址启动带 Bearer Token 的 Streamable HTTP MCP 服务。打开 **帮助 → Agent / MCP 连接**，即可查看端点并复制配置。当前已开放工程状态、图层/参数清单，以及模型数据直出的 PNG View：Agent 可指定参数姿态、合成图层、标注部件、画布坐标取景，或按部件与相对缩放率观察周围。View 返回完整像素↔画布映射，因此 Agent 生成不同分辨率的 PNG 仍能按原画布位置和尺寸回填；长宽比不一致不会被静默拉伸。`asset_import_png` 与 `layer_add_from_asset` 会把生成图规范化成真正的源图层并重建 Mesh/Rig，`layer_soft_delete`、`history_list`、`history_checkout` 提供可分支恢复的修改闭环。历史快照、去重 RGBA、暂存 Asset、View 空间参考和长任务检查点会持久化到本机；再次加载同一版本 PSD 时自动恢复最后的 HEAD。认证后的 Agent 按“工作区所有者”设计，不做逐操作审批；历史节点本身不可改写。完整设计与阶段计划见 [Agent / MCP 产品与技术设计](docs/zh/AGENT_ARCHITECTURE.md)。
 
 ---
 

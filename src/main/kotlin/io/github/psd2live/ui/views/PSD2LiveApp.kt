@@ -56,6 +56,7 @@ import androidx.compose.ui.window.WindowState
 import io.github.psd2live.i18n.AppLanguage
 import io.github.psd2live.i18n.I18n
 import io.github.psd2live.i18n.tr
+import io.github.psd2live.agent.AgentMcpConnectionInfo
 import io.github.psd2live.ui.components.AppTitleBar
 import io.github.psd2live.ui.components.CompactButton
 import io.github.psd2live.ui.components.CompactIconButton
@@ -68,7 +69,9 @@ import io.github.psd2live.ui.theme.LocalToolTypography
 import io.github.psd2live.ui.utils.NativeFilePicker
 import java.awt.Cursor
 import java.awt.Desktop
+import java.awt.Toolkit
 import java.awt.datatransfer.DataFlavor
+import java.awt.datatransfer.StringSelection
 import java.awt.dnd.DnDConstants
 import java.awt.dnd.DropTarget
 import java.awt.dnd.DropTargetAdapter
@@ -83,6 +86,8 @@ fun FrameWindowScope.PSD2LiveApp(
 	viewModel: PSD2LiveViewModel,
 	window: ComposeWindow? = null,
 	windowState: WindowState? = null,
+	agentConnectionInfo: AgentMcpConnectionInfo? = null,
+	agentStartupError: String? = null,
 	onCloseRequest: () -> Unit = {
 		viewModel.close()
 		window?.dispose()
@@ -90,6 +95,7 @@ fun FrameWindowScope.PSD2LiveApp(
 ) {
 	val state by viewModel.state.collectAsState()
 	var showAboutDialog by remember { mutableStateOf(false) }
+	var showAgentDialog by remember { mutableStateOf(false) }
 
 	// Language key tracking for recomposition
 	val currentLanguage = state.currentLanguage
@@ -227,6 +233,7 @@ fun FrameWindowScope.PSD2LiveApp(
 						onExportTo = triggerExportTo,
 						onClose = onCloseRequest,
 						onSetLanguage = { viewModel.setLanguage(it) },
+						onShowAgentConnection = { showAgentDialog = true },
 						onShowAbout = { showAboutDialog = true },
 					)
 				}
@@ -317,6 +324,29 @@ fun FrameWindowScope.PSD2LiveApp(
 				message = tr("dialog.about.message"),
 				onDismiss = { showAboutDialog = false },
 				isError = false,
+			)
+		}
+
+		if (showAgentDialog) {
+			val connection = agentConnectionInfo
+			val message = if (connection != null) {
+				tr("dialog.agent.message", connection.endpoint, connection.token, connection.configToml)
+			} else {
+				tr("dialog.agent.unavailable", agentStartupError ?: tr("dialog.agent.unknownError"))
+			}
+			ModalDialog(
+				title = tr("dialog.agent.title"),
+				message = message,
+				onDismiss = { showAgentDialog = false },
+				extraAction = connection?.let {
+					{
+						CompactButton(
+							text = tr("dialog.agent.copyConfig"),
+							onClick = { copyToClipboard(it.configToml) },
+							height = 24.dp,
+						)
+					}
+				},
 			)
 		}
 	}
@@ -468,6 +498,10 @@ private fun openFolder(pathString: String) {
 			}
 		}
 	} catch (_: Exception) {}
+}
+
+private fun copyToClipboard(text: String) {
+	Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
 }
 
 @Composable

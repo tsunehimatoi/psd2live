@@ -6,8 +6,10 @@ import io.github.psd2live.core.CubismSdkPreviewSession
 import io.github.psd2live.core.EyeJellyDynamics
 import io.github.psd2live.core.LayerClassificationOverride
 import io.github.psd2live.core.PipelineAnalysis
+import io.github.psd2live.core.PipelineConfig
 import io.github.psd2live.core.ProgressListener
 import io.github.psd2live.core.RigPreviewModel
+import io.github.psd2live.core.RigEditOverlay
 import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.Side
 import io.github.psd2live.core.StandardParameters
@@ -27,6 +29,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.umamo.runtime.model.ParameterId
+import org.umamo.format.art.SourceArt
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
@@ -657,6 +660,9 @@ class PSD2LiveViewModel : AutoCloseable {
 				val preview = withContext(Dispatchers.Default) {
 					pipeline.buildPreview(input, config)
 				}
+				val inputSignature = runCatching {
+					"${Files.size(input)}:${Files.getLastModifiedTime(input).toMillis()}"
+				}.getOrNull()
 				_state.update { current ->
 					val recognized = preview.analysis.layers.count { it.semantic.tag != SemanticTag.UNKNOWN }
 					val summary = tr(
@@ -678,6 +684,8 @@ class PSD2LiveViewModel : AutoCloseable {
 						isAnalyzing = false,
 						isIndeterminateProgress = false,
 						analysis = preview.analysis,
+						loadedInputPath = input.toAbsolutePath().normalize().toString(),
+						loadedInputFileSignature = inputSignature,
 						previewModel = preview,
 						statusText = summary,
 						logLines = logs,
@@ -727,6 +735,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		val input = Path.of(rawInput)
 		val output = Path.of(rawOutput)
 		val config = _state.value.buildConfig()
+		val workspaceSource = _state.value.analysis?.source
 		if (!config.exportCmo3 && !config.exportMoc3) {
 			_state.update { it.copy(errorMessage = tr("dialog.exportFormatRequired")) }
 			return
@@ -747,11 +756,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			}
 			try {
 				val result = withContext(Dispatchers.Default) {
-					pipeline.run(
-						input,
-						output,
-						config,
-						ProgressListener { stage, fraction ->
+					val progress = ProgressListener { stage, fraction ->
 							_state.update {
 								it.copy(
 									progress = fraction.toFloat().coerceIn(0f, 1f),
@@ -759,8 +764,12 @@ class PSD2LiveViewModel : AutoCloseable {
 									logLines = it.logLines + listOf("%3d%%  %s".format((fraction * 100).toInt(), stage)),
 								)
 							}
-						},
-					)
+						}
+					if (workspaceSource != null) {
+						pipeline.run(workspaceSource, input.fileName.toString(), output, config, progress)
+					} else {
+						pipeline.run(input, output, config, progress)
+					}
 				}
 				_state.update { current ->
 					val logs = current.logLines + listOf(
@@ -772,6 +781,10 @@ class PSD2LiveViewModel : AutoCloseable {
 						isGenerating = false,
 						progress = 1f,
 						analysis = result.previewModel.analysis,
+						loadedInputPath = current.loadedInputPath ?: input.toAbsolutePath().normalize().toString(),
+						loadedInputFileSignature = current.loadedInputFileSignature ?: runCatching {
+							"${Files.size(input)}:${Files.getLastModifiedTime(input).toMillis()}"
+						}.getOrNull(),
 						previewModel = result.previewModel,
 						statusText = summary,
 						logLines = logs,
@@ -791,6 +804,68 @@ class PSD2LiveViewModel : AutoCloseable {
 				}
 			}
 		}
+	}
+
+	/** CPU-heavy rebuild used by the authenticated Agent transaction boundary. */
+	internal suspend fun buildAgentWorkspacePreview(source: SourceArt, config: PipelineConfig): RigPreviewModel =
+		withContext(Dispatchers.Default) { pipeline.buildPreview(source, config) }
+
+	/** Publish one already-built authoritative workspace snapshot atomically to Compose and preview. */
+	internal fun applyAgentWorkspacePreview(
+		preview: RigPreviewModel,
+		expectedSource: SourceArt,
+		expectedLayerVisibility: Map<String, Boolean>,
+		expectedDeletedLayerIds: Set<String>,
+		expectedLayerOverrides: Map<String, LayerClassificationOverride>,
+		expectedParentOverrides: Map<String, String?>,
+		expectedRigEdits: RigEditOverlay,
+		layerVisibility: Map<String, Boolean>,
+		deletedLayerIds: Set<String>,
+		layerOverrides: Map<String, LayerClassificationOverride>,
+		parentOverrides: Map<String, String?>,
+		rigEdits: RigEditOverlay,
+		status: String,
+	): Boolean {
+		previewRebuildJob?.cancel()
+		var applied = false
+		_state.update { current ->
+			applied = false
+			if (
+				current.analysis?.source !== expectedSource ||
+				current.layerVisibility != expectedLayerVisibility ||
+				current.deletedLayerIds != expectedDeletedLayerIds ||
+				current.layerOverrides != expectedLayerOverrides ||
+				current.parentOverrides != expectedParentOverrides ||
+				current.rigEdits != expectedRigEdits
+			) return@update current
+			applied = true
+			current.copy(
+				analysis = preview.analysis,
+				previewModel = preview,
+				layerVisibility = layerVisibility,
+				deletedLayerIds = deletedLayerIds,
+				layerOverrides = layerOverrides,
+				parentOverrides = parentOverrides,
+				rigEdits = rigEdits,
+				selectedLayerId = current.selectedLayerId?.takeIf { selected ->
+					preview.analysis.layers.any { it.source.id.raw == selected } && selected !in deletedLayerIds
+				},
+				isolationSnapshot = null,
+				isolatedLayerId = null,
+				lockedParameters = current.lockedParameters.intersect(preview.rig.puppet.parameters.mapTo(mutableSetOf()) { it.id }),
+				parameterValues = preview.rig.puppet.parameters.associate { parameter ->
+					parameter.id to (current.parameterValues[parameter.id] ?: parameter.default).coerceIn(parameter.min, parameter.max)
+				},
+				statusText = status,
+				logLines = current.logLines + status,
+				errorMessage = null,
+			)
+		}
+		return applied
+	}
+
+	internal fun loadAgentWorkspacePreview(preview: RigPreviewModel) {
+		sdkSession.load(preview.runtimeBundle, preview.rig.puppet.parameters.map { it.id })
 	}
 
 	private fun schedulePreviewRebuild() {

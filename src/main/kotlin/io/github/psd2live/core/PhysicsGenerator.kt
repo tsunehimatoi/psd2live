@@ -97,6 +97,15 @@ object PhysicsGenerator {
 		}
 	}
 
+	internal fun validRules(
+		hasFrontHair: Boolean,
+		hasBackHair: Boolean,
+		hasEyeJelly: Boolean,
+		availableParameterIds: Set<String>,
+	): List<PhysicsRule> = rules(hasFrontHair, hasBackHair, hasEyeJelly).filter { rule ->
+		rule.outputParameter in availableParameterIds && rule.inputs.all { it.parameter in availableParameterIds }
+	}
+
 	private fun hairRule(
 		id: String,
 		name: String,
@@ -133,7 +142,20 @@ object PhysicsGenerator {
 	)
 
 	fun generate(hasFrontHair: Boolean, hasBackHair: Boolean, hasEyeJelly: Boolean = false): String? {
-		val rules = rules(hasFrontHair, hasBackHair, hasEyeJelly)
+		return generate(hasFrontHair, hasBackHair, hasEyeJelly, null)
+	}
+
+	fun generate(
+		hasFrontHair: Boolean,
+		hasBackHair: Boolean,
+		hasEyeJelly: Boolean,
+		availableParameterIds: Set<String>?,
+	): String? {
+		val rules = if (availableParameterIds == null) {
+			rules(hasFrontHair, hasBackHair, hasEyeJelly)
+		} else {
+			validRules(hasFrontHair, hasBackHair, hasEyeJelly, availableParameterIds)
+		}
 		if (rules.isEmpty()) return null
 		val settings = rules.map(::settingJson)
 		val dictionary = rules.map { rule -> "{ \"Id\": \"${rule.id}\", \"Name\": \"${rule.name}\" }" }

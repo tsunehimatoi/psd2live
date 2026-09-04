@@ -13,10 +13,18 @@ kotlin {
 }
 
 dependencies {
+	implementation(platform("io.ktor:ktor-bom:3.5.1"))
 	implementation("local.umamo:format:local")
 	implementation("local.umamo:runtime:local")
 	implementation("local.umamo:interop:local")
 	implementation("local.umamo:render:local")
+	implementation("local.umamo:edit:local")
+	implementation("io.modelcontextprotocol:kotlin-sdk-server:0.15.0")
+	implementation("io.ktor:ktor-server-netty")
+	implementation("io.ktor:ktor-server-auth")
+	implementation("io.ktor:ktor-server-content-negotiation")
+	implementation("io.ktor:ktor-server-sse")
+	implementation("io.ktor:ktor-serialization-kotlinx-json")
 	implementation("net.java.dev.jna:jna:5.18.0")
 	implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
 	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
@@ -27,6 +35,8 @@ dependencies {
 	implementation(compose.ui)
 	implementation(compose.material)
 	testImplementation(kotlin("test"))
+	testImplementation("io.modelcontextprotocol:kotlin-sdk-client:0.15.0")
+	testImplementation("io.ktor:ktor-client-cio")
 }
 
 

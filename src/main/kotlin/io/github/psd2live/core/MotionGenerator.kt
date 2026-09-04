@@ -2,7 +2,9 @@
 
 /** Demonstration motions that exercise the generated rig without audio assets. */
 object MotionGenerator {
-	fun idle(): String = buildMotionJson(
+	fun idle(): String = idle(ALL_PARAMETERS)!!
+
+	fun idle(availableParameterIds: Set<String>): String? = buildMotionJson(
 		duration = 6.0f,
 		loop = true,
 		curves = listOf(
@@ -12,18 +14,24 @@ object MotionGenerator {
 			curve("ParamEyeLOpen", listOf(0f to 1f, 2.7f to 1f, 2.78f to 0f, 2.88f to 1f, 6f to 1f)),
 			curve("ParamEyeROpen", listOf(0f to 1f, 2.7f to 1f, 2.78f to 0f, 2.88f to 1f, 6f to 1f)),
 		),
+		availableParameterIds = availableParameterIds,
 	)
 
-	fun blink(): String = buildMotionJson(
+	fun blink(): String = blink(ALL_PARAMETERS)!!
+
+	fun blink(availableParameterIds: Set<String>): String? = buildMotionJson(
 		duration = 1.2f,
 		loop = false,
 		curves = listOf(
 			curve("ParamEyeLOpen", listOf(0f to 1f, 0.35f to 1f, 0.45f to 0f, 0.58f to 1f, 1.2f to 1f)),
 			curve("ParamEyeROpen", listOf(0f to 1f, 0.35f to 1f, 0.45f to 0f, 0.58f to 1f, 1.2f to 1f)),
 		),
+		availableParameterIds = availableParameterIds,
 	)
 
-	fun nod(): String = buildMotionJson(
+	fun nod(): String = nod(ALL_PARAMETERS)!!
+
+	fun nod(availableParameterIds: Set<String>): String? = buildMotionJson(
 		duration = 2.0f,
 		loop = false,
 		curves = listOf(
@@ -32,9 +40,12 @@ object MotionGenerator {
 			curve("ParamEyeLOpen", listOf(0f to 1f, 0.55f to 0.75f, 1.25f to 1f, 2.0f to 1f)),
 			curve("ParamEyeROpen", listOf(0f to 1f, 0.55f to 0.75f, 1.25f to 1f, 2.0f to 1f)),
 		),
+		availableParameterIds = availableParameterIds,
 	)
 
-	fun shake(): String = buildMotionJson(
+	fun shake(): String = shake(ALL_PARAMETERS)!!
+
+	fun shake(availableParameterIds: Set<String>): String? = buildMotionJson(
 		duration = 2.0f,
 		loop = false,
 		curves = listOf(
@@ -42,11 +53,19 @@ object MotionGenerator {
 			curve("ParamBodyAngleX", listOf(0f to 0f, 0.4f to -3f, 0.9f to 3f, 1.4f to -1.2f, 2.0f to 0f)),
 			curve("ParamAngleZ", listOf(0f to 0f, 0.4f to 2f, 0.9f to -2f, 1.4f to 1f, 2.0f to 0f)),
 		),
+		availableParameterIds = availableParameterIds,
 	)
 
-	private fun buildMotionJson(duration: Float, loop: Boolean, curves: List<Curve>): String {
-		val segmentCount = curves.sumOf { it.pointCount - 1 }
-		val pointCount = curves.sumOf { it.pointCount }
+	private fun buildMotionJson(
+		duration: Float,
+		loop: Boolean,
+		curves: List<Curve>,
+		availableParameterIds: Set<String>,
+	): String? {
+		val retainedCurves = curves.filter { it.parameter in availableParameterIds }
+		if (retainedCurves.isEmpty()) return null
+		val segmentCount = retainedCurves.sumOf { it.pointCount - 1 }
+		val pointCount = retainedCurves.sumOf { it.pointCount }
 		return """
 		{
 		  "Version": 3,
@@ -55,18 +74,18 @@ object MotionGenerator {
 		    "Fps": 30.0,
 		    "Loop": $loop,
 		    "AreBeziersRestricted": true,
-		    "CurveCount": ${curves.size},
+		    "CurveCount": ${retainedCurves.size},
 		    "TotalSegmentCount": $segmentCount,
 		    "TotalPointCount": $pointCount,
 		    "UserDataCount": 0,
 		    "TotalUserDataSize": 0
 		  },
-		  "Curves": [${curves.joinToString(",") { it.json }}]
+		  "Curves": [${retainedCurves.joinToString(",") { it.json }}]
 		}
 		""".trimIndent()
 	}
 
-	private data class Curve(val json: String, val pointCount: Int)
+	private data class Curve(val parameter: String, val json: String, val pointCount: Int)
 
 	private fun curve(parameter: String, points: List<Pair<Float, Float>>): Curve {
 		require(points.size >= 2)
@@ -81,6 +100,17 @@ object MotionGenerator {
 		}.joinToString(",") { number ->
 			if (number is Int) number.toString() else number.toFloat().toString()
 		}
-		return Curve("""{"Target":"Parameter","Id":"$parameter","Segments":[$segments]}""", points.size)
+		return Curve(parameter, """{"Target":"Parameter","Id":"$parameter","Segments":[$segments]}""", points.size)
 	}
+
+	private val ALL_PARAMETERS = setOf(
+		"ParamBreath",
+		"ParamAngleX",
+		"ParamAngleY",
+		"ParamAngleZ",
+		"ParamBodyAngleX",
+		"ParamBodyAngleY",
+		"ParamEyeLOpen",
+		"ParamEyeROpen",
+	)
 }
