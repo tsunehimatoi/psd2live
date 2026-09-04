@@ -19,21 +19,92 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.psd2live.agent.AgentMcpConnectionInfo
+import io.github.psd2live.i18n.AppLanguage
+import io.github.psd2live.i18n.I18n
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
+import java.io.File
 
-private const val AGENT_INSTALLATION_PROMPT = """You are connected to the PSD2Live Live2D Rigging MCP server.
-Follow these operational guidelines when working with the open Live2D workspace:
+fun buildInstallationPrompt(
+	endpoint: String,
+	token: String,
+	projectDir: String,
+	language: AppLanguage,
+): String {
+	val proxyPath = "$projectDir/mcp_proxy.py"
+	val skillsPath = "$projectDir/.agent/skills"
 
-1. Inspection & Planning: Always inspect the current project state using `project_get_state`, `project_list_layers`, and `project_list_parameters` before modifying the model. For multi-step workflows, maintain checkpoints using `task_start` and `task_update`.
-2. Direct Visual Grounding: Use `view_render_layer` (isolated layer), `view_render_context` (layer with surrounding context), and `view_render_model` (model composite under arbitrary parameter poses) to visually verify artwork and deformations. Never guess coordinates.
-3. AI Asset Generation & Inpainting: When generating accessories, hairpieces, or inpainted layers, stage the transparent PNG bytes via `asset_import_png` with the referenced `spatial_reference_id`, then insert into the model via `layer_add_from_asset`. Soft-delete redundant layers using `layer_soft_delete`.
-4. Cubism Parameters: Create and manage parameters with `parameter_create`, `parameter_update`, and `parameter_delete`.
-5. Keyform & K-Rig Editing: Inspect drawables, deformers, parts, and glue with `object_get`. Author keyform geometry and visual channels (opacity, draw order, multiply/screen color, glue intensity) at exact N-D parameter coordinates using `keyform_set`, `keyform_copy`, `keyform_delete`, and capture poses with `rig_k_pose`.
-6. Append-Only Non-Destructive History: All mutations require `expected_history_head_node_id`. Workspace history is immutable. Use `history_list` and `history_checkout` to branch or restore any historical snapshot."""
+	return when (language) {
+		AppLanguage.CHINESE -> """
+请将 PSD2Live 的 MCP 服务和 Live2D 绑骨技能 (Skill) 安装并配置到你自身环境中（系统级全局或当前应用/工作区）：
+
+1. 配置 MCP 服务 (系统级或应用级)：
+   根据你的运行环境（如 Claude Desktop、Cursor、Antigravity、Windsurf、Cline / Roo Code 等），将 PSD2Live 添加到对应的 MCP 配置文件中：
+   - 方式一：SSE / HTTP 直连 (推荐)
+     - 名称: psd2live
+     - URL: $endpoint
+     - Headers: {"Authorization": "Bearer $token"}
+   - 方式二：Stdio 代理 (若环境仅支持 stdio 命令方式)
+     - 名称: psd2live
+     - 命令: python
+     - 参数: ["$proxyPath"]
+
+2. 安装工作区技能 (Skill)：
+   将本项目自带的 Live2D 自动化技能复制或链接至你的技能目录（如系统级 ~/.gemini/antigravity/skills/ 或 Cursor Rules / 项目技能库），以便自主调用绑骨与分层工具：
+   - $skillsPath/psd2live-rigging
+   - $skillsPath/hair-separation
+
+请检测你当前所在的 Agent 宿主环境与配置文件位置，自动完成上述 MCP 与 Skill 的安装与配置。
+""".trimIndent()
+
+		AppLanguage.JAPANESE -> """
+PSD2Live の MCP サーバーおよび Live2D リギングスキル (Skill) を自身（システム全体または現在のアプリ／ワークスペース）にインストール・設定してください：
+
+1. MCP サーバーの追加（システムまたはアプリレベル）：
+   ご利用のクライアント環境（Claude Desktop、Cursor、Antigravity、Windsurf、Cline / Roo Code など）の MCP 設定ファイルに追加してください：
+   - 方式 1: SSE / HTTP 直結（推奨）
+     - 名前: psd2live
+     - URL: $endpoint
+     - ヘッダー: {"Authorization": "Bearer $token"}
+   - 方式 2: Stdio プロキシ（stdio コマンドのみ対応の場合）
+     - 名前: psd2live
+     - コマンド: python
+     - 引数: ["$proxyPath"]
+
+2. スキル (Skill) のインストール：
+   本プロジェクト付属の Live2D 自動リギングスキルを、ご自身のスキルディレクトリ（システム全体 ~/.gemini/antigravity/skills/ や Cursor / Claude ルール等）にコピーまたはリンクして有効化してください：
+   - $skillsPath/psd2live-rigging
+   - $skillsPath/hair-separation
+
+現在のクライアント種別と設定ファイルのパスを判別し、上記 MCP とスキルのインストールを自動実行してください。
+""".trimIndent()
+
+		AppLanguage.ENGLISH -> """
+Please install and configure the PSD2Live MCP server and Live2D rigging skills into yourself (system-level global or application/workspace-level):
+
+1. Install MCP Server (System or Application Level):
+   Based on your host environment (e.g., Claude Desktop, Cursor, Antigravity, Windsurf, Cline / Roo Code), add PSD2Live to your MCP configuration:
+   - Method 1: SSE / HTTP Direct (Recommended)
+     - Name: psd2live
+     - URL: $endpoint
+     - Headers: {"Authorization": "Bearer $token"}
+   - Method 2: Stdio Proxy (If only command/stdio is supported)
+     - Name: psd2live
+     - Command: python
+     - Args: ["$proxyPath"]
+
+2. Install Skills:
+   Copy or link the Live2D automation skills from this project into your skill directory (e.g., system-level ~/.gemini/antigravity/skills/, Cursor Rules, or workspace rules) so they can be invoked automatically:
+   - $skillsPath/psd2live-rigging
+   - $skillsPath/hair-separation
+
+Please inspect your agent host environment and configuration file paths, then automatically complete the installation and setup for both the MCP server and skills.
+""".trimIndent()
+	}
+}
 
 @Composable
 fun AgentConnectionDialog(
@@ -53,18 +124,34 @@ fun AgentConnectionDialog(
 		copyNotification = "$label ${tr("dialog.agent.copied")}"
 	}
 
-	val stdioJson = remember(connection) {
-		val endpoint = connection?.endpoint ?: "http://127.0.0.1:23871/mcp"
+	val projectDir = remember {
+		runCatching { File(".").canonicalPath.replace('\\', '/') }
+			.getOrDefault(System.getProperty("user.dir")?.replace('\\', '/') ?: ".")
+	}
+	val proxyPath = "$projectDir/mcp_proxy.py"
+	val endpoint = connection?.endpoint ?: "http://127.0.0.1:23871/sse"
+	val token = connection?.token ?: ""
+
+	val stdioJson = remember(connection, proxyPath) {
 		"""
 		{
 		  "mcpServers": {
 		    "psd2live": {
 		      "command": "python",
-		      "args": ["mcp_proxy.py"]
+		      "args": ["$proxyPath"]
 		    }
 		  }
 		}
 		""".trimIndent()
+	}
+
+	val installationPrompt = remember(connection, projectDir, I18n.currentLanguage) {
+		buildInstallationPrompt(
+			endpoint = endpoint,
+			token = token,
+			projectDir = projectDir,
+			language = I18n.currentLanguage,
+		)
 	}
 
 	Box(
@@ -150,7 +237,7 @@ fun AgentConnectionDialog(
 					.padding(10.dp),
 			) {
 				Text(
-					text = tr("dialog.agent.message", connection?.endpoint ?: "-", connection?.token?.take(16) ?: "-", ""),
+					text = tr("dialog.agent.message"),
 					style = typography.body.copy(fontSize = 11.sp, lineHeight = 15.sp),
 					color = colors.textPrimary,
 				)
@@ -348,7 +435,7 @@ fun AgentConnectionDialog(
 							)
 							CompactButton(
 								text = tr("dialog.agent.copyPrompt"),
-								onClick = { copyToClipboard(AGENT_INSTALLATION_PROMPT, "Prompt") },
+								onClick = { copyToClipboard(installationPrompt, "Prompt") },
 								isPrimary = true,
 								height = 24.dp,
 							)
@@ -364,7 +451,7 @@ fun AgentConnectionDialog(
 								.verticalScroll(rememberScrollState()),
 						) {
 							Text(
-								text = AGENT_INSTALLATION_PROMPT,
+								text = installationPrompt,
 								style = typography.mono.copy(fontSize = 10.5.sp, lineHeight = 15.sp),
 								color = Color(0xFFCE9178),
 							)
