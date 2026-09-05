@@ -110,76 +110,57 @@ fun ProjectLocationDialog(state: PSD2LiveState, viewModel: PSD2LiveViewModel) {
                     enabled = !state.projectSaving,
                     label = tr("project.installation"),
                 )
-                val onChooseCustomFile = {
-                    val currentTargetName = if (name.endsWith(".psd2live", ignoreCase = true)) name else "$name.psd2live"
-                    val picked = NativeFilePicker.chooseSaveProjectFile(null, currentTargetName, custom)
-                    if (!picked.isNullOrBlank()) {
-                        val p = Path.of(picked)
-                        viewModel.saveProjectTo(p)
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    CompactRadioButton(
-                        selected = false,
-                        onClick = onChooseCustomFile,
-                        enabled = !state.projectSaving,
-                        label = tr("project.custom"),
-                    )
-                    CompactButton(
-                        text = tr("project.browse"),
-                        onClick = onChooseCustomFile,
-                        enabled = !state.projectSaving,
-                        height = 22.dp,
-                    )
-                }
-            }
-
-            // Project Name Field
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = tr("project.fileName"),
-                    style = typography.caption.copy(fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold),
-                    color = colors.textMuted,
-                )
-                CompactTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    placeholder = tr("project.name"),
-                    modifier = Modifier.fillMaxWidth(),
-                    height = 24.dp,
+                CompactRadioButton(
+                    selected = location == 3,
+                    onClick = { location = 3 },
                     enabled = !state.projectSaving,
+                    label = tr("project.custom"),
                 )
             }
 
-            // Full Target Path Preview Box
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = tr("project.targetFile"),
-                    style = typography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
-                    color = colors.textMuted,
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(colors.inputBackground, RoundedCornerShape(4.dp))
-                        .border(
-                            BorderStroke(1.dp, if (target.isSuccess) colors.divider else colors.error),
-                            RoundedCornerShape(4.dp),
-                        )
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                ) {
+            if (location != 3) {
+                // Project Name Field
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = target.getOrNull()?.toString() ?: tr("project.invalidName"),
-                        style = typography.monoSmall.copy(fontSize = 10.sp),
-                        color = if (target.isSuccess) colors.textPrimary else colors.error,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
+                        text = tr("project.fileName"),
+                        style = typography.caption.copy(fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold),
+                        color = colors.textMuted,
                     )
+                    CompactTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        placeholder = tr("project.name"),
+                        modifier = Modifier.fillMaxWidth(),
+                        height = 24.dp,
+                        enabled = !state.projectSaving,
+                    )
+                }
+
+                // Full Target Path Preview Box
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = tr("project.targetFile"),
+                        style = typography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
+                        color = colors.textMuted,
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(colors.inputBackground, RoundedCornerShape(4.dp))
+                            .border(
+                                BorderStroke(1.dp, if (target.isSuccess) colors.divider else colors.error),
+                                RoundedCornerShape(4.dp),
+                            )
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                    ) {
+                        Text(
+                            text = target.getOrNull()?.toString() ?: tr("project.invalidName"),
+                            style = typography.monoSmall.copy(fontSize = 10.sp),
+                            color = if (target.isSuccess) colors.textPrimary else colors.error,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
             }
 
@@ -222,17 +203,27 @@ fun ProjectLocationDialog(state: PSD2LiveState, viewModel: PSD2LiveViewModel) {
                 CompactButton(
                     text = tr("project.save"),
                     onClick = {
-                        target.fold(
-                            onSuccess = { path ->
-                                if (!Files.exists(path) || JOptionPane.showConfirmDialog(null, tr("project.overwrite", path), tr("project.save"), JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION) {
-                                    error = null
-                                    viewModel.saveProjectTo(path)
-                                }
-                            },
-                            onFailure = { error = it.message }
-                        )
+                        if (location == 3) {
+                            val currentTargetName = if (name.endsWith(".psd2live", ignoreCase = true)) name else "$name.psd2live"
+                            val picked = NativeFilePicker.chooseSaveProjectFile(null, currentTargetName, custom)
+                            if (!picked.isNullOrBlank()) {
+                                error = null
+                                val p = Path.of(picked)
+                                viewModel.saveProjectTo(p)
+                            }
+                        } else {
+                            target.fold(
+                                onSuccess = { path ->
+                                    if (!Files.exists(path) || JOptionPane.showConfirmDialog(null, tr("project.overwrite", path), tr("project.save"), JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION) {
+                                        error = null
+                                        viewModel.saveProjectTo(path)
+                                    }
+                                },
+                                onFailure = { error = it.message }
+                            )
+                        }
                     },
-                    enabled = !state.projectSaving && target.isSuccess,
+                    enabled = !state.projectSaving && (location == 3 || target.isSuccess),
                     isPrimary = true,
                     height = 24.dp,
                 )
