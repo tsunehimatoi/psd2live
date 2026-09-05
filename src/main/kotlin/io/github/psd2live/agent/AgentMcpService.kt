@@ -58,12 +58,17 @@ import java.util.Base64
 import java.util.prefs.Preferences
 
 private const val MCP_SESSION_ID_HEADER = "mcp-session-id"
+// A 4096 x 4096 RGBA PNG can approach 64 MiB; Base64 adds another third, plus JSON overhead.
+internal const val DEFAULT_MCP_MAX_REQUEST_BODY_BYTES = 96L * 1024 * 1024
 
 data class AgentMcpConfig(
 	val host: String = "127.0.0.1",
 	val port: Int = 23871,
 	val token: String = AgentMcpCredentials.loadOrCreateToken(),
-)
+    val maxRequestBodyBytes: Long = DEFAULT_MCP_MAX_REQUEST_BODY_BYTES,
+) {
+    init { require(maxRequestBodyBytes > 0) { "MCP request body limit must be positive" } }
+}
 
 data class AgentMcpConnectionInfo(
 	val endpoint: String,
@@ -112,7 +117,7 @@ class AgentMcpService(
 	fun start(): AgentMcpConnectionInfo {
 		check(engine == null) { "Agent MCP service is already running" }
 		val started = embeddedServer(Netty, host = config.host, port = config.port) {
-			configureAgentMcp(workspace, config.token)
+			configureAgentMcp(workspace, config.token, config.maxRequestBodyBytes)
 		}
 		started.start(wait = false)
 		engine = started
@@ -146,7 +151,7 @@ object AgentMcpCredentials {
 	}
 }
 
-internal fun Application.configureAgentMcp(workspace: AgentWorkspace, authToken: String) {
+internal fun Application.configureAgentMcp(workspace: AgentWorkspace, authToken: String, maxRequestBodyBytes: Long = DEFAULT_MCP_MAX_REQUEST_BODY_BYTES) {
 	require(authToken.length >= 32) { "Agent MCP bearer token is too short" }
 	install(ContentNegotiation) { json(McpJson) }
 	install(SSE)
@@ -174,7 +179,7 @@ internal fun Application.configureAgentMcp(workspace: AgentWorkspace, authToken:
 				post {
 					val sessionId = call.request.header(MCP_SESSION_ID_HEADER)
 					val transport = if (sessionId == null) {
-						createTransport(workspace, transports)
+						createTransport(workspace, transports, maxRequestBodyBytes)
 					} else {
 						findTransport(sessionId, transports)
 					}
@@ -206,9 +211,10 @@ private fun findTransport(
 private suspend fun createTransport(
 	workspace: AgentWorkspace,
 	transports: ConcurrentMap<String, StreamableHttpServerTransport>,
+    maxRequestBodyBytes: Long,
 ): StreamableHttpServerTransport {
 	val transport = StreamableHttpServerTransport(
-		StreamableHttpServerTransport.Configuration(enableJsonResponse = true),
+		StreamableHttpServerTransport.Configuration(enableJsonResponse = true, maxRequestBodySize = maxRequestBodyBytes),
 	)
 	transport.setOnSessionInitialized { sessionId -> transports[sessionId] = transport }
 	transport.setOnSessionClosed { sessionId -> transports.remove(sessionId) }

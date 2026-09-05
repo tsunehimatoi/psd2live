@@ -48,6 +48,56 @@ class AgentMcpServiceTest {
 	private lateinit var client: Client
 	private lateinit var endpoint: String
 
+    @Test
+    fun `PNG base64 larger than four MiB reaches the importer unchanged`() = runBlocking {
+        val width=1152
+        val image=java.awt.image.BufferedImage(width,width,java.awt.image.BufferedImage.TYPE_INT_RGB)
+        val random=java.util.Random(72)
+        val pixels=IntArray(width*width) { random.nextInt() }
+        image.setRGB(0,0,width,width,pixels,0,width)
+        val bytes=png(image)
+        val encoded=java.util.Base64.getEncoder().encodeToString(bytes)
+        assertTrue(encoded.length > 4*1024*1024)
+        val imports=mutableListOf<ByteArray>()
+        val importing=object : AgentWorkspace by workspace {
+            override suspend fun importPng(request:AgentPngImportRequest):AgentImportedPngAsset {
+                imports.add(request.png)
+                val bounds=Bounds(0f,0f,width.toFloat(),width.toFloat())
+                return AgentPngAssetStore().import(request,AgentViewSpatialMetadata(
+                    pixelWidth=width,pixelHeight=width,canvasWidth=width.toFloat(),canvasHeight=width.toFloat(),
+                    requestedViewRect=bounds,viewRect=bounds,canvasUnitsPerPixelX=1f,canvasUnitsPerPixelY=1f))
+            }
+        }
+        val uploadService=AgentMcpService(importing,AgentMcpConfig(port=0,token=token))
+        try {
+            val uploadClient=httpClient.mcpStreamableHttp(uploadService.start().endpoint)
+            try {
+                for(payload in listOf(encoded,"data:image/png;base64,$encoded")) {
+                    val result=uploadClient.callTool("asset_import_png",mapOf("png_base64" to payload,"spatial_reference_id" to "test-view"))
+                    assertTrue(result.isError!=true,result.content.toString())
+                    assertEquals(width.toString(),result.structuredContent?.jsonObject?.get("pixelWidth")?.jsonPrimitive?.content)
+                    kotlin.test.assertContentEquals(bytes,imports.last())
+                }
+                assertEquals(2,imports.size)
+            } finally { uploadClient.close() }
+        } finally { uploadService.close() }
+    }
+
+    @Test
+    fun `request limit remains bounded and is applied before tool dispatch`() = runBlocking {
+        kotlin.test.assertFailsWith<IllegalArgumentException> { AgentMcpConfig(token=token,maxRequestBodyBytes=0) }
+        val bounded=AgentMcpService(workspace,AgentMcpConfig(port=0,token=token,maxRequestBodyBytes=1024))
+        try {
+            val url=bounded.start().endpoint
+            val response=httpClient.post(url) {
+                contentType(ContentType.Application.Json)
+                headers.append(HttpHeaders.Accept,"application/json, text/event-stream")
+                setBody("""{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"asset_import_png","arguments":{"png_base64":"${"A".repeat(2048)}"}}}""")
+            }
+            assertEquals(HttpStatusCode.PayloadTooLarge,response.status)
+        } finally { bounded.close() }
+    }
+
 	@BeforeAll
 	fun beforeAll() = runBlocking {
 		val connection = service.start()
