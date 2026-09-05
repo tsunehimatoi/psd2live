@@ -44,7 +44,19 @@ internal interface AgentWorkspaceSourceLayer : SourceLayer {
 internal data class AgentPngAsset(
 	val public: AgentImportedPngAsset,
 	val rgba: ByteArray,
+    val originalPng: ByteArray? = null,
 )
+
+internal fun AgentPngAsset.preview(): AgentAssetPreview {
+    val png = java.io.ByteArrayOutputStream().also { ImageIO.write(rgbaImage(public.pixelWidth, public.pixelHeight, rgba), "png", it) }.toByteArray()
+    var transparent = 0
+    var translucent = 0
+    for (i in 3 until rgba.size step 4) {
+        val alpha = rgba[i].toInt() and 255
+        if (alpha == 0) transparent++ else if (alpha < 255) translucent++
+    }
+    return AgentAssetPreview(public, png, transparent, translucent, originalPng)
+}
 
 internal class AgentPngAssetStore {
 	private val assets = ConcurrentHashMap<String, AgentPngAsset>()
@@ -53,26 +65,42 @@ internal class AgentPngAssetStore {
 		require(request.png.size >= PNG_SIGNATURE.size && request.png.copyOfRange(0, PNG_SIGNATURE.size).contentEquals(PNG_SIGNATURE)) {
 			"asset_import_png accepts PNG data only"
 		}
-		val image = ImageIO.read(request.png.inputStream())
+		val decoded = ImageIO.read(request.png.inputStream())
 			?: throw IllegalArgumentException("The supplied bytes are not a decodable PNG")
-		require(image.width > 0 && image.height > 0) { "PNG dimensions must be positive" }
-		val placement = spatial.placementForGeneratedPng(
+		require(decoded.width.toLong() * decoded.height <= 16_777_216) { "PNG exceeds 16 megapixels" }
+        val matte = if (request.referenceId != null) processGeneratedMatte(decoded,
+            requireNotNull(request.solidBackground) { "Reference imports require the actual solid_background" }, request.backgroundTolerance, request.processing) else null
+        val image = matte?.image ?: request.solidBackground?.let { cleanGeneratedMatte(decoded, it, request.backgroundTolerance) } ?: decoded
+        if (request.requireTransparency) {
+            val pixels = image.getRGB(0, 0, image.width, image.height, null, 0, image.width)
+            require(pixels.any { it ushr 24 == 0 } && pixels.any { it ushr 24 > 0 }) {
+                "Hair asset must contain transparent background and visible pixels. Regenerate on an explicit solid background and use solid_background; a checkerboard is not transparency."
+            }
+        }
+        require(image.width > 0 && image.height > 0) { "PNG dimensions must be positive" }
+		val placement = if (request.referenceId != null) AgentCanvasPlacement(spatial.coordinateSpace, spatial.viewRect, image.width, image.height,
+            spatial.viewRect.width / image.width, spatial.viewRect.height / image.height, request.spatialReferenceId) else spatial.placementForGeneratedPng(
 			sourceViewId = request.spatialReferenceId,
 			imagePixelWidth = image.width,
 			imagePixelHeight = image.height,
 			sourcePixelRect = request.sourcePixelRect,
 		)
 		val rgba = image.toRgba()
-		val digest = sha256(request.png)
+		val digest = sha256(if (request.solidBackground == null) request.png else java.io.ByteArrayOutputStream().also { ImageIO.write(image, "png", it) }.toByteArray())
 		val placementKey = listOf(
 			placement.canvasRect.left,
 			placement.canvasRect.top,
 			placement.canvasRect.right,
 			placement.canvasRect.bottom,
 		).joinToString(":")
-		val id = "asset-${sha256("$digest|$placementKey|${placement.sourceViewId}".encodeToByteArray()).take(24)}"
-		val imported = AgentImportedPngAsset(id, digest, image.width, image.height, placement)
-		assets.putIfAbsent(id, AgentPngAsset(imported, rgba))
+		val details = if (request.referenceId == null) kotlinx.serialization.json.JsonObject(emptyMap()) else kotlinx.serialization.json.buildJsonObject {
+            put("version", kotlinx.serialization.json.JsonPrimitive(2)); put("reference_id", kotlinx.serialization.json.JsonPrimitive(request.referenceId))
+            put("registration_required", kotlinx.serialization.json.JsonPrimitive(true)); put("processing", request.processing)
+            put("diagnostics", matte!!.diagnostics); put("raw_sha256", kotlinx.serialization.json.JsonPrimitive(sha256(request.png)))
+        }
+        val id = "asset-${sha256("$digest|$placementKey|${placement.sourceViewId}|$details".encodeToByteArray()).take(24)}"
+		val imported = AgentImportedPngAsset(id, digest, image.width, image.height, placement, details)
+		assets.putIfAbsent(id, AgentPngAsset(imported, rgba, request.png.copyOf()))
 		return assets.getValue(id).public
 	}
 
@@ -151,6 +179,16 @@ private fun MutableList<SourceLayer>.anchorIndex(layerId: String): Int {
 	val baseId = layerId.removeSuffix(":l").removeSuffix(":r")
 	return indexOfFirst { it.id.raw == baseId }.takeIf { it >= 0 }
 		?: throw IllegalArgumentException("Insertion anchor layer not found: $layerId")
+}
+
+internal fun AgentWorkspaceDocument.replacePlacedLayer(layerId: String, asset: AgentPngAsset): AgentWorkspaceDocument {
+    val normalized = normalizeAssetRaster(asset, true)
+    val next = source.layers.map { layer ->
+        if (layer.id.raw != layerId) layer else (WorkspaceSourceLayer.copyOf(layer, layer.order) as WorkspaceSourceLayer).copy(
+            bounds = normalized.bounds, raster = normalized.raster)
+    }
+    require(next != source.layers) { "Placement does not change layer pixels or bounds" }
+    return copy(source = WorkspaceSourceArt(source.widthPx, source.heightPx, next, source.groups))
 }
 
 private data class NormalizedRaster(val bounds: LayerBounds, val raster: LayerRaster)

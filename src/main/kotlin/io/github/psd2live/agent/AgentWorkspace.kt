@@ -73,8 +73,13 @@ data class AgentHistorySnapshot(
 
 data class AgentPngImportRequest(
 	val png: ByteArray,
-	val spatialReferenceId: String,
+	val spatialReferenceId: String = "",
 	val sourcePixelRect: AgentPixelRect? = null,
+    val solidBackground: String? = null,
+    val backgroundTolerance: Int = 16,
+    val requireTransparency: Boolean = false,
+    val referenceId: String? = null,
+    val processing: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap()),
 )
 
 data class AgentImportedPngAsset(
@@ -83,7 +88,10 @@ data class AgentImportedPngAsset(
 	val pixelWidth: Int,
 	val pixelHeight: Int,
 	val placement: AgentCanvasPlacement,
+    val details: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap()),
 )
+
+data class AgentAssetPreview(val asset: AgentImportedPngAsset, val png: ByteArray, val transparentPixels: Int, val translucentPixels: Int, val originalPng: ByteArray? = null)
 
 sealed interface AgentLayerInsertion {
 	data object Top : AgentLayerInsertion
@@ -104,6 +112,8 @@ data class AgentAddLayerRequest(
 	val visible: Boolean = true,
 	val opacity: Float = 1f,
 	val trimTransparent: Boolean = true,
+    val registrationId: String? = null,
+    val rigMode: String = "automatic", // "placement" retains existing parent; it is never an unbound layer
 	val parentDeformerId: String? = null,
 	val taskId: String? = null,
 )
@@ -368,7 +378,19 @@ data class AgentParameterRangeDiagnostic(
  * Boundary used by both the in-process chat runtime and external MCP clients.
  * Implementations must return direct model renders, never screenshots of the application UI.
  */
+data class AgentWorkflowResult(val metadata: kotlinx.serialization.json.JsonObject, val images: List<ByteArray> = emptyList())
+
 interface AgentWorkspace {
+    suspend fun assetWorkflow(operation: String, arguments: kotlinx.serialization.json.JsonObject): AgentWorkflowResult = throw UnsupportedOperationException("Asset workflow is unavailable")
+    suspend fun setLayerPlacement(layerId: String, registrationId: String, expectedHead: String, taskId: String?): AgentWorkspaceMutationResult = throw UnsupportedOperationException("Placement editing is unavailable")
+    suspend fun finalizeLayerPlacement(layerId: String, expectedHead: String, taskId: String?): AgentWorkspaceMutationResult = throw UnsupportedOperationException("Placement finalization is unavailable")
+
+    suspend fun inspectAsset(assetId: String): AgentAssetPreview = throw UnsupportedOperationException("Asset inspection is unavailable")
+    fun listRigObjects(): List<AgentKeyformTargetRef> = throw UnsupportedOperationException("Rig discovery is unavailable")
+    fun listPhysics(): List<io.github.psd2live.core.RigPhysicsEdit> = emptyList()
+    suspend fun createWarp(edit: io.github.psd2live.core.RigWarpEdit, expectedHead: String, taskId: String?): AgentWorkspaceMutationResult = throw UnsupportedOperationException("Warp creation is unavailable")
+    suspend fun putPhysics(edit: io.github.psd2live.core.RigPhysicsEdit, expectedHead: String, taskId: String?): AgentWorkspaceMutationResult = throw UnsupportedOperationException("Physics editing is unavailable")
+
     suspend fun saveProject(): AgentWorkspaceMutationResult = throw UnsupportedOperationException("Project saving is not available")
     suspend fun checkpoint(summary: String): AgentWorkspaceMutationResult = throw UnsupportedOperationException("History checkpoints are not available")
 	fun snapshot(): AgentProjectSnapshot

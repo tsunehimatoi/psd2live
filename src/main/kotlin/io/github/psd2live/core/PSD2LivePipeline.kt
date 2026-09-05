@@ -140,8 +140,8 @@ class PSD2LivePipeline {
 			val useFrontHairPhysics = hasFrontHair && config.generatePhysics && config.physicsFrontHair && !config.meshOnly
 			val useBackHairPhysics = hasBackHair && config.generatePhysics && config.physicsBackHair && !config.meshOnly
 			val useEyeJellyPhysics = hasEyeJelly && config.generatePhysics && config.physicsEyeJelly && !config.meshOnly
-			if (useFrontHairPhysics || useBackHairPhysics || useEyeJellyPhysics) {
-				Cmo3PhysicsInjector.inject(converted.model.root as CModelSource, useFrontHairPhysics, useBackHairPhysics, useEyeJellyPhysics)
+			if (useFrontHairPhysics || useBackHairPhysics || useEyeJellyPhysics || (config.generatePhysics && !config.meshOnly && config.rigEdits.physicsEdits.isNotEmpty())) {
+				Cmo3PhysicsInjector.inject(converted.model.root as CModelSource, useFrontHairPhysics, useBackHairPhysics, useEyeJellyPhysics, config.rigEdits.physicsEdits)
 			}
 			val bytes = Cmo3.write(converted.model)
 			files += writeContained(outputRoot, "$baseName.cmo3", bytes)
@@ -185,8 +185,8 @@ class PSD2LivePipeline {
 		val useFrontHairPhysics = hasFrontHair && config.generatePhysics && config.physicsFrontHair && !config.meshOnly
 		val useBackHairPhysics = hasBackHair && config.generatePhysics && config.physicsBackHair && !config.meshOnly
 		val useEyeJellyPhysics = hasEyeJelly && config.generatePhysics && config.physicsEyeJelly && !config.meshOnly
-		val physics = if (useFrontHairPhysics || useBackHairPhysics || useEyeJellyPhysics) {
-			PhysicsGenerator.generate(useFrontHairPhysics, useBackHairPhysics, useEyeJellyPhysics, parameterIds)?.let(CubismJson::normalize)
+		val physics = if (useFrontHairPhysics || useBackHairPhysics || useEyeJellyPhysics || (config.generatePhysics && !config.meshOnly && config.rigEdits.physicsEdits.isNotEmpty())) {
+			PhysicsGenerator.generate(useFrontHairPhysics, useBackHairPhysics, useEyeJellyPhysics, parameterIds, config.rigEdits.physicsEdits)?.let(CubismJson::normalize)
 		} else null
 
 		val motions = buildList<Pair<String, Pair<String, String>>> {

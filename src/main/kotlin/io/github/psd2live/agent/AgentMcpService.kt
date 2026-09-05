@@ -576,6 +576,66 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace): Server {
 		}
 	}
 
+    registerAssetWorkflowTools(server, workspace)
+
+    server.addTool(
+        name = "agent_get_workflow",
+        description = "Read natural hair-separation guidance: infer local depth before editing, allow crossing complete locks, assemble early, judge natural appearance and intended motion rather than exact edges, use white/black matte fallback, and wire independent Warp/physics.",
+        inputSchema = ToolSchema(properties = buildJsonObject {}), toolAnnotations = READ_ONLY,
+    ) { CallToolResult(content = listOf(TextContent(loadHairSeparationSkill()))) }
+
+    server.addTool(
+        name = "rig_list_objects",
+        description = "Discover actual mesh, Warp and rotation IDs before object_get or warp_create. Layer IDs are not necessarily mesh IDs.",
+        inputSchema = ToolSchema(properties = buildJsonObject {}), toolAnnotations = READ_ONLY,
+    ) { mutationResult { buildJsonObject { putJsonArray("objects") {
+        workspace.listRigObjects().forEach { ref -> add(buildJsonObject { put("kind", ref.kind); put("id", ref.id) }) }
+    } } } }
+
+    server.addTool(
+        name = "warp_create",
+        description = "Create an independent identity Warp for one or more existing meshes under their common Warp parent. Preserves mesh pixels, keyforms, masks and inherited motion. The new lattice uses parent-normalized 0..1 coordinates across the parent frame; requested rows/columns are minima, rounded up together to align parent knots and preserve inherited motion. Inspect actual dimensions with object_get. Use rig_list_objects and object_get first; animate with keyform_set. No special hair-split API is required.",
+        inputSchema = rigObjectCreateSchema(false), toolAnnotations = MUTATING,
+    ) { request -> mutationResult {
+        workspace.createWarp(io.github.psd2live.core.RigWarpEdit.fromJson(request.arguments ?: error("Missing arguments")),
+            request.requiredString("expected_history_head_node_id"), request.optionalString("task_id")).toJson()
+    } }
+
+    server.addTool(
+        name = "physics_list",
+        description = "List explicitly authored independent physics groups. Built-in front/back hair presets are generated separately. Physics drives parameters, not Warp IDs; bind each output to its Warp with keyform_set.",
+        inputSchema = ToolSchema(properties = buildJsonObject {}), toolAnnotations = READ_ONLY,
+    ) { mutationResult { buildJsonObject { putJsonArray("groups") { workspace.listPhysics().forEach { add(it.toJson()) } } } } }
+
+    server.addTool(
+        name = "physics_put",
+        description = "Create or replace an independent two-particle Angle-input physics group by ID. Input/output parameters must already exist; each group needs a distinct output parameter and corresponding Warp keyforms. A matching built-in preset ID or output is replaced by this custom group. Adjustable length, mobility, delay, acceleration and output_scale. Enables physics in the same history commit and exports to physics3.json and editable CMO3 outside mesh-only mode.",
+        inputSchema = rigObjectCreateSchema(true), toolAnnotations = MUTATING,
+    ) { request -> mutationResult {
+        workspace.putPhysics(io.github.psd2live.core.RigPhysicsEdit.fromJson(request.arguments ?: error("Missing arguments")),
+            request.requiredString("expected_history_head_node_id"), request.optionalString("task_id")).toJson()
+    } }
+
+    server.addTool(
+        name = "asset_inspect",
+        description = "Inspect actual staged PNG pixels, spatial placement and transparency counts. Use for quick usability/alpha diagnosis, then trial assembly. Overlapping hair, minor tone differences and hidden-root/edge variation are not automatic rejection reasons; judge depth, seams and intended motion in composition.",
+        inputSchema = ToolSchema(properties = buildJsonObject { putJsonObject("asset_id") { put("type", "string") } }, required = listOf("asset_id")),
+        toolAnnotations = READ_ONLY,
+    ) { request ->
+        try {
+            val preview = workspace.inspectAsset(request.requiredString("asset_id"))
+            val metadata = buildJsonObject {
+                put("asset", preview.asset.toJson()); put("transparentPixels", preview.transparentPixels); put("translucentPixels", preview.translucentPixels)
+                put("image_order", "processed, original (when retained)")
+            }
+            CallToolResult(content = listOf(TextContent(metadata.toString()), ImageContent(Base64.getEncoder().encodeToString(preview.png), "image/png")) + listOfNotNull(preview.originalPng?.let { ImageContent(Base64.getEncoder().encodeToString(it), "image/png") }), structuredContent = metadata)
+        } catch (failure: IllegalArgumentException) {
+            CallToolResult(content = listOf(TextContent(failure.message ?: "Invalid asset request")), isError = true)
+        } catch (failure: IllegalStateException) {
+            CallToolResult(content = listOf(TextContent(failure.message ?: "Workspace is not ready")), isError = true)
+        }
+    }
+
 	server.addTool(
 		name = "asset_import_png",
 		description = "Stage a transparent PNG using a View spatial reference. Differences, separated painted parts, occlusion completion, and reconstructed pixels must come from an actual Nano Banana Pro/NBP, GPT Image 2, or equivalent host-native image-tool call—not Python/PIL/OpenCV/Matplotlib/SVG/Canvas drawing. Exact unchanged-pixel extraction and non-creative post-generation alpha cleanup are the only procedural exceptions. Pixel resolution may differ, but aspect and canvas placement are preserved. This does not change project history.",
@@ -591,8 +651,13 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace): Server {
 			workspace.importPng(
 				AgentPngImportRequest(
 					png = decodePngBase64(request.requiredString("png_base64")),
-					spatialReferenceId = request.requiredString("spatial_reference_id"),
+					spatialReferenceId = request.optionalString("spatial_reference_id").orEmpty(),
+                    referenceId = request.optionalString("reference_id"),
+                    processing = request.arguments?.get("processing") as? JsonObject ?: JsonObject(emptyMap()),
 					sourcePixelRect = sourceRect,
+                    solidBackground = request.optionalString("solid_background"),
+                    backgroundTolerance = request.integerOrDefault("background_tolerance", 16),
+                    requireTransparency = request.boolean("require_transparency", false),
 				),
 			).toJson()
 		}
@@ -618,6 +683,8 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace): Server {
 					visible = request.boolean("visible", true),
 					opacity = request.float("opacity", 1f),
 					trimTransparent = request.boolean("trim_transparent", true),
+                    registrationId = request.optionalString("registration_id"),
+                    rigMode = request.optionalString("rig_mode") ?: "automatic",
 					parentDeformerId = request.optionalString("parent_deformer_id"),
 					taskId = request.optionalString("task_id"),
 				),
@@ -663,7 +730,7 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace): Server {
 
 	server.addPrompt(
 		name = "hair-separation",
-		description = "Mandatory workflow for non-destructive hair separation: call Nano Banana Pro/NBP or GPT Image 2 for every painted split or hidden-pixel completion; procedural drawing is forbidden.",
+		description = "Natural hair separation: infer local depth, complete crossing root-to-tip locks with a host image editor, assemble candidates early, and judge coherent appearance and intended motion without requiring exact source edges.",
 	) {
 		GetPromptResult(
 			description = "psd2live hair separation skill",
@@ -685,8 +752,29 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace): Server {
 	return server
 }
 
+private fun rigObjectCreateSchema(physics: Boolean): ToolSchema = ToolSchema(
+    properties = buildJsonObject {
+        listOf("id", "name", "expected_history_head_node_id", "task_id").forEach { key -> putJsonObject(key) { put("type", "string") } }
+        if (physics) {
+            listOf("input_parameter", "output_parameter").forEach { key -> putJsonObject(key) { put("type", "string") } }
+            listOf("length", "mobility", "delay", "acceleration", "output_scale").forEach { key -> putJsonObject(key) { put("type", "number") } }
+        } else {
+            putJsonObject("parent_id") { put("type", "string"); put("description", "Existing common Warp parent from object_get") }
+            putJsonObject("mesh_ids") { put("type", "array"); put("minItems", 1); putJsonObject("items") { put("type", "string") } }
+            listOf("rows", "columns").forEach { key -> putJsonObject(key) { put("type", "integer"); put("minimum", 1); put("maximum", 32) } }
+        }
+    },
+    required = listOf("id", "name", "expected_history_head_node_id") + if (physics) listOf("input_parameter", "output_parameter") else listOf("parent_id", "mesh_ids"),
+)
+
 private fun pngImportSchema(): ToolSchema = ToolSchema(
 	properties = buildJsonObject {
+        putJsonObject("reference_id") { put("type", "string"); put("description", "Reference package from asset_prepare_reference. V2 import keeps raw PNG, removes declared matte, and requires asset_register before adding a layer. Replaces spatial_reference_id.") }
+        put("processing", processingSchema())
+        putJsonObject("solid_background") { put("type", "string"); put("pattern", "^#[0-9a-fA-F]{6}$"); put("description", "Actual generated matte color. Default generation to pure white #FFFFFF for dark hair or pure black #000000 for light hair to avoid colored fringe; do not guess or automatically strip alpha when omitted. Removes only border-connected near-color pixels, not a baked checkerboard. Inspect remaining matte in composition.") }
+        putJsonObject("background_tolerance") { put("type", "integer"); put("minimum", 0); put("maximum", 64); put("default", 16) }
+        putJsonObject("require_transparency") { put("type", "boolean"); put("description", "Set true for separated hair: reject fully opaque or empty results after cleanup.") }
+
 		putJsonObject("png_base64") {
 			put("type", "string")
 			put("description", "PNG bytes encoded as Base64, optionally as a data:image/png;base64 URI")
@@ -708,7 +796,7 @@ private fun pngImportSchema(): ToolSchema = ToolSchema(
 			}
 		}
 	},
-	required = listOf("png_base64", "spatial_reference_id"),
+	required = listOf("png_base64"),
 )
 
 private fun parameterCreateSchema(): ToolSchema = ToolSchema(
@@ -745,6 +833,8 @@ private fun parameterProperties(includeRequiredValues: Boolean): JsonObject = bu
 
 private fun addLayerSchema(): ToolSchema = ToolSchema(
 	properties = buildJsonObject {
+        putJsonObject("registration_id") { put("type", "string"); put("description", "Required for reference-package assets; immutable absolute placement from asset_register") }
+        putJsonObject("rig_mode") { put("type", "string"); put("description", "automatic or placement. Both retain existing parent Warp and inherited motion; placement does NOT mean unbound.") }
 		putJsonObject("asset_id") { put("type", "string") }
 		putJsonObject("expected_history_head_node_id") {
 			put("type", "string")
@@ -1426,6 +1516,7 @@ private fun AgentHistorySnapshot.toJson(): JsonObject = buildJsonObject {
 }
 
 private fun AgentImportedPngAsset.toJson(): JsonObject = buildJsonObject {
+    put("details", details)
 	put("assetId", id)
 	put("sha256", sha256)
 	put("mimeType", "image/png")
@@ -1444,7 +1535,7 @@ private fun AgentImportedPngAsset.toJson(): JsonObject = buildJsonObject {
 	put("canvasUnitsPerPixelY", placement.canvasUnitsPerPixelY)
 }
 
-private fun AgentWorkspaceMutationResult.toJson(): JsonObject = buildJsonObject {
+internal fun AgentWorkspaceMutationResult.toJson(): JsonObject = buildJsonObject {
 	put("historyNodeId", historyNodeId)
 	put("revisionId", revisionId)
 	put("summary", summary)
@@ -1666,13 +1757,15 @@ private val AGENT_INSTRUCTIONS = """
 
 	An authenticated Agent may use the exposed workspace capabilities without per-operation approval. History is append-only; use history_checkout to branch instead of rewriting prior nodes. For multi-step work, call task_start and keep task_update checkpoints current with View, asset, object, and history node IDs. Task state coordinates recovery and is not an approval gate.
 
+    Call agent_get_workflow and rig_list_objects for capability discovery. Do not refuse hair separation because there is no single natural-strand split tool: compose Views, host image editing, asset_import_png, layer_add_from_asset, warp_create, parameter_create/keyform_set and physics_put. Before any split or difference, infer local depth and occlusion from the actual reference, including where each lock covers or passes behind others. Natural crossings and overlapping hidden volumes are expected; bangs and side hair have no fixed category-wide order. Generate complete logical locks, assemble usable candidates early, and judge a coherent hairstyle with plausible attachments and gap-free intended motion, not exact original edges or root coordinates. Harmless contour and tone differences are acceptable; do not stop after a fixed retry quota or delay all rigging for isolated perfection. If alpha is opaque, default to pure white #FFFFFF for dark hair or pure black #000000 for light hair and import using the actual solid_background with require_transparency=true. A drawn checkerboard is not alpha.
+
 	These instructions are mandatory whenever this PSD2Live MCP server is invoked, regardless of the task type. If the host supports skills, read psd2live-rigging before using any PSD2Live tool; also read hair-separation for hair work. This requirement is scoped to skill/MCP use and does not apply to unrelated repository programming.
 
-	IMAGE-GENERATOR GATE: Treat every painted difference or expression variant, part/layer split, overlap removal, occlusion completion, reconstruction, inpaint, outpaint, or new drawable as an image-generation/editing task. Before any shell or Python raster work, make an actual host image-tool call for every output piece that creates, guesses, reconstructs, or changes illustrated pixels. Use Nano Banana Pro (Nano Banana Pro/NBP) when exposed, otherwise GPT Image 2 (gpt-image-2), otherwise an equivalent host-native generator. In Codex/ChatGPT, load imagegen and call image_gen; in Gemini/Antigravity, call Nano Banana Pro when available. If a piece is missing or rejected, call the generator again.
+	IMAGE-GENERATOR GATE: Treat every painted difference or expression variant, part/layer split, overlap removal, occlusion completion, reconstruction, inpaint, outpaint, or new drawable as an image-generation/editing task. Before any shell or Python raster work, make an actual host image-tool call for every output piece that creates, guesses, reconstructs, or changes illustrated pixels. Use Nano Banana Pro (Nano Banana Pro/NBP) when exposed, otherwise GPT Image 2 (gpt-image-2), otherwise an equivalent host-native generator. In Codex/ChatGPT, load imagegen and call image_gen; in Gemini/Antigravity, call Nano Banana Pro when available. For assembly defects first check depth order, placement and motion coverage; call the generator again only when painted pixels need correction. Retain useful candidates and continue independent work.
 
 	The PSD2Live MCP server provides reference Views and imports outputs; it does not contain the host-private image generator. The absence of an image-generation tool in this MCP tool list is not evidence that the host lacks one: leave the MCP call chain, invoke Nano Banana Pro/NBP, GPT Image 2, or the host's image tool, then return to asset_import_png. Never use Python, PIL/Pillow, OpenCV, Matplotlib, SVG, Canvas, ImageMagick, shell scripts, procedural masks/polygons, dilation, smearing, or texture cloning to draw a draft, fallback, separated part, variant, or hidden structure. Code is allowed only for byte transport, diagnostics, exact unchanged-pixel extraction/cropping, and non-creative alpha cleanup after native generation. If no native image tool exists, stop at the last reversible state instead of fabricating artwork.
 
 	Discover available host and MCP capabilities instead of assuming an exact host-side tool name. Use stable object IDs and direct View tools; never infer source coordinates from application screenshots. View tools return a composited PNG plus a reversible pixel-to-canvas spatial reference, not a PSD. Preserve spatialReferenceId when creating replacement pixels. Prefer transparent output.
 
-	Stage generated PNGs with asset_import_png, then add them through layer_add_from_asset. Pixel resolution is independent from canvas size; map the entire PNG or a declared source_pixel_rect back to its referenced canvas rectangle without silent aspect stretching. Mutations rebuild the actual source, mesh, rig, and export preview before committing history. Soft deletion remains recoverable. Use object_get, keyform_set, keyform_delete, keyform_copy, and rig_k_pose for geometry and visual channels at arbitrary N-dimensional parameter coordinates. For hair separation, load the hair-separation prompt and verify isolated, context, neutral, and extreme posed Views.
+	Stage generated PNGs with asset_import_png, then add them through layer_add_from_asset. Pixel resolution is independent from canvas size; map the entire PNG or a declared source_pixel_rect back to its referenced canvas rectangle without silent aspect stretching. Mutations rebuild the actual source, mesh, rig, and export preview before committing history. Soft deletion remains recoverable. Use object_get, keyform_set, keyform_delete, keyform_copy, and rig_k_pose for geometry and visual channels at arbitrary N-dimensional parameter coordinates. For hair separation, load the hair-separation prompt; isolated Views diagnose coverage, while assembled neutral and intended-range posed Views determine acceptance. Exclude the original source from replacement trial compositions without erasing its recoverable pixels.
 """.trimIndent()

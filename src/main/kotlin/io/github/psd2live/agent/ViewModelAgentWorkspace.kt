@@ -23,6 +23,7 @@ import org.umamo.runtime.model.FormChannel
 import org.umamo.runtime.model.Parameter
 import org.umamo.runtime.model.ParameterKind
 import org.umamo.runtime.model.PuppetModel
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -342,13 +343,112 @@ class ViewModelAgentWorkspace(
 		))
 	}
 
+    private fun validateRegisteredNeutral(preview: io.github.psd2live.core.RigPreviewModel, document: AgentWorkspaceDocument) {
+        if (document.rigEdits.assetLayers.isEmpty()) return
+        val geometry = org.umamo.render.eval.CpuDeformationEvaluator().evaluate(preview.rig.puppet, emptyMap())
+        for (mesh in preview.rig.puppet.drawables) {
+            val layerId = preview.rig.layerIdByDrawableId[mesh.id.raw] ?: continue
+            if (layerId !in document.rigEdits.assetLayers) continue
+            val actual = geometry.worldPositions[mesh.id] ?: error("Registered layer has no neutral geometry: $layerId")
+            require(actual.all { it.isFinite() }) { "Registered layer has nonfinite neutral coordinates" }
+            val expected = preview.rig.sourceBoundsByDrawableId[mesh.id.raw] ?: continue
+            val x = actual.indices.filter { it % 2 == 0 }.map { actual[it] }
+            val y = actual.indices.filter { it % 2 == 1 }.map { -actual[it] }
+            val tolerance = maxOf(2f, maxOf(expected.width, expected.height)*.02f)
+            require(kotlin.math.abs(x.min()-expected.left)<=tolerance && kotlin.math.abs(x.max()-expected.right)<=tolerance &&
+                kotlin.math.abs(y.min()-expected.top)<=tolerance && kotlin.math.abs(y.max()-expected.bottom)<=tolerance) {
+                "Neutral placement drift after rig rebuild for $layerId; inspect parent coordinate frame. No commit was made."
+            }
+        }
+    }
+
+    private fun workflow(document: AgentWorkspaceDocument = documentFrom(viewModel.state.value)): AgentAssetWorkflow {
+        val state = snapshot()
+        return AgentAssetWorkflow(state.projectId ?: error("No PSD is loaded"), state.revisionId, document, workspaceStore, assetStore)
+    }
+
+    override suspend fun assetWorkflow(operation: String, arguments: kotlinx.serialization.json.JsonObject): AgentWorkflowResult = editMutex.withLock {
+        val before = snapshot()
+        require(before.persistenceStatus != "restoring" && !before.busy) { "Workspace is not ready" }
+        val api = workflow()
+        val result = when (operation) {
+            "asset_prepare_reference" -> {
+                val state = viewModel.state.value
+                val source = arguments.text("layer_id")
+                val rig = state.previewModel?.rig ?: error("No rig available")
+                val parent = rig.puppet.drawables.firstOrNull { rig.layerIdByDrawableId[it.id.raw] == source }?.parentDeformerId?.raw
+                api.prepare(if (parent == null) arguments else kotlinx.serialization.json.JsonObject(arguments + ("source_parent_id" to kotlinx.serialization.json.JsonPrimitive(parent))))
+            }
+            "asset_register" -> api.register(arguments)
+            "asset_reprocess" -> api.reprocess(arguments)
+            "asset_preview_composite" -> api.preview(arguments)
+            else -> error("Unknown asset operation: $operation")
+        }
+        if (operation != "asset_preview_composite") viewModel.markProjectAuxiliaryChanged()
+        result
+    }
+
+    private fun requirePlacementEditable(document: AgentWorkspaceDocument, puppet: PuppetModel, layerId: String) {
+        val rig = viewModel.state.value.previewModel!!.rig
+        val meshes = puppet.drawables.filter { rig.layerIdByDrawableId[it.id.raw] == layerId }.map { it.id.raw }.toSet()
+        require(meshes.isNotEmpty()) { "Layer mesh not found" }
+        val edits = document.rigEdits
+        require(edits.assetLayers[layerId]?.flag("placement_finalized") != true) { "Placement is finalized; dedicated rig relocation is outside this version" }
+        require(edits.warpEdits.none { w -> w.meshIds.any { it in meshes } } &&
+            edits.keyformSetEdits.none { it.target.id in meshes } && edits.keyformCopyEdits.none { it.destinationTarget.id in meshes } &&
+            edits.keyformDeleteEdits.none { it.target.id in meshes }) { "Layer has dedicated Warp/keyform edits. Existing animation will not be rebuilt or erased; relocate before dedicated binding." }
+        require(puppet.glues.none { it.meshA.raw in meshes || it.meshB.raw in meshes }) { "Layer has glue constraints; coordinated relocation is outside this version" }
+        require(puppet.drawables.filter { it.id.raw in meshes }.none { it.maskedBy.isNotEmpty() }) { "Masked layer placement requires coordinated mask editing" }
+    }
+
+    override suspend fun setLayerPlacement(layerId: String, registrationId: String, expectedHead: String, taskId: String?) =
+        mutateRigKeyform(expectedHead, taskId, "Repositioned layer $layerId under existing parent", layerId) { document, puppet ->
+            requirePlacementEditable(document, puppet, layerId)
+            val api = workflow(document)
+            val reg = api.record(registrationId, "registration")
+            require(!reg.flag("orientation_conflict")) { "Anchor orientation conflict; correct anchors or explicitly mirror before placement" }
+            val source = document.source.layers.single { it.id.raw == layerId } as? AgentWorkspaceSourceLayer
+                ?: error("Only imported asset layers support placement editing")
+            require(source.sourceAssetId == reg.text("asset_id")) { "Registration belongs to a different asset; do not replace pixels implicitly" }
+            val asset = api.asset(reg.text("asset_id"))
+            val ref = api.record(reg.text("reference_id"), "reference")
+            val replaced = document.replacePlacedLayer(layerId, placedAsset(asset, reg))
+            replaced.copy(rigEdits = document.rigEdits.copy(
+                assetLayers = document.rigEdits.assetLayers + (layerId to kotlinx.serialization.json.buildJsonObject {
+                    put("registration_id", kotlinx.serialization.json.JsonPrimitive(registrationId))
+                    put("asset_id", kotlinx.serialization.json.JsonPrimitive(asset.public.id))
+                    put("reference_id", kotlinx.serialization.json.JsonPrimitive(ref.text("id")))
+                    put("placement_finalized", kotlinx.serialization.json.JsonPrimitive(false))
+                }), calibrationLayerIds = document.rigEdits.calibrationLayerIds.ifEmpty { ref.strings("calibration_layer_ids").toSet() }))
+        }
+
+    override suspend fun finalizeLayerPlacement(layerId: String, expectedHead: String, taskId: String?) =
+        mutateRigKeyform(expectedHead, taskId, "Finalized placement $layerId (existing parent retained)", layerId) { document, puppet ->
+            requirePlacementEditable(document, puppet, layerId)
+            val entry = document.rigEdits.assetLayers[layerId] ?: error("Layer has no registered placement")
+            document.copy(rigEdits = document.rigEdits.copy(assetLayers = document.rigEdits.assetLayers +
+                (layerId to kotlinx.serialization.json.JsonObject(entry + ("placement_finalized" to kotlinx.serialization.json.JsonPrimitive(true))))))
+        }
+
+    override suspend fun inspectAsset(assetId: String): AgentAssetPreview = editMutex.withLock {
+        val projectId = snapshot().projectId ?: error("No PSD is loaded")
+        val asset = assetStore.find(assetId) ?: withContext(Dispatchers.IO) { workspaceStore.loadAsset(projectId, assetId) }
+            ?.let(assetStore::remember) ?: throw IllegalArgumentException("PNG asset not found: $assetId")
+        asset.preview()
+    }
+
 	override suspend fun importPng(request: AgentPngImportRequest): AgentImportedPngAsset = editMutex.withLock {
-		val projectId = snapshot().projectId ?: throw IllegalStateException("No PSD is loaded")
-		val spatial = spatialByViewId[request.spatialReferenceId] ?: withContext(Dispatchers.IO) {
-			workspaceStore.loadSpatial(projectId, request.spatialReferenceId)
-		}?.also { spatialByViewId[request.spatialReferenceId] = it }
+        val projectId = snapshot().projectId ?: throw IllegalStateException("No PSD is loaded")
+        val effective = if (request.referenceId == null) request else {
+            val ref = workflow().record(request.referenceId, "reference")
+            require(ref.number("canvas_width").toInt() == snapshot().canvasWidth && ref.number("canvas_height").toInt() == snapshot().canvasHeight) { "Reference canvas size changed; prepare a new reference" }
+            request.copy(spatialReferenceId = request.referenceId, solidBackground = request.solidBackground ?: ref.text("background_color"), requireTransparency = true)
+        }
+        val spatial = spatialByViewId[effective.spatialReferenceId] ?: withContext(Dispatchers.IO) {
+			workspaceStore.loadSpatial(projectId, effective.spatialReferenceId)
+		}?.also { spatialByViewId[effective.spatialReferenceId] = it }
 			?: throw IllegalArgumentException("Spatial reference not found for this workspace: ${request.spatialReferenceId}")
-		val imported = assetStore.import(request, spatial)
+		val imported = assetStore.import(effective, spatial)
 		withContext(Dispatchers.IO) { workspaceStore.persistAsset(projectId, assetStore.require(imported.id)) }
         viewModel.markProjectAuxiliaryChanged()
 		viewModel.addLog(
@@ -356,7 +456,7 @@ class ViewModelAgentWorkspace(
 			level = io.github.psd2live.ui.state.LogLevel.SUCCESS,
 			source = io.github.psd2live.ui.state.LogSource.AGENT,
 			tag = "Asset",
-			imageBytes = request.png,
+			imageBytes = assetStore.require(imported.id).preview().png,
 			imageLabel = "asset_import_png: ${imported.id}",
 		)
 		imported
@@ -379,8 +479,25 @@ class ViewModelAgentWorkspace(
 		val asset = assetStore.find(request.assetId) ?: withContext(Dispatchers.IO) {
 			workspaceStore.loadAsset(projectId, request.assetId)
 		}?.let(assetStore::remember) ?: throw IllegalArgumentException("PNG asset not found: ${request.assetId}")
-		val (nextDocument, layerId) = baseDocument.addLayer(asset, request)
+        require(request.rigMode in setOf("automatic", "placement")) { "rig_mode must be automatic or placement; placement retains the existing parent Warp" }
+        require(asset.public.details["registration_required"] == null || request.registrationId != null) { "Generated asset needs asset_register before adding a layer" }
+        val api = workflow(baseDocument)
+        val registration = request.registrationId?.let { api.record(it, "registration") }
+        require(registration?.flag("orientation_conflict") != true) { "Orientation conflict; inspect anchors before adding layer" }
+        val ref = registration?.let { api.record(it.text("reference_id"), "reference") }
+        val parent = request.parentDeformerId ?: ref?.get("source_parent_id")?.jsonPrimitive?.content
+        if (parent != null) require(current.previewModel!!.rig.puppet.deformers.any { it.id.raw == parent }) { "Reference parent Warp no longer exists" }
+        val placed = registration?.let { placedAsset(asset, it) } ?: asset
+        val (addedDocument, layerId) = baseDocument.addLayer(placed, request.copy(parentDeformerId = parent))
+        val nextDocument = if (registration == null) addedDocument else addedDocument.copy(rigEdits = addedDocument.rigEdits.copy(
+            assetLayers = addedDocument.rigEdits.assetLayers + (layerId to kotlinx.serialization.json.buildJsonObject {
+                put("registration_id", kotlinx.serialization.json.JsonPrimitive(registration.text("id")))
+                put("asset_id", kotlinx.serialization.json.JsonPrimitive(asset.public.id))
+                put("reference_id", kotlinx.serialization.json.JsonPrimitive(ref!!.text("id")))
+                put("placement_finalized", kotlinx.serialization.json.JsonPrimitive(false))
+            }), calibrationLayerIds = addedDocument.rigEdits.calibrationLayerIds.ifEmpty { ref!!.strings("calibration_layer_ids").toSet() }))
 		val preview = viewModel.buildAgentWorkspacePreview(nextDocument.source, nextDocument.toConfig(current))
+        validateRegisteredNeutral(preview, nextDocument)
 		val nextRevision = revisionId(current, nextDocument)
         require(nextRevision != before.revisionId) { "Operation did not change the workspace" }
 		val summary = "Added generated layer '${request.name.trim()}' ($layerId)"
@@ -430,6 +547,7 @@ class ViewModelAgentWorkspace(
 		}
 		val nextDocument = baseDocument.copy(deletedLayerIds = baseDocument.deletedLayerIds + layerId)
 		val preview = viewModel.buildAgentWorkspacePreview(nextDocument.source, nextDocument.toConfig(current))
+        validateRegisteredNeutral(preview, nextDocument)
 		val nextRevision = revisionId(current, nextDocument)
         require(nextRevision != before.revisionId) { "Operation did not change the workspace" }
 		val summary = "Soft-deleted layer $layerId"
@@ -556,6 +674,7 @@ class ViewModelAgentWorkspace(
 		val nextDocument = mutation(baseDocument, parameters)
 		require(nextDocument != baseDocument) { "Parameter edit did not change the workspace" }
 		val preview = viewModel.buildAgentWorkspacePreview(nextDocument.source, nextDocument.toConfig(current))
+        validateRegisteredNeutral(preview, nextDocument)
 		val nextRevision = revisionId(current, nextDocument)
         require(nextRevision != before.revisionId) { "Operation did not change the workspace" }
 		val selection = synchronized(historyLock) {
@@ -587,6 +706,29 @@ class ViewModelAgentWorkspace(
 			affectedParameterIds = listOf(parameterId),
 		)
 	}
+
+    override fun listRigObjects(): List<AgentKeyformTargetRef> {
+        val puppet = viewModel.state.value.previewModel?.rig?.puppet ?: error("No rig is loaded")
+        return puppet.drawables.map { AgentKeyformTargetRef("mesh", it.id.raw) } +
+            puppet.deformers.map { AgentKeyformTargetRef(if (it is Deformer.Warp) "warp" else "rotation", it.id.raw) }
+    }
+
+    override fun listPhysics() = viewModel.state.value.rigEdits.physicsEdits
+
+    override suspend fun createWarp(edit: io.github.psd2live.core.RigWarpEdit, expectedHead: String, taskId: String?) =
+        mutateRigKeyform(expectedHead, taskId, "Created Warp ${edit.id}", edit.id) { document, puppet ->
+            edit.applyTo(puppet) // Validate before constructing the replacement preview.
+            document.copy(rigEdits = document.rigEdits.copy(warpEdits = document.rigEdits.warpEdits + edit))
+        }
+
+    override suspend fun putPhysics(edit: io.github.psd2live.core.RigPhysicsEdit, expectedHead: String, taskId: String?) =
+        mutateRigKeyform(expectedHead, taskId, "Set physics ${edit.id}", edit.id) { document, puppet ->
+            edit.validate(puppet.parameters.map { it.id.raw }.toSet())
+            val next = document.rigEdits.physicsEdits.filterNot { it.id == edit.id } + edit
+            require(next.map { it.outputParameter }.distinct().size == next.size) { "Independent physics groups require distinct output parameters" }
+            document.copy(rigEdits = document.rigEdits.copy(physicsEdits = next),
+                settings = kotlinx.serialization.json.JsonObject(document.settings + ("generatePhysics" to kotlinx.serialization.json.JsonPrimitive(true))))
+        }
 
 	override fun getObject(target: AgentKeyformTargetRef): AgentObjectSnapshot {
 		val state = viewModel.state.value
@@ -933,6 +1075,7 @@ class ViewModelAgentWorkspace(
 		val nextDocument = mutation(baseDocument, puppet)
 		require(nextDocument != baseDocument) { "Rig edit did not change the workspace" }
 		val preview = viewModel.buildAgentWorkspacePreview(nextDocument.source, nextDocument.toConfig(current))
+        validateRegisteredNeutral(preview, nextDocument)
 		val nextRevision = revisionId(current, nextDocument)
         require(nextRevision != before.revisionId) { "Operation did not change the workspace" }
 		val selection = synchronized(historyLock) {
@@ -1084,7 +1227,7 @@ class ViewModelAgentWorkspace(
 		)
 	}
 
-	private fun AgentWorkspaceDocument.toConfig(state: PSD2LiveState): PipelineConfig = io.github.psd2live.project.WorkspaceStateCodec.decode(settings, state).buildConfig().copy(
+	private fun AgentWorkspaceDocument.toConfig(state: PSD2LiveState): PipelineConfig = io.github.psd2live.project.WorkspaceStateCodec.decode(settings, state).copy(rigEdits = rigEdits).buildConfig().copy(
 		layerVisibility = layerVisibility,
 		deletedLayerIds = deletedLayerIds,
 		layerOverrides = layerOverrides,

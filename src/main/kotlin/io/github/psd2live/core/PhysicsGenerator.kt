@@ -1,6 +1,7 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.i18n.tr
+import kotlinx.serialization.json.JsonPrimitive
 /** Live2D physics3 presets for hair pendulums and blink-driven pupil squash/stretch. */
 object PhysicsGenerator {
 	internal enum class InputType(val jsonName: String) { X("X"), ANGLE("Angle") }
@@ -150,15 +151,17 @@ object PhysicsGenerator {
 		hasBackHair: Boolean,
 		hasEyeJelly: Boolean,
 		availableParameterIds: Set<String>?,
+        custom: List<RigPhysicsEdit> = emptyList(),
 	): String? {
-		val rules = if (availableParameterIds == null) {
+		val presets = if (availableParameterIds == null) {
 			rules(hasFrontHair, hasBackHair, hasEyeJelly)
 		} else {
 			validRules(hasFrontHair, hasBackHair, hasEyeJelly, availableParameterIds)
 		}
+		val rules = mergeCustomRules(presets, custom, availableParameterIds)
 		if (rules.isEmpty()) return null
 		val settings = rules.map(::settingJson)
-		val dictionary = rules.map { rule -> "{ \"Id\": \"${rule.id}\", \"Name\": \"${rule.name}\" }" }
+		val dictionary = rules.map { rule -> "{ \"Id\": ${JsonPrimitive(rule.id)}, \"Name\": ${JsonPrimitive(rule.name)} }" }
 		return """
 		{
 		  "Version": 3,
@@ -175,21 +178,28 @@ object PhysicsGenerator {
 		""".trimIndent()
 	}
 
+    internal fun mergeCustomRules(presets: List<PhysicsRule>, custom: List<RigPhysicsEdit>, available: Set<String>?): List<PhysicsRule> {
+        if (available != null) custom.forEach { it.validate(available) }
+        require(custom.map { it.id }.distinct().size == custom.size) { "Duplicate physics IDs" }
+        require(custom.map { it.outputParameter }.distinct().size == custom.size) { "Independent physics must use distinct outputs" }
+        return presets.filterNot { p -> custom.any { it.id == p.id || it.outputParameter == p.outputParameter } } + custom.map { it.rule() }
+    }
+
 	private fun settingJson(rule: PhysicsRule): String {
 		val inputs = rule.inputs.joinToString(",\n") { input ->
-			"""    { "Source": { "Target": "Parameter", "Id": "${input.parameter}" }, "Weight": ${input.weight}, "Type": "${input.type.jsonName}", "Reflect": ${input.reflect} }"""
+			"""    { "Source": { "Target": "Parameter", "Id": ${JsonPrimitive(input.parameter)} }, "Weight": ${input.weight}, "Type": "${input.type.jsonName}", "Reflect": ${input.reflect} }"""
 		}
 		val vertices = rule.vertices.joinToString(",\n") { vertex ->
 			"""    { "Position": { "X": 0, "Y": ${vertex.y} }, "Mobility": ${vertex.mobility}, "Delay": ${vertex.delay}, "Acceleration": ${vertex.acceleration}, "Radius": ${vertex.radius} }"""
 		}
 		return """
 		{
-		  "Id": "${rule.id}",
+		  "Id": ${JsonPrimitive(rule.id)},
 		  "Input": [
 		$inputs
 		  ],
 		  "Output": [
-		    { "Destination": { "Target": "Parameter", "Id": "${rule.outputParameter}" }, "VertexIndex": ${rule.outputVertexIndex}, "Scale": ${rule.outputScale}, "Weight": 100, "Type": "Angle", "Reflect": false }
+		    { "Destination": { "Target": "Parameter", "Id": ${JsonPrimitive(rule.outputParameter)} }, "VertexIndex": ${rule.outputVertexIndex}, "Scale": ${rule.outputScale}, "Weight": 100, "Type": "Angle", "Reflect": false }
 		  ],
 		  "Vertices": [
 		$vertices

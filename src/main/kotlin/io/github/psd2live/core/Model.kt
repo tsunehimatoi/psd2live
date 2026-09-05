@@ -207,6 +207,7 @@ data class PipelineAnalysis(
 	val anchors: RigAnchors,
 	val warnings: List<String>,
 	val preview: BufferedImage,
+    val calibration: PipelineAnalysis? = null,
 )
 
 /** The exact atlas and rig shown by the workbench before export. */

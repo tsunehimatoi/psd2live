@@ -4,53 +4,67 @@ description: >-
   Separate and complete overlapping hair pieces in PSD2Live using visual evidence,
   native image editing, reversible history, and independently riggable topology.
   Use for bangs, side hair, back hair, ahoge, ponytails, twintails, hair variants,
-  overlap removal, hidden-root completion, or any request to split painted hair.
+  depth/occlusion planning, hidden-root completion, or any request to split painted hair.
 ---
 
-# Hair Separation
+# Natural Hair Separation
 
-Produce editable pieces through a non-destructive workflow. They must follow natural strand boundaries, remain complete behind neighbouring layers, keep stable roots, and accept independent meshes, deformers, parameters, and physics. Source preservation and occlusion completion are part of the result.
+Build a coherent, independently movable hairstyle from the painting. Success means a natural assembled result with believable depth, continuous roots and bodies, and enough hidden coverage for the intended motion. The reference supplies character identity, overall volume, flow and style; it is not a pixel-perfect edge template. Small contour, root-position and tonal differences are acceptable when the assembled result reads naturally.
 
-## Mandatory image-generator gate
+## Understand depth before editing
 
-- Read `psd2live-rigging` first. Hair separation, difference/variant creation, and occlusion completion are pixel-producing tasks, not geometry-only operations.
-- Before writing or running image-processing code, call a real host image generator/editor for every piece that needs a new boundary, inferred pixels, or completed hidden structure. Use **Nano Banana Pro** (`Nano Banana Pro`/`NBP`) when exposed, otherwise **GPT Image 2** (`gpt-image-2`), otherwise an equivalent host-native generator.
-- In Codex/ChatGPT, load `imagegen` and call `image_gen`; in Gemini/Antigravity, call Nano Banana Pro when available. PSD2Live MCP Views are reference inputs, not a substitute generator.
-- Python, PIL/Pillow, OpenCV, Matplotlib, SVG, Canvas, ImageMagick, shell scripts, masks, polygons, blur, dilation, and texture cloning must not draw, invent, or reconstruct the output. They are allowed only for byte transport, diagnostics, exact unchanged-pixel extraction, and non-creative alpha cleanup after native generation.
-- If a requested piece is omitted by the generator, call the generator again. Do not manufacture the missing piece procedurally. If no native generator is available, stop and report that blocker.
+Read the `psd2live-rigging` skill (or server instructions when host skills are unavailable). Inspect isolated source Views AND context/model Views before splitting, making differences, or generating replacements. Use object_get to inspect existing topology and bindings. Judge the actual painting; do not impose a universal rule that bangs are in front of side hair or vice versa.
 
-## Establish state and evidence
+Record a compact working plan in task_update:
 
-- Discover the host and MCP capabilities rather than assuming a provider or tool name. Read `project_get_state` and `project_list_layers`, wait for restoration to finish, and identify targets by stable IDs.
-- For multi-step work, create a task with `task_start` and persist decisions, View IDs, asset IDs, derived layer IDs, and history nodes with `task_update`.
-- Inspect each target through `view_render_layer` and one or more focused `view_render_context` calls. Use `view_render_model` only when the full composition or a pose answers a concrete question.
-- Use `object_get` to determine whether the source is already split, keyed, masked, clipped, meshed, deformed, glued, or bound to physics. Identify strand direction, anatomical root, depth order, visible overlap, and missing occluded pixels.
+- Logical lock ID/category and approximate root region, body direction and tip character. Use the count requested by the user; count independently moving locks, not visible patches or highlight islands.
+- For each relevant crossing, which lock is in front, which continues behind it, and WHERE that relationship applies. Record uncertain depth as a working interpretation and test it in composition instead of waiting for certainty.
+- Hidden root/body coverage and overlap needed for the intended sway, plus planned draw order, source View/spatial reference and eventual layer/Warp/parameter/physics IDs.
 
-## Reconstruct painted structure
+Hair normally crosses and overlaps. A foreground bang can cover a rear bang; a side lock can cover bangs in one area while another bang covers side hair elsewhere. Each retains its own root-to-tip shape underneath. Distinguish **intentional overlap of complete locks** from **an accidental extra visible lock that changes the hairstyle**. Similar silhouettes, shared projected regions and intersecting alpha bounds are not duplication defects by themselves.
 
-- Use Nano Banana Pro/NBP or GPT Image 2 (`gpt-image-2`) for reference-conditioned generation, editing, or inpainting. Use another host-native generator only when neither named generator is available.
-- Resolve the host's Nano Banana Pro/NBP, GPT Image 2, or `image_gen` entry. Provide isolated and context Views as references, preserve the source style, and request transparent PNG output when supported.
-- Fully continue an occluded strand's curvature, volume, taper, texture, highlights, and root underneath the foreground piece. Keep the foreground contour self-contained and paint only intentional contact shading.
-- Never fake hidden structure with mask dilation, neighbouring-pixel smearing, repeated texture, or procedural vector/polygon drawing. Each missing or rejected piece returns to the named generator. If suitable image editing is unavailable, report the missing capability and stop at the last reversible state.
+A simple front/back chain can use layer draw order. If the SAME two locks switch front/back in different regions, one global layer order cannot represent that: inspect whether existing masks suffice, or use separate drawable sections with joins hidden under natural overlap and bind them as ONE logical lock. Record any extra render sections; do not inflate the requested independent-lock count or claim a flat order solves local interweaving. Implement only the complexity visible in the reference or needed for motion.
 
-## Import without spatial drift
+## Generate complete volumes, then assemble early
 
-- Preserve the originating View's `spatialReferenceId`. Output resolution may differ, but its pixel-to-canvas mapping, position, size, and aspect ratio must remain explicit.
-- Prefer transparent output. If background removal is necessary, clean the alpha edge, defringe it, and avoid baked gray or black halos.
-- Import each piece through `asset_import_png`. Use `source_pixel_rect` only for a declared crop of the View, then call `layer_add_from_asset` with the current `expected_history_head_node_id`.
-- Keep each asset tightly cropped enough for dense contour-following mesh generation. Verify placement and topology with a context View and `object_get`.
-- Preserve the source layer. Soft-delete it with `layer_soft_delete` only in a separate recoverable commit after all replacements are visibly correct.
+Work roughly back to front using the observed depth plan, while allowing local exceptions. Continue each lock from a plausible attachment region through its body to its tapered end. Paint sufficient coverage beneath neighbours so motion does not expose a cut edge. Hidden contours and buried root details need not reproduce an unknowable original; useful, plausible coverage matters more than isolated resemblance.
 
-## Protect history and recover calls
+For painted completion use the host's native image editor: Nano Banana Pro/NBP when exposed, otherwise GPT Image 2 (`gpt-image-2`), otherwise an equivalent host-native generator. In Codex/ChatGPT load imagegen and call image_gen. A generation call is required when creating or reconstructing illustrated pixels; exact unchanged-source-pixel extraction needs no generation. Code can transport/crop unchanged pixels, diagnose, or clean alpha, but must not invent the artwork procedurally. PSD2Live supplies reference Views and imports assets; lack of a task-named splitting endpoint is not a blocker.
 
-- Refresh `historyHeadNodeId` before each mutation and use the returned history node as the next expected head.
-- On a stale-head error, refresh state/history and reconcile concurrent changes before issuing a new request.
-- Never blindly retry a mutation after a timeout or disconnect. Reconnect, inspect `project_get_state`, `history_list`, the task log, and affected objects to determine whether it committed. Only retry when evidence shows the intended change is absent. Read-only inspection/render calls may use a small bounded retry.
-- Never remesh a keyed object unless all keyforms, masks, glue, deformers, and bindings can be transferred and verified.
+Usually request one logical lock per output for independent control. References describe the whole hairstyle but the output paints only the target lock's OWN volume, including portions concealed under neighbouring locks. Use this adaptable image brief:
 
-## Verify
+- Target and flow: {logical lock, approximate attachment region, body curve, tip character}.
+- Depth: {A covers target at region X; target covers B at region Y}. Neighbours are context; continue the target naturally underneath them rather than cutting away their projected footprint.
+- Preserve the character's overall hair volume, color family and drawing style. Allow coherent contour/hidden-root adjustments that improve assembly and motion coverage.
+- Do not reproduce unrelated face/accessories or a second independently readable hairstyle. Natural overlap, branches belonging to this lock, and hidden extensions are allowed.
+- Keep the declared reference frame, placement and scale for import. Output transparent RGBA, or the chosen uniform white/black matte; no drawn checkerboard, labels or background shadows.
 
-- Compare the neutral composite before and after separation, then inspect every piece in isolation with foreground neighbours hidden.
-- Confirm hidden roots and crossing regions are complete, organic, and free of cut edges, repeated texture, gaps, alpha fringe, or unintended shadows.
-- Inspect mesh flow and density. Test exaggerated sway and head-angle poses with `view_render_model`; verify no holes or tearing appear and every child remains inside its parent deformer over the full range.
-- Complete only when validation Views and every committed history node are recorded in the task log.
+If transparency fails, default to pure white `#FFFFFF` for dark hair or pure black `#000000` for light hair; choose the one least likely to blend with the foreground. Avoid saturated chroma backgrounds by default because colored fringe is distracting. This default does not guarantee halo-free edges: use native alpha where available and inspect cleanup in context. Pass the actual chosen color to asset_import_png as solid_background with require_transparency=true. Do not guess the matte color or treat a painted checkerboard as alpha. asset_inspect shows actual staged pixels and alpha counts. Border-connected cleanup may leave enclosed matte or light/dark fringe; address only visibly distracting remnants with non-creative cleanup or targeted image editing.
+
+Quickly check that an asset is usable (decodable, appropriate subject, useful coverage and mapping), then stage candidate layers in reversible history. Do not demand exact isolated contours, identical root coordinates or a perfect color match before trying composition. Build a complete draft hairstyle early instead of repeatedly polishing the first difficult bang while the rest remains unassembled.
+
+## Judge the assembled hairstyle and intended motion
+
+Use view_render_model with an explicit include_layer_ids composition containing candidate replacements and the remaining character layers, excluding the original source being replaced. Keeping both the complete source hairstyle and its replacements in a test render creates false duplication. Keep source pixels and history recoverable; preserving the original does not mean it must stay visible in every trial. Use insertion order from the depth plan and reconcile recorded layer order with the actual result.
+
+At normal character viewing scale, ask:
+
+1. Do the overall volume, silhouette, color family and flow still read as this character's hair, without obvious pasted-on seams?
+2. Do local front/back crossings make sense, with each lock continuing behind its occluder? Are roots attached plausibly and covered?
+3. Across the intended sway/head-turn range, does overlap cover joins without holes, detached roots, tearing or implausible intersections?
+
+These are the acceptance criteria. Isolated views help diagnose coverage and editability, not certify pixel equality. Small edge differences, slightly shifted buried roots, minor tone variations and invisible hidden overlaps are acceptable. Do not use contour overlap scores, pixel differences, exact edge alignment or extreme zoom as hard gates unless the user explicitly requests faithful pixel restoration. Exaggerated poses can diagnose a problem; motion beyond the intended range is not an automatic failure.
+
+Prioritize defects visible in composition or motion: an exposed gap, wrong local depth, detached root, conspicuous matte fringe/color patch, or an extra visible bang that materially changes the hairstyle. First decide whether draw order, declared placement, overlap coverage or rig settings explain it. Fix that cause; regenerate painted pixels only when the artwork needs it. Regenerating a good hidden extension to match the original visible cut edge can make motion worse.
+
+There is NO fixed two-correction stop rule and no requirement that every isolated asset be perfect. When a correction has little benefit, change the reference/brief, revisit the depth interpretation, try a different useful candidate, or accept a harmless difference and proceed. Keep useful progress, assemble all requested locks, and continue requested rigging on workable candidates. Stop dependent work only for an actual unavailable capability or an unresolved defect that materially prevents natural assembly/motion after trying a different approach; report that specific blocker, not an aesthetic micro-difference or a retry quota. User time/cost constraints still apply. Do not claim completion without an assembled result and the requested rig.
+
+## Compose tools, rig, and preserve history
+
+Discover tools/list (including pagination or host search) rather than assuming missing capabilities. The workflow is Views -> host image editing -> asset_import_png/asset_inspect -> layer_add_from_asset -> trial composition -> rig_list_objects/object_get -> warp_create -> parameter_create/keyform_set -> physics_put -> posed composition. agent_get_workflow exposes this guidance when prompts/skills are unavailable.
+
+Preserve spatialReferenceId and use source_pixel_rect only for a declared crop. Pixel resolution is independent of canvas placement; do not silently stretch mismatched aspect ratios. Natural artistic latitude does not excuse an incorrect coordinate mapping. Avoid cropping away overlap padding merely to make an isolated contour tight.
+
+Use one independent Warp/output parameter/physics group per requested logical lock (several render sections may share one rig). warp_create inserts an identity Warp under the meshes' common existing Warp parent in normalized 0..1 coordinates. Requested rows/columns are minima rounded together to align parent knots; inspect actual dimensions before keyform_set. It does not automatically shrink/remap the parent frame to a lock. Preserve existing keyforms, masks and glue. Physics drives the output parameter and needs corresponding sway keyforms; creating groups alone does not animate the locks. Keep attachment regions stable and let the bodies/tips move. Inspect inherited shared motion as well as independent sway.
+
+Before mutations refresh historyHeadNodeId and pass expected_history_head_node_id; chain the returned head. On stale-head errors refresh and reconcile. After an unknown commit outcome (timeout/disconnect), inspect state/history/task/object records before retrying. Log the depth decisions, candidate IDs, actual composition/pose Views and commits. Once the assembled result is usable over the intended range, soft-delete the original display layer in a recoverable commit and finish remaining rig checks. Do not hold a natural, usable result hostage to invisible edge discrepancies.

@@ -156,7 +156,7 @@ data class PSD2LiveState(
 ) {
 	fun buildConfig(): PipelineConfig {
 		val hasAnyMotion = motionIdle || motionBlink || motionNod || motionShake
-		val hasAnyPhysics = physicsFrontHair || physicsBackHair || physicsEyeJelly
+		val hasAnyPhysics = physicsFrontHair || physicsBackHair || physicsEyeJelly || rigEdits.physicsEdits.isNotEmpty()
 		return PipelineConfig(
 			atlasSize = atlasSize,
 			texturePadding = texturePadding,
@@ -171,7 +171,7 @@ data class PSD2LiveState(
 			motionBlink = motionBlink,
 			motionNod = motionNod,
 			motionShake = motionShake,
-			generatePhysics = !meshOnly && hasAnyPhysics,
+			generatePhysics = generatePhysics && !meshOnly && hasAnyPhysics,
 			physicsFrontHair = physicsFrontHair,
 			physicsBackHair = physicsBackHair,
 			physicsEyeJelly = physicsEyeJelly,

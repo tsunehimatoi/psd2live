@@ -69,7 +69,7 @@ internal class AgentWorkspaceStore(
     @Synchronized
     internal fun copyAuxiliary(projectId: String, target: Path) {
         val source = projectRoot(projectId)
-        for (folder in listOf("assets", "views", "view-images")) {
+        for (folder in listOf("assets", "views", "view-images", "workflow")) {
             val directory = source.resolve(folder)
             if (!Files.isDirectory(directory)) continue
             Files.walk(directory).use { paths -> paths.filter(Files::isRegularFile).forEach { file ->
@@ -154,6 +154,18 @@ internal class AgentWorkspaceStore(
 	}
 
 	@Synchronized
+    fun persistWorkflow(projectId: String, id: String, value: JsonObject) {
+        writeImmutable(projectRoot(projectId).resolve("workflow/${fileKey(id)}.json"), value.toString().encodeToByteArray())
+    }
+
+    @Synchronized
+    fun loadWorkflow(projectId: String, id: String): JsonObject {
+        val path = projectRoot(projectId).resolve("workflow/${fileKey(id)}.json")
+        require(Files.isRegularFile(path)) { "Workflow record not found: $id" }
+        return readJson(path).also { require(it.requiredString("id") == id) }
+    }
+
+    @Synchronized
 	fun persistAsset(projectId: String, asset: AgentPngAsset) {
 		val project = projectRoot(projectId)
 		val blobHash = persistRaster(project, asset.rgba, asset.public.pixelWidth, asset.public.pixelHeight)
@@ -162,6 +174,8 @@ internal class AgentWorkspaceStore(
 			put("version", STORE_VERSION)
 			put("id", value.id)
 			put("sha256", value.sha256)
+            put("details", value.details)
+            asset.originalPng?.let { put("originalPng", java.util.Base64.getEncoder().encodeToString(it)) }
 			put("pixelWidth", value.pixelWidth)
 			put("pixelHeight", value.pixelHeight)
 			put("rgbaBlob", blobHash)
@@ -193,8 +207,9 @@ internal class AgentWorkspaceStore(
 			sourceViewId = objectValue.requiredString("sourceViewId"),
 		)
 		return AgentPngAsset(
-			public = AgentImportedPngAsset(assetId, objectValue.requiredString("sha256"), width, height, placement),
+			public = AgentImportedPngAsset(assetId, objectValue.requiredString("sha256"), width, height, placement, objectValue["details"] as? JsonObject ?: JsonObject(emptyMap())),
 			rgba = loadRaster(project, objectValue.requiredString("rgbaBlob"), width, height),
+            originalPng = objectValue.optionalString("originalPng")?.let { java.util.Base64.getDecoder().decode(it) },
 		)
 	}
 
@@ -344,6 +359,10 @@ internal class AgentWorkspaceStore(
 			}
 		}
 		putJsonObject("rigEdits") {
+            put("assetLayers", JsonObject(document.rigEdits.assetLayers))
+            putJsonArray("calibrationLayerIds") { document.rigEdits.calibrationLayerIds.sorted().forEach { add(JsonPrimitive(it)) } }
+            putJsonArray("warps") { document.rigEdits.warpEdits.forEach { add(it.toJson()) } }
+            putJsonArray("physics") { document.rigEdits.physicsEdits.forEach { add(it.toJson()) } }
 			putJsonArray("parameters") {
 				document.rigEdits.parameterEdits.forEach { edit ->
 					add(buildJsonObject {
@@ -499,6 +518,10 @@ internal class AgentWorkspaceStore(
 		}
 		val rigEditObject = value.optionalObject("rigEdits")
 		val rigEdits = RigEditOverlay(
+            assetLayers = rigEditObject.optionalObject("assetLayers").mapValues { it.value.jsonObject },
+            calibrationLayerIds = rigEditObject.optionalArray("calibrationLayerIds").map { it.jsonPrimitive.content }.toSet(),
+            warpEdits = rigEditObject.optionalArray("warps").map { io.github.psd2live.core.RigWarpEdit.fromJson(it.jsonObject) },
+            physicsEdits = rigEditObject.optionalArray("physics").map { io.github.psd2live.core.RigPhysicsEdit.fromJson(it.jsonObject) },
 			parameterEdits = rigEditObject.optionalArray("parameters").map { element ->
 				val edit = element.jsonObject
 				RigParameterEdit(

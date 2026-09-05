@@ -27,6 +27,10 @@ Use this workflow with any MCP-capable host. Discover the MCP tools the host exp
 - The only no-generator exception is a provably exact extraction or crop in which every output color/alpha sample comes unchanged from already visible source pixels and no boundary, hidden structure, or painted detail is inferred. If uncertain, use Nano Banana Pro or GPT Image 2.
 - If neither named generator nor an equivalent native image capability is available, stop at the last reversible state and report the missing capability. Do not silently fall back to procedural drawing.
 
+## Discover and compose capabilities
+
+Read tools/list (including pagination or host search) before reporting missing operations. Hair separation composes Views -> host image editing -> asset_import_png -> layer_add_from_asset -> rig_list_objects/object_get -> warp_create -> parameter_create/keyform_set -> physics_put. Absence of a single natural-strand split tool is not a blocker. Use agent_get_workflow if MCP prompts/skills are unavailable. Physics acts on parameters and needs matching Warp keyforms; physics_list exposes authored groups. Before splitting or creating a difference, infer local depth and occlusion from the reference; categories do not determine a universal front/back order. Accept natural crossings and complete hidden volumes. Judge candidates in assembled context and intended motion, allowing harmless contour, tone and buried-root differences. There is no fixed correction-count cutoff. If generated alpha is opaque, default to pure white #FFFFFF for dark hair or pure black #000000 for light hair, import with the actual solid_background and require_transparency=true, then inspect contextual cleanup.
+
 ## Connect and recover safely
 
 - Prefer direct Streamable HTTP. Use the stdio bridge only when the host cannot connect to HTTP MCP servers.
@@ -51,15 +55,15 @@ Use this workflow with any MCP-capable host. Discover the MCP tools the host exp
 
 ## Stage generated assets correctly
 
-1. Prefer native transparent output. When the image service returns a solid background, remove it, defringe translucent edges, and alpha-bleed edge colors before import.
-2. Avoid baked soft gray/black halos on primary drawables; use clean cel-shaded contact lines or a separate multiply layer.
-3. Keep crops tight enough for contour-following mesh density. Declare `source_pixel_rect` only when the output is a crop of the referenced View; never silently stretch an aspect-ratio mismatch.
+1. Prefer native transparent output. For solid-matte generation default to pure white (#FFFFFF) or pure black (#000000), choosing contrast with the hair; avoid saturated colors by default. Import using the actual solid_background color and inspect asset_inspect. Clean distracting light/dark fringe if present; matte choice alone cannot ensure perfect alpha.
+2. Preserve intentional contact shading and occlusion. Fix matte residue when it is distracting in the assembled character, rather than treating every isolated edge variation as failure.
+3. Keep sufficient hidden overlap and root padding for intended motion while avoiding excessive empty canvas. Declare `source_pixel_rect` only when the output is a crop of the referenced View; never silently stretch an aspect-ratio mismatch.
 4. Call `asset_import_png` with the PNG, `spatial_reference_id`, and optional declared crop. Add it with `layer_add_from_asset` using the current expected history head.
-5. Verify placement visually and inspect generated topology with `object_get`. Remove redundant source layers only with recoverable `layer_soft_delete` after the replacement is validated.
+5. Verify placement visually and inspect generated topology with `object_get`. Trial composition may exclude the original source while its pixels remain in history. Use recoverable `layer_soft_delete` once the assembled replacement is natural and usable; isolated pixel-perfect matching is not required.
 
 ## Author and verify the rig
 
 - Use `project_list_parameters`, `parameter_create`, `parameter_update`, and `parameter_delete` for real Cubism parameters.
 - Use `object_get`, `keyform_set`, `keyform_copy`, `keyform_delete`, and `rig_k_pose` for geometry and visual channels at exact N-dimensional coordinates.
-- Render neutral and extreme poses after edits. Check silhouette, overlap, mesh density, parent containment, tearing, halos, and parameter limits.
+- Render neutral and intended-range poses after edits. Judge coherent silhouette, local depth, attachment, overlap coverage and movement in composition. Use exaggerated poses and isolated views for diagnosis, not as automatic aesthetic failure gates. Natural inter-lock crossings and small invisible contour differences are acceptable.
 - Finish only when final Views and validation results are recorded and every successful mutation has a known history node.

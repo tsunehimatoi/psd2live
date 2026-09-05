@@ -130,6 +130,8 @@ class AgentMcpServiceTest {
 	fun `lists and calls project and direct view tools`() = runBlocking {
 		val tools = client.listTools().tools
 		val expectedTools = setOf(
+            "asset_prepare_reference", "asset_register", "asset_reprocess", "asset_preview_composite", "layer_set_placement", "layer_finalize_placement",
+            "asset_inspect", "agent_get_workflow", "rig_list_objects", "warp_create", "physics_list", "physics_put",
             "project_save", "history_checkpoint",
 			"project_get_state",
 			"project_list_layers",
@@ -162,6 +164,8 @@ class AgentMcpServiceTest {
 		assertTrue(assetImportDescription.contains("Nano Banana Pro"))
 		assertTrue(assetImportDescription.contains("Python/PIL/OpenCV"))
 		val readOnlyToolNames = setOf(
+            "asset_preview_composite",
+            "asset_inspect", "agent_get_workflow", "rig_list_objects", "physics_list",
 			"project_get_state",
 			"project_list_layers",
 			"project_list_parameters",
@@ -252,12 +256,13 @@ class AgentMcpServiceTest {
 		assertEquals(listOf("hair-separation"), prompts.map { it.name })
 		val prompt = client.getPrompt(GetPromptRequest(GetPromptRequestParams(name = "hair-separation")))
 		val text = assertIs<TextContent>(prompt.messages.single().content).text
-		assertTrue(text.contains("non-destructive", ignoreCase = true))
-		assertTrue(text.contains("occlusion", ignoreCase = true))
-		assertTrue(text.contains("Nano Banana Pro"))
-		assertTrue(text.contains("GPT Image 2"))
-		assertTrue(text.contains("call `image_gen`"))
-		assertTrue(text.contains("Python"))
+        val bundled = assertNotNull(javaClass.getResourceAsStream("/agent/skills/hair-separation.md"))
+            .bufferedReader().use { it.readText() }
+        assertTrue(bundled.isNotBlank())
+        assertEquals(bundled, text)
+        val tool = client.callTool("agent_get_workflow", emptyMap())
+        assertTrue(tool.isError != true)
+        assertEquals(text, assertIs<TextContent>(tool.content.single()).text)
 	}
 
 	@Test
@@ -328,7 +333,42 @@ class AgentMcpServiceTest {
 		assertEquals(mapOf("ParamAngleX" to 15.0f), workspace.lastRigKPose?.parameters)
 	}
 
+    @Test
+    fun `new rig tools route IDs history guard and independent physics over HTTP`() = runBlocking {
+        val workflow = client.callTool("agent_get_workflow", emptyMap())
+        assertTrue(workflow.isError != true)
+        val listed = client.callTool("rig_list_objects", emptyMap()).structuredContent!!.jsonObject
+        assertEquals("mesh-hair", listed.getValue("objects").jsonArray.single().jsonObject.getValue("id").jsonPrimitive.content)
+        val warp = client.callTool("warp_create", mapOf("id" to "lock", "name" to "Lock", "parent_id" to "parent", "mesh_ids" to listOf("mesh-hair"), "rows" to 6, "expected_history_head_node_id" to "head"))
+        assertTrue(warp.isError != true)
+        assertEquals(6, workspace.createdWarp?.rows)
+        assertEquals("head", workspace.rigHead)
+        val physics = client.callTool("physics_put", mapOf("id" to "sway", "name" to "Sway", "input_parameter" to "ParamAngleX", "output_parameter" to "LockSway", "mobility" to 0.6, "expected_history_head_node_id" to "next"))
+        assertTrue(physics.isError != true)
+        assertEquals(0.6f, workspace.authoredPhysics?.mobility)
+        assertEquals("next", workspace.rigHead)
+        val groups = client.callTool("physics_list", emptyMap()).structuredContent!!.jsonObject.getValue("groups").jsonArray
+        assertEquals("LockSway", groups.single().jsonObject.getValue("output_parameter").jsonPrimitive.content)
+        val invalid = client.callTool("physics_put", mapOf("id" to "bad", "name" to "Bad", "input_parameter" to "same", "output_parameter" to "same", "expected_history_head_node_id" to "next"))
+        assertTrue(invalid.isError == true)
+        assertEquals("sway", workspace.authoredPhysics?.id)
+    }
+
 	private class FakeAgentWorkspace : AgentWorkspace {
+        var createdWarp: io.github.psd2live.core.RigWarpEdit? = null
+        var authoredPhysics: io.github.psd2live.core.RigPhysicsEdit? = null
+        var rigHead: String? = null
+        override fun listRigObjects() = listOf(AgentKeyformTargetRef("mesh", "mesh-hair"))
+        override fun listPhysics() = listOfNotNull(authoredPhysics)
+        override suspend fun createWarp(edit: io.github.psd2live.core.RigWarpEdit, expectedHead: String, taskId: String?): AgentWorkspaceMutationResult {
+            createdWarp = edit; rigHead = expectedHead
+            return AgentWorkspaceMutationResult("next", "revision", summary = "Warp", affectedObjectIds = listOf(edit.id))
+        }
+        override suspend fun putPhysics(edit: io.github.psd2live.core.RigPhysicsEdit, expectedHead: String, taskId: String?): AgentWorkspaceMutationResult {
+            authoredPhysics = edit; rigHead = expectedHead
+            return AgentWorkspaceMutationResult("done", "revision", summary = "Physics", affectedObjectIds = listOf(edit.id))
+        }
+
 		var lastRenderedLayer: String? = null
 		var lastModelRequest: AgentModelViewRequest? = null
 		var lastObjectTarget: AgentKeyformTargetRef? = null

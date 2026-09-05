@@ -19,7 +19,7 @@ object CharacterAnalyzer {
 			?.centroidX
 			?: source.widthPx * 0.5f
 		val layers = initiallyClassified.flatMap { original ->
-			ComponentSplitter.split(original, preliminaryFaceCenter, config.alphaThreshold).map { component ->
+			(if (original.source.id.raw in config.rigEdits.assetLayers) listOf(original) else ComponentSplitter.split(original, preliminaryFaceCenter, config.alphaThreshold)).map { component ->
 				val directOverride = config.layerOverrides[component.source.id.raw]
 				val inheritedOverride = config.layerOverrides[original.source.id.raw]
 				when {
@@ -73,7 +73,18 @@ object CharacterAnalyzer {
 		if (duplicateBaseNames.isNotEmpty()) warnings += tr("warning.duplicateLayers", duplicateBaseNames.take(6).joinToString())
 		val unknown = layers.filter { it.semantic.type == LayerType.PRESET && it.semantic.tag == SemanticTag.UNKNOWN }
 
-		return PipelineAnalysis(source, layers, anchors, warnings, PreviewRenderer.composite(source))
+		val calibrationIds = config.rigEdits.calibrationLayerIds
+        val calibration = if (calibrationIds.isEmpty()) null else {
+            val baseline = object : SourceArt {
+                override val widthPx = source.widthPx
+                override val heightPx = source.heightPx
+                override val groups = source.groups
+                override val layers = source.layers.filter { it.id.raw in calibrationIds }
+            }
+            require(baseline.layers.size == calibrationIds.size) { "Registration calibration source layers are missing" }
+            analyze(baseline, config.copy(deletedLayerIds = emptySet(), rigEdits = config.rigEdits.copy(calibrationLayerIds = emptySet())))
+        }
+        return PipelineAnalysis(source, layers, calibration?.anchors ?: anchors, warnings, PreviewRenderer.composite(source), calibration)
 	}
 
 	private fun union(bounds: List<Bounds>): Bounds = bounds.reduce(Bounds::union)

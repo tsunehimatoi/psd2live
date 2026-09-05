@@ -195,8 +195,15 @@ data class RigEditOverlay(
 	val keyformSetEdits: List<RigKeyformSetEdit> = emptyList(),
 	val keyformDeleteEdits: List<RigKeyformDeleteEdit> = emptyList(),
 	val keyformCopyEdits: List<RigKeyformCopyEdit> = emptyList(),
+    val warpEdits: List<RigWarpEdit> = emptyList(),
+    val physicsEdits: List<RigPhysicsEdit> = emptyList(),
+    val assetLayers: Map<String, kotlinx.serialization.json.JsonObject> = emptyMap(),
+    val calibrationLayerIds: Set<String> = emptySet(),
 ) {
 	init {
+		require(warpEdits.map { it.id }.distinct().size == warpEdits.size) { "Duplicate Warp IDs" }
+        require(physicsEdits.map { it.id }.distinct().size == physicsEdits.size) { "Duplicate physics IDs" }
+        require(physicsEdits.map { it.outputParameter }.distinct().size == physicsEdits.size) { "Independent physics must have distinct output parameters" }
 		require(parameterEdits.map(RigParameterEdit::id).distinct().size == parameterEdits.size) {
 			"Rig parameter edits contain duplicate IDs"
 		}
@@ -219,6 +226,8 @@ data class RigEditOverlay(
 			val desired = edit.asParameter()
 			model = model.copy(parameters = model.parameters.map { current -> if (current.id == id) desired else current })
 		}
+		for (warp in warpEdits) model = warp.applyTo(model)
+		physicsEdits.forEach { it.validate(model.parameters.map { p -> p.id.raw }.toSet()) }
 		// 3. Apply keyform sets
 		for (set in keyformSetEdits) {
 			model = applyKeyformSet(model, set)

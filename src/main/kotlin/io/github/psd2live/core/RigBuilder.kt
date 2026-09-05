@@ -132,25 +132,27 @@ object RigBuilder {
 	fun build(analysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig): BuiltRig {
 		val warnings = mutableListOf<String>()
 		val characterFrame = analysis.anchors.character
-		val faceRig = NinePoseFaceRig.from(analysis)
+		val layout = analysis.calibration ?: analysis
+        val faceRig = NinePoseFaceRig.from(layout)
 		val headSpace = faceRig.coordinateSpace
 		val rigLayerById = analysis.layers.associate { layer ->
 			val rigLayer = if (inferredGroup(layer, analysis.anchors) == LayerGroup.HEAD) layer.inHeadSpace(headSpace) else layer
 			layer.source.id.raw to rigLayer
 		}
-		val headCandidates = analysis.layers
+		val layoutRigLayers = layout.layers.map { if (inferredGroup(it, layout.anchors) == LayerGroup.HEAD) it.inHeadSpace(headSpace) else it }
+        val headCandidates = layout.layers
 			.filter { inferredGroup(it, analysis.anchors) == LayerGroup.HEAD && it.opaquePixels > 0 }
-			.map { rigLayerById.getValue(it.source.id.raw) }
+			.map { it.inHeadSpace(headSpace) }
 		val headFrame = if (headCandidates.isEmpty()) faceRig.face else headCandidates.map { it.bounds }.reduce(Bounds::union).expanded(0.025f)
-		val eyeWhiteLayers = rigLayerById.values.filter {
+		val eyeWhiteLayers = layoutRigLayers.filter {
 			it.semantic.tag == SemanticTag.EYEWHITE && it.opaquePixels > 0
 		}
-		val faceCandidates = rigLayerById.values.filter { it.semantic.tag in faceTags && it.opaquePixels > 0 }
+		val faceCandidates = layoutRigLayers.filter { it.semantic.tag in faceTags && it.opaquePixels > 0 }
 		val faceFrame = (faceCandidates.map { it.bounds } + faceRig.face)
 			.reduce(Bounds::union)
 			.expanded(0.025f)
-		val frontHairCandidates = rigLayerById.values.filter { it.semantic.tag == SemanticTag.FRONT_HAIR && it.opaquePixels > 0 }
-		val backHairCandidates = rigLayerById.values.filter { it.semantic.tag == SemanticTag.BACK_HAIR && it.opaquePixels > 0 }
+		val frontHairCandidates = layoutRigLayers.filter { it.semantic.tag == SemanticTag.FRONT_HAIR && it.opaquePixels > 0 }
+		val backHairCandidates = layoutRigLayers.filter { it.semantic.tag == SemanticTag.BACK_HAIR && it.opaquePixels > 0 }
 		val frontHairFrame = frontHairCandidates.map { it.bounds }.takeIf { it.isNotEmpty() }?.reduce(Bounds::union)?.expanded(0.04f)
 		val backHairFrame = backHairCandidates.map { it.bounds }.takeIf { it.isNotEmpty() }?.reduce(Bounds::union)?.expanded(0.04f)
 
@@ -298,7 +300,15 @@ object RigBuilder {
 				defaultParentAndFrame.first
 			}
 			val effectiveParentFrame: Bounds = if (hasParentOverride && effectiveParentId != null) {
-				frameByDeformer[effectiveParentId.raw] ?: defaultParentAndFrame.second
+				run {
+                        var id = effectiveParentId.raw
+                        val seen = mutableSetOf<String>()
+                        while (id !in frameByDeformer && seen.add(id)) {
+                            id = config.rigEdits.warpEdits.firstOrNull { it.id == id }?.parentId
+                                ?: error("Unknown parent coordinate frame: ${effectiveParentId.raw}")
+                        }
+                        frameByDeformer[id] ?: error("Parent frame cycle")
+                    }
 			} else if (hasParentOverride) {
 				characterFrame
 			} else {

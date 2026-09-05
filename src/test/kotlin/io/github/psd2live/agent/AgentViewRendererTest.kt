@@ -141,6 +141,20 @@ class AgentViewRendererTest {
 			source,
 			PipelineConfig(atlasSize = 256, meshSpacing = 16, exportCmo3 = false, exportMoc3 = false, exportJson = false),
 		)
+        val mesh = model.rig.puppet.drawables.first()
+        val warpEdit = io.github.psd2live.core.RigWarpEdit("independent-lock", "Lock", mesh.parentDeformerId!!.raw, listOf(mesh.id.raw))
+        val editedPuppet = warpEdit.applyTo(model.rig.puppet)
+        for (angle in listOf(-45f, 0f, 45f)) {
+            val pose = mapOf(org.umamo.runtime.model.ParameterId("ParamAngleX") to angle)
+            val before = org.umamo.render.eval.CpuDeformationEvaluator().evaluate(model.rig.puppet, pose).worldPositions.getValue(mesh.id)
+            val after = org.umamo.render.eval.CpuDeformationEvaluator().evaluate(editedPuppet, pose).worldPositions.getValue(mesh.id)
+            assertEquals(before.size, after.size)
+            before.indices.forEach { i -> assertEquals(before[i], after[i], 0.001f) }
+        }
+        kotlin.test.assertFailsWith<IllegalArgumentException> { warpEdit.applyTo(editedPuppet) }
+        kotlin.test.assertFailsWith<IllegalArgumentException> {
+            warpEdit.copy(id = "another", parentId = "independent-lock").applyTo(model.rig.puppet.copy(deformers = editedPuppet.deformers))
+        }
 		val parameters = model.rig.puppet.parameters.associate { it.id.raw to it.default } + ("ParamAngleX" to 10f)
 
 		val view = AgentViewRenderer.modelComposite(
