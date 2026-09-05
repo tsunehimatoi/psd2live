@@ -33,14 +33,13 @@ fun ProjectLocationDialog(state: PSD2LiveState, viewModel: PSD2LiveViewModel) {
     val typography = LocalToolTypography.current
 
     val source = Path.of(state.projectFile ?: state.loadedInputPath ?: state.inputPath).toAbsolutePath()
-    var location by remember { mutableStateOf(if (state.projectFile == null) 1 else 0) }
+    var location by remember { mutableStateOf(1) }
     var name by remember { mutableStateOf(state.projectFile?.let { Path.of(it).fileName.toString().removeSuffix(".psd2live") } ?: source.fileName.toString().substringBeforeLast('.')) }
-    var custom by remember { mutableStateOf(state.projectFile?.let { Path.of(it).parent.toString() } ?: source.parent.toString()) }
+    val custom = state.projectFile?.let { Path.of(it).parent.toString() } ?: source.parent.toString()
     var error by remember { mutableStateOf<String?>(null) }
     val directory = when (location) {
-        1 -> source.parent
         2 -> ProjectArchive.installationProjectsDirectory()
-        else -> runCatching { Path.of(custom).toAbsolutePath() }.getOrNull()
+        else -> source.parent
     }
     val target = runCatching {
         require(name.isNotBlank() && name.none { it in "/\\:*?\"<>|" || it.isISOControl() } && name != "." && name != "..") { tr("project.invalidName") }
@@ -99,45 +98,44 @@ fun ProjectLocationDialog(state: PSD2LiveState, viewModel: PSD2LiveViewModel) {
                     .padding(10.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                listOf("project.nearPsd" to 1, "project.custom" to 0, "project.installation" to 2).forEach { (key, index) ->
-                    CompactRadioButton(
-                        selected = location == index,
-                        onClick = { location = index },
-                        enabled = !state.projectSaving,
-                        label = tr(key),
-                    )
+                CompactRadioButton(
+                    selected = location == 1,
+                    onClick = { location = 1 },
+                    enabled = !state.projectSaving,
+                    label = tr("project.nearPsd"),
+                )
+                CompactRadioButton(
+                    selected = location == 2,
+                    onClick = { location = 2 },
+                    enabled = !state.projectSaving,
+                    label = tr("project.installation"),
+                )
+                val onChooseCustomFile = {
+                    val currentTargetName = if (name.endsWith(".psd2live", ignoreCase = true)) name else "$name.psd2live"
+                    val picked = NativeFilePicker.chooseSaveProjectFile(null, currentTargetName, custom)
+                    if (!picked.isNullOrBlank()) {
+                        val p = Path.of(picked)
+                        viewModel.saveProjectTo(p)
+                    }
                 }
 
-                if (location == 0) {
-                    Spacer(Modifier.height(2.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        CompactTextField(
-                            value = custom,
-                            onValueChange = { custom = it },
-                            placeholder = tr("project.directory"),
-                            modifier = Modifier.weight(1f),
-                            height = 24.dp,
-                            enabled = !state.projectSaving,
-                        )
-                        CompactButton(
-                            text = tr("project.browse"),
-                            onClick = {
-                                val currentTargetName = if (name.endsWith(".psd2live", ignoreCase = true)) name else "$name.psd2live"
-                                val picked = NativeFilePicker.chooseSaveProjectFile(null, currentTargetName, custom)
-                                if (!picked.isNullOrBlank()) {
-                                    val f = java.io.File(picked)
-                                    custom = f.parent ?: custom
-                                    name = f.name.removeSuffix(".psd2live")
-                                }
-                            },
-                            enabled = !state.projectSaving,
-                            height = 24.dp,
-                        )
-                    }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    CompactRadioButton(
+                        selected = false,
+                        onClick = onChooseCustomFile,
+                        enabled = !state.projectSaving,
+                        label = tr("project.custom"),
+                    )
+                    CompactButton(
+                        text = tr("project.browse"),
+                        onClick = onChooseCustomFile,
+                        enabled = !state.projectSaving,
+                        height = 22.dp,
+                    )
                 }
             }
 
