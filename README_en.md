@@ -50,25 +50,37 @@ PSD2Live is an automated Live2D model generation pipeline and desktop applicatio
 <p align="center">
   <img src="docs/imgs/agent.png" alt="PSD2Live AI Agent asset generation, integration, and multi-parameter render workflow" />
   <br>
-  <em>An end-to-end example of an Agent adding a hair clip to a Live2D character: it reads the project Skills and MCP tools, makes a plan, inspects an annotated front-hair View, generates the hair-clip image, adds it to the character's hair, and finally renders the result from other parameterized angles</em>
+  <em>An example of an Agent adding a hair clip: reading Skills and MCP tools, inspecting the model, generating and adding the asset, and checking other parameter poses. This example does not establish that the more complex tasks below are available.</em>
 </p>
 
-### Agent Example and Experiment Ideas
+### Agent Capabilities and Implementation Status
 
-Beyond adding a hair clip, try asking an Agent to:
+#### Available
 
-- separate the mouth into independently editable lips, inner mouth, teeth, and tongue layers;
-- separate the hair into front, side, back, ahoge, or other independently riggable strands, and reconstruct hidden regions;
-- add other hair accessories or decorations, then check occlusion, placement, and deformation across multiple parameter poses.
+- Add other hair accessories or decorations, then check occlusion, placement, and deformation across multiple parameter poses.
+
+#### Theoretically feasible, but Agents cannot get reliable results yet — pending implementation
+
+> [!WARNING]
+> **The following tasks are theoretically feasible, but Agents cannot reliably configure and complete them. End-to-end execution is extremely unstable, and these capabilities remain pending implementation. Unless you are debugging the program, we recommend not attempting them.** Existing MCP interfaces do not mean an Agent can complete a task; repeated generation, positioning, and correction can quickly consume large amounts of tokens and image-generation quota without producing a usable result.
+
+Expected implementation difficulty increases in the following order:
+
+1. Generate expression and action variants with additional parameter or animation controls, such as an `@v@` expression, waving, or crossing both arms.
+2. Separate the mouth into independently editable lips, inner mouth, teeth, and tongue layers.
+3. Separate the hair into front, side, back, ahoge, or other independently riggable strands, and reconstruct hidden regions.
+4. Add shadows, including generating and rigging hair-shadow layers and side-of-face shadow layers.
+
+#### Currently beyond the Agent's capabilities
+
+- Deform parts plausibly and precisely: this requires the AI to manipulate individual Warp/Mesh points and control their deformation correctly. Agents cannot yet perform this reliably.
 
 > [!IMPORTANT]
 > These workflows require both the selected model and the Agent harness to expose a working image-generation capability. A model that can only understand text or images, but cannot generate and return an image, cannot complete asset creation and import.
 
-> [!WARNING]
-> Results depend on the model, image generator, Agent harness, prompt, and the quality of the original PSD layer separation. Different combinations can produce substantially different results, and a task may not succeed in one pass.
+Results depend on the model, image generator, Agent harness, prompt, and the quality of the original PSD layer separation. Passing regression tests for the underlying tools does not establish the reliability of the pending tasks above.
 
-> [!NOTE]
-> So far, only the end-to-end example shown above has been completed with Antigravity. Its image-generation quota ran out while preparing additional tasks; this quota is separate from its web quota and is relatively small. You are welcome to try more cases yourself, but be aware that Agent workflows can consume tokens very quickly.
+**Help wanted: Pull Requests for prompt engineering and Agent workflows.** We especially need contributors with experience in tool discovery and selection, depth and occlusion reasoning for part separation, generation constraints, positioning and correction workflows, token budgets, and stopping conditions. Reproducible cases, effective prompt or Skill improvements, workflow implementations, and evaluation cases are welcome. Where possible, include the model and host used, actual consumption, and both successful and failed results so we can assess completion rates and reduce wasted retries. A single successful demonstration is not enough to mark these capabilities as complete.
 
 ---
 
