@@ -179,9 +179,11 @@ fun FrameWindowScope.PSD2LiveApp(
 		}
 
 		val onOpenProjectAction: () -> Unit = {
-            val picker = javax.swing.JFileChooser().apply { fileFilter = javax.swing.filechooser.FileNameExtensionFilter("PSD2Live", "psd2live") }
-            if (picker.showOpenDialog(window) == javax.swing.JFileChooser.APPROVE_OPTION) viewModel.openProject(picker.selectedFile.toPath())
-        }
+			val selected = NativeFilePicker.chooseProjectFile(window, state.projectFile)
+			if (!selected.isNullOrBlank()) {
+				viewModel.openProject(java.nio.file.Path.of(selected))
+			}
+		}
         val onReanalyzeAction = {
 			if (hasInput && !isBusy) {
 				viewModel.withSavedChanges { viewModel.analyze() }

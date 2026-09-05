@@ -69,11 +69,18 @@ fun ProjectLocationDialog(state: PSD2LiveState, viewModel: PSD2LiveViewModel) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text(
-                    text = tr("project.location"),
-                    style = typography.title.copy(fontSize = 13.sp, fontWeight = FontWeight.Bold),
-                    color = colors.textPrimary,
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = tr("project.location"),
+                        style = typography.title.copy(fontSize = 13.sp, fontWeight = FontWeight.Bold),
+                        color = colors.textPrimary,
+                    )
+                    Text(
+                        text = tr("project.singleFileNotice"),
+                        style = typography.caption.copy(fontSize = 10.sp),
+                        color = colors.textMuted,
+                    )
+                }
                 CompactIconButton(
                     onClick = viewModel::cancelProjectLocation,
                     enabled = !state.projectSaving,
@@ -92,7 +99,7 @@ fun ProjectLocationDialog(state: PSD2LiveState, viewModel: PSD2LiveViewModel) {
                     .padding(10.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                listOf("project.custom" to 0, "project.nearPsd" to 1, "project.installation" to 2).forEach { (key, index) ->
+                listOf("project.nearPsd" to 1, "project.custom" to 0, "project.installation" to 2).forEach { (key, index) ->
                     CompactRadioButton(
                         selected = location == index,
                         onClick = { location = index },
@@ -118,7 +125,15 @@ fun ProjectLocationDialog(state: PSD2LiveState, viewModel: PSD2LiveViewModel) {
                         )
                         CompactButton(
                             text = tr("project.browse"),
-                            onClick = { NativeFilePicker.chooseDirectory(null, custom)?.let { custom = it } },
+                            onClick = {
+                                val currentTargetName = if (name.endsWith(".psd2live", ignoreCase = true)) name else "$name.psd2live"
+                                val picked = NativeFilePicker.chooseSaveProjectFile(null, currentTargetName, custom)
+                                if (!picked.isNullOrBlank()) {
+                                    val f = java.io.File(picked)
+                                    custom = f.parent ?: custom
+                                    name = f.name.removeSuffix(".psd2live")
+                                }
+                            },
                             enabled = !state.projectSaving,
                             height = 24.dp,
                         )
@@ -129,7 +144,7 @@ fun ProjectLocationDialog(state: PSD2LiveState, viewModel: PSD2LiveViewModel) {
             // Project Name Field
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = tr("project.name"),
+                    text = tr("project.fileName"),
                     style = typography.caption.copy(fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold),
                     color = colors.textMuted,
                 )
@@ -146,7 +161,7 @@ fun ProjectLocationDialog(state: PSD2LiveState, viewModel: PSD2LiveViewModel) {
             // Full Target Path Preview Box
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = tr("project.directory"),
+                    text = tr("project.targetFile"),
                     style = typography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
                     color = colors.textMuted,
                 )

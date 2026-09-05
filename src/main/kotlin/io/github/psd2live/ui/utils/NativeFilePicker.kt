@@ -1,4 +1,4 @@
-﻿package io.github.psd2live.ui.utils
+package io.github.psd2live.ui.utils
 
 import androidx.compose.ui.awt.ComposeWindow
 import io.github.psd2live.i18n.tr
@@ -54,6 +54,93 @@ object NativeFilePicker {
 			}
 		} catch (_: Throwable) {}
 
+		return null
+	}
+
+	/**
+	 * Opens the native OS file picker for selecting an existing .psd2live project file.
+	 */
+	fun chooseProjectFile(window: ComposeWindow? = null, initialPath: String? = null): String? {
+		val title = tr("project.open")
+		try {
+			val dialog = FileDialog(window, title, FileDialog.LOAD).apply {
+				setFilenameFilter { _, name -> name.endsWith(".psd2live", ignoreCase = true) }
+				file = "*.psd2live"
+				if (!initialPath.isNullOrBlank()) {
+					val f = File(initialPath)
+					if (f.exists()) directory = if (f.isDirectory) f.absolutePath else f.parent
+				}
+				isVisible = true
+			}
+			val dir = dialog.directory
+			val selectedFile = dialog.file
+			if (!dir.isNullOrBlank() && !selectedFile.isNullOrBlank()) {
+				val full = File(dir, selectedFile).toPath().toAbsolutePath().normalize().toString()
+				if (full.endsWith(".psd2live", ignoreCase = true)) {
+					return full
+				}
+			}
+		} catch (_: Throwable) {}
+
+		try {
+			UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
+			val chooser = JFileChooser().apply {
+				dialogTitle = title
+				fileFilter = javax.swing.filechooser.FileNameExtensionFilter("PSD2Live (*.psd2live)", "psd2live")
+				if (!initialPath.isNullOrBlank()) {
+					val f = File(initialPath)
+					if (f.exists()) currentDirectory = if (f.isDirectory) f else f.parentFile
+				}
+			}
+			if (chooser.showOpenDialog(window) == JFileChooser.APPROVE_OPTION) {
+				return chooser.selectedFile.toPath().toAbsolutePath().normalize().toString()
+			}
+		} catch (_: Throwable) {}
+		return null
+	}
+
+	/**
+	 * Opens the native OS file picker for saving a single .psd2live project file.
+	 */
+	fun chooseSaveProjectFile(window: ComposeWindow? = null, defaultName: String? = null, initialDir: String? = null): String? {
+		val title = tr("project.saveAs")
+		val defaultFileName = if (defaultName.isNullOrBlank()) "project.psd2live" else if (defaultName.endsWith(".psd2live", ignoreCase = true)) defaultName else "$defaultName.psd2live"
+
+		try {
+			val dialog = FileDialog(window, title, FileDialog.SAVE).apply {
+				setFilenameFilter { _, name -> name.endsWith(".psd2live", ignoreCase = true) }
+				file = defaultFileName
+				if (!initialDir.isNullOrBlank()) {
+					val f = File(initialDir)
+					if (f.exists()) directory = if (f.isDirectory) f.absolutePath else f.parent
+				}
+				isVisible = true
+			}
+			val dir = dialog.directory
+			val selectedFile = dialog.file
+			if (!dir.isNullOrBlank() && !selectedFile.isNullOrBlank()) {
+				val name = if (selectedFile.endsWith(".psd2live", ignoreCase = true)) selectedFile else "$selectedFile.psd2live"
+				return File(dir, name).toPath().toAbsolutePath().normalize().toString()
+			}
+		} catch (_: Throwable) {}
+
+		try {
+			UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
+			val chooser = JFileChooser().apply {
+				dialogTitle = title
+				fileFilter = javax.swing.filechooser.FileNameExtensionFilter("PSD2Live (*.psd2live)", "psd2live")
+				selectedFile = File(defaultFileName)
+				if (!initialDir.isNullOrBlank()) {
+					val f = File(initialDir)
+					if (f.exists()) currentDirectory = if (f.isDirectory) f else f.parentFile
+				}
+			}
+			if (chooser.showSaveDialog(window) == JFileChooser.APPROVE_OPTION) {
+				val f = chooser.selectedFile
+				val name = if (f.name.endsWith(".psd2live", ignoreCase = true)) f.name else "${f.name}.psd2live"
+				return File(f.parentFile ?: File("."), name).toPath().toAbsolutePath().normalize().toString()
+			}
+		} catch (_: Throwable) {}
 		return null
 	}
 
