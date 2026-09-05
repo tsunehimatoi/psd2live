@@ -76,6 +76,10 @@ fun AppTitleBar(
 	canGenerate: Boolean,
 	currentLanguage: AppLanguage,
 	onOpenPsd: () -> Unit,
+    onOpenProject: () -> Unit,
+    onSaveProject: () -> Unit,
+    onSaveProjectAs: () -> Unit,
+    projectTitle: String,
 	onReanalyze: () -> Unit,
 	onOpenOutput: () -> Unit,
 	onGenerate: () -> Unit,
@@ -133,9 +137,12 @@ fun AppTitleBar(
 					onDismissRequest = { activeMenu = null },
 					modifier = Modifier.widthIn(min = 180.dp, max = 240.dp),
 				) {
+                    AppMenuItem(text = tr("project.open"), shortcut = "Ctrl+O", enabled = !isBusy, onClick = { activeMenu = null; onOpenProject() })
+                    AppMenuItem(text = tr("project.save"), shortcut = "Ctrl+S", enabled = hasInput, onClick = { activeMenu = null; onSaveProject() })
+                    AppMenuItem(text = tr("project.saveAs"), shortcut = "Ctrl+Shift+S", enabled = hasInput, onClick = { activeMenu = null; onSaveProjectAs() })
 					AppMenuItem(
 						text = tr("menu.file.openPsd"),
-						shortcut = "Ctrl+O",
+						shortcut = "Ctrl+Shift+O",
 						onClick = {
 							activeMenu = null
 							onOpenPsd()
@@ -315,7 +322,7 @@ fun AppTitleBar(
 			contentAlignment = Alignment.Center,
 		) {
 			Text(
-				text = tr("app.title"),
+				text = "PSD2Live — $projectTitle",
 				style = typography.caption.copy(fontSize = 11.5.sp),
 				color = colors.textMuted,
 				maxLines = 1,

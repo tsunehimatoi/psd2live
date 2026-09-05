@@ -47,10 +47,11 @@ private val PARAMETER_ID = Regex("[A-Za-z][A-Za-z0-9_]{0,63}")
 
 class ViewModelAgentWorkspace(
 	private val viewModel: PSD2LiveViewModel,
+    private val storeRoot: Path = AgentWorkspaceStore.defaultRoot(),
 ) : AgentWorkspace, AutoCloseable {
 	private val editMutex = Mutex()
 	private val historyLock = Any()
-	private val workspaceStore = AgentWorkspaceStore()
+	private var workspaceStore = AgentWorkspaceStore(storeRoot)
 	private val persistenceJob = SupervisorJob()
 	private val persistenceScope = CoroutineScope(persistenceJob + Dispatchers.IO.limitedParallelism(1))
 	private val recoveryJob = SupervisorJob()
@@ -66,6 +67,119 @@ class ViewModelAgentWorkspace(
 	private val rasterDigests = Collections.synchronizedMap(WeakHashMap<ByteArray, String>())
 	private var historyProjectId: String? = null
 	private var historyTree: WorkspaceHistoryTree<AgentWorkspaceDocument>? = null
+
+    internal data class ProjectCapture(
+        val projectId: String,
+        val history: io.github.psd2live.history.WorkspaceHistoryState<AgentWorkspaceDocument>,
+        val uiState: PSD2LiveState,
+        val tasks: List<AgentTaskSnapshot>,
+        val store: AgentWorkspaceStore,
+        val spatial: Map<String, AgentViewSpatialMetadata>,
+    )
+    private val projectDirectories = mutableListOf<Path>()
+    internal fun rememberProjectDirectory(path: Path) { projectDirectories.add(path) }
+    internal suspend fun flushProjectPersistence() { persistenceScope.launch { }.join() }
+
+    internal suspend fun importedPsd() = editMutex.withLock {
+        val state = viewModel.state.value
+        val id = state.projectId ?: error("Imported project has no identity")
+        val store = AgentWorkspaceStore(storeRoot)
+        val legacyId = projectId(state.copy(projectId = null))
+        val legacy = withContext(Dispatchers.IO) { store.loadHistory(legacyId) }
+        val migrated = legacy?.let { old ->
+            WorkspaceHistoryTree.restore(old.selections().map { selection ->
+                val document = selection.snapshot.copy(settings = selection.snapshot.settings.ifEmpty { io.github.psd2live.project.WorkspaceStateCodec.settings(state) })
+                val revision = revisionId(state, document)
+                selection.copy(node = selection.node.copy(revisionId = revision, snapshotHash = revision), snapshot = document)
+            }, old.head().node.id)
+        }
+        val document = migrated?.head()?.snapshot ?: documentFrom(state)
+        val preview = if (migrated != null) viewModel.buildAgentWorkspacePreview(document.source, document.toConfig(state)) else state.previewModel!!
+        if (migrated != null) withContext(Dispatchers.IO) {
+            store.copyAuxiliary(legacyId, store.projectRoot(id))
+            store.persistTasks(id, store.loadTasks(legacyId))
+        }
+        synchronized(historyLock) {
+            workspaceStore = store
+            historyProjectId = id
+            historyTree = migrated ?: WorkspaceHistoryTree(document, revisionId(state, document), revisionId(state, document))
+            recoveringProjectId = null
+            taskProjectId = null
+            spatialByViewId.clear()
+            assetStore.clear()
+            layerTombstones.clear()
+            if (migrated != null) applyPreviewOrThrow(preview, documentFrom(state), document, "Recovered legacy workspace")
+            scheduleHistoryPersistence(id, historyTree!!)
+        }
+        if (migrated != null) viewModel.loadAgentWorkspacePreview(preview)
+    }
+
+    /** UI command boundary. Called after a semantic edit, never by the frame/animation loop. */
+    fun editorChanged() {
+        if (viewModel.state.value.analysis == null) return
+        synchronized(historyLock) {
+            val state = viewModel.state.value
+            val tree = synchronizeHistory(projectId(state), revisionId(state), documentFrom(state), commitEditorChange = true)
+            viewModel.updateHistorySnapshot(history())
+        }
+    }
+
+    internal suspend fun captureProject(summary: String, actor: String): ProjectCapture = editMutex.withLock {
+        synchronized(historyLock) {
+            val state = viewModel.state.value
+            require(!state.isAnalyzing && recoveringProjectId == null) { "Workspace is still loading" }
+            val id = projectId(state)
+            val tree = synchronizeHistory(id, revisionId(state), documentFrom(state), commitEditorChange = true)
+            val head = tree.head()
+            tree.commit(head.node.id, head.snapshot, head.node.revisionId, head.node.snapshotHash, summary, actor)
+            scheduleHistoryPersistence(id, tree)
+            ProjectCapture(id, tree.state(), state, taskManagerFor(id).list(), workspaceStore, spatialByViewId.toMap())
+        }
+    }
+
+    internal suspend fun installProject(
+        id: String, file: Path, source: Path, state: PSD2LiveState,
+        tree: WorkspaceHistoryTree<AgentWorkspaceDocument>, store: AgentWorkspaceStore, expected: PSD2LiveState,
+    ) = editMutex.withLock {
+        val document = tree.head().snapshot
+        val preview = viewModel.buildAgentWorkspacePreview(document.source, document.toConfig(state))
+        val tasks = store.loadTasks(id) // Validate before replacing the live session.
+        val restoredTasks = AgentTaskManager().also { it.restore(tasks) }
+        synchronized(historyLock) {
+            val current = viewModel.state.value
+            require(current.projectId == expected.projectId && current.projectEditVersion == expected.projectEditVersion) { "Workspace changed while opening project; open again after saving your edits" }
+            workspaceStore = store
+            historyProjectId = id
+            historyTree = tree
+            recoveringProjectId = null
+            persistenceError = null
+            taskProjectId = id
+            taskManager = restoredTasks
+            spatialByViewId.clear()
+            assetStore.clear()
+            layerTombstones.clear()
+            viewModel.installProjectState(state.copy(
+                projectId = id, projectFile = file.toString(), inputPath = source.toString(), loadedInputPath = source.toString(),
+                analysis = preview.analysis, previewModel = preview,
+                layerVisibility = document.layerVisibility, layerOverrides = document.layerOverrides,
+                deletedLayerIds = document.deletedLayerIds, parentOverrides = document.parentOverrides, rigEdits = document.rigEdits,
+            ))
+            viewModel.updateHistorySnapshot(history())
+        }
+        viewModel.loadAgentWorkspacePreview(preview)
+    }
+
+    override suspend fun saveProject(): AgentWorkspaceMutationResult {
+        val node = viewModel.saveProjectNow(actor = "agent")
+        val selected = synchronized(historyLock) { historyTree!!.selectionAt(node) }
+        return AgentWorkspaceMutationResult(node, selected.node.revisionId, emptyList(), "Project saved")
+    }
+    override suspend fun checkpoint(summary: String): AgentWorkspaceMutationResult {
+        require(summary.isNotBlank()) { "Checkpoint summary is required" }
+        val capture = captureProject(summary, "agent")
+        val node = capture.history.selections.last().node
+        return AgentWorkspaceMutationResult(node.id, node.revisionId, emptyList(), summary)
+    }
 
 	override fun snapshot(): AgentProjectSnapshot {
 		val state = viewModel.state.value
@@ -108,7 +222,7 @@ class ViewModelAgentWorkspace(
 			revisionId = revisionId,
 			historyHeadNodeId = null,
 			loaded = analysis != null,
-			inputName = workspaceInputPath(state).takeIf(String::isNotBlank)?.let { runCatching { Path.of(it).fileName.toString() }.getOrNull() },
+			inputName = state.projectSourceName ?: workspaceInputPath(state).takeIf(String::isNotBlank)?.let { runCatching { Path.of(it).fileName.toString() }.getOrNull() },
 			canvasWidth = analysis?.source?.widthPx,
 			canvasHeight = analysis?.source?.heightPx,
 			busy = state.isAnalyzing || state.isGenerating || recoveringProjectId != null,
@@ -132,7 +246,8 @@ class ViewModelAgentWorkspace(
 				pendingPersistenceWrites.get() > 0 -> "saving"
 				else -> "ready"
 			},
-			persistenceError = persistenceError,
+			projectFile = state.projectFile, projectDirty = state.projectDirty, projectSaving = state.projectSaving, projectSaveError = state.projectSaveError,
+            persistenceError = persistenceError,
 		)
 		val headNodeId = if (analysis == null) null else synchronized(historyLock) {
 			synchronizeHistory(base.projectId!!, revisionId, documentFrom(state)).head().node.id
@@ -227,7 +342,7 @@ class ViewModelAgentWorkspace(
 		))
 	}
 
-	override suspend fun importPng(request: AgentPngImportRequest): AgentImportedPngAsset = withContext(Dispatchers.Default) {
+	override suspend fun importPng(request: AgentPngImportRequest): AgentImportedPngAsset = editMutex.withLock {
 		val projectId = snapshot().projectId ?: throw IllegalStateException("No PSD is loaded")
 		val spatial = spatialByViewId[request.spatialReferenceId] ?: withContext(Dispatchers.IO) {
 			workspaceStore.loadSpatial(projectId, request.spatialReferenceId)
@@ -235,6 +350,7 @@ class ViewModelAgentWorkspace(
 			?: throw IllegalArgumentException("Spatial reference not found for this workspace: ${request.spatialReferenceId}")
 		val imported = assetStore.import(request, spatial)
 		withContext(Dispatchers.IO) { workspaceStore.persistAsset(projectId, assetStore.require(imported.id)) }
+        viewModel.markProjectAuxiliaryChanged()
 		viewModel.addLog(
 			message = "Agent Asset Import: ${imported.id} (${imported.pixelWidth}x${imported.pixelHeight})",
 			level = io.github.psd2live.ui.state.LogLevel.SUCCESS,
@@ -266,9 +382,11 @@ class ViewModelAgentWorkspace(
 		val (nextDocument, layerId) = baseDocument.addLayer(asset, request)
 		val preview = viewModel.buildAgentWorkspacePreview(nextDocument.source, nextDocument.toConfig(current))
 		val nextRevision = revisionId(current, nextDocument)
+        require(nextRevision != before.revisionId) { "Operation did not change the workspace" }
 		val summary = "Added generated layer '${request.name.trim()}' ($layerId)"
 		val selection = synchronized(historyLock) {
-			applyPreviewOrThrow(preview, baseDocument, nextDocument, summary)
+            require(historyTree === tree && tree.head().node.id == before.historyHeadNodeId) { "Workspace history changed during the operation; refresh HEAD" }
+            applyPreviewOrThrow(preview, baseDocument, nextDocument, summary)
 			val committed = tree.commit(
 				expectedHeadNodeId = request.expectedHistoryHeadNodeId,
 				snapshot = nextDocument,
@@ -313,9 +431,11 @@ class ViewModelAgentWorkspace(
 		val nextDocument = baseDocument.copy(deletedLayerIds = baseDocument.deletedLayerIds + layerId)
 		val preview = viewModel.buildAgentWorkspacePreview(nextDocument.source, nextDocument.toConfig(current))
 		val nextRevision = revisionId(current, nextDocument)
+        require(nextRevision != before.revisionId) { "Operation did not change the workspace" }
 		val summary = "Soft-deleted layer $layerId"
 		val selection = synchronized(historyLock) {
-			applyPreviewOrThrow(preview, baseDocument, nextDocument, summary)
+            require(historyTree === tree && tree.head().node.id == before.historyHeadNodeId) { "Workspace history changed during the operation; refresh HEAD" }
+            applyPreviewOrThrow(preview, baseDocument, nextDocument, summary)
 			val committed = tree.commit(
 				expectedHeadNodeId = expectedHistoryHeadNodeId,
 				snapshot = nextDocument,
@@ -437,8 +557,10 @@ class ViewModelAgentWorkspace(
 		require(nextDocument != baseDocument) { "Parameter edit did not change the workspace" }
 		val preview = viewModel.buildAgentWorkspacePreview(nextDocument.source, nextDocument.toConfig(current))
 		val nextRevision = revisionId(current, nextDocument)
+        require(nextRevision != before.revisionId) { "Operation did not change the workspace" }
 		val selection = synchronized(historyLock) {
-			applyPreviewOrThrow(preview, baseDocument, nextDocument, summary)
+            require(historyTree === tree && tree.head().node.id == before.historyHeadNodeId) { "Workspace history changed during the operation; refresh HEAD" }
+            applyPreviewOrThrow(preview, baseDocument, nextDocument, summary)
 			tree.commit(
 				expectedHeadNodeId = expectedHeadNodeId,
 				snapshot = nextDocument,
@@ -812,8 +934,10 @@ class ViewModelAgentWorkspace(
 		require(nextDocument != baseDocument) { "Rig edit did not change the workspace" }
 		val preview = viewModel.buildAgentWorkspacePreview(nextDocument.source, nextDocument.toConfig(current))
 		val nextRevision = revisionId(current, nextDocument)
+        require(nextRevision != before.revisionId) { "Operation did not change the workspace" }
 		val selection = synchronized(historyLock) {
-			applyPreviewOrThrow(preview, baseDocument, nextDocument, summary)
+            require(historyTree === tree && tree.head().node.id == before.historyHeadNodeId) { "Workspace history changed during the operation; refresh HEAD" }
+            applyPreviewOrThrow(preview, baseDocument, nextDocument, summary)
 			tree.commit(
 				expectedHeadNodeId = expectedHeadNodeId,
 				snapshot = nextDocument,
@@ -907,6 +1031,7 @@ class ViewModelAgentWorkspace(
 	}
 
 	private fun projectId(state: PSD2LiveState): String {
+        state.projectId?.let { return it }
 		val identity = buildString {
 			append(normalizedPath(workspaceInputPath(state)))
 			workspaceFileSignature(state)?.let { append("|file:").append(it) }
@@ -921,14 +1046,18 @@ class ViewModelAgentWorkspace(
 
 	private fun revisionId(state: PSD2LiveState, document: AgentWorkspaceDocument): String {
 		val canonical = buildString {
-			append(normalizedPath(workspaceInputPath(state)))
-			workspaceFileSignature(state)?.let { append("|file:").append(it) }
-			append("|canvas:").append(document.source.widthPx).append('x').append(document.source.heightPx)
+			append("|settings:").append(document.settings)
+            append("|rig:").append(document.rigEdits)
+			document.source.groups.forEach { group ->
+                append("|group:").append(group.path).append(':').append(group.name).append(':').append(group.visible)
+                append(':').append(group.opacity).append(':').append(group.clipped).append(':').append(group.blend).append(':').append(group.passThrough)
+            }
+            append("|canvas:").append(document.source.widthPx).append('x').append(document.source.heightPx)
 			document.source.layers.forEachIndexed { painterIndex, layer ->
 				append("|layer:").append(painterIndex).append(':').append(layer.id.raw)
 				append(':').append(layer.name).append(':').append(layer.groupPath).append(':').append(layer.kind)
 				append(':').append(layer.visible).append(':').append(layer.order).append(':').append(layer.bounds)
-				append(':').append(layer.opacity).append(':').append(layer.clipped).append(':').append(layer.blend)
+				append(':').append(layer.opacity).append(':').append(layer.clipped).append(':').append(layer.blend).append(':').append(layer.channelMask)
 				append(':').append(layer.raster.width).append('x').append(layer.raster.height)
 				append(':').append(rasterDigest(layer.raster.rgba))
 			}
@@ -939,7 +1068,7 @@ class ViewModelAgentWorkspace(
 			document.rigEdits.deletedParameterIds.sorted().forEach { append("|pd:").append(it) }
 			document.rigEdits.parameterEdits.forEach { edit -> append("|pe:").append(edit) }
 		}
-		return "revision-${sha256(canonical).take(16)}"
+		return "revision-${sha256(canonical)}"
 	}
 
 	private fun documentFrom(state: PSD2LiveState): AgentWorkspaceDocument {
@@ -951,10 +1080,11 @@ class ViewModelAgentWorkspace(
 			layerOverrides = state.layerOverrides.toMap(),
 			parentOverrides = state.parentOverrides.toMap(),
 			rigEdits = state.rigEdits,
+            settings = io.github.psd2live.project.WorkspaceStateCodec.settings(state),
 		)
 	}
 
-	private fun AgentWorkspaceDocument.toConfig(state: PSD2LiveState): PipelineConfig = state.buildConfig().copy(
+	private fun AgentWorkspaceDocument.toConfig(state: PSD2LiveState): PipelineConfig = io.github.psd2live.project.WorkspaceStateCodec.decode(settings, state).buildConfig().copy(
 		layerVisibility = layerVisibility,
 		deletedLayerIds = deletedLayerIds,
 		layerOverrides = layerOverrides,
@@ -966,6 +1096,7 @@ class ViewModelAgentWorkspace(
 		projectId: String,
 		revisionId: String,
 		document: AgentWorkspaceDocument,
+        commitEditorChange: Boolean = false,
 	): WorkspaceHistoryTree<AgentWorkspaceDocument> {
 		var changed = false
 		if (historyTree == null || historyProjectId != projectId) {
@@ -986,7 +1117,7 @@ class ViewModelAgentWorkspace(
 		val tree = historyTree!!
 		if (recoveringProjectId == projectId) return tree
 		val head = tree.head().node
-		if (head.revisionId != revisionId) {
+		if (commitEditorChange && head.revisionId != revisionId) {
 			tree.commit(
 				expectedHeadNodeId = head.id,
 				snapshot = document,
@@ -1062,7 +1193,8 @@ class ViewModelAgentWorkspace(
 		tree: WorkspaceHistoryTree<AgentWorkspaceDocument>,
 	) {
 		val state = tree.state()
-		schedulePersistence { workspaceStore.persistHistory(projectId, state) }
+        val store = workspaceStore
+		schedulePersistence { store.persistHistory(projectId, state) }
 		runCatching {
 			val snapshot = history()
 			viewModel.updateHistorySnapshot(snapshot)
@@ -1071,7 +1203,9 @@ class ViewModelAgentWorkspace(
 
 	private fun scheduleTaskPersistence(projectId: String, manager: AgentTaskManager) {
 		val tasks = manager.list()
-		schedulePersistence { workspaceStore.persistTasks(projectId, tasks) }
+        val store = workspaceStore
+        viewModel.markProjectAuxiliaryChanged()
+		schedulePersistence { store.persistTasks(projectId, tasks) }
 	}
 
 	private fun schedulePersistence(block: () -> Unit) {
@@ -1093,7 +1227,8 @@ class ViewModelAgentWorkspace(
 		val state = viewModel.state.value
 		if (state.analysis != null) {
 			val projectId = projectId(state)
-			schedulePersistence { workspaceStore.persistSpatial(projectId, it.viewId, it.spatial) }
+			val store = workspaceStore
+            schedulePersistence { store.persistView(projectId, it) }
 		}
 		viewModel.addLog(
 			message = "MCP Render: [${it.kind}] ${it.viewId} (${it.renderedWidth}x${it.renderedHeight})",
@@ -1129,12 +1264,14 @@ class ViewModelAgentWorkspace(
 			expectedLayerOverrides = expected.layerOverrides,
 			expectedParentOverrides = expected.parentOverrides,
 			expectedRigEdits = expected.rigEdits,
+            expectedSettings = expected.settings,
 			layerVisibility = next.layerVisibility,
 			deletedLayerIds = next.deletedLayerIds,
 			layerOverrides = next.layerOverrides,
 			parentOverrides = next.parentOverrides,
 			rigEdits = next.rigEdits,
 			status = status,
+            settings = next.settings,
 		)
 
 	private fun rasterDigest(rgba: ByteArray): String = rasterDigests[rgba] ?: sha256(rgba).also { digest ->

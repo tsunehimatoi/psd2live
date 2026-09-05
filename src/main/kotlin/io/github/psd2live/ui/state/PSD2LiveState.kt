@@ -59,9 +59,35 @@ enum class InspectorTab {
 	PARAMETERS,
 }
 
+data class HistoryAnnotation(val title: String = "", val note: String = "", val hidden: Boolean = false)
+
 @Immutable
 data class PSD2LiveState(
-	val inputPath: String = "",
+	val projectId: String? = null,
+    val projectFile: String? = null,
+    val projectDirty: Boolean = false,
+    val projectSaving: Boolean = false,
+    val projectSaveError: String? = null,
+    val showProjectLocationDialog: Boolean = false,
+    val projectOpenGeneration: Long = 0,
+    val projectEditVersion: Long = 0,
+    val projectAuxiliaryVersion: Long = 0,
+    val projectSourceName: String? = null,
+    val historyZoom: Float = 1f,
+    val historyPanX: Float = 0f,
+    val historyPanY: Float = 0f,
+    val historySearch: String = "",
+    val historyShowHidden: Boolean = false,
+    val hierarchyWidth: Float = 260f,
+    val hierarchyCollapsed: Boolean = false,
+    val hierarchySearch: String = "",
+    val modelSettingsExpanded: Boolean = true,
+    val workspaceSplitRatio: Float = 0.60f,
+    val canvasZoom: Float = 1f,
+    val canvasPanX: Float = 0f,
+    val canvasPanY: Float = 0f,
+    val historyAnnotations: Map<String, HistoryAnnotation> = emptyMap(),
+    val inputPath: String = "",
 	/** Input identity that produced [analysis]; remains stable while the user edits the next path field. */
 	val loadedInputPath: String? = null,
 	val loadedInputFileSignature: String? = null,

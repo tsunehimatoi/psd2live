@@ -130,6 +130,7 @@ class AgentMcpServiceTest {
 	fun `lists and calls project and direct view tools`() = runBlocking {
 		val tools = client.listTools().tools
 		val expectedTools = setOf(
+            "project_save", "history_checkpoint",
 			"project_get_state",
 			"project_list_layers",
 			"project_list_parameters",

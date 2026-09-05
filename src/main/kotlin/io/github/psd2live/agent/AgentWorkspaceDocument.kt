@@ -31,6 +31,7 @@ internal data class AgentWorkspaceDocument(
 	val layerOverrides: Map<String, LayerClassificationOverride>,
 	val parentOverrides: Map<String, String?>,
 	val rigEdits: RigEditOverlay,
+    val settings: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap()),
 )
 
 /** Marker used to distinguish Agent-created source layers from layers loaded from the artist file. */
@@ -79,6 +80,7 @@ internal class AgentPngAssetStore {
 		assets[assetId] ?: throw IllegalArgumentException("PNG asset not found: $assetId")
 
 	fun find(assetId: String): AgentPngAsset? = assets[assetId]
+    fun clear() { assets.clear() }
 
 	fun remember(asset: AgentPngAsset): AgentPngAsset = asset.also { assets.putIfAbsent(it.public.id, it) }
 

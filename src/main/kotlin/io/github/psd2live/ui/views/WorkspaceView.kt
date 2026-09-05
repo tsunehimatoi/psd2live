@@ -183,8 +183,8 @@ private fun HierarchyView(
 	val density = LocalDensity.current
 	val model = state.previewModel
 
-	var treeWidth by remember { mutableStateOf(260.dp) }
-	var isTreeCollapsed by remember { mutableStateOf(false) }
+	val treeWidth = state.hierarchyWidth.dp
+	val isTreeCollapsed = state.hierarchyCollapsed
 
 	Box(modifier = Modifier.fillMaxSize()) {
 		Row(modifier = Modifier.fillMaxSize()) {
@@ -247,7 +247,7 @@ private fun HierarchyView(
 								modifier = Modifier
 									.size(18.dp)
 									.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
-									.clickable { isTreeCollapsed = true },
+									.clickable { viewModel.setHierarchyView(collapsed = true) },
 								contentAlignment = Alignment.Center,
 							) {
 								IconChevron(expanded = true, modifier = Modifier.size(9.dp), tint = colors.textMuted)
@@ -280,7 +280,7 @@ private fun HierarchyView(
 							orientation = Orientation.Horizontal,
 							state = rememberDraggableState { delta ->
 								val deltaDp = with(density) { delta.toDp() }
-								treeWidth = (treeWidth + deltaDp).coerceIn(140.dp, 600.dp)
+								viewModel.setHierarchyView(width = ((treeWidth + deltaDp).coerceIn(140.dp, 600.dp)).value)
 							},
 						),
 				)
@@ -305,7 +305,7 @@ private fun HierarchyView(
 							.background(colors.panelElevated, RoundedCornerShape(topEnd = 4.dp, bottomEnd = 4.dp))
 							.border(BorderStroke(1.dp, colors.border), RoundedCornerShape(topEnd = 4.dp, bottomEnd = 4.dp))
 							.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
-							.clickable { isTreeCollapsed = false }
+							.clickable { viewModel.setHierarchyView(collapsed = false) }
 							.padding(horizontal = 8.dp, vertical = 5.dp),
 						contentAlignment = Alignment.Center,
 					) {
@@ -482,7 +482,7 @@ private fun HierarchyTreeList(
 		}
 	}
 
-	var searchQuery by remember { mutableStateOf("") }
+	val searchQuery = state.hierarchySearch
 	val treeDragState = remember { TreeDragState() }
 	val itemBoundsMap = remember { mutableStateMapOf<String, ItemLayoutInfo>() }
 	var containerCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
@@ -521,7 +521,7 @@ private fun HierarchyTreeList(
 		) {
 			CompactTextField(
 				value = searchQuery,
-				onValueChange = { searchQuery = it },
+				onValueChange = { viewModel.setHierarchyView(search = it) },
 				placeholder = tr("canvas.hierarchy.search"),
 				modifier = Modifier.weight(1f),
 				height = 20.dp,
@@ -532,7 +532,7 @@ private fun HierarchyTreeList(
 							modifier = Modifier
 								.size(14.dp)
 								.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
-								.clickable { searchQuery = "" },
+								.clickable { viewModel.setHierarchyView(search = "") },
 							contentAlignment = Alignment.Center,
 						) {
 							IconClose(modifier = Modifier.size(8.dp), tint = colors.textMuted)

@@ -16,7 +16,11 @@ data class AgentProjectSnapshot(
 	val selectedLayerId: String?,
 	val layers: List<AgentLayerSnapshot>,
 	val parameters: List<AgentParameterSnapshot>,
-	val persistenceStatus: String = "memory_only",
+	val projectFile: String? = null,
+    val projectDirty: Boolean = false,
+    val projectSaving: Boolean = false,
+    val projectSaveError: String? = null,
+    val persistenceStatus: String = "memory_only",
 	val persistenceError: String? = null,
 )
 
@@ -365,6 +369,8 @@ data class AgentParameterRangeDiagnostic(
  * Implementations must return direct model renders, never screenshots of the application UI.
  */
 interface AgentWorkspace {
+    suspend fun saveProject(): AgentWorkspaceMutationResult = throw UnsupportedOperationException("Project saving is not available")
+    suspend fun checkpoint(summary: String): AgentWorkspaceMutationResult = throw UnsupportedOperationException("History checkpoints are not available")
 	fun snapshot(): AgentProjectSnapshot
 	fun history(): AgentHistorySnapshot = throw UnsupportedOperationException("Workspace history is not available")
 

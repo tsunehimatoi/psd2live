@@ -34,11 +34,11 @@ fun main(arguments: Array<String>) {
 		}
 		application {
 			val windowState = rememberWindowState(size = DpSize(1280.dp, 820.dp))
-			val closeApp = {
+			val closeApp: () -> Unit = { viewModel.withSavedChanges {
 				agentMcpService?.close()
 				viewModel.close()
 				exitApplication()
-			}
+			} }
 			Window(
 				onCloseRequest = closeApp,
 				title = tr("app.title"),

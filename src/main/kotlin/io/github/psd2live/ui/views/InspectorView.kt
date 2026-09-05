@@ -89,7 +89,7 @@ fun InspectorView(
 	modifier: Modifier = Modifier,
 ) {
 	val colors = LocalToolColors.current
-	var modelSettingsExpanded by remember { mutableStateOf(true) }
+	val modelSettingsExpanded = state.modelSettingsExpanded
 
 	Column(
 		modifier = modifier
@@ -112,7 +112,7 @@ fun InspectorView(
 			state = state,
 			viewModel = viewModel,
 			isExpanded = modelSettingsExpanded,
-			onToggleExpand = { modelSettingsExpanded = !modelSettingsExpanded },
+			onToggleExpand = { viewModel.setModelSettingsExpanded(!modelSettingsExpanded) },
 		)
 
 		Divider(color = colors.divider, thickness = 1.dp)
@@ -540,6 +540,8 @@ private fun ModelSettingsSection(
 				CompactSlider(
 					value = state.meshSpacing.toFloat(),
 					onValueChange = { viewModel.setMeshSpacing(it.roundToInt()) },
+                    onValueChangeStarted = viewModel::beginEditorGesture,
+                    onValueChangeFinished = viewModel::endEditorGesture,
 					valueRange = 16f..128f,
 					enabled = !isBusy,
 					modifier = Modifier.weight(1f),
@@ -582,6 +584,8 @@ private fun ModelSettingsSection(
 				CompactSlider(
 					value = state.headStrength,
 					onValueChange = { viewModel.setHeadStrength(it) },
+                    onValueChangeStarted = viewModel::beginEditorGesture,
+                    onValueChangeFinished = viewModel::endEditorGesture,
 					valueRange = 0.0f..4.0f,
 					enabled = !isBusy,
 					modifier = Modifier.weight(1f),
@@ -617,6 +621,8 @@ private fun ModelSettingsSection(
 				CompactSlider(
 					value = state.bodyStrength,
 					onValueChange = { viewModel.setBodyStrength(it) },
+                    onValueChangeStarted = viewModel::beginEditorGesture,
+                    onValueChangeFinished = viewModel::endEditorGesture,
 					valueRange = 0.0f..4.0f,
 					enabled = !isBusy,
 					modifier = Modifier.weight(1f),

@@ -5,6 +5,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.hoverable
@@ -38,6 +40,7 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -646,13 +649,18 @@ fun CompactNumberSpinner(
 fun CompactSlider(
 	value: Float,
 	onValueChange: (Float) -> Unit,
+    onValueChangeStarted: () -> Unit = {},
+    onValueChangeFinished: () -> Unit = {},
 	modifier: Modifier = Modifier,
 	valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
 	steps: Int = 0,
 	enabled: Boolean = true,
 	height: Dp = 16.dp,
 ) {
-	val colors = LocalToolColors.current
+	val changeValue by rememberUpdatedState(onValueChange)
+    val startChange by rememberUpdatedState(onValueChangeStarted)
+    val finishChange by rememberUpdatedState(onValueChangeFinished)
+    val colors = LocalToolColors.current
 	val interactionSource = remember { MutableInteractionSource() }
 	val isHovered by interactionSource.collectIsHoveredAsState()
 	val isPressed by interactionSource.collectIsPressedAsState()
@@ -664,24 +672,23 @@ fun CompactSlider(
 		modifier = modifier
 			.height(height)
 			.pointerHoverIcon(if (enabled) PointerIcon(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)) else PointerIcon.Default)
-			.pointerInput(valueRange, enabled) {
-				if (!enabled) return@pointerInput
-				detectTapGestures(
-					onPress = { offset ->
-						val newFrac = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
-						val newVal = valueRange.start + newFrac * rangeSpan
-						onValueChange(newVal)
-					},
-				)
-			}
-			.pointerInput(valueRange, enabled) {
-				if (!enabled) return@pointerInput
-				detectHorizontalDragGestures { change, _ ->
-					val newFrac = (change.position.x / size.width.toFloat()).coerceIn(0f, 1f)
-					val newVal = valueRange.start + newFrac * rangeSpan
-					onValueChange(newVal)
-				}
-			},
+            .pointerInput(valueRange, enabled) {
+                if (!enabled) return@pointerInput
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    startChange()
+                    try {
+                        changeValue(valueRange.start + (down.position.x / size.width.toFloat()).coerceIn(0f, 1f) * rangeSpan)
+                        down.consume()
+                        do {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (change.pressed) changeValue(valueRange.start + (change.position.x / size.width.toFloat()).coerceIn(0f, 1f) * rangeSpan)
+                            change.consume()
+                        } while (event.changes.any { it.pressed })
+                    } finally { finishChange() }
+                }
+            },
 		contentAlignment = Alignment.CenterStart,
 	) {
 		val totalW = maxWidth

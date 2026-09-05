@@ -86,9 +86,9 @@ fun CanvasViewportComposable(
 	val focusRequester = remember { FocusRequester() }
 
 	var viewSize by remember { mutableStateOf(IntSize(600, 600)) }
-	var zoom by remember { mutableStateOf(1.0) }
-	var panX by remember { mutableStateOf(0.0) }
-	var panY by remember { mutableStateOf(0.0) }
+	var zoom by remember(state.projectOpenGeneration) { mutableStateOf(state.canvasZoom.toDouble()) }
+	var panX by remember(state.projectOpenGeneration) { mutableStateOf(state.canvasPanX.toDouble()) }
+	var panY by remember(state.projectOpenGeneration) { mutableStateOf(state.canvasPanY.toDouble()) }
 	var isDragging by remember { mutableStateOf(false) }
 	var lastDragPos by remember { mutableStateOf(Offset.Zero) }
 	var fps by remember { mutableStateOf(0f) }
@@ -120,11 +120,9 @@ fun CanvasViewportComposable(
 		zoom = 1.0
 		panX = 0.0
 		panY = 0.0
+        viewModel.setCanvasView(zoom.toFloat(), panX.toFloat(), panY.toFloat())
 	}
 
-	LaunchedEffect(previewModel?.analysis?.source) {
-		resetCamera()
-	}
 
 	fun computeViewport(model: RigPreviewModel, width: Int, height: Int, margin: Int = 34): CanvasViewport {
 		val canvasWidth = model.analysis.source.widthPx.toFloat().coerceAtLeast(1f)
@@ -153,6 +151,7 @@ fun CanvasViewportComposable(
 		val centered = computeViewport(model, viewSize.width, viewSize.height)
 		panX += mouseX - (centered.offsetX + canvasX * centered.scale)
 		panY += mouseY - (centered.offsetY + canvasY * centered.scale)
+        viewModel.setCanvasView(zoom.toFloat(), panX.toFloat(), panY.toFloat())
 	}
 
 	// Vsync-driven frame pump. Cubism conflates requests while busy, so the newest
@@ -254,6 +253,7 @@ fun CanvasViewportComposable(
 					val delta = change.position - lastDragPos
 					panX += delta.x
 					panY += delta.y
+                    viewModel.setCanvasView(zoom.toFloat(), panX.toFloat(), panY.toFloat())
 					lastDragPos = change.position
 				}
 				if (!isDragging && mode == WorkspaceTab.PREVIEW && state.mouseTrackingEnabled) {

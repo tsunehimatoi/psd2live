@@ -237,3 +237,11 @@ History, tasks, spatial references, and SHA-256-deduplicated RGBA assets are per
   A: The base meshes are constructed from the generated atlas slices (`MissingSourceArt` is expected and normal). Keyforms, deformers, and parameters remain fully editable.
 - **Q: Why does the Preview viewport show "Software Rasterizer"? How do I enable official runtime consistency verification?**
   A: PSD2Live strictly complies with open source licensing and Live2D's Proprietary License terms; **proprietary Live2D SDK binaries are NOT distributed with the source or releases**. Without the SDK, the application smoothly uses the built-in CPU software rasterizer (full model analysis, rigging, and `.cmo3`/`.moc3` exports are completely unaffected). If you want to enable official shader rendering to achieve **100% pixel-perfect parity with official game clients / Cubism Viewer (Ground Truth)**, please follow the [Live2D Cubism SDK Configuration Guide](CUBISM_SDK_SETUP.md).
+
+## Portable projects and history
+
+After importing a PSD (Ctrl+Shift+O), choose a custom folder, the PSD folder, or `projects` in the application installation. Confirming creates a `.psd2live` file immediately. Unwritable locations report an error; existing files require an overwrite choice. Cancel leaves an unsaved workspace.
+
+Use Ctrl+O to open a project, Ctrl+S to save, and Ctrl+Shift+S to save as. The unencrypted ZIP contains the original PSD, images, all history branches, rig/configuration, Agent records and workspace UI state. Transfer the single file to move the project. Saving is separate from Cubism export; closing or switching prompts about unsaved changes.
+
+Each save immediately appends a history node, even when unchanged. Failed writes preserve the old file; edits during saving stay dirty. The history UI supports titles, notes, hiding/showing branches and checkout. Hidden branches retain their data. Ctrl+Z undoes; Ctrl+Y redoes or opens branch selection. MCP exposes `project_save` and `history_checkpoint` and records each successful model modification. See [the format reference](../PROJECT_FORMAT.md).

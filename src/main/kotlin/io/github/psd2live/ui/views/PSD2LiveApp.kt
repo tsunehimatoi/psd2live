@@ -100,7 +100,12 @@ fun FrameWindowScope.PSD2LiveApp(
 	var showAboutDialog by remember { mutableStateOf(false) }
 	var showAgentDialog by remember { mutableStateOf(false) }
 
-	// Language key tracking for recomposition
+	viewModel.confirmUnsavedChanges = {
+        JOptionPane.showOptionDialog(window, tr("project.unsaved"), tr("project.save"), JOptionPane.DEFAULT_OPTION,
+            JOptionPane.QUESTION_MESSAGE, null, arrayOf(tr("project.save"), tr("project.discard"), tr("project.cancel")), tr("project.save"))
+    }
+    LaunchedEffect(state.projectFile, state.projectDirty) { window?.title = "PSD2Live — " + (state.projectFile ?: tr("project.untitled")) + if (state.projectDirty) " *" else "" }
+    // Language key tracking for recomposition
 	val currentLanguage = state.currentLanguage
 
 	// Window Drop Target for PSD Drag & Drop
@@ -111,10 +116,10 @@ fun FrameWindowScope.PSD2LiveApp(
 					event.acceptDrop(DnDConstants.ACTION_COPY)
 					@Suppress("UNCHECKED_CAST")
 					val files = event.transferable.getTransferData(DataFlavor.javaFileListFlavor) as List<File>
-					files.firstOrNull { it.extension.equals("psd", true) }?.let {
-						viewModel.setInputPath(it.absolutePath)
-						viewModel.analyze()
-					}
+					files.firstOrNull { it.extension.lowercase() in setOf("psd", "psd2live") }?.let { file ->
+                        if (file.extension.equals("psd2live", true)) viewModel.openProject(file.toPath())
+                        else viewModel.withSavedChanges { viewModel.setInputPath(file.absolutePath); viewModel.analyze() }
+                    }
 					event.dropComplete(true)
 				} catch (failure: Exception) {
 					event.dropComplete(false)
@@ -124,6 +129,10 @@ fun FrameWindowScope.PSD2LiveApp(
 	}
 
 	CompactToolTheme {
+        io.github.psd2live.ui.components.ProjectLocationDialog(state, viewModel)
+        if (!state.showProjectLocationDialog && state.projectSaveError != null) {
+            androidx.compose.material.AlertDialog(onDismissRequest = { viewModel.clearProjectSaveError() }, title = { Text(tr("project.saveFailed")) }, text = { Text(state.projectSaveError!!) }, confirmButton = { androidx.compose.material.TextButton(onClick = { viewModel.clearProjectSaveError() }) { Text(tr("project.cancel")) } })
+        }
 		val colors = LocalToolColors.current
 		val typography = LocalToolTypography.current
 
@@ -168,15 +177,18 @@ fun FrameWindowScope.PSD2LiveApp(
 			if (!isBusy) {
 				val selected = NativeFilePicker.choosePsdFile(window, state.inputPath)
 				if (!selected.isNullOrBlank()) {
-					viewModel.setInputPath(selected)
-					viewModel.analyze()
+					viewModel.withSavedChanges { viewModel.setInputPath(selected); viewModel.analyze() }
 				}
 			}
 		}
 
-		val onReanalyzeAction = {
+		val onOpenProjectAction: () -> Unit = {
+            val picker = javax.swing.JFileChooser().apply { fileFilter = javax.swing.filechooser.FileNameExtensionFilter("PSD2Live", "psd2live") }
+            if (picker.showOpenDialog(window) == javax.swing.JFileChooser.APPROVE_OPTION) viewModel.openProject(picker.selectedFile.toPath())
+        }
+        val onReanalyzeAction = {
 			if (hasInput && !isBusy) {
-				viewModel.analyze()
+				viewModel.withSavedChanges { viewModel.analyze() }
 			}
 		}
 
@@ -194,10 +206,13 @@ fun FrameWindowScope.PSD2LiveApp(
 					if (event.type == KeyEventType.KeyDown && event.isCtrlPressed) {
 						when (event.key) {
 							Key.O -> {
-								onOpenPsdAction()
+                                if (event.isShiftPressed) onOpenPsdAction() else onOpenProjectAction()
 								true
 							}
-							Key.R -> {
+							Key.S -> { viewModel.requestProjectSave(event.isShiftPressed); true }
+                            Key.Z -> { if (event.isShiftPressed) viewModel.redoHistory() else viewModel.undoHistory(); true }
+                            Key.Y -> { viewModel.redoHistory(); true }
+                            Key.R -> {
 								onReanalyzeAction()
 								true
 							}
@@ -230,6 +245,10 @@ fun FrameWindowScope.PSD2LiveApp(
 						canGenerate = canGenerate,
 						currentLanguage = currentLanguage,
 						onOpenPsd = onOpenPsdAction,
+                        onOpenProject = onOpenProjectAction,
+                        onSaveProject = { viewModel.requestProjectSave() },
+                        onSaveProjectAs = { viewModel.requestProjectSave(true) },
+                        projectTitle = (state.projectFile ?: tr("project.untitled")) + if (state.projectDirty) " *" else "",
 						onReanalyze = onReanalyzeAction,
 						onOpenOutput = { openFolder(state.outputPath) },
 						onGenerate = onGenerateAction,
@@ -250,7 +269,7 @@ fun FrameWindowScope.PSD2LiveApp(
 				) {
 					val density = LocalDensity.current
 					val totalWidth = maxWidth
-					var splitRatio by remember { mutableStateOf(0.60f) }
+					val splitRatio = state.workspaceSplitRatio
 
 					val leftWidth = totalWidth * splitRatio
 					val rightWidth = (totalWidth - leftWidth - 4.dp).coerceAtLeast(0.dp)
@@ -276,7 +295,7 @@ fun FrameWindowScope.PSD2LiveApp(
 										val totalWidthPx = with(density) { totalWidth.toPx() }
 										if (totalWidthPx > 0f) {
 											val deltaRatio = delta / totalWidthPx
-											splitRatio = (splitRatio + deltaRatio).coerceIn(0.25f, 0.85f)
+											viewModel.setWorkspaceSplitRatio((splitRatio + deltaRatio).coerceIn(0.25f, 0.85f))
 										}
 									},
 								),

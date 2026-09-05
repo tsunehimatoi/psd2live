@@ -44,12 +44,104 @@ class PSD2LiveViewModel : AutoCloseable {
 	private val pipeline = PSD2LivePipeline()
 	private val preferences by lazy { Preferences.userNodeForPackage(PSD2LiveViewModel::class.java) }
 	private var agentWorkspace: AgentWorkspace? = null
+    private val projectSession = io.github.psd2live.project.ProjectSession(this)
+    private var pendingDestructiveAction: (() -> Unit)? = null
+    var confirmUnsavedChanges: (() -> Int)? = null
+
+    fun withSavedChanges(action: () -> Unit) {
+        if (_state.value.projectSaving) return
+        if (!_state.value.projectDirty) { action(); return }
+        when (confirmUnsavedChanges?.invoke() ?: 2) {
+            0 -> { pendingDestructiveAction = action; requestProjectSave() }
+            1 -> action()
+        }
+    }
+    fun requestProjectSave(saveAs: Boolean = false) {
+        if (_state.value.analysis == null) return
+        if (saveAs || _state.value.projectFile == null) {
+            _state.update { it.copy(showProjectLocationDialog = true, projectSaveError = null) }
+        } else saveProjectTo(Path.of(_state.value.projectFile!!))
+    }
+    fun clearProjectSaveError() { _state.update { it.copy(projectSaveError = null) } }
+    fun cancelProjectLocation() {
+        pendingDestructiveAction = null
+        _state.update { it.copy(showProjectLocationDialog = false) }
+    }
+    fun saveProjectTo(path: Path) {
+        scope.launch {
+            try {
+                saveProjectNow(path)
+                _state.update { it.copy(showProjectLocationDialog = false) }
+                if (!_state.value.projectDirty) pendingDestructiveAction?.also { pendingDestructiveAction = null; it() }
+            } catch (_: Exception) { pendingDestructiveAction = null }
+        }
+    }
+    internal suspend fun saveProjectNow(path: Path? = null, actor: String = "user"): String {
+        val target = path ?: _state.value.projectFile?.let(Path::of) ?: error("Choose a project save location in the application first")
+        val workspace = agentWorkspace as? io.github.psd2live.agent.ViewModelAgentWorkspace ?: error("Project workspace unavailable")
+        return projectSession.save(workspace, target, actor)
+    }
+    fun openProject(path: Path) = withSavedChanges {
+        scope.launch {
+            try {
+                val workspace = agentWorkspace as? io.github.psd2live.agent.ViewModelAgentWorkspace ?: error("Project workspace unavailable")
+                projectSession.open(workspace, path)
+            } catch (failure: Exception) { _state.update { it.copy(errorMessage = failure.message) } }
+        }
+    }
+    internal fun installProjectState(state: PSD2LiveState) {
+        previewRebuildJob?.cancel()
+        activeWorkJob?.cancel()
+        _state.value = state.copy(projectDirty = false, projectOpenGeneration = _state.value.projectOpenGeneration + 1)
+    }
+    private val pendingProjectSaves = java.util.concurrent.atomic.AtomicInteger()
+    internal fun projectSaveStarted() { pendingProjectSaves.incrementAndGet(); _state.update { it.copy(projectSaving = true, projectSaveError = null) } }
+    internal fun projectSaveFailed(failure: Exception) { val saving = pendingProjectSaves.decrementAndGet() > 0; _state.update { it.copy(projectSaving = saving, projectDirty = true, projectSaveError = failure.message ?: "Save failed") } }
+    internal fun projectSaveFinished(path: Path, headId: String, captured: PSD2LiveState) {
+        val saving = pendingProjectSaves.decrementAndGet() > 0
+        _state.update { current -> current.copy(projectFile = path.toAbsolutePath().normalize().toString(), projectSaving = saving,
+            projectDirty = current.historySnapshot?.headNodeId != headId || current.projectAuxiliaryVersion != captured.projectAuxiliaryVersion || io.github.psd2live.project.WorkspaceStateCodec.editableIdentity(current) != io.github.psd2live.project.WorkspaceStateCodec.editableIdentity(captured), projectSaveError = null) }
+    }
+    internal fun markProjectAuxiliaryChanged() { _state.update { it.copy(projectDirty = true, projectEditVersion = it.projectEditVersion + 1, projectAuxiliaryVersion = it.projectAuxiliaryVersion + 1) } }
+    private fun markWorkspaceChanged() { _state.update { if (it.analysis == null) it else it.copy(projectDirty = true, projectEditVersion = it.projectEditVersion + 1) } }
+    private var editorGestureActive = false
+    fun beginEditorGesture() { editorGestureActive = true }
+    fun endEditorGesture() { editorGestureActive = false; editorChanged() }
+    private fun editorChanged() {
+        if (editorGestureActive) { markWorkspaceChanged(); return }
+        if (_state.value.analysis == null) return
+        (agentWorkspace as? io.github.psd2live.agent.ViewModelAgentWorkspace)?.editorChanged()
+    }
+    fun editHistoryAnnotation(id: String, title: String, note: String, hidden: Boolean) {
+        require(_state.value.historySnapshot?.nodes?.any { it.id == id } == true)
+        _state.update { it.copy(historyAnnotations = it.historyAnnotations + (id to HistoryAnnotation(title.trim(), note, hidden)), projectDirty = true, projectEditVersion = it.projectEditVersion + 1) }
+    }
+    fun undoHistory() {
+        val history = _state.value.historySnapshot ?: return
+        history.nodes.firstOrNull { it.id == history.headNodeId }?.parentId?.let(::checkoutHistoryNode)
+    }
+    fun redoHistory() {
+        val history = _state.value.historySnapshot ?: return
+        val children = history.nodes.filter { it.parentId == history.headNodeId }
+        if (children.size == 1) checkoutHistoryNode(children.single().id)
+        else setWorkspaceTab(io.github.psd2live.ui.state.WorkspaceTab.HISTORY)
+    }
+    fun setHistoryView(zoom: Float, x: Float, y: Float, search: String, showHidden: Boolean) {
+        _state.update { if (it.historyZoom == zoom && it.historyPanX == x && it.historyPanY == y && it.historySearch == search && it.historyShowHidden == showHidden) it
+            else it.copy(historyZoom = zoom, historyPanX = x, historyPanY = y, historySearch = search, historyShowHidden = showHidden, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1) }
+    }
+    fun setHierarchyView(width: Float = _state.value.hierarchyWidth, collapsed: Boolean = _state.value.hierarchyCollapsed, search: String = _state.value.hierarchySearch) {
+        _state.update { it.copy(hierarchyWidth = width, hierarchyCollapsed = collapsed, hierarchySearch = search, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1) }
+    }
+    fun setModelSettingsExpanded(expanded: Boolean) { _state.update { it.copy(modelSettingsExpanded = expanded, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1) } }
+    fun setWorkspaceSplitRatio(value: Float) { _state.update { it.copy(workspaceSplitRatio = value, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1) } }
+    fun setCanvasView(zoom: Float, x: Float, y: Float) { _state.update { it.copy(canvasZoom = zoom, canvasPanX = x, canvasPanY = y, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1) } }
 
 	fun attachAgentWorkspace(workspace: AgentWorkspace) {
 		agentWorkspace = workspace
 		runCatching {
 			val snapshot = workspace.history()
-			_state.update { it.copy(historySnapshot = snapshot) }
+			_state.update { it.copy(historySnapshot = snapshot, projectDirty = it.projectDirty || (it.historySnapshot != null && it.historySnapshot.headNodeId != snapshot.headNodeId), projectEditVersion = it.projectEditVersion + if (it.historySnapshot?.headNodeId != snapshot.headNodeId) 1 else 0) }
 		}
 	}
 
@@ -144,50 +236,60 @@ class PSD2LiveViewModel : AutoCloseable {
 			lastExportDirectory = trimmed
 		}
 		_state.update { it.copy(outputPath = trimmed) }
+	    markWorkspaceChanged()
 	}
 
 	fun setAtlasSize(size: Int) {
 		_state.update { it.copy(atlasSize = size) }
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun setMeshSpacing(spacing: Int) {
 		_state.update { it.copy(meshSpacing = spacing.coerceIn(16, 128)) }
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun setHeadStrength(strength: Float) {
 		_state.update { it.copy(headStrength = strength.coerceIn(0f, 4f)) }
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun setBodyStrength(strength: Float) {
 		_state.update { it.copy(bodyStrength = strength.coerceIn(0f, 4f)) }
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun setTexturePadding(padding: Int) {
 		_state.update { it.copy(texturePadding = padding.coerceIn(0, 32)) }
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun setAlphaThreshold(threshold: Int) {
 		_state.update { it.copy(alphaThreshold = threshold.coerceIn(0, 255)) }
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun setMeshOnly(enabled: Boolean) {
 		_state.update { it.copy(meshOnly = enabled, generateDeformers = !enabled) }
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun setGenerateDeformers(enabled: Boolean) {
 		_state.update { it.copy(generateDeformers = enabled) }
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun setExportMotions(enabled: Boolean) {
 		_state.update { it.copy(exportMotions = enabled) }
+	    editorChanged()
 	}
 
 	fun setMotionIdle(enabled: Boolean) {
@@ -195,6 +297,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			val next = it.copy(motionIdle = enabled)
 			next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake)
 		}
+	    editorChanged()
 	}
 
 	fun setMotionBlink(enabled: Boolean) {
@@ -202,6 +305,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			val next = it.copy(motionBlink = enabled)
 			next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake)
 		}
+	    editorChanged()
 	}
 
 	fun setMotionNod(enabled: Boolean) {
@@ -209,6 +313,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			val next = it.copy(motionNod = enabled)
 			next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake)
 		}
+	    editorChanged()
 	}
 
 	fun setMotionShake(enabled: Boolean) {
@@ -216,11 +321,13 @@ class PSD2LiveViewModel : AutoCloseable {
 			val next = it.copy(motionShake = enabled)
 			next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake)
 		}
+	    editorChanged()
 	}
 
 	fun setGeneratePhysics(enabled: Boolean) {
 		_state.update { it.copy(generatePhysics = enabled) }
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun setPhysicsFrontHair(enabled: Boolean) {
@@ -229,6 +336,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			next.copy(generatePhysics = next.physicsFrontHair || next.physicsBackHair || next.physicsEyeJelly)
 		}
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun setPhysicsBackHair(enabled: Boolean) {
@@ -237,6 +345,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			next.copy(generatePhysics = next.physicsFrontHair || next.physicsBackHair || next.physicsEyeJelly)
 		}
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun setPhysicsEyeJelly(enabled: Boolean) {
@@ -245,38 +354,47 @@ class PSD2LiveViewModel : AutoCloseable {
 			next.copy(generatePhysics = next.physicsFrontHair || next.physicsBackHair || next.physicsEyeJelly)
 		}
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun setExportCmo3(enabled: Boolean) {
 		_state.update { it.copy(exportCmo3 = enabled) }
+	    editorChanged()
 	}
 
 	fun setExportMoc3(enabled: Boolean) {
 		_state.update { it.copy(exportMoc3 = enabled) }
+	    editorChanged()
 	}
 
 	fun setExportJson(enabled: Boolean) {
 		_state.update { it.copy(exportJson = enabled) }
+	    editorChanged()
 	}
 
 	fun setExportOptionsExpanded(expanded: Boolean) {
 		_state.update { it.copy(exportOptionsExpanded = expanded) }
+	    markWorkspaceChanged()
 	}
 
 	fun setMotionSubExpanded(expanded: Boolean) {
 		_state.update { it.copy(motionSubExpanded = expanded) }
+	    markWorkspaceChanged()
 	}
 
 	fun setPhysicsSubExpanded(expanded: Boolean) {
 		_state.update { it.copy(physicsSubExpanded = expanded) }
+	    markWorkspaceChanged()
 	}
 
 	fun setProjectOutputsExpanded(expanded: Boolean) {
 		_state.update { it.copy(projectOutputsExpanded = expanded) }
+	    markWorkspaceChanged()
 	}
 
 	fun setAdvancedExpanded(expanded: Boolean) {
 		_state.update { it.copy(advancedExpanded = expanded) }
+	    markWorkspaceChanged()
 	}
 
 	fun resetSettingsToDefault() {
@@ -305,6 +423,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			)
 		}
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun setLanguage(language: AppLanguage) {
@@ -315,6 +434,7 @@ class PSD2LiveViewModel : AutoCloseable {
 
 	fun setWorkspaceTab(tab: WorkspaceTab) {
 		_state.update { it.copy(activeWorkspaceTab = tab) }
+	    markWorkspaceChanged()
 	}
 
 	fun addLog(
@@ -345,6 +465,7 @@ class PSD2LiveViewModel : AutoCloseable {
 
 	fun clearLogs() {
 		_state.update { it.copy(logLines = emptyList(), logEntries = emptyList()) }
+	    markWorkspaceChanged()
 	}
 
 	private fun PSD2LiveState.withLog(
@@ -367,10 +488,12 @@ class PSD2LiveViewModel : AutoCloseable {
 
 	fun setLogPanelExpanded(expanded: Boolean) {
 		_state.update { it.copy(logPanelExpanded = expanded) }
+	    markWorkspaceChanged()
 	}
 
 	fun setLogPanelHeight(height: Float) {
 		_state.update { it.copy(logPanelHeight = height.coerceIn(80f, 450f)) }
+	    markWorkspaceChanged()
 	}
 
 	fun openLightbox(imageBytes: ByteArray, title: String? = null) {
@@ -382,11 +505,12 @@ class PSD2LiveViewModel : AutoCloseable {
 	}
 
 	fun updateHistorySnapshot(snapshot: AgentHistorySnapshot) {
-		_state.update { it.copy(historySnapshot = snapshot) }
+		_state.update { it.copy(historySnapshot = snapshot, projectDirty = it.projectDirty || (it.historySnapshot != null && it.historySnapshot.headNodeId != snapshot.headNodeId), projectEditVersion = it.projectEditVersion + if (it.historySnapshot?.headNodeId != snapshot.headNodeId) 1 else 0) }
 	}
 
 	fun selectHistoryNode(nodeId: String?) {
 		_state.update { it.copy(selectedHistoryNodeId = nodeId) }
+	    markWorkspaceChanged()
 	}
 
 	fun checkoutHistoryNode(nodeId: String) {
@@ -423,15 +547,18 @@ class PSD2LiveViewModel : AutoCloseable {
 
 	fun setInspectorTab(tab: InspectorTab) {
 		_state.update { it.copy(activeInspectorTab = tab) }
+	    markWorkspaceChanged()
 	}
 
 	fun setAnimationEnabled(enabled: Boolean) {
 		_state.update { it.copy(animationEnabled = enabled) }
 		lastTick = System.nanoTime()
+	    markWorkspaceChanged()
 	}
 
 	fun setParameterSearchQuery(query: String) {
 		_state.update { it.copy(parameterSearchQuery = query) }
+	    markWorkspaceChanged()
 	}
 
 	fun selectLayer(layerId: String?) {
@@ -441,6 +568,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				selectedDeformerId = if (layerId != null) null else it.selectedDeformerId,
 			)
 		}
+	    markWorkspaceChanged()
 	}
 
 	fun selectDeformer(deformerId: String?) {
@@ -450,6 +578,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				selectedLayerId = if (deformerId != null) null else it.selectedLayerId,
 			)
 		}
+	    markWorkspaceChanged()
 	}
 
 	fun toggleLayerVisibility(layerId: String) {
@@ -468,6 +597,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			)
 		}
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun setAllLayersVisibility(visible: Boolean) {
@@ -482,6 +612,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			)
 		}
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun invertLayerVisibility() {
@@ -500,6 +631,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			)
 		}
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun isolateLayer(layerId: String) {
@@ -527,6 +659,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			}
 		}
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun showOnlyLayers(layerIds: Set<String>) {
@@ -542,6 +675,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			)
 		}
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun deleteLayer(layerId: String) {
@@ -555,6 +689,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			)
 		}
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun restoreLayer(layerId: String) {
@@ -567,6 +702,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			)
 		}
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun restoreAllDeletedLayers() {
@@ -577,6 +713,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			)
 		}
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun reparentItem(childId: String, newParentId: String?) {
@@ -603,6 +740,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			)
 		}
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun resetHierarchyOverrides() {
@@ -613,6 +751,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			)
 		}
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun resetItemHierarchy(itemId: String) {
@@ -623,6 +762,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			)
 		}
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun setLayerClassification(layerId: String, override: LayerClassificationOverride) {
@@ -633,6 +773,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			)
 		}
 		schedulePreviewRebuild()
+	    editorChanged()
 	}
 
 	fun toggleParameterLock(id: ParameterId, currentValue: Float? = null) {
@@ -655,6 +796,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				)
 			}
 		}
+	    markWorkspaceChanged()
 	}
 
 	fun setParameterValue(id: ParameterId, value: Float) {
@@ -666,6 +808,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				parameterValues = current.parameterValues + (id to clamped),
 			)
 		}
+	    markWorkspaceChanged()
 	}
 
 	fun resetParameter(id: ParameterId) {
@@ -686,6 +829,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			followY = 0f
 			pointerY = 0f
 		}
+	    markWorkspaceChanged()
 	}
 
 	fun resetAllParameters() {
@@ -710,6 +854,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				parameterValues = defaults,
 			)
 		}
+	    markWorkspaceChanged()
 	}
 
 	fun unlockAllParameters() {
@@ -718,6 +863,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				lockedParameters = emptySet(),
 			)
 		}
+	    markWorkspaceChanged()
 	}
 
 	fun setMouseTrackingEnabled(enabled: Boolean) {
@@ -727,6 +873,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			pointerX = 0f
 			pointerY = 0f
 		}
+	    markWorkspaceChanged()
 	}
 
 	fun updatePointer(screenNormX: Float, screenNormY: Float) {
@@ -771,7 +918,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				)
 			}
 			try {
-				val config = _state.value.buildConfig()
+				val config = _state.value.copy(layerVisibility = emptyMap(), layerOverrides = emptyMap(), deletedLayerIds = emptySet(), parentOverrides = emptyMap(), rigEdits = RigEditOverlay.Empty).buildConfig()
 				val preview = withContext(Dispatchers.Default) {
 					pipeline.buildPreview(input, config)
 				}
@@ -796,9 +943,16 @@ class PSD2LiveViewModel : AutoCloseable {
 						),
 					) + preview.analysis.warnings.map { tr("log.warning", it) }
 					current.withLogs(logLinesList, level = LogLevel.INFO, tag = "Analysis").copy(
-						isAnalyzing = false,
 						isIndeterminateProgress = false,
-						analysis = preview.analysis,
+						projectId = java.util.UUID.randomUUID().toString(),
+                        projectSourceName = input.fileName.toString(),
+                        projectFile = null, projectDirty = true, showProjectLocationDialog = false, isAnalyzing = true,
+                        layerVisibility = emptyMap(), layerOverrides = emptyMap(), deletedLayerIds = emptySet(), parentOverrides = emptyMap(), rigEdits = RigEditOverlay.Empty,
+                        selectedLayerId = null, selectedDeformerId = null, isolatedLayerId = null, isolationSnapshot = null,
+                        canvasZoom = 1f, canvasPanX = 0f, canvasPanY = 0f,
+                        historySnapshot = null, historyAnnotations = emptyMap(),
+                        projectOpenGeneration = current.projectOpenGeneration + 1,
+                        analysis = preview.analysis,
 						loadedInputPath = input.toAbsolutePath().normalize().toString(),
 						loadedInputFileSignature = inputSignature,
 						previewModel = preview,
@@ -808,6 +962,8 @@ class PSD2LiveViewModel : AutoCloseable {
 					)
 				}
 				sdkSession.load(preview.runtimeBundle, preview.rig.puppet.parameters.map { it.id })
+                (agentWorkspace as? io.github.psd2live.agent.ViewModelAgentWorkspace)?.importedPsd()
+                _state.update { it.copy(isAnalyzing = false, showProjectLocationDialog = true) }
 			} catch (failure: Throwable) {
 				val detail = failure.message ?: failure.javaClass.simpleName
 				_state.update {
@@ -877,7 +1033,7 @@ class PSD2LiveViewModel : AutoCloseable {
 							}
 						}
 					if (workspaceSource != null) {
-						pipeline.run(workspaceSource, input.fileName.toString(), output, config, progress)
+						pipeline.run(workspaceSource, _state.value.projectSourceName ?: input.fileName.toString(), output, config, progress)
 					} else {
 						pipeline.run(input, output, config, progress)
 					}
@@ -928,12 +1084,14 @@ class PSD2LiveViewModel : AutoCloseable {
 		expectedLayerOverrides: Map<String, LayerClassificationOverride>,
 		expectedParentOverrides: Map<String, String?>,
 		expectedRigEdits: RigEditOverlay,
+        expectedSettings: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap()),
 		layerVisibility: Map<String, Boolean>,
 		deletedLayerIds: Set<String>,
 		layerOverrides: Map<String, LayerClassificationOverride>,
 		parentOverrides: Map<String, String?>,
 		rigEdits: RigEditOverlay,
 		status: String,
+        settings: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap()),
 	): Boolean {
 		previewRebuildJob?.cancel()
 		var applied = false
@@ -945,10 +1103,11 @@ class PSD2LiveViewModel : AutoCloseable {
 				current.deletedLayerIds != expectedDeletedLayerIds ||
 				current.layerOverrides != expectedLayerOverrides ||
 				current.parentOverrides != expectedParentOverrides ||
-				current.rigEdits != expectedRigEdits
+				current.rigEdits != expectedRigEdits ||
+                (expectedSettings.isNotEmpty() && io.github.psd2live.project.WorkspaceStateCodec.settings(current) != expectedSettings)
 			) return@update current
 			applied = true
-			current.copy(
+			io.github.psd2live.project.WorkspaceStateCodec.decode(settings, current).copy(
 				analysis = preview.analysis,
 				previewModel = preview,
 				layerVisibility = layerVisibility,

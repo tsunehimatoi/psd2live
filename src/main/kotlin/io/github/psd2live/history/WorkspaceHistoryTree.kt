@@ -158,16 +158,18 @@ class WorkspaceHistoryTree<T>(
 			val byId = selections.associateBy { it.node.id }
 			require(headNodeId in byId) { "Persisted history HEAD does not exist: $headNodeId" }
 			require(selections.count { it.node.parentId == null } == 1) { "Persisted history must contain exactly one root" }
-			for (selection in selections) {
+			val validated = mutableSetOf<String>()
+            for (selection in selections) {
 				val node = selection.node
 				require(node.revisionId.isNotBlank() && node.snapshotHash.isNotBlank()) { "Persisted history node metadata is incomplete: ${node.id}" }
 				node.parentId?.let { parent -> require(parent in byId) { "Persisted history parent is missing: $parent" } }
 				val visited = mutableSetOf<String>()
 				var cursor: String? = node.id
-				while (cursor != null) {
+				while (cursor != null && cursor !in validated) {
 					require(visited.add(cursor)) { "Persisted history contains a cycle at $cursor" }
 					cursor = byId.getValue(cursor).node.parentId
 				}
+                validated.addAll(visited)
 			}
 			val root = selections.single { it.node.parentId == null }
 			val tree = WorkspaceHistoryTree(

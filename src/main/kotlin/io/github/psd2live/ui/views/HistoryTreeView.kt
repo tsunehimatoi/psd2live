@@ -55,11 +55,24 @@ fun HistoryTreeView(
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 
-	val historySnapshot = state.historySnapshot
-	var searchQuery by remember { mutableStateOf("") }
+	var showHidden by remember(state.projectOpenGeneration) { mutableStateOf(state.historyShowHidden) }
+    val fullHistory = state.historySnapshot
+    val hiddenIds = remember(fullHistory, state.historyAnnotations, showHidden) {
+        val hidden = if (showHidden) mutableSetOf() else state.historyAnnotations.filterValues { it.hidden }.keys.toMutableSet()
+        val children = fullHistory?.nodes.orEmpty().groupBy { it.parentId }
+        val byId = fullHistory?.nodes.orEmpty().associateBy { it.id }
+        val pending = java.util.ArrayDeque(hidden)
+        while (pending.isNotEmpty()) children[pending.removeFirst()].orEmpty().forEach { if (hidden.add(it.id)) pending.add(it.id) }
+        var cursor = fullHistory?.headNodeId
+        while (cursor != null) { hidden.remove(cursor); cursor = byId[cursor]?.parentId }
+        hidden
+    }
+    val historySnapshot = fullHistory?.copy(nodes = fullHistory.nodes.filterNot { it.id in hiddenIds })
+	var searchQuery by remember(state.projectOpenGeneration) { mutableStateOf(state.historySearch) }
 	var selectedActorFilter by remember { mutableStateOf("all") }
-	var scale by remember { mutableStateOf(1.0f) }
-	var panOffset by remember { mutableStateOf(Offset(0f, 0f)) }
+	var scale by remember(state.projectOpenGeneration) { mutableStateOf(state.historyZoom) }
+	var panOffset by remember(state.projectOpenGeneration) { mutableStateOf(Offset(state.historyPanX, state.historyPanY)) }
+    LaunchedEffect(scale, panOffset, searchQuery, showHidden) { viewModel.setHistoryView(scale, panOffset.x, panOffset.y, searchQuery, showHidden) }
 
 	val selectedNodeId = state.selectedHistoryNodeId ?: historySnapshot?.headNodeId
 	val selectedNode = remember(historySnapshot, selectedNodeId) {
@@ -102,7 +115,14 @@ fun HistoryTreeView(
 			.fillMaxSize()
 			.background(colors.windowBackground),
 	) {
-		// Toolbar
+		Row(Modifier.fillMaxWidth().height(32.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+CompactButton(text = tr("project.undo"), onClick = viewModel::undoHistory, height = 20.dp)
+                CompactButton(text = tr("project.redo"), onClick = viewModel::redoHistory, height = 20.dp)
+                androidx.compose.material.Checkbox(checked = showHidden, onCheckedChange = { showHidden = it }, modifier = Modifier.size(20.dp))
+                Text(tr("project.historyShow"), style = typography.caption)
+                
+        }
+        // Toolbar
 		Row(
 			modifier = Modifier
 				.fillMaxWidth()
@@ -317,7 +337,7 @@ fun HistoryTreeView(
 
 							// Summary
 							Text(
-								text = node.summary,
+								text = state.historyAnnotations[node.id]?.title?.takeIf { it.isNotBlank() } ?: node.summary,
 								style = typography.body.copy(
 									fontSize = (11 * scale).sp,
 									fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
@@ -373,8 +393,19 @@ fun HistoryTreeView(
 							}
 						}
 
-						Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-							DetailRow(label = tr("history.nodeId"), value = selectedNode.id)
+						val annotation = state.historyAnnotations[selectedNode.id] ?: io.github.psd2live.ui.state.HistoryAnnotation()
+                        var title by remember(selectedNode.id, annotation) { mutableStateOf(annotation.title) }
+                        var note by remember(selectedNode.id, annotation) { mutableStateOf(annotation.note) }
+                        var hidden by remember(selectedNode.id, annotation) { mutableStateOf(annotation.hidden) }
+                        CompactTextField(value = title, onValueChange = { title = it }, placeholder = tr("project.historyTitle"), modifier = Modifier.fillMaxWidth())
+                        CompactTextField(value = note, onValueChange = { note = it }, placeholder = tr("project.historyNote"), modifier = Modifier.fillMaxWidth())
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            androidx.compose.material.Checkbox(hidden, onCheckedChange = { hidden = it })
+                            Text(tr("project.historyHide"), style = typography.caption)
+                        }
+                        CompactButton(text = tr("project.historyApply"), onClick = { viewModel.editHistoryAnnotation(selectedNode.id, title, note, hidden) })
+                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            DetailRow(label = tr("history.nodeId"), value = selectedNode.id)
 							DetailRow(label = tr("history.parentId"), value = selectedNode.parentId ?: "root")
 							DetailRow(label = tr("history.revisionId"), value = selectedNode.revisionId.take(16))
 							DetailRow(label = "Actor", value = selectedNode.actor)
@@ -493,66 +524,27 @@ private fun calculateTreeLayout(nodes: List<AgentHistoryNodeSnapshot>): TreeCalc
 		}
 	}
 
-	// Layout coordinates
-	var currentRootX = 0f
-	var maxDepth = 0
-
-	fun layoutSubtree(node: TreeNodeLayout, depth: Int): Float {
-		node.y = depth * (NODE_HEIGHT + VERTICAL_GAP)
-		maxDepth = max(maxDepth, depth)
-
-		if (node.children.isEmpty()) {
-			return NODE_WIDTH
-		}
-
-		var totalChildrenWidth = 0f
-		val childWidths = mutableListOf<Float>()
-		for (child in node.children) {
-			val w = layoutSubtree(child, depth + 1)
-			childWidths.add(w)
-			totalChildrenWidth += w
-		}
-		totalChildrenWidth += (node.children.size - 1) * HORIZONTAL_GAP
-
-		return max(NODE_WIDTH, totalChildrenWidth)
-	}
-
-	fun assignXCoordinates(node: TreeNodeLayout, startX: Float, allocatedWidth: Float) {
-		if (node.children.isEmpty()) {
-			node.x = startX + (allocatedWidth - NODE_WIDTH) / 2f
-			return
-		}
-
-		node.x = startX + (allocatedWidth - NODE_WIDTH) / 2f
-
-		var curX = startX
-		for (child in node.children) {
-			val childSubtreeWidth = getSubtreeWidth(child)
-			assignXCoordinates(child, curX, childSubtreeWidth)
-			curX += childSubtreeWidth + HORIZONTAL_GAP
-		}
-	}
-
-	for (root in roots) {
-		val treeWidth = layoutSubtree(root, 0)
-		assignXCoordinates(root, currentRootX, treeWidth)
-		currentRootX += treeWidth + HORIZONTAL_GAP * 2
-	}
-
-	val allList = layoutNodeMap.values.toList()
-	val totalWidth = allList.maxOfOrNull { it.x + NODE_WIDTH } ?: 400f
-	val totalHeight = allList.maxOfOrNull { it.y + NODE_HEIGHT } ?: 300f
-
-	return TreeCalculationResult(roots, allList, totalWidth, totalHeight)
+    // Two iterative passes keep long MCP histories stack-safe and linear in node count.
+    val traversal = mutableListOf<TreeNodeLayout>()
+    val pending = java.util.ArrayDeque<TreeNodeLayout>()
+    roots.forEach { pending.add(it) }
+    while (pending.isNotEmpty()) {
+        val node = pending.removeFirst()
+        traversal.add(node)
+        node.children.forEach { it.y = node.y + NODE_HEIGHT + VERTICAL_GAP; pending.add(it) }
+    }
+    val widths = mutableMapOf<String, Float>()
+    traversal.asReversed().forEach { node ->
+        widths[node.node.id] = max(NODE_WIDTH, node.children.sumOf { widths.getValue(it.node.id).toDouble() }.toFloat() + (node.children.size - 1).coerceAtLeast(0) * HORIZONTAL_GAP)
+    }
+    val starts = mutableMapOf<String, Float>()
+    var currentRootX = 0f
+    roots.forEach { starts[it.node.id] = currentRootX; currentRootX += widths.getValue(it.node.id) + HORIZONTAL_GAP * 2 }
+    traversal.forEach { node ->
+        var start = starts.getValue(node.node.id)
+        node.x = start + (widths.getValue(node.node.id) - NODE_WIDTH) / 2f
+        node.children.forEach { child -> starts[child.node.id] = start; start += widths.getValue(child.node.id) + HORIZONTAL_GAP }
+    }
+    val allList = layoutNodeMap.values.toList()
+    return TreeCalculationResult(roots, allList, allList.maxOf { it.x + NODE_WIDTH }, allList.maxOf { it.y + NODE_HEIGHT })
 }
-
-private fun getSubtreeWidth(node: TreeNodeLayout): Float {
-	if (node.children.isEmpty()) return NODE_WIDTH
-	var total = 0f
-	for (child in node.children) {
-		total += getSubtreeWidth(child)
-	}
-	total += (node.children.size - 1) * HORIZONTAL_GAP
-	return max(NODE_WIDTH, total)
-}
-

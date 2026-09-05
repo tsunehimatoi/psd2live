@@ -64,7 +64,27 @@ import java.util.zip.GZIPOutputStream
 internal class AgentWorkspaceStore(
 	private val root: Path = defaultRoot(),
 ) {
-	private val json = Json { ignoreUnknownKeys = true }
+	private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
+
+    @Synchronized
+    internal fun copyAuxiliary(projectId: String, target: Path) {
+        val source = projectRoot(projectId)
+        for (folder in listOf("assets", "views", "view-images")) {
+            val directory = source.resolve(folder)
+            if (!Files.isDirectory(directory)) continue
+            Files.walk(directory).use { paths -> paths.filter(Files::isRegularFile).forEach { file ->
+                val destination = target.resolve(source.relativize(file))
+                Files.createDirectories(destination.parent)
+                Files.copy(file, destination, StandardCopyOption.REPLACE_EXISTING)
+            } }
+        }
+        // Re-encode staged assets as PNG, including assets not yet used by a layer.
+        val assets = source.resolve("assets")
+        if (Files.isDirectory(assets)) Files.list(assets).use { paths -> paths.filter(Files::isRegularFile).forEach { file ->
+            val asset = loadAsset(projectId, readJson(file).requiredString("id"))!!
+            persistRaster(target, asset.rgba, asset.public.pixelWidth, asset.public.pixelHeight)
+        } }
+    }
 
 	@Synchronized
 	fun loadHistory(projectId: String): WorkspaceHistoryTree<AgentWorkspaceDocument>? {
@@ -72,7 +92,8 @@ internal class AgentWorkspaceStore(
 		val headFile = project.resolve("HEAD.json")
 		val nodesDirectory = project.resolve("history/nodes")
 		if (!Files.isRegularFile(headFile) || !Files.isDirectory(nodesDirectory)) return null
-		val headId = readJson(headFile).requiredString("headNodeId")
+		val headDocument = readJson(headFile)
+        val headId = headDocument.requiredString("headNodeId")
 		val nodeFiles = Files.list(nodesDirectory).use { stream ->
 			stream.filter(Files::isRegularFile).sorted().toList()
 		}
@@ -100,7 +121,12 @@ internal class AgentWorkspaceStore(
 			}
 			WorkspaceHistorySelection(node, document)
 		}
-		return WorkspaceHistoryTree.restore(selections, headId)
+		val order = headDocument["nodeOrder"]?.jsonArray?.map { it.jsonPrimitive.content }
+        val ordered = if (order != null) {
+            require(order.size == selections.size && order.toSet() == selections.map { it.node.id }.toSet()) { "Invalid history node order" }
+            val byId = selections.associateBy { it.node.id }; order.map { byId.getValue(it) }
+        } else selections
+        return WorkspaceHistoryTree.restore(ordered, headId)
 	}
 
 	@Synchronized
@@ -122,6 +148,7 @@ internal class AgentWorkspaceStore(
 			buildJsonObject {
 				put("version", STORE_VERSION)
 				put("headNodeId", state.headNodeId)
+                putJsonArray("nodeOrder") { state.selections.forEach { add(JsonPrimitive(it.node.id)) } }
 			}.toString().encodeToByteArray(),
 		)
 	}
@@ -129,7 +156,7 @@ internal class AgentWorkspaceStore(
 	@Synchronized
 	fun persistAsset(projectId: String, asset: AgentPngAsset) {
 		val project = projectRoot(projectId)
-		val blobHash = persistRaster(project, asset.rgba)
+		val blobHash = persistRaster(project, asset.rgba, asset.public.pixelWidth, asset.public.pixelHeight)
 		val value = asset.public
 		val metadata = buildJsonObject {
 			put("version", STORE_VERSION)
@@ -172,7 +199,16 @@ internal class AgentWorkspaceStore(
 	}
 
 	@Synchronized
-	fun persistSpatial(projectId: String, viewId: String, spatial: AgentViewSpatialMetadata) {
+	fun persistView(projectId: String, view: AgentRenderedView) {
+        persistSpatial(projectId, view.viewId, view.spatial)
+        val project = projectRoot(projectId)
+        val hash = sha256(view.png)
+        writeImmutable(project.resolve("view-images/$hash.png"), view.png)
+        writeImmutable(project.resolve("view-images/${fileKey(view.viewId)}.json"), buildJsonObject { put("viewId", view.viewId); put("image", "$hash.png") }.toString().encodeToByteArray())
+    }
+
+    @Synchronized
+    fun persistSpatial(projectId: String, viewId: String, spatial: AgentViewSpatialMetadata) {
 		val project = projectRoot(projectId)
 		val metadata = buildJsonObject {
 			put("version", STORE_VERSION)
@@ -241,6 +277,7 @@ internal class AgentWorkspaceStore(
 	}
 
 	private fun encodeDocument(document: AgentWorkspaceDocument, project: Path): JsonObject = buildJsonObject {
+        put("settings", document.settings)
 		put("version", STORE_VERSION)
 		put("canvasWidth", document.source.widthPx)
 		put("canvasHeight", document.source.heightPx)
@@ -260,7 +297,7 @@ internal class AgentWorkspaceStore(
 		putJsonArray("layers") {
 			document.source.layers.forEach { layer ->
 				val workspaceLayer = layer as? AgentWorkspaceSourceLayer
-				val blobHash = persistRaster(project, layer.raster.rgba)
+				val blobHash = persistRaster(project, layer.raster.rgba, layer.raster.width, layer.raster.height)
 				add(buildJsonObject {
 					put("id", layer.id.raw)
 					put("name", layer.name)
@@ -550,6 +587,7 @@ internal class AgentWorkspaceStore(
 			layerOverrides = overrides,
 			parentOverrides = value.optionalObject("parentOverrides").mapValues { it.value.jsonPrimitive.contentOrNull },
 			rigEdits = rigEdits,
+            settings = value["settings"] as? JsonObject ?: JsonObject(emptyMap()),
 		)
 	}
 
@@ -617,22 +655,33 @@ internal class AgentWorkspaceStore(
 		)
 	}
 
-	private fun persistRaster(project: Path, rgba: ByteArray): String {
+	private fun persistRaster(project: Path, rgba: ByteArray, width: Int, height: Int): String {
 		val hash = sha256(rgba)
-		val path = project.resolve("blobs/${fileKey(hash)}.rgba.gz")
-		if (Files.isRegularFile(path)) return hash
-		val compressed = ByteArrayOutputStream().use { output ->
-			GZIPOutputStream(output).use { it.write(rgba) }
-			output.toByteArray()
-		}
-		writeImmutable(path, compressed)
+        val path = project.resolve("blobs/${fileKey(hash)}-${width}x${height}.png")
+        if (Files.isRegularFile(path)) return hash
+        val image = io.github.psd2live.core.PreviewRenderer.rasterImage(width, height, rgba)
+        val bytes = ByteArrayOutputStream().use { out -> javax.imageio.ImageIO.write(image, "png", out); out.toByteArray() }
+        writeImmutable(path, bytes)
 		return hash
 	}
 
 	private fun loadRaster(project: Path, hash: String, width: Int, height: Int): ByteArray {
 		val expected = Math.multiplyExact(Math.multiplyExact(width, height), 4)
 		require(expected > 0) { "Stored raster dimensions must be positive" }
-		val file = project.resolve("blobs/${fileKey(hash)}.rgba.gz")
+		val png = project.resolve("blobs/${fileKey(hash)}-${width}x${height}.png")
+        if (Files.isRegularFile(png)) {
+            val image = javax.imageio.ImageIO.read(png.toFile()) ?: error("Invalid PNG: $hash")
+            require(image.width == width && image.height == height) { "Raster dimensions mismatch" }
+            val bytes = ByteArray(expected)
+            for (y in 0 until height) for (x in 0 until width) {
+                val pixel = image.getRGB(x, y); val i = (y * width + x) * 4
+                bytes[i] = (pixel ushr 16).toByte(); bytes[i+1] = (pixel ushr 8).toByte()
+                bytes[i+2] = pixel.toByte(); bytes[i+3] = (pixel ushr 24).toByte()
+            }
+            require(sha256(bytes) == hash) { "Stored raster hash mismatch: $hash" }
+            return bytes
+        }
+        val file = project.resolve("blobs/${fileKey(hash)}.rgba.gz")
 		require(Files.isRegularFile(file)) { "Stored raster blob is missing: $hash" }
 		val rgba = GZIPInputStream(Files.newInputStream(file)).use { input -> input.readNBytes(expected + 1) }
 		require(rgba.size == expected) { "Stored raster length mismatch for $hash" }
@@ -640,7 +689,7 @@ internal class AgentWorkspaceStore(
 		return rgba
 	}
 
-	private fun projectRoot(projectId: String): Path {
+	internal fun projectRoot(projectId: String): Path {
 		require(projectId.matches(Regex("[A-Za-z0-9._-]+"))) { "Invalid project ID" }
 		val normalizedRoot = root.toAbsolutePath().normalize()
 		return normalizedRoot.resolve(projectId).normalize().also { path ->
@@ -652,7 +701,8 @@ internal class AgentWorkspaceStore(
 
 	private fun writeImmutable(path: Path, bytes: ByteArray) {
 		if (Files.isRegularFile(path)) {
-			require(Files.readAllBytes(path).contentEquals(bytes)) { "Immutable workspace record changed: ${path.fileName}" }
+			val same = if (path.fileName.toString().endsWith(".json")) readJson(path) == json.parseToJsonElement(bytes.decodeToString()) else Files.readAllBytes(path).contentEquals(bytes)
+            require(same) { "Immutable workspace record changed: ${path.fileName}" }
 			return
 		}
 		writeAtomic(path, bytes, replace = false)
@@ -662,7 +712,8 @@ internal class AgentWorkspaceStore(
 		Files.createDirectories(path.parent)
 		val temporary = path.parent.resolve(".${path.fileName}.${UUID.randomUUID()}.tmp")
 		try {
-			Files.write(temporary, bytes, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
+			val output = if (path.fileName.toString().endsWith(".json")) json.encodeToString(JsonElement.serializer(), json.parseToJsonElement(bytes.decodeToString())).encodeToByteArray() else bytes
+            Files.write(temporary, output, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
 			val options = if (replace) {
 				arrayOf(StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
 			} else {

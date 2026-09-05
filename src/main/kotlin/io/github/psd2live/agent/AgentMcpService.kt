@@ -444,6 +444,18 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace): Server {
 		}
 	}
 
+    server.addTool(
+        name = "project_save",
+        toolAnnotations = MUTATING,
+        description = "Save the complete portable project to its selected file, creating an immediate history checkpoint. Choose the file location in the UI first.",
+    ) { mutationResult { workspace.saveProject().toJson() } }
+    server.addTool(
+        name = "history_checkpoint",
+        toolAnnotations = MUTATING,
+        description = "Append an explicit history checkpoint even when the model is unchanged.",
+        inputSchema = ToolSchema(properties = buildJsonObject { putJsonObject("summary") { put("type", "string") } }, required = listOf("summary")),
+    ) { request -> mutationResult { workspace.checkpoint(request.requiredString("summary")).toJson() } }
+
 	server.addTool(
 		name = "history_list",
 		description = "Read the append-only branch-preserving workspace history and current HEAD. Nodes cannot be edited or deleted.",
@@ -1327,6 +1339,10 @@ private fun AgentProjectSnapshot.toJson(
 	projectId?.let { put("projectId", it) }
 	put("revisionId", revisionId)
 	historyHeadNodeId?.let { put("historyHeadNodeId", it) }
+    projectFile?.let { put("projectFile", it) }
+    put("projectDirty", projectDirty)
+    put("projectSaving", projectSaving)
+    projectSaveError?.let { put("projectSaveError", it) }
 	put("loaded", loaded)
 	inputName?.let { put("inputName", it) }
 	canvasWidth?.let { put("canvasWidth", it) }
