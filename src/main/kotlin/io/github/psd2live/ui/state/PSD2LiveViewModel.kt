@@ -131,10 +131,34 @@ class PSD2LiveViewModel : AutoCloseable {
             else it.copy(historyZoom = zoom, historyPanX = x, historyPanY = y, historySearch = search, historyShowHidden = showHidden, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1) }
     }
     fun setHierarchyView(width: Float = _state.value.hierarchyWidth, collapsed: Boolean = _state.value.hierarchyCollapsed, search: String = _state.value.hierarchySearch) {
-        _state.update { it.copy(hierarchyWidth = width, hierarchyCollapsed = collapsed, hierarchySearch = search, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1) }
+        val clampedWidth = width.coerceIn(140f, 600f)
+        _state.update {
+            if (it.hierarchyWidth == clampedWidth && it.hierarchyCollapsed == collapsed && it.hierarchySearch == search) it
+            else it.copy(hierarchyWidth = clampedWidth, hierarchyCollapsed = collapsed, hierarchySearch = search, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1)
+        }
+    }
+    fun adjustHierarchyWidth(deltaDp: Float, min: Float = 140f, max: Float = 600f) {
+        _state.update {
+            val next = (it.hierarchyWidth + deltaDp).coerceIn(min, max)
+            if (next == it.hierarchyWidth) it
+            else it.copy(hierarchyWidth = next, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1)
+        }
     }
     fun setModelSettingsExpanded(expanded: Boolean) { _state.update { it.copy(modelSettingsExpanded = expanded, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1) } }
-    fun setWorkspaceSplitRatio(value: Float) { _state.update { it.copy(workspaceSplitRatio = value, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1) } }
+    fun setWorkspaceSplitRatio(value: Float) {
+        val clamped = value.coerceIn(0.25f, 0.85f)
+        _state.update {
+            if (it.workspaceSplitRatio == clamped) it
+            else it.copy(workspaceSplitRatio = clamped, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1)
+        }
+    }
+    fun adjustWorkspaceSplitRatio(deltaRatio: Float, min: Float = 0.25f, max: Float = 0.85f) {
+        _state.update {
+            val next = (it.workspaceSplitRatio + deltaRatio).coerceIn(min, max)
+            if (next == it.workspaceSplitRatio) it
+            else it.copy(workspaceSplitRatio = next, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1)
+        }
+    }
     fun setCanvasView(zoom: Float, x: Float, y: Float) { _state.update { it.copy(canvasZoom = zoom, canvasPanX = x, canvasPanY = y, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1) } }
 
 	fun attachAgentWorkspace(workspace: AgentWorkspace) {
@@ -492,8 +516,25 @@ class PSD2LiveViewModel : AutoCloseable {
 	}
 
 	fun setLogPanelHeight(height: Float) {
-		_state.update { it.copy(logPanelHeight = height.coerceIn(80f, 450f)) }
-	    markWorkspaceChanged()
+		val clamped = height.coerceIn(80f, 450f)
+		var changed = false
+		_state.update {
+			if (it.logPanelHeight == clamped) it
+			else {
+				changed = true
+				it.copy(logPanelHeight = clamped)
+			}
+		}
+		if (changed) markWorkspaceChanged()
+	}
+
+	fun adjustLogPanelHeight(deltaDp: Float, min: Float = 80f, max: Float = 450f) {
+		_state.update {
+			val next = (it.logPanelHeight + deltaDp).coerceIn(min, max)
+			if (next == it.logPanelHeight) it
+			else it.copy(logPanelHeight = next)
+		}
+		markWorkspaceChanged()
 	}
 
 	fun openLightbox(imageBytes: ByteArray, title: String? = null) {

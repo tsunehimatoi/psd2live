@@ -305,4 +305,47 @@ class PSD2LiveViewModelTest {
 			vm.close()
 		}
 	}
+
+	@Test
+	fun `splitter adjustments accumulate rapid deltas and enforce boundaries`() {
+		val vm = PSD2LiveViewModel()
+		try {
+			val initialSplitRatio = vm.state.value.workspaceSplitRatio
+			// Simulate 10 rapid mouse drag events within a single frame
+			repeat(10) {
+				vm.adjustWorkspaceSplitRatio(0.01f)
+			}
+			assertEquals(initialSplitRatio + 0.10f, vm.state.value.workspaceSplitRatio, 0.001f)
+
+			// Boundary clamps
+			vm.adjustWorkspaceSplitRatio(1.0f)
+			assertEquals(0.85f, vm.state.value.workspaceSplitRatio)
+			vm.adjustWorkspaceSplitRatio(-1.0f)
+			assertEquals(0.25f, vm.state.value.workspaceSplitRatio)
+
+			// Hierarchy width adjustments
+			val initialHierarchyWidth = vm.state.value.hierarchyWidth
+			repeat(5) {
+				vm.adjustHierarchyWidth(10f)
+			}
+			assertEquals(initialHierarchyWidth + 50f, vm.state.value.hierarchyWidth)
+			vm.adjustHierarchyWidth(1000f)
+			assertEquals(600f, vm.state.value.hierarchyWidth)
+			vm.adjustHierarchyWidth(-1000f)
+			assertEquals(140f, vm.state.value.hierarchyWidth)
+
+			// Log panel height adjustments
+			val initialLogHeight = vm.state.value.logPanelHeight
+			repeat(5) {
+				vm.adjustLogPanelHeight(10f)
+			}
+			assertEquals(initialLogHeight + 50f, vm.state.value.logPanelHeight)
+			vm.adjustLogPanelHeight(1000f)
+			assertEquals(450f, vm.state.value.logPanelHeight)
+			vm.adjustLogPanelHeight(-1000f)
+			assertEquals(80f, vm.state.value.logPanelHeight)
+		} finally {
+			vm.close()
+		}
+	}
 }

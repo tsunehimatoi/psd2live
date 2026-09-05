@@ -43,6 +43,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.ui.Alignment
@@ -186,8 +188,15 @@ private fun HierarchyView(
 	val treeWidth = state.hierarchyWidth.dp
 	val isTreeCollapsed = state.hierarchyCollapsed
 
+	var rowCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+	var splitterCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+
 	Box(modifier = Modifier.fillMaxSize()) {
-		Row(modifier = Modifier.fillMaxSize()) {
+		Row(
+			modifier = Modifier
+				.fillMaxSize()
+				.onGloballyPositioned { rowCoords = it },
+		) {
 			// Left: Hierarchy Tree (when expanded)
 			if (!isTreeCollapsed) {
 				Column(
@@ -275,14 +284,28 @@ private fun HierarchyView(
 						.width(4.dp)
 						.fillMaxHeight()
 						.background(colors.divider)
+						.onGloballyPositioned { splitterCoords = it }
 						.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.E_RESIZE_CURSOR)))
-						.draggable(
-							orientation = Orientation.Horizontal,
-							state = rememberDraggableState { delta ->
-								val deltaDp = with(density) { delta.toDp() }
-								viewModel.setHierarchyView(width = ((treeWidth + deltaDp).coerceIn(140.dp, 600.dp)).value)
-							},
-						),
+						.pointerInput(density) {
+							awaitEachGesture {
+								val down = awaitFirstDown()
+								val grabOffset = down.position.x
+								while (true) {
+									val event = awaitPointerEvent()
+									val change = event.changes.firstOrNull { it.id == down.id } ?: break
+									if (!change.pressed) break
+									change.consume()
+									val row = rowCoords
+									val splitter = splitterCoords
+									if (row != null && splitter != null && row.isAttached && splitter.isAttached) {
+										val mouseInRow = row.localPositionOf(splitter, change.position)
+										val splitterLeftPx = mouseInRow.x - grabOffset
+										val widthDp = with(density) { splitterLeftPx.toDp() }
+										viewModel.setHierarchyView(width = widthDp.value.coerceIn(140f, 600f))
+									}
+								}
+							}
+						},
 				)
 			}
 

@@ -2,8 +2,14 @@ package io.github.psd2live.ui.views
 
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -99,6 +105,8 @@ fun BottomLogDock(
 		Toolkit.getDefaultToolkit().systemClipboard.setContents(selection, selection)
 	}
 
+	var splitterCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+
 	Column(
 		modifier = modifier
 			.fillMaxWidth()
@@ -112,16 +120,30 @@ fun BottomLogDock(
 					.fillMaxWidth()
 					.height(4.dp)
 					.background(colors.divider)
+					.onGloballyPositioned { splitterCoords = it }
 					.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.N_RESIZE_CURSOR)))
-					.draggable(
-						orientation = Orientation.Vertical,
-						state = rememberDraggableState { deltaY ->
-							// Dragging up increases height (deltaY is negative)
-							val deltaDp = with(density) { deltaY.toDp() }
-							val newHeight = state.logPanelHeight - deltaDp.value
-							viewModel.setLogPanelHeight(newHeight)
-						},
-					),
+					.pointerInput(density) {
+						awaitEachGesture {
+							val down = awaitFirstDown()
+							val splitter = splitterCoords ?: return@awaitEachGesture
+							if (!splitter.isAttached) return@awaitEachGesture
+							val startMouseY = splitter.positionInWindow().y + down.position.y
+							val startHeight = viewModel.state.value.logPanelHeight
+							while (true) {
+								val event = awaitPointerEvent()
+								val change = event.changes.firstOrNull { it.id == down.id } ?: break
+								if (!change.pressed) break
+								change.consume()
+								if (splitter.isAttached) {
+									val currentMouseY = splitter.positionInWindow().y + change.position.y
+									val deltaYPx = currentMouseY - startMouseY
+									val deltaDp = with(density) { (-deltaYPx).toDp() }.value
+									val newHeight = (startHeight + deltaDp).coerceIn(80f, 450f)
+									viewModel.setLogPanelHeight(newHeight)
+								}
+							}
+						}
+					},
 			)
 		}
 

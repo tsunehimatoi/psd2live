@@ -5,8 +5,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -272,7 +277,14 @@ fun FrameWindowScope.PSD2LiveApp(
 					val leftWidth = totalWidth * splitRatio
 					val rightWidth = (totalWidth - leftWidth - 4.dp).coerceAtLeast(0.dp)
 
-					Row(modifier = Modifier.fillMaxSize()) {
+					var rowCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+					var splitterCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+
+					Row(
+						modifier = Modifier
+							.fillMaxSize()
+							.onGloballyPositioned { rowCoords = it },
+					) {
 						// Left: Workspace Area
 						WorkspaceView(
 							state = state,
@@ -286,17 +298,31 @@ fun FrameWindowScope.PSD2LiveApp(
 								.width(4.dp)
 								.fillMaxHeight()
 								.background(colors.divider)
+								.onGloballyPositioned { splitterCoords = it }
 								.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.E_RESIZE_CURSOR)))
-								.draggable(
-									orientation = Orientation.Horizontal,
-									state = rememberDraggableState { delta ->
-										val totalWidthPx = with(density) { totalWidth.toPx() }
-										if (totalWidthPx > 0f) {
-											val deltaRatio = delta / totalWidthPx
-											viewModel.setWorkspaceSplitRatio((splitRatio + deltaRatio).coerceIn(0.25f, 0.85f))
+								.pointerInput(Unit) {
+									awaitEachGesture {
+										val down = awaitFirstDown()
+										val grabOffset = down.position.x
+										while (true) {
+											val event = awaitPointerEvent()
+											val change = event.changes.firstOrNull { it.id == down.id } ?: break
+											if (!change.pressed) break
+											change.consume()
+											val row = rowCoords
+											val splitter = splitterCoords
+											if (row != null && splitter != null && row.isAttached && splitter.isAttached) {
+												val rowWidth = row.size.width.toFloat()
+												if (rowWidth > 0f) {
+													val mouseInRow = row.localPositionOf(splitter, change.position)
+													val splitterLeft = mouseInRow.x - grabOffset
+													val ratio = (splitterLeft / rowWidth).coerceIn(0.25f, 0.85f)
+													viewModel.setWorkspaceSplitRatio(ratio)
+												}
+											}
 										}
-									},
-								),
+									}
+								},
 						)
 
 						// Right: Inspector Area
