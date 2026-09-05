@@ -25,6 +25,7 @@ import io.github.psd2live.agent.AgentHistoryNodeSnapshot
 import io.github.psd2live.agent.AgentHistorySnapshot
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.components.CompactButton
+import io.github.psd2live.ui.components.CompactCheckbox
 import io.github.psd2live.ui.components.CompactTextField
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
@@ -115,14 +116,7 @@ fun HistoryTreeView(
 			.fillMaxSize()
 			.background(colors.windowBackground),
 	) {
-		Row(Modifier.fillMaxWidth().height(32.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-CompactButton(text = tr("project.undo"), onClick = viewModel::undoHistory, height = 20.dp)
-                CompactButton(text = tr("project.redo"), onClick = viewModel::redoHistory, height = 20.dp)
-                androidx.compose.material.Checkbox(checked = showHidden, onCheckedChange = { showHidden = it }, modifier = Modifier.size(20.dp))
-                Text(tr("project.historyShow"), style = typography.caption)
-                
-        }
-        // Toolbar
+		// Unified Toolbar
 		Row(
 			modifier = Modifier
 				.fillMaxWidth()
@@ -143,6 +137,27 @@ CompactButton(text = tr("project.undo"), onClick = viewModel::undoHistory, heigh
 					text = "${historySnapshot.nodes.size} nodes · HEAD: ${historySnapshot.headNodeId.take(12)}…",
 					style = typography.monoSmall.copy(fontSize = 10.sp),
 					color = colors.accent,
+				)
+				Box(
+					modifier = Modifier
+						.width(1.dp)
+						.height(14.dp)
+						.background(colors.divider),
+				)
+				CompactButton(
+					text = tr("project.undo"),
+					onClick = viewModel::undoHistory,
+					height = 20.dp,
+				)
+				CompactButton(
+					text = tr("project.redo"),
+					onClick = viewModel::redoHistory,
+					height = 20.dp,
+				)
+				CompactCheckbox(
+					checked = showHidden,
+					onCheckedChange = { showHidden = it },
+					label = tr("project.historyShow"),
 				)
 			}
 
@@ -394,17 +409,61 @@ CompactButton(text = tr("project.undo"), onClick = viewModel::undoHistory, heigh
 						}
 
 						val annotation = state.historyAnnotations[selectedNode.id] ?: io.github.psd2live.ui.state.HistoryAnnotation()
-                        var title by remember(selectedNode.id, annotation) { mutableStateOf(annotation.title) }
-                        var note by remember(selectedNode.id, annotation) { mutableStateOf(annotation.note) }
-                        var hidden by remember(selectedNode.id, annotation) { mutableStateOf(annotation.hidden) }
-                        CompactTextField(value = title, onValueChange = { title = it }, placeholder = tr("project.historyTitle"), modifier = Modifier.fillMaxWidth())
-                        CompactTextField(value = note, onValueChange = { note = it }, placeholder = tr("project.historyNote"), modifier = Modifier.fillMaxWidth())
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            androidx.compose.material.Checkbox(hidden, onCheckedChange = { hidden = it })
-                            Text(tr("project.historyHide"), style = typography.caption)
-                        }
-                        CompactButton(text = tr("project.historyApply"), onClick = { viewModel.editHistoryAnnotation(selectedNode.id, title, note, hidden) })
-                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+						var title by remember(selectedNode.id, annotation) { mutableStateOf(annotation.title) }
+						var note by remember(selectedNode.id, annotation) { mutableStateOf(annotation.note) }
+						var hidden by remember(selectedNode.id, annotation) { mutableStateOf(annotation.hidden) }
+
+						Column(
+							modifier = Modifier
+								.fillMaxWidth()
+								.background(colors.inputBackground, RoundedCornerShape(4.dp))
+								.border(BorderStroke(1.dp, colors.divider), RoundedCornerShape(4.dp))
+								.padding(8.dp),
+							verticalArrangement = Arrangement.spacedBy(6.dp),
+						) {
+							Text(
+								text = tr("project.historyTitle"),
+								style = typography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
+								color = colors.textMuted,
+							)
+							CompactTextField(
+								value = title,
+								onValueChange = { title = it },
+								placeholder = tr("project.historyTitle"),
+								modifier = Modifier.fillMaxWidth(),
+								height = 22.dp,
+							)
+							Text(
+								text = tr("project.historyNote"),
+								style = typography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
+								color = colors.textMuted,
+							)
+							CompactTextField(
+								value = note,
+								onValueChange = { note = it },
+								placeholder = tr("project.historyNote"),
+								modifier = Modifier.fillMaxWidth(),
+								height = 22.dp,
+							)
+							Row(
+								modifier = Modifier.fillMaxWidth(),
+								verticalAlignment = Alignment.CenterVertically,
+								horizontalArrangement = Arrangement.SpaceBetween,
+							) {
+								CompactCheckbox(
+									checked = hidden,
+									onCheckedChange = { hidden = it },
+									label = tr("project.historyHide"),
+								)
+								CompactButton(
+									text = tr("project.historyApply"),
+									onClick = { viewModel.editHistoryAnnotation(selectedNode.id, title, note, hidden) },
+									height = 20.dp,
+									isPrimary = true,
+								)
+							}
+						}
+						Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                             DetailRow(label = tr("history.nodeId"), value = selectedNode.id)
 							DetailRow(label = tr("history.parentId"), value = selectedNode.parentId ?: "root")
 							DetailRow(label = tr("history.revisionId"), value = selectedNode.revisionId.take(16))

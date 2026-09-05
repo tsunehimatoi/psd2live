@@ -129,10 +129,6 @@ fun FrameWindowScope.PSD2LiveApp(
 	}
 
 	CompactToolTheme {
-        io.github.psd2live.ui.components.ProjectLocationDialog(state, viewModel)
-        if (!state.showProjectLocationDialog && state.projectSaveError != null) {
-            androidx.compose.material.AlertDialog(onDismissRequest = { viewModel.clearProjectSaveError() }, title = { Text(tr("project.saveFailed")) }, text = { Text(state.projectSaveError!!) }, confirmButton = { androidx.compose.material.TextButton(onClick = { viewModel.clearProjectSaveError() }) { Text(tr("project.cancel")) } })
-        }
 		val colors = LocalToolColors.current
 		val typography = LocalToolTypography.current
 
@@ -363,6 +359,18 @@ fun FrameWindowScope.PSD2LiveApp(
 				imageBytes = imgBytes,
 				title = state.lightboxTitle,
 				onDismiss = { viewModel.closeLightbox() },
+			)
+		}
+
+		io.github.psd2live.ui.components.ProjectLocationDialog(state, viewModel)
+
+		if (!state.showProjectLocationDialog && state.projectSaveError != null) {
+			ModalDialog(
+				title = tr("project.saveFailed"),
+				message = state.projectSaveError!!,
+				onDismiss = { viewModel.clearProjectSaveError() },
+				isError = true,
+				confirmText = tr("dialog.ok"),
 			)
 		}
 	}

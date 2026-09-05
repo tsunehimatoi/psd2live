@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -45,6 +46,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -771,6 +773,56 @@ fun CompactCheckbox(
 		) {
 			if (checked) {
 				IconCheck(modifier = Modifier.size(10.dp), tint = Color.White)
+			}
+		}
+		if (label.isNotEmpty()) {
+			Spacer(Modifier.width(6.dp))
+			Text(
+				text = label,
+				style = typography.body.copy(fontSize = 11.5.sp),
+				color = if (enabled) colors.textPrimary else colors.textDisabled,
+			)
+		}
+	}
+}
+
+/** Compact Radio Button matching CompactCheckbox design */
+@Composable
+fun CompactRadioButton(
+	selected: Boolean,
+	onClick: () -> Unit,
+	modifier: Modifier = Modifier,
+	enabled: Boolean = true,
+	label: String = "",
+) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	val interactionSource = remember { MutableInteractionSource() }
+
+	Row(
+		modifier = modifier
+			.clickable(enabled = enabled, interactionSource = interactionSource, indication = null, onClick = onClick)
+			.padding(vertical = 2.dp),
+		verticalAlignment = Alignment.CenterVertically,
+	) {
+		Box(
+			modifier = Modifier
+				.size(14.dp)
+				.clip(CircleShape)
+				.background(colors.inputBackground, CircleShape)
+				.border(
+					BorderStroke(1.dp, if (selected) colors.accent else colors.border),
+					CircleShape,
+				),
+			contentAlignment = Alignment.Center,
+		) {
+			if (selected) {
+				Box(
+					modifier = Modifier
+						.size(6.dp)
+						.clip(CircleShape)
+						.background(colors.accent, CircleShape),
+				)
 			}
 		}
 		if (label.isNotEmpty()) {
