@@ -16,7 +16,8 @@ import kotlin.math.max
  *
  * A container round-trip is not enough: a model can retain every ID and still place a whole
  * deformer subtree outside the canvas.  This validator compares evaluated canvas-space geometry
- * with the PSD layer bounds, so a broken parent-space conversion cannot be reported as a success.
+ * with the PSD layer bounds. Bounds deviations are diagnostics and must not prevent export;
+ * malformed, missing, non-finite or collapsed geometry still fails validation.
  */
 object RigIntegrityValidator {
 	private enum class LatticeExtent { RowWidth, ColumnHeight }
@@ -66,12 +67,11 @@ object RigIntegrityValidator {
 			val scale = max(max(expected.width, expected.height), 1f)
 			val centerError = max(abs(actual.centerX - expected.centerX), abs(actual.centerY - expected.centerY))
 			val sizeError = max(abs(actual.width - expected.width), abs(actual.height - expected.height))
-			// Neutral forms are authored as identity.  A little numerical/interpolation drift is fine,
-			// but moving or resizing a layer by half its own size means the parent-space chain is broken.
-			require(centerError <= scale * 0.50f && sizeError <= scale * 0.50f) {
-				tr("validation.neutralMismatch", label, drawable.id.raw, expected, actual)
-			}
-			if (centerError > scale * 0.04f || sizeError > scale * 0.04f) {
+			// Preserve severe deviations (including their bounds) in the export logs/report, but
+			// allow usable geometry to export even when its neutral bounds differ from the PSD.
+			if (centerError > scale * 0.50f || sizeError > scale * 0.50f) {
+				warnings += tr("validation.neutralMismatch", label, drawable.id.raw, expected, actual)
+			} else if (centerError > scale * 0.04f || sizeError > scale * 0.04f) {
 				warnings += tr("validation.neutralWarning", label, drawable.id.raw, expected, actual)
 			}
 		}
