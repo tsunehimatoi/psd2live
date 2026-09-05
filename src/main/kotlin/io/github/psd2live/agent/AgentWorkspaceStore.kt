@@ -166,6 +166,14 @@ internal class AgentWorkspaceStore(
     }
 
     @Synchronized
+    fun registrationsForAsset(projectId: String, assetId: String): List<JsonObject> {
+        val directory=projectRoot(projectId).resolve("workflow")
+        if (!Files.isDirectory(directory)) return emptyList()
+        return Files.list(directory).use { paths -> paths.filter(Files::isRegularFile).sorted().map { readJson(it) }
+            .filter { it.optionalString("kind")=="registration" && it.optionalString("asset_id")==assetId }.toList() }
+    }
+
+    @Synchronized
 	fun persistAsset(projectId: String, asset: AgentPngAsset) {
 		val project = projectRoot(projectId)
 		val blobHash = persistRaster(project, asset.rgba, asset.public.pixelWidth, asset.public.pixelHeight)

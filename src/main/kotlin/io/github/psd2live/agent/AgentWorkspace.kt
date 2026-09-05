@@ -113,7 +113,6 @@ data class AgentAddLayerRequest(
 	val opacity: Float = 1f,
 	val trimTransparent: Boolean = true,
     val registrationId: String? = null,
-    val rigMode: String = "automatic", // "placement" retains existing parent; it is never an unbound layer
 	val parentDeformerId: String? = null,
 	val taskId: String? = null,
 )

@@ -97,7 +97,10 @@ internal class AgentAssetWorkflow(
                 val pixels=(a["generated_pixel_rect"] as? JsonObject)?.rect() ?: Bounds(0f,0f,asset.public.pixelWidth.toFloat(),asset.public.pixelHeight.toFloat())
                 require(pixels.left>=0 && pixels.top>=0 && pixels.right<=asset.public.pixelWidth && pixels.bottom<=asset.public.pixelHeight) { "generated_pixel_rect outside PNG" }
                 val canvas=(a["source_canvas_rect"] as? JsonObject)?.rect() ?: ref.getValue("source_canvas_rect").jsonObject.rect()
-                registerAgentFrame(pixels,canvas,a.flag("allow_stretch"))
+                val frame=registerAgentFrame(pixels,canvas,a.flag("allow_stretch"))
+                val mirrorX=a.flag("mirror_x"); val mirrorY=a.flag("mirror_y")
+                frame.copy(x=frame.x+if(mirrorX) (pixels.left+pixels.right)*frame.scaleX else 0.0,
+                    y=frame.y+if(mirrorY) (pixels.top+pixels.bottom)*frame.scaleY else 0.0,mirrorX=mirrorX,mirrorY=mirrorY)
             }
             "landmarks" -> {
                 val source=a.points("generated_anchors"); val targets=if(a.containsKey("target_anchors")) a.points("target_anchors") else ref.points("target_anchors")
@@ -106,7 +109,7 @@ internal class AgentAssetWorkflow(
                 val fit=registerAgentLandmarks(source.values.toList(),source.keys.map { targets.getValue(it) },a.flag("mirror_x"),a.flag("mirror_y"))
                 residual=fit.rmsError; conflict=fit.orientationConflict; fit.transform
             }
-            "absolute" -> AgentPlacementTransform.parse(a.getValue("transform").jsonObject).also {
+            "absolute" -> AgentPlacementTransform.parse(requireNotNull(a["transform"] as? JsonObject) { "absolute mode requires transform" }).also {
                 require(a.flag("allow_stretch") || abs(it.scaleX-it.scaleY)/max(it.scaleX,it.scaleY)<.005) { "Nonuniform scaling requires allow_stretch=true" }
             }
             else -> throw IllegalArgumentException("mode must be frame, landmarks or absolute")
@@ -129,15 +132,15 @@ internal class AgentAssetWorkflow(
         val previous=asset(a.text("asset_id")); val referenceId=previous.public.details.text("reference_id")
         val ref=record(referenceId,"reference"); val spatial=store.loadSpatial(projectId,referenceId) ?: error("Reference spatial metadata missing")
         val imported=assets.import(AgentPngImportRequest(requireNotNull(previous.originalPng) { "Legacy asset has no original PNG" },referenceId,
-            solidBackground=a["solid_background"]?.jsonPrimitive?.content ?: ref.text("background_color"),
-            backgroundTolerance=a.number("background_tolerance",16.0).toInt(),requireTransparency=true,referenceId=referenceId,
+            solidBackground=a["solid_background"]?.jsonPrimitive?.content ?: previous.public.details["solid_background"]?.jsonPrimitive?.content ?: ref.text("background_color"),
+            backgroundTolerance=a.number("background_tolerance",previous.public.details.number("background_tolerance",16.0)).toInt(),requireTransparency=true,referenceId=referenceId,
             processing=a["processing"] as? JsonObject ?: JsonObject(emptyMap())),spatial)
         val saved=assets.require(imported.id); store.persistAsset(projectId,saved)
         return AgentWorkflowResult(buildJsonObject { put("asset_id",imported.id); put("details",imported.details) },listOf(saved.preview().png))
     }
 
     fun preview(a: JsonObject): AgentWorkflowResult {
-        val entries=a.getValue("placements").jsonArray.map { it.jsonObject }
+        val entries=requireNotNull(a["placements"] as? JsonArray) { "placements is required" }.map { it.jsonObject }
         require(entries.isNotEmpty())
         val excluded=a.strings("replace_layer_ids").toSet()
         require(excluded.all { id -> document.source.layers.any { it.id.raw==id } }) { "Unknown replace_layer_ids" }
@@ -164,7 +167,7 @@ internal class AgentAssetWorkflow(
             if(background!=null) { require(Regex("#[0-9a-fA-F]{6}").matches(background));g.color=Color(background.drop(1).toInt(16));g.fillRect(0,0,canvas.width,canvas.height) }
             for((key,layer) in ordered) {
                 if(layer!=null) {
-                    if(!layer.visible || layer.opacity<=0) continue
+                    if(!(document.layerVisibility[layer.id.raw] ?: layer.visible) || layer.opacity<=0) continue
                     g.composite=AlphaComposite.getInstance(AlphaComposite.SRC_OVER,layer.opacity)
                     g.drawImage(PreviewRenderer.rasterImage(layer.raster.width,layer.raster.height,layer.raster.rgba),layer.bounds.left,layer.bounds.top,null)
                 } else {

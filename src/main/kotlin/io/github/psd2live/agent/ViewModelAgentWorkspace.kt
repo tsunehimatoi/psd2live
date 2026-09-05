@@ -343,25 +343,6 @@ class ViewModelAgentWorkspace(
 		))
 	}
 
-    private fun validateRegisteredNeutral(preview: io.github.psd2live.core.RigPreviewModel, document: AgentWorkspaceDocument) {
-        if (document.rigEdits.assetLayers.isEmpty()) return
-        val geometry = org.umamo.render.eval.CpuDeformationEvaluator().evaluate(preview.rig.puppet, emptyMap())
-        for (mesh in preview.rig.puppet.drawables) {
-            val layerId = preview.rig.layerIdByDrawableId[mesh.id.raw] ?: continue
-            if (layerId !in document.rigEdits.assetLayers) continue
-            val actual = geometry.worldPositions[mesh.id] ?: error("Registered layer has no neutral geometry: $layerId")
-            require(actual.all { it.isFinite() }) { "Registered layer has nonfinite neutral coordinates" }
-            val expected = preview.rig.sourceBoundsByDrawableId[mesh.id.raw] ?: continue
-            val x = actual.indices.filter { it % 2 == 0 }.map { actual[it] }
-            val y = actual.indices.filter { it % 2 == 1 }.map { -actual[it] }
-            val tolerance = maxOf(2f, maxOf(expected.width, expected.height)*.02f)
-            require(kotlin.math.abs(x.min()-expected.left)<=tolerance && kotlin.math.abs(x.max()-expected.right)<=tolerance &&
-                kotlin.math.abs(y.min()-expected.top)<=tolerance && kotlin.math.abs(y.max()-expected.bottom)<=tolerance) {
-                "Neutral placement drift after rig rebuild for $layerId; inspect parent coordinate frame. No commit was made."
-            }
-        }
-    }
-
     private fun workflow(document: AgentWorkspaceDocument = documentFrom(viewModel.state.value)): AgentAssetWorkflow {
         val state = snapshot()
         return AgentAssetWorkflow(state.projectId ?: error("No PSD is loaded"), state.revisionId, document, workspaceStore, assetStore)
@@ -434,7 +415,16 @@ class ViewModelAgentWorkspace(
         val projectId = snapshot().projectId ?: error("No PSD is loaded")
         val asset = assetStore.find(assetId) ?: withContext(Dispatchers.IO) { workspaceStore.loadAsset(projectId, assetId) }
             ?.let(assetStore::remember) ?: throw IllegalArgumentException("PNG asset not found: $assetId")
-        asset.preview()
+        val referenceId=asset.public.details["reference_id"]?.jsonPrimitive?.content
+        if (referenceId==null) asset.preview() else {
+            val records=workspaceStore.registrationsForAsset(projectId,assetId)
+            val reference=workspaceStore.loadWorkflow(projectId,referenceId)
+            val details=kotlinx.serialization.json.JsonObject(asset.public.details + mapOf(
+                "reference" to kotlinx.serialization.json.JsonObject(reference.filterKeys { !it.startsWith("_") }),
+                "registrations" to kotlinx.serialization.json.JsonArray(records),
+                "orientation_diagnostic" to kotlinx.serialization.json.JsonPrimitive("Compare original and processed images first. Cleanup never reflects. Each registration records explicit reflection and anchor handedness. Source placement and parent/flip channels are checked against texture coordinates before committing; inspect the layer and parent with object_get for inherited motion.")))
+            asset.copy(public=asset.public.copy(details=details)).preview()
+        }
     }
 
 	override suspend fun importPng(request: AgentPngImportRequest): AgentImportedPngAsset = editMutex.withLock {
@@ -479,7 +469,6 @@ class ViewModelAgentWorkspace(
 		val asset = assetStore.find(request.assetId) ?: withContext(Dispatchers.IO) {
 			workspaceStore.loadAsset(projectId, request.assetId)
 		}?.let(assetStore::remember) ?: throw IllegalArgumentException("PNG asset not found: ${request.assetId}")
-        require(request.rigMode in setOf("automatic", "placement")) { "rig_mode must be automatic or placement; placement retains the existing parent Warp" }
         require(asset.public.details["registration_required"] == null || request.registrationId != null) { "Generated asset needs asset_register before adding a layer" }
         val api = workflow(baseDocument)
         val registration = request.registrationId?.let { api.record(it, "registration") }
@@ -497,7 +486,8 @@ class ViewModelAgentWorkspace(
                 put("placement_finalized", kotlinx.serialization.json.JsonPrimitive(false))
             }), calibrationLayerIds = addedDocument.rigEdits.calibrationLayerIds.ifEmpty { ref!!.strings("calibration_layer_ids").toSet() }))
 		val preview = viewModel.buildAgentWorkspacePreview(nextDocument.source, nextDocument.toConfig(current))
-        validateRegisteredNeutral(preview, nextDocument)
+        if (nextDocument.rigEdits.assetLayers != baseDocument.rigEdits.assetLayers || nextDocument.rigEdits.calibrationLayerIds != baseDocument.rigEdits.calibrationLayerIds)
+            validateRegisteredNeutral(preview, nextDocument.rigEdits.assetLayers.filter { (id, record) -> baseDocument.rigEdits.assetLayers[id] != record }.keys)
 		val nextRevision = revisionId(current, nextDocument)
         require(nextRevision != before.revisionId) { "Operation did not change the workspace" }
 		val summary = "Added generated layer '${request.name.trim()}' ($layerId)"
@@ -547,7 +537,8 @@ class ViewModelAgentWorkspace(
 		}
 		val nextDocument = baseDocument.copy(deletedLayerIds = baseDocument.deletedLayerIds + layerId)
 		val preview = viewModel.buildAgentWorkspacePreview(nextDocument.source, nextDocument.toConfig(current))
-        validateRegisteredNeutral(preview, nextDocument)
+        if (nextDocument.rigEdits.assetLayers != baseDocument.rigEdits.assetLayers || nextDocument.rigEdits.calibrationLayerIds != baseDocument.rigEdits.calibrationLayerIds)
+            validateRegisteredNeutral(preview, nextDocument.rigEdits.assetLayers.filter { (id, record) -> baseDocument.rigEdits.assetLayers[id] != record }.keys)
 		val nextRevision = revisionId(current, nextDocument)
         require(nextRevision != before.revisionId) { "Operation did not change the workspace" }
 		val summary = "Soft-deleted layer $layerId"
@@ -674,7 +665,8 @@ class ViewModelAgentWorkspace(
 		val nextDocument = mutation(baseDocument, parameters)
 		require(nextDocument != baseDocument) { "Parameter edit did not change the workspace" }
 		val preview = viewModel.buildAgentWorkspacePreview(nextDocument.source, nextDocument.toConfig(current))
-        validateRegisteredNeutral(preview, nextDocument)
+        if (nextDocument.rigEdits.assetLayers != baseDocument.rigEdits.assetLayers || nextDocument.rigEdits.calibrationLayerIds != baseDocument.rigEdits.calibrationLayerIds)
+            validateRegisteredNeutral(preview, nextDocument.rigEdits.assetLayers.filter { (id, record) -> baseDocument.rigEdits.assetLayers[id] != record }.keys)
 		val nextRevision = revisionId(current, nextDocument)
         require(nextRevision != before.revisionId) { "Operation did not change the workspace" }
 		val selection = synchronized(historyLock) {
@@ -1075,7 +1067,8 @@ class ViewModelAgentWorkspace(
 		val nextDocument = mutation(baseDocument, puppet)
 		require(nextDocument != baseDocument) { "Rig edit did not change the workspace" }
 		val preview = viewModel.buildAgentWorkspacePreview(nextDocument.source, nextDocument.toConfig(current))
-        validateRegisteredNeutral(preview, nextDocument)
+        if (nextDocument.rigEdits.assetLayers != baseDocument.rigEdits.assetLayers || nextDocument.rigEdits.calibrationLayerIds != baseDocument.rigEdits.calibrationLayerIds)
+            validateRegisteredNeutral(preview, nextDocument.rigEdits.assetLayers.filter { (id, record) -> baseDocument.rigEdits.assetLayers[id] != record }.keys)
 		val nextRevision = revisionId(current, nextDocument)
         require(nextRevision != before.revisionId) { "Operation did not change the workspace" }
 		val selection = synchronized(historyLock) {

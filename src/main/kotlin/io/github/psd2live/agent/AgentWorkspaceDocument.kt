@@ -95,8 +95,15 @@ internal class AgentPngAssetStore {
 		).joinToString(":")
 		val details = if (request.referenceId == null) kotlinx.serialization.json.JsonObject(emptyMap()) else kotlinx.serialization.json.buildJsonObject {
             put("version", kotlinx.serialization.json.JsonPrimitive(2)); put("reference_id", kotlinx.serialization.json.JsonPrimitive(request.referenceId))
+            put("solid_background", kotlinx.serialization.json.JsonPrimitive(request.solidBackground)); put("background_tolerance", kotlinx.serialization.json.JsonPrimitive(request.backgroundTolerance))
             put("registration_required", kotlinx.serialization.json.JsonPrimitive(true)); put("processing", request.processing)
             put("diagnostics", matte!!.diagnostics); put("raw_sha256", kotlinx.serialization.json.JsonPrimitive(sha256(request.png)))
+            var left=image.width; var top=image.height; var right=0; var bottom=0
+            for (i in 0 until image.width*image.height) if ((rgba[i*4+3].toInt() and 255)>0) {
+                left=minOf(left,i%image.width);top=minOf(top,i/image.width)
+                right=maxOf(right,i%image.width+1);bottom=maxOf(bottom,i/image.width+1)
+            }
+            if (right>left && bottom>top) put("content_pixel_rect", Bounds(left.toFloat(),top.toFloat(),right.toFloat(),bottom.toFloat()).json())
         }
         val id = "asset-${sha256("$digest|$placementKey|${placement.sourceViewId}|$details".encodeToByteArray()).take(24)}"
 		val imported = AgentImportedPngAsset(id, digest, image.width, image.height, placement, details)
