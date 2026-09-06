@@ -749,12 +749,15 @@ fun CompactCheckbox(
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 	val interactionSource = remember { MutableInteractionSource() }
+	val isHovered by interactionSource.collectIsHoveredAsState()
 
 	Row(
 		modifier = modifier
+			.hoverable(interactionSource)
 			.clickable(enabled = enabled, interactionSource = interactionSource, indication = null) {
 				onCheckedChange(!checked)
 			}
+			.pointerHoverIcon(if (enabled) PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)) else PointerIcon.Default)
 			.padding(vertical = 2.dp),
 		verticalAlignment = Alignment.CenterVertically,
 	) {
@@ -766,7 +769,7 @@ fun CompactCheckbox(
 					RoundedCornerShape(2.dp),
 				)
 				.border(
-					BorderStroke(1.dp, if (checked) colors.accent else colors.border),
+					BorderStroke(1.dp, if (checked) colors.accent else if (isHovered && enabled) colors.borderHover else colors.border),
 					RoundedCornerShape(2.dp),
 				),
 			contentAlignment = Alignment.Center,
@@ -780,7 +783,83 @@ fun CompactCheckbox(
 			Text(
 				text = label,
 				style = typography.body.copy(fontSize = 11.5.sp),
-				color = if (enabled) colors.textPrimary else colors.textDisabled,
+				color = if (enabled) (if (isHovered) colors.textPrimary else colors.textPrimary) else colors.textDisabled,
+			)
+		}
+	}
+}
+
+/** Compact Toggle Chip / Button matching desktop tool aesthetic */
+@Composable
+fun CompactToggleChip(
+	text: String,
+	selected: Boolean,
+	onToggle: () -> Unit,
+	modifier: Modifier = Modifier,
+	enabled: Boolean = true,
+	leadingIcon: (@Composable () -> Unit)? = null,
+	showCheckWhenSelected: Boolean = true,
+	height: Dp = 22.dp,
+) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	val interactionSource = remember { MutableInteractionSource() }
+	val isHovered by interactionSource.collectIsHoveredAsState()
+	val isPressed by interactionSource.collectIsPressedAsState()
+
+	val bgColor = when {
+		!enabled -> colors.controlBackground.copy(alpha = 0.35f)
+		selected -> if (isHovered || isPressed) colors.accent.copy(alpha = 0.28f) else colors.accent.copy(alpha = 0.16f)
+		isPressed -> colors.controlActive
+		isHovered -> colors.controlHover
+		else -> colors.controlBackground.copy(alpha = 0.65f)
+	}
+
+	val borderColor = when {
+		!enabled -> colors.border.copy(alpha = 0.25f)
+		selected -> colors.accent
+		isHovered -> colors.borderHover
+		else -> colors.border
+	}
+
+	val contentColor = when {
+		!enabled -> colors.textDisabled
+		selected -> colors.accent
+		isHovered -> colors.textPrimary
+		else -> colors.textMuted
+	}
+
+	Box(
+		modifier = modifier
+			.height(height)
+			.background(bgColor, RoundedCornerShape(2.dp))
+			.border(BorderStroke(1.dp, borderColor), RoundedCornerShape(2.dp))
+			.hoverable(interactionSource)
+			.clickable(enabled = enabled, interactionSource = interactionSource, indication = null) { onToggle() }
+			.pointerHoverIcon(if (enabled) PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)) else PointerIcon.Default)
+			.padding(horizontal = 4.dp),
+		contentAlignment = Alignment.Center,
+	) {
+		Row(
+			verticalAlignment = Alignment.CenterVertically,
+			horizontalArrangement = Arrangement.Center,
+		) {
+			if (leadingIcon != null) {
+				leadingIcon()
+				Spacer(Modifier.width(3.dp))
+			} else if (selected && showCheckWhenSelected) {
+				IconCheck(modifier = Modifier.size(9.dp), tint = contentColor)
+				Spacer(Modifier.width(3.dp))
+			}
+			Text(
+				text = text,
+				style = typography.body.copy(
+					fontSize = 10.5.sp,
+					fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+				),
+				color = contentColor,
+				maxLines = 1,
+				overflow = TextOverflow.Ellipsis,
 			)
 		}
 	}

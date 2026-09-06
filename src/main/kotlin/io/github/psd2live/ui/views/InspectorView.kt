@@ -62,7 +62,6 @@ import io.github.psd2live.ui.components.CompactSlider
 import io.github.psd2live.ui.components.CompactTabBar
 import io.github.psd2live.ui.components.CompactTextField
 import io.github.psd2live.ui.components.IconChevron
-import io.github.psd2live.ui.components.IconEye
 import io.github.psd2live.ui.components.IconLock
 import io.github.psd2live.ui.components.IconMouse
 import io.github.psd2live.ui.components.IconPause
@@ -858,10 +857,7 @@ private fun LayersTableView(
 				.padding(horizontal = 4.dp),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
-			Box(modifier = Modifier.width(26.dp), contentAlignment = Alignment.Center) {
-				IconEye(visible = true, modifier = Modifier.size(13.dp), tint = colors.textMuted)
-			}
-			Text(text = tr("layers.header.number"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.width(22.dp))
+			Text(text = tr("layers.header.number"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.width(26.dp).padding(start = 2.dp))
 			Text(text = tr("layers.header.name"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.weight(1.0f))
 			Text(text = tr("layers.header.type"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.width(62.dp).padding(horizontal = 2.dp))
 			Text(text = tr("layers.header.binding"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.weight(1.1f).padding(horizontal = 2.dp))
@@ -904,22 +900,6 @@ private fun LayersTableView(
 							.padding(horizontal = 4.dp),
 						verticalAlignment = Alignment.CenterVertically,
 					) {
-						// Visibility Eye icon
-						Box(
-							modifier = Modifier
-								.width(26.dp)
-								.fillMaxHeight()
-								.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
-								.clickable { viewModel.toggleLayerVisibility(layerId) },
-							contentAlignment = Alignment.Center,
-						) {
-							IconEye(
-								visible = isVisible,
-								modifier = Modifier.size(14.dp),
-								tint = if (isVisible) colors.textPrimary else colors.textDisabled,
-							)
-						}
-
 						// Index and Name area (clicking selects the layer)
 						Row(
 							modifier = Modifier
@@ -933,7 +913,7 @@ private fun LayersTableView(
 								text = "${index + 1}",
 								style = typography.monoSmall.copy(fontSize = 10.sp),
 								color = colors.textMuted,
-								modifier = Modifier.width(22.dp),
+								modifier = Modifier.width(26.dp).padding(start = 2.dp),
 							)
 							Text(
 								text = layer.source.name,

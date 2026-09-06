@@ -457,7 +457,16 @@ class PSD2LiveViewModel : AutoCloseable {
 	}
 
 	fun setWorkspaceTab(tab: WorkspaceTab) {
-		_state.update { it.copy(activeWorkspaceTab = tab) }
+		val effectiveTab = if (tab == WorkspaceTab.HIERARCHY) WorkspaceTab.PREVIEW else tab
+		_state.update { current ->
+			val updateShowMesh = if (effectiveTab == WorkspaceTab.TOPOLOGY && !current.showMesh) true else current.showMesh
+			val updateShowTexture = if (effectiveTab == WorkspaceTab.PREVIEW && !current.showTexture) true else current.showTexture
+			current.copy(
+				activeWorkspaceTab = effectiveTab,
+				showMesh = updateShowMesh,
+				showTexture = updateShowTexture,
+			)
+		}
 	    markWorkspaceChanged()
 	}
 
@@ -620,6 +629,53 @@ class PSD2LiveViewModel : AutoCloseable {
 			)
 		}
 	    markWorkspaceChanged()
+	}
+
+	fun setShowWarp(show: Boolean) {
+		_state.update { it.copy(showWarp = show) }
+		markWorkspaceChanged()
+	}
+
+	fun setShowMesh(show: Boolean) {
+		_state.update { it.copy(showMesh = show) }
+		markWorkspaceChanged()
+	}
+
+	fun setShowTexture(show: Boolean) {
+		_state.update { it.copy(showTexture = show) }
+		markWorkspaceChanged()
+	}
+
+	fun setWarpShowNames(show: Boolean) {
+		_state.update { it.copy(warpShowNames = show) }
+		markWorkspaceChanged()
+	}
+
+	fun setWarpShowIndices(show: Boolean) {
+		_state.update { it.copy(warpShowIndices = show, showWarp = if (show) true else it.showWarp) }
+		markWorkspaceChanged()
+	}
+
+	fun setFilterSelectedOnly(selectedOnly: Boolean) {
+		_state.update { it.copy(filterSelectedOnly = selectedOnly) }
+		markWorkspaceChanged()
+	}
+
+	fun toggleDeformerVisibility(deformerId: String) {
+		val current = _state.value.isDeformerVisible(deformerId)
+		setDeformerVisibility(deformerId, !current)
+	}
+
+	fun setDeformerVisibility(deformerId: String, visible: Boolean) {
+		_state.update {
+			val updated = it.deformerVisibility + (deformerId to visible)
+			it.copy(
+				deformerVisibility = updated,
+				statusText = tr("status.visibilityChanged"),
+			)
+		}
+		schedulePreviewRebuild()
+		editorChanged()
 	}
 
 	fun toggleLayerVisibility(layerId: String) {

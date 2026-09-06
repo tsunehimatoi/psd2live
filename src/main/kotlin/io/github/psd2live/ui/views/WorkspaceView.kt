@@ -71,6 +71,7 @@ import io.github.psd2live.ui.ComponentPalette
 import io.github.psd2live.ui.components.CompactButton
 import io.github.psd2live.ui.components.CompactTabBar
 import io.github.psd2live.ui.components.CompactTextField
+import io.github.psd2live.ui.components.CompactToggleChip
 import io.github.psd2live.ui.components.IconChevron
 import io.github.psd2live.ui.components.IconClose
 import io.github.psd2live.ui.components.IconEye
@@ -107,17 +108,15 @@ fun WorkspaceView(
 	val typography = LocalToolTypography.current
 
 	val tabTitles = listOf(
-		tr("tab.hierarchy"),
 		tr("tab.topology"),
 		tr("tab.preview"),
 		tr("tab.history"),
 	)
 	val selectedTabIndex = when (state.activeWorkspaceTab) {
-		WorkspaceTab.HIERARCHY -> 0
-		WorkspaceTab.TOPOLOGY -> 1
-		WorkspaceTab.PREVIEW -> 2
-		WorkspaceTab.HISTORY -> 3
-		WorkspaceTab.LOG -> 2
+		WorkspaceTab.TOPOLOGY -> 0
+		WorkspaceTab.PREVIEW -> 1
+		WorkspaceTab.HISTORY -> 2
+		else -> 1
 	}
 
 	Column(
@@ -132,38 +131,19 @@ fun WorkspaceView(
 			selectedIndex = selectedTabIndex,
 			onTabSelected = { index ->
 				val tab = when (index) {
-					0 -> WorkspaceTab.HIERARCHY
-					1 -> WorkspaceTab.TOPOLOGY
-					2 -> WorkspaceTab.PREVIEW
+					0 -> WorkspaceTab.TOPOLOGY
+					1 -> WorkspaceTab.PREVIEW
 					else -> WorkspaceTab.HISTORY
 				}
 				viewModel.setWorkspaceTab(tab)
 			},
 		)
 
-		// Upper Main Workspace Area: Hierarchy, Topology, Preview, History
+		// Upper Main Workspace Area: Topology / Preview (with persistent hierarchy sidebar), History
 		Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
 			when (state.activeWorkspaceTab) {
-				WorkspaceTab.HIERARCHY -> HierarchyView(state, viewModel)
-				WorkspaceTab.TOPOLOGY -> CanvasViewportComposable(
-					mode = WorkspaceTab.TOPOLOGY,
-					state = state,
-					viewModel = viewModel,
-					onLayerClicked = { viewModel.selectLayer(it) },
-				)
-				WorkspaceTab.PREVIEW -> CanvasViewportComposable(
-					mode = WorkspaceTab.PREVIEW,
-					state = state,
-					viewModel = viewModel,
-					onLayerClicked = { viewModel.selectLayer(it) },
-				)
 				WorkspaceTab.HISTORY -> HistoryTreeView(state, viewModel)
-				WorkspaceTab.LOG -> CanvasViewportComposable(
-					mode = WorkspaceTab.PREVIEW,
-					state = state,
-					viewModel = viewModel,
-					onLayerClicked = { viewModel.selectLayer(it) },
-				)
+				else -> HierarchyView(state, viewModel)
 			}
 		}
 
@@ -312,7 +292,7 @@ private fun HierarchyView(
 			// Right: 2D Canvas Viewport
 			Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
 				CanvasViewportComposable(
-					mode = WorkspaceTab.HIERARCHY,
+					mode = if (state.activeWorkspaceTab == WorkspaceTab.TOPOLOGY) WorkspaceTab.TOPOLOGY else WorkspaceTab.PREVIEW,
 					state = state,
 					viewModel = viewModel,
 					modifier = Modifier.fillMaxSize(),
@@ -531,6 +511,70 @@ private fun HierarchyTreeList(
 	val scrollState = rememberScrollState()
 
 	Column(modifier = Modifier.fillMaxSize()) {
+		// Visibility & Deformer Overlay Controls (merged from canvas viewport)
+		Column(
+			modifier = Modifier
+				.fillMaxWidth()
+				.background(colors.panelElevated)
+				.border(BorderStroke(1.dp, colors.divider))
+				.padding(horizontal = 6.dp, vertical = 5.dp),
+			verticalArrangement = Arrangement.spacedBy(4.dp),
+		) {
+			// Row 1: Visibility Channels (Warp, Mesh, Texture)
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.spacedBy(4.dp),
+			) {
+				CompactToggleChip(
+					text = tr("canvas.visibility.warp"),
+					selected = state.showWarp,
+					onToggle = { viewModel.setShowWarp(!state.showWarp) },
+					modifier = Modifier.weight(1f),
+				)
+				CompactToggleChip(
+					text = tr("canvas.visibility.mesh"),
+					selected = state.showMesh,
+					onToggle = { viewModel.setShowMesh(!state.showMesh) },
+					modifier = Modifier.weight(1f),
+				)
+				CompactToggleChip(
+					text = tr("canvas.visibility.texture"),
+					selected = state.showTexture,
+					onToggle = { viewModel.setShowTexture(!state.showTexture) },
+					modifier = Modifier.weight(1f),
+				)
+			}
+
+			// Row 2: Deformer & Filter Sub-options (Selected Only, Names, Indices)
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.spacedBy(4.dp),
+			) {
+				CompactToggleChip(
+					text = tr("canvas.information.selectedOnly"),
+					selected = state.filterSelectedOnly,
+					onToggle = { viewModel.setFilterSelectedOnly(!state.filterSelectedOnly) },
+					modifier = Modifier.weight(1.15f),
+				)
+				CompactToggleChip(
+					text = tr("canvas.information.names"),
+					selected = state.warpShowNames,
+					onToggle = { viewModel.setWarpShowNames(!state.warpShowNames) },
+					enabled = state.showWarp,
+					modifier = Modifier.weight(0.9f),
+				)
+				CompactToggleChip(
+					text = tr("canvas.information.indices"),
+					selected = state.warpShowIndices,
+					onToggle = { viewModel.setWarpShowIndices(!state.warpShowIndices) },
+					enabled = state.showWarp,
+					modifier = Modifier.weight(0.95f),
+				)
+			}
+		}
+
 		// Search & Expand/Collapse toolbar
 		Row(
 			modifier = Modifier
@@ -590,9 +634,17 @@ private fun HierarchyTreeList(
 					if (event.button == PointerButton.Primary && treeDragState.isPressed) {
 						treeDragState.onRelease(viewModel) { clickedItem ->
 							if (clickedItem.isDeformer) {
-								viewModel.selectDeformer(clickedItem.targetId)
+								if (state.selectedDeformerId == clickedItem.targetId) {
+									viewModel.selectDeformer(null)
+								} else {
+									viewModel.selectDeformer(clickedItem.targetId)
+								}
 							} else {
-								viewModel.selectLayer(clickedItem.id)
+								if (state.selectedLayerId == clickedItem.id) {
+									viewModel.selectLayer(null)
+								} else {
+									viewModel.selectLayer(clickedItem.id)
+								}
 							}
 						}
 					}
@@ -967,6 +1019,7 @@ private fun DeformerTreeItem(
 					.size(TREE_CHEVRON_WIDTH_DP.dp)
 					.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
 					.clickable(enabled = hasChildren) {
+						treeDragState.clear()
 						val nextExpanded = !isExpanded
 						chain.deformers.forEach { expandedMap[it.id.raw] = nextExpanded }
 					},
@@ -980,15 +1033,17 @@ private fun DeformerTreeItem(
 			Spacer(Modifier.width(2.dp))
 
 			// 3. Deformer Chain Display Name with distinctly blue fold separator '\' and surrounding spaces
-			val annotatedDisplayName = remember(chain, isSelected, matchesQuery, searchQuery, colors) {
+			val isDeformerVis = chain.deformers.all { state.isDeformerVisible(it.id.raw) }
+			val annotatedDisplayName = remember(chain, isSelected, isDeformerVis, matchesQuery, searchQuery, colors) {
 				buildAnnotatedString {
 					val isHighlightQuery = matchesQuery && searchQuery.isNotEmpty()
 					val textColor = when {
+						!isDeformerVis -> colors.textDisabled
 						isSelected -> colors.selectionText
 						isHighlightQuery -> colors.accent
 						else -> colors.textPrimary
 					}
-					val slashColor = if (isSelected) colors.selectionText else colors.accent
+					val slashColor = if (!isDeformerVis) colors.textDisabled else if (isSelected) colors.selectionText else colors.accent
 
 					chain.deformers.forEachIndexed { index, def ->
 						if (index > 0) {
@@ -1021,6 +1076,25 @@ private fun DeformerTreeItem(
 				style = typography.monoSmall.copy(fontSize = 9.sp),
 				color = colors.textMuted,
 			)
+
+			Spacer(Modifier.width(4.dp))
+			Box(
+				modifier = Modifier
+					.size(16.dp)
+					.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
+					.clickable {
+						treeDragState.clear()
+						val nextVis = !isDeformerVis
+						chain.deformers.forEach { viewModel.setDeformerVisibility(it.id.raw, nextVis) }
+					},
+				contentAlignment = Alignment.Center,
+			) {
+				IconEye(
+					visible = isDeformerVis,
+					modifier = Modifier.size(12.dp),
+					tint = if (isDeformerVis) (if (isSelected) colors.selectionText else colors.textMuted) else colors.textDisabled.copy(alpha = 0.5f),
+				)
+			}
 		}
 
 		// Streamlined Context menu
@@ -1143,7 +1217,8 @@ private fun DrawableTreeItem(
 	val layerId = model.rig.layerIdByDrawableId[drawable.id.raw]
 	val itemId = layerId ?: drawable.id.raw
 	val isLayerSelected = layerId != null && state.selectedLayerId == layerId
-	val isVisible = layerId == null || state.isLayerVisible(layerId)
+	val isSelfVisible = layerId == null || state.isLayerVisible(layerId)
+	val isEffectiveVisible = layerId == null || layerId in state.effectiveVisibleLayerIds
 
 	val matchesQuery = searchQuery.isBlank() || drawable.name.contains(searchQuery, ignoreCase = true)
 	if (searchQuery.isNotBlank() && !matchesQuery) {
@@ -1253,7 +1328,7 @@ private fun DrawableTreeItem(
 						}
 					}
 				}
-				.padding(start = startX, end = 4.dp),
+				.padding(start = startX, end = 6.dp),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
 			// 1. Square Dot Icon (aligned directly with deformer dot at startX + 1.dp)
@@ -1271,7 +1346,7 @@ private fun DrawableTreeItem(
 			Text(
 				text = drawable.name,
 				style = typography.body.copy(fontSize = 11.sp),
-				color = if (isVisible) (if (isLayerSelected) colors.selectionText else (if (matchesQuery && searchQuery.isNotEmpty()) colors.accent else colors.textPrimary)) else colors.textDisabled,
+				color = if (isEffectiveVisible) (if (isLayerSelected) colors.selectionText else (if (matchesQuery && searchQuery.isNotEmpty()) colors.accent else colors.textPrimary)) else colors.textDisabled,
 				maxLines = 1,
 				overflow = TextOverflow.Ellipsis,
 				modifier = Modifier.weight(1f),
@@ -1283,13 +1358,37 @@ private fun DrawableTreeItem(
 					modifier = Modifier
 						.size(16.dp)
 						.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
-						.clickable { viewModel.deleteLayer(layerId) }
+						.clickable {
+							treeDragState.clear()
+							viewModel.deleteLayer(layerId)
+						}
 						.padding(1.dp),
 					contentAlignment = Alignment.Center,
 				) {
 					IconTrash(
 						modifier = Modifier.size(11.dp),
 						tint = colors.error.copy(alpha = 0.85f),
+					)
+				}
+			}
+
+			// Visibility Eye icon
+			if (layerId != null) {
+				Spacer(Modifier.width(4.dp))
+				Box(
+					modifier = Modifier
+						.size(16.dp)
+						.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
+						.clickable {
+							treeDragState.clear()
+							viewModel.toggleLayerVisibility(layerId)
+						},
+					contentAlignment = Alignment.Center,
+				) {
+					IconEye(
+						visible = isSelfVisible,
+						modifier = Modifier.size(12.dp),
+						tint = if (isSelfVisible) (if (!isEffectiveVisible) colors.textDisabled else if (isLayerSelected) colors.selectionText else colors.textMuted) else colors.textDisabled.copy(alpha = 0.5f),
 					)
 				}
 			}
@@ -1346,8 +1445,8 @@ private fun DrawableTreeItem(
 					showMenu = false
 				}) {
 					Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-						IconEye(visible = !isVisible, modifier = Modifier.size(12.dp), tint = colors.textMuted)
-						Text(if (isVisible) tr("layers.popup.hideAll") else tr("layers.popup.showAll"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
+						IconEye(visible = !isSelfVisible, modifier = Modifier.size(12.dp), tint = colors.textMuted)
+						Text(if (isSelfVisible) tr("canvas.hierarchy.hideLayer") else tr("canvas.hierarchy.showLayer"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
 					}
 				}
 			}

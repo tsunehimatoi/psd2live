@@ -348,4 +348,48 @@ class PSD2LiveViewModelTest {
 			vm.close()
 		}
 	}
+
+	@Test
+	fun `visibility channels and deformer visibility setters update state properly`() {
+		val vm = PSD2LiveViewModel()
+		try {
+			// Visibility channels
+			vm.setShowWarp(false)
+			assertFalse(vm.state.value.showWarp)
+			vm.setShowMesh(true)
+			assertTrue(vm.state.value.showMesh)
+			vm.setShowTexture(false)
+			assertFalse(vm.state.value.showTexture)
+
+			// Sub-options
+			vm.setWarpShowNames(true)
+			assertTrue(vm.state.value.warpShowNames)
+			vm.setWarpShowIndices(true)
+			assertTrue(vm.state.value.warpShowIndices)
+			vm.setFilterSelectedOnly(true)
+			assertTrue(vm.state.value.filterSelectedOnly)
+
+			// Deformer visibility
+			assertTrue(vm.state.value.isDeformerVisible("def_head"))
+			vm.toggleDeformerVisibility("def_head")
+			assertFalse(vm.state.value.isDeformerVisible("def_head"))
+			vm.setDeformerVisibility("def_head", true)
+			assertTrue(vm.state.value.isDeformerVisible("def_head"))
+
+			// Workspace tab switching defaults
+			vm.setWorkspaceTab(io.github.psd2live.ui.state.WorkspaceTab.TOPOLOGY)
+			assertEquals(io.github.psd2live.ui.state.WorkspaceTab.TOPOLOGY, vm.state.value.activeWorkspaceTab)
+			assertTrue(vm.state.value.showMesh)
+
+			vm.setWorkspaceTab(io.github.psd2live.ui.state.WorkspaceTab.PREVIEW)
+			assertEquals(io.github.psd2live.ui.state.WorkspaceTab.PREVIEW, vm.state.value.activeWorkspaceTab)
+			assertTrue(vm.state.value.showTexture)
+
+			@Suppress("DEPRECATION")
+			vm.setWorkspaceTab(io.github.psd2live.ui.state.WorkspaceTab.HIERARCHY)
+			assertEquals(io.github.psd2live.ui.state.WorkspaceTab.PREVIEW, vm.state.value.activeWorkspaceTab)
+		} finally {
+			vm.close()
+		}
+	}
 }

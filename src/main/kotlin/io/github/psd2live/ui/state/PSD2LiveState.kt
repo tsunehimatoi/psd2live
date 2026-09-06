@@ -134,7 +134,14 @@ data class PSD2LiveState(
 	val previewModel: RigPreviewModel? = null,
 	val selectedLayerId: String? = null,
 	val selectedDeformerId: String? = null,
+	val showWarp: Boolean = false,
+	val showMesh: Boolean = false,
+	val showTexture: Boolean = true,
+	val warpShowNames: Boolean = true,
+	val warpShowIndices: Boolean = false,
+	val filterSelectedOnly: Boolean = false,
 	val layerVisibility: Map<String, Boolean> = emptyMap(),
+	val deformerVisibility: Map<String, Boolean> = emptyMap(),
 	val layerOverrides: Map<String, LayerClassificationOverride> = emptyMap(),
 	val isolationSnapshot: Map<String, Boolean>? = null,
 	val isolatedLayerId: String? = null,
@@ -195,12 +202,38 @@ data class PSD2LiveState(
 		return parentId?.let(layerVisibility::get) ?: defaultVisible
 	}
 
+	fun isDeformerVisible(deformerId: String, defaultVisible: Boolean = true): Boolean {
+		return deformerVisibility[deformerId] ?: defaultVisible
+	}
+
 	val effectiveVisibleLayerIds: Set<String>
 		get() {
 			val model = previewModel ?: return emptySet()
+			val hiddenDeformers = deformerVisibility.filterValues { !it }.keys
+			val layerHiddenByDeformer: (String) -> Boolean = if (hiddenDeformers.isEmpty()) {
+				{ false }
+			} else {
+				val drawableIdByLayerId = model.rig.layerIdByDrawableId.entries.associate { it.value to it.key }
+				val drawableById = model.rig.puppet.drawables.associateBy { it.id.raw }
+				val deformerById = model.rig.puppet.deformers.associateBy { it.id.raw }
+				fun isHidden(layerId: String): Boolean {
+					val drawId = drawableIdByLayerId[layerId]
+					var parent: String? = drawId?.let { parentOverrides[it] ?: drawableById[it]?.parentDeformerId?.raw }
+					val visited = mutableSetOf<String>()
+					while (parent != null && visited.add(parent)) {
+						if (parent in hiddenDeformers) {
+							return true
+						}
+						parent = parentOverrides[parent] ?: deformerById[parent]?.parent?.raw
+					}
+					return false
+				}
+				::isHidden
+			}
+
 			return model.analysis.layers
 				.asSequence()
-				.filter { isLayerVisible(it.source.id.raw, it.source.visible) }
+				.filter { isLayerVisible(it.source.id.raw, it.source.visible) && !layerHiddenByDeformer(it.source.id.raw) }
 				.mapTo(linkedSetOf()) { it.source.id.raw }
 		}
 }

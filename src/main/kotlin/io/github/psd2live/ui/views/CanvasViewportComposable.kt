@@ -92,10 +92,6 @@ fun CanvasViewportComposable(
 	var isDragging by remember { mutableStateOf(false) }
 	var lastDragPos by remember { mutableStateOf(Offset.Zero) }
 	var fps by remember { mutableStateOf(0f) }
-	var informationLayer by remember(mode) { mutableStateOf(mode == WorkspaceTab.HIERARCHY) }
-	var informationIndices by remember { mutableStateOf(false) }
-	var informationNames by remember { mutableStateOf(true) }
-	var informationSelectedOnly by remember { mutableStateOf(false) }
 	val fpsCounter = remember { ActualFpsCounter() }
 
 	val previewModel = state.previewModel
@@ -297,40 +293,57 @@ fun CanvasViewportComposable(
 				style = Stroke(width = 1f),
 			)
 
-			// 3. Render content based on mode
-			when (mode) {
-				WorkspaceTab.PREVIEW -> {
-					val nativeFrame = sdkFrame
-					if (!informationLayer && nativeFrame != null && sdkBitmap != null && nativeFrame.image.width == w && nativeFrame.image.height == h) {
-						drawImage(sdkBitmap)
-					} else {
-						// Software rendering fallback
-						val buffer = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
-						val g = buffer.createGraphics()
-						try {
-							g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-							val geometry = RigCanvasSupport.evaluate(model, if(informationLayer)informationPose else state.parameterValues)
-							RigCanvasSupport.paintTexturedRig(g, model, geometry, viewport, visibleLayerIds = state.effectiveVisibleLayerIds)
-						} finally {
-							g.dispose()
-						}
-						drawImage(buffer.toComposeImageBitmap())
-					}
+			// 3. Multi-channel Rendering: Texture, Mesh, Warp
+			val showWarp = state.showWarp || (mode == WorkspaceTab.HIERARCHY)
+			val showMesh = state.showMesh || (mode == WorkspaceTab.TOPOLOGY)
+			val showTexture = state.showTexture
+			val informationNames = state.warpShowNames
+			val informationIndices = state.warpShowIndices
+			val informationSelectedOnly = state.filterSelectedOnly
+
+			val targetVisibleLayerIds: Set<String> = when {
+				!informationSelectedOnly -> state.effectiveVisibleLayerIds
+				state.selectedLayerId != null -> state.effectiveVisibleLayerIds.filter { it == state.selectedLayerId }.toSet()
+				state.selectedDeformerId != null -> {
+					val desc = descendantLayerIds(model, state.selectedDeformerId, state.parentOverrides)
+					state.effectiveVisibleLayerIds.filter { it in desc }.toSet()
 				}
+				else -> state.effectiveVisibleLayerIds
+			}
 
-				WorkspaceTab.TOPOLOGY -> {
-					val buffer = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
-					val g = buffer.createGraphics()
-					try {
-						g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-						val geometry = RigCanvasSupport.evaluate(model, state.parameterValues)
-						RigCanvasSupport.paintTexturedRig(g, model, geometry, viewport, 0.26f, state.effectiveVisibleLayerIds)
+			val nativeFrame = sdkFrame
+			val canUseNativeSdk = mode == WorkspaceTab.PREVIEW &&
+				!showWarp && !showMesh && !informationSelectedOnly && showTexture &&
+				nativeFrame != null && sdkBitmap != null &&
+				nativeFrame.image.width == w && nativeFrame.image.height == h
 
+			val currentSdkBitmap = sdkBitmap
+			if (canUseNativeSdk && currentSdkBitmap != null) {
+				drawImage(currentSdkBitmap)
+			} else {
+				val buffer = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
+				val g = buffer.createGraphics()
+				try {
+					g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+					val geometry = RigCanvasSupport.evaluate(model, if (mode == WorkspaceTab.PREVIEW) informationPose else state.parameterValues)
+
+					// 3a. Texture Channel
+					if (showTexture) {
+						val textureAlpha = when (mode) {
+							WorkspaceTab.TOPOLOGY -> 0.26f
+							WorkspaceTab.HIERARCHY -> 0.43f
+							else -> 1.0f
+						}
+						RigCanvasSupport.paintTexturedRig(g, model, geometry, viewport, textureAlpha, visibleLayerIds = targetVisibleLayerIds)
+					}
+
+					// 3b. Mesh Channel (Wireframe)
+					if (showMesh) {
 						fun drawMeshWireframe(drawable: org.umamo.runtime.model.Drawable, selected: Boolean) {
 							val mesh = drawable.mesh ?: return
 							val positions = geometry.worldPositions[drawable.id] ?: return
 							val layerId = model.rig.layerIdByDrawableId[drawable.id.raw] ?: return
-							if (layerId !in state.effectiveVisibleLayerIds) return
+							if (layerId !in targetVisibleLayerIds) return
 							val awtColor = ComponentPalette.strong(layerId)
 							g.color = if (selected) awtColor.brighter() else awtColor
 							g.stroke = BasicStroke(if (selected) 2.2f else 0.85f)
@@ -360,14 +373,12 @@ fun CanvasViewportComposable(
 						}
 
 						val selectedId = state.selectedLayerId
-						// First draw unselected drawables
 						for (drawable in model.rig.puppet.drawables) {
 							val layerId = model.rig.layerIdByDrawableId[drawable.id.raw]
 							if (layerId != selectedId) {
 								drawMeshWireframe(drawable, selected = false)
 							}
 						}
-						// Then draw selected drawables on top
 						if (selectedId != null) {
 							for (drawable in model.rig.puppet.drawables) {
 								val layerId = model.rig.layerIdByDrawableId[drawable.id.raw]
@@ -376,30 +387,18 @@ fun CanvasViewportComposable(
 								}
 							}
 						}
-					} finally {
-						g.dispose()
 					}
-					drawImage(buffer.toComposeImageBitmap())
-				}
 
-				WorkspaceTab.HIERARCHY -> {
-					val buffer = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
-					val g = buffer.createGraphics()
-					try {
-						g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-						val geometry = RigCanvasSupport.evaluate(model, state.parameterValues)
-						RigCanvasSupport.paintTexturedRig(g, model, geometry, viewport, 0.43f, state.effectiveVisibleLayerIds)
-
+					// 3c. Hierarchy Mode Bounds
+					if (mode == WorkspaceTab.HIERARCHY) {
 						val drawableBounds = RigCanvasSupport.boundsByDrawable(geometry)
 						val deformerBounds = RigCanvasSupport.boundsByDeformer(model, drawableBounds)
-
 						for (deformer in model.rig.puppet.deformers.filterIsInstance<org.umamo.runtime.model.Deformer.Rotation>()) {
 							val bounds = deformerBounds[deformer.id.raw] ?: continue
 							val selected = deformer.id.raw == state.selectedDeformerId
 							val color = ComponentPalette.strong(deformer.id.raw)
 							RigCanvasSupport.paintBounds(g, bounds, viewport, color, if (selected) 2.8f else 1.15f)
 
-							// Paint Label
 							g.font = java.awt.Font(java.awt.Font.SANS_SERIF, if (selected) java.awt.Font.BOLD else java.awt.Font.PLAIN, 11)
 							val lx = viewport.x(bounds.left).toInt() + 2
 							val ly = (viewport.offsetY + bounds.top * viewport.scale).toInt() - 3
@@ -410,7 +409,6 @@ fun CanvasViewportComposable(
 							g.color = color.brighter()
 							g.drawString(deformer.name, lx + 1, labelY)
 						}
-
 						state.selectedLayerId?.let { layerId ->
 							val drawableId = model.rig.layerIdByDrawableId.entries.firstOrNull { it.value == layerId }?.key
 							val bounds = drawableId?.let(drawableBounds::get)
@@ -418,41 +416,22 @@ fun CanvasViewportComposable(
 								g, bounds, viewport, ComponentPalette.strong(layerId).brighter(), 3.0f,
 							)
 						}
-					} finally {
-						g.dispose()
 					}
-					drawImage(buffer.toComposeImageBitmap())
-				}
 
-				else -> {}
-			}
-			if (informationLayer) {
-				val ids = informationWarpIds(model.rig.puppet, state.selectedDeformerId, informationSelectedOnly)
-				val buffer=BufferedImage(w,h,BufferedImage.TYPE_INT_ARGB)
-				val g=buffer.createGraphics()
-				try {
-					g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-					io.github.psd2live.ui.RigInformationOverlay.paint(g,model.rig.puppet,
-						if(mode==WorkspaceTab.PREVIEW)informationPose else state.parameterValues,
-						viewport,ids,labels=informationNames,pointIndices=informationIndices)
-				} finally { g.dispose() }
+					// 3d. Warp Channel (RigInformationOverlay)
+					if (showWarp) {
+						val ids = informationWarpIds(model.rig.puppet, state.selectedDeformerId, informationSelectedOnly)
+							.filter { state.isDeformerVisible(it) }.toSet()
+						io.github.psd2live.ui.RigInformationOverlay.paint(
+							g, model.rig.puppet,
+							if (mode == WorkspaceTab.PREVIEW) informationPose else state.parameterValues,
+							viewport, ids, labels = informationNames, pointIndices = informationIndices,
+						)
+					}
+				} finally {
+					g.dispose()
+				}
 				drawImage(buffer.toComposeImageBitmap())
-			}
-		}
-		if (previewModel != null) androidx.compose.foundation.layout.Column(
-			modifier=Modifier.align(Alignment.TopStart).background(colors.panelBackground).padding(4.dp),
-		) {
-			androidx.compose.foundation.layout.Row(verticalAlignment=Alignment.CenterVertically) {
-			androidx.compose.material.Checkbox(informationLayer,{ informationLayer=it })
-			Text(tr("canvas.information.deformers"),fontSize=11.sp,color=colors.textPrimary)
-			androidx.compose.material.Checkbox(informationNames,{ informationNames=it },enabled=informationLayer)
-			Text(tr("canvas.information.names"),fontSize=11.sp,color=colors.textPrimary)
-			}
-			if(informationLayer) androidx.compose.foundation.layout.Row(verticalAlignment=Alignment.CenterVertically) {
-			androidx.compose.material.Checkbox(informationIndices,{ informationIndices=it; if(it)informationLayer=true })
-			Text(tr("canvas.information.indices"),fontSize=11.sp,color=colors.textPrimary)
-			androidx.compose.material.Checkbox(informationSelectedOnly,{ informationSelectedOnly=it })
-			Text(tr("canvas.information.selectedOnly"),fontSize=11.sp,color=colors.textPrimary)
 			}
 		}
 
@@ -583,4 +562,37 @@ private fun computeCubismViewport(
 		(panX / (safeWidth * 0.5)).toFloat(),
 		(-panY / (safeHeight * 0.5)).toFloat(),
 	)
+}
+
+internal fun descendantLayerIds(model: RigPreviewModel, deformerId: String, parentOverrides: Map<String, String?>): Set<String> {
+	val deformerById = model.rig.puppet.deformers.associateBy { it.id.raw }
+	val drawableById = model.rig.puppet.drawables.associateBy { it.id.raw }
+	val layerByDrawable = model.rig.layerIdByDrawableId
+
+	val targetDeformers = mutableSetOf(deformerId)
+	var changed = true
+	while (changed) {
+		changed = false
+		for (def in model.rig.puppet.deformers) {
+			val defId = def.id.raw
+			if (defId !in targetDeformers) {
+				val p = parentOverrides[defId] ?: def.parent?.raw
+				if (p in targetDeformers) {
+					targetDeformers.add(defId)
+					changed = true
+				}
+			}
+		}
+	}
+
+	val result = mutableSetOf<String>()
+	for (drawable in model.rig.puppet.drawables) {
+		val drawId = drawable.id.raw
+		val p = parentOverrides[drawId] ?: drawable.parentDeformerId?.raw
+		if (p in targetDeformers) {
+			val layerId = layerByDrawable[drawId]
+			if (layerId != null) result.add(layerId)
+		}
+	}
+	return result
 }
