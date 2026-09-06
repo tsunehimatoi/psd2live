@@ -19,7 +19,7 @@ object CharacterAnalyzer {
 			?.centroidX
 			?: source.widthPx * 0.5f
 		val layers = initiallyClassified.flatMap { original ->
-			(if (original.source.id.raw in config.rigEdits.assetLayers) listOf(original) else ComponentSplitter.split(original, preliminaryFaceCenter, config.alphaThreshold)).map { component ->
+			(if (original.source.id.raw in config.rigEdits.assetLayers) listOf(original) else ComponentSplitter.split(original, preliminaryFaceCenter, config.alphaThreshold, config.meshSpacing.toFloat())).map { component ->
 				val directOverride = config.layerOverrides[component.source.id.raw]
 				val inheritedOverride = config.layerOverrides[original.source.id.raw]
 				when {

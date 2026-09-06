@@ -1,4 +1,4 @@
-﻿package io.github.psd2live.core
+package io.github.psd2live.core
 
 import org.umamo.format.art.LayerBlend
 import org.umamo.format.art.LayerBounds
@@ -61,6 +61,57 @@ class LayerClassifierTest {
 		assertEquals(2, analysis.layers.size)
 		assertTrue(analysis.layers.all { it.semantic.tag == SemanticTag.EYEBROW })
 		assertEquals(setOf(Side.LEFT, Side.RIGHT), analysis.layers.map { it.semantic.side }.toSet())
+		assertEquals(listOf("mystery-r", "mystery-l"), analysis.layers.map { it.source.name })
+	}
+
+	@Test
+	fun `auto-splits two disconnected meshes and names them with -r and -l for non-splitTags like hair or limbs`() {
+		val width = 120
+		val height = 60
+		val pixels = ByteArray(width * height * 4)
+		// Left lock: x from 10 to 45, y from 10 to 50
+		for (y in 10..50) for (x in 10..45) pixels[(y * width + x) * 4 + 3] = 0xff.toByte()
+		// Right lock: x from 75 to 110, y from 10 to 50
+		for (y in 10..50) for (x in 75..110) pixels[(y * width + x) * 4 + 3] = 0xff.toByte()
+
+		val original = LayerClassifier.classify(layer("front hair", width, height, pixels), 8)
+		val split = ComponentSplitter.split(original, meshSpacing = 24f, alphaThreshold = 8)
+
+		assertEquals(2, split.size)
+		assertEquals(listOf("front hair-r", "front hair-l"), split.map { it.source.name })
+		assertEquals(listOf(Side.RIGHT, Side.LEFT), split.map { it.semantic.side })
+		assertEquals(listOf(SemanticTag.FRONT_HAIR, SemanticTag.FRONT_HAIR), split.map { it.semantic.tag })
+	}
+
+	@Test
+	fun `single connected mesh is not split`() {
+		val width = 100
+		val height = 60
+		val pixels = ByteArray(width * height * 4)
+		for (y in 10..50) for (x in 10..90) pixels[(y * width + x) * 4 + 3] = 0xff.toByte()
+
+		val original = LayerClassifier.classify(layer("front hair", width, height, pixels), 8)
+		val split = ComponentSplitter.split(original, meshSpacing = 24f, alphaThreshold = 8)
+
+		assertEquals(1, split.size)
+		assertEquals("front hair", split[0].source.name)
+		assertEquals(Side.NONE, split[0].semantic.side)
+	}
+
+	@Test
+	fun `layer already having side suffix is not split even if mesh has two islands`() {
+		val width = 120
+		val height = 60
+		val pixels = ByteArray(width * height * 4)
+		for (y in 10..50) for (x in 10..45) pixels[(y * width + x) * 4 + 3] = 0xff.toByte()
+		for (y in 10..50) for (x in 75..110) pixels[(y * width + x) * 4 + 3] = 0xff.toByte()
+
+		val original = LayerClassifier.classify(layer("front hair-l", width, height, pixels), 8)
+		val split = ComponentSplitter.split(original, meshSpacing = 24f, alphaThreshold = 8)
+
+		assertEquals(1, split.size)
+		assertEquals("front hair-l", split[0].source.name)
+		assertEquals(Side.LEFT, split[0].semantic.side)
 	}
 
 	private fun layer(name: String, width: Int, height: Int, rgba: ByteArray) = object : SourceLayer {
