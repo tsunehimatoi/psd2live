@@ -29,6 +29,8 @@ import org.umamo.runtime.model.RotationPivotForm
 import org.umamo.runtime.model.RuntimeTarget
 import org.umamo.runtime.model.WarpLatticeForm
 import org.umamo.runtime.model.withDerivedRenderRoot
+import java.text.Normalizer
+import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -105,6 +107,15 @@ object RigBuilder {
 	private val frontHairPhysicsWarpId = DeformerId("DeformHairFrontPhysics")
 	private val backHairFollowWarpId = DeformerId("DeformHairBackFollow")
 	private val backHairPhysicsWarpId = DeformerId("DeformHairBackPhysics")
+	private val eyesWarpId = DeformerId("DeformEyes")
+	private val browsWarpId = DeformerId("DeformBrows")
+	private val earsWarpId = DeformerId("DeformEars")
+
+	private data class DeformerBuildResult(
+		val deformers: List<Deformer>,
+		val pairFrames: Map<String, Bounds>,
+		val pairedParentByLayerId: Map<String, Pair<DeformerId, Bounds>>,
+	)
 
 	private val faceTags = setOf(
 		SemanticTag.FACE,
@@ -167,8 +178,10 @@ object RigBuilder {
 		val bodyPartId = PartId("PartBody")
 		val extraPartId = PartId("PartExtra")
 		val shouldBuildDeformers = !config.meshOnly && config.generateDeformers
-		val rawDeformers = if (shouldBuildDeformers) {
+		val deformerResult = if (shouldBuildDeformers) {
 			buildDeformers(
+				analysis,
+				rigLayerById,
 				faceRig,
 				characterFrame,
 				headFrame,
@@ -179,12 +192,15 @@ object RigBuilder {
 				facePartId,
 				frontHairPartId,
 				backHairPartId,
+				headAccessoryPartId,
 				bodyPartId,
+				extraPartId,
 				config,
 			)
 		} else {
-			emptyList()
+			DeformerBuildResult(emptyList(), emptyMap(), emptyMap())
 		}
+		val rawDeformers = deformerResult.deformers
 
 		val deformers = if (config.parentOverrides.isEmpty()) rawDeformers else {
 			val deformerById = rawDeformers.associateBy { it.id.raw }
@@ -223,6 +239,7 @@ object RigBuilder {
 			frameByDeformer[backHairFollowWarpId.raw] = it
 			frameByDeformer[backHairPhysicsWarpId.raw] = it
 		}
+		frameByDeformer.putAll(deformerResult.pairFrames)
 
 		val idCounts = mutableMapOf<String, Int>()
 		val drawables = mutableListOf<Drawable>()
@@ -296,7 +313,8 @@ object RigBuilder {
 			}
 			val isHeadLayer = inferredGroup(layer, analysis.anchors) == LayerGroup.HEAD
 			val rigLayer = rigLayerById.getValue(layer.source.id.raw)
-			val defaultParentAndFrame = parentAndFrame(layer, faceRig, analysis.anchors, characterFrame, headFrame, faceFrame, frontHairFrame, backHairFrame)
+			val defaultParentAndFrame = deformerResult.pairedParentByLayerId[layer.source.id.raw]
+				?: parentAndFrame(layer, faceRig, analysis.anchors, characterFrame, headFrame, faceFrame, frontHairFrame, backHairFrame)
 			val hasParentOverride = config.parentOverrides.containsKey(layer.source.id.raw)
 			val overrideParentRaw = config.parentOverrides[layer.source.id.raw]
 			val effectiveParentId: DeformerId? = if (hasParentOverride) {
@@ -599,6 +617,8 @@ object RigBuilder {
 	}
 
 	private fun buildDeformers(
+		analysis: PipelineAnalysis,
+		rigLayerById: Map<String, ClassifiedLayer>,
 		faceRig: NinePoseFaceRig,
 		character: Bounds,
 		head: Bounds,
@@ -609,9 +629,11 @@ object RigBuilder {
 		facePartId: PartId,
 		frontHairPartId: PartId,
 		backHairPartId: PartId,
+		headAccessoryPartId: PartId,
 		bodyPartId: PartId,
+		extraPartId: PartId,
 		config: PipelineConfig,
-	): List<Deformer> {
+	): DeformerBuildResult {
 		val bodyGrid = warpGrid(
 			listOf(axis(StandardParameters.BODY_X, -10f, 0f, 10f), axis(StandardParameters.BODY_Y, -10f, 0f, 10f)),
 			columns = 4,
@@ -683,11 +705,60 @@ object RigBuilder {
 			faceWarpId, facePartId, 16, 8, true, contourGrid)
 		val deformers = mutableListOf<Deformer>(body, breath, rotation, headContainer, face, contour)
 		if (config.featureDisplacementEnabled) deformers += displacement
+		val pairFrames = mutableMapOf<String, Bounds>()
+		val pairedParentByLayerId = mutableMapOf<String, Pair<DeformerId, Bounds>>()
+
+		val leftEye = faceRig.regions.firstOrNull { it.feature == FaceFeature.EYE && it.side == Side.LEFT }
+		val rightEye = faceRig.regions.firstOrNull { it.feature == FaceFeature.EYE && it.side == Side.RIGHT }
+		val eyesBounds = if (leftEye != null && rightEye != null) {
+			leftEye.bounds.union(rightEye.bounds).expanded(0.04f)
+		} else null
+		if (eyesBounds != null) {
+			val eyesParent = if (config.featureDisplacementEnabled) featureDisplacementId else faceWarpId
+			deformers += identityWarp(eyesWarpId, tr("model.deformer.eyes"), eyesParent, eyesBounds, faceFrame, facePartId, rows = 3, columns = 4)
+			pairFrames[eyesWarpId.raw] = eyesBounds
+		}
+
+		val leftBrow = faceRig.regions.firstOrNull { it.feature == FaceFeature.BROW && it.side == Side.LEFT }
+		val rightBrow = faceRig.regions.firstOrNull { it.feature == FaceFeature.BROW && it.side == Side.RIGHT }
+		val browsBounds = if (leftBrow != null && rightBrow != null) {
+			leftBrow.bounds.union(rightBrow.bounds).expanded(0.04f)
+		} else null
+		if (browsBounds != null) {
+			val browsParent = if (config.featureDisplacementEnabled) featureDisplacementId else faceWarpId
+			deformers += identityWarp(browsWarpId, tr("model.deformer.brows"), browsParent, browsBounds, faceFrame, facePartId, rows = 3, columns = 4)
+			pairFrames[browsWarpId.raw] = browsBounds
+		}
+
+		val leftEar = faceRig.regions.firstOrNull { it.feature == FaceFeature.EAR && it.side == Side.LEFT }
+		val rightEar = faceRig.regions.firstOrNull { it.feature == FaceFeature.EAR && it.side == Side.RIGHT }
+		val earsBounds = if (leftEar != null && rightEar != null) {
+			leftEar.bounds.union(rightEar.bounds).expanded(0.04f)
+		} else null
+		if (earsBounds != null) {
+			deformers += identityWarp(earsWarpId, tr("model.deformer.ears"), faceWarpId, earsBounds, faceFrame, facePartId, rows = 3, columns = 4)
+			pairFrames[earsWarpId.raw] = earsBounds
+		}
+
 		val primaryRegions = faceRig.regions.filter { it.feature != FaceFeature.IRIS }
 		for (region in primaryRegions) {
-			val parent = if (config.featureDisplacementEnabled && region.feature in setOf(FaceFeature.EYE, FaceFeature.BROW, FaceFeature.MOUTH))
-				featureDisplacementId else faceWarpId
-			deformers += featureWarp(faceRig, region, parent, faceFrame, facePartId, config)
+			val (parent, parentFrame) = when (region.feature) {
+				FaceFeature.EYE -> if (eyesBounds != null) eyesWarpId to eyesBounds else {
+					(if (config.featureDisplacementEnabled) featureDisplacementId else faceWarpId) to faceFrame
+				}
+				FaceFeature.BROW -> if (browsBounds != null) browsWarpId to browsBounds else {
+					(if (config.featureDisplacementEnabled) featureDisplacementId else faceWarpId) to faceFrame
+				}
+				FaceFeature.EAR -> if (earsBounds != null) earsWarpId to earsBounds else {
+					faceWarpId to faceFrame
+				}
+				else -> {
+					val p = if (config.featureDisplacementEnabled && region.feature in setOf(FaceFeature.EYE, FaceFeature.BROW, FaceFeature.MOUTH))
+						featureDisplacementId else faceWarpId
+					p to faceFrame
+				}
+			}
+			deformers += featureWarp(faceRig, region, parent, parentFrame, facePartId, config)
 		}
 		for (irisRegion in faceRig.regions.filter { it.feature == FaceFeature.IRIS }) {
 			val eyeRegion = faceRig.regionFor(FaceFeature.EYE, irisRegion.side) ?: continue
@@ -739,7 +810,128 @@ object RigBuilder {
 				curlRatio = 0.025f,
 			)
 		}
-		return deformers
+
+		val usedDeformerIds = deformers.map { it.id.raw }.toMutableSet()
+		val candidateLayers = analysis.layers.filter { layer ->
+			layer.opaquePixels > 0 &&
+				(layer.semantic.side == Side.LEFT || layer.semantic.side == Side.RIGHT) &&
+				!isHandledByFaceRegion(layer, faceRig)
+		}
+		val grouped = candidateLayers.groupBy { layer ->
+			val (defaultParentId, _) = parentAndFrame(layer, faceRig, analysis.anchors, character, head, faceFrame, frontHair, backHair)
+			val baseName = pairBaseName(layer.source.name)
+			defaultParentId to baseName.lowercase(Locale.ROOT).trim()
+		}
+		for ((key, pairLayers) in grouped) {
+			val hasLeft = pairLayers.any { it.semantic.side == Side.LEFT }
+			val hasRight = pairLayers.any { it.semantic.side == Side.RIGHT }
+			if (!hasLeft || !hasRight) continue
+
+			val (defaultParentId, defaultParentFrame) = parentAndFrame(pairLayers.first(), faceRig, analysis.anchors, character, head, faceFrame, frontHair, backHair)
+			val cleanBaseName = pairBaseName(pairLayers.first().source.name)
+			val pairId = uniquePairDeformerId(cleanBaseName, pairLayers.first().semantic.tag, usedDeformerIds)
+			val pairName = tr("model.deformer.pair", cleanBaseName)
+
+			val unionBounds = pairLayers.map { rigLayerById.getValue(it.source.id.raw).bounds }.reduce(Bounds::union)
+			val padX = maxOf(unionBounds.width * 0.04f, 4f)
+			val padY = maxOf(unionBounds.height * 0.04f, 4f)
+			val pairBounds = Bounds(unionBounds.left - padX, unionBounds.top - padY, unionBounds.right + padX, unionBounds.bottom + padY)
+
+			val firstLayer = pairLayers.first()
+			val partId = when {
+				firstLayer.semantic.tag == SemanticTag.FRONT_HAIR -> frontHairPartId
+				firstLayer.semantic.tag == SemanticTag.BACK_HAIR -> backHairPartId
+				firstLayer.semantic.tag in faceTags -> facePartId
+				inferredGroup(firstLayer, analysis.anchors) == LayerGroup.HEAD -> headAccessoryPartId
+				inferredGroup(firstLayer, analysis.anchors) == LayerGroup.EXTRA -> extraPartId
+				else -> bodyPartId
+			}
+
+			val pairWarp = identityWarp(
+				id = pairId,
+				name = pairName,
+				parent = defaultParentId,
+				frame = pairBounds,
+				parentFrame = defaultParentFrame,
+				partId = partId,
+				rows = 3,
+				columns = 3,
+			)
+			deformers += pairWarp
+			pairFrames[pairId.raw] = pairBounds
+			for (layer in pairLayers) {
+				pairedParentByLayerId[layer.source.id.raw] = pairId to pairBounds
+			}
+		}
+
+		return DeformerBuildResult(deformers, pairFrames, pairedParentByLayerId)
+	}
+
+	private fun identityWarp(
+		id: DeformerId,
+		name: String,
+		parent: DeformerId,
+		frame: Bounds,
+		parentFrame: Bounds,
+		partId: PartId,
+		rows: Int = 3,
+		columns: Int = 3,
+	): Deformer.Warp {
+		val inParent = mapBounds(frame, parentFrame)
+		val geometry = warpGrid(emptyList(), columns = columns, rows = rows) { u, v, _ ->
+			(inParent.left + u * inParent.width) to (inParent.top + v * inParent.height)
+		}
+		return Deformer.Warp(id, name, parent, partId, rows, columns, true, geometry)
+	}
+
+	private val sideSuffixRegex = Regex("(?:[-_.\\s]+)(l|r|left|right|左|右)$", RegexOption.IGNORE_CASE)
+	private val sidePrefixRegex = Regex("^(左|右)(?:[-_.\\s]+)?", RegexOption.IGNORE_CASE)
+
+	internal fun pairBaseName(name: String): String {
+		var s = Normalizer.normalize(name, Normalizer.Form.NFKC).trim()
+		sideSuffixRegex.find(s)?.let {
+			s = s.removeRange(it.range).trim()
+		} ?: sidePrefixRegex.find(s)?.let {
+			s = s.removeRange(it.range).trim()
+		}
+		return if (s.isNotBlank()) s else name.trim()
+	}
+
+	private fun uniquePairDeformerId(
+		baseName: String,
+		tag: SemanticTag,
+		usedIds: MutableSet<String>,
+	): DeformerId {
+		val words = baseName.split(Regex("[^a-zA-Z0-9]+")).filter { it.isNotBlank() }
+		val pascal = words.joinToString("") { it.replaceFirstChar(Char::uppercaseChar) }
+		val baseId = when {
+			pascal.isNotBlank() -> "DeformPair_$pascal"
+			tag != SemanticTag.UNKNOWN -> {
+				val tagWords = tag.name.lowercase(Locale.ROOT).split('_').joinToString("") { it.replaceFirstChar(Char::uppercaseChar) }
+				"DeformPair_$tagWords"
+			}
+			else -> "DeformPair_Part"
+		}
+		var id = baseId
+		var counter = 2
+		while (!usedIds.add(id)) {
+			id = "${baseId}_$counter"
+			counter++
+		}
+		return DeformerId(id)
+	}
+
+	private fun isHandledByFaceRegion(layer: ClassifiedLayer, faceRig: NinePoseFaceRig): Boolean = when (layer.semantic.tag) {
+		SemanticTag.IRIDES -> faceRig.regionFor(FaceFeature.IRIS, layer.semantic.side) != null
+		SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE ->
+			faceRig.regionFor(FaceFeature.EYE, layer.semantic.side) != null
+		SemanticTag.EYEBROW -> faceRig.regionFor(FaceFeature.BROW, layer.semantic.side) != null
+		SemanticTag.EARS, SemanticTag.EARWEAR -> faceRig.regionFor(FaceFeature.EAR, layer.semantic.side) != null
+		SemanticTag.NOSE -> faceRig.regionFor(FaceFeature.NOSE, layer.semantic.side) != null
+		SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN, SemanticTag.MOUTH_CLOSE,
+		SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE ->
+			faceRig.regionFor(FaceFeature.MOUTH, layer.semantic.side) != null
+		else -> false
 	}
 
 	/** A local inward socket on the left silhouette, inherited by skin only. */
