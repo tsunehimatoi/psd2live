@@ -95,6 +95,38 @@ class RigIntegrityValidatorTest {
 		}
 	}
 
+	@Test
+	fun `head angle opacity becoming zero produces warning instead of throwing`() {
+		val param = Parameter(ParameterId(StandardParameters.ANGLE_X.raw), "Angle X", -45f, 45f, 0f)
+		val baseBounds = Bounds(10f, 10f, 50f, 50f)
+		val mesh = DrawableMesh(
+			floatArrayOf(baseBounds.left, baseBounds.top, baseBounds.right, baseBounds.top, baseBounds.right, baseBounds.bottom, baseBounds.left, baseBounds.bottom),
+			floatArrayOf(0f, 0f, 1f, 0f, 1f, 1f, 0f, 1f), intArrayOf(0, 1, 2, 0, 2, 3),
+		)
+		val opacityGrid = KeyformGrid<ChannelValue>(
+			axes = listOf(KeyformAxis(StandardParameters.ANGLE_X, floatArrayOf(-45f, 0f, 45f))),
+			cells = listOf(
+				KeyformCell(intArrayOf(0), ChannelValue.Scalar(0f)), // opacity 0 at AngleX=-45
+				KeyformCell(intArrayOf(1), ChannelValue.Scalar(1f)), // opacity 1 at AngleX=0
+				KeyformCell(intArrayOf(2), ChannelValue.Scalar(1f)), // opacity 1 at AngleX=45
+			),
+		)
+		val earDrawable = Drawable(
+			id = DrawableId("ArtMeshEarsR"), name = "ears R", parentDeformerId = null,
+			blendMode = BlendMode.Normal, maskedBy = emptyList(), geometryGrid = null,
+			channelGrids = ChannelGrids(mapOf(FormChannel.OPACITY to opacityGrid)),
+			mesh = mesh,
+		)
+		val puppet = PuppetModel(
+			parameters = listOf(param), parts = emptyList(), deformers = emptyList(),
+			drawables = listOf(earDrawable), rootChildren = listOf(OrgChild.Drawable(earDrawable.id)), rootPartId = null,
+		)
+
+		val warnings = RigIntegrityValidator.validateHeadAnglePoses("Generated Model", puppet, mapOf("ArtMeshEarsR" to baseBounds))
+		assertTrue(warnings.isNotEmpty())
+		assertTrue(warnings.any { "ArtMeshEarsR" in it && "AngleX=-45" in it })
+	}
+
 	private fun puppet(bounds: Bounds): PuppetModel {
 		val drawable = Drawable(
 			id = DrawableId(ID), name = "front hair", parentDeformerId = null,

@@ -570,6 +570,7 @@ object RigBuilder {
 		angleY: Float,
 		yawParallax: Float,
 		pitchParallax: Float,
+		yawPerspective: Float = 0f,
 	): Pair<Float, Float> {
 		val yaw = angleX / 45f
 		val pitch = angleY / 30f
@@ -577,7 +578,8 @@ object RigBuilder {
 		// Both endpoints receive the same vertical offset. The middle retains a depth bulge without
 		// turning signed pitch into a global height scale.
 		val pitchDepthWeight = 0.78f + sin(PI * v).toFloat().coerceAtLeast(0f) * 0.22f
-		return (inHead.left + u * inHead.width + yaw * yawParallax * yawDepthWeight) to
+		val uPerspective = u + yaw * yawPerspective * 4f * u * (1f - u)
+		return (inHead.left + uPerspective * inHead.width + yaw * yawParallax * yawDepthWeight) to
 			(inHead.top + v * inHead.height + pitch * pitchParallax * pitchDepthWeight)
 	}
 
@@ -701,7 +703,16 @@ object RigBuilder {
 			deformers += gazeWarp(irisRegion, irisShape.id, facePartId)
 		}
 		frontHair?.let { frame ->
-			deformers += hairFollowWarp(frontHairFollowWarpId, tr("model.deformer.frontHairFollow"), frame, head, frontHairPartId, 0.014f, -0.006f)
+			deformers += hairFollowWarp(
+				frontHairFollowWarpId,
+				tr("model.deformer.frontHairFollow"),
+				frame,
+				head,
+				frontHairPartId,
+				-0.020f,
+				-0.006f,
+				yawPerspective = 0.10f,
+			)
 			deformers += hairPhysicsWarp(
 				frontHairPhysicsWarpId,
 				tr("model.deformer.frontHairPhysics"),
@@ -840,6 +851,7 @@ object RigBuilder {
 		part: PartId,
 		yawParallax: Float,
 		pitchParallax: Float,
+		yawPerspective: Float = 0f,
 	): Deformer.Warp {
 		val inHead = mapBounds(frame, head)
 		val grid = warpGrid(
@@ -847,7 +859,7 @@ object RigBuilder {
 			3,
 			4,
 		) { u, v, values ->
-			hairFollowPoint(inHead, u, v, values[0], values[1], yawParallax, pitchParallax)
+			hairFollowPoint(inHead, u, v, values[0], values[1], yawParallax, pitchParallax, yawPerspective)
 		}
 		return Deformer.Warp(id, name, headWarpId, part, 4, 3, true, grid)
 	}

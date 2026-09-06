@@ -96,8 +96,8 @@ class PSD2LivePipeline {
 		val rig = RigBuilder.build(analysis, atlas, config).withRigEdits(config.rigEdits)
 		val generatedLabel = tr("validation.generated")
 		val neutralRig = RigIntegrityValidator.validateNeutralPose(generatedLabel, rig.puppet, rig.sourceBoundsByDrawableId)
-		RigIntegrityValidator.validateHeadAnglePoses(generatedLabel, rig.puppet, neutralRig.boundsByDrawableId)
-		RigIntegrityValidator.validateDirectionalWarpDimensions(generatedLabel, rig.puppet)
+		val generatedAngleWarnings = RigIntegrityValidator.validateHeadAnglePoses(generatedLabel, rig.puppet, neutralRig.boundsByDrawableId)
+		val generatedWarpWarnings = RigIntegrityValidator.validateDirectionalWarpDimensions(generatedLabel, rig.puppet)
 		progress.update(tr("progress.keyforms"), 0.58)
 		// CMO3's editable base mesh is canvas-space. The keyform absolutes remain in parent space;
 		// Umamo's conversion preserves that mixed-space invariant exactly.
@@ -108,7 +108,7 @@ class PSD2LivePipeline {
 		val hasEyeJelly = analysis.layers.any { it.semantic.tag == SemanticTag.IRIDES && it.opaquePixels > 0 }
 		Files.createDirectories(outputRoot)
 		val files = mutableListOf<ExportedFile>()
-		val warnings = (analysis.warnings + rig.warnings + neutralRig.warnings).toMutableList()
+		val warnings = (analysis.warnings + rig.warnings + neutralRig.warnings + generatedAngleWarnings + generatedWarpWarnings).toMutableList()
 		val (runtimeBundle, runtimeReport) = buildRuntimeBundle(baseName, analysis, atlas, rig, config)
 
 		if (config.exportMoc3) {
@@ -120,8 +120,8 @@ class PSD2LivePipeline {
 			val moc3Label = tr("validation.moc3Readback")
 			val mocNeutral = RigIntegrityValidator.validateNeutralPose(moc3Label, reimported, rig.sourceBoundsByDrawableId)
 			warnings += mocNeutral.warnings
-			RigIntegrityValidator.validateHeadAnglePoses(moc3Label, reimported, mocNeutral.boundsByDrawableId)
-			RigIntegrityValidator.validateDirectionalWarpDimensions(moc3Label, reimported)
+			warnings += RigIntegrityValidator.validateHeadAnglePoses(moc3Label, reimported, mocNeutral.boundsByDrawableId)
+			warnings += RigIntegrityValidator.validateDirectionalWarpDimensions(moc3Label, reimported)
 		}
 		progress.update(tr("progress.exportMoc3"), 0.77)
 
@@ -153,8 +153,8 @@ class PSD2LivePipeline {
 			val cmo3Label = tr("validation.cmo3Readback")
 			val cmoNeutral = RigIntegrityValidator.validateNeutralPose(cmo3Label, reimported, rig.sourceBoundsByDrawableId)
 			warnings += cmoNeutral.warnings
-			RigIntegrityValidator.validateHeadAnglePoses(cmo3Label, reimported, cmoNeutral.boundsByDrawableId)
-			RigIntegrityValidator.validateDirectionalWarpDimensions(cmo3Label, reimported)
+			warnings += RigIntegrityValidator.validateHeadAnglePoses(cmo3Label, reimported, cmoNeutral.boundsByDrawableId)
+			warnings += RigIntegrityValidator.validateDirectionalWarpDimensions(cmo3Label, reimported)
 		}
 		progress.update(tr("progress.exportCmo3"), 0.91)
 

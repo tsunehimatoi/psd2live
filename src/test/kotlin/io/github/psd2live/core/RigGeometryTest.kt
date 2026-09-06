@@ -1,4 +1,4 @@
-﻿package io.github.psd2live.core
+package io.github.psd2live.core
 
 import kotlin.math.abs
 import kotlin.test.Test
@@ -100,6 +100,58 @@ class RigGeometryTest {
 				assertEquals(hairFrame.height, negativeHeight, 1e-6f)
 				assertEquals(negativeHeight, positiveHeight, 1e-6f)
 			}
+		}
+	}
+
+	@Test
+	fun `Front hair follow warp widens on near turn side and mirrors`() {
+		val hairFrame = Bounds(0.12f, 0.08f, 0.88f, 0.91f)
+		for (v in floatArrayOf(0f, 0.25f, 0.5f, 0.75f, 1f)) {
+			fun point(u: Float, angleX: Float) =
+				RigBuilder.hairFollowPoint(hairFrame, u, v, angleX, 0f, -0.020f, -0.006f, yawPerspective = 0.10f)
+
+			val leftNeutral = point(0.5f, 0f).first - point(0f, 0f).first
+			val rightNeutral = point(1f, 0f).first - point(0.5f, 0f).first
+			assertEquals(leftNeutral, rightNeutral, 1e-5f)
+
+			// When turning to look (AngleX > 0): front hair left side gets wider, right side gets narrower
+			val leftTurnRight = point(0.5f, 45f).first - point(0f, 45f).first
+			val rightTurnRight = point(1f, 45f).first - point(0.5f, 45f).first
+			assertTrue(leftTurnRight > leftNeutral, "Left side must widen when AngleX > 0")
+			assertTrue(rightTurnRight < rightNeutral, "Right side must narrow when AngleX > 0")
+
+			// When turning right (AngleX > 0), hair shifts to the left; when turning left, hair shifts to the right
+			assertTrue(point(0f, 45f).first < point(0f, 0f).first, "Front hair left edge must shift to the left when AngleX > 0")
+			assertTrue(point(1f, 45f).first < point(1f, 0f).first, "Front hair right edge must shift to the left when AngleX > 0")
+			assertTrue(point(0f, -45f).first > point(0f, 0f).first, "Front hair left edge must shift to the right when AngleX < 0")
+			assertTrue(point(1f, -45f).first > point(1f, 0f).first, "Front hair right edge must shift to the right when AngleX < 0")
+
+			// When turning to look (AngleX < 0): front hair left side gets narrower, right side gets wider (mirrored)
+			val leftTurnLeft = point(0.5f, -45f).first - point(0f, -45f).first
+			val rightTurnLeft = point(1f, -45f).first - point(0.5f, -45f).first
+			assertTrue(leftTurnLeft < leftNeutral, "Left side must narrow when AngleX < 0")
+			assertTrue(rightTurnLeft > rightNeutral, "Right side must widen when AngleX < 0")
+
+			// Exact mirror symmetry
+			assertEquals(leftTurnRight, rightTurnLeft, 1e-5f, "Left width at X>0 must equal right width at X<0")
+			assertEquals(rightTurnRight, leftTurnLeft, 1e-5f, "Right width at X>0 must equal left width at X<0")
+
+			// 3-column warp verification (columns at 0, 1/3, 2/3, 1)
+			val col0WidthNeutral = point(1f / 3f, 0f).first - point(0f, 0f).first
+			val col2WidthNeutral = point(1f, 0f).first - point(2f / 3f, 0f).first
+			assertEquals(col0WidthNeutral, col2WidthNeutral, 1e-5f)
+
+			val col0WidthTurnRight = point(1f / 3f, 45f).first - point(0f, 45f).first
+			val col2WidthTurnRight = point(1f, 45f).first - point(2f / 3f, 45f).first
+			assertTrue(col0WidthTurnRight > col0WidthNeutral, "Left column must widen when AngleX > 0")
+			assertTrue(col2WidthTurnRight < col2WidthNeutral, "Right column must narrow when AngleX > 0")
+
+			val col0WidthTurnLeft = point(1f / 3f, -45f).first - point(0f, -45f).first
+			val col2WidthTurnLeft = point(1f, -45f).first - point(2f / 3f, -45f).first
+			assertTrue(col0WidthTurnLeft < col0WidthNeutral, "Left column must narrow when AngleX < 0")
+			assertTrue(col2WidthTurnLeft > col2WidthNeutral, "Right column must widen when AngleX < 0")
+			assertEquals(col0WidthTurnRight, col2WidthTurnLeft, 1e-5f)
+			assertEquals(col2WidthTurnRight, col0WidthTurnLeft, 1e-5f)
 		}
 	}
 
