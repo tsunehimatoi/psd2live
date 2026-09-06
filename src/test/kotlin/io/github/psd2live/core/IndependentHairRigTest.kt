@@ -52,6 +52,15 @@ class IndependentHairRigTest {
             assertEquals("LockPhysics", data.getValue("PhysicsSettings").jsonArray.single().jsonObject.getValue("Id").jsonPrimitive.content)
             val cmo = result.exportedFiles.single { it.path.toString().endsWith(".cmo3") }
             val root = Cmo3.read(Files.readAllBytes(cmo.path)).root as CModelSource
+            val warpSources = ((root.deformerSourceSet as org.umamo.format.cmo3.model.gen.CDeformerSourceSet)._sources as Iterable<*>)
+                .filterIsInstance<org.umamo.format.cmo3.model.gen.CWarpDeformerSource>()
+            assertTrue(warpSources.isNotEmpty())
+            for (sourceWarp in warpSources) {
+                val bezier = (sourceWarp._extensions as Iterable<*>)
+                    .filterIsInstance<org.umamo.format.cmo3.model.gen.CWarpDeformerBezierExtension>().single()
+                assertEquals(2, bezier.editLevel)
+                assertTrue(bezier.bezierCol in 1..3 && bezier.bezierRow in 1..3)
+            }
             val imported = Cmo3Import.fromModelSource(root)
             assertTrue(imported.deformers.any { it.id.raw == warp.id && it is Deformer.Warp })
             assertEquals(warp.id, imported.drawables.single { it.id == mesh.id }.parentDeformerId?.raw)

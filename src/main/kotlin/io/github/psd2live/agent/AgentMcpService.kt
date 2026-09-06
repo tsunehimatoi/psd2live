@@ -364,6 +364,15 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace): Server {
 		}
 	}
 
+    server.addTool(name="rig_inspect", description="Budgeted geometry inspection at coordinate: summary (default, representation and native control availability, no points), or points (paged up to 256). Local or evaluated canvas coordinates. Does not dump all keyforms.",
+        inputSchema=rigGeometrySchema(false), toolAnnotations=READ_ONLY) { request ->
+        mutationResult { workspace.inspectRigGeometry(requireNotNull(request.arguments)) }
+    }
+    server.addTool(name="rig_transform", description="Apply 1..32 ordered translate/scale/rotate/bend/curve/smooth operations to one Warp or mesh at an exact coordinate. Server edits all points in one history commit. Shared selection + range + ordered operations avoid transferring dense geometry. Supports index, rectangle, point-radius and line-radius selections. Read rig_inspect and agent_get_workflow first.",
+        inputSchema=rigGeometrySchema(true), toolAnnotations=MUTATING) { request ->
+        mutationResult { workspace.transformRigGeometry(requireNotNull(request.arguments)).toJson() }
+    }
+
 	server.addTool(
 		name = "keyform_set",
 		description = "Set or update keyform geometry and/or channels (opacity, draw order, multiply/screen color, glue intensity) on a target at an exact N-D parameter coordinate.",
@@ -574,6 +583,8 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace): Server {
 					parameters = request.floatMap("parameters"),
 					includeLayerIds = request.optionalStringSet("include_layer_ids"),
 					annotateLayerIds = request.optionalStringSet("annotate_layer_ids").orEmpty(),
+					annotateDeformerIds = request.optionalStringSet("annotate_deformer_ids").orEmpty(),
+					pointIndices = request.arguments?.get("point_indices")?.jsonPrimitive?.content == "true",
 					frame = request.viewFrame(),
 					background = request.background(),
 					output = request.outputSpec(),
@@ -586,9 +597,9 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace): Server {
 
     server.addTool(
         name = "agent_get_workflow",
-        description = "Read natural hair-separation guidance: infer local depth before editing, allow crossing complete locks, assemble early, judge natural appearance and intended motion rather than exact edges, use white/black matte fallback, and wire independent Warp/physics.",
+        description = "Read the compact end-to-end rig workflow, evidence budget menu, ordered geometry operation units, selection rules and face-edit recipes. Hair separation has a separate prompt.",
         inputSchema = ToolSchema(properties = buildJsonObject {}), toolAnnotations = READ_ONLY,
-    ) { CallToolResult(content = listOf(TextContent(loadHairSeparationSkill()))) }
+    ) { CallToolResult(content = listOf(TextContent(loadRigGeometryWorkflow()))) }
 
     server.addTool(
         name = "rig_list_objects",
@@ -967,6 +978,8 @@ private fun viewSchema(includeBackground: Boolean, includeFocus: Boolean = false
 
 private fun modelViewSchema(): ToolSchema = ToolSchema(
 	properties = buildJsonObject {
+		putJsonObject("annotate_deformer_ids") { put("type","array"); put("maxItems",16); putJsonObject("items") { put("type","string") };put("description","Warp IDs: posed lattice, name and stable ID; [] is a clean image") }
+		putJsonObject("point_indices") { put("type","boolean");put("default",false) }
 		putJsonObject("parameters") {
 			put("type", "object")
 			put("description", "Cubism parameter ID to value, for example {ParamAngleX: 10.0}")
@@ -1668,6 +1681,8 @@ private fun AgentRenderedView.toJson(): JsonObject = buildJsonObject {
 	}
 	putJsonArray("includedLayerIds") { includedLayerIds.forEach { add(JsonPrimitive(it)) } }
 	putJsonArray("annotatedLayerIds") { annotatedLayerIds.forEach { add(JsonPrimitive(it)) } }
+	putJsonArray("annotatedDeformerIds") { annotatedDeformerIds.forEach { add(JsonPrimitive(it)) } }
+	put("pointIndices",pointIndices)
 	putJsonArray("objectIds") { objectIds.forEach { add(JsonPrimitive(it)) } }
 	putJsonObject("canvasRect") {
 		put("left", canvasRect.left)

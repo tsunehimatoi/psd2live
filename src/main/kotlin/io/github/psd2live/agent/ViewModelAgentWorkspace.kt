@@ -24,6 +24,9 @@ import org.umamo.runtime.model.Parameter
 import org.umamo.runtime.model.ParameterKind
 import org.umamo.runtime.model.PuppetModel
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -337,6 +340,8 @@ class ViewModelAgentWorkspace(
 			parameters = appliedParameters,
 			includeLayerIds = includedLayers,
 			annotateLayerIds = request.annotateLayerIds,
+			annotateDeformerIds = request.annotateDeformerIds,
+			pointIndices = request.pointIndices,
 			frame = request.frame,
 			background = request.background,
 			output = request.output,
@@ -705,6 +710,36 @@ class ViewModelAgentWorkspace(
             puppet.deformers.map { AgentKeyformTargetRef(if (it is Deformer.Warp) "warp" else "rotation", it.id.raw) }
     }
 
+    override fun inspectRigGeometry(arguments: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject {
+        val state = viewModel.state.value
+        val result = AgentRigGeometry.inspect(requireNotNull(state.previewModel).rig.puppet, arguments, snapshot().revisionId)
+        viewModel.addLog("Rig inspect ${AgentRigGeometry.id(arguments)} detail=${arguments["detail"] ?: "summary"} bytes=${result.toString().length}",
+            source=io.github.psd2live.ui.state.LogSource.AGENT, tag="Geometry")
+        return result
+    }
+
+    override suspend fun transformRigGeometry(arguments: kotlinx.serialization.json.JsonObject): AgentWorkspaceMutationResult {
+        val kind=AgentRigGeometry.kind(arguments); val id=AgentRigGeometry.id(arguments)
+        val pose=AgentRigGeometry.pose(arguments)
+        require(pose.isNotEmpty()) { "Specify at least one parameter coordinate for a keyform edit" }
+        val operations=arguments.getValue("operations").jsonArray
+        val result = mutateRigKeyform(arguments.getValue("expected_history_head_node_id").jsonPrimitive.content,
+            arguments["task_id"]?.jsonPrimitive?.contentOrNull, "Transform $id at $pose: ${operations.map { it.jsonObject["type"] }}", id) { document, puppet ->
+            val g=io.github.psd2live.core.RigGeometryTools.geometry(puppet,kind,id,pose)
+            require(g.axes.all { it.parameterId.raw in pose }) { "Supply every bound geometry axis in coordinate" }
+            val points=io.github.psd2live.core.RigGeometryTools.transform(g,operations, arguments["selection"]?.jsonObject ?: kotlinx.serialization.json.JsonObject(emptyMap()), arguments["range"]?.jsonObject ?: kotlinx.serialization.json.JsonObject(emptyMap()))
+            val geometry=if(kind=="warp") RigKeyformGeometryEdit(controlPoints=points.toList())
+                else RigKeyformGeometryEdit(positionDeltas=points.indices.map { points[it]-g.base[it] })
+            val edit=RigKeyformSetEdit(RigTargetRef(RigTargetKind.fromString(kind),id),pose,geometry)
+            // Geometry-only edits must retain previously authored channels at this coordinate.
+            val previous=document.rigEdits.keyformSetEdits.firstOrNull { it.target==edit.target && it.coordinate==pose }
+            document.copy(rigEdits=document.rigEdits.setKeyform(edit.copy(channels=previous?.channels)))
+        }
+        viewModel.addLog("Rig transform $id committed ${result.historyNodeId}",
+            source=io.github.psd2live.ui.state.LogSource.AGENT, tag="Geometry", detail=arguments.toString())
+        return result
+    }
+
     override fun listPhysics() = viewModel.state.value.rigEdits.physicsEdits
 
     override suspend fun createWarp(edit: io.github.psd2live.core.RigWarpEdit, expectedHead: String, taskId: String?) =
@@ -740,7 +775,7 @@ class ViewModelAgentWorkspace(
 							"type" to "warp",
 							"rows" to deformer.rows.toString(),
 							"columns" to deformer.columns.toString(),
-							"controlPointsCount" to (deformer.rows * deformer.columns).toString(),
+							"controlPointsCount" to ((deformer.rows + 1) * (deformer.columns + 1)).toString(),
 							"isQuadTransform" to deformer.isQuadTransform.toString(),
 						)
 						val geoSnapshot = grid?.let { g ->
@@ -1367,7 +1402,7 @@ class ViewModelAgentWorkspace(
             schedulePersistence { store.persistView(projectId, it) }
 		}
 		viewModel.addLog(
-			message = "MCP Render: [${it.kind}] ${it.viewId} (${it.renderedWidth}x${it.renderedHeight})",
+			message = "MCP Render: [${it.kind}] ${it.viewId} (${it.renderedWidth}x${it.renderedHeight}) deformers=${it.annotatedDeformerIds} layers=${it.annotatedLayerIds} indices=${it.pointIndices}",
 			level = io.github.psd2live.ui.state.LogLevel.INFO,
 			source = io.github.psd2live.ui.state.LogSource.MCP_SERVER,
 			tag = "Render",

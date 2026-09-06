@@ -64,6 +64,10 @@ class EyeRigTest {
 		}
 		val iris = assertNotNull(drawableByTag[SemanticTag.IRIDES])
 		val eyeWhite = assertNotNull(drawableByTag[SemanticTag.EYEWHITE])
+		val deformers = preview.rig.puppet.deformers.associateBy { it.id.raw }
+		val eyeWarp = deformers.getValue(eyeWhite.parentDeformerId!!.raw)
+		assertEquals("DeformFeatureDisplacement", eyeWarp.parent?.raw)
+		assertEquals("DeformFaceNinePose", deformers.getValue("DeformFeatureDisplacement").parent?.raw)
 		val geometry = assertNotNull(iris.geometryGrid)
 
 		assertEquals(listOf(StandardParameters.EYE_BALL_FORM), geometry.axes.map { it.parameterId })

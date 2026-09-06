@@ -27,6 +27,7 @@ import org.umamo.runtime.model.DrawableId
 import org.umamo.runtime.model.FormChannel
 import org.umamo.runtime.model.KeyableTarget
 import org.umamo.runtime.model.KeyformGrid
+import org.umamo.runtime.model.KeyformCell
 import org.umamo.runtime.model.KeyformOwner
 import org.umamo.runtime.model.MeshDeltaForm
 import org.umamo.runtime.model.Parameter
@@ -359,12 +360,19 @@ private fun applyKeyformSet(model: PuppetModel, set: RigKeyformSetEdit): PuppetM
 			RigTargetKind.WARP_DEFORMER -> {
 				val deformer = current.deformers.firstOrNull { it.id.raw == set.target.id } as? Deformer.Warp
 				if (deformer != null && geo.controlPoints != null) {
-					val expectedSize = deformer.rows * deformer.columns * 2
+					val expectedSize = (deformer.rows + 1) * (deformer.columns + 1) * 2
 					require(geo.controlPoints.size == expectedSize) {
 						"Warp ${set.target.id} control points size mismatch: expected $expectedSize, got ${geo.controlPoints.size}"
 					}
 					val form = WarpLatticeForm(geo.controlPoints.toFloatArray())
+					val identity = FloatArray(expectedSize)
+					for (r in 0..deformer.rows) for (c in 0..deformer.columns) {
+						val i = (r * (deformer.columns + 1) + c) * 2
+						identity[i] = c.toFloat() / deformer.columns
+						identity[i + 1] = r.toFloat() / deformer.rows
+					}
 					var grid: KeyformGrid<WarpLatticeForm>? = deformer.geometryGrid
+						?: KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(), WarpLatticeForm(identity))))
 					for ((paramName, _) in set.coordinate) {
 						val param = current.parameters.firstOrNull { it.id.raw == paramName }
 							?: throw IllegalArgumentException("Parameter not found: $paramName")
@@ -414,8 +422,9 @@ private fun applyKeyformSet(model: PuppetModel, set: RigKeyformSetEdit): PuppetM
 						"Mesh ${set.target.id} position deltas size mismatch: expected $expectedDeltas, got ${geo.positionDeltas.size}"
 					}
 					val form = MeshDeltaForm(geo.positionDeltas.toFloatArray())
-					var grid: KeyformGrid<MeshDeltaForm>? = drawable.geometryGrid
 					val neutralForm = MeshDeltaForm(FloatArray(expectedDeltas))
+					var grid: KeyformGrid<MeshDeltaForm>? = drawable.geometryGrid
+						?: KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(), neutralForm)))
 					for ((paramName, _) in set.coordinate) {
 						val param = current.parameters.firstOrNull { it.id.raw == paramName }
 							?: throw IllegalArgumentException("Parameter not found: $paramName")

@@ -1,4 +1,4 @@
-﻿package io.github.psd2live.ui.views
+package io.github.psd2live.ui.views
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -92,6 +92,10 @@ fun CanvasViewportComposable(
 	var isDragging by remember { mutableStateOf(false) }
 	var lastDragPos by remember { mutableStateOf(Offset.Zero) }
 	var fps by remember { mutableStateOf(0f) }
+	var informationLayer by remember(mode) { mutableStateOf(mode == WorkspaceTab.HIERARCHY) }
+	var informationIndices by remember { mutableStateOf(false) }
+	var informationNames by remember { mutableStateOf(true) }
+	var informationSelectedOnly by remember { mutableStateOf(false) }
 	val fpsCounter = remember { ActualFpsCounter() }
 
 	val previewModel = state.previewModel
@@ -281,6 +285,9 @@ fun CanvasViewportComposable(
 			}
 
 			val viewport = computeViewport(model, w, h)
+			// Draw artwork and its diagnostic geometry from the same pose and camera. Native
+			// frames use a different camera and publish UI parameter values at a lower frequency.
+			val informationPose = informationPreviewPose(state.parameterValues, sdkFrame, state.animationEnabled)
 
 			// 2. Draw canvas boundary
 			drawRect(
@@ -294,7 +301,7 @@ fun CanvasViewportComposable(
 			when (mode) {
 				WorkspaceTab.PREVIEW -> {
 					val nativeFrame = sdkFrame
-					if (nativeFrame != null && sdkBitmap != null && nativeFrame.image.width == w && nativeFrame.image.height == h) {
+					if (!informationLayer && nativeFrame != null && sdkBitmap != null && nativeFrame.image.width == w && nativeFrame.image.height == h) {
 						drawImage(sdkBitmap)
 					} else {
 						// Software rendering fallback
@@ -302,7 +309,7 @@ fun CanvasViewportComposable(
 						val g = buffer.createGraphics()
 						try {
 							g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-							val geometry = RigCanvasSupport.evaluate(model, state.parameterValues)
+							val geometry = RigCanvasSupport.evaluate(model, if(informationLayer)informationPose else state.parameterValues)
 							RigCanvasSupport.paintTexturedRig(g, model, geometry, viewport, visibleLayerIds = state.effectiveVisibleLayerIds)
 						} finally {
 							g.dispose()
@@ -386,7 +393,7 @@ fun CanvasViewportComposable(
 						val drawableBounds = RigCanvasSupport.boundsByDrawable(geometry)
 						val deformerBounds = RigCanvasSupport.boundsByDeformer(model, drawableBounds)
 
-						for (deformer in model.rig.puppet.deformers) {
+						for (deformer in model.rig.puppet.deformers.filterIsInstance<org.umamo.runtime.model.Deformer.Rotation>()) {
 							val bounds = deformerBounds[deformer.id.raw] ?: continue
 							val selected = deformer.id.raw == state.selectedDeformerId
 							val color = ComponentPalette.strong(deformer.id.raw)
@@ -418,6 +425,34 @@ fun CanvasViewportComposable(
 				}
 
 				else -> {}
+			}
+			if (informationLayer) {
+				val ids = informationWarpIds(model.rig.puppet, state.selectedDeformerId, informationSelectedOnly)
+				val buffer=BufferedImage(w,h,BufferedImage.TYPE_INT_ARGB)
+				val g=buffer.createGraphics()
+				try {
+					g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+					io.github.psd2live.ui.RigInformationOverlay.paint(g,model.rig.puppet,
+						if(mode==WorkspaceTab.PREVIEW)informationPose else state.parameterValues,
+						viewport,ids,labels=informationNames,pointIndices=informationIndices)
+				} finally { g.dispose() }
+				drawImage(buffer.toComposeImageBitmap())
+			}
+		}
+		if (previewModel != null) androidx.compose.foundation.layout.Column(
+			modifier=Modifier.align(Alignment.TopStart).background(colors.panelBackground).padding(4.dp),
+		) {
+			androidx.compose.foundation.layout.Row(verticalAlignment=Alignment.CenterVertically) {
+			androidx.compose.material.Checkbox(informationLayer,{ informationLayer=it })
+			Text(tr("canvas.information.deformers"),fontSize=11.sp,color=colors.textPrimary)
+			androidx.compose.material.Checkbox(informationNames,{ informationNames=it },enabled=informationLayer)
+			Text(tr("canvas.information.names"),fontSize=11.sp,color=colors.textPrimary)
+			}
+			if(informationLayer) androidx.compose.foundation.layout.Row(verticalAlignment=Alignment.CenterVertically) {
+			androidx.compose.material.Checkbox(informationIndices,{ informationIndices=it; if(it)informationLayer=true })
+			Text(tr("canvas.information.indices"),fontSize=11.sp,color=colors.textPrimary)
+			androidx.compose.material.Checkbox(informationSelectedOnly,{ informationSelectedOnly=it })
+			Text(tr("canvas.information.selectedOnly"),fontSize=11.sp,color=colors.textPrimary)
 			}
 		}
 

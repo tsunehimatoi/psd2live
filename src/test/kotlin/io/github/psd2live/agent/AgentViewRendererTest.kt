@@ -156,6 +156,26 @@ class AgentViewRendererTest {
             warpEdit.copy(id = "another", parentId = "independent-lock").applyTo(model.rig.puppet.copy(deformers = editedPuppet.deformers))
         }
 		val parameters = model.rig.puppet.parameters.associate { it.id.raw to it.default } + ("ParamAngleX" to 10f)
+		val annotated = AgentViewRenderer.modelComposite(model,"revision-overlay",parameters,setOf("hair-front"),emptySet(),
+			AgentViewFrame.CanvasRect(Bounds(0f,0f,128f,128f)),AgentViewBackground.CHECKERBOARD,AgentViewOutputSpec(512),
+			annotateDeformerIds=setOf(mesh.parentDeformerId!!.raw),pointIndices=true)
+		assertEquals(listOf(mesh.parentDeformerId!!.raw),annotated.annotatedDeformerIds)
+		assertTrue(annotated.pointIndices)
+		val overlayImage=ImageIO.read(ByteArrayInputStream(annotated.png))
+		assertEquals(512,overlayImage.width)
+		val clean = AgentViewRenderer.modelComposite(model,"revision-overlay",parameters,setOf("hair-front"),emptySet(),
+			AgentViewFrame.CanvasRect(Bounds(0f,0f,128f,128f)),AgentViewBackground.CHECKERBOARD,AgentViewOutputSpec(512))
+		assertNotEquals(clean.sha256,annotated.sha256)
+		assertEquals(clean.spatial,annotated.spatial)
+		val diagnostic=java.nio.file.Path.of("build","diagnostics","rig-information.png")
+		java.nio.file.Files.createDirectories(diagnostic.parent)
+		java.nio.file.Files.write(diagnostic,annotated.png)
+		val points=io.github.psd2live.ui.RigInformationOverlay.warpPoints(model.rig.puppet,
+			parameters.mapKeys { org.umamo.runtime.model.ParameterId(it.key) },setOf(mesh.parentDeformerId!!.raw)).getValue(mesh.parentDeformerId!!.raw)
+		assertTrue(points.all(Float::isFinite))
+		kotlin.test.assertFailsWith<IllegalArgumentException> {
+			io.github.psd2live.ui.RigInformationOverlay.warpPoints(model.rig.puppet,emptyMap(),setOf("missing"))
+		}
 
 		val view = AgentViewRenderer.modelComposite(
 			model = model,

@@ -227,7 +227,13 @@ internal class AgentWorkspaceStore(
         val project = projectRoot(projectId)
         val hash = sha256(view.png)
         writeImmutable(project.resolve("view-images/$hash.png"), view.png)
-        writeImmutable(project.resolve("view-images/${fileKey(view.viewId)}.json"), buildJsonObject { put("viewId", view.viewId); put("image", "$hash.png") }.toString().encodeToByteArray())
+        writeImmutable(project.resolve("view-images/${fileKey(view.viewId)}.json"), buildJsonObject {
+            put("viewId", view.viewId); put("image", "$hash.png");put("revisionId",view.revisionId)
+            putJsonObject("parameters") { view.appliedParameters.forEach { (id,value)->put(id,value) } }
+            putJsonArray("annotatedDeformerIds") { view.annotatedDeformerIds.forEach { add(JsonPrimitive(it)) } }
+            putJsonArray("annotatedLayerIds") { view.annotatedLayerIds.forEach { add(JsonPrimitive(it)) } }
+            put("pointIndices",view.pointIndices)
+        }.toString().encodeToByteArray())
     }
 
     @Synchronized

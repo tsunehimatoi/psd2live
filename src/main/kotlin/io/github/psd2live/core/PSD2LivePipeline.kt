@@ -143,6 +143,7 @@ class PSD2LivePipeline {
 			if (useFrontHairPhysics || useBackHairPhysics || useEyeJellyPhysics || (config.generatePhysics && !config.meshOnly && config.rigEdits.physicsEdits.isNotEmpty())) {
 				Cmo3PhysicsInjector.inject(converted.model.root as CModelSource, useFrontHairPhysics, useBackHairPhysics, useEyeJellyPhysics, config.rigEdits.physicsEdits)
 			}
+			BezierWarp.configureEditor(converted.model.root as CModelSource)
 			val bytes = Cmo3.write(converted.model)
 			files += writeContained(outputRoot, "$baseName.cmo3", bytes)
 			warnings += converted.report.notices.map { noticeText("CMO3", it) }

@@ -19,7 +19,7 @@ rootProject.name = "psd2live"
 // Keep the new application independent while consuming Umamo's format/runtime
 // modules from the checked-out reference tree. Explicit substitution avoids
 // publishing local snapshots or copying the reverse-engineered codecs.
-includeBuild("../umamo") {
+includeBuild(providers.gradleProperty("umamoDir").orNull ?: "../umamo") {
 	dependencySubstitution {
 		substitute(module("local.umamo:format")).using(project(":format"))
 		substitute(module("local.umamo:runtime")).using(project(":runtime"))

@@ -18,6 +18,22 @@ import kotlin.test.assertTrue
 
 class LayerBindingTest {
 	@Test
+	fun `face contour child owns only skin under the face surface`() {
+		val tags = mapOf("skin" to SemanticTag.FACE, "detail" to SemanticTag.FACE_DETAIL,
+			"eye" to SemanticTag.EYEWHITE, "hair" to SemanticTag.FRONT_HAIR)
+		val preview = PSD2LivePipeline().buildPreview(
+			artOf(*tags.keys.mapIndexed { i, name -> layer(name, i) }.toTypedArray()),
+			PipelineConfig(atlasSize = 256, meshSpacing = 16,
+				layerOverrides = tags.mapValues { LayerClassificationOverride(tag = it.value, side = Side.NONE) }),
+		)
+		val model = preview.rig.puppet
+		val contour = model.deformers.single { it.id.raw == "DeformFaceContour" }
+		assertEquals("DeformFaceNinePose", contour.parent?.raw)
+		assertEquals(listOf("skin"), model.drawables.filter { it.parentDeformerId == contour.id }.map { it.name })
+		assertTrue(model.deformers.none { it.parent == contour.id })
+	}
+
+	@Test
 	fun `toggle layer creates 0 to 1 parameter and binds opacity channel grid`() {
 		val face = layer("face", 0)
 		val tears = layer("tears", 1)
@@ -171,4 +187,3 @@ class LayerBindingTest {
 		const val HEIGHT = 64
 	}
 }
-

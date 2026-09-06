@@ -317,6 +317,8 @@ data class AgentViewOutputSpec(
 )
 
 data class AgentModelViewRequest(
+	val annotateDeformerIds: Set<String> = emptySet(),
+	val pointIndices: Boolean = false,
 	val parameters: Map<String, Float> = emptyMap(),
 	/** Null uses current workspace visibility; an empty set deliberately renders no layers. */
 	val includeLayerIds: Set<String>? = null,
@@ -344,6 +346,8 @@ data class AgentRenderedView(
 	val outOfRangeParameters: List<AgentParameterRangeDiagnostic> = emptyList(),
 	val includedLayerIds: List<String> = emptyList(),
 	val annotatedLayerIds: List<String> = emptyList(),
+	val annotatedDeformerIds: List<String> = emptyList(),
+	val pointIndices: Boolean = false,
 )
 
 /** Everything required to map generated or edited PNG pixels back into the model without guessing. */
@@ -380,6 +384,8 @@ data class AgentParameterRangeDiagnostic(
 data class AgentWorkflowResult(val metadata: kotlinx.serialization.json.JsonObject, val images: List<ByteArray> = emptyList())
 
 interface AgentWorkspace {
+    fun inspectRigGeometry(arguments: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject = throw UnsupportedOperationException("Rig geometry inspection unavailable")
+    suspend fun transformRigGeometry(arguments: kotlinx.serialization.json.JsonObject): AgentWorkspaceMutationResult = throw UnsupportedOperationException("Rig transforms unavailable")
     suspend fun assetWorkflow(operation: String, arguments: kotlinx.serialization.json.JsonObject): AgentWorkflowResult = throw UnsupportedOperationException("Asset workflow is unavailable")
     suspend fun setLayerPlacement(layerId: String, registrationId: String, expectedHead: String, taskId: String?): AgentWorkspaceMutationResult = throw UnsupportedOperationException("Placement editing is unavailable")
     suspend fun finalizeLayerPlacement(layerId: String, expectedHead: String, taskId: String?): AgentWorkspaceMutationResult = throw UnsupportedOperationException("Placement finalization is unavailable")

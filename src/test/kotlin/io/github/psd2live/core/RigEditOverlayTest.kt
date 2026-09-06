@@ -173,8 +173,8 @@ class RigEditOverlayTest {
 			name = "Test Warp",
 			parent = null,
 			partId = null,
-			rows = 2,
-			columns = 2,
+			rows = 1,
+			columns = 1,
 			isQuadTransform = true,
 			geometryGrid = null,
 		)

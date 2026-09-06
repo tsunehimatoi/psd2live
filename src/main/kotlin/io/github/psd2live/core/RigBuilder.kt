@@ -32,6 +32,7 @@ import org.umamo.runtime.model.withDerivedRenderRoot
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.sin
@@ -98,6 +99,8 @@ object RigBuilder {
 	private val headRotationId = DeformerId("DeformHeadRotation")
 	private val headWarpId = DeformerId("DeformHeadContainer")
 	private val faceWarpId = DeformerId("DeformFaceNinePose")
+	private val faceContourId = DeformerId("DeformFaceContour")
+	private val featureDisplacementId = DeformerId("DeformFeatureDisplacement")
 	private val frontHairFollowWarpId = DeformerId("DeformHairFrontFollow")
 	private val frontHairPhysicsWarpId = DeformerId("DeformHairFrontPhysics")
 	private val backHairFollowWarpId = DeformerId("DeformHairBackFollow")
@@ -204,6 +207,8 @@ object RigBuilder {
 		frameByDeformer[headRotationId.raw] = characterFrame
 		frameByDeformer[headWarpId.raw] = headFrame
 		frameByDeformer[faceWarpId.raw] = faceFrame
+		frameByDeformer[faceContourId.raw] = faceFrame
+		frameByDeformer[featureDisplacementId.raw] = faceFrame
 		for (region in faceRig.regions) {
 			frameByDeformer[featureWarpId(region).raw] = region.bounds
 			if (region.feature == FaceFeature.IRIS) {
@@ -658,10 +663,26 @@ object RigBuilder {
 		}
 		val face = Deformer.Warp(faceWarpId, tr("model.deformer.face"), headWarpId, facePartId, 8, 8, true, faceGrid)
 
-		val deformers = mutableListOf<Deformer>(body, breath, rotation, headContainer, face)
+		// Identity at neutral, in the face's normalized space: the parent surface is inherited
+		// exactly once. Both directional bows affect every row/column, not just the center knot.
+		val displacementGrid = warpGrid(ninePoseAxes(), columns = 8, rows = 8) { u, v, values ->
+			featureDisplacementPoint(u, v, values[0], values[1], config.headTurnStrength,
+				faceFrame.width / faceFrame.height.coerceAtLeast(1e-4f))
+		}
+		val displacement = Deformer.Warp(featureDisplacementId, tr("model.deformer.featureDisplacement"),
+			faceWarpId, facePartId, 8, 8, true, displacementGrid)
+		val socketY = normalizeY(faceRig.eyeLineY, faceFrame).coerceIn(0.05f, 0.95f)
+		val contourGrid = warpGrid(
+			listOf(axis(StandardParameters.ANGLE_X, *NinePoseFaceRig.angleXKeys)), columns = 8, rows = 16,
+		) { u, v, values -> faceContourPoint(u, v, values[0], config.headTurnStrength, socketY) }
+		val contour = Deformer.Warp(faceContourId, tr("model.deformer.faceContour"),
+			faceWarpId, facePartId, 16, 8, true, contourGrid)
+		val deformers = mutableListOf<Deformer>(body, breath, rotation, headContainer, face, displacement, contour)
 		val primaryRegions = faceRig.regions.filter { it.feature != FaceFeature.IRIS }
 		for (region in primaryRegions) {
-			deformers += featureWarp(faceRig, region, faceWarpId, faceFrame, facePartId, config)
+			val parent = if (region.feature in setOf(FaceFeature.EYE, FaceFeature.BROW, FaceFeature.MOUTH))
+				featureDisplacementId else faceWarpId
+			deformers += featureWarp(faceRig, region, parent, faceFrame, facePartId, config)
 		}
 		for (irisRegion in faceRig.regions.filter { it.feature == FaceFeature.IRIS }) {
 			val eyeRegion = faceRig.regionFor(FaceFeature.EYE, irisRegion.side) ?: continue
@@ -705,6 +726,54 @@ object RigBuilder {
 			)
 		}
 		return deformers
+	}
+
+	/** A local inward socket on the left silhouette, inherited by skin only. */
+	internal fun faceContourPoint(u: Float, v: Float, angleX: Float, strength: Float, socketY: Float): Pair<Float, Float> {
+		val turn = (-angleX / 45f * strength).coerceIn(0f, 1f)
+		val distance = (abs(v - socketY) / 0.18f).coerceIn(0f, 1f)
+		val horizontal = (u / 0.35f).coerceIn(0f, 1f)
+		// Two joined cubic Bezier segments have zero tangent at the socket and support edges.
+		val socket = BezierWarp.cubic(1f, 1f, 0f, 0f, distance)
+		val edge = BezierWarp.cubic(1f, 1f, 0f, 0f, horizontal)
+		return (u + turn * 0.018f * socket * edge) to v
+	}
+
+	internal fun featureDisplacementPoint(
+		u: Float, v: Float, angleX: Float, angleY: Float, strength: Float,
+		aspectRatio: Float = 1f,
+	): Pair<Float, Float> {
+		val yaw = (angleX / 45f * strength).coerceIn(-1f, 1f)
+		val pitch = (angleY / 30f * strength).coerceIn(-1f, 1f)
+		// Cubic Bezier with endpoints 0 and handles 4/3 peaks at 1 at t=1/2.
+		fun bow(t: Float): Float = BezierWarp.cubic(0f, 4f / 3f, 4f / 3f, 0f, t)
+		val x = 0.5f + (u - 0.5f) * (1f - 0.15f * abs(yaw)) + yaw * (0.025f + 0.055f * bow(v))
+		// Up: compress the whole height down toward the bottom, with extra compression
+		// in the upper half. Down: compress only the lower half up toward the middle.
+		// The squared half profiles are cubic Beziers with zero slope at their join.
+		fun compressedV(value: Float): Float {
+			fun halfCompression(t: Float) = BezierWarp.cubic(0f, 0f, 1f / 3f, 1f, t)
+			return if (pitch > 0f) {
+				value + pitch * (0.08f * (1f - value) +
+					0.10f * halfCompression((1f - 2f * value).coerceAtLeast(0f)))
+			} else {
+				value + pitch * 0.10f * halfCompression((2f * value - 1f).coerceAtLeast(0f))
+			}
+		}
+		// Canvas Y grows downwards; negative AngleY is a downward look (U-shaped rows).
+		val y = compressedV(v) - pitch * (0.020f + 0.050f * bow(u))
+		// In canvas coordinates positive rotation is clockwise. Upper-left/lower-right
+		// have yaw*pitch < 0. Rotate the entire curved surface about its displaced center;
+		// pure horizontal/vertical poses stay unchanged. Correct for non-square face frames.
+		val radians = -yaw * pitch * (3f * PI.toFloat() / 180f)
+		val centerX = 0.5f + yaw * 0.080f
+		val centerY = compressedV(0.5f) - pitch * 0.070f
+		val dx = (x - centerX) * aspectRatio
+		val dy = y - centerY
+		val cosine = cos(radians)
+		val sine = sin(radians)
+		return (centerX + (dx * cosine - dy * sine) / aspectRatio) to
+			(centerY + dx * sine + dy * cosine)
 	}
 
 	private fun featureWarp(
@@ -815,6 +884,7 @@ object RigBuilder {
 		frontHair: Bounds?,
 		backHair: Bounds?,
 	): Pair<DeformerId, Bounds> = when (layer.semantic.tag) {
+		SemanticTag.FACE -> faceContourId to faceFrame
 		SemanticTag.IRIDES -> faceRig.regionFor(FaceFeature.IRIS, layer.semantic.side)?.let { gazeWarpId(it) to it.bounds }
 			?: (faceWarpId to faceFrame)
 		SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE ->
@@ -1279,7 +1349,7 @@ object RigBuilder {
 			FaceFeature.MOUTH -> tr("model.feature.mouth")
 			FaceFeature.EAR -> tr("model.feature.ear")
 		}
-		return tr("model.feature.name", sideDisplay(region.side), feature)
+		return if (region.side == Side.NONE) feature else tr("model.feature.name", sideDisplay(region.side), feature)
 	}
 
 	private fun sideToken(side: Side): String = when (side) {

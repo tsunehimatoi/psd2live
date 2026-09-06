@@ -180,6 +180,7 @@ class AgentMcpServiceTest {
 	fun `lists and calls project and direct view tools`() = runBlocking {
 		val tools = client.listTools().tools
 		val expectedTools = setOf(
+            "rig_inspect", "rig_transform",
             "asset_prepare_reference", "asset_register", "asset_reprocess", "asset_preview_composite", "layer_set_placement", "layer_finalize_placement",
             "asset_inspect", "agent_get_workflow", "rig_list_objects", "warp_create", "physics_list", "physics_put",
             "project_save", "history_checkpoint",
@@ -214,6 +215,7 @@ class AgentMcpServiceTest {
 		assertTrue(assetImportDescription.contains("Nano Banana Pro"))
 		assertTrue(assetImportDescription.contains("Python/PIL/OpenCV"))
 		val readOnlyToolNames = setOf(
+            "rig_inspect",
             "asset_preview_composite",
             "asset_inspect", "agent_get_workflow", "rig_list_objects", "physics_list",
 			"project_get_state",
@@ -260,6 +262,8 @@ class AgentMcpServiceTest {
 				"parameters" to mapOf("ParamAngleX" to 10),
 				"include_layer_ids" to listOf("hair-front"),
 				"annotate_layer_ids" to listOf("hair-front"),
+				"annotate_deformer_ids" to listOf("warp_head"),
+				"point_indices" to true,
 				"viewport" to mapOf(
 					"mode" to "focus_layers",
 					"layer_ids" to listOf("hair-front"),
@@ -273,6 +277,8 @@ class AgentMcpServiceTest {
 		assertEquals(10f, workspace.lastModelRequest?.parameters?.get("ParamAngleX"))
 		assertEquals(setOf("hair-front"), workspace.lastModelRequest?.includeLayerIds)
 		assertEquals(setOf("hair-front"), workspace.lastModelRequest?.annotateLayerIds)
+		assertEquals(setOf("warp_head"), workspace.lastModelRequest?.annotateDeformerIds)
+		assertEquals(true, workspace.lastModelRequest?.pointIndices)
 		assertEquals(
 			AgentViewFrame.FocusLayers(setOf("hair-front"), objectScale = 0.6f, aspectRatio = 1.5f),
 			workspace.lastModelRequest?.frame,
@@ -312,11 +318,18 @@ class AgentMcpServiceTest {
         assertEquals(bundled, text)
         val tool = client.callTool("agent_get_workflow", emptyMap())
         assertTrue(tool.isError != true)
-        assertEquals(text, assertIs<TextContent>(tool.content.single()).text)
+        assertEquals(loadRigGeometryWorkflow(), assertIs<TextContent>(tool.content.single()).text)
 	}
 
 	@Test
 	fun `calls object and keyform editing tools`() = runBlocking {
+		val query = client.callTool("rig_inspect", mapOf("target" to mapOf("kind" to "warp","id" to "w"),"detail" to "summary"))
+		assertEquals("81",query.structuredContent?.jsonObject?.get("pointCount")?.jsonPrimitive?.content)
+		val transformed=client.callTool("rig_transform",mapOf("target" to mapOf("kind" to "warp","id" to "w"),
+			"coordinate" to mapOf("ParamAngleX" to -30),"operations" to listOf(mapOf("type" to "translate","delta" to listOf(0.1,0))),"expected_history_head_node_id" to "h"))
+		assertTrue(transformed.isError != true)
+		assertEquals("geometry-head",transformed.structuredContent?.jsonObject?.get("historyNodeId")?.jsonPrimitive?.content)
+		assertEquals("h",workspace.geometryRequest?.get("expected_history_head_node_id")?.jsonPrimitive?.content)
 		val getResult = client.callTool(
 			name = "object_get",
 			arguments = mapOf("kind" to "mesh", "id" to "hair-front"),
@@ -404,7 +417,16 @@ class AgentMcpServiceTest {
         assertEquals("sway", workspace.authoredPhysics?.id)
     }
 
-	private class FakeAgentWorkspace : AgentWorkspace {
+    private class FakeAgentWorkspace : AgentWorkspace {
+        var geometryRequest: kotlinx.serialization.json.JsonObject? = null
+        override fun inspectRigGeometry(arguments: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject {
+            geometryRequest=arguments
+            return Json.parseToJsonElement("""{"pointCount":81}""").jsonObject
+        }
+        override suspend fun transformRigGeometry(arguments: kotlinx.serialization.json.JsonObject): AgentWorkspaceMutationResult {
+            geometryRequest=arguments
+            return AgentWorkspaceMutationResult("geometry-head","geometry-revision",summary="transformed")
+        }
         var createdWarp: io.github.psd2live.core.RigWarpEdit? = null
         var authoredPhysics: io.github.psd2live.core.RigPhysicsEdit? = null
         var rigHead: String? = null

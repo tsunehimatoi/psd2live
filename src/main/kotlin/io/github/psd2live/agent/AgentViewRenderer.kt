@@ -30,8 +30,11 @@ object AgentViewRenderer {
 		frame: AgentViewFrame,
 		background: AgentViewBackground,
 		output: AgentViewOutputSpec,
+		annotateDeformerIds: Set<String> = emptySet(),
+		pointIndices: Boolean = false,
 	): AgentRenderedView {
 		validateOutput(output)
+		require(annotateDeformerIds.size <= 16) { "Select at most 16 deformers per View" }
 		val knownLayerIds = model.rig.layerIdByDrawableId.values.toSet()
 		val unknownIncluded = includeLayerIds - knownLayerIds
 		require(unknownIncluded.isEmpty()) { "Unknown included layer IDs: ${unknownIncluded.sorted().joinToString()}" }
@@ -69,6 +72,8 @@ object AgentViewRenderer {
 				visibleLayerIds = includeLayerIds,
 			)
 			paintLayerAnnotations(graphics, model, drawableBounds, target.viewport, annotateLayerIds, image.width, image.height)
+			io.github.psd2live.ui.RigInformationOverlay.paint(graphics, model.rig.puppet, typedParameters,
+				target.viewport, annotateDeformerIds, pointIndices = pointIndices)
 		} finally {
 			graphics.dispose()
 		}
@@ -78,7 +83,7 @@ object AgentViewRenderer {
 			output = output,
 			revisionId = revisionId,
 			kind = "model-composite-png",
-			objectIds = (includeLayerIds + annotateLayerIds).sorted(),
+			objectIds = (includeLayerIds + annotateLayerIds + annotateDeformerIds).sorted(),
 			canvasWidth = canvasWidth,
 			canvasHeight = canvasHeight,
 			requestedCanvasRect = resolvedFrame.viewRect,
@@ -90,7 +95,7 @@ object AgentViewRenderer {
 			outOfRangeParameters = outOfRangeParameters,
 			includedLayerIds = includeLayerIds.sorted(),
 			annotatedLayerIds = annotateLayerIds.sorted(),
-		)
+		).copy(annotatedDeformerIds = annotateDeformerIds.sorted(), pointIndices = pointIndices)
 	}
 
 	fun isolatedLayer(

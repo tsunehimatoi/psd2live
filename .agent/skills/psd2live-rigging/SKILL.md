@@ -11,6 +11,21 @@ description: >-
 
 Use this workflow with any MCP-capable host. Discover the MCP tools the host exposes; for pixel creation, follow the explicit generator routing below.
 
+## Geometry: choose evidence before editing
+
+Complete intent → ownership → selected evidence → edit → posed comparison → recovery/save; tools are one stage of the task.
+
+| Need | Tool |
+|---|---|
+| IDs / state | project_get_state, rig_list_objects |
+| Clean / parts / deformers at one pose | view_render_model; choose annotate_layer_ids or annotate_deformer_ids, point_indices only when useful |
+| Cheap topology + data cost | rig_inspect (default summary; actual representation, native control availability) |
+| Exact data | rig_inspect detail=points, local/canvas, offset/limit; read only needed pages |
+| Ordered compression, bend, shift, rotation, local point/line/region edits | rig_transform: selection + range + operations; one history commit, all bound coordinate axes required |
+| Direct channels / raw keys | object_get, keyform_set/copy/delete; object_get may be large |
+
+Use [geometry operations](references/rig-geometry.md) when authoring deformation: units, selection falloff, curve controls, and recipes from face rigging. Prefer a summary and one or two relevant Views before requesting dense points. Do not infer coordinates from images. Direct Bézier editing requires real stored anchors/handles. The current runtime reports nativeBezier.available=false; use selection/range operations for its sampled grids and meshes, never substitute a fitted cage. Record before/after Views and returned history HEAD in task_update, then validate neutral, target and neighboring poses. Discover available tools; agent_get_workflow provides the same menu when local references are unavailable.
+
 ## Invocation boundary
 
 - Once this skill or any PSD2Live MCP capability is invoked, read and apply this entire file before proceeding, regardless of the model-editing task type.
