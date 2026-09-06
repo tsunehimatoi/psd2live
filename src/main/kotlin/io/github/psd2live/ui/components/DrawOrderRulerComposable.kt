@@ -5,8 +5,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Text
@@ -15,7 +13,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.input.pointer.PointerButton
@@ -23,7 +20,6 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.input.pointer.pointerHoverIcon
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -48,6 +44,7 @@ import io.github.psd2live.ui.theme.LocalToolTypography
 import org.umamo.runtime.model.Drawable
 import java.awt.Cursor
 import kotlin.math.abs
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
 data class DrawableOrderEntry(
@@ -62,12 +59,12 @@ data class DrawableOrderEntry(
 
 /**
  * Vertical Draw Order Ruler replicating Live2D Cubism Editor's vertical draw order slider.
- * Scale: 0 at bottom, 1000 at top.
- * - Plots each layer/drawable as a colored tick mark on the vertical track.
- * - Highlights the currently selected layer with an accent indicator line and value badge.
- * - Allows dragging vertically to modify the selected layer's draw order in real time.
- * - Hover tooltip displays layer name, effective draw order, and default value.
- * - Right-click or double-click opens a precision numeric input dialog (0..1000).
+ * - Auto-scales height to fit active layer orders instead of statically fixing 0..1000.
+ * - Mouse Wheel: Zooms ruler scale in/out centered at mouse cursor with adaptive dynamic ticks.
+ * - Left Mouse Drag: Adjusts selected layer's draw order value in real-time.
+ * - Right Mouse Drag: Pans the ruler up/down along the scale.
+ * - Right Click (or Double Click): Opens precision numeric input dialog.
+ * - Hover Tooltip: Displays layer name, effective draw order, and default value.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -84,25 +81,55 @@ fun DrawOrderRuler(
 
 	var rulerHeightPx by remember { mutableStateOf(1f) }
 	var mousePos by remember { mutableStateOf<Offset?>(null) }
-	var isDragging by remember { mutableStateOf(false) }
+	var lastMousePos by remember { mutableStateOf<Offset?>(null) }
+
+	var isLeftDragging by remember { mutableStateOf(false) }
+	var isRightDragging by remember { mutableStateOf(false) }
+	var rightPressPos by remember { mutableStateOf<Offset?>(null) }
+	var activeDragTargetId by remember { mutableStateOf<String?>(null) }
+	var lastClickTime by remember { mutableStateOf(0L) }
 
 	val padTop = 18f
 	val padBottom = 18f
 
+	val drawables = model?.rig?.puppet?.drawables.orEmpty()
+
+	// Compute initial framing based on layer orders
+	fun computeFittedRange(): Pair<Float, Float> {
+		if (model == null || drawables.isEmpty()) return 500f to 1000f
+		val orders = drawables.map { drawable ->
+			val layerId = model.rig.layerIdByDrawableId[drawable.id.raw] ?: drawable.id.raw
+			state.getEffectiveDrawOrder(drawable.id.raw, layerId, drawable.drawOrder)
+		}
+		val minO = orders.minOrNull() ?: 0f
+		val maxO = orders.maxOrNull() ?: 1000f
+		val span = (maxO - minO).coerceAtLeast(10f)
+		val center = (minO + maxO) / 2f
+		val paddedSpan = (span * 1.35f).coerceIn(15f, 1500f)
+		return center to paddedSpan
+	}
+
+	val initialFit = remember(model) { computeFittedRange() }
+	var viewCenter by remember(model) { mutableStateOf(initialFit.first) }
+	var viewSpan by remember(model) { mutableStateOf(initialFit.second) }
+
+	val visibleMin = viewCenter - viewSpan / 2f
+	val visibleMax = viewCenter + viewSpan / 2f
+
 	fun orderToY(order: Float, h: Float): Float {
 		val usable = (h - padTop - padBottom).coerceAtLeast(1f)
-		return h - padBottom - (order.coerceIn(0f, 1000f) / 1000f) * usable
+		val frac = (order - visibleMin) / viewSpan.coerceAtLeast(0.01f)
+		return h - padBottom - frac * usable
 	}
 
 	fun yToOrder(y: Float, h: Float): Float {
 		val usable = (h - padTop - padBottom).coerceAtLeast(1f)
-		return (((h - padBottom - y) / usable) * 1000f).coerceIn(0f, 1000f)
+		val frac = (h - padBottom - y) / usable
+		return visibleMin + frac * viewSpan
 	}
 
-	val drawables = model?.rig?.puppet?.drawables.orEmpty()
-
-	// Compute order entries with y coordinates
-	val entries = remember(drawables, state.drawOrderOverrides, state.selectedLayerId, rulerHeightPx) {
+	// Compute order entries with dynamically mapped y coordinates
+	val entries = remember(drawables, state.drawOrderOverrides, state.selectedLayerId, rulerHeightPx, visibleMin, visibleMax) {
 		drawables.mapNotNull { drawable ->
 			val layerId = model?.rig?.layerIdByDrawableId?.get(drawable.id.raw) ?: drawable.id.raw
 			val effective = state.getEffectiveDrawOrder(drawable.id.raw, layerId, drawable.drawOrder)
@@ -133,28 +160,114 @@ fun DrawOrderRuler(
 
 	Box(
 		modifier = modifier
-			.width(40.dp)
+			.width(42.dp)
 			.fillMaxHeight()
 			.background(colors.panelElevated.copy(alpha = 0.5f))
 			.border(BorderStroke(1.dp, colors.divider))
 			.onGloballyPositioned { rulerHeightPx = it.size.height.toFloat().coerceAtLeast(1f) }
 			.pointerHoverIcon(
 				PointerIcon(
-					if (isDragging) Cursor.getPredefinedCursor(Cursor.N_RESIZE_CURSOR)
-					else if (hoveredEntry != null) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-					else Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR)
+					when {
+						isRightDragging -> Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR)
+						isLeftDragging -> Cursor.getPredefinedCursor(Cursor.N_RESIZE_CURSOR)
+						hoveredEntry != null -> Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+						else -> Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR)
+					}
 				)
 			)
+			// Mouse Wheel: Zoom scale in/out centered at mouse cursor
+			.onPointerEvent(PointerEventType.Scroll) { event ->
+				val change = event.changes.firstOrNull() ?: return@onPointerEvent
+				val scrollDelta = change.scrollDelta.y
+				if (scrollDelta == 0f) return@onPointerEvent
+
+				val mouseOrder = yToOrder(change.position.y, rulerHeightPx)
+				val zoomFactor = if (scrollDelta < 0f) 0.85f else 1.18f
+				val newSpan = (viewSpan * zoomFactor).coerceIn(4f, 5000f)
+				val actualFactor = newSpan / viewSpan
+				viewSpan = newSpan
+				viewCenter = mouseOrder + (viewCenter - mouseOrder) * actualFactor
+			}
+			// Pointer Press: Left (select/drag value or double-click dialog) or Right (pan start)
+			.onPointerEvent(PointerEventType.Press) { event ->
+				val change = event.changes.firstOrNull() ?: return@onPointerEvent
+				val pos = change.position
+				lastMousePos = pos
+
+				if (event.button == PointerButton.Primary) {
+					val now = System.currentTimeMillis()
+					val isDoubleClick = (now - lastClickTime) < 350L
+					lastClickTime = now
+
+					val hit = entries.filter { abs(it.y - pos.y) <= 8f }.minByOrNull { abs(it.y - pos.y) }
+					val targetEntry = hit ?: selectedEntry
+
+					if (isDoubleClick) {
+						if (targetEntry != null) {
+							onRequestSetOrder?.invoke(
+								targetEntry.layerId,
+								targetEntry.drawable.name,
+								targetEntry.effectiveOrder,
+								targetEntry.defaultOrder,
+								targetEntry.isOverridden,
+							)
+						} else {
+							// Double click on empty track area: Reset/fit to all drawables
+							val (c, s) = computeFittedRange()
+							viewCenter = c
+							viewSpan = s
+						}
+						return@onPointerEvent
+					}
+
+					if (hit != null && hit.layerId != state.selectedLayerId) {
+						viewModel.selectLayer(hit.layerId)
+					}
+
+					val targetId = hit?.layerId ?: state.selectedLayerId
+					if (targetId != null) {
+						isLeftDragging = true
+						activeDragTargetId = targetId
+						val newOrder = yToOrder(pos.y, rulerHeightPx).roundToInt().toFloat().coerceIn(0f, 1000f)
+						viewModel.setLayerDrawOrder(targetId, newOrder)
+					}
+				} else if (event.button == PointerButton.Secondary) {
+					isRightDragging = true
+					rightPressPos = pos
+				}
+			}
+			// Pointer Move: Left Drag (adjust order) or Right Drag (pan ruler)
 			.onPointerEvent(PointerEventType.Move) { event ->
-				mousePos = event.changes.firstOrNull()?.position
+				val change = event.changes.firstOrNull() ?: return@onPointerEvent
+				val pos = change.position
+				val prev = lastMousePos ?: pos
+				lastMousePos = pos
+				mousePos = pos
+
+				if (isLeftDragging && activeDragTargetId != null) {
+					val newOrder = yToOrder(pos.y, rulerHeightPx).roundToInt().toFloat().coerceIn(0f, 1000f)
+					viewModel.setLayerDrawOrder(activeDragTargetId!!, newOrder)
+				} else if (isRightDragging) {
+					val deltaY = pos.y - prev.y
+					val usable = (rulerHeightPx - padTop - padBottom).coerceAtLeast(1f)
+					val deltaOrder = (deltaY / usable) * viewSpan
+					viewCenter += deltaOrder
+				}
 			}
-			.onPointerEvent(PointerEventType.Exit) {
-				if (!isDragging) mousePos = null
-			}
-			.pointerInput(entries, state.selectedLayerId, rulerHeightPx) {
-				detectTapGestures(
-					onDoubleTap = { pos ->
-						val target = entries.filter { abs(it.y - pos.y) <= 10f }.minByOrNull { abs(it.y - pos.y) } ?: selectedEntry
+			// Pointer Release: End Left Drag, or End Right Drag (if moved < 4px, trigger dialog)
+			.onPointerEvent(PointerEventType.Release) { event ->
+				val change = event.changes.firstOrNull()
+				val pos = change?.position ?: lastMousePos ?: Offset.Zero
+
+				if (event.button == PointerButton.Primary) {
+					isLeftDragging = false
+					activeDragTargetId = null
+				} else if (event.button == PointerButton.Secondary) {
+					val press = rightPressPos
+					isRightDragging = false
+					rightPressPos = null
+					if (press != null && (pos - press).getDistance() < 5f) {
+						val target = entries.filter { abs(it.y - pos.y) <= 12f }.minByOrNull { abs(it.y - pos.y) } ?: selectedEntry
 						if (target != null) {
 							onRequestSetOrder?.invoke(
 								target.layerId,
@@ -164,47 +277,12 @@ fun DrawOrderRuler(
 								target.isOverridden,
 							)
 						}
-					},
-					onPress = { pos ->
-						val hit = entries.filter { abs(it.y - pos.y) <= 8f }.minByOrNull { abs(it.y - pos.y) }
-						if (hit != null && hit.layerId != state.selectedLayerId) {
-							viewModel.selectLayer(hit.layerId)
-						}
 					}
-				)
+				}
 			}
-			.pointerInput(entries, state.selectedLayerId, rulerHeightPx) {
-				detectVerticalDragGestures(
-					onDragStart = { pos ->
-						isDragging = true
-						val hit = entries.filter { abs(it.y - pos.y) <= 8f }.minByOrNull { abs(it.y - pos.y) }
-						if (hit != null && hit.layerId != state.selectedLayerId) {
-							viewModel.selectLayer(hit.layerId)
-						}
-					},
-					onDragEnd = { isDragging = false },
-					onDragCancel = { isDragging = false },
-					onVerticalDrag = { change, _ ->
-						change.consume()
-						val targetId = state.selectedLayerId ?: hoveredEntry?.layerId ?: return@detectVerticalDragGestures
-						val newOrder = yToOrder(change.position.y, rulerHeightPx).roundToInt().toFloat()
-						viewModel.setLayerDrawOrder(targetId, newOrder)
-					}
-				)
-			}
-			.onPointerEvent(PointerEventType.Press) { event ->
-				if (event.button == PointerButton.Secondary) {
-					val pos = event.changes.firstOrNull()?.position ?: Offset.Zero
-					val target = entries.filter { abs(it.y - pos.y) <= 12f }.minByOrNull { abs(it.y - pos.y) } ?: selectedEntry
-					if (target != null) {
-						onRequestSetOrder?.invoke(
-							target.layerId,
-							target.drawable.name,
-							target.effectiveOrder,
-							target.defaultOrder,
-							target.isOverridden,
-						)
-					}
+			.onPointerEvent(PointerEventType.Exit) {
+				if (!isLeftDragging && !isRightDragging) {
+					mousePos = null
 				}
 			}
 	) {
@@ -213,6 +291,7 @@ fun DrawOrderRuler(
 			val h = size.height
 
 			val trackX = w - 6f
+			val usable = (h - padTop - padBottom).coerceAtLeast(1f)
 
 			// Vertical track guide line
 			drawLine(
@@ -222,13 +301,38 @@ fun DrawOrderRuler(
 				strokeWidth = 1f,
 			)
 
-			// Major scale ticks (every 100 units) and minor ticks (every 50 units)
-			for (order in 0..1000 step 50) {
-				val y = orderToY(order.toFloat(), h)
-				val isMajor = (order % 100 == 0)
+			// Compute dynamic adaptive tick interval based on pixel height
+			val pixelsPerUnit = usable / viewSpan.coerceAtLeast(0.01f)
+			val idealUnitStep = (46f / pixelsPerUnit).coerceAtLeast(0.01f)
+
+			fun computeNiceStep(raw: Float): Float {
+				val exponent = kotlin.math.floor(kotlin.math.log10(raw.toDouble())).toInt()
+				val base = 10.0.pow(exponent.toDouble()).toFloat()
+				val fraction = raw / base
+				val niceFraction = when {
+					fraction <= 1.2f -> 1f
+					fraction <= 2.5f -> 2f
+					fraction <= 6.0f -> 5f
+					else -> 10f
+				}
+				return niceFraction * base
+			}
+
+			val majorStep = computeNiceStep(idealUnitStep).coerceAtLeast(1f)
+			val minorStep = (majorStep / 2f).coerceAtLeast(0.5f)
+
+			val firstMinor = kotlin.math.floor(visibleMin / minorStep).toInt()
+			val lastMinor = kotlin.math.ceil(visibleMax / minorStep).toInt()
+
+			// Draw adaptive ticks and labels
+			for (i in firstMinor..lastMinor) {
+				val order = i * minorStep
+				val y = orderToY(order, h)
+				if (y < padTop - 2f || y > h - padBottom + 2f) continue
+
+				val isMajor = abs(order % majorStep) < (minorStep * 0.1f) || abs(order % majorStep - majorStep) < (minorStep * 0.1f)
 
 				if (isMajor) {
-					// Tick line extending left from track
 					drawLine(
 						color = colors.borderHover.copy(alpha = 0.6f),
 						start = Offset(trackX - 6f, y),
@@ -236,15 +340,14 @@ fun DrawOrderRuler(
 						strokeWidth = 1f,
 					)
 
-					// Scale number (e.g. 1000, 900, ..., 0)
-					val label = "$order"
+					val label = if (majorStep >= 1f) order.roundToInt().toString() else "%.1f".format(order)
 					val textResult = textMeasurer.measure(
 						text = label,
 						style = TextStyle(
 							fontSize = 7.5.sp,
 							fontFamily = FontFamily.Monospace,
 							fontWeight = FontWeight.Normal,
-							color = colors.textMuted.copy(alpha = 0.5f),
+							color = colors.textMuted.copy(alpha = 0.55f),
 						)
 					)
 					drawText(
@@ -252,7 +355,6 @@ fun DrawOrderRuler(
 						topLeft = Offset((trackX - 8f - textResult.size.width).coerceAtLeast(1f), y - textResult.size.height * 0.5f),
 					)
 				} else {
-					// Minor tick line
 					drawLine(
 						color = colors.border.copy(alpha = 0.35f),
 						start = Offset(trackX - 3f, y),
@@ -265,52 +367,70 @@ fun DrawOrderRuler(
 			// Draw all layers as colored horizontal tick marks
 			for (entry in entries) {
 				if (entry.isSelected) continue // Selected layer drawn on top
+				val y = entry.y
+				if (y < padTop - 2f || y > h - padBottom + 2f) continue
+
 				val awtColor = ComponentPalette.strong(entry.layerId)
 				val markColor = Color(awtColor.red, awtColor.green, awtColor.blue)
 
-				// Tick across the track
 				drawLine(
-					color = markColor.copy(alpha = 0.8f),
-					start = Offset(trackX - 12f, entry.y),
-					end = Offset(trackX + 2f, entry.y),
+					color = markColor.copy(alpha = 0.85f),
+					start = Offset(trackX - 12f, y),
+					end = Offset(trackX + 2f, y),
 					strokeWidth = 1.6f,
 				)
 			}
 
-			// Draw selected layer indicator on top
+			// Draw selected layer indicator
 			if (selectedEntry != null) {
 				val selY = selectedEntry.y
+				val isWithinViewport = selY in (padTop - 2f)..(h - padBottom + 2f)
 
-				// Highlight line across the full ruler width
-				drawLine(
-					color = colors.accent,
-					start = Offset(2f, selY),
-					end = Offset(w - 1f, selY),
-					strokeWidth = 2.2f,
-				)
+				if (isWithinViewport) {
+					// Highlight line across full ruler width
+					drawLine(
+						color = colors.accent,
+						start = Offset(2f, selY),
+						end = Offset(w - 1f, selY),
+						strokeWidth = 2.2f,
+					)
 
-				// Handle / Pointer thumb at the right edge
-				val pointerPath = Path().apply {
-					moveTo(w, selY)
-					lineTo(w - 5f, selY - 4f)
-					lineTo(w - 5f, selY + 4f)
-					close()
+					// Pointer thumb at right edge
+					val pointerPath = Path().apply {
+						moveTo(w, selY)
+						lineTo(w - 5f, selY - 4f)
+						lineTo(w - 5f, selY + 4f)
+						close()
+					}
+					drawPath(pointerPath, color = colors.accent)
+
+					// Indicator dot at left edge
+					drawCircle(
+						color = colors.accent,
+						radius = 2.5f,
+						center = Offset(4f, selY),
+					)
+				} else {
+					// Off-screen indicator arrows
+					val isAbove = selectedEntry.effectiveOrder > visibleMax
+					val arrowY = if (isAbove) padTop + 2f else h - padBottom - 2f
+					val arrowDir = if (isAbove) -1f else 1f
+
+					val offscreenArrow = Path().apply {
+						moveTo(trackX - 3f, arrowY)
+						lineTo(trackX - 6f, arrowY - 4f * arrowDir)
+						lineTo(trackX, arrowY - 4f * arrowDir)
+						close()
+					}
+					drawPath(offscreenArrow, color = colors.accent.copy(alpha = 0.85f))
 				}
-				drawPath(pointerPath, color = colors.accent)
-
-				// Small indicator dot at left edge
-				drawCircle(
-					color = colors.accent,
-					radius = 2.5f,
-					center = Offset(4f, selY),
-				)
 			}
 		}
 
 		// Tooltip overlay on hover
 		val tooltipItem = hoveredEntry
 		val currentMouse = mousePos
-		if (tooltipItem != null && currentMouse != null && !isDragging) {
+		if (tooltipItem != null && currentMouse != null && !isLeftDragging && !isRightDragging) {
 			val isOverridden = tooltipItem.isOverridden
 			val tooltipText = buildString {
 				append(tooltipItem.drawable.name)
@@ -327,7 +447,6 @@ fun DrawOrderRuler(
 				}
 			}
 
-			// Show tooltip using a popup placed to the right of the ruler (into the canvas)
 			Popup(
 				popupPositionProvider = object : PopupPositionProvider {
 					override fun calculatePosition(
@@ -526,4 +645,3 @@ fun DrawOrderInputDialog(
 		}
 	}
 }
-
