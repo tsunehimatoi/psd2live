@@ -19,6 +19,7 @@ internal object WorkspaceStateCodec {
         put("bodyStrength", state.bodyStrength)
         put("meshOnly", state.meshOnly)
         put("generateDeformers", state.generateDeformers)
+        put("featureDisplacementEnabled", state.featureDisplacementEnabled)
         put("exportMotions", state.exportMotions)
         put("motionIdle", state.motionIdle)
         put("motionBlink", state.motionBlink)
@@ -57,6 +58,7 @@ internal object WorkspaceStateCodec {
         put("bodyStrength", state.bodyStrength)
         put("meshOnly", state.meshOnly)
         put("generateDeformers", state.generateDeformers)
+        put("featureDisplacementEnabled", state.featureDisplacementEnabled)
         put("exportMotions", state.exportMotions)
         put("motionIdle", state.motionIdle)
         put("motionBlink", state.motionBlink)
@@ -124,6 +126,7 @@ internal object WorkspaceStateCodec {
         bodyStrength = value["bodyStrength"]?.jsonPrimitive?.float ?: base.bodyStrength,
         meshOnly = value["meshOnly"]?.jsonPrimitive?.boolean ?: base.meshOnly,
         generateDeformers = value["generateDeformers"]?.jsonPrimitive?.boolean ?: base.generateDeformers,
+        featureDisplacementEnabled = value["featureDisplacementEnabled"]?.jsonPrimitive?.boolean ?: base.featureDisplacementEnabled,
         exportMotions = value["exportMotions"]?.jsonPrimitive?.boolean ?: base.exportMotions,
         motionIdle = value["motionIdle"]?.jsonPrimitive?.boolean ?: base.motionIdle,
         motionBlink = value["motionBlink"]?.jsonPrimitive?.boolean ?: base.motionBlink,

@@ -18,6 +18,22 @@ import kotlin.test.assertTrue
 
 class LayerBindingTest {
 	@Test
+	fun `disabling feature displacement reconnects features to the face surface`() {
+		val tags = mapOf("eye" to SemanticTag.EYEWHITE, "brow" to SemanticTag.EYEBROW, "mouth" to SemanticTag.MOUTH)
+		val art = artOf(*tags.keys.mapIndexed { i, name -> layer(name, i) }.toTypedArray())
+		val config = PipelineConfig(atlasSize = 256, meshSpacing = 16,
+			layerOverrides = tags.mapValues { LayerClassificationOverride(tag = it.value, side = Side.NONE) })
+		for (enabled in listOf(true, false)) {
+			val model = PSD2LivePipeline().buildPreview(art, config.copy(featureDisplacementEnabled = enabled)).rig.puppet
+			assertEquals(enabled, model.deformers.any { it.id.raw == "DeformFeatureDisplacement" })
+			for (mesh in model.drawables) {
+				val parent = model.deformers.single { it.id == mesh.parentDeformerId }
+				assertEquals(if (enabled) "DeformFeatureDisplacement" else "DeformFaceNinePose", parent.parent?.raw)
+			}
+		}
+	}
+
+	@Test
 	fun `face contour child owns only skin under the face surface`() {
 		val tags = mapOf("skin" to SemanticTag.FACE, "detail" to SemanticTag.FACE_DETAIL,
 			"eye" to SemanticTag.EYEWHITE, "hair" to SemanticTag.FRONT_HAIR)

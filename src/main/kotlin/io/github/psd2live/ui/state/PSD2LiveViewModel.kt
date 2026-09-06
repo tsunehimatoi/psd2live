@@ -311,6 +311,12 @@ class PSD2LiveViewModel : AutoCloseable {
 	    editorChanged()
 	}
 
+	fun setFeatureDisplacementEnabled(enabled: Boolean) {
+		_state.update { it.copy(featureDisplacementEnabled = enabled) }
+		schedulePreviewRebuild()
+		editorChanged()
+	}
+
 	fun setExportMotions(enabled: Boolean) {
 		_state.update { it.copy(exportMotions = enabled) }
 	    editorChanged()
@@ -432,6 +438,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				bodyStrength = 1.0f,
 				meshOnly = false,
 				generateDeformers = true,
+				featureDisplacementEnabled = true,
 				exportMotions = true,
 				motionIdle = true,
 				motionBlink = true,

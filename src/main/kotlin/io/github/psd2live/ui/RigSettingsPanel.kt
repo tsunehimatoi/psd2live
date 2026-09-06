@@ -103,6 +103,7 @@ class RigSettingsPanel(
 	private val bodyUnitLabel = JLabel("x")
 
 	private val physicsCheck = JCheckBox("", true)
+	private val featureDisplacementCheck = JCheckBox("", true)
 
 	// --- Export Target Controls ---
 	private val cmo3Check = JCheckBox("", true)
@@ -304,6 +305,12 @@ class RigSettingsPanel(
 		buildAdvancedContainer()
 		formPanel.add(advancedContainer, c)
 
+		row++
+		c.gridy = row
+		c.gridx = 0
+		c.gridwidth = 2
+		formPanel.add(featureDisplacementCheck, c)
+
 		// --- Row: Options & Export Checkboxes ---
 		row++
 		c.gridy = row
@@ -454,6 +461,7 @@ class RigSettingsPanel(
 
 		// Physics & Export checkboxes
 		physicsCheck.addActionListener { notifyChanged() }
+		featureDisplacementCheck.addActionListener { notifyChanged() }
 		cmo3Check.addActionListener { notifyChanged() }
 		moc3Check.addActionListener { notifyChanged() }
 	}
@@ -478,6 +486,7 @@ class RigSettingsPanel(
 			bodySpinner.value = preset.bodyStrength.toDouble()
 
 			physicsCheck.isSelected = preset.physics
+			featureDisplacementCheck.isSelected = true
 			cmo3Check.isSelected = preset.cmo3
 			moc3Check.isSelected = preset.moc3
 		}
@@ -505,6 +514,7 @@ class RigSettingsPanel(
 		headTurnStrength = (headSpinner.value as Number).toFloat(),
 		bodyStrength = (bodySpinner.value as Number).toFloat(),
 		generatePhysics = physicsCheck.isSelected,
+		featureDisplacementEnabled = featureDisplacementCheck.isSelected,
 		exportCmo3 = cmo3Check.isSelected,
 		exportMoc3 = moc3Check.isSelected,
 		layerOverrides = layerOverrides,
@@ -531,6 +541,7 @@ class RigSettingsPanel(
 		paddingSpinner.isEnabled = enabled
 		alphaSpinner.isEnabled = enabled
 		physicsCheck.isEnabled = enabled
+		featureDisplacementCheck.isEnabled = enabled
 		cmo3Check.isEnabled = enabled
 		moc3Check.isEnabled = enabled
 	}
@@ -587,6 +598,7 @@ class RigSettingsPanel(
 		alphaSpinner.toolTipText = tr("settings.alphaThreshold.tip")
 
 		physicsCheck.text = tr("settings.physics")
+		featureDisplacementCheck.text = tr("model.deformer.featureDisplacement")
 		physicsCheck.toolTipText = tr("settings.physics.tip")
 
 		cmo3Check.text = tr("settings.cmo3")

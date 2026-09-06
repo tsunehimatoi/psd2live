@@ -679,10 +679,11 @@ object RigBuilder {
 		) { u, v, values -> faceContourPoint(u, v, values[0], config.headTurnStrength, socketY) }
 		val contour = Deformer.Warp(faceContourId, tr("model.deformer.faceContour"),
 			faceWarpId, facePartId, 16, 8, true, contourGrid)
-		val deformers = mutableListOf<Deformer>(body, breath, rotation, headContainer, face, displacement, contour)
+		val deformers = mutableListOf<Deformer>(body, breath, rotation, headContainer, face, contour)
+		if (config.featureDisplacementEnabled) deformers += displacement
 		val primaryRegions = faceRig.regions.filter { it.feature != FaceFeature.IRIS }
 		for (region in primaryRegions) {
-			val parent = if (region.feature in setOf(FaceFeature.EYE, FaceFeature.BROW, FaceFeature.MOUTH))
+			val parent = if (config.featureDisplacementEnabled && region.feature in setOf(FaceFeature.EYE, FaceFeature.BROW, FaceFeature.MOUTH))
 				featureDisplacementId else faceWarpId
 			deformers += featureWarp(faceRig, region, parent, faceFrame, facePartId, config)
 		}

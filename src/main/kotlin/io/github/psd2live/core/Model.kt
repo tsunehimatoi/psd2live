@@ -108,6 +108,7 @@ data class PipelineConfig(
 	val bodyStrength: Float = 1f,
 	val meshOnly: Boolean = false,
 	val generateDeformers: Boolean = true,
+	val featureDisplacementEnabled: Boolean = true,
 	val exportMotions: Boolean = true,
 	val motionIdle: Boolean = true,
 	val motionBlink: Boolean = true,

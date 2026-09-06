@@ -568,6 +568,13 @@ private fun ModelSettingsSection(
 			}
 
 			// Form Row 3: Head Strength
+			CompactCheckbox(
+				checked = state.featureDisplacementEnabled,
+				onCheckedChange = viewModel::setFeatureDisplacementEnabled,
+				label = tr("model.deformer.featureDisplacement"),
+				enabled = !isBusy && !state.meshOnly,
+			)
+
 			Row(
 				modifier = Modifier.fillMaxWidth(),
 				verticalAlignment = Alignment.CenterVertically,
