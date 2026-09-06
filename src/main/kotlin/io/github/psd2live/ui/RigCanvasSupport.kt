@@ -1,4 +1,4 @@
-﻿package io.github.psd2live.ui
+package io.github.psd2live.ui
 
 import io.github.psd2live.core.Bounds
 import io.github.psd2live.core.RigPreviewModel
@@ -65,12 +65,16 @@ internal object RigCanvasSupport {
 		viewport: CanvasViewport,
 		alpha: Float = 1f,
 		visibleLayerIds: Set<String>? = null,
+		drawOrderOverrides: Map<String, Float> = emptyMap(),
 	) {
 		g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
 		g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
 		val drawables = model.rig.puppet.drawables
 			.filter { geometry.worldPositions.containsKey(it.id) && it.mesh != null }
-			.sortedBy { geometry.drawOrder[it.id] ?: it.drawOrder }
+			.sortedBy {
+				val layerId = model.rig.layerIdByDrawableId[it.id.raw]
+				drawOrderOverrides[layerId] ?: drawOrderOverrides[it.id.raw] ?: geometry.drawOrder[it.id] ?: it.drawOrder
+			}
 		val drawableById = model.rig.puppet.drawables.associateBy { it.id }
 		val originalClip = g.clip
 		val originalComposite = g.composite

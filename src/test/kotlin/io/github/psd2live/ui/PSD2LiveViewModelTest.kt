@@ -392,4 +392,66 @@ class PSD2LiveViewModelTest {
 			vm.close()
 		}
 	}
+
+	@Test
+	fun `draw order overrides setter, clamping, reset, and effective order resolution`() {
+		val vm = PSD2LiveViewModel()
+		try {
+			// Initially empty overrides
+			assertTrue(vm.state.value.drawOrderOverrides.isEmpty())
+			assertEquals(500f, vm.state.value.getEffectiveDrawOrder("draw_1", "layer_1", 500f))
+
+			// Setting draw order clamps to 0..1000
+			vm.setLayerDrawOrder("layer_1", 750f)
+			assertEquals(750f, vm.state.value.drawOrderOverrides["layer_1"])
+			assertEquals(750f, vm.state.value.getEffectiveDrawOrder("draw_1", "layer_1", 500f))
+			assertEquals(750f, vm.state.value.getLayerDrawOrder("layer_1"))
+
+			// Clamping below 0
+			vm.setLayerDrawOrder("layer_1", -50f)
+			assertEquals(0f, vm.state.value.drawOrderOverrides["layer_1"])
+
+			// Clamping above 1000
+			vm.setLayerDrawOrder("layer_1", 1200f)
+			assertEquals(1000f, vm.state.value.drawOrderOverrides["layer_1"])
+
+			// Setting by drawable ID fallback
+			vm.setLayerDrawOrder("draw_2", 300f)
+			assertEquals(300f, vm.state.value.getEffectiveDrawOrder("draw_2", "nonexistent_layer", 100f))
+
+			// Layer ID override takes precedence over drawable ID override
+			vm.setLayerDrawOrder("layer_2", 400f)
+			assertEquals(400f, vm.state.value.getEffectiveDrawOrder("draw_2", "layer_2", 100f))
+
+			// Config builder includes overrides
+			val config = vm.state.value.buildConfig()
+			assertEquals(1000f, config.drawOrderOverrides["layer_1"])
+			assertEquals(400f, config.drawOrderOverrides["layer_2"])
+
+			// Reset specific layer override
+			vm.resetLayerDrawOrder("layer_1")
+			assertFalse(vm.state.value.drawOrderOverrides.containsKey("layer_1"))
+			assertEquals(500f, vm.state.value.getEffectiveDrawOrder("draw_1", "layer_1", 500f))
+
+			// Reset all overrides
+			vm.resetAllDrawOrders()
+			assertTrue(vm.state.value.drawOrderOverrides.isEmpty())
+		} finally {
+			vm.close()
+		}
+	}
+
+	@Test
+	fun `workspace state codec round trips drawOrderOverrides`() {
+		val original = PSD2LiveState(
+			drawOrderOverrides = mapOf("layer_head" to 850f, "layer_body" to 200f)
+		)
+		val encoded = io.github.psd2live.project.WorkspaceStateCodec.encode(original)
+		val decoded = io.github.psd2live.project.WorkspaceStateCodec.decode(encoded)
+
+		assertEquals(850f, decoded.drawOrderOverrides["layer_head"])
+		assertEquals(200f, decoded.drawOrderOverrides["layer_body"])
+		assertEquals(2, decoded.drawOrderOverrides.size)
+	}
 }
+

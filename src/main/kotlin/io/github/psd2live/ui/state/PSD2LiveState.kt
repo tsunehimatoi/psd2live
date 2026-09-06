@@ -156,6 +156,7 @@ data class PSD2LiveState(
 	val currentLanguage: AppLanguage = I18n.currentLanguage,
 	val deletedLayerIds: Set<String> = emptySet(),
 	val parentOverrides: Map<String, String?> = emptyMap(),
+	val drawOrderOverrides: Map<String, Float> = emptyMap(),
 	/** Durable parameter/keyform edits replayed after each generated-rig rebuild. */
 	val rigEdits: RigEditOverlay = RigEditOverlay.Empty,
 	val errorMessage: String? = null,
@@ -189,8 +190,24 @@ data class PSD2LiveState(
 			layerVisibility = layerVisibility,
 			deletedLayerIds = deletedLayerIds,
 			parentOverrides = parentOverrides,
+			drawOrderOverrides = drawOrderOverrides,
 			rigEdits = rigEdits,
 		)
+	}
+
+	fun getEffectiveDrawOrder(drawableId: String, layerId: String?, defaultOrder: Float): Float {
+		if (layerId != null) {
+			drawOrderOverrides[layerId]?.let { return it }
+		}
+		return drawOrderOverrides[drawableId] ?: defaultOrder
+	}
+
+	fun getLayerDrawOrder(layerId: String): Float? {
+		drawOrderOverrides[layerId]?.let { return it }
+		val model = previewModel ?: return null
+		val drawableId = model.rig.layerIdByDrawableId.entries.firstOrNull { it.value == layerId }?.key
+		val drawable = model.rig.puppet.drawables.firstOrNull { it.id.raw == drawableId }
+		return drawable?.drawOrder
 	}
 
 	fun isLayerVisible(layerId: String, defaultVisible: Boolean = true): Boolean {

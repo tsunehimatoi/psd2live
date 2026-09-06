@@ -862,6 +862,33 @@ class PSD2LiveViewModel : AutoCloseable {
 	    editorChanged()
 	}
 
+	fun setLayerDrawOrder(targetId: String, order: Float) {
+		val clamped = order.coerceIn(0f, 1000f)
+		val model = _state.value.previewModel
+		val layerId = model?.rig?.layerIdByDrawableId?.get(targetId) ?: targetId
+		_state.update { current ->
+			val updated = current.drawOrderOverrides + (layerId to clamped)
+			current.copy(drawOrderOverrides = updated)
+		}
+		editorChanged()
+	}
+
+	fun resetLayerDrawOrder(targetId: String) {
+		val model = _state.value.previewModel
+		val layerId = model?.rig?.layerIdByDrawableId?.get(targetId) ?: targetId
+		_state.update { current ->
+			current.copy(drawOrderOverrides = current.drawOrderOverrides - layerId - targetId)
+		}
+		editorChanged()
+	}
+
+	fun resetAllDrawOrders() {
+		_state.update { current ->
+			current.copy(drawOrderOverrides = emptyMap())
+		}
+		editorChanged()
+	}
+
 	fun setLayerClassification(layerId: String, override: LayerClassificationOverride) {
 		_state.update {
 			it.copy(

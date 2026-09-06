@@ -362,7 +362,9 @@ object RigBuilder {
 				channelGrids = channelGrids,
 				// Cubism Editor stores draw order as an integer. Keeping this integral also makes
 				// fresh CMO3 conversion lossless instead of reporting one advisory per drawable.
-				drawOrder = (orderedLayers.size - drawIndex).coerceAtMost(1000).toFloat(),
+				drawOrder = (config.drawOrderOverrides[layer.source.id.raw]
+					?: config.drawOrderOverrides[id.raw]
+					?: (orderedLayers.size - drawIndex).coerceAtMost(1000).toFloat()),
 				opacity = layer.source.opacity,
 				isVisible = layerVisibility(config, layer.source.id.raw, layer.source.visible),
 				texturePage = placement.page,

@@ -128,6 +128,8 @@ data class PipelineConfig(
 	val deletedLayerIds: Set<String> = emptySet(),
 	/** Manual parent deformer overrides (layerId or deformerId -> parentDeformerId or null for root). */
 	val parentOverrides: Map<String, String?> = emptyMap(),
+	/** Manual draw order overrides (layerId or drawableId -> drawOrder within 0..1000). */
+	val drawOrderOverrides: Map<String, Float> = emptyMap(),
 	/** Durable Agent/editor changes replayed over every generated base rig and retained on export. */
 	val rigEdits: RigEditOverlay = RigEditOverlay.Empty,
 )

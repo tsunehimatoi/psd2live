@@ -80,6 +80,8 @@ import io.github.psd2live.ui.components.IconPlay
 import io.github.psd2live.ui.components.IconReset
 import io.github.psd2live.ui.components.IconSearch
 import io.github.psd2live.ui.components.IconTrash
+import io.github.psd2live.ui.components.DrawOrderRuler
+import io.github.psd2live.ui.components.DrawOrderInputDialog
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.state.WorkspaceTab
@@ -170,6 +172,7 @@ private fun HierarchyView(
 
 	var rowCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 	var splitterCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+	var activeDrawOrderTarget by remember { mutableStateOf<DrawOrderDialogTarget?>(null) }
 
 	Box(modifier = Modifier.fillMaxSize()) {
 		Row(
@@ -254,7 +257,14 @@ private fun HierarchyView(
 							)
 						}
 					} else {
-						HierarchyTreeList(model, state, viewModel)
+						HierarchyTreeList(
+							model = model,
+							state = state,
+							viewModel = viewModel,
+							onRequestSetOrder = { targetId, name, currentOrder, defaultOrder, isOverridden ->
+								activeDrawOrderTarget = DrawOrderDialogTarget(targetId, name, currentOrder, defaultOrder, isOverridden)
+							},
+						)
 					}
 				}
 
@@ -327,8 +337,39 @@ private fun HierarchyView(
 				}
 			}
 		}
+
+		// Modal Dialog for setting Draw Order
+		if (activeDrawOrderTarget != null) {
+			val target = activeDrawOrderTarget!!
+			DrawOrderInputDialog(
+				targetId = target.id,
+				targetName = target.name,
+				initialOrder = target.currentOrder,
+				defaultOrder = target.defaultOrder,
+				isOverridden = target.isOverridden,
+				onConfirm = { newOrder ->
+					viewModel.setLayerDrawOrder(target.id, newOrder)
+					activeDrawOrderTarget = null
+				},
+				onReset = {
+					viewModel.resetLayerDrawOrder(target.id)
+					activeDrawOrderTarget = null
+				},
+				onDismiss = {
+					activeDrawOrderTarget = null
+				},
+			)
+		}
 	}
 }
+
+private data class DrawOrderDialogTarget(
+	val id: String,
+	val name: String,
+	val currentOrder: Float,
+	val defaultOrder: Float,
+	val isOverridden: Boolean,
+)
 
 private const val TREE_ROW_HEIGHT_DP = 20
 private const val TREE_INDENT_STEP_DP = 10
@@ -475,6 +516,7 @@ private fun HierarchyTreeList(
 	model: RigPreviewModel,
 	state: PSD2LiveState,
 	viewModel: PSD2LiveViewModel,
+	onRequestSetOrder: ((targetId: String, name: String, currentOrder: Float, defaultOrder: Float, isOverridden: Boolean) -> Unit)? = null,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -620,11 +662,16 @@ private fun HierarchyTreeList(
 			)
 		}
 
-		// Tree Body with Container Hit-Testing & Overlay
-		Box(
+		// Tree Body with Container Hit-Testing & Overlay and Draw Order Ruler
+		Row(
 			modifier = Modifier
 				.weight(1f)
-				.fillMaxWidth()
+				.fillMaxWidth(),
+		) {
+			Box(
+				modifier = Modifier
+					.weight(1f)
+					.fillMaxHeight()
 				.onGloballyPositioned { containerCoordinates = it }
 				.onPointerEvent(PointerEventType.Move) { event ->
 					val pos = event.changes.firstOrNull()?.position ?: return@onPointerEvent
@@ -741,6 +788,7 @@ private fun HierarchyTreeList(
 						containerCoordinates = containerCoordinates,
 						itemBoundsMap = itemBoundsMap,
 						searchQuery = searchQuery,
+						onRequestSetOrder = onRequestSetOrder,
 					)
 				}
 				for ((index, drawable) in rootDrawables.withIndex()) {
@@ -757,6 +805,7 @@ private fun HierarchyTreeList(
 						containerCoordinates = containerCoordinates,
 						itemBoundsMap = itemBoundsMap,
 						searchQuery = searchQuery,
+						onRequestSetOrder = onRequestSetOrder,
 					)
 				}
 
@@ -825,7 +874,16 @@ private fun HierarchyTreeList(
 				}
 			}
 		}
+
+		// Draw Order Ruler
+		DrawOrderRuler(
+			model = model,
+			state = state,
+			viewModel = viewModel,
+			onRequestSetOrder = onRequestSetOrder,
+		)
 	}
+}
 }
 
 @OptIn(ExperimentalComposeUiApi::class)
@@ -845,6 +903,7 @@ private fun DeformerTreeItem(
 	containerCoordinates: LayoutCoordinates?,
 	itemBoundsMap: MutableMap<String, ItemLayoutInfo>,
 	searchQuery: String = "",
+	onRequestSetOrder: ((targetId: String, name: String, currentOrder: Float, defaultOrder: Float, isOverridden: Boolean) -> Unit)? = null,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -1174,6 +1233,7 @@ private fun DeformerTreeItem(
 				containerCoordinates = containerCoordinates,
 				itemBoundsMap = itemBoundsMap,
 				searchQuery = searchQuery,
+				onRequestSetOrder = onRequestSetOrder,
 			)
 		}
 		for ((dIndex, childDrawable) in childDrawables.withIndex()) {
@@ -1191,6 +1251,7 @@ private fun DeformerTreeItem(
 				containerCoordinates = containerCoordinates,
 				itemBoundsMap = itemBoundsMap,
 				searchQuery = searchQuery,
+				onRequestSetOrder = onRequestSetOrder,
 			)
 		}
 	}
@@ -1210,6 +1271,7 @@ private fun DrawableTreeItem(
 	containerCoordinates: LayoutCoordinates?,
 	itemBoundsMap: MutableMap<String, ItemLayoutInfo>,
 	searchQuery: String = "",
+	onRequestSetOrder: ((targetId: String, name: String, currentOrder: Float, defaultOrder: Float, isOverridden: Boolean) -> Unit)? = null,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -1430,6 +1492,25 @@ private fun DrawableTreeItem(
 
 			if (layerId != null) {
 				Divider(color = colors.divider.copy(alpha = 0.5f), thickness = 0.5.dp)
+
+				val effectiveOrder = state.getEffectiveDrawOrder(drawable.id.raw, layerId, drawable.drawOrder)
+				val isOverridden = state.drawOrderOverrides.containsKey(layerId) || state.drawOrderOverrides.containsKey(drawable.id.raw)
+
+				DropdownMenuItem(onClick = {
+					showMenu = false
+					onRequestSetOrder?.invoke(layerId, drawable.name, effectiveOrder, drawable.drawOrder, isOverridden)
+				}) {
+					Text(tr("canvas.hierarchy.setDrawOrder"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
+				}
+
+				if (isOverridden) {
+					DropdownMenuItem(onClick = {
+						viewModel.resetLayerDrawOrder(layerId)
+						showMenu = false
+					}) {
+						Text(tr("canvas.drawOrder.reset"), style = typography.body.copy(fontSize = 11.sp), color = colors.accent)
+					}
+				}
 
 				DropdownMenuItem(onClick = {
 					viewModel.deleteLayer(layerId)

@@ -314,6 +314,7 @@ fun CanvasViewportComposable(
 			val nativeFrame = sdkFrame
 			val canUseNativeSdk = mode == WorkspaceTab.PREVIEW &&
 				!showWarp && !showMesh && !informationSelectedOnly && showTexture &&
+				state.drawOrderOverrides.isEmpty() &&
 				nativeFrame != null && sdkBitmap != null &&
 				nativeFrame.image.width == w && nativeFrame.image.height == h
 
@@ -334,7 +335,15 @@ fun CanvasViewportComposable(
 							WorkspaceTab.HIERARCHY -> 0.43f
 							else -> 1.0f
 						}
-						RigCanvasSupport.paintTexturedRig(g, model, geometry, viewport, textureAlpha, visibleLayerIds = targetVisibleLayerIds)
+						RigCanvasSupport.paintTexturedRig(
+							g,
+							model,
+							geometry,
+							viewport,
+							textureAlpha,
+							visibleLayerIds = targetVisibleLayerIds,
+							drawOrderOverrides = state.drawOrderOverrides,
+						)
 					}
 
 					// 3b. Mesh Channel (Wireframe)
