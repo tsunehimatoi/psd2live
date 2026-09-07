@@ -345,7 +345,7 @@ class PSD2LivePipeline {
 		{
 		  "version": 1,
 		  "model": ${quote(baseName)},
-		  "generator": "PSD2Live 0.4.0",
+		  "generator": "PSD2Live 0.5.0",
 		  "runtimeTarget": ${quote(rig.puppet.runtimeTarget.name)},
 		  "mocVersion": ${rig.puppet.runtimeTarget.mocVersion().byteValue},
 		  "canvas": {"width":${analysis.source.widthPx},"height":${analysis.source.heightPx}},
