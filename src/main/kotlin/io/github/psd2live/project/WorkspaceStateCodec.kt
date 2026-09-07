@@ -1,5 +1,7 @@
 package io.github.psd2live.project
 
+import io.github.psd2live.core.MeshSettings
+
 import io.github.psd2live.ui.state.*
 import org.umamo.runtime.model.ParameterId
 import kotlinx.serialization.json.*
@@ -13,6 +15,21 @@ internal object WorkspaceStateCodec {
     fun settings(state: PSD2LiveState): JsonObject = buildJsonObject {
         put("atlasSize", state.atlasSize)
         put("meshSpacing", state.meshSpacing)
+        put("meshOuterMargin", state.meshOuterMargin)
+        put("meshInnerMargin", state.meshInnerMargin)
+        put("meshMaxEdgeDistance", state.meshMaxEdgeDistance)
+        put("meshInteriorDensity", state.meshInteriorDensity)
+        putJsonObject("meshOverrides") {
+            state.meshOverrides.toSortedMap().forEach { (k, v) ->
+                put(k, buildJsonObject {
+                    put("outerMargin", v.outerMargin)
+                    put("innerMarginEnabled", v.innerMarginEnabled)
+                    put("innerMargin", v.innerMargin)
+                    put("maxEdgeDistance", v.maxEdgeDistance)
+                    put("interiorDensity", v.interiorDensity)
+                })
+            }
+        }
         put("texturePadding", state.texturePadding)
         put("alphaThreshold", state.alphaThreshold)
         put("headStrength", state.headStrength)
@@ -52,6 +69,21 @@ internal object WorkspaceStateCodec {
         put("outputPath", state.outputPath)
         put("atlasSize", state.atlasSize)
         put("meshSpacing", state.meshSpacing)
+        put("meshOuterMargin", state.meshOuterMargin)
+        put("meshInnerMargin", state.meshInnerMargin)
+        put("meshMaxEdgeDistance", state.meshMaxEdgeDistance)
+        put("meshInteriorDensity", state.meshInteriorDensity)
+        putJsonObject("meshOverrides") {
+            state.meshOverrides.toSortedMap().forEach { (k, v) ->
+                put(k, buildJsonObject {
+                    put("outerMargin", v.outerMargin)
+                    put("innerMarginEnabled", v.innerMarginEnabled)
+                    put("innerMargin", v.innerMargin)
+                    put("maxEdgeDistance", v.maxEdgeDistance)
+                    put("interiorDensity", v.interiorDensity)
+                })
+            }
+        }
         put("texturePadding", state.texturePadding)
         put("alphaThreshold", state.alphaThreshold)
         put("headStrength", state.headStrength)
@@ -120,6 +152,19 @@ internal object WorkspaceStateCodec {
         outputPath = value["outputPath"]?.jsonPrimitive?.content ?: base.outputPath,
         atlasSize = value["atlasSize"]?.jsonPrimitive?.int ?: base.atlasSize,
         meshSpacing = value["meshSpacing"]?.jsonPrimitive?.int ?: base.meshSpacing,
+        meshOuterMargin = value["meshOuterMargin"]?.jsonPrimitive?.float ?: base.meshOuterMargin,
+        meshInnerMargin = value["meshInnerMargin"]?.jsonPrimitive?.float ?: base.meshInnerMargin,
+        meshMaxEdgeDistance = value["meshMaxEdgeDistance"]?.jsonPrimitive?.float ?: base.meshMaxEdgeDistance,
+        meshInteriorDensity = value["meshInteriorDensity"]?.jsonPrimitive?.float ?: base.meshInteriorDensity,
+        meshOverrides = value["meshOverrides"]?.jsonObject?.mapNotNull { (k, v) ->
+            val obj = v.jsonObject
+            val outerMargin = obj["outerMargin"]?.jsonPrimitive?.floatOrNull ?: 2.0f
+            val innerMarginEnabled = obj["innerMarginEnabled"]?.jsonPrimitive?.booleanOrNull ?: false
+            val innerMargin = obj["innerMargin"]?.jsonPrimitive?.floatOrNull ?: 2.0f
+            val maxEdgeDistance = obj["maxEdgeDistance"]?.jsonPrimitive?.floatOrNull ?: 48.0f
+            val interiorDensity = obj["interiorDensity"]?.jsonPrimitive?.floatOrNull ?: 48.0f
+            k to MeshSettings(outerMargin, innerMarginEnabled, innerMargin, maxEdgeDistance, interiorDensity)
+        }?.toMap() ?: base.meshOverrides,
         texturePadding = value["texturePadding"]?.jsonPrimitive?.int ?: base.texturePadding,
         alphaThreshold = value["alphaThreshold"]?.jsonPrimitive?.int ?: base.alphaThreshold,
         headStrength = value["headStrength"]?.jsonPrimitive?.float ?: base.headStrength,

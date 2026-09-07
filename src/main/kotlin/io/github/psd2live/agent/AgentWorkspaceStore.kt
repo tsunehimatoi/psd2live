@@ -372,6 +372,17 @@ internal class AgentWorkspaceStore(
 				if (parent == null) put(id, JsonNull) else put(id, parent)
 			}
 		}
+		putJsonObject("meshOverrides") {
+			document.meshOverrides.toSortedMap().forEach { (id, s) ->
+				put(id, buildJsonObject {
+					put("outerMargin", s.outerMargin)
+					put("innerMarginEnabled", s.innerMarginEnabled)
+					put("innerMargin", s.innerMargin)
+					put("maxEdgeDistance", s.maxEdgeDistance)
+					put("interiorDensity", s.interiorDensity)
+				})
+			}
+		}
 		putJsonObject("rigEdits") {
             put("assetLayers", JsonObject(document.rigEdits.assetLayers))
             putJsonArray("calibrationLayerIds") { document.rigEdits.calibrationLayerIds.sorted().forEach { add(JsonPrimitive(it)) } }
@@ -617,6 +628,16 @@ internal class AgentWorkspaceStore(
 				)
 			},
 		)
+		val meshOverrides = value.optionalObject("meshOverrides").mapValues { (_, element) ->
+			val obj = element.jsonObject
+			io.github.psd2live.core.MeshSettings(
+				outerMargin = obj["outerMargin"]?.jsonPrimitive?.floatOrNull ?: 2.0f,
+				innerMarginEnabled = obj["innerMarginEnabled"]?.jsonPrimitive?.booleanOrNull ?: false,
+				innerMargin = obj["innerMargin"]?.jsonPrimitive?.floatOrNull ?: 2.0f,
+				maxEdgeDistance = obj["maxEdgeDistance"]?.jsonPrimitive?.floatOrNull ?: 48.0f,
+				interiorDensity = obj["interiorDensity"]?.jsonPrimitive?.floatOrNull ?: 48.0f,
+			)
+		}
 		return AgentWorkspaceDocument(
 			source = WorkspaceSourceArt(value.requiredInt("canvasWidth"), value.requiredInt("canvasHeight"), layers, groups),
 			layerVisibility = value.optionalObject("layerVisibility").mapValues { it.value.jsonPrimitive.booleanOrNull ?: invalid("layerVisibility.${it.key}") },
@@ -625,6 +646,7 @@ internal class AgentWorkspaceStore(
 			parentOverrides = value.optionalObject("parentOverrides").mapValues { it.value.jsonPrimitive.contentOrNull },
 			rigEdits = rigEdits,
             settings = value["settings"] as? JsonObject ?: JsonObject(emptyMap()),
+			meshOverrides = meshOverrides,
 		)
 	}
 

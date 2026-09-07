@@ -524,6 +524,53 @@ class AdaptiveMeshGeneratorTest {
 		assertComponents(mesh, 1)
 	}
 
+	@Test
+	fun `single layer line mesh has empty innerLoops and valid topology`() {
+		val width = 180
+		val height = 180
+		val rgba = ByteArray(width * height * 4)
+		for (x in 30 until 150) for (y in 30 until 150) {
+			rgba[(y * width + x) * 4 + 3] = -1
+		}
+		val mesh = assertNotNull(AdaptiveMeshGenerator.generate(
+			width = width,
+			height = height,
+			rgba = rgba,
+			alphaThreshold = 8,
+			spacing = 32f,
+			interiorSpacing = 32f,
+			outerMargin = 2f,
+			innerMargin = 2f,
+			innerMarginEnabled = false,
+		))
+		assertTrue(mesh.innerLoops.isEmpty(), "single-line mesh must not produce innerLoops")
+		assertTrue(mesh.boundaryLoops.isNotEmpty(), "boundaryLoops must exist")
+		assertTopology(mesh, 1)
+	}
+
+	@Test
+	fun `MeshSettings overload generates single and dual layer line correctly`() {
+		val width = 180
+		val height = 180
+		val rgba = ByteArray(width * height * 4)
+		for (x in 30 until 150) for (y in 30 until 150) {
+			rgba[(y * width + x) * 4 + 3] = -1
+		}
+		val single = assertNotNull(AdaptiveMeshGenerator.generate(
+			width, height, rgba, 8,
+			MeshSettings(outerMargin = 2f, innerMarginEnabled = false, innerMargin = 2f, maxEdgeDistance = 32f, interiorDensity = 32f)
+		))
+		assertTrue(single.innerLoops.isEmpty())
+		assertTopology(single, 1)
+
+		val dual = assertNotNull(AdaptiveMeshGenerator.generate(
+			width, height, rgba, 8,
+			MeshSettings(outerMargin = 2f, innerMarginEnabled = true, innerMargin = 2f, maxEdgeDistance = 32f, interiorDensity = 32f)
+		))
+		assertTrue(dual.innerLoops.isNotEmpty())
+		assertTopology(dual, 1)
+	}
+
 	private fun worstAspect(mesh: AdaptiveMeshGenerator.Result): Float = mesh.indices.toList().chunked(3).maxOf { ids ->
 		val a = ids[0] * 2; val b = ids[1] * 2; val c = ids[2] * 2
 		val areaTwice = abs((mesh.positions[b] - mesh.positions[a]) * (mesh.positions[c + 1] - mesh.positions[a + 1]) -

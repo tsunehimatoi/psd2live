@@ -346,8 +346,7 @@ object RigBuilder {
 				effectiveHeadSpace,
 				placement,
 				atlas.pages[placement.page].image.width,
-				config.meshSpacing,
-				config.alphaThreshold,
+				config,
 			)
 			val effectiveMesh = if (shouldBuildDeformers) {
 				meshData.mesh
@@ -1120,8 +1119,7 @@ object RigBuilder {
 		headSpace: HeadCoordinateSpace?,
 		placement: AtlasPlacement,
 		atlasSize: Int,
-		spacing: Int,
-		alphaThreshold: Int,
+		config: PipelineConfig,
 	): MeshData {
 		val width = max(1, layer.source.raster.width)
 		val height = max(1, layer.source.raster.height)
@@ -1132,18 +1130,29 @@ object RigBuilder {
 			SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE -> 0.45f
 			else -> 1f
 		}
-		val effectiveSpacing = max(12f, spacing * semanticDensity)
+		val override = config.meshOverrides[layer.source.id.raw]
+		val outerMargin = override?.outerMargin ?: config.meshOuterMargin
+		val innerMargin = override?.innerMargin ?: config.meshInnerMargin
+		// Currently only face meshes use dual-line envelope by default; all other parts use single-line:
+		val innerMarginEnabled = override?.innerMarginEnabled ?: (layer.semantic.tag == SemanticTag.FACE)
+		val effectiveSpacing = override?.maxEdgeDistance ?: max(12f, config.meshMaxEdgeDistance * semanticDensity)
+		val effectiveInteriorDensity = override?.interiorDensity ?: max(12f, config.meshInteriorDensity * semanticDensity)
+
 		// Authored tooth layers may contain several disconnected teeth. Keep their complete texture;
 		// the mouth clipping id supplies the visible boundary.
 		if (layer.semantic.tag in setOf(SemanticTag.TOOTH_T, SemanticTag.TOOTH_B)) {
 			return buildRectangularFallbackMesh(layer, parentFrame, headSpace, placement, atlasSize, effectiveSpacing)
 		}
 		val adaptive = AdaptiveMeshGenerator.generate(
-			width,
-			height,
-			layer.source.raster.rgba,
-			alphaThreshold,
-			effectiveSpacing,
+			width = width,
+			height = height,
+			rgba = layer.source.raster.rgba,
+			alphaThreshold = config.alphaThreshold,
+			spacing = effectiveSpacing,
+			interiorSpacing = effectiveInteriorDensity,
+			outerMargin = outerMargin,
+			innerMargin = innerMargin,
+			innerMarginEnabled = innerMarginEnabled,
 		)
 		if (adaptive != null) {
 			val positions = FloatArray(adaptive.positions.size)

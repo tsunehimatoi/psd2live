@@ -1,5 +1,8 @@
 package io.github.psd2live.ui.state
 
+import io.github.psd2live.core.MeshSettings
+import io.github.psd2live.core.SemanticTag
+
 import androidx.compose.runtime.Immutable
 import io.github.psd2live.core.LayerClassificationOverride
 import io.github.psd2live.core.PipelineAnalysis
@@ -93,7 +96,12 @@ data class PSD2LiveState(
 	val loadedInputFileSignature: String? = null,
 	val outputPath: String = "",
 	val atlasSize: Int = 4096,
-	val meshSpacing: Int = 64,
+	val meshSpacing: Int = 40,
+	val meshOuterMargin: Float = 1.0f,
+	val meshInnerMargin: Float = 10.0f,
+	val meshMaxEdgeDistance: Float = 6.0f,
+	val meshInteriorDensity: Float = 40.0f,
+	val meshOverrides: Map<String, MeshSettings> = emptyMap(),
 	val texturePadding: Int = 2,
 	val alphaThreshold: Int = 8,
 	val headStrength: Float = 1.0f,
@@ -170,6 +178,11 @@ data class PSD2LiveState(
 			atlasSize = atlasSize,
 			texturePadding = texturePadding,
 			meshSpacing = meshSpacing,
+			meshOuterMargin = meshOuterMargin,
+			meshInnerMargin = meshInnerMargin,
+			meshMaxEdgeDistance = meshMaxEdgeDistance,
+			meshInteriorDensity = meshInteriorDensity,
+			meshOverrides = meshOverrides,
 			alphaThreshold = alphaThreshold,
 			headTurnStrength = headStrength,
 			bodyStrength = bodyStrength,
@@ -202,6 +215,35 @@ data class PSD2LiveState(
 			drawOrderOverrides[layerId]?.let { return it }
 		}
 		return drawOrderOverrides[drawableId] ?: defaultOrder
+	}
+
+	fun getDefaultMeshSettings(layerId: String?): MeshSettings {
+		val layer = if (layerId != null) {
+			analysis?.layers?.firstOrNull { it.source.id.raw == layerId }
+		} else null
+		val semanticDensity = when (layer?.semantic?.tag) {
+			SemanticTag.FACE, SemanticTag.FRONT_HAIR, SemanticTag.BACK_HAIR, SemanticTag.TOPWEAR -> 0.65f
+			SemanticTag.IRIDES, SemanticTag.EYELASH, SemanticTag.EYEWHITE, SemanticTag.EYEBROW,
+			SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN, SemanticTag.MOUTH_CLOSE,
+			SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE -> 0.45f
+			else -> 1f
+		}
+		val isFace = layer?.semantic?.tag == SemanticTag.FACE
+		return MeshSettings(
+			outerMargin = meshOuterMargin,
+			innerMarginEnabled = isFace,
+			innerMargin = meshInnerMargin,
+			maxEdgeDistance = kotlin.math.max(12f, meshMaxEdgeDistance * semanticDensity),
+			interiorDensity = kotlin.math.max(12f, meshInteriorDensity * semanticDensity),
+		)
+	}
+
+	fun getEffectiveMeshSettings(layerId: String?): MeshSettings {
+		val defaultSettings = getDefaultMeshSettings(layerId)
+		if (layerId != null) {
+			meshOverrides[layerId]?.let { return it }
+		}
+		return defaultSettings
 	}
 
 	fun getLayerDrawOrder(layerId: String): Float? {

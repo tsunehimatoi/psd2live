@@ -1,5 +1,7 @@
 package io.github.psd2live.ui.state
 
+import io.github.psd2live.core.MeshSettings
+
 import io.github.psd2live.core.PSD2LivePipeline
 import io.github.psd2live.core.CubismSdkFrame
 import io.github.psd2live.core.CubismSdkPreviewSession
@@ -270,7 +272,43 @@ class PSD2LiveViewModel : AutoCloseable {
 	}
 
 	fun setMeshSpacing(spacing: Int) {
-		_state.update { it.copy(meshSpacing = spacing.coerceIn(16, 128)) }
+		_state.update { it.copy(meshSpacing = spacing.coerceIn(16, 128), meshMaxEdgeDistance = spacing.toFloat(), meshInteriorDensity = spacing.toFloat()) }
+		schedulePreviewRebuild()
+	    editorChanged()
+	}
+
+	fun setMeshOuterMargin(margin: Float) {
+		_state.update { it.copy(meshOuterMargin = margin.coerceIn(0f, 32f)) }
+		schedulePreviewRebuild()
+	    editorChanged()
+	}
+
+	fun setMeshInnerMargin(margin: Float) {
+		_state.update { it.copy(meshInnerMargin = margin.coerceIn(0.5f, 32f)) }
+		schedulePreviewRebuild()
+	    editorChanged()
+	}
+
+	fun setMeshMaxEdgeDistance(distance: Float) {
+		_state.update { it.copy(meshMaxEdgeDistance = distance.coerceIn(6f, 128f), meshSpacing = distance.toInt().coerceIn(16, 128)) }
+		schedulePreviewRebuild()
+	    editorChanged()
+	}
+
+	fun setMeshInteriorDensity(density: Float) {
+		_state.update { it.copy(meshInteriorDensity = density.coerceIn(6f, 128f)) }
+		schedulePreviewRebuild()
+	    editorChanged()
+	}
+
+	fun setPartMeshSettings(layerId: String, settings: MeshSettings) {
+		_state.update { it.copy(meshOverrides = it.meshOverrides + (layerId to settings)) }
+		schedulePreviewRebuild()
+	    editorChanged()
+	}
+
+	fun resetPartMeshSettings(layerId: String) {
+		_state.update { it.copy(meshOverrides = it.meshOverrides - layerId) }
 		schedulePreviewRebuild()
 	    editorChanged()
 	}
@@ -431,7 +469,12 @@ class PSD2LiveViewModel : AutoCloseable {
 		_state.update {
 			it.copy(
 				atlasSize = 4096,
-				meshSpacing = 64,
+				meshSpacing = 40,
+				meshOuterMargin = 1.0f,
+				meshInnerMargin = 10.0f,
+				meshMaxEdgeDistance = 6.0f,
+				meshInteriorDensity = 40.0f,
+				meshOverrides = emptyMap(),
 				texturePadding = 2,
 				alphaThreshold = 8,
 				headStrength = 1.0f,

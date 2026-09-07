@@ -60,11 +60,33 @@ internal object AdaptiveMeshGenerator {
 		height: Int,
 		rgba: ByteArray,
 		alphaThreshold: Int,
+		settings: MeshSettings,
+	): Result? = generate(
+		width = width,
+		height = height,
+		rgba = rgba,
+		alphaThreshold = alphaThreshold,
+		spacing = settings.maxEdgeDistance,
+		interiorSpacing = settings.interiorDensity,
+		outerMargin = settings.outerMargin,
+		innerMargin = settings.innerMargin,
+		innerMarginEnabled = settings.innerMarginEnabled,
+	)
+
+	fun generate(
+		width: Int,
+		height: Int,
+		rgba: ByteArray,
+		alphaThreshold: Int,
 		spacing: Float,
 		interiorSpacing: Float = spacing * 1.35f,
+		outerMargin: Float = min(2.75f, max(0.8f, spacing * 0.10f)),
+		innerMargin: Float = min(2.75f, max(0.8f, spacing * 0.10f)),
+		innerMarginEnabled: Boolean = true,
 	): Result? {
 		if (width <= 0 || height <= 0 || width.toLong() * height * 4 > rgba.size ||
-			!spacing.isFinite() || !interiorSpacing.isFinite()) return null
+			!spacing.isFinite() || !interiorSpacing.isFinite() ||
+			!outerMargin.isFinite() || !innerMargin.isFinite()) return null
 		val threshold = alphaThreshold.coerceIn(1, 255)
 		val hardened = AlphaEdgePreprocessor.process(width, height, rgba, threshold)
 		val geometryRgba = hardened?.rgba ?: ByteArray(rgba.size)
@@ -155,7 +177,8 @@ internal object AdaptiveMeshGenerator {
 			}
 			for (scale in doubleArrayOf(1.0, 0.5, 0.25, 0.125, 0.0625)) {
 				if (built != null) break
-				val band = buildBands(guides, gridCandidates, width, height, edgeSpacing, gridSpacing, scale, neighbors)
+				val band = buildBands(guides, gridCandidates, width, height, edgeSpacing, gridSpacing, scale, neighbors,
+					outerMargin.toDouble(), innerMargin.toDouble(), innerMarginEnabled)
 				if (band != null && isolated(band)) built = band
 			}
 			if (built == null) {
@@ -391,39 +414,51 @@ internal object AdaptiveMeshGenerator {
 	private fun buildBands(
 		guides: List<List<Point>>, candidates: List<Point>, width: Int, height: Int,
 		edgeSpacing: Double, interiorSpacing: Double, scale: Double, neighbors: List<List<Point>>,
+		outerMargin: Double = min(2.75, max(0.8, edgeSpacing * 0.10)),
+		innerMargin: Double = min(2.75, max(0.8, edgeSpacing * 0.10)),
+		innerMarginEnabled: Boolean = true,
 	): BandedMesh? {
-		// Bezier is a center guide. Emit only two close envelope rows around it;
-		// a third guide row would be a fake mesh seam and needlessly increase cost.
-		val halfBand = min(2.75, max(0.8, edgeSpacing * 0.10)) * scale
-		val outer = guides.map { offsetLoop(it, -halfBand, width, height, guides + neighbors) }
-		val inner = guides.map { offsetLoop(it, halfBand, width, height, guides + neighbors) }
-		if (!validDomain(outer) || !validDomain(inner)) return null
-		val core = triangulateDomain(inner, candidates, interiorSpacing) ?: return null
-		val points = core.points.toMutableList()
-		val triangles = core.triangles.toMutableList()
-		val lookup = points.withIndex().associate { it.value to it.index }.toMutableMap()
-		fun vertices(loop: List<Point>) = loop.map { p -> lookup.getOrPut(p) { points.add(p); points.lastIndex } }.toIntArray()
-		val innerIds = inner.map { vertices(it) }
-		val outerIds = outer.map { vertices(it) }
-		fun strip(a: IntArray, b: IntArray): Boolean {
-			for (i in a.indices) {
-				val j = (i + 1) % a.size
-				// Alternating diagonals avoid a directional bias along the two edge bands.
-				val faces = if (i % 2 == 0) listOf(Triangle(a[i], a[j], b[i]), Triangle(a[j], b[j], b[i]))
-					else listOf(Triangle(a[i], a[j], b[j]), Triangle(a[i], b[j], b[i]))
-				for (t in faces) {
-					if (t.a == t.b || t.b == t.c || t.c == t.a) continue // clipped at the canvas boundary
-					if (cross(points[t.a], points[t.b], points[t.c]) <= GEOMETRY_EPSILON) return false
-					triangles += t
+		if (innerMarginEnabled) {
+			val outerDist = outerMargin * scale
+			val innerDist = innerMargin * scale
+			val outer = guides.map { offsetLoop(it, -outerDist, width, height, guides + neighbors) }
+			val inner = guides.map { offsetLoop(it, innerDist, width, height, guides + neighbors) }
+			if (!validDomain(outer) || !validDomain(inner)) return null
+			val core = triangulateDomain(inner, candidates, interiorSpacing) ?: return null
+			val points = core.points.toMutableList()
+			val triangles = core.triangles.toMutableList()
+			val lookup = points.withIndex().associate { it.value to it.index }.toMutableMap()
+			fun vertices(loop: List<Point>) = loop.map { p -> lookup.getOrPut(p) { points.add(p); points.lastIndex } }.toIntArray()
+			val innerIds = inner.map { vertices(it) }
+			val outerIds = outer.map { vertices(it) }
+			fun strip(a: IntArray, b: IntArray): Boolean {
+				for (i in a.indices) {
+					val j = (i + 1) % a.size
+					// Alternating diagonals avoid a directional bias along the two edge bands.
+					val faces = if (i % 2 == 0) listOf(Triangle(a[i], a[j], b[i]), Triangle(a[j], b[j], b[i]))
+						else listOf(Triangle(a[i], a[j], b[j]), Triangle(a[i], b[j], b[i]))
+					for (t in faces) {
+						if (t.a == t.b || t.b == t.c || t.c == t.a) continue // clipped at the canvas boundary
+						if (cross(points[t.a], points[t.b], points[t.c]) <= GEOMETRY_EPSILON) return false
+						triangles += t
+					}
 				}
+				return true
 			}
-			return true
+			for (i in guides.indices) if (!strip(outerIds[i], innerIds[i])) return null
+			val uses = triangles.flatMap { triangleEdges(it) }.groupingBy { it }.eachCount()
+			val boundaryEdges = outerIds.flatMap { ids -> ids.indices.map { edgeOf(ids[it], ids[(it + 1) % ids.size]) } }.toSet()
+			if (uses.any { (edge, count) -> count != if (edge in boundaryEdges) 1 else 2 }) return null
+			return BandedMesh(LocalMesh(points, triangles), outerIds, emptyList(), innerIds)
+		} else {
+			val outerDist = outerMargin * scale
+			val outer = if (outerDist > 1e-4) guides.map { offsetLoop(it, -outerDist, width, height, guides + neighbors) } else guides
+			if (!validDomain(outer)) return null
+			val core = triangulateDomain(outer, candidates, interiorSpacing) ?: return null
+			var cursor = 0
+			val outerIds = outer.map { loop -> IntArray(loop.size) { cursor + it }.also { cursor += loop.size } }
+			return BandedMesh(core, outerIds, emptyList(), emptyList())
 		}
-		for (i in guides.indices) if (!strip(outerIds[i], innerIds[i])) return null
-		val uses = triangles.flatMap { triangleEdges(it) }.groupingBy { it }.eachCount()
-		val boundaryEdges = outerIds.flatMap { ids -> ids.indices.map { edgeOf(ids[it], ids[(it + 1) % ids.size]) } }.toSet()
-		if (uses.any { (edge, count) -> count != if (edge in boundaryEdges) 1 else 2 }) return null
-		return BandedMesh(LocalMesh(points, triangles), outerIds, emptyList(), innerIds)
 	}
 
 	/** Join holes by visible, non-crossing bridges, reusing endpoint indices on both sides.

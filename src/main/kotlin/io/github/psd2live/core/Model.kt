@@ -99,10 +99,23 @@ data class RigAnchors(
 	val hipY: Float,
 )
 
+data class MeshSettings(
+	val outerMargin: Float = 1.0f,
+	val innerMarginEnabled: Boolean = false,
+	val innerMargin: Float = 10.0f,
+	val maxEdgeDistance: Float = 6.0f,
+	val interiorDensity: Float = 40.0f,
+)
+
 data class PipelineConfig(
 	val atlasSize: Int = 4096,
 	val texturePadding: Int = 2,
-	val meshSpacing: Int = 64,
+	val meshSpacing: Int = 40,
+	val meshOuterMargin: Float = 1.0f,
+	val meshInnerMargin: Float = 10.0f,
+	val meshMaxEdgeDistance: Float = 6.0f,
+	val meshInteriorDensity: Float = 40.0f,
+	val meshOverrides: Map<String, MeshSettings> = emptyMap(),
 	val alphaThreshold: Int = 8,
 	val headTurnStrength: Float = 1f,
 	val bodyStrength: Float = 1f,

@@ -32,6 +32,7 @@ internal data class AgentWorkspaceDocument(
 	val parentOverrides: Map<String, String?>,
 	val rigEdits: RigEditOverlay,
     val settings: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap()),
+	val meshOverrides: Map<String, io.github.psd2live.core.MeshSettings> = emptyMap(),
 )
 
 /** Marker used to distinguish Agent-created source layers from layers loaded from the artist file. */

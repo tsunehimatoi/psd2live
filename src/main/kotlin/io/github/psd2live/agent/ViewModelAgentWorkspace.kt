@@ -1236,6 +1236,7 @@ class ViewModelAgentWorkspace(
 			document.deletedLayerIds.sorted().forEach { append("|d:").append(it) }
 			document.layerOverrides.toSortedMap().forEach { (key, value) -> append("|o:").append(key).append('=').append(value) }
 			document.parentOverrides.toSortedMap().forEach { (key, value) -> append("|p:").append(key).append('=').append(value) }
+			document.meshOverrides.toSortedMap().forEach { (key, value) -> append("|m:").append(key).append('=').append(value) }
 			document.rigEdits.deletedParameterIds.sorted().forEach { append("|pd:").append(it) }
 			document.rigEdits.parameterEdits.forEach { edit -> append("|pe:").append(edit) }
 		}
@@ -1252,6 +1253,7 @@ class ViewModelAgentWorkspace(
 			parentOverrides = state.parentOverrides.toMap(),
 			rigEdits = state.rigEdits,
             settings = io.github.psd2live.project.WorkspaceStateCodec.settings(state),
+			meshOverrides = state.meshOverrides.toMap(),
 		)
 	}
 
@@ -1261,6 +1263,7 @@ class ViewModelAgentWorkspace(
 		layerOverrides = layerOverrides,
 		parentOverrides = parentOverrides,
 		rigEdits = rigEdits,
+		meshOverrides = meshOverrides,
 	)
 
 	private fun synchronizeHistory(

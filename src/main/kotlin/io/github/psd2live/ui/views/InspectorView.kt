@@ -523,13 +523,13 @@ private fun ModelSettingsSection(
 				)
 			}
 
-			// Form Row 2: Mesh Spacing
+			// Form Row: Mesh Outer Margin (外边缘距离)
 			Row(
 				modifier = Modifier.fillMaxWidth(),
 				verticalAlignment = Alignment.CenterVertically,
 			) {
 				Text(
-					text = tr("settings.meshSpacing"),
+					text = tr("settings.meshOuterMargin"),
 					style = typography.body.copy(fontSize = 11.sp),
 					color = colors.textPrimary,
 					modifier = Modifier.width(85.dp),
@@ -537,34 +537,138 @@ private fun ModelSettingsSection(
 				)
 				Spacer(Modifier.width(6.dp))
 				CompactSlider(
-					value = state.meshSpacing.toFloat(),
-					onValueChange = { viewModel.setMeshSpacing(it.roundToInt()) },
-                    onValueChangeStarted = viewModel::beginEditorGesture,
-                    onValueChangeFinished = viewModel::endEditorGesture,
-					valueRange = 16f..128f,
+					value = state.meshOuterMargin,
+					onValueChange = viewModel::setMeshOuterMargin,
+					onValueChangeStarted = viewModel::beginEditorGesture,
+					onValueChangeFinished = viewModel::endEditorGesture,
+					valueRange = 0f..20f,
 					enabled = !isBusy,
 					modifier = Modifier.weight(1f),
 				)
 				Spacer(Modifier.width(4.dp))
 				CompactNumberSpinner(
-					value = state.meshSpacing.toDouble(),
-					onValueChange = { viewModel.setMeshSpacing(it.toInt()) },
-					min = 16.0,
+					value = state.meshOuterMargin.toDouble(),
+					onValueChange = { viewModel.setMeshOuterMargin(it.toFloat()) },
+					min = 0.0,
+					max = 32.0,
+					step = 0.5,
+					decimals = 1,
+					unit = tr("settings.unit.px"),
+					enabled = !isBusy,
+					modifier = Modifier.width(65.dp),
+					height = 22.dp,
+				)
+			}
+
+			// Form Row: Mesh Inner Margin (内边缘距离)
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				Text(
+					text = tr("settings.meshInnerMargin"),
+					style = typography.body.copy(fontSize = 11.sp),
+					color = colors.textPrimary,
+					modifier = Modifier.width(85.dp),
+					textAlign = TextAlign.Right,
+				)
+				Spacer(Modifier.width(6.dp))
+				CompactSlider(
+					value = state.meshInnerMargin,
+					onValueChange = viewModel::setMeshInnerMargin,
+					onValueChangeStarted = viewModel::beginEditorGesture,
+					onValueChangeFinished = viewModel::endEditorGesture,
+					valueRange = 0.5f..20f,
+					enabled = !isBusy,
+					modifier = Modifier.weight(1f),
+				)
+				Spacer(Modifier.width(4.dp))
+				CompactNumberSpinner(
+					value = state.meshInnerMargin.toDouble(),
+					onValueChange = { viewModel.setMeshInnerMargin(it.toFloat()) },
+					min = 0.5,
+					max = 32.0,
+					step = 0.5,
+					decimals = 1,
+					unit = tr("settings.unit.px"),
+					enabled = !isBusy,
+					modifier = Modifier.width(65.dp),
+					height = 22.dp,
+				)
+			}
+
+			// Form Row: Max Edge Distance (最大边缘点距离)
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				Text(
+					text = tr("settings.meshMaxEdgeDistance"),
+					style = typography.body.copy(fontSize = 11.sp),
+					color = colors.textPrimary,
+					modifier = Modifier.width(85.dp),
+					textAlign = TextAlign.Right,
+				)
+				Spacer(Modifier.width(6.dp))
+				CompactSlider(
+					value = state.meshMaxEdgeDistance,
+					onValueChange = viewModel::setMeshMaxEdgeDistance,
+					onValueChangeStarted = viewModel::beginEditorGesture,
+					onValueChangeFinished = viewModel::endEditorGesture,
+					valueRange = 6f..128f,
+					enabled = !isBusy,
+					modifier = Modifier.weight(1f),
+				)
+				Spacer(Modifier.width(4.dp))
+				CompactNumberSpinner(
+					value = state.meshMaxEdgeDistance.toDouble(),
+					onValueChange = { viewModel.setMeshMaxEdgeDistance(it.toFloat()) },
+					min = 6.0,
 					max = 128.0,
-					step = 8.0,
+					step = 4.0,
 					decimals = 0,
 					unit = tr("settings.unit.px"),
 					enabled = !isBusy,
-					modifier = Modifier.width(60.dp),
+					modifier = Modifier.width(65.dp),
 					height = 22.dp,
 				)
-				Spacer(Modifier.width(3.dp))
-				// Quick chips
-				CompactButton(text = "32", onClick = { viewModel.setMeshSpacing(32) }, enabled = !isBusy, height = 20.dp)
-				Spacer(Modifier.width(2.dp))
-				CompactButton(text = "64", onClick = { viewModel.setMeshSpacing(64) }, enabled = !isBusy, height = 20.dp)
-				Spacer(Modifier.width(2.dp))
-				CompactButton(text = "96", onClick = { viewModel.setMeshSpacing(96) }, enabled = !isBusy, height = 20.dp)
+			}
+
+			// Form Row: Interior Mesh Density (内部网格密度)
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				Text(
+					text = tr("settings.meshInteriorDensity"),
+					style = typography.body.copy(fontSize = 11.sp),
+					color = colors.textPrimary,
+					modifier = Modifier.width(85.dp),
+					textAlign = TextAlign.Right,
+				)
+				Spacer(Modifier.width(6.dp))
+				CompactSlider(
+					value = state.meshInteriorDensity,
+					onValueChange = viewModel::setMeshInteriorDensity,
+					onValueChangeStarted = viewModel::beginEditorGesture,
+					onValueChangeFinished = viewModel::endEditorGesture,
+					valueRange = 6f..128f,
+					enabled = !isBusy,
+					modifier = Modifier.weight(1f),
+				)
+				Spacer(Modifier.width(4.dp))
+				CompactNumberSpinner(
+					value = state.meshInteriorDensity.toDouble(),
+					onValueChange = { viewModel.setMeshInteriorDensity(it.toFloat()) },
+					min = 6.0,
+					max = 128.0,
+					step = 4.0,
+					decimals = 0,
+					unit = tr("settings.unit.px"),
+					enabled = !isBusy,
+					modifier = Modifier.width(65.dp),
+					height = 22.dp,
+				)
 			}
 
 			// Form Row 3: Head Strength

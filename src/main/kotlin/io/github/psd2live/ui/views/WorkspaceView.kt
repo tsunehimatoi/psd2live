@@ -82,6 +82,8 @@ import io.github.psd2live.ui.components.IconSearch
 import io.github.psd2live.ui.components.IconTrash
 import io.github.psd2live.ui.components.DrawOrderRuler
 import io.github.psd2live.ui.components.DrawOrderInputDialog
+import io.github.psd2live.ui.components.MeshSettingsDialog
+import io.github.psd2live.ui.components.MeshSettingsDialogTarget
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.state.WorkspaceTab
@@ -173,6 +175,7 @@ private fun HierarchyView(
 	var rowCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 	var splitterCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 	var activeDrawOrderTarget by remember { mutableStateOf<DrawOrderDialogTarget?>(null) }
+	var activeMeshSettingsTarget by remember { mutableStateOf<MeshSettingsDialogTarget?>(null) }
 
 	Box(modifier = Modifier.fillMaxSize()) {
 		Row(
@@ -263,6 +266,9 @@ private fun HierarchyView(
 							viewModel = viewModel,
 							onRequestSetOrder = { targetId, name, currentOrder, defaultOrder, isOverridden ->
 								activeDrawOrderTarget = DrawOrderDialogTarget(targetId, name, currentOrder, defaultOrder, isOverridden)
+							},
+							onRequestSetMeshSettings = { target ->
+								activeMeshSettingsTarget = target
 							},
 						)
 					}
@@ -357,6 +363,25 @@ private fun HierarchyView(
 				},
 				onDismiss = {
 					activeDrawOrderTarget = null
+				},
+			)
+		}
+
+		// Modal Dialog for setting Part Mesh Settings
+		if (activeMeshSettingsTarget != null) {
+			val target = activeMeshSettingsTarget!!
+			MeshSettingsDialog(
+				target = target,
+				onConfirm = { newSettings ->
+					viewModel.setPartMeshSettings(target.layerId, newSettings)
+					activeMeshSettingsTarget = null
+				},
+				onReset = {
+					viewModel.resetPartMeshSettings(target.layerId)
+					activeMeshSettingsTarget = null
+				},
+				onDismiss = {
+					activeMeshSettingsTarget = null
 				},
 			)
 		}
@@ -517,6 +542,7 @@ private fun HierarchyTreeList(
 	state: PSD2LiveState,
 	viewModel: PSD2LiveViewModel,
 	onRequestSetOrder: ((targetId: String, name: String, currentOrder: Float, defaultOrder: Float, isOverridden: Boolean) -> Unit)? = null,
+	onRequestSetMeshSettings: ((MeshSettingsDialogTarget) -> Unit)? = null,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -789,6 +815,7 @@ private fun HierarchyTreeList(
 						itemBoundsMap = itemBoundsMap,
 						searchQuery = searchQuery,
 						onRequestSetOrder = onRequestSetOrder,
+						onRequestSetMeshSettings = onRequestSetMeshSettings,
 					)
 				}
 				for ((index, drawable) in rootDrawables.withIndex()) {
@@ -806,6 +833,7 @@ private fun HierarchyTreeList(
 						itemBoundsMap = itemBoundsMap,
 						searchQuery = searchQuery,
 						onRequestSetOrder = onRequestSetOrder,
+						onRequestSetMeshSettings = onRequestSetMeshSettings,
 					)
 				}
 
@@ -904,6 +932,7 @@ private fun DeformerTreeItem(
 	itemBoundsMap: MutableMap<String, ItemLayoutInfo>,
 	searchQuery: String = "",
 	onRequestSetOrder: ((targetId: String, name: String, currentOrder: Float, defaultOrder: Float, isOverridden: Boolean) -> Unit)? = null,
+	onRequestSetMeshSettings: ((MeshSettingsDialogTarget) -> Unit)? = null,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -1234,6 +1263,7 @@ private fun DeformerTreeItem(
 				itemBoundsMap = itemBoundsMap,
 				searchQuery = searchQuery,
 				onRequestSetOrder = onRequestSetOrder,
+				onRequestSetMeshSettings = onRequestSetMeshSettings,
 			)
 		}
 		for ((dIndex, childDrawable) in childDrawables.withIndex()) {
@@ -1252,6 +1282,7 @@ private fun DeformerTreeItem(
 				itemBoundsMap = itemBoundsMap,
 				searchQuery = searchQuery,
 				onRequestSetOrder = onRequestSetOrder,
+				onRequestSetMeshSettings = onRequestSetMeshSettings,
 			)
 		}
 	}
@@ -1272,6 +1303,7 @@ private fun DrawableTreeItem(
 	itemBoundsMap: MutableMap<String, ItemLayoutInfo>,
 	searchQuery: String = "",
 	onRequestSetOrder: ((targetId: String, name: String, currentOrder: Float, defaultOrder: Float, isOverridden: Boolean) -> Unit)? = null,
+	onRequestSetMeshSettings: ((MeshSettingsDialogTarget) -> Unit)? = null,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -1509,6 +1541,34 @@ private fun DrawableTreeItem(
 						showMenu = false
 					}) {
 						Text(tr("canvas.drawOrder.reset"), style = typography.body.copy(fontSize = 11.sp), color = colors.accent)
+					}
+				}
+
+				val isMeshOverridden = state.meshOverrides.containsKey(layerId)
+				val effectiveMesh = state.getEffectiveMeshSettings(layerId)
+				val defaultMesh = state.getDefaultMeshSettings(layerId)
+
+				DropdownMenuItem(onClick = {
+					showMenu = false
+					onRequestSetMeshSettings?.invoke(
+						MeshSettingsDialogTarget(
+							layerId = layerId,
+							layerName = drawable.name,
+							currentSettings = effectiveMesh,
+							defaultSettings = defaultMesh,
+							isOverridden = isMeshOverridden,
+						)
+					)
+				}) {
+					Text(tr("canvas.hierarchy.meshSettings"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
+				}
+
+				if (isMeshOverridden) {
+					DropdownMenuItem(onClick = {
+						viewModel.resetPartMeshSettings(layerId)
+						showMenu = false
+					}) {
+						Text(tr("canvas.hierarchy.resetMeshSettings"), style = typography.body.copy(fontSize = 11.sp), color = colors.accent)
 					}
 				}
 
