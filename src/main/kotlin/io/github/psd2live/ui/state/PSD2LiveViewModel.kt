@@ -460,6 +460,21 @@ class PSD2LiveViewModel : AutoCloseable {
 	    markWorkspaceChanged()
 	}
 
+	fun setTextureSubExpanded(expanded: Boolean) {
+		_state.update { it.copy(textureSubExpanded = expanded) }
+	    markWorkspaceChanged()
+	}
+
+	fun setMeshSubExpanded(expanded: Boolean) {
+		_state.update { it.copy(meshSubExpanded = expanded) }
+	    markWorkspaceChanged()
+	}
+
+	fun setStrengthSubExpanded(expanded: Boolean) {
+		_state.update { it.copy(strengthSubExpanded = expanded) }
+	    markWorkspaceChanged()
+	}
+
 	fun setAdvancedExpanded(expanded: Boolean) {
 		_state.update { it.copy(advancedExpanded = expanded) }
 	    markWorkspaceChanged()
@@ -469,6 +484,9 @@ class PSD2LiveViewModel : AutoCloseable {
 		_state.update {
 			it.copy(
 				atlasSize = 4096,
+				textureSubExpanded = true,
+				meshSubExpanded = true,
+				strengthSubExpanded = true,
 				meshSpacing = 40,
 				meshOuterMargin = 1.0f,
 				meshInnerMargin = 10.0f,

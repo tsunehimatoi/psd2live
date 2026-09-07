@@ -486,271 +486,394 @@ private fun ModelSettingsSection(
 		}
 
 		if (isExpanded) {
-			// Form Row 1: Texture Size (Atlas)
-			val atlasOptions = listOf(1024, 2048, 4096, 8192, 16384)
+			// Submenu 1: Texture Size (贴图尺寸)
 			Row(
-				modifier = Modifier.fillMaxWidth(),
+				modifier = Modifier
+					.fillMaxWidth()
+					.clickable(enabled = !isBusy) {
+						viewModel.setTextureSubExpanded(!state.textureSubExpanded)
+					}
+					.padding(vertical = 2.dp),
 				verticalAlignment = Alignment.CenterVertically,
 			) {
-				Text(
-					text = tr("settings.atlasSize"),
-					style = typography.body.copy(fontSize = 11.sp),
-					color = colors.textPrimary,
-					modifier = Modifier.width(85.dp),
-					textAlign = TextAlign.Right,
-				)
-				Spacer(Modifier.width(6.dp))
-				CompactDropdown(
-					items = atlasOptions,
-					selectedItem = state.atlasSize.takeIf { it in atlasOptions } ?: atlasOptions[2],
-					onItemSelected = { viewModel.setAtlasSize(it) },
-					itemLabel = { "${it} × ${it}" },
-					modifier = Modifier.weight(1f),
-					enabled = !isBusy,
-					height = 22.dp,
+				IconChevron(
+					expanded = state.textureSubExpanded,
+					modifier = Modifier.size(9.dp),
+					tint = colors.textMuted,
 				)
 				Spacer(Modifier.width(4.dp))
-				CompactNumberSpinner(
-					value = state.atlasSize.toDouble(),
-					onValueChange = { viewModel.setAtlasSize(it.toInt()) },
-					min = 256.0,
-					max = 16384.0,
-					step = 256.0,
-					decimals = 0,
-					enabled = !isBusy,
-					modifier = Modifier.width(65.dp),
-					height = 22.dp,
+				Text(
+					text = tr("settings.group.texture"),
+					style = typography.body.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
+					color = colors.textPrimary,
 				)
+				if (!state.textureSubExpanded) {
+					Spacer(Modifier.width(6.dp))
+					Text(
+						text = "(${state.atlasSize} × ${state.atlasSize})",
+						style = typography.body.copy(fontSize = 10.sp),
+						color = colors.textMuted,
+					)
+				}
 			}
 
-			// Form Row: Mesh Outer Margin (外边缘距离)
+			if (state.textureSubExpanded) {
+				Column(
+					modifier = Modifier
+						.fillMaxWidth()
+						.padding(start = 6.dp, top = 2.dp, bottom = 2.dp),
+					verticalArrangement = Arrangement.spacedBy(4.dp),
+				) {
+					val atlasOptions = listOf(1024, 2048, 4096, 8192, 16384)
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						verticalAlignment = Alignment.CenterVertically,
+					) {
+						Text(
+							text = tr("settings.atlasSize"),
+							style = typography.body.copy(fontSize = 11.sp),
+							color = colors.textPrimary,
+							modifier = Modifier.width(85.dp),
+							textAlign = TextAlign.Right,
+						)
+						Spacer(Modifier.width(6.dp))
+						CompactDropdown(
+							items = atlasOptions,
+							selectedItem = state.atlasSize.takeIf { it in atlasOptions } ?: atlasOptions[2],
+							onItemSelected = { viewModel.setAtlasSize(it) },
+							itemLabel = { "${it} × ${it}" },
+							modifier = Modifier.weight(1f),
+							enabled = !isBusy,
+							height = 22.dp,
+						)
+						Spacer(Modifier.width(4.dp))
+						CompactNumberSpinner(
+							value = state.atlasSize.toDouble(),
+						onValueChange = { viewModel.setAtlasSize(it.toInt()) },
+						min = 256.0,
+						max = 16384.0,
+						step = 256.0,
+						decimals = 0,
+						enabled = !isBusy,
+						modifier = Modifier.width(65.dp),
+						height = 22.dp,
+					)
+					}
+				}
+			}
+
+			Divider(color = colors.divider.copy(alpha = 0.5f), thickness = 0.8.dp)
+
+			// Submenu 2: Mesh (网格)
 			Row(
-				modifier = Modifier.fillMaxWidth(),
+				modifier = Modifier
+					.fillMaxWidth()
+					.clickable(enabled = !isBusy) {
+						viewModel.setMeshSubExpanded(!state.meshSubExpanded)
+					}
+					.padding(vertical = 2.dp),
 				verticalAlignment = Alignment.CenterVertically,
 			) {
-				Text(
-					text = tr("settings.meshOuterMargin"),
-					style = typography.body.copy(fontSize = 11.sp),
-					color = colors.textPrimary,
-					modifier = Modifier.width(85.dp),
-					textAlign = TextAlign.Right,
-				)
-				Spacer(Modifier.width(6.dp))
-				CompactSlider(
-					value = state.meshOuterMargin,
-					onValueChange = viewModel::setMeshOuterMargin,
-					onValueChangeStarted = viewModel::beginEditorGesture,
-					onValueChangeFinished = viewModel::endEditorGesture,
-					valueRange = 0f..20f,
-					enabled = !isBusy,
-					modifier = Modifier.weight(1f),
+				IconChevron(
+					expanded = state.meshSubExpanded,
+					modifier = Modifier.size(9.dp),
+					tint = colors.textMuted,
 				)
 				Spacer(Modifier.width(4.dp))
-				CompactNumberSpinner(
-					value = state.meshOuterMargin.toDouble(),
-					onValueChange = { viewModel.setMeshOuterMargin(it.toFloat()) },
-					min = 0.0,
-					max = 32.0,
-					step = 0.5,
-					decimals = 1,
-					unit = tr("settings.unit.px"),
-					enabled = !isBusy,
-					modifier = Modifier.width(65.dp),
-					height = 22.dp,
+				Text(
+					text = tr("settings.group.mesh"),
+					style = typography.body.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
+					color = colors.textPrimary,
 				)
+				if (!state.meshSubExpanded) {
+					Spacer(Modifier.width(6.dp))
+					Text(
+						text = "(外: ${state.meshOuterMargin}px · 内: ${state.meshInnerMargin}px · 点: ${state.meshMaxEdgeDistance.toInt()}px · 密: ${state.meshInteriorDensity.toInt()}px)",
+						style = typography.body.copy(fontSize = 10.sp),
+						color = colors.textMuted,
+					)
+				}
 			}
 
-			// Form Row: Mesh Inner Margin (内边缘距离)
+			if (state.meshSubExpanded) {
+				Column(
+					modifier = Modifier
+						.fillMaxWidth()
+						.padding(start = 6.dp, top = 2.dp, bottom = 2.dp),
+					verticalArrangement = Arrangement.spacedBy(4.dp),
+				) {
+					// Form Row: Mesh Outer Margin (外边缘距离)
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						verticalAlignment = Alignment.CenterVertically,
+					) {
+						Text(
+							text = tr("settings.meshOuterMargin"),
+							style = typography.body.copy(fontSize = 11.sp),
+							color = colors.textPrimary,
+							modifier = Modifier.width(85.dp),
+							textAlign = TextAlign.Right,
+						)
+						Spacer(Modifier.width(6.dp))
+						CompactSlider(
+							value = state.meshOuterMargin,
+							onValueChange = viewModel::setMeshOuterMargin,
+							onValueChangeStarted = viewModel::beginEditorGesture,
+							onValueChangeFinished = viewModel::endEditorGesture,
+							valueRange = 0f..20f,
+							enabled = !isBusy,
+							modifier = Modifier.weight(1f),
+						)
+						Spacer(Modifier.width(4.dp))
+						CompactNumberSpinner(
+							value = state.meshOuterMargin.toDouble(),
+						onValueChange = { viewModel.setMeshOuterMargin(it.toFloat()) },
+						min = 0.0,
+						max = 32.0,
+						step = 0.5,
+						decimals = 1,
+						unit = tr("settings.unit.px"),
+						enabled = !isBusy,
+						modifier = Modifier.width(65.dp),
+						height = 22.dp,
+					)
+					}
+
+					// Form Row: Mesh Inner Margin (内边缘距离)
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						verticalAlignment = Alignment.CenterVertically,
+					) {
+						Text(
+							text = tr("settings.meshInnerMargin"),
+							style = typography.body.copy(fontSize = 11.sp),
+							color = colors.textPrimary,
+							modifier = Modifier.width(85.dp),
+							textAlign = TextAlign.Right,
+						)
+						Spacer(Modifier.width(6.dp))
+						CompactSlider(
+							value = state.meshInnerMargin,
+							onValueChange = viewModel::setMeshInnerMargin,
+							onValueChangeStarted = viewModel::beginEditorGesture,
+							onValueChangeFinished = viewModel::endEditorGesture,
+							valueRange = 0.5f..20f,
+							enabled = !isBusy,
+							modifier = Modifier.weight(1f),
+						)
+						Spacer(Modifier.width(4.dp))
+						CompactNumberSpinner(
+							value = state.meshInnerMargin.toDouble(),
+						onValueChange = { viewModel.setMeshInnerMargin(it.toFloat()) },
+						min = 0.5,
+						max = 32.0,
+						step = 0.5,
+						decimals = 1,
+						unit = tr("settings.unit.px"),
+						enabled = !isBusy,
+						modifier = Modifier.width(65.dp),
+						height = 22.dp,
+				)
+					}
+
+					// Form Row: Max Edge Distance (最大边缘点距离)
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						verticalAlignment = Alignment.CenterVertically,
+					) {
+						Text(
+							text = tr("settings.meshMaxEdgeDistance"),
+							style = typography.body.copy(fontSize = 11.sp),
+							color = colors.textPrimary,
+							modifier = Modifier.width(85.dp),
+							textAlign = TextAlign.Right,
+						)
+						Spacer(Modifier.width(6.dp))
+						CompactSlider(
+							value = state.meshMaxEdgeDistance,
+							onValueChange = viewModel::setMeshMaxEdgeDistance,
+							onValueChangeStarted = viewModel::beginEditorGesture,
+							onValueChangeFinished = viewModel::endEditorGesture,
+							valueRange = 6f..128f,
+							enabled = !isBusy,
+							modifier = Modifier.weight(1f),
+						)
+						Spacer(Modifier.width(4.dp))
+						CompactNumberSpinner(
+							value = state.meshMaxEdgeDistance.toDouble(),
+						onValueChange = { viewModel.setMeshMaxEdgeDistance(it.toFloat()) },
+						min = 6.0,
+						max = 128.0,
+						step = 4.0,
+						decimals = 0,
+						unit = tr("settings.unit.px"),
+						enabled = !isBusy,
+						modifier = Modifier.width(65.dp),
+						height = 22.dp,
+					)
+					}
+
+					// Form Row: Interior Mesh Density (内部网格密度)
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						verticalAlignment = Alignment.CenterVertically,
+					) {
+						Text(
+							text = tr("settings.meshInteriorDensity"),
+							style = typography.body.copy(fontSize = 11.sp),
+							color = colors.textPrimary,
+							modifier = Modifier.width(85.dp),
+							textAlign = TextAlign.Right,
+						)
+						Spacer(Modifier.width(6.dp))
+						CompactSlider(
+							value = state.meshInteriorDensity,
+							onValueChange = viewModel::setMeshInteriorDensity,
+							onValueChangeStarted = viewModel::beginEditorGesture,
+							onValueChangeFinished = viewModel::endEditorGesture,
+							valueRange = 6f..128f,
+							enabled = !isBusy,
+							modifier = Modifier.weight(1f),
+						)
+						Spacer(Modifier.width(4.dp))
+						CompactNumberSpinner(
+							value = state.meshInteriorDensity.toDouble(),
+						onValueChange = { viewModel.setMeshInteriorDensity(it.toFloat()) },
+						min = 6.0,
+						max = 128.0,
+						step = 4.0,
+						decimals = 0,
+						unit = tr("settings.unit.px"),
+						enabled = !isBusy,
+						modifier = Modifier.width(65.dp),
+						height = 22.dp,
+					)
+					}
+				}
+			}
+
+			Divider(color = colors.divider.copy(alpha = 0.5f), thickness = 0.8.dp)
+
+			// Submenu 3: 幅度 (Strength)
 			Row(
-				modifier = Modifier.fillMaxWidth(),
+				modifier = Modifier
+					.fillMaxWidth()
+					.clickable(enabled = !isBusy && !state.meshOnly) {
+						viewModel.setStrengthSubExpanded(!state.strengthSubExpanded)
+					}
+					.padding(vertical = 2.dp),
 				verticalAlignment = Alignment.CenterVertically,
 			) {
-				Text(
-					text = tr("settings.meshInnerMargin"),
-					style = typography.body.copy(fontSize = 11.sp),
-					color = colors.textPrimary,
-					modifier = Modifier.width(85.dp),
-					textAlign = TextAlign.Right,
-				)
-				Spacer(Modifier.width(6.dp))
-				CompactSlider(
-					value = state.meshInnerMargin,
-					onValueChange = viewModel::setMeshInnerMargin,
-					onValueChangeStarted = viewModel::beginEditorGesture,
-					onValueChangeFinished = viewModel::endEditorGesture,
-					valueRange = 0.5f..20f,
-					enabled = !isBusy,
-					modifier = Modifier.weight(1f),
+				IconChevron(
+					expanded = state.strengthSubExpanded && !state.meshOnly,
+					modifier = Modifier.size(9.dp),
+					tint = if (!state.meshOnly) colors.textMuted else colors.textDisabled,
 				)
 				Spacer(Modifier.width(4.dp))
-				CompactNumberSpinner(
-					value = state.meshInnerMargin.toDouble(),
-					onValueChange = { viewModel.setMeshInnerMargin(it.toFloat()) },
-					min = 0.5,
-					max = 32.0,
-					step = 0.5,
-					decimals = 1,
-					unit = tr("settings.unit.px"),
-					enabled = !isBusy,
-					modifier = Modifier.width(65.dp),
-					height = 22.dp,
-				)
-			}
-
-			// Form Row: Max Edge Distance (最大边缘点距离)
-			Row(
-				modifier = Modifier.fillMaxWidth(),
-				verticalAlignment = Alignment.CenterVertically,
-			) {
 				Text(
-					text = tr("settings.meshMaxEdgeDistance"),
-					style = typography.body.copy(fontSize = 11.sp),
-					color = colors.textPrimary,
-					modifier = Modifier.width(85.dp),
-					textAlign = TextAlign.Right,
+					text = tr("settings.group.strength"),
+					style = typography.body.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
+					color = if (!state.meshOnly) colors.textPrimary else colors.textDisabled,
 				)
-				Spacer(Modifier.width(6.dp))
-				CompactSlider(
-					value = state.meshMaxEdgeDistance,
-					onValueChange = viewModel::setMeshMaxEdgeDistance,
-					onValueChangeStarted = viewModel::beginEditorGesture,
-					onValueChangeFinished = viewModel::endEditorGesture,
-					valueRange = 6f..128f,
-					enabled = !isBusy,
-					modifier = Modifier.weight(1f),
-				)
-				Spacer(Modifier.width(4.dp))
-				CompactNumberSpinner(
-					value = state.meshMaxEdgeDistance.toDouble(),
-					onValueChange = { viewModel.setMeshMaxEdgeDistance(it.toFloat()) },
-					min = 6.0,
-					max = 128.0,
-					step = 4.0,
-					decimals = 0,
-					unit = tr("settings.unit.px"),
-					enabled = !isBusy,
-					modifier = Modifier.width(65.dp),
-					height = 22.dp,
-				)
+				if (!state.strengthSubExpanded || state.meshOnly) {
+					Spacer(Modifier.width(6.dp))
+					Text(
+						text = if (state.meshOnly) "(${tr("export.disabled")})" else "(头: ${"%.2f".format(state.headStrength)}x · 身: ${"%.2f".format(state.bodyStrength)}x)",
+						style = typography.body.copy(fontSize = 10.sp),
+						color = colors.textMuted,
+					)
+				}
 			}
 
-			// Form Row: Interior Mesh Density (内部网格密度)
-			Row(
-				modifier = Modifier.fillMaxWidth(),
-				verticalAlignment = Alignment.CenterVertically,
-			) {
-				Text(
-					text = tr("settings.meshInteriorDensity"),
-					style = typography.body.copy(fontSize = 11.sp),
-					color = colors.textPrimary,
-					modifier = Modifier.width(85.dp),
-					textAlign = TextAlign.Right,
-				)
-				Spacer(Modifier.width(6.dp))
-				CompactSlider(
-					value = state.meshInteriorDensity,
-					onValueChange = viewModel::setMeshInteriorDensity,
-					onValueChangeStarted = viewModel::beginEditorGesture,
-					onValueChangeFinished = viewModel::endEditorGesture,
-					valueRange = 6f..128f,
-					enabled = !isBusy,
-					modifier = Modifier.weight(1f),
-				)
-				Spacer(Modifier.width(4.dp))
-				CompactNumberSpinner(
-					value = state.meshInteriorDensity.toDouble(),
-					onValueChange = { viewModel.setMeshInteriorDensity(it.toFloat()) },
-					min = 6.0,
-					max = 128.0,
-					step = 4.0,
-					decimals = 0,
-					unit = tr("settings.unit.px"),
-					enabled = !isBusy,
-					modifier = Modifier.width(65.dp),
-					height = 22.dp,
-				)
+			if (state.strengthSubExpanded && !state.meshOnly) {
+				Column(
+					modifier = Modifier
+						.fillMaxWidth()
+						.padding(start = 6.dp, top = 2.dp, bottom = 2.dp),
+					verticalArrangement = Arrangement.spacedBy(4.dp),
+				) {
+					CompactCheckbox(
+						checked = state.featureDisplacementEnabled,
+						onCheckedChange = viewModel::setFeatureDisplacementEnabled,
+						label = tr("model.deformer.featureDisplacement"),
+						enabled = !isBusy && !state.meshOnly,
+					)
+
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						verticalAlignment = Alignment.CenterVertically,
+					) {
+						Text(
+							text = tr("settings.headStrength"),
+							style = typography.body.copy(fontSize = 11.sp),
+							color = colors.textPrimary,
+							modifier = Modifier.width(85.dp),
+							textAlign = TextAlign.Right,
+						)
+						Spacer(Modifier.width(6.dp))
+						CompactSlider(
+							value = state.headStrength,
+							onValueChange = { viewModel.setHeadStrength(it) },
+							onValueChangeStarted = viewModel::beginEditorGesture,
+							onValueChangeFinished = viewModel::endEditorGesture,
+							valueRange = 0.0f..4.0f,
+							enabled = !isBusy,
+							modifier = Modifier.weight(1f),
+						)
+						Spacer(Modifier.width(4.dp))
+						CompactNumberSpinner(
+							value = state.headStrength.toDouble(),
+						onValueChange = { viewModel.setHeadStrength(it.toFloat()) },
+						min = 0.0,
+						max = 4.0,
+						step = 0.05,
+						decimals = 2,
+						unit = tr("settings.unit.x"),
+						enabled = !isBusy,
+						modifier = Modifier.width(60.dp),
+						height = 22.dp,
+					)
+					}
+
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						verticalAlignment = Alignment.CenterVertically,
+					) {
+						Text(
+							text = tr("settings.bodyStrength"),
+							style = typography.body.copy(fontSize = 11.sp),
+							color = colors.textPrimary,
+							modifier = Modifier.width(85.dp),
+							textAlign = TextAlign.Right,
+						)
+						Spacer(Modifier.width(6.dp))
+						CompactSlider(
+							value = state.bodyStrength,
+							onValueChange = { viewModel.setBodyStrength(it) },
+							onValueChangeStarted = viewModel::beginEditorGesture,
+							onValueChangeFinished = viewModel::endEditorGesture,
+							valueRange = 0.0f..4.0f,
+							enabled = !isBusy,
+							modifier = Modifier.weight(1f),
+						)
+						Spacer(Modifier.width(4.dp))
+						CompactNumberSpinner(
+							value = state.bodyStrength.toDouble(),
+						onValueChange = { viewModel.setBodyStrength(it.toFloat()) },
+						min = 0.0,
+						max = 4.0,
+						step = 0.05,
+						decimals = 2,
+						unit = tr("settings.unit.x"),
+						enabled = !isBusy,
+						modifier = Modifier.width(60.dp),
+						height = 22.dp,
+					)
+					}
+				}
 			}
 
-			// Form Row 3: Head Strength
-			CompactCheckbox(
-				checked = state.featureDisplacementEnabled,
-				onCheckedChange = viewModel::setFeatureDisplacementEnabled,
-				label = tr("model.deformer.featureDisplacement"),
-				enabled = !isBusy && !state.meshOnly,
-			)
-
-			Row(
-				modifier = Modifier.fillMaxWidth(),
-				verticalAlignment = Alignment.CenterVertically,
-			) {
-				Text(
-					text = tr("settings.headStrength"),
-					style = typography.body.copy(fontSize = 11.sp),
-					color = colors.textPrimary,
-					modifier = Modifier.width(85.dp),
-					textAlign = TextAlign.Right,
-				)
-				Spacer(Modifier.width(6.dp))
-				CompactSlider(
-					value = state.headStrength,
-					onValueChange = { viewModel.setHeadStrength(it) },
-                    onValueChangeStarted = viewModel::beginEditorGesture,
-                    onValueChangeFinished = viewModel::endEditorGesture,
-					valueRange = 0.0f..4.0f,
-					enabled = !isBusy,
-					modifier = Modifier.weight(1f),
-				)
-				Spacer(Modifier.width(4.dp))
-				CompactNumberSpinner(
-					value = state.headStrength.toDouble(),
-					onValueChange = { viewModel.setHeadStrength(it.toFloat()) },
-					min = 0.0,
-					max = 4.0,
-					step = 0.05,
-					decimals = 2,
-					unit = tr("settings.unit.x"),
-					enabled = !isBusy,
-					modifier = Modifier.width(60.dp),
-					height = 22.dp,
-				)
-			}
-
-			// Form Row 4: Body Strength
-			Row(
-				modifier = Modifier.fillMaxWidth(),
-				verticalAlignment = Alignment.CenterVertically,
-			) {
-				Text(
-					text = tr("settings.bodyStrength"),
-					style = typography.body.copy(fontSize = 11.sp),
-					color = colors.textPrimary,
-					modifier = Modifier.width(85.dp),
-					textAlign = TextAlign.Right,
-				)
-				Spacer(Modifier.width(6.dp))
-				CompactSlider(
-					value = state.bodyStrength,
-					onValueChange = { viewModel.setBodyStrength(it) },
-                    onValueChangeStarted = viewModel::beginEditorGesture,
-                    onValueChangeFinished = viewModel::endEditorGesture,
-					valueRange = 0.0f..4.0f,
-					enabled = !isBusy,
-					modifier = Modifier.weight(1f),
-				)
-				Spacer(Modifier.width(4.dp))
-				CompactNumberSpinner(
-					value = state.bodyStrength.toDouble(),
-					onValueChange = { viewModel.setBodyStrength(it.toFloat()) },
-					min = 0.0,
-					max = 4.0,
-					step = 0.05,
-					decimals = 2,
-					unit = tr("settings.unit.x"),
-					enabled = !isBusy,
-					modifier = Modifier.width(60.dp),
-					height = 22.dp,
-				)
-			}
+			Divider(color = colors.divider.copy(alpha = 0.5f), thickness = 0.8.dp)
 
 			// Advanced Toggle
 			Row(
