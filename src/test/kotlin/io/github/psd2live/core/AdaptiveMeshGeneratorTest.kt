@@ -164,7 +164,7 @@ class AdaptiveMeshGeneratorTest {
 	}
 
 	@Test
-	fun `enclosed transparency is meshed as one solid island`() {
+	fun `enclosed transparency has a constrained hole boundary`() {
 		val width = 128
 		val height = 112
 		val rgba = ByteArray(width * height * 4)
@@ -174,21 +174,14 @@ class AdaptiveMeshGeneratorTest {
 		}
 
 		val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, height, rgba, 8, 14f))
-		assertTrue(pointCovered(mesh, 64f, 56f), "the former hole centre must be covered by a solid face")
+		assertTrue(!pointCovered(mesh, 64f, 56f), "hole centre must remain empty")
+		assertTrue(mesh.boundaryLoops.size == 2)
+		assertTopology(mesh, 0)
 
-		// No inner-loop vertices should be emitted. Interior grid points may lie inside the filled
-		// region, but none may trace one of the former hole's four boundary lines.
-		val formerBoundaryVertices = (mesh.positions.indices step 2).count { offset ->
-			val x = mesh.positions[offset]
-			val y = mesh.positions[offset + 1]
-			((abs(x - 38f) < 0.01f || abs(x - 90f) < 0.01f) && y in 30f..82f) ||
-				((abs(y - 30f) < 0.01f || abs(y - 82f) < 0.01f) && x in 38f..90f)
-		}
-		assertTrue(formerBoundaryVertices == 0, "transparent centre must not create an inner vertex ring")
 	}
 
 	@Test
-	fun `one pixel ring is also filled through its centre`() {
+	fun `one pixel ring preserves its centre`() {
 		val width = 96
 		val height = 96
 		val rgba = ByteArray(width * height * 4)
@@ -198,7 +191,8 @@ class AdaptiveMeshGeneratorTest {
 		}
 
 		val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, height, rgba, 8, 12f))
-		assertTrue(pointCovered(mesh, 48f, 48f), "thin ring must become a stable solid mesh")
+		assertTrue(!pointCovered(mesh, 48f, 48f), "thin ring must preserve the hole")
+		assertTopology(mesh, 0)
 	}
 
 	@Test
@@ -221,7 +215,7 @@ class AdaptiveMeshGeneratorTest {
 		}
 
 		val spacing = 64f
-		val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, height, rgba, 8, spacing))
+		val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, height, rgba, 8, spacing, interiorSpacing = spacing))
 		val protected = mesh.boundaryLoops.flatMapTo(hashSetOf()) { loop ->
 			loop.indices.map { index ->
 				val a = loop[index]
@@ -277,7 +271,7 @@ class AdaptiveMeshGeneratorTest {
 		}
 
 		val spacing = 32f
-		val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, height, rgba, 8, spacing))
+		val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, height, rgba, 8, spacing, interiorSpacing = spacing))
 		val protected = mesh.boundaryLoops.flatMapTo(hashSetOf()) { loop ->
 			loop.indices.map { index ->
 				val a = loop[index]
@@ -301,6 +295,282 @@ class AdaptiveMeshGeneratorTest {
 			longestInternal <= spacing * 1.9f,
 			"ear-clipping fan did not converge; longest internal strand edge=$longestInternal",
 		)
+	}
+
+	@Test
+	fun `donut bands are constrained and interior spacing is independent`() {
+		val width = 240
+		val rgba = ByteArray(width * width * 4)
+		for (y in 0 until width) for (x in 0 until width) {
+			val radius = kotlin.math.hypot(x + 0.5 - 120, y + 0.5 - 120)
+			if (radius in 40.0..105.0) rgba[(y * width + x) * 4 + 3] = -1
+		}
+		val dense = assertNotNull(AdaptiveMeshGenerator.generate(width, width, rgba, 8, 18f, 18f))
+		val sparse = assertNotNull(AdaptiveMeshGenerator.generate(width, width, rgba, 8, 18f, 42f))
+		assertTrue(sparse.positions.size < dense.positions.size)
+		assertTrue(sparse.guideLoops.isEmpty() && sparse.innerLoops.size == 2, "Bezier must not be a mesh seam; the inner envelope remains constrained")
+		assertTrue(sparse.boundaryLoops.map { it.size } == dense.boundaryLoops.map { it.size })
+		for (y in 90..150 step 5) for (x in 90..150 step 5) {
+			if (kotlin.math.hypot(x - 120.0, y - 120.0) < 36) assertTrue(!pointCovered(sparse, x.toFloat(), y.toFloat()))
+		}
+		assertTopology(dense, 0)
+		assertTopology(sparse, 0)
+	}
+
+	@Test
+	fun `multiple holes and nested island preserve Euler topology`() {
+		val width = 180
+		val rgba = ByteArray(width * width * 4)
+		for (y in 8 until 172) for (x in 8 until 172) {
+			val hole = (x in 25..75 && y in 30..140) || (x in 100..150 && y in 30..140)
+			val island = x in 40..60 && y in 60..90
+			if (!hole || island) rgba[(y * width + x) * 4 + 3] = -1
+		}
+		val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, width, rgba, 8, 16f))
+		assertTrue(mesh.boundaryLoops.size == 4)
+		assertTrue(!pointCovered(mesh, 120f, 80f))
+		assertTrue(pointCovered(mesh, 50f, 75f))
+		assertTopology(mesh, 0) // two components minus two holes
+	}
+
+	@Test
+	fun `canvas contact and coarse sampling do not collapse to a rectangle`() {
+		for (spacing in listOf(12f, 64f, 500f)) {
+			val width = 100
+			val rgba = ByteArray(width * width * 4)
+			for (y in 0 until width) for (x in 0 until width) {
+				if (kotlin.math.hypot(x + 0.5 - 50, y + 0.5 - 50) <= 50) rgba[(y * width + x) * 4 + 3] = -1
+			}
+			val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, width, rgba, 8, spacing))
+			assertTrue(!pointCovered(mesh, 3f, 3f))
+			assertTopology(mesh, 1)
+		}
+	}
+
+	@Test
+	fun `concave curved silhouettes retain manifold topology across densities`() {
+		val width = 160
+		for (lobes in listOf(3, 5, 9)) for (depth in listOf(0.2, 0.65)) {
+			val rgba = ByteArray(width * width * 4)
+			for (y in 0 until width) for (x in 0 until width) {
+				val dx = x + 0.5 - 80; val dy = y + 0.5 - 80
+				val angle = kotlin.math.atan2(dy, dx)
+				val radius = 65 * (1 - depth * (0.5 + 0.5 * kotlin.math.cos(lobes * angle)))
+				if (kotlin.math.hypot(dx, dy) <= radius) rgba[(y * width + x) * 4 + 3] = -1
+			}
+			for (spacing in listOf(12f, 40f, 96f)) {
+				val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, width, rgba, 8, spacing),
+					"lobes=$lobes depth=$depth spacing=$spacing")
+				assertTrue(!pointCovered(mesh, 4f, 4f))
+				assertTopology(mesh, 1)
+			}
+		}
+	}
+
+	@Test
+	fun `nearby islands do not overlap their expanded edge bands`() {
+		val width = 110
+		val rgba = ByteArray(width * width * 4)
+		for (y in 10 until 100) for (x in 10 until 100) {
+			if (x !in 50..51) rgba[(y * width + x) * 4 + 3] = -1
+		}
+		val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, width, rgba, 8, 16f))
+		assertTrue(mesh.boundaryLoops.size == 2)
+		assertTrue(!pointCovered(mesh, 51f, 55f), "edge expansion overlapped adjacent islands")
+		assertTopology(mesh, 2)
+	}
+
+	@Test
+	fun `thin curved eyebrows receive an expanded longitudinal ribbon`() {
+		val width = 280
+		val height = 120
+		for (thickness in listOf(1.0, 3.0, 7.0)) {
+			val rgba = ByteArray(width * height * 4)
+			for (x in 20 until 260) {
+				val center = 35 + 25 * kotlin.math.sin((x - 20.0) / 240 * Math.PI)
+				// A connected one-pixel stroke includes the staircase corner, not separated diagonal pixels.
+				val previous = 35 + 25 * kotlin.math.sin((maxOf(x - 1, 20) - 20.0) / 240 * Math.PI)
+				for (y in minOf(previous.toInt(), center.toInt())..maxOf(previous.toInt(), center.toInt())) {
+					rgba[(y * width + x) * 4 + 3] = -1
+				}
+				for (y in 0 until height) if (abs(y + 0.5 - center) <= thickness / 2) {
+					rgba[(y * width + x) * 4 + 3] = -1
+				}
+			}
+			val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, height, rgba, 8, 48f))
+			assertTrue(mesh.spinePaths.isEmpty(), "Bezier spine must not be emitted as a mesh line; thickness=$thickness")
+			assertTrue(mesh.positions.size / 2 < 180, "thin eyebrow was flooded with perimeter rows")
+			assertTopology(mesh, 1)
+			for (x in 25 until 255 step 5) {
+				val center = (35 + 25 * kotlin.math.sin((x - 20.0) / 240 * Math.PI)).toFloat()
+				assertTrue(pointCovered(mesh, x + 0.5f, center), "painted eyebrow was clipped")
+			}
+			assertTrue(pointCovered(mesh, 140f, 64f), "free outer space should improve ribbon width")
+			assertTrue(worstAspect(mesh) < 14f, "ribbon retained needle triangles: ${worstAspect(mesh)}")
+		}
+	}
+
+	@Test
+	fun `single pixel gap survives smoothing and mesh expansion`() {
+		val width = 220
+		val height = 90
+		val rgba = ByteArray(width * height * 4)
+		for (x in 10 until 210) for (y in 40..44) {
+			if (y != 42) rgba[(y * width + x) * 4 + 3] = -1
+		}
+		val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, height, rgba, 8, 48f))
+		assertTrue(mesh.boundaryLoops.size == 2, "blur joined independent strokes")
+		assertTrue(mesh.spinePaths.isEmpty())
+		assertTopology(mesh, 2)
+		assertComponents(mesh, 2)
+		for (x in 15..205 step 5) assertTrue(!pointCovered(mesh, x.toFloat(), 42.5f), "gap was bridged")
+	}
+
+	@Test
+	fun `bright hairline survives beside a thick opaque component`() {
+		val width = 220
+		val height = 130
+		val rgba = ByteArray(width * height * 4)
+		for (x in 10 until 210) rgba[(20 * width + x) * 4 + 3] = -1
+		for (x in 10 until 210) for (y in 35 until 120) rgba[(y * width + x) * 4 + 3] = -1
+		val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, height, rgba, 8, 48f))
+		assertComponents(mesh, 2)
+		assertTopology(mesh, 2)
+		assertTrue(pointCovered(mesh, 100f, 20.5f))
+	}
+
+	@Test
+	fun `staggered nearly touching diagonal ribbons stay independent`() {
+		val width = 260
+		val height = 200
+		val rgba = ByteArray(width * height * 4)
+		for (x in 15 until 235) for (y in 0 until height) {
+			val center = 25 + x * 0.5
+			if (abs(y + 0.5 - center) < 1.6 || (x >= 35 && abs(y + 0.5 - center - 6) < 1.6)) {
+				rgba[(y * width + x) * 4 + 3] = -1
+			}
+		}
+		val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, height, rgba, 8, 48f))
+		assertComponents(mesh, 2)
+		assertTrue(mesh.spinePaths.isEmpty(), "diagonal thin strokes should retain two envelope sides without a center seam")
+		assertTopology(mesh, 2)
+		for (x in 40..220 step 5) assertTrue(!pointCovered(mesh, x.toFloat(), 28f + x * 0.5f))
+	}
+
+	@Test
+	fun `corner touching islands keep distinct vertex indices`() {
+		val width = 200
+		val height = 60
+		val rgba = ByteArray(width * height * 4)
+		for (x in 10 until 100) for (y in 10 until 20) rgba[(y * width + x) * 4 + 3] = -1
+		for (x in 100 until 190) for (y in 20 until 30) rgba[(y * width + x) * 4 + 3] = -1
+		val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, height, rgba, 8, 32f))
+		assertComponents(mesh, 2)
+		assertTopology(mesh, 2)
+		assertTrue(!pointCovered(mesh, 50f, 25f) && !pointCovered(mesh, 150f, 15f))
+	}
+
+	@Test
+	fun `tightly cropped hairline refines along its length`() {
+		for ((width, height) in listOf(200 to 1, 1 to 200, 200 to 3)) {
+			val rgba = ByteArray(width * height * 4)
+			for (i in 0 until width * height) rgba[i * 4 + 3] = -1
+			val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, height, rgba, 8, 64f))
+			assertTrue(mesh.spinePaths.isEmpty())
+			assertTrue(worstAspect(mesh) < 10f, "cropped hairline retained needle triangles")
+			assertTopology(mesh, 1)
+		}
+	}
+
+	@Test
+	fun `high alpha threshold does not erase a bright hairline`() {
+		val width = 120
+		val rgba = ByteArray(width * 30 * 4)
+		for (x in 10 until 110) rgba[(15 * width + x) * 4 + 3] = -1
+		val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, 30, rgba, 200, 48f))
+		assertTrue(pointCovered(mesh, 60f, 15.5f))
+		assertTopology(mesh, 1)
+	}
+
+	@Test
+	fun `adjacent one pixel strokes keep their entire painted width`() {
+		val width = 220
+		val rgba = ByteArray(width * 70 * 4)
+		for (x in 10 until 210) for (y in listOf(40, 42)) rgba[(y * width + x) * 4 + 3] = -1
+		val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, 70, rgba, 8, 48f))
+		assertComponents(mesh, 2)
+		assertTopology(mesh, 2)
+		for (x in 11 until 209) {
+			for (y in listOf(40f, 42f)) {
+				assertTrue(pointCovered(mesh, x + 0.5f, y + 0.1f) && pointCovered(mesh, x + 0.5f, y + 0.9f),
+					"one-pixel contour simplification clipped painted pixels")
+			}
+			assertTrue(!pointCovered(mesh, x + 0.5f, 41.5f))
+		}
+	}
+
+	@Test
+	fun `branched thin parts keep the open gap instead of becoming one ribbon`() {
+		val width = 220
+		val height = 80
+		val rgba = ByteArray(width * height * 4)
+		for (x in 15 until 205) for (y in 20 until 44) {
+			if (y < 23 || y >= 41 || x >= 202) rgba[(y * width + x) * 4 + 3] = -1
+		}
+		val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, height, rgba, 8, 48f))
+		assertTrue(mesh.spinePaths.isEmpty(), "a fork must use the general constrained mesh")
+		assertTrue(!pointCovered(mesh, 100f, 33f))
+		assertTopology(mesh, 1)
+		assertComponents(mesh, 1)
+	}
+
+	private fun worstAspect(mesh: AdaptiveMeshGenerator.Result): Float = mesh.indices.toList().chunked(3).maxOf { ids ->
+		val a = ids[0] * 2; val b = ids[1] * 2; val c = ids[2] * 2
+		val areaTwice = abs((mesh.positions[b] - mesh.positions[a]) * (mesh.positions[c + 1] - mesh.positions[a + 1]) -
+			(mesh.positions[b + 1] - mesh.positions[a + 1]) * (mesh.positions[c] - mesh.positions[a]))
+		val longestSquared = (0..2).maxOf { i ->
+			val p = ids[i] * 2; val q = ids[(i + 1) % 3] * 2
+			val dx = mesh.positions[p] - mesh.positions[q]; val dy = mesh.positions[p + 1] - mesh.positions[q + 1]
+			dx * dx + dy * dy
+		}
+		longestSquared / areaTwice
+	}
+
+	private fun assertComponents(mesh: AdaptiveMeshGenerator.Result, expected: Int) {
+		val parent = IntArray(mesh.positions.size / 2) { it }
+		fun root(index: Int): Int {
+			var i = index
+			while (parent[i] != i) { parent[i] = parent[parent[i]]; i = parent[i] }
+			return i
+		}
+		for (ids in mesh.indices.toList().chunked(3)) {
+			parent[root(ids[0])] = root(ids[1]); parent[root(ids[1])] = root(ids[2])
+		}
+		assertTrue(parent.indices.map { root(it) }.toSet().size == expected, "independent islands were connected")
+	}
+
+	private fun assertTopology(mesh: AdaptiveMeshGenerator.Result, euler: Int) {
+		val uses = mutableMapOf<Pair<Int, Int>, Int>()
+		for (i in mesh.indices.indices step 3) {
+			val ids = mesh.indices.slice(i..i + 2)
+			val a = ids[0] * 2; val b = ids[1] * 2; val c = ids[2] * 2
+			val cross = (mesh.positions[b] - mesh.positions[a]) * (mesh.positions[c + 1] - mesh.positions[a + 1]) -
+				(mesh.positions[b + 1] - mesh.positions[a + 1]) * (mesh.positions[c] - mesh.positions[a])
+			assertTrue(cross < 0, "degenerate or reversed triangle: ${ids.map { mesh.positions[it * 2] to mesh.positions[it * 2 + 1] }}")
+			for (j in 0..2) {
+				val key = minOf(ids[j], ids[(j + 1) % 3]) to maxOf(ids[j], ids[(j + 1) % 3])
+				uses[key] = (uses[key] ?: 0) + 1
+			}
+		}
+		fun edges(loops: List<IntArray>) = loops.flatMap { loop -> loop.indices.map {
+			minOf(loop[it], loop[(it + 1) % loop.size]) to maxOf(loop[it], loop[(it + 1) % loop.size])
+		} }.toSet()
+		val boundary = edges(mesh.boundaryLoops)
+		assertTrue(uses.filterValues { it == 1 }.keys == boundary, "unexpected cracks or missing boundary")
+		assertTrue(uses.values.all { it in 1..2 }, "non-manifold edge")
+		assertTrue(edges(mesh.guideLoops).all { it in uses } && edges(mesh.innerLoops).all { it in uses })
+		assertTrue(mesh.indices.toSet().size == mesh.positions.size / 2, "unused vertices")
+		assertTrue(mesh.positions.size / 2 - uses.size + mesh.indices.size / 3 == euler, "incorrect Euler characteristic")
 	}
 
 	private fun pointCovered(mesh: AdaptiveMeshGenerator.Result, x: Float, y: Float): Boolean {
