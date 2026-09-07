@@ -484,9 +484,9 @@ class PSD2LiveViewModel : AutoCloseable {
 		_state.update {
 			it.copy(
 				atlasSize = 4096,
-				textureSubExpanded = true,
-				meshSubExpanded = true,
-				strengthSubExpanded = true,
+				textureSubExpanded = false,
+				meshSubExpanded = false,
+				strengthSubExpanded = false,
 				meshSpacing = 40,
 				meshOuterMargin = 1.0f,
 				meshInnerMargin = 10.0f,
