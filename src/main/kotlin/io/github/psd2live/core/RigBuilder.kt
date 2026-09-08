@@ -143,7 +143,10 @@ object RigBuilder {
 		val rigPositions: FloatArray,
 	)
 
-	fun build(analysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig): BuiltRig {
+	fun build(inputAnalysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig): BuiltRig {
+        val generatedLips = inputAnalysis.layers.filter { it.source is MouthLipLayer }
+            .associateBy { it.source.id.raw }
+        val analysis = inputAnalysis.copy(layers = inputAnalysis.layers.filter { it.source !is MouthLipLayer })
 		val warnings = mutableListOf<String>()
 		val characterFrame = analysis.anchors.character
 		val layout = analysis.calibration ?: analysis
@@ -246,6 +249,7 @@ object RigBuilder {
 		val pageByDrawable = linkedMapOf<String, Int>()
 		val sourceBoundsByDrawable = linkedMapOf<String, Bounds>()
 		val layerIdByDrawable = linkedMapOf<String, String>()
+        val lipOwnerById = mutableMapOf<DrawableId, DrawableId>()
 		val classifiedByDrawable = mutableMapOf<DrawableId, ClassifiedLayer>()
 		// Discover custom toggle and switch parameters from overrides and layers
 		val customParams = mutableListOf<Parameter>()
@@ -340,7 +344,7 @@ object RigBuilder {
 
 			val id = uniqueDrawableId(layer, idCounts)
 			val effectiveHeadSpace = if (isHeadLayer && shouldBuildDeformers) headSpace else null
-			val meshData = buildGridMesh(
+			val originalMeshData = buildGridMesh(
 				layer,
 				effectiveParentFrame,
 				effectiveHeadSpace,
@@ -348,6 +352,11 @@ object RigBuilder {
 				atlas.pages[placement.page].image.width,
 				config,
 			)
+            val meshData = if (config.mouthOutlineEnabled && !config.meshOnly &&
+                layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)) {
+                mouthContourMesh(originalMeshData, layer, effectiveParentFrame, effectiveHeadSpace,
+                    placement, atlas.pages[placement.page].image.width)
+            } else originalMeshData
 			val effectiveMesh = if (shouldBuildDeformers) {
 				meshData.mesh
 			} else {
@@ -364,6 +373,7 @@ object RigBuilder {
 					faceRig,
 					matchingEyeWhiteBounds(rigLayer, eyeWhiteLayers),
 					mouthAperture,
+                    config,
 				)
 			}
 			val override = config.layerOverrides[layer.source.id.raw]
@@ -395,7 +405,21 @@ object RigBuilder {
 				mouthAperture,
 				effectiveHeadSpace,
 				config.meshOnly,
+                config,
 			)
+            if (config.mouthOutlineEnabled && !config.meshOnly && mouthAperture != null) {
+                for (side in 0..1) {
+                    val lipLayer = generatedLips[MouthLipLayer.idFor(layer.source.id.raw, side)] ?: continue
+                    val lipPlacement = atlas.placementByLayerId[lipLayer.source.id.raw] ?: continue
+                    val lip = mouthOutline(drawable, meshData, effectiveParentFrame, mouthAperture,
+                        config, side, lipLayer, lipPlacement, atlas.pages[lipPlacement.page].image.width)
+                    drawables += lip
+                    classifiedByDrawable[lip.id] = lipLayer
+                    lipOwnerById[lip.id] = drawable.id
+                    pageByDrawable[lip.id.raw] = lip.texturePage
+                    layerIdByDrawable[lip.id.raw] = lipLayer.source.id.raw
+                }
+            }
 			layerIdByDrawable[id.raw] = layer.source.id.raw
 		}
 
@@ -404,6 +428,7 @@ object RigBuilder {
 			semantic.tag to semantic.side
 		}
 		val mouthMasks = drawables.filter { drawable ->
+            drawable.id !in lipOwnerById &&
 			classifiedByDrawable.getValue(drawable.id).semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)
 		}
 		val maskedDrawables = drawables.map { drawable ->
@@ -433,6 +458,17 @@ object RigBuilder {
 				}
 				else -> drawable
 			}
+        }.let { masked ->
+            masked.map { drawable ->
+                val owner = lipOwnerById[drawable.id]
+                if (owner == null) drawable else {
+                    val frontOrder = masked.filter { it.id == owner || owner in it.maskedBy }
+                        .maxOfOrNull { it.drawOrder } ?: drawable.drawOrder
+                    drawable.copy(drawOrder = config.drawOrderOverrides[classifiedByDrawable.getValue(drawable.id).source.id.raw]
+                        ?: config.drawOrderOverrides[drawable.id.raw] ?: (frontOrder + 1f).coerceAtMost(1000f))
+                }
+            }
+
 		}
 
 		fun childrenFor(group: LayerGroup): List<OrgChild> =
@@ -1131,11 +1167,15 @@ object RigBuilder {
 			else -> 1f
 		}
 		val override = config.meshOverrides[layer.source.id.raw]
-		val outerMargin = override?.outerMargin ?: config.meshOuterMargin
+		val outerMargin = if (config.mouthOutlineEnabled && !config.meshOnly &&
+            layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)) 0f
+            else override?.outerMargin ?: config.meshOuterMargin
 		val innerMargin = override?.innerMargin ?: config.meshInnerMargin
 		// Currently only face meshes use dual-line envelope by default; all other parts use single-line:
 		val innerMarginEnabled = override?.innerMarginEnabled ?: (layer.semantic.tag == SemanticTag.FACE)
-		val effectiveSpacing = override?.maxEdgeDistance ?: max(12f, config.meshMaxEdgeDistance * semanticDensity)
+		val effectiveSpacing = if (config.mouthOutlineEnabled && !config.meshOnly &&
+            layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)) 2f
+            else override?.maxEdgeDistance ?: max(12f, config.meshMaxEdgeDistance * semanticDensity)
 		val effectiveInteriorDensity = override?.interiorDensity ?: max(12f, config.meshInteriorDensity * semanticDensity)
 
 		// Authored tooth layers may contain several disconnected teeth. Keep their complete texture;
@@ -1234,6 +1274,7 @@ object RigBuilder {
 		faceRig: NinePoseFaceRig,
 		eyeWhiteBounds: List<Bounds>,
 		mouthAperture: Bounds?,
+        config: PipelineConfig,
 	): KeyformGrid<MeshDeltaForm> {
 		val tag = layer.semantic.tag
 		return when (tag) {
@@ -1243,7 +1284,7 @@ object RigBuilder {
 			// delayed squash/stretch while eye-white clipping removes it as the lid closes.
 			SemanticTag.IRIDES -> irisJellyGrid(layer, data, parentFrame)
 			SemanticTag.EYEBROW -> eyebrowGrid(layer, data, parentFrame)
-			SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN -> mouthWholeGrid(data, parentFrame, mouthAperture ?: layer.bounds)
+			SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN -> mouthWholeGrid(data, parentFrame, mouthAperture ?: layer.bounds, config)
 			SemanticTag.MOUTH_CLOSE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE ->
 				zeroMeshGrid(data.mesh.positions.size)
 			else -> zeroMeshGrid(data.mesh.positions.size)
@@ -1425,26 +1466,117 @@ object RigBuilder {
 
 	/**
 	 * The mouth bitmap is authored fully open. ParamMouthOpenY=1 preserves it exactly; zero compresses
-	 * the complete drawable to a roughly one-pixel seam. Optional teeth and tongue are intentionally
+	 * the complete drawable to a seam (zero height when independent lips are enabled). Optional teeth and tongue are intentionally
 	 * not morphed: the animated mouth drawable clips them and their opacity fades near the closed key.
 	 */
-	private fun mouthWholeGrid(data: MeshData, parentFrame: Bounds, aperture: Bounds): KeyformGrid<MeshDeltaForm> =
+	private fun mouthWholeGrid(data: MeshData, parentFrame: Bounds, aperture: Bounds, config: PipelineConfig): KeyformGrid<MeshDeltaForm> =
 		grid(
-			listOf(
-				axis(StandardParameters.MOUTH_FORM, -1f, 0f, 1f),
-				axis(StandardParameters.MOUTH_OPEN, 0f, 0.5f, 1f),
-			),
+			mouthAxes(),
 		) { values ->
 			val delta = FloatArray(data.mesh.positions.size)
 			for (index in data.rigPositions.indices step 2) {
 				val sourceX = data.rigPositions[index]
 				val sourceY = data.rigPositions[index + 1]
-				val target = mouthWholePoint(sourceX, sourceY, aperture, values[0], values[1])
+				val target = mouthWholePoint(sourceX, sourceY, aperture, values[0], values[1], config.mouthShape, config.mouthOutlineEnabled, config.mouthCurve)
 				delta[index] = (target.first - sourceX) / parentFrame.width.coerceAtLeast(1e-4f)
 				delta[index + 1] = (target.second - sourceY) / parentFrame.height.coerceAtLeast(1e-4f)
 			}
 			MeshDeltaForm(delta)
 		}
+
+    private fun mouthBoundarySamples(data: MeshData): List<Triple<Float, Float, Float>> {
+        val edges = mutableMapOf<Pair<Int, Int>, Int>()
+        for (i in data.mesh.indices.indices step 3) {
+            val t = data.mesh.indices
+            for ((a, b) in listOf(t[i] to t[i+1], t[i+1] to t[i+2], t[i+2] to t[i])) {
+                val edge = minOf(a,b) to maxOf(a,b)
+                edges[edge] = (edges[edge] ?: 0) + 1
+            }
+        }
+        val boundary = edges.filterValues { it == 1 }.keys
+        val xs = data.rigPositions.indices.step(2).map { data.rigPositions[it] }.distinct().sorted()
+        if (xs.size < 2) return emptyList()
+        return xs.mapNotNull { x ->
+            val ys = boundary.mapNotNull { (a,b) ->
+                val ax = data.rigPositions[a*2]; val bx = data.rigPositions[b*2]
+                if (x < minOf(ax,bx) || x > maxOf(ax,bx) || abs(ax-bx) < 0.00001f) null
+                else data.rigPositions[a*2+1] + (data.rigPositions[b*2+1]-data.rigPositions[a*2+1]) * ((x-ax)/(bx-ax))
+            }
+            if (ys.isEmpty()) null else Triple(x, ys.min(), ys.max())
+        }
+    }
+
+    // Shared columns guarantee that the fill and both lip ribbons interpolate identical curves.
+    private fun mouthContourMesh(data: MeshData, layer: ClassifiedLayer, frame: Bounds,
+                                 space: HeadCoordinateSpace?, placement: AtlasPlacement, atlasSize: Int): MeshData {
+        val samples = MouthContour.denseColumns(mouthBoundarySamples(data))
+        if (samples.size < 2) return data
+        val positions = FloatArray(samples.size * 6)
+        val rig = FloatArray(positions.size)
+        val uvs = FloatArray(positions.size)
+        for ((i,p) in samples.withIndex()) for (row in 0..2) {
+            val j = i*6+row*2
+            val y = p.second+(p.third-p.second)*row/2f
+            rig[j]=p.first; rig[j+1]=y
+            positions[j]=normalizeX(p.first,frame); positions[j+1]=normalizeY(y,frame)
+            val canvas = space?.toCanvas(p.first,y) ?: (p.first to y)
+            uvs[j]=(placement.x+canvas.first-layer.source.bounds.left)/atlasSize
+            uvs[j+1]=(placement.y+canvas.second-layer.source.bounds.top)/atlasSize
+        }
+        val indices = (0 until samples.lastIndex).flatMap { i -> (0..1).flatMap { row ->
+            val a=i*3+row; listOf(a,a+1,a+3,a+1,a+4,a+3)
+        }}.toIntArray()
+        return MeshData(DrawableMesh(positions,uvs,indices),rig)
+    }
+
+    // Dense shared axes bound the error from interpolating normals between editable Cubism keyforms.
+    private fun mouthAxes(): List<KeyformAxis> = listOf(
+        axis(StandardParameters.MOUTH_FORM, *FloatArray(9) { -1f + it / 4f }),
+        axis(StandardParameters.MOUTH_OPEN, *FloatArray(33) { it / 32f }),
+    )
+
+    private fun mouthOutline(
+        owner: Drawable,
+        data: MeshData,
+        frame: Bounds,
+        aperture: Bounds,
+        config: PipelineConfig,
+        side: Int,
+        layer: ClassifiedLayer,
+        placement: AtlasPlacement,
+        atlasSize: Int,
+    ): Drawable {
+        val samples = mouthBoundarySamples(data)
+        val path = MouthContour.crossedPath(samples, side)
+        val overlap = MouthContour.overlapCount(samples.size)
+        val joins = listOf(overlap, overlap + samples.lastIndex)
+        val radius = config.mouthThickness.coerceIn(0.5f, 8f) * 0.5f
+        fun normalized(points: FloatArray): FloatArray = FloatArray(points.size) { i ->
+            if (i % 2 == 0) normalizeX(points[i], frame) else normalizeY(points[i], frame)
+        }
+        val positions = normalized(MouthStrokeMesh.positions(path, radius, joins))
+        val texture = MouthStrokeMesh.texturePositions(path.size, joins)
+        val uvs = FloatArray(texture.size) { i ->
+            (texture[i] + if (i % 2 == 0) placement.x else placement.y) / atlasSize
+        }
+        val geometry = grid(mouthAxes()) { values ->
+            val transformed = path.map { p ->
+                mouthWholePoint(p.first, p.second, aperture, values[0], values[1], config.mouthShape, true, config.mouthCurve)
+            }
+            val target = normalized(MouthStrokeMesh.positions(transformed, radius, joins))
+            MeshDeltaForm(FloatArray(positions.size) { target[it] - positions[it] })
+        }
+        return owner.copy(
+            id = DrawableId(owner.id.raw + "_lip_" + side),
+            name = layer.source.name,
+            mesh = DrawableMesh(positions, uvs, MouthStrokeMesh.indices(path.size, joins)),
+            geometryGrid = geometry,
+            texturePage = placement.page,
+            blendMode = BlendMode.Normal,
+            isVisible = layerVisibility(config, layer.source.id.raw, layer.source.visible),
+            drawOrder = config.drawOrderOverrides[layer.source.id.raw] ?: (owner.drawOrder + 1f).coerceAtMost(1000f),
+        )
+    }
 
 	internal fun mouthWholePoint(
 		sourceX: Float,
@@ -1452,6 +1584,9 @@ object RigBuilder {
 		aperture: Bounds,
 		mouthForm: Float,
 		mouthOpen: Float,
+        shape: String = "smile",
+        exactClose: Boolean = false,
+        curve: MouthCurve = MouthCurve.preset("smile"),
 	): Pair<Float, Float> {
 		val open = mouthOpen.coerceIn(0f, 1f)
 		val easedOpen = open * open * (3f - 2f * open)
@@ -1461,11 +1596,13 @@ object RigBuilder {
 		val horizontalScale = 0.92f + easedOpen * 0.08f + form * 0.07f
 		val targetX = aperture.centerX + (sourceX - aperture.centerX) * horizontalScale
 		val seamY = aperture.top + aperture.height * 0.48f
-		val closedScale = (1.25f / aperture.height.coerceAtLeast(1f)).coerceIn(0.018f, 0.12f)
+		val closedScale = if (exactClose) 0f else (1.25f / aperture.height.coerceAtLeast(1f)).coerceIn(0.018f, 0.12f)
 		val verticalScale = closedScale + easedOpen * (1f - closedScale)
 		val cornerWeight = abs(normalizedX).toDouble().pow(1.55).toFloat().coerceAtMost(1.35f)
 		val expressionY = -form * aperture.height * (0.018f + cornerWeight * 0.105f) * (0.72f + easedOpen * 0.28f)
-		val targetY = seamY + (sourceY - seamY) * verticalScale + expressionY
+        val effectiveCurve = if (shape == "custom") curve else MouthCurve.preset(shape)
+        val presetY = effectiveCurve.yAt((normalizedX + 1f) * 0.5f) * aperture.height * (1f - easedOpen)
+        val targetY = seamY + (sourceY - seamY) * verticalScale + expressionY + presetY
 		return targetX to targetY
 	}
 
@@ -1624,6 +1761,7 @@ object RigBuilder {
 		mouthAperture: Bounds?,
 		headSpace: HeadCoordinateSpace?,
 		meshOnly: Boolean = false,
+        config: PipelineConfig = PipelineConfig(),
 	): Bounds {
 		if (meshOnly || layer.semantic.tag !in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) || mouthAperture == null) return layer.bounds
 		var left = Float.POSITIVE_INFINITY
@@ -1637,6 +1775,9 @@ object RigBuilder {
 				mouthAperture,
 				mouthForm = 0f,
 				mouthOpen = 0f,
+                shape = config.mouthShape,
+                exactClose = config.mouthOutlineEnabled,
+                curve = config.mouthCurve,
 			)
 			val point = headSpace?.toCanvas(rigPoint.first, rigPoint.second) ?: rigPoint
 			left = minOf(left, point.first)

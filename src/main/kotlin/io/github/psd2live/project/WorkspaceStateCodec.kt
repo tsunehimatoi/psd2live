@@ -8,6 +8,13 @@ import kotlinx.serialization.json.*
 
 /** Explicit durable UI/config schema; excludes live SDK handles, jobs and network state. */
 internal object WorkspaceStateCodec {
+    private fun decodeMouthCurve(value: JsonElement?): io.github.psd2live.core.MouthCurve? = runCatching {
+        io.github.psd2live.core.MouthCurve(value!!.jsonArray.map { p ->
+            io.github.psd2live.core.MouthCurvePoint(p.jsonObject.getValue("x").jsonPrimitive.float,
+                p.jsonObject.getValue("y").jsonPrimitive.float)
+        })
+    }.getOrNull()
+
     /** Running animation changes unlocked preview values without creating unsaved user edits. */
     fun editableIdentity(state: PSD2LiveState): JsonObject = encode(state.copy(
         parameterValues = if (state.animationEnabled) state.parameterValues.filterKeys { it in state.lockedParameters } else state.parameterValues,
@@ -37,6 +44,13 @@ internal object WorkspaceStateCodec {
         put("meshOnly", state.meshOnly)
         put("generateDeformers", state.generateDeformers)
         put("featureDisplacementEnabled", state.featureDisplacementEnabled)
+        put("mouthOutlineEnabled", state.mouthOutlineEnabled)
+        put("mouthShape", state.mouthShape)
+        putJsonArray("mouthCurve") { state.mouthCurve.points.forEach { p ->
+            add(buildJsonObject { put("x", p.x); put("y", p.y) })
+        } }
+        put("mouthColor", state.mouthColor?.let(::JsonPrimitive) ?: JsonNull)
+        put("mouthThickness", state.mouthThickness)
         put("exportMotions", state.exportMotions)
         put("motionIdle", state.motionIdle)
         put("motionBlink", state.motionBlink)
@@ -91,6 +105,13 @@ internal object WorkspaceStateCodec {
         put("meshOnly", state.meshOnly)
         put("generateDeformers", state.generateDeformers)
         put("featureDisplacementEnabled", state.featureDisplacementEnabled)
+        put("mouthOutlineEnabled", state.mouthOutlineEnabled)
+        put("mouthShape", state.mouthShape)
+        putJsonArray("mouthCurve") { state.mouthCurve.points.forEach { p ->
+            add(buildJsonObject { put("x", p.x); put("y", p.y) })
+        } }
+        put("mouthColor", state.mouthColor?.let(::JsonPrimitive) ?: JsonNull)
+        put("mouthThickness", state.mouthThickness)
         put("exportMotions", state.exportMotions)
         put("motionIdle", state.motionIdle)
         put("motionBlink", state.motionBlink)
@@ -171,6 +192,11 @@ internal object WorkspaceStateCodec {
         bodyStrength = value["bodyStrength"]?.jsonPrimitive?.float ?: base.bodyStrength,
         meshOnly = value["meshOnly"]?.jsonPrimitive?.boolean ?: base.meshOnly,
         generateDeformers = value["generateDeformers"]?.jsonPrimitive?.boolean ?: base.generateDeformers,
+        mouthOutlineEnabled = value["mouthOutlineEnabled"]?.jsonPrimitive?.boolean ?: base.mouthOutlineEnabled,
+        mouthShape = value["mouthShape"]?.jsonPrimitive?.content?.takeIf { it in listOf("flat", "smile", "w", "custom") } ?: base.mouthShape,
+        mouthCurve = decodeMouthCurve(value["mouthCurve"]) ?: base.mouthCurve,
+        mouthColor = if ("mouthColor" in value) value["mouthColor"]?.jsonPrimitive?.intOrNull?.takeIf { it in 0..0xFFFFFF } else base.mouthColor,
+        mouthThickness = value["mouthThickness"]?.jsonPrimitive?.floatOrNull?.takeIf { it.isFinite() }?.coerceIn(0.5f, 8f) ?: base.mouthThickness,
         featureDisplacementEnabled = value["featureDisplacementEnabled"]?.jsonPrimitive?.boolean ?: base.featureDisplacementEnabled,
         exportMotions = value["exportMotions"]?.jsonPrimitive?.boolean ?: base.exportMotions,
         motionIdle = value["motionIdle"]?.jsonPrimitive?.boolean ?: base.motionIdle,

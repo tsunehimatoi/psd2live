@@ -337,6 +337,26 @@ class PSD2LiveViewModel : AutoCloseable {
 	    editorChanged()
 	}
 
+    fun setMouthOutlineEnabled(enabled: Boolean) {
+        _state.update { it.copy(mouthOutlineEnabled = enabled) }
+        schedulePreviewRebuild()
+        editorChanged()
+    }
+    fun setMouthShape(shape: String) {
+        require(shape in listOf("flat", "smile", "w"))
+        _state.update { it.copy(mouthShape = shape, mouthCurve = io.github.psd2live.core.MouthCurve.preset(shape)) }
+        schedulePreviewRebuild()
+        editorChanged()
+    }
+    fun setMouthSettings(shape: String, curve: io.github.psd2live.core.MouthCurve, color: Int?, thickness: Float) {
+        require(shape in io.github.psd2live.core.MouthCurve.presets + "custom")
+        require(color == null || color in 0..0xFFFFFF)
+        require(thickness.isFinite() && thickness in 0.5f..8f)
+        _state.update { it.copy(mouthShape = shape, mouthCurve = curve, mouthColor = color, mouthThickness = thickness) }
+        schedulePreviewRebuild()
+        editorChanged()
+    }
+
 	fun setMeshOnly(enabled: Boolean) {
 		_state.update { it.copy(meshOnly = enabled, generateDeformers = !enabled) }
 		schedulePreviewRebuild()
@@ -500,6 +520,11 @@ class PSD2LiveViewModel : AutoCloseable {
 				meshOnly = false,
 				generateDeformers = true,
 				featureDisplacementEnabled = true,
+                mouthOutlineEnabled = true,
+                mouthShape = "smile",
+                mouthCurve = io.github.psd2live.core.MouthCurve.preset("smile"),
+                mouthColor = null,
+                mouthThickness = 1.5f,
 				exportMotions = true,
 				motionIdle = true,
 				motionBlink = true,

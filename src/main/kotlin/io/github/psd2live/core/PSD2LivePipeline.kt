@@ -39,9 +39,8 @@ class PSD2LivePipeline {
 		buildPreview(CharacterAnalyzer.analyze(source, config), config)
 
 	fun buildPreview(analysis: PipelineAnalysis, config: PipelineConfig = PipelineConfig()): RigPreviewModel {
-		val effectiveLayers = if (config.deletedLayerIds.isEmpty()) analysis.layers else analysis.layers.filter { it.source.id.raw !in config.deletedLayerIds }
-		val effectiveAnalysis = if (effectiveLayers.size != analysis.layers.size) analysis.copy(layers = effectiveLayers) else analysis
-		val atlas = AtlasPacker.pack(effectiveAnalysis.layers, config.atlasSize, config.texturePadding)
+        val effectiveAnalysis = MouthLipLayers.prepare(analysis, config)
+        val atlas = AtlasPacker.pack(effectiveAnalysis.layers, config.atlasSize, config.texturePadding)
 		val rig = RigBuilder.build(effectiveAnalysis, atlas, config).withRigEdits(config.rigEdits)
 		val runtimeBundle = buildRuntimeBundle("psd2live-preview", effectiveAnalysis, atlas, rig, config).first
 		return RigPreviewModel(effectiveAnalysis, atlas, rig, config, runtimeBundle)
@@ -56,7 +55,7 @@ class PSD2LivePipeline {
 		progress.update(tr("progress.readPsd"), 0.04)
 		val analysis = inspect(psd, config)
 		return exportAnalysis(
-			analysis = analysis,
+			inputAnalysis = analysis,
 			baseName = safeBaseName(psd.fileName.toString().substringBeforeLast('.')),
 			outputDirectory = outputDirectory,
 			config = config,
@@ -75,7 +74,7 @@ class PSD2LivePipeline {
 		progress.update(tr("progress.readPsd"), 0.04)
 		val analysis = CharacterAnalyzer.analyze(source, config)
 		return exportAnalysis(
-			analysis = analysis,
+			inputAnalysis = analysis,
 			baseName = safeBaseName(sourceName.substringBeforeLast('.')),
 			outputDirectory = outputDirectory,
 			config = config,
@@ -84,12 +83,13 @@ class PSD2LivePipeline {
 	}
 
 	private fun exportAnalysis(
-		analysis: PipelineAnalysis,
+		inputAnalysis: PipelineAnalysis,
 		baseName: String,
 		outputDirectory: Path,
 		config: PipelineConfig,
 		progress: ProgressListener,
 	): PipelineResult {
+        val analysis = MouthLipLayers.prepare(inputAnalysis, config)
 		progress.update(tr("progress.classify"), 0.18)
 		val atlas = AtlasPacker.pack(analysis.layers, config.atlasSize, config.texturePadding)
 		progress.update(tr("progress.atlas"), 0.38)

@@ -208,7 +208,18 @@ private fun ExportActionSection(
 				)
 			}
 
-			// Row 2: Motions (Collapsible, no master checkbox, disabled/grayed when meshOnly)
+			CompactCheckbox(
+                checked = state.mouthOutlineEnabled,
+                onCheckedChange = { viewModel.setMouthOutlineEnabled(it) },
+                label = tr("mouth.outline"),
+                enabled = !isBusy && !state.meshOnly,
+            )
+            io.github.psd2live.ui.components.MouthSettingsPopupButton(
+                state = state,
+                enabled = !isBusy && !state.meshOnly,
+                onApply = viewModel::setMouthSettings,
+            )
+            // Row 2: Motions (Collapsible, no master checkbox, disabled/grayed when meshOnly)
 			Row(
 				modifier = Modifier
 					.fillMaxWidth()
