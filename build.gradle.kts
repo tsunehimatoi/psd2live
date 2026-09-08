@@ -11,7 +11,7 @@ plugins {
 }
 
 group = "io.github.psd2live"
-version = "0.5.0"
+version = "0.6.0"
 
 kotlin {
 	jvmToolchain(21)
@@ -92,7 +92,7 @@ compose.desktop {
 				org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi,
 			)
 			packageName = "PSD2Live"
-			packageVersion = "0.5.0"
+			packageVersion = "0.6.0"
 			description = "PSD2Live - Automated Live2D Rigging Pipeline"
 			copyright = "© 2026 PSD2Live. Licensed under GPL-3.0."
 			vendor = "PSD2Live"
