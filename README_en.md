@@ -97,10 +97,10 @@ Results depend on the model, image generator, Agent harness, prompt, and the qua
 - **Gradle Launch**:
   ```powershell
   # Windows
-  .\umamo\gradlew.bat -p .\psd2live run
+  .\gradlew.bat run
 
   # Linux / macOS
-  ../umamo/gradlew -p ./psd2live run
+  ./gradlew run
   ```
 
 #### Common Shortcuts
@@ -133,10 +133,10 @@ PSD2Live provides Views, spatial mapping, and asset import; it does not expose a
 
 ```powershell
 # Basic export
-.\umamo\gradlew.bat -p .\psd2live run --args="--input ./sample.psd --output ./output"
+.\gradlew.bat run --args="--input ./sample.psd --output ./output"
 
 # Advanced configuration
-.\umamo\gradlew.bat -p .\psd2live run --args="--input ./sample.psd --output ./output --atlas 8192 --mesh-spacing 48 --head-strength 1.2 --lang en"
+.\gradlew.bat run --args="--input ./sample.psd --output ./output --atlas 8192 --mesh-spacing 48 --head-strength 1.2 --lang en"
 ```
 
 | Option | Type | Default | Description |
@@ -231,10 +231,10 @@ output_dir/
 
 ```powershell
 # Compile and assemble standalone distribution ZIP
-.\umamo\gradlew.bat -p .\psd2live clean test distZip
+.\gradlew.bat clean test distZip
 
 # Execute unit and integration tests
-.\umamo\gradlew.bat -p .\psd2live test
+.\gradlew.bat test
 ```
 
 ---
@@ -242,7 +242,7 @@ output_dir/
 ## License & Attribution
 
 - **License**: [GNU General Public License v3.0 (GPL-3.0)](LICENSE).
-- **Third-Party Attribution**: Links the [Umamo](THIRD_PARTY_NOTICES.md) module, with algorithm and semantic inspiration from [Stretchy Studio](THIRD_PARTY_NOTICES.md). See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+- **Third-Party Attribution**: Integrates core modules from [Umamo](THIRD_PARTY_NOTICES.md), with algorithm and semantic inspiration from [Stretchy Studio](THIRD_PARTY_NOTICES.md). See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ---
 

@@ -97,10 +97,10 @@ PSD2Live 是一个自动化的 Live2D 模型生成流水线与桌面应用。输
 - **Gradle 启动**：
   ```powershell
   # Windows
-  .\umamo\gradlew.bat -p .\psd2live run
+  .\gradlew.bat run
 
   # Linux / macOS
-  ../umamo/gradlew -p ./psd2live run
+  ./gradlew run
   ```
 
 #### 常用快捷键
@@ -133,10 +133,10 @@ PSD2Live MCP 负责模型 View、空间映射与素材回填，不提供宿主�
 
 ```powershell
 # 基础运行
-.\umamo\gradlew.bat -p .\psd2live run --args="--input ./sample.psd --output ./output"
+.\gradlew.bat run --args="--input ./sample.psd --output ./output"
 
 # 进阶参数配置
-.\umamo\gradlew.bat -p .\psd2live run --args="--input ./sample.psd --output ./output --atlas 8192 --mesh-spacing 48 --head-strength 1.2 --lang zh"
+.\gradlew.bat run --args="--input ./sample.psd --output ./output --atlas 8192 --mesh-spacing 48 --head-strength 1.2 --lang zh"
 ```
 
 | 参数 | 类型 | 默认值 | 说明 |
@@ -231,10 +231,10 @@ output_dir/
 
 ```powershell
 # 编译并打包独立运行 ZIP
-.\umamo\gradlew.bat -p .\psd2live clean test distZip
+.\gradlew.bat clean test distZip
 
 # 运行全套单元测试
-.\umamo\gradlew.bat -p .\psd2live test
+.\gradlew.bat test
 ```
 
 ---
@@ -242,7 +242,7 @@ output_dir/
 ## 许可证与致谢
 
 - **开源许可证**：本项目采用 [GNU General Public License v3.0 (GPL-3.0)](LICENSE)。
-- **第三方参考与致谢**：本项目运行时通过 Gradle Composite Build 链接了 [Umamo](THIRD_PARTY_NOTICES.md) 模块，并在语义规范、网格算法与物理设计上参考了 [Stretchy Studio](THIRD_PARTY_NOTICES.md)。详细说明请参阅 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+- **第三方参考与致谢**：本项目直接集成了 [Umamo](THIRD_PARTY_NOTICES.md) 核心模块，并在语义规范、网格算法与物理设计上参考了 [Stretchy Studio](THIRD_PARTY_NOTICES.md)。详细说明请参阅 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
 
 ---
 

@@ -4,7 +4,8 @@ PSD2Live is licensed under GNU GPL version 3. See `LICENSE`.
 
 ## Umamo
 
-The application links the local Umamo `format`, `runtime`, `interop`, and `render` modules through a Gradle composite build. Umamo is licensed under GPL-3.0. Its source and original license are located in the adjacent `../umamo` directory.
+This project integrates portions of the Umamo project (`format`, `runtime`, `interop`, `render`, and `edit` core modules). Umamo is authored by Alexia E. Smith and contributors, licensed under GNU GPL version 3.
+
 
 ## Stretchy Studio
 

@@ -1,0 +1,6 @@
+# GENERATED registration code (ModelGenerator, never hand-edited): it wildcard-imports the entire
+# generated model package to register every class in one place. ktlint's no-wildcard-imports rule
+# doesn't fit machine-generated code, so it's disabled for this gen/ subtree only.
+# EN: generated code exemption. JA: 自動生成コードのためワイルドカードインポート規則を無効化。
+[*.kt]
+ktlint_standard_no-wildcard-imports = disabled

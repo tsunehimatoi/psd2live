@@ -97,10 +97,10 @@ PSD2Live は、自動化された Live2D モデル生成パイプラインおよ
 - **Gradle 起動**:
   ```powershell
   # Windows
-  .\umamo\gradlew.bat -p .\psd2live run
+  .\gradlew.bat run
 
   # Linux / macOS
-  ../umamo/gradlew -p ./psd2live run
+  ./gradlew run
   ```
 
 #### 主なショートカット
@@ -133,10 +133,10 @@ PSD2Live が提供するのは View、空間マッピング、素材インポー
 
 ```powershell
 # 基本実行
-.\umamo\gradlew.bat -p .\psd2live run --args="--input ./sample.psd --output ./output"
+.\gradlew.bat run --args="--input ./sample.psd --output ./output"
 
 # 詳細オプション指定
-.\umamo\gradlew.bat -p .\psd2live run --args="--input ./sample.psd --output ./output --atlas 8192 --mesh-spacing 48 --head-strength 1.2 --lang ja"
+.\gradlew.bat run --args="--input ./sample.psd --output ./output --atlas 8192 --mesh-spacing 48 --head-strength 1.2 --lang ja"
 ```
 
 | オプション | 型 | 既定値 | 説明 |
@@ -231,10 +231,10 @@ output_dir/
 
 ```powershell
 # 配布用 ZIP アーカイブの生成
-.\umamo\gradlew.bat -p .\psd2live clean test distZip
+.\gradlew.bat clean test distZip
 
 # 単体テストの実行
-.\umamo\gradlew.bat -p .\psd2live test
+.\gradlew.bat test
 ```
 
 ---
@@ -242,7 +242,7 @@ output_dir/
 ## ライセンスおよび謝辞
 
 - **ライセンス**: [GNU General Public License v3.0 (GPL-3.0)](LICENSE)。
-- **サードパーティ謝辞**: 本プロジェクトは [Umamo](THIRD_PARTY_NOTICES.md) モジュールをリンクしており、セマンティクス設計やアルゴリズムにおいて [Stretchy Studio](THIRD_PARTY_NOTICES.md) を参考にしています。詳細は [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) を参照してください。
+- **サードパーティ謝辞**: 本プロジェクトは [Umamo](THIRD_PARTY_NOTICES.md) のコアモジュールを直接統合しており、セマンティクス設計やアルゴリズムにおいて [Stretchy Studio](THIRD_PARTY_NOTICES.md) を参考にしています。詳細は [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) を参照してください。
 
 ---
 

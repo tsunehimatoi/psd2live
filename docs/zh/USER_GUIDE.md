@@ -46,10 +46,10 @@ PSD2Live 提供桌面图形交互界面（GUI）、自动化命令行批处理�
 ### 2. Gradle 命令行启动
 ```powershell
 # Windows (PowerShell)
-.\umamo\gradlew.bat -p .\psd2live run
+.\gradlew.bat run
 
 # Linux / macOS (Bash)
-../umamo/gradlew -p ./psd2live run
+./gradlew run
 ```
 
 ---
@@ -196,10 +196,10 @@ PNG View 来自模型数据而非 UI 截图，并携带可逆的像素↔画布�
 
 ```powershell
 # 基础运行导出
-.\umamo\gradlew.bat -p .\psd2live run --args="--input D:/models/character.psd --output D:/dist/character"
+.\gradlew.bat run --args="--input D:/models/character.psd --output D:/dist/character"
 
 # 进阶参数调优
-.\umamo\gradlew.bat -p .\psd2live run --args="--input D:/models/character.psd --output D:/dist/character --atlas 8192 --mesh-spacing 48 --head-strength 1.2 --lang zh"
+.\gradlew.bat run --args="--input D:/models/character.psd --output D:/dist/character --atlas 8192 --mesh-spacing 48 --head-strength 1.2 --lang zh"
 ```
 
 | 参数 | 类型 | 默认值 | 说明 |

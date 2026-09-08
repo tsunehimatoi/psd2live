@@ -1,5 +1,6 @@
 plugins {
 	kotlin("jvm") version "2.4.10"
+	kotlin("plugin.serialization") version "2.4.10"
 	id("org.jetbrains.compose") version "1.11.1"
 	id("org.jetbrains.kotlin.plugin.compose") version "2.4.10"
 	distribution
@@ -14,11 +15,30 @@ kotlin {
 
 dependencies {
 	implementation(platform("io.ktor:ktor-bom:3.5.1"))
-	implementation("local.umamo:format:local")
-	implementation("local.umamo:runtime:local")
-	implementation("local.umamo:interop:local")
-	implementation("local.umamo:render:local")
-	implementation("local.umamo:edit:local")
+	// Core engine dependencies (ported from Umamo: format, runtime, interop, render, edit)
+	implementation(kotlin("reflect"))
+	implementation("org.jdom:jdom:1.1.3")
+	implementation("com.squareup.okio:okio:3.17.0")
+	implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.8.0")
+	implementation("app.cash.sqldelight:sqlite-driver:2.0.2")
+
+	// LWJGL (OpenGL rendering pipeline)
+	val lwjglNatives = run {
+		val os = System.getProperty("os.name").lowercase()
+		val arch = System.getProperty("os.arch").lowercase()
+		val isArm = arch.startsWith("aarch64") || arch.startsWith("arm")
+		when {
+			os.contains("win") -> if (isArm) "natives-windows-arm64" else "natives-windows"
+			os.contains("mac") || os.contains("darwin") -> if (isArm) "natives-macos-arm64" else "natives-macos"
+			os.contains("linux") || os.contains("nix") -> if (isArm) "natives-linux-arm64" else "natives-linux"
+			else -> "natives-windows"
+		}
+	}
+	implementation(platform("org.lwjgl:lwjgl-bom:3.4.2"))
+	implementation("org.lwjgl:lwjgl")
+	implementation("org.lwjgl:lwjgl-opengl")
+	runtimeOnly("org.lwjgl:lwjgl::$lwjglNatives")
+	runtimeOnly("org.lwjgl:lwjgl-opengl::$lwjglNatives")
 	implementation("io.modelcontextprotocol:kotlin-sdk-server:0.15.0")
 	implementation("io.ktor:ktor-server-netty")
 	implementation("io.ktor:ktor-server-auth")
@@ -30,10 +50,10 @@ dependencies {
 	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
 	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.11.0")
 	implementation(compose.desktop.currentOs)
-	implementation(compose.runtime)
-	implementation(compose.foundation)
-	implementation(compose.ui)
-	implementation(compose.material)
+	implementation("org.jetbrains.compose.runtime:runtime:1.11.1")
+	implementation("org.jetbrains.compose.foundation:foundation:1.11.1")
+	implementation("org.jetbrains.compose.ui:ui:1.11.1")
+	implementation("org.jetbrains.compose.material:material:1.11.1")
 	testImplementation(kotlin("test"))
 	testImplementation("io.modelcontextprotocol:kotlin-sdk-client:0.15.0")
 	testImplementation("io.ktor:ktor-client-cio")

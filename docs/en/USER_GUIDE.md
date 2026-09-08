@@ -46,10 +46,10 @@ Double-click `run-gui.bat` in the repository root.
 ### 2. Gradle Command Line
 ```powershell
 # Windows (PowerShell)
-.\umamo\gradlew.bat -p .\psd2live run
+.\gradlew.bat run
 
 # Linux / macOS (Bash)
-../umamo/gradlew -p ./psd2live run
+./gradlew run
 ```
 
 ---
@@ -190,10 +190,10 @@ History, tasks, spatial references, and SHA-256-deduplicated RGBA assets are per
 
 ```powershell
 # Basic export
-.\umamo\gradlew.bat -p .\psd2live run --args="--input D:/models/character.psd --output D:/dist/character"
+.\gradlew.bat run --args="--input D:/models/character.psd --output D:/dist/character"
 
 # Advanced configuration
-.\umamo\gradlew.bat -p .\psd2live run --args="--input D:/models/character.psd --output D:/dist/character --atlas 8192 --mesh-spacing 48 --head-strength 1.2 --lang en"
+.\gradlew.bat run --args="--input D:/models/character.psd --output D:/dist/character --atlas 8192 --mesh-spacing 48 --head-strength 1.2 --lang en"
 ```
 
 | Option | Type | Default | Description |

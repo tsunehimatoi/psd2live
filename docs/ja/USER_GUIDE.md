@@ -46,10 +46,10 @@ PSD2Live は、デスクトップ GUI、自動 CLI バッチ処理、および�
 ### 2. Gradle コマンドライン起動
 ```powershell
 # Windows (PowerShell)
-.\umamo\gradlew.bat -p .\psd2live run
+.\gradlew.bat run
 
 # Linux / macOS (Bash)
-../umamo/gradlew -p ./psd2live run
+./gradlew run
 ```
 
 ---
@@ -190,10 +190,10 @@ PNG View は UI スクリーンショットではなくモデルデータから�
 
 ```powershell
 # 基本実行
-.\umamo\gradlew.bat -p .\psd2live run --args="--input D:/models/character.psd --output D:/dist/character"
+.\gradlew.bat run --args="--input D:/models/character.psd --output D:/dist/character"
 
 # 詳細オプション指定
-.\umamo\gradlew.bat -p .\psd2live run --args="--input D:/models/character.psd --output D:/dist/character --atlas 8192 --mesh-spacing 48 --head-strength 1.2 --lang ja"
+.\gradlew.bat run --args="--input D:/models/character.psd --output D:/dist/character --atlas 8192 --mesh-spacing 48 --head-strength 1.2 --lang ja"
 ```
 
 | オプション | 型 | 既定値 | 説明 |

@@ -1,0 +1,11 @@
+# CMO3 model types mirror the Live2D on-disk schema VERBATIM. The reflection-based serializer
+# derives each XML element/attribute name directly from the Kotlin class/property name, so
+# identifiers like `imageFileBuf_size`, `CBlend_Normal`, `_modelImageGuid`, and `m00` are dictated
+# by the format — renaming them to satisfy ktlint would break the CMO3 round-trip. This is the same
+# "localize chrome/display, never format-level identifiers" rule from CLAUDE.md, applied to code.
+# Scope is deliberately just this model/ subtree; the rest of the module stays strict.
+# See docs/formats/CMO3.md §3 (Serializer mechanics).
+[*.kt]
+ktlint_standard_property-naming = disabled
+ktlint_standard_backing-property-naming = disabled
+ktlint_standard_class-naming = disabled
