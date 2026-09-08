@@ -11,7 +11,7 @@ import io.ktor.server.auth.bearer
 import io.ktor.server.application.install
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
-import io.ktor.server.netty.Netty
+import io.ktor.server.cio.CIO
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.request.header
 import io.ktor.server.response.respond
@@ -116,7 +116,7 @@ class AgentMcpService(
 
 	fun start(): AgentMcpConnectionInfo {
 		check(engine == null) { "Agent MCP service is already running" }
-		val started = embeddedServer(Netty, host = config.host, port = config.port) {
+		val started = embeddedServer(CIO, host = config.host, port = config.port) {
 			configureAgentMcp(workspace, config.token, config.maxRequestBodyBytes)
 		}
 		started.start(wait = false)

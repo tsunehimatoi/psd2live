@@ -1,3 +1,7 @@
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
+import java.util.zip.ZipEntry
+
 plugins {
 	kotlin("jvm") version "2.4.10"
 	kotlin("plugin.serialization") version "2.4.10"
@@ -40,7 +44,7 @@ dependencies {
 	runtimeOnly("org.lwjgl:lwjgl::$lwjglNatives")
 	runtimeOnly("org.lwjgl:lwjgl-opengl::$lwjglNatives")
 	implementation("io.modelcontextprotocol:kotlin-sdk-server:0.15.0")
-	implementation("io.ktor:ktor-server-netty")
+	implementation("io.ktor:ktor-server-cio")
 	implementation("io.ktor:ktor-server-auth")
 	implementation("io.ktor:ktor-server-content-negotiation")
 	implementation("io.ktor:ktor-server-sse")
@@ -69,7 +73,10 @@ distributions {
 			from("LICENSE")
 			from("THIRD_PARTY_NOTICES.md")
 			from("licenses") { into("licenses") }
-			from("docs") { into("docs") }
+			from("docs") {
+				into("docs")
+				exclude("imgs/**")
+			}
 			from("src/main/resources/cubism") { into("cubism") }
 		}
 	}
@@ -93,6 +100,86 @@ compose.desktop {
 			windows {
 				menuGroup = "PSD2Live"
 				upgradeUuid = "8e9c4b1a-2d3e-4f5a-6b7c-8d9e0f1a2b3c"
+			}
+		}
+	}
+}
+
+afterEvaluate {
+	tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask>().configureEach {
+		packageFromUberJar.set(true)
+	}
+	listOf("packageUberJarForCurrentOS", "packageReleaseUberJarForCurrentOS").forEach { taskName ->
+		tasks.findByName(taskName)?.let { task ->
+			if (task is org.gradle.jvm.tasks.Jar) {
+				task.apply {
+					exclude("org/sqlite/native/FreeBSD/**")
+					exclude("org/sqlite/native/Linux/**")
+					exclude("org/sqlite/native/Linux-Android/**")
+					exclude("org/sqlite/native/Linux-Musl/**")
+					exclude("org/sqlite/native/Mac/**")
+					exclude("org/sqlite/native/Windows/aarch64/**")
+					exclude("org/sqlite/native/Windows/armv7/**")
+					exclude("org/sqlite/native/Windows/x86/**")
+					exclude("com/sun/jna/aix*/**")
+					exclude("com/sun/jna/darwin*/**")
+					exclude("com/sun/jna/dragonflybsd*/**")
+					exclude("com/sun/jna/freebsd*/**")
+					exclude("com/sun/jna/linux*/**")
+					exclude("com/sun/jna/openbsd*/**")
+					exclude("com/sun/jna/sunos*/**")
+					exclude("com/sun/jna/win32-aarch64/**")
+					exclude("com/sun/jna/win32-x86/**")
+				}
+			}
+		}
+	}
+
+	tasks.named("createDistributable").configure {
+		doLast {
+			val appDir = file("build/compose/binaries/main/app/PSD2Live/app")
+			if (appDir.exists()) {
+				appDir.listFiles()?.forEach { jarFile ->
+					if (jarFile.name.startsWith("sqlite-jdbc-") || jarFile.name.startsWith("jna-")) {
+						val tempJar = File(jarFile.parentFile, jarFile.name + ".tmp")
+						ZipFile(jarFile).use { zin ->
+							ZipOutputStream(tempJar.outputStream().buffered()).use { zout ->
+								val entries = zin.entries()
+								while (entries.hasMoreElements()) {
+									val entry = entries.nextElement()
+									val p = entry.name.replace('\\', '/')
+									var keep = true
+									if (p.startsWith("org/sqlite/native/") && !p.startsWith("org/sqlite/native/Windows/x86_64/")) {
+										keep = false
+									}
+									if (p.startsWith("com/sun/jna/") && (p.endsWith(".so") || p.endsWith(".dylib") || p.endsWith(".a") || p.endsWith(".jnilib")) && !p.contains("win32-x86-64")) {
+										keep = false
+									}
+									if (p.startsWith("com/sun/jna/win32-") && !p.contains("win32-x86-64")) {
+										keep = false
+									}
+									if (keep) {
+										val newEntry = ZipEntry(entry.name).apply {
+											time = entry.time
+											comment = entry.comment
+											if (entry.extra != null) {
+												extra = entry.extra
+											}
+										}
+										zout.putNextEntry(newEntry)
+										zin.getInputStream(entry).copyTo(zout)
+										zout.closeEntry()
+									}
+								}
+							}
+						}
+						if (jarFile.delete()) {
+							tempJar.renameTo(jarFile)
+						} else {
+							tempJar.delete()
+						}
+					}
+				}
 			}
 		}
 	}
