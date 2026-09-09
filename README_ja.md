@@ -125,7 +125,7 @@ PSD2Live は、自動化された Live2D モデル生成パイプラインおよ
 
 現在の MCP は、プロジェクト／レイヤー／パラメータ参照、オブジェクトとキーフォーム編集、パラメータ CRUD、モデルデータ PNG View、透明素材インポート、ソフト削除、再開可能タスク、追記専用の分岐履歴を提供します。プロジェクトの `HEAD` を進める編集には必ず最新の `expected_history_head_node_id` が必要です。タイムアウトや切断後は、再試行前に `project_get_state` と `history_list` でコミット状態を確認してください。
 
-PSD2Live が提供するのは View、空間マッピング、素材インポートであり、ホスト固有の画像生成器ではありません。描画差分、パーツ分割、オクルージョン補完、ピクセル再構築では Nano Banana Pro/NBP、GPT Image 2（`gpt-image-2`）、または同等のホストネイティブ画像ツールを実際に呼び出し、その透明 PNG を `asset_import_png` へ渡します。Python、PIL/OpenCV、SVG、Canvas で代替画像を描かないでください。詳細は [ユーザー操作ガイド](docs/ja/USER_GUIDE.md) を参照してください。
+PSD2Live はモデル View、座標マッピング、PNG インポートを提供します。素材は画風とユーザーの希望に応じて元画像、SVG、描画、画像ツールを選べます。`solid_background` を省略すると元のアルファを保持します。`agent_get_workflow` で必要なトピックだけを参照できます。新しい編集 API は [MCP 編集ガイド](docs/zh/MCP_AUTHORING.md) を参照してください。
 
 ---
 

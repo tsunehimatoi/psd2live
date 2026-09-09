@@ -132,7 +132,7 @@ internal class AgentAssetWorkflow(
         val previous=asset(a.text("asset_id")); val referenceId=previous.public.details.text("reference_id")
         val ref=record(referenceId,"reference"); val spatial=store.loadSpatial(projectId,referenceId) ?: error("Reference spatial metadata missing")
         val imported=assets.import(AgentPngImportRequest(requireNotNull(previous.originalPng) { "Legacy asset has no original PNG" },referenceId,
-            solidBackground=a["solid_background"]?.jsonPrimitive?.content ?: previous.public.details["solid_background"]?.jsonPrimitive?.content ?: ref.text("background_color"),
+            solidBackground=a["solid_background"]?.jsonPrimitive?.content ?: previous.public.details["solid_background"]?.jsonPrimitive?.contentOrNull,
             backgroundTolerance=a.number("background_tolerance",previous.public.details.number("background_tolerance",16.0)).toInt(),requireTransparency=true,referenceId=referenceId,
             processing=a["processing"] as? JsonObject ?: JsonObject(emptyMap())),spatial)
         val saved=assets.require(imported.id); store.persistAsset(projectId,saved)

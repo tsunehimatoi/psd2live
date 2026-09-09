@@ -1,6 +1,6 @@
 # Rig tool menu
 
-Complete the user's task: understand intent and ownership → inspect chosen evidence → author → compare neutral and intended poses → record results/save. Tools are one stage, not the objective. Use stable IDs, current history HEAD, and task records for multi-step recovery. Inspect after an uncertain mutation response; never blindly replay it.
+Choose geometry operations for the intended shape. Use stable IDs, parent-local units and the returned history head. Reconcile uncertain writes before retrying.
 
 | Need | Tool / minimal input |
 |---|---|
@@ -9,6 +9,7 @@ Complete the user's task: understand intent and ownership → inspect chosen evi
 | Parts / deformation image | same View with annotate_layer_ids / annotate_deformer_ids; point_indices only for point edits |
 | Small geometry summary | rig_inspect(target, coordinate); includes actual representation, native control availability, axes, parent, counts and data cost |
 | Exact points | rig_inspect(detail="points", space="local" or "canvas", offset, limit≤256); request only needed pages |
+| Proposed shape diagnostics | rig_preview with the same operations, no history head needed |
 | Ordered shape edits | rig_transform(target, coordinate, operations, expected_history_head_node_id) |
 | Hierarchy / channels / raw keys | object_get (can be large), warp_create, keyform_set/copy/delete, rig_k_pose |
 | Pixels / parts / physics | asset_prepare_reference → host image editing → asset_import_png → asset_register → asset_preview_composite → layer_add_from_asset; physics_put + output keyforms |
@@ -24,7 +25,7 @@ One `rig_transform` commits an ordered list atomically. The baseline is interpol
 - `translate`: `delta:[dx,dy]`, fractions of current width/height.
 - `scale`: `factors:[sx,sy]` (>0), `pivot:[u,v]` (default center). Compress with <1; inflate with >1. A line center is a pivot at its midpoint with one factor=1.
 - `rotate`: `degrees`, `pivot`. Does not add scale in parent-local units.
-- `bend`: `axis:"x"|"y"`, `amount`. Cubic bow with zero endpoint displacement and peak amount at midpoint. X bows along Y, Y bows along X.
+- `bend`: `axis:"x"|"y"`, `amount`. Cubic bow with zero endpoint displacement and peak amount at midpoint. axis x displaces X along rows (v); axis y displaces Y along columns (u).
 - `curve`: `axis`, `controls:[p0,p1,p2,p3]`. Signed cubic displacement along the other axis, fractions of current dimension.
 - `smooth`: `strength:0..1`, Warp only, one neighbor pass; pins boundary. Use only to correct demonstrated unevenness.
 
@@ -35,15 +36,15 @@ Example local eye-socket edit without downloading points:
 
 Human preview: enable the deformer information layer in the Preview tab, then choose names, point indices, or selected-only. Overlay and artwork share the displayed pose and camera. MCP annotation requests independently choose IDs and are saved to Agent Log with the View.
 
-## Recipes from face authoring
+## Attachment-based motion
 
-- Ownership: face surface parent → facial-feature displacement child → eyes/brows/mouth. A separate skin-only child edits silhouette without distorting eyes. Create a child only when that ownership is appropriate.
-- Side look: scale X≈0.85 → X bow → small translation. Negative X looks left. Reverse signs for a requested mirror, retaining scale.
-- Diagonal: add Y bow to X bow; rotate slightly (about 3°), upper-left/lower-right clockwise, other diagonals counterclockwise. Operation order matters.
-- Up look: compress Y toward bottom, extra upper-half selection. Down look: lower-half selection compressed toward middle. Keep a smooth transition, inspect middle rows.
-- Eye socket: skin child, small positive X translation weighted around left eye-height edge. Tune radius/depth from actual silhouette rather than a universal number.
+`sway`: `root:[u,v]`, `tip:[u,v]`, `degrees`, optional `softness` (0..8, default 1), `root_pin` (0..0.95, default 0). Root/tip use normalized bounds of the operation input in parent-local units. Points behind the root/pinned region stay fixed; bending increases toward the tip. Positive degrees rotate clockwise. Softness 0 gives a rigid pivot outside the pinned region; larger values concentrate bending toward the tip. Use explicit anchors from the actual lock, not the whole parent frame. Selection can isolate the affected region.
 
-Example ordered edit at a bound two-axis pose:
-`operations:[{"type":"scale","factors":[0.85,1]},{"type":"bend","axis":"x","amount":-0.04},{"type":"translate","delta":[-0.02,0]}]`
+Example at a sway parameter endpoint:
+`operations:[{"type":"sway","root":[0.5,0.1],"tip":[0.6,0.95],"degrees":12,"softness":1.5,"root_pin":0.1}]`
 
-Render the result and adjacent/neutral poses. Check silhouette, attachment, masking, foldovers, and intended range; revise based on evidence. Keep successful history node IDs and before/after View IDs in task_update. Finish with the task outcome and any actual validation limitations. Pixel synthesis still uses the host native image tool; geometry tools do not paint or reconstruct assets. See the hair-separation prompt when that workflow is needed.
+Inspect neutral, target and relevant neighboring poses. Foldovers or drift are diagnosable geometry defects; visual coherence still needs a composed image. Optional face/hair topics explain ownership and coverage. Keep before/after evidence only when it helps assess the result.
+
+## Reference landmarks
+
+`landmarks`: matching `from:[[u,v],...]` and `to:[[u,v],...]` (1..64 pairs) in normalized current input bounds. The server interpolates displacement with inverse squared distance in parent-local units. An identical source/target pair pins that location; selection limits the edited region. Exact source-point matches use the requested displacement. Correspondences are supplied by the caller; this does not detect image features, solve occlusion or guarantee a fold-free mesh. Use preview diagnostics and posed composition for evidence.

@@ -384,6 +384,10 @@ data class AgentParameterRangeDiagnostic(
 data class AgentWorkflowResult(val metadata: kotlinx.serialization.json.JsonObject, val images: List<ByteArray> = emptyList())
 
 interface AgentWorkspace {
+    fun listRigObjectSummaries(): List<kotlinx.serialization.json.JsonObject> = listRigObjects().map {
+        kotlinx.serialization.json.JsonObject(mapOf("kind" to kotlinx.serialization.json.JsonPrimitive(it.kind), "id" to kotlinx.serialization.json.JsonPrimitive(it.id)))
+    }
+    suspend fun editObjects(arguments: kotlinx.serialization.json.JsonObject): AgentWorkspaceMutationResult = throw UnsupportedOperationException("Object editing unavailable")
     fun inspectRigGeometry(arguments: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject = throw UnsupportedOperationException("Rig geometry inspection unavailable")
     suspend fun transformRigGeometry(arguments: kotlinx.serialization.json.JsonObject): AgentWorkspaceMutationResult = throw UnsupportedOperationException("Rig transforms unavailable")
     suspend fun assetWorkflow(operation: String, arguments: kotlinx.serialization.json.JsonObject): AgentWorkflowResult = throw UnsupportedOperationException("Asset workflow is unavailable")

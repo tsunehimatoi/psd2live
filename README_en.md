@@ -125,7 +125,7 @@ Results depend on the model, image generator, Agent harness, prompt, and the qua
 
 The MCP currently exposes project/layer/parameter reads, object and keyform editing, parameter CRUD, model-data PNG Views, transparent-asset import, soft deletion, resumable tasks, and append-only branch history. Every project edit that advances `HEAD` must use the latest `expected_history_head_node_id`. After a timeout or disconnect, inspect `project_get_state` and `history_list` before deciding whether to retry.
 
-PSD2Live provides Views, spatial mapping, and asset import; it does not expose a host-private image generator. For painted differences, part separation, occlusion completion, or pixel reconstruction, actually call Nano Banana Pro/NBP, GPT Image 2 (`gpt-image-2`), or an equivalent host-native image tool, then import the transparent PNG with `asset_import_png`. Do not draw substitutes with Python, PIL/OpenCV, SVG, or Canvas. See the [User Guide](docs/en/USER_GUIDE.md) for the complete workflow.
+PSD2Live provides model Views, spatial mapping and PNG import. Artwork can use original pixels, SVG, painting or an available image editor according to style and user preference. Native PNG alpha is retained when solid_background is omitted. Optional knowledge is available through agent_get_workflow (overview, geometry, hair, variants, face, assets). See [MCP authoring](docs/zh/MCP_AUTHORING.md).
 
 ---
 

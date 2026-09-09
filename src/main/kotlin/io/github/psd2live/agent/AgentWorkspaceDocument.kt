@@ -69,13 +69,13 @@ internal class AgentPngAssetStore {
 		val decoded = ImageIO.read(request.png.inputStream())
 			?: throw IllegalArgumentException("The supplied bytes are not a decodable PNG")
 		require(decoded.width.toLong() * decoded.height <= 16_777_216) { "PNG exceeds 16 megapixels" }
-        val matte = if (request.referenceId != null) processGeneratedMatte(decoded,
-            requireNotNull(request.solidBackground) { "Reference imports require the actual solid_background" }, request.backgroundTolerance, request.processing) else null
+        val matte = if (request.referenceId != null && request.solidBackground != null) processGeneratedMatte(decoded,
+            request.solidBackground, request.backgroundTolerance, request.processing) else null
         val image = matte?.image ?: request.solidBackground?.let { cleanGeneratedMatte(decoded, it, request.backgroundTolerance) } ?: decoded
         if (request.requireTransparency) {
             val pixels = image.getRGB(0, 0, image.width, image.height, null, 0, image.width)
             require(pixels.any { it ushr 24 == 0 } && pixels.any { it ushr 24 > 0 }) {
-                "Hair asset must contain transparent background and visible pixels. Regenerate on an explicit solid background and use solid_background; a checkerboard is not transparency."
+                "Asset needs transparent background and visible pixels. Supply native alpha or an explicit solid_background for matte removal; a checkerboard is not transparency."
             }
         }
         require(image.width > 0 && image.height > 0) { "PNG dimensions must be positive" }
@@ -98,7 +98,7 @@ internal class AgentPngAssetStore {
             put("version", kotlinx.serialization.json.JsonPrimitive(2)); put("reference_id", kotlinx.serialization.json.JsonPrimitive(request.referenceId))
             put("solid_background", kotlinx.serialization.json.JsonPrimitive(request.solidBackground)); put("background_tolerance", kotlinx.serialization.json.JsonPrimitive(request.backgroundTolerance))
             put("registration_required", kotlinx.serialization.json.JsonPrimitive(true)); put("processing", request.processing)
-            put("diagnostics", matte!!.diagnostics); put("raw_sha256", kotlinx.serialization.json.JsonPrimitive(sha256(request.png)))
+            put("diagnostics", matte?.diagnostics ?: kotlinx.serialization.json.buildJsonObject { put("mode", kotlinx.serialization.json.JsonPrimitive("native_alpha")) }); put("raw_sha256", kotlinx.serialization.json.JsonPrimitive(sha256(request.png)))
             var left=image.width; var top=image.height; var right=0; var bottom=0
             for (i in 0 until image.width*image.height) if ((rgba[i*4+3].toInt() and 255)>0) {
                 left=minOf(left,i%image.width);top=minOf(top,i/image.width)

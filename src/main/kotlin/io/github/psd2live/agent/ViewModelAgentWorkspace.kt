@@ -437,7 +437,7 @@ class ViewModelAgentWorkspace(
         val effective = if (request.referenceId == null) request else {
             val ref = workflow().record(request.referenceId, "reference")
             require(ref.number("canvas_width").toInt() == snapshot().canvasWidth && ref.number("canvas_height").toInt() == snapshot().canvasHeight) { "Reference canvas size changed; prepare a new reference" }
-            request.copy(spatialReferenceId = request.referenceId, solidBackground = request.solidBackground ?: ref.text("background_color"), requireTransparency = true)
+            request.copy(spatialReferenceId = request.referenceId, solidBackground = request.solidBackground, requireTransparency = request.requireTransparency)
         }
         val spatial = spatialByViewId[effective.spatialReferenceId] ?: withContext(Dispatchers.IO) {
 			workspaceStore.loadSpatial(projectId, effective.spatialReferenceId)
@@ -704,10 +704,37 @@ class ViewModelAgentWorkspace(
 		)
 	}
 
+    override fun listRigObjectSummaries(): List<kotlinx.serialization.json.JsonObject> {
+        val rig=requireNotNull(viewModel.state.value.previewModel).rig
+        val model=rig.puppet
+        fun record(kind: String, id: String, name: String, parent: String?, layer: String? = null) =
+            kotlinx.serialization.json.buildJsonObject {
+                put("kind",kotlinx.serialization.json.JsonPrimitive(kind));put("id",kotlinx.serialization.json.JsonPrimitive(id))
+                put("name",kotlinx.serialization.json.JsonPrimitive(name));put("parentId",kotlinx.serialization.json.JsonPrimitive(parent))
+                layer?.let { put("layerId",kotlinx.serialization.json.JsonPrimitive(it)) }
+            }
+        return model.drawables.map { record("mesh",it.id.raw,it.name,it.parentDeformerId?.raw,rig.layerIdByDrawableId[it.id.raw]) } +
+            model.deformers.map { record(if(it is Deformer.Warp) "warp" else "rotation",it.id.raw,it.name,it.parent?.raw) } +
+            model.parts.map { p -> record("part",p.id.raw,p.name,model.parts.firstOrNull { org.umamo.runtime.model.OrgChild.Part(p.id) in it.children }?.id?.raw) }
+    }
+
     override fun listRigObjects(): List<AgentKeyformTargetRef> {
         val puppet = viewModel.state.value.previewModel?.rig?.puppet ?: error("No rig is loaded")
         return puppet.drawables.map { AgentKeyformTargetRef("mesh", it.id.raw) } +
-            puppet.deformers.map { AgentKeyformTargetRef(if (it is Deformer.Warp) "warp" else "rotation", it.id.raw) }
+            puppet.deformers.map { AgentKeyformTargetRef(if (it is Deformer.Warp) "warp" else "rotation", it.id.raw) } +
+            puppet.parts.map { AgentKeyformTargetRef("part", it.id.raw) }
+    }
+
+    override suspend fun editObjects(arguments: kotlinx.serialization.json.JsonObject): AgentWorkspaceMutationResult {
+        val edits = arguments.getValue("edits").jsonArray.map { it.jsonObject }
+        require(edits.size in 1..128) { "Use 1..128 edits" }
+        require(edits.all { it["action"]?.jsonPrimitive?.content in setOf("rename", "visibility", "move", "bind") }) { "Unknown object action" }
+        val ids = edits.map { it.getValue("id").jsonPrimitive.content }.distinct()
+        return mutateRigKeyform(arguments.getValue("expected_history_head_node_id").jsonPrimitive.content,
+            arguments["task_id"]?.jsonPrimitive?.contentOrNull, "Edit ${ids.size} objects: ${edits.map { it["action"] }.distinct()}", ids.first()) { document, puppet ->
+            io.github.psd2live.core.RigStructureEdits.apply(puppet, edits)
+            document.copy(rigEdits = document.rigEdits.copy(structureEdits = document.rigEdits.structureEdits + edits))
+        }.copy(affectedObjectIds = ids)
     }
 
     override fun inspectRigGeometry(arguments: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject {
@@ -745,7 +772,9 @@ class ViewModelAgentWorkspace(
     override suspend fun createWarp(edit: io.github.psd2live.core.RigWarpEdit, expectedHead: String, taskId: String?) =
         mutateRigKeyform(expectedHead, taskId, "Created Warp ${edit.id}", edit.id) { document, puppet ->
             edit.applyTo(puppet) // Validate before constructing the replacement preview.
-            document.copy(rigEdits = document.rigEdits.copy(warpEdits = document.rigEdits.warpEdits + edit))
+            document.copy(rigEdits = document.rigEdits.copy(warpEdits = document.rigEdits.warpEdits + edit,
+                structureEdits = document.rigEdits.structureEdits + kotlinx.serialization.json.JsonObject(edit.toJson() +
+                    ("action" to kotlinx.serialization.json.JsonPrimitive("create_warp")))))
         }
 
     override suspend fun putPhysics(edit: io.github.psd2live.core.RigPhysicsEdit, expectedHead: String, taskId: String?) =

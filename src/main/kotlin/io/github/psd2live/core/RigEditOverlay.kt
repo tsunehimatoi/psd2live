@@ -1,5 +1,7 @@
 package io.github.psd2live.core
 
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import org.umamo.edit.Pose
 import org.umamo.edit.channelValueAt
 import org.umamo.edit.geometryGridOf
@@ -200,6 +202,7 @@ data class RigEditOverlay(
     val physicsEdits: List<RigPhysicsEdit> = emptyList(),
     val assetLayers: Map<String, kotlinx.serialization.json.JsonObject> = emptyMap(),
     val calibrationLayerIds: Set<String> = emptySet(),
+    val structureEdits: List<kotlinx.serialization.json.JsonObject> = emptyList(),
 ) {
 	init {
 		require(warpEdits.map { it.id }.distinct().size == warpEdits.size) { "Duplicate Warp IDs" }
@@ -227,7 +230,9 @@ data class RigEditOverlay(
 			val desired = edit.asParameter()
 			model = model.copy(parameters = model.parameters.map { current -> if (current.id == id) desired else current })
 		}
-		for (warp in warpEdits) model = warp.applyTo(model)
+		val journalWarpIds = structureEdits.filter { it["action"]?.jsonPrimitive?.contentOrNull == "create_warp" }.map { it.getValue("id").jsonPrimitive.content }.toSet()
+        for (warp in warpEdits) if(warp.id !in journalWarpIds) model = warp.applyTo(model)
+        model = RigStructureEdits.apply(model, structureEdits)
 		physicsEdits.forEach { it.validate(model.parameters.map { p -> p.id.raw }.toSet()) }
 		// 3. Apply keyform sets
 		for (set in keyformSetEdits) {

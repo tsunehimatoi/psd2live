@@ -130,7 +130,7 @@ PSD2Live は起動時に、Bearer Token で保護された Streamable HTTP MCP �
 
 プロジェクトの `HEAD` を進める編集には現在の `expected_history_head_node_id` が必要で、成功後に返る新ノードを次の編集の基準にします。PNG の一時保存とタスクイベントの追記は `HEAD` を移動しません。タイムアウト、切断、セッション失効後はコミット状態が不明な場合があります。再接続し、`project_get_state`、`history_list`、タスク記録、対象オブジェクトを確認してから再試行を判断してください。Stdio ブリッジが自動再試行するのは安全な読み取りだけで、プロジェクト編集は再実行しません。
 
-PNG View は UI スクリーンショットではなくモデルデータから生成され、可逆なピクセル↔キャンバス変換を持ちます。`asset_import_png` は `spatial_reference_id` で配置を維持し、View の一部だけを返す場合は `source_pixel_rect` が必要です。縦横比の不一致は引き伸ばさず拒否します。描画差分、パーツ分割、オクルージョン補完、ピクセル再構築では、Nano Banana Pro/NBP、GPT Image 2（`gpt-image-2`）、または同等のホストネイティブ画像ツールを実際に呼び出します。PSD2Live が提供するのは View とインポートであり、Python、PIL/OpenCV、SVG、Canvas で代替素材を描かないでください。
+PNG View はピクセルとキャンバスの可逆マッピングを保持します。素材は `reference_id` と `asset_register` で配置でき、従来の `spatial_reference_id` も使用できます。元画像、SVG、描画、画像ツールを選択でき、`solid_background` を省略すると元のアルファを保持します。背景除去時だけ実際の色を指定してください。[MCP 編集ガイド](../zh/MCP_AUTHORING.md) も参照してください。
 
 履歴、タスク、空間参照、SHA-256 で重複排除された RGBA 素材は永続化されます。Windows の既定保存先は `%LOCALAPPDATA%/PSD2Live/agent-workspaces` で、JVM プロパティ `psd2live.agent.store` で変更できます。同じ正規化パスとファイル署名の PSD を再読み込みすると最後の `HEAD` が復元されます。
 

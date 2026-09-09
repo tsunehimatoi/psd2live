@@ -35,16 +35,20 @@ internal fun rigGeometrySchema(edit: Boolean): ToolSchema = ToolSchema(
                 putJsonObject("items") {
                     put("type","object");put("additionalProperties",false)
                     putJsonObject("properties") {
-                        putJsonObject("type") { put("type","string");put("enum",JsonArray(listOf("translate","scale","rotate","bend","curve","smooth").map(::JsonPrimitive))) }
-                        for((key,size) in mapOf("delta" to 2,"pivot" to 2,"factors" to 2,"controls" to 4)) {
+                        putJsonObject("type") { put("type","string");put("enum",JsonArray(listOf("translate","scale","rotate","bend","curve","smooth","sway","landmarks").map(::JsonPrimitive))) }
+                        for((key,size) in mapOf("root" to 2,"tip" to 2,"delta" to 2,"pivot" to 2,"factors" to 2,"controls" to 4)) {
                             putJsonObject(key) { put("type","array");put("minItems",size);put("maxItems",size);putJsonObject("items") { put("type","number") } }
                         }
+                        for(key in listOf("from","to")) putJsonObject(key) {
+                            put("type","array");put("minItems",1);put("maxItems",64)
+                            putJsonObject("items") { put("type","array");put("minItems",2);put("maxItems",2);putJsonObject("items") { put("type","number") } }
+                        }
                         putJsonObject("axis") { put("type","string");put("enum",JsonArray(listOf("x","y").map(::JsonPrimitive))) }
-                        for(key in listOf("amount","degrees","strength"))putJsonObject(key) { put("type","number") }
+                        for(key in listOf("amount","degrees","strength","softness","root_pin"))putJsonObject(key) { put("type","number") }
                         put("selection", geometrySelectionSchema())
                     }
                     put("required",JsonArray(listOf(JsonPrimitive("type"))))
-                    put("description","Ordered, relative to each operation input bounds. delta/amount/curve are fractions of width/height; pivot is normalized. rotate degrees positive clockwise in local Y-down units. smooth pins boundary.")
+                    put("description","Ordered, relative to each operation input bounds. delta/amount/curve are fractions of width/height; pivot is normalized. rotate degrees positive clockwise in local Y-down units. smooth pins boundary. sway uses explicit root/tip in normalized current bounds, clockwise degrees, softness 0..8 (default 1), root_pin 0..0.95 (default 0); pins the root region and increases bending toward tip. landmarks interpolates displacement from matching from/to normalized input-bound point pairs; identical pairs pin landmarks. It is not an image correspondence detector.")
                 }
             }
         }
@@ -63,4 +67,14 @@ private fun geometrySelectionSchema(): JsonObject = buildJsonObject {
                                 putJsonObject("feather") { put("type","number");put("minimum",0);put("maximum",0.5) }
                             }
                             put("description","Stable normalized rest domain: rect=[left,top,right,bottom], indices, center+radius, or line=[x0,y0,x1,y1]+radius. Smooth radial falloff; optional rectangle feather.")
+}
+
+internal fun loadAgentReference(topic: String): String {
+    val file = when(topic) {
+        "overview" -> "overview"; "geometry" -> "rig-geometry"; "hair" -> "hair-separation"
+        "variants" -> "variants"; "face" -> "face"; "assets" -> "assets"
+        else -> error("Unknown knowledge topic: $topic")
+    }
+    return requireNotNull(AgentWorkspace::class.java.classLoader.getResourceAsStream("agent/skills/$file.md"))
+        .bufferedReader().use { it.readText() }
 }

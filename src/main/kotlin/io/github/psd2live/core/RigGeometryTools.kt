@@ -66,19 +66,21 @@ internal object RigGeometryTools {
         for (element in operations) {
             val op = element.jsonObject
             val type = op.text("type")
-            require(type in setOf("translate", "scale", "rotate", "bend", "curve", "smooth")) { "Unknown operation: $type" }
+            require(type in setOf("translate", "scale", "rotate", "bend", "curve", "smooth", "sway", "landmarks")) { "Unknown operation: $type" }
             val fields = when(type) {
                 "translate" -> setOf("delta")
                 "scale" -> setOf("factors","pivot")
                 "rotate" -> setOf("degrees","pivot")
                 "bend" -> setOf("axis","amount")
                 "curve" -> setOf("axis","controls")
+                "sway" -> setOf("root","tip","degrees","softness","root_pin")
+                "landmarks" -> setOf("from","to")
                 else -> setOf("strength")
             }
             require((op.keys - fields - setOf("type","selection")).isEmpty()) { "Unexpected field for $type" }
             val required = when(type) {
                 "translate" -> "delta"; "scale" -> "factors"; "rotate" -> "degrees"
-                "bend" -> "amount"; "curve" -> "controls"
+                "bend" -> "amount"; "curve" -> "controls"; "sway" -> "degrees"; "landmarks" -> "from"
                 else -> null
             }
             require(required == null || required in op) { "Missing $required for $type" }
@@ -97,6 +99,21 @@ internal object RigGeometryTools {
             val amount = op.number("amount", 0f)
             val degrees = op.number("degrees", 0f)
             val curve = op.vector("controls", listOf(0f, 0f, 0f, 0f), 4)
+            val root = op.vector("root", listOf(0.5f, 0f), 2)
+            val tip = op.vector("tip", listOf(0.5f, 1f), 2)
+            val softness = op.number("softness", 1f)
+            val pin = op.number("root_pin", 0f)
+            if(type == "sway") {
+                require("root" in op && "tip" in op) { "Sway needs explicit root and tip in normalized input bounds" }
+                require(softness in 0f..8f && pin in 0f..0.95f)
+                require(hypot((tip[0]-root[0])*b[2], (tip[1]-root[1])*b[3]) > 1e-6f) { "Root and tip must differ" }
+            }
+            val from = if(type=="landmarks") op.getValue("from").jsonArray.map { it.jsonArray.map { n -> n.jsonPrimitive.float } } else emptyList()
+            val to = if(type=="landmarks") op.getValue("to").jsonArray.map { it.jsonArray.map { n -> n.jsonPrimitive.float } } else emptyList()
+            if(type=="landmarks") {
+                require(from.size in 1..64 && from.size==to.size && (from+to).all { it.size==2 && it.all(Float::isFinite) }) { "from/to need matching lists of 1..64 finite point pairs" }
+                require(from.distinct().size==from.size) { "Source landmarks must be distinct" }
+            }
             val before = result.copyOf()
             for (i in weights.indices) {
                 val j = i*2; val x = before[j]; val y = before[j+1]
@@ -111,6 +128,26 @@ internal object RigGeometryTools {
                         val d = if (type == "bend") BezierWarp.cubic(0f, amount*4/3, amount*4/3, 0f, t)
                             else BezierWarp.cubic(curve[0],curve[1],curve[2],curve[3],t)
                         if (axis == "x") nx += d*b[2] else ny += d*b[3]
+                    }
+                    "landmarks" -> {
+                        var sum=0.0; var dx=0.0; var dy=0.0
+                        for(k in from.indices) {
+                            val fx=b[0]+from[k][0]*b[2]; val fy=b[1]+from[k][1]*b[3]
+                            val distance=(x.toDouble()-fx).pow(2)+(y.toDouble()-fy).pow(2)
+                            val ox=(to[k][0]-from[k][0])*b[2]; val oy=(to[k][1]-from[k][1])*b[3]
+                            if(distance<1e-14) { dx=ox.toDouble();dy=oy.toDouble();sum=1.0;break }
+                            val w=1.0/distance;sum+=w;dx+=ox*w;dy+=oy*w
+                        }
+                        nx=x+(dx/sum).toFloat();ny=y+(dy/sum).toFloat()
+                    }
+                    "sway" -> {
+                        val rx=b[0]+root[0]*b[2]; val ry=b[1]+root[1]*b[3]
+                        val tx=(tip[0]-root[0])*b[2]; val ty=(tip[1]-root[1])*b[3]
+                        val along=((x-rx)*tx+(y-ry)*ty)/(tx*tx+ty*ty)
+                        val t=((along-pin)/(1-pin)).coerceIn(0f,1f)
+                        val a=degrees*PI.toFloat()/180f * if(t == 0f) 0f else t.pow(softness)
+                        val dx=x-rx; val dy=y-ry
+                        nx=rx+dx*cos(a)-dy*sin(a); ny=ry+dx*sin(a)+dy*cos(a)
                     }
                     "smooth" -> {
                         require(g.columns != null && g.rows != null) { "Smooth requires a warp grid" }

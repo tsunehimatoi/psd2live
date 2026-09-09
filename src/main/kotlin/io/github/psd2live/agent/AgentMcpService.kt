@@ -40,6 +40,8 @@ import io.modelcontextprotocol.kotlin.sdk.types.ToolAnnotations
 import io.modelcontextprotocol.kotlin.sdk.types.ToolSchema
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.float
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -368,7 +370,7 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace): Server {
         inputSchema=rigGeometrySchema(false), toolAnnotations=READ_ONLY) { request ->
         mutationResult { workspace.inspectRigGeometry(requireNotNull(request.arguments)) }
     }
-    server.addTool(name="rig_transform", description="Apply 1..32 ordered translate/scale/rotate/bend/curve/smooth operations to one Warp or mesh at an exact coordinate. Server edits all points in one history commit. Shared selection + range + ordered operations avoid transferring dense geometry. Supports index, rectangle, point-radius and line-radius selections. Read rig_inspect and agent_get_workflow first.",
+    server.addTool(name="rig_transform", description="Apply 1..32 ordered translate/scale/rotate/bend/curve/smooth operations to one Warp or mesh at an exact coordinate. Server edits all points in one history commit. Shared selection + range + ordered operations avoid transferring dense geometry. Supports index, rectangle, point-radius and line-radius selections. Includes root-anchored sway. rig_inspect provides coordinate and axis information.",
         inputSchema=rigGeometrySchema(true), toolAnnotations=MUTATING) { request ->
         mutationResult { workspace.transformRigGeometry(requireNotNull(request.arguments)).toJson() }
     }
@@ -593,21 +595,101 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace): Server {
 		}
 	}
 
+    server.addTool(
+        name = "view_check_coverage",
+        description = "Measure whether selected layers cover an explicitly expected canvas rectangle at one pose. For scalp gaps select hair layers, not the opaque face underneath. Returns uncovered pixel bounds and a mapped image; the region's semantic expectation is caller-supplied.",
+        inputSchema = ToolSchema(properties = JsonObject(requireNotNull(modelViewSchema().properties) + buildJsonObject {
+            putJsonObject("alpha_threshold") { put("type","integer"); put("minimum",1); put("maximum",255); put("default",128) }
+        }), required = listOf("viewport", "include_layer_ids")), toolAnnotations = READ_ONLY,
+    ) { request ->
+        try {
+            val frame=request.viewFrame()
+            require(frame is AgentViewFrame.CanvasRect) { "Use canvas_rect for the expected coverage region" }
+            val view=workspace.renderModel(AgentModelViewRequest(parameters=request.floatMap("parameters"),
+                includeLayerIds=request.optionalStringSet("include_layer_ids"), frame=frame,
+                background=AgentViewBackground.TRANSPARENT, output=request.outputSpec()))
+            val image=javax.imageio.ImageIO.read(view.png.inputStream()) ?: error("Invalid rendered PNG")
+            val measurement=measureCoverage(image,request.arguments?.get("alpha_threshold")?.jsonPrimitive?.int ?: 128)
+            val metadata=buildJsonObject { put("view",view.toJson()); put("coverage",measurement) }
+            CallToolResult(content=listOf(TextContent(metadata.toString()),ImageContent(Base64.getEncoder().encodeToString(view.png),"image/png")),structuredContent=metadata)
+        } catch(e: IllegalArgumentException) { CallToolResult(content=listOf(TextContent(e.message ?: "Invalid coverage region")),isError=true) }
+          catch(e: IllegalStateException) { CallToolResult(content=listOf(TextContent(e.message ?: "Cannot render coverage")),isError=true) }
+    }
+
+    server.addTool(
+        name = "view_render_poses",
+        description = "Render 1..9 parameter poses with one fixed canvas camera and composition. Each image retains its own View mapping. This is static pose sampling, not a physics simulation.",
+        inputSchema = ToolSchema(properties = JsonObject(requireNotNull(modelViewSchema().properties) + buildJsonObject {
+            putJsonObject("poses") { put("type","array"); put("minItems",1); put("maxItems",9)
+                putJsonObject("items") { put("type","object"); putJsonObject("additionalProperties") { put("type","number") } }
+            }
+        }), required = listOf("viewport", "poses")), toolAnnotations = READ_ONLY,
+    ) { request ->
+        try {
+            val poses = request.arguments!!.getValue("poses").jsonArray
+            require(poses.size in 1..9)
+            val frame=request.viewFrame()
+            require(frame is AgentViewFrame.CanvasRect) { "Use canvas_rect for a fixed comparison camera" }
+            val revision=workspace.snapshot().revisionId
+            val views=poses.map { pose -> workspace.renderModel(AgentModelViewRequest(
+                parameters=pose.jsonObject.mapValues { it.value.jsonPrimitive.float },
+                includeLayerIds=request.optionalStringSet("include_layer_ids"), frame=frame,
+                background=request.background(), output=request.outputSpec(),
+                annotateLayerIds=request.optionalStringSet("annotate_layer_ids").orEmpty(),
+                annotateDeformerIds=request.optionalStringSet("annotate_deformer_ids").orEmpty(),
+                pointIndices=request.boolean("point_indices",false))) }
+            require(views.all { it.revisionId == revision } && workspace.snapshot().revisionId == revision) { "Workspace changed during comparison; render again" }
+            val metadata=buildJsonObject { put("views",JsonArray(views.map { it.toJson() })); put("physicsSimulated",false) }
+            CallToolResult(content=listOf(TextContent(metadata.toString())) + views.map { ImageContent(Base64.getEncoder().encodeToString(it.png),"image/png") }, structuredContent=metadata)
+        } catch(e: IllegalArgumentException) { CallToolResult(content=listOf(TextContent(e.message ?: "Invalid poses")),isError=true) }
+          catch(e: IllegalStateException) { CallToolResult(content=listOf(TextContent(e.message ?: "Cannot render poses")),isError=true) }
+    }
+
     registerAssetWorkflowTools(server, workspace)
 
     server.addTool(
+        name = "rig_preview",
+        description = "Evaluate proposed rig_transform operations without editing or advancing history. Returns compact displacement and triangle diagnostics relative to the input pose. Does not judge painted coverage or appearance.",
+        inputSchema = ToolSchema(properties = rigGeometrySchema(true).properties,
+            required = listOf("target", "coordinate", "operations")), toolAnnotations = READ_ONLY,
+    ) { request -> mutationResult { workspace.inspectRigGeometry(request.arguments ?: error("Missing arguments")) } }
+
+    server.addTool(
+        name = "object_edit",
+        description = "Rename, show/hide, organize or rebind objects. Applies 1..128 ordered edits atomically in one recoverable history commit. Stable IDs are unchanged. Organizational moves and deformation bindings are separate operations.",
+        inputSchema = objectEditSchema(), toolAnnotations = MUTATING,
+    ) { request -> mutationResult { workspace.editObjects(request.arguments ?: error("Missing arguments")).toJson() } }
+
+    server.addTool(
         name = "agent_get_workflow",
-        description = "Read the compact end-to-end rig workflow, evidence budget menu, ordered geometry operation units, selection rules and face-edit recipes. Hair separation has a separate prompt.",
-        inputSchema = ToolSchema(properties = buildJsonObject {}), toolAnnotations = READ_ONLY,
-    ) { CallToolResult(content = listOf(TextContent(loadRigGeometryWorkflow()))) }
+        description = "Read a short optional reference: overview, geometry, hair, variants, face or assets. Choose only the topic relevant to the task.",
+        inputSchema = ToolSchema(properties = buildJsonObject {
+            putJsonObject("topic") { put("type", "string"); put("enum", JsonArray(listOf("overview", "geometry", "hair", "variants", "face", "assets").map(::JsonPrimitive))) }
+        }), toolAnnotations = READ_ONLY,
+    ) { request -> CallToolResult(content = listOf(TextContent(loadAgentReference(request.optionalString("topic") ?: "overview")))) }
 
     server.addTool(
         name = "rig_list_objects",
-        description = "Discover actual mesh, Warp and rotation IDs before object_get or warp_create. Layer IDs are not necessarily mesh IDs.",
-        inputSchema = ToolSchema(properties = buildJsonObject {}), toolAnnotations = READ_ONLY,
-    ) { mutationResult { buildJsonObject { putJsonArray("objects") {
-        workspace.listRigObjects().forEach { ref -> add(buildJsonObject { put("kind", ref.kind); put("id", ref.id) }) }
-    } } } }
+        description = "Find meshes, Parts and deformers by name or stable ID. Returns compact names, parent relationships and source layer IDs without geometry. Optional query/kind and pagination keep discovery small.",
+        inputSchema = ToolSchema(properties = buildJsonObject {
+            for(key in listOf("query","kind")) putJsonObject(key) { put("type","string") }
+            putJsonObject("offset") { put("type","integer");put("minimum",0) }
+            putJsonObject("limit") { put("type","integer");put("minimum",1);put("maximum",256);put("default",64) }
+        }), toolAnnotations = READ_ONLY,
+    ) { request -> mutationResult {
+        val query=request.optionalString("query")
+        val kind=request.optionalString("kind")
+        require(kind==null || kind in setOf("mesh","warp","rotation","part")) { "Unknown kind" }
+        val all=workspace.listRigObjectSummaries().filter { entry ->
+            (kind==null || entry["kind"]?.jsonPrimitive?.content==kind) &&
+            (query==null || listOf("id","name","layerId").any { entry[it]?.jsonPrimitive?.contentOrNull?.contains(query,ignoreCase=true)==true })
+        }
+        val offset=request.arguments?.get("offset")?.jsonPrimitive?.int ?: 0
+        val limit=request.arguments?.get("limit")?.jsonPrimitive?.int ?: 64
+        require(offset>=0 && limit in 1..256)
+        buildJsonObject { put("objects",JsonArray(all.drop(offset).take(limit)));put("total",all.size)
+            if(offset.toLong()+limit<all.size)put("nextOffset",offset+limit) }
+    } }
 
     server.addTool(
         name = "warp_create",
@@ -655,7 +737,7 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace): Server {
 
 	server.addTool(
 		name = "asset_import_png",
-		description = "Stage a generated solid-matte PNG using reference_id; MCP keeps raw pixels and performs background cleanup. Register placement before adding. Legacy spatial_reference_id import semantics remain available. Differences, separated painted parts, occlusion completion, and reconstructed pixels must come from an actual Nano Banana Pro/NBP, GPT Image 2, or equivalent host-native image-tool call—not Python/PIL/OpenCV/Matplotlib/SVG/Canvas drawing. Exact unchanged-pixel extraction and non-creative post-generation alpha cleanup are the only procedural exceptions. Pixel resolution may differ, but aspect and canvas placement are preserved. This does not change project history.",
+        description = "Stage a PNG from painting, vector rasterization, original pixels or image generation. Omit solid_background to retain native alpha; specify it only for deliberate matte removal. reference_id imports need placement registration. Legacy spatial_reference_id imports remain supported.",
 		inputSchema = pngImportSchema(),
 		toolAnnotations = MUTATING,
 	) { request ->
@@ -1772,19 +1854,9 @@ private val MUTATING = ToolAnnotations(
 )
 
 private val AGENT_INSTRUCTIONS = """
-	PSD2Live exposes one authoritative local workspace. Before every mutation, call project_get_state, wait while persistenceStatus is restoring, and pass the current historyHeadNodeId as expected_history_head_node_id. Never blindly retry a mutation after a timeout, disconnect, or lost response: reconnect and inspect project_get_state, history_list, the task log, and affected objects to determine whether it committed. Read-only discovery and rendering may use a small bounded retry. A stale-head error requires refreshing and reconciling concurrent changes before a new request.
-
-	An authenticated Agent may use the exposed workspace capabilities without per-operation approval. History is append-only; use history_checkout to branch instead of rewriting prior nodes. For multi-step work, call task_start and keep task_update checkpoints current with View, asset, object, and history node IDs. Task state coordinates recovery and is not an approval gate.
-
-    Call agent_get_workflow and rig_list_objects for capability discovery. Do not refuse hair separation because there is no single natural-strand split tool: compose Views, host image editing, asset_import_png, layer_add_from_asset, warp_create, parameter_create/keyform_set and physics_put. Before any split or difference, infer local depth and occlusion from the actual reference, including where each lock covers or passes behind others. Natural crossings and overlapping hidden volumes are expected; bangs and side hair have no fixed category-wide order. Generate complete logical locks, assemble usable candidates early, and judge a coherent hairstyle with plausible attachments and gap-free intended motion, not exact original edges or root coordinates. Harmless contour and tone differences are acceptable; do not stop after a fixed retry quota or delay all rigging for isolated perfection. Always request a declared uniform RGB matte, not transparent output. Choose and record background_color in asset_prepare_reference; white/black are useful defaults, but another suitable RGB is allowed. Pass the actual color as solid_background to asset_import_png with reference_id. MCP retains the original PNG, removes the matte and decontaminates a narrow edge band. Use asset_inspect for raw/processed pixels and diagnostics; asset_reprocess accepts foreground protection and background hole points in original PNG coordinates. A checkerboard or nonuniform matte is a diagnostic failure, not successful transparency. Change matte or hints when needed; judge small residual edges in normal-size composition.
-
-	These instructions are mandatory whenever this PSD2Live MCP server is invoked, regardless of the task type. If the host supports skills, read psd2live-rigging before using any PSD2Live tool; also read hair-separation for hair work. This requirement is scoped to skill/MCP use and does not apply to unrelated repository programming.
-
-	IMAGE-GENERATOR GATE: Treat every painted difference or expression variant, part/layer split, overlap removal, occlusion completion, reconstruction, inpaint, outpaint, or new drawable as an image-generation/editing task. Before any shell or Python raster work, make an actual host image-tool call for every output piece that creates, guesses, reconstructs, or changes illustrated pixels. Use Nano Banana Pro (Nano Banana Pro/NBP) when exposed, otherwise GPT Image 2 (gpt-image-2), otherwise an equivalent host-native generator. In Codex/ChatGPT, load imagegen and call image_gen; in Gemini/Antigravity, call Nano Banana Pro when available. For assembly defects first check depth order, placement and motion coverage; call the generator again only when painted pixels need correction. Retain useful candidates and continue independent work.
-
-	The PSD2Live MCP server provides reference Views and imports outputs; it does not contain the host-private image generator. The absence of an image-generation tool in this MCP tool list is not evidence that the host lacks one: leave the MCP call chain, invoke Nano Banana Pro/NBP, GPT Image 2, or the host's image tool, then return to asset_import_png. Never use Python, PIL/Pillow, OpenCV, Matplotlib, SVG, Canvas, ImageMagick, shell scripts, procedural masks/polygons, dilation, smearing, or texture cloning to draw a draft, fallback, separated part, variant, or hidden structure. Code is allowed only for byte transport, diagnostics, exact unchanged-pixel extraction/cropping, and non-creative alpha cleanup after native generation. If no native image tool exists, stop at the last reversible state instead of fabricating artwork.
-
-	Discover available host and MCP capabilities instead of assuming an exact host-side tool name. Use stable object IDs and direct View tools; never infer source coordinates from application screenshots. View tools return a composited PNG plus a reversible pixel-to-canvas spatial reference, not a PSD. Preserve spatialReferenceId when creating replacement pixels. Prefer transparent output.
-
-	Discover tools/list (including pagination or host search). Use asset_prepare_reference -> host image editing -> asset_import_png/asset_inspect -> asset_register -> asset_preview_composite -> layer_add_from_asset -> layer_set_placement if needed -> layer_finalize_placement -> optional dedicated Warp/keyforms/physics -> posed composition. agent_get_workflow exposes this guidance when skills are unavailable. References contain a clean source image and a separate labeled context; labels must never be painted into the target. Before generation choose root/tip and preferably a noncollinear side anchor in source canvas coordinates and record local depth and hidden coverage. Use reference_id and registration_id for generated assets. Frame registration is appropriate only when the generator kept the declared frame; declare generated_pixel_rect/source_canvas_rect for padding or crops. When content was recentered or resized, mark matching generated_anchors in the full original PNG and use landmarks registration. Pixel resolution and alpha bounds never determine target size. Coordinates are top-left, X right, Y down. Mirrors require explicit mirror_x/mirror_y; do not flip to compensate for unexplained rig drift. Registration instances are immutable; create another registration to adjust position, scale or rotation and apply it with layer_set_placement. This recomputes from the original processed pixels. Imported replacements immediately inherit the reference source layer’s existing parent Warp (or explicit parent_deformer_id). For example front hair 1/2/3 belong inside the existing front-hair Warp. There is no unbound-layer mode. Placement finalization marks readiness for dedicated edits; it does not create the first binding. Inherited parent motion is preserved during positioning. Once a piece has dedicated Warp/keyform/glue edits or finalized placement, whole-rig relocation is outside this version; do not erase animation. Add an independent child Warp/output parameter/physics group only when requested. Physics requires corresponding sway keyforms. Preserve shared parent motion and test the intended range. Legacy spatial_reference_id imports map the PNG or declared source_pixel_rect to the referenced canvas; new reference_id imports require explicit registration. Mutations rebuild the actual source, mesh, rig, and export preview before committing history. Soft deletion remains recoverable. Use object_get, keyform_set, keyform_delete, keyform_copy, and rig_k_pose for geometry and visual channels at arbitrary N-dimensional parameter coordinates. For hair separation, load the hair-separation prompt; isolated Views diagnose coverage, while assembled neutral and intended-range posed Views determine acceptance. Exclude the original source from replacement trial compositions without erasing its recoverable pixels.
+    PSD2Live edits a recoverable local model workspace. Use stable object IDs; rig_list_objects discovers them, rig_inspect gives compact geometry, and View images retain pixel/canvas mappings.
+    Edits require expected_history_head_node_id. Read project_get_state once, then chain returned heads. On stale heads or uncertain writes, reconcile state/history before retrying. History is append-only. Tasks are optional notes for longer work.
+    Choose tools to match intent: object_edit for names, visibility and hierarchy; rig_transform for shape changes at a parameter pose; keyform tools for channels; asset tools for artwork; physics_put to drive an already-authored shape parameter.
+    agent_get_workflow offers optional, focused knowledge by topic. Artwork may come from original pixels, SVG, painting or an available image generator according to style and user preference; this server imports PNG and does not generate illustrations.
+    Structural validity is not visual quality. Report actual changes and inspected poses; distinguish measured defects, visual judgment and uncertainty. Reuse good candidates and stop unproductive refinement within the user's budget.
 """.trimIndent()

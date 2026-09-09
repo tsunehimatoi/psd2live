@@ -1,5 +1,7 @@
 # psd2live Agent：产品与技术设计
 
+当前 MCP 编辑与知识契约见 [MCP_AUTHORING.md](MCP_AUTHORING.md)。下文保留历史设计背景；操作建议可按任务选择，数据合法性由接口验证。
+
 状态：Phase 0 / 0.5 已落地；Phase 1 已完成参数 CRUD、对象级 K 帧编辑、持久化分支历史与桌面历史/日志界面，完整 Domain Command/Transaction 仍在扩展中
 
 ### 素材定位与去背景 v2
@@ -368,12 +370,12 @@ Tool 应小而可组合。Skill 负责组合顺序和判断，不把整个工作
 
 1. 软件从 PSD 解码得到原生 RGBA，按 Agent 指定取景合成为 PNG，并通过 MCP `ImageContent` 给 Agent 看；
 2. Agent 保留 View 的 `spatialReferenceId` 和像素↔画布映射，不使用 UI 截图坐标；
-3. 只要任务会产生绘制差分、拆分边界、遮挡补全、重建像素或新 drawable，Agent 必须离开 PSD2Live Tool 链，实际调用宿主暴露的 Nano Banana Pro/NBP、GPT Image 2（`gpt-image-2`）或等效原生图片生成/编辑能力；
-4. 禁止用 Python、PIL/Pillow、OpenCV、Matplotlib、SVG、Canvas、ImageMagick、脚本或手写多边形绘制替代素材。唯一无需生成器的情形，是所有输出 RGBA 样本均原样来自已可见源像素的严格裁剪/提取；生成后可做非创作性的 Alpha 清理；
+素材由原图像素、SVG 栅格化、绘画或可用图像编辑器提供，按画风和用户偏好选择。MCP 接收 PNG，不限定生成器。
+4. 素材导入只约束格式与空间映射；是否重绘、矢量绘制或调用图像模型由任务决定；
 5. Agent 把透明 PNG 以 Base64 或 data URI 传给 `asset_import_png`，再用 `layer_add_from_asset` 加入图层；若只输出 View 子区域，必须声明 `source_pixel_rect`；
 6. Agent 用独立 View、上下文 View 和参数姿态 View 验证位置、边缘、遮挡和 Mesh，并在确认替代层有效后单独调用 `layer_soft_delete`；每个写入节点均可通过历史树恢复。
 
-当前设计明确把图片生成路由留给宿主：PSD2Live MCP 负责权威模型取证、空间映射、素材暂存与工程写入，不假装暴露宿主私有的图像模型。若宿主没有任何可用的原生图片能力，Agent 必须停在最后一个可恢复状态并报告缺失能力。未来内置 Provider 仍须遵守相同来源、历史和验证契约。
+素材由原图像素、SVG 栅格化、绘画或可用图像编辑器提供，按画风和用户偏好选择。MCP 接收 PNG，不限定生成器。
 
 ### 5.3 Mesh、Warp 与绑定
 
@@ -474,7 +476,7 @@ Skill 是领域作业指导，不是固定脚本。它应声明：
 - 可接受的质量阈值；
 - 对用户的完成报告格式。
 
-仓库当前提供 `.agent/skills/psd2live-rigging` 与 `.agent/skills/hair-separation`。连接窗口的“安装 Prompt”要求把它们复制到宿主官方 Skill 目录；任何 Agent 一旦调用 PSD2Live MCP，就先完整读取 `psd2live-rigging`，头发任务还要读取 `hair-separation`。两个 Skill 都强制执行宿主原生图片生成路由、最新 HEAD 并发边界、断线后查证和最终 View 验证；这些规则不影响不调用 MCP 的普通代码或文档工作。
+仓库提供精简的 psd2live-rigging 和 hair-separation。按任务读取相关知识，或通过 agent_get_workflow 选择主题；基本编辑无需加载绘画流程。
 
 例如“把刘海拆为三片并有独立物理”应由 Skill 引导 Agent 动态决定分割线、内外顺序、补全范围、Mesh 策略和物理参数；程序只强制不可变源、事务、alpha/拓扑/越界/物理约束。这样既保留模型判断力，也不把安全性寄托在 Prompt 是否听话上。
 
@@ -495,7 +497,7 @@ Skill 是领域作业指导，不是固定脚本。它应声明：
 1. 完整读取 `psd2live-rigging` 与 `hair-separation`，调用 `project_get_state`，并以 `task_start` 保存动态计划；
 2. 查询前发候选层，获取透明独立 View、周围上下文 View，并用 `object_get` 检查现有 Mesh、Deformer 与 K 帧；
 3. 判断素材是否完整，确定三片的根部、自然走向、交叠和缺失遮挡区；
-4. 对每个需要新边界或隐藏像素的输出，实际调用宿主的 Nano Banana Pro/NBP、GPT Image 2 或等效原生图片编辑能力，生成保留风格与完整根部的透明 PNG；
+4. 选择适合画风的绘画或图像工具补充新边界与隐藏体积，输出可注册的 PNG；
 5. 通过 `asset_import_png` 保留空间参考，再以最新 HEAD 分别调用 `layer_add_from_asset`；每次成功后把 View、Asset、Layer 与 History Node 写入 `task_update`；
 6. 尽早试拼三层，在正常观看尺寸下判断整体自然度、接合和局部遮挡；可接受无害轮廓/色调差异；在预期运动下可用后单独软删除原层；
 7. 分别生成用途匹配的 Mesh，检查退化/未闭合/过密；
@@ -549,7 +551,7 @@ psd2live 采用两层兼容：
 - `view_render_model` 支持显式参数姿态、图层叠加集合、部件标注、画布矩形或部件聚焦取景；
 - 所有 View 合成为 PNG，并返回像素↔画布的可逆空间映射与压缩后实际分辨率；
 - `hair-separation` MCP Prompt 和项目 Manifest Resource；
-- 项目级 `psd2live-rigging` / `hair-separation` Skill 已落地，并强制把绘制差分、拆分和遮挡补全路由到宿主原生图片工具；
+- Skill 提供按需绘画、差分、头发和脸部知识，保留制作方法选择；
 - 服务端 instructions 明确认证 Agent 的工作区所有者权限与不可改写历史边界；
 - 使用官方 Kotlin MCP Client 做端到端握手与 Tool 测试。
 

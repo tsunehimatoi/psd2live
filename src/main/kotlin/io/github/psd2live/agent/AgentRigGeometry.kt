@@ -13,12 +13,19 @@ internal object AgentRigGeometry {
         val kind=kind(a); val id=id(a); val pose=pose(a)
         val detail=a["detail"]?.jsonPrimitive?.content ?: "summary"
         require(detail in setOf("summary","points"))
-        val g=RigGeometryTools.geometry(model,kind,id,pose)
+        val source=RigGeometryTools.geometry(model,kind,id,pose)
+        val preview=a["operations"]?.jsonArray
+        val g=if(preview==null) source else source.copy(points=RigGeometryTools.transform(source,preview,
+            a["selection"]?.jsonObject ?: JsonObject(emptyMap()), a["range"]?.jsonObject ?: JsonObject(emptyMap())))
+        val reference=if(preview==null) RigGeometryTools.geometry(model,kind,id,emptyMap()).points else source.points
+        val triangles=if(kind=="warp") io.github.psd2live.core.RigGeometryDiagnostics.lattice(g.rows!!,g.columns!!)
+            else model.drawables.single { it.id.raw==id }.mesh!!.indices
         val offset=a["offset"]?.jsonPrimitive?.int ?: 0
         val limit=a["limit"]?.jsonPrimitive?.int ?: 64
         require(offset in 0..g.points.size/2 && limit in 1..256)
         val space=a["space"]?.jsonPrimitive?.content ?: "local"
         require(space in setOf("local","canvas"))
+        require(preview==null || space=="local") { "Preview points are parent-local" }
         return buildJsonObject {
             put("revisionId",revision);put("id",id);put("kind",kind);put("name",g.name);g.parent?.let { put("parentId",it) }
             put("coordinateSpace",if(space=="local") "parent_local_x_right_y_down" else "canvas_x_right_y_down")
@@ -29,6 +36,9 @@ internal object AgentRigGeometry {
                 put("reason","Runtime stores sampled positions, not native Bezier anchors or handles. Editor subdivision metadata does not supply control geometry.")
             }
             put("recommendedEditTool","rig_transform")
+            put("previewOnly",preview!=null)
+            put("diagnosticReference",if(preview==null) "parameter_defaults" else "input_pose_before_operations")
+            put("diagnostics",io.github.psd2live.core.RigGeometryDiagnostics.compare(reference,g.points,triangles))
             put("pointCount",g.points.size/2);put("keyformCount",g.keyCount)
             g.rows?.let { put("rows",it) };g.columns?.let { put("columns",it) }
             putJsonArray("axes") { g.axes.forEach { axis -> add(buildJsonObject { put("id",axis.parameterId.raw);put("keys",JsonArray(axis.keys.map(::JsonPrimitive))) }) } }

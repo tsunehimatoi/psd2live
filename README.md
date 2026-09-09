@@ -125,7 +125,7 @@ PSD2Live 是一个自动化的 Live2D 模型生成流水线与桌面应用。输
 
 当前 MCP 支持工程/图层/参数读取、对象与 K 帧编辑、参数 CRUD、模型数据 PNG View、透明素材导入、软删除、可恢复任务，以及追加式分支历史。每个会推进工程 `HEAD` 的编辑操作都要携带最新的 `expected_history_head_node_id`；超时或断线后先用 `project_get_state` 和 `history_list` 确认是否已经提交，不能盲目重试。
 
-PSD2Live MCP 负责模型 View、空间映射与素材回填，不提供宿主私有的图片生成器。差分、部件拆分、遮挡补全或像素重建应实际调用宿主原生的 Nano Banana Pro/NBP、GPT Image 2（`gpt-image-2`）或等效图片能力，再把透明 PNG 交给 `asset_import_png`；不得用 Python、PIL/OpenCV、SVG 或 Canvas 绘制替代素材。详细界面与配置说明见 [用户操作指南](docs/zh/USER_GUIDE.md)，工具契约与实施状态见 [Agent / MCP 产品与技术设计](docs/zh/AGENT_ARCHITECTURE.md)。
+PSD2Live 提供模型 View、空间映射和 PNG 导入。素材可按画风与用户偏好选择原图像素、SVG、绘画或可用图像工具；省略 `solid_background` 时保留原生透明度。通过 `agent_get_workflow` 按需读取 overview、geometry、hair、variants、face、assets。新增编辑接口与限制见 [MCP 编辑指南](docs/zh/MCP_AUTHORING.md)。
 
 ---
 

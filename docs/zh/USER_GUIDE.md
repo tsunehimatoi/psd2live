@@ -133,7 +133,7 @@ PSD2Live 启动时会在 `127.0.0.1:23871/mcp` 提供带 Bearer Token 的 Stream
 
 每次会推进工程 `HEAD` 的编辑操作必须携带当前 `expected_history_head_node_id`，成功后使用返回的新节点作为下一次写入基准。暂存 PNG 与任务事件不会移动 `HEAD`。若请求超时、断线或会话失效，写入结果可能未知；重新连接后先检查 `project_get_state`、`history_list`、任务记录和目标对象，再决定是否重试。Stdio 代理只会自动重试只读调用，不会盲目重放编辑操作。
 
-PNG View 来自模型数据而非 UI 截图，并携带可逆的像素↔画布映射。`asset_import_png` 会通过 `spatial_reference_id` 保留位置和尺寸；若只返回 View 的一个裁剪区域，还须声明 `source_pixel_rect`，长宽比不一致会被拒绝而不是拉伸。差分、部件拆分、遮挡补全或像素重建必须实际调用宿主原生的 Nano Banana Pro/NBP、GPT Image 2（`gpt-image-2`）或等效图片工具；PSD2Live MCP 只负责 View 与导入，不能用 Python、PIL/OpenCV、SVG 或 Canvas 绘制替代素材。
+PNG View 保留像素与画布的可逆映射。新素材使用 `reference_id` 和 `asset_register` 定位，旧 `spatial_reference_id` 方式仍可用。绘制方法可选择原图像素、SVG、绘画或可用图像工具。省略 `solid_background` 保留原生透明度，需要去底时显式传实际底色。新接口与限制见 [MCP 编辑指南](MCP_AUTHORING.md)。
 
 历史树、任务、空间参考和按 SHA-256 去重的 RGBA 素材会持久化。Windows 默认目录是 `%LOCALAPPDATA%/PSD2Live/agent-workspaces`，可通过 JVM 属性 `psd2live.agent.store` 修改。重新载入路径和文件签名均相同的 PSD 时，会恢复最后的 `HEAD`。
 
