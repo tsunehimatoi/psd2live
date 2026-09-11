@@ -21,6 +21,7 @@ internal object WorkspaceStateCodec {
     ))
     fun settings(state: PSD2LiveState): JsonObject = buildJsonObject {
         put("atlasSize", state.atlasSize)
+        put("textureUpscale", Json.encodeToJsonElement(state.textureUpscale))
         put("meshSpacing", state.meshSpacing)
         put("meshOuterMargin", state.meshOuterMargin)
         put("meshInnerMargin", state.meshInnerMargin)
@@ -82,6 +83,7 @@ internal object WorkspaceStateCodec {
         put("canvasPanY", state.canvasPanY)
         put("outputPath", state.outputPath)
         put("atlasSize", state.atlasSize)
+        put("textureUpscale", Json.encodeToJsonElement(state.textureUpscale))
         put("meshSpacing", state.meshSpacing)
         put("meshOuterMargin", state.meshOuterMargin)
         put("meshInnerMargin", state.meshInnerMargin)
@@ -173,6 +175,7 @@ internal object WorkspaceStateCodec {
         canvasPanY = value["canvasPanY"]?.jsonPrimitive?.float ?: base.canvasPanY,
         outputPath = value["outputPath"]?.jsonPrimitive?.content ?: base.outputPath,
         atlasSize = value["atlasSize"]?.jsonPrimitive?.int ?: base.atlasSize,
+        textureUpscale = value["textureUpscale"]?.let { Json.decodeFromJsonElement<io.github.psd2live.core.TextureUpscaleConfig>(it) } ?: base.textureUpscale,
         meshSpacing = value["meshSpacing"]?.jsonPrimitive?.int ?: base.meshSpacing,
         meshOuterMargin = value["meshOuterMargin"]?.jsonPrimitive?.float ?: base.meshOuterMargin,
         meshInnerMargin = value["meshInnerMargin"]?.jsonPrimitive?.float ?: base.meshInnerMargin,

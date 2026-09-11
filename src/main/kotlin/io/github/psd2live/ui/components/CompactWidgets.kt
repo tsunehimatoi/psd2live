@@ -923,6 +923,7 @@ fun <T> CompactDropdown(
 	onItemSelected: (T) -> Unit,
 	modifier: Modifier = Modifier,
 	itemLabel: (T) -> String = { it.toString() },
+	itemEnabled: (T) -> Boolean = { true },
 	enabled: Boolean = true,
 	height: Dp = 24.dp,
 ) {
@@ -963,21 +964,29 @@ fun <T> CompactDropdown(
 		) {
 			items.forEach { item ->
 				val isSelected = item == selectedItem
+				val isItemEnabled = itemEnabled(item)
 				DropdownMenuItem(
+					enabled = isItemEnabled,
 					onClick = {
-						onItemSelected(item)
-						expanded = false
+						if (isItemEnabled) {
+							onItemSelected(item)
+							expanded = false
+						}
 					},
 					modifier = Modifier
 						.height(26.dp)
 						.background(if (isSelected) colors.selection else Color.Transparent)
-						.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR))),
+						.pointerHoverIcon(if (isItemEnabled) PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)) else PointerIcon.Default),
 				) {
 					Text(
 						text = itemLabel(item),
 						style = typography.body.copy(
 							fontSize = 11.5.sp,
-							color = if (isSelected) colors.selectionText else colors.textPrimary,
+							color = when {
+								!isItemEnabled -> colors.textDisabled
+								isSelected -> colors.selectionText
+								else -> colors.textPrimary
+							},
 						),
 					)
 				}

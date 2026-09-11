@@ -376,7 +376,43 @@ private fun ModelSettingsSection(
 						.padding(start = 12.dp, top = 1.dp, bottom = 1.dp),
 					verticalArrangement = Arrangement.spacedBy(2.dp),
 				) {
+					var showInspectorUpscaleDialog by remember { mutableStateOf(false) }
+					if (showInspectorUpscaleDialog) {
+						io.github.psd2live.ui.components.TextureUpscaleDialog(
+							config = state.textureUpscale,
+							isBusy = isBusy,
+							isUpscaling = state.isUpscaling,
+							progress = state.progress,
+							statusText = state.statusText,
+							onDismiss = { showInspectorUpscaleDialog = false },
+							onApply = viewModel::setTextureUpscale,
+						)
+					}
+					// Row 0: Texture Upscale
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						verticalAlignment = Alignment.CenterVertically,
+					) {
+						Text(
+							text = tr("upscale.title"),
+							style = typography.body.copy(fontSize = 10.5.sp),
+							color = colors.textPrimary,
+							modifier = Modifier.width(76.dp),
+							textAlign = TextAlign.Right,
+						)
+						Spacer(Modifier.width(5.dp))
+						CompactButton(
+							text = if (state.textureUpscale.scale == 1) tr("upscale.off") else "${state.textureUpscale.scale}× (${state.textureUpscale.tileSize}px)",
+							isPrimary = state.textureUpscale.scale > 1,
+							enabled = !isBusy,
+							onClick = { showInspectorUpscaleDialog = true },
+							modifier = Modifier.weight(1f),
+							height = 20.dp,
+						)
+					}
+
 					val atlasOptions = listOf(1024, 2048, 4096, 8192, 16384)
+					val minRequiredAtlasSize = state.minRequiredAtlasSize()
 					// Row 1: Atlas Size
 					Row(
 						modifier = Modifier.fillMaxWidth(),
@@ -394,7 +430,11 @@ private fun ModelSettingsSection(
 							items = atlasOptions,
 							selectedItem = state.atlasSize.takeIf { it in atlasOptions } ?: atlasOptions[2],
 							onItemSelected = { viewModel.setAtlasSize(it) },
-							itemLabel = { "${it} × ${it}" },
+							itemLabel = { size ->
+								if (size < minRequiredAtlasSize) "${size} × ${size} (${tr("settings.atlasTooSmall")})"
+								else "${size} × ${size}"
+							},
+							itemEnabled = { size -> size >= minRequiredAtlasSize },
 							modifier = Modifier.weight(1f),
 							enabled = !isBusy,
 							height = 20.dp,
@@ -403,7 +443,7 @@ private fun ModelSettingsSection(
 						CompactNumberSpinner(
 							value = state.atlasSize.toDouble(),
 							onValueChange = { viewModel.setAtlasSize(it.toInt()) },
-							min = 256.0,
+							min = maxOf(256.0, minRequiredAtlasSize.toDouble()),
 							max = 16384.0,
 							step = 256.0,
 							decimals = 0,

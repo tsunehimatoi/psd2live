@@ -18,8 +18,8 @@ internal fun validateRegisteredNeutral(preview: RigPreviewModel, layerIds: Set<S
         val actual = requireNotNull(evaluated.worldPositions[drawable.id])
         require(actual.size == uv.size)
         for (i in actual.indices step 2) {
-            val x = layer.bounds.left + uv[i]*page.width - placement.x
-            val y = layer.bounds.top + uv[i+1]*page.height - placement.y
+            val x = layer.bounds.left + (uv[i]*page.width - placement.x) / placement.scale
+            val y = layer.bounds.top + (uv[i+1]*page.height - placement.y) / placement.scale
             require(actual[i].isFinite() && actual[i+1].isFinite() && abs(actual[i]-x) < 2f && abs(-actual[i+1]-y) < 2f) {
                 "Neutral placement drift/reflection for $layerId at vertex ${i/2}. Inspect source raster, parent ${drawable.parentDeformerId?.raw}, geometry and flip channels. No commit was made; original asset and registration remain recoverable."
             }

@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import org.umamo.runtime.model.ParameterId
 import org.umamo.format.art.SourceArt
@@ -266,10 +267,43 @@ class PSD2LiveViewModel : AutoCloseable {
 	    markWorkspaceChanged()
 	}
 
-	fun setAtlasSize(size: Int) {
-		_state.update { it.copy(atlasSize = size) }
+	fun setTextureUpscale(config: io.github.psd2live.core.TextureUpscaleConfig) {
+		val current = _state.value
+		val prevScale = current.textureUpscale.scale
+		val minRequired = current.minRequiredAtlasSize(config.scale)
+		val shouldAutoExpand = config.scale > 1 && current.atlasSize < minRequired
+		val newAtlasSize = if (shouldAutoExpand) minRequired else current.atlasSize
+		if (config.scale > 1) {
+			addLog(
+				message = tr("log.upscaleConfigured", config.scale, config.tileSize),
+				level = LogLevel.INFO,
+				tag = "Upscale",
+			)
+		} else if (prevScale > 1) {
+			addLog(
+				message = tr("log.upscaleDisabled"),
+				level = LogLevel.INFO,
+				tag = "Upscale",
+			)
+		}
+		if (shouldAutoExpand) {
+			addLog(
+				message = tr("log.atlasAutoExpanded", newAtlasSize),
+				level = LogLevel.INFO,
+				tag = "Upscale",
+			)
+		}
+		_state.update { it.copy(textureUpscale = config, atlasSize = newAtlasSize) }
 		schedulePreviewRebuild()
-	    editorChanged()
+		editorChanged()
+	}
+
+	fun setAtlasSize(size: Int) {
+		val minRequired = _state.value.minRequiredAtlasSize()
+		val validSize = maxOf(size, minRequired)
+		_state.update { it.copy(atlasSize = validSize) }
+		schedulePreviewRebuild()
+		editorChanged()
 	}
 
 	fun setMeshSpacing(spacing: Int) {
@@ -624,6 +658,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		_state.update {
 			it.copy(
 				atlasSize = 4096,
+                textureUpscale = io.github.psd2live.core.TextureUpscaleConfig(),
 				textureSubExpanded = false,
 				meshSubExpanded = false,
 				strengthSubExpanded = false,
@@ -797,6 +832,7 @@ class PSD2LiveViewModel : AutoCloseable {
 					)
 				}
 			} catch (failure: Throwable) {
+                if (failure is kotlinx.coroutines.CancellationException) throw failure
 				val err = failure.message ?: failure.javaClass.simpleName
 				addLog(
 					message = "History checkout failed: $err",
@@ -1282,7 +1318,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			}
 			try {
 				val config = _state.value.copy(layerVisibility = emptyMap(), layerOverrides = emptyMap(), deletedLayerIds = emptySet(), parentOverrides = emptyMap(), rigEdits = RigEditOverlay.Empty).buildConfig()
-				val preview = withContext(Dispatchers.Default) {
+				val preview = runInterruptible(Dispatchers.Default) {
 					pipeline.buildPreview(input, config)
 				}
 				val inputSignature = runCatching {
@@ -1328,6 +1364,7 @@ class PSD2LiveViewModel : AutoCloseable {
                 (agentWorkspace as? io.github.psd2live.agent.ViewModelAgentWorkspace)?.importedPsd()
                 _state.update { it.copy(isAnalyzing = false) }
 			} catch (failure: Throwable) {
+                if (failure is kotlinx.coroutines.CancellationException) throw failure
 				val detail = failure.message ?: failure.javaClass.simpleName
 				_state.update {
 					it.withLog(tr("log.failed", detail), level = LogLevel.ERROR, tag = "Analysis").copy(
@@ -1376,7 +1413,17 @@ class PSD2LiveViewModel : AutoCloseable {
 		activeWorkJob?.cancel()
 		activeWorkJob = scope.launch {
 			_state.update {
-				it.withLog(tr("status.generating"), level = LogLevel.INFO, tag = "Export").copy(
+				val base = it.withLog(tr("status.generating"), level = LogLevel.INFO, tag = "Export")
+				val withUpscale = if (config.textureUpscale.scale > 1) {
+					base.withLog(
+						tr("log.upscaleExportActive", config.textureUpscale.scale),
+						level = LogLevel.INFO,
+						tag = "Upscale",
+					)
+				} else {
+					base
+				}
+				withUpscale.copy(
 					isGenerating = true,
 					isIndeterminateProgress = false,
 					progress = 0f,
@@ -1386,10 +1433,11 @@ class PSD2LiveViewModel : AutoCloseable {
 				)
 			}
 			try {
-				val result = withContext(Dispatchers.Default) {
+				val result = runInterruptible(Dispatchers.Default) {
 					val progress = ProgressListener { stage, fraction ->
 							_state.update {
-								it.withLog("%3d%%  %s".format((fraction * 100).toInt(), stage), level = LogLevel.INFO, tag = "Export").copy(
+								val tag = if (stage.contains("高清化") || stage.contains("upscal", true) || stage.contains("高解像度")) "Upscale" else "Export"
+								it.withLog("%3d%%  %s".format((fraction * 100).toInt(), stage), level = LogLevel.INFO, tag = tag).copy(
 									progress = fraction.toFloat().coerceIn(0f, 1f),
 									statusText = stage,
 								)
@@ -1422,6 +1470,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				}
 				sdkSession.load(result.previewModel.runtimeBundle, result.previewModel.rig.puppet.parameters.map { it.id })
 			} catch (failure: Throwable) {
+                if (failure is kotlinx.coroutines.CancellationException) throw failure
 				val detail = failure.message ?: failure.javaClass.simpleName
 				_state.update {
 					it.withLog(tr("log.failed", detail), level = LogLevel.ERROR, tag = "Export").copy(
@@ -1436,7 +1485,7 @@ class PSD2LiveViewModel : AutoCloseable {
 
 	/** CPU-heavy rebuild used by the authenticated Agent transaction boundary. */
 	internal suspend fun buildAgentWorkspacePreview(source: SourceArt, config: PipelineConfig): RigPreviewModel =
-		withContext(Dispatchers.Default) { pipeline.buildPreview(source, config) }
+		runInterruptible(Dispatchers.Default) { pipeline.buildPreview(source, config) }
 
 	/** Publish one already-built authoritative workspace snapshot atomically to Compose and preview. */
 	internal fun applyAgentWorkspacePreview(
@@ -1508,7 +1557,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			delay(30)
 			try {
 				val config = _state.value.buildConfig()
-				val updated = withContext(Dispatchers.Default) {
+				val updated = runInterruptible(Dispatchers.Default) {
 					pipeline.updateRuntimeBundle(previous, config)
 				}
 				_state.update {
@@ -1516,11 +1565,11 @@ class PSD2LiveViewModel : AutoCloseable {
 				}
 				sdkSession.load(updated.runtimeBundle, updated.rig.puppet.parameters.map { it.id })
 			} catch (failure: Throwable) {
+                if (failure is kotlinx.coroutines.CancellationException) throw failure
 				val detail = failure.message ?: failure.javaClass.simpleName
 				_state.update {
-					it.copy(
+					it.withLog(tr("log.previewUpdateFailed", detail), level = LogLevel.ERROR, tag = "Preview").copy(
 						statusText = tr("status.previewUpdateFailed", detail),
-						logLines = it.logLines + listOf(tr("log.previewUpdateFailed", detail)),
 					)
 				}
 			}
@@ -1534,19 +1583,74 @@ class PSD2LiveViewModel : AutoCloseable {
 		previewRebuildJob?.cancel()
 		previewRebuildJob = scope.launch {
 			delay(60)
-			_state.update { it.copy(statusText = tr("status.applyingLayerChanges")) }
+			val isUpscalingJob = _state.value.textureUpscale.scale > 1 && _state.value.textureUpscale != previous.config.textureUpscale
+			_state.update { current ->
+				val base = if (isUpscalingJob) {
+					current.withLog(
+						message = tr("log.upscaleStarting", current.textureUpscale.scale),
+						level = LogLevel.INFO,
+						tag = "Upscale",
+					).copy(
+						logPanelExpanded = true,
+					)
+				} else {
+					current
+				}
+				base.copy(
+					statusText = if (isUpscalingJob) tr("upscale.startingInference") else tr("status.applyingLayerChanges"),
+					isUpscaling = isUpscalingJob,
+					progress = 0f,
+				)
+			}
 			try {
 				val config = _state.value.buildConfig()
 				val baseLayers = previous.analysis.layers.filter { it.source !is io.github.psd2live.core.MouthLipLayer }
 				val baseAnalysis = previous.analysis.copy(layers = baseLayers)
-				val rebuilt = withContext(Dispatchers.Default) {
-					pipeline.buildPreview(baseAnalysis, config)
+				var lastReportedStage: String? = null
+				val progress = ProgressListener { stage, frac ->
+					_state.update { current ->
+						val shouldLog = stage.isNotBlank() && stage != lastReportedStage
+						if (shouldLog) {
+							lastReportedStage = stage
+						}
+						val base = if (shouldLog) {
+							val tag = if (current.isUpscaling) "Upscale" else "Preview"
+							current.withLog(
+								message = "%3d%%  %s".format((frac * 100).toInt(), stage),
+								level = LogLevel.INFO,
+								tag = tag,
+							)
+						} else {
+							current
+						}
+						base.copy(
+							statusText = stage,
+							progress = frac.toFloat().coerceIn(0f, 1f),
+						)
+					}
 				}
+				val rebuilt = runInterruptible(Dispatchers.Default) {
+					pipeline.buildPreview(baseAnalysis, config, progress)
+				}
+				val packedAtlasSize = rebuilt.atlas.pages.firstOrNull()?.image?.width ?: config.atlasSize
 				_state.update { current ->
 					val validParamIds = rebuilt.rig.puppet.parameters.mapTo(mutableSetOf()) { it.id }
-					current.copy(
+					val completionMsg = if (isUpscalingJob) {
+						tr("log.upscaleCompleted", rebuilt.analysis.layers.size, packedAtlasSize, packedAtlasSize)
+					} else {
+						tr("log.previewUpdated")
+					}
+					val base = current.withLog(
+						message = completionMsg,
+						level = LogLevel.SUCCESS,
+						tag = if (isUpscalingJob) "Upscale" else "Preview",
+					)
+					base.copy(
 						previewModel = rebuilt,
 						analysis = rebuilt.analysis,
+						atlasSize = maxOf(current.atlasSize, packedAtlasSize),
+						isUpscaling = false,
+						progress = 1f,
 						lockedParameters = current.lockedParameters.intersect(validParamIds),
 						parameterValues = rebuilt.rig.puppet.parameters.associate { param ->
 							param.id to (current.parameterValues[param.id] ?: param.default).coerceIn(param.min, param.max)
@@ -1556,11 +1660,17 @@ class PSD2LiveViewModel : AutoCloseable {
 				}
 				sdkSession.load(rebuilt.runtimeBundle, rebuilt.rig.puppet.parameters.map { it.id })
 			} catch (failure: Throwable) {
+                if (failure is kotlinx.coroutines.CancellationException) throw failure
 				val detail = failure.message ?: failure.javaClass.simpleName
 				_state.update {
-					it.copy(
+					it.withLog(
+						message = if (isUpscalingJob) tr("log.upscaleFailed", detail) else tr("log.previewUpdateFailed", detail),
+						level = LogLevel.ERROR,
+						tag = if (isUpscalingJob) "Upscale" else "Preview",
+					).copy(
+						isUpscaling = false,
 						statusText = tr("status.previewUpdateFailed", detail),
-						logLines = it.logLines + listOf(tr("log.previewUpdateFailed", detail)),
+						errorMessage = detail,
 					)
 				}
 			}

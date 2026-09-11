@@ -86,6 +86,7 @@ fun AppTitleBar(
 	onClose: () -> Unit,
 	onSetLanguage: (AppLanguage) -> Unit,
 	onShowAgentConnection: () -> Unit,
+	onShowTextureUpscale: () -> Unit,
 	onShowHistory: () -> Unit,
 	onShowAbout: () -> Unit,
 ) {
@@ -184,7 +185,31 @@ fun AppTitleBar(
 				}
 			}
 
-			// 2. Agent / MCP Menu (Dedicated top-level menu)
+			// 2. Tools Menu
+			TitleBarMenuItem(
+				title = tr("menu.tools"),
+				isOpen = activeMenu == "tools",
+				onToggle = { activeMenu = if (activeMenu == "tools") null else "tools" },
+				onHoverWhenActive = { if (activeMenu != null && activeMenu != "tools") activeMenu = "tools" },
+			) {
+				AppSeamlessDropdownMenu(
+					expanded = activeMenu == "tools",
+					onDismissRequest = { activeMenu = null },
+					modifier = Modifier.widthIn(min = 180.dp, max = 240.dp),
+				) {
+					AppMenuItem(
+						text = tr("menu.tools.textureUpscale"),
+						shortcut = "Ctrl+U",
+						enabled = hasInput && !isBusy,
+						onClick = {
+							activeMenu = null
+							onShowTextureUpscale()
+						},
+					)
+				}
+			}
+
+			// 3. Agent / MCP Menu (Dedicated top-level menu)
 			TitleBarMenuItem(
 				title = tr("menu.agent"),
 				isOpen = activeMenu == "agent",

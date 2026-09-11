@@ -1208,8 +1208,8 @@ object RigBuilder {
 				positions[index + 1] = normalizeY(rigPoint.second, parentFrame)
 				canvas[index] = rigPoint.first
 				canvas[index + 1] = rigPoint.second
-				uvs[index] = (placement.x + localX) / atlasSize
-				uvs[index + 1] = (placement.y + localY) / atlasSize
+				uvs[index] = (placement.x + localX * placement.scale) / atlasSize
+				uvs[index + 1] = (placement.y + localY * placement.scale) / atlasSize
 			}
 			return MeshData(DrawableMesh(positions, uvs, adaptive.indices), canvas)
 		}
@@ -1245,8 +1245,8 @@ object RigBuilder {
 				positions[vertex * 2 + 1] = normalizeY(rigPoint.second, parentFrame)
 				canvas[vertex * 2] = rigPoint.first
 				canvas[vertex * 2 + 1] = rigPoint.second
-				uvs[vertex * 2] = (placement.x + u * width) / atlasSize
-				uvs[vertex * 2 + 1] = (placement.y + v * height) / atlasSize
+				uvs[vertex * 2] = (placement.x + u * width * placement.scale) / atlasSize
+				uvs[vertex * 2 + 1] = (placement.y + v * height * placement.scale) / atlasSize
 				vertex++
 			}
 		}
@@ -1520,8 +1520,8 @@ object RigBuilder {
             rig[j]=p.first; rig[j+1]=y
             positions[j]=normalizeX(p.first,frame); positions[j+1]=normalizeY(y,frame)
             val canvas = space?.toCanvas(p.first,y) ?: (p.first to y)
-            uvs[j]=(placement.x+canvas.first-layer.source.bounds.left)/atlasSize
-            uvs[j+1]=(placement.y+canvas.second-layer.source.bounds.top)/atlasSize
+            uvs[j]=(placement.x+(canvas.first-layer.source.bounds.left)*placement.scale)/atlasSize
+            uvs[j+1]=(placement.y+(canvas.second-layer.source.bounds.top)*placement.scale)/atlasSize
         }
         val indices = (0 until samples.lastIndex).flatMap { i -> (0..1).flatMap { row ->
             val a=i*3+row; listOf(a,a+1,a+3,a+1,a+4,a+3)
@@ -1557,7 +1557,7 @@ object RigBuilder {
         val positions = normalized(MouthStrokeMesh.positions(path, radius, joins))
         val texture = MouthStrokeMesh.texturePositions(path.size, joins)
         val uvs = FloatArray(texture.size) { i ->
-            (texture[i] + if (i % 2 == 0) placement.x else placement.y) / atlasSize
+            (texture[i] * placement.scale + if (i % 2 == 0) placement.x else placement.y) / atlasSize
         }
         val geometry = grid(mouthAxes()) { values ->
             val transformed = path.map { p ->

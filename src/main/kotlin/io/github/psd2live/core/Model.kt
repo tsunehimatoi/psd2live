@@ -109,6 +109,7 @@ data class MeshSettings(
 
 data class PipelineConfig(
 	val atlasSize: Int = 4096,
+	val textureUpscale: TextureUpscaleConfig = TextureUpscaleConfig(),
 	val texturePadding: Int = 2,
 	val meshSpacing: Int = 40,
 	val meshOuterMargin: Float = 1.0f,
@@ -213,6 +214,8 @@ data class AtlasPlacement(
 	val y: Int,
 	val width: Int,
 	val height: Int,
+	/** Texture pixels per original canvas pixel. */
+	val scale: Int = 1,
 )
 
 data class AtlasPage(val image: BufferedImage, val png: ByteArray)

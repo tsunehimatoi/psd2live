@@ -68,6 +68,7 @@ import io.github.psd2live.ui.components.CompactButton
 import io.github.psd2live.ui.components.CompactIconButton
 import io.github.psd2live.ui.components.IconClose
 import io.github.psd2live.ui.components.ImageLightboxDialog
+import io.github.psd2live.ui.components.TextureUpscaleDialog
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.state.WorkspaceTab
@@ -104,6 +105,7 @@ fun FrameWindowScope.PSD2LiveApp(
 	val state by viewModel.state.collectAsState()
 	var showAboutDialog by remember { mutableStateOf(false) }
 	var showAgentDialog by remember { mutableStateOf(false) }
+	var showUpscaleDialog by remember { mutableStateOf(false) }
 
 	viewModel.confirmUnsavedChanges = {
         JOptionPane.showOptionDialog(window, tr("project.unsaved"), tr("project.save"), JOptionPane.DEFAULT_OPTION,
@@ -137,7 +139,7 @@ fun FrameWindowScope.PSD2LiveApp(
 		val colors = LocalToolColors.current
 		val typography = LocalToolTypography.current
 
-		val isBusy = state.isAnalyzing || state.isGenerating
+		val isBusy = state.isBusy
 		val hasInput = state.inputPath.isNotBlank()
 		val hasOutput = state.outputPath.isNotBlank()
 		val canGenerate = hasInput && (state.exportCmo3 || state.exportMoc3) && !isBusy
@@ -219,6 +221,12 @@ fun FrameWindowScope.PSD2LiveApp(
 								onReanalyzeAction()
 								true
 							}
+							Key.U -> {
+								if (hasInput && !isBusy) {
+									showUpscaleDialog = true
+								}
+								true
+							}
 							Key.G -> {
 								if (event.isShiftPressed) {
 									triggerExportTo()
@@ -259,6 +267,7 @@ fun FrameWindowScope.PSD2LiveApp(
 						onClose = onCloseRequest,
 						onSetLanguage = { viewModel.setLanguage(it) },
 						onShowAgentConnection = { showAgentDialog = true },
+						onShowTextureUpscale = { showUpscaleDialog = true },
 						onShowHistory = { viewModel.setWorkspaceTab(WorkspaceTab.HISTORY) },
 						onShowAbout = { showAboutDialog = true },
 					)
@@ -382,6 +391,18 @@ fun FrameWindowScope.PSD2LiveApp(
 			)
 		}
 
+		if (showUpscaleDialog) {
+			TextureUpscaleDialog(
+				config = state.textureUpscale,
+				isBusy = isBusy,
+				isUpscaling = state.isUpscaling,
+				progress = state.progress,
+				statusText = state.statusText,
+				onDismiss = { showUpscaleDialog = false },
+				onApply = viewModel::setTextureUpscale,
+			)
+		}
+
 		state.lightboxImage?.let { imgBytes ->
 			ImageLightboxDialog(
 				imageBytes = imgBytes,
@@ -405,19 +426,21 @@ fun FrameWindowScope.PSD2LiveApp(
 }
 
 @Composable
-private fun StatusBar(state: PSD2LiveState) {
+private fun StatusBar(
+	state: PSD2LiveState,
+	modifier: Modifier = Modifier,
+) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 
 	Row(
-		modifier = Modifier
+		modifier = modifier
 			.fillMaxWidth()
 			.height(24.dp)
 			.background(colors.panelElevated)
 			.border(BorderStroke(1.dp, colors.divider))
 			.padding(horizontal = 8.dp),
 		verticalAlignment = Alignment.CenterVertically,
-		horizontalArrangement = Arrangement.SpaceBetween,
 	) {
 		Text(
 			text = state.statusText.ifBlank { tr("status.ready") },
@@ -428,7 +451,7 @@ private fun StatusBar(state: PSD2LiveState) {
 			modifier = Modifier.weight(1f),
 		)
 
-		if (state.isAnalyzing || state.isGenerating) {
+		if (state.isBusy) {
 			Spacer(Modifier.width(12.dp))
 			Row(
 				verticalAlignment = Alignment.CenterVertically,

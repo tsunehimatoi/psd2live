@@ -35,12 +35,19 @@ class PSD2LivePipeline {
 	fun buildPreview(psd: Path, config: PipelineConfig = PipelineConfig()): RigPreviewModel =
 		buildPreview(inspect(psd, config), config)
 
-	fun buildPreview(source: SourceArt, config: PipelineConfig = PipelineConfig()): RigPreviewModel =
-		buildPreview(CharacterAnalyzer.analyze(source, config), config)
+	fun buildPreview(
+		source: SourceArt,
+		config: PipelineConfig = PipelineConfig(),
+		progress: ProgressListener = ProgressListener { _, _ -> },
+	): RigPreviewModel = buildPreview(CharacterAnalyzer.analyze(source, config), config, progress)
 
-	fun buildPreview(analysis: PipelineAnalysis, config: PipelineConfig = PipelineConfig()): RigPreviewModel {
+	fun buildPreview(
+		analysis: PipelineAnalysis,
+		config: PipelineConfig = PipelineConfig(),
+		progress: ProgressListener = ProgressListener { _, _ -> },
+	): RigPreviewModel {
         val effectiveAnalysis = MouthLipLayers.prepare(analysis, config)
-        val atlas = AtlasPacker.pack(effectiveAnalysis.layers, config.atlasSize, config.texturePadding)
+        val atlas = AtlasPacker.pack(effectiveAnalysis.layers, config.atlasSize, config.texturePadding, config.textureUpscale, progress)
 		val rig = RigBuilder.build(effectiveAnalysis, atlas, config).withRigEdits(config.rigEdits)
 		val runtimeBundle = buildRuntimeBundle("psd2live-preview", effectiveAnalysis, atlas, rig, config).first
 		return RigPreviewModel(effectiveAnalysis, atlas, rig, config, runtimeBundle)
@@ -51,7 +58,11 @@ class PSD2LivePipeline {
 		current: RigPreviewModel,
 		config: PipelineConfig,
 		baseName: String = "psd2live-preview",
+		progress: ProgressListener = ProgressListener { _, _ -> },
 	): RigPreviewModel {
+		if (config.textureUpscale != current.config.textureUpscale) {
+			return buildPreview(current.analysis, config, progress)
+		}
 		val (runtimeBundle, _) = buildRuntimeBundle(baseName, current.analysis, current.atlas, current.rig, config)
 		return current.copy(config = config, runtimeBundle = runtimeBundle)
 	}
@@ -101,7 +112,7 @@ class PSD2LivePipeline {
 	): PipelineResult {
         val analysis = MouthLipLayers.prepare(inputAnalysis, config)
 		progress.update(tr("progress.classify"), 0.18)
-		val atlas = AtlasPacker.pack(analysis.layers, config.atlasSize, config.texturePadding)
+		val atlas = AtlasPacker.pack(analysis.layers, config.atlasSize, config.texturePadding, config.textureUpscale, progress)
 		progress.update(tr("progress.atlas"), 0.38)
 		val rig = RigBuilder.build(analysis, atlas, config).withRigEdits(config.rigEdits)
 		val generatedLabel = tr("validation.generated")
