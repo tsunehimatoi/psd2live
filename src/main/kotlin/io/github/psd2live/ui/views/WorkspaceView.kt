@@ -614,7 +614,7 @@ private fun HierarchyTreeList(
 				)
 			}
 
-			// Row 2: Deformer & Filter Sub-options (Selected Only, Names, Indices)
+			// Row 2: Focus & Intelligent Filtering (Selected Only, Dim Unselected, Contextual Warp)
 			Row(
 				modifier = Modifier.fillMaxWidth(),
 				verticalAlignment = Alignment.CenterVertically,
@@ -624,21 +624,47 @@ private fun HierarchyTreeList(
 					text = tr("canvas.information.selectedOnly"),
 					selected = state.filterSelectedOnly,
 					onToggle = { viewModel.setFilterSelectedOnly(!state.filterSelectedOnly) },
-					modifier = Modifier.weight(1.15f),
+					modifier = Modifier.weight(1f),
 				)
+				CompactToggleChip(
+					text = tr("canvas.visibility.dimUnselected"),
+					selected = state.dimUnselected,
+					onToggle = { viewModel.setDimUnselected(!state.dimUnselected) },
+					modifier = Modifier.weight(1f),
+				)
+				CompactToggleChip(
+					text = tr("canvas.information.contextualWarp"),
+					selected = state.contextualWarp,
+					onToggle = { viewModel.setContextualWarp(!state.contextualWarp) },
+					modifier = Modifier.weight(1f),
+				)
+			}
+
+			// Row 3: Detail Overlays & Selection Indicators (Names, Indices, Selection Bounds)
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.spacedBy(4.dp),
+			) {
 				CompactToggleChip(
 					text = tr("canvas.information.names"),
 					selected = state.warpShowNames,
 					onToggle = { viewModel.setWarpShowNames(!state.warpShowNames) },
 					enabled = state.showWarp,
-					modifier = Modifier.weight(0.9f),
+					modifier = Modifier.weight(1f),
 				)
 				CompactToggleChip(
 					text = tr("canvas.information.indices"),
 					selected = state.warpShowIndices,
 					onToggle = { viewModel.setWarpShowIndices(!state.warpShowIndices) },
 					enabled = state.showWarp,
-					modifier = Modifier.weight(0.95f),
+					modifier = Modifier.weight(1f),
+				)
+				CompactToggleChip(
+					text = tr("canvas.information.selectionBounds"),
+					selected = state.showSelectionBounds,
+					onToggle = { viewModel.setShowSelectionBounds(!state.showSelectionBounds) },
+					modifier = Modifier.weight(1f),
 				)
 			}
 		}
@@ -797,6 +823,23 @@ private fun HierarchyTreeList(
 					}
 				}
 
+				val selectedAncestorDeformerIds = remember(model, state.selectedLayerId, state.parentOverrides) {
+					if (state.selectedLayerId == null) emptySet<String>()
+					else {
+						val drawableId = model.rig.layerIdByDrawableId.entries.firstOrNull { it.value == state.selectedLayerId }?.key
+						val drawable = drawableId?.let { id -> model.rig.puppet.drawables.firstOrNull { it.id.raw == id } }
+						val ancestors = mutableSetOf<String>()
+						val deformerById = model.rig.puppet.deformers.associateBy { it.id.raw }
+						var parent = drawable?.let { state.parentOverrides[it.id.raw] ?: it.parentDeformerId?.raw }
+						val seen = mutableSetOf<String>()
+						while (parent != null && seen.add(parent)) {
+							ancestors.add(parent)
+							parent = state.parentOverrides[parent] ?: deformerById[parent]?.parent?.raw
+						}
+						ancestors
+					}
+				}
+
 				for ((index, chain) in rootChains.withIndex()) {
 					val isLast = index == rootChains.lastIndex && rootDrawables.isEmpty()
 					DeformerTreeItem(
@@ -814,6 +857,7 @@ private fun HierarchyTreeList(
 						containerCoordinates = containerCoordinates,
 						itemBoundsMap = itemBoundsMap,
 						searchQuery = searchQuery,
+						selectedAncestorDeformerIds = selectedAncestorDeformerIds,
 						onRequestSetOrder = onRequestSetOrder,
 						onRequestSetMeshSettings = onRequestSetMeshSettings,
 					)
@@ -931,6 +975,7 @@ private fun DeformerTreeItem(
 	containerCoordinates: LayoutCoordinates?,
 	itemBoundsMap: MutableMap<String, ItemLayoutInfo>,
 	searchQuery: String = "",
+	selectedAncestorDeformerIds: Set<String> = emptySet(),
 	onRequestSetOrder: ((targetId: String, name: String, currentOrder: Float, defaultOrder: Float, isOverridden: Boolean) -> Unit)? = null,
 	onRequestSetMeshSettings: ((MeshSettingsDialogTarget) -> Unit)? = null,
 ) {
@@ -944,6 +989,7 @@ private fun DeformerTreeItem(
 
 	val isExpanded = expandedMap[headId] ?: true
 	val isSelected = chain.deformers.any { it.id.raw == state.selectedDeformerId }
+	val isAncestorOfSelected = chain.deformers.any { it.id.raw in selectedAncestorDeformerIds }
 	val type = if (tailDeformer is Deformer.Warp) "Warp" else "Rotation"
 
 	val childDeformers = deformerChildrenMap[tailId].orEmpty()
@@ -990,6 +1036,7 @@ private fun DeformerTreeItem(
 						isSelected -> colors.selection
 						isCurrentDragged -> colors.panelElevated.copy(alpha = 0.45f)
 						isHovered -> colors.controlHover.copy(alpha = 0.3f)
+						isAncestorOfSelected -> colors.accent.copy(alpha = 0.14f)
 						else -> Color.Transparent
 					}
 				)
@@ -1064,8 +1111,14 @@ private fun DeformerTreeItem(
 						)
 					}
 				}
-				.onPointerEvent(PointerEventType.Enter) { isHovered = true }
-				.onPointerEvent(PointerEventType.Exit) { isHovered = false }
+				.onPointerEvent(PointerEventType.Enter) {
+					isHovered = true
+					viewModel.setHoveredItem(layerId = null, deformerId = tailId)
+				}
+				.onPointerEvent(PointerEventType.Exit) {
+					isHovered = false
+					viewModel.setHoveredItem(null, null)
+				}
 				.onPointerEvent(PointerEventType.Press) { event ->
 					if (event.button == PointerButton.Secondary) {
 						showMenu = true
@@ -1158,6 +1211,15 @@ private fun DeformerTreeItem(
 				overflow = TextOverflow.Ellipsis,
 				modifier = Modifier.weight(1f),
 			)
+
+			if (isAncestorOfSelected) {
+				Text(
+					text = "[${tr("canvas.hierarchy.ancestorBadge")}]",
+					style = typography.monoSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.SemiBold),
+					color = colors.accent,
+				)
+				Spacer(Modifier.width(3.dp))
+			}
 
 			Text(
 				text = "[$type]",
@@ -1262,6 +1324,7 @@ private fun DeformerTreeItem(
 				containerCoordinates = containerCoordinates,
 				itemBoundsMap = itemBoundsMap,
 				searchQuery = searchQuery,
+				selectedAncestorDeformerIds = selectedAncestorDeformerIds,
 				onRequestSetOrder = onRequestSetOrder,
 				onRequestSetMeshSettings = onRequestSetMeshSettings,
 			)
@@ -1398,8 +1461,14 @@ private fun DrawableTreeItem(
 						)
 					}
 				}
-				.onPointerEvent(PointerEventType.Enter) { isHovered = true }
-				.onPointerEvent(PointerEventType.Exit) { isHovered = false }
+				.onPointerEvent(PointerEventType.Enter) {
+					isHovered = true
+					viewModel.setHoveredItem(layerId = layerId, deformerId = null)
+				}
+				.onPointerEvent(PointerEventType.Exit) {
+					isHovered = false
+					viewModel.setHoveredItem(null, null)
+				}
 				.onPointerEvent(PointerEventType.Press) { event ->
 					if (event.button == PointerButton.Secondary) {
 						showMenu = true
@@ -1498,6 +1567,24 @@ private fun DrawableTreeItem(
 				.widthIn(min = 160.dp, max = 220.dp),
 		) {
 			val isAlreadyRoot = drawable.parentDeformerId == null
+
+			if (layerId != null) {
+				val isIsolated = state.isolatedLayerId == layerId
+				DropdownMenuItem(onClick = {
+					viewModel.isolateLayer(layerId)
+					showMenu = false
+				}) {
+					Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+						IconEye(visible = true, modifier = Modifier.size(12.dp), tint = if (isIsolated) colors.accent else colors.textMuted)
+						Text(
+							if (isIsolated) tr("canvas.hierarchy.unsoloLayer") else tr("canvas.hierarchy.soloLayer"),
+							style = typography.body.copy(fontSize = 11.sp),
+							color = if (isIsolated) colors.accent else colors.textPrimary,
+						)
+					}
+				}
+				Divider(color = colors.divider.copy(alpha = 0.5f), thickness = 0.5.dp)
+			}
 
 			DropdownMenuItem(
 				onClick = {

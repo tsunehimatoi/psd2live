@@ -1,4 +1,4 @@
-﻿package io.github.psd2live.ui
+package io.github.psd2live.ui
 
 import io.github.psd2live.core.Bounds
 import io.github.psd2live.core.RigPreviewModel
@@ -229,7 +229,7 @@ class HierarchyPanel(
 				val viewport = camera.viewport(model, width, height)
 				RigCanvasSupport.paintCanvasBoundary(g, viewport)
 				RigCanvasSupport.paintTexturedRig(g, model, currentGeometry, viewport, 0.43f, visibleLayerIds)
-				for (deformer in model.rig.puppet.deformers) {
+				for (deformer in model.rig.puppet.deformers.filterIsInstance<Deformer.Rotation>()) {
 					val bounds = deformerBounds[deformer.id.raw] ?: continue
 					val selected = deformer.id.raw == selectedDeformerId
 					val color = ComponentPalette.strong(deformer.id.raw)

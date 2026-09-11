@@ -294,7 +294,9 @@ fun CanvasViewportComposable(
 			)
 
 			// 3. Multi-channel Rendering: Texture, Mesh, Warp
-			val showWarp = state.showWarp || (mode == WorkspaceTab.HIERARCHY)
+			val hoveredIsWarp = state.hoveredDeformerId != null &&
+				model.rig.puppet.deformers.any { it.id.raw == state.hoveredDeformerId && it is org.umamo.runtime.model.Deformer.Warp }
+			val showWarp = state.showWarp || (mode == WorkspaceTab.HIERARCHY) || (state.selectedDeformerId != null) || hoveredIsWarp
 			val showMesh = state.showMesh || (mode == WorkspaceTab.TOPOLOGY)
 			val showTexture = state.showTexture
 			val informationNames = state.warpShowNames
@@ -311,9 +313,20 @@ fun CanvasViewportComposable(
 				else -> state.effectiveVisibleLayerIds
 			}
 
+			val hasActiveSelection = state.selectedLayerId != null || state.selectedDeformerId != null
+			val highlightedLayerIds: Set<String>? = when {
+				state.selectedLayerId != null -> setOf(state.selectedLayerId)
+				state.selectedDeformerId != null -> descendantLayerIds(model, state.selectedDeformerId, state.parentOverrides)
+				else -> null
+			}
+			val isDimmingActive = state.dimUnselected && hasActiveSelection
+
 			val nativeFrame = sdkFrame
 			val canUseNativeSdk = mode == WorkspaceTab.PREVIEW &&
 				!showWarp && !showMesh && !informationSelectedOnly && showTexture &&
+				!isDimmingActive &&
+				state.hoveredLayerId == null && state.hoveredDeformerId == null &&
+				(!state.showSelectionBounds || !hasActiveSelection) &&
 				state.drawOrderOverrides.isEmpty() &&
 				nativeFrame != null && sdkBitmap != null &&
 				nativeFrame.image.width == w && nativeFrame.image.height == h
@@ -343,19 +356,28 @@ fun CanvasViewportComposable(
 							textureAlpha,
 							visibleLayerIds = targetVisibleLayerIds,
 							drawOrderOverrides = state.drawOrderOverrides,
+							dimUnselected = state.dimUnselected,
+							highlightedLayerIds = highlightedLayerIds,
+							dimmedAlphaMultiplier = 0.22f,
 						)
 					}
 
 					// 3b. Mesh Channel (Wireframe)
 					if (showMesh) {
-						fun drawMeshWireframe(drawable: org.umamo.runtime.model.Drawable, selected: Boolean) {
+						fun drawMeshWireframe(drawable: org.umamo.runtime.model.Drawable, selected: Boolean, dimmed: Boolean = false) {
 							val mesh = drawable.mesh ?: return
 							val positions = geometry.worldPositions[drawable.id] ?: return
 							val layerId = model.rig.layerIdByDrawableId[drawable.id.raw] ?: return
 							if (layerId !in targetVisibleLayerIds) return
 							val awtColor = ComponentPalette.strong(layerId)
-							g.color = if (selected) awtColor.brighter() else awtColor
-							g.stroke = BasicStroke(if (selected) 2.2f else 0.85f)
+							val strokeWidth = if (selected) 2.2f else if (dimmed) 0.65f else 0.85f
+							val wireColor = when {
+								selected -> awtColor.brighter()
+								dimmed -> java.awt.Color(awtColor.red, awtColor.green, awtColor.blue, 65)
+								else -> awtColor
+							}
+							g.color = wireColor
+							g.stroke = BasicStroke(strokeWidth)
 							for (offset in mesh.indices.indices step 3) {
 								val a = mesh.indices[offset]
 								val b = mesh.indices[offset + 1]
@@ -379,62 +401,135 @@ fun CanvasViewportComposable(
 									viewport.yFromWorld(positions[a * 2 + 1]).toInt(),
 								)
 							}
+							if (selected) {
+								g.color = java.awt.Color.WHITE
+								val radius = 2
+								for (i in 0 until mesh.vertexCount) {
+									val vx = viewport.x(positions[i * 2]).toInt()
+									val vy = viewport.yFromWorld(positions[i * 2 + 1]).toInt()
+									g.fillOval(vx - radius, vy - radius, radius * 2 + 1, radius * 2 + 1)
+								}
+							}
 						}
 
 						val selectedId = state.selectedLayerId
 						for (drawable in model.rig.puppet.drawables) {
 							val layerId = model.rig.layerIdByDrawableId[drawable.id.raw]
 							if (layerId != selectedId) {
-								drawMeshWireframe(drawable, selected = false)
+								val isDimmed = isDimmingActive && (highlightedLayerIds != null && (layerId == null || layerId !in highlightedLayerIds))
+								drawMeshWireframe(drawable, selected = false, dimmed = isDimmed)
 							}
 						}
 						if (selectedId != null) {
 							for (drawable in model.rig.puppet.drawables) {
 								val layerId = model.rig.layerIdByDrawableId[drawable.id.raw]
 								if (layerId == selectedId) {
-									drawMeshWireframe(drawable, selected = true)
+									drawMeshWireframe(drawable, selected = true, dimmed = false)
 								}
 							}
 						}
 					}
 
-					// 3c. Hierarchy Mode Bounds
+					// 3c. Bounding Boxes (Selection, Hover, and Hierarchy Rotation Deformers)
+					val drawableBounds = RigCanvasSupport.boundsByDrawable(geometry)
+					val deformerBounds = RigCanvasSupport.boundsByDeformer(model, drawableBounds)
+
 					if (mode == WorkspaceTab.HIERARCHY) {
-						val drawableBounds = RigCanvasSupport.boundsByDrawable(geometry)
-						val deformerBounds = RigCanvasSupport.boundsByDeformer(model, drawableBounds)
 						for (deformer in model.rig.puppet.deformers.filterIsInstance<org.umamo.runtime.model.Deformer.Rotation>()) {
 							val bounds = deformerBounds[deformer.id.raw] ?: continue
 							val selected = deformer.id.raw == state.selectedDeformerId
-							val color = ComponentPalette.strong(deformer.id.raw)
-							RigCanvasSupport.paintBounds(g, bounds, viewport, color, if (selected) 2.8f else 1.15f)
+							val isDimmed = isDimmingActive && !selected
+							val rawColor = ComponentPalette.strong(deformer.id.raw)
+							val color = when {
+								selected -> rawColor.brighter()
+								isDimmed -> java.awt.Color(rawColor.red, rawColor.green, rawColor.blue, 55)
+								else -> rawColor
+							}
+							val strokeWidth = if (selected) 2.8f else if (isDimmed) 0.75f else 1.15f
+							RigCanvasSupport.paintBounds(g, bounds, viewport, color, strokeWidth)
 
-							g.font = java.awt.Font(java.awt.Font.SANS_SERIF, if (selected) java.awt.Font.BOLD else java.awt.Font.PLAIN, 11)
-							val lx = viewport.x(bounds.left).toInt() + 2
-							val ly = (viewport.offsetY + bounds.top * viewport.scale).toInt() - 3
-							val metrics = g.fontMetrics
-							val labelY = ly.coerceAtLeast(metrics.ascent + 2)
-							g.color = java.awt.Color(24, 26, 30, 205)
-							g.fillRoundRect(lx - 2, labelY - metrics.ascent, metrics.stringWidth(deformer.name) + 7, metrics.height, 5, 5)
-							g.color = color.brighter()
-							g.drawString(deformer.name, lx + 1, labelY)
+							if (!isDimmed || selected) {
+								g.font = java.awt.Font(java.awt.Font.SANS_SERIF, if (selected) java.awt.Font.BOLD else java.awt.Font.PLAIN, 11)
+								val lx = viewport.x(bounds.left).toInt() + 2
+								val ly = (viewport.offsetY + bounds.top * viewport.scale).toInt() - 3
+								val metrics = g.fontMetrics
+								val labelY = ly.coerceAtLeast(metrics.ascent + 2)
+								g.color = java.awt.Color(24, 26, 30, if (isDimmed) 90 else 205)
+								g.fillRoundRect(lx - 2, labelY - metrics.ascent, metrics.stringWidth(deformer.name) + 7, metrics.height, 5, 5)
+								g.color = color.brighter()
+								g.drawString(deformer.name, lx + 1, labelY)
+							}
 						}
+					}
+
+					// Global Selection Bounding Box (across all modes if enabled)
+					if (state.showSelectionBounds) {
 						state.selectedLayerId?.let { layerId ->
 							val drawableId = model.rig.layerIdByDrawableId.entries.firstOrNull { it.value == layerId }?.key
 							val bounds = drawableId?.let(drawableBounds::get)
-							if (bounds != null) RigCanvasSupport.paintBounds(
-								g, bounds, viewport, ComponentPalette.strong(layerId).brighter(), 3.0f,
-							)
+							if (bounds != null) {
+								val selColor = ComponentPalette.strong(layerId).brighter()
+								RigCanvasSupport.paintSelectionBounds(g, bounds, viewport, selColor, stroke = 2.0f, isDashed = false)
+							}
+						}
+						if (mode != WorkspaceTab.HIERARCHY) {
+							state.selectedDeformerId?.let { defId ->
+								val def = model.rig.puppet.deformers.firstOrNull { it.id.raw == defId }
+								if (def !is org.umamo.runtime.model.Deformer.Warp) {
+									val bounds = deformerBounds[defId]
+									if (bounds != null) {
+										val selColor = ComponentPalette.strong(defId).brighter()
+										RigCanvasSupport.paintSelectionBounds(g, bounds, viewport, selColor, stroke = 2.0f, isDashed = false)
+									}
+								}
+							}
+						}
+					}
+
+					// Hover Bounding Box (instant feedback when hovering items in hierarchy tree)
+					state.hoveredLayerId?.takeIf { it != state.selectedLayerId }?.let { layerId ->
+						val drawableId = model.rig.layerIdByDrawableId.entries.firstOrNull { it.value == layerId }?.key
+						val bounds = drawableId?.let(drawableBounds::get)
+						if (bounds != null) {
+							RigCanvasSupport.paintSelectionBounds(g, bounds, viewport, java.awt.Color(0, 210, 255, 190), stroke = 1.4f, isDashed = true)
+						}
+					}
+					state.hoveredDeformerId?.takeIf { it != state.selectedDeformerId }?.let { defId ->
+						val def = model.rig.puppet.deformers.firstOrNull { it.id.raw == defId }
+						if (def !is org.umamo.runtime.model.Deformer.Warp) {
+							val bounds = deformerBounds[defId]
+							if (bounds != null) {
+								RigCanvasSupport.paintSelectionBounds(g, bounds, viewport, java.awt.Color(0, 210, 255, 190), stroke = 1.4f, isDashed = true)
+							}
 						}
 					}
 
 					// 3d. Warp Channel (RigInformationOverlay)
 					if (showWarp) {
-						val ids = informationWarpIds(model.rig.puppet, state.selectedDeformerId, informationSelectedOnly)
-							.filter { state.isDeformerVisible(it) }.toSet()
+						val baseWarpIds = computeActiveWarpIds(
+							model = model,
+							selectedDeformerId = state.selectedDeformerId,
+							selectedLayerId = state.selectedLayerId,
+							parentOverrides = state.parentOverrides,
+							selectedOnly = informationSelectedOnly,
+							contextualWarp = state.contextualWarp,
+						)
+						val hoveredId = state.hoveredDeformerId
+						val ids = (if (hoveredIsWarp && hoveredId != null) {
+							baseWarpIds + hoveredId
+						} else {
+							baseWarpIds
+						}).filter { state.isDeformerVisible(it) }.toSet()
+
 						io.github.psd2live.ui.RigInformationOverlay.paint(
 							g, model.rig.puppet,
 							if (mode == WorkspaceTab.PREVIEW) informationPose else state.parameterValues,
-							viewport, ids, labels = informationNames, pointIndices = informationIndices,
+							viewport, ids,
+							labels = informationNames,
+							pointIndices = informationIndices,
+							selectedDeformerId = state.selectedDeformerId,
+							hoveredDeformerId = state.hoveredDeformerId,
+							dimUnselected = state.dimUnselected,
 						)
 					}
 				} finally {

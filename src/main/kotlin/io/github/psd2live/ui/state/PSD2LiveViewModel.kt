@@ -754,6 +754,28 @@ class PSD2LiveViewModel : AutoCloseable {
 		markWorkspaceChanged()
 	}
 
+	fun setDimUnselected(enabled: Boolean) {
+		_state.update { it.copy(dimUnselected = enabled) }
+		markWorkspaceChanged()
+	}
+
+	fun setContextualWarp(enabled: Boolean) {
+		_state.update { it.copy(contextualWarp = enabled) }
+		markWorkspaceChanged()
+	}
+
+	fun setShowSelectionBounds(show: Boolean) {
+		_state.update { it.copy(showSelectionBounds = show) }
+		markWorkspaceChanged()
+	}
+
+	fun setHoveredItem(layerId: String?, deformerId: String?) {
+		_state.update {
+			if (it.hoveredLayerId == layerId && it.hoveredDeformerId == deformerId) it
+			else it.copy(hoveredLayerId = layerId, hoveredDeformerId = deformerId)
+		}
+	}
+
 	fun toggleDeformerVisibility(deformerId: String) {
 		val current = _state.value.isDeformerVisible(deformerId)
 		setDeformerVisibility(deformerId, !current)

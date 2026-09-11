@@ -66,6 +66,9 @@ internal object RigCanvasSupport {
 		alpha: Float = 1f,
 		visibleLayerIds: Set<String>? = null,
 		drawOrderOverrides: Map<String, Float> = emptyMap(),
+		dimUnselected: Boolean = false,
+		highlightedLayerIds: Set<String>? = null,
+		dimmedAlphaMultiplier: Float = 0.22f,
 	) {
 		g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
 		g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
@@ -81,11 +84,13 @@ internal object RigCanvasSupport {
 		for (drawable in drawables) {
 			val layerId = model.rig.layerIdByDrawableId[drawable.id.raw]
 			if (visibleLayerIds != null && layerId !in visibleLayerIds) continue
+			val isHighlighted = highlightedLayerIds == null || (layerId != null && layerId in highlightedLayerIds) || drawable.id.raw in highlightedLayerIds
+			val effectiveAlpha = if (dimUnselected && !isHighlighted) alpha * dimmedAlphaMultiplier else alpha
 			val mesh = drawable.mesh ?: continue
 			val positions = geometry.worldPositions[drawable.id] ?: continue
 			val pageIndex = model.rig.pageByDrawableId[drawable.id.raw] ?: drawable.texturePage
 			val atlas = model.atlas.pages.getOrNull(pageIndex)?.image ?: continue
-			val opacity = ((geometry.opacity[drawable.id] ?: drawable.opacity) * alpha).coerceIn(0f, 1f)
+			val opacity = ((geometry.opacity[drawable.id] ?: drawable.opacity) * effectiveAlpha).coerceIn(0f, 1f)
 			if (opacity <= 0.001f) continue
 			val maskClip = drawable.maskedBy
 				.takeIf { it.isNotEmpty() && !drawable.invertMask }
@@ -184,6 +189,46 @@ internal object RigCanvasSupport {
 			(bounds.width * viewport.scale).toInt().coerceAtLeast(1),
 			(bounds.height * viewport.scale).toInt().coerceAtLeast(1),
 		)
+	}
+
+	fun paintSelectionBounds(
+		g: Graphics2D,
+		bounds: Bounds,
+		viewport: CanvasViewport,
+		color: Color,
+		stroke: Float = 1.6f,
+		isDashed: Boolean = false,
+		cornerBracketLength: Int = 10,
+	) {
+		val x = viewport.x(bounds.left).toInt()
+		val y = (viewport.offsetY + bounds.top * viewport.scale).toInt()
+		val w = (bounds.width * viewport.scale).toInt().coerceAtLeast(2)
+		val h = (bounds.height * viewport.scale).toInt().coerceAtLeast(2)
+
+		g.color = color
+		if (isDashed) {
+			g.stroke = BasicStroke(stroke, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10f, floatArrayOf(4f, 4f), 0f)
+			g.drawRect(x, y, w, h)
+		} else {
+			g.stroke = BasicStroke(stroke)
+			g.drawRect(x, y, w, h)
+			val cl = minOf(cornerBracketLength, w / 3, h / 3)
+			if (cl > 2) {
+				g.stroke = BasicStroke(stroke * 1.5f)
+				// Top-left
+				g.drawLine(x, y, x + cl, y)
+				g.drawLine(x, y, x, y + cl)
+				// Top-right
+				g.drawLine(x + w, y, x + w - cl, y)
+				g.drawLine(x + w, y, x + w, y + cl)
+				// Bottom-left
+				g.drawLine(x, y + h, x + cl, y + h)
+				g.drawLine(x, y + h, x, y + h - cl)
+				// Bottom-right
+				g.drawLine(x + w, y + h, x + w - cl, y + h)
+				g.drawLine(x + w, y + h, x + w, y + h - cl)
+			}
+		}
 	}
 
 	fun hitLayers(
