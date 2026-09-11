@@ -590,6 +590,11 @@ class PSD2LiveViewModel : AutoCloseable {
 	    markWorkspaceChanged()
 	}
 
+	fun setDynamicsSubExpanded(expanded: Boolean) {
+		_state.update { it.copy(dynamicsSubExpanded = expanded) }
+	    markWorkspaceChanged()
+	}
+
 	fun setProjectOutputsExpanded(expanded: Boolean) {
 		_state.update { it.copy(projectOutputsExpanded = expanded) }
 	    markWorkspaceChanged()
@@ -622,6 +627,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				textureSubExpanded = false,
 				meshSubExpanded = false,
 				strengthSubExpanded = false,
+				dynamicsSubExpanded = false,
 				meshSpacing = 40,
 				meshOuterMargin = 1.0f,
 				meshInnerMargin = 10.0f,

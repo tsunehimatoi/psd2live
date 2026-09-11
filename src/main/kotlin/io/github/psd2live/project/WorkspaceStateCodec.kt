@@ -127,6 +127,7 @@ internal object WorkspaceStateCodec {
         put("exportOptionsExpanded", state.exportOptionsExpanded)
         put("motionSubExpanded", state.motionSubExpanded)
         put("physicsSubExpanded", state.physicsSubExpanded)
+        put("dynamicsSubExpanded", state.dynamicsSubExpanded)
         put("projectOutputsExpanded", state.projectOutputsExpanded)
         put("advancedExpanded", state.advancedExpanded)
         put("logPanelExpanded", state.logPanelExpanded)
@@ -213,6 +214,7 @@ internal object WorkspaceStateCodec {
         exportOptionsExpanded = value["exportOptionsExpanded"]?.jsonPrimitive?.boolean ?: base.exportOptionsExpanded,
         motionSubExpanded = value["motionSubExpanded"]?.jsonPrimitive?.boolean ?: base.motionSubExpanded,
         physicsSubExpanded = value["physicsSubExpanded"]?.jsonPrimitive?.boolean ?: base.physicsSubExpanded,
+        dynamicsSubExpanded = value["dynamicsSubExpanded"]?.jsonPrimitive?.boolean ?: base.dynamicsSubExpanded,
         projectOutputsExpanded = value["projectOutputsExpanded"]?.jsonPrimitive?.boolean ?: base.projectOutputsExpanded,
         advancedExpanded = value["advancedExpanded"]?.jsonPrimitive?.boolean ?: base.advancedExpanded,
         logPanelExpanded = value["logPanelExpanded"]?.jsonPrimitive?.boolean ?: base.logPanelExpanded,

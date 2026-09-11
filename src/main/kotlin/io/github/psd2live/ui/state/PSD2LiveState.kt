@@ -129,6 +129,7 @@ data class PSD2LiveState(
 	val exportOptionsExpanded: Boolean = true,
 	val motionSubExpanded: Boolean = false,
 	val physicsSubExpanded: Boolean = false,
+	val dynamicsSubExpanded: Boolean = false,
 	val projectOutputsExpanded: Boolean = false,
 	val textureSubExpanded: Boolean = false,
 	val meshSubExpanded: Boolean = false,

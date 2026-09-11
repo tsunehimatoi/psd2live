@@ -96,22 +96,22 @@ fun InspectorView(
 			.background(colors.panelBackground)
 			.border(BorderStroke(1.dp, colors.divider)),
 	) {
-		// 1. Output Directory & Generate/Export Row
-		ExportActionSection(
-			state = state,
-			viewModel = viewModel,
-			onGenerate = onGenerate,
-			onChooseOutput = onChooseOutput,
-		)
-
-		Divider(color = colors.divider, thickness = 1.dp)
-
-		// 2. Collapsible Model Settings Section (旧名自动绑定设置)
+		// 1. Collapsible Model Settings Section (模型与绑定设置)
 		ModelSettingsSection(
 			state = state,
 			viewModel = viewModel,
 			isExpanded = modelSettingsExpanded,
 			onToggleExpand = { viewModel.setModelSettingsExpanded(!modelSettingsExpanded) },
+		)
+
+		Divider(color = colors.divider, thickness = 1.dp)
+
+		// 2. Output Directory & Generate/Export Action (导出与交付)
+		ExportActionSection(
+			state = state,
+			viewModel = viewModel,
+			onGenerate = onGenerate,
+			onChooseOutput = onChooseOutput,
 		)
 
 		Divider(color = colors.divider, thickness = 1.dp)
@@ -194,10 +194,59 @@ private fun ExportActionSection(
 	Column(
 		modifier = Modifier
 			.fillMaxWidth()
-			.padding(6.dp),
-		verticalArrangement = Arrangement.spacedBy(6.dp),
+			.padding(horizontal = 6.dp, vertical = 4.dp),
+		verticalArrangement = Arrangement.spacedBy(4.dp),
 	) {
-		// Output Directory Row
+		// Row 1: Generation Mode & Export Formats container
+		Row(
+			modifier = Modifier
+				.fillMaxWidth()
+				.background(colors.panelElevated, RoundedCornerShape(3.dp))
+				.border(BorderStroke(1.dp, colors.divider), RoundedCornerShape(3.dp))
+				.padding(horizontal = 6.dp, vertical = 3.dp),
+			verticalAlignment = Alignment.CenterVertically,
+			horizontalArrangement = Arrangement.SpaceBetween,
+		) {
+			// Mode: Mesh Only toggle
+			CompactCheckbox(
+				checked = state.meshOnly,
+				onCheckedChange = { viewModel.setMeshOnly(it) },
+				label = tr("export.meshOnly"),
+				enabled = !isBusy,
+			)
+
+			// Formats: moc3, cmo3, json
+			Row(
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.spacedBy(6.dp),
+			) {
+				Text(
+					text = tr("export.formats"),
+					style = typography.caption.copy(fontSize = 10.sp),
+					color = colors.textMuted,
+				)
+				CompactCheckbox(
+					checked = state.exportMoc3,
+					onCheckedChange = { viewModel.setExportMoc3(it) },
+					label = tr("export.moc3.short"),
+					enabled = !isBusy,
+				)
+				CompactCheckbox(
+					checked = state.exportCmo3,
+					onCheckedChange = { viewModel.setExportCmo3(it) },
+					label = tr("export.cmo3.short"),
+					enabled = !isBusy,
+				)
+				CompactCheckbox(
+					checked = state.exportJson,
+					onCheckedChange = { viewModel.setExportJson(it) },
+					label = tr("export.json.short"),
+					enabled = !isBusy,
+				)
+			}
+		}
+
+		// Row 2: Output Directory Row
 		Row(
 			modifier = Modifier.fillMaxWidth(),
 			verticalAlignment = Alignment.CenterVertically,
@@ -206,7 +255,7 @@ private fun ExportActionSection(
 				text = tr("project.output"),
 				style = typography.body.copy(fontSize = 11.sp),
 				color = colors.textPrimary,
-				modifier = Modifier.width(65.dp),
+				modifier = Modifier.width(60.dp),
 				textAlign = TextAlign.Right,
 			)
 			Spacer(Modifier.width(6.dp))
@@ -226,271 +275,7 @@ private fun ExportActionSection(
 			)
 		}
 
-		// Collapsible or Compact Export Options Container
-		Column(
-			modifier = Modifier
-				.fillMaxWidth()
-				.background(colors.panelElevated, RoundedCornerShape(3.dp))
-				.border(BorderStroke(1.dp, colors.divider), RoundedCornerShape(3.dp))
-				.padding(6.dp),
-		) {
-			// Row 1: Mesh Only
-			Row(
-				modifier = Modifier.fillMaxWidth(),
-				verticalAlignment = Alignment.CenterVertically,
-			) {
-				CompactCheckbox(
-					checked = state.meshOnly,
-					onCheckedChange = { viewModel.setMeshOnly(it) },
-					label = tr("export.meshOnly"),
-					enabled = !isBusy,
-				)
-			}
-
-			Row(
-				modifier = Modifier.fillMaxWidth(),
-				verticalAlignment = Alignment.CenterVertically,
-				horizontalArrangement = Arrangement.spacedBy(8.dp),
-			) {
-				CompactCheckbox(
-					checked = state.mouthOutlineEnabled,
-					onCheckedChange = { viewModel.setMouthOutlineEnabled(it) },
-					label = tr("mouth.outline"),
-					enabled = !isBusy && !state.meshOnly,
-					modifier = Modifier.weight(1f),
-				)
-				Box(modifier = Modifier.weight(1f)) {
-					io.github.psd2live.ui.components.MouthSettingsPopupButton(
-						state = state,
-						enabled = !isBusy && !state.meshOnly,
-						onApply = viewModel::setMouthSettings,
-					)
-				}
-			}
-            // Row 2: Motions (Collapsible, no master checkbox, disabled/grayed when meshOnly)
-			Row(
-				modifier = Modifier
-					.fillMaxWidth()
-					.clickable(enabled = !isBusy && !state.meshOnly) {
-						viewModel.setMotionSubExpanded(!state.motionSubExpanded)
-					}
-					.padding(vertical = 2.dp),
-				verticalAlignment = Alignment.CenterVertically,
-			) {
-				IconChevron(
-					expanded = state.motionSubExpanded && !state.meshOnly,
-					modifier = Modifier.size(9.dp),
-					tint = if (!state.meshOnly) colors.textMuted else colors.textDisabled,
-				)
-				Spacer(Modifier.width(4.dp))
-				Text(
-					text = tr("export.motions"),
-					style = typography.body.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
-					color = if (!state.meshOnly) colors.textPrimary else colors.textDisabled,
-				)
-				if (!state.motionSubExpanded || state.meshOnly) {
-					Spacer(Modifier.width(6.dp))
-					val activeMotions = buildList {
-						if (state.motionIdle) add(tr("export.motion.idle"))
-						if (state.motionBlink) add(tr("export.motion.blink"))
-						if (state.motionNod) add(tr("export.motion.nod"))
-						if (state.motionShake) add(tr("export.motion.shake"))
-					}
-					Text(
-						text = if (state.meshOnly) "(${tr("export.disabled")})" else "(${activeMotions.joinToString(", ").ifEmpty { tr("export.none") }})",
-						style = typography.body.copy(fontSize = 10.sp),
-						color = colors.textMuted,
-					)
-				}
-			}
-
-			// Motion Sub-items (expanded)
-			if (state.motionSubExpanded && !state.meshOnly) {
-				Column(
-					modifier = Modifier
-						.fillMaxWidth()
-						.padding(start = 14.dp, top = 1.dp, bottom = 2.dp),
-					verticalArrangement = Arrangement.spacedBy(3.dp),
-				) {
-					Row(
-						modifier = Modifier.fillMaxWidth(),
-						horizontalArrangement = Arrangement.spacedBy(10.dp),
-					) {
-						MotionItemWithPlay(
-							checked = state.motionIdle,
-							onCheckedChange = { viewModel.setMotionIdle(it) },
-							label = tr("export.motion.idle"),
-							onPlay = { viewModel.triggerMotion("Idle") },
-							enabled = !isBusy,
-							modifier = Modifier.weight(1f),
-						)
-						MotionItemWithPlay(
-							checked = state.motionBlink,
-							onCheckedChange = { viewModel.setMotionBlink(it) },
-							label = tr("export.motion.blink"),
-							onPlay = { viewModel.triggerMotion("Blink") },
-							enabled = !isBusy,
-							modifier = Modifier.weight(1f),
-						)
-					}
-					Row(
-						modifier = Modifier.fillMaxWidth(),
-						horizontalArrangement = Arrangement.spacedBy(10.dp),
-					) {
-						MotionItemWithPlay(
-							checked = state.motionNod,
-							onCheckedChange = { viewModel.setMotionNod(it) },
-							label = tr("export.motion.nod"),
-							onPlay = { viewModel.triggerMotion("Nod") },
-							enabled = !isBusy,
-							modifier = Modifier.weight(1f),
-						)
-						MotionItemWithPlay(
-							checked = state.motionShake,
-							onCheckedChange = { viewModel.setMotionShake(it) },
-							label = tr("export.motion.shake"),
-							onPlay = { viewModel.triggerMotion("Shake") },
-							enabled = !isBusy,
-							modifier = Modifier.weight(1f),
-						)
-					}
-				}
-			}
-
-			// Row 3: Physics (Collapsible, no master checkbox, disabled/grayed when meshOnly)
-			Row(
-				modifier = Modifier
-					.fillMaxWidth()
-					.clickable(enabled = !isBusy && !state.meshOnly) {
-						viewModel.setPhysicsSubExpanded(!state.physicsSubExpanded)
-					}
-					.padding(vertical = 2.dp),
-				verticalAlignment = Alignment.CenterVertically,
-			) {
-				IconChevron(
-					expanded = state.physicsSubExpanded && !state.meshOnly,
-					modifier = Modifier.size(9.dp),
-					tint = if (!state.meshOnly) colors.textMuted else colors.textDisabled,
-				)
-				Spacer(Modifier.width(4.dp))
-				Text(
-					text = tr("export.physics"),
-					style = typography.body.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
-					color = if (!state.meshOnly) colors.textPrimary else colors.textDisabled,
-				)
-				if (!state.physicsSubExpanded || state.meshOnly) {
-					Spacer(Modifier.width(6.dp))
-					val activePhysics = buildList {
-						if (state.physicsFrontHair) add(tr("export.physics.frontHair"))
-						if (state.physicsBackHair) add(tr("export.physics.backHair"))
-						if (state.physicsEyeJelly) add(tr("export.physics.eyeJelly"))
-					}
-					Text(
-						text = if (state.meshOnly) "(${tr("export.disabled")})" else "(${activePhysics.joinToString(", ").ifEmpty { tr("export.none") }})",
-						style = typography.body.copy(fontSize = 10.sp),
-						color = colors.textMuted,
-					)
-				}
-			}
-
-			// Physics Sub-items (expanded)
-			if (state.physicsSubExpanded && !state.meshOnly) {
-				Row(
-					modifier = Modifier
-						.fillMaxWidth()
-						.padding(start = 14.dp, top = 1.dp, bottom = 2.dp),
-					horizontalArrangement = Arrangement.spacedBy(10.dp),
-				) {
-					CompactCheckbox(
-						checked = state.physicsFrontHair,
-						onCheckedChange = { viewModel.setPhysicsFrontHair(it) },
-						label = tr("export.physics.frontHair"),
-						enabled = !isBusy,
-					)
-					CompactCheckbox(
-						checked = state.physicsBackHair,
-						onCheckedChange = { viewModel.setPhysicsBackHair(it) },
-						label = tr("export.physics.backHair"),
-						enabled = !isBusy,
-					)
-					CompactCheckbox(
-						checked = state.physicsEyeJelly,
-						onCheckedChange = { viewModel.setPhysicsEyeJelly(it) },
-						label = tr("export.physics.eyeJelly"),
-						enabled = !isBusy,
-					)
-				}
-			}
-
-			Divider(color = colors.divider.copy(alpha = 0.5f), thickness = 0.8.dp)
-
-			// Row 4: Generated Project Files Header (Collapsible)
-			Row(
-				modifier = Modifier
-					.fillMaxWidth()
-					.clickable(enabled = !isBusy) {
-						viewModel.setProjectOutputsExpanded(!state.projectOutputsExpanded)
-					}
-					.padding(vertical = 2.dp),
-				verticalAlignment = Alignment.CenterVertically,
-			) {
-				IconChevron(
-					expanded = state.projectOutputsExpanded,
-					modifier = Modifier.size(9.dp),
-					tint = colors.textMuted,
-				)
-				Spacer(Modifier.width(4.dp))
-				Text(
-					text = tr("export.projectOutputs"),
-					style = typography.body.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
-					color = colors.textPrimary,
-				)
-				if (!state.projectOutputsExpanded) {
-					Spacer(Modifier.width(6.dp))
-					val activeOutputs = buildList {
-						if (state.exportMoc3) add("moc3")
-						if (state.exportCmo3) add("cmo3")
-						if (state.exportJson) add("json")
-					}
-					Text(
-						text = "(${activeOutputs.joinToString(", ").ifEmpty { "none" }})",
-						style = typography.body.copy(fontSize = 10.sp),
-						color = colors.textMuted,
-					)
-				}
-			}
-
-			// Project Files Sub-items (expanded)
-			if (state.projectOutputsExpanded) {
-				Row(
-					modifier = Modifier
-						.fillMaxWidth()
-						.padding(start = 14.dp, top = 1.dp, bottom = 2.dp),
-					horizontalArrangement = Arrangement.spacedBy(10.dp),
-				) {
-					CompactCheckbox(
-						checked = state.exportMoc3,
-						onCheckedChange = { viewModel.setExportMoc3(it) },
-						label = tr("export.moc3"),
-						enabled = !isBusy,
-					)
-					CompactCheckbox(
-						checked = state.exportCmo3,
-						onCheckedChange = { viewModel.setExportCmo3(it) },
-						label = tr("export.cmo3"),
-						enabled = !isBusy,
-					)
-					CompactCheckbox(
-						checked = state.exportJson,
-						onCheckedChange = { viewModel.setExportJson(it) },
-						label = tr("export.json"),
-						enabled = !isBusy,
-					)
-				}
-			}
-		}
-
-		// Large Generate & Export Action Button
+		// Row 3: Large Generate & Export Action Button
 		CompactButton(
 			text = tr("action.generate"),
 			onClick = onGenerate,
@@ -553,7 +338,7 @@ private fun ModelSettingsSection(
 		}
 
 		if (isExpanded) {
-			// Submenu 1: Texture Size (贴图尺寸)
+			// Submenu 1: 贴图图集 (Texture Atlas)
 			Row(
 				modifier = Modifier
 					.fillMaxWidth()
@@ -577,7 +362,7 @@ private fun ModelSettingsSection(
 				if (!state.textureSubExpanded) {
 					Spacer(Modifier.width(6.dp))
 					Text(
-						text = "(${state.atlasSize})",
+						text = "(${state.atlasSize} · ${tr("settings.texturePadding")}: ${state.texturePadding}px · α: ${state.alphaThreshold})",
 						style = typography.caption.copy(fontSize = 9.5.sp),
 						color = colors.textMuted,
 					)
@@ -592,6 +377,7 @@ private fun ModelSettingsSection(
 					verticalArrangement = Arrangement.spacedBy(2.dp),
 				) {
 					val atlasOptions = listOf(1024, 2048, 4096, 8192, 16384)
+					// Row 1: Atlas Size
 					Row(
 						modifier = Modifier.fillMaxWidth(),
 						verticalAlignment = Alignment.CenterVertically,
@@ -626,12 +412,60 @@ private fun ModelSettingsSection(
 							height = 20.dp,
 						)
 					}
+
+					// Row 2: Texture Padding & Alpha Threshold
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						verticalAlignment = Alignment.CenterVertically,
+					) {
+						Text(
+							text = tr("settings.texturePadding"),
+							style = typography.body.copy(fontSize = 10.5.sp),
+							color = colors.textPrimary,
+							modifier = Modifier.width(76.dp),
+							textAlign = TextAlign.Right,
+						)
+						Spacer(Modifier.width(5.dp))
+						CompactNumberSpinner(
+							value = state.texturePadding.toDouble(),
+							onValueChange = { viewModel.setTexturePadding(it.toInt()) },
+							min = 0.0,
+							max = 32.0,
+							step = 1.0,
+							decimals = 0,
+							unit = tr("settings.unit.px"),
+							enabled = !isBusy,
+							modifier = Modifier.weight(1f),
+							height = 20.dp,
+						)
+						Spacer(Modifier.width(6.dp))
+						Text(
+							text = tr("settings.alphaThreshold"),
+							style = typography.body.copy(fontSize = 10.5.sp),
+							color = colors.textPrimary,
+							modifier = Modifier.width(60.dp),
+							textAlign = TextAlign.Right,
+						)
+						Spacer(Modifier.width(4.dp))
+						CompactNumberSpinner(
+							value = state.alphaThreshold.toDouble(),
+							onValueChange = { viewModel.setAlphaThreshold(it.toInt()) },
+							min = 0.0,
+							max = 255.0,
+							step = 1.0,
+							decimals = 0,
+							unit = tr("settings.unit.byte"),
+							enabled = !isBusy,
+							modifier = Modifier.width(62.dp),
+							height = 20.dp,
+						)
+					}
 				}
 			}
 
 			Divider(color = colors.divider.copy(alpha = 0.4f), thickness = 0.5.dp)
 
-			// Submenu 2: Mesh (网格)
+			// Submenu 2: 几何网格 (Mesh Topology)
 			Row(
 				modifier = Modifier
 					.fillMaxWidth()
@@ -825,7 +659,7 @@ private fun ModelSettingsSection(
 
 			Divider(color = colors.divider.copy(alpha = 0.4f), thickness = 0.5.dp)
 
-			// Submenu 3: 幅度 (Strength)
+			// Submenu 3: 形变与口型 (Rigging & Facial)
 			Row(
 				modifier = Modifier
 					.fillMaxWidth()
@@ -842,14 +676,15 @@ private fun ModelSettingsSection(
 				)
 				Spacer(Modifier.width(4.dp))
 				Text(
-					text = tr("settings.group.strength"),
+					text = tr("settings.group.rigging"),
 					style = typography.body.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
 					color = if (!state.meshOnly) colors.textPrimary else colors.textDisabled,
 				)
 				if (!state.strengthSubExpanded || state.meshOnly) {
 					Spacer(Modifier.width(6.dp))
+					val mouthSummary = if (state.mouthOutlineEnabled) " · ${tr("mouth.outline")}" else ""
 					Text(
-						text = if (state.meshOnly) "(${tr("export.disabled")})" else "(头: ${"%.2f".format(state.headStrength)} · 身: ${"%.2f".format(state.bodyStrength)})",
+						text = if (state.meshOnly) "(${tr("export.disabled")})" else "(头: ${"%.2f".format(state.headStrength)} · 身: ${"%.2f".format(state.bodyStrength)}$mouthSummary)",
 						style = typography.caption.copy(fontSize = 9.5.sp),
 						color = colors.textMuted,
 					)
@@ -943,66 +778,144 @@ private fun ModelSettingsSection(
 							height = 20.dp,
 						)
 					}
+
+					Row(
+						modifier = Modifier
+							.fillMaxWidth()
+							.padding(top = 2.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(8.dp),
+					) {
+						CompactCheckbox(
+							checked = state.mouthOutlineEnabled,
+							onCheckedChange = { viewModel.setMouthOutlineEnabled(it) },
+							label = tr("mouth.outline"),
+							enabled = !isBusy && !state.meshOnly,
+							modifier = Modifier.weight(1f),
+						)
+						Box(modifier = Modifier.weight(1f)) {
+							io.github.psd2live.ui.components.MouthSettingsPopupButton(
+								state = state,
+								enabled = !isBusy && !state.meshOnly,
+								onApply = viewModel::setMouthSettings,
+							)
+						}
+					}
 				}
 			}
 
 			Divider(color = colors.divider.copy(alpha = 0.4f), thickness = 0.5.dp)
 
-			// Advanced Toggle
+			// Submenu 4: 动态与物理 (Dynamics & Physics)
 			Row(
 				modifier = Modifier
 					.fillMaxWidth()
-					.clickable { viewModel.setAdvancedExpanded(!state.advancedExpanded) }
+					.clickable(enabled = !isBusy && !state.meshOnly) {
+						viewModel.setDynamicsSubExpanded(!state.dynamicsSubExpanded)
+					}
 					.padding(vertical = 1.dp),
 				verticalAlignment = Alignment.CenterVertically,
 			) {
-				IconChevron(expanded = state.advancedExpanded, modifier = Modifier.size(9.dp), tint = colors.accent)
+				IconChevron(
+					expanded = state.dynamicsSubExpanded && !state.meshOnly,
+					modifier = Modifier.size(9.dp),
+					tint = if (!state.meshOnly) colors.textMuted else colors.textDisabled,
+				)
 				Spacer(Modifier.width(4.dp))
 				Text(
-					text = tr("settings.advanced"),
-					style = typography.caption.copy(fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold),
-					color = colors.accent,
+					text = tr("settings.group.dynamics"),
+					style = typography.body.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
+					color = if (!state.meshOnly) colors.textPrimary else colors.textDisabled,
 				)
+				if (!state.dynamicsSubExpanded || state.meshOnly) {
+					Spacer(Modifier.width(6.dp))
+					val motionCount = listOf(state.motionIdle, state.motionBlink, state.motionNod, state.motionShake).count { it }
+					val physicsCount = listOf(state.physicsFrontHair, state.physicsBackHair, state.physicsEyeJelly).count { it }
+					Text(
+						text = if (state.meshOnly) "(${tr("export.disabled")})" else "(${tr("export.motions")}: $motionCount · ${tr("export.physics")}: $physicsCount)",
+						style = typography.caption.copy(fontSize = 9.5.sp),
+						color = colors.textMuted,
+					)
+				}
 			}
 
-			if (state.advancedExpanded) {
-				Row(
+			if (state.dynamicsSubExpanded && !state.meshOnly) {
+				Column(
 					modifier = Modifier
 						.fillMaxWidth()
-						.background(colors.panelElevated, RoundedCornerShape(2.dp))
-						.padding(3.dp),
-					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.spacedBy(6.dp),
+						.padding(start = 12.dp, top = 2.dp, bottom = 2.dp),
+					verticalArrangement = Arrangement.spacedBy(3.dp),
 				) {
-					Text(text = tr("settings.texturePadding"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted)
-					CompactNumberSpinner(
-						value = state.texturePadding.toDouble(),
-						onValueChange = { viewModel.setTexturePadding(it.toInt()) },
-						min = 0.0,
-						max = 32.0,
-						step = 1.0,
-						decimals = 0,
-						unit = tr("settings.unit.px"),
-						enabled = !isBusy,
-						modifier = Modifier.width(55.dp),
-						height = 20.dp,
-					)
+					// Motions
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						horizontalArrangement = Arrangement.spacedBy(10.dp),
+					) {
+						MotionItemWithPlay(
+							checked = state.motionIdle,
+							onCheckedChange = { viewModel.setMotionIdle(it) },
+							label = tr("export.motion.idle"),
+							onPlay = { viewModel.triggerMotion("Idle") },
+							enabled = !isBusy,
+							modifier = Modifier.weight(1f),
+						)
+						MotionItemWithPlay(
+							checked = state.motionBlink,
+							onCheckedChange = { viewModel.setMotionBlink(it) },
+							label = tr("export.motion.blink"),
+							onPlay = { viewModel.triggerMotion("Blink") },
+							enabled = !isBusy,
+							modifier = Modifier.weight(1f),
+						)
+					}
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						horizontalArrangement = Arrangement.spacedBy(10.dp),
+					) {
+						MotionItemWithPlay(
+							checked = state.motionNod,
+							onCheckedChange = { viewModel.setMotionNod(it) },
+							label = tr("export.motion.nod"),
+							onPlay = { viewModel.triggerMotion("Nod") },
+							enabled = !isBusy,
+							modifier = Modifier.weight(1f),
+						)
+						MotionItemWithPlay(
+							checked = state.motionShake,
+							onCheckedChange = { viewModel.setMotionShake(it) },
+							label = tr("export.motion.shake"),
+							onPlay = { viewModel.triggerMotion("Shake") },
+							enabled = !isBusy,
+							modifier = Modifier.weight(1f),
+						)
+					}
 
-					Spacer(Modifier.weight(1f))
+					Divider(color = colors.divider.copy(alpha = 0.3f), thickness = 0.5.dp)
 
-					Text(text = tr("settings.alphaThreshold"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted)
-					CompactNumberSpinner(
-						value = state.alphaThreshold.toDouble(),
-						onValueChange = { viewModel.setAlphaThreshold(it.toInt()) },
-						min = 0.0,
-						max = 255.0,
-						step = 1.0,
-						decimals = 0,
-						unit = tr("settings.unit.byte"),
-						enabled = !isBusy,
-						modifier = Modifier.width(60.dp),
-						height = 20.dp,
-					)
+					// Physics
+					Row(
+						modifier = Modifier.fillMaxWidth(),
+						horizontalArrangement = Arrangement.spacedBy(10.dp),
+					) {
+						CompactCheckbox(
+							checked = state.physicsFrontHair,
+							onCheckedChange = { viewModel.setPhysicsFrontHair(it) },
+							label = tr("export.physics.frontHair"),
+							enabled = !isBusy,
+						)
+						CompactCheckbox(
+							checked = state.physicsBackHair,
+							onCheckedChange = { viewModel.setPhysicsBackHair(it) },
+							label = tr("export.physics.backHair"),
+							enabled = !isBusy,
+						)
+						CompactCheckbox(
+							checked = state.physicsEyeJelly,
+							onCheckedChange = { viewModel.setPhysicsEyeJelly(it) },
+							label = tr("export.physics.eyeJelly"),
+							enabled = !isBusy,
+						)
+					}
 				}
 			}
 		}
