@@ -46,6 +46,16 @@ class PSD2LivePipeline {
 		return RigPreviewModel(effectiveAnalysis, atlas, rig, config, runtimeBundle)
 	}
 
+	/** Fast incremental update for physics, motions and sidecars without re-analyzing or re-packing. */
+	fun updateRuntimeBundle(
+		current: RigPreviewModel,
+		config: PipelineConfig,
+		baseName: String = "psd2live-preview",
+	): RigPreviewModel {
+		val (runtimeBundle, _) = buildRuntimeBundle(baseName, current.analysis, current.atlas, current.rig, config)
+		return current.copy(config = config, runtimeBundle = runtimeBundle)
+	}
+
 	fun run(
 		psd: Path,
 		outputDirectory: Path,
@@ -243,8 +253,10 @@ class PSD2LivePipeline {
 				motions = motionMap,
 			),
 			groups = buildList {
-				listOf("ParamEyeLOpen", "ParamEyeROpen").filter(parameterIds::contains).takeIf(List<String>::isNotEmpty)?.let {
-					add(Model3Group("Parameter", "EyeBlink", it))
+				if (config.motionBlink && !config.meshOnly) {
+					listOf("ParamEyeLOpen", "ParamEyeROpen").filter(parameterIds::contains).takeIf(List<String>::isNotEmpty)?.let {
+						add(Model3Group("Parameter", "EyeBlink", it))
+					}
 				}
 				listOf("ParamMouthOpenY").filter(parameterIds::contains).takeIf(List<String>::isNotEmpty)?.let {
 					add(Model3Group("Parameter", "LipSync", it))

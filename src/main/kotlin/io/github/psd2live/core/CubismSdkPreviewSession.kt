@@ -144,14 +144,27 @@ class CubismSdkPreviewSession(
 				loadedGeneration = targetGeneration
 				lastRenderedFrameTimeNanos = 0L
 				previousFrameWasAnimated = false
-				// The generated manifest always exposes this group. Cubism owns motion, blink and physics.
-				stage = "start generated idle motion"
-				native.Live2D_StartMotion(loaded, "Idle", 0, 3)
+				val manifestText = bundle.assets.firstOrNull { it.path.endsWith(".model3.json") }?.bytes?.decodeToString()
+				val hasIdle = manifestText?.contains("\"Idle\"") == true
+				if (hasIdle) {
+					stage = "start generated idle motion"
+					native.Live2D_StartMotion(loaded, "Idle", 0, 1)
+				}
 				postStatus(if (targetGeneration == generation) "ready" else null)
 				scheduleRenderWorker()
 			} catch (failure: Throwable) {
 				postStatus("$stage: ${failure.message ?: failure.javaClass.simpleName}")
 			}
+		}
+	}
+
+	fun startMotion(group: String, index: Int = 0, priority: Int = 3) {
+		if (closed) return
+		executor.execute {
+			if (closed || loadedGeneration != generation) return@execute
+			val native = api ?: return@execute
+			val handle = model ?: return@execute
+			native.Live2D_StartMotion(handle, group, index, priority)
 		}
 	}
 

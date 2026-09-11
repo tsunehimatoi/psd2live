@@ -97,7 +97,13 @@ internal fun MouthSettingsEditor(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(tr("mouth.preset"), fontSize = 11.sp, color = colors.textPrimary)
                 CompactDropdown(items = MouthCurve.presets + "custom", selectedItem = shape,
-                    onItemSelected = { shape = it; if (it != "custom") curve = MouthCurve.preset(it) },
+                    onItemSelected = {
+                        shape = it
+                        if (it != "custom") {
+                            curve = MouthCurve.preset(it)
+                            onApply(shape, curve, if (autoColor) null else manualColor, thickness)
+                        }
+                    },
                     itemLabel = { tr("mouth.shape.$it") }, modifier = Modifier.weight(1f), height = 22.dp)
             }
             BezierMouthCanvas(curve, selected, rgb, thickness, onSelect = { selected = it }, onChange = ::changeCurve)

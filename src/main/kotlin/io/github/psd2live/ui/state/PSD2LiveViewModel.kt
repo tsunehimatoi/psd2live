@@ -214,7 +214,7 @@ class PSD2LiveViewModel : AutoCloseable {
 					return@update current
 				}
 				accepted = true
-				val publishParameters = current.animationEnabled &&
+				val publishParameters = current.animationEnabled && !current.meshOnly &&
 					(now - lastSdkParameterPublishNanos >= SDK_PARAMETER_PUBLISH_INTERVAL_NANOS)
 				if (!publishParameters && current.sdkStatus == "ready") return@update current
 				if (publishParameters) lastSdkParameterPublishNanos = now
@@ -359,7 +359,25 @@ class PSD2LiveViewModel : AutoCloseable {
     }
 
 	fun setMeshOnly(enabled: Boolean) {
-		_state.update { it.copy(meshOnly = enabled, generateDeformers = !enabled) }
+		_state.update { current ->
+			val updated = current.copy(meshOnly = enabled, generateDeformers = !enabled)
+			if (enabled) {
+				val defaults = current.previewModel?.rig?.puppet?.parameters?.associate { it.id to it.default } ?: emptyMap()
+				val resetMap = defaults.filterKeys { it !in current.lockedParameters }
+				updated.copy(parameterValues = current.parameterValues + resetMap)
+			} else updated
+		}
+		if (enabled) {
+			frontHair = 0f
+			frontHairVelocity = 0f
+			backHair = 0f
+			backHairVelocity = 0f
+			eyeJellyDynamics.reset()
+			followX = 0f
+			followY = 0f
+			previousFollowX = 0f
+			activeSoftwareMotionName = null
+		}
 		schedulePreviewRebuild()
 	    editorChanged()
 	}
@@ -378,71 +396,167 @@ class PSD2LiveViewModel : AutoCloseable {
 
 	fun setExportMotions(enabled: Boolean) {
 		_state.update { it.copy(exportMotions = enabled) }
+		scheduleRuntimeBundleUpdate()
 	    editorChanged()
 	}
 
 	fun setMotionIdle(enabled: Boolean) {
-		_state.update {
-			val next = it.copy(motionIdle = enabled)
-			next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake)
+		_state.update { current ->
+			val next = current.copy(motionIdle = enabled)
+			val updated = next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake)
+			if (!enabled) {
+				val idleReset = mapOf(
+					StandardParameters.ANGLE_X to 0f,
+					StandardParameters.ANGLE_Y to 0f,
+					StandardParameters.ANGLE_Z to 0f,
+					StandardParameters.BODY_X to 0f,
+					StandardParameters.BODY_Y to 0f,
+					StandardParameters.BODY_Z to 0f,
+					StandardParameters.BREATH to 0f,
+					StandardParameters.MOUTH_OPEN to 0f,
+					StandardParameters.MOUTH_FORM to 0f,
+				).filterKeys { key -> key !in updated.lockedParameters }
+				updated.copy(parameterValues = updated.parameterValues + idleReset)
+			} else updated
 		}
+		if (!enabled) {
+			followX = 0f
+			followY = 0f
+			previousFollowX = 0f
+		}
+		scheduleRuntimeBundleUpdate()
 	    editorChanged()
 	}
 
 	fun setMotionBlink(enabled: Boolean) {
-		_state.update {
-			val next = it.copy(motionBlink = enabled)
-			next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake)
+		_state.update { current ->
+			val next = current.copy(motionBlink = enabled)
+			val updated = next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake)
+			if (!enabled) {
+				val blinkReset = mapOf(
+					StandardParameters.EYE_L_OPEN to 1.0f,
+					StandardParameters.EYE_R_OPEN to 1.0f,
+				).filterKeys { key -> key !in updated.lockedParameters }
+				updated.copy(parameterValues = updated.parameterValues + blinkReset)
+			} else updated
 		}
+		scheduleRuntimeBundleUpdate()
 	    editorChanged()
 	}
 
 	fun setMotionNod(enabled: Boolean) {
-		_state.update {
-			val next = it.copy(motionNod = enabled)
-			next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake)
+		_state.update { current ->
+			val next = current.copy(motionNod = enabled)
+			val updated = next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake)
+			if (!enabled && activeSoftwareMotionName == "nod") {
+				val nodReset = mapOf(
+					StandardParameters.ANGLE_Y to 0f,
+					StandardParameters.BODY_Y to 0f,
+				).filterKeys { key -> key !in updated.lockedParameters }
+				updated.copy(parameterValues = updated.parameterValues + nodReset)
+			} else updated
 		}
+		if (!enabled && activeSoftwareMotionName == "nod") activeSoftwareMotionName = null
+		scheduleRuntimeBundleUpdate()
+		if (enabled) triggerMotion("Nod")
 	    editorChanged()
 	}
 
 	fun setMotionShake(enabled: Boolean) {
-		_state.update {
-			val next = it.copy(motionShake = enabled)
-			next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake)
+		_state.update { current ->
+			val next = current.copy(motionShake = enabled)
+			val updated = next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake)
+			if (!enabled && activeSoftwareMotionName == "shake") {
+				val shakeReset = mapOf(
+					StandardParameters.ANGLE_X to 0f,
+					StandardParameters.BODY_X to 0f,
+					StandardParameters.ANGLE_Z to 0f,
+				).filterKeys { key -> key !in updated.lockedParameters }
+				updated.copy(parameterValues = updated.parameterValues + shakeReset)
+			} else updated
 		}
+		if (!enabled && activeSoftwareMotionName == "shake") activeSoftwareMotionName = null
+		scheduleRuntimeBundleUpdate()
+		if (enabled) triggerMotion("Shake")
 	    editorChanged()
 	}
 
 	fun setGeneratePhysics(enabled: Boolean) {
-		_state.update { it.copy(generatePhysics = enabled) }
-		schedulePreviewRebuild()
+		_state.update { current ->
+			val updated = current.copy(generatePhysics = enabled)
+			if (!enabled) {
+				val physReset = mapOf(
+					StandardParameters.HAIR_FRONT to 0f,
+					StandardParameters.HAIR_BACK to 0f,
+					StandardParameters.EYE_BALL_FORM to 0f,
+				).filterKeys { key -> key !in updated.lockedParameters }
+				updated.copy(parameterValues = updated.parameterValues + physReset)
+			} else updated
+		}
+		if (!enabled) {
+			frontHair = 0f
+			frontHairVelocity = 0f
+			backHair = 0f
+			backHairVelocity = 0f
+			eyeJellyDynamics.reset()
+		}
+		scheduleRuntimeBundleUpdate()
 	    editorChanged()
 	}
 
 	fun setPhysicsFrontHair(enabled: Boolean) {
-		_state.update {
-			val next = it.copy(physicsFrontHair = enabled)
-			next.copy(generatePhysics = next.physicsFrontHair || next.physicsBackHair || next.physicsEyeJelly)
+		_state.update { current ->
+			val next = current.copy(physicsFrontHair = enabled)
+			val updated = next.copy(generatePhysics = next.physicsFrontHair || next.physicsBackHair || next.physicsEyeJelly)
+			if (!enabled) {
+				val hairReset = mapOf(
+					StandardParameters.HAIR_FRONT to 0f,
+				).filterKeys { key -> key !in updated.lockedParameters }
+				updated.copy(parameterValues = updated.parameterValues + hairReset)
+			} else updated
 		}
-		schedulePreviewRebuild()
+		if (!enabled) {
+			frontHair = 0f
+			frontHairVelocity = 0f
+		}
+		scheduleRuntimeBundleUpdate()
 	    editorChanged()
 	}
 
 	fun setPhysicsBackHair(enabled: Boolean) {
-		_state.update {
-			val next = it.copy(physicsBackHair = enabled)
-			next.copy(generatePhysics = next.physicsFrontHair || next.physicsBackHair || next.physicsEyeJelly)
+		_state.update { current ->
+			val next = current.copy(physicsBackHair = enabled)
+			val updated = next.copy(generatePhysics = next.physicsFrontHair || next.physicsBackHair || next.physicsEyeJelly)
+			if (!enabled) {
+				val hairReset = mapOf(
+					StandardParameters.HAIR_BACK to 0f,
+				).filterKeys { key -> key !in updated.lockedParameters }
+				updated.copy(parameterValues = updated.parameterValues + hairReset)
+			} else updated
 		}
-		schedulePreviewRebuild()
+		if (!enabled) {
+			backHair = 0f
+			backHairVelocity = 0f
+		}
+		scheduleRuntimeBundleUpdate()
 	    editorChanged()
 	}
 
 	fun setPhysicsEyeJelly(enabled: Boolean) {
-		_state.update {
-			val next = it.copy(physicsEyeJelly = enabled)
-			next.copy(generatePhysics = next.physicsFrontHair || next.physicsBackHair || next.physicsEyeJelly)
+		_state.update { current ->
+			val next = current.copy(physicsEyeJelly = enabled)
+			val updated = next.copy(generatePhysics = next.physicsFrontHair || next.physicsBackHair || next.physicsEyeJelly)
+			if (!enabled) {
+				val jellyReset = mapOf(
+					StandardParameters.EYE_BALL_FORM to 0f,
+				).filterKeys { key -> key !in updated.lockedParameters }
+				updated.copy(parameterValues = updated.parameterValues + jellyReset)
+			} else updated
 		}
-		schedulePreviewRebuild()
+		if (!enabled) {
+			eyeJellyDynamics.reset()
+		}
+		scheduleRuntimeBundleUpdate()
 	    editorChanged()
 	}
 
@@ -1376,23 +1490,58 @@ class PSD2LiveViewModel : AutoCloseable {
 		sdkSession.load(preview.runtimeBundle, preview.rig.puppet.parameters.map { it.id })
 	}
 
+	private fun scheduleRuntimeBundleUpdate() {
+		val previous = _state.value.previewModel ?: return
+		if (_state.value.isAnalyzing || _state.value.isGenerating) return
+
+		previewRebuildJob?.cancel()
+		previewRebuildJob = scope.launch {
+			delay(30)
+			try {
+				val config = _state.value.buildConfig()
+				val updated = withContext(Dispatchers.Default) {
+					pipeline.updateRuntimeBundle(previous, config)
+				}
+				_state.update {
+					it.copy(previewModel = updated)
+				}
+				sdkSession.load(updated.runtimeBundle, updated.rig.puppet.parameters.map { it.id })
+			} catch (failure: Throwable) {
+				val detail = failure.message ?: failure.javaClass.simpleName
+				_state.update {
+					it.copy(
+						statusText = tr("status.previewUpdateFailed", detail),
+						logLines = it.logLines + listOf(tr("log.previewUpdateFailed", detail)),
+					)
+				}
+			}
+		}
+	}
+
 	private fun schedulePreviewRebuild() {
 		val previous = _state.value.previewModel ?: return
 		if (_state.value.isAnalyzing || _state.value.isGenerating) return
 
 		previewRebuildJob?.cancel()
 		previewRebuildJob = scope.launch {
-			delay(220)
+			delay(60)
 			_state.update { it.copy(statusText = tr("status.applyingLayerChanges")) }
 			try {
 				val config = _state.value.buildConfig()
+				val baseLayers = previous.analysis.layers.filter { it.source !is io.github.psd2live.core.MouthLipLayer }
+				val baseAnalysis = previous.analysis.copy(layers = baseLayers)
 				val rebuilt = withContext(Dispatchers.Default) {
-					pipeline.buildPreview(previous.analysis.source, config)
+					pipeline.buildPreview(baseAnalysis, config)
 				}
-				_state.update {
-					it.copy(
+				_state.update { current ->
+					val validParamIds = rebuilt.rig.puppet.parameters.mapTo(mutableSetOf()) { it.id }
+					current.copy(
 						previewModel = rebuilt,
 						analysis = rebuilt.analysis,
+						lockedParameters = current.lockedParameters.intersect(validParamIds),
+						parameterValues = rebuilt.rig.puppet.parameters.associate { param ->
+							param.id to (current.parameterValues[param.id] ?: param.default).coerceIn(param.min, param.max)
+						},
 						statusText = tr("status.layerChangesApplied"),
 					)
 				}
@@ -1409,6 +1558,35 @@ class PSD2LiveViewModel : AutoCloseable {
 		}
 	}
 
+	private var activeSoftwareMotionName: String? = null
+	private var activeSoftwareMotionElapsed: Float = 0f
+	private var activeSoftwareMotionDuration: Float = 2.0f
+	@Volatile private var latestLiveParameters: Map<ParameterId, Float> = emptyMap()
+
+	fun triggerMotion(group: String) {
+		sdkSession.startMotion(group, index = 0, priority = 3)
+		when (group.lowercase()) {
+			"nod" -> {
+				activeSoftwareMotionName = "nod"
+				activeSoftwareMotionElapsed = 0f
+				activeSoftwareMotionDuration = 2.0f
+			}
+			"shake" -> {
+				activeSoftwareMotionName = "shake"
+				activeSoftwareMotionElapsed = 0f
+				activeSoftwareMotionDuration = 2.0f
+			}
+			"blink" -> {
+				activeSoftwareMotionName = "blink"
+				activeSoftwareMotionElapsed = 0f
+				activeSoftwareMotionDuration = 1.2f
+			}
+			"idle" -> {
+				elapsed = 0.0
+			}
+		}
+	}
+
 	private fun startMotionLoop() {
 		motionJob = scope.launch {
 			while (isActive) {
@@ -1417,18 +1595,91 @@ class PSD2LiveViewModel : AutoCloseable {
 				lastTick = now
 
 				val current = _state.value
-				val anim = current.animationEnabled
-				val tracking = current.mouseTrackingEnabled
+				val isMeshOnly = current.meshOnly
+				val anim = current.animationEnabled && !isMeshOnly
+				val tracking = current.mouseTrackingEnabled && !isMeshOnly
 				if (anim) elapsed += dt
-				val blink = blinkAt(elapsed % 4.6)
-				eyeJellyDynamics.advance(
-					blink,
-					dt,
-					anim && current.generatePhysics && current.physicsEyeJelly,
-				)
 
-				val idleX = if (anim) (sin(elapsed * 0.47) * 0.12).toFloat() else 0f
-				val idleY = if (anim) (sin(elapsed * 0.31 + 1.1) * 0.08).toFloat() else 0f
+				// 1. Advance one-shot software motion (Nod / Shake / Blink)
+				var nodAngleY = 0f
+				var nodBodyY = 0f
+				var nodEyeBlink = 1f
+
+				var shakeAngleX = 0f
+				var shakeBodyX = 0f
+				var shakeAngleZ = 0f
+
+				val activeMotion = activeSoftwareMotionName
+				if (activeMotion != null && anim) {
+					activeSoftwareMotionElapsed += dt
+					val t = activeSoftwareMotionElapsed
+					when (activeMotion) {
+						"nod" -> {
+							if (t <= 2.0f) {
+								nodAngleY = when {
+									t < 0.55f -> -18f * (t / 0.55f)
+									t < 1.25f -> -18f + 24f * ((t - 0.55f) / 0.70f)
+									else -> 6f * (1f - (t - 1.25f) / 0.75f)
+								}
+								nodBodyY = when {
+									t < 0.55f -> -4f * (t / 0.55f)
+									t < 1.25f -> -4f + 5.5f * ((t - 0.55f) / 0.70f)
+									else -> 1.5f * (1f - (t - 1.25f) / 0.75f)
+								}
+								nodEyeBlink = when {
+									t < 0.55f -> 1f - 0.25f * (t / 0.55f)
+									t < 1.25f -> 0.75f + 0.25f * ((t - 0.55f) / 0.70f)
+									else -> 1f
+								}
+							} else {
+								activeSoftwareMotionName = null
+							}
+						}
+						"shake" -> {
+							if (t <= 2.0f) {
+								shakeAngleX = when {
+									t < 0.4f -> -20f * (t / 0.4f)
+									t < 0.9f -> -20f + 40f * ((t - 0.4f) / 0.5f)
+									t < 1.4f -> 20f - 28f * ((t - 0.9f) / 0.5f)
+									else -> -8f * (1f - (t - 1.4f) / 0.6f)
+								}
+								shakeBodyX = when {
+									t < 0.4f -> -3f * (t / 0.4f)
+									t < 0.9f -> -3f + 6f * ((t - 0.4f) / 0.5f)
+									t < 1.4f -> 3f - 4.2f * ((t - 0.9f) / 0.5f)
+									else -> -1.2f * (1f - (t - 1.4f) / 0.6f)
+								}
+								shakeAngleZ = when {
+									t < 0.4f -> 2f * (t / 0.4f)
+									t < 0.9f -> 2f - 4f * ((t - 0.4f) / 0.5f)
+									t < 1.4f -> -2f + 3f * ((t - 0.9f) / 0.5f)
+									else -> 1f * (1f - (t - 1.4f) / 0.6f)
+								}
+							} else {
+								activeSoftwareMotionName = null
+							}
+						}
+						"blink" -> {
+							if (t > 1.2f) {
+								activeSoftwareMotionName = null
+							}
+						}
+					}
+				}
+
+				// 2. Eye Blink (Periodic + Triggered)
+				val hasBlink = anim && current.motionBlink
+				val periodicBlink = if (hasBlink) blinkAt(elapsed % 4.6) else 1f
+				val blink = minOf(periodicBlink, nodEyeBlink)
+
+				// 3. Eye Jelly Dynamics
+				val hasEyeJelly = anim && current.generatePhysics && current.physicsEyeJelly
+				eyeJellyDynamics.advance(blink, dt, hasEyeJelly)
+
+				// 4. Idle Motion (Head & Body Sway, Mouse Tracking)
+				val hasIdle = anim && current.motionIdle
+				val idleX = if (hasIdle) (sin(elapsed * 0.47) * 0.12).toFloat() else 0f
+				val idleY = if (hasIdle) (sin(elapsed * 0.31 + 1.1) * 0.08).toFloat() else 0f
 				val targetX = if (pointerActive && tracking) pointerX else idleX
 				val targetY = if (pointerActive && tracking) pointerY else idleY
 				val response = (dt * 7.5f).coerceAtMost(1f)
@@ -1439,18 +1690,48 @@ class PSD2LiveViewModel : AutoCloseable {
 				if (!pointerActive && kotlin.math.abs(followX - targetX) < 0.001f) followX = targetX
 				if (!pointerActive && kotlin.math.abs(followY - targetY) < 0.001f) followY = targetY
 
-				if (anim) {
+				// 5. Hair Physics Simulation
+				val hasFrontHair = anim && current.generatePhysics && current.physicsFrontHair
+				val hasBackHair = anim && current.generatePhysics && current.physicsBackHair
+				if (anim && (hasFrontHair || hasBackHair)) {
 					val headVelocity = ((followX - previousFollowX) / dt).coerceIn(-5f, 5f)
 					val hairTarget = (-followX * 0.42f - headVelocity * 0.085f).coerceIn(-1f, 1f)
-					frontHairVelocity += ((hairTarget - frontHair) * 22f - frontHairVelocity * 7.2f) * dt
-					backHairVelocity += ((hairTarget - backHair) * 10f - backHairVelocity * 4.2f) * dt
-					frontHair += frontHairVelocity * dt
-					backHair += backHairVelocity * dt
+					if (hasFrontHair) {
+						frontHairVelocity += ((hairTarget - frontHair) * 22f - frontHairVelocity * 7.2f) * dt
+						frontHair += frontHairVelocity * dt
+					} else {
+						frontHair = 0f
+						frontHairVelocity = 0f
+					}
+					if (hasBackHair) {
+						backHairVelocity += ((hairTarget - backHair) * 10f - backHairVelocity * 4.2f) * dt
+						backHair += backHairVelocity * dt
+					} else {
+						backHair = 0f
+						backHairVelocity = 0f
+					}
+				} else {
+					frontHair = 0f
+					frontHairVelocity = 0f
+					backHair = 0f
+					backHairVelocity = 0f
 				}
 
 				val model = current.previewModel
-				if (model != null && anim) {
-					val liveParams = computeLiveParameters(model)
+				if (model != null) {
+					val liveParams = if (isMeshOnly) {
+						model.rig.puppet.parameters.associate { it.id to it.default }
+					} else computeLiveParameters(
+						model = model,
+						current = current,
+						blink = blink,
+						nodAngleY = nodAngleY,
+						nodBodyY = nodBodyY,
+						shakeAngleX = shakeAngleX,
+						shakeBodyX = shakeBodyX,
+						shakeAngleZ = shakeAngleZ,
+					)
+					latestLiveParameters = liveParams
 					_state.update { latest ->
 						val mergedValues = parameterValuesAfterSoftwareFrame(latest, liveParams)
 						if (mergedValues === latest.parameterValues) latest else latest.copy(parameterValues = mergedValues)
@@ -1462,31 +1743,60 @@ class PSD2LiveViewModel : AutoCloseable {
 		}
 	}
 
-	fun computeLiveParameters(model: RigPreviewModel): Map<ParameterId, Float> {
-		val phase = elapsed % 4.6
-		val blink = blinkAt(phase)
+	fun computeLiveParameters(
+		model: RigPreviewModel,
+		current: PSD2LiveState = _state.value,
+		blink: Float = blinkAt(elapsed % 4.6),
+		nodAngleY: Float = 0f,
+		nodBodyY: Float = 0f,
+		shakeAngleX: Float = 0f,
+		shakeBodyX: Float = 0f,
+		shakeAngleZ: Float = 0f,
+	): Map<ParameterId, Float> {
+		if (current.meshOnly) {
+			return model.rig.puppet.parameters.associate { it.id to it.default }
+		}
+
+		val hasIdle = current.animationEnabled && current.motionIdle
+		val hasFrontHair = current.animationEnabled && current.generatePhysics && current.physicsFrontHair
+		val hasBackHair = current.animationEnabled && current.generatePhysics && current.physicsBackHair
+		val hasEyeJelly = current.animationEnabled && current.generatePhysics && current.physicsEyeJelly
+
 		val mouthPhase = elapsed % 5.8
-		val mouthOpen = if (mouthPhase in 1.25..2.45) {
+		val mouthOpen = if (mouthPhase in 1.25..2.45 && current.animationEnabled && hasIdle) {
 			sin((mouthPhase - 1.25) / 1.20 * PI).toFloat().coerceAtLeast(0f)
 		} else 0f
 
+		val idleAngleZ = if (hasIdle) (sin(elapsed * PI / 1.5) * 2.0).toFloat() else 0f
+		val idleBodyX = if (hasIdle) sin(elapsed * 0.72).toFloat() * 1.2f else 0f
+		val idleBodyZ = if (hasIdle) sin(elapsed * 0.92).toFloat() * 2.2f else 0f
+		val breath = if (hasIdle) ((sin(elapsed * 1.45) + 1.0) * 0.5).toFloat() else 0f
+
+		val isTracking = pointerActive && current.mouseTrackingEnabled && !current.meshOnly
+		val headAngleX = if (hasIdle || isTracking) followX * 38f else 0f
+		val headAngleY = if (hasIdle || isTracking) -followY * 24f else 0f
+		val bodyAngleX = if (hasIdle || isTracking) followX * 4f else 0f
+		val bodyAngleY = if (hasIdle || isTracking) -followY * 2f else 0f
+		val eyeBallX = if (hasIdle || isTracking) followX.coerceIn(-1f, 1f) else 0f
+		val eyeBallY = if (hasIdle || isTracking) (-followY).coerceIn(-1f, 1f) else 0f
+
 		return mapOf(
-			StandardParameters.ANGLE_X to followX * 38f,
-			StandardParameters.ANGLE_Y to -followY * 24f,
-			StandardParameters.ANGLE_Z to (sin(elapsed * PI / 1.5) * 2.0).toFloat(),
-			StandardParameters.BODY_X to (followX * 4f + sin(elapsed * 0.72).toFloat() * 1.2f),
-			StandardParameters.BODY_Y to -followY * 2f,
-			StandardParameters.BODY_Z to sin(elapsed * 0.92).toFloat() * 2.2f,
-			StandardParameters.EYE_BALL_X to followX.coerceIn(-1f, 1f),
-			StandardParameters.EYE_BALL_Y to (-followY).coerceIn(-1f, 1f),
-			StandardParameters.EYE_BALL_FORM to if (model.config.generatePhysics && model.config.physicsEyeJelly) eyeJellyDynamics.value else 0f,
+			StandardParameters.ANGLE_X to (headAngleX + shakeAngleX),
+			StandardParameters.ANGLE_Y to (headAngleY + nodAngleY),
+			StandardParameters.ANGLE_Z to (idleAngleZ + shakeAngleZ),
+			StandardParameters.BODY_X to (bodyAngleX + idleBodyX + shakeBodyX),
+			StandardParameters.BODY_Y to (bodyAngleY + nodBodyY),
+			StandardParameters.BODY_Z to idleBodyZ,
+			StandardParameters.EYE_BALL_X to eyeBallX,
+			StandardParameters.EYE_BALL_Y to eyeBallY,
+			StandardParameters.EYE_BALL_FORM to if (hasEyeJelly) eyeJellyDynamics.value else 0f,
 			StandardParameters.EYE_L_OPEN to blink,
 			StandardParameters.EYE_R_OPEN to blink,
-			StandardParameters.MOUTH_FORM to sin(elapsed * 0.41).toFloat() * 0.18f,
+			StandardParameters.MOUTH_FORM to if (current.animationEnabled && hasIdle) sin(elapsed * 0.41).toFloat() * 0.18f else 0f,
 			StandardParameters.MOUTH_OPEN to mouthOpen,
-			StandardParameters.BREATH to ((sin(elapsed * 1.45) + 1.0) * 0.5).toFloat(),
-			StandardParameters.HAIR_FRONT to if (model.config.generatePhysics && model.config.physicsFrontHair) frontHair.coerceIn(-1f, 1f) else 0f,
-			StandardParameters.HAIR_BACK to if (model.config.generatePhysics && model.config.physicsBackHair) backHair.coerceIn(-1f, 1f) else 0f,
+			StandardParameters.BREATH to breath,
+			StandardParameters.HAIR_FRONT to if (hasFrontHair) frontHair.coerceIn(-1f, 1f) else 0f,
+			StandardParameters.HAIR_BACK to if (hasBackHair) backHair.coerceIn(-1f, 1f) else 0f,
 		)
 	}
 
@@ -1505,8 +1815,11 @@ class PSD2LiveViewModel : AutoCloseable {
 	) {
 		val current = _state.value
 		val model = current.previewModel ?: return
-		val tracking = current.mouseTrackingEnabled
-		val previewValues = parameterValuesForPreview(current)
+		val tracking = current.mouseTrackingEnabled && !current.meshOnly
+		val liveParams = latestLiveParameters.ifEmpty {
+			computeLiveParameters(model, current)
+		}
+		val previewValues = parameterValuesForPreview(current, liveParams)
 		sdkSession.render(
 			CubismSdkPreviewSession.RenderRequest(
 				width = width,
@@ -1520,7 +1833,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				// separately to keep mouse tracking from owning ParamAngleZ.
 				pointerX = if (pointerActive && tracking) pointerX else 0f,
 				pointerY = if (pointerActive && tracking) -followY else 0f,
-				animationEnabled = current.animationEnabled,
+				animationEnabled = current.animationEnabled && !current.meshOnly,
 				parameterOverrides = previewValues,
 				frameTimeNanos = frameTimeNanos,
 			),
@@ -1561,21 +1874,84 @@ internal fun mergeUnlockedParameterValues(
 	return if (changed) merged else current
 }
 
-internal fun parameterValuesForPreview(state: PSD2LiveState): Map<ParameterId, Float> {
-	val standardIds = StandardParameters.all.map { it.id }.toSet()
-	return if (state.animationEnabled) {
-		state.parameterValues.filterKeys { it in state.lockedParameters || it !in standardIds }
-	} else {
-		state.parameterValues
+internal fun parameterValuesForPreview(
+	state: PSD2LiveState,
+	liveParams: Map<ParameterId, Float> = emptyMap(),
+): Map<ParameterId, Float> {
+	if (!state.animationEnabled) {
+		return state.parameterValues
 	}
+	if (state.meshOnly) {
+		val defaults = state.previewModel?.rig?.puppet?.parameters?.associate { it.id to it.default } ?: emptyMap()
+		return defaults + state.parameterValues.filterKeys { it in state.lockedParameters }
+	}
+
+	val standardIds = StandardParameters.all.map { it.id }.toSet()
+	val overrides = state.parameterValues.filterKeys { it in state.lockedParameters || it !in standardIds }.toMutableMap()
+
+	// 1. Idle animation disabled:
+	// Silences Native SDK's hardcoded CubismBreath and Idle motion.
+	// Overrides AngleX/Y/Z, BodyAngleX/Y/Z, Breath, and Mouth to controlled values (neutral 0 unless moving mouse/motion).
+	if (!state.motionIdle) {
+		val idleSuppressedIds = listOf(
+			StandardParameters.ANGLE_X,
+			StandardParameters.ANGLE_Y,
+			StandardParameters.ANGLE_Z,
+			StandardParameters.BODY_X,
+			StandardParameters.BODY_Y,
+			StandardParameters.BODY_Z,
+			StandardParameters.BREATH,
+			StandardParameters.MOUTH_OPEN,
+			StandardParameters.MOUTH_FORM,
+		)
+		for (id in idleSuppressedIds) {
+			if (id !in state.lockedParameters) {
+				overrides[id] = liveParams[id] ?: 0f
+			}
+		}
+	}
+
+	// 2. Blink motion disabled:
+	// Silences Native SDK eye blinking; keeps eyes fully open (1.0f).
+	if (!state.motionBlink) {
+		if (StandardParameters.EYE_L_OPEN !in state.lockedParameters) {
+			overrides[StandardParameters.EYE_L_OPEN] = liveParams[StandardParameters.EYE_L_OPEN] ?: 1.0f
+		}
+		if (StandardParameters.EYE_R_OPEN !in state.lockedParameters) {
+			overrides[StandardParameters.EYE_R_OPEN] = liveParams[StandardParameters.EYE_R_OPEN] ?: 1.0f
+		}
+	}
+
+	// 3. Physics disabled or specific chains disabled:
+	val physicsActive = state.generatePhysics && !state.meshOnly
+	if (!physicsActive || !state.physicsFrontHair) {
+		if (StandardParameters.HAIR_FRONT !in state.lockedParameters) {
+			overrides[StandardParameters.HAIR_FRONT] = 0f
+		}
+	}
+	if (!physicsActive || !state.physicsBackHair) {
+		if (StandardParameters.HAIR_BACK !in state.lockedParameters) {
+			overrides[StandardParameters.HAIR_BACK] = 0f
+		}
+	}
+	if (!physicsActive || !state.physicsEyeJelly) {
+		if (StandardParameters.EYE_BALL_FORM !in state.lockedParameters) {
+			overrides[StandardParameters.EYE_BALL_FORM] = 0f
+		}
+	}
+
+	return overrides
 }
 
 internal fun parameterValuesAfterPreviewFrame(
 	state: PSD2LiveState,
 	incoming: Map<ParameterId, Float>,
 ): Map<ParameterId, Float> =
-	if (state.animationEnabled) {
+	if (state.animationEnabled && !state.meshOnly) {
 		mergeUnlockedParameterValues(state.parameterValues, incoming, state.lockedParameters)
+	} else if (state.meshOnly) {
+		val defaults = state.previewModel?.rig?.puppet?.parameters?.associate { it.id to it.default } ?: emptyMap()
+		mergeUnlockedParameterValues(state.parameterValues, defaults, state.lockedParameters)
 	} else {
 		state.parameterValues
 	}
@@ -1584,8 +1960,11 @@ internal fun parameterValuesAfterSoftwareFrame(
 	state: PSD2LiveState,
 	incoming: Map<ParameterId, Float>,
 ): Map<ParameterId, Float> =
-	if (state.animationEnabled && state.sdkStatus != "ready") {
+	if (state.animationEnabled && state.sdkStatus != "ready" && !state.meshOnly) {
 		mergeUnlockedParameterValues(state.parameterValues, incoming, state.lockedParameters)
+	} else if (state.meshOnly) {
+		val defaults = state.previewModel?.rig?.puppet?.parameters?.associate { it.id to it.default } ?: emptyMap()
+		mergeUnlockedParameterValues(state.parameterValues, defaults, state.lockedParameters)
 	} else {
 		state.parameterValues
 	}
@@ -1593,4 +1972,4 @@ internal fun parameterValuesAfterSoftwareFrame(
 internal fun previewFrameMatchesState(
 	state: PSD2LiveState,
 	frameAnimationEnabled: Boolean,
-): Boolean = frameAnimationEnabled == state.animationEnabled
+): Boolean = frameAnimationEnabled == (state.animationEnabled && !state.meshOnly)

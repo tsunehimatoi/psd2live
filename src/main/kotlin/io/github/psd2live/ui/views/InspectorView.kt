@@ -142,6 +142,45 @@ fun InspectorView(
 }
 
 @Composable
+private fun MotionItemWithPlay(
+	checked: Boolean,
+	onCheckedChange: (Boolean) -> Unit,
+	label: String,
+	onPlay: () -> Unit,
+	enabled: Boolean,
+	modifier: Modifier = Modifier,
+) {
+	val colors = LocalToolColors.current
+	Row(
+		modifier = modifier,
+		verticalAlignment = Alignment.CenterVertically,
+	) {
+		CompactCheckbox(
+			checked = checked,
+			onCheckedChange = onCheckedChange,
+			label = label,
+			enabled = enabled,
+			modifier = Modifier.weight(1f, fill = false),
+		)
+		Spacer(Modifier.width(3.dp))
+		Box(
+			modifier = Modifier
+				.size(15.dp)
+				.background(colors.panelElevated, RoundedCornerShape(2.dp))
+				.border(BorderStroke(0.5.dp, colors.divider), RoundedCornerShape(2.dp))
+				.clickable(enabled = enabled) { onPlay() },
+			contentAlignment = Alignment.Center,
+		) {
+			Text(
+				text = "▶",
+				fontSize = 8.sp,
+				color = if (enabled) colors.accent else colors.textDisabled,
+			)
+		}
+	}
+}
+
+@Composable
 private fun ExportActionSection(
 	state: PSD2LiveState,
 	viewModel: PSD2LiveViewModel,
@@ -208,17 +247,26 @@ private fun ExportActionSection(
 				)
 			}
 
-			CompactCheckbox(
-                checked = state.mouthOutlineEnabled,
-                onCheckedChange = { viewModel.setMouthOutlineEnabled(it) },
-                label = tr("mouth.outline"),
-                enabled = !isBusy && !state.meshOnly,
-            )
-            io.github.psd2live.ui.components.MouthSettingsPopupButton(
-                state = state,
-                enabled = !isBusy && !state.meshOnly,
-                onApply = viewModel::setMouthSettings,
-            )
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.spacedBy(8.dp),
+			) {
+				CompactCheckbox(
+					checked = state.mouthOutlineEnabled,
+					onCheckedChange = { viewModel.setMouthOutlineEnabled(it) },
+					label = tr("mouth.outline"),
+					enabled = !isBusy && !state.meshOnly,
+					modifier = Modifier.weight(1f),
+				)
+				Box(modifier = Modifier.weight(1f)) {
+					io.github.psd2live.ui.components.MouthSettingsPopupButton(
+						state = state,
+						enabled = !isBusy && !state.meshOnly,
+						onApply = viewModel::setMouthSettings,
+					)
+				}
+			}
             // Row 2: Motions (Collapsible, no master checkbox, disabled/grayed when meshOnly)
 			Row(
 				modifier = Modifier
@@ -266,36 +314,44 @@ private fun ExportActionSection(
 				) {
 					Row(
 						modifier = Modifier.fillMaxWidth(),
-						horizontalArrangement = Arrangement.spacedBy(12.dp),
+						horizontalArrangement = Arrangement.spacedBy(10.dp),
 					) {
-						CompactCheckbox(
+						MotionItemWithPlay(
 							checked = state.motionIdle,
 							onCheckedChange = { viewModel.setMotionIdle(it) },
 							label = tr("export.motion.idle"),
+							onPlay = { viewModel.triggerMotion("Idle") },
 							enabled = !isBusy,
+							modifier = Modifier.weight(1f),
 						)
-						CompactCheckbox(
+						MotionItemWithPlay(
 							checked = state.motionBlink,
 							onCheckedChange = { viewModel.setMotionBlink(it) },
 							label = tr("export.motion.blink"),
+							onPlay = { viewModel.triggerMotion("Blink") },
 							enabled = !isBusy,
+							modifier = Modifier.weight(1f),
 						)
 					}
 					Row(
 						modifier = Modifier.fillMaxWidth(),
-						horizontalArrangement = Arrangement.spacedBy(12.dp),
+						horizontalArrangement = Arrangement.spacedBy(10.dp),
 					) {
-						CompactCheckbox(
+						MotionItemWithPlay(
 							checked = state.motionNod,
 							onCheckedChange = { viewModel.setMotionNod(it) },
 							label = tr("export.motion.nod"),
+							onPlay = { viewModel.triggerMotion("Nod") },
 							enabled = !isBusy,
+							modifier = Modifier.weight(1f),
 						)
-						CompactCheckbox(
+						MotionItemWithPlay(
 							checked = state.motionShake,
 							onCheckedChange = { viewModel.setMotionShake(it) },
 							label = tr("export.motion.shake"),
+							onPlay = { viewModel.triggerMotion("Shake") },
 							enabled = !isBusy,
+							modifier = Modifier.weight(1f),
 						)
 					}
 				}
