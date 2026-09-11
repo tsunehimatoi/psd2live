@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Divider
 import androidx.compose.material.Surface
@@ -108,22 +107,12 @@ fun AppTitleBar(
 			.border(BorderStroke(1.dp, colors.divider)),
 		verticalAlignment = Alignment.CenterVertically,
 	) {
-		// --- LEFT: App Icon & Tool Menus ---
+		// --- LEFT: Tool Menus ---
 		Row(
 			modifier = Modifier.fillMaxHeight(),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
-			// Window Icon / Branding mark
-			Box(
-				modifier = Modifier
-					.padding(start = 8.dp, end = 6.dp)
-					.size(16.dp),
-				contentAlignment = Alignment.Center,
-			) {
-				Canvas(modifier = Modifier.fillMaxSize()) {
-					drawCircle(color = colors.accent, radius = size.minDimension / 2.2f)
-				}
-			}
+			Spacer(modifier = Modifier.width(6.dp))
 
 			// 1. File Menu
 			TitleBarMenuItem(
@@ -335,34 +324,6 @@ fun AppTitleBar(
 			modifier = Modifier.fillMaxHeight(),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
-			// Agent MCP Quick Status Pill
-			Box(
-				modifier = Modifier
-					.padding(end = 12.dp)
-					.clip(RoundedCornerShape(10.dp))
-					.background(Color(0xFF14241E))
-					.border(BorderStroke(1.dp, Color(0xFF4EC9B0).copy(alpha = 0.6f)), RoundedCornerShape(10.dp))
-					.clickable(onClick = onShowAgentConnection)
-					.padding(horizontal = 7.dp, vertical = 2.5.dp),
-			) {
-				Row(
-					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.spacedBy(4.dp),
-				) {
-					Box(
-						modifier = Modifier
-							.size(6.dp)
-							.clip(CircleShape)
-							.background(Color(0xFF4EC9B0)),
-					)
-					Text(
-						text = "MCP :23871",
-						style = typography.monoSmall.copy(fontSize = 9.5.sp, fontWeight = FontWeight.Bold),
-						color = Color(0xFF4EC9B0),
-					)
-				}
-			}
-
 			// Minimize
 			WindowControlButton(
 				onClick = { windowState.isMinimized = true },

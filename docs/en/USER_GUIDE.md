@@ -61,7 +61,7 @@ The main window is structured as **Left Workspace + Right Inspector + Independen
 - **Menu Bar**:
   - **File**: `Open PSD...` (`Ctrl + O`), `Reanalyze` (`Ctrl + R`), `Open Output Directory`, `Generate & Export` (`Ctrl + G`), `Export To...` (`Ctrl + Shift + G`), `Exit`.
   - **Language**: Instant switching between Simplified Chinese (`zh`), English (`en`), and Japanese (`ja`).
-  - **Agent / MCP**: Open connection and skill setup, or jump directly to the version-history tree. The top-right status pill reopens the connection dialog.
+  - **Agent / MCP**: Open connection and skill setup, or jump directly to the version-history tree.
   - **Help**: Version and license notices.
 - **Split Pane Divider**: Drag to adjust the Workspace/Inspector ratio within `25% ~ 85%`.
 
