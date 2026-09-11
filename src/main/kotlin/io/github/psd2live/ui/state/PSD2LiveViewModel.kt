@@ -24,6 +24,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -1526,10 +1527,14 @@ class PSD2LiveViewModel : AutoCloseable {
 		)
 	}
 
+	private val isClosed = java.util.concurrent.atomic.AtomicBoolean(false)
+
 	override fun close() {
+		if (!isClosed.compareAndSet(false, true)) return
 		motionJob?.cancel()
 		previewRebuildJob?.cancel()
 		activeWorkJob?.cancel()
+		scope.cancel()
 		sdkSession.close()
 	}
 

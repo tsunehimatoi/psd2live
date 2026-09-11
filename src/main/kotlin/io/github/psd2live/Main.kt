@@ -32,28 +32,45 @@ fun main(arguments: Array<String>) {
 				.also { agentMcpService = it }
 				.start()
 		}
-		application {
-			val windowState = rememberWindowState(size = DpSize(1280.dp, 820.dp))
-			val closeApp: () -> Unit = { viewModel.withSavedChanges {
-				agentMcpService?.close()
-				viewModel.close()
-				exitApplication()
-			} }
-			Window(
-				onCloseRequest = closeApp,
-				title = tr("app.title"),
-				state = windowState,
-				undecorated = true,
-			) {
-				PSD2LiveApp(
-					viewModel = viewModel,
-					window = window,
-					windowState = windowState,
+
+		val shutdown = {
+			runCatching { agentMcpService?.close() }
+			runCatching { viewModel.close() }
+		}
+		val shutdownHook = Thread({
+			shutdown()
+		}, "psd2live-shutdown-hook")
+		Runtime.getRuntime().addShutdownHook(shutdownHook)
+
+		try {
+			application {
+				val windowState = rememberWindowState(size = DpSize(1280.dp, 820.dp))
+				val closeApp: () -> Unit = {
+					viewModel.withSavedChanges {
+						shutdown()
+						exitApplication()
+					}
+				}
+				Window(
 					onCloseRequest = closeApp,
-					agentConnectionInfo = agentMcpStartup.getOrNull(),
-					agentStartupError = agentMcpStartup.exceptionOrNull()?.message,
-				)
+					title = tr("app.title"),
+					state = windowState,
+					undecorated = true,
+				) {
+					PSD2LiveApp(
+						viewModel = viewModel,
+						window = window,
+						windowState = windowState,
+						onCloseRequest = closeApp,
+						agentConnectionInfo = agentMcpStartup.getOrNull(),
+						agentStartupError = agentMcpStartup.exceptionOrNull()?.message,
+					)
+				}
 			}
+		} finally {
+			shutdown()
+			runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
+			kotlin.system.exitProcess(0)
 		}
 		return
 	}

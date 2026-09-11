@@ -30,11 +30,13 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.awt.AlphaComposite
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
@@ -45,6 +47,7 @@ import java.security.MessageDigest
 import java.util.Collections
 import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 private val PARAMETER_ID = Regex("[A-Za-z][A-Za-z0-9_]{0,63}")
@@ -1531,10 +1534,21 @@ class ViewModelAgentWorkspace(
 		.digest(value)
 		.joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
+	private val isClosed = AtomicBoolean(false)
+
 	override fun close() {
-		recoveryJob.cancel()
-		runBlocking { recoveryJob.join() }
-		persistenceJob.complete()
-		runBlocking { persistenceJob.join() }
+		if (!isClosed.compareAndSet(false, true)) return
+		runCatching {
+			runBlocking {
+				withTimeoutOrNull(500L) {
+					recoveryJob.cancel()
+					recoveryJob.join()
+					persistenceJob.complete()
+					persistenceJob.join()
+				}
+			}
+		}
+		persistenceScope.cancel()
+		recoveryScope.cancel()
 	}
 }

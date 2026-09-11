@@ -39,6 +39,8 @@ import io.modelcontextprotocol.kotlin.sdk.types.TextResourceContents
 import io.modelcontextprotocol.kotlin.sdk.types.ToolAnnotations
 import io.modelcontextprotocol.kotlin.sdk.types.ToolSchema
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.float
@@ -112,6 +114,7 @@ class AgentMcpService(
 	private val config: AgentMcpConfig = AgentMcpConfig(),
 ) : AutoCloseable {
 	private var engine: EmbeddedServer<*, *>? = null
+	private val isClosed = AtomicBoolean(false)
 
 	lateinit var connectionInfo: AgentMcpConnectionInfo
 		private set
@@ -121,19 +124,35 @@ class AgentMcpService(
 		val started = embeddedServer(CIO, host = config.host, port = config.port) {
 			configureAgentMcp(workspace, config.token, config.maxRequestBodyBytes)
 		}
-		started.start(wait = false)
-		engine = started
-		val actualPort = runBlocking { started.engine.resolvedConnectors().single().port }
-		return AgentMcpConnectionInfo(
-			endpoint = "http://${config.host}:$actualPort/mcp",
-			token = config.token,
-		).also { connectionInfo = it }
+		try {
+			started.start(wait = false)
+			engine = started
+			val actualPort = runBlocking {
+				withTimeout(2_000L) {
+					val connectors = started.engine.resolvedConnectors()
+					connectors.firstOrNull()?.port ?: error("No connectors resolved for MCP server")
+				}
+			}
+			return AgentMcpConnectionInfo(
+				endpoint = "http://${config.host}:$actualPort/mcp",
+				token = config.token,
+			).also { connectionInfo = it }
+		} catch (t: Throwable) {
+			runCatching { started.stop(gracePeriodMillis = 50, timeoutMillis = 200) }
+			engine = null
+			throw t
+		}
 	}
 
 	override fun close() {
-		engine?.stop(gracePeriodMillis = 250, timeoutMillis = 1_500)
+		if (!isClosed.compareAndSet(false, true)) return
+		runCatching {
+			engine?.stop(gracePeriodMillis = 100, timeoutMillis = 500)
+		}
 		engine = null
-		(workspace as? AutoCloseable)?.close()
+		runCatching {
+			(workspace as? AutoCloseable)?.close()
+		}
 	}
 }
 
