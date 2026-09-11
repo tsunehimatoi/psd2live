@@ -1203,7 +1203,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				}
 				sdkSession.load(preview.runtimeBundle, preview.rig.puppet.parameters.map { it.id })
                 (agentWorkspace as? io.github.psd2live.agent.ViewModelAgentWorkspace)?.importedPsd()
-                _state.update { it.copy(isAnalyzing = false, showProjectLocationDialog = true) }
+                _state.update { it.copy(isAnalyzing = false) }
 			} catch (failure: Throwable) {
 				val detail = failure.message ?: failure.javaClass.simpleName
 				_state.update {
