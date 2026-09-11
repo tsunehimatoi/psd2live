@@ -226,4 +226,35 @@ class RealtimePreviewDynamicsTest {
         )
         assertEquals(0f, afterPreview[StandardParameters.ANGLE_X], "AngleX must reset to default 0 in meshOnly")
     }
+
+    @Test
+    fun testResetAllParametersStopsAnimationAndDoesNotLockParameters() {
+        val pipeline = PSD2LivePipeline()
+        val source = dummySourceArt()
+        val config = PipelineConfig(atlasSize = 512)
+        val preview = pipeline.buildPreview(source, config)
+        val vm = PSD2LiveViewModel()
+
+        val puppetParams = preview.rig.puppet.parameters
+        val testParamId = puppetParams.first().id
+        val testLocked = setOf(testParamId)
+        val modifiedValues = puppetParams.associate { it.id to (it.default + 5f).coerceIn(it.min, it.max) }
+
+        val activeState = PSD2LiveState(
+            previewModel = preview,
+            animationEnabled = true,
+            lockedParameters = testLocked,
+            parameterValues = modifiedValues,
+        )
+        vm.setStateForTest(activeState)
+
+        vm.resetAllParameters()
+
+        val resultingState = vm.state.value
+        assertFalse(resultingState.animationEnabled, "Animation must be stopped on reset")
+        assertTrue(resultingState.lockedParameters.isEmpty(), "Parameters should not be locked on reset")
+        val expectedDefaults = puppetParams.associate { it.id to it.default }
+        assertEquals(expectedDefaults, resultingState.parameterValues, "Parameters should be reset to defaults")
+    }
 }
+

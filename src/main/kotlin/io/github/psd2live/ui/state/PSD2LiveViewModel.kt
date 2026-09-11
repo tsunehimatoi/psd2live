@@ -1199,12 +1199,15 @@ class PSD2LiveViewModel : AutoCloseable {
 		backHairVelocity = 0f
 		eyeJellyDynamics.reset()
 		elapsed = 0.0
+		activeSoftwareMotionName = null
+		lastTick = System.nanoTime()
 
 		_state.update { current ->
 			val model = current.previewModel
 			val defaults = model?.rig?.puppet?.parameters?.associate { it.id to it.default } ?: emptyMap()
 			current.copy(
-				lockedParameters = defaults.keys,
+				animationEnabled = false,
+				lockedParameters = emptySet(),
 				parameterValues = defaults,
 			)
 		}
@@ -1849,6 +1852,10 @@ class PSD2LiveViewModel : AutoCloseable {
 		activeWorkJob?.cancel()
 		scope.cancel()
 		sdkSession.close()
+	}
+
+	internal fun setStateForTest(state: PSD2LiveState) {
+		_state.value = state
 	}
 
 	private companion object {
