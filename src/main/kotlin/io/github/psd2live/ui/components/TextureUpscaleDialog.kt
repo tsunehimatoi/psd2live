@@ -197,6 +197,43 @@ fun TextureUpscaleDialog(
 					)
 				}
 
+				// Noise & Sharpening selector
+				Row(
+					modifier = Modifier.fillMaxWidth(),
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.SpaceBetween,
+				) {
+					Column(modifier = Modifier.weight(1f)) {
+						Text(
+							text = tr("upscale.noiseLevel"),
+							style = typography.body.copy(fontSize = 11.5.sp, fontWeight = FontWeight.Medium),
+							color = colors.textPrimary,
+						)
+						Text(
+							text = tr("upscale.noiseLevelDesc"),
+							style = typography.caption.copy(fontSize = 9.5.sp),
+							color = colors.textMuted,
+						)
+					}
+					Spacer(Modifier.width(8.dp))
+					CompactDropdown(
+						items = listOf(1, 0, 2, 3, -1),
+						selectedItem = draft.noiseLevel,
+						onItemSelected = { draft = draft.copy(noiseLevel = it) },
+						itemLabel = {
+							when (it) {
+								0 -> tr("upscale.noiseLevel.0")
+								1 -> tr("upscale.noiseLevel.1")
+								2 -> tr("upscale.noiseLevel.2")
+								3 -> tr("upscale.noiseLevel.3")
+								else -> tr("upscale.noiseLevel.none")
+							}
+						},
+						enabled = !isBusy && draft.scale > 1,
+						modifier = Modifier.width(200.dp),
+					)
+				}
+
 				// Form fields
 				Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
 					Text(
@@ -262,12 +299,20 @@ fun TextureUpscaleDialog(
 				}
 
 				// Neural alpha
-				CompactCheckbox(
-					checked = draft.neuralAlpha,
-					onCheckedChange = { draft = draft.copy(neuralAlpha = it) },
-					label = tr("upscale.alpha"),
-					enabled = !isBusy,
-				)
+				Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+					CompactCheckbox(
+						checked = draft.neuralAlpha,
+						onCheckedChange = { draft = draft.copy(neuralAlpha = it) },
+						label = tr("upscale.neuralAlpha"),
+						enabled = !isBusy && draft.scale > 1,
+					)
+					Text(
+						text = tr("upscale.neuralAlphaDesc"),
+						style = typography.caption.copy(fontSize = 9.5.sp),
+						color = colors.textMuted,
+						modifier = Modifier.padding(start = 22.dp),
+					)
+				}
 
 				Text(
 					text = tr("upscale.setup"),

@@ -17,11 +17,13 @@ data class TextureUpscaleConfig(
     val nunifDirectory: String = "",
     val modelDirectory: String = "",
     val tileSize: Int = 256,
-    val neuralAlpha: Boolean = false,
+    val noiseLevel: Int = 1,
+    val neuralAlpha: Boolean = true,
 ) {
     init {
         require(scale in listOf(1, 2, 4)) { "Texture scale must be 1, 2 or 4" }
         require(tileSize in 64..512) { "Upscale tile size must be 64..512" }
+        require(noiseLevel in -1..3) { "Noise level must be -1..3" }
     }
 
     companion object {
@@ -125,8 +127,9 @@ internal object TextureUpscale {
                 val log = temporary.resolve("worker.log")
                 val command = mutableListOf(config.python, "-u", script.toString(), "--repo", repo.toString(),
                     "--models", models.toString(), "--scale", config.scale.toString(), "--tile", config.tileSize.toString(),
+                    "--noise-level", config.noiseLevel.toString(),
                     "--manifest", manifest.toString())
-                if (config.neuralAlpha) command += "--neural-alpha"
+                if (config.neuralAlpha) command += "--neural-alpha" else command += "--no-neural-alpha"
                 if (Thread.currentThread().isInterrupted) throw InterruptedException()
                 val process = ProcessBuilder(command).directory(repo.toFile()).redirectErrorStream(true).start()
                 val shutdown = Thread({

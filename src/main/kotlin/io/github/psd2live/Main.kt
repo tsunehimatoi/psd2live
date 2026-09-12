@@ -87,7 +87,8 @@ fun main(arguments: Array<String>) {
             nunifDirectory = options.value("--nunif-dir") ?: "",
             modelDirectory = options.value("--upscale-model") ?: "",
             tileSize = options.value("--upscale-tile")?.toInt() ?: 256,
-            neuralAlpha = options.flags.contains("--upscale-neural-alpha"),
+            noiseLevel = options.value("--upscale-noise")?.toInt() ?: 1,
+            neuralAlpha = !options.flags.contains("--no-upscale-neural-alpha"),
         ),
 		meshSpacing = options.int("--mesh-spacing", 64),
 		headTurnStrength = options.float("--head-strength", 1f),
@@ -129,8 +130,9 @@ private fun printUsage() {
           --upscale-python <path>    Python executable with nunif dependencies
           --nunif-dir <path>         nunif source checkout
           --upscale-model <path>     Explicit Art weights directory
-          --upscale-tile <64..512>    Input tile size; default 256, batch 1, no TTA
-          --upscale-neural-alpha     Experimental neural alpha; default bilinear
+          --upscale-tile <64..512>   Input tile size; default 256, batch 1, no TTA
+          --upscale-noise <-1..3>    Denoise/sharpen level: -1 (none), 0 (clean art/sharp), 1 (medium, default), 2 (high), 3 (max)
+          --no-upscale-neural-alpha  Disable neural alpha (use bilinear fallback)
     """.trimIndent())
 }
 
@@ -141,8 +143,8 @@ private data class CliOptions(val values: Map<String, String>, val flags: Set<St
 	fun float(name: String, default: Float): Float = value(name)?.toFloatOrNull() ?: default
 
 	companion object {
-		private val flagNames = setOf("--upscale-neural-alpha", "--no-physics", "--no-cmo3", "--no-moc3", "--mesh-only", "--no-deformers", "--no-motions", "--no-json")
-		private val valueNames = setOf("--upscale", "--upscale-python", "--nunif-dir", "--upscale-model", "--upscale-tile", "--input", "--output", "--lang", "--atlas", "--mesh-spacing", "--head-strength", "--body-strength")
+		private val flagNames = setOf("--no-upscale-neural-alpha", "--upscale-neural-alpha", "--no-physics", "--no-cmo3", "--no-moc3", "--mesh-only", "--no-deformers", "--no-motions", "--no-json")
+		private val valueNames = setOf("--upscale", "--upscale-noise", "--upscale-python", "--nunif-dir", "--upscale-model", "--upscale-tile", "--input", "--output", "--lang", "--atlas", "--mesh-spacing", "--head-strength", "--body-strength")
 		fun parse(arguments: Array<String>): CliOptions {
 			val values = linkedMapOf<String, String>()
 			val flags = linkedSetOf<String>()

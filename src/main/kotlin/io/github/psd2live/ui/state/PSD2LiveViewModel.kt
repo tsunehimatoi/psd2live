@@ -275,7 +275,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		val newAtlasSize = if (shouldAutoExpand) minRequired else current.atlasSize
 		if (config.scale > 1) {
 			addLog(
-				message = tr("log.upscaleConfigured", config.scale, config.tileSize),
+				message = tr("log.upscaleConfigured", config.scale, config.noiseLevel, config.tileSize),
 				level = LogLevel.INFO,
 				tag = "Upscale",
 			)

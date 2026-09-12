@@ -138,7 +138,7 @@ class TextureUpscaleTest {
     }
 
     @Test fun workspacePersistsSettingsAndOlderProjectsDefaultToOff() {
-        val config = TextureUpscaleConfig(2, "C:/Python/python.exe", "C:/nunif", "C:/models", 128, true)
+        val config = TextureUpscaleConfig(scale = 2, python = "C:/Python/python.exe", nunifDirectory = "C:/nunif", modelDirectory = "C:/models", tileSize = 128, noiseLevel = 1, neuralAlpha = true)
         val state = PSD2LiveState(textureUpscale = config)
         val encoded = WorkspaceStateCodec.encode(state)
         assertEquals(config, WorkspaceStateCodec.decode(encoded).textureUpscale)
