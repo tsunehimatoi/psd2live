@@ -1,5 +1,7 @@
 package io.github.psd2live.ui
 
+import io.github.psd2live.i18n.AppLanguage
+import io.github.psd2live.ui.components.buildInstallationPrompt
 import io.github.psd2live.ui.components.HelpTab
 import io.github.psd2live.ui.components.TutorialScenario
 import io.github.psd2live.ui.utils.DesktopUtils
@@ -14,6 +16,20 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class HelpDialogAndUrlsTest {
+	@Test
+	fun installationPromptUsesMcpBundledWorkflows() {
+		for (language in AppLanguage.entries) {
+			val prompt = buildInstallationPrompt(
+				endpoint = "http://127.0.0.1:23871/mcp",
+				token = "test-token",
+				projectDir = "C:/PSD2Live",
+				language = language,
+			)
+			assertTrue(prompt.contains("agent_get_workflow"), "Missing MCP workflow entry for $language")
+			assertFalse(prompt.contains(".agent/skills"), "Prompt must not require repository Skills for $language")
+			assertFalse(prompt.contains("psd2live-rigging"), "Prompt must not require a standalone rigging Skill for $language")
+		}
+	}
 
 	@Test
 	fun testDesktopUtilsUrlConstants() {

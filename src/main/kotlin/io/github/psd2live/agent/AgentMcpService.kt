@@ -850,8 +850,8 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace): Server {
 		description = "Natural hair separation: infer local depth, complete crossing root-to-tip locks with a host image editor, assemble candidates early, and judge coherent appearance and intended motion without requiring exact source edges.",
 	) {
 		GetPromptResult(
-			description = "psd2live hair separation skill",
-			messages = listOf(PromptMessage(Role.User, TextContent(loadHairSeparationSkill()))),
+			description = "Built-in psd2live hair separation workflow",
+			messages = listOf(PromptMessage(Role.User, TextContent(loadHairSeparationWorkflow()))),
 		)
 	}
 
@@ -1852,11 +1852,11 @@ private fun AgentRenderedView.toJson(): JsonObject = buildJsonObject {
 	}
 }
 
-private fun loadHairSeparationSkill(): String =
-	AgentMcpService::class.java.getResourceAsStream("/agent/skills/hair-separation.md")
+private fun loadHairSeparationWorkflow(): String =
+	AgentMcpService::class.java.getResourceAsStream("/mcp/workflows/hair-separation.md")
 		?.bufferedReader()
 		?.use { it.readText() }
-		?: error("Bundled hair separation skill is missing")
+		?: error("Bundled hair separation workflow is missing")
 
 private val READ_ONLY = ToolAnnotations(
 	readOnlyHint = true,
@@ -1876,6 +1876,6 @@ private val AGENT_INSTRUCTIONS = """
     PSD2Live edits a recoverable local model workspace. Use stable object IDs; rig_list_objects discovers them, rig_inspect gives compact geometry, and View images retain pixel/canvas mappings.
     Edits require expected_history_head_node_id. Read project_get_state once, then chain returned heads. On stale heads or uncertain writes, reconcile state/history before retrying. History is append-only. Tasks are optional notes for longer work.
     Choose tools to match intent: object_edit for names, visibility and hierarchy; rig_transform for shape changes at a parameter pose; keyform tools for channels; asset tools for artwork; physics_put to drive an already-authored shape parameter.
-    agent_get_workflow offers optional, focused knowledge by topic. Artwork may come from original pixels, SVG, painting or an available image generator according to style and user preference; this server imports PNG and does not generate illustrations.
+    All PSD2Live domain workflows are bundled in this MCP server; no separate host Skill is required. agent_get_workflow offers optional, focused knowledge by topic. Artwork may come from original pixels, SVG, painting or an available image generator according to style and user preference; this server imports PNG and does not generate illustrations.
     Structural validity is not visual quality. Report actual changes and inspected poses; distinguish measured defects, visual judgment and uncertainty. Reuse good candidates and stop unproductive refinement within the user's budget.
 """.trimIndent()

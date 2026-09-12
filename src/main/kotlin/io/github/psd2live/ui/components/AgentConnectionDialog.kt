@@ -35,7 +35,6 @@ fun buildInstallationPrompt(
 	language: AppLanguage,
 ): String {
 	val proxyPath = "$projectDir/mcp_proxy.py"
-	val skillsPath = "$projectDir/.agent/skills"
 	val connectionInfo = AgentMcpConnectionInfo(endpoint, token)
 	val codexToml = connectionInfo.configToml
 	val geminiJson = connectionInfo.configGeminiJson
@@ -54,11 +53,7 @@ $geminiJson
 
 其他支持 Streamable HTTP 的宿主：使用端点 $endpoint，并发送请求头 Authorization: Bearer $token。不要改成旧的 /sse 端点。
 
-技能安装：将以下目录复制到宿主官方的技能目录（例如 ~/.codex/skills/、~/.gemini/config/skills/ 或项目级技能目录）：
-- $skillsPath/psd2live-rigging
-- $skillsPath/hair-separation
-
-按任务选读 Skill 或 agent_get_workflow 主题；基本编辑无需绘画流程。可按画风选择原图像素、SVG、绘画或可用生图工具。PNG 可保留原生透明度，去底时显式声明实际底色。连续编辑沿用返回的历史 HEAD；提交状态不明时先核对历史。
+领域工作流已内置于 MCP，无需查找或安装额外 Skill。连接后按任务调用 agent_get_workflow 读取相关主题；基本编辑无需绘画流程。可按画风选择原图像素、SVG、绘画或可用生图工具。PNG 可保留原生透明度，去底时显式声明实际底色。连续编辑沿用返回的历史 HEAD；提交状态不明时先核对历史。
 
 仅当宿主不支持 HTTP MCP 时，才使用 stdio 后备：python "$proxyPath"。代理会读取 PSD2LIVE_MCP_TOKEN，或在 Windows 上读取 PSD2Live 保存的令牌。
 
@@ -78,11 +73,7 @@ $geminiJson
 
 その他の Streamable HTTP 対応ホスト：エンドポイント $endpoint と Authorization: Bearer $token ヘッダーを使用します。旧 /sse エンドポイントには変更しません。
 
-スキル：次のディレクトリをホスト公式のスキルディレクトリ（例：~/.codex/skills/、~/.gemini/config/skills/、プロジェクト単位のディレクトリ）へコピーします：
-- $skillsPath/psd2live-rigging
-- $skillsPath/hair-separation
-
-必要な Skill または agent_get_workflow のトピックだけを参照します。基本編集に描画手順は不要です。画風に応じて元画像、SVG、描画、画像ツールを選びます。PNG のアルファを保持し、背景除去時だけ実際の背景色を指定します。返された履歴 HEAD を使い、結果が不明な書き込みは履歴を確認します。
+ドメインワークフローは MCP に組み込まれているため、追加の Skill を探したりインストールしたりする必要はありません。接続後、必要なトピックを agent_get_workflow で参照します。基本編集に描画手順は不要です。画風に応じて元画像、SVG、描画、画像ツールを選びます。PNG のアルファを保持し、背景除去時だけ実際の背景色を指定します。返された履歴 HEAD を使い、結果が不明な書き込みは履歴を確認します。
 
 HTTP MCP 非対応のホストでのみ stdio フォールバック python "$proxyPath" を使用します。プロキシは PSD2LIVE_MCP_TOKEN、または Windows 上で PSD2Live が保存したトークンを読み込みます。
 
@@ -102,11 +93,7 @@ $geminiJson
 
 Other Streamable HTTP hosts: use endpoint $endpoint with the header Authorization: Bearer $token. Do not change it to the legacy /sse endpoint.
 
-Skills: copy these directories to the host's documented skill location, such as ~/.codex/skills/, ~/.gemini/config/skills/, or a project-scoped skill directory:
-- $skillsPath/psd2live-rigging
-- $skillsPath/hair-separation
-
-Use skills or agent_get_workflow topics when helpful. Basic edits need no painting workflow. Choose source pixels, SVG, painting or available image tools for the requested style; import PNG with native alpha or an explicitly declared matte. Chain returned history heads and inspect uncertain commits before retrying.
+Domain workflows are built into the MCP server; do not look for or install separate Skill directories. After connecting, call agent_get_workflow for the topics needed by the task. Basic edits need no painting workflow. Choose source pixels, SVG, painting or available image tools for the requested style; import PNG with native alpha or an explicitly declared matte. Chain returned history heads and inspect uncertain commits before retrying.
 
 Use the stdio fallback, python "$proxyPath", only for hosts without HTTP MCP support. The proxy reads PSD2LIVE_MCP_TOKEN or, on Windows, the token saved by PSD2Live.
 

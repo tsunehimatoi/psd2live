@@ -61,7 +61,7 @@ PSD2Live 提供桌面图形交互界面（GUI）、自动化命令行批处理�
 - **顶部菜单栏**：
   - **文件 (File)**：`打开 PSD...` (`Ctrl + O`)、`重新分析` (`Ctrl + R`)、`打开输出目录`、`生成并导出` (`Ctrl + G`)、`导出到...` (`Ctrl + Shift + G`)、`退出`。
   - **语言 (Language)**：支持简体中文 (`zh`)、英文 (`en`)、日文 (`ja`) 实时无缝切换。
-  - **Agent / MCP**：打开连接与技能配置，或直接切换到版本历史树。
+  - **Agent / MCP**：打开连接与工作流配置，或直接切换到版本历史树。
   - **帮助 (Help)**：版本信息、第三方组件与许可证说明。
 - **工作区分隔条**：鼠标拖拽可自由调节左侧工作区与右侧检视器的宽度比例（`25% ~ 85%`）。
 
@@ -119,7 +119,7 @@ PSD2Live 启动时会在 `127.0.0.1:23871/mcp` 提供带 Bearer Token 的 Stream
    - Gemini / Antigravity：把 HTTP JSON 中的 `psd2live` 条目合并到 `~/.gemini/config/mcp_config.json`，刷新 MCP Servers。
    - 其他 HTTP 宿主：使用界面显示的端点，并发送 `Authorization: Bearer <Token>`；不要使用旧 `/sse` 地址。
    - 仅支持 Stdio 的宿主：复制 Stdio JSON，通过 Python 3 运行仓库根目录的 `mcp_proxy.py`。代理读取 `PSD2LIVE_MCP_ENDPOINT`（默认上述地址）、`PSD2LIVE_MCP_TOKEN` 和可选的 `PSD2LIVE_MCP_TIMEOUT`；Windows 上未设置 Token 时会尝试读取 PSD2Live 保存的凭据。
-3. 在“安装 Prompt”页复制完整安装说明。需要领域工作流时，把 `.agent/skills/psd2live-rigging` 和 `.agent/skills/hair-separation` 复制到宿主官方 Skill 目录；连接后先列出工具并调用 `project_get_state`。
+3. 在“安装 Prompt”页复制完整安装说明。领域工作流已内置于 MCP，无需另装 Skill；连接后先列出工具并调用 `project_get_state`，需要专项指导时调用 `agent_get_workflow`。
 
 当前工具覆盖：
 

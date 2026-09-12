@@ -51,7 +51,7 @@ PSD2Live 是一个自动化的 Live2D 模型生成流水线与桌面应用。输
 <p align="center">
   <img src="docs/imgs/agent.png" alt="PSD2Live AI Agent 素材生成、接入与多参数渲染流程" />
   <br>
-  <em>Agent 添加发卡的案例：读取 Skill 与 MCP 工具、查看模型、生成并添加素材、检查其他参数姿态。该案例不代表下列更复杂任务已可用。</em>
+  <em>Agent 添加发卡的案例：读取 MCP 工作流与工具、查看模型、生成并添加素材、检查其他参数姿态。该案例不代表下列更复杂任务已可用。</em>
 </p>
 
 ### Agent 能力与实现状态
@@ -81,7 +81,7 @@ PSD2Live 是一个自动化的 Live2D 模型生成流水线与桌面应用。输
 
 最终效果受模型、图像生成器、Agent harness、提示词和原始 PSD 分层质量共同影响。底层工具的回归测试通过，不等于上述待实现任务已具备可靠性。
 
-**征求 Prompt 工程与 Agent 工作流相关 Pull Request。** 目前尤其需要有相关经验的贡献者协助改进工具发现与选择、拆分对象的深度/遮挡理解、生成约束、定位与修正流程，以及 token 预算和停止条件。欢迎提交可复现案例、有效的提示词或 Skill 改进、工作流实现与评测用例；请尽量附上所用模型和宿主、实际消耗、成功与失败结果，帮助验证改进是否能提高完成率并减少无效重试。单次成功演示不足以将这些能力标记为已完成。
+**征求 Prompt 工程与 Agent 工作流相关 Pull Request。** 目前尤其需要有相关经验的贡献者协助改进工具发现与选择、拆分对象的深度/遮挡理解、生成约束、定位与修正流程，以及 token 预算和停止条件。欢迎提交可复现案例、有效的提示词或 MCP 工作流改进、流程实现与评测用例；请尽量附上所用模型和宿主、实际消耗、成功与失败结果，帮助验证改进是否能提高完成率并减少无效重试。单次成功演示不足以将这些能力标记为已完成。
 
 ---
 
@@ -122,7 +122,7 @@ PSD2Live 是一个自动化的 Live2D 模型生成流水线与桌面应用。输
 1. 保持 PSD2Live 桌面应用运行，打开顶部 **Agent / MCP → Agent / MCP 连接与安装…**。
 2. 在“连接配置”页复制宿主对应的配置：ChatGPT Desktop / Codex 使用 HTTP TOML，Gemini / Antigravity 使用 HTTP JSON。其他支持 Streamable HTTP 的宿主使用界面显示的端点和 `Authorization: Bearer <Token>` 请求头；不要改成旧 `/sse` 地址。
 3. 仅当宿主不支持 HTTP MCP 时，复制 Stdio JSON，通过 Python 3 运行仓库根目录的 `mcp_proxy.py`。代理优先读取 `PSD2LIVE_MCP_TOKEN`；Windows 上也可读取 PSD2Live 已保存的 Token。
-4. 如需领域工作流，把 `.agent/skills/psd2live-rigging` 与 `.agent/skills/hair-separation` 复制到宿主官方技能目录。连接后先列出工具并调用 `project_get_state`。
+4. 领域工作流已内置于 MCP，无需另装 Skill。连接后先列出工具并调用 `project_get_state`；需要专项指导时调用 `agent_get_workflow`。
 
 当前 MCP 支持工程/图层/参数读取、对象与 K 帧编辑、参数 CRUD、模型数据 PNG View、透明素材导入、软删除、可恢复任务，以及追加式分支历史。每个会推进工程 `HEAD` 的编辑操作都要携带最新的 `expected_history_head_node_id`；超时或断线后先用 `project_get_state` 和 `history_list` 确认是否已经提交，不能盲目重试。
 

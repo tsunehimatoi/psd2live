@@ -61,7 +61,7 @@ The main window is structured as **Left Workspace + Right Inspector + Independen
 - **Menu Bar**:
   - **File**: `Open PSD...` (`Ctrl + O`), `Reanalyze` (`Ctrl + R`), `Open Output Directory`, `Generate & Export` (`Ctrl + G`), `Export To...` (`Ctrl + Shift + G`), `Exit`.
   - **Language**: Instant switching between Simplified Chinese (`zh`), English (`en`), and Japanese (`ja`).
-  - **Agent / MCP**: Open connection and skill setup, or jump directly to the version-history tree.
+  - **Agent / MCP**: Open connection and workflow setup, or jump directly to the version-history tree.
   - **Help**: Version and license notices.
 - **Split Pane Divider**: Drag to adjust the Workspace/Inspector ratio within `25% ~ 85%`.
 
@@ -116,7 +116,7 @@ At startup, PSD2Live exposes a bearer-authenticated Streamable HTTP MCP at `127.
    - Gemini / Antigravity: merge the `psd2live` HTTP JSON entry into `~/.gemini/config/mcp_config.json`, then refresh MCP Servers.
    - Other HTTP hosts: use the displayed endpoint with `Authorization: Bearer <token>`. Do not switch to the legacy `/sse` endpoint.
    - Stdio-only hosts: copy the Stdio JSON and run the repository-root `mcp_proxy.py` with Python 3. The bridge reads `PSD2LIVE_MCP_ENDPOINT` (defaulting to the address above), `PSD2LIVE_MCP_TOKEN`, and optional `PSD2LIVE_MCP_TIMEOUT`. On Windows, it can fall back to the credential saved by PSD2Live.
-3. The Installation Prompt tab contains the complete setup prompt. For domain workflows, copy `.agent/skills/psd2live-rigging` and `.agent/skills/hair-separation` into the host's documented skill directory. List tools and call `project_get_state` first.
+3. The Installation Prompt tab contains the complete setup prompt. Domain workflows are built into the MCP server, so no separate Skill installation is needed. List tools and call `project_get_state` first, then use `agent_get_workflow` when focused guidance is useful.
 
 Current tools include:
 

@@ -35,7 +35,7 @@ MCP HTTP 请求体默认上限为 **96 MiB**，通过 `AgentMcpConfig.maxRequest
 
 ### 已实现：自然发束工作流与独立绑定
 
-自然发束分离由多个工具组合完成，不依赖一个名为“精确分离发束”的单一接口。MCP 初始化说明、`hair-separation` prompt、项目 skills 和 `agent_get_workflow` 都提供工具路由。宿主不支持读取 prompts 时，可直接调用后者。
+自然发束分离由多个工具组合完成，不依赖一个名为“精确分离发束”的单一接口。MCP 初始化说明、`hair-separation` prompt 和 `agent_get_workflow` 都提供工具路由。宿主不支持读取 prompts 时，可直接调用后者。
 
 | 工具 | 用途 |
 | --- | --- |
@@ -71,7 +71,7 @@ MCP HTTP 请求体默认上限为 **96 MiB**，通过 `AgentMcpConfig.maxRequest
 
 物理组输入/输出参数必须已存在，每个独立组使用不同输出参数。自定义组与内置预设使用相同 ID 或输出参数时，会替代该预设，避免同时竞争同一输出。物理参数还需通过 `keyform_set` 绑定对应 Warp 的摆动形状，发根保持固定；创建物理对象本身不会自动生成摆动关键形。当前物理入口支持单 Angle 输入与双粒子摆锤，可调 `length`、`mobility`、`delay`、`acceleration`、`output_scale`。设置保存在分支历史中，模型重建、项目恢复、`.physics3.json` 和可编辑 `.cmo3` 导出均使用这些设置；仅网格模式不导出物理。
 
-升级应用并重新连接 MCP 后才能发现新增工具；已安装到宿主的旧 skill 需要同步更新。生图仍由宿主提供，以上流程提供约束、检查和重试机制，不承诺任意图像模型一次精确输出。
+升级应用并重新连接 MCP 后才能发现新增工具和工作流，无需同步宿主侧文件。生图仍由宿主提供，以上流程提供约束、检查和重试机制，不承诺任意图像模型一次精确输出。
 
 目标：把规范 PSD 转换为可继续精修、可重新导入、可复用的 60%～80% Live2D 工程，同时尽量消除建模师的重复劳动。
 
@@ -155,7 +155,7 @@ Cubism Physics 的输出对象是已经制作好摆动 keyform 的参数；输�
 ```text
 内置 Chat（Responses API / 可替换模型） ─┐
                                          ├─ Agent Runtime
-ChatGPT/Codex/Gemini/其他 Agent ─── MCP┘   ├─ Skill Registry
+ChatGPT/Codex/Gemini/其他 Agent ─── MCP┘   ├─ Workflow Registry
                                               ├─ Planner / Workspace Authority
                                               ├─ Task Orchestrator
                                               └─ Tool Registry
@@ -179,12 +179,12 @@ ChatGPT/Codex/Gemini/其他 Agent ─── MCP┘   ├─ Skill Registry
 
 - 外部 MCP：适合 ChatGPT Desktop、Codex、Claude Code 等已有 Agent，用户无需在软件中再次购买或配置模型能力；
 - 内置 API：适合产品化的任务面板、进度、图像预览和断点续作；
-- Tool/Skill/History 共用：同一任务可以从桌面 Agent 发起，在 psd2live 内查看和撤销；
+- Tool/Workflow/History 共用：同一任务可以从桌面 Agent 发起，在 psd2live 内查看和撤销；
 - MCP 是控制平面，不是大文件传输协议。大图、PSD 和 checkpoint 存在工作区 Asset Store；Tool 返回短元数据、`ImageContent` 预览和有时效的本机资源引用。
 
 当前桌面应用直接在 `127.0.0.1:23871/mcp` 提供带 Bearer Token 的 Streamable HTTP。ChatGPT Desktop / Codex 使用连接窗口生成的 TOML，Gemini / Antigravity 使用 HTTP JSON；其他 HTTP 宿主传递相同端点和 `Authorization` 请求头。只有宿主不支持 HTTP MCP 时才使用仓库根目录的 `mcp_proxy.py` 把逐行 stdio JSON-RPC 桥接到 HTTP。代理会维护 MCP Session、转发协议版本、在认证失败时重新读取 Token，并且只自动重试协议发现和只读 Tool；写调用超时后必须重新读取工程与历史，不能盲目重放。
 
-顶部 **Agent / MCP → Agent / MCP 连接与安装…** 会显示在线状态、端点、Token、三类可复制配置和多宿主安装 Prompt。Token 由 Java Preferences 持久化；它代表当前本机工作区写权限，不应写入仓库或公开。服务端 `instructions` 与项目级 Skill 会成为跨工具约束。默认单工具超时为 60 秒，所以长任务必须通过检查点恢复。服务实现使用 [官方 MCP Kotlin SDK](https://github.com/modelcontextprotocol/kotlin-sdk)。
+顶部 **Agent / MCP → Agent / MCP 连接与安装…** 会显示在线状态、端点、Token、三类可复制配置和多宿主安装 Prompt。Token 由 Java Preferences 持久化；它代表当前本机工作区写权限，不应写入仓库或公开。服务端 `instructions`、MCP prompt 与 `agent_get_workflow` 提供跨工具约束和按需知识，不需要宿主另装 Skill。默认单工具超时为 60 秒，所以长任务必须通过检查点恢复。服务实现使用 [官方 MCP Kotlin SDK](https://github.com/modelcontextprotocol/kotlin-sdk)。
 
 ## 4. 工作区领域模型
 
@@ -262,7 +262,7 @@ provenance:
 
 ## 5. Tool 设计
 
-Tool 应小而可组合。Skill 负责组合顺序和判断，不把整个工作流固化为一个脚本；但安全与数据不变量必须写在程序中，不能只靠 Prompt。
+Tool 应小而可组合。MCP 内置工作流负责组合顺序和判断，不把整个流程固化为一个脚本；但安全与数据不变量必须写在程序中，不能只靠 Prompt。
 
 ### 5.1 读取和 Agent View
 
@@ -465,9 +465,9 @@ task_resume(taskId)                        → 从持久 checkpoint 恢复
 
 当前任务状态由 Agent 通过 `task_update` 写入，并作为追加事件保留；Agent 可以替换动态计划，关联 View、Asset、Layer 与 History Node 等产物 ID。更完整的暂停、恢复、取消执行器仍属于后续阶段。`WAITING_FOR_USER` 只应用于确实缺少创作意图或外部输入，不是普通写操作的审批门。
 
-## 6. Skill 与 Prompt 工程
+## 6. MCP 工作流与 Prompt 工程
 
-Skill 是领域作业指导，不是固定脚本。它应声明：
+MCP 工作流是领域作业指导，不是固定脚本。它应声明：
 
 - 开始前必须读取的结构与视图；
 - 可选择的策略及判断条件；
@@ -476,11 +476,11 @@ Skill 是领域作业指导，不是固定脚本。它应声明：
 - 可接受的质量阈值；
 - 对用户的完成报告格式。
 
-仓库提供精简的 psd2live-rigging 和 hair-separation。按任务读取相关知识，或通过 agent_get_workflow 选择主题；基本编辑无需加载绘画流程。
+工作流内容随应用打包，并通过服务端 `instructions`、MCP prompt 和 `agent_get_workflow` 提供。按任务选择主题；基本编辑无需加载绘画流程，也无需在宿主侧安装文件。
 
-例如“把刘海拆为三片并有独立物理”应由 Skill 引导 Agent 动态决定分割线、内外顺序、补全范围、Mesh 策略和物理参数；程序只强制不可变源、事务、alpha/拓扑/越界/物理约束。这样既保留模型判断力，也不把安全性寄托在 Prompt 是否听话上。
+例如“把刘海拆为三片并有独立物理”应由内置工作流引导 Agent 动态决定分割线、内外顺序、补全范围、Mesh 策略和物理参数；程序只强制不可变源、事务、alpha/拓扑/越界/物理约束。这样既保留模型判断力，也不把安全性寄托在 Prompt 是否听话上。
 
-建议技能包：
+建议内置工作流主题：
 
 - `psd-audit`：导入条件、素材缺失、命名歧义；
 - `semantic-labeling`：部件、左右、前后和遮挡图；
@@ -494,7 +494,7 @@ Skill 是领域作业指导，不是固定脚本。它应声明：
 
 用户：`把刘海拆分为三片，并且有独立物理`
 
-1. 完整读取 `psd2live-rigging` 与 `hair-separation`，调用 `project_get_state`，并以 `task_start` 保存动态计划；
+1. 调用 `agent_get_workflow` 读取 overview 与 hair 主题，调用 `project_get_state`，并以 `task_start` 保存动态计划；
 2. 查询前发候选层，获取透明独立 View、周围上下文 View，并用 `object_get` 检查现有 Mesh、Deformer 与 K 帧；
 3. 判断素材是否完整，确定三片的根部、自然走向、交叠和缺失遮挡区；
 4. 选择适合画风的绘画或图像工具补充新边界与隐藏体积，输出可注册的 PNG；
@@ -551,7 +551,7 @@ psd2live 采用两层兼容：
 - `view_render_model` 支持显式参数姿态、图层叠加集合、部件标注、画布矩形或部件聚焦取景；
 - 所有 View 合成为 PNG，并返回像素↔画布的可逆空间映射与压缩后实际分辨率；
 - `hair-separation` MCP Prompt 和项目 Manifest Resource；
-- Skill 提供按需绘画、差分、头发和脸部知识，保留制作方法选择；
+- `agent_get_workflow` 提供按需绘画、差分、头发和脸部知识，保留制作方法选择；
 - 服务端 instructions 明确认证 Agent 的工作区所有者权限与不可改写历史边界；
 - 使用官方 Kotlin MCP Client 做端到端握手与 Tool 测试。
 
@@ -596,7 +596,7 @@ Project ID 同时包含规范化 PSD 路径和加载时的文件签名，避免�
 
 ### Phase 4：产品化 Agent
 
-- 内置 Chat、模型 Provider、Skill 管理和 Eval；
+- 内置 Chat、模型 Provider、MCP 工作流管理和 Eval；
 - 长任务 UI、结构/运动 Diff、费用/Token/图像生成预算；历史树与日志/图片浏览已提前落地；
 - CubismBridge 全能力矩阵与 round-trip 测试；
 - 团队规范包、可观测性和匿名失败样本回收（明确 opt-in）。

@@ -61,7 +61,7 @@ PSD2Live は、デスクトップ GUI、自動 CLI バッチ処理、および�
 - **メニューバー**:
   - **ファイル**: `PSD を開く...` (`Ctrl + O`), `再解析` (`Ctrl + R`), `出力先を開く`, `生成して書き出し` (`Ctrl + G`), `名前を付けて書き出し...` (`Ctrl + Shift + G`), `終了`.
   - **言語 (Language)**: 簡体字中国語 (`zh`)、英語 (`en`)、日本語 (`ja`) を即時切り替え。
-  - **Agent / MCP**: 接続・Skill 設定を開くか、バージョン履歴ツリーへ直接移動します。
+  - **Agent / MCP**: 接続・ワークフロー設定を開くか、バージョン履歴ツリーへ直接移動します。
   - **ヘルプ**: バージョン情報および著作権表示。
 - **スプリッターバー**: 中央の境界線をドラッグして幅の比率を `25% ~ 85%` で調整可能。
 
@@ -116,7 +116,7 @@ PSD2Live は起動時に、Bearer Token で保護された Streamable HTTP MCP �
    - Gemini／Antigravity: HTTP JSON の `psd2live` エントリを `~/.gemini/config/mcp_config.json` へマージし、MCP Servers を更新します。
    - その他の HTTP ホスト: 表示されたエンドポイントと `Authorization: Bearer <token>` を使用します。旧 `/sse` へ変更しないでください。
    - Stdio 専用ホスト: Stdio JSON をコピーし、Python 3 でリポジトリ直下の `mcp_proxy.py` を起動します。ブリッジは `PSD2LIVE_MCP_ENDPOINT`（既定は上記アドレス）、`PSD2LIVE_MCP_TOKEN`、任意の `PSD2LIVE_MCP_TIMEOUT` を読みます。Windows では PSD2Live が保存した資格情報へフォールバックできます。
-3. 「導入プロンプト」には完全な設定手順があります。ドメイン作業では `.agent/skills/psd2live-rigging` と `.agent/skills/hair-separation` をホスト公式の Skill ディレクトリへコピーします。接続後はツールを列挙し、最初に `project_get_state` を呼び出します。
+3. 「導入プロンプト」には完全な設定手順があります。ドメインワークフローは MCP に組み込まれているため、別途 Skill をインストールする必要はありません。接続後はツールを列挙して最初に `project_get_state` を呼び出し、必要に応じて `agent_get_workflow` を使用します。
 
 現在のツール：
 

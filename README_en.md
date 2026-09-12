@@ -50,7 +50,7 @@ PSD2Live is an automated Live2D model generation pipeline and desktop applicatio
 <p align="center">
   <img src="docs/imgs/agent.png" alt="PSD2Live AI Agent asset generation, integration, and multi-parameter render workflow" />
   <br>
-  <em>An example of an Agent adding a hair clip: reading Skills and MCP tools, inspecting the model, generating and adding the asset, and checking other parameter poses. This example does not establish that the more complex tasks below are available.</em>
+  <em>An example of an Agent adding a hair clip: reading MCP workflows and tools, inspecting the model, generating and adding the asset, and checking other parameter poses. This example does not establish that the more complex tasks below are available.</em>
 </p>
 
 ### Agent Capabilities and Implementation Status
@@ -80,7 +80,7 @@ Expected implementation difficulty increases in the following order:
 
 Results depend on the model, image generator, Agent harness, prompt, and the quality of the original PSD layer separation. Passing regression tests for the underlying tools does not establish the reliability of the pending tasks above.
 
-**Help wanted: Pull Requests for prompt engineering and Agent workflows.** We especially need contributors with experience in tool discovery and selection, depth and occlusion reasoning for part separation, generation constraints, positioning and correction workflows, token budgets, and stopping conditions. Reproducible cases, effective prompt or Skill improvements, workflow implementations, and evaluation cases are welcome. Where possible, include the model and host used, actual consumption, and both successful and failed results so we can assess completion rates and reduce wasted retries. A single successful demonstration is not enough to mark these capabilities as complete.
+**Help wanted: Pull Requests for prompt engineering and Agent workflows.** We especially need contributors with experience in tool discovery and selection, depth and occlusion reasoning for part separation, generation constraints, positioning and correction workflows, token budgets, and stopping conditions. Reproducible cases, effective prompt or MCP workflow improvements, implementations, and evaluation cases are welcome. Where possible, include the model and host used, actual consumption, and both successful and failed results so we can assess completion rates and reduce wasted retries. A single successful demonstration is not enough to mark these capabilities as complete.
 
 ---
 
@@ -121,7 +121,7 @@ Results depend on the model, image generator, Agent harness, prompt, and the qua
 1. Keep the PSD2Live desktop app running and open **Agent / MCP → Agent / MCP Connection & Prompts…**.
 2. Copy the matching configuration: HTTP TOML for ChatGPT desktop/Codex, or HTTP JSON for Gemini/Antigravity. Other Streamable HTTP hosts use the displayed endpoint and `Authorization: Bearer <token>` header; do not change it to the legacy `/sse` endpoint.
 3. Use the Stdio JSON fallback only for hosts without HTTP MCP support. It runs the repository-root `mcp_proxy.py` with Python 3 and reads `PSD2LIVE_MCP_TOKEN`; on Windows it can also read the token saved by PSD2Live.
-4. For domain workflows, install `.agent/skills/psd2live-rigging` and `.agent/skills/hair-separation` in the host's documented skill directory. List tools and call `project_get_state` first.
+4. Domain workflows are built into the MCP server; no separate Skill installation is needed. List tools and call `project_get_state` first, then use `agent_get_workflow` when focused guidance is useful.
 
 The MCP currently exposes project/layer/parameter reads, object and keyform editing, parameter CRUD, model-data PNG Views, transparent-asset import, soft deletion, resumable tasks, and append-only branch history. Every project edit that advances `HEAD` must use the latest `expected_history_head_node_id`. After a timeout or disconnect, inspect `project_get_state` and `history_list` before deciding whether to retry.
 

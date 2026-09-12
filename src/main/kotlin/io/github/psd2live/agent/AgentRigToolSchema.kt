@@ -55,7 +55,7 @@ internal fun rigGeometrySchema(edit: Boolean): ToolSchema = ToolSchema(
     }, required=if(edit)listOf("target","coordinate","operations","expected_history_head_node_id") else listOf("target"),
 )
 
-internal fun loadRigGeometryWorkflow(): String = requireNotNull(AgentWorkspace::class.java.classLoader.getResourceAsStream("agent/skills/rig-geometry.md"))
+internal fun loadRigGeometryWorkflow(): String = requireNotNull(AgentWorkspace::class.java.classLoader.getResourceAsStream("mcp/workflows/rig-geometry.md"))
     .bufferedReader().use { it.readText() }
 
 private fun geometrySelectionSchema(): JsonObject = buildJsonObject {
@@ -75,6 +75,6 @@ internal fun loadAgentReference(topic: String): String {
         "variants" -> "variants"; "face" -> "face"; "assets" -> "assets"
         else -> error("Unknown knowledge topic: $topic")
     }
-    return requireNotNull(AgentWorkspace::class.java.classLoader.getResourceAsStream("agent/skills/$file.md"))
+    return requireNotNull(AgentWorkspace::class.java.classLoader.getResourceAsStream("mcp/workflows/$file.md"))
         .bufferedReader().use { it.readText() }
 }

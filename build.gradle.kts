@@ -17,25 +17,6 @@ kotlin {
 	jvmToolchain(21)
 }
 
-val verifyAgentReferences = tasks.register("verifyAgentReferences") {
-    val topics = listOf("rig-geometry", "assets", "variants", "face")
-    val pairs = topics.map { topic ->
-        file("src/main/resources/agent/skills/$topic.md") to file(".agent/skills/psd2live-rigging/references/$topic.md")
-    } + (file("src/main/resources/agent/skills/hair-separation.md") to file(".agent/skills/hair-separation/SKILL.md"))
-    inputs.files(pairs.flatMap { listOf(it.first, it.second) })
-    doLast {
-        for ((embedded, host) in pairs) {
-            val body = host.readText().replace("\r\n", "\n").let {
-                if (it.startsWith("---\n")) it.substringAfter("\n---\n") else it
-            }.trim()
-            check(embedded.readText().replace("\r\n", "\n").trim() == body) {
-                "Agent reference drift: ${embedded.path} and ${host.path}"
-            }
-        }
-    }
-}
-tasks.named("check") { dependsOn(verifyAgentReferences) }
-
 dependencies {
 	implementation(platform("io.ktor:ktor-bom:3.5.1"))
 	// Core engine dependencies (ported from Umamo: format, runtime, interop, render, edit)
