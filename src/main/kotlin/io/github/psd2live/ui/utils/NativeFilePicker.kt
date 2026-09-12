@@ -145,6 +145,51 @@ object NativeFilePicker {
 	}
 
 	/**
+	 * Opens the native OS file picker for saving a PSD (.psd) file.
+	 */
+	fun chooseSavePsdFile(window: ComposeWindow? = null, defaultName: String? = null, initialDir: String? = null): String? {
+		val title = tr("menu.file.reexportPsd")
+		val defaultFileName = if (defaultName.isNullOrBlank()) "export.psd" else if (defaultName.endsWith(".psd", ignoreCase = true)) defaultName else "$defaultName.psd"
+
+		try {
+			val dialog = FileDialog(window, title, FileDialog.SAVE).apply {
+				setFilenameFilter { _, name -> name.endsWith(".psd", ignoreCase = true) }
+				file = defaultFileName
+				if (!initialDir.isNullOrBlank()) {
+					val f = File(initialDir)
+					if (f.exists()) directory = if (f.isDirectory) f.absolutePath else f.parent
+				}
+				isVisible = true
+			}
+			val dir = dialog.directory
+			val selectedFile = dialog.file
+			if (!dir.isNullOrBlank() && !selectedFile.isNullOrBlank()) {
+				val name = if (selectedFile.endsWith(".psd", ignoreCase = true)) selectedFile else "$selectedFile.psd"
+				return File(dir, name).toPath().toAbsolutePath().normalize().toString()
+			}
+		} catch (_: Throwable) {}
+
+		try {
+			UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
+			val chooser = JFileChooser().apply {
+				dialogTitle = title
+				fileFilter = javax.swing.filechooser.FileNameExtensionFilter("Photoshop Document (*.psd)", "psd")
+				selectedFile = File(defaultFileName)
+				if (!initialDir.isNullOrBlank()) {
+					val f = File(initialDir)
+					if (f.exists()) currentDirectory = if (f.isDirectory) f else f.parentFile
+				}
+			}
+			if (chooser.showSaveDialog(window) == JFileChooser.APPROVE_OPTION) {
+				val f = chooser.selectedFile
+				val name = if (f.name.endsWith(".psd", ignoreCase = true)) f.name else "${f.name}.psd"
+				return File(f.parentFile ?: File("."), name).toPath().toAbsolutePath().normalize().toString()
+			}
+		} catch (_: Throwable) {}
+		return null
+	}
+
+	/**
 	 * Opens the modern native OS directory picker.
 	 */
 	fun chooseDirectory(window: ComposeWindow? = null, initialPath: String? = null): String? {

@@ -80,6 +80,7 @@ fun AppTitleBar(
     onSaveProjectAs: () -> Unit,
     projectTitle: String,
 	onReanalyze: () -> Unit,
+	onReexportPsd: () -> Unit,
 	onOpenOutput: () -> Unit,
 	onGenerate: () -> Unit,
 	onExportTo: () -> Unit,
@@ -145,6 +146,15 @@ fun AppTitleBar(
 						onClick = {
 							activeMenu = null
 							onReanalyze()
+						},
+					)
+					AppMenuItem(
+						text = tr("menu.file.reexportPsd"),
+						shortcut = "Ctrl+Shift+E",
+						enabled = hasInput && !isBusy,
+						onClick = {
+							activeMenu = null
+							onReexportPsd()
 						},
 					)
 					AppMenuSeparator()

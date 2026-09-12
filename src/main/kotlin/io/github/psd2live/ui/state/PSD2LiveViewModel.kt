@@ -1483,6 +1483,102 @@ class PSD2LiveViewModel : AutoCloseable {
 		}
 	}
 
+	fun openExportPsdDialog() {
+		if (_state.value.analysis == null) return
+		_state.update { it.copy(showExportPsdDialog = true) }
+	}
+
+	fun closeExportPsdDialog() {
+		_state.update { it.copy(showExportPsdDialog = false) }
+	}
+
+	fun exportPsd(targetPath: Path, scale: Int = 1, includeGeneratedLayers: Boolean = true) {
+		val currentState = _state.value
+		val analysis = currentState.analysis ?: run {
+			_state.update { it.copy(errorMessage = tr("error.noPsdLoaded")) }
+			return
+		}
+		activeWorkJob?.cancel()
+		activeWorkJob = scope.launch {
+			_state.update {
+				it.copy(
+					isExportingPsd = true,
+					showExportPsdDialog = false,
+					progress = 0.05f,
+					statusText = tr("exportPsd.starting", targetPath.fileName.toString()),
+				)
+			}
+			addLog(
+				message = tr("log.exportPsdStart", targetPath.toAbsolutePath().normalize().toString(), scale),
+				level = LogLevel.INFO,
+				tag = "Export",
+			)
+			try {
+				val effectiveLayers = if (includeGeneratedLayers) {
+					analysis.layers.map { it.source }
+				} else {
+					analysis.source.layers
+				}
+				val upscaledTextures = if (scale > 1) {
+					_state.update { it.copy(statusText = tr("upscale.startingInference"), progress = 0.15f) }
+					io.github.psd2live.core.TextureUpscale.prepare(
+						layers = analysis.layers,
+						config = currentState.textureUpscale.copy(scale = scale),
+						progress = { stage, frac ->
+							_state.update { it.copy(statusText = stage, progress = (0.15 + frac * 0.70).toFloat().coerceIn(0.15f, 0.85f)) }
+						}
+					)
+				} else emptyMap()
+
+				_state.update { it.copy(statusText = tr("exportPsd.writingBytes"), progress = 0.90f) }
+				val bytes = withContext(Dispatchers.Default) {
+					org.umamo.format.psd.PsdWriter.write(
+						width = analysis.source.widthPx,
+						height = analysis.source.heightPx,
+						layers = effectiveLayers,
+						groups = analysis.source.groups,
+						scale = scale,
+						upscaledTextures = upscaledTextures,
+					)
+				}
+				withContext(Dispatchers.IO) {
+					val parent = targetPath.toAbsolutePath().parent
+					if (parent != null) Files.createDirectories(parent)
+					Files.write(targetPath, bytes)
+				}
+				val fileSize = Files.size(targetPath)
+				val successMsg = tr("log.exportPsdSuccess", targetPath.fileName.toString(), effectiveLayers.size, fileSize)
+				addLog(
+					message = successMsg,
+					level = LogLevel.SUCCESS,
+					tag = "Export",
+				)
+				_state.update {
+					it.copy(
+						isExportingPsd = false,
+						progress = 1f,
+						statusText = tr("exportPsd.completed", targetPath.fileName.toString()),
+					)
+				}
+			} catch (failure: Throwable) {
+				if (failure is kotlinx.coroutines.CancellationException) throw failure
+				val detail = failure.message ?: failure.javaClass.simpleName
+				addLog(
+					message = tr("log.failed", detail),
+					level = LogLevel.ERROR,
+					tag = "Export",
+				)
+				_state.update {
+					it.copy(
+						isExportingPsd = false,
+						statusText = tr("status.failed", detail),
+						errorMessage = detail,
+					)
+				}
+			}
+		}
+	}
+
 	/** CPU-heavy rebuild used by the authenticated Agent transaction boundary. */
 	internal suspend fun buildAgentWorkspacePreview(source: SourceArt, config: PipelineConfig): RigPreviewModel =
 		runInterruptible(Dispatchers.Default) { pipeline.buildPreview(source, config) }

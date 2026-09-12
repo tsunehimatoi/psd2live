@@ -68,6 +68,7 @@ import io.github.psd2live.ui.components.CompactButton
 import io.github.psd2live.ui.components.CompactIconButton
 import io.github.psd2live.ui.components.IconClose
 import io.github.psd2live.ui.components.ImageLightboxDialog
+import io.github.psd2live.ui.components.ExportPsdDialog
 import io.github.psd2live.ui.components.TextureUpscaleDialog
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
@@ -221,6 +222,12 @@ fun FrameWindowScope.PSD2LiveApp(
 								onReanalyzeAction()
 								true
 							}
+							Key.E -> {
+								if (event.isShiftPressed && hasInput && !isBusy) {
+									viewModel.openExportPsdDialog()
+									true
+								} else false
+							}
 							Key.U -> {
 								if (hasInput && !isBusy) {
 									showUpscaleDialog = true
@@ -261,6 +268,7 @@ fun FrameWindowScope.PSD2LiveApp(
                         onSaveProjectAs = { viewModel.requestProjectSave(true) },
                         projectTitle = (state.projectFile ?: tr("project.untitled")) + if (state.projectDirty) " *" else "",
 						onReanalyze = onReanalyzeAction,
+						onReexportPsd = { if (hasInput && !isBusy) viewModel.openExportPsdDialog() },
 						onOpenOutput = { openFolder(state.outputPath) },
 						onGenerate = onGenerateAction,
 						onExportTo = triggerExportTo,
@@ -412,6 +420,7 @@ fun FrameWindowScope.PSD2LiveApp(
 		}
 
 		io.github.psd2live.ui.components.ProjectLocationDialog(state, viewModel)
+		ExportPsdDialog(state, viewModel, window)
 
 		if (!state.showProjectLocationDialog && state.projectSaveError != null) {
 			ModalDialog(
