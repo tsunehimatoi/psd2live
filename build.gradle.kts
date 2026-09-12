@@ -11,7 +11,7 @@ plugins {
 }
 
 group = "io.github.psd2live"
-version = "0.7.0"
+version = "0.7.1"
 
 kotlin {
 	jvmToolchain(21)
@@ -88,12 +88,16 @@ compose.desktop {
 		mainClass = "io.github.psd2live.MainKt"
 		jvmArgs += listOf("-Xmx8g", "-Dfile.encoding=UTF-8", "-Dsun.java2d.uiScale.enabled=true")
 		nativeDistributions {
+			// ModelDownloader uses java.net.http.HttpClient. Compose's automatic
+			// runtime module scan can miss this API because it is only loaded when
+			// the optional texture-upscale workflow is opened.
+			modules("java.net.http")
 			targetFormats(
 				org.jetbrains.compose.desktop.application.dsl.TargetFormat.Exe,
 				org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi,
 			)
 			packageName = "PSD2Live"
-			packageVersion = "0.7.0"
+			packageVersion = "0.7.1"
 			description = "PSD2Live - Automated Live2D Rigging Pipeline"
 			copyright = "© 2026 PSD2Live. Licensed under GPL-3.0."
 			vendor = "PSD2Live"
