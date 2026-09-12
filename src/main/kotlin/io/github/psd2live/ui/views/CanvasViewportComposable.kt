@@ -224,7 +224,7 @@ fun CanvasViewportComposable(
 				if (isDragging) {
 					isDragging = false
 					if (event.button == PointerButton.Primary && change != null && (change.position - lastDragPos).getDistance() < 6f) {
-						if (previewModel != null && onLayerClicked != null) {
+						if (state.clickToSelectLayer && previewModel != null && onLayerClicked != null) {
 							val viewport = computeViewport(previewModel, viewSize.width, viewSize.height)
 							val geometry = RigCanvasSupport.evaluate(previewModel, state.parameterValues)
 							val drawableBounds = RigCanvasSupport.boundsByDrawable(geometry)

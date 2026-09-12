@@ -96,5 +96,23 @@ class DisplayScalingSettingsTest {
 			viewModel.close()
 		}
 	}
+
+	@Test
+	fun testClickToSelectLayerToggleAndPersistence() {
+		val viewModel = PSD2LiveViewModel()
+		try {
+			assertTrue(viewModel.state.value.clickToSelectLayer, "clickToSelectLayer should default to true")
+			viewModel.setClickToSelectLayer(false)
+			assertEquals(false, viewModel.state.value.clickToSelectLayer)
+			assertEquals(false, AppSettings.clickToSelectLayer)
+
+			viewModel.setClickToSelectLayer(true)
+			assertEquals(true, viewModel.state.value.clickToSelectLayer)
+			assertEquals(true, AppSettings.clickToSelectLayer)
+		} finally {
+			viewModel.close()
+			AppSettings.resetToDefaults()
+		}
+	}
 }
 

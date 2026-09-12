@@ -165,6 +165,7 @@ data class PSD2LiveState(
 	val dimUnselected: Boolean = true,
 	val contextualWarp: Boolean = true,
 	val showSelectionBounds: Boolean = true,
+	val clickToSelectLayer: Boolean = AppSettings.clickToSelectLayer,
 	val hoveredLayerId: String? = null,
 	val hoveredDeformerId: String? = null,
 	val layerVisibility: Map<String, Boolean> = emptyMap(),

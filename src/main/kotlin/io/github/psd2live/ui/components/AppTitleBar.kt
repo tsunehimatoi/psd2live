@@ -94,6 +94,26 @@ fun AppTitleBar(
 	onResetZoom: () -> Unit = {},
 	onSetUiScale: (Float) -> Unit = {},
 	onSetFontScale: (Float) -> Unit = {},
+	clickToSelectLayer: Boolean = true,
+	showTexture: Boolean = true,
+	showMesh: Boolean = false,
+	showWarp: Boolean = false,
+	contextualWarp: Boolean = true,
+	filterSelectedOnly: Boolean = false,
+	dimUnselected: Boolean = true,
+	showSelectionBounds: Boolean = true,
+	warpShowNames: Boolean = true,
+	warpShowIndices: Boolean = false,
+	onToggleClickToSelectLayer: () -> Unit = {},
+	onToggleShowTexture: () -> Unit = {},
+	onToggleShowMesh: () -> Unit = {},
+	onToggleShowWarp: () -> Unit = {},
+	onToggleContextualWarp: () -> Unit = {},
+	onToggleFilterSelectedOnly: () -> Unit = {},
+	onToggleDimUnselected: () -> Unit = {},
+	onToggleShowSelectionBounds: () -> Unit = {},
+	onToggleWarpShowNames: () -> Unit = {},
+	onToggleWarpShowIndices: () -> Unit = {},
 	onShowSettings: () -> Unit = {},
 	onShowAgentConnection: () -> Unit,
 	onShowTextureUpscale: () -> Unit,
@@ -262,6 +282,121 @@ fun AppTitleBar(
 					},
 					modifier = Modifier.widthIn(min = 210.dp, max = 280.dp),
 				) {
+					// 1. 画布与模型 (Canvas & Model)
+					AppMenuHeader(tr("menu.view.category.canvas"))
+					AppMenuItem(
+						text = tr("menu.view.clickToSelectLayer"),
+						isChecked = clickToSelectLayer,
+						onHover = { activeSubmenu = null },
+						onClick = {
+							activeMenu = null
+							activeSubmenu = null
+							onToggleClickToSelectLayer()
+						},
+					)
+					AppMenuItem(
+						text = tr("canvas.visibility.texture"),
+						isChecked = showTexture,
+						onHover = { activeSubmenu = null },
+						onClick = {
+							activeMenu = null
+							activeSubmenu = null
+							onToggleShowTexture()
+						},
+					)
+					AppMenuItem(
+						text = tr("canvas.visibility.mesh"),
+						isChecked = showMesh,
+						onHover = { activeSubmenu = null },
+						onClick = {
+							activeMenu = null
+							activeSubmenu = null
+							onToggleShowMesh()
+						},
+					)
+					AppMenuItem(
+						text = tr("canvas.visibility.warp"),
+						isChecked = showWarp,
+						onHover = { activeSubmenu = null },
+						onClick = {
+							activeMenu = null
+							activeSubmenu = null
+							onToggleShowWarp()
+						},
+					)
+
+					// 二级菜单: 辅助显示与标记 (Overlays)
+					AppSubmenuItem(
+						text = tr("menu.view.overlays"),
+						isOpen = activeSubmenu == "overlays",
+						onOpen = { activeSubmenu = "overlays" },
+						onDismiss = { if (activeSubmenu == "overlays") activeSubmenu = null },
+					) {
+						AppMenuHeader(tr("menu.view.category.focus"))
+						AppMenuItem(
+							text = tr("canvas.information.contextualWarp"),
+							isChecked = contextualWarp,
+							onClick = {
+								activeMenu = null
+								activeSubmenu = null
+								onToggleContextualWarp()
+							},
+						)
+						AppMenuItem(
+							text = tr("canvas.information.selectedOnly"),
+							isChecked = filterSelectedOnly,
+							onClick = {
+								activeMenu = null
+								activeSubmenu = null
+								onToggleFilterSelectedOnly()
+							},
+						)
+						AppMenuItem(
+							text = tr("canvas.visibility.dimUnselected"),
+							isChecked = dimUnselected,
+							onClick = {
+								activeMenu = null
+								activeSubmenu = null
+								onToggleDimUnselected()
+							},
+						)
+
+						AppMenuSeparator()
+
+						AppMenuHeader(tr("menu.view.category.overlays"))
+						AppMenuItem(
+							text = tr("canvas.information.selectionBounds"),
+							isChecked = showSelectionBounds,
+							onClick = {
+								activeMenu = null
+								activeSubmenu = null
+								onToggleShowSelectionBounds()
+							},
+						)
+						AppMenuItem(
+							text = tr("canvas.information.names"),
+							isChecked = warpShowNames,
+							onClick = {
+								activeMenu = null
+								activeSubmenu = null
+								onToggleWarpShowNames()
+							},
+						)
+						AppMenuItem(
+							text = tr("canvas.information.indices"),
+							isChecked = warpShowIndices,
+							onClick = {
+								activeMenu = null
+								activeSubmenu = null
+								onToggleWarpShowIndices()
+							},
+						)
+					}
+
+					AppMenuSeparator()
+
+					// 2. 界面与缩放调整 (Zoom & Scale - 放后面)
+					AppMenuHeader(tr("menu.view.category.zoom"))
 					AppMenuItem(
 						text = tr("menu.view.zoomIn"),
 						shortcut = "Ctrl+=",
@@ -292,8 +427,6 @@ fun AppTitleBar(
 							onResetZoom()
 						},
 					)
-
-					AppMenuSeparator()
 
 					// 二级菜单: 界面缩放比例 (Interface Scale)
 					val currentUiPercent = (uiScale * 100).toInt()
@@ -357,6 +490,7 @@ fun AppTitleBar(
 
 					AppMenuSeparator()
 
+					// 3. 首选项与设置 (Preferences)
 					AppMenuItem(
 						text = tr("menu.view.settings"),
 						shortcut = "Ctrl+,",

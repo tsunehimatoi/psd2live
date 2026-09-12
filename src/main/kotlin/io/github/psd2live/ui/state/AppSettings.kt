@@ -63,12 +63,24 @@ object AppSettings {
 			}
 		}
 
+	private const val KEY_CLICK_TO_SELECT_LAYER = "click_to_select_layer"
+
+	var clickToSelectLayer: Boolean
+		get() = runCatching { preferences.getBoolean(KEY_CLICK_TO_SELECT_LAYER, true) }.getOrDefault(true)
+		set(value) {
+			runCatching {
+				preferences.putBoolean(KEY_CLICK_TO_SELECT_LAYER, value)
+				preferences.flush()
+			}
+		}
+
 	fun resetToDefaults() {
 		hasCustomUiScale = false
 		runCatching {
 			preferences.remove(KEY_UI_SCALE)
 			preferences.remove(KEY_FONT_SCALE)
 			preferences.remove(KEY_CUSTOM_SCALE_SET)
+			preferences.remove(KEY_CLICK_TO_SELECT_LAYER)
 			preferences.flush()
 		}
 	}

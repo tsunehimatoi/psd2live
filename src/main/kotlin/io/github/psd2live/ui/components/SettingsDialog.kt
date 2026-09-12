@@ -25,6 +25,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -32,14 +34,17 @@ import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.state.AppSettings
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
+import java.awt.Cursor
 import kotlin.math.roundToInt
 
 @Composable
 fun SettingsDialog(
 	uiScale: Float,
 	fontScale: Float,
+	clickToSelectLayer: Boolean = true,
 	onUiScaleChange: (Float) -> Unit,
 	onFontScaleChange: (Float) -> Unit,
+	onClickToSelectLayerChange: (Boolean) -> Unit = {},
 	onResetDefaults: () -> Unit,
 	onDismiss: () -> Unit,
 ) {
@@ -236,7 +241,44 @@ fun SettingsDialog(
 					}
 				}
 
-				// Section 3: Display & Environment Info
+				// Section 3: Canvas Interaction
+				Column(
+					modifier = Modifier
+						.fillMaxWidth()
+						.background(colors.panelElevated, RoundedCornerShape(4.dp))
+						.border(BorderStroke(1.dp, colors.border), RoundedCornerShape(4.dp))
+						.padding(10.dp),
+					verticalArrangement = Arrangement.spacedBy(6.dp),
+				) {
+					Text(
+						text = tr("settings.canvas.title"),
+						style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
+						color = colors.textPrimary,
+					)
+					Row(
+						modifier = Modifier
+							.fillMaxWidth()
+							.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
+							.clickable { onClickToSelectLayerChange(!clickToSelectLayer) }
+							.padding(vertical = 2.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.spacedBy(8.dp),
+					) {
+						Text(
+							text = if (clickToSelectLayer) "✓" else " ",
+							style = typography.body.copy(fontWeight = FontWeight.Bold),
+							color = if (clickToSelectLayer) colors.accent else Color.Transparent,
+							modifier = Modifier.width(16.dp),
+						)
+						Text(
+							text = tr("settings.canvas.clickToSelectLayer"),
+							style = typography.body.copy(fontSize = 11.5.sp),
+							color = colors.textPrimary,
+						)
+					}
+				}
+
+				// Section 4: Display & Environment Info
 				Column(
 					modifier = Modifier
 						.fillMaxWidth()

@@ -967,6 +967,12 @@ class PSD2LiveViewModel : AutoCloseable {
 		markWorkspaceChanged()
 	}
 
+	fun setClickToSelectLayer(enabled: Boolean) {
+		AppSettings.clickToSelectLayer = enabled
+		_state.update { it.copy(clickToSelectLayer = enabled) }
+		markWorkspaceChanged()
+	}
+
 	fun setHoveredItem(layerId: String?, deformerId: String?) {
 		_state.update {
 			if (it.hoveredLayerId == layerId && it.hoveredDeformerId == deformerId) it
