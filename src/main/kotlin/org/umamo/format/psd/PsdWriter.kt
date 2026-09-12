@@ -255,7 +255,7 @@ object PsdWriter {
 		val recordsTopToBottom = ArrayList<PsdWriteRecord>()
 		val folderStack = ArrayDeque<String>()
 		val layersTopToBottom = layers.asReversed()
-		var autoLayerId = 1
+		val ids = PsdLayerIds(layers.mapNotNull { parseLayerId(it.id.raw) })
 
 		for (layer in layersTopToBottom) {
 			val targetFolders = if (layer.groupPath.isBlank()) emptyList() else layer.groupPath.split('/')
@@ -301,7 +301,7 @@ object PsdWriter {
 				height = scaledRaster.height,
 			)
 			val channels = encodeNormalChannels(scaledRaster)
-			val id = parseLayerId(layer.id.raw) ?: (autoLayerId++)
+			val id = ids.allocate(parseLayerId(layer.id.raw))
 			recordsTopToBottom += NormalLayerRecord(
 				name = layer.name,
 				visible = layer.visible,

@@ -30,7 +30,7 @@ object CharacterAnalyzer {
 				}
 			}
 		}.filter { it.source.id.raw !in config.deletedLayerIds }
-		val warnings = mutableListOf<String>()
+		val warnings = source.warnings.toMutableList()
 		val nonEmpty = layers.filter { it.opaquePixels > 0 }
 		require(nonEmpty.isNotEmpty()) { tr("error.psdNoVisibleLayers") }
 

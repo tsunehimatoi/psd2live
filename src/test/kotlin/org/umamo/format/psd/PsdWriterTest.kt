@@ -13,6 +13,63 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class PsdWriterTest {
+	private fun identityArt(ids: List<String>): SourceArt = TestSourceArt(
+		10, 10,
+		ids.mapIndexed { index, id ->
+			TestSourceLayer(LayerId(id), "same name", "Group", index,
+				LayerBounds(1, 1, 1, 1), 1f, false, LayerBlend.Normal, true,
+				LayerRaster(1, 1, byteArrayOf(index.toByte(), 20, 30, -1)))
+		},
+		listOf(TestSourceGroup("Group", "Group")),
+	)
+
+	@Test
+	fun duplicateImportedIdsRemainIndependentAndStable() {
+		val source = identityArt(listOf("lyid:42", "lyid:43", "lyid:44", "lyid:1"))
+		val bytes = PsdWriter.write(source)
+		// Simulate an editor duplicating lyid, independently of the writer's ID allocation.
+		val buffer = java.nio.ByteBuffer.wrap(bytes)
+		var patched = 0
+		for (offset in 0..bytes.size - 16) {
+			if (buffer.getInt(offset) == 0x3842494d && buffer.getInt(offset + 4) == 0x6c796964 &&
+				buffer.getInt(offset + 8) == 4 && buffer.getInt(offset + 12) in 43..44) {
+				buffer.putInt(offset + 12, 42)
+				patched++
+			}
+		}
+		assertEquals(2, patched)
+		val parsed = PsdReader.read(bytes)
+		assertEquals(4, parsed.layers.map { it.id }.toSet().size)
+		assertEquals(2, parsed.warnings.size)
+		assertTrue(parsed.warnings.all { it.contains("Duplicate PSD layer ID lyid:42") })
+		assertEquals("lyid:1", parsed.layers.last().id.raw)
+		assertEquals(parsed.layers.map { it.id }, PsdReader.read(bytes).layers.map { it.id })
+		for ((expected, actual) in source.layers.zip(parsed.layers)) {
+			assertEquals(expected.name, actual.name)
+			assertEquals(expected.bounds, actual.bounds)
+			assertEquals(expected.groupPath, actual.groupPath)
+			assertContentEquals(expected.raster.rgba, actual.raster.rgba)
+		}
+		val reimported = PsdReader.read(PsdWriter.write(parsed))
+		assertEquals(parsed.layers.map { it.id }, reimported.layers.map { it.id })
+		assertTrue(reimported.warnings.isEmpty())
+		val analysis = io.github.psd2live.core.CharacterAnalyzer.analyze(parsed, io.github.psd2live.core.PipelineConfig())
+		assertTrue(analysis.warnings.containsAll(parsed.warnings))
+	}
+
+	@Test
+	fun exportReservesExistingIdsBeforeAllocatingGeneratedAndDuplicateIds() {
+		val source = identityArt(listOf("lyid:1", "lyid:2", "lyid:42", "lyid:42", "generated"))
+		val bytes = PsdWriter.write(source)
+		val records = PsdLayerRecords.parse(bytes).records.filter { it.dividerType !in 1..3 }
+		assertEquals(5, records.map { it.layerId }.toSet().size)
+		val parsed = PsdReader.read(bytes)
+		assertTrue(parsed.warnings.isEmpty())
+		assertEquals("lyid:1", parsed.layers[0].id.raw)
+		assertEquals("lyid:2", parsed.layers[1].id.raw)
+		assertEquals("lyid:42", parsed.layers[3].id.raw)
+		assertEquals(parsed.layers.map { it.id }, PsdReader.read(PsdWriter.write(source)).layers.map { it.id })
+	}
 
 	private data class TestSourceLayer(
 		override val id: LayerId,

@@ -67,6 +67,8 @@ object PsdReader : ArtReader {
 		// hidden bounding divider at the bottom closes it. Real layers carry the current stack path;
 		// folder markers are structural and are not emitted as drawable layers.
 		val groups = ArrayList<SourceGroup>()
+		val ids = PsdLayerIds(parse.records.mapNotNull { it.layerId })
+		val warnings = mutableListOf<String>()
 		val folderStack = ArrayDeque<String>()
 		val layersTopToBottom = ArrayList<SourceLayer>()
 		var emittedOrder = 0
@@ -98,10 +100,17 @@ object PsdReader : ArtReader {
 				}
 
 				else -> {
+					val id = record.layerId?.let { original ->
+						val assigned = ids.allocate(original)
+						if (assigned != original) {
+							warnings += "Duplicate PSD layer ID lyid:$original at record $recordIndex (${record.name}); reassigned to lyid:$assigned."
+						}
+						LayerId("lyid:$assigned")
+					} ?: LayerId("${record.name}#$recordIndex")
 					layersTopToBottom +=
 						PsdSourceLayer(
 							// Stable identity: Photoshop's lyid (stable across rename/reorder) when present, else name+order. See docs/format/PSD.md.
-							id = record.layerId?.let { layerId -> LayerId("lyid:$layerId") } ?: LayerId("${record.name}#$recordIndex"),
+							id = id,
 							name = record.name,
 							visible = record.visible,
 							groupPath = folderStack.joinToString("/"),
@@ -121,6 +130,7 @@ object PsdReader : ArtReader {
 			heightPx = header.height,
 			layers = layersTopToBottom.asReversed(),
 			groups = groups,
+			warnings = warnings,
 		)
 	}
 }
@@ -172,6 +182,7 @@ private data class PsdSourceGroup(
 
 /** Concrete [SourceArt] backing a parsed PSD document. */
 private data class PsdSourceArt(
+	override val warnings: List<String>,
 	override val widthPx: Int,
 	override val heightPx: Int,
 	override val layers: List<SourceLayer>,

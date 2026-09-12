@@ -228,6 +228,8 @@ interface SourceGroup {
  * change; CLIP overrides it.
  */
 interface SourceArt {
+	/** Non-fatal import diagnostics, including repaired source identities. */
+	val warnings: List<String> get() = emptyList()
 	val layers: List<SourceLayer>
 	val groups: List<SourceGroup> get() = emptyList()
 	val widthPx: Int
