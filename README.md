@@ -119,7 +119,7 @@ PSD2Live 是一个自动化的 Live2D 模型生成流水线与桌面应用。输
 
 #### 连接 AI Agent / MCP
 
-1. 保持 PSD2Live 桌面应用运行，打开顶部 **Agent / MCP → Agent / MCP 连接与安装…**。
+1. 保持 PSD2Live 桌面应用运行，打开顶部 **工具 → MCP → MCP 连接与安装…**。
 2. 在“连接配置”页复制宿主对应的配置：ChatGPT Desktop / Codex 使用 HTTP TOML，Gemini / Antigravity 使用 HTTP JSON。其他支持 Streamable HTTP 的宿主使用界面显示的端点和 `Authorization: Bearer <Token>` 请求头；不要改成旧 `/sse` 地址。
 3. 仅当宿主不支持 HTTP MCP 时，复制 Stdio JSON，通过 Python 3 运行仓库根目录的 `mcp_proxy.py`。代理优先读取 `PSD2LIVE_MCP_TOKEN`；Windows 上也可读取 PSD2Live 已保存的 Token。
 4. 领域工作流已内置于 MCP，无需另装 Skill。连接后先列出工具并调用 `project_get_state`；需要专项指导时调用 `agent_get_workflow`。

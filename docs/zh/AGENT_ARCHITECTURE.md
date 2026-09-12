@@ -184,7 +184,7 @@ ChatGPT/Codex/Gemini/其他 Agent ─── MCP┘   ├─ Workflow Registry
 
 当前桌面应用直接在 `127.0.0.1:23871/mcp` 提供带 Bearer Token 的 Streamable HTTP。ChatGPT Desktop / Codex 使用连接窗口生成的 TOML，Gemini / Antigravity 使用 HTTP JSON；其他 HTTP 宿主传递相同端点和 `Authorization` 请求头。只有宿主不支持 HTTP MCP 时才使用仓库根目录的 `mcp_proxy.py` 把逐行 stdio JSON-RPC 桥接到 HTTP。代理会维护 MCP Session、转发协议版本、在认证失败时重新读取 Token，并且只自动重试协议发现和只读 Tool；写调用超时后必须重新读取工程与历史，不能盲目重放。
 
-顶部 **Agent / MCP → Agent / MCP 连接与安装…** 会显示在线状态、端点、Token、三类可复制配置和多宿主安装 Prompt。Token 由 Java Preferences 持久化；它代表当前本机工作区写权限，不应写入仓库或公开。服务端 `instructions`、MCP prompt 与 `agent_get_workflow` 提供跨工具约束和按需知识，不需要宿主另装 Skill。默认单工具超时为 60 秒，所以长任务必须通过检查点恢复。服务实现使用 [官方 MCP Kotlin SDK](https://github.com/modelcontextprotocol/kotlin-sdk)。
+顶部 **工具 → MCP → MCP 连接与安装…** 会显示在线状态、端点、Token、三类可复制配置和多宿主安装 Prompt。Token 由 Java Preferences 持久化；它代表当前本机工作区写权限，不应写入仓库或公开。服务端 `instructions`、MCP prompt 与 `agent_get_workflow` 提供跨工具约束和按需知识，不需要宿主另装 Skill。默认单工具超时为 60 秒，所以长任务必须通过检查点恢复。服务实现使用 [官方 MCP Kotlin SDK](https://github.com/modelcontextprotocol/kotlin-sdk)。
 
 ## 4. 工作区领域模型
 
@@ -525,7 +525,7 @@ psd2live 采用两层兼容：
 
 当前桌面端已完成：
 
-- 顶级 **Agent / MCP** 菜单、在线状态徽标，以及连接配置/安装 Prompt 双页对话框；
+- 工具菜单下 **MCP** 二级菜单、在线状态徽标，以及连接配置/安装 Prompt 双页对话框；
 - 主工作区 **History** 标签：绘制完整分支树，支持平移、缩放、搜索、节点详情、复制 ID 与检出恢复；
 - 四个主视图下方的独立日志坞：折叠、拖动高度、按系统/Agent/图片筛选、清空和复制；
 - MCP View 与导入资产的行内缩略图，以及带棋盘背景、尺寸/大小和复制功能的图片灯箱；
@@ -543,7 +543,7 @@ psd2live 采用两层兼容：
 ### Phase 0：已落地的垂直切片
 
 - 应用启动时在 `127.0.0.1:23871/mcp` 启动 Streamable HTTP MCP；
-- Bearer Token 持久化；顶部 Agent / MCP 菜单提供端点、Token、Codex TOML、Gemini/Antigravity HTTP JSON、通用 Stdio JSON 和多语言安装 Prompt；
+- Bearer Token 持久化；顶部工具菜单下的 MCP 提供端点、Token、Codex TOML、Gemini/Antigravity HTTP JSON、通用 Stdio JSON 和多语言安装 Prompt；
 - `mcp_proxy.py` 为仅支持 Stdio 的宿主维护 Session、协议版本和 Token 刷新，并只对安全只读请求作有限重试；
 - `project_get_state`、`project_list_layers`、`project_list_parameters`；
 - `view_render_layer` 透明/棋盘图层直出；

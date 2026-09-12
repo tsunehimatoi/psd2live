@@ -118,7 +118,7 @@ PSD2Live は、自動化された Live2D モデル生成パイプラインおよ
 
 #### AI Agent / MCP ホストへの接続
 
-1. PSD2Live デスクトップアプリを起動したまま、**Agent / MCP → Agent / MCP 接続とプロンプト…** を開きます。
+1. PSD2Live デスクトップアプリを起動したまま、**ツール → MCP → MCP 接続とプロンプト…** を開きます。
 2. ChatGPT デスクトップ／Codex では HTTP TOML、Gemini／Antigravity では HTTP JSON をコピーします。その他の Streamable HTTP 対応ホストでは、表示されたエンドポイントと `Authorization: Bearer <token>` ヘッダーを使用し、旧 `/sse` へ変更しないでください。
 3. HTTP MCP 非対応ホストでのみ Stdio JSON を使用します。Python 3 でリポジトリ直下の `mcp_proxy.py` を起動し、`PSD2LIVE_MCP_TOKEN` を読み取ります。Windows では PSD2Live が保存した Token も利用できます。
 4. ドメインワークフローは MCP に組み込まれているため、別途 Skill をインストールする必要はありません。接続後はツール一覧を取得して最初に `project_get_state` を呼び出し、必要に応じて `agent_get_workflow` を使用します。

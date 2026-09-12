@@ -60,8 +60,9 @@ PSD2Live 提供桌面图形交互界面（GUI）、自动化命令行批处理�
 
 - **顶部菜单栏**：
   - **文件 (File)**：`打开 PSD...` (`Ctrl + O`)、`重新分析` (`Ctrl + R`)、`打开输出目录`、`生成并导出` (`Ctrl + G`)、`导出到...` (`Ctrl + Shift + G`)、`退出`。
+  - **视图 (View)**：画布显示、辅助标注、界面与字体缩放、`首选项与设置…` (`Ctrl + ,`)。
+  - **工具 (Tools)**：`纹理高清化…` (`Ctrl + U`)、**MCP**（`MCP 连接与安装…`、`查看版本历史树图…`）。
   - **语言 (Language)**：支持简体中文 (`zh`)、英文 (`en`)、日文 (`ja`) 实时无缝切换。
-  - **Agent / MCP**：打开连接与工作流配置，或直接切换到版本历史树。
   - **帮助 (Help)**：版本信息、第三方组件与许可证说明。
 - **工作区分隔条**：鼠标拖拽可自由调节左侧工作区与右侧检视器的宽度比例（`25% ~ 85%`）。
 
@@ -113,7 +114,7 @@ PSD2Live 提供桌面图形交互界面（GUI）、自动化命令行批处理�
 
 PSD2Live 启动时会在 `127.0.0.1:23871/mcp` 提供带 Bearer Token 的 Streamable HTTP MCP。应用必须保持运行；Token 视同本机工作区写权限，不要公开或提交到版本库。
 
-1. 打开顶部 **Agent / MCP → Agent / MCP 连接与安装…**。
+1. 打开顶部 **工具 → MCP → MCP 连接与安装…**。
 2. 在“连接配置”页复制对应配置；优先使用原生 Streamable HTTP：
    - ChatGPT Desktop / Codex：把 HTTP TOML 合并到 `~/.codex/config.toml`，或受信任项目的 `.codex/config.toml`，重启客户端后用 `/mcp` 检查。
    - Gemini / Antigravity：把 HTTP JSON 中的 `psd2live` 条目合并到 `~/.gemini/config/mcp_config.json`，刷新 MCP Servers。

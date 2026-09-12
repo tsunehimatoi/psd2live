@@ -1336,6 +1336,14 @@ class PSD2LiveViewModel : AutoCloseable {
 		_state.update { it.copy(errorMessage = null) }
 	}
 
+	fun setErrorMessage(message: String?) {
+		_state.update { it.copy(errorMessage = message) }
+	}
+
+	fun setStatusText(text: String) {
+		_state.update { it.copy(statusText = text) }
+	}
+
 	fun clearSuccessExportMessage() {
 		_state.update { it.copy(successExportMessage = null) }
 	}

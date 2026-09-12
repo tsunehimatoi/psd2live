@@ -70,6 +70,7 @@ import javax.swing.SwingWorker
 import javax.swing.Timer
 import javax.swing.filechooser.FileNameExtensionFilter
 import javax.swing.table.DefaultTableCellRenderer
+import io.github.psd2live.ui.utils.DesktopDropTarget
 
 class PSD2LiveFrame : JFrame() {
 	private val pipeline = PSD2LivePipeline()
@@ -425,23 +426,26 @@ class PSD2LiveFrame : JFrame() {
 	}
 
 	private fun installDropTarget() {
-		DropTarget(this, DnDConstants.ACTION_COPY, object : DropTargetAdapter() {
-			override fun drop(event: DropTargetDropEvent) {
-				try {
-					event.acceptDrop(DnDConstants.ACTION_COPY)
-					@Suppress("UNCHECKED_CAST")
-					val files = event.transferable.getTransferData(DataFlavor.javaFileListFlavor) as List<File>
-					files.firstOrNull { it.extension.equals("psd", true) }?.let {
-						setInput(it.toPath())
-						analyze()
+		DesktopDropTarget.install(this) { files ->
+			when (val action = DesktopDropTarget.resolveDropAction(files)) {
+				is DesktopDropTarget.DroppedAction.OpenPsd -> {
+					if (action.outputDir != null) {
+						outputField.text = action.outputDir.absolutePath
 					}
-					event.dropComplete(true)
-				} catch (failure: Exception) {
-					event.dropComplete(false)
-					showFailure(failure)
+					setInput(action.file.toPath())
+					analyze()
+				}
+				is DesktopDropTarget.DroppedAction.OpenProject -> {
+					showMessage(tr("dialog.unsupportedDrop", action.file.name))
+				}
+				is DesktopDropTarget.DroppedAction.SetOutputDir -> {
+					outputField.text = action.dir.absolutePath
+				}
+				is DesktopDropTarget.DroppedAction.Unsupported -> {
+					showMessage(action.message)
 				}
 			}
-		}, true)
+		}
 	}
 
 	private fun chooseInput() {

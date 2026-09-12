@@ -292,4 +292,34 @@ class HelpDialogAndUrlsTest {
 		assertNotNull(previewIntro)
 		assertTrue(previewIntro.contains("挑选") || previewIntro.contains("选择") || previewIntro.contains("需求"), "Preview intro must explain feature selection purpose")
 	}
+
+	@Test
+	fun testMenuBarKeysAndMcpNaming() {
+		val localePaths = listOf(
+			"/i18n/Messages.properties",
+			"/i18n/Messages_zh_CN.properties",
+			"/i18n/Messages_ja.properties",
+		)
+
+		for (localePath in localePaths) {
+			val props = Properties()
+			val stream = javaClass.getResourceAsStream(localePath)
+			assertNotNull(stream, "Resource not found: $localePath")
+			InputStreamReader(stream, StandardCharsets.UTF_8).use { reader ->
+				props.load(reader)
+			}
+
+			// menu.agent must be renamed to MCP
+			assertEquals("MCP", props.getProperty("menu.agent"), "menu.agent must be MCP in $localePath")
+			assertTrue(
+				props.getProperty("menu.agent.connection").startsWith("MCP"),
+				"menu.agent.connection must start with MCP in $localePath"
+			)
+
+			// Tools menu & View settings presence
+			assertNotNull(props.getProperty("menu.tools"), "Missing menu.tools in $localePath")
+			assertNotNull(props.getProperty("menu.tools.textureUpscale"), "Missing menu.tools.textureUpscale in $localePath")
+			assertNotNull(props.getProperty("menu.view.settings"), "Missing menu.view.settings in $localePath")
+		}
+	}
 }

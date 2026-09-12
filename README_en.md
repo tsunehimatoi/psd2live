@@ -118,7 +118,7 @@ Results depend on the model, image generator, Agent harness, prompt, and the qua
 
 #### Connecting an AI Agent / MCP Host
 
-1. Keep the PSD2Live desktop app running and open **Agent / MCP → Agent / MCP Connection & Prompts…**.
+1. Keep the PSD2Live desktop app running and open **Tools → MCP → MCP Connection & Prompts…**.
 2. Copy the matching configuration: HTTP TOML for ChatGPT desktop/Codex, or HTTP JSON for Gemini/Antigravity. Other Streamable HTTP hosts use the displayed endpoint and `Authorization: Bearer <token>` header; do not change it to the legacy `/sse` endpoint.
 3. Use the Stdio JSON fallback only for hosts without HTTP MCP support. It runs the repository-root `mcp_proxy.py` with Python 3 and reads `PSD2LIVE_MCP_TOKEN`; on Windows it can also read the token saved by PSD2Live.
 4. Domain workflows are built into the MCP server; no separate Skill installation is needed. List tools and call `project_get_state` first, then use `agent_get_workflow` when focused guidance is useful.

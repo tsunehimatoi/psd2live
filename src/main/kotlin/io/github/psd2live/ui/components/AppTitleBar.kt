@@ -242,15 +242,7 @@ fun AppTitleBar(
 
 					AppMenuSeparator()
 
-					// 4. 首选项与系统 (Preferences & Lifecycle)
-					AppMenuItem(
-						text = tr("menu.file.settings"),
-						shortcut = "Ctrl+,",
-						onClick = {
-							activeMenu = null
-							onShowSettings()
-						},
-					)
+					// 4. 系统 / 退出 (Lifecycle)
 					AppMenuItem(
 						text = tr("menu.file.exit"),
 						shortcut = "Alt+F4",
@@ -507,7 +499,7 @@ fun AppTitleBar(
 				}
 			}
 
-			// 2. Tools Menu
+			// 3. Tools Menu
 			TitleBarMenuItem(
 				title = tr("menu.tools"),
 				isOpen = activeMenu == "tools",
@@ -534,54 +526,40 @@ fun AppTitleBar(
 						text = tr("menu.tools.textureUpscale"),
 						shortcut = "Ctrl+U",
 						enabled = hasInput && !isBusy,
+						onHover = { activeSubmenu = null },
 						onClick = {
 							activeMenu = null
 							activeSubmenu = null
 							onShowTextureUpscale()
 						},
 					)
-				}
-			}
 
-			// 3. Agent / MCP Menu (Dedicated top-level menu)
-			TitleBarMenuItem(
-				title = tr("menu.agent"),
-				isOpen = activeMenu == "agent",
-				onToggle = {
-					activeSubmenu = null
-					activeMenu = if (activeMenu == "agent") null else "agent"
-				},
-				onHoverWhenActive = {
-					if (activeMenu != null && activeMenu != "agent") {
-						activeMenu = "agent"
-						activeSubmenu = null
+					AppMenuSeparator()
+
+					// 二级菜单: MCP
+					AppSubmenuItem(
+						text = tr("menu.agent"),
+						isOpen = activeSubmenu == "mcp",
+						onOpen = { activeSubmenu = "mcp" },
+						onDismiss = { if (activeSubmenu == "mcp") activeSubmenu = null },
+					) {
+						AppMenuItem(
+							text = tr("menu.agent.connection"),
+							onClick = {
+								activeMenu = null
+								activeSubmenu = null
+								onShowAgentConnection()
+							},
+						)
+						AppMenuItem(
+							text = tr("menu.agent.history"),
+							onClick = {
+								activeMenu = null
+								activeSubmenu = null
+								onShowHistory()
+							},
+						)
 					}
-				},
-			) {
-				AppSeamlessDropdownMenu(
-					expanded = activeMenu == "agent",
-					onDismissRequest = {
-						activeMenu = null
-						activeSubmenu = null
-					},
-					modifier = Modifier.widthIn(min = 180.dp, max = 260.dp),
-				) {
-					AppMenuItem(
-						text = tr("menu.agent.connection"),
-						onClick = {
-							activeMenu = null
-							activeSubmenu = null
-							onShowAgentConnection()
-						},
-					)
-					AppMenuItem(
-						text = tr("menu.agent.history"),
-						onClick = {
-							activeMenu = null
-							activeSubmenu = null
-							onShowHistory()
-						},
-					)
 				}
 			}
 

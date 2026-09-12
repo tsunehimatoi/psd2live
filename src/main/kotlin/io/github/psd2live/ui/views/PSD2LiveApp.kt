@@ -81,6 +81,7 @@ import androidx.compose.material.Divider
 import io.github.psd2live.ui.components.SettingsDialog
 import io.github.psd2live.ui.state.AppSettings
 import io.github.psd2live.ui.utils.DesktopUtils
+import io.github.psd2live.ui.utils.DesktopDropTarget
 import kotlin.math.roundToInt
 import io.github.psd2live.ui.theme.CompactToolTheme
 import io.github.psd2live.ui.theme.LocalToolColors
@@ -125,24 +126,39 @@ fun FrameWindowScope.PSD2LiveApp(
     // Language key tracking for recomposition
 	val currentLanguage = state.currentLanguage
 
-	// Window Drop Target for PSD Drag & Drop
+	var isDraggingOver by remember { mutableStateOf(false) }
+
+	// Window Drop Target for PSD Drag & Drop and Project Files
 	LaunchedEffect(window) {
-		window?.dropTarget = DropTarget(window, DnDConstants.ACTION_COPY, object : DropTargetAdapter() {
-			override fun drop(event: DropTargetDropEvent) {
-				try {
-					event.acceptDrop(DnDConstants.ACTION_COPY)
-					@Suppress("UNCHECKED_CAST")
-					val files = event.transferable.getTransferData(DataFlavor.javaFileListFlavor) as List<File>
-					files.firstOrNull { it.extension.lowercase() in setOf("psd", "psd2live") }?.let { file ->
-                        if (file.extension.equals("psd2live", true)) viewModel.openProject(file.toPath())
-                        else viewModel.withSavedChanges { viewModel.setInputPath(file.absolutePath); viewModel.analyze() }
-                    }
-					event.dropComplete(true)
-				} catch (failure: Exception) {
-					event.dropComplete(false)
-				}
-			}
-		}, true)
+		if (window != null) {
+			DesktopDropTarget.install(
+				window = window,
+				onDragStateChanged = { isDraggingOver = it },
+				onFilesDropped = { files ->
+					when (val action = DesktopDropTarget.resolveDropAction(files)) {
+						is DesktopDropTarget.DroppedAction.OpenProject -> {
+							viewModel.openProject(action.file.toPath())
+						}
+						is DesktopDropTarget.DroppedAction.OpenPsd -> {
+							if (action.outputDir != null) {
+								viewModel.setOutputPath(action.outputDir.absolutePath)
+							}
+							viewModel.withSavedChanges {
+								viewModel.setInputPath(action.file.absolutePath)
+								viewModel.analyze()
+							}
+						}
+						is DesktopDropTarget.DroppedAction.SetOutputDir -> {
+							viewModel.setOutputPath(action.dir.absolutePath)
+							viewModel.setStatusText(tr("status.outputDirSet", action.dir.name))
+						}
+						is DesktopDropTarget.DroppedAction.Unsupported -> {
+							viewModel.setErrorMessage(action.message)
+						}
+					}
+				},
+			)
+		}
 	}
 
 	CompactToolTheme(
@@ -513,6 +529,33 @@ fun FrameWindowScope.PSD2LiveApp(
 				},
 				onDismiss = { viewModel.closeSettingsDialog() },
 			)
+		}
+
+		if (isDraggingOver) {
+			Box(
+				modifier = Modifier
+					.fillMaxSize()
+					.background(Color.Black.copy(alpha = 0.65f))
+					.padding(24.dp)
+					.border(2.dp, colors.accent, RoundedCornerShape(12.dp)),
+				contentAlignment = Alignment.Center,
+			) {
+				Column(
+					horizontalAlignment = Alignment.CenterHorizontally,
+					verticalArrangement = Arrangement.spacedBy(10.dp),
+				) {
+					Text(
+						text = tr("drop.overlay.title"),
+						style = typography.title.copy(fontSize = 20.sp, fontWeight = FontWeight.Bold),
+						color = Color.White,
+					)
+					Text(
+						text = tr("drop.overlay.desc"),
+						style = typography.body.copy(fontSize = 13.sp),
+						color = Color.White.copy(alpha = 0.85f),
+					)
+				}
+			}
 		}
 	}
 }

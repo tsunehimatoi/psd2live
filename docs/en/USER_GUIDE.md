@@ -61,7 +61,8 @@ The main window is structured as **Left Workspace + Right Inspector + Independen
 - **Menu Bar**:
   - **File**: `Open PSD...` (`Ctrl + O`), `Reanalyze` (`Ctrl + R`), `Open Output Directory`, `Generate & Export` (`Ctrl + G`), `Export To...` (`Ctrl + Shift + G`), `Exit`.
   - **Language**: Instant switching between Simplified Chinese (`zh`), English (`en`), and Japanese (`ja`).
-  - **Agent / MCP**: Open connection and workflow setup, or jump directly to the version-history tree.
+  - **View**: Canvas display, annotations, UI & font scale, `Preferences & Settings…` (`Ctrl + ,`).
+  - **Tools**: `Texture Upscale…` (`Ctrl + U`), **MCP** (`MCP Connection & Prompts…`, `View Version History Tree…`).
   - **Help**: Version and license notices.
 - **Split Pane Divider**: Drag to adjust the Workspace/Inspector ratio within `25% ~ 85%`.
 
@@ -110,7 +111,7 @@ Logs remain visible below Hierarchy, Topology, Preview, and History instead of o
 
 At startup, PSD2Live exposes a bearer-authenticated Streamable HTTP MCP at `127.0.0.1:23871/mcp`. Keep the app running. Treat the token as local workspace write access; do not publish or commit it.
 
-1. Open **Agent / MCP → Agent / MCP Connection & Prompts…**.
+1. Open **Tools → MCP → MCP Connection & Prompts…**.
 2. On Connection Config, copy the matching configuration and prefer native Streamable HTTP:
    - ChatGPT desktop / Codex: merge the HTTP TOML into `~/.codex/config.toml`, or `.codex/config.toml` in a trusted project, restart the client, and check `/mcp`.
    - Gemini / Antigravity: merge the `psd2live` HTTP JSON entry into `~/.gemini/config/mcp_config.json`, then refresh MCP Servers.
