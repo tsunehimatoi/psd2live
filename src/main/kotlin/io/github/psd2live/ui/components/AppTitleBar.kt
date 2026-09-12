@@ -126,11 +126,18 @@ fun AppTitleBar(
 				AppSeamlessDropdownMenu(
 					expanded = activeMenu == "file",
 					onDismissRequest = { activeMenu = null },
-					modifier = Modifier.widthIn(min = 180.dp, max = 240.dp),
+					modifier = Modifier.widthIn(min = 220.dp, max = 280.dp),
 				) {
-                    AppMenuItem(text = tr("project.open"), shortcut = "Ctrl+O", enabled = !isBusy, onClick = { activeMenu = null; onOpenProject() })
-                    AppMenuItem(text = tr("project.save"), shortcut = "Ctrl+S", enabled = hasInput, onClick = { activeMenu = null; onSaveProject() })
-                    AppMenuItem(text = tr("project.saveAs"), shortcut = "Ctrl+Shift+S", enabled = hasInput, onClick = { activeMenu = null; onSaveProjectAs() })
+					// 1. 工程管理 (Project)
+					AppMenuHeader(tr("menu.file.category.project"))
+					AppMenuItem(text = tr("project.open"), shortcut = "Ctrl+O", enabled = !isBusy, onClick = { activeMenu = null; onOpenProject() })
+					AppMenuItem(text = tr("project.save"), shortcut = "Ctrl+S", enabled = hasInput, onClick = { activeMenu = null; onSaveProject() })
+					AppMenuItem(text = tr("project.saveAs"), shortcut = "Ctrl+Shift+S", enabled = hasInput, onClick = { activeMenu = null; onSaveProjectAs() })
+
+					AppMenuSeparator()
+
+					// 2. PSD 原画 (Source PSD)
+					AppMenuHeader(tr("menu.file.category.psd"))
 					AppMenuItem(
 						text = tr("menu.file.openPsd"),
 						shortcut = "Ctrl+Shift+O",
@@ -157,7 +164,11 @@ fun AppTitleBar(
 							onReexportPsd()
 						},
 					)
+
 					AppMenuSeparator()
+
+					// 3. 模型导出 (Model Export)
+					AppMenuHeader(tr("menu.file.category.export"))
 					AppMenuItem(
 						text = tr("menu.file.generate"),
 						shortcut = "Ctrl+G",
@@ -184,9 +195,13 @@ fun AppTitleBar(
 							onOpenOutput()
 						},
 					)
+
 					AppMenuSeparator()
+
+					// 4. 系统 / 退出 (Lifecycle)
 					AppMenuItem(
 						text = tr("menu.file.exit"),
+						shortcut = "Alt+F4",
 						onClick = {
 							activeMenu = null
 							onClose()
@@ -597,7 +612,21 @@ fun AppMenuSeparator() {
 	Divider(
 		color = colors.divider,
 		thickness = 1.dp,
-		modifier = Modifier.fillMaxWidth(),
+		modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+	)
+}
+
+@Composable
+fun AppMenuHeader(text: String) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	Text(
+		text = text,
+		style = typography.caption.copy(fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp),
+		color = colors.textMuted.copy(alpha = 0.7f),
+		modifier = Modifier
+			.fillMaxWidth()
+			.padding(horizontal = 12.dp, vertical = 3.dp),
 	)
 }
 
