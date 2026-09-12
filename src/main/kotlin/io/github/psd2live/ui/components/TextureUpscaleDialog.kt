@@ -19,10 +19,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.psd2live.core.DownloadState
+import io.github.psd2live.core.ModelDownloader
 import io.github.psd2live.core.TextureUpscaleConfig
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
+import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Consistent dialog matching PSD2Live compact dark IDE design system. */
 @Composable
@@ -45,17 +49,30 @@ fun TextureUpscaleDialog(
 		p != null && java.nio.file.Files.isRegularFile(p.resolve("scale2x.pth")) && !java.nio.file.Files.isRegularFile(p.resolve("scale4x.pth"))
 	}
 
-	val canApply = draft.scale == 1 || (
+	var downloadState by remember { mutableStateOf<DownloadState>(DownloadState.Idle) }
+	val cancelFlag = remember { AtomicBoolean(false) }
+	val coroutineScope = rememberCoroutineScope()
+
+	val isDownloading = downloadState is DownloadState.Downloading ||
+		downloadState is DownloadState.Extracting ||
+		downloadState is DownloadState.Verifying
+
+	val isModelInstalled = remember(draft.modelDirectory, downloadState) {
+		val p = runCatching { java.nio.file.Path.of(draft.modelDirectory) }.getOrNull()
+		(p != null && ModelDownloader.isModelInstalled(p)) || ModelDownloader.isModelInstalled()
+	}
+
+	val canApply = !isDownloading && (draft.scale == 1 || (
 		draft.python.isNotBlank() &&
 		draft.nunifDirectory.isNotBlank() &&
 		draft.modelDirectory.isNotBlank()
-	)
+	))
 
 	Box(
 		modifier = Modifier
 			.fillMaxSize()
 			.background(Color(0x99000000))
-			.clickable(enabled = !isUpscaling) { onDismiss() },
+			.clickable(enabled = !isUpscaling && !isDownloading) { onDismiss() },
 		contentAlignment = Alignment.Center,
 	) {
 		Column(
@@ -99,7 +116,7 @@ fun TextureUpscaleDialog(
 						}
 					}
 				}
-				CompactIconButton(onClick = onDismiss, enabled = !isUpscaling, size = 20.dp) {
+				CompactIconButton(onClick = onDismiss, enabled = !isUpscaling && !isDownloading, size = 20.dp) {
 					IconClose(modifier = Modifier.size(10.dp), tint = colors.textMuted)
 				}
 			}
@@ -155,6 +172,187 @@ fun TextureUpscaleDialog(
 					style = typography.body.copy(fontSize = 11.sp),
 					color = colors.textMuted,
 				)
+
+				// Model Availability Status & Download Card
+				if (isModelInstalled && !isDownloading) {
+					Row(
+						modifier = Modifier
+							.fillMaxWidth()
+							.clip(RoundedCornerShape(4.dp))
+							.background(Color(0xFF1B4D3E).copy(alpha = 0.5f))
+							.border(BorderStroke(1.dp, Color(0xFF4EC9B0).copy(alpha = 0.6f)), RoundedCornerShape(4.dp))
+							.padding(horizontal = 10.dp, vertical = 6.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.SpaceBetween,
+					) {
+						Row(
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(6.dp),
+						) {
+							Text("✓", color = Color(0xFF4EC9B0), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+							Text(
+								text = tr("upscale.modelReady"),
+								style = typography.caption.copy(fontSize = 10.5.sp, fontWeight = FontWeight.Medium),
+								color = Color(0xFF4EC9B0),
+							)
+						}
+						Text(
+							text = "swin_unet_v3 / art",
+							style = typography.monoSmall.copy(fontSize = 9.sp),
+							color = colors.textMuted,
+						)
+					}
+				} else {
+					Column(
+						modifier = Modifier
+							.fillMaxWidth()
+							.clip(RoundedCornerShape(6.dp))
+							.background(colors.inputBackground)
+							.border(BorderStroke(1.dp, if (downloadState is DownloadState.Failed) Color(0xFFE06C75) else colors.border), RoundedCornerShape(6.dp))
+							.padding(10.dp),
+						verticalArrangement = Arrangement.spacedBy(8.dp),
+					) {
+						when (val state = downloadState) {
+							is DownloadState.Downloading -> {
+								Row(
+									modifier = Modifier.fillMaxWidth(),
+									verticalAlignment = Alignment.CenterVertically,
+									horizontalArrangement = Arrangement.SpaceBetween,
+								) {
+									Text(
+										text = if (state.currentItem == "nunif") tr("upscale.downloadingNunif") else tr("upscale.downloadingModel"),
+										style = typography.caption.copy(fontSize = 10.5.sp, fontWeight = FontWeight.Medium),
+										color = colors.accent,
+									)
+									Text(
+										text = "${(state.progress * 100).toInt()}%",
+										style = typography.monoSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
+										color = colors.accent,
+									)
+								}
+								LinearProgressIndicator(
+									progress = state.progress,
+									modifier = Modifier.fillMaxWidth().height(4.dp),
+									color = colors.accent,
+									backgroundColor = colors.controlBackground,
+								)
+								Row(
+									modifier = Modifier.fillMaxWidth(),
+									verticalAlignment = Alignment.CenterVertically,
+									horizontalArrangement = Arrangement.SpaceBetween,
+								) {
+									Text(
+										text = "${ModelDownloader.formatBytes(state.bytesDownloaded)} / ${ModelDownloader.formatBytes(state.totalBytes)} (${ModelDownloader.formatSpeed(state.speedBytesPerSec)})",
+										style = typography.monoSmall.copy(fontSize = 9.sp),
+										color = colors.textMuted,
+									)
+									CompactButton(
+										text = tr("upscale.cancel"),
+										isPrimary = false,
+										onClick = { cancelFlag.set(true) },
+										height = 22.dp,
+									)
+								}
+							}
+							is DownloadState.Extracting, is DownloadState.Verifying -> {
+								Row(
+									modifier = Modifier.fillMaxWidth(),
+									verticalAlignment = Alignment.CenterVertically,
+									horizontalArrangement = Arrangement.spacedBy(8.dp),
+								) {
+									Text(
+										text = if (state is DownloadState.Verifying) tr("upscale.verifying") else tr("upscale.extracting"),
+										style = typography.caption.copy(fontSize = 10.5.sp),
+										color = colors.accent,
+									)
+								}
+								LinearProgressIndicator(
+									modifier = Modifier.fillMaxWidth().height(4.dp),
+									color = colors.accent,
+									backgroundColor = colors.controlBackground,
+								)
+							}
+							is DownloadState.Failed -> {
+								Text(
+									text = "${tr("upscale.downloadFailed")}: ${state.error}",
+									style = typography.caption.copy(fontSize = 10.sp),
+									color = Color(0xFFE06C75),
+								)
+								Row(
+									modifier = Modifier.fillMaxWidth(),
+									horizontalArrangement = Arrangement.End,
+								) {
+									CompactButton(
+										text = tr("upscale.retryDownload"),
+										isPrimary = true,
+										onClick = {
+											cancelFlag.set(false)
+											coroutineScope.launch {
+												ModelDownloader.downloadAndInstall(cancelFlag) { s ->
+													downloadState = s
+													if (s is DownloadState.Success) {
+														val autoPython = draft.python.ifBlank { TextureUpscaleConfig.detectAvailablePython() }
+														draft = draft.copy(
+															modelDirectory = s.modelDir.toString(),
+															nunifDirectory = s.nunifDir.toString(),
+															python = autoPython,
+															scale = if (draft.scale == 1) 2 else draft.scale,
+														)
+													}
+												}
+											}
+										},
+										height = 24.dp,
+									)
+								}
+							}
+							else -> {
+								Row(
+									modifier = Modifier.fillMaxWidth(),
+									verticalAlignment = Alignment.CenterVertically,
+									horizontalArrangement = Arrangement.SpaceBetween,
+								) {
+									Column(modifier = Modifier.weight(1f)) {
+										Text(
+											text = tr("upscale.modelMissingTitle"),
+											style = typography.body.copy(fontSize = 11.5.sp, fontWeight = FontWeight.Bold),
+											color = colors.textPrimary,
+										)
+										Text(
+											text = tr("upscale.modelMissingDesc"),
+											style = typography.caption.copy(fontSize = 9.5.sp),
+											color = colors.textMuted,
+										)
+									}
+									Spacer(Modifier.width(8.dp))
+									CompactButton(
+										text = tr("upscale.oneClickDownload"),
+										isPrimary = true,
+										enabled = !isBusy && !isUpscaling,
+										onClick = {
+											cancelFlag.set(false)
+											coroutineScope.launch {
+												ModelDownloader.downloadAndInstall(cancelFlag) { s ->
+													downloadState = s
+													if (s is DownloadState.Success) {
+														val autoPython = draft.python.ifBlank { TextureUpscaleConfig.detectAvailablePython() }
+														draft = draft.copy(
+															modelDirectory = s.modelDir.toString(),
+															nunifDirectory = s.nunifDir.toString(),
+															python = autoPython,
+															scale = if (draft.scale == 1) 2 else draft.scale,
+														)
+													}
+												}
+											}
+										},
+										height = 26.dp,
+									)
+								}
+							}
+						}
+					}
+				}
 
 				if (localRuntime != null) {
 					CompactButton(
@@ -330,14 +528,14 @@ fun TextureUpscaleDialog(
 				CompactButton(
 					text = tr("upscale.cancel"),
 					isPrimary = false,
-					enabled = !isUpscaling,
+					enabled = !isUpscaling && !isDownloading,
 					onClick = onDismiss,
 				)
 				Spacer(Modifier.width(8.dp))
 				CompactButton(
 					text = tr("upscale.apply"),
 					isPrimary = true,
-					enabled = !isBusy && canApply,
+					enabled = !isBusy && !isDownloading && canApply,
 					onClick = {
 						onApply(
 							draft.copy(

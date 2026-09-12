@@ -27,17 +27,41 @@ data class TextureUpscaleConfig(
     }
 
     companion object {
+        private val isWindows = System.getProperty("os.name").lowercase().contains("win")
+
+        fun detectAvailablePython(): String {
+            val root = Path.of(System.getProperty("user.home"), ".psd2live", "runtime")
+            val localPython = root.resolve(if (isWindows) "python/Scripts/python.exe" else "python/bin/python")
+            if (Files.isRegularFile(localPython)) return localPython.toString()
+
+            val portablePython = Path.of("runtime", if (isWindows) "python/Scripts/python.exe" else "python/bin/python")
+            if (Files.isRegularFile(portablePython)) return portablePython.toAbsolutePath().toString()
+
+            val candidates = if (isWindows) listOf("python", "python3") else listOf("python3", "python")
+            for (cmd in candidates) {
+                try {
+                    val proc = ProcessBuilder(cmd, "--version").redirectErrorStream(true).start()
+                    if (proc.waitFor(2, TimeUnit.SECONDS) && proc.exitValue() == 0) {
+                        return cmd
+                    }
+                } catch (_: Exception) {}
+            }
+            return if (isWindows) "python" else "python3"
+        }
+
         /** Explicit UI shortcut for the conventional optional runtime installation. */
         fun localRuntime(): TextureUpscaleConfig? {
             val root = Path.of(System.getProperty("user.home"), ".psd2live", "runtime")
-            val python = root.resolve(if (System.getProperty("os.name").startsWith("Windows")) "python/Scripts/python.exe" else "python/bin/python")
+            val localPython = root.resolve(if (isWindows) "python/Scripts/python.exe" else "python/bin/python")
             val repo = root.resolve("nunif")
             val models = listOf(
                 repo.resolve("waifu2x/pretrained_models/swin_unet_v3/art"),
                 repo.resolve("waifu2x/pretrained_models/swin_unet/art"),
             ).firstOrNull { Files.isDirectory(it) } ?: repo.resolve("waifu2x/pretrained_models/swin_unet_v3/art")
-            return if (Files.isRegularFile(python) && Files.isDirectory(models))
-                TextureUpscaleConfig(python = python.toString(), nunifDirectory = repo.toString(), modelDirectory = models.toString())
+
+            val python = if (Files.isRegularFile(localPython)) localPython.toString() else detectAvailablePython()
+            return if (Files.isDirectory(models) && Files.isDirectory(repo.resolve("waifu2x")))
+                TextureUpscaleConfig(python = python, nunifDirectory = repo.toString(), modelDirectory = models.toString())
             else null
         }
     }
