@@ -705,6 +705,47 @@ class PSD2LiveViewModel : AutoCloseable {
 		schedulePreviewRebuild()
 	}
 
+	private val zoomScaleSteps = listOf(1.0f, 1.15f, 1.25f, 1.35f, 1.5f, 1.75f, 2.0f, 2.25f, 2.5f)
+
+	fun setUiScale(scale: Float) {
+		val clamped = (kotlin.math.round(scale.coerceIn(0.75f, 3.0f) * 100) / 100f)
+		AppSettings.uiScale = clamped
+		_state.update { it.copy(uiScale = clamped) }
+	}
+
+	fun setFontScale(scale: Float) {
+		val clamped = (kotlin.math.round(scale.coerceIn(0.85f, 1.5f) * 100) / 100f)
+		AppSettings.fontScale = clamped
+		_state.update { it.copy(fontScale = clamped) }
+	}
+
+	fun zoomIn() {
+		val current = _state.value.uiScale
+		val next = zoomScaleSteps.firstOrNull { it > current + 0.03f } ?: (current + 0.25f).coerceAtMost(3.0f)
+		setUiScale(next)
+	}
+
+	fun zoomOut() {
+		val current = _state.value.uiScale
+		val next = zoomScaleSteps.asReversed().firstOrNull { it < current - 0.03f } ?: (current - 0.25f).coerceAtLeast(0.75f)
+		setUiScale(next)
+	}
+
+	fun resetZoom() {
+		val def = AppSettings.defaultUiScale()
+		setUiScale(def)
+		setFontScale(1.0f)
+	}
+
+	fun openSettingsDialog() {
+		_state.update { it.copy(showSettingsDialog = true) }
+	}
+
+	fun closeSettingsDialog() {
+		_state.update { it.copy(showSettingsDialog = false) }
+	}
+
+
 	fun setWorkspaceTab(tab: WorkspaceTab) {
 		val effectiveTab = if (tab == WorkspaceTab.HIERARCHY) WorkspaceTab.PREVIEW else tab
 		_state.update { current ->

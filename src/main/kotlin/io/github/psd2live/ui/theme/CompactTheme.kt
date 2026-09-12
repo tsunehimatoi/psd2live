@@ -1,4 +1,4 @@
-﻿package io.github.psd2live.ui.theme
+package io.github.psd2live.ui.theme
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -10,6 +10,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 
 @Immutable
 data class ToolColors(
@@ -43,37 +47,37 @@ data class ToolTypography(
 	val title: TextStyle = TextStyle(
 		fontFamily = FontFamily.SansSerif,
 		fontWeight = FontWeight.SemiBold,
-		fontSize = 13.sp,
+		fontSize = 13.5.sp,
 		color = Color(0xFFDFE1E5),
 	),
 	val header: TextStyle = TextStyle(
 		fontFamily = FontFamily.SansSerif,
 		fontWeight = FontWeight.Medium,
-		fontSize = 12.sp,
+		fontSize = 12.5.sp,
 		color = Color(0xFFDFE1E5),
 	),
 	val body: TextStyle = TextStyle(
 		fontFamily = FontFamily.SansSerif,
 		fontWeight = FontWeight.Normal,
-		fontSize = 12.sp,
+		fontSize = 12.5.sp,
 		color = Color(0xFFDFE1E5),
 	),
 	val caption: TextStyle = TextStyle(
 		fontFamily = FontFamily.SansSerif,
 		fontWeight = FontWeight.Normal,
-		fontSize = 11.sp,
+		fontSize = 11.5.sp,
 		color = Color(0xFF868A91),
 	),
 	val mono: TextStyle = TextStyle(
 		fontFamily = FontFamily.Monospace,
 		fontWeight = FontWeight.Normal,
-		fontSize = 11.sp,
+		fontSize = 11.5.sp,
 		color = Color(0xFFDFE1E5),
 	),
 	val monoSmall: TextStyle = TextStyle(
 		fontFamily = FontFamily.Monospace,
 		fontWeight = FontWeight.Normal,
-		fontSize = 10.sp,
+		fontSize = 10.5.sp,
 		color = Color(0xFF868A91),
 	),
 )
@@ -85,12 +89,23 @@ val LocalToolTypography = staticCompositionLocalOf { ToolTypography() }
 fun CompactToolTheme(
 	colors: ToolColors = ToolColors(),
 	typography: ToolTypography = ToolTypography(),
+	uiScale: Float = 1.0f,
+	fontScale: Float = 1.0f,
 	content: @Composable () -> Unit,
 ) {
+	val currentDensity = LocalDensity.current
+	val effectiveDensity = remember(currentDensity, uiScale, fontScale) {
+		Density(
+			density = currentDensity.density * uiScale,
+			fontScale = currentDensity.fontScale * fontScale,
+		)
+	}
 	CompositionLocalProvider(
+		LocalDensity provides effectiveDensity,
 		LocalToolColors provides colors,
 		LocalToolTypography provides typography,
 		content = content,
 	)
 }
+
 

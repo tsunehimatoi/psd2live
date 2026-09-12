@@ -105,7 +105,7 @@ distributions {
 compose.desktop {
 	application {
 		mainClass = "io.github.psd2live.MainKt"
-		jvmArgs += listOf("-Xmx8g", "-Dfile.encoding=UTF-8")
+		jvmArgs += listOf("-Xmx8g", "-Dfile.encoding=UTF-8", "-Dsun.java2d.uiScale.enabled=true")
 		nativeDistributions {
 			targetFormats(
 				org.jetbrains.compose.desktop.application.dsl.TargetFormat.Exe,

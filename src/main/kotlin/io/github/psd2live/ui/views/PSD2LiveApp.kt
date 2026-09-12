@@ -73,6 +73,12 @@ import io.github.psd2live.ui.components.TextureUpscaleDialog
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.state.WorkspaceTab
+import androidx.compose.material.DropdownMenu
+import androidx.compose.material.DropdownMenuItem
+import androidx.compose.material.Divider
+import io.github.psd2live.ui.components.SettingsDialog
+import io.github.psd2live.ui.state.AppSettings
+import kotlin.math.roundToInt
 import io.github.psd2live.ui.theme.CompactToolTheme
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
@@ -136,7 +142,10 @@ fun FrameWindowScope.PSD2LiveApp(
 		}, true)
 	}
 
-	CompactToolTheme {
+	CompactToolTheme(
+		uiScale = state.uiScale,
+		fontScale = state.fontScale,
+	) {
 		val colors = LocalToolColors.current
 		val typography = LocalToolTypography.current
 
@@ -211,6 +220,22 @@ fun FrameWindowScope.PSD2LiveApp(
 				.onPreviewKeyEvent { event ->
 					if (event.type == KeyEventType.KeyDown && event.isCtrlPressed) {
 						when (event.key) {
+							Key.Plus, Key.Equals, Key.NumPadAdd -> {
+								viewModel.zoomIn()
+								true
+							}
+							Key.Minus, Key.NumPadSubtract -> {
+								viewModel.zoomOut()
+								true
+							}
+							Key.Zero, Key.NumPad0 -> {
+								viewModel.resetZoom()
+								true
+							}
+							Key.Comma -> {
+								viewModel.openSettingsDialog()
+								true
+							}
 							Key.O -> {
                                 if (event.isShiftPressed) onOpenPsdAction() else onOpenProjectAction()
 								true
@@ -262,6 +287,8 @@ fun FrameWindowScope.PSD2LiveApp(
 						canOpenOutput = canOpenOutput,
 						canGenerate = canGenerate,
 						currentLanguage = currentLanguage,
+						uiScale = state.uiScale,
+						fontScale = state.fontScale,
 						onOpenPsd = onOpenPsdAction,
                         onOpenProject = onOpenProjectAction,
                         onSaveProject = { viewModel.requestProjectSave() },
@@ -274,6 +301,12 @@ fun FrameWindowScope.PSD2LiveApp(
 						onExportTo = triggerExportTo,
 						onClose = onCloseRequest,
 						onSetLanguage = { viewModel.setLanguage(it) },
+						onZoomIn = { viewModel.zoomIn() },
+						onZoomOut = { viewModel.zoomOut() },
+						onResetZoom = { viewModel.resetZoom() },
+						onSetUiScale = { viewModel.setUiScale(it) },
+						onSetFontScale = { viewModel.setFontScale(it) },
+						onShowSettings = { viewModel.openSettingsDialog() },
 						onShowAgentConnection = { showAgentDialog = true },
 						onShowTextureUpscale = { showUpscaleDialog = true },
 						onShowHistory = { viewModel.setWorkspaceTab(WorkspaceTab.HISTORY) },
@@ -354,7 +387,7 @@ fun FrameWindowScope.PSD2LiveApp(
 				}
 
 				// Bottom Status Bar
-				StatusBar(state)
+				StatusBar(state, viewModel)
 			}
 
 			// Floating Non-blocking Success Toast
@@ -431,12 +464,27 @@ fun FrameWindowScope.PSD2LiveApp(
 				confirmText = tr("dialog.ok"),
 			)
 		}
+
+		if (state.showSettingsDialog) {
+			SettingsDialog(
+				uiScale = state.uiScale,
+				fontScale = state.fontScale,
+				onUiScaleChange = viewModel::setUiScale,
+				onFontScaleChange = viewModel::setFontScale,
+				onResetDefaults = {
+					AppSettings.resetToDefaults()
+					viewModel.resetZoom()
+				},
+				onDismiss = { viewModel.closeSettingsDialog() },
+			)
+		}
 	}
 }
 
 @Composable
 private fun StatusBar(
 	state: PSD2LiveState,
+	viewModel: PSD2LiveViewModel,
 	modifier: Modifier = Modifier,
 ) {
 	val colors = LocalToolColors.current
@@ -484,6 +532,64 @@ private fun StatusBar(
 						color = colors.accent,
 						backgroundColor = colors.controlBackground,
 					)
+				}
+			}
+		}
+
+		Spacer(Modifier.width(10.dp))
+
+		// Quick UI scale indicator & menu
+		Box {
+			var showZoomMenu by remember { mutableStateOf(false) }
+			val pct = (state.uiScale * 100).roundToInt()
+			Row(
+				modifier = Modifier
+					.background(colors.controlBackground.copy(alpha = 0.65f), RoundedCornerShape(3.dp))
+					.border(BorderStroke(0.5.dp, colors.border), RoundedCornerShape(3.dp))
+					.clickable { showZoomMenu = true }
+					.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
+					.padding(horizontal = 6.dp, vertical = 2.dp),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.spacedBy(4.dp),
+			) {
+				Text(
+					text = "$pct%",
+					style = typography.monoSmall.copy(fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold),
+					color = colors.textPrimary,
+				)
+			}
+
+			DropdownMenu(
+				expanded = showZoomMenu,
+				onDismissRequest = { showZoomMenu = false },
+			) {
+				DropdownMenuItem(onClick = { showZoomMenu = false; viewModel.zoomIn() }) {
+					Text(tr("menu.view.zoomIn") + " (Ctrl+=)", style = typography.body.copy(fontSize = 11.5.sp))
+				}
+				DropdownMenuItem(onClick = { showZoomMenu = false; viewModel.zoomOut() }) {
+					Text(tr("menu.view.zoomOut") + " (Ctrl+-)", style = typography.body.copy(fontSize = 11.5.sp))
+				}
+				DropdownMenuItem(onClick = { showZoomMenu = false; viewModel.resetZoom() }) {
+					Text(tr("menu.view.zoomReset") + " (Ctrl+0)", style = typography.body.copy(fontSize = 11.5.sp))
+				}
+				Divider(color = colors.divider, thickness = 1.dp)
+				listOf(1.0f, 1.15f, 1.25f, 1.35f, 1.50f, 1.75f, 2.00f, 2.50f).forEach { scale ->
+					val p = (scale * 100).toInt()
+					val isCurrent = kotlin.math.abs(state.uiScale - scale) < 0.03f
+					DropdownMenuItem(onClick = { showZoomMenu = false; viewModel.setUiScale(scale) }) {
+						Text(
+							(if (isCurrent) "✓ " else "   ") + "$p%",
+							style = typography.body.copy(
+								fontSize = 11.5.sp,
+								color = if (isCurrent) colors.accent else colors.textPrimary,
+								fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+							)
+						)
+					}
+				}
+				Divider(color = colors.divider, thickness = 1.dp)
+				DropdownMenuItem(onClick = { showZoomMenu = false; viewModel.openSettingsDialog() }) {
+					Text(tr("dialog.settings.title") + "… (Ctrl+,)", style = typography.body.copy(fontSize = 11.5.sp))
 				}
 			}
 		}

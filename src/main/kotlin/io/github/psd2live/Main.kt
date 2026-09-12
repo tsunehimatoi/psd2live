@@ -21,6 +21,7 @@ import kotlin.io.path.absolutePathString
 import androidx.compose.ui.window.rememberWindowState
 
 fun main(arguments: Array<String>) {
+	System.setProperty("sun.java2d.uiScale.enabled", "true")
 	configureLanguage(arguments)
 	if (arguments.isEmpty()) {
 		val viewModel = PSD2LiveViewModel()

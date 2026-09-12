@@ -44,6 +44,7 @@ import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -74,6 +75,8 @@ fun AppTitleBar(
 	canOpenOutput: Boolean,
 	canGenerate: Boolean,
 	currentLanguage: AppLanguage,
+	uiScale: Float = 1.0f,
+	fontScale: Float = 1.0f,
 	onOpenPsd: () -> Unit,
     onOpenProject: () -> Unit,
     onSaveProject: () -> Unit,
@@ -86,6 +89,12 @@ fun AppTitleBar(
 	onExportTo: () -> Unit,
 	onClose: () -> Unit,
 	onSetLanguage: (AppLanguage) -> Unit,
+	onZoomIn: () -> Unit = {},
+	onZoomOut: () -> Unit = {},
+	onResetZoom: () -> Unit = {},
+	onSetUiScale: (Float) -> Unit = {},
+	onSetFontScale: (Float) -> Unit = {},
+	onShowSettings: () -> Unit = {},
 	onShowAgentConnection: () -> Unit,
 	onShowTextureUpscale: () -> Unit,
 	onShowHistory: () -> Unit,
@@ -96,6 +105,7 @@ fun AppTitleBar(
 
 	// Track which menu is open (null if none)
 	var activeMenu by remember { mutableStateOf<String?>(null) }
+	var activeSubmenu by remember { mutableStateOf<String?>(null) }
 
 	// Dragging state using absolute screen cursor coordinates
 	var initialMouseLocation by remember { mutableStateOf<Point?>(null) }
@@ -120,12 +130,23 @@ fun AppTitleBar(
 			TitleBarMenuItem(
 				title = tr("menu.file"),
 				isOpen = activeMenu == "file",
-				onToggle = { activeMenu = if (activeMenu == "file") null else "file" },
-				onHoverWhenActive = { if (activeMenu != null && activeMenu != "file") activeMenu = "file" },
+				onToggle = {
+					activeSubmenu = null
+					activeMenu = if (activeMenu == "file") null else "file"
+				},
+				onHoverWhenActive = {
+					if (activeMenu != null && activeMenu != "file") {
+						activeMenu = "file"
+						activeSubmenu = null
+					}
+				},
 			) {
 				AppSeamlessDropdownMenu(
 					expanded = activeMenu == "file",
-					onDismissRequest = { activeMenu = null },
+					onDismissRequest = {
+						activeMenu = null
+						activeSubmenu = null
+					},
 					modifier = Modifier.widthIn(min = 220.dp, max = 280.dp),
 				) {
 					// 1. 工程管理 (Project)
@@ -198,7 +219,15 @@ fun AppTitleBar(
 
 					AppMenuSeparator()
 
-					// 4. 系统 / 退出 (Lifecycle)
+					// 4. 首选项与系统 (Preferences & Lifecycle)
+					AppMenuItem(
+						text = tr("menu.file.settings"),
+						shortcut = "Ctrl+,",
+						onClick = {
+							activeMenu = null
+							onShowSettings()
+						},
+					)
 					AppMenuItem(
 						text = tr("menu.file.exit"),
 						shortcut = "Alt+F4",
@@ -210,16 +239,158 @@ fun AppTitleBar(
 				}
 			}
 
+			// 2. View Menu (视图)
+			TitleBarMenuItem(
+				title = tr("menu.view"),
+				isOpen = activeMenu == "view",
+				onToggle = {
+					activeSubmenu = null
+					activeMenu = if (activeMenu == "view") null else "view"
+				},
+				onHoverWhenActive = {
+					if (activeMenu != null && activeMenu != "view") {
+						activeMenu = "view"
+						activeSubmenu = null
+					}
+				},
+			) {
+				AppSeamlessDropdownMenu(
+					expanded = activeMenu == "view",
+					onDismissRequest = {
+						activeMenu = null
+						activeSubmenu = null
+					},
+					modifier = Modifier.widthIn(min = 210.dp, max = 280.dp),
+				) {
+					AppMenuItem(
+						text = tr("menu.view.zoomIn"),
+						shortcut = "Ctrl+=",
+						onHover = { activeSubmenu = null },
+						onClick = {
+							activeMenu = null
+							activeSubmenu = null
+							onZoomIn()
+						},
+					)
+					AppMenuItem(
+						text = tr("menu.view.zoomOut"),
+						shortcut = "Ctrl+-",
+						onHover = { activeSubmenu = null },
+						onClick = {
+							activeMenu = null
+							activeSubmenu = null
+							onZoomOut()
+						},
+					)
+					AppMenuItem(
+						text = tr("menu.view.zoomReset"),
+						shortcut = "Ctrl+0",
+						onHover = { activeSubmenu = null },
+						onClick = {
+							activeMenu = null
+							activeSubmenu = null
+							onResetZoom()
+						},
+					)
+
+					AppMenuSeparator()
+
+					// 二级菜单: 界面缩放比例 (Interface Scale)
+					val currentUiPercent = (uiScale * 100).toInt()
+					AppSubmenuItem(
+						text = "${tr("menu.view.uiScale")} ($currentUiPercent%)",
+						isOpen = activeSubmenu == "uiScale",
+						onOpen = { activeSubmenu = "uiScale" },
+						onDismiss = { if (activeSubmenu == "uiScale") activeSubmenu = null },
+					) {
+						val uiScales = listOf(1.0f, 1.15f, 1.25f, 1.35f, 1.50f, 1.75f, 2.00f, 2.50f)
+						for (scale in uiScales) {
+							val percent = (scale * 100).toInt()
+							val label = when (scale) {
+								1.0f -> "$percent% (${tr("settings.scale.standard")})"
+								1.25f -> "$percent% (2K)"
+								1.5f -> "$percent% (2K/4K)"
+								1.75f -> "$percent% (4K)"
+								2.0f -> "$percent% (4K)"
+								else -> "$percent%"
+							}
+							val isSelected = kotlin.math.abs(uiScale - scale) < 0.03f
+							AppMenuItem(
+								text = label,
+								isChecked = isSelected,
+								onClick = {
+									activeMenu = null
+									activeSubmenu = null
+									onSetUiScale(scale)
+								},
+							)
+						}
+					}
+
+					// 二级菜单: 字体大小 (Font Size)
+					val currentFontPercent = (fontScale * 100).toInt()
+					AppSubmenuItem(
+						text = "${tr("menu.view.fontScale")} ($currentFontPercent%)",
+						isOpen = activeSubmenu == "fontScale",
+						onOpen = { activeSubmenu = "fontScale" },
+						onDismiss = { if (activeSubmenu == "fontScale") activeSubmenu = null },
+					) {
+						val fontScales = listOf(
+							0.90f to tr("settings.font.compact"),
+							1.00f to tr("settings.font.standard"),
+							1.15f to tr("settings.font.large"),
+							1.30f to tr("settings.font.extraLarge"),
+						)
+						for ((scale, label) in fontScales) {
+							val isSelected = kotlin.math.abs(fontScale - scale) < 0.04f
+							AppMenuItem(
+								text = label,
+								isChecked = isSelected,
+								onClick = {
+									activeMenu = null
+									activeSubmenu = null
+									onSetFontScale(scale)
+								},
+							)
+						}
+					}
+
+					AppMenuSeparator()
+
+					AppMenuItem(
+						text = tr("menu.view.settings"),
+						shortcut = "Ctrl+,",
+						onHover = { activeSubmenu = null },
+						onClick = {
+							activeMenu = null
+							activeSubmenu = null
+							onShowSettings()
+						},
+					)
+				}
+			}
+
 			// 2. Tools Menu
 			TitleBarMenuItem(
 				title = tr("menu.tools"),
 				isOpen = activeMenu == "tools",
-				onToggle = { activeMenu = if (activeMenu == "tools") null else "tools" },
-				onHoverWhenActive = { if (activeMenu != null && activeMenu != "tools") activeMenu = "tools" },
+				onToggle = {
+					activeSubmenu = null
+					activeMenu = if (activeMenu == "tools") null else "tools"
+				},
+				onHoverWhenActive = {
+					if (activeMenu != null && activeMenu != "tools") {
+						activeMenu = "tools"
+						activeSubmenu = null
+					}
+				},
 			) {
 				AppSeamlessDropdownMenu(
 					expanded = activeMenu == "tools",
-					onDismissRequest = { activeMenu = null },
+					onDismissRequest = {
+						activeMenu = null
+						activeSubmenu = null
+					},
 					modifier = Modifier.widthIn(min = 180.dp, max = 240.dp),
 				) {
 					AppMenuItem(
@@ -228,6 +399,7 @@ fun AppTitleBar(
 						enabled = hasInput && !isBusy,
 						onClick = {
 							activeMenu = null
+							activeSubmenu = null
 							onShowTextureUpscale()
 						},
 					)
@@ -238,18 +410,30 @@ fun AppTitleBar(
 			TitleBarMenuItem(
 				title = tr("menu.agent"),
 				isOpen = activeMenu == "agent",
-				onToggle = { activeMenu = if (activeMenu == "agent") null else "agent" },
-				onHoverWhenActive = { if (activeMenu != null && activeMenu != "agent") activeMenu = "agent" },
+				onToggle = {
+					activeSubmenu = null
+					activeMenu = if (activeMenu == "agent") null else "agent"
+				},
+				onHoverWhenActive = {
+					if (activeMenu != null && activeMenu != "agent") {
+						activeMenu = "agent"
+						activeSubmenu = null
+					}
+				},
 			) {
 				AppSeamlessDropdownMenu(
 					expanded = activeMenu == "agent",
-					onDismissRequest = { activeMenu = null },
+					onDismissRequest = {
+						activeMenu = null
+						activeSubmenu = null
+					},
 					modifier = Modifier.widthIn(min = 180.dp, max = 260.dp),
 				) {
 					AppMenuItem(
 						text = tr("menu.agent.connection"),
 						onClick = {
 							activeMenu = null
+							activeSubmenu = null
 							onShowAgentConnection()
 						},
 					)
@@ -257,6 +441,7 @@ fun AppTitleBar(
 						text = tr("menu.agent.history"),
 						onClick = {
 							activeMenu = null
+							activeSubmenu = null
 							onShowHistory()
 						},
 					)
@@ -267,12 +452,23 @@ fun AppTitleBar(
 			TitleBarMenuItem(
 				title = tr("menu.language"),
 				isOpen = activeMenu == "language",
-				onToggle = { activeMenu = if (activeMenu == "language") null else "language" },
-				onHoverWhenActive = { if (activeMenu != null && activeMenu != "language") activeMenu = "language" },
+				onToggle = {
+					activeSubmenu = null
+					activeMenu = if (activeMenu == "language") null else "language"
+				},
+				onHoverWhenActive = {
+					if (activeMenu != null && activeMenu != "language") {
+						activeMenu = "language"
+						activeSubmenu = null
+					}
+				},
 			) {
 				AppSeamlessDropdownMenu(
 					expanded = activeMenu == "language",
-					onDismissRequest = { activeMenu = null },
+					onDismissRequest = {
+						activeMenu = null
+						activeSubmenu = null
+					},
 					modifier = Modifier.widthIn(min = 140.dp, max = 200.dp),
 				) {
 					for (lang in I18n.supportedLanguages) {
@@ -281,6 +477,7 @@ fun AppTitleBar(
 							isChecked = lang == currentLanguage,
 							onClick = {
 								activeMenu = null
+								activeSubmenu = null
 								onSetLanguage(lang)
 							},
 						)
@@ -292,18 +489,30 @@ fun AppTitleBar(
 			TitleBarMenuItem(
 				title = tr("menu.help"),
 				isOpen = activeMenu == "help",
-				onToggle = { activeMenu = if (activeMenu == "help") null else "help" },
-				onHoverWhenActive = { if (activeMenu != null && activeMenu != "help") activeMenu = "help" },
+				onToggle = {
+					activeSubmenu = null
+					activeMenu = if (activeMenu == "help") null else "help"
+				},
+				onHoverWhenActive = {
+					if (activeMenu != null && activeMenu != "help") {
+						activeMenu = "help"
+						activeSubmenu = null
+					}
+				},
 			) {
 				AppSeamlessDropdownMenu(
 					expanded = activeMenu == "help",
-					onDismissRequest = { activeMenu = null },
+					onDismissRequest = {
+						activeMenu = null
+						activeSubmenu = null
+					},
 					modifier = Modifier.widthIn(min = 140.dp, max = 200.dp),
 				) {
 					AppMenuItem(
 						text = tr("menu.about"),
 						onClick = {
 							activeMenu = null
+							activeSubmenu = null
 							onShowAbout()
 						},
 					)
@@ -512,6 +721,7 @@ private fun AppSeamlessDropdownMenu(
 	if (!expanded) return
 
 	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
 	val density = LocalDensity.current
 	val titleBarHeightPx = with(density) { 32.dp.roundToPx() }
 
@@ -521,16 +731,22 @@ private fun AppSeamlessDropdownMenu(
 		onDismissRequest = onDismissRequest,
 		properties = PopupProperties(focusable = true),
 	) {
-		Surface(
-			color = colors.panelElevated,
-			border = BorderStroke(1.dp, colors.border),
-			shape = RoundedCornerShape(0.dp),
-			elevation = 4.dp,
+		androidx.compose.runtime.CompositionLocalProvider(
+			LocalDensity provides density,
+			LocalToolColors provides colors,
+			LocalToolTypography provides typography,
 		) {
-			Column(
-				modifier = modifier.padding(vertical = 0.dp),
+			Surface(
+				color = colors.panelElevated,
+				border = BorderStroke(1.dp, colors.border),
+				shape = RoundedCornerShape(0.dp),
+				elevation = 4.dp,
 			) {
-				content()
+				Column(
+					modifier = modifier.padding(vertical = 0.dp),
+				) {
+					content()
+				}
 			}
 		}
 	}
@@ -543,6 +759,7 @@ fun AppMenuItem(
 	shortcut: String? = null,
 	isChecked: Boolean? = null,
 	enabled: Boolean = true,
+	onHover: (() -> Unit)? = null,
 	onClick: () -> Unit,
 ) {
 	val colors = LocalToolColors.current
@@ -561,7 +778,12 @@ fun AppMenuItem(
 				}
 			)
 			.pointerHoverIcon(if (enabled) PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)) else PointerIcon.Default)
-			.onPointerEvent(PointerEventType.Enter) { if (enabled) isHovered = true }
+			.onPointerEvent(PointerEventType.Enter) {
+				if (enabled) {
+					isHovered = true
+					onHover?.invoke()
+				}
+			}
 			.onPointerEvent(PointerEventType.Exit) { isHovered = false }
 			.clickable(enabled = enabled, onClick = onClick)
 			.padding(horizontal = 12.dp),
@@ -602,6 +824,94 @@ fun AppMenuItem(
 				color = if (enabled) colors.textMuted else colors.textDisabled,
 				maxLines = 1,
 			)
+		}
+	}
+}
+
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+fun AppSubmenuItem(
+	text: String,
+	isOpen: Boolean,
+	onOpen: () -> Unit,
+	onDismiss: () -> Unit,
+	modifier: Modifier = Modifier,
+	content: @Composable ColumnScope.() -> Unit,
+) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	val density = LocalDensity.current
+	var isHovered by remember { mutableStateOf(false) }
+	var itemWidthPx by remember { mutableStateOf(0) }
+
+	Box(
+		modifier = modifier
+			.fillMaxWidth()
+			.onGloballyPositioned { itemWidthPx = it.size.width }
+	) {
+		Row(
+			modifier = Modifier
+				.fillMaxWidth()
+				.height(28.dp)
+				.background(
+					when {
+						isOpen || isHovered -> colors.selection
+						else -> Color.Transparent
+					}
+				)
+				.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
+				.onPointerEvent(PointerEventType.Enter) {
+					isHovered = true
+					onOpen()
+				}
+				.onPointerEvent(PointerEventType.Exit) { isHovered = false }
+				.clickable(onClick = onOpen)
+				.padding(horizontal = 12.dp),
+			verticalAlignment = Alignment.CenterVertically,
+			horizontalArrangement = Arrangement.SpaceBetween,
+		) {
+			Text(
+				text = text,
+				style = typography.body.copy(fontSize = 11.5.sp),
+				color = if (isOpen || isHovered) colors.selectionText else colors.textPrimary,
+				maxLines = 1,
+				overflow = TextOverflow.Ellipsis,
+			)
+			IconChevron(
+				expanded = false,
+				modifier = Modifier.size(9.dp),
+				tint = if (isOpen || isHovered) colors.selectionText else colors.textMuted,
+			)
+		}
+
+		if (isOpen) {
+			Popup(
+				alignment = Alignment.TopStart,
+				offset = IntOffset(itemWidthPx - 1, 0),
+				onDismissRequest = onDismiss,
+				properties = PopupProperties(focusable = false),
+			) {
+				androidx.compose.runtime.CompositionLocalProvider(
+					LocalDensity provides density,
+					LocalToolColors provides colors,
+					LocalToolTypography provides typography,
+				) {
+					Surface(
+						color = colors.panelElevated,
+						border = BorderStroke(1.dp, colors.border),
+						shape = RoundedCornerShape(0.dp),
+						elevation = 6.dp,
+					) {
+						Column(
+							modifier = Modifier
+								.widthIn(min = 180.dp, max = 260.dp)
+								.padding(vertical = 0.dp),
+						) {
+							content()
+						}
+					}
+				}
+			}
 		}
 	}
 }
