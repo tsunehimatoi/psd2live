@@ -69,6 +69,8 @@ import io.github.psd2live.ui.components.CompactIconButton
 import io.github.psd2live.ui.components.IconClose
 import io.github.psd2live.ui.components.ImageLightboxDialog
 import io.github.psd2live.ui.components.ExportPsdDialog
+import io.github.psd2live.ui.components.HelpDialog
+import io.github.psd2live.ui.components.HelpTab
 import io.github.psd2live.ui.components.TextureUpscaleDialog
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
@@ -78,6 +80,7 @@ import androidx.compose.material.DropdownMenuItem
 import androidx.compose.material.Divider
 import io.github.psd2live.ui.components.SettingsDialog
 import io.github.psd2live.ui.state.AppSettings
+import io.github.psd2live.ui.utils.DesktopUtils
 import kotlin.math.roundToInt
 import io.github.psd2live.ui.theme.CompactToolTheme
 import io.github.psd2live.ui.theme.LocalToolColors
@@ -110,7 +113,7 @@ fun FrameWindowScope.PSD2LiveApp(
 	},
 ) {
 	val state by viewModel.state.collectAsState()
-	var showAboutDialog by remember { mutableStateOf(false) }
+	var helpDialogTab by remember { mutableStateOf<HelpTab?>(null) }
 	var showAgentDialog by remember { mutableStateOf(false) }
 	var showUpscaleDialog by remember { mutableStateOf(false) }
 
@@ -218,57 +221,63 @@ fun FrameWindowScope.PSD2LiveApp(
 				.fillMaxSize()
 				.border(BorderStroke(1.dp, colors.border))
 				.onPreviewKeyEvent { event ->
-					if (event.type == KeyEventType.KeyDown && event.isCtrlPressed) {
-						when (event.key) {
-							Key.Plus, Key.Equals, Key.NumPadAdd -> {
-								viewModel.zoomIn()
-								true
-							}
-							Key.Minus, Key.NumPadSubtract -> {
-								viewModel.zoomOut()
-								true
-							}
-							Key.Zero, Key.NumPad0 -> {
-								viewModel.resetZoom()
-								true
-							}
-							Key.Comma -> {
-								viewModel.openSettingsDialog()
-								true
-							}
-							Key.O -> {
-                                if (event.isShiftPressed) onOpenPsdAction() else onOpenProjectAction()
-								true
-							}
-							Key.S -> { viewModel.requestProjectSave(event.isShiftPressed); true }
-                            Key.Z -> { if (event.isShiftPressed) viewModel.redoHistory() else viewModel.undoHistory(); true }
-                            Key.Y -> { viewModel.redoHistory(); true }
-                            Key.R -> {
-								onReanalyzeAction()
-								true
-							}
-							Key.E -> {
-								if (event.isShiftPressed && hasInput && !isBusy) {
-									viewModel.openExportPsdDialog()
-									true
-								} else false
-							}
-							Key.U -> {
-								if (hasInput && !isBusy) {
-									showUpscaleDialog = true
-								}
-								true
-							}
-							Key.G -> {
-								if (event.isShiftPressed) {
-									triggerExportTo()
-								} else {
-									onGenerateAction()
-								}
-								true
-							}
-							else -> false
+					if (event.type == KeyEventType.KeyDown) {
+						if (event.key == Key.F1) {
+							helpDialogTab = HelpTab.QUICK_START
+							return@onPreviewKeyEvent true
 						}
+						if (event.isCtrlPressed) {
+							when (event.key) {
+								Key.Plus, Key.Equals, Key.NumPadAdd -> {
+									viewModel.zoomIn()
+									true
+								}
+								Key.Minus, Key.NumPadSubtract -> {
+									viewModel.zoomOut()
+									true
+								}
+								Key.Zero, Key.NumPad0 -> {
+									viewModel.resetZoom()
+									true
+								}
+								Key.Comma -> {
+									viewModel.openSettingsDialog()
+									true
+								}
+								Key.O -> {
+									if (event.isShiftPressed) onOpenPsdAction() else onOpenProjectAction()
+									true
+								}
+								Key.S -> { viewModel.requestProjectSave(event.isShiftPressed); true }
+								Key.Z -> { if (event.isShiftPressed) viewModel.redoHistory() else viewModel.undoHistory(); true }
+								Key.Y -> { viewModel.redoHistory(); true }
+								Key.R -> {
+									onReanalyzeAction()
+									true
+								}
+								Key.E -> {
+									if (event.isShiftPressed && hasInput && !isBusy) {
+										viewModel.openExportPsdDialog()
+										true
+									} else false
+								}
+								Key.U -> {
+									if (hasInput && !isBusy) {
+										showUpscaleDialog = true
+									}
+									true
+								}
+								Key.G -> {
+									if (event.isShiftPressed) {
+										triggerExportTo()
+									} else {
+										onGenerateAction()
+									}
+									true
+								}
+								else -> false
+							}
+						} else false
 					} else false
 				},
 		) {
@@ -330,7 +339,9 @@ fun FrameWindowScope.PSD2LiveApp(
 						onShowAgentConnection = { showAgentDialog = true },
 						onShowTextureUpscale = { showUpscaleDialog = true },
 						onShowHistory = { viewModel.setWorkspaceTab(WorkspaceTab.HISTORY) },
-						onShowAbout = { showAboutDialog = true },
+						onShowAbout = { helpDialogTab = HelpTab.ABOUT },
+						onShowHelp = { tab -> helpDialogTab = tab },
+						onOpenUrl = { url -> DesktopUtils.openBrowser(url) },
 					)
 				}
 				// Main Center Area: Split Pane between Workspace (Left) and Inspector (Right)
@@ -434,13 +445,12 @@ fun FrameWindowScope.PSD2LiveApp(
 			)
 		}
 
-		// About Dialog
-		if (showAboutDialog) {
-			ModalDialog(
-				title = tr("dialog.about.title"),
-				message = tr("dialog.about.message"),
-				onDismiss = { showAboutDialog = false },
-				isError = false,
+		// Help & About Dialog
+		helpDialogTab?.let { tab ->
+			HelpDialog(
+				initialTab = tab,
+				onDismiss = { helpDialogTab = null },
+				onOpenUrl = { url -> DesktopUtils.openBrowser(url) },
 			)
 		}
 

@@ -60,6 +60,7 @@ import io.github.psd2live.i18n.I18n
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
+import io.github.psd2live.ui.utils.DesktopUtils
 import java.awt.Cursor
 import java.awt.MouseInfo
 import java.awt.Point
@@ -119,6 +120,8 @@ fun AppTitleBar(
 	onShowTextureUpscale: () -> Unit,
 	onShowHistory: () -> Unit,
 	onShowAbout: () -> Unit,
+	onShowHelp: (HelpTab) -> Unit = { onShowAbout() },
+	onOpenUrl: (String) -> Unit = { DesktopUtils.openBrowser(it) },
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -640,14 +643,73 @@ fun AppTitleBar(
 						activeMenu = null
 						activeSubmenu = null
 					},
-					modifier = Modifier.widthIn(min = 140.dp, max = 200.dp),
+					modifier = Modifier.widthIn(min = 180.dp, max = 250.dp),
 				) {
+					AppMenuItem(
+						text = tr("menu.help.tutorial"),
+						shortcut = "F1",
+						onClick = {
+							activeMenu = null
+							activeSubmenu = null
+							onShowHelp(HelpTab.QUICK_START)
+						},
+					)
+					AppMenuItem(
+						text = tr("menu.help.psd_spec"),
+						onClick = {
+							activeMenu = null
+							activeSubmenu = null
+							onShowHelp(HelpTab.PSD_SPEC)
+						},
+					)
+					AppMenuItem(
+						text = tr("menu.help.shortcuts"),
+						onClick = {
+							activeMenu = null
+							activeSubmenu = null
+							onShowHelp(HelpTab.SHORTCUTS)
+						},
+					)
+					AppMenuSeparator()
+					AppMenuItem(
+						text = tr("menu.help.github"),
+						onClick = {
+							activeMenu = null
+							activeSubmenu = null
+							onOpenUrl(DesktopUtils.GITHUB_REPO_URL)
+						},
+					)
+					AppMenuItem(
+						text = tr("menu.help.issues"),
+						onClick = {
+							activeMenu = null
+							activeSubmenu = null
+							onOpenUrl(DesktopUtils.GITHUB_ISSUES_URL)
+						},
+					)
+					AppMenuItem(
+						text = tr("menu.help.releases"),
+						onClick = {
+							activeMenu = null
+							activeSubmenu = null
+							onOpenUrl(DesktopUtils.GITHUB_RELEASES_URL)
+						},
+					)
+					AppMenuItem(
+						text = tr("menu.help.docs"),
+						onClick = {
+							activeMenu = null
+							activeSubmenu = null
+							onOpenUrl(DesktopUtils.GITHUB_DOCS_URL)
+						},
+					)
+					AppMenuSeparator()
 					AppMenuItem(
 						text = tr("menu.about"),
 						onClick = {
 							activeMenu = null
 							activeSubmenu = null
-							onShowAbout()
+							onShowHelp(HelpTab.ABOUT)
 						},
 					)
 				}

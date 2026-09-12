@@ -1119,7 +1119,7 @@ private fun LayersTableView(
 		) {
 			Text(text = tr("layers.header.number"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.width(26.dp).padding(start = 2.dp))
 			Text(text = tr("layers.header.name"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.weight(1.0f))
-			Text(text = tr("layers.header.type"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.width(62.dp).padding(horizontal = 2.dp))
+			Text(text = tr("layers.header.type"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.width(76.dp).padding(horizontal = 2.dp))
 			Text(text = tr("layers.header.binding"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.weight(1.1f).padding(horizontal = 2.dp))
 			Text(text = tr("layers.header.paramId"), style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted, modifier = Modifier.width(52.dp).padding(horizontal = 2.dp))
 			Spacer(Modifier.width(22.dp))
@@ -1184,7 +1184,7 @@ private fun LayersTableView(
 							)
 						}
 
-						// 1. Type Dropdown (预设 / 开关 / 切换)
+						// 1. Type Dropdown (预设 / 开关差分 / 切换差分)
 						CompactDropdown(
 							items = LayerType.entries,
 							selectedItem = currentType,
@@ -1201,7 +1201,7 @@ private fun LayersTableView(
 								)
 							},
 							itemLabel = { it.localizedName() },
-							modifier = Modifier.width(62.dp).padding(horizontal = 2.dp),
+							modifier = Modifier.width(76.dp).padding(horizontal = 2.dp),
 							height = 20.dp,
 						)
 
