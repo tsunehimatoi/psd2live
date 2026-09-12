@@ -1,251 +1,316 @@
 package io.github.psd2live.ui.utils
 
-import androidx.compose.ui.awt.ComposeWindow
 import io.github.psd2live.i18n.tr
+import java.awt.Dialog
 import java.awt.FileDialog
+import java.awt.Frame
+import java.awt.Window
 import java.io.File
 import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.JFileChooser
 import javax.swing.UIManager
 
 object NativeFilePicker {
 
+	private val isPicking = AtomicBoolean(false)
+
+	/**
+	 * Resets the active picking state, primarily for testing purposes.
+	 */
+	internal fun resetPickingState() {
+		isPicking.set(false)
+	}
+
+	private fun createFileDialog(window: Window?, title: String, mode: Int): FileDialog {
+		return when (window) {
+			is Dialog -> FileDialog(window, title, mode)
+			is Frame -> FileDialog(window, title, mode)
+			else -> FileDialog(null as Frame?, title, mode)
+		}
+	}
+
 	/**
 	 * Opens the modern native OS file picker for selecting a PSD file.
 	 */
-	fun choosePsdFile(window: ComposeWindow? = null, initialPath: String? = null): String? {
-		val title = tr("dialog.choosePsd")
-		val isWindows = System.getProperty("os.name").orEmpty().contains("win", ignoreCase = true)
-
-		// 1. Try Java AWT FileDialog (native OS Open File Dialog)
+	fun choosePsdFile(window: Window? = null, initialPath: String? = null): String? {
+		if (!isPicking.compareAndSet(false, true)) {
+			return null
+		}
 		try {
-			val dialog = FileDialog(window, title, FileDialog.LOAD).apply {
-				setFilenameFilter { _, name -> name.endsWith(".psd", ignoreCase = true) }
-				file = "*.psd"
-				if (!initialPath.isNullOrBlank()) {
-					val f = File(initialPath)
-					if (f.exists()) directory = if (f.isDirectory) f.absolutePath else f.parent
-				}
-				isVisible = true
-			}
-			val dir = dialog.directory
-			val selectedFile = dialog.file
-			if (!dir.isNullOrBlank() && !selectedFile.isNullOrBlank()) {
-				val full = File(dir, selectedFile).toPath().toAbsolutePath().normalize().toString()
-				if (full.endsWith(".psd", ignoreCase = true)) {
-					return full
-				}
-			}
-		} catch (_: Throwable) {}
+			val title = tr("dialog.choosePsd")
 
-		// 2. Fallback to System Look & Feel JFileChooser
-		try {
-			UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
-			val chooser = JFileChooser().apply {
-				dialogTitle = title
-				fileFilter = javax.swing.filechooser.FileNameExtensionFilter(tr("dialog.psdFilter"), "psd")
-				if (!initialPath.isNullOrBlank()) {
-					val f = File(initialPath)
-					if (f.exists()) currentDirectory = if (f.isDirectory) f else f.parentFile
+			// 1. Try Java AWT FileDialog (native OS Open File Dialog)
+			try {
+				val dialog = createFileDialog(window, title, FileDialog.LOAD).apply {
+					setFilenameFilter { _, name -> name.endsWith(".psd", ignoreCase = true) }
+					file = "*.psd"
+					if (!initialPath.isNullOrBlank()) {
+						val f = File(initialPath)
+						if (f.exists()) directory = if (f.isDirectory) f.absolutePath else f.parent
+					}
+					isVisible = true
 				}
-			}
-			if (chooser.showOpenDialog(window) == JFileChooser.APPROVE_OPTION) {
-				return chooser.selectedFile.toPath().toAbsolutePath().normalize().toString()
-			}
-		} catch (_: Throwable) {}
+				val dir = dialog.directory
+				val selectedFile = dialog.file
+				if (!dir.isNullOrBlank() && !selectedFile.isNullOrBlank()) {
+					val full = File(dir, selectedFile).toPath().toAbsolutePath().normalize().toString()
+					if (full.endsWith(".psd", ignoreCase = true)) {
+						return full
+					}
+				}
+				// Dialog completed normally and user cancelled
+				return null
+			} catch (_: Throwable) {}
 
-		return null
+			// 2. Fallback to System Look & Feel JFileChooser only if native picker threw exception
+			try {
+				UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
+				val chooser = JFileChooser().apply {
+					dialogTitle = title
+					fileFilter = javax.swing.filechooser.FileNameExtensionFilter(tr("dialog.psdFilter"), "psd")
+					if (!initialPath.isNullOrBlank()) {
+						val f = File(initialPath)
+						if (f.exists()) currentDirectory = if (f.isDirectory) f else f.parentFile
+					}
+				}
+				if (chooser.showOpenDialog(window) == JFileChooser.APPROVE_OPTION) {
+					return chooser.selectedFile.toPath().toAbsolutePath().normalize().toString()
+				}
+			} catch (_: Throwable) {}
+
+			return null
+		} finally {
+			isPicking.set(false)
+		}
 	}
 
 	/**
 	 * Opens the native OS file picker for selecting an existing .psd2live project file.
 	 */
-	fun chooseProjectFile(window: ComposeWindow? = null, initialPath: String? = null): String? {
-		val title = tr("project.open")
+	fun chooseProjectFile(window: Window? = null, initialPath: String? = null): String? {
+		if (!isPicking.compareAndSet(false, true)) {
+			return null
+		}
 		try {
-			val dialog = FileDialog(window, title, FileDialog.LOAD).apply {
-				setFilenameFilter { _, name -> name.endsWith(".psd2live", ignoreCase = true) }
-				file = "*.psd2live"
-				if (!initialPath.isNullOrBlank()) {
-					val f = File(initialPath)
-					if (f.exists()) directory = if (f.isDirectory) f.absolutePath else f.parent
+			val title = tr("project.open")
+			try {
+				val dialog = createFileDialog(window, title, FileDialog.LOAD).apply {
+					setFilenameFilter { _, name -> name.endsWith(".psd2live", ignoreCase = true) }
+					file = "*.psd2live"
+					if (!initialPath.isNullOrBlank()) {
+						val f = File(initialPath)
+						if (f.exists()) directory = if (f.isDirectory) f.absolutePath else f.parent
+					}
+					isVisible = true
 				}
-				isVisible = true
-			}
-			val dir = dialog.directory
-			val selectedFile = dialog.file
-			if (!dir.isNullOrBlank() && !selectedFile.isNullOrBlank()) {
-				val full = File(dir, selectedFile).toPath().toAbsolutePath().normalize().toString()
-				if (full.endsWith(".psd2live", ignoreCase = true)) {
-					return full
+				val dir = dialog.directory
+				val selectedFile = dialog.file
+				if (!dir.isNullOrBlank() && !selectedFile.isNullOrBlank()) {
+					val full = File(dir, selectedFile).toPath().toAbsolutePath().normalize().toString()
+					if (full.endsWith(".psd2live", ignoreCase = true)) {
+						return full
+					}
 				}
-			}
-		} catch (_: Throwable) {}
+				// Dialog completed normally and user cancelled
+				return null
+			} catch (_: Throwable) {}
 
-		try {
-			UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
-			val chooser = JFileChooser().apply {
-				dialogTitle = title
-				fileFilter = javax.swing.filechooser.FileNameExtensionFilter("PSD2Live (*.psd2live)", "psd2live")
-				if (!initialPath.isNullOrBlank()) {
-					val f = File(initialPath)
-					if (f.exists()) currentDirectory = if (f.isDirectory) f else f.parentFile
+			try {
+				UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
+				val chooser = JFileChooser().apply {
+					dialogTitle = title
+					fileFilter = javax.swing.filechooser.FileNameExtensionFilter("PSD2Live (*.psd2live)", "psd2live")
+					if (!initialPath.isNullOrBlank()) {
+						val f = File(initialPath)
+						if (f.exists()) currentDirectory = if (f.isDirectory) f else f.parentFile
+					}
 				}
-			}
-			if (chooser.showOpenDialog(window) == JFileChooser.APPROVE_OPTION) {
-				return chooser.selectedFile.toPath().toAbsolutePath().normalize().toString()
-			}
-		} catch (_: Throwable) {}
-		return null
+				if (chooser.showOpenDialog(window) == JFileChooser.APPROVE_OPTION) {
+					return chooser.selectedFile.toPath().toAbsolutePath().normalize().toString()
+				}
+			} catch (_: Throwable) {}
+			return null
+		} finally {
+			isPicking.set(false)
+		}
 	}
 
 	/**
 	 * Opens the native OS file picker for saving a single .psd2live project file.
 	 */
-	fun chooseSaveProjectFile(window: ComposeWindow? = null, defaultName: String? = null, initialDir: String? = null): String? {
-		val title = tr("project.saveAs")
-		val defaultFileName = if (defaultName.isNullOrBlank()) "project.psd2live" else if (defaultName.endsWith(".psd2live", ignoreCase = true)) defaultName else "$defaultName.psd2live"
-
+	fun chooseSaveProjectFile(window: Window? = null, defaultName: String? = null, initialDir: String? = null): String? {
+		if (!isPicking.compareAndSet(false, true)) {
+			return null
+		}
 		try {
-			val dialog = FileDialog(window, title, FileDialog.SAVE).apply {
-				setFilenameFilter { _, name -> name.endsWith(".psd2live", ignoreCase = true) }
-				file = defaultFileName
-				if (!initialDir.isNullOrBlank()) {
-					val f = File(initialDir)
-					if (f.exists()) directory = if (f.isDirectory) f.absolutePath else f.parent
-				}
-				isVisible = true
-			}
-			val dir = dialog.directory
-			val selectedFile = dialog.file
-			if (!dir.isNullOrBlank() && !selectedFile.isNullOrBlank()) {
-				val name = if (selectedFile.endsWith(".psd2live", ignoreCase = true)) selectedFile else "$selectedFile.psd2live"
-				return File(dir, name).toPath().toAbsolutePath().normalize().toString()
-			}
-		} catch (_: Throwable) {}
+			val title = tr("project.saveAs")
+			val defaultFileName = if (defaultName.isNullOrBlank()) "project.psd2live" else if (defaultName.endsWith(".psd2live", ignoreCase = true)) defaultName else "$defaultName.psd2live"
 
-		try {
-			UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
-			val chooser = JFileChooser().apply {
-				dialogTitle = title
-				fileFilter = javax.swing.filechooser.FileNameExtensionFilter("PSD2Live (*.psd2live)", "psd2live")
-				selectedFile = File(defaultFileName)
-				if (!initialDir.isNullOrBlank()) {
-					val f = File(initialDir)
-					if (f.exists()) currentDirectory = if (f.isDirectory) f else f.parentFile
+			try {
+				val dialog = createFileDialog(window, title, FileDialog.SAVE).apply {
+					setFilenameFilter { _, name -> name.endsWith(".psd2live", ignoreCase = true) }
+					file = defaultFileName
+					if (!initialDir.isNullOrBlank()) {
+						val f = File(initialDir)
+						if (f.exists()) directory = if (f.isDirectory) f.absolutePath else f.parent
+					}
+					isVisible = true
 				}
-			}
-			if (chooser.showSaveDialog(window) == JFileChooser.APPROVE_OPTION) {
-				val f = chooser.selectedFile
-				val name = if (f.name.endsWith(".psd2live", ignoreCase = true)) f.name else "${f.name}.psd2live"
-				return File(f.parentFile ?: File("."), name).toPath().toAbsolutePath().normalize().toString()
-			}
-		} catch (_: Throwable) {}
-		return null
+				val dir = dialog.directory
+				val selectedFile = dialog.file
+				if (!dir.isNullOrBlank() && !selectedFile.isNullOrBlank()) {
+					val name = if (selectedFile.endsWith(".psd2live", ignoreCase = true)) selectedFile else "$selectedFile.psd2live"
+					return File(dir, name).toPath().toAbsolutePath().normalize().toString()
+				}
+				// Dialog completed normally and user cancelled
+				return null
+			} catch (_: Throwable) {}
+
+			try {
+				UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
+				val chooser = JFileChooser().apply {
+					dialogTitle = title
+					fileFilter = javax.swing.filechooser.FileNameExtensionFilter("PSD2Live (*.psd2live)", "psd2live")
+					selectedFile = File(defaultFileName)
+					if (!initialDir.isNullOrBlank()) {
+						val f = File(initialDir)
+						if (f.exists()) currentDirectory = if (f.isDirectory) f else f.parentFile
+					}
+				}
+				if (chooser.showSaveDialog(window) == JFileChooser.APPROVE_OPTION) {
+					val f = chooser.selectedFile
+					val name = if (f.name.endsWith(".psd2live", ignoreCase = true)) f.name else "${f.name}.psd2live"
+					return File(f.parentFile ?: File("."), name).toPath().toAbsolutePath().normalize().toString()
+				}
+			} catch (_: Throwable) {}
+			return null
+		} finally {
+			isPicking.set(false)
+		}
 	}
 
 	/**
 	 * Opens the native OS file picker for saving a PSD (.psd) file.
 	 */
-	fun chooseSavePsdFile(window: ComposeWindow? = null, defaultName: String? = null, initialDir: String? = null): String? {
-		val title = tr("menu.file.reexportPsd")
-		val defaultFileName = if (defaultName.isNullOrBlank()) "export.psd" else if (defaultName.endsWith(".psd", ignoreCase = true)) defaultName else "$defaultName.psd"
-
+	fun chooseSavePsdFile(window: Window? = null, defaultName: String? = null, initialDir: String? = null): String? {
+		if (!isPicking.compareAndSet(false, true)) {
+			return null
+		}
 		try {
-			val dialog = FileDialog(window, title, FileDialog.SAVE).apply {
-				setFilenameFilter { _, name -> name.endsWith(".psd", ignoreCase = true) }
-				file = defaultFileName
-				if (!initialDir.isNullOrBlank()) {
-					val f = File(initialDir)
-					if (f.exists()) directory = if (f.isDirectory) f.absolutePath else f.parent
-				}
-				isVisible = true
-			}
-			val dir = dialog.directory
-			val selectedFile = dialog.file
-			if (!dir.isNullOrBlank() && !selectedFile.isNullOrBlank()) {
-				val name = if (selectedFile.endsWith(".psd", ignoreCase = true)) selectedFile else "$selectedFile.psd"
-				return File(dir, name).toPath().toAbsolutePath().normalize().toString()
-			}
-		} catch (_: Throwable) {}
+			val title = tr("menu.file.reexportPsd")
+			val defaultFileName = if (defaultName.isNullOrBlank()) "export.psd" else if (defaultName.endsWith(".psd", ignoreCase = true)) defaultName else "$defaultName.psd"
 
-		try {
-			UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
-			val chooser = JFileChooser().apply {
-				dialogTitle = title
-				fileFilter = javax.swing.filechooser.FileNameExtensionFilter("Photoshop Document (*.psd)", "psd")
-				selectedFile = File(defaultFileName)
-				if (!initialDir.isNullOrBlank()) {
-					val f = File(initialDir)
-					if (f.exists()) currentDirectory = if (f.isDirectory) f else f.parentFile
+			try {
+				val dialog = createFileDialog(window, title, FileDialog.SAVE).apply {
+					setFilenameFilter { _, name -> name.endsWith(".psd", ignoreCase = true) }
+					file = defaultFileName
+					if (!initialDir.isNullOrBlank()) {
+						val f = File(initialDir)
+						if (f.exists()) directory = if (f.isDirectory) f.absolutePath else f.parent
+					}
+					isVisible = true
 				}
-			}
-			if (chooser.showSaveDialog(window) == JFileChooser.APPROVE_OPTION) {
-				val f = chooser.selectedFile
-				val name = if (f.name.endsWith(".psd", ignoreCase = true)) f.name else "${f.name}.psd"
-				return File(f.parentFile ?: File("."), name).toPath().toAbsolutePath().normalize().toString()
-			}
-		} catch (_: Throwable) {}
-		return null
+				val dir = dialog.directory
+				val selectedFile = dialog.file
+				if (!dir.isNullOrBlank() && !selectedFile.isNullOrBlank()) {
+					val name = if (selectedFile.endsWith(".psd", ignoreCase = true)) selectedFile else "$selectedFile.psd"
+					return File(dir, name).toPath().toAbsolutePath().normalize().toString()
+				}
+				// Dialog completed normally and user cancelled
+				return null
+			} catch (_: Throwable) {}
+
+			try {
+				UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
+				val chooser = JFileChooser().apply {
+					dialogTitle = title
+					fileFilter = javax.swing.filechooser.FileNameExtensionFilter("Photoshop Document (*.psd)", "psd")
+					selectedFile = File(defaultFileName)
+					if (!initialDir.isNullOrBlank()) {
+						val f = File(initialDir)
+						if (f.exists()) currentDirectory = if (f.isDirectory) f else f.parentFile
+					}
+				}
+				if (chooser.showSaveDialog(window) == JFileChooser.APPROVE_OPTION) {
+					val f = chooser.selectedFile
+					val name = if (f.name.endsWith(".psd", ignoreCase = true)) f.name else "${f.name}.psd"
+					return File(f.parentFile ?: File("."), name).toPath().toAbsolutePath().normalize().toString()
+				}
+			} catch (_: Throwable) {}
+			return null
+		} finally {
+			isPicking.set(false)
+		}
 	}
 
 	/**
 	 * Opens the modern native OS directory picker.
 	 */
-	fun chooseDirectory(window: ComposeWindow? = null, initialPath: String? = null): String? {
-		val title = tr("dialog.chooseOutput")
-		val isWindows = System.getProperty("os.name").orEmpty().contains("win", ignoreCase = true)
+	fun chooseDirectory(window: Window? = null, initialPath: String? = null, title: String? = null): String? {
+		if (!isPicking.compareAndSet(false, true)) {
+			return null
+		}
+		try {
+			val dialogTitle = title ?: tr("dialog.chooseOutput")
+			val os = System.getProperty("os.name").orEmpty().lowercase()
+			val isWindows = os.contains("win")
+			val isMac = os.contains("mac")
 
-		val initialFile = if (!initialPath.isNullOrBlank()) {
-			val f = File(initialPath)
-			if (f.exists() && f.isDirectory) f
-			else if (f.parentFile?.exists() == true && f.parentFile.isDirectory) f.parentFile
-			else null
-		} else null
-		val initialDir = initialFile?.absolutePath.orEmpty()
+			val initialFile = if (!initialPath.isNullOrBlank()) {
+				val f = File(initialPath)
+				if (f.exists() && f.isDirectory) f
+				else if (f.parentFile?.exists() == true && f.parentFile.isDirectory) f.parentFile
+				else null
+			} else null
+			val initialDir = initialFile?.absolutePath.orEmpty()
 
-		// On Windows, try native PowerShell FolderPicker for modern Windows 10/11 folder selection
-		if (isWindows) {
-			try {
-				val script = buildString {
-					append("Add-Type -AssemblyName System.Windows.Forms; ")
-					append("\$dialog = New-Object System.Windows.Forms.FolderBrowserDialog; ")
-					append("\$dialog.Description = '${title.replace("'", "''")}'; ")
-					append("\$dialog.UseDescriptionForTitle = \$true; ")
-					if (initialDir.isNotBlank()) {
-						append("\$dialog.SelectedPath = '${initialDir.replace("'", "''")}'; ")
+			// 1. On macOS, try native AWT FileDialog with directory mode
+			if (isMac) {
+				try {
+					System.setProperty("apple.awt.fileDialogForDirectories", "true")
+					val dialog = createFileDialog(window, dialogTitle, FileDialog.LOAD).apply {
+						if (initialDir.isNotBlank()) directory = initialDir
+						isVisible = true
 					}
-					append("if (\$dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output \$dialog.SelectedPath }")
+					System.setProperty("apple.awt.fileDialogForDirectories", "false")
+					val dir = dialog.directory
+					val file = dialog.file
+					if (!dir.isNullOrBlank() && !file.isNullOrBlank()) {
+						val full = File(dir, file)
+						if (full.isDirectory) {
+							return full.toPath().toAbsolutePath().normalize().toString()
+						}
+					}
+					// User cancelled native dialog on macOS
+					return null
+				} catch (_: Throwable) {
+					System.setProperty("apple.awt.fileDialogForDirectories", "false")
 				}
+			}
 
-				val process = ProcessBuilder("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
-					.redirectErrorStream(true)
-					.start()
-
-				val output = process.inputStream.bufferedReader().readText().trim()
-				process.waitFor()
-				if (output.isNotBlank() && File(output).isDirectory) {
-					return Path.of(output).toAbsolutePath().normalize().toString()
+			// 2. System Look & Feel directory chooser for Windows and Linux
+			try {
+				UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
+				val chooser = JFileChooser().apply {
+					this.dialogTitle = dialogTitle
+					fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
+					if (initialFile != null) {
+						currentDirectory = initialFile
+						selectedFile = initialFile
+					}
+				}
+				if (chooser.showOpenDialog(window) == JFileChooser.APPROVE_OPTION) {
+					val selected = chooser.selectedFile ?: return null
+					return selected.toPath().toAbsolutePath().normalize().toString()
 				}
 			} catch (_: Throwable) {}
+
+			return null
+		} finally {
+			isPicking.set(false)
 		}
-
-		// Fallback to System Look & Feel JFileChooser
-		try {
-			UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
-			val chooser = JFileChooser().apply {
-				dialogTitle = title
-				fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
-				if (initialFile != null) {
-					currentDirectory = initialFile
-				}
-			}
-			if (chooser.showOpenDialog(window) == JFileChooser.APPROVE_OPTION) {
-				return chooser.selectedFile.toPath().toAbsolutePath().normalize().toString()
-			}
-		} catch (_: Throwable) {}
-
-		return null
 	}
 }
+
 

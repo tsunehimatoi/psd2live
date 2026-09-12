@@ -1,4 +1,4 @@
-﻿package io.github.psd2live.ui
+package io.github.psd2live.ui
 
 import io.github.psd2live.core.PSD2LivePipeline
 import io.github.psd2live.core.PipelineConfig
@@ -8,6 +8,8 @@ import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.Side
 import io.github.psd2live.i18n.I18n
 import io.github.psd2live.i18n.tr
+import io.github.psd2live.ui.utils.DesktopUtils
+import io.github.psd2live.ui.utils.NativeFilePicker
 import java.awt.BorderLayout
 import java.awt.BasicStroke
 import java.awt.Color
@@ -43,7 +45,6 @@ import javax.swing.JButton
 import javax.swing.JCheckBox
 import javax.swing.DefaultCellEditor
 import javax.swing.JComboBox
-import javax.swing.JFileChooser
 import javax.swing.JFrame
 import javax.swing.Icon
 import javax.swing.JLabel
@@ -346,7 +347,7 @@ class PSD2LiveFrame : JFrame() {
 		installLayerTableVisibilityActions()
 		openOutputButton.addActionListener {
 			val directory = outputPathOrNull()
-			if (directory != null && Files.isDirectory(directory) && Desktop.isDesktopSupported()) Desktop.getDesktop().open(directory.toFile())
+			if (directory != null) DesktopUtils.openDirectory(directory)
 		}
 		inputField.addActionListener { analyze() }
 	}
@@ -444,11 +445,8 @@ class PSD2LiveFrame : JFrame() {
 	}
 
 	private fun chooseInput() {
-		val chooser = JFileChooser().apply {
-			dialogTitle = tr("dialog.choosePsd")
-			fileFilter = FileNameExtensionFilter(tr("dialog.psdFilter"), "psd")
-		}
-		if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) setInput(chooser.selectedFile.toPath())
+		val selected = NativeFilePicker.choosePsdFile(this, inputField.text)
+		if (!selected.isNullOrBlank()) setInput(Path.of(selected))
 	}
 
 	private fun setInput(path: Path) {
@@ -459,12 +457,8 @@ class PSD2LiveFrame : JFrame() {
 	}
 
 	private fun chooseOutput() {
-		val chooser = JFileChooser().apply {
-			dialogTitle = tr("dialog.chooseOutput")
-			fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
-			outputPathOrNull()?.toFile()?.takeIf(File::exists)?.let { currentDirectory = it }
-		}
-		if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) outputField.text = chooser.selectedFile.absolutePath
+		val selected = NativeFilePicker.chooseDirectory(this, outputField.text)
+		if (!selected.isNullOrBlank()) outputField.text = selected
 	}
 
 	private fun analyze() {

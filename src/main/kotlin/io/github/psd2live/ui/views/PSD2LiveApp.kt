@@ -183,9 +183,11 @@ fun FrameWindowScope.PSD2LiveApp(
 		}
 
 		val chooseOutputFolder = {
-			val selected = NativeFilePicker.chooseDirectory(window, state.outputPath)
-			if (!selected.isNullOrBlank()) {
-				viewModel.setOutputPath(selected)
+			if (!isBusy) {
+				val selected = NativeFilePicker.chooseDirectory(window, state.outputPath)
+				if (!selected.isNullOrBlank()) {
+					viewModel.setOutputPath(selected)
+				}
 			}
 		}
 
@@ -199,9 +201,11 @@ fun FrameWindowScope.PSD2LiveApp(
 		}
 
 		val onOpenProjectAction: () -> Unit = {
-			val selected = NativeFilePicker.chooseProjectFile(window, state.projectFile)
-			if (!selected.isNullOrBlank()) {
-				viewModel.openProject(java.nio.file.Path.of(selected))
+			if (!isBusy) {
+				val selected = NativeFilePicker.chooseProjectFile(window, state.projectFile)
+				if (!selected.isNullOrBlank()) {
+					viewModel.openProject(java.nio.file.Path.of(selected))
+				}
 			}
 		}
         val onReanalyzeAction = {
@@ -482,7 +486,7 @@ fun FrameWindowScope.PSD2LiveApp(
 			)
 		}
 
-		io.github.psd2live.ui.components.ProjectLocationDialog(state, viewModel)
+		io.github.psd2live.ui.components.ProjectLocationDialog(state, viewModel, window)
 		ExportPsdDialog(state, viewModel, window)
 
 		if (!state.showProjectLocationDialog && state.projectSaveError != null) {
@@ -703,27 +707,11 @@ private fun ModalDialog(
 }
 
 private fun openFolder(pathString: String) {
-	val raw = pathString.trim()
-	if (raw.isEmpty()) return
-	try {
-		val dir = Path.of(raw)
-		if (Files.isDirectory(dir)) {
-			if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
-				Desktop.getDesktop().open(dir.toFile())
-			} else {
-				val os = System.getProperty("os.name").orEmpty().lowercase()
-				when {
-					os.contains("win") -> ProcessBuilder("explorer.exe", dir.toAbsolutePath().toString()).start()
-					os.contains("mac") -> ProcessBuilder("open", dir.toAbsolutePath().toString()).start()
-					else -> ProcessBuilder("xdg-open", dir.toAbsolutePath().toString()).start()
-				}
-			}
-		}
-	} catch (_: Exception) {}
+	DesktopUtils.openDirectory(pathString)
 }
 
 private fun copyToClipboard(text: String) {
-	Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
+	DesktopUtils.copyToClipboard(text)
 }
 
 @Composable
