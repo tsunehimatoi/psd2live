@@ -61,30 +61,19 @@ Documents are organized by **category × language** (`docs/<language>/<category>
 
 ### Agent Capabilities and Implementation Status
 
-#### Available
+Planned work is listed in [`ROADMAP.md`](ROADMAP.md) and measured capability results are in [`STATUS.md`](STATUS.md). Both are Chinese-only.
 
-- Add other hair accessories or decorations, then check occlusion, placement, and deformation across multiple parameter poses.
-
-#### Theoretically feasible, but Agents cannot get reliable results yet — pending implementation
+- **Available**: add hair accessories or decorations, then check occlusion, placement and deformation across parameter poses.
+- **Pending**: parameter tuning, expression and action variants, simple layer separation, mouth-internal separation, hair separation with occlusion fill, waving motion, tail deformation and physics, generated artwork with nine-axis adjustment.
+- **Beyond reach**: precise per-point deformation of a part, which requires driving Warp and Mesh points individually.
 
 > [!WARNING]
-> **The following tasks are theoretically feasible, but Agents cannot reliably configure and complete them. End-to-end execution is extremely unstable, and these capabilities remain pending implementation. Unless you are debugging the program, we recommend not attempting them.** Existing MCP interfaces do not mean an Agent can complete a task; repeated generation, positioning, and correction can quickly consume large amounts of tokens and image-generation quota without producing a usable result.
-
-Expected implementation difficulty increases in the following order:
-
-1. Generate expression and action variants with additional parameter or animation controls, such as an `@v@` expression, waving, or crossing both arms.
-2. Separate the mouth into independently editable lips, inner mouth, teeth, and tongue layers.
-3. Separate the hair into front, side, back, ahoge, or other independently riggable strands, and reconstruct hidden regions.
-4. Add shadows, including generating and rigging hair-shadow layers and side-of-face shadow layers.
-
-#### Currently beyond the Agent's capabilities
-
-- Deform parts plausibly and precisely: this requires the AI to manipulate individual Warp/Mesh points and control their deformation correctly. Agents cannot yet perform this reliably.
+> Pending tasks are extremely unstable end to end. Unless you are debugging the program, we recommend not attempting them. Existing MCP interfaces do not mean an Agent can complete a task; repeated generation, positioning and correction can quickly consume large amounts of tokens and image-generation quota without producing a usable result.
 
 > [!IMPORTANT]
 > These workflows require both the selected model and the Agent harness to expose a working image-generation capability. A model that can only understand text or images, but cannot generate and return an image, cannot complete asset creation and import.
 
-Results depend on the model, image generator, Agent harness, prompt, and the quality of the original PSD layer separation. Passing regression tests for the underlying tools does not establish the reliability of the pending tasks above.
+Results depend on the model, image generator, Agent harness, prompt, and the quality of the original PSD layer separation. Passing regression tests for the underlying tools does not establish the reliability of those tasks.
 
 **Help wanted: prompt engineering and Agent workflow contributions.** We especially need help with tool discovery and selection, depth and occlusion reasoning for part separation, generation constraints, positioning and correction workflows, token budgets, and stopping conditions. Reproducible cases, effective prompt or MCP workflow improvements, implementations, and evaluation cases are welcome. Including the model and host used, actual consumption, and both successful and failed results helps us verify whether a change really raises completion rates and reduces wasted retries. A single successful demonstration is not enough to mark these capabilities as complete. For general ways to take part, see [Contributing](#contributing).
 
