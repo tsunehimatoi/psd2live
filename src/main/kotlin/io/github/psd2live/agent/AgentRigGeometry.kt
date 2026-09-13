@@ -35,7 +35,7 @@ internal object AgentRigGeometry {
                 put("available",false)
                 put("reason","Runtime stores sampled positions, not native Bezier anchors or handles. Editor subdivision metadata does not supply control geometry.")
             }
-            put("recommendedEditTool","rig_transform")
+            put("recommendedEditTool","deform")
             put("previewOnly",preview!=null)
             put("diagnosticReference",if(preview==null) "parameter_defaults" else "input_pose_before_operations")
             put("diagnostics",io.github.psd2live.core.RigGeometryDiagnostics.compare(reference,g.points,triangles))

@@ -50,9 +50,4 @@ class AgentAuthoringTest {
         assertEquals(0.75,report.getValue("uncoveredFraction").jsonPrimitive.double)
         assertFailsWith<IllegalArgumentException> { measureCoverage(image,0) }
     }
-
-    @Test fun optionalKnowledgeHasNoBrokenTopics() {
-        for(topic in listOf("overview","geometry","hair","variants","face","assets")) assertTrue(loadAgentReference(topic).isNotBlank())
-        assertFailsWith<IllegalStateException> { loadAgentReference("../../secret") }
-    }
 }

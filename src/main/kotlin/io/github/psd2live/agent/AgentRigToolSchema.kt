@@ -55,9 +55,6 @@ internal fun rigGeometrySchema(edit: Boolean): ToolSchema = ToolSchema(
     }, required=if(edit)listOf("target","coordinate","operations","expected_history_head_node_id") else listOf("target"),
 )
 
-internal fun loadRigGeometryWorkflow(): String = requireNotNull(AgentWorkspace::class.java.classLoader.getResourceAsStream("mcp/workflows/rig-geometry.md"))
-    .bufferedReader().use { it.readText() }
-
 private fun geometrySelectionSchema(): JsonObject = buildJsonObject {
                             put("type","object");put("additionalProperties",false)
                             putJsonObject("properties") {
@@ -67,14 +64,4 @@ private fun geometrySelectionSchema(): JsonObject = buildJsonObject {
                                 putJsonObject("feather") { put("type","number");put("minimum",0);put("maximum",0.5) }
                             }
                             put("description","Stable normalized rest domain: rect=[left,top,right,bottom], indices, center+radius, or line=[x0,y0,x1,y1]+radius. Smooth radial falloff; optional rectangle feather.")
-}
-
-internal fun loadAgentReference(topic: String): String {
-    val file = when(topic) {
-        "overview" -> "overview"; "geometry" -> "rig-geometry"; "hair" -> "hair-separation"
-        "variants" -> "variants"; "face" -> "face"; "assets" -> "assets"
-        else -> error("Unknown knowledge topic: $topic")
-    }
-    return requireNotNull(AgentWorkspace::class.java.classLoader.getResourceAsStream("mcp/workflows/$file.md"))
-        .bufferedReader().use { it.readText() }
 }

@@ -26,13 +26,10 @@ import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.server.ServerOptions
 import io.modelcontextprotocol.kotlin.sdk.server.StreamableHttpServerTransport
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
-import io.modelcontextprotocol.kotlin.sdk.types.GetPromptResult
 import io.modelcontextprotocol.kotlin.sdk.types.ImageContent
 import io.modelcontextprotocol.kotlin.sdk.types.Implementation
 import io.modelcontextprotocol.kotlin.sdk.types.McpJson
-import io.modelcontextprotocol.kotlin.sdk.types.PromptMessage
 import io.modelcontextprotocol.kotlin.sdk.types.ReadResourceResult
-import io.modelcontextprotocol.kotlin.sdk.types.Role
 import io.modelcontextprotocol.kotlin.sdk.types.ServerCapabilities
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import io.modelcontextprotocol.kotlin.sdk.types.TextResourceContents
@@ -250,7 +247,6 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace, legacyTools: Boolea
 		serverInfo = Implementation("psd2live", "0.7.1"),
 		options = ServerOptions(
 			ServerCapabilities(
-				prompts = ServerCapabilities.Prompts(listChanged = false),
 				resources = ServerCapabilities.Resources(subscribe = false, listChanged = false),
 				tools = ServerCapabilities.Tools(listChanged = false),
 			),
@@ -687,14 +683,6 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace, legacyTools: Boolea
     ) { request -> mutationResult { workspace.editObjects(request.arguments ?: error("Missing arguments")).toJson() } }
 
     server.addTool(
-        name = "agent_get_workflow",
-        description = "Read a short optional reference: overview, geometry, hair, variants, face or assets. Choose only the topic relevant to the task.",
-        inputSchema = ToolSchema(properties = buildJsonObject {
-            putJsonObject("topic") { put("type", "string"); put("enum", JsonArray(listOf("overview", "geometry", "hair", "variants", "face", "assets").map(::JsonPrimitive))) }
-        }), toolAnnotations = READ_ONLY,
-    ) { request -> CallToolResult(content = listOf(TextContent(loadAgentReference(request.optionalString("topic") ?: "overview")))) }
-
-    server.addTool(
         name = "rig_list_objects",
         description = "Find meshes, Parts and deformers by name or stable ID. Returns compact names, parent relationships and source layer IDs without geometry. Optional query/kind and pagination keep discovery small.",
         inputSchema = ToolSchema(properties = buildJsonObject {
@@ -828,7 +816,7 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace, legacyTools: Boolea
 		inputSchema = ToolSchema(
 			properties = buildJsonObject {
 				putJsonObject("layer_id") { put("type", "string"); put("description", "Stable layer ID to remove from the active workspace") }
-				putJsonObject("expected_history_head_node_id") { put("type", "string"); put("description", "Current HEAD from project_get_state or history_list") }
+				putJsonObject("expected_history_head_node_id") { put("type", "string"); put("description", "Current HEAD from inspect or revision") }
 				putJsonObject("task_id") { put("type", "string"); put("description", "Optional long-task correlation ID") }
 			},
 			required = listOf("layer_id", "expected_history_head_node_id"),
@@ -856,16 +844,6 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace, legacyTools: Boolea
 		toolAnnotations = MUTATING,
 	) { request ->
 		mutationResult { workspace.checkoutHistory(request.requiredString("node_id")).toJson() }
-	}
-
-	server.addPrompt(
-		name = "hair-separation",
-		description = "Natural hair separation: infer local depth, complete crossing root-to-tip locks with a host image editor, assemble candidates early, and judge coherent appearance and intended motion without requiring exact source edges.",
-	) {
-		GetPromptResult(
-			description = "Built-in psd2live hair separation workflow",
-			messages = listOf(PromptMessage(Role.User, TextContent(loadHairSeparationWorkflow()))),
-		)
 	}
 
 	server.addResource(
@@ -948,7 +926,7 @@ private fun parameterProperties(includeRequiredValues: Boolean): JsonObject = bu
 	}
 	putJsonObject("expected_history_head_node_id") {
 		put("type", "string")
-		put("description", "Optimistic concurrency boundary returned by project_get_state or history_list")
+		put("description", "Optimistic concurrency boundary returned by inspect or revision")
 	}
 	putJsonObject("name") { put("type", "string") }
 	putJsonObject("min") { put("type", "number"); if (includeRequiredValues) put("default", -1) }
@@ -969,7 +947,7 @@ private fun addLayerSchema(): ToolSchema = ToolSchema(
 		putJsonObject("asset_id") { put("type", "string") }
 		putJsonObject("expected_history_head_node_id") {
 			put("type", "string")
-			put("description", "Optimistic concurrency boundary returned by project_get_state or history_list")
+			put("description", "Optimistic concurrency boundary returned by inspect or revision")
 		}
 		putJsonObject("name") { put("type", "string") }
 		putJsonObject("layer_id") {
@@ -1866,12 +1844,6 @@ private fun AgentRenderedView.toJson(): JsonObject = buildJsonObject {
 		put("placementRule", "map_full_png_to_view_rect_preserve_aspect")
 	}
 }
-
-private fun loadHairSeparationWorkflow(): String =
-	AgentMcpService::class.java.getResourceAsStream("/mcp/workflows/hair-separation.md")
-		?.bufferedReader()
-		?.use { it.readText() }
-		?: error("Bundled hair separation workflow is missing")
 
 private val READ_ONLY = ToolAnnotations(
 	readOnlyHint = true,

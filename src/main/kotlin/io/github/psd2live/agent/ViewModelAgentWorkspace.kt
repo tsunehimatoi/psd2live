@@ -462,7 +462,7 @@ class ViewModelAgentWorkspace(
 			source = io.github.psd2live.ui.state.LogSource.AGENT,
 			tag = "Asset",
 			imageBytes = assetStore.require(imported.id).preview().png,
-			imageLabel = "asset_import_png: ${imported.id}",
+			imageLabel = "asset import: ${imported.id}",
 		)
 		imported
 	}

@@ -64,7 +64,7 @@ internal class AgentPngAssetStore {
 
 	fun import(request: AgentPngImportRequest, spatial: AgentViewSpatialMetadata): AgentImportedPngAsset {
 		require(request.png.size >= PNG_SIGNATURE.size && request.png.copyOfRange(0, PNG_SIGNATURE.size).contentEquals(PNG_SIGNATURE)) {
-			"asset_import_png accepts PNG data only"
+			"asset import accepts PNG data only"
 		}
 		val decoded = ImageIO.read(request.png.inputStream())
 			?: throw IllegalArgumentException("The supplied bytes are not a decodable PNG")

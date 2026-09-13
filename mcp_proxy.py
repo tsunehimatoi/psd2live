@@ -28,8 +28,6 @@ SAFE_PROTOCOL_METHODS = {
     "initialize",
     "ping",
     "tools/list",
-    "prompts/list",
-    "prompts/get",
     "resources/list",
     "resources/read",
     "resources/templates/list",
@@ -37,16 +35,8 @@ SAFE_PROTOCOL_METHODS = {
     "notifications/cancelled",
 }
 SAFE_PSD2LIVE_TOOLS = {
-    "project_get_state",
-    "project_list_layers",
-    "project_list_parameters",
-    "object_get",
-    "history_list",
-    "task_get",
-    "task_list",
-    "view_render_layer",
-    "view_render_context",
-    "view_render_model",
+    "inspect",
+    "view",
 }
 
 
@@ -264,7 +254,7 @@ def main() -> int:
                         session_id = None
                         summary = (
                             "PSD2Live MCP session expired. Initialize a new MCP session, "
-                            "then inspect project_get_state/history_list before resuming."
+                            "then inspect/revision before resuming."
                         )
                     elif (
                         error.code in TRANSIENT_HTTP_STATUSES
@@ -281,7 +271,7 @@ def main() -> int:
                         if not retry_safe and error.code in TRANSIENT_HTTP_STATUSES:
                             summary += (
                                 ". The write commit state may be unknown; reconnect and "
-                                "inspect project_get_state/history_list before retrying"
+                                "inspect/revision before retrying"
                             )
 
                     sys.stderr.write(summary + "\n")
@@ -298,8 +288,8 @@ def main() -> int:
                     summary = f"Cannot reach PSD2Live MCP at {ENDPOINT}: {error}"
                     if not retry_safe:
                         summary += (
-                            ". The write commit state is unknown; reconnect and inspect "
-                            "project_get_state/history_list before retrying"
+                            ". The write commit state is unknown; reconnect and check "
+                            "inspect/revision before retrying"
                         )
                     sys.stderr.write(summary + "\n")
                     _write_rpc_error(request_id, summary)
