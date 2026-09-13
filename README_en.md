@@ -86,7 +86,7 @@ Expected implementation difficulty increases in the following order:
 
 Results depend on the model, image generator, Agent harness, prompt, and the quality of the original PSD layer separation. Passing regression tests for the underlying tools does not establish the reliability of the pending tasks above.
 
-**Help wanted: Pull Requests for prompt engineering and Agent workflows.** We especially need contributors with experience in tool discovery and selection, depth and occlusion reasoning for part separation, generation constraints, positioning and correction workflows, token budgets, and stopping conditions. Reproducible cases, effective prompt or MCP workflow improvements, implementations, and evaluation cases are welcome. Where possible, include the model and host used, actual consumption, and both successful and failed results so we can assess completion rates and reduce wasted retries. A single successful demonstration is not enough to mark these capabilities as complete.
+**Help wanted: prompt engineering and Agent workflow contributions.** We especially need help with tool discovery and selection, depth and occlusion reasoning for part separation, generation constraints, positioning and correction workflows, token budgets, and stopping conditions. Reproducible cases, effective prompt or MCP workflow improvements, implementations, and evaluation cases are welcome. Including the model and host used, actual consumption, and both successful and failed results helps us verify whether a change really raises completion rates and reduces wasted retries. A single successful demonstration is not enough to mark these capabilities as complete. For general ways to take part, see [Contributing](#contributing).
 
 ---
 
@@ -242,6 +242,50 @@ output_dir/
 # Execute unit and integration tests
 .\gradlew.bat test
 ```
+
+---
+
+## Contributing
+
+Contributions of every kind are welcome, whether you are an illustrator, a Live2D rigger, a developer, or someone who has just started using the tool. **Issues and pull requests are equally valuable**, and there is no change too small to be worth sending.
+
+### Opening an issue
+
+Please open an issue for problems, questions or ideas:
+
+- **Bug reports**: crashes, failed exports, mesh or physics anomalies, results that do not match expectations.
+- **PSD compatibility problems**: a layered PSD that is misclassified or fails to generate. Attaching a reproducible PSD, or describing its layer naming, helps enormously.
+- **Feature requests**: new parts, new parameters, new export options, or automation that saves you work.
+- **Documentation and tutorial gaps**: anything unclear, missing steps, or text that no longer matches the interface.
+- **Showcases and field notes**: models you built with PSD2Live, pitfalls you hit, and layering tricks that worked.
+
+Including the PSD2Live version, your operating system, the PSD layer structure and naming, reproduction steps, expected versus actual results, and any log-dock output or screenshots makes triage much faster. Incomplete reports are fine too, and we will work out the details together.
+
+### Sending a pull request
+
+**Pull requests of any size are welcome**, from fixing a typo to implementing a whole new algorithm:
+
+- **Documentation**: typo fixes, extra tutorial steps, and translations. The `en` and `ja` documents still have gaps, see the [documentation index](docs/README.md).
+- **Tests and fixtures**: coverage for existing behaviour, PSD samples that reproduce a problem, and better evaluation cases.
+- **Bug fixes**: from edge cases to geometry and physics solving.
+- **Features and algorithms**: meshing, deformer construction, physics parameters, export compatibility.
+- **Agent and MCP workflows**: prompts, tool design and selection strategy, separation and placement flows, token budgets and stop conditions. This area needs the most help right now; see the [Agent design](docs/zh/agent/AGENT_DESIGN.md) document.
+- **Performance and platforms**: startup time, memory use, and behaviour on Linux and macOS.
+
+Before you start:
+
+1. Open an issue describing what you intend to change, so we can avoid duplicate work and agree on the direction.
+2. Branch from `master`, keep the change focused, and write commit messages that explain what changed and why.
+3. Run `./gradlew test` (or `.\gradlew.bat test` on Windows) and make sure it passes. Changes with tests are easier to merge.
+4. Reference the related issue in the pull request description and describe how you verified the change, for example with tests, screenshots, or generated model files.
+
+### Areas that are not stable yet
+
+Several capabilities are documented as theoretically possible but not yet reliable, such as automatic hair separation or Agent-generated expression variants. Contributions there are especially welcome: even a small gain in success rate, or simply recording why an attempt failed, is real progress. Background and acceptance criteria live in the [Agent design](docs/zh/agent/AGENT_DESIGN.md) document and [ROADMAP.md](ROADMAP.md).
+
+If you are not sure where to start, open an issue describing your idea, your use case, or the area you would like to work on. We are glad to find a good entry point together.
+
+Thank you to everyone who files an issue, shares a case, or sends code. This project is better because of you.
 
 ---
 
