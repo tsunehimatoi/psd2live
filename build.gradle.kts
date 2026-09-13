@@ -72,6 +72,7 @@ distributions {
 			from("README_en.md")
 			from("README_ja.md")
 			from("ROADMAP.md")
+			from("STATUS.md")
 			from("LICENSE")
 			from("THIRD_PARTY_NOTICES.md")
 			from("licenses") { into("licenses") }

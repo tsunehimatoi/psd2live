@@ -72,7 +72,8 @@ PSD2Live 是一条自动化的 Live2D 模型生成流水线：输入一张按规
 | 位置 | 内容 | 说明 |
 | :--- | :--- | :--- |
 | [`README.md`](../README.md) / [`README_en.md`](../README_en.md) / [`README_ja.md`](../README_ja.md) | 项目介绍、核心特性、快速上手、PSD 命名速查、变形器层级、导出产物 | 三语入口文档，完整产品展示在这里 |
-| [`ROADMAP.md`](../ROADMAP.md) | 尚未排期的产品级功能项 | 替代原先散落在根目录的 `todo.md` |
+| [`ROADMAP.md`](../ROADMAP.md) | 计划实现表：待完成条目（复选框） | 不排期；已完成项不在此维护 |
+| [`STATUS.md`](../STATUS.md) | Agent 能力实测总表：状态、评价、宿主环境、返工次数与证据 | 仅中文 |
 | [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) | 第三方组件、许可与 Live2D 商标声明 | 合规文档 |
 | `examples/` | 示例工程与版本差异说明 | 功能示例目录 |
 | `docs/imgs/` | 文档插图（`use.gif`、`agent.png`、`mesh*.png`） | 被三语 README 与本页引用 |
