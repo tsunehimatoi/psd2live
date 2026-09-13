@@ -17,7 +17,7 @@ import kotlin.test.assertTrue
 
 class HelpDialogAndUrlsTest {
 	@Test
-	fun installationPromptUsesMcpBundledWorkflows() {
+	fun installationPromptCoversMcpEndpoints() {
 		for (language in AppLanguage.entries) {
 			val prompt = buildInstallationPrompt(
 				endpoint = "http://127.0.0.1:23871/mcp",
@@ -25,7 +25,10 @@ class HelpDialogAndUrlsTest {
 				projectDir = "C:/PSD2Live",
 				language = language,
 			)
-			assertTrue(prompt.contains("agent_get_workflow"), "Missing MCP workflow entry for $language")
+			assertTrue(prompt.contains("http://127.0.0.1:23871/mcp"), "Missing HTTP endpoint for $language")
+			assertTrue(prompt.contains("test-token"), "Missing bearer token for $language")
+			assertTrue(prompt.contains("mcp_proxy.py"), "Missing stdio fallback for $language")
+			assertFalse(prompt.contains("agent_get_workflow"), "Prompt must not reference a removed MCP tool for $language")
 			assertFalse(prompt.contains(".agent/skills"), "Prompt must not require repository Skills for $language")
 			assertFalse(prompt.contains("psd2live-rigging"), "Prompt must not require a standalone rigging Skill for $language")
 		}

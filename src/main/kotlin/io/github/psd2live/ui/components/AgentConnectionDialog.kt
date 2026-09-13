@@ -53,11 +53,11 @@ $geminiJson
 
 其他支持 Streamable HTTP 的宿主：使用端点 $endpoint，并发送请求头 Authorization: Bearer $token。不要改成旧的 /sse 端点。
 
-领域工作流已内置于 MCP，无需查找或安装额外 Skill。连接后按任务调用 agent_get_workflow 读取相关主题；基本编辑无需绘画流程。可按画风选择原图像素、SVG、绘画或可用生图工具。PNG 可保留原生透明度，去底时显式声明实际底色。连续编辑沿用返回的历史 HEAD；提交状态不明时先核对历史。
+基本编辑无需绘画流程。可按画风选择原图像素、SVG、绘画或可用生图工具。PNG 可保留原生透明度，去底时显式声明实际底色。连续编辑沿用返回的历史 HEAD。
 
 仅当宿主不支持 HTTP MCP 时，才使用 stdio 后备：python "$proxyPath"。代理会读取 PSD2LIVE_MCP_TOKEN，或在 Windows 上读取 PSD2Live 保存的令牌。
 
-修改前备份并合并配置，不要覆盖其他服务器，也不要修改任何宿主的程序文件、内部 RPC 或会话数据库。连接后先列出工具并读取 project_get_state。超时或断线后不要盲目重试写操作；重新连接并用 project_get_state/history_list 核对是否已提交。
+修改前备份并合并配置，不要覆盖其他服务器，也不要修改任何宿主的程序文件、内部 RPC 或会话数据库。连接后先列出工具。超时或断线后不要盲目重试写操作。
 """.trimIndent()
 
 		AppLanguage.JAPANESE -> """
@@ -73,11 +73,11 @@ $geminiJson
 
 その他の Streamable HTTP 対応ホスト：エンドポイント $endpoint と Authorization: Bearer $token ヘッダーを使用します。旧 /sse エンドポイントには変更しません。
 
-ドメインワークフローは MCP に組み込まれているため、追加の Skill を探したりインストールしたりする必要はありません。接続後、必要なトピックを agent_get_workflow で参照します。基本編集に描画手順は不要です。画風に応じて元画像、SVG、描画、画像ツールを選びます。PNG のアルファを保持し、背景除去時だけ実際の背景色を指定します。返された履歴 HEAD を使い、結果が不明な書き込みは履歴を確認します。
+基本編集に描画手順は不要です。画風に応じて元画像、SVG、描画、画像ツールを選びます。PNG のアルファを保持し、背景除去時だけ実際の背景色を指定します。返された履歴 HEAD を使います。
 
 HTTP MCP 非対応のホストでのみ stdio フォールバック python "$proxyPath" を使用します。プロキシは PSD2LIVE_MCP_TOKEN、または Windows 上で PSD2Live が保存したトークンを読み込みます。
 
-変更前に設定をバックアップして既存エントリへマージし、ホストのプログラム、内部 RPC、会話データベースは変更しません。接続後はツールを列挙して project_get_state を読みます。タイムアウトや切断後に書き込みを盲目的に再試行せず、再接続後に project_get_state/history_list でコミット状態を照合します。
+変更前に設定をバックアップして既存エントリへマージし、ホストのプログラム、内部 RPC、会話データベースは変更しません。接続後はツールを列挙します。タイムアウトや切断後に書き込みを盲目的に再試行しないでください。
 """.trimIndent()
 
 		AppLanguage.ENGLISH -> """
@@ -93,11 +93,11 @@ $geminiJson
 
 Other Streamable HTTP hosts: use endpoint $endpoint with the header Authorization: Bearer $token. Do not change it to the legacy /sse endpoint.
 
-Domain workflows are built into the MCP server; do not look for or install separate Skill directories. After connecting, call agent_get_workflow for the topics needed by the task. Basic edits need no painting workflow. Choose source pixels, SVG, painting or available image tools for the requested style; import PNG with native alpha or an explicitly declared matte. Chain returned history heads and inspect uncertain commits before retrying.
+Basic edits need no painting workflow. Choose source pixels, SVG, painting or available image tools for the requested style; import PNG with native alpha or an explicitly declared matte. Chain returned history heads.
 
 Use the stdio fallback, python "$proxyPath", only for hosts without HTTP MCP support. The proxy reads PSD2LIVE_MCP_TOKEN or, on Windows, the token saved by PSD2Live.
 
-Back up and merge configuration without replacing other servers. Do not modify any host's program files, internal RPCs, or conversation database. After connecting, list tools and read project_get_state. Never blindly retry a write after a timeout or disconnect; reconnect and reconcile project_get_state/history_list first.
+Back up and merge configuration without replacing other servers. Do not modify any host's program files, internal RPCs, or conversation database. After connecting, list tools. Never blindly retry a write after a timeout or disconnect.
 """.trimIndent()
 	}
 }
