@@ -1,6 +1,6 @@
 # PSD2Live 用户操作指南 (User Guide)
 
-[English](../en/USER_GUIDE.md) | [日本語](../ja/USER_GUIDE.md)
+[English](../../en/guide/USER_GUIDE.md) | [日本語](../../ja/guide/USER_GUIDE.md)
 
 PSD2Live 提供桌面图形交互界面（GUI）、自动化命令行批处理工具（CLI），以及供外部 AI 宿主使用的本机 MCP 工作区。本指南介绍四个主工作区、独立日志坞、Agent 连接与恢复、视口交互、参数微调和导出流程。
 
@@ -107,7 +107,7 @@ PSD2Live 提供桌面图形交互界面（GUI）、自动化命令行批处理�
 ## 连接 AI Agent / MCP
 
 <p align="center">
-  <img src="../imgs/agent.png" alt="PSD2Live AI Agent 素材生成、接入与多参数渲染流程" />
+  <img src="../../imgs/agent.png" alt="PSD2Live AI Agent 素材生成、接入与多参数渲染流程" />
   <br>
   <em>从模型 View 取证，到宿主原生图片生成、图层回填和多参数姿态验证</em>
 </p>
@@ -120,21 +120,26 @@ PSD2Live 启动时会在 `127.0.0.1:23871/mcp` 提供带 Bearer Token 的 Stream
    - Gemini / Antigravity：把 HTTP JSON 中的 `psd2live` 条目合并到 `~/.gemini/config/mcp_config.json`，刷新 MCP Servers。
    - 其他 HTTP 宿主：使用界面显示的端点，并发送 `Authorization: Bearer <Token>`；不要使用旧 `/sse` 地址。
    - 仅支持 Stdio 的宿主：复制 Stdio JSON，通过 Python 3 运行仓库根目录的 `mcp_proxy.py`。代理读取 `PSD2LIVE_MCP_ENDPOINT`（默认上述地址）、`PSD2LIVE_MCP_TOKEN` 和可选的 `PSD2LIVE_MCP_TIMEOUT`；Windows 上未设置 Token 时会尝试读取 PSD2Live 保存的凭据。
-3. 在“安装 Prompt”页复制完整安装说明。领域工作流已内置于 MCP，无需另装 Skill；连接后先列出工具并调用 `project_get_state`，需要专项指导时调用 `agent_get_workflow`。
+3. 在“安装 Prompt”页复制完整安装说明。连接后先列出工具，再调用 `inspect`（`scope: project`）读取工程与历史 HEAD 摘要。
 
 当前工具覆盖：
 
-| 能力 | 工具 |
+| 能力 | 工具与分支 |
 | :--- | :--- |
-| 工程取证 | `project_get_state`、`project_list_layers`、`project_list_parameters`、`object_get` |
-| 参数与 K 帧 | `parameter_create`、`parameter_update`、`parameter_delete`、`keyform_set`、`keyform_copy`、`keyform_delete`、`rig_k_pose` |
-| 模型 View | `view_render_layer`、`view_render_context`、`view_render_model` |
-| 透明素材与图层 | `asset_import_png`、`layer_add_from_asset`、`layer_soft_delete` |
-| 恢复与长任务 | `history_list`、`history_checkout`、`task_start`、`task_update`、`task_get`、`task_list` |
+| 工程取证 | `inspect`：`scope` 取 `project`/`objects`/`layers`/`parameters`/`physics`；或用 `target:"kind:id"` 读取单个对象的直接参数轴、通道与父级链；另有 `query`、`offset`、`limit`(1–64) |
+| 局部变形 | `deform`：`state` + `changes`(1–128)，每项含 `target`、`key`、`operations`(1–16) 与可选 `selection`；操作为 `translate`/`scale`/`rotate`/`arc`/`curve`/`landmarks`，`selection` 支持 `rect`/`center`+`radius`/`line`+`radius`，另有 `feather`、`hardness` |
+| 参数形与键 | `form`：`state` + `changes`(1–128)，`op` 取 `seed`/`copy`/`set`/`delete`，写通道或 Rotation 形，不写 Mesh 点数组 |
+| 独立 Warp | `rig`：`state`、`name`、`targets`(1–64 个共享同一 Warp 父级的 Mesh)，创建拟合的独立 Warp 并返回新 `target` |
+| 模型 View | `view`：`mode` 取 `model`/`layer`/`context`/`coverage`/`poses`/`motion`/`compare`；`poses` 返回一张标注拼图，`motion` 按时间轴采样，`compare` 跨历史节点比较 |
+| 参数定义 | `parameter`：`mode` 取 `create`/`update` |
+| 透明素材与图层 | `asset`：`mode` 取 `create`/`split`/`reference`/`import`/`register`/`preview`/`add`/`place`/`finalize`/`inspect`/`reprocess`/`remove` |
+| 物理 | `physics`：`mode` 取 `put` |
+| 结构与外观 | `appearance`：`state` + `edits`，一次有序编辑完成改名、显隐与重组 |
+| 保存与历史 | `revision`：`mode` 取 `save`/`checkpoint`/`list`/`restore` |
 
-每次会推进工程 `HEAD` 的编辑操作必须携带当前 `expected_history_head_node_id`，成功后使用返回的新节点作为下一次写入基准。暂存 PNG 与任务事件不会移动 `HEAD`。若请求超时、断线或会话失效，写入结果可能未知；重新连接后先检查 `project_get_state`、`history_list`、任务记录和目标对象，再决定是否重试。Stdio 代理只会自动重试只读调用，不会盲目重放编辑操作。
+每次会推进工程 `HEAD` 的编辑操作必须携带当前 `state`，成功后使用返回的新节点作为下一次写入基准。暂存 PNG 不会移动 `HEAD`。若请求超时、断线或会话失效，写入结果可能未知；重新连接后先调用 `inspect`（`scope: project`）与 `revision`（`list`）检查提交状态和目标对象，再决定是否重试。Stdio 代理只会自动重试只读调用，不会盲目重放编辑操作。
 
-PNG View 保留像素与画布的可逆映射。新素材使用 `reference_id` 和 `asset_register` 定位，旧 `spatial_reference_id` 方式仍可用。绘制方法可选择原图像素、SVG、绘画或可用图像工具。省略 `solid_background` 保留原生透明度，需要去底时显式传实际底色。新接口与限制见 [MCP 编辑指南](MCP_AUTHORING.md)。
+PNG View 保留像素与画布的可逆映射。新素材使用 `reference_id` 和 `asset`（`register`）定位，旧 `spatial_reference_id` 方式仍可用。绘制方法可选择原图像素、SVG、绘画或可用图像工具。省略 `solid_background` 保留原生透明度，需要去底时显式传实际底色。新接口与限制见 [MCP 接口契约](../agent/MCP_AUTHORING.md)。
 
 历史树、任务、空间参考和按 SHA-256 去重的 RGBA 素材会持久化。Windows 默认目录是 `%LOCALAPPDATA%/PSD2Live/agent-workspaces`，可通过 JVM 属性 `psd2live.agent.store` 修改。重新载入路径和文件签名均相同的 PSD 时，会恢复最后的 `HEAD`。
 
@@ -222,7 +227,7 @@ PNG View 保留像素与画布的可逆映射。新素材使用 `reference_id` �
 ## 常见问题与 FAQ
 
 - **Q: Agent 无法连接，或重新连接后返回会话已过期？**
-  A: 确认 PSD2Live 保持运行，并从连接窗口重新复制当前端点和 Token。原生 HTTP 宿主应连接 `/mcp` 而非 `/sse`；Stdio 宿主应使用 `mcp_proxy.py`。会话失效后重新初始化，并在继续写入前读取 `project_get_state` 与 `history_list`。
+  A: 确认 PSD2Live 保持运行，并从连接窗口重新复制当前端点和 Token。原生 HTTP 宿主应连接 `/mcp` 而非 `/sse`；Stdio 宿主应使用 `mcp_proxy.py`。会话失效后重新初始化，并在继续写入前读取 `inspect`（`scope: project`）与 `revision`（`list`）。
 
 - **Q: 恢复旧历史节点会删除后续修改吗？**
   A: 不会。历史节点只追加、不改写。恢复只移动工作区 `HEAD`；从旧节点继续编辑会建立新分支，原来的后续分支仍可查看与恢复。
@@ -260,6 +265,6 @@ PNG View 保留像素与画布的可逆映射。新素材使用 `reference_id` �
 
 Ctrl+O 打开工程，Ctrl+S 保存，Ctrl+Shift+S 另存为。工程是未加密 ZIP，包含原 PSD、图片、所有历史分支、绑定与配置、Agent 任务和工作区界面状态；复制单个文件即可迁移。工程保存与 Cubism 导出互相独立。关闭或切换前会提示处理未保存修改。
 
-每次保存立即增加一个历史节点，包括没有内容变化时。保存失败不会破坏旧文件；保存期间的新编辑仍显示未保存。历史树支持改名、备注、隐藏/重新显示分支、切换版本与继续编辑。隐藏不删除数据。Ctrl+Z 撤回，Ctrl+Y 重做；存在多个后继时，在历史树选择分支。MCP 可调用 `project_save` 和 `history_checkpoint`，模型修改会逐次保留撤回节点。
+每次保存立即增加一个历史节点，包括没有内容变化时。保存失败不会破坏旧文件；保存期间的新编辑仍显示未保存。历史树支持改名、备注、隐藏/重新显示分支、切换版本与继续编辑。隐藏不删除数据。Ctrl+Z 撤回，Ctrl+Y 重做；存在多个后继时，在历史树选择分支。MCP 可调用 `revision`（`save`/`checkpoint`），模型修改会逐次保留撤回节点。
 
-格式细节参见 [工程格式](../PROJECT_FORMAT.md)。
+格式细节参见 [工程格式](../spec/PROJECT_FORMAT.md)。

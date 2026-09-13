@@ -1,6 +1,6 @@
 # Live2D Cubism SDK 配置与使用指南
 
-[English](../en/CUBISM_SDK_SETUP.md) | [日本語](../ja/CUBISM_SDK_SETUP.md)
+[English](../../en/guide/CUBISM_SDK_SETUP.md) | [日本語](../../ja/guide/CUBISM_SDK_SETUP.md)
 
 本指南旨在指引用户在需要时为 PSD2Live 配置官方 Live2D® Cubism® Native SDK 运行时环境，以启用与官方 Cubism 运行时**100% 忠实一致的渲染与动力学行为验证（Consistency & Ground Truth）**。
 

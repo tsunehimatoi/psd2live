@@ -1,6 +1,6 @@
 # PSD2Live PSD Layer Specification
 
-[中文](../zh/PSD_LAYER_SPEC.md) | [日本語](../ja/PSD_LAYER_SPEC.md)
+[中文](../../zh/spec/PSD_LAYER_SPEC.md) | [日本語](../../ja/spec/PSD_LAYER_SPEC.md)
 
 PSD2Live adopts the **See-Through** semantic specification as its baseline naming standard, extended with multilingual English, Chinese, and Japanese aliases. This guide covers layering conventions, naming syntax, automated connected-component splitting, and best practices for artists and riggers.
 

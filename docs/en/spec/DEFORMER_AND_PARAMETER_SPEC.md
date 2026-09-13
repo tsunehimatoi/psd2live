@@ -1,6 +1,6 @@
 # Deformer Hierarchy, Mathematical Formulations, and Parameter Specification
 
-[中文](../zh/DEFORMER_AND_PARAMETER_SPEC.md) | [日本語](../ja/DEFORMER_AND_PARAMETER_SPEC.md)
+[中文](../../zh/spec/DEFORMER_AND_PARAMETER_SPEC.md) | [日本語](../../ja/spec/DEFORMER_AND_PARAMETER_SPEC.md)
 
 This specification documents the topological deformer hierarchy, 9-pose facial lattice mathematics, secondary feature warps, multi-pendulum dynamics, and automated geometric integrity gates implemented in PSD2Live.
 

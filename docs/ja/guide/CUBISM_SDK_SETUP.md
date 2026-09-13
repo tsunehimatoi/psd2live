@@ -1,6 +1,6 @@
 # Live2D Cubism SDK 設定・利用ガイド
 
-[English](../en/CUBISM_SDK_SETUP.md) | [中文](../zh/CUBISM_SDK_SETUP.md)
+[English](../../en/guide/CUBISM_SDK_SETUP.md) | [中文](../../zh/guide/CUBISM_SDK_SETUP.md)
 
 本ガイドは、PSD2Live で公式 Live2D® Cubism® Native SDK ランタイム環境を設定し、公式 Cubism ランタイムと**100% 忠実な描画および物理挙動の一致性検証（Consistency & Ground Truth）**を有効化する手順を説明します。
 

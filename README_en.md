@@ -17,14 +17,20 @@ PSD2Live is an automated Live2D model generation pipeline and desktop applicatio
 
 ## Documentation Index
 
-| Document | Description |
-| :--- | :--- |
-| [User Guide (docs/en/USER_GUIDE.md)](docs/en/USER_GUIDE.md) | Desktop GUI, version-history tree, independent log dock, Agent/MCP connection, shortcuts, and CLI reference |
-| [Agent / MCP Product & Technical Design (Chinese)](docs/zh/AGENT_ARCHITECTURE.md) | Implemented MCP tools, persistent workspace/history model, image workflow, and delivery roadmap |
-| [Live2D SDK Setup Guide (docs/en/CUBISM_SDK_SETUP.md)](docs/en/CUBISM_SDK_SETUP.md) | Official Native SDK license policy, shader extraction, and hardware-accelerated preview setup |
-| [PSD Layer Specification (docs/en/PSD_LAYER_SPEC.md)](docs/en/PSD_LAYER_SPEC.md) | 31 semantic tags, side resolution rules, connected-component splitting, and layering guidelines |
-| [Deformer & Math Specification (docs/en/DEFORMER_AND_PARAMETER_SPEC.md)](docs/en/DEFORMER_AND_PARAMETER_SPEC.md) | Deformer tree topology, 9-pose facial lattice math, C1 roll curve, feature warps, and physics |
-| [Implementation Comparison (docs/en/IMPLEMENTATION_COMPARISON.md)](docs/en/IMPLEMENTATION_COMPARISON.md) | Technical comparison across 16 pipeline stages, coordinate invariants, and integrity verification |
+Documents are organized by **category × language** (`docs/<language>/<category>/`). See [`docs/README.md`](docs/README.md) for the full index and language availability.
+
+| Category | Document | Description |
+| :--- | :--- | :--- |
+| Guide | [User Guide](docs/en/guide/USER_GUIDE.md) | Desktop GUI, version-history tree, independent log dock, Agent/MCP connection, shortcuts, and CLI reference |
+| Guide | [Live2D SDK Setup Guide](docs/en/guide/CUBISM_SDK_SETUP.md) | Official Native SDK license policy, shader extraction, and hardware-accelerated preview setup |
+| Spec | [PSD Layer Specification](docs/en/spec/PSD_LAYER_SPEC.md) | 31 semantic tags, side resolution rules, connected-component splitting, and layering guidelines |
+| Spec | [Deformer & Math Specification](docs/en/spec/DEFORMER_AND_PARAMETER_SPEC.md) | Deformer tree topology, 9-pose facial lattice math, C1 roll curve, feature warps, and physics |
+| Spec | [Project Format (version 1)](docs/en/spec/PROJECT_FORMAT.md) | `.psd2live` archive layout, save/recovery semantics, validation rules, and UI/MCP entry points |
+| Spec | [Implementation Comparison](docs/en/spec/IMPLEMENTATION_COMPARISON.md) | Technical comparison across 16 pipeline stages, coordinate invariants, and integrity verification |
+| Agent | [MCP Interface Contract (Chinese)](docs/zh/agent/MCP_AUTHORING.md) | Currently callable MCP tools, parameter and return-value constraints, asset import, and knowledge entry points |
+| Agent | [Agent Design (Chinese)](docs/zh/agent/AGENT_DESIGN.md) | Product boundaries, hard constraints, tool convergence, continuous deformation fields, cost control, and staged acceptance |
+
+> The `agent` category is currently Chinese-only. Chinese additionally provides a [texture upscaling guide](docs/zh/guide/TEXTURE_UPSCALE.md) and a [summary of the project format](docs/zh/spec/PROJECT_FORMAT.md).
 
 ---
 
@@ -42,7 +48,7 @@ PSD2Live is an automated Live2D model generation pipeline and desktop applicatio
 - **Deformer (Warp) Generation**:
   - **Eye & Mouth Deformation**: Shared projective plane constraints for eyes and brows, iris counter-translation against perspective compression, and eyelash alpha-weighted centerline tracking for smooth closed U-curves; centripetal compression of full-open mouth toward central seam with auto-clipped teeth and tongue.
   - **Nine-Pose Lattice Construction**: `AngleX (±45°) × AngleY (±30°)` 8×8 facial lattice combining C1-continuous horizontal roll (near-side reveal, broad plateau preservation, far-side compression), vertical V/^ pitch curvature, and diagonal $C_{xy} = \text{yaw} \times \text{pitch}$ cross-terms.
-- **Animation**: Automated generation of a 6-second seamless looping `idle.motion3.json` covering breathing, subtle head/body sway, and natural eye blinks; desktop GUI supports optional integration with official Cubism 5-r.5 SDK native offscreen OpenGL rendering for **100% official rendering & physical dynamics parity (Ground Truth)** (this project does NOT include or redistribute proprietary SDK binaries, see [SDK Setup Guide](docs/en/CUBISM_SDK_SETUP.md); automatically falls back to pure CPU high-precision software rasterization when SDK is absent) with live mouse gaze tracking (Mouse Look).
+- **Animation**: Automated generation of a 6-second seamless looping `idle.motion3.json` covering breathing, subtle head/body sway, and natural eye blinks; desktop GUI supports optional integration with official Cubism 5-r.5 SDK native offscreen OpenGL rendering for **100% official rendering & physical dynamics parity (Ground Truth)** (this project does NOT include or redistribute proprietary SDK binaries, see [SDK Setup Guide](docs/en/guide/CUBISM_SDK_SETUP.md); automatically falls back to pure CPU high-precision software rasterization when SDK is absent) with live mouse gaze tracking (Mouse Look).
 - **Physics**: Decoupled front and back hair following the head container with root-pinned, $v^3$ cubic tip sway multi-pendulum dynamics; eyelid closure velocity driving second-order damped harmonic oscillators for pupil jelly squash/stretch dynamics (`ParamEyeBallForm`).
 - **Editable Agent / MCP Workspace**: A bearer-authenticated local Streamable HTTP MCP lets ChatGPT/Codex, Gemini/Antigravity, and other MCP hosts inspect the project, render spatially reversible PNG Views, import transparent assets, manage parameters, and edit multidimensional keyforms on meshes, warp/rotation deformers, parts, and glue. Every mutation enters a persistent, append-only branch history with resumable task checkpoints.
 - **Project & Runtime Export**: Synchronized one-click export of editable Live2D Cubism Modeler 5 `.cmo3` projects and `.moc3` runtime families (`.model3.json`, `.cdi3.json`, `physics3.json`, `idle.motion3.json`, and texture atlases); enforced three-stage geometric integrity gates (neutral pose fidelity, extreme angle bounds, and warp lattice mirror symmetry).
@@ -89,7 +95,7 @@ Results depend on the model, image generator, Agent harness, prompt, and the qua
 ### Prerequisites
 - **Java Runtime**: Windows packages downloaded from Releases include a runtime. JDK 21 or higher is required only when building or launching from source with Gradle.
 - **Operating System**: Windows 10/11 x64 (supports 100% pixel-perfect official rendering & physics parity when configured with official Native SDK), Linux / macOS (software rasterization)
-- **Live2D Official SDK Notice**: Source code and release packages **do NOT include or redistribute** official Live2D proprietary SDK binaries. Full pipeline generation and CPU preview work 100% out of the box. To enable official runtime consistency verification on Windows, please refer to the [Live2D SDK Setup Guide](docs/en/CUBISM_SDK_SETUP.md).
+- **Live2D Official SDK Notice**: Source code and release packages **do NOT include or redistribute** official Live2D proprietary SDK binaries. Full pipeline generation and CPU preview work 100% out of the box. To enable official runtime consistency verification on Windows, please refer to the [Live2D SDK Setup Guide](docs/en/guide/CUBISM_SDK_SETUP.md).
 
 ### Launching the Desktop GUI
 
@@ -121,11 +127,11 @@ Results depend on the model, image generator, Agent harness, prompt, and the qua
 1. Keep the PSD2Live desktop app running and open **Tools → MCP → MCP Connection & Prompts…**.
 2. Copy the matching configuration: HTTP TOML for ChatGPT desktop/Codex, or HTTP JSON for Gemini/Antigravity. Other Streamable HTTP hosts use the displayed endpoint and `Authorization: Bearer <token>` header; do not change it to the legacy `/sse` endpoint.
 3. Use the Stdio JSON fallback only for hosts without HTTP MCP support. It runs the repository-root `mcp_proxy.py` with Python 3 and reads `PSD2LIVE_MCP_TOKEN`; on Windows it can also read the token saved by PSD2Live.
-4. Domain workflows are built into the MCP server; no separate Skill installation is needed. List tools and call `project_get_state` first, then use `agent_get_workflow` when focused guidance is useful.
+4. List tools after connecting, then call `inspect` (`scope: project`) for the project and history HEAD summary.
 
-The MCP currently exposes project/layer/parameter reads, object and keyform editing, parameter CRUD, model-data PNG Views, transparent-asset import, soft deletion, resumable tasks, and append-only branch history. Every project edit that advances `HEAD` must use the latest `expected_history_head_node_id`. After a timeout or disconnect, inspect `project_get_state` and `history_list` before deciding whether to retry.
+The MCP currently exposes project/layer/parameter reads, object and keyform editing, parameter CRUD, model-data PNG Views, transparent-asset import, soft deletion, and append-only branch history. Every project edit that advances `HEAD` must use the latest `state`. After a timeout or disconnect, call `inspect` (`scope: project`) and `revision` (`list`) before deciding whether to retry.
 
-PSD2Live provides model Views, spatial mapping and PNG import. Artwork can use original pixels, SVG, painting or an available image editor according to style and user preference. Native PNG alpha is retained when solid_background is omitted. Optional knowledge is available through agent_get_workflow (overview, geometry, hair, variants, face, assets). See [MCP authoring](docs/zh/MCP_AUTHORING.md).
+PSD2Live provides model Views, spatial mapping and PNG import. Artwork can use original pixels, SVG, painting or an available image editor according to style and user preference. Native PNG alpha is retained when solid_background is omitted. See the [MCP interface contract](docs/zh/agent/MCP_AUTHORING.md).
 
 ---
 
@@ -163,7 +169,7 @@ PSD2Live provides model Views, spatial mapping and PNG import. Artwork can use o
 > - **Initial head tilt supported**: Initial character head tilt is permitted; the pipeline automatically estimates this initial angle and uses it as the neutral origin to calibrate rotation limits.
 > - **Body must remain upright (excessive tilt unsupported)**: Kinematics and breathing rely on a vertical canvas frame; severely tilted or reclining poses are unsupported.
 > 
-> See [PSD Layer Specification (docs/en/PSD_LAYER_SPEC.md)](docs/en/PSD_LAYER_SPEC.md) for full rules.
+> See the [PSD Layer Specification](docs/en/spec/PSD_LAYER_SPEC.md) for full rules.
 
 | Component | Recommended English | Aliases (ZH / JA) | Behavior |
 | :--- | :--- | :--- | :--- |

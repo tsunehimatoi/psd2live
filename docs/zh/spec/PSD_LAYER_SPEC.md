@@ -1,6 +1,6 @@
 # PSD2Live PSD 图层规范与命名指南 (PSD Layer Specification)
 
-[English](../en/PSD_LAYER_SPEC.md) | [日本語](../ja/PSD_LAYER_SPEC.md)
+[English](../../en/spec/PSD_LAYER_SPEC.md) | [日本語](../../ja/spec/PSD_LAYER_SPEC.md)
 
 PSD2Live 采用 **See-Through** 语义规范作为标准命名风格，并深度兼容常见的中文、日文部件别名。本指南为画师（Illustrators）与模型师（Modelers）提供分层标准、命名约定、自动连通域拆分规则以及最佳实践。
 

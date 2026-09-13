@@ -1,6 +1,6 @@
-﻿# 実装比較と技術的設計決定
+# 実装比較と技術的設計決定
 
-[中文](../zh/IMPLEMENTATION_COMPARISON.md) | [English](../en/IMPLEMENTATION_COMPARISON.md)
+[中文](../../zh/spec/IMPLEMENTATION_COMPARISON.md) | [English](../../en/spec/IMPLEMENTATION_COMPARISON.md)
 
 本ドキュメントでは、PSD2Live の各処理段階における技術選定、アルゴリズム設計、およびアーキテクチャ上の決定事項について説明します。
 

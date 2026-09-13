@@ -1,6 +1,6 @@
 # PSD2Live PSD レイヤー仕様および命名規則 (PSD Layer Specification)
 
-[中文](../zh/PSD_LAYER_SPEC.md) | [English](../en/PSD_LAYER_SPEC.md)
+[中文](../../zh/spec/PSD_LAYER_SPEC.md) | [English](../../en/spec/PSD_LAYER_SPEC.md)
 
 PSD2Live は **See-Through** セマンティック仕様を標準命名規則として採用し、英語・日本語・中国語の各種別名に対応しています。本ガイドでは、イラストレーターおよびモデラー向けにレイヤー構造、命名構文、自動左右分離機能、およびベストプラクティスを解説します。
 

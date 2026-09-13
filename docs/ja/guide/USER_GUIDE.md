@@ -1,6 +1,6 @@
 # PSD2Live ユーザー操作ガイド (User Guide)
 
-[中文](../zh/USER_GUIDE.md) | [English](../en/USER_GUIDE.md)
+[中文](../../zh/guide/USER_GUIDE.md) | [English](../../en/guide/USER_GUIDE.md)
 
 PSD2Live は、デスクトップ GUI、自動 CLI バッチ処理、および外部 AI ホスト向けのローカル MCP ワークスペースを提供します。本ガイドでは、4 つのメイン画面、独立ログドック、Agent の接続と復旧、キャンバス操作、パラメータ調整、書き出し手順を説明します。
 
@@ -104,7 +104,7 @@ PSD2Live は、デスクトップ GUI、自動 CLI バッチ処理、および�
 ## AI Agent / MCP ホストへの接続
 
 <p align="center">
-  <img src="../imgs/agent.png" alt="PSD2Live AI Agent の素材生成・統合・複数パラメータ描画ワークフロー" />
+  <img src="../../imgs/agent.png" alt="PSD2Live AI Agent の素材生成・統合・複数パラメータ描画ワークフロー" />
   <br>
   <em>モデル View の確認、ホストネイティブ画像生成、レイヤー追加、複数姿勢の検証</em>
 </p>
@@ -117,21 +117,26 @@ PSD2Live は起動時に、Bearer Token で保護された Streamable HTTP MCP �
    - Gemini／Antigravity: HTTP JSON の `psd2live` エントリを `~/.gemini/config/mcp_config.json` へマージし、MCP Servers を更新します。
    - その他の HTTP ホスト: 表示されたエンドポイントと `Authorization: Bearer <token>` を使用します。旧 `/sse` へ変更しないでください。
    - Stdio 専用ホスト: Stdio JSON をコピーし、Python 3 でリポジトリ直下の `mcp_proxy.py` を起動します。ブリッジは `PSD2LIVE_MCP_ENDPOINT`（既定は上記アドレス）、`PSD2LIVE_MCP_TOKEN`、任意の `PSD2LIVE_MCP_TIMEOUT` を読みます。Windows では PSD2Live が保存した資格情報へフォールバックできます。
-3. 「導入プロンプト」には完全な設定手順があります。ドメインワークフローは MCP に組み込まれているため、別途 Skill をインストールする必要はありません。接続後はツールを列挙して最初に `project_get_state` を呼び出し、必要に応じて `agent_get_workflow` を使用します。
+3. 「導入プロンプト」には完全な設定手順があります。接続後はツールを列挙し、`inspect`（`scope: project`）でプロジェクトと履歴 HEAD の概要を読み取ります。
 
 現在のツール：
 
-| 機能 | ツール |
+| 機能 | ツールと分岐 |
 | :--- | :--- |
-| プロジェクト確認 | `project_get_state`、`project_list_layers`、`project_list_parameters`、`object_get` |
-| パラメータとキーフォーム | `parameter_create`、`parameter_update`、`parameter_delete`、`keyform_set`、`keyform_copy`、`keyform_delete`、`rig_k_pose` |
-| モデル View | `view_render_layer`、`view_render_context`、`view_render_model` |
-| 透明素材とレイヤー | `asset_import_png`、`layer_add_from_asset`、`layer_soft_delete` |
-| 復旧と長時間タスク | `history_list`、`history_checkout`、`task_start`、`task_update`、`task_get`、`task_list` |
+| プロジェクト確認 | `inspect`：`scope` は `project`/`objects`/`layers`/`parameters`/`physics`。`target:"kind:id"` で単一オブジェクトの直接パラメータ軸、チャンネル、親チェーンを取得。ほかに `query`、`offset`、`limit`(1–64) |
+| 局所変形 | `deform`：`state` + `changes`(1–128)。各項目は `target`、`key`、`operations`(1–16) と任意の `selection`。操作は `translate`/`scale`/`rotate`/`arc`/`curve`/`landmarks`、`selection` は `rect`/`center`+`radius`/`line`+`radius` に対応し、`feather` と `hardness` も指定できます |
+| パラメータ形とキー | `form`：`state` + `changes`(1–128)、`op` は `seed`/`copy`/`set`/`delete`。チャンネルまたは Rotation 形を書き込み、Mesh の点配列は書き込みません |
+| 独立 Warp | `rig`：`state`、`name`、`targets`（同じ Warp 親を共有する 1–64 個の Mesh）。フィット済みの独立 Warp を作成し、新しい `target` を返します |
+| モデル View | `view`：`mode` は `model`/`layer`/`context`/`coverage`/`poses`/`motion`/`compare`。`poses` は注釈付きの 1 枚のシートを返し、`motion` はタイムラインをサンプリングし、`compare` は履歴ノード間を比較します |
+| パラメータ定義 | `parameter`：`mode` は `create`/`update` |
+| 透明素材とレイヤー | `asset`：`mode` は `create`/`split`/`reference`/`import`/`register`/`preview`/`add`/`place`/`finalize`/`inspect`/`reprocess`/`remove` |
+| 物理 | `physics`：`mode` は `put` |
+| 構造と外観 | `appearance`：`state` + `edits`。1 回の順序付き編集で改名、表示・非表示、再親子化を行います |
+| 保存と履歴 | `revision`：`mode` は `save`/`checkpoint`/`list`/`restore` |
 
-プロジェクトの `HEAD` を進める編集には現在の `expected_history_head_node_id` が必要で、成功後に返る新ノードを次の編集の基準にします。PNG の一時保存とタスクイベントの追記は `HEAD` を移動しません。タイムアウト、切断、セッション失効後はコミット状態が不明な場合があります。再接続し、`project_get_state`、`history_list`、タスク記録、対象オブジェクトを確認してから再試行を判断してください。Stdio ブリッジが自動再試行するのは安全な読み取りだけで、プロジェクト編集は再実行しません。
+プロジェクトの `HEAD` を進める編集には現在の `state` が必要で、成功後に返る新ノードを次の編集の基準にします。PNG の一時保存は `HEAD` を移動しません。タイムアウト、切断、セッション失効後はコミット状態が不明な場合があります。再接続し、`inspect`（`scope: project`）と `revision`（`list`）でコミット状態と対象オブジェクトを確認してから再試行を判断してください。Stdio ブリッジが自動再試行するのは安全な読み取りだけで、プロジェクト編集は再実行しません。
 
-PNG View はピクセルとキャンバスの可逆マッピングを保持します。素材は `reference_id` と `asset_register` で配置でき、従来の `spatial_reference_id` も使用できます。元画像、SVG、描画、画像ツールを選択でき、`solid_background` を省略すると元のアルファを保持します。背景除去時だけ実際の色を指定してください。[MCP 編集ガイド](../zh/MCP_AUTHORING.md) も参照してください。
+PNG View はピクセルとキャンバスの可逆マッピングを保持します。素材は `reference_id` と `asset`（`register`）で配置でき、従来の `spatial_reference_id` も使用できます。元画像、SVG、描画、画像ツールを選択でき、`solid_background` を省略すると元のアルファを保持します。背景除去時だけ実際の色を指定してください。[MCP インターフェース契約](../../zh/agent/MCP_AUTHORING.md) も参照してください。
 
 履歴、タスク、空間参照、SHA-256 で重複排除された RGBA 素材は永続化されます。Windows の既定保存先は `%LOCALAPPDATA%/PSD2Live/agent-workspaces` で、JVM プロパティ `psd2live.agent.store` で変更できます。同じ正規化パスとファイル署名の PSD を再読み込みすると最後の `HEAD` が復元されます。
 
@@ -216,7 +221,7 @@ PNG View はピクセルとキャンバスの可逆マッピングを保持し�
 ## トラブルシューティングと FAQ
 
 - **Q: Agent が接続できない、または再接続時にセッション失効と表示される**
-  A: PSD2Live を起動したまま、接続画面から現在のエンドポイントと Token を再コピーしてください。ネイティブ HTTP ホストは `/sse` ではなく `/mcp`、Stdio ホストは `mcp_proxy.py` を使用します。再初期化後、変更を続ける前に `project_get_state` と `history_list` を読みます。
+  A: PSD2Live を起動したまま、接続画面から現在のエンドポイントと Token を再コピーしてください。ネイティブ HTTP ホストは `/sse` ではなく `/mcp`、Stdio ホストは `mcp_proxy.py` を使用します。再初期化後、変更を続ける前に `inspect`（`scope: project`）と `revision`（`list`）を読みます。
 - **Q: 古い履歴ノードへ復元すると、その後の編集は削除されますか？**
   A: 削除されません。ノードは追記専用で不変です。復元で移動するのはワークスペースの `HEAD` だけで、そのノードから編集すると元の将来を保持したまま新しい分岐が作られます。
 
@@ -245,4 +250,4 @@ PSD の読み込み（Ctrl+Shift+O）後、任意のフォルダー、PSD と同
 
 Ctrl+O で開く、Ctrl+S で保存、Ctrl+Shift+S で名前を付けて保存します。暗号化しない ZIP に元の PSD、画像、すべての履歴分岐、リグ設定、Agent の記録、画面の状態を含めます。ファイル一つで移動でき、Cubism の書き出しとは独立しています。終了や切り替え時には未保存の変更を確認します。
 
-変更がない場合も保存の開始時に履歴ノードを追加します。保存に失敗しても以前のファイルを保持し、保存中の編集は未保存として残ります。履歴 UI で名前、メモ、分岐の表示・非表示、バージョン切り替えを操作できます。非表示でデータは削除されません。Ctrl+Z で元に戻し、Ctrl+Y でやり直すか分岐を選びます。MCP は `project_save` と `history_checkpoint` を提供します。[形式の仕様](../PROJECT_FORMAT.md)も参照してください。
+変更がない場合も保存の開始時に履歴ノードを追加します。保存に失敗しても以前のファイルを保持し、保存中の編集は未保存として残ります。履歴 UI で名前、メモ、分岐の表示・非表示、バージョン切り替えを操作できます。非表示でデータは削除されません。Ctrl+Z で元に戻し、Ctrl+Y でやり直すか分岐を選びます。MCP は `revision`（`save`/`checkpoint`）を提供します。[形式の仕様（英語）](../../en/spec/PROJECT_FORMAT.md)も参照してください。

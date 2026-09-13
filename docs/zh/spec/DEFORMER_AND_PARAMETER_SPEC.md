@@ -1,6 +1,6 @@
 # PSD2Live 变形器层级、算法数学原理与参数系统规范 (Deformer & Math Specification)
 
-[English](../en/DEFORMER_AND_PARAMETER_SPEC.md) | [日本語](../ja/DEFORMER_AND_PARAMETER_SPEC.md)
+[English](../../en/spec/DEFORMER_AND_PARAMETER_SPEC.md) | [日本語](../../ja/spec/DEFORMER_AND_PARAMETER_SPEC.md)
 
 本文档面向对 Live2D 绑定架构、形变插值算法与物理动力学感兴趣的开发者和技术美术（Technical Artists），详细阐述 PSD2Live 的变形器拓扑树、九轴面部经纬网数学模型、五官二维修形算法、物理摆锤系统以及完整性自检规范。
 

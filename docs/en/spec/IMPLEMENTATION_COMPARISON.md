@@ -1,6 +1,6 @@
-﻿# Technical Implementation and Design Comparison
+# Technical Implementation and Design Comparison
 
-[中文](../zh/IMPLEMENTATION_COMPARISON.md) | [日本語](../ja/IMPLEMENTATION_COMPARISON.md)
+[中文](../../zh/spec/IMPLEMENTATION_COMPARISON.md) | [日本語](../../ja/spec/IMPLEMENTATION_COMPARISON.md)
 
 This document outlines the architectural decisions, mathematical algorithms, and pipeline stage comparisons for PSD2Live.
 

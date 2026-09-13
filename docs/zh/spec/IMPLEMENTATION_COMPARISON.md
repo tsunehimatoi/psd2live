@@ -1,6 +1,6 @@
-﻿# 参考实现与 PSD2Live 技术方案对比
+# 参考实现与 PSD2Live 技术方案对比
 
-[English](../en/IMPLEMENTATION_COMPARISON.md) | [日本語](../ja/IMPLEMENTATION_COMPARISON.md)
+[English](../../en/spec/IMPLEMENTATION_COMPARISON.md) | [日本語](../../ja/spec/IMPLEMENTATION_COMPARISON.md)
 
 本文阐述 PSD2Live 在各核心处理阶段的技术选型、算法设计与架构决策。
 

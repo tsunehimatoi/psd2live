@@ -17,14 +17,20 @@ PSD2Live は、自動化された Live2D モデル生成パイプラインおよ
 
 ### ドキュメント一覧
 
-| ドキュメント | 概要 |
-| :--- | :--- |
-| [ユーザー操作ガイド (docs/ja/USER_GUIDE.md)](docs/ja/USER_GUIDE.md) | デスクトップ GUI、バージョン履歴ツリー、独立ログドック、Agent / MCP 接続、ショートカットおよび CLI リファレンス |
-| [Agent / MCP 製品・技術設計（中国語）](docs/zh/AGENT_ARCHITECTURE.md) | 実装済み MCP ツール、永続ワークスペース／履歴、画像ワークフロー、ロードマップ |
-| [Live2D SDK 設定・利用ガイド (docs/ja/CUBISM_SDK_SETUP.md)](docs/ja/CUBISM_SDK_SETUP.md) | 公式 Native SDK ライセンス方針、シェーダー抽出、およびハードウェア高速化描画の設定手順 |
-| [PSD レイヤー仕様および命名規則 (docs/ja/PSD_LAYER_SPEC.md)](docs/ja/PSD_LAYER_SPEC.md) | 31 種のセマンティックタグ、左右判定規則、連結成分自動分離、およびパーツ別レイヤー設計 |
-| [デフォーマ階層・数理モデル・パラメータ仕様書 (docs/ja/DEFORMER_AND_PARAMETER_SPEC.md)](docs/ja/DEFORMER_AND_PARAMETER_SPEC.md) | デフォーマツリー構造、顔面 9 軸数理モデル、C1 連続曲線、パーツ別変形および物理演算仕様 |
-| [実装比較と技術的設計決定 (docs/ja/IMPLEMENTATION_COMPARISON.md)](docs/ja/IMPLEMENTATION_COMPARISON.md) | 16 段階の処理別技術選定、座標系不変条件、および自動幾何整合性検証 |
+ドキュメントは **用途カテゴリ × 言語**（`docs/<言語>/<カテゴリ>/`）で整理されています。全一覧と言語対応状況は [`docs/README.md`](docs/README.md) を参照してください。
+
+| カテゴリ | ドキュメント | 概要 |
+| :--- | :--- | :--- |
+| ガイド | [ユーザー操作ガイド](docs/ja/guide/USER_GUIDE.md) | デスクトップ GUI、バージョン履歴ツリー、独立ログドック、Agent / MCP 接続、ショートカットおよび CLI リファレンス |
+| ガイド | [Live2D SDK 設定・利用ガイド](docs/ja/guide/CUBISM_SDK_SETUP.md) | 公式 Native SDK ライセンス方針、シェーダー抽出、およびハードウェア高速化描画の設定手順 |
+| 仕様 | [PSD レイヤー仕様および命名規則](docs/ja/spec/PSD_LAYER_SPEC.md) | 31 種のセマンティックタグ、左右判定規則、連結成分自動分離、およびパーツ別レイヤー設計 |
+| 仕様 | [デフォーマ階層・数理モデル・パラメータ仕様書](docs/ja/spec/DEFORMER_AND_PARAMETER_SPEC.md) | デフォーマツリー構造、顔面 9 軸数理モデル、C1 連続曲線、パーツ別変形および物理演算仕様 |
+| 仕様 | [プロジェクトファイル形式（英語）](docs/en/spec/PROJECT_FORMAT.md) | `.psd2live` アーカイブ構成、保存・復元セマンティクス、検証規則、UI / MCP エントリーポイント |
+| 仕様 | [実装比較と技術的設計決定](docs/ja/spec/IMPLEMENTATION_COMPARISON.md) | 16 段階の処理別技術選定、座標系不変条件、および自動幾何整合性検証 |
+| Agent | [MCP インターフェース契約（中国語）](docs/zh/agent/MCP_AUTHORING.md) | 現在呼び出し可能な MCP ツール、パラメータと戻り値の制約、素材取り込み、ナレッジ入口 |
+| Agent | [Agent 設計（中国語）](docs/zh/agent/AGENT_DESIGN.md) | 製品境界とハード制約、ツール収束、連続変形場、コスト管理、段階的な受け入れ基準 |
+
+> `agent` カテゴリは現在中国語のみです。中国語ではほかに[テクスチャ高解像度化ガイド](docs/zh/guide/TEXTURE_UPSCALE.md)と[プロジェクト形式の要約](docs/zh/spec/PROJECT_FORMAT.md)が利用できます。
 
 ---
 
@@ -42,7 +48,7 @@ PSD2Live は、自動化された Live2D モデル生成パイプラインおよ
 - **デフォーマ (Warp) 生成**:
   - **目／口の変形**: 目・眉の透視拘束面、瞳の奥側位置補正、まつ毛の Alpha 重心追従による滑らかな閉眼 U 字曲線；口の最大開口状態から中心線への向心閉口補間、歯・舌パーツの自動クリッピング。
   - **9 軸格子の構築**: `AngleX (±45°) × AngleY (±30°)` 8×8 顔面格子、C1 連続水平 Roll 曲線（手前展開、幅維持プラトー、奥側透視圧縮）、垂直 V/^ 仰俯曲率、斜め 4 隅の $C_{xy} = \text{yaw} \times \text{pitch}$ 相互干渉補正。
-- **アニメーション**: 呼吸・微小な頭部/身体の揺れ・自然なまばたきを含む 6 秒間のシームレスループ `idle.motion3.json` を自動生成；デスクトップ GUI では公式 Cubism 5-r.5 SDK ネイティブ描画との連携による **100% 公式描画・物理挙動の一致性検証（Ground Truth）** に対応（本プロジェクトには公式専有 SDK バイナリは含まれず配布も行いません。詳細は [SDK設定ガイド](docs/ja/CUBISM_SDK_SETUP.md) を参照。未設定時は純 CPU 高精度ソフトウェアラスタライザーへ自動フォールバックします）；リアルタイム視線追従（Mouse Look）に対応。
+- **アニメーション**: 呼吸・微小な頭部/身体の揺れ・自然なまばたきを含む 6 秒間のシームレスループ `idle.motion3.json` を自動生成；デスクトップ GUI では公式 Cubism 5-r.5 SDK ネイティブ描画との連携による **100% 公式描画・物理挙動の一致性検証（Ground Truth）** に対応（本プロジェクトには公式専有 SDK バイナリは含まれず配布も行いません。詳細は [SDK 設定ガイド](docs/ja/guide/CUBISM_SDK_SETUP.md) を参照。未設定時は純 CPU 高精度ソフトウェアラスタライザーへ自動フォールバックします）；リアルタイム視線追従（Mouse Look）に対応。
 - **物理演算**: 前髪・後ろ髪を頭部追従デフォーマへ独立配置し、毛根固定と $v^3$ 立方先端揺れ物理を適用；まばたき速度連動の 2 階減衰振動子による瞳ぷるぷる物理（`ParamEyeBallForm`）。
 - **編集可能な Agent / MCP ワークスペース**: Bearer Token で保護されたローカル Streamable HTTP MCP により、ChatGPT/Codex、Gemini/Antigravity、その他の MCP ホストからプロジェクトを調査し、可逆なキャンバス座標付き PNG View の取得、透明素材の追加、パラメータ管理、ArtMesh・Warp/Rotation デフォーマ・Part・Glue の多次元キーフォーム編集を行えます。全変更は再開可能なタスク記録と、永続化された追記専用の分岐履歴へ保存されます。
 - **プロジェクト／ランタイム書き出し**: Live2D Cubism Modeler 5 で編集可能な `.cmo3` プロジェクトおよび実行時 `.moc3` ファイル群（`.model3.json`、`.cdi3.json`、`physics3.json`、`idle.motion3.json`、テクスチャアトラス）をワンクリックで同時出力；中立姿勢・極限姿勢・対称性の 3 段階自動検証ゲートを内包。
@@ -89,7 +95,7 @@ PSD2Live は、自動化された Live2D モデル生成パイプラインおよ
 ### 動作環境
 - **Java Runtime**: Releases からダウンロードする Windows 配布パッケージにはランタイムが含まれます。JDK 21 以降が必要なのは、Gradle でソースからビルドまたは起動する場合のみです。
 - **OS**: Windows 10/11 x64（公式 SDK 設定時に公式ランタイムと 100% ピクセル単位の描画・物理一致性検証に対応）、Linux / macOS（内蔵 CPU ソフトウェア描画）
-- **公式 SDK についての注意事項**: 本プロジェクトのソースコードおよび配布物には Live2D 公式の専有 SDK バイナリは**含まれず、再配布も行いません**。内蔵ソフトウェア描画および全モデル書き出し機能は SDK なしで 100% そのまま動作します。公式ランタイムとの厳格な一致性検証を行う場合は、[Live2D SDK 設定ガイド](docs/ja/CUBISM_SDK_SETUP.md) をご参照ください。
+- **公式 SDK についての注意事項**: 本プロジェクトのソースコードおよび配布物には Live2D 公式の専有 SDK バイナリは**含まれず、再配布も行いません**。内蔵ソフトウェア描画および全モデル書き出し機能は SDK なしで 100% そのまま動作します。公式ランタイムとの厳格な一致性検証を行う場合は、[Live2D SDK 設定ガイド](docs/ja/guide/CUBISM_SDK_SETUP.md) をご参照ください。
 
 ### デスクトップ GUI の起動
 
@@ -121,11 +127,11 @@ PSD2Live は、自動化された Live2D モデル生成パイプラインおよ
 1. PSD2Live デスクトップアプリを起動したまま、**ツール → MCP → MCP 接続とプロンプト…** を開きます。
 2. ChatGPT デスクトップ／Codex では HTTP TOML、Gemini／Antigravity では HTTP JSON をコピーします。その他の Streamable HTTP 対応ホストでは、表示されたエンドポイントと `Authorization: Bearer <token>` ヘッダーを使用し、旧 `/sse` へ変更しないでください。
 3. HTTP MCP 非対応ホストでのみ Stdio JSON を使用します。Python 3 でリポジトリ直下の `mcp_proxy.py` を起動し、`PSD2LIVE_MCP_TOKEN` を読み取ります。Windows では PSD2Live が保存した Token も利用できます。
-4. ドメインワークフローは MCP に組み込まれているため、別途 Skill をインストールする必要はありません。接続後はツール一覧を取得して最初に `project_get_state` を呼び出し、必要に応じて `agent_get_workflow` を使用します。
+4. 接続後はツール一覧を取得し、`inspect`（`scope: project`）でプロジェクトと履歴 HEAD の概要を読み取ります。
 
-現在の MCP は、プロジェクト／レイヤー／パラメータ参照、オブジェクトとキーフォーム編集、パラメータ CRUD、モデルデータ PNG View、透明素材インポート、ソフト削除、再開可能タスク、追記専用の分岐履歴を提供します。プロジェクトの `HEAD` を進める編集には必ず最新の `expected_history_head_node_id` が必要です。タイムアウトや切断後は、再試行前に `project_get_state` と `history_list` でコミット状態を確認してください。
+現在の MCP は、プロジェクト／レイヤー／パラメータ参照、オブジェクトとキーフォーム編集、パラメータ CRUD、モデルデータ PNG View、透明素材インポート、ソフト削除、追記専用の分岐履歴を提供します。プロジェクトの `HEAD` を進める編集には必ず最新の `state` が必要です。タイムアウトや切断後は、再試行前に `inspect`（`scope: project`）と `revision`（`list`）でコミット状態を確認してください。
 
-PSD2Live はモデル View、座標マッピング、PNG インポートを提供します。素材は画風とユーザーの希望に応じて元画像、SVG、描画、画像ツールを選べます。`solid_background` を省略すると元のアルファを保持します。`agent_get_workflow` で必要なトピックだけを参照できます。新しい編集 API は [MCP 編集ガイド](docs/zh/MCP_AUTHORING.md) を参照してください。
+PSD2Live はモデル View、座標マッピング、PNG インポートを提供します。素材は画風とユーザーの希望に応じて元画像、SVG、描画、画像ツールを選べます。`solid_background` を省略すると元のアルファを保持します。新しい編集 API は [MCP インターフェース契約](docs/zh/agent/MCP_AUTHORING.md) を参照してください。
 
 ---
 
@@ -163,7 +169,7 @@ PSD2Live はモデル View、座標マッピング、PNG インポートを提�
 > - **頭部の初期傾きに対応**：原画頭部の自然な傾き（首かしげ）は許容され、自動検出された初期角度を基準（ニュートラル）として回転可動域が決定されます。
 > - **身体は直立姿勢を維持（過度の傾きは非対応）**：体幹動作と胸部呼吸は垂直座標系を基準とするため、過度に傾いたポーズや横たわり姿勢は非対応です。
 > 
-> 詳細なレイヤー設計規則は [PSD レイヤー仕様および命名規則 (docs/ja/PSD_LAYER_SPEC.md)](docs/ja/PSD_LAYER_SPEC.md) を参照してください。
+> 詳細なレイヤー設計規則は [PSD レイヤー仕様および命名規則](docs/ja/spec/PSD_LAYER_SPEC.md) を参照してください。
 
 | パーツ | 推奨英語名 | 日本語別名 | 動作説明 |
 | :--- | :--- | :--- | :--- |

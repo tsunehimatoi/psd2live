@@ -1,6 +1,6 @@
 # デフォーマ階層・数理モデル・パラメータ仕様書 (Deformer & Math Specification)
 
-[中文](../zh/DEFORMER_AND_PARAMETER_SPEC.md) | [English](../en/DEFORMER_AND_PARAMETER_SPEC.md)
+[中文](../../zh/spec/DEFORMER_AND_PARAMETER_SPEC.md) | [English](../../en/spec/DEFORMER_AND_PARAMETER_SPEC.md)
 
 本仕様書は、PSD2Live に実装されているデフォーマツリー構造、顔面 9 軸経緯度格子の数理モデル、パーツ別変形アルゴリズム、多段振り子物理演算、および自動幾何整合性検証について解説します。
 

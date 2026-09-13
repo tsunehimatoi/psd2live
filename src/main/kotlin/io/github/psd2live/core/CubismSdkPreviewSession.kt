@@ -503,7 +503,7 @@ class CubismSdkPreviewSession(
 					"Missing Cubism SDK 5-r.5 runtime resource: $relative. " +
 						"Official Live2D SDK binaries are not distributed with PSD2Live. " +
 						"Please configure CUBISM_SDK_PATH or place binaries in src/main/resources/cubism/windows-x86_64/. " +
-						"See docs/zh/CUBISM_SDK_SETUP.md for setup instructions."
+						"See docs/zh/guide/CUBISM_SDK_SETUP.md for setup instructions."
 				)
 			input.use { Files.copy(it, target, StandardCopyOption.REPLACE_EXISTING) }
 			target.toFile().deleteOnExit()

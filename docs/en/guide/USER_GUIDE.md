@@ -1,6 +1,6 @@
 # PSD2Live User Guide
 
-[中文](../zh/USER_GUIDE.md) | [日本語](../ja/USER_GUIDE.md)
+[中文](../../zh/guide/USER_GUIDE.md) | [日本語](../../ja/guide/USER_GUIDE.md)
 
 PSD2Live provides a desktop GUI, an automated Command Line Interface (CLI), and a local MCP workspace for external AI hosts. This guide covers the four main workspaces, independent log dock, Agent connection and recovery, viewport interaction, parameter tuning, and export.
 
@@ -104,7 +104,7 @@ Logs remain visible below Hierarchy, Topology, Preview, and History instead of o
 ## Connecting an AI Agent / MCP Host
 
 <p align="center">
-  <img src="../imgs/agent.png" alt="PSD2Live AI Agent asset generation, integration, and multi-parameter rendering workflow" />
+  <img src="../../imgs/agent.png" alt="PSD2Live AI Agent asset generation, integration, and multi-parameter rendering workflow" />
   <br>
   <em>Inspect model Views, generate through the host-native image tool, import a layer, and verify multiple parameter poses</em>
 </p>
@@ -117,21 +117,26 @@ At startup, PSD2Live exposes a bearer-authenticated Streamable HTTP MCP at `127.
    - Gemini / Antigravity: merge the `psd2live` HTTP JSON entry into `~/.gemini/config/mcp_config.json`, then refresh MCP Servers.
    - Other HTTP hosts: use the displayed endpoint with `Authorization: Bearer <token>`. Do not switch to the legacy `/sse` endpoint.
    - Stdio-only hosts: copy the Stdio JSON and run the repository-root `mcp_proxy.py` with Python 3. The bridge reads `PSD2LIVE_MCP_ENDPOINT` (defaulting to the address above), `PSD2LIVE_MCP_TOKEN`, and optional `PSD2LIVE_MCP_TIMEOUT`. On Windows, it can fall back to the credential saved by PSD2Live.
-3. The Installation Prompt tab contains the complete setup prompt. Domain workflows are built into the MCP server, so no separate Skill installation is needed. List tools and call `project_get_state` first, then use `agent_get_workflow` when focused guidance is useful.
+3. The Installation Prompt tab contains the complete setup prompt. List tools after connecting, then call `inspect` with `scope: project` for the project and history HEAD summary.
 
 Current tools include:
 
-| Capability | Tools |
+| Capability | Tools and branches |
 | :--- | :--- |
-| Project inspection | `project_get_state`, `project_list_layers`, `project_list_parameters`, `object_get` |
-| Parameters and keyforms | `parameter_create`, `parameter_update`, `parameter_delete`, `keyform_set`, `keyform_copy`, `keyform_delete`, `rig_k_pose` |
-| Model Views | `view_render_layer`, `view_render_context`, `view_render_model` |
-| Transparent assets and layers | `asset_import_png`, `layer_add_from_asset`, `layer_soft_delete` |
-| Recovery and long tasks | `history_list`, `history_checkout`, `task_start`, `task_update`, `task_get`, `task_list` |
+| Project inspection | `inspect`: `scope` is `project`/`objects`/`layers`/`parameters`/`physics`; or `target:"kind:id"` for one object's direct parameter axes, channels and parent chain; also `query`, `offset`, `limit` (1–64) |
+| Local deformation | `deform`: `state` + `changes` (1–128), each with `target`, `key`, `operations` (1–16) and optional `selection`; operations are `translate`/`scale`/`rotate`/`arc`/`curve`/`landmarks`, `selection` accepts `rect`/`center`+`radius`/`line`+`radius`, plus `feather` and `hardness` |
+| Keyforms | `form`: `state` + `changes` (1–128), `op` is `seed`/`copy`/`set`/`delete`; writes channels or a Rotation form, never mesh point arrays |
+| Independent Warp | `rig`: `state`, `name`, `targets` (1–64 meshes sharing one Warp parent); creates a fitted independent Warp and returns the new `target` |
+| Model Views | `view`: `mode` is `model`/`layer`/`context`/`coverage`/`poses`/`motion`/`compare`; `poses` returns one labeled sheet, `motion` samples the timeline, `compare` diffs across history nodes |
+| Parameter definitions | `parameter`: `mode` is `create`/`update` |
+| Transparent assets and layers | `asset`: `mode` is `create`/`split`/`reference`/`import`/`register`/`preview`/`add`/`place`/`finalize`/`inspect`/`reprocess`/`remove` |
+| Physics | `physics`: `mode` is `put` |
+| Structure and appearance | `appearance`: `state` + `edits`, one ordered edit covering rename, show/hide and reparenting |
+| Saving and history | `revision`: `mode` is `save`/`checkpoint`/`list`/`restore` |
 
-Every project edit that advances `HEAD` must carry the current `expected_history_head_node_id`; use the returned node as the base for the next edit. Staging a PNG and appending task events do not move `HEAD`. After a timeout, disconnect, or expired session, the commit state may be unknown. Reconnect and inspect `project_get_state`, `history_list`, the task record, and affected objects before deciding whether to retry. The Stdio bridge automatically retries only safe read calls, never project edits.
+Every project edit that advances `HEAD` must carry the current `state`; use the returned node as the base for the next edit. Staging a PNG does not move `HEAD`. After a timeout, disconnect, or expired session, the commit state may be unknown. Reconnect and call `inspect` (`scope: project`) and `revision` (`list`) to check the commit state and the affected objects before deciding whether to retry. The Stdio bridge automatically retries only safe read calls, never project edits.
 
-PNG Views retain reversible pixel/canvas mappings. Use reference_id and asset_register for placement, or the legacy spatial_reference_id path. Artwork may use original pixels, SVG, painting or available image tools. Omit solid_background to preserve native alpha; declare an actual matte explicitly when removal is desired. See [MCP authoring](../zh/MCP_AUTHORING.md).
+PNG Views retain reversible pixel/canvas mappings. Use reference_id with `asset` (`register`) for placement, or the legacy spatial_reference_id path. Artwork may use original pixels, SVG, painting or available image tools. Omit solid_background to preserve native alpha; declare an actual matte explicitly when removal is desired. See the [MCP interface contract](../../zh/agent/MCP_AUTHORING.md).
 
 History, tasks, spatial references, and SHA-256-deduplicated RGBA assets are persistent. The default Windows store is `%LOCALAPPDATA%/PSD2Live/agent-workspaces`; override it with the JVM property `psd2live.agent.store`. Reloading a PSD with the same normalized path and file signature restores its last `HEAD`.
 
@@ -216,7 +221,7 @@ History, tasks, spatial references, and SHA-256-deduplicated RGBA assets are per
 ## Troubleshooting & FAQ
 
 - **Q: The Agent cannot connect, or reconnecting reports an expired session.**
-  A: Keep PSD2Live running and recopy the current endpoint and token from the connection dialog. Native HTTP hosts must use `/mcp`, not `/sse`; Stdio hosts should run `mcp_proxy.py`. Reinitialize after session expiry and read `project_get_state` plus `history_list` before resuming mutations.
+  A: Keep PSD2Live running and recopy the current endpoint and token from the connection dialog. Native HTTP hosts must use `/mcp`, not `/sse`; Stdio hosts should run `mcp_proxy.py`. Reinitialize after session expiry and read `inspect` (`scope: project`) plus `revision` (`list`) before resuming mutations.
 - **Q: Does restoring an old history node delete later edits?**
   A: No. Nodes are append-only and immutable. Restore moves only the workspace `HEAD`; editing from that node creates a new branch while the original future remains available.
 
@@ -245,4 +250,4 @@ After importing a PSD (Ctrl+Shift+O), choose a custom folder, the PSD folder, or
 
 Use Ctrl+O to open a project, Ctrl+S to save, and Ctrl+Shift+S to save as. The unencrypted ZIP contains the original PSD, images, all history branches, rig/configuration, Agent records and workspace UI state. Transfer the single file to move the project. Saving is separate from Cubism export; closing or switching prompts about unsaved changes.
 
-Each save immediately appends a history node, even when unchanged. Failed writes preserve the old file; edits during saving stay dirty. The history UI supports titles, notes, hiding/showing branches and checkout. Hidden branches retain their data. Ctrl+Z undoes; Ctrl+Y redoes or opens branch selection. MCP exposes `project_save` and `history_checkpoint` and records each successful model modification. See [the format reference](../PROJECT_FORMAT.md).
+Each save immediately appends a history node, even when unchanged. Failed writes preserve the old file; edits during saving stay dirty. The history UI supports titles, notes, hiding/showing branches and checkout. Hidden branches retain their data. Ctrl+Z undoes; Ctrl+Y redoes or opens branch selection. MCP exposes `revision` (`save`/`checkpoint`) and records each successful model modification. See [the format reference](../spec/PROJECT_FORMAT.md).

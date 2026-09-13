@@ -47,7 +47,7 @@ internal class ProjectSession(private val viewModel: PSD2LiveViewModel, private 
                     JsonObject(log)
                 })
                 ProjectArchive.writeJson(root.resolve("workspace.json"), JsonObject(ui))
-                Files.writeString(root.resolve("README.txt"), "PSD2Live project v1. Unencrypted ZIP. manifest.json inventories SHA-256 checksums. source/original.psd is the original source; workspace/ contains immutable history snapshots, PNG resources, tasks and spatial references; workspace.json restores the UI. See docs/PROJECT_FORMAT.md.\n")
+                Files.writeString(root.resolve("README.txt"), "PSD2Live project v1. Unencrypted ZIP. manifest.json inventories SHA-256 checksums. source/original.psd is the original source; workspace/ contains immutable history snapshots, PNG resources, tasks and spatial references; workspace.json restores the UI. See docs/en/spec/PROJECT_FORMAT.md.\n")
                 writeArchive(root, path, capture.projectId)
             }
             viewModel.projectSaveFinished(path, capture.history.headNodeId, state)

@@ -42,8 +42,10 @@ JSON and PNGs are inspectable, but changing a package by hand requires updating 
 - Import PSD: `Ctrl+Shift+O`; choose a custom directory, the PSD's directory, or the installation's `projects` directory. Confirming writes the first project immediately.
 - Open project: `Ctrl+O`; save: `Ctrl+S`; save as: `Ctrl+Shift+S`.
 - Undo: `Ctrl+Z`; redo/choose a branch: `Ctrl+Y` or `Ctrl+Shift+Z`.
-- `project_save`: saves to the location selected in the application and returns its checkpoint node ID. It reports an error if no destination is selected.
-- `history_checkpoint` with `summary`: explicitly appends a node, including when content is unchanged.
-- `project_get_state`: additionally reports `projectFile`, `projectDirty`, `projectSaving`, and `projectSaveError`. Existing MCP mutation tools keep their expected-HEAD preconditions.
+- `project_save` (now `revision` with mode `save`): saves to the location selected in the application and returns its checkpoint node ID. It reports an error if no destination is selected.
+- `history_checkpoint` with `summary` (now `revision` with mode `checkpoint`): explicitly appends a node, including when content is unchanged.
+- `project_get_state` (now `inspect` with `scope: project`): additionally reports `projectFile`, `projectDirty`, `projectSaving`, and `projectSaveError`. Existing MCP mutation tools keep their expected-HEAD preconditions, exposed as `state` on the merged tool surface.
+
+> The MCP server currently exposes only ten merged tools (`inspect`, `deform`, `form`, `rig`, `view`, `parameter`, `asset`, `physics`, `appearance`, `revision`). Names in parentheses above are the underlying branch contracts. See the [MCP interface contract](../../zh/agent/MCP_AUTHORING.md) (Chinese) for the full surface.
 
 Model-changing MCP calls commit one node after successful validation/rebuild. Read-only calls do not append history. Staging assets and recording Agent task events are auxiliary records, included in project saves; adding staged pixels to the model creates the corresponding editable history node.

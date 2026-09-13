@@ -1,6 +1,6 @@
 # Live2D Cubism SDK Configuration Guide
 
-[中文](../zh/CUBISM_SDK_SETUP.md) | [日本語](../ja/CUBISM_SDK_SETUP.md)
+[中文](../../zh/guide/CUBISM_SDK_SETUP.md) | [日本語](../../ja/guide/CUBISM_SDK_SETUP.md)
 
 This guide provides instructions on how to configure the official Live2D® Cubism® Native SDK runtime for PSD2Live to achieve **100% faithful rendering and physical dynamics parity with the official Cubism runtime (Consistency & Ground Truth)**.
 
