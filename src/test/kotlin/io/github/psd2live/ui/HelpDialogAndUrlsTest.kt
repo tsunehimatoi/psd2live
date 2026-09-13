@@ -62,10 +62,11 @@ class HelpDialogAndUrlsTest {
 		assertTrue(tabs.contains(HelpTab.ABOUT))
 
 		val scenarios = TutorialScenario.entries
-		assertEquals(6, scenarios.size)
+		assertEquals(7, scenarios.size)
 		assertTrue(scenarios.contains(TutorialScenario.STANDARD))
 		assertTrue(scenarios.contains(TutorialScenario.CUSTOM_LAYERS))
 		assertTrue(scenarios.contains(TutorialScenario.PREVIEW_ADJUST))
+		assertTrue(scenarios.contains(TutorialScenario.PROJECT_HISTORY))
 		assertTrue(scenarios.contains(TutorialScenario.UPSCALE))
 		assertTrue(scenarios.contains(TutorialScenario.VARIANTS))
 		assertTrue(scenarios.contains(TutorialScenario.AGENT_MCP))
@@ -98,6 +99,8 @@ class HelpDialogAndUrlsTest {
 			"help.tutorial.triage.standard.desc",
 			"help.tutorial.triage.custom.title",
 			"help.tutorial.triage.custom.desc",
+			"help.tutorial.triage.project.title",
+			"help.tutorial.triage.project.desc",
 			"help.tutorial.triage.preview.title",
 			"help.tutorial.triage.preview.desc",
 			"help.tutorial.triage.upscale.title",
@@ -108,6 +111,7 @@ class HelpDialogAndUrlsTest {
 			"help.tutorial.triage.agent.desc",
 			"help.tutorial.scenario.standard",
 			"help.tutorial.scenario.custom",
+			"help.tutorial.scenario.project",
 			"help.tutorial.scenario.preview",
 			"help.tutorial.scenario.upscale",
 			"help.tutorial.scenario.variants",
@@ -118,6 +122,8 @@ class HelpDialogAndUrlsTest {
 			"help.tutorial.standard.step1.desc",
 			"help.tutorial.standard.step2.title",
 			"help.tutorial.standard.step2.desc",
+			"help.tutorial.standard.step3.title",
+			"help.tutorial.standard.step3.desc",
 			// Custom layers scenario (自命名 PSD: 3 steps)
 			"help.tutorial.custom.intro",
 			"help.tutorial.custom.step1.title",
@@ -126,6 +132,16 @@ class HelpDialogAndUrlsTest {
 			"help.tutorial.custom.step2.desc",
 			"help.tutorial.custom.step3.title",
 			"help.tutorial.custom.step3.desc",
+			// Project & history scenario (工程与历史: 4 steps)
+			"help.tutorial.project.intro",
+			"help.tutorial.project.step1.title",
+			"help.tutorial.project.step1.desc",
+			"help.tutorial.project.step2.title",
+			"help.tutorial.project.step2.desc",
+			"help.tutorial.project.step3.title",
+			"help.tutorial.project.step3.desc",
+			"help.tutorial.project.step4.title",
+			"help.tutorial.project.step4.desc",
 			// Optional workflows (Independent points with direct links)
 			"help.tutorial.optional.title",
 			"help.tutorial.optional.desc",
@@ -181,14 +197,25 @@ class HelpDialogAndUrlsTest {
 			"help.spec.head.nose",
 			"help.spec.head.mouth",
 			"help.spec.head.mouthInternals",
+			"help.spec.head.headwear",
+			"help.spec.head.eyeClose",
+			"help.spec.head.mouthClose",
+			"help.spec.head.ears",
 			"help.spec.group.body",
 			"help.spec.body.neck",
 			"help.spec.body.topwear",
+			"help.spec.body.bottomwear",
+			"help.spec.body.neckwear",
 			"help.spec.body.limbs",
+			"help.spec.group.extra",
+			"help.spec.extra.tail",
+			"help.spec.extra.wings",
+			"help.spec.extra.objects",
 			"help.spec.group.notes",
 			"help.spec.note.eyelash",
 			"help.spec.note.mouth",
 			"help.spec.note.body",
+			"help.spec.note.unknown",
 			// Shortcuts
 			"help.shortcuts.group.project",
 			"help.shortcuts.group.view",
@@ -211,6 +238,12 @@ class HelpDialogAndUrlsTest {
 			"help.shortcuts.textureUpscale",
 			"help.shortcuts.agentConnect",
 			"help.shortcuts.historyTree",
+			"help.shortcuts.menuOnly",
+			"help.shortcuts.reanalyze",
+			"help.shortcuts.exportTo",
+			"help.shortcuts.undo",
+			"help.shortcuts.redo",
+			"help.shortcuts.invertSelection",
 			// Links
 			"help.links.intro",
 			"help.links.github.title",

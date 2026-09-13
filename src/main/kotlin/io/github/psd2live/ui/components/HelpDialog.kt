@@ -57,6 +57,7 @@ enum class TutorialScenario {
 	STANDARD,
 	CUSTOM_LAYERS,
 	PREVIEW_ADJUST,
+	PROJECT_HISTORY,
 	UPSCALE,
 	VARIANTS,
 	AGENT_MCP,
@@ -248,6 +249,12 @@ private fun DccTutorialContent(onOpenUrl: (String) -> Unit) {
 				onClick = { currentScenario = TutorialScenario.CUSTOM_LAYERS },
 			)
 
+			DccTriageOptionRow(
+				title = tr("help.tutorial.triage.project.title"),
+				desc = tr("help.tutorial.triage.project.desc"),
+				onClick = { currentScenario = TutorialScenario.PROJECT_HISTORY },
+			)
+
 			Spacer(Modifier.height(2.dp))
 
 			Text(
@@ -306,6 +313,7 @@ private fun DccTutorialContent(onOpenUrl: (String) -> Unit) {
 						TutorialScenario.STANDARD -> tr("help.tutorial.scenario.standard")
 						TutorialScenario.CUSTOM_LAYERS -> tr("help.tutorial.scenario.custom")
 						TutorialScenario.PREVIEW_ADJUST -> tr("help.tutorial.scenario.preview")
+						TutorialScenario.PROJECT_HISTORY -> tr("help.tutorial.scenario.project")
 						TutorialScenario.UPSCALE -> tr("help.tutorial.scenario.upscale")
 						TutorialScenario.VARIANTS -> tr("help.tutorial.scenario.variants")
 						TutorialScenario.AGENT_MCP -> tr("help.tutorial.scenario.agent")
@@ -337,6 +345,7 @@ private fun DccTutorialContent(onOpenUrl: (String) -> Unit) {
 			TutorialScenario.STANDARD -> DccStandardWorkflowScenario(onNavigate = { currentScenario = it })
 			TutorialScenario.CUSTOM_LAYERS -> DccCustomLayersScenario(onNavigate = { currentScenario = it })
 			TutorialScenario.PREVIEW_ADJUST -> DccPreviewAdjustScenario()
+			TutorialScenario.PROJECT_HISTORY -> DccProjectHistoryScenario()
 			TutorialScenario.UPSCALE -> DccUpscaleScenario()
 			TutorialScenario.VARIANTS -> DccVariantsScenario()
 			TutorialScenario.AGENT_MCP -> DccAgentMcpScenario()
@@ -404,6 +413,12 @@ private fun DccStandardWorkflowScenario(onNavigate: (TutorialScenario) -> Unit) 
 		desc = tr("help.tutorial.standard.step2.desc"),
 	)
 
+	// Step 3: 检查生成结果
+	DccStepRow(
+		title = tr("help.tutorial.standard.step3.title"),
+		desc = tr("help.tutorial.standard.step3.desc"),
+	)
+
 	Spacer(Modifier.height(4.dp))
 
 	// 可选流程（带链接跳转到独立标签页）
@@ -444,6 +459,23 @@ private fun DccPreviewAdjustScenario() {
 
 	DccStepRow(title = tr("help.tutorial.preview.step1.title"), desc = tr("help.tutorial.preview.step1.desc"))
 	DccStepRow(title = tr("help.tutorial.preview.step2.title"), desc = tr("help.tutorial.preview.step2.desc"))
+}
+
+@Composable
+private fun DccProjectHistoryScenario() {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+
+	Text(
+		text = tr("help.tutorial.project.intro"),
+		style = typography.caption.copy(fontSize = 11.5.sp, lineHeight = 16.sp),
+		color = colors.textPrimary,
+	)
+
+	DccStepRow(title = tr("help.tutorial.project.step1.title"), desc = tr("help.tutorial.project.step1.desc"))
+	DccStepRow(title = tr("help.tutorial.project.step2.title"), desc = tr("help.tutorial.project.step2.desc"))
+	DccStepRow(title = tr("help.tutorial.project.step3.title"), desc = tr("help.tutorial.project.step3.desc"))
+	DccStepRow(title = tr("help.tutorial.project.step4.title"), desc = tr("help.tutorial.project.step4.desc"))
 }
 
 @Composable
@@ -709,13 +741,17 @@ private fun DccPsdSpecContent(onOpenUrl: (String) -> Unit) {
 			tr("help.spec.head.face"),
 			tr("help.spec.head.hairFront"),
 			tr("help.spec.head.hairBack"),
+			tr("help.spec.head.headwear"),
 			tr("help.spec.head.eyelash"),
 			tr("help.spec.head.eyewhite"),
+			tr("help.spec.head.eyeClose"),
 			tr("help.spec.head.irides"),
 			tr("help.spec.head.eyebrow"),
 			tr("help.spec.head.nose"),
 			tr("help.spec.head.mouth"),
+			tr("help.spec.head.mouthClose"),
 			tr("help.spec.head.mouthInternals"),
+			tr("help.spec.head.ears"),
 		),
 	)
 
@@ -725,7 +761,19 @@ private fun DccPsdSpecContent(onOpenUrl: (String) -> Unit) {
 		rows = listOf(
 			tr("help.spec.body.neck"),
 			tr("help.spec.body.topwear"),
+			tr("help.spec.body.bottomwear"),
 			tr("help.spec.body.limbs"),
+			tr("help.spec.body.neckwear"),
+		),
+	)
+
+	// Extra Group
+	DccSpecTable(
+		title = tr("help.spec.group.extra"),
+		rows = listOf(
+			tr("help.spec.extra.tail"),
+			tr("help.spec.extra.wings"),
+			tr("help.spec.extra.objects"),
 		),
 	)
 
@@ -736,6 +784,7 @@ private fun DccPsdSpecContent(onOpenUrl: (String) -> Unit) {
 			tr("help.spec.note.eyelash"),
 			tr("help.spec.note.mouth"),
 			tr("help.spec.note.body"),
+			tr("help.spec.note.unknown"),
 		),
 	)
 }
@@ -784,20 +833,25 @@ private fun DccSpecTable(title: String, rows: List<String>) {
 @Composable
 private fun DccShortcutsContent() {
 	val projectShortcuts = listOf(
-		tr("help.shortcuts.openPsd") to "Ctrl+O",
-		tr("help.shortcuts.openProject") to "Ctrl+Shift+P",
+		tr("help.shortcuts.openProject") to "Ctrl+O",
 		tr("help.shortcuts.saveProject") to "Ctrl+S",
 		tr("help.shortcuts.saveProjectAs") to "Ctrl+Shift+S",
-		tr("help.shortcuts.reexportPsd") to "Ctrl+E",
+		tr("help.shortcuts.openPsd") to "Ctrl+Shift+O",
+		tr("help.shortcuts.reanalyze") to "Ctrl+R",
+		tr("help.shortcuts.reexportPsd") to "Ctrl+Shift+E",
 		tr("help.shortcuts.generate") to "Ctrl+G",
-		tr("help.shortcuts.openOutput") to "Ctrl+Shift+O",
+		tr("help.shortcuts.exportTo") to "Ctrl+Shift+G",
+		tr("help.shortcuts.openOutput") to tr("help.shortcuts.menuOnly"),
+		tr("help.shortcuts.undo") to "Ctrl+Z",
+		tr("help.shortcuts.redo") to "Ctrl+Y / Ctrl+Shift+Z",
+		tr("help.shortcuts.invertSelection") to "Ctrl+Shift+I",
 		tr("help.shortcuts.settings") to "Ctrl+,",
 		tr("help.shortcuts.help") to "F1",
 	)
 
 	val viewShortcuts = listOf(
 		tr("help.shortcuts.zoomWheel") to "Wheel",
-		tr("help.shortcuts.panCanvas") to "Middle Drag / Space+Drag",
+		tr("help.shortcuts.panCanvas") to "Middle Drag / Left Drag",
 		tr("help.shortcuts.selectLayer") to "Left Click",
 		tr("help.shortcuts.fitCenter") to "F / 0 / Home",
 		tr("help.shortcuts.zoomReset") to "Ctrl+0",
@@ -806,8 +860,8 @@ private fun DccShortcutsContent() {
 
 	val toolShortcuts = listOf(
 		tr("help.shortcuts.textureUpscale") to "Ctrl+U",
-		tr("help.shortcuts.agentConnect") to "Ctrl+Shift+A",
-		tr("help.shortcuts.historyTree") to "Ctrl+H",
+		tr("help.shortcuts.agentConnect") to tr("help.shortcuts.menuOnly"),
+		tr("help.shortcuts.historyTree") to tr("help.shortcuts.menuOnly"),
 	)
 
 	DccShortcutGroup(title = tr("help.shortcuts.group.project"), shortcuts = projectShortcuts)
