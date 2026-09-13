@@ -168,6 +168,35 @@ class CubismSdkPreviewSession(
 		}
 	}
 
+    /** Evaluate a disposable exported model on this session's native thread; the live model is untouched. */
+    fun sampleMotion(bundle: CubismRuntimeBundle, parameters: List<ParameterId>, group: String,
+                     frames: Int, fps: Int): java.util.concurrent.CompletableFuture<List<Map<ParameterId, Float>>> {
+        require(frames in 1..1201 && fps in 15..120)
+        val result = java.util.concurrent.CompletableFuture<List<Map<ParameterId, Float>>>()
+        if (closed) { result.completeExceptionally(IllegalStateException("Cubism session closed")); return result }
+        executor.execute {
+            try {
+                check(!closed) { "Cubism session closed" }
+                val native = api ?: CubismNativeRuntime.load().also {
+                    require(it.Live2D_InitOffscreen() != 0) { nativeError(it, "Cubism runtime initialization failed") }
+                    api = it
+                }
+                val handle = native.Live2D_CreateModel(materialize(bundle).toString())
+                    ?: error(nativeError(native, "Cubism rejected the observation model"))
+                try {
+                    require(native.Live2D_StartMotion(handle, group, 0, 3) != 0) { "Observation motion could not start" }
+                    val samples = ArrayList<Map<ParameterId, Float>>(frames)
+                    repeat(frames) { index ->
+                        native.Live2D_Update(handle, if (index == 0) 0f else 1f / fps)
+                        samples += parameters.associateWith { native.Live2D_GetParameterValue(handle, it.raw) }
+                    }
+                    result.complete(samples)
+                } finally { native.Live2D_DestroyModel(handle) }
+            } catch (failure: Throwable) { result.completeExceptionally(failure) }
+        }
+        return result
+    }
+
 	private fun materialize(bundle: CubismRuntimeBundle): Path {
 		val directory = Files.createTempDirectory("psd2live-preview-model-")
 		for (asset in bundle.assets) {

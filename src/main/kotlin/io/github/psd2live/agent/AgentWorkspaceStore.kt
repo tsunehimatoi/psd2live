@@ -387,6 +387,7 @@ internal class AgentWorkspaceStore(
             put("assetLayers", JsonObject(document.rigEdits.assetLayers))
             putJsonArray("calibrationLayerIds") { document.rigEdits.calibrationLayerIds.sorted().forEach { add(JsonPrimitive(it)) } }
             put("structure", JsonArray(document.rigEdits.structureEdits))
+            put("authoringJournal", JsonArray(document.rigEdits.authoringJournal))
             putJsonArray("warps") { document.rigEdits.warpEdits.forEach { add(it.toJson()) } }
             putJsonArray("physics") { document.rigEdits.physicsEdits.forEach { add(it.toJson()) } }
 			putJsonArray("parameters") {
@@ -547,6 +548,7 @@ internal class AgentWorkspaceStore(
             assetLayers = rigEditObject.optionalObject("assetLayers").mapValues { it.value.jsonObject },
             calibrationLayerIds = rigEditObject.optionalArray("calibrationLayerIds").map { it.jsonPrimitive.content }.toSet(),
             structureEdits = rigEditObject.optionalArray("structure").map { it.jsonObject },
+            authoringJournal = rigEditObject.optionalArray("authoringJournal").map { it.jsonObject },
             warpEdits = rigEditObject.optionalArray("warps").map { io.github.psd2live.core.RigWarpEdit.fromJson(it.jsonObject) },
             physicsEdits = rigEditObject.optionalArray("physics").map { io.github.psd2live.core.RigPhysicsEdit.fromJson(it.jsonObject) },
 			parameterEdits = rigEditObject.optionalArray("parameters").map { element ->

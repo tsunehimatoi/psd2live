@@ -1638,6 +1638,12 @@ class PSD2LiveViewModel : AutoCloseable {
 	internal suspend fun buildAgentWorkspacePreview(source: SourceArt, config: PipelineConfig): RigPreviewModel =
 		runInterruptible(Dispatchers.Default) { pipeline.buildPreview(source, config) }
 
+    internal suspend fun sampleAgentMotion(bundle: io.github.psd2live.core.CubismRuntimeBundle,
+                                          parameters: List<ParameterId>, frames: Int, fps: Int): List<Map<ParameterId, Float>> =
+        kotlinx.coroutines.runInterruptible(Dispatchers.IO) {
+            sdkSession.sampleMotion(bundle, parameters, "AgentObservation", frames, fps).get(45, java.util.concurrent.TimeUnit.SECONDS)
+        }
+
 	/** Publish one already-built authoritative workspace snapshot atomically to Compose and preview. */
 	internal fun applyAgentWorkspacePreview(
 		preview: RigPreviewModel,

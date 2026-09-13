@@ -24,6 +24,8 @@ import org.umamo.runtime.model.Parameter
 import org.umamo.runtime.model.ParameterKind
 import org.umamo.runtime.model.PuppetModel
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.float
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -382,6 +384,11 @@ class ViewModelAgentWorkspace(
         val meshes = puppet.drawables.filter { rig.layerIdByDrawableId[it.id.raw] == layerId }.map { it.id.raw }.toSet()
         require(meshes.isNotEmpty()) { "Layer mesh not found" }
         val edits = document.rigEdits
+        require(edits.authoringJournal.none { entry ->
+            entry["target"]?.jsonPrimitive?.content?.substringAfter(':') in meshes ||
+                entry["destination"]?.jsonPrimitive?.content?.substringAfter(':') in meshes ||
+                entry["warp"]?.jsonObject?.get("mesh_ids")?.jsonArray?.any { it.jsonPrimitive.content in meshes } == true
+        }) { "Layer has authored motion; relocate before binding or restore its earlier state" }
         require(edits.assetLayers[layerId]?.flag("placement_finalized") != true) { "Placement is finalized; dedicated rig relocation is outside this version" }
         require(edits.warpEdits.none { w -> w.meshIds.any { it in meshes } } &&
             edits.keyformSetEdits.none { it.target.id in meshes } && edits.keyformCopyEdits.none { it.destinationTarget.id in meshes } &&
@@ -719,6 +726,121 @@ class ViewModelAgentWorkspace(
         return model.drawables.map { record("mesh",it.id.raw,it.name,it.parentDeformerId?.raw,rig.layerIdByDrawableId[it.id.raw]) } +
             model.deformers.map { record(if(it is Deformer.Warp) "warp" else "rotation",it.id.raw,it.name,it.parent?.raw) } +
             model.parts.map { p -> record("part",p.id.raw,p.name,model.parts.firstOrNull { org.umamo.runtime.model.OrgChild.Part(p.id) in it.children }?.id?.raw) }
+    }
+
+    override suspend fun authorRig(state: String, edits: kotlinx.serialization.json.JsonArray): AgentWorkspaceMutationResult {
+        val ids = edits.mapNotNull { it.jsonObject["target"]?.jsonPrimitive?.content }.distinct()
+        return mutateRigKeyform(state, null, "Authored ${edits.size} ordered edits", ids.firstOrNull() ?: "rig") { document, puppet ->
+            val (_, journal) = io.github.psd2live.core.RigAuthoringJournal.compile(puppet, edits)
+            document.copy(rigEdits = document.rigEdits.copy(authoringJournal = document.rigEdits.authoringJournal + journal))
+        }.copy(affectedObjectIds = ids)
+    }
+
+    override suspend fun createArtwork(arguments: kotlinx.serialization.json.JsonObject): AgentWorkspaceMutationResult = editMutex.withLock {
+        val current = viewModel.state.value
+        require(current.analysis == null && !current.isAnalyzing && !current.isGenerating) { "Create artwork requires an empty workspace; existing projects are never replaced implicitly" }
+        val (source, overrides) = sourceArtwork(arguments)
+        val document = AgentWorkspaceDocument(source, emptyMap(), emptySet(), overrides, emptyMap(), io.github.psd2live.core.RigEditOverlay.Empty)
+        val preview = viewModel.buildAgentWorkspacePreview(source, document.toConfig(current))
+        val id = java.util.UUID.randomUUID().toString()
+        val installed = current.copy(projectId = id, projectSourceName = "Generated artwork", projectFile = null,
+            analysis = preview.analysis, previewModel = preview, layerOverrides = overrides,
+            layerVisibility = emptyMap(), deletedLayerIds = emptySet(), parentOverrides = emptyMap(), rigEdits = document.rigEdits,
+            selectedLayerId = null, selectedDeformerId = null, historySnapshot = null,
+            parameterValues = preview.rig.puppet.parameters.associate { it.id to it.default })
+        synchronized(historyLock) {
+            viewModel.installProjectState(installed)
+            val revision = revisionId(installed, document)
+            val tree = WorkspaceHistoryTree(document, revision, revision)
+            historyProjectId = id; historyTree = tree; taskProjectId = null
+            scheduleHistoryPersistence(id, tree)
+            viewModel.updateHistorySnapshot(history())
+        }
+        viewModel.loadAgentWorkspacePreview(preview)
+        val snapshot = snapshot()
+        AgentWorkspaceMutationResult(snapshot.historyHeadNodeId!!, snapshot.revisionId, source.layers.map { it.id.raw }, "Created source artwork")
+    }
+
+    override suspend fun observeAuthoring(arguments: kotlinx.serialization.json.JsonObject): AgentWorkflowResult {
+        val a = arguments
+        val current = viewModel.state.value
+        val kind = a.getValue("kind").jsonPrimitive.content
+        val rect = a.getValue("rect").jsonArray.map { it.jsonPrimitive.float }
+        require(rect.size == 4 && rect.all(Float::isFinite) && rect[2] > 0 && rect[3] > 0) { "rect is [left,top,width,height] in canvas pixels" }
+        val frame = AgentViewFrame.CanvasRect(Bounds(rect[0], rect[1], rect[0] + rect[2], rect[1] + rect[3]))
+        val output = AgentViewOutputSpec(a["target_long_edge"]?.jsonPrimitive?.int ?: 1536)
+        val views = mutableListOf<AgentRenderedView>()
+        val extra = mutableMapOf<String, kotlinx.serialization.json.JsonElement>()
+        fun render(preview: io.github.psd2live.core.RigPreviewModel, revision: String, parameters: Map<String, Float>, layers: Set<String>): AgentRenderedView {
+            val defaults = preview.rig.puppet.parameters.associate { it.id.raw to it.default }
+            require(parameters.keys.all { it in defaults } && parameters.values.all(Float::isFinite)) { "Unknown or invalid observation parameters" }
+            return remember(AgentViewRenderer.modelComposite(preview, revision, defaults + parameters, layers, emptySet(), frame,
+                AgentViewBackground.TRANSPARENT, output.copy(targetLongEdge = maxOf(128, output.targetLongEdge / 2))))
+        }
+        if (kind == "history") {
+            val states = a.getValue("states").jsonArray.map { it.jsonPrimitive.content }
+            val poses = a.getValue("poses").jsonArray.map { it.jsonObject.mapValues { entry -> entry.value.jsonPrimitive.float } }
+            require(states.size in 1..2 && poses.size in 1..4)
+            val captures = synchronized(historyLock) {
+                val tree = synchronizeHistory(projectId(current), revisionId(current), documentFrom(current))
+                states.map { tree.selectionAt(it) }
+            }
+            val prepared = captures.map { capture -> capture to viewModel.buildAgentWorkspacePreview(capture.snapshot.source, capture.snapshot.toConfig(current)) }
+            for (pose in poses) for ((capture, preview) in prepared) {
+                val document = capture.snapshot
+                val visible = preview.analysis.layers.filter { layer -> layer.source.id.raw !in document.deletedLayerIds &&
+                    (document.layerVisibility[layer.source.id.raw] ?: layer.source.visible) }.map { it.source.id.raw }.toSet()
+                views += render(preview, capture.node.revisionId, pose, visible)
+            }
+            extra["states"] = kotlinx.serialization.json.JsonArray(states.map { kotlinx.serialization.json.JsonPrimitive(it) })
+            val sheet = renderPoseSheet(views, output, states.size, compareVersions = true)
+            return sheet.copy(metadata = kotlinx.serialization.json.JsonObject(sheet.metadata + extra))
+        }
+        require(kind == "motion")
+        val preview = requireNotNull(current.previewModel) { "No model loaded" }
+        val revision = revisionId(current)
+        val frames = a.getValue("frames").jsonArray
+        val fps = a["fps"]?.jsonPrimitive?.int ?: 60
+        require(fps in 15..120)
+        val duration = frames.last().jsonObject.getValue("time").jsonPrimitive.float
+        val times = a.getValue("samples").jsonArray.map { it.jsonPrimitive.float }
+        require(times.size in 1..9 && times.all { it.isFinite() && it in 0f..duration }) { "Samples must be inside the motion duration" }
+        val defaults = preview.rig.puppet.parameters.associate { it.id.raw to it.default }
+        for (sample in frames) for ((id, value) in sample.jsonObject.getValue("parameters").jsonObject) {
+            val parameter = preview.rig.puppet.parameters.singleOrNull { it.id.raw == id } ?: error("Unknown motion input $id")
+            require(value.jsonPrimitive.float in parameter.min..parameter.max) { "Motion input outside $id range" }
+        }
+        val bundle = observationMotion(preview.runtimeBundle, frames, defaults)
+        val samples = viewModel.sampleAgentMotion(bundle, preview.rig.puppet.parameters.map { it.id }, kotlin.math.ceil(duration * fps).toInt() + 1, fps)
+        for (time in times) views += render(preview, revision, samples[(time * fps).toInt().coerceIn(samples.indices)].mapKeys { it.key.raw }, current.effectiveVisibleLayerIds)
+        val sheet = renderPoseSheet(views, output)
+        return sheet.copy(metadata = kotlinx.serialization.json.JsonObject(sheet.metadata + kotlinx.serialization.json.buildJsonObject {
+            put("physicsSimulated", kotlinx.serialization.json.JsonPrimitive(true))
+            put("backend", kotlinx.serialization.json.JsonPrimitive("Cubism exported model parameters; CPU image compositor"))
+            put("fps", kotlinx.serialization.json.JsonPrimitive(fps))
+            put("sampleTimes", kotlinx.serialization.json.JsonArray(times.map { kotlinx.serialization.json.JsonPrimitive(kotlin.math.floor(it * fps) / fps) }))
+            put("ranges", kotlinx.serialization.json.buildJsonObject {
+                for (parameter in preview.rig.puppet.parameters) {
+                    val values = samples.mapNotNull { it[parameter.id] }
+                    if (values.isNotEmpty() && values.max() - values.min() > 1e-5f) put(parameter.id.raw,
+                        kotlinx.serialization.json.JsonArray(listOf(values.min(), values.max()).map { kotlinx.serialization.json.JsonPrimitive(it) }))
+                }
+            })
+        }))
+    }
+
+    override suspend fun splitArtwork(arguments: kotlinx.serialization.json.JsonObject): AgentWorkspaceMutationResult {
+        val id = arguments.getValue("layer_id").jsonPrimitive.content
+        var pieces = emptyList<String>()
+        return mutateRigKeyform(arguments.getValue("state").jsonPrimitive.content, null, "Split source layer $id", id) { document, puppet ->
+            val meshIds = viewModel.state.value.previewModel!!.rig.layerIdByDrawableId.filterValues { it == id }.keys.toSet()
+            require(document.rigEdits.authoringJournal.isEmpty() && document.rigEdits.keyformSetEdits.none { it.target.id in meshIds } &&
+                document.rigEdits.keyformCopyEdits.none { it.destinationTarget.id in meshIds } && document.rigEdits.warpEdits.none { w -> w.meshIds.any { it in meshIds } }) {
+                "Split source artwork before authoring motion; current source partition would change keyed topology"
+            }
+            require(puppet.glues.none { it.meshA.raw in meshIds || it.meshB.raw in meshIds }) { "Split would break existing glue" }
+            val (next, ids) = document.splitSource(arguments); pieces = ids; next
+        }.copy(affectedLayerIds = pieces)
     }
 
     override fun listRigObjects(): List<AgentKeyformTargetRef> {

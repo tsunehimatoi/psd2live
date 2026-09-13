@@ -63,31 +63,31 @@ internal object RigGeometryTools {
         val sharedSelection = JsonObject(selection + range)
         require(operations.size in 1..32) { "Use 1..32 ordered operations" }
         val result = g.points.copyOf()
+        val b = bounds(g.points) // One immutable editing frame for this entire operation sequence.
         for (element in operations) {
             val op = element.jsonObject
             val type = op.text("type")
-            require(type in setOf("translate", "scale", "rotate", "bend", "curve", "smooth", "sway", "landmarks")) { "Unknown operation: $type" }
+            require(type in setOf("translate", "scale", "rotate", "bend", "curve", "smooth", "sway", "arc", "landmarks")) { "Unknown operation: $type" }
             val fields = when(type) {
                 "translate" -> setOf("delta")
                 "scale" -> setOf("factors","pivot")
                 "rotate" -> setOf("degrees","pivot")
                 "bend" -> setOf("axis","amount")
                 "curve" -> setOf("axis","controls")
-                "sway" -> setOf("root","tip","degrees","softness","root_pin")
+                "sway", "arc" -> setOf("root","tip","degrees","softness","root_pin")
                 "landmarks" -> setOf("from","to")
                 else -> setOf("strength")
             }
             require((op.keys - fields - setOf("type","selection")).isEmpty()) { "Unexpected field for $type" }
             val required = when(type) {
                 "translate" -> "delta"; "scale" -> "factors"; "rotate" -> "degrees"
-                "bend" -> "amount"; "curve" -> "controls"; "sway" -> "degrees"; "landmarks" -> "from"
+                "bend" -> "amount"; "curve" -> "controls"; "sway", "arc" -> "degrees"; "landmarks" -> "from"
                 else -> null
             }
             require(required == null || required in op) { "Missing $required for $type" }
-            val b = bounds(result)
             val pivot = op.vector("pivot", listOf(0.5f, 0.5f), 2)
             val selection = op["selection"]?.jsonObject ?: sharedSelection
-            require((selection.keys - setOf("indices","rect","center","line","radius","feather")).isEmpty()) { "Unexpected selection field" }
+            require((selection.keys - setOf("indices","rect","center","line","radius","feather","hardness")).isEmpty()) { "Unexpected selection field" }
             require(!("center" in selection && "line" in selection)) { "Choose point or line falloff" }
             require("radius" !in selection || "center" in selection || "line" in selection) { "radius requires center or line" }
             val weights = FloatArray(result.size / 2) { i -> weight(selection, g.domain[i*2], g.domain[i*2+1], i, result.size/2) }
@@ -103,7 +103,7 @@ internal object RigGeometryTools {
             val tip = op.vector("tip", listOf(0.5f, 1f), 2)
             val softness = op.number("softness", 1f)
             val pin = op.number("root_pin", 0f)
-            if(type == "sway") {
+            if(type == "sway" || type == "arc") {
                 require("root" in op && "tip" in op) { "Sway needs explicit root and tip in normalized input bounds" }
                 require(softness in 0f..8f && pin in 0f..0.95f)
                 require(hypot((tip[0]-root[0])*b[2], (tip[1]-root[1])*b[3]) > 1e-6f) { "Root and tip must differ" }
@@ -149,6 +149,22 @@ internal object RigGeometryTools {
                         val dx=x-rx; val dy=y-ry
                         nx=rx+dx*cos(a)-dy*sin(a); ny=ry+dx*sin(a)+dy*cos(a)
                     }
+                    "arc" -> {
+                        val rx = b[0] + root[0] * b[2]; val ry = b[1] + root[1] * b[3]
+                        val tx = (tip[0] - root[0]) * b[2]; val ty = (tip[1] - root[1]) * b[3]
+                        val length = hypot(tx, ty); val ex = tx / length; val ey = ty / length
+                        val along = (x - rx) * ex + (y - ry) * ey
+                        val across = -(x - rx) * ey + (y - ry) * ex
+                        val fixed = length * pin
+                        val angle = degrees * PI.toFloat() / 180f
+                        if (along > fixed && abs(angle) > 1e-6f) {
+                            val radius = (length - fixed) / angle
+                            val theta = (along - fixed) / radius
+                            val cx = radius * sin(theta); val cy = radius * (1 - cos(theta))
+                            nx = rx + ex * (fixed + cx - across * sin(theta)) - ey * (cy + across * cos(theta))
+                            ny = ry + ey * (fixed + cx - across * sin(theta)) + ex * (cy + across * cos(theta))
+                        }
+                    }
                     "smooth" -> {
                         require(g.columns != null && g.rows != null) { "Smooth requires a warp grid" }
                         val c=i%(g.columns+1); val r=i/(g.columns+1)
@@ -186,7 +202,9 @@ internal object RigGeometryTools {
         if(d>=1f)return 0f
         val edge=s.number("feather",0f); require(edge in 0f..0.5f)
         val fade=if(edge>0) (minOf(u-rect[0],rect[2]-u,v-rect[1],rect[3]-v)/edge).coerceIn(0f,1f) else 1f
-        return BezierWarp.cubic(1f,1f,0f,0f,d)*BezierWarp.cubic(0f,0f,1f,1f,fade)
+        val hardness = s.number("hardness", 0f); require(hardness in 0f..0.95f)
+        val falloff = ((d - hardness) / (1 - hardness)).coerceIn(0f, 1f)
+        return BezierWarp.cubic(1f,1f,0f,0f,falloff)*BezierWarp.cubic(0f,0f,1f,1f,fade)
     }
 }
 

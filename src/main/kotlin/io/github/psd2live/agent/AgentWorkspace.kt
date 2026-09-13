@@ -384,6 +384,14 @@ data class AgentParameterRangeDiagnostic(
 data class AgentWorkflowResult(val metadata: kotlinx.serialization.json.JsonObject, val images: List<ByteArray> = emptyList())
 
 interface AgentWorkspace {
+    suspend fun observeAuthoring(arguments: kotlinx.serialization.json.JsonObject): AgentWorkflowResult =
+        throw UnsupportedOperationException("Version/motion observation unavailable")
+    suspend fun createArtwork(arguments: kotlinx.serialization.json.JsonObject): AgentWorkspaceMutationResult =
+        throw UnsupportedOperationException("Artwork creation unavailable")
+    suspend fun splitArtwork(arguments: kotlinx.serialization.json.JsonObject): AgentWorkspaceMutationResult =
+        throw UnsupportedOperationException("Artwork splitting unavailable")
+    suspend fun authorRig(state: String, edits: kotlinx.serialization.json.JsonArray): AgentWorkspaceMutationResult =
+        throw UnsupportedOperationException("Ordered authoring is unavailable")
     fun listRigObjectSummaries(): List<kotlinx.serialization.json.JsonObject> = listRigObjects().map {
         kotlinx.serialization.json.JsonObject(mapOf("kind" to kotlinx.serialization.json.JsonPrimitive(it.kind), "id" to kotlinx.serialization.json.JsonPrimitive(it.id)))
     }

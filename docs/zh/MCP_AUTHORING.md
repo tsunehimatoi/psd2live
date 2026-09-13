@@ -2,6 +2,8 @@
 
 MCP 同时提供可组合的操作、证据和按需知识，不要求统一的制作顺序。简单改名不需要绘画流程，绘画不绑定某个生成器，几何合法不等于视觉合格。
 
+后续接口设计见 [面向 Agent 的 MCP 统一设计方案](AGENT_MCP_DESIGN.md)。整体重构尚未实现；本页描述当前可调用接口，包括已落地的姿态拼图。
+
 ## 当前接口
 
 | 意图 | 接口 | 行为 |
@@ -11,12 +13,34 @@ MCP 同时提供可组合的操作、证据和按需知识，不要求统一的�
 | 了解形状 | `rig_inspect` | 默认摘要、局部几何诊断；按需读取控制点 |
 | 试算形状 | `rig_preview` | 不修改工程，返回相对输入姿态的位移、翻折、塌缩指标 |
 | 修改形状 | `rig_transform` | 按参数姿态组合平移、缩放、旋转、弯曲、平滑、根部固定的 sway 和对应点 landmarks |
-| 多姿态查看 | `view_render_poses` | 1–9 个姿态，共用明确的画布镜头、图层组合，返回各自 View 映射 |
+| 多姿态查看 | `view_render_poses` | 1–9 个姿态按输入顺序拼为一张图；公共参数只返回一次，每格保留 View 引用与画布映射 |
 | 区域覆盖 | `view_check_coverage` | 在明确应被覆盖的画布矩形内，测量选定图层的 alpha 覆盖 |
 | 素材接入 | asset 工具 | 原图像素、SVG 栅格化、绘画或生图均可；最终输入 PNG |
 | 按需知识 | `agent_get_workflow` | overview / geometry / hair / variants / face / assets |
 
 已有参数、K 帧、物理、注册、保存和历史工具继续保留。`agent_get_workflow` 无参数时改为返回短入口；几何详情使用 `topic="geometry"`。对象发现现在默认分页，需要继续读取 `nextOffset`。
+
+## 多姿态拼图
+
+固定转头姿态，比较张眼、半闭、闭眼，仍使用原工具：
+
+```json
+{
+  "viewport":{"mode":"canvas_rect","left":300,"top":200,"width":400,"height":220},
+  "parameters":{"ParamAngleX":15},
+  "poses":[{"ParamEyeLOpen":1},{"ParamEyeLOpen":0.5},{"ParamEyeLOpen":0}],
+  "columns":3,
+  "target_long_edge":1024
+}
+```
+
+示例坐标及参数 ID 必须换成当前工程的实际值。`parameters` 是公共值，单格 `poses` 覆盖同名值；`columns` 可省略，默认紧凑布局。`target_long_edge` 与 `max_bytes` 约束整张拼图，不是每格；小部件应使用局部镜头或减少姿态，不能无限缩小图片。低于最低可辨尺寸会返回预算错误，该下限不是外观质量保证。
+
+返回一个 image，元数据包含公共 `revisionId / canvasRect / commonParameters` 与 `tiles`。每格 `parameters` 加上公共值构成该格记录的参数；`imageRect=[x,y,width,height]` 是拼图内**不含标签**的图像区域，`canvasRect=[left,top,right,bottom]` 为公共画布范围。像素点 `(px,py)` 映射为 `left+(px-x)/width*(right-left)` 与 `top+(py-y)/height*(bottom-top)`，仅对落在该格图像内的点有效。
+
+格子的 `viewId` 仍引用原始单格 View；整张拼图不是可用于素材导入的空间参考。需要放大时，用该格参数和更小 `canvas_rect` 调用 `view_render_model`。原先的 `views[] + 多个 image` 输出已替换，消费旧返回格式的客户端需调整。
+
+这表示同版本的静态姿态比较，不是版本前后比较或物理仿真。越界参数诊断仍按格返回。实际图像 token 取决于宿主编码，尚未测得节省比例。
 
 ## 基础编辑
 

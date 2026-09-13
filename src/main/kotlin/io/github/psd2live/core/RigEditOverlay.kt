@@ -203,6 +203,8 @@ data class RigEditOverlay(
     val assetLayers: Map<String, kotlinx.serialization.json.JsonObject> = emptyMap(),
     val calibrationLayerIds: Set<String> = emptySet(),
     val structureEdits: List<kotlinx.serialization.json.JsonObject> = emptyList(),
+    /** New authoring commands replay in actual order, after the legacy baseline. */
+    val authoringJournal: List<kotlinx.serialization.json.JsonObject> = emptyList(),
 ) {
 	init {
 		require(warpEdits.map { it.id }.distinct().size == warpEdits.size) { "Duplicate Warp IDs" }
@@ -246,7 +248,7 @@ data class RigEditOverlay(
 		for (delete in keyformDeleteEdits) {
 			model = applyKeyformDelete(model, delete)
 		}
-		return model
+		return authoringJournal.fold(model, RigAuthoringJournal::apply)
 	}
 
 	fun upsert(edit: RigParameterEdit): RigEditOverlay {
@@ -294,7 +296,7 @@ data class RigEditOverlay(
 internal fun BuiltRig.withRigEdits(overlay: RigEditOverlay): BuiltRig =
 	if (overlay == RigEditOverlay.Empty) this else copy(puppet = overlay.applyTo(puppet))
 
-private fun applyKeyformDelete(model: PuppetModel, delete: RigKeyformDeleteEdit): PuppetModel {
+internal fun applyKeyformDelete(model: PuppetModel, delete: RigKeyformDeleteEdit): PuppetModel {
 	val paramId = ParameterId(delete.parameterId)
 	val param = model.parameters.firstOrNull { it.id == paramId } ?: return model
 	val owner = delete.target.asKeyformOwner()
@@ -350,7 +352,7 @@ private fun applyKeyformDelete(model: PuppetModel, delete: RigKeyformDeleteEdit)
 	return current
 }
 
-private fun applyKeyformSet(model: PuppetModel, set: RigKeyformSetEdit): PuppetModel {
+internal fun applyKeyformSet(model: PuppetModel, set: RigKeyformSetEdit): PuppetModel {
 	var current = model
 	val owner = set.target.asKeyformOwner()
 	val poseFn: (ParameterId) -> Float = { id ->
@@ -476,7 +478,7 @@ private fun applyKeyformSet(model: PuppetModel, set: RigKeyformSetEdit): PuppetM
 	return current
 }
 
-private fun applyKeyformCopy(model: PuppetModel, copy: RigKeyformCopyEdit): PuppetModel {
+internal fun applyKeyformCopy(model: PuppetModel, copy: RigKeyformCopyEdit): PuppetModel {
 	val sourceOwner = copy.sourceTarget.asKeyformOwner()
 	val sourcePose: Pose = copy.sourceCoordinate.mapKeys { ParameterId(it.key) }
 

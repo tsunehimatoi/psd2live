@@ -245,7 +245,7 @@ private suspend fun createTransport(
 	return transport
 }
 
-internal fun createAgentMcpServer(workspace: AgentWorkspace): Server {
+internal fun createAgentMcpServer(workspace: AgentWorkspace, legacyTools: Boolean = false): Server {
 	val server = Server(
 		serverInfo = Implementation("psd2live", "0.7.1"),
 		options = ServerOptions(
@@ -637,29 +637,36 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace): Server {
 
     server.addTool(
         name = "view_render_poses",
-        description = "Render 1..9 parameter poses with one fixed canvas camera and composition. Each image retains its own View mapping. This is static pose sampling, not a physics simulation.",
+        description = "Compare 1..9 poses in one labeled sheet, in input order. parameters are shared; poses override them. target_long_edge/max_bytes bound the entire sheet. Each tile imageRect [x,y,width,height] maps to the shared canvasRect [left,top,right,bottom]; labels are excluded. Static poses, not physics or revision comparison.",
         inputSchema = ToolSchema(properties = JsonObject(requireNotNull(modelViewSchema().properties) + buildJsonObject {
             putJsonObject("poses") { put("type","array"); put("minItems",1); put("maxItems",9)
                 putJsonObject("items") { put("type","object"); putJsonObject("additionalProperties") { put("type","number") } }
             }
+            putJsonObject("columns") { put("type","integer"); put("minimum",1); put("maximum",3); put("description","Row-major columns; omit for a compact grid") }
         }), required = listOf("viewport", "poses")), toolAnnotations = READ_ONLY,
     ) { request ->
         try {
             val poses = request.arguments!!.getValue("poses").jsonArray
             require(poses.size in 1..9)
+            val columns = request.arguments?.get("columns")?.jsonPrimitive?.int ?: poseSheetColumns(poses.size)
+            require(columns in 1..minOf(3, poses.size)) { "columns must be 1..min(3, pose count)" }
+            val sharedParameters = request.arguments?.get("parameters")?.jsonObject?.mapValues { it.value.jsonPrimitive.float }.orEmpty()
+            val output = request.outputSpec()
+            val rows = (poses.size + columns - 1) / columns
+            val tileOutput = output.copy(targetLongEdge = maxOf(128, output.targetLongEdge / maxOf(columns, rows)))
             val frame=request.viewFrame()
             require(frame is AgentViewFrame.CanvasRect) { "Use canvas_rect for a fixed comparison camera" }
             val revision=workspace.snapshot().revisionId
             val views=poses.map { pose -> workspace.renderModel(AgentModelViewRequest(
-                parameters=pose.jsonObject.mapValues { it.value.jsonPrimitive.float },
+                parameters=sharedParameters + pose.jsonObject.mapValues { it.value.jsonPrimitive.float },
                 includeLayerIds=request.optionalStringSet("include_layer_ids"), frame=frame,
-                background=request.background(), output=request.outputSpec(),
+                background=request.background(), output=tileOutput,
                 annotateLayerIds=request.optionalStringSet("annotate_layer_ids").orEmpty(),
                 annotateDeformerIds=request.optionalStringSet("annotate_deformer_ids").orEmpty(),
                 pointIndices=request.boolean("point_indices",false))) }
             require(views.all { it.revisionId == revision } && workspace.snapshot().revisionId == revision) { "Workspace changed during comparison; render again" }
-            val metadata=buildJsonObject { put("views",JsonArray(views.map { it.toJson() })); put("physicsSimulated",false) }
-            CallToolResult(content=listOf(TextContent(metadata.toString())) + views.map { ImageContent(Base64.getEncoder().encodeToString(it.png),"image/png") }, structuredContent=metadata)
+            val sheet = renderPoseSheet(views, output, columns)
+            CallToolResult(content=listOf(TextContent(sheet.metadata.toString()), ImageContent(Base64.getEncoder().encodeToString(sheet.images.single()),"image/png")), structuredContent=sheet.metadata)
         } catch(e: IllegalArgumentException) { CallToolResult(content=listOf(TextContent(e.message ?: "Invalid poses")),isError=true) }
           catch(e: IllegalStateException) { CallToolResult(content=listOf(TextContent(e.message ?: "Cannot render poses")),isError=true) }
     }
@@ -768,7 +775,13 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace): Server {
 			}
 			workspace.importPng(
 				AgentPngImportRequest(
-					png = decodePngBase64(request.requiredString("png_base64")),
+					png = request.optionalString("png_path")?.let { path ->
+                        require(request.optionalString("png_base64") == null) { "Provide png_path or png_base64, not both" }
+                        val file = java.nio.file.Path.of(path)
+                        require(file.isAbsolute && java.nio.file.Files.isRegularFile(file)) { "png_path must be an existing absolute file path" }
+                        require(java.nio.file.Files.size(file) in 8..(64L * 1024 * 1024)) { "PNG file exceeds the import budget" }
+                        java.nio.file.Files.readAllBytes(file)
+                    } ?: decodePngBase64(request.requiredString("png_base64")),
 					spatialReferenceId = request.optionalString("spatial_reference_id").orEmpty(),
                     referenceId = request.optionalString("reference_id"),
                     processing = request.arguments?.get("processing") as? JsonObject ?: JsonObject(emptyMap()),
@@ -866,6 +879,7 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace): Server {
 		)
 	}
 
+	if (!legacyTools) installAuthoringTools(server, workspace)
 	return server
 }
 
@@ -886,6 +900,7 @@ private fun rigObjectCreateSchema(physics: Boolean): ToolSchema = ToolSchema(
 
 private fun pngImportSchema(): ToolSchema = ToolSchema(
 	properties = buildJsonObject {
+        putJsonObject("png_path") { put("type", "string"); put("description", "Absolute local PNG path from the image generator; avoids transferring base64 through model context") }
         putJsonObject("reference_id") { put("type", "string"); put("description", "Reference package from asset_prepare_reference. V2 import keeps raw PNG, removes declared matte, and requires asset_register before adding a layer. Replaces spatial_reference_id.") }
         put("processing", processingSchema())
         putJsonObject("solid_background") { put("type", "string"); put("pattern", "^#[0-9a-fA-F]{6}$"); put("description", "Actual generated matte color. Default generation to pure white #FFFFFF for dark hair or pure black #000000 for light hair to avoid colored fringe; do not guess or automatically strip alpha when omitted. Removes only border-connected near-color pixels, not a baked checkerboard. Inspect remaining matte in composition.") }
@@ -913,7 +928,7 @@ private fun pngImportSchema(): ToolSchema = ToolSchema(
 			}
 		}
 	},
-	required = listOf("png_base64"),
+	required = emptyList(),
 )
 
 private fun parameterCreateSchema(): ToolSchema = ToolSchema(
@@ -1873,9 +1888,9 @@ private val MUTATING = ToolAnnotations(
 )
 
 private val AGENT_INSTRUCTIONS = """
-    PSD2Live edits a recoverable local model workspace. Use stable object IDs; rig_list_objects discovers them, rig_inspect gives compact geometry, and View images retain pixel/canvas mappings.
-    Edits require expected_history_head_node_id. Read project_get_state once, then chain returned heads. On stale heads or uncertain writes, reconcile state/history before retrying. History is append-only. Tasks are optional notes for longer work.
-    Choose tools to match intent: object_edit for names, visibility and hierarchy; rig_transform for shape changes at a parameter pose; keyform tools for channels; asset tools for artwork; physics_put to drive an already-authored shape parameter.
-    All PSD2Live domain workflows are bundled in this MCP server; no separate host Skill is required. agent_get_workflow offers optional, focused knowledge by topic. Artwork may come from original pixels, SVG, painting or an available image generator according to style and user preference; this server imports PNG and does not generate illustrations.
-    Structural validity is not visual quality. Report actual changes and inspected poses; distinguish measured defects, visual judgment and uncertainty. Reuse good candidates and stop unproductive refinement within the user's budget.
+    PSD2Live is a recoverable model editor. Inspect context and relevant objects, understand existing motion ownership, and plan your own work. There are no task recipes or required skills.
+    Chain the returned state after writes. A write updates the model and creates history; it is not an uncommitted preview. Reconcile inspect/revision after uncertain writes. Preserve useful milestones and restore deliberately.
+    Separate source artwork, motion hierarchy, parameter definitions, authored keyforms, and observation poses. Prefer existing owners; add a fitted Warp only for independent motion. All surface points may deform, including empty and boundary cage points. Use broad fields, not isolated mesh vertices.
+    Form/deform edits name exact destination keys; viewing parent parameters does not mean binding them again. Plan endpoints, meaningful combinations and intermediate observations. Keep other keys and channels. Physics drives already-authored output forms.
+    Generate or edit artwork with available host image tools when needed, then import/register it through asset. Compare actual model renders, never generated illustrations as proof of motion. Structural validity and appearance are different. Report only observed results and remaining limitations.
 """.trimIndent()
