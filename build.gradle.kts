@@ -195,4 +195,5 @@ afterEvaluate {
 tasks.test {
 	useJUnitPlatform()
 	systemProperty("psd2live.cubism.smoke", System.getProperty("psd2live.cubism.smoke", "false"))
+	systemProperty("psd2live.test", "true")
 }

@@ -26,6 +26,7 @@ PSD2Live 是一条自动化的 Live2D 模型生成流水线：输入一张按规
 | :--- | :--- | :--- |
 | 确认手上的 PSD 能否生成 | [PSD 图层规范](zh/spec/PSD_LAYER_SPEC.md) | [用户操作指南](zh/guide/USER_GUIDE.md) |
 | 尽快跑通一次导出 | [用户操作指南](zh/guide/USER_GUIDE.md) | [工程文件格式](zh/spec/PROJECT_FORMAT.md) |
+| 使用路径制作网格 K 帧 | [变形路径（实验性）](zh/guide/DEFORM_PATHS.md) | [变形器与参数规范](zh/spec/DEFORMER_AND_PARAMETER_SPEC.md) |
 | 弄清生成结果为什么长这样 | [变形器与参数规范](zh/spec/DEFORMER_AND_PARAMETER_SPEC.md) | [实现对比与设计决策](zh/spec/IMPLEMENTATION_COMPARISON.md) |
 | 让 AI 宿主接入并修改工程 | [MCP 接口契约](zh/agent/MCP_AUTHORING.md) | [Agent 设计](zh/agent/AGENT_DESIGN.md) |
 | 开启与官方运行时的一致性对照 | [Live2D SDK 配置指南](zh/guide/CUBISM_SDK_SETUP.md) | — |
@@ -54,6 +55,7 @@ PSD2Live 是一条自动化的 Live2D 模型生成流水线：输入一张按规
 | [变形器与参数规范](zh/spec/DEFORMER_AND_PARAMETER_SPEC.md) | 变形器拓扑与坐标空间、九轴经纬网数学模型、C1 连续曲线、五官二次解耦修形、身体与呼吸变形、物理动力学、参数映射表、几何自检 | 中 · [英](en/spec/DEFORMER_AND_PARAMETER_SPEC.md) · [日](ja/spec/DEFORMER_AND_PARAMETER_SPEC.md) |
 | [工程文件格式](zh/spec/PROJECT_FORMAT.md) | `.psd2live` 归档条目、保存与恢复语义、校验规则、手工编辑限制、UI 与 MCP 入口 | 中（摘要）· [英（完整）](en/spec/PROJECT_FORMAT.md) |
 | [实现对比与设计决策](zh/spec/IMPLEMENTATION_COMPARISON.md) | 逐阶段技术选型与取舍、坐标空间与格式不变性、自动化几何自检 | 中 · [英](en/spec/IMPLEMENTATION_COMPARISON.md) · [日](ja/spec/IMPLEMENTATION_COMPARISON.md) |
+| [运行时、编辑与导出结构及功能缺口](zh/spec/RUNTIME_EXPORT_ARCHITECTURE_AND_GAPS.md) | 统一运行时、工程历史、CMO3/MOC3/边车数据流，格式覆盖矩阵与待实现优先级 | 中 |
 
 ### agent/ Agent 与 MCP
 

@@ -3,9 +3,11 @@ package io.github.psd2live.ui
 import io.github.psd2live.ui.utils.DesktopUtils
 import io.github.psd2live.ui.utils.NativeFilePicker
 import java.nio.file.Files
+import java.nio.file.Path
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -34,14 +36,26 @@ class DesktopUtilsAndFilePickerTest {
 
 	@Test
 	fun testOpenDirectoryDebounceOnSameDirectory() {
+		var openCount = 0
+		var openedPath: Path? = null
+		DesktopUtils.directoryOpener = { path ->
+			openCount++
+			openedPath = path
+			true
+		}
+
 		val tempDir = Files.createTempDirectory("test-dir-debounce")
 		try {
-			// First call may attempt to launch OS explorer or Desktop.open
-			DesktopUtils.openDirectory(tempDir)
+			// First call should invoke directory opener
+			val firstResult = DesktopUtils.openDirectory(tempDir)
+			assertTrue(firstResult, "First call must succeed")
+			assertEquals(1, openCount, "Opener must be called once")
+			assertEquals(tempDir.toAbsolutePath().normalize(), openedPath)
 
-			// Immediate second call should be caught by debounce and return true
+			// Immediate second call should be caught by debounce and return true without calling opener again
 			val secondResult = DesktopUtils.openDirectory(tempDir)
 			assertTrue(secondResult, "Subsequent call within debounce window must return true")
+			assertEquals(1, openCount, "Opener must not be called again within debounce window")
 		} finally {
 			Files.deleteIfExists(tempDir)
 		}

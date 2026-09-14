@@ -28,6 +28,7 @@ PSD2Live 是一个自动化的 Live2D 模型生成流水线与桌面应用。输
 | 规范 | [变形器与算法数学规范](docs/zh/spec/DEFORMER_AND_PARAMETER_SPEC.md) | 变形器拓扑树、九轴经纬网数学模型、C1 连续曲线、五官修形与动力学公式 |
 | 规范 | [工程文件格式](docs/zh/spec/PROJECT_FORMAT.md) | `.psd2live` 归档条目、保存/恢复语义与校验规则（完整规范为[英文版](docs/en/spec/PROJECT_FORMAT.md)） |
 | 规范 | [实现对比与设计决策](docs/zh/spec/IMPLEMENTATION_COMPARISON.md) | 逐流程技术选型、格式不变性与自动化几何自检说明 |
+| 规范 | [运行时、编辑与导出结构及功能缺口](docs/zh/spec/RUNTIME_EXPORT_ARCHITECTURE_AND_GAPS.md) | `PuppetModel`、工程历史、CMO3/MOC3/边车接口关系，透传与完整支持的区别及缺口优先级 |
 | Agent | [MCP 接口契约](docs/zh/agent/MCP_AUTHORING.md) | 当前对外暴露的 10 个合并工具及其分支契约、素材导入、姿态拼图与失败条件 |
 | Agent | [Agent 设计](docs/zh/agent/AGENT_DESIGN.md) | 产品边界与硬约束、工具收敛、连续形变场、成本控制与分阶段验收 |
 
@@ -36,6 +37,8 @@ PSD2Live 是一个自动化的 Live2D 模型生成流水线与桌面应用。输
 ---
 
 ## 核心特性
+
+- **变形路径（实验性）**：选中图层后从工作区进入路径编辑，支持多路径、控制点、宽度/硬度、层级与参数 K 帧；工程保存保留路径，`.cmo3` 写入原生控制器，`.moc3` 导出生成的网格形变。当前算法尚未通过 Cubism Editor 效果一致性验收，使用方式和限制见[变形路径说明](docs/zh/guide/DEFORM_PATHS.md)。
 
 - **自适应网格剖分**：基于可分离高斯平滑滤波与 95th 百分位自适应二值化消除边缘噪点；采用带物理窗口角点识别的周期三次 Bézier 曲线拟合与曲率加权加密采样（最高 12 倍）；执行受约束 Delaunay 剖分结合拓扑动态收敛 Lawson 翻边与超长内部边中点二分细分。
 

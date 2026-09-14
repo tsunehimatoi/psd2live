@@ -18,33 +18,78 @@ object DesktopUtils {
 	private var lastOpenTime: Long = 0L
 	private var lastOpenDirectory: String? = null
 
+	private val defaultDirectoryOpener: (Path) -> Boolean = { dir ->
+		if (isTestEnvironment()) {
+			true
+		} else {
+			runCatching {
+				if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
+					Desktop.getDesktop().open(dir.toFile())
+					true
+				} else {
+					val os = System.getProperty("os.name").orEmpty().lowercase()
+					when {
+						os.contains("win") -> {
+							ProcessBuilder("explorer.exe", dir.toString()).start()
+							true
+						}
+						os.contains("mac") -> {
+							ProcessBuilder("open", dir.toString()).start()
+							true
+						}
+						else -> {
+							ProcessBuilder("xdg-open", dir.toString()).start()
+							true
+						}
+					}
+				}
+			}.getOrElse { false }
+		}
+	}
+
+	private val defaultBrowserOpener: (String) -> Boolean = { url ->
+		if (isTestEnvironment()) {
+			true
+		} else {
+			runCatching {
+				if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+					Desktop.getDesktop().browse(URI(url))
+					true
+				} else {
+					val os = System.getProperty("os.name").orEmpty().lowercase()
+					when {
+						os.contains("win") -> {
+							ProcessBuilder("rundll32", "url.dll,FileProtocolHandler", url).start()
+							true
+						}
+						os.contains("mac") -> {
+							ProcessBuilder("open", url).start()
+							true
+						}
+						else -> {
+							ProcessBuilder("xdg-open", url).start()
+							true
+						}
+					}
+				}
+			}.getOrElse { false }
+		}
+	}
+
+	internal var directoryOpener: (Path) -> Boolean = defaultDirectoryOpener
+	internal var browserOpener: (String) -> Boolean = defaultBrowserOpener
+
+	private fun isTestEnvironment(): Boolean {
+		return System.getProperty("org.gradle.test.worker") != null ||
+			System.getProperty("psd2live.test") == "true"
+	}
+
 	/**
 	 * Opens a URL in the user's default system web browser.
 	 * Falls back gracefully to operating system-specific commands if Desktop API is not supported.
 	 */
 	fun openBrowser(url: String): Boolean {
-		return runCatching {
-			if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
-				Desktop.getDesktop().browse(URI(url))
-				true
-			} else {
-				val os = System.getProperty("os.name").orEmpty().lowercase()
-				when {
-					os.contains("win") -> {
-						ProcessBuilder("rundll32", "url.dll,FileProtocolHandler", url).start()
-						true
-					}
-					os.contains("mac") -> {
-						ProcessBuilder("open", url).start()
-						true
-					}
-					else -> {
-						ProcessBuilder("xdg-open", url).start()
-						true
-					}
-				}
-			}
-		}.getOrElse { false }
+		return browserOpener(url)
 	}
 
 	/**
@@ -74,28 +119,7 @@ object DesktopUtils {
 			lastOpenTime = now
 		}
 
-		return runCatching {
-			if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
-				Desktop.getDesktop().open(dir.toFile())
-				true
-			} else {
-				val os = System.getProperty("os.name").orEmpty().lowercase()
-				when {
-					os.contains("win") -> {
-						ProcessBuilder("explorer.exe", dir.toString()).start()
-						true
-					}
-					os.contains("mac") -> {
-						ProcessBuilder("open", dir.toString()).start()
-						true
-					}
-					else -> {
-						ProcessBuilder("xdg-open", dir.toString()).start()
-						true
-					}
-				}
-			}
-		}.getOrElse { false }
+		return directoryOpener(dir)
 	}
 
 	/**
@@ -106,6 +130,8 @@ object DesktopUtils {
 			lastOpenTime = 0L
 			lastOpenDirectory = null
 		}
+		directoryOpener = defaultDirectoryOpener
+		browserOpener = defaultBrowserOpener
 	}
 
 	/**

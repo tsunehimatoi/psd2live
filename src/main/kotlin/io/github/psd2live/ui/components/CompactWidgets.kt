@@ -348,13 +348,33 @@ fun IconCheck(
 @Composable
 fun IconClose(
 	modifier: Modifier = Modifier.size(12.dp),
-	tint: Color = LocalToolColors.current.textMuted,
+	tint: Color = LocalToolColors.current.textPrimary,
+) {
+	Canvas(modifier = modifier) {
+		val stroke = Stroke(width = 1.3f, cap = StrokeCap.Round)
+		drawLine(color = tint, start = Offset.Zero, end = Offset(size.width, size.height), strokeWidth = stroke.width, cap = stroke.cap)
+		drawLine(color = tint, start = Offset(size.width, 0f), end = Offset(0f, size.height), strokeWidth = stroke.width, cap = stroke.cap)
+	}
+}
+
+/** Vector Deform Path / Bezier Curve Icon */
+@Composable
+fun IconDeformPath(
+	modifier: Modifier = Modifier.size(14.dp),
+	tint: Color = LocalToolColors.current.textPrimary,
 ) {
 	Canvas(modifier = modifier) {
 		val w = size.width
 		val h = size.height
-		drawLine(color = tint, start = Offset(w * 0.2f, h * 0.2f), end = Offset(w * 0.8f, h * 0.8f), strokeWidth = 1.3f, cap = StrokeCap.Round)
-		drawLine(color = tint, start = Offset(w * 0.8f, h * 0.2f), end = Offset(w * 0.2f, h * 0.8f), strokeWidth = 1.3f, cap = StrokeCap.Round)
+		val stroke = Stroke(width = 1.3f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+		val curvePath = Path().apply {
+			moveTo(w * 0.15f, h * 0.78f)
+			cubicTo(w * 0.18f, h * 0.22f, w * 0.82f, h * 0.78f, w * 0.85f, h * 0.22f)
+		}
+		drawPath(curvePath, color = tint, style = stroke)
+		drawCircle(color = tint, radius = w * 0.12f, center = Offset(w * 0.15f, h * 0.78f), style = Fill)
+		drawCircle(color = tint, radius = w * 0.12f, center = Offset(w * 0.85f, h * 0.22f), style = Fill)
+		drawCircle(color = Color(0xFF4EC9B0), radius = w * 0.09f, center = Offset(w * 0.5f, h * 0.5f), style = Fill)
 	}
 }
 
