@@ -1,6 +1,7 @@
 package io.github.psd2live.ui
 
 import io.github.psd2live.core.DeformPathTools
+import io.github.psd2live.core.RigGeometryTools
 import org.umamo.runtime.model.*
 import org.umamo.render.eval.CpuDeformationEvaluator
 import org.umamo.render.eval.DeformedGeometry
@@ -169,25 +170,36 @@ internal object RigInformationOverlay {
                 g.draw(curvePath)
             }
 
+            val localBounds = RigGeometryTools.bounds(mesh.positions)
+            val localExtent = maxOf(localBounds[2], localBounds[3]).coerceAtLeast(1e-6f)
+            val worldBounds = RigGeometryTools.bounds(positions)
+            val worldExtent = maxOf(worldBounds[2], worldBounds[3]).coerceAtLeast(1e-6f)
+            val localToWorldScale = if (geometry?.worldPositions?.containsKey(path.drawableId) == true) {
+                worldExtent / localExtent
+            } else {
+                1f
+            }
+
             val drawWidth = (showWidth || showRadius || isSelected || isHovered) && path.width > 0f
             val drawHardness = (showHardness || showRadius || isSelected || isHovered) && path.width > 0f && path.hardness > 0f
 
             if (drawWidth || drawHardness) {
-                val outerRadiusPx = (path.width * viewport.scale).toFloat()
+                val worldWidth = path.width * localToWorldScale
+                val outerRadiusPx = (worldWidth * viewport.scale).toFloat()
                 val innerRadiusPx = outerRadiusPx * path.hardness.coerceIn(0f, 1f)
                 for (pt in screenPoints) {
                     if (drawHardness && innerRadiusPx > 1f) {
-                        g.color = Color(33, 150, 243, 30)
+                        g.color = Color(33, 150, 243, 35)
                         g.fillOval((pt.first - innerRadiusPx).toInt(), (pt.second - innerRadiusPx).toInt(),
                             (innerRadiusPx * 2).toInt(), (innerRadiusPx * 2).toInt())
-                        g.color = Color(33, 150, 243, 120)
-                        g.stroke = BasicStroke(1f)
+                        g.color = Color(33, 150, 243, 160)
+                        g.stroke = BasicStroke(1.2f)
                         g.drawOval((pt.first - innerRadiusPx).toInt(), (pt.second - innerRadiusPx).toInt(),
                             (innerRadiusPx * 2).toInt(), (innerRadiusPx * 2).toInt())
                     }
                     if (drawWidth && outerRadiusPx > 1f) {
-                        g.color = Color(244, 67, 54, 90)
-                        g.stroke = BasicStroke(1.2f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL, 0f, floatArrayOf(4f, 4f), 0f)
+                        g.color = Color(244, 67, 54, 180)
+                        g.stroke = BasicStroke(1.4f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL, 0f, floatArrayOf(4f, 4f), 0f)
                         g.drawOval((pt.first - outerRadiusPx).toInt(), (pt.second - outerRadiusPx).toInt(),
                             (outerRadiusPx * 2).toInt(), (outerRadiusPx * 2).toInt())
                     }
@@ -231,17 +243,6 @@ internal object RigInformationOverlay {
                     g.color = Color.WHITE
                     g.drawString(idx, ix, iy)
                 }
-            }
-
-            if (labels && (!isDimmed || isSelected || isHovered)) {
-                val label = "path:${path.id} (${path.points.size}pts, L${path.editLevel})"
-                val lx = screenPoints[0].first.toInt().coerceAtLeast(4)
-                val ly = (screenPoints[0].second.toInt() - 14).coerceAtLeast(16)
-                val lw = g.fontMetrics.stringWidth(label) + 8
-                g.color = if (isDimmed) Color(20, 20, 24, 90) else Color(20, 20, 24, 220)
-                g.fillRoundRect(lx, ly - 13, lw, 17, 6, 6)
-                g.color = curveColor
-                g.drawString(label, lx + 4, ly)
             }
         }
         return renderedPathIds
