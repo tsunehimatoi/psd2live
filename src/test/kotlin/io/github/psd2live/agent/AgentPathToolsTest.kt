@@ -322,6 +322,25 @@ class AgentPathToolsTest {
             }
         })
         assertNull(previewWithoutImage["previewImage"])
+
+        // 3. custom width and hardness in preview
+        val previewCustom = AgentPathTools.preview(modelWithPath, buildJsonObject {
+            put("target", "mesh:hair_front")
+            put("path_id", "path_preview_test")
+            put("width", 60f)
+            put("hardness", 0.8f)
+            put("show_width", true)
+            put("show_hardness", false)
+            putJsonArray("moved_points") {
+                add(buildJsonArray { add(JsonPrimitive(30f)); add(JsonPrimitive(10f)) })
+                add(buildJsonArray { add(JsonPrimitive(90f)); add(JsonPrimitive(90f)) })
+            }
+        })
+        assertEquals(60f, previewCustom["width"]?.jsonPrimitive?.float)
+        assertEquals(0.8f, previewCustom["hardness"]?.jsonPrimitive?.float)
+        assertTrue(previewCustom["showWidth"]?.jsonPrimitive?.boolean == true)
+        assertFalse(previewCustom["showHardness"]?.jsonPrimitive?.boolean == true)
+        assertNotNull(previewCustom["previewImage"])
     }
 
     @Test

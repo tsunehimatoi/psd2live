@@ -122,15 +122,24 @@ internal object AgentPathTools {
         meshId: String,
         pathId: String,
         moved: List<Pair<Float, Float>>,
+        customWidth: Float? = null,
+        customHardness: Float? = null,
+        showWidth: Boolean = true,
+        showHardness: Boolean = true,
         targetWidth: Int = 640,
         targetHeight: Int = 640,
     ): ByteArray {
         val drawable = model.drawables.singleOrNull { it.id.raw == meshId } ?: error("Mesh not found: $meshId")
         val mesh = requireNotNull(drawable.mesh) { "Drawable has no mesh" }
-        val active = model.deformPaths.singleOrNull { it.id == pathId } ?: error("Deform path not found: $pathId")
+        val rawActive = model.deformPaths.singleOrNull { it.id == pathId } ?: error("Deform path not found: $pathId")
+        val active = rawActive.copy(
+            width = customWidth?.takeIf { it > 0f } ?: rawActive.width,
+            hardness = customHardness?.coerceIn(0f, 1f) ?: rawActive.hardness,
+        )
+        val paths = model.deformPaths.map { if (it.id == pathId) active else it }
 
         val base = mesh.positions
-        val deformed = DeformPathTools.deform(base, model.deformPaths, pathId, moved)
+        val deformed = DeformPathTools.deform(base, paths, pathId, moved)
         val origPoints = DeformPathTools.positions(active, base)
         val origCurve = DeformPathTools.curve(origPoints, active.points.map { it.corner }, active.closed)
         val movedCurve = DeformPathTools.curve(moved, active.points.map { it.corner }, active.closed)
@@ -231,13 +240,15 @@ internal object AgentPathTools {
                 g.drawLine(cx, cy, ax, ay)
             }
 
-            // 4. Falloff Radii
-            if (active.width > 0f) {
+            // 4. Falloff Width & Hardness
+            val drawWidth = showWidth && active.width > 0f
+            val drawHardness = showHardness && active.width > 0f && active.hardness > 0f
+            if (drawWidth || drawHardness) {
                 val outerRadiusPx = active.width * scale
                 val innerRadiusPx = outerRadiusPx * active.hardness.coerceIn(0f, 1f)
                 for ((px, py) in moved) {
                     val cx = sx(px); val cy = sy(py)
-                    if (innerRadiusPx > 1f) {
+                    if (drawHardness && innerRadiusPx > 1f) {
                         g.color = Color(33, 150, 243, 25)
                         g.fillOval((cx - innerRadiusPx).toInt(), (cy - innerRadiusPx).toInt(),
                             (innerRadiusPx * 2).toInt(), (innerRadiusPx * 2).toInt())
@@ -246,7 +257,7 @@ internal object AgentPathTools {
                         g.drawOval((cx - innerRadiusPx).toInt(), (cy - innerRadiusPx).toInt(),
                             (innerRadiusPx * 2).toInt(), (innerRadiusPx * 2).toInt())
                     }
-                    if (outerRadiusPx > 1f) {
+                    if (drawWidth && outerRadiusPx > 1f) {
                         g.color = Color(244, 67, 54, 75)
                         g.stroke = BasicStroke(1.1f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL, 0f, floatArrayOf(4f, 4f), 0f)
                         g.drawOval((cx - outerRadiusPx).toInt(), (cy - outerRadiusPx).toInt(),
@@ -348,7 +359,7 @@ internal object AgentPathTools {
             g.font = g.font.deriveFont(Font.PLAIN, 11f)
             g.color = Color(190, 200, 215)
             val avg = if (count > 0) sumDisp / count else 0.0
-            val stats = "Vertices: $count | Max \u0394: ${"%.2f".format(maxDisp)}px | Avg \u0394: ${"%.2f".format(avg)}px | Pts: ${moved.size}"
+            val stats = "Vertices: $count | Max \u0394: ${"%.2f".format(maxDisp)}px | Avg \u0394: ${"%.2f".format(avg)}px | Width: ${"%.1f".format(active.width)} | Hardness: ${"%.2f".format(active.hardness)}"
             g.drawString(stats, 22, 43)
 
             // Legend at bottom
@@ -366,11 +377,12 @@ internal object AgentPathTools {
                 g.drawString(text, legX, legY)
                 legX += g.fontMetrics.stringWidth(text) + 14
             }
-            item(Color(110, 125, 145), "Base Wireframe")
-            item(Color(0, 200, 255), "Deformed Wireframe")
-            item(Color(180, 190, 205), "Base Path")
-            item(Color(0, 230, 118), "Moved Path", isCircle = true)
-            item(Color(255, 152, 0), "Displacement \u0394")
+            item(Color(110, 125, 145), "Base Wire")
+            item(Color(0, 200, 255), "Deformed")
+            item(Color(0, 230, 118), "Path", isCircle = true)
+            item(Color(255, 152, 0), "Vector \u0394")
+            if (drawWidth) item(Color(244, 67, 54), "Width")
+            if (drawHardness) item(Color(33, 150, 243), "Hardness")
         } finally {
             g.dispose()
         }
@@ -387,13 +399,24 @@ internal object AgentPathTools {
         val pathId = (arguments["path_id"] ?: arguments["id"])?.jsonPrimitive?.content ?: error("Missing path_id")
         val moved = parseMovedPoints(arguments.getValue("moved_points").jsonArray)
 
+        val customWidth = arguments["width"]?.jsonPrimitive?.floatOrNull
+        val customHardness = arguments["hardness"]?.jsonPrimitive?.floatOrNull
+        val showWidth = arguments["show_width"]?.jsonPrimitive?.booleanOrNull ?: true
+        val showHardness = arguments["show_hardness"]?.jsonPrimitive?.booleanOrNull ?: true
+
         val drawable = model.drawables.singleOrNull { it.id.raw == meshId } ?: error("Mesh not found: $meshId")
         val mesh = requireNotNull(drawable.mesh) { "Drawable has no mesh" }
-        val active = model.deformPaths.singleOrNull { it.id == pathId } ?: error("Deform path not found: $pathId")
-        require(moved.size == active.points.size) { "moved_points count (${moved.size}) must match path points (${active.points.size})" }
+        val rawActive = model.deformPaths.singleOrNull { it.id == pathId } ?: error("Deform path not found: $pathId")
+        require(moved.size == rawActive.points.size) { "moved_points count (${moved.size}) must match path points (${rawActive.points.size})" }
+
+        val active = rawActive.copy(
+            width = customWidth?.takeIf { it > 0f } ?: rawActive.width,
+            hardness = customHardness?.coerceIn(0f, 1f) ?: rawActive.hardness,
+        )
+        val paths = model.deformPaths.map { if (it.id == pathId) active else it }
 
         val base = mesh.positions
-        val deformed = DeformPathTools.deform(base, model.deformPaths, pathId, moved)
+        val deformed = DeformPathTools.deform(base, paths, pathId, moved)
 
         val count = base.size / 2
         var maxDisp = 0.0
@@ -412,7 +435,16 @@ internal object AgentPathTools {
         val render = arguments["render"]?.jsonPrimitive?.booleanOrNull ?: true
         val pngBytes = if (render) {
             try {
-                renderDisplacementPreview(model, meshId, pathId, moved)
+                renderDisplacementPreview(
+                    model = model,
+                    meshId = meshId,
+                    pathId = pathId,
+                    moved = moved,
+                    customWidth = customWidth,
+                    customHardness = customHardness,
+                    showWidth = showWidth,
+                    showHardness = showHardness,
+                )
             } catch (e: Exception) {
                 null
             }
@@ -423,6 +455,10 @@ internal object AgentPathTools {
             put("vertexCount", count)
             put("maxDisplacement", maxDisp)
             put("avgDisplacement", if (count > 0) sumDisp / count else 0.0)
+            put("width", active.width)
+            put("hardness", active.hardness)
+            put("showWidth", showWidth)
+            put("showHardness", showHardness)
             putJsonArray("baseBounds") { baseBounds.forEach { add(JsonPrimitive(it)) } }
             putJsonArray("deformedBounds") { deformedBounds.forEach { add(JsonPrimitive(it)) } }
             base64?.let { put("previewImage", it) }

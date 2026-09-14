@@ -170,7 +170,7 @@ Part 组织树用于归组和同绘制顺序时的排序，独立绘制顺序通
 - `view` 的 `model` 分支继承 `view_render_model` 的 `parameters`/`include_layer_ids`/`annotate_layer_ids`/`annotate_deformer_ids`/`annotate_path_ids`/`annotate_path_width`/`annotate_path_hardness`/`annotate_path_radius`/`point_indices`/`viewport`/`background`/`target_long_edge`/`max_bytes`，`poses` 分支继承第 2 节全部约束；`inspect` 只给直接轴与父级链，不返回点数组。
 - `path` 工具针对 ArtMesh 提供类似 Live2D 路径变形器的直觉控制点操作：
   - `put`：控制点数组 `points` 可直接给网格局部坐标 `[[x, y], ...]` 或 `[{"x": x, "y": y, "corner": false}, ...]`，服务端调用 MLS 自动投影并绑定至最近网格三角面；省略 `width` 时按网格局部包围盒尺寸自动设置（12% 跨度），`hardness` 默认 0.5，`level` 默认 2，`closed` 默认 false。
-  - `preview`：根据 `moved_points: [[x, y], ...]` 试算 MLS 变形，返回受影响顶点数、最大位移、平均位移与形变前后包围盒，并默认渲染 640×640 诊断位移图（含原始灰网格、变形后青色网格、绿色路径曲线、控制点索引编号与位移向量箭头；可通过 `render: false` 关闭），不推进工程历史。
+  - `preview`：根据 `moved_points: [[x, y], ...]` 试算 MLS 变形，支持传入可选的 `width` 与 `hardness` 试算不同影响范围与衰减硬度下的位移效果，支持 `show_width`（默认 true）与 `show_hardness`（默认 true）控制诊断图中的宽度虚线圆与硬度实体圆叠加；返回受影响顶点数、最大位移、平均位移、形变前后包围盒与 `width`/`hardness` 诊断指标，并默认渲染 640×640 诊断位移图（含原始灰网格、变形后青色网格、绿色路径曲线、控制点索引编号、位移向量箭头与宽度/硬度范围圈；可通过 `render: false` 关闭），不推进工程历史。
   - `deform`：必须包含目标参数角 `key`（需指定该网格上绑定的全部几何轴），移动控制点后通过 `workspace.authorRig` 将形变顶点位移原子化编译为标准 `positionDeltas` 关键形。
 - `deform` 的 `selection` 支持 `rect`、`center`+`radius`、`line`+`radius`，另有 `feather` 与 `hardness`（宽平台），不提供 `indices` 白名单，需要逐点控制点数组时只能用细粒度接口；操作集是 `translate`、`scale`、`rotate`、`arc`、`curve`、`landmarks`（`arc` 对应细粒度接口的 `sway`，`root_pin` 语义相同）。目标上直接绑定的参数轴若未显式给出会报错，不会静默取默认值。
 

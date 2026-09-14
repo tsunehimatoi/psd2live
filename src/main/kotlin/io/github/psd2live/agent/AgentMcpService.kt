@@ -884,6 +884,10 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace, legacyTools: Boolea
                 putJsonObject("target") { put("type", "string"); put("description", "Mesh target, e.g. mesh:hair") }
                 putJsonObject("path_id") { put("type", "string"); put("description", "ID of the deform path") }
                 putJsonObject("moved_points") { put("type", "array"); put("description", "Array of moved [x, y] coordinates") }
+                putJsonObject("width") { put("type", "number"); put("description", "Optional custom influence width to preview deformation with") }
+                putJsonObject("hardness") { put("type", "number"); put("description", "Optional custom falloff hardness (0..1) to preview deformation with") }
+                putJsonObject("show_width") { put("type", "boolean"); put("description", "Whether to draw the influence width boundary circle in preview image (default: true)") }
+                putJsonObject("show_hardness") { put("type", "boolean"); put("description", "Whether to draw the core hardness circle in preview image (default: true)") }
                 putJsonObject("render") { put("type", "boolean"); put("description", "Whether to render a diagnostic visual preview image (default: true)") }
             },
             required = listOf("target", "path_id", "moved_points"),

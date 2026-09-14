@@ -220,6 +220,10 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
             put("target", string())
             put("path_id", string())
             put("moved_points", arraySchema(buildJsonObject {}, 2, 128))
+            put("width", number())
+            put("hardness", number())
+            put("show_width", boolean())
+            put("show_hardness", boolean())
             put("render", boolean())
         }, listOf("target", "path_id", "moved_points")),
         variant("mode", "put", buildJsonObject {
