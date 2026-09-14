@@ -93,6 +93,7 @@ data class PuppetModel(
 	 * the atlas, so the puppet stays whole rather than developing holes.
 	 */
 	val rendersFromSourceLayers: Boolean = false,
+    val deformPaths: List<DeformPath> = emptyList(),
 ) {
 	/**
 	 * Every part by id, built once per model instance.

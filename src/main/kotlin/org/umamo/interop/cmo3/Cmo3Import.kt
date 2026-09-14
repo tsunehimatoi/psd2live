@@ -499,6 +499,7 @@ object Cmo3Import {
 				parts = parts,
 				deformers = deformers,
 				drawables = drawables,
+                deformPaths = Cmo3DeformPaths.read(drawableSources),
 				rootChildren = rootChildren,
 				rootPartId = rootPartId,
 				glues = glues,
@@ -517,7 +518,7 @@ object Cmo3Import {
 				// (docs/format/CMO3.md §3), so an absent one falls back to the atlas default.
 				rendersFromSourceLayers = (modelSource.textureManager as? CTextureManager)?.isTextureInputModelImageMode ?: false,
 			)
-		val withRenderRoot = model.copy(renderRoot = model.deriveRenderRoot())
+		val withRenderRoot = Cmo3DeformPaths.toLocalWidths(model.copy(renderRoot = model.deriveRenderRoot()))
 		return if (compactChannels) withRenderRoot.withChannelsCompacted() else withRenderRoot
 	}
 
