@@ -536,31 +536,45 @@ fun CanvasViewportComposable(
 
 					// 3e. Deform Paths (RigInformationOverlay)
 					if (state.showDeformPaths && model.rig.puppet.deformPaths.isNotEmpty()) {
+						val selectedLayerDescendants = if (state.selectedDeformerId != null) {
+							descendantLayerIds(model, state.selectedDeformerId, state.parentOverrides)
+						} else {
+							emptySet()
+						}
+						val selectedPathIds = model.rig.puppet.deformPaths.filter { path ->
+							val layerId = model.rig.layerIdByDrawableId[path.drawableId.raw]
+							(state.selectedLayerId != null && layerId == state.selectedLayerId) ||
+								(state.selectedDeformerId != null && layerId != null && layerId in selectedLayerDescendants)
+						}.map { it.id }.toSet()
+
+						val hoveredPathIds = model.rig.puppet.deformPaths.filter { path ->
+							val layerId = model.rig.layerIdByDrawableId[path.drawableId.raw]
+							state.hoveredLayerId != null && layerId == state.hoveredLayerId
+						}.map { it.id }.toSet()
+
 						val pathIds = if (informationSelectedOnly) {
-							if (state.selectedLayerId != null) {
-								val selectedDrawableId = model.rig.layerIdByDrawableId.entries.firstOrNull { it.value == state.selectedLayerId }?.key
-								model.rig.puppet.deformPaths.filter { it.drawableId.raw == selectedDrawableId }.map { it.id }.toSet()
-							} else if (state.selectedDeformerId != null) {
-								val desc = descendantLayerIds(model, state.selectedDeformerId, state.parentOverrides)
-								model.rig.puppet.deformPaths.filter {
-									val layerId = model.rig.layerIdByDrawableId[it.drawableId.raw]
-									layerId != null && layerId in desc
-								}.map { it.id }.toSet()
-							} else {
-								emptySet()
-							}
+							selectedPathIds
 						} else {
 							model.rig.puppet.deformPaths.map { it.id }.toSet()
 						}
+
+						val hasSelection = state.selectedLayerId != null || state.selectedDeformerId != null
+
 						if (pathIds.isNotEmpty()) {
 							io.github.psd2live.ui.RigInformationOverlay.paintDeformPaths(
-								g, model.rig.puppet, geometry,
-								viewport, pathIds,
+								g = g,
+								model = model.rig.puppet,
+								geometry = geometry,
+								viewport = viewport,
+								pathIds = pathIds,
+								labels = false,
+								pointIndices = informationIndices,
 								showWidth = state.pathShowWidth,
 								showHardness = state.pathShowHardness,
 								showRadius = state.pathShowRadius,
-								labels = informationNames,
-								pointIndices = informationIndices,
+								selectedPathIds = selectedPathIds,
+								hoveredPathIds = hoveredPathIds,
+								hasSelection = hasSelection,
 								dimUnselected = state.dimUnselected,
 							)
 						}

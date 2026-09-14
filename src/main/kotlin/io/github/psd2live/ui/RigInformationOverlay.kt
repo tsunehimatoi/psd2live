@@ -90,13 +90,16 @@ internal object RigInformationOverlay {
         geometry: DeformedGeometry?,
         viewport: CanvasViewport,
         pathIds: Set<String>,
-        labels: Boolean = true,
+        labels: Boolean = false,
         pointIndices: Boolean = false,
         showWidth: Boolean = false,
         showHardness: Boolean = false,
         showRadius: Boolean = false,
         selectedPathId: String? = null,
+        selectedPathIds: Set<String> = emptySet(),
         hoveredPathId: String? = null,
+        hoveredPathIds: Set<String> = emptySet(),
+        hasSelection: Boolean = false,
         dimUnselected: Boolean = false,
     ): List<String> {
         if (pathIds.isEmpty()) return emptyList()
@@ -130,15 +133,15 @@ internal object RigInformationOverlay {
             if (points.size < 2) continue
             renderedPathIds.add(path.id)
 
-            val isSelected = selectedPathId != null && path.id == selectedPathId
-            val isHovered = hoveredPathId != null && path.id == hoveredPathId && !isSelected
-            val isDimmed = dimUnselected && selectedPathId != null && !isSelected && !isHovered
+            val isSelected = selectedPathIds.contains(path.id) || (selectedPathId != null && path.id == selectedPathId)
+            val isHovered = hoveredPathIds.contains(path.id) || (hoveredPathId != null && path.id == hoveredPathId && !isSelected)
+            val isDimmed = dimUnselected && (hasSelection || selectedPathId != null || selectedPathIds.isNotEmpty()) && !isSelected && !isHovered
 
             val baseColor = ComponentPalette.strong("path_${path.id}")
             val curveColor = when {
                 isSelected -> Color(0, 230, 118)
                 isHovered -> Color(0, 220, 255)
-                isDimmed -> Color(baseColor.red, baseColor.green, baseColor.blue, 60)
+                isDimmed -> Color(baseColor.red, baseColor.green, baseColor.blue, 45)
                 else -> baseColor
             }
             val strokeWidth = when {
@@ -161,7 +164,7 @@ internal object RigInformationOverlay {
                 }
                 if (path.closed) curvePath.closePath()
 
-                g.color = if (isDimmed) Color(20, 20, 24, 40) else Color(20, 20, 24, 180)
+                g.color = if (isDimmed) Color(20, 20, 24, 25) else Color(20, 20, 24, 180)
                 g.stroke = BasicStroke(strokeWidth + 2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
                 g.draw(curvePath)
 
@@ -180,8 +183,8 @@ internal object RigInformationOverlay {
                 1f
             }
 
-            val drawWidth = (showWidth || showRadius || isSelected || isHovered) && path.width > 0f
-            val drawHardness = (showHardness || showRadius || isSelected || isHovered) && path.width > 0f && path.hardness > 0f
+            val drawWidth = (showWidth || showRadius || isSelected || isHovered) && path.width > 0f && !isDimmed
+            val drawHardness = (showHardness || showRadius || isSelected || isHovered) && path.width > 0f && path.hardness > 0f && !isDimmed
 
             if (drawWidth || drawHardness) {
                 val worldWidth = path.width * localToWorldScale
@@ -211,7 +214,7 @@ internal object RigInformationOverlay {
                 val isCorner = path.points.getOrNull(i)?.corner == true
 
                 if (isCorner) {
-                    val d = if (isSelected || isHovered) 6f else 4.5f
+                    val d = if (isSelected || isHovered) 6f else if (isDimmed) 3f else 4.5f
                     val diamond = Path2D.Float().apply {
                         moveTo(pt.first, pt.second - d)
                         lineTo(pt.first + d, pt.second)
@@ -219,16 +222,16 @@ internal object RigInformationOverlay {
                         lineTo(pt.first - d, pt.second)
                         closePath()
                     }
-                    g.color = if (isDimmed) Color(180, 150, 50, 80) else Color(255, 202, 40)
+                    g.color = if (isDimmed) Color(180, 150, 50, 60) else Color(255, 202, 40)
                     g.fill(diamond)
-                    g.color = if (isDimmed) Color(20, 20, 24, 60) else Color(20, 20, 24, 220)
+                    g.color = if (isDimmed) Color(20, 20, 24, 40) else Color(20, 20, 24, 220)
                     g.stroke = BasicStroke(1.2f)
                     g.draw(diamond)
                 } else {
                     val r = if (isSelected || isHovered) 5 else if (isDimmed) 2 else 4
-                    g.color = if (isDimmed) Color(curveColor.red, curveColor.green, curveColor.blue, 80) else curveColor
+                    g.color = if (isDimmed) Color(curveColor.red, curveColor.green, curveColor.blue, 50) else curveColor
                     g.fillOval((pt.first - r).toInt(), (pt.second - r).toInt(), r * 2, r * 2)
-                    g.color = if (isDimmed) Color(20, 20, 24, 60) else Color.WHITE
+                    g.color = if (isDimmed) Color(20, 20, 24, 40) else Color.WHITE
                     g.stroke = BasicStroke(1.2f)
                     g.drawOval((pt.first - r).toInt(), (pt.second - r).toInt(), r * 2, r * 2)
                 }
