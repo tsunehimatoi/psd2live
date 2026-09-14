@@ -346,6 +346,8 @@ class ViewModelAgentWorkspace(
 			includeLayerIds = includedLayers,
 			annotateLayerIds = request.annotateLayerIds,
 			annotateDeformerIds = request.annotateDeformerIds,
+			annotatePathIds = request.annotatePathIds,
+			annotatePathRadius = request.annotatePathRadius,
 			pointIndices = request.pointIndices,
 			frame = request.frame,
 			background = request.background,
@@ -861,6 +863,9 @@ class ViewModelAgentWorkspace(
             document.copy(rigEdits = document.rigEdits.copy(structureEdits = document.rigEdits.structureEdits + edits))
         }.copy(affectedObjectIds = ids)
     }
+
+    override fun currentPuppet(): org.umamo.runtime.model.PuppetModel? =
+        viewModel.state.value.previewModel?.rig?.puppet
 
     override fun inspectRigGeometry(arguments: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject {
         val state = viewModel.state.value

@@ -601,6 +601,8 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace, legacyTools: Boolea
 					includeLayerIds = request.optionalStringSet("include_layer_ids"),
 					annotateLayerIds = request.optionalStringSet("annotate_layer_ids").orEmpty(),
 					annotateDeformerIds = request.optionalStringSet("annotate_deformer_ids").orEmpty(),
+					annotatePathIds = request.optionalStringSet("annotate_path_ids").orEmpty(),
+					annotatePathRadius = request.arguments?.get("annotate_path_radius")?.jsonPrimitive?.content == "true",
 					pointIndices = request.arguments?.get("point_indices")?.jsonPrimitive?.content == "true",
 					frame = request.viewFrame(),
 					background = request.background(),
@@ -659,6 +661,8 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace, legacyTools: Boolea
                 background=request.background(), output=tileOutput,
                 annotateLayerIds=request.optionalStringSet("annotate_layer_ids").orEmpty(),
                 annotateDeformerIds=request.optionalStringSet("annotate_deformer_ids").orEmpty(),
+                annotatePathIds=request.optionalStringSet("annotate_path_ids").orEmpty(),
+                annotatePathRadius=request.boolean("annotate_path_radius", false),
                 pointIndices=request.boolean("point_indices",false))) }
             require(views.all { it.revisionId == revision } && workspace.snapshot().revisionId == revision) { "Workspace changed during comparison; render again" }
             val sheet = renderPoseSheet(views, output, columns)
@@ -845,6 +849,142 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace, legacyTools: Boolea
 	) { request ->
 		mutationResult { workspace.checkoutHistory(request.requiredString("node_id")).toJson() }
 	}
+
+    server.addTool(
+        name = "path_inspect",
+        description = "Inspect deform paths by mesh target or path ID, returning point positions in mesh coordinates and barycentric bindings.",
+        inputSchema = ToolSchema(
+            properties = buildJsonObject {
+                putJsonObject("target") { put("type", "string"); put("description", "Optional mesh target, e.g. mesh:hair") }
+                putJsonObject("path_id") { put("type", "string"); put("description", "Optional path ID") }
+            },
+        ),
+        toolAnnotations = READ_ONLY,
+    ) { request ->
+        val puppet = workspace.currentPuppet() ?: error("No model loaded")
+        val json = AgentPathTools.inspect(puppet, request.arguments ?: JsonObject(emptyMap()))
+        jsonResult(json)
+    }
+
+    server.addTool(
+        name = "path_preview",
+        description = "Preview mesh vertex displacements caused by moving deform path control points without modifying the project.",
+        inputSchema = ToolSchema(
+            properties = buildJsonObject {
+                putJsonObject("target") { put("type", "string"); put("description", "Mesh target, e.g. mesh:hair") }
+                putJsonObject("path_id") { put("type", "string"); put("description", "ID of the deform path") }
+                putJsonObject("moved_points") { put("type", "array"); put("description", "Array of moved [x, y] coordinates") }
+                putJsonObject("render") { put("type", "boolean"); put("description", "Whether to render a diagnostic visual preview image (default: true)") }
+            },
+            required = listOf("target", "path_id", "moved_points"),
+        ),
+        toolAnnotations = READ_ONLY,
+    ) { request ->
+        val puppet = workspace.currentPuppet() ?: error("No model loaded")
+        val json = AgentPathTools.preview(puppet, request.arguments ?: error("Missing arguments"))
+        val previewBase64 = json["previewImage"]?.jsonPrimitive?.contentOrNull
+        if (previewBase64 != null) {
+            CallToolResult(
+                content = listOf(
+                    TextContent(json.toString()),
+                    ImageContent(previewBase64, "image/png"),
+                ),
+                structuredContent = json,
+            )
+        } else {
+            jsonResult(json)
+        }
+    }
+
+    server.addTool(
+        name = "path_put",
+        description = "Create or update a deform path on an ArtMesh. Points can be local [x, y] coordinates (automatically bound to triangles) or barycentric objects.",
+        inputSchema = ToolSchema(
+            properties = buildJsonObject {
+                putJsonObject("expected_history_head_node_id") { put("type", "string"); put("description", "Optimistic concurrency state") }
+                putJsonObject("target") { put("type", "string"); put("description", "Mesh target, e.g. mesh:hair") }
+                putJsonObject("id") { put("type", "string"); put("description", "Optional path ID (auto-generated if omitted)") }
+                putJsonObject("points") { put("type", "array"); put("description", "Array of points: [[x,y],...] or [{x, y, corner},...]") }
+                putJsonObject("width") { put("type", "number"); put("description", "Influence width (default 12% of mesh extent)") }
+                putJsonObject("hardness") { put("type", "number"); put("description", "Deformation hardness 0..1 (default 0.5)") }
+                putJsonObject("closed") { put("type", "boolean"); put("description", "Whether path is closed loop (default false)") }
+                putJsonObject("level") { put("type", "integer"); put("description", "Edit level 2 or 3 (default 2)") }
+            },
+            required = listOf("expected_history_head_node_id", "target", "points"),
+        ),
+        toolAnnotations = MUTATING,
+    ) { request ->
+        mutationResult {
+            val args = request.arguments ?: error("Missing arguments")
+            val puppet = workspace.currentPuppet() ?: error("No model loaded")
+            val (pathId, command) = AgentPathTools.createPutCommand(puppet, args)
+            val state = request.requiredString("expected_history_head_node_id")
+            val res = workspace.authorRig(state, buildJsonArray { add(command) })
+            buildJsonObject {
+                put("historyNodeId", res.historyNodeId)
+                put("revisionId", res.revisionId)
+                put("pathId", pathId)
+                put("target", command.getValue("target"))
+                put("summary", res.summary)
+            }
+        }
+    }
+
+    server.addTool(
+        name = "path_delete",
+        description = "Delete a deform path by ID.",
+        inputSchema = ToolSchema(
+            properties = buildJsonObject {
+                putJsonObject("expected_history_head_node_id") { put("type", "string"); put("description", "Optimistic concurrency state") }
+                putJsonObject("path_id") { put("type", "string"); put("description", "ID of the deform path to delete") }
+            },
+            required = listOf("expected_history_head_node_id", "path_id"),
+        ),
+        toolAnnotations = MUTATING,
+    ) { request ->
+        mutationResult {
+            val args = request.arguments ?: error("Missing arguments")
+            val (pathId, command) = AgentPathTools.createDeleteCommand(args)
+            val state = request.requiredString("expected_history_head_node_id")
+            val res = workspace.authorRig(state, buildJsonArray { add(command) })
+            buildJsonObject {
+                put("historyNodeId", res.historyNodeId)
+                put("revisionId", res.revisionId)
+                put("deletedPathId", pathId)
+                put("summary", res.summary)
+            }
+        }
+    }
+
+    server.addTool(
+        name = "path_deform",
+        description = "Deform an ArtMesh by moving deform path control points and baking the result as a keyform at the specified parameter key.",
+        inputSchema = ToolSchema(
+            properties = buildJsonObject {
+                putJsonObject("expected_history_head_node_id") { put("type", "string"); put("description", "Optimistic concurrency state") }
+                putJsonObject("target") { put("type", "string"); put("description", "Mesh target, e.g. mesh:hair") }
+                putJsonObject("path_id") { put("type", "string"); put("description", "ID of the deform path") }
+                putJsonObject("key") { put("type", "object"); put("description", "Destination parameter key coordinate") }
+                putJsonObject("moved_points") { put("type", "array"); put("description", "Array of moved [x, y] coordinates matching path points") }
+            },
+            required = listOf("expected_history_head_node_id", "target", "path_id", "key", "moved_points"),
+        ),
+        toolAnnotations = MUTATING,
+    ) { request ->
+        mutationResult {
+            val args = request.arguments ?: error("Missing arguments")
+            val command = AgentPathTools.createDeformCommand(args)
+            val state = request.requiredString("expected_history_head_node_id")
+            val res = workspace.authorRig(state, buildJsonArray { add(command) })
+            buildJsonObject {
+                put("historyNodeId", res.historyNodeId)
+                put("revisionId", res.revisionId)
+                put("target", command.getValue("target"))
+                put("key", command.getValue("key"))
+                put("summary", res.summary)
+            }
+        }
+    }
 
 	server.addResource(
 		uri = "psd2live://project/current/manifest",
@@ -1073,6 +1213,8 @@ private fun viewSchema(includeBackground: Boolean, includeFocus: Boolean = false
 private fun modelViewSchema(): ToolSchema = ToolSchema(
 	properties = buildJsonObject {
 		putJsonObject("annotate_deformer_ids") { put("type","array"); put("maxItems",16); putJsonObject("items") { put("type","string") };put("description","Warp IDs: posed lattice, name and stable ID; [] is a clean image") }
+		putJsonObject("annotate_path_ids") { put("type","array"); put("maxItems",32); putJsonObject("items") { put("type","string") };put("description","Deform Path IDs to overlay on the mesh (e.g. ['path_1'] or ['*'] for all paths); [] is a clean image") }
+		putJsonObject("annotate_path_radius") { put("type","boolean"); put("default",false); put("description","Whether to draw influence and hardness radii circles around deform path control points") }
 		putJsonObject("point_indices") { put("type","boolean");put("default",false) }
 		putJsonObject("parameters") {
 			put("type", "object")
@@ -1776,6 +1918,8 @@ private fun AgentRenderedView.toJson(): JsonObject = buildJsonObject {
 	putJsonArray("includedLayerIds") { includedLayerIds.forEach { add(JsonPrimitive(it)) } }
 	putJsonArray("annotatedLayerIds") { annotatedLayerIds.forEach { add(JsonPrimitive(it)) } }
 	putJsonArray("annotatedDeformerIds") { annotatedDeformerIds.forEach { add(JsonPrimitive(it)) } }
+	putJsonArray("annotatedPathIds") { annotatedPathIds.forEach { add(JsonPrimitive(it)) } }
+	put("annotatedPathRadius", annotatedPathRadius)
 	put("pointIndices",pointIndices)
 	putJsonArray("objectIds") { objectIds.forEach { add(JsonPrimitive(it)) } }
 	putJsonObject("canvasRect") {

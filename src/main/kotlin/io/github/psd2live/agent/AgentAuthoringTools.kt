@@ -30,7 +30,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
     }
 
     tool("inspect", "Read project context, find objects/layers/parameters, or inspect one kind:id's direct axes, channels and parent. No point arrays. Query and page before expanding.",
-        buildJsonObject { put("scope", choices("project", "objects", "layers", "parameters", "physics")); put("query", string()); put("target", string()); put("offset", integer(0)); put("limit", integer(1, 64)) }) { a ->
+        buildJsonObject { put("scope", choices("project", "objects", "layers", "parameters", "physics", "paths")); put("query", string()); put("target", string()); put("offset", integer(0)); put("limit", integer(1, 64)) }) { a ->
         val snapshot = workspace.snapshot()
         val state = snapshot.historyHeadNodeId
         val target = a["target"]?.jsonPrimitive?.content
@@ -50,6 +50,19 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
                     put("channel", channel.channel); put("value", channel.staticValue)
                     if (channel.axes.isNotEmpty()) putJsonObject("axes") { channel.axes.forEach { axis -> put(axis.parameterId, JsonArray(axis.keys.map(::JsonPrimitive))) } }
                 }) } }
+                if (ref.kind == "mesh") {
+                    val paths = workspace.currentPuppet()?.deformPaths?.filter { it.drawableId.raw == ref.id }.orEmpty()
+                    if (paths.isNotEmpty()) {
+                        putJsonArray("paths") {
+                            paths.forEach { p ->
+                                add(buildJsonObject {
+                                    put("id", p.id); put("level", p.editLevel); put("width", p.width)
+                                    put("hardness", p.hardness); put("closed", p.closed); put("pointCount", p.points.size)
+                                })
+                            }
+                        }
+                    }
+                }
                 // A short ownership chain explains inherited motion without returning ancestor geometry.
                 val objects = workspace.listRigObjectSummaries().associateBy { it.getValue("id").jsonPrimitive.content }
                 var parent = obj.parentId
@@ -87,6 +100,10 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
                             putJsonArray("bounds") { listOf(layer.opaqueBounds.left, layer.opaqueBounds.top, layer.opaqueBounds.right, layer.opaqueBounds.bottom).forEach { add(JsonPrimitive(it)) } }
                         } }
                         "parameters" -> snapshot.parameters.map { p -> buildJsonObject { put("id", p.id); put("name", p.name); put("min", p.min); put("max", p.max); put("default", p.default) } }
+                        "paths" -> workspace.currentPuppet()?.deformPaths.orEmpty().map { p -> buildJsonObject {
+                            put("id", p.id); put("target", "mesh:${p.drawableId.raw}"); put("level", p.editLevel)
+                            put("width", p.width); put("hardness", p.hardness); put("closed", p.closed); put("pointCount", p.points.size)
+                        } }
                         else -> error("Unknown inspect scope")
                     }.filter { a["query"]?.jsonPrimitive?.content?.let { query -> it.toString().contains(query, ignoreCase = true) } ?: true }
                     val offset = a["offset"]?.jsonPrimitive?.int ?: 0; val limit = a["limit"]?.jsonPrimitive?.int ?: 24
@@ -191,6 +208,111 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
         buildJsonObject { put("state", string()); put("edits", legacy.getValue("object_edit").tool.inputSchema.properties!!.getValue("edits")) }, listOf("state", "edits"), true) { a ->
         workspace.authorRig(a.text("state"), buildJsonArray { add(buildJsonObject { put("op", "structure"); put("edits", a.getValue("edits")) }) }).compact()
     }
+    val pathBranches = listOf(
+        variant("mode", "get", buildJsonObject {
+            put("target", string())
+            put("path_id", string())
+        }, emptyList()),
+        variant("mode", "list", buildJsonObject {
+            put("target", string())
+        }, emptyList()),
+        variant("mode", "preview", buildJsonObject {
+            put("target", string())
+            put("path_id", string())
+            put("moved_points", arraySchema(buildJsonObject {}, 2, 128))
+            put("render", boolean())
+        }, listOf("target", "path_id", "moved_points")),
+        variant("mode", "put", buildJsonObject {
+            put("state", string())
+            put("target", string())
+            put("id", string())
+            put("points", arraySchema(buildJsonObject {}, 2, 128))
+            put("width", number())
+            put("hardness", number())
+            put("closed", boolean())
+            put("level", integer(2, 3))
+        }, listOf("state", "target", "points")),
+        variant("mode", "delete", buildJsonObject {
+            put("state", string())
+            put("path_id", string())
+        }, listOf("state", "path_id")),
+        variant("mode", "deform", buildJsonObject {
+            put("state", string())
+            put("target", string())
+            put("path_id", string())
+            put("key", key)
+            put("moved_points", arraySchema(buildJsonObject {}, 2, 128))
+        }, listOf("state", "target", "path_id", "key", "moved_points")),
+    )
+    server.addTool(
+        "path",
+        "Inspect, create, delete, dry-run preview, or deform an ArtMesh with Deform Paths. Points use mesh local coordinates [x, y] with auto-binding to mesh triangles. deform bakes moving least squares (MLS) displacement as a keyform at key.",
+        ToolSchema(
+            properties = buildJsonObject {
+                put("request", oneOf(pathBranches))
+            },
+            required = listOf("request"),
+        ),
+        toolAnnotations = write,
+    ) { request ->
+        try {
+            val args = request.arguments ?: JsonObject(emptyMap())
+            val input = args["request"]?.jsonObject ?: args
+            validateAuthoringSchema(input, oneOf(pathBranches))
+            val mode = input.text("mode")
+            val puppet = workspace.currentPuppet() ?: error("No model is loaded")
+            if (mode == "preview") {
+                val preview = AgentPathTools.preview(puppet, input)
+                val base64 = preview["previewImage"]?.jsonPrimitive?.contentOrNull
+                if (base64 != null) {
+                    CallToolResult(
+                        content = listOf(
+                            TextContent(preview.toString()),
+                            ImageContent(base64, "image/png"),
+                        ),
+                        structuredContent = preview,
+                    )
+                } else {
+                    compactResult(preview)
+                }
+            } else {
+                val result = when (mode) {
+                    "get", "list" -> AgentPathTools.inspect(puppet, input)
+                    "put" -> {
+                        val (pathId, command) = AgentPathTools.createPutCommand(puppet, input)
+                        val res = workspace.authorRig(input.text("state"), buildJsonArray { add(command) })
+                        buildJsonObject {
+                            put("state", res.historyNodeId)
+                            put("path_id", pathId)
+                            put("target", input.text("target"))
+                        }
+                    }
+                    "delete" -> {
+                        val (pathId, command) = AgentPathTools.createDeleteCommand(input)
+                        val res = workspace.authorRig(input.text("state"), buildJsonArray { add(command) })
+                        buildJsonObject {
+                            put("state", res.historyNodeId)
+                            put("deleted", pathId)
+                        }
+                    }
+                    "deform" -> {
+                        val command = AgentPathTools.createDeformCommand(input)
+                        val res = workspace.authorRig(input.text("state"), buildJsonArray { add(command) })
+                        buildJsonObject {
+                            put("state", res.historyNodeId)
+                            put("target", input.text("target"))
+                            put("key", input.getValue("key"))
+                            if (res.affectedObjectIds.isNotEmpty()) put("changed", JsonArray(res.affectedObjectIds.map(::JsonPrimitive)))
+                        }
+                    }
+                    else -> error("Unknown path mode: $mode")
+                }
+                compactResult(result)
+            }
+        } catch (e: IllegalArgumentException) { authoringError(e, workspace) }
+          catch (e: IllegalStateException) { authoringError(e, workspace) }
+    }
+
     adapted("revision", "Save, checkpoint, inspect history or restore a chosen snapshot. Every mutation returns a new state; chain it. Restore is a write, not preview. Keep your own task plan; checkpoints preserve useful progress.",
         mapOf("save" to "project_save", "checkpoint" to "history_checkpoint", "list" to "history_list", "restore" to "history_checkout"), true)
 }

@@ -99,6 +99,8 @@ fun AppTitleBar(
 	showTexture: Boolean = true,
 	showMesh: Boolean = false,
 	showWarp: Boolean = false,
+	showDeformPaths: Boolean = true,
+	pathShowRadius: Boolean = false,
 	contextualWarp: Boolean = true,
 	filterSelectedOnly: Boolean = false,
 	dimUnselected: Boolean = true,
@@ -109,6 +111,8 @@ fun AppTitleBar(
 	onToggleShowTexture: () -> Unit = {},
 	onToggleShowMesh: () -> Unit = {},
 	onToggleShowWarp: () -> Unit = {},
+	onToggleShowDeformPaths: () -> Unit = {},
+	onTogglePathShowRadius: () -> Unit = {},
 	onToggleContextualWarp: () -> Unit = {},
 	onToggleFilterSelectedOnly: () -> Unit = {},
 	onToggleDimUnselected: () -> Unit = {},
@@ -319,6 +323,16 @@ fun AppTitleBar(
 							onToggleShowWarp()
 						},
 					)
+					AppMenuItem(
+						text = tr("canvas.visibility.paths"),
+						isChecked = showDeformPaths,
+						onHover = { activeSubmenu = null },
+						onClick = {
+							activeMenu = null
+							activeSubmenu = null
+							onToggleShowDeformPaths()
+						},
+					)
 
 					// 二级菜单: 辅助显示与标记 (Overlays)
 					AppSubmenuItem(
@@ -384,6 +398,15 @@ fun AppTitleBar(
 								activeMenu = null
 								activeSubmenu = null
 								onToggleWarpShowIndices()
+							},
+						)
+						AppMenuItem(
+							text = tr("canvas.information.pathRadius"),
+							isChecked = pathShowRadius,
+							onClick = {
+								activeMenu = null
+								activeSubmenu = null
+								onTogglePathShowRadius()
 							},
 						)
 					}

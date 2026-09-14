@@ -322,8 +322,9 @@ fun CanvasViewportComposable(
 			val isDimmingActive = state.dimUnselected && hasActiveSelection
 
 			val nativeFrame = sdkFrame
+			val hasActivePaths = state.showDeformPaths && model.rig.puppet.deformPaths.isNotEmpty()
 			val canUseNativeSdk = mode == WorkspaceTab.PREVIEW &&
-				!showWarp && !showMesh && !informationSelectedOnly && showTexture &&
+				!showWarp && !showMesh && !hasActivePaths && !informationSelectedOnly && showTexture &&
 				!isDimmingActive &&
 				state.hoveredLayerId == null && state.hoveredDeformerId == null &&
 				(!state.showSelectionBounds || !hasActiveSelection) &&
@@ -531,6 +532,36 @@ fun CanvasViewportComposable(
 							hoveredDeformerId = state.hoveredDeformerId,
 							dimUnselected = state.dimUnselected,
 						)
+					}
+
+					// 3e. Deform Paths (RigInformationOverlay)
+					if (state.showDeformPaths && model.rig.puppet.deformPaths.isNotEmpty()) {
+						val pathIds = if (informationSelectedOnly) {
+							if (state.selectedLayerId != null) {
+								val selectedDrawableId = model.rig.layerIdByDrawableId.entries.firstOrNull { it.value == state.selectedLayerId }?.key
+								model.rig.puppet.deformPaths.filter { it.drawableId.raw == selectedDrawableId }.map { it.id }.toSet()
+							} else if (state.selectedDeformerId != null) {
+								val desc = descendantLayerIds(model, state.selectedDeformerId, state.parentOverrides)
+								model.rig.puppet.deformPaths.filter {
+									val layerId = model.rig.layerIdByDrawableId[it.drawableId.raw]
+									layerId != null && layerId in desc
+								}.map { it.id }.toSet()
+							} else {
+								emptySet()
+							}
+						} else {
+							model.rig.puppet.deformPaths.map { it.id }.toSet()
+						}
+						if (pathIds.isNotEmpty()) {
+							io.github.psd2live.ui.RigInformationOverlay.paintDeformPaths(
+								g, model.rig.puppet, geometry,
+								viewport, pathIds,
+								showRadius = state.pathShowRadius,
+								labels = informationNames,
+								pointIndices = informationIndices,
+								dimUnselected = state.dimUnselected,
+							)
+						}
 					}
 				} finally {
 					g.dispose()

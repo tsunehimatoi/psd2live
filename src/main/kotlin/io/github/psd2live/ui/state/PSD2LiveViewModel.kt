@@ -44,6 +44,18 @@ import kotlin.math.PI
 import kotlin.math.sin
 
 class PSD2LiveViewModel : AutoCloseable {
+    fun saveDeformPathEdits(expectedState: String, edits: kotlinx.serialization.json.JsonArray, onComplete: (String?) -> Unit) {
+        scope.launch {
+            try {
+                val workspace = requireNotNull(agentWorkspace) { "Project workspace unavailable" }
+                withContext(Dispatchers.Default) { workspace.authorRig(expectedState, edits) }
+                onComplete(null)
+            } catch (failure: Exception) {
+                if (failure is kotlinx.coroutines.CancellationException) throw failure
+                onComplete(failure.message ?: "Could not save deform paths")
+            }
+        }
+    }
 	private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 	private val pipeline = PSD2LivePipeline()
 	private val preferences by lazy { Preferences.userNodeForPackage(PSD2LiveViewModel::class.java) }
@@ -924,6 +936,16 @@ class PSD2LiveViewModel : AutoCloseable {
 
 	fun setShowWarp(show: Boolean) {
 		_state.update { it.copy(showWarp = show) }
+		markWorkspaceChanged()
+	}
+
+	fun setShowDeformPaths(show: Boolean) {
+		_state.update { it.copy(showDeformPaths = show) }
+		markWorkspaceChanged()
+	}
+
+	fun setPathShowRadius(show: Boolean) {
+		_state.update { it.copy(pathShowRadius = show) }
 		markWorkspaceChanged()
 	}
 

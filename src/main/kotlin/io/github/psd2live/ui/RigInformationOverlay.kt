@@ -1,10 +1,14 @@
 package io.github.psd2live.ui
 
+import io.github.psd2live.core.DeformPathTools
 import org.umamo.runtime.model.*
 import org.umamo.render.eval.CpuDeformationEvaluator
+import org.umamo.render.eval.DeformedGeometry
 import java.awt.BasicStroke
 import java.awt.Color
 import java.awt.Graphics2D
+import java.awt.RenderingHints
+import java.awt.geom.Path2D
 
 /** Probe the actual parent cascade, rather than drawing undeformed rectangles. */
 internal object RigInformationOverlay {
@@ -77,5 +81,154 @@ internal object RigInformationOverlay {
                 g.drawString(label, x + 3, y)
             }
         }
+    }
+
+    fun paintDeformPaths(
+        g: Graphics2D,
+        model: PuppetModel,
+        geometry: DeformedGeometry?,
+        viewport: CanvasViewport,
+        pathIds: Set<String>,
+        labels: Boolean = true,
+        pointIndices: Boolean = false,
+        showRadius: Boolean = false,
+        selectedPathId: String? = null,
+        hoveredPathId: String? = null,
+        dimUnselected: Boolean = false,
+    ): List<String> {
+        if (pathIds.isEmpty()) return emptyList()
+        val allPaths = model.deformPaths
+        val targets = if (pathIds.contains("*")) allPaths else allPaths.filter { it.id in pathIds }
+        if (targets.isEmpty()) return emptyList()
+
+        val renderedPathIds = mutableListOf<String>()
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+        g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
+
+        for (path in targets) {
+            val drawable = model.drawables.firstOrNull { it.id == path.drawableId } ?: continue
+            val mesh = drawable.mesh ?: continue
+            val positions = geometry?.worldPositions?.get(path.drawableId) ?: mesh.positions
+            val points = try {
+                DeformPathTools.positions(path, positions)
+            } catch (e: Exception) {
+                continue
+            }
+            if (points.size < 2) continue
+            renderedPathIds.add(path.id)
+
+            val isSelected = selectedPathId != null && path.id == selectedPathId
+            val isHovered = hoveredPathId != null && path.id == hoveredPathId && !isSelected
+            val isDimmed = dimUnselected && selectedPathId != null && !isSelected && !isHovered
+
+            val baseColor = ComponentPalette.strong("path_${path.id}")
+            val curveColor = when {
+                isSelected -> Color(0, 230, 118)
+                isHovered -> Color(0, 220, 255)
+                isDimmed -> Color(baseColor.red, baseColor.green, baseColor.blue, 60)
+                else -> baseColor
+            }
+            val strokeWidth = when {
+                isSelected -> 2.8f
+                isHovered -> 2.2f
+                isDimmed -> 0.8f
+                else -> 1.8f
+            }
+
+            val screenPoints = points.map { (wx, wy) ->
+                viewport.x(wx).toFloat() to viewport.yFromWorld(wy).toFloat()
+            }
+
+            val curvePoints = DeformPathTools.curve(screenPoints, path.points.map { it.corner }, path.closed)
+            if (curvePoints.size >= 2) {
+                val curvePath = Path2D.Float()
+                curvePath.moveTo(curvePoints[0].first, curvePoints[0].second)
+                for (i in 1 until curvePoints.size) {
+                    curvePath.lineTo(curvePoints[i].first, curvePoints[i].second)
+                }
+                if (path.closed) curvePath.closePath()
+
+                g.color = if (isDimmed) Color(20, 20, 24, 40) else Color(20, 20, 24, 180)
+                g.stroke = BasicStroke(strokeWidth + 2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+                g.draw(curvePath)
+
+                g.color = curveColor
+                g.stroke = BasicStroke(strokeWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+                g.draw(curvePath)
+            }
+
+            if ((showRadius || isSelected || isHovered) && path.width > 0f) {
+                val outerRadiusPx = (path.width * viewport.scale).toFloat()
+                val innerRadiusPx = outerRadiusPx * path.hardness.coerceIn(0f, 1f)
+                for (pt in screenPoints) {
+                    if (innerRadiusPx > 1f) {
+                        g.color = Color(33, 150, 243, 30)
+                        g.fillOval((pt.first - innerRadiusPx).toInt(), (pt.second - innerRadiusPx).toInt(),
+                            (innerRadiusPx * 2).toInt(), (innerRadiusPx * 2).toInt())
+                        g.color = Color(33, 150, 243, 120)
+                        g.stroke = BasicStroke(1f)
+                        g.drawOval((pt.first - innerRadiusPx).toInt(), (pt.second - innerRadiusPx).toInt(),
+                            (innerRadiusPx * 2).toInt(), (innerRadiusPx * 2).toInt())
+                    }
+                    if (outerRadiusPx > 1f) {
+                        g.color = Color(244, 67, 54, 90)
+                        g.stroke = BasicStroke(1.2f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL, 0f, floatArrayOf(4f, 4f), 0f)
+                        g.drawOval((pt.first - outerRadiusPx).toInt(), (pt.second - outerRadiusPx).toInt(),
+                            (outerRadiusPx * 2).toInt(), (outerRadiusPx * 2).toInt())
+                    }
+                }
+            }
+
+            for (i in screenPoints.indices) {
+                val pt = screenPoints[i]
+                val isCorner = path.points.getOrNull(i)?.corner == true
+
+                if (isCorner) {
+                    val d = if (isSelected || isHovered) 6f else 4.5f
+                    val diamond = Path2D.Float().apply {
+                        moveTo(pt.first, pt.second - d)
+                        lineTo(pt.first + d, pt.second)
+                        lineTo(pt.first, pt.second + d)
+                        lineTo(pt.first - d, pt.second)
+                        closePath()
+                    }
+                    g.color = if (isDimmed) Color(180, 150, 50, 80) else Color(255, 202, 40)
+                    g.fill(diamond)
+                    g.color = if (isDimmed) Color(20, 20, 24, 60) else Color(20, 20, 24, 220)
+                    g.stroke = BasicStroke(1.2f)
+                    g.draw(diamond)
+                } else {
+                    val r = if (isSelected || isHovered) 5 else if (isDimmed) 2 else 4
+                    g.color = if (isDimmed) Color(curveColor.red, curveColor.green, curveColor.blue, 80) else curveColor
+                    g.fillOval((pt.first - r).toInt(), (pt.second - r).toInt(), r * 2, r * 2)
+                    g.color = if (isDimmed) Color(20, 20, 24, 60) else Color.WHITE
+                    g.stroke = BasicStroke(1.2f)
+                    g.drawOval((pt.first - r).toInt(), (pt.second - r).toInt(), r * 2, r * 2)
+                }
+
+                if (pointIndices && (!isDimmed || isSelected || isHovered)) {
+                    val idx = i.toString()
+                    val ix = (pt.first + 6).toInt()
+                    val iy = (pt.second - 4).toInt()
+                    val w = g.fontMetrics.stringWidth(idx) + 4
+                    g.color = Color(20, 20, 24, 200)
+                    g.fillRoundRect(ix - 2, iy - 11, w, 14, 4, 4)
+                    g.color = Color.WHITE
+                    g.drawString(idx, ix, iy)
+                }
+            }
+
+            if (labels && (!isDimmed || isSelected || isHovered)) {
+                val label = "path:${path.id} (${path.points.size}pts, L${path.editLevel})"
+                val lx = screenPoints[0].first.toInt().coerceAtLeast(4)
+                val ly = (screenPoints[0].second.toInt() - 14).coerceAtLeast(16)
+                val lw = g.fontMetrics.stringWidth(label) + 8
+                g.color = if (isDimmed) Color(20, 20, 24, 90) else Color(20, 20, 24, 220)
+                g.fillRoundRect(lx, ly - 13, lw, 17, 6, 6)
+                g.color = curveColor
+                g.drawString(label, lx + 4, ly)
+            }
+        }
+        return renderedPathIds
     }
 }

@@ -58,7 +58,70 @@ internal object RigAuthoringJournal {
                         }
                     }
                 }
-                "set", "copy", "delete", "warp", "structure", "path_put", "path_delete" -> command
+                "path_deform" -> {
+                    val ref = target(command.text("target"))
+                    require(ref.kind == RigTargetKind.ART_MESH) { "Path deform requires an ArtMesh target" }
+                    val pathId = command.text("path_id")
+                    val key = command.coordinate("key")
+                    require(key.isNotEmpty()) { "Specify the exact destination key" }
+                    val geometry = RigGeometryTools.geometry(current, "mesh", ref.id, key)
+                    require(geometry.axes.all { it.parameterId.raw in key }) { "KEY_INCOMPLETE: include all directly bound geometry axes" }
+                    val movedPoints = command.getValue("moved_points").jsonArray.map { elem ->
+                        when (elem) {
+                            is JsonArray -> elem[0].jsonPrimitive.float to elem[1].jsonPrimitive.float
+                            is JsonObject -> elem.getValue("x").jsonPrimitive.float to elem.getValue("y").jsonPrimitive.float
+                            else -> error("Moved point must be [x, y] or {x, y}")
+                        }
+                    }
+                    val deformed = DeformPathTools.deform(geometry.base, current.deformPaths, pathId, movedPoints)
+                    buildJsonObject {
+                        put("op", "set"); put("target", command.getValue("target")); put("key", command.getValue("key"))
+                        putJsonObject("geometry") {
+                            put("positionDeltas", JsonArray(deformed.indices.map { JsonPrimitive(deformed[it] - geometry.base[it]) }))
+                        }
+                    }
+                }
+                "path_put" -> {
+                    val rawPoints = command.getValue("points").jsonArray
+                    val needsBinding = rawPoints.any { it is JsonArray || (it is JsonObject && "wa" !in it) }
+                    val targetRef = target(command.text("target"))
+                    require(targetRef.kind == RigTargetKind.ART_MESH) { "Deform paths require an ArtMesh" }
+                    val drawable = current.drawables.singleOrNull { it.id.raw == targetRef.id } ?: error("Mesh not found: ${targetRef.id}")
+                    val mesh = requireNotNull(drawable.mesh) { "Drawable has no mesh" }
+                    val extent = RigGeometryTools.bounds(mesh.positions).let { kotlin.math.max(it[2], it[3]) }
+                    val width = command["width"]?.jsonPrimitive?.float ?: (extent * 0.12f)
+                    val hardness = command["hardness"]?.jsonPrimitive?.float ?: 0.5f
+                    val closed = command["closed"]?.jsonPrimitive?.boolean ?: false
+                    val level = command["level"]?.jsonPrimitive?.int ?: 2
+                    val points = if (needsBinding) {
+                        rawPoints.map { elem ->
+                            val (x, y, corner) = when (elem) {
+                                is JsonArray -> Triple(elem[0].jsonPrimitive.float, elem[1].jsonPrimitive.float, elem.getOrNull(2)?.jsonPrimitive?.boolean ?: false)
+                                is JsonObject -> Triple(elem.getValue("x").jsonPrimitive.float, elem.getValue("y").jsonPrimitive.float, elem["corner"]?.jsonPrimitive?.boolean ?: false)
+                                else -> error("Point must be [x, y] or {x, y}")
+                            }
+                            val bound = DeformPathTools.bind(mesh.positions, mesh.indices, x, y, corner)
+                            buildJsonObject {
+                                put("a", bound.a); put("b", bound.b); put("c", bound.c)
+                                put("wa", bound.wa); put("wb", bound.wb); put("wc", bound.wc)
+                                put("corner", bound.corner)
+                            }
+                        }
+                    } else {
+                        rawPoints.map { it.jsonObject }
+                    }
+                    buildJsonObject {
+                        put("op", "path_put")
+                        put("id", command.text("id"))
+                        put("target", command.text("target"))
+                        put("width", width)
+                        put("hardness", hardness)
+                        put("closed", closed)
+                        put("level", level)
+                        put("points", JsonArray(points))
+                    }
+                }
+                "set", "copy", "delete", "warp", "structure", "path_delete" -> command
                 else -> error("Unknown authoring operation: $op")
             }
             current = apply(current, compiled)
