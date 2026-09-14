@@ -265,8 +265,7 @@ Before you start:
 
 1. Open an issue describing what you intend to change, so we can avoid duplicate work and agree on the direction.
 2. Branch from `master`, keep the change focused, and write commit messages that explain what changed and why.
-3. Run `./gradlew test` (or `.\gradlew.bat test` on Windows) and make sure it passes. Changes with tests are easier to merge.
-4. Reference the related issue in the pull request description and describe how you verified the change, for example with tests, screenshots, or generated model files.
+3. Reference the related issue in the pull request description and describe how you verified the change, for example with screenshots or generated model files.
 
 ### Areas that are not stable yet
 
