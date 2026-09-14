@@ -17,12 +17,14 @@
 | `view_check_coverage` | `viewport`(必须 `canvas_rect`)、`include_layer_ids`、`alpha_threshold` | 测量选定图层对指定画布矩形的 alpha 覆盖 |
 | `view_render_poses` | `poses`、`columns` | 1–9 个姿态拼为一张图 |
 
-`view_render_model` 请求字段：`parameters`、`include_layer_ids`、`annotate_layer_ids`、`annotate_deformer_ids`、`annotate_path_ids`、`annotate_path_radius`、`point_indices`、`viewport`、`background`、`target_long_edge`、`max_bytes`。
+`view_render_model` 请求字段：`parameters`、`include_layer_ids`、`annotate_layer_ids`、`annotate_deformer_ids`、`annotate_path_ids`、`annotate_path_width`、`annotate_path_hardness`、`annotate_path_radius`、`point_indices`、`viewport`、`background`、`target_long_edge`、`max_bytes`。
 
 - 未给出的参数取模型默认值；越界值仍参与求值，只附范围诊断（便于检查超调与异常姿势）。
 - `include_layer_ids` 省略时用当前可见图层，`[]` 表示不输出模型图层；`annotate_layer_ids` 只控制轮廓与标签，不改变叠加集合。
-- `annotate_path_ids`：给路径 ID 列表或 `['*']`，在模型渲染上叠加变形路径的 Catmull-Rom 平滑曲线、控制手柄（圆形平滑点/菱形拐角点）与顶点编号，便于 Agent 结合视图直观调姿。
-- `annotate_path_radius`：布尔值（默认 `false`），开启后绘制各控制点的外层影响半径（Width）虚线圆与内层衰减硬度（Hardness）实体圆，直观评估变形权重波及范围。
+- `annotate_path_ids`：给路径 ID 列表或 `['*']`、`['L2']`、`['L3']`，在模型渲染上叠加变形路径的 Catmull-Rom 平滑曲线、控制手柄（圆形平滑点/菱形拐角点）与顶点编号，便于 Agent 结合视图直观调姿。
+- `annotate_path_width`：布尔值（默认 `false`），开启后绘制各控制点的外层影响宽度（Width）虚线圆。
+- `annotate_path_hardness`：布尔值（默认 `false`），开启后绘制各控制点的内层衰减硬度（Hardness）实体圆。
+- `annotate_path_radius`：兼容别名，同时开启宽度与硬度圆圈显示。
 - `viewport.mode=canvas_rect` 直接给画布单位 `left/top/width/height`；`mode=focus_layers` 用 `layer_ids`、`object_scale`、`aspect_ratio` 构造窗口。`object_scale=1` 为部件紧贴窗口，0.5 约两倍范围；比例只靠扩展取景适配，不拉伸角色。
 - `target_long_edge` 控制返回 PNG 分辨率，与画布单位解耦；超过 `max_bytes` 时只降 PNG 分辨率，不改变所代表的画布区域。
 - 服务端按绘制顺序合成**一张 PNG**；MCP 不返回 PSD，PSD 只属于明确的导入/导出工具。
@@ -165,7 +167,7 @@ Part 组织树用于归组和同绘制顺序时的排序，独立绘制顺序通
 | `asset` | `create`、`split`、`reference`、`import`、`register`、`preview`、`add`、`place`、`finalize`、`inspect`、`reprocess`、`remove` |
 | `physics` / `appearance` / `revision` | 分别只有 `put`；一次有序编辑完成改名/显隐/重组；`save`、`checkpoint`、`list`、`restore` |
 
-- `view` 的 `model` 分支继承 `view_render_model` 的 `parameters`/`include_layer_ids`/`annotate_layer_ids`/`annotate_deformer_ids`/`annotate_path_ids`/`annotate_path_radius`/`point_indices`/`viewport`/`background`/`target_long_edge`/`max_bytes`，`poses` 分支继承第 2 节全部约束；`inspect` 只给直接轴与父级链，不返回点数组。
+- `view` 的 `model` 分支继承 `view_render_model` 的 `parameters`/`include_layer_ids`/`annotate_layer_ids`/`annotate_deformer_ids`/`annotate_path_ids`/`annotate_path_width`/`annotate_path_hardness`/`annotate_path_radius`/`point_indices`/`viewport`/`background`/`target_long_edge`/`max_bytes`，`poses` 分支继承第 2 节全部约束；`inspect` 只给直接轴与父级链，不返回点数组。
 - `path` 工具针对 ArtMesh 提供类似 Live2D 路径变形器的直觉控制点操作：
   - `put`：控制点数组 `points` 可直接给网格局部坐标 `[[x, y], ...]` 或 `[{"x": x, "y": y, "corner": false}, ...]`，服务端调用 MLS 自动投影并绑定至最近网格三角面；省略 `width` 时按网格局部包围盒尺寸自动设置（12% 跨度），`hardness` 默认 0.5，`level` 默认 2，`closed` 默认 false。
   - `preview`：根据 `moved_points: [[x, y], ...]` 试算 MLS 变形，返回受影响顶点数、最大位移、平均位移与形变前后包围盒，并默认渲染 640×640 诊断位移图（含原始灰网格、变形后青色网格、绿色路径曲线、控制点索引编号与位移向量箭头；可通过 `render: false` 关闭），不推进工程历史。

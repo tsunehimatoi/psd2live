@@ -91,6 +91,8 @@ internal object RigInformationOverlay {
         pathIds: Set<String>,
         labels: Boolean = true,
         pointIndices: Boolean = false,
+        showWidth: Boolean = false,
+        showHardness: Boolean = false,
         showRadius: Boolean = false,
         selectedPathId: String? = null,
         hoveredPathId: String? = null,
@@ -98,7 +100,17 @@ internal object RigInformationOverlay {
     ): List<String> {
         if (pathIds.isEmpty()) return emptyList()
         val allPaths = model.deformPaths
-        val targets = if (pathIds.contains("*")) allPaths else allPaths.filter { it.id in pathIds }
+        val targets = if (pathIds.contains("*")) {
+            allPaths
+        } else {
+            allPaths.filter { path ->
+                path.id in pathIds ||
+                    (pathIds.contains("L2") && path.editLevel == 2) ||
+                    (pathIds.contains("L3") && path.editLevel == 3) ||
+                    (pathIds.contains("level:2") && path.editLevel == 2) ||
+                    (pathIds.contains("level:3") && path.editLevel == 3)
+            }
+        }
         if (targets.isEmpty()) return emptyList()
 
         val renderedPathIds = mutableListOf<String>()
@@ -157,11 +169,14 @@ internal object RigInformationOverlay {
                 g.draw(curvePath)
             }
 
-            if ((showRadius || isSelected || isHovered) && path.width > 0f) {
+            val drawWidth = (showWidth || showRadius || isSelected || isHovered) && path.width > 0f
+            val drawHardness = (showHardness || showRadius || isSelected || isHovered) && path.width > 0f && path.hardness > 0f
+
+            if (drawWidth || drawHardness) {
                 val outerRadiusPx = (path.width * viewport.scale).toFloat()
                 val innerRadiusPx = outerRadiusPx * path.hardness.coerceIn(0f, 1f)
                 for (pt in screenPoints) {
-                    if (innerRadiusPx > 1f) {
+                    if (drawHardness && innerRadiusPx > 1f) {
                         g.color = Color(33, 150, 243, 30)
                         g.fillOval((pt.first - innerRadiusPx).toInt(), (pt.second - innerRadiusPx).toInt(),
                             (innerRadiusPx * 2).toInt(), (innerRadiusPx * 2).toInt())
@@ -170,7 +185,7 @@ internal object RigInformationOverlay {
                         g.drawOval((pt.first - innerRadiusPx).toInt(), (pt.second - innerRadiusPx).toInt(),
                             (innerRadiusPx * 2).toInt(), (innerRadiusPx * 2).toInt())
                     }
-                    if (outerRadiusPx > 1f) {
+                    if (drawWidth && outerRadiusPx > 1f) {
                         g.color = Color(244, 67, 54, 90)
                         g.stroke = BasicStroke(1.2f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL, 0f, floatArrayOf(4f, 4f), 0f)
                         g.drawOval((pt.first - outerRadiusPx).toInt(), (pt.second - outerRadiusPx).toInt(),

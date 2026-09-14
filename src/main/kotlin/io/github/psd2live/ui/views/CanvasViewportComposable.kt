@@ -556,6 +556,8 @@ fun CanvasViewportComposable(
 							io.github.psd2live.ui.RigInformationOverlay.paintDeformPaths(
 								g, model.rig.puppet, geometry,
 								viewport, pathIds,
+								showWidth = state.pathShowWidth,
+								showHardness = state.pathShowHardness,
 								showRadius = state.pathShowRadius,
 								labels = informationNames,
 								pointIndices = informationIndices,

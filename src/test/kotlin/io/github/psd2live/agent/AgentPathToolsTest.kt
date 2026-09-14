@@ -373,6 +373,28 @@ class AgentPathToolsTest {
             )
             assertEquals(listOf("path_overlay_1"), renderedWithRadius)
 
+            // Test showWidth and showHardness independently
+            val renderedWidth = RigInformationOverlay.paintDeformPaths(
+                g, modelWithPath, null, viewport, setOf("path_overlay_1"),
+                showWidth = true, showHardness = false,
+                labels = true, pointIndices = true,
+            )
+            assertEquals(listOf("path_overlay_1"), renderedWidth)
+
+            val renderedHardness = RigInformationOverlay.paintDeformPaths(
+                g, modelWithPath, null, viewport, setOf("path_overlay_1"),
+                showWidth = false, showHardness = true,
+                labels = true, pointIndices = true,
+            )
+            assertEquals(listOf("path_overlay_1"), renderedHardness)
+
+            // Test level filter "L2"
+            val renderedLevel = RigInformationOverlay.paintDeformPaths(
+                g, modelWithPath, null, viewport, setOf("L2"),
+                labels = true, pointIndices = true,
+            )
+            assertEquals(listOf("path_overlay_1"), renderedLevel)
+
             // Test non-matching path ID
             val renderedEmpty = RigInformationOverlay.paintDeformPaths(
                 g, modelWithPath, null, viewport, setOf("non_existent"),
@@ -384,13 +406,17 @@ class AgentPathToolsTest {
     }
 
     @Test
-    fun agentModelViewRequestSupportsPathRadiusAnnotation() {
+    fun agentModelViewRequestSupportsPathWidthAndHardnessAnnotation() {
         val request = AgentModelViewRequest(
             annotatePathIds = setOf("path_overlay_1"),
-            annotatePathRadius = true,
+            annotatePathWidth = true,
+            annotatePathHardness = true,
+            annotatePathRadius = false,
             frame = AgentViewFrame.CanvasRect(Bounds(0f, 0f, 100f, 100f)),
         )
-        assertTrue(request.annotatePathRadius)
+        assertTrue(request.annotatePathWidth)
+        assertTrue(request.annotatePathHardness)
+        assertFalse(request.annotatePathRadius)
         assertEquals(setOf("path_overlay_1"), request.annotatePathIds)
     }
 }

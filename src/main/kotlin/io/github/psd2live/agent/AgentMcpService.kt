@@ -595,6 +595,9 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace, legacyTools: Boolea
 		toolAnnotations = READ_ONLY,
 	) { request ->
 		renderResult {
+			val annotatePathWidth = request.arguments?.get("annotate_path_width")?.jsonPrimitive?.content == "true"
+			val annotatePathHardness = request.arguments?.get("annotate_path_hardness")?.jsonPrimitive?.content == "true"
+			val annotatePathRadius = request.arguments?.get("annotate_path_radius")?.jsonPrimitive?.content == "true"
 			workspace.renderModel(
 				AgentModelViewRequest(
 					parameters = request.floatMap("parameters"),
@@ -602,7 +605,9 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace, legacyTools: Boolea
 					annotateLayerIds = request.optionalStringSet("annotate_layer_ids").orEmpty(),
 					annotateDeformerIds = request.optionalStringSet("annotate_deformer_ids").orEmpty(),
 					annotatePathIds = request.optionalStringSet("annotate_path_ids").orEmpty(),
-					annotatePathRadius = request.arguments?.get("annotate_path_radius")?.jsonPrimitive?.content == "true",
+					annotatePathWidth = annotatePathWidth || annotatePathRadius,
+					annotatePathHardness = annotatePathHardness || annotatePathRadius,
+					annotatePathRadius = annotatePathRadius,
 					pointIndices = request.arguments?.get("point_indices")?.jsonPrimitive?.content == "true",
 					frame = request.viewFrame(),
 					background = request.background(),
@@ -655,6 +660,9 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace, legacyTools: Boolea
             val frame=request.viewFrame()
             require(frame is AgentViewFrame.CanvasRect) { "Use canvas_rect for a fixed comparison camera" }
             val revision=workspace.snapshot().revisionId
+            val pathWidth = request.boolean("annotate_path_width", false)
+            val pathHardness = request.boolean("annotate_path_hardness", false)
+            val pathRadius = request.boolean("annotate_path_radius", false)
             val views=poses.map { pose -> workspace.renderModel(AgentModelViewRequest(
                 parameters=sharedParameters + pose.jsonObject.mapValues { it.value.jsonPrimitive.float },
                 includeLayerIds=request.optionalStringSet("include_layer_ids"), frame=frame,
@@ -662,7 +670,9 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace, legacyTools: Boolea
                 annotateLayerIds=request.optionalStringSet("annotate_layer_ids").orEmpty(),
                 annotateDeformerIds=request.optionalStringSet("annotate_deformer_ids").orEmpty(),
                 annotatePathIds=request.optionalStringSet("annotate_path_ids").orEmpty(),
-                annotatePathRadius=request.boolean("annotate_path_radius", false),
+                annotatePathWidth=pathWidth || pathRadius,
+                annotatePathHardness=pathHardness || pathRadius,
+                annotatePathRadius=pathRadius,
                 pointIndices=request.boolean("point_indices",false))) }
             require(views.all { it.revisionId == revision } && workspace.snapshot().revisionId == revision) { "Workspace changed during comparison; render again" }
             val sheet = renderPoseSheet(views, output, columns)
@@ -1213,8 +1223,10 @@ private fun viewSchema(includeBackground: Boolean, includeFocus: Boolean = false
 private fun modelViewSchema(): ToolSchema = ToolSchema(
 	properties = buildJsonObject {
 		putJsonObject("annotate_deformer_ids") { put("type","array"); put("maxItems",16); putJsonObject("items") { put("type","string") };put("description","Warp IDs: posed lattice, name and stable ID; [] is a clean image") }
-		putJsonObject("annotate_path_ids") { put("type","array"); put("maxItems",32); putJsonObject("items") { put("type","string") };put("description","Deform Path IDs to overlay on the mesh (e.g. ['path_1'] or ['*'] for all paths); [] is a clean image") }
-		putJsonObject("annotate_path_radius") { put("type","boolean"); put("default",false); put("description","Whether to draw influence and hardness radii circles around deform path control points") }
+		putJsonObject("annotate_path_ids") { put("type","array"); put("maxItems",32); putJsonObject("items") { put("type","string") };put("description","Deform Path IDs to overlay on the mesh (e.g. ['path_1'] or ['*'] for all paths, or ['L2']/['L3']); [] is a clean image") }
+		putJsonObject("annotate_path_width") { put("type","boolean"); put("default",false); put("description","Whether to draw influence width boundaries (outer falloff dashed circle) around deform path control points") }
+		putJsonObject("annotate_path_hardness") { put("type","boolean"); put("default",false); put("description","Whether to draw hardness boundaries (inner core solid circle) around deform path control points") }
+		putJsonObject("annotate_path_radius") { put("type","boolean"); put("default",false); put("description","Legacy alias for enabling both annotate_path_width and annotate_path_hardness") }
 		putJsonObject("point_indices") { put("type","boolean");put("default",false) }
 		putJsonObject("parameters") {
 			put("type", "object")
@@ -1919,6 +1931,8 @@ private fun AgentRenderedView.toJson(): JsonObject = buildJsonObject {
 	putJsonArray("annotatedLayerIds") { annotatedLayerIds.forEach { add(JsonPrimitive(it)) } }
 	putJsonArray("annotatedDeformerIds") { annotatedDeformerIds.forEach { add(JsonPrimitive(it)) } }
 	putJsonArray("annotatedPathIds") { annotatedPathIds.forEach { add(JsonPrimitive(it)) } }
+	put("annotatedPathWidth", annotatedPathWidth)
+	put("annotatedPathHardness", annotatedPathHardness)
 	put("annotatedPathRadius", annotatedPathRadius)
 	put("pointIndices",pointIndices)
 	putJsonArray("objectIds") { objectIds.forEach { add(JsonPrimitive(it)) } }

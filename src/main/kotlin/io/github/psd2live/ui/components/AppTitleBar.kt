@@ -100,6 +100,8 @@ fun AppTitleBar(
 	showMesh: Boolean = false,
 	showWarp: Boolean = false,
 	showDeformPaths: Boolean = true,
+	pathShowWidth: Boolean = false,
+	pathShowHardness: Boolean = false,
 	pathShowRadius: Boolean = false,
 	contextualWarp: Boolean = true,
 	filterSelectedOnly: Boolean = false,
@@ -112,6 +114,8 @@ fun AppTitleBar(
 	onToggleShowMesh: () -> Unit = {},
 	onToggleShowWarp: () -> Unit = {},
 	onToggleShowDeformPaths: () -> Unit = {},
+	onTogglePathShowWidth: () -> Unit = {},
+	onTogglePathShowHardness: () -> Unit = {},
 	onTogglePathShowRadius: () -> Unit = {},
 	onToggleContextualWarp: () -> Unit = {},
 	onToggleFilterSelectedOnly: () -> Unit = {},
@@ -401,12 +405,21 @@ fun AppTitleBar(
 							},
 						)
 						AppMenuItem(
-							text = tr("canvas.information.pathRadius"),
-							isChecked = pathShowRadius,
+							text = tr("canvas.information.pathWidth"),
+							isChecked = pathShowWidth,
 							onClick = {
 								activeMenu = null
 								activeSubmenu = null
-								onTogglePathShowRadius()
+								onTogglePathShowWidth()
+							},
+						)
+						AppMenuItem(
+							text = tr("canvas.information.pathHardness"),
+							isChecked = pathShowHardness,
+							onClick = {
+								activeMenu = null
+								activeSubmenu = null
+								onTogglePathShowHardness()
 							},
 						)
 					}

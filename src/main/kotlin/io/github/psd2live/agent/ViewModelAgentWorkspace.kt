@@ -347,6 +347,8 @@ class ViewModelAgentWorkspace(
 			annotateLayerIds = request.annotateLayerIds,
 			annotateDeformerIds = request.annotateDeformerIds,
 			annotatePathIds = request.annotatePathIds,
+			annotatePathWidth = request.annotatePathWidth,
+			annotatePathHardness = request.annotatePathHardness,
 			annotatePathRadius = request.annotatePathRadius,
 			pointIndices = request.pointIndices,
 			frame = request.frame,

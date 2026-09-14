@@ -32,6 +32,8 @@ object AgentViewRenderer {
 		output: AgentViewOutputSpec,
 		annotateDeformerIds: Set<String> = emptySet(),
 		annotatePathIds: Set<String> = emptySet(),
+		annotatePathWidth: Boolean = false,
+		annotatePathHardness: Boolean = false,
 		annotatePathRadius: Boolean = false,
 		pointIndices: Boolean = false,
 	): AgentRenderedView {
@@ -82,6 +84,8 @@ object AgentViewRenderer {
 				graphics, model.rig.puppet, geometry,
 				target.viewport, annotatePathIds,
 				pointIndices = pointIndices,
+				showWidth = annotatePathWidth,
+				showHardness = annotatePathHardness,
 				showRadius = annotatePathRadius,
 			)
 		} finally {
@@ -108,6 +112,8 @@ object AgentViewRenderer {
 		).copy(
 			annotatedDeformerIds = annotateDeformerIds.sorted(),
 			annotatedPathIds = matchedPathIds.sorted(),
+			annotatedPathWidth = annotatePathWidth || annotatePathRadius,
+			annotatedPathHardness = annotatePathHardness || annotatePathRadius,
 			annotatedPathRadius = annotatePathRadius,
 			pointIndices = pointIndices,
 		)

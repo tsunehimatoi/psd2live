@@ -319,6 +319,8 @@ data class AgentViewOutputSpec(
 data class AgentModelViewRequest(
 	val annotateDeformerIds: Set<String> = emptySet(),
 	val annotatePathIds: Set<String> = emptySet(),
+	val annotatePathWidth: Boolean = false,
+	val annotatePathHardness: Boolean = false,
 	val annotatePathRadius: Boolean = false,
 	val pointIndices: Boolean = false,
 	val parameters: Map<String, Float> = emptyMap(),
@@ -350,6 +352,8 @@ data class AgentRenderedView(
 	val annotatedLayerIds: List<String> = emptyList(),
 	val annotatedDeformerIds: List<String> = emptyList(),
 	val annotatedPathIds: List<String> = emptyList(),
+	val annotatedPathWidth: Boolean = false,
+	val annotatedPathHardness: Boolean = false,
 	val annotatedPathRadius: Boolean = false,
 	val pointIndices: Boolean = false,
 )

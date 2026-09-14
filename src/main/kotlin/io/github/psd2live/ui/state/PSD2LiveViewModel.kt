@@ -944,8 +944,18 @@ class PSD2LiveViewModel : AutoCloseable {
 		markWorkspaceChanged()
 	}
 
+	fun setPathShowWidth(show: Boolean) {
+		_state.update { it.copy(pathShowWidth = show) }
+		markWorkspaceChanged()
+	}
+
+	fun setPathShowHardness(show: Boolean) {
+		_state.update { it.copy(pathShowHardness = show) }
+		markWorkspaceChanged()
+	}
+
 	fun setPathShowRadius(show: Boolean) {
-		_state.update { it.copy(pathShowRadius = show) }
+		_state.update { it.copy(pathShowRadius = show, pathShowWidth = show, pathShowHardness = show) }
 		markWorkspaceChanged()
 	}
 
