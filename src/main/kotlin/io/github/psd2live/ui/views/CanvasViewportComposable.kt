@@ -53,13 +53,13 @@ import androidx.compose.ui.unit.sp
 import io.github.psd2live.core.Bounds
 import io.github.psd2live.core.RigPreviewModel
 import io.github.psd2live.i18n.tr
-import io.github.psd2live.ui.CanvasCamera
 import io.github.psd2live.ui.CanvasViewport
 import io.github.psd2live.ui.ComponentPalette
+import io.github.psd2live.ui.CubismViewport
 import io.github.psd2live.ui.RigCanvasSupport
+import io.github.psd2live.ui.state.CanvasMode
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
-import io.github.psd2live.ui.state.WorkspaceTab
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
 import kotlinx.coroutines.flow.collect
@@ -75,7 +75,7 @@ import kotlin.math.pow
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun CanvasViewportComposable(
-	mode: WorkspaceTab,
+	mode: CanvasMode,
 	state: PSD2LiveState,
 	viewModel: PSD2LiveViewModel,
 	modifier: Modifier = Modifier,
@@ -158,7 +158,7 @@ fun CanvasViewportComposable(
 	// parameters are rendered next without building latency in a callback queue.
 	LaunchedEffect(mode, previewModel, state.animationEnabled, viewSize) {
 		if (previewModel != null && viewSize.width > 0 && viewSize.height > 0) {
-			if (mode == WorkspaceTab.PREVIEW) {
+			if (mode == CanvasMode.PREVIEW) {
 				var previousFrameNanos = 0L
 				while (isActive) {
 					val frameNanos = withFrameNanos { it }
@@ -216,7 +216,7 @@ fun CanvasViewportComposable(
 				if (event.button == PointerButton.Primary || event.button == PointerButton.Tertiary) {
 					isDragging = true
 					lastDragPos = change.position
-					if (mode == WorkspaceTab.PREVIEW) viewModel.clearPointer()
+					if (mode == CanvasMode.PREVIEW) viewModel.clearPointer()
 				}
 			}
 			.onPointerEvent(PointerEventType.Release) { event ->
@@ -243,7 +243,7 @@ fun CanvasViewportComposable(
 				}
 			}
 			.onPointerEvent(PointerEventType.Exit) {
-				if (mode == WorkspaceTab.PREVIEW) {
+				if (mode == CanvasMode.PREVIEW) {
 					viewModel.clearPointer()
 				}
 			}
@@ -256,7 +256,7 @@ fun CanvasViewportComposable(
                     viewModel.setCanvasView(zoom.toFloat(), panX.toFloat(), panY.toFloat())
 					lastDragPos = change.position
 				}
-				if (!isDragging && mode == WorkspaceTab.PREVIEW && state.mouseTrackingEnabled) {
+				if (!isDragging && mode == CanvasMode.PREVIEW && state.mouseTrackingEnabled) {
 					val normX = ((change.position.x - viewSize.width * 0.5f) / (viewSize.width * 0.5f).coerceAtLeast(1f)).coerceIn(-1f, 1f)
 					val normY = ((change.position.y - viewSize.height * 0.5f) / (viewSize.height * 0.5f).coerceAtLeast(1f)).coerceIn(-1f, 1f)
 					viewModel.updatePointer(normX, normY)
@@ -296,8 +296,10 @@ fun CanvasViewportComposable(
 			// 3. Multi-channel Rendering: Texture, Mesh, Warp
 			val hoveredIsWarp = state.hoveredDeformerId != null &&
 				model.rig.puppet.deformers.any { it.id.raw == state.hoveredDeformerId && it is org.umamo.runtime.model.Deformer.Warp }
-			val showWarp = state.showWarp || (mode == WorkspaceTab.HIERARCHY) || (state.selectedDeformerId != null) || hoveredIsWarp
-			val showMesh = state.showMesh || (mode == WorkspaceTab.TOPOLOGY)
+			// The per-tab "Deformer Warp" option is authoritative here: an Edit tab shows the rig
+			// guides because its default enables them, not because the mode forces them on.
+			val showWarp = state.showWarp || (state.selectedDeformerId != null) || hoveredIsWarp
+			val showMesh = state.showMesh
 			val showTexture = state.showTexture
 			val informationNames = state.warpShowNames
 			val informationIndices = state.warpShowIndices
@@ -323,7 +325,7 @@ fun CanvasViewportComposable(
 
 			val nativeFrame = sdkFrame
 			val hasActivePaths = state.showDeformPaths && model.rig.puppet.deformPaths.isNotEmpty()
-			val canUseNativeSdk = mode == WorkspaceTab.PREVIEW &&
+			val canUseNativeSdk = mode == CanvasMode.PREVIEW &&
 				!showWarp && !showMesh && !hasActivePaths && !informationSelectedOnly && showTexture &&
 				!isDimmingActive &&
 				state.hoveredLayerId == null && state.hoveredDeformerId == null &&
@@ -340,21 +342,17 @@ fun CanvasViewportComposable(
 				val g = buffer.createGraphics()
 				try {
 					g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-					val geometry = RigCanvasSupport.evaluate(model, if (mode == WorkspaceTab.PREVIEW) informationPose else state.parameterValues)
+					val geometry = RigCanvasSupport.evaluate(model, if (mode == CanvasMode.PREVIEW) informationPose else state.parameterValues)
 
-					// 3a. Texture Channel
+					// 3a. Texture Channel. The artwork always renders opaque; legibility of the
+					// overlays comes from the focus/dim options instead of a global transparency.
 					if (showTexture) {
-						val textureAlpha = when (mode) {
-							WorkspaceTab.TOPOLOGY -> 0.26f
-							WorkspaceTab.HIERARCHY -> 0.43f
-							else -> 1.0f
-						}
 						RigCanvasSupport.paintTexturedRig(
 							g,
 							model,
 							geometry,
 							viewport,
-							textureAlpha,
+							1.0f,
 							visibleLayerIds = targetVisibleLayerIds,
 							drawOrderOverrides = state.drawOrderOverrides,
 							dimUnselected = state.dimUnselected,
@@ -371,36 +369,11 @@ fun CanvasViewportComposable(
 							val layerId = model.rig.layerIdByDrawableId[drawable.id.raw] ?: return
 							if (layerId !in targetVisibleLayerIds) return
 							val awtColor = ComponentPalette.strong(layerId)
-							val strokeWidth = if (selected) 2.2f else if (dimmed) 0.65f else 0.85f
+							val strokeWidth = if (selected) 2.2f else if (dimmed) 0.65f else 1.1f
 							val wireColor = when {
 								selected -> awtColor.brighter()
 								dimmed -> java.awt.Color(awtColor.red, awtColor.green, awtColor.blue, 65)
 								else -> awtColor
-							}
-							g.color = wireColor
-							g.stroke = BasicStroke(strokeWidth)
-							for (offset in mesh.indices.indices step 3) {
-								val a = mesh.indices[offset]
-								val b = mesh.indices[offset + 1]
-								val c = mesh.indices[offset + 2]
-								g.drawLine(
-									viewport.x(positions[a * 2]).toInt(),
-									viewport.yFromWorld(positions[a * 2 + 1]).toInt(),
-									viewport.x(positions[b * 2]).toInt(),
-									viewport.yFromWorld(positions[b * 2 + 1]).toInt(),
-								)
-								g.drawLine(
-									viewport.x(positions[b * 2]).toInt(),
-									viewport.yFromWorld(positions[b * 2 + 1]).toInt(),
-									viewport.x(positions[c * 2]).toInt(),
-									viewport.yFromWorld(positions[c * 2 + 1]).toInt(),
-								)
-								g.drawLine(
-									viewport.x(positions[c * 2]).toInt(),
-									viewport.yFromWorld(positions[c * 2 + 1]).toInt(),
-									viewport.x(positions[a * 2]).toInt(),
-									viewport.yFromWorld(positions[a * 2 + 1]).toInt(),
-								)
 							}
 							if (selected) {
 								g.color = java.awt.Color.WHITE
@@ -411,6 +384,36 @@ fun CanvasViewportComposable(
 									g.fillOval(vx - radius, vy - radius, radius * 2 + 1, radius * 2 + 1)
 								}
 							}
+							// Opaque artwork needs a dark halo under every wire so the mesh stays readable.
+							fun drawEdges(color: java.awt.Color, width: Float) {
+								g.color = color
+								g.stroke = BasicStroke(width)
+								for (offset in mesh.indices.indices step 3) {
+									val a = mesh.indices[offset]
+									val b = mesh.indices[offset + 1]
+									val c = mesh.indices[offset + 2]
+									g.drawLine(
+										viewport.x(positions[a * 2]).toInt(),
+										viewport.yFromWorld(positions[a * 2 + 1]).toInt(),
+										viewport.x(positions[b * 2]).toInt(),
+										viewport.yFromWorld(positions[b * 2 + 1]).toInt(),
+									)
+									g.drawLine(
+										viewport.x(positions[b * 2]).toInt(),
+										viewport.yFromWorld(positions[b * 2 + 1]).toInt(),
+										viewport.x(positions[c * 2]).toInt(),
+										viewport.yFromWorld(positions[c * 2 + 1]).toInt(),
+									)
+									g.drawLine(
+										viewport.x(positions[c * 2]).toInt(),
+										viewport.yFromWorld(positions[c * 2 + 1]).toInt(),
+										viewport.x(positions[a * 2]).toInt(),
+										viewport.yFromWorld(positions[a * 2 + 1]).toInt(),
+									)
+								}
+							}
+							if (showTexture && !dimmed) drawEdges(java.awt.Color(12, 13, 16, 150), strokeWidth + 1.6f)
+							drawEdges(wireColor, strokeWidth)
 						}
 
 						val selectedId = state.selectedLayerId
@@ -435,11 +438,12 @@ fun CanvasViewportComposable(
 					val drawableBounds = RigCanvasSupport.boundsByDrawable(geometry)
 					val deformerBounds = RigCanvasSupport.boundsByDeformer(model, drawableBounds)
 
-					if (mode == WorkspaceTab.HIERARCHY) {
+					if (mode == CanvasMode.EDIT) {
 						for (deformer in model.rig.puppet.deformers.filterIsInstance<org.umamo.runtime.model.Deformer.Rotation>()) {
 							val bounds = deformerBounds[deformer.id.raw] ?: continue
 							val selected = deformer.id.raw == state.selectedDeformerId
-							val isDimmed = isDimmingActive && !selected
+							// With nothing selected every box is unselected, so the rig guide fades.
+							val isDimmed = state.dimUnselected && !selected
 							val rawColor = ComponentPalette.strong(deformer.id.raw)
 							val color = when {
 								selected -> rawColor.brighter()
@@ -473,7 +477,7 @@ fun CanvasViewportComposable(
 								RigCanvasSupport.paintSelectionBounds(g, bounds, viewport, selColor, stroke = 2.0f, isDashed = false)
 							}
 						}
-						if (mode != WorkspaceTab.HIERARCHY) {
+						if (mode != CanvasMode.EDIT) {
 							state.selectedDeformerId?.let { defId ->
 								val def = model.rig.puppet.deformers.firstOrNull { it.id.raw == defId }
 								if (def !is org.umamo.runtime.model.Deformer.Warp) {
@@ -524,7 +528,7 @@ fun CanvasViewportComposable(
 
 						io.github.psd2live.ui.RigInformationOverlay.paint(
 							g, model.rig.puppet,
-							if (mode == WorkspaceTab.PREVIEW) informationPose else state.parameterValues,
+							if (mode == CanvasMode.PREVIEW) informationPose else state.parameterValues,
 							viewport, ids,
 							labels = informationNames,
 							pointIndices = informationIndices,
@@ -558,8 +562,6 @@ fun CanvasViewportComposable(
 							model.rig.puppet.deformPaths.map { it.id }.toSet()
 						}
 
-						val hasSelection = state.selectedLayerId != null || state.selectedDeformerId != null
-
 						if (pathIds.isNotEmpty()) {
 							io.github.psd2live.ui.RigInformationOverlay.paintDeformPaths(
 								g = g,
@@ -571,10 +573,8 @@ fun CanvasViewportComposable(
 								pointIndices = informationIndices,
 								showWidth = state.pathShowWidth,
 								showHardness = state.pathShowHardness,
-								showRadius = state.pathShowRadius,
 								selectedPathIds = selectedPathIds,
 								hoveredPathIds = hoveredPathIds,
-								hasSelection = hasSelection,
 								dimUnselected = state.dimUnselected,
 							)
 						}
@@ -590,9 +590,8 @@ fun CanvasViewportComposable(
 		if (previewModel == null) {
 			Text(
 				text = when (mode) {
-					WorkspaceTab.HIERARCHY -> tr("canvas.hierarchy.empty")
-					WorkspaceTab.TOPOLOGY -> tr("canvas.topology.empty")
-					else -> tr("canvas.preview.empty")
+					CanvasMode.EDIT -> tr("canvas.hierarchy.empty")
+					CanvasMode.PREVIEW -> tr("canvas.preview.empty")
 				},
 				style = typography.body.copy(fontSize = 12.sp),
 				color = colors.textMuted,
@@ -603,7 +602,7 @@ fun CanvasViewportComposable(
 			val zoomPct = (zoom * 100).toInt()
 			val fpsStr = if (fps > 0f) "%.1f FPS · ".format(fps) else ""
 			val badgeText = when (mode) {
-				WorkspaceTab.PREVIEW -> when {
+				CanvasMode.PREVIEW -> when {
 					sdkFrame != null -> "${fpsStr}${tr(
 						if (previewModel.hasRuntimePhysics) "canvas.preview.cubismPhysicsOn" else "canvas.preview.cubismPhysicsOff",
 						zoomPct,
@@ -612,13 +611,13 @@ fun CanvasViewportComposable(
 					previewModel.hasRuntimePhysics -> "${fpsStr}${tr("canvas.preview.physicsOn", zoomPct)}"
 					else -> "${fpsStr}${tr("canvas.preview.physicsOff", zoomPct)}"
 				}
-				WorkspaceTab.TOPOLOGY -> {
+				CanvasMode.EDIT -> if (state.showMesh) {
 					val vertexCount = previewModel.rig.puppet.drawables.sumOf { it.mesh?.vertexCount ?: 0 }
 					val triangleCount = previewModel.rig.puppet.drawables.sumOf { it.mesh?.triangleCount ?: 0 }
-					tr("canvas.topology.stats", previewModel.rig.puppet.drawables.size, vertexCount, triangleCount, zoomPct)
+					tr("canvas.mesh.stats", previewModel.rig.puppet.drawables.size, vertexCount, triangleCount, zoomPct)
+				} else {
+					"$zoomPct%"
 				}
-				WorkspaceTab.HIERARCHY -> "${zoomPct}%"
-				else -> ""
 			}
 
 			if (badgeText.isNotEmpty()) {
@@ -694,7 +693,7 @@ private fun computeCubismViewport(
 	zoom: Double,
 	panX: Double,
 	panY: Double,
-): CanvasCamera.CubismViewport {
+): CubismViewport {
 	val safeWidth = width.coerceAtLeast(1).toDouble()
 	val safeHeight = height.coerceAtLeast(1).toDouble()
 	val viewportAspect = safeWidth / safeHeight
@@ -708,7 +707,7 @@ private fun computeCubismViewport(
 	} else {
 		1.0 / baseScaleY * 0.95
 	}
-	return CanvasCamera.CubismViewport(
+	return CubismViewport(
 		(fitScale * zoom).toFloat(),
 		(panX / (safeWidth * 0.5)).toFloat(),
 		(-panY / (safeHeight * 0.5)).toFloat(),

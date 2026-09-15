@@ -1,9 +1,8 @@
-﻿package io.github.psd2live.ui
+package io.github.psd2live.ui
 
 import java.awt.Color
-import java.util.concurrent.CopyOnWriteArrayList
 
-/** Stable colors keep one component recognizable across hierarchy, topology and the layer table. */
+/** Stable colors keep one component recognizable across hierarchy, canvas and layer table. */
 object ComponentPalette {
 	private val colors = arrayOf(
 		Color(87, 181, 255),
@@ -31,21 +30,4 @@ object ComponentPalette {
 		(base.green + (tint.green - base.green) * amount).toInt().coerceIn(0, 255),
 		(base.blue + (tint.blue - base.blue) * amount).toInt().coerceIn(0, 255),
 	)
-}
-
-class ComponentSelectionModel {
-	private val listeners = CopyOnWriteArrayList<(String?) -> Unit>()
-
-	var selectedLayerId: String? = null
-		private set
-
-	fun select(layerId: String?) {
-		if (selectedLayerId == layerId) return
-		selectedLayerId = layerId
-		listeners.forEach { it(layerId) }
-	}
-
-	fun addListener(listener: (String?) -> Unit) {
-		listeners += listener
-	}
 }

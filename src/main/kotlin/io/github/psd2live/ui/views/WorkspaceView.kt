@@ -38,6 +38,7 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -69,7 +70,6 @@ import io.github.psd2live.core.RigPreviewModel
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.ComponentPalette
 import io.github.psd2live.ui.components.CompactButton
-import io.github.psd2live.ui.components.CompactTabBar
 import io.github.psd2live.ui.components.CompactTextField
 import io.github.psd2live.ui.components.CompactToggleChip
 import io.github.psd2live.ui.components.IconChevron
@@ -85,9 +85,11 @@ import io.github.psd2live.ui.components.DrawOrderRuler
 import io.github.psd2live.ui.components.DrawOrderInputDialog
 import io.github.psd2live.ui.components.MeshSettingsDialog
 import io.github.psd2live.ui.components.MeshSettingsDialogTarget
+import io.github.psd2live.ui.state.CanvasMode
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
-import io.github.psd2live.ui.state.WorkspaceTab
+import io.github.psd2live.ui.state.WorkspaceTabKind
+import io.github.psd2live.ui.state.canvasMode
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
 import org.umamo.runtime.model.Deformer
@@ -110,20 +112,7 @@ fun WorkspaceView(
 	modifier: Modifier = Modifier,
 ) {
 	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-	var showDeformPaths by remember(state.projectOpenGeneration) { mutableStateOf(false) }
-
-	val tabTitles = listOf(
-		tr("tab.topology"),
-		tr("tab.preview"),
-		tr("tab.history"),
-	)
-	val selectedTabIndex = when (state.activeWorkspaceTab) {
-		WorkspaceTab.TOPOLOGY -> 0
-		WorkspaceTab.PREVIEW -> 1
-		WorkspaceTab.HISTORY -> 2
-		else -> 1
-	}
+	var showDeformPathDialog by remember(state.projectOpenGeneration) { mutableStateOf(false) }
 
 	val canEditDeformPath = state.previewModel?.rig?.let { rig ->
 		rig.puppet.drawables.any { rig.layerIdByDrawableId[it.id.raw] == state.selectedLayerId && it.mesh != null }
@@ -136,7 +125,7 @@ fun WorkspaceView(
 				.background(colors.panelBackground)
 				.border(BorderStroke(1.dp, colors.divider)),
 		) {
-			// Tab Bar Row with Integrated Trailing Tools
+			// Browser-style tab strip with the integrated deform-path tool
 			Row(
 				modifier = Modifier
 					.fillMaxWidth()
@@ -145,26 +134,16 @@ fun WorkspaceView(
 					.border(BorderStroke(1.dp, colors.divider)),
 				verticalAlignment = Alignment.CenterVertically,
 			) {
-				Box(modifier = Modifier.weight(1f)) {
-					CompactTabBar(
-						tabs = tabTitles,
-						selectedIndex = selectedTabIndex,
-						onTabSelected = { index ->
-							val tab = when (index) {
-								0 -> WorkspaceTab.TOPOLOGY
-								1 -> WorkspaceTab.PREVIEW
-								else -> WorkspaceTab.HISTORY
-							}
-							viewModel.setWorkspaceTab(tab)
-						},
-						modifier = Modifier.fillMaxWidth(),
-					)
-				}
+				WorkspaceTabStrip(
+					state = state,
+					viewModel = viewModel,
+					modifier = Modifier.weight(1f),
+				)
 
 				if (canEditDeformPath) {
 					CompactButton(
 						text = tr("path.title"),
-						onClick = { showDeformPaths = true },
+						onClick = { showDeformPathDialog = true },
 						leadingIcon = {
 							IconDeformPath(modifier = Modifier.size(13.dp), tint = colors.accent)
 						},
@@ -174,30 +153,34 @@ fun WorkspaceView(
 				}
 			}
 
-			// Upper Main Workspace Area: Topology / Preview (with persistent hierarchy sidebar), History
+			// Main workspace area: the active tab owns its canvas mode and view options.
+			val activeTab = state.activeWorkspaceTab
 			Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-				when (state.activeWorkspaceTab) {
-					WorkspaceTab.HISTORY -> HistoryTreeView(state, viewModel)
-					else -> HierarchyView(
-						state = state,
-						viewModel = viewModel,
-						onRequestOpenDeformPaths = { layerId ->
-							viewModel.selectLayer(layerId)
-							showDeformPaths = true
-						},
-					)
+				key(activeTab.id) {
+					when (activeTab.kind) {
+						WorkspaceTabKind.HISTORY -> HistoryTreeView(state, viewModel)
+						WorkspaceTabKind.EDIT, WorkspaceTabKind.PREVIEW -> HierarchyView(
+							state = state,
+							viewModel = viewModel,
+							canvasMode = activeTab.kind.canvasMode ?: CanvasMode.EDIT,
+							onRequestOpenDeformPaths = { layerId ->
+								viewModel.selectLayer(layerId)
+								showDeformPathDialog = true
+							},
+						)
+					}
 				}
 			}
 
-			// Independent Bottom Log Dock (underneath Hierarchy / Topology / Preview / History)
+			// Independent Bottom Log Dock (shared by every tab)
 			BottomLogDock(
 				state = state,
 				viewModel = viewModel,
 			)
 		}
 
-		if (showDeformPaths && state.previewModel != null) {
-			io.github.psd2live.ui.components.DeformPathDialog(state, viewModel) { showDeformPaths = false }
+		if (showDeformPathDialog && state.previewModel != null) {
+			io.github.psd2live.ui.components.DeformPathDialog(state, viewModel) { showDeformPathDialog = false }
 		}
 	}
 }
@@ -206,6 +189,7 @@ fun WorkspaceView(
 private fun HierarchyView(
 	state: PSD2LiveState,
 	viewModel: PSD2LiveViewModel,
+	canvasMode: CanvasMode,
 	onRequestOpenDeformPaths: ((String) -> Unit)? = null,
 ) {
 	val colors = LocalToolColors.current
@@ -353,7 +337,7 @@ private fun HierarchyView(
 			// Right: 2D Canvas Viewport
 			Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
 				CanvasViewportComposable(
-					mode = if (state.activeWorkspaceTab == WorkspaceTab.TOPOLOGY) WorkspaceTab.TOPOLOGY else WorkspaceTab.PREVIEW,
+					mode = canvasMode,
 					state = state,
 					viewModel = viewModel,
 					modifier = Modifier.fillMaxSize(),

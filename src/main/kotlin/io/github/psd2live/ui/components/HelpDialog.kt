@@ -856,12 +856,15 @@ private fun DccShortcutsContent() {
 		tr("help.shortcuts.fitCenter") to "F / 0 / Home",
 		tr("help.shortcuts.zoomReset") to "Ctrl+0",
 		tr("help.shortcuts.zoomStep") to "Ctrl + / Ctrl -",
+		tr("help.shortcuts.newTab") to "Ctrl+T / Ctrl+Shift+T",
+		tr("help.shortcuts.closeTab") to "Ctrl+W",
+		tr("help.shortcuts.historyTab") to "Ctrl+H",
+		tr("help.shortcuts.switchTab") to "Ctrl+Tab / Ctrl+1…9",
 	)
 
 	val toolShortcuts = listOf(
 		tr("help.shortcuts.textureUpscale") to "Ctrl+U",
 		tr("help.shortcuts.agentConnect") to tr("help.shortcuts.menuOnly"),
-		tr("help.shortcuts.historyTree") to tr("help.shortcuts.menuOnly"),
 	)
 
 	DccShortcutGroup(title = tr("help.shortcuts.group.project"), shortcuts = projectShortcuts)

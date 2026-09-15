@@ -15,13 +15,102 @@ import org.umamo.runtime.model.ParameterId
 
 import io.github.psd2live.agent.AgentHistorySnapshot
 
-enum class WorkspaceTab {
-	HIERARCHY,
-	TOPOLOGY,
+/** Kind of a workspace tab; only [EDIT] and [PREVIEW] render the canvas. */
+enum class WorkspaceTabKind {
+	EDIT,
 	PREVIEW,
 	HISTORY,
-	LOG,
 }
+
+/** Canvas rendering mode; [EDIT] shows rig geometry for editing, [PREVIEW] runs the animation. */
+enum class CanvasMode {
+	EDIT,
+	PREVIEW,
+}
+
+val WorkspaceTabKind.canvasMode: CanvasMode?
+	get() = when (this) {
+		WorkspaceTabKind.EDIT -> CanvasMode.EDIT
+		WorkspaceTabKind.PREVIEW -> CanvasMode.PREVIEW
+		WorkspaceTabKind.HISTORY -> null
+	}
+
+/**
+ * View options a fresh tab of this kind starts with (and what "reset view options" restores).
+ * The Edit tab opens with the deformer guides enabled; they fade while nothing is selected.
+ */
+fun WorkspaceTabKind.defaultViewOptions(): TabViewOptions = when (this) {
+	WorkspaceTabKind.EDIT -> TabViewOptions.Default.copy(showWarp = true)
+	WorkspaceTabKind.PREVIEW, WorkspaceTabKind.HISTORY -> TabViewOptions.Default
+}
+
+/**
+ * Per-tab canvas display options. Mirrors the View menu's canvas and annotation toggles so two
+ * tabs can be inspected with different overlays at the same time.
+ */
+@Immutable
+data class TabViewOptions(
+	val showTexture: Boolean = true,
+	val showMesh: Boolean = false,
+	val showWarp: Boolean = false,
+	val showDeformPaths: Boolean = true,
+	val warpShowNames: Boolean = true,
+	val warpShowIndices: Boolean = false,
+	val pathShowWidth: Boolean = false,
+	val pathShowHardness: Boolean = false,
+	val filterSelectedOnly: Boolean = false,
+	val dimUnselected: Boolean = true,
+	val contextualWarp: Boolean = true,
+	val showSelectionBounds: Boolean = true,
+) {
+	/** Point indices are only painted together with the warp overlay they annotate. */
+	fun normalized(): TabViewOptions = copy(showWarp = showWarp || warpShowIndices)
+
+	companion object {
+		val Default = TabViewOptions()
+	}
+}
+
+/** Per-tab canvas camera, so duplicated tabs can keep their own zoom and pan. */
+@Immutable
+data class TabCamera(
+	val zoom: Float = 1f,
+	val panX: Float = 0f,
+	val panY: Float = 0f,
+)
+
+/** One browser-style workspace tab. Pinned tabs (Edit / Preview) cannot be closed. */
+@Immutable
+data class WorkspaceTabState(
+	val id: String,
+	val kind: WorkspaceTabKind,
+	val ordinal: Int,
+	val pinned: Boolean = false,
+	val view: TabViewOptions = TabViewOptions.Default,
+	val camera: TabCamera = TabCamera(),
+)
+
+internal const val PINNED_EDIT_TAB_ID = "edit"
+internal const val PINNED_PREVIEW_TAB_ID = "preview"
+
+internal fun defaultWorkspaceTabs(): List<WorkspaceTabState> = listOf(
+	WorkspaceTabState(
+		id = PINNED_EDIT_TAB_ID,
+		kind = WorkspaceTabKind.EDIT,
+		ordinal = 1,
+		pinned = true,
+		view = WorkspaceTabKind.EDIT.defaultViewOptions(),
+	),
+	WorkspaceTabState(id = PINNED_PREVIEW_TAB_ID, kind = WorkspaceTabKind.PREVIEW, ordinal = 1, pinned = true),
+)
+
+internal val FALLBACK_EDIT_TAB = WorkspaceTabState(
+	id = PINNED_EDIT_TAB_ID,
+	kind = WorkspaceTabKind.EDIT,
+	ordinal = 1,
+	pinned = true,
+	view = WorkspaceTabKind.EDIT.defaultViewOptions(),
+)
 
 enum class LogSource {
 	SYSTEM,
@@ -88,9 +177,8 @@ data class PSD2LiveState(
     val hierarchySearch: String = "",
     val modelSettingsExpanded: Boolean = true,
     val workspaceSplitRatio: Float = 0.60f,
-    val canvasZoom: Float = 1f,
-    val canvasPanX: Float = 0f,
-    val canvasPanY: Float = 0f,
+    val workspaceTabs: List<WorkspaceTabState> = defaultWorkspaceTabs(),
+    val activeWorkspaceTabId: String = PINNED_EDIT_TAB_ID,
     val historyAnnotations: Map<String, HistoryAnnotation> = emptyMap(),
     val inputPath: String = "",
 	/** Input identity that produced [analysis]; remains stable while the user edits the next path field. */
@@ -156,19 +244,6 @@ data class PSD2LiveState(
 	val previewModel: RigPreviewModel? = null,
 	val selectedLayerId: String? = null,
 	val selectedDeformerId: String? = null,
-	val showWarp: Boolean = false,
-	val showDeformPaths: Boolean = true,
-	val showMesh: Boolean = false,
-	val showTexture: Boolean = true,
-	val warpShowNames: Boolean = true,
-	val warpShowIndices: Boolean = false,
-	val pathShowWidth: Boolean = false,
-	val pathShowHardness: Boolean = false,
-	val pathShowRadius: Boolean = false,
-	val filterSelectedOnly: Boolean = false,
-	val dimUnselected: Boolean = true,
-	val contextualWarp: Boolean = true,
-	val showSelectionBounds: Boolean = true,
 	val clickToSelectLayer: Boolean = AppSettings.clickToSelectLayer,
 	val hoveredLayerId: String? = null,
 	val hoveredDeformerId: String? = null,
@@ -183,7 +258,6 @@ data class PSD2LiveState(
 	val animationEnabled: Boolean = true,
 	val mouseTrackingEnabled: Boolean = true,
 	val sdkStatus: String? = null,
-	val activeWorkspaceTab: WorkspaceTab = WorkspaceTab.PREVIEW,
 	val activeInspectorTab: InspectorTab = InspectorTab.LAYERS,
 	val currentLanguage: AppLanguage = I18n.currentLanguage,
 	val uiScale: Float = AppSettings.uiScale,
@@ -197,6 +271,40 @@ data class PSD2LiveState(
 	val errorMessage: String? = null,
 	val successExportMessage: String? = null,
 ) {
+	/** The selected tab, falling back to the leftmost tab so every derived accessor stays total. */
+	val activeWorkspaceTab: WorkspaceTabState
+		get() = workspaceTabs.firstOrNull { it.id == activeWorkspaceTabId }
+			?: workspaceTabs.firstOrNull()
+			?: FALLBACK_EDIT_TAB
+
+	val activeTabKind: WorkspaceTabKind get() = activeWorkspaceTab.kind
+
+	val activeTabView: TabViewOptions get() = activeWorkspaceTab.view
+
+	val showWarp: Boolean get() = activeTabView.showWarp
+	val showDeformPaths: Boolean get() = activeTabView.showDeformPaths
+	val showMesh: Boolean get() = activeTabView.showMesh
+	val showTexture: Boolean get() = activeTabView.showTexture
+	val warpShowNames: Boolean get() = activeTabView.warpShowNames
+	val warpShowIndices: Boolean get() = activeTabView.warpShowIndices
+	val pathShowWidth: Boolean get() = activeTabView.pathShowWidth
+	val pathShowHardness: Boolean get() = activeTabView.pathShowHardness
+	val filterSelectedOnly: Boolean get() = activeTabView.filterSelectedOnly
+	val dimUnselected: Boolean get() = activeTabView.dimUnselected
+	val contextualWarp: Boolean get() = activeTabView.contextualWarp
+	val showSelectionBounds: Boolean get() = activeTabView.showSelectionBounds
+
+	val canvasZoom: Float get() = activeWorkspaceTab.camera.zoom
+	val canvasPanX: Float get() = activeWorkspaceTab.camera.panX
+	val canvasPanY: Float get() = activeWorkspaceTab.camera.panY
+
+	/** Replaces one tab in place, preserving order and the active tab. */
+	fun updateTab(id: String, transform: (WorkspaceTabState) -> WorkspaceTabState): PSD2LiveState =
+		copy(workspaceTabs = workspaceTabs.map { if (it.id == id) transform(it) else it })
+
+	fun updateActiveTab(transform: (WorkspaceTabState) -> WorkspaceTabState): PSD2LiveState =
+		updateTab(activeWorkspaceTab.id, transform)
+
 	fun buildConfig(): PipelineConfig {
 		val hasAnyMotion = motionIdle || motionBlink || motionNod || motionShake
 		val hasAnyPhysics = physicsFrontHair || physicsBackHair || physicsEyeJelly || rigEdits.physicsEdits.isNotEmpty()

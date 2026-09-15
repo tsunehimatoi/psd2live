@@ -2,7 +2,7 @@
 
 [中文](../../zh/guide/USER_GUIDE.md) | [日本語](../../ja/guide/USER_GUIDE.md)
 
-PSD2Live provides a desktop GUI, an automated Command Line Interface (CLI), and a local MCP workspace for external AI hosts. This guide covers the four main workspaces, independent log dock, Agent connection and recovery, viewport interaction, parameter tuning, and export.
+PSD2Live provides a desktop GUI, an automated Command Line Interface (CLI), and a local MCP workspace for external AI hosts. This guide covers the workspace tabs, independent log dock, Agent connection and recovery, viewport interaction, parameter tuning, and export.
 
 ---
 
@@ -11,11 +11,10 @@ PSD2Live provides a desktop GUI, an automated Command Line Interface (CLI), and 
 - [Prerequisites](#prerequisites)
 - [Launch Methods](#launch-methods)
 - [Desktop GUI Overview](#desktop-gui-overview)
-- [Workspace Views](#workspace-views)
-  - [1. Hierarchy View](#1-hierarchy-view)
-  - [2. Topology View](#2-topology-view)
-  - [3. Preview View](#3-preview-view)
-  - [4. History View](#4-history-view)
+- [Workspace Tabs](#workspace-tabs)
+  - [1. Edit Tab](#1-edit-tab)
+  - [2. Preview Tab](#2-preview-tab)
+  - [3. History Tab](#3-history-tab)
 - [Independent Log Dock](#independent-log-dock)
 - [Connecting an AI Agent / MCP Host](#connecting-an-ai-agent--mcp-host)
 - [Canvas Viewport & Shortcuts](#canvas-viewport--shortcuts)
@@ -61,40 +60,45 @@ The main window is structured as **Left Workspace + Right Inspector + Independen
 - **Menu Bar**:
   - **File**: `Open PSD...` (`Ctrl + O`), `Reanalyze` (`Ctrl + R`), `Open Output Directory`, `Generate & Export` (`Ctrl + G`), `Export To...` (`Ctrl + Shift + G`), `Exit`.
   - **Language**: Instant switching between Simplified Chinese (`zh`), English (`en`), and Japanese (`ja`).
-  - **View**: Canvas display, annotations, UI & font scale, `Preferences & Settings…` (`Ctrl + ,`).
-  - **Tools**: `Texture Upscale…` (`Ctrl + U`), **MCP** (`MCP Connection & Prompts…`, `View Version History Tree…`).
+  - **View**: Tab management, UI & font scale, `Preferences & Settings…` (`Ctrl + ,`). The current tab's canvas options live in the `View ▾` menu at the right of the tab strip.
+  - **Tools**: `Texture Upscale…` (`Ctrl + U`), **MCP** (`MCP Connection & Setup…`).
   - **Help**: Version and license notices.
 - **Split Pane Divider**: Drag to adjust the Workspace/Inspector ratio within `25% ~ 85%`.
 
 ---
 
-## Workspace Views
+## Workspace Tabs
 
-### 1. Hierarchy View
+The left workspace is a browser-style tab strip: two fixed tabs — **Edit** and **Preview** — plus any number of added tabs.
+
+- **Fixed and added tabs**: `Edit` and `Preview` are pinned and cannot be closed. `+` adds an Edit, Preview, or History tab; added tabs show a close button (`✕`). `Ctrl+T` adds an Edit tab, `Ctrl+Shift+T` a Preview tab, `Ctrl+H` opens the History tab, `Ctrl+W` closes the current tab, `Ctrl+Tab` / `Ctrl+1…9` switch tabs.
+- **Per-tab view options**: Every canvas tab keeps its own texture / mesh wireframe / warp / deform-path / annotation toggles *and* its own canvas zoom and pan. These options have a single home: the `View ▾` menu at the right of the tab strip (the title-bar View menu no longer repeats them). A dot on that button means the tab differs from the defaults, and `Reset Current Tab View Options` restores them. Two Preview tabs can therefore hold different overlays and camera positions at the same time.
+- **Right-click a tab** to duplicate or close it; `View → Tabs` exposes the same commands with their shortcuts. The close button only appears on the current or hovered tab.
+
+### 1. Edit Tab
 - **Deformer & Drawable Tree**: Displays the full deformer hierarchy (`BodyXY` -> `BodyZ_Breath` -> `HeadRotation` -> `HeadContainer` -> `FaceNinePose` -> Feature Warps -> ArtMeshes).
 - **VS Code Style Tree Guides**: Clean indentation guide lines with expand/collapse arrows.
 - **Ear Tab Collapse**: Click the collapse button in the header to minimize the hierarchy tree into a compact side tab, maximizing canvas area.
+- **Opaque Canvas**: Artwork always renders at its own opacity instead of a global semi-transparency. Use `Selected only` or `Dim unselected` on that tab when you need to focus, and the overlays draw on top.
+- **Idle guides fade out**: With no layer or deformer selected, the warp lattices, rotation-deformer boxes, and deform paths render faded instead of covering the artwork. Selecting something brings its own guides back to full strength; turn the tab's `Dim unselected` off to keep everything bright.
+- **Deformer Warp option**: an Edit tab enables `Deformer Warp` by default (so the rig lattice is still visible), and that option now really governs the view — turn it off for artwork plus mesh wireframe only.
+- **Mesh Wireframe**: Enable `Mesh Wireframe` in that tab's `View ▾` menu to overlay the adaptive Delaunay triangulation with a dark halo (turn the texture off for a pure wireframe). The bottom-left badge then reports drawable, vertex, and triangle counts.
 
-### 2. Topology View
-- **Mesh Wireframe Overlay**: Renders the adaptive Delaunay triangulation over the semi-transparent canvas.
-- **Selection Highlight**: Selected ArtMeshes are highlighted in bold wireframe (2.2px).
-- **Statistics Badge**: Displays active drawable count, total vertices, total triangles, and current zoom level.
-
-### 3. Preview View
+### 2. Preview Tab
 - **Native Cubism 5-r.5 Engine (Optional)**: On Windows x86-64, supports offscreen OpenGL rendering via JNA using the official Live2D Cubism Core & Framework library (`live2d_renderer.dll`) to achieve **100% faithful rendering and physical dynamics parity with the official runtime (Ground Truth)**.
   - *Note: To comply with Live2D's Proprietary License, this repository does NOT include or redistribute official SDK binaries. See [Live2D Cubism SDK Configuration Guide](CUBISM_SDK_SETUP.md) for setup instructions.*
 - **Built-in Pure CPU Software Rasterizer**: Automatically active when the official SDK is absent or on non-Windows platforms (macOS / Linux); provides 100% out-of-the-box preview and slider inspection without any manual configuration.
 - **Interactive Features**: Real-time mouse gaze tracking, 6-second breathing/blink idle loop, and blink-driven eye jelly dynamics.
 - **Status Badge**: Bottom-left pill displays current zoom percentage, underlying engine type (`Native Cubism` or `Software Fallback`), and physics state.
 
-### 4. History View
+### 3. History Tab
 - **Append-only Branch Tree**: Shows immutable nodes created by the system, user, and Agent. A green `HEAD` badge marks the active workspace version; editing after restoring an older node creates a new branch without deleting the old future.
 - **Navigation**: Drag the canvas to pan, use `-` / `+` to zoom or reset the view, and search summaries, node IDs, or actors.
 - **Inspect and Restore**: Select a node to view its ID, parent, revision hash, actor, and timestamp. “Restore to this node” rebuilds its editable assets and rig without deleting any history node.
 
 ## Independent Log Dock
 
-Logs remain visible below Hierarchy, Topology, Preview, and History instead of occupying a workspace tab:
+Logs remain visible below every workspace tab instead of occupying a tab of their own:
 
 - Click the header chevron to collapse or expand it; drag its top edge to resize it between `80` and `450 px`.
 - Filter by All, System, Agent/MCP, or Images Only; search messages, tags, and details; and toggle auto-scroll. The header reports both log and image counts.
@@ -186,7 +190,7 @@ History, tasks, spatial references, and SHA-256-deduplicated RGBA assets are per
 ## End-to-End Workflow
 
 1. **Import**: Drag and drop a layered `.psd` file into the application window.
-2. **Review & Tune**: Confirm semantic assignments in the Layers Table; check mesh triangulation in Topology View; test mouse tracking in Preview View.
+2. **Review & Tune**: Confirm semantic assignments in the Layers Table; check mesh triangulation from the Edit tab's `View ▾` menu (`Mesh Wireframe`); test mouse tracking in a Preview tab.
 3. **Optional Agent Refinement**: Connect an MCP host and use model Views for parameter, keyform, or asset edits. Confirm the active `HEAD` in History; restoring an older node and editing from it creates a branch.
 4. **Export**: Set target directory and format toggles; click `Generate & Export` (`Ctrl+G`) to produce model files.
 

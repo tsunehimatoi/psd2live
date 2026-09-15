@@ -74,7 +74,7 @@ import io.github.psd2live.ui.components.HelpTab
 import io.github.psd2live.ui.components.TextureUpscaleDialog
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
-import io.github.psd2live.ui.state.WorkspaceTab
+import io.github.psd2live.ui.state.WorkspaceTabKind
 import androidx.compose.material.DropdownMenu
 import androidx.compose.material.DropdownMenuItem
 import androidx.compose.material.Divider
@@ -295,6 +295,29 @@ fun FrameWindowScope.PSD2LiveApp(
 									}
 									true
 								}
+								Key.T -> {
+									if (event.isShiftPressed) viewModel.addTab(WorkspaceTabKind.PREVIEW)
+									else viewModel.addTab(WorkspaceTabKind.EDIT)
+									true
+								}
+								Key.W -> { viewModel.closeTab(state.activeWorkspaceTab.id); true }
+								Key.H -> { viewModel.openHistoryTab(); true }
+								Key.D -> {
+									if (event.isShiftPressed) { viewModel.duplicateActiveTab(); true } else false
+								}
+								Key.Tab -> {
+									viewModel.cycleTab(if (event.isShiftPressed) -1 else 1)
+									true
+								}
+								Key.One, Key.NumPad1 -> { viewModel.activateTabByIndex(0); true }
+								Key.Two, Key.NumPad2 -> { viewModel.activateTabByIndex(1); true }
+								Key.Three, Key.NumPad3 -> { viewModel.activateTabByIndex(2); true }
+								Key.Four, Key.NumPad4 -> { viewModel.activateTabByIndex(3); true }
+								Key.Five, Key.NumPad5 -> { viewModel.activateTabByIndex(4); true }
+								Key.Six, Key.NumPad6 -> { viewModel.activateTabByIndex(5); true }
+								Key.Seven, Key.NumPad7 -> { viewModel.activateTabByIndex(6); true }
+								Key.Eight, Key.NumPad8 -> { viewModel.activateTabByIndex(7); true }
+								Key.Nine, Key.NumPad9 -> { viewModel.activateTabByIndex(8); true }
 								else -> false
 							}
 						} else false
@@ -335,38 +358,16 @@ fun FrameWindowScope.PSD2LiveApp(
 						onResetZoom = { viewModel.resetZoom() },
 						onSetUiScale = { viewModel.setUiScale(it) },
 						onSetFontScale = { viewModel.setFontScale(it) },
-						clickToSelectLayer = state.clickToSelectLayer,
-						showTexture = state.showTexture,
-						showMesh = state.showMesh,
-						showWarp = state.showWarp,
-						showDeformPaths = state.showDeformPaths,
-						pathShowWidth = state.pathShowWidth,
-						pathShowHardness = state.pathShowHardness,
-						pathShowRadius = state.pathShowRadius,
-						contextualWarp = state.contextualWarp,
-						filterSelectedOnly = state.filterSelectedOnly,
-						dimUnselected = state.dimUnselected,
-						showSelectionBounds = state.showSelectionBounds,
-						warpShowNames = state.warpShowNames,
-						warpShowIndices = state.warpShowIndices,
-						onToggleClickToSelectLayer = { viewModel.setClickToSelectLayer(!state.clickToSelectLayer) },
-						onToggleShowTexture = { viewModel.setShowTexture(!state.showTexture) },
-						onToggleShowMesh = { viewModel.setShowMesh(!state.showMesh) },
-						onToggleShowWarp = { viewModel.setShowWarp(!state.showWarp) },
-						onToggleShowDeformPaths = { viewModel.setShowDeformPaths(!state.showDeformPaths) },
-						onTogglePathShowWidth = { viewModel.setPathShowWidth(!state.pathShowWidth) },
-						onTogglePathShowHardness = { viewModel.setPathShowHardness(!state.pathShowHardness) },
-						onTogglePathShowRadius = { viewModel.setPathShowRadius(!state.pathShowRadius) },
-						onToggleContextualWarp = { viewModel.setContextualWarp(!state.contextualWarp) },
-						onToggleFilterSelectedOnly = { viewModel.setFilterSelectedOnly(!state.filterSelectedOnly) },
-						onToggleDimUnselected = { viewModel.setDimUnselected(!state.dimUnselected) },
-						onToggleShowSelectionBounds = { viewModel.setShowSelectionBounds(!state.showSelectionBounds) },
-						onToggleWarpShowNames = { viewModel.setWarpShowNames(!state.warpShowNames) },
-						onToggleWarpShowIndices = { viewModel.setWarpShowIndices(!state.warpShowIndices) },
 						onShowSettings = { viewModel.openSettingsDialog() },
 						onShowAgentConnection = { showAgentDialog = true },
 						onShowTextureUpscale = { showUpscaleDialog = true },
-						onShowHistory = { viewModel.setWorkspaceTab(WorkspaceTab.HISTORY) },
+						onShowHistory = { viewModel.openHistoryTab() },
+						onNewEditTab = { viewModel.addTab(WorkspaceTabKind.EDIT) },
+						onNewPreviewTab = { viewModel.addTab(WorkspaceTabKind.PREVIEW) },
+						onDuplicateTab = { viewModel.duplicateActiveTab() },
+						onCloseTab = { viewModel.closeTab(state.activeWorkspaceTab.id) },
+						onNextTab = { viewModel.cycleTab(1) },
+						onPrevTab = { viewModel.cycleTab(-1) },
 						onShowAbout = { helpDialogTab = HelpTab.ABOUT },
 						onShowHelp = { tab -> helpDialogTab = tab },
 						onOpenUrl = { url -> DesktopUtils.openBrowser(url) },

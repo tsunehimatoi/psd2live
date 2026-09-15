@@ -44,7 +44,9 @@ internal object RigInformationOverlay {
             val p = pointsById[w.id.raw] ?: continue
             val isSelected = selectedDeformerId != null && w.id.raw == selectedDeformerId
             val isHovered = hoveredDeformerId != null && w.id.raw == hoveredDeformerId && !isSelected
-            val isDimmed = dimUnselected && selectedDeformerId != null && !isSelected && !isHovered
+            // Nothing selected means every warp is "unselected", so the whole rig guide fades to a
+            // background hint instead of covering the artwork.
+            val isDimmed = dimUnselected && !isSelected && !isHovered
             val baseColor = ComponentPalette.strong(w.id.raw)
             val strokeWidth = when {
                 isSelected -> 2.2f
@@ -99,7 +101,6 @@ internal object RigInformationOverlay {
         selectedPathIds: Set<String> = emptySet(),
         hoveredPathId: String? = null,
         hoveredPathIds: Set<String> = emptySet(),
-        hasSelection: Boolean = false,
         dimUnselected: Boolean = false,
     ): List<String> {
         if (pathIds.isEmpty()) return emptyList()
@@ -135,7 +136,7 @@ internal object RigInformationOverlay {
 
             val isSelected = selectedPathIds.contains(path.id) || (selectedPathId != null && path.id == selectedPathId)
             val isHovered = hoveredPathIds.contains(path.id) || (hoveredPathId != null && path.id == hoveredPathId && !isSelected)
-            val isDimmed = dimUnselected && (hasSelection || selectedPathId != null || selectedPathIds.isNotEmpty()) && !isSelected && !isHovered
+            val isDimmed = dimUnselected && !isSelected && !isHovered
 
             val baseColor = ComponentPalette.strong("path_${path.id}")
             val curveColor = when {

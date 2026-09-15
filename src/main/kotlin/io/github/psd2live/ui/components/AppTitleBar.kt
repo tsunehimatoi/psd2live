@@ -95,38 +95,16 @@ fun AppTitleBar(
 	onResetZoom: () -> Unit = {},
 	onSetUiScale: (Float) -> Unit = {},
 	onSetFontScale: (Float) -> Unit = {},
-	clickToSelectLayer: Boolean = true,
-	showTexture: Boolean = true,
-	showMesh: Boolean = false,
-	showWarp: Boolean = false,
-	showDeformPaths: Boolean = true,
-	pathShowWidth: Boolean = false,
-	pathShowHardness: Boolean = false,
-	pathShowRadius: Boolean = false,
-	contextualWarp: Boolean = true,
-	filterSelectedOnly: Boolean = false,
-	dimUnselected: Boolean = true,
-	showSelectionBounds: Boolean = true,
-	warpShowNames: Boolean = true,
-	warpShowIndices: Boolean = false,
-	onToggleClickToSelectLayer: () -> Unit = {},
-	onToggleShowTexture: () -> Unit = {},
-	onToggleShowMesh: () -> Unit = {},
-	onToggleShowWarp: () -> Unit = {},
-	onToggleShowDeformPaths: () -> Unit = {},
-	onTogglePathShowWidth: () -> Unit = {},
-	onTogglePathShowHardness: () -> Unit = {},
-	onTogglePathShowRadius: () -> Unit = {},
-	onToggleContextualWarp: () -> Unit = {},
-	onToggleFilterSelectedOnly: () -> Unit = {},
-	onToggleDimUnselected: () -> Unit = {},
-	onToggleShowSelectionBounds: () -> Unit = {},
-	onToggleWarpShowNames: () -> Unit = {},
-	onToggleWarpShowIndices: () -> Unit = {},
 	onShowSettings: () -> Unit = {},
 	onShowAgentConnection: () -> Unit,
 	onShowTextureUpscale: () -> Unit,
 	onShowHistory: () -> Unit,
+	onNewEditTab: () -> Unit = {},
+	onNewPreviewTab: () -> Unit = {},
+	onDuplicateTab: () -> Unit = {},
+	onCloseTab: () -> Unit = {},
+	onNextTab: () -> Unit = {},
+	onPrevTab: () -> Unit = {},
 	onShowAbout: () -> Unit,
 	onShowHelp: (HelpTab) -> Unit = { onShowAbout() },
 	onOpenUrl: (String) -> Unit = { DesktopUtils.openBrowser(it) },
@@ -285,148 +263,82 @@ fun AppTitleBar(
 					},
 					modifier = Modifier.widthIn(min = 210.dp, max = 280.dp),
 				) {
-					// 1. 画布与模型 (Canvas & Model)
-					AppMenuHeader(tr("menu.view.category.canvas"))
+					// 1. 标签页 (Tabs). The per-tab canvas options live in the tab strip's ▾ menu.
+					AppMenuHeader(tr("menu.view.tabs"))
 					AppMenuItem(
-						text = tr("menu.view.clickToSelectLayer"),
-						isChecked = clickToSelectLayer,
+						text = tr("tab.new.edit"),
+						shortcut = "Ctrl+T",
 						onHover = { activeSubmenu = null },
 						onClick = {
 							activeMenu = null
 							activeSubmenu = null
-							onToggleClickToSelectLayer()
+							onNewEditTab()
 						},
 					)
 					AppMenuItem(
-						text = tr("canvas.visibility.texture"),
-						isChecked = showTexture,
+						text = tr("tab.new.preview"),
+						shortcut = "Ctrl+Shift+T",
 						onHover = { activeSubmenu = null },
 						onClick = {
 							activeMenu = null
 							activeSubmenu = null
-							onToggleShowTexture()
+							onNewPreviewTab()
 						},
 					)
 					AppMenuItem(
-						text = tr("canvas.visibility.mesh"),
-						isChecked = showMesh,
+						text = tr("tab.new.history"),
+						shortcut = "Ctrl+H",
 						onHover = { activeSubmenu = null },
 						onClick = {
 							activeMenu = null
 							activeSubmenu = null
-							onToggleShowMesh()
+							onShowHistory()
 						},
 					)
+					AppMenuSeparator()
 					AppMenuItem(
-						text = tr("canvas.visibility.warp"),
-						isChecked = showWarp,
+						text = tr("tab.duplicate"),
 						onHover = { activeSubmenu = null },
 						onClick = {
 							activeMenu = null
 							activeSubmenu = null
-							onToggleShowWarp()
+							onDuplicateTab()
 						},
 					)
 					AppMenuItem(
-						text = tr("canvas.visibility.paths"),
-						isChecked = showDeformPaths,
+						text = tr("tab.close"),
+						shortcut = "Ctrl+W",
 						onHover = { activeSubmenu = null },
 						onClick = {
 							activeMenu = null
 							activeSubmenu = null
-							onToggleShowDeformPaths()
+							onCloseTab()
 						},
 					)
-
-					// 二级菜单: 辅助显示与标记 (Overlays)
-					AppSubmenuItem(
-						text = tr("menu.view.overlays"),
-						isOpen = activeSubmenu == "overlays",
-						onOpen = { activeSubmenu = "overlays" },
-						onDismiss = { if (activeSubmenu == "overlays") activeSubmenu = null },
-					) {
-						AppMenuHeader(tr("menu.view.category.focus"))
-						AppMenuItem(
-							text = tr("canvas.information.contextualWarp"),
-							isChecked = contextualWarp,
-							onClick = {
-								activeMenu = null
-								activeSubmenu = null
-								onToggleContextualWarp()
-							},
-						)
-						AppMenuItem(
-							text = tr("canvas.information.selectedOnly"),
-							isChecked = filterSelectedOnly,
-							onClick = {
-								activeMenu = null
-								activeSubmenu = null
-								onToggleFilterSelectedOnly()
-							},
-						)
-						AppMenuItem(
-							text = tr("canvas.visibility.dimUnselected"),
-							isChecked = dimUnselected,
-							onClick = {
-								activeMenu = null
-								activeSubmenu = null
-								onToggleDimUnselected()
-							},
-						)
-
-						AppMenuSeparator()
-
-						AppMenuHeader(tr("menu.view.category.overlays"))
-						AppMenuItem(
-							text = tr("canvas.information.selectionBounds"),
-							isChecked = showSelectionBounds,
-							onClick = {
-								activeMenu = null
-								activeSubmenu = null
-								onToggleShowSelectionBounds()
-							},
-						)
-						AppMenuItem(
-							text = tr("canvas.information.names"),
-							isChecked = warpShowNames,
-							onClick = {
-								activeMenu = null
-								activeSubmenu = null
-								onToggleWarpShowNames()
-							},
-						)
-						AppMenuItem(
-							text = tr("canvas.information.indices"),
-							isChecked = warpShowIndices,
-							onClick = {
-								activeMenu = null
-								activeSubmenu = null
-								onToggleWarpShowIndices()
-							},
-						)
-						AppMenuItem(
-							text = tr("canvas.information.pathWidth"),
-							isChecked = pathShowWidth,
-							onClick = {
-								activeMenu = null
-								activeSubmenu = null
-								onTogglePathShowWidth()
-							},
-						)
-						AppMenuItem(
-							text = tr("canvas.information.pathHardness"),
-							isChecked = pathShowHardness,
-							onClick = {
-								activeMenu = null
-								activeSubmenu = null
-								onTogglePathShowHardness()
-							},
-						)
-					}
+					AppMenuItem(
+						text = tr("tab.next"),
+						shortcut = "Ctrl+Tab",
+						onHover = { activeSubmenu = null },
+						onClick = {
+							activeMenu = null
+							activeSubmenu = null
+							onNextTab()
+						},
+					)
+					AppMenuItem(
+						text = tr("tab.prev"),
+						shortcut = "Ctrl+Shift+Tab",
+						onHover = { activeSubmenu = null },
+						onClick = {
+							activeMenu = null
+							activeSubmenu = null
+							onPrevTab()
+						},
+					)
 
 					AppMenuSeparator()
 
-					// 2. 界面与缩放调整 (Zoom & Scale - 放后面)
+					// 3. 界面与缩放调整 (Zoom & Scale)
 					AppMenuHeader(tr("menu.view.category.zoom"))
 					AppMenuItem(
 						text = tr("menu.view.zoomIn"),
@@ -585,14 +497,6 @@ fun AppTitleBar(
 								activeMenu = null
 								activeSubmenu = null
 								onShowAgentConnection()
-							},
-						)
-						AppMenuItem(
-							text = tr("menu.agent.history"),
-							onClick = {
-								activeMenu = null
-								activeSubmenu = null
-								onShowHistory()
 							},
 						)
 					}

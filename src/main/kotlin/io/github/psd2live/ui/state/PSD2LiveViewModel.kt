@@ -140,7 +140,7 @@ class PSD2LiveViewModel : AutoCloseable {
         val history = _state.value.historySnapshot ?: return
         val children = history.nodes.filter { it.parentId == history.headNodeId }
         if (children.size == 1) checkoutHistoryNode(children.single().id)
-        else setWorkspaceTab(io.github.psd2live.ui.state.WorkspaceTab.HISTORY)
+        else openHistoryTab()
     }
     fun setHistoryView(zoom: Float, x: Float, y: Float, search: String, showHidden: Boolean) {
         _state.update { if (it.historyZoom == zoom && it.historyPanX == x && it.historyPanY == y && it.historySearch == search && it.historyShowHidden == showHidden) it
@@ -175,7 +175,12 @@ class PSD2LiveViewModel : AutoCloseable {
             else it.copy(workspaceSplitRatio = next, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1)
         }
     }
-    fun setCanvasView(zoom: Float, x: Float, y: Float) { _state.update { it.copy(canvasZoom = zoom, canvasPanX = x, canvasPanY = y, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1) } }
+    fun setCanvasView(zoom: Float, x: Float, y: Float) {
+        _state.update { current ->
+            current.updateActiveTab { tab -> tab.copy(camera = TabCamera(zoom, x, y)) }
+                .copy(projectDirty = current.analysis != null, projectEditVersion = current.projectEditVersion + 1)
+        }
+    }
 
 	fun attachAgentWorkspace(workspace: AgentWorkspace) {
 		agentWorkspace = workspace
@@ -758,18 +763,126 @@ class PSD2LiveViewModel : AutoCloseable {
 	}
 
 
-	fun setWorkspaceTab(tab: WorkspaceTab) {
-		val effectiveTab = if (tab == WorkspaceTab.HIERARCHY) WorkspaceTab.PREVIEW else tab
+	fun setActiveTab(id: String) {
+		var changed = false
 		_state.update { current ->
-			val updateShowMesh = if (effectiveTab == WorkspaceTab.TOPOLOGY && !current.showMesh) true else current.showMesh
-			val updateShowTexture = if (effectiveTab == WorkspaceTab.PREVIEW && !current.showTexture) true else current.showTexture
-			current.copy(
-				activeWorkspaceTab = effectiveTab,
-				showMesh = updateShowMesh,
-				showTexture = updateShowTexture,
+			if (current.activeWorkspaceTabId == id || current.workspaceTabs.none { it.id == id }) current
+			else {
+				changed = true
+				current.copy(activeWorkspaceTabId = id)
+			}
+		}
+		if (changed) markWorkspaceChanged()
+	}
+
+	/** Adds a tab after the last one of the same kind; [sourceTabId] duplicates that tab's view and camera. */
+	fun addTab(kind: WorkspaceTabKind, sourceTabId: String? = null): String {
+		val current = _state.value
+		val source = sourceTabId?.let { id -> current.workspaceTabs.firstOrNull { it.id == id } }
+		val ordinal = (current.workspaceTabs.filter { it.kind == kind }.maxOfOrNull { it.ordinal } ?: 0) + 1
+		val tab = WorkspaceTabState(
+			id = java.util.UUID.randomUUID().toString(),
+			kind = kind,
+			ordinal = ordinal,
+			pinned = false,
+			view = source?.view ?: kind.defaultViewOptions(),
+			camera = source?.camera ?: TabCamera(),
+		)
+		_state.update { it.copy(workspaceTabs = it.workspaceTabs + tab, activeWorkspaceTabId = tab.id) }
+		markWorkspaceChanged()
+		return tab.id
+	}
+
+	fun duplicateActiveTab(): String = duplicateTab(_state.value.activeWorkspaceTab.id)
+
+	/** Duplicates [id]'s kind, view options and camera into a new closable tab. */
+	fun duplicateTab(id: String): String {
+		val source = _state.value.workspaceTabs.firstOrNull { it.id == id } ?: return addTab(_state.value.activeTabKind)
+		return addTab(source.kind, source.id)
+	}
+
+	fun closeTab(id: String) {
+		val current = _state.value
+		val tab = current.workspaceTabs.firstOrNull { it.id == id } ?: return
+		if (tab.pinned) {
+			_state.update { it.copy(statusText = tr("status.tabPinned")) }
+			return
+		}
+		val remaining = current.workspaceTabs.filterNot { it.id == id }
+		val nextActive = if (current.activeWorkspaceTabId != id) current.activeWorkspaceTabId else {
+			val index = current.workspaceTabs.indexOf(tab)
+			(remaining.getOrNull(index - 1) ?: remaining.getOrNull(index) ?: remaining.firstOrNull())?.id
+				?: PINNED_EDIT_TAB_ID
+		}
+		_state.update {
+			it.copy(
+				workspaceTabs = remaining,
+				activeWorkspaceTabId = nextActive,
+				statusText = tr("status.tabClosed", tabTitle(tab)),
 			)
 		}
-	    markWorkspaceChanged()
+		markWorkspaceChanged()
+	}
+
+	/** Activates the existing history tab, or creates one when the workspace has none. */
+	fun openHistoryTab() {
+		val existing = _state.value.workspaceTabs.firstOrNull { it.kind == WorkspaceTabKind.HISTORY }
+		if (existing != null) {
+			setActiveTab(existing.id)
+		} else {
+			addTab(WorkspaceTabKind.HISTORY)
+		}
+	}
+
+	fun cycleTab(delta: Int) {
+		val tabs = _state.value.workspaceTabs
+		if (tabs.size < 2) return
+		val index = tabs.indexOfFirst { it.id == _state.value.activeWorkspaceTabId }.coerceAtLeast(0)
+		val next = ((index + delta) % tabs.size + tabs.size) % tabs.size
+		setActiveTab(tabs[next].id)
+	}
+
+	fun activateTabByIndex(index: Int) {
+		_state.value.workspaceTabs.getOrNull(index)?.let { setActiveTab(it.id) }
+	}
+
+	/** Applies the View menu / tab-strip toggles to the active tab. */
+	fun setTabViewOptions(options: TabViewOptions) {
+		val normalized = options.normalized()
+		var changed = false
+		_state.update { current ->
+			if (current.activeTabView == normalized) current
+			else {
+				changed = true
+				current.updateActiveTab { tab -> tab.copy(view = normalized) }
+			}
+		}
+		if (changed) markWorkspaceChanged()
+	}
+
+	/** Restores the active tab's canvas options to the defaults for its kind. */
+	fun resetActiveTabViewOptions() {
+		val id = _state.value.activeWorkspaceTab.id
+		var changed = false
+		_state.update { current ->
+			val target = current.workspaceTabs.firstOrNull { it.id == id } ?: return@update current
+			val defaults = target.kind.defaultViewOptions()
+			if (target.view == defaults) current
+			else {
+				changed = true
+				current.updateTab(id) { tab -> tab.copy(view = defaults) }
+			}
+		}
+		if (changed) markWorkspaceChanged()
+	}
+
+	/** Display title of a tab: localized kind name plus its creation ordinal for added tabs. */
+	fun tabTitle(tab: WorkspaceTabState): String = tr(tabTitleKey(tab.kind)) + if (tab.ordinal > 1) " ${tab.ordinal}" else ""
+
+	private fun tabTitleKey(kind: WorkspaceTabKind): String = when (kind) {
+		WorkspaceTabKind.EDIT -> "tab.edit"
+		WorkspaceTabKind.PREVIEW -> "tab.preview"
+		WorkspaceTabKind.HISTORY -> "tab.history"
 	}
 
 	fun addLog(
@@ -932,71 +1045,6 @@ class PSD2LiveViewModel : AutoCloseable {
 			)
 		}
 	    markWorkspaceChanged()
-	}
-
-	fun setShowWarp(show: Boolean) {
-		_state.update { it.copy(showWarp = show) }
-		markWorkspaceChanged()
-	}
-
-	fun setShowDeformPaths(show: Boolean) {
-		_state.update { it.copy(showDeformPaths = show) }
-		markWorkspaceChanged()
-	}
-
-	fun setPathShowWidth(show: Boolean) {
-		_state.update { it.copy(pathShowWidth = show) }
-		markWorkspaceChanged()
-	}
-
-	fun setPathShowHardness(show: Boolean) {
-		_state.update { it.copy(pathShowHardness = show) }
-		markWorkspaceChanged()
-	}
-
-	fun setPathShowRadius(show: Boolean) {
-		_state.update { it.copy(pathShowRadius = show, pathShowWidth = show, pathShowHardness = show) }
-		markWorkspaceChanged()
-	}
-
-	fun setShowMesh(show: Boolean) {
-		_state.update { it.copy(showMesh = show) }
-		markWorkspaceChanged()
-	}
-
-	fun setShowTexture(show: Boolean) {
-		_state.update { it.copy(showTexture = show) }
-		markWorkspaceChanged()
-	}
-
-	fun setWarpShowNames(show: Boolean) {
-		_state.update { it.copy(warpShowNames = show) }
-		markWorkspaceChanged()
-	}
-
-	fun setWarpShowIndices(show: Boolean) {
-		_state.update { it.copy(warpShowIndices = show, showWarp = if (show) true else it.showWarp) }
-		markWorkspaceChanged()
-	}
-
-	fun setFilterSelectedOnly(selectedOnly: Boolean) {
-		_state.update { it.copy(filterSelectedOnly = selectedOnly) }
-		markWorkspaceChanged()
-	}
-
-	fun setDimUnselected(enabled: Boolean) {
-		_state.update { it.copy(dimUnselected = enabled) }
-		markWorkspaceChanged()
-	}
-
-	fun setContextualWarp(enabled: Boolean) {
-		_state.update { it.copy(contextualWarp = enabled) }
-		markWorkspaceChanged()
-	}
-
-	fun setShowSelectionBounds(show: Boolean) {
-		_state.update { it.copy(showSelectionBounds = show) }
-		markWorkspaceChanged()
 	}
 
 	fun setClickToSelectLayer(enabled: Boolean) {
@@ -1435,7 +1483,9 @@ class PSD2LiveViewModel : AutoCloseable {
                         projectFile = null, projectDirty = true, showProjectLocationDialog = false, isAnalyzing = true,
                         layerVisibility = emptyMap(), layerOverrides = emptyMap(), deletedLayerIds = emptySet(), parentOverrides = emptyMap(), rigEdits = RigEditOverlay.Empty,
                         selectedLayerId = null, selectedDeformerId = null, isolatedLayerId = null, isolationSnapshot = null,
-                        canvasZoom = 1f, canvasPanX = 0f, canvasPanY = 0f,
+                        workspaceTabs = current.workspaceTabs.map { tab ->
+                            if (tab.kind.canvasMode != null) tab.copy(camera = TabCamera()) else tab
+                        },
                         historySnapshot = null, historyAnnotations = emptyMap(),
                         projectOpenGeneration = current.projectOpenGeneration + 1,
                         analysis = preview.analysis,

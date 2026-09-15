@@ -28,6 +28,9 @@ internal data class CanvasViewport(
 	fun canvasY(screenY: Int): Float = ((screenY - offsetY) / scale).toFloat()
 }
 
+/** Normalized viewport passed to the native Cubism renderer. */
+internal data class CubismViewport(val scale: Float, val offsetX: Float, val offsetY: Float)
+
 internal object RigCanvasSupport {
 	private val evaluator = CpuDeformationEvaluator()
 
