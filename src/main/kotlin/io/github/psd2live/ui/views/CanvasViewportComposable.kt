@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -33,6 +34,8 @@ import androidx.compose.ui.graphics.Shader
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.skiaCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.key.Key
@@ -57,6 +60,7 @@ import io.github.psd2live.ui.CanvasCamera
 import io.github.psd2live.ui.CanvasViewport
 import io.github.psd2live.ui.ComponentPalette
 import io.github.psd2live.ui.RigCanvasSupport
+import io.github.psd2live.ui.SkiaRigPainter
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.state.WorkspaceTab
@@ -95,6 +99,8 @@ fun CanvasViewportComposable(
 	val fpsCounter = remember { ActualFpsCounter() }
 
 	val previewModel = state.previewModel
+	val editingPainter = remember(previewModel?.atlas) { previewModel?.atlas?.let(::SkiaRigPainter) }
+	DisposableEffect(editingPainter) { onDispose { editingPainter?.close() } }
 	val sdkFrame by viewModel.sdkFrame.collectAsState()
 	val sdkBitmap = remember(sdkFrame?.image) { sdkFrame?.image?.toComposeImageBitmap() }
 	val checkerboardBrush = remember(colors.checkerLight, colors.checkerDark) {
@@ -349,8 +355,8 @@ fun CanvasViewportComposable(
 							WorkspaceTab.HIERARCHY -> 0.43f
 							else -> 1.0f
 						}
-						RigCanvasSupport.paintTexturedRig(
-							g,
+						drawIntoCanvas { target -> editingPainter?.paint(
+							target.skiaCanvas,
 							model,
 							geometry,
 							viewport,
@@ -360,7 +366,7 @@ fun CanvasViewportComposable(
 							dimUnselected = state.dimUnselected,
 							highlightedLayerIds = highlightedLayerIds,
 							dimmedAlphaMultiplier = 0.22f,
-						)
+						) }
 					}
 
 					// 3b. Mesh Channel (Wireframe)
