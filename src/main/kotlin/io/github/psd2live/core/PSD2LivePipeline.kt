@@ -25,6 +25,7 @@ import java.nio.file.StandardOpenOption
 import java.time.Instant
 
 class PSD2LivePipeline {
+	private val meshCache = PreviewMeshCache()
 	fun inspect(psd: Path, config: PipelineConfig = PipelineConfig()): PipelineAnalysis {
 		require(Files.isRegularFile(psd)) { tr("error.psdMissing", psd) }
 		val bytes = Files.readAllBytes(psd)
@@ -48,9 +49,24 @@ class PSD2LivePipeline {
 	): RigPreviewModel {
         val effectiveAnalysis = MouthLipLayers.prepare(analysis, config)
         val atlas = AtlasPacker.pack(effectiveAnalysis.layers, config.atlasSize, config.texturePadding, config.textureUpscale, progress)
-		val rig = RigBuilder.build(effectiveAnalysis, atlas, config).withRigEdits(config.rigEdits)
+		val rig = RigBuilder.build(effectiveAnalysis, atlas, config, meshCache).withRigEdits(config.rigEdits)
 		val runtimeBundle = buildRuntimeBundle("psd2live-preview", effectiveAnalysis, atlas, rig, config).first
 		return RigPreviewModel(effectiveAnalysis, atlas, rig, config, runtimeBundle)
+	}
+
+	/** Hierarchy-only edits retain textures but rebuild all parent-space geometry and keyforms. */
+	fun rebuildPreview(
+		current: RigPreviewModel,
+		config: PipelineConfig,
+		progress: ProgressListener = ProgressListener { _, _ -> },
+	): RigPreviewModel {
+		if (current.config.copy(parentOverrides = config.parentOverrides) == config) {
+			val rig = RigBuilder.build(current.analysis, current.atlas, config, meshCache).withRigEdits(config.rigEdits)
+			val bundle = buildRuntimeBundle("psd2live-preview", current.analysis, current.atlas, rig, config).first
+			return current.copy(rig = rig, config = config, runtimeBundle = bundle)
+		}
+		val base = current.analysis.copy(layers = current.analysis.layers.filter { it.source !is MouthLipLayer })
+		return buildPreview(base, config, progress)
 	}
 
 	/** Fast incremental update for physics, motions and sidecars without re-analyzing or re-packing. */

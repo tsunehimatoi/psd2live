@@ -143,7 +143,7 @@ object RigBuilder {
 		val rigPositions: FloatArray,
 	)
 
-	fun build(inputAnalysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig): BuiltRig {
+	fun build(inputAnalysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig, meshCache: PreviewMeshCache? = null): BuiltRig {
         val generatedLips = inputAnalysis.layers.filter { it.source is MouthLipLayer }
             .associateBy { it.source.id.raw }
         val analysis = inputAnalysis.copy(layers = inputAnalysis.layers.filter { it.source !is MouthLipLayer })
@@ -351,6 +351,7 @@ object RigBuilder {
 				placement,
 				atlas.pages[placement.page].image.width,
 				config,
+				meshCache,
 			)
             val meshData = if (config.mouthOutlineEnabled && !config.meshOnly &&
                 layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)) {
@@ -1156,6 +1157,7 @@ object RigBuilder {
 		placement: AtlasPlacement,
 		atlasSize: Int,
 		config: PipelineConfig,
+		meshCache: PreviewMeshCache?,
 	): MeshData {
 		val width = max(1, layer.source.raster.width)
 		val height = max(1, layer.source.raster.height)
@@ -1183,7 +1185,9 @@ object RigBuilder {
 		if (layer.semantic.tag in setOf(SemanticTag.TOOTH_T, SemanticTag.TOOTH_B)) {
 			return buildRectangularFallbackMesh(layer, parentFrame, headSpace, placement, atlasSize, effectiveSpacing)
 		}
-		val adaptive = AdaptiveMeshGenerator.generate(
+		val settings = MeshSettings(outerMargin, innerMarginEnabled, innerMargin, effectiveSpacing, effectiveInteriorDensity)
+		val adaptive = if (meshCache != null) meshCache.generate(width, height, layer.source.raster.rgba, config.alphaThreshold, settings)
+		else AdaptiveMeshGenerator.generate(
 			width = width,
 			height = height,
 			rgba = layer.source.raster.rgba,

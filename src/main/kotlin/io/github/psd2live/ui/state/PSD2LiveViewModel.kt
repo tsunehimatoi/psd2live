@@ -1843,8 +1843,6 @@ class PSD2LiveViewModel : AutoCloseable {
 			}
 			try {
 				val config = _state.value.buildConfig()
-				val baseLayers = previous.analysis.layers.filter { it.source !is io.github.psd2live.core.MouthLipLayer }
-				val baseAnalysis = previous.analysis.copy(layers = baseLayers)
 				var lastReportedStage: String? = null
 				val progress = ProgressListener { stage, frac ->
 					_state.update { current ->
@@ -1869,7 +1867,7 @@ class PSD2LiveViewModel : AutoCloseable {
 					}
 				}
 				val rebuilt = runInterruptible(Dispatchers.Default) {
-					pipeline.buildPreview(baseAnalysis, config, progress)
+					pipeline.rebuildPreview(previous, config, progress)
 				}
 				val packedAtlasSize = rebuilt.atlas.pages.firstOrNull()?.image?.width ?: config.atlasSize
 				_state.update { current ->
