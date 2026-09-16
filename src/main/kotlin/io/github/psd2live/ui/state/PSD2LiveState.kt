@@ -155,6 +155,7 @@ data class HistoryAnnotation(val title: String = "", val note: String = "", val 
 
 @Immutable
 data class PSD2LiveState(
+    val canvasEditBusy: Boolean = false,
 	val projectId: String? = null,
     val projectFile: String? = null,
     val projectDirty: Boolean = false,
@@ -172,9 +173,10 @@ data class PSD2LiveState(
     val historyPanY: Float = 0f,
     val historySearch: String = "",
     val historyShowHidden: Boolean = false,
-    val hierarchyWidth: Float = 260f,
+    val hierarchyWidth: Float = 210f,
     val hierarchyCollapsed: Boolean = false,
     val hierarchySearch: String = "",
+    val drawOrderRulerWidth: Float = 24f,
     val modelSettingsExpanded: Boolean = true,
     val workspaceSplitRatio: Float = 0.60f,
     val workspaceTabs: List<WorkspaceTabState> = defaultWorkspaceTabs(),

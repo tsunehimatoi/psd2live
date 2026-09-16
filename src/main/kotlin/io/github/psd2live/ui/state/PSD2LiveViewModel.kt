@@ -44,7 +44,11 @@ import kotlin.math.PI
 import kotlin.math.sin
 
 class PSD2LiveViewModel : AutoCloseable {
+    val canvasPathRequests = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    fun requestCanvasPathTool() { canvasPathRequests.tryEmit(Unit) }
     fun saveDeformPathEdits(expectedState: String, edits: kotlinx.serialization.json.JsonArray, onComplete: (String?) -> Unit) {
+        if (_state.value.canvasEditBusy) { onComplete("An editor operation is still being applied"); return }
+        _state.update { it.copy(canvasEditBusy = true) }
         scope.launch {
             try {
                 val workspace = requireNotNull(agentWorkspace) { "Project workspace unavailable" }
@@ -53,6 +57,9 @@ class PSD2LiveViewModel : AutoCloseable {
             } catch (failure: Exception) {
                 if (failure is kotlinx.coroutines.CancellationException) throw failure
                 onComplete(failure.message ?: "Could not save deform paths")
+            } finally {
+                _state.update { it.copy(canvasEditBusy = false) }
+                queuedCanvasSave?.let { saveAs -> queuedCanvasSave=null; requestProjectSave(saveAs) }
             }
         }
     }
@@ -63,6 +70,7 @@ class PSD2LiveViewModel : AutoCloseable {
     private val projectSession = io.github.psd2live.project.ProjectSession(this)
     private var pendingDestructiveAction: (() -> Unit)? = null
     var confirmUnsavedChanges: (() -> Int)? = null
+    private var queuedCanvasSave: Boolean? = null
 
     fun withSavedChanges(action: () -> Unit) {
         if (_state.value.projectSaving) return
@@ -73,6 +81,7 @@ class PSD2LiveViewModel : AutoCloseable {
         }
     }
     fun requestProjectSave(saveAs: Boolean = false) {
+        if (_state.value.canvasEditBusy) { queuedCanvasSave=saveAs; return }
         if (_state.value.analysis == null) return
         if (saveAs || _state.value.projectFile == null) {
             _state.update { it.copy(showProjectLocationDialog = true, projectSaveError = null) }
@@ -133,10 +142,12 @@ class PSD2LiveViewModel : AutoCloseable {
         _state.update { it.copy(historyAnnotations = it.historyAnnotations + (id to HistoryAnnotation(title.trim(), note, hidden)), projectDirty = true, projectEditVersion = it.projectEditVersion + 1) }
     }
     fun undoHistory() {
+        if (_state.value.canvasEditBusy) return
         val history = _state.value.historySnapshot ?: return
         history.nodes.firstOrNull { it.id == history.headNodeId }?.parentId?.let(::checkoutHistoryNode)
     }
     fun redoHistory() {
+        if (_state.value.canvasEditBusy) return
         val history = _state.value.historySnapshot ?: return
         val children = history.nodes.filter { it.parentId == history.headNodeId }
         if (children.size == 1) checkoutHistoryNode(children.single().id)
@@ -147,17 +158,31 @@ class PSD2LiveViewModel : AutoCloseable {
             else it.copy(historyZoom = zoom, historyPanX = x, historyPanY = y, historySearch = search, historyShowHidden = showHidden, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1) }
     }
     fun setHierarchyView(width: Float = _state.value.hierarchyWidth, collapsed: Boolean = _state.value.hierarchyCollapsed, search: String = _state.value.hierarchySearch) {
-        val clampedWidth = width.coerceIn(140f, 600f)
+        val clampedWidth = width.coerceIn(100f, 600f)
         _state.update {
             if (it.hierarchyWidth == clampedWidth && it.hierarchyCollapsed == collapsed && it.hierarchySearch == search) it
             else it.copy(hierarchyWidth = clampedWidth, hierarchyCollapsed = collapsed, hierarchySearch = search, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1)
         }
     }
-    fun adjustHierarchyWidth(deltaDp: Float, min: Float = 140f, max: Float = 600f) {
+    fun adjustHierarchyWidth(deltaDp: Float, min: Float = 100f, max: Float = 600f) {
         _state.update {
             val next = (it.hierarchyWidth + deltaDp).coerceIn(min, max)
             if (next == it.hierarchyWidth) it
             else it.copy(hierarchyWidth = next, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1)
+        }
+    }
+    fun setDrawOrderRulerWidth(width: Float, min: Float = 14f, max: Float = 100f) {
+        val clamped = width.coerceIn(min, max)
+        _state.update {
+            if (it.drawOrderRulerWidth == clamped) it
+            else it.copy(drawOrderRulerWidth = clamped, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1)
+        }
+    }
+    fun adjustDrawOrderRulerWidth(deltaDp: Float, min: Float = 14f, max: Float = 100f) {
+        _state.update {
+            val next = (it.drawOrderRulerWidth + deltaDp).coerceIn(min, max)
+            if (next == it.drawOrderRulerWidth) it
+            else it.copy(drawOrderRulerWidth = next, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1)
         }
     }
     fun setModelSettingsExpanded(expanded: Boolean) { _state.update { it.copy(modelSettingsExpanded = expanded, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1) } }
@@ -764,6 +789,7 @@ class PSD2LiveViewModel : AutoCloseable {
 
 
 	fun setActiveTab(id: String) {
+        if (_state.value.canvasEditBusy) return
 		var changed = false
 		_state.update { current ->
 			if (current.activeWorkspaceTabId == id || current.workspaceTabs.none { it.id == id }) current

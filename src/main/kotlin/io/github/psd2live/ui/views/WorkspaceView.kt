@@ -112,11 +112,6 @@ fun WorkspaceView(
 	modifier: Modifier = Modifier,
 ) {
 	val colors = LocalToolColors.current
-	var showDeformPathDialog by remember(state.projectOpenGeneration) { mutableStateOf(false) }
-
-	val canEditDeformPath = state.previewModel?.rig?.let { rig ->
-		rig.puppet.drawables.any { rig.layerIdByDrawableId[it.id.raw] == state.selectedLayerId && it.mesh != null }
-	} == true && state.historySnapshot != null && !state.isGenerating && !state.isAnalyzing
 
 	Box(modifier = modifier.fillMaxSize()) {
 		Column(
@@ -140,17 +135,6 @@ fun WorkspaceView(
 					modifier = Modifier.weight(1f),
 				)
 
-				if (canEditDeformPath) {
-					CompactButton(
-						text = tr("path.title"),
-						onClick = { showDeformPathDialog = true },
-						leadingIcon = {
-							IconDeformPath(modifier = Modifier.size(13.dp), tint = colors.accent)
-						},
-						height = 20.dp,
-						modifier = Modifier.padding(end = 6.dp),
-					)
-				}
 			}
 
 			// Main workspace area: the active tab owns its canvas mode and view options.
@@ -165,7 +149,7 @@ fun WorkspaceView(
 							canvasMode = activeTab.kind.canvasMode ?: CanvasMode.EDIT,
 							onRequestOpenDeformPaths = { layerId ->
 								viewModel.selectLayer(layerId)
-								showDeformPathDialog = true
+								viewModel.requestCanvasPathTool()
 							},
 						)
 					}
@@ -179,9 +163,6 @@ fun WorkspaceView(
 			)
 		}
 
-		if (showDeformPathDialog && state.previewModel != null) {
-			io.github.psd2live.ui.components.DeformPathDialog(state, viewModel) { showDeformPathDialog = false }
-		}
 	}
 }
 
@@ -326,7 +307,7 @@ private fun HierarchyView(
 										val mouseInRow = row.localPositionOf(splitter, change.position)
 										val splitterLeftPx = mouseInRow.x - grabOffset
 										val widthDp = with(density) { splitterLeftPx.toDp() }
-										viewModel.setHierarchyView(width = widthDp.value.coerceIn(140f, 600f))
+										viewModel.setHierarchyView(width = widthDp.value.coerceIn(100f, 600f))
 									}
 								}
 							}
@@ -587,6 +568,9 @@ private fun HierarchyTreeList(
 	val treeDragState = remember { TreeDragState() }
 	val itemBoundsMap = remember { mutableStateMapOf<String, ItemLayoutInfo>() }
 	var containerCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+	var treeRowCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+	var rulerSplitterCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+	val density = LocalDensity.current
 
 	val deformers = model.rig.puppet.deformers
 	val drawables = model.rig.puppet.drawables
@@ -658,7 +642,8 @@ private fun HierarchyTreeList(
 		Row(
 			modifier = Modifier
 				.weight(1f)
-				.fillMaxWidth(),
+				.fillMaxWidth()
+				.onGloballyPositioned { treeRowCoords = it },
 		) {
 			Box(
 				modifier = Modifier
@@ -889,15 +874,47 @@ private fun HierarchyTreeList(
 			}
 		}
 
-		// Draw Order Ruler
-		DrawOrderRuler(
-			model = model,
-			state = state,
-			viewModel = viewModel,
-			onRequestSetOrder = onRequestSetOrder,
-		)
+			// Resizable Splitter Handle between Tree List and Draw Order Ruler
+			Box(
+				modifier = Modifier
+					.width(3.dp)
+					.fillMaxHeight()
+					.background(colors.divider)
+					.onGloballyPositioned { rulerSplitterCoords = it }
+					.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.E_RESIZE_CURSOR)))
+					.pointerInput(density) {
+						awaitEachGesture {
+							val down = awaitFirstDown()
+							val grabOffset = down.position.x
+							while (true) {
+								val event = awaitPointerEvent()
+								val change = event.changes.firstOrNull { it.id == down.id } ?: break
+								if (!change.pressed) break
+								change.consume()
+								val row = treeRowCoords
+								val splitter = rulerSplitterCoords
+								if (row != null && splitter != null && row.isAttached && splitter.isAttached) {
+									val mouseInRow = row.localPositionOf(splitter, change.position)
+									val mouseX = mouseInRow.x - grabOffset
+									val rulerWidthPx = row.size.width - mouseX
+									val widthDp = with(density) { rulerWidthPx.toDp() }
+									viewModel.setDrawOrderRulerWidth(widthDp.value)
+								}
+							}
+						}
+					},
+			)
+
+			// Draw Order Ruler
+			DrawOrderRuler(
+				model = model,
+				state = state,
+				viewModel = viewModel,
+				width = state.drawOrderRulerWidth.dp,
+				onRequestSetOrder = onRequestSetOrder,
+			)
+		}
 	}
-}
 }
 
 @OptIn(ExperimentalComposeUiApi::class)

@@ -164,6 +164,7 @@ internal object WorkspaceStateCodec {
         put("hierarchyWidth", state.hierarchyWidth)
         put("hierarchyCollapsed", state.hierarchyCollapsed)
         put("hierarchySearch", state.hierarchySearch)
+        put("drawOrderRulerWidth", state.drawOrderRulerWidth)
         put("modelSettingsExpanded", state.modelSettingsExpanded)
 
         put("workspaceSplitRatio", state.workspaceSplitRatio)
@@ -280,6 +281,7 @@ internal object WorkspaceStateCodec {
         hierarchyWidth = value["hierarchyWidth"]?.jsonPrimitive?.float ?: base.hierarchyWidth,
         hierarchyCollapsed = value["hierarchyCollapsed"]?.jsonPrimitive?.boolean ?: base.hierarchyCollapsed,
         hierarchySearch = value["hierarchySearch"]?.jsonPrimitive?.content ?: base.hierarchySearch,
+        drawOrderRulerWidth = value["drawOrderRulerWidth"]?.jsonPrimitive?.float ?: base.drawOrderRulerWidth,
         modelSettingsExpanded = value["modelSettingsExpanded"]?.jsonPrimitive?.boolean ?: base.modelSettingsExpanded,
 
         workspaceSplitRatio = value["workspaceSplitRatio"]?.jsonPrimitive?.float ?: base.workspaceSplitRatio,

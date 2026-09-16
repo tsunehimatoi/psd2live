@@ -73,6 +73,7 @@ fun DrawOrderRuler(
 	state: PSD2LiveState,
 	viewModel: PSD2LiveViewModel,
 	modifier: Modifier = Modifier,
+	width: androidx.compose.ui.unit.Dp = state.drawOrderRulerWidth.dp,
 	onRequestSetOrder: ((targetId: String, name: String, currentOrder: Float, defaultOrder: Float, isOverridden: Boolean) -> Unit)? = null,
 ) {
 	val colors = LocalToolColors.current
@@ -160,7 +161,7 @@ fun DrawOrderRuler(
 
 	Box(
 		modifier = modifier
-			.width(42.dp)
+			.width(width)
 			.fillMaxHeight()
 			.background(colors.panelElevated.copy(alpha = 0.5f))
 			.border(BorderStroke(1.dp, colors.divider))
@@ -290,7 +291,7 @@ fun DrawOrderRuler(
 			val w = size.width
 			val h = size.height
 
-			val trackX = w - 6f
+			val trackX = (w - 4f).coerceAtLeast(3f)
 			val usable = (h - padTop - padBottom).coerceAtLeast(1f)
 
 			// Vertical track guide line
@@ -333,31 +334,38 @@ fun DrawOrderRuler(
 				val isMajor = abs(order % majorStep) < (minorStep * 0.1f) || abs(order % majorStep - majorStep) < (minorStep * 0.1f)
 
 				if (isMajor) {
+					val tickLen = minOf(5f, w * 0.25f)
 					drawLine(
 						color = colors.borderHover.copy(alpha = 0.6f),
-						start = Offset(trackX - 6f, y),
+						start = Offset((trackX - tickLen).coerceAtLeast(0f), y),
 						end = Offset(trackX, y),
 						strokeWidth = 1f,
 					)
 
-					val label = if (majorStep >= 1f) order.roundToInt().toString() else "%.1f".format(order)
-					val textResult = textMeasurer.measure(
-						text = label,
-						style = TextStyle(
-							fontSize = 7.5.sp,
-							fontFamily = FontFamily.Monospace,
-							fontWeight = FontWeight.Normal,
-							color = colors.textMuted.copy(alpha = 0.55f),
+					if (w >= 30f) {
+						val label = if (majorStep >= 1f) order.roundToInt().toString() else "%.1f".format(order)
+						val textResult = textMeasurer.measure(
+							text = label,
+							style = TextStyle(
+								fontSize = 7.5.sp,
+								fontFamily = FontFamily.Monospace,
+								fontWeight = FontWeight.Normal,
+								color = colors.textMuted.copy(alpha = 0.55f),
+							)
 						)
-					)
-					drawText(
-						textLayoutResult = textResult,
-						topLeft = Offset((trackX - 8f - textResult.size.width).coerceAtLeast(1f), y - textResult.size.height * 0.5f),
-					)
+						val textX = trackX - 6f - textResult.size.width
+						if (textX >= 1f) {
+							drawText(
+								textLayoutResult = textResult,
+								topLeft = Offset(textX, y - textResult.size.height * 0.5f),
+							)
+						}
+					}
 				} else {
+					val tickLen = minOf(2.5f, w * 0.15f)
 					drawLine(
 						color = colors.border.copy(alpha = 0.35f),
-						start = Offset(trackX - 3f, y),
+						start = Offset((trackX - tickLen).coerceAtLeast(0f), y),
 						end = Offset(trackX, y),
 						strokeWidth = 1f,
 					)
@@ -373,10 +381,11 @@ fun DrawOrderRuler(
 				val awtColor = ComponentPalette.strong(entry.layerId)
 				val markColor = Color(awtColor.red, awtColor.green, awtColor.blue)
 
+				val markLen = (w * 0.45f).coerceIn(4f, 12f)
 				drawLine(
 					color = markColor.copy(alpha = 0.85f),
-					start = Offset(trackX - 12f, y),
-					end = Offset(trackX + 2f, y),
+					start = Offset((trackX - markLen).coerceAtLeast(0f), y),
+					end = Offset(minOf(w, trackX + 2f), y),
 					strokeWidth = 1.6f,
 				)
 			}
@@ -390,36 +399,40 @@ fun DrawOrderRuler(
 					// Highlight line across full ruler width
 					drawLine(
 						color = colors.accent,
-						start = Offset(2f, selY),
+						start = Offset(1f, selY),
 						end = Offset(w - 1f, selY),
 						strokeWidth = 2.2f,
 					)
 
 					// Pointer thumb at right edge
+					val thumbW = minOf(4f, w * 0.22f)
 					val pointerPath = Path().apply {
 						moveTo(w, selY)
-						lineTo(w - 5f, selY - 4f)
-						lineTo(w - 5f, selY + 4f)
+						lineTo(w - thumbW, selY - 3.5f)
+						lineTo(w - thumbW, selY + 3.5f)
 						close()
 					}
 					drawPath(pointerPath, color = colors.accent)
 
-					// Indicator dot at left edge
-					drawCircle(
-						color = colors.accent,
-						radius = 2.5f,
-						center = Offset(4f, selY),
-					)
+					// Indicator dot at left edge if wide enough
+					if (w >= 20f) {
+						drawCircle(
+							color = colors.accent,
+							radius = 2f,
+							center = Offset(3f, selY),
+						)
+					}
 				} else {
 					// Off-screen indicator arrows
 					val isAbove = selectedEntry.effectiveOrder > visibleMax
 					val arrowY = if (isAbove) padTop + 2f else h - padBottom - 2f
 					val arrowDir = if (isAbove) -1f else 1f
 
+					val arrowW = minOf(4f, trackX)
 					val offscreenArrow = Path().apply {
-						moveTo(trackX - 3f, arrowY)
-						lineTo(trackX - 6f, arrowY - 4f * arrowDir)
-						lineTo(trackX, arrowY - 4f * arrowDir)
+						moveTo(trackX, arrowY)
+						lineTo((trackX - arrowW).coerceAtLeast(0f), arrowY - 3.5f * arrowDir)
+						lineTo(minOf(w, trackX + 1f), arrowY - 3.5f * arrowDir)
 						close()
 					}
 					drawPath(offscreenArrow, color = colors.accent.copy(alpha = 0.85f))
