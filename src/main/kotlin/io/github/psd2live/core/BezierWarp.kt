@@ -19,6 +19,8 @@ internal object BezierWarp {
             val extensions = CArrayList<Any?>()
             (warp._extensions as? Iterable<*>)?.filterNot { it is CWarpDeformerBezierExtension }?.forEach { extensions.add(it) }
             extensions.add(CWarpDeformerBezierExtension().apply {
+                guid = org.umamo.format.cmo3.model.identity.Guid("CExtensionGuid").apply { uuid = java.util.UUID.randomUUID().toString() }
+                _owner = warp
                 editLevel = 2
                 bezierCol = warp.col.coerceIn(1, 3)
                 bezierRow = warp.row.coerceIn(1, 3)

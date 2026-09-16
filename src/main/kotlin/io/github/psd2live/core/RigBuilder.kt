@@ -1533,10 +1533,9 @@ object RigBuilder {
         return MeshData(DrawableMesh(positions,uvs,indices),rig)
     }
 
-    // Dense shared axes bound the error from interpolating normals between editable Cubism keyforms.
     private fun mouthAxes(): List<KeyformAxis> = listOf(
-        axis(StandardParameters.MOUTH_FORM, *FloatArray(9) { -1f + it / 4f }),
-        axis(StandardParameters.MOUTH_OPEN, *FloatArray(33) { it / 32f }),
+        axis(StandardParameters.MOUTH_FORM, -1f, 0f, 1f),
+        axis(StandardParameters.MOUTH_OPEN, 0f, 0.5f, 1f),
     )
 
     private fun mouthOutline(
