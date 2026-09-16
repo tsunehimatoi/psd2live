@@ -174,8 +174,8 @@ internal object Cmo3SkeletonBuilder {
 				modelViewerSetting = ModelViewerSetting().apply { trackCursorSettings = ArrayList<Any?>() }
 				guides = CGuidesSetting().apply { guidesModeling = CArrayList<Any?>() }
 				this.targetVersionNo = targetVersionNo
-				// CMO3: CModelSource field latestVersionOfLastModelerNo (BareMinimum writes 5030000).
-				latestVersionOfLastModelerNo = 5030000
+				// CMO3: CModelSource field latestVersionOfLastModelerNo (matches targetVersionNo or Cubism 5.0).
+				latestVersionOfLastModelerNo = if (targetVersionNo == org.umamo.format.cmo3.Cmo3TargetVersion.LATEST_VERSION_NO) 5000000 else targetVersionNo
 				artPathBrushesSetting = CArtPathBrushSetting().apply { brushes = CArrayList<Any?>() }
 				// CMO3: CModelSource fields randomPoseSetting / motionSyncSettingsSet /
 				// modelStateSetSet - every 5.4 corpus file writes all three (empty when the

@@ -79,7 +79,7 @@ data class PuppetModel(
 	 * The document's runtime-compatibility target; [RuntimeTarget.NoTarget] restricts nothing.  Gates
 	 * editing controls only - never rendering or saving.  See [RuntimeTarget].
 	 */
-	val runtimeTarget: RuntimeTarget = RuntimeTarget.NoTarget,
+	val runtimeTarget: RuntimeTarget = RuntimeTarget.Cubism50,
 	/**
 	 * Whether the puppet displays from its SOURCE ARTWORK rather than from the packed atlas pages.
 	 *

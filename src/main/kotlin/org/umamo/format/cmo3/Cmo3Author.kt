@@ -24,7 +24,7 @@ public object Cmo3Author {
 	 * the 504000000 corpus samples; changing one without the other would author a mismatched
 	 * prologue.
 	 */
-	public const val FRESH_FILE_FORMAT_VERSION: String = "504000000"
+	public const val FRESH_FILE_FORMAT_VERSION: String = "500000000"
 
 	/**
 	 * Serializes [root] as a complete main.xml document with the 5.4-era prologue.
@@ -111,7 +111,7 @@ public object Cmo3Author {
 		val replayedVersionNames = versionInstructions.map { it.data.trim().substringBeforeLast(':') }.toHashSet()
 		val fileFormatVersion = document.rootElement.getAttributeValue("fileFormatVersion")
 		val appendedVersions =
-			if (fileFormatVersion == FRESH_FILE_FORMAT_VERSION) {
+			if (fileFormatVersion == FRESH_FILE_FORMAT_VERSION || fileFormatVersion == "504000000" || fileFormatVersion?.startsWith("5") == true) {
 				modelTags.sorted().mapNotNull { tag ->
 					CMO3_VERSIONS_BY_TAG_5_4[tag]?.takeIf { (piName, _) -> piName !in replayedVersionNames }
 				}
