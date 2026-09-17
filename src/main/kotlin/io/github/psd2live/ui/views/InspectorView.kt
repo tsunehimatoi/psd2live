@@ -55,6 +55,7 @@ import io.github.psd2live.core.MouthLipLayers
 import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.Side
 import io.github.psd2live.i18n.tr
+import io.github.psd2live.ui.components.ColorPickerSwatch
 import io.github.psd2live.ui.components.CompactButton
 import io.github.psd2live.ui.components.CompactCheckbox
 import io.github.psd2live.ui.components.CompactDropdown
@@ -906,10 +907,13 @@ private fun ModelSettingsSection(
 								enabled = !isBusy && !state.meshOnly,
 								modifier = Modifier.weight(1f),
 							)
-							Box(
-								Modifier.size(18.dp)
-									.background(Color(0xFF000000L or rgb.toLong()), RoundedCornerShape(3.dp))
-									.border(1.dp, colors.border, RoundedCornerShape(3.dp))
+							ColorPickerSwatch(
+								color = rgb,
+								enabled = !isBusy && !state.meshOnly,
+								onColorChanged = { chosenRgb ->
+									viewModel.setMouthColor(chosenRgb)
+								},
+								sampledColor = sampledColor,
 							)
 							var hexInput by remember(state.mouthColor, autoColor) {
 								mutableStateOf("%06X".format(state.mouthColor ?: sampledColor))
@@ -928,7 +932,7 @@ private fun ModelSettingsSection(
 								enabled = !isBusy && !state.meshOnly && !autoColor,
 								isMono = true,
 								placeholder = "#RRGGBB",
-								modifier = Modifier.width(76.dp),
+								modifier = Modifier.width(68.dp),
 								height = 20.dp,
 							)
 						}
