@@ -139,8 +139,8 @@ object LayerClassifier {
 			Bounds(
 				layer.bounds.left.toFloat(),
 				layer.bounds.top.toFloat(),
-				(layer.bounds.left + layer.bounds.width).toFloat(),
-				(layer.bounds.top + layer.bounds.height).toFloat(),
+				(layer.bounds.left + layer.bounds.width.coerceAtLeast(0)).toFloat(),
+				(layer.bounds.top + layer.bounds.height.coerceAtLeast(0)).toFloat(),
 			)
 		} else {
 			Bounds(

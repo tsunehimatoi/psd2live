@@ -497,11 +497,11 @@ internal class Cmo3KeyformLowering(
 			form.positions = absolute
 			editor.ensureChildSlot(form, "CArtMeshForm", "positions")
 			scalarOf(channels[FormChannel.DRAW_ORDER])?.let { drawOrder ->
-				form.drawOrder = drawOrder.toInt()
+				form.drawOrder = drawOrder.toInt().coerceIn(0, 1000)
 				editor.ensureChildSlot(form, "ACDrawableForm", "drawOrder", "opacity")
 			}
 			scalarOf(channels[FormChannel.OPACITY])?.let { opacity ->
-				form.opacity = opacity
+				form.opacity = opacity.coerceIn(0f, 1f)
 				editor.ensureChildSlot(form, "ACDrawableForm", "opacity", "multiplyColor")
 			}
 			colorOf(channels[FormChannel.MULTIPLY_COLOR])?.let { color ->
@@ -838,14 +838,14 @@ internal class Cmo3KeyformLowering(
 					}
 			scalarOf(cell.channels[FormChannel.DRAW_ORDER])?.let { drawOrder ->
 				// CMO3: CPartForm field drawOrder.
-				form.drawOrder = drawOrder.toInt()
+				form.drawOrder = drawOrder.toInt().coerceIn(0, 1000)
 				editor.ensureChildSlot(form, "CPartForm", "drawOrder", "opacity")
 			}
 			scalarOf(cell.channels[FormChannel.OPACITY])?.let { opacity ->
 				// CMO3: CPartForm field opacity - a pre-5.3 part's unset 0f means opaque, so an
 				// opaque value on a pre-5.3 form is left as stored rather than authored anew.
 				if (!(isPre53 && opacity == 1f && existing != null)) {
-					form.opacity = opacity
+					form.opacity = opacity.coerceIn(0f, 1f)
 					editor.ensureChildSlot(form, "CPartForm", "opacity", "multiplyColor")
 				}
 			}

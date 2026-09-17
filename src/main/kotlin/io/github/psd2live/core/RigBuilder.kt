@@ -402,8 +402,8 @@ object RigBuilder {
 				// fresh CMO3 conversion lossless instead of reporting one advisory per drawable.
 				drawOrder = (config.drawOrderOverrides[layer.source.id.raw]
 					?: config.drawOrderOverrides[id.raw]
-					?: (orderedLayers.size - drawIndex).coerceAtMost(1000).toFloat()),
-				opacity = layer.source.opacity,
+					?: (orderedLayers.size - drawIndex).toFloat()).coerceIn(0f, 1000f),
+				opacity = layer.source.opacity.coerceIn(0f, 1f),
 				isVisible = layerVisibility(config, layer.source.id.raw, layer.source.visible),
 				texturePage = placement.page,
 			)
@@ -484,8 +484,8 @@ object RigBuilder {
                 if (owner == null) drawable else {
                     val frontOrder = masked.filter { it.id == owner || owner in it.maskedBy }
                         .maxOfOrNull { it.drawOrder } ?: drawable.drawOrder
-                    drawable.copy(drawOrder = config.drawOrderOverrides[classifiedByDrawable.getValue(drawable.id).source.id.raw]
-                        ?: config.drawOrderOverrides[drawable.id.raw] ?: (frontOrder + 1f).coerceAtMost(1000f))
+                    drawable.copy(drawOrder = (config.drawOrderOverrides[classifiedByDrawable.getValue(drawable.id).source.id.raw]
+                        ?: config.drawOrderOverrides[drawable.id.raw] ?: (frontOrder + 1f)).coerceIn(0f, 1000f))
                 }
             }
 
@@ -1666,7 +1666,7 @@ object RigBuilder {
             texturePage = placement.page,
             blendMode = BlendMode.Normal,
             isVisible = layerVisibility(config, layer.source.id.raw, layer.source.visible),
-            drawOrder = config.drawOrderOverrides[layer.source.id.raw] ?: (owner.drawOrder + 1f).coerceAtMost(1000f),
+            drawOrder = (config.drawOrderOverrides[layer.source.id.raw] ?: (owner.drawOrder + 1f)).coerceIn(0f, 1000f),
         )
         val deformPath = if (columns.size >= 5) {
             val startIdx = overlap

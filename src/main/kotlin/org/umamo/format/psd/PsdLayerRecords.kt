@@ -179,8 +179,8 @@ internal object PsdLayerRecords {
 			records +=
 				PsdLayerRecord(
 					name = name,
-					bounds = LayerBounds(left = left, top = top, width = right - left, height = bottom - top),
-					opacity = opacityByte / 255f,
+					bounds = LayerBounds(left = left, top = top, width = (right - left).coerceAtLeast(0), height = (bottom - top).coerceAtLeast(0)),
+					opacity = (opacityByte / 255f).coerceIn(0f, 1f),
 					clipped = clipping != 0,
 					blend = blendKeyToBlend(blendKey),
 					visible = (flags and 0x02) == 0,

@@ -10,11 +10,14 @@ data class DeformPath(
     val closed: Boolean = false,
     val editLevel: Int = 2,
 ) {
+    val safeWidth: Float get() = width.coerceAtLeast(0f)
+    val safeHardness: Float get() = hardness.coerceIn(0f, 1f)
+
     init {
         require(id.isNotBlank())
         require(points.size in 2..128)
-        require(width.isFinite() && width > 0f)
-        require(hardness.isFinite() && hardness in 0f..1f)
+        require(width.isFinite())
+        require(hardness.isFinite())
         require(editLevel in 2..3)
         require(!closed || points.size >= 3)
     }
@@ -26,14 +29,19 @@ data class DeformPathPoint(
     val corner: Boolean = false,
 ) {
     init {
-        require(a >= 0 && b >= 0 && c >= 0)
         require(listOf(wa, wb, wc).all(Float::isFinite))
         require(kotlin.math.abs(wa + wb + wc - 1f) < 0.001f)
     }
 
     fun position(vertices: FloatArray): Pair<Float, Float> {
-        require(maxOf(a, b, c) < vertices.size / 2) { "Deform path topology has changed" }
-        return Pair(vertices[a*2]*wa + vertices[b*2]*wb + vertices[c*2]*wc,
-            vertices[a*2+1]*wa + vertices[b*2+1]*wb + vertices[c*2+1]*wc)
+        if (vertices.isEmpty()) return Pair(0f, 0f)
+        val maxIndex = vertices.size / 2 - 1
+        val safeA = a.coerceAtLeast(0).coerceAtMost(maxIndex)
+        val safeB = b.coerceAtLeast(0).coerceAtMost(maxIndex)
+        val safeC = c.coerceAtLeast(0).coerceAtMost(maxIndex)
+        return Pair(
+            vertices[safeA * 2] * wa + vertices[safeB * 2] * wb + vertices[safeC * 2] * wc,
+            vertices[safeA * 2 + 1] * wa + vertices[safeB * 2 + 1] * wb + vertices[safeC * 2 + 1] * wc
+        )
     }
 }

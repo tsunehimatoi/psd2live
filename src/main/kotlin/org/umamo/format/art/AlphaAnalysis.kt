@@ -108,14 +108,14 @@ public fun analyzeAlpha(
 	alphaThreshold: Int = DEFAULT_ALPHA_THRESHOLD,
 	contourEpsilon: Float = DEFAULT_CONTOUR_EPSILON,
 ): AlphaAnalysis? {
-	require(width >= 0 && height >= 0) { "raster dimensions must be non-negative: $width x $height" }
+	if (width <= 0 || height <= 0) return null
 	require(rgba.size.toLong() == width.toLong() * height.toLong() * 4L) {
 		"rgba size ${rgba.size} does not match $width x $height x 4"
 	}
 	require(alphaThreshold in 1..255) {
 		"alphaThreshold must be in 1..255 (0 marks everything opaque, 256 nothing): $alphaThreshold"
 	}
-	require(contourEpsilon >= 0f) { "contourEpsilon must be non-negative: $contourEpsilon" }
+	val safeContourEpsilon = contourEpsilon.coerceAtLeast(0f)
 
 	// Pass 1: one row-major sweep folds the trimmed bounds and the count, and builds the
 	// bit-packed mask the tracer walks.  Packed LongArray, not BooleanArray: an 8192^2 layer
@@ -167,11 +167,11 @@ public fun analyzeAlpha(
 	val mask = AlphaMask(width, height, maskWords)
 	val exactContours = traceAlphaContours(mask, opaqueBounds)
 	val contours =
-		if (contourEpsilon > 0f) {
+		if (safeContourEpsilon > 0f) {
 			exactContours.map { contour ->
 				// simplifyClosedRing returns the input array itself when nothing can drop;
 				// reuse the contour object then instead of re-wrapping the same ring.
-				val simplifiedPoints = simplifyClosedRing(contour.points, contourEpsilon)
+				val simplifiedPoints = simplifyClosedRing(contour.points, safeContourEpsilon)
 				if (simplifiedPoints === contour.points) {
 					contour
 				} else {

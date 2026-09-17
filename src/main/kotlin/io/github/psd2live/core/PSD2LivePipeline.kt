@@ -155,7 +155,7 @@ class PSD2LivePipeline {
 			warnings += runtimeReport.notices.map { noticeText("MOC3", it) }
 			val mocBytes = runtimeBundle.assets.first { it.path.endsWith(".moc3") }.bytes
 			val reimported = Moc3Import.fromMocDocument(Moc3.read(mocBytes), null)
-			validateRigShape("MOC3", exportPuppet, reimported)
+			warnings += validateRigShape("MOC3", exportPuppet, reimported)
 			val moc3Label = tr("validation.moc3Readback")
 			val mocNeutral = RigIntegrityValidator.validateNeutralPose(moc3Label, reimported, rig.sourceBoundsByDrawableId)
 			warnings += mocNeutral.warnings
@@ -188,7 +188,7 @@ class PSD2LivePipeline {
 			warnings += converted.report.notices.map { noticeText("CMO3", it) }
 			val source = Cmo3.read(bytes).root as? CModelSource ?: error(tr("error.cmo3Root"))
 			val reimported = Cmo3Import.fromModelSource(source)
-			validateRigShape("CMO3", converted.puppet, reimported)
+			warnings += validateRigShape("CMO3", converted.puppet, reimported)
 			val cmo3Label = tr("validation.cmo3Readback")
 			val cmoNeutral = RigIntegrityValidator.validateNeutralPose(cmo3Label, reimported, rig.sourceBoundsByDrawableId)
 			warnings += cmoNeutral.warnings
@@ -322,15 +322,17 @@ class PSD2LivePipeline {
 		}
 	}
 
-	private fun validateRigShape(label: String, expected: PuppetModel, actual: PuppetModel) {
-		fun <T> requireSame(kind: String, left: Set<T>, right: Set<T>) {
-			require(left == right) {
-				tr("error.rigShape", label, kind, left - right, right - left)
+	private fun validateRigShape(label: String, expected: PuppetModel, actual: PuppetModel): List<String> {
+		val warnings = mutableListOf<String>()
+		fun <T> checkSame(kind: String, left: Set<T>, right: Set<T>) {
+			if (left != right) {
+				warnings += tr("error.rigShape", label, kind, left - right, right - left)
 			}
 		}
-		requireSame(tr("validation.parameter"), expected.parameters.map { it.id.raw }.toSet(), actual.parameters.map { it.id.raw }.toSet())
-		requireSame(tr("validation.deformer"), expected.deformers.map { it.id.raw }.toSet(), actual.deformers.map { it.id.raw }.toSet())
-		requireSame(tr("validation.drawable"), expected.drawables.map { it.id.raw }.toSet(), actual.drawables.map { it.id.raw }.toSet())
+		checkSame(tr("validation.parameter"), expected.parameters.map { it.id.raw }.toSet(), actual.parameters.map { it.id.raw }.toSet())
+		checkSame(tr("validation.deformer"), expected.deformers.map { it.id.raw }.toSet(), actual.deformers.map { it.id.raw }.toSet())
+		checkSame(tr("validation.drawable"), expected.drawables.map { it.id.raw }.toSet(), actual.drawables.map { it.id.raw }.toSet())
+		return warnings
 	}
 
 	private fun writeContained(root: Path, relativeName: String, bytes: ByteArray): ExportedFile {

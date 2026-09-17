@@ -136,15 +136,15 @@ data class RigKeyformChannelsEdit(
 	val flipY: Boolean? = null,
 ) {
 	init {
-		opacity?.let { require(it.isFinite() && it in 0f..1f) { "Opacity must be within 0..1" } }
-		drawOrder?.let { require(it.isFinite() && it in 0f..1000f) { "Draw order must be within 0..1000" } }
+		opacity?.let { require(it.isFinite()) { "Opacity must be finite" } }
+		drawOrder?.let { require(it.isFinite()) { "Draw order must be finite" } }
 		multiplyColor?.let {
-			require(it.size == 3 && it.all { c -> c.isFinite() && c in 0f..1f }) { "multiplyColor must be 3 floats within 0..1" }
+			require(it.size == 3 && it.all { c -> c.isFinite() }) { "multiplyColor must be 3 finite floats" }
 		}
 		screenColor?.let {
-			require(it.size == 3 && it.all { c -> c.isFinite() && c in 0f..1f }) { "screenColor must be 3 floats within 0..1" }
+			require(it.size == 3 && it.all { c -> c.isFinite() }) { "screenColor must be 3 finite floats" }
 		}
-		glueIntensity?.let { require(it.isFinite() && it in 0f..1f) { "glueIntensity must be within 0..1" } }
+		glueIntensity?.let { require(it.isFinite()) { "glueIntensity must be finite" } }
 	}
 }
 
@@ -460,11 +460,11 @@ internal fun applyKeyformSet(model: PuppetModel, set: RigKeyformSetEdit): Puppet
 	val ch = set.channels
 	if (ch != null) {
 		val channelEntries = buildList<Pair<FormChannel, ChannelValue>> {
-			ch.opacity?.let { add(FormChannel.OPACITY to ChannelValue.Scalar(it)) }
-			ch.drawOrder?.let { add(FormChannel.DRAW_ORDER to ChannelValue.Scalar(it)) }
-			ch.multiplyColor?.let { add(FormChannel.MULTIPLY_COLOR to ChannelValue.Color(ColorRgb(it[0], it[1], it[2]))) }
-			ch.screenColor?.let { add(FormChannel.SCREEN_COLOR to ChannelValue.Color(ColorRgb(it[0], it[1], it[2]))) }
-			ch.glueIntensity?.let { add(FormChannel.GLUE_INTENSITY to ChannelValue.Scalar(it)) }
+			ch.opacity?.let { add(FormChannel.OPACITY to ChannelValue.Scalar(it.coerceIn(0f, 1f))) }
+			ch.drawOrder?.let { add(FormChannel.DRAW_ORDER to ChannelValue.Scalar(it.coerceIn(0f, 1000f))) }
+			ch.multiplyColor?.let { add(FormChannel.MULTIPLY_COLOR to ChannelValue.Color(ColorRgb(it[0].coerceIn(0f, 1f), it[1].coerceIn(0f, 1f), it[2].coerceIn(0f, 1f)))) }
+			ch.screenColor?.let { add(FormChannel.SCREEN_COLOR to ChannelValue.Color(ColorRgb(it[0].coerceIn(0f, 1f), it[1].coerceIn(0f, 1f), it[2].coerceIn(0f, 1f)))) }
+			ch.glueIntensity?.let { add(FormChannel.GLUE_INTENSITY to ChannelValue.Scalar(it.coerceIn(0f, 1f))) }
 			ch.flipX?.let { add(FormChannel.FLIP_X to ChannelValue.Flag(it)) }
 			ch.flipY?.let { add(FormChannel.FLIP_Y to ChannelValue.Flag(it)) }
 		}

@@ -130,11 +130,11 @@ internal fun lowerArtMeshes(
 					ArtMeshKeyform(
 						vertexPositions = convertPointsToMoc(space, absolute, context.canvas),
 						opacity =
-							bundle?.let { scalarOf(it, cellIndex, FormChannel.OPACITY, drawable.opacity) }
-								?: drawable.opacity,
+							(bundle?.let { scalarOf(it, cellIndex, FormChannel.OPACITY, drawable.opacity) }
+								?: drawable.opacity).coerceIn(0f, 1f),
 						drawOrder =
-							bundle?.let { scalarOf(it, cellIndex, FormChannel.DRAW_ORDER, drawable.drawOrder) }
-								?: drawable.drawOrder,
+							(bundle?.let { scalarOf(it, cellIndex, FormChannel.DRAW_ORDER, drawable.drawOrder) }
+								?: drawable.drawOrder).coerceIn(0f, 1000f),
 						multiplyColor =
 							colorOf(bundle, cellIndex, FormChannel.MULTIPLY_COLOR, drawable.multiplyColor, context.colorsEnabled),
 						screenColor =

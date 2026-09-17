@@ -45,11 +45,18 @@ internal object Cmo3DeformPaths {
                     val points=Cmo3Import.elementsOf(curve._curvePoints).filterIsInstance<CControllerPoint>()
                     if(points.size !in 2..128 || points.any { it.pointInTriangle !is PointInTriangle }) continue
                     val curveId=Cmo3Import.uuidOf(curve.curveId) ?: continue
-                    if(extension.editLevel !in 2..3 || curve.lineWidth<=0f) continue
+                    if(extension.editLevel !in 2..3) continue
+                    val safeLineWidth = curve.lineWidth.coerceAtLeast(0f)
+                    val safeHardness = (curve.lineHardnessPercent / 100f).coerceIn(0f, 1f)
                     add(DeformPath(curveId,DrawableId(id),points.map { p ->
                         val b=p.pointInTriangle as PointInTriangle
-                        DeformPathPoint(b.ptIndex1,b.ptIndex2,b.ptIndex3,b.weight1,b.weight2,b.weight3,p.isCorner)
-                    },curve.lineWidth,curve.lineHardnessPercent/100f,!curve.isOpen,extension.editLevel))
+                        DeformPathPoint(
+                            b.ptIndex1.coerceAtLeast(0),
+                            b.ptIndex2.coerceAtLeast(0),
+                            b.ptIndex3.coerceAtLeast(0),
+                            b.weight1,b.weight2,b.weight3,p.isCorner
+                        )
+                    },safeLineWidth,safeHardness,!curve.isOpen,extension.editLevel))
                 }
             }
         }
@@ -77,7 +84,7 @@ internal object Cmo3DeformPaths {
                 for(path in curves) {
                     val curve=CControllerCurve().apply {
                         curveId=Guid("CControllerCurveGuid").apply { uuid=path.id }
-                        lineWidth=path.width*widthScale;lineHardnessPercent=path.hardness*100f;isOpen=!path.closed
+                        lineWidth=(path.width*widthScale).coerceAtLeast(0f);lineHardnessPercent=path.hardness.coerceIn(0f, 1f)*100f;isOpen=!path.closed
                     }
                     curve._curvePoints=CArrayList<Any?>().apply {
                         for(p in path.points) {

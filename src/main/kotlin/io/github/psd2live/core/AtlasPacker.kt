@@ -24,21 +24,21 @@ object AtlasPacker {
         progress: ProgressListener = ProgressListener { _, _ -> },
         prepareTextures: (List<ClassifiedLayer>, TextureUpscaleConfig) -> Map<String, Path>,
     ): PackedAtlas {
-        require(requestedSize in 256..16384) { tr("error.atlasSize") }
-        require(padding in 0..32)
+        val safeSize = requestedSize.coerceIn(256, 16384)
+        val safePadding = padding.coerceIn(0, 32)
         val items = layers.filter { it.source.raster.width > 0 && it.source.raster.height > 0 && it.opaquePixels > 0 }
             .map { Item(it, Math.multiplyExact(it.source.raster.width, upscale.scale), Math.multiplyExact(it.source.raster.height, upscale.scale)) }
             .sortedWith(compareByDescending<Item> { it.height }.thenByDescending { it.width }.thenBy { it.layer.source.id.raw })
-        val largest = items.maxOfOrNull { maxOf(it.width, it.height) + padding * 2 } ?: requestedSize
-        val pageSize = maxOf(requestedSize, nextPowerOfTwo(largest)).coerceAtMost(16384)
+        val largest = items.maxOfOrNull { maxOf(it.width, it.height) + safePadding * 2 } ?: safeSize
+        val pageSize = maxOf(safeSize, nextPowerOfTwo(largest)).coerceAtMost(16384)
         require(largest <= pageSize) { tr("error.layerTooLarge") }
         val placements = linkedMapOf<String, AtlasPlacement>()
-        var x = padding; var y = padding; var rowHeight = 0; var pageIndex = 0
+        var x = safePadding; var y = safePadding; var rowHeight = 0; var pageIndex = 0
         for (item in items) {
-            if (x + item.width + padding > pageSize) { x = padding; y += rowHeight + padding; rowHeight = 0 }
-            if (y + item.height + padding > pageSize) { pageIndex++; x = padding; y = padding; rowHeight = 0 }
+            if (x + item.width + safePadding > pageSize) { x = safePadding; y += rowHeight + safePadding; rowHeight = 0 }
+            if (y + item.height + safePadding > pageSize) { pageIndex++; x = safePadding; y = safePadding; rowHeight = 0 }
             placements[item.layer.source.id.raw] = AtlasPlacement(pageIndex, x, y, item.width, item.height, upscale.scale)
-            x += item.width + padding * 2
+            x += item.width + safePadding * 2
             rowHeight = maxOf(rowHeight, item.height)
         }
         // Fail before inference or large allocations; encoded PNGs and render copies cost extra memory.

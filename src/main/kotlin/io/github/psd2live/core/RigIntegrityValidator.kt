@@ -43,44 +43,62 @@ object RigIntegrityValidator {
 				missing += drawable.id.raw
 				continue
 			}
-			require(positions.size % 2 == 0) { tr("validation.vertexArrayOdd", label, drawable.id.raw) }
+			if (positions.size % 2 != 0) {
+				warnings += tr("validation.vertexArrayOdd", label, drawable.id.raw)
+				continue
+			}
 			var left = Float.POSITIVE_INFINITY
 			var top = Float.POSITIVE_INFINITY
 			var right = Float.NEGATIVE_INFINITY
 			var bottom = Float.NEGATIVE_INFINITY
+			var hasNonFinite = false
 			for (index in positions.indices step 2) {
 				val x = positions[index]
 				val y = -positions[index + 1] // evaluator world Y-up -> PSD/canvas Y-down
-				require(x.isFinite() && y.isFinite()) { tr("validation.nonFiniteVertex", label, drawable.id.raw) }
+				if (!x.isFinite() || !y.isFinite()) {
+					warnings += tr("validation.nonFiniteVertex", label, drawable.id.raw)
+					hasNonFinite = true
+					break
+				}
 				left = minOf(left, x)
 				top = minOf(top, y)
 				right = maxOf(right, x)
 				bottom = maxOf(bottom, y)
 			}
+			if (hasNonFinite) continue
 			val actual = Bounds(left, top, right, bottom)
-			actualBounds[drawable.id.raw] = actual
-			require(actual.width > 1e-3f && actual.height > 1e-3f) {
-				tr("validation.neutralCollapsed", label, drawable.id.raw, actual.width, actual.height)
+			val safeWidth = actual.width.coerceAtLeast(0f)
+			val safeHeight = actual.height.coerceAtLeast(0f)
+			val safeActual = if (actual.width < 0f || actual.height < 0f) {
+				Bounds(left, top, left + safeWidth, top + safeHeight)
+			} else {
+				actual
+			}
+			actualBounds[drawable.id.raw] = safeActual
+			if (safeActual.width <= 1e-3f || safeActual.height <= 1e-3f) {
+				warnings += tr("validation.neutralCollapsed", label, drawable.id.raw, safeActual.width, safeActual.height)
 			}
 
 			val expected = expectedBoundsByDrawableId[drawable.id.raw] ?: continue
 			val scale = max(max(expected.width, expected.height), 1f)
-			val centerError = max(abs(actual.centerX - expected.centerX), abs(actual.centerY - expected.centerY))
-			val sizeError = max(abs(actual.width - expected.width), abs(actual.height - expected.height))
+			val centerError = max(abs(safeActual.centerX - expected.centerX), abs(safeActual.centerY - expected.centerY))
+			val sizeError = max(abs(safeActual.width - expected.width), abs(safeActual.height - expected.height))
 			val mismatchTolerance = max(5.0f, scale * 0.50f)
 			val warningTolerance = max(1.5f, scale * 0.04f)
 			// Preserve severe deviations (including their bounds) in the export logs/report, but
 			// allow usable geometry to export even when its neutral bounds differ from the PSD.
 			if (centerError > mismatchTolerance || sizeError > mismatchTolerance) {
-				warnings += tr("validation.neutralMismatch", label, drawable.id.raw, expected, actual)
+				warnings += tr("validation.neutralMismatch", label, drawable.id.raw, expected, safeActual)
 			} else if (centerError > warningTolerance || sizeError > warningTolerance) {
-				warnings += tr("validation.neutralWarning", label, drawable.id.raw, expected, actual)
+				warnings += tr("validation.neutralWarning", label, drawable.id.raw, expected, safeActual)
 			}
 		}
 
-		require(missing.isEmpty()) { tr("validation.missingNeutralGeometry", label, missing.joinToString()) }
-		require(actualBounds.size == puppet.drawables.count { it.mesh != null }) {
-			tr("validation.incompleteNeutralGeometry", label)
+		if (missing.isNotEmpty()) {
+			warnings += tr("validation.missingNeutralGeometry", label, missing.joinToString())
+		}
+		if (actualBounds.size != puppet.drawables.count { it.mesh != null }) {
+			warnings += tr("validation.incompleteNeutralGeometry", label)
 		}
 		return Result(actualBounds, warnings)
 	}

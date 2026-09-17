@@ -46,8 +46,8 @@ internal fun valueTableSections(context: MocLoweringContext): Map<Int, ByteArray
 			meshPositionIndex.add(positionValues.position / 4)
 			keyform.vertexPositions.forEach(positionValues::writeFloat32)
 			padTo16Floats(positionValues, keyform.vertexPositions.size)
-			meshOpacity.add(keyform.opacity)
-			meshDrawOrder.add(keyform.drawOrder)
+			meshOpacity.add(keyform.opacity.coerceIn(0f, 1f))
+			meshDrawOrder.add(keyform.drawOrder.coerceIn(0f, 1000f))
 		}
 	}
 
@@ -141,7 +141,7 @@ internal fun valueTableSections(context: MocLoweringContext): Map<Int, ByteArray
 	val partKeyformBase = IntArray(doc.parts.size)
 	for ((partIndex, part) in doc.parts.withIndex()) {
 		partKeyformBase[partIndex] = partDrawOrder.size
-		part.drawOrderKeyforms.forEach { partDrawOrder.add(it) }
+		part.drawOrderKeyforms.forEach { partDrawOrder.add(it.coerceIn(0f, 1000f)) }
 	}
 	if (blendLayout != null) {
 		for (record in blendLayout.partRecords) {
