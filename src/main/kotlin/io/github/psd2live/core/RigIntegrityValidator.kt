@@ -67,11 +67,13 @@ object RigIntegrityValidator {
 			val scale = max(max(expected.width, expected.height), 1f)
 			val centerError = max(abs(actual.centerX - expected.centerX), abs(actual.centerY - expected.centerY))
 			val sizeError = max(abs(actual.width - expected.width), abs(actual.height - expected.height))
+			val mismatchTolerance = max(5.0f, scale * 0.50f)
+			val warningTolerance = max(1.5f, scale * 0.04f)
 			// Preserve severe deviations (including their bounds) in the export logs/report, but
 			// allow usable geometry to export even when its neutral bounds differ from the PSD.
-			if (centerError > scale * 0.50f || sizeError > scale * 0.50f) {
+			if (centerError > mismatchTolerance || sizeError > mismatchTolerance) {
 				warnings += tr("validation.neutralMismatch", label, drawable.id.raw, expected, actual)
-			} else if (centerError > scale * 0.04f || sizeError > scale * 0.04f) {
+			} else if (centerError > warningTolerance || sizeError > warningTolerance) {
 				warnings += tr("validation.neutralWarning", label, drawable.id.raw, expected, actual)
 			}
 		}

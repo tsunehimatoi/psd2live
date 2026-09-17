@@ -1636,21 +1636,30 @@ class PSD2LiveViewModel : AutoCloseable {
 				_state.update { current ->
 					val outputLogs = listOf(
 						tr("log.outputFiles"),
-					) + result.exportedFiles.map { "• ${it.path} (${it.bytes} bytes)" } +
-						(if (result.warnings.isNotEmpty()) listOf(tr("log.warnings")) + result.warnings.map { "• $it" } else emptyList())
+					) + result.exportedFiles.map { "• ${it.path} (${it.bytes} bytes)" }
+					val warningLogs = if (result.warnings.isNotEmpty()) {
+						listOf(tr("log.warnings")) + result.warnings.map { "• $it" }
+					} else emptyList()
 					val summary = tr("status.completed", result.exportedFiles.size, result.warnings.size)
-					current.withLogs(outputLogs, level = if (result.warnings.isNotEmpty()) LogLevel.WARNING else LogLevel.SUCCESS, tag = "Export").copy(
-						isGenerating = false,
-						progress = 1f,
-						analysis = result.previewModel.analysis,
-						loadedInputPath = current.loadedInputPath ?: input.toAbsolutePath().normalize().toString(),
-						loadedInputFileSignature = current.loadedInputFileSignature ?: runCatching {
-							"${Files.size(input)}:${Files.getLastModifiedTime(input).toMillis()}"
-						}.getOrNull(),
-						previewModel = result.previewModel,
-						statusText = summary,
-						successExportMessage = tr("dialog.exportSuccess", result.exportedFiles.size, output),
-					)
+					current
+						.withLogs(outputLogs, level = LogLevel.INFO, tag = "Export")
+						.let { state ->
+							if (warningLogs.isNotEmpty()) {
+								state.withLogs(warningLogs, level = LogLevel.WARNING, tag = "Export")
+							} else state
+						}
+						.copy(
+							isGenerating = false,
+							progress = 1f,
+							analysis = result.previewModel.analysis,
+							loadedInputPath = current.loadedInputPath ?: input.toAbsolutePath().normalize().toString(),
+							loadedInputFileSignature = current.loadedInputFileSignature ?: runCatching {
+								"${Files.size(input)}:${Files.getLastModifiedTime(input).toMillis()}"
+							}.getOrNull(),
+							previewModel = result.previewModel,
+							statusText = summary,
+							successExportMessage = tr("dialog.exportSuccess", result.exportedFiles.size, output),
+						)
 				}
 				sdkSession.load(result.previewModel.runtimeBundle, result.previewModel.rig.puppet.parameters.map { it.id })
 			} catch (failure: Throwable) {

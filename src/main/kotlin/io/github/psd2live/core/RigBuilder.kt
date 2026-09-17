@@ -430,7 +430,14 @@ object RigBuilder {
                     lipOwnerById[lip.id] = drawable.id
                     pageByDrawable[lip.id.raw] = lip.texturePage
                     layerIdByDrawable[lip.id.raw] = lipLayer.source.id.raw
-                    sourceBoundsByDrawable[lip.id.raw] = lipLayer.bounds
+                    sourceBoundsByDrawable[lip.id.raw] = neutralLipBounds(
+                        meshData,
+                        mouthAperture,
+                        config,
+                        side,
+                        effectiveHeadSpace,
+                        lipLayer.bounds,
+                    )
                 }
             }
 			layerIdByDrawable[id.raw] = layer.source.id.raw
@@ -1877,29 +1884,73 @@ object RigBuilder {
 		meshOnly: Boolean = false,
         config: PipelineConfig = PipelineConfig(),
 	): Bounds {
-		if (meshOnly || layer.semantic.tag !in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) || mouthAperture == null) return layer.bounds
 		var left = Float.POSITIVE_INFINITY
 		var top = Float.POSITIVE_INFINITY
 		var right = Float.NEGATIVE_INFINITY
 		var bottom = Float.NEGATIVE_INFINITY
+		val isMouth = !meshOnly && layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && mouthAperture != null
 		for (index in data.rigPositions.indices step 2) {
-			val rigPoint = mouthWholePoint(
-				data.rigPositions[index],
-				data.rigPositions[index + 1],
-				mouthAperture,
-				mouthForm = 0f,
-				mouthOpen = 0f,
-                shape = config.mouthShape,
-                exactClose = config.mouthOutlineEnabled,
-                curve = config.mouthCurve,
-			)
+			val rigPoint = if (isMouth) {
+				mouthWholePoint(
+					data.rigPositions[index],
+					data.rigPositions[index + 1],
+					mouthAperture,
+					mouthForm = 0f,
+					mouthOpen = 0f,
+					shape = config.mouthShape,
+					exactClose = config.mouthOutlineEnabled,
+					curve = config.mouthCurve,
+				)
+			} else {
+				data.rigPositions[index] to data.rigPositions[index + 1]
+			}
 			val point = headSpace?.toCanvas(rigPoint.first, rigPoint.second) ?: rigPoint
 			left = minOf(left, point.first)
 			top = minOf(top, point.second)
 			right = maxOf(right, point.first)
 			bottom = maxOf(bottom, point.second)
 		}
-		return Bounds(left, top, right, bottom)
+		return if (left.isFinite() && top.isFinite() && right.isFinite() && bottom.isFinite()) {
+			Bounds(left, top, right, bottom)
+		} else {
+			layer.bounds
+		}
+	}
+
+	private fun neutralLipBounds(
+		data: MeshData,
+		aperture: Bounds,
+		config: PipelineConfig,
+		side: Int,
+		space: HeadCoordinateSpace?,
+		fallback: Bounds,
+	): Bounds {
+		val columns = MouthContour.uniformColumns(data, MouthContour.DEFAULT_SEGMENTS)
+		if (columns.size < 2) return fallback
+		val path = MouthContour.crossedPath(columns, side)
+		val overlap = MouthContour.overlapCount(columns.size)
+		val joins = listOf(overlap, overlap + columns.lastIndex)
+		val radius = config.mouthThickness.coerceIn(0.5f, 8f) * 0.5f
+		val transformed = path.map { p ->
+			mouthWholePoint(p.first, p.second, aperture, 0f, 0f, config.mouthShape, true, config.mouthCurve)
+		}
+		val rawPositions = MouthStrokeMesh.positions(transformed, radius, joins)
+		var left = Float.POSITIVE_INFINITY
+		var top = Float.POSITIVE_INFINITY
+		var right = Float.NEGATIVE_INFINITY
+		var bottom = Float.NEGATIVE_INFINITY
+		for (i in rawPositions.indices step 2) {
+			val canvas = space?.toCanvas(rawPositions[i], rawPositions[i + 1]) ?: (rawPositions[i] to rawPositions[i + 1])
+			left = minOf(left, canvas.first)
+			top = minOf(top, canvas.second)
+			right = maxOf(right, canvas.first)
+			bottom = maxOf(bottom, canvas.second)
+		}
+		return if (left.isFinite() && top.isFinite() && right.isFinite() && bottom.isFinite()) {
+			Bounds(left, top, right, bottom)
+		} else {
+			fallback
+		}
 	}
 
 	/** Places explicitly named mouth internals directly above their nearest mouth, independent of PSD order. */
