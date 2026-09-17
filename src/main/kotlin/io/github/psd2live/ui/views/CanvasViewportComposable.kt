@@ -528,9 +528,10 @@ fun CanvasViewportComposable(
 			val isDimmingActive = state.dimUnselected && hasActiveSelection
 
 			val nativeFrame = sdkFrame
-			val hasActivePaths = state.showDeformPaths && model.rig.puppet.deformPaths.isNotEmpty()
+			// Path guides never paint outside the Edit tab (see 3e), so they cannot force the
+			// preview off its native SDK frame.
 			val canUseNativeSdk = mode == CanvasMode.PREVIEW &&
-				!showWarp && !showMesh && !hasActivePaths && !informationSelectedOnly && showTexture &&
+				!showWarp && !showMesh && !informationSelectedOnly && showTexture &&
 				!isDimmingActive &&
 				state.hoveredLayerId == null && state.hoveredDeformerId == null &&
 				(!state.showSelectionBounds || !hasActiveSelection) &&
@@ -742,8 +743,10 @@ fun CanvasViewportComposable(
 						)
 					}
 
-					// 3e. Deform Paths (RigInformationOverlay)
-					if (state.showDeformPaths && model.rig.puppet.deformPaths.isNotEmpty()) {
+					// 3e. Deform Paths (RigInformationOverlay). A path belongs to the part it
+					// deforms, so it is drawn only while that part (or the part's deformer) is
+					// selected -- an edit-time guide, never part of the Preview tab's render.
+					if (mode == CanvasMode.EDIT && state.showDeformPaths && model.rig.puppet.deformPaths.isNotEmpty()) {
 						val selectedLayerDescendants = if (state.selectedDeformerId != null) {
 							descendantLayerIds(model, state.selectedDeformerId, state.parentOverrides)
 						} else {
@@ -760,11 +763,9 @@ fun CanvasViewportComposable(
 							state.hoveredLayerId != null && layerId == state.hoveredLayerId
 						}.map { it.id }.toSet()
 
-						val pathIds = if (informationSelectedOnly) {
-							selectedPathIds
-						} else {
-							model.rig.puppet.deformPaths.map { it.id }.toSet()
-						}
+						// Hovering a part in the tree previews its path -- same instant feedback the
+						// warp channel gives, without bringing back the always-on rig clutter.
+						val pathIds = selectedPathIds + hoveredPathIds
 
 						if (pathIds.isNotEmpty()) {
 							io.github.psd2live.ui.RigInformationOverlay.paintDeformPaths(
@@ -779,7 +780,6 @@ fun CanvasViewportComposable(
 								showHardness = state.pathShowHardness,
 								selectedPathIds = selectedPathIds,
 								hoveredPathIds = hoveredPathIds,
-								dimUnselected = state.dimUnselected,
 							)
 						}
 					}

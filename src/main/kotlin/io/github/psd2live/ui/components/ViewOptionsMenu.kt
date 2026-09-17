@@ -5,10 +5,11 @@ import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.state.TabViewOptions
 
 /**
- * The single source of truth for the per-tab canvas and annotation toggles.
+ * The single source of truth for the per-tab canvas and annotation toggles, rendered by the tab
+ * strip's "view options" dropdown.
  *
- * Both the title-bar View menu and the tab strip's "view options" dropdown render this list, so a
- * toggle flipped in either place shows up identically in the other.
+ * Deform path entries are `showPathGuides`-gated because path guides are an Edit-tab overlay:
+ * offering the toggle on a Preview tab would advertise a switch that cannot change anything.
  */
 @Composable
 fun ViewOptionsMenuItems(
@@ -16,6 +17,7 @@ fun ViewOptionsMenuItems(
 	onOptionsChange: (TabViewOptions) -> Unit,
 	onDismiss: () -> Unit,
 	showHeaders: Boolean = true,
+	showPathGuides: Boolean = true,
 	onHover: (() -> Unit)? = null,
 ) {
 	fun apply(updated: TabViewOptions) {
@@ -43,12 +45,14 @@ fun ViewOptionsMenuItems(
 		onHover = onHover,
 		onClick = { apply(options.copy(showWarp = !options.showWarp)) },
 	)
-	AppMenuItem(
-		text = tr("canvas.visibility.paths"),
-		isChecked = options.showDeformPaths,
-		onHover = onHover,
-		onClick = { apply(options.copy(showDeformPaths = !options.showDeformPaths)) },
-	)
+	if (showPathGuides) {
+		AppMenuItem(
+			text = tr("canvas.visibility.paths"),
+			isChecked = options.showDeformPaths,
+			onHover = onHover,
+			onClick = { apply(options.copy(showDeformPaths = !options.showDeformPaths)) },
+		)
+	}
 
 	AppMenuSeparator()
 
@@ -93,16 +97,18 @@ fun ViewOptionsMenuItems(
 		onHover = onHover,
 		onClick = { apply(options.copy(warpShowIndices = !options.warpShowIndices)) },
 	)
-	AppMenuItem(
-		text = tr("canvas.information.pathWidth"),
-		isChecked = options.pathShowWidth,
-		onHover = onHover,
-		onClick = { apply(options.copy(pathShowWidth = !options.pathShowWidth)) },
-	)
-	AppMenuItem(
-		text = tr("canvas.information.pathHardness"),
-		isChecked = options.pathShowHardness,
-		onHover = onHover,
-		onClick = { apply(options.copy(pathShowHardness = !options.pathShowHardness)) },
-	)
+	if (showPathGuides) {
+		AppMenuItem(
+			text = tr("canvas.information.pathWidth"),
+			isChecked = options.pathShowWidth,
+			onHover = onHover,
+			onClick = { apply(options.copy(pathShowWidth = !options.pathShowWidth)) },
+		)
+		AppMenuItem(
+			text = tr("canvas.information.pathHardness"),
+			isChecked = options.pathShowHardness,
+			onHover = onHover,
+			onClick = { apply(options.copy(pathShowHardness = !options.pathShowHardness)) },
+		)
+	}
 }

@@ -128,6 +128,8 @@ fun WorkspaceTabStrip(
 						onOptionsChange = viewModel::setTabViewOptions,
 						onDismiss = { showOptionsMenu = false },
 						showHeaders = false,
+						// Only the Edit canvas paints path guides, so only it offers their toggles.
+						showPathGuides = state.activeTabKind == WorkspaceTabKind.EDIT,
 					)
 					AppMenuSeparator()
 					AppMenuItem(text = tr("tab.resetView"), onClick = {

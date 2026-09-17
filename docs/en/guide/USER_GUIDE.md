@@ -73,7 +73,7 @@ The main window is structured as **Left Workspace + Right Inspector + Independen
 The left workspace is a browser-style tab strip: two fixed tabs — **Edit** and **Preview** — plus any number of added tabs.
 
 - **Fixed and added tabs**: `Edit` and `Preview` are pinned and cannot be closed. `+` adds an Edit, Preview, or History tab; added tabs show a close button (`✕`). `Ctrl+T` adds an Edit tab, `Ctrl+Shift+T` a Preview tab, `Ctrl+H` opens the History tab, `Ctrl+W` closes the current tab, `Ctrl+Tab` / `Ctrl+1…9` switch tabs.
-- **Per-tab view options**: Every canvas tab keeps its own texture / mesh wireframe / warp / deform-path / annotation toggles *and* its own canvas zoom and pan. These options have a single home: the `View ▾` menu at the right of the tab strip (the title-bar View menu no longer repeats them). A dot on that button means the tab differs from the defaults, and `Reset Current Tab View Options` restores them. Two Preview tabs can therefore hold different overlays and camera positions at the same time.
+- **Per-tab view options**: Every canvas tab keeps its own texture / mesh wireframe / warp / deform-path / annotation toggles *and* its own canvas zoom and pan. These options have a single home: the `View ▾` menu at the right of the tab strip (the title-bar View menu no longer repeats them). A dot on that button means the tab differs from the defaults, and `Reset Current Tab View Options` restores them. Two Preview tabs can therefore hold different overlays and camera positions at the same time. The deform-path toggles are listed on Edit tabs only, because path guides never paint on a Preview canvas.
 - **Right-click a tab** to duplicate or close it; `View → Tabs` exposes the same commands with their shortcuts. The close button only appears on the current or hovered tab.
 
 ### 1. Edit Tab
@@ -81,7 +81,8 @@ The left workspace is a browser-style tab strip: two fixed tabs — **Edit** and
 - **VS Code Style Tree Guides**: Clean indentation guide lines with expand/collapse arrows.
 - **Ear Tab Collapse**: Click the collapse button in the header to minimize the hierarchy tree into a compact side tab, maximizing canvas area.
 - **Opaque Canvas**: Artwork always renders at its own opacity instead of a global semi-transparency. Use `Selected only` or `Dim unselected` on that tab when you need to focus, and the overlays draw on top.
-- **Idle guides fade out**: With no layer or deformer selected, the warp lattices, rotation-deformer boxes, and deform paths render faded instead of covering the artwork. Selecting something brings its own guides back to full strength; turn the tab's `Dim unselected` off to keep everything bright.
+- **Idle guides fade out**: With no layer or deformer selected, the warp lattices and rotation-deformer boxes render faded instead of covering the artwork. Selecting something brings its own guides back to full strength; turn the tab's `Dim unselected` off to keep everything bright.
+- **Path guides follow the selection**: A deform path is only drawn while the part it deforms — or that part's deformer — is selected, and only on an Edit tab. With nothing selected the canvas shows no paths at all, hovering a part in the tree previews its path, and the Preview tab always renders clean artwork.
 - **Deformer Warp option**: an Edit tab enables `Deformer Warp` by default (so the rig lattice is still visible), and that option now really governs the view — turn it off for artwork plus mesh wireframe only.
 - **Mesh Wireframe**: Enable `Mesh Wireframe` in that tab's `View ▾` menu to overlay the adaptive Delaunay triangulation with a dark halo (turn the texture off for a pure wireframe). The bottom-left badge then reports drawable, vertex, and triangle counts.
 
