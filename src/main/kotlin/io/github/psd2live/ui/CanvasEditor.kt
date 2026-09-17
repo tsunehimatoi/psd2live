@@ -24,6 +24,9 @@ internal enum class CanvasTool(val shortcut: String) {
 
 internal enum class SelectionStyle { BOX, LASSO }
 
+/** Which brush parameter the Alt + right-drag gesture latched onto; null until the drag picks a direction. */
+internal enum class BrushAdjustAxis { RADIUS, HARDNESS }
+
 internal enum class BoundingHandle {
     NONE, BODY, TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT,
     TOP, BOTTOM, LEFT, RIGHT, ROTATE
@@ -59,8 +62,11 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
     var inflateInvert by mutableStateOf(false)
     /** Live feedback only: the direction the next stroke would take right now. */
     var shrinks by mutableStateOf(false)
-    /** True while Alt + right-drag is retuning the brush; the overlay HUD follows it and cancel() restores. */
+    /** True while Alt + right-drag is retuning the brush; the overlay keys its HUD and feather fill off it. */
     var adjustingBrush by mutableStateOf(false)
+        private set
+    /** Which parameter the live adjustment latched onto; null until the drag clears the lock threshold. */
+    var brushAxis by mutableStateOf<BrushAdjustAxis?>(null)
         private set
     var pathWidth by mutableStateOf(0.12f)
     var pathLevel by mutableStateOf(2)
@@ -600,12 +606,7 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
     fun move(pos: Offset, viewport: CanvasViewport, shift: Boolean, alt: Boolean = false) {
         updateHover(pos, viewport)
         // Mid-stroke report the latched direction, so the circle never contradicts what the drag is doing.
-        // While the brush gesture runs Alt means "retune the brush", not "shrink the inflate stroke".
-        shrinks = when {
-            adjustingBrush -> inflateInvert
-            dragging && tool == CanvasTool.INFLATE -> shrinkAtPress
-            else -> inflateInvert xor alt
-        }
+        shrinks = if (dragging && tool == CanvasTool.INFLATE) shrinkAtPress else inflateInvert xor alt
         if (!dragging || busy) return
         moved = moved || (pos - start).getDistance() > 2f
         if (!moved) return
@@ -780,17 +781,20 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
             } else {
                 val brush = tool == CanvasTool.BRUSH || tool == CanvasTool.SMOOTH || tool == CanvasTool.INFLATE
                 val inflate = tool == CanvasTool.INFLATE
+                // radius is a canvas-space size, so it covers the same part of the artwork at any zoom; every
+                // use below works on screen coordinates and therefore needs it scaled first.
+                val screenRadius = (radius * viewport.scale).toFloat()
                 val base = if (brush && preview != null) RigGeometryTools.geometry(preview!!, t.kind, t.id, pose).points else t.geometry.points
                 val screen = screen(base, t, viewport); val world = t.mapping.localToWorld(base)
-                val affected = if (brush) screen.indices.filter { (vertices.isEmpty() || it in vertices) && distanceToSegment(screen[it], previous, pos) <= radius }.toSet() else vertices.filter { it in screen.indices }.toSet()
+                val affected = if (brush) screen.indices.filter { (vertices.isEmpty() || it in vertices) && distanceToSegment(screen[it], previous, pos) <= screenRadius }.toSet() else vertices.filter { it in screen.indices }.toSet()
                 val delta = if (brush) pos - previous else pos - start
                 val center = if (t.kind == "rotation") screen[0] else if (affected.isEmpty()) start else Offset(affected.map { screen[it].x }.average().toFloat(), affected.map { screen[it].y }.average().toFloat())
                 val adjacency = if (tool == CanvasTool.SMOOTH || (tool == CanvasTool.BRUSH && shift)) neighbors(t) else null
                 for (i in affected) {
                     val p = screen[i]
-                    val weight = if (brush) brushWeight(distanceToSegment(p, previous, pos), radius, hardness) * strength else 1f
+                    val weight = if (brush) brushWeight(distanceToSegment(p, previous, pos), screenRadius, hardness) * strength else 1f
                     val destination = when {
-                        inflate -> p + inflateOffset(p, previous, pos, delta.getDistance().coerceAtMost(radius) * weight * INFLATE_GAIN * (if (shrinkAtPress) -1f else 1f))
+                        inflate -> p + inflateOffset(p, previous, pos, delta.getDistance().coerceAtMost(screenRadius) * weight * INFLATE_GAIN * (if (shrinkAtPress) -1f else 1f))
                         adjacency != null -> { val ns = adjacency[i]; if (ns.isEmpty()) p else p + (Offset(ns.map { screen[it].x }.average().toFloat(), ns.map { screen[it].y }.average().toFloat()) - p) * weight }
                         else -> p + delta * weight
                     }
@@ -833,23 +837,43 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
         if (adjustingBrush || dragging) return false
         if (tool != CanvasTool.BRUSH && tool != CanvasTool.SMOOTH && tool != CanvasTool.INFLATE) return false
         adjustingBrush = true
+        brushAxis = null
         brushAnchor = pos
         brushRadiusAtStart = radius
         brushHardnessAtStart = hardness
+        // Freeze the outline at the press point, and pin the ring colour with it: the viewport stops calling
+        // move() for the duration, so nothing else refreshes either. The size change is then judged against
+        // fixed artwork instead of an outline sliding along under the cursor.
+        cursor = pos
+        shrinks = inflateInvert
         return true
     }
 
-    /** Right grows the radius one `]` press per [BRUSH_RADIUS_STEP_PX]; down hardens, full span over [BRUSH_HARDNESS_SPAN_PX]. */
+    /**
+     * Applies the drag to whichever parameter the gesture latched onto. The axis is decided once, from the
+     * first movement past [BRUSH_AXIS_LOCK_PX], so radius and hardness are never adjusted together and a
+     * mostly-horizontal drag cannot nudge hardness by accident.
+     */
     fun updateBrushAdjust(pos: Offset) {
         if (!adjustingBrush) return
-        radius = (brushRadiusAtStart * 1.2f.pow((pos.x - brushAnchor.x) / BRUSH_RADIUS_STEP_PX)).coerceIn(4f, 500f)
-        hardness = (brushHardnessAtStart + (pos.y - brushAnchor.y) / BRUSH_HARDNESS_SPAN_PX * 0.95f).coerceIn(0f, 0.95f)
+        val dx = pos.x - brushAnchor.x
+        val dy = pos.y - brushAnchor.y
+        if (brushAxis == null) {
+            if (max(abs(dx), abs(dy)) < BRUSH_AXIS_LOCK_PX) return
+            brushAxis = if (abs(dx) >= abs(dy)) BrushAdjustAxis.RADIUS else BrushAdjustAxis.HARDNESS
+        }
+        when (brushAxis) {
+            BrushAdjustAxis.RADIUS -> radius = (brushRadiusAtStart * 1.2f.pow(dx / BRUSH_RADIUS_STEP_PX)).coerceIn(4f, 500f)
+            BrushAdjustAxis.HARDNESS -> hardness = (brushHardnessAtStart + dy / BRUSH_HARDNESS_SPAN_PX * 0.95f).coerceIn(0f, 0.95f)
+            null -> Unit
+        }
     }
 
     /** Ends the gesture; [cancel] restores the values captured at press (Esc, tool switch, focus loss). */
     fun endBrushAdjust(cancel: Boolean) {
         if (!adjustingBrush) return
         adjustingBrush = false
+        brushAxis = null
         if (cancel) { radius = brushRadiusAtStart; hardness = brushHardnessAtStart }
     }
 
@@ -886,6 +910,9 @@ private const val BRUSH_RADIUS_STEP_PX = 12f
 
 /** Vertical travel in raw px that spans the whole 0f..0.95f hardness range in the same gesture. */
 private const val BRUSH_HARDNESS_SPAN_PX = 200f
+
+/** Drag distance before the gesture commits to radius or hardness; below it nothing is adjusted. */
+private const val BRUSH_AXIS_LOCK_PX = 4f
 
 /**
  * Radially pushes [point] away from the closest point on the stroke segment [from]→[to], by [amount] pixels.

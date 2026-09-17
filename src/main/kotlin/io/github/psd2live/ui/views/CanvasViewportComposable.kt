@@ -414,13 +414,15 @@ fun CanvasViewportComposable(
 			.onPointerEvent(PointerEventType.Move) { event ->
 				val change = event.changes.firstOrNull() ?: return@onPointerEvent
                 if (mode == CanvasMode.EDIT && previewModel != null && !isDragging) {
-                    editor.move(
+                    // The brush gesture takes over the pointer: skipping move() here is what keeps the outline
+                    // parked at the press point, so the viewport stops feeding hover updates for the duration.
+                    if (editor.adjustingBrush) editor.updateBrushAdjust(change.position)
+                    else editor.move(
                         change.position,
                         computeViewport(previewModel, viewSize.width, viewSize.height),
                         event.keyboardModifiers.isShiftPressed,
                         event.keyboardModifiers.isAltPressed
                     )
-                    if (editor.adjustingBrush) editor.updateBrushAdjust(change.position)
                 }
                 if (isDragging) {
 					val delta = change.position - lastDragPos

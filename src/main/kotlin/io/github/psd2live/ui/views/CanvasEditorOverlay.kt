@@ -17,6 +17,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -196,10 +197,26 @@ internal fun BoxScope.CanvasEditorOverlay(
         // 4. BRUSH / SMOOTH / INFLATE mode: Circle brush outline following cursor
         if (editor.tool in listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE)) {
             editor.cursor?.let {
+                // Same conversion the paint path uses: radius is a canvas size, the outline is drawn in screen px.
+                val r = (editor.radius * viewport.scale).toFloat()
                 val ring = if (editor.tool == CanvasTool.INFLATE && editor.shrinks) colors.warning else colors.textPrimary
-                drawCircle(Color.Black.copy(alpha = 0.7f), editor.radius, it, style = Stroke(3f))
-                drawCircle(ring, editor.radius, it, style = Stroke(1.2f))
-                drawCircle(colors.accent.copy(alpha = 0.6f), editor.radius * editor.hardness, it, style = Stroke(1f))
+                if (editor.adjustingBrush) {
+                    // Red preview of the actual falloff, the way Photoshop shows it: the gradient is sampled
+                    // from brushWeight() itself, so what is painted here is exactly how the stroke will land.
+                    val samples = 24
+                    val stops = Array(samples + 1) { i ->
+                        val t = i / samples.toFloat()
+                        t to Color.Red.copy(alpha = brushWeight(t * r, r, editor.hardness) * 0.6f)
+                    }
+                    drawCircle(
+                        brush = Brush.radialGradient(colorStops = stops, center = it, radius = r.coerceAtLeast(1f)),
+                        radius = r,
+                        center = it,
+                    )
+                }
+                drawCircle(Color.Black.copy(alpha = 0.7f), r, it, style = Stroke(3f))
+                drawCircle(ring, r, it, style = Stroke(1.2f))
+                drawCircle(colors.accent.copy(alpha = 0.6f), r * editor.hardness, it, style = Stroke(1f))
             }
         }
 
@@ -247,20 +264,29 @@ internal fun BoxScope.CanvasEditorOverlay(
             }
         }
 
-        // 7. Brush gesture HUD: radius / hardness readout that follows the cursor during Alt + right-drag
+        // 7. Brush gesture HUD: sits with the frozen outline and lists every brush parameter, the way the
+        //    Photoshop readout does. The one the drag latched onto is highlighted, so the full picture is
+        //    there without having to guess which value is currently moving.
         if (editor.adjustingBrush) {
             editor.cursor?.let { anchor ->
-                val label = TextStyle(fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = colors.textPrimary)
-                val radiusLayout = textMeasurer.measure(text = "${tr("editor.radius")} ${editor.radius.roundToInt()} px", style = label)
-                val hardnessLayout = textMeasurer.measure(text = "${tr("editor.hardness")} ${(editor.hardness * 100).roundToInt()}%", style = label)
+                val base = TextStyle(fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = colors.textPrimary)
+                val live = base.copy(color = colors.accent)
+                val rows = listOf(
+                    BrushAdjustAxis.RADIUS to "${tr("editor.radius")} ${editor.radius.roundToInt()} px",
+                    BrushAdjustAxis.HARDNESS to "${tr("editor.hardness")} ${(editor.hardness * 100).roundToInt()}%",
+                    null to "${tr("editor.strength")} ${(editor.strength * 100).roundToInt()}%",
+                )
+                val lines = rows.map { (axis, text) ->
+                    textMeasurer.measure(text = text, style = if (axis != null && axis == editor.brushAxis) live else base)
+                }
                 val padX = 8f
                 val padY = 5f
                 val gap = 3f
                 val box = Size(
-                    maxOf(radiusLayout.size.width, hardnessLayout.size.width) + padX * 2f,
-                    radiusLayout.size.height + hardnessLayout.size.height + gap + padY * 2f,
+                    lines.maxOf { it.size.width } + padX * 2f,
+                    lines.sumOf { it.size.height }.toFloat() + gap * (lines.size - 1) + padY * 2f,
                 )
-                // Prefer below-right of the cursor; flip to the opposite side when that would leave the canvas.
+                // Prefer below-right of the outline; flip to the opposite side when that would leave the canvas.
                 var x = anchor.x + 18f
                 var y = anchor.y + 22f
                 if (x + box.width > size.width) x = anchor.x - 18f - box.width
@@ -269,8 +295,11 @@ internal fun BoxScope.CanvasEditorOverlay(
                 y = y.coerceIn(0f, (size.height - box.height).coerceAtLeast(0f))
                 drawRoundRect(Color(0xE6181A1E), Offset(x, y), box, CornerRadius(4f, 4f))
                 drawRoundRect(colors.accent.copy(alpha = 0.9f), Offset(x, y), box, CornerRadius(4f, 4f), style = Stroke(1f))
-                drawText(textLayoutResult = radiusLayout, topLeft = Offset(x + padX, y + padY))
-                drawText(textLayoutResult = hardnessLayout, topLeft = Offset(x + padX, y + padY + radiusLayout.size.height + gap))
+                var lineY = y + padY
+                lines.forEach {
+                    drawText(textLayoutResult = it, topLeft = Offset(x + padX, lineY))
+                    lineY += it.size.height + gap
+                }
             }
         }
     }
