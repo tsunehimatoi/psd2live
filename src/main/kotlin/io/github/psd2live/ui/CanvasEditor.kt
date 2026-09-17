@@ -17,6 +17,7 @@ internal enum class CanvasTool(val shortcut: String) {
     WARP("W"),
     BRUSH("B"),
     SMOOTH("Shift+B"),
+    INFLATE("I"),
     PATH_DEFORM("D"),
     HAND("H")
 }
@@ -54,6 +55,10 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
     var radius by mutableStateOf(48f)
     var strength by mutableStateOf(0.5f)
     var hardness by mutableStateOf(0.35f)
+    /** Persistent direction toggle for the inflate brush; flipped by the options-bar chip and live Alt. */
+    var inflateInvert by mutableStateOf(false)
+    /** Live feedback only: the direction the next stroke would take right now. */
+    var shrinks by mutableStateOf(false)
     var pathWidth by mutableStateOf(0.12f)
     var pathLevel by mutableStateOf(2)
     var activePath by mutableStateOf<String?>(null)
@@ -97,6 +102,8 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
     private var moved = false
     private var additive = false
     private var subtractive = false
+    /** Inflate direction is latched here on press so a stroke never flips sign mid-drag. */
+    private var shrinkAtPress = false
     private var dragging = false
     private var cachedSource: PuppetModel? = null
     private var cachedPose = emptyMap<ParameterId, Float>()
@@ -190,6 +197,7 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
         hoveredVertex = null
         hoveredHandle = BoundingHandle.NONE
         isHoveringObject = false
+        shrinks = inflateInvert
     }
 
     fun selectionBounds(viewport: CanvasViewport): BoundingBox? {
@@ -297,7 +305,7 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
         if (space || tool == CanvasTool.HAND) return if (dragging) java.awt.Cursor.MOVE_CURSOR else java.awt.Cursor.HAND_CURSOR
         if (dragging) {
             if (marquee.isNotEmpty()) return java.awt.Cursor.CROSSHAIR_CURSOR
-            if (tool == CanvasTool.BRUSH || tool == CanvasTool.SMOOTH) return java.awt.Cursor.CROSSHAIR_CURSOR
+            if (tool == CanvasTool.BRUSH || tool == CanvasTool.SMOOTH || tool == CanvasTool.INFLATE) return java.awt.Cursor.CROSSHAIR_CURSOR
             return java.awt.Cursor.MOVE_CURSOR
         }
         return when (tool) {
@@ -312,7 +320,7 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
             }
             CanvasTool.MESH -> if (hoveredVertex != null) java.awt.Cursor.HAND_CURSOR else java.awt.Cursor.CROSSHAIR_CURSOR
             CanvasTool.WARP -> if (hoveredVertex != null) java.awt.Cursor.HAND_CURSOR else java.awt.Cursor.CROSSHAIR_CURSOR
-            CanvasTool.BRUSH, CanvasTool.SMOOTH -> java.awt.Cursor.CROSSHAIR_CURSOR
+            CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE -> java.awt.Cursor.CROSSHAIR_CURSOR
             CanvasTool.PATH_DEFORM -> if (hoveredVertex != null) java.awt.Cursor.HAND_CURSOR else java.awt.Cursor.CROSSHAIR_CURSOR
             CanvasTool.HAND -> java.awt.Cursor.HAND_CURSOR
         }
@@ -547,7 +555,9 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
         targetAtPress = editTarget; original = model; dragging = true
         val points = screen(editTarget.geometry.points, editTarget, viewport)
 
-        if (tool == CanvasTool.BRUSH || tool == CanvasTool.SMOOTH) {
+        val brush = tool == CanvasTool.BRUSH || tool == CanvasTool.SMOOTH || tool == CanvasTool.INFLATE
+        if (brush) {
+            shrinkAtPress = inflateInvert xor alt
             if (editTarget.kind == "rotation") { dragging = false; error = io.github.psd2live.i18n.tr("editor.rotationBrush") }
             return true
         }
@@ -576,6 +586,8 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
 
     fun move(pos: Offset, viewport: CanvasViewport, shift: Boolean, alt: Boolean = false) {
         updateHover(pos, viewport)
+        // Mid-stroke report the latched direction, so the circle never contradicts what the drag is doing.
+        shrinks = if (dragging && tool == CanvasTool.INFLATE) shrinkAtPress else inflateInvert xor alt
         if (!dragging || busy) return
         moved = moved || (pos - start).getDistance() > 2f
         if (!moved) return
@@ -748,17 +760,19 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
                 points[pathPoint] = local(pos, t, viewport, points[pathPoint])
                 cmd = geometryCommand(t, DeformPathTools.deform(t.geometry.points, source.deformPaths, path.id, points))
             } else {
-                val brush = tool == CanvasTool.BRUSH || tool == CanvasTool.SMOOTH
+                val brush = tool == CanvasTool.BRUSH || tool == CanvasTool.SMOOTH || tool == CanvasTool.INFLATE
+                val inflate = tool == CanvasTool.INFLATE
                 val base = if (brush && preview != null) RigGeometryTools.geometry(preview!!, t.kind, t.id, pose).points else t.geometry.points
                 val screen = screen(base, t, viewport); val world = t.mapping.localToWorld(base)
                 val affected = if (brush) screen.indices.filter { (vertices.isEmpty() || it in vertices) && distanceToSegment(screen[it], previous, pos) <= radius }.toSet() else vertices.filter { it in screen.indices }.toSet()
                 val delta = if (brush) pos - previous else pos - start
                 val center = if (t.kind == "rotation") screen[0] else if (affected.isEmpty()) start else Offset(affected.map { screen[it].x }.average().toFloat(), affected.map { screen[it].y }.average().toFloat())
-                val adjacency = if (tool == CanvasTool.SMOOTH || (brush && shift)) neighbors(t) else null
+                val adjacency = if (tool == CanvasTool.SMOOTH || (tool == CanvasTool.BRUSH && shift)) neighbors(t) else null
                 for (i in affected) {
                     val p = screen[i]
                     val weight = if (brush) brushWeight(distanceToSegment(p, previous, pos), radius, hardness) * strength else 1f
                     val destination = when {
+                        inflate -> p + inflateOffset(p, previous, pos, delta.getDistance().coerceAtMost(radius) * weight * INFLATE_GAIN * (if (shrinkAtPress) -1f else 1f))
                         adjacency != null -> { val ns = adjacency[i]; if (ns.isEmpty()) p else p + (Offset(ns.map { screen[it].x }.average().toFloat(), ns.map { screen[it].y }.average().toFloat()) - p) * weight }
                         else -> p + delta * weight
                     }
@@ -811,6 +825,25 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
 internal fun brushWeight(distance: Float, radius: Float, hardness: Float): Float {
     val x = ((distance / radius.coerceAtLeast(1f) - hardness) / (1f - hardness.coerceAtMost(0.95f))).coerceIn(0f, 1f)
     return 1 - x * x * (3 - 2 * x)
+}
+
+/** Radial gain for the inflate brush: displacement = min(cursor travel, radius) * weight * gain. */
+private const val INFLATE_GAIN = 0.5f
+
+/**
+ * Radially pushes [point] away from the closest point on the stroke segment [from]→[to], by [amount] pixels.
+ * Degenerate directions return [Offset.Zero] rather than a NaN — a NaN here would be committed to history.
+ * The epsilon (instead of an exact zero test) also stops the sign from strobing as the cursor sweeps a vertex.
+ */
+internal fun inflateOffset(point: Offset, from: Offset, to: Offset, amount: Float): Offset {
+    val segment = to - from
+    val length2 = segment.x * segment.x + segment.y * segment.y
+    val direction = if (length2 < 1e-8f) point - from else {
+        val t = (((point - from).x * segment.x + (point - from).y * segment.y) / length2).coerceIn(0f, 1f)
+        point - (from + segment * t)
+    }
+    val distance = direction.getDistance()
+    return if (distance < 1e-3f) Offset.Zero else direction / distance * amount
 }
 
 internal fun distanceToSegment(p: Offset, a: Offset, b: Offset): Float {

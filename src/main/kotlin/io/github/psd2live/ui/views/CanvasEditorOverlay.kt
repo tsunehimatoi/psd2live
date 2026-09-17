@@ -187,11 +187,12 @@ internal fun BoxScope.CanvasEditorOverlay(
             }
         }
 
-        // 4. BRUSH or SMOOTH mode: Circle brush outline following cursor
-        if (editor.tool in listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH)) {
+        // 4. BRUSH / SMOOTH / INFLATE mode: Circle brush outline following cursor
+        if (editor.tool in listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE)) {
             editor.cursor?.let {
+                val ring = if (editor.tool == CanvasTool.INFLATE && editor.shrinks) colors.warning else colors.textPrimary
                 drawCircle(Color.Black.copy(alpha = 0.7f), editor.radius, it, style = Stroke(3f))
-                drawCircle(colors.textPrimary, editor.radius, it, style = Stroke(1.2f))
+                drawCircle(ring, editor.radius, it, style = Stroke(1.2f))
                 drawCircle(colors.accent.copy(alpha = 0.6f), editor.radius * editor.hardness, it, style = Stroke(1f))
             }
         }
@@ -318,14 +319,31 @@ internal fun BoxScope.CanvasEditorOverlay(
                 }
             }
 
-            // BRUSH / SMOOTH tool options
-            if (editor.tool in listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH)) {
+            // BRUSH / SMOOTH / INFLATE tool options
+            if (editor.tool in listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE)) {
                 Text(tr("editor.radius"), color = colors.textMuted, fontSize = 10.sp)
                 CompactNumberSpinner(editor.radius.toDouble(), { editor.radius = it.toFloat() }, Modifier.width(72.dp), min = 4.0, max = 500.0, unit = "px", height = 23.dp)
                 Text(tr("editor.strength"), color = colors.textMuted, fontSize = 10.sp)
                 CompactNumberSpinner((editor.strength * 100).toDouble(), { editor.strength = it.toFloat() / 100 }, Modifier.width(65.dp), min = 1.0, max = 100.0, unit = "%", height = 23.dp)
                 Text(tr("editor.hardness"), color = colors.textMuted, fontSize = 10.sp)
                 CompactNumberSpinner((editor.hardness * 100).toDouble(), { editor.hardness = it.toFloat() / 100 }, Modifier.width(65.dp), min = 0.0, max = 95.0, unit = "%", height = 23.dp)
+                // INFLATE direction: persistent toggle, inverted for the length of a stroke by holding Alt
+                if (editor.tool == CanvasTool.INFLATE) {
+                    CompactToggleChip(
+                        text = tr("editor.mode.inflate"),
+                        selected = !editor.inflateInvert,
+                        onToggle = { editor.inflateInvert = false; focus() },
+                        enabled = editor.editable,
+                        height = 22.dp
+                    )
+                    CompactToggleChip(
+                        text = tr("editor.mode.shrink"),
+                        selected = editor.inflateInvert,
+                        onToggle = { editor.inflateInvert = true; focus() },
+                        enabled = editor.editable,
+                        height = 22.dp
+                    )
+                }
             }
 
             // PATH_DEFORM tool options
@@ -353,7 +371,11 @@ internal fun BoxScope.CanvasEditorOverlay(
 
     // Bottom Status Bar
     Text(
-        editor.error ?: if (editor.busy) tr("editor.saving") else tr("editor.selectionCount", editor.objects.size, editor.vertices.size) + "   ·   " + tr(if (isPathTool) "editor.pathHint" else "editor.hint"),
+        editor.error ?: if (editor.busy) tr("editor.saving") else tr("editor.selectionCount", editor.objects.size, editor.vertices.size) + "   ·   " + tr(when (editor.tool) {
+            CanvasTool.PATH_DEFORM -> "editor.pathHint"
+            CanvasTool.INFLATE -> "editor.inflateHint"
+            else -> "editor.hint"
+        }),
         color = if (editor.error != null) colors.error else colors.textMuted,
         fontSize = 10.sp,
         modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().background(colors.panelBackground).padding(horizontal = 8.dp, vertical = 5.dp)
@@ -570,6 +592,19 @@ private fun ToolIcon(tool: CanvasTool, color: Color) {
                 line(14f, 3f, 17f, 6f)
                 drawCircle(color, 3 * s, p(5f, 14f), style = Stroke(1.3f * s))
                 if (tool == CanvasTool.SMOOTH) line(1f, 4f, 7f, 4f)
+            }
+            CanvasTool.INFLATE -> {
+                drawCircle(color, 3.4f * s, p(9f, 9f), style = Stroke(1.3f * s))
+                // Four barbs pointing outward: volume pushed away from the stroke
+                listOf(0f to -1f, 0f to 1f, -1f to 0f, 1f to 0f).forEach { (dx, dy) ->
+                    val tipX = 9f + dx * 7.8f
+                    val tipY = 9f + dy * 7.8f
+                    line(9f + dx * 5.2f, 9f + dy * 5.2f, tipX, tipY)
+                    val perpX = -dy * 1.6f
+                    val perpY = dx * 1.6f
+                    line(tipX, tipY, tipX - dx * 2.2f + perpX, tipY - dy * 2.2f + perpY)
+                    line(tipX, tipY, tipX - dx * 2.2f - perpX, tipY - dy * 2.2f - perpY)
+                }
             }
             CanvasTool.PATH_DEFORM -> {
                 val path = Path().apply { moveTo(2 * s, 14 * s); cubicTo(6 * s, -2 * s, 12 * s, 20 * s, 16 * s, 4 * s) }

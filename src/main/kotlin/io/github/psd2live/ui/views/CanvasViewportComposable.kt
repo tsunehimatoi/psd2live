@@ -286,6 +286,7 @@ fun CanvasViewportComposable(
                                 Key.Tab, Key.E -> if (editor.tool == CanvasTool.MESH) CanvasTool.SELECT else CanvasTool.MESH
                                 Key.W -> CanvasTool.WARP
                                 Key.B -> if (event.isShiftPressed) CanvasTool.SMOOTH else CanvasTool.BRUSH
+                                Key.I -> CanvasTool.INFLATE
                                 Key.D, Key.P -> CanvasTool.PATH_DEFORM
                                 Key.H -> CanvasTool.HAND
                                 else -> null
