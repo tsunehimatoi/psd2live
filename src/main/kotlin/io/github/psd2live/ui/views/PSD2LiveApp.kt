@@ -529,12 +529,15 @@ fun FrameWindowScope.PSD2LiveApp(
 				uiScale = state.uiScale,
 				fontScale = state.fontScale,
 				clickToSelectLayer = state.clickToSelectLayer,
+				currentLanguage = currentLanguage,
 				onUiScaleChange = viewModel::setUiScale,
 				onFontScaleChange = viewModel::setFontScale,
 				onClickToSelectLayerChange = viewModel::setClickToSelectLayer,
+				onLanguageChange = viewModel::setLanguage,
 				onResetDefaults = {
 					AppSettings.resetToDefaults()
 					viewModel.resetZoom()
+					viewModel.resetInteractionPrefs()
 				},
 				onDismiss = { viewModel.closeSettingsDialog() },
 			)

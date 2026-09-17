@@ -431,19 +431,6 @@ fun AppTitleBar(
 						}
 					}
 
-					AppMenuSeparator()
-
-					// 3. 首选项与设置 (Preferences)
-					AppMenuItem(
-						text = tr("menu.view.settings"),
-						shortcut = "Ctrl+,",
-						onHover = { activeSubmenu = null },
-						onClick = {
-							activeMenu = null
-							activeSubmenu = null
-							onShowSettings()
-						},
-					)
 				}
 			}
 
@@ -540,7 +527,26 @@ fun AppTitleBar(
 				}
 			}
 
-			// 4. Help Menu
+			// 4. Settings Menu — a direct entry rather than a menu: it opens the preferences
+			// window on click, so it has no dropdown of its own.
+			TitleBarMenuItem(
+				title = tr("menu.settings"),
+				isOpen = false,
+				onToggle = {
+					activeMenu = null
+					activeSubmenu = null
+					onShowSettings()
+				},
+				onHoverWhenActive = {
+					// Sweep an open menu away when the cursor parks here, like the menus do.
+					if (activeMenu != null) {
+						activeMenu = null
+						activeSubmenu = null
+					}
+				},
+			) {}
+
+			// 5. Help Menu
 			TitleBarMenuItem(
 				title = tr("menu.help"),
 				isOpen = activeMenu == "help",

@@ -800,6 +800,18 @@ class PSD2LiveViewModel : AutoCloseable {
 		setFontScale(1.0f)
 	}
 
+	/**
+	 * Restores the interaction preferences that [AppSettings.resetToDefaults] clears on disk.
+	 *
+	 * Deliberately not routed through [setClickToSelectLayer], which marks the project dirty: a
+	 * global UI preference is not part of the project, and "Reset Defaults" must not leave an opened
+	 * project looking unsaved.
+	 */
+	fun resetInteractionPrefs() {
+		AppSettings.clickToSelectLayer = true
+		_state.update { it.copy(clickToSelectLayer = true) }
+	}
+
 	fun openSettingsDialog() {
 		_state.update { it.copy(showSettingsDialog = true) }
 	}
