@@ -104,10 +104,7 @@ internal object WorkspaceStateCodec {
         return tabs to activeId
     }
 
-    /** Running animation changes unlocked preview values without creating unsaved user edits. */
-    fun editableIdentity(state: PSD2LiveState): JsonObject = encode(state.copy(
-        parameterValues = if (state.animationEnabled) state.parameterValues.filterKeys { it in state.lockedParameters } else state.parameterValues,
-    ))
+    fun editableIdentity(state: PSD2LiveState): JsonObject = encode(state)
     fun settings(state: PSD2LiveState): JsonObject = buildJsonObject {
         put("atlasSize", state.atlasSize)
         put("textureUpscale", Json.encodeToJsonElement(state.textureUpscale))

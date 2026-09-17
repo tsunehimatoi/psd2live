@@ -17,6 +17,7 @@ import org.umamo.interop.cmo3.Cmo3Import
 import org.umamo.interop.mocVersion
 import org.umamo.interop.moc3.Moc3Sidecars
 import org.umamo.interop.moc3.import.Moc3Import
+import org.umamo.render.canvasToParentSpaceFor
 import org.umamo.render.restMeshesToCanvasSpace
 import org.umamo.runtime.model.PuppetModel
 import java.nio.file.Files
@@ -292,7 +293,14 @@ class PSD2LivePipeline {
 				}
 			},
 		)
-		val bundle = Moc3Sidecars.bundle(exportPuppet, baseName, pages = pages, sidecars = sidecars, source = manifestTemplate)
+		val bundle = Moc3Sidecars.bundle(
+			exportPuppet,
+			baseName,
+			pages = pages,
+			sidecars = sidecars,
+			source = manifestTemplate,
+			canvasToParentSpace = canvasToParentSpaceFor(exportPuppet),
+		)
 		validateBundle(bundle)
 		val manifest = bundle.files.single { it.name.endsWith(".model3.json") }.name
 		return CubismRuntimeBundle(manifest, bundle.files.map { CubismRuntimeAsset(it.name, it.bytes) }) to bundle.report

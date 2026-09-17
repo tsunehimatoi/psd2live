@@ -12,6 +12,7 @@ internal object RigAuthoringJournal {
     }
 
     fun apply(model: PuppetModel, edit: JsonObject): PuppetModel = when (edit.getValue("op").jsonPrimitive.content) {
+        "canvas_geometry", "canvas_topology", "canvas_create_warp", "canvas_create_rotation" -> CanvasEdits.apply(model, edit)
         "path_put", "path_delete" -> DeformPathJournal.apply(model, edit)
         "set" -> applyKeyformSet(model, RigKeyformSetEdit(target(edit.text("target")), edit.coordinate("key"),
             edit["geometry"]?.jsonObject?.let { g -> RigKeyformGeometryEdit(
@@ -121,7 +122,7 @@ internal object RigAuthoringJournal {
                         put("points", JsonArray(points))
                     }
                 }
-                "set", "copy", "delete", "warp", "structure", "path_delete" -> command
+                "set", "copy", "delete", "warp", "structure", "path_delete", "canvas_geometry", "canvas_topology", "canvas_create_warp", "canvas_create_rotation" -> command
                 else -> error("Unknown authoring operation: $op")
             }
             current = apply(current, compiled)

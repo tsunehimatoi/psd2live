@@ -263,10 +263,10 @@ class PSD2LiveViewModel : AutoCloseable {
 				if (publishParameters) lastSdkParameterPublishNanos = now
 				current.copy(
 					sdkStatus = "ready",
-					parameterValues = if (publishParameters) {
+					previewParameterValues = if (publishParameters) {
 						parameterValuesAfterPreviewFrame(current, frame.parameters)
 					} else {
-						current.parameterValues
+						current.previewParameterValues
 					},
 				)
 			}
@@ -816,6 +816,11 @@ class PSD2LiveViewModel : AutoCloseable {
 			if (current.activeWorkspaceTabId == id || current.workspaceTabs.none { it.id == id }) current
 			else {
 				changed = true
+				val target = current.workspaceTabs.firstOrNull { it.id == id }
+				if (target?.kind != WorkspaceTabKind.PREVIEW) {
+					pointerActive = false
+					activeSoftwareMotionName = null
+				}
 				current.copy(activeWorkspaceTabId = id)
 			}
 		}
@@ -1064,7 +1069,16 @@ class PSD2LiveViewModel : AutoCloseable {
 	}
 
 	fun setAnimationEnabled(enabled: Boolean) {
-		_state.update { it.copy(animationEnabled = enabled) }
+		_state.update { current ->
+			var nextState = current.copy(animationEnabled = enabled)
+			if (enabled && current.activeTabKind != WorkspaceTabKind.PREVIEW) {
+				val previewTab = current.workspaceTabs.firstOrNull { it.kind == WorkspaceTabKind.PREVIEW }
+				if (previewTab != null) {
+					nextState = nextState.copy(activeWorkspaceTabId = previewTab.id)
+				}
+			}
+			nextState
+		}
 		lastTick = System.nanoTime()
 	    markWorkspaceChanged()
 	}
@@ -1425,6 +1439,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				animationEnabled = false,
 				lockedParameters = emptySet(),
 				parameterValues = defaults,
+				previewParameterValues = defaults,
 			)
 		}
 	    markWorkspaceChanged()
@@ -1976,6 +1991,16 @@ class PSD2LiveViewModel : AutoCloseable {
 	@Volatile private var latestLiveParameters: Map<ParameterId, Float> = emptyMap()
 
 	fun triggerMotion(group: String) {
+		_state.update { current ->
+			var nextState = current.copy(animationEnabled = true)
+			if (current.activeTabKind != WorkspaceTabKind.PREVIEW) {
+				val previewTab = current.workspaceTabs.firstOrNull { it.kind == WorkspaceTabKind.PREVIEW }
+				if (previewTab != null) {
+					nextState = nextState.copy(activeWorkspaceTabId = previewTab.id)
+				}
+			}
+			nextState
+		}
 		sdkSession.startMotion(group, index = 0, priority = 3)
 		when (group.lowercase()) {
 			"nod" -> {
@@ -2007,9 +2032,10 @@ class PSD2LiveViewModel : AutoCloseable {
 				lastTick = now
 
 				val current = _state.value
+				val inPreview = current.activeTabKind == WorkspaceTabKind.PREVIEW
 				val isMeshOnly = current.meshOnly
-				val anim = current.animationEnabled && !isMeshOnly
-				val tracking = current.mouseTrackingEnabled && !isMeshOnly
+				val anim = inPreview && current.animationEnabled && !isMeshOnly
+				val tracking = inPreview && current.mouseTrackingEnabled && !isMeshOnly
 				if (anim) elapsed += dt
 
 				// 1. Advance one-shot software motion (Nod / Shake / Blink)
@@ -2130,7 +2156,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				}
 
 				val model = current.previewModel
-				if (model != null) {
+				if (model != null && inPreview && (anim || tracking)) {
 					val liveParams = if (isMeshOnly) {
 						model.rig.puppet.parameters.associate { it.id to it.default }
 					} else computeLiveParameters(
@@ -2144,9 +2170,15 @@ class PSD2LiveViewModel : AutoCloseable {
 						shakeAngleZ = shakeAngleZ,
 					)
 					latestLiveParameters = liveParams
-					_state.update { latest ->
-						val mergedValues = parameterValuesAfterSoftwareFrame(latest, liveParams)
-						if (mergedValues === latest.parameterValues) latest else latest.copy(parameterValues = mergedValues)
+					if (current.sdkStatus != "ready") {
+						_state.update { latest ->
+							if (latest.activeTabKind != WorkspaceTabKind.PREVIEW) latest
+							else {
+								val mergedValues = parameterValuesAfterSoftwareFrame(latest, liveParams)
+								if (mergedValues === latest.previewParameterValues) latest
+								else latest.copy(previewParameterValues = mergedValues)
+							}
+						}
 					}
 				}
 
@@ -2227,7 +2259,9 @@ class PSD2LiveViewModel : AutoCloseable {
 	) {
 		val current = _state.value
 		val model = current.previewModel ?: return
-		val tracking = current.mouseTrackingEnabled && !current.meshOnly
+		val inPreview = current.activeTabKind == WorkspaceTabKind.PREVIEW
+		val isAnim = inPreview && current.animationEnabled && !current.meshOnly
+		val tracking = inPreview && current.mouseTrackingEnabled && !current.meshOnly
 		val liveParams = latestLiveParameters.ifEmpty {
 			computeLiveParameters(model, current)
 		}
@@ -2245,7 +2279,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				// separately to keep mouse tracking from owning ParamAngleZ.
 				pointerX = if (pointerActive && tracking) pointerX else 0f,
 				pointerY = if (pointerActive && tracking) -followY else 0f,
-				animationEnabled = current.animationEnabled && !current.meshOnly,
+				animationEnabled = isAnim,
 				parameterOverrides = previewValues,
 				frameTimeNanos = frameTimeNanos,
 			),
@@ -2294,7 +2328,7 @@ internal fun parameterValuesForPreview(
 	state: PSD2LiveState,
 	liveParams: Map<ParameterId, Float> = emptyMap(),
 ): Map<ParameterId, Float> {
-	if (!state.animationEnabled) {
+	if (!state.animationEnabled || state.activeTabKind != WorkspaceTabKind.PREVIEW) {
 		return state.parameterValues
 	}
 	if (state.meshOnly) {
@@ -2362,30 +2396,35 @@ internal fun parameterValuesForPreview(
 internal fun parameterValuesAfterPreviewFrame(
 	state: PSD2LiveState,
 	incoming: Map<ParameterId, Float>,
-): Map<ParameterId, Float> =
-	if (state.animationEnabled && !state.meshOnly) {
-		mergeUnlockedParameterValues(state.parameterValues, incoming, state.lockedParameters)
+): Map<ParameterId, Float> {
+	val base = state.previewParameterValues.ifEmpty { state.parameterValues }
+	return if (state.animationEnabled && !state.meshOnly) {
+		mergeUnlockedParameterValues(base, incoming, state.lockedParameters)
 	} else if (state.meshOnly) {
 		val defaults = state.previewModel?.rig?.puppet?.parameters?.associate { it.id to it.default } ?: emptyMap()
-		mergeUnlockedParameterValues(state.parameterValues, defaults, state.lockedParameters)
+		mergeUnlockedParameterValues(base, defaults, state.lockedParameters)
 	} else {
-		state.parameterValues
+		base
 	}
+}
 
 internal fun parameterValuesAfterSoftwareFrame(
 	state: PSD2LiveState,
 	incoming: Map<ParameterId, Float>,
-): Map<ParameterId, Float> =
-	if (state.animationEnabled && state.sdkStatus != "ready" && !state.meshOnly) {
-		mergeUnlockedParameterValues(state.parameterValues, incoming, state.lockedParameters)
+): Map<ParameterId, Float> {
+	val base = state.previewParameterValues.ifEmpty { state.parameterValues }
+	return if (state.animationEnabled && state.sdkStatus != "ready" && !state.meshOnly) {
+		mergeUnlockedParameterValues(base, incoming, state.lockedParameters)
 	} else if (state.meshOnly) {
 		val defaults = state.previewModel?.rig?.puppet?.parameters?.associate { it.id to it.default } ?: emptyMap()
-		mergeUnlockedParameterValues(state.parameterValues, defaults, state.lockedParameters)
+		mergeUnlockedParameterValues(base, defaults, state.lockedParameters)
 	} else {
-		state.parameterValues
+		base
 	}
+}
 
 internal fun previewFrameMatchesState(
 	state: PSD2LiveState,
 	frameAnimationEnabled: Boolean,
-): Boolean = frameAnimationEnabled == (state.animationEnabled && !state.meshOnly)
+): Boolean = (state.activeTabKind == WorkspaceTabKind.PREVIEW) &&
+	(frameAnimationEnabled == (state.animationEnabled && !state.meshOnly))

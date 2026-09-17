@@ -28,6 +28,21 @@ internal object RigGeometryTools {
             return result
         }
         return when (kind) {
+            "rotation" -> {
+                val rotation = model.deformers.single { it.id.raw == id } as Deformer.Rotation
+                val grid = rotation.geometryGrid
+                val cells = grid?.let(::cellsByLinearIndex)
+                val corners = grid?.let { gridCorners(it) { p -> pose[p.raw] ?: params[p.raw]?.default ?: 0f } }
+                var x=0f; var y=0f; var angle=0f; var scale=if(grid==null)1f else 0f
+                corners?.forEach { corner -> cells?.get(corner.linearIndex)?.form?.let { form ->
+                    x+=corner.weight*form.originX; y+=corner.weight*form.originY
+                    angle+=corner.weight*form.angle; scale+=corner.weight*form.scale
+                } }
+                val length = if(model.deformers.any { it.id == rotation.parent && it is Deformer.Warp }) 0.2f else 100f
+                val radians=(angle+rotation.baseAngle)*PI.toFloat()/180f
+                val points=floatArrayOf(x,y,x+cos(radians)*length*scale,y+sin(radians)*length*scale)
+                Geometry(points,points.copyOf(),floatArrayOf(0f,0f,1f,1f),null,null,grid?.axes.orEmpty(),grid?.cells?.size ?: 0,rotation.name,rotation.parent?.raw)
+            }
             "warp" -> {
                 val w = model.deformers.singleOrNull { it.id.raw == id } as? Deformer.Warp ?: error("Warp not found: $id")
                 val domain = FloatArray((w.rows + 1) * (w.columns + 1) * 2)

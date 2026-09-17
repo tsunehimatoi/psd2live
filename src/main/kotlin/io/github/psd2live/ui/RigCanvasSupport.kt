@@ -86,7 +86,8 @@ internal object RigCanvasSupport {
 		val originalComposite = g.composite
 		for (drawable in drawables) {
 			val layerId = model.rig.layerIdByDrawableId[drawable.id.raw]
-			if (visibleLayerIds != null && layerId !in visibleLayerIds) continue
+			if (visibleLayerIds != null && layerId != null && layerId !in visibleLayerIds) continue
+			if (visibleLayerIds != null && layerId == null && drawable.id.raw !in visibleLayerIds && !drawable.isVisible) continue
 			val isHighlighted = highlightedLayerIds == null || (layerId != null && layerId in highlightedLayerIds) || drawable.id.raw in highlightedLayerIds
 			val effectiveAlpha = if (dimUnselected && !isHighlighted) alpha * dimmedAlphaMultiplier else alpha
 			val mesh = drawable.mesh ?: continue

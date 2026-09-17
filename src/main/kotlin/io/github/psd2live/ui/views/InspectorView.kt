@@ -76,6 +76,7 @@ import io.github.psd2live.ui.localizedName
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.state.InspectorTab
+import io.github.psd2live.ui.state.WorkspaceTabKind
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
 import org.umamo.runtime.model.Parameter
@@ -1501,7 +1502,8 @@ private fun ParametersListView(
 				)
 			}
 
-			// Row 2: Animation Switch + Mouse Tracking Switch + Unlock All + Reset All
+			// Row 2: Control Toolbar
+			val inPreview = state.activeTabKind == WorkspaceTabKind.PREVIEW
 			Row(
 				modifier = Modifier.fillMaxWidth(),
 				verticalAlignment = Alignment.CenterVertically,
@@ -1510,38 +1512,50 @@ private fun ParametersListView(
 				val isAnim = state.animationEnabled
 				val isMouseTracking = state.mouseTrackingEnabled
 
-				CompactButton(
-					text = if (isAnim) tr("preview.animation.pause") else tr("preview.animation.play"),
-					onClick = { viewModel.setAnimationEnabled(!isAnim) },
-					leadingIcon = {
-						if (isAnim) IconPause(tint = colors.textPrimary) else IconPlay(tint = colors.accent)
-					},
-					enabled = model != null,
-					height = 22.dp,
-				)
-
-				CompactButton(
-					text = if (isMouseTracking) tr("preview.mouseTracking.on") else tr("preview.mouseTracking.off"),
-					onClick = { viewModel.setMouseTrackingEnabled(!isMouseTracking) },
-					leadingIcon = {
-						IconMouse(
-							active = isMouseTracking,
-							tint = if (isMouseTracking) colors.accent else colors.textDisabled,
-						)
-					},
-					enabled = model != null,
-					height = 22.dp,
-				)
-
-				Spacer(Modifier.weight(1f))
-
-				if (state.lockedParameters.isNotEmpty()) {
+				if (inPreview) {
 					CompactButton(
-						text = tr("parameters.unlockAll"),
-						onClick = { viewModel.unlockAllParameters() },
-						leadingIcon = { IconLock(locked = false, tint = colors.textPrimary) },
+						text = if (isAnim) tr("preview.animation.pause") else tr("preview.animation.play"),
+						onClick = { viewModel.setAnimationEnabled(!isAnim) },
+						leadingIcon = {
+							if (isAnim) IconPause(tint = colors.textPrimary) else IconPlay(tint = colors.accent)
+						},
+						enabled = model != null,
 						height = 22.dp,
 					)
+
+					CompactButton(
+						text = if (isMouseTracking) tr("preview.mouseTracking.on") else tr("preview.mouseTracking.off"),
+						onClick = { viewModel.setMouseTrackingEnabled(!isMouseTracking) },
+						leadingIcon = {
+							IconMouse(
+								active = isMouseTracking,
+								tint = if (isMouseTracking) colors.accent else colors.textDisabled,
+							)
+						},
+						enabled = model != null,
+						height = 22.dp,
+					)
+
+					Spacer(Modifier.weight(1f))
+
+					if (state.lockedParameters.isNotEmpty()) {
+						CompactButton(
+							text = tr("parameters.unlockAll"),
+							onClick = { viewModel.unlockAllParameters() },
+							leadingIcon = { IconLock(locked = false, tint = colors.textPrimary) },
+							height = 22.dp,
+						)
+					}
+				} else {
+					CompactButton(
+						text = tr("preview.animation.play"),
+						onClick = { viewModel.setAnimationEnabled(true) },
+						leadingIcon = { IconPlay(tint = colors.accent) },
+						enabled = model != null,
+						height = 22.dp,
+					)
+
+					Spacer(Modifier.weight(1f))
 				}
 
 				CompactButton(
@@ -1584,7 +1598,11 @@ private fun ParameterRowItem(
 	val typography = LocalToolTypography.current
 
 	val isLocked = param.id in state.lockedParameters
-	val currentValue = state.parameterValues[param.id] ?: param.default
+	val currentValue = if (state.activeTabKind == WorkspaceTabKind.PREVIEW && state.animationEnabled) {
+		state.previewParameterValues[param.id] ?: state.parameterValues[param.id] ?: param.default
+	} else {
+		state.parameterValues[param.id] ?: param.default
+	}
 
 	val valueText = if (kotlin.math.abs(currentValue) >= 10f) "%.1f".format(currentValue) else "%.2f".format(currentValue)
 

@@ -36,8 +36,9 @@ internal class SkiaRigPainter(atlas: PackedAtlas) : AutoCloseable {
             try {
                 for (drawable in drawables) {
                     val layerId = model.rig.layerIdByDrawableId[drawable.id.raw]
-                    if (visibleLayerIds != null && layerId !in visibleLayerIds) continue
-                    val highlighted = highlightedLayerIds == null || layerId in highlightedLayerIds || drawable.id.raw in highlightedLayerIds
+                    if (visibleLayerIds != null && layerId != null && layerId !in visibleLayerIds) continue
+                    if (visibleLayerIds != null && layerId == null && drawable.id.raw !in visibleLayerIds && !drawable.isVisible) continue
+                    val highlighted = highlightedLayerIds == null || (layerId != null && layerId in highlightedLayerIds) || drawable.id.raw in highlightedLayerIds
                     val dim = if (dimUnselected && !highlighted) dimmedAlphaMultiplier else 1f
                     val opacity = ((geometry.opacity[drawable.id] ?: drawable.opacity) * alpha * dim).coerceIn(0f, 1f)
                     if (opacity <= 0.001f) continue

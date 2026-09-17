@@ -1,11 +1,20 @@
 package io.github.psd2live.ui.views
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
@@ -38,7 +47,14 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.skiaCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.toComposeImageBitmap
-import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.*
+import io.github.psd2live.ui.CanvasEditor
+import io.github.psd2live.ui.CanvasTool
+import androidx.compose.ui.input.pointer.isShiftPressed
+import androidx.compose.ui.input.pointer.isAltPressed
+import androidx.compose.ui.input.pointer.isCtrlPressed
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
@@ -61,6 +77,12 @@ import io.github.psd2live.ui.ComponentPalette
 import io.github.psd2live.ui.CubismViewport
 import io.github.psd2live.ui.RigCanvasSupport
 import io.github.psd2live.ui.SkiaRigPainter
+import io.github.psd2live.ui.components.CompactButton
+import io.github.psd2live.ui.components.CompactToggleChip
+import io.github.psd2live.ui.components.IconMouse
+import io.github.psd2live.ui.components.IconPause
+import io.github.psd2live.ui.components.IconPlay
+import io.github.psd2live.ui.components.IconReset
 import io.github.psd2live.ui.state.CanvasMode
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
@@ -88,6 +110,7 @@ fun CanvasViewportComposable(
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 	val focusRequester = remember { FocusRequester() }
+    val density = LocalDensity.current.density
 
 	var viewSize by remember { mutableStateOf(IntSize(600, 600)) }
 	var zoom by remember(state.projectOpenGeneration) { mutableStateOf(state.canvasZoom.toDouble()) }
@@ -98,7 +121,23 @@ fun CanvasViewportComposable(
 	var fps by remember { mutableStateOf(0f) }
 	val fpsCounter = remember { ActualFpsCounter() }
 
-	val previewModel = state.previewModel
+	val editor = remember(state.projectOpenGeneration) { CanvasEditor(viewModel) }
+    editor.state = state
+    LaunchedEffect(viewModel, mode) { viewModel.canvasPathRequests.collect { if(mode == CanvasMode.EDIT) editor.activateTool(CanvasTool.PATH) } }
+    LaunchedEffect(state.selectedLayerId, state.selectedDeformerId) {
+        if (!editor.inGesture && !editor.busy) {
+            editor.resetSelection()
+            if(state.selectedLayerId !in editor.objects) editor.objects=setOfNotNull(state.selectedLayerId)
+            if(state.selectedDeformerId!=null) { editor.objects=emptySet();editor.objectMode=false }
+        }
+    }
+    LaunchedEffect(state.historySnapshot?.headNodeId, state.parameterValues) {
+        if (!editor.busy && editor.inGesture) editor.cancel()
+        if (!editor.busy && state.previewModel != null) editor.target()?.let { t -> editor.vertices=editor.vertices.filter { it in 0 until t.count }.toSet() }
+    }
+    val previewModel = state.previewModel?.let { source ->
+        if (mode == CanvasMode.EDIT && editor.preview != null) source.copy(rig = source.rig.copy(puppet = editor.preview!!)) else source
+    }
 	val editingPainter = remember(previewModel?.atlas) { previewModel?.atlas?.let(::SkiaRigPainter) }
 	DisposableEffect(editingPainter) { onDispose { editingPainter?.close() } }
 	val sdkFrame by viewModel.sdkFrame.collectAsState()
@@ -129,22 +168,25 @@ fun CanvasViewportComposable(
         viewModel.setCanvasView(zoom.toFloat(), panX.toFloat(), panY.toFloat())
 	}
 
+    fun frameSelection() {
+        val model=previewModel ?: return
+        val viewport=computeEditorViewport(model,viewSize,zoom,panX,panY)
+        val targets=if(editor.objectMode)editor.objects.mapNotNull { editor.target(editor.model,it,null) } else listOfNotNull(editor.target())
+        val points=targets.flatMap { t -> editor.screen(t.geometry.points,t,viewport).filterIndexed { i,_ -> editor.objectMode || editor.vertices.isEmpty() || i in editor.vertices } }
+        if(points.isEmpty()) { resetCamera();return }
+        val minX=points.minOf { it.x };val maxX=points.maxOf { it.x };val minY=points.minOf { it.y };val maxY=points.maxOf { it.y }
+        val factor=minOf((viewSize.width-120*density).coerceAtLeast(50f)/(maxX-minX).coerceAtLeast(30f),(viewSize.height-140*density).coerceAtLeast(50f)/(maxY-minY).coerceAtLeast(30f))
+        val next=(zoom*factor).coerceIn(0.05,64.0)
+        val actual=next/zoom
+        panX=-((minX+maxX)/2.0-viewSize.width/2.0-panX)*actual
+        panY=-((minY+maxY)/2.0-viewSize.height/2.0-panY)*actual
+        zoom=next;viewModel.setCanvasView(zoom.toFloat(),panX.toFloat(),panY.toFloat())
+    }
 
-	fun computeViewport(model: RigPreviewModel, width: Int, height: Int, margin: Int = 34): CanvasViewport {
-		val canvasWidth = model.analysis.source.widthPx.toFloat().coerceAtLeast(1f)
-		val canvasHeight = model.analysis.source.heightPx.toFloat().coerceAtLeast(1f)
-		val availableWidth = (width - margin * 2).coerceAtLeast(1)
-		val availableHeight = (height - margin * 2).coerceAtLeast(1)
-		val fitScale = minOf(availableWidth / canvasWidth.toDouble(), availableHeight / canvasHeight.toDouble())
-		val scale = fitScale * zoom
-		return CanvasViewport(
-			scale,
-			(width - canvasWidth * scale) * 0.5 + panX,
-			(height - canvasHeight * scale) * 0.5 + panY,
-			canvasWidth,
-			canvasHeight,
-		)
-	}
+
+    fun computeViewport(model: RigPreviewModel, width: Int, height: Int, margin: Int = 34): CanvasViewport =
+        computeEditorViewport(model,IntSize(width,height),zoom,panX,panY,margin)
+
 
 	fun zoomAt(mouseX: Float, mouseY: Float, wheelDelta: Float) {
 		val model = previewModel ?: return
@@ -162,18 +204,38 @@ fun CanvasViewportComposable(
 
 	// Vsync-driven frame pump. Cubism conflates requests while busy, so the newest
 	// parameters are rendered next without building latency in a callback queue.
-	LaunchedEffect(mode, previewModel, state.animationEnabled, viewSize) {
+	LaunchedEffect(mode, previewModel, state.animationEnabled, viewSize, currentZoom, currentPanX, currentPanY, state.parameterValues) {
 		if (previewModel != null && viewSize.width > 0 && viewSize.height > 0) {
 			if (mode == CanvasMode.PREVIEW) {
-				var previousFrameNanos = 0L
-				while (isActive) {
-					val frameNanos = withFrameNanos { it }
-					val deltaTime = if (previousFrameNanos == 0L) {
-						1f / 60f
-					} else {
-						((frameNanos - previousFrameNanos) / 1_000_000_000f).coerceIn(0.001f, 0.1f)
+				if (state.animationEnabled) {
+					var previousFrameNanos = 0L
+					while (isActive) {
+						val frameNanos = withFrameNanos { it }
+						val deltaTime = if (previousFrameNanos == 0L) {
+							1f / 60f
+						} else {
+							((frameNanos - previousFrameNanos) / 1_000_000_000f).coerceIn(0.001f, 0.1f)
+						}
+						previousFrameNanos = frameNanos
+						val sdkVp = computeCubismViewport(
+							previewModel,
+							viewSize.width,
+							viewSize.height,
+							currentZoom,
+							currentPanX,
+							currentPanY,
+						)
+						viewModel.requestSdkFrame(
+							viewSize.width,
+							viewSize.height,
+							sdkVp.scale,
+							sdkVp.offsetX,
+							sdkVp.offsetY,
+							deltaTime,
+							frameNanos,
+						)
 					}
-					previousFrameNanos = frameNanos
+				} else {
 					val sdkVp = computeCubismViewport(
 						previewModel,
 						viewSize.width,
@@ -188,8 +250,8 @@ fun CanvasViewportComposable(
 						sdkVp.scale,
 						sdkVp.offsetX,
 						sdkVp.offsetY,
-						deltaTime,
-						frameNanos,
+						0f,
+						System.nanoTime(),
 					)
 				}
 			}
@@ -202,12 +264,48 @@ fun CanvasViewportComposable(
 			.clipToBounds()
 			.background(colors.windowBackground)
 			.focusRequester(focusRequester)
+			.onFocusChanged { if(!it.hasFocus) { editor.space=false; if(editor.inGesture)editor.cancel() } }
 			.focusable()
 			.onSizeChanged { viewSize = it }
 			.onKeyEvent { event ->
-				if (event.type == KeyEventType.KeyDown) {
+				if (mode == CanvasMode.EDIT && previewModel != null) {
+                    if (event.key == Key.Spacebar) { editor.space = event.type == KeyEventType.KeyDown; return@onKeyEvent true }
+                    if (event.type == KeyEventType.KeyDown) {
+                        if (editor.busy || state.canvasEditBusy) return@onKeyEvent true
+                        if (event.isCtrlPressed) {
+                            when(event.key) {
+                                Key.Z -> { if(event.isShiftPressed) viewModel.redoHistory() else viewModel.undoHistory(); return@onKeyEvent true }
+                                Key.Y -> { viewModel.redoHistory(); return@onKeyEvent true }
+                                Key.A -> { editor.selectAll(); return@onKeyEvent true }
+                                Key.I -> { editor.selectAll(true); return@onKeyEvent true }
+                            }
+                        } else {
+                            val tool = when(event.key) {
+                                Key.V -> CanvasTool.SELECT; Key.Q -> CanvasTool.BOX; Key.L -> if(event.isShiftPressed) null else CanvasTool.LASSO
+                                Key.G -> CanvasTool.MOVE; Key.R -> CanvasTool.ROTATE; Key.S -> CanvasTool.SCALE
+                                Key.Tab -> if(editor.tool==CanvasTool.MESH)CanvasTool.SELECT else CanvasTool.MESH; Key.W -> CanvasTool.WARP; Key.B -> if(event.isShiftPressed)CanvasTool.SMOOTH else CanvasTool.BRUSH
+                                Key.P -> CanvasTool.PATH; Key.D -> CanvasTool.PATH_DEFORM; Key.H -> CanvasTool.HAND
+                                else -> null
+                            }
+                            if(tool != null) { editor.activateTool(tool); return@onKeyEvent true }
+                            when(event.key) {
+                                Key.Escape -> { editor.cancel(); return@onKeyEvent true }
+                                Key.Enter -> { editor.finishPath(); return@onKeyEvent true }
+                                Key.Delete, Key.Backspace -> { if(editor.tool in listOf(CanvasTool.PATH,CanvasTool.PATH_DEFORM)) editor.deletePathPoint() else if(editor.tool == CanvasTool.MESH) editor.topology("delete"); return@onKeyEvent true }
+                                Key.LeftBracket -> { editor.radius=(editor.radius/1.2f).coerceAtLeast(4f); return@onKeyEvent true }
+                                Key.RightBracket -> { editor.radius=(editor.radius*1.2f).coerceAtMost(500f); return@onKeyEvent true }
+                                Key.X -> { editor.axis=if(editor.axis=="x")null else "x"; return@onKeyEvent true }
+                                Key.Y -> { editor.axis=if(editor.axis=="y")null else "y"; return@onKeyEvent true }
+                                Key.L -> { if(event.isShiftPressed)editor.selectLinked();return@onKeyEvent true }
+                                else -> Unit
+                            }
+                        }
+                    }
+                }
+                if (event.type == KeyEventType.KeyDown && !event.isCtrlPressed) {
 					when (event.key) {
-						Key.F, Key.MoveHome, Key.Zero -> {
+                        Key.F -> { if(mode==CanvasMode.EDIT)frameSelection() else resetCamera();true }
+                        Key.MoveHome, Key.Zero -> {
 							resetCamera()
 							true
 						}
@@ -215,10 +313,24 @@ fun CanvasViewportComposable(
 					}
 				} else false
 			}
-			.pointerHoverIcon(PointerIcon(if (isDragging) Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR) else Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
+			.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(when {
+                isDragging || (mode==CanvasMode.EDIT && (editor.space || editor.tool==CanvasTool.HAND)) -> Cursor.MOVE_CURSOR
+                mode==CanvasMode.EDIT && editor.tool in listOf(CanvasTool.BRUSH,CanvasTool.SMOOTH,CanvasTool.PATH,CanvasTool.PATH_DEFORM,CanvasTool.BOX,CanvasTool.LASSO,CanvasTool.MESH) -> Cursor.CROSSHAIR_CURSOR
+                else -> Cursor.DEFAULT_CURSOR
+            })))
 			.onPointerEvent(PointerEventType.Press) { event ->
-				focusRequester.requestFocus()
 				val change = event.changes.firstOrNull() ?: return@onPointerEvent
+                if(change.isConsumed) return@onPointerEvent
+                if(mode == CanvasMode.EDIT && previewModel != null) {
+                    val p=change.position/density
+                    if(p.y<32f || p.y>viewSize.height/density-25f || (p.x<42f && p.y in 44f..442f)) return@onPointerEvent
+                }
+                focusRequester.requestFocus()
+                if (mode == CanvasMode.EDIT && previewModel != null && event.button == PointerButton.Primary) {
+                    if (editor.press(change.position,computeViewport(previewModel,viewSize.width,viewSize.height),event.keyboardModifiers.isShiftPressed,event.keyboardModifiers.isAltPressed,event.keyboardModifiers.isCtrlPressed)) {
+                        change.consume(); return@onPointerEvent
+                    }
+                }
 				if (event.button == PointerButton.Primary || event.button == PointerButton.Tertiary) {
 					isDragging = true
 					lastDragPos = change.position
@@ -227,12 +339,18 @@ fun CanvasViewportComposable(
 			}
 			.onPointerEvent(PointerEventType.Release) { event ->
 				val change = event.changes.firstOrNull()
-				if (isDragging) {
+                if(change?.isConsumed==true && !editor.inGesture && !isDragging) return@onPointerEvent
+                if(mode == CanvasMode.EDIT && previewModel != null && event.button == PointerButton.Primary && !isDragging) {
+                    editor.release()
+                    editor.finishSelection(computeViewport(previewModel,viewSize.width,viewSize.height))
+                    return@onPointerEvent
+                }
+                if (isDragging) {
 					isDragging = false
-					if (event.button == PointerButton.Primary && change != null && (change.position - lastDragPos).getDistance() < 6f) {
+					if (mode == CanvasMode.PREVIEW && event.button == PointerButton.Primary && change != null && (change.position - lastDragPos).getDistance() < 6f) {
 						if (state.clickToSelectLayer && previewModel != null && onLayerClicked != null) {
 							val viewport = computeViewport(previewModel, viewSize.width, viewSize.height)
-							val geometry = RigCanvasSupport.evaluate(previewModel, state.parameterValues)
+							val geometry = RigCanvasSupport.evaluate(previewModel, state.effectivePose(CanvasMode.PREVIEW))
 							val drawableBounds = RigCanvasSupport.boundsByDrawable(geometry)
 							val hit = RigCanvasSupport.hitLayer(
 								model = previewModel,
@@ -249,13 +367,15 @@ fun CanvasViewportComposable(
 				}
 			}
 			.onPointerEvent(PointerEventType.Exit) {
-				if (mode == CanvasMode.PREVIEW) {
+				editor.cursor=null
+                if (mode == CanvasMode.PREVIEW) {
 					viewModel.clearPointer()
 				}
 			}
 			.onPointerEvent(PointerEventType.Move) { event ->
 				val change = event.changes.firstOrNull() ?: return@onPointerEvent
-				if (isDragging) {
+                if(mode == CanvasMode.EDIT && previewModel != null && !isDragging) editor.move(change.position,computeViewport(previewModel,viewSize.width,viewSize.height),event.keyboardModifiers.isShiftPressed)
+                if (isDragging) {
 					val delta = change.position - lastDragPos
 					panX += delta.x
 					panY += delta.y
@@ -270,8 +390,9 @@ fun CanvasViewportComposable(
 			}
 			.onPointerEvent(PointerEventType.Scroll) { event ->
 				val change = event.changes.firstOrNull() ?: return@onPointerEvent
-				val delta = change.scrollDelta.y
-				zoomAt(change.position.x, change.position.y, delta)
+				if(change.isConsumed || (mode == CanvasMode.EDIT && editor.inGesture)) return@onPointerEvent
+                val delta = change.scrollDelta.y
+                zoomAt(change.position.x, change.position.y, delta)
 			},
 	) {
 		Canvas(modifier = Modifier.fillMaxSize()) {
@@ -289,7 +410,7 @@ fun CanvasViewportComposable(
 			val viewport = computeViewport(model, w, h)
 			// Draw artwork and its diagnostic geometry from the same pose and camera. Native
 			// frames use a different camera and publish UI parameter values at a lower frequency.
-			val informationPose = informationPreviewPose(state.parameterValues, sdkFrame, state.animationEnabled)
+			val informationPose = informationPreviewPose(state.parameterValues, state.previewParameterValues, sdkFrame, state.animationEnabled)
 
 			// 2. Draw canvas boundary
 			drawRect(
@@ -323,6 +444,7 @@ fun CanvasViewportComposable(
 
 			val hasActiveSelection = state.selectedLayerId != null || state.selectedDeformerId != null
 			val highlightedLayerIds: Set<String>? = when {
+                mode==CanvasMode.EDIT && editor.objectMode && editor.objects.isNotEmpty() -> editor.objects
 				state.selectedLayerId != null -> setOf(state.selectedLayerId)
 				state.selectedDeformerId != null -> descendantLayerIds(model, state.selectedDeformerId, state.parentOverrides)
 				else -> null
@@ -592,7 +714,12 @@ fun CanvasViewportComposable(
 			}
 		}
 
-		// Overlay: Empty hint or Stats Badge
+		if(mode == CanvasMode.EDIT && previewModel != null) {
+            CanvasEditorOverlay(editor,computeViewport(previewModel,viewSize.width,viewSize.height),viewModel) { focusRequester.requestFocus() }
+        } else if (mode == CanvasMode.PREVIEW && previewModel != null) {
+            PreviewFloatingToolbar(state, viewModel)
+        }
+        // Overlay: Empty hint or Stats Badge
 		if (previewModel == null) {
 			Text(
 				text = when (mode) {
@@ -629,8 +756,8 @@ fun CanvasViewportComposable(
 			if (badgeText.isNotEmpty()) {
 				Box(
 					modifier = Modifier
-						.align(Alignment.BottomStart)
-						.padding(10.dp)
+						.align(Alignment.BottomEnd)
+						.padding(end=10.dp,bottom=if(mode==CanvasMode.EDIT)32.dp else 10.dp)
 						.background(Color(0xCC181A1E), RoundedCornerShape(4.dp))
 						.padding(horizontal = 8.dp, vertical = 4.dp),
 				) {
@@ -751,4 +878,91 @@ internal fun descendantLayerIds(model: RigPreviewModel, deformerId: String, pare
 		}
 	}
 	return result
+}
+
+private fun computeEditorViewport(model: RigPreviewModel, size: IntSize, zoom: Double, panX: Double, panY: Double, margin: Int=34): CanvasViewport {
+    val width=model.analysis.source.widthPx.toFloat().coerceAtLeast(1f)
+    val height=model.analysis.source.heightPx.toFloat().coerceAtLeast(1f)
+    val fit=minOf((size.width-margin*2).coerceAtLeast(1)/width.toDouble(),(size.height-margin*2).coerceAtLeast(1)/height.toDouble())
+    val scale=fit*zoom
+    return CanvasViewport(scale,(size.width-width*scale)*0.5+panX,(size.height-height*scale)*0.5+panY,width,height)
+}
+
+@Composable
+private fun BoxScope.PreviewFloatingToolbar(
+	state: PSD2LiveState,
+	viewModel: PSD2LiveViewModel,
+) {
+	val colors = LocalToolColors.current
+	val isAnim = state.animationEnabled
+	val isTracking = state.mouseTrackingEnabled
+
+	Row(
+		modifier = Modifier
+			.align(Alignment.BottomCenter)
+			.padding(bottom = 12.dp)
+			.background(Color(0xEE1E2024), RoundedCornerShape(6.dp))
+			.border(BorderStroke(1.dp, Color(0x448892B0)), RoundedCornerShape(6.dp))
+			.padding(horizontal = 8.dp, vertical = 4.dp),
+		verticalAlignment = Alignment.CenterVertically,
+		horizontalArrangement = Arrangement.spacedBy(6.dp),
+	) {
+		// Play / Pause Button
+		CompactButton(
+			text = if (isAnim) tr("preview.animation.pause") else tr("preview.animation.play"),
+			onClick = { viewModel.setAnimationEnabled(!isAnim) },
+			leadingIcon = {
+				if (isAnim) IconPause(modifier = Modifier.size(12.dp), tint = colors.accent)
+				else IconPlay(modifier = Modifier.size(12.dp), tint = colors.accent)
+			},
+			height = 24.dp,
+		)
+
+		// Mouse Tracking Toggle
+		CompactToggleChip(
+			text = tr("preview.mouseTracking.on"),
+			selected = isTracking,
+			onToggle = { viewModel.setMouseTrackingEnabled(!isTracking) },
+			leadingIcon = {
+				IconMouse(
+					active = isTracking,
+					modifier = Modifier.size(12.dp),
+					tint = if (isTracking) colors.accent else colors.textDisabled,
+				)
+			},
+			showCheckWhenSelected = false,
+			height = 24.dp,
+		)
+
+		Spacer(Modifier.width(2.dp))
+		Box(modifier = Modifier.width(1.dp).height(16.dp).background(Color(0x33FFFFFF)))
+		Spacer(Modifier.width(2.dp))
+
+		// Motion triggers: Idle, Blink, Nod, Shake
+		val motions = listOf(
+			"Idle" to tr("export.motion.idle"),
+			"Blink" to tr("export.motion.blink"),
+			"Nod" to tr("export.motion.nod"),
+			"Shake" to tr("export.motion.shake"),
+		)
+		for ((group, label) in motions) {
+			CompactButton(
+				text = label,
+				onClick = { viewModel.triggerMotion(group) },
+				height = 24.dp,
+			)
+		}
+
+		Spacer(Modifier.width(2.dp))
+		Box(modifier = Modifier.width(1.dp).height(16.dp).background(Color(0x33FFFFFF)))
+		Spacer(Modifier.width(2.dp))
+
+		// Reset Pose Button
+		CompactButton(
+			text = tr("parameters.resetAll"),
+			onClick = { viewModel.resetAllParameters() },
+			leadingIcon = { IconReset(modifier = Modifier.size(11.dp), tint = colors.textPrimary) },
+			height = 24.dp,
+		)
+	}
 }

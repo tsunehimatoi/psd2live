@@ -4,8 +4,29 @@ import io.github.psd2live.core.CubismSdkFrame
 import io.github.psd2live.core.RigPreviewModel
 import org.umamo.runtime.model.*
 
-internal fun informationPreviewPose(values: Map<ParameterId, Float>, frame: CubismSdkFrame?, animated: Boolean): Map<ParameterId, Float> =
-    if (animated && frame?.animationEnabled == true) frame.parameters else values
+internal fun informationPreviewPose(
+    values: Map<ParameterId, Float>,
+    previewValues: Map<ParameterId, Float>,
+    frame: CubismSdkFrame?,
+    animated: Boolean,
+): Map<ParameterId, Float> =
+    if (animated) {
+        if (frame?.animationEnabled == true && frame.parameters.isNotEmpty()) {
+            frame.parameters
+        } else if (previewValues.isNotEmpty()) {
+            previewValues
+        } else {
+            values
+        }
+    } else {
+        values
+    }
+
+internal fun informationPreviewPose(
+    values: Map<ParameterId, Float>,
+    frame: CubismSdkFrame?,
+    animated: Boolean,
+): Map<ParameterId, Float> = informationPreviewPose(values, emptyMap(), frame, animated)
 
 /**
  * Computes active Warp IDs to display on canvas.
