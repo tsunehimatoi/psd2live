@@ -59,6 +59,9 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
     var inflateInvert by mutableStateOf(false)
     /** Live feedback only: the direction the next stroke would take right now. */
     var shrinks by mutableStateOf(false)
+    /** True while Alt + right-drag is retuning the brush; the overlay HUD follows it and cancel() restores. */
+    var adjustingBrush by mutableStateOf(false)
+        private set
     var pathWidth by mutableStateOf(0.12f)
     var pathLevel by mutableStateOf(2)
     var activePath by mutableStateOf<String?>(null)
@@ -104,6 +107,10 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
     private var subtractive = false
     /** Inflate direction is latched here on press so a stroke never flips sign mid-drag. */
     private var shrinkAtPress = false
+    /** Alt + right-drag latches its anchor and the pre-drag brush values here, so Alt can be released mid-drag. */
+    private var brushAnchor = Offset.Zero
+    private var brushRadiusAtStart = 48f
+    private var brushHardnessAtStart = 0.35f
     private var dragging = false
     private var cachedSource: PuppetModel? = null
     private var cachedPose = emptyMap<ParameterId, Float>()
@@ -166,6 +173,7 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
 
     fun cancel() {
         if (busy) return
+        endBrushAdjust(cancel = true)
         preview = null; pending = null; dragging = false; targetAtPress = null; original = null
         marquee = emptyList(); draft = emptyList(); draftPathId = null; drawingPath = false
         axis = null; head = null; objectTargets = emptyList(); pendingObjects = emptyList()
@@ -432,6 +440,9 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
     }
 
     fun press(pos: Offset, viewport: CanvasViewport, shift: Boolean, alt: Boolean, ctrl: Boolean = false): Boolean {
+        // A left click while the brush gesture still owns the right button ends it. Commit rather than restore:
+        // the user is starting new work, not abandoning the adjustment.
+        if (adjustingBrush) endBrushAdjust(cancel = false)
         if (!editable) return true
         if (space || tool == CanvasTool.HAND) return false
         error = null; head = state.historySnapshot?.headNodeId; start = pos; previous = pos; dragStartPos = pos; moved = false; additive = shift; subtractive = alt
@@ -589,7 +600,12 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
     fun move(pos: Offset, viewport: CanvasViewport, shift: Boolean, alt: Boolean = false) {
         updateHover(pos, viewport)
         // Mid-stroke report the latched direction, so the circle never contradicts what the drag is doing.
-        shrinks = if (dragging && tool == CanvasTool.INFLATE) shrinkAtPress else inflateInvert xor alt
+        // While the brush gesture runs Alt means "retune the brush", not "shrink the inflate stroke".
+        shrinks = when {
+            adjustingBrush -> inflateInvert
+            dragging && tool == CanvasTool.INFLATE -> shrinkAtPress
+            else -> inflateInvert xor alt
+        }
         if (!dragging || busy) return
         moved = moved || (pos - start).getDistance() > 2f
         if (!moved) return
@@ -808,6 +824,35 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
         pending = null; targetAtPress = null; original = null
     }
 
+    /**
+     * Starts the Photoshop-style Alt + right-drag brush gesture. Returns false when the active tool has no brush
+     * parameters, so the caller leaves the event unhandled. Both values are recomputed from the press anchor on
+     * every move, so dragging past a clamp and back re-enters smoothly instead of sticking.
+     */
+    fun beginBrushAdjust(pos: Offset): Boolean {
+        if (adjustingBrush || dragging) return false
+        if (tool != CanvasTool.BRUSH && tool != CanvasTool.SMOOTH && tool != CanvasTool.INFLATE) return false
+        adjustingBrush = true
+        brushAnchor = pos
+        brushRadiusAtStart = radius
+        brushHardnessAtStart = hardness
+        return true
+    }
+
+    /** Right grows the radius one `]` press per [BRUSH_RADIUS_STEP_PX]; down hardens, full span over [BRUSH_HARDNESS_SPAN_PX]. */
+    fun updateBrushAdjust(pos: Offset) {
+        if (!adjustingBrush) return
+        radius = (brushRadiusAtStart * 1.2f.pow((pos.x - brushAnchor.x) / BRUSH_RADIUS_STEP_PX)).coerceIn(4f, 500f)
+        hardness = (brushHardnessAtStart + (pos.y - brushAnchor.y) / BRUSH_HARDNESS_SPAN_PX * 0.95f).coerceIn(0f, 0.95f)
+    }
+
+    /** Ends the gesture; [cancel] restores the values captured at press (Esc, tool switch, focus loss). */
+    fun endBrushAdjust(cancel: Boolean) {
+        if (!adjustingBrush) return
+        adjustingBrush = false
+        if (cancel) { radius = brushRadiusAtStart; hardness = brushHardnessAtStart }
+    }
+
     fun finishSelection(viewport: CanvasViewport) {
         if (marquee.isEmpty()) return
         val polygon = if (selectionStyle == SelectionStyle.LASSO) marquee else listOf(marquee.first(), Offset(marquee.last().x, marquee.first().y), marquee.last(), Offset(marquee.first().x, marquee.last().y))
@@ -835,6 +880,12 @@ internal fun brushWeight(distance: Float, radius: Float, hardness: Float): Float
 
 /** Radial gain for the inflate brush: displacement = min(cursor travel, radius) * weight * gain. */
 private const val INFLATE_GAIN = 0.5f
+
+/** Travel in raw px that equals one `]` press (one 1.2x step) in the Alt + right-drag radius gesture. */
+private const val BRUSH_RADIUS_STEP_PX = 12f
+
+/** Vertical travel in raw px that spans the whole 0f..0.95f hardness range in the same gesture. */
+private const val BRUSH_HARDNESS_SPAN_PX = 200f
 
 /**
  * Radially pushes [point] away from the closest point on the stroke segment [from]→[to], by [amount] pixels.

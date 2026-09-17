@@ -265,7 +265,7 @@ fun CanvasViewportComposable(
 			.clipToBounds()
 			.background(colors.windowBackground)
 			.focusRequester(focusRequester)
-			.onFocusChanged { if(!it.hasFocus) { editor.space=false; if(editor.inGesture)editor.cancel() } }
+			.onFocusChanged { if(!it.hasFocus) { editor.space=false; if(editor.inGesture)editor.cancel(); if(editor.adjustingBrush)editor.endBrushAdjust(cancel = false) } }
 			.focusable()
 			.onSizeChanged { viewSize = it }
 			.onKeyEvent { event ->
@@ -306,8 +306,17 @@ fun CanvasViewportComposable(
                                     else if (editor.tool == CanvasTool.MESH) editor.topology("delete")
                                     return@onKeyEvent true
                                 }
-                                Key.LeftBracket -> { editor.radius = (editor.radius / 1.2f).coerceAtLeast(4f); return@onKeyEvent true }
-                                Key.RightBracket -> { editor.radius = (editor.radius * 1.2f).coerceAtMost(500f); return@onKeyEvent true }
+                                Key.LeftBracket -> {
+                                    // Never let hardness reach 1.0: brushWeight divides by (1 - hardness).
+                                    if (event.isShiftPressed) editor.hardness = (editor.hardness - 0.05f).coerceIn(0f, 0.95f)
+                                    else editor.radius = (editor.radius / 1.2f).coerceAtLeast(4f)
+                                    return@onKeyEvent true
+                                }
+                                Key.RightBracket -> {
+                                    if (event.isShiftPressed) editor.hardness = (editor.hardness + 0.05f).coerceIn(0f, 0.95f)
+                                    else editor.radius = (editor.radius * 1.2f).coerceAtMost(500f)
+                                    return@onKeyEvent true
+                                }
                                 Key.X -> { editor.axis = if (editor.axis == "x") null else "x"; return@onKeyEvent true }
                                 Key.Y -> { editor.axis = if (editor.axis == "y") null else "y"; return@onKeyEvent true }
                                 else -> Unit
@@ -339,6 +348,14 @@ fun CanvasViewportComposable(
                     if(p.y<32f || p.y>viewSize.height/density-25f || (p.x<42f && p.y in 44f..442f)) return@onPointerEvent
                 }
                 focusRequester.requestFocus()
+                // Photoshop parity: Alt + right-drag retunes the brush — right/left grows/shrinks the radius,
+                // down/up hardens/softens. The Alt state is latched by the editor, so releasing Alt mid-drag
+                // neither aborts the gesture nor changes what it is doing.
+                if (mode == CanvasMode.EDIT && previewModel != null && event.button == PointerButton.Secondary &&
+                    event.keyboardModifiers.isAltPressed && !isDragging && !editor.inGesture && editor.beginBrushAdjust(change.position)
+                ) {
+                    change.consume(); return@onPointerEvent
+                }
                 if (mode == CanvasMode.EDIT && previewModel != null && event.button == PointerButton.Primary) {
                     if (editor.press(change.position,computeViewport(previewModel,viewSize.width,viewSize.height),event.keyboardModifiers.isShiftPressed,event.keyboardModifiers.isAltPressed,event.keyboardModifiers.isCtrlPressed)) {
                         change.consume(); return@onPointerEvent
@@ -352,6 +369,13 @@ fun CanvasViewportComposable(
 			}
 			.onPointerEvent(PointerEventType.Release) { event ->
 				val change = event.changes.firstOrNull()
+                // Must be tested before the consumed check below, and the button test is load-bearing: a middle
+                // button release during an adjustment has to fall through to the pan-end block, otherwise
+                // isDragging stays true and the canvas pans forever.
+                if (editor.adjustingBrush && event.button == PointerButton.Secondary) {
+                    editor.endBrushAdjust(cancel = false)
+                    return@onPointerEvent
+                }
                 if(change?.isConsumed==true && !editor.inGesture && !isDragging) return@onPointerEvent
                 if(mode == CanvasMode.EDIT && previewModel != null && event.button == PointerButton.Primary && !isDragging) {
                     editor.release()
@@ -380,6 +404,8 @@ fun CanvasViewportComposable(
 				}
 			}
 			.onPointerEvent(PointerEventType.Exit) {
+                // Releasing the right button outside the window may never route a Release back here.
+                if (editor.adjustingBrush) editor.endBrushAdjust(cancel = false)
 				editor.clearHover()
                 if (mode == CanvasMode.PREVIEW) {
 					viewModel.clearPointer()
@@ -394,6 +420,7 @@ fun CanvasViewportComposable(
                         event.keyboardModifiers.isShiftPressed,
                         event.keyboardModifiers.isAltPressed
                     )
+                    if (editor.adjustingBrush) editor.updateBrushAdjust(change.position)
                 }
                 if (isDragging) {
 					val delta = change.position - lastDragPos
@@ -410,7 +437,7 @@ fun CanvasViewportComposable(
 			}
 			.onPointerEvent(PointerEventType.Scroll) { event ->
 				val change = event.changes.firstOrNull() ?: return@onPointerEvent
-				if(change.isConsumed || (mode == CanvasMode.EDIT && editor.inGesture)) return@onPointerEvent
+				if(change.isConsumed || (mode == CanvasMode.EDIT && (editor.inGesture || editor.adjustingBrush))) return@onPointerEvent
                 val delta = change.scrollDelta.y
                 zoomAt(change.position.x, change.position.y, delta)
 			},

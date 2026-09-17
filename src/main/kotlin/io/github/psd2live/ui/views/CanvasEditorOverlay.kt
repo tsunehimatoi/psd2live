@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -24,8 +25,11 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -35,6 +39,7 @@ import io.github.psd2live.ui.*
 import io.github.psd2live.ui.components.*
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.theme.LocalToolColors
+import kotlin.math.roundToInt
 import org.umamo.edit.MeshTopology
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
@@ -46,6 +51,7 @@ internal fun BoxScope.CanvasEditorOverlay(
     focus: () -> Unit
 ) {
     val colors = LocalToolColors.current
+    val textMeasurer = rememberTextMeasurer()
     val target = editor.target()
     val isPathTool = editor.tool == CanvasTool.PATH_DEFORM
 
@@ -240,6 +246,33 @@ internal fun BoxScope.CanvasEditorOverlay(
                 drawRect(colors.accent, origin, extent, style = Stroke(1.2f))
             }
         }
+
+        // 7. Brush gesture HUD: radius / hardness readout that follows the cursor during Alt + right-drag
+        if (editor.adjustingBrush) {
+            editor.cursor?.let { anchor ->
+                val label = TextStyle(fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = colors.textPrimary)
+                val radiusLayout = textMeasurer.measure(text = "${tr("editor.radius")} ${editor.radius.roundToInt()} px", style = label)
+                val hardnessLayout = textMeasurer.measure(text = "${tr("editor.hardness")} ${(editor.hardness * 100).roundToInt()}%", style = label)
+                val padX = 8f
+                val padY = 5f
+                val gap = 3f
+                val box = Size(
+                    maxOf(radiusLayout.size.width, hardnessLayout.size.width) + padX * 2f,
+                    radiusLayout.size.height + hardnessLayout.size.height + gap + padY * 2f,
+                )
+                // Prefer below-right of the cursor; flip to the opposite side when that would leave the canvas.
+                var x = anchor.x + 18f
+                var y = anchor.y + 22f
+                if (x + box.width > size.width) x = anchor.x - 18f - box.width
+                if (y + box.height > size.height) y = anchor.y - 22f - box.height
+                x = x.coerceIn(0f, (size.width - box.width).coerceAtLeast(0f))
+                y = y.coerceIn(0f, (size.height - box.height).coerceAtLeast(0f))
+                drawRoundRect(Color(0xE6181A1E), Offset(x, y), box, CornerRadius(4f, 4f))
+                drawRoundRect(colors.accent.copy(alpha = 0.9f), Offset(x, y), box, CornerRadius(4f, 4f), style = Stroke(1f))
+                drawText(textLayoutResult = radiusLayout, topLeft = Offset(x + padX, y + padY))
+                drawText(textLayoutResult = hardnessLayout, topLeft = Offset(x + padX, y + padY + radiusLayout.size.height + gap))
+            }
+        }
     }
 
     // Left Animated Hover Toolbar
@@ -374,6 +407,7 @@ internal fun BoxScope.CanvasEditorOverlay(
         editor.error ?: if (editor.busy) tr("editor.saving") else tr("editor.selectionCount", editor.objects.size, editor.vertices.size) + "   ·   " + tr(when (editor.tool) {
             CanvasTool.PATH_DEFORM -> "editor.pathHint"
             CanvasTool.INFLATE -> "editor.inflateHint"
+            CanvasTool.BRUSH, CanvasTool.SMOOTH -> "editor.brushHint"
             else -> "editor.hint"
         }),
         color = if (editor.error != null) colors.error else colors.textMuted,
