@@ -330,9 +330,10 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
         commitBatch(listOf(command))
     }
 
-    private fun commitBatch(commands: List<JsonObject>) {
-        if (!editable) return
-        val expected = head ?: state.historySnapshot?.headNodeId ?: return
+    /** Returns false when the edit never reached history, so the caller can drop its preview. */
+    private fun commitBatch(commands: List<JsonObject>): Boolean {
+        if (!editable) return false
+        val expected = head ?: state.historySnapshot?.headNodeId ?: return false
         try {
             val result = RigAuthoringJournal.compile(state.previewModel!!.rig.puppet, JsonArray(commands))
             preview = result.first; busy = true; error = null
@@ -341,6 +342,7 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
                 if (failure == null) commands.lastOrNull { it["op"]?.jsonPrimitive?.content in setOf("canvas_create_warp", "canvas_create_rotation") }?.let { viewModel.selectDeformer(it.getValue("id").jsonPrimitive.content) }
             }
         } catch (e: Exception) { error = e.message; preview = null; pending = null; head = null }
+        return true
     }
 
     fun topology(action: String) {
@@ -795,9 +797,13 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
         currentRotateCenter = null
         initialScreenPoints = emptyList()
         if (marquee.isNotEmpty()) return
+        // A preview that never reached history must not survive the gesture: it would both keep showing an
+        // uncommitted shape and become the `original` of the next gesture, whose full-array command would then
+        // silently fold these edits into that commit.
         val cmd = pending
-        if (moved && pendingObjects.isNotEmpty()) commitBatch(pendingObjects)
-        else if (moved && cmd != null) commit(cmd) else { preview = null; head = null }
+        if (moved && pendingObjects.isNotEmpty()) { if (!commitBatch(pendingObjects)) preview = null }
+        else if (moved && cmd != null) { if (!commitBatch(listOf(cmd))) preview = null }
+        else { preview = null; head = null }
         pendingObjects = emptyList(); objectTargets = emptyList()
         pending = null; targetAtPress = null; original = null
     }
