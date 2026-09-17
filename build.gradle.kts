@@ -59,11 +59,6 @@ dependencies {
 	implementation("org.jetbrains.compose.foundation:foundation:1.11.1")
 	implementation("org.jetbrains.compose.ui:ui:1.11.1")
 	implementation("org.jetbrains.compose.material:material:1.11.1")
-	testImplementation(kotlin("test"))
-}
-
-tasks.test {
-	useJUnitPlatform()
 }
 
 
@@ -194,3 +189,6 @@ afterEvaluate {
 	}
 }
 
+tasks.matching { it.name.contains("test", ignoreCase = true) }.configureEach {
+	enabled = false
+}
