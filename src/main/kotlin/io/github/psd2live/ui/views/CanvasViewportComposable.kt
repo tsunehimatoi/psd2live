@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.key.*
 import io.github.psd2live.ui.CanvasEditor
 import io.github.psd2live.ui.CanvasTool
+import io.github.psd2live.ui.SelectionStyle
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.isAltPressed
 import androidx.compose.ui.input.pointer.isCtrlPressed
@@ -123,7 +124,7 @@ fun CanvasViewportComposable(
 
 	val editor = remember(state.projectOpenGeneration) { CanvasEditor(viewModel) }
     editor.state = state
-    LaunchedEffect(viewModel, mode) { viewModel.canvasPathRequests.collect { if(mode == CanvasMode.EDIT) editor.activateTool(CanvasTool.PATH) } }
+    LaunchedEffect(viewModel, mode) { viewModel.canvasPathRequests.collect { if(mode == CanvasMode.EDIT) editor.activateTool(CanvasTool.PATH_DEFORM) } }
     LaunchedEffect(state.selectedLayerId, state.selectedDeformerId) {
         if (!editor.inGesture && !editor.busy) {
             editor.resetSelection()
@@ -281,22 +282,33 @@ fun CanvasViewportComposable(
                             }
                         } else {
                             val tool = when(event.key) {
-                                Key.V -> CanvasTool.SELECT; Key.Q -> CanvasTool.BOX; Key.L -> if(event.isShiftPressed) null else CanvasTool.LASSO
-                                Key.G -> CanvasTool.MOVE; Key.R -> CanvasTool.ROTATE; Key.S -> CanvasTool.SCALE
-                                Key.Tab -> if(editor.tool==CanvasTool.MESH)CanvasTool.SELECT else CanvasTool.MESH; Key.W -> CanvasTool.WARP; Key.B -> if(event.isShiftPressed)CanvasTool.SMOOTH else CanvasTool.BRUSH
-                                Key.P -> CanvasTool.PATH; Key.D -> CanvasTool.PATH_DEFORM; Key.H -> CanvasTool.HAND
+                                Key.V -> CanvasTool.SELECT
+                                Key.Tab, Key.E -> if (editor.tool == CanvasTool.MESH) CanvasTool.SELECT else CanvasTool.MESH
+                                Key.W -> CanvasTool.WARP
+                                Key.B -> if (event.isShiftPressed) CanvasTool.SMOOTH else CanvasTool.BRUSH
+                                Key.D, Key.P -> CanvasTool.PATH_DEFORM
+                                Key.H -> CanvasTool.HAND
                                 else -> null
                             }
-                            if(tool != null) { editor.activateTool(tool); return@onKeyEvent true }
+                            if (tool != null) { editor.activateTool(tool); return@onKeyEvent true }
                             when(event.key) {
+                                Key.Q -> { editor.selectionStyle = SelectionStyle.BOX; return@onKeyEvent true }
+                                Key.L -> {
+                                    if (event.isShiftPressed) editor.selectLinked()
+                                    else editor.selectionStyle = SelectionStyle.LASSO
+                                    return@onKeyEvent true
+                                }
                                 Key.Escape -> { editor.cancel(); return@onKeyEvent true }
                                 Key.Enter -> { editor.finishPath(); return@onKeyEvent true }
-                                Key.Delete, Key.Backspace -> { if(editor.tool in listOf(CanvasTool.PATH,CanvasTool.PATH_DEFORM)) editor.deletePathPoint() else if(editor.tool == CanvasTool.MESH) editor.topology("delete"); return@onKeyEvent true }
-                                Key.LeftBracket -> { editor.radius=(editor.radius/1.2f).coerceAtLeast(4f); return@onKeyEvent true }
-                                Key.RightBracket -> { editor.radius=(editor.radius*1.2f).coerceAtMost(500f); return@onKeyEvent true }
-                                Key.X -> { editor.axis=if(editor.axis=="x")null else "x"; return@onKeyEvent true }
-                                Key.Y -> { editor.axis=if(editor.axis=="y")null else "y"; return@onKeyEvent true }
-                                Key.L -> { if(event.isShiftPressed)editor.selectLinked();return@onKeyEvent true }
+                                Key.Delete, Key.Backspace -> {
+                                    if (editor.tool == CanvasTool.PATH_DEFORM) editor.deletePathPoint()
+                                    else if (editor.tool == CanvasTool.MESH) editor.topology("delete")
+                                    return@onKeyEvent true
+                                }
+                                Key.LeftBracket -> { editor.radius = (editor.radius / 1.2f).coerceAtLeast(4f); return@onKeyEvent true }
+                                Key.RightBracket -> { editor.radius = (editor.radius * 1.2f).coerceAtMost(500f); return@onKeyEvent true }
+                                Key.X -> { editor.axis = if (editor.axis == "x") null else "x"; return@onKeyEvent true }
+                                Key.Y -> { editor.axis = if (editor.axis == "y") null else "y"; return@onKeyEvent true }
                                 else -> Unit
                             }
                         }
@@ -314,8 +326,8 @@ fun CanvasViewportComposable(
 				} else false
 			}
 			.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(when {
-                isDragging || (mode==CanvasMode.EDIT && (editor.space || editor.tool==CanvasTool.HAND)) -> Cursor.MOVE_CURSOR
-                mode==CanvasMode.EDIT && editor.tool in listOf(CanvasTool.BRUSH,CanvasTool.SMOOTH,CanvasTool.PATH,CanvasTool.PATH_DEFORM,CanvasTool.BOX,CanvasTool.LASSO,CanvasTool.MESH) -> Cursor.CROSSHAIR_CURSOR
+                isDragging -> Cursor.MOVE_CURSOR
+                mode == CanvasMode.EDIT -> editor.activeCursor()
                 else -> Cursor.DEFAULT_CURSOR
             })))
 			.onPointerEvent(PointerEventType.Press) { event ->
@@ -367,14 +379,21 @@ fun CanvasViewportComposable(
 				}
 			}
 			.onPointerEvent(PointerEventType.Exit) {
-				editor.cursor=null
+				editor.clearHover()
                 if (mode == CanvasMode.PREVIEW) {
 					viewModel.clearPointer()
 				}
 			}
 			.onPointerEvent(PointerEventType.Move) { event ->
 				val change = event.changes.firstOrNull() ?: return@onPointerEvent
-                if(mode == CanvasMode.EDIT && previewModel != null && !isDragging) editor.move(change.position,computeViewport(previewModel,viewSize.width,viewSize.height),event.keyboardModifiers.isShiftPressed)
+                if (mode == CanvasMode.EDIT && previewModel != null && !isDragging) {
+                    editor.move(
+                        change.position,
+                        computeViewport(previewModel, viewSize.width, viewSize.height),
+                        event.keyboardModifiers.isShiftPressed,
+                        event.keyboardModifiers.isAltPressed
+                    )
+                }
                 if (isDragging) {
 					val delta = change.position - lastDragPos
 					panX += delta.x

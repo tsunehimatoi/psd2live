@@ -16,9 +16,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.semantics.contentDescription
@@ -34,151 +35,329 @@ import io.github.psd2live.ui.*
 import io.github.psd2live.ui.components.*
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.theme.LocalToolColors
+import org.umamo.edit.MeshTopology
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
 @Composable
-internal fun BoxScope.CanvasEditorOverlay(editor: CanvasEditor, viewport: CanvasViewport, viewModel: PSD2LiveViewModel, focus: ()->Unit) {
-    val colors=LocalToolColors.current
-    val target=editor.target()
-    val pathTool=editor.tool in listOf(CanvasTool.PATH,CanvasTool.PATH_DEFORM)
+internal fun BoxScope.CanvasEditorOverlay(
+    editor: CanvasEditor,
+    viewport: CanvasViewport,
+    viewModel: PSD2LiveViewModel,
+    focus: () -> Unit
+) {
+    val colors = LocalToolColors.current
+    val target = editor.target()
+    val isPathTool = editor.tool == CanvasTool.PATH_DEFORM
+
     Canvas(Modifier.fillMaxSize()) {
-        if(editor.objectMode) editor.objects.forEach { id -> editor.target(editor.model,id,null)?.let { item ->
-            val points=editor.screen(item.geometry.points,item,viewport)
-            if(points.isNotEmpty()) {
-                val origin=Offset(points.minOf { it.x },points.minOf { it.y })
-                drawRect(colors.accent,origin,Size((points.maxOf { it.x }-origin.x).coerceAtLeast(1f),(points.maxOf { it.y }-origin.y).coerceAtLeast(1f)),style=Stroke(1.2f))
-            }
-        } }
-        if(target!=null && editor.tool!=CanvasTool.SELECT && editor.tool!=CanvasTool.HAND) {
-            val pts=editor.screen(target.geometry.points,target,viewport)
-            if(!pathTool) {
-                val edges=if(target.kind=="mesh") org.umamo.edit.MeshTopology.uniqueEdges(target.indices).map { it.endpointLow to it.endpointHigh } else if(target.kind=="rotation")listOf(0 to 1) else {
-                    val columns=target.geometry.columns!!+1
-                    pts.indices.flatMap { i -> listOfNotNull(if(i%columns<columns-1)i to i+1 else null,if(i+columns<pts.size)i to i+columns else null) }
-                }
-                edges.forEach { (a,b) -> drawLine(Color.Black.copy(alpha=0.6f),pts[a],pts[b],3f);drawLine(colors.accent.copy(alpha=0.75f),pts[a],pts[b],1f) }
-                pts.forEachIndexed { i,p -> drawCircle(colors.windowBackground,4.5f,p);drawCircle(if(i in editor.vertices)colors.accent else colors.textPrimary,if(i in editor.vertices)3.5f else 2.5f,p) }
-                val chosen=pts.filterIndexed { i,_ -> i in editor.vertices }
-                if(chosen.isNotEmpty() && editor.tool in listOf(CanvasTool.MOVE,CanvasTool.ROTATE,CanvasTool.SCALE)) {
-                    val c=Offset(chosen.map { it.x }.average().toFloat(),chosen.map { it.y }.average().toFloat())
-                    drawCircle(colors.accent,5f,c,style=Stroke(1.5f))
-                    if(editor.tool==CanvasTool.ROTATE) drawCircle(colors.accent,40f,c,style=Stroke(1.5f))
-                    else { drawLine(Color(0xffd97878),c,c+Offset(46f,0f),2f);drawLine(Color(0xff7bbb99),c,c+Offset(0f,-46f),2f) }
-                }
-            }
-            if(pathTool && target.kind=="mesh") {
-                editor.paths().forEach { path ->
-                    val local=DeformPathTools.positions(path,target.geometry.points)
-                    val curve=DeformPathTools.curve(local,path.points.map { it.corner },path.closed)
-                    val points=editor.screen(curve.flatMap { listOf(it.first,it.second) }.toFloatArray(),target,viewport)
-                    val selected=path.id==editor.activePath
-                    points.zipWithNext().forEach { (a,b) -> drawLine(Color.Black.copy(alpha=0.7f),a,b,5f);drawLine(if(selected)colors.accent else colors.textPrimary,a,b,2f) }
-                    editor.screen(local.flatMap { listOf(it.first,it.second) }.toFloatArray(),target,viewport).forEachIndexed { i,p ->
-                        drawCircle(colors.windowBackground,5.5f,p);drawCircle(if(selected && i==editor.pathPoint) colors.accent else colors.textPrimary,4f,p)
+        // 1. SELECT tool: Draw object bounding box and 8 handles + rotate stem
+        if (editor.tool == CanvasTool.SELECT) {
+            val bounds = editor.selectionBounds(viewport)
+            if (bounds != null) {
+                val rotateAngleDeg = Math.toDegrees(editor.currentRotateAngle.toDouble()).toFloat()
+                val rotatePivot = editor.currentRotateCenter ?: Offset(bounds.centerX, bounds.centerY)
+                rotate(rotateAngleDeg, rotatePivot) {
+                    // Main bounding box rectangle
+                    drawRect(
+                        color = colors.accent,
+                        topLeft = Offset(bounds.minX, bounds.minY),
+                        size = Size(bounds.width, bounds.height),
+                        style = Stroke(1.2f)
+                    )
+
+                    // Rotate handle: stem line + circle
+                    drawLine(
+                        color = colors.accent.copy(alpha = 0.8f),
+                        start = Offset(bounds.centerX, bounds.minY),
+                        end = bounds.rotateHandlePos,
+                        strokeWidth = 1f
+                    )
+                    val isRotateHovered = editor.hoveredHandle == BoundingHandle.ROTATE
+                    drawCircle(
+                        color = if (isRotateHovered) colors.accent else colors.windowBackground,
+                        radius = if (isRotateHovered) 5.5f else 4f,
+                        center = bounds.rotateHandlePos
+                    )
+                    drawCircle(
+                        color = colors.accent,
+                        radius = if (isRotateHovered) 5.5f else 4f,
+                        center = bounds.rotateHandlePos,
+                        style = Stroke(1.5f)
+                    )
+
+                    // Draw 8 transform handles
+                    val handles = listOf(
+                        BoundingHandle.TOP_LEFT to Offset(bounds.minX, bounds.minY),
+                        BoundingHandle.TOP_RIGHT to Offset(bounds.maxX, bounds.minY),
+                        BoundingHandle.BOTTOM_LEFT to Offset(bounds.minX, bounds.maxY),
+                        BoundingHandle.BOTTOM_RIGHT to Offset(bounds.maxX, bounds.maxY),
+                        BoundingHandle.TOP to Offset(bounds.centerX, bounds.minY),
+                        BoundingHandle.BOTTOM to Offset(bounds.centerX, bounds.maxY),
+                        BoundingHandle.LEFT to Offset(bounds.minX, bounds.centerY),
+                        BoundingHandle.RIGHT to Offset(bounds.maxX, bounds.centerY),
+                    )
+                    handles.forEach { (handle, pt) ->
+                        val isCorner = handle in listOf(BoundingHandle.TOP_LEFT, BoundingHandle.TOP_RIGHT, BoundingHandle.BOTTOM_LEFT, BoundingHandle.BOTTOM_RIGHT)
+                        val isHovered = editor.hoveredHandle == handle
+                        val hs = if (isHovered) 8f else if (isCorner) 7f else 5.5f
+                        drawRect(
+                            color = if (isHovered) colors.accent else Color.White,
+                            topLeft = pt - Offset(hs * 0.5f, hs * 0.5f),
+                            size = Size(hs, hs)
+                        )
+                        drawRect(
+                            color = if (isHovered) Color.White else colors.accent,
+                            topLeft = pt - Offset(hs * 0.5f, hs * 0.5f),
+                            size = Size(hs, hs),
+                            style = Stroke(1f)
+                        )
                     }
                 }
-                val points=editor.screen(editor.draft.flatMap { listOf(it.first,it.second) }.toFloatArray(),target,viewport)
-                points.zipWithNext().forEach { (a,b) -> drawLine(colors.accent,a,b,2f) }
-                points.forEach { drawCircle(colors.accent,4f,it) }
-                if(editor.drawingPath && points.isNotEmpty()) editor.cursor?.let { drawLine(colors.accent.copy(alpha=0.5f),points.last(),it,1f) }
             }
         }
-        if(editor.marquee.isNotEmpty()) {
-            val points=editor.marquee
-            if(editor.tool==CanvasTool.LASSO) {
-                val path=Path().apply { moveTo(points[0].x,points[0].y);points.drop(1).forEach { lineTo(it.x,it.y) };close() }
-                drawPath(path,colors.accent.copy(alpha=0.12f));drawPath(path,colors.accent,style=Stroke(1f))
-            } else { val a=points.first();val b=points.last();val origin=Offset(minOf(a.x,b.x),minOf(a.y,b.y));val extent=Size(kotlin.math.abs(a.x-b.x),kotlin.math.abs(a.y-b.y));drawRect(colors.accent.copy(alpha=0.12f),origin,extent);drawRect(colors.accent,origin,extent,style=Stroke(1f)) }
+
+        // 2. MESH tool: Draw triangle wireframe, vertices, and hover halo
+        if (editor.tool == CanvasTool.MESH && target != null && target.kind == "mesh") {
+            val pts = editor.screen(target.geometry.points, target, viewport)
+            val edges = MeshTopology.uniqueEdges(target.indices).map { it.endpointLow to it.endpointHigh }
+            edges.forEach { (a, b) ->
+                drawLine(Color.Black.copy(alpha = 0.45f), pts[a], pts[b], 2.5f)
+                drawLine(colors.accent.copy(alpha = 0.65f), pts[a], pts[b], 1f)
+            }
+            pts.forEachIndexed { i, p ->
+                val isSelected = i in editor.vertices
+                val isHovered = i == editor.hoveredVertex
+                if (isHovered) {
+                    drawCircle(Color.White, 7.5f, p, style = Stroke(1.8f))
+                    drawCircle(colors.accent, 4.5f, p)
+                } else if (isSelected) {
+                    drawCircle(colors.windowBackground, 5f, p)
+                    drawCircle(colors.accent, 3.8f, p)
+                } else {
+                    drawCircle(colors.windowBackground, 3.5f, p)
+                    drawCircle(colors.textPrimary.copy(alpha = 0.7f), 2.2f, p)
+                }
+            }
+
+            // Dragging guide line
+            if (editor.inGesture && editor.vertices.isNotEmpty() && editor.marquee.isEmpty() && editor.cursor != null) {
+                drawLine(
+                    color = colors.accent.copy(alpha = 0.6f),
+                    start = editor.dragStartPos,
+                    end = editor.cursor!!,
+                    strokeWidth = 1.5f
+                )
+            }
         }
-        if(editor.tool in listOf(CanvasTool.BRUSH,CanvasTool.SMOOTH)) editor.cursor?.let {
-            drawCircle(Color.Black.copy(alpha=0.7f),editor.radius,it,style=Stroke(3f));drawCircle(colors.textPrimary,editor.radius,it,style=Stroke(1f));drawCircle(colors.accent.copy(alpha=0.6f),editor.radius*editor.hardness,it,style=Stroke(1f))
+
+        // 3. WARP tool: Draw deformer lattice grid lines or rotation axis
+        if (editor.tool == CanvasTool.WARP && target != null && (target.kind == "warp" || target.kind == "rotation")) {
+            val pts = editor.screen(target.geometry.points, target, viewport)
+            if (target.kind == "rotation") {
+                if (pts.size >= 2) {
+                    drawLine(colors.accent, pts[0], pts[1], 2.5f)
+                    drawCircle(colors.accent, 6.5f, pts[0])
+                    drawCircle(Color(0xFF7BBB99), 5.5f, pts[1])
+                }
+            } else {
+                val columns = target.geometry.columns!! + 1
+                pts.indices.flatMap { i ->
+                    listOfNotNull(
+                        if (i % columns < columns - 1) i to i + 1 else null,
+                        if (i + columns < pts.size) i to i + columns else null
+                    )
+                }.forEach { (a, b) ->
+                    drawLine(Color.Black.copy(alpha = 0.6f), pts[a], pts[b], 3f)
+                    drawLine(colors.accent.copy(alpha = 0.8f), pts[a], pts[b], 1.2f)
+                }
+                pts.forEachIndexed { i, p ->
+                    val isHovered = i == editor.hoveredVertex
+                    val isSelected = i in editor.vertices
+                    if (isHovered) {
+                        drawCircle(Color.White, 8f, p, style = Stroke(2f))
+                        drawCircle(colors.accent, 5f, p)
+                    } else if (isSelected) {
+                        drawCircle(colors.windowBackground, 5.5f, p)
+                        drawCircle(colors.accent, 4f, p)
+                    } else {
+                        drawCircle(colors.windowBackground, 4f, p)
+                        drawCircle(colors.textPrimary, 2.8f, p)
+                    }
+                }
+            }
+        }
+
+        // 4. BRUSH or SMOOTH mode: Circle brush outline following cursor
+        if (editor.tool in listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH)) {
+            editor.cursor?.let {
+                drawCircle(Color.Black.copy(alpha = 0.7f), editor.radius, it, style = Stroke(3f))
+                drawCircle(colors.textPrimary, editor.radius, it, style = Stroke(1.2f))
+                drawCircle(colors.accent.copy(alpha = 0.6f), editor.radius * editor.hardness, it, style = Stroke(1f))
+            }
+        }
+
+        // 5. PATH_DEFORM mode: Curves and control points
+        if (isPathTool && target != null && target.kind == "mesh") {
+            editor.paths().forEach { path ->
+                val local = DeformPathTools.positions(path, target.geometry.points)
+                val curve = DeformPathTools.curve(local, path.points.map { it.corner }, path.closed)
+                val points = editor.screen(curve.flatMap { listOf(it.first, it.second) }.toFloatArray(), target, viewport)
+                val selected = path.id == editor.activePath
+                points.zipWithNext().forEach { (a, b) ->
+                    drawLine(Color.Black.copy(alpha = 0.7f), a, b, 5f)
+                    drawLine(if (selected) colors.accent else colors.textPrimary, a, b, 2f)
+                }
+                editor.screen(local.flatMap { listOf(it.first, it.second) }.toFloatArray(), target, viewport).forEachIndexed { i, p ->
+                    val isHovered = i == editor.hoveredVertex
+                    if (isHovered) {
+                        drawCircle(Color.White, 8f, p, style = Stroke(2f))
+                        drawCircle(colors.accent, 5f, p)
+                    } else {
+                        drawCircle(colors.windowBackground, 5.5f, p)
+                        drawCircle(if (selected && i == editor.pathPoint) colors.accent else colors.textPrimary, 4f, p)
+                    }
+                }
+            }
+            val points = editor.screen(editor.draft.flatMap { listOf(it.first, it.second) }.toFloatArray(), target, viewport)
+            points.zipWithNext().forEach { (a, b) -> drawLine(colors.accent, a, b, 2f) }
+            points.forEach { drawCircle(colors.accent, 4f, it) }
+            if (editor.drawingPath && points.isNotEmpty()) editor.cursor?.let { drawLine(colors.accent.copy(alpha = 0.5f), points.last(), it, 1f) }
+        }
+
+        // 6. Marquee selection box / lasso
+        if (editor.marquee.isNotEmpty()) {
+            val points = editor.marquee
+            if (editor.selectionStyle == SelectionStyle.LASSO) {
+                val path = Path().apply { moveTo(points[0].x, points[0].y); points.drop(1).forEach { lineTo(it.x, it.y) }; close() }
+                drawPath(path, colors.accent.copy(alpha = 0.15f))
+                drawPath(path, colors.accent, style = Stroke(1.2f))
+            } else {
+                val a = points.first(); val b = points.last()
+                val origin = Offset(minOf(a.x, b.x), minOf(a.y, b.y))
+                val extent = Size(kotlin.math.abs(a.x - b.x), kotlin.math.abs(a.y - b.y))
+                drawRect(colors.accent.copy(alpha = 0.15f), origin, extent)
+                drawRect(colors.accent, origin, extent, style = Stroke(1.2f))
+            }
         }
     }
+
+    // Left Animated Hover Toolbar
     CanvasToolBar(editor = editor, focus = focus)
-    Column(Modifier.align(Alignment.TopStart).fillMaxWidth().background(colors.panelBackground).border(1.dp,colors.divider)) {
-        Row(Modifier.height(32.dp).horizontalScroll(rememberScrollState()).padding(horizontal=8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(7.dp)) {
-            Text(tr("editor.tool.${editor.tool.name.lowercase()}"),color=colors.textPrimary,fontSize=11.sp)
-            Text(target?.geometry?.name ?: tr("editor.select"),color=colors.textMuted,fontSize=11.sp)
-            if(target!=null) {
+
+    // Top Options Bar
+    Column(Modifier.align(Alignment.TopStart).fillMaxWidth().background(colors.panelBackground).border(1.dp, colors.divider)) {
+        Row(
+            Modifier.height(32.dp).horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            Text(tr("editor.tool.${editor.tool.name.lowercase()}"), color = colors.textPrimary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+            Text(target?.geometry?.name ?: tr("editor.select"), color = colors.textMuted, fontSize = 11.sp)
+
+            // Selection style toggle (Box / Lasso)
+            if (editor.tool in listOf(CanvasTool.SELECT, CanvasTool.MESH, CanvasTool.WARP)) {
+                CompactToggleChip(
+                    text = tr("editor.mode.box"),
+                    selected = editor.selectionStyle == SelectionStyle.BOX,
+                    onToggle = { editor.selectionStyle = SelectionStyle.BOX },
+                    height = 22.dp
+                )
+                CompactToggleChip(
+                    text = tr("editor.mode.lasso"),
+                    selected = editor.selectionStyle == SelectionStyle.LASSO,
+                    onToggle = { editor.selectionStyle = SelectionStyle.LASSO },
+                    height = 22.dp
+                )
+            }
+
+            // Target pose / parameter picker for MESH and WARP
+            if (target != null && editor.tool in listOf(CanvasTool.MESH, CanvasTool.WARP)) {
                 var menu by remember { mutableStateOf(false) }
                 Box {
-                    CompactButton(if(editor.parameter==null) if(target.geometry.axes.isEmpty()) tr("editor.base") else tr("editor.pose") else editor.parameter!!,{ menu=true },height=23.dp)
-                    DropdownMenu(menu,{ menu=false }) {
-                        DropdownMenuItem({ editor.parameter=null;menu=false;focus() }) { Text(if(target.geometry.axes.isEmpty())tr("editor.base") else tr("editor.pose")) }
-                        editor.model.parameters.forEach { p -> DropdownMenuItem({ editor.parameter=p.id.raw;menu=false;focus() }) { Text(p.name) } }
+                    CompactButton(if (editor.parameter == null) if (target.geometry.axes.isEmpty()) tr("editor.base") else tr("editor.pose") else editor.parameter!!, { menu = true }, height = 23.dp)
+                    DropdownMenu(menu, { menu = false }) {
+                        DropdownMenuItem({ editor.parameter = null; menu = false; focus() }) { Text(if (target.geometry.axes.isEmpty()) tr("editor.base") else tr("editor.pose")) }
+                        editor.model.parameters.forEach { p -> DropdownMenuItem({ editor.parameter = p.id.raw; menu = false; focus() }) { Text(p.name) } }
                     }
                 }
             }
-            if(editor.tool in listOf(CanvasTool.BRUSH,CanvasTool.SMOOTH)) {
-                Text(tr("editor.radius"),color=colors.textMuted,fontSize=10.sp)
-                CompactNumberSpinner(editor.radius.toDouble(),{ editor.radius=it.toFloat() },Modifier.width(72.dp),min=4.0,max=500.0,unit="px",height=23.dp)
-                Text(tr("editor.strength"),color=colors.textMuted,fontSize=10.sp)
-                CompactNumberSpinner((editor.strength*100).toDouble(),{ editor.strength=it.toFloat()/100 },Modifier.width(65.dp),min=1.0,max=100.0,unit="%",height=23.dp)
-                Text(tr("editor.hardness"),color=colors.textMuted,fontSize=10.sp)
-                CompactNumberSpinner((editor.hardness*100).toDouble(),{ editor.hardness=it.toFloat()/100 },Modifier.width(65.dp),min=0.0,max=95.0,unit="%",height=23.dp)
-            }
-            if(editor.tool in listOf(CanvasTool.MOVE,CanvasTool.ROTATE,CanvasTool.SCALE)) {
-                var first by remember(editor.tool) { mutableStateOf(if(editor.tool==CanvasTool.SCALE)100.0 else 0.0) }
-                var second by remember(editor.tool) { mutableStateOf(0.0) }
-                CompactNumberSpinner(first,{ first=it },Modifier.width(80.dp),min=if(editor.tool==CanvasTool.SCALE)0.1 else -10000.0,max=10000.0,decimals=1,unit=when(editor.tool) { CanvasTool.SCALE -> "%";CanvasTool.ROTATE -> "°";else -> "X" },height=23.dp)
-                if(editor.tool==CanvasTool.MOVE)CompactNumberSpinner(second,{ second=it },Modifier.width(80.dp),min=-10000.0,max=10000.0,decimals=1,unit="Y",height=23.dp)
-                CompactButton(tr("editor.apply"),{ editor.preciseTransform(viewport,first.toFloat(),second.toFloat());focus() },enabled=editor.editable && target!=null,height=23.dp)
-            }
-            if(editor.tool==CanvasTool.MESH) {
-                listOf("vertex","edge","face").forEachIndexed { i,key -> CompactButton(tr("editor.$key"),{ editor.elementMode=i;focus() },isPrimary=editor.elementMode==i,height=23.dp) }
-                listOf("split","connect","merge","delete").forEach { action -> CompactButton(tr("editor.$action"),{ editor.topology(action);focus() },enabled=editor.editable && editor.vertices.isNotEmpty(),height=23.dp) }
-            }
-            if(editor.tool==CanvasTool.WARP) {
-                CompactButton(tr("editor.createWarp"),{ editor.createWarp();focus() },enabled=editor.editable && target?.kind=="mesh",height=23.dp)
-                TooltipArea(tooltip={ Surface(color=colors.panelElevated) { Text(tr("editor.rootRotationHint"),color=colors.textPrimary,fontSize=11.sp,modifier=Modifier.padding(6.dp)) } }) {
-                    CompactButton(tr("editor.createRotation"),{ editor.createWarp(rotation=true);focus() },enabled=editor.editable && target?.kind=="mesh",height=23.dp)
-                }
-            }
-            if(pathTool) {
-                CompactButton(tr("editor.newPath"),{ editor.cancel();editor.drawingPath=true;focus() },enabled=target?.kind=="mesh" && editor.editable,height=23.dp)
-                if(editor.drawingPath) CompactButton(tr("editor.finishPath"),{ editor.finishPath();focus() },enabled=editor.draft.size>=2,height=23.dp)
-                val active=editor.selectedPath()
-                if(active!=null) {
-                    if(!active.closed)CompactButton(tr("editor.extend"),{ editor.extendPath();focus() },enabled=editor.editable,height=23.dp)
-                    CompactButton(tr("editor.delete"),{ editor.deletePathPoint();focus() },enabled=editor.editable,height=23.dp)
-                    CompactButton(tr(if(active.closed)"editor.openPath" else "editor.closePath"),{ editor.changePath { it.copy(closed=!it.closed) };focus() },enabled=editor.editable && active.points.size>=3,height=23.dp)
-                    if(editor.pathPoint in active.points.indices) CompactButton(tr("editor.corner"),{ editor.changePath { it.copy(points=it.points.mapIndexed { i,p -> if(i==editor.pathPoint)p.copy(corner=!p.corner) else p }) };focus() },enabled=editor.editable,height=23.dp)
-                    Text(tr("editor.width"),color=colors.textMuted,fontSize=10.sp)
-                    CompactNumberSpinner(active.width.toDouble(),{ width -> editor.changePath { it.copy(width=width.toFloat()) } },Modifier.width(82.dp),min=0.001,max=10000.0,decimals=3,step=0.01,enabled=editor.editable,height=23.dp)
-                    Text(tr("editor.hardness"),color=colors.textMuted,fontSize=10.sp)
-                    CompactNumberSpinner((active.hardness*100).toDouble(),{ h -> editor.changePath { it.copy(hardness=h.toFloat()/100) } },Modifier.width(64.dp),min=0.0,max=100.0,enabled=editor.editable,height=23.dp)
-                }
-                CompactButton("L${editor.pathLevel}",{ editor.pathLevel=if(editor.pathLevel==2)3 else 2;editor.activePath=null;focus() },height=23.dp)
-            }
-            CompactButton(tr("editor.undo"),{ viewModel.undoHistory();focus() },enabled=editor.editable,height=23.dp)
-            CompactButton(tr("editor.redo"),{ viewModel.redoHistory();focus() },enabled=editor.editable,height=23.dp)
-        }
-    }
-    Text(editor.error ?: if(editor.busy)tr("editor.saving") else tr("editor.selectionCount",editor.objects.size,editor.vertices.size)+"   ·   "+tr(if(pathTool)"editor.pathHint" else "editor.hint"),
-        color=if(editor.error!=null)colors.error else colors.textMuted,fontSize=10.sp,
-        modifier=Modifier.align(Alignment.BottomStart).fillMaxWidth().background(colors.panelBackground).padding(horizontal=8.dp,vertical=5.dp))
-}
 
-@Composable
-private fun ToolIcon(tool: CanvasTool, color: Color) {
-    Canvas(Modifier.size(18.dp)) {
-        val s=size.width/18f
-        fun p(x: Float,y: Float)=Offset(x*s,y*s)
-        fun line(x: Float,y: Float,a: Float,b: Float)=drawLine(color,p(x,y),p(a,b),1.3f*s)
-        when(tool) {
-            CanvasTool.SELECT -> { val path=Path().apply { moveTo(3*s,2*s);lineTo(14*s,10*s);lineTo(9*s,11*s);lineTo(7*s,16*s);close() };drawPath(path,color,style=Stroke(s*1.3f)) }
-            CanvasTool.BOX -> drawRect(color,p(3f,3f),Size(12*s,12*s),style=Stroke(1.3f*s))
-            CanvasTool.LASSO -> { drawOval(color,p(2f,3f),Size(14*s,10*s),style=Stroke(1.3f*s));line(5f,12f,4f,16f) }
-            CanvasTool.MOVE -> { line(2f,9f,16f,9f);line(9f,2f,9f,16f);line(2f,9f,5f,6f);line(2f,9f,5f,12f);line(9f,2f,6f,5f);line(9f,2f,12f,5f) }
-            CanvasTool.ROTATE -> { drawArc(color,30f,290f,false,p(3f,3f),Size(12*s,12*s),style=Stroke(1.3f*s));line(15f,3f,15f,8f);line(15f,8f,11f,7f) }
-            CanvasTool.SCALE -> { drawRect(color,p(3f,9f),Size(6*s,6*s),style=Stroke(1.3f*s));line(8f,10f,15f,3f);line(10f,3f,15f,3f);line(15f,3f,15f,8f) }
-            CanvasTool.MESH -> { line(3f,14f,8f,3f);line(8f,3f,16f,14f);line(16f,14f,3f,14f);line(8f,3f,9f,10f);line(9f,10f,3f,14f);line(9f,10f,16f,14f);drawCircle(color,2*s,p(9f,10f)) }
-            CanvasTool.WARP -> { for(i in listOf(3f,9f,15f)) { line(i,3f,i,15f);line(3f,i,15f,i) } }
-            CanvasTool.BRUSH,CanvasTool.SMOOTH -> { line(6f,11f,14f,3f);line(9f,14f,17f,6f);line(14f,3f,17f,6f);drawCircle(color,3*s,p(5f,14f),style=Stroke(1.3f*s));if(tool==CanvasTool.SMOOTH)line(1f,4f,7f,4f) }
-            CanvasTool.PATH,CanvasTool.PATH_DEFORM -> { val path=Path().apply { moveTo(2*s,14*s);cubicTo(6*s,-2*s,12*s,20*s,16*s,4*s) };drawPath(path,color,style=Stroke(1.3f*s));drawCircle(color,2*s,p(2f,14f));drawCircle(color,2*s,p(16f,4f));if(tool==CanvasTool.PATH_DEFORM)drawCircle(color,2*s,p(9f,9f)) }
-            CanvasTool.HAND -> { line(4f,9f,4f,14f);line(4f,14f,8f,17f);line(8f,17f,13f,15f);line(13f,15f,15f,6f);for(i in 6..12 step 2)line(i.toFloat(),3f,i.toFloat(),10f) }
+            // SELECT tool options: Precise numeric transforms & Warp creation
+            if (editor.tool == CanvasTool.SELECT) {
+                var posX by remember { mutableStateOf(0.0) }
+                var posY by remember { mutableStateOf(0.0) }
+                var scaleVal by remember { mutableStateOf(100.0) }
+                var rotateVal by remember { mutableStateOf(0.0) }
+                CompactNumberSpinner(posX, { posX = it }, Modifier.width(72.dp), min = -10000.0, max = 10000.0, decimals = 1, unit = "X", height = 23.dp)
+                CompactNumberSpinner(posY, { posY = it }, Modifier.width(72.dp), min = -10000.0, max = 10000.0, decimals = 1, unit = "Y", height = 23.dp)
+                CompactButton(tr("editor.apply"), { editor.preciseTransform(viewport, posX.toFloat(), posY.toFloat()); focus() }, enabled = editor.editable && target != null, height = 23.dp)
+                CompactNumberSpinner(scaleVal, { scaleVal = it }, Modifier.width(72.dp), min = 0.1, max = 10000.0, decimals = 1, unit = "%", height = 23.dp)
+                CompactButton(tr("editor.apply"), { editor.preciseTransform(viewport, scaleVal.toFloat(), scaleMode = true); focus() }, enabled = editor.editable && target != null, height = 23.dp)
+                CompactNumberSpinner(rotateVal, { rotateVal = it }, Modifier.width(72.dp), min = -360.0, max = 360.0, decimals = 1, unit = "°", height = 23.dp)
+                CompactButton(tr("editor.apply"), { editor.preciseTransform(viewport, rotateVal.toFloat(), rotateMode = true); focus() }, enabled = editor.editable && target != null, height = 23.dp)
+
+                if (target?.kind == "mesh") {
+                    CompactButton(tr("editor.createWarp"), { editor.createWarp(); focus() }, enabled = editor.editable, height = 23.dp)
+                    TooltipArea(tooltip = { Surface(color = colors.panelElevated) { Text(tr("editor.rootRotationHint"), color = colors.textPrimary, fontSize = 11.sp, modifier = Modifier.padding(6.dp)) } }) {
+                        CompactButton(tr("editor.createRotation"), { editor.createWarp(rotation = true); focus() }, enabled = editor.editable, height = 23.dp)
+                    }
+                }
+            }
+
+            // MESH tool options: element mode & topology
+            if (editor.tool == CanvasTool.MESH) {
+                listOf("vertex", "edge", "face").forEachIndexed { i, key -> CompactButton(tr("editor.$key"), { editor.elementMode = i; focus() }, isPrimary = editor.elementMode == i, height = 23.dp) }
+                listOf("split", "connect", "merge", "delete").forEach { action -> CompactButton(tr("editor.$action"), { editor.topology(action); focus() }, enabled = editor.editable && editor.vertices.isNotEmpty(), height = 23.dp) }
+            }
+
+            // WARP tool options
+            if (editor.tool == CanvasTool.WARP) {
+                CompactButton(tr("editor.createWarp"), { editor.createWarp(); focus() }, enabled = editor.editable && target?.kind == "mesh", height = 23.dp)
+                TooltipArea(tooltip = { Surface(color = colors.panelElevated) { Text(tr("editor.rootRotationHint"), color = colors.textPrimary, fontSize = 11.sp, modifier = Modifier.padding(6.dp)) } }) {
+                    CompactButton(tr("editor.createRotation"), { editor.createWarp(rotation = true); focus() }, enabled = editor.editable && target?.kind == "mesh", height = 23.dp)
+                }
+            }
+
+            // BRUSH / SMOOTH tool options
+            if (editor.tool in listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH)) {
+                Text(tr("editor.radius"), color = colors.textMuted, fontSize = 10.sp)
+                CompactNumberSpinner(editor.radius.toDouble(), { editor.radius = it.toFloat() }, Modifier.width(72.dp), min = 4.0, max = 500.0, unit = "px", height = 23.dp)
+                Text(tr("editor.strength"), color = colors.textMuted, fontSize = 10.sp)
+                CompactNumberSpinner((editor.strength * 100).toDouble(), { editor.strength = it.toFloat() / 100 }, Modifier.width(65.dp), min = 1.0, max = 100.0, unit = "%", height = 23.dp)
+                Text(tr("editor.hardness"), color = colors.textMuted, fontSize = 10.sp)
+                CompactNumberSpinner((editor.hardness * 100).toDouble(), { editor.hardness = it.toFloat() / 100 }, Modifier.width(65.dp), min = 0.0, max = 95.0, unit = "%", height = 23.dp)
+            }
+
+            // PATH_DEFORM tool options
+            if (isPathTool) {
+                CompactButton(tr("editor.newPath"), { editor.cancel(); editor.drawingPath = true; focus() }, enabled = target?.kind == "mesh" && editor.editable, height = 23.dp)
+                if (editor.drawingPath) CompactButton(tr("editor.finishPath"), { editor.finishPath(); focus() }, enabled = editor.draft.size >= 2, height = 23.dp)
+                val active = editor.selectedPath()
+                if (active != null) {
+                    if (!active.closed) CompactButton(tr("editor.extend"), { editor.extendPath(); focus() }, enabled = editor.editable, height = 23.dp)
+                    CompactButton(tr("editor.delete"), { editor.deletePathPoint(); focus() }, enabled = editor.editable, height = 23.dp)
+                    CompactButton(tr(if (active.closed) "editor.openPath" else "editor.closePath"), { editor.changePath { it.copy(closed = !it.closed) }; focus() }, enabled = editor.editable && active.points.size >= 3, height = 23.dp)
+                    if (editor.pathPoint in active.points.indices) CompactButton(tr("editor.corner"), { editor.changePath { it.copy(points = it.points.mapIndexed { i, p -> if (i == editor.pathPoint) p.copy(corner = !p.corner) else p }) }; focus() }, enabled = editor.editable, height = 23.dp)
+                    Text(tr("editor.width"), color = colors.textMuted, fontSize = 10.sp)
+                    CompactNumberSpinner(active.width.toDouble(), { width -> editor.changePath { it.copy(width = width.toFloat()) } }, Modifier.width(82.dp), min = 0.001, max = 10000.0, decimals = 3, step = 0.01, enabled = editor.editable, height = 23.dp)
+                    Text(tr("editor.hardness"), color = colors.textMuted, fontSize = 10.sp)
+                    CompactNumberSpinner((active.hardness * 100).toDouble(), { h -> editor.changePath { it.copy(hardness = h.toFloat() / 100) } }, Modifier.width(64.dp), min = 0.0, max = 100.0, enabled = editor.editable, height = 23.dp)
+                }
+                CompactButton("L${editor.pathLevel}", { editor.pathLevel = if (editor.pathLevel == 2) 3 else 2; editor.activePath = null; focus() }, height = 23.dp)
+            }
+
+            CompactButton(tr("editor.undo"), { viewModel.undoHistory(); focus() }, enabled = editor.editable, height = 23.dp)
+            CompactButton(tr("editor.redo"), { viewModel.redoHistory(); focus() }, enabled = editor.editable, height = 23.dp)
         }
     }
+
+    // Bottom Status Bar
+    Text(
+        editor.error ?: if (editor.busy) tr("editor.saving") else tr("editor.selectionCount", editor.objects.size, editor.vertices.size) + "   ·   " + tr(if (isPathTool) "editor.pathHint" else "editor.hint"),
+        color = if (editor.error != null) colors.error else colors.textMuted,
+        fontSize = 10.sp,
+        modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().background(colors.panelBackground).padding(horizontal = 8.dp, vertical = 5.dp)
+    )
 }
 
 @OptIn(ExperimentalComposeUiApi::class)
@@ -356,6 +535,55 @@ private fun ToolItemRow(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToolIcon(tool: CanvasTool, color: Color) {
+    Canvas(Modifier.size(18.dp)) {
+        val s = size.width / 18f
+        fun p(x: Float, y: Float) = Offset(x * s, y * s)
+        fun line(x: Float, y: Float, a: Float, b: Float) = drawLine(color, p(x, y), p(a, b), 1.3f * s)
+        when (tool) {
+            CanvasTool.SELECT -> {
+                val path = Path().apply { moveTo(3 * s, 2 * s); lineTo(14 * s, 10 * s); lineTo(9 * s, 11 * s); lineTo(7 * s, 16 * s); close() }
+                drawPath(path, color, style = Stroke(s * 1.3f))
+            }
+            CanvasTool.MESH -> {
+                val path = Path().apply { moveTo(9 * s, 2 * s); lineTo(16 * s, 15 * s); lineTo(2 * s, 15 * s); close() }
+                drawPath(path, color, style = Stroke(s * 1.3f))
+                drawCircle(color, 2 * s, p(9f, 2f))
+                drawCircle(color, 2 * s, p(16f, 15f))
+                drawCircle(color, 2 * s, p(2f, 15f))
+            }
+            CanvasTool.WARP -> {
+                for (i in listOf(3f, 9f, 15f)) {
+                    line(i, 3f, i, 15f)
+                    line(3f, i, 15f, i)
+                }
+            }
+            CanvasTool.BRUSH, CanvasTool.SMOOTH -> {
+                line(6f, 11f, 14f, 3f)
+                line(9f, 14f, 17f, 6f)
+                line(14f, 3f, 17f, 6f)
+                drawCircle(color, 3 * s, p(5f, 14f), style = Stroke(1.3f * s))
+                if (tool == CanvasTool.SMOOTH) line(1f, 4f, 7f, 4f)
+            }
+            CanvasTool.PATH_DEFORM -> {
+                val path = Path().apply { moveTo(2 * s, 14 * s); cubicTo(6 * s, -2 * s, 12 * s, 20 * s, 16 * s, 4 * s) }
+                drawPath(path, color, style = Stroke(1.3f * s))
+                drawCircle(color, 2 * s, p(2f, 14f))
+                drawCircle(color, 2 * s, p(16f, 4f))
+                drawCircle(color, 2 * s, p(9f, 9f))
+            }
+            CanvasTool.HAND -> {
+                line(4f, 9f, 4f, 14f)
+                line(4f, 14f, 8f, 17f)
+                line(8f, 17f, 13f, 15f)
+                line(13f, 15f, 15f, 6f)
+                for (i in 6..12 step 2) line(i.toFloat(), 3f, i.toFloat(), 10f)
             }
         }
     }
