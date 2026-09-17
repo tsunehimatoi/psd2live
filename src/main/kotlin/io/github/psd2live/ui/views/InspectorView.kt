@@ -50,6 +50,8 @@ import androidx.compose.material.DropdownMenuItem
 import io.github.psd2live.core.ClassifiedLayer
 import io.github.psd2live.core.LayerClassificationOverride
 import io.github.psd2live.core.LayerType
+import io.github.psd2live.core.MouthLipLayer
+import io.github.psd2live.core.MouthLipLayers
 import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.Side
 import io.github.psd2live.i18n.tr
@@ -837,7 +839,97 @@ private fun ModelSettingsSection(
 							io.github.psd2live.ui.components.MouthSettingsPopupButton(
 								state = state,
 								enabled = !isBusy && !state.meshOnly,
-								onApply = viewModel::setMouthSettings,
+								onApply = viewModel::setMouthShapeCurve,
+							)
+						}
+					}
+
+					if (state.mouthOutlineEnabled) {
+						Row(
+							modifier = Modifier.fillMaxWidth(),
+							verticalAlignment = Alignment.CenterVertically,
+						) {
+							Text(
+								text = tr("mouth.thickness"),
+								style = typography.body.copy(fontSize = 10.5.sp),
+								color = colors.textPrimary,
+								modifier = Modifier.width(76.dp),
+								textAlign = TextAlign.Right,
+							)
+							Spacer(Modifier.width(5.dp))
+							CompactSlider(
+								value = state.mouthThickness,
+								onValueChange = { viewModel.setMouthThickness(it) },
+								onValueChangeStarted = viewModel::beginEditorGesture,
+								onValueChangeFinished = viewModel::endEditorGesture,
+								valueRange = 0.5f..8.0f,
+								enabled = !isBusy && !state.meshOnly,
+								height = 14.dp,
+								modifier = Modifier.weight(1f),
+							)
+							Spacer(Modifier.width(4.dp))
+							CompactNumberSpinner(
+								value = state.mouthThickness.toDouble(),
+								onValueChange = { viewModel.setMouthThickness(it.toFloat()) },
+								min = 0.5,
+								max = 8.0,
+								step = 0.1,
+								decimals = 1,
+								unit = "px",
+								enabled = !isBusy && !state.meshOnly,
+								modifier = Modifier.width(60.dp),
+								height = 20.dp,
+							)
+						}
+
+						val sampledColor = remember(state.analysis, state.alphaThreshold) {
+							state.analysis?.layers?.firstOrNull {
+								it.source !is MouthLipLayer &&
+								it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) &&
+								it.opaquePixels > 0
+							}?.let { MouthLipLayers.perimeterColor(it.source.raster, state.alphaThreshold) } ?: 0x482C32
+						}
+						val autoColor = state.mouthColor == null
+						val rgb = state.mouthColor ?: sampledColor
+
+						Row(
+							modifier = Modifier.fillMaxWidth().padding(top = 1.dp),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(6.dp),
+						) {
+							CompactCheckbox(
+								checked = autoColor,
+								onCheckedChange = { auto ->
+									viewModel.setMouthColor(if (auto) null else (state.mouthColor ?: sampledColor))
+								},
+								label = tr("mouth.autoColor"),
+								enabled = !isBusy && !state.meshOnly,
+								modifier = Modifier.weight(1f),
+							)
+							Box(
+								Modifier.size(18.dp)
+									.background(Color(0xFF000000L or rgb.toLong()), RoundedCornerShape(3.dp))
+									.border(1.dp, colors.border, RoundedCornerShape(3.dp))
+							)
+							var hexInput by remember(state.mouthColor, autoColor) {
+								mutableStateOf("%06X".format(state.mouthColor ?: sampledColor))
+							}
+							CompactTextField(
+								value = if (autoColor) "%06X".format(sampledColor) else hexInput,
+								onValueChange = { newHex ->
+									hexInput = newHex
+									val cleaned = newHex.trim().removePrefix("#")
+									if (cleaned.length == 6) {
+										cleaned.toIntOrNull(16)?.let { c ->
+											viewModel.setMouthColor(c)
+										}
+									}
+								},
+								enabled = !isBusy && !state.meshOnly && !autoColor,
+								isMono = true,
+								placeholder = "#RRGGBB",
+								modifier = Modifier.width(76.dp),
+								height = 20.dp,
 							)
 						}
 					}

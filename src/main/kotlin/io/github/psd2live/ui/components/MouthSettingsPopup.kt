@@ -37,7 +37,7 @@ import io.github.psd2live.ui.theme.LocalToolTypography
 fun MouthSettingsPopupButton(
     state: PSD2LiveState,
     enabled: Boolean,
-    onApply: (String, MouthCurve, Int?, Float) -> Unit,
+    onApply: (String, MouthCurve) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     val density = LocalDensity.current
@@ -46,6 +46,7 @@ fun MouthSettingsPopupButton(
             it.source !is MouthLipLayer && it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && it.opaquePixels > 0
         }?.let { MouthLipLayers.perimeterColor(it.source.raster, state.alphaThreshold) } ?: 0x482C32
     }
+    val rgb = state.mouthColor ?: sampledColor
     Box(Modifier.fillMaxWidth()) {
         CompactButton(
             text = tr("mouth.settings") + " · " + tr("mouth.shape.${state.mouthShape}"),
@@ -58,9 +59,17 @@ fun MouthSettingsPopupButton(
             onDismissRequest = { expanded = false },
             properties = PopupProperties(focusable = true),
         ) {
-            MouthSettingsEditor(state.mouthShape, state.mouthCurve, state.mouthColor, state.mouthThickness, sampledColor,
-                onApply = { shape, curve, color, thickness -> onApply(shape, curve, color, thickness); expanded = false },
-                onDismiss = { expanded = false })
+            MouthSettingsEditor(
+                initialShape = state.mouthShape,
+                initialCurve = state.mouthCurve,
+                previewColor = rgb,
+                previewThickness = state.mouthThickness,
+                onApply = { shape, curve ->
+                    onApply(shape, curve)
+                    expanded = false
+                },
+                onDismiss = { expanded = false }
+            )
         }
     }
 }
@@ -69,10 +78,9 @@ fun MouthSettingsPopupButton(
 internal fun MouthSettingsEditor(
     initialShape: String,
     initialCurve: MouthCurve,
-    initialColor: Int?,
-    initialThickness: Float,
-    sampledColor: Int,
-    onApply: (String, MouthCurve, Int?, Float) -> Unit,
+    previewColor: Int,
+    previewThickness: Float,
+    onApply: (String, MouthCurve) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val colors = LocalToolColors.current
@@ -80,69 +88,74 @@ internal fun MouthSettingsEditor(
     var shape by remember { mutableStateOf(initialShape) }
     var curve by remember { mutableStateOf(if (initialShape == "custom") initialCurve else MouthCurve.preset(initialShape)) }
     var selected by remember { mutableStateOf(3) }
-    var autoColor by remember { mutableStateOf(initialColor == null) }
-    var hex by remember { mutableStateOf("%06X".format(initialColor ?: sampledColor)) }
-    var thickness by remember { mutableStateOf(initialThickness) }
-    val manualColor = hex.trim().removePrefix("#").takeIf { it.length == 6 }?.toIntOrNull(16)?.takeIf { it in 0..0xFFFFFF }
-    val rgb = if (autoColor) sampledColor else manualColor ?: sampledColor
     fun changeCurve(next: MouthCurve) { curve = next; shape = "custom" }
 
-    Surface(color = colors.panelElevated, border = BorderStroke(1.dp, colors.border),
-        shape = RoundedCornerShape(6.dp), elevation = 6.dp) {
-        Column(Modifier.width(380.dp).padding(12.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+    Surface(
+        color = colors.panelElevated,
+        border = BorderStroke(1.dp, colors.border),
+        shape = RoundedCornerShape(6.dp),
+        elevation = 6.dp
+    ) {
+        Column(
+            Modifier.width(380.dp).padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp)
+        ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(tr("mouth.settings"), style = typography.title, color = colors.textPrimary, modifier = Modifier.weight(1f))
                 CompactIconButton(onClick = onDismiss, size = 20.dp) { IconClose(Modifier.size(10.dp), tint = colors.textMuted) }
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(tr("mouth.preset"), fontSize = 11.sp, color = colors.textPrimary)
-                CompactDropdown(items = MouthCurve.presets + "custom", selectedItem = shape,
+                CompactDropdown(
+                    items = MouthCurve.presets + "custom",
+                    selectedItem = shape,
                     onItemSelected = {
                         shape = it
                         if (it != "custom") {
                             curve = MouthCurve.preset(it)
-                            onApply(shape, curve, if (autoColor) null else manualColor, thickness)
+                            onApply(shape, curve)
                         }
                     },
-                    itemLabel = { tr("mouth.shape.$it") }, modifier = Modifier.weight(1f), height = 22.dp)
+                    itemLabel = { tr("mouth.shape.$it") },
+                    modifier = Modifier.weight(1f),
+                    height = 22.dp
+                )
             }
-            BezierMouthCanvas(curve, selected, rgb, thickness, onSelect = { selected = it }, onChange = ::changeCurve)
+            BezierMouthCanvas(curve, selected, previewColor, previewThickness, onSelect = { selected = it }, onChange = ::changeCurve)
             Text(tr("mouth.curve.hint"), fontSize = 10.sp, color = colors.textMuted)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                CompactDropdown(items = (0..6).toList(), selectedItem = selected, onItemSelected = { selected = it },
+                CompactDropdown(
+                    items = (0..6).toList(),
+                    selectedItem = selected,
+                    onItemSelected = { selected = it },
                     itemLabel = { tr(if (it % 3 == 0) "mouth.anchor" else "mouth.control") + " ${it + 1}" },
-                    modifier = Modifier.weight(1f), height = 22.dp)
+                    modifier = Modifier.weight(1f),
+                    height = 22.dp
+                )
                 Text("X", color = colors.textMuted, fontSize = 10.sp)
-                CompactNumberSpinner(value = (curve.points[selected].x * 100).toDouble(),
+                CompactNumberSpinner(
+                    value = (curve.points[selected].x * 100).toDouble(),
                     onValueChange = { changeCurve(curve.move(selected, it.toFloat() / 100, curve.points[selected].y)) },
                     min = 0.0, max = 100.0, step = 1.0, decimals = 1, unit = "%",
-                    enabled = selected != 0 && selected != 6, modifier = Modifier.width(65.dp), height = 22.dp)
+                    enabled = selected != 0 && selected != 6, modifier = Modifier.width(65.dp), height = 22.dp
+                )
                 Text("Y", color = colors.textMuted, fontSize = 10.sp)
-                CompactNumberSpinner(value = (curve.points[selected].y * 100).toDouble(),
+                CompactNumberSpinner(
+                    value = (curve.points[selected].y * 100).toDouble(),
                     onValueChange = { changeCurve(curve.move(selected, curve.points[selected].x, it.toFloat() / 100)) },
                     min = -50.0, max = 50.0, step = 1.0, decimals = 1, unit = "%",
-                    modifier = Modifier.width(65.dp), height = 22.dp)
+                    modifier = Modifier.width(65.dp), height = 22.dp
+                )
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(tr("mouth.thickness"), color = colors.textPrimary, fontSize = 11.sp)
-                CompactSlider(value = thickness, onValueChange = { thickness = it }, valueRange = 0.5f..8f, modifier = Modifier.weight(1f))
-                CompactNumberSpinner(value = thickness.toDouble(), onValueChange = { thickness = it.toFloat() },
-                    min = 0.5, max = 8.0, step = 0.1, decimals = 1, unit = "px", modifier = Modifier.width(70.dp), height = 22.dp)
-            }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CompactCheckbox(checked = autoColor, onCheckedChange = { autoColor = it }, label = tr("mouth.autoColor"))
-                Spacer(Modifier.weight(1f))
-                Box(Modifier.size(20.dp).background(Color(0xFF000000L or rgb.toLong()), RoundedCornerShape(3.dp)).border(1.dp, colors.border, RoundedCornerShape(3.dp)))
-                CompactTextField(value = if (autoColor) "%06X".format(sampledColor) else hex,
-                    onValueChange = { hex = it }, enabled = !autoColor, isMono = true, placeholder = "#RRGGBB",
-                    modifier = Modifier.width(88.dp), height = 22.dp)
-            }
-            if (!autoColor && manualColor == null) Text(tr("mouth.color.invalid"), fontSize = 10.sp, color = colors.textPrimary)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 CompactButton(text = tr("mouth.cancel"), onClick = onDismiss, height = 24.dp)
                 Spacer(Modifier.width(8.dp))
-                CompactButton(text = tr("mouth.apply"), onClick = { onApply(shape, curve, if (autoColor) null else manualColor, thickness) },
-                    enabled = autoColor || manualColor != null, isPrimary = true, height = 24.dp)
+                CompactButton(
+                    text = tr("mouth.apply"),
+                    onClick = { onApply(shape, curve) },
+                    isPrimary = true,
+                    height = 24.dp
+                )
             }
         }
     }

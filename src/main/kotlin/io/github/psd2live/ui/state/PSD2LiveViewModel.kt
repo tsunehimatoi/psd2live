@@ -434,6 +434,27 @@ class PSD2LiveViewModel : AutoCloseable {
         editorChanged()
     }
 
+    fun setMouthShapeCurve(shape: String, curve: io.github.psd2live.core.MouthCurve) {
+        require(shape in io.github.psd2live.core.MouthCurve.presets + "custom")
+        _state.update { it.copy(mouthShape = shape, mouthCurve = curve) }
+        schedulePreviewRebuild()
+        editorChanged()
+    }
+
+    fun setMouthThickness(thickness: Float) {
+        val clamped = thickness.coerceIn(0.5f, 8f)
+        _state.update { it.copy(mouthThickness = clamped) }
+        schedulePreviewRebuild()
+        editorChanged()
+    }
+
+    fun setMouthColor(color: Int?) {
+        require(color == null || color in 0..0xFFFFFF)
+        _state.update { it.copy(mouthColor = color) }
+        schedulePreviewRebuild()
+        editorChanged()
+    }
+
 	fun setMeshOnly(enabled: Boolean) {
 		_state.update { current ->
 			val updated = current.copy(meshOnly = enabled, generateDeformers = !enabled)
