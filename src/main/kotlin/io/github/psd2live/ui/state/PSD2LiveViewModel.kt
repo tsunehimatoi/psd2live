@@ -1,5 +1,8 @@
 package io.github.psd2live.ui.state
 
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.key
 import io.github.psd2live.core.MeshSettings
 
 import io.github.psd2live.core.PSD2LivePipeline
@@ -817,7 +820,101 @@ class PSD2LiveViewModel : AutoCloseable {
 	}
 
 	fun closeSettingsDialog() {
-		_state.update { it.copy(showSettingsDialog = false) }
+		_state.update {
+			it.copy(
+				showSettingsDialog = false,
+				// A capture left dangling would swallow every key from here on.
+				keyCapture = null,
+				focusCanvasRequest = it.focusCanvasRequest + 1,
+			)
+		}
+	}
+
+	// -------------------------------------------------------------------------------------
+	// Keyboard shortcuts
+	//
+	// None of these mark the project dirty — the keymap is an application preference, not project
+	// content. Persistence is write-through so the state always mirrors what is on disk.
+	// -------------------------------------------------------------------------------------
+
+	/** Starts recording a replacement for the binding at [index] (use size to append). */
+	fun beginKeyCapture(action: ShortcutAction, index: Int) {
+		_state.update { it.copy(keyCapture = KeyCapture(action, index)) }
+	}
+
+	fun cancelKeyCapture() {
+		_state.update { it.copy(keyCapture = null) }
+	}
+
+	/**
+	 * Feeds one key event to the active capture. `Esc` abandons it; a refused chord is reported back
+	 * through [KeyCapture.feedback] and recording continues.
+	 */
+	fun captureKeyEvent(event: KeyEvent) {
+		val capture = _state.value.keyCapture ?: return
+		if (event.key == Key.Escape) {
+			cancelKeyCapture()
+			return
+		}
+		if (isModifierKey(event.key)) return
+		val binding = keyBindingOf(event)
+		val check = _state.value.keymap.validateCapture(capture.action, capture.index, binding)
+		if (check != CaptureCheck.Ok) {
+			_state.update { it.copy(keyCapture = capture.copy(feedback = check)) }
+			return
+		}
+		val updated = _state.value.keymap.bindingsFor(capture.action).toMutableList()
+		if (capture.index < updated.size) updated[capture.index] = binding else updated.add(binding)
+		applyBindings(capture.action, updated)
+		cancelKeyCapture()
+	}
+
+	fun addKeyBinding(action: ShortcutAction) {
+		beginKeyCapture(action, _state.value.keymap.bindingsFor(action).size)
+	}
+
+	fun removeKeyBinding(action: ShortcutAction, index: Int) {
+		val updated = _state.value.keymap.bindingsFor(action).toMutableList()
+		if (index !in updated.indices) return
+		updated.removeAt(index)
+		applyBindings(action, updated)
+		if (_state.value.keyCapture?.action == action) cancelKeyCapture()
+	}
+
+	/** Drops the override so the action falls back to whatever the active preset defines. */
+	fun resetKeyBinding(action: ShortcutAction) {
+		AppSettings.removeKeymapOverride(action)
+		_state.update { it.copy(keymap = loadPersistedKeymap()) }
+	}
+
+	fun applyKeymapPreset(preset: KeymapPreset) {
+		if (_state.value.keymapPreset == preset) return
+		// An override is expressed relative to a base preset, so carrying it across a switch has no
+		// defined meaning. Switching is therefore a full reset of the customisations.
+		AppSettings.clearKeymap()
+		AppSettings.keymapPreset = preset
+		_state.update {
+			it.copy(keymapPreset = preset, keymap = Keymap.of(preset), keyCapture = null)
+		}
+	}
+
+	/** Part of "Reset Defaults": back to the shipped Photoshop table with no customisations. */
+	fun resetKeymap() {
+		AppSettings.clearKeymap()
+		_state.update {
+			it.copy(keymapPreset = KeymapPreset.PHOTOSHOP, keymap = Keymap.DEFAULT, keyCapture = null)
+		}
+	}
+
+	/**
+	 * Writes [bindings] and refreshes the keymap. A set that matches the preset default drops the
+	 * override entirely, so the row's reset button goes back to being disabled.
+	 */
+	private fun applyBindings(action: ShortcutAction, bindings: List<KeyBinding>) {
+		val preset = _state.value.keymapPreset
+		if (bindings == Keymap.of(preset).bindingsFor(action)) AppSettings.removeKeymapOverride(action)
+		else AppSettings.putKeymapOverride(action, bindings)
+		_state.update { it.copy(keymap = loadPersistedKeymap()) }
 	}
 
 

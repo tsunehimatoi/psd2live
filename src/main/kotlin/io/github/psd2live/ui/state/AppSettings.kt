@@ -74,6 +74,91 @@ object AppSettings {
 			}
 		}
 
+	// ---------------------------------------------------------------------------------------
+	// Keyboard shortcuts
+	//
+	// Only the *overrides* are stored, relative to the active preset, so restoring a single action
+	// is just removing a key and switching presets cannot inherit a stale customisation.
+	// ---------------------------------------------------------------------------------------
+
+	private const val KEYMAP_PREFIX = "keymap_"
+	private const val KEY_KEYMAP_VERSION = "${KEYMAP_PREFIX}version"
+	private const val KEY_KEYMAP_PRESET = "${KEYMAP_PREFIX}preset"
+	private const val KEYMAP_OVERRIDE_PREFIX = "${KEYMAP_PREFIX}override_"
+
+	/** Bump when the override encoding changes; a newer value makes us ignore every override. */
+	private const val KEYMAP_VERSION = 1
+
+	/** Written for an action the user deliberately unbound, as opposed to never having touched it. */
+	private const val UNBOUND_MARKER = "-"
+
+	internal var keymapPreset: KeymapPreset
+		get() = runCatching { KeymapPreset.fromId(preferences.get(KEY_KEYMAP_PRESET, null)) }
+			.getOrDefault(KeymapPreset.PHOTOSHOP)
+		set(value) {
+			runCatching {
+				preferences.put(KEY_KEYMAP_PRESET, value.id)
+				preferences.flush()
+			}
+		}
+
+	/**
+	 * The user's per-action overrides for the active preset. Corrupt entries, unknown action names
+	 * and values written by a newer version are all skipped rather than thrown — a broken preference
+	 * store must never keep the app from starting.
+	 */
+	internal fun keymapOverrides(): Map<ShortcutAction, List<KeyBinding>> {
+		return runCatching {
+			if (preferences.getInt(KEY_KEYMAP_VERSION, KEYMAP_VERSION) > KEYMAP_VERSION) {
+				return emptyMap<ShortcutAction, List<KeyBinding>>()
+			}
+			val result = mutableMapOf<ShortcutAction, List<KeyBinding>>()
+			for (key in preferences.keys()) {
+				if (!key.startsWith(KEYMAP_OVERRIDE_PREFIX)) continue
+				val name = key.removePrefix(KEYMAP_OVERRIDE_PREFIX)
+				val action = ShortcutAction.entries.firstOrNull { it.name == name } ?: continue
+				val raw = preferences.get(key, null) ?: continue
+				result[action] = parseOverrideList(raw) ?: continue
+			}
+			result
+		}.getOrDefault(emptyMap())
+	}
+
+	internal fun putKeymapOverride(action: ShortcutAction, bindings: List<KeyBinding>) {
+		runCatching {
+			preferences.putInt(KEY_KEYMAP_VERSION, KEYMAP_VERSION)
+			preferences.put(
+				KEYMAP_OVERRIDE_PREFIX + action.name,
+				if (bindings.isEmpty()) UNBOUND_MARKER else bindings.joinToString(";") { it.format() },
+			)
+			preferences.flush()
+		}
+	}
+
+	internal fun removeKeymapOverride(action: ShortcutAction) {
+		runCatching {
+			preferences.remove(KEYMAP_OVERRIDE_PREFIX + action.name)
+			preferences.flush()
+		}
+	}
+
+	/** Drops the preset and every override, returning the keymap to the shipped defaults. */
+	internal fun clearKeymap() {
+		runCatching {
+			preferences.keys().filter { it.startsWith(KEYMAP_PREFIX) }.forEach { preferences.remove(it) }
+			preferences.flush()
+		}
+	}
+
+	/** Null when [raw] is malformed — callers then fall back to the preset default for that action. */
+	private fun parseOverrideList(raw: String): List<KeyBinding>? {
+		if (raw == UNBOUND_MARKER) return emptyList()
+		val parts = raw.split(';')
+		val parsed = ArrayList<KeyBinding>(parts.size)
+		for (part in parts) parsed.add(parseKeyBinding(part) ?: return null)
+		return parsed
+	}
+
 	fun resetToDefaults() {
 		hasCustomUiScale = false
 		runCatching {
@@ -81,6 +166,8 @@ object AppSettings {
 			preferences.remove(KEY_FONT_SCALE)
 			preferences.remove(KEY_CUSTOM_SCALE_SET)
 			preferences.remove(KEY_CLICK_TO_SELECT_LAYER)
+			// Enumerated by prefix so there is no action-name list to keep up to date.
+			preferences.keys().filter { it.startsWith(KEYMAP_PREFIX) }.forEach { preferences.remove(it) }
 			preferences.flush()
 		}
 	}

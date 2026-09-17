@@ -44,10 +44,7 @@ import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
-import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.isCtrlPressed
-import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -74,6 +71,8 @@ import io.github.psd2live.ui.components.HelpTab
 import io.github.psd2live.ui.components.TextureUpscaleDialog
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
+import io.github.psd2live.ui.state.ShortcutAction
+import io.github.psd2live.ui.state.ShortcutScope
 import io.github.psd2live.ui.state.WorkspaceTabKind
 import androidx.compose.material.DropdownMenu
 import androidx.compose.material.DropdownMenuItem
@@ -236,92 +235,73 @@ fun FrameWindowScope.PSD2LiveApp(
 			}
 		}
 
+		// A modal owns the keyboard: the root dispatcher stands down so shortcuts cannot fire behind
+		// a dialog (Ctrl+O with Help open used to raise a file picker behind it). Returning false
+		// rather than true is deliberate — the dialogs keep their own key handling and text input.
+		val modalOpen = helpDialogTab != null ||
+			showAgentDialog ||
+			showUpscaleDialog ||
+			state.lightboxImage != null ||
+			state.showProjectLocationDialog ||
+			state.showExportPsdDialog ||
+			state.showSettingsDialog ||
+			state.projectSaveError != null ||
+			state.errorMessage != null ||
+			isDraggingOver
+
 		Box(
 			modifier = Modifier
 				.fillMaxSize()
 				.border(BorderStroke(1.dp, colors.border))
 				.onPreviewKeyEvent { event ->
-					if (event.type == KeyEventType.KeyDown) {
-						if (event.key == Key.F1) {
-							helpDialogTab = HelpTab.QUICK_START
-							return@onPreviewKeyEvent true
+					// Recording a shortcut owns the keyboard outright, so the chord being recorded
+					// cannot be swallowed by the very action it is about to replace.
+					if (state.keyCapture != null) {
+						if (event.type == KeyEventType.KeyDown) viewModel.captureKeyEvent(event)
+						return@onPreviewKeyEvent true
+					}
+					if (modalOpen) return@onPreviewKeyEvent false
+					if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+					// Load-bearing: an unmatched key must still reach the canvas handler, the open
+					// dialogs and any focused text field.
+					val action = state.keymap.match(event, ShortcutScope.APP)
+						?: return@onPreviewKeyEvent false
+					when (action) {
+						ShortcutAction.OPEN_PROJECT -> { onOpenProjectAction(); true }
+						ShortcutAction.OPEN_PSD -> { onOpenPsdAction(); true }
+						ShortcutAction.SAVE_PROJECT -> { viewModel.requestProjectSave(false); true }
+						ShortcutAction.SAVE_PROJECT_AS -> { viewModel.requestProjectSave(true); true }
+						ShortcutAction.REANALYZE -> { onReanalyzeAction(); true }
+						// Falls through when there is no source PSD, as the old Shift-gated branch did.
+						ShortcutAction.REEXPORT_PSD ->
+							if (hasInput && !isBusy) { viewModel.openExportPsdDialog(); true } else false
+						ShortcutAction.GENERATE -> { onGenerateAction(); true }
+						ShortcutAction.EXPORT_TO -> { triggerExportTo(); true }
+						ShortcutAction.TEXTURE_UPSCALE -> {
+							if (hasInput && !isBusy) showUpscaleDialog = true
+							true
 						}
-						if (event.isCtrlPressed) {
-							when (event.key) {
-								Key.Plus, Key.Equals, Key.NumPadAdd -> {
-									viewModel.zoomIn()
-									true
-								}
-								Key.Minus, Key.NumPadSubtract -> {
-									viewModel.zoomOut()
-									true
-								}
-								Key.Zero, Key.NumPad0 -> {
-									viewModel.resetZoom()
-									true
-								}
-								Key.Comma -> {
-									viewModel.openSettingsDialog()
-									true
-								}
-								Key.O -> {
-									if (event.isShiftPressed) onOpenPsdAction() else onOpenProjectAction()
-									true
-								}
-								Key.S -> { viewModel.requestProjectSave(event.isShiftPressed); true }
-								Key.Z -> { if (event.isShiftPressed) viewModel.redoHistory() else viewModel.undoHistory(); true }
-								Key.Y -> { viewModel.redoHistory(); true }
-								Key.R -> {
-									onReanalyzeAction()
-									true
-								}
-								Key.E -> {
-									if (event.isShiftPressed && hasInput && !isBusy) {
-										viewModel.openExportPsdDialog()
-										true
-									} else false
-								}
-								Key.U -> {
-									if (hasInput && !isBusy) {
-										showUpscaleDialog = true
-									}
-									true
-								}
-								Key.G -> {
-									if (event.isShiftPressed) {
-										triggerExportTo()
-									} else {
-										onGenerateAction()
-									}
-									true
-								}
-								Key.T -> {
-									if (event.isShiftPressed) viewModel.addTab(WorkspaceTabKind.PREVIEW)
-									else viewModel.addTab(WorkspaceTabKind.EDIT)
-									true
-								}
-								Key.W -> { viewModel.closeTab(state.activeWorkspaceTab.id); true }
-								Key.H -> { viewModel.openHistoryTab(); true }
-								Key.D -> {
-									if (event.isShiftPressed) { viewModel.duplicateActiveTab(); true } else false
-								}
-								Key.Tab -> {
-									viewModel.cycleTab(if (event.isShiftPressed) -1 else 1)
-									true
-								}
-								Key.One, Key.NumPad1 -> { viewModel.activateTabByIndex(0); true }
-								Key.Two, Key.NumPad2 -> { viewModel.activateTabByIndex(1); true }
-								Key.Three, Key.NumPad3 -> { viewModel.activateTabByIndex(2); true }
-								Key.Four, Key.NumPad4 -> { viewModel.activateTabByIndex(3); true }
-								Key.Five, Key.NumPad5 -> { viewModel.activateTabByIndex(4); true }
-								Key.Six, Key.NumPad6 -> { viewModel.activateTabByIndex(5); true }
-								Key.Seven, Key.NumPad7 -> { viewModel.activateTabByIndex(6); true }
-								Key.Eight, Key.NumPad8 -> { viewModel.activateTabByIndex(7); true }
-								Key.Nine, Key.NumPad9 -> { viewModel.activateTabByIndex(8); true }
-								else -> false
-							}
-						} else false
-					} else false
+						ShortcutAction.UNDO -> { viewModel.undoHistory(); true }
+						ShortcutAction.REDO -> { viewModel.redoHistory(); true }
+						ShortcutAction.NEW_EDIT_TAB -> { viewModel.addTab(WorkspaceTabKind.EDIT); true }
+						ShortcutAction.NEW_PREVIEW_TAB -> { viewModel.addTab(WorkspaceTabKind.PREVIEW); true }
+						ShortcutAction.OPEN_HISTORY_TAB -> { viewModel.openHistoryTab(); true }
+						ShortcutAction.DUPLICATE_TAB -> { viewModel.duplicateActiveTab(); true }
+						ShortcutAction.CLOSE_TAB -> { viewModel.closeTab(state.activeWorkspaceTab.id); true }
+						ShortcutAction.NEXT_TAB -> { viewModel.cycleTab(1); true }
+						ShortcutAction.PREV_TAB -> { viewModel.cycleTab(-1); true }
+						ShortcutAction.ZOOM_IN -> { viewModel.zoomIn(); true }
+						ShortcutAction.ZOOM_OUT -> { viewModel.zoomOut(); true }
+						ShortcutAction.ZOOM_RESET -> { viewModel.resetZoom(); true }
+						ShortcutAction.OPEN_SETTINGS -> { viewModel.openSettingsDialog(); true }
+						ShortcutAction.OPEN_HELP -> { helpDialogTab = HelpTab.QUICK_START; true }
+						else -> {
+							// The nine tab-jump actions share one body. A null index means this is a
+							// canvas action, which this handler does not own.
+							val jump = action.jumpIndex
+							if (jump == null) false else { viewModel.activateTabByIndex(jump - 1); true }
+						}
+					}
 				},
 		) {
 			Column(
@@ -341,6 +321,7 @@ fun FrameWindowScope.PSD2LiveApp(
 						currentLanguage = currentLanguage,
 						uiScale = state.uiScale,
 						fontScale = state.fontScale,
+						keymap = state.keymap,
 						onOpenPsd = onOpenPsdAction,
                         onOpenProject = onOpenProjectAction,
                         onSaveProject = { viewModel.requestProjectSave() },
@@ -478,6 +459,7 @@ fun FrameWindowScope.PSD2LiveApp(
 		helpDialogTab?.let { tab ->
 			HelpDialog(
 				initialTab = tab,
+				keymap = state.keymap,
 				onDismiss = { helpDialogTab = null },
 				onOpenUrl = { url -> DesktopUtils.openBrowser(url) },
 			)
@@ -529,15 +511,23 @@ fun FrameWindowScope.PSD2LiveApp(
 				uiScale = state.uiScale,
 				fontScale = state.fontScale,
 				clickToSelectLayer = state.clickToSelectLayer,
+				keymap = state.keymap,
+				keyPreset = state.keymapPreset,
+				keyCapture = state.keyCapture,
 				currentLanguage = currentLanguage,
 				onUiScaleChange = viewModel::setUiScale,
 				onFontScaleChange = viewModel::setFontScale,
 				onClickToSelectLayerChange = viewModel::setClickToSelectLayer,
 				onLanguageChange = viewModel::setLanguage,
+				onKeyCapture = viewModel::beginKeyCapture,
+				onKeyRemoveBinding = viewModel::removeKeyBinding,
+				onKeyResetBinding = viewModel::resetKeyBinding,
+				onKeyPresetChange = viewModel::applyKeymapPreset,
 				onResetDefaults = {
 					AppSettings.resetToDefaults()
 					viewModel.resetZoom()
 					viewModel.resetInteractionPrefs()
+					viewModel.resetKeymap()
 				},
 				onDismiss = { viewModel.closeSettingsDialog() },
 			)

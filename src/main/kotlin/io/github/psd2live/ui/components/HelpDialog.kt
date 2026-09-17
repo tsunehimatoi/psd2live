@@ -39,6 +39,9 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import io.github.psd2live.i18n.tr
+import io.github.psd2live.ui.state.Keymap
+import io.github.psd2live.ui.state.ShortcutAction
+import io.github.psd2live.ui.state.ShortcutCategory
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
 import io.github.psd2live.ui.utils.DesktopUtils
@@ -66,6 +69,7 @@ enum class TutorialScenario {
 @Composable
 fun HelpDialog(
 	initialTab: HelpTab = HelpTab.QUICK_START,
+	keymap: Keymap = Keymap.DEFAULT,
 	onDismiss: () -> Unit,
 	onOpenUrl: (String) -> Unit = { DesktopUtils.openBrowser(it) },
 ) {
@@ -162,7 +166,7 @@ fun HelpDialog(
 				when (selectedTab) {
 					HelpTab.QUICK_START -> DccTutorialContent(onOpenUrl)
 					HelpTab.PSD_SPEC -> DccPsdSpecContent(onOpenUrl)
-					HelpTab.SHORTCUTS -> DccShortcutsContent()
+					HelpTab.SHORTCUTS -> DccShortcutsContent(keymap)
 					HelpTab.COMMUNITY_LINKS -> DccCommunityLinksContent(
 						onOpenUrl = onOpenUrl,
 						onCopyLink = { url ->
@@ -831,45 +835,42 @@ private fun DccSpecTable(title: String, rows: List<String>) {
 // 3. DCC Shortcuts Content (Tabular Key-Value)
 // ---------------------------------------------------------------------------
 @Composable
-private fun DccShortcutsContent() {
-	val projectShortcuts = listOf(
-		tr("help.shortcuts.openProject") to "Ctrl+O",
-		tr("help.shortcuts.saveProject") to "Ctrl+S",
-		tr("help.shortcuts.saveProjectAs") to "Ctrl+Shift+S",
-		tr("help.shortcuts.openPsd") to "Ctrl+Shift+O",
-		tr("help.shortcuts.reanalyze") to "Ctrl+R",
-		tr("help.shortcuts.reexportPsd") to "Ctrl+Shift+E",
-		tr("help.shortcuts.generate") to "Ctrl+G",
-		tr("help.shortcuts.exportTo") to "Ctrl+Shift+G",
-		tr("help.shortcuts.openOutput") to tr("help.shortcuts.menuOnly"),
-		tr("help.shortcuts.undo") to "Ctrl+Z",
-		tr("help.shortcuts.redo") to "Ctrl+Y / Ctrl+Shift+Z",
-		tr("help.shortcuts.invertSelection") to "Ctrl+Shift+I",
-		tr("help.shortcuts.settings") to "Ctrl+,",
-		tr("help.shortcuts.help") to "F1",
+private fun DccShortcutsContent(keymap: Keymap) {
+	// Pointer gestures have no key to rebind, so they stay literal.
+	DccShortcutGroup(
+		title = tr("help.shortcuts.group.view"),
+		shortcuts = listOf(
+			tr("help.shortcuts.zoomWheel") to "Wheel",
+			tr("help.shortcuts.panCanvas") to "Middle Drag / Left Drag",
+			tr("help.shortcuts.selectLayer") to "Left Click",
+		),
 	)
 
-	val viewShortcuts = listOf(
-		tr("help.shortcuts.zoomWheel") to "Wheel",
-		tr("help.shortcuts.panCanvas") to "Middle Drag / Left Drag",
-		tr("help.shortcuts.selectLayer") to "Left Click",
-		tr("help.shortcuts.fitCenter") to "F / 0 / Home",
-		tr("help.shortcuts.zoomReset") to "Ctrl+0",
-		tr("help.shortcuts.zoomStep") to "Ctrl + / Ctrl -",
-		tr("help.shortcuts.newTab") to "Ctrl+T / Ctrl+Shift+T",
-		tr("help.shortcuts.closeTab") to "Ctrl+W",
-		tr("help.shortcuts.historyTab") to "Ctrl+H",
-		tr("help.shortcuts.switchTab") to "Ctrl+Tab / Ctrl+1…9",
+	// Menu-only commands: no key to show, but the page still documents them.
+	DccShortcutGroup(
+		title = tr("help.shortcuts.group.tools"),
+		shortcuts = listOf(
+			tr("help.shortcuts.agentConnect") to tr("help.shortcuts.menuOnly"),
+		),
 	)
 
-	val toolShortcuts = listOf(
-		tr("help.shortcuts.textureUpscale") to "Ctrl+U",
-		tr("help.shortcuts.agentConnect") to tr("help.shortcuts.menuOnly"),
-	)
-
-	DccShortcutGroup(title = tr("help.shortcuts.group.project"), shortcuts = projectShortcuts)
-	DccShortcutGroup(title = tr("help.shortcuts.group.view"), shortcuts = viewShortcuts)
-	DccShortcutGroup(title = tr("help.shortcuts.group.tools"), shortcuts = toolShortcuts)
+	// Everything else is generated from the shortcut registry, so no row here can disagree with the
+	// keys the application actually listens for. All of it is rebindable in Settings -> Shortcuts.
+	for (category in ShortcutCategory.entries) {
+		DccShortcutGroup(
+			title = tr(category.labelKey),
+			shortcuts = ShortcutAction.entries
+				.filter { it.category == category }
+				.map { action ->
+					// The nine tab-jump actions share one label pattern, keyed by their digit.
+					val jump = action.jumpIndex
+					val label = if (jump == null) tr(action.labelKey) else tr(action.labelKey, jump)
+					val binding = keymap.labelsFor(action).joinToString(" / ")
+						.ifEmpty { tr("help.shortcuts.unbound") }
+					label to binding
+				},
+		)
+	}
 }
 
 @Composable

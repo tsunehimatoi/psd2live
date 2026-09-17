@@ -87,6 +87,8 @@ import io.github.psd2live.ui.components.IconReset
 import io.github.psd2live.ui.state.CanvasMode
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
+import io.github.psd2live.ui.state.ShortcutAction
+import io.github.psd2live.ui.state.ShortcutScope
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
 import kotlinx.coroutines.flow.collect
@@ -123,6 +125,18 @@ fun CanvasViewportComposable(
 	val fpsCounter = remember { ActualFpsCounter() }
 
 	val editor = remember(state.projectOpenGeneration) { CanvasEditor(viewModel) }
+
+	// A capture in the settings panel swallows key events, including the Space release that
+	// clears the pan latch, so drop it proactively — a stuck pan would look like a hung canvas.
+	LaunchedEffect(state.keyCapture, state.showSettingsDialog) {
+		if (state.keyCapture != null || state.showSettingsDialog) editor.space = false
+	}
+
+	// Rebinding happens in a modal that takes focus off the canvas. Pull it back on close so the
+	// key the user just recorded works straight away instead of needing a click on the canvas.
+	LaunchedEffect(state.focusCanvasRequest) {
+		if (state.focusCanvasRequest > 0) focusRequester.requestFocus()
+	}
     editor.state = state
     LaunchedEffect(viewModel, mode) { viewModel.canvasPathRequests.collect { if(mode == CanvasMode.EDIT) editor.activateTool(CanvasTool.PATH_DEFORM) } }
     LaunchedEffect(state.selectedLayerId, state.selectedDeformerId) {
@@ -269,71 +283,84 @@ fun CanvasViewportComposable(
 			.focusable()
 			.onSizeChanged { viewSize = it }
 			.onKeyEvent { event ->
-				if (mode == CanvasMode.EDIT && previewModel != null) {
-                    if (event.key == Key.Spacebar) { editor.space = event.type == KeyEventType.KeyDown; return@onKeyEvent true }
-                    if (event.type == KeyEventType.KeyDown) {
-                        if (editor.busy || state.canvasEditBusy) return@onKeyEvent true
-                        if (event.isCtrlPressed) {
-                            when(event.key) {
-                                Key.Z -> { if(event.isShiftPressed) viewModel.redoHistory() else viewModel.undoHistory(); return@onKeyEvent true }
-                                Key.Y -> { viewModel.redoHistory(); return@onKeyEvent true }
-                                Key.A -> { editor.selectAll(); return@onKeyEvent true }
-                                Key.I -> { editor.selectAll(true); return@onKeyEvent true }
-                            }
-                        } else {
-                            val tool = when(event.key) {
-                                Key.V -> CanvasTool.SELECT
-                                Key.Tab, Key.E -> if (editor.tool == CanvasTool.MESH) CanvasTool.SELECT else CanvasTool.MESH
-                                Key.W -> CanvasTool.WARP
-                                Key.B -> if (event.isShiftPressed) CanvasTool.SMOOTH else CanvasTool.BRUSH
-                                Key.I -> CanvasTool.INFLATE
-                                Key.D, Key.P -> CanvasTool.PATH_DEFORM
-                                Key.H -> CanvasTool.HAND
-                                else -> null
-                            }
-                            if (tool != null) { editor.activateTool(tool); return@onKeyEvent true }
-                            when(event.key) {
-                                Key.Q -> { editor.selectionStyle = SelectionStyle.BOX; return@onKeyEvent true }
-                                Key.L -> {
-                                    if (event.isShiftPressed) editor.selectLinked()
-                                    else editor.selectionStyle = SelectionStyle.LASSO
-                                    return@onKeyEvent true
-                                }
-                                Key.Escape -> { editor.cancel(); return@onKeyEvent true }
-                                Key.Enter -> { editor.finishPath(); return@onKeyEvent true }
-                                Key.Delete, Key.Backspace -> {
-                                    if (editor.tool == CanvasTool.PATH_DEFORM) editor.deletePathPoint()
-                                    else if (editor.tool == CanvasTool.MESH) editor.topology("delete")
-                                    return@onKeyEvent true
-                                }
-                                Key.LeftBracket -> {
-                                    // Never let hardness reach 1.0: brushWeight divides by (1 - hardness).
-                                    if (event.isShiftPressed) editor.hardness = (editor.hardness - 0.05f).coerceIn(0f, 0.95f)
-                                    else editor.radius = (editor.radius / 1.2f).coerceAtLeast(4f)
-                                    return@onKeyEvent true
-                                }
-                                Key.RightBracket -> {
-                                    if (event.isShiftPressed) editor.hardness = (editor.hardness + 0.05f).coerceIn(0f, 0.95f)
-                                    else editor.radius = (editor.radius * 1.2f).coerceAtMost(500f)
-                                    return@onKeyEvent true
-                                }
-                                Key.X -> { editor.axis = if (editor.axis == "x") null else "x"; return@onKeyEvent true }
-                                Key.Y -> { editor.axis = if (editor.axis == "y") null else "y"; return@onKeyEvent true }
-                                else -> Unit
-                            }
-                        }
-                    }
-                }
-                if (event.type == KeyEventType.KeyDown && !event.isCtrlPressed) {
-					when (event.key) {
-                        Key.F -> { if(mode==CanvasMode.EDIT)frameSelection() else resetCamera();true }
-                        Key.MoveHome, Key.Zero -> {
-							resetCamera()
-							true
-						}
-						else -> false
+				// A capture in the settings panel owns the keyboard. The root handler already
+				// swallowed the event, but stay inert anyway so nothing reaches the canvas
+				// mid-recording.
+				if (state.keyCapture != null) return@onKeyEvent false
+				// The pan latch and its release must outlive every gate below: it is a press /
+				// release pair rather than a discrete command, and it stays live while an edit
+				// commits. Space is deliberately not a bindable action.
+				if (mode == CanvasMode.EDIT && previewModel != null && event.key == Key.Spacebar) {
+					editor.space = event.type == KeyEventType.KeyDown
+					return@onKeyEvent true
+				}
+				val action = state.keymap.match(event, ShortcutScope.CANVAS)
+					?: return@onKeyEvent false
+				// Camera commands sit outside the mode and busy gates, as they always have: a
+				// long commit must not take the view controls away.
+				when (action) {
+					ShortcutAction.FRAME_VIEW -> {
+						if (mode == CanvasMode.EDIT) frameSelection() else resetCamera()
+						return@onKeyEvent true
 					}
-				} else false
+					ShortcutAction.RESET_CAMERA -> {
+						resetCamera()
+						return@onKeyEvent true
+					}
+					else -> Unit
+				}
+				if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+				if (mode != CanvasMode.EDIT || previewModel == null) return@onKeyEvent false
+				// Consumes rather than falls through while a commit is running.
+				if (editor.busy || state.canvasEditBusy) return@onKeyEvent true
+				return@onKeyEvent when (action) {
+					ShortcutAction.SELECT_ALL -> { editor.selectAll(); true }
+					ShortcutAction.INVERT_SELECTION -> { editor.selectAll(true); true }
+					ShortcutAction.TOOL_SELECT -> { editor.activateTool(CanvasTool.SELECT); true }
+					ShortcutAction.TOOL_MESH -> {
+						// Toggles back to SELECT when already in mesh mode.
+						editor.activateTool(
+							if (editor.tool == CanvasTool.MESH) CanvasTool.SELECT else CanvasTool.MESH,
+						)
+						true
+					}
+					ShortcutAction.TOOL_WARP -> { editor.activateTool(CanvasTool.WARP); true }
+					ShortcutAction.TOOL_BRUSH -> { editor.activateTool(CanvasTool.BRUSH); true }
+					ShortcutAction.TOOL_SMOOTH -> { editor.activateTool(CanvasTool.SMOOTH); true }
+					ShortcutAction.TOOL_INFLATE -> { editor.activateTool(CanvasTool.INFLATE); true }
+					ShortcutAction.TOOL_PATH_DEFORM -> { editor.activateTool(CanvasTool.PATH_DEFORM); true }
+					ShortcutAction.TOOL_HAND -> { editor.activateTool(CanvasTool.HAND); true }
+					ShortcutAction.SELECTION_STYLE_BOX -> { editor.selectionStyle = SelectionStyle.BOX; true }
+					ShortcutAction.SELECTION_STYLE_LASSO -> { editor.selectionStyle = SelectionStyle.LASSO; true }
+					ShortcutAction.SELECT_LINKED -> { editor.selectLinked(); true }
+					ShortcutAction.CANCEL -> { editor.cancel(); true }
+					ShortcutAction.FINISH_PATH -> { editor.finishPath(); true }
+					ShortcutAction.DELETE_SELECTION -> {
+						if (editor.tool == CanvasTool.PATH_DEFORM) editor.deletePathPoint()
+						else if (editor.tool == CanvasTool.MESH) editor.topology("delete")
+						true
+					}
+					ShortcutAction.BRUSH_RADIUS_DOWN -> {
+						editor.radius = (editor.radius / 1.2f).coerceAtLeast(4f)
+						true
+					}
+					ShortcutAction.BRUSH_RADIUS_UP -> {
+						editor.radius = (editor.radius * 1.2f).coerceAtMost(500f)
+						true
+					}
+					// Never let hardness reach 1.0: brushWeight divides by (1 - hardness).
+					ShortcutAction.BRUSH_HARDNESS_DOWN -> {
+						editor.hardness = (editor.hardness - 0.05f).coerceIn(0f, 0.95f)
+						true
+					}
+					ShortcutAction.BRUSH_HARDNESS_UP -> {
+						editor.hardness = (editor.hardness + 0.05f).coerceIn(0f, 0.95f)
+						true
+					}
+					ShortcutAction.AXIS_CONSTRAIN_X -> { editor.axis = if (editor.axis == "x") null else "x"; true }
+					ShortcutAction.AXIS_CONSTRAIN_Y -> { editor.axis = if (editor.axis == "y") null else "y"; true }
+					else -> false
+				}
 			}
 			.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(when {
                 isDragging -> Cursor.MOVE_CURSOR
@@ -764,7 +791,7 @@ fun CanvasViewportComposable(
 		}
 
 		if(mode == CanvasMode.EDIT && previewModel != null) {
-            CanvasEditorOverlay(editor,computeViewport(previewModel,viewSize.width,viewSize.height),viewModel) { focusRequester.requestFocus() }
+            CanvasEditorOverlay(editor,computeViewport(previewModel,viewSize.width,viewSize.height),viewModel,keymap = state.keymap) { focusRequester.requestFocus() }
         } else if (mode == CanvasMode.PREVIEW && previewModel != null) {
             PreviewFloatingToolbar(state, viewModel)
         }

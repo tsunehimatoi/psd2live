@@ -266,6 +266,15 @@ data class PSD2LiveState(
 	val uiScale: Float = AppSettings.uiScale,
 	val fontScale: Float = AppSettings.fontScale,
 	val showSettingsDialog: Boolean = false,
+	/**
+	 * Keyboard shortcuts. Not part of the project: like [uiScale] these are application preferences,
+	 * so they are absent from WorkspaceStateCodec and no edit here may mark the project dirty.
+	 */
+	val keymap: Keymap = loadPersistedKeymap(),
+	val keymapPreset: KeymapPreset = AppSettings.keymapPreset,
+	val keyCapture: KeyCapture? = null,
+	/** Bumped to pull focus back to the canvas when a modal that stole it closes. */
+	val focusCanvasRequest: Int = 0,
 	val deletedLayerIds: Set<String> = emptySet(),
 	val parentOverrides: Map<String, String?> = emptyMap(),
 	val drawOrderOverrides: Map<String, Float> = emptyMap(),

@@ -11,15 +11,16 @@ import org.umamo.runtime.model.*
 import java.util.UUID
 import kotlin.math.*
 
-internal enum class CanvasTool(val shortcut: String) {
-    SELECT("V"),
-    MESH("Tab"),
-    WARP("W"),
-    BRUSH("B"),
-    SMOOTH("Shift+B"),
-    INFLATE("I"),
-    PATH_DEFORM("D"),
-    HAND("H")
+/** Canvas tools, each pointing at the shortcut action that activates it. */
+internal enum class CanvasTool(val action: ShortcutAction) {
+    SELECT(ShortcutAction.TOOL_SELECT),
+    MESH(ShortcutAction.TOOL_MESH),
+    WARP(ShortcutAction.TOOL_WARP),
+    BRUSH(ShortcutAction.TOOL_BRUSH),
+    SMOOTH(ShortcutAction.TOOL_SMOOTH),
+    INFLATE(ShortcutAction.TOOL_INFLATE),
+    PATH_DEFORM(ShortcutAction.TOOL_PATH_DEFORM),
+    HAND(ShortcutAction.TOOL_HAND),
 }
 
 internal enum class SelectionStyle { BOX, LASSO }

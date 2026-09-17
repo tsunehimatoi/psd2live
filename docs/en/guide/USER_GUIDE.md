@@ -60,7 +60,8 @@ The main window is structured as **Left Workspace + Right Inspector + Independen
 - **Menu Bar**:
   - **File**: `Open PSD...` (`Ctrl + O`), `Reanalyze` (`Ctrl + R`), `Open Output Directory`, `Generate & Export` (`Ctrl + G`), `Export To...` (`Ctrl + Shift + G`), `Exit`.
   - **Language**: Instant switching between Simplified Chinese (`zh`), English (`en`), and Japanese (`ja`).
-  - **View**: Tab management, UI & font scale, `Preferences & Settings…` (`Ctrl + ,`). The current tab's canvas options live in the `View ▾` menu at the right of the tab strip.
+  - **View**: Tab management, UI & font scale. The current tab's canvas options live in the `View ▾` menu at the right of the tab strip.
+  - **Settings**: `Preferences & Settings…` (`Ctrl + ,`) — scale & display, language, canvas interaction, shortcuts and environment.
   - **Tools**: `Texture Upscale…` (`Ctrl + U`), **MCP** (`MCP Connection & Setup…`).
   - **Help**: Version and license notices.
 - **Split Pane Divider**: Drag to adjust the Workspace/Inspector ratio within `25% ~ 85%`.
@@ -158,6 +159,22 @@ History, tasks, spatial references, and SHA-256-deduplicated RGBA assets are per
 | **Reanalyze** | `Ctrl + R` | Reloads and re-evaluates current PSD |
 | **Generate & Export** | `Ctrl + G` | Executes full pipeline export |
 | **Export To...** | `Ctrl + Shift + G` | Selects target folder and exports |
+
+---
+
+### Shortcuts and Presets
+
+Every shortcut listed above, and every other shortcut in the application, can be changed under **Settings -> Shortcuts**: click a key cell, then press the new combination. `Esc` cancels. An action can carry several alternative keys, or none at all (an unbound command stays reachable from the menu). If the combination is already taken, the panel refuses it and names the action that owns it, so a chord can never end up bound but dead.
+
+Three presets ship with the application. Switching a preset replaces every custom binding:
+
+| Preset | Description |
+| :--- | :--- |
+| **Photoshop Style** (default) | The traditional layout this guide documents. |
+| **Blender Style** | `G` to transform, `Tab` to toggle mesh editing, `B`/`C` to select, `V`/`S` for brushes, `Ctrl+PageUp/Down` for tabs. |
+| **Live2D Cubism Style** | Adds `A` for the select tool, `P` for the deform path, `Ctrl+E` for mesh editing and `Shift+F` to fit the work area on top of the Photoshop set. |
+
+Press `F1` and open the Keyboard Shortcuts tab for the full list, including the file, edit, tab and view commands. That list is generated from the current bindings, so it cannot drift from what the application actually does. "Reset Defaults" also returns the shortcuts to the Photoshop preset.
 
 ---
 

@@ -59,6 +59,8 @@ import io.github.psd2live.i18n.AppLanguage
 import io.github.psd2live.i18n.I18n
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.theme.LocalToolColors
+import io.github.psd2live.ui.state.Keymap
+import io.github.psd2live.ui.state.ShortcutAction
 import io.github.psd2live.ui.theme.LocalToolTypography
 import io.github.psd2live.ui.utils.DesktopUtils
 import java.awt.Cursor
@@ -78,6 +80,7 @@ fun AppTitleBar(
 	currentLanguage: AppLanguage,
 	uiScale: Float = 1.0f,
 	fontScale: Float = 1.0f,
+	keymap: Keymap = Keymap.DEFAULT,
 	onOpenPsd: () -> Unit,
     onOpenProject: () -> Unit,
     onSaveProject: () -> Unit,
@@ -160,9 +163,9 @@ fun AppTitleBar(
 				) {
 					// 1. 工程管理 (Project)
 					AppMenuHeader(tr("menu.file.category.project"))
-					AppMenuItem(text = tr("project.open"), shortcut = "Ctrl+O", enabled = !isBusy, onClick = { activeMenu = null; onOpenProject() })
-					AppMenuItem(text = tr("project.save"), shortcut = "Ctrl+S", enabled = hasInput, onClick = { activeMenu = null; onSaveProject() })
-					AppMenuItem(text = tr("project.saveAs"), shortcut = "Ctrl+Shift+S", enabled = hasInput, onClick = { activeMenu = null; onSaveProjectAs() })
+					AppMenuItem(text = tr("project.open"), shortcut = keymap.labelFor(ShortcutAction.OPEN_PROJECT), enabled = !isBusy, onClick = { activeMenu = null; onOpenProject() })
+					AppMenuItem(text = tr("project.save"), shortcut = keymap.labelFor(ShortcutAction.SAVE_PROJECT), enabled = hasInput, onClick = { activeMenu = null; onSaveProject() })
+					AppMenuItem(text = tr("project.saveAs"), shortcut = keymap.labelFor(ShortcutAction.SAVE_PROJECT_AS), enabled = hasInput, onClick = { activeMenu = null; onSaveProjectAs() })
 
 					AppMenuSeparator()
 
@@ -170,7 +173,7 @@ fun AppTitleBar(
 					AppMenuHeader(tr("menu.file.category.psd"))
 					AppMenuItem(
 						text = tr("menu.file.openPsd"),
-						shortcut = "Ctrl+Shift+O",
+						shortcut = keymap.labelFor(ShortcutAction.OPEN_PSD),
 						onClick = {
 							activeMenu = null
 							onOpenPsd()
@@ -178,7 +181,7 @@ fun AppTitleBar(
 					)
 					AppMenuItem(
 						text = tr("menu.file.reanalyze"),
-						shortcut = "Ctrl+R",
+						shortcut = keymap.labelFor(ShortcutAction.REANALYZE),
 						enabled = hasInput && !isBusy,
 						onClick = {
 							activeMenu = null
@@ -187,7 +190,7 @@ fun AppTitleBar(
 					)
 					AppMenuItem(
 						text = tr("menu.file.reexportPsd"),
-						shortcut = "Ctrl+Shift+E",
+						shortcut = keymap.labelFor(ShortcutAction.REEXPORT_PSD),
 						enabled = hasInput && !isBusy,
 						onClick = {
 							activeMenu = null
@@ -201,7 +204,7 @@ fun AppTitleBar(
 					AppMenuHeader(tr("menu.file.category.export"))
 					AppMenuItem(
 						text = tr("menu.file.generate"),
-						shortcut = "Ctrl+G",
+						shortcut = keymap.labelFor(ShortcutAction.GENERATE),
 						enabled = canGenerate,
 						onClick = {
 							activeMenu = null
@@ -210,7 +213,7 @@ fun AppTitleBar(
 					)
 					AppMenuItem(
 						text = tr("menu.file.exportTo"),
-						shortcut = "Ctrl+Shift+G",
+						shortcut = keymap.labelFor(ShortcutAction.EXPORT_TO),
 						enabled = canGenerate,
 						onClick = {
 							activeMenu = null
@@ -267,7 +270,7 @@ fun AppTitleBar(
 					AppMenuHeader(tr("menu.view.tabs"))
 					AppMenuItem(
 						text = tr("tab.new.edit"),
-						shortcut = "Ctrl+T",
+						shortcut = keymap.labelFor(ShortcutAction.NEW_EDIT_TAB),
 						onHover = { activeSubmenu = null },
 						onClick = {
 							activeMenu = null
@@ -277,7 +280,7 @@ fun AppTitleBar(
 					)
 					AppMenuItem(
 						text = tr("tab.new.preview"),
-						shortcut = "Ctrl+Shift+T",
+						shortcut = keymap.labelFor(ShortcutAction.NEW_PREVIEW_TAB),
 						onHover = { activeSubmenu = null },
 						onClick = {
 							activeMenu = null
@@ -287,7 +290,7 @@ fun AppTitleBar(
 					)
 					AppMenuItem(
 						text = tr("tab.new.history"),
-						shortcut = "Ctrl+H",
+						shortcut = keymap.labelFor(ShortcutAction.OPEN_HISTORY_TAB),
 						onHover = { activeSubmenu = null },
 						onClick = {
 							activeMenu = null
@@ -298,6 +301,7 @@ fun AppTitleBar(
 					AppMenuSeparator()
 					AppMenuItem(
 						text = tr("tab.duplicate"),
+						shortcut = keymap.labelFor(ShortcutAction.DUPLICATE_TAB),
 						onHover = { activeSubmenu = null },
 						onClick = {
 							activeMenu = null
@@ -307,7 +311,7 @@ fun AppTitleBar(
 					)
 					AppMenuItem(
 						text = tr("tab.close"),
-						shortcut = "Ctrl+W",
+						shortcut = keymap.labelFor(ShortcutAction.CLOSE_TAB),
 						onHover = { activeSubmenu = null },
 						onClick = {
 							activeMenu = null
@@ -317,7 +321,7 @@ fun AppTitleBar(
 					)
 					AppMenuItem(
 						text = tr("tab.next"),
-						shortcut = "Ctrl+Tab",
+						shortcut = keymap.labelFor(ShortcutAction.NEXT_TAB),
 						onHover = { activeSubmenu = null },
 						onClick = {
 							activeMenu = null
@@ -327,7 +331,7 @@ fun AppTitleBar(
 					)
 					AppMenuItem(
 						text = tr("tab.prev"),
-						shortcut = "Ctrl+Shift+Tab",
+						shortcut = keymap.labelFor(ShortcutAction.PREV_TAB),
 						onHover = { activeSubmenu = null },
 						onClick = {
 							activeMenu = null
@@ -342,7 +346,7 @@ fun AppTitleBar(
 					AppMenuHeader(tr("menu.view.category.zoom"))
 					AppMenuItem(
 						text = tr("menu.view.zoomIn"),
-						shortcut = "Ctrl+=",
+						shortcut = keymap.labelFor(ShortcutAction.ZOOM_IN),
 						onHover = { activeSubmenu = null },
 						onClick = {
 							activeMenu = null
@@ -352,7 +356,7 @@ fun AppTitleBar(
 					)
 					AppMenuItem(
 						text = tr("menu.view.zoomOut"),
-						shortcut = "Ctrl+-",
+						shortcut = keymap.labelFor(ShortcutAction.ZOOM_OUT),
 						onHover = { activeSubmenu = null },
 						onClick = {
 							activeMenu = null
@@ -362,7 +366,7 @@ fun AppTitleBar(
 					)
 					AppMenuItem(
 						text = tr("menu.view.zoomReset"),
-						shortcut = "Ctrl+0",
+						shortcut = keymap.labelFor(ShortcutAction.ZOOM_RESET),
 						onHover = { activeSubmenu = null },
 						onClick = {
 							activeMenu = null
@@ -459,7 +463,7 @@ fun AppTitleBar(
 				) {
 					AppMenuItem(
 						text = tr("menu.tools.textureUpscale"),
-						shortcut = "Ctrl+U",
+						shortcut = keymap.labelFor(ShortcutAction.TEXTURE_UPSCALE),
 						enabled = hasInput && !isBusy,
 						onHover = { activeSubmenu = null },
 						onClick = {
@@ -571,7 +575,7 @@ fun AppTitleBar(
 				) {
 					AppMenuItem(
 						text = tr("menu.help.tutorial"),
-						shortcut = "F1",
+						shortcut = keymap.labelFor(ShortcutAction.OPEN_HELP),
 						onClick = {
 							activeMenu = null
 							activeSubmenu = null

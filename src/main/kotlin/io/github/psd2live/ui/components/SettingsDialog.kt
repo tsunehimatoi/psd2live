@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -46,6 +47,13 @@ import io.github.psd2live.i18n.AppLanguage
 import io.github.psd2live.i18n.I18n
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.state.AppSettings
+import io.github.psd2live.ui.state.CaptureCheck
+import io.github.psd2live.ui.state.KeyBinding
+import io.github.psd2live.ui.state.KeyCapture
+import io.github.psd2live.ui.state.Keymap
+import io.github.psd2live.ui.state.KeymapPreset
+import io.github.psd2live.ui.state.ShortcutAction
+import io.github.psd2live.ui.state.ShortcutCategory
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
 import java.awt.Cursor
@@ -86,11 +94,18 @@ fun SettingsDialog(
 	uiScale: Float,
 	fontScale: Float,
 	clickToSelectLayer: Boolean = true,
+	keymap: Keymap = Keymap.DEFAULT,
+	keyPreset: KeymapPreset = KeymapPreset.PHOTOSHOP,
+	keyCapture: KeyCapture? = null,
 	currentLanguage: AppLanguage = I18n.currentLanguage,
 	onUiScaleChange: (Float) -> Unit,
 	onFontScaleChange: (Float) -> Unit,
 	onClickToSelectLayerChange: (Boolean) -> Unit = {},
 	onLanguageChange: (AppLanguage) -> Unit = {},
+	onKeyCapture: (ShortcutAction, Int) -> Unit = { _, _ -> },
+	onKeyRemoveBinding: (ShortcutAction, Int) -> Unit = { _, _ -> },
+	onKeyResetBinding: (ShortcutAction) -> Unit = {},
+	onKeyPresetChange: (KeymapPreset) -> Unit = {},
 	onResetDefaults: () -> Unit,
 	onDismiss: () -> Unit,
 ) {
@@ -209,7 +224,15 @@ fun SettingsDialog(
 							clickToSelectLayer = clickToSelectLayer,
 							onClickToSelectLayerChange = onClickToSelectLayerChange,
 						)
-						SettingsSection.SHORTCUTS -> SettingsShortcutsSection()
+						SettingsSection.SHORTCUTS -> SettingsShortcutsSection(
+							keymap = keymap,
+							preset = keyPreset,
+							capture = keyCapture,
+							onBeginCapture = onKeyCapture,
+							onRemoveBinding = onKeyRemoveBinding,
+							onResetBinding = onKeyResetBinding,
+							onPresetChange = onKeyPresetChange,
+						)
 						SettingsSection.ENVIRONMENT -> SettingsEnvironmentSection(displayMetrics)
 					}
 				}
@@ -557,53 +580,261 @@ private fun SettingsCanvasSection(
 }
 
 /**
- * The interface-related shortcuts. Note Ctrl+= / Ctrl+- / Ctrl+0 drive the *interface* scale, not a
- * canvas zoom, which is why they belong in this window. The full list lives in the help dialog (F1).
+ * Rebinding for every keyboard shortcut, grouped by category, plus the three shipped presets.
+ *
+ * Recording is deliberately *not* handled here. Compose runs the preview key pass from the root
+ * down, so the root dispatcher would grab a chord like Ctrl+O before this panel ever saw it. The
+ * root handler therefore special-cases [capture] and consumes everything while it is set; this
+ * section only renders that state and asks for it to start.
+ *
+ * Edits apply immediately, like every other option in this window.
  */
 @Composable
-private fun SettingsShortcutsSection() {
+private fun SettingsShortcutsSection(
+	keymap: Keymap,
+	preset: KeymapPreset,
+	capture: KeyCapture?,
+	onBeginCapture: (ShortcutAction, Int) -> Unit,
+	onRemoveBinding: (ShortcutAction, Int) -> Unit,
+	onResetBinding: (ShortcutAction) -> Unit,
+	onPresetChange: (KeymapPreset) -> Unit,
+) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
-
-	val shortcuts = listOf(
-		tr("menu.view.zoomIn") to "Ctrl + / Ctrl =",
-		tr("menu.view.zoomOut") to "Ctrl -",
-		tr("menu.view.zoomReset") to "Ctrl 0",
-		tr("help.shortcuts.settings") to "Ctrl+,",
-		tr("help.shortcuts.help") to "F1",
-	)
+	// Built once per keymap rather than per row: ~130 entries, looked up O(1) on each row.
+	val conflicts = remember(keymap) { keymap.conflictIndex() }
 
 	SettingsSectionDescription(tr("dialog.settings.shortcuts.desc"))
 
-	Column(
-		modifier = Modifier
-			.fillMaxWidth()
-			.background(colors.panelElevated, RoundedCornerShape(4.dp))
-			.border(BorderStroke(1.dp, colors.divider), RoundedCornerShape(4.dp)),
+	Row(
+		modifier = Modifier.fillMaxWidth(),
+		horizontalArrangement = Arrangement.spacedBy(8.dp),
+		verticalAlignment = Alignment.CenterVertically,
 	) {
-		shortcuts.forEachIndexed { index, (action, shortcut) ->
-			if (index > 0) {
-				Divider(color = colors.divider, thickness = 1.dp)
-			}
-			Row(
+		Text(
+			text = tr("dialog.settings.shortcuts.preset"),
+			style = typography.caption.copy(fontSize = 11.sp),
+			color = colors.textPrimary,
+		)
+		CompactDropdown(
+			items = KeymapPreset.entries,
+			selectedItem = preset,
+			onItemSelected = onPresetChange,
+			itemLabel = { tr(it.labelKey) },
+			modifier = Modifier.weight(1f),
+		)
+	}
+	Text(
+		text = tr("dialog.settings.shortcuts.presetHint"),
+		style = typography.caption.copy(fontSize = 10.5.sp),
+		color = colors.textMuted,
+	)
+
+	capture?.let { active ->
+		// Staying in capture after a refusal lets the user simply try another chord.
+		val rejected = active.feedback != null && active.feedback != CaptureCheck.Ok
+		val message = when (val feedback = active.feedback) {
+			null, CaptureCheck.Ok ->
+				tr("dialog.settings.shortcuts.captureFor", tr(active.action.labelKey))
+			CaptureCheck.Reserved -> tr("dialog.settings.shortcuts.reserved")
+			CaptureCheck.DuplicateSelf -> tr("dialog.settings.shortcuts.duplicateSelf")
+			is CaptureCheck.Conflict ->
+				tr("dialog.settings.shortcuts.conflict", tr(feedback.action.labelKey))
+		}
+		Row(
+			modifier = Modifier
+				.fillMaxWidth()
+				.background(colors.panelElevated, RoundedCornerShape(4.dp))
+				.border(
+					BorderStroke(1.dp, if (rejected) colors.error else colors.accent),
+					RoundedCornerShape(4.dp),
+				)
+				.padding(horizontal = 10.dp, vertical = 6.dp),
+			verticalAlignment = Alignment.CenterVertically,
+		) {
+			Text(
+				text = message,
+				style = typography.caption.copy(fontSize = 11.sp),
+				color = if (rejected) colors.error else colors.accent,
+			)
+		}
+	}
+
+	for (category in ShortcutCategory.entries) {
+		Column(
+			modifier = Modifier.fillMaxWidth(),
+			verticalArrangement = Arrangement.spacedBy(4.dp),
+		) {
+			CompactSectionHeader(tr(category.labelKey))
+			Column(
 				modifier = Modifier
 					.fillMaxWidth()
-					.padding(horizontal = 10.dp, vertical = 6.dp),
-				horizontalArrangement = Arrangement.SpaceBetween,
-				verticalAlignment = Alignment.CenterVertically,
+					.background(colors.panelElevated, RoundedCornerShape(4.dp))
+					.border(BorderStroke(1.dp, colors.divider), RoundedCornerShape(4.dp)),
+			) {
+				val actions = ShortcutAction.entries.filter { it.category == category }
+				actions.forEachIndexed { index, action ->
+					if (index > 0) Divider(color = colors.divider, thickness = 1.dp)
+					ShortcutRow(
+						action = action,
+						keymap = keymap,
+						capture = capture,
+						conflicts = conflicts,
+						onBeginCapture = onBeginCapture,
+						onRemoveBinding = onRemoveBinding,
+						onResetBinding = onResetBinding,
+					)
+				}
+			}
+		}
+	}
+}
+
+@Composable
+private fun ShortcutRow(
+	action: ShortcutAction,
+	keymap: Keymap,
+	capture: KeyCapture?,
+	conflicts: Map<KeyBinding, List<ShortcutAction>>,
+	onBeginCapture: (ShortcutAction, Int) -> Unit,
+	onRemoveBinding: (ShortcutAction, Int) -> Unit,
+	onResetBinding: (ShortcutAction) -> Unit,
+) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	val bindings = keymap.bindingsFor(action)
+	// Compares against the preset rather than "has an override on disk": a value that happens to
+	// equal the preset default is deliberately not stored, so the two agree.
+	val isCustomised = bindings != Keymap.of(keymap.preset).bindingsFor(action)
+	val isRecording = capture?.action == action
+	val clash = bindings.any { binding -> conflicts[binding].orEmpty().any { it != action } }
+	val jump = action.jumpIndex
+	val label = if (jump == null) tr(action.labelKey) else tr(action.labelKey, jump)
+
+	Column(modifier = Modifier.fillMaxWidth()) {
+		Row(
+			modifier = Modifier
+				.fillMaxWidth()
+				.padding(horizontal = 10.dp, vertical = 5.dp),
+			verticalAlignment = Alignment.CenterVertically,
+			horizontalArrangement = Arrangement.spacedBy(3.dp),
+		) {
+			Text(
+				text = label,
+				modifier = Modifier.weight(1f),
+				style = typography.caption.copy(fontSize = 11.sp),
+				color = colors.textPrimary,
+				maxLines = 1,
+				overflow = TextOverflow.Ellipsis,
+			)
+
+			if (bindings.isEmpty()) {
+				KeyChip(
+					text = tr("dialog.settings.shortcuts.unbound"),
+					tint = colors.textDisabled,
+					highlighted = isRecording,
+					onClick = { onBeginCapture(action, 0) },
+				)
+			} else {
+				bindings.forEachIndexed { index, binding ->
+					KeyChip(
+						text = if (isRecording && capture?.index == index) {
+							tr("dialog.settings.shortcuts.captureShort")
+						} else {
+							binding.format()
+						},
+						tint = when {
+							isRecording && capture?.index == index -> colors.accent
+							conflicts[binding].orEmpty().any { it != action } -> colors.error
+							else -> colors.selectionText
+						},
+						highlighted = isRecording && capture?.index == index,
+						onClick = { onBeginCapture(action, index) },
+					)
+					if (bindings.size > 1) {
+						Text(
+							text = "×",
+							modifier = Modifier
+								.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
+								.clickable { onRemoveBinding(action, index) }
+								.padding(horizontal = 1.dp),
+							style = typography.monoSmall.copy(fontSize = 10.sp),
+							color = colors.textMuted,
+						)
+					}
+				}
+			}
+
+			CompactIconButton(
+				onClick = { onBeginCapture(action, bindings.size) },
+				size = 18.dp,
+				tooltip = tr("dialog.settings.shortcuts.addAlt"),
 			) {
 				Text(
-					text = action,
-					style = typography.caption.copy(fontSize = 11.sp),
-					color = colors.textPrimary,
+					text = "+",
+					style = typography.monoSmall.copy(fontSize = 12.sp),
+					color = colors.textMuted,
 				)
-				Text(
-					text = shortcut,
-					style = typography.monoSmall.copy(fontSize = 10.5.sp, fontWeight = FontWeight.Medium),
-					color = colors.accent,
+			}
+			CompactIconButton(
+				onClick = { onResetBinding(action) },
+				size = 18.dp,
+				enabled = isCustomised,
+				tooltip = tr("dialog.settings.shortcuts.resetOne"),
+			) {
+				IconReset(
+					modifier = Modifier.size(11.dp),
+					tint = if (isCustomised) colors.textMuted else colors.textDisabled,
 				)
 			}
 		}
+
+		if (clash) {
+			Text(
+				text = tr("dialog.settings.shortcuts.clash"),
+				modifier = Modifier.padding(start = 10.dp, end = 10.dp, bottom = 5.dp),
+				style = typography.caption.copy(fontSize = 10.sp),
+				color = colors.error,
+			)
+		}
+	}
+}
+
+/**
+ * A single key combination. Shares the canvas toolbar's chip styling so "a key" reads the same
+ * everywhere in the application.
+ */
+@Composable
+private fun KeyChip(
+	text: String,
+	tint: Color,
+	highlighted: Boolean,
+	onClick: () -> Unit,
+) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+
+	Box(
+		modifier = Modifier
+			.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
+			.clickable(onClick = onClick)
+			.background(
+				if (highlighted) colors.accent.copy(alpha = 0.18f) else colors.inputBackground,
+				RoundedCornerShape(2.dp),
+			)
+			.border(
+				1.dp,
+				if (highlighted) colors.accent else colors.border,
+				RoundedCornerShape(2.dp),
+			)
+			.padding(horizontal = 5.dp, vertical = 1.dp),
+	) {
+		Text(
+			text = text,
+			style = typography.monoSmall.copy(fontSize = 10.sp),
+			color = tint,
+			maxLines = 1,
+		)
 	}
 }
 

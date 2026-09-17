@@ -38,6 +38,7 @@ import io.github.psd2live.core.DeformPathTools
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.*
 import io.github.psd2live.ui.components.*
+import io.github.psd2live.ui.state.Keymap
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.theme.LocalToolColors
 import kotlin.math.roundToInt
@@ -49,6 +50,7 @@ internal fun BoxScope.CanvasEditorOverlay(
     editor: CanvasEditor,
     viewport: CanvasViewport,
     viewModel: PSD2LiveViewModel,
+    keymap: Keymap,
     focus: () -> Unit
 ) {
     val colors = LocalToolColors.current
@@ -305,7 +307,7 @@ internal fun BoxScope.CanvasEditorOverlay(
     }
 
     // Left Animated Hover Toolbar
-    CanvasToolBar(editor = editor, focus = focus)
+    CanvasToolBar(editor = editor, keymap = keymap, focus = focus)
 
     // Top Options Bar
     Column(Modifier.align(Alignment.TopStart).fillMaxWidth().background(colors.panelBackground).border(1.dp, colors.divider)) {
@@ -449,6 +451,7 @@ internal fun BoxScope.CanvasEditorOverlay(
 @Composable
 private fun BoxScope.CanvasToolBar(
     editor: CanvasEditor,
+    keymap: Keymap,
     focus: () -> Unit,
 ) {
     val colors = LocalToolColors.current
@@ -513,6 +516,7 @@ private fun BoxScope.CanvasToolBar(
                 textAlpha = textAlpha,
                 textOffset = textOffset,
                 isBusy = editor.busy,
+                keyLabel = keymap.labelFor(tool.action).orEmpty(),
                 onClick = {
                     editor.activateTool(tool)
                     focus()
@@ -530,6 +534,7 @@ private fun ToolItemRow(
     textAlpha: Float,
     textOffset: androidx.compose.ui.unit.Dp,
     isBusy: Boolean,
+    keyLabel: String,
     onClick: () -> Unit,
 ) {
     val colors = LocalToolColors.current
@@ -550,7 +555,7 @@ private fun ToolItemRow(
             .height(28.dp)
             .clip(RoundedCornerShape(3.dp))
             .background(bg)
-            .semantics { contentDescription = "$label  ${tool.shortcut}" }
+            .semantics { contentDescription = "$label  $keyLabel" }
             .clickable(
                 interactionSource = itemInteractionSource,
                 indication = null,
@@ -596,7 +601,7 @@ private fun ToolItemRow(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                if (tool.shortcut.isNotEmpty()) {
+                if (keyLabel.isNotEmpty()) {
                     Box(
                         modifier = Modifier
                             .background(
@@ -612,7 +617,7 @@ private fun ToolItemRow(
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
-                            text = tool.shortcut,
+                            text = keyLabel,
                             color = if (isSelected) colors.accent else colors.textDisabled,
                             fontSize = 9.5.sp,
                             fontFamily = FontFamily.Monospace,
