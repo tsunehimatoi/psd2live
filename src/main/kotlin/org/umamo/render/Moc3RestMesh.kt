@@ -43,16 +43,16 @@ private const val LATTICE_CENTRE: Float = 0.5f
  * @return PuppetModel The model with canvas-space rest meshes (a drawable that stays hidden even at
  *                     the clamped pose keeps its parent-local base, which still evaluates correctly).
  */
-fun restMeshesToCanvasSpace(model: PuppetModel): PuppetModel {
+fun restMeshesToCanvasSpace(model: PuppetModel, initialPoseOverrides: Map<ParameterId, Float> = emptyMap()): PuppetModel {
 	val preGlueModel = model.copy(glues = emptyList())
 	val evaluator = CpuDeformationEvaluator()
-	val defaultPose = evaluator.evaluate(preGlueModel, emptyMap())
+	val defaultPose = evaluator.evaluate(preGlueModel, initialPoseOverrides)
 
 	// Second chance for drawables absent from the raw default pose: clamp every involved parameter
 	// into its axes' key ranges and evaluate once more.  Only the still-missing drawables read from
 	// this pose, so in-range drawables keep their true default geometry.
 	val fallback = defaultPoseFallbackFor(model, defaultPose)
-	val clampedPose = fallback?.let { rescue -> evaluator.evaluate(preGlueModel, rescue.clampedDefaults) }
+	val clampedPose = fallback?.let { rescue -> evaluator.evaluate(preGlueModel, rescue.clampedDefaults + initialPoseOverrides) }
 
 	val drawables =
 		model.drawables.map { drawable ->
@@ -184,19 +184,19 @@ private fun defaultPoseFallbackFor(model: PuppetModel, defaultPose: DeformedGeom
  * @return Function2 The seam: drawable id plus interleaved canvas-space positions to parent-space
  *                   positions, or null when the chain cannot invert.
  */
-fun canvasToParentSpaceFor(puppet: PuppetModel): (DrawableId, FloatArray) -> FloatArray? {
+fun canvasToParentSpaceFor(puppet: PuppetModel, initialPoseOverrides: Map<ParameterId, Float> = emptyMap()): (DrawableId, FloatArray) -> FloatArray? {
 	// Resolved once per export rather than per drawable: the evaluation is the expensive part and the
 	// answer is a property of the model, not of whichever drawable is being written.
 	val preGlueModel = puppet.copy(glues = emptyList())
-	val defaultPose = CpuDeformationEvaluator().evaluate(preGlueModel, emptyMap())
+	val defaultPose = CpuDeformationEvaluator().evaluate(preGlueModel, initialPoseOverrides)
 	val fallback = defaultPoseFallbackFor(puppet, defaultPose)
 
 	return { drawableId, positions ->
 		val pose =
 			if (fallback != null && drawableId in fallback.hiddenIds) {
-				fallback.clampedDefaults
+				fallback.clampedDefaults + initialPoseOverrides
 			} else {
-				emptyMap()
+				initialPoseOverrides
 			}
 		drawableSpaceMapping(puppet, pose, drawableId)?.let { mapping ->
 			// worldToLocal expects the renderer's Y-negated world space, and every vertex is solved.

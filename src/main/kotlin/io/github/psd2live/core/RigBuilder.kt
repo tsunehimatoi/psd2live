@@ -27,10 +27,13 @@ import org.umamo.runtime.model.PartId
 import org.umamo.runtime.model.PuppetModel
 import org.umamo.runtime.model.RotationPivotForm
 import org.umamo.runtime.model.RuntimeTarget
+import org.umamo.runtime.model.DeformPath
+import org.umamo.runtime.model.DeformPathPoint
 import org.umamo.runtime.model.WarpLatticeForm
 import org.umamo.runtime.model.withDerivedRenderRoot
 import java.text.Normalizer
 import java.util.Locale
+import java.util.UUID
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -95,6 +98,12 @@ data class BuiltRig(
 	val initialHeadAngleZ: Float = 0f,
 )
 
+internal data class MeshData(
+	val mesh: DrawableMesh,
+	/** Source points expressed in the coordinate system of their parent frame. */
+	val rigPositions: FloatArray,
+)
+
 object RigBuilder {
 	private val bodyWarpId = DeformerId("DeformBodyXY")
 	private val breathWarpId = DeformerId("DeformBodyZBreath")
@@ -135,12 +144,6 @@ object RigBuilder {
 		SemanticTag.TOOTH_T,
 		SemanticTag.TOOTH_B,
 		SemanticTag.TONGUE,
-	)
-
-	private data class MeshData(
-		val mesh: DrawableMesh,
-		/** Source points expressed in the coordinate system of their parent frame. */
-		val rigPositions: FloatArray,
 	)
 
 	fun build(inputAnalysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig, meshCache: PreviewMeshCache? = null): BuiltRig {
@@ -308,6 +311,7 @@ object RigBuilder {
 			)
 		}
 
+		val builtDeformPaths = mutableListOf<DeformPath>()
 		val orderedLayers = orderMouthLayers(analysis.layers.sortedBy { it.source.order })
 		for ((drawIndex, layer) in orderedLayers.withIndex()) {
 			val placement = atlas.placementByLayerId[layer.source.id.raw]
@@ -364,6 +368,11 @@ object RigBuilder {
 				DrawableMesh(meshData.rigPositions, meshData.mesh.uvs, meshData.mesh.indices)
 			}
 			val mouthAperture = mouthApertureFor(rigLayer)
+            val mouthPaths = if (config.mouthOutlineEnabled && !config.meshOnly &&
+                layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)) {
+                createMouthDeformPaths(id, meshData, effectiveParentFrame)
+            } else emptyList()
+            builtDeformPaths.addAll(mouthPaths)
 			val geometryGrid = if (config.meshOnly) {
 				zeroMeshGrid(effectiveMesh.positions.size)
 			} else {
@@ -375,6 +384,7 @@ object RigBuilder {
 					matchingEyeWhiteBounds(rigLayer, eyeWhiteLayers),
 					mouthAperture,
                     config,
+                    mouthPaths,
 				)
 			}
 			val override = config.layerOverrides[layer.source.id.raw]
@@ -412,13 +422,15 @@ object RigBuilder {
                 for (side in 0..1) {
                     val lipLayer = generatedLips[MouthLipLayer.idFor(layer.source.id.raw, side)] ?: continue
                     val lipPlacement = atlas.placementByLayerId[lipLayer.source.id.raw] ?: continue
-                    val lip = mouthOutline(drawable, meshData, effectiveParentFrame, mouthAperture,
-                        config, side, lipLayer, lipPlacement, atlas.pages[lipPlacement.page].image.width)
+                    val (lip, lipPath) = mouthOutline(drawable, meshData, effectiveParentFrame, mouthAperture,
+                        config, side, lipLayer, lipPlacement, atlas.pages[lipPlacement.page].image.width, effectiveHeadSpace)
                     drawables += lip
+                    lipPath?.let { builtDeformPaths += it }
                     classifiedByDrawable[lip.id] = lipLayer
                     lipOwnerById[lip.id] = drawable.id
                     pageByDrawable[lip.id.raw] = lip.texturePage
                     layerIdByDrawable[lip.id.raw] = lipLayer.source.id.raw
+                    sourceBoundsByDrawable[lip.id.raw] = lipLayer.bounds
                 }
             }
 			layerIdByDrawable[id.raw] = layer.source.id.raw
@@ -533,6 +545,7 @@ object RigBuilder {
 			// 5.3-only feature, and targeting v5 keeps it readable by both current Viewer releases and
 			// older Cubism 5 runtimes without relying on v6-only container fields.
 			runtimeTarget = RuntimeTarget.Cubism50,
+			deformPaths = builtDeformPaths,
 		).withDerivedRenderRoot()
 		val faceCenterCanvas = faceRig.coordinateSpace.toCanvas(faceRig.centerX, faceRig.centerY)
 		return BuiltRig(
@@ -1176,8 +1189,11 @@ object RigBuilder {
 		// Currently only face meshes use dual-line envelope by default; all other parts use single-line:
 		val innerMarginEnabled = override?.innerMarginEnabled ?: (layer.semantic.tag == SemanticTag.FACE)
 		val effectiveSpacing = if (config.mouthOutlineEnabled && !config.meshOnly &&
-            layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)) 2f
-            else override?.maxEdgeDistance ?: max(12f, config.meshMaxEdgeDistance * semanticDensity)
+            layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)) {
+            override?.maxEdgeDistance ?: max(6f, config.meshMaxEdgeDistance * semanticDensity)
+        } else {
+            override?.maxEdgeDistance ?: max(12f, config.meshMaxEdgeDistance * semanticDensity)
+        }
 		val effectiveInteriorDensity = override?.interiorDensity ?: max(12f, config.meshInteriorDensity * semanticDensity)
 
 		// Authored tooth layers may contain several disconnected teeth. Keep their complete texture;
@@ -1279,6 +1295,7 @@ object RigBuilder {
 		eyeWhiteBounds: List<Bounds>,
 		mouthAperture: Bounds?,
         config: PipelineConfig,
+        mouthPaths: List<DeformPath> = emptyList(),
 	): KeyformGrid<MeshDeltaForm> {
 		val tag = layer.semantic.tag
 		return when (tag) {
@@ -1288,7 +1305,7 @@ object RigBuilder {
 			// delayed squash/stretch while eye-white clipping removes it as the lid closes.
 			SemanticTag.IRIDES -> irisJellyGrid(layer, data, parentFrame)
 			SemanticTag.EYEBROW -> eyebrowGrid(layer, data, parentFrame)
-			SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN -> mouthWholeGrid(data, parentFrame, mouthAperture ?: layer.bounds, config)
+			SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN -> mouthWholeGrid(data, parentFrame, mouthAperture ?: layer.bounds, config, mouthPaths)
 			SemanticTag.MOUTH_CLOSE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE ->
 				zeroMeshGrid(data.mesh.positions.size)
 			else -> zeroMeshGrid(data.mesh.positions.size)
@@ -1473,7 +1490,19 @@ object RigBuilder {
 	 * the complete drawable to a seam (zero height when independent lips are enabled). Optional teeth and tongue are intentionally
 	 * not morphed: the animated mouth drawable clips them and their opacity fades near the closed key.
 	 */
-	private fun mouthWholeGrid(data: MeshData, parentFrame: Bounds, aperture: Bounds, config: PipelineConfig): KeyformGrid<MeshDeltaForm> =
+	/**
+	 * The mouth bitmap is authored fully open. ParamMouthOpenY=1 preserves it exactly; zero compresses
+	 * the complete drawable to a seam (zero height when independent lips are enabled). Optional teeth and tongue are intentionally
+	 * not morphed: the animated mouth drawable clips them and their opacity fades near the closed key.
+     * When deform paths are available, they drive the mouth mesh deformation via MLS (DeformPathTools.deformAll).
+	 */
+	private fun mouthWholeGrid(
+        data: MeshData,
+        parentFrame: Bounds,
+        aperture: Bounds,
+        config: PipelineConfig,
+        mouthPaths: List<DeformPath> = emptyList(),
+    ): KeyformGrid<MeshDeltaForm> =
 		grid(
 			mouthAxes(),
 		) { values ->
@@ -1488,49 +1517,91 @@ object RigBuilder {
 			MeshDeltaForm(delta)
 		}
 
-    private fun mouthBoundarySamples(data: MeshData): List<Triple<Float, Float, Float>> {
-        val edges = mutableMapOf<Pair<Int, Int>, Int>()
-        for (i in data.mesh.indices.indices step 3) {
-            val t = data.mesh.indices
-            for ((a, b) in listOf(t[i] to t[i+1], t[i+1] to t[i+2], t[i+2] to t[i])) {
-                val edge = minOf(a,b) to maxOf(a,b)
-                edges[edge] = (edges[edge] ?: 0) + 1
+    private fun createMouthDeformPaths(drawableId: DrawableId, data: MeshData, frame: Bounds): List<DeformPath> {
+        val colCount = MouthContour.DEFAULT_SEGMENTS + 1
+        if (data.mesh.positions.size < colCount * 6) return emptyList()
+        val count = 9
+        val sampleCols = (0 until count).map { i -> (i * (colCount - 1) + (count - 1) / 2) / (count - 1) }
+        val upperPoints = sampleCols.mapNotNull { c ->
+            val v = c * 3
+            val px = data.mesh.positions[v * 2]
+            val py = data.mesh.positions[v * 2 + 1]
+            try {
+                DeformPathTools.bind(data.mesh.positions, data.mesh.indices, px, py, corner = (c == 0 || c == colCount - 1))
+            } catch (_: Throwable) {
+                null
             }
         }
-        val boundary = edges.filterValues { it == 1 }.keys
-        val xs = data.rigPositions.indices.step(2).map { data.rigPositions[it] }.distinct().sorted()
-        if (xs.size < 2) return emptyList()
-        return xs.mapNotNull { x ->
-            val ys = boundary.mapNotNull { (a,b) ->
-                val ax = data.rigPositions[a*2]; val bx = data.rigPositions[b*2]
-                if (x < minOf(ax,bx) || x > maxOf(ax,bx) || abs(ax-bx) < 0.00001f) null
-                else data.rigPositions[a*2+1] + (data.rigPositions[b*2+1]-data.rigPositions[a*2+1]) * ((x-ax)/(bx-ax))
+        val lowerPoints = sampleCols.mapNotNull { c ->
+            val v = c * 3 + 2
+            val px = data.mesh.positions[v * 2]
+            val py = data.mesh.positions[v * 2 + 1]
+            try {
+                DeformPathTools.bind(data.mesh.positions, data.mesh.indices, px, py, corner = (c == 0 || c == colCount - 1))
+            } catch (_: Throwable) {
+                null
             }
-            if (ys.isEmpty()) null else Triple(x, ys.min(), ys.max())
+        }
+        if (upperPoints.size < 2 || lowerPoints.size < 2) return emptyList()
+        return listOf(
+            DeformPath(
+                id = UUID.randomUUID().toString(),
+                drawableId = drawableId,
+                points = upperPoints,
+                width = 0.1f,
+                hardness = 0.5f,
+                closed = false,
+                editLevel = 2,
+            ),
+            DeformPath(
+                id = UUID.randomUUID().toString(),
+                drawableId = drawableId,
+                points = lowerPoints,
+                width = 0.1f,
+                hardness = 0.5f,
+                closed = false,
+                editLevel = 2,
+            ),
+        )
+    }
+
+    private fun mouthBoundarySamples(data: MeshData): List<Triple<Float, Float, Float>> {
+        val columns = MouthContour.uniformColumns(data, MouthContour.DEFAULT_SEGMENTS)
+        return columns.map { col ->
+            val x = (col.top.first + col.bottom.first) * 0.5f
+            Triple(x, col.top.second, col.bottom.second)
         }
     }
 
     // Shared columns guarantee that the fill and both lip ribbons interpolate identical curves.
     private fun mouthContourMesh(data: MeshData, layer: ClassifiedLayer, frame: Bounds,
                                  space: HeadCoordinateSpace?, placement: AtlasPlacement, atlasSize: Int): MeshData {
-        val samples = MouthContour.denseColumns(mouthBoundarySamples(data))
-        if (samples.size < 2) return data
-        val positions = FloatArray(samples.size * 6)
+        val columns = MouthContour.uniformColumns(data, MouthContour.DEFAULT_SEGMENTS)
+        if (columns.size < 2) return data
+        val positions = FloatArray(columns.size * 6)
         val rig = FloatArray(positions.size)
         val uvs = FloatArray(positions.size)
-        for ((i,p) in samples.withIndex()) for (row in 0..2) {
-            val j = i*6+row*2
-            val y = p.second+(p.third-p.second)*row/2f
-            rig[j]=p.first; rig[j+1]=y
-            positions[j]=normalizeX(p.first,frame); positions[j+1]=normalizeY(y,frame)
-            val canvas = space?.toCanvas(p.first,y) ?: (p.first to y)
-            uvs[j]=(placement.x+(canvas.first-layer.source.bounds.left)*placement.scale)/atlasSize
-            uvs[j+1]=(placement.y+(canvas.second-layer.source.bounds.top)*placement.scale)/atlasSize
+        val width = max(1, layer.source.raster.width).toFloat()
+        val height = max(1, layer.source.raster.height).toFloat()
+        for ((i, col) in columns.withIndex()) {
+            val topY = if (col.bottomY - col.topY < 0.5f) (col.topY + col.bottomY) * 0.5f - 0.25f else col.topY
+            val botY = if (col.bottomY - col.topY < 0.5f) (col.topY + col.bottomY) * 0.5f + 0.25f else col.bottomY
+            for (row in 0..2) {
+                val j = i * 6 + row * 2
+                val y = topY + (botY - topY) * row / 2f
+                rig[j] = col.x; rig[j + 1] = y
+                positions[j] = normalizeX(col.x, frame); positions[j + 1] = normalizeY(y, frame)
+                val canvas = space?.toCanvas(col.x, y) ?: (col.x to y)
+                val localX = (canvas.first - layer.source.bounds.left).coerceIn(0f, width)
+                val localY = (canvas.second - layer.source.bounds.top).coerceIn(0f, height)
+                uvs[j] = (placement.x + localX * placement.scale) / atlasSize
+                uvs[j + 1] = (placement.y + localY * placement.scale) / atlasSize
+            }
         }
-        val indices = (0 until samples.lastIndex).flatMap { i -> (0..1).flatMap { row ->
-            val a=i*3+row; listOf(a,a+1,a+3,a+1,a+4,a+3)
+        val indices = (0 until columns.lastIndex).flatMap { i -> (0..1).flatMap { row ->
+            val a = i * 3 + row; listOf(a, a + 1, a + 3, a + 1, a + 4, a + 3)
         }}.toIntArray()
-        return MeshData(DrawableMesh(positions,uvs,indices),rig)
+        return MeshData(DrawableMesh(positions, uvs, indices), rig)
     }
 
     private fun mouthAxes(): List<KeyformAxis> = listOf(
@@ -1548,19 +1619,29 @@ object RigBuilder {
         layer: ClassifiedLayer,
         placement: AtlasPlacement,
         atlasSize: Int,
-    ): Drawable {
-        val samples = mouthBoundarySamples(data)
-        val path = MouthContour.crossedPath(samples, side)
-        val overlap = MouthContour.overlapCount(samples.size)
-        val joins = listOf(overlap, overlap + samples.lastIndex)
+        space: HeadCoordinateSpace?,
+    ): Pair<Drawable, DeformPath?> {
+        val columns = MouthContour.uniformColumns(data, MouthContour.DEFAULT_SEGMENTS)
+        val path = MouthContour.crossedPath(columns, side)
+        val overlap = MouthContour.overlapCount(columns.size)
+        val joins = listOf(overlap, overlap + columns.lastIndex)
         val radius = config.mouthThickness.coerceIn(0.5f, 8f) * 0.5f
         fun normalized(points: FloatArray): FloatArray = FloatArray(points.size) { i ->
             if (i % 2 == 0) normalizeX(points[i], frame) else normalizeY(points[i], frame)
         }
-        val positions = normalized(MouthStrokeMesh.positions(path, radius, joins))
-        val texture = MouthStrokeMesh.texturePositions(path.size, joins)
-        val uvs = FloatArray(texture.size) { i ->
-            (texture[i] * placement.scale + if (i % 2 == 0) placement.x else placement.y) / atlasSize
+        val rawPositions = MouthStrokeMesh.positions(path, radius, joins)
+        val positions = normalized(rawPositions)
+        val uvs = FloatArray(rawPositions.size)
+        val texWidth = layer.source.raster.width.toFloat()
+        val texHeight = layer.source.raster.height.toFloat()
+        for (i in 0 until rawPositions.size step 2) {
+            val rx = rawPositions[i]
+            val ry = rawPositions[i + 1]
+            val canvas = space?.toCanvas(rx, ry) ?: (rx to ry)
+            val localX = (canvas.first - layer.source.bounds.left).coerceIn(0f, texWidth)
+            val localY = (canvas.second - layer.source.bounds.top).coerceIn(0f, texHeight)
+            uvs[i] = (placement.x + localX * placement.scale) / atlasSize
+            uvs[i + 1] = (placement.y + localY * placement.scale) / atlasSize
         }
         val geometry = grid(mouthAxes()) { values ->
             val transformed = path.map { p ->
@@ -1569,16 +1650,46 @@ object RigBuilder {
             val target = normalized(MouthStrokeMesh.positions(transformed, radius, joins))
             MeshDeltaForm(FloatArray(positions.size) { target[it] - positions[it] })
         }
-        return owner.copy(
+        val indices = MouthStrokeMesh.indices(path.size, joins)
+        val lipDrawable = owner.copy(
             id = DrawableId(owner.id.raw + "_lip_" + side),
             name = layer.source.name,
-            mesh = DrawableMesh(positions, uvs, MouthStrokeMesh.indices(path.size, joins)),
+            mesh = DrawableMesh(positions, uvs, indices),
             geometryGrid = geometry,
             texturePage = placement.page,
             blendMode = BlendMode.Normal,
             isVisible = layerVisibility(config, layer.source.id.raw, layer.source.visible),
             drawOrder = config.drawOrderOverrides[layer.source.id.raw] ?: (owner.drawOrder + 1f).coerceAtMost(1000f),
         )
+        val deformPath = if (columns.size >= 5) {
+            val startIdx = overlap
+            val endIdx = overlap + columns.lastIndex
+            val count = 9
+            val span = endIdx - startIdx
+            val sampleIdxs = (0 until count).map { i -> startIdx + (i * span + (count - 1) / 2) / (count - 1) }
+            val points = sampleIdxs.mapNotNull { idx ->
+                val p = path[idx]
+                val nx = normalizeX(p.first, frame)
+                val ny = normalizeY(p.second, frame)
+                try {
+                    DeformPathTools.bind(positions, indices, nx, ny, corner = (idx == startIdx || idx == endIdx))
+                } catch (_: Throwable) {
+                    null
+                }
+            }
+            if (points.size >= 2) {
+                DeformPath(
+                    id = UUID.randomUUID().toString(),
+                    drawableId = lipDrawable.id,
+                    points = points,
+                    width = 0.1f,
+                    hardness = 0.5f,
+                    closed = false,
+                    editLevel = 2,
+                )
+            } else null
+        } else null
+        return lipDrawable to deformPath
     }
 
 	internal fun mouthWholePoint(

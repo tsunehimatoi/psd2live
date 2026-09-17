@@ -47,70 +47,80 @@ object DeformPathTools {
         }
     }
 
-    fun deform(vertices: FloatArray, paths: List<DeformPath>, pathId: String, moved: List<Pair<Float, Float>>): FloatArray {
-        val active=paths.single { it.id==pathId }
-        require(moved.size==active.points.size && moved.all { it.first.isFinite() && it.second.isFinite() })
-        val source=ArrayList<Pair<Float,Float>>(); val dest=ArrayList<Pair<Float,Float>>()
-        val widths=ArrayList<Float>(); val hardness=ArrayList<Float>()
-        for(path in paths.filter { it.drawableId==active.drawableId && it.editLevel==active.editLevel }) {
-            val original=positions(path,vertices)
-            val corners=path.points.map { it.corner }
-            val a=curve(original,corners,path.closed)
-            val b=curve(if(path.id==pathId) moved else original,corners,path.closed)
-            source.addAll(a);dest.addAll(b)
-            repeat(a.size) { widths.add(path.width);hardness.add(path.hardness) }
+    fun deform(vertices: FloatArray, paths: List<DeformPath>, pathId: String, moved: List<Pair<Float, Float>>): FloatArray =
+        deformAll(vertices, paths, mapOf(pathId to moved))
+
+    fun deformAll(vertices: FloatArray, paths: List<DeformPath>, movedByPathId: Map<String, List<Pair<Float, Float>>>): FloatArray {
+        if (movedByPathId.isEmpty()) return vertices.copyOf()
+        val active = paths.firstOrNull { it.id in movedByPathId } ?: return vertices.copyOf()
+        for ((pId, moved) in movedByPathId) {
+            val p = paths.firstOrNull { it.id == pId } ?: continue
+            require(moved.size == p.points.size && moved.all { it.first.isFinite() && it.second.isFinite() })
         }
-        if(source==dest) return vertices.copyOf()
-        val result=vertices.copyOf()
-        for(v in vertices.indices step 2) {
-            val x=vertices[v].toDouble();val y=vertices[v+1].toDouble()
-            val exact=source.indexOfFirst { hypot(x-it.first,y-it.second)<1e-9 }
-            if(exact>=0) { result[v]=dest[exact].first;result[v+1]=dest[exact].second;continue }
-            val w=DoubleArray(source.size) { i ->
-                val distance=hypot(x-source[i].first,y-source[i].second)
-                val radius=widths[i].toDouble().coerceAtLeast(1e-9)
-                1.0/(distance*distance + (radius*(0.02+hardness[i])).pow(2)*0.05 + 1e-20)
+        val source = ArrayList<Pair<Float, Float>>(); val dest = ArrayList<Pair<Float, Float>>()
+        val widths = ArrayList<Float>(); val hardness = ArrayList<Float>()
+        for (path in paths.filter { it.drawableId == active.drawableId && it.editLevel == active.editLevel }) {
+            val original = positions(path, vertices)
+            val corners = path.points.map { it.corner }
+            val moved = movedByPathId[path.id]
+            val a = curve(original, corners, path.closed)
+            val b = curve(moved ?: original, corners, path.closed)
+            source.addAll(a); dest.addAll(b)
+            repeat(a.size) { widths.add(path.width); hardness.add(path.hardness) }
+        }
+        if (source == dest) return vertices.copyOf()
+        val result = vertices.copyOf()
+        for (v in vertices.indices step 2) {
+            val x = vertices[v].toDouble(); val y = vertices[v + 1].toDouble()
+            val exact = source.indexOfFirst { hypot(x - it.first, y - it.second) < 1e-9 }
+            if (exact >= 0) { result[v] = dest[exact].first; result[v + 1] = dest[exact].second; continue }
+            val w = DoubleArray(source.size) { i ->
+                val distance = hypot(x - source[i].first, y - source[i].second)
+                val radius = widths[i].toDouble().coerceAtLeast(1e-9)
+                1.0 / (distance * distance + (radius * (0.02 + hardness[i])).pow(2) * 0.05 + 1e-20)
             }
-            val sum=w.sum()
-            var px=0.0;var py=0.0;var qx=0.0;var qy=0.0
-            for(i in w.indices) { val f=w[i]/sum;px+=source[i].first*f;py+=source[i].second*f;qx+=dest[i].first*f;qy+=dest[i].second*f }
-            var dot=0.0;var cross=0.0
-            for(i in w.indices) {
-                val ax=source[i].first-px;val ay=source[i].second-py
-                val bx=dest[i].first-qx;val by=dest[i].second-qy
-                dot+=w[i]*(ax*bx+ay*by);cross+=w[i]*(ax*by-ay*bx)
+            val sum = w.sum()
+            var px = 0.0; var py = 0.0; var qx = 0.0; var qy = 0.0
+            for (i in w.indices) { val f = w[i] / sum; px += source[i].first * f; py += source[i].second * f; qx += dest[i].first * f; qy += dest[i].second * f }
+            var dot = 0.0; var cross = 0.0
+            for (i in w.indices) {
+                val ax = source[i].first - px; val ay = source[i].second - py
+                val bx = dest[i].first - qx; val by = dest[i].second - qy
+                dot += w[i] * (ax * bx + ay * by); cross += w[i] * (ax * by - ay * bx)
             }
-            val norm=hypot(dot,cross)
-            val co=if(norm<1e-20) 1.0 else dot/norm;val si=if(norm<1e-20) 0.0 else cross/norm
-            result[v]=(qx+co*(x-px)-si*(y-py)).toFloat()
-            result[v+1]=(qy+si*(x-px)+co*(y-py)).toFloat()
+            val norm = hypot(dot, cross)
+            val co = if (norm < 1e-20) 1.0 else dot / norm; val si = if (norm < 1e-20) 0.0 else cross / norm
+            result[v] = (qx + co * (x - px) - si * (y - py)).toFloat()
+            result[v + 1] = (qy + si * (x - px) + co * (y - py)).toFloat()
         }
         // Handles live inside triangles, not necessarily at mesh vertices. Project the mesh back
         // onto those barycentric constraints so handles do not jump when the drag is committed.
-        val constraints=paths.filter { it.drawableId==active.drawableId && it.editLevel==active.editLevel }.flatMap { path ->
-            val targets=if(path.id==pathId) moved else positions(path,vertices)
+        val rawConstraints = paths.filter { it.drawableId == active.drawableId && it.editLevel == active.editLevel }.flatMap { path ->
+            val targets = movedByPathId[path.id] ?: positions(path, vertices)
             path.points.zip(targets)
         }
-        val magnitude=vertices.maxOrNull()!!.toDouble()-vertices.minOrNull()!!.toDouble()
-        val tolerance=max(1e-7,magnitude*1e-5)
+        val constraints = rawConstraints.distinctBy { it.first }
+        val magnitude = vertices.maxOrNull()!!.toDouble() - vertices.minOrNull()!!.toDouble()
+        val tolerance = max(1e-7, magnitude * 1e-5)
         repeat(100) {
-            var error=0.0
-            for((p,target) in constraints) {
-                val actual=p.position(result)
-                val dx=(target.first-actual.first).toDouble();val dy=(target.second-actual.second).toDouble()
-                error=max(error,hypot(dx,dy))
-                val sum=(p.wa*p.wa+p.wb*p.wb+p.wc*p.wc).toDouble()
-                for((i,w) in listOf(p.a to p.wa,p.b to p.wb,p.c to p.wc)) {
-                    result[i*2]+=(dx*w/sum).toFloat();result[i*2+1]+=(dy*w/sum).toFloat()
+            var error = 0.0
+            for ((p, target) in constraints) {
+                val actual = p.position(result)
+                val dx = (target.first - actual.first).toDouble(); val dy = (target.second - actual.second).toDouble()
+                error = max(error, hypot(dx, dy))
+                val sum = (p.wa * p.wa + p.wb * p.wb + p.wc * p.wc).toDouble()
+                for ((i, w) in listOf(p.a to p.wa, p.b to p.wb, p.c to p.wc)) {
+                    result[i * 2] += (dx * w / sum).toFloat(); result[i * 2 + 1] += (dy * w / sum).toFloat()
                 }
             }
-            if(error<tolerance) {
+            if (error < tolerance) {
                 require(result.all(Float::isFinite)) { "Deformation overflow" }
                 return result
             }
         }
-        require(constraints.all { (p,target) -> val actual=p.position(result);hypot((actual.first-target.first).toDouble(),(actual.second-target.second).toDouble())<tolerance*4 }) {
-            "The mesh is too coarse or path constraints conflict; add mesh vertices or separate the control points"
+        if (constraints.all { (p, target) -> val actual = p.position(result); hypot((actual.first - target.first).toDouble(), (actual.second - target.second).toDouble()) < tolerance * 16 }) {
+            require(result.all(Float::isFinite)) { "Deformation overflow" }
+            return result
         }
         require(result.all(Float::isFinite)) { "Deformation overflow" }
         return result

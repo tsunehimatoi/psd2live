@@ -4,8 +4,8 @@ import kotlin.math.*
 
 /** Fixed topology ribbon with normal offsets, miter joins and two semicircular end caps. */
 internal object MouthStrokeMesh {
-    const val CAP_SEGMENTS = 24
-    private const val JOIN_SEGMENTS = 24
+    const val CAP_SEGMENTS = 8
+    private const val JOIN_SEGMENTS = 8
     private const val EPSILON = 0.00001f
 
     private fun direction(a: Pair<Float, Float>, b: Pair<Float, Float>): Pair<Float, Float> {

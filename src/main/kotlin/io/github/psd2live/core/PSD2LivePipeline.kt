@@ -138,7 +138,9 @@ class PSD2LivePipeline {
 		progress.update(tr("progress.keyforms"), 0.58)
 		// CMO3's editable base mesh is canvas-space. The keyform absolutes remain in parent space;
 		// Umamo's conversion preserves that mixed-space invariant exactly.
-		val exportPuppet = restMeshesToCanvasSpace(rig.puppet)
+		// Evaluating the mouth at MOUTH_OPEN=1.0f keeps the base mesh in its initial open state matching
+		// the authored PSD layer artwork and atlas UV coordinates, avoiding singular affine transforms in CMO3.
+		val exportPuppet = restMeshesToCanvasSpace(rig.puppet, mapOf(StandardParameters.MOUTH_OPEN to 1.0f))
 		val outputRoot = outputDirectory.toAbsolutePath().normalize()
 		val hasFrontHair = analysis.layers.any { it.semantic.tag == SemanticTag.FRONT_HAIR && it.opaquePixels > 0 }
 		val hasBackHair = analysis.layers.any { it.semantic.tag == SemanticTag.BACK_HAIR && it.opaquePixels > 0 }
@@ -211,7 +213,7 @@ class PSD2LivePipeline {
 		rig: BuiltRig,
 		config: PipelineConfig,
 	): Pair<CubismRuntimeBundle, org.umamo.interop.ExportReport> {
-		val exportPuppet = restMeshesToCanvasSpace(rig.puppet)
+		val exportPuppet = restMeshesToCanvasSpace(rig.puppet, mapOf(StandardParameters.MOUTH_OPEN to 1.0f))
 		val parameterIds = rig.puppet.parameters.mapTo(linkedSetOf()) { it.id.raw }
 		val textureFolder = "$baseName.${atlas.pages.firstOrNull()?.image?.width ?: config.atlasSize}"
 		val pages = atlas.pages.mapIndexed { index, page ->
