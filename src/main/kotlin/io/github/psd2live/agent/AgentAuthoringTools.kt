@@ -137,7 +137,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
         val edits = JsonArray(a.getValue("changes").jsonArray.map { change ->
             JsonObject(change.jsonObject + ("op" to JsonPrimitive("deform")))
         })
-        workspace.authorRig(a.text("state"), edits).compact()
+        workspace.authorRig(a.text("state"), edits, MutationAuthor.AGENT).compact()
     }
 
     val channels = objectSchema(buildJsonObject {
@@ -153,7 +153,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
                 put("originX", number()); put("originY", number()); put("angle", number()); put("scale", number())
             })) }), listOf("target", "key")),
             variant("op", "delete", buildJsonObject { put("target", string()); put("parameter", string()); put("value", number()); put("channel", string()) }, listOf("target", "parameter"))
-        )), 1, 128)) }, listOf("state", "changes"), true) { a -> workspace.authorRig(a.text("state"), a.getValue("changes").jsonArray).compact() }
+        )), 1, 128)) }, listOf("state", "changes"), true) { a -> workspace.authorRig(a.text("state"), a.getValue("changes").jsonArray, MutationAuthor.AGENT).compact() }
 
     tool("rig", "Create a fitted independent Warp for meshes sharing a parent. Existing keyforms and UVs migrate; the parent lattice constrains fit precision. Use deform directly when no independent motion layer is needed. Returned target is the new Warp.",
         buildJsonObject { put("state", string()); put("name", string()); put("targets", arraySchema(string(), 1, 64)) }, listOf("state", "name", "targets"), true) { a ->
@@ -162,7 +162,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
         require(parents.size == 1 && parents.single() != null) { "Targets need a common Warp parent" }
         val id = "AgentWarp_${UUID.randomUUID().toString().take(8)}"
         val edit = RigWarpEdit(id, a.text("name"), parents.single()!!, targets.map { it.id }, 16, 16, fitLocal = true)
-        val result = workspace.authorRig(a.text("state"), buildJsonArray { add(buildJsonObject { put("op", "warp"); put("warp", edit.toJson()) }) })
+        val result = workspace.authorRig(a.text("state"), buildJsonArray { add(buildJsonObject { put("op", "warp"); put("warp", edit.toJson()) }) }, MutationAuthor.AGENT)
         JsonObject(result.compact() + ("target" to JsonPrimitive("warp:$id")))
     }
 
@@ -206,7 +206,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
     adapted("physics", "Configure an independent input→output parameter pendulum. Author the output parameter's endpoint forms first. This edits physics; static view poses do not establish settling or natural motion.", mapOf("put" to "physics_put"), true)
     tool("appearance", "Rename, show/hide or reorganize objects in one ordered edit. For an animated switch use form opacity keys instead of static visibility. Local reparenting changes inherited motion.",
         buildJsonObject { put("state", string()); put("edits", legacy.getValue("object_edit").tool.inputSchema.properties!!.getValue("edits")) }, listOf("state", "edits"), true) { a ->
-        workspace.authorRig(a.text("state"), buildJsonArray { add(buildJsonObject { put("op", "structure"); put("edits", a.getValue("edits")) }) }).compact()
+        workspace.authorRig(a.text("state"), buildJsonArray { add(buildJsonObject { put("op", "structure"); put("edits", a.getValue("edits")) }) }, MutationAuthor.AGENT).compact()
     }
     val pathBranches = listOf(
         variant("mode", "get", buildJsonObject {
@@ -284,7 +284,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
                     "get", "list" -> AgentPathTools.inspect(puppet, input)
                     "put" -> {
                         val (pathId, command) = AgentPathTools.createPutCommand(puppet, input)
-                        val res = workspace.authorRig(input.text("state"), buildJsonArray { add(command) })
+                        val res = workspace.authorRig(input.text("state"), buildJsonArray { add(command) }, MutationAuthor.AGENT)
                         buildJsonObject {
                             put("state", res.historyNodeId)
                             put("path_id", pathId)
@@ -293,7 +293,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
                     }
                     "delete" -> {
                         val (pathId, command) = AgentPathTools.createDeleteCommand(input)
-                        val res = workspace.authorRig(input.text("state"), buildJsonArray { add(command) })
+                        val res = workspace.authorRig(input.text("state"), buildJsonArray { add(command) }, MutationAuthor.AGENT)
                         buildJsonObject {
                             put("state", res.historyNodeId)
                             put("deleted", pathId)
@@ -301,7 +301,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
                     }
                     "deform" -> {
                         val command = AgentPathTools.createDeformCommand(input)
-                        val res = workspace.authorRig(input.text("state"), buildJsonArray { add(command) })
+                        val res = workspace.authorRig(input.text("state"), buildJsonArray { add(command) }, MutationAuthor.AGENT)
                         buildJsonObject {
                             put("state", res.historyNodeId)
                             put("target", input.text("target"))

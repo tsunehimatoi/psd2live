@@ -732,9 +732,9 @@ class ViewModelAgentWorkspace(
             model.parts.map { p -> record("part",p.id.raw,p.name,model.parts.firstOrNull { org.umamo.runtime.model.OrgChild.Part(p.id) in it.children }?.id?.raw) }
     }
 
-    override suspend fun authorRig(state: String, edits: kotlinx.serialization.json.JsonArray): AgentWorkspaceMutationResult {
+    override suspend fun authorRig(state: String, edits: kotlinx.serialization.json.JsonArray, author: MutationAuthor): AgentWorkspaceMutationResult {
         val ids = edits.mapNotNull { it.jsonObject["target"]?.jsonPrimitive?.content }.distinct()
-        return mutateRigKeyform(state, null, "Authored ${edits.size} ordered edits", ids.firstOrNull() ?: "rig") { document, puppet ->
+        return mutateRigKeyform(state, null, "Authored ${edits.size} ordered edits", ids.firstOrNull() ?: "rig", author) { document, puppet ->
             val (_, journal) = io.github.psd2live.core.RigAuthoringJournal.compile(puppet, edits)
             document.copy(rigEdits = document.rigEdits.copy(authoringJournal = document.rigEdits.authoringJournal + journal))
         }.copy(affectedObjectIds = ids)
@@ -1243,6 +1243,9 @@ class ViewModelAgentWorkspace(
 		taskId: String?,
 		summary: String,
 		affectedObjectId: String,
+		// Defaults to the Agent because only [authorRig] is shared with the editor; every other
+		// caller here is an MCP tool.
+		author: MutationAuthor = MutationAuthor.AGENT,
 		mutation: (AgentWorkspaceDocument, PuppetModel) -> AgentWorkspaceDocument,
 	): AgentWorkspaceMutationResult = editMutex.withLock {
 		val before = snapshot()
@@ -1276,17 +1279,17 @@ class ViewModelAgentWorkspace(
 				revisionId = nextRevision,
 				snapshotHash = nextRevision,
 				summary = summary,
-				actor = "agent",
+				actor = author.historyActor,
 				taskId = taskId,
 			)
 		}
 		scheduleHistoryPersistence(projectId, tree)
 		viewModel.loadAgentWorkspacePreview(preview)
 		viewModel.addLog(
-			message = "Agent Keyform: $summary",
+			message = if (author == MutationAuthor.USER) "Editor: $summary" else "Agent Keyform: $summary",
 			level = io.github.psd2live.ui.state.LogLevel.INFO,
-			source = io.github.psd2live.ui.state.LogSource.AGENT,
-			tag = "Keyform",
+			source = author.logSource,
+			tag = if (author == MutationAuthor.USER) "Edit" else "Keyform",
 		)
 		AgentWorkspaceMutationResult(
 			historyNodeId = selection.node.id,
@@ -1297,7 +1300,7 @@ class ViewModelAgentWorkspace(
 		)
 	}
 
-	override suspend fun checkoutHistory(nodeId: String): AgentWorkspaceMutationResult = editMutex.withLock {
+	override suspend fun checkoutHistory(nodeId: String, author: MutationAuthor): AgentWorkspaceMutationResult = editMutex.withLock {
 		val before = snapshot()
 		val projectId = before.projectId ?: throw IllegalStateException("No PSD is loaded")
 		val tree = synchronized(historyLock) {
@@ -1321,7 +1324,7 @@ class ViewModelAgentWorkspace(
 		viewModel.addLog(
 			message = "Checked out history node: $nodeId (${target.summary})",
 			level = io.github.psd2live.ui.state.LogLevel.SUCCESS,
-			source = io.github.psd2live.ui.state.LogSource.AGENT,
+			source = author.logSource,
 			tag = "History",
 		)
 		AgentWorkspaceMutationResult(target.id, target.revisionId, emptyList(), "Checked out history node $nodeId")

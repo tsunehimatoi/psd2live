@@ -53,6 +53,7 @@ private val TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(Zo
 private enum class LogFilter {
 	ALL,
 	SYSTEM,
+	EDITOR,
 	AGENT_MCP,
 	IMAGES_ONLY,
 }
@@ -78,6 +79,7 @@ fun BottomLogDock(
 			val matchesFilter = when (currentFilter) {
 				LogFilter.ALL -> true
 				LogFilter.SYSTEM -> entry.source == LogSource.SYSTEM
+				LogFilter.EDITOR -> entry.source == LogSource.EDITOR
 				LogFilter.AGENT_MCP -> entry.source == LogSource.MCP_SERVER || entry.source == LogSource.AGENT
 				LogFilter.IMAGES_ONLY -> entry.imageBytes != null
 			}
@@ -204,6 +206,11 @@ fun BottomLogDock(
 						text = tr("log.dock.filter.system"),
 						selected = currentFilter == LogFilter.SYSTEM,
 						onClick = { currentFilter = LogFilter.SYSTEM },
+					)
+					FilterChip(
+						text = tr("log.dock.filter.editor"),
+						selected = currentFilter == LogFilter.EDITOR,
+						onClick = { currentFilter = LogFilter.EDITOR },
 					)
 					FilterChip(
 						text = tr("log.dock.filter.agent"),
@@ -357,6 +364,8 @@ private fun LogEntryRow(
 		LogSource.SYSTEM -> Triple(Color(0xFF2E3440), Color(0xFF88C0D0), "SYSTEM")
 		LogSource.MCP_SERVER -> Triple(Color(0xFF1E3A3A), Color(0xFF4EC9B0), "MCP")
 		LogSource.AGENT -> Triple(Color(0xFF3B2E58), Color(0xFFDCDCAA), "AGENT")
+		// Same blue the history tree gives a "User" node, so one edit reads the same in both panels.
+		LogSource.EDITOR -> Triple(Color(0xFF1E3A5F), Color(0xFF9CDCFE), "EDITOR")
 	}
 
 	val textColor = when (entry.level) {

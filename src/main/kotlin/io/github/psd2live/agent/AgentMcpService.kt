@@ -857,7 +857,7 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace, legacyTools: Boolea
 		),
 		toolAnnotations = MUTATING,
 	) { request ->
-		mutationResult { workspace.checkoutHistory(request.requiredString("node_id")).toJson() }
+		mutationResult { workspace.checkoutHistory(request.requiredString("node_id"), MutationAuthor.AGENT).toJson() }
 	}
 
     server.addTool(
@@ -933,7 +933,7 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace, legacyTools: Boolea
             val puppet = workspace.currentPuppet() ?: error("No model loaded")
             val (pathId, command) = AgentPathTools.createPutCommand(puppet, args)
             val state = request.requiredString("expected_history_head_node_id")
-            val res = workspace.authorRig(state, buildJsonArray { add(command) })
+            val res = workspace.authorRig(state, buildJsonArray { add(command) }, MutationAuthor.AGENT)
             buildJsonObject {
                 put("historyNodeId", res.historyNodeId)
                 put("revisionId", res.revisionId)
@@ -960,7 +960,7 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace, legacyTools: Boolea
             val args = request.arguments ?: error("Missing arguments")
             val (pathId, command) = AgentPathTools.createDeleteCommand(args)
             val state = request.requiredString("expected_history_head_node_id")
-            val res = workspace.authorRig(state, buildJsonArray { add(command) })
+            val res = workspace.authorRig(state, buildJsonArray { add(command) }, MutationAuthor.AGENT)
             buildJsonObject {
                 put("historyNodeId", res.historyNodeId)
                 put("revisionId", res.revisionId)
@@ -989,7 +989,7 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace, legacyTools: Boolea
             val args = request.arguments ?: error("Missing arguments")
             val command = AgentPathTools.createDeformCommand(args)
             val state = request.requiredString("expected_history_head_node_id")
-            val res = workspace.authorRig(state, buildJsonArray { add(command) })
+            val res = workspace.authorRig(state, buildJsonArray { add(command) }, MutationAuthor.AGENT)
             buildJsonObject {
                 put("historyNodeId", res.historyNodeId)
                 put("revisionId", res.revisionId)

@@ -103,7 +103,7 @@ The left workspace is a browser-style tab strip: two fixed tabs — **Edit** and
 Logs remain visible below every workspace tab instead of occupying a tab of their own:
 
 - Click the header chevron to collapse or expand it; drag its top edge to resize it between `80` and `450 px`.
-- Filter by All, System, Agent/MCP, or Images Only; search messages, tags, and details; and toggle auto-scroll. The header reports both log and image counts.
+- Filter by All, System, Editor, Agent/MCP, or Images Only — Editor carries the edits you made by hand, tagged the same blue the history tree gives a User node; search messages, tags, and details; and toggle auto-scroll. The header reports both log and image counts.
 - Rendered Views and imported assets appear as inline thumbnails. Click one to open a larger checkerboard preview with dimensions, file size, and a Copy Image action.
 - Clear affects only the current UI log. Copy Log copies the filtered text and does not modify history or task records.
 

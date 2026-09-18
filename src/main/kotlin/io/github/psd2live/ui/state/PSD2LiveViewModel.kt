@@ -70,7 +70,9 @@ class PSD2LiveViewModel : AutoCloseable {
         scope.launch {
             try {
                 val workspace = requireNotNull(agentWorkspace) { "Project workspace unavailable" }
-                withContext(Dispatchers.Default) { workspace.authorRig(expectedState, edits) }
+                // Canvas authoring uses the same journal the MCP tools write, so the author has to
+                // be stated here: these edits came from the person at the editor.
+                withContext(Dispatchers.Default) { workspace.authorRig(expectedState, edits, io.github.psd2live.agent.MutationAuthor.USER) }
                 onComplete(null)
             } catch (failure: Exception) {
                 if (failure is kotlinx.coroutines.CancellationException) throw failure
@@ -1192,14 +1194,9 @@ class PSD2LiveViewModel : AutoCloseable {
 			try {
 				val ws = agentWorkspace ?: throw IllegalStateException("Agent workspace is not attached")
 				val result = withContext(Dispatchers.Default) {
-					ws.checkoutHistory(nodeId)
+					ws.checkoutHistory(nodeId, io.github.psd2live.agent.MutationAuthor.USER)
 				}
-				addLog(
-					message = "Checked out history node: $nodeId (${result.summary})",
-					level = LogLevel.SUCCESS,
-					source = LogSource.AGENT,
-					tag = "History",
-				)
+				// The workspace already logged the checkout; this only reflects it in the status bar.
 				_state.update { current ->
 					current.copy(
 						statusText = result.summary,
@@ -1212,7 +1209,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				addLog(
 					message = "History checkout failed: $err",
 					level = LogLevel.ERROR,
-					source = LogSource.AGENT,
+					source = LogSource.EDITOR,
 					tag = "History",
 				)
 				_state.update { it.copy(errorMessage = err) }

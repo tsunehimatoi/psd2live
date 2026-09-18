@@ -391,6 +391,19 @@ data class AgentParameterRangeDiagnostic(
  */
 data class AgentWorkflowResult(val metadata: kotlinx.serialization.json.JsonObject, val images: List<ByteArray> = emptyList())
 
+/**
+ * Who asked for a mutation, for the entry points the editor and the AI host both reach. The
+ * workspace cannot tell them apart from the call itself, so the caller must say: history nodes
+ * record [historyActor] verbatim and the log dock tags the entry with [logSource].
+ *
+ * Only the shared entry points take this -- everything else on [AgentWorkspace] is reachable from
+ * the MCP tools alone and is the Agent's by construction.
+ */
+enum class MutationAuthor(val historyActor: String, val logSource: io.github.psd2live.ui.state.LogSource) {
+	USER("user", io.github.psd2live.ui.state.LogSource.EDITOR),
+	AGENT("agent", io.github.psd2live.ui.state.LogSource.AGENT),
+}
+
 interface AgentWorkspace {
     suspend fun observeAuthoring(arguments: kotlinx.serialization.json.JsonObject): AgentWorkflowResult =
         throw UnsupportedOperationException("Version/motion observation unavailable")
@@ -398,7 +411,7 @@ interface AgentWorkspace {
         throw UnsupportedOperationException("Artwork creation unavailable")
     suspend fun splitArtwork(arguments: kotlinx.serialization.json.JsonObject): AgentWorkspaceMutationResult =
         throw UnsupportedOperationException("Artwork splitting unavailable")
-    suspend fun authorRig(state: String, edits: kotlinx.serialization.json.JsonArray): AgentWorkspaceMutationResult =
+    suspend fun authorRig(state: String, edits: kotlinx.serialization.json.JsonArray, author: MutationAuthor): AgentWorkspaceMutationResult =
         throw UnsupportedOperationException("Ordered authoring is unavailable")
     fun listRigObjectSummaries(): List<kotlinx.serialization.json.JsonObject> = listRigObjects().map {
         kotlinx.serialization.json.JsonObject(mapOf("kind" to kotlinx.serialization.json.JsonPrimitive(it.kind), "id" to kotlinx.serialization.json.JsonPrimitive(it.id)))
@@ -490,7 +503,7 @@ interface AgentWorkspace {
 		throw UnsupportedOperationException("Rig K pose is not available")
 
 	/** Move workspace HEAD to an immutable prior snapshot and rebuild the editable preview. */
-	suspend fun checkoutHistory(nodeId: String): AgentWorkspaceMutationResult =
+	suspend fun checkoutHistory(nodeId: String, author: MutationAuthor): AgentWorkspaceMutationResult =
 		throw UnsupportedOperationException("Workspace history is not available")
 
 	fun startTask(objective: String, plan: List<String>): AgentTaskSnapshot =

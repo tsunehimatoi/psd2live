@@ -120,6 +120,9 @@ enum class LogSource {
 	SYSTEM,
 	MCP_SERVER,
 	AGENT,
+
+	/** A human at the editor: canvas authoring, history checkouts, the same acts an Agent host can ask for. */
+	EDITOR,
 }
 
 enum class LogLevel {
