@@ -30,11 +30,8 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
@@ -54,7 +51,6 @@ import io.github.psd2live.ui.theme.ToolColors
 import io.github.psd2live.ui.theme.frostedGlass
 import io.github.psd2live.ui.theme.frostedGlassTopBar
 import kotlin.math.abs
-import kotlin.math.roundToInt
 import org.umamo.edit.MeshTopology
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
@@ -67,7 +63,6 @@ internal fun BoxScope.CanvasEditorOverlay(
     focus: () -> Unit
 ) {
     val colors = LocalToolColors.current
-    val textMeasurer = rememberTextMeasurer()
     val target = editor.target()
     val isPathTool = editor.tool == CanvasTool.CREATE_DEFORM_PATH || editor.drawingPath || (editor.hierarchyMode == EditHierarchyMode.DEFORM && editor.paths().isNotEmpty())
 
@@ -479,93 +474,11 @@ internal fun BoxScope.CanvasEditorOverlay(
             }
         }
 
-        // 7. Brush gesture HUD: sits with the frozen outline and lists every brush parameter, the way the
-        //    Photoshop readout does. The one the drag latched onto is highlighted, so the full picture is
-        //    there without having to guess which value is currently moving.
-        if (editor.adjustingBrush) {
-            editor.cursor?.let { anchor ->
-                val base = TextStyle(fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = colors.textPrimary)
-                val live = base.copy(color = colors.accent)
-                val rows = buildList {
-                    add(BrushAdjustAxis.RADIUS to "${tr("editor.radius")} ${editor.radius.roundToInt()} px")
-                    add(BrushAdjustAxis.HARDNESS to "${tr("editor.hardness")} ${(editor.hardness * 100).roundToInt()}%")
-                    if (editor.brushShape != BrushShape.CIRCLE) {
-                        add(BrushAdjustAxis.ANGLE to "${tr("editor.angle")} ${editor.brushAngle.roundToInt()}°")
-                    }
-                    add(null to "${tr("editor.strength")} ${(editor.strength * 100).roundToInt()}%")
-                }
-                val lines = rows.map { (axis, text) ->
-                    textMeasurer.measure(text = text, style = if (axis != null && axis == editor.brushAxis) live else base)
-                }
-                val padX = 8f
-                val padY = 5f
-                val gap = 3f
-                val box = Size(
-                    lines.maxOf { it.size.width } + padX * 2f,
-                    lines.sumOf { it.size.height }.toFloat() + gap * (lines.size - 1) + padY * 2f,
-                )
-                // Prefer below-right of the outline; flip to the opposite side when that would leave the canvas.
-                var x = anchor.x + 18f
-                var y = anchor.y + 22f
-                if (x + box.width > size.width) x = anchor.x - 18f - box.width
-                if (y + box.height > size.height) y = anchor.y - 22f - box.height
-                x = x.coerceIn(0f, (size.width - box.width).coerceAtLeast(0f))
-                y = y.coerceIn(0f, (size.height - box.height).coerceAtLeast(0f))
-                drawRoundRect(Color(0xE6181A1E), Offset(x, y), box, CornerRadius(4f, 4f))
-                drawRoundRect(colors.accent.copy(alpha = 0.9f), Offset(x, y), box, CornerRadius(4f, 4f), style = Stroke(1f))
-                var lineY = y + padY
-                lines.forEach {
-                    drawText(textLayoutResult = it, topLeft = Offset(x + padX, lineY))
-                    lineY += it.size.height + gap
-                }
-            }
-        }
-
-        // 8. Object-mode hover annotation: a chip naming the part the pointer is over, the deformer it
-        //    hangs off, and where a Ctrl-click goes next. It reads [hoveredPick], the same resolution
-        //    the press makes, so it cannot promise a pick the click would not.
-        //
-        //    The highlight itself is not drawn here. The part's own texture is washed in this same
-        //    component colour by the viewport, so a box would just be a second, worse answer to the
-        //    question the wash already answers.
-        val pick = editor.hoveredPick
-        if (pick != null && !editor.inGesture) {
-            val awt = ComponentPalette.strong(pick.id)
-            val accent = Color(awt.red, awt.green, awt.blue)
-            val base = TextStyle(fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = colors.textPrimary)
-            val muted = base.copy(color = colors.textMuted)
-            val lines = buildList {
-                add(textMeasurer.measure(tr("editor.hover.${pick.kind}", pick.name), base.copy(color = accent, fontWeight = FontWeight.Medium)))
-                pick.parentName?.let { add(textMeasurer.measure(tr("editor.hover.parent", it), muted)) }
-                pick.nextName?.let { add(textMeasurer.measure(tr("editor.hover.ctrl", it), muted)) }
-            }
-            val padX = 8f
-            val padY = 5f
-            val gap = 3f
-            val dot = 6f
-            val dotGap = 6f
-            val box = Size(
-                lines.maxOf { it.size.width } + padX * 2f + dot + dotGap,
-                lines.sumOf { it.size.height }.toFloat() + gap * (lines.size - 1) + padY * 2f,
-            )
-            val anchor = editor.cursor ?: Offset(size.width * 0.5f, size.height * 0.5f)
-            var x = anchor.x + 18f
-            var y = anchor.y + 22f
-            if (x + box.width > size.width) x = anchor.x - 18f - box.width
-            if (y + box.height > size.height) y = anchor.y - 22f - box.height
-            x = x.coerceIn(0f, (size.width - box.width).coerceAtLeast(0f))
-            y = y.coerceIn(0f, (size.height - box.height).coerceAtLeast(0f))
-            drawRoundRect(Color(0xE6181A1E), Offset(x, y), box, CornerRadius(4f, 4f))
-            drawRoundRect(accent.copy(alpha = 0.9f), Offset(x, y), box, CornerRadius(4f, 4f), style = Stroke(1f))
-            drawCircle(accent, dot / 2f, Offset(x + padX + dot / 2f, y + padY + lines.first().size.height / 2f))
-            var lineY = y + padY
-            lines.forEach {
-                drawText(textLayoutResult = it, topLeft = Offset(x + padX + dot + dotGap, lineY))
-                lineY += it.size.height + gap
-            }
-        }
+        // No floating readouts over the artwork. The brush gesture's numbers and the object under the
+        // pointer were both drawn here as chips beside the cursor, and both covered the art they were
+        // describing — the brush outline and the hovered part's own highlight already say the same
+        // thing without a box in the way.
     }
-
     // Left Animated Hover Toolbar
     CanvasToolBar(editor = editor, keymap = keymap, focus = focus)
 
@@ -647,23 +560,38 @@ private fun BoxScope.CanvasToolBar(
             .padding(3.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        val toolGroups = listOf(
-            listOf(CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT),
-            listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE),
-            listOf(CanvasTool.CREATE_WARP, CanvasTool.CREATE_ROTATION, CanvasTool.CREATE_DEFORM_PATH, CanvasTool.GLUE),
-        )
+        // The palette is every tool walked in one fixed order, with each row's visibility following the
+        // mode. Walking the mode's own list instead would be shorter, but a row that left the
+        // composition has nothing left to animate out of — so the rows that a mode change adds or
+        // removes would pop while the rest slid. Composing them all and hiding the ones the mode has no
+        // use for makes the arriving and departing rows slide with everything else.
+        val availableTools = toolbarGroups(editor.hierarchyMode).flatten().toSet()
+        val lastVisibleIndex = TOOLBAR_TOOL_ORDER.indexOfLast { it in availableTools }
 
-        toolGroups.forEachIndexed { groupIndex, group ->
-            if (groupIndex > 0) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
-                        .height(1.dp)
-                        .background(colors.border.copy(alpha = 0.35f))
-                )
+        TOOLBAR_TOOL_ORDER.forEachIndexed { index, tool ->
+            // A divider earns its place only when both sides of it have something to separate; in
+            // object mode the whole list is two select tools and every line would be a stray rule.
+            if (tool in TOOLBAR_DIVIDERS) {
+                val splitsGroups = index < lastVisibleIndex && TOOLBAR_TOOL_ORDER.take(index + 1).any { it in availableTools }
+                AnimatedVisibility(
+                    visible = splitsGroups,
+                    enter = expandVertically(animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)) + fadeIn(animationSpec = tween(150)),
+                    exit = shrinkVertically(animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)) + fadeOut(animationSpec = tween(120)),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                            .height(1.dp)
+                            .background(colors.border.copy(alpha = 0.35f))
+                    )
+                }
             }
-            group.forEach { tool ->
+            AnimatedVisibility(
+                visible = tool in availableTools,
+                enter = expandVertically(animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)) + fadeIn(animationSpec = tween(150)),
+                exit = shrinkVertically(animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)) + fadeOut(animationSpec = tween(120)),
+            ) {
                 ToolItemRow(
                     tool = tool,
                     isSelected = editor.tool == tool,

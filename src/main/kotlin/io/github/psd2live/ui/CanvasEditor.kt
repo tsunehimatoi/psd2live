@@ -56,6 +56,49 @@ internal val VERTEX_TOOLS = setOf(
 )
 
 /**
+ * Every tool the left toolbar can show, in the order it shows them.
+ *
+ * The per-mode palettes below are subsets of this, so a row keeps its place when the mode changes and
+ * the rows that come and go animate in and out of that place instead of the list reshuffling.
+ */
+internal val TOOLBAR_TOOL_ORDER = listOf(
+    CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT,
+    CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE,
+    CanvasTool.CREATE_DEFORM_PATH, CanvasTool.CREATE_WARP, CanvasTool.CREATE_ROTATION, CanvasTool.GLUE,
+)
+
+/** A divider is drawn after these, when there are visible tools on both sides of them. */
+internal val TOOLBAR_DIVIDERS = listOf(CanvasTool.BRUSH_SELECT, CanvasTool.INFLATE)
+
+/**
+ * The toolbar's palette for [mode].
+ *
+ * Membership follows what the mode is *for*, so the palette stops offering tools the mode cannot act
+ * with — an armed tool the toolbar does not show is the worst of both, since the pointer and the
+ * palette then disagree about what a drag does.
+ *
+ * Object mode is the one without the vertex tools: it neither draws the wireframe nor shows vertices,
+ * so a brush there would edit points the artist cannot see. Deform mode edits points without changing
+ * topology, which is the brushes and the deform paths. The tools that add a deformer or a glue —
+ * structural changes by definition — belong to the mode named for structure.
+ */
+internal fun toolbarGroups(mode: EditHierarchyMode): List<List<CanvasTool>> = when (mode) {
+    EditHierarchyMode.OBJECT -> listOf(
+        listOf(CanvasTool.SELECT, CanvasTool.LASSO_SELECT),
+    )
+    EditHierarchyMode.DEFORM -> listOf(
+        listOf(CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT),
+        listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE),
+        listOf(CanvasTool.CREATE_DEFORM_PATH),
+    )
+    EditHierarchyMode.STRUCTURE -> listOf(
+        listOf(CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT),
+        listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE),
+        listOf(CanvasTool.CREATE_DEFORM_PATH, CanvasTool.CREATE_WARP, CanvasTool.CREATE_ROTATION, CanvasTool.GLUE),
+    )
+}
+
+/**
  * The target kinds a point selection may be framed in.
  */
 internal val POINT_BOX_KINDS = setOf("mesh", "warp")
@@ -74,22 +117,13 @@ internal data class CanvasTarget(
 }
 
 /**
- * One node an object-mode click can pick: a drawable, or one of the deformers above it.
- *
- * [parentName] and [nextName] are what the hover annotation reads — they name the step a Ctrl-click
- * would take, so the canvas can say where the click goes before it is made rather than after.
+ * One node an object-mode click can pick: a drawable, or one of the deformers above it. Exactly one of
+ * the two ids is set.
  */
 internal data class HierarchyPick(
-    val kind: String,
     val layerId: String? = null,
     val deformerId: String? = null,
-    val name: String,
-    val parentName: String? = null,
-    val nextName: String? = null,
-) {
-    /** The id the component colour keys off; a deformer and a layer of the same rig never collide. */
-    val id get() = layerId ?: deformerId.orEmpty()
-}
+)
 
 /** One gesture owns its pose, parent mapping and history HEAD until release. */
 internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
@@ -323,8 +357,15 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         vertices = emptySet(); activePath = null; pathPoint = -1
     }
 
+    /**
+     * Arms [next]. A tool the current mode's palette does not offer is refused rather than armed, so
+     * every way in — toolbar, shortcut, a request from another view — passes the same test the toolbar
+     * draws itself from. Arming one anyway would leave the pointer doing something the palette has just
+     * animated away, which is worse than the keypress doing nothing.
+     */
     fun activateTool(next: CanvasTool) {
         if (busy) return
+        if (next !in toolbarGroups(hierarchyMode).flatten()) return
         cancel()
         tool = next
         error = null
@@ -346,6 +387,10 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         } else if (next == EditHierarchyMode.DEFORM && editLevel == 2) {
             ensureBezierState()
         }
+        // A tool the new mode no longer offers would leave the canvas armed with something the toolbar
+        // is about to animate away, so the palette and the pointer would disagree about what a drag
+        // does. Fall back to the tool every mode has.
+        if (tool !in toolbarGroups(next).flatten()) activateTool(CanvasTool.SELECT)
         clearHover()
     }
 
@@ -437,10 +482,40 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     private fun gestureIndices(t: CanvasTarget): Set<Int> =
         if (t.kind != "rotation") vertices.filter { it in 0 until t.count }.toSet() else (0 until t.count).toSet()
 
+    private var cachedGeometrySource: PuppetModel? = null
+    private var cachedGeometryPose = emptyMap<ParameterId, Float>()
+    private var cachedGeometry: DeformedGeometry? = null
+
+    private var warpOutlineSource: PuppetModel? = null
+    private var warpOutlinePose = emptyMap<ParameterId, Float>()
+    private var warpOutlineIds = emptySet<String>()
+    private var warpOutlinePoints = emptyMap<String, FloatArray>()
+
+    /** The rig the canvas is drawing right now: the gesture's preview when one is live, else the rig. */
+    private val drawnPreview: RigPreviewModel?
+        get() = state.previewModel?.let { source -> preview?.let { source.copy(rig = source.rig.copy(puppet = it)) } ?: source }
+
+    /**
+     * The pose, evaluated once per (rig, pose) rather than once per caller.
+     *
+     * Hit-testing wants the same deformation more than once on a single pointer move, and a full CPU
+     * evaluation is far too much to run per caller. Keyed on the puppet the canvas is actually drawing,
+     * so a gesture's preview is what gets measured, exactly as the painter measures it.
+     */
+    private fun evaluatedGeometry(): DeformedGeometry? {
+        val drawn = drawnPreview ?: return null
+        if (cachedGeometrySource !== drawn.rig.puppet || cachedGeometryPose != state.parameterValues) {
+            cachedGeometrySource = drawn.rig.puppet
+            cachedGeometryPose = state.parameterValues
+            cachedGeometry = RigCanvasSupport.evaluate(drawn, state.parameterValues)
+        }
+        return cachedGeometry
+    }
+
     /** Layers under [pos], in the order a Ctrl-click cycles them. Empty when nothing is pickable. */
     private fun layerCandidates(pos: Offset, viewport: CanvasViewport): List<String> {
         val source = state.previewModel ?: return emptyList()
-        val geometry = RigCanvasSupport.evaluate(source, state.parameterValues)
+        val geometry = evaluatedGeometry() ?: return emptyList()
         return RigCanvasSupport.hitLayers(
             source,
             RigCanvasSupport.boundsByDrawable(geometry),
@@ -451,6 +526,97 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             state.drawOrderOverrides
         ).filter { target(source.rig.puppet, it, null) != null }
     }
+
+    /**
+     * The corner mark of each warp the canvas is drawing a guide for, by deformer id, in screen space,
+     * in the order they are painted.
+     *
+     * Read by the pick. The painting does not come through here — [RigInformationOverlay] draws the mark
+     * inside the very loop that draws the lattice, off the very points it draws it with, which is what
+     * makes the mark part of the deformer instead of a layer sitting on top of it. This is the same
+     * geometry, asked for by the same rule and fetched from the same probe, so the two cannot disagree
+     * about where a mark is or whether there is one.
+     */
+    fun deformerCorners(viewport: CanvasViewport): Map<String, java.awt.geom.Area> {
+        val source = drawnPreview?.rig?.puppet ?: return emptyMap()
+        val ids = activeWarpIds()
+        if (ids.isEmpty()) return emptyMap()
+        return RigCanvasSupport.deformerCorners(RigCanvasSupport.deformerOutlines(source, warpOutlinePoints(source, ids)), viewport)
+    }
+
+    /**
+     * The warps the canvas is drawing guides for right now.
+     *
+     * This rule used to live in the viewport, which was enough while the viewport was the only thing
+     * that cared. The corner marks care too, and a mark that outlives the deformer it belongs to is
+     * exactly what a second copy of this rule produces — so it lives here, where the painter and the
+     * pick both ask it and cannot get different answers.
+     *
+     * A selected mesh shows none of them, a selected deformer shows itself and everything under it,
+     * and with nothing selected the whole rig shows unless the tab asked for the selection only. The
+     * channel as a whole stays off unless the tab wants it or a warp is involved, so an untouched rig
+     * in a tab without the option stays as clean as it was.
+     */
+    fun activeWarpIds(): Set<String> {
+        val preview = drawnPreview ?: return emptySet()
+        val puppet = preview.rig.puppet
+        val warps = puppet.deformers.filterIsInstance<Deformer.Warp>().map { it.id.raw }.toSet()
+        if (warps.isEmpty()) return emptySet()
+        val hovered = state.hoveredDeformerId?.takeIf { it in warps }
+        if (!state.showWarp && state.selectedDeformerId == null && hovered == null) return emptySet()
+        // A mesh is being edited, and the warps that shape it are not what the artist is looking at.
+        if (state.selectedLayerId != null) return emptySet()
+
+        val selected = state.selectedDeformerId
+        val base = if (selected == null) {
+            if (state.filterSelectedOnly) emptySet() else warps
+        } else {
+            // The deformer and everything under it — the chain that moves when it does.
+            val under = mutableSetOf(selected)
+            var grew = true
+            while (grew) {
+                grew = false
+                for (deformer in puppet.deformers) {
+                    if (deformer.id.raw in under) continue
+                    val parent = state.parentOverrides[deformer.id.raw] ?: deformer.parent?.raw
+                    if (parent in under) {
+                        under.add(deformer.id.raw)
+                        grew = true
+                    }
+                }
+            }
+            under.filter { it in warps }.toSet()
+        }
+        return (if (hovered != null) base + hovered else base).filter { state.isDeformerVisible(it) }.toSet()
+    }
+
+    /**
+     * Each shown warp's lattice in canvas space, fetched through the same probe the lattice channel
+     * draws from — so a mark is placed off the very geometry the deformer is drawn with, rather than off
+     * a second opinion about it.
+     *
+     * Cached against the pose and the shown set, because the probe evaluates a deformation per warp and
+     * the pointer asks on every move.
+     */
+    private fun warpOutlinePoints(source: PuppetModel, ids: Set<String>): Map<String, FloatArray> {
+        if (warpOutlineSource !== source || warpOutlinePose != state.parameterValues || warpOutlineIds != ids) {
+            warpOutlineSource = source
+            warpOutlinePose = state.parameterValues
+            warpOutlineIds = ids
+            warpOutlinePoints = RigInformationOverlay.warpPoints(source, state.parameterValues, ids)
+        }
+        return warpOutlinePoints
+    }
+
+    /**
+     * The deformer whose corner mark is under [pos], or null when the pointer is between them.
+     *
+     * No ordering to it: each mark is only the band of it that is not covered by a smaller one, so the
+     * bands do not overlap and whichever contains the pointer is the one the artist is pointing at —
+     * which is the same thing as the one they can see.
+     */
+    private fun badgeAt(pos: Offset, viewport: CanvasViewport): String? =
+        deformerCorners(viewport).entries.firstOrNull { it.value.contains(pos.x.toDouble(), pos.y.toDouble()) }?.key
 
     fun updateHover(pos: Offset, viewport: CanvasViewport, ctrl: Boolean = false) {
         cursor = pos
@@ -836,43 +1002,40 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         val seen = mutableSetOf<String>()
         layerCandidates(pos, viewport).forEach { layerId ->
             val drawable = source.drawables.firstOrNull { preview.rig.layerIdByDrawableId[it.id.raw] == layerId }
-            if (drawable != null && seen.add("mesh:$layerId")) {
-                ring += HierarchyPick(
-                    kind = "mesh",
-                    layerId = layerId,
-                    name = drawable.name,
-                    parentName = drawable.parentDeformerId?.let { id -> source.deformers.firstOrNull { it.id == id }?.name },
-                )
-            }
+            if (drawable != null && seen.add("mesh:$layerId")) ring += HierarchyPick(layerId = layerId)
             var parent = drawable?.parentDeformerId
             while (parent != null) {
                 val id = parent.raw
+
                 if (!seen.add("deformer:$id")) break
                 val deformer = source.deformers.firstOrNull { it.id == parent } ?: break
                 if (target(source, null, id) == null) break
-                ring += HierarchyPick(
-                    kind = if (deformer is Deformer.Rotation) "rotation" else "warp",
-                    deformerId = id,
-                    name = deformer.name,
-                    parentName = deformer.parent?.let { p -> source.deformers.firstOrNull { it.id == p }?.name },
-                )
+                ring += HierarchyPick(deformerId = id)
                 parent = deformer.parent
             }
         }
-        // Each node names the step Ctrl takes from it, so the HUD can show the destination up front.
-        return ring.mapIndexed { i, pick -> pick.copy(nextName = ring[(i + 1) % ring.size].name) }
+        return ring
     }
 
     /**
-     * What a click at [pos] picks. A plain click walks the stack the one-layer-per-click way the
-     * preview tab and [pickLayer] use; Ctrl steps to the next node of the hierarchy instead, so the
-     * whole chain a part hangs off is reachable without leaving the canvas.
+     * What a click at [pos] picks.
      *
-     * A Ctrl-click with nothing of the ring selected starts at the top, which is what makes the first
-     * Ctrl-click on untouched artwork land on the layer rather than skipping past it.
+     * A plain click walks the stack the one-layer-per-click way the preview tab and [pickLayer] use.
+     * Ctrl steps to the next node of the hierarchy instead, so the whole chain a part hangs off is
+     * reachable without leaving the canvas; a Ctrl-click with nothing of the ring selected starts at
+     * the top, which is what makes the first one land on the layer rather than skipping past it.
+     *
+     * A corner badge wins over both. It is the only way to reach a deformer that has no art of its own
+     * under the pointer — which is most of them, since a deformer frames artwork rather than being it —
+     * and having pointed at one deliberately, taking a step instead would be an odd answer. The
+     * exception is a Ctrl-click that has somewhere to step *to*: badges are ignored so that Ctrl means
+     * the same thing wherever it is pressed, rather than dead-ending on the deformer just selected.
      */
     fun objectPick(pos: Offset, viewport: CanvasViewport, ctrl: Boolean): HierarchyPick? {
         val ring = hierarchyRing(pos, viewport)
+        if (!ctrl || ring.isEmpty()) {
+            badgeAt(pos, viewport)?.let { return HierarchyPick(deformerId = it) }
+        }
         if (ring.isEmpty()) return null
         if (!ctrl) {
             val next = RigCanvasSupport.nextLayer(ring.mapNotNull { it.layerId }, state.selectedLayerId) ?: return null
@@ -1030,6 +1193,24 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                     dragging = true
                     return true
                 }
+            }
+        }
+
+        // 2b. A corner badge picks the deformer it belongs to, in every mode.
+        //
+        // Object and point selection are different operations rather than two candidates for one click:
+        // the badge names *which* deformer is being worked on, and a click that is not on one falls
+        // through to the points exactly as before. So the two never contend — the mark is small, it is
+        // only on the corner, and pointing at it is a deliberate act.
+        //
+        // Behind the creation tools and behind the Bezier handles on purpose: those are clicks that mean
+        // something already, and the handles in particular sit on the very corner a badge does. Ctrl is
+        // left to object mode's own pick, where it means "step to the next node" and has to keep meaning
+        // that wherever it is pressed.
+        if (tool in SELECTION_TOOLS && !(ctrl && hierarchyMode == EditHierarchyMode.OBJECT)) {
+            badgeAt(pos, viewport)?.let { id ->
+                applyObjectPick(HierarchyPick(deformerId = id), null)
+                return true
             }
         }
 

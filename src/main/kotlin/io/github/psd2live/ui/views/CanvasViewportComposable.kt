@@ -151,7 +151,17 @@ fun CanvasViewportComposable(
 		if (state.focusCanvasRequest > 0) focusRequester.requestFocus()
 	}
     editor.state = state
-    LaunchedEffect(viewModel, mode) { viewModel.canvasPathRequests.collect { if(mode == CanvasMode.EDIT) editor.activateTool(CanvasTool.CREATE_DEFORM_PATH) } }
+    LaunchedEffect(viewModel, mode) {
+        viewModel.canvasPathRequests.collect {
+            if (mode == CanvasMode.EDIT) {
+                // A deform path is a deform-mode tool, so a request arriving from the hierarchy while
+                // the canvas sits in another mode takes it there rather than being refused by the
+                // palette check activateTool now applies.
+                if (editor.hierarchyMode != EditHierarchyMode.DEFORM) editor.setHierarchyMode(EditHierarchyMode.DEFORM)
+                editor.activateTool(CanvasTool.CREATE_DEFORM_PATH)
+            }
+        }
+    }
     LaunchedEffect(state.selectedLayerId, state.selectedDeformerId) {
         if (!editor.inGesture && !editor.busy) {
             editor.resetSelection()
@@ -573,11 +583,12 @@ fun CanvasViewportComposable(
 			)
 
 			// 3. Multi-channel Rendering: Texture, Mesh, Warp
-			val hoveredIsWarp = state.hoveredDeformerId != null &&
-				model.rig.puppet.deformers.any { it.id.raw == state.hoveredDeformerId && it is org.umamo.runtime.model.Deformer.Warp }
 			// The per-tab "Deformer Warp" option is authoritative here: an Edit tab shows the rig
-			// guides because its default enables them, not because the mode forces them on.
-			val showWarp = state.showWarp || (state.selectedDeformerId != null) || hoveredIsWarp
+			// guides because its default enables them, not because the mode forces them on. Which warps
+			// that works out to is the editor's answer, asked for once and used for both the native-frame
+			// choice below and the channel itself, so the two cannot disagree about whether anything is
+			// being drawn.
+			val warpIds = editor.activeWarpIds()
 			val showMesh = state.showMesh
 			val showTexture = state.showTexture
 			val informationNames = state.warpShowNames
@@ -619,7 +630,7 @@ fun CanvasViewportComposable(
 			// Path guides never paint outside the Edit tab (see 3e), so they cannot force the
 			// preview off its native SDK frame.
 			val canUseNativeSdk = mode == CanvasMode.PREVIEW &&
-				!showWarp && !showMesh && !informationSelectedOnly && showTexture &&
+				warpIds.isEmpty() && !showMesh && !informationSelectedOnly && showTexture &&
 				!isDimmingActive &&
 				state.hoveredLayerId == null && state.hoveredDeformerId == null &&
 				(!state.showSelectionBounds || !hasActiveSelection) &&
@@ -742,23 +753,14 @@ fun CanvasViewportComposable(
 							val rawColor = ComponentPalette.strong(deformer.id.raw)
 							val color = when {
 								selected -> rawColor.brighter()
-								isDimmed -> java.awt.Color(rawColor.red, rawColor.green, rawColor.blue, 55)
+								// The faded guide was faint enough to read as absent, which made an unselected
+								// rig look like it had no deformers at all. It stays a background hint, just
+								// a legible one.
+								isDimmed -> java.awt.Color(rawColor.red, rawColor.green, rawColor.blue, 90)
 								else -> rawColor
 							}
-							val strokeWidth = if (selected) 2.8f else if (isDimmed) 0.75f else 1.15f
+							val strokeWidth = if (selected) 2.8f else if (isDimmed) 0.9f else 1.15f
 							RigCanvasSupport.paintBounds(g, bounds, viewport, color, strokeWidth)
-
-							if (!isDimmed || selected) {
-								g.font = java.awt.Font(java.awt.Font.SANS_SERIF, if (selected) java.awt.Font.BOLD else java.awt.Font.PLAIN, 11)
-								val lx = viewport.x(bounds.left).toInt() + 2
-								val ly = (viewport.offsetY + bounds.top * viewport.scale).toInt() - 3
-								val metrics = g.fontMetrics
-								val labelY = ly.coerceAtLeast(metrics.ascent + 2)
-								g.color = java.awt.Color(24, 26, 30, if (isDimmed) 90 else 205)
-								g.fillRoundRect(lx - 2, labelY - metrics.ascent, metrics.stringWidth(deformer.name) + 7, metrics.height, 5, 5)
-								g.color = color.brighter()
-								g.drawString(deformer.name, lx + 1, labelY)
-							}
 						}
 					}
 
@@ -797,27 +799,15 @@ fun CanvasViewportComposable(
 					// rectangle laid over the rig — and for a deformer, its bounds are the union of
 					// everything beneath it, which would box far more than the pointer is on.
 
-					// 3d. Warp Channel (RigInformationOverlay)
-					if (showWarp) {
-						val baseWarpIds = computeActiveWarpIds(
-							model = model,
-							selectedDeformerId = state.selectedDeformerId,
-							selectedLayerId = state.selectedLayerId,
-							parentOverrides = state.parentOverrides,
-							selectedOnly = informationSelectedOnly,
-							contextualWarp = state.contextualWarp,
-						)
-						val hoveredId = state.hoveredDeformerId
-						val ids = (if (hoveredIsWarp && hoveredId != null) {
-							baseWarpIds + hoveredId
-						} else {
-							baseWarpIds
-						}).filter { state.isDeformerVisible(it) }.toSet()
-
+					// 3d. Warp Channel (RigInformationOverlay). Which warps show is the editor's answer,
+					// not this file's: the editor is what picks their corner marks, and were the two to
+					// work it out separately a mark could outlive the deformer it belongs to — which is
+					// exactly what it used to do.
+					if (warpIds.isNotEmpty()) {
 						io.github.psd2live.ui.RigInformationOverlay.paint(
 							g, model.rig.puppet,
 							if (mode == CanvasMode.PREVIEW) informationPose else state.parameterValues,
-							viewport, ids,
+							viewport, warpIds,
 							labels = informationNames,
 							pointIndices = informationIndices,
 							selectedDeformerId = state.selectedDeformerId,

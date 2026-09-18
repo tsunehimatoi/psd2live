@@ -40,6 +40,8 @@ internal object RigInformationOverlay {
     ) {
         if (ids.isEmpty()) return
         val pointsById = warpPoints(model, parameters, ids)
+        // Laid out once for the whole pass, because a mark's size depends on what else shares its corner.
+        val corners = RigCanvasSupport.deformerCorners(RigCanvasSupport.deformerOutlines(model, pointsById), viewport)
         for (w in model.deformers.filterIsInstance<Deformer.Warp>().filter { it.id.raw in ids }) {
             val p = pointsById[w.id.raw] ?: continue
             val isSelected = selectedDeformerId != null && w.id.raw == selectedDeformerId
@@ -57,14 +59,16 @@ internal object RigInformationOverlay {
             val wireColor = when {
                 isSelected -> baseColor.brighter()
                 isHovered -> Color(0, 210, 255, 230)
-                isDimmed -> Color(baseColor.red, baseColor.green, baseColor.blue, 55)
+                // The faded guide was faint enough to read as absent, which made an unselected rig look
+                // like it had no deformers at all. It stays a background hint, just a legible one.
+                isDimmed -> Color(baseColor.red, baseColor.green, baseColor.blue, 90)
                 else -> baseColor
             }
 
-            g.color = wireColor
-            g.stroke = BasicStroke(strokeWidth)
             fun x(i: Int) = viewport.x(p[i * 2]).toInt()
             fun y(i: Int) = viewport.yFromWorld(p[i * 2 + 1]).toInt()
+            g.color = wireColor
+            g.stroke = BasicStroke(strokeWidth)
             for (r in 0..w.rows) for (c in 0..w.columns) {
                 val i = r * (w.columns + 1) + c
                 if (c < w.columns) g.drawLine(x(i), y(i), x(i + 1), y(i + 1))
@@ -82,6 +86,15 @@ internal object RigInformationOverlay {
                 g.fillRect(x, y - 14, g.fontMetrics.stringWidth(label) + 6, 17)
                 g.color = color
                 g.drawString(label, x + 3, y)
+            }
+
+            // The deformer's own corner mark, drawn here — in the same pass, off the same points, under
+            // the same colour and the same dimming as the lattice above. That is the whole of what makes
+            // it part of the deformer rather than a layer sitting on top of it: it has no lifecycle of its
+            // own to fall out of step, so it cannot outlive the deformer it belongs to or stay bright
+            // while the deformer it belongs to fades.
+            corners[w.id.raw]?.let {
+                RigCanvasSupport.paintDeformerCorner(g, it, if (isSelected || isHovered) baseColor.brighter() else baseColor, isDimmed)
             }
         }
     }

@@ -4,7 +4,9 @@ import io.github.psd2live.core.Bounds
 import io.github.psd2live.core.RigPreviewModel
 import org.umamo.render.eval.CpuDeformationEvaluator
 import org.umamo.render.eval.DeformedGeometry
+import org.umamo.runtime.model.Deformer
 import org.umamo.runtime.model.ParameterId
+import org.umamo.runtime.model.PuppetModel
 import java.awt.AlphaComposite
 import java.awt.BasicStroke
 import java.awt.Color
@@ -14,6 +16,8 @@ import java.awt.geom.AffineTransform
 import java.awt.geom.Area
 import java.awt.geom.Path2D
 import kotlin.math.abs
+import kotlin.math.hypot
+import kotlin.math.min
 
 internal data class CanvasViewport(
 	val scale: Double,
@@ -193,6 +197,140 @@ internal object RigCanvasSupport {
 			(bounds.width * viewport.scale).toInt().coerceAtLeast(1),
 			(bounds.height * viewport.scale).toInt().coerceAtLeast(1),
 		)
+	}
+
+	/**
+	 * A warp's corner mark as a fraction of the canvas's shorter side.
+	 *
+	 * Measured against the canvas rather than in screen pixels so the mark belongs to the artwork: it is
+	 * the same size on the same rig whatever the zoom, the tab or the window, and it grows and shrinks
+	 * with the deformer it sits on. Being a fraction of the canvas rather than a fixed count of its units
+	 * also keeps it the same *visual* size across documents authored at different resolutions.
+	 */
+	private const val DEFORMER_CORNER_LEG_RATIO = 0.012f
+
+	/**
+	 * How much larger each mark sharing a corner is than the one inside it, as a fraction of the base leg.
+	 *
+	 * Every mark keeps the same two edges and the same corner and differs only in length, so they read as
+	 * one corner marked out at several scales rather than as several marks that happen to be near each
+	 * other.
+	 */
+	private const val DEFORMER_CORNER_NEST = 0.7f
+
+	/**
+	 * A warp's outline for its corner mark: where its lattice actually is, how many cells across it is,
+	 * and how far down the deformer chain it sits.
+	 */
+	internal class DeformerOutline(val id: String, val world: FloatArray, val columns: Int, val depth: Int)
+
+	/**
+	 * The outlines to mark, given each warp's lattice from a probe.
+	 *
+	 * Shared so the painter and the pick describe the same deformers the same way — [worlds] is keyed by
+	 * deformer id, and anything missing from it simply gets no mark rather than a misplaced one.
+	 */
+	fun deformerOutlines(puppet: PuppetModel, worlds: Map<String, FloatArray>): List<DeformerOutline> =
+		puppet.deformers.filterIsInstance<Deformer.Warp>().mapNotNull { warp ->
+			val world = worlds[warp.id.raw] ?: return@mapNotNull null
+			DeformerOutline(warp.id.raw, world, warp.columns, deformerDepth(puppet, warp.id.raw))
+		}
+
+	/** How far down the deformer chain [id] sits. The nesting sizes marks by it: the outermost is largest. */
+	private fun deformerDepth(puppet: PuppetModel, id: String): Int {
+		var depth = 0
+		var cursor = puppet.deformers.firstOrNull { it.id.raw == id }?.parent
+		// Bounded by what has been walked: a malformed rig with a cycle would otherwise spin here, on
+		// every pointer move.
+		val walked = mutableSetOf(id)
+		while (cursor != null && walked.add(cursor.raw)) {
+			depth++
+			cursor = puppet.deformers.firstOrNull { it.id == cursor }?.parent
+		}
+		return depth
+	}
+
+	/**
+	 * The corner mark of each of [outlines], by deformer id: the triangle each deformer owns, with
+	 * everything that will be painted over it already cut away.
+	 *
+	 * The triangle is built out of the deformer's own corner rather than out of the screen's axes: its
+	 * legs run along the two lattice edges that actually meet there, so a lattice that is turned or
+	 * sheared carries its mark with it, and the leg is a length in canvas units projected last, so the
+	 * mark is part of the artwork rather than an ornament of the viewport.
+	 *
+	 * Marks sharing a corner are drawn one inside the next rather than pushed apart — pushing them apart
+	 * moved a mark off the corner it belonged to, and the corner is the whole point. The outermost
+	 * deformer takes the largest, so the nesting reads the way the hierarchy does, and each keeps its own
+	 * colour to say which is which.
+	 *
+	 * What comes back is the *visible* part of each: the smaller marks are subtracted out of the larger
+	 * ones. Painting the whole triangle and letting the inner ones cover it does not work, because the
+	 * fill is translucent — the covered part still shows through, so a mark lighting up under the pointer
+	 * tinted its entire triangle rather than the band of it that can actually be seen. Cutting it away is
+	 * also what makes the pick exact with no ordering rule to it: the bands do not overlap, so whichever
+	 * one contains the pointer is the one it is on.
+	 */
+	fun deformerCorners(outlines: List<DeformerOutline>, viewport: CanvasViewport): Map<String, Area> {
+		if (outlines.isEmpty()) return emptyMap()
+		val baseLeg = min(viewport.canvasWidth, viewport.canvasHeight) * DEFORMER_CORNER_LEG_RATIO
+		val result = linkedMapOf<String, Area>()
+		for (group in outlines.groupBy { viewport.x(it.world[0]).toInt() to viewport.yFromWorld(it.world[1]).toInt() }.values) {
+			// Outermost first. Size runs the other way — the deepest deformer in the group is the mark
+			// inside all the others, so it is the one that gets the base leg and stays whole, and each
+			// one further out is a step larger and is cut by everything inside it. The list has to run
+			// largest to smallest for the subtraction below to read straight.
+			val ordered = group.sortedBy { it.depth }
+			val marks = ordered.mapIndexedNotNull { index, outline ->
+				val leg = baseLeg * (1f + DEFORMER_CORNER_NEST * (ordered.size - 1 - index))
+				cornerTriangle(outline, leg, viewport)?.let { outline.id to Area(it) }
+			}
+			marks.forEachIndexed { index, (id, mark) ->
+				for (inner in index + 1 until marks.size) mark.subtract(marks[inner].second)
+				result[id] = mark
+			}
+		}
+		return result
+	}
+
+	/**
+	 * One outline's corner triangle: its first control point, with the legs running along the two lattice
+	 * edges that meet there, in screen space.
+	 */
+	private fun cornerTriangle(outline: DeformerOutline, leg: Float, viewport: CanvasViewport): java.awt.Polygon? {
+		val world = outline.world
+		val nextRow = (outline.columns + 1) * 2
+		if (world.size <= nextRow + 1) return null
+		val x0 = world[0]; val y0 = world[1]
+		val alongX = world[2] - x0; val alongY = world[3] - y0
+		val downX = world[nextRow] - x0; val downY = world[nextRow + 1] - y0
+		val alongLength = hypot(alongX, alongY)
+		val downLength = hypot(downX, downY)
+		// A degenerate edge has no direction to take, so it has no mark either rather than a garbage one.
+		if (alongLength < 1e-4f || downLength < 1e-4f) return null
+		val legAlongX = alongX / alongLength * leg; val legAlongY = alongY / alongLength * leg
+		val legDownX = downX / downLength * leg; val legDownY = downY / downLength * leg
+		return java.awt.Polygon(
+			intArrayOf(viewport.x(x0).toInt(), viewport.x(x0 + legAlongX).toInt(), viewport.x(x0 + legDownX).toInt()),
+			intArrayOf(
+				viewport.yFromWorld(y0).toInt(),
+				viewport.yFromWorld(y0 + legAlongY).toInt(),
+				viewport.yFromWorld(y0 + legDownY).toInt(),
+			),
+			3,
+		)
+	}
+
+	/**
+	 * Fills [corner] with the deformer's own colour.
+	 *
+	 * Semi-transparent on purpose: the triangle sits over the artwork and has to mark the corner without
+	 * hiding what is under it. Dimming takes it further down, but not all the way — past a certain
+	 * faintness it stops reading as something to grab, and being grabbed is the whole of its job.
+	 */
+	fun paintDeformerCorner(g: Graphics2D, corner: Area, accent: Color, dimmed: Boolean) {
+		g.color = Color(accent.red, accent.green, accent.blue, if (dimmed) 120 else 200)
+		g.fill(corner)
 	}
 
 	fun paintSelectionBounds(
