@@ -847,8 +847,6 @@ fun CanvasViewportComposable(
             val vp = computeViewport(previewModel,viewSize.width,viewSize.height)
             editor.viewport = vp
             CanvasEditorOverlay(editor,vp,viewModel,keymap = state.keymap) { focusRequester.requestFocus() }
-        } else if (mode == CanvasMode.PREVIEW && previewModel != null) {
-            PreviewFloatingToolbar(state, viewModel)
         }
         // Overlay: Empty hint or Stats Badge
 		if (previewModel == null) {
@@ -1022,80 +1020,4 @@ private fun computeEditorViewport(model: RigPreviewModel, size: IntSize, zoom: D
     return CanvasViewport(scale,(size.width-width*scale)*0.5+panX,(size.height-height*scale)*0.5+panY,width,height)
 }
 
-@Composable
-private fun BoxScope.PreviewFloatingToolbar(
-	state: PSD2LiveState,
-	viewModel: PSD2LiveViewModel,
-) {
-	val colors = LocalToolColors.current
-	val isAnim = state.animationEnabled
-	val isTracking = state.mouseTrackingEnabled
 
-	Row(
-		modifier = Modifier
-			.align(Alignment.BottomCenter)
-			.padding(bottom = 12.dp)
-			.frostedGlass(shape = RoundedCornerShape(6.dp), alpha = 0.82f)
-			.padding(horizontal = 8.dp, vertical = 4.dp),
-		verticalAlignment = Alignment.CenterVertically,
-		horizontalArrangement = Arrangement.spacedBy(6.dp),
-	) {
-		// Play / Pause Button
-		CompactButton(
-			text = if (isAnim) tr("preview.animation.pause") else tr("preview.animation.play"),
-			onClick = { viewModel.setAnimationEnabled(!isAnim) },
-			leadingIcon = {
-				if (isAnim) IconPause(modifier = Modifier.size(12.dp), tint = colors.accent)
-				else IconPlay(modifier = Modifier.size(12.dp), tint = colors.accent)
-			},
-			height = 24.dp,
-		)
-
-		// Mouse Tracking Toggle
-		CompactToggleChip(
-			text = tr("preview.mouseTracking.on"),
-			selected = isTracking,
-			onToggle = { viewModel.setMouseTrackingEnabled(!isTracking) },
-			leadingIcon = {
-				IconMouse(
-					active = isTracking,
-					modifier = Modifier.size(12.dp),
-					tint = if (isTracking) colors.accent else colors.textDisabled,
-				)
-			},
-			showCheckWhenSelected = false,
-			height = 24.dp,
-		)
-
-		Spacer(Modifier.width(2.dp))
-		Box(modifier = Modifier.width(1.dp).height(16.dp).background(Color(0x33FFFFFF)))
-		Spacer(Modifier.width(2.dp))
-
-		// Motion triggers: Idle, Blink, Nod, Shake
-		val motions = listOf(
-			"Idle" to tr("export.motion.idle"),
-			"Blink" to tr("export.motion.blink"),
-			"Nod" to tr("export.motion.nod"),
-			"Shake" to tr("export.motion.shake"),
-		)
-		for ((group, label) in motions) {
-			CompactButton(
-				text = label,
-				onClick = { viewModel.triggerMotion(group) },
-				height = 24.dp,
-			)
-		}
-
-		Spacer(Modifier.width(2.dp))
-		Box(modifier = Modifier.width(1.dp).height(16.dp).background(Color(0x33FFFFFF)))
-		Spacer(Modifier.width(2.dp))
-
-		// Reset Pose Button
-		CompactButton(
-			text = tr("parameters.resetAll"),
-			onClick = { viewModel.resetAllParameters() },
-			leadingIcon = { IconReset(modifier = Modifier.size(11.dp), tint = colors.textPrimary) },
-			height = 24.dp,
-		)
-	}
-}

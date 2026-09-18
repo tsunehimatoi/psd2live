@@ -5,6 +5,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -1032,7 +1034,8 @@ fun CompactTabBar(
 			.height(height)
 			.fillMaxWidth()
 			.background(colors.windowBackground)
-			.border(BorderStroke(1.dp, colors.divider)),
+			.border(BorderStroke(1.dp, colors.divider))
+			.horizontalScroll(rememberScrollState()),
 		verticalAlignment = Alignment.CenterVertically,
 	) {
 		tabs.forEachIndexed { index, title ->
@@ -1069,7 +1072,7 @@ fun CompactTabBar(
 							if (isSelected) colors.divider else Color.Transparent,
 						),
 					)
-					.padding(horizontal = 14.dp),
+					.padding(horizontal = 10.dp),
 				contentAlignment = Alignment.Center,
 			) {
 				Text(

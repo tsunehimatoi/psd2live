@@ -151,6 +151,8 @@ enum class InspectorTab {
 	PARAMETERS,
 	TOOL_DETAILS,
 	INSPECTOR,
+	ANIMATION,
+	PHYSICS,
 }
 
 data class HistoryAnnotation(val title: String = "", val note: String = "", val hidden: Boolean = false)

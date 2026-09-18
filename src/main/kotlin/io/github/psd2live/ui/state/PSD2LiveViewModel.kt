@@ -15,6 +15,7 @@ import io.github.psd2live.core.PipelineConfig
 import io.github.psd2live.core.ProgressListener
 import io.github.psd2live.core.RigPreviewModel
 import io.github.psd2live.core.RigEditOverlay
+import io.github.psd2live.core.RigPhysicsEdit
 import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.Side
 import io.github.psd2live.core.StandardParameters
@@ -672,6 +673,33 @@ class PSD2LiveViewModel : AutoCloseable {
 		}
 		scheduleRuntimeBundleUpdate()
 	    editorChanged()
+	}
+
+	fun upsertPhysicsEdit(edit: RigPhysicsEdit) {
+		_state.update { current ->
+			val existing = current.rigEdits.physicsEdits
+			val index = existing.indexOfFirst { it.id == edit.id || it.outputParameter == edit.outputParameter }
+			val nextList = if (index >= 0) {
+				existing.toMutableList().also { it[index] = edit }
+			} else {
+				existing + edit
+			}
+			current.copy(
+				rigEdits = current.rigEdits.copy(physicsEdits = nextList),
+				generatePhysics = true,
+			)
+		}
+		scheduleRuntimeBundleUpdate()
+		editorChanged()
+	}
+
+	fun removePhysicsEdit(id: String) {
+		_state.update { current ->
+			val nextList = current.rigEdits.physicsEdits.filterNot { it.id == id || it.outputParameter == id }
+			current.copy(rigEdits = current.rigEdits.copy(physicsEdits = nextList))
+		}
+		scheduleRuntimeBundleUpdate()
+		editorChanged()
 	}
 
 	fun setExportCmo3(enabled: Boolean) {
@@ -1987,7 +2015,7 @@ class PSD2LiveViewModel : AutoCloseable {
 
 		previewRebuildJob?.cancel()
 		previewRebuildJob = scope.launch {
-			delay(30)
+			delay(200)
 			try {
 				val config = _state.value.buildConfig()
 				val updated = runInterruptible(Dispatchers.Default) {
@@ -2112,6 +2140,9 @@ class PSD2LiveViewModel : AutoCloseable {
 	private var activeSoftwareMotionElapsed: Float = 0f
 	private var activeSoftwareMotionDuration: Float = 2.0f
 	@Volatile private var latestLiveParameters: Map<ParameterId, Float> = emptyMap()
+
+	val currentLiveParameters: Map<ParameterId, Float> get() = latestLiveParameters
+	val activeMotionName: String? get() = activeSoftwareMotionName
 
 	fun triggerMotion(group: String) {
 		_state.update { current ->
@@ -2258,14 +2289,20 @@ class PSD2LiveViewModel : AutoCloseable {
 					val headVelocity = ((followX - previousFollowX) / dt).coerceIn(-5f, 5f)
 					val hairTarget = (-followX * 0.42f - headVelocity * 0.085f).coerceIn(-1f, 1f)
 					if (hasFrontHair) {
-						frontHairVelocity += ((hairTarget - frontHair) * 22f - frontHairVelocity * 7.2f) * dt
+						val frontEdit = current.rigEdits.physicsEdits.find { it.id == "PhysicsHairFront" || it.outputParameter == "ParamHairFront" }
+						val stiffness = if (frontEdit != null) 22f * (frontEdit.mobility / 0.77f).coerceIn(0.2f, 3f) else 22f
+						val damp = if (frontEdit != null) 7.2f * (frontEdit.delay / 1.45f).coerceIn(0.2f, 3f) else 7.2f
+						frontHairVelocity += ((hairTarget - frontHair) * stiffness - frontHairVelocity * damp) * dt
 						frontHair += frontHairVelocity * dt
 					} else {
 						frontHair = 0f
 						frontHairVelocity = 0f
 					}
 					if (hasBackHair) {
-						backHairVelocity += ((hairTarget - backHair) * 10f - backHairVelocity * 4.2f) * dt
+						val backEdit = current.rigEdits.physicsEdits.find { it.id == "PhysicsHairBack" || it.outputParameter == "ParamHairBack" }
+						val stiffness = if (backEdit != null) 10f * (backEdit.mobility / 0.95f).coerceIn(0.2f, 3f) else 10f
+						val damp = if (backEdit != null) 4.2f * (backEdit.delay / 0.8f).coerceIn(0.2f, 3f) else 4.2f
+						backHairVelocity += ((hairTarget - backHair) * stiffness - backHairVelocity * damp) * dt
 						backHair += backHairVelocity * dt
 					} else {
 						backHair = 0f

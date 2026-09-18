@@ -120,18 +120,22 @@ fun InspectorView(
 
 		Divider(color = colors.divider, thickness = 1.dp)
 
-		// 3. Tabs Section: Layers, Parameters, Tool Details & Inspector
+		// 3. Tabs Section: Layers, Parameters, Tool Details, Inspector, Animation & Physics
 		val inspectorTabs = listOf(
 			tr("tab.layers"),
 			tr("tab.parameters"),
 			tr("tab.toolDetails"),
 			tr("tab.inspector"),
+			tr("tab.animation"),
+			tr("tab.physics"),
 		)
 		val selectedIndex = when (state.activeInspectorTab) {
 			InspectorTab.LAYERS -> 0
 			InspectorTab.PARAMETERS -> 1
 			InspectorTab.TOOL_DETAILS -> 2
 			InspectorTab.INSPECTOR -> 3
+			InspectorTab.ANIMATION -> 4
+			InspectorTab.PHYSICS -> 5
 		}
 
 		CompactTabBar(
@@ -144,6 +148,8 @@ fun InspectorView(
 						1 -> InspectorTab.PARAMETERS
 						2 -> InspectorTab.TOOL_DETAILS
 						3 -> InspectorTab.INSPECTOR
+						4 -> InspectorTab.ANIMATION
+						5 -> InspectorTab.PHYSICS
 						else -> InspectorTab.LAYERS
 					}
 				)
@@ -157,6 +163,8 @@ fun InspectorView(
 				InspectorTab.PARAMETERS -> ParametersListView(state, viewModel)
 				InspectorTab.TOOL_DETAILS -> ToolDetailsView(viewModel.canvasEditor, viewModel, state)
 				InspectorTab.INSPECTOR -> InspectorPanelView(viewModel.canvasEditor, viewModel, state)
+				InspectorTab.ANIMATION -> AnimationPanelView(viewModel, state)
+				InspectorTab.PHYSICS -> PhysicsPanelView(viewModel, state)
 			}
 		}
 	}
