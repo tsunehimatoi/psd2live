@@ -18,7 +18,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
 
     fun tool(name: String, description: String, fields: JsonObject, required: List<String> = emptyList(),
              mutating: Boolean = false, handler: suspend (JsonObject) -> JsonObject) {
-        server.addTool(name, description, ToolSchema(properties = fields, required = required), toolAnnotations = if (mutating) write else read) { request ->
+        server.addTool(name, description, ToolSchema(properties = fields.flattenForPublication().jsonObject, required = required), toolAnnotations = if (mutating) write else read) { request ->
             try {
                 val arguments = request.arguments ?: JsonObject(emptyMap())
                 validateAuthoringSchema(arguments, objectSchema(fields, required))
@@ -175,7 +175,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
                 .mapValues { stripSchemaDescriptions(it.value) })
             variant("mode", mode, properties, schema.required.orEmpty().filter { it != "task_id" }.map { if (it == "expected_history_head_node_id") "state" else it } + if (oldName == "asset_import_png") listOf("png_path") else emptyList())
         }
-        server.addTool(name, description, ToolSchema(properties = buildJsonObject { put("request", oneOf(branches)) }, required = listOf("request")), toolAnnotations = if (mutating) write else read) { request ->
+        server.addTool(name, description, ToolSchema(properties = buildJsonObject { put("request", oneOf(branches)) }.flattenForPublication().jsonObject, required = listOf("request")), toolAnnotations = if (mutating) write else read) { request ->
             try {
                 val input = request.arguments!!.getValue("request").jsonObject
                 validateAuthoringSchema(input, oneOf(branches))
@@ -254,7 +254,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
         ToolSchema(
             properties = buildJsonObject {
                 put("request", oneOf(pathBranches))
-            },
+            }.flattenForPublication().jsonObject,
             required = listOf("request"),
         ),
         toolAnnotations = write,
@@ -346,6 +346,54 @@ private fun objectSchema(fields: JsonObject, required: List<String> = emptyList(
 private fun variant(discriminator: String, value: String, fields: JsonObject, required: List<String>) =
     objectSchema(JsonObject(fields + (discriminator to buildJsonObject { put("type", "string"); put("const", value) })), listOf(discriminator) + required)
 private fun oneOf(branches: List<JsonObject>) = buildJsonObject { put("oneOf", JsonArray(branches)) }
+
+/** Strict tool-schema validators such as GLM's reject oneOf/const, so the published schema
+ *  merges each variant set into one flat object (union of properties, const discriminators
+ *  folded into an enum, per-variant required fields listed in the description). Server-side
+ *  validation still runs against the exact variant contract via validateAuthoringSchema. */
+private fun JsonElement.flattenForPublication(): JsonElement = when (this) {
+    is JsonObject -> flattenVariantSet(this)
+    is JsonArray -> JsonArray(map { it.flattenForPublication() })
+    else -> this
+}
+
+private fun flattenVariantSet(node: JsonObject): JsonObject {
+    val branches = (node["oneOf"] as? JsonArray)?.map { flattenVariantSet(it.jsonObject) }
+        ?: return JsonObject(node.mapValues { (_, value) -> value.flattenForPublication() })
+    val properties = LinkedHashMap<String, JsonElement>()
+    val discriminators = LinkedHashMap<String, MutableList<String>>()
+    val requiredLists = mutableListOf<List<String>>()
+    val variants = mutableListOf<String>()
+    for (branch in branches) {
+        val branchRequired = branch["required"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty()
+        requiredLists += branchRequired
+        val constants = mutableListOf<String>()
+        val constKeys = mutableSetOf<String>()
+        for ((key, field) in branch["properties"]?.jsonObject.orEmpty()) {
+            val const = (field as? JsonObject)?.get("const") as? JsonPrimitive
+            if (const != null) {
+                discriminators.getOrPut(key) { mutableListOf() }.add(const.content)
+                constants += const.content
+                constKeys += key
+            } else {
+                properties.getOrPut(key) { field }
+            }
+        }
+        val rest = branchRequired - constKeys
+        val name = constants.joinToString("&")
+        variants += if (rest.isEmpty()) name else "$name (needs ${rest.joinToString()})"
+    }
+    for ((key, values) in discriminators) {
+        properties[key] = buildJsonObject { put("type", "string"); put("enum", JsonArray(values.distinct().map(::JsonPrimitive))) }
+    }
+    val required = requiredLists.reduceOrNull { acc, list -> acc.filter { it in list } }.orEmpty()
+    return buildJsonObject {
+        put("type", "object"); put("properties", JsonObject(properties))
+        if (required.isNotEmpty()) put("required", JsonArray(required.distinct().map(::JsonPrimitive)))
+        if (variants.isNotEmpty()) put("description", "Exactly one variant per call: ${variants.joinToString("; ")}.")
+        put("additionalProperties", false)
+    }
+}
 private fun stripSchemaDescriptions(value: JsonElement): JsonElement = when (value) {
     is JsonObject -> JsonObject(value.filterKeys { it !in setOf("description", "examples", "title") }.mapValues { stripSchemaDescriptions(it.value) })
     is JsonArray -> JsonArray(value.map(::stripSchemaDescriptions))
