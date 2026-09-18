@@ -122,20 +122,18 @@ fun WorkspaceTabStrip(
 					highlighted = state.activeTabView != state.activeTabKind.defaultViewOptions(),
 				) { showOptionsMenu = true }
 				TabStripDropdown(expanded = showOptionsMenu, onDismissRequest = { showOptionsMenu = false }) {
-					AppMenuHeader(tr("tab.options"))
 					ViewOptionsMenuItems(
 						options = state.activeTabView,
 						onOptionsChange = viewModel::setTabViewOptions,
 						onDismiss = { showOptionsMenu = false },
-						showHeaders = false,
+						showHeaders = true,
 						// Only the Edit canvas paints path guides, so only it offers their toggles.
 						showPathGuides = state.activeTabKind == WorkspaceTabKind.EDIT,
+						onReset = {
+							showOptionsMenu = false
+							viewModel.resetActiveTabViewOptions()
+						},
 					)
-					AppMenuSeparator()
-					AppMenuItem(text = tr("tab.resetView"), onClick = {
-						showOptionsMenu = false
-						viewModel.resetActiveTabViewOptions()
-					})
 				}
 			}
 		}
@@ -280,7 +278,7 @@ private fun TabStripDropdown(
 		modifier = Modifier
 			.background(colors.panelElevated)
 			.border(BorderStroke(1.dp, colors.border))
-			.widthIn(min = 190.dp, max = 260.dp),
+			.widthIn(min = 210.dp, max = 280.dp),
 		content = content,
 	)
 }

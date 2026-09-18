@@ -883,12 +883,27 @@ fun AppMenuItem(
 	shortcut: String? = null,
 	isChecked: Boolean? = null,
 	enabled: Boolean = true,
+	icon: (@Composable (tint: Color) -> Unit)? = null,
+	indentCheckSpace: Boolean = false,
+	/**
+	 * Renders the entry as a nested sub-option: a tree rail hangs off the parent's check column and
+	 * the whole row shifts right. [isLastChild] closes the rail at the row's vertical center so a
+	 * child group does not read as if more entries followed.
+	 */
+	isChild: Boolean = false,
+	isLastChild: Boolean = false,
 	onHover: (() -> Unit)? = null,
 	onClick: () -> Unit,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 	var isHovered by remember { mutableStateOf(false) }
+
+	val contentColor = when {
+		!enabled -> colors.textDisabled
+		isHovered -> colors.selectionText
+		else -> colors.textPrimary
+	}
 
 	Row(
 		modifier = Modifier
@@ -919,6 +934,29 @@ fun AppMenuItem(
 			horizontalArrangement = Arrangement.spacedBy(6.dp),
 			modifier = Modifier.weight(1f, fill = false),
 		) {
+			if (isChild) {
+				Canvas(
+					modifier = Modifier
+						.width(12.dp)
+						.fillMaxHeight(),
+				) {
+					val railX = 1.dp.toPx()
+					val midY = size.height / 2f
+					val railColor = if (enabled) colors.border else colors.border.copy(alpha = 0.45f)
+					drawLine(
+						color = railColor,
+						start = Offset(railX, 0f),
+						end = Offset(railX, if (isLastChild) midY else size.height),
+						strokeWidth = 1.dp.toPx(),
+					)
+					drawLine(
+						color = railColor,
+						start = Offset(railX, midY),
+						end = Offset(size.width, midY),
+						strokeWidth = 1.dp.toPx(),
+					)
+				}
+			}
 			if (isChecked != null) {
 				Text(
 					text = if (isChecked) "✓" else " ",
@@ -926,15 +964,21 @@ fun AppMenuItem(
 					color = if (isChecked) colors.accent else Color.Transparent,
 					modifier = Modifier.width(14.dp),
 				)
+			} else if (indentCheckSpace) {
+				Spacer(modifier = Modifier.width(14.dp))
+			}
+			if (icon != null) {
+				Box(
+					modifier = Modifier.size(15.dp),
+					contentAlignment = Alignment.Center,
+				) {
+					icon(contentColor)
+				}
 			}
 			Text(
 				text = text,
 				style = typography.body.copy(fontSize = 11.5.sp),
-				color = when {
-					!enabled -> colors.textDisabled
-					isHovered -> colors.selectionText
-					else -> colors.textPrimary
-				},
+				color = contentColor,
 				maxLines = 1,
 				overflow = TextOverflow.Ellipsis,
 			)
