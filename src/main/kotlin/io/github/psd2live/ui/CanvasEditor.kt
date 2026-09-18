@@ -52,8 +52,11 @@ internal data class CanvasTarget(
 }
 
 /** One gesture owns its pose, parent mapping and history HEAD until release. */
-internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
-    lateinit var state: PSD2LiveState
+internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
+    var state: PSD2LiveState
+        get() = viewModel.state.value
+        set(_) {}
+    var viewport: CanvasViewport? = null
     var tool by mutableStateOf(CanvasTool.SELECT)
     var vertices by mutableStateOf(emptySet<Int>())
     var radius by mutableStateOf(48f)
@@ -401,8 +404,9 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
         draft = DeformPathTools.positions(path, t.geometry.points); draftPathId = path.id; drawingPath = true; tool = CanvasTool.PATH_DEFORM
     }
 
-    fun preciseTransform(viewport: CanvasViewport, first: Float, second: Float = 0f, scaleMode: Boolean = false, rotateMode: Boolean = false) {
+    fun preciseTransform(vp: CanvasViewport? = null, first: Float, second: Float = 0f, scaleMode: Boolean = false, rotateMode: Boolean = false) {
         if (!editable) return
+        val viewport = vp ?: this.viewport ?: return
         val targets = if (objectMode) objects.mapNotNull { target(model, it, null) }.ifEmpty { listOfNotNull(target()) } else listOfNotNull(target())
         val chosen = targets.flatMap { item -> screen(item.geometry.points, item, viewport).filterIndexed { i, _ -> objectMode || vertices.isEmpty() || i in vertices } }
         if (chosen.isEmpty()) return

@@ -120,18 +120,33 @@ fun InspectorView(
 
 		Divider(color = colors.divider, thickness = 1.dp)
 
-		// 3. Tabs Section: Layers & Parameters
+		// 3. Tabs Section: Layers, Parameters, Tool Details & Inspector
 		val inspectorTabs = listOf(
 			tr("tab.layers"),
 			tr("tab.parameters"),
+			tr("tab.toolDetails"),
+			tr("tab.inspector"),
 		)
-		val selectedIndex = if (state.activeInspectorTab == InspectorTab.LAYERS) 0 else 1
+		val selectedIndex = when (state.activeInspectorTab) {
+			InspectorTab.LAYERS -> 0
+			InspectorTab.PARAMETERS -> 1
+			InspectorTab.TOOL_DETAILS -> 2
+			InspectorTab.INSPECTOR -> 3
+		}
 
 		CompactTabBar(
 			tabs = inspectorTabs,
 			selectedIndex = selectedIndex,
 			onTabSelected = { index ->
-				viewModel.setInspectorTab(if (index == 0) InspectorTab.LAYERS else InspectorTab.PARAMETERS)
+				viewModel.setInspectorTab(
+					when (index) {
+						0 -> InspectorTab.LAYERS
+						1 -> InspectorTab.PARAMETERS
+						2 -> InspectorTab.TOOL_DETAILS
+						3 -> InspectorTab.INSPECTOR
+						else -> InspectorTab.LAYERS
+					}
+				)
 			},
 			height = 26.dp,
 		)
@@ -140,6 +155,8 @@ fun InspectorView(
 			when (state.activeInspectorTab) {
 				InspectorTab.LAYERS -> LayersTableView(state, viewModel)
 				InspectorTab.PARAMETERS -> ParametersListView(state, viewModel)
+				InspectorTab.TOOL_DETAILS -> ToolDetailsView(viewModel.canvasEditor, viewModel, state)
+				InspectorTab.INSPECTOR -> InspectorPanelView(viewModel.canvasEditor, viewModel, state)
 			}
 		}
 	}

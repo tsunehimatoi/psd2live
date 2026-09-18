@@ -135,7 +135,7 @@ fun CanvasViewportComposable(
 	val lastPointerActivityNanos = remember { AtomicLong(0L) }
 	val pointerActivity = remember { Channel<Unit>(Channel.CONFLATED) }
 
-	val editor = remember(state.projectOpenGeneration) { CanvasEditor(viewModel) }
+	val editor = viewModel.canvasEditor
 
 	// A capture in the settings panel swallows key events, including the Space release that
 	// clears the pan latch, so drop it proactively — a stuck pan would look like a hung canvas.
@@ -844,7 +844,9 @@ fun CanvasViewportComposable(
 		}
 
 		if(mode == CanvasMode.EDIT && previewModel != null) {
-            CanvasEditorOverlay(editor,computeViewport(previewModel,viewSize.width,viewSize.height),viewModel,keymap = state.keymap) { focusRequester.requestFocus() }
+            val vp = computeViewport(previewModel,viewSize.width,viewSize.height)
+            editor.viewport = vp
+            CanvasEditorOverlay(editor,vp,viewModel,keymap = state.keymap) { focusRequester.requestFocus() }
         } else if (mode == CanvasMode.PREVIEW && previewModel != null) {
             PreviewFloatingToolbar(state, viewModel)
         }

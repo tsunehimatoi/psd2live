@@ -149,6 +149,8 @@ data class AppLogEntry(
 enum class InspectorTab {
 	LAYERS,
 	PARAMETERS,
+	TOOL_DETAILS,
+	INSPECTOR,
 }
 
 data class HistoryAnnotation(val title: String = "", val note: String = "", val hidden: Boolean = false)

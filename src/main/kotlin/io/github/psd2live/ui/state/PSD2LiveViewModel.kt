@@ -38,6 +38,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import org.umamo.runtime.model.ParameterId
+import org.umamo.runtime.model.PuppetModel
+import io.github.psd2live.ui.CanvasEditor
 import org.umamo.format.art.SourceArt
 import java.io.File
 import java.nio.file.Files
@@ -47,6 +49,18 @@ import kotlin.math.PI
 import kotlin.math.sin
 
 class PSD2LiveViewModel : AutoCloseable {
+    internal val canvasEditor: CanvasEditor by lazy { CanvasEditor(this) }
+
+    fun updatePuppetModel(transform: (PuppetModel) -> PuppetModel) {
+        val currentPreview = _state.value.previewModel ?: return
+        val newPuppet = transform(currentPreview.rig.puppet)
+        val updatedRig = currentPreview.rig.copy(puppet = newPuppet)
+        val updatedPreview = currentPreview.copy(rig = updatedRig)
+        _state.update { it.copy(previewModel = updatedPreview, projectDirty = true) }
+        markWorkspaceChanged()
+        editorChanged()
+    }
+
     val canvasPathRequests = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     fun requestCanvasPathTool() { canvasPathRequests.tryEmit(Unit) }
     fun saveDeformPathEdits(expectedState: String, edits: kotlinx.serialization.json.JsonArray, onComplete: (String?) -> Unit) {
