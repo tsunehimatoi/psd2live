@@ -2,7 +2,12 @@ package io.github.psd2live.ui.views
 
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Text
@@ -12,7 +17,9 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -92,6 +99,7 @@ fun HistoryTreeView(
 	var isDragging by remember { mutableStateOf(false) }
 	var viewportSize by remember { mutableStateOf(IntSize(800, 600)) }
 	var isInspectionPanelOpen by remember { mutableStateOf(true) }
+	var isOperationListOpen by remember { mutableStateOf(true) }
 
 	LaunchedEffect(scale, panOffset, searchQuery, showHidden) {
 		viewModel.setHistoryView(scale, panOffset.x, panOffset.y, searchQuery, showHidden)
@@ -126,6 +134,21 @@ fun HistoryTreeView(
 			}
 		}
 		return
+	}
+
+	// The chain the current state was built from, oldest first: what the operation list shows and
+	// what one undo walks back. Hidden branches never shorten it -- the filter above keeps HEAD's
+	// ancestors no matter what the annotations say.
+	val operationChain = remember(historySnapshot) {
+		val byId = historySnapshot.nodes.associateBy { it.id }
+		val chain = ArrayDeque<AgentHistoryNodeSnapshot>()
+		var cursor: String? = historySnapshot.headNodeId
+		while (cursor != null) {
+			val node = byId[cursor] ?: break
+			chain.addFirst(node)
+			cursor = node.parentId
+		}
+		chain.toList()
 	}
 
 	// Calculate Tree Layout in world DP units
@@ -205,6 +228,13 @@ fun HistoryTreeView(
 					onClick = viewModel::redoHistory,
 					height = 20.dp,
 				)
+				CompactButton(
+					// The list is a left sidebar, so the arrow points the way it would move.
+					text = (if (isOperationListOpen) "◂ " else "▸ ") + tr("history.operations"),
+					onClick = { isOperationListOpen = !isOperationListOpen },
+					isPrimary = isOperationListOpen,
+					height = 20.dp,
+				)
 				CompactCheckbox(
 					checked = showHidden,
 					onCheckedChange = { showHidden = it },
@@ -255,421 +285,580 @@ fun HistoryTreeView(
 			}
 		}
 
-		// Canvas & Inspection Split Pane (Strictly clipped to avoid UI leakage)
+		// Canvas, operation list and inspection panel share one clipped pane.
 		Box(
 			modifier = Modifier
 				.weight(1f)
 				.fillMaxWidth()
 				.clipToBounds(),
 		) {
-			// Interactive Tree Canvas
-			Box(
-				modifier = Modifier
-					.fillMaxSize()
-					.clipToBounds()
-					.onSizeChanged { viewportSize = it }
-					.pointerHoverIcon(
-						PointerIcon(
-							if (isDragging) Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR)
-							else Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR)
-						)
+			Row(modifier = Modifier.fillMaxSize()) {
+				// Photoshop-style operation list: the chain that led to the current state.
+				if (isOperationListOpen) {
+					OperationListSidebar(
+						chain = operationChain,
+						annotations = state.historyAnnotations,
+						enabled = !state.canvasEditBusy,
+						onCheckout = { viewModel.checkoutHistoryNode(it) },
+						onCollapse = { isOperationListOpen = false },
 					)
-					.pointerInput(Unit) {
-						detectDragGestures(
-							onDragStart = { isDragging = true },
-							onDragEnd = { isDragging = false },
-							onDragCancel = { isDragging = false },
-							onDrag = { change, dragAmount ->
-								change.consume()
-								panOffset = Offset(panOffset.x + dragAmount.x, panOffset.y + dragAmount.y)
-							},
-						)
-					}
-					.onPointerEvent(PointerEventType.Scroll) { event ->
-						val change = event.changes.firstOrNull() ?: return@onPointerEvent
-						val delta = change.scrollDelta.y
-						if (delta != 0f) {
-							val mouseX = change.position.x
-							val mouseY = change.position.y
-							val oldScale = scale
-							val zoomFactor = if (delta < 0) 1.15f else 1f / 1.15f
-							val nextScale = (scale * zoomFactor).coerceIn(MIN_SCALE, MAX_SCALE)
-							if (nextScale != oldScale) {
-								val worldX = (mouseX - panOffset.x) / (oldScale * densityFactor) - CANVAS_PADDING_DP
-								val worldY = (mouseY - panOffset.y) / (oldScale * densityFactor) - CANVAS_PADDING_DP
-								scale = nextScale
-								panOffset = Offset(
-									mouseX - (worldX + CANVAS_PADDING_DP) * nextScale * densityFactor,
-									mouseY - (worldY + CANVAS_PADDING_DP) * nextScale * densityFactor,
-								)
-							}
-						}
-					},
-			) {
-				// Canvas Background Grid & Connecting Lines
-				Canvas(modifier = Modifier.fillMaxSize()) {
-					val gridSpacing = 24f * scale * densityFactor
-					if (gridSpacing >= 12f) {
-						val ox = (panOffset.x % gridSpacing + gridSpacing) % gridSpacing
-						val oy = (panOffset.y % gridSpacing + gridSpacing) % gridSpacing
-						var x = ox
-						while (x < size.width) {
-							drawLine(Color(0x0CFFFFFF), Offset(x, 0f), Offset(x, size.height), strokeWidth = 1f)
-							x += gridSpacing
-						}
-						var y = oy
-						while (y < size.height) {
-							drawLine(Color(0x0CFFFFFF), Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
-							y += gridSpacing
-						}
-					}
-
-					// Draw connecting Bezier curves between parent and child nodes
-					for (layoutNode in allLayoutNodes) {
-						val parent = layoutNode
-						val px = worldToScreenX(parent.x + NODE_WIDTH_DP / 2f)
-						val py = worldToScreenY(parent.y + NODE_HEIGHT_DP)
-
-						for (child in parent.children) {
-							val cx = worldToScreenX(child.x + NODE_WIDTH_DP / 2f)
-							val cy = worldToScreenY(child.y)
-
-							val path = Path().apply {
-								moveTo(px, py)
-								cubicTo(
-									px, py + (cy - py) * 0.5f,
-									cx, cy - (cy - py) * 0.5f,
-									cx, cy,
-								)
-							}
-
-							val isBranchToHead = child.node.isHead
-							val strokeColor = if (isBranchToHead) Color(0xFF4EC9B0) else Color(0x66778899)
-							val strokeWidth = (if (isBranchToHead) 2.5f else 1.5f) * scale.coerceIn(0.6f, 1.8f) * densityFactor
-
-							drawPath(
-								path = path,
-								color = strokeColor,
-								style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
-							)
-
-							// Arrow dot at child connector
-							drawCircle(
-								color = strokeColor,
-								radius = 3.5f * scale.coerceIn(0.6f, 1.5f) * densityFactor,
-								center = Offset(cx, cy),
-							)
-						}
-					}
 				}
 
-				// Place Node Cards
-				for (layoutNode in allLayoutNodes) {
-					val node = layoutNode.node
-					val isHead = node.isHead
-					val isSelected = node.id == selectedNodeId
-					val matchesSearch = if (searchQuery.isBlank()) true else {
-						node.summary.contains(searchQuery, ignoreCase = true) ||
-							node.id.contains(searchQuery, ignoreCase = true) ||
-							node.actor.contains(searchQuery, ignoreCase = true)
-					}
-
-					val cardX = worldToScreenX(layoutNode.x).roundToInt()
-					val cardY = worldToScreenY(layoutNode.y).roundToInt()
-					val cardWidthDp = (NODE_WIDTH_DP * scale).dp
-					val cardHeightDp = (NODE_HEIGHT_DP * scale).dp
-
-					// Culling outside viewport
-					if (cardX + (NODE_WIDTH_DP * scale * densityFactor) < -100 ||
-						cardX > viewportSize.width + 100 ||
-						cardY + (NODE_HEIGHT_DP * scale * densityFactor) < -100 ||
-						cardY > viewportSize.height + 100
-					) {
-						continue
-					}
-
-					val isCompact = scale < 0.65f
-					val cornerRadius = (6 * scale.coerceIn(0.5f, 1.2f)).dp
-
-					Box(
-						modifier = Modifier
-							.offset { IntOffset(cardX, cardY) }
-							.size(width = cardWidthDp, height = cardHeightDp)
-							.clip(RoundedCornerShape(cornerRadius))
-							.background(
-								if (isSelected) colors.panelElevated
-								else colors.panelBackground.copy(alpha = if (matchesSearch) 0.95f else 0.35f)
+				Box(
+					modifier = Modifier
+						.weight(1f)
+						.fillMaxHeight()
+						.clipToBounds(),
+				) {
+				// Interactive Tree Canvas
+				Box(
+					modifier = Modifier
+						.fillMaxSize()
+						.clipToBounds()
+						.onSizeChanged { viewportSize = it }
+						.pointerHoverIcon(
+							PointerIcon(
+								if (isDragging) Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR)
+								else Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR)
 							)
-							.border(
-								BorderStroke(
-									width = if (isSelected || isHead) (2 * scale.coerceIn(0.6f, 1.2f)).dp else (1 * scale.coerceIn(0.6f, 1.2f)).dp,
-									color = when {
-										isHead -> Color(0xFF4EC9B0)
-										isSelected -> colors.accent
-										!matchesSearch -> colors.divider.copy(alpha = 0.2f)
-										else -> colors.border
-									},
-								),
-								RoundedCornerShape(cornerRadius),
+						)
+						.pointerInput(Unit) {
+							detectDragGestures(
+								onDragStart = { isDragging = true },
+								onDragEnd = { isDragging = false },
+								onDragCancel = { isDragging = false },
+								onDrag = { change, dragAmount ->
+									change.consume()
+									panOffset = Offset(panOffset.x + dragAmount.x, panOffset.y + dragAmount.y)
+								},
 							)
-							.clickable {
-								viewModel.selectHistoryNode(node.id)
-								isInspectionPanelOpen = true
-							}
-							.padding((6 * scale.coerceIn(0.6f, 1.0f)).dp),
-					) {
-						if (isCompact) {
-							// Compact View when zoomed out
-							Column(
-								modifier = Modifier.fillMaxSize(),
-								verticalArrangement = Arrangement.SpaceBetween,
-							) {
-								Row(
-									modifier = Modifier.fillMaxWidth(),
-									verticalAlignment = Alignment.CenterVertically,
-									horizontalArrangement = Arrangement.SpaceBetween,
-								) {
-									Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-										ActorBadge(actor = node.actor, scale = scale.coerceIn(0.5f, 0.8f))
-										Text(
-											text = "#${node.id.takeLast(6)}",
-											style = typography.monoSmall.copy(fontSize = (8 * scale.coerceIn(0.6f, 1.0f)).sp),
-											color = colors.textMuted,
-										)
-									}
-									if (isHead) {
-										Box(
-											modifier = Modifier
-												.size((6 * scale.coerceIn(0.6f, 1.2f)).dp)
-												.clip(CircleShape)
-												.background(Color(0xFF4EC9B0))
-										)
-									}
+						}
+						.onPointerEvent(PointerEventType.Scroll) { event ->
+							val change = event.changes.firstOrNull() ?: return@onPointerEvent
+							val delta = change.scrollDelta.y
+							if (delta != 0f) {
+								val mouseX = change.position.x
+								val mouseY = change.position.y
+								val oldScale = scale
+								val zoomFactor = if (delta < 0) 1.15f else 1f / 1.15f
+								val nextScale = (scale * zoomFactor).coerceIn(MIN_SCALE, MAX_SCALE)
+								if (nextScale != oldScale) {
+									val worldX = (mouseX - panOffset.x) / (oldScale * densityFactor) - CANVAS_PADDING_DP
+									val worldY = (mouseY - panOffset.y) / (oldScale * densityFactor) - CANVAS_PADDING_DP
+									scale = nextScale
+									panOffset = Offset(
+										mouseX - (worldX + CANVAS_PADDING_DP) * nextScale * densityFactor,
+										mouseY - (worldY + CANVAS_PADDING_DP) * nextScale * densityFactor,
+									)
 								}
-								Text(
-									text = state.historyAnnotations[node.id]?.title?.takeIf { it.isNotBlank() } ?: node.summary,
-									style = typography.body.copy(
-										fontSize = (9 * scale.coerceIn(0.6f, 1.0f)).sp,
-										fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-									),
-									color = if (!matchesSearch) colors.textMuted else colors.textPrimary,
-									maxLines = 1,
-									overflow = TextOverflow.Ellipsis,
+							}
+						},
+				) {
+					// Canvas Background Grid & Connecting Lines
+					Canvas(modifier = Modifier.fillMaxSize()) {
+						val gridSpacing = 24f * scale * densityFactor
+						if (gridSpacing >= 12f) {
+							val ox = (panOffset.x % gridSpacing + gridSpacing) % gridSpacing
+							val oy = (panOffset.y % gridSpacing + gridSpacing) % gridSpacing
+							var x = ox
+							while (x < size.width) {
+								drawLine(Color(0x0CFFFFFF), Offset(x, 0f), Offset(x, size.height), strokeWidth = 1f)
+								x += gridSpacing
+							}
+							var y = oy
+							while (y < size.height) {
+								drawLine(Color(0x0CFFFFFF), Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
+								y += gridSpacing
+							}
+						}
+
+						// Draw connecting Bezier curves between parent and child nodes
+						for (layoutNode in allLayoutNodes) {
+							val parent = layoutNode
+							val px = worldToScreenX(parent.x + NODE_WIDTH_DP / 2f)
+							val py = worldToScreenY(parent.y + NODE_HEIGHT_DP)
+
+							for (child in parent.children) {
+								val cx = worldToScreenX(child.x + NODE_WIDTH_DP / 2f)
+								val cy = worldToScreenY(child.y)
+
+								val path = Path().apply {
+									moveTo(px, py)
+									cubicTo(
+										px, py + (cy - py) * 0.5f,
+										cx, cy - (cy - py) * 0.5f,
+										cx, cy,
+									)
+								}
+
+								val isBranchToHead = child.node.isHead
+								val strokeColor = if (isBranchToHead) Color(0xFF4EC9B0) else Color(0x66778899)
+								val strokeWidth = (if (isBranchToHead) 2.5f else 1.5f) * scale.coerceIn(0.6f, 1.8f) * densityFactor
+
+								drawPath(
+									path = path,
+									color = strokeColor,
+									style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
+								)
+
+								// Arrow dot at child connector
+								drawCircle(
+									color = strokeColor,
+									radius = 3.5f * scale.coerceIn(0.6f, 1.5f) * densityFactor,
+									center = Offset(cx, cy),
 								)
 							}
-						} else {
-							// Detailed View when normal or zoomed in
-							Column(
-								modifier = Modifier.fillMaxSize(),
-								verticalArrangement = Arrangement.SpaceBetween,
-							) {
-								// Card Header: Actor Chip + Short ID + HEAD badge
-								Row(
-									modifier = Modifier.fillMaxWidth(),
-									verticalAlignment = Alignment.CenterVertically,
-									horizontalArrangement = Arrangement.SpaceBetween,
+						}
+					}
+
+					// Place Node Cards
+					for (layoutNode in allLayoutNodes) {
+						val node = layoutNode.node
+						val isHead = node.isHead
+						val isSelected = node.id == selectedNodeId
+						val matchesSearch = if (searchQuery.isBlank()) true else {
+							node.summary.contains(searchQuery, ignoreCase = true) ||
+								node.id.contains(searchQuery, ignoreCase = true) ||
+								node.actor.contains(searchQuery, ignoreCase = true)
+						}
+
+						val cardX = worldToScreenX(layoutNode.x).roundToInt()
+						val cardY = worldToScreenY(layoutNode.y).roundToInt()
+						val cardWidthDp = (NODE_WIDTH_DP * scale).dp
+						val cardHeightDp = (NODE_HEIGHT_DP * scale).dp
+
+						// Culling outside viewport
+						if (cardX + (NODE_WIDTH_DP * scale * densityFactor) < -100 ||
+							cardX > viewportSize.width + 100 ||
+							cardY + (NODE_HEIGHT_DP * scale * densityFactor) < -100 ||
+							cardY > viewportSize.height + 100
+						) {
+							continue
+						}
+
+						val isCompact = scale < 0.65f
+						val cornerRadius = (6 * scale.coerceIn(0.5f, 1.2f)).dp
+
+						Box(
+							modifier = Modifier
+								.offset { IntOffset(cardX, cardY) }
+								.size(width = cardWidthDp, height = cardHeightDp)
+								.clip(RoundedCornerShape(cornerRadius))
+								.background(
+									if (isSelected) colors.panelElevated
+									else colors.panelBackground.copy(alpha = if (matchesSearch) 0.95f else 0.35f)
+								)
+								.border(
+									BorderStroke(
+										width = if (isSelected || isHead) (2 * scale.coerceIn(0.6f, 1.2f)).dp else (1 * scale.coerceIn(0.6f, 1.2f)).dp,
+										color = when {
+											isHead -> Color(0xFF4EC9B0)
+											isSelected -> colors.accent
+											!matchesSearch -> colors.divider.copy(alpha = 0.2f)
+											else -> colors.border
+										},
+									),
+									RoundedCornerShape(cornerRadius),
+								)
+								.clickable {
+									viewModel.selectHistoryNode(node.id)
+									isInspectionPanelOpen = true
+								}
+								.padding((6 * scale.coerceIn(0.6f, 1.0f)).dp),
+						) {
+							if (isCompact) {
+								// Compact View when zoomed out
+								Column(
+									modifier = Modifier.fillMaxSize(),
+									verticalArrangement = Arrangement.SpaceBetween,
 								) {
 									Row(
+										modifier = Modifier.fillMaxWidth(),
 										verticalAlignment = Alignment.CenterVertically,
-										horizontalArrangement = Arrangement.spacedBy((4 * scale.coerceIn(0.7f, 1.0f)).dp),
+										horizontalArrangement = Arrangement.SpaceBetween,
 									) {
-										ActorBadge(actor = node.actor, scale = scale.coerceIn(0.7f, 1.0f))
-										Text(
-											text = "#${node.id.takeLast(7)}",
-											style = typography.monoSmall.copy(fontSize = (9 * scale.coerceIn(0.7f, 1.1f)).sp),
-											color = colors.textMuted,
-										)
+										Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+											ActorBadge(actor = node.actor, scale = scale.coerceIn(0.5f, 0.8f))
+											Text(
+												text = "#${node.id.takeLast(6)}",
+												style = typography.monoSmall.copy(fontSize = (8 * scale.coerceIn(0.6f, 1.0f)).sp),
+												color = colors.textMuted,
+											)
+										}
+										if (isHead) {
+											Box(
+												modifier = Modifier
+													.size((6 * scale.coerceIn(0.6f, 1.2f)).dp)
+													.clip(CircleShape)
+													.background(Color(0xFF4EC9B0))
+											)
+										}
 									}
-
-									if (isHead) {
-										Box(
-											modifier = Modifier
-												.clip(RoundedCornerShape((4 * scale).dp))
-												.background(Color(0xFF1B4D3E))
-												.border(BorderStroke((1 * scale).dp, Color(0xFF4EC9B0)), RoundedCornerShape((4 * scale).dp))
-												.padding(horizontal = (4 * scale).dp, vertical = (1 * scale).dp),
+									Text(
+										text = state.historyAnnotations[node.id]?.title?.takeIf { it.isNotBlank() } ?: node.summary,
+										style = typography.body.copy(
+											fontSize = (9 * scale.coerceIn(0.6f, 1.0f)).sp,
+											fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+										),
+										color = if (!matchesSearch) colors.textMuted else colors.textPrimary,
+										maxLines = 1,
+										overflow = TextOverflow.Ellipsis,
+									)
+								}
+							} else {
+								// Detailed View when normal or zoomed in
+								Column(
+									modifier = Modifier.fillMaxSize(),
+									verticalArrangement = Arrangement.SpaceBetween,
+								) {
+									// Card Header: Actor Chip + Short ID + HEAD badge
+									Row(
+										modifier = Modifier.fillMaxWidth(),
+										verticalAlignment = Alignment.CenterVertically,
+										horizontalArrangement = Arrangement.SpaceBetween,
+									) {
+										Row(
+											verticalAlignment = Alignment.CenterVertically,
+											horizontalArrangement = Arrangement.spacedBy((4 * scale.coerceIn(0.7f, 1.0f)).dp),
 										) {
-											Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy((3 * scale).dp)) {
-												Box(modifier = Modifier.size((5 * scale).dp).clip(CircleShape).background(Color(0xFF4EC9B0)))
-												Text(
-													text = tr("history.head"),
-													style = typography.monoSmall.copy(fontSize = (8.5 * scale.coerceIn(0.7f, 1.1f)).sp, fontWeight = FontWeight.Bold),
-													color = Color(0xFF4EC9B0),
-												)
+											ActorBadge(actor = node.actor, scale = scale.coerceIn(0.7f, 1.0f))
+											Text(
+												text = "#${node.id.takeLast(7)}",
+												style = typography.monoSmall.copy(fontSize = (9 * scale.coerceIn(0.7f, 1.1f)).sp),
+												color = colors.textMuted,
+											)
+										}
+
+										if (isHead) {
+											Box(
+												modifier = Modifier
+													.clip(RoundedCornerShape((4 * scale).dp))
+													.background(Color(0xFF1B4D3E))
+													.border(BorderStroke((1 * scale).dp, Color(0xFF4EC9B0)), RoundedCornerShape((4 * scale).dp))
+													.padding(horizontal = (4 * scale).dp, vertical = (1 * scale).dp),
+											) {
+												Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy((3 * scale).dp)) {
+													Box(modifier = Modifier.size((5 * scale).dp).clip(CircleShape).background(Color(0xFF4EC9B0)))
+													Text(
+														text = tr("history.head"),
+														style = typography.monoSmall.copy(fontSize = (8.5 * scale.coerceIn(0.7f, 1.1f)).sp, fontWeight = FontWeight.Bold),
+														color = Color(0xFF4EC9B0),
+													)
+												}
 											}
 										}
 									}
+
+									// Summary
+									Text(
+										text = state.historyAnnotations[node.id]?.title?.takeIf { it.isNotBlank() } ?: node.summary,
+										style = typography.body.copy(
+											fontSize = (10.5 * scale.coerceIn(0.75f, 1.2f)).sp,
+											fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+											lineHeight = (13.5 * scale.coerceIn(0.75f, 1.2f)).sp,
+										),
+										color = if (!matchesSearch) colors.textMuted else colors.textPrimary,
+										maxLines = 2,
+										overflow = TextOverflow.Ellipsis,
+									)
+
+									// Timestamp
+									Text(
+										text = node.createdAt.take(19).replace('T', ' '),
+										style = typography.caption.copy(fontSize = (8.5 * scale.coerceIn(0.75f, 1.1f)).sp),
+										color = colors.textMuted,
+									)
 								}
-
-								// Summary
-								Text(
-									text = state.historyAnnotations[node.id]?.title?.takeIf { it.isNotBlank() } ?: node.summary,
-									style = typography.body.copy(
-										fontSize = (10.5 * scale.coerceIn(0.75f, 1.2f)).sp,
-										fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-										lineHeight = (13.5 * scale.coerceIn(0.75f, 1.2f)).sp,
-									),
-									color = if (!matchesSearch) colors.textMuted else colors.textPrimary,
-									maxLines = 2,
-									overflow = TextOverflow.Ellipsis,
-								)
-
-								// Timestamp
-								Text(
-									text = node.createdAt.take(19).replace('T', ' '),
-									style = typography.caption.copy(fontSize = (8.5 * scale.coerceIn(0.75f, 1.1f)).sp),
-									color = colors.textMuted,
-								)
 							}
 						}
 					}
 				}
-			}
 
-			// Side / Floating Inspection Panel for Selected Node
-			if (selectedNode != null && isInspectionPanelOpen) {
-				Box(
-					modifier = Modifier
-						.align(Alignment.BottomEnd)
-						.padding(12.dp)
-						.width(320.dp)
-						.heightIn(max = 480.dp)
-						.clip(RoundedCornerShape(8.dp))
-						.background(colors.panelElevated)
-						.border(BorderStroke(1.dp, colors.border), RoundedCornerShape(8.dp))
-						.padding(12.dp),
-				) {
-					Column(
+				// Side / Floating Inspection Panel for Selected Node
+				if (selectedNode != null && isInspectionPanelOpen) {
+					Box(
 						modifier = Modifier
-							.fillMaxWidth()
-							.verticalScroll(rememberScrollState()),
-						verticalArrangement = Arrangement.spacedBy(8.dp),
+							.align(Alignment.BottomEnd)
+							.padding(12.dp)
+							.width(320.dp)
+							.heightIn(max = 480.dp)
+							.clip(RoundedCornerShape(8.dp))
+							.background(colors.panelElevated)
+							.border(BorderStroke(1.dp, colors.border), RoundedCornerShape(8.dp))
+							.padding(12.dp),
 					) {
-						Row(
-							modifier = Modifier.fillMaxWidth(),
-							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.SpaceBetween,
-						) {
-							Text(
-								text = selectedNode.summary,
-								style = typography.title.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
-								color = colors.textPrimary,
-								maxLines = 2,
-								overflow = TextOverflow.Ellipsis,
-								modifier = Modifier.weight(1f),
-							)
-							Spacer(Modifier.width(6.dp))
-							if (selectedNode.isHead) {
-								Text(
-									text = "● HEAD",
-									style = typography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
-									color = Color(0xFF4EC9B0),
-								)
-								Spacer(Modifier.width(6.dp))
-							}
-							CompactButton(
-								text = "✕",
-								onClick = { isInspectionPanelOpen = false },
-								height = 20.dp,
-							)
-						}
-
-						val annotation = state.historyAnnotations[selectedNode.id] ?: io.github.psd2live.ui.state.HistoryAnnotation()
-						var title by remember(selectedNode.id, annotation) { mutableStateOf(annotation.title) }
-						var note by remember(selectedNode.id, annotation) { mutableStateOf(annotation.note) }
-						var hidden by remember(selectedNode.id, annotation) { mutableStateOf(annotation.hidden) }
-
 						Column(
 							modifier = Modifier
 								.fillMaxWidth()
-								.background(colors.inputBackground, RoundedCornerShape(4.dp))
-								.border(BorderStroke(1.dp, colors.divider), RoundedCornerShape(4.dp))
-								.padding(8.dp),
-							verticalArrangement = Arrangement.spacedBy(6.dp),
+								.verticalScroll(rememberScrollState()),
+							verticalArrangement = Arrangement.spacedBy(8.dp),
 						) {
-							Text(
-								text = tr("project.historyTitle"),
-								style = typography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
-								color = colors.textMuted,
-							)
-							CompactTextField(
-								value = title,
-								onValueChange = { title = it },
-								placeholder = tr("project.historyTitle"),
-								modifier = Modifier.fillMaxWidth(),
-								height = 22.dp,
-							)
-							Text(
-								text = tr("project.historyNote"),
-								style = typography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
-								color = colors.textMuted,
-							)
-							CompactTextField(
-								value = note,
-								onValueChange = { note = it },
-								placeholder = tr("project.historyNote"),
-								modifier = Modifier.fillMaxWidth(),
-								height = 22.dp,
-							)
 							Row(
 								modifier = Modifier.fillMaxWidth(),
 								verticalAlignment = Alignment.CenterVertically,
 								horizontalArrangement = Arrangement.SpaceBetween,
 							) {
-								CompactCheckbox(
-									checked = hidden,
-									onCheckedChange = { hidden = it },
-									label = tr("project.historyHide"),
+								Text(
+									text = selectedNode.summary,
+									style = typography.title.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
+									color = colors.textPrimary,
+									maxLines = 2,
+									overflow = TextOverflow.Ellipsis,
+									modifier = Modifier.weight(1f),
 								)
+								Spacer(Modifier.width(6.dp))
+								if (selectedNode.isHead) {
+									Text(
+										text = "● HEAD",
+										style = typography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
+										color = Color(0xFF4EC9B0),
+									)
+									Spacer(Modifier.width(6.dp))
+								}
 								CompactButton(
-									text = tr("project.historyApply"),
-									onClick = { viewModel.editHistoryAnnotation(selectedNode.id, title, note, hidden) },
+									text = "✕",
+									onClick = { isInspectionPanelOpen = false },
 									height = 20.dp,
-									isPrimary = true,
 								)
 							}
-						}
-						Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-							DetailRow(label = tr("history.nodeId"), value = selectedNode.id)
-							DetailRow(label = tr("history.parentId"), value = selectedNode.parentId ?: "root")
-							DetailRow(label = tr("history.revisionId"), value = selectedNode.revisionId.take(16))
-							DetailRow(label = "Actor", value = selectedNode.actor)
-							DetailRow(label = tr("history.time"), value = selectedNode.createdAt.take(19).replace('T', ' '))
-						}
 
-						Row(
-							modifier = Modifier.fillMaxWidth(),
-							horizontalArrangement = Arrangement.SpaceBetween,
-							verticalAlignment = Alignment.CenterVertically,
-						) {
-							CompactButton(
-								text = tr("history.copyId"),
-								onClick = {
-									val sel = StringSelection(selectedNode.id)
-									Toolkit.getDefaultToolkit().systemClipboard.setContents(sel, sel)
-								},
-								height = 24.dp,
-							)
+							val annotation = state.historyAnnotations[selectedNode.id] ?: io.github.psd2live.ui.state.HistoryAnnotation()
+							var title by remember(selectedNode.id, annotation) { mutableStateOf(annotation.title) }
+							var note by remember(selectedNode.id, annotation) { mutableStateOf(annotation.note) }
+							var hidden by remember(selectedNode.id, annotation) { mutableStateOf(annotation.hidden) }
 
-							if (!selectedNode.isHead) {
+							Column(
+								modifier = Modifier
+									.fillMaxWidth()
+									.background(colors.inputBackground, RoundedCornerShape(4.dp))
+									.border(BorderStroke(1.dp, colors.divider), RoundedCornerShape(4.dp))
+									.padding(8.dp),
+								verticalArrangement = Arrangement.spacedBy(6.dp),
+							) {
+								Text(
+									text = tr("project.historyTitle"),
+									style = typography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
+									color = colors.textMuted,
+								)
+								CompactTextField(
+									value = title,
+									onValueChange = { title = it },
+									placeholder = tr("project.historyTitle"),
+									modifier = Modifier.fillMaxWidth(),
+									height = 22.dp,
+								)
+								Text(
+									text = tr("project.historyNote"),
+									style = typography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
+									color = colors.textMuted,
+								)
+								CompactTextField(
+									value = note,
+									onValueChange = { note = it },
+									placeholder = tr("project.historyNote"),
+									modifier = Modifier.fillMaxWidth(),
+									height = 22.dp,
+								)
+								Row(
+									modifier = Modifier.fillMaxWidth(),
+									verticalAlignment = Alignment.CenterVertically,
+									horizontalArrangement = Arrangement.SpaceBetween,
+								) {
+									CompactCheckbox(
+										checked = hidden,
+										onCheckedChange = { hidden = it },
+										label = tr("project.historyHide"),
+									)
+									CompactButton(
+										text = tr("project.historyApply"),
+										onClick = { viewModel.editHistoryAnnotation(selectedNode.id, title, note, hidden) },
+										height = 20.dp,
+										isPrimary = true,
+									)
+								}
+							}
+							Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+								DetailRow(label = tr("history.nodeId"), value = selectedNode.id)
+								DetailRow(label = tr("history.parentId"), value = selectedNode.parentId ?: "root")
+								DetailRow(label = tr("history.revisionId"), value = selectedNode.revisionId.take(16))
+								DetailRow(label = "Actor", value = selectedNode.actor)
+								DetailRow(label = tr("history.time"), value = selectedNode.createdAt.take(19).replace('T', ' '))
+							}
+
+							Row(
+								modifier = Modifier.fillMaxWidth(),
+								horizontalArrangement = Arrangement.SpaceBetween,
+								verticalAlignment = Alignment.CenterVertically,
+							) {
 								CompactButton(
-									text = tr("history.checkout"),
-									onClick = { viewModel.checkoutHistoryNode(selectedNode.id) },
-									isPrimary = true,
+									text = tr("history.copyId"),
+									onClick = {
+										val sel = StringSelection(selectedNode.id)
+										Toolkit.getDefaultToolkit().systemClipboard.setContents(sel, sel)
+									},
 									height = 24.dp,
 								)
-							} else {
-								Text(
-									text = tr("history.current"),
-									style = typography.caption.copy(fontSize = 10.5.sp),
-									color = Color(0xFF4EC9B0),
-								)
+
+								if (!selectedNode.isHead) {
+									CompactButton(
+										text = tr("history.checkout"),
+										onClick = { viewModel.checkoutHistoryNode(selectedNode.id) },
+										isPrimary = true,
+										height = 24.dp,
+									)
+								} else {
+									Text(
+										text = tr("history.current"),
+										style = typography.caption.copy(fontSize = 10.5.sp),
+										color = Color(0xFF4EC9B0),
+									)
+								}
 							}
 						}
 					}
 				}
+				}
 			}
 		}
+	}
+}
+
+/**
+ * Photoshop-style operation list: the chain that led to the current state, oldest first and the
+ * current state last, scrolling to keep it in view. Clicking a row rewinds the workspace to it --
+ * the same checkout the tree card's "restore" runs, without hunting for the card on the canvas.
+ *
+ * Rows past the current one are not listed: they belong to the redo side, which the tree's branches
+ * and Ctrl+Y already cover, and mixing them in would make "before the current state" ambiguous.
+ */
+@Composable
+private fun OperationListSidebar(
+	chain: List<AgentHistoryNodeSnapshot>,
+	annotations: Map<String, io.github.psd2live.ui.state.HistoryAnnotation>,
+	enabled: Boolean,
+	onCheckout: (String) -> Unit,
+	onCollapse: () -> Unit,
+) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	val listState = rememberLazyListState()
+	val headId = chain.lastOrNull()?.id
+
+	// The newest operation is the one you step back from, so it stays in sight as the chain grows.
+	LaunchedEffect(headId) {
+		if (chain.isNotEmpty()) listState.animateScrollToItem(chain.lastIndex)
+	}
+
+	Column(
+		modifier = Modifier
+			.fillMaxHeight()
+			.width(240.dp)
+			.background(colors.panelElevated)
+			.border(BorderStroke(1.dp, colors.divider)),
+	) {
+		Row(
+			modifier = Modifier
+				.fillMaxWidth()
+				.height(26.dp)
+				.background(colors.panelBackground)
+				.padding(start = 8.dp, end = 4.dp),
+			verticalAlignment = Alignment.CenterVertically,
+			horizontalArrangement = Arrangement.SpaceBetween,
+		) {
+			Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+				Text(
+					text = tr("history.operations"),
+					style = typography.title.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
+					color = colors.textPrimary,
+				)
+				Text(
+					text = "${chain.size}",
+					style = typography.monoSmall.copy(fontSize = 10.sp),
+					color = colors.textMuted,
+				)
+			}
+			CompactButton(text = "‹", onClick = onCollapse, height = 18.dp)
+		}
+
+		LazyColumn(
+			state = listState,
+			modifier = Modifier
+				.weight(1f)
+				.fillMaxWidth(),
+		) {
+			itemsIndexed(chain, key = { _, node -> node.id }) { index, node ->
+				OperationListRow(
+					index = index,
+					node = node,
+					title = annotations[node.id]?.title?.takeIf { it.isNotBlank() },
+					enabled = enabled,
+					onClick = { onCheckout(node.id) },
+				)
+			}
+		}
+	}
+}
+
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun OperationListRow(
+	index: Int,
+	node: AgentHistoryNodeSnapshot,
+	title: String?,
+	enabled: Boolean,
+	onClick: () -> Unit,
+) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	val interactionSource = remember { MutableInteractionSource() }
+	val isHovered by interactionSource.collectIsHoveredAsState()
+	val isCurrent = node.isHead
+	val canRewind = enabled && !isCurrent
+
+	Row(
+		modifier = Modifier
+			.fillMaxWidth()
+			.height(24.dp)
+			.background(
+				when {
+					isCurrent -> colors.selection.copy(alpha = 0.35f)
+					isHovered && canRewind -> colors.controlHover
+					else -> Color.Transparent
+				}
+			)
+			.drawBehind {
+				if (isCurrent) drawRect(color = colors.accent, topLeft = Offset.Zero, size = Size(2.dp.toPx(), size.height))
+			}
+			.pointerHoverIcon(
+				PointerIcon(
+					if (canRewind) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+					else Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR)
+				)
+			)
+			.clickable(enabled = canRewind, interactionSource = interactionSource, indication = null) { onClick() }
+			.padding(start = 8.dp, end = 6.dp),
+		verticalAlignment = Alignment.CenterVertically,
+	) {
+		Text(
+			text = "${index + 1}",
+			style = typography.monoSmall.copy(fontSize = 9.5.sp),
+			color = if (isCurrent) colors.accent else colors.textDisabled,
+			modifier = Modifier.width(18.dp),
+		)
+		Text(
+			// The annotations are what the tree cards show, so a renamed node reads the same here.
+			text = title ?: node.summary,
+			style = typography.body.copy(
+				fontSize = 10.5.sp,
+				fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
+			),
+			color = if (isCurrent) colors.textPrimary else colors.textMuted,
+			maxLines = 1,
+			overflow = TextOverflow.Ellipsis,
+			modifier = Modifier.weight(1f),
+		)
+		Spacer(Modifier.width(4.dp))
+		ActorBadge(actor = node.actor, scale = 0.85f)
 	}
 }
 
