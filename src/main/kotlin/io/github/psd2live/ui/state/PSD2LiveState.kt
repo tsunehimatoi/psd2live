@@ -92,8 +92,12 @@ data class WorkspaceTabState(
 
 internal const val PINNED_EDIT_TAB_ID = "edit"
 internal const val PINNED_PREVIEW_TAB_ID = "preview"
+internal const val PINNED_HISTORY_TAB_ID = "history"
 
 internal fun defaultWorkspaceTabs(): List<WorkspaceTabState> = listOf(
+	// History leads the strip and never closes: it is the one view of the project that no edit can
+	// invalidate, so it stays one click away from whichever canvas tab is in front.
+	WorkspaceTabState(id = PINNED_HISTORY_TAB_ID, kind = WorkspaceTabKind.HISTORY, ordinal = 1, pinned = true),
 	WorkspaceTabState(
 		id = PINNED_EDIT_TAB_ID,
 		kind = WorkspaceTabKind.EDIT,

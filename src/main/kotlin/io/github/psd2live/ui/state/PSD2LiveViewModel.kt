@@ -1001,6 +1001,12 @@ class PSD2LiveViewModel : AutoCloseable {
 	/** Duplicates [id]'s kind, view options and camera into a new closable tab. */
 	fun duplicateTab(id: String): String {
 		val source = _state.value.workspaceTabs.firstOrNull { it.id == id } ?: return addTab(_state.value.activeTabKind)
+		// History is a singleton: its zoom, pan and search live in shared state, so a second history
+		// tab could never show anything the first one does not. Duplicating just brings it forward.
+		if (source.kind == WorkspaceTabKind.HISTORY) {
+			setActiveTab(source.id)
+			return source.id
+		}
 		return addTab(source.kind, source.id)
 	}
 

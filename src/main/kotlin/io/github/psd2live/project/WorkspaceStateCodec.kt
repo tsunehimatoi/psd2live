@@ -48,7 +48,7 @@ internal object WorkspaceStateCodec {
     /**
      * Decodes the browser-style tab list. A missing `workspaceTabs` key keeps [base]'s tabs (these
      * decode calls are also used to rebuild a config from saved settings); an old
-     * `activeWorkspaceTab` name is migrated onto the default Edit / Preview tabs.
+     * `activeWorkspaceTab` name is migrated onto the tab it names among the defaults.
      */
     private fun decodeWorkspaceTabs(value: JsonObject, base: PSD2LiveState): Pair<List<WorkspaceTabState>, String> {
         val array = value["workspaceTabs"]?.jsonArray
@@ -70,10 +70,7 @@ internal object WorkspaceStateCodec {
             val defaults = defaultWorkspaceTabs().map { tab ->
                 if (legacyCamera != null && tab.kind.canvasMode != null) tab.copy(camera = legacyCamera) else tab
             }
-            if (kind == WorkspaceTabKind.HISTORY) {
-                val history = WorkspaceTabState(id = "history-legacy", kind = WorkspaceTabKind.HISTORY, ordinal = 1)
-                return defaults + history to history.id
-            }
+            // History is one of the defaults now, so the legacy name needs no extra tab.
             val active = defaults.firstOrNull { it.kind == kind } ?: defaults.first()
             return defaults to active.id
         }
@@ -94,13 +91,21 @@ internal object WorkspaceStateCodec {
             )
         }.distinctBy { it.id }
 
+        // A saved file contributes the pinned tabs' identity -- id, view options, camera -- but not
+        // their order or pinning: History, Edit and Preview always lead the strip in that order.
+        // Extra history tabs an older build allowed are dropped, the view being a singleton now.
         val defaults = defaultWorkspaceTabs()
-        val edit = parsed.firstOrNull { it.kind == WorkspaceTabKind.EDIT } ?: defaults[0]
-        val preview = parsed.firstOrNull { it.kind == WorkspaceTabKind.PREVIEW } ?: defaults[1]
-        val tabs = listOf(edit.copy(pinned = true, ordinal = 1), preview.copy(pinned = true, ordinal = 1)) +
-            parsed.filter { it.id != edit.id && it.id != preview.id }
+        val pinned = listOf(WorkspaceTabKind.HISTORY, WorkspaceTabKind.EDIT, WorkspaceTabKind.PREVIEW).map { kind ->
+            (parsed.firstOrNull { it.kind == kind } ?: defaults.first { it.kind == kind })
+                .copy(pinned = true, ordinal = 1)
+        }
+        val pinnedIds = pinned.map { it.id }.toSet()
+        val tabs = pinned + parsed.filter { it.id !in pinnedIds && it.kind != WorkspaceTabKind.HISTORY }
         val requested = value["activeWorkspaceTabId"]?.jsonPrimitive?.contentOrNull
-        val activeId = tabs.firstOrNull { it.id == requested }?.id ?: tabs.first().id
+        // An id the file no longer carries (a tab closed since the save) lands on the Edit canvas --
+        // the tab the app itself opens on -- not on whichever pinned tab now happens to lead.
+        val activeId = tabs.firstOrNull { it.id == requested }?.id
+            ?: tabs.first { it.kind == WorkspaceTabKind.EDIT }.id
         return tabs to activeId
     }
 

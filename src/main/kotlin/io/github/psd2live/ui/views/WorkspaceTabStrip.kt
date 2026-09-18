@@ -92,25 +92,26 @@ fun WorkspaceTabStrip(
 					onDuplicate = { viewModel.duplicateTab(tab.id) },
 				)
 			}
-		}
 
-		// Add tab
-		Box {
-			TabStripButton(label = "+") { showAddMenu = true }
-			TabStripDropdown(expanded = showAddMenu, onDismissRequest = { showAddMenu = false }) {
-				AppMenuHeader(tr("menu.view.tabs"))
-				AppMenuItem(text = tr("tab.new.edit"), onClick = {
-					showAddMenu = false
-					viewModel.addTab(WorkspaceTabKind.EDIT)
-				})
-				AppMenuItem(text = tr("tab.new.preview"), onClick = {
-					showAddMenu = false
-					viewModel.addTab(WorkspaceTabKind.PREVIEW)
-				})
-				AppMenuItem(text = tr("tab.new.history"), onClick = {
-					showAddMenu = false
-					viewModel.openHistoryTab()
-				})
+			// Add tab -- it sits right behind the last tab, browser-style, so it scrolls with the
+			// strip instead of floating at the far end of an otherwise empty bar.
+			Box {
+				TabStripButton(label = "+") { showAddMenu = true }
+				TabStripDropdown(expanded = showAddMenu, onDismissRequest = { showAddMenu = false }) {
+					AppMenuHeader(tr("menu.view.tabs"))
+					AppMenuItem(text = tr("tab.new.edit"), onClick = {
+						showAddMenu = false
+						viewModel.addTab(WorkspaceTabKind.EDIT)
+					})
+					AppMenuItem(text = tr("tab.new.preview"), onClick = {
+						showAddMenu = false
+						viewModel.addTab(WorkspaceTabKind.PREVIEW)
+					})
+					AppMenuItem(text = tr("tab.new.history"), onClick = {
+						showAddMenu = false
+						viewModel.openHistoryTab()
+					})
+				}
 			}
 		}
 
@@ -215,10 +216,15 @@ private fun WorkspaceTabChip(
 
 		TabStripDropdown(expanded = showMenu, onDismissRequest = { showMenu = false }) {
 			AppMenuHeader(title)
-			AppMenuItem(text = tr("tab.duplicate"), onClick = {
-				showMenu = false
-				onDuplicate()
-			})
+			AppMenuItem(
+				text = tr("tab.duplicate"),
+				// A second history tab would be an empty promise: the view is a singleton.
+				enabled = tab.kind != WorkspaceTabKind.HISTORY,
+				onClick = {
+					showMenu = false
+					onDuplicate()
+				},
+			)
 			AppMenuItem(
 				text = tr("tab.close"),
 				enabled = !tab.pinned,
