@@ -65,8 +65,22 @@ internal fun BoxScope.CanvasEditorOverlay(
     val isPathTool = editor.tool == CanvasTool.PATH_DEFORM
 
     Canvas(Modifier.fillMaxSize()) {
-        // 1. SELECT tool: Draw object bounding box and 8 handles + rotate stem
+        // 1. Object-space tools. SELECT only outlines what is picked, so a click can never turn into a
+        //    drag; TRANSFORM adds the box, the 8 handles and the rotate stem it is dragged by.
         if (editor.tool == CanvasTool.SELECT) {
+            // Suppressed when the hierarchy, not the canvas, owns the selection: those targets already
+            // carry their own AWT-drawn boxes, and two outlines around one object read as two objects.
+            if (editor.objects.isNotEmpty()) editor.selectionBounds(viewport)?.let { bounds ->
+                drawRect(
+                    color = colors.accent.copy(alpha = 0.55f),
+                    topLeft = Offset(bounds.minX, bounds.minY),
+                    size = Size(bounds.width, bounds.height),
+                    style = Stroke(1f)
+                )
+            }
+        }
+
+        if (editor.tool == CanvasTool.TRANSFORM) {
             val bounds = editor.selectionBounds(viewport)
             if (bounds != null) {
                 val rotateAngleDeg = Math.toDegrees(editor.currentRotateAngle.toDouble()).toFloat()
@@ -128,6 +142,18 @@ internal fun BoxScope.CanvasEditorOverlay(
                         )
                     }
                 }
+            }
+
+            // Axis lock guide. The constraint is a keyboard latch with no persistent on-screen state, so
+            // without this the drag just silently refuses one of the two directions.
+            val axis = editor.axis
+            val guide = editor.currentDragBounds ?: editor.selectionBounds(viewport)
+            if (axis != null && editor.inGesture && guide != null) {
+                val span = size.width + size.height
+                val center = Offset(guide.centerX, guide.centerY)
+                val from = if (axis == "x") Offset(center.x - span, center.y) else Offset(center.x, center.y - span)
+                val to = if (axis == "x") Offset(center.x + span, center.y) else Offset(center.x, center.y + span)
+                drawLine(colors.warning.copy(alpha = 0.7f), from, to, 1.2f)
             }
         }
 
@@ -442,6 +468,7 @@ internal fun BoxScope.CanvasEditorOverlay(
             CanvasTool.PATH_DEFORM -> "editor.pathHint"
             CanvasTool.INFLATE -> "editor.inflateHint"
             CanvasTool.BRUSH, CanvasTool.SMOOTH -> "editor.brushHint"
+            CanvasTool.TRANSFORM -> "editor.transformHint"
             else -> "editor.hint"
         }),
         color = if (editor.error != null) colors.error else colors.textMuted,
@@ -762,6 +789,12 @@ private fun ToolIcon(tool: CanvasTool, color: Color, brushShape: BrushShape? = n
             CanvasTool.SELECT -> {
                 val path = Path().apply { moveTo(3 * s, 2 * s); lineTo(14 * s, 10 * s); lineTo(9 * s, 11 * s); lineTo(7 * s, 16 * s); close() }
                 drawPath(path, color, style = Stroke(s * 1.3f))
+            }
+            CanvasTool.TRANSFORM -> {
+                drawRect(color, Offset(3 * s, 3 * s), Size(12 * s, 12 * s), style = Stroke(s * 1.3f))
+                listOf(3f to 3f, 15f to 3f, 3f to 15f, 15f to 15f).forEach { (x, y) ->
+                    drawRect(color, Offset((x - 1.6f) * s, (y - 1.6f) * s), Size(3.2f * s, 3.2f * s))
+                }
             }
             CanvasTool.MESH -> {
                 val path = Path().apply { moveTo(9 * s, 2 * s); lineTo(16 * s, 15 * s); lineTo(2 * s, 15 * s); close() }

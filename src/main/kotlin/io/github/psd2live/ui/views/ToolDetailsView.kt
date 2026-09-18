@@ -196,11 +196,53 @@ internal fun ToolDetailsView(
         when (editor.tool) {
             CanvasTool.SELECT -> {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (target?.kind == "mesh") {
+                        Text(
+                            text = tr("editor.deformers"),
+                            style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
+                            color = colors.textPrimary,
+                        )
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            CompactButton(
+                                text = tr("editor.createWarp"),
+                                onClick = { editor.createWarp() },
+                                enabled = editor.editable,
+                                modifier = Modifier.weight(1f),
+                                height = 25.dp,
+                            )
+                            CompactButton(
+                                text = tr("editor.createRotation"),
+                                onClick = { editor.createWarp(rotation = true) },
+                                enabled = editor.editable,
+                                modifier = Modifier.weight(1f),
+                                height = 25.dp,
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = tr("editor.select"),
+                            style = typography.caption.copy(fontSize = 10.5.sp),
+                            color = colors.textMuted,
+                        )
+                    }
+                }
+            }
+
+            CanvasTool.TRANSFORM -> {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
                         text = tr("editor.preciseTransform"),
                         style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
                         color = colors.textPrimary,
                     )
+
+                    if (target == null) {
+                        Text(
+                            text = tr("editor.select"),
+                            style = typography.caption.copy(fontSize = 10.5.sp),
+                            color = colors.textMuted,
+                        )
+                    }
 
                     var posX by remember { mutableStateOf(0.0) }
                     var posY by remember { mutableStateOf(0.0) }
@@ -251,31 +293,6 @@ internal fun ToolDetailsView(
                             enabled = editor.editable && target != null,
                             height = 24.dp,
                         )
-                    }
-
-                    if (target?.kind == "mesh") {
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = tr("editor.deformers"),
-                            style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
-                            color = colors.textPrimary,
-                        )
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            CompactButton(
-                                text = tr("editor.createWarp"),
-                                onClick = { editor.createWarp() },
-                                enabled = editor.editable,
-                                modifier = Modifier.weight(1f),
-                                height = 25.dp,
-                            )
-                            CompactButton(
-                                text = tr("editor.createRotation"),
-                                onClick = { editor.createWarp(rotation = true) },
-                                enabled = editor.editable,
-                                modifier = Modifier.weight(1f),
-                                height = 25.dp,
-                            )
-                        }
                     }
                 }
             }

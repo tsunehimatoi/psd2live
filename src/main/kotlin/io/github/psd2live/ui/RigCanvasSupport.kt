@@ -279,11 +279,20 @@ internal object RigCanvasSupport {
 		visibleLayerIds: Set<String>? = null,
 		currentSelectedLayerId: String? = null,
 		geometry: DeformedGeometry? = null,
-	): String? {
-		val candidates = hitLayers(model, drawableBounds, canvasX, canvasY, visibleLayerIds, geometry)
+	): String? = nextLayer(
+		hitLayers(model, drawableBounds, canvasX, canvasY, visibleLayerIds, geometry),
+		currentSelectedLayerId,
+	)
+
+	/**
+	 * One step through a click-through stack: the layer after [current], wrapping, or the first when
+	 * [current] is not in the stack at all. Shared by the preview tab's click-to-select and the canvas
+	 * editor's select tool so the two cannot drift into different click orders.
+	 */
+	fun nextLayer(candidates: List<String>, current: String?): String? {
 		if (candidates.isEmpty()) return null
-		val currentIndex = if (currentSelectedLayerId != null) candidates.indexOf(currentSelectedLayerId) else -1
-		return if (currentIndex == -1) candidates.first() else candidates[(currentIndex + 1) % candidates.size]
+		val index = candidates.indexOf(current)
+		return if (index == -1) candidates.first() else candidates[(index + 1) % candidates.size]
 	}
 
 	private fun isPointInMesh(

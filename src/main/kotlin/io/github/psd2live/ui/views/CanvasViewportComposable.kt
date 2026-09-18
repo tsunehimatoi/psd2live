@@ -51,6 +51,7 @@ import androidx.compose.ui.input.key.*
 import io.github.psd2live.ui.CanvasEditor
 import io.github.psd2live.ui.CanvasTool
 import io.github.psd2live.ui.SelectionStyle
+import io.github.psd2live.ui.VERTEX_TOOLS
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.isAltPressed
 import androidx.compose.ui.input.pointer.isCtrlPressed
@@ -154,7 +155,11 @@ fun CanvasViewportComposable(
         if (!editor.inGesture && !editor.busy) {
             editor.resetSelection()
             if(state.selectedLayerId !in editor.objects) editor.objects=setOfNotNull(state.selectedLayerId)
-            if(state.selectedDeformerId!=null) { editor.objects=emptySet();editor.objectMode=false }
+            // Vertex mode is only meaningful for the tools that edit points. Forcing it for the object
+            // tools left `objects` populated while objectMode said otherwise, and the transform bounding
+            // box — which is computed from objectMode — then framed a different set than the one a drag
+            // actually moved.
+            if(state.selectedDeformerId!=null && editor.tool in VERTEX_TOOLS) { editor.objects=emptySet();editor.objectMode=false }
         }
     }
     LaunchedEffect(state.historySnapshot?.headNodeId, state.parameterValues) {
@@ -343,6 +348,7 @@ fun CanvasViewportComposable(
 					ShortcutAction.SELECT_ALL -> { editor.selectAll(); true }
 					ShortcutAction.INVERT_SELECTION -> { editor.selectAll(true); true }
 					ShortcutAction.TOOL_SELECT -> { editor.activateTool(CanvasTool.SELECT); true }
+					ShortcutAction.TOOL_TRANSFORM -> { editor.activateTool(CanvasTool.TRANSFORM); true }
 					ShortcutAction.TOOL_MESH -> {
 						// Toggles back to SELECT when already in mesh mode.
 						editor.activateTool(

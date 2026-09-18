@@ -172,7 +172,7 @@ Three presets ship with the application. Switching a preset replaces every custo
 | Preset | Description |
 | :--- | :--- |
 | **Photoshop Style** (default) | The traditional layout this guide documents. |
-| **Blender Style** | `G` to transform, `Tab` to toggle mesh editing, `B`/`C` to select, `V`/`S` for brushes, `Ctrl+PageUp/Down` for tabs. |
+| **Blender Style** | `G` to transform, `E` for the select tool (`B`/`C` switch box/lasso), `Tab` to toggle mesh editing, `V`/`S` for brushes, `Ctrl+PageUp/Down` for tabs. |
 | **Live2D Cubism Style** | Adds `A` for the select tool, `P` for the deform path, `Ctrl+E` for mesh editing and `Shift+F` to fit the work area on top of the Photoshop set. |
 
 Press `F1` and open the Keyboard Shortcuts tab for the full list, including the file, edit, tab and view commands. That list is generated from the current bindings, so it cannot drift from what the application actually does. "Reset Defaults" also returns the shortcuts to the Photoshop preset.

@@ -74,6 +74,7 @@ enum class ShortcutAction(val category: ShortcutCategory, val labelKey: String) 
 
     // Canvas tools
     TOOL_SELECT(ShortcutCategory.CANVAS_TOOLS, "editor.tool.select"),
+    TOOL_TRANSFORM(ShortcutCategory.CANVAS_TOOLS, "editor.tool.transform"),
     TOOL_MESH(ShortcutCategory.CANVAS_TOOLS, "editor.tool.mesh"),
     TOOL_WARP(ShortcutCategory.CANVAS_TOOLS, "editor.tool.warp"),
     TOOL_BRUSH(ShortcutCategory.CANVAS_TOOLS, "editor.tool.brush"),
@@ -179,6 +180,7 @@ private val PS_DEFAULTS: Map<ShortcutAction, List<KeyBinding>> = mapOf(
     ShortcutAction.OPEN_HELP to keys("F1"),
 
     ShortcutAction.TOOL_SELECT to keys("V"),
+    ShortcutAction.TOOL_TRANSFORM to keys("T"),
     ShortcutAction.TOOL_MESH to keys("Tab", "E"),
     ShortcutAction.TOOL_WARP to keys("W"),
     ShortcutAction.TOOL_BRUSH to keys("B"),
@@ -217,8 +219,10 @@ private val PS_DEFAULTS: Map<ShortcutAction, List<KeyBinding>> = mapOf(
  * another move, and no key is claimed twice.
  */
 private val BLENDER_OVERRIDES: Map<ShortcutAction, List<KeyBinding>> = mapOf(
-    // Grab — this app's SELECT tool is its move/transform tool.
-    ShortcutAction.TOOL_SELECT to keys("G"),
+    // Grab — this app's TRANSFORM tool is its move/rotate/scale tool.
+    ShortcutAction.TOOL_TRANSFORM to keys("G"),
+    // Selection. `E` is the key the TOOL_MESH move below vacated, so it closes the permutation.
+    ShortcutAction.TOOL_SELECT to keys("E"),
     // Sculpt-mode brush keys.
     ShortcutAction.TOOL_BRUSH to keys("V"),
     ShortcutAction.TOOL_SMOOTH to keys("S"),
@@ -241,9 +245,10 @@ private val BLENDER_OVERRIDES: Map<ShortcutAction, List<KeyBinding>> = mapOf(
  * focus the selection, Ctrl+W to close a tab, hold-Space to pan), so only the genuine differences
  * are listed.
  *
- * Deliberately not adopted: Cubism's `S` (solo display), `C` (animation edit mode) and `T`
- * (original-image toggle) have no counterpart here, and the `G` = deform-mode key that circulates in
- * third-party tutorials is not in the official table at all (`G` is modifier-only there).
+ * Deliberately not adopted: Cubism's `S` (solo display) and `C` (animation edit mode) have no
+ * counterpart here, and the `G` = deform-mode key that circulates in third-party tutorials is not in
+ * the official table at all (`G` is modifier-only there). `T` is not in this table because the
+ * default binding already gives it to the transform tool.
  */
 private val CUBISM_OVERRIDES: Map<ShortcutAction, List<KeyBinding>> = mapOf(
     // Arrow/select tool. `V` has no Cubism default, so it survives as a spare.
