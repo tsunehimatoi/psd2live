@@ -51,6 +51,42 @@ internal data class BoundingBox(val minX: Float, val minY: Float, val maxX: Floa
     val rotateHandlePos get() = Offset(centerX, minY - 24f)
 }
 
+/**
+ * Turns a pointer position into the transform frame's own coordinates, and back.
+ *
+ * The box is always axis-aligned *here*, which is the whole point of the frame: an oriented selection
+ * box needs no oriented-rectangle maths anywhere, only this one pair of conversions at the edges.
+ */
+internal fun Offset.intoTransformFrame(pivot: Offset, angleDeg: Float): Offset = rotateAbout(pivot, -angleDeg)
+
+internal fun Offset.outOfTransformFrame(pivot: Offset, angleDeg: Float): Offset = rotateAbout(pivot, angleDeg)
+
+/** Turns a delta about the origin, for rotating a pointer's travel into the frame. */
+internal fun Offset.rotateVector(angleDeg: Float): Offset {
+    if (angleDeg == 0f) return this
+    val radians = angleDeg * PI.toFloat() / 180f
+    val c = cos(radians)
+    val s = sin(radians)
+    return Offset(x * c - y * s, x * s + y * c)
+}
+
+internal fun Offset.rotateAbout(pivot: Offset, angleDeg: Float): Offset {
+    if (angleDeg == 0f) return this
+    val radians = angleDeg * PI.toFloat() / 180f
+    val c = cos(radians)
+    val s = sin(radians)
+    val d = this - pivot
+    return pivot + Offset(d.x * c - d.y * s, d.x * s + d.y * c)
+}
+
+/**
+ * The transform frame: its box, and the screen point it is oriented about.
+ *
+ * [bounds] is in frame coordinates — axis-aligned *inside* the frame — so every consumer of a box (the
+ * overlay, the handle hit test, the drag math) needs no oriented-rectangle case at all.
+ */
+internal data class TransformFrame(val bounds: BoundingBox, val pivot: Offset)
+
 internal data class CanvasTarget(
     val kind: String,
     val id: String,
@@ -112,9 +148,23 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     var activeHandle by mutableStateOf(BoundingHandle.NONE)
     var dragStartPos by mutableStateOf(Offset.Zero)
     var initialBounds by mutableStateOf<BoundingBox?>(null)
+    /** The box a drag is currently showing, in frame coordinates. Null except while a gesture is live. */
     var currentDragBounds by mutableStateOf<BoundingBox?>(null)
-    var currentRotateAngle by mutableStateOf(0f)
-    var currentRotateCenter by mutableStateOf<Offset?>(null)
+
+    /**
+     * The transform frame's orientation in degrees. The box is a rectangle *inside* this frame rather
+     * than a fresh axis-aligned hull of the selection — which is what lets rotate, then move, then scale
+     * read as one continuous Photoshop-style transform instead of three that each reset the box.
+     *
+     * Its lifetime is the tool's: leaving the TRANSFORM tool, Escape, or picking another object resets it
+     * to axis-aligned. A gesture committing does not.
+     */
+    var frameAngle by mutableStateOf(0f)
+        private set
+
+    /** The frame orientation and pivot frozen at press, so a drag is measured against one frame. */
+    private var frameAngleAtPress = 0f
+    private var framePivotAtPress = Offset.Zero
 
     /**
      * The layer SELECT picked on press. A marquee started on top of an object is still a marquee, so a
@@ -216,6 +266,8 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         activeHandle = BoundingHandle.NONE
         initialBounds = null
         endTransformBox()
+        // The frame belongs to the tool session, so cancelling is one of the two things that drop it.
+        frameAngle = 0f
         initialScreenPoints = emptyList()
     }
 
@@ -244,20 +296,41 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         shrinks = inflateInvert
     }
 
-    fun selectionBounds(viewport: CanvasViewport): BoundingBox? {
-        // Not gated on `dragging`: a transform drag keeps its own box past the mouse-up, until the commit
-        // it produced resolves. See endTransformBox.
-        if (currentDragBounds != null) return currentDragBounds
+    /**
+     * The frame the transform box lives in: the box itself, in frame coordinates, and the screen pivot
+     * the frame turns about.
+     *
+     * Everything downstream works in these coordinates, so an oriented box needs no special case — it is
+     * always an axis-aligned rectangle in a frame that happens to be turned.
+     *
+     * Not gated on `dragging`: a transform drag keeps its own box past the mouse-up, until the commit it
+     * produced resolves. See endTransformBox.
+     */
+    fun transformFrame(viewport: CanvasViewport): TransformFrame? {
+        val bounds = currentDragBounds
+        if (bounds != null) return TransformFrame(bounds, framePivotAtPress)
+        val points = selectionScreenPoints(viewport) ?: return null
+        val pivot = pointCentroid(points)
+        val local = points.map { it.intoTransformFrame(pivot, frameAngle) }
+        return TransformFrame(
+            BoundingBox(local.minOf { it.x }, local.minOf { it.y }, local.maxOf { it.x }, local.maxOf { it.y }),
+            pivot,
+        )
+    }
+
+    private fun selectionScreenPoints(viewport: CanvasViewport): List<Offset>? {
         val targets = if (objectMode) objects.mapNotNull { target(model, it, null) }.ifEmpty { listOfNotNull(target()) } else listOfNotNull(target())
         if (targets.isEmpty()) return null
-        val allScreenPoints = targets.flatMap { screen(it.geometry.points, it, viewport) }
-        if (allScreenPoints.isEmpty()) return null
-        val minX = allScreenPoints.minOf { it.x }
-        val maxX = allScreenPoints.maxOf { it.x }
-        val minY = allScreenPoints.minOf { it.y }
-        val maxY = allScreenPoints.maxOf { it.y }
-        return BoundingBox(minX, minY, maxX, maxY)
+        return targets.flatMap { screen(it.geometry.points, it, viewport) }.ifEmpty { null }
     }
+
+    /**
+     * The pivot is the centroid, not the hull's centre: a rotation leaves the centroid where it is, so an
+     * oriented frame turns in place instead of swinging as its bounding hull changes shape.
+     */
+    private fun pointCentroid(points: List<Offset>) =
+        Offset(points.map { it.x }.average().toFloat(), points.map { it.y }.average().toFloat())
+
 
     private fun hitBoundingHandle(pos: Offset, bounds: BoundingBox): BoundingHandle {
         if ((pos - bounds.rotateHandlePos).getDistance() <= 9f) return BoundingHandle.ROTATE
@@ -282,10 +355,11 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
      * resolved here, and it has to be resolved *before* any artwork hit test: a multi-object
      * selection has holes in its box, and a click in one of them is a move, not a re-pick.
      */
-    private fun transformHandleAt(pos: Offset, bounds: BoundingBox): BoundingHandle {
-        val handle = hitBoundingHandle(pos, bounds)
+    private fun transformHandleAt(pos: Offset, frame: TransformFrame): BoundingHandle {
+        val local = pos.intoTransformFrame(frame.pivot, frameAngle)
+        val handle = hitBoundingHandle(local, frame.bounds)
         if (handle != BoundingHandle.NONE) return handle
-        return if (pos.x in bounds.minX..bounds.maxX && pos.y in bounds.minY..bounds.maxY) BoundingHandle.BODY
+        return if (local.x in frame.bounds.minX..frame.bounds.maxX && local.y in frame.bounds.minY..frame.bounds.maxY) BoundingHandle.BODY
         else BoundingHandle.NONE
     }
 
@@ -314,8 +388,8 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             }
             CanvasTool.TRANSFORM -> {
                 hoveredVertex = null
-                val bounds = selectionBounds(viewport)
-                hoveredHandle = if (bounds != null) transformHandleAt(pos, bounds) else BoundingHandle.NONE
+                val frame = transformFrame(viewport)
+                hoveredHandle = if (frame != null) transformHandleAt(pos, frame) else BoundingHandle.NONE
                 // Outside the box a press re-picks, so the cursor has to promise that too.
                 isHoveringObject = hoveredHandle == BoundingHandle.NONE && layerCandidates(pos, viewport).isNotEmpty()
             }
@@ -543,8 +617,6 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
      */
     private fun endTransformBox() {
         currentDragBounds = null
-        currentRotateAngle = 0f
-        currentRotateCenter = null
     }
 
     /** What a transform gesture edits: the object selection, or the hierarchy target when there is none. */
@@ -555,7 +627,9 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
      * Freezes the pose a transform gesture is about to edit. The handle grab and the body move both
      * start here and differ only in the handle they latch.
      */
-    private fun beginTransformDrag(source: PuppetModel, targets: List<CanvasTarget>, handle: BoundingHandle, bounds: BoundingBox?, viewport: CanvasViewport) {
+    private fun beginTransformDrag(source: PuppetModel, targets: List<CanvasTarget>, handle: BoundingHandle, frame: TransformFrame?, viewport: CanvasViewport) {
+        val bounds = frame?.bounds
+        val pivot = frame?.pivot ?: Offset.Zero
         activeHandle = handle
         original = source
         objectTargets = targets
@@ -563,8 +637,8 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         initialBounds = bounds
         initialScreenPoints = targets.map { screen(it.geometry.points, it, viewport) }
         currentDragBounds = bounds
-        currentRotateAngle = 0f
-        currentRotateCenter = bounds?.let { Offset(it.centerX, it.centerY) }
+        frameAngleAtPress = frameAngle
+        framePivotAtPress = pivot
         dragging = true
     }
 
@@ -598,18 +672,16 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             activeHandle = BoundingHandle.NONE
             initialBounds = null
             currentDragBounds = null
-            currentRotateAngle = 0f
-            currentRotateCenter = null
             initialScreenPoints = emptyList()
             return true
         }
 
         if (tool == CanvasTool.TRANSFORM) {
             val source = state.previewModel?.rig?.puppet ?: return true
-            val bounds = selectionBounds(viewport)
-            val handle = if (bounds != null) transformHandleAt(pos, bounds) else BoundingHandle.NONE
-            if (bounds != null && handle != BoundingHandle.NONE) {
-                beginTransformDrag(source, transformTargets(source), handle, bounds, viewport)
+            val frame = transformFrame(viewport)
+            val handle = if (frame != null) transformHandleAt(pos, frame) else BoundingHandle.NONE
+            if (frame != null && handle != BoundingHandle.NONE) {
+                beginTransformDrag(source, transformTargets(source), handle, frame, viewport)
                 return true
             }
             // Nothing to grab: pick the layer under the cursor and drag that. Alt and Shift only edit the
@@ -624,7 +696,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             }
             if (state.selectedLayerId != hit && !alt) viewModel.selectLayer(hit)
             if (alt) return true
-            beginTransformDrag(source, transformTargets(source), BoundingHandle.BODY, selectionBounds(viewport), viewport)
+            beginTransformDrag(source, transformTargets(source), BoundingHandle.BODY, transformFrame(viewport), viewport)
             return true
         }
 
@@ -725,11 +797,19 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                 val b0 = initialBounds ?: return
                 val targets = objectTargets.ifEmpty { listOfNotNull(t) }
                 if (targets.isEmpty() || initialScreenPoints.size != targets.size) return
-                val dx = pos.x - start.x
-                val dy = pos.y - start.y
-                // The axis lock constrains the body drag only — scaling stays free in both directions.
-                val moveDx = if (axis == "y") 0f else dx
-                val moveDy = if (axis == "x") 0f else dy
+                // The axis lock is a screen-space promise — "move horizontally" has to mean the screen's
+                // horizontal whatever the frame is turned to — so it constrains the pointer delta before
+                // that delta is rotated into the frame.
+                val screenDelta = Offset(
+                    if (axis == "y") 0f else pos.x - start.x,
+                    if (axis == "x") 0f else pos.y - start.y,
+                )
+                // Everything the box does is in frame coordinates. A body move is the exception: the
+                // artwork itself follows the pointer, so it translates by the screen delta.
+                val frameDelta = screenDelta.rotateVector(-frameAngleAtPress)
+                val pivot = framePivotAtPress
+                val dx = frameDelta.x
+                val dy = frameDelta.y
 
                 val isRotate = activeHandle == BoundingHandle.ROTATE
                 val isBodyMove = activeHandle == BoundingHandle.BODY
@@ -737,12 +817,12 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                 val h0 = b0.height.coerceAtLeast(1f)
 
                 if (isBodyMove) {
-                    currentDragBounds = BoundingBox(b0.minX + moveDx, b0.minY + moveDy, b0.maxX + moveDx, b0.maxY + moveDy)
+                    currentDragBounds = BoundingBox(b0.minX + dx, b0.minY + dy, b0.maxX + dx, b0.maxY + dy)
                     pendingObjects = targets.mapIndexed { itemIndex, item ->
                         val world = item.mapping.localToWorld(item.geometry.points)
                         val pts0 = initialScreenPoints[itemIndex]
                         for (i in pts0.indices) {
-                            val dest = pts0[i] + Offset(moveDx, moveDy)
+                            val dest = pts0[i] + screenDelta
                             world[i * 2] = ((dest.x - viewport.offsetX) / viewport.scale).toFloat()
                             world[i * 2 + 1] = -((dest.y - viewport.offsetY) / viewport.scale).toFloat()
                         }
@@ -753,13 +833,14 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                 }
 
                 if (isRotate) {
-                    val center = Offset(b0.centerX, b0.centerY)
-                    val angle0 = atan2(start.y - center.y, start.x - center.x)
-                    val angle1 = atan2(pos.y - center.y, pos.x - center.x)
+                    // Measured about the frame pivot in screen space, and accumulated onto the angle the
+                    // frame already had: the box turns with the pointer while keeping its size, because
+                    // the frame carries the orientation and the box inside it never changes.
+                    val angle0 = atan2(start.y - pivot.y, start.x - pivot.x)
+                    val angle1 = atan2(pos.y - pivot.y, pos.x - pivot.x)
                     var deltaAngle = angle1 - angle0
                     if (shift) deltaAngle = (deltaAngle / (PI.toFloat() / 12)).roundToInt() * (PI.toFloat() / 12)
-                    currentRotateAngle = deltaAngle
-                    currentRotateCenter = center
+                    frameAngle = frameAngleAtPress + Math.toDegrees(deltaAngle.toDouble()).toFloat()
                     val cosA = cos(deltaAngle)
                     val sinA = sin(deltaAngle)
 
@@ -767,8 +848,8 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                         val world = item.mapping.localToWorld(item.geometry.points)
                         val pts0 = initialScreenPoints[itemIndex]
                         for (i in pts0.indices) {
-                            val d = pts0[i] - center
-                            val dest = center + Offset(d.x * cosA - d.y * sinA, d.x * sinA + d.y * cosA)
+                            val d = pts0[i] - pivot
+                            val dest = pivot + Offset(d.x * cosA - d.y * sinA, d.x * sinA + d.y * cosA)
                             world[i * 2] = ((dest.x - viewport.offsetX) / viewport.scale).toFloat()
                             world[i * 2 + 1] = -((dest.y - viewport.offsetY) / viewport.scale).toFloat()
                         }
@@ -866,10 +947,13 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                     val world = item.mapping.localToWorld(item.geometry.points)
                     val pts0 = initialScreenPoints[itemIndex]
                     for (i in pts0.indices) {
-                        val p0 = pts0[i]
+                        // Scaling happens along the frame's own axes, so the source points are read in the
+                        // frame and the result is turned back out of it. That is what makes dragging a
+                        // corner of a rotated box stretch along the box rather than along the screen.
+                        val p0 = pts0[i].intoTransformFrame(pivot, frameAngleAtPress)
                         val u = (p0.x - b0.minX) / w0
                         val v = (p0.y - b0.minY) / h0
-                        val dest = Offset(newMinX + u * newW, newMinY + v * newH)
+                        val dest = Offset(newMinX + u * newW, newMinY + v * newH).outOfTransformFrame(pivot, frameAngleAtPress)
                         world[i * 2] = ((dest.x - viewport.offsetX) / viewport.scale).toFloat()
                         world[i * 2 + 1] = -((dest.y - viewport.offsetY) / viewport.scale).toFloat()
                     }

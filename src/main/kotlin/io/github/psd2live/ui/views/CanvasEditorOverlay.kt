@@ -69,11 +69,12 @@ internal fun BoxScope.CanvasEditorOverlay(
         //    SELECT draws nothing here — its selection is already shown by the selection-bounds overlay,
         //    which the View menu owns; a second outline around the same object just reads as two.
         if (editor.tool == CanvasTool.TRANSFORM) {
-            val bounds = editor.selectionBounds(viewport)
-            if (bounds != null) {
-                val rotateAngleDeg = Math.toDegrees(editor.currentRotateAngle.toDouble()).toFloat()
-                val rotatePivot = editor.currentRotateCenter ?: Offset(bounds.centerX, bounds.centerY)
-                rotate(rotateAngleDeg, rotatePivot) {
+            val frame = editor.transformFrame(viewport)
+            if (frame != null) {
+                val bounds = frame.bounds
+                // The box is drawn inside the frame it was measured in, so an oriented box is still just
+                // a rectangle here — the rotation lives in this one transform, not in the geometry below.
+                rotate(editor.frameAngle, frame.pivot) {
                     // Main bounding box rectangle
                     drawRect(
                         color = colors.accent,
@@ -144,10 +145,11 @@ internal fun BoxScope.CanvasEditorOverlay(
             // Axis lock guide. The constraint is a keyboard latch with no persistent on-screen state, so
             // without this the drag just silently refuses one of the two directions.
             val axis = editor.axis
-            val guide = editor.currentDragBounds ?: editor.selectionBounds(viewport)
-            if (axis != null && editor.inGesture && guide != null) {
+            if (axis != null && editor.inGesture && frame != null) {
                 val span = size.width + size.height
-                val center = Offset(guide.centerX, guide.centerY)
+                // The pivot, not the box centre: it is already a screen point, while the box is expressed
+                // in the frame and would need turning back out of it.
+                val center = frame.pivot
                 val from = if (axis == "x") Offset(center.x - span, center.y) else Offset(center.x, center.y - span)
                 val to = if (axis == "x") Offset(center.x + span, center.y) else Offset(center.x, center.y + span)
                 drawLine(colors.warning.copy(alpha = 0.7f), from, to, 1.2f)
