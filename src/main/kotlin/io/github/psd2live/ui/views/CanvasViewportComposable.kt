@@ -91,6 +91,7 @@ import io.github.psd2live.ui.state.ShortcutAction
 import io.github.psd2live.ui.state.ShortcutScope
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.isActive
 import org.umamo.render.eval.DeformedGeometry
@@ -99,7 +100,11 @@ import java.awt.Cursor
 import java.awt.Graphics2D
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.pow
+
+/** How long a paused preview keeps rendering after a pointer change, so the eased follow settles. */
+private const val PAUSED_TRACKING_SETTLE_NANOS = 750_000_000L
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -123,6 +128,11 @@ fun CanvasViewportComposable(
 	var lastDragPos by remember { mutableStateOf(Offset.Zero) }
 	var fps by remember { mutableStateOf(0f) }
 	val fpsCounter = remember { ActualFpsCounter() }
+	// A paused preview still follows the pointer, so the frame pump must stay awake for a moment
+	// after every pointer change instead of rendering the single frame a pause asks for. A plain
+	// AtomicLong rather than snapshot state: only the pump coroutine reads it.
+	val lastPointerActivityNanos = remember { AtomicLong(0L) }
+	val pointerActivity = remember { Channel<Unit>(Channel.CONFLATED) }
 
 	val editor = remember(state.projectOpenGeneration) { CanvasEditor(viewModel) }
 
@@ -160,6 +170,14 @@ fun CanvasViewportComposable(
 	val checkerboardBrush = remember(colors.checkerLight, colors.checkerDark) {
 		createCheckerboardBrush(colors.checkerLight, colors.checkerDark)
 	}
+	// One pose for the whole tab: artwork, diagnostic geometry and hit-testing. A paused preview
+	// is still live here, because the follow keeps moving the pose after the motion stops.
+	val informationPose = informationPreviewPose(
+		state.parameterValues,
+		state.previewParameterValues,
+		sdkFrame,
+		state.animationEnabled || (mode == CanvasMode.PREVIEW && state.mouseTrackingEnabled),
+	)
 	val currentZoom by rememberUpdatedState(zoom)
 	val currentPanX by rememberUpdatedState(panX)
 	val currentPanY by rememberUpdatedState(panY)
@@ -174,6 +192,12 @@ fun CanvasViewportComposable(
 				if (measured != null) fps = measured
 			}
 		}
+	}
+
+	/** Marks a pointer change a paused preview has to render (see the frame pump). */
+	fun notePointerActivity() {
+		lastPointerActivityNanos.set(System.nanoTime())
+		pointerActivity.trySend(Unit)
 	}
 
 	fun resetCamera() {
@@ -219,38 +243,10 @@ fun CanvasViewportComposable(
 
 	// Vsync-driven frame pump. Cubism conflates requests while busy, so the newest
 	// parameters are rendered next without building latency in a callback queue.
-	LaunchedEffect(mode, previewModel, state.animationEnabled, viewSize, currentZoom, currentPanX, currentPanY, state.parameterValues) {
+	LaunchedEffect(mode, previewModel, state.animationEnabled, state.mouseTrackingEnabled, viewSize, currentZoom, currentPanX, currentPanY, state.parameterValues) {
 		if (previewModel != null && viewSize.width > 0 && viewSize.height > 0) {
 			if (mode == CanvasMode.PREVIEW) {
-				if (state.animationEnabled) {
-					var previousFrameNanos = 0L
-					while (isActive) {
-						val frameNanos = withFrameNanos { it }
-						val deltaTime = if (previousFrameNanos == 0L) {
-							1f / 60f
-						} else {
-							((frameNanos - previousFrameNanos) / 1_000_000_000f).coerceIn(0.001f, 0.1f)
-						}
-						previousFrameNanos = frameNanos
-						val sdkVp = computeCubismViewport(
-							previewModel,
-							viewSize.width,
-							viewSize.height,
-							currentZoom,
-							currentPanX,
-							currentPanY,
-						)
-						viewModel.requestSdkFrame(
-							viewSize.width,
-							viewSize.height,
-							sdkVp.scale,
-							sdkVp.offsetX,
-							sdkVp.offsetY,
-							deltaTime,
-							frameNanos,
-						)
-					}
-				} else {
+				fun requestFrame(deltaTime: Float, frameNanos: Long) {
 					val sdkVp = computeCubismViewport(
 						previewModel,
 						viewSize.width,
@@ -265,9 +261,38 @@ fun CanvasViewportComposable(
 						sdkVp.scale,
 						sdkVp.offsetX,
 						sdkVp.offsetY,
-						0f,
-						System.nanoTime(),
+						deltaTime,
+						frameNanos,
 					)
+				}
+				if (state.animationEnabled) {
+					var previousFrameNanos = 0L
+					while (isActive) {
+						val frameNanos = withFrameNanos { it }
+						val deltaTime = if (previousFrameNanos == 0L) {
+							1f / 60f
+						} else {
+							((frameNanos - previousFrameNanos) / 1_000_000_000f).coerceIn(0.001f, 0.1f)
+						}
+						previousFrameNanos = frameNanos
+						requestFrame(deltaTime, frameNanos)
+					}
+				} else {
+					requestFrame(0f, System.nanoTime())
+					// Pausing stops the motion, not the follow: Cubism applies the pointer's look
+					// offsets without advancing the clock, and the UI eases them in over ~0.5s. So
+					// render until that settle window closes instead of the single frame a pause
+					// used to ask for, which froze the pose mid-turn. Sleeping on the channel keeps
+					// an untouched preview from waking up every vsync.
+					while (isActive && state.mouseTrackingEnabled) {
+						pointerActivity.receive()
+						while (isActive &&
+							System.nanoTime() - lastPointerActivityNanos.get() <= PAUSED_TRACKING_SETTLE_NANOS
+						) {
+							requestFrame(0f, System.nanoTime())
+							withFrameNanos { it }
+						}
+					}
 				}
 			}
 		}
@@ -391,7 +416,10 @@ fun CanvasViewportComposable(
 				if (event.button == PointerButton.Primary || event.button == PointerButton.Tertiary) {
 					isDragging = true
 					lastDragPos = change.position
-					if (mode == CanvasMode.PREVIEW) viewModel.clearPointer()
+					// Pressing deliberately leaves the look alone. It used to hand the pointer back
+					// to the idle pose, which snapped the character's head to neutral on every click
+					// and on the first frame of every pan; the follow already freezes on its own
+					// while a drag is in flight, and Exit is what returns the pose to rest.
 				}
 			}
 			.onPointerEvent(PointerEventType.Release) { event ->
@@ -414,7 +442,9 @@ fun CanvasViewportComposable(
 					if (mode == CanvasMode.PREVIEW && event.button == PointerButton.Primary && change != null && (change.position - lastDragPos).getDistance() < 6f) {
 						if (state.clickToSelectLayer && previewModel != null && onLayerClicked != null) {
 							val viewport = computeViewport(previewModel, viewSize.width, viewSize.height)
-							val geometry = RigCanvasSupport.evaluate(previewModel, state.effectivePose(CanvasMode.PREVIEW))
+							// Hit the pose that is on screen, not the last animated one: a paused
+							// preview still follows the pointer, so the two drift apart.
+							val geometry = RigCanvasSupport.evaluate(previewModel, informationPose)
 							val drawableBounds = RigCanvasSupport.boundsByDrawable(geometry)
 							val hit = RigCanvasSupport.hitLayer(
 								model = previewModel,
@@ -436,6 +466,8 @@ fun CanvasViewportComposable(
 				editor.clearHover()
                 if (mode == CanvasMode.PREVIEW) {
 					viewModel.clearPointer()
+					// One last frame puts the pose back to neutral now that the look is gone.
+					notePointerActivity()
 				}
 			}
 			.onPointerEvent(PointerEventType.Move) { event ->
@@ -462,6 +494,7 @@ fun CanvasViewportComposable(
 					val normX = ((change.position.x - viewSize.width * 0.5f) / (viewSize.width * 0.5f).coerceAtLeast(1f)).coerceIn(-1f, 1f)
 					val normY = ((change.position.y - viewSize.height * 0.5f) / (viewSize.height * 0.5f).coerceAtLeast(1f)).coerceIn(-1f, 1f)
 					viewModel.updatePointer(normX, normY)
+					notePointerActivity()
 				}
 			}
 			.onPointerEvent(PointerEventType.Scroll) { event ->
@@ -484,9 +517,6 @@ fun CanvasViewportComposable(
 			}
 
 			val viewport = computeViewport(model, w, h)
-			// Draw artwork and its diagnostic geometry from the same pose and camera. Native
-			// frames use a different camera and publish UI parameter values at a lower frequency.
-			val informationPose = informationPreviewPose(state.parameterValues, state.previewParameterValues, sdkFrame, state.animationEnabled)
 
 			// 2. Draw canvas boundary
 			drawRect(
@@ -833,7 +863,10 @@ fun CanvasViewportComposable(
 				Box(
 					modifier = Modifier
 						.align(Alignment.BottomEnd)
-						.padding(end=10.dp,bottom=if(mode==CanvasMode.EDIT)32.dp else 10.dp)
+						// Each tab's bottom bar owns the bottom strip: the editor's footer in Edit,
+						// the preview's floating toolbar in Preview. The badge sits above whichever
+						// one is showing instead of on top of it.
+						.padding(end = 10.dp, bottom = if (mode == CanvasMode.EDIT) 32.dp else 48.dp)
 						.background(Color(0xCC181A1E), RoundedCornerShape(4.dp))
 						.padding(horizontal = 8.dp, vertical = 4.dp),
 				) {

@@ -2283,7 +2283,7 @@ class PSD2LiveViewModel : AutoCloseable {
 						_state.update { latest ->
 							if (latest.activeTabKind != WorkspaceTabKind.PREVIEW) latest
 							else {
-								val mergedValues = parameterValuesAfterSoftwareFrame(latest, liveParams)
+								val mergedValues = parameterValuesAfterSoftwareFrame(latest, liveParams, pointerActive)
 								if (mergedValues === latest.previewParameterValues) latest
 								else latest.copy(previewParameterValues = mergedValues)
 							}
@@ -2517,18 +2517,50 @@ internal fun parameterValuesAfterPreviewFrame(
 	}
 }
 
+/**
+ * Parameters the pointer drives. A paused preview still follows the mouse, and the live map holds
+ * nothing but those angles then -- merging the whole map would overwrite the pose the user is
+ * inspecting (breath, mouth, eyes) with the neutral values a paused motion reports.
+ */
+private val POINTER_POSE_PARAMETERS = setOf(
+	StandardParameters.ANGLE_X,
+	StandardParameters.ANGLE_Y,
+	StandardParameters.BODY_X,
+	StandardParameters.BODY_Y,
+	StandardParameters.EYE_BALL_X,
+	StandardParameters.EYE_BALL_Y,
+)
+
 internal fun parameterValuesAfterSoftwareFrame(
 	state: PSD2LiveState,
 	incoming: Map<ParameterId, Float>,
+	pointerActive: Boolean,
 ): Map<ParameterId, Float> {
 	val base = state.previewParameterValues.ifEmpty { state.parameterValues }
-	return if (state.animationEnabled && state.sdkStatus != "ready" && !state.meshOnly) {
-		mergeUnlockedParameterValues(base, incoming, state.lockedParameters)
-	} else if (state.meshOnly) {
-		val defaults = state.previewModel?.rig?.puppet?.parameters?.associate { it.id to it.default } ?: emptyMap()
-		mergeUnlockedParameterValues(base, defaults, state.lockedParameters)
-	} else {
-		base
+	return when {
+		state.meshOnly -> {
+			val defaults = state.previewModel?.rig?.puppet?.parameters?.associate { it.id to it.default } ?: emptyMap()
+			mergeUnlockedParameterValues(base, defaults, state.lockedParameters)
+		}
+		state.sdkStatus != "ready" && state.animationEnabled ->
+			mergeUnlockedParameterValues(base, incoming, state.lockedParameters)
+		// A paused preview still follows the pointer, but with the pointer gone the live map reads
+		// neutral: publishing the edit pose itself is what keeps a parameter the user is inspecting
+		// from being flattened to zero, and keeps the canvas off a stale animated map.
+		state.sdkStatus != "ready" && !state.animationEnabled && !pointerActive -> state.parameterValues
+		state.sdkStatus != "ready" && !state.animationEnabled -> {
+			// Merge onto the current edit values, never onto the previous preview pose, or a
+			// parameter edited while paused would be masked by the map published a tick earlier.
+			val tracked = mergeUnlockedParameterValues(
+				state.parameterValues,
+				incoming.filterKeys { it in POINTER_POSE_PARAMETERS },
+				state.lockedParameters,
+			)
+			// A parked pointer merges to the pose already published; returning the old map keeps a
+			// paused preview from copying an identical one on every tick.
+			if (tracked == base) base else tracked
+		}
+		else -> base
 	}
 }
 

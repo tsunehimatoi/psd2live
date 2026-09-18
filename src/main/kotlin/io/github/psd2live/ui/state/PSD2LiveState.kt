@@ -317,18 +317,6 @@ data class PSD2LiveState(
 	fun updateActiveTab(transform: (WorkspaceTabState) -> WorkspaceTabState): PSD2LiveState =
 		updateTab(activeWorkspaceTab.id, transform)
 
-	/**
-	 * Returns the appropriate parameter pose for the given canvas mode.
-	 * EDIT mode always evaluates against the canonical user edit pose ([parameterValues]).
-	 * PREVIEW mode evaluates against live dynamic preview values ([previewParameterValues]) if active.
-	 */
-	fun effectivePose(mode: CanvasMode = activeTabKind.canvasMode ?: CanvasMode.EDIT): Map<ParameterId, Float> =
-		if (mode == CanvasMode.PREVIEW && (animationEnabled || previewParameterValues.isNotEmpty())) {
-			previewParameterValues.ifEmpty { parameterValues }
-		} else {
-			parameterValues
-		}
-
 	fun buildConfig(): PipelineConfig {
 		val hasAnyMotion = motionIdle || motionBlink || motionNod || motionShake
 		val hasAnyPhysics = physicsFrontHair || physicsBackHair || physicsEyeJelly || rigEdits.physicsEdits.isNotEmpty()
