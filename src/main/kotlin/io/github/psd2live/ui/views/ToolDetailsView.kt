@@ -228,74 +228,7 @@ internal fun ToolDetailsView(
                 }
             }
 
-            CanvasTool.TRANSFORM -> {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = tr("editor.preciseTransform"),
-                        style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
-                        color = colors.textPrimary,
-                    )
-
-                    if (target == null) {
-                        Text(
-                            text = tr("editor.select"),
-                            style = typography.caption.copy(fontSize = 10.5.sp),
-                            color = colors.textMuted,
-                        )
-                    }
-
-                    var posX by remember { mutableStateOf(0.0) }
-                    var posY by remember { mutableStateOf(0.0) }
-                    var scaleVal by remember { mutableStateOf(100.0) }
-                    var rotateVal by remember { mutableStateOf(0.0) }
-
-                    // Move row
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        CompactNumberSpinner(posX, { posX = it }, Modifier.weight(1f), min = -10000.0, max = 10000.0, decimals = 1, unit = "X", height = 24.dp)
-                        CompactNumberSpinner(posY, { posY = it }, Modifier.weight(1f), min = -10000.0, max = 10000.0, decimals = 1, unit = "Y", height = 24.dp)
-                        CompactButton(
-                            text = tr("editor.apply"),
-                            onClick = { editor.preciseTransform(first = posX.toFloat(), second = posY.toFloat()) },
-                            enabled = editor.editable && target != null && (posX != 0.0 || posY != 0.0),
-                            height = 24.dp,
-                        )
-                    }
-
-                    // Scale row
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        CompactNumberSpinner(scaleVal, { scaleVal = it }, Modifier.weight(1f), min = 0.1, max = 10000.0, decimals = 1, unit = "%", height = 24.dp)
-                        CompactButton(
-                            text = tr("editor.apply"),
-                            onClick = { editor.preciseTransform(first = scaleVal.toFloat(), scaleMode = true) },
-                            enabled = editor.editable && target != null && scaleVal != 100.0,
-                            height = 24.dp,
-                        )
-                    }
-
-                    // Rotate row
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        CompactNumberSpinner(rotateVal, { rotateVal = it }, Modifier.weight(1f), min = -360.0, max = 360.0, decimals = 1, unit = "°", height = 24.dp)
-                        CompactButton(
-                            text = tr("editor.apply"),
-                            onClick = { editor.preciseTransform(first = rotateVal.toFloat(), rotateMode = true) },
-                            enabled = editor.editable && target != null && rotateVal != 0.0,
-                            height = 24.dp,
-                        )
-                    }
-                }
-            }
+            CanvasTool.TRANSFORM -> PreciseTransformColumn(editor)
 
             CanvasTool.MESH -> {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -333,6 +266,9 @@ internal fun ToolDetailsView(
                             )
                         }
                     }
+
+                    Divider(color = colors.divider, thickness = 0.8.dp)
+                    PreciseTransformColumn(editor)
                 }
             }
 
@@ -359,6 +295,9 @@ internal fun ToolDetailsView(
                             height = 25.dp,
                         )
                     }
+
+                    Divider(color = colors.divider, thickness = 0.8.dp)
+                    PreciseTransformColumn(editor)
                 }
             }
 
@@ -680,6 +619,87 @@ internal fun ToolDetailsView(
                     height = 26.dp,
                 )
             }
+        }
+    }
+}
+
+/**
+ * The numeric transform, shared by TRANSFORM, MESH and WARP so all three edit a multi-point selection
+ * through the same controls and — because preciseTransform centres on the same pivot the box does —
+ * about the same point.
+ *
+ * The pending values live here rather than on the editor, so leaving the tool and coming back starts
+ * from the identity again.
+ */
+@Composable
+private fun PreciseTransformColumn(editor: CanvasEditor) {
+    val colors = LocalToolColors.current
+    val typography = LocalToolTypography.current
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = tr("editor.preciseTransform"),
+            style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
+            color = colors.textPrimary,
+        )
+
+        if (!editor.hasTransformSelection) {
+            Text(
+                text = tr("editor.select"),
+                style = typography.caption.copy(fontSize = 10.5.sp),
+                color = colors.textMuted,
+            )
+        }
+
+        var posX by remember { mutableStateOf(0.0) }
+        var posY by remember { mutableStateOf(0.0) }
+        var scaleVal by remember { mutableStateOf(100.0) }
+        var rotateVal by remember { mutableStateOf(0.0) }
+
+        // Move row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            CompactNumberSpinner(posX, { posX = it }, Modifier.weight(1f), min = -10000.0, max = 10000.0, decimals = 1, unit = "X", height = 24.dp)
+            CompactNumberSpinner(posY, { posY = it }, Modifier.weight(1f), min = -10000.0, max = 10000.0, decimals = 1, unit = "Y", height = 24.dp)
+            CompactButton(
+                text = tr("editor.apply"),
+                onClick = { editor.preciseTransform(first = posX.toFloat(), second = posY.toFloat()) },
+                enabled = editor.editable && editor.hasTransformSelection && (posX != 0.0 || posY != 0.0),
+                height = 24.dp,
+            )
+        }
+
+        // Scale row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            CompactNumberSpinner(scaleVal, { scaleVal = it }, Modifier.weight(1f), min = 0.1, max = 10000.0, decimals = 1, unit = "%", height = 24.dp)
+            CompactButton(
+                text = tr("editor.apply"),
+                onClick = { editor.preciseTransform(first = scaleVal.toFloat(), scaleMode = true) },
+                enabled = editor.editable && editor.hasTransformSelection && scaleVal != 100.0,
+                height = 24.dp,
+            )
+        }
+
+        // Rotate row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            CompactNumberSpinner(rotateVal, { rotateVal = it }, Modifier.weight(1f), min = -360.0, max = 360.0, decimals = 1, unit = "°", height = 24.dp)
+            CompactButton(
+                text = tr("editor.apply"),
+                onClick = { editor.preciseTransform(first = rotateVal.toFloat(), rotateMode = true) },
+                enabled = editor.editable && editor.hasTransformSelection && rotateVal != 0.0,
+                height = 24.dp,
+            )
         }
     }
 }

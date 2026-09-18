@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.key.*
 import io.github.psd2live.ui.CanvasEditor
 import io.github.psd2live.ui.CanvasTool
+import io.github.psd2live.ui.POINT_BOX_TOOLS
 import io.github.psd2live.ui.SelectionStyle
 import io.github.psd2live.ui.VERTEX_TOOLS
 import androidx.compose.ui.input.pointer.isShiftPressed
@@ -737,7 +738,10 @@ fun CanvasViewportComposable(
 					// while this one frames a single layer — so letting both draw stacks two different
 					// rectangles over the same artwork. The transform box wins: it is the one that is
 					// dragged. Every other tool leaves this as the only selection feedback.
-					val transformBoxOwnsSelection = mode == CanvasMode.EDIT && editor.tool == CanvasTool.TRANSFORM
+					val transformBoxOwnsSelection = mode == CanvasMode.EDIT && (
+						editor.tool == CanvasTool.TRANSFORM ||
+							(editor.tool in POINT_BOX_TOOLS && editor.vertices.isNotEmpty())
+						)
 					if (state.showSelectionBounds && !transformBoxOwnsSelection) {
 						state.selectedLayerId?.let { layerId ->
 							val drawableId = model.rig.layerIdByDrawableId.entries.firstOrNull { it.value == layerId }?.key
