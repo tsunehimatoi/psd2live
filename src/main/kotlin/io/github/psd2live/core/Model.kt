@@ -241,6 +241,7 @@ data class RigPreviewModel(
 	val rig: BuiltRig,
 	val config: PipelineConfig,
 	val runtimeBundle: CubismRuntimeBundle,
+	val baseRig: BuiltRig = rig,
 ) {
 	/** True only when this exact preview bundle contains an active Cubism physics sidecar. */
 	val hasRuntimePhysics: Boolean

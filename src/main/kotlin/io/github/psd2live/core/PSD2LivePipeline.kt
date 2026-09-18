@@ -50,9 +50,10 @@ class PSD2LivePipeline {
 	): RigPreviewModel {
         val effectiveAnalysis = MouthLipLayers.prepare(analysis, config)
         val atlas = AtlasPacker.pack(effectiveAnalysis.layers, config.atlasSize, config.texturePadding, config.textureUpscale, progress)
-		val rig = RigBuilder.build(effectiveAnalysis, atlas, config, meshCache).withRigEdits(config.rigEdits)
+		val baseRig = RigBuilder.build(effectiveAnalysis, atlas, config, meshCache)
+		val rig = baseRig.withRigEdits(config.rigEdits)
 		val runtimeBundle = buildRuntimeBundle("psd2live-preview", effectiveAnalysis, atlas, rig, config).first
-		return RigPreviewModel(effectiveAnalysis, atlas, rig, config, runtimeBundle)
+		return RigPreviewModel(effectiveAnalysis, atlas, rig, config, runtimeBundle, baseRig = baseRig)
 	}
 
 	/** Hierarchy-only edits retain textures but rebuild all parent-space geometry and keyforms. */
@@ -61,10 +62,11 @@ class PSD2LivePipeline {
 		config: PipelineConfig,
 		progress: ProgressListener = ProgressListener { _, _ -> },
 	): RigPreviewModel {
-		if (current.config.copy(parentOverrides = config.parentOverrides) == config) {
-			val rig = RigBuilder.build(current.analysis, current.atlas, config, meshCache).withRigEdits(config.rigEdits)
+		if (current.config.copy(parentOverrides = config.parentOverrides, rigEdits = config.rigEdits, drawOrderOverrides = config.drawOrderOverrides) == config) {
+			val baseRig = RigBuilder.build(current.analysis, current.atlas, config, meshCache)
+			val rig = baseRig.withRigEdits(config.rigEdits)
 			val bundle = buildRuntimeBundle("psd2live-preview", current.analysis, current.atlas, rig, config).first
-			return current.copy(rig = rig, config = config, runtimeBundle = bundle)
+			return current.copy(rig = rig, config = config, runtimeBundle = bundle, baseRig = baseRig)
 		}
 		val base = current.analysis.copy(layers = current.analysis.layers.filter { it.source !is MouthLipLayer })
 		return buildPreview(base, config, progress)
@@ -81,7 +83,33 @@ class PSD2LivePipeline {
 			return buildPreview(current.analysis, config, progress)
 		}
 		val (runtimeBundle, _) = buildRuntimeBundle(baseName, current.analysis, current.atlas, current.rig, config)
-		return current.copy(config = config, runtimeBundle = runtimeBundle)
+		return current.copy(config = config, runtimeBundle = runtimeBundle, baseRig = current.baseRig)
+	}
+
+	/** Fast incremental update for rig and keyform edits replayed onto the cached base rig. */
+	fun updateRigEdits(
+		current: RigPreviewModel,
+		config: PipelineConfig,
+		baseName: String = "psd2live-preview",
+	): RigPreviewModel {
+		val rig = current.baseRig.withRigEdits(config.rigEdits)
+		val (runtimeBundle, _) = buildRuntimeBundle(baseName, current.analysis, current.atlas, rig, config)
+		return current.copy(
+			rig = rig,
+			config = config,
+			runtimeBundle = runtimeBundle,
+			baseRig = current.baseRig,
+		)
+	}
+
+	fun canFastUpdateRig(
+		current: RigPreviewModel?,
+		source: SourceArt,
+		config: PipelineConfig,
+	): Boolean {
+		if (current == null) return false
+		if (current.analysis.source !== source && current.analysis.source != source) return false
+		return current.config.copy(rigEdits = config.rigEdits) == config
 	}
 
 	fun run(
@@ -130,8 +158,8 @@ class PSD2LivePipeline {
         val analysis = MouthLipLayers.prepare(inputAnalysis, config)
 		progress.update(tr("progress.classify"), 0.18)
 		val atlas = AtlasPacker.pack(analysis.layers, config.atlasSize, config.texturePadding, config.textureUpscale, progress)
-		progress.update(tr("progress.atlas"), 0.38)
-		val rig = RigBuilder.build(analysis, atlas, config).withRigEdits(config.rigEdits)
+		val baseRig = RigBuilder.build(analysis, atlas, config)
+		val rig = baseRig.withRigEdits(config.rigEdits)
 		val generatedLabel = tr("validation.generated")
 		val neutralRig = RigIntegrityValidator.validateNeutralPose(generatedLabel, rig.puppet, rig.sourceBoundsByDrawableId)
 		val generatedAngleWarnings = RigIntegrityValidator.validateHeadAnglePoses(generatedLabel, rig.puppet, neutralRig.boundsByDrawableId)
@@ -204,10 +232,10 @@ class PSD2LivePipeline {
 			files += writeContained(outputRoot, "$baseName.psd2live.json", report.encodeToByteArray())
 		}
 		progress.update(tr("progress.validated"), 1.0)
-		return PipelineResult(analysis, files, warnings, RigPreviewModel(analysis, atlas, rig, config, runtimeBundle))
+		return PipelineResult(analysis, files, warnings, RigPreviewModel(analysis, atlas, rig, config, runtimeBundle, baseRig = baseRig))
 	}
 
-	private fun buildRuntimeBundle(
+	internal fun buildRuntimeBundle(
 		baseName: String,
 		analysis: PipelineAnalysis,
 		atlas: PackedAtlas,

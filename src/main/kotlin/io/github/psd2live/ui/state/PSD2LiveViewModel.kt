@@ -404,6 +404,26 @@ class PSD2LiveViewModel : AutoCloseable {
 	private var elapsed = 0.0
 	private var lastTick = System.nanoTime()
 	private var lastSdkParameterPublishNanos = 0L
+	private var sdkSessionNeedsReload = false
+
+	private fun refreshSdkSession(preview: RigPreviewModel) {
+		if (_state.value.activeTabKind == WorkspaceTabKind.PREVIEW) {
+			sdkSession.load(preview.runtimeBundle, preview.rig.puppet.parameters.map { it.id })
+			sdkSessionNeedsReload = false
+		} else {
+			sdkSessionNeedsReload = true
+		}
+	}
+
+	private fun ensureSdkSessionLoaded() {
+		if (sdkSessionNeedsReload) {
+			val preview = _state.value.previewModel
+			if (preview != null) {
+				sdkSessionNeedsReload = false
+				sdkSession.load(preview.runtimeBundle, preview.rig.puppet.parameters.map { it.id })
+			}
+		}
+	}
 
 	private val sdkSession = CubismSdkPreviewSession(
 		onFrame = { frame ->
@@ -1114,7 +1134,12 @@ class PSD2LiveViewModel : AutoCloseable {
 				current.copy(activeWorkspaceTabId = id)
 			}
 		}
-		if (changed) markWorkspaceChanged()
+		if (changed) {
+			markWorkspaceChanged()
+			if (_state.value.activeTabKind == WorkspaceTabKind.PREVIEW) {
+				ensureSdkSessionLoaded()
+			}
+		}
 	}
 
 	/** Adds a tab after the last one of the same kind; [sourceTabId] duplicates that tab's view and camera. */
@@ -1132,6 +1157,9 @@ class PSD2LiveViewModel : AutoCloseable {
 		)
 		_state.update { it.copy(workspaceTabs = it.workspaceTabs + tab, activeWorkspaceTabId = tab.id) }
 		markWorkspaceChanged()
+		if (kind == WorkspaceTabKind.PREVIEW) {
+			ensureSdkSessionLoaded()
+		}
 		return tab.id
 	}
 
@@ -1170,6 +1198,9 @@ class PSD2LiveViewModel : AutoCloseable {
 			)
 		}
 		markWorkspaceChanged()
+		if (_state.value.activeTabKind == WorkspaceTabKind.PREVIEW) {
+			ensureSdkSessionLoaded()
+		}
 	}
 
 	/** Activates the existing history tab, or creates one when the workspace has none. */
@@ -1850,7 +1881,7 @@ class PSD2LiveViewModel : AutoCloseable {
 						parameterValues = preview.rig.puppet.parameters.associate { it.id to it.default },
 					)
 				}
-				sdkSession.load(preview.runtimeBundle, preview.rig.puppet.parameters.map { it.id })
+				refreshSdkSession(preview)
                 (agentWorkspace as? io.github.psd2live.agent.ViewModelAgentWorkspace)?.importedPsd()
                 _state.update { it.copy(isAnalyzing = false) }
 			} catch (failure: Throwable) {
@@ -1967,7 +1998,7 @@ class PSD2LiveViewModel : AutoCloseable {
 							successExportMessage = tr("dialog.exportSuccess", result.exportedFiles.size, output),
 						)
 				}
-				sdkSession.load(result.previewModel.runtimeBundle, result.previewModel.rig.puppet.parameters.map { it.id })
+				refreshSdkSession(result.previewModel)
 			} catch (failure: Throwable) {
                 if (failure is kotlinx.coroutines.CancellationException) throw failure
 				val detail = failure.message ?: failure.javaClass.simpleName
@@ -2078,9 +2109,20 @@ class PSD2LiveViewModel : AutoCloseable {
 		}
 	}
 
-	/** CPU-heavy rebuild used by the authenticated Agent transaction boundary. */
+	/** Fast incremental update or CPU rebuild used by the authenticated Agent transaction boundary. */
 	internal suspend fun buildAgentWorkspacePreview(source: SourceArt, config: PipelineConfig): RigPreviewModel =
-		runInterruptible(Dispatchers.Default) { pipeline.buildPreview(source, config) }
+		runInterruptible(Dispatchers.Default) {
+			val current = _state.value.previewModel
+			if (current != null && pipeline.canFastUpdateRig(current, source, config)) {
+				pipeline.updateRigEdits(current, config)
+			} else if (current != null && (current.analysis.source === source || current.analysis.source == source) &&
+				current.config.copy(parentOverrides = config.parentOverrides, rigEdits = config.rigEdits, drawOrderOverrides = config.drawOrderOverrides) == config
+			) {
+				pipeline.rebuildPreview(current, config)
+			} else {
+				pipeline.buildPreview(source, config)
+			}
+		}
 
     internal suspend fun sampleAgentMotion(bundle: io.github.psd2live.core.CubismRuntimeBundle,
                                           parameters: List<ParameterId>, frames: Int, fps: Int): List<Map<ParameterId, Float>> =
@@ -2147,7 +2189,7 @@ class PSD2LiveViewModel : AutoCloseable {
 	}
 
 	internal fun loadAgentWorkspacePreview(preview: RigPreviewModel) {
-		sdkSession.load(preview.runtimeBundle, preview.rig.puppet.parameters.map { it.id })
+		refreshSdkSession(preview)
 	}
 
 	private fun scheduleRuntimeBundleUpdate() {
@@ -2165,7 +2207,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				_state.update {
 					it.copy(previewModel = updated)
 				}
-				sdkSession.load(updated.runtimeBundle, updated.rig.puppet.parameters.map { it.id })
+				refreshSdkSession(updated)
 			} catch (failure: Throwable) {
                 if (failure is kotlinx.coroutines.CancellationException) throw failure
 				val detail = failure.message ?: failure.javaClass.simpleName
@@ -2258,7 +2300,7 @@ class PSD2LiveViewModel : AutoCloseable {
 						statusText = tr("status.layerChangesApplied"),
 					)
 				}
-				sdkSession.load(rebuilt.runtimeBundle, rebuilt.rig.puppet.parameters.map { it.id })
+				refreshSdkSession(rebuilt)
 			} catch (failure: Throwable) {
                 if (failure is kotlinx.coroutines.CancellationException) throw failure
 				val detail = failure.message ?: failure.javaClass.simpleName
@@ -2296,6 +2338,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			}
 			nextState
 		}
+		ensureSdkSessionLoaded()
 		sdkSession.startMotion(group, index = 0, priority = 3)
 		when (group.lowercase()) {
 			"nod" -> {
@@ -2561,6 +2604,9 @@ class PSD2LiveViewModel : AutoCloseable {
 		val current = _state.value
 		val model = current.previewModel ?: return
 		val inPreview = current.activeTabKind == WorkspaceTabKind.PREVIEW
+		if (inPreview && sdkSessionNeedsReload) {
+			ensureSdkSessionLoaded()
+		}
 		val isAnim = inPreview && current.animationEnabled && !current.meshOnly
 		val tracking = inPreview && current.mouseTrackingEnabled && !current.meshOnly
 		val liveParams = latestLiveParameters.ifEmpty {
