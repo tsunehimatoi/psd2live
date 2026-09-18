@@ -42,50 +42,51 @@ internal object RigInformationOverlay {
         val pointsById = warpPoints(model, parameters, ids)
         // Laid out once for the whole pass, because a mark's size depends on what else shares its corner.
         val corners = RigCanvasSupport.deformerCorners(RigCanvasSupport.deformerOutlines(model, pointsById), viewport)
-        for (w in model.deformers.filterIsInstance<Deformer.Warp>().filter { it.id.raw in ids }) {
-            val p = pointsById[w.id.raw] ?: continue
+        val layers = model.deformers.filterIsInstance<Deformer.Warp>().filter { it.id.raw in ids }.mapNotNull { w ->
+            val p = pointsById[w.id.raw] ?: return@mapNotNull null
             val isSelected = selectedDeformerId != null && w.id.raw == selectedDeformerId
             val isHovered = hoveredDeformerId != null && w.id.raw == hoveredDeformerId && !isSelected
             // Nothing selected means every warp is "unselected", so the whole rig guide fades to a
             // background hint instead of covering the artwork.
             val isDimmed = dimUnselected && !isSelected && !isHovered
             val baseColor = ComponentPalette.strong(w.id.raw)
-            val strokeWidth = when {
-                isSelected -> 2.2f
-                isHovered -> 1.8f
-                isDimmed -> 0.7f
-                else -> 1.3f
-            }
-            val wireColor = when {
-                isSelected -> baseColor.brighter()
-                isHovered -> Color(0, 210, 255, 230)
-                // The faded guide was faint enough to read as absent, which made an unselected rig look
-                // like it had no deformers at all. It stays a background hint, just a legible one.
-                isDimmed -> Color(baseColor.red, baseColor.green, baseColor.blue, 90)
-                else -> baseColor
-            }
+            WarpLayer(
+                warp = w,
+                points = p,
+                baseColor = baseColor,
+                wireColor = when {
+                    isSelected -> baseColor.brighter()
+                    isHovered -> Color(0, 210, 255, 230)
+                    // The faded guide was faint enough to read as absent, which made an unselected rig
+                    // look like it had no deformers at all. It stays a background hint, just a legible one.
+                    isDimmed -> Color(baseColor.red, baseColor.green, baseColor.blue, 90)
+                    else -> baseColor
+                },
+                strokeWidth = when {
+                    isSelected -> 2.2f
+                    isHovered -> 1.8f
+                    isDimmed -> 0.7f
+                    else -> 1.3f
+                },
+                pointRadius = if (isSelected || isHovered) 3 else if (isDimmed) 1 else 2,
+                isActive = isSelected || isHovered,
+                isDimmed = isDimmed,
+            )
+        }
 
+        // Pass 1: the rig itself - every lattice, every control point, every corner mark.
+        for (layer in layers) {
+            val w = layer.warp
+            val p = layer.points
             fun x(i: Int) = viewport.x(p[i * 2]).toInt()
             fun y(i: Int) = viewport.yFromWorld(p[i * 2 + 1]).toInt()
-            g.color = wireColor
-            g.stroke = BasicStroke(strokeWidth)
+            g.color = layer.wireColor
+            g.stroke = BasicStroke(layer.strokeWidth)
             for (r in 0..w.rows) for (c in 0..w.columns) {
                 val i = r * (w.columns + 1) + c
                 if (c < w.columns) g.drawLine(x(i), y(i), x(i + 1), y(i + 1))
                 if (r < w.rows) g.drawLine(x(i), y(i), x(i + w.columns + 1), y(i + w.columns + 1))
-                val radius = if (isSelected || isHovered) 3 else if (isDimmed) 1 else 2
-                g.fillOval(x(i) - radius, y(i) - radius, radius * 2, radius * 2)
-                if (pointIndices && (!isDimmed || isSelected || isHovered)) g.drawString(i.toString(), x(i) + 3, y(i) - 3)
-            }
-            if (labels && (!isDimmed || isSelected || isHovered)) {
-                val label = "${w.name} [${w.id.raw}] ${w.columns}×${w.rows}"
-                val x = x(0).coerceAtLeast(0)
-                val y = y(0).coerceAtLeast(16)
-                val color = g.color
-                g.color = if (isDimmed) Color(20, 20, 24, 100) else Color(20, 20, 24, 220)
-                g.fillRect(x, y - 14, g.fontMetrics.stringWidth(label) + 6, 17)
-                g.color = color
-                g.drawString(label, x + 3, y)
+                g.fillOval(x(i) - layer.pointRadius, y(i) - layer.pointRadius, layer.pointRadius * 2, layer.pointRadius * 2)
             }
 
             // The deformer's own corner mark, drawn here — in the same pass, off the same points, under
@@ -94,9 +95,61 @@ internal object RigInformationOverlay {
             // own to fall out of step, so it cannot outlive the deformer it belongs to or stay bright
             // while the deformer it belongs to fades.
             corners[w.id.raw]?.let {
-                RigCanvasSupport.paintDeformerCorner(g, it, if (isSelected || isHovered) baseColor.brighter() else baseColor, isDimmed)
+                RigCanvasSupport.paintDeformerCorner(g, it, layer.accent(), layer.isDimmed)
             }
         }
+
+        // Pass 2: all of the text, after all of the rig. Drawn inside the loop above - which is where it
+        // used to be - a label is covered by the NEXT deformer's lattice, so a deformer's own name could
+        // sit under the very lines it names and a rig with labels switched on would still read as
+        // unlabelled. Text is a tier above the geometry, not a part of it.
+        for (layer in layers) {
+            if (layer.isDimmed) continue
+            val w = layer.warp
+            val p = layer.points
+            fun x(i: Int) = viewport.x(p[i * 2]).toInt()
+            fun y(i: Int) = viewport.yFromWorld(p[i * 2 + 1]).toInt()
+
+            g.color = layer.wireColor
+            if (pointIndices) {
+                for (r in 0..w.rows) for (c in 0..w.columns) {
+                    val i = r * (w.columns + 1) + c
+                    g.drawString(i.toString(), x(i) + 3, y(i) - 3)
+                }
+            }
+            if (labels) {
+                val label = "${w.name} [${w.id.raw}] ${w.columns}×${w.rows}"
+                val left = x(0).coerceAtLeast(0)
+                val baseline = y(0).coerceAtLeast(16)
+                g.color = Color(20, 20, 24, 220)
+                g.fillRect(left, baseline - 14, g.fontMetrics.stringWidth(label) + 6, 17)
+                g.color = layer.wireColor
+                g.drawString(label, left + 3, baseline)
+            }
+        }
+    }
+
+    /**
+     * One deformer's resolved appearance for a paint pass: its geometry, the colour every part of it is
+     * drawn in, and the flags that decide whether the text above it is drawn at all.
+     *
+     * Derived once and reused by both passes, so that the label cannot end up under a different colour or
+     * a different dimming than the lattice it belongs to - the two would then be able to disagree about
+     * which deformer is selected.
+     */
+    private class WarpLayer(
+        val warp: Deformer.Warp,
+        val points: FloatArray,
+        val baseColor: Color,
+        val wireColor: Color,
+        val strokeWidth: Float,
+        val pointRadius: Int,
+        /** Selected or hovered - the deformer currently being worked on. */
+        val isActive: Boolean,
+        val isDimmed: Boolean,
+    ) {
+        /** The colour of the corner mark: brighter while the deformer is the one being worked on. */
+        fun accent(): Color = if (isActive) baseColor.brighter() else baseColor
     }
 
     fun paintDeformPaths(
