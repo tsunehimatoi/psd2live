@@ -4,6 +4,7 @@ import io.github.psd2live.core.PackedAtlas
 import io.github.psd2live.core.RigPreviewModel
 import org.jetbrains.skia.*
 import org.umamo.render.eval.DeformedGeometry
+import org.umamo.render.glsl.SELECTION_TINT_STRENGTH
 import org.umamo.runtime.model.DrawableId
 
 /** Draw the editing texture channel on Compose's Skia canvas, without per-triangle Java2D clips. */
@@ -24,12 +25,13 @@ internal class SkiaRigPainter(atlas: PackedAtlas) : AutoCloseable {
         dimUnselected: Boolean = false,
         highlightedLayerIds: Set<String>? = null,
         dimmedAlphaMultiplier: Float = 0.22f,
+        tintLayerIds: Set<String>? = null,
+        tintColor: Int = 0,
+        /** Defaults to the GpuRenderer's own wash, so the two paths tint by the same amount. */
+        tintAlpha: Float = SELECTION_TINT_STRENGTH,
     ) {
         val drawables = model.rig.puppet.drawables.filter { it.mesh != null && it.id in geometry.worldPositions }
-            .sortedBy {
-                drawOrderOverrides[model.rig.layerIdByDrawableId[it.id.raw]]
-                    ?: drawOrderOverrides[it.id.raw] ?: geometry.drawOrder[it.id] ?: it.drawOrder
-            }
+            .sortedBy { RigCanvasSupport.displayOrder(model, it, geometry, drawOrderOverrides) }
         val byId = model.rig.puppet.drawables.associateBy { it.id }
         val masks = mutableMapOf<List<DrawableId>, Path?>()
         Paint().use { paint ->
@@ -89,6 +91,18 @@ internal class SkiaRigPainter(atlas: PackedAtlas) : AutoCloseable {
                         paint.shader = shaders[page]
                         paint.setAlphaf(opacity)
                         canvas.drawVertices(VertexMode.TRIANGLES, positions, null, uvs, null, BlendMode.MODULATE, paint)
+                        // Hover annotation: wash the very triangles just drawn with the component colour
+                        // instead of boxing them. Re-drawing the mesh keeps the tint on the artwork's own
+                        // silhouette — a part lights up rather than growing a rectangle — and because it
+                        // runs inside the same clip, a masked part is tinted only where it actually shows.
+                        if (tintColor != 0 && tintLayerIds != null &&
+                            ((layerId != null && layerId in tintLayerIds) || drawable.id.raw in tintLayerIds)
+                        ) {
+                            paint.shader = null
+                            paint.color = tintColor
+                            paint.setAlphaf(tintAlpha)
+                            canvas.drawVertices(VertexMode.TRIANGLES, positions, null, null, null, BlendMode.SRC_OVER, paint)
+                        }
                     } finally { canvas.restoreToCount(saved) }
                 }
             } finally { masks.values.forEach { it?.close() } }

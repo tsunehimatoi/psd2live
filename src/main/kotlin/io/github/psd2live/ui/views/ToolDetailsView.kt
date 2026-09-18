@@ -66,7 +66,7 @@ internal fun ToolDetailsView(
     val colors = LocalToolColors.current
     val typography = LocalToolTypography.current
     val target = editor.target()
-    val isPathTool = editor.tool == CanvasTool.PATH_DEFORM || editor.drawingPath
+    val isPathTool = editor.tool == CanvasTool.CREATE_DEFORM_PATH || editor.drawingPath
 
     Column(
         modifier = modifier
@@ -133,7 +133,7 @@ internal fun ToolDetailsView(
         }
 
         // 2. Selection Style (Box / Lasso)
-        if (editor.tool in listOf(CanvasTool.SELECT, CanvasTool.MESH, CanvasTool.WARP)) {
+        if (editor.tool in listOf(CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT)) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
                     text = tr("editor.selectionMode"),
@@ -158,7 +158,7 @@ internal fun ToolDetailsView(
         }
 
         // 3. Target Pose / Parameter Picker
-        if (target != null && editor.tool in listOf(CanvasTool.MESH, CanvasTool.WARP)) {
+        if (target != null && editor.hierarchyMode == io.github.psd2live.ui.EditHierarchyMode.DEFORM) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
                     text = tr("editor.targetPose"),
@@ -194,8 +194,47 @@ internal fun ToolDetailsView(
 
         // 4. Tool-Specific Parameters
         when (editor.tool) {
-            CanvasTool.SELECT -> {
+            CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT -> {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (editor.hierarchyMode == io.github.psd2live.ui.EditHierarchyMode.STRUCTURE && target?.kind == "mesh") {
+                        Text(
+                            text = tr("editor.elementMode"),
+                            style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
+                            color = colors.textPrimary,
+                        )
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf("vertex", "edge", "face").forEachIndexed { i, key ->
+                                CompactButton(
+                                    text = tr("editor.$key"),
+                                    onClick = { editor.elementMode = i },
+                                    isPrimary = editor.elementMode == i,
+                                    modifier = Modifier.weight(1f),
+                                    height = 24.dp,
+                                )
+                            }
+                        }
+
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = tr("editor.topology"),
+                            style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
+                            color = colors.textPrimary,
+                        )
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            listOf("split", "connect", "merge", "delete").forEach { action ->
+                                CompactButton(
+                                    text = tr("editor.$action"),
+                                    onClick = { editor.topology(action) },
+                                    enabled = editor.editable && editor.vertices.isNotEmpty(),
+                                    modifier = Modifier.weight(1f),
+                                    height = 24.dp,
+                                )
+                            }
+                        }
+
+                        Divider(color = colors.divider, thickness = 0.8.dp)
+                    }
+
                     if (target?.kind == "mesh") {
                         Text(
                             text = tr("editor.deformers"),
@@ -225,79 +264,104 @@ internal fun ToolDetailsView(
                             color = colors.textMuted,
                         )
                     }
+
+                    if (editor.tool == CanvasTool.SELECT && editor.hasTransformSelection) {
+                        Divider(color = colors.divider, thickness = 0.8.dp)
+                        PreciseTransformColumn(editor)
+                    }
                 }
             }
 
-            CanvasTool.TRANSFORM -> PreciseTransformColumn(editor)
-
-            CanvasTool.MESH -> {
+            CanvasTool.CREATE_WARP -> {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = tr("editor.elementMode"),
+                        text = tr("editor.tool.create_warp"),
                         style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
                         color = colors.textPrimary,
                     )
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf("vertex", "edge", "face").forEachIndexed { i, key ->
-                            CompactButton(
-                                text = tr("editor.$key"),
-                                onClick = { editor.elementMode = i },
-                                isPrimary = editor.elementMode == i,
-                                modifier = Modifier.weight(1f),
-                                height = 24.dp,
-                            )
-                        }
-                    }
-
-                    Spacer(Modifier.height(4.dp))
                     Text(
-                        text = tr("editor.topology"),
-                        style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
-                        color = colors.textPrimary,
+                        text = tr("editor.createWarpHint"),
+                        style = typography.caption.copy(fontSize = 10.5.sp),
+                        color = colors.textMuted,
                     )
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        listOf("split", "connect", "merge", "delete").forEach { action ->
-                            CompactButton(
-                                text = tr("editor.$action"),
-                                onClick = { editor.topology(action) },
-                                enabled = editor.editable && editor.vertices.isNotEmpty(),
-                                modifier = Modifier.weight(1f),
-                                height = 24.dp,
-                            )
-                        }
+                    CompactSectionHeader(title = "Grid Divisions")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        CompactNumberSpinner(
+                            value = editor.warpCreateGridRows.toDouble(),
+                            onValueChange = { editor.warpCreateGridRows = it.toInt() },
+                            modifier = Modifier.weight(1f),
+                            min = 2.0,
+                            max = 20.0,
+                            unit = "R",
+                            height = 24.dp,
+                        )
+                        CompactNumberSpinner(
+                            value = editor.warpCreateGridCols.toDouble(),
+                            onValueChange = { editor.warpCreateGridCols = it.toInt() },
+                            modifier = Modifier.weight(1f),
+                            min = 2.0,
+                            max = 20.0,
+                            unit = "C",
+                            height = 24.dp,
+                        )
                     }
-
-                    Divider(color = colors.divider, thickness = 0.8.dp)
-                    PreciseTransformColumn(editor)
+                    CompactSectionHeader(title = "Bezier Divisions")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        CompactNumberSpinner(
+                            value = editor.warpCreateBezierRows.toDouble(),
+                            onValueChange = { editor.warpCreateBezierRows = it.toInt() },
+                            modifier = Modifier.weight(1f),
+                            min = 1.0,
+                            max = 10.0,
+                            unit = "BR",
+                            height = 24.dp,
+                        )
+                        CompactNumberSpinner(
+                            value = editor.warpCreateBezierCols.toDouble(),
+                            onValueChange = { editor.warpCreateBezierCols = it.toInt() },
+                            modifier = Modifier.weight(1f),
+                            min = 1.0,
+                            max = 10.0,
+                            unit = "BC",
+                            height = 24.dp,
+                        )
+                    }
                 }
             }
 
-            CanvasTool.WARP -> {
+            CanvasTool.CREATE_ROTATION -> {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = tr("editor.deformers"),
+                        text = tr("editor.tool.create_rotation"),
                         style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
                         color = colors.textPrimary,
                     )
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        CompactButton(
-                            text = tr("editor.createWarp"),
-                            onClick = { editor.createWarp() },
-                            enabled = editor.editable && target?.kind == "mesh",
-                            modifier = Modifier.weight(1f),
-                            height = 25.dp,
-                        )
-                        CompactButton(
-                            text = tr("editor.createRotation"),
-                            onClick = { editor.createWarp(rotation = true) },
-                            enabled = editor.editable && target?.kind == "mesh",
-                            modifier = Modifier.weight(1f),
-                            height = 25.dp,
-                        )
-                    }
+                    Text(
+                        text = tr("editor.createRotationHint"),
+                        style = typography.caption.copy(fontSize = 10.5.sp),
+                        color = colors.textMuted,
+                    )
+                }
+            }
 
-                    Divider(color = colors.divider, thickness = 0.8.dp)
-                    PreciseTransformColumn(editor)
+            CanvasTool.GLUE -> {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = tr("editor.tool.glue"),
+                        style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
+                        color = colors.textPrimary,
+                    )
+                    Text(
+                        text = tr("editor.glueHint"),
+                        style = typography.caption.copy(fontSize = 10.5.sp),
+                        color = colors.textMuted,
+                    )
                 }
             }
 
@@ -475,7 +539,7 @@ internal fun ToolDetailsView(
                 }
             }
 
-            CanvasTool.PATH_DEFORM -> {
+            CanvasTool.CREATE_DEFORM_PATH -> {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
                         text = tr("editor.pathDeform"),

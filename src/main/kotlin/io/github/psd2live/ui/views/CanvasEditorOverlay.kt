@@ -21,6 +21,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -35,10 +36,14 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import io.github.psd2live.core.DeformPathTools
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import io.github.psd2live.core.*
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.*
 import io.github.psd2live.ui.components.*
@@ -64,11 +69,11 @@ internal fun BoxScope.CanvasEditorOverlay(
     val colors = LocalToolColors.current
     val textMeasurer = rememberTextMeasurer()
     val target = editor.target()
-    val isPathTool = editor.tool == CanvasTool.PATH_DEFORM
+    val isPathTool = editor.tool == CanvasTool.CREATE_DEFORM_PATH || editor.drawingPath || (editor.hierarchyMode == EditHierarchyMode.DEFORM && editor.paths().isNotEmpty())
 
     Canvas(Modifier.fillMaxSize()) {
-        // 1. MESH tool: Draw triangle wireframe, vertices, and hover halo
-        if (editor.tool == CanvasTool.MESH && target != null && target.kind == "mesh") {
+        // 1. Mesh wireframe & vertices when in DEFORM or STRUCTURE on a mesh
+        if (editor.hierarchyMode != EditHierarchyMode.OBJECT && target != null && target.kind == "mesh") {
             val pts = editor.screen(target.geometry.points, target, viewport)
             val edges = MeshTopology.uniqueEdges(target.indices).map { it.endpointLow to it.endpointHigh }
             edges.forEach { (a, b) ->
@@ -101,8 +106,8 @@ internal fun BoxScope.CanvasEditorOverlay(
             }
         }
 
-        // 2. WARP tool: Draw deformer lattice grid lines or rotation axis
-        if (editor.tool == CanvasTool.WARP && target != null && (target.kind == "warp" || target.kind == "rotation")) {
+        // 2. Warp deformer or Rotation deformer when in DEFORM or STRUCTURE
+        if (editor.hierarchyMode != EditHierarchyMode.OBJECT && target != null && (target.kind == "warp" || target.kind == "rotation")) {
             val pts = editor.screen(target.geometry.points, target, viewport)
             if (target.kind == "rotation") {
                 if (pts.size >= 2) {
@@ -110,7 +115,92 @@ internal fun BoxScope.CanvasEditorOverlay(
                     drawCircle(colors.accent, 6.5f, pts[0])
                     drawCircle(Color(0xFF7BBB99), 5.5f, pts[1])
                 }
+            } else if (editor.hierarchyMode == EditHierarchyMode.DEFORM && editor.editLevel == 2) {
+                // LEVEL 2: Live2D Cubism-style Bezier Deformer
+                editor.ensureBezierState()
+                val bState = editor.bezierState
+                if (bState != null) {
+                    // Faint underlying lattice lines
+                    val columns = target.geometry.columns!! + 1
+                    pts.indices.flatMap { i ->
+                        listOfNotNull(
+                            if (i % columns < columns - 1) i to i + 1 else null,
+                            if (i + columns < pts.size) i to i + columns else null
+                        )
+                    }.forEach { (a, b) ->
+                        drawLine(colors.accent.copy(alpha = 0.22f), pts[a], pts[b], 1f)
+                    }
+
+                    // Cubic Bezier boundary and internal curves
+                    for (r in 0..bState.bezierRows) {
+                        for (c in 0 until bState.bezierCols) {
+                            val a0 = bState.anchors[r to c] ?: continue
+                            val a1 = bState.anchors[r to (c + 1)] ?: continue
+                            val h0 = bState.handles[Triple(r, c, BezierHandleDir.RIGHT)]
+                            val h1 = bState.handles[Triple(r, c + 1, BezierHandleDir.LEFT)]
+                            val p0 = editor.screen(floatArrayOf(a0.x, a0.y), target, viewport)[0]
+                            val p1 = editor.screen(floatArrayOf(a1.x, a1.y), target, viewport)[0]
+                            val c0 = h0?.let { editor.screen(floatArrayOf(it.x, it.y), target, viewport)[0] } ?: (p0 + (p1 - p0) / 3f)
+                            val c1 = h1?.let { editor.screen(floatArrayOf(it.x, it.y), target, viewport)[0] } ?: (p1 - (p1 - p0) / 3f)
+                            val curvePath = Path().apply {
+                                moveTo(p0.x, p0.y)
+                                cubicTo(c0.x, c0.y, c1.x, c1.y, p1.x, p1.y)
+                            }
+                            drawLine(Color.Black.copy(alpha = 0.35f), p0, p1, 1f)
+                            drawPath(curvePath, colors.accent, style = Stroke(2f))
+                        }
+                    }
+                    for (r in 0 until bState.bezierRows) {
+                        for (c in 0..bState.bezierCols) {
+                            val a0 = bState.anchors[r to c] ?: continue
+                            val a1 = bState.anchors[(r + 1) to c] ?: continue
+                            val h0 = bState.handles[Triple(r, c, BezierHandleDir.BOTTOM)]
+                            val h1 = bState.handles[Triple(r + 1, c, BezierHandleDir.TOP)]
+                            val p0 = editor.screen(floatArrayOf(a0.x, a0.y), target, viewport)[0]
+                            val p1 = editor.screen(floatArrayOf(a1.x, a1.y), target, viewport)[0]
+                            val c0 = h0?.let { editor.screen(floatArrayOf(it.x, it.y), target, viewport)[0] } ?: (p0 + (p1 - p0) / 3f)
+                            val c1 = h1?.let { editor.screen(floatArrayOf(it.x, it.y), target, viewport)[0] } ?: (p1 - (p1 - p0) / 3f)
+                            val curvePath = Path().apply {
+                                moveTo(p0.x, p0.y)
+                                cubicTo(c0.x, c0.y, c1.x, c1.y, p1.x, p1.y)
+                            }
+                            drawPath(curvePath, colors.accent, style = Stroke(2f))
+                        }
+                    }
+
+                    // Tangent handle stems and end markers
+                    bState.handles.forEach { (key, handle) ->
+                        val anchor = bState.anchors[key.first to key.second] ?: return@forEach
+                        val ap = editor.screen(floatArrayOf(anchor.x, anchor.y), target, viewport)[0]
+                        val hp = editor.screen(floatArrayOf(handle.x, handle.y), target, viewport)[0]
+                        val isHovered = editor.hoveredBezierHandle == key
+                        val isActive = editor.activeBezierHandle == key
+                        drawLine(colors.textPrimary.copy(alpha = 0.55f), ap, hp, 1.2f)
+                        if (isHovered || isActive) {
+                            drawCircle(Color.White, 6.5f, hp, style = Stroke(1.8f))
+                            drawCircle(colors.accent, 4.5f, hp)
+                        } else {
+                            drawCircle(colors.windowBackground, 4.5f, hp)
+                            drawCircle(Color(0xFFE5A823), 3f, hp)
+                        }
+                    }
+
+                    // Bezier anchor points
+                    bState.anchors.forEach { (key, anchor) ->
+                        val ap = editor.screen(floatArrayOf(anchor.x, anchor.y), target, viewport)[0]
+                        val isHovered = editor.hoveredBezierAnchor == key
+                        val isActive = editor.activeBezierAnchor == key
+                        if (isHovered || isActive) {
+                            drawCircle(Color.White, 8.5f, ap, style = Stroke(2f))
+                            drawCircle(colors.accent, 5.5f, ap)
+                        } else {
+                            drawCircle(colors.windowBackground, 5.5f, ap)
+                            drawCircle(colors.accent, 4f, ap)
+                        }
+                    }
+                }
             } else {
+                // Level 1 or 3: Warp lattice grid lines and vertices
                 val columns = target.geometry.columns!! + 1
                 pts.indices.flatMap { i ->
                     listOfNotNull(
@@ -138,12 +228,66 @@ internal fun BoxScope.CanvasEditorOverlay(
             }
         }
 
-        // 3. The transform box, shared by TRANSFORM and the two point tools. Drawn after the geometries
-        //    above so its handles sit on top of the wireframe they act on. transformFrame answers null
-        //    for everything that must not have a box: nothing selected, a rotation deformer, no target.
+        // 3. Transform box (shared by TRANSFORM tool and points)
         if (editor.drawsTransformBox) {
             editor.transformFrame(viewport)?.let { frame ->
                 drawTransformBox(frame, editor.hoveredHandle, editor.axis.takeIf { editor.inGesture }, colors)
+            }
+        }
+
+        // 3b. Object mode: the selection, outlined in the colour of the part it is. Object mode has no
+        //     transform box, so this outline is the whole of the selection feedback — it is what tells a
+        //     picked layer apart from the ones merely drawn, and it carries across a multi-select.
+        if (editor.hierarchyMode == EditHierarchyMode.OBJECT && editor.tool == CanvasTool.SELECT) {
+            editor.objects.forEach { layerId ->
+                val item = editor.target(editor.model, layerId, null)
+                val points = item?.let { editor.screen(it.geometry.points, it, viewport) }.orEmpty()
+                if (points.isNotEmpty()) {
+                    val left = points.minOf { it.x }; val top = points.minOf { it.y }
+                    val origin = Offset(left, top)
+                    val extent = Size(points.maxOf { it.x } - left, points.maxOf { it.y } - top)
+                    val awt = ComponentPalette.strong(layerId)
+                    val color = Color(awt.red, awt.green, awt.blue)
+                    drawRect(color.copy(alpha = 0.08f), origin, extent)
+                    drawRect(color, origin, extent, style = Stroke(1.6f))
+                }
+            }
+        }
+
+        // Interactive Creation Previews
+        if (editor.isCreatingWarp && editor.creationStart != null && editor.creationCurrent != null) {
+            val s = editor.creationStart!!; val e = editor.creationCurrent!!
+            val origin = Offset(minOf(s.x, e.x), minOf(s.y, e.y))
+            val extent = Size(abs(s.x - e.x), abs(s.y - e.y))
+            drawRect(colors.accent.copy(alpha = 0.12f), origin, extent)
+            drawRect(colors.accent, origin, extent, style = Stroke(1.5f))
+            val rows = editor.warpCreateGridRows
+            val cols = editor.warpCreateGridCols
+            for (r in 1 until rows) {
+                val y = origin.y + extent.height * (r.toFloat() / rows)
+                drawLine(colors.accent.copy(alpha = 0.45f), Offset(origin.x, y), Offset(origin.x + extent.width, y), 1f)
+            }
+            for (c in 1 until cols) {
+                val x = origin.x + extent.width * (c.toFloat() / cols)
+                drawLine(colors.accent.copy(alpha = 0.45f), Offset(x, origin.y), Offset(x, origin.y + extent.height), 1f)
+            }
+        }
+
+        if (editor.isCreatingRotation && editor.creationStart != null && editor.creationCurrent != null) {
+            val s = editor.creationStart!!; val e = editor.creationCurrent!!
+            val radius = (e - s).getDistance()
+            drawCircle(colors.accent.copy(alpha = 0.1f), radius, s)
+            drawCircle(colors.accent, radius, s, style = Stroke(1.2f))
+            drawLine(colors.accent, s, e, 2f)
+            drawCircle(colors.accent, 5f, s)
+            drawCircle(Color(0xFF7BBB99), 4f, e)
+        }
+
+        if (editor.tool == CanvasTool.BRUSH_SELECT) {
+            editor.cursor?.let { center ->
+                val r = (editor.radius * viewport.scale).toFloat()
+                drawCircle(Color.Black.copy(alpha = 0.5f), r, center, style = Stroke(2.5f))
+                drawCircle(colors.accent, r, center, style = Stroke(1.2f))
             }
         }
 
@@ -376,18 +520,69 @@ internal fun BoxScope.CanvasEditorOverlay(
                 }
             }
         }
+
+        // 8. Object-mode hover annotation: a chip naming the part the pointer is over, the deformer it
+        //    hangs off, and where a Ctrl-click goes next. It reads [hoveredPick], the same resolution
+        //    the press makes, so it cannot promise a pick the click would not.
+        //
+        //    The highlight itself is not drawn here. The part's own texture is washed in this same
+        //    component colour by the viewport, so a box would just be a second, worse answer to the
+        //    question the wash already answers.
+        val pick = editor.hoveredPick
+        if (pick != null && !editor.inGesture) {
+            val awt = ComponentPalette.strong(pick.id)
+            val accent = Color(awt.red, awt.green, awt.blue)
+            val base = TextStyle(fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = colors.textPrimary)
+            val muted = base.copy(color = colors.textMuted)
+            val lines = buildList {
+                add(textMeasurer.measure(tr("editor.hover.${pick.kind}", pick.name), base.copy(color = accent, fontWeight = FontWeight.Medium)))
+                pick.parentName?.let { add(textMeasurer.measure(tr("editor.hover.parent", it), muted)) }
+                pick.nextName?.let { add(textMeasurer.measure(tr("editor.hover.ctrl", it), muted)) }
+            }
+            val padX = 8f
+            val padY = 5f
+            val gap = 3f
+            val dot = 6f
+            val dotGap = 6f
+            val box = Size(
+                lines.maxOf { it.size.width } + padX * 2f + dot + dotGap,
+                lines.sumOf { it.size.height }.toFloat() + gap * (lines.size - 1) + padY * 2f,
+            )
+            val anchor = editor.cursor ?: Offset(size.width * 0.5f, size.height * 0.5f)
+            var x = anchor.x + 18f
+            var y = anchor.y + 22f
+            if (x + box.width > size.width) x = anchor.x - 18f - box.width
+            if (y + box.height > size.height) y = anchor.y - 22f - box.height
+            x = x.coerceIn(0f, (size.width - box.width).coerceAtLeast(0f))
+            y = y.coerceIn(0f, (size.height - box.height).coerceAtLeast(0f))
+            drawRoundRect(Color(0xE6181A1E), Offset(x, y), box, CornerRadius(4f, 4f))
+            drawRoundRect(accent.copy(alpha = 0.9f), Offset(x, y), box, CornerRadius(4f, 4f), style = Stroke(1f))
+            drawCircle(accent, dot / 2f, Offset(x + padX + dot / 2f, y + padY + lines.first().size.height / 2f))
+            var lineY = y + padY
+            lines.forEach {
+                drawText(textLayoutResult = it, topLeft = Offset(x + padX + dot + dotGap, lineY))
+                lineY += it.size.height + gap
+            }
+        }
     }
 
     // Left Animated Hover Toolbar
     CanvasToolBar(editor = editor, keymap = keymap, focus = focus)
 
+    // Top Right Hierarchy / Layer Mode Toolbar
+    HierarchyModeBar(editor = editor, focus = focus)
+
     // Bottom Status Bar
     Text(
-        editor.error ?: if (editor.busy) tr("editor.saving") else tr("editor.selectionCount", editor.objects.size, editor.vertices.size) + "   ·   " + tr(when (editor.tool) {
-            CanvasTool.PATH_DEFORM -> "editor.pathHint"
-            CanvasTool.INFLATE -> "editor.inflateHint"
-            CanvasTool.BRUSH, CanvasTool.SMOOTH -> "editor.brushHint"
-            CanvasTool.TRANSFORM -> "editor.transformHint"
+        editor.error ?: if (editor.busy) tr("editor.saving") else tr("editor.selectionCount", editor.objects.size, editor.vertices.size) + "   ·   " + tr(when {
+            editor.tool == CanvasTool.CREATE_DEFORM_PATH -> "editor.pathHint"
+            editor.tool == CanvasTool.INFLATE -> "editor.inflateHint"
+            editor.tool == CanvasTool.BRUSH || editor.tool == CanvasTool.SMOOTH -> "editor.brushHint"
+            editor.hierarchyMode == EditHierarchyMode.OBJECT && editor.tool == CanvasTool.SELECT -> "editor.objectHint"
+            editor.tool == CanvasTool.SELECT && editor.drawsTransformBox -> "editor.transformHint"
+            editor.tool == CanvasTool.CREATE_WARP -> "editor.createWarpHint"
+            editor.tool == CanvasTool.CREATE_ROTATION -> "editor.createRotationHint"
+            editor.tool == CanvasTool.GLUE -> "editor.glueHint"
             else -> "editor.hint"
         }),
         color = if (editor.error != null) colors.error else colors.textMuted,
@@ -452,21 +647,38 @@ private fun BoxScope.CanvasToolBar(
             .padding(3.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        CanvasTool.entries.forEach { tool ->
-            ToolItemRow(
-                tool = tool,
-                isSelected = editor.tool == tool,
-                isToolbarExpanded = animatedWidth > 42.dp,
-                textAlpha = textAlpha,
-                textOffset = textOffset,
-                isBusy = editor.busy,
-                keyLabel = keymap.labelFor(tool.action).orEmpty(),
-                brushShape = if (tool == CanvasTool.BRUSH) editor.brushShape else null,
-                onClick = {
-                    editor.activateTool(tool)
-                    focus()
-                },
-            )
+        val toolGroups = listOf(
+            listOf(CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT),
+            listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE),
+            listOf(CanvasTool.CREATE_WARP, CanvasTool.CREATE_ROTATION, CanvasTool.CREATE_DEFORM_PATH, CanvasTool.GLUE),
+        )
+
+        toolGroups.forEachIndexed { groupIndex, group ->
+            if (groupIndex > 0) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                        .height(1.dp)
+                        .background(colors.border.copy(alpha = 0.35f))
+                )
+            }
+            group.forEach { tool ->
+                ToolItemRow(
+                    tool = tool,
+                    isSelected = editor.tool == tool,
+                    isToolbarExpanded = animatedWidth > 42.dp,
+                    textAlpha = textAlpha,
+                    textOffset = textOffset,
+                    isBusy = editor.busy,
+                    keyLabel = keymap.labelFor(tool.action).orEmpty(),
+                    brushShape = if (tool == CanvasTool.BRUSH) editor.brushShape else null,
+                    onClick = {
+                        editor.activateTool(tool)
+                        focus()
+                    },
+                )
+            }
         }
 
         val isBrushTool = editor.tool in listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE)
@@ -709,24 +921,18 @@ private fun ToolIcon(tool: CanvasTool, color: Color, brushShape: BrushShape? = n
                 val path = Path().apply { moveTo(3 * s, 2 * s); lineTo(14 * s, 10 * s); lineTo(9 * s, 11 * s); lineTo(7 * s, 16 * s); close() }
                 drawPath(path, color, style = Stroke(s * 1.3f))
             }
-            CanvasTool.TRANSFORM -> {
-                drawRect(color, Offset(3 * s, 3 * s), Size(12 * s, 12 * s), style = Stroke(s * 1.3f))
-                listOf(3f to 3f, 15f to 3f, 3f to 15f, 15f to 15f).forEach { (x, y) ->
-                    drawRect(color, Offset((x - 1.6f) * s, (y - 1.6f) * s), Size(3.2f * s, 3.2f * s))
+            CanvasTool.LASSO_SELECT -> {
+                val path = Path().apply {
+                    moveTo(5 * s, 13 * s)
+                    cubicTo(2 * s, 6 * s, 12 * s, 2 * s, 14 * s, 7 * s)
+                    cubicTo(16 * s, 12 * s, 9 * s, 16 * s, 5 * s, 13 * s)
+                    lineTo(3 * s, 16 * s)
                 }
-            }
-            CanvasTool.MESH -> {
-                val path = Path().apply { moveTo(9 * s, 2 * s); lineTo(16 * s, 15 * s); lineTo(2 * s, 15 * s); close() }
                 drawPath(path, color, style = Stroke(s * 1.3f))
-                drawCircle(color, 2 * s, p(9f, 2f))
-                drawCircle(color, 2 * s, p(16f, 15f))
-                drawCircle(color, 2 * s, p(2f, 15f))
             }
-            CanvasTool.WARP -> {
-                for (i in listOf(3f, 9f, 15f)) {
-                    line(i, 3f, i, 15f)
-                    line(3f, i, 15f, i)
-                }
+            CanvasTool.BRUSH_SELECT -> {
+                drawCircle(color, 4.5f * s, p(9f, 9f), style = Stroke(s * 1.2f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(2.5f * s, 2f * s))))
+                drawCircle(color, 2f * s, p(9f, 9f))
             }
             CanvasTool.BRUSH, CanvasTool.SMOOTH -> {
                 line(6f, 11f, 14f, 3f)
@@ -743,7 +949,6 @@ private fun ToolIcon(tool: CanvasTool, color: Color, brushShape: BrushShape? = n
             }
             CanvasTool.INFLATE -> {
                 drawCircle(color, 3.4f * s, p(9f, 9f), style = Stroke(1.3f * s))
-                // Four barbs pointing outward: volume pushed away from the stroke
                 listOf(0f to -1f, 0f to 1f, -1f to 0f, 1f to 0f).forEach { (dx, dy) ->
                     val tipX = 9f + dx * 7.8f
                     val tipY = 9f + dy * 7.8f
@@ -754,21 +959,418 @@ private fun ToolIcon(tool: CanvasTool, color: Color, brushShape: BrushShape? = n
                     line(tipX, tipY, tipX - dx * 2.2f - perpX, tipY - dy * 2.2f - perpY)
                 }
             }
-            CanvasTool.PATH_DEFORM -> {
+            CanvasTool.CREATE_WARP -> {
+                drawRect(color, Offset(3 * s, 3 * s), Size(12 * s, 12 * s), style = Stroke(s * 1.3f))
+                line(7f, 3f, 7f, 15f)
+                line(11f, 3f, 11f, 15f)
+                line(3f, 7f, 15f, 7f)
+                line(3f, 11f, 15f, 11f)
+            }
+            CanvasTool.CREATE_ROTATION -> {
+                drawCircle(color, 2.5f * s, p(6f, 12f))
+                line(6f, 12f, 14f, 4f)
+                drawCircle(color, 1.8f * s, p(14f, 4f))
+                val arcPath = Path().apply {
+                    arcTo(androidx.compose.ui.geometry.Rect(Offset(-2f * s, 4f * s), Size(16f * s, 16f * s)), -65f, 45f, false)
+                }
+                drawPath(arcPath, color, style = Stroke(s * 1.2f))
+            }
+            CanvasTool.CREATE_DEFORM_PATH -> {
                 val path = Path().apply { moveTo(2 * s, 14 * s); cubicTo(6 * s, -2 * s, 12 * s, 20 * s, 16 * s, 4 * s) }
                 drawPath(path, color, style = Stroke(1.3f * s))
                 drawCircle(color, 2 * s, p(2f, 14f))
                 drawCircle(color, 2 * s, p(16f, 4f))
                 drawCircle(color, 2 * s, p(9f, 9f))
             }
-            CanvasTool.HAND -> {
-                line(4f, 9f, 4f, 14f)
-                line(4f, 14f, 8f, 17f)
-                line(8f, 17f, 13f, 15f)
-                line(13f, 15f, 15f, 6f)
-                for (i in 6..12 step 2) line(i.toFloat(), 3f, i.toFloat(), 10f)
+            CanvasTool.GLUE -> {
+                drawCircle(color, 3.5f * s, p(6.5f, 9f), style = Stroke(s * 1.2f))
+                drawCircle(color, 3.5f * s, p(11.5f, 9f), style = Stroke(s * 1.2f))
+                line(7.5f, 7f, 10.5f, 7f)
+                line(7.5f, 11f, 10.5f, 11f)
             }
         }
+    }
+}
+
+@Composable
+private fun ModeIcon(mode: EditHierarchyMode, color: Color) {
+    Canvas(Modifier.size(14.dp)) {
+        val s = size.width / 14f
+        when (mode) {
+            EditHierarchyMode.OBJECT -> {
+                drawRect(color, Offset(2 * s, 2 * s), Size(10 * s, 10 * s), style = Stroke(1.3f * s))
+                listOf(2f to 2f, 12f to 2f, 2f to 12f, 12f to 12f).forEach { (x, y) ->
+                    drawCircle(color, 1.4f * s, Offset(x * s, y * s))
+                }
+            }
+            EditHierarchyMode.DEFORM -> {
+                val path = Path().apply {
+                    moveTo(2 * s, 10 * s)
+                    cubicTo(5 * s, 3 * s, 9 * s, 11 * s, 12 * s, 4 * s)
+                }
+                drawPath(path, color, style = Stroke(1.4f * s, cap = StrokeCap.Round))
+                drawCircle(color, 1.3f * s, Offset(2 * s, 10 * s))
+                drawCircle(color, 1.3f * s, Offset(12 * s, 4 * s))
+            }
+            EditHierarchyMode.STRUCTURE -> {
+                val path = Path().apply {
+                    moveTo(7 * s, 2 * s)
+                    lineTo(12 * s, 11 * s)
+                    lineTo(2 * s, 11 * s)
+                    close()
+                }
+                drawPath(path, color, style = Stroke(1.3f * s))
+                drawLine(color, Offset(7 * s, 2 * s), Offset(7 * s, 11 * s), 1f * s)
+                drawCircle(color, 1.3f * s, Offset(7 * s, 2 * s))
+                drawCircle(color, 1.3f * s, Offset(12 * s, 11 * s))
+                drawCircle(color, 1.3f * s, Offset(2 * s, 11 * s))
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun BoxScope.HierarchyModeBar(
+    editor: CanvasEditor,
+    focus: () -> Unit,
+) {
+    val colors = LocalToolColors.current
+    val target = editor.target()
+
+    val interactionSource = remember { MutableInteractionSource() }
+    val isHoveredBySource by interactionSource.collectIsHoveredAsState()
+    var isHoveredByEvent by remember { mutableStateOf(false) }
+    val isToolbarHovered = isHoveredBySource || isHoveredByEvent
+
+    val elevation by animateDpAsState(
+        targetValue = if (isToolbarHovered) 8.dp else 2.dp,
+        animationSpec = tween(durationMillis = 200),
+    )
+
+    Row(
+        modifier = Modifier
+            .align(Alignment.TopStart)
+            .padding(start = 8.dp, top = 8.dp)
+            .frostedGlass(
+                shape = RoundedCornerShape(6.dp),
+                isHovered = isToolbarHovered,
+                elevation = elevation,
+                alpha = if (isToolbarHovered) 0.88f else 0.78f,
+            )
+            .hoverable(interactionSource)
+            .onPointerEvent(PointerEventType.Enter) { isHoveredByEvent = true }
+            .onPointerEvent(PointerEventType.Exit) { isHoveredByEvent = false }
+            .padding(horizontal = 4.dp, vertical = 3.dp)
+            .animateContentSize(
+                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        // Mode buttons: 物体模式 / 变形模式 / 编辑模式
+        EditHierarchyMode.entries.forEach { mode ->
+            val isSelected = editor.hierarchyMode == mode
+            val label = when (mode) {
+                EditHierarchyMode.OBJECT -> tr("editor.mode.object")
+                EditHierarchyMode.DEFORM -> tr("editor.mode.deform")
+                EditHierarchyMode.STRUCTURE -> tr("editor.mode.structure")
+            }
+            ModeBarChip(
+                mode = mode,
+                text = label,
+                isSelected = isSelected,
+                onClick = {
+                    editor.setHierarchyMode(mode)
+                    focus()
+                }
+            )
+        }
+
+        // 1 2 3 deformation level expansion animation
+        AnimatedVisibility(
+            visible = editor.hierarchyMode == EditHierarchyMode.DEFORM,
+            enter = expandHorizontally(
+                animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+                expandFrom = Alignment.Start,
+            ) + fadeIn(animationSpec = tween(160)),
+            exit = shrinkHorizontally(
+                animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
+                shrinkTowards = Alignment.Start,
+            ) + fadeOut(animationSpec = tween(120)),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 2.dp)
+                        .height(14.dp)
+                        .width(1.dp)
+                        .background(colors.border.copy(alpha = 0.45f))
+                )
+                listOf(
+                    1 to (tr("editor.level.1") + " · " + tr("editor.level.1.desc")),
+                    2 to (tr("editor.level.2") + " · " + tr("editor.level.2.desc")),
+                    3 to (tr("editor.level.3") + " · " + tr("editor.level.3.desc")),
+                ).forEach { (lvl, tooltip) ->
+                    val isLvlSelected = editor.editLevel == lvl
+                    DeformLevelChip(
+                        level = lvl,
+                        tooltip = tooltip,
+                        isSelected = isLvlSelected,
+                        onClick = {
+                            editor.setEditLevel(lvl)
+                            focus()
+                        }
+                    )
+                }
+            }
+        }
+
+        // Structure mode tools
+        AnimatedVisibility(
+            visible = editor.hierarchyMode == EditHierarchyMode.STRUCTURE,
+            enter = expandHorizontally(
+                animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+                expandFrom = Alignment.Start,
+            ) + fadeIn(animationSpec = tween(160)),
+            exit = shrinkHorizontally(
+                animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
+                shrinkTowards = Alignment.Start,
+            ) + fadeOut(animationSpec = tween(120)),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 2.dp)
+                        .height(14.dp)
+                        .width(1.dp)
+                        .background(colors.border.copy(alpha = 0.45f))
+                )
+                if (target != null && target.kind == "warp") {
+                    val warpRows = target.geometry.rows ?: 4
+                    val warpCols = target.geometry.columns ?: 4
+                    Text(
+                        text = "Grid: ${warpRows}×${warpCols}",
+                        fontSize = 11.sp,
+                        color = colors.textMuted,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+                } else if (target != null && target.kind == "mesh") {
+                    listOf(
+                        tr("editor.split") to { editor.topology("split"); focus() },
+                        tr("editor.connect") to { editor.topology("connect"); focus() },
+                        tr("editor.delete") to { editor.topology("delete"); focus() },
+                    ).forEach { (lbl, act) ->
+                        StructureActionChip(
+                            text = lbl,
+                            onClick = act
+                        )
+                    }
+                }
+            }
+        }
+
+        // Object mode target badge
+        AnimatedVisibility(
+            visible = editor.hierarchyMode == EditHierarchyMode.OBJECT && target != null,
+            enter = expandHorizontally(
+                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+                expandFrom = Alignment.Start,
+            ) + fadeIn(animationSpec = tween(150)),
+            exit = shrinkHorizontally(
+                animationSpec = tween(durationMillis = 160, easing = FastOutSlowInEasing),
+                shrinkTowards = Alignment.Start,
+            ) + fadeOut(animationSpec = tween(100)),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 2.dp)
+                        .height(14.dp)
+                        .width(1.dp)
+                        .background(colors.border.copy(alpha = 0.45f))
+                )
+                Text(
+                    text = target?.id.orEmpty(),
+                    fontSize = 10.5.sp,
+                    color = colors.textMuted,
+                    maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModeBarChip(
+    mode: EditHierarchyMode,
+    text: String,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+) {
+    val colors = LocalToolColors.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val isHovered by interactionSource.collectIsHoveredAsState()
+
+    val bg = when {
+        isSelected -> colors.accent.copy(alpha = 0.22f)
+        isHovered -> colors.controlHover.copy(alpha = 0.7f)
+        else -> Color.Transparent
+    }
+    val textColor = when {
+        isSelected -> colors.accent
+        isHovered -> colors.textPrimary
+        else -> colors.textMuted
+    }
+
+    Row(
+        modifier = Modifier
+            .height(24.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(bg)
+            .border(
+                0.5.dp,
+                if (isSelected) colors.accent.copy(alpha = 0.5f) else Color.Transparent,
+                RoundedCornerShape(4.dp)
+            )
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick,
+            )
+            .padding(horizontal = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ModeIcon(mode = mode, color = textColor)
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = text,
+            color = textColor,
+            fontSize = 11.sp,
+            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun DeformLevelChip(
+    level: Int,
+    tooltip: String,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+) {
+    val colors = LocalToolColors.current
+    val density = LocalDensity.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val isHovered by interactionSource.collectIsHoveredAsState()
+
+    val bg = when {
+        isSelected -> colors.accent.copy(alpha = 0.22f)
+        isHovered -> colors.controlHover.copy(alpha = 0.7f)
+        else -> Color.Transparent
+    }
+    val textColor = when {
+        isSelected -> colors.accent
+        isHovered -> colors.textPrimary
+        else -> colors.textMuted
+    }
+
+    val yOffsetPx = with(density) { 28.dp.roundToPx() }
+
+    Box {
+        Box(
+            modifier = Modifier
+                .height(24.dp)
+                .defaultMinSize(minWidth = 24.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(bg)
+                .border(
+                    0.5.dp,
+                    if (isSelected) colors.accent.copy(alpha = 0.5f) else Color.Transparent,
+                    RoundedCornerShape(4.dp)
+                )
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                    onClick = onClick,
+                )
+                .padding(horizontal = 7.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "$level",
+                color = textColor,
+                fontSize = 11.5.sp,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                maxLines = 1,
+            )
+        }
+
+        if (isHovered) {
+            Popup(
+                alignment = Alignment.TopStart,
+                offset = IntOffset(0, yOffsetPx),
+                properties = PopupProperties(focusable = false),
+            ) {
+                Surface(
+                    color = colors.panelElevated,
+                    border = BorderStroke(0.8.dp, colors.border),
+                    shape = RoundedCornerShape(4.dp),
+                    elevation = 6.dp,
+                ) {
+                    Text(
+                        text = tooltip,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = colors.textPrimary,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StructureActionChip(
+    text: String,
+    onClick: () -> Unit,
+) {
+    val colors = LocalToolColors.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val isHovered by interactionSource.collectIsHoveredAsState()
+
+    Row(
+        modifier = Modifier
+            .height(24.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(if (isHovered) colors.controlHover.copy(alpha = 0.7f) else Color.Transparent)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick,
+            )
+            .padding(horizontal = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = text,
+            color = if (isHovered) colors.textPrimary else colors.textMuted,
+            fontSize = 11.sp,
+            maxLines = 1,
+        )
     }
 }
 

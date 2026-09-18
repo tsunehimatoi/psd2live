@@ -74,14 +74,15 @@ enum class ShortcutAction(val category: ShortcutCategory, val labelKey: String) 
 
     // Canvas tools
     TOOL_SELECT(ShortcutCategory.CANVAS_TOOLS, "editor.tool.select"),
-    TOOL_TRANSFORM(ShortcutCategory.CANVAS_TOOLS, "editor.tool.transform"),
-    TOOL_MESH(ShortcutCategory.CANVAS_TOOLS, "editor.tool.mesh"),
-    TOOL_WARP(ShortcutCategory.CANVAS_TOOLS, "editor.tool.warp"),
+    TOOL_LASSO_SELECT(ShortcutCategory.CANVAS_TOOLS, "editor.tool.lasso_select"),
+    TOOL_BRUSH_SELECT(ShortcutCategory.CANVAS_TOOLS, "editor.tool.brush_select"),
     TOOL_BRUSH(ShortcutCategory.CANVAS_TOOLS, "editor.tool.brush"),
     TOOL_SMOOTH(ShortcutCategory.CANVAS_TOOLS, "editor.tool.smooth"),
     TOOL_INFLATE(ShortcutCategory.CANVAS_TOOLS, "editor.tool.inflate"),
-    TOOL_PATH_DEFORM(ShortcutCategory.CANVAS_TOOLS, "editor.tool.path_deform"),
-    TOOL_HAND(ShortcutCategory.CANVAS_TOOLS, "editor.tool.hand"),
+    TOOL_CREATE_WARP(ShortcutCategory.CANVAS_TOOLS, "editor.tool.create_warp"),
+    TOOL_CREATE_ROTATION(ShortcutCategory.CANVAS_TOOLS, "editor.tool.create_rotation"),
+    TOOL_CREATE_DEFORM_PATH(ShortcutCategory.CANVAS_TOOLS, "editor.tool.create_deform_path"),
+    TOOL_GLUE(ShortcutCategory.CANVAS_TOOLS, "editor.tool.glue"),
 
     // Canvas editing
     SELECT_ALL(ShortcutCategory.CANVAS_EDIT, "shortcut.selectAll"),
@@ -179,20 +180,21 @@ private val PS_DEFAULTS: Map<ShortcutAction, List<KeyBinding>> = mapOf(
     ShortcutAction.OPEN_SETTINGS to keys("Ctrl+,"),
     ShortcutAction.OPEN_HELP to keys("F1"),
 
-    ShortcutAction.TOOL_SELECT to keys("V"),
-    ShortcutAction.TOOL_TRANSFORM to keys("T"),
-    ShortcutAction.TOOL_MESH to keys("Tab", "E"),
-    ShortcutAction.TOOL_WARP to keys("W"),
+    ShortcutAction.TOOL_SELECT to keys("V", "T"),
+    ShortcutAction.TOOL_LASSO_SELECT to keys("L"),
+    ShortcutAction.TOOL_BRUSH_SELECT to keys("W"),
     ShortcutAction.TOOL_BRUSH to keys("B"),
     ShortcutAction.TOOL_SMOOTH to keys("Shift+B"),
     ShortcutAction.TOOL_INFLATE to keys("I"),
-    ShortcutAction.TOOL_PATH_DEFORM to keys("D", "P"),
-    ShortcutAction.TOOL_HAND to keys("H"),
+    ShortcutAction.TOOL_CREATE_WARP to keys("C"),
+    ShortcutAction.TOOL_CREATE_ROTATION to keys("R"),
+    ShortcutAction.TOOL_CREATE_DEFORM_PATH to keys("P", "D"),
+    ShortcutAction.TOOL_GLUE to keys("G"),
 
     ShortcutAction.SELECT_ALL to keys("Ctrl+A"),
     ShortcutAction.INVERT_SELECTION to keys("Ctrl+I"),
     ShortcutAction.SELECTION_STYLE_BOX to keys("Q"),
-    ShortcutAction.SELECTION_STYLE_LASSO to keys("L"),
+    ShortcutAction.SELECTION_STYLE_LASSO to keys("Shift+Q"),
     ShortcutAction.SELECT_LINKED to keys("Shift+L"),
     ShortcutAction.CANCEL to keys("Esc"),
     ShortcutAction.FINISH_PATH to keys("Enter"),
@@ -214,24 +216,15 @@ private val PS_DEFAULTS: Map<ShortcutAction, List<KeyBinding>> = mapOf(
  * Blender-flavoured overrides. Only rows where Blender has a directly corresponding function with
  * a well-known key are listed; everything else is inherited from [PS_DEFAULTS], which is why the
  * three presets cannot drift apart on the rows they share.
- *
- * The canvas keys are a genuine permutation, not a pile-up: every key vacated by a move is taken by
- * another move, and no key is claimed twice.
  */
 private val BLENDER_OVERRIDES: Map<ShortcutAction, List<KeyBinding>> = mapOf(
-    // Grab — this app's TRANSFORM tool is its move/rotate/scale tool.
-    ShortcutAction.TOOL_TRANSFORM to keys("G"),
-    // Selection. `E` is the key the TOOL_MESH move below vacated, so it closes the permutation.
-    ShortcutAction.TOOL_SELECT to keys("E"),
+    ShortcutAction.TOOL_SELECT to keys("G", "E"),
+    ShortcutAction.TOOL_LASSO_SELECT to keys("C"),
     // Sculpt-mode brush keys.
     ShortcutAction.TOOL_BRUSH to keys("V"),
     ShortcutAction.TOOL_SMOOTH to keys("S"),
-    // Object/Edit mode toggle. The `E` alias is dropped.
-    ShortcutAction.TOOL_MESH to keys("Tab"),
-    // Edit-mode selection keys.
-    ShortcutAction.SELECTION_STYLE_BOX to keys("B"),
-    ShortcutAction.SELECTION_STYLE_LASSO to keys("C"),
-    ShortcutAction.SELECT_LINKED to keys("L"),
+    ShortcutAction.TOOL_CREATE_WARP to keys("Shift+W"),
+    ShortcutAction.TOOL_GLUE to keys("Shift+G"),
     // Numpad-dot = view selected.
     ShortcutAction.FRAME_VIEW to keys("NumPadDot"),
     // Workspace cycling.
@@ -240,23 +233,13 @@ private val BLENDER_OVERRIDES: Map<ShortcutAction, List<KeyBinding>> = mapOf(
 )
 
 /**
- * Live2D Cubism Editor overrides, taken from the official 5.x shortcut table. Most of Cubism's keys
- * already coincide with this app's defaults (undo/redo, open/save, select all, delete, escape, F to
- * focus the selection, Ctrl+W to close a tab, hold-Space to pan), so only the genuine differences
- * are listed.
- *
- * Deliberately not adopted: Cubism's `S` (solo display) and `C` (animation edit mode) have no
- * counterpart here, and the `G` = deform-mode key that circulates in third-party tutorials is not in
- * the official table at all (`G` is modifier-only there). `T` is not in this table because the
- * default binding already gives it to the transform tool.
+ * Live2D Cubism Editor overrides, taken from the official 5.x shortcut table.
  */
 private val CUBISM_OVERRIDES: Map<ShortcutAction, List<KeyBinding>> = mapOf(
     // Arrow/select tool. `V` has no Cubism default, so it survives as a spare.
     ShortcutAction.TOOL_SELECT to keys("A", "V"),
     // Deform path tool.
-    ShortcutAction.TOOL_PATH_DEFORM to keys("P", "D"),
-    // Mesh edit mode toggle.
-    ShortcutAction.TOOL_MESH to keys("Ctrl+E", "Tab"),
+    ShortcutAction.TOOL_CREATE_DEFORM_PATH to keys("P", "D"),
     // Show the whole work area.
     ShortcutAction.RESET_CAMERA to keys("Shift+F", "Home", "0"),
 )

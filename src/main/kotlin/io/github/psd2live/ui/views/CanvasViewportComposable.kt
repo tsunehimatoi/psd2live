@@ -50,7 +50,7 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.key.*
 import io.github.psd2live.ui.CanvasEditor
 import io.github.psd2live.ui.CanvasTool
-import io.github.psd2live.ui.POINT_BOX_TOOLS
+import io.github.psd2live.ui.EditHierarchyMode
 import io.github.psd2live.ui.SelectionStyle
 import io.github.psd2live.ui.VERTEX_TOOLS
 import androidx.compose.ui.input.pointer.isShiftPressed
@@ -151,7 +151,7 @@ fun CanvasViewportComposable(
 		if (state.focusCanvasRequest > 0) focusRequester.requestFocus()
 	}
     editor.state = state
-    LaunchedEffect(viewModel, mode) { viewModel.canvasPathRequests.collect { if(mode == CanvasMode.EDIT) editor.activateTool(CanvasTool.PATH_DEFORM) } }
+    LaunchedEffect(viewModel, mode) { viewModel.canvasPathRequests.collect { if(mode == CanvasMode.EDIT) editor.activateTool(CanvasTool.CREATE_DEFORM_PATH) } }
     LaunchedEffect(state.selectedLayerId, state.selectedDeformerId) {
         if (!editor.inGesture && !editor.busy) {
             editor.resetSelection()
@@ -349,28 +349,23 @@ fun CanvasViewportComposable(
 					ShortcutAction.SELECT_ALL -> { editor.selectAll(); true }
 					ShortcutAction.INVERT_SELECTION -> { editor.selectAll(true); true }
 					ShortcutAction.TOOL_SELECT -> { editor.activateTool(CanvasTool.SELECT); true }
-					ShortcutAction.TOOL_TRANSFORM -> { editor.activateTool(CanvasTool.TRANSFORM); true }
-					ShortcutAction.TOOL_MESH -> {
-						// Toggles back to SELECT when already in mesh mode.
-						editor.activateTool(
-							if (editor.tool == CanvasTool.MESH) CanvasTool.SELECT else CanvasTool.MESH,
-						)
-						true
-					}
-					ShortcutAction.TOOL_WARP -> { editor.activateTool(CanvasTool.WARP); true }
+					ShortcutAction.TOOL_LASSO_SELECT -> { editor.activateTool(CanvasTool.LASSO_SELECT); true }
+					ShortcutAction.TOOL_BRUSH_SELECT -> { editor.activateTool(CanvasTool.BRUSH_SELECT); true }
 					ShortcutAction.TOOL_BRUSH -> { editor.activateTool(CanvasTool.BRUSH); true }
 					ShortcutAction.TOOL_SMOOTH -> { editor.activateTool(CanvasTool.SMOOTH); true }
 					ShortcutAction.TOOL_INFLATE -> { editor.activateTool(CanvasTool.INFLATE); true }
-					ShortcutAction.TOOL_PATH_DEFORM -> { editor.activateTool(CanvasTool.PATH_DEFORM); true }
-					ShortcutAction.TOOL_HAND -> { editor.activateTool(CanvasTool.HAND); true }
+					ShortcutAction.TOOL_CREATE_WARP -> { editor.activateTool(CanvasTool.CREATE_WARP); true }
+					ShortcutAction.TOOL_CREATE_ROTATION -> { editor.activateTool(CanvasTool.CREATE_ROTATION); true }
+					ShortcutAction.TOOL_CREATE_DEFORM_PATH -> { editor.activateTool(CanvasTool.CREATE_DEFORM_PATH); true }
+					ShortcutAction.TOOL_GLUE -> { editor.activateTool(CanvasTool.GLUE); true }
 					ShortcutAction.SELECTION_STYLE_BOX -> { editor.selectionStyle = SelectionStyle.BOX; true }
 					ShortcutAction.SELECTION_STYLE_LASSO -> { editor.selectionStyle = SelectionStyle.LASSO; true }
 					ShortcutAction.SELECT_LINKED -> { editor.selectLinked(); true }
 					ShortcutAction.CANCEL -> { editor.cancel(); true }
 					ShortcutAction.FINISH_PATH -> { editor.finishPath(); true }
 					ShortcutAction.DELETE_SELECTION -> {
-						if (editor.tool == CanvasTool.PATH_DEFORM) editor.deletePathPoint()
-						else if (editor.tool == CanvasTool.MESH) editor.topology("delete")
+						if (editor.tool == CanvasTool.CREATE_DEFORM_PATH) editor.deletePathPoint()
+						else if (editor.hierarchyMode == EditHierarchyMode.STRUCTURE) editor.topology("delete")
 						true
 					}
 					ShortcutAction.BRUSH_RADIUS_DOWN -> {
@@ -419,7 +414,7 @@ fun CanvasViewportComposable(
                 if(change.isConsumed) return@onPointerEvent
                 if(mode == CanvasMode.EDIT && previewModel != null) {
                     val p=change.position/density
-                    if(p.y<32f || p.y>viewSize.height/density-25f || (p.x<42f && p.y in 44f..442f)) return@onPointerEvent
+                    if(p.y<40f || p.y>viewSize.height/density-25f || (p.x<42f && p.y in 40f..460f)) return@onPointerEvent
                 }
                 focusRequester.requestFocus()
                 // Photoshop parity: Alt + right-drag retunes the brush — right/left grows/shrinks the radius,
@@ -429,6 +424,13 @@ fun CanvasViewportComposable(
                     event.keyboardModifiers.isAltPressed && !isDragging && !editor.inGesture && editor.beginBrushAdjust(change.position, event.keyboardModifiers.isShiftPressed)
                 ) {
                     change.consume(); return@onPointerEvent
+                }
+                // Middle mouse drag or Space + Left drag -> Canvas Pan
+                if (event.button == PointerButton.Tertiary || (event.button == PointerButton.Primary && editor.space)) {
+                    isDragging = true
+                    lastDragPos = change.position
+                    change.consume()
+                    return@onPointerEvent
                 }
                 if (mode == CanvasMode.EDIT && previewModel != null && event.button == PointerButton.Primary) {
                     if (editor.press(change.position,computeViewport(previewModel,viewSize.width,viewSize.height),event.keyboardModifiers.isShiftPressed,event.keyboardModifiers.isAltPressed,event.keyboardModifiers.isCtrlPressed)) {
@@ -476,6 +478,7 @@ fun CanvasViewportComposable(
 								visibleLayerIds = state.effectiveVisibleLayerIds,
 								currentSelectedLayerId = state.selectedLayerId,
 								geometry = geometry,
+								drawOrderOverrides = state.drawOrderOverrides,
 							)
 							onLayerClicked(hit)
 						}
@@ -502,7 +505,8 @@ fun CanvasViewportComposable(
                         change.position,
                         computeViewport(previewModel, viewSize.width, viewSize.height),
                         event.keyboardModifiers.isShiftPressed,
-                        event.keyboardModifiers.isAltPressed
+                        event.keyboardModifiers.isAltPressed,
+                        event.keyboardModifiers.isCtrlPressed
                     )
                 }
                 if (isDragging) {
@@ -521,6 +525,18 @@ fun CanvasViewportComposable(
 			}
 			.onPointerEvent(PointerEventType.Scroll) { event ->
 				val change = event.changes.firstOrNull() ?: return@onPointerEvent
+				if (mode == CanvasMode.EDIT && editor.tool == CanvasTool.CREATE_WARP) {
+					val delta = if (change.scrollDelta.y > 0) -1 else 1
+					if (event.keyboardModifiers.isShiftPressed) {
+						editor.warpCreateBezierRows = (editor.warpCreateBezierRows + delta).coerceIn(1, 10)
+						editor.warpCreateBezierCols = (editor.warpCreateBezierCols + delta).coerceIn(1, 10)
+					} else {
+						editor.warpCreateGridRows = (editor.warpCreateGridRows + delta).coerceIn(2, 20)
+						editor.warpCreateGridCols = (editor.warpCreateGridCols + delta).coerceIn(2, 20)
+					}
+					change.consume()
+					return@onPointerEvent
+				}
 				if (mode == CanvasMode.EDIT && event.keyboardModifiers.isAltPressed &&
 					editor.tool in listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE)
 				) {
@@ -587,6 +603,18 @@ fun CanvasViewportComposable(
 			}
 			val isDimmingActive = state.dimUnselected && hasActiveSelection
 
+			// Hover annotation: a wash over the artwork in the component's own colour, not a box around
+			// it. A deformer owns no texture of its own, so previewing one lights up everything it
+			// deforms — which is exactly what the deformer is.
+			val hoveredLayerId = state.hoveredLayerId
+			val hoveredDeformerId = state.hoveredDeformerId
+			val hoverTintLayerIds = when {
+				hoveredLayerId != null -> setOf(hoveredLayerId)
+				hoveredDeformerId != null -> descendantLayerIds(model, hoveredDeformerId, state.parentOverrides)
+				else -> null
+			}
+			val hoverTintColor = (hoveredLayerId ?: hoveredDeformerId)?.let { ComponentPalette.strong(it).rgb } ?: 0
+
 			val nativeFrame = sdkFrame
 			// Path guides never paint outside the Edit tab (see 3e), so they cannot force the
 			// preview off its native SDK frame.
@@ -623,6 +651,8 @@ fun CanvasViewportComposable(
 							dimUnselected = state.dimUnselected,
 							highlightedLayerIds = highlightedLayerIds,
 							dimmedAlphaMultiplier = 0.22f,
+							tintLayerIds = hoverTintLayerIds,
+							tintColor = hoverTintColor,
 						) }
 					}
 
@@ -738,10 +768,7 @@ fun CanvasViewportComposable(
 					// while this one frames a single layer — so letting both draw stacks two different
 					// rectangles over the same artwork. The transform box wins: it is the one that is
 					// dragged. Every other tool leaves this as the only selection feedback.
-					val transformBoxOwnsSelection = mode == CanvasMode.EDIT && (
-						editor.tool == CanvasTool.TRANSFORM ||
-							(editor.tool in POINT_BOX_TOOLS && editor.vertices.isNotEmpty())
-						)
+					val transformBoxOwnsSelection = mode == CanvasMode.EDIT && editor.drawsTransformBox
 					if (state.showSelectionBounds && !transformBoxOwnsSelection) {
 						state.selectedLayerId?.let { layerId ->
 							val drawableId = model.rig.layerIdByDrawableId.entries.firstOrNull { it.value == layerId }?.key
@@ -765,23 +792,10 @@ fun CanvasViewportComposable(
 						}
 					}
 
-					// Hover Bounding Box (instant feedback when hovering items in hierarchy tree)
-					state.hoveredLayerId?.takeIf { it != state.selectedLayerId }?.let { layerId ->
-						val drawableId = model.rig.layerIdByDrawableId.entries.firstOrNull { it.value == layerId }?.key
-						val bounds = drawableId?.let(drawableBounds::get)
-						if (bounds != null) {
-							RigCanvasSupport.paintSelectionBounds(g, bounds, viewport, java.awt.Color(0, 210, 255, 190), stroke = 1.4f, isDashed = true)
-						}
-					}
-					state.hoveredDeformerId?.takeIf { it != state.selectedDeformerId }?.let { defId ->
-						val def = model.rig.puppet.deformers.firstOrNull { it.id.raw == defId }
-						if (def !is org.umamo.runtime.model.Deformer.Warp) {
-							val bounds = deformerBounds[defId]
-							if (bounds != null) {
-								RigCanvasSupport.paintSelectionBounds(g, bounds, viewport, java.awt.Color(0, 210, 255, 190), stroke = 1.4f, isDashed = true)
-							}
-						}
-					}
+					// Hover has no box here on purpose. It is a wash over the part's own texture (see
+					// hoverTintLayerIds above), which reads as the part lighting up instead of a
+					// rectangle laid over the rig — and for a deformer, its bounds are the union of
+					// everything beneath it, which would box far more than the pointer is on.
 
 					// 3d. Warp Channel (RigInformationOverlay)
 					if (showWarp) {

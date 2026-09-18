@@ -235,6 +235,31 @@ internal object RigCanvasSupport {
 		}
 	}
 
+	/**
+	 * The value the texture channel sorts this drawable by: the override, then the evaluated order,
+	 * then the authored one — the same chain [SkiaRigPainter] draws with.
+	 *
+	 * Shared rather than written twice so "what is drawn on top is what gets picked" holds by
+	 * construction. A draw-order override the picker ignored would leave the pointer selecting a part
+	 * the artist can plainly see is behind another.
+	 */
+	fun displayOrder(
+		model: RigPreviewModel,
+		drawable: org.umamo.runtime.model.Drawable,
+		geometry: DeformedGeometry? = null,
+		drawOrderOverrides: Map<String, Float> = emptyMap(),
+	): Float = drawOrderOverrides[model.rig.layerIdByDrawableId[drawable.id.raw]]
+		?: drawOrderOverrides[drawable.id.raw]
+		?: geometry?.drawOrder?.get(drawable.id)
+		?: drawable.drawOrder
+
+	/**
+	 * The layers under a point, front-most first.
+	 *
+	 * The order is the render order, not a guess at importance: the part drawn last is the one the
+	 * pointer is visibly on, so that is the one a click takes. Clicking again walks back through the
+	 * stack (see [nextLayer]), which is how a part buried under another is still reachable.
+	 */
 	fun hitLayers(
 		model: RigPreviewModel,
 		drawableBounds: Map<String, Bounds>,
@@ -242,6 +267,7 @@ internal object RigCanvasSupport {
 		canvasY: Float,
 		visibleLayerIds: Set<String>? = null,
 		geometry: DeformedGeometry? = null,
+		drawOrderOverrides: Map<String, Float> = emptyMap(),
 	): List<String> {
 		val candidates = model.rig.puppet.drawables.asSequence()
 			.mapNotNull { drawable ->
@@ -258,15 +284,15 @@ internal object RigCanvasSupport {
 					}
 				}
 
-				Triple(layerId, bounds.width * bounds.height, drawable.drawOrder)
+				layerId to displayOrder(model, drawable, geometry, drawOrderOverrides)
 			}
-			.sortedWith(compareBy<Triple<String, Float, Float>> { it.second }.thenByDescending { it.third })
+			.sortedByDescending { it.second }
 			.map { it.first }
 			.distinct()
 			.toList()
 
 		if (candidates.isEmpty() && geometry != null) {
-			return hitLayers(model, drawableBounds, canvasX, canvasY, visibleLayerIds, geometry = null)
+			return hitLayers(model, drawableBounds, canvasX, canvasY, visibleLayerIds, geometry = null, drawOrderOverrides = drawOrderOverrides)
 		}
 		return candidates
 	}
@@ -279,8 +305,9 @@ internal object RigCanvasSupport {
 		visibleLayerIds: Set<String>? = null,
 		currentSelectedLayerId: String? = null,
 		geometry: DeformedGeometry? = null,
+		drawOrderOverrides: Map<String, Float> = emptyMap(),
 	): String? = nextLayer(
-		hitLayers(model, drawableBounds, canvasX, canvasY, visibleLayerIds, geometry),
+		hitLayers(model, drawableBounds, canvasX, canvasY, visibleLayerIds, geometry, drawOrderOverrides),
 		currentSelectedLayerId,
 	)
 

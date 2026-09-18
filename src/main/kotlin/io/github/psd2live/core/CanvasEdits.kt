@@ -23,8 +23,12 @@ internal object CanvasEdits {
                 }.toSet()
                 // Wrap whole root branches: inserting an affine inside a warped UV frame would
                 // discard the parent's non-linear shape. A root identity preserves every pose.
-                val rotation=Deformer.Rotation(DeformerId(id),edit.getValue("name").jsonPrimitive.content,null,null,0f,
-                    KeyformGrid(emptyList(),listOf(KeyformCell(intArrayOf(),RotationPivotForm(0f,0f,0f,1f)))))
+                val origin = edit["origin"]?.jsonArray
+                val originX = origin?.get(0)?.jsonPrimitive?.float ?: 0f
+                val originY = origin?.get(1)?.jsonPrimitive?.float ?: 0f
+                val baseAngle = edit["angle"]?.jsonPrimitive?.float ?: 0f
+                val rotation=Deformer.Rotation(DeformerId(id),edit.getValue("name").jsonPrimitive.content,null,null,baseAngle,
+                    KeyformGrid(emptyList(),listOf(KeyformCell(intArrayOf(),RotationPivotForm(originX,originY,0f,1f)))))
                 model.copy(deformers=listOf(rotation)+model.deformers.map { d -> if(d.id !in roots)d else when(d) {
                     is Deformer.Warp -> d.copy(parent=rotation.id)
                     is Deformer.Rotation -> d.copy(parent=rotation.id)
@@ -44,11 +48,16 @@ internal object CanvasEdits {
                         val mesh=d.mesh!!
                         listOf(mesh.positions.toList()) + d.geometryGrid?.cells.orEmpty().map { cell -> mesh.positions.indices.map { mesh.positions[it]+cell.form.positionDeltas[it] } }
                     }.flatten().toFloatArray()
-                    val bounds=RigGeometryTools.bounds(all)
-                    val x=bounds[0]-bounds[2]*0.05f;val y=bounds[1]-bounds[3]*0.05f
-                    val w=bounds[2]*1.1f;val h=bounds[3]*1.1f
-                    val points=(0..4).flatMap { r -> (0..4).flatMap { c -> listOf(x+c*w/4,y+r*h/4) } }.toFloatArray()
-                    val warp=Deformer.Warp(DeformerId(id),edit.getValue("name").jsonPrimitive.content,parent,null,4,4,true,KeyformGrid(emptyList(),listOf(KeyformCell(intArrayOf(),WarpLatticeForm(points)))))
+                    val bounds = RigGeometryTools.bounds(all)
+                    val rows = edit["rows"]?.jsonPrimitive?.int ?: 4
+                    val cols = edit["columns"]?.jsonPrimitive?.int ?: 4
+                    val customBounds = edit["bounds"]?.jsonObject
+                    val x = customBounds?.get("x")?.jsonPrimitive?.float ?: (bounds[0]-bounds[2]*0.05f)
+                    val y = customBounds?.get("y")?.jsonPrimitive?.float ?: (bounds[1]-bounds[3]*0.05f)
+                    val w = customBounds?.get("w")?.jsonPrimitive?.float ?: (bounds[2]*1.1f)
+                    val h = customBounds?.get("h")?.jsonPrimitive?.float ?: (bounds[3]*1.1f)
+                    val points = (0..rows).flatMap { r -> (0..cols).flatMap { c -> listOf(x+c*w/cols, y+r*h/rows) } }.toFloatArray()
+                    val warp = Deformer.Warp(DeformerId(id), edit.getValue("name").jsonPrimitive.content, parent, null, rows, cols, true, KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(), WarpLatticeForm(points)))))
                     model.copy(deformers=model.deformers+warp,drawables=model.drawables.map { d -> if(d.id.raw !in ids)d else {
                         val mesh=d.mesh!!
                         d.copy(parentDeformerId=warp.id,mesh=DrawableMesh(FloatArray(mesh.positions.size) { j -> if(j%2==0)(mesh.positions[j]-x)/w else (mesh.positions[j]-y)/h },mesh.uvs,mesh.indices),
@@ -132,6 +141,35 @@ internal object CanvasEdits {
                 }
                 next = next.copy(deformPaths = next.deformPaths.map { paths[it.id] ?: it })
                 next
+            }
+            "canvas_create_glue" -> {
+                val meshA = DrawableId(edit.getValue("mesh_a").jsonPrimitive.content)
+                val meshB = DrawableId(edit.getValue("mesh_b").jsonPrimitive.content)
+                val dA = model.drawables.firstOrNull { it.id == meshA } ?: return model
+                val dB = model.drawables.firstOrNull { it.id == meshB } ?: return model
+                val mA = dA.mesh ?: return model
+                val mB = dB.mesh ?: return model
+                val pairs = mutableListOf<GluePair>()
+                for (i in 0 until mA.vertexCount) {
+                    val ax = mA.positions[i * 2]
+                    val ay = mA.positions[i * 2 + 1]
+                    var bestDist = Float.MAX_VALUE
+                    var bestJ = -1
+                    for (j in 0 until mB.vertexCount) {
+                        val bx = mB.positions[j * 2]
+                        val by = mB.positions[j * 2 + 1]
+                        val d = kotlin.math.hypot(ax - bx, ay - by)
+                        if (d < bestDist) {
+                            bestDist = d
+                            bestJ = j
+                        }
+                    }
+                    if (bestJ >= 0 && bestDist < 40f) {
+                        pairs.add(GluePair(i, bestJ, 0.5f, 0.5f))
+                    }
+                }
+                val glue = Glue(meshA, meshB, pairs, intensity = 1f, id = "Glue_${java.util.UUID.randomUUID()}")
+                model.copy(glues = model.glues + glue)
             }
             else -> error("Unknown canvas operation")
         }

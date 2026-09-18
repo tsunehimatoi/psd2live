@@ -12,44 +12,51 @@ import java.util.UUID
 import kotlin.math.*
 
 /** Canvas tools, each pointing at the shortcut action that activates it. */
+/** Edit hierarchy / layer mode chosen in the top-right toolbar. */
+enum class EditHierarchyMode {
+    OBJECT,      // 物体模式: 选择/移动/缩放/旋转整个对象
+    DEFORM,      // 变形编辑: 不改拓扑，编辑参数形变 (Level 1/2/3)
+    STRUCTURE,   // 结构编辑: 改变对象基础结构/网格拓扑/分割
+}
+
+/** Canvas tools, each pointing at the shortcut action that activates it. */
 internal enum class CanvasTool(val action: ShortcutAction) {
     SELECT(ShortcutAction.TOOL_SELECT),
-    TRANSFORM(ShortcutAction.TOOL_TRANSFORM),
-    MESH(ShortcutAction.TOOL_MESH),
-    WARP(ShortcutAction.TOOL_WARP),
+    LASSO_SELECT(ShortcutAction.TOOL_LASSO_SELECT),
+    BRUSH_SELECT(ShortcutAction.TOOL_BRUSH_SELECT),
     BRUSH(ShortcutAction.TOOL_BRUSH),
     SMOOTH(ShortcutAction.TOOL_SMOOTH),
     INFLATE(ShortcutAction.TOOL_INFLATE),
-    PATH_DEFORM(ShortcutAction.TOOL_PATH_DEFORM),
-    HAND(ShortcutAction.TOOL_HAND),
+    CREATE_WARP(ShortcutAction.TOOL_CREATE_WARP),
+    CREATE_ROTATION(ShortcutAction.TOOL_CREATE_ROTATION),
+    CREATE_DEFORM_PATH(ShortcutAction.TOOL_CREATE_DEFORM_PATH),
+    GLUE(ShortcutAction.TOOL_GLUE),
 }
 
 internal enum class SelectionStyle { BOX, LASSO }
 
-/**
- * Tools that edit points rather than whole objects. The hierarchy selection sync only forces the canvas
- * into vertex mode for these — see the note at its call site.
- */
-internal val VERTEX_TOOLS = setOf(
-    CanvasTool.MESH, CanvasTool.WARP, CanvasTool.BRUSH,
-    CanvasTool.SMOOTH, CanvasTool.INFLATE, CanvasTool.PATH_DEFORM,
+internal val SELECTION_TOOLS = setOf(
+    CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT
+)
+
+internal val DEFORM_BRUSH_TOOLS = setOf(
+    CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE
+)
+
+internal val CREATION_TOOLS = setOf(
+    CanvasTool.CREATE_WARP, CanvasTool.CREATE_ROTATION, CanvasTool.CREATE_DEFORM_PATH, CanvasTool.GLUE
 )
 
 /**
- * The point tools that get the shared transform box.
- *
- * Not BRUSH/SMOOTH/INFLATE/PATH_DEFORM: those edit through a radius or a path, so a box drawn around
- * the points would promise a different edit than the one a drag actually performs.
+ * Tools that edit points rather than whole objects.
  */
-internal val POINT_BOX_TOOLS = setOf(CanvasTool.MESH, CanvasTool.WARP)
+internal val VERTEX_TOOLS = setOf(
+    CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT,
+    CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE,
+)
 
 /**
  * The target kinds a point selection may be framed in.
- *
- * A rotation deformer is excluded: [io.github.psd2live.core.CanvasEdits] derives its origin, angle and
- * scale from its two axis points, so scaling a box about the pair's centre would drag the origin — the
- * deformer's pivot — along with it. The numeric panel is the right surface for it instead; see
- * preciseTransform, whose origin-pinned centre is already correct.
  */
 internal val POINT_BOX_KINDS = setOf("mesh", "warp")
 
@@ -66,6 +73,24 @@ internal data class CanvasTarget(
     val count get() = geometry.points.size / 2
 }
 
+/**
+ * One node an object-mode click can pick: a drawable, or one of the deformers above it.
+ *
+ * [parentName] and [nextName] are what the hover annotation reads — they name the step a Ctrl-click
+ * would take, so the canvas can say where the click goes before it is made rather than after.
+ */
+internal data class HierarchyPick(
+    val kind: String,
+    val layerId: String? = null,
+    val deformerId: String? = null,
+    val name: String,
+    val parentName: String? = null,
+    val nextName: String? = null,
+) {
+    /** The id the component colour keys off; a deformer and a layer of the same rig never collide. */
+    val id get() = layerId ?: deformerId.orEmpty()
+}
+
 /** One gesture owns its pose, parent mapping and history HEAD until release. */
 internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     var state: PSD2LiveState
@@ -73,6 +98,31 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         set(_) {}
     var viewport: CanvasViewport? = null
     var tool by mutableStateOf(CanvasTool.SELECT)
+
+    // Top-right Hierarchy & Level state
+    var hierarchyMode by mutableStateOf(EditHierarchyMode.OBJECT)
+    var editLevel by mutableStateOf(2) // Level 1 (grid), Level 2 (bezier), Level 3 (macro)
+
+    // Level 2 Bezier Deformer state
+    var bezierState by mutableStateOf<BezierDeformerState?>(null)
+    var activeBezierAnchor by mutableStateOf<Pair<Int, Int>?>(null)
+    var activeBezierHandle by mutableStateOf<Triple<Int, Int, BezierHandleDir>?>(null)
+    var hoveredBezierAnchor by mutableStateOf<Pair<Int, Int>?>(null)
+    var hoveredBezierHandle by mutableStateOf<Triple<Int, Int, BezierHandleDir>?>(null)
+
+    // Interactive Creation state
+    var isCreatingWarp by mutableStateOf(false)
+    var isCreatingRotation by mutableStateOf(false)
+    var creationStart by mutableStateOf<Offset?>(null)
+    var creationCurrent by mutableStateOf<Offset?>(null)
+    var warpCreateGridRows by mutableStateOf(4)
+    var warpCreateGridCols by mutableStateOf(4)
+    var warpCreateBezierRows by mutableStateOf(2)
+    var warpCreateBezierCols by mutableStateOf(2)
+    var glueFirstMesh by mutableStateOf<String?>(null)
+    var glueHoverMesh by mutableStateOf<String?>(null)
+    var brushSelecting by mutableStateOf(false)
+
     var vertices by mutableStateOf(emptySet<Int>())
     var radius by mutableStateOf(48f)
     var strength by mutableStateOf(0.5f)
@@ -114,6 +164,8 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     var hoveredVertex by mutableStateOf<Int?>(null)
     var hoveredHandle by mutableStateOf(BoundingHandle.NONE)
     var isHoveringObject by mutableStateOf(false)
+    /** What object mode would pick at the pointer right now; drives the colour annotation and its HUD. */
+    var hoveredPick by mutableStateOf<HierarchyPick?>(null)
     var activeHandle by mutableStateOf(BoundingHandle.NONE)
     var dragStartPos by mutableStateOf(Offset.Zero)
     var initialBounds by mutableStateOf<BoundingBox?>(null)
@@ -184,25 +236,20 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     val pose get() = state.parameterValues.mapKeys { it.key.raw }
 
     /**
-     * Whether the active tool edits points rather than whole objects.
-     *
-     * Read off the tool, never off `objectMode`: the hierarchy sync in CanvasViewportComposable flips
-     * `objectMode` whenever a deformer is selected, so it answers a different question than this one.
+     * Whether the active tool should draw a transform box at all. Object mode is selection only, so
+     * the box never appears there — and neither do its handles, which read the same frame.
      */
-    private val pointsTool get() = tool in POINT_BOX_TOOLS
-
-    /** Whether the active tool should draw a transform box at all. */
-    val drawsTransformBox get() = tool == CanvasTool.TRANSFORM || pointsTool
+    val drawsTransformBox get() = hierarchyMode != EditHierarchyMode.OBJECT && tool == CanvasTool.SELECT && (
+        vertices.isNotEmpty() || (target()?.kind == "rotation")
+    )
 
     /**
-     * Whether the shared Precise Transform controls have something to act on. The object tools need a
-     * target; the point tools additionally need a selection, except over a rotation deformer, whose two
-     * axis points are its whole selection whether or not the canvas has seeded them.
+     * Whether the shared Precise Transform controls have something to act on.
      */
     val hasTransformSelection: Boolean
         get() {
+            if (hierarchyMode == EditHierarchyMode.OBJECT) return false
             val t = target() ?: return false
-            if (!pointsTool) return true
             return t.kind == "rotation" || vertices.any { it in 0 until t.count }
         }
     val editable get() = !busy && !state.canvasEditBusy && !state.isGenerating && !state.isAnalyzing && state.historySnapshot != null
@@ -281,18 +328,69 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         cancel()
         tool = next
         error = null
-        // Both object-space tools: SELECT picks the objects, TRANSFORM moves them. The pick survives the
-        // switch — cancel() above deliberately leaves `objects` and `selectionStyle` alone.
-        objectMode = (next == CanvasTool.SELECT || next == CanvasTool.TRANSFORM)
-        if (next == CanvasTool.SELECT) vertices = emptySet()
+        if (next == CanvasTool.LASSO_SELECT) selectionStyle = SelectionStyle.LASSO
+        else if (next == CanvasTool.SELECT) selectionStyle = SelectionStyle.BOX
+        objectMode = (hierarchyMode == EditHierarchyMode.OBJECT)
+        if (next == CanvasTool.SELECT && objectMode) vertices = emptySet()
         clearHover()
+    }
+
+    @JvmName("changeHierarchyMode")
+    fun setHierarchyMode(next: EditHierarchyMode) {
+        if (busy) return
+        cancel()
+        hierarchyMode = next
+        objectMode = (next == EditHierarchyMode.OBJECT)
+        if (next == EditHierarchyMode.OBJECT) {
+            vertices = emptySet()
+        } else if (next == EditHierarchyMode.DEFORM && editLevel == 2) {
+            ensureBezierState()
+        }
+        clearHover()
+    }
+
+    @JvmName("changeEditLevel")
+    fun setEditLevel(level: Int) {
+        editLevel = level
+        if (level == 2 && hierarchyMode == EditHierarchyMode.DEFORM) {
+            ensureBezierState()
+        }
+        clearHover()
+    }
+
+    val warpBezierDivisions = mutableMapOf<String, Pair<Int, Int>>()
+
+    fun ensureBezierState() {
+        val t = target()
+        if (t != null && t.kind == "warp") {
+            val warp = model.deformers.filterIsInstance<Deformer.Warp>().firstOrNull { it.id.raw == t.id }
+            if (warp != null) {
+                val rows = warp.rows
+                val cols = warp.columns
+                val (bRows, bCols) = warpBezierDivisions[t.id] ?: (2 to 2)
+                val cur = bezierState
+                if (cur == null || cur.bezierRows != bRows || cur.bezierCols != bCols) {
+                    val bState = BezierDeformerState(bRows, bCols)
+                    bState.initFromLattice(t.geometry.points, rows, cols)
+                    bezierState = bState
+                }
+            }
+        } else {
+            bezierState = null
+        }
     }
 
     fun clearHover() {
         cursor = null
         hoveredVertex = null
         hoveredHandle = BoundingHandle.NONE
+        hoveredBezierAnchor = null
+        hoveredBezierHandle = null
         isHoveringObject = false
+        // The hierarchy panel publishes the same pair from its own hover, so only retract a highlight
+        // this editor actually put up — a tool switch must not blink out the panel's.
+        if (hoveredPick != null) viewModel.setHoveredItem(null, null)
+        hoveredPick = null
         shrinks = inflateInvert
     }
 
@@ -307,41 +405,37 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
      * produced resolves. See endTransformBox.
      */
     fun transformFrame(viewport: CanvasViewport): TransformFrame? {
+        // Object mode is selection only, so it has no frame at all. Enforced here rather than at each
+        // caller: the box, its handles, the hover ring and the precise-transform pivot all read the
+        // frame, and one null is what keeps every one of them out of the mode.
+        if (hierarchyMode == EditHierarchyMode.OBJECT) return null
         val bounds = currentDragBounds
         if (bounds != null) return TransformFrame(bounds, framePivotAtPress, frameAngle)
         return selectionFrame(viewport)
     }
 
     /**
-     * The frame the current selection makes, in the tool's own frame orientation.
+     * The frame the selected points make, in the tool's own frame orientation.
      *
-     * The two tool families frame different things: the object tools frame every point of the picked
-     * layers, the point tools frame exactly the selected vertices — which is what makes the box hug the
-     * selection instead of the whole mesh it belongs to.
+     * The frame hugs exactly the selected vertices rather than the whole mesh they belong to, which is
+     * what lets a box around three points of a cheek read as those three points.
      */
     private fun selectionFrame(viewport: CanvasViewport): TransformFrame? {
-        if (pointsTool) {
-            val t = target() ?: return null
-            if (t.kind !in POINT_BOX_KINDS) return null
-            return frameOf(screen(t.geometry.points, t, viewport), vertices, frameAngle)
-        }
-        val targets = if (objectMode) objects.mapNotNull { target(model, it, null) }.ifEmpty { listOfNotNull(target()) } else listOfNotNull(target())
-        if (targets.isEmpty()) return null
-        val points = targets.flatMap { screen(it.geometry.points, it, viewport) }
-        return frameOf(points, points.indices.toSet(), frameAngle)
+        val t = target() ?: return null
+        if (t.kind !in POINT_BOX_KINDS) return null
+        if (vertices.isEmpty()) return null
+        return frameOf(screen(t.geometry.points, t, viewport), vertices, frameAngle)
     }
 
     /**
-     * The points a transform gesture on [t] moves: every point for the object tools, and for a rotation
-     * deformer, whose two axis points are the whole deformer; the vertex selection for a mesh or a warp
-     * lattice.
+     * The points a transform gesture on [t] moves: the vertex selection for a mesh or a warp lattice,
+     * and for a rotation deformer — whose two axis points are the whole deformer — everything.
      *
-     * Deliberately *not* "empty selection means everything": in a point tool an empty selection means
-     * nothing to move, not the whole mesh. That fallback is only ever right in object mode.
+     * Deliberately *not* "empty selection means everything": an empty selection means nothing to move,
+     * not the whole mesh. That fallback would move artwork nobody asked to move.
      */
     private fun gestureIndices(t: CanvasTarget): Set<Int> =
-        if (pointsTool && t.kind != "rotation") vertices.filter { it in 0 until t.count }.toSet()
-        else (0 until t.count).toSet()
+        if (t.kind != "rotation") vertices.filter { it in 0 until t.count }.toSet() else (0 until t.count).toSet()
 
     /** Layers under [pos], in the order a Ctrl-click cycles them. Empty when nothing is pickable. */
     private fun layerCandidates(pos: Offset, viewport: CanvasViewport): List<String> {
@@ -353,52 +447,120 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             viewport.canvasX(pos.x.toInt()),
             viewport.canvasY(pos.y.toInt()),
             state.effectiveVisibleLayerIds,
-            geometry
+            geometry,
+            state.drawOrderOverrides
         ).filter { target(source.rig.puppet, it, null) != null }
     }
 
-    fun updateHover(pos: Offset, viewport: CanvasViewport) {
+    fun updateHover(pos: Offset, viewport: CanvasViewport, ctrl: Boolean = false) {
         cursor = pos
         if (dragging) return
-        when (tool) {
-            CanvasTool.SELECT -> {
-                hoveredVertex = null
-                hoveredHandle = BoundingHandle.NONE
-                isHoveringObject = layerCandidates(pos, viewport).isNotEmpty()
-            }
-            CanvasTool.TRANSFORM -> {
-                hoveredVertex = null
-                val frame = transformFrame(viewport)
-                hoveredHandle = if (frame != null) transformHandleAt(pos, frame) else BoundingHandle.NONE
-                // Outside the box a press re-picks, so the cursor has to promise that too.
-                isHoveringObject = hoveredHandle == BoundingHandle.NONE && layerCandidates(pos, viewport).isNotEmpty()
-            }
-            CanvasTool.MESH -> {
-                isHoveringObject = false
-                updatePointHover(pos, viewport, target()?.takeIf { it.kind == "mesh" })
-            }
-            CanvasTool.WARP -> {
-                isHoveringObject = false
-                updatePointHover(pos, viewport, target()?.takeIf { it.kind == "warp" || it.kind == "rotation" })
-            }
-            CanvasTool.PATH_DEFORM -> {
-                hoveredHandle = BoundingHandle.NONE
-                isHoveringObject = false
+        hoveredBezierAnchor = null
+        hoveredBezierHandle = null
+        hoveredVertex = null
+        hoveredHandle = BoundingHandle.NONE
+        isHoveringObject = false
+        hoveredPick = null
+
+        if (tool in CREATION_TOOLS) {
+            if (tool == CanvasTool.GLUE) {
+                glueHoverMesh = layerCandidates(pos, viewport).firstOrNull { it != glueFirstMesh }
+            } else if (tool == CanvasTool.CREATE_DEFORM_PATH) {
                 val t = target()
                 if (t != null && t.kind == "mesh") {
                     val hit = paths().flatMap { path ->
                         screen(DeformPathTools.positions(path, t.geometry.points).flatMap { listOf(it.first, it.second) }.toFloatArray(), t, viewport).mapIndexed { i, p -> Triple(path, i, (p - pos).getDistance()) }
                     }.filter { it.third <= 10f }.minByOrNull { it.third }
                     hoveredVertex = hit?.second
-                } else {
-                    hoveredVertex = null
                 }
             }
-            else -> {
-                hoveredVertex = null
-                hoveredHandle = BoundingHandle.NONE
-                isHoveringObject = false
+            return
+        }
+
+        // Object mode has no transform box, so no handle is ever live here. What the pointer is over is
+        // the pick itself, and resolving it through the same call the press makes is what guarantees the
+        // annotation names the thing a click would actually select — Ctrl included.
+        if (hierarchyMode == EditHierarchyMode.OBJECT) {
+            if (tool == CanvasTool.SELECT) {
+                val pick = objectPick(pos, viewport, ctrl)
+                hoveredPick = pick
+                isHoveringObject = pick != null
+                viewModel.setHoveredItem(pick?.layerId, pick?.deformerId)
+            } else if (tool in SELECTION_TOOLS) {
+                val hit = layerCandidates(pos, viewport).firstOrNull()
+                isHoveringObject = hit != null
+                viewModel.setHoveredItem(hit, null)
             }
+            return
+        }
+
+        val t = target() ?: return
+
+        if (hierarchyMode == EditHierarchyMode.DEFORM) {
+            if (t.kind == "warp") {
+                if (editLevel == 2) {
+                    ensureBezierState()
+                    val bState = bezierState
+                    if (bState != null) {
+                        var bestHandleDist = Float.MAX_VALUE
+                        var bestHandle: Triple<Int, Int, BezierHandleDir>? = null
+                        bState.handles.forEach { (key, handle) ->
+                            val sp = screen(floatArrayOf(handle.x, handle.y), t, viewport).firstOrNull() ?: return@forEach
+                            val dist = (sp - pos).getDistance()
+                            if (dist <= 8f && dist < bestHandleDist) {
+                                bestHandleDist = dist
+                                bestHandle = key
+                            }
+                        }
+                        if (bestHandle != null) {
+                            hoveredBezierHandle = bestHandle
+                            return
+                        }
+
+                        var bestAnchorDist = Float.MAX_VALUE
+                        var bestAnchor: Pair<Int, Int>? = null
+                        bState.anchors.forEach { (key, anchor) ->
+                            val sp = screen(floatArrayOf(anchor.x, anchor.y), t, viewport).firstOrNull() ?: return@forEach
+                            val dist = (sp - pos).getDistance()
+                            if (dist <= 9f && dist < bestAnchorDist) {
+                                bestAnchorDist = dist
+                                bestAnchor = key
+                            }
+                        }
+                        if (bestAnchor != null) {
+                            hoveredBezierAnchor = bestAnchor
+                            return
+                        }
+                    }
+                    if (tool == CanvasTool.SELECT) {
+                        val frame = transformFrame(viewport)
+                        hoveredHandle = if (frame != null) transformHandleAt(pos, frame) else BoundingHandle.NONE
+                    }
+                    return
+                } else {
+                    updatePointHover(pos, viewport, t)
+                    return
+                }
+            } else if (t.kind == "mesh") {
+                if (paths().isNotEmpty() && activePath != null) {
+                    val hit = paths().filter { it.id == activePath }.flatMap { path ->
+                        screen(DeformPathTools.positions(path, t.geometry.points).flatMap { listOf(it.first, it.second) }.toFloatArray(), t, viewport).mapIndexed { i, p -> Triple(path, i, (p - pos).getDistance()) }
+                    }.filter { it.third <= 10f }.minByOrNull { it.third }
+                    if (hit != null) {
+                        hoveredVertex = hit.second
+                        return
+                    }
+                }
+                updatePointHover(pos, viewport, t)
+                return
+            } else if (t.kind == "rotation") {
+                updatePointHover(pos, viewport, t)
+                return
+            }
+        }
+
+        if (hierarchyMode == EditHierarchyMode.STRUCTURE) {
+            updatePointHover(pos, viewport, t)
         }
     }
 
@@ -425,35 +587,31 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         val hand = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
         val cross = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.CROSSHAIR_CURSOR)
         val move = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.MOVE_CURSOR)
-        if (space || tool == CanvasTool.HAND) return if (dragging) move else hand
+        if (space) return if (dragging) move else hand
         if (dragging) {
+            if (isCreatingWarp || isCreatingRotation) return cross
             if (marquee.isNotEmpty()) return cross
-            if (tool == CanvasTool.BRUSH || tool == CanvasTool.SMOOTH || tool == CanvasTool.INFLATE) return cross
-            // A box drag keeps the cursor its handle promised, so scaling never reads as a move.
+            if (tool in DEFORM_BRUSH_TOOLS || tool == CanvasTool.BRUSH_SELECT) return cross
             if (boxDrag) return handleCursor(activeHandle)
+            if (activeBezierAnchor != null || activeBezierHandle != null) return hand
             return move
         }
-        return when (tool) {
-            // The select tool does two things, so it advertises both: a clickable layer under the
-            // pointer, and a marquee anywhere else. A plain arrow would claim there is nothing here.
-            CanvasTool.SELECT -> if (isHoveringObject) hand else cross
-            // The transform tool acts on what it already framed, so outside that box the arrow is
-            // right unless a press there would re-pick a layer, which is what the hand promises.
-            CanvasTool.TRANSFORM -> when (hoveredHandle) {
-                BoundingHandle.NONE -> if (isHoveringObject) hand else arrow
-                else -> handleCursor(hoveredHandle)
-            }
-            // The point tools do three things under the pointer — a box handle, a point, or a marquee —
-            // so the cursor advertises the most specific one.
-            CanvasTool.MESH, CanvasTool.WARP -> when {
-                hoveredHandle != BoundingHandle.NONE -> handleCursor(hoveredHandle)
-                hoveredVertex != null -> hand
-                else -> cross
-            }
-            CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE -> cross
-            CanvasTool.PATH_DEFORM -> if (hoveredVertex != null) hand else cross
-            CanvasTool.HAND -> hand
+        if (tool in CREATION_TOOLS) {
+            return if (tool == CanvasTool.GLUE) hand else cross
         }
+        if (tool == CanvasTool.BRUSH_SELECT || tool in DEFORM_BRUSH_TOOLS) return cross
+        if (tool == CanvasTool.LASSO_SELECT) return cross
+
+        if (hoveredBezierHandle != null || hoveredBezierAnchor != null) return hand
+        if (hoveredHandle != BoundingHandle.NONE) return handleCursor(hoveredHandle)
+        if (hoveredVertex != null) return hand
+
+        if (hierarchyMode == EditHierarchyMode.OBJECT) {
+            if (tool == CanvasTool.SELECT) return if (isHoveringObject) hand else arrow
+        } else {
+            if (tool == CanvasTool.SELECT) return arrow
+        }
+        return arrow
     }
 
     /** The cursor a transform handle promises, shared by hover and the drag itself. */
@@ -526,7 +684,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     fun extendPath() {
         val t = target() ?: return; val path = selectedPath() ?: return
         if (path.closed) return
-        draft = DeformPathTools.positions(path, t.geometry.points); draftPathId = path.id; drawingPath = true; tool = CanvasTool.PATH_DEFORM
+        draft = DeformPathTools.positions(path, t.geometry.points); draftPathId = path.id; drawingPath = true; tool = CanvasTool.CREATE_DEFORM_PATH
     }
 
     fun preciseTransform(vp: CanvasViewport? = null, first: Float, second: Float = 0f, scaleMode: Boolean = false, rotateMode: Boolean = false) {
@@ -588,6 +746,72 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         head = null; commit(buildJsonObject { put("op", if (rotation) "canvas_create_rotation" else "canvas_create_warp"); put("id", id); put("name", name); put("meshes", JsonArray(ids.map(::JsonPrimitive))) })
     }
 
+    fun createWarpFromBounds(s: Offset, e: Offset, viewport: CanvasViewport) {
+        val x0 = minOf(s.x, e.x); val y0 = minOf(s.y, e.y)
+        val x1 = maxOf(s.x, e.x); val y1 = maxOf(s.y, e.y)
+        val wX = ((x0 - viewport.offsetX) / viewport.scale).toFloat()
+        val wY = -((y1 - viewport.offsetY) / viewport.scale).toFloat()
+        val wW = ((x1 - x0) / viewport.scale).toFloat()
+        val wH = ((y1 - y0) / viewport.scale).toFloat()
+
+        val targetMeshes = objects.mapNotNull { target(model, it, null)?.id }.ifEmpty { listOfNotNull(target()?.takeIf { it.kind == "mesh" }?.id) }
+        if (targetMeshes.isEmpty()) return
+        val id = "Warp_${UUID.randomUUID()}"
+        val cmd = buildJsonObject {
+            put("op", "canvas_create_warp")
+            put("id", id)
+            put("name", "Warp")
+            put("rows", warpCreateGridRows)
+            put("columns", warpCreateGridCols)
+            put("bezierRows", warpCreateBezierRows)
+            put("bezierColumns", warpCreateBezierCols)
+            put("bounds", buildJsonObject {
+                put("x", wX)
+                put("y", wY)
+                put("w", wW)
+                put("h", wH)
+            })
+            put("meshes", JsonArray(targetMeshes.map(::JsonPrimitive)))
+        }
+        head = null
+        commit(cmd)
+    }
+
+    fun createRotationFromPoints(s: Offset, e: Offset, viewport: CanvasViewport) {
+        val originX = ((s.x - viewport.offsetX) / viewport.scale).toFloat()
+        val originY = -((s.y - viewport.offsetY) / viewport.scale).toFloat()
+        val armX = ((e.x - viewport.offsetX) / viewport.scale).toFloat()
+        val armY = -((e.y - viewport.offsetY) / viewport.scale).toFloat()
+        val angleDeg = Math.toDegrees(kotlin.math.atan2((armY - originY).toDouble(), (armX - originX).toDouble())).toFloat()
+
+        val targetMeshes = objects.mapNotNull { target(model, it, null)?.id }.ifEmpty { listOfNotNull(target()?.takeIf { it.kind == "mesh" }?.id) }
+        if (targetMeshes.isEmpty()) return
+        val id = "Rotation_${UUID.randomUUID()}"
+        val cmd = buildJsonObject {
+            put("op", "canvas_create_rotation")
+            put("id", id)
+            put("name", "Rotation")
+            put("origin", JsonArray(listOf(originX, originY).map(::JsonPrimitive)))
+            put("angle", angleDeg)
+            put("meshes", JsonArray(targetMeshes.map(::JsonPrimitive)))
+        }
+        head = null
+        commit(cmd)
+    }
+
+    fun createGlue(meshA: String, meshB: String) {
+        val id = "Glue_${UUID.randomUUID()}"
+        val cmd = buildJsonObject {
+            put("op", "canvas_create_glue")
+            put("id", id)
+            put("name", "Glue")
+            put("mesh_a", meshA)
+            put("mesh_b", meshB)
+        }
+        head = null
+        commit(cmd)
+    }
+
     /**
      * The layer a click at [pos] picks. Clicking a stack walks it one layer per click — the same rule
      * [RigCanvasSupport.hitLayer] applies in the preview tab — so the layer under the pointer can be
@@ -595,6 +819,91 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
      */
     private fun pickLayer(pos: Offset, viewport: CanvasViewport): String? =
         RigCanvasSupport.nextLayer(layerCandidates(pos, viewport), state.selectedLayerId)
+
+    /**
+     * Every node a Ctrl-click cycles at [pos], in click order: each layer under the cursor followed by
+     * the deformers above it, innermost first, then on to the next layer in the stack.
+     *
+     * An ancestor is visited once however many layers sit under it, so two braids sharing a head
+     * rotation step through that rotation together instead of meeting it twice. Deformers that are
+     * hidden, locked or missing from the rig are left out — [target] is the single definition of
+     * "pickable" and asking it is what keeps the ring from offering a step that selects nothing.
+     */
+    private fun hierarchyRing(pos: Offset, viewport: CanvasViewport): List<HierarchyPick> {
+        val preview = state.previewModel ?: return emptyList()
+        val source = preview.rig.puppet
+        val ring = mutableListOf<HierarchyPick>()
+        val seen = mutableSetOf<String>()
+        layerCandidates(pos, viewport).forEach { layerId ->
+            val drawable = source.drawables.firstOrNull { preview.rig.layerIdByDrawableId[it.id.raw] == layerId }
+            if (drawable != null && seen.add("mesh:$layerId")) {
+                ring += HierarchyPick(
+                    kind = "mesh",
+                    layerId = layerId,
+                    name = drawable.name,
+                    parentName = drawable.parentDeformerId?.let { id -> source.deformers.firstOrNull { it.id == id }?.name },
+                )
+            }
+            var parent = drawable?.parentDeformerId
+            while (parent != null) {
+                val id = parent.raw
+                if (!seen.add("deformer:$id")) break
+                val deformer = source.deformers.firstOrNull { it.id == parent } ?: break
+                if (target(source, null, id) == null) break
+                ring += HierarchyPick(
+                    kind = if (deformer is Deformer.Rotation) "rotation" else "warp",
+                    deformerId = id,
+                    name = deformer.name,
+                    parentName = deformer.parent?.let { p -> source.deformers.firstOrNull { it.id == p }?.name },
+                )
+                parent = deformer.parent
+            }
+        }
+        // Each node names the step Ctrl takes from it, so the HUD can show the destination up front.
+        return ring.mapIndexed { i, pick -> pick.copy(nextName = ring[(i + 1) % ring.size].name) }
+    }
+
+    /**
+     * What a click at [pos] picks. A plain click walks the stack the one-layer-per-click way the
+     * preview tab and [pickLayer] use; Ctrl steps to the next node of the hierarchy instead, so the
+     * whole chain a part hangs off is reachable without leaving the canvas.
+     *
+     * A Ctrl-click with nothing of the ring selected starts at the top, which is what makes the first
+     * Ctrl-click on untouched artwork land on the layer rather than skipping past it.
+     */
+    fun objectPick(pos: Offset, viewport: CanvasViewport, ctrl: Boolean): HierarchyPick? {
+        val ring = hierarchyRing(pos, viewport)
+        if (ring.isEmpty()) return null
+        if (!ctrl) {
+            val next = RigCanvasSupport.nextLayer(ring.mapNotNull { it.layerId }, state.selectedLayerId) ?: return null
+            return ring.firstOrNull { it.layerId == next }
+        }
+        val current = ring.indexOfFirst { it.deformerId != null && it.deformerId == state.selectedDeformerId }
+            .takeIf { it >= 0 }
+            ?: ring.indexOfFirst { it.layerId != null && it.layerId == state.selectedLayerId }
+        return if (current < 0) ring.first() else ring[(current + 1) % ring.size]
+    }
+
+    /**
+     * Selects [pick]; [add] is true for Shift (extend), false for Alt (remove), null to replace.
+     *
+     * Picking a deformer drops the layer set: the two are different kinds of target, and holding both
+     * would leave the canvas framing one while the hierarchy panel listed the other.
+     */
+    private fun applyObjectPick(pick: HierarchyPick, add: Boolean?) {
+        val layer = pick.layerId
+        if (layer == null) {
+            objects = emptySet()
+            if (state.selectedDeformerId != pick.deformerId) viewModel.selectDeformer(pick.deformerId)
+            return
+        }
+        objects = when (add) {
+            true -> objects + layer
+            false -> objects - layer
+            null -> if (layer in objects) objects else setOf(layer)
+        }
+        if (add != false && state.selectedLayerId != layer) viewModel.selectLayer(layer)
+    }
 
     /**
      * Drops the box a transform drag built.
@@ -609,12 +918,10 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     }
 
     /**
-     * What a transform gesture edits: the object selection, or the hierarchy target when there is none.
-     * The point tools always have exactly one target — the mesh or deformer they are editing.
+     * What a transform gesture edits: the mesh or deformer the point tools are working on, always
+     * exactly one. Object mode never gets here — it has no box to grab and no body to drag.
      */
-    private fun transformTargets(source: PuppetModel): List<CanvasTarget> =
-        if (pointsTool) listOfNotNull(target(source))
-        else objects.mapNotNull { target(source, it, null) }.ifEmpty { listOfNotNull(target(source)) }
+    private fun transformTargets(source: PuppetModel): List<CanvasTarget> = listOfNotNull(target(source))
 
     /**
      * Freezes the pose a transform gesture is about to edit. The handle grab and the body move both
@@ -639,64 +946,40 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     }
 
     fun press(pos: Offset, viewport: CanvasViewport, shift: Boolean, alt: Boolean, ctrl: Boolean = false): Boolean {
-        // A left click while the brush gesture still owns the right button ends it. Commit rather than restore:
-        // the user is starting new work, not abandoning the adjustment.
         if (adjustingBrush) endBrushAdjust(cancel = false)
         if (!editable) return true
-        if (space || tool == CanvasTool.HAND) return false
-        error = null; head = state.historySnapshot?.headNodeId; start = pos; previous = pos; dragStartPos = pos; moved = false; additive = shift; subtractive = alt; pressedObject = null
+        if (space) return false
+        error = null; head = state.historySnapshot?.headNodeId; start = pos; previous = pos; dragStartPos = pos
+        moved = false; additive = shift; subtractive = alt; pressedObject = null
 
-        if (tool == CanvasTool.SELECT) {
-            // The pick lands on press, and the marquee starts either way: a drag that begins on top of an
-            // object is still a drag. finishSelection keeps this pick when the marquee catches nothing.
-            val hit = pickLayer(pos, viewport)
-            pressedObject = hit
-            if (hit != null) {
-                objects = when {
-                    alt -> objects - hit
-                    shift -> objects + hit
-                    hit in objects -> objects
-                    else -> setOf(hit)
-                }
-                if (state.selectedLayerId != hit && !alt) viewModel.selectLayer(hit)
-            } else if (!shift && !alt) {
-                objects = emptySet()
-                viewModel.selectLayer(null)
-            }
-            marquee = listOf(pos, pos)
+        // 1. Interactive Creation Tools
+        if (tool == CanvasTool.CREATE_WARP) {
+            isCreatingWarp = true
+            creationStart = pos
+            creationCurrent = pos
             dragging = true
-            activeHandle = BoundingHandle.NONE
-            initialBounds = null
-            currentDragBounds = null
-            initialScreenPoints = emptyList()
             return true
         }
-
-        if (tool == CanvasTool.TRANSFORM) {
-            val source = state.previewModel?.rig?.puppet ?: return true
-            val frame = transformFrame(viewport)
-            val handle = if (frame != null) transformHandleAt(pos, frame) else BoundingHandle.NONE
-            if (frame != null && handle != BoundingHandle.NONE) {
-                beginTransformDrag(source, transformTargets(source), handle, frame, viewport)
-                return true
-            }
-            // Nothing to grab: pick the layer under the cursor and drag that. Alt and Shift only edit the
-            // selection, and a click that lands on nothing at all leaves it alone — a transform never
-            // marquees and never clears.
-            val hit = pickLayer(pos, viewport) ?: return true
-            objects = when {
-                alt -> objects - hit
-                shift -> objects + hit
-                hit in objects -> objects
-                else -> setOf(hit)
-            }
-            if (state.selectedLayerId != hit && !alt) viewModel.selectLayer(hit)
-            if (alt) return true
-            beginTransformDrag(source, transformTargets(source), BoundingHandle.BODY, transformFrame(viewport), viewport)
+        if (tool == CanvasTool.CREATE_ROTATION) {
+            isCreatingRotation = true
+            creationStart = pos
+            creationCurrent = pos
+            dragging = true
             return true
         }
-
-        if (tool == CanvasTool.PATH_DEFORM) {
+        if (tool == CanvasTool.GLUE) {
+            val hit = pickLayer(pos, viewport)
+            if (glueFirstMesh == null) {
+                glueFirstMesh = hit
+            } else if (hit != null && hit != glueFirstMesh) {
+                createGlue(glueFirstMesh!!, hit)
+                glueFirstMesh = null
+            } else {
+                glueFirstMesh = null
+            }
+            return true
+        }
+        if (tool == CanvasTool.CREATE_DEFORM_PATH) {
             val t = target()
             if (t != null && t.kind == "mesh") {
                 val pathTarget = t
@@ -729,11 +1012,72 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             return true
         }
 
-        // The point tools' box is hit before anything else: its handles are drawn on top of the artwork
-        // and are the most specific thing under the pointer. Only the ring is taken here — the body has
-        // to wait for the pick below, so a press on a point that sits inside the box still picks it, and
-        // a handle grab is never stolen by the deformer switch below.
-        if (pointsTool) {
+        // 2. Level 2 Bezier Deformer in DEFORM mode
+        if (hierarchyMode == EditHierarchyMode.DEFORM && editLevel == 2) {
+            val t = target()
+            if (t != null && t.kind == "warp") {
+                if (hoveredBezierHandle != null) {
+                    activeBezierHandle = hoveredBezierHandle
+                    targetAtPress = t
+                    original = model
+                    dragging = true
+                    return true
+                }
+                if (hoveredBezierAnchor != null) {
+                    activeBezierAnchor = hoveredBezierAnchor
+                    targetAtPress = t
+                    original = model
+                    dragging = true
+                    return true
+                }
+            }
+        }
+
+        // 3. Brush Select
+        if (tool == CanvasTool.BRUSH_SELECT) {
+            brushSelecting = true
+            dragging = true
+            val t = target()
+            if (t != null) {
+                val points = screen(t.geometry.points, t, viewport)
+                val r = (radius * viewport.scale).toFloat()
+                val hits = points.indices.filter { (points[it] - pos).getDistance() <= r }.toSet()
+                vertices = if (alt) vertices - hits else vertices + hits
+            }
+            return true
+        }
+
+        // 4. Lasso Select. Box selection is not a tool of its own: a drag on canvas that finds nothing
+        //    to pick *is* a box marquee, so SELECT starts one further down instead.
+        if (tool == CanvasTool.LASSO_SELECT) {
+            selectionStyle = SelectionStyle.LASSO
+            marquee = listOf(pos, pos)
+            dragging = true
+            return true
+        }
+
+        // 5. Object mode picks and nothing else. The transform box and its handles belong to the point
+        //    tools, so a press here selects — Ctrl walks the hierarchy — or starts a marquee. It never
+        //    begins a transform drag, which is what keeps the mode read-only.
+        if (hierarchyMode == EditHierarchyMode.OBJECT && tool == CanvasTool.SELECT) {
+            val pick = objectPick(pos, viewport, ctrl)
+            pressedObject = pick?.layerId
+            if (pick != null) {
+                applyObjectPick(pick, when { alt -> false; shift -> true; else -> null })
+            } else if (!shift && !alt) {
+                // Empty canvas clears the lot. Both calls are needed: each one only drops the other
+                // half when it is given a non-null id, so neither alone clears a deformer selection.
+                objects = emptySet()
+                viewModel.selectLayer(null)
+                viewModel.selectDeformer(null)
+            }
+            marquee = listOf(pos, pos)
+            dragging = true
+            return true
+        }
+
+        // 6. Point Transform handles (SELECT tool in DEFORM/STRUCTURE mode)
+        if (tool == CanvasTool.SELECT) {
             val frame = transformFrame(viewport)
             val handle = frame?.let { transformRingAt(pos, it) } ?: BoundingHandle.NONE
             if (frame != null && handle != BoundingHandle.NONE) {
@@ -743,24 +1087,11 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             }
         }
 
-        if (tool == CanvasTool.WARP) {
-            val source = state.previewModel ?: return true
-            val warp = source.rig.puppet.deformers.filterIsInstance<Deformer.Warp>().filter { it.isSelectable && it.isVisible }.lastOrNull { w ->
-                val worlds = buildDeformerWorlds(source.rig.puppet.deformers, { p -> state.parameterValues[p] ?: source.rig.puppet.parameters.firstOrNull { it.id == p }?.default ?: 0f })
-                val map = DrawableSpaceMapping(w.parent?.let { worlds[it] }); val g = RigGeometryTools.geometry(source.rig.puppet, "warp", w.id.raw, pose)
-                val candidate = CanvasTarget("warp", w.id.raw, g, map, IntArray(0))
-                screen(g.points, candidate, viewport).any { (it - pos).getDistance() < 9f }
-            }
-            if (warp != null && warp.id.raw != state.selectedDeformerId) {
-                viewModel.selectDeformer(warp.id.raw); vertices = emptySet()
-            }
-        }
-
         val editTarget = target() ?: return true
         targetAtPress = editTarget; original = model; dragging = true
         val points = screen(editTarget.geometry.points, editTarget, viewport)
 
-        val brush = tool == CanvasTool.BRUSH || tool == CanvasTool.SMOOTH || tool == CanvasTool.INFLATE
+        val brush = tool in DEFORM_BRUSH_TOOLS
         if (brush) {
             shrinkAtPress = inflateInvert xor alt
             if (editTarget.kind == "rotation") { dragging = false; error = io.github.psd2live.i18n.tr("editor.rotationBrush") }
@@ -768,22 +1099,16 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         }
 
         var picked = points.indices.filter { (points[it] - pos).getDistance() < 10f }.minByOrNull { (points[it] - pos).getDistance() }?.let { setOf(it) }.orEmpty()
-        if (tool == CanvasTool.MESH && elementMode > 0) {
+        if (hierarchyMode == EditHierarchyMode.STRUCTURE && editTarget.kind == "mesh" && elementMode > 0) {
             picked = if (elementMode == 1) MeshTopology.uniqueEdges(editTarget.indices).minByOrNull { edge -> distanceToSegment(pos, points[edge.endpointLow], points[edge.endpointHigh]) }?.takeIf { distanceToSegment(pos, points[it.endpointLow], points[it.endpointHigh]) < 8f }?.let { setOf(it.endpointLow, it.endpointHigh) }.orEmpty()
             else editTarget.indices.toList().chunked(3).firstOrNull { tri -> insidePolygon(pos, tri.map { points[it] }) }?.toSet().orEmpty()
         }
 
-        // The box body, resolved only now that the pick has had its say.
-        //
-        // `picked ⊆ vertices` is the face-mode case: triangles tile the mesh, so every press inside it
-        // picks one, and if the pick always won the body could never be grabbed. A press on something
-        // already selected has to read as a move rather than as a re-pick. Shift and Alt still go to the
-        // pick, so adding and subtracting elements inside the box keeps working.
-        if (pointsTool) {
+        if (tool == CanvasTool.SELECT) {
             val boxFrame = transformFrame(viewport)
             if (boxFrame != null &&
-                boxFrame.bounds.contains(pos.intoTransformFrame(boxFrame.pivot, boxFrame.angleDeg)) &&
-                (picked.isEmpty() || (picked.all { it in vertices } && !shift && !alt))
+                (boxFrame.bounds.contains(pos.intoTransformFrame(boxFrame.pivot, boxFrame.angleDeg)) || (picked.isNotEmpty() && picked.all { it in vertices })) &&
+                !shift && !alt
             ) {
                 val source = state.previewModel?.rig?.puppet ?: return true
                 beginTransformDrag(source, transformTargets(source), BoundingHandle.BODY, boxFrame, viewport)
@@ -807,17 +1132,58 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         return true
     }
 
-    fun move(pos: Offset, viewport: CanvasViewport, shift: Boolean, alt: Boolean = false) {
-        updateHover(pos, viewport)
-        // Mid-stroke report the latched direction, so the circle never contradicts what the drag is doing.
+    fun move(pos: Offset, viewport: CanvasViewport, shift: Boolean, alt: Boolean = false, ctrl: Boolean = false) {
+        updateHover(pos, viewport, ctrl)
         shrinks = if (dragging && tool == CanvasTool.INFLATE) shrinkAtPress else inflateInvert xor alt
         if (!dragging || busy) return
         moved = moved || (pos - start).getDistance() > 2f
         if (!moved) return
+
+        if (isCreatingWarp || isCreatingRotation) {
+            creationCurrent = pos
+            return
+        }
+
+        if (activeBezierHandle != null) {
+            val (br, bc, dir) = activeBezierHandle!!
+            val t = targetAtPress ?: return; val source = original ?: return
+            val (lx, ly) = local(pos, t, viewport)
+            bezierState?.moveHandle(br, bc, dir, lx, ly, smooth = !alt)
+            val warp = source.deformers.filterIsInstance<Deformer.Warp>().firstOrNull { it.id.raw == t.id } ?: return
+            val evaluated = bezierState?.evaluateLattice(warp.rows, warp.columns) ?: return
+            val cmd = geometryCommand(t, evaluated)
+            preview = RigAuthoringJournal.apply(source, cmd); pending = cmd; previous = pos
+            return
+        }
+
+        if (activeBezierAnchor != null) {
+            val (br, bc) = activeBezierAnchor!!
+            val t = targetAtPress ?: return; val source = original ?: return
+            val (lx, ly) = local(pos, t, viewport)
+            val (prevLx, prevLy) = local(previous, t, viewport)
+            bezierState?.moveAnchor(br, bc, lx - prevLx, ly - prevLy)
+            val warp = source.deformers.filterIsInstance<Deformer.Warp>().firstOrNull { it.id.raw == t.id } ?: return
+            val evaluated = bezierState?.evaluateLattice(warp.rows, warp.columns) ?: return
+            val cmd = geometryCommand(t, evaluated)
+            preview = RigAuthoringJournal.apply(source, cmd); pending = cmd; previous = pos
+            return
+        }
+
+        if (tool == CanvasTool.BRUSH_SELECT) {
+            val t = target() ?: return
+            val points = screen(t.geometry.points, t, viewport)
+            val r = (radius * viewport.scale).toFloat()
+            val hits = points.indices.filter { (points[it] - pos).getDistance() <= r || distanceToSegment(points[it], previous, pos) <= r }.toSet()
+            vertices = if (alt) vertices - hits else vertices + hits
+            previous = pos
+            return
+        }
+
         if (marquee.isNotEmpty()) {
             marquee = if (selectionStyle == SelectionStyle.LASSO) marquee + pos else listOf(start, pos)
             return
         }
+
         val t = targetAtPress ?: return; val source = original ?: return
 
         try {
@@ -845,41 +1211,43 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                 return
             }
 
-            val cmd: JsonObject
-            if (tool == CanvasTool.PATH_DEFORM) {
-                val path = source.deformPaths.first { it.id == activePath }; val points = DeformPathTools.positions(path, t.geometry.points).toMutableList()
-                if (pathPoint !in points.indices) return
-                points[pathPoint] = local(pos, t, viewport, points[pathPoint])
-                cmd = geometryCommand(t, DeformPathTools.deform(t.geometry.points, source.deformPaths, path.id, points))
-            } else {
-                val brush = tool == CanvasTool.BRUSH || tool == CanvasTool.SMOOTH || tool == CanvasTool.INFLATE
-                val inflate = tool == CanvasTool.INFLATE
-                // radius is a canvas-space size, so it covers the same part of the artwork at any zoom; every
-                // use below works on screen coordinates and therefore needs it scaled first.
-                val screenRadius = (radius * viewport.scale).toFloat()
-                val base = if (brush && preview != null) RigGeometryTools.geometry(preview!!, t.kind, t.id, pose).points else t.geometry.points
-                val screen = screen(base, t, viewport); val world = t.mapping.localToWorld(base)
-                val affected = if (brush) screen.indices.filter {
-                    (vertices.isEmpty() || it in vertices) &&
-                    isPointInBrush(screen[it], previous, pos, screenRadius, brushShape, brushAngle, brushAspect, hardness)
-                }.toSet() else vertices.filter { it in screen.indices }.toSet()
-                val delta = if (brush) pos - previous else pos - start
-                val center = if (t.kind == "rotation") screen[0] else if (affected.isEmpty()) start else Offset(affected.map { screen[it].x }.average().toFloat(), affected.map { screen[it].y }.average().toFloat())
-                val adjacency = if (tool == CanvasTool.SMOOTH || (tool == CanvasTool.BRUSH && shift)) neighbors(t) else null
-                for (i in affected) {
-                    val p = screen[i]
-                    val weight = if (brush) computeBrushWeight(p, previous, pos, screenRadius, hardness, brushShape, brushAngle, brushAspect) * strength else 1f
-                    val destination = when {
-                        inflate -> p + inflateOffset(p, previous, pos, delta.getDistance().coerceAtMost(screenRadius) * weight * INFLATE_GAIN * (if (shrinkAtPress) -1f else 1f))
-                        adjacency != null -> { val ns = adjacency[i]; if (ns.isEmpty()) p else p + (Offset(ns.map { screen[it].x }.average().toFloat(), ns.map { screen[it].y }.average().toFloat()) - p) * weight }
-                        else -> p + delta * weight
+            if (tool == CanvasTool.CREATE_DEFORM_PATH || (paths().isNotEmpty() && activePath != null && pathPoint >= 0)) {
+                val path = source.deformPaths.firstOrNull { it.id == activePath }
+                if (path != null && pathPoint >= 0) {
+                    val points = DeformPathTools.positions(path, t.geometry.points).toMutableList()
+                    if (pathPoint in points.indices) {
+                        points[pathPoint] = local(pos, t, viewport, points[pathPoint])
+                        val cmd = geometryCommand(t, DeformPathTools.deform(t.geometry.points, source.deformPaths, path.id, points))
+                        preview = RigAuthoringJournal.apply(source, cmd); pending = cmd; previous = pos
+                        return
                     }
-                    world[i * 2] = ((destination.x - viewport.offsetX) / viewport.scale).toFloat()
-                    world[i * 2 + 1] = -((destination.y - viewport.offsetY) / viewport.scale).toFloat()
                 }
-                if (affected.isEmpty()) { previous = pos; return }
-                cmd = geometryCommand(t, t.mapping.worldToLocal(world, base, affected))
             }
+
+            val brush = tool in DEFORM_BRUSH_TOOLS
+            val inflate = tool == CanvasTool.INFLATE
+            val screenRadius = (radius * viewport.scale).toFloat()
+            val base = if (brush && preview != null) RigGeometryTools.geometry(preview!!, t.kind, t.id, pose).points else t.geometry.points
+            val screen = screen(base, t, viewport); val world = t.mapping.localToWorld(base)
+            val affected = if (brush) screen.indices.filter {
+                (vertices.isEmpty() || it in vertices) &&
+                isPointInBrush(screen[it], previous, pos, screenRadius, brushShape, brushAngle, brushAspect, hardness)
+            }.toSet() else vertices.filter { it in screen.indices }.toSet()
+            val delta = if (brush) pos - previous else pos - start
+            val adjacency = if (tool == CanvasTool.SMOOTH || (tool == CanvasTool.BRUSH && shift)) neighbors(t) else null
+            for (i in affected) {
+                val p = screen[i]
+                val weight = if (brush) computeBrushWeight(p, previous, pos, screenRadius, hardness, brushShape, brushAngle, brushAspect) * strength else 1f
+                val destination = when {
+                    inflate -> p + inflateOffset(p, previous, pos, delta.getDistance().coerceAtMost(screenRadius) * weight * INFLATE_GAIN * (if (shrinkAtPress) -1f else 1f))
+                    adjacency != null -> { val ns = adjacency[i]; if (ns.isEmpty()) p else p + (Offset(ns.map { screen[it].x }.average().toFloat(), ns.map { screen[it].y }.average().toFloat()) - p) * weight }
+                    else -> p + delta * weight
+                }
+                world[i * 2] = ((destination.x - viewport.offsetX) / viewport.scale).toFloat()
+                world[i * 2 + 1] = -((destination.y - viewport.offsetY) / viewport.scale).toFloat()
+            }
+            if (affected.isEmpty()) { previous = pos; return }
+            val cmd = geometryCommand(t, t.mapping.worldToLocal(world, base, affected))
             preview = RigAuthoringJournal.apply(source, cmd); pending = cmd; previous = pos
         } catch (e: Exception) { error = e.message }
     }
@@ -890,11 +1258,47 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         initialBounds = null
         initialScreenPoints = emptyList()
         boxDrag = false; dragIndices = emptyList()
+
+        if (isCreatingWarp) {
+            isCreatingWarp = false
+            val s = creationStart; val e = creationCurrent
+            creationStart = null; creationCurrent = null
+            if (s != null && e != null && abs(s.x - e.x) > 10f && abs(s.y - e.y) > 10f && viewport != null) {
+                createWarpFromBounds(s, e, viewport!!)
+            }
+            return
+        }
+
+        if (isCreatingRotation) {
+            isCreatingRotation = false
+            val s = creationStart; val e = creationCurrent
+            creationStart = null; creationCurrent = null
+            if (s != null && e != null && (s - e).getDistance() > 10f && viewport != null) {
+                createRotationFromPoints(s, e, viewport!!)
+            }
+            return
+        }
+
+        if (activeBezierAnchor != null || activeBezierHandle != null) {
+            activeBezierAnchor = null
+            activeBezierHandle = null
+            val cmd = pending
+            if (moved && cmd != null) {
+                commit(cmd)
+            } else {
+                preview = null; head = null
+            }
+            pending = null; targetAtPress = null; original = null
+            return
+        }
+
+        if (brushSelecting) {
+            brushSelecting = false
+            return
+        }
+
         if (marquee.isNotEmpty()) { endTransformBox(); return }
-        // A preview that never reached history must not survive the gesture: it would both keep showing an
-        // uncommitted shape and become the `original` of the next gesture, whose full-array command would then
-        // silently fold these edits into that commit. commitBatch drops the transform box itself, so only
-        // the paths below that never dispatch a command have to.
+
         val cmd = pending
         if (moved && pendingObjects.isNotEmpty()) { if (!commitBatch(pendingObjects)) preview = null }
         else if (moved && cmd != null) { if (!commitBatch(listOf(cmd))) preview = null }
@@ -960,18 +1364,19 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
 
     fun finishSelection(viewport: CanvasViewport) {
         if (marquee.isEmpty()) return
+        // Object mode picks on press, so a marquee that never moved — a click, jitter included — is
+        // already resolved and must not be re-derived here. Re-deriving it from a zero-area polygon
+        // finds nothing and would blank the very selection the press just made, deformers especially,
+        // which the marquee has no way to express at all.
+        if (hierarchyMode == EditHierarchyMode.OBJECT && !moved) {
+            pressedObject = null; marquee = emptyList(); original = null; head = null; return
+        }
         val polygon = if (selectionStyle == SelectionStyle.LASSO) marquee else listOf(marquee.first(), Offset(marquee.last().x, marquee.first().y), marquee.last(), Offset(marquee.first().x, marquee.last().y))
-        // objectMode is not tool-derived: the hierarchy sync in CanvasViewportComposable flips it off
-        // whenever a deformer is selected. The tool test is what keeps an object-space marquee out of the
-        // vertex branch below, where it would fill `vertices` with lattice indices that nothing draws
-        // here and that the next brush stroke would then treat as its affected set.
-        if (objectMode || tool == CanvasTool.SELECT || tool == CanvasTool.TRANSFORM) {
+        if (hierarchyMode == EditHierarchyMode.OBJECT) {
             val found = state.effectiveVisibleLayerIds.filter { id -> target(model, id, null)?.let { item -> screen(item.geometry.points, item, viewport).any { insidePolygon(it, polygon) } } == true }.toSet()
             objects = when {
                 subtractive -> objects - found
                 additive -> objects + found
-                // A swipe that caught nothing keeps the pick it started on: an ordinary click jitters far
-                // enough to count as a drag, and its degenerate marquee would otherwise deselect.
                 found.isEmpty() && pressedObject != null -> objects
                 else -> found
             }
