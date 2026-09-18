@@ -294,9 +294,14 @@ data class PSD2LiveState(
 	val errorMessage: String? = null,
 	val successExportMessage: String? = null,
 ) {
-	/** The selected tab, falling back to the leftmost tab so every derived accessor stays total. */
+	/**
+	 * The selected tab. An id that matches nothing falls back to the Edit tab -- the one the app
+	 * opens on -- and only then to the leftmost tab, so the strip's order (History leads it) never
+	 * decides which canvas the editor lands on.
+	 */
 	val activeWorkspaceTab: WorkspaceTabState
 		get() = workspaceTabs.firstOrNull { it.id == activeWorkspaceTabId }
+			?: workspaceTabs.firstOrNull { it.kind == WorkspaceTabKind.EDIT }
 			?: workspaceTabs.firstOrNull()
 			?: FALLBACK_EDIT_TAB
 
