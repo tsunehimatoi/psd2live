@@ -255,6 +255,14 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     private var brushAngleAtStart = 0f
     private var dragging = false
 
+    /** Active brush deformation vertex weights [0f..1f] for target points; non-null while a brush stroke is live. */
+    var activeBrushWeights by mutableStateOf<FloatArray?>(null)
+    /** Screen position where the active brush stroke was pressed. */
+    var activeBrushCenter by mutableStateOf<Offset?>(null)
+    private var brushInitialBase: FloatArray? = null
+    private var brushInitialScreen: List<Offset>? = null
+    private var brushAffectedIndices: Set<Int> = emptySet()
+
     fun cycleBrushShape() {
         val entries = BrushShape.entries
         val next = (brushShape.ordinal + 1) % entries.size
@@ -341,6 +349,8 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         if (busy) return
         endBrushAdjust(cancel = true)
         preview = null; pending = null; dragging = false; targetAtPress = null; original = null
+        activeBrushWeights = null; activeBrushCenter = null
+        brushInitialBase = null; brushInitialScreen = null; brushAffectedIndices = emptySet()
         marquee = emptyList(); draft = emptyList(); draftPathId = null; drawingPath = false
         axis = null; head = null; objectTargets = emptyList(); pendingObjects = emptyList()
         activeHandle = BoundingHandle.NONE
@@ -1275,7 +1285,26 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         val brush = tool in DEFORM_BRUSH_TOOLS
         if (brush) {
             shrinkAtPress = inflateInvert xor alt
-            if (editTarget.kind == "rotation") { dragging = false; error = io.github.psd2live.i18n.tr("editor.rotationBrush") }
+            if (editTarget.kind == "rotation") { dragging = false; error = io.github.psd2live.i18n.tr("editor.rotationBrush"); return true }
+            val basePoints = editTarget.geometry.points.copyOf()
+            val initialScreen = points
+            val screenRadius = (radius * viewport.scale).toFloat()
+            val weights = FloatArray(initialScreen.size)
+            val affected = mutableSetOf<Int>()
+            for (i in initialScreen.indices) {
+                if (vertices.isNotEmpty() && i !in vertices) continue
+                val p = initialScreen[i]
+                val w = computeBrushWeight(p, pos, pos, screenRadius, hardness, brushShape, brushAngle, brushAspect) * strength
+                if (w > 0.0001f) {
+                    weights[i] = w
+                    affected.add(i)
+                }
+            }
+            activeBrushWeights = weights
+            activeBrushCenter = pos
+            brushInitialBase = basePoints
+            brushInitialScreen = initialScreen
+            brushAffectedIndices = affected
             return true
         }
 
@@ -1407,7 +1436,29 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
 
             val brush = tool in DEFORM_BRUSH_TOOLS
             val inflate = tool == CanvasTool.INFLATE
+            val isDeformBrush = tool == CanvasTool.BRUSH && !shift
             val screenRadius = (radius * viewport.scale).toFloat()
+
+            if (isDeformBrush) {
+                val base = brushInitialBase ?: t.geometry.points
+                val initScreen = brushInitialScreen ?: screen(base, t, viewport)
+                val weights = activeBrushWeights
+                val affected = brushAffectedIndices
+                if (weights == null || affected.isEmpty()) { previous = pos; return }
+
+                val totalDelta = pos - start
+                val world = t.mapping.localToWorld(base)
+                for (i in affected) {
+                    val w = weights[i]
+                    val destination = initScreen[i] + totalDelta * w
+                    world[i * 2] = ((destination.x - viewport.offsetX) / viewport.scale).toFloat()
+                    world[i * 2 + 1] = -((destination.y - viewport.offsetY) / viewport.scale).toFloat()
+                }
+                val cmd = geometryCommand(t, t.mapping.worldToLocal(world, base, affected))
+                preview = RigAuthoringJournal.apply(source, cmd); pending = cmd; previous = pos
+                return
+            }
+
             val base = if (brush && preview != null) RigGeometryTools.geometry(preview!!, t.kind, t.id, pose).points else t.geometry.points
             val screen = screen(base, t, viewport); val world = t.mapping.localToWorld(base)
             val affected = if (brush) screen.indices.filter {
@@ -1439,6 +1490,8 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         initialBounds = null
         initialScreenPoints = emptyList()
         boxDrag = false; dragIndices = emptyList()
+        activeBrushWeights = null; activeBrushCenter = null
+        brushInitialBase = null; brushInitialScreen = null; brushAffectedIndices = emptySet()
 
         if (isCreatingWarp) {
             isCreatingWarp = false

@@ -25,7 +25,13 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.skiaCanvas
+import org.jetbrains.skia.BlendMode as SkiaBlendMode
+import org.jetbrains.skia.Paint as SkiaPaint
+import org.jetbrains.skia.VertexMode as SkiaVertexMode
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.semantics.contentDescription
@@ -67,10 +73,73 @@ internal fun BoxScope.CanvasEditorOverlay(
     val isPathTool = editor.tool == CanvasTool.CREATE_DEFORM_PATH || editor.drawingPath || (editor.hierarchyMode == EditHierarchyMode.DEFORM && editor.paths().isNotEmpty())
 
     Canvas(Modifier.fillMaxSize()) {
+        val currentTarget = editor.target() ?: target
         // 1. Mesh wireframe & vertices when in DEFORM or STRUCTURE on a mesh
-        if (editor.hierarchyMode != EditHierarchyMode.OBJECT && target != null && target.kind == "mesh") {
-            val pts = editor.screen(target.geometry.points, target, viewport)
-            val edges = MeshTopology.uniqueEdges(target.indices).map { it.endpointLow to it.endpointHigh }
+        if (editor.hierarchyMode != EditHierarchyMode.OBJECT && currentTarget != null && currentTarget.kind == "mesh") {
+            val pts = editor.screen(currentTarget.geometry.points, currentTarget, viewport)
+            val brushWeights = editor.activeBrushWeights
+
+            // 1a. Real-time translucent mesh weight coloring rendered strictly on ArtMesh geometry (transforms with mesh)
+            if (brushWeights != null && currentTarget.indices.isNotEmpty() && pts.isNotEmpty()) {
+                val vertexCount = minOf(currentTarget.count, pts.size)
+                val positions = FloatArray(vertexCount * 2)
+                val colorsArr = IntArray(vertexCount)
+                for (i in 0 until vertexCount) {
+                    positions[i * 2] = pts[i].x
+                    positions[i * 2 + 1] = pts[i].y
+                    val w = brushWeights.getOrNull(i) ?: 0f
+                    if (w > 0.0001f) {
+                        val normW = if (editor.strength > 0.001f) (w / editor.strength).coerceIn(0f, 1f) else w.coerceIn(0f, 1f)
+                        val a = (normW * 0.62f * 255f).toInt()
+                        val red = (a * 248) / 255
+                        val green = (a * 24) / 255
+                        val blue = (a * 24) / 255
+                        colorsArr[i] = (a shl 24) or (red shl 16) or (green shl 8) or blue
+                    }
+                }
+
+                val affectedIndices = mutableListOf<Short>()
+                for (tri in 0 until currentTarget.indices.size step 3) {
+                    val a = currentTarget.indices[tri]
+                    val b = currentTarget.indices[tri + 1]
+                    val c = currentTarget.indices[tri + 2]
+                    if (a < vertexCount && b < vertexCount && c < vertexCount) {
+                        val wa = brushWeights.getOrNull(a) ?: 0f
+                        val wb = brushWeights.getOrNull(b) ?: 0f
+                        val wc = brushWeights.getOrNull(c) ?: 0f
+                        if (wa > 0.0001f || wb > 0.0001f || wc > 0.0001f) {
+                            affectedIndices.add(a.toShort())
+                            affectedIndices.add(b.toShort())
+                            affectedIndices.add(c.toShort())
+                        }
+                    }
+                }
+
+                if (affectedIndices.isNotEmpty()) {
+                    val shortIndices = ShortArray(affectedIndices.size) { affectedIndices[it] }
+                    drawIntoCanvas { canvas ->
+                        val skiaCanvas = canvas.skiaCanvas
+                        val weightPaint = SkiaPaint().apply {
+                            isAntiAlias = true
+                        }
+                        try {
+                            skiaCanvas.drawVertices(
+                                SkiaVertexMode.TRIANGLES,
+                                positions,
+                                colorsArr,
+                                null,
+                                shortIndices,
+                                SkiaBlendMode.DST,
+                                weightPaint
+                            )
+                        } finally {
+                            weightPaint.close()
+                        }
+                    }
+                }
+            }
+
+            val edges = MeshTopology.uniqueEdges(currentTarget.indices).map { it.endpointLow to it.endpointHigh }
             edges.forEach { (a, b) ->
                 drawLine(Color.Black.copy(alpha = 0.45f), pts[a], pts[b], 2.5f)
                 drawLine(colors.accent.copy(alpha = 0.65f), pts[a], pts[b], 1f)
@@ -78,7 +147,27 @@ internal fun BoxScope.CanvasEditorOverlay(
             pts.forEachIndexed { i, p ->
                 val isSelected = i in editor.vertices
                 val isHovered = i == editor.hoveredVertex
-                if (isHovered) {
+                val w = brushWeights?.getOrNull(i) ?: 0f
+                if (brushWeights != null) {
+                    if (w > 0.001f) {
+                        val normW = if (editor.strength > 0.001f) (w / editor.strength).coerceIn(0f, 1f) else w.coerceIn(0f, 1f)
+                        val r = 1.6f + normW * 0.8f
+                        drawCircle(Color.Black.copy(alpha = 0.75f), r + 0.8f, p)
+                        val redFill = Color(
+                            red = 1.0f - normW * 0.08f,
+                            green = 1.0f - normW * 0.90f,
+                            blue = 1.0f - normW * 0.88f,
+                            alpha = 1f
+                        )
+                        drawCircle(redFill, r, p)
+                    } else {
+                        drawCircle(Color.Black.copy(alpha = 0.65f), 2.2f, p)
+                        drawCircle(Color.White.copy(alpha = 0.9f), 1.5f, p)
+                    }
+                    if (isHovered) {
+                        drawCircle(Color.White, 6f, p, style = Stroke(1.5f))
+                    }
+                } else if (isHovered) {
                     drawCircle(Color.White, 7.5f, p, style = Stroke(1.8f))
                     drawCircle(colors.accent, 4.5f, p)
                 } else if (isSelected) {
@@ -206,10 +295,31 @@ internal fun BoxScope.CanvasEditorOverlay(
                     drawLine(Color.Black.copy(alpha = 0.6f), pts[a], pts[b], 3f)
                     drawLine(colors.accent.copy(alpha = 0.8f), pts[a], pts[b], 1.2f)
                 }
+                val warpBrushWeights = editor.activeBrushWeights
                 pts.forEachIndexed { i, p ->
                     val isHovered = i == editor.hoveredVertex
                     val isSelected = i in editor.vertices
-                    if (isHovered) {
+                    val w = warpBrushWeights?.getOrNull(i) ?: 0f
+                    if (warpBrushWeights != null) {
+                        if (w > 0.001f) {
+                            val normW = if (editor.strength > 0.001f) (w / editor.strength).coerceIn(0f, 1f) else w.coerceIn(0f, 1f)
+                            val r = 1.6f + normW * 0.8f
+                            drawCircle(Color.Black.copy(alpha = 0.75f), r + 0.8f, p)
+                            val redFill = Color(
+                                red = 1.0f - normW * 0.08f,
+                                green = 1.0f - normW * 0.90f,
+                                blue = 1.0f - normW * 0.88f,
+                                alpha = 1f
+                            )
+                            drawCircle(redFill, r, p)
+                        } else {
+                            drawCircle(Color.Black.copy(alpha = 0.65f), 2.2f, p)
+                            drawCircle(Color.White.copy(alpha = 0.9f), 1.5f, p)
+                        }
+                        if (isHovered) {
+                            drawCircle(Color.White, 6.5f, p, style = Stroke(1.5f))
+                        }
+                    } else if (isHovered) {
                         drawCircle(Color.White, 8f, p, style = Stroke(2f))
                         drawCircle(colors.accent, 5f, p)
                     } else if (isSelected) {
@@ -288,7 +398,8 @@ internal fun BoxScope.CanvasEditorOverlay(
 
         // 4. BRUSH / SMOOTH / INFLATE mode: Shape-aware brush outline following cursor
         if (editor.tool in listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE)) {
-            editor.cursor?.let { center ->
+            val center = editor.cursor ?: editor.activeBrushCenter
+            center?.let { center ->
                 val r = (editor.radius * viewport.scale).toFloat()
                 val ring = if (editor.tool == CanvasTool.INFLATE && editor.shrinks) colors.warning else colors.textPrimary
 
