@@ -61,7 +61,7 @@ data class TabViewOptions(
 	val filterSelectedOnly: Boolean = false,
 	val dimUnselected: Boolean = true,
 	val contextualWarp: Boolean = true,
-	val showSelectionBounds: Boolean = true,
+	val showSelectionBounds: Boolean = false,
 ) {
 	/** Point indices are only painted together with the warp overlay they annotate. */
 	fun normalized(): TabViewOptions = copy(showWarp = showWarp || warpShowIndices)

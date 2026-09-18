@@ -731,8 +731,14 @@ fun CanvasViewportComposable(
 						}
 					}
 
-					// Global Selection Bounding Box (across all modes if enabled)
-					if (state.showSelectionBounds) {
+					// Global Selection Bounding Box (across all modes if enabled).
+					// The transform tool draws its own box around `editor.objects`, which is not the
+					// same set as the hierarchy selection — a multi-object pick frames several layers
+					// while this one frames a single layer — so letting both draw stacks two different
+					// rectangles over the same artwork. The transform box wins: it is the one that is
+					// dragged. Every other tool leaves this as the only selection feedback.
+					val transformBoxOwnsSelection = mode == CanvasMode.EDIT && editor.tool == CanvasTool.TRANSFORM
+					if (state.showSelectionBounds && !transformBoxOwnsSelection) {
 						state.selectedLayerId?.let { layerId ->
 							val drawableId = model.rig.layerIdByDrawableId.entries.firstOrNull { it.value == layerId }?.key
 							val bounds = drawableId?.let(drawableBounds::get)

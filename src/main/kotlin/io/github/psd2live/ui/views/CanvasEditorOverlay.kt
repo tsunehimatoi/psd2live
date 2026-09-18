@@ -65,21 +65,9 @@ internal fun BoxScope.CanvasEditorOverlay(
     val isPathTool = editor.tool == CanvasTool.PATH_DEFORM
 
     Canvas(Modifier.fillMaxSize()) {
-        // 1. Object-space tools. SELECT only outlines what is picked, so a click can never turn into a
-        //    drag; TRANSFORM adds the box, the 8 handles and the rotate stem it is dragged by.
-        if (editor.tool == CanvasTool.SELECT) {
-            // Suppressed when the hierarchy, not the canvas, owns the selection: those targets already
-            // carry their own AWT-drawn boxes, and two outlines around one object read as two objects.
-            if (editor.objects.isNotEmpty()) editor.selectionBounds(viewport)?.let { bounds ->
-                drawRect(
-                    color = colors.accent.copy(alpha = 0.55f),
-                    topLeft = Offset(bounds.minX, bounds.minY),
-                    size = Size(bounds.width, bounds.height),
-                    style = Stroke(1f)
-                )
-            }
-        }
-
+        // 1. TRANSFORM tool: the bounding box, the 8 handles and the rotate stem it is dragged by.
+        //    SELECT draws nothing here — its selection is already shown by the selection-bounds overlay,
+        //    which the View menu owns; a second outline around the same object just reads as two.
         if (editor.tool == CanvasTool.TRANSFORM) {
             val bounds = editor.selectionBounds(viewport)
             if (bounds != null) {

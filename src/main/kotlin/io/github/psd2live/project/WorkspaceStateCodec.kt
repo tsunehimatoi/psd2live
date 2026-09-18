@@ -8,6 +8,15 @@ import kotlinx.serialization.json.*
 
 /** Explicit durable UI/config schema; excludes live SDK handles, jobs and network state. */
 internal object WorkspaceStateCodec {
+    /**
+     * Stamped into every workspace this build writes. A file that predates the selection-bounds
+     * default flipping to off stored that option as `true` whether or not anyone had asked for it,
+     * and nothing in the file distinguishes the two. So a file without the revision has the one key
+     * ignored on load and the new default applies; the next save stamps the revision, after which
+     * the user's own toggle is honoured again.
+     */
+    private const val VIEW_OPTIONS_REVISION = 1
+
     private fun decodeMouthCurve(value: JsonElement?): io.github.psd2live.core.MouthCurve? = runCatching {
         io.github.psd2live.core.MouthCurve(value!!.jsonArray.map { p ->
             io.github.psd2live.core.MouthCurvePoint(p.jsonObject.getValue("x").jsonPrimitive.float,
@@ -18,7 +27,11 @@ internal object WorkspaceStateCodec {
     private fun booleanOr(obj: JsonObject, key: String, fallback: Boolean): Boolean =
         obj[key]?.jsonPrimitive?.booleanOrNull ?: fallback
 
-    private fun decodeViewOptions(value: JsonElement?, defaults: TabViewOptions = TabViewOptions.Default): TabViewOptions {
+    private fun decodeViewOptions(
+        value: JsonElement?,
+        defaults: TabViewOptions = TabViewOptions.Default,
+        legacySelectionBounds: Boolean = false,
+    ): TabViewOptions {
         val obj = value?.jsonObject ?: return defaults
         return TabViewOptions(
             showTexture = booleanOr(obj, "showTexture", defaults.showTexture),
@@ -32,7 +45,8 @@ internal object WorkspaceStateCodec {
             filterSelectedOnly = booleanOr(obj, "filterSelectedOnly", defaults.filterSelectedOnly),
             dimUnselected = booleanOr(obj, "dimUnselected", defaults.dimUnselected),
             contextualWarp = booleanOr(obj, "contextualWarp", defaults.contextualWarp),
-            showSelectionBounds = booleanOr(obj, "showSelectionBounds", defaults.showSelectionBounds),
+            showSelectionBounds = if (legacySelectionBounds) defaults.showSelectionBounds
+                                  else booleanOr(obj, "showSelectionBounds", defaults.showSelectionBounds),
         )
     }
 
@@ -52,6 +66,7 @@ internal object WorkspaceStateCodec {
      */
     private fun decodeWorkspaceTabs(value: JsonObject, base: PSD2LiveState): Pair<List<WorkspaceTabState>, String> {
         val array = value["workspaceTabs"]?.jsonArray
+        val legacyViewOptions = (value["viewOptionsRevision"]?.jsonPrimitive?.intOrNull ?: 0) < VIEW_OPTIONS_REVISION
         val legacyCamera = if ("canvasZoom" in value || "canvasPanX" in value || "canvasPanY" in value) {
             TabCamera(
                 zoom = value["canvasZoom"]?.jsonPrimitive?.floatOrNull ?: 1f,
@@ -86,7 +101,7 @@ internal object WorkspaceStateCodec {
                 kind = kind,
                 ordinal = (obj["ordinal"]?.jsonPrimitive?.intOrNull ?: 1).coerceAtLeast(1),
                 pinned = obj["pinned"]?.jsonPrimitive?.booleanOrNull ?: false,
-                view = decodeViewOptions(obj["view"], kind.defaultViewOptions()),
+                view = decodeViewOptions(obj["view"], kind.defaultViewOptions(), legacyViewOptions),
                 camera = if (obj["camera"] != null) decodeCamera(obj["camera"]) else (legacyCamera ?: TabCamera()),
             )
         }.distinctBy { it.id }
@@ -170,6 +185,7 @@ internal object WorkspaceStateCodec {
         put("modelSettingsExpanded", state.modelSettingsExpanded)
 
         put("workspaceSplitRatio", state.workspaceSplitRatio)
+        put("viewOptionsRevision", VIEW_OPTIONS_REVISION)
         putJsonArray("workspaceTabs") { state.workspaceTabs.forEach { tab -> add(buildJsonObject {
             put("id", tab.id)
             put("kind", tab.kind.name)
