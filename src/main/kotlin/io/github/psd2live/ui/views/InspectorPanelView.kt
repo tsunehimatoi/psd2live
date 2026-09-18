@@ -28,6 +28,7 @@ import androidx.compose.material.DropdownMenu
 import androidx.compose.material.DropdownMenuItem
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,24 +63,14 @@ import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
-import org.umamo.edit.withDeformerMoved
-import org.umamo.edit.withDeformerMultiplyColor
-import org.umamo.edit.withDeformerName
-import org.umamo.edit.withDeformerOpacity
 import org.umamo.edit.withDeformerPart
 import org.umamo.edit.withDeformerQuadTransform
-import org.umamo.edit.withDeformerScreenColor
-import org.umamo.edit.withDrawableBlendMode
-import org.umamo.edit.withDrawableCulling
 import org.umamo.edit.withDrawableDrawOrder
-import org.umamo.edit.withDrawableInvertMask
-import org.umamo.edit.withDrawableMaskedBy
-import org.umamo.edit.withDrawableMultiplyColor
-import org.umamo.edit.withDrawableName
-import org.umamo.edit.withDrawableOpacity
-import org.umamo.edit.withDrawableParentDeformer
-import org.umamo.edit.withDrawableScreenColor
 import org.umamo.edit.withOrgChildMoved
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import org.umamo.runtime.model.BlendMode
 import org.umamo.runtime.model.ColorRgb
 import org.umamo.runtime.model.Deformer
@@ -210,11 +201,13 @@ private fun ArtMeshInspector(
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         // 1. 名称 (Name)
         InspectorFormRow(label = tr("inspector.name")) {
+            val nameEdit = "mesh.name.${drawable.id.raw}"
             CompactTextField(
                 value = drawable.name,
                 onValueChange = { newName ->
-                    viewModel.updatePuppetModel { it.withDrawableName(drawable.id, newName) }
+                    viewModel.applyRigStructureLive(nameEdit, "rename", "mesh", drawable.id.raw, buildJsonObject { put("name", JsonPrimitive(newName)) })
                 },
+                onEditEnd = { viewModel.endEditorField(nameEdit) },
                 modifier = Modifier.fillMaxWidth(),
                 height = 23.dp,
             )
@@ -243,9 +236,7 @@ private fun ArtMeshInspector(
                 selectedItem = selectedItem,
                 onItemSelected = { selected ->
                     val nextPart = selected.first.takeIf { it.isNotEmpty() }?.let(::PartId)
-                    viewModel.updatePuppetModel { model ->
-                        model.withOrgChildMoved(OrgChild.Drawable(drawable.id), nextPart, null)
-                    }
+                    viewModel.applyRigStructure("move", "mesh", drawable.id.raw, buildJsonObject { put("parent_id", nextPart?.raw?.let(::JsonPrimitive) ?: JsonNull) })
                 },
                 itemLabel = { it.second },
                 modifier = Modifier.fillMaxWidth(),
@@ -263,7 +254,7 @@ private fun ArtMeshInspector(
                 selectedItem = selectedItem,
                 onItemSelected = { selected ->
                     val nextDeformer = selected.first.takeIf { it.isNotEmpty() }?.let(::DeformerId)
-                    viewModel.updatePuppetModel { it.withDrawableParentDeformer(drawable.id, nextDeformer) }
+                    viewModel.applyRigStructure("bind", "mesh", drawable.id.raw, buildJsonObject { put("space", JsonPrimitive("local")); put("parent_id", nextDeformer?.raw?.let(::JsonPrimitive) ?: JsonNull) })
                 },
                 itemLabel = { it.second },
                 modifier = Modifier.fillMaxWidth(),
@@ -286,7 +277,7 @@ private fun ArtMeshInspector(
                                 .map { it.trim() }
                                 .filter { it.isNotEmpty() }
                                 .map(::DrawableId)
-                            viewModel.updatePuppetModel { it.withDrawableMaskedBy(drawable.id, ids) }
+                            viewModel.applyRigStaticNow("mesh", drawable.id.raw, "masked_by" to JsonArray(ids.map { JsonPrimitive(it.raw) }))
                         },
                         modifier = Modifier.fillMaxWidth(),
                         height = 23.dp,
@@ -313,7 +304,7 @@ private fun ArtMeshInspector(
                                 } else {
                                     drawable.maskedBy + DrawableId(dId)
                                 }
-                                viewModel.updatePuppetModel { it.withDrawableMaskedBy(drawable.id, nextList) }
+                                viewModel.applyRigStaticNow("mesh", drawable.id.raw, "masked_by" to JsonArray(nextList.map { JsonPrimitive(it.raw) }))
                                 clipIdPickerOpen = false
                             }) {
                                 Row(
@@ -335,7 +326,7 @@ private fun ArtMeshInspector(
                             val otherLayers = state.effectiveVisibleLayerIds - currentLayer
                             otherLayers.firstOrNull()?.let { maskLayer ->
                                 val maskId = state.previewModel?.rig?.layerIdByDrawableId?.entries?.firstOrNull { it.value == maskLayer }?.key ?: maskLayer
-                                viewModel.updatePuppetModel { it.withDrawableMaskedBy(drawable.id, listOf(DrawableId(maskId))) }
+                                viewModel.applyRigStaticNow("mesh", drawable.id.raw, "masked_by" to JsonArray(listOf(JsonPrimitive(maskId))))
                             }
                         }
                     },
@@ -351,7 +342,7 @@ private fun ArtMeshInspector(
             CompactCheckbox(
                 checked = drawable.invertMask,
                 onCheckedChange = { inverted ->
-                    viewModel.updatePuppetModel { it.withDrawableInvertMask(drawable.id, inverted) }
+                    viewModel.applyRigStaticNow("mesh", drawable.id.raw, "invert_mask" to JsonPrimitive(inverted))
                 },
             )
         }
@@ -391,8 +382,9 @@ private fun ArtMeshInspector(
                     value = (drawable.opacity * 100).toDouble(),
                     onValueChange = { pct ->
                         val op = (pct / 100f).toFloat().coerceIn(0f, 1f)
-                        viewModel.updatePuppetModel { it.withDrawableOpacity(drawable.id, op) }
+                        viewModel.applyRigStaticLive("mesh.opacity.${drawable.id.raw}", "mesh", drawable.id.raw, "opacity" to JsonPrimitive(op))
                     },
+                    onEditEnd = { viewModel.endEditorField("mesh.opacity.${drawable.id.raw}") },
                     modifier = Modifier.weight(1f),
                     min = 0.0,
                     max = 100.0,
@@ -410,8 +402,9 @@ private fun ArtMeshInspector(
             colorRgb = drawable.multiplyColor,
             defaultColor = ColorRgb.MultiplyIdentity,
             onColorChanged = { newColor ->
-                viewModel.updatePuppetModel { it.withDrawableMultiplyColor(drawable.id, newColor) }
+                viewModel.applyRigStaticLive("mesh.multiply_color.${drawable.id.raw}", "mesh", drawable.id.raw, "multiply_color" to newColor.toJsonArray())
             },
+            onEditEnd = { viewModel.endEditorField("mesh.multiply_color.${drawable.id.raw}") },
         )
 
         // 10. 屏幕色 (Screen Color)
@@ -420,8 +413,9 @@ private fun ArtMeshInspector(
             colorRgb = drawable.screenColor,
             defaultColor = ColorRgb.ScreenIdentity,
             onColorChanged = { newColor ->
-                viewModel.updatePuppetModel { it.withDrawableScreenColor(drawable.id, newColor) }
+                viewModel.applyRigStaticLive("mesh.screen_color.${drawable.id.raw}", "mesh", drawable.id.raw, "screen_color" to newColor.toJsonArray())
             },
+            onEditEnd = { viewModel.endEditorField("mesh.screen_color.${drawable.id.raw}") },
         )
 
         // 11. 混合模式 (Blend Mode)
@@ -441,7 +435,7 @@ private fun ArtMeshInspector(
                 items = modeItems,
                 selectedItem = currentMode,
                 onItemSelected = { selected ->
-                    viewModel.updatePuppetModel { it.withDrawableBlendMode(drawable.id, selected.first) }
+                    viewModel.applyRigStaticNow("mesh", drawable.id.raw, "blend_mode" to JsonPrimitive(selected.first.name))
                 },
                 itemLabel = { it.second },
                 modifier = Modifier.fillMaxWidth(),
@@ -454,7 +448,7 @@ private fun ArtMeshInspector(
             CompactCheckbox(
                 checked = drawable.culling,
                 onCheckedChange = { culled ->
-                    viewModel.updatePuppetModel { it.withDrawableCulling(drawable.id, culled) }
+                    viewModel.applyRigStaticNow("mesh", drawable.id.raw, "culling" to JsonPrimitive(culled))
                 },
             )
         }
@@ -524,8 +518,9 @@ private fun WarpDeformerInspector(
             CompactTextField(
                 value = warp.name,
                 onValueChange = { newName ->
-                    viewModel.updatePuppetModel { it.withDeformerName(warp.id, newName) }
+                    viewModel.applyRigStructureLive("warp.name.${warp.id.raw}", "rename", "warp", warp.id.raw, buildJsonObject { put("name", JsonPrimitive(newName)) })
                 },
+                onEditEnd = { viewModel.endEditorField("warp.name.${warp.id.raw}") },
                 modifier = Modifier.fillMaxWidth(),
                 height = 23.dp,
             )
@@ -552,7 +547,7 @@ private fun WarpDeformerInspector(
                 selectedItem = selectedItem,
                 onItemSelected = { selected ->
                     val nextPart = selected.first.takeIf { it.isNotEmpty() }?.let(::PartId)
-                    viewModel.updatePuppetModel { it.withDeformerPart(warp.id, nextPart) }
+                    viewModel.applyRigStructure("part", "warp", warp.id.raw, buildJsonObject { put("part_id", nextPart?.raw?.let(::JsonPrimitive) ?: JsonNull) })
                 },
                 itemLabel = { it.second },
                 modifier = Modifier.fillMaxWidth(),
@@ -570,7 +565,7 @@ private fun WarpDeformerInspector(
                 selectedItem = selectedItem,
                 onItemSelected = { selected ->
                     val nextParent = selected.first.takeIf { it.isNotEmpty() }?.let(::DeformerId)
-                    viewModel.updatePuppetModel { it.withDeformerMoved(warp.id, nextParent, null) }
+                    viewModel.applyRigStructure("move", "warp", warp.id.raw, buildJsonObject { put("space", JsonPrimitive("local")); put("parent_id", nextParent?.raw?.let(::JsonPrimitive) ?: JsonNull) })
                 },
                 itemLabel = { it.second },
                 modifier = Modifier.fillMaxWidth(),
@@ -584,8 +579,9 @@ private fun WarpDeformerInspector(
                 value = (warp.opacity * 100).toDouble(),
                 onValueChange = { pct ->
                     val op = (pct / 100f).toFloat().coerceIn(0f, 1f)
-                    viewModel.updatePuppetModel { it.withDeformerOpacity(warp.id, op) }
+                    viewModel.applyRigStaticLive("warp.opacity.${warp.id.raw}", "warp", warp.id.raw, "opacity" to JsonPrimitive(op))
                 },
+                onEditEnd = { viewModel.endEditorField("warp.opacity.${warp.id.raw}") },
                 modifier = Modifier.fillMaxWidth(),
                 min = 0.0,
                 max = 100.0,
@@ -602,8 +598,9 @@ private fun WarpDeformerInspector(
             colorRgb = warp.multiplyColor,
             defaultColor = ColorRgb.MultiplyIdentity,
             onColorChanged = { newColor ->
-                viewModel.updatePuppetModel { it.withDeformerMultiplyColor(warp.id, newColor) }
+                viewModel.applyRigStaticLive("warp.multiply_color.${warp.id.raw}", "warp", warp.id.raw, "multiply_color" to newColor.toJsonArray())
             },
+            onEditEnd = { viewModel.endEditorField("warp.multiply_color.${warp.id.raw}") },
         )
 
         // 7. 屏幕色 (Screen Color)
@@ -612,8 +609,9 @@ private fun WarpDeformerInspector(
             colorRgb = warp.screenColor,
             defaultColor = ColorRgb.ScreenIdentity,
             onColorChanged = { newColor ->
-                viewModel.updatePuppetModel { it.withDeformerScreenColor(warp.id, newColor) }
+                viewModel.applyRigStaticLive("warp.screen_color.${warp.id.raw}", "warp", warp.id.raw, "screen_color" to newColor.toJsonArray())
             },
+            onEditEnd = { viewModel.endEditorField("warp.screen_color.${warp.id.raw}") },
         )
 
         // 8. 转换的分裂数量 (Conversion Division: cols x rows)
@@ -743,7 +741,7 @@ private fun WarpDeformerInspector(
             CompactCheckbox(
                 checked = warp.isQuadTransform,
                 onCheckedChange = { quad ->
-                    viewModel.updatePuppetModel { it.withDeformerQuadTransform(warp.id, quad) }
+                    viewModel.applyRigStaticNow("warp", warp.id.raw, "quad" to JsonPrimitive(quad))
                 },
             )
         }
@@ -766,8 +764,9 @@ private fun RotationDeformerInspector(
             CompactTextField(
                 value = rotation.name,
                 onValueChange = { newName ->
-                    viewModel.updatePuppetModel { it.withDeformerName(rotation.id, newName) }
+                    viewModel.applyRigStructureLive("rotation.name.${rotation.id.raw}", "rename", "rotation", rotation.id.raw, buildJsonObject { put("name", JsonPrimitive(newName)) })
                 },
+                onEditEnd = { viewModel.endEditorField("rotation.name.${rotation.id.raw}") },
                 modifier = Modifier.fillMaxWidth(),
                 height = 23.dp,
             )
@@ -792,7 +791,7 @@ private fun RotationDeformerInspector(
                 selectedItem = selectedItem,
                 onItemSelected = { selected ->
                     val nextPart = selected.first.takeIf { it.isNotEmpty() }?.let(::PartId)
-                    viewModel.updatePuppetModel { it.withDeformerPart(rotation.id, nextPart) }
+                    viewModel.applyRigStructure("part", "rotation", rotation.id.raw, buildJsonObject { put("part_id", nextPart?.raw?.let(::JsonPrimitive) ?: JsonNull) })
                 },
                 itemLabel = { it.second },
                 modifier = Modifier.fillMaxWidth(),
@@ -809,7 +808,7 @@ private fun RotationDeformerInspector(
                 selectedItem = selectedItem,
                 onItemSelected = { selected ->
                     val nextParent = selected.first.takeIf { it.isNotEmpty() }?.let(::DeformerId)
-                    viewModel.updatePuppetModel { it.withDeformerMoved(rotation.id, nextParent, null) }
+                    viewModel.applyRigStructure("move", "rotation", rotation.id.raw, buildJsonObject { put("space", JsonPrimitive("local")); put("parent_id", nextParent?.raw?.let(::JsonPrimitive) ?: JsonNull) })
                 },
                 itemLabel = { it.second },
                 modifier = Modifier.fillMaxWidth(),
@@ -822,8 +821,9 @@ private fun RotationDeformerInspector(
                 value = (rotation.opacity * 100).toDouble(),
                 onValueChange = { pct ->
                     val op = (pct / 100f).toFloat().coerceIn(0f, 1f)
-                    viewModel.updatePuppetModel { it.withDeformerOpacity(rotation.id, op) }
+                    viewModel.applyRigStaticLive("rotation.opacity.${rotation.id.raw}", "rotation", rotation.id.raw, "opacity" to JsonPrimitive(op))
                 },
+                onEditEnd = { viewModel.endEditorField("rotation.opacity.${rotation.id.raw}") },
                 modifier = Modifier.fillMaxWidth(),
                 min = 0.0,
                 max = 100.0,
@@ -839,8 +839,9 @@ private fun RotationDeformerInspector(
             colorRgb = rotation.multiplyColor,
             defaultColor = ColorRgb.MultiplyIdentity,
             onColorChanged = { newColor ->
-                viewModel.updatePuppetModel { it.withDeformerMultiplyColor(rotation.id, newColor) }
+                viewModel.applyRigStaticLive("rotation.multiply_color.${rotation.id.raw}", "rotation", rotation.id.raw, "multiply_color" to newColor.toJsonArray())
             },
+            onEditEnd = { viewModel.endEditorField("rotation.multiply_color.${rotation.id.raw}") },
         )
 
         InspectorColorRow(
@@ -848,8 +849,9 @@ private fun RotationDeformerInspector(
             colorRgb = rotation.screenColor,
             defaultColor = ColorRgb.ScreenIdentity,
             onColorChanged = { newColor ->
-                viewModel.updatePuppetModel { it.withDeformerScreenColor(rotation.id, newColor) }
+                viewModel.applyRigStaticLive("rotation.screen_color.${rotation.id.raw}", "rotation", rotation.id.raw, "screen_color" to newColor.toJsonArray())
             },
+            onEditEnd = { viewModel.endEditorField("rotation.screen_color.${rotation.id.raw}") },
         )
 
         VertexInfoRows(editor = editor)
@@ -896,10 +898,17 @@ private fun InspectorColorRow(
     colorRgb: ColorRgb,
     defaultColor: ColorRgb,
     onColorChanged: (ColorRgb) -> Unit,
+    /** The picker popup and the hex field share one session: it ends when both are done with. */
+    onEditStart: () -> Unit = {},
+    onEditEnd: () -> Unit = {},
 ) {
     val colors = LocalToolColors.current
     val density = LocalDensity.current
     var colorPickerOpen by remember { mutableStateOf(false) }
+    // Opening the popup starts a colour session and dismissing it ends one, so a drag across the picker
+    // records the colour the user settled on rather than one node per sample. The first composition sees
+    // `false` and ends a session that was never open, which is a no-op.
+    LaunchedEffect(colorPickerOpen) { if (colorPickerOpen) onEditStart() else onEditEnd() }
 
     val intColor = colorRgbToInt(colorRgb)
     val hexString = colorRgbToHex(colorRgb)
@@ -949,6 +958,7 @@ private fun InspectorColorRow(
                     hexInput = nextHex
                     parseHexToColorRgb(nextHex)?.let(onColorChanged)
                 },
+                onEditEnd = onEditEnd,
                 modifier = Modifier.weight(1f),
                 height = 23.dp,
             )
@@ -1126,3 +1136,8 @@ private fun parseHexToColorRgb(hex: String): ColorRgb? {
     val b = (rgb and 0xFF) / 255f
     return ColorRgb(r, g, b)
 }
+
+
+/** A colour as the `static` action takes it: three 0..1 channels. */
+private fun ColorRgb.toJsonArray() =
+    JsonArray(listOf(JsonPrimitive(red), JsonPrimitive(green), JsonPrimitive(blue)))

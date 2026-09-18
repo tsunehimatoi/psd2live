@@ -19,6 +19,11 @@ internal object RigStructureEdits {
             "visibility" -> setOf("visible")
             "move" -> setOf("parent_id", "before_id", "before_kind", "space")
             "bind" -> setOf("parent_id", "space")
+            "static" -> setOf("opacity", "draw_order", "multiply_color", "screen_color", "blend_mode", "masked_by", "invert_mask", "culling", "selectable", "quad")
+            // A deformer's organizational part. Distinct from `move`, which walks the deformer parent
+            // chain: this is only the Parts-panel membership, and meshes use `move` instead because they
+            // are org children in a way a deformer is not.
+            "part" -> setOf("part_id")
             else -> error("Unknown structure action: $action")
         }
         require((edit.keys - allowed - setOf("action", "kind", "id")).isEmpty()) { "Unexpected field for $action" }
@@ -41,6 +46,67 @@ internal object RigStructureEdits {
                     "part" -> model.withPartName(part!!.id, name)
                     else -> model.withDeformerName(deformer!!.id, name)
                 }
+            }
+            // The values a channel track falls back to when it keys nothing. Writing one never touches the
+            // track, so this is a plain overwrite of the model field — the same edit the inspector's own
+            // helpers made directly, now recorded in the document so it survives a rebuild and a reload.
+            "static" -> {
+                var next = model
+                edit["opacity"]?.jsonPrimitive?.floatOrNull?.let { value ->
+                    require(kind != "part") { "A part has no opacity of its own" }
+                    next = if (kind == "mesh") next.withDrawableOpacity(mesh!!.id, value)
+                           else next.withDeformerOpacity(deformer!!.id, value)
+                }
+                edit["draw_order"]?.jsonPrimitive?.floatOrNull?.let { value ->
+                    require(kind == "mesh") { "Draw order belongs to a mesh; parts order through move" }
+                    next = next.withDrawableDrawOrder(mesh!!.id, value)
+                }
+                edit["multiply_color"]?.jsonArray?.let { value ->
+                    val color = value.toColorRgb("multiply_color")
+                    next = if (kind == "mesh") next.withDrawableMultiplyColor(mesh!!.id, color)
+                           else next.withDeformerMultiplyColor(deformer!!.id, color)
+                }
+                edit["screen_color"]?.jsonArray?.let { value ->
+                    val color = value.toColorRgb("screen_color")
+                    next = if (kind == "mesh") next.withDrawableScreenColor(mesh!!.id, color)
+                           else next.withDeformerScreenColor(deformer!!.id, color)
+                }
+                edit["blend_mode"]?.jsonPrimitive?.contentOrNull?.let { value ->
+                    require(kind == "mesh") { "Blend mode belongs to a mesh" }
+                    val mode = BlendMode.entries.firstOrNull { it.name.equals(value, ignoreCase = true) }
+                        ?: throw IllegalArgumentException("Unknown blend mode: $value")
+                    next = next.withDrawableBlendMode(mesh!!.id, mode)
+                }
+                edit["masked_by"]?.jsonArray?.let { value ->
+                    require(kind == "mesh") { "Only a mesh is masked" }
+                    next = next.withDrawableMaskedBy(mesh!!.id, value.map { DrawableId(it.jsonPrimitive.content) })
+                }
+                edit["invert_mask"]?.jsonPrimitive?.booleanOrNull?.let { value ->
+                    require(kind == "mesh") { "Only a mesh is masked" }
+                    next = next.withDrawableInvertMask(mesh!!.id, value)
+                }
+                edit["culling"]?.jsonPrimitive?.booleanOrNull?.let { value ->
+                    require(kind == "mesh") { "Culling belongs to a mesh" }
+                    next = next.withDrawableCulling(mesh!!.id, value)
+                }
+                edit["selectable"]?.jsonPrimitive?.booleanOrNull?.let { value ->
+                    next = when (kind) {
+                        "mesh" -> next.withDrawableSelectable(mesh!!.id, value)
+                        "part" -> next.withPartSelectable(part!!.id, value)
+                        else -> next.withDeformerSelectable(deformer!!.id, value)
+                    }
+                }
+                edit["quad"]?.jsonPrimitive?.booleanOrNull?.let { value ->
+                    require(kind == "warp") { "Quad transform belongs to a warp" }
+                    next = next.withDeformerQuadTransform(deformer!!.id, value)
+                }
+                next
+            }
+            "part" -> {
+                require(kind in setOf("warp", "rotation")) { "A mesh moves through the org tree, not into a part" }
+                val partId = edit["part_id"]?.jsonPrimitive?.contentOrNull?.let(::PartId)
+                require(partId == null || model.parts.any { it.id == partId }) { "Part not found: $partId" }
+                model.withDeformerPart(deformer!!.id, partId)
             }
             "visibility" -> {
                 val visible = edit.getValue("visible").jsonPrimitive.boolean
@@ -88,5 +154,12 @@ internal object RigStructureEdits {
 
     private fun JsonObject.string(key: String): String = getValue(key).jsonPrimitive.content.also {
         require(it.isNotBlank() && it.none(Char::isISOControl)) { "$key must be nonblank text" }
+    }
+
+    private fun JsonArray.toColorRgb(key: String): ColorRgb {
+        require(size == 3) { "$key must be [r, g, b]" }
+        val channels = map { it.jsonPrimitive.float }
+        require(channels.all { it in 0f..1f }) { "$key channels must be within 0..1" }
+        return ColorRgb(channels[0], channels[1], channels[2])
     }
 }

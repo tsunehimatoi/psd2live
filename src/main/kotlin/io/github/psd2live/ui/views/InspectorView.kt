@@ -470,6 +470,8 @@ private fun ModelSettingsSection(
 						)
 						Spacer(Modifier.width(4.dp))
 						CompactNumberSpinner(
+							onEditStart = { viewModel.beginEditorField("setAtlasSize") },
+							onEditEnd = { viewModel.endEditorField("setAtlasSize") },
 							value = state.atlasSize.toDouble(),
 							onValueChange = { viewModel.setAtlasSize(it.toInt()) },
 							min = maxOf(256.0, minRequiredAtlasSize.toDouble()),
@@ -496,6 +498,8 @@ private fun ModelSettingsSection(
 						)
 						Spacer(Modifier.width(5.dp))
 						CompactNumberSpinner(
+							onEditStart = { viewModel.beginEditorField("setTexturePadding") },
+							onEditEnd = { viewModel.endEditorField("setTexturePadding") },
 							value = state.texturePadding.toDouble(),
 							onValueChange = { viewModel.setTexturePadding(it.toInt()) },
 							min = 0.0,
@@ -517,6 +521,8 @@ private fun ModelSettingsSection(
 						)
 						Spacer(Modifier.width(4.dp))
 						CompactNumberSpinner(
+							onEditStart = { viewModel.beginEditorField("setAlphaThreshold") },
+							onEditEnd = { viewModel.endEditorField("setAlphaThreshold") },
 							value = state.alphaThreshold.toDouble(),
 							onValueChange = { viewModel.setAlphaThreshold(it.toInt()) },
 							min = 0.0,
@@ -597,6 +603,8 @@ private fun ModelSettingsSection(
 						)
 						Spacer(Modifier.width(4.dp))
 						CompactNumberSpinner(
+							onEditStart = { viewModel.beginEditorField("setMeshOuterMargin") },
+							onEditEnd = { viewModel.endEditorField("setMeshOuterMargin") },
 							value = state.meshOuterMargin.toDouble(),
 							onValueChange = { viewModel.setMeshOuterMargin(it.toFloat()) },
 							min = 0.0,
@@ -635,6 +643,8 @@ private fun ModelSettingsSection(
 						)
 						Spacer(Modifier.width(4.dp))
 						CompactNumberSpinner(
+							onEditStart = { viewModel.beginEditorField("setMeshInnerMargin") },
+							onEditEnd = { viewModel.endEditorField("setMeshInnerMargin") },
 							value = state.meshInnerMargin.toDouble(),
 							onValueChange = { viewModel.setMeshInnerMargin(it.toFloat()) },
 							min = 0.5,
@@ -673,6 +683,8 @@ private fun ModelSettingsSection(
 						)
 						Spacer(Modifier.width(4.dp))
 						CompactNumberSpinner(
+							onEditStart = { viewModel.beginEditorField("setMeshMaxEdgeDistance") },
+							onEditEnd = { viewModel.endEditorField("setMeshMaxEdgeDistance") },
 							value = state.meshMaxEdgeDistance.toDouble(),
 							onValueChange = { viewModel.setMeshMaxEdgeDistance(it.toFloat()) },
 							min = 6.0,
@@ -711,6 +723,8 @@ private fun ModelSettingsSection(
 						)
 						Spacer(Modifier.width(4.dp))
 						CompactNumberSpinner(
+							onEditStart = { viewModel.beginEditorField("setMeshInteriorDensity") },
+							onEditEnd = { viewModel.endEditorField("setMeshInteriorDensity") },
 							value = state.meshInteriorDensity.toDouble(),
 							onValueChange = { viewModel.setMeshInteriorDensity(it.toFloat()) },
 							min = 6.0,
@@ -798,6 +812,8 @@ private fun ModelSettingsSection(
 						)
 						Spacer(Modifier.width(4.dp))
 						CompactNumberSpinner(
+							onEditStart = { viewModel.beginEditorField("setHeadStrength") },
+							onEditEnd = { viewModel.endEditorField("setHeadStrength") },
 							value = state.headStrength.toDouble(),
 							onValueChange = { viewModel.setHeadStrength(it.toFloat()) },
 							min = 0.0,
@@ -835,6 +851,8 @@ private fun ModelSettingsSection(
 						)
 						Spacer(Modifier.width(4.dp))
 						CompactNumberSpinner(
+							onEditStart = { viewModel.beginEditorField("setBodyStrength") },
+							onEditEnd = { viewModel.endEditorField("setBodyStrength") },
 							value = state.bodyStrength.toDouble(),
 							onValueChange = { viewModel.setBodyStrength(it.toFloat()) },
 							min = 0.0,
@@ -896,6 +914,8 @@ private fun ModelSettingsSection(
 							)
 							Spacer(Modifier.width(4.dp))
 							CompactNumberSpinner(
+								onEditStart = { viewModel.beginEditorField("setMouthThickness") },
+								onEditEnd = { viewModel.endEditorField("setMouthThickness") },
 								value = state.mouthThickness.toDouble(),
 								onValueChange = { viewModel.setMouthThickness(it.toFloat()) },
 								min = 0.5,

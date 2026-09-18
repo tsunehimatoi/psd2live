@@ -326,7 +326,13 @@ private fun parseTarget(value: String): AgentKeyformTargetRef {
     require(pair.size == 2 && pair[0] in setOf("mesh", "warp", "rotation", "part", "glue") && pair[1].isNotBlank()) { "Use kind:id from inspect" }
     return AgentKeyformTargetRef(pair[0], pair[1])
 }
-private fun AgentWorkspaceMutationResult.compact() = buildJsonObject { put("state", historyNodeId); if (affectedObjectIds.isNotEmpty()) put("changed", JsonArray(affectedObjectIds.map(::JsonPrimitive))) }
+private fun AgentWorkspaceMutationResult.compact() = buildJsonObject {
+    put("state", historyNodeId)
+    // Emitted only when false: a no-op is the case a caller has to act on, and leaving it off a normal
+    // response keeps the common payload small.
+    if (!applied) put("applied", false)
+    if (affectedObjectIds.isNotEmpty()) put("changed", JsonArray(affectedObjectIds.map(::JsonPrimitive)))
+}
 private fun compactResult(value: JsonObject) = CallToolResult(content = listOf(TextContent(value.toString())), structuredContent = value)
 private fun authoringError(e: Exception, workspace: AgentWorkspace): CallToolResult {
     val value = buildJsonObject { put("error", e.message ?: "Invalid authoring request"); workspace.snapshot().historyHeadNodeId?.let { put("state", it) } }

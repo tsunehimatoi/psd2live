@@ -215,9 +215,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         axis = null; head = null; objectTargets = emptyList(); pendingObjects = emptyList()
         activeHandle = BoundingHandle.NONE
         initialBounds = null
-        currentDragBounds = null
-        currentRotateAngle = 0f
-        currentRotateCenter = null
+        endTransformBox()
         initialScreenPoints = emptyList()
     }
 
@@ -247,9 +245,9 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     }
 
     fun selectionBounds(viewport: CanvasViewport): BoundingBox? {
-        if (dragging && tool == CanvasTool.TRANSFORM && currentDragBounds != null) {
-            return currentDragBounds
-        }
+        // Not gated on `dragging`: a transform drag keeps its own box past the mouse-up, until the commit
+        // it produced resolves. See endTransformBox.
+        if (currentDragBounds != null) return currentDragBounds
         val targets = if (objectMode) objects.mapNotNull { target(model, it, null) }.ifEmpty { listOfNotNull(target()) } else listOfNotNull(target())
         if (targets.isEmpty()) return null
         val allScreenPoints = targets.flatMap { screen(it.geometry.points, it, viewport) }
@@ -366,38 +364,49 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         }
     }
 
-    fun activeCursor(): Int {
-        if (space || tool == CanvasTool.HAND) return if (dragging) java.awt.Cursor.MOVE_CURSOR else java.awt.Cursor.HAND_CURSOR
+    /** The pointer the canvas should show right now, derived from the tool and what is under it. */
+    fun activeCursor(): java.awt.Cursor {
+        val arrow = java.awt.Cursor.getDefaultCursor()
+        val hand = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+        val cross = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.CROSSHAIR_CURSOR)
+        val move = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.MOVE_CURSOR)
+        if (space || tool == CanvasTool.HAND) return if (dragging) move else hand
         if (dragging) {
-            if (marquee.isNotEmpty()) return java.awt.Cursor.CROSSHAIR_CURSOR
-            if (tool == CanvasTool.BRUSH || tool == CanvasTool.SMOOTH || tool == CanvasTool.INFLATE) return java.awt.Cursor.CROSSHAIR_CURSOR
+            if (marquee.isNotEmpty()) return cross
+            if (tool == CanvasTool.BRUSH || tool == CanvasTool.SMOOTH || tool == CanvasTool.INFLATE) return cross
             // A transform drag keeps the cursor its handle promised, so scaling never reads as a move.
             if (tool == CanvasTool.TRANSFORM) return handleCursor(activeHandle)
-            return java.awt.Cursor.MOVE_CURSOR
+            return move
         }
         return when (tool) {
-            CanvasTool.SELECT -> if (isHoveringObject) java.awt.Cursor.HAND_CURSOR else java.awt.Cursor.DEFAULT_CURSOR
+            // The select tool does two things, so it advertises both: a clickable layer under the
+            // pointer, and a marquee anywhere else. A plain arrow would claim there is nothing here.
+            CanvasTool.SELECT -> if (isHoveringObject) hand else cross
+            // The transform tool acts on what it already framed, so outside that box the arrow is
+            // right unless a press there would re-pick a layer, which is what the hand promises.
             CanvasTool.TRANSFORM -> when (hoveredHandle) {
-                BoundingHandle.NONE -> if (isHoveringObject) java.awt.Cursor.HAND_CURSOR else java.awt.Cursor.DEFAULT_CURSOR
+                BoundingHandle.NONE -> if (isHoveringObject) hand else arrow
                 else -> handleCursor(hoveredHandle)
             }
-            CanvasTool.MESH -> if (hoveredVertex != null) java.awt.Cursor.HAND_CURSOR else java.awt.Cursor.CROSSHAIR_CURSOR
-            CanvasTool.WARP -> if (hoveredVertex != null) java.awt.Cursor.HAND_CURSOR else java.awt.Cursor.CROSSHAIR_CURSOR
-            CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE -> java.awt.Cursor.CROSSHAIR_CURSOR
-            CanvasTool.PATH_DEFORM -> if (hoveredVertex != null) java.awt.Cursor.HAND_CURSOR else java.awt.Cursor.CROSSHAIR_CURSOR
-            CanvasTool.HAND -> java.awt.Cursor.HAND_CURSOR
+            CanvasTool.MESH -> if (hoveredVertex != null) hand else cross
+            CanvasTool.WARP -> if (hoveredVertex != null) hand else cross
+            CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE -> cross
+            CanvasTool.PATH_DEFORM -> if (hoveredVertex != null) hand else cross
+            CanvasTool.HAND -> hand
         }
     }
 
-    /** The resize/move cursor a transform handle promises, shared by hover and the drag itself. */
-    private fun handleCursor(handle: BoundingHandle): Int = when (handle) {
-        BoundingHandle.ROTATE -> java.awt.Cursor.CROSSHAIR_CURSOR
-        BoundingHandle.TOP_LEFT, BoundingHandle.BOTTOM_RIGHT -> java.awt.Cursor.NW_RESIZE_CURSOR
-        BoundingHandle.TOP_RIGHT, BoundingHandle.BOTTOM_LEFT -> java.awt.Cursor.NE_RESIZE_CURSOR
-        BoundingHandle.TOP, BoundingHandle.BOTTOM -> java.awt.Cursor.N_RESIZE_CURSOR
-        BoundingHandle.LEFT, BoundingHandle.RIGHT -> java.awt.Cursor.E_RESIZE_CURSOR
-        BoundingHandle.BODY -> java.awt.Cursor.MOVE_CURSOR
-        BoundingHandle.NONE -> java.awt.Cursor.DEFAULT_CURSOR
+    /** The cursor a transform handle promises, shared by hover and the drag itself. */
+    private fun handleCursor(handle: BoundingHandle): java.awt.Cursor = when (handle) {
+        BoundingHandle.TOP_LEFT, BoundingHandle.BOTTOM_RIGHT -> java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.NW_RESIZE_CURSOR)
+        BoundingHandle.TOP_RIGHT, BoundingHandle.BOTTOM_LEFT -> java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.NE_RESIZE_CURSOR)
+        BoundingHandle.TOP, BoundingHandle.BOTTOM -> java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.N_RESIZE_CURSOR)
+        BoundingHandle.LEFT, BoundingHandle.RIGHT -> java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.E_RESIZE_CURSOR)
+        BoundingHandle.BODY -> java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.MOVE_CURSOR)
+        // ROTATE keeps the plain arrow on purpose. AWT has no rotate cursor, and the crosshair that
+        // stood in for one read as "place a point" rather than "turn this" — the handle says what it
+        // does by lighting up under the pointer instead of by changing the pointer.
+        BoundingHandle.ROTATE, BoundingHandle.NONE -> java.awt.Cursor.getDefaultCursor()
     }
 
     fun commit(command: JsonObject) {
@@ -406,16 +415,26 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
 
     /** Returns false when the edit never reached history, so the caller can drop its preview. */
     private fun commitBatch(commands: List<JsonObject>): Boolean {
-        if (!editable) return false
-        val expected = head ?: state.historySnapshot?.headNodeId ?: return false
+        if (!editable) { endTransformBox(); return false }
+        val expected = head ?: state.historySnapshot?.headNodeId
+        if (expected == null) { endTransformBox(); return false }
         try {
             val result = RigAuthoringJournal.compile(state.previewModel!!.rig.puppet, JsonArray(commands))
+            // A gesture that ends where it started compiles to nothing: dragging a vertex back onto
+            // itself, or a numeric transform applied with its identity values. Dispatching that would ask
+            // the workspace for an edit that cannot change anything, so drop it here and let the caller's
+            // `false` clear the preview. This is also what keeps the gesture from flipping canvasEditBusy
+            // and queueing a pointless save.
+            if (result.second.isEmpty()) { preview = null; pending = null; head = null; endTransformBox(); return false }
             preview = result.first; busy = true; error = null
-            viewModel.saveDeformPathEdits(expected, JsonArray(result.second)) { failure ->
+            // The pending edit is only settled here, so this is where the box a drag was holding gives
+            // way to one computed from what the model actually became.
+            viewModel.saveAuthoringEdits(expected, JsonArray(result.second)) { failure ->
                 busy = false; preview = null; pending = null; head = null; error = failure
+                endTransformBox()
                 if (failure == null) commands.lastOrNull { it["op"]?.jsonPrimitive?.content in setOf("canvas_create_warp", "canvas_create_rotation") }?.let { viewModel.selectDeformer(it.getValue("id").jsonPrimitive.content) }
             }
-        } catch (e: Exception) { error = e.message; preview = null; pending = null; head = null }
+        } catch (e: Exception) { error = e.message; preview = null; pending = null; head = null; endTransformBox() }
         return true
     }
 
@@ -513,6 +532,20 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
      */
     private fun pickLayer(pos: Offset, viewport: CanvasViewport): String? =
         RigCanvasSupport.nextLayer(layerCandidates(pos, viewport), state.selectedLayerId)
+
+    /**
+     * Drops the box a transform drag built.
+     *
+     * The drag state outlives [release] on purpose. Committing is asynchronous, so clearing it on mouse-up
+     * made the box snap to the axis-aligned hull of the already-rotated geometry while the edit was still
+     * in flight — the box moved before the artwork it frames had anything to do with the commit. It now
+     * holds the gesture's own result and gives way only once the edit lands, or once it is clear none will.
+     */
+    private fun endTransformBox() {
+        currentDragBounds = null
+        currentRotateAngle = 0f
+        currentRotateCenter = null
+    }
 
     /** What a transform gesture edits: the object selection, or the hierarchy target when there is none. */
     private fun transformTargets(source: PuppetModel): List<CanvasTarget> =
@@ -889,18 +922,16 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         if (!dragging) return
         dragging = false; axis = null; activeHandle = BoundingHandle.NONE
         initialBounds = null
-        currentDragBounds = null
-        currentRotateAngle = 0f
-        currentRotateCenter = null
         initialScreenPoints = emptyList()
-        if (marquee.isNotEmpty()) return
+        if (marquee.isNotEmpty()) { endTransformBox(); return }
         // A preview that never reached history must not survive the gesture: it would both keep showing an
         // uncommitted shape and become the `original` of the next gesture, whose full-array command would then
-        // silently fold these edits into that commit.
+        // silently fold these edits into that commit. commitBatch drops the transform box itself, so only
+        // the paths below that never dispatch a command have to.
         val cmd = pending
         if (moved && pendingObjects.isNotEmpty()) { if (!commitBatch(pendingObjects)) preview = null }
         else if (moved && cmd != null) { if (!commitBatch(listOf(cmd))) preview = null }
-        else { preview = null; head = null }
+        else { preview = null; head = null; endTransformBox() }
         pendingObjects = emptyList(); objectTargets = emptyList()
         pending = null; targetAtPress = null; original = null
     }

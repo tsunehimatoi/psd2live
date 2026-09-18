@@ -606,7 +606,7 @@ internal fun applyKeyformCopy(model: PuppetModel, copy: RigKeyformCopyEdit): Pup
 	)
 }
 
-private fun <TForm> findCellAtCoordinate(
+internal fun <TForm> findCellAtCoordinate(
 	grid: KeyformGrid<TForm>,
 	coordinate: Map<String, Float>,
 ): org.umamo.runtime.model.KeyformCell<TForm>? {

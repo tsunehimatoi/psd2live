@@ -89,18 +89,16 @@ internal fun BoxScope.CanvasEditorOverlay(
                         end = bounds.rotateHandlePos,
                         strokeWidth = 1f
                     )
-                    val isRotateHovered = editor.hoveredHandle == BoundingHandle.ROTATE
-                    drawCircle(
-                        color = if (isRotateHovered) colors.accent else colors.windowBackground,
-                        radius = if (isRotateHovered) 5.5f else 4f,
-                        center = bounds.rotateHandlePos
-                    )
-                    drawCircle(
-                        color = colors.accent,
-                        radius = if (isRotateHovered) 5.5f else 4f,
-                        center = bounds.rotateHandlePos,
-                        style = Stroke(1.5f)
-                    )
+                    // Hovered, a handle takes the treatment the mesh vertices already use: a white ring
+                    // around a filled accent mark. Swapping the fill on a fixed-size shape was too
+                    // quiet to tell which handle the pointer had actually caught.
+                    if (editor.hoveredHandle == BoundingHandle.ROTATE) {
+                        drawCircle(Color.White, 8.5f, bounds.rotateHandlePos, style = Stroke(1.8f))
+                        drawCircle(colors.accent, 5.5f, bounds.rotateHandlePos)
+                    } else {
+                        drawCircle(colors.windowBackground, 4f, bounds.rotateHandlePos)
+                        drawCircle(colors.accent, 4f, bounds.rotateHandlePos, style = Stroke(1.5f))
+                    }
 
                     // Draw 8 transform handles
                     val handles = listOf(
@@ -116,18 +114,29 @@ internal fun BoxScope.CanvasEditorOverlay(
                     handles.forEach { (handle, pt) ->
                         val isCorner = handle in listOf(BoundingHandle.TOP_LEFT, BoundingHandle.TOP_RIGHT, BoundingHandle.BOTTOM_LEFT, BoundingHandle.BOTTOM_RIGHT)
                         val isHovered = editor.hoveredHandle == handle
-                        val hs = if (isHovered) 8f else if (isCorner) 7f else 5.5f
-                        drawRect(
-                            color = if (isHovered) colors.accent else Color.White,
-                            topLeft = pt - Offset(hs * 0.5f, hs * 0.5f),
-                            size = Size(hs, hs)
-                        )
-                        drawRect(
-                            color = if (isHovered) Color.White else colors.accent,
-                            topLeft = pt - Offset(hs * 0.5f, hs * 0.5f),
-                            size = Size(hs, hs),
-                            style = Stroke(1f)
-                        )
+                        val side = when {
+                            isHovered && isCorner -> 8.5f
+                            isHovered || isCorner -> 7f
+                            else -> 5.5f
+                        }
+                        if (isHovered) {
+                            val ring = side + 5f
+                            drawRect(
+                                color = Color.White,
+                                topLeft = pt - Offset(ring * 0.5f, ring * 0.5f),
+                                size = Size(ring, ring),
+                                style = Stroke(1.8f)
+                            )
+                            drawRect(colors.accent, pt - Offset(side * 0.5f, side * 0.5f), Size(side, side))
+                        } else {
+                            drawRect(Color.White, pt - Offset(side * 0.5f, side * 0.5f), Size(side, side))
+                            drawRect(
+                                color = colors.accent,
+                                topLeft = pt - Offset(side * 0.5f, side * 0.5f),
+                                size = Size(side, side),
+                                style = Stroke(1f)
+                            )
+                        }
                     }
                 }
             }

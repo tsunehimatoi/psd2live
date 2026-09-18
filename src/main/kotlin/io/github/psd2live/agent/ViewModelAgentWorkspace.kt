@@ -84,6 +84,8 @@ class ViewModelAgentWorkspace(
         val tasks: List<AgentTaskSnapshot>,
         val store: AgentWorkspaceStore,
         val spatial: Map<String, AgentViewSpatialMetadata>,
+        /** False when the workspace already matched HEAD, so the capture appended no node. */
+        val createdNode: Boolean = true,
     )
     private val projectDirectories = mutableListOf<Path>()
     internal fun rememberProjectDirectory(path: Path) { projectDirectories.add(path) }
@@ -133,16 +135,30 @@ class ViewModelAgentWorkspace(
         }
     }
 
-    internal suspend fun captureProject(summary: String, actor: String): ProjectCapture = editMutex.withLock {
+    /**
+     * Appends a node for the current workspace, unless it is already the head's — see [alwaysCommit].
+     *
+     * @param alwaysCommit Pin this moment even when nothing changed. Only `history_checkpoint` wants
+     *   that: it is an explicit milestone a caller asked for, not an automatic commit, so it is the one
+     *   deliberate exception to the rule that history only records changes.
+     */
+    internal suspend fun captureProject(summary: String, actor: String, alwaysCommit: Boolean = false): ProjectCapture = editMutex.withLock {
         synchronized(historyLock) {
             val state = viewModel.state.value
             require(!state.isAnalyzing && recoveringProjectId == null) { "Workspace is still loading" }
             val id = projectId(state)
-            val tree = synchronizeHistory(id, revisionId(state), documentFrom(state), commitEditorChange = true)
+            val revision = revisionId(state)
+            // Synchronised without committing: the save's own summary is the node this capture is about,
+            // and letting synchronizeHistory commit first meant one Ctrl+S could land two nodes with the
+            // same revision — "Workspace changed in the editor" followed by "Save project".
+            val tree = synchronizeHistory(id, revision, documentFrom(state))
             val head = tree.head()
-            tree.commit(head.node.id, head.snapshot, head.node.revisionId, head.node.snapshotHash, summary, actor)
-            scheduleHistoryPersistence(id, tree)
-            ProjectCapture(id, tree.state(), state, taskManagerFor(id).list(), workspaceStore, spatialByViewId.toMap())
+            val created = alwaysCommit || head.node.revisionId != revision
+            val selection = if (created) {
+                tree.commit(head.node.id, head.snapshot, revision, revision, summary, actor)
+            } else head
+            if (created) scheduleHistoryPersistence(id, tree)
+            ProjectCapture(id, tree.state(), state, taskManagerFor(id).list(), workspaceStore, spatialByViewId.toMap(), created)
         }
     }
 
@@ -179,13 +195,16 @@ class ViewModelAgentWorkspace(
     }
 
     override suspend fun saveProject(): AgentWorkspaceMutationResult {
+        val before = snapshot().historyHeadNodeId
         val node = viewModel.saveProjectNow(actor = "agent")
         val selected = synchronized(historyLock) { historyTree!!.selectionAt(node) }
-        return AgentWorkspaceMutationResult(node, selected.node.revisionId, emptyList(), "Project saved")
+        return AgentWorkspaceMutationResult(node, selected.node.revisionId, emptyList(), "Project saved", applied = node != before)
     }
     override suspend fun checkpoint(summary: String): AgentWorkspaceMutationResult {
         require(summary.isNotBlank()) { "Checkpoint summary is required" }
-        val capture = captureProject(summary, "agent")
+        // The one deliberate exception: a checkpoint exists to pin a moment, so it appends even when the
+        // workspace already matches HEAD. Every other commit path records a change or records nothing.
+        val capture = captureProject(summary, "agent", alwaysCommit = true)
         val node = capture.history.selections.last().node
         return AgentWorkspaceMutationResult(node.id, node.revisionId, emptyList(), summary)
     }
@@ -682,12 +701,20 @@ class ViewModelAgentWorkspace(
 			}
 		}
 		val nextDocument = mutation(baseDocument, parameters)
-		require(nextDocument != baseDocument) { "Parameter edit did not change the workspace" }
+		// Same rule as mutateRigKeyform: a request that describes the state the workspace is already in
+		// is answered, not committed, and not raised as a failure.
+		val nextRevision = revisionId(current, nextDocument)
+		if (nextRevision == revisionId(current, baseDocument)) {
+			return@withLock AgentWorkspaceMutationResult(
+				historyNodeId = before.historyHeadNodeId ?: expectedHeadNodeId,
+				revisionId = before.revisionId,
+				summary = summary,
+				applied = false,
+			)
+		}
 		val preview = viewModel.buildAgentWorkspacePreview(nextDocument.source, nextDocument.toConfig(current))
         if (nextDocument.rigEdits.assetLayers != baseDocument.rigEdits.assetLayers || nextDocument.rigEdits.calibrationLayerIds != baseDocument.rigEdits.calibrationLayerIds)
             validateRegisteredNeutral(preview, nextDocument.rigEdits.assetLayers.filter { (id, record) -> baseDocument.rigEdits.assetLayers[id] != record }.keys)
-		val nextRevision = revisionId(current, nextDocument)
-        require(nextRevision != before.revisionId) { "Operation did not change the workspace" }
 		val selection = synchronized(historyLock) {
             require(historyTree === tree && tree.head().node.id == before.historyHeadNodeId) { "Workspace history changed during the operation; refresh HEAD" }
             applyPreviewOrThrow(preview, baseDocument, nextDocument, summary)
@@ -734,10 +761,13 @@ class ViewModelAgentWorkspace(
 
     override suspend fun authorRig(state: String, edits: kotlinx.serialization.json.JsonArray, author: MutationAuthor): AgentWorkspaceMutationResult {
         val ids = edits.mapNotNull { it.jsonObject["target"]?.jsonPrimitive?.content }.distinct()
-        return mutateRigKeyform(state, null, "Authored ${edits.size} ordered edits", ids.firstOrNull() ?: "rig", author) { document, puppet ->
+        val result = mutateRigKeyform(state, null, "Authored ${edits.size} ordered edits", ids.firstOrNull() ?: "rig", author) { document, puppet ->
             val (_, journal) = io.github.psd2live.core.RigAuthoringJournal.compile(puppet, edits)
             document.copy(rigEdits = document.rigEdits.copy(authoringJournal = document.rigEdits.authoringJournal + journal))
-        }.copy(affectedObjectIds = ids)
+        }
+        // Every edit was dropped as ineffective: report the targets as untouched rather than as changed,
+        // so a caller reading the affected list is not told to re-read objects nothing happened to.
+        return if (result.applied) result.copy(affectedObjectIds = ids) else result
     }
 
     override suspend fun createArtwork(arguments: kotlinx.serialization.json.JsonObject): AgentWorkspaceMutationResult = editMutex.withLock {
@@ -1263,13 +1293,24 @@ class ViewModelAgentWorkspace(
 				}
 			}
 		}
-		val nextDocument = mutation(baseDocument, puppet)
-		require(nextDocument != baseDocument) { "Rig edit did not change the workspace" }
+		val nextDocument = mutation(baseDocument, rigBaseline(current, baseDocument, puppet))
+		// Measured against the document this edit started from, not against the head that was current
+		// when the request arrived: the question is whether *this* edit changed anything, so a settings
+		// change landing in between must not be able to answer it.
+		val nextRevision = revisionId(current, nextDocument)
+		if (nextRevision == revisionId(current, baseDocument)) {
+			return@withLock AgentWorkspaceMutationResult(
+				historyNodeId = before.historyHeadNodeId ?: expectedHeadNodeId,
+				revisionId = before.revisionId,
+				summary = summary,
+				applied = false,
+			)
+		}
+		// Built only past the guard: a no-op is answered without paying for a full pipeline rebuild,
+		// and on the canvas path a no-op is a mouse-up.
 		val preview = viewModel.buildAgentWorkspacePreview(nextDocument.source, nextDocument.toConfig(current))
         if (nextDocument.rigEdits.assetLayers != baseDocument.rigEdits.assetLayers || nextDocument.rigEdits.calibrationLayerIds != baseDocument.rigEdits.calibrationLayerIds)
             validateRegisteredNeutral(preview, nextDocument.rigEdits.assetLayers.filter { (id, record) -> baseDocument.rigEdits.assetLayers[id] != record }.keys)
-		val nextRevision = revisionId(current, nextDocument)
-        require(nextRevision != before.revisionId) { "Operation did not change the workspace" }
 		val selection = synchronized(historyLock) {
             require(historyTree === tree && tree.head().node.id == before.historyHeadNodeId) { "Workspace history changed during the operation; refresh HEAD" }
             applyPreviewOrThrow(preview, baseDocument, nextDocument, summary)
@@ -1378,6 +1419,27 @@ class ViewModelAgentWorkspace(
 		val analysis = state.analysis ?: return "revision-${sha256("unloaded|${normalizedPath(state.inputPath)}").take(16)}"
 		return revisionId(state, documentFrom(state).copy(source = analysis.source))
 	}
+
+	/**
+	 * The model an authoring command has to be judged against.
+	 *
+	 * The inspector previews a field edit on the puppet immediately so the canvas stays live, and records
+	 * it in the document when the field session ends. By then the on-screen model already shows the new
+	 * value, so compiling the command against it would read as a no-op — the command writes what the
+	 * model already holds — and the document would never receive the edit at all. Whenever the preview is
+	 * patched, the baseline is rebuilt from the document instead, which is the state the command is
+	 * actually being compared to.
+	 *
+	 * The canvas never patches the puppet, so for every gesture this returns [preview] and the extra
+	 * rebuild is skipped.
+	 */
+	private suspend fun rigBaseline(
+		state: PSD2LiveState,
+		document: AgentWorkspaceDocument,
+		preview: PuppetModel,
+	): PuppetModel = if (state.previewModelDirty) {
+		viewModel.buildAgentWorkspacePreview(document.source, document.toConfig(state)).rig.puppet
+	} else preview
 
 	private fun revisionId(state: PSD2LiveState, document: AgentWorkspaceDocument): String {
 		val canonical = buildString {

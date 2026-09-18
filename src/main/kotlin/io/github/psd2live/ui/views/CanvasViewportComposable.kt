@@ -408,11 +408,11 @@ fun CanvasViewportComposable(
 					else -> false
 				}
 			}
-			.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(when {
-                isDragging -> Cursor.MOVE_CURSOR
+			.pointerHoverIcon(PointerIcon(when {
+                isDragging -> Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR)
                 mode == CanvasMode.EDIT -> editor.activeCursor()
-                else -> Cursor.DEFAULT_CURSOR
-            })))
+                else -> Cursor.getDefaultCursor()
+            }))
 			.onPointerEvent(PointerEventType.Press) { event ->
 				val change = event.changes.firstOrNull() ?: return@onPointerEvent
                 if(change.isConsumed) return@onPointerEvent

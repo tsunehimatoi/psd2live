@@ -46,7 +46,7 @@ JSON 与 PNG 均可直接查看，但手工改动包内容必须同步更新 man
 | 打开 / 保存 / 另存为 | `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` |
 | 撤销 / 重做或选择分支 | `Ctrl+Z` / `Ctrl+Y` 或 `Ctrl+Shift+Z` |
 | `project_save`（现为 `revision` 的 `save`） | 保存到应用中所选位置并返回检查点节点 ID；未选择目标时报错 |
-| `history_checkpoint`（现为 `revision` 的 `checkpoint`） | 携带 `summary` 时显式追加节点（内容未变也追加） |
+| `history_checkpoint`（现为 `revision` 的 `checkpoint`） | 携带 `summary` 时显式追加节点（内容未变也追加）。这是唯一一条「无变化也开节点」的路径，其余写入在无变化时返回 `applied: false` 且不开节点 |
 | `project_get_state`（现为 `inspect` 的 `scope: project`） | 额外报告 `projectFile`、`projectDirty`、`projectSaving`、`projectSaveError` |
 
 > MCP 服务当前只暴露 10 个合并工具（`inspect`、`deform`、`form`、`rig`、`view`、`parameter`、`asset`、`physics`、`appearance`、`revision`），上表括号内是各分支的底层契约；完整工具面见 [MCP 接口契约](../agent/MCP_AUTHORING.md)。

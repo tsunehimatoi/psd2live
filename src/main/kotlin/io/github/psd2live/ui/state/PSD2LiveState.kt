@@ -255,6 +255,16 @@ data class PSD2LiveState(
 	val lightboxTitle: String? = null,
 	val analysis: PipelineAnalysis? = null,
 	val previewModel: RigPreviewModel? = null,
+	/**
+	 * True while [previewModel] carries edits the document has not recorded yet.
+	 *
+	 * The inspector previews a field edit on the puppet immediately so the canvas stays live, and records
+	 * it in the document when the field session ends. Anything compiling an authoring command has to know
+	 * the difference: against a patched preview, a command writing the value already on screen looks like
+	 * a no-op, and the edit would never reach the document. Cleared whenever the preview is rebuilt from
+	 * the document. The canvas never patches the puppet, so its gestures always see false here.
+	 */
+	val previewModelDirty: Boolean = false,
 	val selectedLayerId: String? = null,
 	val selectedDeformerId: String? = null,
 	val clickToSelectLayer: Boolean = AppSettings.clickToSelectLayer,

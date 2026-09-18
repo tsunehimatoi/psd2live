@@ -125,14 +125,19 @@ internal object RigAuthoringJournal {
                 "set", "copy", "delete", "warp", "structure", "path_delete", "canvas_geometry", "canvas_topology", "canvas_create_warp", "canvas_create_rotation" -> command
                 else -> error("Unknown authoring operation: $op")
             }
+            // Ask against the model *before* this command is applied: the question is whether the slot
+            // already holds what the command writes, and applying first would make every command look
+            // like a no-op. Dropping the ineffective ones here is what lets the workspace funnel's
+            // change guard fire — see RigCommandDelta.
+            val before = current
             current = apply(current, compiled)
-            journal += compiled
+            if (!RigCommandDelta.isNoOp(before, compiled)) journal += compiled
         }
         return current to journal
     }
 
-    private fun JsonObject.text(key: String) = getValue(key).jsonPrimitive.content
-    private fun JsonObject.coordinate(key: String) = getValue(key).jsonObject.mapValues { it.value.jsonPrimitive.float }
-    private fun JsonObject.number(key: String) = get(key)?.jsonPrimitive?.float
-    private fun JsonObject.floats(key: String) = get(key)?.jsonArray?.map { it.jsonPrimitive.float }
+    internal fun JsonObject.text(key: String) = getValue(key).jsonPrimitive.content
+    internal fun JsonObject.coordinate(key: String) = getValue(key).jsonObject.mapValues { it.value.jsonPrimitive.float }
+    internal fun JsonObject.number(key: String) = get(key)?.jsonPrimitive?.float
+    internal fun JsonObject.floats(key: String) = get(key)?.jsonArray?.map { it.jsonPrimitive.float }
 }

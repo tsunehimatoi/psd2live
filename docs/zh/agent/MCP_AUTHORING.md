@@ -184,7 +184,7 @@ Part 组织树用于归组和同绘制顺序时的排序，独立绘制顺序通
 
 - 所有会追加历史节点的编辑工具都携带 `state`（乐观并发边界，不是审批）：先从 `inspect`（`scope: project`）或 `revision`（`list`）取 HEAD，每次成功后用响应中的新 `state`。HEAD 不一致返回 stale-head 错误，必须刷新工程并重新协调计划。
 - 单个编辑工具即一次原子提交：先在不可变工作副本上应用并重建 Rig，成功后追加历史节点，失败不留半成品；`asset`（`import`）只暂存资产、不移动 HEAD。多命令 `transaction_begin/commit/cancel` 尚未作为 MCP 工具暴露，当前每个写工具分别产生历史节点。
-- 历史操作通过 `revision` 的 `save`/`checkpoint`/`list`/`restore` 完成：`list` 只读返回 node、parent、revision、summary、task 与当前 HEAD；`restore` 把 HEAD 切到指定节点并恢复快照，不删除任何分支（它是工作区写操作，不是 History Store 写操作）；`checkpoint` 在模型未变时也可追加显式检查点；`save` 保存完整工程并立即检查点，须先在 UI 选好文件。跨节点的差异比较用 `view`（`compare`）；更完整的结构 Diff（`history_diff`）尚未实现。
+- 历史操作通过 `revision` 的 `save`/`checkpoint`/`list`/`restore` 完成：`list` 只读返回 node、parent、revision、summary、task 与当前 HEAD；`restore` 把 HEAD 切到指定节点并恢复快照，不删除任何分支（它是工作区写操作，不是 History Store 写操作）；`checkpoint` 在模型未变时也可追加显式检查点（这是唯一一条无变化也开节点的路径；其余写入若描述的就是当前状态，会返回 `applied: false`、不开节点也不写日志）；`save` 保存完整工程并立即检查点，须先在 UI 选好文件。跨节点的差异比较用 `view`（`compare`）；更完整的结构 Diff（`history_diff`）尚未实现。
 - History Store 追加式且对 Agent 不可写：成功提交只追加节点，`history_checkout` 只移动 `WorkspaceHead`，从旧节点继续编辑自然产生新分支，原未来分支保留。大型二进制资产按内容寻址保存在不可变对象库，节点只引用 hash。
 - 任务记录（`task_*`）在源码中已实现，用于保存可替换的计划、状态、进度、消息与产物 ID（View、Asset、Layer、History Node），是恢复检查点而非审批或固定工作流；但**当前合并工具面未暴露 `task_*`**，相关的 `task_events`/`task_continue`/`task_cancel`/`task_resume` 同样尚未暴露。`WAITING_FOR_USER` 只用于确实缺少创作意图或外部输入。
 - 默认单工具超时 60 秒，耗时任务不得占住一次 MCP 调用；超时或 HEAD 过期时才重新核对历史。写入成功即返回下一次可用的 HEAD，无需重复读取完整状态。

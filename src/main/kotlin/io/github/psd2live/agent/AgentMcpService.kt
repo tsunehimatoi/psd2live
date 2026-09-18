@@ -1808,6 +1808,10 @@ internal fun AgentWorkspaceMutationResult.toJson(): JsonObject = buildJsonObject
 	put("historyNodeId", historyNodeId)
 	put("revisionId", revisionId)
 	put("summary", summary)
+	// False means the request described the state the workspace was already in: no node was appended and
+	// nothing needs re-reading. Stated on every response so a caller never has to infer it from an
+	// unchanged revision.
+	put("applied", applied)
 	putJsonArray("affectedLayerIds") { affectedLayerIds.forEach { add(JsonPrimitive(it)) } }
 	putJsonArray("affectedParameterIds") { affectedParameterIds.forEach { add(JsonPrimitive(it)) } }
 	putJsonArray("affectedObjectIds") { affectedObjectIds.forEach { add(JsonPrimitive(it)) } }

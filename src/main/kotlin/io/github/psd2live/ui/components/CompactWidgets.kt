@@ -41,9 +41,13 @@ import androidx.compose.material.Slider
 import androidx.compose.material.SliderDefaults
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.focus.onFocusChanged
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -526,28 +530,49 @@ fun CompactTextField(
 	leadingIcon: (@Composable () -> Unit)? = null,
 	trailingIcon: (@Composable () -> Unit)? = null,
 	height: Dp = 24.dp,
+	/** Brackets one editing session; see the note on [CompactNumberSpinner]'s identically named pair. */
+	onEditStart: () -> Unit = {},
+	onEditEnd: () -> Unit = {},
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 	val interactionSource = remember { MutableInteractionSource() }
 	val isHovered by interactionSource.collectIsHoveredAsState()
+	var editing by remember { mutableStateOf(false) }
+	LaunchedEffect(value, editing) {
+		if (!editing) return@LaunchedEffect
+		delay(EDIT_SETTLE_MILLIS)
+		editing = false
+		onEditEnd()
+	}
+	DisposableEffect(Unit) { onDispose { if (editing) onEditEnd() } }
 
 	val textStyle = if (isMono) typography.mono else typography.body
 
 	BasicTextField(
 		value = value,
-		onValueChange = onValueChange,
+		onValueChange = { input ->
+			if (!editing) { editing = true; onEditStart() }
+			onValueChange(input)
+		},
 		modifier = modifier
 			.height(height)
 			.background(colors.inputBackground, RoundedCornerShape(2.dp))
 			.border(BorderStroke(1.dp, if (isHovered && enabled) colors.borderHover else colors.border), RoundedCornerShape(2.dp))
-			.padding(horizontal = 6.dp),
+			.padding(horizontal = 6.dp)
+			.onFocusChanged { focus ->
+				if (!focus.isFocused && editing) { editing = false; onEditEnd() }
+			},
 		enabled = enabled,
 		textStyle = textStyle.copy(color = if (enabled) colors.textPrimary else colors.textDisabled, fontSize = 11.5.sp),
 		cursorBrush = SolidColor(colors.accent),
 		singleLine = true,
 		keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-		keyboardActions = KeyboardActions(onDone = { onCommit?.invoke() }),
+		// Enter is a confirm: it ends the session, which is what records the edit.
+		keyboardActions = KeyboardActions(onDone = {
+			if (editing) { editing = false; onEditEnd() }
+			onCommit?.invoke()
+		}),
 		interactionSource = interactionSource,
 		decorationBox = { innerTextField ->
 			Row(
@@ -591,12 +616,31 @@ fun CompactNumberSpinner(
 	unit: String = "",
 	enabled: Boolean = true,
 	height: Dp = 24.dp,
+	/**
+	 * Brackets one editing session. Keystrokes inside a session collapse into a single history commit
+	 * instead of one per keystroke; the caller pairs the two with a token of its own.
+	 */
+	onEditStart: () -> Unit = {},
+	onEditEnd: () -> Unit = {},
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 	val formatted = if (decimals == 0) value.toLong().toString() else "%.${decimals}f".format(value)
 
 	var textState by remember(value) { mutableStateOf(formatted) }
+	var editing by remember { mutableStateOf(false) }
+	// The session has to end even when the user never leaves the field, because ending it is what writes
+	// the history node. A pause this long is the end of the edit as far as history is concerned; typing
+	// restarts it, so a pause mid-number can split one edit into two nodes. That is the deliberate trade:
+	// the alternative is leaving an abandoned session open forever.
+	LaunchedEffect(textState, editing) {
+		if (!editing) return@LaunchedEffect
+		delay(EDIT_SETTLE_MILLIS)
+		editing = false
+		onEditEnd()
+	}
+	// Leaving the composition mid-edit — switching tabs, closing a panel — ends the session too.
+	DisposableEffect(Unit) { onDispose { if (editing) onEditEnd() } }
 
 	Row(
 		modifier = modifier
@@ -613,7 +657,10 @@ fun CompactNumberSpinner(
 					onValueChange(num.coerceIn(min, max))
 				}
 			},
-			modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+			modifier = Modifier.weight(1f).padding(horizontal = 4.dp).onFocusChanged { focus ->
+				if (focus.isFocused && !editing) { editing = true; onEditStart() }
+				else if (!focus.isFocused && editing) { editing = false; onEditEnd() }
+			},
 			textStyle = typography.mono.copy(
 				color = if (enabled) colors.textPrimary else colors.textDisabled,
 				fontSize = 11.sp,
@@ -644,8 +691,11 @@ fun CompactNumberSpinner(
 					.fillMaxWidth()
 					.background(colors.controlBackground)
 					.clickable(enabled = enabled) {
+						// A click is a whole session on its own: it never takes focus, so nothing
+						// would ever blur to end it, and the change has to be recorded here.
 						val next = (value + step).coerceIn(min, max)
 						onValueChange(next)
+						onEditEnd()
 					},
 				contentAlignment = Alignment.Center,
 			) {
@@ -659,6 +709,7 @@ fun CompactNumberSpinner(
 					.clickable(enabled = enabled) {
 						val next = (value - step).coerceIn(min, max)
 						onValueChange(next)
+						onEditEnd()
 					},
 				contentAlignment = Alignment.Center,
 			) {
@@ -1117,3 +1168,6 @@ fun CompactSectionHeader(
 	}
 }
 
+
+/** Quiet period that ends an abandoned field session; see CompactNumberSpinner. */
+private const val EDIT_SETTLE_MILLIS = 800L

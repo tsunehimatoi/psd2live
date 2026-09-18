@@ -23,7 +23,7 @@ Internal filenames for history records and raster references are SHA-256 keys of
 
 ## Saving and recovery
 
-Every accepted save appends a checkpoint before writing the archive. Requests queue their immutable captures and serialize file replacement. The UI can continue editing; changes made after capture remain unsaved. The writer closes and flushes a temporary file in the destination directory, verifies its complete inventory, and atomically replaces the previous file. If atomic replacement is unsupported, saving reports a failure and keeps the previous project. A failed save retains its checkpoint and the dirty state.
+An accepted save appends a checkpoint before writing the archive, unless the workspace already matches HEAD — in which case there is nothing to record and no node is created. Requests queue their immutable captures and serialize file replacement. The UI can continue editing; changes made after capture remain unsaved. The writer closes and flushes a temporary file in the destination directory, verifies its complete inventory, and atomically replaces the previous file. If atomic replacement is unsupported, saving reports a failure and keeps the previous project. A failed save retains its checkpoint and the dirty state.
 
 The format preserves all branches without automatic pruning. Checkout changes HEAD; editing afterward appends a new child. UI titles, notes and hidden-branch flags live separately from original node records. Hiding a branch does not remove snapshots, assets or MCP visibility. Undo follows the parent; redo selects the only child or opens the tree to choose among branches.
 
@@ -43,7 +43,7 @@ JSON and PNGs are inspectable, but changing a package by hand requires updating 
 - Open project: `Ctrl+O`; save: `Ctrl+S`; save as: `Ctrl+Shift+S`.
 - Undo: `Ctrl+Z`; redo/choose a branch: `Ctrl+Y` or `Ctrl+Shift+Z`.
 - `project_save` (now `revision` with mode `save`): saves to the location selected in the application and returns its checkpoint node ID. It reports an error if no destination is selected.
-- `history_checkpoint` with `summary` (now `revision` with mode `checkpoint`): explicitly appends a node, including when content is unchanged.
+- `history_checkpoint` with `summary` (now `revision` with mode `checkpoint`): explicitly appends a node, including when content is unchanged. This is the only path that appends without a change; every other write answers `applied: false` and appends nothing when the workspace already matches HEAD.
 - `project_get_state` (now `inspect` with `scope: project`): additionally reports `projectFile`, `projectDirty`, `projectSaving`, and `projectSaveError`. Existing MCP mutation tools keep their expected-HEAD preconditions, exposed as `state` on the merged tool surface.
 
 > The MCP server currently exposes only ten merged tools (`inspect`, `deform`, `form`, `rig`, `view`, `parameter`, `asset`, `physics`, `appearance`, `revision`). Names in parentheses above are the underlying branch contracts. See the [MCP interface contract](../../zh/agent/MCP_AUTHORING.md) (Chinese) for the full surface.

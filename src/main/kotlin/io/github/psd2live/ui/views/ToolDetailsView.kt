@@ -260,7 +260,7 @@ internal fun ToolDetailsView(
                         CompactButton(
                             text = tr("editor.apply"),
                             onClick = { editor.preciseTransform(first = posX.toFloat(), second = posY.toFloat()) },
-                            enabled = editor.editable && target != null,
+                            enabled = editor.editable && target != null && (posX != 0.0 || posY != 0.0),
                             height = 24.dp,
                         )
                     }
@@ -275,7 +275,7 @@ internal fun ToolDetailsView(
                         CompactButton(
                             text = tr("editor.apply"),
                             onClick = { editor.preciseTransform(first = scaleVal.toFloat(), scaleMode = true) },
-                            enabled = editor.editable && target != null,
+                            enabled = editor.editable && target != null && scaleVal != 100.0,
                             height = 24.dp,
                         )
                     }
@@ -290,7 +290,7 @@ internal fun ToolDetailsView(
                         CompactButton(
                             text = tr("editor.apply"),
                             onClick = { editor.preciseTransform(first = rotateVal.toFloat(), rotateMode = true) },
-                            enabled = editor.editable && target != null,
+                            enabled = editor.editable && target != null && rotateVal != 0.0,
                             height = 24.dp,
                         )
                     }

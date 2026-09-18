@@ -124,6 +124,13 @@ data class AgentWorkspaceMutationResult(
 	val summary: String,
 	val affectedParameterIds: List<String> = emptyList(),
 	val affectedObjectIds: List<String> = emptyList(),
+	/**
+	 * False when the request described the state the workspace was already in. Nothing was committed,
+	 * nothing was logged, and every affected list is empty — the caller asked for an edit and the answer
+	 * is that there was nothing to edit. Deliberately not named `changed`: the authoring tools already
+	 * use that JSON key for the affected-object list.
+	 */
+	val applied: Boolean = true,
 )
 
 data class AgentCreateParameterRequest(

@@ -6,6 +6,7 @@ import androidx.compose.ui.input.key.key
 import io.github.psd2live.core.MeshSettings
 
 import io.github.psd2live.core.PSD2LivePipeline
+import io.github.psd2live.core.RigStructureEdits
 import io.github.psd2live.core.CubismSdkFrame
 import io.github.psd2live.core.CubismSdkPreviewSession
 import io.github.psd2live.core.EyeJellyDynamics
@@ -57,14 +58,14 @@ class PSD2LiveViewModel : AutoCloseable {
         val newPuppet = transform(currentPreview.rig.puppet)
         val updatedRig = currentPreview.rig.copy(puppet = newPuppet)
         val updatedPreview = currentPreview.copy(rig = updatedRig)
-        _state.update { it.copy(previewModel = updatedPreview, projectDirty = true) }
+        _state.update { it.copy(previewModel = updatedPreview, previewModelDirty = true, projectDirty = true) }
         markWorkspaceChanged()
         editorChanged()
     }
 
     val canvasPathRequests = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     fun requestCanvasPathTool() { canvasPathRequests.tryEmit(Unit) }
-    fun saveDeformPathEdits(expectedState: String, edits: kotlinx.serialization.json.JsonArray, onComplete: (String?) -> Unit) {
+    fun saveAuthoringEdits(expectedState: String, edits: kotlinx.serialization.json.JsonArray, onComplete: (String?) -> Unit) {
         if (_state.value.canvasEditBusy) { onComplete("An editor operation is still being applied"); return }
         _state.update { it.copy(canvasEditBusy = true) }
         scope.launch {
@@ -83,6 +84,110 @@ class PSD2LiveViewModel : AutoCloseable {
             }
         }
     }
+
+    /** What each open field session will record once it ends; the last value written wins. */
+    private val pendingRigEdits = mutableMapOf<String, kotlinx.serialization.json.JsonObject>()
+
+    /**
+     * Live-previews one object property on the puppet and holds the edit for the end of its field session.
+     *
+     * This is what the inspector's fields call on every change. The preview is patched immediately — the
+     * canvas is what the user is watching, and a colour or opacity that only landed on blur would feel
+     * broken — while the document edit waits in [pendingRigEdits] until [endEditorField], so a drag or a
+     * typed number becomes one history node instead of one per sample or keystroke.
+     *
+     * The opening of the session is implicit: the first change on a token starts it, so a call site needs
+     * only the pairing `onEditEnd`.
+     *
+     * @param token identifies the field; the matching `endEditorField` must use the same string.
+     * @param fields the `static` action's own fields, e.g. `"opacity" to JsonPrimitive(0.5f)`.
+     */
+    fun applyRigStaticLive(
+        token: String,
+        kind: String,
+        id: String,
+        vararg fields: Pair<String, kotlinx.serialization.json.JsonElement>,
+    ) {
+        val edit = structureEdit("static", kind, id, kotlinx.serialization.json.JsonObject(linkedMapOf(*fields)))
+        editorSessions.begin(token)
+        pendingRigEdits[token] = edit
+        patchPreview(edit)
+    }
+
+    /**
+     * Records one object property change with no session around it.
+     *
+     * For the controls where a single interaction *is* the whole edit — a checkbox, a dropdown row — so
+     * there is nothing to coalesce and waiting for a blur would just delay the node. Continuous controls
+     * use [applyRigStaticLive] instead.
+     */
+    fun applyRigStaticNow(kind: String, id: String, vararg fields: Pair<String, kotlinx.serialization.json.JsonElement>) {
+        recordStructure(structureEdit("static", kind, id, kotlinx.serialization.json.JsonObject(linkedMapOf(*fields))))
+    }
+
+    /**
+     * The same, for the `rename`, `visibility`, `move` and `bind` actions, which carry fields of their own.
+     */
+    fun applyRigStructureLive(token: String, action: String, kind: String, id: String, fields: kotlinx.serialization.json.JsonObject) {
+        val edit = structureEdit(action, kind, id, fields)
+        editorSessions.begin(token)
+        pendingRigEdits[token] = edit
+        patchPreview(edit)
+    }
+
+    /** Applies the pending edit to the puppet in place, which is what makes the field feel immediate. */
+    private fun patchPreview(edit: kotlinx.serialization.json.JsonObject) {
+        val current = _state.value.previewModel ?: return
+        val patched = runCatching { RigStructureEdits.apply(current.rig.puppet, listOf(edit)) }.getOrNull() ?: return
+        _state.update {
+            it.copy(
+                previewModel = it.previewModel?.copy(rig = it.previewModel!!.rig.copy(puppet = patched)) ?: current,
+                previewModelDirty = true,
+                projectDirty = true,
+            )
+        }
+    }
+
+    private fun structureEdit(action: String, kind: String, id: String, fields: kotlinx.serialization.json.JsonObject) =
+        kotlinx.serialization.json.JsonObject(
+            linkedMapOf(
+                "action" to kotlinx.serialization.json.JsonPrimitive(action),
+                "kind" to kotlinx.serialization.json.JsonPrimitive(kind),
+                "id" to kotlinx.serialization.json.JsonPrimitive(id),
+            ) + fields,
+        )
+
+    /**
+     * Records one object property change in the document, as the single history node for the field session
+     * that produced it.
+     *
+     * Call this when the session **ends**, not while it is open: the inspector already patches the puppet
+     * for immediate feedback, and the funnel would read a mid-typing commit as a no-op against that
+     * patched preview — see [PSD2LiveState.previewModelDirty]. Ending the session is what makes the
+     * command describe a change the document has not seen.
+     *
+     * @param action a `structure` action: `rename`, `visibility`, `move`, `bind`, or `static`.
+     * @param fields the action's own fields, e.g. `{"opacity": 0.5}` for `static`.
+     */
+    fun applyRigStructure(
+        action: String,
+        kind: String,
+        id: String,
+        fields: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap()),
+    ) {
+        recordStructure(structureEdit(action, kind, id, fields))
+    }
+
+    private fun recordStructure(edit: kotlinx.serialization.json.JsonObject) {
+        val expected = _state.value.historySnapshot?.headNodeId ?: return
+        val command = kotlinx.serialization.json.JsonObject(
+            linkedMapOf(
+                "op" to kotlinx.serialization.json.JsonPrimitive("structure"),
+                "edits" to kotlinx.serialization.json.JsonArray(listOf(edit)),
+            ),
+        )
+        saveAuthoringEdits(expected, kotlinx.serialization.json.JsonArray(listOf(command))) {}
+    }
 	private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 	private val pipeline = PSD2LivePipeline()
 	private val preferences by lazy { Preferences.userNodeForPackage(PSD2LiveViewModel::class.java) }
@@ -94,6 +199,9 @@ class PSD2LiveViewModel : AutoCloseable {
 
     fun withSavedChanges(action: () -> Unit) {
         if (_state.value.projectSaving) return
+        // Anything half-typed is closed first, so the dirty check and the confirm dialog below see the
+        // value the user actually ended on rather than the last committed one.
+        flushEditorFields()
         if (!_state.value.projectDirty) { action(); return }
         when (confirmUnsavedChanges?.invoke() ?: 2) {
             0 -> { pendingDestructiveAction = action; requestProjectSave() }
@@ -101,6 +209,8 @@ class PSD2LiveViewModel : AutoCloseable {
         }
     }
     fun requestProjectSave(saveAs: Boolean = false) {
+        // A save captures the workspace, so it has to see the value still sitting in a focused field.
+        flushEditorFields()
         if (_state.value.canvasEditBusy) { queuedCanvasSave=saveAs; return }
         if (_state.value.analysis == null) return
         if (saveAs || _state.value.projectFile == null) {
@@ -149,11 +259,38 @@ class PSD2LiveViewModel : AutoCloseable {
     }
     internal fun markProjectAuxiliaryChanged() { _state.update { it.copy(projectDirty = true, projectEditVersion = it.projectEditVersion + 1, projectAuxiliaryVersion = it.projectAuxiliaryVersion + 1) } }
     private fun markWorkspaceChanged() { _state.update { if (it.analysis == null) it else it.copy(projectDirty = true, projectEditVersion = it.projectEditVersion + 1) } }
-    private var editorGestureActive = false
-    fun beginEditorGesture() { editorGestureActive = true }
-    fun endEditorGesture() { editorGestureActive = false; editorChanged() }
+    /**
+     * Open field sessions, so a slider drag or a half-typed value commits once rather than per sample or
+     * per keystroke. See [EditorFieldSessions].
+     */
+    private val editorSessions = EditorFieldSessions { commitEditorChange() }
+
+    fun beginEditorGesture() = editorSessions.begin(SLIDER_SESSION)
+    fun endEditorGesture() = editorSessions.end(SLIDER_SESSION)
+
+    /** Brackets one text/number field's editing session; [token] has to match the paired `end`. */
+    fun beginEditorField(token: String) = editorSessions.begin(token)
+
+    /**
+     * Ends a field session and records whatever it was holding.
+     *
+     * The edit is recorded before the session closes: closing it can ask the workspace to record an
+     * editor change, and the object edit is the one that has to land first.
+     */
+    fun endEditorField(token: String) {
+        pendingRigEdits.remove(token)?.let(::recordStructure)
+        editorSessions.end(token)
+    }
+
+    /** Closes every open field session so a save or a window close sees the value just typed. */
+    fun flushEditorFields() = editorSessions.flush()
+
     private fun editorChanged() {
-        if (editorGestureActive) { markWorkspaceChanged(); return }
+        if (editorSessions.anyOpen) { markWorkspaceChanged(); return }
+        commitEditorChange()
+    }
+
+    private fun commitEditorChange() {
         if (_state.value.analysis == null) return
         (agentWorkspace as? io.github.psd2live.agent.ViewModelAgentWorkspace)?.editorChanged()
     }
@@ -1986,6 +2123,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			io.github.psd2live.project.WorkspaceStateCodec.decode(settings, current).copy(
 				analysis = preview.analysis,
 				previewModel = preview,
+				previewModelDirty = false,
 				layerVisibility = layerVisibility,
 				deletedLayerIds = deletedLayerIds,
 				layerOverrides = layerOverrides,
@@ -2467,6 +2605,8 @@ class PSD2LiveViewModel : AutoCloseable {
 	private companion object {
 		const val SDK_PARAMETER_PUBLISH_INTERVAL_NANOS = 33_333_333L
 		const val PREF_LAST_EXPORT_DIR = "last_export_dir"
+		/** The token every slider shares; the call sites predate the per-field tokens and stay untouched. */
+		const val SLIDER_SESSION = "slider"
 	}
 }
 
