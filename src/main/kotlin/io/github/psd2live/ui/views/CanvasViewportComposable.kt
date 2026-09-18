@@ -58,6 +58,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
+import io.github.psd2live.ui.theme.frostedGlass
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerButton
@@ -382,6 +383,20 @@ fun CanvasViewportComposable(
 						editor.hardness = (editor.hardness + 0.05f).coerceIn(0f, 0.95f)
 						true
 					}
+					ShortcutAction.BRUSH_ROTATE_LEFT -> {
+						val step = if (event.isShiftPressed) 45f else 15f
+						editor.brushAngle = (editor.brushAngle - step).mod(360f)
+						true
+					}
+					ShortcutAction.BRUSH_ROTATE_RIGHT -> {
+						val step = if (event.isShiftPressed) 45f else 15f
+						editor.brushAngle = (editor.brushAngle + step).mod(360f)
+						true
+					}
+					ShortcutAction.BRUSH_SHAPE_CYCLE -> {
+						editor.cycleBrushShape()
+						true
+					}
 					ShortcutAction.AXIS_CONSTRAIN_X -> { editor.axis = if (editor.axis == "x") null else "x"; true }
 					ShortcutAction.AXIS_CONSTRAIN_Y -> { editor.axis = if (editor.axis == "y") null else "y"; true }
 					else -> false
@@ -404,7 +419,7 @@ fun CanvasViewportComposable(
                 // down/up hardens/softens. The Alt state is latched by the editor, so releasing Alt mid-drag
                 // neither aborts the gesture nor changes what it is doing.
                 if (mode == CanvasMode.EDIT && previewModel != null && event.button == PointerButton.Secondary &&
-                    event.keyboardModifiers.isAltPressed && !isDragging && !editor.inGesture && editor.beginBrushAdjust(change.position)
+                    event.keyboardModifiers.isAltPressed && !isDragging && !editor.inGesture && editor.beginBrushAdjust(change.position, event.keyboardModifiers.isShiftPressed)
                 ) {
                     change.consume(); return@onPointerEvent
                 }
@@ -499,6 +514,14 @@ fun CanvasViewportComposable(
 			}
 			.onPointerEvent(PointerEventType.Scroll) { event ->
 				val change = event.changes.firstOrNull() ?: return@onPointerEvent
+				if (mode == CanvasMode.EDIT && event.keyboardModifiers.isAltPressed &&
+					editor.tool in listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE)
+				) {
+					val step = if (event.keyboardModifiers.isShiftPressed) 45f else 15f
+					editor.brushAngle = (editor.brushAngle + if (change.scrollDelta.y > 0) step else -step).mod(360f)
+					change.consume()
+					return@onPointerEvent
+				}
 				if(change.isConsumed || (mode == CanvasMode.EDIT && (editor.inGesture || editor.adjustingBrush))) return@onPointerEvent
                 val delta = change.scrollDelta.y
                 zoomAt(change.position.x, change.position.y, delta)
@@ -1010,8 +1033,7 @@ private fun BoxScope.PreviewFloatingToolbar(
 		modifier = Modifier
 			.align(Alignment.BottomCenter)
 			.padding(bottom = 12.dp)
-			.background(Color(0xEE1E2024), RoundedCornerShape(6.dp))
-			.border(BorderStroke(1.dp, Color(0x448892B0)), RoundedCornerShape(6.dp))
+			.frostedGlass(shape = RoundedCornerShape(6.dp), alpha = 0.82f)
 			.padding(horizontal = 8.dp, vertical = 4.dp),
 		verticalAlignment = Alignment.CenterVertically,
 		horizontalArrangement = Arrangement.spacedBy(6.dp),

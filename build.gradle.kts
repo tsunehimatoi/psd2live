@@ -59,6 +59,16 @@ dependencies {
 	implementation("org.jetbrains.compose.foundation:foundation:1.11.1")
 	implementation("org.jetbrains.compose.ui:ui:1.11.1")
 	implementation("org.jetbrains.compose.material:material:1.11.1")
+	testImplementation(kotlin("test"))
+}
+
+tasks.named("compileTestKotlin").configure {
+	enabled = true
+}
+
+tasks.test {
+	enabled = true
+	useJUnitPlatform()
 }
 
 
@@ -110,6 +120,8 @@ compose.desktop {
 }
 
 afterEvaluate {
+	tasks.findByName("compileTestKotlin")?.enabled = true
+	tasks.findByName("test")?.enabled = true
 	tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask>().configureEach {
 		packageFromUberJar.set(true)
 	}

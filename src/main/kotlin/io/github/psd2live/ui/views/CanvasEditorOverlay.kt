@@ -1,5 +1,6 @@
 package io.github.psd2live.ui.views
 
+import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -20,6 +21,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -32,6 +34,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.psd2live.core.DeformPathTools
@@ -41,6 +44,9 @@ import io.github.psd2live.ui.components.*
 import io.github.psd2live.ui.state.Keymap
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.theme.LocalToolColors
+import io.github.psd2live.ui.theme.frostedGlass
+import io.github.psd2live.ui.theme.frostedGlassTopBar
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import org.umamo.edit.MeshTopology
 
@@ -196,29 +202,147 @@ internal fun BoxScope.CanvasEditorOverlay(
             }
         }
 
-        // 4. BRUSH / SMOOTH / INFLATE mode: Circle brush outline following cursor
+        // 4. BRUSH / SMOOTH / INFLATE mode: Shape-aware brush outline following cursor
         if (editor.tool in listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE)) {
-            editor.cursor?.let {
-                // Same conversion the paint path uses: radius is a canvas size, the outline is drawn in screen px.
+            editor.cursor?.let { center ->
                 val r = (editor.radius * viewport.scale).toFloat()
                 val ring = if (editor.tool == CanvasTool.INFLATE && editor.shrinks) colors.warning else colors.textPrimary
-                if (editor.adjustingBrush) {
-                    // Red preview of the actual falloff, the way Photoshop shows it: the gradient is sampled
-                    // from brushWeight() itself, so what is painted here is exactly how the stroke will land.
-                    val samples = 24
-                    val stops = Array(samples + 1) { i ->
-                        val t = i / samples.toFloat()
-                        t to Color.Red.copy(alpha = brushWeight(t * r, r, editor.hardness) * 0.6f)
+
+                when (editor.brushShape) {
+                    BrushShape.CIRCLE -> {
+                        if (editor.adjustingBrush) {
+                            val samples = 24
+                            val stops = Array(samples + 1) { i ->
+                                val t = i / samples.toFloat()
+                                t to Color.Red.copy(alpha = brushWeight(t * r, r, editor.hardness) * 0.6f)
+                            }
+                            drawCircle(
+                                brush = Brush.radialGradient(colorStops = stops, center = center, radius = r.coerceAtLeast(1f)),
+                                radius = r,
+                                center = center,
+                            )
+                        }
+                        drawCircle(Color.Black.copy(alpha = 0.7f), r, center, style = Stroke(3f))
+                        drawCircle(ring, r, center, style = Stroke(1.2f))
+                        drawCircle(colors.accent.copy(alpha = 0.6f), r * editor.hardness, center, style = Stroke(1f))
                     }
-                    drawCircle(
-                        brush = Brush.radialGradient(colorStops = stops, center = it, radius = r.coerceAtLeast(1f)),
-                        radius = r,
-                        center = it,
-                    )
+
+                    BrushShape.LINE -> {
+                        // Infinite line spanning across the entire canvas with influence band width 2 * r
+                        val rad = Math.toRadians(editor.brushAngle.toDouble())
+                        val cosA = kotlin.math.cos(rad).toFloat()
+                        val sinA = kotlin.math.sin(rad).toFloat()
+                        val u = Offset(cosA, sinA)
+                        val v = Offset(-sinA, cosA)
+
+                        val span = (size.width + size.height) * 2f
+                        val p1 = center - u * span
+                        val p2 = center + u * span
+
+                        val p1Plus = p1 + v * r; val p2Plus = p2 + v * r
+                        val p1Minus = p1 - v * r; val p2Minus = p2 - v * r
+
+                        if (editor.adjustingBrush) {
+                            val samples = 24
+                            val stops = Array(samples + 1) { i ->
+                                val t = i / samples.toFloat()
+                                val dist = kotlin.math.abs(t * 2f - 1f) * r
+                                t to Color.Red.copy(alpha = brushWeight(dist, r, editor.hardness) * 0.6f)
+                            }
+                            val bandBrush = Brush.linearGradient(
+                                colorStops = stops,
+                                start = center - v * r,
+                                end = center + v * r,
+                            )
+                            val bandPath = Path().apply {
+                                moveTo(p1Minus.x, p1Minus.y)
+                                lineTo(p1Plus.x, p1Plus.y)
+                                lineTo(p2Plus.x, p2Plus.y)
+                                lineTo(p2Minus.x, p2Minus.y)
+                                close()
+                            }
+                            drawPath(bandPath, bandBrush)
+                        }
+
+                        // Outer influence band boundary lines at distance +r and -r
+                        drawLine(Color.Black.copy(alpha = 0.5f), p1Plus, p2Plus, strokeWidth = 2.5f)
+                        drawLine(ring.copy(alpha = 0.5f), p1Plus, p2Plus, strokeWidth = 1.2f)
+                        drawLine(Color.Black.copy(alpha = 0.5f), p1Minus, p2Minus, strokeWidth = 2.5f)
+                        drawLine(ring.copy(alpha = 0.5f), p1Minus, p2Minus, strokeWidth = 1.2f)
+
+                        // Hardness core zone boundary lines
+                        if (editor.hardness > 0.05f) {
+                            val hr = r * editor.hardness
+                            drawLine(colors.accent.copy(alpha = 0.45f), p1 + v * hr, p2 + v * hr, strokeWidth = 1f)
+                            drawLine(colors.accent.copy(alpha = 0.45f), p1 - v * hr, p2 - v * hr, strokeWidth = 1f)
+                        }
+
+                        // Central infinite axis line
+                        drawLine(Color.Black.copy(alpha = 0.8f), p1, p2, strokeWidth = 3f)
+                        drawLine(ring, p1, p2, strokeWidth = 1.5f)
+
+                        // Center point & angle pointer
+                        drawCircle(ring, 3.5f, center)
+                        drawCircle(colors.accent, 2f, center)
+                        val dirPointer = center + u * (r.coerceAtLeast(30f) + 12f)
+                        drawLine(colors.accent, center, dirPointer, strokeWidth = 1.8f)
+                    }
+
+                    BrushShape.RECTANGLE -> {
+                        val h = editor.hardness.coerceIn(0f, 0.95f)
+                        val halfW = r.coerceAtLeast(1f)
+                        val halfH = (r * editor.brushAspect.coerceIn(0.1f, 10f)).coerceAtLeast(1f)
+                        val coreW = halfW * h
+                        val coreH = halfH * h
+                        val falloff = halfW * (1f - h)
+
+                        rotate(degrees = editor.brushAngle, pivot = center) {
+                            val topLeft = Offset(center.x - halfW, center.y - halfH)
+                            val rectSize = Size(halfW * 2f, halfH * 2f)
+                            val cornerRadius = CornerRadius(falloff, falloff)
+
+                            if (editor.adjustingBrush) {
+                                // Real hardness preview: solid red core + smooth Euclidean Hermite falloff
+                                val steps = 16
+                                for (step in steps downTo 1) {
+                                    val t = step / steps.toFloat()
+                                    val curDist = falloff * t
+                                    val w = coreW + curDist
+                                    val hStep = coreH + curDist
+                                    val alpha = (1f - t * t * (3f - 2f * t)) * 0.6f
+                                    drawRoundRect(
+                                        color = Color.Red.copy(alpha = alpha),
+                                        topLeft = Offset(center.x - w, center.y - hStep),
+                                        size = Size(w * 2f, hStep * 2f),
+                                        cornerRadius = CornerRadius(curDist, curDist),
+                                    )
+                                }
+                                if (h > 0.02f) {
+                                    drawRect(
+                                        color = Color.Red.copy(alpha = 0.6f),
+                                        topLeft = Offset(center.x - coreW, center.y - coreH),
+                                        size = Size(coreW * 2f, coreH * 2f),
+                                    )
+                                }
+                            }
+
+                            // Outer influence boundary
+                            drawRoundRect(Color.Black.copy(alpha = 0.7f), topLeft, rectSize, cornerRadius, style = Stroke(3f))
+                            drawRoundRect(ring, topLeft, rectSize, cornerRadius, style = Stroke(1.2f))
+
+                            // Inner core boundary (when hardness > 0)
+                            if (h > 0.05f) {
+                                drawRect(
+                                    color = colors.accent.copy(alpha = 0.6f),
+                                    topLeft = Offset(center.x - coreW, center.y - coreH),
+                                    size = Size(coreW * 2f, coreH * 2f),
+                                    style = Stroke(1f),
+                                )
+                            }
+                        }
+                        drawCircle(colors.accent, 2.5f, center)
+                    }
                 }
-                drawCircle(Color.Black.copy(alpha = 0.7f), r, it, style = Stroke(3f))
-                drawCircle(ring, r, it, style = Stroke(1.2f))
-                drawCircle(colors.accent.copy(alpha = 0.6f), r * editor.hardness, it, style = Stroke(1f))
             }
         }
 
@@ -273,11 +397,14 @@ internal fun BoxScope.CanvasEditorOverlay(
             editor.cursor?.let { anchor ->
                 val base = TextStyle(fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = colors.textPrimary)
                 val live = base.copy(color = colors.accent)
-                val rows = listOf(
-                    BrushAdjustAxis.RADIUS to "${tr("editor.radius")} ${editor.radius.roundToInt()} px",
-                    BrushAdjustAxis.HARDNESS to "${tr("editor.hardness")} ${(editor.hardness * 100).roundToInt()}%",
-                    null to "${tr("editor.strength")} ${(editor.strength * 100).roundToInt()}%",
-                )
+                val rows = buildList {
+                    add(BrushAdjustAxis.RADIUS to "${tr("editor.radius")} ${editor.radius.roundToInt()} px")
+                    add(BrushAdjustAxis.HARDNESS to "${tr("editor.hardness")} ${(editor.hardness * 100).roundToInt()}%")
+                    if (editor.brushShape != BrushShape.CIRCLE) {
+                        add(BrushAdjustAxis.ANGLE to "${tr("editor.angle")} ${editor.brushAngle.roundToInt()}°")
+                    }
+                    add(null to "${tr("editor.strength")} ${(editor.strength * 100).roundToInt()}%")
+                }
                 val lines = rows.map { (axis, text) ->
                     textMeasurer.measure(text = text, style = if (axis != null && axis == editor.brushAxis) live else base)
                 }
@@ -309,8 +436,8 @@ internal fun BoxScope.CanvasEditorOverlay(
     // Left Animated Hover Toolbar
     CanvasToolBar(editor = editor, keymap = keymap, focus = focus)
 
-    // Top Options Bar
-    Column(Modifier.align(Alignment.TopStart).fillMaxWidth().background(colors.panelBackground).border(1.dp, colors.divider)) {
+    // Top Options Bar with Frosted Glass styling
+    Column(Modifier.align(Alignment.TopStart).fillMaxWidth().frostedGlassTopBar()) {
         Row(
             Modifier.height(32.dp).horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -387,6 +514,38 @@ internal fun BoxScope.CanvasEditorOverlay(
             if (editor.tool in listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE)) {
                 Text(tr("editor.radius"), color = colors.textMuted, fontSize = 10.sp)
                 CompactNumberSpinner(editor.radius.toDouble(), { editor.radius = it.toFloat() }, Modifier.width(72.dp), min = 4.0, max = 500.0, unit = "px", height = 23.dp)
+                AnimatedVisibility(
+                    visible = editor.brushShape != BrushShape.CIRCLE,
+                    enter = expandHorizontally() + fadeIn(),
+                    exit = shrinkHorizontally() + fadeOut()
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(tr("editor.angle"), color = colors.textMuted, fontSize = 10.sp)
+                        CompactNumberSpinner(
+                            value = editor.brushAngle.toDouble(),
+                            onValueChange = { editor.brushAngle = it.toFloat().mod(360f) },
+                            modifier = Modifier.width(68.dp),
+                            min = 0.0,
+                            max = 360.0,
+                            step = 15.0,
+                            unit = "°",
+                            height = 23.dp
+                        )
+                        listOf(0f, 45f, 90f).forEach { ang ->
+                            val isQuickActive = abs(editor.brushAngle - ang) < 1f
+                            CompactToggleChip(
+                                text = "${ang.toInt()}°",
+                                selected = isQuickActive,
+                                onToggle = { editor.brushAngle = ang; focus() },
+                                showCheckWhenSelected = false,
+                                height = 22.dp
+                            )
+                        }
+                    }
+                }
                 Text(tr("editor.strength"), color = colors.textMuted, fontSize = 10.sp)
                 CompactNumberSpinner((editor.strength * 100).toDouble(), { editor.strength = it.toFloat() / 100 }, Modifier.width(65.dp), min = 1.0, max = 100.0, unit = "%", height = 23.dp)
                 Text(tr("editor.hardness"), color = colors.textMuted, fontSize = 10.sp)
@@ -489,17 +648,12 @@ private fun BoxScope.CanvasToolBar(
         modifier = Modifier
             .align(Alignment.TopStart)
             .padding(start = 8.dp, top = 44.dp)
-            .shadow(
-                elevation = elevation,
-                shape = RoundedCornerShape(4.dp),
-                clip = false,
-            )
             .width(animatedWidth)
-            .background(colors.panelBackground.copy(alpha = 0.95f), RoundedCornerShape(4.dp))
-            .border(
-                1.dp,
-                if (isToolbarHovered) colors.borderHover else colors.border,
-                RoundedCornerShape(4.dp)
+            .frostedGlass(
+                shape = RoundedCornerShape(6.dp),
+                isHovered = isToolbarHovered,
+                elevation = elevation,
+                alpha = 0.78f
             )
             .hoverable(toolbarInteractionSource)
             .onPointerEvent(PointerEventType.Enter) { isHoveredByEvent = true }
@@ -517,11 +671,53 @@ private fun BoxScope.CanvasToolBar(
                 textOffset = textOffset,
                 isBusy = editor.busy,
                 keyLabel = keymap.labelFor(tool.action).orEmpty(),
+                brushShape = if (tool == CanvasTool.BRUSH) editor.brushShape else null,
                 onClick = {
                     editor.activateTool(tool)
                     focus()
                 },
             )
+        }
+
+        val isBrushTool = editor.tool in listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE)
+
+        AnimatedVisibility(
+            visible = isBrushTool,
+            enter = expandVertically(animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)) + fadeIn(animationSpec = tween(150)),
+            exit = shrinkVertically(animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)) + fadeOut(animationSpec = tween(120)),
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                // Subtle divider separating primary tools and brush shapes
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                        .height(1.dp)
+                        .background(colors.border.copy(alpha = 0.45f))
+                )
+
+                // Three brush shapes placed at the bottom of the peer toolbar with text
+                BrushShape.entries.forEach { shape ->
+                    ShapeItemRow(
+                        shape = shape,
+                        isSelected = editor.brushShape == shape,
+                        isToolbarExpanded = animatedWidth > 42.dp,
+                        textAlpha = textAlpha,
+                        textOffset = textOffset,
+                        isBusy = editor.busy,
+                        onClick = {
+                            editor.brushShape = shape
+                            if (editor.tool !in listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE)) {
+                                editor.activateTool(CanvasTool.BRUSH)
+                            }
+                            focus()
+                        },
+                    )
+                }
+            }
         }
     }
 }
@@ -535,6 +731,7 @@ private fun ToolItemRow(
     textOffset: androidx.compose.ui.unit.Dp,
     isBusy: Boolean,
     keyLabel: String,
+    brushShape: BrushShape? = null,
     onClick: () -> Unit,
 ) {
     val colors = LocalToolColors.current
@@ -575,6 +772,7 @@ private fun ToolItemRow(
                     isItemHovered -> colors.textPrimary
                     else -> colors.textMuted
                 },
+                brushShape = brushShape,
             )
         }
 
@@ -631,7 +829,87 @@ private fun ToolItemRow(
 }
 
 @Composable
-private fun ToolIcon(tool: CanvasTool, color: Color) {
+private fun ShapeItemRow(
+    shape: BrushShape,
+    isSelected: Boolean,
+    isToolbarExpanded: Boolean,
+    textAlpha: Float,
+    textOffset: androidx.compose.ui.unit.Dp,
+    isBusy: Boolean,
+    onClick: () -> Unit,
+) {
+    val colors = LocalToolColors.current
+    val itemInteractionSource = remember { MutableInteractionSource() }
+    val isItemHovered by itemInteractionSource.collectIsHoveredAsState()
+
+    val label = tr(shape.labelKey)
+
+    val bg = when {
+        isSelected -> colors.accent.copy(alpha = 0.24f)
+        isItemHovered -> colors.controlHover.copy(alpha = 0.7f)
+        else -> Color.Transparent
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(28.dp)
+            .clip(RoundedCornerShape(3.dp))
+            .background(bg)
+            .semantics { contentDescription = label }
+            .clickable(
+                interactionSource = itemInteractionSource,
+                indication = null,
+                enabled = !isBusy,
+                onClick = onClick,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier.size(28.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            BrushShapeIcon(
+                shape = shape,
+                color = when {
+                    isSelected -> colors.accent
+                    isItemHovered -> colors.textPrimary
+                    else -> colors.textMuted
+                },
+                size = 14.dp,
+            )
+        }
+
+        if (isToolbarExpanded) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .offset(x = textOffset)
+                    .alpha(textAlpha)
+                    .padding(end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Spacer(Modifier.width(2.dp))
+                Text(
+                    text = label,
+                    color = when {
+                        isSelected -> colors.textPrimary
+                        isItemHovered -> colors.textPrimary
+                        else -> colors.textMuted
+                    },
+                    fontSize = 11.5.sp,
+                    fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToolIcon(tool: CanvasTool, color: Color, brushShape: BrushShape? = null) {
     Canvas(Modifier.size(18.dp)) {
         val s = size.width / 18f
         fun p(x: Float, y: Float) = Offset(x * s, y * s)
@@ -658,7 +936,13 @@ private fun ToolIcon(tool: CanvasTool, color: Color) {
                 line(6f, 11f, 14f, 3f)
                 line(9f, 14f, 17f, 6f)
                 line(14f, 3f, 17f, 6f)
-                drawCircle(color, 3 * s, p(5f, 14f), style = Stroke(1.3f * s))
+                if (brushShape == BrushShape.LINE) {
+                    line(2f, 16f, 8f, 12f)
+                } else if (brushShape == BrushShape.RECTANGLE) {
+                    drawRect(color, Offset(2 * s, 11 * s), Size(6 * s, 5 * s), style = Stroke(1.3f * s))
+                } else {
+                    drawCircle(color, 3 * s, p(5f, 14f), style = Stroke(1.3f * s))
+                }
                 if (tool == CanvasTool.SMOOTH) line(1f, 4f, 7f, 4f)
             }
             CanvasTool.INFLATE -> {
@@ -687,6 +971,45 @@ private fun ToolIcon(tool: CanvasTool, color: Color) {
                 line(8f, 17f, 13f, 15f)
                 line(13f, 15f, 15f, 6f)
                 for (i in 6..12 step 2) line(i.toFloat(), 3f, i.toFloat(), 10f)
+            }
+        }
+    }
+}
+
+/**
+ * Renders a crisp vector glyph representing [shape].
+ */
+@Composable
+private fun BrushShapeIcon(
+    shape: BrushShape,
+    color: Color,
+    size: Dp = 14.dp,
+    modifier: Modifier = Modifier,
+) {
+    Canvas(modifier.size(size)) {
+        val w = this.size.width
+        val h = this.size.height
+        val strokeW = 1.3f
+        when (shape) {
+            BrushShape.CIRCLE -> {
+                drawCircle(color, radius = w * 0.42f, center = Offset(w * 0.5f, h * 0.5f), style = Stroke(strokeW))
+                drawCircle(color.copy(alpha = 0.5f), radius = w * 0.18f, center = Offset(w * 0.5f, h * 0.5f), style = Stroke(strokeW * 0.8f))
+            }
+            BrushShape.LINE -> {
+                val p1 = Offset(w * 0.18f, h * 0.82f)
+                val p2 = Offset(w * 0.82f, h * 0.18f)
+                drawLine(color, p1, p2, strokeWidth = strokeW * 1.2f, cap = StrokeCap.Round)
+                drawCircle(color, radius = 1.8f, center = p1)
+                drawCircle(color, radius = 1.8f, center = p2)
+            }
+            BrushShape.RECTANGLE -> {
+                drawRoundRect(
+                    color = color,
+                    topLeft = Offset(w * 0.16f, h * 0.22f),
+                    size = Size(w * 0.68f, h * 0.56f),
+                    cornerRadius = CornerRadius(1.5f, 1.5f),
+                    style = Stroke(strokeW)
+                )
             }
         }
     }

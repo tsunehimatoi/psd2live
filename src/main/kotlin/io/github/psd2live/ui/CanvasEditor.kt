@@ -26,7 +26,7 @@ internal enum class CanvasTool(val action: ShortcutAction) {
 internal enum class SelectionStyle { BOX, LASSO }
 
 /** Which brush parameter the Alt + right-drag gesture latched onto; null until the drag picks a direction. */
-internal enum class BrushAdjustAxis { RADIUS, HARDNESS }
+internal enum class BrushAdjustAxis { RADIUS, HARDNESS, ANGLE }
 
 internal enum class BoundingHandle {
     NONE, BODY, TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT,
@@ -59,6 +59,9 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
     var radius by mutableStateOf(48f)
     var strength by mutableStateOf(0.5f)
     var hardness by mutableStateOf(0.35f)
+    var brushShape by mutableStateOf(BrushShape.CIRCLE)
+    var brushAngle by mutableStateOf(0f)
+    var brushAspect by mutableStateOf(1f)
     /** Persistent direction toggle for the inflate brush; flipped by the options-bar chip and live Alt. */
     var inflateInvert by mutableStateOf(false)
     /** Live feedback only: the direction the next stroke would take right now. */
@@ -118,7 +121,14 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
     private var brushAnchor = Offset.Zero
     private var brushRadiusAtStart = 48f
     private var brushHardnessAtStart = 0.35f
+    private var brushAngleAtStart = 0f
     private var dragging = false
+
+    fun cycleBrushShape() {
+        val entries = BrushShape.entries
+        val next = (brushShape.ordinal + 1) % entries.size
+        brushShape = entries[next]
+    }
     private var cachedSource: PuppetModel? = null
     private var cachedPose = emptyMap<ParameterId, Float>()
     private var cachedWorlds = emptyMap<DeformerId, DeformerWorld>()
@@ -787,13 +797,16 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
                 val screenRadius = (radius * viewport.scale).toFloat()
                 val base = if (brush && preview != null) RigGeometryTools.geometry(preview!!, t.kind, t.id, pose).points else t.geometry.points
                 val screen = screen(base, t, viewport); val world = t.mapping.localToWorld(base)
-                val affected = if (brush) screen.indices.filter { (vertices.isEmpty() || it in vertices) && distanceToSegment(screen[it], previous, pos) <= screenRadius }.toSet() else vertices.filter { it in screen.indices }.toSet()
+                val affected = if (brush) screen.indices.filter {
+                    (vertices.isEmpty() || it in vertices) &&
+                    isPointInBrush(screen[it], previous, pos, screenRadius, brushShape, brushAngle, brushAspect, hardness)
+                }.toSet() else vertices.filter { it in screen.indices }.toSet()
                 val delta = if (brush) pos - previous else pos - start
                 val center = if (t.kind == "rotation") screen[0] else if (affected.isEmpty()) start else Offset(affected.map { screen[it].x }.average().toFloat(), affected.map { screen[it].y }.average().toFloat())
                 val adjacency = if (tool == CanvasTool.SMOOTH || (tool == CanvasTool.BRUSH && shift)) neighbors(t) else null
                 for (i in affected) {
                     val p = screen[i]
-                    val weight = if (brush) brushWeight(distanceToSegment(p, previous, pos), screenRadius, hardness) * strength else 1f
+                    val weight = if (brush) computeBrushWeight(p, previous, pos, screenRadius, hardness, brushShape, brushAngle, brushAspect) * strength else 1f
                     val destination = when {
                         inflate -> p + inflateOffset(p, previous, pos, delta.getDistance().coerceAtMost(screenRadius) * weight * INFLATE_GAIN * (if (shrinkAtPress) -1f else 1f))
                         adjacency != null -> { val ns = adjacency[i]; if (ns.isEmpty()) p else p + (Offset(ns.map { screen[it].x }.average().toFloat(), ns.map { screen[it].y }.average().toFloat()) - p) * weight }
@@ -834,14 +847,15 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
      * parameters, so the caller leaves the event unhandled. Both values are recomputed from the press anchor on
      * every move, so dragging past a clamp and back re-enters smoothly instead of sticking.
      */
-    fun beginBrushAdjust(pos: Offset): Boolean {
+    fun beginBrushAdjust(pos: Offset, shift: Boolean = false): Boolean {
         if (adjustingBrush || dragging) return false
         if (tool != CanvasTool.BRUSH && tool != CanvasTool.SMOOTH && tool != CanvasTool.INFLATE) return false
         adjustingBrush = true
-        brushAxis = null
+        brushAxis = if (shift && brushShape != BrushShape.CIRCLE) BrushAdjustAxis.ANGLE else null
         brushAnchor = pos
         brushRadiusAtStart = radius
         brushHardnessAtStart = hardness
+        brushAngleAtStart = brushAngle
         // Freeze the outline at the press point, and pin the ring colour with it: the viewport stops calling
         // move() for the duration, so nothing else refreshes either. The size change is then judged against
         // fixed artwork instead of an outline sliding along under the cursor.
@@ -866,6 +880,7 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
         when (brushAxis) {
             BrushAdjustAxis.RADIUS -> radius = (brushRadiusAtStart * 1.2f.pow(dx / BRUSH_RADIUS_STEP_PX)).coerceIn(4f, 500f)
             BrushAdjustAxis.HARDNESS -> hardness = (brushHardnessAtStart + dy / BRUSH_HARDNESS_SPAN_PX * 0.95f).coerceIn(0f, 0.95f)
+            BrushAdjustAxis.ANGLE -> brushAngle = (brushAngleAtStart + dx * 0.75f).mod(360f)
             null -> Unit
         }
     }
@@ -875,7 +890,11 @@ internal class CanvasEditor(private val viewModel: PSD2LiveViewModel) {
         if (!adjustingBrush) return
         adjustingBrush = false
         brushAxis = null
-        if (cancel) { radius = brushRadiusAtStart; hardness = brushHardnessAtStart }
+        if (cancel) {
+            radius = brushRadiusAtStart
+            hardness = brushHardnessAtStart
+            brushAngle = brushAngleAtStart
+        }
     }
 
     fun finishSelection(viewport: CanvasViewport) {
