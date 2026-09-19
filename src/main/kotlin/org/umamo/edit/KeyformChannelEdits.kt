@@ -319,36 +319,3 @@ fun PuppetModel.isChannelKeyedOn(target: KeyableTarget, parameterId: ParameterId
 	val track = channelGridsOf(target.owner)?.get(target.channel) ?: return false
 	return track.axisIndexOf(parameterId) >= 0
 }
-
-/**
- * Captures [value] on [target] at the current pose, keyed on [parameter], as one undo step.
- *
- * @param KeyableTarget target The entity and channel to key.
- * @param Parameter parameter The parameter to key on.
- * @param ChannelValue value The value to store.
- */
-fun EditorSession.captureChannelKey(target: KeyableTarget, parameter: Parameter, value: ChannelValue) {
-	mutate(KeyformChange.InsertKey(target.channel)) { model ->
-		model.withChannelKeyCaptured(target, parameter, pose.value, value)
-	}
-}
-
-/**
- * Removes the key at the current pose from [target]'s channel on [parameter], as one undo step.
- *
- * @param KeyableTarget target The entity and channel.
- * @param Parameter parameter The parameter whose axis to remove from.
- */
-fun EditorSession.removeChannelKey(target: KeyableTarget, parameter: Parameter) {
-	mutate(KeyformChange.DeleteKey(target.channel)) { model ->
-		model.withChannelKeyRemoved(target, parameter, pose.value)
-	}
-}
-
-/** The kind guard's counterpart for callers building a value: the neutral value of [channel]'s kind. */
-internal fun FormChannel.neutralValue(): ChannelValue =
-	when (valueKind) {
-		ChannelValueKind.SCALAR -> ChannelValue.Scalar(0f)
-		ChannelValueKind.COLOR -> ChannelValue.Color(org.umamo.runtime.model.ColorRgb(0f, 0f, 0f))
-		ChannelValueKind.FLAG -> ChannelValue.Flag(false)
-	}

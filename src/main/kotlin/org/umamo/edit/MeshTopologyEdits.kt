@@ -44,6 +44,33 @@ sealed interface VertexSource {
 	 * @property Float t The split parameter (0 = at oldA, 1 = at oldB).
 	 */
 	data class LerpOf(val oldA: Int, val oldB: Int, val t: Float) : VertexSource
+
+	/**
+	 * The new vertex is an interior point of the old triangle ([oldA], [oldB], [oldC]) at barycentric
+	 * weights [wa] / [wb] / [wc]: its deltas are the same weighted combination.
+	 *
+	 * The weights are the same ones the position was built from, which is the point: a vertex whose
+	 * position and UV come from one set of weights keeps `uv = Φ(position)` true, and that is what stops
+	 * an edit from moving the picture.
+	 *
+	 * @property Int oldA The triangle's first old corner.
+	 * @property Int oldB The triangle's second old corner.
+	 * @property Int oldC The triangle's third old corner.
+	 * @property Float wa The weight on [oldA].
+	 * @property Float wb The weight on [oldB].
+	 * @property Float wc The weight on [oldC].
+	 */
+	data class BarycentricOf(
+		val oldA: Int,
+		val oldB: Int,
+		val oldC: Int,
+		val wa: Float,
+		val wb: Float,
+		val wc: Float,
+	) : VertexSource
+
+	/** An affine combination of original vertices, including points built through earlier cuts. */
+	data class WeightedOf(val indices: IntArray, val weights: FloatArray) : VertexSource
 }
 
 /**
@@ -140,6 +167,11 @@ fun PuppetModel.withMeshTopologyEdit(id: DrawableId, edit: MeshTopologyEdit): Pu
 
 			// A split point is a brand-new vertex; it claims no old identity.
 			is VertexSource.LerpOf -> {}
+
+			// Nor is an interior point any one old vertex - it is a blend of three, so claiming any of
+			// them would move a glue weld onto a vertex that only partly is it.
+			is VertexSource.BarycentricOf -> {}
+			is VertexSource.WeightedOf -> {}
 		}
 	}
 
@@ -213,6 +245,20 @@ private fun remapMeshDeltas(form: MeshDeltaForm, vertexSources: List<VertexSourc
 			is VertexSource.LerpOf -> {
 				newDeltas[newIndex * 2] = oldDeltaX(source.oldA) + (oldDeltaX(source.oldB) - oldDeltaX(source.oldA)) * source.t
 				newDeltas[newIndex * 2 + 1] = oldDeltaY(source.oldA) + (oldDeltaY(source.oldB) - oldDeltaY(source.oldA)) * source.t
+			}
+
+			is VertexSource.BarycentricOf -> {
+				newDeltas[newIndex * 2] = oldDeltaX(source.oldA) * source.wa + oldDeltaX(source.oldB) * source.wb + oldDeltaX(source.oldC) * source.wc
+				newDeltas[newIndex * 2 + 1] = oldDeltaY(source.oldA) * source.wa + oldDeltaY(source.oldB) * source.wb + oldDeltaY(source.oldC) * source.wc
+			}
+
+			is VertexSource.WeightedOf -> {
+				for (slot in source.indices.indices) {
+					val index = source.indices[slot]
+					val weight = source.weights[slot]
+					newDeltas[newIndex * 2] += oldDeltaX(index) * weight
+					newDeltas[newIndex * 2 + 1] += oldDeltaY(index) * weight
+				}
 			}
 		}
 	}

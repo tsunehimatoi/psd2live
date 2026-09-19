@@ -75,19 +75,20 @@ internal fun selectionPivot(points: List<Offset>): Offset =
 
 /**
  * The box hugging [indices] of [points], axis-aligned inside a frame turned by [angleDeg] about their
- * centroid. Null when nothing is selected, which is the only guard the overlay and the hit test need:
- * no selection draws no box and grabs no handle.
+ * centroid. Null when nothing is selected, and null when what is selected spans nothing — a single point
+ * — which is the only guard the overlay and the hit test need: no frame draws no box and grabs no handle.
  */
 internal fun frameOf(points: List<Offset>, indices: Set<Int>, angleDeg: Float): TransformFrame? {
     val chosen = indices.filter { it in points.indices }.map { points[it] }
     if (chosen.isEmpty()) return null
     val pivot = selectionPivot(chosen)
     val local = chosen.map { it.intoTransformFrame(pivot, angleDeg) }
-    return TransformFrame(
-        BoundingBox(local.minOf { it.x }, local.minOf { it.y }, local.maxOf { it.x }, local.maxOf { it.y }),
-        pivot,
-        angleDeg,
-    )
+    val box = BoundingBox(local.minOf { it.x }, local.minOf { it.y }, local.maxOf { it.x }, local.maxOf { it.y })
+    // A box with no extent is one point, or several sitting on the same spot: eight scale handles stacked
+    // on the point and a rotate grip hanging over it, none of which can do anything. No frame at all is the
+    // honest answer — the point is still drawn as selected and still dragged directly.
+    if (box.width <= 0f && box.height <= 0f) return null
+    return TransformFrame(box, pivot, angleDeg)
 }
 
 private fun hitBoundingHandle(pos: Offset, bounds: BoundingBox): BoundingHandle {

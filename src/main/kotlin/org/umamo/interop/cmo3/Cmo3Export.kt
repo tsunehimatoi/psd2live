@@ -81,8 +81,8 @@ object Cmo3Export {
 	 * [drawableTextureBindings] supplying the texture web created drawables bind to when they have
 	 * no existing source to clone (a session duplicate) - the CMO3-origin export path passes none.
 	 *
-	 * @param PuppetModel edited The session's current model (EditorSession.model.value - NOT the
-	 *                           document's original import, which edits never update).
+	 * @param PuppetModel edited The current model to export - NOT the document's original import,
+	 *                           which edits never update.
 	 * @param Cmo3Model   target The retained CMO3 model whose graph receives the edits.
 	 * @param Map         drawableTextureBindings Per-drawable-id texture webs for created drawables
 	 *                           without a texture source; empty for CMO3-origin exports.

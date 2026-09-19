@@ -138,6 +138,22 @@ internal fun ToolDetailsView(
             }
         }
 
+        if (target?.kind == "rotation") {
+            Text(tr("editor.rotationGestureHint"), style = typography.caption, color = colors.textMuted)
+            PreciseTransformColumn(editor)
+        }
+        if (editor.tool == CanvasTool.CREATE_WARP || editor.tool == CanvasTool.CREATE_ROTATION) {
+            CompactButton(
+                text = tr("editor.createFromSelection"),
+                onClick = { editor.createWarp(editor.tool == CanvasTool.CREATE_ROTATION) },
+                enabled = editor.editable && target?.kind == "mesh",
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (editor.tool == CanvasTool.CREATE_ROTATION) {
+                Text(tr("editor.rotationScopeHint"), style = typography.caption, color = colors.textMuted)
+            }
+        }
+
         // 2. Selection Style (Box / Lasso)
         if (editor.tool in listOf(CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT)) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -163,8 +179,9 @@ internal fun ToolDetailsView(
             }
         }
 
-        // 3. Target Pose / Parameter Picker
-        if (target != null && editor.hierarchyMode == io.github.psd2live.ui.EditHierarchyMode.DEFORM) {
+        // 3. Target Pose / Parameter Picker. Warp and rotation edits still address a pose; an ArtMesh
+        //    edit does not, so for a mesh this control would do nothing and is not offered.
+        if (target != null && target.kind != "mesh" && editor.hierarchyMode == io.github.psd2live.ui.EditHierarchyMode.DEFORM) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
                     text = tr("editor.targetPose"),
@@ -227,7 +244,7 @@ internal fun ToolDetailsView(
                             color = colors.textPrimary,
                         )
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            listOf("split", "connect", "merge", "delete").forEach { action ->
+                            listOf("split", "subdivide", "connect", "merge", "delete", "duplicate").forEach { action ->
                                 CompactButton(
                                     text = tr("editor.$action"),
                                     onClick = { editor.topology(action) },
@@ -290,7 +307,7 @@ internal fun ToolDetailsView(
                         style = typography.caption.copy(fontSize = 10.5.sp),
                         color = colors.textMuted,
                     )
-                    CompactSectionHeader(title = "Grid Divisions")
+                    CompactSectionHeader(title = tr("editor.gridDivisions"))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -314,30 +331,7 @@ internal fun ToolDetailsView(
                             height = 24.dp,
                         )
                     }
-                    CompactSectionHeader(title = "Bezier Divisions")
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        CompactNumberSpinner(
-                            value = editor.warpCreateBezierRows.toDouble(),
-                            onValueChange = { editor.warpCreateBezierRows = it.toInt() },
-                            modifier = Modifier.weight(1f),
-                            min = 1.0,
-                            max = 10.0,
-                            unit = "BR",
-                            height = 24.dp,
-                        )
-                        CompactNumberSpinner(
-                            value = editor.warpCreateBezierCols.toDouble(),
-                            onValueChange = { editor.warpCreateBezierCols = it.toInt() },
-                            modifier = Modifier.weight(1f),
-                            min = 1.0,
-                            max = 10.0,
-                            unit = "BC",
-                            height = 24.dp,
-                        )
-                    }
+
                 }
             }
 
@@ -358,6 +352,8 @@ internal fun ToolDetailsView(
 
             CanvasTool.GLUE -> {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(tr("editor.glueDistance"), style = typography.caption, color = colors.textMuted)
+                    CompactNumberSpinner(value = editor.glueDistance.toDouble(), onValueChange = { editor.glueDistance = it.toFloat() }, min = 1.0, max = 500.0, unit = "px", height = 24.dp)
                     Text(
                         text = tr("editor.tool.glue"),
                         style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
@@ -660,6 +656,38 @@ internal fun ToolDetailsView(
                     )
                 }
             }
+            CanvasTool.SUBDIVIDE -> {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CompactNumberSpinner(value = editor.radius.toDouble(), onValueChange = { editor.radius = it.toFloat() }, min = 1.0, max = 500.0, unit = "px", height = 24.dp)
+                    Text(
+                        text = tr("editor.subdivideHint"),
+                        style = typography.caption.copy(fontSize = 10.5.sp),
+                        color = colors.textMuted,
+                    )
+                    CompactButton(
+                        text = tr("editor.subdivide"),
+                        onClick = { editor.topology("subdivide") },
+                        enabled = editor.editable && editor.vertices.isNotEmpty(),
+                        modifier = Modifier.fillMaxWidth(),
+                        height = 24.dp,
+                    )
+                }
+            }
+            CanvasTool.KNIFE -> {
+                Text(tr("editor.knifeGestureHint"), style = typography.caption, color = colors.textMuted)
+                // No snap toggle: snapping is always on and the radius is the only thing to tune. Inside it a
+                // click takes the vertex or edge; outside it the click drops a new point.
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(tr("editor.knifeSnapRadius"), color = colors.textMuted, fontSize = 11.sp)
+                    CompactNumberSpinner(value = editor.knifeSnapRadius.toDouble(),
+                        onValueChange = { editor.knifeSnapRadius = it.toFloat() }, min = 3.0, max = 30.0, unit = "px", height = 24.dp)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    CompactButton(text = tr("editor.finishCut"), onClick = { editor.finishKnife() }, enabled = editor.editable && editor.knifeDraft.size >= 2)
+                    CompactButton(text = tr("editor.undoPoint"), onClick = { editor.undoDraftPoint() }, enabled = !editor.busy && editor.knifeDraft.isNotEmpty())
+                    CompactButton(text = tr("action.cancel"), onClick = { editor.cancel() }, enabled = !editor.busy && editor.knifeDraft.isNotEmpty())
+                }
+            }
             CanvasTool.PAINT_BRUSH, CanvasTool.PAINT_PENCIL, CanvasTool.PAINT_ERASER,
             CanvasTool.PAINT_BUCKET, CanvasTool.PAINT_EYEDROPPER,
             CanvasTool.PAINT_SHAPE -> {
@@ -746,34 +774,38 @@ private fun PreciseTransformColumn(editor: CanvasEditor) {
             )
         }
 
-        // Scale row
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            CompactNumberSpinner(scaleVal, { scaleVal = it }, Modifier.weight(1f), min = 0.1, max = 10000.0, decimals = 1, unit = "%", height = 24.dp)
-            CompactButton(
-                text = tr("editor.apply"),
-                onClick = { editor.preciseTransform(first = scaleVal.toFloat(), scaleMode = true) },
-                enabled = editor.editable && editor.hasTransformSelection && scaleVal != 100.0,
-                height = 24.dp,
-            )
-        }
+        // Scale and rotate need a selection with extent — two points or more. A lone point spans nothing, so
+        // its only operation is the move above; the rows would be controls that cannot do what they say.
+        if (editor.selectionHasExtent) {
+            // Scale row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                CompactNumberSpinner(scaleVal, { scaleVal = it }, Modifier.weight(1f), min = 0.1, max = 10000.0, decimals = 1, unit = "%", height = 24.dp)
+                CompactButton(
+                    text = tr("editor.apply"),
+                    onClick = { editor.preciseTransform(first = scaleVal.toFloat(), scaleMode = true) },
+                    enabled = editor.editable && editor.hasTransformSelection && scaleVal != 100.0,
+                    height = 24.dp,
+                )
+            }
 
-        // Rotate row
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            CompactNumberSpinner(rotateVal, { rotateVal = it }, Modifier.weight(1f), min = -360.0, max = 360.0, decimals = 1, unit = "°", height = 24.dp)
-            CompactButton(
-                text = tr("editor.apply"),
-                onClick = { editor.preciseTransform(first = rotateVal.toFloat(), rotateMode = true) },
-                enabled = editor.editable && editor.hasTransformSelection && rotateVal != 0.0,
-                height = 24.dp,
-            )
+            // Rotate row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                CompactNumberSpinner(rotateVal, { rotateVal = it }, Modifier.weight(1f), min = -360.0, max = 360.0, decimals = 1, unit = "°", height = 24.dp)
+                CompactButton(
+                    text = tr("editor.apply"),
+                    onClick = { editor.preciseTransform(first = rotateVal.toFloat(), rotateMode = true) },
+                    enabled = editor.editable && editor.hasTransformSelection && rotateVal != 0.0,
+                    height = 24.dp,
+                )
+            }
         }
     }
 }

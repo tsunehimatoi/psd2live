@@ -346,6 +346,11 @@ fun CanvasViewportComposable(
 					editor.altHeld = event.type == KeyEventType.KeyDown
 					return@onKeyEvent false
 				}
+                if (mode == CanvasMode.EDIT && !editor.busy && event.type == KeyEventType.KeyDown &&
+                    event.key == Key.Backspace && (editor.tool == CanvasTool.KNIFE || editor.drawingPath)) {
+                    editor.undoDraftPoint()
+                    return@onKeyEvent true
+                }
 				val action = state.keymap.match(event, ShortcutScope.CANVAS)
 					?: return@onKeyEvent false
 				// Camera commands sit outside the mode and busy gates, as they always have: a
@@ -378,13 +383,16 @@ fun CanvasViewportComposable(
 					ShortcutAction.TOOL_CREATE_ROTATION -> { editor.activateTool(CanvasTool.CREATE_ROTATION); true }
 					ShortcutAction.TOOL_CREATE_DEFORM_PATH -> { editor.activateTool(CanvasTool.CREATE_DEFORM_PATH); true }
 					ShortcutAction.TOOL_GLUE -> { editor.activateTool(CanvasTool.GLUE); true }
+					ShortcutAction.TOOL_SUBDIVIDE -> { editor.activateTool(CanvasTool.SUBDIVIDE); true }
+					ShortcutAction.TOOL_KNIFE -> { editor.activateTool(CanvasTool.KNIFE); true }
 					ShortcutAction.SELECTION_STYLE_BOX -> { editor.selectionStyle = SelectionStyle.BOX; true }
 					ShortcutAction.SELECTION_STYLE_LASSO -> { editor.selectionStyle = SelectionStyle.LASSO; true }
 					ShortcutAction.SELECT_LINKED -> { editor.selectLinked(); true }
 					ShortcutAction.CANCEL -> { editor.cancel(); true }
-					ShortcutAction.FINISH_PATH -> { editor.finishPath(); true }
+					ShortcutAction.FINISH_PATH -> { if (editor.tool == CanvasTool.KNIFE) editor.finishKnife() else editor.finishPath(); true }
 					ShortcutAction.DELETE_SELECTION -> {
-						if (editor.tool == CanvasTool.CREATE_DEFORM_PATH) editor.deletePathPoint()
+						if (editor.tool == CanvasTool.KNIFE || editor.drawingPath) editor.undoDraftPoint()
+                        else if (editor.tool == CanvasTool.CREATE_DEFORM_PATH) editor.deletePathPoint()
 						else if (editor.hierarchyMode == EditHierarchyMode.EDIT) editor.topology("delete")
 						true
 					}
@@ -613,13 +621,8 @@ fun CanvasViewportComposable(
 				val change = event.changes.firstOrNull() ?: return@onPointerEvent
 				if (mode == CanvasMode.EDIT && editor.tool == CanvasTool.CREATE_WARP) {
 					val delta = if (change.scrollDelta.y > 0) -1 else 1
-					if (event.keyboardModifiers.isShiftPressed) {
-						editor.warpCreateBezierRows = (editor.warpCreateBezierRows + delta).coerceIn(1, 10)
-						editor.warpCreateBezierCols = (editor.warpCreateBezierCols + delta).coerceIn(1, 10)
-					} else {
-						editor.warpCreateGridRows = (editor.warpCreateGridRows + delta).coerceIn(2, 20)
-						editor.warpCreateGridCols = (editor.warpCreateGridCols + delta).coerceIn(2, 20)
-					}
+                    editor.warpCreateGridRows = (editor.warpCreateGridRows + delta).coerceIn(2, 20)
+                    editor.warpCreateGridCols = (editor.warpCreateGridCols + delta).coerceIn(2, 20)
 					change.consume()
 					return@onPointerEvent
 				}

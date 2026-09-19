@@ -28,6 +28,8 @@ data class ToolColors(
 	val borderHover: Color = Color(0xFF5E626B),
 	val divider: Color = Color(0xFF36383D),
 	val accent: Color = Color(0xFF4B7EE8),
+	/** The wash over a provisional patch (a topology op's freshly created faces). Low alpha on purpose. */
+	val patchFill: Color = Color(0x244B7EE8),
 	val accentHover: Color = Color(0xFF5C8FF0),
 	val accentText: Color = Color(0xFFFFFFFF),
 	val selection: Color = Color(0xFF2E436E),

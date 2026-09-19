@@ -22,12 +22,11 @@ import org.umamo.runtime.model.withDerivedRenderRoot
 
 /*
  * Parameter document edits: create a new axis, rename one (its display name), and delete one everywhere.
- * Create and rename mirror the group edits (ParameterGroupEdits.kt) - pure PuppetModel.withX plus thin
- * EditorSession wrappers through mutate. Delete is the heavier one: besides the flat parameters list, the
+ * Create and rename are straightforward axis edits. Delete is the heavier one: besides the flat parameters list, the
  * panel tree, and any link, it must scrub the parameter out of every object's keyform grid, since each
  * grid axis references a parameter by id (KeyformAxis.parameterId). Dropping an axis collapses that grid
  * one dimension, keeping the slice at the parameter's default value (the neutral pose) and discarding the
- * off-axis motion. The live pose entry is dropped in the session wrapper (pose lives on EditorSession).
+ * off-axis motion.
  *
  * パラメータの作成・改名・削除。削除は各オブジェクトのキーフォーム格子から該当軸を取り除き、既定値の
  * スライスへ畳み込む。
@@ -53,6 +52,21 @@ fun PuppetModel.freshParameterId(): ParameterId {
 	}
 	return ParameterId("Param$suffix")
 }
+
+/**
+ * This model's parameter tree, materializing a flat all-leaves-at-root tree when the model carries no
+ * groups. Gives structure edits one shape to operate on: a group-less model becomes a root list of
+ * [ParameterNode.Param] in the flat parameters order (which is what the panel already renders for an
+ * empty tree), so the first edit has a tree to rewrite.
+ *
+ * @return List<ParameterNode> The existing tree, or a freshly materialized flat one.
+ */
+internal fun PuppetModel.materializedParameterTree(): List<ParameterNode> =
+	if (parameterTree.isEmpty()) {
+		parameters.map { parameter -> ParameterNode.Param(parameter.id) }
+	} else {
+		parameterTree
+	}
 
 /**
  * A copy of this model with a new animatable parameter [newId] named [name] of [kind] appended to the axis
@@ -262,28 +276,3 @@ private fun removeParameterLeaf(nodes: List<ParameterNode>, id: ParameterId): Li
 			is ParameterNode.Group -> node.copy(children = removeParameterLeaf(node.children, id))
 		}
 	}
-
-/**
- * Creates a new animatable parameter (a freshly minted id, default -1..1 range) named [name] of [kind]
- * and returns its id, so the caller can immediately open inline rename on it. One undo step.
- *
- * @param String name The initial display name.
- * @param ParameterKind kind The parameter kind (NORMAL key-form or BLEND_SHAPE); defaults to NORMAL.
- * @return ParameterId The id of the created parameter.
- */
-fun EditorSession.createParameter(name: String, kind: ParameterKind = ParameterKind.NORMAL): ParameterId {
-	val id = model.value.freshParameterId()
-	mutate(ParameterChange.Create(id)) { model -> model.withParameterCreated(id, name, kind) }
-	return id
-}
-
-/**
- * Renames parameter [id]'s display name to [newName] (trimmed) as one undo step. A blank or unchanged
- * name records nothing.
- *
- * @param ParameterId id The parameter to rename.
- * @param String newName The new display name.
- */
-fun EditorSession.renameParameter(id: ParameterId, newName: String) {
-	mutate(ParameterChange.Rename(id, newName.trim())) { model -> model.withParameterRenamed(id, newName) }
-}

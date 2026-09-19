@@ -10,7 +10,7 @@ import kotlin.math.*
 internal object RigGeometryTools {
     data class Geometry(val points: FloatArray, val base: FloatArray, val domain: FloatArray,
         val rows: Int?, val columns: Int?, val axes: List<KeyformAxis>, val keyCount: Int,
-        val name: String, val parent: String?)
+        val name: String, val parent: String?, val rotationAngle: Float? = null)
 
     fun geometry(model: PuppetModel, kind: String, id: String, pose: Map<String, Float>): Geometry {
         val params = model.parameters.associateBy { it.id.raw }
@@ -41,7 +41,7 @@ internal object RigGeometryTools {
                 val length = if(model.deformers.any { it.id == rotation.parent && it is Deformer.Warp }) 0.2f else 100f
                 val radians=(angle+rotation.baseAngle)*PI.toFloat()/180f
                 val points=floatArrayOf(x,y,x+cos(radians)*length*scale,y+sin(radians)*length*scale)
-                Geometry(points,points.copyOf(),floatArrayOf(0f,0f,1f,1f),null,null,grid?.axes.orEmpty(),grid?.cells?.size ?: 0,rotation.name,rotation.parent?.raw)
+                Geometry(points,points.copyOf(),floatArrayOf(0f,0f,1f,1f),null,null,grid?.axes.orEmpty(),grid?.cells?.size ?: 0,rotation.name,rotation.parent?.raw,angle)
             }
             "warp" -> {
                 val w = model.deformers.singleOrNull { it.id.raw == id } as? Deformer.Warp ?: error("Warp not found: $id")
@@ -64,6 +64,50 @@ internal object RigGeometryTools {
             }
             else -> error("Expected warp or mesh")
         }
+    }
+
+    /**
+     * The affine map from a drawable's parent-local positions to its atlas UVs, recovered from the mesh
+     * itself, as `(a, b, e, c, d, f)` for `u = a·x + b·y + e` and `v = c·x + d·y + f`.
+     *
+     * Recovered rather than stored because every mesh the rig generator produces already satisfies it:
+     * a vertex's UV is that vertex's own layer pixel placed in the atlas, so position and UV are two
+     * affines of the same layer-local point and are therefore affine in each other. Recovering the map
+     * from the mesh lets the canvas re-derive a UV from wherever the vertex has been dragged to without
+     * the map ever being written down, and without a schema for it.
+     *
+     * Null when the mesh cannot determine one - fewer than three vertices, or all of them collinear.
+     *
+     * @param FloatArray positions The mesh's interleaved parent-local positions.
+     * @param FloatArray uvs The mesh's interleaved atlas coordinates.
+     * @return FloatArray? The six affine coefficients, or null when the mesh does not pin one down.
+     */
+    fun uvAffine(positions: FloatArray, uvs: FloatArray): FloatArray? {
+        require(positions.size == uvs.size && positions.size % 2 == 0) { "Positions and UVs must match" }
+        val count = positions.size / 2
+        if (count < 3) return null
+        var sx = 0.0; var sy = 0.0; var sxx = 0.0; var syy = 0.0; var sxy = 0.0; var su = 0.0; var sv = 0.0; var sxu = 0.0; var syu = 0.0; var sxv = 0.0; var syv = 0.0
+        for (i in 0 until count) {
+            val x = positions[i * 2].toDouble(); val y = positions[i * 2 + 1].toDouble()
+            val u = uvs[i * 2].toDouble(); val v = uvs[i * 2 + 1].toDouble()
+            sx += x; sy += y; sxx += x * x; syy += y * y; sxy += x * y
+            su += u; sv += v; sxu += x * u; syu += y * u; sxv += x * v; syv += y * v
+        }
+        val n = count.toDouble()
+        val m = doubleArrayOf(sxx, sxy, sx, sxy, syy, sy, sx, sy, n)
+        val det = m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6])
+        // A collinear (or single-point) vertex set spans no area, so it cannot pin a 2-D affine down.
+        if (abs(det) < 1e-12) return null
+        fun solve(r0: Double, r1: Double, r2: Double): DoubleArray {
+            val d0 = r0 * (m[4] * m[8] - m[5] * m[7]) - m[1] * (r1 * m[8] - m[5] * r2) + m[2] * (r1 * m[7] - m[4] * r2)
+            val d1 = m[0] * (r1 * m[8] - m[5] * r2) - r0 * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * r2 - r1 * m[6])
+            val d2 = m[0] * (m[4] * r2 - r1 * m[7]) - m[1] * (m[3] * r2 - r1 * m[6]) + r0 * (m[3] * m[7] - m[4] * m[6])
+            return doubleArrayOf(d0 / det, d1 / det, d2 / det)
+        }
+        val u = solve(sxu, syu, su)
+        val v = solve(sxv, syv, sv)
+        val out = floatArrayOf(u[0].toFloat(), u[1].toFloat(), v[0].toFloat(), v[1].toFloat(), u[2].toFloat(), v[2].toFloat())
+        return if (out.all(Float::isFinite)) out else null
     }
 
     fun bounds(p: FloatArray): FloatArray {

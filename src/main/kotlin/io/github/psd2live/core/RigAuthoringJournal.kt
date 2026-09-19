@@ -122,7 +122,7 @@ internal object RigAuthoringJournal {
                         put("points", JsonArray(points))
                     }
                 }
-                "set", "copy", "delete", "warp", "structure", "path_delete", "canvas_geometry", "canvas_topology", "canvas_create_warp", "canvas_create_rotation" -> command
+                "set", "copy", "delete", "warp", "structure", "path_delete", "canvas_geometry", "canvas_topology", "canvas_create_warp", "canvas_create_rotation", "canvas_create_glue" -> command
                 else -> error("Unknown authoring operation: $op")
             }
             // Ask against the model *before* this command is applied: the question is whether the slot

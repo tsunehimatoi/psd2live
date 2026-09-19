@@ -284,37 +284,3 @@ private fun <TForm> KeyformGrid<TForm>.asNothing(): KeyformGrid<Nothing> = this 
 /** The [asNothing] counterpart for an interpolator, for the same reason and with the same confinement. */
 @Suppress("UNCHECKED_CAST")
 private fun <TForm> FormInterpolator<TForm>.asNothing(): FormInterpolator<Nothing> = this as FormInterpolator<Nothing>
-
-/**
- * Moves [owner]'s geometry key at [fromValue] to [toValue], as one undo step.
- *
- * @param KeyformOwner owner The entity.
- * @param Parameter parameter The parameter whose axis the key sits on.
- * @param Int keyIndex The key's ordinal on that axis.
- * @param Float toValue The new position.
- */
-fun EditorSession.moveGeometryKey(owner: KeyformOwner, parameter: Parameter, keyIndex: Int, toValue: Float) {
-	mutate(KeyformChange.MoveKey(null)) { model -> model.withGeometryKeyMoved(owner, parameter, keyIndex, toValue) }
-}
-
-/**
- * Inserts a shape-preserving key at [position] on [owner]'s geometry track, as one undo step.
- *
- * @param KeyformOwner owner The entity.
- * @param Parameter parameter The parameter whose axis to insert on.
- * @param Float position The new key's parameter value.
- */
-fun EditorSession.insertGeometryKeyAt(owner: KeyformOwner, parameter: Parameter, position: Float) {
-	mutate(KeyformChange.InsertKey(null)) { model -> model.withGeometryKeyInserted(owner, parameter, position) }
-}
-
-/**
- * Removes [owner]'s geometry key at [position], as one undo step.
- *
- * @param KeyformOwner owner The entity.
- * @param Parameter parameter The parameter whose axis to remove from.
- * @param Int keyIndex The key's ordinal on that axis.
- */
-fun EditorSession.removeGeometryKeyAt(owner: KeyformOwner, parameter: Parameter, keyIndex: Int) {
-	mutate(KeyformChange.DeleteKey(null)) { model -> model.withGeometryKeyRemoved(owner, parameter, keyIndex) }
-}

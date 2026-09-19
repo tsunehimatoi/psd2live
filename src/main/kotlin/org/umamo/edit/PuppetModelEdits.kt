@@ -22,7 +22,7 @@ import org.umamo.runtime.model.withDerivedRenderRoot
  * every unchanged entity with its input (a data class copy replaces only the touched list element),
  * so producing a snapshot costs O(changed spine), not O(model). They never mutate their input, so they
  * are trivially unit-testable and safe to use as undo snapshots. This is the model-mutation half of the
- * editing core; the EditorSession wraps these with history and change events.
+ * editing core: every canvas and panel edit bottoms out here.
  */
 
 /**

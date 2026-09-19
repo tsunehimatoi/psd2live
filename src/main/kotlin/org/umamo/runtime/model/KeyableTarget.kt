@@ -3,15 +3,15 @@ package org.umamo.runtime.model
 /*
  * How a keyform channel is ADDRESSED: an entity plus one of its channels.
  *
- * In :runtime rather than :edit because it is vocabulary about the model, not about editing - the renderer
- * needs it too, to accept per-channel overrides for a value the user has typed but not yet keyed, and
- * :render depends on :runtime but not on :edit.
+ * It lives with the model rather than with the edit layer because it is vocabulary about the model, not
+ * about editing - the renderer needs it too, to accept per-channel overrides for a value the user has
+ * typed but not yet keyed.
  */
 
 /**
  * The entity a keyform channel belongs to.
  *
- * Its own taxonomy rather than [SelectionTarget] because a glue is keyable but not selectable, and a glue
+ * Its own taxonomy rather than an object-selection target because a glue is keyable but not selectable, and a glue
  * carries no id - it is addressed by the mesh pair it welds, which is stable across edits in a way a list
  * index is not.
  */

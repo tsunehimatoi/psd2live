@@ -147,10 +147,90 @@ internal fun BoxScope.CanvasEditorOverlay(
                 }
             }
 
-            val edges = MeshTopology.uniqueEdges(currentTarget.indices).map { it.endpointLow to it.endpointHigh }
-            edges.forEach { (a, b) ->
+            // 1b. The faces the last topology op created - a hole fill, so far - washed faintly, so a
+            //     provisional patch reads as a patch rather than as a stain. SRC_OVER, not the weight
+            //     block's DST: that one modulates the art underneath, this one lays a colour over it.
+            //     Nothing is drawn once the patch marker is gone; it never outlives one commit.
+            val patch = editor.topologyFills?.takeIf { it.drawableId == currentTarget.id }
+            if (patch != null && currentTarget.indices.isNotEmpty() && pts.isNotEmpty()) {
+                val vertexCount = minOf(currentTarget.count, pts.size)
+                val positions = FloatArray(vertexCount * 2)
+                for (i in 0 until vertexCount) {
+                    positions[i * 2] = pts[i].x
+                    positions[i * 2 + 1] = pts[i].y
+                }
+                val corners = mutableListOf<Short>()
+                val patches = mutableListOf<Path>()
+                for (ordinal in patch.triangles) {
+                    val base = ordinal * 3
+                    if (base + 2 >= currentTarget.indices.size) continue
+                    val a = currentTarget.indices[base]
+                    val b = currentTarget.indices[base + 1]
+                    val c = currentTarget.indices[base + 2]
+                    if (a >= vertexCount || b >= vertexCount || c >= vertexCount) continue
+                    corners.add(a.toShort()); corners.add(b.toShort()); corners.add(c.toShort())
+                    patches.add(Path().apply {
+                        moveTo(pts[a].x, pts[a].y); lineTo(pts[b].x, pts[b].y); lineTo(pts[c].x, pts[c].y); close()
+                    })
+                }
+                if (corners.isNotEmpty()) {
+                    val shortIndices = ShortArray(corners.size) { corners[it] }
+                    drawIntoCanvas { canvas ->
+                        val wash = SkiaPaint().apply {
+                            isAntiAlias = true
+                            color = colors.patchFill.toArgb()
+                        }
+                        try {
+                            canvas.skiaCanvas.drawVertices(
+                                SkiaVertexMode.TRIANGLES,
+                                positions,
+                                null,
+                                null,
+                                shortIndices,
+                                SkiaBlendMode.SRC_OVER,
+                                wash,
+                            )
+                        } finally {
+                            wash.close()
+                        }
+                    }
+                    // Outlined as well, so the patch has a readable edge over artwork of any colour.
+                    patches.forEach { drawPath(it, colors.accent.copy(alpha = 0.35f), style = Stroke(1f)) }
+                }
+            }
+
+            // Preview exactly the edges the brush collected and the reducer will split.
+            if (editor.tool == CanvasTool.SUBDIVIDE && editor.subdivideEdges.isNotEmpty()) {
+                MeshTopology.uniqueEdges(currentTarget.indices)
+                    .filter { it in editor.subdivideEdges }
+                    .forEach { edge ->
+                        val a = pts.getOrNull(edge.endpointLow)
+                        val b = pts.getOrNull(edge.endpointHigh)
+                        if (a != null && b != null) {
+                            drawCircle(colors.accent, 2.6f, Offset((a.x + b.x) / 2f, (a.y + b.y) / 2f), style = Stroke(1.2f))
+                        }
+                    }
+            }
+
+            if (editor.elementMode == 2) {
+                editor.selectedFaces.forEach { face ->
+                    if (face in 0 until currentTarget.indices.size / 3) {
+                        val corners = (0..2).map { pts[currentTarget.indices[face * 3 + it]] }
+                        val shape = Path().apply {
+                            moveTo(corners[0].x, corners[0].y)
+                            lineTo(corners[1].x, corners[1].y)
+                            lineTo(corners[2].x, corners[2].y)
+                            close()
+                        }
+                        drawPath(shape, colors.accent.copy(alpha = 0.2f))
+                    }
+                }
+            }
+            MeshTopology.uniqueEdges(currentTarget.indices).forEach { edge ->
+                val a = edge.endpointLow; val b = edge.endpointHigh
+                val selected = editor.elementMode == 1 && edge in editor.selectedEdges
                 drawLine(Color.Black.copy(alpha = 0.45f), pts[a], pts[b], 2.5f)
-                drawLine(colors.accent.copy(alpha = 0.65f), pts[a], pts[b], 1f)
+                drawLine(colors.accent.copy(alpha = if (selected) 1f else 0.65f), pts[a], pts[b], if (selected) 3f else 1f)
             }
             pts.forEachIndexed { i, p ->
                 val isSelected = i in editor.vertices
@@ -203,7 +283,10 @@ internal fun BoxScope.CanvasEditorOverlay(
             val pts = editor.screen(target.geometry.points, target, viewport)
             if (target.kind == "rotation") {
                 if (pts.size >= 2) {
+                    drawCircle(colors.accent.copy(alpha = 0.28f), (pts[1] - pts[0]).getDistance(), pts[0], style = Stroke(1f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 5f))))
                     drawLine(colors.accent, pts[0], pts[1], 2.5f)
+                    drawCircle(colors.accent, 10f, pts[0], style = Stroke(1f))
+                    if (editor.hoveredVertex == 1) drawCircle(colors.accent, 9f, pts[1], style = Stroke(2f))
                     drawCircle(colors.accent, 6.5f, pts[0])
                     drawCircle(Color(0xFF7BBB99), 5.5f, pts[1])
                 }
@@ -292,7 +375,7 @@ internal fun BoxScope.CanvasEditorOverlay(
                     }
                 }
             } else {
-                // Level 1 or 3: Warp lattice grid lines and vertices
+                // Level 1: Warp lattice grid lines and vertices
                 val columns = target.geometry.columns!! + 1
                 pts.indices.flatMap { i ->
                     listOfNotNull(
@@ -537,6 +620,39 @@ internal fun BoxScope.CanvasEditorOverlay(
             }
         }
 
+        // 3f. The subdivide brush's ring. It has no hardness and no shape - it takes every edge whose
+        //     ends fall inside - so the radius is the whole preview.
+        if (editor.tool == CanvasTool.SUBDIVIDE) {
+            editor.cursor?.let { center ->
+                val r = (editor.radius * viewport.scale).toFloat()
+                drawCircle(Color.Black.copy(alpha = 0.5f), r, center, style = Stroke(2.5f))
+                drawCircle(colors.accent, r, center, style = Stroke(1.2f))
+            }
+        }
+
+        // 3g. The knife's polyline: the anchors placed so far, the red rubber band that shows where the cut
+        //     would run to the pointer, and a ring that turns red and grows where a click would snap to a
+        //     vertex or an edge instead of dropping a new point.
+        if (editor.tool == CanvasTool.KNIFE && currentTarget != null && currentTarget.kind == "mesh") {
+            val placed = editor.knifeDraft.mapNotNull { editor.knifeAnchorScreen(it, currentTarget, viewport) }
+            for (index in 0 until placed.size - 1) {
+                drawLine(Color.Black.copy(alpha = 0.45f), placed[index], placed[index + 1], 2.5f)
+                drawLine(colors.accent, placed[index], placed[index + 1], 1.4f)
+            }
+            editor.knifeHover?.let { cursor ->
+                // Snapped: the ring grows and turns red, so lock-on reads as a change in size as well as colour.
+                val snapped = editor.knifeSnapKind != null
+                drawCircle(if (snapped) colors.error else colors.textPrimary, if (snapped) 9f else 6f, cursor, style = Stroke(1.5f))
+                placed.lastOrNull()?.let { last ->
+                    drawLine(colors.error.copy(alpha = 0.75f), last, cursor, 1.2f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 5f)))
+                }
+            }
+            placed.forEachIndexed { index, point ->
+                val isLast = index == placed.lastIndex
+                drawCircle(if (isLast) colors.accent else colors.textPrimary, 3.5f, point)
+            }
+        }
+
         // 4. BRUSH / SMOOTH / INFLATE mode: Shape-aware brush outline following cursor
         if (editor.tool in listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE)) {
             val center = editor.cursor ?: editor.activeBrushCenter
@@ -740,6 +856,9 @@ internal fun BoxScope.CanvasEditorOverlay(
     // Bottom Status Bar
     Text(
         editor.error ?: if (editor.busy) tr("editor.saving") else tr("editor.selectionCount", editor.objects.size, editor.vertices.size) + "   ·   " + tr(when {
+            editor.tool == CanvasTool.KNIFE -> "editor.knifeGestureHint"
+            editor.tool == CanvasTool.SUBDIVIDE -> "editor.subdivideHint"
+            editor.tool == CanvasTool.SELECT && target?.kind == "rotation" -> "editor.rotationGestureHint"
             editor.tool == CanvasTool.CREATE_DEFORM_PATH -> "editor.pathHint"
             editor.tool == CanvasTool.INFLATE -> "editor.inflateHint"
             editor.hierarchyMode == EditHierarchyMode.PAINT -> "editor.paintHint"
@@ -1247,6 +1366,27 @@ private fun ToolIcon(
                 drawCircle(color, 2 * s, p(16f, 4f))
                 drawCircle(color, 2 * s, p(9f, 9f))
             }
+            CanvasTool.SUBDIVIDE -> {
+                // A triangle with its edge midpoints picked out: exactly what the brush makes.
+                line(9f, 3f, 3f, 15f)
+                line(3f, 15f, 15f, 15f)
+                line(15f, 15f, 9f, 3f)
+                drawCircle(color, 1.7f * s, p(6f, 9f), style = Stroke(1.1f * s))
+                drawCircle(color, 1.7f * s, p(12f, 9f), style = Stroke(1.1f * s))
+                drawCircle(color, 1.7f * s, p(9f, 15f), style = Stroke(1.1f * s))
+            }
+            CanvasTool.KNIFE -> {
+                // A blade over the seam it is opening.
+                line(2.5f, 15.5f, 12f, 15.5f)
+                val blade = Path().apply {
+                    moveTo(4f * s, 12.5f * s)
+                    lineTo(11.5f * s, 3f * s)
+                    lineTo(15f * s, 6.5f * s)
+                    lineTo(7.5f * s, 16f * s)
+                    close()
+                }
+                drawPath(blade, color, style = Stroke(1.2f * s))
+            }
             CanvasTool.GLUE -> {
                 drawCircle(color, 3.5f * s, p(6.5f, 9f), style = Stroke(s * 1.2f))
                 drawCircle(color, 3.5f * s, p(11.5f, 9f), style = Stroke(s * 1.2f))
@@ -1460,7 +1600,6 @@ private fun BoxScope.HierarchyModeBar(
                 listOf(
                     1 to (tr("editor.level.1") + " · " + tr("editor.level.1.desc")),
                     2 to (tr("editor.level.2") + " · " + tr("editor.level.2.desc")),
-                    3 to (tr("editor.level.3") + " · " + tr("editor.level.3.desc")),
                 ).forEach { (lvl, tooltip) ->
                     val isLvlSelected = editor.editLevel == lvl
                     DeformLevelChip(

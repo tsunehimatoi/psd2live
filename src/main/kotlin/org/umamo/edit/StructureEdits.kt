@@ -77,23 +77,6 @@ fun PuppetModel.withOrgChildMoved(child: OrgChild, newParentId: PartId?, before:
 	return copy(rootChildren = newRoot, parts = newParts).withDerivedRenderRoot()
 }
 
-/**
- * Moves the org child [child] under [newParentId] (null = top level), before [before] (null = append), as
- * one undo step. A cycle-forming or no-op move records nothing.
- *
- * @param OrgChild child The sub-part or drawable to move.
- * @param PartId? newParentId The destination part, or null for the top level.
- * @param OrgChild? before The sibling to insert before, or null to append.
- */
-fun EditorSession.moveOrgChild(child: OrgChild, newParentId: PartId?, before: OrgChild?) {
-	val change: Change =
-		when (child) {
-			is OrgChild.Part -> PartChange.Move(child.id, newParentId, (before as? OrgChild.Part)?.id)
-			is OrgChild.Drawable -> DrawableChange.Move(child.id, newParentId)
-		}
-	mutate(change) { model -> model.withOrgChildMoved(child, newParentId, before) }
-}
-
 /** A copy of this deformer re-homed under [newParent] in the transform (nesting) hierarchy. */
 private fun Deformer.withParent(newParent: DeformerId?): Deformer =
 	when (this) {
@@ -128,14 +111,3 @@ fun PuppetModel.withDeformerMoved(id: DeformerId, newParentId: DeformerId?, befo
 	return copy(deformers = without)
 }
 
-/**
- * Moves the deformer [id] under [newParentId] (null = armature root), before [beforeId] (null = append),
- * as one undo step. A cycle-forming or no-op move records nothing.
- *
- * @param DeformerId id The deformer to move.
- * @param DeformerId? newParentId The destination parent deformer, or null for a root.
- * @param DeformerId? beforeId The sibling to insert before, or null to append.
- */
-fun EditorSession.moveDeformer(id: DeformerId, newParentId: DeformerId?, beforeId: DeformerId?) {
-	mutate(DeformerChange.Move(id, newParentId, beforeId)) { model -> model.withDeformerMoved(id, newParentId, beforeId) }
-}

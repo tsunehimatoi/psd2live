@@ -6,7 +6,9 @@ import io.github.psd2live.core.*
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.state.*
 import kotlinx.serialization.json.*
+import org.umamo.edit.MeshElement
 import org.umamo.edit.MeshTopology
+import org.umamo.edit.MeshRefinementOps
 import org.umamo.edit.withDrawablesDeleted
 import org.umamo.format.art.LayerRaster
 import org.umamo.format.art.LayerBounds
@@ -44,6 +46,10 @@ internal enum class CanvasTool(val action: ShortcutAction) {
     CREATE_ROTATION(ShortcutAction.TOOL_CREATE_ROTATION),
     CREATE_DEFORM_PATH(ShortcutAction.TOOL_CREATE_DEFORM_PATH),
     GLUE(ShortcutAction.TOOL_GLUE),
+    /** Region subdivide: a radius brush over the mesh's edges. */
+    SUBDIVIDE(ShortcutAction.TOOL_SUBDIVIDE),
+    /** The knife: click anchors along a cut, connect them, commit with Enter. */
+    KNIFE(ShortcutAction.TOOL_KNIFE),
     // Painting mode tools (L1)
     PAINT_BRUSH(ShortcutAction.TOOL_PAINT_BRUSH),
     PAINT_PENCIL(ShortcutAction.TOOL_PAINT_PENCIL),
@@ -97,6 +103,7 @@ internal val TOOLBAR_TOOL_ORDER = listOf(
     CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT,
     CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE,
     CanvasTool.CREATE_DEFORM_PATH, CanvasTool.CREATE_WARP, CanvasTool.CREATE_ROTATION, CanvasTool.GLUE,
+    CanvasTool.SUBDIVIDE, CanvasTool.KNIFE,
     CanvasTool.PAINT_BRUSH, CanvasTool.PAINT_PENCIL, CanvasTool.PAINT_ERASER,
     CanvasTool.PAINT_BUCKET, CanvasTool.PAINT_EYEDROPPER,
     CanvasTool.PAINT_SHAPE,
@@ -129,6 +136,7 @@ internal fun toolbarGroups(mode: EditHierarchyMode): List<List<CanvasTool>> = wh
         listOf(CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT),
         listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE),
         listOf(CanvasTool.CREATE_DEFORM_PATH, CanvasTool.CREATE_WARP, CanvasTool.CREATE_ROTATION, CanvasTool.GLUE),
+        listOf(CanvasTool.SUBDIVIDE, CanvasTool.KNIFE),
     )
     EditHierarchyMode.PAINT -> listOf(
         listOf(CanvasTool.SELECT),
@@ -209,6 +217,9 @@ private fun remapUvs(mesh: DrawableMesh, from: AtlasSlice, to: AtlasSlice): Floa
 }
 
 /** One gesture owns its pose, parent mapping and history HEAD until release. */
+/** The faces a topology op created, and which drawable they belong to. See [CanvasEditor.topologyFills]. */
+internal data class TopologyFill(val drawableId: String, val triangles: Set<Int>)
+
 internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     var state: PSD2LiveState
         get() = viewModel.state.value
@@ -326,8 +337,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     var creationCurrent by mutableStateOf<Offset?>(null)
     var warpCreateGridRows by mutableStateOf(4)
     var warpCreateGridCols by mutableStateOf(4)
-    var warpCreateBezierRows by mutableStateOf(2)
-    var warpCreateBezierCols by mutableStateOf(2)
+    var glueDistance by mutableStateOf(40f)
     var glueFirstMesh by mutableStateOf<String?>(null)
     var glueHoverMesh by mutableStateOf<String?>(null)
     var brushSelecting by mutableStateOf(false)
@@ -364,7 +374,50 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     var space by mutableStateOf(false)
     var axis by mutableStateOf<String?>(null)
     var parameter by mutableStateOf<String?>(null)
-    var elementMode by mutableStateOf(0) // vertex / edge / face
+    private var activeElementMode by mutableStateOf(0)
+    var elementMode: Int
+        get() = activeElementMode
+        set(value) {
+            if (activeElementMode != value) { selectedEdges = emptySet(); selectedFaces = emptySet() }
+            activeElementMode = value.coerceIn(0, 2)
+        }
+    var selectedEdges by mutableStateOf<Set<MeshElement.Edge>>(emptySet())
+    var selectedFaces by mutableStateOf<Set<Int>>(emptySet())
+
+    /**
+     * The faces the last topology op created, drawn faintly so a provisional patch reads as a patch.
+     * Session-only and never persisted: "this is provisional" is a statement about the editing session,
+     * not about the document. Dropped by the next commit or cancel, because after either the indices may
+     * no longer mean what they meant.
+     */
+    var topologyFills by mutableStateOf<TopologyFill?>(null)
+
+    /** The knife's anchors, in click order. Empty when no cut is being drawn. */
+    var knifeDraft by mutableStateOf<List<MeshRefinementOps.KnifeAnchor>>(emptyList())
+
+    /** The drawable [knifeDraft] belongs to, so switching targets drops a cut that could not apply. */
+    private var knifeDrawableId: String? = null
+
+    /** The only say the artist has over snapping: how close, in screen pixels, counts as "on" a vertex or an
+     *  edge. Snapping itself is not optional - outside this radius a click always drops a new point. */
+    var knifeSnapRadius by mutableStateOf(10f)
+
+    /** Where the next click would land: the snapped vertex or edge, or the pointer itself. */
+    var knifeHover by mutableStateOf<Offset?>(null)
+
+    /** "vertex" or "edge" while [knifeHover] sits on a snap target, null while it is a free point. */
+    var knifeSnapKind by mutableStateOf<String?>(null)
+
+    fun undoDraftPoint() {
+        if (busy) return
+        if (tool == CanvasTool.KNIFE) knifeDraft = knifeDraft.dropLast(1)
+        else if (drawingPath) draft = draft.dropLast(1)
+        error = null
+    }
+
+    /** The vertices the subdivide brush is currently covering; the stroke's union, not the last radius. */
+    var subdivideEdges by mutableStateOf<Set<MeshElement.Edge>>(emptySet())
+    private var subdividing = false
     val objectMode get() = hierarchyMode == EditHierarchyMode.SELECT
     var objects by mutableStateOf(emptySet<String>())
     var selectionStyle by mutableStateOf(SelectionStyle.BOX)
@@ -459,13 +512,33 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     val model get() = preview ?: state.previewModel!!.rig.puppet
     val pose get() = state.parameterValues.mapKeys { it.key.raw }
 
+
     /**
      * Whether the active tool should draw a transform box at all. Object mode is selection only, so
      * the box never appears there — and neither do its handles, which read the same frame.
      */
-    val drawsTransformBox get() = hierarchyMode != EditHierarchyMode.SELECT && tool == CanvasTool.SELECT && (
-        vertices.isNotEmpty() || (target()?.kind == "rotation")
-    )
+    val drawsTransformBox get() = hierarchyMode != EditHierarchyMode.SELECT && tool == CanvasTool.SELECT && selectionHasExtent
+
+    /**
+     * Whether the selection spans enough to be scaled or turned, which is what both the transform box and
+     * the numeric scale / rotate rows need.
+     *
+     * A rotation deformer always does — it turns about its origin, which is an axis point rather than the
+     * selection's own centre. A point selection needs two points that are not on the same spot: one point
+     * has no extent of its own, so the only thing it can do is move. The box agrees by construction —
+     * `frameOf` answers null for the same selection, which is what keeps the handles off a lone point.
+     */
+    val selectionHasExtent: Boolean
+        get() {
+            if (hierarchyMode == EditHierarchyMode.SELECT) return false
+            val t = target() ?: return false
+            if (t.kind == "rotation") return true
+            if (t.kind !in POINT_BOX_KINDS) return false
+            val points = t.geometry.points
+            val chosen = vertices.filter { it in 0 until t.count }
+            val first = chosen.firstOrNull() ?: return false
+            return chosen.any { points[it * 2] != points[first * 2] || points[it * 2 + 1] != points[first * 2 + 1] }
+        }
 
     /**
      * Whether the shared Precise Transform controls have something to act on.
@@ -521,9 +594,24 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         parameter?.let { p -> model.parameters.firstOrNull { it.id.raw == p }?.let { put(p, pose[p] ?: it.default) } }
     }
 
+    /**
+     * The canvas's geometry write.
+     *
+     * **An ArtMesh is edited at its base, so its coordinate is empty.** Editing changes the shape of the
+     * mesh itself, never the shape at a parameter pose; an empty coordinate is what selects the reducer's
+     * base-geometry branch, and the reducer then moves each vertex's UV with the vertex so the picture
+     * does not change. A non-empty coordinate would instead capture the current shape as a keyform delta -
+     * a deformation, and a different operation, which belongs to the explicit MCP commands that require
+     * the caller to name the pose.
+     *
+     * **A warp or rotation still addresses a coordinate.** It has no UVs to carry along, so there is no
+     * base edit that leaves the picture alone, and handing the reducer an empty coordinate would replace
+     * its whole lattice with a single unkeyed cell - destroying every keyform it holds. Until that has a
+     * design, these keep writing the pose they were dragged at.
+     */
     private fun geometryCommand(t: CanvasTarget, points: FloatArray) = buildJsonObject {
         put("op", "canvas_geometry"); put("kind", t.kind); put("id", t.id)
-        put("key", JsonObject(coordinate(t).mapValues { JsonPrimitive(it.value) }))
+        put("key", if (t.kind == "mesh") JsonObject(emptyMap()) else JsonObject(coordinate(t).mapValues { JsonPrimitive(it.value) }))
         put("points", JsonArray(points.map(::JsonPrimitive)))
     }
 
@@ -1212,7 +1300,12 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             session.refreshPreview()
         }
         endBrushAdjust(cancel = true)
-        preview = null; pending = null; dragging = false; targetAtPress = null; original = null
+        preview = null; pending = null; dragging = false; targetAtPress = null; original = null; topologyFills = null
+        knifeDraft = emptyList(); knifeDrawableId = null; subdividing = false; subdivideEdges = emptySet()
+        knifeHover = null; knifeSnapKind = null
+        isCreatingWarp = false; isCreatingRotation = false; creationStart = null; creationCurrent = null
+        glueFirstMesh = null; glueHoverMesh = null
+        activeBezierAnchor = null; activeBezierHandle = null
         activeBrushWeights = null; activeBrushCenter = null
         brushInitialBase = null; brushInitialScreen = null; brushAffectedIndices = emptySet()
         marquee = emptyList(); draft = emptyList(); draftPathId = null; drawingPath = false
@@ -1228,7 +1321,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
 
     fun resetSelection() {
         if (!busy) cancel()
-        vertices = emptySet(); activePath = null; pathPoint = -1
+        vertices = emptySet(); selectedEdges = emptySet(); selectedFaces = emptySet(); activePath = null; pathPoint = -1
     }
 
     /**
@@ -1239,7 +1332,13 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
      */
     fun activateTool(next: CanvasTool) {
         if (busy) return
-        if (next !in toolbarGroups(hierarchyMode).flatten()) return
+        if (next !in toolbarGroups(hierarchyMode).flatten()) {
+            setHierarchyMode(when {
+                next in PAINT_TOOLS -> EditHierarchyMode.PAINT
+                next in CREATION_TOOLS || next == CanvasTool.KNIFE || next == CanvasTool.SUBDIVIDE -> EditHierarchyMode.EDIT
+                else -> EditHierarchyMode.DEFORM
+            })
+        }
         cancel()
         tool = next
         error = null
@@ -1282,6 +1381,8 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     }
 
     val warpBezierDivisions = mutableMapOf<String, Pair<Int, Int>>()
+    private var bezierTargetId: String? = null
+    private var bezierSourcePoints: FloatArray? = null
 
     fun ensureBezierState() {
         val t = target()
@@ -1292,10 +1393,13 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                 val cols = warp.columns
                 val (bRows, bCols) = warpBezierDivisions[t.id] ?: (2 to 2)
                 val cur = bezierState
-                if (cur == null || cur.bezierRows != bRows || cur.bezierCols != bCols) {
+                if (cur == null || bezierTargetId != t.id || cur.bezierRows != bRows || cur.bezierCols != bCols ||
+                    (!dragging && !busy && bezierSourcePoints?.contentEquals(t.geometry.points) != true)) {
                     val bState = BezierDeformerState(bRows, bCols)
                     bState.initFromLattice(t.geometry.points, rows, cols)
                     bezierState = bState
+                    bezierTargetId = t.id
+                    bezierSourcePoints = t.geometry.points.copyOf()
                 }
             }
         } else {
@@ -1497,8 +1601,14 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     private fun badgeAt(pos: Offset, viewport: CanvasViewport): String? =
         deformerCorners(viewport).entries.firstOrNull { it.value.contains(pos.x.toDouble(), pos.y.toDouble()) }?.key
 
-    fun updateHover(pos: Offset, viewport: CanvasViewport, ctrl: Boolean = false) {
+    fun updateHover(pos: Offset, viewport: CanvasViewport, ctrl: Boolean = false, shift: Boolean = false) {
         cursor = pos
+        if (tool == CanvasTool.KNIFE) {
+            target()?.takeIf { it.kind == "mesh" }?.let { knifeAnchor(pos, it, viewport, shift) }
+        }
+        if (tool == CanvasTool.SUBDIVIDE && !dragging) {
+            subdivideEdges = target()?.takeIf { it.kind == "mesh" }?.let { edgesWithin(pos, pos, it, viewport) }.orEmpty()
+        }
         if (dragging) return
         hoveredBezierAnchor = null
         hoveredBezierHandle = null
@@ -1636,7 +1746,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         if (dragging) {
             if (isCreatingWarp || isCreatingRotation) return cross
             if (marquee.isNotEmpty()) return cross
-            if (tool in DEFORM_BRUSH_TOOLS || tool == CanvasTool.BRUSH_SELECT) return cross
+            if (tool in DEFORM_BRUSH_TOOLS || tool == CanvasTool.BRUSH_SELECT || tool == CanvasTool.SUBDIVIDE || tool == CanvasTool.KNIFE) return cross
             if (boxDrag) return handleCursor(activeHandle)
             if (activeBezierAnchor != null || activeBezierHandle != null) return hand
             return move
@@ -1644,7 +1754,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         if (tool in CREATION_TOOLS) {
             return if (tool == CanvasTool.GLUE) hand else cross
         }
-        if (tool == CanvasTool.BRUSH_SELECT || tool in DEFORM_BRUSH_TOOLS) return cross
+        if (tool == CanvasTool.BRUSH_SELECT || tool in DEFORM_BRUSH_TOOLS || tool == CanvasTool.SUBDIVIDE || tool == CanvasTool.KNIFE) return cross
         if (tool == CanvasTool.LASSO_SELECT) return cross
         // Painting gets no crosshair: the cursor is exactly where the tip ring already is, and a cross
         // over the pixels being judged is worse than no mark at all.
@@ -1679,7 +1789,11 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     }
 
     /** Returns false when the edit never reached history, so the caller can drop its preview. */
-    private fun commitBatch(commands: List<JsonObject>): Boolean {
+    private fun commitBatch(commands: List<JsonObject>, onSuccess: (() -> Unit)? = null): Boolean {
+        // The provisional fill describes faces of the mesh as it stands; after any commit those indices
+        // may mean something else, so it lives exactly as long as the op that set it. topology() sets it
+        // after calling through here, which is why clearing on the way in is enough.
+        topologyFills = null
         if (!editable) { endTransformBox(); return false }
         val expected = head ?: state.historySnapshot?.headNodeId
         if (expected == null) { endTransformBox(); return false }
@@ -1697,18 +1811,133 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             viewModel.saveAuthoringEdits(expected, JsonArray(result.second)) { failure ->
                 busy = false; preview = null; pending = null; head = null; error = failure
                 endTransformBox()
-                if (failure == null) commands.lastOrNull { it["op"]?.jsonPrimitive?.content in setOf("canvas_create_warp", "canvas_create_rotation") }?.let { viewModel.selectDeformer(it.getValue("id").jsonPrimitive.content) }
+                if (failure == null) onSuccess?.invoke()
+                if (failure == null) commands.lastOrNull { it["op"]?.jsonPrimitive?.content in setOf("canvas_create_warp", "canvas_create_rotation") }?.let {
+                    activateTool(CanvasTool.SELECT)
+                    vertices = emptySet()
+                    viewModel.selectDeformer(it.getValue("id").jsonPrimitive.content)
+                }
             }
         } catch (e: Exception) { error = e.message; preview = null; pending = null; head = null; endTransformBox() }
         return true
     }
 
-    fun topology(action: String) {
+    /**
+     * Runs a topology op on the mesh selection.
+     *
+     * The selection afterwards is "what the op made", which the op knows and the journal does not carry -
+     * a [org.umamo.edit.TopologyOpResult] has no way back through a persisted JSON command. So the op is
+     * built here first, against the same mesh the reducer will read, and its result picks the selection
+     * and marks the provisional fill. It is a pure function, so the answer the reducer computes is the
+     * same one; see CanvasTopology.
+     */
+    fun topology(action: String, selection: Set<Int> = vertices, edges: Set<MeshElement.Edge> = emptySet()) {
         val t = target() ?: return
         if (t.kind != "mesh" || !editable) return
         head = null
-        commit(buildJsonObject { put("op", "canvas_topology"); put("id", t.id); put("action", action); put("vertices", JsonArray(vertices.map(::JsonPrimitive))) })
-        if (error == null) vertices = emptySet()
+        val selected = selection
+        val chosenEdges = if (edges.isNotEmpty()) edges else if (action in setOf("subdivide", "split")) {
+            when (elementMode) {
+                1 -> selectedEdges
+                2 -> selectedFaces.flatMapTo(LinkedHashSet()) { face ->
+                    if (face in 0 until t.indices.size / 3) MeshTopology.edgesOfTriangle(t.indices, face) else emptyList()
+                }
+                else -> emptySet()
+            }
+        } else emptySet()
+        // Against state.previewModel, which is what commitBatch compiles against - not `model`, which
+        // prefers the in-flight `preview` and would disagree with the reducer mid-drag.
+        val mesh = state.previewModel?.rig?.puppet?.drawables?.firstOrNull { it.id.raw == t.id }?.mesh
+        val outcome = mesh?.let { runCatching { CanvasTopology.build(it, action, selected, edges = chosenEdges) }.getOrNull() }
+        commitBatch(listOf(buildJsonObject { put("op", "canvas_topology"); put("id", t.id); put("action", action); put("vertices", JsonArray(selected.map(::JsonPrimitive)))
+            if (chosenEdges.isNotEmpty()) put("edges", JsonArray(chosenEdges.map { JsonArray(listOf(JsonPrimitive(it.endpointLow), JsonPrimitive(it.endpointHigh))) })) })) {
+            vertices = CanvasTopology.selectedVertices(outcome)
+            selectedEdges = emptySet(); selectedFaces = emptySet()
+            topologyFills = CanvasTopology.createdFaces(outcome).takeIf { it.isNotEmpty() }?.let { TopologyFill(t.id, it) }
+        }
+    }
+
+    /** Commits the knife polyline. All or nothing - see [MeshRefinementOps.knifeCut]. */
+    fun finishKnife() {
+        val t = target() ?: return
+        if (!editable || t.kind != "mesh" || t.id != knifeDrawableId || knifeDraft.size < 2) return
+        val anchors = knifeDraft
+        head = null
+        val mesh = state.previewModel?.rig?.puppet?.drawables?.firstOrNull { it.id.raw == t.id }?.mesh
+        val outcome = mesh?.let { runCatching { CanvasTopology.build(it, "knife", emptySet(), anchors) }.getOrNull() }
+        if (outcome == null) {
+            error = tr("editor.knifeCannotConnect")
+            return
+        }
+        commitBatch(listOf(buildJsonObject {
+            put("op", "canvas_topology"); put("id", t.id); put("action", "knife")
+            put("vertices", JsonArray(emptyList()))
+            put("anchors", CanvasTopology.encodeAnchors(anchors))
+        })) {
+            knifeDraft = emptyList()
+            vertices = CanvasTopology.selectedVertices(outcome)
+            selectedEdges = emptySet(); selectedFaces = emptySet()
+            topologyFills = CanvasTopology.createdFaces(outcome).takeIf { it.isNotEmpty() }?.let { TopologyFill(t.id, it) }
+        }
+    }
+
+    /**
+     * Resolve both hover and press through the same screen-space snap, then store mesh-space anchors.
+     *
+     * Snapping is not optional: a vertex within [knifeSnapRadius] wins, then an edge, and anything further
+     * away lands as a new free point. Edges take the point on them under the pointer - never their midpoint.
+     * [bypass] is the Shift escape hatch, for the free point that has to sit on top of a vertex.
+     */
+    private fun knifeAnchor(pos: Offset, t: CanvasTarget, viewport: CanvasViewport, bypass: Boolean = false): MeshRefinementOps.KnifeAnchor {
+        val points = screen(t.geometry.points, t, viewport)
+        knifeSnapKind = null
+        knifeHover = pos
+        if (!bypass) {
+            val nearest = points.indices.minByOrNull { (points[it] - pos).getDistance() }
+            if (nearest != null && (points[nearest] - pos).getDistance() <= knifeSnapRadius) {
+                knifeHover = points[nearest]; knifeSnapKind = "vertex"
+                return MeshRefinementOps.KnifeAnchor.AtVertex(nearest)
+            }
+            val edge = MeshTopology.uniqueEdges(t.indices).map { edge ->
+                val a = points[edge.endpointLow]; val b = points[edge.endpointHigh]
+                val fraction = CanvasGestureGeometry.project(pos, a, b)
+                Triple(edge, fraction, a + (b - a) * fraction)
+            }.minByOrNull { (it.third - pos).getDistance() }
+            if (edge != null && (edge.third - pos).getDistance() <= knifeSnapRadius) {
+                knifeHover = edge.third; knifeSnapKind = "edge"
+                val a = edge.first.endpointLow * 2; val b = edge.first.endpointHigh * 2
+                val geometry = t.geometry.base
+                // Journal anchors are in rest-mesh space, even while a parameter pose is displayed.
+                return MeshRefinementOps.KnifeAnchor.AtPoint(
+                    geometry[a] + (geometry[b] - geometry[a]) * edge.second,
+                    geometry[a + 1] + (geometry[b + 1] - geometry[a + 1]) * edge.second)
+            }
+        }
+        val (x, y) = local(pos, t, viewport)
+        val rest = runCatching {
+            DeformPathTools.bind(t.geometry.points, t.indices, x, y).position(t.geometry.base)
+        }.getOrElse { x to y }
+        return MeshRefinementOps.KnifeAnchor.AtPoint(rest.first, rest.second)
+    }
+
+    fun knifeAnchorScreen(anchor: MeshRefinementOps.KnifeAnchor, t: CanvasTarget, viewport: CanvasViewport): Offset? =
+        when (anchor) {
+            is MeshRefinementOps.KnifeAnchor.AtVertex -> screen(t.geometry.points, t, viewport).getOrNull(anchor.index)
+            is MeshRefinementOps.KnifeAnchor.AtPoint -> {
+                val posed = runCatching {
+                    DeformPathTools.bind(t.geometry.base, t.indices, anchor.x, anchor.y).position(t.geometry.points)
+                }.getOrElse { anchor.x to anchor.y }
+                screen(floatArrayOf(posed.first, posed.second), t, viewport).firstOrNull()
+            }
+        }
+
+    /** The target's vertices inside the brush radius, in screen space. */
+    private fun edgesWithin(start: Offset, end: Offset, t: CanvasTarget, viewport: CanvasViewport): Set<MeshElement.Edge> {
+        val r = (radius * viewport.scale).toFloat()
+        val points = screen(t.geometry.points, t, viewport)
+        return MeshTopology.uniqueEdges(t.indices).filterTo(LinkedHashSet()) { edge ->
+            CanvasGestureGeometry.segmentDistance(start, end, points[edge.endpointLow], points[edge.endpointHigh]) <= r
+        }
     }
 
     fun finishPath() {
@@ -1775,7 +2004,17 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         if (objectMode) {
             objects = state.effectiveVisibleLayerIds.filter { (!invert || it !in objects) && target(model, it, null) != null }.toSet()
             viewModel.selectLayer(objects.lastOrNull())
-        } else target()?.let { t -> vertices = (0 until t.count).filter { !invert || it !in vertices }.toSet() }
+        } else target()?.let { t ->
+            if (hierarchyMode == EditHierarchyMode.EDIT && t.kind == "mesh" && elementMode == 1) {
+                selectedEdges = MeshTopology.uniqueEdges(t.indices).filterTo(LinkedHashSet()) { !invert || it !in selectedEdges }
+                vertices = selectedEdges.flatMapTo(LinkedHashSet()) { listOf(it.endpointLow, it.endpointHigh) }
+            } else if (hierarchyMode == EditHierarchyMode.EDIT && t.kind == "mesh" && elementMode == 2) {
+                selectedFaces = (0 until t.indices.size / 3).filterTo(LinkedHashSet()) { !invert || it !in selectedFaces }
+                vertices = selectedFaces.flatMapTo(LinkedHashSet()) { MeshTopology.verticesOfTriangle(t.indices, it) }
+            } else {
+                vertices = (0 until t.count).filter { !invert || it !in vertices }.toSet()
+            }
+        }
     }
 
     fun selectLinked() {
@@ -1786,20 +2025,28 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
 
     fun createWarp(rotation: Boolean = false) {
         val t = target() ?: return
-        if (t.kind != "mesh") return
+        if (t.kind != "mesh" || !editable) return
         val name = if (rotation) "Rotation" else "Warp"
         val id = "${name}_${UUID.randomUUID()}"
-        val ids = objects.mapNotNull { target(model, it, null)?.id }.ifEmpty { listOf(t.id) }
-        head = null; commit(buildJsonObject { put("op", if (rotation) "canvas_create_rotation" else "canvas_create_warp"); put("id", id); put("name", name); put("meshes", JsonArray(ids.map(::JsonPrimitive))) })
+        val targets = objects.mapNotNull { target(model, it, null) }.ifEmpty { listOf(t) }
+        val world = targets.flatMap { it.mapping.localToWorld(it.geometry.points).toList().chunked(2) }
+        head = null
+        commit(buildJsonObject {
+            put("op", if (rotation) "canvas_create_rotation" else "canvas_create_warp")
+            put("id", id); put("name", name); put("preservePose", true)
+            put("rows", warpCreateGridRows); put("columns", warpCreateGridCols)
+            if (rotation && world.isNotEmpty()) put("origin", JsonArray(listOf(
+                (world.minOf { it[0] } + world.maxOf { it[0] }) / 2f,
+                (world.minOf { it[1] } + world.maxOf { it[1] }) / 2f).map(::JsonPrimitive)))
+            put("meshes", JsonArray(targets.map { JsonPrimitive(it.id) }))
+        })
     }
 
     fun createWarpFromBounds(s: Offset, e: Offset, viewport: CanvasViewport) {
-        val x0 = minOf(s.x, e.x); val y0 = minOf(s.y, e.y)
-        val x1 = maxOf(s.x, e.x); val y1 = maxOf(s.y, e.y)
-        val wX = ((x0 - viewport.offsetX) / viewport.scale).toFloat()
-        val wY = -((y1 - viewport.offsetY) / viewport.scale).toFloat()
-        val wW = ((x1 - x0) / viewport.scale).toFloat()
-        val wH = ((y1 - y0) / viewport.scale).toFloat()
+        val target = target()?.takeIf { it.kind == "mesh" } ?: return
+        val corners = listOf(s, e, Offset(s.x, e.y), Offset(e.x, s.y)).map { local(it, target, viewport) }
+        val wX = corners.minOf { it.first }; val wY = corners.minOf { it.second }
+        val wW = corners.maxOf { it.first } - wX; val wH = corners.maxOf { it.second } - wY
 
         val targetMeshes = objects.mapNotNull { target(model, it, null)?.id }.ifEmpty { listOfNotNull(target()?.takeIf { it.kind == "mesh" }?.id) }
         if (targetMeshes.isEmpty()) return
@@ -1810,8 +2057,6 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             put("name", "Warp")
             put("rows", warpCreateGridRows)
             put("columns", warpCreateGridCols)
-            put("bezierRows", warpCreateBezierRows)
-            put("bezierColumns", warpCreateBezierCols)
             put("bounds", buildJsonObject {
                 put("x", wX)
                 put("y", wY)
@@ -1836,6 +2081,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         val id = "Rotation_${UUID.randomUUID()}"
         val cmd = buildJsonObject {
             put("op", "canvas_create_rotation")
+            put("preservePose", true)
             put("id", id)
             put("name", "Rotation")
             put("origin", JsonArray(listOf(originX, originY).map(::JsonPrimitive)))
@@ -1854,6 +2100,8 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             put("name", "Glue")
             put("mesh_a", meshA)
             put("mesh_b", meshB)
+            put("distance", glueDistance)
+            put("pose", JsonObject(pose.mapValues { JsonPrimitive(it.value) }))
         }
         head = null
         commit(cmd)
@@ -2061,6 +2309,13 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             return true
         }
 
+        // Creation needs a concrete binding target before starting a gesture.
+        if (tool in setOf(CanvasTool.CREATE_WARP, CanvasTool.CREATE_ROTATION, CanvasTool.CREATE_DEFORM_PATH) &&
+            target()?.kind != "mesh") {
+            pickLayer(pos, viewport)?.let { viewModel.selectLayer(it) }
+            error = tr("editor.creationSelectFirst")
+            return true
+        }
         // 1. Interactive Creation Tools
         if (tool == CanvasTool.CREATE_WARP) {
             isCreatingWarp = true
@@ -2121,6 +2376,21 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             return true
         }
 
+        // 1b. The knife is a click tool, not a drag: each press drops one anchor and the polyline is
+        //     committed with Enter. It never sets `dragging`, so no stray move can commit anything.
+        if (tool == CanvasTool.KNIFE) {
+            val t = target()
+            if (t != null && t.kind == "mesh") {
+                if (t.id != knifeDrawableId) {
+                    knifeDraft = emptyList()
+                    knifeDrawableId = t.id
+                }
+                val anchor = knifeAnchor(pos, t, viewport, shift)
+                if (anchor != knifeDraft.lastOrNull()) knifeDraft = knifeDraft + anchor
+            }
+            return true
+        }
+
         // 2. Level 2 Bezier Deformer in DEFORM mode
         if (hierarchyMode == EditHierarchyMode.DEFORM && editLevel == 2) {
             val t = target()
@@ -2158,6 +2428,18 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                 applyObjectPick(HierarchyPick(deformerId = id), null)
                 return true
             }
+        }
+
+        // 2c. The subdivide brush. It takes every edge whose two ends fall inside the radius, which is
+        //     the same rule the panel button uses, so the two entry points cannot disagree. The mesh is
+        //     frozen for the whole stroke - re-splitting an already-split edge would split the halves
+        //     again - so the drag only accumulates a vertex set and the op runs once on release.
+        if (tool == CanvasTool.SUBDIVIDE) {
+            val t = target() ?: return true
+            if (t.kind != "mesh") return true
+            targetAtPress = t; original = model; dragging = true; subdividing = true
+            subdivideEdges = edgesWithin(pos, pos, t, viewport)
+            return true
         }
 
         // 3. Brush Select
@@ -2245,9 +2527,22 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         }
 
         var picked = points.indices.filter { (points[it] - pos).getDistance() < 10f }.minByOrNull { (points[it] - pos).getDistance() }?.let { setOf(it) }.orEmpty()
-        if (hierarchyMode == EditHierarchyMode.EDIT && editTarget.kind == "mesh" && elementMode > 0) {
-            picked = if (elementMode == 1) MeshTopology.uniqueEdges(editTarget.indices).minByOrNull { edge -> distanceToSegment(pos, points[edge.endpointLow], points[edge.endpointHigh]) }?.takeIf { distanceToSegment(pos, points[it.endpointLow], points[it.endpointHigh]) < 8f }?.let { setOf(it.endpointLow, it.endpointHigh) }.orEmpty()
-            else editTarget.indices.toList().chunked(3).firstOrNull { tri -> insidePolygon(pos, tri.map { points[it] }) }?.toSet().orEmpty()
+        var pickedEdge: MeshElement.Edge? = null
+        var pickedFace: Int? = null
+        if (hierarchyMode == EditHierarchyMode.EDIT && editTarget.kind == "mesh") {
+            when (elementMode) {
+                1 -> {
+                    pickedEdge = MeshTopology.uniqueEdges(editTarget.indices).minByOrNull { edge -> distanceToSegment(pos, points[edge.endpointLow], points[edge.endpointHigh]) }
+                        ?.takeIf { distanceToSegment(pos, points[it.endpointLow], points[it.endpointHigh]) < 8f }
+                    picked = pickedEdge?.let { setOf(it.endpointLow, it.endpointHigh) }.orEmpty()
+                }
+                2 -> {
+                    pickedFace = (0 until editTarget.indices.size / 3).firstOrNull { face ->
+                        insidePolygon(pos, (0..2).map { points[editTarget.indices[face * 3 + it]] })
+                    }
+                    picked = pickedFace?.let { MeshTopology.verticesOfTriangle(editTarget.indices, it) }.orEmpty()
+                }
+            }
         }
 
         if (tool == CanvasTool.SELECT) {
@@ -2263,7 +2558,13 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         }
 
         if (picked.isNotEmpty()) {
-            vertices = when {
+            if (pickedEdge != null) {
+                selectedEdges = when { alt -> selectedEdges - pickedEdge; shift -> selectedEdges + pickedEdge; else -> setOf(pickedEdge) }
+                vertices = selectedEdges.flatMapTo(LinkedHashSet()) { listOf(it.endpointLow, it.endpointHigh) }
+            } else if (pickedFace != null) {
+                selectedFaces = when { alt -> selectedFaces - pickedFace; shift -> selectedFaces + pickedFace; else -> setOf(pickedFace) }
+                vertices = selectedFaces.flatMapTo(LinkedHashSet()) { MeshTopology.verticesOfTriangle(editTarget.indices, it) }
+            } else vertices = when {
                 alt -> vertices - picked
                 shift -> vertices + picked
                 picked.all { it in vertices } -> vertices
@@ -2271,20 +2572,26 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             }
         } else {
             marquee = listOf(pos, pos)
-            if (!shift && !alt) vertices = emptySet()
+            if (!shift && !alt) { vertices = emptySet(); selectedEdges = emptySet(); selectedFaces = emptySet() }
         }
         if (editTarget.kind == "rotation") vertices = if (picked == setOf(1)) setOf(1) else setOf(0, 1)
-        if (alt && picked.isNotEmpty()) dragging = false
+        if (alt && picked.isNotEmpty() && editTarget.kind != "rotation") dragging = false
         return true
     }
 
     fun move(pos: Offset, viewport: CanvasViewport, shift: Boolean, alt: Boolean = false, ctrl: Boolean = false) {
         this.viewport = viewport
-        updateHover(pos, viewport, ctrl)
+        updateHover(pos, viewport, ctrl, shift)
         shrinks = if (dragging && tool == CanvasTool.INFLATE) shrinkAtPress else inflateInvert xor alt
         if (!dragging || busy) return
         moved = moved || (pos - start).getDistance() > 2f
         if (!moved) return
+
+        if (subdividing) {
+            targetAtPress?.let { t -> subdivideEdges = subdivideEdges + edgesWithin(previous, pos, t, viewport) }
+            previous = pos
+            return
+        }
 
         if (hierarchyMode == EditHierarchyMode.PAINT && isPainting) {
             paintStrokeCurrent = pos
@@ -2299,7 +2606,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         }
 
         if (isCreatingWarp || isCreatingRotation) {
-            creationCurrent = pos
+            creationCurrent = if (isCreatingRotation && shift) CanvasGestureGeometry.direction(creationStart!!, pos, snap = true) else pos
             return
         }
 
@@ -2383,6 +2690,20 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                 }
             }
 
+            if (t.kind == "rotation" && vertices == setOf(1)) {
+                val base = t.geometry.points
+                val origin = Offset(base[0], base[1])
+                val arm = Offset(base[2], base[3])
+                val pointer = local(pos, t, viewport, base[2] to base[3]).let { Offset(it.first, it.second) }
+                val endpoint = if (alt) {
+                    origin + (arm - origin) * ((pointer - origin).getDistance().coerceAtLeast(1e-4f) / (arm - origin).getDistance().coerceAtLeast(1e-4f))
+                } else CanvasGestureGeometry.direction(origin, pointer, (arm - origin).getDistance(), shift)
+                if ((endpoint - origin).getDistance() < 1e-5f) return
+                val cmd = geometryCommand(t, floatArrayOf(origin.x, origin.y, endpoint.x, endpoint.y))
+                preview = RigAuthoringJournal.apply(source, cmd); pending = cmd; previous = pos
+                return
+            }
+
             val brush = tool in DEFORM_BRUSH_TOOLS
             val inflate = tool == CanvasTool.INFLATE
             val isDeformBrush = tool == CanvasTool.BRUSH && !shift
@@ -2435,6 +2756,16 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
 
     fun release() {
         if (!dragging) return
+        if (subdividing) {
+            subdividing = false
+            dragging = false
+            val covered = subdivideEdges
+            subdivideEdges = emptySet()
+            targetAtPress = null; original = null
+            if (covered.isNotEmpty()) topology("subdivide", edges = covered)
+            return
+        }
+
         if (hierarchyMode == EditHierarchyMode.PAINT && isPainting) {
             val session = paintSession
             val vp = viewport
@@ -2561,13 +2892,14 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     fun beginBrushAdjust(pos: Offset, shift: Boolean = false): Boolean {
         if (adjustingBrush || dragging) return false
         val painting = paintBrushActive
-        if (!painting && tool != CanvasTool.BRUSH && tool != CanvasTool.SMOOTH && tool != CanvasTool.INFLATE) return false
+        if (!painting && tool != CanvasTool.BRUSH && tool != CanvasTool.SMOOTH && tool != CanvasTool.INFLATE && tool != CanvasTool.SUBDIVIDE) return false
         adjustingBrush = true
         brushAxis = when {
             // A paint tip has no angle, so Shift latches its third parameter - the opacity - instead,
             // which is the same pairing Photoshop uses for its Shift + right-drag.
             painting && shift -> BrushAdjustAxis.OPACITY
             painting -> null
+            tool == CanvasTool.SUBDIVIDE -> null
             shift && brushShape != BrushShape.CIRCLE -> BrushAdjustAxis.ANGLE
             else -> null
         }
@@ -2654,6 +2986,8 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         val t = targetAtPress ?: target() ?: return
         val found = screen(t.geometry.points, t, viewport).mapIndexedNotNull { i, p -> if (insidePolygon(p, polygon)) i else null }.toSet()
         vertices = when { subtractive -> vertices - found; additive -> vertices + found; else -> found }
+        selectedEdges = if (elementMode == 1) MeshTopology.edgesWithBothEndpointsSelected(t.indices, vertices) else emptySet()
+        selectedFaces = if (elementMode == 2) MeshTopology.facesWithAllVerticesSelected(t.indices, vertices).mapTo(LinkedHashSet()) { it.triangleIndex } else emptySet()
         pressedObject = null; marquee = emptyList(); targetAtPress = null; original = null; head = null
     }
 

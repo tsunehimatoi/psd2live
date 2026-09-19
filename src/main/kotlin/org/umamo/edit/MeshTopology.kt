@@ -228,4 +228,93 @@ object MeshTopology {
 		}
 		return islands
 	}
+
+	/**
+	 * Which triangles use each edge, as a map from the canonical edge to the triangle ordinals that
+	 * contain it, in triangle order.
+	 *
+	 * The inverse of [uniqueEdges] and the thing every rim / boundary question needs: an edge used once
+	 * is on the silhouette, an edge used twice is interior, and an edge whose uses straddle a kept and a
+	 * dropped triangle is a rim edge of whatever was removed.
+	 *
+	 * @param IntArray triangleIndices The mesh's triangle index list.
+	 * @return Map<MeshElement.Edge, List<Int>> The edge-to-triangles map.
+	 */
+	fun edgeUses(triangleIndices: IntArray): Map<MeshElement.Edge, List<Int>> {
+		val uses = LinkedHashMap<MeshElement.Edge, MutableList<Int>>()
+		for (ordinal in 0 until triangleIndices.size / 3) {
+			for (slot in 0..2) {
+				val a = triangleIndices[ordinal * 3 + slot]
+				val b = triangleIndices[ordinal * 3 + (slot + 1) % 3]
+				uses.getOrPut(MeshElement.Edge.of(a, b)) { mutableListOf() }.add(ordinal)
+			}
+		}
+		return uses
+	}
+
+	/**
+	 * The closed walks around whatever removing the triangles [keptTriangle] rejects would leave behind.
+	 *
+	 * A **rim edge** is one that at least one kept and at least one dropped triangle uses; an edge only
+	 * dropped triangles used is interior to the removed patch and disappears with it, and an edge only one
+	 * triangle ever used is on the silhouette and was never touched. The rim's direction comes from the
+	 * dropped side: a kept triangle walks a rim edge one way, so the removed triangle walked it the other,
+	 * and following that reversed direction gives loops whose winding matches the triangles being
+	 * replaced. Nothing here measures area to work that out.
+	 *
+	 * A walk that does not return to its start has reached the silhouette: the removal opened the hole
+	 * onto the edge of the mesh. Those are returned too, and the caller closes them with a chord.
+	 *
+	 * Short walks are returned as they are rather than dropped. A rim walk below 3 vertices cannot be
+	 * triangulated, and dropping it would quietly leave a gap in a mesh the caller believes it filled -
+	 * so the caller gets to refuse the whole op instead.
+	 *
+	 * @param IntArray triangleIndices The mesh's triangle index list.
+	 * @param (Int) -> Boolean keptTriangle True for a triangle that survives the removal.
+	 * @return List<IntArray> The rim loops, closed ones first, each a vertex-index walk.
+	 */
+	fun rimLoops(triangleIndices: IntArray, keptTriangle: (Int) -> Boolean): List<IntArray> {
+		val triangles = triangleIndices.toList().chunked(3)
+		val uses = edgeUses(triangleIndices)
+		val outgoing = HashMap<Int, ArrayDeque<Int>>()
+		for (ordinal in triangles.indices) {
+			if (!keptTriangle(ordinal)) continue
+			val triangle = triangles[ordinal]
+			for (slot in 0..2) {
+				val from = triangle[slot]
+				val to = triangle[(slot + 1) % 3]
+				val usedBy = uses[MeshElement.Edge.of(from, to)] ?: continue
+				if (usedBy.size < 2 || usedBy.all(keptTriangle)) continue
+				// The removed neighbour walked this edge the other way, so the hole walks to -> from.
+				outgoing.getOrPut(to) { ArrayDeque() }.add(from)
+			}
+		}
+
+		val closed = ArrayList<IntArray>()
+		val open = ArrayList<IntArray>()
+		// Bounded by the edge count: every step consumes one directed edge, so this cannot spin.
+		var budget = outgoing.values.sumOf { it.size } + 1
+		while (budget-- > 0) {
+			val start = outgoing.entries.firstOrNull { it.value.isNotEmpty() }?.key ?: break
+			val walk = ArrayList<Int>()
+			var current = start
+			var closedLoop = false
+			while (true) {
+				walk.add(current)
+				val successors = outgoing[current]
+				if (successors.isNullOrEmpty()) break
+				val next = successors.removeLast()
+				if (next == start) {
+					closedLoop = true
+					break
+				}
+				current = next
+				if (walk.size > triangles.size + 1) break
+			}
+			if (walk.isNotEmpty()) {
+				if (closedLoop) closed.add(walk.toIntArray()) else open.add(walk.toIntArray())
+			}
+		}
+		return closed + open
+	}
 }

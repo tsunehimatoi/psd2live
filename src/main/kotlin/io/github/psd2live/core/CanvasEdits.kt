@@ -1,8 +1,40 @@
 package io.github.psd2live.core
 
 import kotlinx.serialization.json.*
-import org.umamo.edit.*
+import org.umamo.edit.MergeTarget
+import org.umamo.edit.MeshRefinementOps
+import org.umamo.edit.MeshElement
+import org.umamo.edit.MeshTopology
+import org.umamo.edit.MeshTopologyEdit
+import org.umamo.edit.MeshTopologyOps
+import org.umamo.edit.VertexSource
+import org.umamo.edit.withMeshTopologyEdit
 import org.umamo.runtime.model.*
+
+/**
+ * A copy of this mesh with every vertex shifted by [shift], and each vertex's UV shifted by the same
+ * amount in UV space.
+ *
+ * This is what keeps editing from changing the picture: a vertex carries the texel it samples along with
+ * it, so the triangle keeps covering the same image wherever the vertex is dragged to. The UV side of the
+ * shift comes from [RigGeometryTools.uvAffine], the drawable's own position-to-UV map, which every
+ * generated mesh satisfies exactly - so the render is not merely close to the original, it is the same
+ * mapping evaluated at moved points.
+ *
+ * A mesh that cannot pin an affine down (degenerate, or hand-built by something else) falls back to
+ * leaving the UVs alone, which is the old behaviour rather than a wrong guess.
+ */
+internal fun DrawableMesh.movedBy(shift: FloatArray): DrawableMesh {
+    require(shift.size == positions.size) { "A vertex shift must match the mesh" }
+    val moved = FloatArray(positions.size) { positions[it] + shift[it] }
+    val phi = RigGeometryTools.uvAffine(positions, uvs) ?: return DrawableMesh(moved, uvs, indices)
+    val movedUvs = FloatArray(uvs.size)
+    for (i in moved.indices step 2) {
+        movedUvs[i] = phi[0] * moved[i] + phi[1] * moved[i + 1] + phi[4]
+        movedUvs[i + 1] = phi[2] * moved[i] + phi[3] * moved[i + 1] + phi[5]
+    }
+    return DrawableMesh(moved, movedUvs, indices)
+}
 
 /** Replayable canvas operations. The preview and persisted history use this same reducer. */
 internal object CanvasEdits {
@@ -29,10 +61,18 @@ internal object CanvasEdits {
                 val baseAngle = edit["angle"]?.jsonPrimitive?.float ?: 0f
                 val rotation=Deformer.Rotation(DeformerId(id),edit.getValue("name").jsonPrimitive.content,null,null,baseAngle,
                     KeyformGrid(emptyList(),listOf(KeyformCell(intArrayOf(),RotationPivotForm(originX,originY,0f,1f)))))
-                model.copy(deformers=listOf(rotation)+model.deformers.map { d -> if(d.id !in roots)d else when(d) {
-                    is Deformer.Warp -> d.copy(parent=rotation.id)
-                    is Deformer.Rotation -> d.copy(parent=rotation.id)
-                } },drawables=model.drawables.map { if(it.id.raw in selected && it.parentDeformerId==null)it.copy(parentDeformerId=rotation.id) else it }).withDerivedRenderRoot()
+                require(listOf(originX, originY, baseAngle).all(Float::isFinite))
+                if (edit["preservePose"]?.jsonPrimitive?.booleanOrNull == true) {
+                    RotationCreationSpace(originX, originY, baseAngle).wrap(model, rotation, roots, selected)
+                } else {
+                    // Old journals retain their original coordinate-space semantics.
+                    model.copy(deformers = listOf(rotation) + model.deformers.map { d -> if (d.id !in roots) d else when (d) {
+                        is Deformer.Warp -> d.copy(parent = rotation.id)
+                        is Deformer.Rotation -> d.copy(parent = rotation.id)
+                    } }, drawables = model.drawables.map {
+                        if (it.id.raw in selected && it.parentDeformerId == null) it.copy(parentDeformerId = rotation.id) else it
+                    }).withDerivedRenderRoot()
+                }
             }
             "canvas_create_warp" -> {
                 val ids=edit.getValue("meshes").jsonArray.map { it.jsonPrimitive.content }.toSet()
@@ -42,7 +82,8 @@ internal object CanvasEdits {
                 require(model.deformers.none { it.id.raw==id })
                 val parent=drawables.first().parentDeformerId
                 if(model.deformers.any { it.id==parent && it is Deformer.Warp }) {
-                    RigWarpEdit(id,edit.getValue("name").jsonPrimitive.content,parent!!.raw,ids.toList(),4,4).applyTo(model)
+                    RigWarpEdit(id,edit.getValue("name").jsonPrimitive.content,parent!!.raw,ids.toList(),
+                        edit["rows"]?.jsonPrimitive?.int ?: 4, edit["columns"]?.jsonPrimitive?.int ?: 4).applyTo(model)
                 } else {
                     val all=drawables.flatMap { d ->
                         val mesh=d.mesh!!
@@ -56,6 +97,8 @@ internal object CanvasEdits {
                     val y = customBounds?.get("y")?.jsonPrimitive?.float ?: (bounds[1]-bounds[3]*0.05f)
                     val w = customBounds?.get("w")?.jsonPrimitive?.float ?: (bounds[2]*1.1f)
                     val h = customBounds?.get("h")?.jsonPrimitive?.float ?: (bounds[3]*1.1f)
+                    require(rows in 1..32 && cols in 1..32) { "Warp divisions must be between 1 and 32" }
+                    require(listOf(x, y, w, h).all(Float::isFinite) && w > 1e-6f && h > 1e-6f) { "Warp bounds must have positive width and height" }
                     val points = (0..rows).flatMap { r -> (0..cols).flatMap { c -> listOf(x+c*w/cols, y+r*h/rows) } }.toFloatArray()
                     val warp = Deformer.Warp(DeformerId(id), edit.getValue("name").jsonPrimitive.content, parent, null, rows, cols, true, KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(), WarpLatticeForm(points)))))
                     model.copy(deformers=model.deformers+warp,drawables=model.drawables.map { d -> if(d.id.raw !in ids)d else {
@@ -73,7 +116,7 @@ internal object CanvasEdits {
                 val key = edit.getValue("key").jsonObject.mapValues { it.value.jsonPrimitive.float }
                 val geometry = RigGeometryTools.geometry(model, kind, id, key)
                 require(points.size == geometry.points.size)
-                require(geometry.axes.all { it.parameterId.raw in key }) { "Include every bound parameter axis" }
+                if (key.isNotEmpty()) require(geometry.axes.all { it.parameterId.raw in key }) { "Include every bound parameter axis" }
                 if(kind == "rotation") {
                     val rotation=model.deformers.single { it.id.raw==id } as Deformer.Rotation
                     require(points.size==4)
@@ -81,7 +124,9 @@ internal object CanvasEdits {
                     val dx=points[2]-points[0]; val dy=points[3]-points[1]
                     val scale=kotlin.math.hypot(dx,dy)/length
                     require(scale>1e-5f) { "Rotation scale must be positive" }
-                    val angle=kotlin.math.atan2(dy,dx)*180f/kotlin.math.PI.toFloat()-rotation.baseAngle
+                    val wrapped=kotlin.math.atan2(dy,dx)*180f/kotlin.math.PI.toFloat()-rotation.baseAngle
+                    val reference = geometry.rotationAngle ?: 0f
+                    val angle = wrapped + 360f * kotlin.math.round((reference - wrapped) / 360f)
                     val form=RotationPivotForm(points[0],points[1],angle,scale)
                     if(key.isEmpty())model.copy(deformers=model.deformers.map { if(it.id==rotation.id)rotation.copy(geometryGrid=KeyformGrid(emptyList(),listOf(KeyformCell(intArrayOf(),form)))) else it })
                     else applyKeyformSet(model,RigKeyformSetEdit(RigTargetRef(RigTargetKind.ROTATION_DEFORMER,id),key,RigKeyformGeometryEdit(originX=form.originX,originY=form.originY,angle=form.angle,scale=form.scale)))
@@ -93,46 +138,38 @@ internal object CanvasEdits {
                     model.copy(deformers = model.deformers.map {
                         if (it.id.raw == id && it is Deformer.Warp) it.copy(geometryGrid = KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(), WarpLatticeForm(points))))) else it
                     })
-                } else model.copy(drawables = model.drawables.map {
-                    if (it.id.raw == id) it.copy(mesh = it.mesh!!.let { m -> DrawableMesh(points, m.uvs, m.indices) }, geometryGrid = it.geometryGrid) else it
-                })
+                } else {
+                    // The mesh moves by how far its DISPLAYED geometry moved, not to the displayed points.
+                    // Assigning the displayed points to the rest mesh would apply a keyed default delta a
+                    // second time and make the geometry jump out from under the pointer; taking the shift
+                    // keeps the edit under the cursor whatever the drawable's default keyform holds.
+                    val displayed = RigGeometryTools.geometry(model, "mesh", id, emptyMap()).points
+                    val shift = FloatArray(points.size) { points[it] - displayed[it] }
+                    model.copy(drawables = model.drawables.map {
+                        if (it.id.raw != id) it else it.mesh?.let { mesh ->
+                            it.copy(mesh = mesh.movedBy(shift), geometryGrid = it.geometryGrid)
+                        } ?: it
+                    })
+                }
             }
             "canvas_topology" -> {
                 val drawable = model.drawables.single { it.id.raw == id }
                 val mesh = requireNotNull(drawable.mesh)
                 val selected = edit.getValue("vertices").jsonArray.map { it.jsonPrimitive.int }.toSet()
-                require(selected.isNotEmpty() && selected.all { it in 0 until mesh.vertexCount })
+                // Not `isNotEmpty`: the knife carries its anchors instead of a selection, and an
+                // action that needs a selection answers null from CanvasTopology.build anyway.
+                require(selected.all { it in 0 until mesh.vertexCount })
                 val action = edit.getValue("action").jsonPrimitive.content
-                val result = when (action) {
-                    "merge" -> requireNotNull(MeshTopologyOps.mergeVertices(mesh, selected.sorted(), MergeTarget.AtCenter)) { "Select at least two vertices" }.edit
-                    "connect" -> { require(selected.size == 2); requireNotNull(MeshTopologyOps.connectVertices(mesh, selected.first(), selected.last())) { "These vertices cannot be connected" }.edit }
-                    "delete" -> {
-                        val keep = (0 until mesh.vertexCount).filter { it !in selected }
-                        require(keep.size >= 3) { "A mesh needs at least three vertices" }
-                        val remap = keep.withIndex().associate { it.value to it.index }
-                        val triangles = mesh.indices.toList().chunked(3).filter { t -> t.none { it in selected } }.flatten().map { remap.getValue(it) }.toIntArray()
-                        require(triangles.isNotEmpty()) { "Deletion would remove every triangle" }
-                        MeshTopologyEdit(DrawableMesh(keep.flatMap { listOf(mesh.positions[it*2], mesh.positions[it*2+1]) }.toFloatArray(),
-                            keep.flatMap { listOf(mesh.uvs[it*2], mesh.uvs[it*2+1]) }.toFloatArray(), triangles), keep.map(VertexSource::FromOld))
-                    }
-                    "split" -> {
-                        val edges = MeshTopology.uniqueEdges(mesh.indices).filter { it.endpointLow in selected && it.endpointHigh in selected }
-                        require(edges.isNotEmpty()) { "Select both ends of an edge" }
-                        // Split a single edge, including both adjacent triangles; all keyforms interpolate with it.
-                        val edge = edges.first(); val a = edge.endpointLow; val b = edge.endpointHigh; val n = mesh.vertexCount
-                        val triangles = mesh.indices.toList().chunked(3).flatMap { t ->
-                            if (a !in t || b !in t) t else {
-                                val start = (0..2).first { (t[it] == a && t[(it+1)%3] == b) || (t[it] == b && t[(it+1)%3] == a) }
-                                val x=t[start]; val y=t[(start+1)%3]; val z=t[(start+2)%3]
-                                listOf(x,n,z,n,y,z)
-                            }
-                        }.toIntArray()
-                        MeshTopologyEdit(DrawableMesh(mesh.positions + floatArrayOf((mesh.positions[a*2]+mesh.positions[b*2])/2, (mesh.positions[a*2+1]+mesh.positions[b*2+1])/2),
-                            mesh.uvs + floatArrayOf((mesh.uvs[a*2]+mesh.uvs[b*2])/2, (mesh.uvs[a*2+1]+mesh.uvs[b*2+1])/2), triangles),
-                            (0 until n).map { VertexSource.FromOld(it) } + VertexSource.LerpOf(a,b,0.5f))
-                    }
-                    else -> error("Unknown topology operation")
-                }
+                // The op itself lives in CanvasTopology so the editor can ask it the same question - see
+                // there for why the editor needs to know what an op makes before it is committed.
+                val anchors = CanvasTopology.parseAnchors(edit["anchors"]?.jsonArray)
+                val edges = edit["edges"]?.jsonArray?.map { pair ->
+                    val values = pair.jsonArray
+                    MeshElement.Edge.of(values[0].jsonPrimitive.int, values[1].jsonPrimitive.int)
+                }?.toSet().orEmpty()
+                val result = requireNotNull(CanvasTopology.build(mesh, action, selected, anchors, edges)) {
+                    "The $action operation does not apply to this selection"
+                }.edit
                 var next = model.withMeshTopologyEdit(drawable.id, result)
                 // Path anchors carry triangle indices. Rebind them before the old topology disappears.
                 val paths = model.deformPaths.filter { it.drawableId == drawable.id }.associate { path ->
@@ -145,30 +182,30 @@ internal object CanvasEdits {
             "canvas_create_glue" -> {
                 val meshA = DrawableId(edit.getValue("mesh_a").jsonPrimitive.content)
                 val meshB = DrawableId(edit.getValue("mesh_b").jsonPrimitive.content)
-                val dA = model.drawables.firstOrNull { it.id == meshA } ?: return model
-                val dB = model.drawables.firstOrNull { it.id == meshB } ?: return model
-                val mA = dA.mesh ?: return model
-                val mB = dB.mesh ?: return model
-                val pairs = mutableListOf<GluePair>()
-                for (i in 0 until mA.vertexCount) {
-                    val ax = mA.positions[i * 2]
-                    val ay = mA.positions[i * 2 + 1]
-                    var bestDist = Float.MAX_VALUE
-                    var bestJ = -1
-                    for (j in 0 until mB.vertexCount) {
-                        val bx = mB.positions[j * 2]
-                        val by = mB.positions[j * 2 + 1]
-                        val d = kotlin.math.hypot(ax - bx, ay - by)
-                        if (d < bestDist) {
-                            bestDist = d
-                            bestJ = j
-                        }
+                require(meshA != meshB) { "Select two different meshes" }
+                require(model.glues.none { it.id == id }) { "Glue ID already exists" }
+                val parameters = edit["pose"]?.jsonObject?.map { ParameterId(it.key) to it.value.jsonPrimitive.float }?.toMap().orEmpty()
+                val positions = org.umamo.render.eval.CpuDeformationEvaluator().evaluate(model, parameters).worldPositions
+                val a = requireNotNull(positions[meshA]) { "First mesh is not visible at this pose" }
+                val b = requireNotNull(positions[meshB]) { "Second mesh is not visible at this pose" }
+                val distance = edit["distance"]?.jsonPrimitive?.float ?: 40f
+                require(distance.isFinite() && distance > 0f) { "Glue distance must be positive" }
+                val usedB = mutableSetOf<Int>()
+                val pairs = (0 until a.size / 2).mapNotNull { i ->
+                    var nearest = -1
+                    var best = distance
+                    for (j in 0 until b.size / 2) {
+                        if (j in usedB) continue
+                        val d = kotlin.math.hypot(a[i * 2] - b[j * 2], a[i * 2 + 1] - b[j * 2 + 1])
+                        if (d <= best) { nearest = j; best = d }
                     }
-                    if (bestJ >= 0 && bestDist < 40f) {
-                        pairs.add(GluePair(i, bestJ, 0.5f, 0.5f))
+                    if (nearest < 0) null else {
+                        usedB += nearest
+                        GluePair(i, nearest, 0.5f, 0.5f)
                     }
                 }
-                val glue = Glue(meshA, meshB, pairs, intensity = 1f, id = "Glue_${java.util.UUID.randomUUID()}")
+                require(pairs.isNotEmpty()) { "No nearby vertices to glue; increase the matching distance or move the meshes closer" }
+                val glue = Glue(meshA, meshB, pairs, intensity = 1f, id = id)
                 model.copy(glues = model.glues + glue)
             }
             else -> error("Unknown canvas operation")

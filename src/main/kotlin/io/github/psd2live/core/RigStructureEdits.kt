@@ -1,7 +1,27 @@
 package io.github.psd2live.core
 
 import kotlinx.serialization.json.*
-import org.umamo.edit.*
+import org.umamo.edit.withDeformerMoved
+import org.umamo.edit.withDeformerMultiplyColor
+import org.umamo.edit.withDeformerName
+import org.umamo.edit.withDeformerOpacity
+import org.umamo.edit.withDeformerPart
+import org.umamo.edit.withDeformerQuadTransform
+import org.umamo.edit.withDeformerScreenColor
+import org.umamo.edit.withDeformerSelectable
+import org.umamo.edit.withDrawableBlendMode
+import org.umamo.edit.withDrawableCulling
+import org.umamo.edit.withDrawableDrawOrder
+import org.umamo.edit.withDrawableInvertMask
+import org.umamo.edit.withDrawableMaskedBy
+import org.umamo.edit.withDrawableMultiplyColor
+import org.umamo.edit.withDrawableName
+import org.umamo.edit.withDrawableOpacity
+import org.umamo.edit.withDrawableScreenColor
+import org.umamo.edit.withDrawableSelectable
+import org.umamo.edit.withOrgChildMoved
+import org.umamo.edit.withPartName
+import org.umamo.edit.withPartSelectable
 import org.umamo.runtime.model.*
 
 /** Ordered document edits. Stored verbatim in history and replayed after rig construction. */
