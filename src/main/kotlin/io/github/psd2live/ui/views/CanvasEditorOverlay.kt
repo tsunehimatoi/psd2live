@@ -6,12 +6,15 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -21,6 +24,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
@@ -31,12 +35,17 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.skiaCanvas
 import org.jetbrains.skia.BlendMode as SkiaBlendMode
 import org.jetbrains.skia.Paint as SkiaPaint
 import org.jetbrains.skia.VertexMode as SkiaVertexMode
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.onPointerEvent
+import java.awt.Cursor
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -45,6 +54,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -59,11 +69,16 @@ import io.github.psd2live.ui.components.*
 import io.github.psd2live.ui.state.Keymap
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.theme.LocalToolColors
+import io.github.psd2live.ui.theme.LocalToolTypography
 import io.github.psd2live.ui.theme.ToolColors
 import io.github.psd2live.ui.theme.frostedGlass
 import io.github.psd2live.ui.theme.frostedGlassTopBar
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.cos
 import kotlin.math.roundToInt
+import kotlin.math.sin
 import org.umamo.edit.MeshTopology
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
@@ -283,12 +298,16 @@ internal fun BoxScope.CanvasEditorOverlay(
             val pts = editor.screen(target.geometry.points, target, viewport)
             if (target.kind == "rotation") {
                 if (pts.size >= 2) {
-                    drawCircle(colors.accent.copy(alpha = 0.28f), (pts[1] - pts[0]).getDistance(), pts[0], style = Stroke(1f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 5f))))
-                    drawLine(colors.accent, pts[0], pts[1], 2.5f)
-                    drawCircle(colors.accent, 10f, pts[0], style = Stroke(1f))
-                    if (editor.hoveredVertex == 1) drawCircle(colors.accent, 9f, pts[1], style = Stroke(2f))
-                    drawCircle(colors.accent, 6.5f, pts[0])
-                    drawCircle(Color(0xFF7BBB99), 5.5f, pts[1])
+                    val guide = editor.rotationGuideScreen(target, viewport)
+                    drawRotationArrow(
+                        pivot = guide[0],
+                        tip = guide[1],
+                        color = colors.accent,
+                        tipColor = Color(0xFF7BBB99),
+                        hoveredTip = editor.hoveredVertex == 1 || (editor.inGesture && editor.vertices == setOf(1)),
+                        hoveredPivot = editor.hoveredVertex == 0 || (editor.inGesture && editor.vertices.contains(0)),
+                        isAltHeld = editor.altHeld,
+                    )
                 }
             } else if (editor.hierarchyMode == EditHierarchyMode.DEFORM && editor.editLevel == 2) {
                 // LEVEL 2: Live2D Cubism-style Bezier Deformer
@@ -436,8 +455,23 @@ internal fun BoxScope.CanvasEditorOverlay(
         //     picked layer apart from the ones merely drawn, and it carries across a multi-select.
         if ((editor.hierarchyMode == EditHierarchyMode.SELECT || (editor.hierarchyMode == EditHierarchyMode.PAINT && editor.tool == CanvasTool.SELECT)) && editor.tool == CanvasTool.SELECT) {
             editor.objects.forEach { layerId ->
-                val item = editor.target(editor.model, layerId, null)
-                val points = item?.let { editor.screen(it.geometry.points, it, viewport) }.orEmpty()
+                val item = editor.target(editor.model, layerId, null) ?: return@forEach
+                // Rotation is an arrow, not a mesh AABB — a box around the two axis points stretches
+                // as the arm turns and reads as a broken length.
+                if (item.kind == "rotation") {
+                    val guide = editor.rotationGuideScreen(item, viewport)
+                    if (guide.size >= 2) {
+                        val awt = ComponentPalette.strong(layerId)
+                        drawRotationArrow(
+                            pivot = guide[0],
+                            tip = guide[1],
+                            color = Color(awt.red, awt.green, awt.blue),
+                            tipColor = Color(0xFF7BBB99),
+                        )
+                    }
+                    return@forEach
+                }
+                val points = editor.screen(item.geometry.points, item, viewport)
                 if (points.isNotEmpty()) {
                     val left = points.minOf { it.x }; val top = points.minOf { it.y }
                     val origin = Offset(left, top)
@@ -631,12 +665,7 @@ internal fun BoxScope.CanvasEditorOverlay(
                 }
                 CreatePlacementKind.ROTATION -> {
                     editor.placementPivotScreen(viewport)?.let { (pivot, tip) ->
-                        val radius = (tip - pivot).getDistance()
-                        drawCircle(colors.accent.copy(alpha = 0.1f), radius, pivot)
-                        drawCircle(colors.accent, radius, pivot, style = Stroke(1.2f))
-                        drawLine(colors.accent, pivot, tip, 2f)
-                        drawCircle(colors.accent, 6f, pivot)
-                        drawCircle(Color(0xFF7BBB99), 5f, tip)
+                        drawRotationArrow(pivot, tip, colors.accent, Color(0xFF7BBB99))
                     }
                 }
                 else -> {}
@@ -663,13 +692,7 @@ internal fun BoxScope.CanvasEditorOverlay(
         }
 
         if (editor.isCreatingRotation && editor.creationStart != null && editor.creationCurrent != null) {
-            val s = editor.creationStart!!; val e = editor.creationCurrent!!
-            val radius = (e - s).getDistance()
-            drawCircle(colors.accent.copy(alpha = 0.1f), radius, s)
-            drawCircle(colors.accent, radius, s, style = Stroke(1.2f))
-            drawLine(colors.accent, s, e, 2f)
-            drawCircle(colors.accent, 5f, s)
-            drawCircle(Color(0xFF7BBB99), 4f, e)
+            drawRotationArrow(editor.creationStart!!, editor.creationCurrent!!, colors.accent, Color(0xFF7BBB99))
         }
 
         // Rotation create scope: highlight every drawable the root wrap would affect
@@ -936,9 +959,48 @@ internal fun BoxScope.CanvasEditorOverlay(
     // Left Animated Hover Toolbar (edit / deform / paint tools)
     CanvasToolBar(editor = editor, keymap = keymap, focus = focus)
 
-    // Bottom-left placement panel (Blender-style confirm)
-    if (editor.placement != null) {
-        PlacementSettingsPanel(editor = editor, focus = focus)
+    // Bottom-left placement panel (Blender-style confirm with smooth animation)
+    val currentPlacement = editor.placement
+    var lastPlacement by remember { mutableStateOf<CreatePlacement?>(null) }
+    if (currentPlacement != null) {
+        lastPlacement = currentPlacement
+    }
+    val activePlacement = currentPlacement ?: lastPlacement
+
+    AnimatedVisibility(
+        visible = currentPlacement != null && activePlacement != null,
+        enter = slideInVertically(
+            initialOffsetY = { it / 3 },
+            animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+        ) + fadeIn(
+            animationSpec = tween(durationMillis = 180),
+        ) + scaleIn(
+            initialScale = 0.95f,
+            transformOrigin = TransformOrigin(0f, 1f),
+            animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+        ),
+        exit = slideOutVertically(
+            targetOffsetY = { it / 3 },
+            animationSpec = tween(durationMillis = 180, easing = FastOutLinearInEasing),
+        ) + fadeOut(
+            animationSpec = tween(durationMillis = 140),
+        ) + scaleOut(
+            targetScale = 0.95f,
+            transformOrigin = TransformOrigin(0f, 1f),
+            animationSpec = tween(durationMillis = 180, easing = FastOutLinearInEasing),
+        ),
+        modifier = Modifier
+            .align(Alignment.BottomStart)
+            .padding(start = 10.dp, bottom = 34.dp),
+    ) {
+        if (activePlacement != null) {
+            PlacementSettingsPanel(
+                editor = editor,
+                place = activePlacement,
+                isClosing = currentPlacement == null,
+                focus = focus,
+            )
+        }
     }
 
     // Top Left Hierarchy / Layer Mode Toolbar
@@ -977,31 +1039,40 @@ internal fun BoxScope.CanvasEditorOverlay(
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
-private fun BoxScope.PlacementSettingsPanel(
+private fun PlacementSettingsPanel(
     editor: CanvasEditor,
+    place: CreatePlacement,
+    isClosing: Boolean,
     focus: () -> Unit,
 ) {
     val colors = LocalToolColors.current
-    val place = editor.placement ?: return
+    val typography = LocalToolTypography.current
 
     Column(
         modifier = Modifier
-            .align(Alignment.BottomStart)
-            .padding(start = 8.dp, bottom = 36.dp)
-            .widthIn(min = 200.dp, max = 236.dp)
-            .frostedGlass(shape = RoundedCornerShape(8.dp), isHovered = true, elevation = 6.dp, alpha = 0.92f)
-            .padding(horizontal = 8.dp, vertical = 7.dp),
+            .width(240.dp)
+            .frostedGlass(shape = RoundedCornerShape(6.dp), isHovered = true, elevation = 6.dp, alpha = 0.94f)
+            .border(BorderStroke(1.dp, colors.border.copy(alpha = 0.85f)), RoundedCornerShape(6.dp))
+            .padding(horizontal = 9.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        // Header: icon + title + relation chip
+        // 1. Header: Icon Badge + Title + Close Button
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth(),
         ) {
-            when (place.kind) {
-                CreatePlacementKind.WARP -> IconWarpDeformer(tint = colors.accent, modifier = Modifier.size(14.dp))
-                CreatePlacementKind.ROTATION -> IconRotationDeformer(modifier = Modifier.size(14.dp), tint = colors.accent)
-                CreatePlacementKind.PATH -> IconDeformPath(modifier = Modifier.size(14.dp), tint = colors.accent)
+            Box(
+                modifier = Modifier
+                    .size(20.dp)
+                    .background(colors.accent.copy(alpha = 0.16f), RoundedCornerShape(4.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                when (place.kind) {
+                    CreatePlacementKind.WARP -> IconWarpDeformer(tint = colors.accent, modifier = Modifier.size(13.dp))
+                    CreatePlacementKind.ROTATION -> IconRotationDeformer(tint = colors.accent, modifier = Modifier.size(13.dp))
+                    CreatePlacementKind.PATH -> IconDeformPath(tint = colors.accent, modifier = Modifier.size(13.dp))
+                }
             }
             Text(
                 text = when (place.kind) {
@@ -1010,160 +1081,341 @@ private fun BoxScope.PlacementSettingsPanel(
                     CreatePlacementKind.PATH -> tr("editor.pathDeform")
                 },
                 color = colors.textPrimary,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
+                style = typography.body.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
                 modifier = Modifier.weight(1f),
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
+            CompactIconButton(
+                onClick = { if (!isClosing) { editor.cancelPlacement(); focus() } },
+                size = 18.dp,
+                tooltip = "${tr("editor.placementCancel")} (Esc)",
+            ) {
+                IconClose(tint = colors.textMuted, modifier = Modifier.size(10.dp))
+            }
+        }
+
+        // 2. Target relation info (single-line muted context)
+        val relationText = buildString {
+            val isParent = place.relation == CreateRelation.AS_PARENT
+            append(tr(if (isParent) "editor.placementAsParentOf" else "editor.placementAsChildOf", place.anchorLabel))
+            if (place.meshIds.isNotEmpty()) {
+                append(" · ")
+                append(tr("editor.placementMeshCount", place.meshIds.size))
+            }
         }
         Text(
-            text = buildString {
-                append(
-                    tr(
-                        if (place.relation == CreateRelation.AS_PARENT) "editor.placementAsParentOf" else "editor.placementAsChildOf",
-                        place.anchorLabel,
-                    )
-                )
-                if (place.meshIds.isNotEmpty()) {
-                    append(" · ")
-                    append(tr("editor.placementMeshCount", place.meshIds.size))
-                }
-            },
-            color = colors.accent,
-            fontSize = 10.sp,
-            maxLines = 2,
+            text = relationText,
+            color = colors.textMuted,
+            fontSize = 9.5.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
         )
 
+        // 3. Name and Part Fields
         if (place.kind != CreatePlacementKind.PATH) {
-            CompactTextField(
-                value = place.name,
-                onValueChange = { editor.updatePlacementName(it) },
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.fillMaxWidth(),
-                height = 22.dp,
-            )
+            ) {
+                Text(
+                    text = tr("inspector.name"),
+                    color = colors.textMuted,
+                    fontSize = 10.sp,
+                    modifier = Modifier.width(28.dp),
+                )
+                CompactTextField(
+                    value = place.name,
+                    onValueChange = { if (!isClosing) editor.updatePlacementName(it) },
+                    modifier = Modifier.weight(1f),
+                    height = 22.dp,
+                )
+            }
+
             val partOptions = listOf("" to tr("editor.warpPart.inherit")) +
                 editor.model.parts.map { it.id.raw to it.name }
             val partSelected = partOptions.firstOrNull { it.first == (place.partId ?: "") } ?: partOptions.first()
-            CompactDropdown(
-                items = partOptions,
-                selectedItem = partSelected,
-                onItemSelected = { editor.updatePlacementPart(it.first.takeIf { id -> id.isNotEmpty() }) },
-                itemLabel = { it.second },
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.fillMaxWidth(),
-                height = 22.dp,
-            )
+            ) {
+                Text(
+                    text = tr("inspector.part"),
+                    color = colors.textMuted,
+                    fontSize = 10.sp,
+                    modifier = Modifier.width(28.dp),
+                )
+                CompactDropdown(
+                    items = partOptions,
+                    selectedItem = partSelected,
+                    onItemSelected = { if (!isClosing) editor.updatePlacementPart(it.first.takeIf { id -> id.isNotEmpty() }) },
+                    itemLabel = { it.second },
+                    modifier = Modifier.weight(1f),
+                    height = 22.dp,
+                )
+            }
         }
 
+        // 4. Grid Divisions (for WARP)
         if (place.kind == CreatePlacementKind.WARP) {
-            PlacementDivisionRow(
-                icon = { IconGridDivision(tint = colors.textMuted) },
-                label = tr("inspector.conversionDivision"),
-                presets = listOf(3 to 3, 5 to 5, 8 to 8),
-                rows = place.rows,
-                cols = place.cols,
-                maxDiv = 32,
-                onPreset = { r, c -> editor.updatePlacementGrid(r, c) },
-                onRows = { editor.updatePlacementGrid(it, place.cols) },
-                onCols = { editor.updatePlacementGrid(place.rows, it) },
-            )
-            PlacementDivisionRow(
-                icon = { IconBezierDivision(tint = colors.textMuted) },
-                label = tr("inspector.bezierDivision"),
-                presets = listOf(2 to 2, 3 to 3, 5 to 5),
-                rows = place.bezierRows,
-                cols = place.bezierCols,
-                maxDiv = 16,
-                onPreset = { r, c -> editor.updatePlacementBezier(r, c) },
-                onRows = { editor.updatePlacementBezier(it, place.bezierCols) },
-                onCols = { editor.updatePlacementBezier(place.bezierRows, it) },
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = tr("inspector.conversionDivision"),
+                    color = colors.textMuted,
+                    fontSize = 10.sp,
+                    modifier = Modifier.width(48.dp),
+                )
+                MiniStepper(
+                    value = place.cols,
+                    onValueChange = { if (!isClosing) editor.updatePlacementGrid(place.rows, it) },
+                    min = 1,
+                    max = 32,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = "×",
+                    color = colors.textMuted,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 1.dp),
+                )
+                MiniStepper(
+                    value = place.rows,
+                    onValueChange = { if (!isClosing) editor.updatePlacementGrid(it, place.cols) },
+                    min = 1,
+                    max = 32,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = tr("inspector.bezierDivision"),
+                    color = colors.textMuted,
+                    fontSize = 10.sp,
+                    modifier = Modifier.width(48.dp),
+                )
+                MiniStepper(
+                    value = place.bezierCols,
+                    onValueChange = { if (!isClosing) editor.updatePlacementBezier(place.bezierRows, it) },
+                    min = 1,
+                    max = 16,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = "×",
+                    color = colors.textMuted,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 1.dp),
+                )
+                MiniStepper(
+                    value = place.bezierRows,
+                    onValueChange = { if (!isClosing) editor.updatePlacementBezier(it, place.bezierCols) },
+                    min = 1,
+                    max = 16,
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
 
-        Text(
-            text = when (place.kind) {
-                CreatePlacementKind.WARP -> tr("editor.placementDragHint")
-                CreatePlacementKind.ROTATION -> tr("editor.placementRotationHint")
-                CreatePlacementKind.PATH -> tr("editor.pathCreateHint")
-            },
-            color = colors.textMuted,
-            fontSize = 9.sp,
-            maxLines = 2,
-        )
+        // 5. Rotation Angle (for ROTATION)
+        if (place.kind == CreatePlacementKind.ROTATION) {
+            val dx = place.tipX - place.originX
+            val dy = place.tipY - place.originY
+            val currentDeg = (atan2(dy.toDouble(), dx.toDouble()) * 180.0 / PI).let { if (it < 0) it + 360.0 else it }.roundToInt() % 360
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = tr("editor.direction"),
+                    color = colors.textMuted,
+                    fontSize = 10.sp,
+                    modifier = Modifier.width(28.dp),
+                )
+                MiniStepper(
+                    value = currentDeg,
+                    onValueChange = { if (!isClosing) editor.updatePlacementRotationDirection(it.toFloat()) },
+                    min = 0,
+                    max = 359,
+                    step = 15,
+                    unit = "°",
+                    modifier = Modifier.width(82.dp),
+                )
+            }
+        }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.fillMaxWidth()) {
+        // 6. Path Points Status (for PATH)
+        if (place.kind == CreatePlacementKind.PATH) {
+            val pointCount = editor.draft.size
+            val isReady = pointCount >= 2
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth().height(22.dp),
+            ) {
+                Text(
+                    text = if (isReady) tr("editor.placementPathReady", pointCount) else tr("editor.placementPathNeedMore", pointCount),
+                    color = if (isReady) colors.accent else colors.warning,
+                    fontSize = 9.5.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (pointCount > 0) {
+                    CompactButton(
+                        text = tr("editor.undoPoint"),
+                        onClick = { if (!isClosing) editor.undoDraftPoint() },
+                        height = 20.dp,
+                    )
+                }
+            }
+        }
+
+        // 7. Action Buttons
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+        ) {
             CompactButton(
-                text = tr("editor.placementCancel"),
-                onClick = { editor.cancelPlacement(); focus() },
+                text = "${tr("editor.placementCancel")} (Esc)",
+                onClick = { if (!isClosing) { editor.cancelPlacement(); focus() } },
                 modifier = Modifier.weight(1f),
                 height = 24.dp,
-                leadingIcon = { IconClose(modifier = Modifier.size(10.dp), tint = colors.textMuted) },
+                leadingIcon = { IconClose(modifier = Modifier.size(9.dp), tint = colors.textMuted) },
             )
             CompactButton(
-                text = tr("editor.placementConfirm"),
-                onClick = { editor.confirmPlacement(); focus() },
+                text = "${tr("editor.placementConfirm")} (Enter)",
+                onClick = { if (!isClosing) { editor.confirmPlacement(); focus() } },
                 isPrimary = true,
-                enabled = editor.editable && !editor.busy &&
+                enabled = !isClosing && editor.editable && !editor.busy &&
                     (place.kind != CreatePlacementKind.PATH || editor.draft.size >= 2),
                 modifier = Modifier.weight(1f),
                 height = 24.dp,
-                leadingIcon = { IconCheck(modifier = Modifier.size(10.dp), tint = colors.accentText) },
+                leadingIcon = { IconCheck(modifier = Modifier.size(9.dp), tint = colors.accentText) },
             )
         }
     }
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
-private fun PlacementDivisionRow(
-    icon: @Composable () -> Unit,
-    label: String,
-    presets: List<Pair<Int, Int>>,
-    rows: Int,
-    cols: Int,
-    maxDiv: Int,
-    onPreset: (Int, Int) -> Unit,
-    onRows: (Int) -> Unit,
-    onCols: (Int) -> Unit,
+private fun MiniStepper(
+    value: Int,
+    onValueChange: (Int) -> Unit,
+    min: Int = 1,
+    max: Int = 32,
+    step: Int = 1,
+    unit: String = "",
+    modifier: Modifier = Modifier,
 ) {
     val colors = LocalToolColors.current
-    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-        ) {
-            icon()
-            Text(label, color = colors.textMuted, fontSize = 9.sp, maxLines = 1)
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            presets.forEach { (r, c) ->
-                CompactToggleChip(
-                    text = "${r}×${c}",
-                    selected = rows == r && cols == c,
-                    onToggle = { onPreset(r, c) },
-                    height = 20.dp,
-                )
-            }
-            Spacer(Modifier.weight(1f))
-            CompactNumberSpinner(
-                value = cols.toDouble(),
-                onValueChange = { onCols(it.toInt()) },
-                modifier = Modifier.width(52.dp),
-                min = 1.0,
-                max = maxDiv.toDouble(),
-                unit = "C",
-                height = 20.dp,
+    val typography = LocalToolTypography.current
+    var textValue by remember(value) { mutableStateOf(value.toString()) }
+    var isFocused by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = modifier
+            .height(22.dp)
+            .background(colors.inputBackground, RoundedCornerShape(3.dp))
+            .border(
+                BorderStroke(1.dp, if (isFocused) colors.accent else colors.border),
+                RoundedCornerShape(3.dp),
             )
-            CompactNumberSpinner(
-                value = rows.toDouble(),
-                onValueChange = { onRows(it.toInt()) },
-                modifier = Modifier.width(52.dp),
-                min = 1.0,
-                max = maxDiv.toDouble(),
-                unit = "R",
-                height = 20.dp,
+            .onPointerEvent(PointerEventType.Scroll) { event ->
+                val change = event.changes.firstOrNull() ?: return@onPointerEvent
+                val dy = change.scrollDelta.y
+                if (dy < 0f) {
+                    onValueChange((value + step).coerceAtMost(max))
+                } else if (dy > 0f) {
+                    onValueChange((value - step).coerceAtLeast(min))
+                }
+            },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Decrement button
+        Box(
+            modifier = Modifier
+                .width(18.dp)
+                .fillMaxHeight()
+                .clickable(enabled = value > min) {
+                    onValueChange((value - step).coerceAtLeast(min))
+                }
+                .pointerHoverIcon(if (value > min) PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)) else PointerIcon.Default),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "-",
+                color = if (value > min) colors.textPrimary else colors.textDisabled,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+
+        // Center text / input
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight(),
+            contentAlignment = Alignment.Center,
+        ) {
+            BasicTextField(
+                value = if (isFocused) textValue else if (unit.isNotEmpty()) "$value$unit" else value.toString(),
+                onValueChange = { input ->
+                    val filtered = input.filter { it.isDigit() }.take(4)
+                    textValue = filtered
+                    filtered.toIntOrNull()?.let { num ->
+                        onValueChange(num.coerceIn(min, max))
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onFocusChanged { focusState ->
+                        isFocused = focusState.isFocused
+                        if (!focusState.isFocused) {
+                            textValue = value.toString()
+                        }
+                    },
+                textStyle = typography.mono.copy(
+                    color = colors.textPrimary,
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center,
+                ),
+                cursorBrush = SolidColor(colors.accent),
+                singleLine = true,
+            )
+        }
+
+        // Increment button
+        Box(
+            modifier = Modifier
+                .width(18.dp)
+                .fillMaxHeight()
+                .clickable(enabled = value < max) {
+                    onValueChange((value + step).coerceAtMost(max))
+                }
+                .pointerHoverIcon(if (value < max) PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)) else PointerIcon.Default),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "+",
+                color = if (value < max) colors.textPrimary else colors.textDisabled,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
             )
         }
     }
@@ -1645,13 +1897,16 @@ private fun ToolIcon(
                 line(3f, 11f, 15f, 11f)
             }
             CanvasTool.CREATE_ROTATION -> {
-                drawCircle(color, 2.5f * s, p(6f, 12f))
-                line(6f, 12f, 14f, 4f)
-                drawCircle(color, 1.8f * s, p(14f, 4f))
-                val arcPath = Path().apply {
-                    arcTo(androidx.compose.ui.geometry.Rect(Offset(-2f * s, 4f * s), Size(16f * s, 16f * s)), -65f, 45f, false)
+                // Arrow: shaft + head + pivot
+                line(5f, 13f, 13f, 5f)
+                val head = Path().apply {
+                    moveTo(14.5f * s, 3.5f * s)
+                    lineTo(11.2f * s, 4.2f * s)
+                    lineTo(13.8f * s, 6.8f * s)
+                    close()
                 }
-                drawPath(arcPath, color, style = Stroke(s * 1.2f))
+                drawPath(head, color)
+                drawCircle(color, 2.2f * s, p(5f, 13f))
             }
             CanvasTool.CREATE_DEFORM_PATH -> {
                 val path = Path().apply { moveTo(2 * s, 14 * s); cubicTo(6 * s, -2 * s, 12 * s, 20 * s, 16 * s, 4 * s) }
@@ -2316,6 +2571,148 @@ private fun BrushShapeIcon(
             }
         }
     }
+}
+
+/**
+ * Clean, minimalistic rotation deformer: tapered rounded needle (capsule-like),
+ * larger root pivot, single solid color without gradient or arrowhead,
+ * and a compact rotation indicator.
+ */
+private fun DrawScope.drawRotationArrow(
+    pivot: Offset,
+    tip: Offset,
+    color: Color,
+    tipColor: Color,
+    hoveredTip: Boolean = false,
+    hoveredPivot: Boolean = false,
+    isAltHeld: Boolean = false,
+) {
+    val delta = tip - pivot
+    val length = delta.getDistance().coerceAtLeast(1e-3f)
+    val dir = delta / length
+
+    // Dimensions: larger root at pivot, tapering to a rounded tip
+    val rootR = minOf(11f, maxOf(8.5f, length * 0.10f))
+    val tipR = minOf(4.5f, maxOf(3.2f, rootR * 0.45f))
+    val angleDeg = Math.toDegrees(atan2(delta.y.toDouble(), delta.x.toDouble())).toFloat()
+
+    // 1. Tapered needle with rounded ends at both sides (no arrow wings)
+    val tipCapRect = Rect(tip.x - tipR, tip.y - tipR, tip.x + tipR, tip.y + tipR)
+    val rootCapRect = Rect(pivot.x - rootR, pivot.y - rootR, pivot.x + rootR, pivot.y + rootR)
+    val needlePath = Path().apply {
+        arcTo(tipCapRect, angleDeg - 90f, 180f, false)
+        arcTo(rootCapRect, angleDeg + 90f, 180f, false)
+        close()
+    }
+
+    // Subtle drop shadow for contrast
+    translate(left = 0f, top = 1.2f) {
+        drawPath(needlePath, Color.Black.copy(alpha = 0.25f))
+    }
+
+    // Single solid color fill (no gradient)
+    drawPath(needlePath, color.copy(alpha = 0.88f))
+
+    // Crisp white hairline outline
+    drawPath(needlePath, Color.White.copy(alpha = 0.85f), style = Stroke(width = 1.2f, join = StrokeJoin.Round))
+
+    // 2. Handle 1: Pivot Origin (Root)
+    if (hoveredPivot) {
+        // Soft glowing halo on hover/drag
+        drawCircle(color.copy(alpha = 0.22f), radius = rootR + 5f, center = pivot)
+        drawCircle(color.copy(alpha = 0.80f), radius = rootR + 5f, center = pivot, style = Stroke(width = 1.2f))
+    }
+    // Concentric root hub
+    drawCircle(Color.Black.copy(alpha = 0.35f), radius = 4.8f, center = pivot + Offset(0f, 0.8f))
+    drawCircle(Color.White, radius = 4.2f, center = pivot)
+    drawCircle(color, radius = 2.6f, center = pivot)
+    drawCircle(Color.White, radius = 1.2f, center = pivot)
+
+    // 3. Handle 2: Tip Direction (Rotate & Scale Indicator)
+    if (hoveredTip) {
+        // Soft glowing halo on hover/drag
+        drawCircle(tipColor.copy(alpha = 0.22f), radius = tipR + 5f, center = tip)
+        drawCircle(tipColor.copy(alpha = 0.85f), radius = tipR + 5f, center = tip, style = Stroke(width = 1.2f))
+
+        if (isAltHeld) {
+            // Alt-key compact stretch indicator (<--->)
+            val stretchSpan = 10f
+            val sStart = tip - dir * stretchSpan
+            val sEnd = tip + dir * stretchSpan
+            drawLine(Color.Black.copy(alpha = 0.45f), sStart, sEnd, strokeWidth = 2.4f, cap = StrokeCap.Round)
+            drawLine(Color.White, sStart, sEnd, strokeWidth = 1.4f, cap = StrokeCap.Round)
+
+            fun drawStretchHead(tipP: Offset, headDir: Offset) {
+                val hPerp = Offset(-headDir.y, headDir.x)
+                val sh = Path().apply {
+                    moveTo(tipP.x + headDir.x * 1.5f, tipP.y + headDir.y * 1.5f)
+                    lineTo(tipP.x - headDir.x * 3.5f + hPerp.x * 2.5f, tipP.y - headDir.y * 3.5f + hPerp.y * 2.5f)
+                    lineTo(tipP.x - headDir.x * 3.5f - hPerp.x * 2.5f, tipP.y - headDir.y * 3.5f - hPerp.y * 2.5f)
+                    close()
+                }
+                drawPath(sh, tipColor)
+                drawPath(sh, Color.White, style = Stroke(0.8f, join = StrokeJoin.Round))
+            }
+            drawStretchHead(sStart, -dir)
+            drawStretchHead(sEnd, dir)
+        } else {
+            // Compact rotation arc: sweep shortened by half (from 72° to 36°)
+            val orbitR = length
+
+            if (orbitR >= 24f) {
+                val sweepAngle = 36f
+                val startAngle = angleDeg - sweepAngle / 2f
+                val arcRect = Rect(pivot.x - orbitR, pivot.y - orbitR, pivot.x + orbitR, pivot.y + orbitR)
+                val orbitArc = Path().apply {
+                    arcTo(arcRect, startAngle, sweepAngle, false)
+                }
+
+                // Arc stroke
+                drawPath(orbitArc, Color.Black.copy(alpha = 0.35f), style = Stroke(width = 3.0f, cap = StrokeCap.Round))
+                drawPath(orbitArc, Color.White.copy(alpha = 0.70f), style = Stroke(width = 2.0f, cap = StrokeCap.Round))
+                drawPath(orbitArc, tipColor, style = Stroke(width = 1.4f, cap = StrokeCap.Round))
+
+                // Compact bidirectional arrowheads at arc ends
+                fun drawOrbitHead(headAngleDeg: Float, isClockwise: Boolean) {
+                    val rad = Math.toRadians(headAngleDeg.toDouble())
+                    val endP = pivot + Offset((orbitR * cos(rad)).toFloat(), (orbitR * sin(rad)).toFloat())
+                    val sign = if (isClockwise) 1f else -1f
+                    val tx = (-sin(rad) * sign).toFloat()
+                    val ty = (cos(rad) * sign).toFloat()
+                    val nx = -ty
+                    val ny = tx
+                    val aLen = 4.2f
+                    val aHalf = 2.6f
+
+                    val head = Path().apply {
+                        moveTo(endP.x + tx * aLen, endP.y + ty * aLen)
+                        lineTo(endP.x + nx * aHalf, endP.y + ny * aHalf)
+                        lineTo(endP.x - nx * aHalf, endP.y - ny * aHalf)
+                        close()
+                    }
+                    drawPath(head, Color.Black.copy(alpha = 0.35f), style = Stroke(1.8f, join = StrokeJoin.Round))
+                    drawPath(head, tipColor)
+                    drawPath(head, Color.White, style = Stroke(0.8f, join = StrokeJoin.Round))
+                }
+
+                drawOrbitHead(startAngle, false)
+                drawOrbitHead(startAngle + sweepAngle, true)
+            } else {
+                // Fallback for very short distance: compact arc around tip
+                val arcR = 10f
+                val sweep = 90f
+                val arcRect = Rect(tip.x - arcR, tip.y - arcR, tip.x + arcR, tip.y + arcR)
+                val orbitArc = Path().apply {
+                    arcTo(arcRect, angleDeg - 45f, sweep, false)
+                }
+                drawPath(orbitArc, Color.Black.copy(alpha = 0.35f), style = Stroke(width = 2.8f, cap = StrokeCap.Round))
+                drawPath(orbitArc, tipColor, style = Stroke(width = 1.5f, cap = StrokeCap.Round))
+            }
+        }
+    }
+    // Tip center target
+    drawCircle(Color.Black.copy(alpha = 0.35f), radius = 2.8f, center = tip + Offset(0f, 0.8f))
+    drawCircle(Color.White, radius = 2.2f, center = tip)
 }
 
 /**

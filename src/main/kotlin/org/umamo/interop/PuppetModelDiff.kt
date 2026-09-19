@@ -56,6 +56,7 @@ enum class DeformerField {
 	LATTICE,
 	QUAD_TRANSFORM,
 	BASE_ANGLE,
+	HANDLE_LENGTH,
 	GEOMETRY,
 	CHANNELS,
 	STATICS,
@@ -349,6 +350,9 @@ private fun deformerFields(baseline: Deformer, edited: Deformer): Set<DeformerFi
 
 			is Deformer.Rotation -> {
 				val editedRotation = edited as Deformer.Rotation
+				if (baseline.handleLength != editedRotation.handleLength) {
+					add(DeformerField.HANDLE_LENGTH)
+				}
 				if (!floatEq(baseline.baseAngle, editedRotation.baseAngle)) {
 					add(DeformerField.BASE_ANGLE)
 				}

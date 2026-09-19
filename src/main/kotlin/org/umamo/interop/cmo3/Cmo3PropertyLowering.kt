@@ -269,6 +269,14 @@ internal class Cmo3PropertyLowering(
 									editor.ensureChildSlot(rotationSource, "CRotationDeformerSource", "baseAngle")
 								}
 							}
+							DeformerField.HANDLE_LENGTH -> {
+								val rotationSource = source as? CRotationDeformerSource
+								val length = (editedDeformer as? Deformer.Rotation)?.handleLength
+								if (rotationSource != null && length != null) {
+									rotationSource.handleLengthOnCanvas = length
+									editor.ensureChildSlot(rotationSource, "CRotationDeformerSource", "handleLengthOnCanvas", "circleRadiusOnCanvas")
+								}
+							}
 							DeformerField.LATTICE -> {
 								val warpSource = source as? CWarpDeformerSource
 								if (warpSource != null && editedDeformer is Deformer.Warp) {

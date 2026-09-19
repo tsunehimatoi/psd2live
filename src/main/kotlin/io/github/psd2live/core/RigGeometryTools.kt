@@ -8,6 +8,9 @@ import kotlin.math.*
 
 /** Geometry stays in parent-local units; selectors use a stable normalized rest domain. */
 internal object RigGeometryTools {
+    fun rotationHandleLength(model: PuppetModel, rotation: Deformer.Rotation): Float =
+        rotation.handleLength ?: if (model.deformers.any { it.id == rotation.parent && it is Deformer.Warp }) 0.2f else 100f
+
     data class Geometry(val points: FloatArray, val base: FloatArray, val domain: FloatArray,
         val rows: Int?, val columns: Int?, val axes: List<KeyformAxis>, val keyCount: Int,
         val name: String, val parent: String?, val rotationAngle: Float? = null)
@@ -38,7 +41,7 @@ internal object RigGeometryTools {
                     x+=corner.weight*form.originX; y+=corner.weight*form.originY
                     angle+=corner.weight*form.angle; scale+=corner.weight*form.scale
                 } }
-                val length = if(model.deformers.any { it.id == rotation.parent && it is Deformer.Warp }) 0.2f else 100f
+                val length = rotationHandleLength(model, rotation)
                 val radians=(angle+rotation.baseAngle)*PI.toFloat()/180f
                 val points=floatArrayOf(x,y,x+cos(radians)*length*scale,y+sin(radians)*length*scale)
                 Geometry(points,points.copyOf(),floatArrayOf(0f,0f,1f,1f),null,null,grid?.axes.orEmpty(),grid?.cells?.size ?: 0,rotation.name,rotation.parent?.raw,angle)

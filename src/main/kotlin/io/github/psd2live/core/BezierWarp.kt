@@ -24,6 +24,10 @@ class BezierDeformerState(
     val bezierRows: Int = 2,
     val bezierCols: Int = 2,
 ) {
+    init {
+        require(bezierRows > 0 && bezierCols > 0) { "Bezier divisions must be positive" }
+    }
+
     val anchors = mutableMapOf<Pair<Int, Int>, BezierAnchor>()
     val handles = mutableMapOf<Triple<Int, Int, BezierHandleDir>, BezierHandle>()
 
@@ -31,21 +35,32 @@ class BezierDeformerState(
      * Initializes the Bezier control lattice from an existing conversion grid.
      */
     fun initFromLattice(points: FloatArray, latticeRows: Int, latticeCols: Int) {
+        require(latticeRows > 0 && latticeCols > 0)
+        require(points.size == (latticeRows + 1) * (latticeCols + 1) * 2 && points.all(Float::isFinite))
         anchors.clear()
         handles.clear()
 
-        fun latticePoint(r: Int, c: Int): Pair<Float, Float> {
-            val clampedR = r.coerceIn(0, latticeRows)
-            val clampedC = c.coerceIn(0, latticeCols)
-            val idx = (clampedR * (latticeCols + 1) + clampedC) * 2
-            return points[idx] to points[idx + 1]
+        fun latticePoint(r: Float, c: Float): Pair<Float, Float> {
+            val r0 = r.toInt().coerceIn(0, latticeRows - 1)
+            val c0 = c.toInt().coerceIn(0, latticeCols - 1)
+            val v = r - r0
+            val u = c - c0
+            fun component(axis: Int): Float {
+                val i = (r0 * (latticeCols + 1) + c0) * 2 + axis
+                val j = i + (latticeCols + 1) * 2
+                val top = points[i] + (points[i + 2] - points[i]) * u
+                val bottom = points[j] + (points[j + 2] - points[j]) * u
+                return top + (bottom - top) * v
+            }
+            return component(0) to component(1)
         }
 
-        // 1. Initialize anchors by sampling lattice points at normalized grid ratios
+        // Bezier and conversion divisions are independent. Keep the normalized position:
+        // snapping 2.5 to either 2 or 3 changes an untouched 5/2 lattice on the first drag.
         for (br in 0..bezierRows) {
-            val targetR = (br.toFloat() / bezierRows * latticeRows).toInt()
+            val targetR = br.toFloat() / bezierRows * latticeRows
             for (bc in 0..bezierCols) {
-                val targetC = (bc.toFloat() / bezierCols * latticeCols).toInt()
+                val targetC = bc.toFloat() / bezierCols * latticeCols
                 val pt = latticePoint(targetR, targetC)
                 anchors[br to bc] = BezierAnchor(br, bc, pt.first, pt.second)
             }

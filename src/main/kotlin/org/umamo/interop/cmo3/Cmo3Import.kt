@@ -380,6 +380,7 @@ object Cmo3Import {
 							parent,
 							partId,
 							baseAngle = source.baseAngle,
+							handleLength = source.handleLengthOnCanvas.takeIf { it.isFinite() && it > 0f },
 							geometryGrid = fanned?.geometry,
 							channelGrids = fanned?.channels ?: ChannelGrids.Empty,
 							// CMO3: ACParameterControllableSource.isLocked (inverted: Cubism lock = not selectable).

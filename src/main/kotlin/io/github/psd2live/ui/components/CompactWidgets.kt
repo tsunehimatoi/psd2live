@@ -37,11 +37,36 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.updateTransition
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.DropdownMenu
 import androidx.compose.material.DropdownMenuItem
 import androidx.compose.material.Slider
 import androidx.compose.material.SliderDefaults
+import androidx.compose.material.Surface
 import androidx.compose.material.Text
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.onPointerEvent
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
+import kotlin.math.max
+import kotlin.math.roundToInt
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -415,7 +440,7 @@ fun IconTrash(
 	}
 }
 
-/** Rotation deformer: pivot + direction tip. */
+/** Rotation deformer: pivot + direction arrow. */
 @Composable
 fun IconRotationDeformer(
 	modifier: Modifier = Modifier.size(12.dp),
@@ -425,18 +450,24 @@ fun IconRotationDeformer(
 		val w = size.width
 		val h = size.height
 		val stroke = Stroke(width = 1.2f, cap = StrokeCap.Round)
-		drawCircle(tint, w * 0.16f, Offset(w * 0.28f, h * 0.72f), style = Fill)
-		drawLine(tint, Offset(w * 0.28f, h * 0.72f), Offset(w * 0.78f, h * 0.22f), stroke.width, cap = stroke.cap)
-		drawCircle(tint, w * 0.12f, Offset(w * 0.78f, h * 0.22f), style = Fill)
-		val arc = Path().apply {
-			arcTo(
-				rect = androidx.compose.ui.geometry.Rect(w * -0.05f, h * 0.25f, w * 0.75f, h * 1.05f),
-				startAngleDegrees = -70f,
-				sweepAngleDegrees = 50f,
-				forceMoveTo = false,
-			)
+		val pivot = Offset(w * 0.28f, h * 0.72f)
+		val tip = Offset(w * 0.82f, h * 0.18f)
+		val dx = tip.x - pivot.x
+		val dy = tip.y - pivot.y
+		val len = kotlin.math.hypot(dx, dy).coerceAtLeast(1e-3f)
+		val ux = dx / len
+		val uy = dy / len
+		val head = minOf(w, h) * 0.28f
+		val shaftEnd = Offset(tip.x - ux * head * 0.85f, tip.y - uy * head * 0.85f)
+		drawCircle(tint, w * 0.14f, pivot, style = Fill)
+		drawLine(tint, pivot, shaftEnd, stroke.width, cap = stroke.cap)
+		val headPath = Path().apply {
+			moveTo(tip.x, tip.y)
+			lineTo(tip.x - ux * head + -uy * head * 0.45f, tip.y - uy * head + ux * head * 0.45f)
+			lineTo(tip.x - ux * head - -uy * head * 0.45f, tip.y - uy * head - ux * head * 0.45f)
+			close()
 		}
-		drawPath(arc, tint, style = stroke)
+		drawPath(headPath, tint)
 	}
 }
 
@@ -550,8 +581,69 @@ fun IconDrawOrder(
 }
 
 /**
- * Compact context-menu row: fixed icon column + single-line label, tight padding for hierarchy trees.
+ * Header row for context menu showing item icon, name, and element badge.
  */
+@Composable
+fun CompactMenuHeader(
+	name: String,
+	badge: String? = null,
+	icon: (@Composable () -> Unit)? = null,
+) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	Row(
+		modifier = Modifier
+			.fillMaxWidth()
+			.height(28.dp)
+			.background(colors.windowBackground.copy(alpha = 0.55f), RoundedCornerShape(4.dp))
+			.padding(horizontal = 8.dp),
+		verticalAlignment = Alignment.CenterVertically,
+		horizontalArrangement = Arrangement.SpaceBetween,
+	) {
+		Row(
+			verticalAlignment = Alignment.CenterVertically,
+			horizontalArrangement = Arrangement.spacedBy(7.dp),
+			modifier = Modifier.weight(1f, fill = false),
+		) {
+			if (icon != null) {
+				Box(
+					modifier = Modifier.size(16.dp),
+					contentAlignment = Alignment.Center,
+				) {
+					icon()
+				}
+			}
+			Text(
+				text = name,
+				style = typography.title.copy(fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold),
+				color = colors.textPrimary,
+				maxLines = 1,
+				overflow = TextOverflow.Ellipsis,
+			)
+		}
+		if (!badge.isNullOrBlank()) {
+			Box(
+				modifier = Modifier
+					.background(colors.panelBackground, RoundedCornerShape(3.dp))
+					.border(BorderStroke(0.8.dp, colors.border), RoundedCornerShape(3.dp))
+					.padding(horizontal = 4.dp, vertical = 1.dp),
+				contentAlignment = Alignment.Center,
+			) {
+				Text(
+					text = badge,
+					style = typography.monoSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.Medium),
+					color = colors.accent,
+				)
+			}
+		}
+	}
+	Spacer(Modifier.height(3.dp))
+}
+
+/**
+ * Compact context-menu row: fixed icon column + single-line label, tight desktop ergonomics.
+ */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun CompactMenuItem(
 	text: String,
@@ -559,40 +651,74 @@ fun CompactMenuItem(
 	modifier: Modifier = Modifier,
 	enabled: Boolean = true,
 	danger: Boolean = false,
+	active: Boolean = false,
+	trailingText: String? = null,
+	trailingBadge: (@Composable () -> Unit)? = null,
 	icon: (@Composable () -> Unit)? = null,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
+	var isHovered by remember { mutableStateOf(false) }
+
 	val labelColor = when {
 		!enabled -> colors.textDisabled
-		danger -> colors.error
+		danger -> if (isHovered) colors.error else colors.error.copy(alpha = 0.9f)
+		active -> colors.accent
+		isHovered -> colors.selectionText
 		else -> colors.textPrimary
 	}
-	DropdownMenuItem(
-		onClick = onClick,
-		enabled = enabled,
-		modifier = modifier,
-		contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+
+	val itemBg = when {
+		!enabled -> Color.Transparent
+		isHovered && danger -> colors.error.copy(alpha = 0.14f)
+		isHovered -> colors.selection
+		active -> colors.accent.copy(alpha = 0.12f)
+		else -> Color.Transparent
+	}
+
+	Row(
+		modifier = modifier
+			.fillMaxWidth()
+			.height(26.dp)
+			.clip(RoundedCornerShape(4.dp))
+			.background(itemBg)
+			.pointerHoverIcon(if (enabled) PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)) else PointerIcon.Default)
+			.onPointerEvent(PointerEventType.Enter) { if (enabled) isHovered = true }
+			.onPointerEvent(PointerEventType.Exit) { isHovered = false }
+			.clickable(enabled = enabled, onClick = onClick)
+			.padding(horizontal = 8.dp),
+		verticalAlignment = Alignment.CenterVertically,
+		horizontalArrangement = Arrangement.SpaceBetween,
 	) {
 		Row(
-			modifier = Modifier
-				.fillMaxWidth()
-				.heightIn(min = 22.dp),
 			verticalAlignment = Alignment.CenterVertically,
-			horizontalArrangement = Arrangement.spacedBy(7.dp),
+			horizontalArrangement = Arrangement.spacedBy(8.dp),
+			modifier = Modifier.weight(1f, fill = false),
 		) {
 			Box(
-				modifier = Modifier.size(14.dp),
+				modifier = Modifier.size(16.dp),
 				contentAlignment = Alignment.Center,
 			) {
 				icon?.invoke()
 			}
 			Text(
 				text = text,
-				style = typography.body.copy(fontSize = 11.sp, lineHeight = 14.sp),
+				style = typography.body.copy(
+					fontSize = 11.5.sp,
+					fontWeight = if (active || (isHovered && !danger)) FontWeight.Medium else FontWeight.Normal,
+				),
 				color = labelColor,
 				maxLines = 1,
 				overflow = TextOverflow.Ellipsis,
+			)
+		}
+		if (trailingBadge != null) {
+			trailingBadge()
+		} else if (!trailingText.isNullOrBlank()) {
+			Text(
+				text = trailingText,
+				style = typography.monoSmall.copy(fontSize = 9.5.sp),
+				color = if (isHovered) colors.selectionText.copy(alpha = 0.85f) else colors.textMuted,
 			)
 		}
 	}
@@ -603,10 +729,14 @@ fun CompactMenuSection(title: String) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 	Text(
-		text = title,
-		style = typography.caption.copy(fontSize = 9.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.3.sp),
-		color = colors.textMuted,
-		modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 5.dp, bottom = 1.dp),
+		text = title.uppercase(),
+		style = typography.caption.copy(
+			fontSize = 9.sp,
+			fontWeight = FontWeight.Bold,
+			letterSpacing = 0.5.sp,
+		),
+		color = colors.textMuted.copy(alpha = 0.8f),
+		modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 5.dp, bottom = 2.dp),
 	)
 }
 
@@ -614,10 +744,137 @@ fun CompactMenuSection(title: String) {
 fun CompactMenuDivider() {
 	val colors = LocalToolColors.current
 	androidx.compose.material.Divider(
-		color = colors.divider.copy(alpha = 0.45f),
+		color = colors.divider.copy(alpha = 0.6f),
 		thickness = 0.5.dp,
-		modifier = Modifier.padding(vertical = 2.dp),
+		modifier = Modifier.padding(horizontal = 4.dp, vertical = 3.dp),
 	)
+}
+
+/**
+ * Desktop context menu designed for layer tree / hierarchy tree.
+ * Positioned smartly at the mouse click location with automatic window edge flipping and clamping.
+ * Features ultra-smooth snappy entrance and exit transitions, elevated panel styling,
+ * and high-density desktop typography.
+ */
+@Composable
+fun TreeContextMenu(
+	expanded: Boolean,
+	onDismissRequest: () -> Unit,
+	clickOffset: Offset = Offset.Zero,
+	modifier: Modifier = Modifier,
+	content: @Composable ColumnScope.() -> Unit,
+) {
+	val expandedStates = remember { MutableTransitionState(false) }
+	expandedStates.targetState = expanded
+
+	if (expandedStates.currentState || expandedStates.targetState) {
+		val colors = LocalToolColors.current
+		val typography = LocalToolTypography.current
+		val density = LocalDensity.current
+
+		val positionProvider = remember(clickOffset, density) {
+			object : PopupPositionProvider {
+				override fun calculatePosition(
+					anchorBounds: IntRect,
+					windowSize: IntSize,
+					layoutDirection: LayoutDirection,
+					popupContentSize: IntSize,
+				): IntOffset {
+					val marginPx = with(density) { 8.dp.roundToPx() }
+					val cursorPaddingPx = with(density) { 2.dp.roundToPx() }
+
+					val mouseX = if (clickOffset != Offset.Zero) {
+						anchorBounds.left + clickOffset.x.roundToInt()
+					} else {
+						anchorBounds.left + with(density) { 24.dp.roundToPx() }
+					}
+
+					val mouseY = if (clickOffset != Offset.Zero) {
+						anchorBounds.top + clickOffset.y.roundToInt()
+					} else {
+						anchorBounds.bottom
+					}
+
+					// Horizontal placement: right of cursor, or flip to left if overflows window
+					var x = mouseX + cursorPaddingPx
+					if (x + popupContentSize.width > windowSize.width - marginPx) {
+						x = mouseX - popupContentSize.width - cursorPaddingPx
+					}
+					x = x.coerceIn(marginPx, max(marginPx, windowSize.width - popupContentSize.width - marginPx))
+
+					// Vertical placement: below cursor, or flip upward if overflows window
+					var y = mouseY + cursorPaddingPx
+					if (y + popupContentSize.height > windowSize.height - marginPx) {
+						val upY = mouseY - popupContentSize.height - cursorPaddingPx
+						y = if (upY >= marginPx) upY else (windowSize.height - popupContentSize.height - marginPx)
+					}
+					y = y.coerceIn(marginPx, max(marginPx, windowSize.height - popupContentSize.height - marginPx))
+
+					return IntOffset(x, y)
+				}
+			}
+		}
+
+		Popup(
+			popupPositionProvider = positionProvider,
+			onDismissRequest = onDismissRequest,
+			properties = PopupProperties(focusable = true),
+		) {
+			androidx.compose.runtime.CompositionLocalProvider(
+				LocalDensity provides density,
+				LocalToolColors provides colors,
+				LocalToolTypography provides typography,
+			) {
+				val transition = updateTransition(expandedStates, "TreeContextMenuTransition")
+				val alpha by transition.animateFloat(
+					transitionSpec = {
+						if (false isTransitioningTo true) tween(durationMillis = 110, easing = LinearOutSlowInEasing)
+						else tween(durationMillis = 75, easing = FastOutLinearInEasing)
+					},
+					label = "alpha",
+				) { if (it) 1f else 0f }
+
+				val scale by transition.animateFloat(
+					transitionSpec = {
+						if (false isTransitioningTo true) tween(durationMillis = 130, easing = FastOutSlowInEasing)
+						else tween(durationMillis = 75, easing = FastOutLinearInEasing)
+					},
+					label = "scale",
+				) { if (it) 1f else 0.96f }
+
+				val translateY by transition.animateFloat(
+					transitionSpec = {
+						if (false isTransitioningTo true) tween(durationMillis = 130, easing = FastOutSlowInEasing)
+						else tween(durationMillis = 75, easing = FastOutLinearInEasing)
+					},
+					label = "translateY",
+				) { if (it) 0f else -4f }
+
+				Surface(
+					color = colors.panelElevated,
+					shape = RoundedCornerShape(6.dp),
+					border = BorderStroke(1.dp, colors.borderHover.copy(alpha = 0.5f)),
+					elevation = 10.dp,
+					modifier = modifier
+						.graphicsLayer {
+							this.alpha = alpha
+							this.scaleX = scale
+							this.scaleY = scale
+							this.translationY = translateY * density.density
+							this.transformOrigin = TransformOrigin(0f, 0f)
+						}
+						.widthIn(min = 200.dp, max = 270.dp),
+				) {
+					Column(
+						modifier = Modifier
+							.padding(all = 4.dp),
+					) {
+						content()
+					}
+				}
+			}
+		}
+	}
 }
 
 /** Practical Compact Tool Button */

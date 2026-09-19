@@ -145,6 +145,10 @@ internal enum class PlacementHandle {
 /**
  * An in-progress create: target and relation are fixed from the tree/toolbar; the artist places and
  * sizes a ghost on the canvas, then confirms. Nothing is written to the model until [CanvasEditor.confirmPlacement].
+ *
+ * Bounds / origin / tip are stored in the new deformer parent-local space — the same units
+ * non-UI create-from-selection / [createWarpFromBounds] write. Screen is display-only via
+ * [DrawableSpaceMapping.localToWorld]; commit copies these fields as-is (no camera-world round-trip).
  */
 internal data class CreatePlacement(
     val kind: CreatePlacementKind,
@@ -155,22 +159,27 @@ internal data class CreatePlacement(
     val anchorLabel: String,
     /** Drawable ids remounted under a new Warp/Rotation when applicable. */
     val meshIds: List<String>,
+    /**
+     * Parent deformer whose local frame owns [localX]-[tipY]; null = model root.
+     * Matches the parent / mesh parent that [CanvasEdits] will assign.
+     */
+    val spaceParentId: String?,
     var name: String,
     var partId: String?,
-    /** World-space AABB for Warp (Y-up). */
-    var worldX: Float,
-    var worldY: Float,
-    var worldW: Float,
-    var worldH: Float,
-    /** World-space pivot and tip for Rotation. */
+    /** Parent-local AABB for Warp (mesh positions / lattice units). */
+    var localX: Float,
+    var localY: Float,
+    var localW: Float,
+    var localH: Float,
+    /** Parent-local pivot and tip for Rotation. */
     var originX: Float = 0f,
     var originY: Float = 0f,
     var tipX: Float = 0f,
     var tipY: Float = 0f,
-    /** Conversion division (Cubism 转换的分裂数量) — lattice rows × cols. */
+    /** Conversion division (Cubism) — lattice rows x cols. */
     var rows: Int = 5,
     var cols: Int = 5,
-    /** Bezier edit division (Cubism 贝塞尔分割数) — Level-2 handle density. */
+    /** Bezier edit division — Level-2 handle density. */
     var bezierRows: Int = 2,
     var bezierCols: Int = 2,
 )
@@ -706,13 +715,31 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     }
 
     fun screen(local: FloatArray, target: CanvasTarget, viewport: CanvasViewport): List<Offset> {
+        if (target.kind == "rotation" && local.size == 4) {
+            val projection = rotationProjection(local[0], local[1], viewport, target.mapping)
+            return listOf(projection.toScreen(Offset(local[0], local[1])), projection.toScreen(Offset(local[2], local[3])))
+        }
         val world = target.mapping.localToWorld(local)
         return (world.indices step 2).map { Offset(viewport.x(world[it]).toFloat(), viewport.yFromWorld(world[it + 1]).toFloat()) }
     }
 
+    /** Use the same parent-local endpoints for placement, drawing, hit-testing and dragging. */
+    fun rotationGuideScreen(t: CanvasTarget, viewport: CanvasViewport): List<Offset> {
+        require(t.kind == "rotation")
+        return screen(t.geometry.points, t, viewport)
+    }
+
     fun local(point: Offset, target: CanvasTarget, viewport: CanvasViewport, seed: Pair<Float, Float> = 0.5f to 0.5f): Pair<Float, Float> {
+        if (target.kind == "rotation") {
+            val base = target.geometry.points
+            val result = rotationProjection(base[0], base[1], viewport, target.mapping).toLocal(point)
+            return result.x to result.y
+        }
         val world = floatArrayOf(((point.x - viewport.offsetX) / viewport.scale).toFloat(), -((point.y - viewport.offsetY) / viewport.scale).toFloat())
-        val result = target.mapping.worldToLocal(world, floatArrayOf(seed.first, seed.second), setOf(0))
+        // Reach-uncapped inverse: the damped worldToLocal clamps steps at 0.5 UV and, when seeded at
+        // the cage centre, never reaches a corner — Bezier/placement tips then collapse inward.
+        val seedLocal = floatArrayOf(seed.first, seed.second)
+        val result = target.mapping.worldToLocalLinearized(world, seedLocal, world, setOf(0))
         return result[0] to result[1]
     }
 
@@ -1601,10 +1628,14 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         if (createSessionReturnMode == null) createSessionReturnMode = hierarchyMode
         cancelKeepingReturnMode()
         deferredMode = null
-        val world = placementWorldBounds(meshIds, anchorKind, anchorId)
-        val cx = world[0] + world[2] / 2f
-        val cy = world[1] + world[3] / 2f
-        val tipLen = max(world[2], world[3]) * 0.35f + 40f
+        val spaceParentId = resolvePlacementSpaceParent(relation, anchorKind, anchorId, meshIds)
+        val local = placementLocalBounds(meshIds, anchorKind, anchorId, spaceParentId)
+        val cx = local[0] + local[2] / 2f
+        val cy = local[1] + local[3] / 2f
+        val parentIsWarp = spaceParentId != null &&
+            model.deformers.any { it.id.raw == spaceParentId && it is Deformer.Warp }
+        // Match RigGeometryTools rotation tip length (UV vs world).
+        val tipLen = if (parentIsWarp) 0.2f else max(local[2], local[3]) * 0.35f + 40f
         val name = when (kind) {
             CreatePlacementKind.WARP -> tr("editor.defaultWarpName", anchorLabel)
             CreatePlacementKind.ROTATION -> tr("editor.defaultRotationName", anchorLabel)
@@ -1622,12 +1653,13 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             anchorId = anchorId,
             anchorLabel = anchorLabel,
             meshIds = meshIds,
+            spaceParentId = spaceParentId,
             name = name,
             partId = part,
-            worldX = world[0],
-            worldY = world[1],
-            worldW = world[2].coerceAtLeast(8f),
-            worldH = world[3].coerceAtLeast(8f),
+            localX = local[0],
+            localY = local[1],
+            localW = local[2].coerceAtLeast(1e-3f),
+            localH = local[3].coerceAtLeast(1e-3f),
             originX = cx,
             originY = cy,
             tipX = cx + tipLen,
@@ -1651,28 +1683,64 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         clearHover()
     }
 
-    /** World AABB [x,y,w,h] for the placement ghost, with 5% padding. */
-    private fun placementWorldBounds(meshIds: List<String>, anchorKind: String, anchorId: String): FloatArray {
+    /** Parent id the new deformer will live under — same rules as [commitPlacedWarp] / [CanvasEdits]. */
+    private fun resolvePlacementSpaceParent(
+        relation: CreateRelation,
+        anchorKind: String,
+        anchorId: String,
+        meshIds: List<String>,
+    ): String? = when {
+        relation == CreateRelation.AS_CHILD && anchorKind == "deformer" -> anchorId
+        relation == CreateRelation.AS_PARENT && anchorKind == "deformer" ->
+            model.deformers.firstOrNull { it.id.raw == anchorId }?.parent?.raw
+        else -> meshIds.firstOrNull()?.let { mid ->
+            model.drawables.firstOrNull { it.id.raw == mid }?.parentDeformerId?.raw
+        }
+    }
+
+    /**
+     * Parent-local AABB [x,y,w,h] for the placement ghost.
+     * Uses mesh / deformer geometry points directly — same source as create-from-selection —
+     * never camera-world envelopes.
+     */
+    private fun placementLocalBounds(
+        meshIds: List<String>,
+        anchorKind: String,
+        anchorId: String,
+        spaceParentId: String?,
+    ): FloatArray {
         val pts = mutableListOf<Float>()
         for (id in meshIds) {
             val layer = state.previewModel?.rig?.layerIdByDrawableId?.get(id) ?: continue
             val t = target(model, layer, null) ?: continue
-            val w = t.mapping.localToWorld(t.geometry.points)
-            pts.addAll(w.toList())
+            pts.addAll(t.geometry.points.toList())
         }
         if (pts.isEmpty() && anchorKind == "deformer") {
-            val t = target(model, null, anchorId)
-            if (t != null) {
-                val w = t.mapping.localToWorld(t.geometry.points)
-                pts.addAll(w.toList())
+            if (spaceParentId == anchorId) {
+                // Empty child under [anchorId]: cover the parent's local domain.
+                val parent = model.deformers.firstOrNull { it.id.raw == anchorId }
+                return when (parent) {
+                    is Deformer.Warp -> floatArrayOf(-0.05f, -0.05f, 1.1f, 1.1f)
+                    is Deformer.Rotation -> floatArrayOf(-55f, -55f, 110f, 110f)
+                    null -> floatArrayOf(-50f, -50f, 100f, 100f)
+                }
             }
+            val t = target(model, null, anchorId)
+            if (t != null) pts.addAll(t.geometry.points.toList())
         }
-        if (pts.size < 4) return floatArrayOf(-50f, -50f, 100f, 100f)
-        val xs = pts.filterIndexed { i, _ -> i % 2 == 0 }
-        val ys = pts.filterIndexed { i, _ -> i % 2 == 1 }
-        val minX = xs.min(); val maxX = xs.max(); val minY = ys.min(); val maxY = ys.max()
-        val w = (maxX - minX).coerceAtLeast(8f); val h = (maxY - minY).coerceAtLeast(8f)
-        return floatArrayOf(minX - w * 0.05f, minY - h * 0.05f, w * 1.1f, h * 1.1f)
+        if (pts.size < 4) {
+            val underWarp = spaceParentId != null &&
+                model.deformers.any { it.id.raw == spaceParentId && it is Deformer.Warp }
+            return if (underWarp) floatArrayOf(-0.05f, -0.05f, 1.1f, 1.1f)
+            else floatArrayOf(-50f, -50f, 100f, 100f)
+        }
+        val b = RigGeometryTools.bounds(pts.toFloatArray())
+        return floatArrayOf(
+            b[0] - b[2] * 0.05f,
+            b[1] - b[3] * 0.05f,
+            b[2] * 1.1f,
+            b[3] * 1.1f,
+        )
     }
 
     private fun cancelKeepingReturnMode() {
@@ -1692,6 +1760,19 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         placement = placement?.copy(bezierRows = rows.coerceIn(1, 16), bezierCols = cols.coerceIn(1, 16))
         warpCreateBezierRows = rows.coerceIn(1, 16)
         warpCreateBezierCols = cols.coerceIn(1, 16)
+    }
+
+    fun updatePlacementRotationDirection(deg: Float) {
+        val p = placement?.takeIf { it.kind == CreatePlacementKind.ROTATION } ?: return
+        val parentIsWarp = p.spaceParentId != null &&
+            model.deformers.any { it.id.raw == p.spaceParentId && it is Deformer.Warp }
+        val minLen = if (parentIsWarp) 0.05f else 20f
+        val len = hypot(p.tipX - p.originX, p.tipY - p.originY).coerceAtLeast(minLen)
+        val rad = Math.toRadians(deg.toDouble())
+        placement = p.copy(
+            tipX = p.originX + (len * cos(rad)).toFloat(),
+            tipY = p.originY + (len * sin(rad)).toFloat(),
+        )
     }
 
     fun cancelPlacement() {
@@ -1734,27 +1815,24 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             put("rows", p.rows)
             put("columns", p.cols)
             if (p.partId != null) put("part_id", p.partId!!)
+            // Bounds already parent-local — same payload shape as [createWarpFromBounds].
+            put("bounds", buildJsonObject {
+                put("x", p.localX); put("y", p.localY); put("w", p.localW); put("h", p.localH)
+            })
             when {
                 p.relation == CreateRelation.AS_CHILD && p.anchorKind == "deformer" && p.meshIds.isEmpty() -> {
                     put("add_to", "child_of_deformer")
                     put("parent_id", p.anchorId)
                     put("meshes", JsonArray(emptyList()))
-                    putPlacementLocalBounds(this, p, parentDeformerId = p.anchorId)
                 }
                 p.relation == CreateRelation.AS_PARENT && p.anchorKind == "deformer" -> {
                     put("add_to", "parent_of_deformer")
                     put("deformer_id", p.anchorId)
                     put("meshes", JsonArray(p.meshIds.map(::JsonPrimitive)))
-                    val parentOfAnchor = model.deformers.firstOrNull { it.id.raw == p.anchorId }?.parent?.raw
-                    putPlacementLocalBounds(this, p, parentDeformerId = parentOfAnchor)
                 }
                 else -> {
                     put("add_to", "parent_of_selected")
                     put("meshes", JsonArray(p.meshIds.map(::JsonPrimitive)))
-                    val meshParent = p.meshIds.firstOrNull()?.let { mid ->
-                        model.drawables.firstOrNull { it.id.raw == mid }?.parentDeformerId?.raw
-                    }
-                    putPlacementLocalBounds(this, p, parentDeformerId = meshParent)
                 }
             }
         }
@@ -1767,27 +1845,28 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
 
     private fun commitPlacedRotation(p: CreatePlacement) {
         val id = "Rotation_${UUID.randomUUID()}"
+        val angleDeg = Math.toDegrees(
+            atan2((p.tipY - p.originY).toDouble(), (p.tipX - p.originX).toDouble()),
+        ).toFloat()
         val cmd = buildJsonObject {
             put("op", "canvas_create_rotation")
             put("preservePose", true)
             put("id", id)
             put("name", p.name)
             if (p.partId != null) put("part_id", p.partId!!)
+            // Origin already parent-local — same as create-from-selection.
+            put("origin", JsonArray(listOf(p.originX, p.originY).map(::JsonPrimitive)))
+            put("angle", angleDeg)
+            put("handle_length", hypot(p.tipX - p.originX, p.tipY - p.originY).coerceAtLeast(1e-4f))
             when {
                 p.relation == CreateRelation.AS_PARENT && p.anchorKind == "deformer" -> {
                     put("add_to", "parent_of_deformer")
                     put("deformer_id", p.anchorId)
-                    val parentOfAnchor = model.deformers.firstOrNull { it.id.raw == p.anchorId }?.parent?.raw
-                    putPlacementRotationLocal(this, p, parentOfAnchor)
                 }
                 else -> {
                     require(p.meshIds.isNotEmpty()) { "Rotation needs meshes" }
                     put("add_to", "parent_of_selected")
                     put("meshes", JsonArray(p.meshIds.map(::JsonPrimitive)))
-                    val meshParent = p.meshIds.firstOrNull()?.let { mid ->
-                        model.drawables.firstOrNull { it.id.raw == mid }?.parentDeformerId?.raw
-                    }
-                    putPlacementRotationLocal(this, p, meshParent)
                 }
             }
         }
@@ -1796,73 +1875,8 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         commit(cmd)
     }
 
-    /** Writes origin + angle in the new rotation's parent local space (matches the placement ghost). */
-    private fun putPlacementRotationLocal(
-        obj: kotlinx.serialization.json.JsonObjectBuilder,
-        p: CreatePlacement,
-        parentDeformerId: String?,
-    ) {
-        val (ox, oy) = worldPointToParentLocal(p.originX, p.originY, parentDeformerId)
-        val (tx, ty) = worldPointToParentLocal(p.tipX, p.tipY, parentDeformerId)
-        val angleDeg = Math.toDegrees(atan2((ty - oy).toDouble(), (tx - ox).toDouble())).toFloat()
-        obj.put("origin", JsonArray(listOf(ox, oy).map(::JsonPrimitive)))
-        obj.put("angle", angleDeg)
-    }
-
-    private fun worldPointToParentLocal(worldX: Float, worldY: Float, parentDeformerId: String?): Pair<Float, Float> {
-        val mapping = parentLocalMapping(parentDeformerId) ?: return worldX to worldY
-        val out = mapping.worldToLocal(floatArrayOf(worldX, worldY), floatArrayOf(0.5f, 0.5f), setOf(0))
-        return out[0] to out[1]
-    }
-
-    /**
-     * Writes `bounds` in the new warp's **parent local** space so the lattice matches the ghost.
-     * Under a Warp parent that means UV (via [DrawableSpaceMapping] of the parent world);
-     * under Rotation, the affine frame; at root, model world.
-     */
-    private fun putPlacementLocalBounds(
-        obj: kotlinx.serialization.json.JsonObjectBuilder,
-        p: CreatePlacement,
-        parentDeformerId: String?,
-    ) {
-        val (x, y, w, h) = worldRectToParentLocal(p.worldX, p.worldY, p.worldW, p.worldH, parentDeformerId)
-        obj.put("bounds", buildJsonObject { put("x", x); put("y", y); put("w", w); put("h", h) })
-    }
-
-    /** Four-corner AABB of a world rect mapped into [parentDeformerId]'s local space. */
-    private fun worldRectToParentLocal(
-        worldX: Float,
-        worldY: Float,
-        worldW: Float,
-        worldH: Float,
-        parentDeformerId: String?,
-    ): FloatArray {
-        val mapping = parentLocalMapping(parentDeformerId)
-        val corners = listOf(
-            worldX to worldY,
-            worldX + worldW to worldY,
-            worldX to worldY + worldH,
-            worldX + worldW to worldY + worldH,
-        )
-        if (mapping == null) {
-            return floatArrayOf(worldX, worldY, worldW.coerceAtLeast(1e-6f), worldH.coerceAtLeast(1e-6f))
-        }
-        val locals = corners.map { (wx, wy) ->
-            // Same convention as [local]: worldToLocal receives model-space (x, y).
-            val out = mapping.worldToLocal(floatArrayOf(wx, wy), floatArrayOf(0.5f, 0.5f), setOf(0))
-            out[0] to out[1]
-        }
-        val xs = locals.map { it.first }
-        val ys = locals.map { it.second }
-        val x = xs.min(); val y = ys.min()
-        val w = (xs.max() - x).coerceAtLeast(1e-6f)
-        val h = (ys.max() - y).coerceAtLeast(1e-6f)
-        return floatArrayOf(x, y, w, h)
-    }
-
-    /** Mapping whose local space equals a child deformer's parent coordinates, or null at root. */
-    private fun parentLocalMapping(parentDeformerId: String?): DrawableSpaceMapping? {
-        if (parentDeformerId == null) return null
+    /** Mapping for [CreatePlacement.spaceParentId]; root uses identity (model with camera Y-flip). */
+    private fun placementMapping(spaceParentId: String?): DrawableSpaceMapping {
         val source = model
         if (cachedSource !== source || cachedPose != state.parameterValues) {
             cachedSource = source
@@ -1873,25 +1887,71 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                 { p -> state.parameterValues[p] ?: source.parameters.firstOrNull { it.id == p }?.default ?: 0f },
             )
         }
-        val parentId = DeformerId(parentDeformerId)
-        val world = cachedWorlds[parentId] ?: return null
+        if (spaceParentId == null) return DrawableSpaceMapping(null)
+        val world = cachedWorlds[DeformerId(spaceParentId)]
+            ?: error("Parent deformer world unavailable: $spaceParentId")
         return DrawableSpaceMapping(world)
     }
 
+    private fun placementLocalToScreen(
+        lx: Float,
+        ly: Float,
+        viewport: CanvasViewport,
+        mapping: DrawableSpaceMapping,
+    ): Offset {
+        val w = mapping.localToWorld(floatArrayOf(lx, ly))
+        return Offset(viewport.x(w[0]).toFloat(), viewport.yFromWorld(w[1]).toFloat())
+    }
+
+    private fun rotationProjection(ox: Float, oy: Float, viewport: CanvasViewport, mapping: DrawableSpaceMapping) =
+        RotationGuideProjection(Offset(ox, oy)) { point ->
+            placementLocalToScreen(point.x, point.y, viewport, mapping)
+        }
+
+    private fun placementScreenToLocal(
+        point: Offset,
+        viewport: CanvasViewport,
+        mapping: DrawableSpaceMapping,
+        seed: Pair<Float, Float>,
+    ): Pair<Float, Float> {
+        val world = floatArrayOf(
+            ((point.x - viewport.offsetX) / viewport.scale).toFloat(),
+            -((point.y - viewport.offsetY) / viewport.scale).toFloat(),
+        )
+        val out = mapping.worldToLocalLinearized(world, floatArrayOf(seed.first, seed.second), world, setOf(0))
+        return out[0] to out[1]
+    }
+
+    /** Screen AABB of the four projected parent-local corners (display / hit-test only). */
     fun placementScreenRect(viewport: CanvasViewport): Rect? {
         val p = placement ?: return null
         if (p.kind != CreatePlacementKind.WARP) return null
-        val left = viewport.x(p.worldX).toFloat()
-        val top = viewport.yFromWorld(p.worldY + p.worldH).toFloat()
-        val right = viewport.x(p.worldX + p.worldW).toFloat()
-        val bottom = viewport.yFromWorld(p.worldY).toFloat()
-        return Rect(left, top, right, bottom)
+        return placementScreenRectOf(p, viewport)
+    }
+
+    private fun placementScreenRectOf(p: CreatePlacement, viewport: CanvasViewport): Rect? {
+        if (p.kind != CreatePlacementKind.WARP) return null
+        val mapping = placementMapping(p.spaceParentId)
+        val corners = listOf(
+            p.localX to p.localY,
+            p.localX + p.localW to p.localY,
+            p.localX to p.localY + p.localH,
+            p.localX + p.localW to p.localY + p.localH,
+        ).map { (lx, ly) -> placementLocalToScreen(lx, ly, viewport, mapping) }
+        return Rect(
+            corners.minOf { it.x },
+            corners.minOf { it.y },
+            corners.maxOf { it.x },
+            corners.maxOf { it.y },
+        )
     }
 
     fun placementPivotScreen(viewport: CanvasViewport): Pair<Offset, Offset>? {
         val p = placement?.takeIf { it.kind == CreatePlacementKind.ROTATION } ?: return null
-        return Offset(viewport.x(p.originX).toFloat(), viewport.yFromWorld(p.originY).toFloat()) to
-            Offset(viewport.x(p.tipX).toFloat(), viewport.yFromWorld(p.tipY).toFloat())
+        val mapping = placementMapping(p.spaceParentId)
+        val projection = rotationProjection(p.originX, p.originY, viewport, mapping)
+        return projection.toScreen(Offset(p.originX, p.originY)) to
+            projection.toScreen(Offset(p.tipX, p.tipY))
     }
 
     private fun hitPlacementHandle(pos: Offset, viewport: CanvasViewport): PlacementHandle {
@@ -1923,64 +1983,136 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         }
     }
 
+    /**
+     * Drag edits parent-local state. Warp resize is done on the screen AABB then inverted with
+     * corner-matched seeds (same reach-uncapped inverse as [local]); body/tip move via local deltas.
+     */
     private fun applyPlacementDrag(pos: Offset, viewport: CanvasViewport, shift: Boolean) {
         val start = placementDragStart ?: return
         val snap = placementDragSnapshot ?: return
         val p = placement ?: return
-        val dx = ((pos.x - start.x) / viewport.scale).toFloat()
-        val dy = -((pos.y - start.y) / viewport.scale).toFloat()
+        val mapping = placementMapping(snap.spaceParentId)
         when (p.kind) {
             CreatePlacementKind.WARP -> {
-                var x = snap.worldX; var y = snap.worldY; var w = snap.worldW; var h = snap.worldH
                 when (placementHandle) {
-                    PlacementHandle.BODY -> { x += dx; y += dy }
-                    PlacementHandle.E -> w = (snap.worldW + dx).coerceAtLeast(8f)
-                    PlacementHandle.W -> { val nw = (snap.worldW - dx).coerceAtLeast(8f); x = snap.worldX + snap.worldW - nw; w = nw }
-                    PlacementHandle.N -> h = (snap.worldH + dy).coerceAtLeast(8f)
-                    PlacementHandle.S -> { val nh = (snap.worldH - dy).coerceAtLeast(8f); y = snap.worldY + snap.worldH - nh; h = nh }
-                    PlacementHandle.NE -> { w = (snap.worldW + dx).coerceAtLeast(8f); h = (snap.worldH + dy).coerceAtLeast(8f) }
-                    PlacementHandle.NW -> {
-                        val nw = (snap.worldW - dx).coerceAtLeast(8f); x = snap.worldX + snap.worldW - nw; w = nw
-                        h = (snap.worldH + dy).coerceAtLeast(8f)
+                    PlacementHandle.BODY -> {
+                        val seed = (snap.localX + snap.localW / 2f) to (snap.localY + snap.localH / 2f)
+                        val a = placementScreenToLocal(start, viewport, mapping, seed)
+                        val b = placementScreenToLocal(pos, viewport, mapping, seed)
+                        placement = p.copy(
+                            localX = snap.localX + (b.first - a.first),
+                            localY = snap.localY + (b.second - a.second),
+                        )
                     }
-                    PlacementHandle.SE -> {
-                        w = (snap.worldW + dx).coerceAtLeast(8f)
-                        val nh = (snap.worldH - dy).coerceAtLeast(8f); y = snap.worldY + snap.worldH - nh; h = nh
+                    PlacementHandle.NONE, PlacementHandle.PIVOT, PlacementHandle.TIP -> {}
+                    else -> {
+                        val r0 = placementScreenRectOf(snap, viewport) ?: return
+                        val dx = pos.x - start.x
+                        val dy = pos.y - start.y
+                        var left = r0.left
+                        var top = r0.top
+                        var right = r0.right
+                        var bottom = r0.bottom
+                        val minPx = 8f
+                        when (placementHandle) {
+                            PlacementHandle.E -> right = (r0.right + dx).coerceAtLeast(left + minPx)
+                            PlacementHandle.W -> left = (r0.left + dx).coerceAtMost(right - minPx)
+                            PlacementHandle.N -> top = (r0.top + dy).coerceAtMost(bottom - minPx)
+                            PlacementHandle.S -> bottom = (r0.bottom + dy).coerceAtLeast(top + minPx)
+                            PlacementHandle.NE -> {
+                                right = (r0.right + dx).coerceAtLeast(left + minPx)
+                                top = (r0.top + dy).coerceAtMost(bottom - minPx)
+                            }
+                            PlacementHandle.NW -> {
+                                left = (r0.left + dx).coerceAtMost(right - minPx)
+                                top = (r0.top + dy).coerceAtMost(bottom - minPx)
+                            }
+                            PlacementHandle.SE -> {
+                                right = (r0.right + dx).coerceAtLeast(left + minPx)
+                                bottom = (r0.bottom + dy).coerceAtLeast(top + minPx)
+                            }
+                            PlacementHandle.SW -> {
+                                left = (r0.left + dx).coerceAtMost(right - minPx)
+                                bottom = (r0.bottom + dy).coerceAtLeast(top + minPx)
+                            }
+                            else -> {}
+                        }
+                        val local = screenAabbToLocalBounds(Rect(left, top, right, bottom), viewport, snap, mapping)
+                        placement = p.copy(
+                            localX = local[0], localY = local[1], localW = local[2], localH = local[3],
+                        )
                     }
-                    PlacementHandle.SW -> {
-                        val nw = (snap.worldW - dx).coerceAtLeast(8f); x = snap.worldX + snap.worldW - nw; w = nw
-                        val nh = (snap.worldH - dy).coerceAtLeast(8f); y = snap.worldY + snap.worldH - nh; h = nh
-                    }
-                    else -> {}
                 }
-                placement = p.copy(worldX = x, worldY = y, worldW = w, worldH = h)
             }
             CreatePlacementKind.ROTATION -> {
-                val wx = ((pos.x - viewport.offsetX) / viewport.scale).toFloat()
-                val wy = -((pos.y - viewport.offsetY) / viewport.scale).toFloat()
                 when (placementHandle) {
                     PlacementHandle.PIVOT -> {
+                        val seed = snap.originX to snap.originY
+                        val a = placementScreenToLocal(start, viewport, mapping, seed)
+                        val b = placementScreenToLocal(pos, viewport, mapping, seed)
+                        val ddx = b.first - a.first
+                        val ddy = b.second - a.second
                         placement = p.copy(
-                            originX = snap.originX + dx, originY = snap.originY + dy,
-                            tipX = snap.tipX + dx, tipY = snap.tipY + dy,
+                            originX = snap.originX + ddx, originY = snap.originY + ddy,
+                            tipX = snap.tipX + ddx, tipY = snap.tipY + ddy,
                         )
                     }
                     PlacementHandle.TIP -> {
+                        val projection = rotationProjection(snap.originX, snap.originY, viewport, mapping)
                         val tip = if (shift) {
-                            val dir = CanvasGestureGeometry.direction(
-                                Offset(viewport.x(snap.originX).toFloat(), viewport.yFromWorld(snap.originY).toFloat()),
-                                pos, snap = true,
-                            )
-                            ((dir.x - viewport.offsetX) / viewport.scale).toFloat() to
-                                -((dir.y - viewport.offsetY) / viewport.scale).toFloat()
-                        } else wx to wy
-                        placement = p.copy(tipX = tip.first, tipY = tip.second)
+                            val screenOrigin = projection.toScreen(Offset(snap.originX, snap.originY))
+                            val screenTip = projection.toScreen(Offset(snap.tipX, snap.tipY))
+                            val screenLen = (screenTip - screenOrigin).getDistance().coerceAtLeast(1e-4f)
+                            val tipScreen = CanvasGestureGeometry.direction(screenOrigin, pos, screenLen, snap = true)
+                            projection.toLocal(tipScreen)
+                        } else {
+                            projection.toLocal(pos)
+                        }
+                        placement = p.copy(tipX = tip.x, tipY = tip.y)
                     }
                     else -> {}
                 }
             }
             else -> {}
         }
+    }
+
+    /** Invert a screen AABB into parent-local bounds, seeding each corner from the nearest snap corner. */
+    private fun screenAabbToLocalBounds(
+        rect: Rect,
+        viewport: CanvasViewport,
+        snap: CreatePlacement,
+        mapping: DrawableSpaceMapping,
+    ): FloatArray {
+        val localCorners = listOf(
+            snap.localX to snap.localY,
+            snap.localX + snap.localW to snap.localY,
+            snap.localX to snap.localY + snap.localH,
+            snap.localX + snap.localW to snap.localY + snap.localH,
+        )
+        val projected = localCorners.map { (lx, ly) ->
+            placementLocalToScreen(lx, ly, viewport, mapping) to (lx to ly)
+        }
+        val screenCorners = listOf(
+            Offset(rect.left, rect.top),
+            Offset(rect.right, rect.top),
+            Offset(rect.left, rect.bottom),
+            Offset(rect.right, rect.bottom),
+        )
+        val locals = screenCorners.map { sc ->
+            val seed = projected.minBy { (proj, _) -> (proj - sc).getDistance() }.second
+            placementScreenToLocal(sc, viewport, mapping, seed)
+        }
+        val xs = locals.map { it.first }
+        val ys = locals.map { it.second }
+        val x = xs.min()
+        val y = ys.min()
+        return floatArrayOf(
+            x,
+            y,
+            (xs.max() - x).coerceAtLeast(1e-6f),
+            (ys.max() - y).coerceAtLeast(1e-6f),
+        )
     }
 
     /** Exit paint into Select so a creation tool can be armed without a paint session open. */
@@ -2890,7 +3022,8 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     fun createRotationFromPoints(s: Offset, e: Offset, viewport: CanvasViewport) {
         val meshTarget = target()?.takeIf { it.kind == "mesh" } ?: return
         val origin = local(s, meshTarget, viewport)
-        val tip = local(e, meshTarget, viewport)
+        val endpoint = rotationProjection(origin.first, origin.second, viewport, meshTarget.mapping).toLocal(e)
+        val tip = endpoint.x to endpoint.y
         val angleDeg = Math.toDegrees(atan2((tip.second - origin.second).toDouble(), (tip.first - origin.first).toDouble())).toFloat()
 
         val targetMeshes = objects.mapNotNull { target(model, it, null)?.id }.ifEmpty { listOf(meshTarget.id) }
@@ -2905,6 +3038,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             put("name", name)
             put("origin", JsonArray(listOf(origin.first, origin.second).map(::JsonPrimitive)))
             put("angle", angleDeg)
+            put("handle_length", hypot(tip.first - origin.first, tip.second - origin.second).coerceAtLeast(1e-4f))
             putCreationPartId(this, targetMeshes)
             put("meshes", JsonArray(targetMeshes.map(::JsonPrimitive)))
         }
@@ -3534,6 +3668,9 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             bezierState?.moveHandle(br, bc, dir, lx, ly, smooth = !alt)
             val warp = source.deformers.filterIsInstance<Deformer.Warp>().firstOrNull { it.id.raw == t.id } ?: return
             val evaluated = bezierState?.evaluateLattice(warp.rows, warp.columns) ?: return
+            // Keep the authored handles when this lattice is committed. Reconstructing them
+            // from sampled anchors would straighten the curves before the next gesture.
+            bezierSourcePoints = evaluated.copyOf()
             val cmd = geometryCommand(t, evaluated)
             preview = RigAuthoringJournal.apply(source, cmd); pending = cmd; previous = pos
             return
@@ -3547,6 +3684,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             bezierState?.moveAnchor(br, bc, lx - prevLx, ly - prevLy)
             val warp = source.deformers.filterIsInstance<Deformer.Warp>().firstOrNull { it.id.raw == t.id } ?: return
             val evaluated = bezierState?.evaluateLattice(warp.rows, warp.columns) ?: return
+            bezierSourcePoints = evaluated.copyOf()
             val cmd = geometryCommand(t, evaluated)
             preview = RigAuthoringJournal.apply(source, cmd); pending = cmd; previous = pos
             return
@@ -3616,7 +3754,13 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                     origin + (arm - origin) * ((pointer - origin).getDistance().coerceAtLeast(1e-4f) / (arm - origin).getDistance().coerceAtLeast(1e-4f))
                 } else CanvasGestureGeometry.direction(origin, pointer, (arm - origin).getDistance(), shift)
                 if ((endpoint - origin).getDistance() < 1e-5f) return
-                val cmd = geometryCommand(t, floatArrayOf(origin.x, origin.y, endpoint.x, endpoint.y))
+                val pts = floatArrayOf(origin.x, origin.y, endpoint.x, endpoint.y)
+                val cmd = if (alt) geometryCommand(t, pts) else buildJsonObject {
+                    put("op", "canvas_geometry"); put("kind", t.kind); put("id", t.id)
+                    put("key", if (t.kind == "mesh") JsonObject(emptyMap()) else JsonObject(coordinate(t).mapValues { JsonPrimitive(it.value) }))
+                    put("points", JsonArray(pts.map(::JsonPrimitive)))
+                    put("keep_scale", true)
+                }
                 preview = RigAuthoringJournal.apply(source, cmd); pending = cmd; previous = pos
                 return
             }

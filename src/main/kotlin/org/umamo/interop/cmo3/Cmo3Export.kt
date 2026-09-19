@@ -64,7 +64,7 @@ object Cmo3Export {
 	private val ALL_PART_FIELDS = PartField.entries.toSet()
 
 	/** Every warp field except KIND (fixed at synthesis) and the rotation-only BASE_ANGLE. */
-	private val ALL_WARP_FIELDS = DeformerField.entries.toSet() - DeformerField.KIND - DeformerField.BASE_ANGLE
+	private val ALL_WARP_FIELDS = DeformerField.entries.toSet() - DeformerField.KIND - DeformerField.BASE_ANGLE - DeformerField.HANDLE_LENGTH
 
 	/** Every rotation field except KIND (fixed at synthesis) and the warp-only lattice pair. */
 	private val ALL_ROTATION_FIELDS =

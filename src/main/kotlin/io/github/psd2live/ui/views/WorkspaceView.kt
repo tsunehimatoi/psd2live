@@ -73,10 +73,12 @@ import io.github.psd2live.ui.CreateRelation
 import io.github.psd2live.ui.ComponentPalette
 import io.github.psd2live.ui.components.CompactButton
 import io.github.psd2live.ui.components.CompactMenuDivider
+import io.github.psd2live.ui.components.CompactMenuHeader
 import io.github.psd2live.ui.components.CompactMenuItem
 import io.github.psd2live.ui.components.CompactMenuSection
 import io.github.psd2live.ui.components.CompactTextField
 import io.github.psd2live.ui.components.CompactToggleChip
+import io.github.psd2live.ui.components.TreeContextMenu
 import io.github.psd2live.ui.components.IconChevron
 import io.github.psd2live.ui.components.IconClose
 import io.github.psd2live.ui.components.IconCollapseBranch
@@ -110,7 +112,6 @@ import org.umamo.runtime.model.Deformer
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
-import androidx.compose.material.DropdownMenu
 import androidx.compose.ui.input.pointer.PointerButton
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
@@ -1012,9 +1013,11 @@ private fun DeformerTreeItem(
 
 	var isHovered by remember { mutableStateOf(false) }
 	var showMenu by remember { mutableStateOf(false) }
+	var menuClickOffset by remember { mutableStateOf(Offset.Zero) }
 	var rowCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
 	val startX = (TREE_BASE_PADDING_DP + depth * TREE_INDENT_STEP_DP).dp
+	val dotAwt = ComponentPalette.strong(tailId)
 
 	Box(modifier = Modifier.fillMaxWidth()) {
 		Row(
@@ -1112,6 +1115,13 @@ private fun DeformerTreeItem(
 				}
 				.onPointerEvent(PointerEventType.Press) { event ->
 					if (event.button == PointerButton.Secondary) {
+						val clickPos = event.changes.firstOrNull()?.position ?: Offset.Zero
+						menuClickOffset = clickPos
+						if (state.selectedDeformerId != tailId) {
+							viewModel.selectDeformer(tailId)
+						}
+						treeDragState.clear()
+						event.changes.firstOrNull()?.consume()
 						showMenu = true
 					} else if (event.button == PointerButton.Primary) {
 						val parent = containerCoordinates
@@ -1137,7 +1147,6 @@ private fun DeformerTreeItem(
 		) {
 			// 1. Deformer Dot Icon (aligned directly with the vertical guideline)
 			Spacer(Modifier.width(1.dp))
-			val dotAwt = ComponentPalette.strong(tailId)
 			Box(
 				modifier = Modifier
 					.size(6.dp)
@@ -1239,14 +1248,23 @@ private fun DeformerTreeItem(
 		}
 
 		// Deformer context menu: add → hierarchy → view → delete
-		DropdownMenu(
+		TreeContextMenu(
 			expanded = showMenu,
 			onDismissRequest = { showMenu = false },
-			modifier = Modifier
-				.background(colors.panelElevated)
-				.border(BorderStroke(1.dp, colors.border))
-				.widthIn(min = 156.dp, max = 200.dp),
+			clickOffset = menuClickOffset,
 		) {
+			CompactMenuHeader(
+				name = chain.displayName,
+				badge = type,
+				icon = {
+					Box(
+						modifier = Modifier
+							.size(8.dp)
+							.background(Color(dotAwt.red, dotAwt.green, dotAwt.blue), CircleShape),
+					)
+				},
+			)
+
 			CompactMenuSection(tr("canvas.hierarchy.menuAdd"))
 			CompactMenuItem(
 				text = tr("editor.treeAddWarpParent"),
@@ -1254,7 +1272,7 @@ private fun DeformerTreeItem(
 					onRequestCreate?.invoke(CreatePlacementKind.WARP, CreateRelation.AS_PARENT, true, tailId)
 					showMenu = false
 				},
-				icon = { IconContextualWarp(tint = colors.textMuted, modifier = Modifier.size(12.dp)) },
+				icon = { IconContextualWarp(tint = colors.textMuted, modifier = Modifier.size(13.dp)) },
 			)
 			CompactMenuItem(
 				text = tr("editor.treeAddWarpChild"),
@@ -1262,7 +1280,7 @@ private fun DeformerTreeItem(
 					onRequestCreate?.invoke(CreatePlacementKind.WARP, CreateRelation.AS_CHILD, true, tailId)
 					showMenu = false
 				},
-				icon = { IconWarpDeformer(tint = colors.textMuted, modifier = Modifier.size(12.dp)) },
+				icon = { IconWarpDeformer(tint = colors.textMuted, modifier = Modifier.size(13.dp)) },
 			)
 			CompactMenuItem(
 				text = tr("editor.treeAddRotationParent"),
@@ -1270,7 +1288,7 @@ private fun DeformerTreeItem(
 					onRequestCreate?.invoke(CreatePlacementKind.ROTATION, CreateRelation.AS_PARENT, true, tailId)
 					showMenu = false
 				},
-				icon = { IconRotationDeformer(tint = colors.textMuted) },
+				icon = { IconRotationDeformer(tint = colors.textMuted, modifier = Modifier.size(13.dp)) },
 			)
 
 			CompactMenuDivider()
@@ -1283,7 +1301,7 @@ private fun DeformerTreeItem(
 					showMenu = false
 				},
 				enabled = !isAlreadyRoot,
-				icon = { IconMoveToRoot(tint = if (!isAlreadyRoot) colors.textMuted else colors.textDisabled) },
+				icon = { IconMoveToRoot(tint = if (!isAlreadyRoot) colors.textMuted else colors.textDisabled, modifier = Modifier.size(13.dp)) },
 			)
 			if (chain.deformers.any { state.parentOverrides.containsKey(it.id.raw) }) {
 				CompactMenuItem(
@@ -1292,7 +1310,20 @@ private fun DeformerTreeItem(
 						chain.deformers.forEach { viewModel.resetItemHierarchy(it.id.raw) }
 						showMenu = false
 					},
-					icon = { IconReset(modifier = Modifier.size(12.dp), tint = colors.accent) },
+					trailingBadge = {
+						Box(
+							modifier = Modifier
+								.background(colors.accent.copy(alpha = 0.15f), RoundedCornerShape(3.dp))
+								.padding(horizontal = 4.dp, vertical = 1.dp)
+						) {
+							Text(
+								text = tr("settings.reset").ifEmpty { "RESET" },
+								style = typography.monoSmall.copy(fontSize = 8.5.sp, fontWeight = FontWeight.SemiBold),
+								color = colors.accent,
+							)
+						}
+					},
+					icon = { IconReset(modifier = Modifier.size(13.dp), tint = colors.accent) },
 				)
 			}
 
@@ -1309,7 +1340,7 @@ private fun DeformerTreeItem(
 					expandRecursive(tailId)
 					showMenu = false
 				},
-				icon = { IconExpandBranch(tint = colors.textMuted) },
+				icon = { IconExpandBranch(tint = colors.textMuted, modifier = Modifier.size(13.dp)) },
 			)
 			CompactMenuItem(
 				text = tr("canvas.hierarchy.collapseBranch"),
@@ -1317,7 +1348,7 @@ private fun DeformerTreeItem(
 					chain.deformers.forEach { expandedMap[it.id.raw] = false }
 					showMenu = false
 				},
-				icon = { IconCollapseBranch(tint = colors.textMuted) },
+				icon = { IconCollapseBranch(tint = colors.textMuted, modifier = Modifier.size(13.dp)) },
 			)
 
 			CompactMenuDivider()
@@ -1328,7 +1359,7 @@ private fun DeformerTreeItem(
 					showMenu = false
 				},
 				danger = true,
-				icon = { IconTrash(modifier = Modifier.size(11.dp), tint = colors.error) },
+				icon = { IconTrash(modifier = Modifier.size(12.dp), tint = colors.error) },
 			)
 		}
 	}
@@ -1425,9 +1456,11 @@ private fun DrawableTreeItem(
 
 	var isHovered by remember { mutableStateOf(false) }
 	var showMenu by remember { mutableStateOf(false) }
+	var menuClickOffset by remember { mutableStateOf(Offset.Zero) }
 	var rowCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
 	val startX = (TREE_BASE_PADDING_DP + depth * TREE_INDENT_STEP_DP).dp
+	val layerDotAwt = if (layerId != null) ComponentPalette.strong(layerId) else java.awt.Color.GRAY
 
 	Box(modifier = Modifier.fillMaxWidth()) {
 		Row(
@@ -1507,6 +1540,13 @@ private fun DrawableTreeItem(
 				}
 				.onPointerEvent(PointerEventType.Press) { event ->
 					if (event.button == PointerButton.Secondary) {
+						val clickPos = event.changes.firstOrNull()?.position ?: Offset.Zero
+						menuClickOffset = clickPos
+						if (layerId != null && state.selectedLayerId != layerId) {
+							viewModel.selectLayer(layerId)
+						}
+						treeDragState.clear()
+						event.changes.firstOrNull()?.consume()
 						showMenu = true
 					} else if (event.button == PointerButton.Primary) {
 						val parent = containerCoordinates
@@ -1532,7 +1572,6 @@ private fun DrawableTreeItem(
 		) {
 			// 1. Square Dot Icon (aligned directly with deformer dot at startX + 1.dp)
 			Spacer(Modifier.width(1.dp))
-			val layerDotAwt = if (layerId != null) ComponentPalette.strong(layerId) else java.awt.Color.GRAY
 			Box(
 				modifier = Modifier
 					.size(6.dp)
@@ -1594,15 +1633,25 @@ private fun DrawableTreeItem(
 		}
 
 		// Drawable context menu: view → add → settings → hierarchy → delete
-		DropdownMenu(
+		TreeContextMenu(
 			expanded = showMenu,
 			onDismissRequest = { showMenu = false },
-			modifier = Modifier
-				.background(colors.panelElevated)
-				.border(BorderStroke(1.dp, colors.border))
-				.widthIn(min = 156.dp, max = 200.dp),
+			clickOffset = menuClickOffset,
 		) {
 			val isAlreadyRoot = drawable.parentDeformerId == null
+			val itemTypeBadge = if (drawable.mesh != null) "ArtMesh" else "Layer"
+
+			CompactMenuHeader(
+				name = drawable.name,
+				badge = itemTypeBadge,
+				icon = {
+					Box(
+						modifier = Modifier
+							.size(8.dp)
+							.background(Color(layerDotAwt.red, layerDotAwt.green, layerDotAwt.blue), RoundedCornerShape(1.5.dp)),
+					)
+				},
+			)
 
 			if (layerId != null) {
 				val isIsolated = state.isolatedLayerId == layerId
@@ -1613,10 +1662,26 @@ private fun DrawableTreeItem(
 						viewModel.isolateLayer(layerId)
 						showMenu = false
 					},
+					active = isIsolated,
+					trailingBadge = if (isIsolated) {
+						{
+							Box(
+								modifier = Modifier
+									.background(colors.accent.copy(alpha = 0.18f), RoundedCornerShape(3.dp))
+									.padding(horizontal = 4.dp, vertical = 1.dp)
+							) {
+								Text(
+									text = "SOLO",
+									style = typography.monoSmall.copy(fontSize = 8.5.sp, fontWeight = FontWeight.Bold),
+									color = colors.accent,
+								)
+							}
+						}
+					} else null,
 					icon = {
 						IconEye(
 							visible = true,
-							modifier = Modifier.size(12.dp),
+							modifier = Modifier.size(13.dp),
 							tint = if (isIsolated) colors.accent else colors.textMuted,
 						)
 					},
@@ -1630,8 +1695,8 @@ private fun DrawableTreeItem(
 					icon = {
 						IconEye(
 							visible = !isSelfVisible,
-							modifier = Modifier.size(12.dp),
-							tint = colors.textMuted,
+							modifier = Modifier.size(13.dp),
+							tint = if (!isSelfVisible) colors.accent else colors.textMuted,
 						)
 					},
 				)
@@ -1646,7 +1711,7 @@ private fun DrawableTreeItem(
 						onRequestCreate?.invoke(CreatePlacementKind.WARP, CreateRelation.AS_PARENT, false, drawable.id.raw)
 						showMenu = false
 					},
-					icon = { IconWarpDeformer(tint = colors.textMuted, modifier = Modifier.size(12.dp)) },
+					icon = { IconWarpDeformer(tint = colors.textMuted, modifier = Modifier.size(13.dp)) },
 				)
 				CompactMenuItem(
 					text = tr("editor.treeAddRotationParent"),
@@ -1654,7 +1719,7 @@ private fun DrawableTreeItem(
 						onRequestCreate?.invoke(CreatePlacementKind.ROTATION, CreateRelation.AS_PARENT, false, drawable.id.raw)
 						showMenu = false
 					},
-					icon = { IconRotationDeformer(tint = colors.textMuted) },
+					icon = { IconRotationDeformer(tint = colors.textMuted, modifier = Modifier.size(13.dp)) },
 				)
 				if (drawable.mesh != null) {
 					CompactMenuItem(
@@ -1663,7 +1728,7 @@ private fun DrawableTreeItem(
 							onRequestCreate?.invoke(CreatePlacementKind.PATH, CreateRelation.AS_CHILD, false, drawable.id.raw)
 							showMenu = false
 						},
-						icon = { IconDeformPath(modifier = Modifier.size(12.dp), tint = colors.textMuted) },
+						icon = { IconDeformPath(modifier = Modifier.size(13.dp), tint = colors.textMuted) },
 					)
 				}
 				CompactMenuDivider()
@@ -1677,7 +1742,29 @@ private fun DrawableTreeItem(
 						showMenu = false
 						onRequestSetOrder?.invoke(layerId, drawable.name, effectiveOrder, drawable.drawOrder, isOverridden)
 					},
-					icon = { IconDrawOrder(tint = colors.textMuted) },
+					trailingBadge = {
+						Row(
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(4.dp),
+						) {
+							if (isOverridden) {
+								Box(
+									modifier = Modifier
+										.size(5.dp)
+										.background(colors.accent, CircleShape)
+								)
+							}
+							Text(
+								text = effectiveOrder.roundToInt().toString(),
+								style = typography.monoSmall.copy(
+									fontSize = 10.sp,
+									fontWeight = if (isOverridden) FontWeight.SemiBold else FontWeight.Normal,
+								),
+								color = if (isOverridden) colors.accent else colors.textMuted,
+							)
+						}
+					},
+					icon = { IconDrawOrder(tint = if (isOverridden) colors.accent else colors.textMuted, modifier = Modifier.size(13.dp)) },
 				)
 				if (isOverridden) {
 					CompactMenuItem(
@@ -1686,7 +1773,20 @@ private fun DrawableTreeItem(
 							viewModel.resetLayerDrawOrder(layerId)
 							showMenu = false
 						},
-						icon = { IconReset(modifier = Modifier.size(12.dp), tint = colors.accent) },
+						trailingBadge = {
+							Box(
+								modifier = Modifier
+									.background(colors.accent.copy(alpha = 0.15f), RoundedCornerShape(3.dp))
+									.padding(horizontal = 4.dp, vertical = 1.dp)
+							) {
+								Text(
+									text = tr("settings.reset").ifEmpty { "RESET" },
+									style = typography.monoSmall.copy(fontSize = 8.5.sp, fontWeight = FontWeight.SemiBold),
+									color = colors.accent,
+								)
+							}
+						},
+						icon = { IconReset(modifier = Modifier.size(13.dp), tint = colors.accent) },
 					)
 				}
 				val isMeshOverridden = state.meshOverrides.containsKey(layerId)
@@ -1706,7 +1806,16 @@ private fun DrawableTreeItem(
 							)
 						)
 					},
-					icon = { IconMeshWireframe(tint = colors.textMuted, modifier = Modifier.size(12.dp)) },
+					trailingBadge = if (isMeshOverridden) {
+						{
+							Box(
+								modifier = Modifier
+									.size(5.dp)
+									.background(colors.accent, CircleShape)
+							)
+						}
+					} else null,
+					icon = { IconMeshWireframe(tint = if (isMeshOverridden) colors.accent else colors.textMuted, modifier = Modifier.size(13.dp)) },
 				)
 				if (drawable.mesh != null) {
 					CompactMenuItem(
@@ -1715,7 +1824,7 @@ private fun DrawableTreeItem(
 							showMenu = false
 							onRequestOpenDeformPaths?.invoke(layerId)
 						},
-						icon = { IconDeformPath(modifier = Modifier.size(12.dp), tint = colors.accent) },
+						icon = { IconDeformPath(modifier = Modifier.size(13.dp), tint = colors.accent) },
 					)
 				}
 				if (isMeshOverridden) {
@@ -1725,7 +1834,20 @@ private fun DrawableTreeItem(
 							viewModel.resetPartMeshSettings(layerId)
 							showMenu = false
 						},
-						icon = { IconReset(modifier = Modifier.size(12.dp), tint = colors.accent) },
+						trailingBadge = {
+							Box(
+								modifier = Modifier
+									.background(colors.accent.copy(alpha = 0.15f), RoundedCornerShape(3.dp))
+									.padding(horizontal = 4.dp, vertical = 1.dp)
+							) {
+								Text(
+									text = tr("settings.reset").ifEmpty { "RESET" },
+									style = typography.monoSmall.copy(fontSize = 8.5.sp, fontWeight = FontWeight.SemiBold),
+									color = colors.accent,
+								)
+							}
+						},
+						icon = { IconReset(modifier = Modifier.size(13.dp), tint = colors.accent) },
 					)
 				}
 				CompactMenuDivider()
@@ -1739,7 +1861,7 @@ private fun DrawableTreeItem(
 					showMenu = false
 				},
 				enabled = !isAlreadyRoot,
-				icon = { IconMoveToRoot(tint = if (!isAlreadyRoot) colors.textMuted else colors.textDisabled) },
+				icon = { IconMoveToRoot(tint = if (!isAlreadyRoot) colors.textMuted else colors.textDisabled, modifier = Modifier.size(13.dp)) },
 			)
 			if (state.parentOverrides.containsKey(itemId)) {
 				CompactMenuItem(
@@ -1748,7 +1870,20 @@ private fun DrawableTreeItem(
 						viewModel.resetItemHierarchy(itemId)
 						showMenu = false
 					},
-					icon = { IconReset(modifier = Modifier.size(12.dp), tint = colors.accent) },
+					trailingBadge = {
+						Box(
+							modifier = Modifier
+								.background(colors.accent.copy(alpha = 0.15f), RoundedCornerShape(3.dp))
+								.padding(horizontal = 4.dp, vertical = 1.dp)
+						) {
+							Text(
+								text = tr("settings.reset").ifEmpty { "RESET" },
+								style = typography.monoSmall.copy(fontSize = 8.5.sp, fontWeight = FontWeight.SemiBold),
+								color = colors.accent,
+							)
+						}
+					},
+					icon = { IconReset(modifier = Modifier.size(13.dp), tint = colors.accent) },
 				)
 			}
 
@@ -1761,7 +1896,7 @@ private fun DrawableTreeItem(
 						showMenu = false
 					},
 					danger = true,
-					icon = { IconTrash(modifier = Modifier.size(11.dp), tint = colors.error) },
+					icon = { IconTrash(modifier = Modifier.size(12.dp), tint = colors.error) },
 				)
 			}
 		}

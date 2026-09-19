@@ -49,6 +49,8 @@ internal object CanvasEdits {
                 val originX = origin?.get(0)?.jsonPrimitive?.float ?: 0f
                 val originY = origin?.get(1)?.jsonPrimitive?.float ?: 0f
                 val baseAngle = edit["angle"]?.jsonPrimitive?.float ?: 0f
+                val handleLength = edit["handle_length"]?.jsonPrimitive?.float
+                require(handleLength == null || (handleLength.isFinite() && handleLength > 1e-6f))
                 require(listOf(originX, originY, baseAngle).all(Float::isFinite))
 
                 when (addTo) {
@@ -65,6 +67,7 @@ internal object CanvasEdits {
                             partId,
                             baseAngle,
                             KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(), RotationPivotForm(originX, originY, 0f, 1f)))),
+                            handleLength = handleLength,
                         )
                         if (edit["preservePose"]?.jsonPrimitive?.booleanOrNull == true) {
                             RotationCreationSpace(originX, originY, baseAngle)
@@ -100,6 +103,7 @@ internal object CanvasEdits {
                             partId,
                             baseAngle,
                             KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(), RotationPivotForm(originX, originY, 0f, 1f)))),
+                            handleLength = handleLength,
                         )
                         if (edit["preservePose"]?.jsonPrimitive?.booleanOrNull == true) {
                             RotationCreationSpace(originX, originY, baseAngle)
@@ -294,9 +298,16 @@ internal object CanvasEdits {
                 if(kind == "rotation") {
                     val rotation=model.deformers.single { it.id.raw==id } as Deformer.Rotation
                     require(points.size==4)
-                    val length=if(model.deformers.any { it.id==rotation.parent && it is Deformer.Warp })0.2f else 100f
+                    val length=RigGeometryTools.rotationHandleLength(model, rotation)
                     val dx=points[2]-points[0]; val dy=points[3]-points[1]
-                    val scale=kotlin.math.hypot(dx,dy)/length
+                    val prevLen=kotlin.math.hypot(
+                        geometry.points[2]-geometry.points[0],
+                        geometry.points[3]-geometry.points[1],
+                    )
+                    val prevScale=(prevLen/length).coerceAtLeast(1e-5f)
+                    // Tip rotate must not rewrite scale (that resizes every child). Alt-scale omits keep_scale.
+                    val scale=if(edit["keep_scale"]?.jsonPrimitive?.booleanOrNull==true) prevScale
+                    else (kotlin.math.hypot(dx,dy)/length).coerceAtLeast(1e-5f)
                     require(scale>1e-5f) { "Rotation scale must be positive" }
                     val wrapped=kotlin.math.atan2(dy,dx)*180f/kotlin.math.PI.toFloat()-rotation.baseAngle
                     val reference = geometry.rotationAngle ?: 0f
