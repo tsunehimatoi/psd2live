@@ -202,7 +202,7 @@ object ModelDownloader {
         Files.deleteIfExists(targetFile)
         val request = HttpRequest.newBuilder()
             .uri(URI.create(urlString))
-            .header("User-Agent", "PSD2Live-ModelDownloader/0.7.1")
+            .header("User-Agent", "PSD2Live-ModelDownloader/0.8.0")
             .timeout(Duration.ofMinutes(15))
             .GET()
             .build()

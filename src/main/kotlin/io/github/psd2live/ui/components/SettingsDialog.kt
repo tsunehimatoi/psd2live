@@ -167,7 +167,7 @@ fun SettingsDialog(
 						color = colors.textPrimary,
 					)
 					Text(
-						text = "v0.7.1",
+						text = "v0.8.0",
 						style = typography.monoSmall.copy(fontSize = 10.sp),
 						color = colors.textMuted,
 					)
