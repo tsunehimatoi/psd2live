@@ -15,7 +15,7 @@
 - [設定手順ガイド](#設定手順ガイド)
   - [ステップ 1：公式 SDK の入手](#ステップ-1公式-sdk-の入手)
   - [ステップ 2：OpenGL シェーダーファイルの抽出](#ステップ-2opengl-シェーダーファイルの抽出)
-  - [ステップ 3：レンダラー DLL の取得またはビルド](#ステップ-3レンダラー-dll-の取得またはビルド)
+  - [ステップ 3：本リポジトリのソースからレンダラー DLL をビルド](#ステップ-3本リポジトリのソースからレンダラー-dll-をビルド)
   - [ステップ 4：所定ディレクトリへの配置 (3つの方法)](#ステップ-4所定ディレクトリへの配置-3つの方法)
 - [動作確認とステータス表示](#動作確認とステータス表示)
 - [よくある質問 (FAQ)](#よくある質問-faq)
@@ -103,6 +103,8 @@ cubism/
 
 ### ステップ 2：OpenGL シェーダーファイルの抽出
 
+> ステップ 3 の `build_live2d_renderer.bat -Deploy`（または手動 CMake ビルド）を使う場合、シェーダーは SDK から成果物／配置先へ自動コピーされるため、**本手順の手作業コピーは省略できます**。
+
 1. 解凍先フォルダから以下のディレクトリを開きます：
    ```text
    CubismSdkForNative-5-r.5/Framework/src/Rendering/OpenGL/Shaders/Standard/
@@ -110,19 +112,33 @@ cubism/
 2. 16 個の `.frag` フラグメントシェーダーと 6 個の `.vert` 頂点シェーダーが含まれています。
 3. これら 22 ファイルすべてを、配置対象先の `FrameworkShaders/` フォルダへコピーします。
 
-### ステップ 3：レンダラー DLL の取得またはビルド
+### ステップ 3：本リポジトリのソースからレンダラー DLL をビルド
 
-`live2d_renderer.dll` は SDK の `Live2DCubismCore_MD.lib` および Framework と静的リンクしたラッパー DLL です。
+`live2d_renderer.dll` の**オープンソース・ラッパー**は本リポジトリの [`native/live2d_renderer/`](../../../native/live2d_renderer/) にあります。ビルド時に、ローカルへ展開済みの公式 SDK（`Live2DCubismCore_MD.lib` + Native Framework）と静的リンクします。公式 Core / Framework / シェーダーは**引き続き本リポジトリでは再配布しません**。
 
-ソースからビルドする場合（CMake 3.16+ および Visual Studio 2022 MSVC が必要）：
-1. SDK 内の `Core/lib/windows/x86_64/143/Live2DCubismCore_MD.lib` を確認します。
-2. `Samples/OpenGL/thirdParty/glew` と `stb` を確認します。
-3. CMake ビルドを実行：
+要件：Windows x86-64、CMake 3.16+、Visual Studio 2022 C++（MSVC toolset 143）。
+
+1. SDK 内に以下があることを確認：
+   - `Core/lib/windows/x86_64/143/Live2DCubismCore_MD.lib`
+   - `Samples/OpenGL/thirdParty/glew` と `stb`
+2. リポジトリルートから（推奨）：
    ```powershell
-   cmake -G "Visual Studio 17 2022" -A x64 -B build
-   cmake --build build --config Release --target live2d_renderer
+   $env:CUBISM_SDK_ROOT = "D:\path\to\CubismSdkForNative-5-r.5"
+   .\native\build_live2d_renderer.bat -Deploy
    ```
-4. 生成された `live2d_renderer.dll` を配置先ディレクトリへコピーします。
+   `-Deploy` は DLL と `FrameworkShaders/` を `src/main/resources/cubism/windows-x86_64/` へコピーします（`.gitignore` 済み）。
+3. または CMake を手動実行：
+   ```powershell
+   cmake -G "Visual Studio 17 2022" -A x64 `
+     -DCUBISM_SDK_ROOT="D:\path\to\CubismSdkForNative-5-r.5" `
+     -B native/live2d_renderer/build `
+     -S native/live2d_renderer
+   cmake --build native/live2d_renderer/build --config Release --target live2d_renderer
+   ```
+   成果物は `native/live2d_renderer/build/bin/Release/` に出力されます。
+
+> [!TIP]
+> 詳細は [`native/live2d_renderer/README.md`](../../../native/live2d_renderer/README.md) を参照。DLL 未配置時は内蔵ソフトウェアラスタライザへ自動フォールバックし、通常開発と書き出しには影響しません。
 
 ### ステップ 4：所定ディレクトリへの配置 (3つの方法)
 

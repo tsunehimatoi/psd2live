@@ -3,6 +3,12 @@ build/
 out/
 *.log
 
+# Native renderer local CMake output (wrapper sources under native/ are tracked)
+native/live2d_renderer/build/
+native/**/CMakeFiles/
+native/**/cmake_install.cmake
+native/**/CMakeCache.txt
+
 # Live2D Cubism Proprietary SDK & Binaries
 # The project does NOT distribute official proprietary Live2D SDK files.
 src/main/resources/cubism/

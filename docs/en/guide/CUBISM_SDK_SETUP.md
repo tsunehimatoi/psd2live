@@ -15,7 +15,7 @@ This guide provides instructions on how to configure the official Live2D® Cubis
 - [Setup Instructions](#setup-instructions)
   - [Step 1: Obtain the Official SDK](#step-1-obtain-the-official-sdk)
   - [Step 2: Extract OpenGL Shaders](#step-2-extract-opengl-shaders)
-  - [Step 3: Obtain or Build the Native Renderer DLL](#step-3-obtain-or-build-the-native-renderer-dll)
+  - [Step 3: Build the Native Renderer DLL from This Repository](#step-3-build-the-native-renderer-dll-from-this-repository)
   - [Step 4: Deploy to Target Path (3 Methods)](#step-4-deploy-to-target-path-3-methods)
 - [Verification & Runtime Status](#verification--runtime-status)
 - [Frequently Asked Questions (FAQ)](#frequently-asked-questions-faq)
@@ -104,6 +104,8 @@ cubism/
 
 ### Step 2: Extract OpenGL Shaders
 
+> If you use Step 3's `build_live2d_renderer.bat -Deploy` (or the manual CMake build), shaders are copied from the SDK into the build/deploy directories automatically — **you can skip this manual copy**.
+
 1. Open the extracted SDK folder and navigate to:
    ```text
    CubismSdkForNative-5-r.5/Framework/src/Rendering/OpenGL/Shaders/Standard/
@@ -111,19 +113,33 @@ cubism/
 2. This directory contains 16 `.frag` fragment shaders and 6 `.vert` vertex shaders.
 3. Copy all 22 shader files into a `FrameworkShaders/` folder in your target deployment directory.
 
-### Step 3: Obtain or Build the Native Renderer DLL
+### Step 3: Build the Native Renderer DLL from This Repository
 
-`live2d_renderer.dll` is a lightweight native wrapper that statically links against `Live2DCubismCore_MD.lib` and the Native Framework from the SDK.
+The **open-source wrapper** for `live2d_renderer.dll` lives in [`native/live2d_renderer/`](../../../native/live2d_renderer/). The build statically links your locally extracted official SDK (`Live2DCubismCore_MD.lib` + Native Framework). Official Core / Framework / shaders are **still not redistributed** by this repository.
 
-If building from source (requires CMake 3.16+ and Visual Studio 2022 MSVC toolchain):
-1. Verify `Core/lib/windows/x86_64/143/Live2DCubismCore_MD.lib` exists in your extracted SDK.
-2. Verify `Samples/OpenGL/thirdParty/glew` and `stb` exist.
-3. Run CMake build:
+Requirements: Windows x86-64, CMake 3.16+, Visual Studio 2022 C++ (MSVC toolset 143).
+
+1. Confirm these exist under your extracted SDK:
+   - `Core/lib/windows/x86_64/143/Live2DCubismCore_MD.lib`
+   - `Samples/OpenGL/thirdParty/glew` and `stb`
+2. From the repository root (recommended):
    ```powershell
-   cmake -G "Visual Studio 17 2022" -A x64 -B build
-   cmake --build build --config Release --target live2d_renderer
+   $env:CUBISM_SDK_ROOT = "D:\path\to\CubismSdkForNative-5-r.5"
+   .\native\build_live2d_renderer.bat -Deploy
    ```
-4. Copy the resulting `live2d_renderer.dll` to your target directory.
+   `-Deploy` copies the DLL and `FrameworkShaders/` into `src/main/resources/cubism/windows-x86_64/` (gitignored).
+3. Or invoke CMake manually:
+   ```powershell
+   cmake -G "Visual Studio 17 2022" -A x64 `
+     -DCUBISM_SDK_ROOT="D:\path\to\CubismSdkForNative-5-r.5" `
+     -B native/live2d_renderer/build `
+     -S native/live2d_renderer
+   cmake --build native/live2d_renderer/build --config Release --target live2d_renderer
+   ```
+   Outputs land in `native/live2d_renderer/build/bin/Release/` (`live2d_renderer.dll` plus `FrameworkShaders/` copied from the SDK at build time).
+
+> [!TIP]
+> See [`native/live2d_renderer/README.md`](../../../native/live2d_renderer/README.md) for details. Without the DLL, PSD2Live falls back to the built-in software rasterizer; day-to-day development and export are unaffected.
 
 ### Step 4: Deploy to Target Path (3 Methods)
 

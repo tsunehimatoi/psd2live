@@ -15,7 +15,7 @@
 - [配置步骤指南](#配置步骤指南)
   - [第一步：获取官方 SDK](#第一步获取官方-sdk)
   - [第二步：提取 OpenGL 着色器文件](#第二步提取-opengl-着色器文件)
-  - [第三步：获取或构建渲染动态库](#第三步获取或构建渲染动态库)
+  - [第三步：从本仓库源码构建渲染动态库](#第三步从本仓库源码构建渲染动态库)
   - [第四步：部署到指定路径 (三种方式)](#第四步部署到指定路径-三种方式)
 - [验证与状态识别](#验证与状态识别)
 - [常见问题与故障排查](#常见问题与故障排查)
@@ -105,6 +105,8 @@ cubism/
 
 ### 第二步：提取 OpenGL 着色器文件
 
+> 若使用第三步的 `build_live2d_renderer.bat -Deploy`（或手动 CMake 构建），着色器会在构建时从 SDK 自动复制到产物目录 / 部署目录，**可跳过本步手工拷贝**。
+
 1. 打开解压后的 SDK 文件夹，定位至：
    ```text
    CubismSdkForNative-5-r.5/Framework/src/Rendering/OpenGL/Shaders/Standard/
@@ -112,19 +114,33 @@ cubism/
 2. 该目录下包含 16 个 `.frag` 片段着色器文件与 6 个 `.vert` 顶点着色器文件。
 3. 将上述 22 个着色器文件复制到目标配置位置的 `FrameworkShaders/` 文件夹中。
 
-### 第三步：获取或构建渲染动态库
+### 第三步：从本仓库源码构建渲染动态库
 
-`live2d_renderer.dll` 是一个轻量级原生包装库，内部静态链接了官方 SDK 的核心库 `Live2DCubismCore_MD.lib` 与 Native Framework。
+`live2d_renderer.dll` 的**开源包装层源码**位于本仓库 [`native/live2d_renderer/`](../../../native/live2d_renderer/)，构建时静态链接您本地已解压的官方 SDK（`Live2DCubismCore_MD.lib` + Native Framework）。官方 Core / Framework / 着色器**仍不随本仓库分发**。
 
-若需要自行从源码编译（要求安装 CMake 3.16+ 与 Visual Studio 2022 C++ MSVC 工具链）：
-1. 确保 SDK 解压目录中的 `Core/lib/windows/x86_64/143/Live2DCubismCore_MD.lib` 存在。
-2. 确保 `Samples/OpenGL/thirdParty/glew` 与 `stb` 存在。
-3. 执行 CMake 构建：
+要求：Windows x86-64、CMake 3.16+、Visual Studio 2022 C++（MSVC toolset 143）。
+
+1. 确认 SDK 解压目录中存在：
+   - `Core/lib/windows/x86_64/143/Live2DCubismCore_MD.lib`
+   - `Samples/OpenGL/thirdParty/glew` 与 `stb`
+2. 在仓库根目录执行一键构建（推荐）：
    ```powershell
-   cmake -G "Visual Studio 17 2022" -A x64 -B build
-   cmake --build build --config Release --target live2d_renderer
+   $env:CUBISM_SDK_ROOT = "D:\path\to\CubismSdkForNative-5-r.5"
+   .\native\build_live2d_renderer.bat -Deploy
    ```
-4. 编译完成后，将生成的 `live2d_renderer.dll` 拷贝至目标配置目录。
+   `-Deploy` 会把 DLL 与 `FrameworkShaders/` 复制到 `src/main/resources/cubism/windows-x86_64/`（该路径已被 `.gitignore` 忽略）。
+3. 或手动调用 CMake：
+   ```powershell
+   cmake -G "Visual Studio 17 2022" -A x64 `
+     -DCUBISM_SDK_ROOT="D:\path\to\CubismSdkForNative-5-r.5" `
+     -B native/live2d_renderer/build `
+     -S native/live2d_renderer
+   cmake --build native/live2d_renderer/build --config Release --target live2d_renderer
+   ```
+   产物位于 `native/live2d_renderer/build/bin/Release/`（含 `live2d_renderer.dll` 与构建时从 SDK 复制的 `FrameworkShaders/`）。
+
+> [!TIP]
+> 更细的说明见 [`native/live2d_renderer/README.md`](../../../native/live2d_renderer/README.md)。未构建或不部署 DLL 时，应用会自动使用内置软件光栅化，不影响日常开发与导出。
 
 ### 第四步：部署到指定路径 (三种方式)
 
