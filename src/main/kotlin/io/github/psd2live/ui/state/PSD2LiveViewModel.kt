@@ -181,7 +181,7 @@ class PSD2LiveViewModel : AutoCloseable {
      * patched preview — see [PSD2LiveState.previewModelDirty]. Ending the session is what makes the
      * command describe a change the document has not seen.
      *
-     * @param action a `structure` action: `rename`, `visibility`, `move`, `bind`, or `static`.
+     * @param action a `structure` action: `rename`, `visibility`, `move`, `bind`, `static`, or `delete`.
      * @param fields the action's own fields, e.g. `{"opacity": 0.5}` for `static`.
      */
     fun applyRigStructure(
@@ -191,6 +191,40 @@ class PSD2LiveViewModel : AutoCloseable {
         fields: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap()),
     ) {
         recordStructure(structureEdit(action, kind, id, fields))
+    }
+
+    /**
+     * Deletes deformers innermost-first (unwrap: children bake into the parent and re-home).
+     * Clears hierarchy overrides and selection for the removed ids.
+     */
+    fun deleteDeformers(idsInnermostFirst: List<String>) {
+        if (idsInnermostFirst.isEmpty()) return
+        val puppet = _state.value.previewModel?.rig?.puppet ?: return
+        val byId = puppet.deformers.associateBy { it.id.raw }
+        val edits = idsInnermostFirst.mapNotNull { id ->
+            val d = byId[id] ?: return@mapNotNull null
+            val kind = when (d) {
+                is org.umamo.runtime.model.Deformer.Warp -> "warp"
+                is org.umamo.runtime.model.Deformer.Rotation -> "rotation"
+            }
+            structureEdit("delete", kind, id, kotlinx.serialization.json.JsonObject(emptyMap()))
+        }
+        if (edits.isEmpty()) return
+        val removed = idsInnermostFirst.toSet()
+        _state.update { current ->
+            current.copy(
+                parentOverrides = current.parentOverrides.filterKeys { it !in removed },
+                selectedDeformerId = if (current.selectedDeformerId in removed) null else current.selectedDeformerId,
+            )
+        }
+        val expected = _state.value.historySnapshot?.headNodeId ?: return
+        val command = kotlinx.serialization.json.JsonObject(
+            linkedMapOf(
+                "op" to kotlinx.serialization.json.JsonPrimitive("structure"),
+                "edits" to kotlinx.serialization.json.JsonArray(edits),
+            ),
+        )
+        saveAuthoringEdits(expected, kotlinx.serialization.json.JsonArray(listOf(command))) {}
     }
 
     private fun recordStructure(edit: kotlinx.serialization.json.JsonObject) {

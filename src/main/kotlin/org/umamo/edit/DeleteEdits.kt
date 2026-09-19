@@ -1,19 +1,33 @@
 package org.umamo.edit
 
+import org.umamo.render.eval.RotationXform
+import org.umamo.render.eval.rotationXform
+import org.umamo.render.eval.warpApply
 import org.umamo.runtime.model.Deformer
 import org.umamo.runtime.model.DeformerId
+import org.umamo.runtime.model.Drawable
 import org.umamo.runtime.model.DrawableId
+import org.umamo.runtime.model.DrawableMesh
+import org.umamo.runtime.model.KeyformCell
+import org.umamo.runtime.model.KeyformGrid
+import org.umamo.runtime.model.MeshDeltaForm
+import org.umamo.runtime.model.MeshForm
 import org.umamo.runtime.model.OrgChild
 import org.umamo.runtime.model.PartId
 import org.umamo.runtime.model.PuppetModel
+import org.umamo.runtime.model.RotationForm
+import org.umamo.runtime.model.RotationPivotForm
+import org.umamo.runtime.model.WarpForm
+import org.umamo.runtime.model.WarpLatticeForm
 import org.umamo.runtime.model.withDerivedRenderRoot
 
 /*
  * Entity deletion over the org tree. Removing a drawable, a deformer, or a part scrubs every dangling
  * reference so no later code dereferences a deleted id. Deleting an art mesh is the only inherently
  * destructive case; deleting a deformer "unwraps" it (its sub-deformers and bound meshes re-home to its
- * parent); deleting a part is either a cascade (the part and its whole subtree) or an ungroup (the folder
- * only, contents spliced up into its parent). Org-tree edits re-derive the render order.
+ * parent, with rest-pose coordinates baked through the removed transform); deleting a part is either a
+ * cascade (the part and its whole subtree) or an ungroup (the folder only, contents spliced up into its
+ * parent). Org-tree edits re-derive the render order.
  */
 
 /** A copy of this deformer re-nested under [newParent] in the transform hierarchy (used to re-home orphans). */
@@ -82,11 +96,194 @@ fun PuppetModel.withDrawablesDeleted(ids: Set<DrawableId>): PuppetModel {
  */
 fun PuppetModel.withDrawableDeleted(id: DrawableId): PuppetModel = withDrawablesDeleted(setOf(id))
 
+/** Maps one (x, y) from the deleted deformer's local space into its parent's local space. */
+private fun interface LocalPointMap {
+	fun map(x: Float, y: Float, out: FloatArray)
+}
+
+private fun restWarpMapper(warp: Deformer.Warp): LocalPointMap? {
+	val grid = warp.geometryGrid ?: return null
+	val points = grid.cells.firstOrNull { it.coordinate.isEmpty() }?.form?.controlPoints
+		?: grid.cells.firstOrNull()?.form?.controlPoints
+		?: return null
+	val cols = warp.columns
+	val rows = warp.rows
+	val bilinear = warp.isQuadTransform
+	val scratch = FloatArray(2)
+	return LocalPointMap { x, y, out ->
+		warpApply(points, cols, rows, bilinear, x, y, scratch, 0)
+		out[0] = scratch[0]
+		out[1] = scratch[1]
+	}
+}
+
+private fun restRotationMapper(rotation: Deformer.Rotation): LocalPointMap? {
+	val grid = rotation.geometryGrid ?: return null
+	val form = grid.cells.firstOrNull { it.coordinate.isEmpty() }?.form
+		?: grid.cells.firstOrNull()?.form
+		?: return null
+	val xform: RotationXform = rotationXform(form.angle, form.scale, flipX = false, flipY = false, form.originX, form.originY)
+	return LocalPointMap { x, y, out -> xform.apply(x, y, out, 0) }
+}
+
+private fun restLocalMapper(deformer: Deformer): LocalPointMap? =
+	when (deformer) {
+		is Deformer.Warp -> restWarpMapper(deformer)
+		is Deformer.Rotation -> restRotationMapper(deformer)
+	}
+
+private fun mapInterleaved(points: FloatArray, mapper: LocalPointMap): FloatArray {
+	val out = FloatArray(points.size)
+	val scratch = FloatArray(2)
+	for (i in 0 until points.size / 2) {
+		mapper.map(points[i * 2], points[i * 2 + 1], scratch)
+		out[i * 2] = scratch[0]
+		out[i * 2 + 1] = scratch[1]
+	}
+	return out
+}
+
+/** Maps absolute base + delta through [mapper], returning the new delta in the parent space. */
+private fun mapDeltas(base: FloatArray, deltas: FloatArray, mapper: LocalPointMap): FloatArray {
+	val out = FloatArray(deltas.size)
+	val scratchBase = FloatArray(2)
+	val scratchAbs = FloatArray(2)
+	val count = minOf(base.size, deltas.size) / 2
+	for (i in 0 until count) {
+		val bx = base[i * 2]
+		val by = base[i * 2 + 1]
+		mapper.map(bx, by, scratchBase)
+		mapper.map(bx + deltas[i * 2], by + deltas[i * 2 + 1], scratchAbs)
+		out[i * 2] = scratchAbs[0] - scratchBase[0]
+		out[i * 2 + 1] = scratchAbs[1] - scratchBase[1]
+	}
+	return out
+}
+
+private fun mapDrawableThrough(drawable: Drawable, grandParent: DeformerId?, mapper: LocalPointMap?): Drawable {
+	val mesh = drawable.mesh
+	if (mapper == null || mesh == null) {
+		return drawable.copy(parentDeformerId = grandParent)
+	}
+	val newBase = mapInterleaved(mesh.positions, mapper)
+	val newGrid = drawable.geometryGrid?.let { grid ->
+		KeyformGrid(
+			grid.axes,
+			grid.cells.map { cell ->
+				KeyformCell(cell.coordinate, MeshDeltaForm(mapDeltas(mesh.positions, cell.form.positionDeltas, mapper)))
+			},
+		)
+	}
+	val newBlends = drawable.blendShapes.map { binding ->
+		binding.copy(
+			forms = binding.forms.map { form ->
+				form?.let {
+					MeshForm(
+						mapDeltas(mesh.positions, it.positionDeltas, mapper),
+						it.drawOrder,
+						it.opacity,
+						it.multiplyColor,
+						it.screenColor,
+					)
+				}
+			},
+		)
+	}
+	return drawable.copy(
+		parentDeformerId = grandParent,
+		mesh = DrawableMesh(newBase, mesh.uvs, mesh.indices),
+		geometryGrid = newGrid,
+		blendShapes = newBlends,
+	)
+}
+
+private fun mapDeformerThrough(deformer: Deformer, grandParent: DeformerId?, mapper: LocalPointMap?, deletedRotation: Deformer.Rotation?): Deformer {
+	val reparented = deformer.reparentedTo(grandParent)
+	if (mapper == null) return reparented
+	return when (reparented) {
+		is Deformer.Warp -> {
+			val grid = reparented.geometryGrid ?: return reparented
+			reparented.copy(
+				geometryGrid = KeyformGrid(
+					grid.axes,
+					grid.cells.map { cell ->
+						KeyformCell(cell.coordinate, WarpLatticeForm(mapInterleaved(cell.form.controlPoints, mapper)))
+					},
+				),
+				blendShapes = reparented.blendShapes.map { binding ->
+					binding.copy(
+						forms = binding.forms.map { form ->
+							form?.let {
+								WarpForm(
+									mapInterleaved(it.controlPoints, mapper),
+									it.opacity,
+									it.multiplyColor,
+									it.screenColor,
+								)
+							}
+						},
+					)
+				},
+			)
+		}
+		is Deformer.Rotation -> {
+			val parentAngle = deletedRotation?.geometryGrid?.cells
+				?.firstOrNull { it.coordinate.isEmpty() }?.form?.angle
+				?: deletedRotation?.geometryGrid?.cells?.firstOrNull()?.form?.angle
+				?: 0f
+			val parentScale = deletedRotation?.geometryGrid?.cells
+				?.firstOrNull { it.coordinate.isEmpty() }?.form?.scale
+				?: deletedRotation?.geometryGrid?.cells?.firstOrNull()?.form?.scale
+				?: 1f
+			val grid = reparented.geometryGrid ?: return reparented
+			reparented.copy(
+				geometryGrid = KeyformGrid(
+					grid.axes,
+					grid.cells.map { cell ->
+						val scratch = FloatArray(2)
+						mapper.map(cell.form.originX, cell.form.originY, scratch)
+						KeyformCell(
+							cell.coordinate,
+							RotationPivotForm(
+								scratch[0],
+								scratch[1],
+								cell.form.angle + parentAngle,
+								cell.form.scale * parentScale,
+							),
+						)
+					},
+				),
+				blendShapes = reparented.blendShapes.map { binding ->
+					binding.copy(
+						forms = binding.forms.map { form ->
+							form?.let {
+								val scratch = FloatArray(2)
+								mapper.map(it.originX, it.originY, scratch)
+								RotationForm(
+									scratch[0],
+									scratch[1],
+									it.angle + parentAngle,
+									it.scale * parentScale,
+									it.flipX,
+									it.flipY,
+									it.opacity,
+									it.multiplyColor,
+									it.screenColor,
+								)
+							}
+						},
+					)
+				},
+			)
+		}
+	}
+}
+
 /**
  * Returns a copy of [this] with the deformer [id] deleted by unwrapping it: its child deformers and the
- * drawables it deformed re-home to its own parent (null = an armature root), so removing a transform
- * wrapper never deletes art. Does not touch the org tree, so the render order is unchanged. A no-op (no
- * such deformer) returns the same instance.
+ * drawables it deformed re-home to its own parent (null = an armature root). Child rest geometry is baked
+ * through the removed deformer's rest pose so appearance is preserved. Does not touch the org tree. A
+ * no-op (no such deformer) returns the same instance.
  *
  * @param DeformerId id The deformer to delete.
  * @return PuppetModel The model without that deformer, or [this] if it was absent.
@@ -94,14 +291,18 @@ fun PuppetModel.withDrawableDeleted(id: DrawableId): PuppetModel = withDrawables
 fun PuppetModel.withDeformerDeleted(id: DeformerId): PuppetModel {
 	val deformer = deformers.firstOrNull { it.id == id } ?: return this
 	val grandParent = deformer.parent
+	val mapper = restLocalMapper(deformer)
+	val deletedRotation = deformer as? Deformer.Rotation
 	val updatedDeformers =
 		deformers.filter { it.id != id }
-			.map { other -> if (other.parent == id) other.reparentedTo(grandParent) else other }
+			.map { other ->
+				if (other.parent == id) mapDeformerThrough(other, grandParent, mapper, deletedRotation) else other
+			}
 	val updatedDrawables =
 		drawables.map { drawable ->
-			if (drawable.parentDeformerId == id) drawable.copy(parentDeformerId = grandParent) else drawable
+			if (drawable.parentDeformerId == id) mapDrawableThrough(drawable, grandParent, mapper) else drawable
 		}
-	return copy(deformers = updatedDeformers, drawables = updatedDrawables)
+	return copy(deformers = updatedDeformers, drawables = updatedDrawables).withDerivedRenderRoot()
 }
 
 /** The set of part ids in [id]'s org-tree subtree (the part itself plus every descendant part). */

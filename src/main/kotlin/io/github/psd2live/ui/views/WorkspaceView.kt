@@ -1228,15 +1228,36 @@ private fun DeformerTreeItem(
 			}
 		}
 
-		// Streamlined Context menu
+		// Deformer context menu: create → hierarchy → expand → delete
 		DropdownMenu(
 			expanded = showMenu,
 			onDismissRequest = { showMenu = false },
 			modifier = Modifier
 				.background(colors.panelElevated)
 				.border(BorderStroke(1.dp, colors.border))
-				.widthIn(min = 160.dp, max = 220.dp),
+				.widthIn(min = 168.dp, max = 240.dp),
 		) {
+			DropdownMenuItem(onClick = {
+				onRequestCreate?.invoke(CreatePlacementKind.WARP, CreateRelation.AS_PARENT, true, tailId)
+				showMenu = false
+			}) {
+				Text(tr("editor.treeAddWarpParent"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
+			}
+			DropdownMenuItem(onClick = {
+				onRequestCreate?.invoke(CreatePlacementKind.WARP, CreateRelation.AS_CHILD, true, tailId)
+				showMenu = false
+			}) {
+				Text(tr("editor.treeAddWarpChild"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
+			}
+			DropdownMenuItem(onClick = {
+				onRequestCreate?.invoke(CreatePlacementKind.ROTATION, CreateRelation.AS_PARENT, true, tailId)
+				showMenu = false
+			}) {
+				Text(tr("editor.treeAddRotationParent"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
+			}
+
+			Divider(color = colors.divider.copy(alpha = 0.5f), thickness = 0.5.dp)
+
 			val isAlreadyRoot = headDeformer.parent == null
 			DropdownMenuItem(
 				onClick = {
@@ -1264,27 +1285,6 @@ private fun DeformerTreeItem(
 			Divider(color = colors.divider.copy(alpha = 0.5f), thickness = 0.5.dp)
 
 			DropdownMenuItem(onClick = {
-				onRequestCreate?.invoke(CreatePlacementKind.WARP, CreateRelation.AS_PARENT, true, tailId)
-				showMenu = false
-			}) {
-				Text(tr("editor.treeAddWarpParent"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
-			}
-			DropdownMenuItem(onClick = {
-				onRequestCreate?.invoke(CreatePlacementKind.WARP, CreateRelation.AS_CHILD, true, tailId)
-				showMenu = false
-			}) {
-				Text(tr("editor.treeAddWarpChild"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
-			}
-			DropdownMenuItem(onClick = {
-				onRequestCreate?.invoke(CreatePlacementKind.ROTATION, CreateRelation.AS_PARENT, true, tailId)
-				showMenu = false
-			}) {
-				Text(tr("editor.treeAddRotationParent"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
-			}
-
-			Divider(color = colors.divider.copy(alpha = 0.5f), thickness = 0.5.dp)
-
-			DropdownMenuItem(onClick = {
 				chain.deformers.forEach { expandedMap[it.id.raw] = true }
 				fun expandRecursive(dId: String) {
 					expandedMap[dId] = true
@@ -1301,6 +1301,20 @@ private fun DeformerTreeItem(
 				showMenu = false
 			}) {
 				Text(tr("canvas.hierarchy.collapseBranch"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
+			}
+
+			Divider(color = colors.divider.copy(alpha = 0.5f), thickness = 0.5.dp)
+
+			DropdownMenuItem(onClick = {
+				// Innermost first so each unwrap bakes into the next parent before that parent is removed.
+				viewModel.deleteDeformers(chain.deformers.asReversed().map { it.id.raw })
+				showMenu = false
+			}) {
+				Text(
+					tr("canvas.hierarchy.deleteDeformer"),
+					style = typography.body.copy(fontSize = 11.sp),
+					color = colors.error,
+				)
 			}
 		}
 	}

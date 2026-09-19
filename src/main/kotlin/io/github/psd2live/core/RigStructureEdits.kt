@@ -1,6 +1,7 @@
 package io.github.psd2live.core
 
 import kotlinx.serialization.json.*
+import org.umamo.edit.withDeformerDeleted
 import org.umamo.edit.withDeformerMoved
 import org.umamo.edit.withDeformerMultiplyColor
 import org.umamo.edit.withDeformerName
@@ -44,6 +45,7 @@ internal object RigStructureEdits {
             // chain: this is only the Parts-panel membership, and meshes use `move` instead because they
             // are org children in a way a deformer is not.
             "part" -> setOf("part_id")
+            "delete" -> emptySet()
             else -> error("Unknown structure action: $action")
         }
         require((edit.keys - allowed - setOf("action", "kind", "id")).isEmpty()) { "Unexpected field for $action" }
@@ -59,6 +61,10 @@ internal object RigStructureEdits {
             return edit["parent_id"]?.jsonPrimitive?.contentOrNull
         }
         return when(action) {
+            "delete" -> {
+                require(kind in setOf("warp", "rotation")) { "Only a deformer can be deleted via structure delete" }
+                model.withDeformerDeleted(deformer!!.id)
+            }
             "rename" -> {
                 val name = edit.string("name").trim()
                 when(kind) {
