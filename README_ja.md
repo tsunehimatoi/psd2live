@@ -22,7 +22,7 @@ PSD2Live は、自動化された Live2D モデル生成パイプラインおよ
 | カテゴリ | ドキュメント | 概要 |
 | :--- | :--- | :--- |
 | ガイド | [ユーザー操作ガイド](docs/ja/guide/USER_GUIDE.md) | デスクトップ GUI、バージョン履歴ツリー、独立ログドック、Agent / MCP 接続、ショートカットおよび CLI リファレンス |
-| ガイド | [Live2D SDK 設定・利用ガイド](docs/ja/guide/CUBISM_SDK_SETUP.md) | 公式 Native SDK ライセンス方針、シェーダー抽出、およびハードウェア高速化描画の設定手順 |
+| ガイド | [Live2D SDK 設定・利用ガイド](docs/ja/guide/CUBISM_SDK_SETUP.md) | 公式 Native SDK ライセンス方針、本リポジトリ `native/live2d_renderer` による DLL ビルド、シェーダー配置とオフスクリーン描画設定 |
 | 仕様 | [PSD レイヤー仕様および命名規則](docs/ja/spec/PSD_LAYER_SPEC.md) | 31 種のセマンティックタグ、左右判定規則、連結成分自動分離、およびパーツ別レイヤー設計 |
 | 仕様 | [デフォーマ階層・数理モデル・パラメータ仕様書](docs/ja/spec/DEFORMER_AND_PARAMETER_SPEC.md) | デフォーマツリー構造、顔面 9 軸数理モデル、C1 連続曲線、パーツ別変形および物理演算仕様 |
 | 仕様 | [プロジェクトファイル形式（英語）](docs/en/spec/PROJECT_FORMAT.md) | `.psd2live` アーカイブ構成、保存・復元セマンティクス、検証規則、UI / MCP エントリーポイント |

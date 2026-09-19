@@ -22,7 +22,7 @@ PSD2Live 是一个自动化的 Live2D 模型生成流水线与桌面应用。输
 | 分类 | 文档 | 说明 |
 | :--- | :--- | :--- |
 | 使用指南 | [用户操作指南](docs/zh/guide/USER_GUIDE.md) | 桌面 GUI、版本历史树、独立日志坞、Agent / MCP 连接、快捷键及 CLI 参数说明 |
-| 使用指南 | [Live2D SDK 配置指南](docs/zh/guide/CUBISM_SDK_SETUP.md) | 官方 Native SDK 许可政策、着色器提取与离屏硬件加速预览配置指南 |
+| 使用指南 | [Live2D SDK 配置指南](docs/zh/guide/CUBISM_SDK_SETUP.md) | 官方 Native SDK 许可政策、本仓库 `native/live2d_renderer` 自建 DLL、着色器部署与离屏预览配置 |
 | 使用指南 | [纹理高清化配置](docs/zh/guide/TEXTURE_UPSCALE.md) | 可选 nunif 动漫超分、透明边缘处理、2×/4× 纹理与显存控制 |
 | 规范 | [PSD 图层规范与命名指南](docs/zh/spec/PSD_LAYER_SPEC.md) | 31 种语义标签中日英对照、侧别规则、连通域拆分与五官/头发分层规范 |
 | 规范 | [变形器与算法数学规范](docs/zh/spec/DEFORMER_AND_PARAMETER_SPEC.md) | 变形器拓扑树、九轴经纬网数学模型、C1 连续曲线、五官修形与动力学公式 |

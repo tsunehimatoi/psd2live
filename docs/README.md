@@ -42,7 +42,7 @@ PSD2Live 是一条自动化的 Live2D 模型生成流水线：输入一张按规
 | 文档 | 内容 | 可用语言 |
 | :--- | :--- | :--- |
 | [用户操作指南](zh/guide/USER_GUIDE.md) | 四大工作区视图、独立日志坞、检视器面板、端到端生成流程、Agent / MCP 连接、快捷键与 CLI 参数、FAQ、单文件工程与历史树 | 中 · [英](en/guide/USER_GUIDE.md) · [日](ja/guide/USER_GUIDE.md) |
-| [Live2D SDK 配置指南](zh/guide/CUBISM_SDK_SETUP.md) | 为什么要接官方 SDK（一致性而非单纯加速）、非分发原则、组件清单、着色器提取与部署、状态识别与排障 | 中 · [英](en/guide/CUBISM_SDK_SETUP.md) · [日](ja/guide/CUBISM_SDK_SETUP.md) |
+| [Live2D SDK 配置指南](zh/guide/CUBISM_SDK_SETUP.md) | 为什么要接官方 SDK、非分发原则、一键 `/MT` 自建 DLL（无 VC 运行库依赖）、部署与排障 | 中 · [英](en/guide/CUBISM_SDK_SETUP.md) · [日](ja/guide/CUBISM_SDK_SETUP.md) |
 | [纹理高清化](zh/guide/TEXTURE_UPSCALE.md) | 可选 nunif / waifu2x 动漫超分：环境配置、桌面与 CLI 用法、透明边缘处理、显存策略与验证 | 中 |
 
 ### spec/ 规范与格式

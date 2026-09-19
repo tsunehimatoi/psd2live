@@ -22,7 +22,7 @@ Documents are organized by **category × language** (`docs/<language>/<category>
 | Category | Document | Description |
 | :--- | :--- | :--- |
 | Guide | [User Guide](docs/en/guide/USER_GUIDE.md) | Desktop GUI, version-history tree, independent log dock, Agent/MCP connection, shortcuts, and CLI reference |
-| Guide | [Live2D SDK Setup Guide](docs/en/guide/CUBISM_SDK_SETUP.md) | Official Native SDK license policy, shader extraction, and hardware-accelerated preview setup |
+| Guide | [Live2D SDK Setup Guide](docs/en/guide/CUBISM_SDK_SETUP.md) | Official Native SDK license policy, in-repo `native/live2d_renderer` build, shader deployment, and offscreen preview setup |
 | Spec | [PSD Layer Specification](docs/en/spec/PSD_LAYER_SPEC.md) | 31 semantic tags, side resolution rules, connected-component splitting, and layering guidelines |
 | Spec | [Deformer & Math Specification](docs/en/spec/DEFORMER_AND_PARAMETER_SPEC.md) | Deformer tree topology, 9-pose facial lattice math, C1 roll curve, feature warps, and physics |
 | Spec | [Project Format (version 1)](docs/en/spec/PROJECT_FORMAT.md) | `.psd2live` archive layout, save/recovery semantics, validation rules, and UI/MCP entry points |
