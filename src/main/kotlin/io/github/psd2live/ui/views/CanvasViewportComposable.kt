@@ -337,6 +337,15 @@ fun CanvasViewportComposable(
 					editor.space = event.type == KeyEventType.KeyDown
 					return@onKeyEvent true
 				}
+				// Alt is a latch of the same kind: the pointer reports its modifiers only while it moves,
+				// and the sampling ring has to appear the moment Alt is held, not the moment the mouse
+				// happens to twitch. Not consumed - Alt belongs to whatever else wants it too.
+				if (mode == CanvasMode.EDIT && previewModel != null &&
+					(event.key == Key.AltLeft || event.key == Key.AltRight)
+				) {
+					editor.altHeld = event.type == KeyEventType.KeyDown
+					return@onKeyEvent false
+				}
 				val action = state.keymap.match(event, ShortcutScope.CANVAS)
 					?: return@onKeyEvent false
 				// Camera commands sit outside the mode and busy gates, as they always have: a
@@ -468,7 +477,15 @@ fun CanvasViewportComposable(
 						editor.cycleBrushShape()
 						true
 					}
-					ShortcutAction.AXIS_CONSTRAIN_X -> { editor.axis = if (editor.axis == "x") null else "x"; true }
+					ShortcutAction.AXIS_CONSTRAIN_X -> {
+						// Painting has no axis to constrain, so in paint mode X is what it is in every
+						// paint program: the foreground and background colours change places.
+						if (editor.hierarchyMode == EditHierarchyMode.PAINT) {
+							editor.swapPaintColors(); true
+						} else {
+							editor.axis = if (editor.axis == "x") null else "x"; true
+						}
+					}
 					ShortcutAction.AXIS_CONSTRAIN_Y -> { editor.axis = if (editor.axis == "y") null else "y"; true }
 					else -> false
 				}

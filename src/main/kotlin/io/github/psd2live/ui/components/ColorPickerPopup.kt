@@ -139,6 +139,12 @@ fun ColorPickerSwatch(
     }
 }
 
+/** The colour as the string an artist would type: `#RRGGBB`. */
+internal fun Color.toHex(): String {
+    val argb = toArgb()
+    return "#%02X%02X%02X".format((argb ushr 16) and 0xFF, (argb ushr 8) and 0xFF, argb and 0xFF)
+}
+
 /**
  * A paint colour chip that opens the colour picker below it.
  *

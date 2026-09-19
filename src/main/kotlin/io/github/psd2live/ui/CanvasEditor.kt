@@ -286,10 +286,24 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         selectPaintShape(shapes[(paintShape.ordinal + 1) % shapes.size])
     }
 
+    /** Puts the background colour in hand and the foreground into the background's place. */
+    fun swapPaintColors() {
+        val previous = paintColor
+        paintColor = paintSecondaryColor
+        paintSecondaryColor = previous
+    }
+
     var isPainting by mutableStateOf(false)
     /** True while the pointer is picking a colour rather than drawing one: the eyedropper's own
      *  gesture, or Alt held down over any paint tool. */
     var isSampling by mutableStateOf(false)
+
+    /**
+     * True while Alt is held. The pointer reports its modifiers only when it moves, so the key itself
+     * latches this - it is what the sampling ring follows, and a ring that waited for the mouse to
+     * twitch would be a ring that is not there when the artist looks for it.
+     */
+    var altHeld by mutableStateOf(false)
     var paintStrokeStart by mutableStateOf<Offset?>(null)
     var paintStrokeCurrent by mutableStateOf<Offset?>(null)
 
@@ -1062,6 +1076,19 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         )
     }
 
+    /**
+     * Where the sampling ring belongs, or null when the pointer is drawing rather than picking.
+     *
+     * The eyedropper always picks; Alt makes any paint tool pick for as long as it is held, which is how
+     * a colour is taken without leaving the brush; and a pick already under way keeps picking until the
+     * button comes up. The overlay asks this rather than working it out again, so the ring and the pick
+     * cannot disagree about whether the pointer is picking.
+     */
+    fun pickCursor(): Offset? = cursor?.takeIf {
+        hierarchyMode == EditHierarchyMode.PAINT && tool in PAINT_TOOLS &&
+            (tool == CanvasTool.PAINT_EYEDROPPER || altHeld || isSampling)
+    }
+
     /** Takes the colour under [pos]: the foreground, or the secondary colour when [secondary]. */
     fun pickColorAt(pos: Offset, viewport: CanvasViewport, secondary: Boolean = false) {
         val sampled = sampleColorAt(pos, viewport) ?: return
@@ -1278,6 +1305,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
 
     fun clearHover() {
         cursor = null
+        altHeld = false
         hoveredVertex = null
         hoveredHandle = BoundingHandle.NONE
         hoveredBezierAnchor = null
@@ -1609,7 +1637,6 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             if (isCreatingWarp || isCreatingRotation) return cross
             if (marquee.isNotEmpty()) return cross
             if (tool in DEFORM_BRUSH_TOOLS || tool == CanvasTool.BRUSH_SELECT) return cross
-            if (isPainting) return cross
             if (boxDrag) return handleCursor(activeHandle)
             if (activeBezierAnchor != null || activeBezierHandle != null) return hand
             return move
@@ -1619,9 +1646,8 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         }
         if (tool == CanvasTool.BRUSH_SELECT || tool in DEFORM_BRUSH_TOOLS) return cross
         if (tool == CanvasTool.LASSO_SELECT) return cross
-        // Painting aims at a pixel: the tip ring says how big the mark will be, the crosshair says
-        // exactly where it lands - and for a pick that is the whole of what the tool does.
-        if (hierarchyMode == EditHierarchyMode.PAINT && (tool in PAINT_TOOLS || tool == CanvasTool.SELECT)) return cross
+        // Painting gets no crosshair: the cursor is exactly where the tip ring already is, and a cross
+        // over the pixels being judged is worse than no mark at all.
 
         if (hoveredBezierHandle != null || hoveredBezierAnchor != null) return hand
         if (hoveredHandle != BoundingHandle.NONE) return handleCursor(hoveredHandle)

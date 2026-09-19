@@ -6,7 +6,6 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.runtime.*
@@ -407,9 +406,9 @@ internal fun BoxScope.CanvasEditorOverlay(
         // 3d. Paint mode: the tip under the cursor, Photoshop style - the outer ring is the brush, the
         // inner one the part of it that stays solid, and while the tip is being retuned the falloff
         // between them is painted out in the stroke's own colour and opacity.
-        // While a pick is running the sampling ring is the cursor, and the tip ring would only argue
-        // with it about where the pointer is.
-        editor.cursor?.takeIf { editor.paintBrushActive && !editor.isSampling }?.let { cur ->
+        // While the pointer is picking, the sampling ring is the cursor, and the tip ring would only
+        // argue with it about where the pointer is.
+        editor.cursor?.takeIf { editor.paintBrushActive && editor.pickCursor() == null }?.let { cur ->
             // The tip is the one description of the mark: the ring is its radius, the inner circle its
             // core, and the falloff between them is the profile the stroke is rasterized with - so what
             // the cursor promises is what the pixels do. The eraser draws no colour of its own, so its
@@ -442,42 +441,37 @@ internal fun BoxScope.CanvasEditorOverlay(
         // pointer, the bottom half the colour in hand, so a pick can be judged before it is taken. The
         // ring follows the pointer for the whole gesture, which is what makes an eyedropper usable at
         // all on art whose every pixel is a slightly different shade.
-        val sampling = editor.cursor != null && editor.hierarchyMode == EditHierarchyMode.PAINT &&
-            (editor.isSampling || editor.tool == CanvasTool.PAINT_EYEDROPPER)
-        if (sampling) {
-            val cur = editor.cursor!!
+        editor.pickCursor()?.let { cur ->
             val sampled = editor.sampleColorAt(cur, viewport)
-            val r = 9f
-            val ring = Rect(cur - Offset(r, r), Size(r * 2f, r * 2f))
-            if (sampled != null) {
-                drawArc(
-                    color = sampled,
-                    startAngle = 180f,
-                    sweepAngle = 180f,
-                    useCenter = true,
-                    topLeft = ring.topLeft,
-                    size = ring.size,
-                )
-            }
-            drawArc(
-                color = editor.paintColor,
-                startAngle = 0f,
+            // A ring, not a disc: the middle stays empty so the pixel being read is the one thing the
+            // cursor never covers, and the two colours ride around it - what is under the pointer on the
+            // top half, what is in hand on the bottom. Sized in dp, because the ring reads a pixel and is
+            // sized for the eye rather than for the zoom (or for the display's density).
+            val inner = 17.dp.toPx()
+            val band = 5.dp.toPx()
+            val middle = inner + band / 2f
+            val box = Rect(cur - Offset(middle, middle), Size(middle * 2f, middle * 2f))
+            fun halfRing(color: Color, startAngle: Float) = drawArc(
+                color = color,
+                startAngle = startAngle,
                 sweepAngle = 180f,
-                useCenter = true,
-                topLeft = ring.topLeft,
-                size = ring.size,
+                useCenter = false,
+                topLeft = box.topLeft,
+                size = box.size,
+                style = Stroke(band),
             )
-            drawCircle(color = Color.Black.copy(alpha = 0.75f), radius = r, center = cur, style = Stroke(3f))
-            drawCircle(color = Color.White.copy(alpha = 0.9f), radius = r, center = cur, style = Stroke(1f))
-            // The pixel being read, and the reading itself: a colour is only useful if it can be quoted.
-            drawCircle(color = Color.White.copy(alpha = 0.9f), radius = 1.5f, center = cur, style = Stroke(2f))
-            drawCircle(color = sampled ?: Color.Transparent, radius = 1.5f, center = cur)
-            val label = sampled?.let { argbHex(it) } ?: tr("editor.paint.nothingToPick")
+            // The dark band underneath is the ring's own edging: half of what it reports can be the same
+            // colour as the artwork it is lying on.
+            drawCircle(color = Color.Black.copy(alpha = 0.8f), radius = middle, center = cur, style = Stroke(band + 2.5.dp.toPx()))
+            if (sampled != null) halfRing(sampled, 180f)
+            halfRing(editor.paintColor, 0f)
+
+            val label = sampled?.let { it.toHex() } ?: tr("editor.paint.nothingToPick")
             val layout = textMeasurer.measure(
                 text = label,
                 style = TextStyle(color = colors.textPrimary, fontSize = 11.sp, fontFamily = FontFamily.Monospace),
             )
-            val origin = Offset(cur.x + 16f, cur.y - 12f)
+            val origin = Offset(cur.x + middle + 6.dp.toPx(), cur.y - 12.dp.toPx())
             val extent = Size(layout.size.width + 12f, layout.size.height + 6f)
             drawRect(colors.panelElevated.copy(alpha = 0.94f), origin, extent)
             drawRect(colors.divider, origin, extent, style = Stroke(1f))
@@ -1557,13 +1551,31 @@ private fun BoxScope.HierarchyModeBar(
                         .width(1.dp)
                         .background(colors.border.copy(alpha = 0.45f))
                 )
-                PaintColorChip(
-                    color = editor.paintColor,
-                    onColorChanged = { editor.paintColor = it },
-                    modifier = Modifier.size(18.dp),
-                    popupOffset = 24.dp,
-                    shape = CircleShape,
-                    border = BorderStroke(1.5.dp, colors.accent),
+                // Foreground and background the way every paint program shows them: the colour in hand
+                // in front, the other one behind it, and the swap beside them. The chord for the swap is
+                // X, out on the canvas where the hand already is.
+                Box(modifier = Modifier.size(26.dp, 24.dp)) {
+                    PaintColorChip(
+                        color = editor.paintSecondaryColor,
+                        onColorChanged = { editor.paintSecondaryColor = it },
+                        modifier = Modifier.align(Alignment.BottomEnd).size(17.dp),
+                        popupOffset = 22.dp,
+                        shape = RoundedCornerShape(2.dp),
+                        border = BorderStroke(1.dp, colors.border),
+                    )
+                    PaintColorChip(
+                        color = editor.paintColor,
+                        onColorChanged = { editor.paintColor = it },
+                        modifier = Modifier.align(Alignment.TopStart).size(19.dp),
+                        popupOffset = 24.dp,
+                        shape = RoundedCornerShape(2.dp),
+                        border = BorderStroke(1.5.dp, colors.accent),
+                    )
+                }
+                CompactButton(
+                    text = "⇄",
+                    onClick = { editor.swapPaintColors(); focus() },
+                    height = 20.dp,
                 )
                 val currentSize = editor.paintSize
                 Text(
@@ -1863,12 +1875,6 @@ private fun BrushShapeIcon(
             }
         }
     }
-}
-
-/** The colour as the string an artist would type: `#RRGGBB`, which is what a pick is quoted in. */
-private fun argbHex(color: Color): String {
-    val argb = color.toArgb()
-    return "#%02X%02X%02X".format((argb ushr 16) and 0xFF, (argb ushr 8) and 0xFF, argb and 0xFF)
 }
 
 /**

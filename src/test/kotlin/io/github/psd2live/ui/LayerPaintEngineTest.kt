@@ -846,6 +846,53 @@ class LayerPaintEngineTest {
     }
 
     @Test
+    fun testTheSamplingRingIsThereForEveryWayAPickIsCalled() {
+        // The ring is the eyedropper's whole feedback, so it has to be there for all three ways in: the
+        // tool itself, Alt over any paint tool, and a pick already under way. A ring that only appears
+        // once the button is down is a ring nobody ever sees.
+        val (vm, editor) = createTestEnvironment()
+        val vp = unitViewport()
+        editor.viewport = vp
+        editor.setHierarchyMode(EditHierarchyMode.PAINT)
+        editor.activateTool(CanvasTool.PAINT_BRUSH)
+        editor.move(Offset(20f, 20f), vp, shift = false, alt = false)
+        assertNull(editor.pickCursor(), "a brush stroke is not a pick")
+
+        editor.altHeld = true
+        assertEquals(Offset(20f, 20f), editor.pickCursor(), "Alt turns the brush into the eyedropper")
+        editor.altHeld = false
+
+        // Arming a tool drops the hover: the pointer has not been anywhere since, so the first move over
+        // the canvas is what puts the ring back.
+        editor.activateTool(CanvasTool.PAINT_EYEDROPPER)
+        assertNull(editor.pickCursor())
+        editor.move(Offset(20f, 20f), vp, shift = false, alt = false)
+        assertEquals(Offset(20f, 20f), editor.pickCursor(), "arming the eyedropper itself is a pick")
+
+        editor.press(Offset(20f, 20f), vp, shift = false, alt = false)
+        assertEquals(Offset(20f, 20f), editor.pickCursor(), "a pick keeps its ring while the button is down")
+        editor.release()
+
+        editor.clearHover()
+        assertNull(editor.pickCursor(), "with the pointer off the canvas there is nothing to point at")
+    }
+
+    @Test
+    fun testSwappingForegroundAndBackground() {
+        val (vm, editor) = createTestEnvironment()
+        editor.paintColor = Color.Red
+        editor.paintSecondaryColor = Color.Blue
+
+        editor.swapPaintColors()
+        assertEquals(Color.Blue, editor.paintColor, "the background comes forward")
+        assertEquals(Color.Red, editor.paintSecondaryColor, "and the foreground goes back")
+
+        editor.swapPaintColors()
+        assertEquals(Color.Red, editor.paintColor, "and back again")
+        assertEquals(Color.Blue, editor.paintSecondaryColor)
+    }
+
+    @Test
     fun testEyedropperTakesTheColourUnderThePointer() {
         val (vm, editor) = createTestEnvironment()
         val vp = unitViewport()

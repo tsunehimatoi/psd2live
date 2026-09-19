@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -53,6 +54,7 @@ import io.github.psd2live.ui.components.CompactNumberSpinner
 import io.github.psd2live.ui.components.CompactSectionHeader
 import io.github.psd2live.ui.components.CompactToggleChip
 import io.github.psd2live.ui.components.PaintColorChip
+import io.github.psd2live.ui.components.toHex
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.theme.LocalToolColors
@@ -835,31 +837,49 @@ private fun PaintToolDetailsColumn(editor: CanvasEditor, target: CanvasTarget?) 
             style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
             color = colors.textPrimary,
         )
+        // Foreground and background, drawn the way every paint program draws them: two overlapping
+        // squares with the one in hand in front, the swap beside them, and the values written out - a
+        // colour is quoted as often as it is judged. X swaps them from the canvas, where the hand is.
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            PaintColorChip(
-                color = editor.paintColor,
-                onColorChanged = { editor.paintColor = it },
-                modifier = Modifier.size(28.dp),
-                popupOffset = 34.dp,
-                border = BorderStroke(1.5.dp, colors.accent),
-            )
-            PaintColorChip(
-                color = editor.paintSecondaryColor,
-                onColorChanged = { editor.paintSecondaryColor = it },
-                modifier = Modifier.size(22.dp),
-                popupOffset = 28.dp,
-            )
+            Box(modifier = Modifier.size(42.dp, 38.dp)) {
+                PaintColorChip(
+                    color = editor.paintSecondaryColor,
+                    onColorChanged = { editor.paintSecondaryColor = it },
+                    modifier = Modifier.align(Alignment.BottomEnd).size(26.dp),
+                    popupOffset = 30.dp,
+                    border = BorderStroke(1.dp, colors.border),
+                )
+                PaintColorChip(
+                    color = editor.paintColor,
+                    onColorChanged = { editor.paintColor = it },
+                    modifier = Modifier.align(Alignment.TopStart).size(28.dp),
+                    popupOffset = 32.dp,
+                    border = BorderStroke(1.5.dp, colors.accent),
+                )
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    text = "${tr("editor.paint.foreground")}  ${editor.paintColor.toHex()}",
+                    color = colors.textPrimary,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                )
+                Text(
+                    text = "${tr("editor.paint.background")}  ${editor.paintSecondaryColor.toHex()}",
+                    color = colors.textMuted,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                )
+            }
             CompactButton(
                 text = "⇄",
-                onClick = {
-                    val tmp = editor.paintColor
-                    editor.paintColor = editor.paintSecondaryColor
-                    editor.paintSecondaryColor = tmp
-                },
+                onClick = { editor.swapPaintColors() },
                 height = 24.dp,
             )
         }
