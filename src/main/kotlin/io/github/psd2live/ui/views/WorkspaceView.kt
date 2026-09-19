@@ -56,16 +56,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import java.awt.Cursor
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -448,10 +447,30 @@ private data class DrawOrderDialogTarget(
 )
 
 private const val TREE_ROW_HEIGHT_DP = 20
-private const val TREE_INDENT_STEP_DP = 10
+private const val TREE_INDENT_STEP_DP = 14
 private const val TREE_BASE_PADDING_DP = 4
-private const val TREE_DOT_OFFSET_DP = 4
+/** Horizontal center of the type icon: 1.dp leading spacer + half of [TREE_ICON_SIZE_DP]. */
+private const val TREE_DOT_OFFSET_DP = 7
+private const val TREE_ICON_SIZE_DP = 12
 private const val TREE_CHEVRON_WIDTH_DP = 10
+
+private enum class HierarchyIconKind { WARP, ROTATION, MESH }
+
+@Composable
+private fun HierarchyTypeIcon(
+	kind: HierarchyIconKind,
+	tint: Color,
+	modifier: Modifier = Modifier.size(TREE_ICON_SIZE_DP.dp),
+) {
+	when (kind) {
+		HierarchyIconKind.WARP -> IconWarpDeformer(tint = tint, modifier = modifier)
+		HierarchyIconKind.ROTATION -> IconRotationDeformer(modifier = modifier, tint = tint)
+		HierarchyIconKind.MESH -> IconMeshWireframe(tint = tint, modifier = modifier)
+	}
+}
+
+private fun deformerIconKind(deformer: Deformer): HierarchyIconKind =
+	if (deformer is Deformer.Warp) HierarchyIconKind.WARP else HierarchyIconKind.ROTATION
 
 private data class CompactedDeformerChain(
 	val deformers: List<Deformer>,
@@ -498,6 +517,8 @@ private fun isDescendantOf(deformerId: String, potentialAncestorId: String, defo
 private data class ItemLayoutInfo(
 	val id: String,
 	val targetId: String,
+	/** Specific item to select on click (compact-chain segment or layer). */
+	val selectId: String,
 	val name: String,
 	val isDeformer: Boolean,
 	val currentParentId: String?,
@@ -700,16 +721,16 @@ private fun HierarchyTreeList(
 					if (event.button == PointerButton.Primary && treeDragState.isPressed) {
 						treeDragState.onRelease(viewModel) { clickedItem ->
 							if (clickedItem.isDeformer) {
-								if (state.selectedDeformerId == clickedItem.targetId) {
+								if (state.selectedDeformerId == clickedItem.selectId) {
 									viewModel.selectDeformer(null)
 								} else {
-									viewModel.selectDeformer(clickedItem.targetId)
+									viewModel.selectDeformer(clickedItem.selectId)
 								}
 							} else {
-								if (state.selectedLayerId == clickedItem.id) {
+								if (state.selectedLayerId == clickedItem.selectId) {
 									viewModel.selectLayer(null)
 								} else {
-									viewModel.selectLayer(clickedItem.id)
+									viewModel.selectLayer(clickedItem.selectId)
 								}
 							}
 						}
@@ -750,6 +771,7 @@ private fun HierarchyTreeList(
 									itemBoundsMap["ROOT"] = ItemLayoutInfo(
 										id = "ROOT",
 										targetId = "ROOT",
+										selectId = "ROOT",
 										name = tr("canvas.hierarchy.root"),
 										isDeformer = true,
 										currentParentId = null,
@@ -766,10 +788,9 @@ private fun HierarchyTreeList(
 							verticalAlignment = Alignment.CenterVertically,
 							horizontalArrangement = Arrangement.spacedBy(6.dp),
 						) {
-							Box(
-								modifier = Modifier
-									.size(6.dp)
-									.background(if (isRootTarget) colors.accent else colors.textMuted, CircleShape),
+							IconMoveToRoot(
+								modifier = Modifier.size(11.dp),
+								tint = if (isRootTarget) colors.accent else colors.textMuted,
 							)
 							Text(
 								text = if (isRootTarget) tr("canvas.hierarchy.dropToRoot") else tr("canvas.hierarchy.root"),
@@ -790,20 +811,47 @@ private fun HierarchyTreeList(
 					}
 				}
 
-				val selectedAncestorDeformerIds = remember(model, state.selectedLayerId, state.parentOverrides) {
-					if (state.selectedLayerId == null) emptySet<String>()
-					else {
-						val drawableId = model.rig.layerIdByDrawableId.entries.firstOrNull { it.value == state.selectedLayerId }?.key
-						val drawable = drawableId?.let { id -> model.rig.puppet.drawables.firstOrNull { it.id.raw == id } }
-						val ancestors = mutableSetOf<String>()
-						val deformerById = model.rig.puppet.deformers.associateBy { it.id.raw }
-						var parent = drawable?.let { state.parentOverrides[it.id.raw] ?: it.parentDeformerId?.raw }
+				val selectedAncestorDeformerIds = remember(model, state.selectedLayerId, state.selectedDeformerId, state.parentOverrides) {
+					val ancestors = mutableSetOf<String>()
+					val deformerById = model.rig.puppet.deformers.associateBy { it.id.raw }
+					fun collectAncestors(startParent: String?) {
+						var parent = startParent
 						val seen = mutableSetOf<String>()
 						while (parent != null && seen.add(parent)) {
 							ancestors.add(parent)
 							parent = state.parentOverrides[parent] ?: deformerById[parent]?.parent?.raw
 						}
-						ancestors
+					}
+					state.selectedLayerId?.let { layerId ->
+						val drawableId = model.rig.layerIdByDrawableId.entries.firstOrNull { it.value == layerId }?.key
+						val drawable = drawableId?.let { id -> model.rig.puppet.drawables.firstOrNull { it.id.raw == id } }
+						collectAncestors(drawable?.let { state.parentOverrides[it.id.raw] ?: it.parentDeformerId?.raw })
+					}
+					state.selectedDeformerId?.let { deformerId ->
+						val deformer = deformerById[deformerId]
+						collectAncestors(state.parentOverrides[deformerId] ?: deformer?.parent?.raw)
+					}
+					ancestors
+				}
+
+				val selectedDescendantLabelByAncestor = remember(
+					model, state.selectedLayerId, state.selectedDeformerId, state.parentOverrides, selectedAncestorDeformerIds,
+				) {
+					if (selectedAncestorDeformerIds.isEmpty()) emptyMap()
+					else {
+						val label = when {
+							state.selectedLayerId != null -> {
+								val drawableId = model.rig.layerIdByDrawableId.entries.firstOrNull { it.value == state.selectedLayerId }?.key
+								model.rig.puppet.drawables.firstOrNull { it.id.raw == drawableId }?.name
+									?: state.selectedLayerId
+							}
+							state.selectedDeformerId != null ->
+								model.rig.puppet.deformers.firstOrNull { it.id.raw == state.selectedDeformerId }?.name
+									?: state.selectedDeformerId
+							else -> null
+						}
+						if (label == null) emptyMap()
+						else selectedAncestorDeformerIds.associateWith { label }
 					}
 				}
 
@@ -825,6 +873,7 @@ private fun HierarchyTreeList(
 						itemBoundsMap = itemBoundsMap,
 						searchQuery = searchQuery,
 						selectedAncestorDeformerIds = selectedAncestorDeformerIds,
+						selectedDescendantLabelByAncestor = selectedDescendantLabelByAncestor,
 						onRequestSetOrder = onRequestSetOrder,
 						onRequestSetMeshSettings = onRequestSetMeshSettings,
 						onRequestOpenDeformPaths = onRequestOpenDeformPaths,
@@ -890,13 +939,17 @@ private fun HierarchyTreeList(
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(6.dp),
 					) {
-						Box(
-							modifier = Modifier
-								.size(6.dp)
-								.background(
-									if (dragItem.isDeformer) colors.accent else colors.textPrimary,
-									if (dragItem.isDeformer) CircleShape else RoundedCornerShape(1.dp),
-								),
+						val dragKind = if (dragItem.isDeformer) {
+							val def = deformers.find { it.id.raw == dragItem.targetId }
+								?: deformers.find { it.id.raw == dragItem.id }
+							def?.let { deformerIconKind(it) } ?: HierarchyIconKind.WARP
+						} else {
+							HierarchyIconKind.MESH
+						}
+						HierarchyTypeIcon(
+							kind = dragKind,
+							tint = if (dragItem.isDeformer) colors.accent else colors.textPrimary,
+							modifier = Modifier.size(11.dp),
 						)
 						Text(
 							text = dragItem.name,
@@ -979,6 +1032,7 @@ private fun DeformerTreeItem(
 	itemBoundsMap: MutableMap<String, ItemLayoutInfo>,
 	searchQuery: String = "",
 	selectedAncestorDeformerIds: Set<String> = emptySet(),
+	selectedDescendantLabelByAncestor: Map<String, String> = emptyMap(),
 	onRequestSetOrder: ((targetId: String, name: String, currentOrder: Float, defaultOrder: Float, isOverridden: Boolean) -> Unit)? = null,
 	onRequestSetMeshSettings: ((MeshSettingsDialogTarget) -> Unit)? = null,
 	onRequestOpenDeformPaths: ((String) -> Unit)? = null,
@@ -993,8 +1047,12 @@ private fun DeformerTreeItem(
 	val tailId = tailDeformer.id.raw
 
 	val isExpanded = expandedMap[headId] ?: true
-	val isSelected = chain.deformers.any { it.id.raw == state.selectedDeformerId }
-	val isAncestorOfSelected = chain.deformers.any { it.id.raw in selectedAncestorDeformerIds }
+	val selectedInChain = chain.deformers.firstOrNull { it.id.raw == state.selectedDeformerId }
+	val isSelected = selectedInChain != null
+	val isAncestorOfSelected = !isSelected && chain.deformers.any { it.id.raw in selectedAncestorDeformerIds }
+	val collapsedSelectedLabel = if (!isExpanded && isAncestorOfSelected) {
+		chain.deformers.asReversed().firstNotNullOfOrNull { selectedDescendantLabelByAncestor[it.id.raw] }
+	} else null
 	val type = if (tailDeformer is Deformer.Warp) "Warp" else "Rotation"
 
 	val childDeformers = deformerChildrenMap[tailId].orEmpty()
@@ -1025,12 +1083,44 @@ private fun DeformerTreeItem(
 	val isHoverTarget = treeDragState.isDragging && treeDragState.hoverTargetId == tailId
 
 	var isHovered by remember { mutableStateOf(false) }
+	var hoveredSegmentId by remember { mutableStateOf<String?>(null) }
 	var showMenu by remember { mutableStateOf(false) }
 	var menuClickOffset by remember { mutableStateOf(Offset.Zero) }
 	var rowCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+	val segmentBoundsInRow = remember { mutableStateMapOf<String, Rect>() }
+	val fallbackSelectId = selectedInChain?.id?.raw ?: tailId
+
+	fun resolveSegmentId(rowLocalPos: Offset): String {
+		segmentBoundsInRow.entries.firstOrNull { (_, rect) ->
+			rowLocalPos.x >= rect.left && rowLocalPos.x <= rect.right &&
+				rowLocalPos.y >= rect.top && rowLocalPos.y <= rect.bottom
+		}?.key?.let { return it }
+		return hoveredSegmentId ?: fallbackSelectId
+	}
+
+	fun beginSegmentPress(segmentId: String, rowLocalPos: Offset) {
+		val parent = containerCoordinates
+		val coords = rowCoords
+		if (parent == null || coords == null || !parent.isAttached || !coords.isAttached) return
+		val containerPos = parent.localPositionOf(coords, rowLocalPos)
+		val topLeft = parent.localPositionOf(coords, Offset.Zero)
+		treeDragState.onPress(
+			ItemLayoutInfo(
+				id = headId,
+				targetId = tailId,
+				selectId = segmentId,
+				name = chain.displayName,
+				isDeformer = true,
+				currentParentId = headDeformer.parent?.raw,
+				top = topLeft.y,
+				bottom = topLeft.y + coords.size.height,
+			),
+			containerPos,
+		)
+	}
 
 	val startX = (TREE_BASE_PADDING_DP + depth * TREE_INDENT_STEP_DP).dp
-	val dotAwt = ComponentPalette.strong(tailId)
+	val menuIconAwt = ComponentPalette.strong((selectedInChain ?: tailDeformer).id.raw)
 
 	Box(modifier = Modifier.fillMaxWidth()) {
 		Row(
@@ -1060,6 +1150,7 @@ private fun DeformerTreeItem(
 						itemBoundsMap[tailId] = ItemLayoutInfo(
 							id = headId,
 							targetId = tailId,
+							selectId = fallbackSelectId,
 							name = chain.displayName,
 							isDeformer = true,
 							currentParentId = headDeformer.parent?.raw,
@@ -1097,7 +1188,7 @@ private fun DeformerTreeItem(
 							strokeWidth = 1.2f,
 						)
 
-						// Horizontal branch into dot
+						// Horizontal branch into type icon
 						val branchEndX = (startX + 1.dp).toPx()
 						drawLine(
 							color = activeGuideColor,
@@ -1107,12 +1198,12 @@ private fun DeformerTreeItem(
 						)
 					}
 
-					// When expanded with children, draw line from bottom of dot down to row bottom
+					// When expanded with children, draw line from bottom of icon down to row bottom
 					if (isExpanded && hasChildren) {
 						val myDotX = (TREE_BASE_PADDING_DP + depth * TREE_INDENT_STEP_DP + TREE_DOT_OFFSET_DP).dp.toPx()
 						drawLine(
 							color = guideColor,
-							start = Offset(myDotX, midY + 3.dp.toPx()),
+							start = Offset(myDotX, midY + (TREE_ICON_SIZE_DP / 2f).dp.toPx()),
 							end = Offset(myDotX, size.height),
 							strokeWidth = 1.2f,
 						)
@@ -1120,18 +1211,33 @@ private fun DeformerTreeItem(
 				}
 				.onPointerEvent(PointerEventType.Enter) {
 					isHovered = true
-					viewModel.setHoveredItem(layerId = null, deformerId = tailId)
+					val pos = it.changes.firstOrNull()?.position
+					val segmentId = if (pos != null) resolveSegmentId(pos) else fallbackSelectId
+					hoveredSegmentId = segmentId
+					viewModel.setHoveredItem(layerId = null, deformerId = segmentId)
+				}
+				.onPointerEvent(PointerEventType.Move) {
+					if (!isHovered) return@onPointerEvent
+					val pos = it.changes.firstOrNull()?.position ?: return@onPointerEvent
+					val segmentId = resolveSegmentId(pos)
+					if (hoveredSegmentId != segmentId) {
+						hoveredSegmentId = segmentId
+						viewModel.setHoveredItem(layerId = null, deformerId = segmentId)
+					}
 				}
 				.onPointerEvent(PointerEventType.Exit) {
 					isHovered = false
+					hoveredSegmentId = null
 					viewModel.setHoveredItem(null, null)
 				}
 				.onPointerEvent(PointerEventType.Press) { event ->
+					if (event.changes.any { it.isConsumed }) return@onPointerEvent
 					if (event.button == PointerButton.Secondary) {
 						val clickPos = event.changes.firstOrNull()?.position ?: Offset.Zero
 						menuClickOffset = clickPos
-						if (state.selectedDeformerId != tailId) {
-							viewModel.selectDeformer(tailId)
+						val selectId = resolveSegmentId(clickPos)
+						if (state.selectedDeformerId != selectId) {
+							viewModel.selectDeformer(selectId)
 						}
 						treeDragState.clear()
 						event.changes.firstOrNull()?.consume()
@@ -1145,6 +1251,7 @@ private fun DeformerTreeItem(
 							val info = ItemLayoutInfo(
 								id = headId,
 								targetId = tailId,
+								selectId = resolveSegmentId(localPos),
 								name = chain.displayName,
 								isDeformer = true,
 								currentParentId = headDeformer.parent?.raw,
@@ -1158,15 +1265,15 @@ private fun DeformerTreeItem(
 				.padding(start = startX, end = 6.dp),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
-			// 1. Deformer Dot Icon (aligned directly with the vertical guideline)
+			// 1. Leading type icon — first (outer) deformer in the compact chain, aligned with guideline
 			Spacer(Modifier.width(1.dp))
-			Box(
-				modifier = Modifier
-					.size(6.dp)
-					.background(Color(dotAwt.red, dotAwt.green, dotAwt.blue), CircleShape),
+			val headAwt = ComponentPalette.strong(headId)
+			HierarchyTypeIcon(
+				kind = deformerIconKind(headDeformer),
+				tint = Color(headAwt.red, headAwt.green, headAwt.blue),
 			)
 
-			// 2. Folding symbol (BEHIND the dot, in BLUE, with spacing)
+			// 2. Folding symbol
 			Spacer(Modifier.width(2.dp))
 			Box(
 				modifier = Modifier
@@ -1186,46 +1293,125 @@ private fun DeformerTreeItem(
 			}
 			Spacer(Modifier.width(2.dp))
 
-			// 3. Deformer Chain Display Name with distinctly blue fold separator '\' and surrounding spaces
+			// 3. Compact chain: each compacted segment gets its own type icon (VS Code compact folders)
 			val isDeformerVis = chain.deformers.all { state.isDeformerVisible(it.id.raw) }
-			val annotatedDisplayName = remember(chain, isSelected, isDeformerVis, matchesQuery, searchQuery, colors) {
-				buildAnnotatedString {
-					val isHighlightQuery = matchesQuery && searchQuery.isNotEmpty()
+			val selectedSegmentId = selectedInChain?.id?.raw
+			val isHighlightQuery = matchesQuery && searchQuery.isNotEmpty()
+			val slashColor = when {
+				!isDeformerVis -> colors.textDisabled
+				isSelected -> colors.selectionText.copy(alpha = 0.55f)
+				else -> colors.accent
+			}
+
+			Row(
+				modifier = Modifier.weight(1f),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				chain.deformers.forEachIndexed { index, def ->
+					val segmentId = def.id.raw
+					val segmentSelected = segmentId == selectedSegmentId
+					val segmentHovered = !segmentSelected && segmentId == hoveredSegmentId
 					val textColor = when {
 						!isDeformerVis -> colors.textDisabled
-						isSelected -> colors.selectionText
+						segmentSelected -> colors.selectionText
+						segmentHovered && isSelected -> colors.selectionText
+						segmentHovered -> colors.accentHover
+						isSelected -> colors.selectionText.copy(alpha = 0.62f)
 						isHighlightQuery -> colors.accent
 						else -> colors.textPrimary
 					}
-					val slashColor = if (!isDeformerVis) colors.textDisabled else if (isSelected) colors.selectionText else colors.accent
+					val iconTint = when {
+						!isDeformerVis -> colors.textDisabled
+						segmentSelected -> colors.selectionText
+						segmentHovered -> colors.accentHover
+						else -> {
+							val awt = ComponentPalette.strong(segmentId)
+							Color(awt.red, awt.green, awt.blue)
+						}
+					}
 
-					chain.deformers.forEachIndexed { index, def ->
-						if (index > 0) {
-							withStyle(SpanStyle(color = slashColor, fontWeight = FontWeight.Normal)) {
-								append(" \\ ")
+					if (index > 0) {
+						Text(
+							text = " \\ ",
+							style = typography.body.copy(fontSize = 11.sp),
+							color = slashColor,
+							maxLines = 1,
+						)
+					}
+
+					Row(
+						modifier = Modifier
+							.then(if (index == chain.deformers.lastIndex) Modifier.weight(1f, fill = false) else Modifier)
+							.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
+							.onGloballyPositioned { coords ->
+								val row = rowCoords
+								if (row != null && row.isAttached && coords.isAttached) {
+									val topLeft = row.localPositionOf(coords, Offset.Zero)
+									segmentBoundsInRow[segmentId] = Rect(
+										offset = topLeft,
+										size = Size(coords.size.width.toFloat(), coords.size.height.toFloat()),
+									)
+								}
 							}
-						}
-						withStyle(
-							SpanStyle(
-								color = textColor,
-								fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+							.onPointerEvent(PointerEventType.Enter) {
+								hoveredSegmentId = segmentId
+								viewModel.setHoveredItem(layerId = null, deformerId = segmentId)
+							}
+							.onPointerEvent(PointerEventType.Press) { event ->
+								if (event.button == PointerButton.Secondary) {
+									menuClickOffset = event.changes.firstOrNull()?.position ?: Offset.Zero
+									if (state.selectedDeformerId != segmentId) {
+										viewModel.selectDeformer(segmentId)
+									}
+									treeDragState.clear()
+									event.changes.firstOrNull()?.consume()
+									showMenu = true
+								} else if (event.button == PointerButton.Primary) {
+									val row = rowCoords
+									val localInSegment = event.changes.firstOrNull()?.position ?: Offset.Zero
+									val rowLocal = if (row != null && row.isAttached) {
+										segmentBoundsInRow[segmentId]?.let { it.topLeft + localInSegment } ?: localInSegment
+									} else localInSegment
+									beginSegmentPress(segmentId, rowLocal)
+									event.changes.firstOrNull()?.consume()
+								}
+							},
+						verticalAlignment = Alignment.CenterVertically,
+					) {
+						if (index > 0) {
+							HierarchyTypeIcon(
+								kind = deformerIconKind(def),
+								tint = iconTint,
+								modifier = Modifier.size(10.dp),
 							)
-						) {
-							append(def.name)
+							Spacer(Modifier.width(2.dp))
 						}
+						Text(
+							text = def.name,
+							style = typography.body.copy(
+								fontSize = 11.sp,
+								fontWeight = if (segmentSelected || segmentHovered) FontWeight.SemiBold else FontWeight.Normal,
+								textDecoration = if (segmentHovered) TextDecoration.Underline else TextDecoration.None,
+							),
+							color = textColor,
+							maxLines = 1,
+							overflow = TextOverflow.Ellipsis,
+						)
 					}
 				}
 			}
 
-			Text(
-				text = annotatedDisplayName,
-				style = typography.body.copy(fontSize = 11.sp),
-				maxLines = 1,
-				overflow = TextOverflow.Ellipsis,
-				modifier = Modifier.weight(1f),
-			)
-
-			if (isAncestorOfSelected) {
+			if (collapsedSelectedLabel != null) {
+				Text(
+					text = collapsedSelectedLabel,
+					style = typography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
+					color = colors.accent,
+					maxLines = 1,
+					overflow = TextOverflow.Ellipsis,
+					modifier = Modifier.widthIn(max = 88.dp),
+				)
+				Spacer(Modifier.width(3.dp))
+			} else if (isAncestorOfSelected) {
 				Text(
 					text = "[${tr("canvas.hierarchy.ancestorBadge")}]",
 					style = typography.monoSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.SemiBold),
@@ -1237,7 +1423,7 @@ private fun DeformerTreeItem(
 			Text(
 				text = "[$type]",
 				style = typography.monoSmall.copy(fontSize = 9.sp),
-				color = colors.textMuted,
+				color = if (isSelected) colors.selectionText.copy(alpha = 0.7f) else colors.textMuted,
 			)
 
 			Spacer(Modifier.width(4.dp))
@@ -1261,19 +1447,21 @@ private fun DeformerTreeItem(
 		}
 
 		// Deformer context menu: add → hierarchy → view → delete
+		val menuFocus = selectedInChain ?: tailDeformer
+		val menuType = if (menuFocus is Deformer.Warp) "Warp" else "Rotation"
 		TreeContextMenu(
 			expanded = showMenu,
 			onDismissRequest = { showMenu = false },
 			clickOffset = menuClickOffset,
 		) {
 			CompactMenuHeader(
-				name = chain.displayName,
-				badge = type,
+				name = menuFocus.name,
+				badge = menuType,
 				icon = {
-					Box(
-						modifier = Modifier
-							.size(8.dp)
-							.background(Color(dotAwt.red, dotAwt.green, dotAwt.blue), CircleShape),
+					HierarchyTypeIcon(
+						kind = deformerIconKind(menuFocus),
+						tint = Color(menuIconAwt.red, menuIconAwt.green, menuIconAwt.blue),
+						modifier = Modifier.size(13.dp),
 					)
 				},
 			)
@@ -1282,7 +1470,7 @@ private fun DeformerTreeItem(
 			CompactMenuItem(
 				text = tr("editor.treeAddWarpParent"),
 				onClick = {
-					onRequestCreate?.invoke(CreatePlacementKind.WARP, CreateRelation.AS_PARENT, true, tailId)
+					onRequestCreate?.invoke(CreatePlacementKind.WARP, CreateRelation.AS_PARENT, true, menuFocus.id.raw)
 					showMenu = false
 				},
 				icon = { IconContextualWarp(tint = colors.textMuted, modifier = Modifier.size(13.dp)) },
@@ -1290,7 +1478,7 @@ private fun DeformerTreeItem(
 			CompactMenuItem(
 				text = tr("editor.treeAddWarpChild"),
 				onClick = {
-					onRequestCreate?.invoke(CreatePlacementKind.WARP, CreateRelation.AS_CHILD, true, tailId)
+					onRequestCreate?.invoke(CreatePlacementKind.WARP, CreateRelation.AS_CHILD, true, menuFocus.id.raw)
 					showMenu = false
 				},
 				icon = { IconWarpDeformer(tint = colors.textMuted, modifier = Modifier.size(13.dp)) },
@@ -1298,7 +1486,7 @@ private fun DeformerTreeItem(
 			CompactMenuItem(
 				text = tr("editor.treeAddRotationParent"),
 				onClick = {
-					onRequestCreate?.invoke(CreatePlacementKind.ROTATION, CreateRelation.AS_PARENT, true, tailId)
+					onRequestCreate?.invoke(CreatePlacementKind.ROTATION, CreateRelation.AS_PARENT, true, menuFocus.id.raw)
 					showMenu = false
 				},
 				icon = { IconRotationDeformer(tint = colors.textMuted, modifier = Modifier.size(13.dp)) },
@@ -1379,7 +1567,6 @@ private fun DeformerTreeItem(
 
 	// Render children recursively
 	if (isExpanded) {
-		val totalChildren = childChains.size + childDrawables.size
 		for ((cIndex, childChain) in childChains.withIndex()) {
 			val isLast = (cIndex == childChains.lastIndex && childDrawables.isEmpty())
 			val nextAncestors = ancestorHasNextSibling + (!isLast)
@@ -1399,6 +1586,7 @@ private fun DeformerTreeItem(
 				itemBoundsMap = itemBoundsMap,
 				searchQuery = searchQuery,
 				selectedAncestorDeformerIds = selectedAncestorDeformerIds,
+				selectedDescendantLabelByAncestor = selectedDescendantLabelByAncestor,
 				onRequestSetOrder = onRequestSetOrder,
 				onRequestSetMeshSettings = onRequestSetMeshSettings,
 				onRequestOpenDeformPaths = onRequestOpenDeformPaths,
@@ -1505,6 +1693,7 @@ private fun DrawableTreeItem(
 						itemBoundsMap[itemId] = ItemLayoutInfo(
 							id = itemId,
 							targetId = itemId,
+							selectId = itemId,
 							name = drawable.name,
 							isDeformer = false,
 							currentParentId = drawable.parentDeformerId?.raw,
@@ -1542,7 +1731,7 @@ private fun DrawableTreeItem(
 							strokeWidth = 1.2f,
 						)
 
-						// Horizontal branch into square dot
+						// Horizontal branch into type icon
 						val branchEndX = (startX + 1.dp).toPx()
 						drawLine(
 							color = activeGuideColor,
@@ -1584,6 +1773,7 @@ private fun DrawableTreeItem(
 							val info = ItemLayoutInfo(
 								id = itemId,
 								targetId = itemId,
+								selectId = itemId,
 								name = drawable.name,
 								isDeformer = false,
 								currentParentId = drawable.parentDeformerId?.raw,
@@ -1597,12 +1787,11 @@ private fun DrawableTreeItem(
 				.padding(start = startX, end = 6.dp),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
-			// 1. Square Dot Icon (aligned directly with deformer dot at startX + 1.dp)
+			// 1. Drawable / ArtMesh type icon (aligned with deformer icons)
 			Spacer(Modifier.width(1.dp))
-			Box(
-				modifier = Modifier
-					.size(6.dp)
-					.background(Color(layerDotAwt.red, layerDotAwt.green, layerDotAwt.blue), RoundedCornerShape(1.dp)),
+			HierarchyTypeIcon(
+				kind = HierarchyIconKind.MESH,
+				tint = Color(layerDotAwt.red, layerDotAwt.green, layerDotAwt.blue),
 			)
 
 			// Spacer matching the Chevron slot (2.dp + 10.dp + 2.dp = 14.dp) so layer text aligns with deformer text
@@ -1616,26 +1805,6 @@ private fun DrawableTreeItem(
 				overflow = TextOverflow.Ellipsis,
 				modifier = Modifier.weight(1f),
 			)
-
-			// Delete Layer Icon Button on Hover or when Selected
-			if ((isHovered || isLayerSelected) && layerId != null) {
-				Box(
-					modifier = Modifier
-						.size(16.dp)
-						.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
-						.clickable {
-							treeDragState.clear()
-							viewModel.deleteLayer(layerId)
-						}
-						.padding(1.dp),
-					contentAlignment = Alignment.Center,
-				) {
-					IconTrash(
-						modifier = Modifier.size(11.dp),
-						tint = colors.error.copy(alpha = 0.85f),
-					)
-				}
-			}
 
 			// Visibility Eye icon
 			if (layerId != null) {
@@ -1672,10 +1841,10 @@ private fun DrawableTreeItem(
 				name = drawable.name,
 				badge = itemTypeBadge,
 				icon = {
-					Box(
-						modifier = Modifier
-							.size(8.dp)
-							.background(Color(layerDotAwt.red, layerDotAwt.green, layerDotAwt.blue), RoundedCornerShape(1.5.dp)),
+					HierarchyTypeIcon(
+						kind = HierarchyIconKind.MESH,
+						tint = Color(layerDotAwt.red, layerDotAwt.green, layerDotAwt.blue),
+						modifier = Modifier.size(13.dp),
 					)
 				},
 			)

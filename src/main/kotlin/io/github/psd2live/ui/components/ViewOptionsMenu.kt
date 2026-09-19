@@ -72,7 +72,6 @@ fun IconMeshWireframe(
 		val pTop = Offset(w * 0.5f, h * 0.14f)
 		val pLeft = Offset(w * 0.14f, h * 0.84f)
 		val pRight = Offset(w * 0.86f, h * 0.84f)
-		val pCenter = Offset(w * 0.5f, h * 0.56f)
 
 		val outline = Path().apply {
 			moveTo(pTop.x, pTop.y)
@@ -81,15 +80,11 @@ fun IconMeshWireframe(
 			close()
 		}
 		drawPath(outline, color = tint, style = stroke)
-		drawLine(tint, pTop, pCenter, strokeWidth = 1.2f, cap = StrokeCap.Round)
-		drawLine(tint, pLeft, pCenter, strokeWidth = 1.2f, cap = StrokeCap.Round)
-		drawLine(tint, pRight, pCenter, strokeWidth = 1.2f, cap = StrokeCap.Round)
 
 		val dotR = 1.4f
 		drawCircle(tint, dotR, pTop, style = Fill)
 		drawCircle(tint, dotR, pLeft, style = Fill)
 		drawCircle(tint, dotR, pRight, style = Fill)
-		drawCircle(tint, dotR, pCenter, style = Fill)
 	}
 }
 
