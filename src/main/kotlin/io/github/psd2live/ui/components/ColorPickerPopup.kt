@@ -165,15 +165,15 @@ fun PaintColorChip(
     var expanded by remember { mutableStateOf(false) }
     val density = LocalDensity.current
 
-    Box {
-        Box(
-            modifier
-                .clip(shape)
-                .background(color)
-                .border(border, shape)
-                .clickable { expanded = true }
-                .pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
-        )
+    // Modifier must sit on the root so parent BoxScope.align / size actually take effect.
+    Box(
+        modifier
+            .clip(shape)
+            .background(color)
+            .border(border, shape)
+            .clickable { expanded = true }
+            .pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
+    ) {
         if (expanded) {
             Popup(
                 alignment = Alignment.TopStart,
@@ -189,6 +189,114 @@ fun PaintColorChip(
                 )
             }
         }
+    }
+}
+
+/**
+ * Photoshop-style foreground / background swatch: overlapping squares (FG top-left in front,
+ * BG bottom-right behind) with a tiny swap control in the upper-right corner.
+ *
+ * @param Dp squareSize   Edge length of each colour square; overall footprint grows slightly for the swap hit target.
+ */
+@Composable
+fun PaintFgBgSwatch(
+    foreground: Color,
+    background: Color,
+    onForegroundChanged: (Color) -> Unit,
+    onBackgroundChanged: (Color) -> Unit,
+    onSwap: () -> Unit,
+    modifier: Modifier = Modifier,
+    squareSize: Dp = 18.dp,
+) {
+    val colors = LocalToolColors.current
+    val swapHit = (squareSize * 0.48f).coerceIn(9.dp, 12.dp)
+    // Modest stagger so both faces show without bloating the toolbar row height.
+    val stagger = squareSize * 0.36f
+    val footprint = squareSize + stagger
+    val shape = RoundedCornerShape(1.dp)
+    val thin = BorderStroke(0.5.dp, colors.border)
+    val thinAccent = BorderStroke(0.5.dp, colors.accent)
+
+    Box(modifier = modifier.size(footprint)) {
+        PaintColorChip(
+            color = background,
+            onColorChanged = onBackgroundChanged,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .size(squareSize),
+            popupOffset = squareSize + 4.dp,
+            shape = shape,
+            border = thin,
+        )
+        PaintColorChip(
+            color = foreground,
+            onColorChanged = onForegroundChanged,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .size(squareSize),
+            popupOffset = squareSize + 4.dp,
+            shape = shape,
+            border = thinAccent,
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .size(swapHit)
+                .clip(RoundedCornerShape(2.dp))
+                .clickable(onClick = onSwap)
+                .pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR))),
+            contentAlignment = Alignment.Center,
+        ) {
+            IconPaintColorSwap(
+                modifier = Modifier.size(swapHit * 0.7f),
+                tint = colors.textMuted,
+            )
+        }
+    }
+}
+
+/** Tiny double-curved arrows for swapping foreground and background, like Photoshop's swatch control. */
+@Composable
+fun IconPaintColorSwap(
+    modifier: Modifier = Modifier.size(10.dp),
+    tint: Color = LocalToolColors.current.textMuted,
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = Stroke(width = (w * 0.14f).coerceAtLeast(1f), cap = StrokeCap.Round)
+        // Upper arc: right → left with arrowhead on the left.
+        val top = Path().apply {
+            moveTo(w * 0.78f, h * 0.28f)
+            quadraticTo(w * 0.5f, h * 0.02f, w * 0.22f, h * 0.28f)
+        }
+        drawPath(top, color = tint, style = stroke)
+        drawPath(
+            Path().apply {
+                moveTo(w * 0.22f, h * 0.28f)
+                lineTo(w * 0.32f, h * 0.12f)
+                moveTo(w * 0.22f, h * 0.28f)
+                lineTo(w * 0.36f, h * 0.34f)
+            },
+            color = tint,
+            style = stroke,
+        )
+        // Lower arc: left → right with arrowhead on the right.
+        val bottom = Path().apply {
+            moveTo(w * 0.22f, h * 0.72f)
+            quadraticTo(w * 0.5f, h * 0.98f, w * 0.78f, h * 0.72f)
+        }
+        drawPath(bottom, color = tint, style = stroke)
+        drawPath(
+            Path().apply {
+                moveTo(w * 0.78f, h * 0.72f)
+                lineTo(w * 0.68f, h * 0.88f)
+                moveTo(w * 0.78f, h * 0.72f)
+                lineTo(w * 0.64f, h * 0.66f)
+            },
+            color = tint,
+            style = stroke,
+        )
     }
 }
 

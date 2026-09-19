@@ -393,6 +393,10 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             tool == CanvasTool.CREATE_DEFORM_PATH -> "editor.pathHint"
             tool == CanvasTool.INFLATE -> "editor.inflateHint"
             hierarchyMode == EditHierarchyMode.PAINT -> "editor.paintHint"
+            hierarchyMode == EditHierarchyMode.SELECT && tool == CanvasTool.SELECT &&
+                target?.kind == "mesh" && source != null &&
+                source.deformPaths.any { it.drawableId.raw == target.id && it.editLevel == pathLevel } ->
+                "editor.pathBindHint"
             hierarchyMode == EditHierarchyMode.SELECT && tool == CanvasTool.SELECT -> "editor.objectHint"
             // drawsTransformBox reads model via target(); only evaluate once a puppet exists.
             tool == CanvasTool.SELECT && source != null && drawsTransformBox -> "editor.transformHint"
@@ -802,6 +806,78 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
 
     fun paths() = model.deformPaths.filter { it.drawableId.raw == target()?.id && it.editLevel == pathLevel }
     fun selectedPath() = paths().firstOrNull { it.id == activePath }
+
+    /** Nearest path control point under the pointer, within [radius] screen px. */
+    private fun pathControlHit(
+        pos: Offset,
+        t: CanvasTarget,
+        viewport: CanvasViewport,
+        radius: Float = 10f,
+        onlyActive: Boolean = false,
+    ): Pair<DeformPath, Int>? {
+        val candidates = if (onlyActive) paths().filter { it.id == activePath } else paths()
+        return candidates.flatMap { path ->
+            screen(
+                DeformPathTools.positions(path, t.geometry.points).flatMap { listOf(it.first, it.second) }.toFloatArray(),
+                t,
+                viewport,
+            ).mapIndexed { i, p -> Triple(path, i, (p - pos).getDistance()) }
+        }.filter { it.third <= radius }.minByOrNull { it.third }?.let { it.first to it.second }
+    }
+
+    /** Nearest path whose sampled curve is under the pointer. */
+    private fun pathCurveHit(
+        pos: Offset,
+        t: CanvasTarget,
+        viewport: CanvasViewport,
+        radius: Float = 9f,
+    ): DeformPath? = paths().mapNotNull { path ->
+        val points = DeformPathTools.positions(path, t.geometry.points)
+        val curve = DeformPathTools.curve(points, path.points.map { it.corner }, path.closed)
+        val scr = screen(curve.flatMap { listOf(it.first, it.second) }.toFloatArray(), t, viewport)
+        val dist = scr.zipWithNext().minOfOrNull { (a, b) -> distanceToSegment(pos, a, b) } ?: Float.MAX_VALUE
+        if (dist < radius) path to dist else null
+    }.minByOrNull { it.second }?.first
+
+    /**
+     * Starts a path-point drag, or selects / Ctrl-inserts on the curve.
+     * Returns true when the pointer was over a path so the caller should not fall through to object/mesh picks.
+     */
+    private fun beginPathInteraction(pos: Offset, t: CanvasTarget, viewport: CanvasViewport, ctrl: Boolean): Boolean {
+        val hit = pathControlHit(pos, t, viewport)
+        if (hit != null) {
+            activePath = hit.first.id
+            pathPoint = hit.second
+            targetAtPress = t
+            original = model
+            dragging = true
+            return true
+        }
+        val curveHit = pathCurveHit(pos, t, viewport) ?: return false
+        activePath = curveHit.id
+        pathPoint = -1
+        if (ctrl) {
+            val points = DeformPathTools.positions(curveHit, t.geometry.points)
+            val screens = screen(points.flatMap { listOf(it.first, it.second) }.toFloatArray(), t, viewport)
+            val segment = (0 until if (curveHit.closed) points.size else points.size - 1)
+                .minByOrNull { i -> distanceToSegment(pos, screens[i], screens[(i + 1) % points.size]) } ?: 0
+            val point = local(pos, t, viewport, points[segment])
+            val bound = DeformPathTools.bind(t.geometry.points, t.indices, point.first, point.second)
+            changePath { it.copy(points = it.points.take(segment + 1) + bound + it.points.drop(segment + 1)) }
+            pathPoint = segment + 1
+        }
+        return true
+    }
+
+    /** True while path control points may be dragged for binding (non-deform) or deformation. */
+    private fun pathPointsInteractive(): Boolean {
+        val t = target() ?: return false
+        return t.kind == "mesh" && paths().isNotEmpty() && (
+            tool == CanvasTool.CREATE_DEFORM_PATH ||
+                hierarchyMode == EditHierarchyMode.DEFORM ||
+                hierarchyMode == EditHierarchyMode.SELECT
+            )
+    }
 
     private fun coordinate(t: CanvasTarget) = buildMap {
         t.geometry.axes.forEach { a -> put(a.parameterId.raw, pose[a.parameterId.raw] ?: model.parameters.single { it.id == a.parameterId }.default) }
@@ -2585,10 +2661,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             } else if (tool == CanvasTool.CREATE_DEFORM_PATH) {
                 val t = target()
                 if (t != null && t.kind == "mesh") {
-                    val hit = paths().flatMap { path ->
-                        screen(DeformPathTools.positions(path, t.geometry.points).flatMap { listOf(it.first, it.second) }.toFloatArray(), t, viewport).mapIndexed { i, p -> Triple(path, i, (p - pos).getDistance()) }
-                    }.filter { it.third <= 10f }.minByOrNull { it.third }
-                    hoveredVertex = hit?.second
+                    hoveredVertex = pathControlHit(pos, t, viewport)?.second
                 }
             }
             return
@@ -2597,7 +2670,16 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         // Object mode has no transform box, so no handle is ever live here. What the pointer is over is
         // the pick itself, and resolving it through the same call the press makes is what guarantees the
         // annotation names the thing a click would actually select — Ctrl included.
+        // Path binding handles sit on the selected mesh and take priority over object hover.
         if (hierarchyMode == EditHierarchyMode.SELECT) {
+            val pathTarget = target()?.takeIf { it.kind == "mesh" && paths().isNotEmpty() }
+            if (pathTarget != null && tool == CanvasTool.SELECT) {
+                val hit = pathControlHit(pos, pathTarget, viewport)
+                if (hit != null) {
+                    hoveredVertex = hit.second
+                    return
+                }
+            }
             if (tool == CanvasTool.SELECT) {
                 val pick = objectPick(pos, viewport, ctrl)
                 hoveredPick = pick
@@ -2659,10 +2741,9 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                     return
                 }
             } else if (t.kind == "mesh") {
-                if (paths().isNotEmpty() && activePath != null) {
-                    val hit = paths().filter { it.id == activePath }.flatMap { path ->
-                        screen(DeformPathTools.positions(path, t.geometry.points).flatMap { listOf(it.first, it.second) }.toFloatArray(), t, viewport).mapIndexed { i, p -> Triple(path, i, (p - pos).getDistance()) }
-                    }.filter { it.third <= 10f }.minByOrNull { it.third }
+                if (paths().isNotEmpty()) {
+                    val hit = pathControlHit(pos, t, viewport, onlyActive = activePath != null)
+                        ?: pathControlHit(pos, t, viewport, onlyActive = false)
                     if (hit != null) {
                         hoveredVertex = hit.second
                         return
@@ -3478,32 +3559,17 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         if (tool == CanvasTool.CREATE_DEFORM_PATH) {
             val t = target()
             if (t != null && t.kind == "mesh") {
-                val pathTarget = t
-                if (drawingPath) { draft = draft + local(pos, t, viewport, draft.lastOrNull() ?: (0.5f to 0.5f)); return true }
-                val hit = paths().flatMap { path ->
-                    screen(DeformPathTools.positions(path, pathTarget.geometry.points).flatMap { listOf(it.first, it.second) }.toFloatArray(), pathTarget, viewport).mapIndexed { i, p -> Triple(path, i, (p - pos).getDistance()) }
-                }.filter { it.third < 10f }.minByOrNull { it.third }
-                if (hit != null) { activePath = hit.first.id; pathPoint = hit.second; targetAtPress = t; original = model; dragging = true; return true }
-                val curveHit = paths().mapNotNull { path ->
-                    val points = DeformPathTools.positions(path, pathTarget.geometry.points)
-                    val curve = DeformPathTools.curve(points, path.points.map { it.corner }, path.closed)
-                    val scr = screen(curve.flatMap { listOf(it.first, it.second) }.toFloatArray(), pathTarget, viewport)
-                    val dist = scr.zipWithNext().minOfOrNull { (a, b) -> distanceToSegment(pos, a, b) } ?: Float.MAX_VALUE
-                    if (dist < 9f) path to dist else null
-                }.minByOrNull { it.second }?.first
-                if (curveHit != null) {
-                    activePath = curveHit.id; pathPoint = -1
-                    if (ctrl) {
-                        val points = DeformPathTools.positions(curveHit, pathTarget.geometry.points)
-                        val screens = screen(points.flatMap { listOf(it.first, it.second) }.toFloatArray(), pathTarget, viewport)
-                        val segment = (0 until if (curveHit.closed) points.size else points.size - 1).minByOrNull { i -> distanceToSegment(pos, screens[i], screens[(i + 1) % points.size]) } ?: 0
-                        val point = local(pos, pathTarget, viewport, points[segment])
-                        val bound = DeformPathTools.bind(pathTarget.geometry.points, pathTarget.indices, point.first, point.second)
-                        changePath { it.copy(points = it.points.take(segment + 1) + bound + it.points.drop(segment + 1)) }; pathPoint = segment + 1
-                    }
+                if (drawingPath) {
+                    draft = draft + local(pos, t, viewport, draft.lastOrNull() ?: (0.5f to 0.5f))
                     return true
                 }
-                activePath = null; pathPoint = -1; drawingPath = true; draftPathId = null; draft = listOf(local(pos, t, viewport)); return true
+                if (beginPathInteraction(pos, t, viewport, ctrl)) return true
+                activePath = null
+                pathPoint = -1
+                drawingPath = true
+                draftPathId = null
+                draft = listOf(local(pos, t, viewport))
+                return true
             }
             return true
         }
@@ -3600,7 +3666,10 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         // 5. Object mode picks and nothing else. The transform box and its handles belong to the point
         //    tools, so a press here selects — Ctrl walks the hierarchy — or starts a marquee. It never
         //    begins a transform drag, which is what keeps the mode read-only.
+        //    Path control points on the selected mesh are the exception: dragging them rebinds only.
         if (hierarchyMode == EditHierarchyMode.SELECT && tool == CanvasTool.SELECT) {
+            val pathTarget = target()?.takeIf { it.kind == "mesh" && paths().isNotEmpty() }
+            if (pathTarget != null && beginPathInteraction(pos, pathTarget, viewport, ctrl)) return true
             val pick = objectPick(pos, viewport, ctrl)
             pressedObject = pick?.layerId
             if (pick != null) {
@@ -3626,6 +3695,12 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                 beginTransformDrag(source, transformTargets(source), handle, frame, viewport)
                 return true
             }
+        }
+
+        // Path deform handles in DEFORM mode (before mesh vertex picks).
+        if (hierarchyMode == EditHierarchyMode.DEFORM) {
+            val pathTarget = target()?.takeIf { it.kind == "mesh" && paths().isNotEmpty() }
+            if (pathTarget != null && beginPathInteraction(pos, pathTarget, viewport, ctrl)) return true
         }
 
         val editTarget = target() ?: return true
@@ -3818,16 +3893,30 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                 return
             }
 
-            if (tool == CanvasTool.CREATE_DEFORM_PATH || (paths().isNotEmpty() && activePath != null && pathPoint >= 0)) {
+            if (activePath != null && pathPoint >= 0 && pathPointsInteractive()) {
                 val path = source.deformPaths.firstOrNull { it.id == activePath }
-                if (path != null && pathPoint >= 0) {
-                    val points = DeformPathTools.positions(path, t.geometry.points).toMutableList()
-                    if (pathPoint in points.indices) {
-                        points[pathPoint] = local(pos, t, viewport, points[pathPoint])
+                if (path != null && pathPoint in path.points.indices) {
+                    val seed = DeformPathTools.positions(path, t.geometry.points)[pathPoint]
+                    val dest = local(pos, t, viewport, seed)
+                    if (hierarchyMode == EditHierarchyMode.DEFORM) {
+                        val points = DeformPathTools.positions(path, t.geometry.points).toMutableList()
+                        points[pathPoint] = dest
                         val cmd = geometryCommand(t, DeformPathTools.deform(t.geometry.points, source.deformPaths, path.id, points))
-                        preview = RigAuthoringJournal.apply(source, cmd); pending = cmd; previous = pos
-                        return
+                        preview = RigAuthoringJournal.apply(source, cmd)
+                        pending = cmd
+                    } else {
+                        // SELECT / create: rebind control point only — mesh geometry stays put.
+                        val corner = path.points[pathPoint].corner
+                        val rebound = DeformPathTools.bind(t.geometry.points, t.indices, dest.first, dest.second, corner)
+                        val updated = path.copy(
+                            points = path.points.mapIndexed { i, p -> if (i == pathPoint) rebound else p },
+                        )
+                        val cmd = DeformPathJournal.encode(updated)
+                        preview = RigAuthoringJournal.apply(source, cmd)
+                        pending = cmd
                     }
+                    previous = pos
+                    return
                 }
             }
 
