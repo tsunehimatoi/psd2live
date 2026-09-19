@@ -332,7 +332,13 @@ internal object CanvasEdits {
                     val shift = FloatArray(points.size) { points[it] - displayed[it] }
                     model.copy(drawables = model.drawables.map {
                         if (it.id.raw != id) it else it.mesh?.let { mesh ->
-                            it.copy(mesh = mesh.movedBy(shift), geometryGrid = it.geometryGrid)
+                            // Missing intent preserves replay of journals written before modes were separated.
+                            val preserveImage = edit["preserve_image"]?.jsonPrimitive?.booleanOrNull ?: true
+                            val moved = if (preserveImage) mesh.movedBy(shift) else DrawableMesh(
+                                FloatArray(mesh.positions.size) { j -> mesh.positions[j] + shift[j] },
+                                mesh.uvs, mesh.indices,
+                            )
+                            it.copy(mesh = moved, geometryGrid = it.geometryGrid)
                         } ?: it
                     })
                 }

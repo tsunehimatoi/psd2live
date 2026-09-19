@@ -35,6 +35,21 @@ enum class EditHierarchyMode {
     PAINT,
 }
 
+/** Persist the mode's intent so preview and history replay use identical UV semantics. */
+internal fun canvasGeometryCommand(
+    mode: EditHierarchyMode,
+    kind: String,
+    id: String,
+    coordinate: Map<String, Float>,
+    points: FloatArray,
+): JsonObject = buildJsonObject {
+    val editMesh = kind == "mesh" && mode == EditHierarchyMode.EDIT
+    put("op", "canvas_geometry"); put("kind", kind); put("id", id)
+    put("key", JsonObject((if (editMesh) emptyMap() else coordinate).mapValues { JsonPrimitive(it.value) }))
+    put("preserve_image", editMesh)
+    put("points", JsonArray(points.map(::JsonPrimitive)))
+}
+
 /**
  * A mode the user asked for while nothing was selected, and the tool that request came with.
  *
@@ -792,26 +807,9 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         parameter?.let { p -> model.parameters.firstOrNull { it.id.raw == p }?.let { put(p, pose[p] ?: it.default) } }
     }
 
-    /**
-     * The canvas's geometry write.
-     *
-     * **An ArtMesh is edited at its base, so its coordinate is empty.** Editing changes the shape of the
-     * mesh itself, never the shape at a parameter pose; an empty coordinate is what selects the reducer's
-     * base-geometry branch, and the reducer then moves each vertex's UV with the vertex so the picture
-     * does not change. A non-empty coordinate would instead capture the current shape as a keyform delta -
-     * a deformation, and a different operation, which belongs to the explicit MCP commands that require
-     * the caller to name the pose.
-     *
-     * **A warp or rotation still addresses a coordinate.** It has no UVs to carry along, so there is no
-     * base edit that leaves the picture alone, and handing the reducer an empty coordinate would replace
-     * its whole lattice with a single unkeyed cell - destroying every keyform it holds. Until that has a
-     * design, these keep writing the pose they were dragged at.
-     */
-    private fun geometryCommand(t: CanvasTarget, points: FloatArray) = buildJsonObject {
-        put("op", "canvas_geometry"); put("kind", t.kind); put("id", t.id)
-        put("key", if (t.kind == "mesh") JsonObject(emptyMap()) else JsonObject(coordinate(t).mapValues { JsonPrimitive(it.value) }))
-        put("points", JsonArray(points.map(::JsonPrimitive)))
-    }
+    /** Only structural mesh editing moves UVs; deformation writes the current pose. */
+    private fun geometryCommand(t: CanvasTarget, points: FloatArray) =
+        canvasGeometryCommand(hierarchyMode, t.kind, t.id, coordinate(t), points)
 
     fun targetLayerId(t: CanvasTarget? = target(deformerId = null)): String? {
         if (t == null) return state.selectedLayerId
@@ -3856,12 +3854,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                 } else CanvasGestureGeometry.direction(origin, pointer, (arm - origin).getDistance(), shift)
                 if ((endpoint - origin).getDistance() < 1e-5f) return
                 val pts = floatArrayOf(origin.x, origin.y, endpoint.x, endpoint.y)
-                val cmd = if (alt) geometryCommand(t, pts) else buildJsonObject {
-                    put("op", "canvas_geometry"); put("kind", t.kind); put("id", t.id)
-                    put("key", if (t.kind == "mesh") JsonObject(emptyMap()) else JsonObject(coordinate(t).mapValues { JsonPrimitive(it.value) }))
-                    put("points", JsonArray(pts.map(::JsonPrimitive)))
-                    put("keep_scale", true)
-                }
+                val cmd = if (alt) geometryCommand(t, pts) else JsonObject(geometryCommand(t, pts) + ("keep_scale" to JsonPrimitive(true)))
                 preview = RigAuthoringJournal.apply(source, cmd); pending = cmd; previous = pos
                 return
             }
