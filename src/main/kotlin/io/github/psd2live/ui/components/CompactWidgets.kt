@@ -2,6 +2,8 @@ package io.github.psd2live.ui.components
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -528,6 +530,60 @@ fun IconCollapseBranch(
 	}
 }
 
+/** Expand all items in tree hierarchy (chevrons pointing outward). */
+@Composable
+fun IconExpandAll(
+	modifier: Modifier = Modifier.size(12.dp),
+	tint: Color = LocalToolColors.current.textPrimary,
+) {
+	Canvas(modifier = modifier) {
+		val w = size.width
+		val h = size.height
+		val stroke = Stroke(width = 1.3f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+		// Top chevron pointing UP
+		val pathUp = Path().apply {
+			moveTo(w * 0.22f, h * 0.38f)
+			lineTo(w * 0.5f, h * 0.16f)
+			lineTo(w * 0.78f, h * 0.38f)
+		}
+		// Bottom chevron pointing DOWN
+		val pathDown = Path().apply {
+			moveTo(w * 0.22f, h * 0.62f)
+			lineTo(w * 0.5f, h * 0.84f)
+			lineTo(w * 0.78f, h * 0.62f)
+		}
+		drawPath(pathUp, tint, style = stroke)
+		drawPath(pathDown, tint, style = stroke)
+	}
+}
+
+/** Collapse all items in tree hierarchy (chevrons pointing inward). */
+@Composable
+fun IconCollapseAll(
+	modifier: Modifier = Modifier.size(12.dp),
+	tint: Color = LocalToolColors.current.textPrimary,
+) {
+	Canvas(modifier = modifier) {
+		val w = size.width
+		val h = size.height
+		val stroke = Stroke(width = 1.3f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+		// Top chevron pointing DOWN
+		val pathDown = Path().apply {
+			moveTo(w * 0.22f, h * 0.16f)
+			lineTo(w * 0.5f, h * 0.38f)
+			lineTo(w * 0.78f, h * 0.16f)
+		}
+		// Bottom chevron pointing UP
+		val pathUp = Path().apply {
+			moveTo(w * 0.22f, h * 0.84f)
+			lineTo(w * 0.5f, h * 0.62f)
+			lineTo(w * 0.78f, h * 0.84f)
+		}
+		drawPath(pathDown, tint, style = stroke)
+		drawPath(pathUp, tint, style = stroke)
+	}
+}
+
 /** Conversion / lattice division grid. */
 @Composable
 fun IconGridDivision(
@@ -976,6 +1032,7 @@ fun CompactButton(
 }
 
 /** Practical Compact Icon Button */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CompactIconButton(
 	onClick: () -> Unit,
@@ -986,6 +1043,7 @@ fun CompactIconButton(
 	content: @Composable () -> Unit,
 ) {
 	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
 	val interactionSource = remember { MutableInteractionSource() }
 	val isHovered by interactionSource.collectIsHoveredAsState()
 	val isPressed by interactionSource.collectIsPressedAsState()
@@ -997,17 +1055,45 @@ fun CompactIconButton(
 		else -> colors.controlBackground
 	}
 
-	Box(
-		modifier = modifier
-			.size(size)
-			.background(bgColor, RoundedCornerShape(2.dp))
-			.border(BorderStroke(1.dp, if (isHovered && enabled) colors.borderHover else colors.border), RoundedCornerShape(2.dp))
-			.hoverable(interactionSource)
-			.clickable(enabled = enabled, interactionSource = interactionSource, indication = null) { onClick() }
-			.pointerHoverIcon(if (enabled) PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)) else PointerIcon.Default),
-		contentAlignment = Alignment.Center,
-	) {
-		content()
+	val buttonBox = @Composable {
+		Box(
+			modifier = (if (tooltip.isNullOrBlank()) modifier else Modifier)
+				.size(size)
+				.background(bgColor, RoundedCornerShape(2.dp))
+				.border(BorderStroke(1.dp, if (isHovered && enabled) colors.borderHover else colors.border), RoundedCornerShape(2.dp))
+				.hoverable(interactionSource)
+				.clickable(enabled = enabled, interactionSource = interactionSource, indication = null) { onClick() }
+				.pointerHoverIcon(if (enabled) PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)) else PointerIcon.Default),
+			contentAlignment = Alignment.Center,
+		) {
+			content()
+		}
+	}
+
+	if (!tooltip.isNullOrBlank()) {
+		TooltipArea(
+			tooltip = {
+				Surface(
+					color = colors.panelElevated,
+					shape = RoundedCornerShape(3.dp),
+					border = BorderStroke(1.dp, colors.border),
+					elevation = 4.dp,
+				) {
+					Text(
+						text = tooltip,
+						style = typography.caption.copy(fontSize = 10.sp),
+						color = colors.textPrimary,
+						modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+					)
+				}
+			},
+			modifier = modifier,
+			delayMillis = 400,
+		) {
+			buttonBox()
+		}
+	} else {
+		buttonBox()
 	}
 }
 

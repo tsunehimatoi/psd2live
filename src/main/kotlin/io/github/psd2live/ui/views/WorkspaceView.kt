@@ -73,7 +73,7 @@ import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.CreatePlacementKind
 import io.github.psd2live.ui.CreateRelation
 import io.github.psd2live.ui.ComponentPalette
-import io.github.psd2live.ui.components.CompactButton
+import io.github.psd2live.ui.components.CompactIconButton
 import io.github.psd2live.ui.components.CompactMenuDivider
 import io.github.psd2live.ui.components.CompactMenuHeader
 import io.github.psd2live.ui.components.CompactMenuItem
@@ -83,9 +83,11 @@ import io.github.psd2live.ui.components.CompactToggleChip
 import io.github.psd2live.ui.components.TreeContextMenu
 import io.github.psd2live.ui.components.IconChevron
 import io.github.psd2live.ui.components.IconClose
+import io.github.psd2live.ui.components.IconCollapseAll
 import io.github.psd2live.ui.components.IconCollapseBranch
 import io.github.psd2live.ui.components.IconDeformPath
 import io.github.psd2live.ui.components.IconDrawOrder
+import io.github.psd2live.ui.components.IconExpandAll
 import io.github.psd2live.ui.components.IconExpandBranch
 import io.github.psd2live.ui.components.IconEye
 import io.github.psd2live.ui.components.IconMoveToRoot
@@ -689,16 +691,20 @@ private fun HierarchyTreeList(
 				} else null,
 			)
 
-			CompactButton(
-				text = tr("canvas.hierarchy.expandAll"),
+			CompactIconButton(
 				onClick = { deformers.forEach { expandedMap[it.id.raw] = true } },
-				height = 20.dp,
-			)
-			CompactButton(
-				text = tr("canvas.hierarchy.collapseAll"),
+				size = 20.dp,
+				tooltip = tr("canvas.hierarchy.expandAll"),
+			) {
+				IconExpandAll(modifier = Modifier.size(11.dp), tint = colors.textMuted)
+			}
+			CompactIconButton(
 				onClick = { deformers.forEach { expandedMap[it.id.raw] = false } },
-				height = 20.dp,
-			)
+				size = 20.dp,
+				tooltip = tr("canvas.hierarchy.collapseAll"),
+			) {
+				IconCollapseAll(modifier = Modifier.size(11.dp), tint = colors.textMuted)
+			}
 		}
 
 		// Tree Body with Container Hit-Testing & Overlay and Draw Order Ruler
@@ -1420,11 +1426,13 @@ private fun DeformerTreeItem(
 				Spacer(Modifier.width(3.dp))
 			}
 
-			Text(
-				text = "[$type]",
-				style = typography.monoSmall.copy(fontSize = 9.sp),
-				color = if (isSelected) colors.selectionText.copy(alpha = 0.7f) else colors.textMuted,
-			)
+			if (tailDeformer !is Deformer.Warp) {
+				Text(
+					text = "[$type]",
+					style = typography.monoSmall.copy(fontSize = 9.sp),
+					color = if (isSelected) colors.selectionText.copy(alpha = 0.7f) else colors.textMuted,
+				)
+			}
 
 			Spacer(Modifier.width(4.dp))
 			Box(
