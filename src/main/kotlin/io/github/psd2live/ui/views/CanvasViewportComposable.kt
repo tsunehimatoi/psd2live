@@ -1086,12 +1086,18 @@ fun CanvasViewportComposable(
 				if (badgeText.isNotEmpty()) {
 					Box(
 						modifier = Modifier
-							.background(Color(0xCC181A1E), RoundedCornerShape(4.dp))
+							.frostedGlass(
+								shape = RoundedCornerShape(6.dp),
+								isHovered = false,
+								elevation = 2.dp,
+								alpha = 0.78f,
+							)
 							.padding(horizontal = 8.dp, vertical = 4.dp),
 					) {
 						Text(
 							text = badgeText,
-							style = typography.caption.copy(fontSize = 11.sp, color = Color(0xFFD7DEE7)),
+							style = typography.caption.copy(fontSize = 11.sp),
+							color = colors.textPrimary,
 						)
 					}
 				}

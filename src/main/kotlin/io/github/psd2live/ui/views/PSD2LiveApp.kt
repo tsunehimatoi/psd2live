@@ -63,8 +63,12 @@ import io.github.psd2live.ui.CanvasStatusTone
 import io.github.psd2live.agent.AgentMcpConnectionInfo
 import io.github.psd2live.ui.components.AgentConnectionDialog
 import io.github.psd2live.ui.components.AppTitleBar
+import io.github.psd2live.ui.components.AppMenuHeader
+import io.github.psd2live.ui.components.AppMenuItem
+import io.github.psd2live.ui.components.AppMenuSeparator
 import io.github.psd2live.ui.components.CompactButton
 import io.github.psd2live.ui.components.CompactIconButton
+import io.github.psd2live.ui.components.IconChevron
 import io.github.psd2live.ui.components.IconClose
 import io.github.psd2live.ui.components.ImageLightboxDialog
 import io.github.psd2live.ui.components.ExportPsdDialog
@@ -77,8 +81,6 @@ import io.github.psd2live.ui.state.ShortcutAction
 import io.github.psd2live.ui.state.ShortcutScope
 import io.github.psd2live.ui.state.WorkspaceTabKind
 import androidx.compose.material.DropdownMenu
-import androidx.compose.material.DropdownMenuItem
-import androidx.compose.material.Divider
 import io.github.psd2live.ui.components.SettingsDialog
 import io.github.psd2live.ui.state.AppSettings
 import io.github.psd2live.ui.utils.DesktopUtils
@@ -651,17 +653,19 @@ private fun StatusBar(
 
 		Spacer(Modifier.width(10.dp))
 
-		// Quick UI scale indicator & menu
+		// UI scale chip — same AppMenu* language as the View menu / tab-strip dropdowns.
 		Box {
 			var showZoomMenu by remember { mutableStateOf(false) }
 			val pct = (state.uiScale * 100).roundToInt()
+			val keymap = state.keymap
 			Row(
 				modifier = Modifier
-					.background(colors.controlBackground.copy(alpha = 0.65f), RoundedCornerShape(3.dp))
-					.border(BorderStroke(0.5.dp, colors.border), RoundedCornerShape(3.dp))
+					.height(18.dp)
+					.background(colors.controlBackground, RoundedCornerShape(3.dp))
+					.border(BorderStroke(1.dp, colors.border), RoundedCornerShape(3.dp))
 					.clickable { showZoomMenu = true }
 					.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
-					.padding(horizontal = 6.dp, vertical = 2.dp),
+					.padding(horizontal = 6.dp),
 				verticalAlignment = Alignment.CenterVertically,
 				horizontalArrangement = Arrangement.spacedBy(4.dp),
 			) {
@@ -670,40 +674,63 @@ private fun StatusBar(
 					style = typography.monoSmall.copy(fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold),
 					color = colors.textPrimary,
 				)
+				IconChevron(
+					expanded = showZoomMenu,
+					modifier = Modifier.size(8.dp),
+					tint = colors.textMuted,
+				)
 			}
 
 			DropdownMenu(
 				expanded = showZoomMenu,
 				onDismissRequest = { showZoomMenu = false },
+				modifier = Modifier
+					.background(colors.panelElevated)
+					.border(BorderStroke(1.dp, colors.border))
+					.widthIn(min = 210.dp, max = 280.dp),
 			) {
-				DropdownMenuItem(onClick = { showZoomMenu = false; viewModel.zoomIn() }) {
-					Text(tr("menu.view.zoomIn") + " (Ctrl+=)", style = typography.body.copy(fontSize = 11.5.sp))
-				}
-				DropdownMenuItem(onClick = { showZoomMenu = false; viewModel.zoomOut() }) {
-					Text(tr("menu.view.zoomOut") + " (Ctrl+-)", style = typography.body.copy(fontSize = 11.5.sp))
-				}
-				DropdownMenuItem(onClick = { showZoomMenu = false; viewModel.resetZoom() }) {
-					Text(tr("menu.view.zoomReset") + " (Ctrl+0)", style = typography.body.copy(fontSize = 11.5.sp))
-				}
-				Divider(color = colors.divider, thickness = 1.dp)
+				AppMenuHeader(tr("menu.view.category.zoom"))
+				AppMenuItem(
+					text = tr("menu.view.zoomIn"),
+					shortcut = keymap.labelFor(ShortcutAction.ZOOM_IN),
+					onClick = { showZoomMenu = false; viewModel.zoomIn() },
+				)
+				AppMenuItem(
+					text = tr("menu.view.zoomOut"),
+					shortcut = keymap.labelFor(ShortcutAction.ZOOM_OUT),
+					onClick = { showZoomMenu = false; viewModel.zoomOut() },
+				)
+				AppMenuItem(
+					text = tr("menu.view.zoomReset"),
+					shortcut = keymap.labelFor(ShortcutAction.ZOOM_RESET),
+					onClick = { showZoomMenu = false; viewModel.resetZoom() },
+				)
+
+				AppMenuSeparator()
+				AppMenuHeader(tr("menu.view.uiScale"))
 				listOf(1.0f, 1.15f, 1.25f, 1.35f, 1.50f, 1.75f, 2.00f, 2.50f).forEach { scale ->
 					val p = (scale * 100).toInt()
-					val isCurrent = kotlin.math.abs(state.uiScale - scale) < 0.03f
-					DropdownMenuItem(onClick = { showZoomMenu = false; viewModel.setUiScale(scale) }) {
-						Text(
-							(if (isCurrent) "✓ " else "   ") + "$p%",
-							style = typography.body.copy(
-								fontSize = 11.5.sp,
-								color = if (isCurrent) colors.accent else colors.textPrimary,
-								fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-							)
-						)
+					val label = when (scale) {
+						1.0f -> "$p% (${tr("settings.scale.standard")})"
+						1.25f -> "$p% (2K)"
+						1.5f -> "$p% (2K/4K)"
+						1.75f, 2.0f -> "$p% (4K)"
+						else -> "$p%"
 					}
+					val isCurrent = kotlin.math.abs(state.uiScale - scale) < 0.03f
+					AppMenuItem(
+						text = label,
+						isChecked = isCurrent,
+						onClick = { showZoomMenu = false; viewModel.setUiScale(scale) },
+					)
 				}
-				Divider(color = colors.divider, thickness = 1.dp)
-				DropdownMenuItem(onClick = { showZoomMenu = false; viewModel.openSettingsDialog() }) {
-					Text(tr("dialog.settings.title") + "… (Ctrl+,)", style = typography.body.copy(fontSize = 11.5.sp))
-				}
+
+				AppMenuSeparator()
+				AppMenuItem(
+					text = tr("dialog.settings.title") + "…",
+					shortcut = keymap.labelFor(ShortcutAction.OPEN_SETTINGS),
+					onClick = { showZoomMenu = false; viewModel.openSettingsDialog() },
+				)
 			}
 		}
 	}
