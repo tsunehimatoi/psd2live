@@ -42,7 +42,9 @@ import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import org.umamo.runtime.model.ParameterId
 import org.umamo.runtime.model.PuppetModel
+import org.umamo.edit.freshParameterGroupId
 import io.github.psd2live.ui.CanvasEditor
+import io.github.psd2live.ui.keyformAxesFor
 import io.github.psd2live.ui.EditHierarchyMode
 import org.umamo.format.art.SourceArt
 import java.io.File
@@ -237,6 +239,85 @@ class PSD2LiveViewModel : AutoCloseable {
             ),
         )
         saveAuthoringEdits(expected, kotlinx.serialization.json.JsonArray(listOf(command))) {}
+    }
+
+    /** Creates a parameter-panel folder (CMO3 CParameterGroup) at the panel root or under [parentGroupId]. */
+    fun createParameterGroup(name: String, parentGroupId: String? = null) {
+        val puppet = _state.value.previewModel?.rig?.puppet ?: return
+        val id = puppet.freshParameterGroupId().raw
+        applyRigStructure(
+            "create",
+            "param_group",
+            id,
+            kotlinx.serialization.json.buildJsonObject {
+                put("name", kotlinx.serialization.json.JsonPrimitive(name))
+                put("parent_id", parentGroupId?.let { kotlinx.serialization.json.JsonPrimitive(it) } ?: kotlinx.serialization.json.JsonNull)
+            },
+        )
+    }
+
+    fun renameParameterGroup(groupId: String, name: String) {
+        applyRigStructure(
+            "rename",
+            "param_group",
+            groupId,
+            kotlinx.serialization.json.buildJsonObject {
+                put("name", kotlinx.serialization.json.JsonPrimitive(name))
+            },
+        )
+    }
+
+    fun deleteParameterGroup(groupId: String) {
+        applyRigStructure("delete", "param_group", groupId)
+    }
+
+    fun setParameterGroupOpen(groupId: String, open: Boolean) {
+        applyRigStructure(
+            "open",
+            "param_group",
+            groupId,
+            kotlinx.serialization.json.buildJsonObject {
+                put("open", kotlinx.serialization.json.JsonPrimitive(open))
+            },
+        )
+    }
+
+    /**
+     * Moves a parameter or folder in the panel tree. [parentGroupId] null = root; [beforeId] null = append.
+     * Flat parameter order is rewritten to tree preorder so CMO3 combined adjacency matches the panel.
+     */
+    fun moveParameterPanelNode(
+        kind: String,
+        id: String,
+        parentGroupId: String?,
+        beforeId: String?,
+        beforeKind: String?,
+    ) {
+        applyRigStructure(
+            "move",
+            kind,
+            id,
+            kotlinx.serialization.json.buildJsonObject {
+                put("parent_id", parentGroupId?.let { kotlinx.serialization.json.JsonPrimitive(it) } ?: kotlinx.serialization.json.JsonNull)
+                if (beforeId != null && beforeKind != null) {
+                    put("before_id", kotlinx.serialization.json.JsonPrimitive(beforeId))
+                    put("before_kind", kotlinx.serialization.json.JsonPrimitive(beforeKind))
+                }
+            },
+        )
+    }
+
+    /** Links [horizontalId] + [partnerId] as a Cubism combined pair (2D pad), or unlinks them. */
+    fun setParameterLink(horizontalId: String, partnerId: String, linked: Boolean) {
+        applyRigStructure(
+            "link",
+            "parameter",
+            horizontalId,
+            kotlinx.serialization.json.buildJsonObject {
+                put("partner_id", kotlinx.serialization.json.JsonPrimitive(partnerId))
+                put("linked", kotlinx.serialization.json.JsonPrimitive(linked))
+            },
+        )
     }
 	private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 	internal val pipeline = PSD2LivePipeline()
@@ -1776,6 +1857,75 @@ class PSD2LiveViewModel : AutoCloseable {
 			)
 		}
 	    markWorkspaceChanged()
+	}
+
+	private var parameterSnapJob: Job? = null
+
+	/** True while a snap-to-nearest-key animation is running. */
+	val isSnappingParameters: Boolean get() = parameterSnapJob?.isActive == true
+
+	/**
+	 * If the current pose sits between keys on any axis of [kind]/[id], animates those parameters to
+	 * the nearest key (Cubism-style) then invokes [onReady]. Returns true when a snap animation
+	 * started; false when already on-key (and [onReady] has already been called).
+	 */
+	fun snapToNearestKeys(kind: String, id: String, onReady: () -> Unit): Boolean {
+		val puppet = _state.value.previewModel?.rig?.puppet ?: return false
+		val axes = puppet.keyformAxesFor(kind, id)
+		return snapAxesToNearestKeys(axes, onReady)
+	}
+
+	/** Same as [snapToNearestKeys] for the union of axes across several edit targets. */
+	fun snapTargetsToNearestKeys(targets: List<Pair<String, String>>, onReady: () -> Unit): Boolean {
+		val puppet = _state.value.previewModel?.rig?.puppet ?: return false
+		if (targets.isEmpty()) return false
+		val axes = targets.flatMap { (kind, id) -> puppet.keyformAxesFor(kind, id) }
+			.distinctBy { it.parameterId to it.keys.contentHashCode() }
+		return snapAxesToNearestKeys(axes, onReady)
+	}
+
+	fun snapAxesToNearestKeys(axes: List<org.umamo.runtime.model.KeyformAxis>, onReady: () -> Unit): Boolean {
+		val puppet = _state.value.previewModel?.rig?.puppet ?: return false
+		if (axes.isEmpty()) return false
+		val pose = _state.value.parameterValues
+		val defaults = puppet.parameters.associate { it.id to it.default }
+		val targets = io.github.psd2live.ui.nearestKeyPose(axes, pose, defaults)
+		if (targets.isEmpty()) return false
+		parameterSnapJob?.cancel()
+		parameterSnapJob = scope.launch {
+			try {
+				animateParameterValues(targets, durationMs = 220L)
+			} finally {
+				onReady()
+			}
+		}
+		return true
+	}
+
+	private suspend fun animateParameterValues(targets: Map<ParameterId, Float>, durationMs: Long) {
+		val startValues = _state.value.parameterValues.toMap()
+		val from = targets.mapValues { (id, _) -> startValues[id] ?: targets.getValue(id) }
+		val startedAt = System.nanoTime()
+		while (true) {
+			val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L
+			val t = (elapsedMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+			// Smoothstep ease-in-out.
+			val eased = t * t * (3f - 2f * t)
+			_state.update { current ->
+				val next = current.parameterValues.toMutableMap()
+				for ((id, to) in targets) {
+					val a = from[id] ?: to
+					next[id] = a + (to - a) * eased
+				}
+				current.copy(parameterValues = next, lockedParameters = current.lockedParameters + targets.keys)
+			}
+			if (t >= 1f) break
+			delay(16L)
+		}
+		_state.update { current ->
+			current.copy(parameterValues = current.parameterValues + targets)
+		}
+		markWorkspaceChanged()
 	}
 
 	fun resetParameter(id: ParameterId) {

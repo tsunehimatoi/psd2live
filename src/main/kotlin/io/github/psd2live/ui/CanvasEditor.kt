@@ -3491,6 +3491,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         if (adjustingBrush) endBrushAdjust(cancel = false)
         if (!editable) return true
         if (space) return false
+        if (viewModel.isSnappingParameters) return true
         this.viewport = viewport
         error = null; head = state.historySnapshot?.headNodeId; start = pos; previous = pos; dragStartPos = pos
         moved = false; additive = shift; subtractive = alt; pressedObject = null
@@ -3626,6 +3627,9 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         if (hierarchyMode == EditHierarchyMode.DEFORM && editLevel == 2) {
             val t = target()
             if (t != null && t.kind == "warp") {
+                if (hoveredBezierHandle != null || hoveredBezierAnchor != null) {
+                    if (viewModel.snapToNearestKeys(t.kind, t.id) { press(pos, viewport, shift, alt, ctrl) }) return true
+                }
                 if (hoveredBezierHandle != null) {
                     activeBezierHandle = hoveredBezierHandle
                     targetAtPress = t
@@ -3722,7 +3726,12 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             val handle = frame?.let { transformRingAt(pos, it) } ?: BoundingHandle.NONE
             if (frame != null && handle != BoundingHandle.NONE) {
                 val source = state.previewModel?.rig?.puppet ?: return true
-                beginTransformDrag(source, transformTargets(source), handle, frame, viewport)
+                val targets = transformTargets(source)
+                if (hierarchyMode == EditHierarchyMode.DEFORM) {
+                    val refs = targets.map { it.kind to it.id }
+                    if (viewModel.snapTargetsToNearestKeys(refs) { press(pos, viewport, shift, alt, ctrl) }) return true
+                }
+                beginTransformDrag(source, targets, handle, frame, viewport)
                 return true
             }
         }
@@ -3730,16 +3739,28 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         // Path handles: EDIT rebinds, DEFORM deforms — always before mesh vertex picks.
         if (hierarchyMode == EditHierarchyMode.DEFORM || hierarchyMode == EditHierarchyMode.EDIT) {
             val pathTarget = target()?.takeIf { it.kind == "mesh" && paths().isNotEmpty() }
-            if (pathTarget != null && beginPathInteraction(pos, pathTarget, viewport, ctrl)) return true
+            if (pathTarget != null) {
+                if (hierarchyMode == EditHierarchyMode.DEFORM) {
+                    if (viewModel.snapToNearestKeys(pathTarget.kind, pathTarget.id) {
+                        press(pos, viewport, shift, alt, ctrl)
+                    }) return true
+                }
+                if (beginPathInteraction(pos, pathTarget, viewport, ctrl)) return true
+            }
         }
 
         val editTarget = target() ?: return true
         // Mesh / topology gestures are separate from path handles — drop any lingering path-point grab.
         clearPathPointSelection()
+        val brush = tool in DEFORM_BRUSH_TOOLS
+        if (hierarchyMode == EditHierarchyMode.DEFORM && (brush || tool == CanvasTool.SELECT)) {
+            if (viewModel.snapToNearestKeys(editTarget.kind, editTarget.id) {
+                press(pos, viewport, shift, alt, ctrl)
+            }) return true
+        }
         targetAtPress = editTarget; original = model; dragging = true
         val points = screen(editTarget.geometry.points, editTarget, viewport)
 
-        val brush = tool in DEFORM_BRUSH_TOOLS
         if (brush) {
             shrinkAtPress = inflateInvert xor alt
             if (editTarget.kind == "rotation") { dragging = false; error = io.github.psd2live.i18n.tr("editor.rotationBrush"); return true }

@@ -77,7 +77,10 @@ fun PuppetModel.withParameterLink(horizontal: ParameterId, vertical: ParameterId
 		if (horizontal in linkedMembers || vertical in linkedMembers) {
 			return this
 		}
+		// CMO3 encodes a combined pair positionally (Y is the source immediately after X). Keep the
+		// panel tree and flat parameter order adjacent so export matches Cubism without a reorder notice.
 		return copy(parameterLinks = parameterLinks + ParameterLink(horizontal, vertical))
+			.withLinkedPairAdjacent(horizontal, vertical)
 	}
 	val remaining = parameterLinks.filterNot { link -> link.horizontal == horizontal && link.vertical == vertical }
 	if (remaining.size == parameterLinks.size) {

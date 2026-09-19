@@ -83,6 +83,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -313,6 +314,65 @@ fun IconSearch(
 	}
 }
 
+/** Link / unlink glyph for Cubism-style combined parameters (points at the parameter below). */
+@Composable
+fun IconParameterLink(
+	linked: Boolean,
+	modifier: Modifier = Modifier.size(12.dp),
+	tint: Color = LocalToolColors.current.textMuted,
+) {
+	Canvas(modifier = modifier) {
+		val w = size.width
+		val h = size.height
+		val stroke = Stroke(width = 1.25f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+		if (linked) {
+			// Two interlocking chain links (linked pair)
+			drawRoundRect(
+				color = tint,
+				topLeft = Offset(w * 0.10f, h * 0.22f),
+				size = androidx.compose.ui.geometry.Size(w * 0.48f, h * 0.56f),
+				cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.22f, h * 0.28f),
+				style = stroke,
+			)
+			drawRoundRect(
+				color = tint,
+				topLeft = Offset(w * 0.42f, h * 0.22f),
+				size = androidx.compose.ui.geometry.Size(w * 0.48f, h * 0.56f),
+				cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.22f, h * 0.28f),
+				style = stroke,
+			)
+			drawLine(
+				color = tint,
+				start = Offset(w * 0.38f, h * 0.5f),
+				end = Offset(w * 0.62f, h * 0.5f),
+				strokeWidth = 1.3f,
+				cap = StrokeCap.Round,
+			)
+		} else {
+			// Two open links separated by a gap (can link)
+			drawRoundRect(
+				color = tint,
+				topLeft = Offset(w * 0.08f, h * 0.24f),
+				size = androidx.compose.ui.geometry.Size(w * 0.38f, h * 0.52f),
+				cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.18f, h * 0.26f),
+				style = stroke,
+			)
+			drawRoundRect(
+				color = tint,
+				topLeft = Offset(w * 0.54f, h * 0.24f),
+				size = androidx.compose.ui.geometry.Size(w * 0.38f, h * 0.52f),
+				cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.18f, h * 0.26f),
+				style = stroke,
+			)
+			drawCircle(
+				color = tint.copy(alpha = 0.5f),
+				radius = 1.0f,
+				center = Offset(w * 0.5f, h * 0.5f),
+			)
+		}
+	}
+}
+
 /** Vector Folder Icon */
 @Composable
 fun IconFolder(
@@ -471,6 +531,26 @@ fun IconRotationDeformer(
 			close()
 		}
 		drawPath(headPath, tint)
+	}
+}
+
+/** Six-dot grip used as a drag handle (e.g. parameter-panel reorder). */
+@Composable
+fun IconDragHandle(
+	modifier: Modifier = Modifier.size(12.dp),
+	tint: Color = LocalToolColors.current.textMuted,
+) {
+	Canvas(modifier = modifier) {
+		val w = size.width
+		val h = size.height
+		val r = 1.05f
+		val xs = floatArrayOf(w * 0.32f, w * 0.68f)
+		val ys = floatArrayOf(h * 0.22f, h * 0.5f, h * 0.78f)
+		for (x in xs) {
+			for (y in ys) {
+				drawCircle(tint, r, Offset(x, y))
+			}
+		}
 	}
 }
 
@@ -1299,7 +1379,13 @@ fun CompactNumberSpinner(
 	}
 }
 
-/** Practical Compact DCC Slider */
+/** Shape of a parameter key mark / thumb: circle = keyform grid, square = blend-shape. */
+enum class SliderKeyShape { Circle, Square }
+
+/** One key point drawn on a parameter slider track. */
+data class SliderKeyMark(val value: Float, val shape: SliderKeyShape = SliderKeyShape.Circle)
+
+/** Practical Compact DCC Slider with optional Cubism-style parameter key marks. */
 @Composable
 fun CompactSlider(
 	value: Float,
@@ -1311,6 +1397,8 @@ fun CompactSlider(
 	steps: Int = 0,
 	enabled: Boolean = true,
 	height: Dp = 16.dp,
+	keyMarks: List<SliderKeyMark> = emptyList(),
+	thumbShape: SliderKeyShape = SliderKeyShape.Circle,
 ) {
 	val changeValue by rememberUpdatedState(onValueChange)
     val startChange by rememberUpdatedState(onValueChangeStarted)
@@ -1326,6 +1414,7 @@ fun CompactSlider(
 	BoxWithConstraints(
 		modifier = modifier
 			.height(height)
+			.hoverable(interactionSource)
 			.pointerHoverIcon(if (enabled) PointerIcon(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)) else PointerIcon.Default)
             .pointerInput(valueRange, enabled) {
                 if (!enabled) return@pointerInput
@@ -1348,10 +1437,8 @@ fun CompactSlider(
 	) {
 		val totalW = maxWidth
 		val trackH = 4.dp
-		val thumbW = 5.dp
-		val thumbH = 10.dp
+		val thumbRadius = 5.dp
 
-		// Background Track
 		Box(
 			modifier = Modifier
 				.fillMaxWidth()
@@ -1360,7 +1447,6 @@ fun CompactSlider(
 				.border(BorderStroke(0.5.dp, colors.border), RoundedCornerShape(2.dp)),
 		)
 
-		// Active Track
 		Box(
 			modifier = Modifier
 				.width(totalW * fraction)
@@ -1372,19 +1458,49 @@ fun CompactSlider(
 				),
 		)
 
-		// Compact Sleek Thumb Indicator (Small 5x10dp bar, clean & non-obtrusive)
-		val thumbOffset = ((totalW - thumbW) * fraction).coerceAtLeast(0.dp)
+		if (keyMarks.isNotEmpty()) {
+			Canvas(modifier = Modifier.fillMaxWidth().height(height)) {
+				val markRadius = 3.5.dp.toPx()
+				val centerY = size.height / 2f
+				val usable = (size.width - 2f * thumbRadius.toPx()).coerceAtLeast(0f)
+				val inset = thumbRadius.toPx()
+				for (mark in keyMarks) {
+					val keyFraction = ((mark.value - valueRange.start) / rangeSpan).coerceIn(0f, 1f)
+					val markX = inset + keyFraction * usable
+					val color = colors.textMuted.copy(alpha = 0.85f)
+					when (mark.shape) {
+						SliderKeyShape.Circle -> drawCircle(color, markRadius, Offset(markX, centerY))
+						SliderKeyShape.Square -> drawRoundRect(
+							color = color,
+							topLeft = Offset(markX - markRadius, centerY - markRadius),
+							size = Size(markRadius * 2f, markRadius * 2f),
+							cornerRadius = CornerRadius(markRadius * 0.35f),
+						)
+					}
+				}
+			}
+		}
+
+		val thumbOffset = ((totalW - thumbRadius * 2) * fraction).coerceAtLeast(0.dp)
+		val thumbColor = if (enabled) {
+			if (isPressed) colors.accent else if (isHovered) colors.accentHover else Color(0xFFE0E6ED)
+		} else {
+			colors.textDisabled
+		}
 		Box(
 			modifier = Modifier
 				.padding(start = thumbOffset)
-				.size(width = thumbW, height = thumbH)
-				.background(
-					if (enabled) (if (isPressed) Color.White else Color(0xFFE0E6ED)) else colors.textDisabled,
-					RoundedCornerShape(1.dp),
-				)
-				.border(
-					BorderStroke(0.5.dp, if (enabled) colors.accent else Color.Transparent),
-					RoundedCornerShape(1.dp),
+				.size(thumbRadius * 2)
+				.then(
+					if (thumbShape == SliderKeyShape.Circle) {
+						Modifier
+							.background(thumbColor, CircleShape)
+							.border(BorderStroke(1.dp, if (enabled) colors.accent else Color.Transparent), CircleShape)
+					} else {
+						Modifier
+							.background(thumbColor, RoundedCornerShape(2.dp))
+							.border(BorderStroke(1.dp, if (enabled) colors.accent else Color.Transparent), RoundedCornerShape(2.dp))
+					},
 				),
 		)
 	}

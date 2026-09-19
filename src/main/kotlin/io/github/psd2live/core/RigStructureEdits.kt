@@ -1,6 +1,7 @@
 package io.github.psd2live.core
 
 import kotlinx.serialization.json.*
+import org.umamo.edit.ParameterPanelRef
 import org.umamo.edit.withDeformerDeleted
 import org.umamo.edit.withDeformerMoved
 import org.umamo.edit.withDeformerMultiplyColor
@@ -21,6 +22,13 @@ import org.umamo.edit.withDrawableOpacity
 import org.umamo.edit.withDrawableScreenColor
 import org.umamo.edit.withDrawableSelectable
 import org.umamo.edit.withOrgChildMoved
+import org.umamo.edit.withParameterGroupCreated
+import org.umamo.edit.withParameterGroupDeleted
+import org.umamo.edit.withParameterGroupOpen
+import org.umamo.edit.withParameterGroupRenamed
+import org.umamo.edit.withParameterLink
+import org.umamo.edit.withParameterPanelNodeMoved
+import org.umamo.edit.withParameterRenamed
 import org.umamo.edit.withPartName
 import org.umamo.edit.withPartSelectable
 import org.umamo.runtime.model.*
@@ -33,6 +41,9 @@ internal object RigStructureEdits {
         val action = edit.string("action")
         if(action == "create_warp") return RigWarpEdit.fromJson(JsonObject(edit - "action")).applyTo(model)
         val kind = edit.string("kind")
+        if (kind == "parameter" || kind == "param_group") {
+            return applyParameterPanel(model, action, kind, edit)
+        }
         val id = edit.string("id")
         require(kind in setOf("mesh", "warp", "rotation", "part")) { "Expected mesh, warp, rotation or part" }
         val allowed = when (action) {
@@ -176,6 +187,95 @@ internal object RigStructureEdits {
                 }
             }
         }
+    }
+
+    /**
+     * Parameter-panel layout: folders, reorder / recategorize, and LINKED (combined) pairs.
+     * Same payload shape as org-tree structure edits so history / rebuild replay stays uniform.
+     */
+    private fun applyParameterPanel(model: PuppetModel, action: String, kind: String, edit: JsonObject): PuppetModel {
+        val id = edit.string("id")
+        val allowed = when (action) {
+            "rename" -> setOf("name")
+            "move" -> setOf("parent_id", "before_id", "before_kind")
+            "create" -> setOf("name", "parent_id", "before_id", "before_kind", "open")
+            "delete" -> emptySet()
+            "link" -> setOf("partner_id", "linked")
+            "open" -> setOf("open")
+            else -> error("Unknown parameter-panel action: $action")
+        }
+        require((edit.keys - allowed - setOf("action", "kind", "id")).isEmpty()) { "Unexpected field for $action" }
+        fun parentId(): ParameterGroupId? {
+            require("parent_id" in edit) { "Specify parent_id; null means panel root" }
+            return edit["parent_id"]?.jsonPrimitive?.contentOrNull?.let(::ParameterGroupId)
+        }
+        fun beforeRef(): ParameterPanelRef? {
+            val beforeId = edit["before_id"]?.jsonPrimitive?.contentOrNull ?: return null
+            return when (edit.string("before_kind")) {
+                "parameter" -> ParameterPanelRef.Param(ParameterId(beforeId))
+                "param_group" -> ParameterPanelRef.Group(ParameterGroupId(beforeId))
+                else -> error("before_kind must be parameter or param_group")
+            }
+        }
+        return when (action) {
+            "create" -> {
+                require(kind == "param_group") { "Only a parameter folder can be created here" }
+                val name = edit.string("name")
+                val open = edit["open"]?.jsonPrimitive?.booleanOrNull ?: true
+                val parent = if ("parent_id" in edit) parentId() else null
+                require(parent == null || model.parameterTree.anyGroup(parent)) { "Parent folder not found: $parent" }
+                model.withParameterGroupCreated(
+                    id = ParameterGroupId(id),
+                    name = name,
+                    parentId = parent,
+                    before = beforeRef(),
+                    initiallyOpen = open,
+                )
+            }
+            "rename" -> {
+                val name = edit.string("name")
+                when (kind) {
+                    "parameter" -> model.withParameterRenamed(ParameterId(id), name)
+                    "param_group" -> model.withParameterGroupRenamed(ParameterGroupId(id), name)
+                    else -> error("rename requires parameter or param_group")
+                }
+            }
+            "delete" -> {
+                require(kind == "param_group") { "Only a parameter folder can be deleted here" }
+                model.withParameterGroupDeleted(ParameterGroupId(id))
+            }
+            "open" -> {
+                require(kind == "param_group") { "open belongs to a parameter folder" }
+                val open = edit.getValue("open").jsonPrimitive.boolean
+                model.withParameterGroupOpen(ParameterGroupId(id), open)
+            }
+            "link" -> {
+                require(kind == "parameter") { "link belongs to a parameter" }
+                val partner = ParameterId(edit.string("partner_id"))
+                val linked = edit.getValue("linked").jsonPrimitive.boolean
+                model.withParameterLink(ParameterId(id), partner, linked)
+            }
+            "move" -> {
+                val node = when (kind) {
+                    "parameter" -> ParameterPanelRef.Param(ParameterId(id))
+                    "param_group" -> ParameterPanelRef.Group(ParameterGroupId(id))
+                    else -> error("move requires parameter or param_group")
+                }
+                val parent = parentId()
+                require(parent == null || model.parameterTree.anyGroup(parent)) { "Parent folder not found: $parent" }
+                model.withParameterPanelNodeMoved(node, parent, beforeRef())
+            }
+            else -> error("Unknown parameter-panel action: $action")
+        }
+    }
+
+    private fun List<ParameterNode>.anyGroup(id: ParameterGroupId): Boolean {
+        for (node in this) {
+            if (node is ParameterNode.Group) {
+                if (node.id == id || node.children.anyGroup(id)) return true
+            }
+        }
+        return false
     }
 
     private fun JsonObject.string(key: String): String = getValue(key).jsonPrimitive.content.also {
