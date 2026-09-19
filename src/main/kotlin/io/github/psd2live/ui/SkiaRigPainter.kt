@@ -7,9 +7,14 @@ import org.umamo.render.eval.DeformedGeometry
 import org.umamo.render.glsl.SELECTION_TINT_STRENGTH
 import org.umamo.runtime.model.DrawableId
 
+import androidx.compose.ui.graphics.asSkiaBitmap
+import androidx.compose.ui.graphics.toComposeImageBitmap
+
 /** Draw the editing texture channel on Compose's Skia canvas, without per-triangle Java2D clips. */
 internal class SkiaRigPainter(atlas: PackedAtlas) : AutoCloseable {
-    private val images = atlas.pages.map { Image.makeFromEncoded(it.png) }
+    private val images = atlas.pages.map { page ->
+        Image.makeFromBitmap(page.image.toComposeImageBitmap().asSkiaBitmap())
+    }
     private val shaders = images.map {
         it.makeShader(FilterTileMode.CLAMP, FilterTileMode.CLAMP, SamplingMode.LINEAR, null)
     }

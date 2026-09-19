@@ -28,8 +28,11 @@ internal data class CanvasViewport(
 ) {
 	fun x(canvasX: Float): Double = offsetX + canvasX * scale
 	fun yFromWorld(worldY: Float): Double = offsetY - worldY * scale
-	fun canvasX(screenX: Int): Float = ((screenX - offsetX) / scale).toFloat()
-	fun canvasY(screenY: Int): Float = ((screenY - offsetY) / scale).toFloat()
+	fun canvasX(screenX: Int): Float = canvasX(screenX.toFloat())
+	fun canvasY(screenY: Int): Float = canvasY(screenY.toFloat())
+	/** The float form the paint tips use: a stroke belongs between two pixels, not on one of them. */
+	fun canvasX(screenX: Float): Float = ((screenX - offsetX) / scale).toFloat()
+	fun canvasY(screenY: Float): Float = ((screenY - offsetY) / scale).toFloat()
 }
 
 /** Normalized viewport passed to the native Cubism renderer. */

@@ -19,6 +19,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.unit.Dp
 import androidx.compose.material.Surface
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
@@ -129,6 +132,53 @@ fun ColorPickerSwatch(
                     initialColor = color,
                     sampledColor = sampledColor,
                     onColorChanged = onColorChanged,
+                    onDismiss = { expanded = false },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * A paint colour chip that opens the colour picker below it.
+ *
+ * @param Color color                The colour shown, always drawn opaque.
+ * @param Function onColorChanged    Receives the picked colour, with the alpha channel restored.
+ * @param Dp popupOffset             Distance from the chip's top edge to the popup, which is what
+ *                                   clears the chip whatever size the caller gave it.
+ */
+@Composable
+fun PaintColorChip(
+    color: Color,
+    onColorChanged: (Color) -> Unit,
+    modifier: Modifier = Modifier,
+    popupOffset: Dp = 30.dp,
+    shape: Shape = RoundedCornerShape(4.dp),
+    border: BorderStroke = BorderStroke(1.dp, LocalToolColors.current.border),
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
+
+    Box {
+        Box(
+            modifier
+                .clip(shape)
+                .background(color)
+                .border(border, shape)
+                .clickable { expanded = true }
+                .pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
+        )
+        if (expanded) {
+            Popup(
+                alignment = Alignment.TopStart,
+                offset = IntOffset(0, with(density) { popupOffset.roundToPx() }),
+                onDismissRequest = { expanded = false },
+                properties = PopupProperties(focusable = true),
+            ) {
+                ColorPickerPopupContent(
+                    initialColor = color.toArgb() and 0xFFFFFF,
+                    sampledColor = null,
+                    onColorChanged = { rgb -> onColorChanged(Color(0xFF000000L or rgb.toLong())) },
                     onDismiss = { expanded = false },
                 )
             }

@@ -126,6 +126,268 @@ object RigBuilder {
 		val pairedParentByLayerId: Map<String, Pair<DeformerId, Bounds>>,
 	)
 
+	/** Everything one layer contributes to the rig: its stored mesh, keyforms and mouth outline. */
+	private class LayerMeshParts(
+		/** The mesh as it is stored on the drawable: parent-local, or canvas positions with no parent. */
+		val mesh: DrawableMesh,
+		/** Un-normalized source geometry, still carrying the canvas position of every vertex. */
+		val data: MeshData,
+		val mouthAperture: Bounds?,
+		val mouthPaths: List<DeformPath>,
+		val geometryGrid: KeyformGrid<MeshDeltaForm>,
+		/** The space the layer's geometry was aligned into, or null when it was left in canvas space. */
+		val headSpace: HeadCoordinateSpace?,
+		val neutralBounds: Bounds,
+	)
+
+	/**
+	 * Everything a rig derives from its analysis before a single mesh is built: the frames the
+	 * deformers were fitted to, the face rig, the head space and the deformers themselves.
+	 *
+	 * The frames are the reason this is derived once and kept. Every mesh vertex is stored as a 0..1
+	 * position inside its parent deformer's frame, so a rig stays coherent only while all of its
+	 * meshes are normalized against the same frames its deformers were laid out on. Deriving a second
+	 * context from an edited analysis moves the head, face or hair frame as soon as one painted layer's
+	 * bounds change, and every mesh built from the moved frame is silently rescaled against the
+	 * deformers that stayed put.
+	 */
+	internal class RigContext internal constructor(
+		/** The rigged analysis with the generated mouth-lip layers stripped, exactly as [build] sees it. */
+		val analysis: PipelineAnalysis,
+		val character: Bounds,
+		val head: Bounds,
+		val face: Bounds,
+		val frontHair: Bounds?,
+		val backHair: Bounds?,
+		val headSpace: HeadCoordinateSpace,
+		val faceRig: NinePoseFaceRig,
+		val eyeWhiteLayers: List<ClassifiedLayer>,
+		private val frameByDeformer: Map<String, Bounds>,
+		private val pairedParentByLayerId: Map<String, Pair<DeformerId, Bounds>>,
+		/** False when the config built no deformers, which leaves every mesh in canvas space. */
+		val deformersEnabled: Boolean,
+		val deformers: List<Deformer>,
+	) {
+		/** The layer expressed in the coordinate system its mesh and its keyforms are authored in. */
+		fun rigLayer(layer: ClassifiedLayer): ClassifiedLayer = layer.riggedIn(analysis.anchors, headSpace)
+
+		/** The space head layers are aligned into, or null when the layer stays in canvas space. */
+		fun headSpaceFor(layer: ClassifiedLayer): HeadCoordinateSpace? =
+			if (deformersEnabled && inferredGroup(layer, analysis.anchors) == LayerGroup.HEAD) headSpace else null
+
+		/**
+		 * The deformer [layer] hangs under and the frame that deformer was fitted to. An override
+		 * re-parents the layer and may name an ancestor warp the user created; everything else takes
+		 * the automatically paired deformer, or the parent its semantic tag implies.
+		 */
+		fun parentAndFrame(layer: ClassifiedLayer, config: PipelineConfig): Pair<DeformerId?, Bounds> {
+			val paired = pairedParentByLayerId[layer.source.id.raw] ?: parentAndFrame(layer)
+			if (!config.parentOverrides.containsKey(layer.source.id.raw)) return paired
+			val parentId = config.parentOverrides[layer.source.id.raw]
+				?.takeIf { it.isNotBlank() && !it.equals("root", true) }
+				?.let(::DeformerId)
+				?: return null to character
+			return parentId to (resolveFrame(parentId, config) ?: error("Unknown parent coordinate frame: ${parentId.raw}"))
+		}
+
+		/**
+		 * The frame a deformer normalizes its children against, or null when this rig has none for it.
+		 * A deformer the user created has no frame of its own here, so its children inherit the nearest
+		 * ancestor that does; a deformer from somewhere other than [build] - an imported rig's - inherits
+		 * nothing, and the caller has to recover the frame from the geometry it is replacing.
+		 */
+		fun resolveFrame(parentId: DeformerId, config: PipelineConfig): Bounds? {
+			var id = parentId.raw
+			val seen = mutableSetOf<String>()
+			while (id !in frameByDeformer && seen.add(id)) {
+				id = config.rigEdits.warpEdits.firstOrNull { it.id == id }?.parentId ?: return null
+			}
+			return frameByDeformer[id]
+		}
+
+		private fun parentAndFrame(layer: ClassifiedLayer): Pair<DeformerId, Bounds> =
+			defaultParentAndFrame(layer, faceRig, analysis.anchors, character, head, face, frontHair, backHair)
+	}
+
+	/**
+	 * Derives the rig context of [inputAnalysis].
+	 *
+	 * Call it once per rig build and keep the result: two contexts derived from different analyses
+	 * describe the same deformers' frames only while every layer bound that feeds them is unchanged.
+	 */
+	internal fun rigContext(inputAnalysis: PipelineAnalysis, config: PipelineConfig): RigContext {
+		val analysis = inputAnalysis.copy(layers = inputAnalysis.layers.filter { it.source !is MouthLipLayer })
+		val character = analysis.anchors.character
+		val layout = analysis.calibration ?: analysis
+		val faceRig = NinePoseFaceRig.from(layout)
+		val headSpace = faceRig.coordinateSpace
+		val rigLayerById = analysis.layers.associate { layer ->
+			layer.source.id.raw to layer.riggedIn(analysis.anchors, headSpace)
+		}
+		val layoutRigLayers = layout.layers.map { it.riggedIn(layout.anchors, headSpace) }
+		val headCandidates = layout.layers
+			.filter { inferredGroup(it, analysis.anchors) == LayerGroup.HEAD && it.opaquePixels > 0 }
+			.map { it.inHeadSpace(headSpace) }
+		val head = if (headCandidates.isEmpty()) faceRig.face else headCandidates.map { it.bounds }.reduce(Bounds::union).expanded(0.025f)
+		val eyeWhiteLayers = layoutRigLayers.filter {
+			it.semantic.tag == SemanticTag.EYEWHITE && it.opaquePixels > 0
+		}
+		val faceCandidates = layoutRigLayers.filter { it.semantic.tag in faceTags && it.opaquePixels > 0 }
+		val face = (faceCandidates.map { it.bounds } + faceRig.face)
+			.reduce(Bounds::union)
+			.expanded(0.025f)
+		val frontHairCandidates = layoutRigLayers.filter { it.semantic.tag == SemanticTag.FRONT_HAIR && it.opaquePixels > 0 }
+		val backHairCandidates = layoutRigLayers.filter { it.semantic.tag == SemanticTag.BACK_HAIR && it.opaquePixels > 0 }
+		val frontHair = frontHairCandidates.map { it.bounds }.takeIf { it.isNotEmpty() }?.reduce(Bounds::union)?.expanded(0.04f)
+		val backHair = backHairCandidates.map { it.bounds }.takeIf { it.isNotEmpty() }?.reduce(Bounds::union)?.expanded(0.04f)
+
+		val deformersEnabled = !config.meshOnly && config.generateDeformers
+		val deformerResult = if (deformersEnabled) {
+			buildDeformers(
+				analysis,
+				rigLayerById,
+				faceRig,
+				character,
+				head,
+				face,
+				frontHair,
+				backHair,
+				PartId("PartHead"),
+				PartId("PartFace"),
+				PartId("PartHairFront"),
+				PartId("PartHairBack"),
+				PartId("PartHeadAccessories"),
+				PartId("PartBody"),
+				PartId("PartExtra"),
+				config,
+			)
+		} else {
+			DeformerBuildResult(emptyList(), emptyMap(), emptyMap())
+		}
+
+		val frameByDeformer = mutableMapOf<String, Bounds>()
+		frameByDeformer[bodyWarpId.raw] = character
+		frameByDeformer[breathWarpId.raw] = character
+		frameByDeformer[headRotationId.raw] = character
+		frameByDeformer[headWarpId.raw] = head
+		frameByDeformer[faceWarpId.raw] = face
+		frameByDeformer[faceContourId.raw] = face
+		frameByDeformer[featureDisplacementId.raw] = face
+		for (region in faceRig.regions) {
+			frameByDeformer[featureWarpId(region).raw] = region.bounds
+			if (region.feature == FaceFeature.IRIS) {
+				frameByDeformer[gazeWarpId(region).raw] = region.bounds
+			}
+		}
+		frontHair?.let {
+			frameByDeformer[frontHairFollowWarpId.raw] = it
+			frameByDeformer[frontHairPhysicsWarpId.raw] = it
+		}
+		backHair?.let {
+			frameByDeformer[backHairFollowWarpId.raw] = it
+			frameByDeformer[backHairPhysicsWarpId.raw] = it
+		}
+		frameByDeformer.putAll(deformerResult.pairFrames)
+
+		return RigContext(
+			analysis,
+			character,
+			head,
+			face,
+			frontHair,
+			backHair,
+			headSpace,
+			faceRig,
+			eyeWhiteLayers,
+			frameByDeformer,
+			deformerResult.pairedParentByLayerId,
+			deformersEnabled,
+			deformerResult.deformers,
+		)
+	}
+
+	private fun ClassifiedLayer.riggedIn(anchors: RigAnchors, headSpace: HeadCoordinateSpace): ClassifiedLayer =
+		if (inferredGroup(this, anchors) == LayerGroup.HEAD) inHeadSpace(headSpace) else this
+
+	/** The generated mouth-outline layers of [analysis], keyed by the id their drawable is built from. */
+	internal fun generatedMouthLips(analysis: PipelineAnalysis): Map<String, ClassifiedLayer> =
+		analysis.layers.filter { it.source is MouthLipLayer }.associateBy { it.source.id.raw }
+
+	/**
+	 * The ribbons that outline [layer]'s mouth, rasterized into their own generated layers.
+	 *
+	 * They are derived geometry: [mouthOutline] walks the same contour the fill mesh is built on, so a
+	 * paint commit that repaints the mouth has to rebuild them with it, or the ribbons keep the shape
+	 * of the mouth they were drawn for and their texture coordinates leave the slice their regenerated
+	 * layer was packed into.
+	 */
+	private fun mouthLips(
+		owner: Drawable,
+		layer: ClassifiedLayer,
+		data: MeshData,
+		parentFrame: Bounds,
+		aperture: Bounds?,
+		headSpace: HeadCoordinateSpace?,
+		atlas: PackedAtlas,
+		generatedLips: Map<String, ClassifiedLayer>,
+		config: PipelineConfig,
+	): List<MouthLip> {
+		if (!config.mouthOutlineEnabled || config.meshOnly || aperture == null) return emptyList()
+		return (0..1).mapNotNull { side ->
+			val lipLayer = generatedLips[MouthLipLayer.idFor(layer.source.id.raw, side)] ?: return@mapNotNull null
+			val lipPlacement = atlas.placementByLayerId[lipLayer.source.id.raw] ?: return@mapNotNull null
+			val lipPage = atlas.pages[lipPlacement.page].image
+			val (lip, path) = mouthOutline(
+				owner,
+				data,
+				parentFrame,
+				aperture,
+				config,
+				side,
+				lipLayer,
+				lipPlacement,
+				lipPage.width,
+				lipPage.height,
+				headSpace,
+			)
+			MouthLip(lip, owner.id, lipLayer, path, neutralLipBounds(data, aperture, config, side, headSpace, lipLayer.bounds))
+		}
+	}
+
+	/** The deformer a layer's semantic tag implies, and the frame that deformer was fitted to. */
+	private fun defaultParentAndFrame(
+		layer: ClassifiedLayer,
+		faceRig: NinePoseFaceRig,
+		anchors: RigAnchors,
+		character: Bounds,
+		head: Bounds,
+		faceFrame: Bounds,
+		frontHair: Bounds?,
+		backHair: Bounds?,
+	): Pair<DeformerId, Bounds> = when (layer.semantic.tag) {
+		SemanticTag.FACE -> faceContourId to faceFrame
+		SemanticTag.IRIDES -> faceRig.regionFor(FaceFeature.IRIS, layer.semantic.side)?.let { gazeWarpId(it) to it.bounds }
+			?: (faceWarpId to faceFrame)
+		SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE ->
+			faceRig.regionFor(FaceFeature.EYE, layer.semantic.side)?.let { featureWarpId(it) to it.bounds } ?: (faceWarpId to faceFrame)
+		SemanticTag.EYEBROW -> faceRig.regionFor(FaceFeature.BROW, layer.semantic.side)?.let { featureWarpId(it) to it.bounds }
+			?: (faceWarpId to faceFrame)
+		SemanticTag.NOSE -> faceRig.regionFor(FaceFeature.NOSE, layer.semantic.side)?.let { featureWarpId(it) to it.bounds }
+			?: (faceWarpId to faceFrame)
+		SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN, SemanticTag.MOUTH_CLOSE,
+		SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE ->
+			faceRig.regionFor(FaceFeature.MOUTH, layer.semantic.side)?.let { featureWarpId(it) to it.bounds } ?: (faceWarpId to faceFrame)
+		SemanticTag.EARS, SemanticTag.EARWEAR -> faceRig.regionFor(FaceFeature.EAR, layer.semantic.side)?.let { featureWarpId(it) to it.bounds }
+			?: (faceWarpId to faceFrame)
+		SemanticTag.FRONT_HAIR -> frontHair?.let { frontHairPhysicsWarpId to it } ?: (headWarpId to head)
+		SemanticTag.BACK_HAIR -> backHair?.let { backHairPhysicsWarpId to it } ?: (headWarpId to head)
+		else -> when {
+			layer.semantic.tag in faceTags -> faceWarpId to faceFrame
+			inferredGroup(layer, anchors) == LayerGroup.HEAD -> headWarpId to head
+			else -> breathWarpId to character
+		}
+	}
+
 	private val faceTags = setOf(
 		SemanticTag.FACE,
 		SemanticTag.FACE_DETAIL,
@@ -147,35 +409,12 @@ object RigBuilder {
 	)
 
 	fun build(inputAnalysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig, meshCache: PreviewMeshCache? = null): BuiltRig {
-        val generatedLips = inputAnalysis.layers.filter { it.source is MouthLipLayer }
-            .associateBy { it.source.id.raw }
-        val analysis = inputAnalysis.copy(layers = inputAnalysis.layers.filter { it.source !is MouthLipLayer })
+        val generatedLips = generatedMouthLips(inputAnalysis)
+		val context = rigContext(inputAnalysis, config)
+		val analysis = context.analysis
+		val faceRig = context.faceRig
+		val shouldBuildDeformers = context.deformersEnabled
 		val warnings = mutableListOf<String>()
-		val characterFrame = analysis.anchors.character
-		val layout = analysis.calibration ?: analysis
-        val faceRig = NinePoseFaceRig.from(layout)
-		val headSpace = faceRig.coordinateSpace
-		val rigLayerById = analysis.layers.associate { layer ->
-			val rigLayer = if (inferredGroup(layer, analysis.anchors) == LayerGroup.HEAD) layer.inHeadSpace(headSpace) else layer
-			layer.source.id.raw to rigLayer
-		}
-		val layoutRigLayers = layout.layers.map { if (inferredGroup(it, layout.anchors) == LayerGroup.HEAD) it.inHeadSpace(headSpace) else it }
-        val headCandidates = layout.layers
-			.filter { inferredGroup(it, analysis.anchors) == LayerGroup.HEAD && it.opaquePixels > 0 }
-			.map { it.inHeadSpace(headSpace) }
-		val headFrame = if (headCandidates.isEmpty()) faceRig.face else headCandidates.map { it.bounds }.reduce(Bounds::union).expanded(0.025f)
-		val eyeWhiteLayers = layoutRigLayers.filter {
-			it.semantic.tag == SemanticTag.EYEWHITE && it.opaquePixels > 0
-		}
-		val faceCandidates = layoutRigLayers.filter { it.semantic.tag in faceTags && it.opaquePixels > 0 }
-		val faceFrame = (faceCandidates.map { it.bounds } + faceRig.face)
-			.reduce(Bounds::union)
-			.expanded(0.025f)
-		val frontHairCandidates = layoutRigLayers.filter { it.semantic.tag == SemanticTag.FRONT_HAIR && it.opaquePixels > 0 }
-		val backHairCandidates = layoutRigLayers.filter { it.semantic.tag == SemanticTag.BACK_HAIR && it.opaquePixels > 0 }
-		val frontHairFrame = frontHairCandidates.map { it.bounds }.takeIf { it.isNotEmpty() }?.reduce(Bounds::union)?.expanded(0.04f)
-		val backHairFrame = backHairCandidates.map { it.bounds }.takeIf { it.isNotEmpty() }?.reduce(Bounds::union)?.expanded(0.04f)
-
 		val headPartId = PartId("PartHead")
 		val facePartId = PartId("PartFace")
 		val frontHairPartId = PartId("PartHairFront")
@@ -183,30 +422,7 @@ object RigBuilder {
 		val headAccessoryPartId = PartId("PartHeadAccessories")
 		val bodyPartId = PartId("PartBody")
 		val extraPartId = PartId("PartExtra")
-		val shouldBuildDeformers = !config.meshOnly && config.generateDeformers
-		val deformerResult = if (shouldBuildDeformers) {
-			buildDeformers(
-				analysis,
-				rigLayerById,
-				faceRig,
-				characterFrame,
-				headFrame,
-				faceFrame,
-				frontHairFrame,
-				backHairFrame,
-				headPartId,
-				facePartId,
-				frontHairPartId,
-				backHairPartId,
-				headAccessoryPartId,
-				bodyPartId,
-				extraPartId,
-				config,
-			)
-		} else {
-			DeformerBuildResult(emptyList(), emptyMap(), emptyMap())
-		}
-		val rawDeformers = deformerResult.deformers
+		val rawDeformers = context.deformers
 
 		val deformers = if (config.parentOverrides.isEmpty()) rawDeformers else {
 			val deformerById = rawDeformers.associateBy { it.id.raw }
@@ -222,30 +438,6 @@ object RigBuilder {
 				} else deformer
 			}
 		}
-
-		val frameByDeformer = mutableMapOf<String, Bounds>()
-		frameByDeformer[bodyWarpId.raw] = characterFrame
-		frameByDeformer[breathWarpId.raw] = characterFrame
-		frameByDeformer[headRotationId.raw] = characterFrame
-		frameByDeformer[headWarpId.raw] = headFrame
-		frameByDeformer[faceWarpId.raw] = faceFrame
-		frameByDeformer[faceContourId.raw] = faceFrame
-		frameByDeformer[featureDisplacementId.raw] = faceFrame
-		for (region in faceRig.regions) {
-			frameByDeformer[featureWarpId(region).raw] = region.bounds
-			if (region.feature == FaceFeature.IRIS) {
-				frameByDeformer[gazeWarpId(region).raw] = region.bounds
-			}
-		}
-		frontHairFrame?.let {
-			frameByDeformer[frontHairFollowWarpId.raw] = it
-			frameByDeformer[frontHairPhysicsWarpId.raw] = it
-		}
-		backHairFrame?.let {
-			frameByDeformer[backHairFollowWarpId.raw] = it
-			frameByDeformer[backHairPhysicsWarpId.raw] = it
-		}
-		frameByDeformer.putAll(deformerResult.pairFrames)
 
 		val idCounts = mutableMapOf<String, Int>()
 		val drawables = mutableListOf<Drawable>()
@@ -319,84 +511,35 @@ object RigBuilder {
 				warnings += tr("warning.emptyLayerSkipped", layer.source.name)
 				continue
 			}
-			val isHeadLayer = inferredGroup(layer, analysis.anchors) == LayerGroup.HEAD
-			val rigLayer = rigLayerById.getValue(layer.source.id.raw)
-			val defaultParentAndFrame = deformerResult.pairedParentByLayerId[layer.source.id.raw]
-				?: parentAndFrame(layer, faceRig, analysis.anchors, characterFrame, headFrame, faceFrame, frontHairFrame, backHairFrame)
-			val hasParentOverride = config.parentOverrides.containsKey(layer.source.id.raw)
-			val overrideParentRaw = config.parentOverrides[layer.source.id.raw]
-			val effectiveParentId: DeformerId? = if (hasParentOverride) {
-				overrideParentRaw?.takeIf { it.isNotBlank() && !it.equals("root", true) }?.let(::DeformerId)
-			} else {
-				defaultParentAndFrame.first
-			}
-			val effectiveParentFrame: Bounds = if (hasParentOverride && effectiveParentId != null) {
-				run {
-                        var id = effectiveParentId.raw
-                        val seen = mutableSetOf<String>()
-                        while (id !in frameByDeformer && seen.add(id)) {
-                            id = config.rigEdits.warpEdits.firstOrNull { it.id == id }?.parentId
-                                ?: error("Unknown parent coordinate frame: ${effectiveParentId.raw}")
-                        }
-                        frameByDeformer[id] ?: error("Parent frame cycle")
-                    }
-			} else if (hasParentOverride) {
-				characterFrame
-			} else {
-				defaultParentAndFrame.second
-			}
-
+			val rigLayer = context.rigLayer(layer)
+			val (parentId, parentFrame) = context.parentAndFrame(layer, config)
 			val id = uniqueDrawableId(layer, idCounts)
-			val effectiveHeadSpace = if (isHeadLayer && shouldBuildDeformers) headSpace else null
-			val originalMeshData = buildGridMesh(
+			val parts = buildDrawableMesh(
 				layer,
-				effectiveParentFrame,
-				effectiveHeadSpace,
-				placement,
-				atlas.pages[placement.page].image.width,
-				config,
-				meshCache,
+				rigLayer,
+				context,
+				// Without deformers there is nothing for the mesh to be local to, so it stays in canvas
+				// space and keeps its raw rig positions.
+				parentId = if (shouldBuildDeformers) parentId else null,
+				parentFrame = parentFrame,
+				headSpace = context.headSpaceFor(layer),
+				placement = placement,
+				pageWidth = atlas.pages[placement.page].image.width,
+				pageHeight = atlas.pages[placement.page].image.height,
+				config = config,
+				meshCache = meshCache,
 			)
-            val meshData = if (config.mouthOutlineEnabled && !config.meshOnly &&
-                layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)) {
-                mouthContourMesh(originalMeshData, layer, effectiveParentFrame, effectiveHeadSpace,
-                    placement, atlas.pages[placement.page].image.width)
-            } else originalMeshData
-			val effectiveMesh = if (shouldBuildDeformers) {
-				meshData.mesh
-			} else {
-				DrawableMesh(meshData.rigPositions, meshData.mesh.uvs, meshData.mesh.indices)
-			}
-			val mouthAperture = mouthApertureFor(rigLayer)
-            val mouthPaths = if (config.mouthOutlineEnabled && !config.meshOnly &&
-                layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)) {
-                createMouthDeformPaths(id, meshData, effectiveParentFrame)
-            } else emptyList()
-            builtDeformPaths.addAll(mouthPaths)
-			val geometryGrid = if (config.meshOnly) {
-				zeroMeshGrid(effectiveMesh.positions.size)
-			} else {
-				buildDrawableGeometry(
-					rigLayer,
-					meshData,
-					effectiveParentFrame,
-					faceRig,
-					matchingEyeWhiteBounds(rigLayer, eyeWhiteLayers),
-					mouthAperture,
-                    config,
-                    mouthPaths,
-				)
-			}
+			builtDeformPaths.addAll(parts.mouthPaths)
 			val override = config.layerOverrides[layer.source.id.raw]
 			val channelGrids = if (config.meshOnly) ChannelGrids.Empty else buildChannels(layer, override, switchParamKeys)
 			val drawable = Drawable(
 				id = id,
 				name = layer.source.name,
-				parentDeformerId = if (shouldBuildDeformers) effectiveParentId else null,
+				parentDeformerId = if (shouldBuildDeformers) parentId else null,
 				blendMode = blendMode(layer.source.blend),
 				maskedBy = emptyList(),
-				mesh = effectiveMesh,
-				geometryGrid = geometryGrid,
+				mesh = parts.mesh,
+				geometryGrid = parts.geometryGrid,
 				channelGrids = channelGrids,
 				// Cubism Editor stores draw order as an integer. Keeping this integral also makes
 				// fresh CMO3 conversion lossless instead of reporting one advisory per drawable.
@@ -410,36 +553,16 @@ object RigBuilder {
 			drawables += drawable
 			classifiedByDrawable[id] = layer
 			pageByDrawable[id.raw] = placement.page
-			sourceBoundsByDrawable[id.raw] = neutralValidationBounds(
-				layer,
-				meshData,
-				mouthAperture,
-				effectiveHeadSpace,
-				config.meshOnly,
-                config,
-			)
-            if (config.mouthOutlineEnabled && !config.meshOnly && mouthAperture != null) {
-                for (side in 0..1) {
-                    val lipLayer = generatedLips[MouthLipLayer.idFor(layer.source.id.raw, side)] ?: continue
-                    val lipPlacement = atlas.placementByLayerId[lipLayer.source.id.raw] ?: continue
-                    val (lip, lipPath) = mouthOutline(drawable, meshData, effectiveParentFrame, mouthAperture,
-                        config, side, lipLayer, lipPlacement, atlas.pages[lipPlacement.page].image.width, effectiveHeadSpace)
-                    drawables += lip
-                    lipPath?.let { builtDeformPaths += it }
-                    classifiedByDrawable[lip.id] = lipLayer
-                    lipOwnerById[lip.id] = drawable.id
-                    pageByDrawable[lip.id.raw] = lip.texturePage
-                    layerIdByDrawable[lip.id.raw] = lipLayer.source.id.raw
-                    sourceBoundsByDrawable[lip.id.raw] = neutralLipBounds(
-                        meshData,
-                        mouthAperture,
-                        config,
-                        side,
-                        effectiveHeadSpace,
-                        lipLayer.bounds,
-                    )
-                }
-            }
+			sourceBoundsByDrawable[id.raw] = parts.neutralBounds
+			for (lip in mouthLips(drawable, layer, parts.data, parentFrame, parts.mouthAperture, parts.headSpace, atlas, generatedLips, config)) {
+				drawables += lip.drawable
+				lip.path?.let { builtDeformPaths += it }
+				classifiedByDrawable[lip.drawable.id] = lip.layer
+				lipOwnerById[lip.drawable.id] = drawable.id
+				pageByDrawable[lip.drawable.id.raw] = lip.drawable.texturePage
+				layerIdByDrawable[lip.drawable.id.raw] = lip.layer.source.id.raw
+				sourceBoundsByDrawable[lip.drawable.id.raw] = lip.neutralBounds
+			}
 			layerIdByDrawable[id.raw] = layer.source.id.raw
 		}
 
@@ -566,6 +689,224 @@ object RigBuilder {
 			faceRig.radiusY,
 			warnings,
 			faceRig.initialAngleZ,
+		)
+	}
+
+	/** A mesh a paint commit replaces, with the atlas slice its texture coordinates were sampled from. */
+	internal class ReplacedMesh internal constructor(
+		val mesh: DrawableMesh,
+		val placement: AtlasPlacement?,
+		val pageWidth: Int,
+		val pageHeight: Int,
+		/** The layer's source bounds in canvas pixels at the time that mesh was built. */
+		val sourceBounds: Bounds,
+	)
+
+	/**
+	 * Rebuilds one drawable's mesh and keyforms after its layer's raster changed.
+	 *
+	 * [context] must be the context of the rig the drawable lives in - [rigContext] of the analysis
+	 * that rig was built from - so the rebuilt mesh is normalized against the very frames its parent
+	 * deformer was laid out on. Deriving a context from the edited analysis instead moves those frames
+	 * as soon as the painted layer's bounds change, and the drawable is then rescaled against every
+	 * sibling that kept the old frames.
+	 *
+	 * @param DeformerId?  parentId  The deformer the mesh hangs under, or null for a drawable that hangs
+	 *                               under none and therefore stays in canvas space.
+	 * @param ReplacedMesh? previous The mesh being replaced. It is the fallback frame source for a
+	 *                               deformer [context] cannot resolve, which is what an imported or
+	 *                               hand-authored rig parents its drawables to.
+	 */
+	internal fun rebuildDrawableMesh(
+		layer: ClassifiedLayer,
+		context: RigContext,
+		placement: AtlasPlacement,
+		pageWidth: Int,
+		pageHeight: Int,
+		config: PipelineConfig,
+		parentId: DeformerId?,
+		owner: Drawable,
+		atlas: PackedAtlas,
+		generatedLips: Map<String, ClassifiedLayer>,
+		previous: ReplacedMesh? = null,
+	): RebuiltDrawable {
+		val contextFrame = parentId?.let { context.resolveFrame(it, config) }
+		val canvasFrame = if (contextFrame == null) previous?.let(::meshNormalizationFrame) else null
+		val parentFrame = contextFrame ?: canvasFrame ?: context.character
+		// A frame read off the mesh is already in canvas space, so the layer must not be head-aligned
+		// on top of it; the rig's own frames only make sense together with the rig's own alignment.
+		val headSpace = if (canvasFrame == null) context.headSpaceFor(layer) else null
+		val parts = buildDrawableMesh(
+			layer,
+			context.rigLayer(layer),
+			context,
+			parentId,
+			parentFrame,
+			headSpace,
+			placement,
+			pageWidth,
+			pageHeight,
+			config,
+			meshCache = null,
+		)
+		val lips = mouthLips(
+			owner,
+			layer,
+			parts.data,
+			parentFrame,
+			parts.mouthAperture,
+			headSpace,
+			atlas,
+			generatedLips,
+			config,
+		)
+		return RebuiltDrawable(parts.mesh, parts.geometryGrid, lips)
+	}
+
+	/**
+	 * What a paint commit replaces on one layer: the drawable's own geometry, and the mouth-outline
+	 * ribbons that are drawn from the same contour.
+	 */
+	internal class RebuiltDrawable internal constructor(
+		val mesh: DrawableMesh,
+		val geometryGrid: KeyformGrid<MeshDeltaForm>,
+		/** Ribbons to swap in, empty for a layer that has none. */
+		val mouthLips: List<MouthLip>,
+	)
+
+	/** One generated mouth-outline ribbon: the drawable, the layer it samples, and its deform path. */
+	internal class MouthLip internal constructor(
+		val drawable: Drawable,
+		/** The mouth drawable this ribbon outlines. */
+		val ownerId: DrawableId,
+		val layer: ClassifiedLayer,
+		val path: DeformPath?,
+		val neutralBounds: Bounds,
+	)
+
+	/**
+	 * The frame that reproduces the affine [previous] is already normalized by.
+	 *
+	 * Every vertex carries the source pixel its texture coordinate was sampled from, so the affine the
+	 * mesh was built with - `local = scale * canvas + offset`, per axis - is recoverable from the mesh
+	 * itself, and that affine is what its parent deformer expects. It is the only thing left to go on
+	 * when the parent is a deformer the analysis cannot describe, such as an imported rig's; the
+	 * alternative, normalizing against some default frame, moves and rescales the painted layer.
+	 *
+	 * @return The frame, or null when the mesh cannot pin one down. A mirrored parent space negates the
+	 *         slope and is reported as unresolved rather than as an inverted frame.
+	 */
+	private fun meshNormalizationFrame(previous: ReplacedMesh): Bounds? {
+		val placement = previous.placement ?: return null
+		val vertices = previous.mesh.positions.size / 2
+		if (vertices < 3 || previous.mesh.uvs.size < vertices * 2) return null
+		val scale = placement.scale.coerceAtLeast(1)
+		val canvasX = DoubleArray(vertices)
+		val canvasY = DoubleArray(vertices)
+		val localX = DoubleArray(vertices)
+		val localY = DoubleArray(vertices)
+		for (vertex in 0 until vertices) {
+			canvasX[vertex] = (previous.sourceBounds.left + (previous.mesh.uvs[vertex * 2] * previous.pageWidth - placement.x) / scale).toDouble()
+			canvasY[vertex] = (previous.sourceBounds.top + (previous.mesh.uvs[vertex * 2 + 1] * previous.pageHeight - placement.y) / scale).toDouble()
+			localX[vertex] = previous.mesh.positions[vertex * 2].toDouble()
+			localY[vertex] = previous.mesh.positions[vertex * 2 + 1].toDouble()
+		}
+		val (scaleX, offsetX) = fitAffine(canvasX, localX) ?: return null
+		val (scaleY, offsetY) = fitAffine(canvasY, localY) ?: return null
+		if (scaleX <= 1e-6 || scaleY <= 1e-6) return null
+		val left = (-offsetX / scaleX).toFloat()
+		val top = (-offsetY / scaleY).toFloat()
+		return Bounds(left, top, left + (1.0 / scaleX).toFloat(), top + (1.0 / scaleY).toFloat())
+			.takeIf { it.width.isFinite() && it.height.isFinite() && it.width > 1e-3f && it.height > 1e-3f }
+	}
+
+	/** Least-squares fit of `local = scale * canvas + offset`; null when [canvas] pins no slope. */
+	private fun fitAffine(canvas: DoubleArray, local: DoubleArray): Pair<Double, Double>? {
+		val count = canvas.size.toDouble()
+		var canvasSum = 0.0
+		var localSum = 0.0
+		var canvasSquareSum = 0.0
+		var productSum = 0.0
+		for (index in canvas.indices) {
+			canvasSum += canvas[index]
+			localSum += local[index]
+			canvasSquareSum += canvas[index] * canvas[index]
+			productSum += canvas[index] * local[index]
+		}
+		val determinant = count * canvasSquareSum - canvasSum * canvasSum
+		if (abs(determinant) < 1e-9) return null
+		val scale = (count * productSum - canvasSum * localSum) / determinant
+		val offset = (localSum - scale * canvasSum) / count
+		return if (scale.isFinite() && offset.isFinite()) scale to offset else null
+	}
+
+	/**
+	 * Builds every piece of one layer's rig geometry: the stored mesh, its mouth outline and the
+	 * keyforms that move it. [layer] carries the pixels and bounds; [context] supplies the frames,
+	 * the face rig and the eye whites that the resulting geometry is expressed in.
+	 *
+	 * A null [parentId] leaves the mesh in canvas space, which is what the runtime expects from a
+	 * drawable that hangs under no deformer at all.
+	 */
+	private fun buildDrawableMesh(
+		layer: ClassifiedLayer,
+		rigLayer: ClassifiedLayer,
+		context: RigContext,
+		parentId: DeformerId?,
+		parentFrame: Bounds,
+		headSpace: HeadCoordinateSpace?,
+		placement: AtlasPlacement,
+		pageWidth: Int,
+		pageHeight: Int,
+		config: PipelineConfig,
+		meshCache: PreviewMeshCache?,
+	): LayerMeshParts {
+		val originalMeshData = buildGridMesh(
+			layer,
+			parentFrame,
+			headSpace,
+			placement,
+			pageWidth,
+			pageHeight,
+			config,
+			meshCache,
+		)
+		val outlineMouth = config.mouthOutlineEnabled && !config.meshOnly &&
+			layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)
+		val meshData = if (outlineMouth) {
+			mouthContourMesh(originalMeshData, layer, parentFrame, headSpace, placement, pageWidth, pageHeight)
+		} else originalMeshData
+		val mesh = if (parentId != null) {
+			meshData.mesh
+		} else {
+			DrawableMesh(meshData.rigPositions, meshData.mesh.uvs, meshData.mesh.indices)
+		}
+		val mouthAperture = mouthApertureFor(rigLayer)
+		val mouthPaths = if (outlineMouth) {
+			createMouthDeformPaths(DrawableId(layer.source.id.raw), meshData, parentFrame)
+		} else emptyList()
+		val geometryGrid = if (config.meshOnly) {
+			zeroMeshGrid(mesh.positions.size)
+		} else {
+			buildDrawableGeometry(
+				rigLayer,
+				meshData,
+				parentFrame,
+				context.faceRig,
+				matchingEyeWhiteBounds(rigLayer, context.eyeWhiteLayers),
+				mouthAperture,
+				config,
+				mouthPaths,
+			)
+		}
+		return LayerMeshParts(
+			mesh,
+			meshData,
+			mouthAperture,
+			mouthPaths,
+			geometryGrid,
+			headSpace,
+			neutralValidationBounds(layer, meshData, mouthAperture, headSpace, config.meshOnly, config),
 		)
 	}
 
@@ -874,7 +1215,7 @@ object RigBuilder {
 				!isHandledByFaceRegion(layer, faceRig)
 		}
 		val grouped = candidateLayers.groupBy { layer ->
-			val (defaultParentId, _) = parentAndFrame(layer, faceRig, analysis.anchors, character, head, faceFrame, frontHair, backHair)
+			val (defaultParentId, _) = defaultParentAndFrame(layer, faceRig, analysis.anchors, character, head, faceFrame, frontHair, backHair)
 			val baseName = pairBaseName(layer.source.name)
 			defaultParentId to baseName.lowercase(Locale.ROOT).trim()
 		}
@@ -883,7 +1224,8 @@ object RigBuilder {
 			val hasRight = pairLayers.any { it.semantic.side == Side.RIGHT }
 			if (!hasLeft || !hasRight) continue
 
-			val (defaultParentId, defaultParentFrame) = parentAndFrame(pairLayers.first(), faceRig, analysis.anchors, character, head, faceFrame, frontHair, backHair)
+			val (defaultParentId, defaultParentFrame) =
+				defaultParentAndFrame(pairLayers.first(), faceRig, analysis.anchors, character, head, faceFrame, frontHair, backHair)
 			val cleanBaseName = pairBaseName(pairLayers.first().source.name)
 			val pairId = uniquePairDeformerId(cleanBaseName, pairLayers.first().semantic.tag, usedDeformerIds)
 			val pairName = tr("model.deformer.pair", cleanBaseName)
@@ -1137,45 +1479,13 @@ object RigBuilder {
 		return Deformer.Warp(id, name, parent, part, rows, 3, true, grid)
 	}
 
-	private fun parentAndFrame(
-		layer: ClassifiedLayer,
-		faceRig: NinePoseFaceRig,
-		anchors: RigAnchors,
-		character: Bounds,
-		head: Bounds,
-		faceFrame: Bounds,
-		frontHair: Bounds?,
-		backHair: Bounds?,
-	): Pair<DeformerId, Bounds> = when (layer.semantic.tag) {
-		SemanticTag.FACE -> faceContourId to faceFrame
-		SemanticTag.IRIDES -> faceRig.regionFor(FaceFeature.IRIS, layer.semantic.side)?.let { gazeWarpId(it) to it.bounds }
-			?: (faceWarpId to faceFrame)
-		SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE ->
-			faceRig.regionFor(FaceFeature.EYE, layer.semantic.side)?.let { featureWarpId(it) to it.bounds } ?: (faceWarpId to faceFrame)
-		SemanticTag.EYEBROW -> faceRig.regionFor(FaceFeature.BROW, layer.semantic.side)?.let { featureWarpId(it) to it.bounds }
-			?: (faceWarpId to faceFrame)
-		SemanticTag.NOSE -> faceRig.regionFor(FaceFeature.NOSE, layer.semantic.side)?.let { featureWarpId(it) to it.bounds }
-			?: (faceWarpId to faceFrame)
-		SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN, SemanticTag.MOUTH_CLOSE,
-		SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE ->
-			faceRig.regionFor(FaceFeature.MOUTH, layer.semantic.side)?.let { featureWarpId(it) to it.bounds } ?: (faceWarpId to faceFrame)
-		SemanticTag.EARS, SemanticTag.EARWEAR -> faceRig.regionFor(FaceFeature.EAR, layer.semantic.side)?.let { featureWarpId(it) to it.bounds }
-			?: (faceWarpId to faceFrame)
-		SemanticTag.FRONT_HAIR -> frontHair?.let { frontHairPhysicsWarpId to it } ?: (headWarpId to head)
-		SemanticTag.BACK_HAIR -> backHair?.let { backHairPhysicsWarpId to it } ?: (headWarpId to head)
-		else -> when {
-			layer.semantic.tag in faceTags -> faceWarpId to faceFrame
-			inferredGroup(layer, anchors) == LayerGroup.HEAD -> headWarpId to head
-			else -> breathWarpId to character
-		}
-	}
-
 	private fun buildGridMesh(
 		layer: ClassifiedLayer,
 		parentFrame: Bounds,
 		headSpace: HeadCoordinateSpace?,
 		placement: AtlasPlacement,
-		atlasSize: Int,
+		atlasWidth: Int,
+		atlasHeight: Int = atlasWidth,
 		config: PipelineConfig,
 		meshCache: PreviewMeshCache?,
 	): MeshData {
@@ -1206,7 +1516,7 @@ object RigBuilder {
 		// Authored tooth layers may contain several disconnected teeth. Keep their complete texture;
 		// the mouth clipping id supplies the visible boundary.
 		if (layer.semantic.tag in setOf(SemanticTag.TOOTH_T, SemanticTag.TOOTH_B)) {
-			return buildRectangularFallbackMesh(layer, parentFrame, headSpace, placement, atlasSize, effectiveSpacing)
+			return buildRectangularFallbackMesh(layer, parentFrame, headSpace, placement, atlasWidth, atlasHeight, effectiveSpacing)
 		}
 		val settings = MeshSettings(outerMargin, innerMarginEnabled, innerMargin, effectiveSpacing, effectiveInteriorDensity)
 		val adaptive = if (meshCache != null) meshCache.generate(width, height, layer.source.raster.rgba, config.alphaThreshold, settings)
@@ -1235,12 +1545,12 @@ object RigBuilder {
 				positions[index + 1] = normalizeY(rigPoint.second, parentFrame)
 				canvas[index] = rigPoint.first
 				canvas[index + 1] = rigPoint.second
-				uvs[index] = (placement.x + localX * placement.scale) / atlasSize
-				uvs[index + 1] = (placement.y + localY * placement.scale) / atlasSize
+				uvs[index] = (placement.x + localX * placement.scale) / atlasWidth
+				uvs[index + 1] = (placement.y + localY * placement.scale) / atlasHeight
 			}
 			return MeshData(DrawableMesh(positions, uvs, adaptive.indices), canvas)
 		}
-		return buildRectangularFallbackMesh(layer, parentFrame, headSpace, placement, atlasSize, effectiveSpacing)
+		return buildRectangularFallbackMesh(layer, parentFrame, headSpace, placement, atlasWidth, atlasHeight, effectiveSpacing)
 	}
 
 	/** Conservative fallback for pathological alpha masks or degenerate one-pixel slivers. */
@@ -1249,7 +1559,8 @@ object RigBuilder {
 		parentFrame: Bounds,
 		headSpace: HeadCoordinateSpace?,
 		placement: AtlasPlacement,
-		atlasSize: Int,
+		atlasWidth: Int,
+		atlasHeight: Int = atlasWidth,
 		effectiveSpacing: Float,
 	): MeshData {
 		val width = max(1, layer.source.raster.width)
@@ -1272,8 +1583,8 @@ object RigBuilder {
 				positions[vertex * 2 + 1] = normalizeY(rigPoint.second, parentFrame)
 				canvas[vertex * 2] = rigPoint.first
 				canvas[vertex * 2 + 1] = rigPoint.second
-				uvs[vertex * 2] = (placement.x + u * width * placement.scale) / atlasSize
-				uvs[vertex * 2 + 1] = (placement.y + v * height * placement.scale) / atlasSize
+				uvs[vertex * 2] = (placement.x + u * width * placement.scale) / atlasWidth
+				uvs[vertex * 2 + 1] = (placement.y + v * height * placement.scale) / atlasHeight
 				vertex++
 			}
 		}
@@ -1582,7 +1893,7 @@ object RigBuilder {
 
     // Shared columns guarantee that the fill and both lip ribbons interpolate identical curves.
     private fun mouthContourMesh(data: MeshData, layer: ClassifiedLayer, frame: Bounds,
-                                 space: HeadCoordinateSpace?, placement: AtlasPlacement, atlasSize: Int): MeshData {
+                                 space: HeadCoordinateSpace?, placement: AtlasPlacement, atlasWidth: Int, atlasHeight: Int = atlasWidth): MeshData {
         val columns = MouthContour.uniformColumns(data, MouthContour.DEFAULT_SEGMENTS)
         if (columns.size < 2) return data
         val positions = FloatArray(columns.size * 6)
@@ -1601,8 +1912,8 @@ object RigBuilder {
                 val canvas = space?.toCanvas(col.x, y) ?: (col.x to y)
                 val localX = (canvas.first - layer.source.bounds.left).coerceIn(0f, width)
                 val localY = (canvas.second - layer.source.bounds.top).coerceIn(0f, height)
-                uvs[j] = (placement.x + localX * placement.scale) / atlasSize
-                uvs[j + 1] = (placement.y + localY * placement.scale) / atlasSize
+                uvs[j] = (placement.x + localX * placement.scale) / atlasWidth
+                uvs[j + 1] = (placement.y + localY * placement.scale) / atlasHeight
             }
         }
         val indices = (0 until columns.lastIndex).flatMap { i -> (0..1).flatMap { row ->
@@ -1625,7 +1936,8 @@ object RigBuilder {
         side: Int,
         layer: ClassifiedLayer,
         placement: AtlasPlacement,
-        atlasSize: Int,
+        pageWidth: Int,
+        pageHeight: Int,
         space: HeadCoordinateSpace?,
     ): Pair<Drawable, DeformPath?> {
         val columns = MouthContour.uniformColumns(data, MouthContour.DEFAULT_SEGMENTS)
@@ -1647,8 +1959,8 @@ object RigBuilder {
             val canvas = space?.toCanvas(rx, ry) ?: (rx to ry)
             val localX = (canvas.first - layer.source.bounds.left).coerceIn(0f, texWidth)
             val localY = (canvas.second - layer.source.bounds.top).coerceIn(0f, texHeight)
-            uvs[i] = (placement.x + localX * placement.scale) / atlasSize
-            uvs[i + 1] = (placement.y + localY * placement.scale) / atlasSize
+            uvs[i] = (placement.x + localX * placement.scale) / pageWidth
+            uvs[i + 1] = (placement.y + localY * placement.scale) / pageHeight
         }
         val geometry = grid(mouthAxes()) { values ->
             val transformed = path.map { p ->

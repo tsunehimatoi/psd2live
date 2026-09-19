@@ -58,6 +58,7 @@ import androidx.compose.ui.window.WindowState
 import io.github.psd2live.i18n.AppLanguage
 import io.github.psd2live.i18n.I18n
 import io.github.psd2live.i18n.tr
+import io.github.psd2live.ui.EditHierarchyMode
 import io.github.psd2live.agent.AgentMcpConnectionInfo
 import io.github.psd2live.ui.components.AgentConnectionDialog
 import io.github.psd2live.ui.components.AppTitleBar
@@ -281,8 +282,24 @@ fun FrameWindowScope.PSD2LiveApp(
 							if (hasInput && !isBusy) showUpscaleDialog = true
 							true
 						}
-						ShortcutAction.UNDO -> { viewModel.undoHistory(); true }
-						ShortcutAction.REDO -> { viewModel.redoHistory(); true }
+						ShortcutAction.UNDO -> {
+							val ed = viewModel.canvasEditor
+							if (ed.hierarchyMode == EditHierarchyMode.PAINT && ed.canUndoPaint()) {
+								ed.undoPaint()
+							} else {
+								viewModel.undoHistory()
+							}
+							true
+						}
+						ShortcutAction.REDO -> {
+							val ed = viewModel.canvasEditor
+							if (ed.hierarchyMode == EditHierarchyMode.PAINT && ed.canRedoPaint()) {
+								ed.redoPaint()
+							} else {
+								viewModel.redoHistory()
+							}
+							true
+						}
 						ShortcutAction.NEW_EDIT_TAB -> { viewModel.addTab(WorkspaceTabKind.EDIT); true }
 						ShortcutAction.NEW_PREVIEW_TAB -> { viewModel.addTab(WorkspaceTabKind.PREVIEW); true }
 						ShortcutAction.OPEN_HISTORY_TAB -> { viewModel.openHistoryTab(); true }

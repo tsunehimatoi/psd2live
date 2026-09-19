@@ -3,20 +3,33 @@ package io.github.psd2live.ui
 import androidx.compose.runtime.*
 import androidx.compose.ui.geometry.Offset
 import io.github.psd2live.core.*
+import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.state.*
 import kotlinx.serialization.json.*
 import org.umamo.edit.MeshTopology
+import org.umamo.edit.withDrawablesDeleted
+import org.umamo.format.art.LayerRaster
+import org.umamo.format.art.LayerBounds
+import org.umamo.format.art.SourceLayer
+import io.github.psd2live.agent.WorkspaceSourceLayer
+import io.github.psd2live.agent.WorkspaceSourceArt
 import org.umamo.render.eval.*
 import org.umamo.runtime.model.*
+import java.awt.image.BufferedImage
 import java.util.UUID
 import kotlin.math.*
 
 /** Canvas tools, each pointing at the shortcut action that activates it. */
 /** Edit hierarchy / layer mode chosen in the top-right toolbar. */
 enum class EditHierarchyMode {
-    OBJECT,      // 物体模式: 选择/移动/缩放/旋转整个对象
-    DEFORM,      // 变形编辑: 不改拓扑，编辑参数形变 (Level 1/2/3)
-    STRUCTURE,   // 结构编辑: 改变对象基础结构/网格拓扑/分割
+    /** 选择: pick, move, scale and rotate whole objects. */
+    SELECT,
+    /** 变形: edit parameter deformation without touching topology (Level 1/2/3). */
+    DEFORM,
+    /** 编辑: change structure - topology, splitting and deformer creation. */
+    EDIT,
+    /** 绘画: raster repainting of one layer slice. */
+    PAINT,
 }
 
 /** Canvas tools, each pointing at the shortcut action that activates it. */
@@ -31,6 +44,14 @@ internal enum class CanvasTool(val action: ShortcutAction) {
     CREATE_ROTATION(ShortcutAction.TOOL_CREATE_ROTATION),
     CREATE_DEFORM_PATH(ShortcutAction.TOOL_CREATE_DEFORM_PATH),
     GLUE(ShortcutAction.TOOL_GLUE),
+    // Painting mode tools (L1)
+    PAINT_BRUSH(ShortcutAction.TOOL_PAINT_BRUSH),
+    PAINT_PENCIL(ShortcutAction.TOOL_PAINT_PENCIL),
+    PAINT_ERASER(ShortcutAction.TOOL_PAINT_ERASER),
+    PAINT_BUCKET(ShortcutAction.TOOL_PAINT_BUCKET),
+    PAINT_EYEDROPPER(ShortcutAction.TOOL_PAINT_EYEDROPPER),
+    /** Line, rectangle and ellipse: one tool with a [paintShape], not three tools. */
+    PAINT_SHAPE(ShortcutAction.TOOL_PAINT_LINE),
 }
 
 internal enum class SelectionStyle { BOX, LASSO }
@@ -45,6 +66,17 @@ internal val DEFORM_BRUSH_TOOLS = setOf(
 
 internal val CREATION_TOOLS = setOf(
     CanvasTool.CREATE_WARP, CanvasTool.CREATE_ROTATION, CanvasTool.CREATE_DEFORM_PATH, CanvasTool.GLUE
+)
+
+internal val PAINT_TOOLS = setOf(
+    CanvasTool.PAINT_BRUSH, CanvasTool.PAINT_PENCIL, CanvasTool.PAINT_ERASER,
+    CanvasTool.PAINT_BUCKET, CanvasTool.PAINT_EYEDROPPER,
+    CanvasTool.PAINT_SHAPE,
+)
+
+/** The paint tools that stamp a tip: they are the ones with a size, a hardness and an opacity. */
+internal val PAINT_BRUSH_TOOLS = setOf(
+    CanvasTool.PAINT_BRUSH, CanvasTool.PAINT_PENCIL, CanvasTool.PAINT_ERASER,
 )
 
 /**
@@ -65,6 +97,9 @@ internal val TOOLBAR_TOOL_ORDER = listOf(
     CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT,
     CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE,
     CanvasTool.CREATE_DEFORM_PATH, CanvasTool.CREATE_WARP, CanvasTool.CREATE_ROTATION, CanvasTool.GLUE,
+    CanvasTool.PAINT_BRUSH, CanvasTool.PAINT_PENCIL, CanvasTool.PAINT_ERASER,
+    CanvasTool.PAINT_BUCKET, CanvasTool.PAINT_EYEDROPPER,
+    CanvasTool.PAINT_SHAPE,
 )
 
 /** A divider is drawn after these, when there are visible tools on both sides of them. */
@@ -83,18 +118,23 @@ internal val TOOLBAR_DIVIDERS = listOf(CanvasTool.BRUSH_SELECT, CanvasTool.INFLA
  * structural changes by definition — belong to the mode named for structure.
  */
 internal fun toolbarGroups(mode: EditHierarchyMode): List<List<CanvasTool>> = when (mode) {
-    EditHierarchyMode.OBJECT -> listOf(
+    EditHierarchyMode.SELECT -> listOf(
         listOf(CanvasTool.SELECT, CanvasTool.LASSO_SELECT),
     )
     EditHierarchyMode.DEFORM -> listOf(
         listOf(CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT),
         listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE),
-        listOf(CanvasTool.CREATE_DEFORM_PATH),
     )
-    EditHierarchyMode.STRUCTURE -> listOf(
+    EditHierarchyMode.EDIT -> listOf(
         listOf(CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT),
         listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE),
         listOf(CanvasTool.CREATE_DEFORM_PATH, CanvasTool.CREATE_WARP, CanvasTool.CREATE_ROTATION, CanvasTool.GLUE),
+    )
+    EditHierarchyMode.PAINT -> listOf(
+        listOf(CanvasTool.SELECT),
+        listOf(CanvasTool.PAINT_BRUSH, CanvasTool.PAINT_PENCIL, CanvasTool.PAINT_ERASER),
+        listOf(CanvasTool.PAINT_BUCKET, CanvasTool.PAINT_EYEDROPPER),
+        listOf(CanvasTool.PAINT_SHAPE),
     )
 }
 
@@ -104,7 +144,11 @@ internal fun toolbarGroups(mode: EditHierarchyMode): List<List<CanvasTool>> = wh
 internal val POINT_BOX_KINDS = setOf("mesh", "warp")
 
 /** Which brush parameter the Alt + right-drag gesture latched onto; null until the drag picks a direction. */
-internal enum class BrushAdjustAxis { RADIUS, HARDNESS, ANGLE }
+/**
+ * Which parameter the Alt + right-drag gesture latched onto. The deform brushes retune radius,
+ * hardness and angle; a paint tip has no angle, so its third axis is the opacity instead.
+ */
+internal enum class BrushAdjustAxis { RADIUS, HARDNESS, ANGLE, OPACITY }
 
 internal data class CanvasTarget(
     val kind: String,
@@ -125,6 +169,45 @@ internal data class HierarchyPick(
     val deformerId: String? = null,
 )
 
+/**
+ * One layer's slice of the packed atlas, with the source bounds it was cropped from.
+ *
+ * A mesh's texture coordinates address the slice, not the canvas, so repacking has to translate them
+ * through canvas pixels: `uv -> canvas -> uv`. That round trip is what keeps a drawable on the same
+ * pixels after its layer was re-cropped, which is why the atlas convention lives in one place.
+ */
+internal class AtlasSlice(
+    val placement: AtlasPlacement,
+    val pageWidth: Int,
+    val pageHeight: Int,
+    /** The layer's source bounds in canvas pixels when this slice was packed. */
+    val sourceBounds: Bounds,
+) {
+    private val scale get() = placement.scale.coerceAtLeast(1)
+
+    fun canvasX(uv: Float): Float = sourceBounds.left + (uv * pageWidth - placement.x) / scale
+    fun canvasY(uv: Float): Float = sourceBounds.top + (uv * pageHeight - placement.y) / scale
+    fun uvX(canvasX: Float): Float = (placement.x + (canvasX - sourceBounds.left) * scale) / pageWidth
+    fun uvY(canvasY: Float): Float = (placement.y + (canvasY - sourceBounds.top) * scale) / pageHeight
+}
+
+/**
+ * The painted layer's box in canvas pixels, as the float box the rig math works in. The two are
+ * easy to confuse: a [Bounds] holds edges, a [LayerBounds] holds a width and a height.
+ */
+private fun LayerBounds.toBounds(): Bounds =
+	Bounds(left.toFloat(), top.toFloat(), (left + width).toFloat(), (top + height).toFloat())
+
+/** Re-addresses a mesh's texture coordinates from one slice of the atlas to another. */
+private fun remapUvs(mesh: DrawableMesh, from: AtlasSlice, to: AtlasSlice): FloatArray {
+    val uvs = FloatArray(mesh.uvs.size)
+    for (index in mesh.uvs.indices step 2) {
+        uvs[index] = to.uvX(from.canvasX(mesh.uvs[index]))
+        uvs[index + 1] = to.uvY(from.canvasY(mesh.uvs[index + 1]))
+    }
+    return uvs
+}
+
 /** One gesture owns its pose, parent mapping and history HEAD until release. */
 internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     var state: PSD2LiveState
@@ -134,8 +217,86 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     var tool by mutableStateOf(CanvasTool.SELECT)
 
     // Top-right Hierarchy & Level state
-    var hierarchyMode by mutableStateOf(EditHierarchyMode.OBJECT)
+    var hierarchyMode by mutableStateOf(EditHierarchyMode.SELECT)
     var editLevel by mutableStateOf(2) // Level 1 (grid), Level 2 (bezier), Level 3 (macro)
+
+    // Painting system state (L1)
+    var paintColor by mutableStateOf(androidx.compose.ui.graphics.Color.Black)
+    var paintSecondaryColor by mutableStateOf(androidx.compose.ui.graphics.Color.White)
+    var paintBrushSize by mutableStateOf(16f)
+    var paintPencilSize by mutableStateOf(4f)
+    var paintEraserSize by mutableStateOf(24f)
+
+    /** Edge softness of the paint and erase tips: 1 is a pen, 0 fades the whole tip to nothing. */
+    var paintHardness by mutableStateOf(0.85f)
+
+    /** The size the active paint tool draws at: pencil, eraser and shapes each keep their own. */
+    var paintSize: Float
+        get() = when (tool) {
+            CanvasTool.PAINT_PENCIL -> paintPencilSize
+            CanvasTool.PAINT_ERASER -> paintEraserSize
+            else -> paintBrushSize
+        }
+        set(value) {
+            when (tool) {
+                CanvasTool.PAINT_PENCIL -> paintPencilSize = value
+                CanvasTool.PAINT_ERASER -> paintEraserSize = value
+                else -> paintBrushSize = value
+            }
+        }
+
+    /** Whether the active tool stamps the paint tip, which is what the brush keys and HUD act on. */
+    val paintBrushActive: Boolean
+        get() = hierarchyMode == EditHierarchyMode.PAINT && tool in PAINT_BRUSH_TOOLS
+
+    /** Whether the active tool has a size at all: the shapes are drawn with one, the fills are not. */
+    val paintSizeActive: Boolean
+        get() = hierarchyMode == EditHierarchyMode.PAINT && tool in PAINT_TOOLS &&
+            tool != CanvasTool.PAINT_BUCKET && tool != CanvasTool.PAINT_EYEDROPPER
+
+    /**
+     * The tip the active paint tool draws with: the tool's own size, the shared hardness - and, for the
+     * pencil, a hard edge with no blending, which is what makes it a pencil.
+     *
+     * The tip is the one description of the mark, so the overlay previews it from the same profile the
+     * stroke is rasterized with.
+     */
+    fun paintTip(): LayerPaintEngine.Tip = LayerPaintEngine.Tip(
+        radius = (paintSize / 2f).coerceAtLeast(0.5f),
+        hardness = if (tool == CanvasTool.PAINT_PENCIL) 1f else paintHardness,
+        antialias = tool != CanvasTool.PAINT_PENCIL,
+    )
+    var paintOpacity by mutableStateOf(1f)
+    var paintTolerance by mutableStateOf(32)
+    var paintShapeFilled by mutableStateOf(false)
+
+    /** Which of the shape tool's three faces is in hand. Its keys arm both the shape and the tool. */
+    var paintShape by mutableStateOf(PaintShape.LINE)
+        private set
+
+    /** Takes [shape] in hand. The tool follows, so a shape's chord is enough to start drawing with it. */
+    fun selectPaintShape(shape: PaintShape) {
+        paintShape = shape
+        activateTool(CanvasTool.PAINT_SHAPE)
+    }
+
+    /** Steps through the shapes, the way `Alt+B` steps through the deform brush's three. */
+    fun cyclePaintShape() {
+        val shapes = PaintShape.entries
+        selectPaintShape(shapes[(paintShape.ordinal + 1) % shapes.size])
+    }
+
+    var isPainting by mutableStateOf(false)
+    /** True while the pointer is picking a colour rather than drawing one: the eyedropper's own
+     *  gesture, or Alt held down over any paint tool. */
+    var isSampling by mutableStateOf(false)
+    var paintStrokeStart by mutableStateOf<Offset?>(null)
+    var paintStrokeCurrent by mutableStateOf<Offset?>(null)
+
+    var paintSession by mutableStateOf<PaintSession?>(null)
+    /** Where the live paint gesture was last seen: the far end of the segment still to be drawn. */
+    private var lastPaintPoint: Offset? = null
+    var showRebuildMeshDialog by mutableStateOf(false)
 
     // Level 2 Bezier Deformer state
     var bezierState by mutableStateOf<BezierDeformerState?>(null)
@@ -190,7 +351,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     var axis by mutableStateOf<String?>(null)
     var parameter by mutableStateOf<String?>(null)
     var elementMode by mutableStateOf(0) // vertex / edge / face
-    var objectMode by mutableStateOf(true)
+    val objectMode get() = hierarchyMode == EditHierarchyMode.SELECT
     var objects by mutableStateOf(emptySet<String>())
     var selectionStyle by mutableStateOf(SelectionStyle.BOX)
 
@@ -253,6 +414,13 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     private var brushRadiusAtStart = 48f
     private var brushHardnessAtStart = 0.35f
     private var brushAngleAtStart = 0f
+    private var paintSizeAtStart = 16f
+    private var paintHardnessAtStart = 0.85f
+    private var paintOpacityAtStart = 1f
+    /** Which colour a live pick is filling in, latched at the press so Alt can be let go mid-scrub. */
+    private var samplingSecondary = false
+    /** When the painted bitmap was last republished, in [System.nanoTime] units. */
+    private var lastPaintBitmapAt = 0L
     private var dragging = false
 
     /** Active brush deformation vertex weights [0f..1f] for target points; non-null while a brush stroke is live. */
@@ -281,7 +449,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
      * Whether the active tool should draw a transform box at all. Object mode is selection only, so
      * the box never appears there — and neither do its handles, which read the same frame.
      */
-    val drawsTransformBox get() = hierarchyMode != EditHierarchyMode.OBJECT && tool == CanvasTool.SELECT && (
+    val drawsTransformBox get() = hierarchyMode != EditHierarchyMode.SELECT && tool == CanvasTool.SELECT && (
         vertices.isNotEmpty() || (target()?.kind == "rotation")
     )
 
@@ -290,7 +458,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
      */
     val hasTransformSelection: Boolean
         get() {
-            if (hierarchyMode == EditHierarchyMode.OBJECT) return false
+            if (hierarchyMode == EditHierarchyMode.SELECT) return false
             val t = target() ?: return false
             return t.kind == "rotation" || vertices.any { it in 0 until t.count }
         }
@@ -345,8 +513,677 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         put("points", JsonArray(points.map(::JsonPrimitive)))
     }
 
+    fun targetLayerId(t: CanvasTarget? = target(deformerId = null)): String? {
+        if (t == null) return state.selectedLayerId
+        val preview = state.previewModel ?: return state.selectedLayerId
+        return preview.rig.layerIdByDrawableId[t.id] ?: state.selectedLayerId ?: t.id
+    }
+
+    fun targetPlacement(t: CanvasTarget? = target(deformerId = null)): io.github.psd2live.core.AtlasPlacement? {
+        val atlas = state.previewModel?.atlas ?: return null
+        val layerId = targetLayerId(t) ?: return null
+        return atlas.placementByLayerId[layerId]
+            ?: (state.previewModel?.rig?.layerIdByDrawableId?.get(layerId)?.let { atlas.placementByLayerId[it] })
+            ?: atlas.placementByLayerId[layerId.substringBefore(':').substringBeforeLast('-')]
+    }
+
+    fun paintTarget(pos: Offset? = null, viewport: CanvasViewport? = null): CanvasTarget? {
+        val t = target(deformerId = null)
+        if (t != null && t.kind == "mesh") return t
+        if (pos != null && viewport != null) {
+            val hit = pickLayer(pos, viewport)
+            if (hit != null) {
+                viewModel.selectLayer(hit)
+                return target(layerId = hit, deformerId = null)
+            }
+        }
+        val layerId = state.selectedLayerId ?: return null
+        return target(layerId = layerId, deformerId = null)
+    }
+
+    fun startPaintSession(layerId: String? = null, forceReload: Boolean = false): PaintSession? {
+        val t = paintTarget()
+        val targetLid = layerId ?: targetLayerId(t) ?: state.selectedLayerId ?: return null
+        val currentSession = paintSession
+        if (!forceReload && currentSession != null && currentSession.layerId == targetLid) {
+            return currentSession
+        }
+        if (currentSession != null) {
+            discardPaintSession()
+        }
+        val currentAnalysis = state.analysis ?: state.previewModel?.analysis ?: return null
+        val docWidth = currentAnalysis.source.widthPx.coerceAtLeast(1)
+        val docHeight = currentAnalysis.source.heightPx.coerceAtLeast(1)
+
+        val layer = sourceLayerFor(currentAnalysis, targetLid) ?: return null
+        val layerName = layer.name.ifBlank { targetLid }
+        val bounds = layer.bounds
+        val raster = layer.raster
+
+        val workingCopy = BufferedImage(docWidth, docHeight, BufferedImage.TYPE_INT_ARGB)
+        if (raster.width > 0 && raster.height > 0 && raster.rgba.isNotEmpty()) {
+            val layerImg = BufferedImage(raster.width, raster.height, BufferedImage.TYPE_INT_ARGB)
+            val rgba = raster.rgba
+            val intPixels = IntArray(raster.width * raster.height)
+            for (i in intPixels.indices) {
+                val r = rgba[i * 4].toInt() and 0xFF
+                val g = rgba[i * 4 + 1].toInt() and 0xFF
+                val b = rgba[i * 4 + 2].toInt() and 0xFF
+                val a = rgba[i * 4 + 3].toInt() and 0xFF
+                intPixels[i] = (a shl 24) or (r shl 16) or (g shl 8) or b
+            }
+            layerImg.setRGB(0, 0, raster.width, raster.height, intPixels, 0, raster.width)
+            val g = workingCopy.createGraphics()
+            try {
+                g.drawImage(layerImg, bounds.left, bounds.top, null)
+            } finally {
+                g.dispose()
+            }
+        }
+
+        val newSession = PaintSession(
+            layerId = targetLid,
+            layerName = layerName,
+            workingImage = workingCopy,
+            originalImageCopy = PaintSession.copyImage(workingCopy),
+        )
+        paintSession = newSession
+        return newSession
+    }
+
+    fun ensurePaintSession(layerId: String? = null): PaintSession? =
+        startPaintSession(layerId, forceReload = false)
+
+    fun canUndoPaint(layerId: String? = targetLayerId(paintTarget())): Boolean =
+        paintSession?.canUndo() == true
+
+    fun canRedoPaint(layerId: String? = targetLayerId(paintTarget())): Boolean =
+        paintSession?.canRedo() == true
+
+    fun undoPaint(layerId: String = targetLayerId(paintTarget()) ?: "") {
+        val session = paintSession ?: return
+        session.undo()
+    }
+
+    fun redoPaint(layerId: String = targetLayerId(paintTarget()) ?: "") {
+        val session = paintSession ?: return
+        session.redo()
+    }
+
+    fun jumpToPaintStroke(index: Int) {
+        val session = paintSession ?: return
+        session.jumpToStroke(index)
+    }
+
+    fun resetPaintSession() {
+        paintSession = null
+        isPainting = false
+        paintStrokeStart = null
+        paintStrokeCurrent = null
+        showRebuildMeshDialog = false
+    }
+
+    fun discardPaintSession() {
+        val session = paintSession ?: return
+        session.discard()
+        paintSession = null
+        isPainting = false
+        paintStrokeStart = null
+        paintStrokeCurrent = null
+    }
+
+    fun clearCurrentLayerPaint() {
+        val session = ensurePaintSession() ?: return
+        session.edit(java.awt.Rectangle(0, 0, session.docWidth, session.docHeight)) { image ->
+            LayerPaintEngine.clear(image)
+        }
+        session.recordStroke(tr("editor.paint.strokeClear"))
+    }
+
+    fun promptCommitPaintSession() {
+        val session = paintSession ?: return
+        if (!session.isDirty) return
+        showRebuildMeshDialog = true
+    }
+
+    fun commitPaintSession(rebuildMesh: Boolean) {
+        val session = paintSession ?: return
+        showRebuildMeshDialog = false
+
+        val currentPreview = state.previewModel ?: return
+        val currentAnalysis = currentPreview.analysis
+        // The frames the live rig was built on. Rebuilt from the previous analysis on purpose: the
+        // commit preserves every deformer, so a mesh rebuilt against frames moved by the new paint
+        // would no longer line up with the parent deformer it hangs under.
+        val rigContext = RigBuilder.rigContext(currentAnalysis, currentPreview.config)
+        val img = session.workingImage
+        val docW = session.docWidth
+        val docH = session.docHeight
+
+        // 1. Scan workingImage to find tight non-transparent bounding box
+        var minX = docW
+        var minY = docH
+        var maxX = -1
+        var maxY = -1
+
+        val row = IntArray(docW)
+        for (y in 0 until docH) {
+            img.getRGB(0, y, docW, 1, row, 0, docW)
+            for (x in 0 until docW) {
+                val alpha = (row[x] ushr 24) and 0xFF
+                if (alpha > 0) {
+                    if (x < minX) minX = x
+                    if (x > maxX) maxX = x
+                    if (y < minY) minY = y
+                    if (y > maxY) maxY = y
+                }
+            }
+        }
+
+        val newBounds: LayerBounds
+        val newRaster: LayerRaster
+
+        if (maxX < minX || maxY < minY) {
+            // Completely erased / transparent layer
+            newBounds = LayerBounds(0, 0, 1, 1)
+            newRaster = LayerRaster(1, 1, ByteArray(4))
+        } else {
+            val cropW = maxX - minX + 1
+            val cropH = maxY - minY + 1
+            newBounds = LayerBounds(minX, minY, cropW, cropH)
+            val croppedImg = img.getSubimage(minX, minY, cropW, cropH)
+            val pixels = IntArray(cropW * cropH)
+            croppedImg.getRGB(0, 0, cropW, cropH, pixels, 0, cropW)
+            val rgba = ByteArray(cropW * cropH * 4)
+            for (i in pixels.indices) {
+                val argb = pixels[i]
+                rgba[i * 4] = ((argb ushr 16) and 0xFF).toByte()     // R
+                rgba[i * 4 + 1] = ((argb ushr 8) and 0xFF).toByte()  // G
+                rgba[i * 4 + 2] = (argb and 0xFF).toByte()           // B
+                rgba[i * 4 + 3] = ((argb ushr 24) and 0xFF).toByte() // A
+            }
+            newRaster = LayerRaster(cropW, cropH, rgba)
+        }
+
+        // 2. Identify target Drawable, ClassifiedLayer, and SourceLayer
+        val targetLid = session.layerId
+        val targetDrawable = currentPreview.rig.puppet.drawables.firstOrNull {
+            it.id.raw == targetLid || currentPreview.rig.layerIdByDrawableId[it.id.raw] == targetLid
+        }
+        val targetClassified = classifiedLayerFor(currentAnalysis, targetLid)
+        val targetSourceLayerId = targetClassified?.source?.id?.raw
+            ?: targetLid.substringBefore(':').substringBeforeLast('-')
+        val oldBounds = sourceLayerFor(currentAnalysis, targetLid)?.bounds ?: newBounds
+
+        // 3. Update Source Art and Classified Layers
+        val updatedSrcLayers = currentAnalysis.source.layers.map { sl ->
+            if (sl.id.raw == targetSourceLayerId || sl.id.raw == targetLid || sl.id.raw == targetClassified?.source?.id?.raw) {
+                val base = if (sl is WorkspaceSourceLayer) sl else WorkspaceSourceLayer.copyOf(sl, sl.order) as WorkspaceSourceLayer
+                base.copy(bounds = newBounds, raster = newRaster)
+            } else {
+                if (sl is WorkspaceSourceLayer) sl else WorkspaceSourceLayer.copyOf(sl, sl.order)
+            }
+        }
+        val updatedSourceArt = WorkspaceSourceArt(
+            widthPx = currentAnalysis.source.widthPx,
+            heightPx = currentAnalysis.source.heightPx,
+            layers = updatedSrcLayers,
+            groups = currentAnalysis.source.groups,
+        )
+
+        val updatedClassifiedLayers = currentAnalysis.layers.map { cl ->
+            if (cl.source.id.raw == (targetClassified?.source?.id?.raw ?: targetLid)) {
+                val updatedSource = (cl.source as? WorkspaceSourceLayer)?.copy(bounds = newBounds, raster = newRaster)
+                    ?: (WorkspaceSourceLayer.copyOf(cl.source, cl.source.order) as WorkspaceSourceLayer).copy(bounds = newBounds, raster = newRaster)
+                val updatedFloatBounds = newBounds.toBounds()
+                cl.copy(
+                    source = updatedSource,
+                    bounds = updatedFloatBounds,
+                    opaquePixels = newBounds.width * newBounds.height,
+                    centroidX = newBounds.left + newBounds.width * 0.5f,
+                    centroidY = newBounds.top + newBounds.height * 0.5f,
+                )
+            } else cl
+        }
+
+        val updatedAnalysis = currentAnalysis.copy(
+            source = updatedSourceArt,
+            layers = updatedClassifiedLayers,
+        )
+
+        // 4. Repack texture atlas with updated layer raster
+        val refreshedAnalysis = MouthLipLayers.prepare(updatedAnalysis, currentPreview.config)
+        // The ribbons are generated from the mouth layer, so a repaint would normally regenerate them
+        // too. Keeping the existing mesh means keeping the ribbons' own pixels as well: a regenerated
+        // ribbon follows a contour the kept mesh no longer has, and its coordinates would fall outside
+        // the slice it was packed into.
+        val effectiveAnalysis = if (rebuildMesh) refreshedAnalysis else refreshedAnalysis.copy(
+            layers = refreshedAnalysis.layers.map { layer ->
+                if (layer.source is MouthLipLayer) {
+                    currentAnalysis.layers.firstOrNull { it.source.id.raw == layer.source.id.raw } ?: layer
+                } else {
+                    layer
+                }
+            },
+        )
+        val newAtlas = AtlasPacker.pack(
+            effectiveAnalysis.layers,
+            currentPreview.config.atlasSize,
+            currentPreview.config.texturePadding,
+            currentPreview.config.textureUpscale,
+        )
+        val oldAtlas = currentPreview.atlas
+
+        fun findPlacement(atlas: PackedAtlas, drawableId: String, layerId: String?): AtlasPlacement? {
+            if (layerId != null && atlas.placementByLayerId.containsKey(layerId)) {
+                return atlas.placementByLayerId[layerId]
+            }
+            if (atlas.placementByLayerId.containsKey(drawableId)) {
+                return atlas.placementByLayerId[drawableId]
+            }
+            val mappedId = currentPreview.rig.layerIdByDrawableId[drawableId]
+            if (mappedId != null && atlas.placementByLayerId.containsKey(mappedId)) {
+                return atlas.placementByLayerId[mappedId]
+            }
+            val baseId = (layerId ?: drawableId).substringBefore(':').substringBeforeLast('-')
+            if (atlas.placementByLayerId.containsKey(baseId)) {
+                return atlas.placementByLayerId[baseId]
+            }
+            return null
+        }
+
+        /** One layer's slice of [atlas], or null when it holds none. An unknown [bounds] reads as the
+         *  canvas origin, which leaves the texture coordinates translated but unscaled. */
+        fun sliceOf(atlas: PackedAtlas, drawableId: String, layerId: String, bounds: LayerBounds?): AtlasSlice? {
+            val placement = findPlacement(atlas, drawableId, layerId) ?: return null
+            val page = atlas.pages.getOrNull(placement.page)
+            return AtlasSlice(
+                placement = placement,
+                pageWidth = page?.image?.width ?: placement.width,
+                pageHeight = page?.image?.height ?: placement.height,
+                sourceBounds = bounds?.let { Bounds(it.left.toFloat(), it.top.toFloat(), (it.left + it.width).toFloat(), (it.top + it.height).toFloat()) }
+                    ?: Bounds(0f, 0f, 0f, 0f),
+            )
+        }
+
+        /** The mesh a rebuild replaces, described so the frame its parent deformer expects can be
+         *  recovered from the geometry itself - the only source left for an imported or hand-made rig. */
+        fun replacedMesh(mesh: DrawableMesh, atlas: PackedAtlas, drawableId: String, layerId: String, bounds: LayerBounds): RigBuilder.ReplacedMesh {
+            val slice = sliceOf(atlas, drawableId, layerId, bounds)
+            return RigBuilder.ReplacedMesh(
+                mesh = mesh,
+                placement = slice?.placement,
+                pageWidth = slice?.pageWidth ?: 1,
+                pageHeight = slice?.pageHeight ?: 1,
+                sourceBounds = slice?.sourceBounds ?: Bounds(0f, 0f, 0f, 0f),
+            )
+        }
+
+        val targetPlacement = findPlacement(newAtlas, targetDrawable?.id?.raw ?: targetLid, targetClassified?.source?.id?.raw ?: targetLid)
+            ?: newAtlas.placementByLayerId[targetLid]
+            ?: newAtlas.placementByLayerId.values.firstOrNull()
+            ?: AtlasPlacement(0, 0, 0, newBounds.width, newBounds.height)
+        val targetPage = newAtlas.pages.getOrNull(targetPlacement.page)
+        val targetPageWidth = targetPage?.image?.width ?: currentPreview.config.atlasSize
+        val targetPageHeight = targetPage?.image?.height ?: currentPreview.config.atlasSize
+
+        val regeneratedLips = RigBuilder.generatedMouthLips(effectiveAnalysis)
+        val finalTargetClassified = effectiveAnalysis.layers.firstOrNull { it.source.id.raw == (targetClassified?.source?.id?.raw ?: targetLid) }
+            ?: updatedClassifiedLayers.firstOrNull { it.source.id.raw == (targetClassified?.source?.id?.raw ?: targetLid) }
+            ?: targetClassified
+
+        // 5. Update drawables (preserving deformers, hierarchy, keyforms, and rigging)
+        val updatedPageByDrawableId = currentPreview.rig.pageByDrawableId.toMutableMap()
+        val updatedSourceBounds = currentPreview.rig.sourceBoundsByDrawableId.toMutableMap()
+
+        val droppedDrawables = mutableSetOf<DrawableId>()
+        val rebuiltLips = mutableMapOf<String, RigBuilder.MouthLip>()
+        val updatedDrawables = currentPreview.rig.puppet.drawables.mapNotNull { drawable ->
+            val layerId = currentPreview.rig.layerIdByDrawableId[drawable.id.raw] ?: drawable.id.raw
+            val isTarget = (targetDrawable != null && drawable.id == targetDrawable.id) ||
+                           drawable.id.raw == targetLid ||
+                           layerId == targetLid ||
+                           layerId == targetClassified?.source?.id?.raw ||
+                           drawable.id.raw == targetClassified?.source?.id?.raw
+
+            if (isTarget) {
+                updatedPageByDrawableId[drawable.id.raw] = targetPlacement.page
+
+                if (rebuildMesh || drawable.mesh == null) {
+                    // The neutral-pose reference follows the mesh, not the texture: a kept mesh keeps
+                    // describing the area it covers even when new pixels were painted beyond it.
+                    updatedSourceBounds[drawable.id.raw] =
+                        newBounds.toBounds()
+
+                    val targetClassifiedLayer = finalTargetClassified
+                        ?: targetClassified
+                        ?: error("Target classified layer not found for paint commit: $targetLid")
+
+                    // The rig keeps its deformers, so the new mesh has to be normalized against the
+                    // frames those deformers were built on - the context of the analysis the rig came
+                    // from - and not against frames derived from the freshly painted bounds, which
+                    // would rescale the drawable against every sibling that kept the old frames.
+                    val rebuilt = RigBuilder.rebuildDrawableMesh(
+                        layer = targetClassifiedLayer,
+                        context = rigContext,
+                        placement = targetPlacement,
+                        pageWidth = targetPageWidth,
+                        pageHeight = targetPageHeight,
+                        config = currentPreview.config,
+                        parentId = drawable.parentDeformerId,
+                        owner = drawable,
+                        atlas = newAtlas,
+                        generatedLips = regeneratedLips,
+                        previous = drawable.mesh?.let { replacedMesh(it, oldAtlas, drawable.id.raw, layerId, oldBounds) },
+                    )
+                    for (lip in rebuilt.mouthLips) rebuiltLips[lip.drawable.id.raw] = lip
+
+                    drawable.copy(
+                        mesh = rebuilt.mesh,
+                        texturePage = targetPlacement.page,
+                        // A user-edited grid only survives a rebuild that kept the vertex count.
+                        geometryGrid = if (drawable.mesh?.positions?.size == rebuilt.mesh.positions.size) {
+                            drawable.geometryGrid ?: rebuilt.geometryGrid
+                        } else {
+                            rebuilt.geometryGrid
+                        },
+                    )
+                } else {
+                    val oldMesh = drawable.mesh
+                    val oldSlice = sliceOf(oldAtlas, drawable.id.raw, layerId, oldBounds)
+                    val newSlice = sliceOf(newAtlas, drawable.id.raw, layerId, newBounds)
+                    if (oldSlice != null && newSlice != null) {
+                        drawable.copy(
+                            mesh = DrawableMesh(oldMesh.positions, remapUvs(oldMesh, oldSlice, newSlice), oldMesh.indices),
+                            texturePage = targetPlacement.page,
+                        )
+                    } else {
+                        drawable.copy(texturePage = targetPlacement.page)
+                    }
+                }
+            } else {
+                val oldSlice = sliceOf(oldAtlas, drawable.id.raw, layerId, sourceLayerFor(currentAnalysis, layerId)?.bounds)
+                val newSlice = sliceOf(newAtlas, drawable.id.raw, layerId, sourceLayerFor(effectiveAnalysis, layerId)?.bounds)
+                val oldMesh = drawable.mesh
+                when {
+                    // The repack has no slice for this drawable any more. That is what a generated layer
+                    // does when the layer it follows loses the shape it was built from - an erased mouth
+                    // takes its lip ribbons with it - and keeping the drawable would leave it sampling
+                    // whatever the repack happened to place at its old texture coordinates, which reads
+                    // as the art tearing apart instead of disappearing.
+                    oldMesh != null && oldSlice != null && newSlice == null -> {
+                        droppedDrawables += drawable.id
+                        null
+                    }
+                    oldMesh != null && oldSlice != null && newSlice != null -> {
+                        updatedPageByDrawableId[drawable.id.raw] = newSlice.placement.page
+                        drawable.copy(
+                            mesh = DrawableMesh(oldMesh.positions, remapUvs(oldMesh, oldSlice, newSlice), oldMesh.indices),
+                            texturePage = newSlice.placement.page,
+                        )
+                    }
+                    else -> drawable
+                }
+            }
+        }
+
+        // 6. Update puppet and rig (deformers, hierarchy, parameters preserved 100%). Deleting a drawable
+        // goes through the model's own delete so the org tree, clip masks, glues and the derived render
+        // order all stop referring to it.
+        for (id in droppedDrawables) {
+            updatedPageByDrawableId.remove(id.raw)
+            updatedSourceBounds.remove(id.raw)
+        }
+        // Ribbons are swapped in by id, whichever side of their owner they sit on, and a ribbon the rig
+        // never had - a mouth painted back after its own erase - joins the part its own mouth is in.
+        var drawablesAfterRepack = updatedDrawables.map { drawable ->
+            val lip = rebuiltLips[drawable.id.raw]
+            if (lip == null) drawable else lip.drawable.copy(
+                drawOrder = drawable.drawOrder,
+                blendMode = drawable.blendMode,
+                isVisible = drawable.isVisible,
+                maskedBy = drawable.maskedBy,
+            )
+        }
+        val addedLips = rebuiltLips.values.filter { lip -> drawablesAfterRepack.none { it.id == lip.drawable.id } }
+        for (lip in addedLips) {
+            updatedPageByDrawableId[lip.drawable.id.raw] = lip.drawable.texturePage
+            updatedSourceBounds[lip.drawable.id.raw] = lip.neutralBounds
+        }
+        if (addedLips.isNotEmpty()) drawablesAfterRepack = drawablesAfterRepack + addedLips.map { it.drawable }
+        val partsAfterRepack = if (addedLips.isEmpty()) {
+            currentPreview.rig.puppet.parts
+        } else {
+            val addedByOwner = addedLips.groupBy { it.ownerId }
+            currentPreview.rig.puppet.parts.map { part ->
+                val added = part.children.filterIsInstance<OrgChild.Drawable>()
+                    .flatMap { addedByOwner[it.id].orEmpty() }
+                if (added.isEmpty()) part else part.copy(children = part.children + added.map { OrgChild.Drawable(it.drawable.id) })
+            }
+        }
+        val updatedPuppet = currentPreview.rig.puppet
+            .let { puppet -> if (droppedDrawables.isEmpty()) puppet else puppet.withDrawablesDeleted(droppedDrawables) }
+            .copy(
+                drawables = drawablesAfterRepack,
+                parts = partsAfterRepack,
+                deformPaths = currentPreview.rig.puppet.deformPaths.filterNot { it.drawableId in droppedDrawables } +
+                    addedLips.mapNotNull { it.path },
+            )
+            .let { puppet -> if (addedLips.isEmpty()) puppet else puppet.withDerivedRenderRoot() }
+        val updatedRig = currentPreview.rig.copy(
+            puppet = updatedPuppet,
+            pageByDrawableId = updatedPageByDrawableId,
+            sourceBoundsByDrawableId = updatedSourceBounds,
+            layerIdByDrawableId = currentPreview.rig.layerIdByDrawableId +
+                addedLips.associate { it.drawable.id.raw to it.layer.source.id.raw },
+        )
+
+        val (runtimeBundle, _) = viewModel.pipeline.buildRuntimeBundle(
+            "psd2live-preview",
+            effectiveAnalysis,
+            newAtlas,
+            updatedRig,
+            currentPreview.config,
+        )
+
+        val finalPreview = currentPreview.copy(
+            analysis = updatedAnalysis,
+            atlas = newAtlas,
+            rig = updatedRig,
+            baseRig = currentPreview.baseRig.copy(puppet = updatedPuppet, pageByDrawableId = updatedPageByDrawableId, sourceBoundsByDrawableId = updatedSourceBounds),
+            runtimeBundle = runtimeBundle,
+        )
+
+        // 7. Update state and project history. The canvas rebuilds its texture painter from the new
+        // preview model, so the committed atlas reaches the screen without a swap of its own.
+        viewModel.applyCommittedPaint(finalPreview, tr("editor.paint.commitSummary", session.layerName))
+
+        // 8. Refresh PaintSession baseline with new committed image
+        paintSession = startPaintSession(session.layerId, forceReload = true)
+        isPainting = false
+        paintStrokeStart = null
+        paintStrokeCurrent = null
+        showRebuildMeshDialog = false
+    }
+
+    /** The bounds the paint session's layer occupies on the document canvas. */
+    fun activePaintLayerBounds(): LayerBounds? {
+        val layerId = targetLayerId(paintTarget()) ?: state.selectedLayerId ?: return null
+        val analysis = state.analysis ?: state.previewModel?.analysis ?: return null
+        return sourceLayerFor(analysis, layerId)?.bounds
+    }
+
+    /**
+     * Every id a paint target can be named by: the rig maps generated drawables back to their layer,
+     * and generated mouth lips carry a suffix on top of it.
+     */
+    private fun paintTargetIds(layerId: String): List<String> = buildList {
+        add(layerId)
+        state.previewModel?.rig?.layerIdByDrawableId?.get(layerId)?.let { add(it) }
+        layerId.substringBefore(':').substringBeforeLast('-').let { if (it !in this) add(it) }
+    }
+
+    private fun classifiedLayerFor(analysis: PipelineAnalysis, layerId: String): ClassifiedLayer? =
+        paintTargetIds(layerId).firstNotNullOfOrNull { id ->
+            analysis.layers.firstOrNull { it.source.id.raw == id }
+        }
+
+    private fun sourceLayerFor(analysis: PipelineAnalysis, layerId: String): SourceLayer? =
+        paintTargetIds(layerId).firstNotNullOfOrNull { id ->
+            analysis.layers.firstOrNull { it.source.id.raw == id }?.source
+                ?: analysis.source.layers.firstOrNull { it.id.raw == id }
+        }
+
+    fun screenToCanvasPixel(pos: Offset, viewport: CanvasViewport): Pair<Int, Int>? {
+        val session = paintSession ?: return null
+        val cx = viewport.canvasX(pos.x).toInt()
+        val cy = viewport.canvasY(pos.y).toInt()
+        if (cx !in 0 until session.docWidth || cy !in 0 until session.docHeight) return null
+        return cx to cy
+    }
+
+    /**
+     * The colour of the layer's pixel under [pos], or null when the pointer is off the layer's raster or
+     * over nothing painted there.
+     *
+     * The eyedropper picks with this, and so does the cursor's sampling ring - one answer to "what is
+     * under the pointer", so the ring cannot report a colour the pick would not take.
+     */
+    fun sampleColorAt(pos: Offset, viewport: CanvasViewport): androidx.compose.ui.graphics.Color? {
+        val session = paintSession ?: return null
+        val pixel = screenToCanvasPixel(pos, viewport) ?: return null
+        val argb = session.workingImage.getRGB(pixel.first, pixel.second)
+        if (((argb ushr 24) and 0xFF) == 0) return null
+        return androidx.compose.ui.graphics.Color(
+            red = ((argb ushr 16) and 0xFF) / 255f,
+            green = ((argb ushr 8) and 0xFF) / 255f,
+            blue = (argb and 0xFF) / 255f,
+            alpha = ((argb ushr 24) and 0xFF) / 255f,
+        )
+    }
+
+    /** Takes the colour under [pos]: the foreground, or the secondary colour when [secondary]. */
+    fun pickColorAt(pos: Offset, viewport: CanvasViewport, secondary: Boolean = false) {
+        val sampled = sampleColorAt(pos, viewport) ?: return
+        if (secondary) paintSecondaryColor = sampled else paintColor = sampled
+    }
+
+    /**
+     * Where the pointer is on the layer's raster, in the float the tip is stamped at: a stroke belongs
+     * between two pixels, not on one of them, and rounding here would make a slow drag step.
+     */
+    private fun screenToCanvasPoint(pos: Offset, viewport: CanvasViewport): Pair<Float, Float>? {
+        paintSession ?: return null
+        return viewport.canvasX(pos.x) to viewport.canvasY(pos.y)
+    }
+
+    /**
+     * Applies the segment the pointer just covered, the way every paint program does: the layer holds
+     * the result while the gesture is still running, so hardness and opacity are visible as they are
+     * being dragged rather than one release later, and the canvas shows the mark itself instead of an
+     * overlay standing in for it.
+     *
+     * The stroke's coverage says what the stroke looks like; the layer is then rebuilt over the pixels
+     * this segment has just claimed, out of the pixels the stroke started from. Two things follow: the
+     * mark reaches nowhere the tip did not, and the work is proportional to the segment rather than to
+     * the stroke drawn so far.
+     */
+    private fun applyLiveSegment(from: Offset, to: Offset, erase: Boolean) {
+        val session = paintSession ?: return
+        val vp = viewport ?: return
+        val start = screenToCanvasPoint(from, vp) ?: return
+        val end = screenToCanvasPoint(to, vp) ?: return
+        // Nothing new under the segment - a stroke doubling back over itself - is nothing to redraw.
+        val claimed = session.stroke()
+            .addSegment(start.first, start.second, end.first, end.second, paintTip()) ?: return
+        session.landSegment(claimed, paintColor, paintOpacity, erase = erase)
+        refreshPaintPreview()
+    }
+
+    /** Repaints the preview at most every ~40 ms: a gesture fires far more moves than frames. */
+    private fun refreshPaintPreview() {
+        val now = System.nanoTime()
+        if (lastPaintBitmapAt != 0L && now - lastPaintBitmapAt < 40_000_000L) return
+        lastPaintBitmapAt = now
+        paintSession?.refreshPreview()
+    }
+
+    fun screenToAtlasPixel(pos: Offset, t: CanvasTarget, viewport: CanvasViewport): Pair<Int, Int>? {
+        val atlas = state.previewModel?.atlas ?: return null
+        val placement = targetPlacement(t) ?: return null
+        val page = atlas.pages.getOrNull(placement.page) ?: return null
+
+        val screenPts = screen(t.geometry.points, t, viewport)
+        val mesh = (model.drawables.firstOrNull { it.id.raw == t.id }?.mesh) ?: return null
+        val uvs = mesh.uvs
+        val indices = mesh.indices
+
+        for (tri in indices.indices step 3) {
+            val ia = indices[tri]
+            val ib = indices[tri + 1]
+            val ic = indices[tri + 2]
+            val a = screenPts[ia]
+            val b = screenPts[ib]
+            val c = screenPts[ic]
+
+            val v0 = b - a
+            val v1 = c - a
+            val v2 = pos - a
+            val d00 = v0.x * v0.x + v0.y * v0.y
+            val d01 = v0.x * v1.x + v0.y * v1.y
+            val d11 = v1.x * v1.x + v1.y * v1.y
+            val d20 = v2.x * v0.x + v2.y * v0.y
+            val d21 = v2.x * v1.x + v2.y * v1.y
+            val denom = d00 * d11 - d01 * d01
+            if (abs(denom) < 1e-6f) continue
+            val v = (d11 * d20 - d01 * d21) / denom
+            val w = (d00 * d21 - d01 * d20) / denom
+            val u = 1f - v - w
+            if (u in -0.01f..1.01f && v in -0.01f..1.01f && w in -0.01f..1.01f) {
+                val uc = (u.coerceIn(0f, 1f) * uvs[ia * 2] + v.coerceIn(0f, 1f) * uvs[ib * 2] + w.coerceIn(0f, 1f) * uvs[ic * 2])
+                val vc = (u.coerceIn(0f, 1f) * uvs[ia * 2 + 1] + v.coerceIn(0f, 1f) * uvs[ib * 2 + 1] + w.coerceIn(0f, 1f) * uvs[ic * 2 + 1])
+                val px = (uc * page.image.width).toInt()
+                val py = (vc * page.image.height).toInt()
+                if (px in placement.x until (placement.x + placement.width) &&
+                    py in placement.y until (placement.y + placement.height)
+                ) {
+                    return px to py
+                }
+            }
+        }
+
+        // Fallback: direct projection into layer canvas bounds and placement
+        val layerId = targetLayerId(t) ?: return null
+        val classifiedLayer = state.analysis?.layers?.firstOrNull { it.source.id.raw == layerId }
+        val layerBounds = classifiedLayer?.source?.bounds
+        if (layerBounds != null) {
+            val canvasX = viewport.canvasX(pos.x.toInt())
+            val canvasY = viewport.canvasY(pos.y.toInt())
+            val localX = canvasX - layerBounds.left
+            val localY = canvasY - layerBounds.top
+            if (localX >= 0f && localX < layerBounds.width &&
+                localY >= 0f && localY < layerBounds.height
+            ) {
+                val px = (placement.x + localX * placement.scale).toInt()
+                val py = (placement.y + localY * placement.scale).toInt()
+                if (px in placement.x until (placement.x + placement.width) &&
+                    py in placement.y until (placement.y + placement.height)
+                ) {
+                    return px to py
+                }
+            }
+        }
+        return null
+    }
+
     fun cancel() {
         if (busy) return
+        // Every tip edits pixels as it goes, so an abandoned gesture has to give them back.
+        val session = paintSession
+        if (isPainting && session != null) {
+            session.abandonStroke()
+            session.refreshPreview()
+        }
         endBrushAdjust(cancel = true)
         preview = null; pending = null; dragging = false; targetAtPress = null; original = null
         activeBrushWeights = null; activeBrushCenter = null
@@ -357,7 +1194,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         initialBounds = null
         boxDrag = false; dragIndices = emptyList()
         endTransformBox()
-        // The frame belongs to the tool session, so cancelling is the only thing that drops it.
+        isPainting = false; isSampling = false; paintStrokeStart = null; paintStrokeCurrent = null;        // The frame belongs to the tool session, so cancelling is the only thing that drops it.
         frameAngle = 0f
         initialScreenPoints = emptyList()
     }
@@ -381,7 +1218,6 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         error = null
         if (next == CanvasTool.LASSO_SELECT) selectionStyle = SelectionStyle.LASSO
         else if (next == CanvasTool.SELECT) selectionStyle = SelectionStyle.BOX
-        objectMode = (hierarchyMode == EditHierarchyMode.OBJECT)
         if (next == CanvasTool.SELECT && objectMode) vertices = emptySet()
         clearHover()
     }
@@ -390,9 +1226,14 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     fun setHierarchyMode(next: EditHierarchyMode) {
         if (busy) return
         cancel()
+        val prev = hierarchyMode
         hierarchyMode = next
-        objectMode = (next == EditHierarchyMode.OBJECT)
-        if (next == EditHierarchyMode.OBJECT) {
+        if (prev == EditHierarchyMode.PAINT && next != EditHierarchyMode.PAINT) {
+            discardPaintSession()
+        }
+        if (next == EditHierarchyMode.PAINT) {
+            startPaintSession(forceReload = true)
+        } else if (next == EditHierarchyMode.SELECT) {
             vertices = emptySet()
         } else if (next == EditHierarchyMode.DEFORM && editLevel == 2) {
             ensureBezierState()
@@ -463,7 +1304,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         // Object mode is selection only, so it has no frame at all. Enforced here rather than at each
         // caller: the box, its handles, the hover ring and the precise-transform pivot all read the
         // frame, and one null is what keeps every one of them out of the mode.
-        if (hierarchyMode == EditHierarchyMode.OBJECT) return null
+        if (hierarchyMode == EditHierarchyMode.SELECT) return null
         val bounds = currentDragBounds
         if (bounds != null) return TransformFrame(bounds, framePivotAtPress, frameAngle)
         return selectionFrame(viewport)
@@ -656,7 +1497,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         // Object mode has no transform box, so no handle is ever live here. What the pointer is over is
         // the pick itself, and resolving it through the same call the press makes is what guarantees the
         // annotation names the thing a click would actually select — Ctrl included.
-        if (hierarchyMode == EditHierarchyMode.OBJECT) {
+        if (hierarchyMode == EditHierarchyMode.SELECT) {
             if (tool == CanvasTool.SELECT) {
                 val pick = objectPick(pos, viewport, ctrl)
                 hoveredPick = pick
@@ -735,7 +1576,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             }
         }
 
-        if (hierarchyMode == EditHierarchyMode.STRUCTURE) {
+        if (hierarchyMode == EditHierarchyMode.EDIT) {
             updatePointHover(pos, viewport, t)
         }
     }
@@ -768,6 +1609,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             if (isCreatingWarp || isCreatingRotation) return cross
             if (marquee.isNotEmpty()) return cross
             if (tool in DEFORM_BRUSH_TOOLS || tool == CanvasTool.BRUSH_SELECT) return cross
+            if (isPainting) return cross
             if (boxDrag) return handleCursor(activeHandle)
             if (activeBezierAnchor != null || activeBezierHandle != null) return hand
             return move
@@ -777,12 +1619,15 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         }
         if (tool == CanvasTool.BRUSH_SELECT || tool in DEFORM_BRUSH_TOOLS) return cross
         if (tool == CanvasTool.LASSO_SELECT) return cross
+        // Painting aims at a pixel: the tip ring says how big the mark will be, the crosshair says
+        // exactly where it lands - and for a pick that is the whole of what the tool does.
+        if (hierarchyMode == EditHierarchyMode.PAINT && (tool in PAINT_TOOLS || tool == CanvasTool.SELECT)) return cross
 
         if (hoveredBezierHandle != null || hoveredBezierAnchor != null) return hand
         if (hoveredHandle != BoundingHandle.NONE) return handleCursor(hoveredHandle)
         if (hoveredVertex != null) return hand
 
-        if (hierarchyMode == EditHierarchyMode.OBJECT) {
+        if (hierarchyMode == EditHierarchyMode.SELECT) {
             if (tool == CanvasTool.SELECT) return if (isHoveringObject) hand else arrow
         } else {
             if (tool == CanvasTool.SELECT) return arrow
@@ -1122,8 +1967,73 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         if (adjustingBrush) endBrushAdjust(cancel = false)
         if (!editable) return true
         if (space) return false
+        this.viewport = viewport
         error = null; head = state.historySnapshot?.headNodeId; start = pos; previous = pos; dragStartPos = pos
         moved = false; additive = shift; subtractive = alt; pressedObject = null
+
+        // 0. Paint Mode (L1 raster paint engine)
+        if (hierarchyMode == EditHierarchyMode.PAINT && tool in PAINT_TOOLS) {
+            val layerId = paintSession?.layerId ?: state.selectedLayerId ?: targetLayerId(paintTarget()) ?: return true
+            val session = ensurePaintSession(layerId) ?: return true
+            val t = target(layerId = layerId, deformerId = null) ?: paintTarget()
+
+            targetAtPress = t
+            original = model
+            dragging = true
+            isPainting = true
+            paintStrokeStart = pos
+            paintStrokeCurrent = pos
+            lastPaintPoint = pos
+
+            val canvasPos = screenToCanvasPixel(pos, viewport)
+
+            when {
+                // Picking a colour rather than drawing one: the eyedropper's own gesture, and what Alt
+                // does to every paint tool. The pick follows the pointer for as long as the button is
+                // down, so a colour can be scrubbed for instead of guessed at in one click.
+                tool == CanvasTool.PAINT_EYEDROPPER || alt -> {
+                    isSampling = true
+                    // Alt means two different things here, as it does in Photoshop: on the eyedropper it
+                    // fills in the secondary colour, while Alt over any other tool is the eyedropper
+                    // itself, and that one picks into the foreground.
+                    samplingSecondary = alt && tool == CanvasTool.PAINT_EYEDROPPER
+                    pickColorAt(pos, viewport, secondary = samplingSecondary)
+                }
+                tool == CanvasTool.PAINT_BUCKET -> {
+                    if (canvasPos != null) {
+                        val clip = java.awt.Rectangle(0, 0, session.docWidth, session.docHeight)
+                        LayerPaintEngine.floodFill(
+                            image = session.workingImage,
+                            startX = canvasPos.first,
+                            startY = canvasPos.second,
+                            fillColor = paintColor,
+                            tolerance = paintTolerance,
+                            clipRect = clip,
+                            // The fill reports the ground it is about to cover, so the session can keep
+                            // the pixels it replaces - and the fill stays one undoable action.
+                            before = { session.willWrite(it) },
+                        )
+                        session.recordStroke(tr("editor.paint.strokeFill"))
+                    }
+                    isPainting = false
+                    dragging = false
+                }
+                tool in PAINT_BRUSH_TOOLS -> {
+                    // The tip paints as the pointer moves, the way every paint program does: what the
+                    // canvas shows is the mark itself, not a stroke standing in for it. The bitmap is
+                    // republished on the press whatever the throttle says: the first touch of a stroke
+                    // is the one the user is watching for.
+                    session.beginStroke()
+                    lastPaintBitmapAt = 0L
+                    applyLiveSegment(pos, pos, erase = tool == CanvasTool.PAINT_ERASER)
+                }
+                else -> {
+                    // The shape tool: the live gesture is previewed on the overlay and lands on release,
+                    // because a shape is committed when its second corner is.
+                }
+            }
+            return true
+        }
 
         // 1. Interactive Creation Tools
         if (tool == CanvasTool.CREATE_WARP) {
@@ -1217,7 +2127,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         // something already, and the handles in particular sit on the very corner a badge does. Ctrl is
         // left to object mode's own pick, where it means "step to the next node" and has to keep meaning
         // that wherever it is pressed.
-        if (tool in SELECTION_TOOLS && !(ctrl && hierarchyMode == EditHierarchyMode.OBJECT)) {
+        if (tool in SELECTION_TOOLS && !(ctrl && hierarchyMode == EditHierarchyMode.SELECT)) {
             badgeAt(pos, viewport)?.let { id ->
                 applyObjectPick(HierarchyPick(deformerId = id), null)
                 return true
@@ -1250,7 +2160,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         // 5. Object mode picks and nothing else. The transform box and its handles belong to the point
         //    tools, so a press here selects — Ctrl walks the hierarchy — or starts a marquee. It never
         //    begins a transform drag, which is what keeps the mode read-only.
-        if (hierarchyMode == EditHierarchyMode.OBJECT && tool == CanvasTool.SELECT) {
+        if (hierarchyMode == EditHierarchyMode.SELECT && tool == CanvasTool.SELECT) {
             val pick = objectPick(pos, viewport, ctrl)
             pressedObject = pick?.layerId
             if (pick != null) {
@@ -1309,7 +2219,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         }
 
         var picked = points.indices.filter { (points[it] - pos).getDistance() < 10f }.minByOrNull { (points[it] - pos).getDistance() }?.let { setOf(it) }.orEmpty()
-        if (hierarchyMode == EditHierarchyMode.STRUCTURE && editTarget.kind == "mesh" && elementMode > 0) {
+        if (hierarchyMode == EditHierarchyMode.EDIT && editTarget.kind == "mesh" && elementMode > 0) {
             picked = if (elementMode == 1) MeshTopology.uniqueEdges(editTarget.indices).minByOrNull { edge -> distanceToSegment(pos, points[edge.endpointLow], points[edge.endpointHigh]) }?.takeIf { distanceToSegment(pos, points[it.endpointLow], points[it.endpointHigh]) < 8f }?.let { setOf(it.endpointLow, it.endpointHigh) }.orEmpty()
             else editTarget.indices.toList().chunked(3).firstOrNull { tri -> insidePolygon(pos, tri.map { points[it] }) }?.toSet().orEmpty()
         }
@@ -1343,11 +2253,24 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     }
 
     fun move(pos: Offset, viewport: CanvasViewport, shift: Boolean, alt: Boolean = false, ctrl: Boolean = false) {
+        this.viewport = viewport
         updateHover(pos, viewport, ctrl)
         shrinks = if (dragging && tool == CanvasTool.INFLATE) shrinkAtPress else inflateInvert xor alt
         if (!dragging || busy) return
         moved = moved || (pos - start).getDistance() > 2f
         if (!moved) return
+
+        if (hierarchyMode == EditHierarchyMode.PAINT && isPainting) {
+            paintStrokeCurrent = pos
+            // A pick scrubs: the colour follows the pointer for as long as the button is held.
+            if (isSampling) {
+                pickColorAt(pos, viewport, secondary = samplingSecondary)
+            } else if (tool in PAINT_BRUSH_TOOLS) {
+                applyLiveSegment(lastPaintPoint ?: pos, pos, erase = tool == CanvasTool.PAINT_ERASER)
+                lastPaintPoint = pos
+            }
+            return
+        }
 
         if (isCreatingWarp || isCreatingRotation) {
             creationCurrent = pos
@@ -1486,6 +2409,69 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
 
     fun release() {
         if (!dragging) return
+        if (hierarchyMode == EditHierarchyMode.PAINT && isPainting) {
+            val session = paintSession
+            val vp = viewport
+
+            if (session != null && vp != null) {
+                val clip = java.awt.Rectangle(0, 0, session.docWidth, session.docHeight)
+                when {
+                    isSampling -> Unit // a pick draws nothing, so there is no stroke to record
+                    tool in PAINT_BRUSH_TOOLS -> {
+                        // The pixels are already on the layer: this is what makes the gesture one
+                        // stroke in the history rather than one per segment.
+                        val toolName = when (tool) {
+                            CanvasTool.PAINT_ERASER -> tr("editor.paint.strokeEraser")
+                            CanvasTool.PAINT_PENCIL -> tr("editor.paint.strokePencil")
+                            else -> tr("editor.paint.strokeBrush")
+                        }
+                        session.recordStroke(toolName)
+                    }
+                    tool == CanvasTool.PAINT_SHAPE -> {
+                        val s = paintStrokeStart
+                        val c = paintStrokeCurrent
+                        // The corners are in canvas space and not clipped to the layer: a shape dragged
+                        // off the edge is still the shape the artist drew, and the raster trims it.
+                        val p0 = if (s != null) screenToCanvasPoint(s, vp) else null
+                        val p1 = if (c != null) screenToCanvasPoint(c, vp) else null
+                        val shape = paintShape
+                        if (p0 != null && p1 != null) {
+                            val x0 = floor(p0.first).toInt()
+                            val y0 = floor(p0.second).toInt()
+                            val x1 = floor(p1.first).toInt()
+                            val y1 = floor(p1.second).toInt()
+                            val shapeStrokeWidth = paintBrushSize.coerceAtLeast(1f)
+                            val area = LayerPaintEngine.shapeArea(x0, y0, x1, y1, shapeStrokeWidth, clip)
+                            session.edit(area) { image ->
+                                LayerPaintEngine.drawShape(
+                                    image = image,
+                                    x0 = x0, y0 = y0,
+                                    x1 = x1, y1 = y1,
+                                    shape = shape,
+                                    color = paintColor,
+                                    opacity = paintOpacity,
+                                    strokeWidth = shapeStrokeWidth,
+                                    filled = paintShapeFilled && shape.canFill,
+                                    clipRect = clip
+                                )
+                            }
+                            session.recordStroke(tr(shape.strokeLabelKey))
+                        }
+                    }
+                    else -> {}
+                }
+            }
+
+            isSampling = false
+            isPainting = false
+            paintStrokeStart = null
+            paintStrokeCurrent = null
+            dragging = false
+            targetAtPress = null
+            original = null
+            return
+        }
+
         dragging = false; axis = null; activeHandle = BoundingHandle.NONE
         initialBounds = null
         initialScreenPoints = emptyList()
@@ -1548,13 +2534,24 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
      */
     fun beginBrushAdjust(pos: Offset, shift: Boolean = false): Boolean {
         if (adjustingBrush || dragging) return false
-        if (tool != CanvasTool.BRUSH && tool != CanvasTool.SMOOTH && tool != CanvasTool.INFLATE) return false
+        val painting = paintBrushActive
+        if (!painting && tool != CanvasTool.BRUSH && tool != CanvasTool.SMOOTH && tool != CanvasTool.INFLATE) return false
         adjustingBrush = true
-        brushAxis = if (shift && brushShape != BrushShape.CIRCLE) BrushAdjustAxis.ANGLE else null
+        brushAxis = when {
+            // A paint tip has no angle, so Shift latches its third parameter - the opacity - instead,
+            // which is the same pairing Photoshop uses for its Shift + right-drag.
+            painting && shift -> BrushAdjustAxis.OPACITY
+            painting -> null
+            shift && brushShape != BrushShape.CIRCLE -> BrushAdjustAxis.ANGLE
+            else -> null
+        }
         brushAnchor = pos
         brushRadiusAtStart = radius
         brushHardnessAtStart = hardness
         brushAngleAtStart = brushAngle
+        paintSizeAtStart = paintSize
+        paintHardnessAtStart = paintHardness
+        paintOpacityAtStart = paintOpacity
         // Freeze the outline at the press point, and pin the ring colour with it: the viewport stops calling
         // move() for the duration, so nothing else refreshes either. The size change is then judged against
         // fixed artwork instead of an outline sliding along under the cursor.
@@ -1576,11 +2573,20 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             if (max(abs(dx), abs(dy)) < BRUSH_AXIS_LOCK_PX) return
             brushAxis = if (abs(dx) >= abs(dy)) BrushAdjustAxis.RADIUS else BrushAdjustAxis.HARDNESS
         }
+        if (paintBrushActive) {
+            when (brushAxis) {
+                BrushAdjustAxis.RADIUS -> paintSize = (paintSizeAtStart * 1.2f.pow(dx / BRUSH_RADIUS_STEP_PX)).coerceIn(1f, 512f)
+                BrushAdjustAxis.HARDNESS -> paintHardness = (paintHardnessAtStart + dy / BRUSH_HARDNESS_SPAN_PX).coerceIn(0f, 1f)
+                BrushAdjustAxis.OPACITY -> paintOpacity = (paintOpacityAtStart + dy / BRUSH_HARDNESS_SPAN_PX).coerceIn(0.01f, 1f)
+                BrushAdjustAxis.ANGLE, null -> Unit
+            }
+            return
+        }
         when (brushAxis) {
             BrushAdjustAxis.RADIUS -> radius = (brushRadiusAtStart * 1.2f.pow(dx / BRUSH_RADIUS_STEP_PX)).coerceIn(4f, 500f)
             BrushAdjustAxis.HARDNESS -> hardness = (brushHardnessAtStart + dy / BRUSH_HARDNESS_SPAN_PX * 0.95f).coerceIn(0f, 0.95f)
             BrushAdjustAxis.ANGLE -> brushAngle = (brushAngleAtStart + dx * 0.75f).mod(360f)
-            null -> Unit
+            BrushAdjustAxis.OPACITY, null -> Unit
         }
     }
 
@@ -1593,6 +2599,9 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             radius = brushRadiusAtStart
             hardness = brushHardnessAtStart
             brushAngle = brushAngleAtStart
+            paintSize = paintSizeAtStart
+            paintHardness = paintHardnessAtStart
+            paintOpacity = paintOpacityAtStart
         }
     }
 
@@ -1602,11 +2611,11 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         // already resolved and must not be re-derived here. Re-deriving it from a zero-area polygon
         // finds nothing and would blank the very selection the press just made, deformers especially,
         // which the marquee has no way to express at all.
-        if (hierarchyMode == EditHierarchyMode.OBJECT && !moved) {
+        if (hierarchyMode == EditHierarchyMode.SELECT && !moved) {
             pressedObject = null; marquee = emptyList(); original = null; head = null; return
         }
         val polygon = if (selectionStyle == SelectionStyle.LASSO) marquee else listOf(marquee.first(), Offset(marquee.last().x, marquee.first().y), marquee.last(), Offset(marquee.first().x, marquee.last().y))
-        if (hierarchyMode == EditHierarchyMode.OBJECT) {
+        if (hierarchyMode == EditHierarchyMode.SELECT) {
             val found = state.effectiveVisibleLayerIds.filter { id -> target(model, id, null)?.let { item -> screen(item.geometry.points, item, viewport).any { insidePolygon(it, polygon) } } == true }.toSet()
             objects = when {
                 subtractive -> objects - found

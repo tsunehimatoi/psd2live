@@ -4,6 +4,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.key
 import io.github.psd2live.core.MeshSettings
+import io.github.psd2live.core.PackedAtlas
 
 import io.github.psd2live.core.PSD2LivePipeline
 import io.github.psd2live.core.RigStructureEdits
@@ -61,6 +62,20 @@ class PSD2LiveViewModel : AutoCloseable {
         _state.update { it.copy(previewModel = updatedPreview, previewModelDirty = true, projectDirty = true) }
         markWorkspaceChanged()
         editorChanged()
+    }
+
+    fun applyCommittedPaint(updatedPreview: RigPreviewModel, summary: String) {
+        _state.update {
+            it.copy(
+                previewModel = updatedPreview,
+                analysis = updatedPreview.analysis,
+                previewModelDirty = true,
+                projectDirty = true,
+            ).withLog(tr("editor.paint.applied", summary), level = LogLevel.INFO, tag = "Paint")
+        }
+        refreshSdkSession(updatedPreview)
+        markWorkspaceChanged()
+        commitEditorChange(summary)
     }
 
     val canvasPathRequests = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
@@ -189,7 +204,7 @@ class PSD2LiveViewModel : AutoCloseable {
         saveAuthoringEdits(expected, kotlinx.serialization.json.JsonArray(listOf(command))) {}
     }
 	private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-	private val pipeline = PSD2LivePipeline()
+	internal val pipeline = PSD2LivePipeline()
 	private val preferences by lazy { Preferences.userNodeForPackage(PSD2LiveViewModel::class.java) }
 	private var agentWorkspace: AgentWorkspace? = null
     private val projectSession = io.github.psd2live.project.ProjectSession(this)
@@ -247,6 +262,7 @@ class PSD2LiveViewModel : AutoCloseable {
     internal fun installProjectState(state: PSD2LiveState) {
         previewRebuildJob?.cancel()
         activeWorkJob?.cancel()
+        canvasEditor.resetPaintSession()
         _state.value = state.copy(projectDirty = false, projectOpenGeneration = _state.value.projectOpenGeneration + 1)
     }
     private val pendingProjectSaves = java.util.concurrent.atomic.AtomicInteger()
@@ -290,9 +306,9 @@ class PSD2LiveViewModel : AutoCloseable {
         commitEditorChange()
     }
 
-    private fun commitEditorChange() {
+    private fun commitEditorChange(summary: String? = null) {
         if (_state.value.analysis == null) return
-        (agentWorkspace as? io.github.psd2live.agent.ViewModelAgentWorkspace)?.editorChanged()
+        (agentWorkspace as? io.github.psd2live.agent.ViewModelAgentWorkspace)?.editorChanged(summary)
     }
     fun editHistoryAnnotation(id: String, title: String, note: String, hidden: Boolean) {
         require(_state.value.historySnapshot?.nodes?.any { it.id == id } == true)
@@ -1882,6 +1898,7 @@ class PSD2LiveViewModel : AutoCloseable {
 					)
 				}
 				refreshSdkSession(preview)
+                canvasEditor.resetPaintSession()
                 (agentWorkspace as? io.github.psd2live.agent.ViewModelAgentWorkspace)?.importedPsd()
                 _state.update { it.copy(isAnalyzing = false) }
 			} catch (failure: Throwable) {
@@ -2149,6 +2166,7 @@ class PSD2LiveViewModel : AutoCloseable {
         settings: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap()),
 	): Boolean {
 		previewRebuildJob?.cancel()
+		canvasEditor.resetPaintSession()
 		var applied = false
 		_state.update { current ->
 			applied = false
@@ -2189,6 +2207,8 @@ class PSD2LiveViewModel : AutoCloseable {
 	}
 
 	internal fun loadAgentWorkspacePreview(preview: RigPreviewModel) {
+		canvasEditor.resetPaintSession()
+		_state.update { it.copy(previewModel = preview, analysis = preview.analysis, previewModelDirty = false) }
 		refreshSdkSession(preview)
 	}
 

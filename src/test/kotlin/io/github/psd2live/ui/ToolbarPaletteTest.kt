@@ -59,4 +59,29 @@ class ToolbarPaletteTest {
             assertEquals(tools.size, tools.distinct().size, "$mode lists a tool in two groups")
         }
     }
+
+    @Test
+    fun modeOrderIsSelectDeformEditPaint() {
+        assertEquals(
+            listOf(EditHierarchyMode.SELECT, EditHierarchyMode.DEFORM, EditHierarchyMode.EDIT, EditHierarchyMode.PAINT),
+            EditHierarchyMode.entries,
+            "Mode order must strictly be SELECT, DEFORM, EDIT, PAINT"
+        )
+    }
+
+    @Test
+    fun createDeformPathIsInEditAndNotDeform() {
+        val deformTools = toolbarGroups(EditHierarchyMode.DEFORM).flatten()
+        val editTools = toolbarGroups(EditHierarchyMode.EDIT).flatten()
+        assertTrue(CanvasTool.CREATE_DEFORM_PATH !in deformTools, "CREATE_DEFORM_PATH must NOT appear in DEFORM mode")
+        assertTrue(CanvasTool.CREATE_DEFORM_PATH in editTools, "CREATE_DEFORM_PATH must appear in EDIT mode")
+    }
+
+    @Test
+    fun paintModeOffersAllPaintTools() {
+        val paintTools = toolbarGroups(EditHierarchyMode.PAINT).flatten()
+        for (tool in PAINT_TOOLS) {
+            assertTrue(tool in paintTools, "PAINT mode must offer ${tool.name}")
+        }
+    }
 }

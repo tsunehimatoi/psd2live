@@ -6,6 +6,7 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.runtime.*
@@ -17,12 +18,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
@@ -36,6 +40,9 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -57,6 +64,7 @@ import io.github.psd2live.ui.theme.ToolColors
 import io.github.psd2live.ui.theme.frostedGlass
 import io.github.psd2live.ui.theme.frostedGlassTopBar
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import org.umamo.edit.MeshTopology
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
@@ -71,11 +79,12 @@ internal fun BoxScope.CanvasEditorOverlay(
     val colors = LocalToolColors.current
     val target = editor.target()
     val isPathTool = editor.tool == CanvasTool.CREATE_DEFORM_PATH || editor.drawingPath || (editor.hierarchyMode == EditHierarchyMode.DEFORM && editor.paths().isNotEmpty())
+    val textMeasurer = rememberTextMeasurer()
 
     Canvas(Modifier.fillMaxSize()) {
         val currentTarget = editor.target() ?: target
-        // 1. Mesh wireframe & vertices when in DEFORM or STRUCTURE on a mesh
-        if (editor.hierarchyMode != EditHierarchyMode.OBJECT && currentTarget != null && currentTarget.kind == "mesh") {
+        // 1. Mesh wireframe & vertices when in DEFORM or EDIT on a mesh
+        if ((editor.hierarchyMode == EditHierarchyMode.DEFORM || editor.hierarchyMode == EditHierarchyMode.EDIT) && currentTarget != null && currentTarget.kind == "mesh") {
             val pts = editor.screen(currentTarget.geometry.points, currentTarget, viewport)
             val brushWeights = editor.activeBrushWeights
 
@@ -190,8 +199,8 @@ internal fun BoxScope.CanvasEditorOverlay(
             }
         }
 
-        // 2. Warp deformer or Rotation deformer when in DEFORM or STRUCTURE
-        if (editor.hierarchyMode != EditHierarchyMode.OBJECT && target != null && (target.kind == "warp" || target.kind == "rotation")) {
+        // 2. Warp deformer or Rotation deformer when in DEFORM or EDIT
+        if ((editor.hierarchyMode == EditHierarchyMode.DEFORM || editor.hierarchyMode == EditHierarchyMode.EDIT) && target != null && (target.kind == "warp" || target.kind == "rotation")) {
             val pts = editor.screen(target.geometry.points, target, viewport)
             if (target.kind == "rotation") {
                 if (pts.size >= 2) {
@@ -343,7 +352,7 @@ internal fun BoxScope.CanvasEditorOverlay(
         // 3b. Object mode: the selection, outlined in the colour of the part it is. Object mode has no
         //     transform box, so this outline is the whole of the selection feedback — it is what tells a
         //     picked layer apart from the ones merely drawn, and it carries across a multi-select.
-        if (editor.hierarchyMode == EditHierarchyMode.OBJECT && editor.tool == CanvasTool.SELECT) {
+        if ((editor.hierarchyMode == EditHierarchyMode.SELECT || (editor.hierarchyMode == EditHierarchyMode.PAINT && editor.tool == CanvasTool.SELECT)) && editor.tool == CanvasTool.SELECT) {
             editor.objects.forEach { layerId ->
                 val item = editor.target(editor.model, layerId, null)
                 val points = item?.let { editor.screen(it.geometry.points, it, viewport) }.orEmpty()
@@ -356,6 +365,144 @@ internal fun BoxScope.CanvasEditorOverlay(
                     drawRect(color.copy(alpha = 0.08f), origin, extent)
                     drawRect(color, origin, extent, style = Stroke(1.6f))
                 }
+            }
+        }
+
+        // 3c. Paint mode: live stroke & shape preview while dragging
+        if (editor.hierarchyMode == EditHierarchyMode.PAINT && editor.isPainting) {
+            val col = editor.paintColor.copy(alpha = editor.paintOpacity)
+            val strokeWidth = (editor.paintSize * viewport.scale.toFloat()).coerceAtLeast(1f)
+
+            // The tips draw nothing of their own: the pixels are already on the layer, with exactly the
+            // hardness and opacity that were asked for, and anything laid over them would misreport
+            // both. Only a shape - which lands when its second corner does - is previewed here.
+            if (editor.tool == CanvasTool.PAINT_SHAPE && editor.paintStrokeStart != null && editor.paintStrokeCurrent != null) {
+                val s = editor.paintStrokeStart!!
+                val c = editor.paintStrokeCurrent!!
+                val fill = editor.paintShapeFilled && editor.paintShape.canFill
+                when (editor.paintShape) {
+                    PaintShape.LINE -> {
+                        drawLine(col, s, c, strokeWidth = strokeWidth, cap = StrokeCap.Round)
+                    }
+                    PaintShape.RECTANGLE -> {
+                        val l = minOf(s.x, c.x)
+                        val t = minOf(s.y, c.y)
+                        val w = maxOf(1f, kotlin.math.abs(c.x - s.x))
+                        val h = maxOf(1f, kotlin.math.abs(c.y - s.y))
+                        if (fill) drawRect(col, Offset(l, t), Size(w, h))
+                        else drawRect(col, Offset(l, t), Size(w, h), style = Stroke(strokeWidth))
+                    }
+                    PaintShape.ELLIPSE -> {
+                        val l = minOf(s.x, c.x)
+                        val t = minOf(s.y, c.y)
+                        val w = maxOf(1f, kotlin.math.abs(c.x - s.x))
+                        val h = maxOf(1f, kotlin.math.abs(c.y - s.y))
+                        if (fill) drawOval(col, Offset(l, t), Size(w, h))
+                        else drawOval(col, Offset(l, t), Size(w, h), style = Stroke(strokeWidth))
+                    }
+                }
+            }
+        }
+
+        // 3d. Paint mode: the tip under the cursor, Photoshop style - the outer ring is the brush, the
+        // inner one the part of it that stays solid, and while the tip is being retuned the falloff
+        // between them is painted out in the stroke's own colour and opacity.
+        // While a pick is running the sampling ring is the cursor, and the tip ring would only argue
+        // with it about where the pointer is.
+        editor.cursor?.takeIf { editor.paintBrushActive && !editor.isSampling }?.let { cur ->
+            // The tip is the one description of the mark: the ring is its radius, the inner circle its
+            // core, and the falloff between them is the profile the stroke is rasterized with - so what
+            // the cursor promises is what the pixels do. The eraser draws no colour of its own, so its
+            // falloff is shown in the neutral ring colour instead.
+            val tip = editor.paintTip()
+            val scale = viewport.scale.toFloat()
+            val r = (tip.radius * scale).coerceAtLeast(1f)
+            val tint = if (editor.tool == CanvasTool.PAINT_ERASER) colors.textPrimary else editor.paintColor
+            if (editor.adjustingBrush) {
+                val samples = 24
+                val stops = Array(samples + 1) { i ->
+                    val t = i / samples.toFloat()
+                    t to tint.copy(alpha = tip.alphaAt(t * tip.radius) * editor.paintOpacity * 0.55f)
+                }
+                drawCircle(
+                    brush = Brush.radialGradient(colorStops = stops, center = cur, radius = r),
+                    radius = r,
+                    center = cur,
+                )
+            }
+            drawCircle(color = Color.Black.copy(alpha = 0.7f), radius = r, center = cur, style = Stroke(3f))
+            drawCircle(color = tint.copy(alpha = 0.85f), radius = r, center = cur, style = Stroke(1.2f))
+            val core = tip.core * scale
+            if (tip.hardness < 1f && core > 1.5f) {
+                drawCircle(color = colors.accent.copy(alpha = 0.6f), radius = core, center = cur, style = Stroke(1f))
+            }
+        }
+
+        // 3d-bis. Picking a colour: the sampling ring, Photoshop's - the top half is what is under the
+        // pointer, the bottom half the colour in hand, so a pick can be judged before it is taken. The
+        // ring follows the pointer for the whole gesture, which is what makes an eyedropper usable at
+        // all on art whose every pixel is a slightly different shade.
+        val sampling = editor.cursor != null && editor.hierarchyMode == EditHierarchyMode.PAINT &&
+            (editor.isSampling || editor.tool == CanvasTool.PAINT_EYEDROPPER)
+        if (sampling) {
+            val cur = editor.cursor!!
+            val sampled = editor.sampleColorAt(cur, viewport)
+            val r = 9f
+            val ring = Rect(cur - Offset(r, r), Size(r * 2f, r * 2f))
+            if (sampled != null) {
+                drawArc(
+                    color = sampled,
+                    startAngle = 180f,
+                    sweepAngle = 180f,
+                    useCenter = true,
+                    topLeft = ring.topLeft,
+                    size = ring.size,
+                )
+            }
+            drawArc(
+                color = editor.paintColor,
+                startAngle = 0f,
+                sweepAngle = 180f,
+                useCenter = true,
+                topLeft = ring.topLeft,
+                size = ring.size,
+            )
+            drawCircle(color = Color.Black.copy(alpha = 0.75f), radius = r, center = cur, style = Stroke(3f))
+            drawCircle(color = Color.White.copy(alpha = 0.9f), radius = r, center = cur, style = Stroke(1f))
+            // The pixel being read, and the reading itself: a colour is only useful if it can be quoted.
+            drawCircle(color = Color.White.copy(alpha = 0.9f), radius = 1.5f, center = cur, style = Stroke(2f))
+            drawCircle(color = sampled ?: Color.Transparent, radius = 1.5f, center = cur)
+            val label = sampled?.let { argbHex(it) } ?: tr("editor.paint.nothingToPick")
+            val layout = textMeasurer.measure(
+                text = label,
+                style = TextStyle(color = colors.textPrimary, fontSize = 11.sp, fontFamily = FontFamily.Monospace),
+            )
+            val origin = Offset(cur.x + 16f, cur.y - 12f)
+            val extent = Size(layout.size.width + 12f, layout.size.height + 6f)
+            drawRect(colors.panelElevated.copy(alpha = 0.94f), origin, extent)
+            drawRect(colors.divider, origin, extent, style = Stroke(1f))
+            drawText(layout, topLeft = Offset(origin.x + 6f, origin.y + 3f))
+        }
+
+        // 3e. The number the Alt + right-drag gesture is moving, next to the tip it is moving
+        if (editor.adjustingBrush && editor.paintBrushActive && editor.cursor != null) {
+            val cur = editor.cursor!!
+            val readout = when (editor.brushAxis) {
+                BrushAdjustAxis.RADIUS -> tr("editor.radius") to "${editor.paintSize.roundToInt()} px"
+                BrushAdjustAxis.HARDNESS -> tr("editor.hardness") to "${(editor.paintHardness * 100f).roundToInt()} %"
+                BrushAdjustAxis.OPACITY -> tr("editor.opacity") to "${(editor.paintOpacity * 100f).roundToInt()} %"
+                else -> null
+            }
+            if (readout != null) {
+                val layout = textMeasurer.measure(
+                    text = "${readout.first}  ${readout.second}",
+                    style = TextStyle(color = colors.textPrimary, fontSize = 11.sp),
+                )
+                val origin = Offset(cur.x + 16f, cur.y - 12f)
+                val extent = Size(layout.size.width + 12f, layout.size.height + 6f)
+                drawRect(colors.panelElevated.copy(alpha = 0.94f), origin, extent)
+                drawRect(colors.divider, origin, extent, style = Stroke(1f))
+                drawText(layout, topLeft = Offset(origin.x + 6f, origin.y + 3f))
             }
         }
 
@@ -601,8 +748,8 @@ internal fun BoxScope.CanvasEditorOverlay(
         editor.error ?: if (editor.busy) tr("editor.saving") else tr("editor.selectionCount", editor.objects.size, editor.vertices.size) + "   ·   " + tr(when {
             editor.tool == CanvasTool.CREATE_DEFORM_PATH -> "editor.pathHint"
             editor.tool == CanvasTool.INFLATE -> "editor.inflateHint"
-            editor.tool == CanvasTool.BRUSH || editor.tool == CanvasTool.SMOOTH -> "editor.brushHint"
-            editor.hierarchyMode == EditHierarchyMode.OBJECT && editor.tool == CanvasTool.SELECT -> "editor.objectHint"
+            editor.hierarchyMode == EditHierarchyMode.PAINT -> "editor.paintHint"
+            editor.hierarchyMode == EditHierarchyMode.SELECT && editor.tool == CanvasTool.SELECT -> "editor.objectHint"
             editor.tool == CanvasTool.SELECT && editor.drawsTransformBox -> "editor.transformHint"
             editor.tool == CanvasTool.CREATE_WARP -> "editor.createWarpHint"
             editor.tool == CanvasTool.CREATE_ROTATION -> "editor.createRotationHint"
@@ -710,8 +857,13 @@ private fun BoxScope.CanvasToolBar(
                     textAlpha = textAlpha,
                     textOffset = textOffset,
                     isBusy = editor.busy,
-                    keyLabel = keymap.labelFor(tool.action).orEmpty(),
+                    // The shape group answers to its shapes' chords, so its row shows the one that is in
+                    // hand: pressing it is how the row is reached.
+                    keyLabel = keymap.labelFor(
+                        if (tool == CanvasTool.PAINT_SHAPE) editor.paintShape.action else tool.action
+                    ).orEmpty(),
                     brushShape = if (tool == CanvasTool.BRUSH) editor.brushShape else null,
+                    paintShape = if (tool == CanvasTool.PAINT_SHAPE) editor.paintShape else null,
                     onClick = {
                         editor.activateTool(tool)
                         focus()
@@ -743,17 +895,56 @@ private fun BoxScope.CanvasToolBar(
                 // Three brush shapes placed at the bottom of the peer toolbar with text
                 BrushShape.entries.forEach { shape ->
                     ShapeItemRow(
-                        shape = shape,
+                        label = tr(shape.labelKey),
                         isSelected = editor.brushShape == shape,
                         isToolbarExpanded = animatedWidth > 42.dp,
                         textAlpha = textAlpha,
                         textOffset = textOffset,
                         isBusy = editor.busy,
+                        icon = { color -> BrushShapeIcon(shape = shape, color = color, size = 14.dp) },
                         onClick = {
                             editor.brushShape = shape
                             if (editor.tool !in listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE)) {
                                 editor.activateTool(CanvasTool.BRUSH)
                             }
+                            focus()
+                        },
+                    )
+                }
+            }
+        }
+
+        // The shape tool's three faces live under it, exactly the way the deform brush carries its own:
+        // one row in the palette for the tool, and the shapes it draws are what changes.
+        AnimatedVisibility(
+            visible = editor.hierarchyMode == EditHierarchyMode.PAINT && editor.tool == CanvasTool.PAINT_SHAPE,
+            enter = expandVertically(animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)) + fadeIn(animationSpec = tween(150)),
+            exit = shrinkVertically(animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)) + fadeOut(animationSpec = tween(120)),
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                        .height(1.dp)
+                        .background(colors.border.copy(alpha = 0.45f))
+                )
+
+                PaintShape.entries.forEach { shape ->
+                    ShapeItemRow(
+                        label = tr(shape.labelKey),
+                        keyLabel = keymap.labelFor(shape.action).orEmpty(),
+                        isSelected = editor.paintShape == shape,
+                        isToolbarExpanded = animatedWidth > 42.dp,
+                        textAlpha = textAlpha,
+                        textOffset = textOffset,
+                        isBusy = editor.busy,
+                        icon = { color -> PaintShapeIcon(shape = shape, color = color, iconSize = 14.dp) },
+                        onClick = {
+                            editor.selectPaintShape(shape)
                             focus()
                         },
                     )
@@ -773,6 +964,7 @@ private fun ToolItemRow(
     isBusy: Boolean,
     keyLabel: String,
     brushShape: BrushShape? = null,
+    paintShape: PaintShape? = null,
     onClick: () -> Unit,
 ) {
     val colors = LocalToolColors.current
@@ -814,6 +1006,7 @@ private fun ToolItemRow(
                     else -> colors.textMuted
                 },
                 brushShape = brushShape,
+                paintShape = paintShape,
             )
         }
 
@@ -869,21 +1062,25 @@ private fun ToolItemRow(
     }
 }
 
+/**
+ * One row of a tool's shape menu: the deform brush's three below the brush, the paint shape tool's three
+ * below it. The icon is whatever the caller draws for the shape, in the colour the row's state calls for.
+ */
 @Composable
 private fun ShapeItemRow(
-    shape: BrushShape,
+    label: String,
     isSelected: Boolean,
     isToolbarExpanded: Boolean,
     textAlpha: Float,
-    textOffset: androidx.compose.ui.unit.Dp,
+    textOffset: Dp,
     isBusy: Boolean,
+    icon: @Composable (Color) -> Unit,
+    keyLabel: String = "",
     onClick: () -> Unit,
 ) {
     val colors = LocalToolColors.current
     val itemInteractionSource = remember { MutableInteractionSource() }
     val isItemHovered by itemInteractionSource.collectIsHoveredAsState()
-
-    val label = tr(shape.labelKey)
 
     val bg = when {
         isSelected -> colors.accent.copy(alpha = 0.24f)
@@ -910,14 +1107,12 @@ private fun ShapeItemRow(
             modifier = Modifier.size(28.dp),
             contentAlignment = Alignment.Center,
         ) {
-            BrushShapeIcon(
-                shape = shape,
-                color = when {
+            icon(
+                when {
                     isSelected -> colors.accent
                     isItemHovered -> colors.textPrimary
                     else -> colors.textMuted
-                },
-                size = 14.dp,
+                }
             )
         }
 
@@ -944,13 +1139,50 @@ private fun ShapeItemRow(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                if (keyLabel.isNotEmpty()) {
+                    Text(
+                        text = keyLabel,
+                        color = colors.textMuted.copy(alpha = 0.75f),
+                        fontSize = 9.5.sp,
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1,
+                        modifier = Modifier.padding(end = 4.dp),
+                    )
+                }
             }
         }
     }
 }
 
+/** The shape tool's icon: whichever of the three faces is in hand. */
 @Composable
-private fun ToolIcon(tool: CanvasTool, color: Color, brushShape: BrushShape? = null) {
+private fun PaintShapeIcon(shape: PaintShape, color: Color, iconSize: Dp = 18.dp) {
+    Canvas(Modifier.size(iconSize)) { drawPaintShape(shape, color) }
+}
+
+/** The shape, drawn in an 18-unit box scaled to whatever the caller's canvas is. */
+private fun DrawScope.drawPaintShape(shape: PaintShape, color: Color) {
+    val s = size.width / 18f
+    when (shape) {
+        PaintShape.LINE -> {
+            drawLine(color, Offset(3 * s, 15 * s), Offset(15 * s, 3 * s), 1.3f * s)
+            drawCircle(color, 1.5f * s, Offset(3 * s, 15 * s))
+            drawCircle(color, 1.5f * s, Offset(15 * s, 3 * s))
+        }
+        PaintShape.RECTANGLE ->
+            drawRect(color, Offset(3 * s, 4 * s), Size(12 * s, 10 * s), style = Stroke(1.3f * s))
+        PaintShape.ELLIPSE ->
+            drawOval(color, Offset(3 * s, 4 * s), Size(12 * s, 10 * s), style = Stroke(1.3f * s))
+    }
+}
+
+@Composable
+private fun ToolIcon(
+    tool: CanvasTool,
+    color: Color,
+    brushShape: BrushShape? = null,
+    paintShape: PaintShape? = null,
+) {
     Canvas(Modifier.size(18.dp)) {
         val s = size.width / 18f
         fun p(x: Float, y: Float) = Offset(x * s, y * s)
@@ -1027,6 +1259,71 @@ private fun ToolIcon(tool: CanvasTool, color: Color, brushShape: BrushShape? = n
                 line(7.5f, 7f, 10.5f, 7f)
                 line(7.5f, 11f, 10.5f, 11f)
             }
+            CanvasTool.PAINT_BRUSH -> {
+                line(6f, 12f, 15f, 3f)
+                line(7.5f, 13.5f, 16.5f, 4.5f)
+                line(15f, 3f, 16.5f, 4.5f)
+                val tip = Path().apply {
+                    moveTo(6f * s, 12f * s)
+                    lineTo(3f * s, 15f * s)
+                    cubicTo(2f * s, 16f * s, 4f * s, 17f * s, 5.5f * s, 15.5f * s)
+                    lineTo(7.5f * s, 13.5f * s)
+                    close()
+                }
+                drawPath(tip, color, style = Stroke(1.3f * s))
+            }
+            CanvasTool.PAINT_PENCIL -> {
+                line(5f, 13f, 14f, 4f)
+                line(7f, 15f, 16f, 6f)
+                line(14f, 4f, 16f, 6f)
+                val point = Path().apply {
+                    moveTo(5f * s, 13f * s)
+                    lineTo(2.5f * s, 15.5f * s)
+                    lineTo(7f * s, 15f * s)
+                    close()
+                }
+                drawPath(point, color, style = Stroke(1.3f * s))
+                drawCircle(color, 0.8f * s, p(2.8f, 15.2f))
+            }
+            CanvasTool.PAINT_ERASER -> {
+                val eraser = Path().apply {
+                    moveTo(4f * s, 10f * s)
+                    lineTo(10f * s, 4f * s)
+                    lineTo(14f * s, 8f * s)
+                    lineTo(8f * s, 14f * s)
+                    close()
+                }
+                drawPath(eraser, color, style = Stroke(1.3f * s))
+                line(7f, 7f, 11f, 11f)
+            }
+            CanvasTool.PAINT_BUCKET -> {
+                val bucket = Path().apply {
+                    moveTo(5f * s, 7f * s)
+                    lineTo(11f * s, 4f * s)
+                    lineTo(14f * s, 10f * s)
+                    lineTo(8f * s, 13f * s)
+                    close()
+                }
+                drawPath(bucket, color, style = Stroke(1.3f * s))
+                drawCircle(color, 1.2f * s, p(4f, 14f))
+            }
+            CanvasTool.PAINT_EYEDROPPER -> {
+                line(6f, 12f, 12f, 6f)
+                line(8f, 14f, 14f, 8f)
+                line(12f, 6f, 14f, 8f)
+                val tip = Path().apply {
+                    moveTo(6f * s, 12f * s)
+                    lineTo(3f * s, 15f * s)
+                    lineTo(8f * s, 14f * s)
+                    close()
+                }
+                drawPath(tip, color, style = Stroke(1.2f * s))
+                drawCircle(color, 1.8f * s, p(14.5f, 5.5f))
+            }
+            CanvasTool.PAINT_SHAPE -> {
+                // The row carries the face in hand, the way the deform brush's row carries its shape.
+                drawPaintShape(paintShape ?: PaintShape.LINE, color)
+            }
         }
     }
 }
@@ -1036,7 +1333,7 @@ private fun ModeIcon(mode: EditHierarchyMode, color: Color) {
     Canvas(Modifier.size(14.dp)) {
         val s = size.width / 14f
         when (mode) {
-            EditHierarchyMode.OBJECT -> {
+            EditHierarchyMode.SELECT -> {
                 drawRect(color, Offset(2 * s, 2 * s), Size(10 * s, 10 * s), style = Stroke(1.3f * s))
                 listOf(2f to 2f, 12f to 2f, 2f to 12f, 12f to 12f).forEach { (x, y) ->
                     drawCircle(color, 1.4f * s, Offset(x * s, y * s))
@@ -1051,7 +1348,7 @@ private fun ModeIcon(mode: EditHierarchyMode, color: Color) {
                 drawCircle(color, 1.3f * s, Offset(2 * s, 10 * s))
                 drawCircle(color, 1.3f * s, Offset(12 * s, 4 * s))
             }
-            EditHierarchyMode.STRUCTURE -> {
+            EditHierarchyMode.EDIT -> {
                 val path = Path().apply {
                     moveTo(7 * s, 2 * s)
                     lineTo(12 * s, 11 * s)
@@ -1063,6 +1360,22 @@ private fun ModeIcon(mode: EditHierarchyMode, color: Color) {
                 drawCircle(color, 1.3f * s, Offset(7 * s, 2 * s))
                 drawCircle(color, 1.3f * s, Offset(12 * s, 11 * s))
                 drawCircle(color, 1.3f * s, Offset(2 * s, 11 * s))
+            }
+            EditHierarchyMode.PAINT -> {
+                val handle = Path().apply {
+                    moveTo(12 * s, 2 * s)
+                    lineTo(10 * s, 4 * s)
+                    lineTo(7 * s, 7 * s)
+                    lineTo(5 * s, 9 * s)
+                    lineTo(3 * s, 12 * s)
+                    lineTo(2 * s, 12 * s)
+                    lineTo(2 * s, 11 * s)
+                    lineTo(5 * s, 7 * s)
+                    lineTo(8 * s, 4 * s)
+                    close()
+                }
+                drawPath(handle, color, style = Stroke(1.3f * s, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawCircle(color, 1.2f * s, Offset(2.5f * s, 11.5f * s))
             }
         }
     }
@@ -1111,9 +1424,10 @@ private fun BoxScope.HierarchyModeBar(
         EditHierarchyMode.entries.forEach { mode ->
             val isSelected = editor.hierarchyMode == mode
             val label = when (mode) {
-                EditHierarchyMode.OBJECT -> tr("editor.mode.object")
+                EditHierarchyMode.SELECT -> tr("editor.mode.select")
                 EditHierarchyMode.DEFORM -> tr("editor.mode.deform")
-                EditHierarchyMode.STRUCTURE -> tr("editor.mode.structure")
+                EditHierarchyMode.EDIT -> tr("editor.mode.edit")
+                EditHierarchyMode.PAINT -> tr("editor.mode.paint")
             }
             ModeBarChip(
                 mode = mode,
@@ -1168,9 +1482,9 @@ private fun BoxScope.HierarchyModeBar(
             }
         }
 
-        // Structure mode tools
+        // Edit mode tools
         AnimatedVisibility(
-            visible = editor.hierarchyMode == EditHierarchyMode.STRUCTURE,
+            visible = editor.hierarchyMode == EditHierarchyMode.EDIT,
             enter = expandHorizontally(
                 animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
                 expandFrom = Alignment.Start,
@@ -1215,9 +1529,92 @@ private fun BoxScope.HierarchyModeBar(
             }
         }
 
-        // Object mode target badge
+        // Paint mode quick controls
         AnimatedVisibility(
-            visible = editor.hierarchyMode == EditHierarchyMode.OBJECT && target != null,
+            visible = editor.hierarchyMode == EditHierarchyMode.PAINT,
+            enter = expandHorizontally(
+                animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+                expandFrom = Alignment.Start,
+            ) + fadeIn(animationSpec = tween(160)),
+            exit = shrinkHorizontally(
+                animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
+                shrinkTowards = Alignment.Start,
+            ) + fadeOut(animationSpec = tween(120)),
+        ) {
+            // The session is opened here rather than in composition: the controls below only ever read
+            // it, and one opened while the toolbar draws would be a state write during composition.
+            LaunchedEffect(editor.state.selectedLayerId) {
+                if (editor.hierarchyMode == EditHierarchyMode.PAINT) editor.ensurePaintSession()
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 2.dp)
+                        .height(14.dp)
+                        .width(1.dp)
+                        .background(colors.border.copy(alpha = 0.45f))
+                )
+                PaintColorChip(
+                    color = editor.paintColor,
+                    onColorChanged = { editor.paintColor = it },
+                    modifier = Modifier.size(18.dp),
+                    popupOffset = 24.dp,
+                    shape = CircleShape,
+                    border = BorderStroke(1.5.dp, colors.accent),
+                )
+                val currentSize = editor.paintSize
+                Text(
+                    text = "${currentSize.toInt()}px",
+                    fontSize = 10.5.sp,
+                    color = colors.textMuted,
+                    modifier = Modifier.padding(horizontal = 2.dp),
+                )
+                val session = editor.paintSession
+                if (session != null) {
+                    StructureActionChip(
+                        text = tr("editor.undo"),
+                        onClick = { editor.undoPaint(); focus() },
+                        enabled = session.canUndo(),
+                    )
+                    StructureActionChip(
+                        text = tr("editor.redo"),
+                        onClick = { editor.redoPaint(); focus() },
+                        enabled = session.canRedo(),
+                    )
+                    StructureActionChip(
+                        text = tr("editor.paintClear"),
+                        onClick = { editor.clearCurrentLayerPaint(); focus() },
+                    )
+                    val isDirty = session.isDirty
+                    StructureActionChip(
+                        text = if (isDirty) tr("editor.paint.applyCount", session.strokeCount) else tr("editor.paint.apply"),
+                        onClick = { editor.promptCommitPaintSession(); focus() },
+                        enabled = isDirty,
+                        primary = isDirty,
+                    )
+                    if (isDirty) {
+                        StructureActionChip(
+                            text = tr("editor.paint.discard"),
+                            onClick = { editor.discardPaintSession(); focus() },
+                        )
+                    }
+                } else {
+                    Text(
+                        text = tr("editor.paintSelectLayerHint"),
+                        fontSize = 10.sp,
+                        color = colors.textMuted,
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                    )
+                }
+            }
+        }
+
+        // Select mode target badge
+        AnimatedVisibility(
+            visible = editor.hierarchyMode == EditHierarchyMode.SELECT && target != null,
             enter = expandHorizontally(
                 animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
                 expandFrom = Alignment.Start,
@@ -1386,19 +1783,34 @@ private fun DeformLevelChip(
 private fun StructureActionChip(
     text: String,
     onClick: () -> Unit,
+    enabled: Boolean = true,
+    primary: Boolean = false,
 ) {
     val colors = LocalToolColors.current
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
 
+    val bg = when {
+        primary && enabled -> if (isHovered) colors.accent.copy(alpha = 0.9f) else colors.accent
+        isHovered && enabled -> colors.controlHover.copy(alpha = 0.7f)
+        else -> Color.Transparent
+    }
+    val textColor = when {
+        primary && enabled -> Color.White
+        !enabled -> colors.textMuted.copy(alpha = 0.4f)
+        isHovered -> colors.textPrimary
+        else -> colors.textMuted
+    }
+
     Row(
         modifier = Modifier
             .height(24.dp)
             .clip(RoundedCornerShape(4.dp))
-            .background(if (isHovered) colors.controlHover.copy(alpha = 0.7f) else Color.Transparent)
+            .background(bg)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
+                enabled = enabled,
                 onClick = onClick,
             )
             .padding(horizontal = 6.dp),
@@ -1406,8 +1818,9 @@ private fun StructureActionChip(
     ) {
         Text(
             text = text,
-            color = if (isHovered) colors.textPrimary else colors.textMuted,
+            color = textColor,
             fontSize = 11.sp,
+            fontWeight = if (primary) FontWeight.SemiBold else FontWeight.Normal,
             maxLines = 1,
         )
     }
@@ -1450,6 +1863,12 @@ private fun BrushShapeIcon(
             }
         }
     }
+}
+
+/** The colour as the string an artist would type: `#RRGGBB`, which is what a pick is quoted in. */
+private fun argbHex(color: Color): String {
+    val argb = color.toArgb()
+    return "#%02X%02X%02X".format((argb ushr 16) and 0xFF, (argb ushr 8) and 0xFF, argb and 0xFF)
 }
 
 /**

@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.Divider
 import androidx.compose.material.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -40,6 +41,7 @@ import androidx.compose.ui.unit.sp
 import io.github.psd2live.agent.AgentHistoryNodeSnapshot
 import io.github.psd2live.agent.AgentHistorySnapshot
 import io.github.psd2live.i18n.tr
+import io.github.psd2live.ui.PaintSession
 import io.github.psd2live.ui.components.CompactButton
 import io.github.psd2live.ui.components.CompactCheckbox
 import io.github.psd2live.ui.components.CompactTextField
@@ -301,6 +303,8 @@ fun HistoryTreeView(
 						enabled = !state.canvasEditBusy,
 						onCheckout = { viewModel.checkoutHistoryNode(it) },
 						onCollapse = { isOperationListOpen = false },
+						paintSession = viewModel.canvasEditor.paintSession,
+						onJumpToPaintStroke = { viewModel.canvasEditor.jumpToPaintStroke(it) },
 					)
 				}
 
@@ -738,6 +742,8 @@ private fun OperationListSidebar(
 	enabled: Boolean,
 	onCheckout: (String) -> Unit,
 	onCollapse: () -> Unit,
+	paintSession: PaintSession? = null,
+	onJumpToPaintStroke: ((Int) -> Unit)? = null,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -778,6 +784,88 @@ private fun OperationListSidebar(
 				)
 			}
 			CompactButton(text = "‹", onClick = onCollapse, height = 18.dp)
+		}
+
+		if (paintSession != null) {
+			Column(
+				modifier = Modifier
+					.fillMaxWidth()
+					.background(colors.panelBackground.copy(alpha = 0.5f))
+					.border(BorderStroke(1.dp, colors.accent.copy(alpha = 0.4f)))
+			) {
+				Row(
+					modifier = Modifier
+						.fillMaxWidth()
+						.background(colors.accent.copy(alpha = 0.12f))
+						.padding(horizontal = 8.dp, vertical = 5.dp),
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.SpaceBetween,
+				) {
+					Text(
+						text = tr("editor.paint.session", paintSession.layerName),
+						style = typography.caption.copy(fontSize = 10.5.sp, fontWeight = FontWeight.Bold),
+						color = colors.accent,
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
+						modifier = Modifier.weight(1f),
+					)
+					Text(
+						text = tr("editor.paint.strokeCount", paintSession.strokeCount),
+						style = typography.monoSmall.copy(fontSize = 9.5.sp),
+						color = colors.textMuted,
+					)
+				}
+				LazyColumn(
+					modifier = Modifier
+						.fillMaxWidth()
+						.heightIn(max = 160.dp),
+				) {
+					itemsIndexed(paintSession.strokeRecords) { idx, record ->
+						val isCurrent = idx == paintSession.currentStrokeIndex
+						val isFuture = idx > paintSession.currentStrokeIndex
+						Row(
+							modifier = Modifier
+								.fillMaxWidth()
+								.height(22.dp)
+								.background(
+									when {
+										isCurrent -> colors.accent.copy(alpha = 0.25f)
+										else -> Color.Transparent
+									}
+								)
+								.clickable(enabled = enabled) {
+									onJumpToPaintStroke?.invoke(idx)
+								}
+								.padding(horizontal = 8.dp),
+							verticalAlignment = Alignment.CenterVertically,
+							horizontalArrangement = Arrangement.spacedBy(6.dp),
+						) {
+							Text(
+								text = if (idx == 0) "•" else "#$idx",
+								style = typography.monoSmall.copy(fontSize = 9.5.sp),
+								color = if (isCurrent) colors.accent else if (isFuture) colors.textMuted.copy(alpha = 0.5f) else colors.textMuted,
+								modifier = Modifier.width(22.dp),
+							)
+							Text(
+								text = record.name,
+								style = typography.body.copy(fontSize = 10.5.sp),
+								color = if (isCurrent) colors.textPrimary else if (isFuture) colors.textMuted.copy(alpha = 0.5f) else colors.textPrimary,
+								maxLines = 1,
+								overflow = TextOverflow.Ellipsis,
+								modifier = Modifier.weight(1f),
+							)
+							if (isCurrent) {
+								Box(
+									modifier = Modifier
+										.size(6.dp)
+										.background(colors.accent, CircleShape)
+								)
+							}
+						}
+					}
+				}
+			}
+			Divider(color = colors.divider, thickness = 1.dp)
 		}
 
 		LazyColumn(

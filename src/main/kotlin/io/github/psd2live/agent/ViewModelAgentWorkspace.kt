@@ -126,11 +126,11 @@ class ViewModelAgentWorkspace(
     }
 
     /** UI command boundary. Called after a semantic edit, never by the frame/animation loop. */
-    fun editorChanged() {
+    fun editorChanged(customSummary: String? = null) {
         if (viewModel.state.value.analysis == null) return
         synchronized(historyLock) {
             val state = viewModel.state.value
-            val tree = synchronizeHistory(projectId(state), revisionId(state), documentFrom(state), commitEditorChange = true)
+            val tree = synchronizeHistory(projectId(state), revisionId(state), documentFrom(state), commitEditorChange = true, customSummary = customSummary)
             viewModel.updateHistorySnapshot(history())
         }
     }
@@ -1497,6 +1497,7 @@ class ViewModelAgentWorkspace(
 		revisionId: String,
 		document: AgentWorkspaceDocument,
         commitEditorChange: Boolean = false,
+        customSummary: String? = null,
 	): WorkspaceHistoryTree<AgentWorkspaceDocument> {
 		var changed = false
 		if (historyTree == null || historyProjectId != projectId) {
@@ -1523,7 +1524,7 @@ class ViewModelAgentWorkspace(
 				snapshot = document,
 				revisionId = revisionId,
 				snapshotHash = revisionId,
-				summary = "Workspace changed in the editor",
+				summary = customSummary ?: "Workspace changed in the editor",
 				actor = "user",
 			)
 			changed = true

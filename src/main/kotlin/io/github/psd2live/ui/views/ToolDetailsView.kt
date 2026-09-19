@@ -43,16 +43,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.BrushShape
+import io.github.psd2live.ui.PaintShape
 import io.github.psd2live.ui.CanvasEditor
+import io.github.psd2live.ui.CanvasTarget
 import io.github.psd2live.ui.CanvasTool
 import io.github.psd2live.ui.SelectionStyle
 import io.github.psd2live.ui.components.CompactButton
 import io.github.psd2live.ui.components.CompactNumberSpinner
 import io.github.psd2live.ui.components.CompactSectionHeader
 import io.github.psd2live.ui.components.CompactToggleChip
+import io.github.psd2live.ui.components.PaintColorChip
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.theme.LocalToolColors
+import io.github.psd2live.ui.theme.ToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
 import kotlin.math.abs
 
@@ -196,7 +200,7 @@ internal fun ToolDetailsView(
         when (editor.tool) {
             CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT -> {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (editor.hierarchyMode == io.github.psd2live.ui.EditHierarchyMode.STRUCTURE && target?.kind == "mesh") {
+                    if (editor.hierarchyMode == io.github.psd2live.ui.EditHierarchyMode.EDIT && target?.kind == "mesh") {
                         Text(
                             text = tr("editor.elementMode"),
                             style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
@@ -654,7 +658,11 @@ internal fun ToolDetailsView(
                     )
                 }
             }
-            else -> {}
+            CanvasTool.PAINT_BRUSH, CanvasTool.PAINT_PENCIL, CanvasTool.PAINT_ERASER,
+            CanvasTool.PAINT_BUCKET, CanvasTool.PAINT_EYEDROPPER,
+            CanvasTool.PAINT_SHAPE -> {
+                PaintToolDetailsColumn(editor, target)
+            }
         }
 
         Spacer(Modifier.weight(1f))
@@ -762,6 +770,304 @@ private fun PreciseTransformColumn(editor: CanvasEditor) {
                 text = tr("editor.apply"),
                 onClick = { editor.preciseTransform(first = rotateVal.toFloat(), rotateMode = true) },
                 enabled = editor.editable && editor.hasTransformSelection && rotateVal != 0.0,
+                height = 24.dp,
+            )
+        }
+    }
+}
+
+/**
+ * The opacity the tip lands at, on every tool that stamps one: the same number whichever of the three
+ * is in hand, and shown for each of them rather than only for the brush it is usually set on.
+ */
+@Composable
+private fun PaintOpacityRow(editor: CanvasEditor, colors: ToolColors) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(tr("editor.opacity"), color = colors.textMuted, fontSize = 11.sp, modifier = Modifier.width(42.dp))
+        CompactNumberSpinner(
+            value = (editor.paintOpacity * 100).toDouble(),
+            onValueChange = { editor.paintOpacity = (it.toFloat() / 100f).coerceIn(0.01f, 1f) },
+            modifier = Modifier.weight(1f),
+            min = 1.0, max = 100.0, step = 5.0, unit = "%", height = 24.dp
+        )
+    }
+}
+
+@Composable
+private fun PaintToolDetailsColumn(editor: CanvasEditor, target: CanvasTarget?) {
+    val colors = LocalToolColors.current
+    val typography = LocalToolTypography.current
+    val paintT = editor.paintTarget()
+    val layerId = editor.targetLayerId(paintT)
+    val layerName = layerId?.let { lid ->
+        editor.state.previewModel?.rig?.puppet?.drawables
+            ?.firstOrNull { editor.state.previewModel?.rig?.layerIdByDrawableId?.get(it.id.raw) == lid }
+            ?.name ?: lid
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Target layer status
+        Text(
+            text = tr("editor.paintTargetLayer"),
+            style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
+            color = colors.textPrimary,
+        )
+        if (paintT != null && layerId != null) {
+            Text(
+                text = layerName ?: layerId,
+                style = typography.caption.copy(fontSize = 11.sp),
+                color = colors.accent,
+                maxLines = 1,
+            )
+        } else {
+            Text(
+                text = tr("editor.paintSelectLayerHint"),
+                style = typography.caption.copy(fontSize = 10.5.sp),
+                color = colors.error,
+            )
+        }
+
+        Divider(color = colors.divider, thickness = 0.5.dp)
+
+        // Palette & Swatches
+        Text(
+            text = tr("editor.paintPalette"),
+            style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
+            color = colors.textPrimary,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            PaintColorChip(
+                color = editor.paintColor,
+                onColorChanged = { editor.paintColor = it },
+                modifier = Modifier.size(28.dp),
+                popupOffset = 34.dp,
+                border = BorderStroke(1.5.dp, colors.accent),
+            )
+            PaintColorChip(
+                color = editor.paintSecondaryColor,
+                onColorChanged = { editor.paintSecondaryColor = it },
+                modifier = Modifier.size(22.dp),
+                popupOffset = 28.dp,
+            )
+            CompactButton(
+                text = "⇄",
+                onClick = {
+                    val tmp = editor.paintColor
+                    editor.paintColor = editor.paintSecondaryColor
+                    editor.paintSecondaryColor = tmp
+                },
+                height = 24.dp,
+            )
+        }
+
+        // Swatches grid
+        val swatches = listOf(
+            Color(0xFF000000), Color(0xFFFFFFFF), Color(0xFF7F7F7F), Color(0xFFC3C3C3),
+            Color(0xFFED1C24), Color(0xFFFF7F27), Color(0xFFFFF200), Color(0xFF22B14C),
+            Color(0xFF00A2E8), Color(0xFF3F48CC), Color(0xFFA349A4), Color(0xFFFFAEC9),
+            Color(0xFFFFDFC4), Color(0xFFB97A57)
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            swatches.take(7).forEach { col ->
+                Box(
+                    modifier = Modifier
+                        .size(18.dp)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(col)
+                        .border(1.dp, if (editor.paintColor == col) colors.accent else colors.border, RoundedCornerShape(3.dp))
+                        .clickable { editor.paintColor = col }
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            swatches.drop(7).forEach { col ->
+                Box(
+                    modifier = Modifier
+                        .size(18.dp)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(col)
+                        .border(1.dp, if (editor.paintColor == col) colors.accent else colors.border, RoundedCornerShape(3.dp))
+                        .clickable { editor.paintColor = col }
+                )
+            }
+        }
+
+        Divider(color = colors.divider, thickness = 0.5.dp)
+
+        // Tool-specific parameter rows
+        when (editor.tool) {
+            CanvasTool.PAINT_BRUSH -> {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(tr("editor.radius"), color = colors.textMuted, fontSize = 11.sp, modifier = Modifier.width(42.dp))
+                    CompactNumberSpinner(
+                        value = editor.paintBrushSize.toDouble(),
+                        onValueChange = { editor.paintBrushSize = it.toFloat().coerceIn(1f, 256f) },
+                        modifier = Modifier.weight(1f),
+                        min = 1.0, max = 256.0, step = 1.0, unit = "px", height = 24.dp
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(tr("editor.hardness"), color = colors.textMuted, fontSize = 11.sp, modifier = Modifier.width(42.dp))
+                    CompactNumberSpinner(
+                        value = (editor.paintHardness * 100).toDouble(),
+                        onValueChange = { editor.paintHardness = (it.toFloat() / 100f).coerceIn(0f, 1f) },
+                        modifier = Modifier.weight(1f),
+                        min = 0.0, max = 100.0, step = 5.0, unit = "%", height = 24.dp
+                    )
+                }
+                PaintOpacityRow(editor, colors)
+            }
+            CanvasTool.PAINT_PENCIL -> {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(tr("editor.radius"), color = colors.textMuted, fontSize = 11.sp, modifier = Modifier.width(42.dp))
+                    CompactNumberSpinner(
+                        value = editor.paintPencilSize.toDouble(),
+                        onValueChange = { editor.paintPencilSize = it.toFloat().coerceIn(1f, 64f) },
+                        modifier = Modifier.weight(1f),
+                        min = 1.0, max = 64.0, step = 1.0, unit = "px", height = 24.dp
+                    )
+                }
+                PaintOpacityRow(editor, colors)
+            }
+            CanvasTool.PAINT_ERASER -> {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(tr("editor.radius"), color = colors.textMuted, fontSize = 11.sp, modifier = Modifier.width(42.dp))
+                    CompactNumberSpinner(
+                        value = editor.paintEraserSize.toDouble(),
+                        onValueChange = { editor.paintEraserSize = it.toFloat().coerceIn(1f, 256f) },
+                        modifier = Modifier.weight(1f),
+                        min = 1.0, max = 256.0, step = 2.0, unit = "px", height = 24.dp
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(tr("editor.hardness"), color = colors.textMuted, fontSize = 11.sp, modifier = Modifier.width(42.dp))
+                    CompactNumberSpinner(
+                        value = (editor.paintHardness * 100).toDouble(),
+                        onValueChange = { editor.paintHardness = (it.toFloat() / 100f).coerceIn(0f, 1f) },
+                        modifier = Modifier.weight(1f),
+                        min = 0.0, max = 100.0, step = 5.0, unit = "%", height = 24.dp
+                    )
+                }
+                PaintOpacityRow(editor, colors)
+            }
+            CanvasTool.PAINT_BUCKET -> {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(tr("editor.tolerance"), color = colors.textMuted, fontSize = 11.sp, modifier = Modifier.width(42.dp))
+                    CompactNumberSpinner(
+                        value = editor.paintTolerance.toDouble(),
+                        onValueChange = { editor.paintTolerance = it.toInt().coerceIn(0, 255) },
+                        modifier = Modifier.weight(1f),
+                        min = 0.0, max = 255.0, step = 4.0, height = 24.dp
+                    )
+                }
+            }
+            CanvasTool.PAINT_SHAPE -> {
+                // The three faces, the same way the deform brush offers its own.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    PaintShape.entries.forEach { shape ->
+                        CompactToggleChip(
+                            text = tr(shape.labelKey),
+                            selected = editor.paintShape == shape,
+                            onToggle = { editor.selectPaintShape(shape) },
+                            height = 24.dp,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(tr("editor.width"), color = colors.textMuted, fontSize = 11.sp, modifier = Modifier.width(42.dp))
+                    CompactNumberSpinner(
+                        value = editor.paintBrushSize.toDouble(),
+                        onValueChange = { editor.paintBrushSize = it.toFloat().coerceIn(1f, 128f) },
+                        modifier = Modifier.weight(1f),
+                        min = 1.0, max = 128.0, step = 1.0, unit = "px", height = 24.dp
+                    )
+                }
+                // A line has no inside, so the fill choice belongs to the box shapes only.
+                AnimatedVisibility(
+                    visible = editor.paintShape.canFill,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut(),
+                ) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        CompactToggleChip(
+                            text = tr("editor.outline"),
+                            selected = !editor.paintShapeFilled,
+                            onToggle = { editor.paintShapeFilled = false },
+                            height = 24.dp,
+                            modifier = Modifier.weight(1f),
+                        )
+                        CompactToggleChip(
+                            text = tr("editor.filled"),
+                            selected = editor.paintShapeFilled,
+                            onToggle = { editor.paintShapeFilled = true },
+                            height = 24.dp,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            }
+            else -> {}
+        }
+
+        Divider(color = colors.divider, thickness = 0.5.dp)
+
+        // Actions
+        val hasSession = editor.paintSession != null
+        val uncommittedCount = editor.paintSession?.strokeCount ?: 0
+        if (paintT != null && layerId != null) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                CompactButton(
+                    text = tr("editor.undo"),
+                    onClick = { editor.undoPaint() },
+                    enabled = editor.canUndoPaint(),
+                    modifier = Modifier.weight(1f),
+                    height = 24.dp,
+                )
+                CompactButton(
+                    text = tr("editor.redo"),
+                    onClick = { editor.redoPaint() },
+                    enabled = editor.canRedoPaint(),
+                    modifier = Modifier.weight(1f),
+                    height = 24.dp,
+                )
+            }
+            CompactButton(
+                text = tr("editor.paintClear"),
+                onClick = { editor.clearCurrentLayerPaint() },
+                modifier = Modifier.fillMaxWidth(),
+                height = 24.dp,
+            )
+
+            Spacer(Modifier.height(4.dp))
+
+            // Commit / Discard
+            CompactButton(
+                text = if (uncommittedCount > 0) tr("editor.paint.applyCount", uncommittedCount) else tr("editor.paint.apply"),
+                onClick = { editor.promptCommitPaintSession() },
+                enabled = hasSession && (editor.paintSession?.isDirty == true || uncommittedCount > 0),
+                isPrimary = true,
+                modifier = Modifier.fillMaxWidth(),
+                height = 26.dp,
+            )
+            CompactButton(
+                text = tr("editor.paint.discard"),
+                onClick = { editor.discardPaintSession() },
+                enabled = hasSession && (editor.paintSession?.isDirty == true || uncommittedCount > 0),
+                modifier = Modifier.fillMaxWidth(),
                 height = 24.dp,
             )
         }

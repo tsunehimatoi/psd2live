@@ -83,6 +83,14 @@ enum class ShortcutAction(val category: ShortcutCategory, val labelKey: String) 
     TOOL_CREATE_ROTATION(ShortcutCategory.CANVAS_TOOLS, "editor.tool.create_rotation"),
     TOOL_CREATE_DEFORM_PATH(ShortcutCategory.CANVAS_TOOLS, "editor.tool.create_deform_path"),
     TOOL_GLUE(ShortcutCategory.CANVAS_TOOLS, "editor.tool.glue"),
+    TOOL_PAINT_BRUSH(ShortcutCategory.CANVAS_TOOLS, "editor.tool.paint_brush"),
+    TOOL_PAINT_PENCIL(ShortcutCategory.CANVAS_TOOLS, "editor.tool.paint_pencil"),
+    TOOL_PAINT_ERASER(ShortcutCategory.CANVAS_TOOLS, "editor.tool.paint_eraser"),
+    TOOL_PAINT_BUCKET(ShortcutCategory.CANVAS_TOOLS, "editor.tool.paint_bucket"),
+    TOOL_PAINT_EYEDROPPER(ShortcutCategory.CANVAS_TOOLS, "editor.tool.paint_eyedropper"),
+    TOOL_PAINT_LINE(ShortcutCategory.CANVAS_TOOLS, "editor.tool.paint_line"),
+    TOOL_PAINT_RECT(ShortcutCategory.CANVAS_TOOLS, "editor.tool.paint_rect"),
+    TOOL_PAINT_ELLIPSE(ShortcutCategory.CANVAS_TOOLS, "editor.tool.paint_ellipse"),
 
     // Canvas editing
     SELECT_ALL(ShortcutCategory.CANVAS_EDIT, "shortcut.selectAll"),
@@ -100,6 +108,9 @@ enum class ShortcutAction(val category: ShortcutCategory, val labelKey: String) 
     BRUSH_ROTATE_LEFT(ShortcutCategory.CANVAS_EDIT, "shortcut.brushRotateLeft"),
     BRUSH_ROTATE_RIGHT(ShortcutCategory.CANVAS_EDIT, "shortcut.brushRotateRight"),
     BRUSH_SHAPE_CYCLE(ShortcutCategory.CANVAS_EDIT, "shortcut.brushShapeCycle"),
+    PAINT_SHAPE_CYCLE(ShortcutCategory.CANVAS_EDIT, "shortcut.paintShapeCycle"),
+    PAINT_OPACITY_DOWN(ShortcutCategory.CANVAS_EDIT, "shortcut.paintOpacityDown"),
+    PAINT_OPACITY_UP(ShortcutCategory.CANVAS_EDIT, "shortcut.paintOpacityUp"),
     AXIS_CONSTRAIN_X(ShortcutCategory.CANVAS_EDIT, "shortcut.axisX"),
     AXIS_CONSTRAIN_Y(ShortcutCategory.CANVAS_EDIT, "shortcut.axisY"),
     FRAME_VIEW(ShortcutCategory.CANVAS_EDIT, "shortcut.frameView"),
@@ -190,6 +201,14 @@ private val PS_DEFAULTS: Map<ShortcutAction, List<KeyBinding>> = mapOf(
     ShortcutAction.TOOL_CREATE_ROTATION to keys("R"),
     ShortcutAction.TOOL_CREATE_DEFORM_PATH to keys("P", "D"),
     ShortcutAction.TOOL_GLUE to keys("G"),
+    ShortcutAction.TOOL_PAINT_BRUSH to keys("Shift+P", "J"),
+    ShortcutAction.TOOL_PAINT_PENCIL to keys("N"),
+    ShortcutAction.TOOL_PAINT_ERASER to keys("E"),
+    ShortcutAction.TOOL_PAINT_BUCKET to keys("K"),
+    ShortcutAction.TOOL_PAINT_EYEDROPPER to keys("Alt+I"),
+    ShortcutAction.TOOL_PAINT_LINE to keys("U"),
+    ShortcutAction.TOOL_PAINT_RECT to keys("Shift+R"),
+    ShortcutAction.TOOL_PAINT_ELLIPSE to keys("Shift+O"),
 
     ShortcutAction.SELECT_ALL to keys("Ctrl+A"),
     ShortcutAction.INVERT_SELECTION to keys("Ctrl+I"),
@@ -206,6 +225,11 @@ private val PS_DEFAULTS: Map<ShortcutAction, List<KeyBinding>> = mapOf(
     ShortcutAction.BRUSH_ROTATE_LEFT to keys("Alt+[", ","),
     ShortcutAction.BRUSH_ROTATE_RIGHT to keys("Alt+]", "."),
     ShortcutAction.BRUSH_SHAPE_CYCLE to keys("Alt+B"),
+    // The paint shape tool's three faces, on the same "the tool's key, shifted" pairing.
+    ShortcutAction.PAINT_SHAPE_CYCLE to keys("Shift+U"),
+    // The paint tip's third parameter, on the same Shift pairing the Alt + drag gesture uses.
+    ShortcutAction.PAINT_OPACITY_DOWN to keys("Alt+Shift+["),
+    ShortcutAction.PAINT_OPACITY_UP to keys("Alt+Shift+]"),
     ShortcutAction.AXIS_CONSTRAIN_X to keys("X"),
     ShortcutAction.AXIS_CONSTRAIN_Y to keys("Y"),
     ShortcutAction.FRAME_VIEW to keys("F"),
@@ -225,6 +249,7 @@ private val BLENDER_OVERRIDES: Map<ShortcutAction, List<KeyBinding>> = mapOf(
     ShortcutAction.TOOL_SMOOTH to keys("S"),
     ShortcutAction.TOOL_CREATE_WARP to keys("Shift+W"),
     ShortcutAction.TOOL_GLUE to keys("Shift+G"),
+    ShortcutAction.TOOL_PAINT_ERASER to keys("Shift+E"),
     // Numpad-dot = view selected.
     ShortcutAction.FRAME_VIEW to keys("NumPadDot"),
     // Workspace cycling.

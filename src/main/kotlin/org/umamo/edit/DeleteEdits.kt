@@ -60,18 +60,27 @@ private fun PuppetModel.removingDrawables(ids: Set<DrawableId>): PuppetModel {
 }
 
 /**
+ * Returns a copy of [this] with every drawable in [ids] deleted (mask / glue / tree references scrubbed,
+ * render order re-derived once). A no-op (none of them present) returns the same instance.
+ *
+ * @param Set<DrawableId> ids The drawables to delete.
+ * @return PuppetModel The model without those drawables.
+ */
+fun PuppetModel.withDrawablesDeleted(ids: Set<DrawableId>): PuppetModel {
+	if (drawables.none { it.id in ids }) {
+		return this
+	}
+	return removingDrawables(ids).withDerivedRenderRoot()
+}
+
+/**
  * Returns a copy of [this] with the single drawable [id] deleted (mask / glue / tree references scrubbed,
  * render order re-derived). A no-op (no such drawable) returns the same instance.
  *
  * @param DrawableId id The drawable to delete.
  * @return PuppetModel The model without that drawable, or [this] if it was absent.
  */
-fun PuppetModel.withDrawableDeleted(id: DrawableId): PuppetModel {
-	if (drawables.none { it.id == id }) {
-		return this
-	}
-	return removingDrawables(setOf(id)).withDerivedRenderRoot()
-}
+fun PuppetModel.withDrawableDeleted(id: DrawableId): PuppetModel = withDrawablesDeleted(setOf(id))
 
 /**
  * Returns a copy of [this] with the deformer [id] deleted by unwrapping it: its child deformers and the

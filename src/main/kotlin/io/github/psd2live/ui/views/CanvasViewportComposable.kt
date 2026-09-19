@@ -51,6 +51,7 @@ import androidx.compose.ui.input.key.*
 import io.github.psd2live.ui.CanvasEditor
 import io.github.psd2live.ui.CanvasTool
 import io.github.psd2live.ui.EditHierarchyMode
+import io.github.psd2live.ui.PaintShape
 import io.github.psd2live.ui.SelectionStyle
 import io.github.psd2live.ui.VERTEX_TOOLS
 import androidx.compose.ui.input.pointer.isShiftPressed
@@ -157,7 +158,7 @@ fun CanvasViewportComposable(
                 // A deform path is a deform-mode tool, so a request arriving from the hierarchy while
                 // the canvas sits in another mode takes it there rather than being refused by the
                 // palette check activateTool now applies.
-                if (editor.hierarchyMode != EditHierarchyMode.DEFORM) editor.setHierarchyMode(EditHierarchyMode.DEFORM)
+                if (editor.hierarchyMode != EditHierarchyMode.EDIT) editor.setHierarchyMode(EditHierarchyMode.EDIT)
                 editor.activateTool(CanvasTool.CREATE_DEFORM_PATH)
             }
         }
@@ -170,7 +171,7 @@ fun CanvasViewportComposable(
             // tools left `objects` populated while objectMode said otherwise, and the transform bounding
             // box — which is computed from objectMode — then framed a different set than the one a drag
             // actually moved.
-            if(state.selectedDeformerId!=null && editor.tool in VERTEX_TOOLS) { editor.objects=emptySet();editor.objectMode=false }
+            if(state.selectedDeformerId!=null && editor.tool in VERTEX_TOOLS) { editor.objects=emptySet() }
         }
     }
     LaunchedEffect(state.historySnapshot?.headNodeId, state.parameterValues) {
@@ -375,25 +376,83 @@ fun CanvasViewportComposable(
 					ShortcutAction.FINISH_PATH -> { editor.finishPath(); true }
 					ShortcutAction.DELETE_SELECTION -> {
 						if (editor.tool == CanvasTool.CREATE_DEFORM_PATH) editor.deletePathPoint()
-						else if (editor.hierarchyMode == EditHierarchyMode.STRUCTURE) editor.topology("delete")
+						else if (editor.hierarchyMode == EditHierarchyMode.EDIT) editor.topology("delete")
 						true
 					}
+					ShortcutAction.TOOL_PAINT_BRUSH -> {
+						if (editor.hierarchyMode != EditHierarchyMode.PAINT) editor.setHierarchyMode(EditHierarchyMode.PAINT)
+						editor.activateTool(CanvasTool.PAINT_BRUSH); true
+					}
+					ShortcutAction.TOOL_PAINT_PENCIL -> {
+						if (editor.hierarchyMode != EditHierarchyMode.PAINT) editor.setHierarchyMode(EditHierarchyMode.PAINT)
+						editor.activateTool(CanvasTool.PAINT_PENCIL); true
+					}
+					ShortcutAction.TOOL_PAINT_ERASER -> {
+						if (editor.hierarchyMode != EditHierarchyMode.PAINT) editor.setHierarchyMode(EditHierarchyMode.PAINT)
+						editor.activateTool(CanvasTool.PAINT_ERASER); true
+					}
+					ShortcutAction.TOOL_PAINT_BUCKET -> {
+						if (editor.hierarchyMode != EditHierarchyMode.PAINT) editor.setHierarchyMode(EditHierarchyMode.PAINT)
+						editor.activateTool(CanvasTool.PAINT_BUCKET); true
+					}
+					ShortcutAction.TOOL_PAINT_EYEDROPPER -> {
+						if (editor.hierarchyMode != EditHierarchyMode.PAINT) editor.setHierarchyMode(EditHierarchyMode.PAINT)
+						editor.activateTool(CanvasTool.PAINT_EYEDROPPER); true
+					}
+					// The shape chords pick a shape, and with it the shape tool: the three are one tool
+					// with three faces, so a chord is enough to start drawing with the face it names.
+					ShortcutAction.TOOL_PAINT_LINE -> {
+						if (editor.hierarchyMode != EditHierarchyMode.PAINT) editor.setHierarchyMode(EditHierarchyMode.PAINT)
+						editor.selectPaintShape(PaintShape.LINE); true
+					}
+					ShortcutAction.TOOL_PAINT_RECT -> {
+						if (editor.hierarchyMode != EditHierarchyMode.PAINT) editor.setHierarchyMode(EditHierarchyMode.PAINT)
+						editor.selectPaintShape(PaintShape.RECTANGLE); true
+					}
+					ShortcutAction.TOOL_PAINT_ELLIPSE -> {
+						if (editor.hierarchyMode != EditHierarchyMode.PAINT) editor.setHierarchyMode(EditHierarchyMode.PAINT)
+						editor.selectPaintShape(PaintShape.ELLIPSE); true
+					}
+					ShortcutAction.PAINT_SHAPE_CYCLE -> {
+						if (editor.hierarchyMode != EditHierarchyMode.PAINT) editor.setHierarchyMode(EditHierarchyMode.PAINT)
+						editor.cyclePaintShape(); true
+					}
+					// The brush keys drive whichever brush is in hand: the paint tip in paint mode,
+					// the deform brush's radius/hardness everywhere else.
 					ShortcutAction.BRUSH_RADIUS_DOWN -> {
-						editor.radius = (editor.radius / 1.2f).coerceAtLeast(4f)
+						if (editor.paintSizeActive) editor.paintSize = (editor.paintSize / 1.2f).coerceAtLeast(1f)
+						else editor.radius = (editor.radius / 1.2f).coerceAtLeast(4f)
 						true
 					}
 					ShortcutAction.BRUSH_RADIUS_UP -> {
-						editor.radius = (editor.radius * 1.2f).coerceAtMost(500f)
+						if (editor.paintSizeActive) editor.paintSize = (editor.paintSize * 1.2f).coerceAtMost(512f)
+						else editor.radius = (editor.radius * 1.2f).coerceAtMost(500f)
 						true
 					}
-					// Never let hardness reach 1.0: brushWeight divides by (1 - hardness).
+					// Never let the deform brush's hardness reach 1.0: brushWeight divides by (1 - hardness).
 					ShortcutAction.BRUSH_HARDNESS_DOWN -> {
-						editor.hardness = (editor.hardness - 0.05f).coerceIn(0f, 0.95f)
+						if (editor.paintBrushActive) editor.paintHardness = (editor.paintHardness - 0.05f).coerceIn(0f, 1f)
+						else editor.hardness = (editor.hardness - 0.05f).coerceIn(0f, 0.95f)
 						true
 					}
 					ShortcutAction.BRUSH_HARDNESS_UP -> {
-						editor.hardness = (editor.hardness + 0.05f).coerceIn(0f, 0.95f)
+						if (editor.paintBrushActive) editor.paintHardness = (editor.paintHardness + 0.05f).coerceIn(0f, 1f)
+						else editor.hardness = (editor.hardness + 0.05f).coerceIn(0f, 0.95f)
 						true
+					}
+					ShortcutAction.PAINT_OPACITY_DOWN -> {
+						if (!editor.paintBrushActive) false
+						else {
+							editor.paintOpacity = (editor.paintOpacity - 0.05f).coerceIn(0.01f, 1f)
+							true
+						}
+					}
+					ShortcutAction.PAINT_OPACITY_UP -> {
+						if (!editor.paintBrushActive) false
+						else {
+							editor.paintOpacity = (editor.paintOpacity + 0.05f).coerceIn(0.01f, 1f)
+							true
+						}
 					}
 					ShortcutAction.BRUSH_ROTATE_LEFT -> {
 						val step = if (event.isShiftPressed) 45f else 15f
@@ -651,13 +710,15 @@ fun CanvasViewportComposable(
 					// 3a. Texture Channel. The artwork always renders opaque; legibility of the
 					// overlays comes from the focus/dim options instead of a global transparency.
 					if (showTexture) {
+						val paintLayerId = if (editor.hierarchyMode == EditHierarchyMode.PAINT) editor.paintSession?.layerId else null
+						val effectiveVisible = if (paintLayerId != null) targetVisibleLayerIds - setOf(paintLayerId) else targetVisibleLayerIds
 						drawIntoCanvas { target -> editingPainter?.paint(
 							target.skiaCanvas,
 							model,
 							geometry,
 							viewport,
 							1.0f,
-							visibleLayerIds = targetVisibleLayerIds,
+							visibleLayerIds = effectiveVisible,
 							drawOrderOverrides = state.drawOrderOverrides,
 							dimUnselected = state.dimUnselected,
 							highlightedLayerIds = highlightedLayerIds,
@@ -665,6 +726,31 @@ fun CanvasViewportComposable(
 							tintLayerIds = hoverTintLayerIds,
 							tintColor = hoverTintColor,
 						) }
+
+						if (editor.hierarchyMode == EditHierarchyMode.PAINT) {
+							val session = editor.paintSession
+							if (session != null) {
+								// The layer's live pixels, tile by tile. Each tile's destination is drawn
+								// from its own edges rather than its size, so neighbouring tiles share an
+								// edge exactly and the seams between them land on whole pixels.
+								val scale = viewport.scale
+								for (tile in session.previewTiles) {
+									val left = Math.round(viewport.offsetX + tile.x * scale)
+									val top = Math.round(viewport.offsetY + tile.y * scale)
+									val right = Math.round(viewport.offsetX + (tile.x + tile.width) * scale)
+									val bottom = Math.round(viewport.offsetY + (tile.y + tile.height) * scale)
+									drawImage(
+										image = tile.image,
+										dstOffset = androidx.compose.ui.unit.IntOffset(left.toInt(), top.toInt()),
+										dstSize = androidx.compose.ui.unit.IntSize(
+											(right - left).toInt().coerceAtLeast(1),
+											(bottom - top).toInt().coerceAtLeast(1)
+										),
+										filterQuality = androidx.compose.ui.graphics.FilterQuality.Low
+									)
+								}
+							}
+						}
 					}
 
 					// 3b. Mesh Channel (Wireframe)

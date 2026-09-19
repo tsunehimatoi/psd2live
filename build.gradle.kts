@@ -69,6 +69,7 @@ tasks.named("compileTestKotlin").configure {
 tasks.test {
 	enabled = true
 	useJUnitPlatform()
+	maxHeapSize = "2g"
 }
 
 

@@ -85,6 +85,7 @@ import io.github.psd2live.ui.components.DrawOrderRuler
 import io.github.psd2live.ui.components.DrawOrderInputDialog
 import io.github.psd2live.ui.components.MeshSettingsDialog
 import io.github.psd2live.ui.components.MeshSettingsDialogTarget
+import io.github.psd2live.ui.components.RebuildMeshPromptDialog
 import io.github.psd2live.ui.state.CanvasMode
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
@@ -163,6 +164,15 @@ fun WorkspaceView(
 			)
 		}
 
+		val editor = viewModel.canvasEditor
+		if (editor.showRebuildMeshDialog) {
+			RebuildMeshPromptDialog(
+				layerName = editor.paintSession?.layerName ?: "",
+				onConfirmRebuild = { editor.commitPaintSession(rebuildMesh = true) },
+				onKeepExisting = { editor.commitPaintSession(rebuildMesh = false) },
+				onDismiss = { editor.showRebuildMeshDialog = false },
+			)
+		}
 	}
 }
 
