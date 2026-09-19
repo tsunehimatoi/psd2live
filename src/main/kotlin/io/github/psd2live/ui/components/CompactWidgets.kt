@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -411,6 +413,211 @@ fun IconTrash(
 		drawLine(color = tint, start = Offset(w * 0.43f, h * 0.38f), end = Offset(w * 0.43f, h * 0.78f), strokeWidth = 1.0f, cap = StrokeCap.Round)
 		drawLine(color = tint, start = Offset(w * 0.57f, h * 0.38f), end = Offset(w * 0.57f, h * 0.78f), strokeWidth = 1.0f, cap = StrokeCap.Round)
 	}
+}
+
+/** Rotation deformer: pivot + direction tip. */
+@Composable
+fun IconRotationDeformer(
+	modifier: Modifier = Modifier.size(12.dp),
+	tint: Color = LocalToolColors.current.textPrimary,
+) {
+	Canvas(modifier = modifier) {
+		val w = size.width
+		val h = size.height
+		val stroke = Stroke(width = 1.2f, cap = StrokeCap.Round)
+		drawCircle(tint, w * 0.16f, Offset(w * 0.28f, h * 0.72f), style = Fill)
+		drawLine(tint, Offset(w * 0.28f, h * 0.72f), Offset(w * 0.78f, h * 0.22f), stroke.width, cap = stroke.cap)
+		drawCircle(tint, w * 0.12f, Offset(w * 0.78f, h * 0.22f), style = Fill)
+		val arc = Path().apply {
+			arcTo(
+				rect = androidx.compose.ui.geometry.Rect(w * -0.05f, h * 0.25f, w * 0.75f, h * 1.05f),
+				startAngleDegrees = -70f,
+				sweepAngleDegrees = 50f,
+				forceMoveTo = false,
+			)
+		}
+		drawPath(arc, tint, style = stroke)
+	}
+}
+
+/** Move / float an item to the armature root. */
+@Composable
+fun IconMoveToRoot(
+	modifier: Modifier = Modifier.size(12.dp),
+	tint: Color = LocalToolColors.current.textPrimary,
+) {
+	Canvas(modifier = modifier) {
+		val w = size.width
+		val h = size.height
+		val stroke = Stroke(width = 1.2f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+		drawLine(tint, Offset(w * 0.18f, h * 0.18f), Offset(w * 0.82f, h * 0.18f), stroke.width, cap = stroke.cap)
+		drawLine(tint, Offset(w * 0.5f, h * 0.28f), Offset(w * 0.5f, h * 0.88f), stroke.width, cap = stroke.cap)
+		val arrow = Path().apply {
+			moveTo(w * 0.5f, h * 0.28f)
+			lineTo(w * 0.32f, h * 0.48f)
+			moveTo(w * 0.5f, h * 0.28f)
+			lineTo(w * 0.68f, h * 0.48f)
+		}
+		drawPath(arrow, tint, style = stroke)
+	}
+}
+
+/** Expand a tree branch. */
+@Composable
+fun IconExpandBranch(
+	modifier: Modifier = Modifier.size(12.dp),
+	tint: Color = LocalToolColors.current.textPrimary,
+) {
+	Canvas(modifier = modifier) {
+		val w = size.width
+		val h = size.height
+		val stroke = Stroke(width = 1.2f, cap = StrokeCap.Round)
+		drawLine(tint, Offset(w * 0.22f, h * 0.28f), Offset(w * 0.22f, h * 0.78f), stroke.width, cap = stroke.cap)
+		drawLine(tint, Offset(w * 0.22f, h * 0.5f), Offset(w * 0.72f, h * 0.5f), stroke.width, cap = stroke.cap)
+		drawLine(tint, Offset(w * 0.22f, h * 0.78f), Offset(w * 0.72f, h * 0.78f), stroke.width, cap = stroke.cap)
+		drawCircle(tint, w * 0.1f, Offset(w * 0.72f, h * 0.5f), style = Fill)
+		drawCircle(tint, w * 0.1f, Offset(w * 0.72f, h * 0.78f), style = Fill)
+	}
+}
+
+/** Collapse a tree branch. */
+@Composable
+fun IconCollapseBranch(
+	modifier: Modifier = Modifier.size(12.dp),
+	tint: Color = LocalToolColors.current.textPrimary,
+) {
+	Canvas(modifier = modifier) {
+		val w = size.width
+		val h = size.height
+		val stroke = Stroke(width = 1.2f, cap = StrokeCap.Round)
+		drawLine(tint, Offset(w * 0.22f, h * 0.28f), Offset(w * 0.22f, h * 0.72f), stroke.width, cap = stroke.cap)
+		drawLine(tint, Offset(w * 0.22f, h * 0.5f), Offset(w * 0.55f, h * 0.5f), stroke.width, cap = stroke.cap)
+		drawRect(tint, Offset(w * 0.55f, h * 0.38f), Size(w * 0.28f, h * 0.24f), style = Stroke(width = 1.1f))
+	}
+}
+
+/** Conversion / lattice division grid. */
+@Composable
+fun IconGridDivision(
+	modifier: Modifier = Modifier.size(12.dp),
+	tint: Color = LocalToolColors.current.textPrimary,
+) {
+	Canvas(modifier = modifier) {
+		val w = size.width
+		val h = size.height
+		val stroke = Stroke(width = 1.1f, cap = StrokeCap.Round)
+		drawRect(tint, Offset(w * 0.15f, h * 0.15f), Size(w * 0.7f, h * 0.7f), style = stroke)
+		drawLine(tint, Offset(w * 0.15f, h * 0.5f), Offset(w * 0.85f, h * 0.5f), stroke.width)
+		drawLine(tint, Offset(w * 0.5f, h * 0.15f), Offset(w * 0.5f, h * 0.85f), stroke.width)
+	}
+}
+
+/** Bezier edit division (curved lattice). */
+@Composable
+fun IconBezierDivision(
+	modifier: Modifier = Modifier.size(12.dp),
+	tint: Color = LocalToolColors.current.textPrimary,
+) {
+	Canvas(modifier = modifier) {
+		val w = size.width
+		val h = size.height
+		val stroke = Stroke(width = 1.15f, cap = StrokeCap.Round)
+		val path = Path().apply {
+			moveTo(w * 0.15f, h * 0.78f)
+			cubicTo(w * 0.2f, h * 0.2f, w * 0.8f, h * 0.8f, w * 0.85f, h * 0.22f)
+		}
+		drawPath(path, tint, style = stroke)
+		drawCircle(tint, w * 0.1f, Offset(w * 0.15f, h * 0.78f), style = Fill)
+		drawCircle(tint, w * 0.1f, Offset(w * 0.85f, h * 0.22f), style = Fill)
+		drawCircle(tint, w * 0.08f, Offset(w * 0.5f, h * 0.5f), style = Fill)
+	}
+}
+
+/** Draw-order / stacking icon. */
+@Composable
+fun IconDrawOrder(
+	modifier: Modifier = Modifier.size(12.dp),
+	tint: Color = LocalToolColors.current.textPrimary,
+) {
+	Canvas(modifier = modifier) {
+		val w = size.width
+		val h = size.height
+		val stroke = Stroke(width = 1.1f, cap = StrokeCap.Round)
+		drawRect(tint, Offset(w * 0.18f, h * 0.42f), Size(w * 0.64f, h * 0.42f), style = stroke)
+		drawRect(tint, Offset(w * 0.28f, h * 0.28f), Size(w * 0.64f, h * 0.42f), style = stroke)
+		drawRect(tint, Offset(w * 0.38f, h * 0.14f), Size(w * 0.48f, h * 0.36f), style = stroke)
+	}
+}
+
+/**
+ * Compact context-menu row: fixed icon column + single-line label, tight padding for hierarchy trees.
+ */
+@Composable
+fun CompactMenuItem(
+	text: String,
+	onClick: () -> Unit,
+	modifier: Modifier = Modifier,
+	enabled: Boolean = true,
+	danger: Boolean = false,
+	icon: (@Composable () -> Unit)? = null,
+) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	val labelColor = when {
+		!enabled -> colors.textDisabled
+		danger -> colors.error
+		else -> colors.textPrimary
+	}
+	DropdownMenuItem(
+		onClick = onClick,
+		enabled = enabled,
+		modifier = modifier,
+		contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+	) {
+		Row(
+			modifier = Modifier
+				.fillMaxWidth()
+				.heightIn(min = 22.dp),
+			verticalAlignment = Alignment.CenterVertically,
+			horizontalArrangement = Arrangement.spacedBy(7.dp),
+		) {
+			Box(
+				modifier = Modifier.size(14.dp),
+				contentAlignment = Alignment.Center,
+			) {
+				icon?.invoke()
+			}
+			Text(
+				text = text,
+				style = typography.body.copy(fontSize = 11.sp, lineHeight = 14.sp),
+				color = labelColor,
+				maxLines = 1,
+				overflow = TextOverflow.Ellipsis,
+			)
+		}
+	}
+}
+
+@Composable
+fun CompactMenuSection(title: String) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	Text(
+		text = title,
+		style = typography.caption.copy(fontSize = 9.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.3.sp),
+		color = colors.textMuted,
+		modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 5.dp, bottom = 1.dp),
+	)
+}
+
+@Composable
+fun CompactMenuDivider() {
+	val colors = LocalToolColors.current
+	androidx.compose.material.Divider(
+		color = colors.divider.copy(alpha = 0.45f),
+		thickness = 0.5.dp,
+		modifier = Modifier.padding(vertical = 2.dp),
+	)
 }
 
 /** Practical Compact Tool Button */

@@ -72,21 +72,32 @@ import io.github.psd2live.ui.CreatePlacementKind
 import io.github.psd2live.ui.CreateRelation
 import io.github.psd2live.ui.ComponentPalette
 import io.github.psd2live.ui.components.CompactButton
+import io.github.psd2live.ui.components.CompactMenuDivider
+import io.github.psd2live.ui.components.CompactMenuItem
+import io.github.psd2live.ui.components.CompactMenuSection
 import io.github.psd2live.ui.components.CompactTextField
 import io.github.psd2live.ui.components.CompactToggleChip
 import io.github.psd2live.ui.components.IconChevron
 import io.github.psd2live.ui.components.IconClose
+import io.github.psd2live.ui.components.IconCollapseBranch
+import io.github.psd2live.ui.components.IconDeformPath
+import io.github.psd2live.ui.components.IconDrawOrder
+import io.github.psd2live.ui.components.IconExpandBranch
 import io.github.psd2live.ui.components.IconEye
+import io.github.psd2live.ui.components.IconMoveToRoot
 import io.github.psd2live.ui.components.IconPause
 import io.github.psd2live.ui.components.IconPlay
 import io.github.psd2live.ui.components.IconReset
+import io.github.psd2live.ui.components.IconRotationDeformer
 import io.github.psd2live.ui.components.IconSearch
 import io.github.psd2live.ui.components.IconTrash
-import io.github.psd2live.ui.components.IconDeformPath
+import io.github.psd2live.ui.components.IconWarpDeformer
 import io.github.psd2live.ui.components.DrawOrderRuler
 import io.github.psd2live.ui.components.DrawOrderInputDialog
 import io.github.psd2live.ui.components.MeshSettingsDialog
 import io.github.psd2live.ui.components.MeshSettingsDialogTarget
+import io.github.psd2live.ui.components.IconContextualWarp
+import io.github.psd2live.ui.components.IconMeshWireframe
 import io.github.psd2live.ui.components.RebuildMeshPromptDialog
 import io.github.psd2live.ui.state.CanvasMode
 import io.github.psd2live.ui.state.PSD2LiveState
@@ -100,7 +111,6 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.material.DropdownMenu
-import androidx.compose.material.DropdownMenuItem
 import androidx.compose.ui.input.pointer.PointerButton
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
@@ -1228,94 +1238,98 @@ private fun DeformerTreeItem(
 			}
 		}
 
-		// Deformer context menu: create → hierarchy → expand → delete
+		// Deformer context menu: add → hierarchy → view → delete
 		DropdownMenu(
 			expanded = showMenu,
 			onDismissRequest = { showMenu = false },
 			modifier = Modifier
 				.background(colors.panelElevated)
 				.border(BorderStroke(1.dp, colors.border))
-				.widthIn(min = 168.dp, max = 240.dp),
+				.widthIn(min = 156.dp, max = 200.dp),
 		) {
-			DropdownMenuItem(onClick = {
-				onRequestCreate?.invoke(CreatePlacementKind.WARP, CreateRelation.AS_PARENT, true, tailId)
-				showMenu = false
-			}) {
-				Text(tr("editor.treeAddWarpParent"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
-			}
-			DropdownMenuItem(onClick = {
-				onRequestCreate?.invoke(CreatePlacementKind.WARP, CreateRelation.AS_CHILD, true, tailId)
-				showMenu = false
-			}) {
-				Text(tr("editor.treeAddWarpChild"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
-			}
-			DropdownMenuItem(onClick = {
-				onRequestCreate?.invoke(CreatePlacementKind.ROTATION, CreateRelation.AS_PARENT, true, tailId)
-				showMenu = false
-			}) {
-				Text(tr("editor.treeAddRotationParent"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
-			}
+			CompactMenuSection(tr("canvas.hierarchy.menuAdd"))
+			CompactMenuItem(
+				text = tr("editor.treeAddWarpParent"),
+				onClick = {
+					onRequestCreate?.invoke(CreatePlacementKind.WARP, CreateRelation.AS_PARENT, true, tailId)
+					showMenu = false
+				},
+				icon = { IconContextualWarp(tint = colors.textMuted, modifier = Modifier.size(12.dp)) },
+			)
+			CompactMenuItem(
+				text = tr("editor.treeAddWarpChild"),
+				onClick = {
+					onRequestCreate?.invoke(CreatePlacementKind.WARP, CreateRelation.AS_CHILD, true, tailId)
+					showMenu = false
+				},
+				icon = { IconWarpDeformer(tint = colors.textMuted, modifier = Modifier.size(12.dp)) },
+			)
+			CompactMenuItem(
+				text = tr("editor.treeAddRotationParent"),
+				onClick = {
+					onRequestCreate?.invoke(CreatePlacementKind.ROTATION, CreateRelation.AS_PARENT, true, tailId)
+					showMenu = false
+				},
+				icon = { IconRotationDeformer(tint = colors.textMuted) },
+			)
 
-			Divider(color = colors.divider.copy(alpha = 0.5f), thickness = 0.5.dp)
-
+			CompactMenuDivider()
+			CompactMenuSection(tr("canvas.hierarchy.menuHierarchy"))
 			val isAlreadyRoot = headDeformer.parent == null
-			DropdownMenuItem(
+			CompactMenuItem(
+				text = tr("canvas.hierarchy.moveToRoot"),
 				onClick = {
 					viewModel.reparentItem(headId, null)
 					showMenu = false
 				},
 				enabled = !isAlreadyRoot,
-			) {
-				Text(
-					tr("canvas.hierarchy.moveToRoot"),
-					style = typography.body.copy(fontSize = 11.sp),
-					color = if (!isAlreadyRoot) colors.textPrimary else colors.textDisabled,
-				)
-			}
-
+				icon = { IconMoveToRoot(tint = if (!isAlreadyRoot) colors.textMuted else colors.textDisabled) },
+			)
 			if (chain.deformers.any { state.parentOverrides.containsKey(it.id.raw) }) {
-				DropdownMenuItem(onClick = {
-					chain.deformers.forEach { viewModel.resetItemHierarchy(it.id.raw) }
-					showMenu = false
-				}) {
-					Text(tr("canvas.hierarchy.resetItem"), style = typography.body.copy(fontSize = 11.sp), color = colors.accent)
-				}
-			}
-
-			Divider(color = colors.divider.copy(alpha = 0.5f), thickness = 0.5.dp)
-
-			DropdownMenuItem(onClick = {
-				chain.deformers.forEach { expandedMap[it.id.raw] = true }
-				fun expandRecursive(dId: String) {
-					expandedMap[dId] = true
-					deformerChildrenMap[dId]?.forEach { expandRecursive(it.id.raw) }
-				}
-				expandRecursive(tailId)
-				showMenu = false
-			}) {
-				Text(tr("canvas.hierarchy.expandBranch"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
-			}
-
-			DropdownMenuItem(onClick = {
-				chain.deformers.forEach { expandedMap[it.id.raw] = false }
-				showMenu = false
-			}) {
-				Text(tr("canvas.hierarchy.collapseBranch"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
-			}
-
-			Divider(color = colors.divider.copy(alpha = 0.5f), thickness = 0.5.dp)
-
-			DropdownMenuItem(onClick = {
-				// Innermost first so each unwrap bakes into the next parent before that parent is removed.
-				viewModel.deleteDeformers(chain.deformers.asReversed().map { it.id.raw })
-				showMenu = false
-			}) {
-				Text(
-					tr("canvas.hierarchy.deleteDeformer"),
-					style = typography.body.copy(fontSize = 11.sp),
-					color = colors.error,
+				CompactMenuItem(
+					text = tr("canvas.hierarchy.resetItem"),
+					onClick = {
+						chain.deformers.forEach { viewModel.resetItemHierarchy(it.id.raw) }
+						showMenu = false
+					},
+					icon = { IconReset(modifier = Modifier.size(12.dp), tint = colors.accent) },
 				)
 			}
+
+			CompactMenuDivider()
+			CompactMenuSection(tr("canvas.hierarchy.menuView"))
+			CompactMenuItem(
+				text = tr("canvas.hierarchy.expandBranch"),
+				onClick = {
+					chain.deformers.forEach { expandedMap[it.id.raw] = true }
+					fun expandRecursive(dId: String) {
+						expandedMap[dId] = true
+						deformerChildrenMap[dId]?.forEach { expandRecursive(it.id.raw) }
+					}
+					expandRecursive(tailId)
+					showMenu = false
+				},
+				icon = { IconExpandBranch(tint = colors.textMuted) },
+			)
+			CompactMenuItem(
+				text = tr("canvas.hierarchy.collapseBranch"),
+				onClick = {
+					chain.deformers.forEach { expandedMap[it.id.raw] = false }
+					showMenu = false
+				},
+				icon = { IconCollapseBranch(tint = colors.textMuted) },
+			)
+
+			CompactMenuDivider()
+			CompactMenuItem(
+				text = tr("canvas.hierarchy.deleteDeformer"),
+				onClick = {
+					viewModel.deleteDeformers(chain.deformers.asReversed().map { it.id.raw })
+					showMenu = false
+				},
+				danger = true,
+				icon = { IconTrash(modifier = Modifier.size(11.dp), tint = colors.error) },
+			)
 		}
 	}
 
@@ -1579,161 +1593,176 @@ private fun DrawableTreeItem(
 			}
 		}
 
-		// Streamlined Context Menu
+		// Drawable context menu: view → add → settings → hierarchy → delete
 		DropdownMenu(
 			expanded = showMenu,
 			onDismissRequest = { showMenu = false },
 			modifier = Modifier
 				.background(colors.panelElevated)
 				.border(BorderStroke(1.dp, colors.border))
-				.widthIn(min = 160.dp, max = 220.dp),
+				.widthIn(min = 156.dp, max = 200.dp),
 		) {
 			val isAlreadyRoot = drawable.parentDeformerId == null
 
 			if (layerId != null) {
 				val isIsolated = state.isolatedLayerId == layerId
-				DropdownMenuItem(onClick = {
-					viewModel.isolateLayer(layerId)
-					showMenu = false
-				}) {
-					Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-						IconEye(visible = true, modifier = Modifier.size(12.dp), tint = if (isIsolated) colors.accent else colors.textMuted)
-						Text(
-							if (isIsolated) tr("canvas.hierarchy.unsoloLayer") else tr("canvas.hierarchy.soloLayer"),
-							style = typography.body.copy(fontSize = 11.sp),
-							color = if (isIsolated) colors.accent else colors.textPrimary,
+				CompactMenuSection(tr("canvas.hierarchy.menuView"))
+				CompactMenuItem(
+					text = if (isIsolated) tr("canvas.hierarchy.unsoloLayer") else tr("canvas.hierarchy.soloLayer"),
+					onClick = {
+						viewModel.isolateLayer(layerId)
+						showMenu = false
+					},
+					icon = {
+						IconEye(
+							visible = true,
+							modifier = Modifier.size(12.dp),
+							tint = if (isIsolated) colors.accent else colors.textMuted,
 						)
-					}
-				}
-				Divider(color = colors.divider.copy(alpha = 0.5f), thickness = 0.5.dp)
+					},
+				)
+				CompactMenuItem(
+					text = if (isSelfVisible) tr("canvas.hierarchy.hideLayer") else tr("canvas.hierarchy.showLayer"),
+					onClick = {
+						viewModel.toggleLayerVisibility(layerId)
+						showMenu = false
+					},
+					icon = {
+						IconEye(
+							visible = !isSelfVisible,
+							modifier = Modifier.size(12.dp),
+							tint = colors.textMuted,
+						)
+					},
+				)
+				CompactMenuDivider()
 			}
 
-			DropdownMenuItem(
+			if (layerId != null) {
+				CompactMenuSection(tr("canvas.hierarchy.menuAdd"))
+				CompactMenuItem(
+					text = tr("editor.treeAddWarpParent"),
+					onClick = {
+						onRequestCreate?.invoke(CreatePlacementKind.WARP, CreateRelation.AS_PARENT, false, drawable.id.raw)
+						showMenu = false
+					},
+					icon = { IconWarpDeformer(tint = colors.textMuted, modifier = Modifier.size(12.dp)) },
+				)
+				CompactMenuItem(
+					text = tr("editor.treeAddRotationParent"),
+					onClick = {
+						onRequestCreate?.invoke(CreatePlacementKind.ROTATION, CreateRelation.AS_PARENT, false, drawable.id.raw)
+						showMenu = false
+					},
+					icon = { IconRotationDeformer(tint = colors.textMuted) },
+				)
+				if (drawable.mesh != null) {
+					CompactMenuItem(
+						text = tr("editor.treeAddPath"),
+						onClick = {
+							onRequestCreate?.invoke(CreatePlacementKind.PATH, CreateRelation.AS_CHILD, false, drawable.id.raw)
+							showMenu = false
+						},
+						icon = { IconDeformPath(modifier = Modifier.size(12.dp), tint = colors.textMuted) },
+					)
+				}
+				CompactMenuDivider()
+
+				CompactMenuSection(tr("canvas.hierarchy.menuSettings"))
+				val effectiveOrder = state.getEffectiveDrawOrder(drawable.id.raw, layerId, drawable.drawOrder)
+				val isOverridden = state.drawOrderOverrides.containsKey(layerId) || state.drawOrderOverrides.containsKey(drawable.id.raw)
+				CompactMenuItem(
+					text = tr("canvas.hierarchy.setDrawOrder"),
+					onClick = {
+						showMenu = false
+						onRequestSetOrder?.invoke(layerId, drawable.name, effectiveOrder, drawable.drawOrder, isOverridden)
+					},
+					icon = { IconDrawOrder(tint = colors.textMuted) },
+				)
+				if (isOverridden) {
+					CompactMenuItem(
+						text = tr("canvas.drawOrder.reset"),
+						onClick = {
+							viewModel.resetLayerDrawOrder(layerId)
+							showMenu = false
+						},
+						icon = { IconReset(modifier = Modifier.size(12.dp), tint = colors.accent) },
+					)
+				}
+				val isMeshOverridden = state.meshOverrides.containsKey(layerId)
+				val effectiveMesh = state.getEffectiveMeshSettings(layerId)
+				val defaultMesh = state.getDefaultMeshSettings(layerId)
+				CompactMenuItem(
+					text = tr("canvas.hierarchy.meshSettings"),
+					onClick = {
+						showMenu = false
+						onRequestSetMeshSettings?.invoke(
+							MeshSettingsDialogTarget(
+								layerId = layerId,
+								layerName = drawable.name,
+								currentSettings = effectiveMesh,
+								defaultSettings = defaultMesh,
+								isOverridden = isMeshOverridden,
+							)
+						)
+					},
+					icon = { IconMeshWireframe(tint = colors.textMuted, modifier = Modifier.size(12.dp)) },
+				)
+				if (drawable.mesh != null) {
+					CompactMenuItem(
+						text = tr("path.title"),
+						onClick = {
+							showMenu = false
+							onRequestOpenDeformPaths?.invoke(layerId)
+						},
+						icon = { IconDeformPath(modifier = Modifier.size(12.dp), tint = colors.accent) },
+					)
+				}
+				if (isMeshOverridden) {
+					CompactMenuItem(
+						text = tr("canvas.hierarchy.resetMeshSettings"),
+						onClick = {
+							viewModel.resetPartMeshSettings(layerId)
+							showMenu = false
+						},
+						icon = { IconReset(modifier = Modifier.size(12.dp), tint = colors.accent) },
+					)
+				}
+				CompactMenuDivider()
+			}
+
+			CompactMenuSection(tr("canvas.hierarchy.menuHierarchy"))
+			CompactMenuItem(
+				text = tr("canvas.hierarchy.moveToRoot"),
 				onClick = {
 					viewModel.reparentItem(itemId, null)
 					showMenu = false
 				},
 				enabled = !isAlreadyRoot,
-			) {
-				Text(
-					tr("canvas.hierarchy.moveToRoot"),
-					style = typography.body.copy(fontSize = 11.sp),
-					color = if (!isAlreadyRoot) colors.textPrimary else colors.textDisabled,
+				icon = { IconMoveToRoot(tint = if (!isAlreadyRoot) colors.textMuted else colors.textDisabled) },
+			)
+			if (state.parentOverrides.containsKey(itemId)) {
+				CompactMenuItem(
+					text = tr("canvas.hierarchy.resetItem"),
+					onClick = {
+						viewModel.resetItemHierarchy(itemId)
+						showMenu = false
+					},
+					icon = { IconReset(modifier = Modifier.size(12.dp), tint = colors.accent) },
 				)
 			}
 
-			if (state.parentOverrides.containsKey(itemId)) {
-				DropdownMenuItem(onClick = {
-					viewModel.resetItemHierarchy(itemId)
-					showMenu = false
-				}) {
-					Text(tr("canvas.hierarchy.resetItem"), style = typography.body.copy(fontSize = 11.sp), color = colors.accent)
-				}
-			}
-
 			if (layerId != null) {
-				Divider(color = colors.divider.copy(alpha = 0.5f), thickness = 0.5.dp)
-
-				DropdownMenuItem(onClick = {
-					onRequestCreate?.invoke(CreatePlacementKind.WARP, CreateRelation.AS_PARENT, false, drawable.id.raw)
-					showMenu = false
-				}) {
-					Text(tr("editor.treeAddWarpParent"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
-				}
-				DropdownMenuItem(onClick = {
-					onRequestCreate?.invoke(CreatePlacementKind.ROTATION, CreateRelation.AS_PARENT, false, drawable.id.raw)
-					showMenu = false
-				}) {
-					Text(tr("editor.treeAddRotationParent"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
-				}
-				if (drawable.mesh != null) {
-					DropdownMenuItem(onClick = {
-						onRequestCreate?.invoke(CreatePlacementKind.PATH, CreateRelation.AS_CHILD, false, drawable.id.raw)
+				CompactMenuDivider()
+				CompactMenuItem(
+					text = tr("canvas.hierarchy.deleteLayer"),
+					onClick = {
+						viewModel.deleteLayer(layerId)
 						showMenu = false
-					}) {
-						Text(tr("editor.treeAddPath"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
-					}
-				}
-
-				Divider(color = colors.divider.copy(alpha = 0.5f), thickness = 0.5.dp)
-
-				val effectiveOrder = state.getEffectiveDrawOrder(drawable.id.raw, layerId, drawable.drawOrder)
-				val isOverridden = state.drawOrderOverrides.containsKey(layerId) || state.drawOrderOverrides.containsKey(drawable.id.raw)
-
-				DropdownMenuItem(onClick = {
-					showMenu = false
-					onRequestSetOrder?.invoke(layerId, drawable.name, effectiveOrder, drawable.drawOrder, isOverridden)
-				}) {
-					Text(tr("canvas.hierarchy.setDrawOrder"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
-				}
-
-				if (isOverridden) {
-					DropdownMenuItem(onClick = {
-						viewModel.resetLayerDrawOrder(layerId)
-						showMenu = false
-					}) {
-						Text(tr("canvas.drawOrder.reset"), style = typography.body.copy(fontSize = 11.sp), color = colors.accent)
-					}
-				}
-
-				val isMeshOverridden = state.meshOverrides.containsKey(layerId)
-				val effectiveMesh = state.getEffectiveMeshSettings(layerId)
-				val defaultMesh = state.getDefaultMeshSettings(layerId)
-
-				DropdownMenuItem(onClick = {
-					showMenu = false
-					onRequestSetMeshSettings?.invoke(
-						MeshSettingsDialogTarget(
-							layerId = layerId,
-							layerName = drawable.name,
-							currentSettings = effectiveMesh,
-							defaultSettings = defaultMesh,
-							isOverridden = isMeshOverridden,
-						)
-					)
-				}) {
-					Text(tr("canvas.hierarchy.meshSettings"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
-				}
-
-				if (drawable.mesh != null) {
-					DropdownMenuItem(onClick = {
-						showMenu = false
-						onRequestOpenDeformPaths?.invoke(layerId)
-					}) {
-						Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-							IconDeformPath(modifier = Modifier.size(12.dp), tint = colors.accent)
-							Text(tr("path.title"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
-						}
-					}
-				}
-
-				if (isMeshOverridden) {
-					DropdownMenuItem(onClick = {
-						viewModel.resetPartMeshSettings(layerId)
-						showMenu = false
-					}) {
-						Text(tr("canvas.hierarchy.resetMeshSettings"), style = typography.body.copy(fontSize = 11.sp), color = colors.accent)
-					}
-				}
-
-				DropdownMenuItem(onClick = {
-					viewModel.deleteLayer(layerId)
-					showMenu = false
-				}) {
-					Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-						IconTrash(modifier = Modifier.size(11.dp), tint = colors.error)
-						Text(tr("canvas.hierarchy.deleteLayer"), style = typography.body.copy(fontSize = 11.sp), color = colors.error)
-					}
-				}
-				DropdownMenuItem(onClick = {
-					viewModel.toggleLayerVisibility(layerId)
-					showMenu = false
-				}) {
-					Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-						IconEye(visible = !isSelfVisible, modifier = Modifier.size(12.dp), tint = colors.textMuted)
-						Text(if (isSelfVisible) tr("canvas.hierarchy.hideLayer") else tr("canvas.hierarchy.showLayer"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
-					}
-				}
+					},
+					danger = true,
+					icon = { IconTrash(modifier = Modifier.size(11.dp), tint = colors.error) },
+				)
 			}
 		}
 	}

@@ -983,48 +983,63 @@ private fun BoxScope.PlacementSettingsPanel(
 ) {
     val colors = LocalToolColors.current
     val place = editor.placement ?: return
-    val typography = io.github.psd2live.ui.theme.LocalToolTypography.current
 
     Column(
         modifier = Modifier
             .align(Alignment.BottomStart)
             .padding(start = 8.dp, bottom = 36.dp)
-            .widthIn(min = 220.dp, max = 280.dp)
+            .widthIn(min = 200.dp, max = 236.dp)
             .frostedGlass(shape = RoundedCornerShape(8.dp), isHovered = true, elevation = 6.dp, alpha = 0.92f)
-            .padding(10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .padding(horizontal = 8.dp, vertical = 7.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        Text(
-            text = when (place.kind) {
-                CreatePlacementKind.WARP -> tr("editor.tool.create_warp")
-                CreatePlacementKind.ROTATION -> tr("editor.tool.create_rotation")
-                CreatePlacementKind.PATH -> tr("editor.pathDeform")
-            },
-            color = colors.textPrimary,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Text(
-            text = tr(
-                if (place.relation == CreateRelation.AS_PARENT) "editor.placementAsParentOf" else "editor.placementAsChildOf",
-                place.anchorLabel,
-            ),
-            color = colors.accent,
-            fontSize = 11.sp,
-        )
-        if (place.meshIds.isNotEmpty()) {
+        // Header: icon + title + relation chip
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            when (place.kind) {
+                CreatePlacementKind.WARP -> IconWarpDeformer(tint = colors.accent, modifier = Modifier.size(14.dp))
+                CreatePlacementKind.ROTATION -> IconRotationDeformer(modifier = Modifier.size(14.dp), tint = colors.accent)
+                CreatePlacementKind.PATH -> IconDeformPath(modifier = Modifier.size(14.dp), tint = colors.accent)
+            }
             Text(
-                text = tr("editor.placementMeshCount", place.meshIds.size),
-                color = colors.textMuted,
-                fontSize = 10.sp,
+                text = when (place.kind) {
+                    CreatePlacementKind.WARP -> tr("editor.tool.create_warp")
+                    CreatePlacementKind.ROTATION -> tr("editor.tool.create_rotation")
+                    CreatePlacementKind.PATH -> tr("editor.pathDeform")
+                },
+                color = colors.textPrimary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
             )
         }
+        Text(
+            text = buildString {
+                append(
+                    tr(
+                        if (place.relation == CreateRelation.AS_PARENT) "editor.placementAsParentOf" else "editor.placementAsChildOf",
+                        place.anchorLabel,
+                    )
+                )
+                if (place.meshIds.isNotEmpty()) {
+                    append(" · ")
+                    append(tr("editor.placementMeshCount", place.meshIds.size))
+                }
+            },
+            color = colors.accent,
+            fontSize = 10.sp,
+            maxLines = 2,
+        )
+
         if (place.kind != CreatePlacementKind.PATH) {
             CompactTextField(
                 value = place.name,
                 onValueChange = { editor.updatePlacementName(it) },
                 modifier = Modifier.fillMaxWidth(),
-                height = 24.dp,
+                height = 22.dp,
             )
             val partOptions = listOf("" to tr("editor.warpPart.inherit")) +
                 editor.model.parts.map { it.id.raw to it.name }
@@ -1035,92 +1050,53 @@ private fun BoxScope.PlacementSettingsPanel(
                 onItemSelected = { editor.updatePlacementPart(it.first.takeIf { id -> id.isNotEmpty() }) },
                 itemLabel = { it.second },
                 modifier = Modifier.fillMaxWidth(),
-                height = 24.dp,
+                height = 22.dp,
             )
         }
+
         if (place.kind == CreatePlacementKind.WARP) {
-            Text(tr("inspector.conversionDivision"), color = colors.textMuted, fontSize = 10.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf(3 to 3, 5 to 5, 8 to 8).forEach { (r, c) ->
-                    CompactToggleChip(
-                        text = "${r}×${c}",
-                        selected = place.rows == r && place.cols == c,
-                        onToggle = { editor.updatePlacementGrid(r, c) },
-                        height = 22.dp,
-                    )
-                }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                CompactNumberSpinner(
-                    value = place.cols.toDouble(),
-                    onValueChange = { editor.updatePlacementGrid(place.rows, it.toInt()) },
-                    modifier = Modifier.weight(1f),
-                    min = 1.0,
-                    max = 32.0,
-                    unit = "C",
-                    height = 22.dp,
-                )
-                CompactNumberSpinner(
-                    value = place.rows.toDouble(),
-                    onValueChange = { editor.updatePlacementGrid(it.toInt(), place.cols) },
-                    modifier = Modifier.weight(1f),
-                    min = 1.0,
-                    max = 32.0,
-                    unit = "R",
-                    height = 22.dp,
-                )
-            }
-            Text(tr("inspector.bezierDivision"), color = colors.textMuted, fontSize = 10.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf(2 to 2, 3 to 3, 5 to 5).forEach { (r, c) ->
-                    CompactToggleChip(
-                        text = "${r}×${c}",
-                        selected = place.bezierRows == r && place.bezierCols == c,
-                        onToggle = { editor.updatePlacementBezier(r, c) },
-                        height = 22.dp,
-                    )
-                }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                CompactNumberSpinner(
-                    value = place.bezierCols.toDouble(),
-                    onValueChange = { editor.updatePlacementBezier(place.bezierRows, it.toInt()) },
-                    modifier = Modifier.weight(1f),
-                    min = 1.0,
-                    max = 16.0,
-                    unit = "C",
-                    height = 22.dp,
-                )
-                CompactNumberSpinner(
-                    value = place.bezierRows.toDouble(),
-                    onValueChange = { editor.updatePlacementBezier(it.toInt(), place.bezierCols) },
-                    modifier = Modifier.weight(1f),
-                    min = 1.0,
-                    max = 16.0,
-                    unit = "R",
-                    height = 22.dp,
-                )
-            }
-            Text(tr("editor.placementDragHint"), color = colors.textMuted, fontSize = 10.sp)
+            PlacementDivisionRow(
+                icon = { IconGridDivision(tint = colors.textMuted) },
+                label = tr("inspector.conversionDivision"),
+                presets = listOf(3 to 3, 5 to 5, 8 to 8),
+                rows = place.rows,
+                cols = place.cols,
+                maxDiv = 32,
+                onPreset = { r, c -> editor.updatePlacementGrid(r, c) },
+                onRows = { editor.updatePlacementGrid(it, place.cols) },
+                onCols = { editor.updatePlacementGrid(place.rows, it) },
+            )
+            PlacementDivisionRow(
+                icon = { IconBezierDivision(tint = colors.textMuted) },
+                label = tr("inspector.bezierDivision"),
+                presets = listOf(2 to 2, 3 to 3, 5 to 5),
+                rows = place.bezierRows,
+                cols = place.bezierCols,
+                maxDiv = 16,
+                onPreset = { r, c -> editor.updatePlacementBezier(r, c) },
+                onRows = { editor.updatePlacementBezier(it, place.bezierCols) },
+                onCols = { editor.updatePlacementBezier(place.bezierRows, it) },
+            )
         }
-        if (place.kind == CreatePlacementKind.ROTATION) {
-            Text(tr("editor.placementRotationHint"), color = colors.textMuted, fontSize = 10.sp)
-        }
-        if (place.kind == CreatePlacementKind.PATH) {
-            Text(tr("editor.pathCreateHint"), color = colors.textMuted, fontSize = 10.sp)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+
+        Text(
+            text = when (place.kind) {
+                CreatePlacementKind.WARP -> tr("editor.placementDragHint")
+                CreatePlacementKind.ROTATION -> tr("editor.placementRotationHint")
+                CreatePlacementKind.PATH -> tr("editor.pathCreateHint")
+            },
+            color = colors.textMuted,
+            fontSize = 9.sp,
+            maxLines = 2,
+        )
+
+        Row(horizontalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.fillMaxWidth()) {
             CompactButton(
                 text = tr("editor.placementCancel"),
                 onClick = { editor.cancelPlacement(); focus() },
                 modifier = Modifier.weight(1f),
-                height = 26.dp,
+                height = 24.dp,
+                leadingIcon = { IconClose(modifier = Modifier.size(10.dp), tint = colors.textMuted) },
             )
             CompactButton(
                 text = tr("editor.placementConfirm"),
@@ -1129,7 +1105,65 @@ private fun BoxScope.PlacementSettingsPanel(
                 enabled = editor.editable && !editor.busy &&
                     (place.kind != CreatePlacementKind.PATH || editor.draft.size >= 2),
                 modifier = Modifier.weight(1f),
-                height = 26.dp,
+                height = 24.dp,
+                leadingIcon = { IconCheck(modifier = Modifier.size(10.dp), tint = colors.accentText) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlacementDivisionRow(
+    icon: @Composable () -> Unit,
+    label: String,
+    presets: List<Pair<Int, Int>>,
+    rows: Int,
+    cols: Int,
+    maxDiv: Int,
+    onPreset: (Int, Int) -> Unit,
+    onRows: (Int) -> Unit,
+    onCols: (Int) -> Unit,
+) {
+    val colors = LocalToolColors.current
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            icon()
+            Text(label, color = colors.textMuted, fontSize = 9.sp, maxLines = 1)
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            presets.forEach { (r, c) ->
+                CompactToggleChip(
+                    text = "${r}×${c}",
+                    selected = rows == r && cols == c,
+                    onToggle = { onPreset(r, c) },
+                    height = 20.dp,
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            CompactNumberSpinner(
+                value = cols.toDouble(),
+                onValueChange = { onCols(it.toInt()) },
+                modifier = Modifier.width(52.dp),
+                min = 1.0,
+                max = maxDiv.toDouble(),
+                unit = "C",
+                height = 20.dp,
+            )
+            CompactNumberSpinner(
+                value = rows.toDouble(),
+                onValueChange = { onRows(it.toInt()) },
+                modifier = Modifier.width(52.dp),
+                min = 1.0,
+                max = maxDiv.toDouble(),
+                unit = "R",
+                height = 20.dp,
             )
         }
     }
