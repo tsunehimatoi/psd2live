@@ -59,6 +59,7 @@ import io.github.psd2live.i18n.AppLanguage
 import io.github.psd2live.i18n.I18n
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.EditHierarchyMode
+import io.github.psd2live.ui.CanvasStatusTone
 import io.github.psd2live.agent.AgentMcpConnectionInfo
 import io.github.psd2live.ui.components.AgentConnectionDialog
 import io.github.psd2live.ui.components.AppTitleBar
@@ -587,6 +588,20 @@ private fun StatusBar(
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
+	val editor = viewModel.canvasEditor
+	// Read editor snapshot fields so tool/selection changes recompose this bar.
+	val editorMessage = if (!state.isBusy && state.activeTabKind == WorkspaceTabKind.EDIT) {
+		editor.statusBarMessage(state.selectedLayerId, state.selectedDeformerId)
+	} else {
+		null
+	}
+	val statusText = editorMessage?.text ?: state.statusText.ifBlank { tr("status.ready") }
+	val statusColor = when (editorMessage?.tone) {
+		CanvasStatusTone.ERROR -> colors.error
+		CanvasStatusTone.WARNING -> colors.warning
+		CanvasStatusTone.NORMAL -> colors.textPrimary
+		null -> colors.textPrimary
+	}
 
 	Row(
 		modifier = modifier
@@ -598,9 +613,9 @@ private fun StatusBar(
 		verticalAlignment = Alignment.CenterVertically,
 	) {
 		Text(
-			text = state.statusText.ifBlank { tr("status.ready") },
+			text = statusText,
 			style = typography.caption.copy(fontSize = 11.sp),
-			color = colors.textPrimary,
+			color = statusColor,
 			maxLines = 1,
 			overflow = TextOverflow.Ellipsis,
 			modifier = Modifier.weight(1f),

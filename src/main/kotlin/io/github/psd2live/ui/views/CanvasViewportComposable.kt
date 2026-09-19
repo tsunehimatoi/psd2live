@@ -8,6 +8,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -94,6 +95,7 @@ import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.state.ShortcutAction
 import io.github.psd2live.ui.state.ShortcutScope
+import io.github.psd2live.ui.state.WorkspaceTabKind
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
 import kotlinx.coroutines.channels.Channel
@@ -1071,22 +1073,34 @@ fun CanvasViewportComposable(
 				}
 			}
 
-			if (badgeText.isNotEmpty()) {
-				Box(
-					modifier = Modifier
-						.align(Alignment.BottomEnd)
-						// Each tab's bottom bar owns the bottom strip: the editor's footer in Edit,
-						// the preview's floating toolbar in Preview. The badge sits above whichever
-						// one is showing instead of on top of it.
-						.padding(end = 10.dp, bottom = if (mode == CanvasMode.EDIT) 32.dp else 48.dp)
-						.background(Color(0xCC181A1E), RoundedCornerShape(4.dp))
-						.padding(horizontal = 8.dp, vertical = 4.dp),
-				) {
-					Text(
-						text = badgeText,
-						style = typography.caption.copy(fontSize = 11.sp, color = Color(0xFFD7DEE7)),
-					)
+			// Bottom-right cluster: zoom/stats pill above the display-toggle rail. The rail mirrors
+			// the left tool palette; Edit shows hints in the app status bar, so only Preview needs
+			// extra clearance for its floating toolbar.
+			Column(
+				modifier = Modifier
+					.align(Alignment.BottomEnd)
+					.padding(end = 8.dp, bottom = if (mode == CanvasMode.EDIT) 8.dp else 48.dp),
+				horizontalAlignment = Alignment.End,
+				verticalArrangement = Arrangement.spacedBy(6.dp),
+			) {
+				if (badgeText.isNotEmpty()) {
+					Box(
+						modifier = Modifier
+							.background(Color(0xCC181A1E), RoundedCornerShape(4.dp))
+							.padding(horizontal = 8.dp, vertical = 4.dp),
+					) {
+						Text(
+							text = badgeText,
+							style = typography.caption.copy(fontSize = 11.sp, color = Color(0xFFD7DEE7)),
+						)
+					}
 				}
+				CanvasViewOptionsBar(
+					options = state.activeTabView,
+					onOptionsChange = viewModel::setTabViewOptions,
+					showPathGuides = state.activeTabKind == WorkspaceTabKind.EDIT,
+					modifier = Modifier,
+				)
 			}
 		}
 	}

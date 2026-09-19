@@ -323,6 +323,12 @@ private fun remapUvs(mesh: DrawableMesh, from: AtlasSlice, to: AtlasSlice): Floa
 /** The faces a topology op created, and which drawable they belong to. See [CanvasEditor.topologyFills]. */
 internal data class TopologyFill(val drawableId: String, val triangles: Set<Int>)
 
+/** Tone for [CanvasEditor.statusBarMessage] in the app status bar. */
+internal enum class CanvasStatusTone { NORMAL, WARNING, ERROR }
+
+/** Text and tone the app status bar shows while an Edit tab is active. */
+internal data class CanvasStatusMessage(val text: String, val tone: CanvasStatusTone)
+
 internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     var state: PSD2LiveState
         get() = viewModel.state.value
@@ -347,6 +353,41 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             if (deferred.tool in CREATION_TOOLS) tr(deferred.promptKey)
             else tr(deferred.promptKey, modeLabel(deferred.mode))
         }
+
+    /**
+     * Selection count, tool gesture shortcuts, waiting prompts and submit errors for the app status bar.
+     * A waiting mode's prompt is read from the request itself rather than from [error], which any tool
+     * press clears: the request stands until a pick answers it, and so has to the line asking for one.
+     */
+    fun statusBarMessage(
+        selectedLayerId: String? = state.selectedLayerId,
+        selectedDeformerId: String? = state.selectedDeformerId,
+    ): CanvasStatusMessage {
+        val waiting = deferredModePrompt
+        error?.let { return CanvasStatusMessage(it, CanvasStatusTone.ERROR) }
+        waiting?.let { return CanvasStatusMessage(it, CanvasStatusTone.WARNING) }
+        if (busy) return CanvasStatusMessage(tr("editor.saving"), CanvasStatusTone.NORMAL)
+        // Status bar is always composed; model may still be absent before any PSD is loaded.
+        val source = preview ?: state.previewModel?.rig?.puppet
+        val target = source?.let { target(it, selectedLayerId, selectedDeformerId) }
+        val hintKey = when {
+            tool == CanvasTool.KNIFE -> "editor.knifeGestureHint"
+            tool == CanvasTool.SUBDIVIDE -> "editor.subdivideHint"
+            tool == CanvasTool.SELECT && target?.kind == "rotation" -> "editor.rotationGestureHint"
+            tool == CanvasTool.CREATE_DEFORM_PATH -> "editor.pathHint"
+            tool == CanvasTool.INFLATE -> "editor.inflateHint"
+            hierarchyMode == EditHierarchyMode.PAINT -> "editor.paintHint"
+            hierarchyMode == EditHierarchyMode.SELECT && tool == CanvasTool.SELECT -> "editor.objectHint"
+            // drawsTransformBox reads model via target(); only evaluate once a puppet exists.
+            tool == CanvasTool.SELECT && source != null && drawsTransformBox -> "editor.transformHint"
+            tool == CanvasTool.CREATE_WARP -> if (placement != null) "editor.placementDragHint" else "editor.createWarpHint"
+            tool == CanvasTool.CREATE_ROTATION -> if (placement != null) "editor.placementRotationHint" else "editor.createRotationHint"
+            tool == CanvasTool.GLUE -> "editor.glueHint"
+            else -> "editor.hint"
+        }
+        val text = tr("editor.selectionCount", objects.size, vertices.size) + "   ·   " + tr(hintKey)
+        return CanvasStatusMessage(text, CanvasStatusTone.NORMAL)
+    }
 
     // Painting system state (L1)
     var paintColor by mutableStateOf(androidx.compose.ui.graphics.Color.Black)

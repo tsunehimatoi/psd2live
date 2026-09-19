@@ -999,7 +999,7 @@ internal fun BoxScope.CanvasEditorOverlay(
         ),
         modifier = Modifier
             .align(Alignment.BottomStart)
-            .padding(start = 10.dp, bottom = 34.dp),
+            .padding(start = 10.dp, bottom = 10.dp),
     ) {
         if (activePlacement != null) {
             PlacementSettingsPanel(
@@ -1017,36 +1017,6 @@ internal fun BoxScope.CanvasEditorOverlay(
         selectedLayerId = selectedLayerId,
         selectedDeformerId = selectedDeformerId,
         focus = focus,
-    )
-
-    // Bottom Status Bar
-    //
-    // A waiting mode's prompt is read from the request itself rather than from `error`, which any tool
-    // press clears: the request stands until a pick answers it, and so has to the line asking for one.
-    val waiting = editor.deferredModePrompt
-    Text(
-        editor.error ?: waiting ?: if (editor.busy) tr("editor.saving") else tr("editor.selectionCount", editor.objects.size, editor.vertices.size) + "   ·   " + tr(when {
-            editor.tool == CanvasTool.KNIFE -> "editor.knifeGestureHint"
-            editor.tool == CanvasTool.SUBDIVIDE -> "editor.subdivideHint"
-            editor.tool == CanvasTool.SELECT && target?.kind == "rotation" -> "editor.rotationGestureHint"
-            editor.tool == CanvasTool.CREATE_DEFORM_PATH -> "editor.pathHint"
-            editor.tool == CanvasTool.INFLATE -> "editor.inflateHint"
-            editor.hierarchyMode == EditHierarchyMode.PAINT -> "editor.paintHint"
-            editor.hierarchyMode == EditHierarchyMode.SELECT && editor.tool == CanvasTool.SELECT -> "editor.objectHint"
-            editor.tool == CanvasTool.SELECT && editor.drawsTransformBox -> "editor.transformHint"
-            editor.tool == CanvasTool.CREATE_WARP -> if (editor.placement != null) "editor.placementDragHint" else "editor.createWarpHint"
-            editor.tool == CanvasTool.CREATE_ROTATION -> if (editor.placement != null) "editor.placementRotationHint" else "editor.createRotationHint"
-            editor.tool == CanvasTool.GLUE -> "editor.glueHint"
-            else -> "editor.hint"
-        }),
-        // Amber rather than red: a request waiting for a part is an instruction, not a failure.
-        color = when {
-            editor.error != null -> colors.error
-            waiting != null -> colors.warning
-            else -> colors.textMuted
-        },
-        fontSize = 10.sp,
-        modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().background(colors.panelBackground).padding(horizontal = 8.dp, vertical = 5.dp)
     )
 }
 
