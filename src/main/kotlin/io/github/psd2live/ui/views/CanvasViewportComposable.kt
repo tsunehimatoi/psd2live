@@ -174,6 +174,13 @@ fun CanvasViewportComposable(
             if(state.selectedDeformerId!=null && editor.tool in VERTEX_TOOLS) { editor.objects=emptySet() }
         }
     }
+    // A mode asked for without a selection waits for one, and this is where the wait ends: a selection
+    // arriving from any view — the canvas pick, the hierarchy tree, the inspector — is what a deferred
+    // request was for. Deliberately outside the guard above: an object pick happens on the press of a
+    // gesture that is still live, and the request has to be answered whether or not that gesture is.
+    LaunchedEffect(state.selectedLayerId, state.selectedDeformerId) {
+        editor.resolveDeferredMode()
+    }
     LaunchedEffect(state.historySnapshot?.headNodeId, state.parameterValues) {
         if (!editor.busy && editor.inGesture) editor.cancel()
         if (!editor.busy && state.previewModel != null) editor.target()?.let { t -> editor.vertices=editor.vertices.filter { it in 0 until t.count }.toSet() }

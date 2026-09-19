@@ -34,6 +34,31 @@ enum class EditHierarchyMode {
     PAINT,
 }
 
+/**
+ * A mode the user asked for while nothing was selected, and the tool that request came with.
+ *
+ * The canvas stays in object mode until a part is picked, so the request is answered by the same gesture
+ * that makes the pick: the click satisfying the prompt is the click the mode needed anyway, while entering
+ * the mode early would leave every gesture in it without a target to act on.
+ */
+internal data class DeferredMode(val mode: EditHierarchyMode, val tool: CanvasTool? = null) {
+    /**
+     * The prompt this request shows, which names the kind of part the mode actually needs: painting
+     * replaces one layer's pixels, so a deformer selection would leave it with nothing to paint.
+     */
+    val promptKey: String get() = if (mode == EditHierarchyMode.PAINT) "editor.mode.layerFirst" else "editor.mode.partFirst"
+}
+
+/** The localized name of [mode], as the mode chips and the deferred-mode prompt spell it. */
+internal fun modeLabel(mode: EditHierarchyMode): String = tr(
+    when (mode) {
+        EditHierarchyMode.SELECT -> "editor.mode.select"
+        EditHierarchyMode.DEFORM -> "editor.mode.deform"
+        EditHierarchyMode.EDIT -> "editor.mode.edit"
+        EditHierarchyMode.PAINT -> "editor.mode.paint"
+    }
+)
+
 /** Canvas tools, each pointing at the shortcut action that activates it. */
 internal enum class CanvasTool(val action: ShortcutAction) {
     SELECT(ShortcutAction.TOOL_SELECT),
@@ -230,6 +255,17 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     // Top-right Hierarchy & Level state
     var hierarchyMode by mutableStateOf(EditHierarchyMode.SELECT)
     var editLevel by mutableStateOf(2) // Level 1 (grid), Level 2 (bezier), Level 3 (macro)
+
+    /**
+     * The mode the user asked for that has no part to work on yet, waiting for the pick that gives it
+     * one. Null whenever the canvas is in the mode it is showing.
+     */
+    var deferredMode by mutableStateOf<DeferredMode?>(null)
+        private set
+
+    /** What the status bar says while a request waits: it names the mode, so the click that put it there is not lost. */
+    val deferredModePrompt: String?
+        get() = deferredMode?.let { tr(it.promptKey, modeLabel(it.mode)) }
 
     // Painting system state (L1)
     var paintColor by mutableStateOf(androidx.compose.ui.graphics.Color.Black)
@@ -1329,15 +1365,17 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
      * every way in — toolbar, shortcut, a request from another view — passes the same test the toolbar
      * draws itself from. Arming one anyway would leave the pointer doing something the palette has just
      * animated away, which is worse than the keypress doing nothing.
+     *
+     * A tool whose mode has no part yet waits with it, and waits for the tool it was asked for: the
+     * request carries it, so the keypress answered by a pick arms the brush it named rather than the
+     * select tool that made the pick.
      */
     fun activateTool(next: CanvasTool) {
         if (busy) return
         if (next !in toolbarGroups(hierarchyMode).flatten()) {
-            setHierarchyMode(when {
-                next in PAINT_TOOLS -> EditHierarchyMode.PAINT
-                next in CREATION_TOOLS || next == CanvasTool.KNIFE || next == CanvasTool.SUBDIVIDE -> EditHierarchyMode.EDIT
-                else -> EditHierarchyMode.DEFORM
-            })
+            val mode = modeForTool(next)
+            if (!hasPartFor(mode)) { deferMode(mode, next); return }
+            enterMode(mode)
         }
         cancel()
         tool = next
@@ -1348,9 +1386,82 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         clearHover()
     }
 
+    /**
+     * A mode nothing is selected for is asked for, not entered: the request is remembered and the canvas
+     * stays in object mode, which is the mode that can answer the prompt it raises.
+     */
     @JvmName("changeHierarchyMode")
     fun setHierarchyMode(next: EditHierarchyMode) {
         if (busy) return
+        if (!hasPartFor(next)) { deferMode(next, null); return }
+        enterMode(next)
+    }
+
+    /**
+     * Whether [mode] has the part it works on.
+     *
+     * Object mode is the one that needs nothing — it is what the canvas does without a selection. The
+     * other three each work on a part, and asking [target] is what keeps this the same test the canvas
+     * picks with: a layer that is hidden, locked or carries no mesh is not something they could act on,
+     * so they wait for one that is.
+     */
+    private fun hasPartFor(mode: EditHierarchyMode): Boolean = when {
+        mode == EditHierarchyMode.SELECT -> true
+        // No rig, no part: the canvas that would pick one is not there either, and there is no model for
+        // [target] to read. The request waits, which is what it does anyway.
+        state.previewModel == null -> false
+        // Paint repaints one layer's pixels. A deformer is a target these modes can edit but not paint, and
+        // entering paint mode on one would leave the session and the tools alike with nothing to draw on.
+        mode == EditHierarchyMode.PAINT -> target(deformerId = null)?.kind == "mesh"
+        else -> target() != null
+    }
+
+    /**
+     * The mode a tool belongs to when the current palette does not offer it: the palette the toolbar
+     * would have to draw for the tool to be armable at all.
+     */
+    private fun modeForTool(tool: CanvasTool): EditHierarchyMode = when {
+        tool in PAINT_TOOLS -> EditHierarchyMode.PAINT
+        tool in CREATION_TOOLS || tool == CanvasTool.KNIFE || tool == CanvasTool.SUBDIVIDE -> EditHierarchyMode.EDIT
+        else -> EditHierarchyMode.DEFORM
+    }
+
+    /**
+     * Remembers [next] for the first part the user selects, and puts object mode in force to make that
+     * selection: object mode is the one that picks, so the request waits in the mode that answers it.
+     */
+    private fun deferMode(next: EditHierarchyMode, tool: CanvasTool?) {
+        val request = DeferredMode(next, tool)
+        enterMode(EditHierarchyMode.SELECT)
+        deferredMode = request
+    }
+
+    /**
+     * Enters the mode a request was waiting for, now that its part is selected.
+     *
+     * Every way a selection can land — the canvas pick, the hierarchy tree, the inspector — ends up in
+     * the state this reads, so whichever view the click came from answers the request, and no entry point
+     * has to remember to call this.
+     */
+    fun resolveDeferredMode() {
+        val request = deferredMode ?: return
+        if (busy || !hasPartFor(request.mode)) return
+        enterMode(request.mode)
+        // The tool the request named, if it was one. It belongs to the mode just entered, so this arms it
+        // rather than asking for a mode of its own.
+        request.tool?.let { activateTool(it) }
+    }
+
+    /**
+     * Puts [next] in force. Every way into a mode ends up here, so the mode's own bookkeeping — the paint
+     * session, the Bezier state, the palette fallback — is applied once and applies to all of them.
+     *
+     * A mode that takes over answers whatever was waiting for one: nothing is pending once the canvas is
+     * working in a mode of its own.
+     */
+    private fun enterMode(next: EditHierarchyMode) {
+        if (busy) return
+        deferredMode = null
         cancel()
         val prev = hierarchyMode
         hierarchyMode = next

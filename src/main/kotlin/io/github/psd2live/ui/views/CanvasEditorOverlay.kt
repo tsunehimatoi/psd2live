@@ -854,8 +854,12 @@ internal fun BoxScope.CanvasEditorOverlay(
     HierarchyModeBar(editor = editor, focus = focus)
 
     // Bottom Status Bar
+    //
+    // A waiting mode's prompt is read from the request itself rather than from `error`, which any tool
+    // press clears: the request stands until a pick answers it, and so has to the line asking for one.
+    val waiting = editor.deferredModePrompt
     Text(
-        editor.error ?: if (editor.busy) tr("editor.saving") else tr("editor.selectionCount", editor.objects.size, editor.vertices.size) + "   ·   " + tr(when {
+        editor.error ?: waiting ?: if (editor.busy) tr("editor.saving") else tr("editor.selectionCount", editor.objects.size, editor.vertices.size) + "   ·   " + tr(when {
             editor.tool == CanvasTool.KNIFE -> "editor.knifeGestureHint"
             editor.tool == CanvasTool.SUBDIVIDE -> "editor.subdivideHint"
             editor.tool == CanvasTool.SELECT && target?.kind == "rotation" -> "editor.rotationGestureHint"
@@ -869,7 +873,12 @@ internal fun BoxScope.CanvasEditorOverlay(
             editor.tool == CanvasTool.GLUE -> "editor.glueHint"
             else -> "editor.hint"
         }),
-        color = if (editor.error != null) colors.error else colors.textMuted,
+        // Amber rather than red: a request waiting for a part is an instruction, not a failure.
+        color = when {
+            editor.error != null -> colors.error
+            waiting != null -> colors.warning
+            else -> colors.textMuted
+        },
         fontSize = 10.sp,
         modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().background(colors.panelBackground).padding(horizontal = 8.dp, vertical = 5.dp)
     )
@@ -1556,17 +1565,13 @@ private fun BoxScope.HierarchyModeBar(
     ) {
         // Mode buttons: 物体模式 / 变形模式 / 编辑模式
         EditHierarchyMode.entries.forEach { mode ->
-            val isSelected = editor.hierarchyMode == mode
-            val label = when (mode) {
-                EditHierarchyMode.SELECT -> tr("editor.mode.select")
-                EditHierarchyMode.DEFORM -> tr("editor.mode.deform")
-                EditHierarchyMode.EDIT -> tr("editor.mode.edit")
-                EditHierarchyMode.PAINT -> tr("editor.mode.paint")
-            }
             ModeBarChip(
                 mode = mode,
-                text = label,
-                isSelected = isSelected,
+                text = modeLabel(mode),
+                isSelected = editor.hierarchyMode == mode,
+                // A mode asked for before there was anything to work on: it reads as waiting rather than
+                // as in force, which is what the canvas is doing until a part is picked.
+                isWaiting = editor.deferredMode?.mode == mode,
                 onClick = {
                     editor.setHierarchyMode(mode)
                     focus()
@@ -1808,6 +1813,7 @@ private fun ModeBarChip(
     mode: EditHierarchyMode,
     text: String,
     isSelected: Boolean,
+    isWaiting: Boolean = false,
     onClick: () -> Unit,
 ) {
     val colors = LocalToolColors.current
@@ -1816,11 +1822,13 @@ private fun ModeBarChip(
 
     val bg = when {
         isSelected -> colors.accent.copy(alpha = 0.22f)
+        isWaiting -> colors.warning.copy(alpha = 0.14f)
         isHovered -> colors.controlHover.copy(alpha = 0.7f)
         else -> Color.Transparent
     }
     val textColor = when {
         isSelected -> colors.accent
+        isWaiting -> colors.warning
         isHovered -> colors.textPrimary
         else -> colors.textMuted
     }
@@ -1832,7 +1840,11 @@ private fun ModeBarChip(
             .background(bg)
             .border(
                 0.5.dp,
-                if (isSelected) colors.accent.copy(alpha = 0.5f) else Color.Transparent,
+                when {
+                    isSelected -> colors.accent.copy(alpha = 0.5f)
+                    isWaiting -> colors.warning.copy(alpha = 0.5f)
+                    else -> Color.Transparent
+                },
                 RoundedCornerShape(4.dp)
             )
             .clickable(
