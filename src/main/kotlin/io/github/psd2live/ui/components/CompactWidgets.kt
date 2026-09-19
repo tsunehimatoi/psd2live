@@ -102,6 +102,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
+import io.github.psd2live.ui.theme.frostedGlass
 import java.awt.Cursor
 
 /** Vector Eye Icon (Visible or Hidden/Crossed-out) */
@@ -762,6 +763,10 @@ fun TreeContextMenu(
 	onDismissRequest: () -> Unit,
 	clickOffset: Offset = Offset.Zero,
 	modifier: Modifier = Modifier,
+	minWidth: Dp = 200.dp,
+	maxWidth: Dp = 270.dp,
+	/** Match overlay toolbars: translucent acrylic instead of an opaque elevated panel. */
+	frosted: Boolean = false,
 	content: @Composable ColumnScope.() -> Unit,
 ) {
 	val expandedStates = remember { MutableTransitionState(false) }
@@ -850,26 +855,42 @@ fun TreeContextMenu(
 					label = "translateY",
 				) { if (it) 0f else -4f }
 
-				Surface(
-					color = colors.panelElevated,
-					shape = RoundedCornerShape(6.dp),
-					border = BorderStroke(1.dp, colors.borderHover.copy(alpha = 0.5f)),
-					elevation = 10.dp,
-					modifier = modifier
-						.graphicsLayer {
-							this.alpha = alpha
-							this.scaleX = scale
-							this.scaleY = scale
-							this.translationY = translateY * density.density
-							this.transformOrigin = TransformOrigin(0f, 0f)
-						}
-						.widthIn(min = 200.dp, max = 270.dp),
-				) {
-					Column(
-						modifier = Modifier
-							.padding(all = 4.dp),
+				val shape = RoundedCornerShape(6.dp)
+				val shellModifier = modifier
+					.graphicsLayer {
+						this.alpha = alpha
+						this.scaleX = scale
+						this.scaleY = scale
+						this.translationY = translateY * density.density
+						this.transformOrigin = TransformOrigin(0f, 0f)
+					}
+					.widthIn(min = minWidth, max = maxWidth)
+				val contentPad = if (frosted) 3.dp else 4.dp
+				if (frosted) {
+					Box(
+						modifier = shellModifier.frostedGlass(
+							shape = shape,
+							isHovered = true,
+							elevation = 12.dp,
+							baseColor = colors.panelElevated,
+							alpha = 0.88f,
+						),
 					) {
-						content()
+						Column(modifier = Modifier.padding(all = contentPad)) {
+							content()
+						}
+					}
+				} else {
+					Surface(
+						color = colors.panelElevated,
+						shape = shape,
+						border = BorderStroke(1.dp, colors.borderHover.copy(alpha = 0.5f)),
+						elevation = 10.dp,
+						modifier = shellModifier,
+					) {
+						Column(modifier = Modifier.padding(all = contentPad)) {
+							content()
+						}
 					}
 				}
 			}
@@ -885,6 +906,7 @@ fun CompactButton(
 	modifier: Modifier = Modifier,
 	enabled: Boolean = true,
 	isPrimary: Boolean = false,
+	danger: Boolean = false,
 	leadingIcon: (@Composable () -> Unit)? = null,
 	height: Dp = 26.dp,
 ) {
@@ -896,6 +918,8 @@ fun CompactButton(
 
 	val bgColor = when {
 		!enabled -> colors.controlBackground.copy(alpha = 0.4f)
+		danger && (isHovered || isPressed) -> colors.error.copy(alpha = 0.22f)
+		danger -> colors.error.copy(alpha = 0.12f)
 		isPrimary -> if (isHovered || isPressed) colors.accentHover else colors.accent
 		isPressed -> colors.controlActive
 		isHovered -> colors.controlHover
@@ -904,6 +928,7 @@ fun CompactButton(
 
 	val borderColor = when {
 		!enabled -> colors.border.copy(alpha = 0.3f)
+		danger -> colors.error.copy(alpha = if (isHovered) 0.75f else 0.5f)
 		isPrimary -> colors.accent
 		isHovered -> colors.borderHover
 		else -> colors.border
@@ -911,6 +936,7 @@ fun CompactButton(
 
 	val textColor = when {
 		!enabled -> colors.textDisabled
+		danger -> colors.error
 		isPrimary -> colors.accentText
 		else -> colors.textPrimary
 	}
@@ -923,7 +949,7 @@ fun CompactButton(
 			.hoverable(interactionSource)
 			.clickable(enabled = enabled, interactionSource = interactionSource, indication = null) { onClick() }
 			.pointerHoverIcon(if (enabled) PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)) else PointerIcon.Default)
-			.padding(horizontal = 8.dp),
+			.padding(horizontal = 6.dp),
 		contentAlignment = Alignment.Center,
 	) {
 		Row(
@@ -932,14 +958,18 @@ fun CompactButton(
 		) {
 			if (leadingIcon != null) {
 				leadingIcon()
-				Spacer(Modifier.width(5.dp))
+				Spacer(modifier.width(5.dp))
 			}
 			Text(
 				text = text,
-				style = typography.body.copy(fontSize = 11.5.sp, fontWeight = if (isPrimary) FontWeight.Medium else FontWeight.Normal),
+				style = typography.body.copy(
+					fontSize = 11.sp,
+					fontWeight = if (isPrimary || danger) FontWeight.Medium else FontWeight.Normal,
+				),
 				color = textColor,
 				maxLines = 1,
 				overflow = TextOverflow.Ellipsis,
+				textAlign = TextAlign.Center,
 			)
 		}
 	}

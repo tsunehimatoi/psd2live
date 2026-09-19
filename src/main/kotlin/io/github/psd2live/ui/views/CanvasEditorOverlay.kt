@@ -2175,9 +2175,9 @@ private fun BoxScope.HierarchyModeBar(
             }
         }
 
-        // Edit mode tools
+        // Edit mode: warp grid badge only. Mesh topology actions are on the canvas context menu.
         AnimatedVisibility(
-            visible = editor.hierarchyMode == EditHierarchyMode.EDIT,
+            visible = editor.hierarchyMode == EditHierarchyMode.EDIT && target?.kind == "warp",
             enter = expandHorizontally(
                 animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
                 expandFrom = Alignment.Start,
@@ -2198,27 +2198,14 @@ private fun BoxScope.HierarchyModeBar(
                         .width(1.dp)
                         .background(colors.border.copy(alpha = 0.45f))
                 )
-                if (target != null && target.kind == "warp") {
-                    val warpRows = target.geometry.rows ?: 4
-                    val warpCols = target.geometry.columns ?: 4
-                    Text(
-                        text = "Grid: ${warpRows}×${warpCols}",
-                        fontSize = 11.sp,
-                        color = colors.textMuted,
-                        modifier = Modifier.padding(horizontal = 4.dp)
-                    )
-                } else if (target != null && target.kind == "mesh") {
-                    listOf(
-                        tr("editor.split") to { editor.topology("split"); focus() },
-                        tr("editor.connect") to { editor.topology("connect"); focus() },
-                        tr("editor.delete") to { editor.topology("delete"); focus() },
-                    ).forEach { (lbl, act) ->
-                        StructureActionChip(
-                            text = lbl,
-                            onClick = act
-                        )
-                    }
-                }
+                val warpRows = target?.geometry?.rows ?: 4
+                val warpCols = target?.geometry?.columns ?: 4
+                Text(
+                    text = "Grid: ${warpRows}×${warpCols}",
+                    fontSize = 11.sp,
+                    color = colors.textMuted,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
             }
         }
 
@@ -2285,20 +2272,6 @@ private fun BoxScope.HierarchyModeBar(
                 )
                 val session = editor.paintSession
                 if (session != null) {
-                    StructureActionChip(
-                        text = tr("editor.undo"),
-                        onClick = { editor.undoPaint(); focus() },
-                        enabled = session.canUndo(),
-                    )
-                    StructureActionChip(
-                        text = tr("editor.redo"),
-                        onClick = { editor.redoPaint(); focus() },
-                        enabled = session.canRedo(),
-                    )
-                    StructureActionChip(
-                        text = tr("editor.paintClear"),
-                        onClick = { editor.clearCurrentLayerPaint(); focus() },
-                    )
                     val isDirty = session.isDirty
                     StructureActionChip(
                         text = if (isDirty) tr("editor.paint.applyCount", session.strokeCount) else tr("editor.paint.apply"),

@@ -131,6 +131,8 @@ fun CanvasViewportComposable(
 	var panY by remember(state.projectOpenGeneration) { mutableStateOf(state.canvasPanY.toDouble()) }
 	var isDragging by remember { mutableStateOf(false) }
 	var lastDragPos by remember { mutableStateOf(Offset.Zero) }
+	var showContextMenu by remember { mutableStateOf(false) }
+	var contextMenuOffset by remember { mutableStateOf(Offset.Zero) }
 	var fps by remember { mutableStateOf(0f) }
 	val fpsCounter = remember { ActualFpsCounter() }
 	// A paused preview still follows the pointer, so the frame pump must stay awake for a moment
@@ -394,8 +396,13 @@ fun CanvasViewportComposable(
 					ShortcutAction.SELECTION_STYLE_LASSO -> { editor.selectionStyle = SelectionStyle.LASSO; true }
 					ShortcutAction.SELECT_LINKED -> { editor.selectLinked(); true }
 					ShortcutAction.CANCEL -> {
-						if (editor.placement != null) editor.cancelPlacement() else editor.cancel()
-						true
+						if (showContextMenu) {
+							showContextMenu = false
+							true
+						} else {
+							if (editor.placement != null) editor.cancelPlacement() else editor.cancel()
+							true
+						}
 					}
 					ShortcutAction.FINISH_PATH -> {
 						when {
@@ -538,7 +545,18 @@ fun CanvasViewportComposable(
                 if (mode == CanvasMode.EDIT && previewModel != null && event.button == PointerButton.Secondary &&
                     event.keyboardModifiers.isAltPressed && !isDragging && !editor.inGesture && editor.beginBrushAdjust(change.position, event.keyboardModifiers.isShiftPressed)
                 ) {
+                    showContextMenu = false
                     change.consume(); return@onPointerEvent
+                }
+                // Plain right-click opens the mode/tool context menu (parameters + topology/paint actions).
+                if (mode == CanvasMode.EDIT && previewModel != null && event.button == PointerButton.Secondary &&
+                    !event.keyboardModifiers.isAltPressed && !isDragging && !editor.inGesture && !editor.adjustingBrush &&
+                    canvasContextMenuHasContent(editor)
+                ) {
+                    contextMenuOffset = change.position
+                    showContextMenu = true
+                    change.consume()
+                    return@onPointerEvent
                 }
                 // Middle mouse drag or Space + Left drag -> Canvas Pan
                 if (event.button == PointerButton.Tertiary || (event.button == PointerButton.Primary && editor.space)) {
@@ -548,6 +566,11 @@ fun CanvasViewportComposable(
                     return@onPointerEvent
                 }
                 if (mode == CanvasMode.EDIT && previewModel != null && event.button == PointerButton.Primary) {
+                    if (showContextMenu) {
+                        showContextMenu = false
+                        change.consume()
+                        return@onPointerEvent
+                    }
                     if (editor.press(change.position,computeViewport(previewModel,viewSize.width,viewSize.height),event.keyboardModifiers.isShiftPressed,event.keyboardModifiers.isAltPressed,event.keyboardModifiers.isCtrlPressed)) {
                         change.consume(); return@onPointerEvent
                     }
@@ -1001,6 +1024,13 @@ fun CanvasViewportComposable(
                 selectedLayerId = state.selectedLayerId,
                 selectedDeformerId = state.selectedDeformerId,
             ) { focusRequester.requestFocus() }
+            CanvasContextMenu(
+                editor = editor,
+                expanded = showContextMenu,
+                clickOffset = contextMenuOffset,
+                onDismissRequest = { showContextMenu = false },
+                onAction = { focusRequester.requestFocus() },
+            )
         }
         // Overlay: Empty hint or Stats Badge
 		if (previewModel == null) {
