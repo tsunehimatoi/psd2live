@@ -583,8 +583,68 @@ internal fun BoxScope.CanvasEditorOverlay(
             }
         }
 
-        // Interactive Creation Previews
-        if (editor.isCreatingWarp && editor.creationStart != null && editor.creationCurrent != null) {
+        // Place-then-confirm ghost (Blender-style)
+        editor.placement?.let { place ->
+            when (place.kind) {
+                CreatePlacementKind.WARP -> {
+                    editor.placementScreenRect(viewport)?.let { r ->
+                        drawRect(colors.accent.copy(alpha = 0.14f), r.topLeft, r.size)
+                        drawRect(colors.accent, r.topLeft, r.size, style = Stroke(2f))
+                        // Conversion lattice (solid) — matches created warp.rows × columns
+                        val rows = place.rows.coerceAtLeast(1)
+                        val cols = place.cols.coerceAtLeast(1)
+                        for (row in 1 until rows) {
+                            val y = r.top + r.height * (row.toFloat() / rows)
+                            drawLine(colors.accent.copy(alpha = 0.55f), Offset(r.left, y), Offset(r.right, y), 1.2f)
+                        }
+                        for (col in 1 until cols) {
+                            val x = r.left + r.width * (col.toFloat() / cols)
+                            drawLine(colors.accent.copy(alpha = 0.55f), Offset(x, r.top), Offset(x, r.bottom), 1.2f)
+                        }
+                        // Bezier edit subdivision (dashed) when it differs from conversion
+                        val bRows = place.bezierRows.coerceAtLeast(1)
+                        val bCols = place.bezierCols.coerceAtLeast(1)
+                        if (bRows != rows || bCols != cols) {
+                            val dash = PathEffect.dashPathEffect(floatArrayOf(4f, 4f), 0f)
+                            for (row in 1 until bRows) {
+                                val y = r.top + r.height * (row.toFloat() / bRows)
+                                drawLine(
+                                    colors.accent.copy(alpha = 0.28f), Offset(r.left, y), Offset(r.right, y), 1f,
+                                    pathEffect = dash,
+                                )
+                            }
+                            for (col in 1 until bCols) {
+                                val x = r.left + r.width * (col.toFloat() / bCols)
+                                drawLine(
+                                    colors.accent.copy(alpha = 0.28f), Offset(x, r.top), Offset(x, r.bottom), 1f,
+                                    pathEffect = dash,
+                                )
+                            }
+                        }
+                        listOf(
+                            Offset(r.left, r.top), Offset(r.right, r.top),
+                            Offset(r.left, r.bottom), Offset(r.right, r.bottom),
+                            Offset(r.center.x, r.top), Offset(r.center.x, r.bottom),
+                            Offset(r.left, r.center.y), Offset(r.right, r.center.y),
+                        ).forEach { drawCircle(colors.accent, 4.5f, it) }
+                    }
+                }
+                CreatePlacementKind.ROTATION -> {
+                    editor.placementPivotScreen(viewport)?.let { (pivot, tip) ->
+                        val radius = (tip - pivot).getDistance()
+                        drawCircle(colors.accent.copy(alpha = 0.1f), radius, pivot)
+                        drawCircle(colors.accent, radius, pivot, style = Stroke(1.2f))
+                        drawLine(colors.accent, pivot, tip, 2f)
+                        drawCircle(colors.accent, 6f, pivot)
+                        drawCircle(Color(0xFF7BBB99), 5f, tip)
+                    }
+                }
+                else -> {}
+            }
+        }
+
+        // Interactive Creation Previews (legacy drag — only when no placement session)
+        if (editor.placement == null && editor.isCreatingWarp && editor.creationStart != null && editor.creationCurrent != null) {
             val s = editor.creationStart!!; val e = editor.creationCurrent!!
             val origin = Offset(minOf(s.x, e.x), minOf(s.y, e.y))
             val extent = Size(abs(s.x - e.x), abs(s.y - e.y))
@@ -610,6 +670,32 @@ internal fun BoxScope.CanvasEditorOverlay(
             drawLine(colors.accent, s, e, 2f)
             drawCircle(colors.accent, 5f, s)
             drawCircle(Color(0xFF7BBB99), 4f, e)
+        }
+
+        // Rotation create scope: highlight every drawable the root wrap would affect
+        if (editor.tool == CanvasTool.CREATE_ROTATION) {
+            val (_, drawableIds) = editor.rotationScopeIds()
+            val source = editor.preview ?: editor.model
+            val layerByDrawable = editor.state.previewModel?.rig?.layerIdByDrawableId.orEmpty()
+            for (drawableId in drawableIds) {
+                val layerId = layerByDrawable[drawableId] ?: continue
+                val meshTarget = editor.target(source, layerId, null) ?: continue
+                val pts = editor.screen(meshTarget.geometry.points, meshTarget, viewport)
+                if (pts.size < 2 || meshTarget.indices.isEmpty()) continue
+                val outline = Path()
+                for (t in 0 until meshTarget.indices.size / 3) {
+                    val i0 = meshTarget.indices[t * 3]
+                    val i1 = meshTarget.indices[t * 3 + 1]
+                    val i2 = meshTarget.indices[t * 3 + 2]
+                    if (i0 !in pts.indices || i1 !in pts.indices || i2 !in pts.indices) continue
+                    outline.moveTo(pts[i0].x, pts[i0].y)
+                    outline.lineTo(pts[i1].x, pts[i1].y)
+                    outline.lineTo(pts[i2].x, pts[i2].y)
+                    outline.close()
+                }
+                drawPath(outline, colors.warning.copy(alpha = 0.18f))
+                drawPath(outline, colors.warning.copy(alpha = 0.55f), style = Stroke(1.2f))
+            }
         }
 
         if (editor.tool == CanvasTool.BRUSH_SELECT) {
@@ -847,10 +933,15 @@ internal fun BoxScope.CanvasEditorOverlay(
         // describing — the brush outline and the hovered part's own highlight already say the same
         // thing without a box in the way.
     }
-    // Left Animated Hover Toolbar
+    // Left Animated Hover Toolbar (edit / deform / paint tools)
     CanvasToolBar(editor = editor, keymap = keymap, focus = focus)
 
-    // Top Right Hierarchy / Layer Mode Toolbar
+    // Bottom-left placement panel (Blender-style confirm)
+    if (editor.placement != null) {
+        PlacementSettingsPanel(editor = editor, focus = focus)
+    }
+
+    // Top Left Hierarchy / Layer Mode Toolbar
     HierarchyModeBar(editor = editor, focus = focus)
 
     // Bottom Status Bar
@@ -868,8 +959,8 @@ internal fun BoxScope.CanvasEditorOverlay(
             editor.hierarchyMode == EditHierarchyMode.PAINT -> "editor.paintHint"
             editor.hierarchyMode == EditHierarchyMode.SELECT && editor.tool == CanvasTool.SELECT -> "editor.objectHint"
             editor.tool == CanvasTool.SELECT && editor.drawsTransformBox -> "editor.transformHint"
-            editor.tool == CanvasTool.CREATE_WARP -> "editor.createWarpHint"
-            editor.tool == CanvasTool.CREATE_ROTATION -> "editor.createRotationHint"
+            editor.tool == CanvasTool.CREATE_WARP -> if (editor.placement != null) "editor.placementDragHint" else "editor.createWarpHint"
+            editor.tool == CanvasTool.CREATE_ROTATION -> if (editor.placement != null) "editor.placementRotationHint" else "editor.createRotationHint"
             editor.tool == CanvasTool.GLUE -> "editor.glueHint"
             else -> "editor.hint"
         }),
@@ -882,6 +973,166 @@ internal fun BoxScope.CanvasEditorOverlay(
         fontSize = 10.sp,
         modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().background(colors.panelBackground).padding(horizontal = 8.dp, vertical = 5.dp)
     )
+}
+
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun BoxScope.PlacementSettingsPanel(
+    editor: CanvasEditor,
+    focus: () -> Unit,
+) {
+    val colors = LocalToolColors.current
+    val place = editor.placement ?: return
+    val typography = io.github.psd2live.ui.theme.LocalToolTypography.current
+
+    Column(
+        modifier = Modifier
+            .align(Alignment.BottomStart)
+            .padding(start = 8.dp, bottom = 36.dp)
+            .widthIn(min = 220.dp, max = 280.dp)
+            .frostedGlass(shape = RoundedCornerShape(8.dp), isHovered = true, elevation = 6.dp, alpha = 0.92f)
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = when (place.kind) {
+                CreatePlacementKind.WARP -> tr("editor.tool.create_warp")
+                CreatePlacementKind.ROTATION -> tr("editor.tool.create_rotation")
+                CreatePlacementKind.PATH -> tr("editor.pathDeform")
+            },
+            color = colors.textPrimary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = tr(
+                if (place.relation == CreateRelation.AS_PARENT) "editor.placementAsParentOf" else "editor.placementAsChildOf",
+                place.anchorLabel,
+            ),
+            color = colors.accent,
+            fontSize = 11.sp,
+        )
+        if (place.meshIds.isNotEmpty()) {
+            Text(
+                text = tr("editor.placementMeshCount", place.meshIds.size),
+                color = colors.textMuted,
+                fontSize = 10.sp,
+            )
+        }
+        if (place.kind != CreatePlacementKind.PATH) {
+            CompactTextField(
+                value = place.name,
+                onValueChange = { editor.updatePlacementName(it) },
+                modifier = Modifier.fillMaxWidth(),
+                height = 24.dp,
+            )
+            val partOptions = listOf("" to tr("editor.warpPart.inherit")) +
+                editor.model.parts.map { it.id.raw to it.name }
+            val partSelected = partOptions.firstOrNull { it.first == (place.partId ?: "") } ?: partOptions.first()
+            CompactDropdown(
+                items = partOptions,
+                selectedItem = partSelected,
+                onItemSelected = { editor.updatePlacementPart(it.first.takeIf { id -> id.isNotEmpty() }) },
+                itemLabel = { it.second },
+                modifier = Modifier.fillMaxWidth(),
+                height = 24.dp,
+            )
+        }
+        if (place.kind == CreatePlacementKind.WARP) {
+            Text(tr("inspector.conversionDivision"), color = colors.textMuted, fontSize = 10.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(3 to 3, 5 to 5, 8 to 8).forEach { (r, c) ->
+                    CompactToggleChip(
+                        text = "${r}×${c}",
+                        selected = place.rows == r && place.cols == c,
+                        onToggle = { editor.updatePlacementGrid(r, c) },
+                        height = 22.dp,
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                CompactNumberSpinner(
+                    value = place.cols.toDouble(),
+                    onValueChange = { editor.updatePlacementGrid(place.rows, it.toInt()) },
+                    modifier = Modifier.weight(1f),
+                    min = 1.0,
+                    max = 32.0,
+                    unit = "C",
+                    height = 22.dp,
+                )
+                CompactNumberSpinner(
+                    value = place.rows.toDouble(),
+                    onValueChange = { editor.updatePlacementGrid(it.toInt(), place.cols) },
+                    modifier = Modifier.weight(1f),
+                    min = 1.0,
+                    max = 32.0,
+                    unit = "R",
+                    height = 22.dp,
+                )
+            }
+            Text(tr("inspector.bezierDivision"), color = colors.textMuted, fontSize = 10.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(2 to 2, 3 to 3, 5 to 5).forEach { (r, c) ->
+                    CompactToggleChip(
+                        text = "${r}×${c}",
+                        selected = place.bezierRows == r && place.bezierCols == c,
+                        onToggle = { editor.updatePlacementBezier(r, c) },
+                        height = 22.dp,
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                CompactNumberSpinner(
+                    value = place.bezierCols.toDouble(),
+                    onValueChange = { editor.updatePlacementBezier(place.bezierRows, it.toInt()) },
+                    modifier = Modifier.weight(1f),
+                    min = 1.0,
+                    max = 16.0,
+                    unit = "C",
+                    height = 22.dp,
+                )
+                CompactNumberSpinner(
+                    value = place.bezierRows.toDouble(),
+                    onValueChange = { editor.updatePlacementBezier(it.toInt(), place.bezierCols) },
+                    modifier = Modifier.weight(1f),
+                    min = 1.0,
+                    max = 16.0,
+                    unit = "R",
+                    height = 22.dp,
+                )
+            }
+            Text(tr("editor.placementDragHint"), color = colors.textMuted, fontSize = 10.sp)
+        }
+        if (place.kind == CreatePlacementKind.ROTATION) {
+            Text(tr("editor.placementRotationHint"), color = colors.textMuted, fontSize = 10.sp)
+        }
+        if (place.kind == CreatePlacementKind.PATH) {
+            Text(tr("editor.pathCreateHint"), color = colors.textMuted, fontSize = 10.sp)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+            CompactButton(
+                text = tr("editor.placementCancel"),
+                onClick = { editor.cancelPlacement(); focus() },
+                modifier = Modifier.weight(1f),
+                height = 26.dp,
+            )
+            CompactButton(
+                text = tr("editor.placementConfirm"),
+                onClick = { editor.confirmPlacement(); focus() },
+                isPrimary = true,
+                enabled = editor.editable && !editor.busy &&
+                    (place.kind != CreatePlacementKind.PATH || editor.draft.size >= 2),
+                modifier = Modifier.weight(1f),
+                height = 26.dp,
+            )
+        }
+    }
 }
 
 @OptIn(ExperimentalComposeUiApi::class)

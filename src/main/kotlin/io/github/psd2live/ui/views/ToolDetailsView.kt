@@ -49,7 +49,10 @@ import io.github.psd2live.ui.CanvasEditor
 import io.github.psd2live.ui.CanvasTarget
 import io.github.psd2live.ui.CanvasTool
 import io.github.psd2live.ui.SelectionStyle
+import io.github.psd2live.ui.WarpAddTo
+import io.github.psd2live.ui.WarpSizeStrategy
 import io.github.psd2live.ui.components.CompactButton
+import io.github.psd2live.ui.components.CompactDropdown
 import io.github.psd2live.ui.components.CompactNumberSpinner
 import io.github.psd2live.ui.components.CompactSectionHeader
 import io.github.psd2live.ui.components.CompactToggleChip
@@ -146,7 +149,11 @@ internal fun ToolDetailsView(
             CompactButton(
                 text = tr("editor.createFromSelection"),
                 onClick = { editor.createWarp(editor.tool == CanvasTool.CREATE_ROTATION) },
-                enabled = editor.editable && target?.kind == "mesh",
+                enabled = editor.editable && (
+                    (editor.tool == CanvasTool.CREATE_WARP && editor.warpAddTo == WarpAddTo.CHILD_OF_SELECTED_DEFORMER &&
+                        state.selectedDeformerId != null) ||
+                        target?.kind == "mesh"
+                    ),
                 modifier = Modifier.fillMaxWidth(),
             )
             if (editor.tool == CanvasTool.CREATE_ROTATION) {
@@ -307,31 +314,151 @@ internal fun ToolDetailsView(
                         style = typography.caption.copy(fontSize = 10.5.sp),
                         color = colors.textMuted,
                     )
-                    CompactSectionHeader(title = tr("editor.gridDivisions"))
+
+                    CompactSectionHeader(title = tr("editor.warpAddTo"))
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        listOf(
+                            WarpAddTo.PARENT_OF_SELECTED to "editor.warpAddTo.parentOfSelected",
+                            WarpAddTo.CHILD_OF_SELECTED_DEFORMER to "editor.warpAddTo.childOfDeformer",
+                            WarpAddTo.SPECIFY_PARENT to "editor.warpAddTo.specifyParent",
+                        ).forEach { (mode, key) ->
+                            CompactToggleChip(
+                                text = tr(key),
+                                selected = editor.warpAddTo == mode,
+                                onToggle = { editor.warpAddTo = mode },
+                                height = 24.dp,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                    if (editor.warpAddTo == WarpAddTo.SPECIFY_PARENT) {
+                        val deformerOptions = listOf("" to tr("inspector.none")) +
+                            editor.model.deformers.map { it.id.raw to it.name }
+                        val selected = deformerOptions.firstOrNull { it.first == (editor.warpSpecifyParentId ?: "") }
+                            ?: deformerOptions.first()
+                        CompactDropdown(
+                            items = deformerOptions,
+                            selectedItem = selected,
+                            onItemSelected = { editor.warpSpecifyParentId = it.first.takeIf { id -> id.isNotEmpty() } },
+                            itemLabel = { it.second },
+                            modifier = Modifier.fillMaxWidth(),
+                            height = 24.dp,
+                        )
+                    }
+
+                    CompactSectionHeader(title = tr("editor.warpPart"))
+                    val partOptions = listOf("" to tr("editor.warpPart.inherit")) +
+                        editor.model.parts.map { it.id.raw to it.name }
+                    val partSelected = partOptions.firstOrNull { it.first == (editor.warpCreatePartId ?: "") }
+                        ?: partOptions.first()
+                    CompactDropdown(
+                        items = partOptions,
+                        selectedItem = partSelected,
+                        onItemSelected = { editor.warpCreatePartId = it.first.takeIf { id -> id.isNotEmpty() } },
+                        itemLabel = { it.second },
+                        modifier = Modifier.fillMaxWidth(),
+                        height = 24.dp,
+                    )
+
+                    CompactSectionHeader(title = tr("inspector.conversionDivision"))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(3 to 3, 5 to 5, 8 to 8).forEach { (r, c) ->
+                            CompactToggleChip(
+                                text = "${r}×${c}",
+                                selected = editor.warpCreateGridRows == r && editor.warpCreateGridCols == c,
+                                onToggle = {
+                                    editor.warpCreateGridRows = r
+                                    editor.warpCreateGridCols = c
+                                },
+                                height = 24.dp,
+                            )
+                        }
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         CompactNumberSpinner(
-                            value = editor.warpCreateGridRows.toDouble(),
-                            onValueChange = { editor.warpCreateGridRows = it.toInt() },
+                            value = editor.warpCreateGridCols.toDouble(),
+                            onValueChange = { editor.warpCreateGridCols = it.toInt().coerceIn(1, 32) },
                             modifier = Modifier.weight(1f),
-                            min = 2.0,
-                            max = 20.0,
-                            unit = "R",
+                            min = 1.0,
+                            max = 32.0,
+                            unit = "C",
                             height = 24.dp,
                         )
                         CompactNumberSpinner(
-                            value = editor.warpCreateGridCols.toDouble(),
-                            onValueChange = { editor.warpCreateGridCols = it.toInt() },
+                            value = editor.warpCreateGridRows.toDouble(),
+                            onValueChange = { editor.warpCreateGridRows = it.toInt().coerceIn(1, 32) },
                             modifier = Modifier.weight(1f),
-                            min = 2.0,
-                            max = 20.0,
+                            min = 1.0,
+                            max = 32.0,
+                            unit = "R",
+                            height = 24.dp,
+                        )
+                    }
+                    CompactSectionHeader(title = tr("inspector.bezierDivision"))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(2 to 2, 3 to 3, 5 to 5).forEach { (r, c) ->
+                            CompactToggleChip(
+                                text = "${r}×${c}",
+                                selected = editor.warpCreateBezierRows == r && editor.warpCreateBezierCols == c,
+                                onToggle = {
+                                    editor.warpCreateBezierRows = r
+                                    editor.warpCreateBezierCols = c
+                                },
+                                height = 24.dp,
+                            )
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        CompactNumberSpinner(
+                            value = editor.warpCreateBezierCols.toDouble(),
+                            onValueChange = { editor.warpCreateBezierCols = it.toInt().coerceIn(1, 16) },
+                            modifier = Modifier.weight(1f),
+                            min = 1.0,
+                            max = 16.0,
                             unit = "C",
+                            height = 24.dp,
+                        )
+                        CompactNumberSpinner(
+                            value = editor.warpCreateBezierRows.toDouble(),
+                            onValueChange = { editor.warpCreateBezierRows = it.toInt().coerceIn(1, 16) },
+                            modifier = Modifier.weight(1f),
+                            min = 1.0,
+                            max = 16.0,
+                            unit = "R",
                             height = 24.dp,
                         )
                     }
 
+                    CompactSectionHeader(title = tr("editor.warpSizeStrategy"))
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        listOf(
+                            WarpSizeStrategy.SELECTION_BOUNDS to "editor.warpSize.selection",
+                            WarpSizeStrategy.KEYFORM_ENVELOPE to "editor.warpSize.keyform",
+                            WarpSizeStrategy.CENTER_ALIGN to "editor.warpSize.center",
+                        ).forEach { (strategy, key) ->
+                            CompactToggleChip(
+                                text = tr(key),
+                                selected = editor.warpSizeStrategy == strategy,
+                                onToggle = { editor.warpSizeStrategy = strategy },
+                                height = 24.dp,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+
+                    CompactToggleChip(
+                        text = tr("editor.sequentialCreate"),
+                        selected = editor.sequentialCreate,
+                        onToggle = { editor.sequentialCreate = !editor.sequentialCreate },
+                        height = 24.dp,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
             }
 
@@ -346,6 +473,39 @@ internal fun ToolDetailsView(
                         text = tr("editor.createRotationHint"),
                         style = typography.caption.copy(fontSize = 10.5.sp),
                         color = colors.textMuted,
+                    )
+                    Text(
+                        text = tr("editor.rotationMountHint"),
+                        style = typography.caption.copy(fontSize = 10.5.sp),
+                        color = colors.textMuted,
+                    )
+                    val (deformerIds, drawableIds) = editor.rotationScopeIds()
+                    if (deformerIds.isNotEmpty() || drawableIds.isNotEmpty()) {
+                        Text(
+                            text = tr("editor.rotationScopeCount", deformerIds.size, drawableIds.size),
+                            style = typography.caption.copy(fontSize = 10.5.sp),
+                            color = colors.warning,
+                        )
+                    }
+                    CompactSectionHeader(title = tr("editor.warpPart"))
+                    val partOptions = listOf("" to tr("editor.warpPart.inherit")) +
+                        editor.model.parts.map { it.id.raw to it.name }
+                    val partSelected = partOptions.firstOrNull { it.first == (editor.warpCreatePartId ?: "") }
+                        ?: partOptions.first()
+                    CompactDropdown(
+                        items = partOptions,
+                        selectedItem = partSelected,
+                        onItemSelected = { editor.warpCreatePartId = it.first.takeIf { id -> id.isNotEmpty() } },
+                        itemLabel = { it.second },
+                        modifier = Modifier.fillMaxWidth(),
+                        height = 24.dp,
+                    )
+                    CompactToggleChip(
+                        text = tr("editor.sequentialCreate"),
+                        selected = editor.sequentialCreate,
+                        onToggle = { editor.sequentialCreate = !editor.sequentialCreate },
+                        height = 24.dp,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
@@ -548,6 +708,16 @@ internal fun ToolDetailsView(
                         style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
                         color = colors.textPrimary,
                     )
+                    Text(
+                        text = tr("editor.pathCreateHint"),
+                        style = typography.caption.copy(fontSize = 10.5.sp),
+                        color = colors.textMuted,
+                    )
+                    Text(
+                        text = tr("editor.pathLevelHint", editor.pathLevel),
+                        style = typography.caption.copy(fontSize = 10.5.sp),
+                        color = colors.textMuted,
+                    )
 
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         CompactButton(
@@ -564,6 +734,18 @@ internal fun ToolDetailsView(
                                 enabled = editor.draft.size >= 2,
                                 modifier = Modifier.weight(1f),
                                 height = 25.dp,
+                            )
+                        }
+                    }
+
+                    CompactSectionHeader(title = tr("editor.pathEditLevel"))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(2, 3).forEach { level ->
+                            CompactToggleChip(
+                                text = "L$level",
+                                selected = editor.pathLevel == level,
+                                onToggle = { editor.pathLevel = level },
+                                height = 24.dp,
                             )
                         }
                     }

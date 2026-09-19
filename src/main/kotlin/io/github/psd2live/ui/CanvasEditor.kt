@@ -2,6 +2,7 @@ package io.github.psd2live.ui
 
 import androidx.compose.runtime.*
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import io.github.psd2live.core.*
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.state.*
@@ -45,8 +46,13 @@ internal data class DeferredMode(val mode: EditHierarchyMode, val tool: CanvasTo
     /**
      * The prompt this request shows, which names the kind of part the mode actually needs: painting
      * replaces one layer's pixels, so a deformer selection would leave it with nothing to paint.
+     * Creation tools ask for a mesh (or deformer) rather than a hierarchy mode.
      */
-    val promptKey: String get() = if (mode == EditHierarchyMode.PAINT) "editor.mode.layerFirst" else "editor.mode.partFirst"
+    val promptKey: String get() = when {
+        tool in CREATION_TOOLS -> "editor.creationSelectFirst"
+        mode == EditHierarchyMode.PAINT -> "editor.mode.layerFirst"
+        else -> "editor.mode.partFirst"
+    }
 }
 
 /** The localized name of [mode], as the mode chips and the deferred-mode prompt spell it. */
@@ -99,6 +105,76 @@ internal val CREATION_TOOLS = setOf(
     CanvasTool.CREATE_WARP, CanvasTool.CREATE_ROTATION, CanvasTool.CREATE_DEFORM_PATH, CanvasTool.GLUE
 )
 
+/** Where a new Warp attaches in the deformer tree (Cubism "Add to"). */
+internal enum class WarpAddTo {
+    /** New Warp becomes parent of the selected meshes (default). */
+    PARENT_OF_SELECTED,
+    /** New Warp is created as child of the selected deformer; meshes are not remounted. */
+    CHILD_OF_SELECTED_DEFORMER,
+    /** New Warp's parent is [CanvasEditor.warpSpecifyParentId]; selected meshes remount under it. */
+    SPECIFY_PARENT,
+}
+
+/** How Warp bounds are computed for "create from selection". */
+internal enum class WarpSizeStrategy {
+    /** Current-pose AABB of the selection, expanded 5%. */
+    SELECTION_BOUNDS,
+    /** Union of base + all keyform AABBs (Cubism "consider keyforms"). */
+    KEYFORM_ENVELOPE,
+    /** Same size as selection AABB, centered on the selection. */
+    CENTER_ALIGN,
+}
+
+/** Blender-style add: new node above (parent) or below (child) the tree anchor. */
+internal enum class CreateRelation {
+    /** New deformer becomes parent of the anchor. */
+    AS_PARENT,
+    /** New deformer becomes child of the anchor (anchor must be a deformer). */
+    AS_CHILD,
+}
+
+internal enum class CreatePlacementKind { WARP, ROTATION, PATH }
+
+/** Which handle is being dragged while placing. */
+internal enum class PlacementHandle {
+    NONE, BODY,
+    N, S, E, W, NE, NW, SE, SW,
+    PIVOT, TIP,
+}
+
+/**
+ * An in-progress create: target and relation are fixed from the tree/toolbar; the artist places and
+ * sizes a ghost on the canvas, then confirms. Nothing is written to the model until [CanvasEditor.confirmPlacement].
+ */
+internal data class CreatePlacement(
+    val kind: CreatePlacementKind,
+    val relation: CreateRelation,
+    /** "mesh" or "deformer" */
+    val anchorKind: String,
+    val anchorId: String,
+    val anchorLabel: String,
+    /** Drawable ids remounted under a new Warp/Rotation when applicable. */
+    val meshIds: List<String>,
+    var name: String,
+    var partId: String?,
+    /** World-space AABB for Warp (Y-up). */
+    var worldX: Float,
+    var worldY: Float,
+    var worldW: Float,
+    var worldH: Float,
+    /** World-space pivot and tip for Rotation. */
+    var originX: Float = 0f,
+    var originY: Float = 0f,
+    var tipX: Float = 0f,
+    var tipY: Float = 0f,
+    /** Conversion division (Cubism 转换的分裂数量) — lattice rows × cols. */
+    var rows: Int = 5,
+    var cols: Int = 5,
+    /** Bezier edit division (Cubism 贝塞尔分割数) — Level-2 handle density. */
+    var bezierRows: Int = 2,
+    var bezierCols: Int = 2,
+)
+
 internal val PAINT_TOOLS = setOf(
     CanvasTool.PAINT_BRUSH, CanvasTool.PAINT_PENCIL, CanvasTool.PAINT_ERASER,
     CanvasTool.PAINT_BUCKET, CanvasTool.PAINT_EYEDROPPER,
@@ -119,15 +195,14 @@ internal val VERTEX_TOOLS = setOf(
 )
 
 /**
- * Every tool the left toolbar can show, in the order it shows them.
+ * Every tool the left (edit) toolbar can show, in the order it shows them.
  *
- * The per-mode palettes below are subsets of this, so a row keeps its place when the mode changes and
- * the rows that come and go animate in and out of that place instead of the list reshuffling.
+ * Creation tools are started from the hierarchy tree context menu or shortcuts, not this palette.
+ * The per-mode palettes below are subsets of this list.
  */
 internal val TOOLBAR_TOOL_ORDER = listOf(
     CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT,
     CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE,
-    CanvasTool.CREATE_DEFORM_PATH, CanvasTool.CREATE_WARP, CanvasTool.CREATE_ROTATION, CanvasTool.GLUE,
     CanvasTool.SUBDIVIDE, CanvasTool.KNIFE,
     CanvasTool.PAINT_BRUSH, CanvasTool.PAINT_PENCIL, CanvasTool.PAINT_ERASER,
     CanvasTool.PAINT_BUCKET, CanvasTool.PAINT_EYEDROPPER,
@@ -138,16 +213,11 @@ internal val TOOLBAR_TOOL_ORDER = listOf(
 internal val TOOLBAR_DIVIDERS = listOf(CanvasTool.BRUSH_SELECT, CanvasTool.INFLATE)
 
 /**
- * The toolbar's palette for [mode].
+ * The left toolbar's palette for [mode]. Creation tools are not listed here — use the tree
+ * context menu or shortcuts (C / R / P).
  *
- * Membership follows what the mode is *for*, so the palette stops offering tools the mode cannot act
- * with — an armed tool the toolbar does not show is the worst of both, since the pointer and the
- * palette then disagree about what a drag does.
- *
- * Object mode is the one without the vertex tools: it neither draws the wireframe nor shows vertices,
- * so a brush there would edit points the artist cannot see. Deform mode edits points without changing
- * topology, which is the brushes and the deform paths. The tools that add a deformer or a glue —
- * structural changes by definition — belong to the mode named for structure.
+ * Object mode is the one without the vertex tools. Deform mode edits points without changing topology.
+ * Edit mode handles mesh topology (subdivide / knife). Paint mode replaces layer pixels.
  */
 internal fun toolbarGroups(mode: EditHierarchyMode): List<List<CanvasTool>> = when (mode) {
     EditHierarchyMode.SELECT -> listOf(
@@ -160,7 +230,6 @@ internal fun toolbarGroups(mode: EditHierarchyMode): List<List<CanvasTool>> = wh
     EditHierarchyMode.EDIT -> listOf(
         listOf(CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT),
         listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE),
-        listOf(CanvasTool.CREATE_DEFORM_PATH, CanvasTool.CREATE_WARP, CanvasTool.CREATE_ROTATION, CanvasTool.GLUE),
         listOf(CanvasTool.SUBDIVIDE, CanvasTool.KNIFE),
     )
     EditHierarchyMode.PAINT -> listOf(
@@ -265,7 +334,10 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
 
     /** What the status bar says while a request waits: it names the mode, so the click that put it there is not lost. */
     val deferredModePrompt: String?
-        get() = deferredMode?.let { tr(it.promptKey, modeLabel(it.mode)) }
+        get() = deferredMode?.let { deferred ->
+            if (deferred.tool in CREATION_TOOLS) tr(deferred.promptKey)
+            else tr(deferred.promptKey, modeLabel(deferred.mode))
+        }
 
     // Painting system state (L1)
     var paintColor by mutableStateOf(androidx.compose.ui.graphics.Color.Black)
@@ -371,8 +443,30 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     var isCreatingRotation by mutableStateOf(false)
     var creationStart by mutableStateOf<Offset?>(null)
     var creationCurrent by mutableStateOf<Offset?>(null)
-    var warpCreateGridRows by mutableStateOf(4)
-    var warpCreateGridCols by mutableStateOf(4)
+    var warpCreateGridRows by mutableStateOf(5)
+    var warpCreateGridCols by mutableStateOf(5)
+    var warpCreateBezierRows by mutableStateOf(2)
+    var warpCreateBezierCols by mutableStateOf(2)
+    var warpAddTo by mutableStateOf(WarpAddTo.PARENT_OF_SELECTED)
+    var warpSizeStrategy by mutableStateOf(WarpSizeStrategy.SELECTION_BOUNDS)
+    /** Explicit part for the next Warp/Rotation; null means inherit from the primary mesh. */
+    var warpCreatePartId by mutableStateOf<String?>(null)
+    /** Parent deformer id when [warpAddTo] is [WarpAddTo.SPECIFY_PARENT]. */
+    var warpSpecifyParentId by mutableStateOf<String?>(null)
+    /** Keep the create tool armed after a successful commit (Cubism sequential create). */
+    var sequentialCreate by mutableStateOf(false)
+    /**
+     * Mode to restore when a create session ends. Set when arming a creation tool; cleared on cancel
+     * or after a successful create that leaves the session.
+     */
+    private var createSessionReturnMode: EditHierarchyMode? = null
+    /** Active Blender-style place-then-confirm session; null when not placing. */
+    var placement by mutableStateOf<CreatePlacement?>(null)
+        private set
+    var placementHandle by mutableStateOf(PlacementHandle.NONE)
+        private set
+    private var placementDragStart: Offset? = null
+    private var placementDragSnapshot: CreatePlacement? = null
     var glueDistance by mutableStateOf(40f)
     var glueFirstMesh by mutableStateOf<String?>(null)
     var glueHoverMesh by mutableStateOf<String?>(null)
@@ -1340,6 +1434,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         knifeDraft = emptyList(); knifeDrawableId = null; subdividing = false; subdivideEdges = emptySet()
         knifeHover = null; knifeSnapKind = null
         isCreatingWarp = false; isCreatingRotation = false; creationStart = null; creationCurrent = null
+        placement = null; placementHandle = PlacementHandle.NONE; placementDragStart = null; placementDragSnapshot = null
         glueFirstMesh = null; glueHoverMesh = null
         activeBezierAnchor = null; activeBezierHandle = null
         activeBrushWeights = null; activeBrushCenter = null
@@ -1361,17 +1456,16 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     }
 
     /**
-     * Arms [next]. A tool the current mode's palette does not offer is refused rather than armed, so
-     * every way in — toolbar, shortcut, a request from another view — passes the same test the toolbar
-     * draws itself from. Arming one anyway would leave the pointer doing something the palette has just
-     * animated away, which is worse than the keypress doing nothing.
-     *
-     * A tool whose mode has no part yet waits with it, and waits for the tool it was asked for: the
-     * request carries it, so the keypress answered by a pick arms the brush it named rather than the
-     * select tool that made the pick.
+     * Arms [next]. Creation tools ride the create strip and do not switch [hierarchyMode] (except
+     * leaving paint). Other tools whose mode palette does not offer them still enter their mode first.
      */
     fun activateTool(next: CanvasTool) {
         if (busy) return
+        if (next in CREATION_TOOLS) {
+            activateCreationTool(next)
+            return
+        }
+        createSessionReturnMode = null
         if (next !in toolbarGroups(hierarchyMode).flatten()) {
             val mode = modeForTool(next)
             if (!hasPartFor(mode)) { deferMode(mode, next); return }
@@ -1384,6 +1478,509 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         else if (next == CanvasTool.SELECT) selectionStyle = SelectionStyle.BOX
         if (next == CanvasTool.SELECT && objectMode) vertices = emptySet()
         clearHover()
+    }
+
+    /**
+     * Arms a creation tool. With a valid selection, enters place-then-confirm; otherwise waits for a pick.
+     */
+    private fun activateCreationTool(next: CanvasTool) {
+        if (hierarchyMode == EditHierarchyMode.PAINT) {
+            leavePaintForCreation()
+        }
+        if (next == CanvasTool.GLUE) {
+            if (createSessionReturnMode == null) createSessionReturnMode = hierarchyMode
+            cancel()
+            deferredMode = null
+            tool = next
+            error = null
+            clearHover()
+            return
+        }
+        if (next == CanvasTool.CREATE_DEFORM_PATH) {
+            if (target()?.kind != "mesh") {
+                deferCreation(next)
+                return
+            }
+            beginPlacement(
+                kind = CreatePlacementKind.PATH,
+                relation = CreateRelation.AS_CHILD,
+                anchorKind = "mesh",
+                anchorId = target()!!.id,
+                anchorLabel = model.drawables.firstOrNull { it.id.raw == target()!!.id }?.name ?: target()!!.id,
+                meshIds = listOf(target()!!.id),
+            )
+            return
+        }
+        val meshTarget = target()?.takeIf { it.kind == "mesh" }
+        val deformerId = state.selectedDeformerId
+        when {
+            next == CanvasTool.CREATE_WARP && warpAddTo == WarpAddTo.CHILD_OF_SELECTED_DEFORMER && deformerId != null -> {
+                val d = model.deformers.firstOrNull { it.id.raw == deformerId } ?: run { deferCreation(next); return }
+                beginPlacement(CreatePlacementKind.WARP, CreateRelation.AS_CHILD, "deformer", d.id.raw, d.name, emptyList())
+            }
+            meshTarget != null -> {
+                val kind = if (next == CanvasTool.CREATE_ROTATION) CreatePlacementKind.ROTATION else CreatePlacementKind.WARP
+                val name = model.drawables.firstOrNull { it.id.raw == meshTarget.id }?.name ?: meshTarget.id
+                val meshes = objects.mapNotNull { target(model, it, null)?.takeIf { t -> t.kind == "mesh" }?.id }
+                    .ifEmpty { listOf(meshTarget.id) }
+                beginPlacement(kind, CreateRelation.AS_PARENT, "mesh", meshTarget.id, name, meshes)
+            }
+            deformerId != null && next == CanvasTool.CREATE_WARP -> {
+                val d = model.deformers.firstOrNull { it.id.raw == deformerId } ?: run { deferCreation(next); return }
+                beginPlacement(CreatePlacementKind.WARP, CreateRelation.AS_CHILD, "deformer", d.id.raw, d.name, emptyList())
+            }
+            else -> deferCreation(next)
+        }
+    }
+
+    /**
+     * Starts place-then-confirm from the hierarchy tree (Blender-style Add Parent / Add Child).
+     * [anchorId] is a drawable id when [anchorIsDeformer] is false, else a deformer id.
+     */
+    fun beginTreeCreate(
+        kind: CreatePlacementKind,
+        relation: CreateRelation,
+        anchorIsDeformer: Boolean,
+        anchorId: String,
+    ) {
+        if (busy || !editable) return
+        if (hierarchyMode == EditHierarchyMode.PAINT) leavePaintForCreation()
+        if (anchorIsDeformer) {
+            val d = model.deformers.firstOrNull { it.id.raw == anchorId } ?: return
+            viewModel.selectDeformer(anchorId)
+            when (kind) {
+                CreatePlacementKind.PATH -> return // paths attach to meshes only
+                CreatePlacementKind.WARP -> {
+                    val meshes = if (relation == CreateRelation.AS_PARENT) {
+                        descendantMeshIds(anchorId)
+                    } else {
+                        model.drawables.filter { it.parentDeformerId?.raw == anchorId }.map { it.id.raw }
+                    }
+                    beginPlacement(kind, relation, "deformer", anchorId, d.name, meshes)
+                }
+                CreatePlacementKind.ROTATION -> {
+                    val meshes = descendantMeshIds(anchorId).ifEmpty {
+                        model.drawables.filter { it.parentDeformerId?.raw == anchorId }.map { it.id.raw }
+                    }
+                    if (meshes.isEmpty()) {
+                        error = tr("editor.placementNeedMesh")
+                        return
+                    }
+                    beginPlacement(kind, CreateRelation.AS_PARENT, "deformer", anchorId, d.name, meshes)
+                }
+            }
+        } else {
+            val drawable = model.drawables.firstOrNull { it.id.raw == anchorId } ?: return
+            val layer = state.previewModel?.rig?.layerIdByDrawableId?.get(drawable.id.raw)
+            if (layer != null) viewModel.selectLayer(layer)
+            when (kind) {
+                CreatePlacementKind.PATH -> beginPlacement(
+                    CreatePlacementKind.PATH, CreateRelation.AS_CHILD, "mesh", drawable.id.raw, drawable.name, listOf(drawable.id.raw),
+                )
+                CreatePlacementKind.WARP, CreatePlacementKind.ROTATION -> {
+                    beginPlacement(kind, CreateRelation.AS_PARENT, "mesh", drawable.id.raw, drawable.name, listOf(drawable.id.raw))
+                }
+            }
+        }
+    }
+
+    private fun descendantMeshIds(deformerId: String): List<String> {
+        val byParent = model.deformers.groupBy { it.parent?.raw }
+        val under = mutableSetOf<String>()
+        fun walk(id: String) {
+            under.add(id)
+            byParent[id].orEmpty().forEach { walk(it.id.raw) }
+        }
+        walk(deformerId)
+        return model.drawables.filter { it.parentDeformerId?.raw in under }.map { it.id.raw }
+    }
+
+    private fun beginPlacement(
+        kind: CreatePlacementKind,
+        relation: CreateRelation,
+        anchorKind: String,
+        anchorId: String,
+        anchorLabel: String,
+        meshIds: List<String>,
+    ) {
+        if (createSessionReturnMode == null) createSessionReturnMode = hierarchyMode
+        cancelKeepingReturnMode()
+        deferredMode = null
+        val world = placementWorldBounds(meshIds, anchorKind, anchorId)
+        val cx = world[0] + world[2] / 2f
+        val cy = world[1] + world[3] / 2f
+        val tipLen = max(world[2], world[3]) * 0.35f + 40f
+        val name = when (kind) {
+            CreatePlacementKind.WARP -> tr("editor.defaultWarpName", anchorLabel)
+            CreatePlacementKind.ROTATION -> tr("editor.defaultRotationName", anchorLabel)
+            CreatePlacementKind.PATH -> anchorLabel
+        }
+        val part = warpCreatePartId
+            ?: meshIds.firstOrNull()?.let { model.partByDrawable()[DrawableId(it)]?.raw }
+            ?: (anchorKind == "deformer").takeIf { it }?.let {
+                model.deformers.firstOrNull { d -> d.id.raw == anchorId }?.partId?.raw
+            }
+        placement = CreatePlacement(
+            kind = kind,
+            relation = relation,
+            anchorKind = anchorKind,
+            anchorId = anchorId,
+            anchorLabel = anchorLabel,
+            meshIds = meshIds,
+            name = name,
+            partId = part,
+            worldX = world[0],
+            worldY = world[1],
+            worldW = world[2].coerceAtLeast(8f),
+            worldH = world[3].coerceAtLeast(8f),
+            originX = cx,
+            originY = cy,
+            tipX = cx + tipLen,
+            tipY = cy,
+            rows = warpCreateGridRows,
+            cols = warpCreateGridCols,
+            bezierRows = warpCreateBezierRows,
+            bezierCols = warpCreateBezierCols,
+        )
+        tool = when (kind) {
+            CreatePlacementKind.WARP -> CanvasTool.CREATE_WARP
+            CreatePlacementKind.ROTATION -> CanvasTool.CREATE_ROTATION
+            CreatePlacementKind.PATH -> CanvasTool.CREATE_DEFORM_PATH
+        }
+        if (kind == CreatePlacementKind.PATH) {
+            drawingPath = true
+            draft = emptyList()
+            draftPathId = null
+        }
+        error = null
+        clearHover()
+    }
+
+    /** World AABB [x,y,w,h] for the placement ghost, with 5% padding. */
+    private fun placementWorldBounds(meshIds: List<String>, anchorKind: String, anchorId: String): FloatArray {
+        val pts = mutableListOf<Float>()
+        for (id in meshIds) {
+            val layer = state.previewModel?.rig?.layerIdByDrawableId?.get(id) ?: continue
+            val t = target(model, layer, null) ?: continue
+            val w = t.mapping.localToWorld(t.geometry.points)
+            pts.addAll(w.toList())
+        }
+        if (pts.isEmpty() && anchorKind == "deformer") {
+            val t = target(model, null, anchorId)
+            if (t != null) {
+                val w = t.mapping.localToWorld(t.geometry.points)
+                pts.addAll(w.toList())
+            }
+        }
+        if (pts.size < 4) return floatArrayOf(-50f, -50f, 100f, 100f)
+        val xs = pts.filterIndexed { i, _ -> i % 2 == 0 }
+        val ys = pts.filterIndexed { i, _ -> i % 2 == 1 }
+        val minX = xs.min(); val maxX = xs.max(); val minY = ys.min(); val maxY = ys.max()
+        val w = (maxX - minX).coerceAtLeast(8f); val h = (maxY - minY).coerceAtLeast(8f)
+        return floatArrayOf(minX - w * 0.05f, minY - h * 0.05f, w * 1.1f, h * 1.1f)
+    }
+
+    private fun cancelKeepingReturnMode() {
+        val keep = createSessionReturnMode
+        cancel()
+        createSessionReturnMode = keep
+    }
+
+    fun updatePlacementName(name: String) { placement = placement?.copy(name = name) }
+    fun updatePlacementPart(partId: String?) { placement = placement?.copy(partId = partId) }
+    fun updatePlacementGrid(rows: Int, cols: Int) {
+        placement = placement?.copy(rows = rows.coerceIn(1, 32), cols = cols.coerceIn(1, 32))
+        warpCreateGridRows = rows.coerceIn(1, 32)
+        warpCreateGridCols = cols.coerceIn(1, 32)
+    }
+    fun updatePlacementBezier(rows: Int, cols: Int) {
+        placement = placement?.copy(bezierRows = rows.coerceIn(1, 16), bezierCols = cols.coerceIn(1, 16))
+        warpCreateBezierRows = rows.coerceIn(1, 16)
+        warpCreateBezierCols = cols.coerceIn(1, 16)
+    }
+
+    fun cancelPlacement() {
+        placement = null
+        placementHandle = PlacementHandle.NONE
+        placementDragStart = null
+        placementDragSnapshot = null
+        drawingPath = false
+        draft = emptyList()
+        val returnMode = createSessionReturnMode
+        createSessionReturnMode = null
+        if (returnMode != null && returnMode != hierarchyMode && returnMode != EditHierarchyMode.PAINT) {
+            hierarchyMode = returnMode
+        }
+        tool = CanvasTool.SELECT
+        clearHover()
+    }
+
+    /** Commits the placed ghost into the model. */
+    fun confirmPlacement() {
+        val p = placement ?: return
+        if (!editable || busy) return
+        when (p.kind) {
+            CreatePlacementKind.PATH -> {
+                if (draft.size >= 2) finishPath()
+                else error = tr("editor.placementPathNeedPoints")
+                return
+            }
+            CreatePlacementKind.WARP -> commitPlacedWarp(p)
+            CreatePlacementKind.ROTATION -> commitPlacedRotation(p)
+        }
+    }
+
+    private fun commitPlacedWarp(p: CreatePlacement) {
+        val id = "Warp_${UUID.randomUUID()}"
+        val cmd = buildJsonObject {
+            put("op", "canvas_create_warp")
+            put("id", id)
+            put("name", p.name)
+            put("rows", p.rows)
+            put("columns", p.cols)
+            if (p.partId != null) put("part_id", p.partId!!)
+            when {
+                p.relation == CreateRelation.AS_CHILD && p.anchorKind == "deformer" && p.meshIds.isEmpty() -> {
+                    put("add_to", "child_of_deformer")
+                    put("parent_id", p.anchorId)
+                    put("meshes", JsonArray(emptyList()))
+                    putPlacementLocalBounds(this, p, parentDeformerId = p.anchorId)
+                }
+                p.relation == CreateRelation.AS_PARENT && p.anchorKind == "deformer" -> {
+                    put("add_to", "parent_of_deformer")
+                    put("deformer_id", p.anchorId)
+                    put("meshes", JsonArray(p.meshIds.map(::JsonPrimitive)))
+                    val parentOfAnchor = model.deformers.firstOrNull { it.id.raw == p.anchorId }?.parent?.raw
+                    putPlacementLocalBounds(this, p, parentDeformerId = parentOfAnchor)
+                }
+                else -> {
+                    put("add_to", "parent_of_selected")
+                    put("meshes", JsonArray(p.meshIds.map(::JsonPrimitive)))
+                    val meshParent = p.meshIds.firstOrNull()?.let { mid ->
+                        model.drawables.firstOrNull { it.id.raw == mid }?.parentDeformerId?.raw
+                    }
+                    putPlacementLocalBounds(this, p, parentDeformerId = meshParent)
+                }
+            }
+        }
+        // Store Bezier edit density before the journal round-trip clears placement.
+        warpBezierDivisions[id] = p.bezierRows to p.bezierCols
+        placement = null
+        head = null
+        commit(cmd)
+    }
+
+    private fun commitPlacedRotation(p: CreatePlacement) {
+        if (p.meshIds.isEmpty()) return
+        val id = "Rotation_${UUID.randomUUID()}"
+        val angleDeg = Math.toDegrees(atan2((p.tipY - p.originY).toDouble(), (p.tipX - p.originX).toDouble())).toFloat()
+        val cmd = buildJsonObject {
+            put("op", "canvas_create_rotation")
+            put("preservePose", true)
+            put("id", id)
+            put("name", p.name)
+            put("origin", JsonArray(listOf(p.originX, p.originY).map(::JsonPrimitive)))
+            put("angle", angleDeg)
+            if (p.partId != null) put("part_id", p.partId!!)
+            put("meshes", JsonArray(p.meshIds.map(::JsonPrimitive)))
+        }
+        placement = null
+        head = null
+        commit(cmd)
+    }
+
+    /**
+     * Writes `bounds` in the new warp's **parent local** space so the lattice matches the ghost.
+     * Under a Warp parent that means UV (via [DrawableSpaceMapping] of the parent world);
+     * under Rotation, the affine frame; at root, model world.
+     */
+    private fun putPlacementLocalBounds(
+        obj: kotlinx.serialization.json.JsonObjectBuilder,
+        p: CreatePlacement,
+        parentDeformerId: String?,
+    ) {
+        val (x, y, w, h) = worldRectToParentLocal(p.worldX, p.worldY, p.worldW, p.worldH, parentDeformerId)
+        obj.put("bounds", buildJsonObject { put("x", x); put("y", y); put("w", w); put("h", h) })
+    }
+
+    /** Four-corner AABB of a world rect mapped into [parentDeformerId]'s local space. */
+    private fun worldRectToParentLocal(
+        worldX: Float,
+        worldY: Float,
+        worldW: Float,
+        worldH: Float,
+        parentDeformerId: String?,
+    ): FloatArray {
+        val mapping = parentLocalMapping(parentDeformerId)
+        val corners = listOf(
+            worldX to worldY,
+            worldX + worldW to worldY,
+            worldX to worldY + worldH,
+            worldX + worldW to worldY + worldH,
+        )
+        if (mapping == null) {
+            return floatArrayOf(worldX, worldY, worldW.coerceAtLeast(1e-6f), worldH.coerceAtLeast(1e-6f))
+        }
+        val locals = corners.map { (wx, wy) ->
+            // Same convention as [local]: worldToLocal receives model-space (x, y).
+            val out = mapping.worldToLocal(floatArrayOf(wx, wy), floatArrayOf(0.5f, 0.5f), setOf(0))
+            out[0] to out[1]
+        }
+        val xs = locals.map { it.first }
+        val ys = locals.map { it.second }
+        val x = xs.min(); val y = ys.min()
+        val w = (xs.max() - x).coerceAtLeast(1e-6f)
+        val h = (ys.max() - y).coerceAtLeast(1e-6f)
+        return floatArrayOf(x, y, w, h)
+    }
+
+    /** Mapping whose local space equals a child deformer's parent coordinates, or null at root. */
+    private fun parentLocalMapping(parentDeformerId: String?): DrawableSpaceMapping? {
+        if (parentDeformerId == null) return null
+        val source = model
+        if (cachedSource !== source || cachedPose != state.parameterValues) {
+            cachedSource = source
+            cachedPose = state.parameterValues
+            cachedTargets.clear()
+            cachedWorlds = buildDeformerWorlds(
+                source.deformers,
+                { p -> state.parameterValues[p] ?: source.parameters.firstOrNull { it.id == p }?.default ?: 0f },
+            )
+        }
+        val parentId = DeformerId(parentDeformerId)
+        val world = cachedWorlds[parentId] ?: return null
+        return DrawableSpaceMapping(world)
+    }
+
+    fun placementScreenRect(viewport: CanvasViewport): Rect? {
+        val p = placement ?: return null
+        if (p.kind != CreatePlacementKind.WARP) return null
+        val left = viewport.x(p.worldX).toFloat()
+        val top = viewport.yFromWorld(p.worldY + p.worldH).toFloat()
+        val right = viewport.x(p.worldX + p.worldW).toFloat()
+        val bottom = viewport.yFromWorld(p.worldY).toFloat()
+        return Rect(left, top, right, bottom)
+    }
+
+    fun placementPivotScreen(viewport: CanvasViewport): Pair<Offset, Offset>? {
+        val p = placement?.takeIf { it.kind == CreatePlacementKind.ROTATION } ?: return null
+        return Offset(viewport.x(p.originX).toFloat(), viewport.yFromWorld(p.originY).toFloat()) to
+            Offset(viewport.x(p.tipX).toFloat(), viewport.yFromWorld(p.tipY).toFloat())
+    }
+
+    private fun hitPlacementHandle(pos: Offset, viewport: CanvasViewport): PlacementHandle {
+        val p = placement ?: return PlacementHandle.NONE
+        when (p.kind) {
+            CreatePlacementKind.WARP -> {
+                val r = placementScreenRect(viewport) ?: return PlacementHandle.NONE
+                val hs = 8f
+                fun near(x: Float, y: Float) = (pos - Offset(x, y)).getDistance() <= hs
+                if (near(r.left, r.top)) return PlacementHandle.NW
+                if (near(r.right, r.top)) return PlacementHandle.NE
+                if (near(r.left, r.bottom)) return PlacementHandle.SW
+                if (near(r.right, r.bottom)) return PlacementHandle.SE
+                if (near(r.center.x, r.top)) return PlacementHandle.N
+                if (near(r.center.x, r.bottom)) return PlacementHandle.S
+                if (near(r.left, r.center.y)) return PlacementHandle.W
+                if (near(r.right, r.center.y)) return PlacementHandle.E
+                if (r.contains(pos)) return PlacementHandle.BODY
+                return PlacementHandle.NONE
+            }
+            CreatePlacementKind.ROTATION -> {
+                val pivots = placementPivotScreen(viewport) ?: return PlacementHandle.NONE
+                val (pivot, tip) = pivots
+                if ((pos - tip).getDistance() <= 10f) return PlacementHandle.TIP
+                if ((pos - pivot).getDistance() <= 10f) return PlacementHandle.PIVOT
+                return PlacementHandle.NONE
+            }
+            CreatePlacementKind.PATH -> return PlacementHandle.NONE
+        }
+    }
+
+    private fun applyPlacementDrag(pos: Offset, viewport: CanvasViewport, shift: Boolean) {
+        val start = placementDragStart ?: return
+        val snap = placementDragSnapshot ?: return
+        val p = placement ?: return
+        val dx = ((pos.x - start.x) / viewport.scale).toFloat()
+        val dy = -((pos.y - start.y) / viewport.scale).toFloat()
+        when (p.kind) {
+            CreatePlacementKind.WARP -> {
+                var x = snap.worldX; var y = snap.worldY; var w = snap.worldW; var h = snap.worldH
+                when (placementHandle) {
+                    PlacementHandle.BODY -> { x += dx; y += dy }
+                    PlacementHandle.E -> w = (snap.worldW + dx).coerceAtLeast(8f)
+                    PlacementHandle.W -> { val nw = (snap.worldW - dx).coerceAtLeast(8f); x = snap.worldX + snap.worldW - nw; w = nw }
+                    PlacementHandle.N -> h = (snap.worldH + dy).coerceAtLeast(8f)
+                    PlacementHandle.S -> { val nh = (snap.worldH - dy).coerceAtLeast(8f); y = snap.worldY + snap.worldH - nh; h = nh }
+                    PlacementHandle.NE -> { w = (snap.worldW + dx).coerceAtLeast(8f); h = (snap.worldH + dy).coerceAtLeast(8f) }
+                    PlacementHandle.NW -> {
+                        val nw = (snap.worldW - dx).coerceAtLeast(8f); x = snap.worldX + snap.worldW - nw; w = nw
+                        h = (snap.worldH + dy).coerceAtLeast(8f)
+                    }
+                    PlacementHandle.SE -> {
+                        w = (snap.worldW + dx).coerceAtLeast(8f)
+                        val nh = (snap.worldH - dy).coerceAtLeast(8f); y = snap.worldY + snap.worldH - nh; h = nh
+                    }
+                    PlacementHandle.SW -> {
+                        val nw = (snap.worldW - dx).coerceAtLeast(8f); x = snap.worldX + snap.worldW - nw; w = nw
+                        val nh = (snap.worldH - dy).coerceAtLeast(8f); y = snap.worldY + snap.worldH - nh; h = nh
+                    }
+                    else -> {}
+                }
+                placement = p.copy(worldX = x, worldY = y, worldW = w, worldH = h)
+            }
+            CreatePlacementKind.ROTATION -> {
+                val wx = ((pos.x - viewport.offsetX) / viewport.scale).toFloat()
+                val wy = -((pos.y - viewport.offsetY) / viewport.scale).toFloat()
+                when (placementHandle) {
+                    PlacementHandle.PIVOT -> {
+                        placement = p.copy(
+                            originX = snap.originX + dx, originY = snap.originY + dy,
+                            tipX = snap.tipX + dx, tipY = snap.tipY + dy,
+                        )
+                    }
+                    PlacementHandle.TIP -> {
+                        val tip = if (shift) {
+                            val dir = CanvasGestureGeometry.direction(
+                                Offset(viewport.x(snap.originX).toFloat(), viewport.yFromWorld(snap.originY).toFloat()),
+                                pos, snap = true,
+                            )
+                            ((dir.x - viewport.offsetX) / viewport.scale).toFloat() to
+                                -((dir.y - viewport.offsetY) / viewport.scale).toFloat()
+                        } else wx to wy
+                        placement = p.copy(tipX = tip.first, tipY = tip.second)
+                    }
+                    else -> {}
+                }
+            }
+            else -> {}
+        }
+    }
+
+    /** Exit paint into Select so a creation tool can be armed without a paint session open. */
+    private fun leavePaintForCreation() {
+        deferredMode = null
+        cancel()
+        discardPaintSession()
+        hierarchyMode = EditHierarchyMode.SELECT
+        vertices = emptySet()
+        clearHover()
+    }
+
+    /** Wait in Select for a mesh pick, then re-arm [tool]. */
+    private fun deferCreation(tool: CanvasTool) {
+        val request = DeferredMode(EditHierarchyMode.SELECT, tool)
+        if (hierarchyMode != EditHierarchyMode.SELECT) {
+            deferredMode = null
+            cancel()
+            hierarchyMode = EditHierarchyMode.SELECT
+            vertices = emptySet()
+            clearHover()
+        } else {
+            cancel()
+        }
+        this.tool = CanvasTool.SELECT
+        deferredMode = request
     }
 
     /**
@@ -1417,12 +2014,12 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     }
 
     /**
-     * The mode a tool belongs to when the current palette does not offer it: the palette the toolbar
-     * would have to draw for the tool to be armable at all.
+     * The mode a tool belongs to when the current palette does not offer it.
+     * Creation tools are handled separately and never force Edit.
      */
     private fun modeForTool(tool: CanvasTool): EditHierarchyMode = when {
         tool in PAINT_TOOLS -> EditHierarchyMode.PAINT
-        tool in CREATION_TOOLS || tool == CanvasTool.KNIFE || tool == CanvasTool.SUBDIVIDE -> EditHierarchyMode.EDIT
+        tool == CanvasTool.KNIFE || tool == CanvasTool.SUBDIVIDE -> EditHierarchyMode.EDIT
         else -> EditHierarchyMode.DEFORM
     }
 
@@ -1438,30 +2035,40 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
 
     /**
      * Enters the mode a request was waiting for, now that its part is selected.
-     *
-     * Every way a selection can land — the canvas pick, the hierarchy tree, the inspector — ends up in
-     * the state this reads, so whichever view the click came from answers the request, and no entry point
-     * has to remember to call this.
      */
     fun resolveDeferredMode() {
         val request = deferredMode ?: return
-        if (busy || !hasPartFor(request.mode)) return
+        if (busy) return
+        if (request.tool in CREATION_TOOLS) {
+            if (request.tool == CanvasTool.GLUE) {
+                deferredMode = null
+                activateCreationTool(request.tool!!)
+                return
+            }
+            if (request.tool == CanvasTool.CREATE_WARP && warpAddTo == WarpAddTo.CHILD_OF_SELECTED_DEFORMER) {
+                if (state.selectedDeformerId == null) return
+                deferredMode = null
+                activateCreationTool(request.tool!!)
+                return
+            }
+            if (target()?.kind != "mesh") return
+            deferredMode = null
+            activateCreationTool(request.tool!!)
+            return
+        }
+        if (!hasPartFor(request.mode)) return
         enterMode(request.mode)
-        // The tool the request named, if it was one. It belongs to the mode just entered, so this arms it
-        // rather than asking for a mode of its own.
         request.tool?.let { activateTool(it) }
     }
 
     /**
-     * Puts [next] in force. Every way into a mode ends up here, so the mode's own bookkeeping — the paint
-     * session, the Bezier state, the palette fallback — is applied once and applies to all of them.
-     *
-     * A mode that takes over answers whatever was waiting for one: nothing is pending once the canvas is
-     * working in a mode of its own.
+     * Puts [next] in force. Creation tools are disarmed when the mode changes — they belong to the
+     * create session, not to a hierarchy mode.
      */
     private fun enterMode(next: EditHierarchyMode) {
         if (busy) return
         deferredMode = null
+        createSessionReturnMode = null
         cancel()
         val prev = hierarchyMode
         hierarchyMode = next
@@ -1475,10 +2082,10 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         } else if (next == EditHierarchyMode.DEFORM && editLevel == 2) {
             ensureBezierState()
         }
-        // A tool the new mode no longer offers would leave the canvas armed with something the toolbar
-        // is about to animate away, so the palette and the pointer would disagree about what a drag
-        // does. Fall back to the tool every mode has.
-        if (tool !in toolbarGroups(next).flatten()) activateTool(CanvasTool.SELECT)
+        if (tool !in toolbarGroups(next).flatten()) {
+            tool = CanvasTool.SELECT
+            if (objectMode) vertices = emptySet()
+        }
         clearHover()
     }
 
@@ -1924,9 +2531,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                 endTransformBox()
                 if (failure == null) onSuccess?.invoke()
                 if (failure == null) commands.lastOrNull { it["op"]?.jsonPrimitive?.content in setOf("canvas_create_warp", "canvas_create_rotation") }?.let {
-                    activateTool(CanvasTool.SELECT)
-                    vertices = emptySet()
-                    viewModel.selectDeformer(it.getValue("id").jsonPrimitive.content)
+                    finishCreateSession(it.getValue("id").jsonPrimitive.content)
                 }
             }
         } catch (e: Exception) { error = e.message; preview = null; pending = null; head = null; endTransformBox() }
@@ -2060,6 +2665,16 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             val points = draft.mapIndexed { i, p -> DeformPathTools.bind(t.geometry.points, t.indices, p.first, p.second, previous?.points?.getOrNull(i)?.corner ?: false) }
             val path = previous?.copy(points = points) ?: DeformPath(UUID.randomUUID().toString(), DrawableId(t.id), points, extent * pathWidth, hardness = hardness, editLevel = pathLevel)
             head = null; commit(DeformPathJournal.encode(path)); activePath = path.id; drawingPath = false; draft = emptyList()
+            placement = null
+            // After binding, return to select so dragging control points edits binding without deforming.
+            val returnMode = createSessionReturnMode
+            createSessionReturnMode = null
+            if (returnMode != null && returnMode != hierarchyMode && returnMode != EditHierarchyMode.PAINT) {
+                hierarchyMode = returnMode
+                if (returnMode == EditHierarchyMode.DEFORM && editLevel == 2) ensureBezierState()
+            }
+            tool = CanvasTool.SELECT
+            clearHover()
         } catch (e: Exception) { error = e.message }
     }
 
@@ -2135,21 +2750,73 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     }
 
     fun createWarp(rotation: Boolean = false) {
+        if (rotation) {
+            createWarpRotationFromSelection()
+            return
+        }
+        if (warpAddTo == WarpAddTo.CHILD_OF_SELECTED_DEFORMER) {
+            createEmptyWarpUnderSelectedDeformer()
+            return
+        }
         val t = target() ?: return
         if (t.kind != "mesh" || !editable) return
-        val name = if (rotation) "Rotation" else "Warp"
-        val id = "${name}_${UUID.randomUUID()}"
+        val targets = objects.mapNotNull { target(model, it, null) }.ifEmpty { listOf(t) }
+            .filter { it.kind == "mesh" }
+        if (targets.isEmpty()) return
+        val parents = targets.map { it.let { tg -> model.drawables.first { d -> d.id.raw == tg.id }.parentDeformerId } }.distinct()
+        if (parents.size != 1) {
+            error = tr("editor.createWarpSameParent")
+            return
+        }
+        val name = defaultCreateName(targets.first().id, rotation = false)
+        val id = "Warp_${UUID.randomUUID()}"
+        warpBezierDivisions[id] = warpCreateBezierRows to warpCreateBezierCols
+        head = null
+        commit(buildJsonObject {
+            put("op", "canvas_create_warp")
+            put("id", id); put("name", name)
+            put("rows", warpCreateGridRows); put("columns", warpCreateGridCols)
+            put("size_strategy", warpSizeStrategy.name.lowercase())
+            putCreationPlacement(this, targets.map { it.id })
+            put("meshes", JsonArray(targets.map { JsonPrimitive(it.id) }))
+        })
+    }
+
+    private fun createWarpRotationFromSelection() {
+        val t = target() ?: return
+        if (t.kind != "mesh" || !editable) return
+        val name = defaultCreateName(t.id, rotation = true)
+        val id = "Rotation_${UUID.randomUUID()}"
         val targets = objects.mapNotNull { target(model, it, null) }.ifEmpty { listOf(t) }
         val world = targets.flatMap { it.mapping.localToWorld(it.geometry.points).toList().chunked(2) }
         head = null
         commit(buildJsonObject {
-            put("op", if (rotation) "canvas_create_rotation" else "canvas_create_warp")
+            put("op", "canvas_create_rotation")
             put("id", id); put("name", name); put("preservePose", true)
-            put("rows", warpCreateGridRows); put("columns", warpCreateGridCols)
-            if (rotation && world.isNotEmpty()) put("origin", JsonArray(listOf(
+            if (world.isNotEmpty()) put("origin", JsonArray(listOf(
                 (world.minOf { it[0] } + world.maxOf { it[0] }) / 2f,
                 (world.minOf { it[1] } + world.maxOf { it[1] }) / 2f).map(::JsonPrimitive)))
+            putCreationPartId(this, targets.map { it.id })
             put("meshes", JsonArray(targets.map { JsonPrimitive(it.id) }))
+        })
+    }
+
+    private fun createEmptyWarpUnderSelectedDeformer() {
+        val parentId = state.selectedDeformerId ?: return
+        if (!editable) return
+        val parent = model.deformers.firstOrNull { it.id.raw == parentId } ?: return
+        val name = tr("editor.defaultWarpName", parent.name)
+        val id = "Warp_${UUID.randomUUID()}"
+        warpBezierDivisions[id] = warpCreateBezierRows to warpCreateBezierCols
+        head = null
+        commit(buildJsonObject {
+            put("op", "canvas_create_warp")
+            put("id", id); put("name", name)
+            put("rows", warpCreateGridRows); put("columns", warpCreateGridCols)
+            put("add_to", "child_of_deformer")
+            put("parent_id", parentId)
+            putCreationPartId(this, emptyList(), fallbackDeformerPart = parent.partId?.raw)
+            put("meshes", JsonArray(emptyList()))
         })
     }
 
@@ -2162,10 +2829,12 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         val targetMeshes = objects.mapNotNull { target(model, it, null)?.id }.ifEmpty { listOfNotNull(target()?.takeIf { it.kind == "mesh" }?.id) }
         if (targetMeshes.isEmpty()) return
         val id = "Warp_${UUID.randomUUID()}"
+        val name = defaultCreateName(targetMeshes.first(), rotation = false)
+        warpBezierDivisions[id] = warpCreateBezierRows to warpCreateBezierCols
         val cmd = buildJsonObject {
             put("op", "canvas_create_warp")
             put("id", id)
-            put("name", "Warp")
+            put("name", name)
             put("rows", warpCreateGridRows)
             put("columns", warpCreateGridCols)
             put("bounds", buildJsonObject {
@@ -2174,6 +2843,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                 put("w", wW)
                 put("h", wH)
             })
+            putCreationPlacement(this, targetMeshes)
             put("meshes", JsonArray(targetMeshes.map(::JsonPrimitive)))
         }
         head = null
@@ -2190,17 +2860,126 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         val targetMeshes = objects.mapNotNull { target(model, it, null)?.id }.ifEmpty { listOfNotNull(target()?.takeIf { it.kind == "mesh" }?.id) }
         if (targetMeshes.isEmpty()) return
         val id = "Rotation_${UUID.randomUUID()}"
+        val name = defaultCreateName(targetMeshes.first(), rotation = true)
         val cmd = buildJsonObject {
             put("op", "canvas_create_rotation")
             put("preservePose", true)
             put("id", id)
-            put("name", "Rotation")
+            put("name", name)
             put("origin", JsonArray(listOf(originX, originY).map(::JsonPrimitive)))
             put("angle", angleDeg)
+            putCreationPartId(this, targetMeshes)
             put("meshes", JsonArray(targetMeshes.map(::JsonPrimitive)))
         }
         head = null
         commit(cmd)
+    }
+
+    private fun defaultCreateName(meshId: String, rotation: Boolean): String {
+        val meshName = model.drawables.firstOrNull { it.id.raw == meshId }?.name ?: meshId
+        return if (rotation) tr("editor.defaultRotationName", meshName) else tr("editor.defaultWarpName", meshName)
+    }
+
+    private fun putCreationPlacement(obj: kotlinx.serialization.json.JsonObjectBuilder, meshIds: List<String>) {
+        when (warpAddTo) {
+            WarpAddTo.PARENT_OF_SELECTED -> obj.put("add_to", "parent_of_selected")
+            WarpAddTo.CHILD_OF_SELECTED_DEFORMER -> {
+                obj.put("add_to", "child_of_deformer")
+                state.selectedDeformerId?.let { obj.put("parent_id", it) }
+            }
+            WarpAddTo.SPECIFY_PARENT -> {
+                obj.put("add_to", "specify_parent")
+                warpSpecifyParentId?.let { obj.put("parent_id", it) }
+            }
+        }
+        putCreationPartId(obj, meshIds)
+    }
+
+    private fun putCreationPartId(
+        obj: kotlinx.serialization.json.JsonObjectBuilder,
+        meshIds: List<String>,
+        fallbackDeformerPart: String? = null,
+    ) {
+        val part = warpCreatePartId
+            ?: meshIds.firstOrNull()?.let { id ->
+                model.partByDrawable()[org.umamo.runtime.model.DrawableId(id)]?.raw
+            }
+            ?: fallbackDeformerPart
+        if (part != null) obj.put("part_id", part)
+    }
+
+    /**
+     * After a successful Warp/Rotation create: select the new deformer and either stay armed
+     * (sequential) or restore the mode the create session started from.
+     */
+    private fun finishCreateSession(newDeformerId: String) {
+        vertices = emptySet()
+        viewModel.selectDeformer(newDeformerId)
+        if (sequentialCreate) {
+            // Stay on the create tool; keep return mode for a later exit.
+            return
+        }
+        val returnMode = createSessionReturnMode
+        createSessionReturnMode = null
+        if (returnMode != null && returnMode != hierarchyMode && returnMode != EditHierarchyMode.PAINT) {
+            deferredMode = null
+            hierarchyMode = returnMode
+            if (returnMode == EditHierarchyMode.DEFORM && editLevel == 2) ensureBezierState()
+        }
+        tool = CanvasTool.SELECT
+        clearHover()
+    }
+
+    /** True when the selection's shared parent is already a Warp (grid density is parent-aligned). */
+    fun warpCreateParentIsWarp(): Boolean {
+        val meshes = selectedCreateMeshIds()
+        if (meshes.isEmpty()) return false
+        val parents = model.drawables.filter { it.id.raw in meshes }.map { it.parentDeformerId }.distinct()
+        if (parents.size != 1) return false
+        val parent = parents.first() ?: return false
+        return model.deformers.any { it.id == parent && it is Deformer.Warp }
+    }
+
+    /** Deformer and drawable ids that a root-rotation create would wrap (for scope preview). */
+    fun rotationScopeIds(): Pair<Set<String>, Set<String>> {
+        val selected = selectedCreateMeshIds()
+        if (selected.isEmpty()) return emptySet<String>() to emptySet()
+        val byId = model.deformers.associateBy { it.id }
+        val roots = model.drawables.filter { it.id.raw in selected }.mapNotNull { d ->
+            var parent = d.parentDeformerId
+            val visited = mutableSetOf<DeformerId>()
+            while (parent != null && byId[parent]?.parent != null) {
+                if (!visited.add(parent)) break
+                parent = byId[parent]?.parent
+            }
+            parent
+        }.toSet()
+        fun underRoot(id: DeformerId?): Boolean {
+            var p = id
+            val visited = mutableSetOf<DeformerId>()
+            while (p != null) {
+                if (p in roots) return true
+                if (!visited.add(p)) return false
+                p = byId[p]?.parent
+            }
+            return false
+        }
+        val deformerIds = model.deformers.filter { it.id in roots || underRoot(it.parent) }.map { it.id.raw }.toSet()
+        val drawableIds = model.drawables.filter { d ->
+            val parent = d.parentDeformerId
+            when {
+                parent == null -> d.id.raw in selected
+                parent in roots || underRoot(parent) -> true
+                else -> false
+            }
+        }.map { it.id.raw }.toSet()
+        return deformerIds to drawableIds
+    }
+
+    private fun selectedCreateMeshIds(): Set<String> {
+        val fromObjects = objects.mapNotNull { target(model, it, null)?.takeIf { t -> t.kind == "mesh" }?.id }
+        if (fromObjects.isNotEmpty()) return fromObjects.toSet()
+        return listOfNotNull(target()?.takeIf { it.kind == "mesh" }?.id).toSet()
     }
 
     fun createGlue(meshA: String, meshB: String) {
@@ -2420,26 +3199,22 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             return true
         }
 
-        // Creation needs a concrete binding target before starting a gesture.
+        // Creation: place-then-confirm ghost, or start path points.
+        if (tool in setOf(CanvasTool.CREATE_WARP, CanvasTool.CREATE_ROTATION) && placement != null) {
+            val handle = hitPlacementHandle(pos, viewport!!)
+            if (handle != PlacementHandle.NONE) {
+                placementHandle = handle
+                placementDragStart = pos
+                placementDragSnapshot = placement!!.copy()
+                dragging = true
+                return true
+            }
+            return true
+        }
         if (tool in setOf(CanvasTool.CREATE_WARP, CanvasTool.CREATE_ROTATION, CanvasTool.CREATE_DEFORM_PATH) &&
-            target()?.kind != "mesh") {
+            target()?.kind != "mesh" && placement == null) {
             pickLayer(pos, viewport)?.let { viewModel.selectLayer(it) }
             error = tr("editor.creationSelectFirst")
-            return true
-        }
-        // 1. Interactive Creation Tools
-        if (tool == CanvasTool.CREATE_WARP) {
-            isCreatingWarp = true
-            creationStart = pos
-            creationCurrent = pos
-            dragging = true
-            return true
-        }
-        if (tool == CanvasTool.CREATE_ROTATION) {
-            isCreatingRotation = true
-            creationStart = pos
-            creationCurrent = pos
-            dragging = true
             return true
         }
         if (tool == CanvasTool.GLUE) {
@@ -2716,6 +3491,11 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             return
         }
 
+        if (placement != null && placementHandle != PlacementHandle.NONE && placementDragStart != null && placementDragSnapshot != null) {
+            applyPlacementDrag(pos, viewport, shift)
+            return
+        }
+
         if (isCreatingWarp || isCreatingRotation) {
             creationCurrent = if (isCreatingRotation && shift) CanvasGestureGeometry.direction(creationStart!!, pos, snap = true) else pos
             return
@@ -2951,7 +3731,8 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             isCreatingWarp = false
             val s = creationStart; val e = creationCurrent
             creationStart = null; creationCurrent = null
-            if (s != null && e != null && abs(s.x - e.x) > 10f && abs(s.y - e.y) > 10f && viewport != null) {
+            // Legacy drag-create only when no place-then-confirm session is active.
+            if (placement == null && s != null && e != null && abs(s.x - e.x) > 10f && abs(s.y - e.y) > 10f && viewport != null) {
                 createWarpFromBounds(s, e, viewport!!)
             }
             return
@@ -2961,9 +3742,16 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             isCreatingRotation = false
             val s = creationStart; val e = creationCurrent
             creationStart = null; creationCurrent = null
-            if (s != null && e != null && (s - e).getDistance() > 10f && viewport != null) {
+            if (placement == null && s != null && e != null && (s - e).getDistance() > 10f && viewport != null) {
                 createRotationFromPoints(s, e, viewport!!)
             }
+            return
+        }
+
+        if (placementHandle != PlacementHandle.NONE) {
+            placementHandle = PlacementHandle.NONE
+            placementDragStart = null
+            placementDragSnapshot = null
             return
         }
 

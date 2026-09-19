@@ -68,6 +68,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.psd2live.core.RigPreviewModel
 import io.github.psd2live.i18n.tr
+import io.github.psd2live.ui.CreatePlacementKind
+import io.github.psd2live.ui.CreateRelation
 import io.github.psd2live.ui.ComponentPalette
 import io.github.psd2live.ui.components.CompactButton
 import io.github.psd2live.ui.components.CompactTextField
@@ -152,6 +154,9 @@ fun WorkspaceView(
 								viewModel.selectLayer(layerId)
 								viewModel.requestCanvasPathTool()
 							},
+							onRequestCreate = { kind, relation, isDeformer, id ->
+								viewModel.canvasEditor.beginTreeCreate(kind, relation, isDeformer, id)
+							},
 						)
 					}
 				}
@@ -182,6 +187,7 @@ private fun HierarchyView(
 	viewModel: PSD2LiveViewModel,
 	canvasMode: CanvasMode,
 	onRequestOpenDeformPaths: ((String) -> Unit)? = null,
+	onRequestCreate: ((CreatePlacementKind, CreateRelation, Boolean, String) -> Unit)? = null,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -290,6 +296,7 @@ private fun HierarchyView(
 								activeMeshSettingsTarget = target
 							},
 							onRequestOpenDeformPaths = onRequestOpenDeformPaths,
+							onRequestCreate = onRequestCreate,
 						)
 					}
 				}
@@ -564,6 +571,7 @@ private fun HierarchyTreeList(
 	onRequestSetOrder: ((targetId: String, name: String, currentOrder: Float, defaultOrder: Float, isOverridden: Boolean) -> Unit)? = null,
 	onRequestSetMeshSettings: ((MeshSettingsDialogTarget) -> Unit)? = null,
 	onRequestOpenDeformPaths: ((String) -> Unit)? = null,
+	onRequestCreate: ((CreatePlacementKind, CreateRelation, Boolean, String) -> Unit)? = null,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -796,6 +804,7 @@ private fun HierarchyTreeList(
 						onRequestSetOrder = onRequestSetOrder,
 						onRequestSetMeshSettings = onRequestSetMeshSettings,
 						onRequestOpenDeformPaths = onRequestOpenDeformPaths,
+						onRequestCreate = onRequestCreate,
 					)
 				}
 				for ((index, drawable) in rootDrawables.withIndex()) {
@@ -815,6 +824,7 @@ private fun HierarchyTreeList(
 						onRequestSetOrder = onRequestSetOrder,
 						onRequestSetMeshSettings = onRequestSetMeshSettings,
 						onRequestOpenDeformPaths = onRequestOpenDeformPaths,
+						onRequestCreate = onRequestCreate,
 					)
 				}
 
@@ -948,6 +958,7 @@ private fun DeformerTreeItem(
 	onRequestSetOrder: ((targetId: String, name: String, currentOrder: Float, defaultOrder: Float, isOverridden: Boolean) -> Unit)? = null,
 	onRequestSetMeshSettings: ((MeshSettingsDialogTarget) -> Unit)? = null,
 	onRequestOpenDeformPaths: ((String) -> Unit)? = null,
+	onRequestCreate: ((CreatePlacementKind, CreateRelation, Boolean, String) -> Unit)? = null,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -1253,6 +1264,27 @@ private fun DeformerTreeItem(
 			Divider(color = colors.divider.copy(alpha = 0.5f), thickness = 0.5.dp)
 
 			DropdownMenuItem(onClick = {
+				onRequestCreate?.invoke(CreatePlacementKind.WARP, CreateRelation.AS_PARENT, true, tailId)
+				showMenu = false
+			}) {
+				Text(tr("editor.treeAddWarpParent"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
+			}
+			DropdownMenuItem(onClick = {
+				onRequestCreate?.invoke(CreatePlacementKind.WARP, CreateRelation.AS_CHILD, true, tailId)
+				showMenu = false
+			}) {
+				Text(tr("editor.treeAddWarpChild"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
+			}
+			DropdownMenuItem(onClick = {
+				onRequestCreate?.invoke(CreatePlacementKind.ROTATION, CreateRelation.AS_PARENT, true, tailId)
+				showMenu = false
+			}) {
+				Text(tr("editor.treeAddRotationParent"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
+			}
+
+			Divider(color = colors.divider.copy(alpha = 0.5f), thickness = 0.5.dp)
+
+			DropdownMenuItem(onClick = {
 				chain.deformers.forEach { expandedMap[it.id.raw] = true }
 				fun expandRecursive(dId: String) {
 					expandedMap[dId] = true
@@ -1298,6 +1330,7 @@ private fun DeformerTreeItem(
 				onRequestSetOrder = onRequestSetOrder,
 				onRequestSetMeshSettings = onRequestSetMeshSettings,
 				onRequestOpenDeformPaths = onRequestOpenDeformPaths,
+				onRequestCreate = onRequestCreate,
 			)
 		}
 		for ((dIndex, childDrawable) in childDrawables.withIndex()) {
@@ -1318,6 +1351,7 @@ private fun DeformerTreeItem(
 				onRequestSetOrder = onRequestSetOrder,
 				onRequestSetMeshSettings = onRequestSetMeshSettings,
 				onRequestOpenDeformPaths = onRequestOpenDeformPaths,
+				onRequestCreate = onRequestCreate,
 			)
 		}
 	}
@@ -1340,6 +1374,7 @@ private fun DrawableTreeItem(
 	onRequestSetOrder: ((targetId: String, name: String, currentOrder: Float, defaultOrder: Float, isOverridden: Boolean) -> Unit)? = null,
 	onRequestSetMeshSettings: ((MeshSettingsDialogTarget) -> Unit)? = null,
 	onRequestOpenDeformPaths: ((String) -> Unit)? = null,
+	onRequestCreate: ((CreatePlacementKind, CreateRelation, Boolean, String) -> Unit)? = null,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -1583,6 +1618,29 @@ private fun DrawableTreeItem(
 			}
 
 			if (layerId != null) {
+				Divider(color = colors.divider.copy(alpha = 0.5f), thickness = 0.5.dp)
+
+				DropdownMenuItem(onClick = {
+					onRequestCreate?.invoke(CreatePlacementKind.WARP, CreateRelation.AS_PARENT, false, drawable.id.raw)
+					showMenu = false
+				}) {
+					Text(tr("editor.treeAddWarpParent"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
+				}
+				DropdownMenuItem(onClick = {
+					onRequestCreate?.invoke(CreatePlacementKind.ROTATION, CreateRelation.AS_PARENT, false, drawable.id.raw)
+					showMenu = false
+				}) {
+					Text(tr("editor.treeAddRotationParent"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
+				}
+				if (drawable.mesh != null) {
+					DropdownMenuItem(onClick = {
+						onRequestCreate?.invoke(CreatePlacementKind.PATH, CreateRelation.AS_CHILD, false, drawable.id.raw)
+						showMenu = false
+					}) {
+						Text(tr("editor.treeAddPath"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary)
+					}
+				}
+
 				Divider(color = colors.divider.copy(alpha = 0.5f), thickness = 0.5.dp)
 
 				val effectiveOrder = state.getEffectiveDrawOrder(drawable.id.raw, layerId, drawable.drawOrder)

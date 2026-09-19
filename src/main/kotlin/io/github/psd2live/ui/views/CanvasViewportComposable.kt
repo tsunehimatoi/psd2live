@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.key.*
 import io.github.psd2live.ui.CanvasEditor
 import io.github.psd2live.ui.CanvasTool
+import io.github.psd2live.ui.CreatePlacementKind
 import io.github.psd2live.ui.EditHierarchyMode
 import io.github.psd2live.ui.PaintShape
 import io.github.psd2live.ui.SelectionStyle
@@ -153,12 +154,9 @@ fun CanvasViewportComposable(
 	}
     editor.state = state
     LaunchedEffect(viewModel, mode) {
-        viewModel.canvasPathRequests.collect {
+                viewModel.canvasPathRequests.collect {
             if (mode == CanvasMode.EDIT) {
-                // A deform path is a deform-mode tool, so a request arriving from the hierarchy while
-                // the canvas sits in another mode takes it there rather than being refused by the
-                // palette check activateTool now applies.
-                if (editor.hierarchyMode != EditHierarchyMode.EDIT) editor.setHierarchyMode(EditHierarchyMode.EDIT)
+                // Deform paths ride the create strip; arm the tool without forcing Edit mode.
                 editor.activateTool(CanvasTool.CREATE_DEFORM_PATH)
             }
         }
@@ -395,8 +393,24 @@ fun CanvasViewportComposable(
 					ShortcutAction.SELECTION_STYLE_BOX -> { editor.selectionStyle = SelectionStyle.BOX; true }
 					ShortcutAction.SELECTION_STYLE_LASSO -> { editor.selectionStyle = SelectionStyle.LASSO; true }
 					ShortcutAction.SELECT_LINKED -> { editor.selectLinked(); true }
-					ShortcutAction.CANCEL -> { editor.cancel(); true }
-					ShortcutAction.FINISH_PATH -> { if (editor.tool == CanvasTool.KNIFE) editor.finishKnife() else editor.finishPath(); true }
+					ShortcutAction.CANCEL -> {
+						if (editor.placement != null) editor.cancelPlacement() else editor.cancel()
+						true
+					}
+					ShortcutAction.FINISH_PATH -> {
+						when {
+							editor.tool == CanvasTool.KNIFE -> { editor.finishKnife(); true }
+							editor.placement != null && editor.placement?.kind != CreatePlacementKind.PATH -> {
+								editor.confirmPlacement(); true
+							}
+							editor.tool == CanvasTool.CREATE_DEFORM_PATH || editor.drawingPath ||
+								editor.placement?.kind == CreatePlacementKind.PATH -> {
+								editor.finishPath(); true
+							}
+							editor.placement != null -> { editor.confirmPlacement(); true }
+							else -> false
+						}
+					}
 					ShortcutAction.DELETE_SELECTION -> {
 						if (editor.tool == CanvasTool.KNIFE || editor.drawingPath) editor.undoDraftPoint()
                         else if (editor.tool == CanvasTool.CREATE_DEFORM_PATH) editor.deletePathPoint()
@@ -626,7 +640,7 @@ fun CanvasViewportComposable(
 			}
 			.onPointerEvent(PointerEventType.Scroll) { event ->
 				val change = event.changes.firstOrNull() ?: return@onPointerEvent
-				if (mode == CanvasMode.EDIT && editor.tool == CanvasTool.CREATE_WARP) {
+				if (mode == CanvasMode.EDIT && editor.tool == CanvasTool.CREATE_WARP && !editor.warpCreateParentIsWarp()) {
 					val delta = if (change.scrollDelta.y > 0) -1 else 1
                     editor.warpCreateGridRows = (editor.warpCreateGridRows + delta).coerceIn(2, 20)
                     editor.warpCreateGridCols = (editor.warpCreateGridCols + delta).coerceIn(2, 20)

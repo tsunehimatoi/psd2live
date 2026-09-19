@@ -509,8 +509,12 @@ private fun WarpDeformerInspector(
     val colors = LocalToolColors.current
     val typography = LocalToolTypography.current
 
-    var bezierCols by remember(warp.id.raw) { mutableStateOf(warp.columns.coerceAtLeast(2)) }
-    var bezierRows by remember(warp.id.raw) { mutableStateOf(warp.rows.coerceAtLeast(2)) }
+    var bezierCols by remember(warp.id.raw) {
+        mutableStateOf(editor.warpBezierDivisions[warp.id.raw]?.second ?: 2)
+    }
+    var bezierRows by remember(warp.id.raw) {
+        mutableStateOf(editor.warpBezierDivisions[warp.id.raw]?.first ?: 2)
+    }
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         // 1. 名称 (Name)
@@ -681,7 +685,12 @@ private fun WarpDeformerInspector(
             ) {
                 CompactNumberSpinner(
                     value = bezierCols.toDouble(),
-                    onValueChange = { bezierCols = it.toInt().coerceIn(1, 16) },
+                    onValueChange = {
+                        val next = it.toInt().coerceIn(1, 16)
+                        bezierCols = next
+                        editor.warpBezierDivisions[warp.id.raw] = bezierRows to next
+                        editor.ensureBezierState()
+                    },
                     modifier = Modifier.weight(1f),
                     min = 1.0,
                     max = 16.0,
@@ -692,7 +701,12 @@ private fun WarpDeformerInspector(
                 Text("x", fontSize = 11.sp, color = colors.textMuted)
                 CompactNumberSpinner(
                     value = bezierRows.toDouble(),
-                    onValueChange = { bezierRows = it.toInt().coerceIn(1, 16) },
+                    onValueChange = {
+                        val next = it.toInt().coerceIn(1, 16)
+                        bezierRows = next
+                        editor.warpBezierDivisions[warp.id.raw] = next to bezierCols
+                        editor.ensureBezierState()
+                    },
                     modifier = Modifier.weight(1f),
                     min = 1.0,
                     max = 16.0,

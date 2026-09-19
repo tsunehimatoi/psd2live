@@ -8,6 +8,7 @@ import org.umamo.edit.MeshTopology
 import org.umamo.edit.MeshTopologyEdit
 import org.umamo.edit.MeshTopologyOps
 import org.umamo.edit.VertexSource
+import org.umamo.edit.withDeformerPart
 import org.umamo.edit.withMeshTopologyEdit
 import org.umamo.runtime.model.*
 
@@ -59,7 +60,10 @@ internal object CanvasEdits {
                 val originX = origin?.get(0)?.jsonPrimitive?.float ?: 0f
                 val originY = origin?.get(1)?.jsonPrimitive?.float ?: 0f
                 val baseAngle = edit["angle"]?.jsonPrimitive?.float ?: 0f
-                val rotation=Deformer.Rotation(DeformerId(id),edit.getValue("name").jsonPrimitive.content,null,null,baseAngle,
+                val partId = edit["part_id"]?.jsonPrimitive?.contentOrNull?.let(::PartId)
+                    ?: drawables.firstOrNull()?.let { model.partByDrawable()[it.id] }
+                require(partId == null || model.parts.any { it.id == partId }) { "Part not found: $partId" }
+                val rotation=Deformer.Rotation(DeformerId(id),edit.getValue("name").jsonPrimitive.content,null,partId,baseAngle,
                     KeyformGrid(emptyList(),listOf(KeyformCell(intArrayOf(),RotationPivotForm(originX,originY,0f,1f)))))
                 require(listOf(originX, originY, baseAngle).all(Float::isFinite))
                 if (edit["preservePose"]?.jsonPrimitive?.booleanOrNull == true) {
@@ -75,39 +79,172 @@ internal object CanvasEdits {
                 }
             }
             "canvas_create_warp" -> {
+                require(model.deformers.none { it.id.raw==id })
                 val ids=edit.getValue("meshes").jsonArray.map { it.jsonPrimitive.content }.toSet()
                 val drawables=model.drawables.filter { it.id.raw in ids }
-                require(ids.isNotEmpty() && drawables.size==ids.size && drawables.all { it.mesh!=null })
-                require(drawables.map { it.parentDeformerId }.distinct().size==1) { "Select meshes with the same parent deformer" }
-                require(model.deformers.none { it.id.raw==id })
-                val parent=drawables.first().parentDeformerId
-                if(model.deformers.any { it.id==parent && it is Deformer.Warp }) {
-                    RigWarpEdit(id,edit.getValue("name").jsonPrimitive.content,parent!!.raw,ids.toList(),
-                        edit["rows"]?.jsonPrimitive?.int ?: 4, edit["columns"]?.jsonPrimitive?.int ?: 4).applyTo(model)
-                } else {
-                    val all=drawables.flatMap { d ->
-                        val mesh=d.mesh!!
-                        listOf(mesh.positions.toList()) + d.geometryGrid?.cells.orEmpty().map { cell -> mesh.positions.indices.map { mesh.positions[it]+cell.form.positionDeltas[it] } }
-                    }.flatten().toFloatArray()
-                    val bounds = RigGeometryTools.bounds(all)
-                    val rows = edit["rows"]?.jsonPrimitive?.int ?: 4
-                    val cols = edit["columns"]?.jsonPrimitive?.int ?: 4
+                require(drawables.size==ids.size && drawables.all { it.mesh!=null })
+                val addTo = edit["add_to"]?.jsonPrimitive?.contentOrNull ?: "parent_of_selected"
+                val rows = edit["rows"]?.jsonPrimitive?.int ?: 5
+                val cols = edit["columns"]?.jsonPrimitive?.int ?: 5
+                require(rows in 1..32 && cols in 1..32) { "Warp divisions must be between 1 and 32" }
+
+                if (addTo == "child_of_deformer" && ids.isEmpty()) {
+                    val parentId = edit.getValue("parent_id").jsonPrimitive.content.let(::DeformerId)
+                    val parent = model.deformers.singleOrNull { it.id == parentId }
+                        ?: error("Parent deformer not found: ${parentId.raw}")
+                    val partId = edit["part_id"]?.jsonPrimitive?.contentOrNull?.let(::PartId) ?: parent.partId
+                    require(partId == null || model.parts.any { it.id == partId }) { "Part not found: $partId" }
                     val customBounds = edit["bounds"]?.jsonObject
-                    val x = customBounds?.get("x")?.jsonPrimitive?.float ?: (bounds[0]-bounds[2]*0.05f)
-                    val y = customBounds?.get("y")?.jsonPrimitive?.float ?: (bounds[1]-bounds[3]*0.05f)
-                    val w = customBounds?.get("w")?.jsonPrimitive?.float ?: (bounds[2]*1.1f)
-                    val h = customBounds?.get("h")?.jsonPrimitive?.float ?: (bounds[3]*1.1f)
-                    require(rows in 1..32 && cols in 1..32) { "Warp divisions must be between 1 and 32" }
-                    require(listOf(x, y, w, h).all(Float::isFinite) && w > 1e-6f && h > 1e-6f) { "Warp bounds must have positive width and height" }
+                    val (x, y, w, h) = if (customBounds != null) {
+                        listOf(
+                            customBounds.getValue("x").jsonPrimitive.float,
+                            customBounds.getValue("y").jsonPrimitive.float,
+                            customBounds.getValue("w").jsonPrimitive.float,
+                            customBounds.getValue("h").jsonPrimitive.float,
+                        )
+                    } else when (parent) {
+                        is Deformer.Warp -> {
+                            val pts = parent.geometryGrid?.cells?.firstOrNull()?.form?.controlPoints
+                                ?: floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f)
+                            val xs = pts.filterIndexed { i, _ -> i % 2 == 0 }
+                            val ys = pts.filterIndexed { i, _ -> i % 2 == 1 }
+                            listOf(xs.min(), ys.min(), (xs.max() - xs.min()).coerceAtLeast(1e-3f), (ys.max() - ys.min()).coerceAtLeast(1e-3f))
+                        }
+                        is Deformer.Rotation -> listOf(-50f, -50f, 100f, 100f)
+                    }
+                    require(listOf(x, y, w, h).all(Float::isFinite) && w > 1e-6f && h > 1e-6f)
                     val points = (0..rows).flatMap { r -> (0..cols).flatMap { c -> listOf(x+c*w/cols, y+r*h/rows) } }.toFloatArray()
-                    val warp = Deformer.Warp(DeformerId(id), edit.getValue("name").jsonPrimitive.content, parent, null, rows, cols, true, KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(), WarpLatticeForm(points)))))
-                    model.copy(deformers=model.deformers+warp,drawables=model.drawables.map { d -> if(d.id.raw !in ids)d else {
-                        val mesh=d.mesh!!
-                        d.copy(parentDeformerId=warp.id,mesh=DrawableMesh(FloatArray(mesh.positions.size) { j -> if(j%2==0)(mesh.positions[j]-x)/w else (mesh.positions[j]-y)/h },mesh.uvs,mesh.indices),
-                            geometryGrid=d.geometryGrid?.let { grid -> KeyformGrid(grid.axes,grid.cells.map { cell -> KeyformCell(cell.coordinate,MeshDeltaForm(FloatArray(cell.form.positionDeltas.size) { j -> cell.form.positionDeltas[j]/if(j%2==0)w else h })) }) },
-                            blendShapes=d.blendShapes.map { binding -> binding.copy(forms=binding.forms.map { form -> form?.let { MeshForm(FloatArray(it.positionDeltas.size) { j -> it.positionDeltas[j]/if(j%2==0)w else h },it.drawOrder,it.opacity,it.multiplyColor,it.screenColor) } }) })
-                    } }).withDerivedRenderRoot()
+                    val warp = Deformer.Warp(DeformerId(id), edit.getValue("name").jsonPrimitive.content, parentId, partId, rows, cols, true,
+                        KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(), WarpLatticeForm(points)))))
+                    return model.copy(deformers = model.deformers + warp).withDerivedRenderRoot()
                 }
+
+                if (addTo == "parent_of_deformer") {
+                    val childId = edit.getValue("deformer_id").jsonPrimitive.content.let(::DeformerId)
+                    val child = model.deformers.singleOrNull { it.id == childId }
+                        ?: error("Deformer not found: ${childId.raw}")
+                    val partId = edit["part_id"]?.jsonPrimitive?.contentOrNull?.let(::PartId) ?: child.partId
+                    require(partId == null || model.parts.any { it.id == partId }) { "Part not found: $partId" }
+                    val customBounds = edit["bounds"]?.jsonObject
+                    val (x, y, w, h) = if (customBounds != null) {
+                        listOf(
+                            customBounds.getValue("x").jsonPrimitive.float,
+                            customBounds.getValue("y").jsonPrimitive.float,
+                            customBounds.getValue("w").jsonPrimitive.float,
+                            customBounds.getValue("h").jsonPrimitive.float,
+                        )
+                    } else {
+                        when (child) {
+                            is Deformer.Warp -> {
+                                val pts = child.geometryGrid?.cells?.firstOrNull()?.form?.controlPoints
+                                    ?: floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f)
+                                val xs = pts.filterIndexed { i, _ -> i % 2 == 0 }
+                                val ys = pts.filterIndexed { i, _ -> i % 2 == 1 }
+                                val minX = xs.min(); val maxX = xs.max(); val minY = ys.min(); val maxY = ys.max()
+                                val bw = (maxX - minX).coerceAtLeast(1e-3f); val bh = (maxY - minY).coerceAtLeast(1e-3f)
+                                listOf(minX - bw * 0.05f, minY - bh * 0.05f, bw * 1.1f, bh * 1.1f)
+                            }
+                            is Deformer.Rotation -> {
+                                val ox = child.geometryGrid?.cells?.firstOrNull()?.form?.originX ?: 0f
+                                val oy = child.geometryGrid?.cells?.firstOrNull()?.form?.originY ?: 0f
+                                listOf(ox - 50f, oy - 50f, 100f, 100f)
+                            }
+                        }
+                    }
+                    require(listOf(x, y, w, h).all(Float::isFinite) && w > 1e-6f && h > 1e-6f)
+                    val points = (0..rows).flatMap { r -> (0..cols).flatMap { c -> listOf(x+c*w/cols, y+r*h/rows) } }.toFloatArray()
+                    val warp = Deformer.Warp(DeformerId(id), edit.getValue("name").jsonPrimitive.content, child.parent, partId, rows, cols, true,
+                        KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(), WarpLatticeForm(points)))))
+                    val remapped = model.deformers.map { d ->
+                        if (d.id != childId) d else when (d) {
+                            is Deformer.Warp -> {
+                                val pts = d.geometryGrid?.cells?.firstOrNull()?.form?.controlPoints ?: return@map d.copy(parent = warp.id)
+                                val norm = FloatArray(pts.size) { j -> if (j % 2 == 0) (pts[j] - x) / w else (pts[j] - y) / h }
+                                d.copy(
+                                    parent = warp.id,
+                                    geometryGrid = d.geometryGrid?.let { grid ->
+                                        KeyformGrid(grid.axes, grid.cells.map { cell ->
+                                            KeyformCell(cell.coordinate, WarpLatticeForm(FloatArray(cell.form.controlPoints.size) { j ->
+                                                if (j % 2 == 0) (cell.form.controlPoints[j] - x) / w else (cell.form.controlPoints[j] - y) / h
+                                            }))
+                                        })
+                                    } ?: KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(), WarpLatticeForm(norm)))),
+                                )
+                            }
+                            is Deformer.Rotation -> {
+                                val ox = d.geometryGrid?.cells?.firstOrNull()?.form?.originX ?: 0f
+                                val oy = d.geometryGrid?.cells?.firstOrNull()?.form?.originY ?: 0f
+                                d.copy(
+                                    parent = warp.id,
+                                    geometryGrid = KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(),
+                                        RotationPivotForm((ox - x) / w, (oy - y) / h, 0f, 1f)))),
+                                )
+                            }
+                        }
+                    }
+                    return model.copy(deformers = remapped + warp).withDerivedRenderRoot()
+                }
+
+                require(ids.isNotEmpty()) { "Select at least one mesh" }
+                require(drawables.map { it.parentDeformerId }.distinct().size==1) { "Select meshes with the same parent deformer" }
+
+                val meshParent = drawables.first().parentDeformerId
+                val parent = when (addTo) {
+                    "specify_parent" -> edit["parent_id"]?.jsonPrimitive?.contentOrNull?.let(::DeformerId).also {
+                        require(it == meshParent) { "Specified parent must match the selection's current parent" }
+                    } ?: meshParent
+                    else -> meshParent
+                }
+                val partId = edit["part_id"]?.jsonPrimitive?.contentOrNull?.let(::PartId)
+                    ?: (parent?.let { p -> model.deformers.firstOrNull { it.id == p }?.partId })
+                    ?: model.partByDrawable()[drawables.first().id]
+                require(partId == null || model.parts.any { it.id == partId }) { "Part not found: $partId" }
+
+                val customBounds = edit["bounds"]?.jsonObject
+                // Honor an explicit placement box. Parent-Warp auto-alignment (RigWarpEdit) only runs when
+                // the artist did not place a rectangle — otherwise the result diverges from the ghost.
+                if (customBounds == null && parent != null && model.deformers.any { it.id == parent && it is Deformer.Warp }) {
+                    val result = RigWarpEdit(id, edit.getValue("name").jsonPrimitive.content, parent.raw, ids.toList(), rows, cols).applyTo(model)
+                    return if (partId != null && result.deformers.any { it.id.raw == id && it.partId != partId }) {
+                        result.withDeformerPart(DeformerId(id), partId)
+                    } else result
+                }
+
+                val strategy = edit["size_strategy"]?.jsonPrimitive?.contentOrNull ?: "selection_bounds"
+                val (x, y, w, h) = if (customBounds != null) {
+                    listOf(
+                        customBounds.getValue("x").jsonPrimitive.float,
+                        customBounds.getValue("y").jsonPrimitive.float,
+                        customBounds.getValue("w").jsonPrimitive.float,
+                        customBounds.getValue("h").jsonPrimitive.float,
+                    )
+                } else {
+                    val basePositions = drawables.flatMap { d -> d.mesh!!.positions.toList() }.toFloatArray()
+                    val baseBounds = RigGeometryTools.bounds(basePositions)
+                    when (strategy) {
+                        "keyform_envelope" -> {
+                            val all = drawables.flatMap { d ->
+                                val mesh = d.mesh!!
+                                listOf(mesh.positions.toList()) + d.geometryGrid?.cells.orEmpty().map { cell ->
+                                    mesh.positions.indices.map { mesh.positions[it] + cell.form.positionDeltas[it] }
+                                }
+                            }.flatten().toFloatArray()
+                            val bounds = RigGeometryTools.bounds(all)
+                            listOf(bounds[0] - bounds[2] * 0.05f, bounds[1] - bounds[3] * 0.05f, bounds[2] * 1.1f, bounds[3] * 1.1f)
+                        }
+                        "center_align" -> listOf(baseBounds[0], baseBounds[1], baseBounds[2], baseBounds[3])
+                        else -> listOf(baseBounds[0] - baseBounds[2] * 0.05f, baseBounds[1] - baseBounds[3] * 0.05f, baseBounds[2] * 1.1f, baseBounds[3] * 1.1f)
+                    }
+                }
+                require(listOf(x, y, w, h).all(Float::isFinite) && w > 1e-6f && h > 1e-6f) { "Warp bounds must have positive width and height" }
+                val points = (0..rows).flatMap { r -> (0..cols).flatMap { c -> listOf(x+c*w/cols, y+r*h/rows) } }.toFloatArray()
+                val warp = Deformer.Warp(DeformerId(id), edit.getValue("name").jsonPrimitive.content, parent, partId, rows, cols, true, KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(), WarpLatticeForm(points)))))
+                model.copy(deformers=model.deformers+warp,drawables=model.drawables.map { d -> if(d.id.raw !in ids)d else {
+                    val mesh=d.mesh!!
+                    d.copy(parentDeformerId=warp.id,mesh=DrawableMesh(FloatArray(mesh.positions.size) { j -> if(j%2==0)(mesh.positions[j]-x)/w else (mesh.positions[j]-y)/h },mesh.uvs,mesh.indices),
+                        geometryGrid=d.geometryGrid?.let { grid -> KeyformGrid(grid.axes,grid.cells.map { cell -> KeyformCell(cell.coordinate,MeshDeltaForm(FloatArray(cell.form.positionDeltas.size) { j -> cell.form.positionDeltas[j]/if(j%2==0)w else h })) }) },
+                        blendShapes=d.blendShapes.map { binding -> binding.copy(forms=binding.forms.map { form -> form?.let { MeshForm(FloatArray(it.positionDeltas.size) { j -> it.positionDeltas[j]/if(j%2==0)w else h },it.drawOrder,it.opacity,it.multiplyColor,it.screenColor) } }) })
+                } }).withDerivedRenderRoot()
             }
             "canvas_geometry" -> {
                 val kind = edit.getValue("kind").jsonPrimitive.content
