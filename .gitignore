@@ -17,3 +17,4 @@ CubismSdk*/
 *.exp
 __pycache__/
 *.pyc
+.kotlin/
