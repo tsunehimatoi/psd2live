@@ -56,7 +56,7 @@ import io.github.psd2live.ui.components.CompactDropdown
 import io.github.psd2live.ui.components.CompactNumberSpinner
 import io.github.psd2live.ui.components.CompactSectionHeader
 import io.github.psd2live.ui.components.CompactToggleChip
-import io.github.psd2live.ui.components.PaintColorChip
+import io.github.psd2live.ui.components.PaintFgBgSwatch
 import io.github.psd2live.ui.components.toHex
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
@@ -1051,30 +1051,20 @@ private fun PaintToolDetailsColumn(editor: CanvasEditor, target: CanvasTarget?) 
             style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
             color = colors.textPrimary,
         )
-        // Foreground and background, drawn the way every paint program draws them: two overlapping
-        // squares with the one in hand in front, the swap beside them, and the values written out - a
-        // colour is quoted as often as it is judged. X swaps them from the canvas, where the hand is.
+        // Photoshop-style FG/BG swatch with hex values beside it. X swaps from the canvas.
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Box(modifier = Modifier.size(42.dp, 38.dp)) {
-                PaintColorChip(
-                    color = editor.paintSecondaryColor,
-                    onColorChanged = { editor.paintSecondaryColor = it },
-                    modifier = Modifier.align(Alignment.BottomEnd).size(26.dp),
-                    popupOffset = 30.dp,
-                    border = BorderStroke(1.dp, colors.border),
-                )
-                PaintColorChip(
-                    color = editor.paintColor,
-                    onColorChanged = { editor.paintColor = it },
-                    modifier = Modifier.align(Alignment.TopStart).size(28.dp),
-                    popupOffset = 32.dp,
-                    border = BorderStroke(1.5.dp, colors.accent),
-                )
-            }
+            PaintFgBgSwatch(
+                foreground = editor.paintColor,
+                background = editor.paintSecondaryColor,
+                onForegroundChanged = { editor.paintColor = it },
+                onBackgroundChanged = { editor.paintSecondaryColor = it },
+                onSwap = { editor.swapPaintColors() },
+                squareSize = 26.dp,
+            )
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(
                     text = "${tr("editor.paint.foreground")}  ${editor.paintColor.toHex()}",
@@ -1091,11 +1081,6 @@ private fun PaintToolDetailsColumn(editor: CanvasEditor, target: CanvasTarget?) 
                     maxLines = 1,
                 )
             }
-            CompactButton(
-                text = "⇄",
-                onClick = { editor.swapPaintColors() },
-                height = 24.dp,
-            )
         }
 
         // Swatches grid

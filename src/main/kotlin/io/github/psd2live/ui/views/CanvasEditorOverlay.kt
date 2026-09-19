@@ -97,7 +97,14 @@ internal fun BoxScope.CanvasEditorOverlay(
 ) {
     val colors = LocalToolColors.current
     val target = editor.target(layerId = selectedLayerId, deformerId = selectedDeformerId)
-    val isPathTool = editor.tool == CanvasTool.CREATE_DEFORM_PATH || editor.drawingPath || (editor.hierarchyMode == EditHierarchyMode.DEFORM && editor.paths().isNotEmpty())
+    val pathEditable = target?.kind == "mesh" && (
+        editor.tool == CanvasTool.CREATE_DEFORM_PATH ||
+            editor.drawingPath ||
+            (editor.paths().isNotEmpty() && (
+                editor.hierarchyMode == EditHierarchyMode.DEFORM ||
+                    editor.hierarchyMode == EditHierarchyMode.SELECT
+                ))
+        )
     val textMeasurer = rememberTextMeasurer()
 
     Canvas(Modifier.fillMaxSize()) {
@@ -915,32 +922,56 @@ internal fun BoxScope.CanvasEditorOverlay(
             }
         }
 
-        // 5. PATH_DEFORM mode: Curves and control points
-        if (isPathTool && target != null && target.kind == "mesh") {
+        // 5. PATH_DEFORM: live Catmull-Rom curves + control points (create, select binding, deform)
+        if (pathEditable && target != null && target.kind == "mesh") {
             editor.paths().forEach { path ->
+                if (editor.drawingPath && path.id == editor.draftPathId) return@forEach
                 val local = DeformPathTools.positions(path, target.geometry.points)
-                val curve = DeformPathTools.curve(local, path.points.map { it.corner }, path.closed)
-                val points = editor.screen(curve.flatMap { listOf(it.first, it.second) }.toFloatArray(), target, viewport)
                 val selected = path.id == editor.activePath
-                points.zipWithNext().forEach { (a, b) ->
-                    drawLine(Color.Black.copy(alpha = 0.7f), a, b, 5f)
-                    drawLine(if (selected) colors.accent else colors.textPrimary, a, b, 2f)
-                }
+                drawDeformPathCurve(
+                    screenPoints = editor.screen(
+                        DeformPathTools.curve(local, path.points.map { it.corner }, path.closed)
+                            .flatMap { listOf(it.first, it.second) }.toFloatArray(),
+                        target,
+                        viewport,
+                    ),
+                    stroke = if (selected) colors.accent else colors.textPrimary,
+                )
                 editor.screen(local.flatMap { listOf(it.first, it.second) }.toFloatArray(), target, viewport).forEachIndexed { i, p ->
-                    val isHovered = i == editor.hoveredVertex
-                    if (isHovered) {
-                        drawCircle(Color.White, 8f, p, style = Stroke(2f))
-                        drawCircle(colors.accent, 5f, p)
-                    } else {
-                        drawCircle(colors.windowBackground, 5.5f, p)
-                        drawCircle(if (selected && i == editor.pathPoint) colors.accent else colors.textPrimary, 4f, p)
-                    }
+                    drawDeformPathHandle(
+                        p = p,
+                        colors = colors,
+                        hovered = i == editor.hoveredVertex,
+                        active = selected && i == editor.pathPoint,
+                    )
                 }
             }
-            val points = editor.screen(editor.draft.flatMap { listOf(it.first, it.second) }.toFloatArray(), target, viewport)
-            points.zipWithNext().forEach { (a, b) -> drawLine(colors.accent, a, b, 2f) }
-            points.forEach { drawCircle(colors.accent, 4f, it) }
-            if (editor.drawingPath && points.isNotEmpty()) editor.cursor?.let { drawLine(colors.accent.copy(alpha = 0.5f), points.last(), it, 1f) }
+            // Creation / extend draft: real curve (rubber-band cursor as temporary end)
+            if (editor.draft.isNotEmpty()) {
+                val extending = editor.draftPathId?.let { id -> editor.model.deformPaths.firstOrNull { it.id == id } }
+                val rubber = if (editor.drawingPath) {
+                    editor.cursor?.let { editor.local(it, target, viewport, editor.draft.last()) }
+                } else null
+                val previewPts = if (rubber != null) editor.draft + rubber else editor.draft
+                if (previewPts.size >= 2) {
+                    val corners = previewPts.indices.map { i -> extending?.points?.getOrNull(i)?.corner ?: false }
+                    drawDeformPathCurve(
+                        screenPoints = editor.screen(
+                            DeformPathTools.curve(previewPts, corners, closed = false)
+                                .flatMap { listOf(it.first, it.second) }.toFloatArray(),
+                            target,
+                            viewport,
+                        ),
+                        stroke = colors.accent.copy(alpha = if (rubber != null) 0.9f else 1f),
+                    )
+                }
+                editor.screen(editor.draft.flatMap { listOf(it.first, it.second) }.toFloatArray(), target, viewport)
+                    .forEach { drawCircle(colors.accent, 4f, it) }
+                if (rubber != null) {
+                    editor.screen(floatArrayOf(rubber.first, rubber.second), target, viewport)
+                        .firstOrNull()?.let { drawCircle(colors.accent.copy(alpha = 0.45f), 3.5f, it) }
+                }
+            }
         }
 
         // 6. Marquee selection box / lasso
@@ -2210,31 +2241,15 @@ private fun BoxScope.HierarchyModeBar(
                         .width(1.dp)
                         .background(colors.border.copy(alpha = 0.45f))
                 )
-                // Foreground and background the way every paint program shows them: the colour in hand
-                // in front, the other one behind it, and the swap beside them. The chord for the swap is
-                // X, out on the canvas where the hand already is.
-                Box(modifier = Modifier.size(26.dp, 24.dp)) {
-                    PaintColorChip(
-                        color = editor.paintSecondaryColor,
-                        onColorChanged = { editor.paintSecondaryColor = it },
-                        modifier = Modifier.align(Alignment.BottomEnd).size(17.dp),
-                        popupOffset = 22.dp,
-                        shape = RoundedCornerShape(2.dp),
-                        border = BorderStroke(1.dp, colors.border),
-                    )
-                    PaintColorChip(
-                        color = editor.paintColor,
-                        onColorChanged = { editor.paintColor = it },
-                        modifier = Modifier.align(Alignment.TopStart).size(19.dp),
-                        popupOffset = 24.dp,
-                        shape = RoundedCornerShape(2.dp),
-                        border = BorderStroke(1.5.dp, colors.accent),
-                    )
-                }
-                CompactButton(
-                    text = "⇄",
-                    onClick = { editor.swapPaintColors(); focus() },
-                    height = 20.dp,
+                // Photoshop-style FG/BG swatch: overlapping squares with a tiny swap in the corner.
+                // The canvas chord for the same swap is X.
+                PaintFgBgSwatch(
+                    foreground = editor.paintColor,
+                    background = editor.paintSecondaryColor,
+                    onForegroundChanged = { editor.paintColor = it },
+                    onBackgroundChanged = { editor.paintSecondaryColor = it },
+                    onSwap = { editor.swapPaintColors(); focus() },
+                    squareSize = 15.dp,
                 )
                 val currentSize = editor.paintSize
                 Text(
@@ -2764,5 +2779,23 @@ private fun DrawScope.drawTransformBox(frame: TransformFrame, hovered: BoundingH
         val from = if (axis == "x") Offset(center.x - span, center.y) else Offset(center.x, center.y - span)
         val to = if (axis == "x") Offset(center.x + span, center.y) else Offset(center.x, center.y + span)
         drawLine(colors.warning.copy(alpha = 0.7f), from, to, 1.2f)
+    }
+}
+
+private fun DrawScope.drawDeformPathCurve(screenPoints: List<Offset>, stroke: Color) {
+    if (screenPoints.size < 2) return
+    screenPoints.zipWithNext().forEach { (a, b) ->
+        drawLine(Color.Black.copy(alpha = 0.7f), a, b, 5f)
+        drawLine(stroke, a, b, 2f)
+    }
+}
+
+private fun DrawScope.drawDeformPathHandle(p: Offset, colors: ToolColors, hovered: Boolean, active: Boolean) {
+    if (hovered) {
+        drawCircle(Color.White, 8f, p, style = Stroke(2f))
+        drawCircle(colors.accent, 5f, p)
+    } else {
+        drawCircle(colors.windowBackground, 5.5f, p)
+        drawCircle(if (active) colors.accent else colors.textPrimary, 4f, p)
     }
 }

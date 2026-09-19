@@ -49,7 +49,7 @@ import io.github.psd2live.ui.components.IconDeformPath
 import io.github.psd2live.ui.components.IconRotationDeformer
 import io.github.psd2live.ui.components.IconTrash
 import io.github.psd2live.ui.components.IconWarpDeformer
-import io.github.psd2live.ui.components.PaintColorChip
+import io.github.psd2live.ui.components.PaintFgBgSwatch
 import io.github.psd2live.ui.components.TreeContextMenu
 import io.github.psd2live.ui.components.toHex
 import io.github.psd2live.ui.theme.LocalToolColors
@@ -993,24 +993,14 @@ private fun PaintColorBlock(editor: CanvasEditor) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Box(modifier = Modifier.size(30.dp, 26.dp)) {
-                PaintColorChip(
-                    color = editor.paintSecondaryColor,
-                    onColorChanged = { editor.paintSecondaryColor = it },
-                    modifier = Modifier.align(Alignment.BottomEnd).size(17.dp),
-                    popupOffset = 22.dp,
-                    shape = RoundedCornerShape(2.dp),
-                    border = BorderStroke(1.dp, colors.border),
-                )
-                PaintColorChip(
-                    color = editor.paintColor,
-                    onColorChanged = { editor.paintColor = it },
-                    modifier = Modifier.align(Alignment.TopStart).size(19.dp),
-                    popupOffset = 24.dp,
-                    shape = RoundedCornerShape(2.dp),
-                    border = BorderStroke(1.5.dp, colors.accent),
-                )
-            }
+            PaintFgBgSwatch(
+                foreground = editor.paintColor,
+                background = editor.paintSecondaryColor,
+                onForegroundChanged = { editor.paintColor = it },
+                onBackgroundChanged = { editor.paintSecondaryColor = it },
+                onSwap = { editor.swapPaintColors() },
+                squareSize = 15.dp,
+            )
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                 Text(
                     text = editor.paintColor.toHex(),
@@ -1025,11 +1015,6 @@ private fun PaintColorBlock(editor: CanvasEditor) {
                     maxLines = 1,
                 )
             }
-            CompactButton(
-                text = "⇄",
-                onClick = { editor.swapPaintColors() },
-                height = 22.dp,
-            )
         }
         Row(
             modifier = Modifier.fillMaxWidth(),

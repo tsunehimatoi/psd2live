@@ -422,7 +422,7 @@ fun CanvasViewportComposable(
 					}
 					ShortcutAction.DELETE_SELECTION -> {
 						if (editor.tool == CanvasTool.KNIFE || editor.drawingPath) editor.undoDraftPoint()
-                        else if (editor.tool == CanvasTool.CREATE_DEFORM_PATH) editor.deletePathPoint()
+                        else if (editor.tool == CanvasTool.CREATE_DEFORM_PATH || editor.activePath != null) editor.deletePathPoint()
 						else if (editor.hierarchyMode == EditHierarchyMode.EDIT) editor.topology("delete")
 						true
 					}
