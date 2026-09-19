@@ -1613,7 +1613,12 @@ private fun BoxScope.HierarchyModeBar(
                             onClick = { editor.discardPaintSession(); focus() },
                         )
                     }
-                } else {
+                } else if (editor.hierarchyMode == EditHierarchyMode.PAINT) {
+                    // The prompt asks for the one thing paint mode cannot start without, so it may only
+                    // be said while paint mode is the mode in hand. Leaving it drops the session on the
+                    // spot, and this row outlives that by the length of its exit animation - tested on
+                    // the mode alone, the row would otherwise flash "pick a layer" at the very moment
+                    // the user stops painting, when there is nothing left to pick a layer for.
                     Text(
                         text = tr("editor.paintSelectLayerHint"),
                         fontSize = 10.sp,
