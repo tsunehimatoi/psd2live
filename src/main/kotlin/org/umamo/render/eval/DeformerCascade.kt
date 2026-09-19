@@ -342,7 +342,7 @@ private fun buildWarpWorld(
  * @param Map               channelOverrides Pending unkeyed channel edits, which win over the rotation's stored channel value.
  * @return DeformerWorld? The world transform, or null when hidden.
  */
-private fun buildRotationWorld(
+internal fun buildRotationWorld(
 	rotation: Deformer.Rotation,
 	paramValue: (ParameterId) -> Float,
 	defaultValue: (ParameterId) -> Float,

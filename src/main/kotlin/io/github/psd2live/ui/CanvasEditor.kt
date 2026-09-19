@@ -1634,8 +1634,8 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         val cy = local[1] + local[3] / 2f
         val parentIsWarp = spaceParentId != null &&
             model.deformers.any { it.id.raw == spaceParentId && it is Deformer.Warp }
-        // Match RigGeometryTools rotation tip length (UV vs world).
-        val tipLen = if (parentIsWarp) 0.2f else max(local[2], local[3]) * 0.35f + 40f
+        // Handle lengths are model units even when the pivot is in a warp's UV space.
+        val tipLen = if (parentIsWarp) 100f else max(local[2], local[3]) * 0.35f + 40f
         val name = when (kind) {
             CreatePlacementKind.WARP -> tr("editor.defaultWarpName", anchorLabel)
             CreatePlacementKind.ROTATION -> tr("editor.defaultRotationName", anchorLabel)
@@ -1904,8 +1904,8 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     }
 
     private fun rotationProjection(ox: Float, oy: Float, viewport: CanvasViewport, mapping: DrawableSpaceMapping) =
-        RotationGuideProjection(Offset(ox, oy)) { point ->
-            placementLocalToScreen(point.x, point.y, viewport, mapping)
+        RotationGuideProjection(Offset(ox, oy), mapping) { x, y ->
+            Offset(viewport.x(x).toFloat(), viewport.yFromWorld(y).toFloat())
         }
 
     private fun placementScreenToLocal(
@@ -3789,6 +3789,20 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                         return
                     }
                 }
+            }
+
+            if (t.kind == "rotation" && 0 in vertices) {
+                // The pivot is parent-local, but the arm is a rigid model-unit offset.
+                // Translating both as warp UV points changes the arm's angle and length.
+                val base = t.geometry.points
+                val pivot = screen(base, t, viewport)[0] + (pos - start)
+                val moved = placementScreenToLocal(pivot, viewport, t.mapping, base[0] to base[1])
+                val dx = moved.first - base[0]
+                val dy = moved.second - base[1]
+                val pts = floatArrayOf(moved.first, moved.second, base[2] + dx, base[3] + dy)
+                val cmd = geometryCommand(t, pts)
+                preview = RigAuthoringJournal.apply(source, cmd); pending = cmd; previous = pos
+                return
             }
 
             if (t.kind == "rotation" && vertices == setOf(1)) {

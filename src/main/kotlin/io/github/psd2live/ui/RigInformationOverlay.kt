@@ -192,9 +192,8 @@ internal object RigInformationOverlay {
             val local = geo.points
             if (local.size < 4) continue
             val mapping = DrawableSpaceMapping(rotation.parent?.let { worlds[it] })
-            val projection = RotationGuideProjection(Offset(local[0], local[1])) { point ->
-                val world = mapping.localToWorld(floatArrayOf(point.x, point.y))
-                Offset(viewport.x(world[0]).toFloat(), viewport.yFromWorld(world[1]).toFloat())
+            val projection = RotationGuideProjection(Offset(local[0], local[1]), mapping) { x, y ->
+                Offset(viewport.x(x).toFloat(), viewport.yFromWorld(y).toFloat())
             }
             val pivot = projection.toScreen(Offset(local[0], local[1]))
             val tip = projection.toScreen(Offset(local[2], local[3]))

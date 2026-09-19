@@ -140,7 +140,7 @@ sealed interface Deformer {
 		 * result; empty when the deformer has none. (CMO3 keyformMorphTargetSet.)
 		 */
 		val blendShapes: List<BlendShapeBinding<RotationForm>> = emptyList(),
-		/** Editor arm length in parent-local units, independent of the animated scale. */
+		/** Editor arm length in model units before rotation scale, never warp UV units. */
 		val handleLength: Float? = null,
 	) : Deformer
 }

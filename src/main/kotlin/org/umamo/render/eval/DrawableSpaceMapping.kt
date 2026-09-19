@@ -3,6 +3,11 @@ package org.umamo.render.eval
 import org.umamo.runtime.model.DrawableId
 import org.umamo.runtime.model.ParameterId
 import org.umamo.runtime.model.PuppetModel
+import org.umamo.runtime.model.Deformer
+import org.umamo.runtime.model.DeformerId
+import org.umamo.runtime.model.KeyformGrid
+import org.umamo.runtime.model.KeyformCell
+import org.umamo.runtime.model.RotationPivotForm
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.sqrt
@@ -41,6 +46,15 @@ private const val RIGID_INVERSE_MAX_ITERATIONS = 24
 class DrawableSpaceMapping internal constructor(
 	private val parentWorld: DeformerWorld?,
 ) {
+	/** Rotation handles use the runtime's rigid parent frame, not the warp's UV Jacobian. */
+	internal fun rotationFrame(originX: Float, originY: Float): DrawableSpaceMapping {
+		val reference = Deformer.Rotation(
+			DeformerId("__rotation_guide__"), "", null, null, 0f,
+			KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(), RotationPivotForm(originX, originY, 0f, 1f)))),
+		)
+		return DrawableSpaceMapping(buildRotationWorld(reference, { 0f }, { 0f }, parentWorld, emptyMap()))
+	}
+
 	/**
 	 * Maps interleaved (x, y) local positions to world positions: the composed parent transform (or a
 	 * pass-through for a direct drawable) followed by the renderer's Y negation - the exact composition
