@@ -993,7 +993,14 @@ fun CanvasViewportComposable(
 		if(mode == CanvasMode.EDIT && previewModel != null) {
             val vp = computeViewport(previewModel,viewSize.width,viewSize.height)
             editor.viewport = vp
-            CanvasEditorOverlay(editor,vp,viewModel,keymap = state.keymap) { focusRequester.requestFocus() }
+            CanvasEditorOverlay(
+                editor = editor,
+                viewport = vp,
+                viewModel = viewModel,
+                keymap = state.keymap,
+                selectedLayerId = state.selectedLayerId,
+                selectedDeformerId = state.selectedDeformerId,
+            ) { focusRequester.requestFocus() }
         }
         // Overlay: Empty hint or Stats Badge
 		if (previewModel == null) {

@@ -88,10 +88,15 @@ internal fun BoxScope.CanvasEditorOverlay(
     viewport: CanvasViewport,
     viewModel: PSD2LiveViewModel,
     keymap: Keymap,
+    // Selection must be parameters: Compose may skip this overlay when only StateFlow selection
+    // changes (editor/viewport/keymap are stable). Hovering the mode bar previously forced a
+    // recomposition; reading these keys updates the target label as soon as a pick lands.
+    selectedLayerId: String? = null,
+    selectedDeformerId: String? = null,
     focus: () -> Unit
 ) {
     val colors = LocalToolColors.current
-    val target = editor.target()
+    val target = editor.target(layerId = selectedLayerId, deformerId = selectedDeformerId)
     val isPathTool = editor.tool == CanvasTool.CREATE_DEFORM_PATH || editor.drawingPath || (editor.hierarchyMode == EditHierarchyMode.DEFORM && editor.paths().isNotEmpty())
     val textMeasurer = rememberTextMeasurer()
 
@@ -1004,7 +1009,12 @@ internal fun BoxScope.CanvasEditorOverlay(
     }
 
     // Top Left Hierarchy / Layer Mode Toolbar
-    HierarchyModeBar(editor = editor, focus = focus)
+    HierarchyModeBar(
+        editor = editor,
+        selectedLayerId = selectedLayerId,
+        selectedDeformerId = selectedDeformerId,
+        focus = focus,
+    )
 
     // Bottom Status Bar
     //
@@ -2068,10 +2078,15 @@ private fun ModeIcon(mode: EditHierarchyMode, color: Color) {
 @Composable
 private fun BoxScope.HierarchyModeBar(
     editor: CanvasEditor,
+    selectedLayerId: String?,
+    selectedDeformerId: String?,
     focus: () -> Unit,
 ) {
     val colors = LocalToolColors.current
-    val target = editor.target()
+    // Resolve from the selection keys passed by the parent so the badge tracks picks immediately,
+    // not only when hover recomposes this bar.
+    val target = editor.target(layerId = selectedLayerId, deformerId = selectedDeformerId)
+    val targetLabel = target?.geometry?.name ?: target?.id
 
     val interactionSource = remember { MutableInteractionSource() }
     val isHoveredBySource by interactionSource.collectIsHoveredAsState()
@@ -2313,9 +2328,10 @@ private fun BoxScope.HierarchyModeBar(
             }
         }
 
-        // Select mode target badge
+        // Current edit target badge — shown whenever a mesh/deformer is selected so the label
+        // tracks the pick in every hierarchy mode, not only after hovering the toolbar.
         AnimatedVisibility(
-            visible = editor.hierarchyMode == EditHierarchyMode.SELECT && target != null,
+            visible = targetLabel != null,
             enter = expandHorizontally(
                 animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
                 expandFrom = Alignment.Start,
@@ -2337,10 +2353,11 @@ private fun BoxScope.HierarchyModeBar(
                         .background(colors.border.copy(alpha = 0.45f))
                 )
                 Text(
-                    text = target?.id.orEmpty(),
+                    text = targetLabel.orEmpty(),
                     fontSize = 10.5.sp,
                     color = colors.textMuted,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(horizontal = 4.dp)
                 )
             }
