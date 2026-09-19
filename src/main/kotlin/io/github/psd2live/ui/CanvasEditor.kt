@@ -1559,13 +1559,8 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                     beginPlacement(kind, relation, "deformer", anchorId, d.name, meshes)
                 }
                 CreatePlacementKind.ROTATION -> {
-                    val meshes = descendantMeshIds(anchorId).ifEmpty {
-                        model.drawables.filter { it.parentDeformerId?.raw == anchorId }.map { it.id.raw }
-                    }
-                    if (meshes.isEmpty()) {
-                        error = tr("editor.placementNeedMesh")
-                        return
-                    }
+                    // Remount the deformer itself; descendant meshes are listed for scope preview only.
+                    val meshes = descendantMeshIds(anchorId)
                     beginPlacement(kind, CreateRelation.AS_PARENT, "deformer", anchorId, d.name, meshes)
                 }
             }
@@ -1771,22 +1766,53 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     }
 
     private fun commitPlacedRotation(p: CreatePlacement) {
-        if (p.meshIds.isEmpty()) return
         val id = "Rotation_${UUID.randomUUID()}"
-        val angleDeg = Math.toDegrees(atan2((p.tipY - p.originY).toDouble(), (p.tipX - p.originX).toDouble())).toFloat()
         val cmd = buildJsonObject {
             put("op", "canvas_create_rotation")
             put("preservePose", true)
             put("id", id)
             put("name", p.name)
-            put("origin", JsonArray(listOf(p.originX, p.originY).map(::JsonPrimitive)))
-            put("angle", angleDeg)
             if (p.partId != null) put("part_id", p.partId!!)
-            put("meshes", JsonArray(p.meshIds.map(::JsonPrimitive)))
+            when {
+                p.relation == CreateRelation.AS_PARENT && p.anchorKind == "deformer" -> {
+                    put("add_to", "parent_of_deformer")
+                    put("deformer_id", p.anchorId)
+                    val parentOfAnchor = model.deformers.firstOrNull { it.id.raw == p.anchorId }?.parent?.raw
+                    putPlacementRotationLocal(this, p, parentOfAnchor)
+                }
+                else -> {
+                    require(p.meshIds.isNotEmpty()) { "Rotation needs meshes" }
+                    put("add_to", "parent_of_selected")
+                    put("meshes", JsonArray(p.meshIds.map(::JsonPrimitive)))
+                    val meshParent = p.meshIds.firstOrNull()?.let { mid ->
+                        model.drawables.firstOrNull { it.id.raw == mid }?.parentDeformerId?.raw
+                    }
+                    putPlacementRotationLocal(this, p, meshParent)
+                }
+            }
         }
         placement = null
         head = null
         commit(cmd)
+    }
+
+    /** Writes origin + angle in the new rotation's parent local space (matches the placement ghost). */
+    private fun putPlacementRotationLocal(
+        obj: kotlinx.serialization.json.JsonObjectBuilder,
+        p: CreatePlacement,
+        parentDeformerId: String?,
+    ) {
+        val (ox, oy) = worldPointToParentLocal(p.originX, p.originY, parentDeformerId)
+        val (tx, ty) = worldPointToParentLocal(p.tipX, p.tipY, parentDeformerId)
+        val angleDeg = Math.toDegrees(atan2((ty - oy).toDouble(), (tx - ox).toDouble())).toFloat()
+        obj.put("origin", JsonArray(listOf(ox, oy).map(::JsonPrimitive)))
+        obj.put("angle", angleDeg)
+    }
+
+    private fun worldPointToParentLocal(worldX: Float, worldY: Float, parentDeformerId: String?): Pair<Float, Float> {
+        val mapping = parentLocalMapping(parentDeformerId) ?: return worldX to worldY
+        val out = mapping.worldToLocal(floatArrayOf(worldX, worldY), floatArrayOf(0.5f, 0.5f), setOf(0))
+        return out[0] to out[1]
     }
 
     /**
@@ -2788,14 +2814,25 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         val name = defaultCreateName(t.id, rotation = true)
         val id = "Rotation_${UUID.randomUUID()}"
         val targets = objects.mapNotNull { target(model, it, null) }.ifEmpty { listOf(t) }
-        val world = targets.flatMap { it.mapping.localToWorld(it.geometry.points).toList().chunked(2) }
+            .filter { it.kind == "mesh" }
+        if (targets.isEmpty()) return
+        // Origin in the meshes' shared parent-local space (UV under Warp, etc.).
+        val locals = targets.flatMap { it.geometry.points.toList().chunked(2) }
         head = null
         commit(buildJsonObject {
             put("op", "canvas_create_rotation")
             put("id", id); put("name", name); put("preservePose", true)
-            if (world.isNotEmpty()) put("origin", JsonArray(listOf(
-                (world.minOf { it[0] } + world.maxOf { it[0] }) / 2f,
-                (world.minOf { it[1] } + world.maxOf { it[1] }) / 2f).map(::JsonPrimitive)))
+            put("add_to", "parent_of_selected")
+            if (locals.isNotEmpty()) put(
+                "origin",
+                JsonArray(
+                    listOf(
+                        (locals.minOf { it[0] } + locals.maxOf { it[0] }) / 2f,
+                        (locals.minOf { it[1] } + locals.maxOf { it[1] }) / 2f,
+                    ).map(::JsonPrimitive),
+                ),
+            )
+            put("angle", 0f)
             putCreationPartId(this, targets.map { it.id })
             put("meshes", JsonArray(targets.map { JsonPrimitive(it.id) }))
         })
@@ -2851,22 +2888,22 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     }
 
     fun createRotationFromPoints(s: Offset, e: Offset, viewport: CanvasViewport) {
-        val originX = ((s.x - viewport.offsetX) / viewport.scale).toFloat()
-        val originY = -((s.y - viewport.offsetY) / viewport.scale).toFloat()
-        val armX = ((e.x - viewport.offsetX) / viewport.scale).toFloat()
-        val armY = -((e.y - viewport.offsetY) / viewport.scale).toFloat()
-        val angleDeg = Math.toDegrees(kotlin.math.atan2((armY - originY).toDouble(), (armX - originX).toDouble())).toFloat()
+        val meshTarget = target()?.takeIf { it.kind == "mesh" } ?: return
+        val origin = local(s, meshTarget, viewport)
+        val tip = local(e, meshTarget, viewport)
+        val angleDeg = Math.toDegrees(atan2((tip.second - origin.second).toDouble(), (tip.first - origin.first).toDouble())).toFloat()
 
-        val targetMeshes = objects.mapNotNull { target(model, it, null)?.id }.ifEmpty { listOfNotNull(target()?.takeIf { it.kind == "mesh" }?.id) }
+        val targetMeshes = objects.mapNotNull { target(model, it, null)?.id }.ifEmpty { listOf(meshTarget.id) }
         if (targetMeshes.isEmpty()) return
         val id = "Rotation_${UUID.randomUUID()}"
         val name = defaultCreateName(targetMeshes.first(), rotation = true)
         val cmd = buildJsonObject {
             put("op", "canvas_create_rotation")
             put("preservePose", true)
+            put("add_to", "parent_of_selected")
             put("id", id)
             put("name", name)
-            put("origin", JsonArray(listOf(originX, originY).map(::JsonPrimitive)))
+            put("origin", JsonArray(listOf(origin.first, origin.second).map(::JsonPrimitive)))
             put("angle", angleDeg)
             putCreationPartId(this, targetMeshes)
             put("meshes", JsonArray(targetMeshes.map(::JsonPrimitive)))
@@ -2940,40 +2977,29 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         return model.deformers.any { it.id == parent && it is Deformer.Warp }
     }
 
-    /** Deformer and drawable ids that a root-rotation create would wrap (for scope preview). */
+    /** Deformer and drawable ids affected by the current rotation create (scope preview). */
     fun rotationScopeIds(): Pair<Set<String>, Set<String>> {
+        val place = placement?.takeIf { it.kind == CreatePlacementKind.ROTATION }
+        if (place != null) {
+            return when {
+                place.anchorKind == "deformer" -> {
+                    val under = mutableSetOf(place.anchorId)
+                    val byParent = model.deformers.groupBy { it.parent?.raw }
+                    val stack = ArrayDeque(listOf(place.anchorId))
+                    while (stack.isNotEmpty()) {
+                        val id = stack.removeFirst()
+                        byParent[id].orEmpty().forEach { child ->
+                            if (under.add(child.id.raw)) stack.add(child.id.raw)
+                        }
+                    }
+                    under to model.drawables.filter { it.parentDeformerId?.raw in under }.map { it.id.raw }.toSet()
+                }
+                else -> emptySet<String>() to place.meshIds.toSet()
+            }
+        }
         val selected = selectedCreateMeshIds()
         if (selected.isEmpty()) return emptySet<String>() to emptySet()
-        val byId = model.deformers.associateBy { it.id }
-        val roots = model.drawables.filter { it.id.raw in selected }.mapNotNull { d ->
-            var parent = d.parentDeformerId
-            val visited = mutableSetOf<DeformerId>()
-            while (parent != null && byId[parent]?.parent != null) {
-                if (!visited.add(parent)) break
-                parent = byId[parent]?.parent
-            }
-            parent
-        }.toSet()
-        fun underRoot(id: DeformerId?): Boolean {
-            var p = id
-            val visited = mutableSetOf<DeformerId>()
-            while (p != null) {
-                if (p in roots) return true
-                if (!visited.add(p)) return false
-                p = byId[p]?.parent
-            }
-            return false
-        }
-        val deformerIds = model.deformers.filter { it.id in roots || underRoot(it.parent) }.map { it.id.raw }.toSet()
-        val drawableIds = model.drawables.filter { d ->
-            val parent = d.parentDeformerId
-            when {
-                parent == null -> d.id.raw in selected
-                parent in roots || underRoot(parent) -> true
-                else -> false
-            }
-        }.map { it.id.raw }.toSet()
-        return deformerIds to drawableIds
+        return emptySet<String>() to selected
     }
 
     private fun selectedCreateMeshIds(): Set<String> {

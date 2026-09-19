@@ -15,18 +15,22 @@ class RotationCreationTest {
             DrawableMesh(points, floatArrayOf(0f, 0f, 1f, 0f, 1f, 1f), intArrayOf(0, 1, 2)),
             grid(MeshDeltaForm(FloatArray(6)), MeshDeltaForm(FloatArray(6) { if (normalized) .03f else 3f })))
     }
-    private fun command() = buildJsonObject {
+    private fun command(originX: Float = 0.5f, originY: Float = 0.5f) = buildJsonObject {
         put("op", "canvas_create_rotation"); put("id", "new"); put("name", "New")
         put("preservePose", true); put("angle", 37f)
-        put("origin", JsonArray(listOf(JsonPrimitive(120f), JsonPrimitive(-53f))))
+        put("add_to", "parent_of_selected")
+        put("origin", JsonArray(listOf(JsonPrimitive(originX), JsonPrimitive(originY))))
         put("meshes", JsonArray(listOf(JsonPrimitive("mesh"))))
     }
-    private fun verify(parent: Deformer?) {
+    private fun verify(parent: Deformer?, originX: Float, originY: Float) {
         val mesh = drawable(parent?.id, parent is Deformer.Warp)
         val source = PuppetModel(listOf(Parameter(parameter, "Pose", 0f, 1f, 0f)), emptyList(), listOfNotNull(parent),
             listOf(mesh), listOf(OrgChild.Drawable(mesh.id)), null)
-        val created = CanvasEdits.apply(source, command())
+        val created = CanvasEdits.apply(source, command(originX, originY))
         assertContentEquals(mesh.mesh!!.uvs, created.drawables.single().mesh!!.uvs)
+        // New rotation sits between the mesh and its former parent.
+        assertEquals(parent?.id, created.deformers.single { it.id.raw == "new" }.parent)
+        assertEquals(DeformerId("new"), created.drawables.single().parentDeformerId)
         val evaluator = CpuDeformationEvaluator()
         for (value in listOf(0f, .25f, .5f, 1f)) {
             val before = evaluator.evaluate(source, mapOf(parameter to value)).worldPositions.getValue(mesh.id)
@@ -34,16 +38,36 @@ class RotationCreationTest {
             before.indices.forEach { assertEquals(before[it], after[it], .002f, "pose=$value component=$it") }
         }
         // The source is immutable; replay produces the same result.
-        val replay = CanvasEdits.apply(source, command())
+        val replay = CanvasEdits.apply(source, command(originX, originY))
         assertContentEquals(created.drawables.single().mesh!!.positions, replay.drawables.single().mesh!!.positions)
     }
-    @Test fun unparentedMeshKeepsItsPoses() = verify(null)
+    @Test fun unparentedMeshKeepsItsPoses() = verify(null, 50f, 50f)
+    /** Warp parent: mesh lands in pixel-scale rotation-local. Static lattice so mid-poses stay exact. */
     @Test fun warpedBranchKeepsItsPoses() = verify(Deformer.Warp(DeformerId("warp"), "Warp", null, null, 1, 1, true,
-        grid(WarpLatticeForm(floatArrayOf(0f, 0f, 100f, 0f, 0f, 100f, 100f, 100f)),
-            WarpLatticeForm(floatArrayOf(-10f, 10f, 120f, 15f, 5f, 80f, 90f, 110f)))))
+        KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(),
+            WarpLatticeForm(floatArrayOf(0f, 0f, 100f, 0f, 0f, 100f, 100f, 100f)))))), 0.5f, 0.5f)
 
     @Test fun rotatedBranchKeepsItsPoses() = verify(Deformer.Rotation(DeformerId("rotation"), "Rotation", null, null, 12f,
-        grid(RotationPivotForm(13f, 9f, -20f, .7f), RotationPivotForm(30f, 6f, 65f, 1.3f))))
+        grid(RotationPivotForm(13f, 9f, -20f, .7f), RotationPivotForm(30f, 6f, 65f, 1.3f))), 50f, 50f)
+
+    @Test fun parentOfDeformerInsertsAboveAnchor() {
+        val warp = Deformer.Warp(DeformerId("warp"), "Warp", null, null, 1, 1, true,
+            KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(), WarpLatticeForm(floatArrayOf(0f, 0f, 100f, 0f, 0f, 100f, 100f, 100f))))))
+        val mesh = drawable(warp.id, normalized = true)
+        val source = PuppetModel(listOf(Parameter(parameter, "Pose", 0f, 1f, 0f)), emptyList(), listOf(warp),
+            listOf(mesh), listOf(OrgChild.Drawable(mesh.id)), null)
+        val cmd = buildJsonObject {
+            put("op", "canvas_create_rotation"); put("id", "rot"); put("name", "Rot")
+            put("preservePose", true); put("angle", 0f)
+            put("add_to", "parent_of_deformer"); put("deformer_id", "warp")
+            put("origin", JsonArray(listOf(JsonPrimitive(50f), JsonPrimitive(50f))))
+        }
+        val created = CanvasEdits.apply(source, cmd)
+        val rot = created.deformers.single { it.id.raw == "rot" }
+        assertNull(rot.parent)
+        assertEquals(DeformerId("rot"), created.deformers.single { it.id.raw == "warp" }.parent)
+        assertEquals(warp.id, created.drawables.single().parentDeformerId)
+    }
     @Test fun glueCreationCompilesAndReplaysWithStableIdentity() {
         val a = drawable(null)
         val b = a.copy(id = DrawableId("other"), name = "Other")

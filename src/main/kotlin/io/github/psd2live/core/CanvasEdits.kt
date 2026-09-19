@@ -43,39 +43,76 @@ internal object CanvasEdits {
         val id = edit.getValue("id").jsonPrimitive.content
         return when (edit.getValue("op").jsonPrimitive.content) {
             "canvas_create_rotation" -> {
-                require(model.deformers.none { it.id.raw==id })
-                val selected=edit.getValue("meshes").jsonArray.map { it.jsonPrimitive.content }.toSet()
-                val drawables=model.drawables.filter { it.id.raw in selected }
-                require(drawables.isNotEmpty() && drawables.size==selected.size)
-                val byId=model.deformers.associateBy { it.id }
-                val roots=drawables.mapNotNull { d ->
-                    var parent=d.parentDeformerId
-                    val visited=mutableSetOf<DeformerId>()
-                    while(parent!=null && byId[parent]?.parent!=null) { require(visited.add(parent)) { "Deformer cycle" };parent=byId[parent]?.parent }
-                    parent
-                }.toSet()
-                // Wrap whole root branches: inserting an affine inside a warped UV frame would
-                // discard the parent's non-linear shape. A root identity preserves every pose.
+                require(model.deformers.none { it.id.raw == id })
+                val addTo = edit["add_to"]?.jsonPrimitive?.contentOrNull ?: "parent_of_selected"
                 val origin = edit["origin"]?.jsonArray
                 val originX = origin?.get(0)?.jsonPrimitive?.float ?: 0f
                 val originY = origin?.get(1)?.jsonPrimitive?.float ?: 0f
                 val baseAngle = edit["angle"]?.jsonPrimitive?.float ?: 0f
-                val partId = edit["part_id"]?.jsonPrimitive?.contentOrNull?.let(::PartId)
-                    ?: drawables.firstOrNull()?.let { model.partByDrawable()[it.id] }
-                require(partId == null || model.parts.any { it.id == partId }) { "Part not found: $partId" }
-                val rotation=Deformer.Rotation(DeformerId(id),edit.getValue("name").jsonPrimitive.content,null,partId,baseAngle,
-                    KeyformGrid(emptyList(),listOf(KeyformCell(intArrayOf(),RotationPivotForm(originX,originY,0f,1f)))))
                 require(listOf(originX, originY, baseAngle).all(Float::isFinite))
-                if (edit["preservePose"]?.jsonPrimitive?.booleanOrNull == true) {
-                    RotationCreationSpace(originX, originY, baseAngle).wrap(model, rotation, roots, selected)
-                } else {
-                    // Old journals retain their original coordinate-space semantics.
-                    model.copy(deformers = listOf(rotation) + model.deformers.map { d -> if (d.id !in roots) d else when (d) {
-                        is Deformer.Warp -> d.copy(parent = rotation.id)
-                        is Deformer.Rotation -> d.copy(parent = rotation.id)
-                    } }, drawables = model.drawables.map {
-                        if (it.id.raw in selected && it.parentDeformerId == null) it.copy(parentDeformerId = rotation.id) else it
-                    }).withDerivedRenderRoot()
+
+                when (addTo) {
+                    "parent_of_deformer" -> {
+                        val childId = edit.getValue("deformer_id").jsonPrimitive.content.let(::DeformerId)
+                        val child = model.deformers.singleOrNull { it.id == childId }
+                            ?: error("Deformer not found: ${childId.raw}")
+                        val partId = edit["part_id"]?.jsonPrimitive?.contentOrNull?.let(::PartId) ?: child.partId
+                        require(partId == null || model.parts.any { it.id == partId }) { "Part not found: $partId" }
+                        val rotation = Deformer.Rotation(
+                            DeformerId(id),
+                            edit.getValue("name").jsonPrimitive.content,
+                            child.parent,
+                            partId,
+                            baseAngle,
+                            KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(), RotationPivotForm(originX, originY, 0f, 1f)))),
+                        )
+                        if (edit["preservePose"]?.jsonPrimitive?.booleanOrNull == true) {
+                            RotationCreationSpace(originX, originY, baseAngle)
+                                .wrap(model, rotation, remountDeformers = setOf(childId), remountMeshes = emptySet())
+                        } else {
+                            model.copy(
+                                deformers = listOf(rotation) + model.deformers.map { d ->
+                                    if (d.id != childId) d else when (d) {
+                                        is Deformer.Warp -> d.copy(parent = rotation.id)
+                                        is Deformer.Rotation -> d.copy(parent = rotation.id)
+                                    }
+                                },
+                            ).withDerivedRenderRoot()
+                        }
+                    }
+                    else -> {
+                        // parent_of_selected: insert above the selected meshes (shared parent required).
+                        val selected = edit.getValue("meshes").jsonArray.map { it.jsonPrimitive.content }.toSet()
+                        val drawables = model.drawables.filter { it.id.raw in selected }
+                        require(drawables.isNotEmpty() && drawables.size == selected.size)
+                        require(drawables.map { it.parentDeformerId }.distinct().size == 1) {
+                            "Select meshes with the same parent deformer"
+                        }
+                        val meshParent = drawables.first().parentDeformerId
+                        val partId = edit["part_id"]?.jsonPrimitive?.contentOrNull?.let(::PartId)
+                            ?: meshParent?.let { p -> model.deformers.firstOrNull { it.id == p }?.partId }
+                            ?: model.partByDrawable()[drawables.first().id]
+                        require(partId == null || model.parts.any { it.id == partId }) { "Part not found: $partId" }
+                        val rotation = Deformer.Rotation(
+                            DeformerId(id),
+                            edit.getValue("name").jsonPrimitive.content,
+                            meshParent,
+                            partId,
+                            baseAngle,
+                            KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(), RotationPivotForm(originX, originY, 0f, 1f)))),
+                        )
+                        if (edit["preservePose"]?.jsonPrimitive?.booleanOrNull == true) {
+                            RotationCreationSpace(originX, originY, baseAngle)
+                                .wrap(model, rotation, remountDeformers = emptySet(), remountMeshes = selected)
+                        } else {
+                            model.copy(
+                                deformers = listOf(rotation) + model.deformers,
+                                drawables = model.drawables.map {
+                                    if (it.id.raw in selected) it.copy(parentDeformerId = rotation.id) else it
+                                },
+                            ).withDerivedRenderRoot()
+                        }
+                    }
                 }
             }
             "canvas_create_warp" -> {
