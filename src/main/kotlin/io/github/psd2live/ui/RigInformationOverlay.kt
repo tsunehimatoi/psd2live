@@ -1,15 +1,25 @@
 package io.github.psd2live.ui
 
+import androidx.compose.ui.geometry.Offset
 import io.github.psd2live.core.DeformPathTools
 import io.github.psd2live.core.RigGeometryTools
 import org.umamo.runtime.model.*
 import org.umamo.render.eval.CpuDeformationEvaluator
 import org.umamo.render.eval.DeformedGeometry
+import org.umamo.render.eval.DrawableSpaceMapping
+import org.umamo.render.eval.buildDeformerWorlds
 import java.awt.BasicStroke
 import java.awt.Color
 import java.awt.Graphics2D
 import java.awt.RenderingHints
+import java.awt.geom.Ellipse2D
 import java.awt.geom.Path2D
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.hypot
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.sin
 
 /** Probe the actual parent cascade, rather than drawing undeformed rectangles. */
 internal object RigInformationOverlay {
@@ -150,6 +160,121 @@ internal object RigInformationOverlay {
     ) {
         /** The colour of the corner mark: brighter while the deformer is the one being worked on. */
         fun accent(): Color = if (isActive) baseColor.brighter() else baseColor
+    }
+
+    /**
+     * Global rotation-deformer channel: pivot→tip needles in the same parent-composed space the
+     * deform-mode overlay uses. Bounding boxes of descendant meshes are not a rotation guide.
+     */
+    fun paintRotations(
+        g: Graphics2D,
+        model: PuppetModel,
+        parameters: Map<ParameterId, Float>,
+        viewport: CanvasViewport,
+        ids: Set<String>,
+        labels: Boolean = true,
+        selectedDeformerId: String? = null,
+        hoveredDeformerId: String? = null,
+        dimUnselected: Boolean = false,
+    ) {
+        if (ids.isEmpty()) return
+        val pose = parameters.mapKeys { it.key.raw }
+        val paramValue: (ParameterId) -> Float = { id ->
+            parameters[id] ?: model.parameters.firstOrNull { it.id == id }?.default ?: 0f
+        }
+        val worlds = buildDeformerWorlds(model.deformers, paramValue)
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+
+        for (rotation in model.deformers.filterIsInstance<Deformer.Rotation>()) {
+            if (rotation.id.raw !in ids) continue
+            val geo = runCatching { RigGeometryTools.geometry(model, "rotation", rotation.id.raw, pose) }.getOrNull()
+                ?: continue
+            val local = geo.points
+            if (local.size < 4) continue
+            val mapping = DrawableSpaceMapping(rotation.parent?.let { worlds[it] })
+            val projection = RotationGuideProjection(Offset(local[0], local[1])) { point ->
+                val world = mapping.localToWorld(floatArrayOf(point.x, point.y))
+                Offset(viewport.x(world[0]).toFloat(), viewport.yFromWorld(world[1]).toFloat())
+            }
+            val pivot = projection.toScreen(Offset(local[0], local[1]))
+            val tip = projection.toScreen(Offset(local[2], local[3]))
+
+            val isSelected = selectedDeformerId != null && rotation.id.raw == selectedDeformerId
+            val isHovered = hoveredDeformerId != null && rotation.id.raw == hoveredDeformerId && !isSelected
+            val isDimmed = dimUnselected && !isSelected && !isHovered
+            val baseColor = ComponentPalette.strong(rotation.id.raw)
+            val color = when {
+                isSelected -> baseColor.brighter()
+                isHovered -> Color(0, 210, 255, 230)
+                isDimmed -> Color(baseColor.red, baseColor.green, baseColor.blue, 90)
+                else -> baseColor
+            }
+            paintRotationNeedle(g, pivot.x, pivot.y, tip.x, tip.y, color, isDimmed)
+
+            if (labels && !isDimmed) {
+                val label = "${rotation.name} [${rotation.id.raw}]"
+                val left = pivot.x.toInt().coerceAtLeast(0)
+                val baseline = (pivot.y - 10f).toInt().coerceAtLeast(16)
+                g.color = Color(20, 20, 24, 220)
+                g.fillRect(left, baseline - 14, g.fontMetrics.stringWidth(label) + 6, 17)
+                g.color = color
+                g.drawString(label, left + 3, baseline)
+            }
+        }
+    }
+
+    /** Compact Graphics2D stand-in for the Compose deform-mode needle. */
+    private fun paintRotationNeedle(
+        g: Graphics2D,
+        px: Float,
+        py: Float,
+        tx: Float,
+        ty: Float,
+        color: Color,
+        dimmed: Boolean,
+    ) {
+        val dx = tx - px
+        val dy = ty - py
+        val length = hypot(dx.toDouble(), dy.toDouble()).toFloat().coerceAtLeast(1e-3f)
+        val ux = dx / length
+        val uy = dy / length
+        val rootR = min(11f, max(8.5f, length * 0.10f))
+        val tipR = min(4.5f, max(3.2f, rootR * 0.45f))
+        val angle = atan2(dy.toDouble(), dx.toDouble())
+        val perpX = (-sin(angle)).toFloat()
+        val perpY = cos(angle).toFloat()
+
+        val needle = Path2D.Float().apply {
+            moveTo(tx + perpX * tipR, ty + perpY * tipR)
+            lineTo(px + perpX * rootR, py + perpY * rootR)
+            lineTo(px - perpX * rootR, py - perpY * rootR)
+            lineTo(tx - perpX * tipR, ty - perpY * tipR)
+            closePath()
+        }
+        // Caps at both ends so the taper reads as a capsule rather than a diamond.
+        val tipCap = Ellipse2D.Float(tx - tipR, ty - tipR, tipR * 2f, tipR * 2f)
+        val rootCap = Ellipse2D.Float(px - rootR, py - rootR, rootR * 2f, rootR * 2f)
+
+        val fill = if (dimmed) color else Color(color.red, color.green, color.blue, 224)
+        g.color = Color(0, 0, 0, if (dimmed) 20 else 64)
+        g.translate(0.0, 1.2)
+        g.fill(needle); g.fill(tipCap); g.fill(rootCap)
+        g.translate(0.0, -1.2)
+
+        g.color = fill
+        g.fill(needle); g.fill(tipCap); g.fill(rootCap)
+        g.color = Color(255, 255, 255, if (dimmed) 40 else 200)
+        g.stroke = BasicStroke(1.1f)
+        g.draw(needle); g.draw(tipCap); g.draw(rootCap)
+
+        // Pivot hub
+        val hub = if (dimmed) 2.2f else 4.2f
+        g.color = Color(0, 0, 0, if (dimmed) 30 else 90)
+        g.fill(Ellipse2D.Float(px - hub * 0.55f, py - hub * 0.55f + 0.8f, hub * 1.1f, hub * 1.1f))
+        g.color = Color.WHITE
+        g.fill(Ellipse2D.Float(px - hub * 0.5f, py - hub * 0.5f, hub, hub))
+        g.color = color
+        g.fill(Ellipse2D.Float(px - hub * 0.28f, py - hub * 0.28f, hub * 0.56f, hub * 0.56f))
     }
 
     fun paintDeformPaths(

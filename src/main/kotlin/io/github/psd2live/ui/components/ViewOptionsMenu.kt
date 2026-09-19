@@ -426,7 +426,7 @@ fun IconPathHardness(
  * strip's "view options" dropdown.
  *
  * Items are categorized into three distinct DCC sections:
- * 1. Entities / Canvas & Model (纹理、网格线框、变形器、变形路径 + 子选项 路径宽度/路径硬度)
+ * 1. Entities / Canvas & Model (纹理、网格线框、弯曲变形器、旋转变形器、变形路径 + 子选项 路径宽度/路径硬度)
  * 2. Selection & Focus (选中边框、关联变形器、仅显示选中项、淡化未选中)
  * 3. Annotations & Guides (名称、点编号)
  *
@@ -471,6 +471,13 @@ fun ViewOptionsMenuItems(
 		isChecked = options.showWarp,
 		onHover = onHover,
 		onClick = { apply(options.copy(showWarp = !options.showWarp)) },
+	)
+	AppMenuItem(
+		text = tr("canvas.visibility.rotation"),
+		icon = { IconRotationDeformer(tint = it, modifier = Modifier.size(14.dp)) },
+		isChecked = options.showRotation,
+		onHover = onHover,
+		onClick = { apply(options.copy(showRotation = !options.showRotation)) },
 	)
 	if (showPathGuides) {
 		AppMenuItem(

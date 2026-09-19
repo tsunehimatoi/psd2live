@@ -298,7 +298,10 @@ internal fun BoxScope.CanvasEditorOverlay(
             }
         }
 
-        // 2. Warp deformer or Rotation deformer when in DEFORM or EDIT
+        // 2. Warp deformer or Rotation deformer when in DEFORM or EDIT.
+        // Rotation needles here are the forced exception to [TabViewOptions.showRotation]: while the
+        // artist is deform-editing a rotation, its interactive guide stays on regardless of the
+        // global channel.
         if ((editor.hierarchyMode == EditHierarchyMode.DEFORM || editor.hierarchyMode == EditHierarchyMode.EDIT) && target != null && (target.kind == "warp" || target.kind == "rotation")) {
             val pts = editor.screen(target.geometry.points, target, viewport)
             if (target.kind == "rotation") {

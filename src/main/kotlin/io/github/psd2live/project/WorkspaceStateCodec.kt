@@ -37,6 +37,7 @@ internal object WorkspaceStateCodec {
             showTexture = booleanOr(obj, "showTexture", defaults.showTexture),
             showMesh = booleanOr(obj, "showMesh", defaults.showMesh),
             showWarp = booleanOr(obj, "showWarp", defaults.showWarp),
+            showRotation = booleanOr(obj, "showRotation", defaults.showRotation),
             showDeformPaths = booleanOr(obj, "showDeformPaths", defaults.showDeformPaths),
             warpShowNames = booleanOr(obj, "warpShowNames", defaults.warpShowNames),
             warpShowIndices = booleanOr(obj, "warpShowIndices", defaults.warpShowIndices),
@@ -195,6 +196,7 @@ internal object WorkspaceStateCodec {
                 put("showTexture", tab.view.showTexture)
                 put("showMesh", tab.view.showMesh)
                 put("showWarp", tab.view.showWarp)
+                put("showRotation", tab.view.showRotation)
                 put("showDeformPaths", tab.view.showDeformPaths)
                 put("warpShowNames", tab.view.warpShowNames)
                 put("warpShowIndices", tab.view.warpShowIndices)

@@ -2450,6 +2450,52 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     }
 
     /**
+     * The rotations the canvas is drawing global guides for right now.
+     *
+     * [TabViewOptions.showRotation] owns the global channel. Deform/Edit hierarchy mode is the forced
+     * exception: while a rotation is the edit target there, its guide stays on even if the tab option
+     * is off — the artist is already working on it. Selection alone does not reopen the channel.
+     */
+    fun activeRotationIds(): Set<String> {
+        val preview = drawnPreview ?: return emptySet()
+        val puppet = preview.rig.puppet
+        val rotations = puppet.deformers.filterIsInstance<Deformer.Rotation>().map { it.id.raw }.toSet()
+        if (rotations.isEmpty()) return emptySet()
+        val hovered = state.hoveredDeformerId?.takeIf { it in rotations }
+        val selectedRotation = state.selectedDeformerId?.takeIf { it in rotations }
+        val deformForced = selectedRotation != null &&
+            (hierarchyMode == EditHierarchyMode.DEFORM || hierarchyMode == EditHierarchyMode.EDIT)
+
+        if (!state.showRotation) {
+            return if (deformForced) setOf(selectedRotation!!).filter { state.isDeformerVisible(it) }.toSet()
+            else emptySet()
+        }
+        // A mesh is being edited — rotation guides are not what the artist is looking at.
+        if (state.selectedLayerId != null) return emptySet()
+
+        val selected = state.selectedDeformerId
+        val base = if (selected == null) {
+            if (state.filterSelectedOnly) emptySet() else rotations
+        } else {
+            val under = mutableSetOf(selected)
+            var grew = true
+            while (grew) {
+                grew = false
+                for (deformer in puppet.deformers) {
+                    if (deformer.id.raw in under) continue
+                    val parent = state.parentOverrides[deformer.id.raw] ?: deformer.parent?.raw
+                    if (parent in under) {
+                        under.add(deformer.id.raw)
+                        grew = true
+                    }
+                }
+            }
+            under.filter { it in rotations }.toSet()
+        }
+        return (if (hovered != null) base + hovered else base).filter { state.isDeformerVisible(it) }.toSet()
+    }
+
+    /**
      * Each shown warp's lattice in canvas space, fetched through the same probe the lattice channel
      * draws from — so a mark is placed off the very geometry the deformer is drawn with, rather than off
      * a second opinion about it.

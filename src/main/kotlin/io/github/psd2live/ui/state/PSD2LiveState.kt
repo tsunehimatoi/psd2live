@@ -40,7 +40,7 @@ val WorkspaceTabKind.canvasMode: CanvasMode?
  * The Edit tab opens with the deformer guides enabled; they fade while nothing is selected.
  */
 fun WorkspaceTabKind.defaultViewOptions(): TabViewOptions = when (this) {
-	WorkspaceTabKind.EDIT -> TabViewOptions.Default.copy(showWarp = true)
+	WorkspaceTabKind.EDIT -> TabViewOptions.Default.copy(showWarp = true, showRotation = true)
 	WorkspaceTabKind.PREVIEW, WorkspaceTabKind.HISTORY -> TabViewOptions.Default
 }
 
@@ -53,6 +53,7 @@ data class TabViewOptions(
 	val showTexture: Boolean = true,
 	val showMesh: Boolean = false,
 	val showWarp: Boolean = false,
+	val showRotation: Boolean = false,
 	val showDeformPaths: Boolean = true,
 	val warpShowNames: Boolean = true,
 	val warpShowIndices: Boolean = false,
@@ -320,6 +321,7 @@ data class PSD2LiveState(
 	val activeTabView: TabViewOptions get() = activeWorkspaceTab.view
 
 	val showWarp: Boolean get() = activeTabView.showWarp
+	val showRotation: Boolean get() = activeTabView.showRotation
 	val showDeformPaths: Boolean get() = activeTabView.showDeformPaths
 	val showMesh: Boolean get() = activeTabView.showMesh
 	val showTexture: Boolean get() = activeTabView.showTexture

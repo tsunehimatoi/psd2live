@@ -712,6 +712,7 @@ fun CanvasViewportComposable(
 			// choice below and the channel itself, so the two cannot disagree about whether anything is
 			// being drawn.
 			val warpIds = editor.activeWarpIds()
+			val rotationIds = editor.activeRotationIds()
 			val showMesh = state.showMesh
 			val showTexture = state.showTexture
 			val informationNames = state.warpShowNames
@@ -753,7 +754,7 @@ fun CanvasViewportComposable(
 			// Path guides never paint outside the Edit tab (see 3e), so they cannot force the
 			// preview off its native SDK frame.
 			val canUseNativeSdk = mode == CanvasMode.PREVIEW &&
-				warpIds.isEmpty() && !showMesh && !informationSelectedOnly && showTexture &&
+				warpIds.isEmpty() && rotationIds.isEmpty() && !showMesh && !informationSelectedOnly && showTexture &&
 				!isDimmingActive &&
 				state.hoveredLayerId == null && state.hoveredDeformerId == null &&
 				(!state.showSelectionBounds || !hasActiveSelection) &&
@@ -890,28 +891,32 @@ fun CanvasViewportComposable(
 						}
 					}
 
-					// 3c. Bounding Boxes (Selection, Hover, and Hierarchy Rotation Deformers)
+					// 3c. Rotation Channel (RigInformationOverlay). Same ownership rule as warps: the
+					// editor decides which rotations show. Deform/Edit mode still draws the interactive
+					// needle in the Compose overlay for the edit target — that path is the forced
+					// exception when the tab option is off — so skip that one id here to avoid stacking
+					// two needles on the same pivot.
 					val drawableBounds = RigCanvasSupport.boundsByDrawable(geometry)
 					val deformerBounds = RigCanvasSupport.boundsByDeformer(model, drawableBounds)
-
-					if (mode == CanvasMode.EDIT) {
-						for (deformer in model.rig.puppet.deformers.filterIsInstance<org.umamo.runtime.model.Deformer.Rotation>()) {
-							val bounds = deformerBounds[deformer.id.raw] ?: continue
-							val selected = deformer.id.raw == state.selectedDeformerId
-							// With nothing selected every box is unselected, so the rig guide fades.
-							val isDimmed = state.dimUnselected && !selected
-							val rawColor = ComponentPalette.strong(deformer.id.raw)
-							val color = when {
-								selected -> rawColor.brighter()
-								// The faded guide was faint enough to read as absent, which made an unselected
-								// rig look like it had no deformers at all. It stays a background hint, just
-								// a legible one.
-								isDimmed -> java.awt.Color(rawColor.red, rawColor.green, rawColor.blue, 90)
-								else -> rawColor
-							}
-							val strokeWidth = if (selected) 2.8f else if (isDimmed) 0.9f else 1.15f
-							RigCanvasSupport.paintBounds(g, bounds, viewport, color, strokeWidth)
-						}
+					val deformEditTarget = state.selectedDeformerId?.takeIf {
+						editor.hierarchyMode == EditHierarchyMode.DEFORM ||
+							editor.hierarchyMode == EditHierarchyMode.EDIT
+					}
+					val globalRotationIds = when {
+						mode != CanvasMode.EDIT -> emptySet()
+						deformEditTarget != null -> rotationIds - deformEditTarget
+						else -> rotationIds
+					}
+					if (globalRotationIds.isNotEmpty()) {
+						io.github.psd2live.ui.RigInformationOverlay.paintRotations(
+							g, model.rig.puppet,
+							if (mode == CanvasMode.PREVIEW) informationPose else state.parameterValues,
+							viewport, globalRotationIds,
+							labels = informationNames,
+							selectedDeformerId = state.selectedDeformerId,
+							hoveredDeformerId = state.hoveredDeformerId,
+							dimUnselected = state.dimUnselected,
+						)
 					}
 
 					// Global Selection Bounding Box (across all modes if enabled).
