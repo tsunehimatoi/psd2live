@@ -1,4 +1,13 @@
 cmake_minimum_required(VERSION 3.16)
+
+# Match the historically validated live2d_renderer.dll: static MSVC CRT (/MT),
+# so the DLL only depends on system OpenGL/USER32/GDI32 — no VC++ redistributable.
+# Must be set before project() / add_subdirectory so Framework & GLEW inherit it.
+if(POLICY CMP0091)
+  cmake_policy(SET CMP0091 NEW)
+endif()
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "" FORCE)
+
 project(Live2DRenderer CXX)
 
 set(CMAKE_CXX_STANDARD 14)
@@ -35,10 +44,14 @@ set(THIRD_PARTY_PATH "${CUBISM_SDK_ROOT}/Samples/OpenGL/thirdParty")
 set(GLEW_PATH "${THIRD_PARTY_PATH}/glew")
 set(STB_PATH "${THIRD_PARTY_PATH}/stb")
 set(FRAMEWORK_SHADER_PATH "${FRAMEWORK_PATH}/src/Rendering/OpenGL/Shaders/Standard")
-set(CORE_LIB "${CORE_PATH}/lib/windows/x86_64/143/Live2DCubismCore_MD.lib")
+
+# /MT ↔ Core_MT.lib (Release), /MTd ↔ Core_MTd.lib (Debug). Do not mix with *_MD*.
+set(CORE_LIB_RELEASE "${CORE_PATH}/lib/windows/x86_64/143/Live2DCubismCore_MT.lib")
+set(CORE_LIB_DEBUG "${CORE_PATH}/lib/windows/x86_64/143/Live2DCubismCore_MTd.lib")
 
 foreach(required_path IN ITEMS
-    "${CORE_LIB}"
+    "${CORE_LIB_RELEASE}"
+    "${CORE_LIB_DEBUG}"
     "${GLEW_PATH}/include/GL/glew.h"
     "${STB_PATH}/stb_image.h"
     "${FRAMEWORK_SHADER_PATH}/FragShaderSrc.frag")
@@ -48,6 +61,7 @@ foreach(required_path IN ITEMS
 endforeach()
 
 message(STATUS "Using Cubism SDK at: ${CUBISM_SDK_ROOT}")
+message(STATUS "MSVC runtime: static (/MT) — DLL will not depend on VCRUNTIME/MSVCP")
 
 # GLEW (static)
 set(BUILD_UTILS OFF CACHE BOOL "" FORCE)
@@ -56,7 +70,10 @@ add_subdirectory("${GLEW_PATH}/build/cmake" "${CMAKE_CURRENT_BINARY_DIR}/glew")
 # Live2D Cubism Core (static import of official .lib; not redistributed by this repo)
 add_library(Live2DCubismCore STATIC IMPORTED)
 set_target_properties(Live2DCubismCore PROPERTIES
-  IMPORTED_LOCATION "${CORE_LIB}"
+  IMPORTED_LOCATION_RELEASE "${CORE_LIB_RELEASE}"
+  IMPORTED_LOCATION_RELWITHDEBINFO "${CORE_LIB_RELEASE}"
+  IMPORTED_LOCATION_MINSIZEREL "${CORE_LIB_RELEASE}"
+  IMPORTED_LOCATION_DEBUG "${CORE_LIB_DEBUG}"
   INTERFACE_INCLUDE_DIRECTORIES "${CORE_PATH}/include"
 )
 

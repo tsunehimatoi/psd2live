@@ -1,11 +1,14 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 
-rem Build live2d_renderer.dll from source against a locally extracted Cubism SDK.
+rem Build live2d_renderer.dll with static MSVC CRT (/MT), matching the validated
+rem dependency profile: OPENGL32 / KERNEL32 / USER32 / GDI32 only — no VCRUNTIME.
+rem
 rem Usage:
 rem   set CUBISM_SDK_ROOT=C:\path\to\CubismSdkForNative-5-r.5
 rem   native\build_live2d_renderer.bat
 rem   native\build_live2d_renderer.bat -Deploy
+rem   native\build_live2d_renderer.bat -Clean -Deploy
 rem   native\build_live2d_renderer.bat -DCUBISM_SDK_ROOT=C:\path\to\CubismSdkForNative-5-r.5
 
 set "SCRIPT_DIR=%~dp0"
@@ -13,10 +16,13 @@ set "REPO_ROOT=%SCRIPT_DIR%.."
 set "SRC_DIR=%SCRIPT_DIR%live2d_renderer"
 set "BUILD_DIR=%SRC_DIR%\build"
 set "DEPLOY=0"
+set "CLEAN=0"
 
 for %%A in (%*) do (
   if /I "%%~A"=="-Deploy" set "DEPLOY=1"
   if /I "%%~A"=="/Deploy" set "DEPLOY=1"
+  if /I "%%~A"=="-Clean" set "CLEAN=1"
+  if /I "%%~A"=="/Clean" set "CLEAN=1"
   set "ARG=%%~A"
   if /I "!ARG:~0,18!"=="-DCUBISM_SDK_ROOT=" (
     set "CUBISM_SDK_ROOT=!ARG:~18!"
@@ -38,8 +44,15 @@ if not exist "%CUBISM_SDK_ROOT%\Core\include\Live2DCubismCore.h" (
   exit /b 1
 )
 
+if not exist "%CUBISM_SDK_ROOT%\Core\lib\windows\x86_64\143\Live2DCubismCore_MT.lib" (
+  echo [ERROR] Missing Live2DCubismCore_MT.lib ^(required for /MT static CRT^).
+  echo Expected under:
+  echo   %CUBISM_SDK_ROOT%\Core\lib\windows\x86_64\143\
+  exit /b 1
+)
+
 echo ===================================================
-echo  Building live2d_renderer.dll
+echo  Building live2d_renderer.dll  [/MT static CRT]
 echo  SDK: %CUBISM_SDK_ROOT%
 echo ===================================================
 
@@ -60,11 +73,31 @@ if errorlevel 1 (
   exit /b 1
 )
 
+rem Drop a stale /MD cache so runtime-library changes actually take effect.
+if exist "%BUILD_DIR%\CMakeCache.txt" (
+  findstr /C:"CMAKE_MSVC_RUNTIME_LIBRARY:STRING=MultiThreadedDLL" "%BUILD_DIR%\CMakeCache.txt" >nul 2>nul
+  if not errorlevel 1 (
+    echo [INFO] Previous build used /MD — forcing clean reconfigure for /MT.
+    set "CLEAN=1"
+  )
+  findstr /C:"Live2DCubismCore_MD.lib" "%BUILD_DIR%\CMakeCache.txt" >nul 2>nul
+  if not errorlevel 1 (
+    echo [INFO] Previous build linked Core_MD.lib — forcing clean reconfigure for Core_MT.lib.
+    set "CLEAN=1"
+  )
+)
+
+if "%CLEAN%"=="1" (
+  echo [0/3] Cleaning "%BUILD_DIR%" ...
+  if exist "%BUILD_DIR%" rmdir /S /Q "%BUILD_DIR%"
+)
+
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
-echo [1/3] Configuring CMake...
+echo [1/3] Configuring CMake [/MT + Core_MT.lib]...
 cmake -G "Visual Studio 17 2022" -A x64 ^
   -DCUBISM_SDK_ROOT="%CUBISM_SDK_ROOT%" ^
+  -DCMAKE_MSVC_RUNTIME_LIBRARY="MultiThreaded$<$<CONFIG:Debug>:Debug>" ^
   -B "%BUILD_DIR%" ^
   -S "%SRC_DIR%"
 if errorlevel 1 (
@@ -90,6 +123,7 @@ echo.
 echo  Build Successful!
 echo  DLL:     %DLL_OUT%
 echo  Shaders: %SHADER_OUT%
+echo  Expected dependents: OPENGL32 KERNEL32 USER32 GDI32  ^(no VCRUNTIME/MSVCP^)
 
 if "%DEPLOY%"=="1" (
   echo [3/3] Deploying to src\main\resources\cubism\windows-x86_64\ ...
