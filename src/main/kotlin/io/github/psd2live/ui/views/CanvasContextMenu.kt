@@ -34,6 +34,8 @@ import io.github.psd2live.ui.BrushShape
 import io.github.psd2live.ui.CREATION_TOOLS
 import io.github.psd2live.ui.CanvasEditor
 import io.github.psd2live.ui.CanvasTool
+import io.github.psd2live.ui.CreatePlacementKind
+import io.github.psd2live.ui.CreateRelation
 import io.github.psd2live.ui.EditHierarchyMode
 import io.github.psd2live.ui.PaintShape
 import io.github.psd2live.ui.components.CompactButton
@@ -149,14 +151,46 @@ private fun ColumnScope.SelectModeContextMenu(
                             enabled = editor.editable,
                             icon = { IconWarpDeformer(it, Modifier.size(12.dp)) },
                         ) {
-                            editor.createWarp(); onAction(); onDismissRequest()
+                            // Same place-then-confirm entry as the hierarchy-tree Add menu.
+                            val meshId = editor.target()?.id ?: return@ActionSpec
+                            editor.beginTreeCreate(
+                                CreatePlacementKind.WARP,
+                                CreateRelation.AS_PARENT,
+                                false,
+                                meshId,
+                            )
+                            onAction()
+                            onDismissRequest()
                         },
                         ActionSpec(
                             tr("editor.createRotation"),
                             enabled = editor.editable,
                             icon = { IconRotationDeformer(modifier = Modifier.size(12.dp), tint = it) },
                         ) {
-                            editor.createWarp(rotation = true); onAction(); onDismissRequest()
+                            val meshId = editor.target()?.id ?: return@ActionSpec
+                            editor.beginTreeCreate(
+                                CreatePlacementKind.ROTATION,
+                                CreateRelation.AS_PARENT,
+                                false,
+                                meshId,
+                            )
+                            onAction()
+                            onDismissRequest()
+                        },
+                        ActionSpec(
+                            tr("editor.treeAddPath"),
+                            enabled = editor.editable,
+                            icon = { IconDeformPath(modifier = Modifier.size(12.dp), tint = it) },
+                        ) {
+                            val meshId = editor.target()?.id ?: return@ActionSpec
+                            editor.beginTreeCreate(
+                                CreatePlacementKind.PATH,
+                                CreateRelation.AS_CHILD,
+                                false,
+                                meshId,
+                            )
+                            onAction()
+                            onDismissRequest()
                         },
                     )
                 )
