@@ -46,6 +46,7 @@ internal fun canvasGeometryCommand(
     val editMesh = kind == "mesh" && mode == EditHierarchyMode.EDIT
     put("op", "canvas_geometry"); put("kind", kind); put("id", id)
     put("key", JsonObject((if (editMesh) emptyMap() else coordinate).mapValues { JsonPrimitive(it.value) }))
+    if (editMesh) put("pose", JsonObject(coordinate.mapValues { JsonPrimitive(it.value) }))
     put("preserve_image", editMesh)
     put("points", JsonArray(points.map(::JsonPrimitive)))
 }

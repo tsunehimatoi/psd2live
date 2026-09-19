@@ -117,7 +117,12 @@ internal object RigCommandDelta {
         val points = command.getValue("points").jsonArray.map { it.jsonPrimitive.float }.toFloatArray()
         val key = command.coordinate("key")
 
-        if (key.isEmpty()) return isEmptyKeyCanvasGeometryNoOp(model, kind, id, points, key)
+        if (key.isEmpty()) {
+            // Base-mesh edits carry displayed points; the reducer subtracts the same pose.
+            val pose = command["pose"]?.jsonObject?.mapValues { it.value.jsonPrimitive.float }.orEmpty()
+            if (kind == "mesh") return evaluatedPoints(model, kind, id, pose).approx(points)
+            return isEmptyKeyCanvasGeometryNoOp(model, kind, id, points, key)
+        }
 
         // A non-empty coordinate writes through one keyform cell, so the value being overwritten is the
         // lattice evaluated at that coordinate: apply derives its deltas from the same evaluation.
@@ -149,11 +154,6 @@ internal object RigCommandDelta {
             val grid = deformer.geometryGrid ?: return false
             grid.axes.isEmpty() && grid.cells.singleOrNull()?.form?.controlPoints?.approx(points) == true
         }
-
-        // apply writes mesh.positions and leaves the grid alone, so this compares the rest mesh rather
-        // than the pose-sampled one. A keyed mesh whose default pose is non-zero reads as changed here,
-        // which is the safe direction.
-        "mesh" -> model.findDrawable(id)?.mesh?.positions?.approx(points) == true
 
         // apply derives a pivot form from the four handle points and stores it as a single unkeyed cell,
         // so the evaluated handles round-trip: equal handles mean an equal form.

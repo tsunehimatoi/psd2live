@@ -328,7 +328,8 @@ internal object CanvasEdits {
                     // Assigning the displayed points to the rest mesh would apply a keyed default delta a
                     // second time and make the geometry jump out from under the pointer; taking the shift
                     // keeps the edit under the cursor whatever the drawable's default keyform holds.
-                    val displayed = RigGeometryTools.geometry(model, "mesh", id, emptyMap()).points
+                    val pose = edit["pose"]?.jsonObject?.mapValues { it.value.jsonPrimitive.float }.orEmpty()
+                    val displayed = RigGeometryTools.geometry(model, "mesh", id, pose).points
                     val shift = FloatArray(points.size) { points[it] - displayed[it] }
                     model.copy(drawables = model.drawables.map {
                         if (it.id.raw != id) it else it.mesh?.let { mesh ->

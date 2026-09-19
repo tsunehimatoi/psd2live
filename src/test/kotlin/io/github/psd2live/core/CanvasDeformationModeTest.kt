@@ -48,10 +48,36 @@ class CanvasDeformationModeTest {
     @Test fun structuralEditingMovesUvsAndPreservesKeyforms() {
         val source = model(true)
         val points = floatArrayOf(20f, 0f, 100f, 0f, 0f, 100f)
-        val command = canvasGeometryCommand(EditHierarchyMode.EDIT, "mesh", "mesh", mapOf("pose" to 1f), points)
+        val command = canvasGeometryCommand(EditHierarchyMode.EDIT, "mesh", "mesh", mapOf("pose" to 0f), points)
         val next = CanvasEdits.apply(source, command).drawables.single()
         assertContentEquals(points, next.mesh!!.positions)
         assertEquals(.2f, next.mesh!!.uvs[0], .0001f)
         assertSame(source.drawables.single().geometryGrid, next.geometryGrid)
     }
+    @Test fun structuralEditingAtNonDefaultPoseAppliesOnlyPointerDisplacement() {
+        val source = model(true)
+        val key = mapOf("pose" to 1f)
+        val points = RigGeometryTools.geometry(source, "mesh", "mesh", key).points.copyOf()
+        points[0] += 20f
+        val command = canvasGeometryCommand(EditHierarchyMode.EDIT, "mesh", "mesh", key, points)
+        val next = CanvasEdits.apply(source, command)
+        assertContentEquals(points, RigGeometryTools.geometry(next, "mesh", "mesh", key).points)
+        assertEquals(0f, next.drawables.single().mesh!!.positions[1])
+        assertEquals(.2f, next.drawables.single().mesh!!.uvs[0], .0001f)
+    }
+
+    @Test fun movingDisplayedMeshOntoRestPositionsIsARealEdit() {
+        val source = model(true).let { it.copy(parameters = it.parameters.map { p -> p.copy(default = 1f) }) }
+        val rest = source.drawables.single().mesh!!.positions
+        val command = canvasGeometryCommand(EditHierarchyMode.EDIT, "mesh", "mesh", emptyMap(), rest)
+        assertFalse(RigCommandDelta.isNoOp(source, command))
+    }
+
+    @Test fun unchangedDisplayedMeshDoesNotCreateHistory() {
+        val source = model(true).let { it.copy(parameters = it.parameters.map { p -> p.copy(default = 1f) }) }
+        val points = RigGeometryTools.geometry(source, "mesh", "mesh", emptyMap()).points
+        val command = canvasGeometryCommand(EditHierarchyMode.EDIT, "mesh", "mesh", emptyMap(), points)
+        assertTrue(RigCommandDelta.isNoOp(source, command))
+    }
+
 }
