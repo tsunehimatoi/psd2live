@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.IntOffset
@@ -35,6 +36,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Text
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -208,6 +211,7 @@ private fun HierarchyView(
 	val treeWidth = state.hierarchyWidth.dp
 	val isTreeCollapsed = state.hierarchyCollapsed
 
+	val meshPreviewHover = remember(model) { mutableStateOf<MeshPreviewHover?>(null) }
 	var rowCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 	var splitterCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 	var activeDrawOrderTarget by remember { mutableStateOf<DrawOrderDialogTarget?>(null) }
@@ -296,6 +300,7 @@ private fun HierarchyView(
 							)
 						}
 					} else {
+						CompositionLocalProvider(LocalMeshPreviewHover provides meshPreviewHover) {
 						HierarchyTreeList(
 							model = model,
 							state = state,
@@ -309,6 +314,7 @@ private fun HierarchyView(
 							onRequestOpenDeformPaths = onRequestOpenDeformPaths,
 							onRequestCreate = onRequestCreate,
 						)
+						}
 					}
 				}
 
@@ -379,6 +385,13 @@ private fun HierarchyView(
 						}
 					}
 				}
+			}
+		}
+
+		if (!isTreeCollapsed && model != null) {
+			meshPreviewHover.value?.let { hover ->
+				val originY = rowCoords?.takeIf { it.isAttached }?.positionInRoot()?.y ?: 0f
+				HierarchyMeshPreview(model, hover.drawableId, treeWidth + 4.dp, hover.centerYInRoot - originY)
 			}
 		}
 
@@ -1438,6 +1451,12 @@ private fun DrawableTreeItem(
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 
+	val meshPreviewHover = LocalMeshPreviewHover.current
+	DisposableEffect(drawable.id, meshPreviewHover) {
+		onDispose {
+			if (meshPreviewHover?.value?.drawableId == drawable.id.raw) meshPreviewHover.value = null
+		}
+	}
 	val layerId = model.rig.layerIdByDrawableId[drawable.id.raw]
 	val itemId = layerId ?: drawable.id.raw
 	val isLayerSelected = layerId != null && state.selectedLayerId == layerId
@@ -1477,6 +1496,9 @@ private fun DrawableTreeItem(
 				)
 				.onGloballyPositioned { coords ->
 					rowCoords = coords
+					if (meshPreviewHover?.value?.drawableId == drawable.id.raw) {
+						meshPreviewHover.value = MeshPreviewHover(drawable.id.raw, coords.positionInRoot().y + coords.size.height / 2f)
+					}
 					val parent = containerCoordinates
 					if (parent != null && parent.isAttached && coords.isAttached) {
 						val topLeft = parent.localPositionOf(coords, Offset.Zero)
@@ -1532,13 +1554,18 @@ private fun DrawableTreeItem(
 				}
 				.onPointerEvent(PointerEventType.Enter) {
 					isHovered = true
+					meshPreviewHover?.value = rowCoords?.takeIf { it.isAttached && drawable.mesh != null }?.let {
+						MeshPreviewHover(drawable.id.raw, it.positionInRoot().y + it.size.height / 2f)
+					}
 					viewModel.setHoveredItem(layerId = layerId, deformerId = null)
 				}
 				.onPointerEvent(PointerEventType.Exit) {
 					isHovered = false
+					if (meshPreviewHover?.value?.drawableId == drawable.id.raw) meshPreviewHover.value = null
 					viewModel.setHoveredItem(null, null)
 				}
 				.onPointerEvent(PointerEventType.Press) { event ->
+					meshPreviewHover?.value = null
 					if (event.button == PointerButton.Secondary) {
 						val clickPos = event.changes.firstOrNull()?.position ?: Offset.Zero
 						menuClickOffset = clickPos
