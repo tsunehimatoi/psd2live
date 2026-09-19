@@ -821,6 +821,8 @@ fun CanvasViewportComposable(
 					}
 
 					// 3b. Mesh Channel (Wireframe)
+					// Outside SELECT mode, mesh wires are focus chrome for the active artmesh only —
+					// every other part stays texture-only so the canvas stays readable while editing.
 					if (showMesh) {
 						fun drawMeshWireframe(drawable: org.umamo.runtime.model.Drawable, selected: Boolean, dimmed: Boolean = false) {
 							val mesh = drawable.mesh ?: return
@@ -876,33 +878,45 @@ fun CanvasViewportComposable(
 						}
 
 						val selectedId = state.selectedLayerId
-						for (drawable in model.rig.puppet.drawables) {
-							val layerId = model.rig.layerIdByDrawableId[drawable.id.raw]
-							if (layerId != selectedId) {
-								val isDimmed = isDimmingActive && (highlightedLayerIds != null && (layerId == null || layerId !in highlightedLayerIds))
-								drawMeshWireframe(drawable, selected = false, dimmed = isDimmed)
+						val meshFocusOnly = mode == CanvasMode.EDIT && !editor.objectMode
+						if (meshFocusOnly) {
+							if (selectedId != null) {
+								for (drawable in model.rig.puppet.drawables) {
+									val layerId = model.rig.layerIdByDrawableId[drawable.id.raw]
+									if (layerId == selectedId) {
+										drawMeshWireframe(drawable, selected = true, dimmed = false)
+									}
+								}
 							}
-						}
-						if (selectedId != null) {
+						} else {
 							for (drawable in model.rig.puppet.drawables) {
 								val layerId = model.rig.layerIdByDrawableId[drawable.id.raw]
-								if (layerId == selectedId) {
-									drawMeshWireframe(drawable, selected = true, dimmed = false)
+								if (layerId != selectedId) {
+									val isDimmed = isDimmingActive && (highlightedLayerIds != null && (layerId == null || layerId !in highlightedLayerIds))
+									drawMeshWireframe(drawable, selected = false, dimmed = isDimmed)
+								}
+							}
+							if (selectedId != null) {
+								for (drawable in model.rig.puppet.drawables) {
+									val layerId = model.rig.layerIdByDrawableId[drawable.id.raw]
+									if (layerId == selectedId) {
+										drawMeshWireframe(drawable, selected = true, dimmed = false)
+									}
 								}
 							}
 						}
 					}
 
-					// 3c. Rotation Channel (RigInformationOverlay). Same ownership rule as warps: the
-					// editor decides which rotations show. Deform/Edit mode still draws the interactive
-					// needle in the Compose overlay for the edit target — that path is the forced
-					// exception when the tab option is off — so skip that one id here to avoid stacking
-					// two needles on the same pivot.
+					// 3c. Rotation Channel (RigInformationOverlay). Same ownership as warps: the
+					// editor decides which rotations show via showRotation; the Compose overlay draws
+					// the interactive needle for the edit target when that toggle is on.
 					val drawableBounds = RigCanvasSupport.boundsByDrawable(geometry)
 					val deformerBounds = RigCanvasSupport.boundsByDeformer(model, drawableBounds)
 					val deformEditTarget = state.selectedDeformerId?.takeIf {
-						editor.hierarchyMode == EditHierarchyMode.DEFORM ||
-							editor.hierarchyMode == EditHierarchyMode.EDIT
+						state.showRotation && (
+							editor.hierarchyMode == EditHierarchyMode.DEFORM ||
+								editor.hierarchyMode == EditHierarchyMode.EDIT
+							)
 					}
 					val globalRotationIds = when {
 						mode != CanvasMode.EDIT -> emptySet()
@@ -1030,6 +1044,8 @@ fun CanvasViewportComposable(
                 keymap = state.keymap,
                 selectedLayerId = state.selectedLayerId,
                 selectedDeformerId = state.selectedDeformerId,
+                showMesh = state.showMesh,
+                showRotation = state.showRotation,
             ) { focusRequester.requestFocus() }
             CanvasContextMenu(
                 editor = editor,

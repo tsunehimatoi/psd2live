@@ -73,6 +73,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import org.umamo.runtime.model.BlendMode
 import org.umamo.runtime.model.ColorRgb
+import org.umamo.runtime.model.DeformPath
 import org.umamo.runtime.model.Deformer
 import org.umamo.runtime.model.DeformerId
 import org.umamo.runtime.model.Drawable
@@ -140,15 +141,28 @@ internal fun InspectorPanelView(
                 )
             }
             selectedDrawable != null -> {
-                ArtMeshInspector(
-                    drawable = selectedDrawable,
-                    allParts = puppet.parts.map { it.id.raw to it.name },
-                    allDeformers = puppet.deformers.map { it.id.raw to it.name },
-                    allDrawables = puppet.drawables.map { it.id.raw to it.name },
-                    editor = editor,
-                    viewModel = viewModel,
-                    state = state,
-                )
+                val activePath = editor.selectedPath()?.takeIf { it.drawableId == selectedDrawable.id }
+                Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (activePath != null) {
+                        DeformPathInspector(
+                            path = activePath,
+                            drawable = selectedDrawable,
+                            editor = editor,
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Divider(color = colors.border.copy(alpha = 0.55f), thickness = 1.dp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
+                    ArtMeshInspector(
+                        drawable = selectedDrawable,
+                        allParts = puppet.parts.map { it.id.raw to it.name },
+                        allDeformers = puppet.deformers.map { it.id.raw to it.name },
+                        allDrawables = puppet.drawables.map { it.id.raw to it.name },
+                        editor = editor,
+                        viewModel = viewModel,
+                        state = state,
+                    )
+                }
             }
             else -> {
                 // Empty state
@@ -175,6 +189,164 @@ internal fun InspectorPanelView(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Cubism-style deform-path inspector: curve width/hardness, per-point fold line, and target mesh.
+ */
+@Composable
+private fun DeformPathInspector(
+    path: DeformPath,
+    drawable: Drawable,
+    editor: CanvasEditor,
+) {
+    val colors = LocalToolColors.current
+    val typography = LocalToolTypography.current
+    val pointIndex = editor.pathPoint.takeIf { it in path.points.indices }
+    val selectedPoint = pointIndex?.let { path.points[it] }
+    val editable = editor.editable && !editor.busy
+
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        InspectorSectionBox(title = tr("inspector.pathCurve")) {
+            InspectorFormRow(label = tr("inspector.deformPathWidth")) {
+                CompactNumberSpinner(
+                    value = path.width.toDouble(),
+                    onValueChange = { w ->
+                        if (editable) editor.changePath { it.copy(width = w.toFloat().coerceAtLeast(0f)) }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    min = 0.0,
+                    max = 100000.0,
+                    decimals = 2,
+                    step = 1.0,
+                    enabled = editable,
+                    height = 23.dp,
+                )
+            }
+
+            InspectorFormRow(label = tr("inspector.deformPathHardness")) {
+                CompactNumberSpinner(
+                    value = path.hardness * 100.0,
+                    onValueChange = { h ->
+                        if (editable) editor.changePath { it.copy(hardness = (h.toFloat() / 100f).coerceIn(0f, 1f)) }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    min = 0.0,
+                    max = 100.0,
+                    decimals = 0,
+                    step = 1.0,
+                    unit = "%",
+                    enabled = editable,
+                    height = 23.dp,
+                )
+            }
+
+            InspectorFormRow(label = tr("inspector.pathClosed")) {
+                CompactCheckbox(
+                    checked = path.closed,
+                    onCheckedChange = { closed ->
+                        if (!editable) return@CompactCheckbox
+                        if (closed && path.points.size < 3) return@CompactCheckbox
+                        editor.changePath { it.copy(closed = closed) }
+                    },
+                    enabled = editable && (path.closed || path.points.size >= 3),
+                )
+            }
+
+            InspectorFormRow(label = tr("inspector.pathEditLevel")) {
+                CompactDropdown(
+                    items = listOf(2 to "L2", 3 to "L3"),
+                    selectedItem = path.editLevel to "L${path.editLevel}",
+                    onItemSelected = { (level, _) ->
+                        if (!editable) return@CompactDropdown
+                        editor.changePath { it.copy(editLevel = level) }
+                        editor.pathLevel = level
+                    },
+                    itemLabel = { it.second },
+                    modifier = Modifier.fillMaxWidth(),
+                    height = 23.dp,
+                    enabled = editable,
+                )
+            }
+        }
+
+        // Per-control-point: fold line (折线) — each path point has its own corner flag
+        InspectorFormRow(label = tr("inspector.foldLine")) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                CompactCheckbox(
+                    checked = selectedPoint?.corner == true,
+                    onCheckedChange = { corner ->
+                        if (!editable || pointIndex == null) return@CompactCheckbox
+                        editor.changePath { p ->
+                            p.copy(
+                                points = p.points.mapIndexed { i, pt ->
+                                    if (i == pointIndex) pt.copy(corner = corner) else pt
+                                },
+                            )
+                        }
+                    },
+                    enabled = editable && selectedPoint != null,
+                )
+                Text(
+                    text = pointIndex?.let { "${it + 1}/${path.points.size}" } ?: tr("inspector.pathPointNone"),
+                    style = typography.caption.copy(fontSize = 10.5.sp),
+                    color = if (selectedPoint != null) colors.textMuted else colors.textDisabled,
+                )
+            }
+        }
+
+        InspectorSectionBox(title = tr("inspector.pathTarget")) {
+            InspectorFormRow(label = tr("inspector.pathMain")) {
+                CompactTextField(
+                    value = drawable.name.ifBlank { drawable.id.raw },
+                    onValueChange = {},
+                    enabled = false,
+                    modifier = Modifier.fillMaxWidth(),
+                    height = 23.dp,
+                )
+            }
+
+            InspectorFormRow(label = tr("inspector.pathChild")) {
+                CompactTextField(
+                    value = "",
+                    onValueChange = {},
+                    enabled = false,
+                    modifier = Modifier.fillMaxWidth(),
+                    height = 23.dp,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun InspectorSectionBox(
+    title: String,
+    content: @Composable () -> Unit,
+) {
+    val colors = LocalToolColors.current
+    val typography = LocalToolTypography.current
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            text = title,
+            style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
+            color = colors.textPrimary,
+            modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(colors.panelElevated, RoundedCornerShape(4.dp))
+                .border(1.dp, colors.border.copy(alpha = 0.55f), RoundedCornerShape(4.dp))
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            content()
         }
     }
 }

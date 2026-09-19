@@ -43,6 +43,7 @@ import kotlinx.coroutines.withContext
 import org.umamo.runtime.model.ParameterId
 import org.umamo.runtime.model.PuppetModel
 import io.github.psd2live.ui.CanvasEditor
+import io.github.psd2live.ui.EditHierarchyMode
 import org.umamo.format.art.SourceArt
 import java.io.File
 import java.nio.file.Files
@@ -1287,6 +1288,16 @@ class PSD2LiveViewModel : AutoCloseable {
 			}
 		}
 		if (changed) markWorkspaceChanged()
+	}
+
+	/**
+	 * Seeds display toggles when entering a hierarchy mode. Presets differ by mode; afterwards the
+	 * same toggles apply uniformly — no mode forces overlays that the user turned off.
+	 */
+	fun applyHierarchyModeViewPreset(mode: EditHierarchyMode) {
+		val current = _state.value.activeTabView
+		val next = hierarchyModeViewPreset(mode, current)
+		if (next != current) setTabViewOptions(next)
 	}
 
 	/** Restores the active tab's canvas options to the defaults for its kind. */

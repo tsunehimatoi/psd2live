@@ -165,6 +165,26 @@ internal fun CanvasViewOptionsBar(
 				icon = { IconDeformPath(tint = it, modifier = Modifier.size(14.dp)) },
 				onClick = { apply(options.copy(showDeformPaths = !options.showDeformPaths)) },
 			)
+			if (options.showDeformPaths) {
+				ViewOptionRow(
+					label = tr("canvas.information.pathWidth"),
+					isChecked = options.pathShowWidth,
+					isToolbarExpanded = isExpanded,
+					textAlpha = textAlpha,
+					textOffset = textOffset,
+					icon = { IconDeformPath(tint = it.copy(alpha = 0.75f), modifier = Modifier.size(14.dp)) },
+					onClick = { apply(options.copy(pathShowWidth = !options.pathShowWidth)) },
+				)
+				ViewOptionRow(
+					label = tr("canvas.information.pathHardness"),
+					isChecked = options.pathShowHardness,
+					isToolbarExpanded = isExpanded,
+					textAlpha = textAlpha,
+					textOffset = textOffset,
+					icon = { IconDeformPath(tint = it.copy(alpha = 0.55f), modifier = Modifier.size(14.dp)) },
+					onClick = { apply(options.copy(pathShowHardness = !options.pathShowHardness)) },
+				)
+			}
 		}
 
 		Box(

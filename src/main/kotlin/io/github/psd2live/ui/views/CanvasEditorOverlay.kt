@@ -68,6 +68,7 @@ import io.github.psd2live.ui.*
 import io.github.psd2live.ui.components.*
 import io.github.psd2live.ui.state.Keymap
 import io.github.psd2live.ui.state.PSD2LiveViewModel
+import io.github.psd2live.ui.state.ShortcutAction
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
 import io.github.psd2live.ui.theme.ToolColors
@@ -93,6 +94,8 @@ internal fun BoxScope.CanvasEditorOverlay(
     // recomposition; reading these keys updates the target label as soon as a pick lands.
     selectedLayerId: String? = null,
     selectedDeformerId: String? = null,
+    showMesh: Boolean = true,
+    showRotation: Boolean = true,
     focus: () -> Unit
 ) {
     val colors = LocalToolColors.current
@@ -102,15 +105,15 @@ internal fun BoxScope.CanvasEditorOverlay(
             editor.drawingPath ||
             (editor.paths().isNotEmpty() && (
                 editor.hierarchyMode == EditHierarchyMode.DEFORM ||
-                    editor.hierarchyMode == EditHierarchyMode.SELECT
+                    editor.hierarchyMode == EditHierarchyMode.EDIT
                 ))
         )
     val textMeasurer = rememberTextMeasurer()
 
     Canvas(Modifier.fillMaxSize()) {
         val currentTarget = editor.target() ?: target
-        // 1. Mesh wireframe & vertices when in DEFORM or EDIT on a mesh
-        if ((editor.hierarchyMode == EditHierarchyMode.DEFORM || editor.hierarchyMode == EditHierarchyMode.EDIT) && currentTarget != null && currentTarget.kind == "mesh") {
+        // 1. Mesh wireframe & vertices — same toggle as the global mesh channel, no mode privilege.
+        if (showMesh && (editor.hierarchyMode == EditHierarchyMode.DEFORM || editor.hierarchyMode == EditHierarchyMode.EDIT) && currentTarget != null && currentTarget.kind == "mesh") {
             val pts = editor.screen(currentTarget.geometry.points, currentTarget, viewport)
             val brushWeights = editor.activeBrushWeights
 
@@ -306,13 +309,11 @@ internal fun BoxScope.CanvasEditorOverlay(
         }
 
         // 2. Warp deformer or Rotation deformer when in DEFORM or EDIT.
-        // Rotation needles here are the forced exception to [TabViewOptions.showRotation]: while the
-        // artist is deform-editing a rotation, its interactive guide stays on regardless of the
-        // global channel.
+        // Rotation interactive guide uses the same showRotation toggle as the global channel.
         if ((editor.hierarchyMode == EditHierarchyMode.DEFORM || editor.hierarchyMode == EditHierarchyMode.EDIT) && target != null && (target.kind == "warp" || target.kind == "rotation")) {
             val pts = editor.screen(target.geometry.points, target, viewport)
             if (target.kind == "rotation") {
-                if (pts.size >= 2) {
+                if (showRotation && pts.size >= 2) {
                     val guide = editor.rotationGuideScreen(target, viewport)
                     drawRotationArrow(
                         pivot = guide[0],
@@ -941,23 +942,24 @@ internal fun BoxScope.CanvasEditorOverlay(
                     drawDeformPathHandle(
                         p = p,
                         colors = colors,
-                        hovered = i == editor.hoveredVertex,
+                        hovered = i == editor.hoveredPathPoint,
                         active = selected && i == editor.pathPoint,
                     )
                 }
             }
-            // Creation / extend draft: real curve (rubber-band cursor as temporary end)
+            // Creation / extend draft: real curve + live width/hardness influence preview
             if (editor.draft.isNotEmpty()) {
                 val extending = editor.draftPathId?.let { id -> editor.model.deformPaths.firstOrNull { it.id == id } }
                 val rubber = if (editor.drawingPath) {
                     editor.cursor?.let { editor.local(it, target, viewport, editor.draft.last()) }
                 } else null
                 val previewPts = if (rubber != null) editor.draft + rubber else editor.draft
+                val closedPreview = editor.pathClosed && previewPts.size >= 3
                 if (previewPts.size >= 2) {
                     val corners = previewPts.indices.map { i -> extending?.points?.getOrNull(i)?.corner ?: false }
                     drawDeformPathCurve(
                         screenPoints = editor.screen(
-                            DeformPathTools.curve(previewPts, corners, closed = false)
+                            DeformPathTools.curve(previewPts, corners, closedPreview)
                                 .flatMap { listOf(it.first, it.second) }.toFloatArray(),
                             target,
                             viewport,
@@ -965,11 +967,36 @@ internal fun BoxScope.CanvasEditorOverlay(
                         stroke = colors.accent.copy(alpha = if (rubber != null) 0.9f else 1f),
                     )
                 }
-                editor.screen(editor.draft.flatMap { listOf(it.first, it.second) }.toFloatArray(), target, viewport)
-                    .forEach { drawCircle(colors.accent, 4f, it) }
+                val draftScreen = editor.screen(editor.draft.flatMap { listOf(it.first, it.second) }.toFloatArray(), target, viewport)
+                val extent = RigGeometryTools.bounds(target.geometry.points).let { maxOf(it[2], it[3]).coerceAtLeast(1e-6f) }
+                val localWidth = extent * editor.pathWidth.coerceAtLeast(0f)
+                drawDeformPathInfluencePreview(
+                    centers = draftScreen,
+                    sampleLocal = editor.draft.first(),
+                    localWidth = localWidth,
+                    hardness = editor.pathHardness,
+                    editor = editor,
+                    target = target,
+                    viewport = viewport,
+                    colors = colors,
+                )
+                draftScreen.forEach { drawCircle(colors.accent, 4f, it) }
                 if (rubber != null) {
                     editor.screen(floatArrayOf(rubber.first, rubber.second), target, viewport)
-                        .firstOrNull()?.let { drawCircle(colors.accent.copy(alpha = 0.45f), 3.5f, it) }
+                        .firstOrNull()?.let { tip ->
+                            drawDeformPathInfluencePreview(
+                                centers = listOf(tip),
+                                sampleLocal = rubber,
+                                localWidth = localWidth,
+                                hardness = editor.pathHardness,
+                                editor = editor,
+                                target = target,
+                                viewport = viewport,
+                                colors = colors,
+                                alphaScale = 0.55f,
+                            )
+                            drawCircle(colors.accent.copy(alpha = 0.45f), 3.5f, tip)
+                        }
                 }
             }
         }
@@ -1037,6 +1064,7 @@ internal fun BoxScope.CanvasEditorOverlay(
                 editor = editor,
                 place = activePlacement,
                 isClosing = currentPlacement == null,
+                keymap = keymap,
                 focus = focus,
             )
         }
@@ -1057,6 +1085,7 @@ private fun PlacementSettingsPanel(
     editor: CanvasEditor,
     place: CreatePlacement,
     isClosing: Boolean,
+    keymap: Keymap,
     focus: () -> Unit,
 ) {
     val colors = LocalToolColors.current
@@ -1272,7 +1301,7 @@ private fun PlacementSettingsPanel(
             }
         }
 
-        // 6. Path Points Status (for PATH)
+        // 6. Path parameters + point status (for PATH)
         if (place.kind == CreatePlacementKind.PATH) {
             val pointCount = editor.draft.size
             val isReady = pointCount >= 2
@@ -1297,6 +1326,113 @@ private fun PlacementSettingsPanel(
                     )
                 }
             }
+
+            Text(
+                text = tr("editor.pathEditLevel"),
+                color = colors.textMuted,
+                fontSize = 10.sp,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(2, 3).forEach { level ->
+                    CompactToggleChip(
+                        text = "L$level",
+                        selected = editor.pathLevel == level,
+                        onToggle = { if (!isClosing) editor.pathLevel = level },
+                        height = 22.dp,
+                    )
+                }
+            }
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = tr("editor.width"),
+                    color = colors.textMuted,
+                    fontSize = 10.sp,
+                    modifier = Modifier.width(36.dp),
+                )
+                MiniStepper(
+                    value = (editor.pathWidth * 100f).roundToInt().coerceIn(1, 100),
+                    onValueChange = { if (!isClosing) editor.pathWidth = it.coerceIn(1, 100) / 100f },
+                    min = 1,
+                    max = 100,
+                    unit = "%",
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = tr("editor.hardness"),
+                    color = colors.textMuted,
+                    fontSize = 10.sp,
+                    modifier = Modifier.width(36.dp),
+                )
+                MiniStepper(
+                    value = (editor.pathHardness * 100f).roundToInt().coerceIn(0, 100),
+                    onValueChange = { if (!isClosing) editor.pathHardness = it.coerceIn(0, 100) / 100f },
+                    min = 0,
+                    max = 100,
+                    unit = "%",
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                CompactToggleChip(
+                    text = tr("editor.closePath"),
+                    selected = editor.pathClosed,
+                    onToggle = { if (!isClosing) editor.pathClosed = !editor.pathClosed },
+                    height = 22.dp,
+                )
+            }
+
+            Text(
+                text = tr("editor.placementPathPreviewHint"),
+                color = colors.textMuted,
+                fontSize = 9.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            val finishKey = keymap.labelFor(ShortcutAction.FINISH_PATH).orEmpty()
+            val cancelKey = keymap.labelFor(ShortcutAction.CANCEL).orEmpty()
+            val createKey = keymap.labelFor(ShortcutAction.TOOL_CREATE_DEFORM_PATH).orEmpty()
+            val deleteKey = keymap.labelFor(ShortcutAction.DELETE_SELECTION).orEmpty()
+            Text(
+                text = buildString {
+                    if (createKey.isNotEmpty()) append(tr("editor.placementPathShortcutCreate", createKey))
+                    if (finishKey.isNotEmpty()) {
+                        if (isNotEmpty()) append("  ·  ")
+                        append(tr("editor.placementPathShortcutFinish", finishKey))
+                    }
+                    if (deleteKey.isNotEmpty()) {
+                        if (isNotEmpty()) append("  ·  ")
+                        append(tr("editor.placementPathShortcutUndo", deleteKey))
+                    }
+                    if (cancelKey.isNotEmpty()) {
+                        if (isNotEmpty()) append("  ·  ")
+                        append(tr("editor.placementPathShortcutCancel", cancelKey))
+                    }
+                },
+                color = colors.textMuted,
+                fontSize = 9.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
 
         // 7. Action Buttons
@@ -2797,5 +2933,48 @@ private fun DrawScope.drawDeformPathHandle(p: Offset, colors: ToolColors, hovere
     } else {
         drawCircle(colors.windowBackground, 5.5f, p)
         drawCircle(if (active) colors.accent else colors.textPrimary, 4f, p)
+    }
+}
+
+/** Live width (outer dashed) / hardness (inner) rings while placing a deform path. */
+private fun DrawScope.drawDeformPathInfluencePreview(
+    centers: List<Offset>,
+    sampleLocal: Pair<Float, Float>,
+    localWidth: Float,
+    hardness: Float,
+    editor: CanvasEditor,
+    target: CanvasTarget,
+    viewport: CanvasViewport,
+    colors: ToolColors,
+    alphaScale: Float = 1f,
+) {
+    if (centers.isEmpty() || localWidth <= 1e-6f) return
+    val probe = editor.screen(
+        floatArrayOf(sampleLocal.first, sampleLocal.second, sampleLocal.first + localWidth, sampleLocal.second),
+        target,
+        viewport,
+    )
+    if (probe.size < 2) return
+    val outerR = (probe[1] - probe[0]).getDistance().coerceAtLeast(1f)
+    val hard = hardness.coerceIn(0f, 1f)
+    val innerR = outerR * hard
+    val dash = PathEffect.dashPathEffect(floatArrayOf(4f, 4f))
+    centers.forEach { p ->
+        if (hard > 0.02f && innerR > 1f) {
+            drawCircle(Color(0xFF2196F3).copy(alpha = 0.12f * alphaScale), innerR, p)
+            drawCircle(
+                color = Color(0xFF2196F3).copy(alpha = 0.7f * alphaScale),
+                radius = innerR,
+                center = p,
+                style = Stroke(1.2f),
+            )
+        }
+        drawCircle(
+            color = Color(0xFFF44336).copy(alpha = 0.75f * alphaScale),
+            radius = outerR,
+            center = p,
+            style = Stroke(width = 1.4f, pathEffect = dash),
+        )
+        drawCircle(colors.accent.copy(alpha = 0.35f * alphaScale), 2f, p)
     }
 }

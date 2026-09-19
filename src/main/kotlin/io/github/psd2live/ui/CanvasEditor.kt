@@ -393,11 +393,11 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             tool == CanvasTool.CREATE_DEFORM_PATH -> "editor.pathHint"
             tool == CanvasTool.INFLATE -> "editor.inflateHint"
             hierarchyMode == EditHierarchyMode.PAINT -> "editor.paintHint"
-            hierarchyMode == EditHierarchyMode.SELECT && tool == CanvasTool.SELECT &&
+            hierarchyMode == EditHierarchyMode.SELECT && tool == CanvasTool.SELECT -> "editor.objectHint"
+            hierarchyMode == EditHierarchyMode.EDIT && tool == CanvasTool.SELECT &&
                 target?.kind == "mesh" && source != null &&
                 source.deformPaths.any { it.drawableId.raw == target.id && it.editLevel == pathLevel } ->
                 "editor.pathBindHint"
-            hierarchyMode == EditHierarchyMode.SELECT && tool == CanvasTool.SELECT -> "editor.objectHint"
             // drawsTransformBox reads model via target(); only evaluate once a puppet exists.
             tool == CanvasTool.SELECT && source != null && drawsTransformBox -> "editor.transformHint"
             tool == CanvasTool.CREATE_WARP -> if (placement != null) "editor.placementDragHint" else "editor.createWarpHint"
@@ -561,8 +561,14 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         private set
     var pathWidth by mutableStateOf(0.12f)
     var pathLevel by mutableStateOf(2)
+    var pathHardness by mutableStateOf(0.5f)
+    var pathClosed by mutableStateOf(false)
     var activePath by mutableStateOf<String?>(null)
     var pathPoint by mutableStateOf(-1)
+    /** Path-handle hover index; kept separate from [hoveredVertex] so mesh points are not lit by accident. */
+    var hoveredPathPoint by mutableStateOf<Int?>(null)
+    /** True only while the current gesture began on a path control point — not while a path point is merely selected. */
+    private var pathDragging = false
     var drawingPath by mutableStateOf(false)
     var draftPathId by mutableStateOf<String?>(null)
     var draft by mutableStateOf(emptyList<Pair<Float, Float>>())
@@ -848,14 +854,18 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         if (hit != null) {
             activePath = hit.first.id
             pathPoint = hit.second
+            clearMeshElementSelection()
             targetAtPress = t
             original = model
+            pathDragging = true
             dragging = true
             return true
         }
         val curveHit = pathCurveHit(pos, t, viewport) ?: return false
         activePath = curveHit.id
         pathPoint = -1
+        pathDragging = false
+        clearMeshElementSelection()
         if (ctrl) {
             val points = DeformPathTools.positions(curveHit, t.geometry.points)
             val screens = screen(points.flatMap { listOf(it.first, it.second) }.toFloatArray(), t, viewport)
@@ -869,16 +879,35 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         return true
     }
 
-    /** True while path control points may be dragged for binding (non-deform) or deformation. */
+    /** Ends a path-handle gesture without dropping the selected path / point highlight. */
+    private fun endPathDrag() {
+        pathDragging = false
+    }
+
+    /** Clears path point selection so mesh edits cannot drag a lingering path handle. */
+    private fun clearPathPointSelection() {
+        pathDragging = false
+        pathPoint = -1
+    }
+
+    /**
+     * Binding edit lives in EDIT; deformation lives in DEFORM.
+     * SELECT never edits path handles — object mode only picks whole parts.
+     */
     private fun pathPointsInteractive(): Boolean {
         val t = target() ?: return false
         return t.kind == "mesh" && paths().isNotEmpty() && (
             tool == CanvasTool.CREATE_DEFORM_PATH ||
                 hierarchyMode == EditHierarchyMode.DEFORM ||
-                hierarchyMode == EditHierarchyMode.SELECT
+                hierarchyMode == EditHierarchyMode.EDIT
             )
     }
 
+    private fun clearMeshElementSelection() {
+        vertices = emptySet()
+        selectedEdges = emptySet()
+        selectedFaces = emptySet()
+    }
     private fun coordinate(t: CanvasTarget) = buildMap {
         t.geometry.axes.forEach { a -> put(a.parameterId.raw, pose[a.parameterId.raw] ?: model.parameters.single { it.id == a.parameterId }.default) }
         parameter?.let { p -> model.parameters.firstOrNull { it.id.raw == p }?.let { put(p, pose[p] ?: it.default) } }
@@ -1583,6 +1612,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         activeBrushWeights = null; activeBrushCenter = null
         brushInitialBase = null; brushInitialScreen = null; brushAffectedIndices = emptySet()
         marquee = emptyList(); draft = emptyList(); draftPathId = null; drawingPath = false
+        pathDragging = false
         axis = null; head = null; objectTargets = emptyList(); pendingObjects = emptyList()
         activeHandle = BoundingHandle.NONE
         initialBounds = null
@@ -1595,7 +1625,8 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
 
     fun resetSelection() {
         if (!busy) cancel()
-        vertices = emptySet(); selectedEdges = emptySet(); selectedFaces = emptySet(); activePath = null; pathPoint = -1
+        vertices = emptySet(); selectedEdges = emptySet(); selectedFaces = emptySet()
+        activePath = null; pathPoint = -1; pathDragging = false
     }
 
     /**
@@ -1794,6 +1825,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             drawingPath = true
             draft = emptyList()
             draftPathId = null
+            pathClosed = false
         }
         error = null
         clearHover()
@@ -2360,6 +2392,8 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             tool = CanvasTool.SELECT
             if (objectMode) vertices = emptySet()
         }
+        // Mode only seeds display presets — toggles stay fully user-controlled afterwards.
+        viewModel.applyHierarchyModeViewPreset(next)
         clearHover()
     }
 
@@ -2403,6 +2437,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         cursor = null
         altHeld = false
         hoveredVertex = null
+        hoveredPathPoint = null
         hoveredHandle = BoundingHandle.NONE
         hoveredBezierAnchor = null
         hoveredBezierHandle = null
@@ -2567,25 +2602,14 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
 
     /**
      * The rotations the canvas is drawing global guides for right now.
-     *
-     * [TabViewOptions.showRotation] owns the global channel. Deform/Edit hierarchy mode is the forced
-     * exception: while a rotation is the edit target there, its guide stays on even if the tab option
-     * is off — the artist is already working on it. Selection alone does not reopen the channel.
+     * [TabViewOptions.showRotation] owns the channel — hierarchy mode only seeds presets, never forces.
      */
     fun activeRotationIds(): Set<String> {
         val preview = drawnPreview ?: return emptySet()
         val puppet = preview.rig.puppet
         val rotations = puppet.deformers.filterIsInstance<Deformer.Rotation>().map { it.id.raw }.toSet()
-        if (rotations.isEmpty()) return emptySet()
+        if (rotations.isEmpty() || !state.showRotation) return emptySet()
         val hovered = state.hoveredDeformerId?.takeIf { it in rotations }
-        val selectedRotation = state.selectedDeformerId?.takeIf { it in rotations }
-        val deformForced = selectedRotation != null &&
-            (hierarchyMode == EditHierarchyMode.DEFORM || hierarchyMode == EditHierarchyMode.EDIT)
-
-        if (!state.showRotation) {
-            return if (deformForced) setOf(selectedRotation!!).filter { state.isDeformerVisible(it) }.toSet()
-            else emptySet()
-        }
         // A mesh is being edited — rotation guides are not what the artist is looking at.
         if (state.selectedLayerId != null) return emptySet()
 
@@ -2651,6 +2675,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         hoveredBezierAnchor = null
         hoveredBezierHandle = null
         hoveredVertex = null
+        hoveredPathPoint = null
         hoveredHandle = BoundingHandle.NONE
         isHoveringObject = false
         hoveredPick = null
@@ -2661,7 +2686,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             } else if (tool == CanvasTool.CREATE_DEFORM_PATH) {
                 val t = target()
                 if (t != null && t.kind == "mesh") {
-                    hoveredVertex = pathControlHit(pos, t, viewport)?.second
+                    hoveredPathPoint = pathControlHit(pos, t, viewport)?.second
                 }
             }
             return
@@ -2670,16 +2695,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         // Object mode has no transform box, so no handle is ever live here. What the pointer is over is
         // the pick itself, and resolving it through the same call the press makes is what guarantees the
         // annotation names the thing a click would actually select — Ctrl included.
-        // Path binding handles sit on the selected mesh and take priority over object hover.
         if (hierarchyMode == EditHierarchyMode.SELECT) {
-            val pathTarget = target()?.takeIf { it.kind == "mesh" && paths().isNotEmpty() }
-            if (pathTarget != null && tool == CanvasTool.SELECT) {
-                val hit = pathControlHit(pos, pathTarget, viewport)
-                if (hit != null) {
-                    hoveredVertex = hit.second
-                    return
-                }
-            }
             if (tool == CanvasTool.SELECT) {
                 val pick = objectPick(pos, viewport, ctrl)
                 hoveredPick = pick
@@ -2745,7 +2761,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                     val hit = pathControlHit(pos, t, viewport, onlyActive = activePath != null)
                         ?: pathControlHit(pos, t, viewport, onlyActive = false)
                     if (hit != null) {
-                        hoveredVertex = hit.second
+                        hoveredPathPoint = hit.second
                         return
                     }
                 }
@@ -2758,6 +2774,14 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         }
 
         if (hierarchyMode == EditHierarchyMode.EDIT) {
+            if (t.kind == "mesh" && paths().isNotEmpty()) {
+                val hit = pathControlHit(pos, t, viewport, onlyActive = activePath != null)
+                    ?: pathControlHit(pos, t, viewport, onlyActive = false)
+                if (hit != null) {
+                    hoveredPathPoint = hit.second
+                    return
+                }
+            }
             updatePointHover(pos, viewport, t)
         }
     }
@@ -2804,7 +2828,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
 
         if (hoveredBezierHandle != null || hoveredBezierAnchor != null) return hand
         if (hoveredHandle != BoundingHandle.NONE) return handleCursor(hoveredHandle)
-        if (hoveredVertex != null) return hand
+        if (hoveredVertex != null || hoveredPathPoint != null) return hand
 
         if (hierarchyMode == EditHierarchyMode.SELECT) {
             if (tool == CanvasTool.SELECT) return if (isHoveringObject) hand else arrow
@@ -2988,17 +3012,26 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             val extent = RigGeometryTools.bounds(t.geometry.points).let { max(it[2], it[3]) }
             val previous = paths().firstOrNull { it.id == draftPathId }
             val points = draft.mapIndexed { i, p -> DeformPathTools.bind(t.geometry.points, t.indices, p.first, p.second, previous?.points?.getOrNull(i)?.corner ?: false) }
-            val path = previous?.copy(points = points) ?: DeformPath(UUID.randomUUID().toString(), DrawableId(t.id), points, extent * pathWidth, hardness = hardness, editLevel = pathLevel)
+            val path = previous?.copy(points = points, closed = if (previous.closed) previous.closed else pathClosed)
+                ?: DeformPath(
+                    UUID.randomUUID().toString(),
+                    DrawableId(t.id),
+                    points,
+                    extent * pathWidth,
+                    hardness = pathHardness,
+                    closed = pathClosed && points.size >= 3,
+                    editLevel = pathLevel,
+                )
             head = null; commit(DeformPathJournal.encode(path)); activePath = path.id; drawingPath = false; draft = emptyList()
             placement = null
-            // After binding, return to select so dragging control points edits binding without deforming.
-            val returnMode = createSessionReturnMode
+            // After binding, enter EDIT so dragging control points rebinds without deforming.
             createSessionReturnMode = null
-            if (returnMode != null && returnMode != hierarchyMode && returnMode != EditHierarchyMode.PAINT) {
-                hierarchyMode = returnMode
-                if (returnMode == EditHierarchyMode.DEFORM && editLevel == 2) ensureBezierState()
+            if (hierarchyMode != EditHierarchyMode.EDIT) {
+                hierarchyMode = EditHierarchyMode.EDIT
+                viewModel.applyHierarchyModeViewPreset(EditHierarchyMode.EDIT)
             }
             tool = CanvasTool.SELECT
+            pathClosed = false
             clearHover()
         } catch (e: Exception) { error = e.message }
     }
@@ -3666,10 +3699,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         // 5. Object mode picks and nothing else. The transform box and its handles belong to the point
         //    tools, so a press here selects — Ctrl walks the hierarchy — or starts a marquee. It never
         //    begins a transform drag, which is what keeps the mode read-only.
-        //    Path control points on the selected mesh are the exception: dragging them rebinds only.
         if (hierarchyMode == EditHierarchyMode.SELECT && tool == CanvasTool.SELECT) {
-            val pathTarget = target()?.takeIf { it.kind == "mesh" && paths().isNotEmpty() }
-            if (pathTarget != null && beginPathInteraction(pos, pathTarget, viewport, ctrl)) return true
             val pick = objectPick(pos, viewport, ctrl)
             pressedObject = pick?.layerId
             if (pick != null) {
@@ -3686,7 +3716,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             return true
         }
 
-        // 6. Point Transform handles (SELECT tool in DEFORM/STRUCTURE mode)
+        // 6. Point Transform handles (SELECT tool in DEFORM/EDIT mode)
         if (tool == CanvasTool.SELECT) {
             val frame = transformFrame(viewport)
             val handle = frame?.let { transformRingAt(pos, it) } ?: BoundingHandle.NONE
@@ -3697,13 +3727,15 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             }
         }
 
-        // Path deform handles in DEFORM mode (before mesh vertex picks).
-        if (hierarchyMode == EditHierarchyMode.DEFORM) {
+        // Path handles: EDIT rebinds, DEFORM deforms — always before mesh vertex picks.
+        if (hierarchyMode == EditHierarchyMode.DEFORM || hierarchyMode == EditHierarchyMode.EDIT) {
             val pathTarget = target()?.takeIf { it.kind == "mesh" && paths().isNotEmpty() }
             if (pathTarget != null && beginPathInteraction(pos, pathTarget, viewport, ctrl)) return true
         }
 
         val editTarget = target() ?: return true
+        // Mesh / topology gestures are separate from path handles — drop any lingering path-point grab.
+        clearPathPointSelection()
         targetAtPress = editTarget; original = model; dragging = true
         val points = screen(editTarget.geometry.points, editTarget, viewport)
 
@@ -3893,7 +3925,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                 return
             }
 
-            if (activePath != null && pathPoint >= 0 && pathPointsInteractive()) {
+            if (pathDragging && activePath != null && pathPoint >= 0 && pathPointsInteractive()) {
                 val path = source.deformPaths.firstOrNull { it.id == activePath }
                 if (path != null && pathPoint in path.points.indices) {
                     val seed = DeformPathTools.positions(path, t.geometry.points)[pathPoint]
@@ -3905,7 +3937,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                         preview = RigAuthoringJournal.apply(source, cmd)
                         pending = cmd
                     } else {
-                        // SELECT / create: rebind control point only — mesh geometry stays put.
+                        // EDIT / create: rebind control point only — mesh geometry stays put.
                         val corner = path.points[pathPoint].corner
                         val rebound = DeformPathTools.bind(t.geometry.points, t.indices, dest.first, dest.second, corner)
                         val updated = path.copy(
@@ -4080,6 +4112,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         boxDrag = false; dragIndices = emptyList()
         activeBrushWeights = null; activeBrushCenter = null
         brushInitialBase = null; brushInitialScreen = null; brushAffectedIndices = emptySet()
+        endPathDrag()
 
         if (isCreatingWarp) {
             isCreatingWarp = false

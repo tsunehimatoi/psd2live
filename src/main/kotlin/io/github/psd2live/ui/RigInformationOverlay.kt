@@ -374,8 +374,8 @@ internal object RigInformationOverlay {
                 1f
             }
 
-            val drawWidth = (showWidth || showRadius || isSelected || isHovered) && path.width > 0f && !isDimmed
-            val drawHardness = (showHardness || showRadius || isSelected || isHovered) && path.width > 0f && path.hardness > 0f && !isDimmed
+            val drawWidth = (showWidth || showRadius) && path.width > 0f && !isDimmed
+            val drawHardness = (showHardness || showRadius) && path.width > 0f && path.hardness > 0f && !isDimmed
 
             if (drawWidth || drawHardness) {
                 val worldWidth = path.width * localToWorldScale

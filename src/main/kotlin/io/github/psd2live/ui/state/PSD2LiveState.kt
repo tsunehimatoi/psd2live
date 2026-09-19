@@ -11,6 +11,7 @@ import io.github.psd2live.core.RigPreviewModel
 import io.github.psd2live.core.RigEditOverlay
 import io.github.psd2live.i18n.AppLanguage
 import io.github.psd2live.i18n.I18n
+import io.github.psd2live.ui.EditHierarchyMode
 import org.umamo.runtime.model.ParameterId
 
 import io.github.psd2live.agent.AgentHistorySnapshot
@@ -42,6 +43,27 @@ val WorkspaceTabKind.canvasMode: CanvasMode?
 fun WorkspaceTabKind.defaultViewOptions(): TabViewOptions = when (this) {
 	WorkspaceTabKind.EDIT -> TabViewOptions.Default.copy(showWarp = true, showRotation = true)
 	WorkspaceTabKind.PREVIEW, WorkspaceTabKind.HISTORY -> TabViewOptions.Default
+}
+
+/**
+ * Recommended display seeds when entering a hierarchy mode. Rendering always respects the resulting
+ * toggles equally — modes never force overlays that the user turned off.
+ */
+fun hierarchyModeViewPreset(mode: EditHierarchyMode, current: TabViewOptions): TabViewOptions = when (mode) {
+	EditHierarchyMode.SELECT -> current.copy(showMesh = false)
+	EditHierarchyMode.DEFORM -> current.copy(
+		showMesh = true,
+		showWarp = true,
+		showRotation = true,
+		showDeformPaths = true,
+	)
+	EditHierarchyMode.EDIT -> current.copy(showMesh = true, showDeformPaths = true)
+	EditHierarchyMode.PAINT -> current.copy(
+		showMesh = false,
+		showWarp = false,
+		showRotation = false,
+		showDeformPaths = false,
+	)
 }
 
 /**
