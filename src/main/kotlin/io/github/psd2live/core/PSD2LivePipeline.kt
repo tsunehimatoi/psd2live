@@ -295,9 +295,11 @@ class PSD2LivePipeline {
 		} else null
 
 		val sidecars = buildList {
-			physics?.let {
-				Moc3.readPhysics3(it)
-				add(Moc3Sidecars.PassThroughSidecar(Moc3Sidecars.SidecarKind.Physics, "$baseName.physics3.json", it))
+			if (config.exportIncludePhysics) {
+				physics?.let {
+					Moc3.readPhysics3(it)
+					add(Moc3Sidecars.PassThroughSidecar(Moc3Sidecars.SidecarKind.Physics, "$baseName.physics3.json", it))
+				}
 			}
 			for ((_, motionPair) in motions) {
 				add(Moc3Sidecars.PassThroughSidecar(Moc3Sidecars.SidecarKind.Motion, motionPair.first, motionPair.second))
@@ -328,6 +330,7 @@ class PSD2LivePipeline {
 			sidecars = sidecars,
 			source = manifestTemplate,
 			canvasToParentSpace = canvasToParentSpaceFor(exportPuppet),
+			options = config.moc3ExportOptions(),
 		)
 		validateBundle(bundle)
 		val manifest = bundle.files.single { it.name.endsWith(".model3.json") }.name

@@ -1031,6 +1031,47 @@ class PSD2LiveViewModel : AutoCloseable {
 	    editorChanged()
 	}
 
+	fun setRuntimeTarget(target: org.umamo.runtime.model.RuntimeTarget) {
+		_state.update { it.copy(runtimeTarget = target) }
+		schedulePreviewRebuild()
+		editorChanged()
+	}
+
+	fun setExportHiddenParts(enabled: Boolean) {
+		_state.update { it.copy(exportHiddenParts = enabled) }
+		editorChanged()
+	}
+
+	fun setExportHiddenDrawables(enabled: Boolean) {
+		_state.update { it.copy(exportHiddenDrawables = enabled) }
+		editorChanged()
+	}
+
+	fun setExportGuideImageParts(enabled: Boolean) {
+		_state.update { it.copy(exportGuideImageParts = enabled) }
+		editorChanged()
+	}
+
+	fun setExportIncludePhysics(enabled: Boolean) {
+		_state.update { it.copy(exportIncludePhysics = enabled) }
+		editorChanged()
+	}
+
+	fun setExportIncludeUserData(enabled: Boolean) {
+		_state.update { it.copy(exportIncludeUserData = enabled) }
+		editorChanged()
+	}
+
+	fun setExportIncludeDisplayInfo(enabled: Boolean) {
+		_state.update { it.copy(exportIncludeDisplayInfo = enabled) }
+		editorChanged()
+	}
+
+	fun setExportPixelsPerUnit(value: Float?) {
+		_state.update { it.copy(exportPixelsPerUnit = value?.takeIf { v -> v > 0f }) }
+		editorChanged()
+	}
+
 	fun setExportOptionsExpanded(expanded: Boolean) {
 		_state.update { it.copy(exportOptionsExpanded = expanded) }
 	    markWorkspaceChanged()
@@ -1115,6 +1156,14 @@ class PSD2LiveViewModel : AutoCloseable {
 				exportCmo3 = true,
 				exportMoc3 = true,
 				exportJson = true,
+				runtimeTarget = org.umamo.runtime.model.RuntimeTarget.Cubism50,
+				exportHiddenParts = false,
+				exportHiddenDrawables = false,
+				exportGuideImageParts = false,
+				exportIncludePhysics = true,
+				exportIncludeUserData = true,
+				exportIncludeDisplayInfo = true,
+				exportPixelsPerUnit = null,
 			)
 		}
 		schedulePreviewRebuild()

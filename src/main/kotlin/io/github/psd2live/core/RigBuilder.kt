@@ -671,10 +671,8 @@ object RigBuilder {
 			canvasHeight = analysis.source.heightPx.toFloat(),
 			worldOriginX = analysis.source.widthPx * 0.5f,
 			worldOriginY = -analysis.source.heightPx * 0.5f,
-			// Cubism 5.0/MOC v5 is the compatibility baseline.  The generated rig does not use any
-			// 5.3-only feature, and targeting v5 keeps it readable by both current Viewer releases and
-			// older Cubism 5 runtimes without relying on v6-only container fields.
-			runtimeTarget = RuntimeTarget.Cubism50,
+			// Compatibility baseline comes from the export dialog's SDK target.
+			runtimeTarget = config.runtimeTarget,
 			deformPaths = builtDeformPaths,
 		).withDerivedRenderRoot()
 		val faceCenterCanvas = faceRig.coordinateSpace.toCanvas(faceRig.centerX, faceRig.centerY)

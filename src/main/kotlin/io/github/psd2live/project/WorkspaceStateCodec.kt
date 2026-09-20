@@ -171,6 +171,14 @@ internal object WorkspaceStateCodec {
         put("exportCmo3", state.exportCmo3)
         put("exportMoc3", state.exportMoc3)
         put("exportJson", state.exportJson)
+        put("runtimeTarget", state.runtimeTarget.name)
+        put("exportHiddenParts", state.exportHiddenParts)
+        put("exportHiddenDrawables", state.exportHiddenDrawables)
+        put("exportGuideImageParts", state.exportGuideImageParts)
+        put("exportIncludePhysics", state.exportIncludePhysics)
+        put("exportIncludeUserData", state.exportIncludeUserData)
+        put("exportIncludeDisplayInfo", state.exportIncludeDisplayInfo)
+        put("exportPixelsPerUnit", state.exportPixelsPerUnit?.let(::JsonPrimitive) ?: JsonNull)
     }
     fun encode(state: PSD2LiveState): JsonObject = buildJsonObject {
         put("projectSourceName", state.projectSourceName)
@@ -260,6 +268,14 @@ internal object WorkspaceStateCodec {
         put("exportCmo3", state.exportCmo3)
         put("exportMoc3", state.exportMoc3)
         put("exportJson", state.exportJson)
+        put("runtimeTarget", state.runtimeTarget.name)
+        put("exportHiddenParts", state.exportHiddenParts)
+        put("exportHiddenDrawables", state.exportHiddenDrawables)
+        put("exportGuideImageParts", state.exportGuideImageParts)
+        put("exportIncludePhysics", state.exportIncludePhysics)
+        put("exportIncludeUserData", state.exportIncludeUserData)
+        put("exportIncludeDisplayInfo", state.exportIncludeDisplayInfo)
+        put("exportPixelsPerUnit", state.exportPixelsPerUnit?.let(::JsonPrimitive) ?: JsonNull)
         put("exportOptionsExpanded", state.exportOptionsExpanded)
         put("motionSubExpanded", state.motionSubExpanded)
         put("physicsSubExpanded", state.physicsSubExpanded)
@@ -350,6 +366,18 @@ internal object WorkspaceStateCodec {
         exportCmo3 = value["exportCmo3"]?.jsonPrimitive?.boolean ?: base.exportCmo3,
         exportMoc3 = value["exportMoc3"]?.jsonPrimitive?.boolean ?: base.exportMoc3,
         exportJson = value["exportJson"]?.jsonPrimitive?.boolean ?: base.exportJson,
+        runtimeTarget = value["runtimeTarget"]?.jsonPrimitive?.content?.let {
+            runCatching { org.umamo.runtime.model.RuntimeTarget.valueOf(it) }.getOrNull()
+        } ?: base.runtimeTarget,
+        exportHiddenParts = value["exportHiddenParts"]?.jsonPrimitive?.boolean ?: base.exportHiddenParts,
+        exportHiddenDrawables = value["exportHiddenDrawables"]?.jsonPrimitive?.boolean ?: base.exportHiddenDrawables,
+        exportGuideImageParts = value["exportGuideImageParts"]?.jsonPrimitive?.boolean ?: base.exportGuideImageParts,
+        exportIncludePhysics = value["exportIncludePhysics"]?.jsonPrimitive?.boolean ?: base.exportIncludePhysics,
+        exportIncludeUserData = value["exportIncludeUserData"]?.jsonPrimitive?.boolean ?: base.exportIncludeUserData,
+        exportIncludeDisplayInfo = value["exportIncludeDisplayInfo"]?.jsonPrimitive?.boolean ?: base.exportIncludeDisplayInfo,
+        exportPixelsPerUnit = if ("exportPixelsPerUnit" in value) {
+            value["exportPixelsPerUnit"]?.jsonPrimitive?.floatOrNull?.takeIf { it > 0f }
+        } else base.exportPixelsPerUnit,
         exportOptionsExpanded = value["exportOptionsExpanded"]?.jsonPrimitive?.boolean ?: base.exportOptionsExpanded,
         motionSubExpanded = value["motionSubExpanded"]?.jsonPrimitive?.boolean ?: base.motionSubExpanded,
         physicsSubExpanded = value["physicsSubExpanded"]?.jsonPrimitive?.boolean ?: base.physicsSubExpanded,

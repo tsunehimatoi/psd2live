@@ -140,6 +140,23 @@ data class PipelineConfig(
 	val exportCmo3: Boolean = true,
 	val exportMoc3: Boolean = true,
 	val exportJson: Boolean = true,
+	/**
+	 * Cubism SDK / model-target version written into MOC3 and CMO3.
+	 * Defaults to Cubism 5.0 to match the generated-rig baseline.
+	 */
+	val runtimeTarget: org.umamo.runtime.model.RuntimeTarget = org.umamo.runtime.model.RuntimeTarget.Cubism50,
+	/**
+	 * MOC3 bake options. Defaults follow the official editor's export dialog (hidden / guide
+	 * objects dropped) rather than [org.umamo.interop.moc3.Moc3ExportOptions.Default].
+	 */
+	val exportHiddenParts: Boolean = false,
+	val exportHiddenDrawables: Boolean = false,
+	val exportGuideImageParts: Boolean = false,
+	val exportIncludePhysics: Boolean = true,
+	val exportIncludeUserData: Boolean = true,
+	val exportIncludeDisplayInfo: Boolean = true,
+	/** Bake scale override; null resolves from the model (recorded scale, else canvas width). */
+	val exportPixelsPerUnit: Float? = null,
 	/** Manual UI corrections, keyed by the stable source/virtual-layer id. */
 	val layerOverrides: Map<String, LayerClassificationOverride> = emptyMap(),
 	/** Photoshop-style layer-eye overrides; omitted entries retain their PSD visibility. */
@@ -152,7 +169,18 @@ data class PipelineConfig(
 	val drawOrderOverrides: Map<String, Float> = emptyMap(),
 	/** Durable Agent/editor changes replayed over every generated base rig and retained on export. */
 	val rigEdits: RigEditOverlay = RigEditOverlay.Empty,
-)
+) {
+	fun moc3ExportOptions(): org.umamo.interop.moc3.Moc3ExportOptions =
+		org.umamo.interop.moc3.Moc3ExportOptions(
+			exportHiddenParts = exportHiddenParts,
+			exportHiddenDrawables = exportHiddenDrawables,
+			exportGuideImageParts = exportGuideImageParts,
+			includePhysics = exportIncludePhysics,
+			includeUserData = exportIncludeUserData,
+			includeDisplayInfo = exportIncludeDisplayInfo,
+			pixelsPerUnitOverride = exportPixelsPerUnit?.takeIf { it > 0f },
+		)
+}
 
 /** One file from the MOC3 family consumed by the official Cubism runtime preview. */
 data class CubismRuntimeAsset(val path: String, val bytes: ByteArray)
