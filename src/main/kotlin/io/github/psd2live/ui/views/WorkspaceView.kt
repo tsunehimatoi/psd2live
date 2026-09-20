@@ -62,10 +62,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import java.awt.Cursor
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.psd2live.core.RigPreviewModel
@@ -398,6 +402,168 @@ private data class CompactedDeformerChain(
 	val displayName: String get() = deformers.joinToString("\\") { it.name }
 }
 
+/** Effective parent after applying workspace reparent overrides (`null` = root). */
+private fun effectiveParent(id: String, defaultParent: String?, overrides: Map<String, String?>): String? =
+	if (overrides.containsKey(id)) overrides[id] else defaultParent
+
+/**
+ * Precomputed hierarchy search filter.
+ * - [query]: trimmed search text used for substring highlighting
+ * - [matchedIds]: name matches
+ * - [visibleIds]: matches + ancestors (path) + descendants of matches (context under a hit)
+ * - [expandIds]: nodes that must be expanded so matches remain reachable
+ */
+private data class HierarchySearchFilter(
+	val active: Boolean,
+	val query: String,
+	val matchedIds: Set<String>,
+	val visibleIds: Set<String>,
+	val expandIds: Set<String>,
+) {
+	fun isVisible(id: String): Boolean = !active || id in visibleIds
+	fun isMatch(id: String): Boolean = active && id in matchedIds
+	fun isChainVisible(chain: CompactedDeformerChain): Boolean =
+		!active || chain.deformers.any { it.id.raw in visibleIds }
+	fun isChainMatch(chain: CompactedDeformerChain): Boolean =
+		active && chain.deformers.any { it.id.raw in matchedIds }
+
+	companion object {
+		val Inactive = HierarchySearchFilter(
+			active = false,
+			query = "",
+			matchedIds = emptySet(),
+			visibleIds = emptySet(),
+			expandIds = emptySet(),
+		)
+	}
+}
+
+/** Build labeled text that accents every case-insensitive occurrence of [query]. */
+private fun highlightSearchMatches(
+	text: String,
+	query: String,
+	baseColor: Color,
+	highlightColor: Color,
+): AnnotatedString {
+	if (query.isEmpty()) {
+		return AnnotatedString(text, spanStyles = listOf(AnnotatedString.Range(SpanStyle(color = baseColor), 0, text.length)))
+	}
+	val lowerText = text.lowercase()
+	val lowerQuery = query.lowercase()
+	return buildAnnotatedString {
+		var start = 0
+		while (start < text.length) {
+			val hit = lowerText.indexOf(lowerQuery, startIndex = start)
+			if (hit < 0) {
+				withStyle(SpanStyle(color = baseColor)) {
+					append(text.substring(start))
+				}
+				break
+			}
+			if (hit > start) {
+				withStyle(SpanStyle(color = baseColor)) {
+					append(text.substring(start, hit))
+				}
+			}
+			withStyle(SpanStyle(color = highlightColor, fontWeight = FontWeight.SemiBold)) {
+				append(text.substring(hit, hit + query.length))
+			}
+			start = hit + query.length
+		}
+	}
+}
+
+private fun buildHierarchyChildrenMaps(
+	deformers: List<Deformer>,
+	drawables: List<org.umamo.runtime.model.Drawable>,
+	overrides: Map<String, String?>,
+): Pair<Map<String?, List<Deformer>>, Map<String?, List<org.umamo.runtime.model.Drawable>>> {
+	val deformerChildren = deformers.groupBy { d ->
+		effectiveParent(d.id.raw, d.parent?.raw, overrides)
+	}
+	val drawableChildren = drawables.groupBy { d ->
+		effectiveParent(d.id.raw, d.parentDeformerId?.raw, overrides)
+	}
+	return deformerChildren to drawableChildren
+}
+
+private fun buildHierarchySearchFilter(
+	queryRaw: String,
+	deformers: List<Deformer>,
+	drawables: List<org.umamo.runtime.model.Drawable>,
+	deformerChildren: Map<String?, List<Deformer>>,
+	drawableChildren: Map<String?, List<org.umamo.runtime.model.Drawable>>,
+	overrides: Map<String, String?>,
+): HierarchySearchFilter {
+	val query = queryRaw.trim()
+	if (query.isEmpty()) return HierarchySearchFilter.Inactive
+
+	val deformerById = deformers.associateBy { it.id.raw }
+	val drawableById = drawables.associateBy { it.id.raw }
+
+	val matched = linkedSetOf<String>()
+	for (d in deformers) {
+		if (d.name.contains(query, ignoreCase = true)) matched += d.id.raw
+	}
+	for (d in drawables) {
+		if (d.name.contains(query, ignoreCase = true)) matched += d.id.raw
+	}
+	if (matched.isEmpty()) {
+		return HierarchySearchFilter(
+			active = true,
+			query = query,
+			matchedIds = emptySet(),
+			visibleIds = emptySet(),
+			expandIds = emptySet(),
+		)
+	}
+
+	fun parentOf(id: String): String? {
+		deformerById[id]?.let { return effectiveParent(id, it.parent?.raw, overrides) }
+		drawableById[id]?.let { return effectiveParent(id, it.parentDeformerId?.raw, overrides) }
+		return null
+	}
+
+	val visible = matched.toMutableSet()
+	val expand = linkedSetOf<String>()
+
+	for (id in matched) {
+		var parent = parentOf(id)
+		val seen = mutableSetOf<String>()
+		while (parent != null && seen.add(parent)) {
+			visible += parent
+			expand += parent
+			parent = parentOf(parent)
+		}
+	}
+
+	fun addDescendants(id: String) {
+		for (child in deformerChildren[id].orEmpty()) {
+			val childId = child.id.raw
+			if (visible.add(childId)) addDescendants(childId)
+		}
+		for (child in drawableChildren[id].orEmpty()) {
+			visible += child.id.raw
+		}
+	}
+
+	for (id in matched) {
+		if (id in deformerById) {
+			val hasKids = deformerChildren[id].orEmpty().isNotEmpty() || drawableChildren[id].orEmpty().isNotEmpty()
+			if (hasKids) expand += id
+			addDescendants(id)
+		}
+	}
+
+	return HierarchySearchFilter(
+		active = true,
+		query = query,
+		matchedIds = matched,
+		visibleIds = visible,
+		expandIds = expand,
+	)
+}
+
 private fun resolveCompactedChain(
 	start: Deformer,
 	deformerChildrenMap: Map<String?, List<Deformer>>,
@@ -554,20 +720,41 @@ private fun HierarchyTreeList(
 
 	val deformers = model.rig.puppet.deformers
 	val drawables = model.rig.puppet.drawables
+	val parentOverrides = state.parentOverrides
 
-	val deformerChildrenMap = remember(deformers, state.parentOverrides) {
-		deformers.groupBy { it.parent?.raw }
-	}
-	val drawableChildrenMap = remember(drawables, state.parentOverrides) {
-		drawables.groupBy { it.parentDeformerId?.raw }
+	val (deformerChildrenMap, drawableChildrenMap) = remember(deformers, drawables, parentOverrides) {
+		buildHierarchyChildrenMaps(deformers, drawables, parentOverrides)
 	}
 
-	val rootDeformers = deformers.filter { it.parent == null }
-	val rootDrawables = drawables.filter { it.parentDeformerId == null }
+	val rootDeformers = remember(deformers, parentOverrides) {
+		deformers.filter { effectiveParent(it.id.raw, it.parent?.raw, parentOverrides) == null }
+	}
+	val rootDrawables = remember(drawables, parentOverrides) {
+		drawables.filter { effectiveParent(it.id.raw, it.parentDeformerId?.raw, parentOverrides) == null }
+	}
 
 	// Resolve compacted chains for root deformers
 	val rootChains = remember(rootDeformers, deformerChildrenMap, drawableChildrenMap) {
 		rootDeformers.map { resolveCompactedChain(it, deformerChildrenMap, drawableChildrenMap) }
+	}
+
+	val searchFilter = remember(searchQuery, deformers, drawables, deformerChildrenMap, drawableChildrenMap, parentOverrides) {
+		buildHierarchySearchFilter(
+			queryRaw = searchQuery,
+			deformers = deformers,
+			drawables = drawables,
+			deformerChildren = deformerChildrenMap,
+			drawableChildren = drawableChildrenMap,
+			overrides = parentOverrides,
+		)
+	}
+
+	// Expand ancestors/matches outside composition so search can reveal nested hits.
+	LaunchedEffect(searchFilter.expandIds, searchFilter.active) {
+		if (!searchFilter.active) return@LaunchedEffect
+		for (id in searchFilter.expandIds) {
+			expandedMap[id] = true
+		}
 	}
 
 	val scrollState = rememberScrollState()
@@ -586,7 +773,7 @@ private fun HierarchyTreeList(
 		) {
 			CompactTextField(
 				value = searchQuery,
-				onValueChange = { viewModel.setHierarchyView(search = it) },
+				onValueChange = { viewModel.setHierarchySearch(it) },
 				placeholder = tr("canvas.hierarchy.search"),
 				modifier = Modifier.weight(1f),
 				height = 20.dp,
@@ -597,7 +784,7 @@ private fun HierarchyTreeList(
 							modifier = Modifier
 								.size(14.dp)
 								.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
-								.clickable { viewModel.setHierarchyView(search = "") },
+								.clickable { viewModel.setHierarchySearch("") },
 							contentAlignment = Alignment.Center,
 						) {
 							IconClose(modifier = Modifier.size(8.dp), tint = colors.textMuted)
@@ -792,7 +979,7 @@ private fun HierarchyTreeList(
 						treeDragState = treeDragState,
 						containerCoordinates = containerCoordinates,
 						itemBoundsMap = itemBoundsMap,
-						searchQuery = searchQuery,
+						searchFilter = searchFilter,
 						selectedAncestorDeformerIds = selectedAncestorDeformerIds,
 						selectedDescendantLabelByAncestor = selectedDescendantLabelByAncestor,
 						onRequestSetOrder = onRequestSetOrder,
@@ -814,7 +1001,7 @@ private fun HierarchyTreeList(
 						treeDragState = treeDragState,
 						containerCoordinates = containerCoordinates,
 						itemBoundsMap = itemBoundsMap,
-						searchQuery = searchQuery,
+						searchFilter = searchFilter,
 						onRequestSetOrder = onRequestSetOrder,
 						onRequestSetMeshSettings = onRequestSetMeshSettings,
 						onRequestOpenDeformPaths = onRequestOpenDeformPaths,
@@ -951,7 +1138,7 @@ private fun DeformerTreeItem(
 	treeDragState: TreeDragState,
 	containerCoordinates: LayoutCoordinates?,
 	itemBoundsMap: MutableMap<String, ItemLayoutInfo>,
-	searchQuery: String = "",
+	searchFilter: HierarchySearchFilter = HierarchySearchFilter.Inactive,
 	selectedAncestorDeformerIds: Set<String> = emptySet(),
 	selectedDescendantLabelByAncestor: Map<String, String> = emptyMap(),
 	onRequestSetOrder: ((targetId: String, name: String, currentOrder: Float, defaultOrder: Float, isOverridden: Boolean) -> Unit)? = null,
@@ -966,6 +1153,10 @@ private fun DeformerTreeItem(
 	val tailDeformer = chain.tail
 	val headId = headDeformer.id.raw
 	val tailId = tailDeformer.id.raw
+
+	if (!searchFilter.isChainVisible(chain)) {
+		return
+	}
 
 	val isExpanded = expandedMap[headId] ?: true
 	val selectedInChain = chain.deformers.firstOrNull { it.id.raw == state.selectedDeformerId }
@@ -985,16 +1176,15 @@ private fun DeformerTreeItem(
 		childDeformers.map { resolveCompactedChain(it, deformerChildrenMap, drawableChildrenMap) }
 	}
 
-	val matchesQuery = searchQuery.isBlank() || chain.deformers.any { it.name.contains(searchQuery, ignoreCase = true) }
-	val hasMatchingChild = searchQuery.isNotBlank() && (
-		childDeformers.any { it.name.contains(searchQuery, ignoreCase = true) } ||
-		childDrawables.any { it.name.contains(searchQuery, ignoreCase = true) }
-	)
-	if (searchQuery.isNotBlank() && !matchesQuery && !hasMatchingChild) {
-		return
+	val visibleChildChains = if (searchFilter.active) {
+		childChains.filter { searchFilter.isChainVisible(it) }
+	} else {
+		childChains
 	}
-	if (hasMatchingChild && !isExpanded) {
-		chain.deformers.forEach { expandedMap[it.id.raw] = true }
+	val visibleChildDrawables = if (searchFilter.active) {
+		childDrawables.filter { searchFilter.isVisible(it.id.raw) }
+	} else {
+		childDrawables
 	}
 
 	val guideColor = Color(0xFFE4E7EC).copy(alpha = 0.42f)
@@ -1032,7 +1222,7 @@ private fun DeformerTreeItem(
 				selectId = segmentId,
 				name = chain.displayName,
 				isDeformer = true,
-				currentParentId = headDeformer.parent?.raw,
+				currentParentId = effectiveParent(headId, headDeformer.parent?.raw, state.parentOverrides),
 				top = topLeft.y,
 				bottom = topLeft.y + coords.size.height,
 			),
@@ -1074,7 +1264,7 @@ private fun DeformerTreeItem(
 							selectId = fallbackSelectId,
 							name = chain.displayName,
 							isDeformer = true,
-							currentParentId = headDeformer.parent?.raw,
+							currentParentId = effectiveParent(headId, headDeformer.parent?.raw, state.parentOverrides),
 							top = topLeft.y,
 							bottom = topLeft.y + coords.size.height,
 						)
@@ -1217,7 +1407,6 @@ private fun DeformerTreeItem(
 			// 3. Compact chain: each compacted segment gets its own type icon (VS Code compact folders)
 			val isDeformerVis = chain.deformers.all { state.isDeformerVisible(it.id.raw) }
 			val selectedSegmentId = selectedInChain?.id?.raw
-			val isHighlightQuery = matchesQuery && searchQuery.isNotEmpty()
 			val slashColor = when {
 				!isDeformerVis -> colors.textDisabled
 				isSelected -> colors.selectionText.copy(alpha = 0.55f)
@@ -1238,7 +1427,6 @@ private fun DeformerTreeItem(
 						segmentHovered && isSelected -> colors.selectionText
 						segmentHovered -> colors.accentHover
 						isSelected -> colors.selectionText.copy(alpha = 0.62f)
-						isHighlightQuery -> colors.accent
 						else -> colors.textPrimary
 					}
 					val iconTint = when {
@@ -1308,13 +1496,17 @@ private fun DeformerTreeItem(
 							Spacer(Modifier.width(2.dp))
 						}
 						Text(
-							text = def.name,
+							text = highlightSearchMatches(
+								text = def.name,
+								query = if (searchFilter.isMatch(segmentId)) searchFilter.query else "",
+								baseColor = textColor,
+								highlightColor = if (segmentSelected || isSelected) colors.selectionText else colors.accent,
+							),
 							style = typography.body.copy(
 								fontSize = 11.sp,
 								fontWeight = if (segmentSelected || segmentHovered) FontWeight.SemiBold else FontWeight.Normal,
 								textDecoration = if (segmentHovered) TextDecoration.Underline else TextDecoration.None,
 							),
-							color = textColor,
 							maxLines = 1,
 							overflow = TextOverflow.Ellipsis,
 						)
@@ -1490,8 +1682,8 @@ private fun DeformerTreeItem(
 
 	// Render children recursively
 	if (isExpanded) {
-		for ((cIndex, childChain) in childChains.withIndex()) {
-			val isLast = (cIndex == childChains.lastIndex && childDrawables.isEmpty())
+		for ((cIndex, childChain) in visibleChildChains.withIndex()) {
+			val isLast = (cIndex == visibleChildChains.lastIndex && visibleChildDrawables.isEmpty())
 			val nextAncestors = ancestorHasNextSibling + (!isLast)
 			DeformerTreeItem(
 				chain = childChain,
@@ -1507,7 +1699,7 @@ private fun DeformerTreeItem(
 				treeDragState = treeDragState,
 				containerCoordinates = containerCoordinates,
 				itemBoundsMap = itemBoundsMap,
-				searchQuery = searchQuery,
+				searchFilter = searchFilter,
 				selectedAncestorDeformerIds = selectedAncestorDeformerIds,
 				selectedDescendantLabelByAncestor = selectedDescendantLabelByAncestor,
 				onRequestSetOrder = onRequestSetOrder,
@@ -1516,8 +1708,8 @@ private fun DeformerTreeItem(
 				onRequestCreate = onRequestCreate,
 			)
 		}
-		for ((dIndex, childDrawable) in childDrawables.withIndex()) {
-			val isLast = (dIndex == childDrawables.lastIndex)
+		for ((dIndex, childDrawable) in visibleChildDrawables.withIndex()) {
+			val isLast = (dIndex == visibleChildDrawables.lastIndex)
 			val nextAncestors = ancestorHasNextSibling + (!isLast)
 			DrawableTreeItem(
 				drawable = childDrawable,
@@ -1530,7 +1722,7 @@ private fun DeformerTreeItem(
 				treeDragState = treeDragState,
 				containerCoordinates = containerCoordinates,
 				itemBoundsMap = itemBoundsMap,
-				searchQuery = searchQuery,
+				searchFilter = searchFilter,
 				onRequestSetOrder = onRequestSetOrder,
 				onRequestSetMeshSettings = onRequestSetMeshSettings,
 				onRequestOpenDeformPaths = onRequestOpenDeformPaths,
@@ -1553,7 +1745,7 @@ private fun DrawableTreeItem(
 	treeDragState: TreeDragState,
 	containerCoordinates: LayoutCoordinates?,
 	itemBoundsMap: MutableMap<String, ItemLayoutInfo>,
-	searchQuery: String = "",
+	searchFilter: HierarchySearchFilter = HierarchySearchFilter.Inactive,
 	onRequestSetOrder: ((targetId: String, name: String, currentOrder: Float, defaultOrder: Float, isOverridden: Boolean) -> Unit)? = null,
 	onRequestSetMeshSettings: ((MeshSettingsDialogTarget) -> Unit)? = null,
 	onRequestOpenDeformPaths: ((String) -> Unit)? = null,
@@ -1574,8 +1766,7 @@ private fun DrawableTreeItem(
 	val isSelfVisible = layerId == null || state.isLayerVisible(layerId)
 	val isEffectiveVisible = layerId == null || layerId in state.effectiveVisibleLayerIds
 
-	val matchesQuery = searchQuery.isBlank() || drawable.name.contains(searchQuery, ignoreCase = true)
-	if (searchQuery.isNotBlank() && !matchesQuery) {
+	if (!searchFilter.isVisible(drawable.id.raw)) {
 		return
 	}
 
@@ -1619,7 +1810,7 @@ private fun DrawableTreeItem(
 							selectId = itemId,
 							name = drawable.name,
 							isDeformer = false,
-							currentParentId = drawable.parentDeformerId?.raw,
+							currentParentId = effectiveParent(drawable.id.raw, drawable.parentDeformerId?.raw, state.parentOverrides),
 							top = topLeft.y,
 							bottom = topLeft.y + coords.size.height,
 						)
@@ -1699,7 +1890,7 @@ private fun DrawableTreeItem(
 								selectId = itemId,
 								name = drawable.name,
 								isDeformer = false,
-								currentParentId = drawable.parentDeformerId?.raw,
+								currentParentId = effectiveParent(drawable.id.raw, drawable.parentDeformerId?.raw, state.parentOverrides),
 								top = containerPos.y - localPos.y,
 								bottom = containerPos.y - localPos.y + coords.size.height,
 							)
@@ -1721,9 +1912,17 @@ private fun DrawableTreeItem(
 			Spacer(Modifier.width(14.dp))
 
 			Text(
-				text = drawable.name,
+				text = highlightSearchMatches(
+					text = drawable.name,
+					query = if (searchFilter.isMatch(drawable.id.raw)) searchFilter.query else "",
+					baseColor = when {
+						!isEffectiveVisible -> colors.textDisabled
+						isLayerSelected -> colors.selectionText
+						else -> colors.textPrimary
+					},
+					highlightColor = if (isLayerSelected) colors.selectionText else colors.accent,
+				),
 				style = typography.body.copy(fontSize = 11.sp),
-				color = if (isEffectiveVisible) (if (isLayerSelected) colors.selectionText else (if (matchesQuery && searchQuery.isNotEmpty()) colors.accent else colors.textPrimary)) else colors.textDisabled,
 				maxLines = 1,
 				overflow = TextOverflow.Ellipsis,
 				modifier = Modifier.weight(1f),

@@ -449,8 +449,24 @@ class PSD2LiveViewModel : AutoCloseable {
     fun setHierarchyView(width: Float = _state.value.hierarchyWidth, collapsed: Boolean = _state.value.hierarchyCollapsed, search: String = _state.value.hierarchySearch) {
         val clampedWidth = width.coerceIn(100f, 600f)
         _state.update {
-            if (it.hierarchyWidth == clampedWidth && it.hierarchyCollapsed == collapsed && it.hierarchySearch == search) it
-            else it.copy(hierarchyWidth = clampedWidth, hierarchyCollapsed = collapsed, hierarchySearch = search, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1)
+            val layoutChanged = it.hierarchyWidth != clampedWidth || it.hierarchyCollapsed != collapsed
+            val searchChanged = it.hierarchySearch != search
+            if (!layoutChanged && !searchChanged) it
+            else it.copy(
+                hierarchyWidth = clampedWidth,
+                hierarchyCollapsed = collapsed,
+                hierarchySearch = search,
+                // Search is a transient filter — do not dirty the project or bump edit version.
+                projectDirty = if (layoutChanged && it.analysis != null) true else it.projectDirty,
+                projectEditVersion = if (layoutChanged) it.projectEditVersion + 1 else it.projectEditVersion,
+            )
+        }
+    }
+
+    fun setHierarchySearch(search: String) {
+        _state.update {
+            if (it.hierarchySearch == search) it
+            else it.copy(hierarchySearch = search)
         }
     }
     fun adjustHierarchyWidth(deltaDp: Float, min: Float = 100f, max: Float = 600f) {
