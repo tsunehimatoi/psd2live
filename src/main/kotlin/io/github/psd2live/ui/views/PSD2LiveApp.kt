@@ -450,16 +450,22 @@ fun FrameWindowScope.PSD2LiveApp(
 						onOpenUrl = { url -> DesktopUtils.openBrowser(url) },
 					)
 				}
-                DockWorkspaceView(
-					state,
-					viewModel,
-                    Modifier.weight(1f).fillMaxWidth().padding(top = 2.dp),
-					window,
-					onStartTutorial = { startInteractiveTutorial() },
-				)
-
-				// Bottom Status Bar
-				StatusBar(state, viewModel)
+				Column(
+					modifier = Modifier
+						.weight(1f)
+						.fillMaxWidth()
+						.padding(horizontal = 8.dp),
+				) {
+					DockWorkspaceView(
+						state,
+						viewModel,
+						Modifier.weight(1f).fillMaxWidth().padding(top = 2.dp),
+						window,
+						onStartTutorial = { startInteractiveTutorial() },
+					)
+					// Selection / tool hint bar ("已选 N 个对象 / M 个控制点 · …")
+					StatusBar(state, viewModel)
+				}
 			}
 
 			// Floating Non-blocking Success Toast
@@ -645,8 +651,6 @@ private fun StatusBar(
 		modifier = modifier
 			.fillMaxWidth()
 			.height(24.dp)
-			.background(colors.panelElevated)
-			.border(BorderStroke(1.dp, colors.divider))
 			.padding(horizontal = 8.dp),
 		verticalAlignment = Alignment.CenterVertically,
 	) {
