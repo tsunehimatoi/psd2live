@@ -39,7 +39,6 @@ enum class ShortcutAction(val category: ShortcutCategory, val labelKey: String) 
     REANALYZE(ShortcutCategory.FILE, "help.shortcuts.reanalyze"),
     REEXPORT_PSD(ShortcutCategory.FILE, "help.shortcuts.reexportPsd"),
     GENERATE(ShortcutCategory.FILE, "help.shortcuts.generate"),
-    EXPORT_TO(ShortcutCategory.FILE, "help.shortcuts.exportTo"),
     OPEN_OUTPUT(ShortcutCategory.FILE, "help.shortcuts.openOutput"),
     TEXTURE_UPSCALE(ShortcutCategory.FILE, "help.shortcuts.textureUpscale"),
 
@@ -163,7 +162,6 @@ private val PS_DEFAULTS: Map<ShortcutAction, List<KeyBinding>> = mapOf(
     ShortcutAction.REANALYZE to keys("Ctrl+R", "Ctrl+Shift+R"),
     ShortcutAction.REEXPORT_PSD to keys("Ctrl+Shift+E"),
     ShortcutAction.GENERATE to keys("Ctrl+G"),
-    ShortcutAction.EXPORT_TO to keys("Ctrl+Shift+G"),
     ShortcutAction.OPEN_OUTPUT to emptyList(),
     ShortcutAction.TEXTURE_UPSCALE to keys("Ctrl+U", "Ctrl+Shift+U"),
 

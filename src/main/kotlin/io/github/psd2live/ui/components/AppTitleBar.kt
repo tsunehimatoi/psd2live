@@ -88,7 +88,6 @@ fun AppTitleBar(
 	isBusy: Boolean,
 	hasInput: Boolean,
 	canOpenOutput: Boolean,
-	canGenerate: Boolean,
 	currentLanguage: AppLanguage,
 	uiScale: Float = 1.0f,
 	fontScale: Float = 1.0f,
@@ -108,7 +107,6 @@ fun AppTitleBar(
 	onReexportPsd: () -> Unit,
 	onOpenOutput: () -> Unit,
 	onShowExport: () -> Unit,
-	onExportTo: () -> Unit,
 	onClose: () -> Unit,
 	onSetLanguage: (AppLanguage) -> Unit,
 	onZoomIn: () -> Unit = {},
@@ -223,18 +221,10 @@ fun AppTitleBar(
 					AppMenuItem(
 						text = tr("menu.file.export"),
 						shortcut = keymap.labelFor(ShortcutAction.GENERATE),
+						enabled = hasInput && !isBusy,
 						onClick = {
 							activeMenu = null
 							onShowExport()
-						},
-					)
-					AppMenuItem(
-						text = tr("menu.file.exportTo"),
-						shortcut = keymap.labelFor(ShortcutAction.EXPORT_TO),
-						enabled = canGenerate,
-						onClick = {
-							activeMenu = null
-							onExportTo()
 						},
 					)
 					AppMenuItem(

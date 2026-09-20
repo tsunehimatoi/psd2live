@@ -182,26 +182,6 @@ fun FrameWindowScope.PSD2LiveApp(
 			false
 		}
 
-		val triggerExportTo = {
-			if (canGenerate) {
-				val defaultFolder = state.outputPath.ifBlank {
-					try {
-						val p = Path.of(state.inputPath)
-						val parent = p.toAbsolutePath().parent
-						val name = p.fileName.toString().substringBeforeLast('.')
-						parent.resolve("$name-psd2live").toString()
-					} catch (_: Exception) {
-						viewModel.lastExportDirectory ?: ""
-					}
-				}
-				val selected = NativeFilePicker.chooseDirectory(window, defaultFolder)
-				if (!selected.isNullOrBlank()) {
-					viewModel.setOutputPath(selected)
-					viewModel.generateRig(selected)
-				}
-			}
-		}
-
 		val chooseOutputFolder = {
 			if (!isBusy) {
 				val selected = NativeFilePicker.chooseDirectory(window, state.outputPath)
@@ -276,6 +256,7 @@ fun FrameWindowScope.PSD2LiveApp(
 							state.showExportDialog && canGenerate -> { onGenerateAction(); true }
 							state.showExportDialog -> true
 							modalOpen -> false
+							!hasInput || isBusy -> false
 							else -> { viewModel.openExportDialog(); true }
 						}
 					}
@@ -289,7 +270,6 @@ fun FrameWindowScope.PSD2LiveApp(
 						// Falls through when there is no source PSD, as the old Shift-gated branch did.
 						ShortcutAction.REEXPORT_PSD ->
 							if (hasInput && !isBusy) { viewModel.openExportPsdDialog(); true } else false
-						ShortcutAction.EXPORT_TO -> { triggerExportTo(); true }
 						ShortcutAction.TEXTURE_UPSCALE -> {
 							if (hasInput && !isBusy) showUpscaleDialog = true
 							true
@@ -346,7 +326,6 @@ fun FrameWindowScope.PSD2LiveApp(
 						isBusy = isBusy,
 						hasInput = hasInput,
 						canOpenOutput = canOpenOutput,
-						canGenerate = canGenerate,
 						currentLanguage = currentLanguage,
 						uiScale = state.uiScale,
 						fontScale = state.fontScale,
@@ -365,8 +344,7 @@ fun FrameWindowScope.PSD2LiveApp(
 						onReanalyze = onReanalyzeAction,
 						onReexportPsd = { if (hasInput && !isBusy) viewModel.openExportPsdDialog() },
 						onOpenOutput = { openFolder(state.outputPath) },
-						onShowExport = { viewModel.openExportDialog() },
-						onExportTo = triggerExportTo,
+						onShowExport = { if (hasInput && !isBusy) viewModel.openExportDialog() },
 						onClose = onCloseRequest,
 						onSetLanguage = { viewModel.setLanguage(it) },
 						onZoomIn = { viewModel.zoomIn() },
