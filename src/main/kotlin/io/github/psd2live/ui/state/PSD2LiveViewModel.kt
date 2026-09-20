@@ -2251,6 +2251,19 @@ class PSD2LiveViewModel : AutoCloseable {
 		}
 	}
 
+	fun openExportDialog() {
+		_state.update { it.copy(showExportDialog = true) }
+	}
+
+	fun closeExportDialog() {
+		_state.update {
+			it.copy(
+				showExportDialog = false,
+				focusCanvasRequest = it.focusCanvasRequest + 1,
+			)
+		}
+	}
+
 	fun openExportPsdDialog() {
 		if (_state.value.analysis == null) return
 		_state.update { it.copy(showExportPsdDialog = true) }

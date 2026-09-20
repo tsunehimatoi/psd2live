@@ -71,6 +71,7 @@ import io.github.psd2live.ui.components.CompactIconButton
 import io.github.psd2live.ui.components.IconChevron
 import io.github.psd2live.ui.components.IconClose
 import io.github.psd2live.ui.components.ImageLightboxDialog
+import io.github.psd2live.ui.components.ExportDialog
 import io.github.psd2live.ui.components.ExportPsdDialog
 import io.github.psd2live.ui.components.HelpDialog
 import io.github.psd2live.ui.components.HelpTab
@@ -247,6 +248,7 @@ fun FrameWindowScope.PSD2LiveApp(
 			showUpscaleDialog ||
 			state.lightboxImage != null ||
 			state.showProjectLocationDialog ||
+			state.showExportDialog ||
 			state.showExportPsdDialog ||
 			state.showSettingsDialog ||
 			state.projectSaveError != null ||
@@ -264,12 +266,20 @@ fun FrameWindowScope.PSD2LiveApp(
 						if (event.type == KeyEventType.KeyDown) viewModel.captureKeyEvent(event)
 						return@onPreviewKeyEvent true
 					}
-					if (modalOpen) return@onPreviewKeyEvent false
 					if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
 					// Load-bearing: an unmatched key must still reach the canvas handler, the open
 					// dialogs and any focused text field.
 					val action = state.keymap.match(event, ShortcutScope.APP)
 						?: return@onPreviewKeyEvent false
+					if (action == ShortcutAction.GENERATE) {
+						return@onPreviewKeyEvent when {
+							state.showExportDialog && canGenerate -> { onGenerateAction(); true }
+							state.showExportDialog -> true
+							modalOpen -> false
+							else -> { viewModel.openExportDialog(); true }
+						}
+					}
+					if (modalOpen) return@onPreviewKeyEvent false
 					when (action) {
 						ShortcutAction.OPEN_PROJECT -> { onOpenProjectAction(); true }
 						ShortcutAction.OPEN_PSD -> { onOpenPsdAction(); true }
@@ -279,7 +289,6 @@ fun FrameWindowScope.PSD2LiveApp(
 						// Falls through when there is no source PSD, as the old Shift-gated branch did.
 						ShortcutAction.REEXPORT_PSD ->
 							if (hasInput && !isBusy) { viewModel.openExportPsdDialog(); true } else false
-						ShortcutAction.GENERATE -> { onGenerateAction(); true }
 						ShortcutAction.EXPORT_TO -> { triggerExportTo(); true }
 						ShortcutAction.TEXTURE_UPSCALE -> {
 							if (hasInput && !isBusy) showUpscaleDialog = true
@@ -356,7 +365,7 @@ fun FrameWindowScope.PSD2LiveApp(
 						onReanalyze = onReanalyzeAction,
 						onReexportPsd = { if (hasInput && !isBusy) viewModel.openExportPsdDialog() },
 						onOpenOutput = { openFolder(state.outputPath) },
-						onGenerate = onGenerateAction,
+						onShowExport = { viewModel.openExportDialog() },
 						onExportTo = triggerExportTo,
 						onClose = onCloseRequest,
 						onSetLanguage = { viewModel.setLanguage(it) },
@@ -380,7 +389,7 @@ fun FrameWindowScope.PSD2LiveApp(
 						onOpenUrl = { url -> DesktopUtils.openBrowser(url) },
 					)
 				}
-                DockWorkspaceView(state, viewModel, chooseOutputFolder,
+                DockWorkspaceView(state, viewModel,
                     Modifier.weight(1f).fillMaxWidth().padding(top = 2.dp), window)
 
 				// Bottom Status Bar
@@ -450,6 +459,12 @@ fun FrameWindowScope.PSD2LiveApp(
 		}
 
 		io.github.psd2live.ui.components.ProjectLocationDialog(state, viewModel, window)
+		ExportDialog(
+			state = state,
+			viewModel = viewModel,
+			onChooseOutput = chooseOutputFolder,
+			onDismiss = { viewModel.closeExportDialog() },
+		)
 		ExportPsdDialog(state, viewModel, window)
 
 		if (!state.showProjectLocationDialog && state.projectSaveError != null) {

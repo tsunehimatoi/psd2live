@@ -66,9 +66,7 @@ internal fun defaultDockLayout(history: Boolean): DockNode {
     val workspace = if (history) canvasAndLog else DockNode(ratio = .28f,
         first = DockNode(modules = listOf("hierarchy")), second = canvasAndLog)
     return DockNode(ratio = .60f, first = workspace,
-        second = DockNode(horizontal = false, ratio = .27f,
+        second = DockNode(horizontal = false, ratio = .32f,
             first = DockNode(modules = listOf("settings")),
-            second = DockNode(horizontal = false, ratio = .22f,
-                first = DockNode(modules = listOf("export")),
-                second = DockNode(modules = listOf("layers", "parameters", "tools", "inspector", "animation", "physics")))))
+            second = DockNode(modules = listOf("layers", "parameters", "tools", "inspector", "animation", "physics"))))
 }

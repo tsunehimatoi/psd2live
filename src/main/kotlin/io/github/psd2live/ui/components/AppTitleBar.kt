@@ -107,7 +107,7 @@ fun AppTitleBar(
 	onReanalyze: () -> Unit,
 	onReexportPsd: () -> Unit,
 	onOpenOutput: () -> Unit,
-	onGenerate: () -> Unit,
+	onShowExport: () -> Unit,
 	onExportTo: () -> Unit,
 	onClose: () -> Unit,
 	onSetLanguage: (AppLanguage) -> Unit,
@@ -221,12 +221,11 @@ fun AppTitleBar(
 					// 3. 模型导出 (Model Export)
 					AppMenuHeader(tr("menu.file.category.export"))
 					AppMenuItem(
-						text = tr("menu.file.generate"),
+						text = tr("menu.file.export"),
 						shortcut = keymap.labelFor(ShortcutAction.GENERATE),
-						enabled = canGenerate,
 						onClick = {
 							activeMenu = null
-							onGenerate()
+							onShowExport()
 						},
 					)
 					AppMenuItem(

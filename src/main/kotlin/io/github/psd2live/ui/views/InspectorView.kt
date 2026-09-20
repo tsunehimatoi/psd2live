@@ -64,6 +64,7 @@ import io.github.psd2live.ui.components.CompactSectionHeader
 import io.github.psd2live.ui.components.CompactSlider
 import io.github.psd2live.ui.components.CompactTabBar
 import io.github.psd2live.ui.components.CompactTextField
+import io.github.psd2live.ui.components.ExportActionSection
 import io.github.psd2live.ui.components.IconChevron
 import io.github.psd2live.ui.components.IconReset
 import io.github.psd2live.ui.components.IconTrash
@@ -199,114 +200,6 @@ private fun MotionItemWithPlay(
 				color = if (enabled) colors.accent else colors.textDisabled,
 			)
 		}
-	}
-}
-
-@Composable
-internal fun ExportActionSection(
-	state: PSD2LiveState,
-	viewModel: PSD2LiveViewModel,
-	onGenerate: () -> Unit,
-	onChooseOutput: () -> Unit,
-) {
-	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-	val isBusy = state.isAnalyzing || state.isGenerating
-
-	Column(
-		modifier = Modifier
-			.fillMaxWidth()
-			.padding(horizontal = 6.dp, vertical = 4.dp),
-		verticalArrangement = Arrangement.spacedBy(4.dp),
-	) {
-		// Row 1: Generation Mode & Export Formats container
-		Row(
-			modifier = Modifier
-				.fillMaxWidth()
-				.background(colors.panelElevated, RoundedCornerShape(3.dp))
-				.border(BorderStroke(1.dp, colors.divider), RoundedCornerShape(3.dp))
-				.padding(horizontal = 6.dp, vertical = 3.dp),
-			verticalAlignment = Alignment.CenterVertically,
-			horizontalArrangement = Arrangement.SpaceBetween,
-		) {
-			// Mode: Mesh Only toggle
-			CompactCheckbox(
-				checked = state.meshOnly,
-				onCheckedChange = { viewModel.setMeshOnly(it) },
-				label = tr("export.meshOnly"),
-				enabled = !isBusy,
-			)
-
-			// Formats: moc3, cmo3, json
-			Row(
-				verticalAlignment = Alignment.CenterVertically,
-				horizontalArrangement = Arrangement.spacedBy(6.dp),
-			) {
-				Text(
-					text = tr("export.formats"),
-					style = typography.caption.copy(fontSize = 10.sp),
-					color = colors.textMuted,
-				)
-				CompactCheckbox(
-					checked = state.exportMoc3,
-					onCheckedChange = { viewModel.setExportMoc3(it) },
-					label = tr("export.moc3.short"),
-					enabled = !isBusy,
-				)
-				CompactCheckbox(
-					checked = state.exportCmo3,
-					onCheckedChange = { viewModel.setExportCmo3(it) },
-					label = tr("export.cmo3.short"),
-					enabled = !isBusy,
-				)
-				CompactCheckbox(
-					checked = state.exportJson,
-					onCheckedChange = { viewModel.setExportJson(it) },
-					label = tr("export.json.short"),
-					enabled = !isBusy,
-				)
-			}
-		}
-
-		// Row 2: Output Directory Row
-		Row(
-			modifier = Modifier.fillMaxWidth(),
-			verticalAlignment = Alignment.CenterVertically,
-		) {
-			Text(
-				text = tr("project.output"),
-				style = typography.body.copy(fontSize = 11.sp),
-				color = colors.textPrimary,
-				modifier = Modifier.width(60.dp),
-				textAlign = TextAlign.Right,
-			)
-			Spacer(Modifier.width(6.dp))
-			CompactTextField(
-				value = state.outputPath,
-				onValueChange = { viewModel.setOutputPath(it) },
-				placeholder = tr("dialog.chooseOutput"),
-				modifier = Modifier.weight(1f),
-				height = 22.dp,
-			)
-			Spacer(Modifier.width(4.dp))
-			CompactButton(
-				text = tr("action.choose"),
-				onClick = onChooseOutput,
-				enabled = !isBusy,
-				height = 22.dp,
-			)
-		}
-
-		// Row 3: Large Generate & Export Action Button
-		CompactButton(
-			text = tr("action.generate"),
-			onClick = onGenerate,
-			enabled = state.inputPath.isNotBlank() &&
-				(state.exportCmo3 || state.exportMoc3 || state.exportJson) && !isBusy,
-			isPrimary = true,
-			height = 26.dp,
-			modifier = Modifier.fillMaxWidth(),
-		)
 	}
 }
 

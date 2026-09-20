@@ -175,7 +175,6 @@ private val dockJson = Json { ignoreUnknownKeys = true }
 internal fun DockWorkspaceView(
     state: PSD2LiveState,
     viewModel: PSD2LiveViewModel,
-    chooseOutput: () -> Unit,
     modifier: Modifier = Modifier,
     mainWindow: java.awt.Window? = null,
 ) {
@@ -186,14 +185,14 @@ internal fun DockWorkspaceView(
         val default = defaultDockLayout(tab.kind == WorkspaceTabKind.HISTORY)
         val saved = runCatching {
             dockJson.decodeFromString<DockNode>(dockPreferences.get(preferenceKey, ""))
-        }.getOrNull()
+        }.getOrNull()?.remove("export")
         DockSession(saved?.takeIf { it.allModules().toSet() == default.allModules().toSet() &&
             it.allModules().size == default.allModules().size } ?: default)
     }
     val hiddenModules = buildSet {
         if (state.hierarchyCollapsed) add("hierarchy")
         if (!state.logPanelExpanded) add("log")
-        if (state.inspectorCollapsed) addAll(listOf("settings", "export", "layers", "parameters",
+        if (state.inspectorCollapsed) addAll(listOf("settings", "layers", "parameters",
             "tools", "inspector", "animation", "physics"))
     }
     // Visibility is a projection of the saved layout: toggling a panel must not remove
@@ -211,10 +210,9 @@ internal fun DockWorkspaceView(
         saved?.let { runCatching { dockPreferences.put(preferenceKey, dockJson.encodeToString(it)) } }
     }
     val latestState by rememberUpdatedState(state)
-    val latestOutput by rememberUpdatedState(chooseOutput)
     val contents = remember(tab.id) { mutableMapOf<String, @Composable () -> Unit>() }
     fun content(id: String): @Composable () -> Unit = contents.getOrPut(id) {
-        movableContentOf { DockModuleContent(id, latestState, viewModel, latestOutput) }
+        movableContentOf { DockModuleContent(id, latestState, viewModel) }
     }
     DisposableEffect(session) { onDispose { session.cancel() } }
     LaunchedEffect(session, session.dragging) {
@@ -596,14 +594,14 @@ private fun DockHeader(id: String, session: DockSession, modifier: Modifier,
 
 private fun moduleTitle(id: String): String = tr(when (id) {
     "canvas" -> "dock.canvas"; "hierarchy" -> "dock.hierarchy"; "history" -> "dock.history"
-    "log" -> "dock.log"; "settings" -> "dock.settings"; "export" -> "dock.export"
+    "log" -> "dock.log"; "settings" -> "dock.settings"
     "layers" -> "tab.layers"; "parameters" -> "tab.parameters"; "tools" -> "tab.toolDetails"
     "inspector" -> "tab.inspector"; "animation" -> "tab.animation"; "physics" -> "tab.physics"
     else -> id
 })
 
 @Composable
-private fun DockModuleContent(id: String, state: PSD2LiveState, vm: PSD2LiveViewModel, chooseOutput: () -> Unit) {
+private fun DockModuleContent(id: String, state: PSD2LiveState, vm: PSD2LiveViewModel) {
     when (id) {
         "canvas" -> CanvasViewportComposable(mode = state.activeTabKind.canvasMode ?: CanvasMode.EDIT,
             state = state, viewModel = vm, modifier = Modifier.fillMaxSize(), onLayerClicked = vm::selectLayer)
@@ -614,9 +612,6 @@ private fun DockModuleContent(id: String, state: PSD2LiveState, vm: PSD2LiveView
         "log" -> BottomLogDock(state, vm, Modifier.fillMaxSize(), fillDock = true)
         "settings" -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             ModelSettingsSection(state, vm, state.modelSettingsExpanded, { vm.setModelSettingsExpanded(!state.modelSettingsExpanded) })
-        }
-        "export" -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-            ExportActionSection(state, vm, { vm.generateRig() }, chooseOutput)
         }
         "layers" -> LayersTableView(state, vm)
         "parameters" -> ParametersListView(state, vm)

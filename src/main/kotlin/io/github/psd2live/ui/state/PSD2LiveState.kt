@@ -196,6 +196,7 @@ data class PSD2LiveState(
     val projectSaving: Boolean = false,
     val projectSaveError: String? = null,
     val showProjectLocationDialog: Boolean = false,
+    val showExportDialog: Boolean = false,
     val showExportPsdDialog: Boolean = false,
     val isExportingPsd: Boolean = false,
     val projectOpenGeneration: Long = 0,
