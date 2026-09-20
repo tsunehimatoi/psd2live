@@ -1,5 +1,11 @@
 package io.github.psd2live.ui.views
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -24,7 +30,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -69,7 +74,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.psd2live.i18n.tr
@@ -83,7 +87,6 @@ import io.github.psd2live.ui.components.IconDragHandle
 import io.github.psd2live.ui.components.IconFolder
 import io.github.psd2live.ui.components.IconLock
 import io.github.psd2live.ui.components.IconMouse
-import io.github.psd2live.ui.components.IconMoveToRoot
 import io.github.psd2live.ui.components.IconParameterLink
 import io.github.psd2live.ui.components.IconPause
 import io.github.psd2live.ui.components.IconPlay
@@ -101,7 +104,6 @@ import io.github.psd2live.ui.theme.LocalToolTypography
 import java.awt.Cursor
 import kotlin.math.abs
 import kotlin.math.hypot
-import kotlin.math.roundToInt
 import org.umamo.edit.materializedParameterTree
 import org.umamo.runtime.eval.EPS_KEY
 import org.umamo.runtime.model.Parameter
@@ -149,7 +151,7 @@ private data class ParamItemLayout(
 
 /**
  * Drop destination resolved while dragging — mirrors hierarchy-tree press→threshold→hit-test→release,
- * extended with before/after insert lines for sibling reorder.
+ * extended with before/after destinations for live sibling reorder previews.
  */
 private sealed interface ParamDropTarget {
 	data object Root : ParamDropTarget
@@ -223,6 +225,38 @@ private class ParameterDragState {
 	}
 }
 
+/** Shift sibling rows to expose the pending slot without changing hit-test coordinates. */
+private fun parameterDragShift(
+	row: ParamItemLayout,
+	drag: ParameterDragState,
+	bounds: Collection<ParamItemLayout>,
+): Float {
+	val source = drag.draggedItem ?: return 0f
+	val target = drag.dropTarget ?: return 0f
+	if (source.isFolder || row.key == source.key) return 0f
+	val measured = bounds.firstOrNull { it.key == row.key } ?: return 0f
+	fun groupEnd(groupId: String?): Float? {
+		if (groupId == null) return bounds.maxOfOrNull { it.bottom }
+		val group = bounds.firstOrNull { it.id == groupId && it.isFolder }
+		return bounds.filter {
+			it.key == group?.key || it.parentGroupId == groupId || it.parentGroupId in group?.descendantGroupIds.orEmpty()
+		}.maxOfOrNull { it.bottom }
+	}
+	val destination = when (target) {
+		is ParamDropTarget.Before -> bounds.firstOrNull { it.id == target.id && it.kind == target.kind }?.top
+		is ParamDropTarget.Nest -> if (source.parentGroupId == target.folderId) null else groupEnd(target.folderId)
+		is ParamDropTarget.Append -> groupEnd(target.parentGroupId)
+		ParamDropTarget.Root -> if (source.parentGroupId == null) null else groupEnd(null)
+	} ?: return 0f
+	val sourceBounds = bounds.firstOrNull { it.key == source.key } ?: source
+	val height = sourceBounds.bottom - sourceBounds.top
+	return when {
+		destination <= sourceBounds.top && measured.top >= destination && measured.top < sourceBounds.top -> height
+		destination >= sourceBounds.bottom && measured.top > sourceBounds.top && measured.top < destination -> -height
+		else -> 0f
+	}
+}
+
 private fun resolveDropTarget(
 	dragged: ParamItemLayout,
 	hit: ParamItemLayout?,
@@ -238,7 +272,8 @@ private fun resolveDropTarget(
 	}
 	if (hit.key == dragged.key) return null
 	// Block dropping a folder onto itself or any of its descendants (cycle prevention, same as hierarchy tree).
-	if (dragged.isFolder && (hit.id == dragged.id || hit.id in dragged.descendantGroupIds)) return null
+	if (dragged.isFolder && (hit.id == dragged.id || hit.id in dragged.descendantGroupIds ||
+		hit.parentGroupId == dragged.id || hit.parentGroupId in dragged.descendantGroupIds)) return null
 
 	val height = (hit.bottom - hit.top).coerceAtLeast(1f)
 	val rel = ((y - hit.top) / height).coerceIn(0f, 1f)
@@ -324,6 +359,7 @@ internal fun ParametersListView(
 	var folderMenuOffset by remember { mutableStateOf(Offset.Zero) }
 
 	val dragState = remember { ParameterDragState() }
+	val dragPreview = rememberGraphicsLayer()
 	val itemBoundsMap = remember { mutableStateMapOf<String, ParamItemLayout>() }
 	var containerCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
@@ -478,89 +514,29 @@ internal fun ParametersListView(
 					),
 			) {
 				LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(end = 10.dp)) {
-					if (dragState.isDragging) {
-						item(key = "ROOT") {
-							val isRootTarget = dragState.dropTarget is ParamDropTarget.Root
-							Row(
-								modifier = Modifier
-									.fillMaxWidth()
-									.padding(horizontal = 6.dp, vertical = 2.dp)
-									.background(
-										if (isRootTarget) colors.accent.copy(alpha = 0.28f)
-										else colors.panelElevated.copy(alpha = 0.5f),
-										RoundedCornerShape(3.dp),
-									)
-									.border(
-										BorderStroke(1.2.dp, if (isRootTarget) colors.accent else colors.divider),
-										RoundedCornerShape(3.dp),
-									)
-									.onGloballyPositioned { coords ->
-										val parent = containerCoordinates
-										if (parent != null && parent.isAttached && coords.isAttached) {
-											val topLeft = parent.localPositionOf(coords, Offset.Zero)
-											itemBoundsMap["ROOT"] = ParamItemLayout(
-												key = "ROOT",
-												id = "ROOT",
-												kind = "param_group",
-												name = tr("parameters.folderRoot"),
-												parentGroupId = null,
-												isFolder = true,
-												descendantGroupIds = emptySet(),
-												top = topLeft.y,
-												bottom = topLeft.y + coords.size.height,
-											)
-										}
-									}
-									.padding(horizontal = 8.dp, vertical = 4.dp),
-								verticalAlignment = Alignment.CenterVertically,
-								horizontalArrangement = Arrangement.spacedBy(6.dp),
-							) {
-								IconMoveToRoot(
-									modifier = Modifier.size(11.dp),
-									tint = if (isRootTarget) colors.accent else colors.textMuted,
-								)
-								Text(
-									text = tr("parameters.dragRoot"),
-									style = typography.caption.copy(fontSize = 11.sp),
-									color = if (isRootTarget) colors.accent else colors.textMuted,
-								)
-							}
-						}
-					}
-
 					items(rows, key = { row -> rowKey(row) }) { row ->
 						val key = rowKey(row)
 						val layout = rowToLayout(row)
 						val isDragged = dragState.isDragging && dragState.draggedKey == key
-						val isNestTarget = dragState.isDragging &&
-							(dragState.dropTarget as? ParamDropTarget.Nest)?.folderId == layout.id &&
-							layout.isFolder
-						val insertBeforeHere = dragState.isDragging &&
-							(dragState.dropTarget as? ParamDropTarget.Before)?.let {
-								it.id == layout.id && it.kind == layout.kind
-							} == true
+						val shift by animateFloatAsState(
+							targetValue = if (dragState.isDragging) parameterDragShift(layout, dragState, itemBoundsMap.values) else 0f,
+							animationSpec = tween(if (dragState.isDragging) 120 else 0),
+						)
 
-						Column(modifier = Modifier.fillMaxWidth()) {
-							if (insertBeforeHere) {
-								Box(
-									modifier = Modifier
-										.fillMaxWidth()
-										.padding(horizontal = 6.dp)
-										.height(2.dp)
-										.background(colors.accent, RoundedCornerShape(1.dp)),
-								)
-							}
-							Box(
+						Column(
 								modifier = Modifier
 									.fillMaxWidth()
-									.then(if (isDragged) Modifier.background(colors.panelElevated.copy(alpha = 0.35f)) else Modifier)
-									.then(
-										if (isNestTarget) {
-											Modifier
-												.background(colors.accent.copy(alpha = 0.22f))
-												.border(BorderStroke(1.2.dp, colors.accent), RoundedCornerShape(2.dp))
-										} else Modifier
-									)
+									.drawWithContent {
+										if (isDragged) {
+											dragPreview.record {
+												drawRect(colors.panelElevated)
+												this@drawWithContent.drawContent()
+											}
+										} else {
+											translate(top = shift) { this@drawWithContent.drawContent() }
+										}
+									}
+
 									.onGloballyPositioned { coords ->
 										val parent = containerCoordinates
 										if (parent != null && parent.isAttached && coords.isAttached) {
@@ -572,6 +548,7 @@ internal fun ParametersListView(
 										}
 									},
 							) {
+							Box(Modifier.fillMaxWidth()) {
 								DisposableEffect(key) {
 									onDispose { itemBoundsMap.remove(key) }
 								}
@@ -696,55 +673,14 @@ internal fun ParametersListView(
 				)
 
 				if (dragState.isDragging && dragState.draggedItem != null) {
-					val dragItem = dragState.draggedItem!!
-					val target = dragState.dropTarget
-					val hoverLabel = when (target) {
-						null -> "⊘"
-						is ParamDropTarget.Root -> "→ ${tr("parameters.folderRoot")}"
-						is ParamDropTarget.Nest -> "→ ${target.folderName}"
-						is ParamDropTarget.Before -> "⤒ ${target.label}"
-						is ParamDropTarget.Append -> "⤓ ${target.label}"
-					}
-					val isValid = target != null
-					Box(
-						modifier = Modifier
-							.offset {
-								IntOffset(
-									x = (dragState.currentMousePos.x + 14).roundToInt(),
-									y = (dragState.currentMousePos.y + 14).roundToInt(),
-								)
-							}
-							.background(colors.panelElevated, RoundedCornerShape(4.dp))
-							.border(
-								BorderStroke(1.dp, if (isValid) colors.accent else colors.textMuted),
-								RoundedCornerShape(4.dp),
-							)
-							.padding(horizontal = 8.dp, vertical = 4.dp),
-					) {
-						Row(
-							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.spacedBy(6.dp),
-						) {
-							if (dragItem.isFolder) {
-								IconFolder(modifier = Modifier.size(11.dp), tint = colors.accent)
-							} else {
-								IconDragHandle(modifier = Modifier.size(11.dp), tint = colors.textMuted)
-							}
-							Text(
-								text = dragItem.name,
-								style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
-								color = colors.textPrimary,
-								maxLines = 1,
-							)
-							Text(
-								text = hoverLabel,
-								style = typography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
-								color = if (isValid) colors.accent else colors.error,
-								maxLines = 1,
-							)
-						}
+					val dragged = dragState.draggedItem!!
+					// Draw the actual row, without adding a second interactive copy of its controls.
+					Canvas(Modifier.fillMaxSize()) {
+						val top = dragged.top + dragState.currentMousePos.y - dragState.pressPos.y
+						translate(top = top) { drawLayer(dragPreview) }
 					}
 				}
+
 			}
 		}
 	}
@@ -1283,7 +1219,7 @@ private fun ParameterLinkSlot(
 		) {
 			IconParameterLink(
 				linked = linked,
-				modifier = Modifier.size(width = 11.dp, height = if (tall) 26.dp else 14.dp),
+				modifier = Modifier.size(width = 12.dp, height = if (tall) 24.dp else 16.dp),
 				tint = when {
 					!enabled -> colors.textDisabled.copy(alpha = 0.35f)
 					linked -> if (hovered) colors.accentHover else colors.accent

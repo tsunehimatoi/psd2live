@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.shape.CircleShape
@@ -317,114 +318,69 @@ fun IconSearch(
 	}
 }
 
-/**
- * Cubism-style parameter link chain.
- *
- * Each link is a tall stadium (capsule) — taller than wide, not a circle.
- * [linked]=true: two stadiums diagonally staggered and hooked through each other;
- * gaps sit on the actual crossing so the weave reads as a small cross (+).
- * [linked]=false: one open tall stadium (gap at bottom-left).
- */
+/** Parameter chain with rounded links and clear negative space at small sizes. */
 @Composable
 fun IconParameterLink(
 	linked: Boolean,
 	modifier: Modifier = Modifier.size(12.dp),
 	tint: Color = LocalToolColors.current.textMuted,
 ) {
-	Canvas(modifier = modifier) {
-		val w = size.width
-		val h = size.height
-		val strokeW = (minOf(w, h) * 0.14f).coerceIn(1.15.dp.toPx(), 1.85.dp.toPx())
-		val stroke = Stroke(width = strokeW, cap = StrokeCap.Round, join = StrokeJoin.Round)
-
-		fun stadiumPath(
-			left: Float,
-			top: Float,
-			right: Float,
-			bottom: Float,
-			/** Open gap on bottom-left corner (degrees of bottom arc skipped near left). */
-			gapBottomLeftDeg: Float = 0f,
-			/** Open gap on top-right corner (degrees of top arc skipped near right). */
-			gapTopRightDeg: Float = 0f,
-		): Path {
-			val r = (right - left) * 0.5f
-			val topRect = Rect(left, top, right, top + 2f * r)
-			val bottomRect = Rect(left, bottom - 2f * r, right, bottom)
-			return Path().apply {
-				when {
-					gapBottomLeftDeg > 0f -> {
-						// Start on left edge above the gap, go up → top → right → bottom (stop before left).
-						moveTo(left, bottom - r - strokeW * 0.35f)
-						lineTo(left, top + r)
-						arcTo(topRect, 180f, 180f, false)
-						lineTo(right, bottom - r)
-						arcTo(bottomRect, 0f, 180f - gapBottomLeftDeg, false)
-					}
-					gapTopRightDeg > 0f -> {
-						// Start on right edge below the gap, go down → bottom → left → top (stop before right).
-						moveTo(right, top + r + strokeW * 0.35f)
-						lineTo(right, bottom - r)
-						arcTo(bottomRect, 0f, 180f, false)
-						lineTo(left, top + r)
-						arcTo(topRect, 180f, 180f - gapTopRightDeg, false)
-					}
-					else -> {
-						moveTo(left, top + r)
-						lineTo(left, bottom - r)
-						arcTo(bottomRect, 180f, -180f, false)
-						lineTo(right, top + r)
-						arcTo(topRect, 0f, -180f, false)
-						close()
-					}
-				}
-			}
+	// Fixed viewports keep the rings proportional even in a square icon slot.
+	// Upper-right and lower-left rings cross at (4.5, 10) and (7.5, 14).
+	// Alternate the interrupted strand at each crossing to show an interlocking weave.
+	val upperLink = remember {
+		Path().apply {
+			moveTo(4.5f, 8.2f)
+			lineTo(4.5f, 3.5f)
+			cubicTo(4.5f, 2.4f, 5.4f, 1.5f, 6.5f, 1.5f)
+			lineTo(8.5f, 1.5f)
+			cubicTo(9.6f, 1.5f, 10.5f, 2.4f, 10.5f, 3.5f)
+			lineTo(10.5f, 12f)
+			cubicTo(10.5f, 13.1f, 9.6f, 14f, 8.5f, 14f)
+			lineTo(6.5f, 14f)
+			cubicTo(5.4f, 14f, 4.5f, 13.1f, 4.5f, 12f)
+			lineTo(4.5f, 11.8f)
 		}
-
-		if (!linked) {
-			// Single open tall stadium — gap at bottom-left (same language as linked weave).
-			val linkW = (w * 0.58f).coerceAtLeast(4f)
-			val linkH = (h * 0.78f).coerceAtLeast(linkW * 1.45f)
-			val left = (w - linkW) * 0.5f
-			val top = (h - linkH) * 0.5f
-			drawPath(
-				path = stadiumPath(
-					left, top, left + linkW, top + linkH,
-					gapBottomLeftDeg = 52f,
-				),
-				color = tint,
-				style = stroke,
-			)
-		} else {
-			// Diagonal stagger: upper-right / lower-left.
-			// Crossing sits on upper bottom-left ↔ lower top-right → gaps match those corners.
-			val linkW = (w * 0.55f).coerceAtLeast(4f)
-			val linkH = (h * 0.58f).coerceAtLeast(linkW * 1.55f)
-			val diag = (w * 0.12f).coerceAtLeast(1.1.dp.toPx())
-			val centerX = w * 0.5f
-			val top1 = h * 0.02f
-			val bottom1 = top1 + linkH
-			val bottom2 = h * 0.98f
-			val top2 = bottom2 - linkH
-			val gapDeg = 56f
-
-			// Upper → shift right
-			val left1 = centerX - linkW * 0.5f + diag
-			val right1 = left1 + linkW
-			// Lower → shift left
-			val left2 = centerX - linkW * 0.5f - diag
-			val right2 = left2 + linkW
-
-			// Draw lower first, then upper (upper's right strand sits in front at top-right gap of lower).
-			drawPath(
-				path = stadiumPath(left2, top2, right2, bottom2, gapTopRightDeg = gapDeg),
-				color = tint,
-				style = stroke,
-			)
-			drawPath(
-				path = stadiumPath(left1, top1, right1, bottom1, gapBottomLeftDeg = gapDeg),
-				color = tint,
-				style = stroke,
-			)
+	}
+	val lowerLink = remember {
+		Path().apply {
+			moveTo(7.5f, 15.8f)
+			lineTo(7.5f, 20.5f)
+			cubicTo(7.5f, 21.6f, 6.6f, 22.5f, 5.5f, 22.5f)
+			lineTo(3.5f, 22.5f)
+			cubicTo(2.4f, 22.5f, 1.5f, 21.6f, 1.5f, 20.5f)
+			lineTo(1.5f, 12f)
+			cubicTo(1.5f, 10.9f, 2.4f, 10f, 3.5f, 10f)
+			lineTo(5.5f, 10f)
+			cubicTo(6.6f, 10f, 7.5f, 10.9f, 7.5f, 12f)
+			lineTo(7.5f, 12.2f)
+		}
+	}
+	val openLink = remember {
+		Path().apply {
+			moveTo(2.5f, 9f)
+			lineTo(2.5f, 5f)
+			cubicTo(2.5f, 3.1f, 4.1f, 1.5f, 6f, 1.5f)
+			cubicTo(7.9f, 1.5f, 9.5f, 3.1f, 9.5f, 5f)
+			lineTo(9.5f, 11f)
+			cubicTo(9.5f, 12.9f, 7.9f, 14.5f, 6f, 14.5f)
+			cubicTo(5.2f, 14.5f, 4.5f, 14.2f, 3.9f, 13.7f)
+		}
+	}
+	Canvas(modifier = modifier) {
+		val viewportHeight = if (linked) 24f else 16f
+		val scale = minOf(size.width / 12f, size.height / viewportHeight)
+		withTransform({
+			translate((size.width - 12f * scale) / 2f, (size.height - viewportHeight * scale) / 2f)
+			scale(scale, scale, pivot = Offset.Zero)
+		}) {
+			val stroke = Stroke(width = 1.5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+			if (linked) {
+				drawPath(upperLink, tint, style = stroke)
+				drawPath(lowerLink, tint, style = stroke)
+			} else {
+				drawPath(openLink, tint, style = stroke)
+			}
 		}
 	}
 }
