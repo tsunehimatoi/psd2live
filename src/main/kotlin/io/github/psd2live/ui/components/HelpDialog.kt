@@ -33,19 +33,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.hoverable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsHoveredAsState
-import androidx.compose.ui.input.pointer.PointerIcon
-import androidx.compose.ui.input.pointer.pointerHoverIcon
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.state.Keymap
 import io.github.psd2live.ui.state.ShortcutAction
 import io.github.psd2live.ui.state.ShortcutCategory
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
+import io.github.psd2live.ui.tutorial.TutorialId
 import io.github.psd2live.ui.utils.DesktopUtils
-import java.awt.Cursor
 import kotlinx.coroutines.delay
 
 enum class HelpTab {
@@ -56,23 +51,13 @@ enum class HelpTab {
 	ABOUT,
 }
 
-enum class TutorialScenario {
-	STANDARD,
-	CUSTOM_LAYERS,
-	PREVIEW_ADJUST,
-	PROJECT_HISTORY,
-	UPSCALE,
-	VARIANTS,
-	AGENT_MCP,
-}
-
 @Composable
 fun HelpDialog(
 	initialTab: HelpTab = HelpTab.QUICK_START,
 	keymap: Keymap = Keymap.DEFAULT,
 	onDismiss: () -> Unit,
 	onOpenUrl: (String) -> Unit = { DesktopUtils.openBrowser(it) },
-	onStartInteractiveTutorial: (() -> Unit)? = null,
+	onStartInteractiveTutorial: ((TutorialId) -> Unit)? = null,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -111,7 +96,6 @@ fun HelpDialog(
 				.clickable(enabled = false) {}
 				.padding(16.dp),
 		) {
-			// Title Bar
 			Row(
 				modifier = Modifier.fillMaxWidth(),
 				verticalAlignment = Alignment.CenterVertically,
@@ -146,7 +130,6 @@ fun HelpDialog(
 
 			Spacer(Modifier.height(10.dp))
 
-			// Tab Navigation
 			CompactTabBar(
 				tabs = tabTitles,
 				selectedIndex = selectedTab.ordinal,
@@ -156,7 +139,6 @@ fun HelpDialog(
 
 			Spacer(Modifier.height(12.dp))
 
-			// Scrollable Content
 			Column(
 				modifier = Modifier
 					.weight(1f, fill = false)
@@ -165,8 +147,7 @@ fun HelpDialog(
 				verticalArrangement = Arrangement.spacedBy(10.dp),
 			) {
 				when (selectedTab) {
-					HelpTab.QUICK_START -> DccTutorialContent(
-						onOpenUrl = onOpenUrl,
+					HelpTab.QUICK_START -> InteractiveTutorialCatalog(
 						onStartInteractiveTutorial = onStartInteractiveTutorial,
 					)
 					HelpTab.PSD_SPEC -> DccPsdSpecContent(onOpenUrl)
@@ -186,7 +167,6 @@ fun HelpDialog(
 			Divider(color = colors.divider, thickness = 1.dp)
 			Spacer(Modifier.height(10.dp))
 
-			// Bottom Actions & Status
 			Row(
 				modifier = Modifier.fillMaxWidth(),
 				horizontalArrangement = Arrangement.SpaceBetween,
@@ -217,546 +197,73 @@ fun HelpDialog(
 	}
 }
 
-// ---------------------------------------------------------------------------
-// 1. DCC Tutorial Content (Flat, Technical, Zero Emojis)
-// ---------------------------------------------------------------------------
 @Composable
-private fun DccTutorialContent(
-	onOpenUrl: (String) -> Unit,
-	onStartInteractiveTutorial: (() -> Unit)? = null,
+private fun InteractiveTutorialCatalog(
+	onStartInteractiveTutorial: ((TutorialId) -> Unit)? = null,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 
-	var currentScenario by remember { mutableStateOf<TutorialScenario?>(null) }
+	Column(
+		modifier = Modifier.fillMaxWidth(),
+		verticalArrangement = Arrangement.spacedBy(8.dp),
+	) {
+		Text(
+			text = tr("tutorial.catalog.title"),
+			style = typography.body.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
+			color = colors.textPrimary,
+		)
+		Text(
+			text = tr("tutorial.catalog.desc"),
+			style = typography.caption.copy(fontSize = 11.sp),
+			color = colors.textMuted,
+		)
 
-	if (currentScenario == null) {
-		// Triage / Scenario guidance view asking to select workflow
-		Column(
-			modifier = Modifier.fillMaxWidth(),
-			verticalArrangement = Arrangement.spacedBy(8.dp),
-		) {
-			if (onStartInteractiveTutorial != null) {
-				Column(
+		if (onStartInteractiveTutorial != null) {
+			CompactButton(
+				text = tr("tutorial.basic.start"),
+				onClick = { onStartInteractiveTutorial(TutorialId.BASIC) },
+				isPrimary = true,
+				height = 26.dp,
+			)
+
+			Text(
+				text = tr("tutorial.catalog.progressive"),
+				style = typography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
+				color = colors.accent,
+			)
+
+			TutorialId.progressiveOrder.forEachIndexed { index, id ->
+				Row(
 					modifier = Modifier
 						.fillMaxWidth()
 						.background(colors.panelElevated, RoundedCornerShape(3.dp))
-						.border(BorderStroke(1.dp, colors.accent.copy(alpha = 0.45f)), RoundedCornerShape(3.dp))
-						.padding(12.dp),
-					verticalArrangement = Arrangement.spacedBy(8.dp),
+						.border(BorderStroke(1.dp, colors.divider), RoundedCornerShape(3.dp))
+						.clickable { onStartInteractiveTutorial(id) }
+						.padding(horizontal = 10.dp, vertical = 8.dp),
+					verticalAlignment = Alignment.CenterVertically,
+					horizontalArrangement = Arrangement.spacedBy(8.dp),
 				) {
 					Text(
-						text = tr("tutorial.basic.helpCard.title"),
-						style = typography.body.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
-						color = colors.textPrimary,
+						text = "%02d".format(index),
+						style = typography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
+						color = colors.accent,
 					)
-					Text(
-						text = tr("tutorial.basic.helpCard.desc"),
-						style = typography.caption.copy(fontSize = 11.sp),
-						color = colors.textMuted,
-					)
-					CompactButton(
-						text = tr("tutorial.basic.start"),
-						onClick = onStartInteractiveTutorial,
-						isPrimary = true,
-						height = 26.dp,
-					)
-				}
-				Spacer(modifier = Modifier.height(4.dp))
-			}
-
-			Text(
-				text = tr("help.tutorial.triage.title"),
-				style = typography.body.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
-				color = colors.textPrimary,
-			)
-
-			Text(
-				text = tr("help.tutorial.triage.section.core"),
-				style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
-				color = colors.accent,
-			)
-
-			DccTriageOptionRow(
-				title = tr("help.tutorial.triage.standard.title"),
-				desc = tr("help.tutorial.triage.standard.desc"),
-				onClick = { currentScenario = TutorialScenario.STANDARD },
-			)
-
-			DccTriageOptionRow(
-				title = tr("help.tutorial.triage.custom.title"),
-				desc = tr("help.tutorial.triage.custom.desc"),
-				onClick = { currentScenario = TutorialScenario.CUSTOM_LAYERS },
-			)
-
-			DccTriageOptionRow(
-				title = tr("help.tutorial.triage.project.title"),
-				desc = tr("help.tutorial.triage.project.desc"),
-				onClick = { currentScenario = TutorialScenario.PROJECT_HISTORY },
-			)
-
-			Spacer(Modifier.height(2.dp))
-
-			Text(
-				text = tr("help.tutorial.triage.section.advanced"),
-				style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
-				color = colors.accent,
-			)
-
-			DccTriageOptionRow(
-				title = tr("help.tutorial.triage.preview.title"),
-				desc = tr("help.tutorial.triage.preview.desc"),
-				onClick = { currentScenario = TutorialScenario.PREVIEW_ADJUST },
-			)
-
-			DccTriageOptionRow(
-				title = tr("help.tutorial.triage.upscale.title"),
-				desc = tr("help.tutorial.triage.upscale.desc"),
-				onClick = { currentScenario = TutorialScenario.UPSCALE },
-			)
-
-			DccTriageOptionRow(
-				title = tr("help.tutorial.triage.variants.title"),
-				desc = tr("help.tutorial.triage.variants.desc"),
-				onClick = { currentScenario = TutorialScenario.VARIANTS },
-			)
-
-			DccTriageOptionRow(
-				title = tr("help.tutorial.triage.agent.title"),
-				desc = tr("help.tutorial.triage.agent.desc"),
-				onClick = { currentScenario = TutorialScenario.AGENT_MCP },
-				isWarning = true,
-			)
-		}
-	} else {
-		// Navigation bar: Back button to Triage + Scenario switcher tabs
-		Row(
-			modifier = Modifier.fillMaxWidth(),
-			horizontalArrangement = Arrangement.SpaceBetween,
-			verticalAlignment = Alignment.CenterVertically,
-		) {
-			CompactButton(
-				text = tr("help.tutorial.triage.back"),
-				onClick = { currentScenario = null },
-				height = 24.dp,
-			)
-
-			// Segmented Scenario Selector (Flat DCC Toolbar style)
-			Row(
-				modifier = Modifier
-					.background(colors.windowBackground)
-					.border(BorderStroke(1.dp, colors.divider)),
-			) {
-				TutorialScenario.entries.forEach { scenario ->
-					val isSelected = scenario == currentScenario
-					val label = when (scenario) {
-						TutorialScenario.STANDARD -> tr("help.tutorial.scenario.standard")
-						TutorialScenario.CUSTOM_LAYERS -> tr("help.tutorial.scenario.custom")
-						TutorialScenario.PREVIEW_ADJUST -> tr("help.tutorial.scenario.preview")
-						TutorialScenario.PROJECT_HISTORY -> tr("help.tutorial.scenario.project")
-						TutorialScenario.UPSCALE -> tr("help.tutorial.scenario.upscale")
-						TutorialScenario.VARIANTS -> tr("help.tutorial.scenario.variants")
-						TutorialScenario.AGENT_MCP -> tr("help.tutorial.scenario.agent")
-					}
-
-					Box(
-						modifier = Modifier
-							.background(if (isSelected) colors.controlActive else Color.Transparent)
-							.clickable { currentScenario = scenario }
-							.padding(horizontal = 6.dp, vertical = 4.dp),
-						contentAlignment = Alignment.Center,
-					) {
+					Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
 						Text(
-							text = label,
-							style = typography.caption.copy(
-								fontSize = 10.5.sp,
-								fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-							),
-							color = if (isSelected) colors.accentText else colors.textMuted,
+							text = tr(id.titleKey),
+							style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
+							color = colors.textPrimary,
+						)
+						Text(
+							text = tr(id.descKey),
+							style = typography.caption.copy(fontSize = 10.sp),
+							color = colors.textMuted,
 						)
 					}
 				}
 			}
 		}
-
-		Spacer(Modifier.height(4.dp))
-
-		when (currentScenario) {
-			TutorialScenario.STANDARD -> DccStandardWorkflowScenario(onNavigate = { currentScenario = it })
-			TutorialScenario.CUSTOM_LAYERS -> DccCustomLayersScenario(onNavigate = { currentScenario = it })
-			TutorialScenario.PREVIEW_ADJUST -> DccPreviewAdjustScenario()
-			TutorialScenario.PROJECT_HISTORY -> DccProjectHistoryScenario()
-			TutorialScenario.UPSCALE -> DccUpscaleScenario()
-			TutorialScenario.VARIANTS -> DccVariantsScenario()
-			TutorialScenario.AGENT_MCP -> DccAgentMcpScenario()
-			null -> {}
-		}
-	}
-}
-
-@Composable
-private fun DccTriageOptionRow(
-	title: String,
-	desc: String,
-	onClick: () -> Unit,
-	isWarning: Boolean = false,
-) {
-	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-	val interactionSource = remember { MutableInteractionSource() }
-	val isHovered by interactionSource.collectIsHoveredAsState()
-
-	Column(
-		modifier = Modifier
-			.fillMaxWidth()
-			.background(if (isHovered) colors.controlActive else colors.panelElevated, RoundedCornerShape(2.dp))
-			.border(BorderStroke(1.dp, if (isHovered) colors.accent else colors.divider), RoundedCornerShape(2.dp))
-			.hoverable(interactionSource)
-			.clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
-			.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
-			.padding(horizontal = 12.dp, vertical = 10.dp),
-		verticalArrangement = Arrangement.spacedBy(4.dp),
-	) {
-		Text(
-			text = title,
-			style = typography.body.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
-			color = if (isWarning) colors.warning else colors.textPrimary,
-		)
-		Text(
-			text = desc,
-			style = typography.caption.copy(fontSize = 11.sp, lineHeight = 16.sp),
-			color = colors.textMuted,
-		)
-	}
-}
-
-@Composable
-private fun DccStandardWorkflowScenario(onNavigate: (TutorialScenario) -> Unit) {
-	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-
-	Text(
-		text = tr("help.tutorial.standard.intro"),
-		style = typography.caption.copy(fontSize = 11.5.sp, lineHeight = 16.sp),
-		color = colors.textPrimary,
-	)
-
-	// Step 1: 导入 PSD
-	DccStepRow(
-		title = tr("help.tutorial.standard.step1.title"),
-		desc = tr("help.tutorial.standard.step1.desc"),
-	)
-
-	// Step 2: 一键导出
-	DccStepRow(
-		title = tr("help.tutorial.standard.step2.title"),
-		desc = tr("help.tutorial.standard.step2.desc"),
-	)
-
-	// Step 3: 检查生成结果
-	DccStepRow(
-		title = tr("help.tutorial.standard.step3.title"),
-		desc = tr("help.tutorial.standard.step3.desc"),
-	)
-
-	Spacer(Modifier.height(4.dp))
-
-	// 可选流程（带链接跳转到独立标签页）
-	DccOptionalWorkflowsSection(onNavigate = onNavigate)
-}
-
-@Composable
-private fun DccCustomLayersScenario(onNavigate: (TutorialScenario) -> Unit) {
-	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-
-	Text(
-		text = tr("help.tutorial.custom.intro"),
-		style = typography.caption.copy(fontSize = 11.5.sp, lineHeight = 16.sp),
-		color = colors.textPrimary,
-	)
-
-	DccStepRow(title = tr("help.tutorial.custom.step1.title"), desc = tr("help.tutorial.custom.step1.desc"))
-	DccStepRow(title = tr("help.tutorial.custom.step2.title"), desc = tr("help.tutorial.custom.step2.desc"))
-	DccStepRow(title = tr("help.tutorial.custom.step3.title"), desc = tr("help.tutorial.custom.step3.desc"))
-
-	Spacer(Modifier.height(4.dp))
-
-	// 可选流程（带链接跳转到独立标签页）
-	DccOptionalWorkflowsSection(onNavigate = onNavigate)
-}
-
-@Composable
-private fun DccPreviewAdjustScenario() {
-	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-
-	Text(
-		text = tr("help.tutorial.preview.intro"),
-		style = typography.caption.copy(fontSize = 11.5.sp, lineHeight = 16.sp),
-		color = colors.textPrimary,
-	)
-
-	DccStepRow(title = tr("help.tutorial.preview.step1.title"), desc = tr("help.tutorial.preview.step1.desc"))
-	DccStepRow(title = tr("help.tutorial.preview.step2.title"), desc = tr("help.tutorial.preview.step2.desc"))
-}
-
-@Composable
-private fun DccProjectHistoryScenario() {
-	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-
-	Text(
-		text = tr("help.tutorial.project.intro"),
-		style = typography.caption.copy(fontSize = 11.5.sp, lineHeight = 16.sp),
-		color = colors.textPrimary,
-	)
-
-	DccStepRow(title = tr("help.tutorial.project.step1.title"), desc = tr("help.tutorial.project.step1.desc"))
-	DccStepRow(title = tr("help.tutorial.project.step2.title"), desc = tr("help.tutorial.project.step2.desc"))
-	DccStepRow(title = tr("help.tutorial.project.step3.title"), desc = tr("help.tutorial.project.step3.desc"))
-	DccStepRow(title = tr("help.tutorial.project.step4.title"), desc = tr("help.tutorial.project.step4.desc"))
-}
-
-@Composable
-private fun DccUpscaleScenario() {
-	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-
-	Text(
-		text = tr("help.tutorial.upscale.intro"),
-		style = typography.caption.copy(fontSize = 11.5.sp, lineHeight = 16.sp),
-		color = colors.textPrimary,
-	)
-
-	DccStepRow(title = tr("help.tutorial.upscale.step1.title"), desc = tr("help.tutorial.upscale.step1.desc"))
-	DccStepRow(title = tr("help.tutorial.upscale.step2.title"), desc = tr("help.tutorial.upscale.step2.desc"))
-}
-
-@Composable
-private fun DccOptionalWorkflowsSection(onNavigate: (TutorialScenario) -> Unit) {
-	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-
-	Column(
-		modifier = Modifier
-			.fillMaxWidth()
-			.background(colors.panelElevated, RoundedCornerShape(2.dp))
-			.border(BorderStroke(1.dp, colors.divider), RoundedCornerShape(2.dp))
-			.padding(10.dp),
-		verticalArrangement = Arrangement.spacedBy(8.dp),
-	) {
-		Text(
-			text = tr("help.tutorial.optional.title"),
-			style = typography.body.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
-			color = colors.textPrimary,
-		)
-		Text(
-			text = tr("help.tutorial.optional.desc"),
-			style = typography.caption.copy(fontSize = 11.sp, lineHeight = 15.sp),
-			color = colors.textMuted,
-		)
-
-		Column(
-			verticalArrangement = Arrangement.spacedBy(6.dp),
-		) {
-			DccOptionalPointRow(
-				title = tr("help.tutorial.optional.opt1.title"),
-				desc = tr("help.tutorial.optional.opt1.desc"),
-				onClick = { onNavigate(TutorialScenario.PREVIEW_ADJUST) },
-			)
-			DccOptionalPointRow(
-				title = tr("help.tutorial.optional.opt2.title"),
-				desc = tr("help.tutorial.optional.opt2.desc"),
-				onClick = { onNavigate(TutorialScenario.UPSCALE) },
-			)
-			DccOptionalPointRow(
-				title = tr("help.tutorial.optional.opt3.title"),
-				desc = tr("help.tutorial.optional.opt3.desc"),
-				onClick = { onNavigate(TutorialScenario.VARIANTS) },
-			)
-			DccOptionalPointRow(
-				title = tr("help.tutorial.optional.opt4.title"),
-				desc = tr("help.tutorial.optional.opt4.desc"),
-				onClick = { onNavigate(TutorialScenario.AGENT_MCP) },
-			)
-		}
-	}
-}
-
-@Composable
-private fun DccOptionalPointRow(
-	title: String,
-	desc: String,
-	onClick: () -> Unit,
-) {
-	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-	val interactionSource = remember { MutableInteractionSource() }
-	val isHovered by interactionSource.collectIsHoveredAsState()
-
-	Column(
-		modifier = Modifier
-			.fillMaxWidth()
-			.background(if (isHovered) colors.controlActive else colors.windowBackground, RoundedCornerShape(2.dp))
-			.border(BorderStroke(1.dp, if (isHovered) colors.accent else colors.divider), RoundedCornerShape(2.dp))
-			.hoverable(interactionSource)
-			.clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
-			.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
-			.padding(horizontal = 10.dp, vertical = 8.dp),
-		verticalArrangement = Arrangement.spacedBy(2.dp),
-	) {
-		Row(
-			modifier = Modifier.fillMaxWidth(),
-			horizontalArrangement = Arrangement.SpaceBetween,
-			verticalAlignment = Alignment.CenterVertically,
-		) {
-			Text(
-				text = title,
-				style = typography.caption.copy(fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold),
-				color = colors.accent,
-			)
-			Text(
-				text = tr("help.tutorial.optional.action"),
-				style = typography.caption.copy(fontSize = 10.5.sp, fontWeight = FontWeight.Medium),
-				color = colors.accent,
-			)
-		}
-		Text(
-			text = desc,
-			style = typography.caption.copy(fontSize = 11.sp, lineHeight = 15.sp),
-			color = colors.textMuted,
-		)
-	}
-}
-
-@Composable
-private fun DccStepRow(title: String, desc: String, badge: String? = null) {
-	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-
-	Column(
-		modifier = Modifier
-			.fillMaxWidth()
-			.background(colors.panelElevated, RoundedCornerShape(2.dp))
-			.border(BorderStroke(1.dp, colors.divider), RoundedCornerShape(2.dp))
-			.padding(10.dp),
-		verticalArrangement = Arrangement.spacedBy(6.dp),
-	) {
-		Row(
-			verticalAlignment = Alignment.CenterVertically,
-			horizontalArrangement = Arrangement.spacedBy(6.dp),
-		) {
-			if (badge != null) {
-				Text(
-					text = badge,
-					style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
-					color = colors.accent,
-				)
-			}
-			Text(
-				text = title,
-				style = typography.body.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
-				color = colors.textPrimary,
-			)
-		}
-		Text(
-			text = desc,
-			style = typography.caption.copy(fontSize = 11.sp, lineHeight = 16.5.sp),
-			color = colors.textMuted,
-		)
-	}
-}
-
-@Composable
-private fun DccVariantsScenario() {
-	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-
-	Text(
-		text = tr("help.tutorial.variants.intro"),
-		style = typography.caption.copy(fontSize = 11.5.sp, lineHeight = 16.sp),
-		color = colors.textPrimary,
-	)
-
-	DccStepRow(title = tr("help.tutorial.variants.step1.title"), desc = tr("help.tutorial.variants.step1.desc"))
-	DccStepRow(title = tr("help.tutorial.variants.step2.title"), desc = tr("help.tutorial.variants.step2.desc"))
-	DccStepRow(title = tr("help.tutorial.variants.step3.title"), desc = tr("help.tutorial.variants.step3.desc"))
-}
-
-@Composable
-private fun DccAgentMcpScenario() {
-	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-
-	// Prominent instability warning box
-	Column(
-		modifier = Modifier
-			.fillMaxWidth()
-			.background(colors.panelElevated, RoundedCornerShape(2.dp))
-			.border(BorderStroke(1.dp, colors.warning), RoundedCornerShape(2.dp))
-			.padding(10.dp),
-		verticalArrangement = Arrangement.spacedBy(4.dp),
-	) {
-		Text(
-			text = tr("help.tutorial.agent.warning"),
-			style = typography.caption.copy(fontSize = 11.5.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold),
-			color = colors.warning,
-		)
-	}
-
-	Text(
-		text = tr("help.tutorial.agent.intro"),
-		style = typography.caption.copy(fontSize = 11.5.sp, lineHeight = 16.sp),
-		color = colors.textPrimary,
-	)
-
-	DccAgentScopeItem(
-		title = tr("help.tutorial.agent.ready.title"),
-		desc = tr("help.tutorial.agent.ready.desc"),
-		indicatorColor = colors.success,
-	)
-	DccAgentScopeItem(
-		title = tr("help.tutorial.agent.beta.title"),
-		desc = tr("help.tutorial.agent.beta.desc"),
-		indicatorColor = colors.warning,
-	)
-	DccAgentScopeItem(
-		title = tr("help.tutorial.agent.unsupported.title"),
-		desc = tr("help.tutorial.agent.unsupported.desc"),
-		indicatorColor = colors.error,
-	)
-
-	Text(
-		text = tr("help.tutorial.agent.tip"),
-		style = typography.caption.copy(fontSize = 11.sp),
-		color = colors.accent,
-	)
-}
-
-@Composable
-private fun DccAgentScopeItem(title: String, desc: String, indicatorColor: Color) {
-	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-
-	Column(
-		modifier = Modifier
-			.fillMaxWidth()
-			.background(colors.panelElevated)
-			.border(BorderStroke(1.dp, colors.divider))
-			.padding(10.dp),
-		verticalArrangement = Arrangement.spacedBy(4.dp),
-	) {
-		Text(
-			text = title,
-			style = typography.body.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
-			color = indicatorColor,
-		)
-		Text(
-			text = desc,
-			style = typography.caption.copy(fontSize = 11.sp, lineHeight = 16.sp),
-			color = colors.textPrimary,
-		)
 	}
 }
 

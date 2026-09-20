@@ -116,6 +116,8 @@ import io.github.psd2live.ui.state.WorkspaceTabKind
 import io.github.psd2live.ui.state.canvasMode
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
+import io.github.psd2live.ui.tutorial.TutorialTargetId
+import io.github.psd2live.ui.tutorial.tutorialTarget
 import org.umamo.runtime.model.Deformer
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -873,7 +875,8 @@ private fun HierarchyTreeList(
 				.height(26.dp)
 				.background(colors.panelElevated)
 				.border(BorderStroke(1.dp, colors.divider))
-				.padding(horizontal = 6.dp, vertical = 2.dp),
+				.padding(horizontal = 6.dp, vertical = 2.dp)
+				.tutorialTarget(TutorialTargetId.HIERARCHY_TOOLBAR),
 			verticalAlignment = Alignment.CenterVertically,
 			horizontalArrangement = Arrangement.spacedBy(4.dp),
 		) {
@@ -920,6 +923,7 @@ private fun HierarchyTreeList(
 			modifier = Modifier
 				.weight(1f)
 				.fillMaxWidth()
+				.tutorialTarget(TutorialTargetId.HIERARCHY_TREE)
 				.onGloballyPositioned { treeRowCoords = it },
 		) {
 			Box(

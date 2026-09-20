@@ -74,6 +74,8 @@ import io.github.psd2live.ui.theme.LocalToolTypography
 import io.github.psd2live.ui.theme.ToolColors
 import io.github.psd2live.ui.theme.frostedGlass
 import io.github.psd2live.ui.theme.frostedGlassTopBar
+import io.github.psd2live.ui.tutorial.TutorialTargetId
+import io.github.psd2live.ui.tutorial.tutorialTarget
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -1614,6 +1616,7 @@ private fun BoxScope.CanvasToolBar(
             .align(Alignment.TopStart)
             .padding(start = 8.dp, top = 44.dp)
             .width(animatedWidth)
+            .tutorialTarget(TutorialTargetId.CANVAS_TOOLBAR)
             .frostedGlass(
                 shape = RoundedCornerShape(6.dp),
                 isHovered = isToolbarHovered,
@@ -2242,6 +2245,7 @@ private fun BoxScope.HierarchyModeBar(
         modifier = Modifier
             .align(Alignment.TopStart)
             .padding(start = 8.dp, top = 8.dp)
+            .tutorialTarget(TutorialTargetId.MODE_BAR)
             .frostedGlass(
                 shape = RoundedCornerShape(6.dp),
                 isHovered = isToolbarHovered,

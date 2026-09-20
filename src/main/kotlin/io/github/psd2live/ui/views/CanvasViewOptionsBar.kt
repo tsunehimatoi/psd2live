@@ -50,6 +50,8 @@ import io.github.psd2live.ui.components.IconWarpDeformer
 import io.github.psd2live.ui.state.TabViewOptions
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.frostedGlass
+import io.github.psd2live.ui.tutorial.TutorialTargetId
+import io.github.psd2live.ui.tutorial.tutorialTarget
 
 /**
  * Bottom-right mirror of the left tool palette: the most-used per-tab display toggles, so the
@@ -105,6 +107,7 @@ internal fun CanvasViewOptionsBar(
 
 	Column(
 		modifier = modifier
+			.tutorialTarget(TutorialTargetId.VIEW_OPTIONS_BAR)
 			.width(animatedWidth)
 			.frostedGlass(
 				shape = RoundedCornerShape(6.dp),

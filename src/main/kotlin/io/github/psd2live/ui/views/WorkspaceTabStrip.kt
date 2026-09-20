@@ -92,10 +92,10 @@ fun WorkspaceTabStrip(
 					onSelect = { viewModel.setActiveTab(tab.id) },
 					onClose = { viewModel.closeTab(tab.id) },
 					onDuplicate = { viewModel.duplicateTab(tab.id) },
-					modifier = if (tab.kind == WorkspaceTabKind.PREVIEW) {
-						Modifier.tutorialTarget(TutorialTargetId.PREVIEW_TAB)
-					} else {
-						Modifier
+					modifier = when (tab.kind) {
+						WorkspaceTabKind.PREVIEW -> Modifier.tutorialTarget(TutorialTargetId.PREVIEW_TAB)
+						WorkspaceTabKind.EDIT -> Modifier.tutorialTarget(TutorialTargetId.EDIT_TAB)
+						else -> Modifier
 					},
 				)
 			}
@@ -124,7 +124,7 @@ fun WorkspaceTabStrip(
 
 		// Per-tab view options (canvas tabs only; the history tab has no canvas options)
 		if (state.activeTabKind.canvasMode != null) {
-			Box {
+			Box(modifier = Modifier.tutorialTarget(TutorialTargetId.VIEW_OPTIONS_MENU)) {
 				TabStripButton(
 					label = "${tr("tab.options.short")} \u25BE",
 					highlighted = state.activeTabView != state.activeTabKind.defaultViewOptions(),

@@ -81,16 +81,19 @@ import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.state.ShortcutAction
 import io.github.psd2live.ui.state.ShortcutScope
 import io.github.psd2live.ui.state.WorkspaceTabKind
-import io.github.psd2live.ui.tutorial.BasicTutorialStep
 import io.github.psd2live.ui.tutorial.InteractiveTutorialState
 import io.github.psd2live.ui.tutorial.LocalTutorialTargets
+import io.github.psd2live.ui.tutorial.TutorialId
 import io.github.psd2live.ui.tutorial.TutorialOverlay
+import io.github.psd2live.ui.tutorial.TutorialTargetId
 import io.github.psd2live.ui.tutorial.advance
+import io.github.psd2live.ui.tutorial.continueNextTutorial
 import io.github.psd2live.ui.tutorial.isComplete
 import io.github.psd2live.ui.tutorial.rememberTutorialTargetRegistry
 import io.github.psd2live.ui.tutorial.retreat
 import io.github.psd2live.ui.tutorial.start
 import io.github.psd2live.ui.tutorial.stop
+import io.github.psd2live.ui.tutorial.tutorialTarget
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.material.DropdownMenu
 import io.github.psd2live.ui.components.SettingsDialog
@@ -135,9 +138,9 @@ fun FrameWindowScope.PSD2LiveApp(
 	var tutorial by remember { mutableStateOf(InteractiveTutorialState()) }
 	val tutorialTargets = rememberTutorialTargetRegistry()
 
-	fun startInteractiveTutorial() {
+	fun startInteractiveTutorial(id: TutorialId = TutorialId.BASIC) {
 		helpDialogTab = null
-		tutorial = InteractiveTutorialState().start()
+		tutorial = InteractiveTutorialState().start(id)
 	}
 
 	fun stopInteractiveTutorial() {
@@ -150,6 +153,15 @@ fun FrameWindowScope.PSD2LiveApp(
 
 	fun retreatTutorial() {
 		tutorial = tutorial.retreat()
+	}
+
+	fun continueNextTutorial() {
+		tutorial = tutorial.continueNextTutorial()
+	}
+
+	fun openTutorialCatalog() {
+		stopInteractiveTutorial()
+		helpDialogTab = HelpTab.QUICK_START
 	}
 
 	viewModel.confirmUnsavedChanges = {
@@ -267,25 +279,35 @@ fun FrameWindowScope.PSD2LiveApp(
 			tutorial.active
 
 		// Tutorial step side-effects and auto-advance
-		LaunchedEffect(tutorial.active, tutorial.step) {
-			if (!tutorial.active) return@LaunchedEffect
-			when (tutorial.step) {
-				BasicTutorialStep.ADJUST_LAYERS, BasicTutorialStep.INTRODUCE_LAYER_ROW -> {
-					viewModel.setInspectorCollapsed(false)
-					viewModel.requestSelectDockModule("layers")
-				}
-				BasicTutorialStep.ADJUST_MODEL_SETTINGS -> {
-					viewModel.setInspectorCollapsed(false)
-					viewModel.setModelSettingsExpanded(true)
-					viewModel.requestSelectDockModule("settings")
-				}
-				else -> Unit
-			}
-		}
-		LaunchedEffect(tutorial.active, tutorial.step, state.previewModel, state.activeTabKind, state.showExportDialog, tutorial.titleBarMenuOpen, tutorial.reviewing) {
+		LaunchedEffect(tutorial.active, tutorial.tutorialId, tutorial.stepIndex) {
 			if (!tutorial.active) return@LaunchedEffect
 			val step = tutorial.step
-			if (step == BasicTutorialStep.DONE) return@LaunchedEffect
+			if (step.ensureEditTab) {
+				val edit = state.workspaceTabs.firstOrNull { it.kind == WorkspaceTabKind.EDIT }
+				when {
+					edit != null && state.activeWorkspaceTabId != edit.id -> viewModel.setActiveTab(edit.id)
+					edit == null -> viewModel.addTab(WorkspaceTabKind.EDIT)
+				}
+			}
+			if (step.ensureHierarchyVisible && state.hierarchyCollapsed) {
+				viewModel.setHierarchyView(collapsed = false)
+			}
+			step.selectDock?.let { dock ->
+				viewModel.setInspectorCollapsed(false)
+				viewModel.requestSelectDockModule(dock)
+			}
+			if (step.expandModelSettings) {
+				viewModel.setInspectorCollapsed(false)
+				viewModel.setModelSettingsExpanded(true)
+			}
+			step.setHierarchyMode?.let { mode ->
+				viewModel.canvasEditor.setHierarchyMode(mode)
+			}
+		}
+		LaunchedEffect(tutorial.active, tutorial.tutorialId, tutorial.stepIndex, state.previewModel, state.activeTabKind, state.showExportDialog, tutorial.titleBarMenuOpen, tutorial.reviewing) {
+			if (!tutorial.active) return@LaunchedEffect
+			val step = tutorial.step
+			if (step.isDone) return@LaunchedEffect
 			if (step.isComplete(state, tutorial)) {
 				advanceTutorial()
 			}
@@ -372,7 +394,7 @@ fun FrameWindowScope.PSD2LiveApp(
 						ShortcutAction.ZOOM_OUT -> { viewModel.zoomOut(); true }
 						ShortcutAction.ZOOM_RESET -> { viewModel.resetZoom(); true }
 						ShortcutAction.OPEN_SETTINGS -> { viewModel.openSettingsDialog(); true }
-						ShortcutAction.OPEN_HELP -> { startInteractiveTutorial(); true }
+						ShortcutAction.OPEN_HELP -> { openTutorialCatalog(); true }
 						else -> {
 							// The nine tab-jump actions share one body. A null index means this is a
 							// canvas action, which this handler does not own.
@@ -433,11 +455,14 @@ fun FrameWindowScope.PSD2LiveApp(
 						onPrevTab = { viewModel.cycleTab(-1) },
 						onShowAbout = { helpDialogTab = HelpTab.ABOUT },
 						onShowHelp = { tab -> helpDialogTab = tab },
-						onStartInteractiveTutorial = { startInteractiveTutorial() },
+						onOpenTutorialCatalog = { openTutorialCatalog() },
 						tutorialMenuForce = if (tutorial.active && tutorial.step.forcesFileMenu) "file" else null,
 						tutorialHighlightTarget = if (tutorial.active) tutorial.step.targetId else null,
+						tutorialId = if (tutorial.active) tutorial.tutorialId else null,
 						tutorialStep = if (tutorial.active) tutorial.step else null,
+						tutorialStepIndex = tutorial.stepIndex,
 						tutorialReviewing = tutorial.reviewing,
+						tutorialIsFirstStep = tutorial.isFirstStep,
 						onTutorialNext = { advanceTutorial() },
 						onTutorialPrevious = { retreatTutorial() },
 						onTutorialSkip = { advanceTutorial() },
@@ -461,10 +486,10 @@ fun FrameWindowScope.PSD2LiveApp(
 						viewModel,
 						Modifier.weight(1f).fillMaxWidth().padding(top = 2.dp),
 						window,
-						onStartTutorial = { startInteractiveTutorial() },
+						onStartTutorial = { startInteractiveTutorial(TutorialId.BASIC) },
 					)
 					// Selection / tool hint bar ("已选 N 个对象 / M 个控制点 · …")
-					StatusBar(state, viewModel)
+					StatusBar(state, viewModel, Modifier.tutorialTarget(TutorialTargetId.STATUS_BAR))
 				}
 			}
 
@@ -484,14 +509,23 @@ fun FrameWindowScope.PSD2LiveApp(
 			if (tutorial.active && !tutorial.step.coachBesideMenu) {
 				// Menu steps render their overlay inside the menu popup.
 				TutorialOverlay(
+					tutorialId = tutorial.tutorialId,
 					step = tutorial.step,
+					stepIndex = tutorial.stepIndex,
 					registry = tutorialTargets,
 					reviewing = tutorial.reviewing,
+					isFirstStep = tutorial.isFirstStep,
 					onNext = { advanceTutorial() },
 					onPrevious = { retreatTutorial() },
 					onSkip = { advanceTutorial() },
 					onExit = { stopInteractiveTutorial() },
 					onFinish = { stopInteractiveTutorial() },
+					onContinueNext = if (tutorial.isDoneStep && tutorial.nextTutorialId != null) {
+						{ continueNextTutorial() }
+					} else null,
+					onOpenCatalog = if (tutorial.isDoneStep) {
+						{ openTutorialCatalog() }
+					} else null,
 				)
 			}
 		}
@@ -514,9 +548,8 @@ fun FrameWindowScope.PSD2LiveApp(
 				keymap = state.keymap,
 				onDismiss = { helpDialogTab = null },
 				onOpenUrl = { url -> DesktopUtils.openBrowser(url) },
-				onStartInteractiveTutorial = {
-					helpDialogTab = null
-					startInteractiveTutorial()
+				onStartInteractiveTutorial = { id ->
+					startInteractiveTutorial(id)
 				},
 			)
 		}

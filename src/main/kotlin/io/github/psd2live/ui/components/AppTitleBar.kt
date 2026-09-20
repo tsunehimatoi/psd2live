@@ -36,9 +36,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import io.github.psd2live.ui.tutorial.BasicTutorialStep
 import io.github.psd2live.ui.tutorial.LocalTutorialTargets
+import io.github.psd2live.ui.tutorial.TutorialId
 import io.github.psd2live.ui.tutorial.TutorialOverlay
+import io.github.psd2live.ui.tutorial.TutorialStep
 import io.github.psd2live.ui.tutorial.TutorialTargetId
 import io.github.psd2live.ui.tutorial.tutorialTarget
 import androidx.compose.ui.draw.clip
@@ -135,11 +136,14 @@ fun AppTitleBar(
 	onPrevTab: () -> Unit = {},
 	onShowAbout: () -> Unit,
 	onShowHelp: (HelpTab) -> Unit = { onShowAbout() },
-	onStartInteractiveTutorial: () -> Unit = {},
+	onOpenTutorialCatalog: () -> Unit = {},
 	tutorialMenuForce: String? = null,
 	tutorialHighlightTarget: TutorialTargetId? = null,
-	tutorialStep: BasicTutorialStep? = null,
+	tutorialId: TutorialId? = null,
+	tutorialStep: TutorialStep? = null,
+	tutorialStepIndex: Int = 0,
 	tutorialReviewing: Boolean = false,
+	tutorialIsFirstStep: Boolean = false,
 	onTutorialNext: () -> Unit = {},
 	onTutorialPrevious: () -> Unit = {},
 	onTutorialSkip: () -> Unit = {},
@@ -156,7 +160,7 @@ fun AppTitleBar(
 
 	// A forced menu must release focus when the tutorial moves on or exits.
 	// Otherwise its popup keeps intercepting clicks on the next step's controls.
-	var previousTutorialStep by remember { mutableStateOf<BasicTutorialStep?>(null) }
+	var previousTutorialStep by remember { mutableStateOf<TutorialStep?>(null) }
 	LaunchedEffect(tutorialStep, tutorialMenuForce) {
 		if (tutorialStep != null || previousTutorialStep != null) {
 			activeMenu = tutorialMenuForce
@@ -203,7 +207,7 @@ fun AppTitleBar(
 				},
 				modifier = Modifier.tutorialTarget(TutorialTargetId.FILE_MENU),
 			) {
-				val showMenuCoach = tutorialStep != null &&
+				val showMenuCoach = tutorialId != null && tutorialStep != null &&
 					(tutorialHighlightTarget == TutorialTargetId.FILE_IMPORT ||
 						tutorialHighlightTarget == TutorialTargetId.FILE_EXPORT)
 				AppSeamlessDropdownMenu(
@@ -221,9 +225,17 @@ fun AppTitleBar(
 						{
 							LocalTutorialTargets.current?.let { registry ->
 								TutorialOverlay(
-									step = tutorialStep, registry = registry, reviewing = tutorialReviewing,
-									onNext = onTutorialNext, onPrevious = onTutorialPrevious,
-									onSkip = onTutorialSkip, onExit = onTutorialExit, onFinish = onTutorialExit,
+									tutorialId = tutorialId,
+									step = tutorialStep,
+									stepIndex = tutorialStepIndex,
+									registry = registry,
+									reviewing = tutorialReviewing,
+									isFirstStep = tutorialIsFirstStep,
+									onNext = onTutorialNext,
+									onPrevious = onTutorialPrevious,
+									onSkip = onTutorialSkip,
+									onExit = onTutorialExit,
+									onFinish = onTutorialExit,
 								)
 							}
 						}
@@ -642,7 +654,7 @@ fun AppTitleBar(
 						onClick = {
 							activeMenu = null
 							activeSubmenu = null
-							onStartInteractiveTutorial()
+							onOpenTutorialCatalog()
 						},
 					)
 					AppMenuItem(
@@ -775,6 +787,7 @@ fun AppTitleBar(
 				active = hierarchyVisible,
 				icon = LayoutPanelIcon.LEFT,
 				onClick = onToggleHierarchy,
+				modifier = Modifier.tutorialTarget(TutorialTargetId.LAYOUT_HIERARCHY_TOGGLE),
 			)
 			TitleBarLayoutToggle(
 				tooltip = tr("layout.toggle.log"),
@@ -1206,6 +1219,7 @@ private fun TitleBarLayoutToggle(
 	active: Boolean,
 	icon: LayoutPanelIcon,
 	onClick: () -> Unit,
+	modifier: Modifier = Modifier,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -1230,7 +1244,7 @@ private fun TitleBarLayoutToggle(
 		delayMillis = 400,
 	) {
 		Box(
-			modifier = Modifier
+			modifier = modifier
 				.width(30.dp)
 				.fillMaxHeight()
 				.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))

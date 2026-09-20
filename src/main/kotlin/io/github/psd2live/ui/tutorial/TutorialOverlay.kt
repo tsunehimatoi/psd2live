@@ -42,98 +42,143 @@ private val MaskDim = Color(0xB30A0C10)
  */
 @Composable
 fun TutorialOverlay(
-    step: BasicTutorialStep,
-    registry: TutorialTargetRegistry,
-    reviewing: Boolean = false,
-    onNext: () -> Unit,
-    onPrevious: () -> Unit,
-    onSkip: () -> Unit,
-    onExit: () -> Unit,
-    onFinish: () -> Unit,
+	tutorialId: TutorialId,
+	step: TutorialStep,
+	stepIndex: Int,
+	registry: TutorialTargetRegistry,
+	reviewing: Boolean = false,
+	isFirstStep: Boolean = false,
+	onNext: () -> Unit,
+	onPrevious: () -> Unit,
+	onSkip: () -> Unit,
+	onExit: () -> Unit,
+	onFinish: () -> Unit,
+	onContinueNext: (() -> Unit)? = null,
+	onOpenCatalog: (() -> Unit)? = null,
 ) {
-    val colors = LocalToolColors.current
-    val density = LocalDensity.current
-    var origin by remember { mutableStateOf(Offset.Zero) }
-    val target = step.targetId?.let(registry::boundsOf)
-    val hole = target?.translate(-origin)?.inflate(with(density) { 4.dp.toPx() })
-    Layout(
-        modifier = Modifier.fillMaxSize()
-            .onGloballyPositioned { origin = it.positionInWindow() }
-            .drawBehind {
-                val window = Rect(Offset.Zero, size)
-                spotlightMaskRects(window, listOfNotNull(hole)).forEach {
-                    drawRect(MaskDim, it.topLeft, it.size)
-                }
-                hole?.intersect(window)?.takeIf { it.width > 0f && it.height > 0f }?.let {
-                    // Stroke stays inside the cutout, including targets at the window edge.
-                    val stroke = 2.dp.toPx()
-                    drawRect(colors.accent, it.topLeft + Offset(stroke / 2, stroke / 2),
-                        Size((it.width - stroke).coerceAtLeast(0f), (it.height - stroke).coerceAtLeast(0f)),
-                        style = Stroke(stroke))
-                }
-            },
-        content = {
-            repeat(4) {
-                Box(Modifier.clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null, onClick = {},
-                ))
-            }
-            key(step) {
-                TutorialCoachCard(step, onNext, onPrevious, onSkip, onExit, onFinish,
-                    targetMissing = target == null && step != BasicTutorialStep.DONE,
-                    reviewing = reviewing)
-            }
-        },
-    ) { measurables, constraints ->
-        val width = constraints.maxWidth
-        val height = constraints.maxHeight
-        val margin = 16.dp.roundToPx()
-        val cardWidth = 340.dp.roundToPx().coerceAtMost((width - margin * 2).coerceAtLeast(1))
-        val card = measurables.last().measure(Constraints(
-            minWidth = cardWidth, maxWidth = cardWidth,
-            maxHeight = (height - margin * 2).coerceAtLeast(1),
-        ))
-        val masks = spotlightMaskRects(Rect(0f, 0f, width.toFloat(), height.toFloat()), listOfNotNull(hole))
-        val blockers = measurables.take(4).mapIndexed { index, measurable ->
-            val rect = masks.getOrNull(index) ?: Rect.Zero
-            val x = rect.left.roundToInt()
-            val y = rect.top.roundToInt()
-            Triple(measurable.measure(Constraints.fixed(
-                (rect.right.roundToInt() - x).coerceAtLeast(0),
-                (rect.bottom.roundToInt() - y).coerceAtLeast(0),
-            )), x, y)
-        }
-        val position = coachPosition(hole, IntSize(width, height), IntSize(card.width, card.height),
-            margin.toFloat(), step.preferSideBubble || step.coachBesideMenu)
-        layout(width, height) {
-            blockers.forEach { (placeable, x, y) -> placeable.place(x, y) }
-            card.place(position.x, position.y, zIndex = 1f)
-        }
-    }
+	val colors = LocalToolColors.current
+	val density = LocalDensity.current
+	var origin by remember { mutableStateOf(Offset.Zero) }
+	val target = step.targetId?.let(registry::boundsOf)
+	val hole = target?.translate(-origin)?.inflate(with(density) { 4.dp.toPx() })
+	Layout(
+		modifier = Modifier.fillMaxSize()
+			.onGloballyPositioned { origin = it.positionInWindow() }
+			.drawBehind {
+				val window = Rect(Offset.Zero, size)
+				spotlightMaskRects(window, listOfNotNull(hole)).forEach {
+					drawRect(MaskDim, it.topLeft, it.size)
+				}
+				hole?.intersect(window)?.takeIf { it.width > 0f && it.height > 0f }?.let {
+					val stroke = 2.dp.toPx()
+					drawRect(
+						colors.accent,
+						it.topLeft + Offset(stroke / 2, stroke / 2),
+						Size((it.width - stroke).coerceAtLeast(0f), (it.height - stroke).coerceAtLeast(0f)),
+						style = Stroke(stroke),
+					)
+				}
+			},
+		content = {
+			repeat(4) {
+				Box(
+					Modifier.clickable(
+						interactionSource = remember { MutableInteractionSource() },
+						indication = null,
+						onClick = {},
+					),
+				)
+			}
+			key(tutorialId, step.key) {
+				TutorialCoachCard(
+					tutorialId = tutorialId,
+					step = step,
+					stepIndex = stepIndex,
+					isFirstStep = isFirstStep,
+					onNext = onNext,
+					onPrevious = onPrevious,
+					onSkip = onSkip,
+					onExit = onExit,
+					onFinish = onFinish,
+					onContinueNext = onContinueNext,
+					onOpenCatalog = onOpenCatalog,
+					targetMissing = target == null && !step.isDone,
+					reviewing = reviewing,
+				)
+			}
+		},
+	) { measurables, constraints ->
+		val width = constraints.maxWidth
+		val height = constraints.maxHeight
+		val margin = 16.dp.roundToPx()
+		val cardWidth = 340.dp.roundToPx().coerceAtMost((width - margin * 2).coerceAtLeast(1))
+		val card = measurables.last().measure(
+			Constraints(
+				minWidth = cardWidth,
+				maxWidth = cardWidth,
+				maxHeight = (height - margin * 2).coerceAtLeast(1),
+			),
+		)
+		val masks = spotlightMaskRects(Rect(0f, 0f, width.toFloat(), height.toFloat()), listOfNotNull(hole))
+		val blockers = measurables.take(4).mapIndexed { index, measurable ->
+			val rect = masks.getOrNull(index) ?: Rect.Zero
+			val x = rect.left.roundToInt()
+			val y = rect.top.roundToInt()
+			Triple(
+				measurable.measure(
+					Constraints.fixed(
+						(rect.right.roundToInt() - x).coerceAtLeast(0),
+						(rect.bottom.roundToInt() - y).coerceAtLeast(0),
+					),
+				),
+				x,
+				y,
+			)
+		}
+		val position = coachPosition(
+			hole,
+			IntSize(width, height),
+			IntSize(card.width, card.height),
+			margin.toFloat(),
+			step.preferSideBubble || step.coachBesideMenu,
+		)
+		layout(width, height) {
+			blockers.forEach { (placeable, x, y) -> placeable.place(x, y) }
+			card.place(position.x, position.y, zIndex = 1f)
+		}
+	}
 }
 
 @Composable
 fun TutorialCoachCard(
-	step: BasicTutorialStep,
+	tutorialId: TutorialId,
+	step: TutorialStep,
+	stepIndex: Int,
+	isFirstStep: Boolean,
 	onNext: () -> Unit,
 	onPrevious: () -> Unit,
 	onSkip: () -> Unit,
 	onExit: () -> Unit,
 	onFinish: () -> Unit = {},
+	onContinueNext: (() -> Unit)? = null,
+	onOpenCatalog: (() -> Unit)? = null,
 	targetMissing: Boolean = false,
 	reviewing: Boolean = false,
 	modifier: Modifier = Modifier,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
-	val stepIndex = BasicTutorialStep.actionableSteps.indexOf(step).coerceAtLeast(0)
-	val stepTotal = BasicTutorialStep.actionableSteps.size
-	val progressLabel = if (step == BasicTutorialStep.DONE) {
+	val definition = tutorialDefinition(tutorialId)
+	val actionable = definition.actionableSteps
+	val displayIndex = actionable.indexOfFirst { it.key == step.key }.takeIf { it >= 0 }
+		?: stepIndex.coerceAtMost(actionable.lastIndex)
+	val stepTotal = actionable.size.coerceAtLeast(1)
+	val progressLabel = if (step.isDone) {
 		tr("tutorial.basic.progress.done")
 	} else {
-		tr("tutorial.basic.progress", stepIndex + 1, stepTotal)
+		tr("tutorial.basic.progress", displayIndex + 1, stepTotal)
 	}
+	val nextId = tutorialId.nextId
 
 	Column(
 		modifier = modifier
@@ -144,58 +189,101 @@ fun TutorialCoachCard(
 			.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {}),
 		verticalArrangement = Arrangement.spacedBy(8.dp),
 	) {
+		Text(
+			text = tr(tutorialId.titleKey),
+			style = typography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
+			color = colors.accent,
+		)
 		LinearProgressIndicator(
-			progress = if (step == BasicTutorialStep.DONE) 1f else (stepIndex + 1f) / stepTotal,
+			progress = if (step.isDone) 1f else (displayIndex + 1f) / stepTotal,
 			modifier = Modifier.fillMaxWidth().height(3.dp),
 			color = colors.accent,
 			backgroundColor = colors.accent.copy(alpha = 0.12f),
 		)
 		Text(text = progressLabel, style = typography.caption.copy(fontSize = 10.sp), color = colors.accent)
 		Text(
-			text = tr(step.titleKey),
+			text = tr(step.titleKey(tutorialId)),
 			style = typography.body.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
 			color = colors.textPrimary,
 		)
 		Text(
-			text = tr(step.bodyKey),
+			text = tr(step.bodyKey(tutorialId)),
 			style = typography.caption.copy(fontSize = 11.5.sp, lineHeight = 16.sp),
 			color = colors.textMuted,
 		)
 		if (targetMissing) {
 			Text(tr("tutorial.basic.targetMissing"), style = typography.caption, color = colors.accent)
 		}
-		if (step != BasicTutorialStep.DONE) {
+		if (!step.isDone) {
 			Column(
 				modifier = Modifier.fillMaxWidth()
 					.background(colors.accent.copy(alpha = 0.08f), RoundedCornerShape(6.dp)).padding(10.dp),
 				verticalArrangement = Arrangement.spacedBy(4.dp),
 			) {
 				Text(tr("tutorial.basic.action"), style = typography.caption, color = colors.accent)
-				Text(tr(step.bodyKey.removeSuffix("body") + "action"), style = typography.caption.copy(lineHeight = 17.sp), color = colors.textPrimary)
+				Text(
+					tr(step.actionKey(tutorialId)),
+					style = typography.caption.copy(lineHeight = 17.sp),
+					color = colors.textPrimary,
+				)
 			}
-			Text(tr(if (step.allowsNext || reviewing) "tutorial.basic.hint.manual" else "tutorial.basic.hint.auto"),
-				style = typography.caption.copy(fontSize = 10.sp), color = colors.textMuted)
+			Text(
+				tr(if (step.allowsNext || reviewing) "tutorial.basic.hint.manual" else "tutorial.basic.hint.auto"),
+				style = typography.caption.copy(fontSize = 10.sp),
+				color = colors.textMuted,
+			)
 		}
 		Spacer(modifier = Modifier.height(2.dp))
-		Row(
-			modifier = Modifier.fillMaxWidth(),
-			horizontalArrangement = Arrangement.spacedBy(6.dp),
-			verticalAlignment = Alignment.CenterVertically,
-		) {
-			CompactButton(text = tr("tutorial.basic.exit"), onClick = onExit, height = 24.dp)
-			if (step.allowsPrevious) {
-				CompactButton(text = tr("tutorial.basic.previous"), onClick = onPrevious, height = 24.dp)
+		if (step.isDone) {
+			Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+				if (onContinueNext != null && nextId != null) {
+					CompactButton(
+						text = tr("tutorial.common.continueNext", tr(nextId.titleKey)),
+						onClick = onContinueNext,
+						isPrimary = true,
+						height = 26.dp,
+						modifier = Modifier.fillMaxWidth(),
+					)
+				}
+				Row(
+					modifier = Modifier.fillMaxWidth(),
+					horizontalArrangement = Arrangement.spacedBy(6.dp),
+				) {
+					if (onOpenCatalog != null) {
+						CompactButton(
+							text = tr("tutorial.common.openCatalog"),
+							onClick = onOpenCatalog,
+							height = 24.dp,
+							modifier = Modifier.weight(1f),
+						)
+					}
+					CompactButton(
+						text = tr("tutorial.basic.finish"),
+						onClick = onFinish,
+						isPrimary = onContinueNext == null || nextId == null,
+						height = 24.dp,
+						modifier = Modifier.weight(1f),
+					)
+				}
 			}
-			Spacer(modifier = Modifier.weight(1f))
-			when {
-				step == BasicTutorialStep.DONE ->
-					CompactButton(text = tr("tutorial.basic.finish"), onClick = onFinish, isPrimary = true, height = 24.dp)
-				step.allowsNext || reviewing ->
-					CompactButton(text = tr("tutorial.basic.next"), onClick = onNext, isPrimary = true, height = 24.dp)
-				else ->
-					CompactButton(text = tr("tutorial.basic.skip"), onClick = onSkip, height = 24.dp)
+		} else {
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				horizontalArrangement = Arrangement.spacedBy(6.dp),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				CompactButton(text = tr("tutorial.basic.exit"), onClick = onExit, height = 24.dp)
+				if (!isFirstStep) {
+					CompactButton(text = tr("tutorial.basic.previous"), onClick = onPrevious, height = 24.dp)
+				}
+				Spacer(modifier = Modifier.weight(1f))
+				when {
+					step.allowsNext || reviewing ->
+						CompactButton(text = tr("tutorial.basic.next"), onClick = onNext, isPrimary = true, height = 24.dp)
+					else ->
+						CompactButton(text = tr("tutorial.basic.skip"), onClick = onSkip, height = 24.dp)
+				}
 			}
 		}
 	}
 }
-

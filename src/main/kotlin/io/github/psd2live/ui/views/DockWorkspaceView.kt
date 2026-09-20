@@ -340,6 +340,10 @@ private fun DockTree(node: DockNode, session: DockSession, modifier: Modifier, w
 			when (node.selected) {
 				"layers" -> Modifier.tutorialTarget(TutorialTargetId.LAYERS_DOCK)
 				"settings" -> Modifier.tutorialTarget(TutorialTargetId.MODEL_SETTINGS)
+				"parameters" -> Modifier.tutorialTarget(TutorialTargetId.PARAMETERS_DOCK)
+				"inspector" -> Modifier.tutorialTarget(TutorialTargetId.INSPECTOR_DOCK)
+				"tools" -> Modifier.tutorialTarget(TutorialTargetId.TOOLS_DOCK)
+				"hierarchy" -> Modifier.tutorialTarget(TutorialTargetId.HIERARCHY_DOCK)
 				else -> Modifier
 			},
 		)

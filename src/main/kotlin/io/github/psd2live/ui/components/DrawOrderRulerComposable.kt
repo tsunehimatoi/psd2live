@@ -41,6 +41,8 @@ import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
+import io.github.psd2live.ui.tutorial.TutorialTargetId
+import io.github.psd2live.ui.tutorial.tutorialTarget
 import org.umamo.runtime.model.Drawable
 import java.awt.Cursor
 import kotlin.math.abs
@@ -161,6 +163,7 @@ fun DrawOrderRuler(
 
 	Box(
 		modifier = modifier
+			.tutorialTarget(TutorialTargetId.DRAW_ORDER_RULER)
 			.width(width)
 			.fillMaxHeight()
 			.background(colors.panelElevated.copy(alpha = 0.5f))
