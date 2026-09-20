@@ -216,6 +216,8 @@ data class PSD2LiveState(
     val workspaceSplitRatio: Float = 0.60f,
     /** When true, the right inspector / parameters sidebar is hidden. */
     val inspectorCollapsed: Boolean = false,
+	/** One-shot request for DockWorkspaceView to select a dock module tab (e.g. "layers"). */
+	val requestedDockModule: String? = null,
     val workspaceTabs: List<WorkspaceTabState> = defaultWorkspaceTabs(),
     val activeWorkspaceTabId: String = PINNED_EDIT_TAB_ID,
     val historyAnnotations: Map<String, HistoryAnnotation> = emptyMap(),

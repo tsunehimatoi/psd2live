@@ -121,6 +121,7 @@ fun CanvasViewportComposable(
 	viewModel: PSD2LiveViewModel,
 	modifier: Modifier = Modifier,
 	onLayerClicked: ((String?) -> Unit)? = null,
+	onStartTutorial: (() -> Unit)? = null,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -1057,15 +1058,28 @@ fun CanvasViewportComposable(
         }
         // Overlay: Empty hint or Stats Badge
 		if (previewModel == null) {
-			Text(
-				text = when (mode) {
-					CanvasMode.EDIT -> tr("canvas.hierarchy.empty")
-					CanvasMode.PREVIEW -> tr("canvas.preview.empty")
-				},
-				style = typography.body.copy(fontSize = 12.sp),
-				color = colors.textMuted,
+			Column(
 				modifier = Modifier.align(Alignment.Center),
-			)
+				horizontalAlignment = Alignment.CenterHorizontally,
+				verticalArrangement = Arrangement.spacedBy(10.dp),
+			) {
+				Text(
+					text = when (mode) {
+						CanvasMode.EDIT -> tr("canvas.hierarchy.empty")
+						CanvasMode.PREVIEW -> tr("canvas.preview.empty")
+					},
+					style = typography.body.copy(fontSize = 12.sp),
+					color = colors.textMuted,
+				)
+				if (onStartTutorial != null) {
+					CompactButton(
+						text = tr("canvas.tutorial.start"),
+						onClick = onStartTutorial,
+						isPrimary = true,
+						height = 26.dp,
+					)
+				}
+			}
 		} else {
 			// Floating Stats Pill Badge
 			val zoomPct = (zoom * 100).toInt()

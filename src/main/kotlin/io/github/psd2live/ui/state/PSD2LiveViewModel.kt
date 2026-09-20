@@ -505,6 +505,16 @@ class PSD2LiveViewModel : AutoCloseable {
             else it.copy(inspectorCollapsed = collapsed, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1)
         }
     }
+
+	fun requestSelectDockModule(moduleId: String) {
+		_state.update { it.copy(requestedDockModule = moduleId) }
+	}
+
+	fun clearDockModuleRequest() {
+		_state.update {
+			if (it.requestedDockModule == null) it else it.copy(requestedDockModule = null)
+		}
+	}
     fun adjustWorkspaceSplitRatio(deltaRatio: Float, min: Float = 0.25f, max: Float = 0.85f) {
         _state.update {
             val next = (it.workspaceSplitRatio + deltaRatio).coerceIn(min, max)

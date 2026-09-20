@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -75,6 +76,8 @@ import io.github.psd2live.ui.state.InspectorTab
 import io.github.psd2live.ui.state.WorkspaceTabKind
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
+import io.github.psd2live.ui.tutorial.TutorialTargetId
+import io.github.psd2live.ui.tutorial.tutorialTarget
 import kotlin.math.roundToInt
 
 @Composable
@@ -1162,7 +1165,10 @@ internal fun LayersTableView(
 				)
 			}
 		} else {
-			LazyColumn(modifier = Modifier.fillMaxSize()) {
+			val layerListState = rememberLazyListState()
+			val tutorialRowIndex = (layerListState.firstVisibleItemIndex +
+				if (layerListState.firstVisibleItemScrollOffset > 0) 1 else 0).coerceAtMost(layers.lastIndex)
+			LazyColumn(state = layerListState, modifier = Modifier.fillMaxSize()) {
 				itemsIndexed(layers) { index, layer ->
 					val layerId = layer.source.id.raw
 					val isSelected = state.selectedLayerId == layerId
@@ -1185,6 +1191,7 @@ internal fun LayersTableView(
 							.fillMaxWidth()
 							.height(26.dp)
 							.background(rowBg)
+							.then(if (index == tutorialRowIndex) Modifier.tutorialTarget(TutorialTargetId.LAYER_ROW) else Modifier)
 							.padding(horizontal = 4.dp),
 						verticalAlignment = Alignment.CenterVertically,
 					) {

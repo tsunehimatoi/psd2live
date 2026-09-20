@@ -36,6 +36,8 @@ import androidx.compose.ui.window.*
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.state.*
 import io.github.psd2live.ui.theme.*
+import io.github.psd2live.ui.tutorial.TutorialTargetId
+import io.github.psd2live.ui.tutorial.tutorialTarget
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import java.awt.MouseInfo
@@ -177,6 +179,7 @@ internal fun DockWorkspaceView(
     viewModel: PSD2LiveViewModel,
     modifier: Modifier = Modifier,
     mainWindow: java.awt.Window? = null,
+	onStartTutorial: (() -> Unit)? = null,
 ) {
     val sessions = remember { mutableMapOf<String, DockSession>() }
     val tab = state.activeWorkspaceTab
@@ -210,11 +213,24 @@ internal fun DockWorkspaceView(
         saved?.let { runCatching { dockPreferences.put(preferenceKey, dockJson.encodeToString(it)) } }
     }
     val latestState by rememberUpdatedState(state)
+	val latestOnStartTutorial by rememberUpdatedState(onStartTutorial)
     val contents = remember(tab.id) { mutableMapOf<String, @Composable () -> Unit>() }
     fun content(id: String): @Composable () -> Unit = contents.getOrPut(id) {
-        movableContentOf { DockModuleContent(id, latestState, viewModel) }
+        movableContentOf { DockModuleContent(id, latestState, viewModel, latestOnStartTutorial) }
     }
     DisposableEffect(session) { onDispose { session.cancel() } }
+	// Tutorial / programmatic focus: select a dock module tab and bring floating modules back.
+	LaunchedEffect(state.requestedDockModule, tab.id) {
+		val module = state.requestedDockModule ?: return@LaunchedEffect
+		if (module in session.floating) {
+			session.returnToDock(module)
+		}
+		val node = session.root?.containing(module)
+		if (node != null) {
+			session.root = session.root?.update(node.id) { it.copy(selected = module) }
+		}
+		viewModel.clearDockModuleRequest()
+	}
     LaunchedEffect(session, session.dragging) {
         while (session.dragging != null) {
             session.track()
@@ -319,7 +335,15 @@ private fun DockTree(node: DockNode, session: DockSession, modifier: Modifier, w
         return
     }
     DisposableEffect(node.id) { onDispose { session.bounds.remove(node.id) } }
-    Box(modifier.onGloballyPositioned { coordinates ->
+    Box(modifier
+		.then(
+			when (node.selected) {
+				"layers" -> Modifier.tutorialTarget(TutorialTargetId.LAYERS_DOCK)
+				"settings" -> Modifier.tutorialTarget(TutorialTargetId.MODEL_SETTINGS)
+				else -> Modifier
+			},
+		)
+		.onGloballyPositioned { coordinates ->
         session.bounds[node.id] = {
             screenBounds(coordinates, window)?.let { r ->
                 val scale = window?.graphicsConfiguration?.defaultTransform?.scaleX?.toFloat() ?: 1f
@@ -601,23 +625,48 @@ private fun moduleTitle(id: String): String = tr(when (id) {
 })
 
 @Composable
-private fun DockModuleContent(id: String, state: PSD2LiveState, vm: PSD2LiveViewModel) {
-    when (id) {
-        "canvas" -> CanvasViewportComposable(mode = state.activeTabKind.canvasMode ?: CanvasMode.EDIT,
-            state = state, viewModel = vm, modifier = Modifier.fillMaxSize(), onLayerClicked = vm::selectLayer)
-        "hierarchy" -> DockHierarchyView(state, vm, state.activeTabKind.canvasMode ?: CanvasMode.EDIT,
-            onRequestOpenDeformPaths = { vm.selectLayer(it); vm.requestCanvasPathTool() },
-            onRequestCreate = { kind, relation, isDeformer, target -> vm.canvasEditor.beginTreeCreate(kind, relation, isDeformer, target) })
-        "history" -> HistoryTreeView(state, vm, Modifier.fillMaxSize())
-        "log" -> BottomLogDock(state, vm, Modifier.fillMaxSize(), fillDock = true)
-        "settings" -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-            ModelSettingsSection(state, vm, state.modelSettingsExpanded, { vm.setModelSettingsExpanded(!state.modelSettingsExpanded) })
-        }
-        "layers" -> LayersTableView(state, vm)
-        "parameters" -> ParametersListView(state, vm)
-        "tools" -> ToolDetailsView(vm.canvasEditor, vm, state)
-        "inspector" -> InspectorPanelView(vm.canvasEditor, vm, state)
-        "animation" -> AnimationPanelView(vm, state)
-        "physics" -> PhysicsPanelView(vm, state)
-    }
+private fun DockModuleContent(
+	id: String,
+	state: PSD2LiveState,
+	vm: PSD2LiveViewModel,
+	onStartTutorial: (() -> Unit)? = null,
+) {
+	when (id) {
+		"canvas" -> CanvasViewportComposable(
+			mode = state.activeTabKind.canvasMode ?: CanvasMode.EDIT,
+			state = state,
+			viewModel = vm,
+			modifier = Modifier.fillMaxSize(),
+			onLayerClicked = vm::selectLayer,
+			onStartTutorial = onStartTutorial,
+		)
+		"hierarchy" -> DockHierarchyView(
+			state,
+			vm,
+			state.activeTabKind.canvasMode ?: CanvasMode.EDIT,
+			onRequestOpenDeformPaths = { vm.selectLayer(it); vm.requestCanvasPathTool() },
+			onRequestCreate = { kind, relation, isDeformer, target ->
+				vm.canvasEditor.beginTreeCreate(kind, relation, isDeformer, target)
+			},
+		)
+		"history" -> HistoryTreeView(state, vm, Modifier.fillMaxSize())
+		"log" -> BottomLogDock(state, vm, Modifier.fillMaxSize(), fillDock = true)
+		"settings" -> {
+			Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+				ModelSettingsSection(
+					state,
+					vm,
+					state.modelSettingsExpanded,
+					{ vm.setModelSettingsExpanded(!state.modelSettingsExpanded) },
+				)
+			}
+		}
+		"layers" -> LayersTableView(state, vm)
+		"parameters" -> ParametersListView(state, vm)
+		"tools" -> ToolDetailsView(vm.canvasEditor, vm, state)
+		"inspector" -> InspectorPanelView(vm.canvasEditor, vm, state)
+		"animation" -> AnimationPanelView(vm, state)
+		"physics" -> PhysicsPanelView(vm, state)
+	}
 }
+

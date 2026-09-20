@@ -54,6 +54,8 @@ import io.github.psd2live.ui.state.canvasMode
 import io.github.psd2live.ui.state.defaultViewOptions
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
+import io.github.psd2live.ui.tutorial.TutorialTargetId
+import io.github.psd2live.ui.tutorial.tutorialTarget
 import java.awt.Cursor
 
 /**
@@ -90,6 +92,11 @@ fun WorkspaceTabStrip(
 					onSelect = { viewModel.setActiveTab(tab.id) },
 					onClose = { viewModel.closeTab(tab.id) },
 					onDuplicate = { viewModel.duplicateTab(tab.id) },
+					modifier = if (tab.kind == WorkspaceTabKind.PREVIEW) {
+						Modifier.tutorialTarget(TutorialTargetId.PREVIEW_TAB)
+					} else {
+						Modifier
+					},
 				)
 			}
 
@@ -152,6 +159,7 @@ private fun WorkspaceTabChip(
 	onSelect: () -> Unit,
 	onClose: () -> Unit,
 	onDuplicate: () -> Unit,
+	modifier: Modifier = Modifier,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -165,7 +173,7 @@ private fun WorkspaceTabChip(
 		else -> Color.Transparent
 	}
 
-	Box {
+	Box(modifier = modifier) {
 		Row(
 			modifier = Modifier
 				.fillMaxHeight()

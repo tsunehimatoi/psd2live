@@ -28,6 +28,7 @@ import androidx.compose.material.Divider
 import androidx.compose.material.Surface
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,8 +36,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import io.github.psd2live.ui.tutorial.BasicTutorialStep
+import io.github.psd2live.ui.tutorial.LocalTutorialTargets
+import io.github.psd2live.ui.tutorial.TutorialOverlay
+import io.github.psd2live.ui.tutorial.TutorialTargetId
+import io.github.psd2live.ui.tutorial.tutorialTarget
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.awt.ComposeWindow
+import androidx.compose.ui.zIndex
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.RoundRect
@@ -126,6 +135,16 @@ fun AppTitleBar(
 	onPrevTab: () -> Unit = {},
 	onShowAbout: () -> Unit,
 	onShowHelp: (HelpTab) -> Unit = { onShowAbout() },
+	onStartInteractiveTutorial: () -> Unit = {},
+	tutorialMenuForce: String? = null,
+	tutorialHighlightTarget: TutorialTargetId? = null,
+	tutorialStep: BasicTutorialStep? = null,
+	tutorialReviewing: Boolean = false,
+	onTutorialNext: () -> Unit = {},
+	onTutorialPrevious: () -> Unit = {},
+	onTutorialSkip: () -> Unit = {},
+	onTutorialExit: () -> Unit = {},
+	onTutorialMenuChanged: (String?) -> Unit = {},
 	onOpenUrl: (String) -> Unit = { DesktopUtils.openBrowser(it) },
 ) {
 	val colors = LocalToolColors.current
@@ -134,6 +153,20 @@ fun AppTitleBar(
 	// Track which menu is open (null if none)
 	var activeMenu by remember { mutableStateOf<String?>(null) }
 	var activeSubmenu by remember { mutableStateOf<String?>(null) }
+
+	// A forced menu must release focus when the tutorial moves on or exits.
+	// Otherwise its popup keeps intercepting clicks on the next step's controls.
+	var previousTutorialStep by remember { mutableStateOf<BasicTutorialStep?>(null) }
+	LaunchedEffect(tutorialStep, tutorialMenuForce) {
+		if (tutorialStep != null || previousTutorialStep != null) {
+			activeMenu = tutorialMenuForce
+			activeSubmenu = null
+		}
+		previousTutorialStep = tutorialStep
+	}
+	LaunchedEffect(activeMenu) {
+		onTutorialMenuChanged(activeMenu)
+	}
 
 	// Dragging state using absolute screen cursor coordinates
 	var initialMouseLocation by remember { mutableStateOf<Point?>(null) }
@@ -168,14 +201,33 @@ fun AppTitleBar(
 						activeSubmenu = null
 					}
 				},
+				modifier = Modifier.tutorialTarget(TutorialTargetId.FILE_MENU),
 			) {
+				val showMenuCoach = tutorialStep != null &&
+					(tutorialHighlightTarget == TutorialTargetId.FILE_IMPORT ||
+						tutorialHighlightTarget == TutorialTargetId.FILE_EXPORT)
 				AppSeamlessDropdownMenu(
-					expanded = activeMenu == "file",
+					expanded = activeMenu == "file" || tutorialMenuForce == "file",
 					onDismissRequest = {
-						activeMenu = null
-						activeSubmenu = null
+						if (tutorialMenuForce != "file") {
+							activeMenu = null
+							activeSubmenu = null
+						}
 					},
-					modifier = Modifier.widthIn(min = 220.dp, max = 280.dp),
+					modifier = Modifier
+						.widthIn(min = 220.dp, max = 280.dp)
+						.tutorialTarget(TutorialTargetId.FILE_MENU_BODY),
+					tutorialOverlay = if (showMenuCoach) {
+						{
+							LocalTutorialTargets.current?.let { registry ->
+								TutorialOverlay(
+									step = tutorialStep!!, registry = registry, reviewing = tutorialReviewing,
+									onNext = onTutorialNext, onPrevious = onTutorialPrevious,
+									onSkip = onTutorialSkip, onExit = onTutorialExit, onFinish = onTutorialExit,
+								)
+							}
+						}
+					} else null,
 				) {
 					// 1. 工程管理 (Project)
 					AppMenuHeader(tr("menu.file.category.project"))
@@ -190,6 +242,8 @@ fun AppTitleBar(
 					AppMenuItem(
 						text = tr("menu.file.openPsd"),
 						shortcut = keymap.labelFor(ShortcutAction.OPEN_PSD),
+						highlighted = tutorialHighlightTarget == TutorialTargetId.FILE_IMPORT,
+						modifier = Modifier.tutorialTarget(TutorialTargetId.FILE_IMPORT),
 						onClick = {
 							activeMenu = null
 							onOpenPsd()
@@ -222,6 +276,8 @@ fun AppTitleBar(
 						text = tr("menu.file.export"),
 						shortcut = keymap.labelFor(ShortcutAction.GENERATE),
 						enabled = hasInput && !isBusy,
+						highlighted = tutorialHighlightTarget == TutorialTargetId.FILE_EXPORT,
+						modifier = Modifier.tutorialTarget(TutorialTargetId.FILE_EXPORT),
 						onClick = {
 							activeMenu = null
 							onShowExport()
@@ -586,7 +642,7 @@ fun AppTitleBar(
 						onClick = {
 							activeMenu = null
 							activeSubmenu = null
-							onShowHelp(HelpTab.QUICK_START)
+							onStartInteractiveTutorial()
 						},
 					)
 					AppMenuItem(
@@ -821,6 +877,7 @@ private fun TitleBarMenuItem(
 	isOpen: Boolean,
 	onToggle: () -> Unit,
 	onHoverWhenActive: () -> Unit,
+	modifier: Modifier = Modifier,
 	content: @Composable () -> Unit,
 ) {
 	val colors = LocalToolColors.current
@@ -828,7 +885,7 @@ private fun TitleBarMenuItem(
 	var isHovered by remember { mutableStateOf(false) }
 
 	Box(
-		modifier = Modifier
+		modifier = modifier
 			.fillMaxHeight()
 			.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
 			.onPointerEvent(PointerEventType.Enter) {
@@ -862,46 +919,50 @@ private fun TitleBarMenuItem(
 /**
  * Clean and seamless dropdown menu built on Compose Popup.
  * Zero gap from the title bar, zero excessive inner margins, and edge-to-edge hover highlights.
+ * Tutorial steps place the menu and its spotlight in the same full-window popup.
  */
 @Composable
 private fun AppSeamlessDropdownMenu(
-	expanded: Boolean,
-	onDismissRequest: () -> Unit,
-	modifier: Modifier = Modifier,
-	content: @Composable ColumnScope.() -> Unit,
+    expanded: Boolean,
+    onDismissRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+    tutorialOverlay: (@Composable () -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit,
 ) {
-	if (!expanded) return
-
-	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-	val density = LocalDensity.current
-	val titleBarHeightPx = with(density) { 32.dp.roundToPx() }
-
-	Popup(
-		alignment = Alignment.TopStart,
-		offset = IntOffset(0, titleBarHeightPx),
-		onDismissRequest = onDismissRequest,
-		properties = PopupProperties(focusable = true),
-	) {
-		androidx.compose.runtime.CompositionLocalProvider(
-			LocalDensity provides density,
-			LocalToolColors provides colors,
-			LocalToolTypography provides typography,
-		) {
-			Surface(
-				color = colors.panelElevated,
-				border = BorderStroke(1.dp, colors.border),
-				shape = RoundedCornerShape(0.dp),
-				elevation = 4.dp,
-			) {
-				Column(
-					modifier = modifier.padding(vertical = 0.dp),
-				) {
-					content()
-				}
-			}
-		}
-	}
+    if (!expanded) return
+    val colors = LocalToolColors.current
+    val density = LocalDensity.current
+    val titleBarHeightPx = with(density) { 32.dp.roundToPx() }
+    val positionProvider = remember(tutorialOverlay != null, titleBarHeightPx) {
+        object : androidx.compose.ui.window.PopupPositionProvider {
+            override fun calculatePosition(
+                anchorBounds: androidx.compose.ui.unit.IntRect,
+                windowSize: androidx.compose.ui.unit.IntSize,
+                layoutDirection: androidx.compose.ui.unit.LayoutDirection,
+                popupContentSize: androidx.compose.ui.unit.IntSize,
+            ): IntOffset = if (tutorialOverlay != null) IntOffset.Zero
+                else IntOffset(anchorBounds.left, anchorBounds.top + titleBarHeightPx)
+        }
+    }
+    Popup(
+        popupPositionProvider = positionProvider,
+        onDismissRequest = onDismissRequest,
+        properties = PopupProperties(focusable = true),
+    ) {
+        Box(if (tutorialOverlay != null) Modifier.fillMaxSize() else Modifier) {
+            Surface(
+                modifier = if (tutorialOverlay != null) Modifier.offset(y = 32.dp) else Modifier,
+                color = colors.panelElevated,
+                border = BorderStroke(1.dp, colors.border),
+                shape = RoundedCornerShape(0.dp),
+                elevation = 8.dp,
+            ) {
+                Column(modifier = modifier) { content() }
+            }
+            // Draw after the menu, in the same popup. No cross-popup z-order or coordinate conversion.
+            tutorialOverlay?.invoke()
+        }
+    }
 }
 
 @OptIn(ExperimentalComposeUiApi::class)
@@ -911,6 +972,7 @@ fun AppMenuItem(
 	shortcut: String? = null,
 	isChecked: Boolean? = null,
 	enabled: Boolean = true,
+	highlighted: Boolean = false,
 	icon: (@Composable (tint: Color) -> Unit)? = null,
 	indentCheckSpace: Boolean = false,
 	/**
@@ -920,6 +982,7 @@ fun AppMenuItem(
 	 */
 	isChild: Boolean = false,
 	isLastChild: Boolean = false,
+	modifier: Modifier = Modifier,
 	onHover: (() -> Unit)? = null,
 	onClick: () -> Unit,
 ) {
@@ -929,18 +992,18 @@ fun AppMenuItem(
 
 	val contentColor = when {
 		!enabled -> colors.textDisabled
-		isHovered -> colors.selectionText
+		isHovered || highlighted -> colors.selectionText
 		else -> colors.textPrimary
 	}
 
 	Row(
-		modifier = Modifier
+		modifier = modifier
 			.fillMaxWidth()
 			.height(28.dp)
 			.background(
 				when {
 					!enabled -> Color.Transparent
-					isHovered -> colors.selection
+					isHovered || highlighted -> colors.selection
 					else -> Color.Transparent
 				}
 			)

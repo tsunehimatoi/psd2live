@@ -72,6 +72,7 @@ fun HelpDialog(
 	keymap: Keymap = Keymap.DEFAULT,
 	onDismiss: () -> Unit,
 	onOpenUrl: (String) -> Unit = { DesktopUtils.openBrowser(it) },
+	onStartInteractiveTutorial: (() -> Unit)? = null,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -164,7 +165,10 @@ fun HelpDialog(
 				verticalArrangement = Arrangement.spacedBy(10.dp),
 			) {
 				when (selectedTab) {
-					HelpTab.QUICK_START -> DccTutorialContent(onOpenUrl)
+					HelpTab.QUICK_START -> DccTutorialContent(
+						onOpenUrl = onOpenUrl,
+						onStartInteractiveTutorial = onStartInteractiveTutorial,
+					)
 					HelpTab.PSD_SPEC -> DccPsdSpecContent(onOpenUrl)
 					HelpTab.SHORTCUTS -> DccShortcutsContent(keymap)
 					HelpTab.COMMUNITY_LINKS -> DccCommunityLinksContent(
@@ -217,7 +221,10 @@ fun HelpDialog(
 // 1. DCC Tutorial Content (Flat, Technical, Zero Emojis)
 // ---------------------------------------------------------------------------
 @Composable
-private fun DccTutorialContent(onOpenUrl: (String) -> Unit) {
+private fun DccTutorialContent(
+	onOpenUrl: (String) -> Unit,
+	onStartInteractiveTutorial: (() -> Unit)? = null,
+) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 
@@ -229,6 +236,35 @@ private fun DccTutorialContent(onOpenUrl: (String) -> Unit) {
 			modifier = Modifier.fillMaxWidth(),
 			verticalArrangement = Arrangement.spacedBy(8.dp),
 		) {
+			if (onStartInteractiveTutorial != null) {
+				Column(
+					modifier = Modifier
+						.fillMaxWidth()
+						.background(colors.panelElevated, RoundedCornerShape(3.dp))
+						.border(BorderStroke(1.dp, colors.accent.copy(alpha = 0.45f)), RoundedCornerShape(3.dp))
+						.padding(12.dp),
+					verticalArrangement = Arrangement.spacedBy(8.dp),
+				) {
+					Text(
+						text = tr("tutorial.basic.helpCard.title"),
+						style = typography.body.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
+						color = colors.textPrimary,
+					)
+					Text(
+						text = tr("tutorial.basic.helpCard.desc"),
+						style = typography.caption.copy(fontSize = 11.sp),
+						color = colors.textMuted,
+					)
+					CompactButton(
+						text = tr("tutorial.basic.start"),
+						onClick = onStartInteractiveTutorial,
+						isPrimary = true,
+						height = 26.dp,
+					)
+				}
+				Spacer(modifier = Modifier.height(4.dp))
+			}
+
 			Text(
 				text = tr("help.tutorial.triage.title"),
 				style = typography.body.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),

@@ -81,6 +81,17 @@ import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.state.ShortcutAction
 import io.github.psd2live.ui.state.ShortcutScope
 import io.github.psd2live.ui.state.WorkspaceTabKind
+import io.github.psd2live.ui.tutorial.BasicTutorialStep
+import io.github.psd2live.ui.tutorial.InteractiveTutorialState
+import io.github.psd2live.ui.tutorial.LocalTutorialTargets
+import io.github.psd2live.ui.tutorial.TutorialOverlay
+import io.github.psd2live.ui.tutorial.advance
+import io.github.psd2live.ui.tutorial.isComplete
+import io.github.psd2live.ui.tutorial.rememberTutorialTargetRegistry
+import io.github.psd2live.ui.tutorial.retreat
+import io.github.psd2live.ui.tutorial.start
+import io.github.psd2live.ui.tutorial.stop
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.material.DropdownMenu
 import io.github.psd2live.ui.components.SettingsDialog
 import io.github.psd2live.ui.state.AppSettings
@@ -104,7 +115,7 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import javax.swing.JOptionPane
-
+import androidx.compose.ui.input.key.Key
 @Composable
 fun FrameWindowScope.PSD2LiveApp(
 	viewModel: PSD2LiveViewModel,
@@ -121,6 +132,25 @@ fun FrameWindowScope.PSD2LiveApp(
 	var helpDialogTab by remember { mutableStateOf<HelpTab?>(null) }
 	var showAgentDialog by remember { mutableStateOf(false) }
 	var showUpscaleDialog by remember { mutableStateOf(false) }
+	var tutorial by remember { mutableStateOf(InteractiveTutorialState()) }
+	val tutorialTargets = rememberTutorialTargetRegistry()
+
+	fun startInteractiveTutorial() {
+		helpDialogTab = null
+		tutorial = InteractiveTutorialState().start()
+	}
+
+	fun stopInteractiveTutorial() {
+		tutorial = tutorial.stop()
+	}
+
+	fun advanceTutorial() {
+		tutorial = tutorial.advance()
+	}
+
+	fun retreatTutorial() {
+		tutorial = tutorial.retreat()
+	}
 
 	viewModel.confirmUnsavedChanges = {
         JOptionPane.showOptionDialog(window, tr("project.unsaved"), tr("project.save"), JOptionPane.DEFAULT_OPTION,
@@ -233,13 +263,44 @@ fun FrameWindowScope.PSD2LiveApp(
 			state.showSettingsDialog ||
 			state.projectSaveError != null ||
 			state.errorMessage != null ||
-			isDraggingOver
+			isDraggingOver ||
+			tutorial.active
 
+		// Tutorial step side-effects and auto-advance
+		LaunchedEffect(tutorial.active, tutorial.step) {
+			if (!tutorial.active) return@LaunchedEffect
+			when (tutorial.step) {
+				BasicTutorialStep.ADJUST_LAYERS, BasicTutorialStep.INTRODUCE_LAYER_ROW -> {
+					viewModel.setInspectorCollapsed(false)
+					viewModel.requestSelectDockModule("layers")
+				}
+				BasicTutorialStep.ADJUST_MODEL_SETTINGS -> {
+					viewModel.setInspectorCollapsed(false)
+					viewModel.setModelSettingsExpanded(true)
+					viewModel.requestSelectDockModule("settings")
+				}
+				else -> Unit
+			}
+		}
+		LaunchedEffect(tutorial.active, tutorial.step, state.previewModel, state.activeTabKind, state.showExportDialog, tutorial.titleBarMenuOpen, tutorial.reviewing) {
+			if (!tutorial.active) return@LaunchedEffect
+			val step = tutorial.step
+			if (step == BasicTutorialStep.DONE) return@LaunchedEffect
+			if (step.isComplete(state, tutorial)) {
+				advanceTutorial()
+			}
+		}
+
+		CompositionLocalProvider(LocalTutorialTargets provides tutorialTargets) {
 		Box(
 			modifier = Modifier
 				.fillMaxSize()
 				.border(BorderStroke(1.dp, colors.border))
 				.onPreviewKeyEvent { event ->
+					if (tutorial.active && event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+						stopInteractiveTutorial()
+						return@onPreviewKeyEvent true
+					}
 					// Recording a shortcut owns the keyboard outright, so the chord being recorded
 					// cannot be swallowed by the very action it is about to replace.
 					if (state.keyCapture != null) {
@@ -255,9 +316,17 @@ fun FrameWindowScope.PSD2LiveApp(
 						return@onPreviewKeyEvent when {
 							state.showExportDialog && canGenerate -> { onGenerateAction(); true }
 							state.showExportDialog -> true
+							tutorial.active && hasInput && !isBusy -> { viewModel.openExportDialog(); true }
 							modalOpen -> false
 							!hasInput || isBusy -> false
 							else -> { viewModel.openExportDialog(); true }
+						}
+					}
+					if (tutorial.active) {
+						return@onPreviewKeyEvent when (action) {
+							ShortcutAction.OPEN_PSD -> { onOpenPsdAction(); true }
+							ShortcutAction.OPEN_HELP -> { stopInteractiveTutorial(); true }
+							else -> true // consume other app shortcuts during the tour
 						}
 					}
 					if (modalOpen) return@onPreviewKeyEvent false
@@ -303,7 +372,7 @@ fun FrameWindowScope.PSD2LiveApp(
 						ShortcutAction.ZOOM_OUT -> { viewModel.zoomOut(); true }
 						ShortcutAction.ZOOM_RESET -> { viewModel.resetZoom(); true }
 						ShortcutAction.OPEN_SETTINGS -> { viewModel.openSettingsDialog(); true }
-						ShortcutAction.OPEN_HELP -> { helpDialogTab = HelpTab.QUICK_START; true }
+						ShortcutAction.OPEN_HELP -> { startInteractiveTutorial(); true }
 						else -> {
 							// The nine tab-jump actions share one body. A null index means this is a
 							// canvas action, which this handler does not own.
@@ -364,11 +433,30 @@ fun FrameWindowScope.PSD2LiveApp(
 						onPrevTab = { viewModel.cycleTab(-1) },
 						onShowAbout = { helpDialogTab = HelpTab.ABOUT },
 						onShowHelp = { tab -> helpDialogTab = tab },
+						onStartInteractiveTutorial = { startInteractiveTutorial() },
+						tutorialMenuForce = if (tutorial.active && tutorial.step.forcesFileMenu) "file" else null,
+						tutorialHighlightTarget = if (tutorial.active) tutorial.step.targetId else null,
+						tutorialStep = if (tutorial.active) tutorial.step else null,
+						tutorialReviewing = tutorial.reviewing,
+						onTutorialNext = { advanceTutorial() },
+						onTutorialPrevious = { retreatTutorial() },
+						onTutorialSkip = { advanceTutorial() },
+						onTutorialExit = { stopInteractiveTutorial() },
+						onTutorialMenuChanged = { menu ->
+							if (tutorial.active) {
+								tutorial = tutorial.copy(titleBarMenuOpen = menu)
+							}
+						},
 						onOpenUrl = { url -> DesktopUtils.openBrowser(url) },
 					)
 				}
-                DockWorkspaceView(state, viewModel,
-                    Modifier.weight(1f).fillMaxWidth().padding(top = 2.dp), window)
+                DockWorkspaceView(
+					state,
+					viewModel,
+                    Modifier.weight(1f).fillMaxWidth().padding(top = 2.dp),
+					window,
+					onStartTutorial = { startInteractiveTutorial() },
+				)
 
 				// Bottom Status Bar
 				StatusBar(state, viewModel)
@@ -386,7 +474,22 @@ fun FrameWindowScope.PSD2LiveApp(
 					modifier = Modifier.align(Alignment.BottomEnd),
 				)
 			}
+
+			if (tutorial.active && !tutorial.step.coachBesideMenu) {
+				// Menu steps render their overlay inside the menu popup.
+				TutorialOverlay(
+					step = tutorial.step,
+					registry = tutorialTargets,
+					reviewing = tutorial.reviewing,
+					onNext = { advanceTutorial() },
+					onPrevious = { retreatTutorial() },
+					onSkip = { advanceTutorial() },
+					onExit = { stopInteractiveTutorial() },
+					onFinish = { stopInteractiveTutorial() },
+				)
+			}
 		}
+		} // CompositionLocalProvider
 
 		// Error Message Modal
 		state.errorMessage?.let { error ->
@@ -405,6 +508,10 @@ fun FrameWindowScope.PSD2LiveApp(
 				keymap = state.keymap,
 				onDismiss = { helpDialogTab = null },
 				onOpenUrl = { url -> DesktopUtils.openBrowser(url) },
+				onStartInteractiveTutorial = {
+					helpDialogTab = null
+					startInteractiveTutorial()
+				},
 			)
 		}
 
