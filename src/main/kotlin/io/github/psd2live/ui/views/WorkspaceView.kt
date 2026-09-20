@@ -160,11 +160,23 @@ fun WorkspaceView(
 			}
 
 			// Main workspace area: the active tab owns its canvas mode and view options.
+			// The hierarchy sidebar is a full-height sibling of (canvas + log), so the log
+			// dock never sits under the tree.
 			val activeTab = state.activeWorkspaceTab
 			Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
 				key(activeTab.id) {
 					when (activeTab.kind) {
-						WorkspaceTabKind.HISTORY -> HistoryTreeView(state, viewModel)
+						WorkspaceTabKind.HISTORY -> Column(modifier = Modifier.fillMaxSize()) {
+							HistoryTreeView(
+								state = state,
+								viewModel = viewModel,
+								modifier = Modifier.weight(1f).fillMaxWidth(),
+							)
+							BottomLogDock(
+								state = state,
+								viewModel = viewModel,
+							)
+						}
 						WorkspaceTabKind.EDIT, WorkspaceTabKind.PREVIEW -> HierarchyView(
 							state = state,
 							viewModel = viewModel,
@@ -180,12 +192,6 @@ fun WorkspaceView(
 					}
 				}
 			}
-
-			// Independent Bottom Log Dock (shared by every tab)
-			BottomLogDock(
-				state = state,
-				viewModel = viewModel,
-			)
 		}
 
 		val editor = viewModel.canvasEditor
@@ -296,14 +302,21 @@ private fun HierarchyView(
 				)
 			}
 
-			// Right: 2D Canvas Viewport
-			Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-				CanvasViewportComposable(
-					mode = canvasMode,
+			// Right: canvas stacked above the shared log dock. The tree to the left
+			// keeps the remaining height, so expanding the log only shrinks the viewport.
+			Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+				Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+					CanvasViewportComposable(
+						mode = canvasMode,
+						state = state,
+						viewModel = viewModel,
+						modifier = Modifier.fillMaxSize(),
+						onLayerClicked = { viewModel.selectLayer(it) },
+					)
+				}
+				BottomLogDock(
 					state = state,
 					viewModel = viewModel,
-					modifier = Modifier.fillMaxSize(),
-					onLayerClicked = { viewModel.selectLayer(it) },
 				)
 			}
 		}
