@@ -14,6 +14,8 @@ import org.umamo.format.psd.PsdReader
 import org.umamo.interop.ExportNotice
 import org.umamo.interop.cmo3.Cmo3Conversion
 import org.umamo.interop.cmo3.Cmo3Import
+import org.umamo.interop.cmo3FileFormatVersion
+import org.umamo.interop.cmo3TargetVersionNo
 import org.umamo.interop.mocVersion
 import org.umamo.interop.moc3.Moc3Sidecars
 import org.umamo.interop.moc3.import.Moc3Import
@@ -432,6 +434,8 @@ class PSD2LivePipeline {
 		  "generator": "PSD2Live 0.9.0",
 		  "runtimeTarget": ${quote(rig.puppet.runtimeTarget.name)},
 		  "mocVersion": ${rig.puppet.runtimeTarget.mocVersion().byteValue},
+		  "cmo3TargetVersionNo": ${rig.puppet.runtimeTarget.cmo3TargetVersionNo()},
+		  "cmo3FileFormatVersion": ${quote(rig.puppet.runtimeTarget.cmo3FileFormatVersion())},
 		  "canvas": {"width":${analysis.source.widthPx},"height":${analysis.source.heightPx}},
 		  "config": {"atlasSize":${config.atlasSize},"meshSpacing":${config.meshSpacing},"headTurnStrength":${config.headTurnStrength},"bodyStrength":${config.bodyStrength},"meshOnly":${config.meshOnly},"generateDeformers":${config.generateDeformers},"exportMotions":${config.exportMotions}},
 		  "faceRig": {"algorithm":"perspective-parallelogram-nine-pose-v2","angleX":[-45,0,45],"angleY":[-30,0,30],"initialAngleZ":${rig.initialHeadAngleZ},"centerX":${rig.faceCenterX},"centerY":${rig.faceCenterY},"radiusX":${rig.faceRadiusX},"radiusY":${rig.faceRadiusY}},

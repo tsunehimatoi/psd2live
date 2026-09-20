@@ -22,19 +22,33 @@ internal object Cmo3FreshFile {
 	/**
 	 * Serializes [root] via [Cmo3Author] and wraps it with the given PNGs into a CAFF container.
 	 *
-	 * @param Any  root         The fresh model root (a CModelSource web built in memory).
-	 * @param List pngEntries   The embedded PNGs, in allocation order (icons, then pages).
-	 * @param Int  obfuscateKey The container XOR key; the editor mints one per save.
+	 * @param Any    root              The fresh model root (a CModelSource web built in memory).
+	 * @param List   pngEntries        The embedded PNGs, in allocation order (icons, then pages).
+	 * @param Int    obfuscateKey      The container XOR key; the editor mints one per save.
+	 * @param String fileFormatVersion The `<root fileFormatVersion>` matching the selected SDK.
 	 * @return ByteArray The complete .cmo3 file bytes.
 	 */
-	internal fun assemble(root: Any, pngEntries: List<PngEntry>, obfuscateKey: Int): ByteArray {
+	internal fun assemble(
+		root: Any,
+		pngEntries: List<PngEntry>,
+		obfuscateKey: Int,
+		fileFormatVersion: String = Cmo3Author.FRESH_FILE_FORMAT_VERSION,
+	): ByteArray {
 		val entries = ArrayList<CaffEntry>(pngEntries.size + 1)
 		for (pngEntry in pngEntries) {
 			// CMO3: PNG entries - tag "", RAW compression, obfuscated (corpus invariant).
 			entries.add(CaffEntry(pngEntry.path, "", pngEntry.pngBytes, CompressOption.RAW, obfuscated = true))
 		}
 		// CMO3: the main_xml entry - FAST compression, obfuscated, LAST in the table (corpus invariant).
-		entries.add(CaffEntry("main.xml", CaffArchive.TAG_MAIN_XML, Cmo3Author.writeFreshMainXml(root), CompressOption.FAST, obfuscated = true))
+		entries.add(
+			CaffEntry(
+				"main.xml",
+				CaffArchive.TAG_MAIN_XML,
+				Cmo3Author.writeFreshMainXml(root, fileFormatVersion),
+				CompressOption.FAST,
+				obfuscated = true,
+			),
+		)
 		return CaffCodec.write(CaffArchive(obfuscateKey = obfuscateKey, entries = entries))
 	}
 }

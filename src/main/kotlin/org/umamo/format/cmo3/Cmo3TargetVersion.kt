@@ -32,6 +32,17 @@ enum class Cmo3TargetVersion(val major: Int, val minor: Int, val versionNo: Int)
 	;
 
 	/**
+	 * The `<root fileFormatVersion>` a fresh document writes for this SDK target.
+	 *
+	 * Packed as `major * 100_000_000 + minor * 1_000_000` so Cubism 5.0 → `500000000` and
+	 * Cubism 5.3 → `503000000`.  Distinct from [versionNo] (the model-target field) and from the
+	 * upstream BareMinimum pin `504000000` (Editor 5.4 era), which must not override a lower SDK
+	 * selection.
+	 */
+	val fileFormatVersion: String
+		get() = (major * 100_000_000L + minor * 1_000_000L).toString()
+
+	/**
 	 * The value this version would take under the modern 4.2+ scheme, accepted as a tolerant-read
 	 * alias because a future editor revision normalizing old projects would most plausibly emit it.
 	 */

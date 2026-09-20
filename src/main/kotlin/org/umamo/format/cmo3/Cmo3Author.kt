@@ -17,27 +17,29 @@ import org.umamo.format.cmo3.xml.XmlCodec
  */
 public object Cmo3Author {
 	/**
-	 * The fileFormatVersion a fresh document writes.
-	 *
-	 * CMO3: root attribute fileFormatVersion (BareMinimum.cmo3, official editor 5.4 New -> Save
-	 * As).  Pinned to the 5.4 era because the prologue tables (Cmo3PiTables) are transcribed from
-	 * the 504000000 corpus samples; changing one without the other would author a mismatched
-	 * prologue.
+	 * Default fresh-document `fileFormatVersion` when no SDK target is supplied (Cubism 5.0).
+	 * Prefer [org.umamo.interop.cmo3FileFormatVersion] / [Cmo3TargetVersion.fileFormatVersion] so the
+	 * root attribute tracks the selected SDK.
 	 */
-	public const val FRESH_FILE_FORMAT_VERSION: String = "504000000"
+	public const val FRESH_FILE_FORMAT_VERSION: String = "500000000"
 
 	/**
-	 * Serializes [root] as a complete main.xml document with the 5.4-era prologue.
+	 * Serializes [root] as a complete main.xml document with the prologue for [fileFormatVersion].
 	 *
 	 * The `<?import?>` list is derived from the document itself: one FQCN per distinct
 	 * non-structural element tag actually emitted, sorted - exactly the rule every corpus file
 	 * follows.  An element tag with no FQCN table entry is a hard error: it means an unregistered
 	 * or newly modeled class whose import the official editor's reader would miss.
 	 *
-	 * @param Any root The fresh model root (a CModelSource web built in memory, never read).
+	 * @param Any    root              The fresh model root (a CModelSource web built in memory, never read).
+	 * @param String fileFormatVersion The `<root fileFormatVersion>` to write; must match the SDK
+	 *                                 target (e.g. Cubism 5.0 → `500000000`).
 	 * @return ByteArray The UTF-8 main.xml bytes, CRLF-framed like the editor's writer.
 	 */
-	public fun writeFreshMainXml(root: Any): ByteArray {
+	public fun writeFreshMainXml(
+		root: Any,
+		fileFormatVersion: String = FRESH_FILE_FORMAT_VERSION,
+	): ByteArray {
 		val document = cubismEngine().writeRoot(root)
 		val tags = HashSet<String>()
 		collectTags(document.rootElement, tags)
@@ -57,7 +59,7 @@ public object Cmo3Author {
 			CMO3_VERSIONS_BY_TAG_5_4[tag]?.let { versionEntry -> versions.add(versionEntry) }
 		}
 		// CMO3: root attribute fileFormatVersion - the root's only attribute in every corpus file.
-		document.rootElement.setAttribute("fileFormatVersion", FRESH_FILE_FORMAT_VERSION)
+		document.rootElement.setAttribute("fileFormatVersion", fileFormatVersion)
 		var instructionIndex = 0
 		for ((piName, versionNumber) in versions) {
 			document.addContent(instructionIndex++, ProcessingInstruction("version", "$piName:$versionNumber"))
@@ -111,7 +113,10 @@ public object Cmo3Author {
 		val replayedVersionNames = versionInstructions.map { it.data.trim().substringBeforeLast(':') }.toHashSet()
 		val fileFormatVersion = document.rootElement.getAttributeValue("fileFormatVersion")
 		val appendedVersions =
-			if (fileFormatVersion == FRESH_FILE_FORMAT_VERSION) {
+			if (fileFormatVersion == FRESH_FILE_FORMAT_VERSION ||
+				fileFormatVersion == "504000000" ||
+				fileFormatVersion?.startsWith("5") == true
+			) {
 				modelTags.sorted().mapNotNull { tag ->
 					CMO3_VERSIONS_BY_TAG_5_4[tag]?.takeIf { (piName, _) -> piName !in replayedVersionNames }
 				}

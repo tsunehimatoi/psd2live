@@ -9,6 +9,7 @@ import org.umamo.format.cmo3.model.gen.CTextureManager
 import org.umamo.format.raster.RasterImage
 import org.umamo.interop.ExportNotice
 import org.umamo.interop.ExportReport
+import org.umamo.interop.cmo3FileFormatVersion
 import org.umamo.interop.cmo3TargetVersionNo
 import org.umamo.runtime.model.AtlasTileId
 import org.umamo.runtime.model.PuppetModel
@@ -142,6 +143,7 @@ public object Cmo3Conversion {
 						)
 					} + chain.pngEntries,
 					obfuscateKey,
+					fileFormatVersion = effectivePuppet.runtimeTarget.cmo3FileFormatVersion(),
 				),
 			)
 		rebindPageResources(chain, model)

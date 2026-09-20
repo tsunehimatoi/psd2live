@@ -62,6 +62,15 @@ fun RuntimeTarget.cmo3TargetVersionNo(): Int =
 	cmo3TargetVersion()?.versionNo ?: Cmo3TargetVersion.V50.versionNo
 
 /**
+ * The `<root fileFormatVersion>` a fresh CMO3 write uses for this target - kept in lockstep with
+ * [cmo3TargetVersion] so selecting Cubism 5.0 cannot emit a 5.4-era `504000000` root.
+ *
+ * @return String The packed fileFormatVersion attribute value.
+ */
+fun RuntimeTarget.cmo3FileFormatVersion(): String =
+	cmo3TargetVersion()?.fileFormatVersion ?: Cmo3TargetVersion.V50.fileFormatVersion
+
+/**
  * Maps a CMO3 document's decoded target version to the runtime target it selects, with unknown or
  * absent values falling back to no restriction.
  *

@@ -47,15 +47,16 @@ import org.umamo.format.raster.RasterImage
  * too - their DontSerializeIfDefault annotations are hand-removed in the generated model, because
  * the official reader's custom deserializers reject their absence.
  *
- * ERA NOTE, unresolved: seeding from BareMinimum means a fresh graph declares fileFormatVersion
- * 504000000 (Cubism 5.4) even though a MOC3-origin conversion populates nothing 5.x and its
- * targetVersionNo says SDK 4.0.  Both files that are known to RENDER for the same model - Cubism's
- * own golden (402030000) and a third-party converter's output (401030000) - are 4.x.  The standing
- * theory for the MOC3-origin render gap (see [Cmo3Conversion]) is that the 5.4 reader composites
- * through the model-image web, so a merely shape-correct synthetic web is not enough, while a 4.x
- * file draws straight from the atlas.  Emitting an era-matched graph (4.x version PIs, dropping
- * the 5.x-only fields) would test it; it was not pursued because the art-sourcing pipeline
- * supersedes the whole synthetic path.
+ * ERA NOTE: fresh graphs write `fileFormatVersion` from the selected SDK target (Cubism 5.0 →
+ * `500000000`, Cubism 5.3 → `503000000`) via [org.umamo.interop.cmo3FileFormatVersion], in lockstep
+ * with [targetVersionNo].  Prologue PI tables still come from the 5.4 corpus.  A MOC3-origin
+ * conversion may still populate nothing 5.x while targetVersionNo says an older SDK.  Both files
+ * that are known to RENDER for the same model - Cubism's own golden (402030000) and a third-party
+ * converter's output (401030000) - are 4.x.  The standing theory for the MOC3-origin render gap
+ * (see [Cmo3Conversion]) is that a 5.x reader composites through the model-image web, so a merely
+ * shape-correct synthetic web is not enough, while a 4.x file draws straight from the atlas.
+ * Emitting an era-matched graph (4.x version PIs, dropping the 5.x-only fields) would test it; it
+ * was not pursued because the art-sourcing pipeline supersedes the whole synthetic path.
  */
 internal object Cmo3SkeletonBuilder {
 	/**
@@ -186,8 +187,13 @@ internal object Cmo3SkeletonBuilder {
 				modelViewerSetting = ModelViewerSetting().apply { trackCursorSettings = ArrayList<Any?>() }
 				guides = CGuidesSetting().apply { guidesModeling = CArrayList<Any?>() }
 				this.targetVersionNo = targetVersionNo
-				// CMO3: CModelSource field latestVersionOfLastModelerNo (BareMinimum writes 5030000).
-				latestVersionOfLastModelerNo = 5030000
+				// CMO3: CModelSource field latestVersionOfLastModelerNo (matches targetVersionNo or Cubism 5.0).
+				latestVersionOfLastModelerNo =
+					if (targetVersionNo == org.umamo.format.cmo3.Cmo3TargetVersion.LATEST_VERSION_NO) {
+						5_000_000
+					} else {
+						targetVersionNo
+					}
 				artPathBrushesSetting = CArtPathBrushSetting().apply { brushes = CArrayList<Any?>() }
 				// CMO3: CModelSource fields randomPoseSetting / motionSyncSettingsSet /
 				// modelStateSetSet - every 5.4 corpus file writes all three (empty when the
