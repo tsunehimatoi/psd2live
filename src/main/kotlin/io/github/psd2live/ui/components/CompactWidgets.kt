@@ -13,6 +13,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import kotlin.math.abs
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -33,6 +34,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -57,6 +59,7 @@ import androidx.compose.material.Text
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerButton
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.platform.LocalDensity
@@ -314,7 +317,14 @@ fun IconSearch(
 	}
 }
 
-/** Link / unlink glyph for Cubism-style combined parameters (points at the parameter below). */
+/**
+ * Cubism-style parameter link chain.
+ *
+ * Each link is a tall stadium (capsule) — taller than wide, not a circle.
+ * [linked]=true: two stadiums diagonally staggered and hooked through each other;
+ * gaps sit on the actual crossing so the weave reads as a small cross (+).
+ * [linked]=false: one open tall stadium (gap at bottom-left).
+ */
 @Composable
 fun IconParameterLink(
 	linked: Boolean,
@@ -324,50 +334,96 @@ fun IconParameterLink(
 	Canvas(modifier = modifier) {
 		val w = size.width
 		val h = size.height
-		val stroke = Stroke(width = 1.25f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-		if (linked) {
-			// Two interlocking chain links (linked pair)
-			drawRoundRect(
+		val strokeW = (minOf(w, h) * 0.14f).coerceIn(1.15.dp.toPx(), 1.85.dp.toPx())
+		val stroke = Stroke(width = strokeW, cap = StrokeCap.Round, join = StrokeJoin.Round)
+
+		fun stadiumPath(
+			left: Float,
+			top: Float,
+			right: Float,
+			bottom: Float,
+			/** Open gap on bottom-left corner (degrees of bottom arc skipped near left). */
+			gapBottomLeftDeg: Float = 0f,
+			/** Open gap on top-right corner (degrees of top arc skipped near right). */
+			gapTopRightDeg: Float = 0f,
+		): Path {
+			val r = (right - left) * 0.5f
+			val topRect = Rect(left, top, right, top + 2f * r)
+			val bottomRect = Rect(left, bottom - 2f * r, right, bottom)
+			return Path().apply {
+				when {
+					gapBottomLeftDeg > 0f -> {
+						// Start on left edge above the gap, go up → top → right → bottom (stop before left).
+						moveTo(left, bottom - r - strokeW * 0.35f)
+						lineTo(left, top + r)
+						arcTo(topRect, 180f, 180f, false)
+						lineTo(right, bottom - r)
+						arcTo(bottomRect, 0f, 180f - gapBottomLeftDeg, false)
+					}
+					gapTopRightDeg > 0f -> {
+						// Start on right edge below the gap, go down → bottom → left → top (stop before right).
+						moveTo(right, top + r + strokeW * 0.35f)
+						lineTo(right, bottom - r)
+						arcTo(bottomRect, 0f, 180f, false)
+						lineTo(left, top + r)
+						arcTo(topRect, 180f, 180f - gapTopRightDeg, false)
+					}
+					else -> {
+						moveTo(left, top + r)
+						lineTo(left, bottom - r)
+						arcTo(bottomRect, 180f, -180f, false)
+						lineTo(right, top + r)
+						arcTo(topRect, 0f, -180f, false)
+						close()
+					}
+				}
+			}
+		}
+
+		if (!linked) {
+			// Single open tall stadium — gap at bottom-left (same language as linked weave).
+			val linkW = (w * 0.58f).coerceAtLeast(4f)
+			val linkH = (h * 0.78f).coerceAtLeast(linkW * 1.45f)
+			val left = (w - linkW) * 0.5f
+			val top = (h - linkH) * 0.5f
+			drawPath(
+				path = stadiumPath(
+					left, top, left + linkW, top + linkH,
+					gapBottomLeftDeg = 52f,
+				),
 				color = tint,
-				topLeft = Offset(w * 0.10f, h * 0.22f),
-				size = androidx.compose.ui.geometry.Size(w * 0.48f, h * 0.56f),
-				cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.22f, h * 0.28f),
 				style = stroke,
-			)
-			drawRoundRect(
-				color = tint,
-				topLeft = Offset(w * 0.42f, h * 0.22f),
-				size = androidx.compose.ui.geometry.Size(w * 0.48f, h * 0.56f),
-				cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.22f, h * 0.28f),
-				style = stroke,
-			)
-			drawLine(
-				color = tint,
-				start = Offset(w * 0.38f, h * 0.5f),
-				end = Offset(w * 0.62f, h * 0.5f),
-				strokeWidth = 1.3f,
-				cap = StrokeCap.Round,
 			)
 		} else {
-			// Two open links separated by a gap (can link)
-			drawRoundRect(
+			// Diagonal stagger: upper-right / lower-left.
+			// Crossing sits on upper bottom-left ↔ lower top-right → gaps match those corners.
+			val linkW = (w * 0.55f).coerceAtLeast(4f)
+			val linkH = (h * 0.58f).coerceAtLeast(linkW * 1.55f)
+			val diag = (w * 0.12f).coerceAtLeast(1.1.dp.toPx())
+			val centerX = w * 0.5f
+			val top1 = h * 0.02f
+			val bottom1 = top1 + linkH
+			val bottom2 = h * 0.98f
+			val top2 = bottom2 - linkH
+			val gapDeg = 56f
+
+			// Upper → shift right
+			val left1 = centerX - linkW * 0.5f + diag
+			val right1 = left1 + linkW
+			// Lower → shift left
+			val left2 = centerX - linkW * 0.5f - diag
+			val right2 = left2 + linkW
+
+			// Draw lower first, then upper (upper's right strand sits in front at top-right gap of lower).
+			drawPath(
+				path = stadiumPath(left2, top2, right2, bottom2, gapTopRightDeg = gapDeg),
 				color = tint,
-				topLeft = Offset(w * 0.08f, h * 0.24f),
-				size = androidx.compose.ui.geometry.Size(w * 0.38f, h * 0.52f),
-				cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.18f, h * 0.26f),
 				style = stroke,
 			)
-			drawRoundRect(
+			drawPath(
+				path = stadiumPath(left1, top1, right1, bottom1, gapBottomLeftDeg = gapDeg),
 				color = tint,
-				topLeft = Offset(w * 0.54f, h * 0.24f),
-				size = androidx.compose.ui.geometry.Size(w * 0.38f, h * 0.52f),
-				cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.18f, h * 0.26f),
 				style = stroke,
-			)
-			drawCircle(
-				color = tint.copy(alpha = 0.5f),
-				radius = 1.0f,
-				center = Offset(w * 0.5f, h * 0.5f),
 			)
 		}
 	}
@@ -1385,13 +1441,14 @@ enum class SliderKeyShape { Circle, Square }
 /** One key point drawn on a parameter slider track. */
 data class SliderKeyMark(val value: Float, val shape: SliderKeyShape = SliderKeyShape.Circle)
 
-/** Practical Compact DCC Slider with optional Cubism-style parameter key marks. */
+
+/** Simple compact slider for settings dialogs (parameter panel uses its own Cubism track). */
 @Composable
 fun CompactSlider(
 	value: Float,
 	onValueChange: (Float) -> Unit,
-    onValueChangeStarted: () -> Unit = {},
-    onValueChangeFinished: () -> Unit = {},
+	onValueChangeStarted: () -> Unit = {},
+	onValueChangeFinished: () -> Unit = {},
 	modifier: Modifier = Modifier,
 	valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
 	steps: Int = 0,
@@ -1401,108 +1458,84 @@ fun CompactSlider(
 	thumbShape: SliderKeyShape = SliderKeyShape.Circle,
 ) {
 	val changeValue by rememberUpdatedState(onValueChange)
-    val startChange by rememberUpdatedState(onValueChangeStarted)
-    val finishChange by rememberUpdatedState(onValueChangeFinished)
-    val colors = LocalToolColors.current
+	val startChange by rememberUpdatedState(onValueChangeStarted)
+	val finishChange by rememberUpdatedState(onValueChangeFinished)
+	val colors = LocalToolColors.current
+	val span = (valueRange.endInclusive - valueRange.start).coerceAtLeast(0.0001f)
+	val fraction = ((value - valueRange.start) / span).coerceIn(0f, 1f)
 	val interactionSource = remember { MutableInteractionSource() }
 	val isHovered by interactionSource.collectIsHoveredAsState()
 	val isPressed by interactionSource.collectIsPressedAsState()
 
-	val rangeSpan = (valueRange.endInclusive - valueRange.start).coerceAtLeast(0.0001f)
-	val fraction = ((value - valueRange.start) / rangeSpan).coerceIn(0f, 1f)
-
-	BoxWithConstraints(
+	Canvas(
 		modifier = modifier
 			.height(height)
 			.hoverable(interactionSource)
-			.pointerHoverIcon(if (enabled) PointerIcon(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)) else PointerIcon.Default)
-            .pointerInput(valueRange, enabled) {
-                if (!enabled) return@pointerInput
-                awaitEachGesture {
-                    val down = awaitFirstDown()
-                    startChange()
-                    try {
-                        changeValue(valueRange.start + (down.position.x / size.width.toFloat()).coerceIn(0f, 1f) * rangeSpan)
-                        down.consume()
-                        do {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                            if (change.pressed) changeValue(valueRange.start + (change.position.x / size.width.toFloat()).coerceIn(0f, 1f) * rangeSpan)
-                            change.consume()
-                        } while (event.changes.any { it.pressed })
-                    } finally { finishChange() }
-                }
-            },
-		contentAlignment = Alignment.CenterStart,
-	) {
-		val totalW = maxWidth
-		val trackH = 4.dp
-		val thumbRadius = 5.dp
-
-		Box(
-			modifier = Modifier
-				.fillMaxWidth()
-				.height(trackH)
-				.background(colors.inputBackground, RoundedCornerShape(2.dp))
-				.border(BorderStroke(0.5.dp, colors.border), RoundedCornerShape(2.dp)),
-		)
-
-		Box(
-			modifier = Modifier
-				.width(totalW * fraction)
-				.height(trackH)
-				.background(
-					if (enabled) (if (isHovered || isPressed) colors.accentHover else colors.accent)
-					else colors.textDisabled,
-					RoundedCornerShape(2.dp),
-				),
-		)
-
-		if (keyMarks.isNotEmpty()) {
-			Canvas(modifier = Modifier.fillMaxWidth().height(height)) {
-				val markRadius = 3.5.dp.toPx()
-				val centerY = size.height / 2f
-				val usable = (size.width - 2f * thumbRadius.toPx()).coerceAtLeast(0f)
-				val inset = thumbRadius.toPx()
-				for (mark in keyMarks) {
-					val keyFraction = ((mark.value - valueRange.start) / rangeSpan).coerceIn(0f, 1f)
-					val markX = inset + keyFraction * usable
-					val color = colors.textMuted.copy(alpha = 0.85f)
-					when (mark.shape) {
-						SliderKeyShape.Circle -> drawCircle(color, markRadius, Offset(markX, centerY))
-						SliderKeyShape.Square -> drawRoundRect(
-							color = color,
-							topLeft = Offset(markX - markRadius, centerY - markRadius),
-							size = Size(markRadius * 2f, markRadius * 2f),
-							cornerRadius = CornerRadius(markRadius * 0.35f),
-						)
+			.pointerHoverIcon(
+				if (enabled) PointerIcon(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR))
+				else PointerIcon.Default,
+			)
+			.pointerInput(valueRange, enabled) {
+				if (!enabled) return@pointerInput
+				val inset = 5.dp.toPx()
+				awaitEachGesture {
+					val down = awaitFirstDown()
+					startChange()
+					try {
+						fun at(x: Float): Float {
+							val usable = (size.width - 2f * inset).coerceAtLeast(1f)
+							return valueRange.start + ((x - inset) / usable).coerceIn(0f, 1f) * span
+						}
+						changeValue(at(down.position.x))
+						down.consume()
+						do {
+							val event = awaitPointerEvent()
+							val change = event.changes.firstOrNull { it.id == down.id } ?: break
+							if (change.pressed) changeValue(at(change.position.x))
+							change.consume()
+						} while (event.changes.any { it.pressed })
+					} finally {
+						finishChange()
 					}
 				}
+			},
+	) {
+		val trackH = 3.dp.toPx()
+		val thumbR = 5.dp.toPx()
+		val cy = size.height / 2f
+		val usable = (size.width - 2f * thumbR).coerceAtLeast(0f)
+		val thumbX = thumbR + fraction * usable
+		drawRoundRect(
+			colors.inputBackground,
+			Offset(0f, cy - trackH / 2f),
+			Size(size.width, trackH),
+			CornerRadius(trackH / 2f),
+		)
+		drawRoundRect(
+			if (enabled) (if (isHovered || isPressed) colors.accentHover else colors.accent) else colors.textDisabled,
+			Offset(0f, cy - trackH / 2f),
+			Size(thumbX.coerceAtLeast(trackH), trackH),
+			CornerRadius(trackH / 2f),
+		)
+		for (mark in keyMarks) {
+			val mx = thumbR + ((mark.value - valueRange.start) / span).coerceIn(0f, 1f) * usable
+			drawCircle(colors.textMuted, 2.5.dp.toPx(), Offset(mx, cy))
+		}
+		val thumbColor = if (enabled) Color(0xFFE0E6ED) else colors.textDisabled
+		when (thumbShape) {
+			SliderKeyShape.Circle -> {
+				drawCircle(thumbColor, thumbR, Offset(thumbX, cy))
+				drawCircle(colors.accent, thumbR, Offset(thumbX, cy), style = Stroke(1.2.dp.toPx()))
+			}
+			SliderKeyShape.Square -> {
+				drawRoundRect(
+					thumbColor,
+					Offset(thumbX - thumbR, cy - thumbR),
+					Size(thumbR * 2f, thumbR * 2f),
+					CornerRadius(thumbR * 0.35f),
+				)
 			}
 		}
-
-		val thumbOffset = ((totalW - thumbRadius * 2) * fraction).coerceAtLeast(0.dp)
-		val thumbColor = if (enabled) {
-			if (isPressed) colors.accent else if (isHovered) colors.accentHover else Color(0xFFE0E6ED)
-		} else {
-			colors.textDisabled
-		}
-		Box(
-			modifier = Modifier
-				.padding(start = thumbOffset)
-				.size(thumbRadius * 2)
-				.then(
-					if (thumbShape == SliderKeyShape.Circle) {
-						Modifier
-							.background(thumbColor, CircleShape)
-							.border(BorderStroke(1.dp, if (enabled) colors.accent else Color.Transparent), CircleShape)
-					} else {
-						Modifier
-							.background(thumbColor, RoundedCornerShape(2.dp))
-							.border(BorderStroke(1.dp, if (enabled) colors.accent else Color.Transparent), RoundedCornerShape(2.dp))
-					},
-				),
-		)
 	}
 }
 

@@ -2,11 +2,16 @@ package io.github.psd2live.ui.views
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.TooltipArea
+import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -15,6 +20,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,25 +30,31 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Divider
+import androidx.compose.material.Surface
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Fill
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.PointerButton
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -52,20 +64,21 @@ import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.ParameterKeyMarks
-import io.github.psd2live.ui.components.CompactButton
 import io.github.psd2live.ui.components.CompactIconButton
 import io.github.psd2live.ui.components.CompactMenuItem
-import io.github.psd2live.ui.components.CompactSlider
 import io.github.psd2live.ui.components.CompactTextField
 import io.github.psd2live.ui.components.IconChevron
+import io.github.psd2live.ui.components.IconClose
 import io.github.psd2live.ui.components.IconDragHandle
 import io.github.psd2live.ui.components.IconFolder
 import io.github.psd2live.ui.components.IconLock
@@ -85,17 +98,16 @@ import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.state.WorkspaceTabKind
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
-import org.umamo.edit.materializedParameterTree
-import org.umamo.runtime.model.Parameter
-import org.umamo.runtime.model.ParameterGroupId
-import org.umamo.runtime.model.ParameterId
-import org.umamo.runtime.model.ParameterKind
-import org.umamo.runtime.model.ParameterNode
-import org.umamo.runtime.model.PuppetModel
 import java.awt.Cursor
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.roundToInt
+import org.umamo.edit.materializedParameterTree
+import org.umamo.runtime.eval.EPS_KEY
+import org.umamo.runtime.model.Parameter
+import org.umamo.runtime.model.ParameterKind
+import org.umamo.runtime.model.ParameterNode
+import org.umamo.runtime.model.PuppetModel
 
 /** One visible row in the parameter panel (folder header, single slider, or combined 2D pad). */
 private sealed interface ParameterPanelRow {
@@ -318,34 +330,49 @@ internal fun ParametersListView(
 	val rows = remember(puppet, query, openOverrides.toMap()) {
 		if (puppet == null) emptyList() else buildParameterPanelRows(puppet, query, openOverrides)
 	}
-	val visibleCount = rows.count { it !is ParameterPanelRow.Folder }
+	val listState = rememberLazyListState()
+	val visibleCount = rows.sumOf { row ->
+		when (row) {
+			is ParameterPanelRow.Folder -> 0
+			is ParameterPanelRow.Single -> 1
+			is ParameterPanelRow.Linked -> 2
+		}
+	}
 
 	Column(modifier = Modifier.fillMaxSize()) {
 		Column(
 			modifier = Modifier
 				.fillMaxWidth()
 				.background(colors.panelElevated)
-				.border(BorderStroke(1.dp, colors.divider))
 				.padding(horizontal = 6.dp, vertical = 4.dp),
 			verticalArrangement = Arrangement.spacedBy(4.dp),
 		) {
 			Row(
 				modifier = Modifier.fillMaxWidth(),
 				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.spacedBy(6.dp),
 			) {
 				CompactTextField(
 					value = state.parameterSearchQuery,
 					onValueChange = { viewModel.setParameterSearchQuery(it) },
 					placeholder = tr("parameters.search"),
 					leadingIcon = { IconSearch(tint = colors.textMuted) },
+					trailingIcon = {
+						if (state.parameterSearchQuery.isNotEmpty()) {
+							CompactIconButton(
+								onClick = { viewModel.setParameterSearchQuery("") },
+								tooltip = tr("parameters.clearSearch"), size = 16.dp,
+							) { IconClose(modifier = Modifier.size(10.dp), tint = colors.textMuted) }
+						}
+					},
 					modifier = Modifier.weight(1f),
 					height = 22.dp,
 				)
-				Spacer(Modifier.width(6.dp))
 				Text(
 					text = tr("parameters.count", visibleCount, allParameters.size, state.lockedParameters.size),
 					style = typography.caption.copy(fontSize = 10.sp),
 					color = colors.textMuted,
+					maxLines = 1,
 				)
 			}
 
@@ -353,74 +380,77 @@ internal fun ParametersListView(
 			Row(
 				modifier = Modifier.fillMaxWidth(),
 				verticalAlignment = Alignment.CenterVertically,
-				horizontalArrangement = Arrangement.spacedBy(4.dp),
+				horizontalArrangement = Arrangement.spacedBy(3.dp),
 			) {
 				val isAnim = state.animationEnabled
 				val isMouseTracking = state.mouseTrackingEnabled
 
 				if (inPreview) {
-					CompactButton(
-						text = if (isAnim) tr("preview.animation.pause") else tr("preview.animation.play"),
+					CompactIconButton(
 						onClick = { viewModel.setAnimationEnabled(!isAnim) },
-						leadingIcon = {
-							if (isAnim) IconPause(tint = colors.textPrimary) else IconPlay(tint = colors.accent)
-						},
 						enabled = model != null,
-						height = 22.dp,
-					)
-					CompactButton(
-						text = if (isMouseTracking) tr("preview.mouseTracking.on") else tr("preview.mouseTracking.off"),
+						size = 22.dp,
+						tooltip = if (isAnim) tr("preview.animation.pause") else tr("preview.animation.play"),
+					) {
+						if (isAnim) IconPause(modifier = Modifier.size(11.dp), tint = colors.textPrimary)
+						else IconPlay(modifier = Modifier.size(11.dp), tint = colors.accent)
+					}
+					CompactIconButton(
 						onClick = { viewModel.setMouseTrackingEnabled(!isMouseTracking) },
-						leadingIcon = {
-							IconMouse(
-								active = isMouseTracking,
-								tint = if (isMouseTracking) colors.accent else colors.textDisabled,
-							)
-						},
 						enabled = model != null,
-						height = 22.dp,
-					)
-					Spacer(Modifier.weight(1f))
-					if (state.lockedParameters.isNotEmpty()) {
-						CompactButton(
-							text = tr("parameters.unlockAll"),
-							onClick = { viewModel.unlockAllParameters() },
-							leadingIcon = { IconLock(locked = false, tint = colors.textPrimary) },
-							height = 22.dp,
+						size = 22.dp,
+						tooltip = if (isMouseTracking) tr("preview.mouseTracking.on") else tr("preview.mouseTracking.off"),
+					) {
+						IconMouse(
+							active = isMouseTracking,
+							modifier = Modifier.size(12.dp),
+							tint = if (isMouseTracking) colors.accent else colors.textDisabled,
 						)
 					}
+					CompactIconButton(
+						onClick = { viewModel.unlockAllParameters() },
+						enabled = state.lockedParameters.isNotEmpty(),
+						size = 22.dp,
+						tooltip = tr("parameters.unlockAll"),
+					) {
+						IconLock(locked = false, modifier = Modifier.size(11.dp), tint = colors.textPrimary)
+					}
 				} else {
-					CompactButton(
-						text = tr("preview.animation.play"),
+					CompactIconButton(
 						onClick = { viewModel.setAnimationEnabled(true) },
-						leadingIcon = { IconPlay(tint = colors.accent) },
 						enabled = model != null,
-						height = 22.dp,
-					)
-					Spacer(Modifier.weight(1f))
+						size = 22.dp,
+						tooltip = tr("preview.animation.play"),
+					) {
+						IconPlay(modifier = Modifier.size(11.dp), tint = colors.accent)
+					}
 				}
 
-				CompactButton(
-					text = tr("parameters.newFolder"),
+				CompactIconButton(
 					onClick = { viewModel.createParameterGroup(tr("parameters.newFolderName")) },
 					enabled = puppet != null,
-					leadingIcon = { IconFolder(tint = colors.textPrimary) },
-					height = 22.dp,
-				)
-				CompactButton(
-					text = tr("parameters.resetAll"),
+					size = 22.dp,
+					tooltip = tr("parameters.newFolder"),
+				) {
+					IconFolder(modifier = Modifier.size(12.dp), tint = colors.textPrimary)
+				}
+				CompactIconButton(
 					onClick = { viewModel.resetAllParameters() },
 					enabled = allParameters.isNotEmpty(),
-					leadingIcon = { IconReset(tint = colors.textPrimary) },
-					height = 22.dp,
-				)
+					size = 22.dp,
+					tooltip = tr("parameters.resetAll"),
+				) {
+					IconReset(modifier = Modifier.size(11.dp), tint = colors.textPrimary)
+				}
 			}
 		}
 
-		if (allParameters.isEmpty()) {
+		Divider(color = colors.divider)
+
+		if (allParameters.isEmpty() || rows.isEmpty()) {
 			Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
 				Text(
-					text = tr("parameters.empty"),
+					text = if (allParameters.isEmpty()) tr("parameters.empty") else tr("parameters.noResults"),
 					style = typography.caption.copy(fontSize = 11.sp),
 					color = colors.textMuted,
 					modifier = Modifier.padding(12.dp),
@@ -447,7 +477,7 @@ internal fun ParametersListView(
 						),
 					),
 			) {
-				LazyColumn(modifier = Modifier.fillMaxSize()) {
+				LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(end = 10.dp)) {
 					if (dragState.isDragging) {
 						item(key = "ROOT") {
 							val isRootTarget = dragState.dropTarget is ParamDropTarget.Root
@@ -660,6 +690,11 @@ internal fun ParametersListView(
 					}
 				}
 
+				VerticalScrollbar(
+					adapter = rememberScrollbarAdapter(listState),
+					modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(8.dp),
+				)
+
 				if (dragState.isDragging && dragState.draggedItem != null) {
 					val dragItem = dragState.draggedItem!!
 					val target = dragState.dropTarget
@@ -867,7 +902,7 @@ private fun ParameterDragHandle(
 	var handleCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 	Box(
 		modifier = Modifier
-			.size(18.dp)
+			.size(16.dp)
 			.onGloballyPositioned { handleCoords = it }
 			.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR)))
 			.onPointerEvent(PointerEventType.Press) { event ->
@@ -940,7 +975,7 @@ private fun ParameterFolderRow(
 						)
 				} else Modifier,
 			)
-			.padding(start = (6 + row.depth * 12).dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+			.padding(start = (6 + row.depth * 12).dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
 		verticalAlignment = Alignment.CenterVertically,
 	) {
 		IconChevron(expanded = row.open, tint = colors.textMuted, modifier = Modifier.size(10.dp))
@@ -992,7 +1027,291 @@ private fun ParameterFolderRow(
 	}
 }
 
+/** Cubism-style single-line name (no id clutter). */
+@Composable
+private fun ParameterName(param: Parameter, locked: Boolean = false, modifier: Modifier = Modifier) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	Text(
+		text = param.name,
+		style = typography.body.copy(
+			fontSize = 11.sp,
+			fontWeight = if (locked) FontWeight.SemiBold else FontWeight.Normal,
+		),
+		color = if (locked) colors.accent else colors.textPrimary,
+		maxLines = 1,
+		overflow = TextOverflow.Ellipsis,
+		modifier = modifier,
+	)
+}
+
+@Composable
+private fun ParameterValueInput(param: Parameter, value: Float, onValueChange: (Float) -> Unit) {
+	val focusManager = LocalFocusManager.current
+	var focused by remember(param.id) { mutableStateOf(false) }
+	var draft by remember(param.id) { mutableStateOf(formatParamValue(value)) }
+	LaunchedEffect(value, focused) {
+		if (!focused) draft = formatParamValue(value)
+	}
+	CompactTextField(
+		value = draft,
+		onValueChange = { draft = it },
+		isMono = true,
+		onCommit = { focusManager.clearFocus() },
+		modifier = Modifier.width(44.dp)
+			.semantics { contentDescription = param.name + " (" + param.id.raw + ")" }
+			.onFocusChanged { focus ->
+				if (focused && !focus.isFocused) {
+					draft.replace(',', '.').toFloatOrNull()?.takeIf { it.isFinite() }?.let {
+						onValueChange(it.coerceIn(param.min, param.max))
+					}
+					draft = formatParamValue(value)
+				} else if (!focused && focus.isFocused) {
+					draft = value.toString()
+				}
+				focused = focus.isFocused
+			},
+		height = 18.dp,
+	)
+}
+
+private val ParamRowLinkWidth = 14.dp
+private val ParamRowLinkSpacer = 2.dp
+private val ParamRowLockWidth = 16.dp
+private val ParamRowLockSpacer = 4.dp
+private val ParamRowNameWidth = 88.dp
+private val ParamRowBeforeTrackSpacer = 6.dp
+
+private val ParamRowAfterTrackSpacer = 6.dp
+private val ParamRowInputWidth = 44.dp
+private val ParamRowInputSpacer = 2.dp
+private val ParamRowResetWidth = 16.dp
+private val ParamRowHandleWidth = 16.dp
+
+private val ParamTrackInsetHorizontal = 4.dp
+private val ParamKeyRadius = 2.8.dp
+private val ParamThumbRadius = 5.2.dp
+
+/**
+ * Cubism Parameter palette track: thin line + hollow key dots + live2d handle (blue with white core on-key).
+ * Left drag = free scrub. Hover a key then right-click = snap to that key.
+ */
 @OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun ParameterTrack(
+	value: Float,
+	onValueChange: (Float) -> Unit,
+	valueRange: ClosedFloatingPointRange<Float>,
+	keyMarks: List<SliderKeyMark>,
+	modifier: Modifier = Modifier,
+	enabled: Boolean = true,
+	thumbShape: SliderKeyShape = SliderKeyShape.Circle,
+) {
+	val colors = LocalToolColors.current
+	val changeValue by rememberUpdatedState(onValueChange)
+	val span = (valueRange.endInclusive - valueRange.start).takeIf { it > 1e-6f } ?: 1f
+	val marks = remember(keyMarks, valueRange) {
+		keyMarks
+			.filter { it.value >= valueRange.start - 1e-4f && it.value <= valueRange.endInclusive + 1e-4f }
+			.distinctBy { it.value }
+	}
+	val marksState by rememberUpdatedState(marks)
+	var hoverKey by remember { mutableStateOf<Float?>(null) }
+
+	val insetDp = ParamTrackInsetHorizontal
+	val keyRadiusDp = ParamKeyRadius
+	val thumbRadiusDp = ParamThumbRadius
+
+	fun xOf(width: Float, v: Float, inset: Float): Float {
+		val usable = (width - 2f * inset).coerceAtLeast(1f)
+		return inset + ((v - valueRange.start) / span).coerceIn(0f, 1f) * usable
+	}
+
+	fun valueOf(x: Float, width: Float, inset: Float): Float {
+		val usable = (width - 2f * inset).coerceAtLeast(1f)
+		return valueRange.start + ((x - inset) / usable).coerceIn(0f, 1f) * span
+	}
+
+	fun hitKey(x: Float, width: Float, inset: Float, radius: Float): Float? {
+		var best: Float? = null
+		var bestDist = radius
+		for (mark in marksState) {
+			val dist = abs(xOf(width, mark.value, inset) - x)
+			if (dist <= bestDist) {
+				bestDist = dist
+				best = mark.value
+			}
+		}
+		return best
+	}
+
+	Canvas(
+		modifier = modifier
+			.height(18.dp)
+			.pointerHoverIcon(
+				if (enabled) PointerIcon(Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR))
+				else PointerIcon.Default,
+			)
+			.onPointerEvent(PointerEventType.Move) { event ->
+				if (!enabled) return@onPointerEvent
+				val x = event.changes.firstOrNull()?.position?.x ?: return@onPointerEvent
+				val inset = insetDp.toPx()
+				hoverKey = hitKey(x, size.width.toFloat(), inset, 10.dp.toPx())
+			}
+			.onPointerEvent(PointerEventType.Exit) { hoverKey = null }
+			.onPointerEvent(PointerEventType.Press) { event ->
+				if (!enabled || event.button != PointerButton.Secondary) return@onPointerEvent
+				val x = event.changes.firstOrNull()?.position?.x ?: return@onPointerEvent
+				val inset = insetDp.toPx()
+				val key = hitKey(x, size.width.toFloat(), inset, 10.dp.toPx()) ?: return@onPointerEvent
+				changeValue(key)
+				event.changes.forEach { it.consume() }
+			}
+			.pointerInput(valueRange, enabled) {
+				if (!enabled) return@pointerInput
+				val inset = insetDp.toPx()
+				awaitEachGesture {
+					val down = awaitFirstDown()
+					if (currentEvent.button != null && currentEvent.button != PointerButton.Primary) {
+						down.consume()
+						do {
+							val event = awaitPointerEvent()
+							event.changes.forEach { it.consume() }
+						} while (event.changes.any { it.pressed })
+						return@awaitEachGesture
+					}
+					changeValue(valueOf(down.position.x, size.width.toFloat(), inset))
+					down.consume()
+					drag(down.id) { change ->
+						change.consume()
+						changeValue(valueOf(change.position.x, size.width.toFloat(), inset))
+					}
+				}
+			},
+	) {
+		val inset = insetDp.toPx()
+		val keyR = keyRadiusDp.toPx()
+		val thumbR = thumbRadiusDp.toPx()
+		val cy = size.height / 2f
+		val trackColor = colors.textMuted.copy(alpha = 0.55f)
+		val keyStroke = colors.textMuted.copy(alpha = 0.85f)
+		val onKey = marks.any { abs(it.value - value) < EPS_KEY }
+
+		// Horizontal track line
+		drawLine(
+			color = trackColor,
+			start = Offset(inset, cy),
+			end = Offset(size.width - inset, cy),
+			strokeWidth = 1.2.dp.toPx(),
+			cap = StrokeCap.Round,
+		)
+
+		for (mark in marks) {
+			val mx = xOf(size.width, mark.value, inset)
+			val hovered = hoverKey != null && abs(hoverKey!! - mark.value) < 1e-4f
+			val r = if (hovered) keyR * 1.35f else keyR
+
+			when (mark.shape) {
+				SliderKeyShape.Circle -> {
+					if (hovered) drawCircle(colors.accent.copy(alpha = 0.22f), r * 1.8f, Offset(mx, cy))
+					// Hollow key dot: mask background so track line doesn't cut through, then hollow stroke
+					drawCircle(colors.panelBackground, r, Offset(mx, cy))
+					drawCircle(keyStroke, r, Offset(mx, cy), style = Stroke(width = 1.15.dp.toPx()))
+				}
+				SliderKeyShape.Square -> {
+					val tl = Offset(mx - r, cy - r)
+					val sz = Size(r * 2f, r * 2f)
+					val cr = CornerRadius(r * 0.25f)
+					drawRoundRect(colors.panelBackground, tl, sz, cr)
+					drawRoundRect(keyStroke, tl, sz, cr, style = Stroke(width = 1.15.dp.toPx()))
+				}
+			}
+		}
+
+		val thumbX = xOf(size.width, value, inset)
+		if (!enabled) {
+			drawCircle(colors.textDisabled, thumbR, Offset(thumbX, cy))
+		} else {
+			// Thumb: solid accent circle + white center dot if onKey (Cubism keyform indicator)
+			when (thumbShape) {
+				SliderKeyShape.Circle -> {
+					drawCircle(colors.accent, thumbR, Offset(thumbX, cy))
+					if (onKey) {
+						drawCircle(Color.White, thumbR * 0.42f, Offset(thumbX, cy))
+					}
+				}
+				SliderKeyShape.Square -> {
+					val tl = Offset(thumbX - thumbR, cy - thumbR)
+					val sz = Size(thumbR * 2f, thumbR * 2f)
+					val cr = CornerRadius(thumbR * 0.25f)
+					drawRoundRect(colors.accent, tl, sz, cr)
+					if (onKey) {
+						val innerR = thumbR * 0.42f
+						drawRoundRect(Color.White, Offset(thumbX - innerR, cy - innerR), Size(innerR * 2f, innerR * 2f), CornerRadius(innerR * 0.25f))
+					}
+				}
+			}
+		}
+	}
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ParameterLinkSlot(
+	linked: Boolean,
+	enabled: Boolean,
+	tooltip: String,
+	onClick: () -> Unit,
+	modifier: Modifier = Modifier,
+	tall: Boolean = false,
+) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	val interaction = remember { MutableInteractionSource() }
+	val hovered by interaction.collectIsHoveredAsState()
+	val content = @Composable {
+		Box(
+			modifier = modifier
+				.size(width = ParamRowLinkWidth, height = if (tall) 36.dp else 16.dp)
+				.hoverable(interaction)
+				.clickable(enabled = enabled, interactionSource = interaction, indication = null, onClick = onClick)
+				.pointerHoverIcon(
+					if (enabled) PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR))
+					else PointerIcon.Default,
+				),
+			contentAlignment = Alignment.Center,
+		) {
+			IconParameterLink(
+				linked = linked,
+				modifier = Modifier.size(width = 11.dp, height = if (tall) 26.dp else 14.dp),
+				tint = when {
+					!enabled -> colors.textDisabled.copy(alpha = 0.35f)
+					linked -> if (hovered) colors.accentHover else colors.accent
+					else -> if (hovered) colors.textPrimary else colors.textMuted.copy(alpha = 0.72f)
+				},
+			)
+		}
+	}
+	TooltipArea(
+		tooltip = {
+			Surface(
+				color = colors.panelElevated,
+				shape = RoundedCornerShape(3.dp),
+				border = BorderStroke(1.dp, colors.border),
+				elevation = 4.dp,
+			) {
+				Text(
+					text = tooltip,
+					style = typography.caption.copy(fontSize = 10.sp),
+					color = colors.textPrimary,
+					modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+				)
+			}
+		},
+		delayMillis = 400,
+	) { content() }
+}
+
 @Composable
 private fun ParameterRowItem(
 	param: Parameter,
@@ -1005,109 +1324,64 @@ private fun ParameterRowItem(
 	onDragPress: (localPos: Offset, rowCoords: LayoutCoordinates) -> Unit,
 ) {
 	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
 	val isLocked = param.id in state.lockedParameters
 	val currentValue = liveValue(param, state)
-	val valueText = formatParamValue(currentValue)
 	val sliderMarks = remember(keyMarks) { keyMarks.toSliderMarks() }
 	var rowCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+	val canLink = nextSiblingParam != null
 
-	Column(
+	Row(
 		modifier = Modifier
 			.fillMaxWidth()
 			.onGloballyPositioned { rowCoords = it }
-			.background(if (isLocked) colors.selection.copy(alpha = 0.25f) else Color.Transparent)
-			.padding(start = (6 + depth * 12).dp, end = 4.dp, top = 3.dp, bottom = 3.dp),
+			.background(if (isLocked) colors.selection.copy(alpha = 0.22f) else Color.Transparent)
+			.padding(start = (4 + depth * 12).dp, end = 2.dp, top = 1.dp, bottom = 1.dp)
+			.height(22.dp),
+		verticalAlignment = Alignment.CenterVertically,
 	) {
-		Row(
-			modifier = Modifier.fillMaxWidth(),
-			verticalAlignment = Alignment.CenterVertically,
+		// Cubism: faint single chain link to the left of the name.
+		ParameterLinkSlot(
+			linked = false,
+			enabled = canLink,
+			tooltip = tr("parameters.linkTooltip"),
+			onClick = { nextSiblingParam?.let { onLinkWith(it.id.raw) } },
+			modifier = Modifier.width(ParamRowLinkWidth),
+		)
+		Spacer(Modifier.width(ParamRowLinkSpacer))
+		CompactIconButton(
+			onClick = { viewModel.toggleParameterLock(param.id, currentValue) },
+			size = ParamRowLockWidth,
+			tooltip = if (isLocked) tr("parameters.unlockTooltip") else tr("parameters.lockTooltip"),
 		) {
-			CompactIconButton(
-				onClick = { viewModel.toggleParameterLock(param.id, currentValue) },
-				size = 18.dp,
-				tooltip = if (isLocked) tr("parameters.unlockTooltip") else tr("parameters.lockTooltip"),
-			) {
-				IconLock(
-					locked = isLocked,
-					modifier = Modifier.size(11.dp),
-					tint = if (isLocked) colors.accent else colors.textMuted,
-				)
-			}
-			Spacer(Modifier.width(5.dp))
-			Text(
-				text = param.name,
-				style = typography.body.copy(fontSize = 11.sp, fontWeight = if (isLocked) FontWeight.SemiBold else FontWeight.Normal),
-				color = if (isLocked) colors.selectionText else colors.textPrimary,
-				maxLines = 1,
-				overflow = TextOverflow.Ellipsis,
-			)
-			Spacer(Modifier.width(4.dp))
-			Text(
-				text = param.id.raw,
-				style = typography.monoSmall.copy(fontSize = 9.5.sp),
-				color = colors.textMuted,
-				maxLines = 1,
-				overflow = TextOverflow.Ellipsis,
-				modifier = Modifier.weight(1f),
-			)
-			Text(
-				text = valueText,
-				style = typography.mono.copy(
-					fontSize = 10.5.sp,
-					fontWeight = if (isLocked) FontWeight.Bold else FontWeight.Normal,
-					color = if (isLocked) colors.accent else colors.textPrimary,
-				),
-			)
-			if (isLocked || abs(currentValue - param.default) > 0.001f) {
-				Spacer(Modifier.width(4.dp))
-				CompactIconButton(
-					onClick = { viewModel.resetParameter(param.id) },
-					size = 18.dp,
-					tooltip = tr("parameters.resetTooltip"),
-				) {
-					IconReset(modifier = Modifier.size(10.dp), tint = if (isLocked) colors.accent else colors.textMuted)
-				}
-			}
-			if (nextSiblingParam != null) {
-				Spacer(Modifier.width(4.dp))
-				CompactIconButton(
-					onClick = { onLinkWith(nextSiblingParam.id.raw) },
-					size = 18.dp,
-					tooltip = tr("parameters.linkTooltip"),
-				) {
-					IconParameterLink(linked = false, tint = colors.accent, modifier = Modifier.size(11.dp))
-				}
-			}
-			Spacer(Modifier.width(2.dp))
-			ParameterDragHandle(onDragPress = onDragPress, rowCoords = rowCoords)
-		}
-		Row(
-			modifier = Modifier.fillMaxWidth().height(18.dp),
-			verticalAlignment = Alignment.CenterVertically,
-		) {
-			Text(
-				text = "%.0f".format(param.min),
-				style = typography.monoSmall.copy(fontSize = 9.sp),
-				color = colors.textMuted,
-				modifier = Modifier.width(22.dp),
-			)
-			CompactSlider(
-				value = currentValue.coerceIn(param.min, param.max),
-				onValueChange = { viewModel.setParameterValue(param.id, it) },
-				valueRange = param.min..param.max,
-				modifier = Modifier.weight(1f),
-				keyMarks = sliderMarks,
-				thumbShape = if (param.kind == ParameterKind.BLEND_SHAPE) SliderKeyShape.Square else SliderKeyShape.Circle,
-			)
-			Text(
-				text = "%.0f".format(param.max),
-				style = typography.monoSmall.copy(fontSize = 9.sp),
-				color = colors.textMuted,
-				textAlign = TextAlign.Right,
-				modifier = Modifier.width(22.dp),
+			IconLock(
+				locked = isLocked,
+				modifier = Modifier.size(9.dp),
+				tint = if (isLocked) colors.accent else colors.textMuted,
 			)
 		}
+		Spacer(Modifier.width(ParamRowLockSpacer))
+		ParameterName(param, locked = isLocked, modifier = Modifier.width(ParamRowNameWidth))
+		Spacer(Modifier.width(ParamRowBeforeTrackSpacer))
+		ParameterTrack(
+			value = currentValue.coerceIn(param.min, param.max),
+			onValueChange = { viewModel.setParameterValue(param.id, it) },
+			valueRange = param.min..param.max,
+			keyMarks = sliderMarks,
+			modifier = Modifier.weight(1f),
+			thumbShape = if (param.kind == ParameterKind.BLEND_SHAPE) SliderKeyShape.Square else SliderKeyShape.Circle,
+		)
+		Spacer(Modifier.width(ParamRowAfterTrackSpacer))
+		ParameterValueInput(param, currentValue, { viewModel.setParameterValue(param.id, it) })
+		Spacer(Modifier.width(ParamRowInputSpacer))
+		CompactIconButton(
+			onClick = { viewModel.resetParameter(param.id) },
+			enabled = isLocked || abs(currentValue - param.default) > 0.001f,
+			size = ParamRowResetWidth,
+			tooltip = tr("parameters.resetTooltip"),
+		) {
+			IconReset(modifier = Modifier.size(8.dp), tint = if (isLocked) colors.accent else colors.textMuted)
+		}
+		ParameterDragHandle(onDragPress = onDragPress, rowCoords = rowCoords)
 	}
 }
 
@@ -1130,47 +1404,61 @@ private fun LinkedParameterPad(
 	val yValue = liveValue(vertical, state)
 	var rowCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
-	Column(
+	Row(
 		modifier = Modifier
 			.fillMaxWidth()
 			.onGloballyPositioned { rowCoords = it }
-			.clipToBounds()
-			.background(colors.panelElevated.copy(alpha = 0.45f))
-			.border(BorderStroke(0.5.dp, colors.divider.copy(alpha = 0.5f)))
-			.padding(start = (6 + depth * 12).dp, end = 4.dp, top = 4.dp, bottom = 6.dp),
-		verticalArrangement = Arrangement.spacedBy(0.dp),
+			.padding(start = (4 + depth * 12).dp, end = 2.dp, top = 3.dp, bottom = 3.dp)
+			.height(68.dp),
+		verticalAlignment = Alignment.CenterVertically,
 	) {
-		LinkedAxisValueRow(
-			axisLabel = "X",
-			axisColor = colors.accent,
-			param = horizontal,
-			value = xValue,
-			locked = xLocked,
-			showUnlink = true,
-			showDragHandle = true,
-			onLock = { viewModel.toggleParameterLock(horizontal.id, xValue) },
-			onReset = { viewModel.resetParameter(horizontal.id) },
-			onUnlink = onUnlink,
-			onDragPress = onDragPress,
-			rowCoords = rowCoords,
+		// Cubism: tall interlocking two-chain link spanning both axis rows.
+		ParameterLinkSlot(
+			linked = true,
+			enabled = true,
+			tooltip = tr("parameters.unlinkTooltip"),
+			onClick = onUnlink,
+			tall = true,
+			modifier = Modifier.width(ParamRowLinkWidth),
 		)
-		Divider(color = colors.divider.copy(alpha = 0.4f), thickness = 0.5.dp)
-		LinkedAxisValueRow(
-			axisLabel = "Y",
-			axisColor = Color(0xFFA78BFA),
-			param = vertical,
-			value = yValue,
-			locked = yLocked,
-			showUnlink = false,
-			showDragHandle = false,
-			onLock = { viewModel.toggleParameterLock(vertical.id, yValue) },
-			onReset = { viewModel.resetParameter(vertical.id) },
-			onUnlink = {},
-			onDragPress = { _, _ -> },
-			rowCoords = null,
-		)
-		Spacer(Modifier.height(4.dp))
-		CombinedParameterPad(
+		Spacer(Modifier.width(ParamRowLinkSpacer))
+		Column(
+			modifier = Modifier.width(ParamRowLockWidth + ParamRowLockSpacer + ParamRowNameWidth),
+			verticalArrangement = Arrangement.spacedBy(8.dp),
+		) {
+			Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+				CompactIconButton(
+					onClick = { viewModel.toggleParameterLock(horizontal.id, xValue) },
+					size = ParamRowLockWidth,
+					tooltip = if (xLocked) tr("parameters.unlockTooltip") else tr("parameters.lockTooltip"),
+				) {
+					IconLock(
+						locked = xLocked,
+						modifier = Modifier.size(9.dp),
+						tint = if (xLocked) colors.accent else colors.textMuted,
+					)
+				}
+				Spacer(Modifier.width(ParamRowLockSpacer))
+				ParameterName(horizontal, locked = xLocked, modifier = Modifier.width(ParamRowNameWidth))
+			}
+			Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+				CompactIconButton(
+					onClick = { viewModel.toggleParameterLock(vertical.id, yValue) },
+					size = ParamRowLockWidth,
+					tooltip = if (yLocked) tr("parameters.unlockTooltip") else tr("parameters.lockTooltip"),
+				) {
+					IconLock(
+						locked = yLocked,
+						modifier = Modifier.size(9.dp),
+						tint = if (yLocked) colors.accent else colors.textMuted,
+					)
+				}
+				Spacer(Modifier.width(ParamRowLockSpacer))
+				ParameterName(vertical, locked = yLocked, modifier = Modifier.width(ParamRowNameWidth))
+			}
+		}
+		Spacer(Modifier.width(ParamRowBeforeTrackSpacer))
+		ParameterPad2D(
 			horizontal = horizontal,
 			vertical = vertical,
 			xValue = xValue,
@@ -1179,117 +1467,54 @@ private fun LinkedParameterPad(
 			yLocked = yLocked,
 			horizontalKeys = horizontalKeys,
 			verticalKeys = verticalKeys,
-			modifier = Modifier
-				.fillMaxWidth()
-				.height(84.dp)
-				.clipToBounds()
-				.clip(RoundedCornerShape(3.dp)),
+			modifier = Modifier.weight(1f).fillMaxHeight(),
 			onChange = { x, y ->
 				if (!xLocked) viewModel.setParameterValue(horizontal.id, x)
 				if (!yLocked) viewModel.setParameterValue(vertical.id, y)
 			},
 		)
-	}
-}
-
-@Composable
-private fun LinkedAxisValueRow(
-	axisLabel: String,
-	axisColor: Color,
-	param: Parameter,
-	value: Float,
-	locked: Boolean,
-	showUnlink: Boolean,
-	showDragHandle: Boolean,
-	onLock: () -> Unit,
-	onReset: () -> Unit,
-	onUnlink: () -> Unit,
-	onDragPress: (localPos: Offset, rowCoords: LayoutCoordinates) -> Unit,
-	rowCoords: LayoutCoordinates?,
-) {
-	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-	Row(
-		modifier = Modifier
-			.fillMaxWidth()
-			.background(if (locked) colors.selection.copy(alpha = 0.2f) else Color.Transparent)
-			.padding(vertical = 3.dp),
-		verticalAlignment = Alignment.CenterVertically,
-	) {
-		Box(
-			modifier = Modifier
-				.size(16.dp)
-				.background(axisColor.copy(alpha = 0.16f), RoundedCornerShape(2.dp)),
-			contentAlignment = Alignment.Center,
+		Spacer(Modifier.width(ParamRowAfterTrackSpacer))
+		Column(
+			modifier = Modifier.width(ParamRowInputWidth),
+			verticalArrangement = Arrangement.spacedBy(8.dp),
+			horizontalAlignment = Alignment.End,
 		) {
-			Text(
-				text = axisLabel,
-				style = typography.mono.copy(fontSize = 9.sp, fontWeight = FontWeight.Bold),
-				color = axisColor,
-			)
+			ParameterValueInput(horizontal, xValue) { viewModel.setParameterValue(horizontal.id, it) }
+			ParameterValueInput(vertical, yValue) { viewModel.setParameterValue(vertical.id, it) }
 		}
-		Spacer(Modifier.width(4.dp))
-		CompactIconButton(
-			onClick = onLock,
-			size = 18.dp,
-			tooltip = if (locked) tr("parameters.unlockTooltip") else tr("parameters.lockTooltip"),
+		Spacer(Modifier.width(ParamRowInputSpacer))
+		Column(
+			modifier = Modifier.width(ParamRowResetWidth),
+			verticalArrangement = Arrangement.spacedBy(6.dp),
 		) {
-			IconLock(
-				locked = locked,
-				modifier = Modifier.size(11.dp),
-				tint = if (locked) colors.accent else colors.textMuted,
-			)
-		}
-		Spacer(Modifier.width(4.dp))
-		Text(
-			text = param.name,
-			style = typography.body.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
-			color = colors.textPrimary,
-			maxLines = 1,
-			overflow = TextOverflow.Ellipsis,
-		)
-		Spacer(Modifier.width(4.dp))
-		Text(
-			text = param.id.raw,
-			style = typography.monoSmall.copy(fontSize = 9.5.sp),
-			color = colors.textMuted,
-			maxLines = 1,
-			overflow = TextOverflow.Ellipsis,
-			modifier = Modifier.weight(1f),
-		)
-		Text(
-			text = formatParamValue(value),
-			style = typography.mono.copy(fontSize = 10.5.sp, color = if (locked) colors.accent else colors.textPrimary),
-		)
-		if (locked || abs(value - param.default) > 0.001f) {
-			Spacer(Modifier.width(4.dp))
 			CompactIconButton(
-				onClick = onReset,
-				size = 18.dp,
+				onClick = { viewModel.resetParameter(horizontal.id) },
+				enabled = xLocked || abs(xValue - horizontal.default) > 0.001f,
+				size = ParamRowResetWidth,
 				tooltip = tr("parameters.resetTooltip"),
 			) {
-				IconReset(modifier = Modifier.size(10.dp), tint = if (locked) colors.accent else colors.textMuted)
+				IconReset(modifier = Modifier.size(8.dp), tint = colors.textMuted)
 			}
-		}
-		if (showUnlink) {
-			Spacer(Modifier.width(4.dp))
 			CompactIconButton(
-				onClick = onUnlink,
-				size = 18.dp,
-				tooltip = tr("parameters.unlinkTooltip"),
+				onClick = { viewModel.resetParameter(vertical.id) },
+				enabled = yLocked || abs(yValue - vertical.default) > 0.001f,
+				size = ParamRowResetWidth,
+				tooltip = tr("parameters.resetTooltip"),
 			) {
-				IconParameterLink(linked = true, tint = colors.accent, modifier = Modifier.size(11.dp))
+				IconReset(modifier = Modifier.size(8.dp), tint = colors.textMuted)
 			}
 		}
-		if (showDragHandle) {
-			Spacer(Modifier.width(2.dp))
-			ParameterDragHandle(onDragPress = onDragPress, rowCoords = rowCoords)
-		}
+		ParameterDragHandle(onDragPress = onDragPress, rowCoords = rowCoords)
 	}
 }
 
+/**
+ * Cubism combined-parameter pad: dashed border, key grid, hollow key dots, live2d handle (blue with white core on-key).
+ * Left drag free; hover key + right-click snaps to that intersection.
+ */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
-private fun CombinedParameterPad(
+private fun ParameterPad2D(
 	horizontal: Parameter,
 	vertical: Parameter,
 	xValue: Float,
@@ -1302,212 +1527,181 @@ private fun CombinedParameterPad(
 	onChange: (Float, Float) -> Unit,
 ) {
 	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-
 	val xKeyList = remember(horizontal, horizontalKeys) {
-		val keys = horizontalKeys?.allKeys.orEmpty()
-		if (keys.isNotEmpty()) keys else listOf(horizontal.min, horizontal.default, horizontal.max).distinct().sorted()
+		horizontalKeys?.allKeys.orEmpty()
+			.filter { it >= horizontal.min - 1e-4f && it <= horizontal.max + 1e-4f }
+			.distinct().sorted()
 	}
 	val yKeyList = remember(vertical, verticalKeys) {
-		val keys = verticalKeys?.allKeys.orEmpty()
-		if (keys.isNotEmpty()) keys else listOf(vertical.min, vertical.default, vertical.max).distinct().sorted()
+		verticalKeys?.allKeys.orEmpty()
+			.filter { it >= vertical.min - 1e-4f && it <= vertical.max + 1e-4f }
+			.distinct().sorted()
 	}
+	val blendX = remember(horizontalKeys) { horizontalKeys?.blendKeys.orEmpty().toSet() }
+	val blendY = remember(verticalKeys) { verticalKeys?.blendKeys.orEmpty().toSet() }
 
-	fun projectToValues(pos: Offset, w: Float, h: Float): Pair<Float, Float> {
-		val nx = (pos.x / w).coerceIn(0f, 1f)
-		val ny = (pos.y / h).coerceIn(0f, 1f)
-		val rawX = horizontal.min + nx * (horizontal.max - horizontal.min)
-		val rawY = vertical.max - ny * (vertical.max - vertical.min)
-		return rawX to rawY
-	}
+	val onChangeState by rememberUpdatedState(onChange)
+	val xLockedState by rememberUpdatedState(xLocked)
+	val yLockedState by rememberUpdatedState(yLocked)
+	val xValueState by rememberUpdatedState(xValue)
+	val yValueState by rememberUpdatedState(yValue)
+	val xKeysState by rememberUpdatedState(xKeyList)
+	val yKeysState by rememberUpdatedState(yKeyList)
+	val hMin by rememberUpdatedState(horizontal.min)
+	val hMax by rememberUpdatedState(horizontal.max)
+	val vMin by rememberUpdatedState(vertical.min)
+	val vMax by rememberUpdatedState(vertical.max)
 
-	fun snapValues(rawX: Float, rawY: Float, w: Float, h: Float): Pair<Float, Float> {
-		val curX = if (xLocked) xValue else rawX
-		val curY = if (yLocked) yValue else rawY
-		val snapRadiusPx = 10f
-		var bestDist = Float.MAX_VALUE
-		var snappedX = curX
-		var snappedY = curY
+	var hoverKey by remember { mutableStateOf<Pair<Float, Float>?>(null) }
+
+	val insetHorizontalDp = ParamTrackInsetHorizontal
+	val insetVerticalDp = 4.dp
+	val keyRadiusDp = ParamKeyRadius
+	val thumbRadiusDp = ParamThumbRadius
+
+	Canvas(
+		modifier = modifier
+			.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR)))
+			.onPointerEvent(PointerEventType.Move) { event ->
+				val pos = event.changes.firstOrNull()?.position ?: return@onPointerEvent
+				val insetX = insetHorizontalDp.toPx()
+				val insetY = insetVerticalDp.toPx()
+				val w = (size.width - 2f * insetX).coerceAtLeast(1f)
+				val h = (size.height - 2f * insetY).coerceAtLeast(1f)
+				val spanX = (hMax - hMin).takeIf { it > 1e-4f } ?: 1f
+				val spanY = (vMax - vMin).takeIf { it > 1e-4f } ?: 1f
+				val hitR = 10.dp.toPx()
+				var best: Pair<Float, Float>? = null
+				var bestDist = hitR
+				for (kx in xKeysState) for (ky in yKeysState) {
+					val px = insetX + ((kx - hMin) / spanX).coerceIn(0f, 1f) * w
+					val py = insetY + ((vMax - ky) / spanY).coerceIn(0f, 1f) * h
+					val dist = hypot(px - pos.x, py - pos.y)
+					if (dist <= bestDist) {
+						bestDist = dist
+						best = kx to ky
+					}
+				}
+				hoverKey = best
+			}
+			.onPointerEvent(PointerEventType.Exit) { hoverKey = null }
+			.onPointerEvent(PointerEventType.Press) { event ->
+				if (event.button != PointerButton.Secondary) return@onPointerEvent
+				val hit = hoverKey ?: return@onPointerEvent
+				onChangeState(
+					if (!xLockedState) hit.first else xValueState,
+					if (!yLockedState) hit.second else yValueState,
+				)
+				event.changes.forEach { it.consume() }
+			}
+			.pointerInput(horizontal.id, vertical.id) {
+				val insetX = insetHorizontalDp.toPx()
+				val insetY = insetVerticalDp.toPx()
+				awaitEachGesture {
+					val down = awaitFirstDown()
+					if (currentEvent.button != null && currentEvent.button != PointerButton.Primary) {
+						down.consume()
+						do {
+							val event = awaitPointerEvent()
+							event.changes.forEach { it.consume() }
+						} while (event.changes.any { it.pressed })
+						return@awaitEachGesture
+					}
+					fun freeAt(pos: Offset) {
+						val w = (size.width - 2f * insetX).coerceAtLeast(1f)
+						val h = (size.height - 2f * insetY).coerceAtLeast(1f)
+						val nx = ((pos.x - insetX) / w).coerceIn(0f, 1f)
+						val ny = ((pos.y - insetY) / h).coerceIn(0f, 1f)
+						onChangeState(
+							if (!xLockedState) hMin + nx * (hMax - hMin) else xValueState,
+							if (!yLockedState) vMax - ny * (vMax - vMin) else yValueState,
+						)
+					}
+					freeAt(down.position)
+					down.consume()
+					drag(down.id) { change ->
+						change.consume()
+						freeAt(change.position)
+					}
+				}
+			},
+	) {
+		val insetX = insetHorizontalDp.toPx()
+		val insetY = insetVerticalDp.toPx()
+		val padW = (size.width - 2f * insetX).coerceAtLeast(1f)
+		val padH = (size.height - 2f * insetY).coerceAtLeast(1f)
 		val spanX = (horizontal.max - horizontal.min).takeIf { it > 1e-4f } ?: 1f
 		val spanY = (vertical.max - vertical.min).takeIf { it > 1e-4f } ?: 1f
+		val dash = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 2.dp.toPx()), 0f)
+		val borderColor = colors.textMuted.copy(alpha = 0.50f)
+
+		fun xPx(v: Float) = insetX + ((v - horizontal.min) / spanX).coerceIn(0f, 1f) * padW
+		fun yPx(v: Float) = insetY + ((vertical.max - v) / spanY).coerceIn(0f, 1f) * padH
+
+		// Dashed boundary rectangle matching Cubism 2D Pad (clean, no tinted fill background)
+		drawRect(
+			color = borderColor,
+			topLeft = Offset(insetX, insetY),
+			size = Size(padW, padH),
+			style = Stroke(width = 1.dp.toPx(), pathEffect = dash),
+		)
+
+		// Inner grid dashed lines (only between boundaries)
+		val gridColor = colors.textMuted.copy(alpha = 0.40f)
 		for (kx in xKeyList) {
+			val x = xPx(kx)
+			if (abs(x - insetX) > 2.5f && abs(x - (insetX + padW)) > 2.5f) {
+				drawLine(gridColor, Offset(x, insetY), Offset(x, insetY + padH), 1.dp.toPx(), pathEffect = dash)
+			}
+		}
+		for (ky in yKeyList) {
+			val y = yPx(ky)
+			if (abs(y - insetY) > 2.5f && abs(y - (insetY + padH)) > 2.5f) {
+				drawLine(gridColor, Offset(insetX, y), Offset(insetX + padW, y), 1.dp.toPx(), pathEffect = dash)
+			}
+		}
+
+		val hx = xPx(xValue)
+		val hy = yPx(yValue)
+		val keyStroke = colors.textMuted.copy(alpha = 0.85f)
+		val keyR = keyRadiusDp.toPx()
+		val thumbR = thumbRadiusDp.toPx()
+		val onKey = xKeyList.any { abs(it - xValue) < EPS_KEY } &&
+			yKeyList.any { abs(it - yValue) < EPS_KEY }
+
+		// Draw hollow key dots at all intersections
+		for (kx in xKeyList) {
+			val isBlendX = kx in blendX
 			for (ky in yKeyList) {
-				val px = ((kx - horizontal.min) / spanX) * w
-				val py = ((vertical.max - ky) / spanY) * h
-				val curPx = ((curX - horizontal.min) / spanX) * w
-				val curPy = ((vertical.max - curY) / spanY) * h
-				val dist = hypot(px - curPx, py - curPy)
-				if (dist < snapRadiusPx && dist < bestDist) {
-					bestDist = dist
-					snappedX = if (!xLocked) kx else xValue
-					snappedY = if (!yLocked) ky else yValue
+				val px = xPx(kx)
+				val py = yPx(ky)
+				val isBlend = isBlendX || ky in blendY
+				val hovered = hoverKey?.let { abs(it.first - kx) < 1e-4f && abs(it.second - ky) < 1e-4f } == true
+				val r = if (hovered) keyR * 1.35f else keyR
+
+				if (hovered) drawCircle(colors.accent.copy(alpha = 0.22f), r * 1.8f, Offset(px, py))
+				if (isBlend) {
+					val tl = Offset(px - r, py - r)
+					val sz = Size(r * 2f, r * 2f)
+					val cr = CornerRadius(r * 0.25f)
+					drawRoundRect(colors.panelBackground, tl, sz, cr)
+					drawRoundRect(keyStroke, tl, sz, cr, style = Stroke(width = 1.15.dp.toPx()))
+				} else {
+					drawCircle(colors.panelBackground, r, Offset(px, py))
+					drawCircle(keyStroke, r, Offset(px, py), style = Stroke(width = 1.15.dp.toPx()))
 				}
 			}
 		}
-		return snappedX to snappedY
-	}
 
-	Box(
-		modifier = modifier
-			.clipToBounds()
-			.clip(RoundedCornerShape(3.dp))
-			.background(colors.inputBackground)
-			.border(BorderStroke(1.dp, colors.border), RoundedCornerShape(3.dp))
-			.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR))),
-	) {
-		Canvas(
-			modifier = Modifier
-				.fillMaxSize()
-				.pointerInput(horizontal.id, vertical.id, xLocked, yLocked, horizontal.min, horizontal.max, vertical.min, vertical.max) {
-					detectTapGestures(
-						onDoubleTap = { offset ->
-							var closestDist = Float.MAX_VALUE
-							var targetX = xValue
-							var targetY = yValue
-							val spanX = (horizontal.max - horizontal.min).takeIf { it > 1e-4f } ?: 1f
-							val spanY = (vertical.max - vertical.min).takeIf { it > 1e-4f } ?: 1f
-							for (kx in xKeyList) {
-								for (ky in yKeyList) {
-									val px = ((kx - horizontal.min) / spanX) * size.width
-									val py = ((vertical.max - ky) / spanY) * size.height
-									val dist = hypot(px - offset.x, py - offset.y)
-									if (dist < closestDist) {
-										closestDist = dist
-										targetX = kx
-										targetY = ky
-									}
-								}
-							}
-							onChange(if (!xLocked) targetX else xValue, if (!yLocked) targetY else yValue)
-						},
-						onTap = { offset ->
-							val (rx, ry) = projectToValues(offset, size.width.toFloat(), size.height.toFloat())
-							val (sx, sy) = snapValues(rx, ry, size.width.toFloat(), size.height.toFloat())
-							onChange(sx, sy)
-						},
-					)
-				}
-				.pointerInput(horizontal.id, vertical.id, xLocked, yLocked, horizontal.min, horizontal.max, vertical.min, vertical.max) {
-					detectDragGestures(
-						onDragStart = { offset ->
-							val (rx, ry) = projectToValues(offset, size.width.toFloat(), size.height.toFloat())
-							val (sx, sy) = snapValues(rx, ry, size.width.toFloat(), size.height.toFloat())
-							onChange(sx, sy)
-						},
-						onDrag = { change, _ ->
-							change.consume()
-							val (rx, ry) = projectToValues(change.position, size.width.toFloat(), size.height.toFloat())
-							val (sx, sy) = snapValues(rx, ry, size.width.toFloat(), size.height.toFloat())
-							onChange(sx, sy)
-						},
-					)
-				},
-		) {
-			val w = size.width
-			val h = size.height
-			val guideColor = colors.divider.copy(alpha = 0.65f)
-			val spanX = (horizontal.max - horizontal.min).takeIf { it > 1e-4f } ?: 1f
-			val spanY = (vertical.max - vertical.min).takeIf { it > 1e-4f } ?: 1f
-
-			val zeroNormX = if (0f in horizontal.min..horizontal.max) (0f - horizontal.min) / spanX else 0.5f
-			val zeroNormY = if (0f in vertical.min..vertical.max) (vertical.max - 0f) / spanY else 0.5f
-			val ox = (zeroNormX * w).coerceIn(0f, w)
-			val oy = (zeroNormY * h).coerceIn(0f, h)
-			drawLine(guideColor, Offset(ox, 0f), Offset(ox, h), strokeWidth = 1f)
-			drawLine(guideColor, Offset(0f, oy), Offset(w, oy), strokeWidth = 1f)
-
-			val curNormX = ((xValue - horizontal.min) / spanX).coerceIn(0f, 1f)
-			val curNormY = ((vertical.max - yValue) / spanY).coerceIn(0f, 1f)
-			val hx = curNormX * w
-			val hy = curNormY * h
-			val crossColor = colors.accent.copy(alpha = 0.28f)
-			drawLine(crossColor, Offset(hx, 0f), Offset(hx, h), strokeWidth = 1f)
-			drawLine(crossColor, Offset(0f, hy), Offset(w, hy), strokeWidth = 1f)
-
-			val blendKeysX = horizontalKeys?.blendKeys.orEmpty().toSet()
-			val blendKeysY = verticalKeys?.blendKeys.orEmpty().toSet()
-			val dotFill = colors.controlBackground
-			val dotStroke = colors.textMuted.copy(alpha = 0.75f)
-
-			for (kx in xKeyList) {
-				val kxNorm = ((kx - horizontal.min) / spanX).coerceIn(0f, 1f)
-				val kxPx = kxNorm * w
-				val isBlendX = kx in blendKeysX
-				for (ky in yKeyList) {
-					val kyNorm = ((vertical.max - ky) / spanY).coerceIn(0f, 1f)
-					val kyPx = kyNorm * h
-					val isBlend = isBlendX || ky in blendKeysY
-					val isDefault = abs(kx - horizontal.default) < 1e-4f && abs(ky - vertical.default) < 1e-4f
-					val isSnapped = hypot(kxPx - hx, kyPx - hy) < 3.5f
-					if (isSnapped) {
-						drawCircle(colors.accent.copy(alpha = 0.35f), radius = 5.dp.toPx(), center = Offset(kxPx, kyPx))
-					}
-					val markSize = if (isDefault) 2.0.dp.toPx() else 1.4.dp.toPx()
-					if (isBlend) {
-						drawRect(
-							color = if (isSnapped) colors.accent else dotFill,
-							topLeft = Offset(kxPx - markSize, kyPx - markSize),
-							size = Size(markSize * 2f, markSize * 2f),
-							style = Fill,
-						)
-						drawRect(
-							color = if (isSnapped) colors.accent else dotStroke,
-							topLeft = Offset(kxPx - markSize, kyPx - markSize),
-							size = Size(markSize * 2f, markSize * 2f),
-							style = Stroke(width = 1f),
-						)
-					} else {
-						drawCircle(
-							color = if (isSnapped) colors.accent else dotFill,
-							radius = markSize,
-							center = Offset(kxPx, kyPx),
-							style = Fill,
-						)
-						drawCircle(
-							color = if (isSnapped) colors.accent else dotStroke,
-							radius = markSize,
-							center = Offset(kxPx, kyPx),
-							style = Stroke(width = 1f),
-						)
-					}
-				}
-			}
-
-			val handleCenter = Offset(hx, hy)
-			drawCircle(colors.accent.copy(alpha = 0.22f), radius = 6.5.dp.toPx(), center = handleCenter)
-			drawCircle(Color(0xFF1E2127), radius = 4.dp.toPx(), center = handleCenter, style = Fill)
-			drawCircle(colors.accent, radius = 4.dp.toPx(), center = handleCenter, style = Stroke(width = 1.4.dp.toPx()))
-			drawCircle(Color.White, radius = 1.8.dp.toPx(), center = handleCenter, style = Fill)
-		}
-
-		Text(
-			text = "%.0f".format(vertical.max),
-			style = typography.monoSmall.copy(fontSize = 8.sp),
-			color = colors.textMuted.copy(alpha = 0.45f),
-			modifier = Modifier.align(Alignment.TopStart).padding(start = 3.dp, top = 2.dp),
-		)
-		Text(
-			text = "%.0f".format(horizontal.max),
-			style = typography.monoSmall.copy(fontSize = 8.sp),
-			color = colors.textMuted.copy(alpha = 0.45f),
-			modifier = Modifier.align(Alignment.BottomEnd).padding(end = 3.dp, bottom = 2.dp),
-		)
-		Box(
-			modifier = Modifier
-				.align(Alignment.BottomStart)
-				.padding(start = 3.dp, bottom = 2.dp)
-				.background(colors.panelBackground.copy(alpha = 0.85f), RoundedCornerShape(2.dp))
-				.border(BorderStroke(0.5.dp, colors.divider.copy(alpha = 0.4f)), RoundedCornerShape(2.dp))
-				.padding(horizontal = 4.dp, vertical = 1.dp),
-		) {
-			Text(
-				text = "X: ${formatParamValue(xValue)}  Y: ${formatParamValue(yValue)}",
-				style = typography.monoSmall.copy(fontSize = 8.5.sp, fontWeight = FontWeight.SemiBold),
-				color = colors.textPrimary.copy(alpha = 0.9f),
-			)
+		// Handle (thumb): solid accent circle + white core when on-key
+		val handleColor = if (xLocked && yLocked) colors.textDisabled else colors.accent
+		drawCircle(handleColor, thumbR, Offset(hx, hy))
+		if (onKey && (!xLocked || !yLocked)) {
+			drawCircle(Color.White, thumbR * 0.42f, Offset(hx, hy))
 		}
 	}
 }
+
 
 private fun ParameterKeyMarks?.toSliderMarks(): List<SliderKeyMark> {
 	if (this == null) return emptyList()
