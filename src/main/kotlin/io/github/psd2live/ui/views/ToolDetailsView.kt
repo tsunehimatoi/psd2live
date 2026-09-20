@@ -74,6 +74,12 @@ internal fun ToolDetailsView(
 ) {
     val colors = LocalToolColors.current
     val typography = LocalToolTypography.current
+    if (state.previewModel == null || editor.state.previewModel == null) {
+        Box(modifier.fillMaxSize().padding(12.dp), contentAlignment = Alignment.Center) {
+            Text(tr("toolDetails.noModel"), style = typography.caption, color = colors.textMuted)
+        }
+        return
+    }
     val target = editor.target()
     val isPathTool = editor.tool == CanvasTool.CREATE_DEFORM_PATH || editor.drawingPath
 

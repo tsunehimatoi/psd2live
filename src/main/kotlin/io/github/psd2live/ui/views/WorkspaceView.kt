@@ -372,6 +372,99 @@ private fun HierarchyView(
 	}
 }
 
+@Composable
+internal fun DockHierarchyView(
+	state: PSD2LiveState,
+	viewModel: PSD2LiveViewModel,
+	canvasMode: CanvasMode,
+	onRequestOpenDeformPaths: ((String) -> Unit)? = null,
+	onRequestCreate: ((CreatePlacementKind, CreateRelation, Boolean, String) -> Unit)? = null,
+) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	val density = LocalDensity.current
+	val model = state.previewModel
+
+	val meshPreviewHover = remember(model) { mutableStateOf<MeshPreviewHover?>(null) }
+	var rowCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+	var splitterCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+	var activeDrawOrderTarget by remember { mutableStateOf<DrawOrderDialogTarget?>(null) }
+	var activeMeshSettingsTarget by remember { mutableStateOf<MeshSettingsDialogTarget?>(null) }
+
+	Box(modifier = Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().onGloballyPositioned { rowCoords = it }) {
+					if (model == null) {
+						Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+							Text(
+								text = tr("canvas.hierarchy.empty"),
+								style = typography.caption.copy(fontSize = 11.sp),
+								color = colors.textMuted,
+								modifier = Modifier.padding(12.dp),
+							)
+						}
+					} else {
+						CompositionLocalProvider(LocalMeshPreviewHover provides meshPreviewHover) {
+						HierarchyTreeList(
+							model = model,
+							state = state,
+							viewModel = viewModel,
+							onRequestSetOrder = { targetId, name, currentOrder, defaultOrder, isOverridden ->
+								activeDrawOrderTarget = DrawOrderDialogTarget(targetId, name, currentOrder, defaultOrder, isOverridden)
+							},
+							onRequestSetMeshSettings = { target ->
+								activeMeshSettingsTarget = target
+							},
+							onRequestOpenDeformPaths = onRequestOpenDeformPaths,
+							onRequestCreate = onRequestCreate,
+						)
+						}
+					}
+        }
+
+		// Modal Dialog for setting Draw Order
+		if (activeDrawOrderTarget != null) {
+			val target = activeDrawOrderTarget!!
+			DrawOrderInputDialog(
+				targetId = target.id,
+				targetName = target.name,
+				initialOrder = target.currentOrder,
+				defaultOrder = target.defaultOrder,
+				isOverridden = target.isOverridden,
+				onConfirm = { newOrder ->
+					viewModel.setLayerDrawOrder(target.id, newOrder)
+					activeDrawOrderTarget = null
+				},
+				onReset = {
+					viewModel.resetLayerDrawOrder(target.id)
+					activeDrawOrderTarget = null
+				},
+				onDismiss = {
+					activeDrawOrderTarget = null
+				},
+			)
+		}
+
+		// Modal Dialog for setting Part Mesh Settings
+		if (activeMeshSettingsTarget != null) {
+			val target = activeMeshSettingsTarget!!
+			MeshSettingsDialog(
+				target = target,
+				onConfirm = { newSettings ->
+					viewModel.setPartMeshSettings(target.layerId, newSettings)
+					activeMeshSettingsTarget = null
+				},
+				onReset = {
+					viewModel.resetPartMeshSettings(target.layerId)
+					activeMeshSettingsTarget = null
+				},
+				onDismiss = {
+					activeMeshSettingsTarget = null
+				},
+			)
+		}
+	}
+}
+
 private data class DrawOrderDialogTarget(
 	val id: String,
 	val name: String,

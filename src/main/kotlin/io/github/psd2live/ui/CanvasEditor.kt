@@ -757,9 +757,12 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         }
     val editable get() = !busy && !state.canvasEditBusy && !state.isGenerating && !state.isAnalyzing && state.historySnapshot != null
 
-    fun target(source: PuppetModel = model, layerId: String? = state.selectedLayerId, deformerId: String? = state.selectedDeformerId): CanvasTarget? {
-        val deformer = source.deformers.firstOrNull { it.id.raw == deformerId }
-        val drawable = source.drawables.firstOrNull { state.previewModel!!.rig.layerIdByDrawableId[it.id.raw] == layerId }
+    fun target(source: PuppetModel? = preview ?: state.previewModel?.rig?.puppet, layerId: String? = state.selectedLayerId, deformerId: String? = state.selectedDeformerId): CanvasTarget? {
+        // Panels can be composed before a project is loaded or while it is closing.
+        val resolvedSource = source ?: return null
+        val rig = state.previewModel?.rig ?: return null
+        val deformer = resolvedSource.deformers.firstOrNull { it.id.raw == deformerId }
+        val drawable = resolvedSource.drawables.firstOrNull { rig.layerIdByDrawableId[it.id.raw] == layerId }
         val kind: String; val id: String; val parent: DeformerId?; val indices: IntArray
         if (deformer is Deformer.Warp) {
             if (!deformer.isSelectable || !deformer.isVisible || state.deformerVisibility[deformer.id.raw] == false) return null
@@ -772,13 +775,13 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             if (layerId !in state.effectiveVisibleLayerIds || !drawable.isSelectable) return null
             kind = "mesh"; id = drawable.id.raw; parent = drawable.parentDeformerId; indices = drawable.mesh.indices
         } else return null
-        if (cachedSource !== source || cachedPose != state.parameterValues) {
-            cachedSource = source; cachedPose = state.parameterValues; cachedTargets.clear()
-            cachedWorlds = buildDeformerWorlds(source.deformers, { p -> state.parameterValues[p] ?: source.parameters.firstOrNull { it.id == p }?.default ?: 0f })
+        if (cachedSource !== resolvedSource || cachedPose != state.parameterValues) {
+            cachedSource = resolvedSource; cachedPose = state.parameterValues; cachedTargets.clear()
+            cachedWorlds = buildDeformerWorlds(resolvedSource.deformers, { p -> state.parameterValues[p] ?: resolvedSource.parameters.firstOrNull { it.id == p }?.default ?: 0f })
         }
         val worlds = cachedWorlds
         if (parent != null && worlds[parent] == null) return null
-        return cachedTargets.getOrPut("$kind:$id") { CanvasTarget(kind, id, RigGeometryTools.geometry(source, kind, id, pose), DrawableSpaceMapping(parent?.let { worlds[it] }), indices) }
+        return cachedTargets.getOrPut("$kind:$id") { CanvasTarget(kind, id, RigGeometryTools.geometry(resolvedSource, kind, id, pose), DrawableSpaceMapping(parent?.let { worlds[it] }), indices) }
     }
 
     fun screen(local: FloatArray, target: CanvasTarget, viewport: CanvasViewport): List<Offset> {

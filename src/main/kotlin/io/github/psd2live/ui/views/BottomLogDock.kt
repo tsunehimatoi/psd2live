@@ -63,6 +63,7 @@ fun BottomLogDock(
 	state: PSD2LiveState,
 	viewModel: PSD2LiveViewModel,
 	modifier: Modifier = Modifier,
+    fillDock: Boolean = false,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -116,7 +117,7 @@ fun BottomLogDock(
 			.border(BorderStroke(1.dp, colors.divider)),
 	) {
 		// 1. Resizable Splitter Handle
-		if (state.logPanelExpanded) {
+		if (state.logPanelExpanded && !fillDock) {
 			Box(
 				modifier = Modifier
 					.fillMaxWidth()
@@ -195,7 +196,7 @@ fun BottomLogDock(
 				verticalAlignment = Alignment.CenterVertically,
 				horizontalArrangement = Arrangement.spacedBy(4.dp),
 			) {
-				if (state.logPanelExpanded) {
+				if (state.logPanelExpanded || fillDock) {
 					// Filter Chips
 					FilterChip(
 						text = tr("log.dock.filter.all"),
@@ -262,11 +263,11 @@ fun BottomLogDock(
 		}
 
 		// 3. Scrollable Log Body (when expanded)
-		if (state.logPanelExpanded) {
+		if (state.logPanelExpanded || fillDock) {
 			Box(
 				modifier = Modifier
 					.fillMaxWidth()
-					.height(state.logPanelHeight.dp)
+					.then(if (fillDock) Modifier.weight(1f) else Modifier.height(state.logPanelHeight.dp))
 					.background(colors.inputBackground),
 			) {
 				if (filteredEntries.isEmpty()) {

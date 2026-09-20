@@ -380,81 +380,8 @@ fun FrameWindowScope.PSD2LiveApp(
 						onOpenUrl = { url -> DesktopUtils.openBrowser(url) },
 					)
 				}
-				// Main Center Area: Split Pane between Workspace (Left) and Inspector (Right)
-				BoxWithConstraints(
-					modifier = Modifier
-						.weight(1f)
-						.fillMaxWidth()
-						.padding(top = 2.dp),
-				) {
-					val density = LocalDensity.current
-					val totalWidth = maxWidth
-					val inspectorCollapsed = state.inspectorCollapsed
-					val splitRatio = state.workspaceSplitRatio
-
-					val leftWidth = if (inspectorCollapsed) totalWidth else totalWidth * splitRatio
-					val rightWidth = if (inspectorCollapsed) 0.dp else (totalWidth - leftWidth - 4.dp).coerceAtLeast(0.dp)
-
-					var rowCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
-					var splitterCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
-
-					Row(
-						modifier = Modifier
-							.fillMaxSize()
-							.onGloballyPositioned { rowCoords = it },
-					) {
-						// Left: Workspace Area
-						WorkspaceView(
-							state = state,
-							viewModel = viewModel,
-							modifier = Modifier.width(leftWidth).fillMaxHeight(),
-						)
-
-						if (!inspectorCollapsed) {
-							// Resizable Splitter Handle
-							Box(
-								modifier = Modifier
-									.width(4.dp)
-									.fillMaxHeight()
-									.background(colors.divider)
-									.onGloballyPositioned { splitterCoords = it }
-									.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.E_RESIZE_CURSOR)))
-									.pointerInput(Unit) {
-										awaitEachGesture {
-											val down = awaitFirstDown()
-											val grabOffset = down.position.x
-											while (true) {
-												val event = awaitPointerEvent()
-												val change = event.changes.firstOrNull { it.id == down.id } ?: break
-												if (!change.pressed) break
-												change.consume()
-												val row = rowCoords
-												val splitter = splitterCoords
-												if (row != null && splitter != null && row.isAttached && splitter.isAttached) {
-													val rowWidth = row.size.width.toFloat()
-													if (rowWidth > 0f) {
-														val mouseInRow = row.localPositionOf(splitter, change.position)
-														val splitterLeft = mouseInRow.x - grabOffset
-														val ratio = (splitterLeft / rowWidth).coerceIn(0.25f, 0.85f)
-														viewModel.setWorkspaceSplitRatio(ratio)
-													}
-												}
-											}
-										}
-									},
-							)
-
-							// Right: Inspector Area
-							InspectorView(
-								state = state,
-								viewModel = viewModel,
-								onGenerate = { viewModel.generateRig() },
-								onChooseOutput = chooseOutputFolder,
-								modifier = Modifier.width(rightWidth).fillMaxHeight(),
-							)
-						}
-					}
-				}
+                DockWorkspaceView(state, viewModel, chooseOutputFolder,
+                    Modifier.weight(1f).fillMaxWidth().padding(top = 2.dp), window)
 
 				// Bottom Status Bar
 				StatusBar(state, viewModel)

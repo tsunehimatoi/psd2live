@@ -203,7 +203,7 @@ private fun MotionItemWithPlay(
 }
 
 @Composable
-private fun ExportActionSection(
+internal fun ExportActionSection(
 	state: PSD2LiveState,
 	viewModel: PSD2LiveViewModel,
 	onGenerate: () -> Unit,
@@ -311,7 +311,7 @@ private fun ExportActionSection(
 }
 
 @Composable
-private fun ModelSettingsSection(
+internal fun ModelSettingsSection(
 	state: PSD2LiveState,
 	viewModel: PSD2LiveViewModel,
 	isExpanded: Boolean,
@@ -1167,7 +1167,7 @@ private fun CompactSwitchParamField(
 }
 
 @Composable
-private fun LayersTableView(
+internal fun LayersTableView(
 	state: PSD2LiveState,
 	viewModel: PSD2LiveViewModel,
 ) {
