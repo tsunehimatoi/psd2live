@@ -2,6 +2,8 @@ package io.github.psd2live.ui.components
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -35,10 +37,14 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.awt.ComposeWindow
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.onPointerEvent
@@ -67,6 +73,12 @@ import java.awt.Cursor
 import java.awt.MouseInfo
 import java.awt.Point
 
+private enum class LayoutPanelIcon {
+	LEFT,
+	BOTTOM,
+	RIGHT,
+}
+
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun AppTitleBar(
@@ -81,6 +93,12 @@ fun AppTitleBar(
 	uiScale: Float = 1.0f,
 	fontScale: Float = 1.0f,
 	keymap: Keymap = Keymap.DEFAULT,
+	hierarchyVisible: Boolean = true,
+	logVisible: Boolean = true,
+	inspectorVisible: Boolean = true,
+	onToggleHierarchy: () -> Unit = {},
+	onToggleLog: () -> Unit = {},
+	onToggleInspector: () -> Unit = {},
 	onOpenPsd: () -> Unit,
     onOpenProject: () -> Unit,
     onSaveProject: () -> Unit,
@@ -702,11 +720,32 @@ fun AppTitleBar(
 			)
 		}
 
-		// --- RIGHT: Window Control Buttons (Minimize, Maximize/Restore, Close) ---
+		// --- RIGHT: Layout toggles + Window Control Buttons ---
 		Row(
 			modifier = Modifier.fillMaxHeight(),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
+			TitleBarLayoutToggle(
+				tooltip = tr("layout.toggle.hierarchy"),
+				active = hierarchyVisible,
+				icon = LayoutPanelIcon.LEFT,
+				onClick = onToggleHierarchy,
+			)
+			TitleBarLayoutToggle(
+				tooltip = tr("layout.toggle.log"),
+				active = logVisible,
+				icon = LayoutPanelIcon.BOTTOM,
+				onClick = onToggleLog,
+			)
+			TitleBarLayoutToggle(
+				tooltip = tr("layout.toggle.inspector"),
+				active = inspectorVisible,
+				icon = LayoutPanelIcon.RIGHT,
+				onClick = onToggleInspector,
+			)
+
+			Spacer(modifier = Modifier.width(4.dp))
+
 			// Minimize
 			WindowControlButton(
 				onClick = { windowState.isMinimized = true },
@@ -1106,6 +1145,103 @@ fun AppMenuHeader(text: String) {
 			.fillMaxWidth()
 			.padding(horizontal = 12.dp, vertical = 3.dp),
 	)
+}
+
+@OptIn(ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
+@Composable
+private fun TitleBarLayoutToggle(
+	tooltip: String,
+	active: Boolean,
+	icon: LayoutPanelIcon,
+	onClick: () -> Unit,
+) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	var isHovered by remember { mutableStateOf(false) }
+
+	TooltipArea(
+		tooltip = {
+			Surface(
+				color = colors.panelElevated,
+				shape = RoundedCornerShape(3.dp),
+				border = BorderStroke(1.dp, colors.border),
+				elevation = 4.dp,
+			) {
+				Text(
+					text = tooltip,
+					style = typography.caption.copy(fontSize = 10.sp),
+					color = colors.textPrimary,
+					modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+				)
+			}
+		},
+		delayMillis = 400,
+	) {
+		Box(
+			modifier = Modifier
+				.width(30.dp)
+				.fillMaxHeight()
+				.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
+				.onPointerEvent(PointerEventType.Enter) { isHovered = true }
+				.onPointerEvent(PointerEventType.Exit) { isHovered = false }
+				.clickable(onClick = onClick),
+			contentAlignment = Alignment.Center,
+		) {
+			Canvas(modifier = Modifier.size(14.dp)) {
+				val stroke = 1.15.dp.toPx()
+				val inset = 0.5.dp.toPx()
+				val band = size.width * 0.28f
+				val corner = CornerRadius(1.75.dp.toPx())
+				val outline = if (active || isHovered) colors.textPrimary else colors.textMuted
+				val fill = when {
+					active -> colors.textPrimary.copy(alpha = 0.75f)
+					isHovered -> colors.textPrimary.copy(alpha = 0.45f)
+					else -> colors.textMuted.copy(alpha = 0.35f)
+				}
+				val frame = Path().apply {
+					addRoundRect(
+						RoundRect(
+							left = inset,
+							top = inset,
+							right = size.width - inset,
+							bottom = size.height - inset,
+							cornerRadius = corner,
+						),
+					)
+				}
+
+				// Clip to the rounded frame so outer corners follow the outline,
+				// while the inner divider stays a hard straight edge.
+				clipPath(frame) {
+					when (icon) {
+						LayoutPanelIcon.LEFT -> {
+							drawRect(
+								color = fill,
+								topLeft = Offset(inset, inset),
+								size = Size(band, size.height - inset * 2),
+							)
+						}
+						LayoutPanelIcon.BOTTOM -> {
+							drawRect(
+								color = fill,
+								topLeft = Offset(inset, size.height - inset - band),
+								size = Size(size.width - inset * 2, band),
+							)
+						}
+						LayoutPanelIcon.RIGHT -> {
+							drawRect(
+								color = fill,
+								topLeft = Offset(size.width - inset - band, inset),
+								size = Size(band, size.height - inset * 2),
+							)
+						}
+					}
+				}
+
+				drawPath(frame, color = outline, style = Stroke(stroke))
+			}
+		}
+	}
 }
 
 @OptIn(ExperimentalComposeUiApi::class)

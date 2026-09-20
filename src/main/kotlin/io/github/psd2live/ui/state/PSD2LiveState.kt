@@ -213,6 +213,8 @@ data class PSD2LiveState(
     val drawOrderRulerWidth: Float = 24f,
     val modelSettingsExpanded: Boolean = true,
     val workspaceSplitRatio: Float = 0.60f,
+    /** When true, the right inspector / parameters sidebar is hidden. */
+    val inspectorCollapsed: Boolean = false,
     val workspaceTabs: List<WorkspaceTabState> = defaultWorkspaceTabs(),
     val activeWorkspaceTabId: String = PINNED_EDIT_TAB_ID,
     val historyAnnotations: Map<String, HistoryAnnotation> = emptyMap(),

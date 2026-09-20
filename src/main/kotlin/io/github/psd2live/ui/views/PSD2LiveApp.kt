@@ -342,6 +342,12 @@ fun FrameWindowScope.PSD2LiveApp(
 						uiScale = state.uiScale,
 						fontScale = state.fontScale,
 						keymap = state.keymap,
+						hierarchyVisible = !state.hierarchyCollapsed,
+						logVisible = state.logPanelExpanded,
+						inspectorVisible = !state.inspectorCollapsed,
+						onToggleHierarchy = { viewModel.setHierarchyView(collapsed = !state.hierarchyCollapsed) },
+						onToggleLog = { viewModel.setLogPanelExpanded(!state.logPanelExpanded) },
+						onToggleInspector = { viewModel.setInspectorCollapsed(!state.inspectorCollapsed) },
 						onOpenPsd = onOpenPsdAction,
                         onOpenProject = onOpenProjectAction,
                         onSaveProject = { viewModel.requestProjectSave() },
@@ -383,10 +389,11 @@ fun FrameWindowScope.PSD2LiveApp(
 				) {
 					val density = LocalDensity.current
 					val totalWidth = maxWidth
+					val inspectorCollapsed = state.inspectorCollapsed
 					val splitRatio = state.workspaceSplitRatio
 
-					val leftWidth = totalWidth * splitRatio
-					val rightWidth = (totalWidth - leftWidth - 4.dp).coerceAtLeast(0.dp)
+					val leftWidth = if (inspectorCollapsed) totalWidth else totalWidth * splitRatio
+					val rightWidth = if (inspectorCollapsed) 0.dp else (totalWidth - leftWidth - 4.dp).coerceAtLeast(0.dp)
 
 					var rowCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 					var splitterCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
@@ -403,47 +410,49 @@ fun FrameWindowScope.PSD2LiveApp(
 							modifier = Modifier.width(leftWidth).fillMaxHeight(),
 						)
 
-						// Resizable Splitter Handle
-						Box(
-							modifier = Modifier
-								.width(4.dp)
-								.fillMaxHeight()
-								.background(colors.divider)
-								.onGloballyPositioned { splitterCoords = it }
-								.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.E_RESIZE_CURSOR)))
-								.pointerInput(Unit) {
-									awaitEachGesture {
-										val down = awaitFirstDown()
-										val grabOffset = down.position.x
-										while (true) {
-											val event = awaitPointerEvent()
-											val change = event.changes.firstOrNull { it.id == down.id } ?: break
-											if (!change.pressed) break
-											change.consume()
-											val row = rowCoords
-											val splitter = splitterCoords
-											if (row != null && splitter != null && row.isAttached && splitter.isAttached) {
-												val rowWidth = row.size.width.toFloat()
-												if (rowWidth > 0f) {
-													val mouseInRow = row.localPositionOf(splitter, change.position)
-													val splitterLeft = mouseInRow.x - grabOffset
-													val ratio = (splitterLeft / rowWidth).coerceIn(0.25f, 0.85f)
-													viewModel.setWorkspaceSplitRatio(ratio)
+						if (!inspectorCollapsed) {
+							// Resizable Splitter Handle
+							Box(
+								modifier = Modifier
+									.width(4.dp)
+									.fillMaxHeight()
+									.background(colors.divider)
+									.onGloballyPositioned { splitterCoords = it }
+									.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.E_RESIZE_CURSOR)))
+									.pointerInput(Unit) {
+										awaitEachGesture {
+											val down = awaitFirstDown()
+											val grabOffset = down.position.x
+											while (true) {
+												val event = awaitPointerEvent()
+												val change = event.changes.firstOrNull { it.id == down.id } ?: break
+												if (!change.pressed) break
+												change.consume()
+												val row = rowCoords
+												val splitter = splitterCoords
+												if (row != null && splitter != null && row.isAttached && splitter.isAttached) {
+													val rowWidth = row.size.width.toFloat()
+													if (rowWidth > 0f) {
+														val mouseInRow = row.localPositionOf(splitter, change.position)
+														val splitterLeft = mouseInRow.x - grabOffset
+														val ratio = (splitterLeft / rowWidth).coerceIn(0.25f, 0.85f)
+														viewModel.setWorkspaceSplitRatio(ratio)
+													}
 												}
 											}
 										}
-									}
-								},
-						)
+									},
+							)
 
-						// Right: Inspector Area
-						InspectorView(
-							state = state,
-							viewModel = viewModel,
-							onGenerate = { viewModel.generateRig() },
-							onChooseOutput = chooseOutputFolder,
-							modifier = Modifier.width(rightWidth).fillMaxHeight(),
-						)
+							// Right: Inspector Area
+							InspectorView(
+								state = state,
+								viewModel = viewModel,
+								onGenerate = { viewModel.generateRig() },
+								onChooseOutput = chooseOutputFolder,
+								modifier = Modifier.width(rightWidth).fillMaxHeight(),
+							)
+						}
 					}
 				}
 

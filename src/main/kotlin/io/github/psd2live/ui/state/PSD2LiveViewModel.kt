@@ -482,6 +482,13 @@ class PSD2LiveViewModel : AutoCloseable {
             else it.copy(workspaceSplitRatio = clamped, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1)
         }
     }
+
+    fun setInspectorCollapsed(collapsed: Boolean) {
+        _state.update {
+            if (it.inspectorCollapsed == collapsed) it
+            else it.copy(inspectorCollapsed = collapsed, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1)
+        }
+    }
     fun adjustWorkspaceSplitRatio(deltaRatio: Float, min: Float = 0.25f, max: Float = 0.85f) {
         _state.update {
             val next = (it.workspaceSplitRatio + deltaRatio).coerceIn(min, max)
@@ -1456,7 +1463,10 @@ class PSD2LiveViewModel : AutoCloseable {
 	}
 
 	fun setLogPanelExpanded(expanded: Boolean) {
-		_state.update { it.copy(logPanelExpanded = expanded) }
+		_state.update {
+			if (it.logPanelExpanded == expanded) it
+			else it.copy(logPanelExpanded = expanded)
+		}
 	    markWorkspaceChanged()
 	}
 

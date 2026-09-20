@@ -233,64 +233,6 @@ private fun HierarchyView(
 						.background(colors.panelBackground)
 						.border(BorderStroke(1.dp, colors.divider)),
 				) {
-					// Tree Header
-					Row(
-						modifier = Modifier
-							.fillMaxWidth()
-							.height(26.dp)
-							.background(colors.panelElevated)
-							.border(BorderStroke(1.dp, colors.divider))
-							.padding(horizontal = 8.dp),
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.SpaceBetween,
-					) {
-						Row(
-							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.spacedBy(6.dp),
-						) {
-							Text(
-								text = tr("canvas.hierarchy.root"),
-								style = typography.header.copy(fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold),
-								color = colors.textPrimary,
-							)
-							if (model != null) {
-								val dCount = model.rig.puppet.deformers.size
-								val lCount = model.rig.puppet.drawables.size
-								Text(
-									text = tr("canvas.hierarchy.stats", dCount, lCount),
-									style = typography.caption.copy(fontSize = 9.5.sp),
-									color = colors.textMuted,
-								)
-							}
-						}
-						Row(
-							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.spacedBy(4.dp),
-						) {
-							if (state.parentOverrides.isNotEmpty()) {
-								Box(
-									modifier = Modifier
-										.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
-										.clickable { viewModel.resetHierarchyOverrides() }
-										.padding(2.dp),
-									contentAlignment = Alignment.Center,
-								) {
-									IconReset(modifier = Modifier.size(11.dp), tint = colors.accent)
-								}
-							}
-							// Collapse button in header
-							Box(
-								modifier = Modifier
-									.size(18.dp)
-									.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
-									.clickable { viewModel.setHierarchyView(collapsed = true) },
-								contentAlignment = Alignment.Center,
-							) {
-								IconChevron(expanded = true, modifier = Modifier.size(9.dp), tint = colors.textMuted)
-							}
-						}
-					}
-
 					if (model == null) {
 						Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
 							Text(
@@ -359,33 +301,6 @@ private fun HierarchyView(
 					modifier = Modifier.fillMaxSize(),
 					onLayerClicked = { viewModel.selectLayer(it) },
 				)
-
-				// Ear Tab (外挂耳朵标签) when collapsed
-				if (isTreeCollapsed) {
-					Box(
-						modifier = Modifier
-							.align(Alignment.TopStart)
-							.padding(top = 8.dp)
-							.background(colors.panelElevated, RoundedCornerShape(topEnd = 4.dp, bottomEnd = 4.dp))
-							.border(BorderStroke(1.dp, colors.border), RoundedCornerShape(topEnd = 4.dp, bottomEnd = 4.dp))
-							.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
-							.clickable { viewModel.setHierarchyView(collapsed = false) }
-							.padding(horizontal = 8.dp, vertical = 5.dp),
-						contentAlignment = Alignment.Center,
-					) {
-						Row(
-							verticalAlignment = Alignment.CenterVertically,
-							horizontalArrangement = Arrangement.spacedBy(4.dp),
-						) {
-							IconChevron(expanded = false, modifier = Modifier.size(9.dp), tint = colors.accent)
-							Text(
-								text = tr("tab.hierarchy"),
-								style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
-								color = colors.textPrimary,
-							)
-						}
-					}
-				}
 			}
 		}
 

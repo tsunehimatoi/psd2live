@@ -186,6 +186,7 @@ internal object WorkspaceStateCodec {
         put("modelSettingsExpanded", state.modelSettingsExpanded)
 
         put("workspaceSplitRatio", state.workspaceSplitRatio)
+        put("inspectorCollapsed", state.inspectorCollapsed)
         put("viewOptionsRevision", VIEW_OPTIONS_REVISION)
         putJsonArray("workspaceTabs") { state.workspaceTabs.forEach { tab -> add(buildJsonObject {
             put("id", tab.id)
@@ -305,6 +306,7 @@ internal object WorkspaceStateCodec {
         modelSettingsExpanded = value["modelSettingsExpanded"]?.jsonPrimitive?.boolean ?: base.modelSettingsExpanded,
 
         workspaceSplitRatio = value["workspaceSplitRatio"]?.jsonPrimitive?.float ?: base.workspaceSplitRatio,
+        inspectorCollapsed = value["inspectorCollapsed"]?.jsonPrimitive?.boolean ?: base.inspectorCollapsed,
         workspaceTabs = workspaceTabs,
         activeWorkspaceTabId = activeWorkspaceTabId,
         outputPath = value["outputPath"]?.jsonPrimitive?.content ?: base.outputPath,
