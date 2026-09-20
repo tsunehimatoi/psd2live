@@ -221,7 +221,7 @@ fun AppTitleBar(
 						{
 							LocalTutorialTargets.current?.let { registry ->
 								TutorialOverlay(
-									step = tutorialStep!!, registry = registry, reviewing = tutorialReviewing,
+									step = tutorialStep, registry = registry, reviewing = tutorialReviewing,
 									onNext = onTutorialNext, onPrevious = onTutorialPrevious,
 									onSkip = onTutorialSkip, onExit = onTutorialExit, onFinish = onTutorialExit,
 								)

@@ -17,7 +17,7 @@ import org.umamo.format.moc3.model.WarpDeformer
  * row, so a kind whose reference table is short sends it reading past the pool.
  *
  * @param MocLoweringContext context The shared lowering derivations.
- * @return Map Section index → element-region bytes (empty when the document carries no color data).
+ * @return Map Section index → element-region bytes, including identity colors for uncolored forms.
  * @see <a href="https://docs.umamo.org/format/MOC3.md">MOC3.md §5.6</a>
  */
 internal fun colorSections(context: MocLoweringContext): Map<Int, ByteArray> {
@@ -26,20 +26,12 @@ internal fun colorSections(context: MocLoweringContext): Map<Int, ByteArray> {
 
 	// Layout (MOC3 §5.6): a moc-6 offscreen keyform PREFIX, then the base rows (deformers in
 	// unified order, then meshes), then the blend records' color delta rows (global record
-	// order, part records excluded - parts own no color rows).  Synthesized whenever any typed
-	// color data exists; a doc whose offscreens/blends predate the typed extraction (empty
-	// keyform lists) falls back to carrying via the size guard below.
+	// order, part records excluded - parts own no color rows). Offscreens without typed
+	// keyforms cannot supply their prefix, so leave those tables to the reference container.
 	val offscreenKeyformsTyped = doc.offscreens.all { it.keyforms.isNotEmpty() }
-	val hasColor =
-		(offscreenKeyformsTyped || doc.offscreens.isEmpty()) &&
-			(
-				doc.deformers.any { deformer ->
-					(deformer is WarpDeformer && deformer.keyforms.any { it.multiplyColor != null }) ||
-						(deformer is RotationDeformer && deformer.keyforms.any { it.multiplyColor != null })
-				} ||
-					doc.artMeshes.any { mesh -> mesh.keyforms.any { it.multiplyColor != null } } ||
-					doc.offscreens.any { offscreen -> offscreen.keyforms.any { it.multiplyColor != null } }
-			)
+	// Cubism 4.2+ validates color rows even when no colors were authored. Emit the
+	// white multiply / black screen defaults for fresh models as well as imported ones.
+	val hasColor = doc.version.byteValue >= 4 && offscreenKeyformsTyped
 	if (hasColor) {
 		val multiplyRed = ArrayList<Float>()
 		val multiplyGreen = ArrayList<Float>()

@@ -106,7 +106,8 @@ internal fun countInfoSection(context: MocLoweringContext): ByteArray {
 		} else {
 			countInfo[7] + countInfo[8] + countInfo[9] + offscreenKeyformTotal
 		}
-	if (blendLayout != null || doc.offscreens.isNotEmpty()) {
+	// Base color rows are mandatory from Cubism 4.2 onward, including blend-free models.
+	if (doc.version.byteValue >= 4) {
 		putField(23, colorRowTotal)
 		putField(24, colorRowTotal)
 	}
