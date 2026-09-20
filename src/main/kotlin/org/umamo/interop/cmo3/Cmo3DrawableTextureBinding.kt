@@ -1,5 +1,6 @@
 package org.umamo.interop.cmo3
 
+import org.umamo.format.cmo3.model.gen.CImageIcon
 import org.umamo.format.cmo3.model.gen.GTexture2D
 import org.umamo.format.cmo3.model.identity.Guid
 import org.umamo.format.cmo3.model.type.CAffine
@@ -9,7 +10,9 @@ import org.umamo.format.cmo3.model.type.CAffine
  * per-page objects the image-chain builder created (docs/format/CMO3.md §4 How a Drawable
  * References its Texture).  Instances are shared per atlas page: every drawable on the page
  * references the SAME GTexture2D and guid objects, so the writer hoists them exactly like the
- * editor's own files (one atlas GTexture2D for all packed drawables).
+ * editor's own files (one atlas GTexture2D for all packed drawables).  The icons are the drawable's
+ * own (one per drawable, like the editor's files), their PNG entries already collected or embedded
+ * by whoever built the binding.
  */
 public class Cmo3DrawableTextureBinding(
 	/** The page's shared texture (srcImageResource = the page CImageResource). */
@@ -20,6 +23,10 @@ public class Cmo3DrawableTextureBinding(
 	val modelImageGuid: Guid?,
 	/** The drawable's fitted atlas-page-to-canvas placement (the region input's transform). */
 	val inputImageLocalToCanvasTransform: CAffine,
+	/** The drawable's 32px thumbnail of its texture patch, or null when it has no art to show. */
+	val icon32: CImageIcon? = null,
+	/** The drawable's 16px thumbnail, or null likewise. */
+	val icon16: CImageIcon? = null,
 )
 
 /**

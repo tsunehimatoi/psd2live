@@ -34,7 +34,30 @@ data class LayerBounds(
 	val top: Int,
 	val width: Int,
 	val height: Int,
-)
+) {
+	/** The rectangle's area in pixels; zero for an empty one. */
+	val area: Long get() = if (width <= 0 || height <= 0) 0L else width.toLong() * height.toLong()
+
+	/**
+	 * How much of the union of this rectangle and [other] both cover: 1 for the same rectangle, 0 for
+	 * disjoint ones - the overlap measure a layer matcher scores a candidate's placement on.
+	 *
+	 * @param LayerBounds other The other rectangle.
+	 * @return Float The intersection over the union, 0 when either rectangle is empty.
+	 */
+	fun intersectionOverUnion(other: LayerBounds): Float {
+		if (area == 0L || other.area == 0L) {
+			return 0f
+		}
+		val overlapWidth = minOf(left + width, other.left + other.width) - maxOf(left, other.left)
+		val overlapHeight = minOf(top + height, other.top + other.height) - maxOf(top, other.top)
+		if (overlapWidth <= 0 || overlapHeight <= 0) {
+			return 0f
+		}
+		val intersection = overlapWidth.toLong() * overlapHeight.toLong()
+		return intersection.toFloat() / (area + other.area - intersection).toFloat()
+	}
+}
 
 /**
  * How a layer composites onto what's beneath it - the full PSD/Clip Studio/Krita blend-mode set.
@@ -133,6 +156,23 @@ class LayerRaster(
 )
 
 /**
+ * Whether every pixel of this raster is fully transparent - a layer the artist erased to nothing, as
+ * opposed to one that merely fell under an import's alpha threshold.
+ *
+ * @return Boolean True when no pixel has any alpha.
+ */
+fun LayerRaster.isFullyTransparent(): Boolean {
+	var offset = 3
+	while (offset < rgba.size) {
+		if (rgba[offset].toInt() != 0) {
+			return false
+		}
+		offset += 4
+	}
+	return true
+}
+
+/**
  * One layer of ingested source art, neutral across PSD/CLIP/KRA. [id] is the re-import join key;
  * [groupPath] is the slash-joined group hierarchy used as the PSD fallback key when [id] is weak.
  */
@@ -154,6 +194,16 @@ interface SourceLayer {
 	 * hidden by an ancestor folder being hidden ([SourceGroup.visible]).
 	 */
 	val visible: Boolean get() = true
+
+	/**
+	 * Whether [id] is a format-minted identity that survives a rename or reorder in the art program (a
+	 * CLIP or Krita layer uuid, a PSD lyid), as opposed to a name-and-order fallback that holds only as
+	 * long as the artist's layer organization does.  Defaults to true because every reader mints a
+	 * stable id wherever the format offers one; a reader overrides it to false for the layers where it
+	 * had to fall back.  The re-import join trusts a stable key outright and routes the rest through
+	 * review.
+	 */
+	val idIsStable: Boolean get() = true
 
 	/** Draw order within the source document (top-most first), used to disambiguate fallbacks. */
 	val order: Int

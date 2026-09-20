@@ -247,6 +247,11 @@ internal class Cmo3StructureLowering(
 			keyformMorphTargetSet = Cmo3SkeletonBuilder.emptyMorphTargetSet()
 			labelColor = Cmo3SkeletonBuilder.undefinedLabelColor()
 			userData = ""
+			// CMO3: ACDrawableSource fields icon32 / icon16 - the drawable's own thumbnails of its
+			// texture patch, minted by whoever built the binding; a drawable with no binding (a clone
+			// of a source with no art of its own) carries none.
+			icon32 = binding?.icon32
+			icon16 = binding?.icon16
 			if (textureSource != null) {
 				// CMO3: CArtMeshSource identity shell.  The texture and texture-input extension are
 				// the SOURCE drawable's own objects (the writer hoists the shared references), so the

@@ -106,10 +106,7 @@ internal fun countInfoSection(context: MocLoweringContext): ByteArray {
 		} else {
 			countInfo[7] + countInfo[8] + countInfo[9] + offscreenKeyformTotal
 		}
-	// MOC3 v4+ validates the base color row of every deformer/art-mesh form even when all colors
-	// are their identity values.  Therefore these totals are mandatory for a newly synthesized
-	// v4/v5/v6 file, not merely for models with blend shapes or offscreens.
-	if (doc.version.byteValue >= 4) {
+	if (blendLayout != null || doc.offscreens.isNotEmpty()) {
 		putField(23, colorRowTotal)
 		putField(24, colorRowTotal)
 	}

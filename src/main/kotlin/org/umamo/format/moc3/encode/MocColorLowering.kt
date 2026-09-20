@@ -30,13 +30,16 @@ internal fun colorSections(context: MocLoweringContext): Map<Int, ByteArray> {
 	// color data exists; a doc whose offscreens/blends predate the typed extraction (empty
 	// keyform lists) falls back to carrying via the size guard below.
 	val offscreenKeyformsTyped = doc.offscreens.all { it.keyforms.isNotEmpty() }
-	// Cubism 4.2+ requires the base color row for every deformer/art-mesh form even when the
-	// author never changed its colors.  An absent table is not interpreted as white/black identity:
-	// the Core still validates each object's color-base + keyform-count range and rejects a fresh
-	// bake whose CountInfo color-row total is zero.  Older round-trip tests did not reveal this
-	// because official input files already carried identity rows which the reference-container path
-	// preserved.  Full synthesis must create those rows itself.
-	val hasColor = doc.version.byteValue >= 4 && (offscreenKeyformsTyped || doc.offscreens.isEmpty())
+	val hasColor =
+		(offscreenKeyformsTyped || doc.offscreens.isEmpty()) &&
+			(
+				doc.deformers.any { deformer ->
+					(deformer is WarpDeformer && deformer.keyforms.any { it.multiplyColor != null }) ||
+						(deformer is RotationDeformer && deformer.keyforms.any { it.multiplyColor != null })
+				} ||
+					doc.artMeshes.any { mesh -> mesh.keyforms.any { it.multiplyColor != null } } ||
+					doc.offscreens.any { offscreen -> offscreen.keyforms.any { it.multiplyColor != null } }
+			)
 	if (hasColor) {
 		val multiplyRed = ArrayList<Float>()
 		val multiplyGreen = ArrayList<Float>()

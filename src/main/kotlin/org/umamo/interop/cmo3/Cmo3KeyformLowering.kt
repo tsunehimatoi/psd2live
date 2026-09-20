@@ -28,6 +28,7 @@ import org.umamo.interop.ExportEntityCategory
 import org.umamo.interop.ExportNotice
 import org.umamo.interop.ExportNoticeReason
 import org.umamo.interop.KeyformBundle
+import org.umamo.interop.KeyformBundleCell
 import org.umamo.interop.KeyformBundleResult
 import org.umamo.interop.OutOfSpanPolicy
 import org.umamo.interop.buildKeyformBundle
@@ -121,10 +122,25 @@ internal class Cmo3KeyformLowering(
 
 	/**
 	 * [buildKeyformBundle] with CMO3's policy applied: an owner whose split state cannot be expressed
-	 * as one grid is REJECTED and reported, rather than partially written.
+	 * as one grid is REJECTED and reported, rather than partially written, and an owner with no keys
+	 * anywhere gets ONE default cell rather than no grid.
 	 *
-	 * CMO3 can decline to write an object's grid; MOC3 cannot (every object needs a keyform), which is
-	 * why the shared bundler takes the policy as a parameter instead of assuming one.
+	 * The default cell is the editor's own requirement, not a convenience.  Every
+	 * ACParameterControllableSource in the official editor carries a KeyformGridSource with at least
+	 * the default form: its setKeyformGridSource rejects null and CArtMeshSource.getDefaultKeyForm
+	 * throws "no KeyForms" on an empty pool, and a model with either fails to open (Cubism 5.4 alpha1,
+	 * checked 2026-09-04 against a file whose meshes had no grid).  The corpus agrees - every unkeyed
+	 * source, part, and glue holds an axis-less grid with one form, which is also what the structural
+	 * create synthesizes for a fresh part or glue.  So a fully unkeyed owner whose rest state lives
+	 * outside its grid (a drawable's base mesh, a part's or glue's statics) bundles here to that one
+	 * cell: no axes, no geometry payload (the form writers fall back to the owner's base), the statics
+	 * as its channel values.  A geometry owner (warp, rotation) with no grid has no rest geometry
+	 * anywhere - it left with the last axis - so nothing is invented for it and the empty bundle
+	 * stands.  The shared bundler keeps returning the empty bundle because MOC3 has its own answer
+	 * for an unkeyed owner (its lowering emits the rest form itself).
+	 *
+	 * CMO3 can decline to write an object's grid over a split state; MOC3 cannot (every object needs a
+	 * keyform), which is why the shared bundler takes the policy as a parameter instead of assuming one.
 	 *
 	 * @param ExportEntityCategory category    The notice category.
 	 * @param String           subject          The owner's id for notices.
@@ -155,7 +171,12 @@ internal class Cmo3KeyformLowering(
 					OutOfSpanPolicy.RejectOwner,
 				)
 		) {
-			is KeyformBundleResult.Bundled -> result.bundle
+			is KeyformBundleResult.Bundled ->
+				if (!requireGeometry && result.bundle.axes.isEmpty() && result.bundle.cells.isEmpty()) {
+					KeyformBundle(emptyList(), listOf(KeyformBundleCell(IntArray(0), emptyMap(), null, statics)))
+				} else {
+					result.bundle
+				}
 			is KeyformBundleResult.Unrepresentable -> {
 				unsupported(category, subject, ExportNoticeReason.KeyformCannotBundle(result.rejection))
 				null
@@ -247,8 +268,11 @@ internal class Cmo3KeyformLowering(
 		bundle: KeyformBundle,
 		cellForms: List<ACForm>,
 	): Boolean {
-		if (bundle.axes.isEmpty() && bundle.cells.isEmpty()) {
-			// Fully unkeyed: the grid goes away entirely (an unkeyed source has a null grid).
+		if (bundle.cells.isEmpty()) {
+			// Only a geometry owner reaches here (buildBundle gives every other unkeyed owner its default
+			// cell): its rest geometry left with its last axis, so there is no form to write and the grid
+			// is removed.  The editor wants a default cell there too; keeping an axis-less rest cell when
+			// the last axis collapses is the model's job (:edit), not this writer's to invent.
 			assignGrid(null)
 			editor.ensureChildSlot(owner, "ACParameterControllableSource", "keyformGridSource", "keyformMorphTargetSet")
 			return true

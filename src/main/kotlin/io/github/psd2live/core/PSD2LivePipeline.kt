@@ -197,6 +197,7 @@ class PSD2LivePipeline {
 			val pages = atlas.pages.map { page ->
 				Cmo3Conversion.AtlasPage(page.png, page.image.width, page.image.height)
 			}
+			val tileRasters = PuppetSourceAtlas.rastersByTile(analysis)
 			val converted = Cmo3Conversion.freshCmo3(
 				puppet = exportPuppet,
 				pages = pages,
@@ -204,6 +205,7 @@ class PSD2LivePipeline {
 				modelName = baseName,
 				nowMillis = Instant.now().toEpochMilli(),
 				obfuscateKey = 0x42,
+				tileRasters = { tileId -> tileRasters[tileId] },
 			)
 			val useFrontHairPhysics = hasFrontHair && config.generatePhysics && config.physicsFrontHair && !config.meshOnly
 			val useBackHairPhysics = hasBackHair && config.generatePhysics && config.physicsBackHair && !config.meshOnly

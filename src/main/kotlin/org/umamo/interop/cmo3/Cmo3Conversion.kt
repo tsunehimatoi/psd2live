@@ -6,26 +6,30 @@ import org.umamo.format.cmo3.model.custom.CImageResource
 import org.umamo.format.cmo3.model.custom.CModelSource
 import org.umamo.format.cmo3.model.gen.CTextureAtlas
 import org.umamo.format.cmo3.model.gen.CTextureManager
+import org.umamo.format.raster.RasterImage
 import org.umamo.interop.ExportNotice
 import org.umamo.interop.ExportReport
 import org.umamo.interop.cmo3TargetVersionNo
+import org.umamo.runtime.model.AtlasTileId
 import org.umamo.runtime.model.PuppetModel
 import kotlin.math.roundToInt
 
 /**
- * Converts a puppet with NO retained CMO3 graph (a MOC3-origin document) into a fresh Cmo3Model:
- * the blank skeleton plus the per-page image chain are synthesized, serialized, and read back
- * through the normal codec, then the ordinary reconcile lowers the whole puppet onto the empty
+ * Converts a puppet with NO retained CMO3 graph (a MOC3-origin or artwork-origin document) into a
+ * fresh Cmo3Model: the blank skeleton plus the image chain are synthesized, serialized, and read
+ * back through the normal codec, then the ordinary reconcile lowers the whole puppet onto the empty
  * baseline as created entities.  Stateless - each call builds a new graph; the caller writes the
  * result with Cmo3.write.
  *
  * The file this produces opens and renders in the official Cubism Editor and switches between its
- * layered-art and texture-atlas display modes.  What it cannot carry is real SOURCE ART: a .moc3
- * has none, so [Cmo3ImageChainBuilder] fabricates a source document by slicing the packed atlas
- * back apart, and every layer in the output is a slice of a baked page rather than the artwork the
- * rig was drawn from.  The art-sourcing pipeline replaces that reconstruction outright
- * (docs/plan/art-sourcing-pipeline.md Phase H - an imported MOC3 reconciles its original
- * PSD/CLIP/KRA first), which is why every conversion leads its report with MissingSourceArt.
+ * layered-art and texture-atlas display modes.  An artwork-origin document writes its REAL source
+ * art: every tile with a raster and an inventory row becomes a layer of its file's layered image
+ * ([Cmo3SourceLayerWeb]), so the export is the shape the editor writes for its own PSD import and
+ * reopens with the same layer identities.  A MOC3-origin document has none of that: a .moc3
+ * carries only the packed pages, so [Cmo3ImageChainBuilder] fabricates a source document by slicing
+ * the packed atlas back apart, every layer in that output is a slice of a baked page rather than the
+ * artwork the rig was drawn from, and the report leads with MissingSourceArt for as long as any
+ * drawable's art came out of a page.
  *
  * One open issue at scale: modelF (~850 MB, several hundred layers) OOMs the official editor when
  * switched back to texture-atlas mode.  Atlas mode recomposites the page from the materials, so
@@ -65,6 +69,13 @@ public object Cmo3Conversion {
 	 * @param String      modelName The document display name the skeleton records.
 	 * @param Long        nowMillis The wall-clock import timestamp the image chain records.
 	 * @param Int         obfuscateKey The container XOR key; the editor mints one per save.
+	 * @param Function    tileRasters The document's own pixels for a tile, or null when it holds
+	 *                              none; a tile with a raster and an inventory row writes its real
+	 *                              layer, every other drawable takes the crop stand-in.  A
+	 *                              MOC3-origin document has no tiles and passes nothing.
+	 * @param RasterImage modelThumbnail The model's rest-pose thumbnail the three model icons fit,
+	 *                              or null for the blank icons the editor writes for a model it
+	 *                              never rendered.
 	 * @return Result The fresh model plus the reconcile report.
 	 */
 	public fun freshCmo3(
@@ -74,11 +85,19 @@ public object Cmo3Conversion {
 		modelName: String,
 		nowMillis: Long,
 		obfuscateKey: Int,
+		tileRasters: (AtlasTileId) -> RasterImage? = { null },
+		modelThumbnail: RasterImage? = null,
 	): Result {
+		// Real layers first: a drawable whose tile has a raster and an inventory row writes that
+		// raster as its own layer, and leaves the crop path - the un-dedup included, since a real
+		// tile's model image is the single-placement shape by construction.
+		val sourceImages = Cmo3SourceLayerWeb.inputsOf(puppet, tileRasters)
+		val realDrawableIds = sourceImages.flatMapTo(HashSet()) { image -> image.layers.flatMap { layer -> layer.drawableIds } }
+		val cropPageIndexByDrawableId = pageIndexByDrawableId.filterKeys { drawableId -> drawableId !in realDrawableIds }
 		// Baked twins (one atlas slot, several canvas placements) are unrepresentable in the
 		// model-image web; the prepass copies each additional placement's patch onto a synthesized
 		// page and remaps those drawables' uvs there.  Everything below runs on ITS outputs.
-		val undedup = Cmo3AtlasUndedup.undeduplicate(puppet, pages, pageIndexByDrawableId)
+		val undedup = Cmo3AtlasUndedup.undeduplicate(puppet, pages, cropPageIndexByDrawableId)
 		val effectivePuppet = undedup.puppet
 		val effectivePages = undedup.pages
 		val effectivePageIndexByDrawableId = undedup.pageIndexByDrawableId
@@ -88,6 +107,7 @@ public object Cmo3Conversion {
 				canvasWidth = effectivePuppet.canvasWidth.roundToInt(),
 				canvasHeight = effectivePuppet.canvasHeight.roundToInt(),
 				targetVersionNo = effectivePuppet.runtimeTarget.cmo3TargetVersionNo(),
+				modelThumbnail = modelThumbnail,
 			)
 		// Each page's drawable regions feed the per-drawable patch webs (crop + placement fit).
 		// The puppet's mesh.positions MUST be canvas-frame here: the app's MOC3 document loader
@@ -105,10 +125,11 @@ public object Cmo3Conversion {
 		val chain =
 			Cmo3ImageChainBuilder.populate(
 				skeleton.root,
-				effectivePages.map { page -> Cmo3ImageChainBuilder.AtlasPage(page.pngBytes, page.width, page.height) },
+				effectivePages,
 				regionsByPage,
 				nowMillis,
 				fromSourceLayers = effectivePuppet.rendersFromSourceLayers,
+				sourceImages = sourceImages,
 			)
 		val model =
 			Cmo3.read(
@@ -126,21 +147,30 @@ public object Cmo3Conversion {
 		rebindPageResources(chain, model)
 		val bindings = HashMap<String, Cmo3DrawableTextureBinding>()
 		for (drawable in effectivePuppet.drawables) {
-			val pageIndex = effectivePageIndexByDrawableId[drawable.id.raw] ?: continue
+			// A real-layer drawable has its own binding; a crop-path drawable its own or its page's.
 			val binding =
-				chain.bindingByDrawableId[drawable.id.raw] ?: chain.pageFallbackBindings.getOrNull(pageIndex)
+				chain.bindingByDrawableId[drawable.id.raw]
+					?: effectivePageIndexByDrawableId[drawable.id.raw]?.let { pageIndex -> chain.pageFallbackBindings.getOrNull(pageIndex) }
 			binding?.let { resolved -> bindings[drawable.id.raw] = resolved }
 		}
 		val report = Cmo3Export.apply(effectivePuppet, model, bindings)
-		// Every fresh-graph export is by definition source-art-less - the stand-in document above is
-		// sliced out of the atlas - so the notice leads the report rather than hiding behind the
-		// per-entity findings.  It is the one finding that describes the WHOLE file rather than an
-		// entity in it, which no amount of per-drawable detail would tell the user.
-		return Result(
-			model,
-			report.copy(notices = listOf(ExportNotice.MissingSourceArt(effectivePages.size)) + report.notices),
-			effectivePuppet,
-		)
+		// An export whose art did not all come from real layers - a drawable sliced out of a page or
+		// bound to no page, or a document with no real layer to write at all - is source-art-less, so
+		// the notice leads the report rather than hiding behind the per-entity findings.  It is the
+		// one finding that describes the WHOLE file rather than an entity in it, which no amount of
+		// per-drawable detail would tell the user; a document whose every drawable wrote its real
+		// layer carries no such finding.  A twin the prepass had to leave sharing its slot follows
+		// it, for the same reason.
+		val everyDrawableIsReal = sourceImages.isNotEmpty() && effectivePuppet.drawables.all { drawable -> drawable.id.raw in realDrawableIds }
+		val leading = ArrayList<ExportNotice>()
+		if (!everyDrawableIsReal) {
+			leading.add(ExportNotice.MissingSourceArt(effectivePages.size))
+		}
+		if (undedup.sharedDrawableIds.isNotEmpty()) {
+			val nameById = effectivePuppet.drawables.associate { drawable -> drawable.id.raw to drawable.name }
+			leading.add(ExportNotice.SharedAtlasSlotKept(undedup.sharedDrawableIds.map { drawableId -> nameById[drawableId] ?: drawableId }))
+		}
+		return Result(model, report.copy(notices = leading + report.notices), effectivePuppet)
 	}
 
 	/**

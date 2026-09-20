@@ -14,8 +14,9 @@ import org.umamo.format.art.SourceLayer
  *
  * The result is a root-level document with one raster layer covering the whole canvas: no groups,
  * normal blend, full opacity, unclipped.  A flat image carries no per-layer stable identity (the
- * whole file is the layer), so [id] defaults to the file [name].  The pixels are handed through
- * by reference - the caller must not mutate [RasterImage.rgba] afterwards.
+ * whole file is the layer), so [id] defaults to the file [name] and is marked unstable - a re-import
+ * can only ever match it by content.  The pixels are handed through by reference - the caller must
+ * not mutate [RasterImage.rgba] afterwards.
  *
  * @param RasterImage image The decoded flat image (RGBA8888, straight alpha, top-first).
  * @param String name        A display name / provisional layer id for the single layer (e.g. the file name).
@@ -29,6 +30,7 @@ public fun rasterToSourceArt(image: RasterImage, name: String): SourceArt =
 			listOf(
 				RasterSourceLayer(
 					id = LayerId(name),
+					idIsStable = false,
 					name = name,
 					groupPath = "",
 					order = 0,
@@ -44,6 +46,7 @@ public fun rasterToSourceArt(image: RasterImage, name: String): SourceArt =
 /** Concrete [SourceLayer] backing a flat raster imported as a single layer. */
 private data class RasterSourceLayer(
 	override val id: LayerId,
+	override val idIsStable: Boolean,
 	override val name: String,
 	override val groupPath: String,
 	override val order: Int,

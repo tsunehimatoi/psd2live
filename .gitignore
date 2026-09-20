@@ -2,6 +2,7 @@
 build/
 out/
 *.log
+.umamo-sync-backup/
 
 # Native renderer local CMake output (wrapper sources under native/ are tracked)
 native/live2d_renderer/build/

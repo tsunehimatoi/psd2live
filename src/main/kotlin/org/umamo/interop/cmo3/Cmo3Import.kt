@@ -111,7 +111,20 @@ object Cmo3Import {
 	 *   against and the switch to flip when bisecting a suspected compaction fault.
 	 * @return PuppetModel The concrete runtime puppet.
 	 */
-	fun fromModelSource(modelSource: CModelSource, compactChannels: Boolean = true): PuppetModel {
+	fun fromModelSource(modelSource: CModelSource, compactChannels: Boolean = true): PuppetModel =
+		importModelSource(modelSource, compactChannels).puppet
+
+	/**
+	 * Builds a [PuppetModel] from a CMO3 `CModelSource` root together with the atlas ingest the model was
+	 * read from, for a caller that also needs the ingest's per-tile pixel resources (the document loader's
+	 * byte supplier).  One walk of the layered-art web serves both, so the model's tile ids and the
+	 * supplier's keys cannot come from two runs that disagree.
+	 *
+	 * @param CModelSource modelSource The parsed model root.
+	 * @param Boolean compactChannels Whether to run the post-import channel compaction; see [fromModelSource].
+	 * @return Cmo3ImportedDocument The puppet plus the atlas ingest it carries.
+	 */
+	fun importModelSource(modelSource: CModelSource, compactChannels: Boolean = true): Cmo3ImportedDocument {
 		val parameterSources =
 			elementsOf((modelSource.parameterSourceSet as? CParameterSourceSet)?._sources)
 				.filterIsInstance<CParameterSource>()
@@ -404,6 +417,10 @@ object Cmo3Import {
 		// renderIndexByUuid (computed above for parts) is the source of both this order and panelOrder.
 		val orderedDrawableSources = drawableSources.sortedByDescending { renderIndexByUuid[uuidOf(it.guid)] ?: Int.MAX_VALUE }
 
+		// The layered-art web, read once as model state: the atlas pages, the tiles, and which tile each
+		// drawable samples.  Metadata only - no pixel is decoded here.
+		val atlasIngest = cmo3AtlasIngest(modelSource)
+
 		val drawables =
 			orderedDrawableSources.map { source ->
 				val mesh = meshOf(source)
@@ -437,6 +454,7 @@ object Cmo3Import {
 						blendShapeBindingsOf(source.keyformMorphTargetSet, source.keyforms, paramIdByUuid) { form ->
 							meshForm(form, mesh?.positions)
 						},
+					atlasTileId = atlasIngest.tileIdByDrawableId[idStrOf(source.id).orEmpty()],
 				)
 			}
 
@@ -500,7 +518,7 @@ object Cmo3Import {
 				parts = parts,
 				deformers = deformers,
 				drawables = drawables,
-                deformPaths = Cmo3DeformPaths.read(drawableSources),
+				deformPaths = Cmo3DeformPaths.read(drawableSources),
 				rootChildren = rootChildren,
 				rootPartId = rootPartId,
 				glues = glues,
@@ -518,9 +536,12 @@ object Cmo3Import {
 				// layer images, false the packed atlas.  The texture manager is mandatory even when empty
 				// (docs/format/CMO3.md §3), so an absent one falls back to the atlas default.
 				rendersFromSourceLayers = (modelSource.textureManager as? CTextureManager)?.isTextureInputModelImageMode ?: false,
+				atlas = atlasIngest.atlas,
+				sources = atlasIngest.sources,
 			)
 		val withRenderRoot = Cmo3DeformPaths.toLocalWidths(model.copy(renderRoot = model.deriveRenderRoot()))
-		return if (compactChannels) withRenderRoot.withChannelsCompacted() else withRenderRoot
+		val puppet = if (compactChannels) withRenderRoot.withChannelsCompacted() else withRenderRoot
+		return Cmo3ImportedDocument(puppet, atlasIngest)
 	}
 
 	/**
@@ -1041,3 +1062,15 @@ object Cmo3Import {
 		return FloatArray(positions.size) { positions[it] - base[it] }
 	}
 }
+
+/**
+ * A CMO3 import's two products: the runtime puppet and the atlas ingest it was built from.
+ *
+ * @property PuppetModel     puppet      The concrete runtime puppet.
+ * @property Cmo3AtlasIngest atlasIngest The layered-art web the puppet's atlas came from, carrying the
+ *                                       per-tile pixel resources the model deliberately does not hold.
+ */
+class Cmo3ImportedDocument(
+	val puppet: PuppetModel,
+	val atlasIngest: Cmo3AtlasIngest,
+)

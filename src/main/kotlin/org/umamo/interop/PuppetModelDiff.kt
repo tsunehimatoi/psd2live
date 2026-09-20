@@ -1,5 +1,7 @@
 package org.umamo.interop
 
+import org.umamo.runtime.model.AtlasTile
+import org.umamo.runtime.model.AtlasTileId
 import org.umamo.runtime.model.BlendShapeBinding
 import org.umamo.runtime.model.ChannelGrids
 import org.umamo.runtime.model.Deformer
@@ -22,6 +24,7 @@ import org.umamo.runtime.model.RotationForm
 import org.umamo.runtime.model.RotationPivotForm
 import org.umamo.runtime.model.WarpForm
 import org.umamo.runtime.model.WarpLatticeForm
+import org.umamo.runtime.model.lineageRoot
 
 /*
  * The semantic diff between two PuppetModels - the input the CMO3 export reconcile dispatches on.
@@ -75,6 +78,7 @@ enum class DrawableField {
 	VISIBLE,
 	SELECTABLE,
 	TEXTURE_SOURCE,
+	ATLAS_TILE,
 	MESH_TOPOLOGY,
 	MESH_POSITIONS,
 	MESH_UVS,
@@ -87,6 +91,15 @@ enum class DrawableField {
 /** The changed aspects of a [Glue]. */
 enum class GlueField { PAIRS, CHANNELS, INTENSITY }
 
+/** The changed aspects of an [AtlasTile]. */
+enum class AtlasTileField {
+	/** Where the tile's art sits on its page - the authored half, and the only one an edit produces. */
+	PLACEMENT,
+
+	/** Its name, pixel size, or source binding: what the art itself is, not where it was packed. */
+	METADATA,
+}
+
 /** The changed document-level aspects of a [PuppetModel]. */
 enum class DocumentField {
 	CANVAS_SIZE,
@@ -97,6 +110,8 @@ enum class DocumentField {
 	PARAMETER_LINKS,
 	PARAMETER_TREE,
 	ROOT_CHILDREN,
+	ATLAS_PAGES,
+	SOURCE_FILES,
 }
 
 /**
@@ -158,6 +173,7 @@ sealed interface GlueDiff {
  * @property List deformers       Per-deformer diffs.
  * @property List drawables       Per-drawable diffs.
  * @property List glues           Per-glue diffs.
+ * @property List atlasTiles      Per-atlas-tile diffs.
  * @property Set  document        Document-level field diffs.
  */
 data class PuppetDiff(
@@ -167,6 +183,7 @@ data class PuppetDiff(
 	val deformers: List<EntityDiff<DeformerId, DeformerField>>,
 	val drawables: List<EntityDiff<DrawableId, DrawableField>>,
 	val glues: List<GlueDiff>,
+	val atlasTiles: List<EntityDiff<AtlasTileId, AtlasTileField>>,
 	val document: Set<DocumentField>,
 ) {
 	/** True when the models are semantically identical and the export graph needs no touch. */
@@ -178,6 +195,7 @@ data class PuppetDiff(
 				deformers.isEmpty() &&
 				drawables.isEmpty() &&
 				glues.isEmpty() &&
+				atlasTiles.isEmpty() &&
 				document.isEmpty()
 }
 
@@ -202,6 +220,7 @@ fun diffPuppetModels(baseline: PuppetModel, edited: PuppetModel): PuppetDiff =
 		deformers = diffEntities(baseline.deformers, edited.deformers, Deformer::id, ::deformerFields),
 		drawables = diffEntities(baseline.drawables, edited.drawables, Drawable::id, ::drawableFields),
 		glues = diffGlues(baseline.glues, edited.glues),
+		atlasTiles = diffAtlasTiles(baseline.atlas.tiles, edited.atlas.tiles),
 		document = documentFields(baseline, edited),
 	)
 
@@ -350,11 +369,11 @@ private fun deformerFields(baseline: Deformer, edited: Deformer): Set<DeformerFi
 
 			is Deformer.Rotation -> {
 				val editedRotation = edited as Deformer.Rotation
-				if (baseline.handleLength != editedRotation.handleLength) {
-					add(DeformerField.HANDLE_LENGTH)
-				}
 				if (!floatEq(baseline.baseAngle, editedRotation.baseAngle)) {
 					add(DeformerField.BASE_ANGLE)
+				}
+				if (baseline.handleLength != editedRotation.handleLength) {
+					add(DeformerField.HANDLE_LENGTH)
 				}
 				if (!gridEquals(baseline.geometryGrid, editedRotation.geometryGrid, ::rotationPivotFormEqual)) {
 					add(DeformerField.GEOMETRY)
@@ -375,6 +394,57 @@ private fun deformerFields(baseline: Deformer, edited: Deformer): Set<DeformerFi
 		}
 		if (!channelGridsEqual(baseline.channelGrids, edited.channelGrids)) {
 			add(DeformerField.CHANNELS)
+		}
+	}
+
+/**
+ * Diffs the atlas inventory, comparing only the tiles BOTH models carry.
+ *
+ * Set membership is deliberately not a difference here.  A tile is the art the document holds, which
+ * arrives and leaves with an import rather than with an edit - and the two models being compared do not
+ * always track it the same way: a MOC3-origin conversion synthesizes model images into the graph that
+ * its puppet, which never had layered art, does not know about.  Reporting those as deletions would
+ * describe an edit nobody made, on a path with nothing to reconcile.
+ *
+ * That is safe precisely because no edit can add or remove art today.  When re-import can (it is the
+ * whole point of that phase), this grows the created/deleted arms together with the lowering that
+ * serves them, rather than reporting a difference nothing acts on.
+ *
+ * @param List baseline The graph-derived tiles.
+ * @param List edited   The session's tiles.
+ * @return List One Changed entry per shared tile that differs.
+ */
+private fun diffAtlasTiles(baseline: List<AtlasTile>, edited: List<AtlasTile>): List<EntityDiff<AtlasTileId, AtlasTileField>> {
+	val editedById = edited.associateBy { tile -> tile.id }
+	// A reloaded tile is a new tile whose lineage root is the baseline's id; it is the same art to the
+	// graph, compared under the root so the reload reads as that tile changing.
+	val editedByRoot = edited.filter { tile -> tile.replaces != null }.associateBy { tile -> tile.id.lineageRoot }
+	return baseline.mapNotNull { baselineTile ->
+		val editedTile = editedById[baselineTile.id] ?: editedByRoot[baselineTile.id] ?: return@mapNotNull null
+		val fields = atlasTileFields(baselineTile, editedTile)
+		if (fields.isEmpty()) null else EntityDiff.Changed(baselineTile.id, fields)
+	}
+}
+
+/**
+ * The changed aspects of one atlas tile.
+ *
+ * @param AtlasTile baseline The graph-derived tile.
+ * @param AtlasTile edited   The session's tile.
+ * @return Set<AtlasTileField> The fields that differ.
+ */
+private fun atlasTileFields(baseline: AtlasTile, edited: AtlasTile): Set<AtlasTileField> =
+	buildSet {
+		if (baseline.placement != edited.placement) {
+			add(AtlasTileField.PLACEMENT)
+		}
+		if (
+			baseline.name != edited.name ||
+			baseline.width != edited.width ||
+			baseline.height != edited.height ||
+			baseline.source != edited.source
+		) {
+			add(AtlasTileField.METADATA)
 		}
 	}
 
@@ -410,8 +480,17 @@ private fun drawableFields(baseline: Drawable, edited: Drawable): Set<DrawableFi
 		if (baseline.textureSourceId != edited.textureSourceId) {
 			add(DrawableField.TEXTURE_SOURCE)
 		}
+		// Absence is "not tracked", not "unbound", for the same reason the page list is only compared
+		// when there is an atlas: a drawable the model carries no art for says nothing about the art the
+		// graph carries for it.
+		// Compared under the lineage root: a drawable carried onto its tile's reload replacement still
+		// samples the same art as far as the graph knows.
+		val editedTileId = edited.atlasTileId
+		if (editedTileId != null && baseline.atlasTileId?.lineageRoot != editedTileId.lineageRoot) {
+			add(DrawableField.ATLAS_TILE)
+		}
 		addAll(meshFields(baseline.mesh, edited.mesh))
-		if (!gridEquals(baseline.geometryGrid, edited.geometryGrid, ::meshDeltaFormEqual)) {
+		if (!gridEquals(restOnlyAsUnkeyed(baseline.geometryGrid), restOnlyAsUnkeyed(edited.geometryGrid), ::meshDeltaFormEqual)) {
 			add(DrawableField.GEOMETRY)
 		}
 		if (!channelGridsEqual(baseline.channelGrids, edited.channelGrids)) {
@@ -532,6 +611,15 @@ private fun documentFields(baseline: PuppetModel, edited: PuppetModel): Set<Docu
 		if (baseline.rendersFromSourceLayers != edited.rendersFromSourceLayers) {
 			add(DocumentField.SOURCE_LAYER_DISPLAY)
 		}
+		// The page LIST, not the tiles on it: a page appearing, disappearing, or resizing changes what
+		// every placement on it means, and no per-tile diff would say so.
+		//
+		// Only when the edited model actually tracks an atlas.  Carrying none is "this model has no
+		// source art" - a MOC3 origin never had any - and is not the same as an atlas that was emptied;
+		// comparing against a graph that does carry one would report a deletion nobody performed.
+		if (edited.atlas.tiles.isNotEmpty() && baseline.atlas.pages != edited.atlas.pages) {
+			add(DocumentField.ATLAS_PAGES)
+		}
 		// Document order of the flat parameter list is semantic in CMO3: combined (2D) pairs are
 		// encoded positionally (the Y axis is the next source after its combined X).
 		if (baseline.parameters.map(Parameter::id) != edited.parameters.map(Parameter::id)) {
@@ -546,7 +634,31 @@ private fun documentFields(baseline: PuppetModel, edited: PuppetModel): Set<Docu
 		if (baseline.rootChildren != edited.rootChildren) {
 			add(DocumentField.ROOT_CHILDREN)
 		}
+		// The file each source record points at - its name, path, and modification time - and nothing
+		// else about the record: the inventory and the hashes change on every reload and have no CMO3
+		// home, so they must not turn a reload into a document change the export cannot lower.  Only
+		// the records BOTH models list: a record one side lacks is art added this session, or a page
+		// slice a fresh synthesis minted under its own id, and has no layered image to repoint.
+		if (sourceFilesChanged(baseline, edited)) {
+			add(DocumentField.SOURCE_FILES)
+		}
 	}
+
+/**
+ * Whether any source record both models list points at a different file in [edited]: another name,
+ * path, or modification time.
+ *
+ * @param PuppetModel baseline The graph-derived baseline.
+ * @param PuppetModel edited   The session's current model.
+ * @return Boolean True when a shared record was repointed.
+ */
+private fun sourceFilesChanged(baseline: PuppetModel, edited: PuppetModel): Boolean {
+	val baselineById = baseline.sources.associateBy { source -> source.id }
+	return edited.sources.any { source ->
+		val before = baselineById[source.id] ?: return@any false
+		before.name != source.name || before.path != source.path || before.lastModified != source.lastModified
+	}
+}
 
 /**
  * The identity sequence of one tree level - a Param's id or a Group's id, in order.  Group content
@@ -587,6 +699,24 @@ private fun flattenGroups(tree: List<ParameterNode>): List<ParameterNode.Group> 
  */
 
 private fun floatEq(baseline: Float, edited: Float): Boolean = baseline.toRawBits() == edited.toRawBits()
+
+/**
+ * A drawable's geometry grid with the rest-only shape read as unkeyed: an axis-less grid holding one
+ * cell of zero deltas IS the unkeyed drawable, since both mean "the base mesh, nothing keyed".  The
+ * two spellings arise from the formats - every CMO3 source carries a default form, so an unkeyed
+ * drawable exports as that one cell and re-imports as this grid - and neither is an edit of the
+ * other, so the diff must not call it one.
+ *
+ * @param KeyformGrid? grid The drawable's geometry grid.
+ * @return KeyformGrid? The grid, or null when it is the rest-only shape.
+ */
+private fun restOnlyAsUnkeyed(grid: KeyformGrid<MeshDeltaForm>?): KeyformGrid<MeshDeltaForm>? {
+	if (grid == null || grid.axes.isNotEmpty() || grid.cells.size != 1) {
+		return grid
+	}
+	val deltas = grid.cells.single().form.positionDeltas
+	return if (deltas.all { delta -> delta == 0f }) null else grid
+}
 
 private fun <TForm> gridEquals(
 	baseline: KeyformGrid<TForm>?,

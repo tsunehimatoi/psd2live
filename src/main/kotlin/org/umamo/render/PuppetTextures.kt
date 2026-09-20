@@ -9,6 +9,11 @@ import org.umamo.runtime.model.PuppetModel
  * per-drawable index into them.  Art meshes typically share one atlas page in `TEXTURE_ATLAS` mode, but
  * this structure generalises to multiple pages.
  *
+ * For an IMPORTED document [atlases] is ordered by the renderer's own page walk and shares no
+ * numbering with the model's `PuppetAtlas.pages`.  A page set Umamo generates itself (a repack's,
+ * built by `deriveAtlasTextures`) is index-parallel to `PuppetAtlas.pages` instead, so for generated
+ * sets a placement's page index is valid against both lists.
+ *
  * [premultipliedAlpha] is the OR-fold of the CMO3 `GTexture2D.isPremultiplied` bits and is currently
  * UNCONSUMED - and is deliberately kept that way.  It is an editor texture-upload-convention flag
  * (serialized true on nearly every model), NOT a claim that the decoded bytes are premultiplied: every
@@ -58,10 +63,11 @@ enum class UndecodablePagePolicy {
  * Builds the [PuppetTextures] for a puppet from its atlas page bytes and a per-drawable index into
  * them - the format-agnostic core both ingest paths end at.
  *
- * Each format's adapter ([cmo3PuppetTextures], [moc3PuppetTextures]) does its own walk to produce
- * these two arguments and then hands them here, so the decode, the page-index validation, and the
- * PuppetTextures shape are written once.  Nothing about this function knows a format; it is
- * deliberately reachable with hand-built arguments so tests need no corpus file.
+ * Each format's own atlas-page walk (`cmo3AtlasPages`, `moc3AtlasPages`, in `:interop`) produces a
+ * neutral `AtlasPageSet` that the document loader unpacks into these two arguments and hands here, so
+ * the decode, the page-index validation, and the PuppetTextures shape are written once.  Nothing about
+ * this function knows a format; it is deliberately reachable with hand-built arguments so tests need
+ * no corpus file.
  *
  * @param List<ByteArray>       pageBytes              The PNG bytes per atlas page, in index order.
  * @param Map<String, Int>      atlasIndexByDrawableId Drawable id (`ArtMesh…`) → index into [pageBytes].

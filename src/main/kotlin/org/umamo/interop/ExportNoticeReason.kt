@@ -254,4 +254,22 @@ sealed interface ExportNoticeReason {
 
 	/** A fractional canvas size, where CMO3 stores whole pixels. */
 	data object FractionalCanvasSizeNotStorable : ExportNoticeReason
+
+	/** The tile has no packed entry on any atlas page, so there is no placement in the file to move. */
+	data object NoAtlasEntryToReconcile : ExportNoticeReason
+
+	/**
+	 * A placement moved, but the page's stored pixels were not rebuilt to match.
+	 *
+	 * Where the art is RECORDED to sit is model state; the page image is the document's, and nothing
+	 * here recomposes it.  The written file is a faithful export of what was authored, and its atlas
+	 * page still shows the art at its old spot until a repack redraws it.
+	 */
+	data object AtlasPageNotRecomposed : ExportNoticeReason
+
+	/** The tile's own art changed - its name, size, or source layer - which a repack cannot express. */
+	data object AtlasTileMetadataNotReconcilable : ExportNoticeReason
+
+	/** The drawable was rebound to different source art, which needs the art re-imported, not repacked. */
+	data object AtlasTileRebindingNotLowered : ExportNoticeReason
 }

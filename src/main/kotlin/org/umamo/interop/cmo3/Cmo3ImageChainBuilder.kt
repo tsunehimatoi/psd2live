@@ -1,15 +1,14 @@
 package org.umamo.interop.cmo3
 
-import org.umamo.format.art.LayerBounds
 import org.umamo.format.art.analyzeAlpha
 import org.umamo.format.cmo3.model.custom.CImageResource
 import org.umamo.format.cmo3.model.custom.CLayer
 import org.umamo.format.cmo3.model.custom.CModelImage
 import org.umamo.format.cmo3.model.custom.CModelSource
 import org.umamo.format.cmo3.model.custom.CSize
-import org.umamo.format.cmo3.model.custom.CWritableImage
 import org.umamo.format.cmo3.model.custom.FilterInstance
 import org.umamo.format.cmo3.model.gen.Anisotropy
+import org.umamo.format.cmo3.model.gen.AutoLayoutLock
 import org.umamo.format.cmo3.model.gen.CBlend_Normal
 import org.umamo.format.cmo3.model.gen.CCachedImage
 import org.umamo.format.cmo3.model.gen.CCachedImageManager
@@ -49,6 +48,8 @@ import org.umamo.format.cmo3.type.CArrayList
 import org.umamo.format.cmo3.type.CHashMap
 import org.umamo.format.png.PngCodec
 import org.umamo.format.raster.RasterImage
+import org.umamo.format.raster.cropped
+import org.umamo.runtime.model.AtlasPlacement
 
 /*
  * WHY THIS FILE EXISTS, AND WHY IT CUTS UP THE ATLAS
@@ -60,6 +61,11 @@ import org.umamo.format.raster.RasterImage
  * is the packed page.  That is the whole reason this builder slices each drawable's uv bounding
  * box back out of the atlas and presents the crop as if it were an imported layer.  None of that
  * cutting is inherent to the format; it is reconstruction of information the bake threw away.
+ *
+ * An artwork-origin document needs none of it: its tiles hold the real rasters, so those write as
+ * real layers of their file's layered image through Cmo3SourceLayerWeb, and the crop path here
+ * serves only the drawables that have no such art.  The page half (one atlas and one shared texture
+ * per page) and the model-image web around a layer (modelImageOver) are shared by both.
  *
  * The cutting is NOT what makes a file render.  A third-party converter's CMO3 renders in the
  * official editor with NO source document at all (zero CLayeredImage / CLayer / CModelImage /
@@ -114,16 +120,13 @@ import org.umamo.format.raster.RasterImage
  * takes the foreign pixels for this drawable's artwork - they follow the patch when the atlas is
  * rearranged, and a repack stamps them back into the page.
  *
- * Remaining deliberate simplifications, validated by the official-editor gate: icon thumbnails
- * are transparent placeholders (the editor regenerates thumbnails on edit), and the cached
- * images are the raw resources themselves (SCALE_1, nothing prerendered; their
+ * Remaining deliberate simplification, validated by the official-editor gate: the cached images
+ * are the raw resources themselves (SCALE_1, nothing prerendered; their
  * transformRawImageToCachedImage records the 64-aligned padding fraction like every corpus
- * cache entry).
+ * cache entry).  The icons are real: each layer's, model image's, and drawable's is its art fitted
+ * into the square the way the editor writes it (Cmo3Icons).
  */
 internal object Cmo3ImageChainBuilder {
-	/** One retained atlas page: the original PNG bytes plus its pixel dimensions. */
-	internal class AtlasPage(val pngBytes: ByteArray, val width: Int, val height: Int)
-
 	/**
 	 * One drawable's geometry on its page: id, interleaved atlas-frame uvs and base positions, plus
 	 * the triangle indices that say which page pixels inside the uv bounding box are actually this
@@ -136,12 +139,110 @@ internal object Cmo3ImageChainBuilder {
 		val indices: IntArray,
 	)
 
-	/** The populated chain: the PNG entries to embed and the texture bindings. */
+	/**
+	 * The populated chain: the PNG entries to embed and the texture bindings.
+	 *
+	 * @property List pngEntries           The PNG entries to embed.
+	 * @property Map  bindingByDrawableId  The texture web per drawable that got one.
+	 * @property List pageFallbackBindings The per-page bindings for a drawable with no web of its own.
+	 * @property Int  cropDrawableCount    How many drawables took the crop path - the stand-in sliced
+	 *   out of a page - which is what the missing-source-art notice reports; zero when every
+	 *   drawable's art came from a real layer.
+	 */
 	internal class BuiltImageChain(
 		val pngEntries: List<Cmo3FreshFile.PngEntry>,
 		val bindingByDrawableId: Map<String, Cmo3DrawableTextureBinding>,
 		val pageFallbackBindings: List<Cmo3DrawableTextureBinding>,
+		val cropDrawableCount: Int = 0,
 	)
+
+	/**
+	 * The per-document state an image chain threads through every page, crop, and real layer it
+	 * writes: the archive-entry path minters (the editor's imageFileBuf / image_N de-dupe sequences,
+	 * which must stay unique across the whole file), the filter web's shared definitions, and the
+	 * blend and option instances every layer shares.
+	 *
+	 * A fresh graph takes the defaults: counters from the skeleton's own first indices and fresh
+	 * filter definitions.  A retained graph hands in the archive's own minters and the definitions
+	 * recovered from a model image it already holds, so a layer minted into it continues the file's
+	 * sequences and shares its singletons rather than growing a second set.
+	 *
+	 * @param FilterCommons filters               The filter web's per-document singletons.
+	 * @param Function      mintImageFileBufPath  The next unique archive path for an image buffer.
+	 * @param Function      mintIconPath          The next unique archive path for an icon.
+	 */
+	internal class Cmo3FreshChainNames(
+		val filters: FilterCommons = FilterCommons.fresh(),
+		// CMO3: the imageFileBuf de-dupe naming convention (imageFileBuf, imageFileBuf_0, ...); pages
+		// claim the first indices, then crops and real layers continue the sequence.
+		private val mintImageFileBufPath: () -> String = FreshPathSequence("imageFileBuf", firstSuffix = -1)::next,
+		// The skeleton's three model icons take image.png / image_0.png / image_1.png, so icon entries
+		// continue the editor's image_N naming from suffix 2.
+		private val mintIconPath: () -> String = FreshPathSequence("image", firstSuffix = 2)::next,
+	) {
+		/** The one blend node every synthesized layer and group references. */
+		val sharedBlend: CBlend_Normal = CBlend_Normal()
+
+		/** The one option map every synthesized layer and group references. */
+		val sharedOptions: CHashMap<String, Any?> = CHashMap()
+
+		/**
+		 * The next unique archive path for an image buffer.
+		 *
+		 * @return String The path.
+		 */
+		fun nextImageFileBufPath(): String = mintImageFileBufPath()
+
+		/**
+		 * The next unique archive path for an icon.
+		 *
+		 * @return String The path.
+		 */
+		fun nextIconPath(): String = mintIconPath()
+	}
+
+	/**
+	 * One of the editor's archive de-dupe sequences: `<stem>.png` for suffix -1, then `<stem>_<n>.png`.
+	 * A fresh archive starts at the skeleton's first free suffix; a retained archive continues from
+	 * the first path its own minter reports ([continuingFrom]) and counts locally from there, so a
+	 * batch of icons minted before their entries are embedded still takes distinct paths.
+	 *
+	 * @param String stem        The sequence's stem.
+	 * @param Int    firstSuffix The suffix the first minted path takes.
+	 */
+	internal class FreshPathSequence(private val stem: String, firstSuffix: Int) {
+		private var nextSuffix = firstSuffix
+
+		/**
+		 * Mints the next path.
+		 *
+		 * @return String The path.
+		 */
+		fun next(): String {
+			val suffix = nextSuffix
+			nextSuffix += 1
+			return if (suffix < 0) "$stem.png" else "${stem}_$suffix.png"
+		}
+
+		companion object {
+			/**
+			 * The sequence whose first path is [firstPath], as a retained archive's minter reports it.
+			 *
+			 * @param String stem      The sequence's stem.
+			 * @param String firstPath The next unused path in the archive, in the sequence's own form.
+			 * @return FreshPathSequence The sequence.
+			 */
+			fun continuingFrom(stem: String, firstPath: String): FreshPathSequence {
+				val firstSuffix =
+					if (firstPath == "$stem.png") {
+						-1
+					} else {
+						checkNotNull(firstPath.removePrefix("${stem}_").removeSuffix(".png").toIntOrNull()) { "'$firstPath' is not in the $stem sequence" }
+					}
+				return FreshPathSequence(stem, firstSuffix)
+			}
+		}
+	}
 
 	/**
 	 * What makes two drawables share one CModelImage: the same crop rect and the same mesh.  The
@@ -179,57 +280,224 @@ internal object Cmo3ImageChainBuilder {
 	/** CMO3: FilterInstance filterDefGuid for "CLayerFilter" - fixed uuid in every corpus file. */
 	private const val LAYER_FILTER_DEF_UUID = "4083cd1f-40ba-4eda-8400-379019d55ed8"
 
-	/** The per-document singletons of the filter web, shared by every page's ModelImageFilterSet. */
-	private class FilterCommons {
-		fun valueId(idStr: String): Id = Id("FilterValueId").apply { idstr = idStr }
+	/**
+	 * The per-document singletons of the filter web, shared by every model image's ModelImageFilterSet:
+	 * the value ids the connectors are keyed by, the FilterValue definitions they name, and the two
+	 * filter-definition guids.  Minted fresh for a new graph, or recovered from a model image a
+	 * retained graph already holds so a minted image shares the file's own objects.
+	 *
+	 * @param Map  idByIdStr          Each value id by its idstr.
+	 * @param Map  valueByIdStr       Each FilterValue definition by its own id's idstr.
+	 * @param Guid selectorDefGuid    The CLayerSelector definition guid.
+	 * @param Guid layerFilterDefGuid The CLayerFilter definition guid.
+	 */
+	internal class FilterCommons private constructor(
+		private val idByIdStr: Map<String, Id>,
+		private val valueByIdStr: Map<String, FilterValue>,
+		val selectorDefGuid: Guid,
+		val layerFilterDefGuid: Guid,
+	) {
+		val inputLayerData: Id get() = idByIdStr.getValue(INPUT_LAYER_DATA)
+		val currentImageGuid: Id get() = idByIdStr.getValue(CURRENT_IMAGE_GUID)
+		val outputImage: Id get() = idByIdStr.getValue(OUTPUT_IMAGE)
+		val outputTransform: Id get() = idByIdStr.getValue(OUTPUT_TRANSFORM)
+		val selectorInputLayerData: Id get() = idByIdStr.getValue(SELECTOR_INPUT_LAYER_DATA)
+		val selectorCurrentImageGuid: Id get() = idByIdStr.getValue(SELECTOR_CURRENT_IMAGE_GUID)
+		val selectorOutputLayerData: Id get() = idByIdStr.getValue(SELECTOR_OUTPUT_LAYER_DATA)
+		val filterInputLayer: Id get() = idByIdStr.getValue(FILTER_INPUT_LAYER)
 
-		val inputLayerData: Id = valueId("mi_input_layerInputData")
-		val currentImageGuid: Id = valueId("mi_currentImageGuid")
-		val outputImage: Id = valueId("mi_output_image")
-		val outputTransform: Id = valueId("mi_output_transform")
-		val selectorInputLayerData: Id = valueId("ilf_inputLayerData")
-		val selectorCurrentImageGuid: Id = valueId("ilf_currentImageGuid")
-		val selectorOutputLayerData: Id = valueId("ilf_outputLayerData")
-		val filterInputLayer: Id = valueId("ilf_inputLayer")
+		val selectLayer: FilterValue get() = valueByIdStr.getValue(SELECTOR_OUTPUT_LAYER_DATA)
+		val importLayer: FilterValue get() = valueByIdStr.getValue(INPUT_LAYER_DATA)
+		val importLayerSelection: FilterValue get() = valueByIdStr.getValue(SELECTOR_INPUT_LAYER_DATA)
+		val currentGuid: FilterValue get() = valueByIdStr.getValue(CURRENT_IMAGE_GUID)
+		val selectedSourceGuid: FilterValue get() = valueByIdStr.getValue(SELECTOR_CURRENT_IMAGE_GUID)
+		val outputImageValue: FilterValue get() = valueByIdStr.getValue(OUTPUT_IMAGE)
+		val outputImageResource: FilterValue get() = valueByIdStr.getValue(SELECTOR_OUTPUT_IMAGE_RESOURCE)
+		val layerToCanvasEnv: FilterValue get() = valueByIdStr.getValue(OUTPUT_TRANSFORM)
+		val layerToCanvasFilter: FilterValue get() = valueByIdStr.getValue(SELECTOR_OUTPUT_TRANSFORM)
 
-		fun value(displayName: String, id: Id): FilterValue =
-			FilterValue().apply {
-				name = displayName
-				this.id = id
+		companion object {
+			// CMO3: the FilterValueId idstrs of the model-image filter web, transcribed from the corpus
+			// (MultiplyScreenColors.cmo3, identical across files).  "mi_" ids are the env side, "ilf_"
+			// ids the filter side.
+			private const val INPUT_LAYER_DATA = "mi_input_layerInputData"
+			private const val CURRENT_IMAGE_GUID = "mi_currentImageGuid"
+			private const val OUTPUT_IMAGE = "mi_output_image"
+			private const val OUTPUT_TRANSFORM = "mi_output_transform"
+			private const val SELECTOR_INPUT_LAYER_DATA = "ilf_inputLayerData"
+			private const val SELECTOR_CURRENT_IMAGE_GUID = "ilf_currentImageGuid"
+			private const val SELECTOR_OUTPUT_LAYER_DATA = "ilf_outputLayerData"
+			private const val FILTER_INPUT_LAYER = "ilf_inputLayer"
+			private const val SELECTOR_OUTPUT_IMAGE_RESOURCE = "ilf_outputImageRes"
+			private const val SELECTOR_OUTPUT_TRANSFORM = "ilf_outputTransform"
+
+			/** The ids the connectors are keyed by, every one of which a recovery must find. */
+			private val KEY_ID_STRS =
+				listOf(
+					INPUT_LAYER_DATA,
+					CURRENT_IMAGE_GUID,
+					OUTPUT_IMAGE,
+					OUTPUT_TRANSFORM,
+					SELECTOR_INPUT_LAYER_DATA,
+					SELECTOR_CURRENT_IMAGE_GUID,
+					SELECTOR_OUTPUT_LAYER_DATA,
+					FILTER_INPUT_LAYER,
+				)
+
+			/** The definitions' own ids, every one of which a recovery must find. */
+			private val VALUE_ID_STRS =
+				listOf(
+					SELECTOR_OUTPUT_LAYER_DATA,
+					INPUT_LAYER_DATA,
+					SELECTOR_INPUT_LAYER_DATA,
+					CURRENT_IMAGE_GUID,
+					SELECTOR_CURRENT_IMAGE_GUID,
+					OUTPUT_IMAGE,
+					SELECTOR_OUTPUT_IMAGE_RESOURCE,
+					OUTPUT_TRANSFORM,
+					SELECTOR_OUTPUT_TRANSFORM,
+				)
+
+			/**
+			 * Fresh singletons for a new graph.
+			 *
+			 * @return FilterCommons The definitions.
+			 */
+			fun fresh(): FilterCommons {
+				val idByIdStr = HashMap<String, Id>()
+
+				/**
+				 * The one Id per idstr.
+				 *
+				 * @param String idStr The idstr.
+				 * @return Id The id.
+				 */
+				fun valueId(idStr: String): Id = idByIdStr.getOrPut(idStr) { Id("FilterValueId").apply { idstr = idStr } }
+
+				/**
+				 * A FilterValue definition.
+				 *
+				 * @param String displayName The editor's display name for the value.
+				 * @param String idStr       The value's own id.
+				 * @return FilterValue The definition.
+				 */
+				fun value(displayName: String, idStr: String): FilterValue =
+					FilterValue().apply {
+						name = displayName
+						id = valueId(idStr)
+					}
+				// CMO3: the FilterValue definitions - names and value-id wiring transcribed from the
+				// corpus (MultiplyScreenColors.cmo3, identical across files).
+				val values =
+					listOf(
+						value("Select Layer", SELECTOR_OUTPUT_LAYER_DATA),
+						value("Import Layer", INPUT_LAYER_DATA),
+						value("Import Layer selection", SELECTOR_INPUT_LAYER_DATA),
+						value("Current GUID", CURRENT_IMAGE_GUID),
+						value("GUID of Selected Source Image", SELECTOR_CURRENT_IMAGE_GUID),
+						value("Output image", OUTPUT_IMAGE),
+						value("Output Image (Resource Format)", SELECTOR_OUTPUT_IMAGE_RESOURCE),
+						value("LayerToCanvas変換", OUTPUT_TRANSFORM),
+						value("LayerToCanvas変換", SELECTOR_OUTPUT_TRANSFORM),
+					)
+				for (idStr in KEY_ID_STRS) {
+					valueId(idStr)
+				}
+				return FilterCommons(
+					idByIdStr,
+					values.associateBy { value -> (value.id as Id).idstr },
+					Guid("StaticFilterDefGuid").apply {
+						uuid = LAYER_SELECTOR_DEF_UUID
+						note = "(no debug info)"
+					},
+					Guid("StaticFilterDefGuid").apply {
+						uuid = LAYER_FILTER_DEF_UUID
+						note = "(no debug info)"
+					},
+				)
 			}
 
-		// CMO3: the FilterValue definitions - names and value-id wiring transcribed from the
-		// corpus (MultiplyScreenColors.cmo3, identical across files).
-		val selectLayer: FilterValue = value("Select Layer", selectorOutputLayerData)
-		val importLayer: FilterValue = value("Import Layer", inputLayerData)
-		val importLayerSelection: FilterValue = value("Import Layer selection", selectorInputLayerData)
-		val currentGuid: FilterValue = value("Current GUID", currentImageGuid)
-		val selectedSourceGuid: FilterValue = value("GUID of Selected Source Image", selectorCurrentImageGuid)
-		val outputImageValue: FilterValue = value("Output image", outputImage)
-		val outputImageResource: FilterValue = value("Output Image (Resource Format)", valueId("ilf_outputImageRes"))
-		val layerToCanvasEnv: FilterValue = value("LayerToCanvas変換", outputTransform)
-		val layerToCanvasFilter: FilterValue = value("LayerToCanvas変換", valueId("ilf_outputTransform"))
+			/**
+			 * The singletons a retained graph's model image already wires, so an image minted beside it
+			 * shares the same objects; null when the set does not carry the full web (a graph another
+			 * writer produced), in which case the caller falls back to [fresh].
+			 *
+			 * @param ModelImageFilterSet filterSet A retained model image's inputFilter.
+			 * @return FilterCommons? The recovered definitions, or null.
+			 */
+			fun fromFilterSet(filterSet: ModelImageFilterSet): FilterCommons? {
+				val idByIdStr = HashMap<String, Id>()
+				val valueByIdStr = HashMap<String, FilterValue>()
+				var selectorDefGuid: Guid? = null
+				var layerFilterDefGuid: Guid? = null
 
-		val selectorDefGuid: Guid =
-			Guid("StaticFilterDefGuid").apply {
-				uuid = LAYER_SELECTOR_DEF_UUID
-				note = "(no debug info)"
+				/**
+				 * Records an id the web references.
+				 *
+				 * @param Any? candidate A key or a connector's id slot.
+				 */
+				fun noteId(candidate: Any?) {
+					val id = candidate as? Id ?: return
+					idByIdStr.putIfAbsent(id.idstr, id)
+				}
+
+				/**
+				 * Records a definition the web references, and its own id.
+				 *
+				 * @param Any? candidate A connector's definition slot.
+				 */
+				fun noteValue(candidate: Any?) {
+					val value = candidate as? FilterValue ?: return
+					val id = value.id as? Id ?: return
+					noteId(id)
+					valueByIdStr.putIfAbsent(id.idstr, value)
+				}
+				// CMO3: ModelImageFilterSet field filterMap -> FilterInstance fields filterName /
+				// filterDefGuid / inputConnectors / outputConnectors, the connectors keyed by value id.
+				for (instance in (filterSet.filterMap as? Map<*, *>)?.values.orEmpty().filterIsInstance<FilterInstance>()) {
+					when (instance.filterName) {
+						"CLayerSelector" -> selectorDefGuid = instance.filterDefGuid as? Guid
+						"CLayerFilter" -> layerFilterDefGuid = instance.filterDefGuid as? Guid
+					}
+					for ((key, connector) in (instance.inputConnectors as? Map<*, *>).orEmpty()) {
+						noteId(key)
+						noteId((connector as? EnvValueConnector)?.envValueId)
+					}
+					for ((key, connector) in (instance.outputConnectors as? Map<*, *>).orEmpty()) {
+						noteId(key)
+						val output = connector as? FilterOutputValueConnector ?: continue
+						noteId(output.id)
+						noteValue(output.valueDef)
+					}
+				}
+				// CMO3: ModelImageFilterSet fields _externalInputs / _externalOutputs -> EnvConnection
+				// fields _envValueDef / filterValueDef.
+				for (external in listOf(filterSet._externalInputs, filterSet._externalOutputs)) {
+					for ((key, connection) in (external as? Map<*, *>).orEmpty()) {
+						noteId(key)
+						val envConnection = connection as? EnvConnection ?: continue
+						noteValue(envConnection._envValueDef)
+						noteValue(envConnection.filterValueDef)
+					}
+				}
+				val selector = selectorDefGuid ?: return null
+				val layerFilter = layerFilterDefGuid ?: return null
+				if (KEY_ID_STRS.any { idStr -> idStr !in idByIdStr } || VALUE_ID_STRS.any { idStr -> idStr !in valueByIdStr }) {
+					return null
+				}
+				return FilterCommons(idByIdStr, valueByIdStr, selector, layerFilter)
 			}
-		val layerFilterDefGuid: Guid =
-			Guid("StaticFilterDefGuid").apply {
-				uuid = LAYER_FILTER_DEF_UUID
-				note = "(no debug info)"
-			}
+		}
 	}
 
 	/**
-	 * Builds one page's ModelImageFilterSet: a CLayerSelector instance feeding a CLayerFilter,
+	 * Builds one model image's ModelImageFilterSet: a CLayerSelector instance feeding a CLayerFilter,
 	 * with the external input/output connections the editor's model-image pipeline expects.
 	 *
 	 * @param FilterCommons commons The per-document shared definitions.
 	 * @return ModelImageFilterSet The fresh filter set.
 	 */
-	private fun buildFilterSet(commons: FilterCommons): ModelImageFilterSet {
+	internal fun buildFilterSet(commons: FilterCommons): ModelImageFilterSet {
 		val filterSet = ModelImageFilterSet()
 		val selectorId = Id("FilterInstanceId").apply { idstr = "filter0" }
 		val layerFilterId = Id("FilterInstanceId").apply { idstr = "filter1" }
@@ -308,6 +576,88 @@ internal object Cmo3ImageChainBuilder {
 	}
 
 	/**
+	 * A page's image resource: the embedded page PNG's dimensions, type, and archive link.
+	 *
+	 * Shared by the fresh conversion and the export's page mint, so a page minted into a retained
+	 * graph is field-for-field the shape the fresh path writes.
+	 *
+	 * @param String path    The archive path the page PNG is stored under.
+	 * @param Int    width   The page width in pixels.
+	 * @param Int    height  The page height in pixels.
+	 * @param Int    pngSize The encoded PNG's byte size.
+	 * @return CImageResource The page resource.
+	 */
+	internal fun pageImageResource(path: String, width: Int, height: Int, pngSize: Int): CImageResource =
+		CImageResource().apply {
+			// CMO3: CImageResource attrs width/height/type + the imageFileBuf file child.
+			this.width = width
+			this.height = height
+			type = "INT_ARGB"
+			imageFileBuf = FileRef().apply { archivePath = path }
+			imageFileBuf_size = pngSize
+		}
+
+	/**
+	 * A page's texture atlas element, empty of entries: the editor's naming, a fresh guid, and the
+	 * cached-image manager whose padding diagonal the editor's source-image sampling depends on.
+	 *
+	 * @param Int            pageOrdinal The zero-based page index ("TextureAtlas1" is page 0).
+	 * @param Int            width       The page width in pixels.
+	 * @param Int            height      The page height in pixels.
+	 * @param CImageResource resource    The page's image resource.
+	 * @return CTextureAtlas The atlas element.
+	 */
+	internal fun pageAtlas(pageOrdinal: Int, width: Int, height: Int, resource: CImageResource): CTextureAtlas =
+		CTextureAtlas().apply {
+			// CMO3: CTextureAtlas fields name/width/height/cachedAtlasImage/guid/modelImages/
+			// cachedImageManager.
+			name = "TextureAtlas${pageOrdinal + 1}"
+			this.width = width
+			this.height = height
+			cachedAtlasImage = resource
+			guid = Cmo3SkeletonBuilder.freshGuid("CTextureAtlasGuid")
+			modelImages = CArrayList<Any?>()
+			cachedImageManager = paddedCacheManager(resource, width, height)
+		}
+
+	/**
+	 * A page's ONE shared texture: every drawable on the page references this instance (the writer
+	 * hoists it), like the editor's own atlas files.
+	 *
+	 * @param String?        atlasName The owning atlas's name, which the texture shares.
+	 * @param CImageResource resource  The page's image resource the texture samples.
+	 * @return GTexture2D The page texture.
+	 */
+	internal fun pageTexture(atlasName: String?, resource: CImageResource): GTexture2D {
+		val texture =
+			GTexture2D().apply {
+				// CMO3: GTexture2D - the page's shared texture.
+				name = atlasName
+				// CMO3: GTexture fields wrapMode / filterMode / anisotropy - the editor's fixed
+				// sampling setup on every corpus texture.
+				wrapMode = WrapMode.CLAMP_TO_BORDER
+				guid = Cmo3SkeletonBuilder.freshGuid("GTextureGuid")
+				anisotropy = Anisotropy.ON
+				srcImageResource = resource
+				transformImageResource01toLogical01 = CAffine()
+				mipmapLevel = 64
+				// CMO3: GTexture2D field isPremultiplied - true on EVERY corpus texture (178 of
+				// 178, every era), including the many whose embedded PNG bytes are straight
+				// alpha.  The flag records the editor's texture-render/upload convention, not
+				// the byte storage (see the Premultiplied section), so a MOC3 sidecar page -
+				// straight alpha like the corpus ones - writes true as well.
+				isPremultiplied = true
+			}
+		texture.filterMode =
+			FilterMode().apply {
+				minFilter = MinFilter.LINEAR_MIPMAP_LINEAR
+				magFilter = MagFilter.LINEAR
+				owner = texture
+			}
+		return texture
+	}
+
+	/**
 	 * The cached-image manager the editor expects on every model image and texture atlas: the raw
 	 * page cached as itself at SCALE_1 (nothing prerendered).
 	 *
@@ -316,7 +666,7 @@ internal object Cmo3ImageChainBuilder {
 	 * @param Int            height       The page height in pixels.
 	 * @return CCachedImageManager The fresh manager.
 	 */
-	private fun paddedCacheManager(pageResource: CImageResource, width: Int, height: Int): CCachedImageManager =
+	internal fun paddedCacheManager(pageResource: CImageResource, width: Int, height: Int): CCachedImageManager =
 		CCachedImageManager().apply {
 			// CMO3: CCachedImageManager fields defaultCacheType / rawImage / cachedImages /
 			// requiredMipmapLevel (corpus flat imports cache the raw resource itself).
@@ -352,27 +702,6 @@ internal object Cmo3ImageChainBuilder {
 				)
 			requiredMipmapLevel = 64
 		}
-
-	/**
-	 * A transparent square icon plus its PNG entry.
-	 *
-	 * @param Int    size The square pixel size.
-	 * @param String path The unique archive path for the PNG entry.
-	 * @param MutableList entries The PNG entry collector.
-	 * @return CImageIcon The fresh icon.
-	 */
-	private fun placeholderIcon(size: Int, path: String, entries: MutableList<Cmo3FreshFile.PngEntry>): CImageIcon {
-		entries.add(Cmo3FreshFile.PngEntry(path, Cmo3SkeletonBuilder.blankPng(size)))
-		return CImageIcon().apply {
-			image =
-				CWritableImage().apply {
-					width = size
-					height = size
-					type = "INT_ARGB"
-					image = FileRef().apply { archivePath = path }
-				}
-		}
-	}
 
 	/**
 	 * A drawable's pixel-aligned texture-patch rect on its page, from its atlas-frame uv bounds.
@@ -438,20 +767,91 @@ internal object Cmo3ImageChainBuilder {
 	}
 
 	/**
-	 * An independent copy of an affine (the writer must not hoist one shared instance across the
-	 * entry, the region input, and the model image - the editor writes separate elements).
+	 * Writes a packing origin into [transform]: the position in page pixels, the packer's resampling
+	 * scale, and its rotation in degrees.
 	 *
-	 * @param CAffine source The affine to copy.
-	 * @return CAffine The copy.
+	 * CMO3: ModelImageEntry field materialLocalToAtlasTransform - a GTransform2 whose position is the
+	 * packing origin in page pixels, scale the packer's resampling, and eulerAngle its rotation in
+	 * DEGREES.  Shared by the fresh conversion, the export's pack-in mint, and the placement lowering,
+	 * so the three write one convention.
+	 *
+	 * @param GTransform2 transform       The transform to write into; an entry's own, so it keeps its instance.
+	 * @param Float       positionX       The packing origin's x on the page.
+	 * @param Float       positionY       The packing origin's y on the page.
+	 * @param Float       scaleX          The packer's horizontal scale.
+	 * @param Float       scaleY          The packer's vertical scale.
+	 * @param Float       rotationDegrees The packer's rotation, counter-clockwise degrees.
+	 * @return GTransform2 The same [transform].
 	 */
-	private fun copyAffine(source: CAffine): CAffine =
-		CAffine().apply {
-			m00 = source.m00
-			m01 = source.m01
-			m02 = source.m02
-			m10 = source.m10
-			m11 = source.m11
-			m12 = source.m12
+	internal fun writePacking(
+		transform: GTransform2,
+		positionX: Float,
+		positionY: Float,
+		scaleX: Float,
+		scaleY: Float,
+		rotationDegrees: Float,
+	): GTransform2 {
+		transform.position =
+			GVector2().apply {
+				x = positionX
+				y = positionY
+			}
+		transform.scale =
+			GVector2().apply {
+				x = scaleX
+				y = scaleY
+			}
+		transform.eulerAngle = rotationDegrees
+		return transform
+	}
+
+	/**
+	 * [writePacking] from a runtime placement.
+	 *
+	 * @param GTransform2    transform The transform to write into.
+	 * @param AtlasPlacement placement Where the art sits on its page.
+	 * @return GTransform2 The same [transform].
+	 */
+	internal fun writePacking(transform: GTransform2, placement: AtlasPlacement): GTransform2 =
+		writePacking(
+			transform,
+			placement.positionX,
+			placement.positionY,
+			placement.scaleX,
+			placement.scaleY,
+			placement.rotationDegrees,
+		)
+
+	/**
+	 * A page's packed entry for one model image: the membership back-reference, the shared guid, and
+	 * the transform pair the editor's atlas and mesh-edit views derive mesh-over-texture placement
+	 * from.
+	 *
+	 * CMO3: ModelImageEntry fields atlas / modelImageGuid / autoLayoutLock /
+	 * atlasLocalToCanvasTransform / materialLocalToAtlasTransform.  The guid is the model image's OWN
+	 * instance, so the writer shares it like the editor's files; autoLayoutLock is an AutoLayoutLock
+	 * enum (v="NONE") - the editor's field is enum-typed and class-casts a boolean.  Shared by the
+	 * fresh conversion and the export's pack-in mint, so an entry minted into a retained graph is
+	 * field-for-field the shape the fresh path writes.
+	 *
+	 * @param CTextureAtlas atlas              The page the entry lives in.
+	 * @param Any?          modelImageGuid     The model image's own guid instance.
+	 * @param CAffine       atlasLocalToCanvas The fitted atlas-to-canvas placement, an independent instance.
+	 * @param GTransform2   packing            The packing origin on the page.
+	 * @return ModelImageEntry The entry.
+	 */
+	internal fun packedEntry(
+		atlas: CTextureAtlas,
+		modelImageGuid: Any?,
+		atlasLocalToCanvas: CAffine,
+		packing: GTransform2,
+	): ModelImageEntry =
+		ModelImageEntry().apply {
+			this.atlas = atlas
+			this.modelImageGuid = modelImageGuid
+			autoLayoutLock = AutoLayoutLock.NONE
+			atlasLocalToCanvasTransform = atlasLocalToCanvas
+			materialLocalToAtlasTransform = packing
 		}
 
 	/**
@@ -467,7 +867,7 @@ internal object Cmo3ImageChainBuilder {
 	 * @return CAffine The material-local placement.
 	 */
 	private fun materialLocalToCanvas(pageFit: CAffine, x0: Int, y0: Int): CAffine =
-		copyAffine(pageFit).apply {
+		pageFit.copyAffine().apply {
 			m02 = pageFit.m00 * x0 + pageFit.m01 * y0 + pageFit.m02
 			m12 = pageFit.m10 * x0 + pageFit.m11 * y0 + pageFit.m12
 		}
@@ -697,58 +1097,48 @@ internal object Cmo3ImageChainBuilder {
 	}
 
 	/**
-	 * Extracts [bounds] out of a raster, returning the raster itself when the bounds cover it.
+	 * The crop web's one model-image group and the two lists the pages append to, minted only once a
+	 * drawable actually takes the crop path.
 	 *
-	 * @param RasterImage source The raster to extract from.
-	 * @param LayerBounds bounds The raster-local rect to keep.
-	 * @return RasterImage The extracted pixels.
+	 * @property CModelImageGroup group               The group.
+	 * @property CArrayList       linkedRawImageGuids The stand-in documents' guids, one per cropped page.
+	 * @property CArrayList       modelImages         The crop model images.
 	 */
-	private fun subRaster(source: RasterImage, bounds: LayerBounds): RasterImage {
-		if (bounds.left == 0 && bounds.top == 0 && bounds.width == source.width && bounds.height == source.height) {
-			return source
-		}
-		val rgba = ByteArray(bounds.width * bounds.height * 4)
-		for (rowIndex in 0 until bounds.height) {
-			val sourceOffset = ((bounds.top + rowIndex) * source.width + bounds.left) * 4
-			source.rgba.copyInto(rgba, rowIndex * bounds.width * 4, sourceOffset, sourceOffset + bounds.width * 4)
-		}
-		return RasterImage(bounds.width, bounds.height, rgba)
-	}
+	private class CropGroup(
+		val group: CModelImageGroup,
+		val linkedRawImageGuids: CArrayList<Any?>,
+		val modelImages: CArrayList<Any?>,
+	)
 
 	/**
-	 * Populates [root]'s texture manager with one page chain per atlas page plus the per-drawable
-	 * model-image webs.
+	 * Populates [root]'s texture manager with one page chain per atlas page, the real-layer web for
+	 * every artwork file in [sourceImages] (a layered image per file, a layer and model image per
+	 * tile from the document's own raster, entries and bindings off the tiles' placements), and the
+	 * crop web for the drawables [regionsByPage] lists - the MOC3-origin stand-in that slices each
+	 * drawable's patch out of its page.  A page with no crop regions mints no stand-in document, so an
+	 * artwork-origin file carries none.
 	 *
 	 * @param CModelSource root          The fresh skeleton root (its textureManager must exist).
 	 * @param List         pages         The atlas pages, in model3 texture order.
-	 * @param List         regionsByPage Each page's drawable regions (geometry for the patch crop
-	 *                                   and the placement fit), indexed like [pages].
+	 * @param List         regionsByPage Each page's crop-path drawable regions (geometry for the patch
+	 *                                   crop and the placement fit), indexed like [pages].
 	 * @param Long         nowMillis     The import timestamp the wrappers record (caller-supplied
 	 *                                   so tests stay deterministic).
 	 * @param Boolean      fromSourceLayers The document's display mode: true writes the texture
 	 *                                   manager's combined-layer mode, false the packed-atlas one.
+	 * @param List         sourceImages  The artwork files whose tiles have real art, with their layers.
 	 * @return BuiltImageChain The PNG entries plus the texture bindings.
 	 */
 	internal fun populate(
 		root: CModelSource,
-		pages: List<AtlasPage>,
+		pages: List<Cmo3Conversion.AtlasPage>,
 		regionsByPage: List<List<DrawableRegion>>,
 		nowMillis: Long,
 		fromSourceLayers: Boolean = false,
+		sourceImages: List<Cmo3SourceLayerWeb.SourceImageInput> = emptyList(),
 	): BuiltImageChain {
 		val textureManager = root.textureManager as? CTextureManager ?: error("skeleton has no texture manager")
-		val sharedBlend = CBlend_Normal()
-		val sharedOptions = CHashMap<String, Any?>()
-		val filterCommons = FilterCommons()
-		val groupLinkedRawImageGuids = CArrayList<Any?>()
-		val groupModelImages = CArrayList<Any?>()
-		val group =
-			CModelImageGroup().apply {
-				memo = ""
-				groupName = "Textures"
-				_linkedRawImageGuids = groupLinkedRawImageGuids
-				_modelImages = groupModelImages
-			}
+		val names = Cmo3FreshChainNames()
 		val rawImages =
 			mutableGraphListOf(textureManager._rawImages) ?: error("skeleton texture manager has no raw-image list")
 		val textureAtlases =
@@ -758,314 +1148,374 @@ internal object Cmo3ImageChainBuilder {
 		val pngEntries = ArrayList<Cmo3FreshFile.PngEntry>()
 		val bindingByDrawableId = HashMap<String, Cmo3DrawableTextureBinding>()
 		val pageFallbackBindings = ArrayList<Cmo3DrawableTextureBinding>(pages.size)
-		// The skeleton's three model icons take image.png / image_0.png / image_1.png, so page
-		// icon entries continue the editor's image_N naming from suffix 2.
-		var iconSuffix = 2
-		// CMO3: the imageFileBuf de-dupe naming convention (imageFileBuf, imageFileBuf_0, ...);
-		// pages claim the first indices and patch crops continue the sequence.
-		var imageFileBufIndex = 0
-
-		fun nextImageFileBufPath(): String {
-			val path = if (imageFileBufIndex == 0) "imageFileBuf.png" else "imageFileBuf_${imageFileBufIndex - 1}.png"
-			imageFileBufIndex += 1
-			return path
-		}
+		val atlases = ArrayList<CTextureAtlas>(pages.size)
+		val textures = ArrayList<GTexture2D>(pages.size)
+		var cropGroup: CropGroup? = null
+		var cropDrawableCount = 0
 		for ((pageIndex, page) in pages.withIndex()) {
-			val pagePath = nextImageFileBufPath()
-			val pageName = "Texture_$pageIndex.png"
+			val pagePath = names.nextImageFileBufPath()
 			pngEntries.add(Cmo3FreshFile.PngEntry(pagePath, page.pngBytes))
-			val pageResource =
-				CImageResource().apply {
-					// CMO3: CImageResource attrs width/height/type + the imageFileBuf file child.
-					width = page.width
-					height = page.height
-					type = "INT_ARGB"
-					imageFileBuf = FileRef().apply { archivePath = pagePath }
-					imageFileBuf_size = page.pngBytes.size
-				}
-			val layeredImage = CLayeredImage()
-			val patchLayers = CArrayList<Any?>()
-			val rootLayerGroup =
-				CLayerGroup().apply {
-					name = "root"
-					memo = ""
-					isVisible = true
-					blend = sharedBlend
-					guid = Cmo3SkeletonBuilder.freshGuid("CLayerGuid")
-					opacity255 = 255
-					_optionOfIOption = sharedOptions
-					_layeredImage = layeredImage
-					_children = patchLayers
-				}
-			val layerEntryList = CArrayList<Any?>(mutableListOf<Any?>(rootLayerGroup))
-			layeredImage.apply {
-				name = pageName
-				memo = ""
-				// CMO3: CLayeredImage width/height - the SOURCE document's own frame, unrelated to
-				// the canvas (ModelWithOffscreenPartClipping: a 500x500 doc in a 1000x2000 canvas).
-				// Our synthetic source document IS the atlas page, so the page dims are its frame.
-				width = page.width
-				height = page.height
-				// A rendered page has no source file on anyone's disk; the bare name is the honest
-				// breadcrumb (the editor stores the importing machine's absolute path here).
-				psdFile = FileRef().apply { textPath = pageName }
-				description = ""
-				guid = Cmo3SkeletonBuilder.freshGuid("CLayeredImageGuid")
-				psdFileLastModified = nowMillis
-				_rootLayer = rootLayerGroup
-				layerSet =
-					LayerSet().apply {
-						_layeredImage = layeredImage
-						_layerEntryList = layerEntryList
-					}
-			}
-			val wrapper =
-				LayeredImageWrapper().apply {
-					image = layeredImage
-					importedTimeMSec = nowMillis
-					lastModifiedTimeMSec = nowMillis
-				}
-			val atlasEntries = CArrayList<Any?>()
-			val atlas = CTextureAtlas()
-			atlas.apply {
-				name = "TextureAtlas${pageIndex + 1}"
-				width = page.width
-				height = page.height
-				cachedAtlasImage = pageResource
-				guid = Cmo3SkeletonBuilder.freshGuid("CTextureAtlasGuid")
-				modelImages = atlasEntries
-				cachedImageManager = paddedCacheManager(pageResource, page.width, page.height)
-			}
-			val texture =
-				GTexture2D().apply {
-					// CMO3: GTexture2D - the page's ONE shared texture; every drawable on the page
-					// references this instance (the writer hoists it), like the editor's own atlas.
-					name = atlas.name
-					// CMO3: GTexture fields wrapMode / filterMode / anisotropy - the editor's fixed
-					// sampling setup on every corpus texture.
-					wrapMode = WrapMode.CLAMP_TO_BORDER
-					guid = Cmo3SkeletonBuilder.freshGuid("GTextureGuid")
-					anisotropy = Anisotropy.ON
-					srcImageResource = pageResource
-					transformImageResource01toLogical01 = CAffine()
-					mipmapLevel = 64
-					// CMO3: GTexture2D field isPremultiplied - true on EVERY corpus texture (178 of
-					// 178, every era), including the many whose embedded PNG bytes are straight
-					// alpha.  The flag records the editor's texture-render/upload convention, not
-					// the byte storage (see the Premultiplied section), so a MOC3 sidecar page -
-					// straight alpha like the corpus ones - writes true as well.
-					isPremultiplied = true
-				}
-			texture.filterMode =
-				FilterMode().apply {
-					minFilter = MinFilter.LINEAR_MIPMAP_LINEAR
-					magFilter = MagFilter.LINEAR
-					owner = texture
-				}
-			// Patch webs, shared across drawables sampling the same crop with the same mesh (mirror
-			// twins get ONE material like official files; each twin's placement rides its own
-			// region input, and the shared image keeps the first drawable's placement).
+			val pageResource = pageImageResource(pagePath, page.width, page.height, page.pngBytes.size)
+			val atlas = pageAtlas(pageIndex, page.width, page.height, pageResource)
+			val texture = pageTexture(atlas.name, pageResource)
+			atlases.add(atlas)
+			textures.add(texture)
 			val regions = regionsByPage.getOrNull(pageIndex).orEmpty()
-			val decodedPage = if (regions.isNotEmpty()) PngCodec.read(page.pngBytes) else null
-			val imageGuidByWebKey = HashMap<PatchWebKey, Guid>()
-			for (region in regions) {
-				val pageFit = fitAtlasPageToCanvasTransform(region.uvs, region.positions, page.width, page.height)
-				val patch = patchRectOf(region.uvs, page.width, page.height)
-				if (patch == null || decodedPage == null) {
-					bindingByDrawableId[region.drawableIdStr] =
-						Cmo3DrawableTextureBinding(texture, atlas.guid as Guid, null, pageFit)
-					continue
-				}
-				val patchX0 = patch[0]
-				val patchY0 = patch[1]
-				val cropWidth = patch[2] - patch[0]
-				val cropHeight = patch[3] - patch[1]
-				val webKey = PatchWebKey(patch, region.uvs, region.indices)
-				val imageGuid =
-					imageGuidByWebKey.getOrPut(webKey) {
-						val coverage =
-							coverageMaskOf(region.uvs, region.indices, page.width, page.height, patchX0, patchY0, cropWidth, cropHeight)
-						val maskedCrop = maskedCropOf(decodedPage, patchX0, patchY0, cropWidth, cropHeight, coverage)
-						// Trim the masked crop to its opaque pixel bounds: an official layer rect
-						// records the ART's own bounds, not the mesh's reach (the auto-mesh margin
-						// the uv bbox includes), and trimming lands within ~1px median of the
-						// editor's own rects on the EricaTamamo differential.  A fully transparent
-						// crop (a mesh over empty page pixels) keeps the untrimmed rect.
-						val opaqueBounds =
-							analyzeAlpha(cropWidth, cropHeight, maskedCrop.rgba, contourEpsilon = 0f)?.opaqueBounds
-						val trimmedCrop = if (opaqueBounds == null) maskedCrop else subRaster(maskedCrop, opaqueBounds)
-						val trimmedX0 = patchX0 + (opaqueBounds?.left ?: 0)
-						val trimmedY0 = patchY0 + (opaqueBounds?.top ?: 0)
-						// Anchor the web on an INTEGER canvas placement, official-style: every
-						// official _materialLocalToCanvasTransform translation is a whole number
-						// (176 of 176 on EricaTamamo) while the packing origin and the page fit
-						// carry complementary FRACTIONS whose composition reproduces it exactly.
-						// So snap the placement to the nearest canvas pixel and back-solve the
-						// declared packing origin through the fit - the whole chain then composes
-						// without a rounding step, and boundsOnImageDoc equals the placement
-						// bit-for-bit instead of disagreeing by the rounding residue (the editor's
-						// source-image view shows that residue as a subtle per-layer misplacement).
-						val patchPlacement = materialLocalToCanvas(pageFit, trimmedX0, trimmedY0)
-						patchPlacement.m02 = kotlin.math.round(patchPlacement.m02)
-						patchPlacement.m12 = kotlin.math.round(patchPlacement.m12)
-						val packingOrigin = solvePageFitFor(pageFit, patchPlacement.m02, patchPlacement.m12)
-						val cropBytes = PngCodec.write(trimmedCrop)
-						val cropPath = nextImageFileBufPath()
-						pngEntries.add(Cmo3FreshFile.PngEntry(cropPath, cropBytes))
-						val cropResource =
-							CImageResource().apply {
-								// CMO3: CImageResource - the drawable's patch cropped out of the page.
-								width = trimmedCrop.width
-								height = trimmedCrop.height
-								type = "INT_ARGB"
-								imageFileBuf = FileRef().apply { archivePath = cropPath }
-								imageFileBuf_size = cropBytes.size
-							}
-						val patchLayer =
-							CLayer().apply {
-								// CMO3: CLayer - the patch as its own layer on the canvas-frame doc,
-								// layerId null (no PSD layer identity exists for a rendered atlas).
-								name = region.drawableIdStr
+			if (regions.isNotEmpty()) {
+				val group =
+					cropGroup ?: run {
+						val linkedRawImageGuids = CArrayList<Any?>()
+						val modelImages = CArrayList<Any?>()
+						val minted =
+							CModelImageGroup().apply {
 								memo = ""
-								isVisible = true
-								blend = sharedBlend
-								guid = Cmo3SkeletonBuilder.freshGuid("CLayerGuid")
-								opacity255 = 255
-								_optionOfIOption = sharedOptions
-								_layeredImage = layeredImage
-								imageResource = cropResource
-								// CMO3: CLayer field boundsOnImageDoc - the layer's pixel rect on the
-								// layered-image doc: origin = the placement translation (equals the
-								// CModelImage's _materialLocalToCanvasTransform translation on all 892
-								// corpus layers), size = the imageResource dims (also 892 of 892).
-								boundsOnImageDoc =
-									CRect().apply {
-										// The placement translation is already snapped integral, so
-										// this equals the transform without a second rounding.
-										x = patchPlacement.m02.toInt()
-										y = patchPlacement.m12.toInt()
-										width = trimmedCrop.width
-										height = trimmedCrop.height
-									}
-								layerIdentifier =
-									CLayerIdentifier().apply {
-										layerName = region.drawableIdStr
-										layerIdValue_testImpl = -1
-									}
-								// CMO3: CLayer fields icon16 / icon64 - thumbnails on every corpus layer.
-								icon16 = placeholderIcon(16, "image_${iconSuffix++}.png", pngEntries)
-								icon64 = placeholderIcon(64, "image_${iconSuffix++}.png", pngEntries)
-								layerInfo = LinkedHashMap<String, Any?>()
-								this.group = rootLayerGroup
+								groupName = "Textures"
+								_linkedRawImageGuids = linkedRawImageGuids
+								_modelImages = modelImages
 							}
-						patchLayers.add(patchLayer)
-						layerEntryList.add(patchLayer)
-						val patchImage =
-							CModelImage().apply {
-								guid = Cmo3SkeletonBuilder.freshGuid("CModelImageGuid")
-								name = region.drawableIdStr
-								// CMO3: CModelImage fields inputFilter / inputFilterEnv - the layer-filter
-								// web selecting this patch's layer; the deserializer dereferences both.
-								inputFilter = buildFilterSet(filterCommons)
-								inputFilterEnv =
-									ModelImageFilterEnv().apply {
-										envValues =
-											CHashMap<Any?, Any?>().apply {
-												put(
-													filterCommons.currentImageGuid,
-													EnvValueSet().apply {
-														id = filterCommons.currentImageGuid
-														value = layeredImage.guid
-														updateTimeMs = nowMillis
-													},
-												)
-												put(
-													filterCommons.inputLayerData,
-													EnvValueSet().apply {
-														id = filterCommons.inputLayerData
-														value =
-															CLayerSelectorMap().apply {
-																_imageToLayerInput =
-																	LinkedHashMap<Any?, Any?>().apply {
-																		put(
-																			layeredImage.guid,
-																			ArrayList<Any?>(
-																				mutableListOf(
-																					CLayerInputData().apply {
-																						layer = patchLayer
-																						affine = CAffine()
-																					},
-																				),
-																			),
-																		)
-																	}
-															}
-														updateTimeMs = nowMillis
-													},
-												)
-											}
-									}
-								_filteredImage = cropResource
-								// CMO3: CModelImage fields icon16 / cachedImageManager - present on every
-								// corpus model image; the icon is a placeholder the editor regenerates.
-								icon16 = placeholderIcon(16, "image_${iconSuffix++}.png", pngEntries)
-								// CMO3: CModelImage field _materialLocalToCanvasTransform - the patch's
-								// canvas placement (official layers carry their canvas origin here),
-								// the same numbers the layer's boundsOnImageDoc origin carries.
-								_materialLocalToCanvasTransform = copyAffine(patchPlacement)
-								_group = group
-								linkedRawImageGuids = CArrayList<Any?>(mutableListOf(layeredImage.guid))
-								cachedImageManager = paddedCacheManager(cropResource, trimmedCrop.width, trimmedCrop.height)
-								memo = ""
-							}
-						groupModelImages.add(patchImage)
-						atlasEntries.add(
-							ModelImageEntry().apply {
-								// CMO3: ModelImageEntry - the patch's packing origin on the page plus the
-								// drawable's fitted atlas-to-canvas placement; the editor's atlas and
-								// mesh-edit views derive mesh-over-texture placement from these.
-								this.atlas = atlas
-								modelImageGuid = patchImage.guid
-								// CMO3: ModelImageEntry field autoLayoutLock - an AutoLayoutLock enum
-								// (v="NONE"); the editor's field is enum-typed and class-casts a boolean.
-								autoLayoutLock = org.umamo.format.cmo3.model.gen.AutoLayoutLock.NONE
-								atlasLocalToCanvasTransform = copyAffine(pageFit)
-								// CMO3: ModelImageEntry field materialLocalToAtlasTransform - the declared
-								// packing origin is the fit-inverse of the snapped placement (fractional,
-								// like every official entry), NOT the raw crop rect origin, so the web
-								// composes to the integer placement exactly.
-								materialLocalToAtlasTransform =
-									GTransform2().apply {
-										position =
-											GVector2().apply {
-												x = packingOrigin?.get(0) ?: trimmedX0.toFloat()
-												y = packingOrigin?.get(1) ?: trimmedY0.toFloat()
-											}
-										scale =
-											GVector2().apply {
-												x = 1f
-												y = 1f
-											}
-									}
-							},
-						)
-						patchImage.guid as Guid
+						CropGroup(minted, linkedRawImageGuids, modelImages).also { cropGroup = it }
 					}
-				bindingByDrawableId[region.drawableIdStr] =
-					Cmo3DrawableTextureBinding(texture, atlas.guid as Guid, imageGuid, copyAffine(pageFit))
+				cropDrawableCount += regions.size
+				rawImages.add(cropWeb(page, pageIndex, regions, atlas, texture, group, names, pngEntries, bindingByDrawableId, nowMillis))
 			}
 			pageFallbackBindings.add(Cmo3DrawableTextureBinding(texture, atlas.guid as Guid, null, CAffine()))
-			groupLinkedRawImageGuids.add(layeredImage.guid)
-			rawImages.add(wrapper)
 			textureAtlases.add(atlas)
 		}
-		modelImageGroups.add(group)
+		cropGroup?.let { group -> modelImageGroups.add(group.group) }
+		for (image in sourceImages) {
+			val written = Cmo3SourceLayerWeb.write(image, atlases, textures, names, pngEntries, nowMillis)
+			rawImages.add(written.wrapper)
+			modelImageGroups.add(written.group)
+			bindingByDrawableId.putAll(written.bindingByDrawableId)
+		}
 		// CMO3: CTextureManager field isTextureInputModelImageMode - the document's own display mode.
 		// The synthesized web carries BOTH inputs per drawable (a model image and an atlas region), so
 		// either mode is representable; the diff-driven lowering retargets currentTextureInputData to
 		// match.  This path is not covered by that lowering, so it reads the model directly rather than
 		// hardcoding a mode the document may not be in.
 		textureManager.isTextureInputModelImageMode = fromSourceLayers
-		return BuiltImageChain(pngEntries, bindingByDrawableId, pageFallbackBindings)
+		return BuiltImageChain(pngEntries, bindingByDrawableId, pageFallbackBindings, cropDrawableCount)
 	}
+
+	/**
+	 * One model image over one layer: the editor's layer-filter web selecting [layer] at identity,
+	 * the layer's own resource as the filtered image, the padded cache manager over it, the icon of
+	 * its pixels, and the canvas placement.  Shared by the crop web and the real-layer web, so a crop
+	 * and a real layer carry field-for-field the same shape around their pixels.
+	 *
+	 * @param String           name         The model image's name (the drawable's, as the editor writes it).
+	 * @param CLayeredImage    layeredImage The layered image the layer belongs to.
+	 * @param CLayer           layer        The layer the image composites.
+	 * @param CImageResource   resource     The layer's own resource, which is also the filtered image.
+	 * @param RasterImage      raster       The resource's pixels, which the icon shows fitted.
+	 * @param CAffine          placement    The material-local-to-canvas placement, an independent instance.
+	 * @param CModelImageGroup group        The group the image belongs to.
+	 * @param Cmo3FreshChainNames names     The document's shared filter definitions and naming counters.
+	 * @param MutableList      pngEntries   The PNG entry collector, for the icon.
+	 * @param Long             nowMillis    The timestamp the env values record.
+	 * @return CModelImage The model image.
+	 */
+	internal fun modelImageOver(
+		name: String,
+		layeredImage: CLayeredImage,
+		layer: CLayer,
+		resource: CImageResource,
+		raster: RasterImage,
+		placement: CAffine,
+		group: CModelImageGroup,
+		names: Cmo3FreshChainNames,
+		pngEntries: MutableList<Cmo3FreshFile.PngEntry>,
+		nowMillis: Long,
+	): CModelImage =
+		CModelImage().apply {
+			guid = Cmo3SkeletonBuilder.freshGuid("CModelImageGuid")
+			this.name = name
+			// CMO3: CModelImage fields inputFilter / inputFilterEnv - the layer-filter web selecting
+			// this layer; the deserializer dereferences both.
+			inputFilter = buildFilterSet(names.filters)
+			inputFilterEnv =
+				ModelImageFilterEnv().apply {
+					envValues =
+						CHashMap<Any?, Any?>().apply {
+							put(
+								names.filters.currentImageGuid,
+								EnvValueSet().apply {
+									id = names.filters.currentImageGuid
+									value = layeredImage.guid
+									updateTimeMs = nowMillis
+								},
+							)
+							put(
+								names.filters.inputLayerData,
+								EnvValueSet().apply {
+									id = names.filters.inputLayerData
+									value =
+										CLayerSelectorMap().apply {
+											_imageToLayerInput =
+												LinkedHashMap<Any?, Any?>().apply {
+													put(
+														layeredImage.guid,
+														ArrayList<Any?>(
+															mutableListOf(
+																CLayerInputData().apply {
+																	this.layer = layer
+																	affine = CAffine()
+																},
+															),
+														),
+													)
+												}
+										}
+									updateTimeMs = nowMillis
+								},
+							)
+						}
+				}
+			_filteredImage = resource
+			// CMO3: CModelImage fields icon16 / cachedImageManager - present on every corpus model
+			// image; the icon is the filtered image fitted into its square.
+			icon16 = Cmo3Icons.iconOf(raster, 16, names.nextIconPath(), pngEntries)
+			// CMO3: CModelImage field _materialLocalToCanvasTransform - the layer's canvas placement
+			// (official layers carry their canvas origin here), the same numbers the layer's
+			// boundsOnImageDoc origin carries.
+			_materialLocalToCanvasTransform = placement
+			_group = group
+			linkedRawImageGuids = CArrayList<Any?>(mutableListOf(layeredImage.guid))
+			cachedImageManager = paddedCacheManager(resource, resource.width, resource.height)
+			memo = ""
+		}
+
+	/**
+	 * The crop web for one page: a stand-in layered image whose frame is the page itself, one layer
+	 * and model image per distinct (patch, mesh) crop, an entry per crop on the page's atlas, and a
+	 * binding per drawable.  The MOC3-origin path: the only raw material a bake leaves is the page,
+	 * so each drawable's patch is sliced back out of it (see the file comment).
+	 *
+	 * @param Cmo3Conversion.AtlasPage page       The page.
+	 * @param Int                      pageIndex  The page's index.
+	 * @param List                     regions    The crop-path drawables on the page, at least one.
+	 * @param CTextureAtlas            atlas      The page's atlas element.
+	 * @param GTexture2D               texture    The page's shared texture.
+	 * @param CropGroup                group      The crop web's model-image group.
+	 * @param Cmo3FreshChainNames      names      The document's shared definitions and naming counters.
+	 * @param MutableList              pngEntries The PNG entry collector.
+	 * @param MutableMap               bindingByDrawableId The binding collector.
+	 * @param Long                     nowMillis  The import timestamp the wrapper records.
+	 * @return LayeredImageWrapper The stand-in document's wrapper, for the texture manager's raw-image list.
+	 */
+	private fun cropWeb(
+		page: Cmo3Conversion.AtlasPage,
+		pageIndex: Int,
+		regions: List<DrawableRegion>,
+		atlas: CTextureAtlas,
+		texture: GTexture2D,
+		group: CropGroup,
+		names: Cmo3FreshChainNames,
+		pngEntries: MutableList<Cmo3FreshFile.PngEntry>,
+		bindingByDrawableId: MutableMap<String, Cmo3DrawableTextureBinding>,
+		nowMillis: Long,
+	): LayeredImageWrapper {
+		val pageName = "Texture_$pageIndex.png"
+		val layeredImage = CLayeredImage()
+		val patchLayers = CArrayList<Any?>()
+		val rootLayerGroup =
+			CLayerGroup().apply {
+				name = "root"
+				memo = ""
+				isVisible = true
+				blend = names.sharedBlend
+				guid = Cmo3SkeletonBuilder.freshGuid("CLayerGuid")
+				opacity255 = 255
+				_optionOfIOption = names.sharedOptions
+				_layeredImage = layeredImage
+				_children = patchLayers
+			}
+		val layerEntryList = CArrayList<Any?>(mutableListOf<Any?>(rootLayerGroup))
+		layeredImage.apply {
+			name = pageName
+			memo = ""
+			// CMO3: CLayeredImage width/height - the SOURCE document's own frame, unrelated to
+			// the canvas (ModelWithOffscreenPartClipping: a 500x500 doc in a 1000x2000 canvas).
+			// Our synthetic source document IS the atlas page, so the page dims are its frame.
+			width = page.width
+			height = page.height
+			// A rendered page has no source file on anyone's disk; the bare name is the honest
+			// breadcrumb (the editor stores the importing machine's absolute path here).
+			psdFile = FileRef().apply { textPath = pageName }
+			description = ""
+			guid = Cmo3SkeletonBuilder.freshGuid("CLayeredImageGuid")
+			psdFileLastModified = nowMillis
+			_rootLayer = rootLayerGroup
+			layerSet =
+				LayerSet().apply {
+					_layeredImage = layeredImage
+					_layerEntryList = layerEntryList
+				}
+		}
+		val wrapper =
+			LayeredImageWrapper().apply {
+				image = layeredImage
+				importedTimeMSec = nowMillis
+				lastModifiedTimeMSec = nowMillis
+			}
+		val atlasEntries = checkNotNull(mutableGraphListOf(atlas.modelImages)) { "pageAtlas builds a list" }
+		// Patch webs, shared across drawables sampling the same crop with the same mesh (mirror
+		// twins get ONE material like official files; each twin's placement rides its own
+		// region input, and the shared image keeps the first drawable's placement).
+		val decodedPage = PngCodec.read(page.pngBytes)
+		val patchWebByKey = HashMap<PatchWebKey, PatchWeb>()
+
+		/**
+		 * An icon entry of its own for one drawable, over PNG bytes twins share.
+		 *
+		 * @param ByteArray png  The encoded icon.
+		 * @param Int       size The square's edge.
+		 * @return CImageIcon The icon.
+		 */
+		fun iconEntry(png: ByteArray, size: Int): CImageIcon {
+			val path = names.nextIconPath()
+			pngEntries.add(Cmo3FreshFile.PngEntry(path, png))
+			return Cmo3Icons.iconReferencing(size, path)
+		}
+		for (region in regions) {
+			val pageFit = fitAtlasPageToCanvasTransform(region.uvs, region.positions, page.width, page.height)
+			val patch = patchRectOf(region.uvs, page.width, page.height)
+			if (patch == null) {
+				bindingByDrawableId[region.drawableIdStr] =
+					Cmo3DrawableTextureBinding(texture, atlas.guid as Guid, null, pageFit)
+				continue
+			}
+			val patchX0 = patch[0]
+			val patchY0 = patch[1]
+			val cropWidth = patch[2] - patch[0]
+			val cropHeight = patch[3] - patch[1]
+			val webKey = PatchWebKey(patch, region.uvs, region.indices)
+			val patchWeb =
+				patchWebByKey.getOrPut(webKey) {
+					val coverage =
+						coverageMaskOf(region.uvs, region.indices, page.width, page.height, patchX0, patchY0, cropWidth, cropHeight)
+					val maskedCrop = maskedCropOf(decodedPage, patchX0, patchY0, cropWidth, cropHeight, coverage)
+					// Trim the masked crop to its opaque pixel bounds: an official layer rect
+					// records the ART's own bounds, not the mesh's reach (the auto-mesh margin
+					// the uv bbox includes), and trimming lands within ~1px median of the
+					// editor's own rects on the EricaTamamo differential.  A fully transparent
+					// crop (a mesh over empty page pixels) keeps the untrimmed rect.
+					val opaqueBounds =
+						analyzeAlpha(cropWidth, cropHeight, maskedCrop.rgba, contourEpsilon = 0f)?.opaqueBounds
+					val trimmedCrop = if (opaqueBounds == null) maskedCrop else maskedCrop.cropped(opaqueBounds)
+					val trimmedX0 = patchX0 + (opaqueBounds?.left ?: 0)
+					val trimmedY0 = patchY0 + (opaqueBounds?.top ?: 0)
+					// Anchor the web on an INTEGER canvas placement, official-style: every
+					// official _materialLocalToCanvasTransform translation is a whole number
+					// (176 of 176 on EricaTamamo) while the packing origin and the page fit
+					// carry complementary FRACTIONS whose composition reproduces it exactly.
+					// So snap the placement to the nearest canvas pixel and back-solve the
+					// declared packing origin through the fit - the whole chain then composes
+					// without a rounding step, and boundsOnImageDoc equals the placement
+					// bit-for-bit instead of disagreeing by the rounding residue (the editor's
+					// source-image view shows that residue as a subtle per-layer misplacement).
+					val patchPlacement = materialLocalToCanvas(pageFit, trimmedX0, trimmedY0)
+					patchPlacement.m02 = kotlin.math.round(patchPlacement.m02)
+					patchPlacement.m12 = kotlin.math.round(patchPlacement.m12)
+					val packingOrigin = solvePageFitFor(pageFit, patchPlacement.m02, patchPlacement.m12)
+					val cropBytes = PngCodec.write(trimmedCrop)
+					val cropPath = names.nextImageFileBufPath()
+					pngEntries.add(Cmo3FreshFile.PngEntry(cropPath, cropBytes))
+					val cropResource =
+						CImageResource().apply {
+							// CMO3: CImageResource - the drawable's patch cropped out of the page.
+							width = trimmedCrop.width
+							height = trimmedCrop.height
+							type = "INT_ARGB"
+							imageFileBuf = FileRef().apply { archivePath = cropPath }
+							imageFileBuf_size = cropBytes.size
+						}
+					val patchLayer =
+						CLayer().apply {
+							// CMO3: CLayer - the patch as its own layer on the canvas-frame doc,
+							// layerId null (no PSD layer identity exists for a rendered atlas).
+							name = region.drawableIdStr
+							memo = ""
+							isVisible = true
+							blend = names.sharedBlend
+							guid = Cmo3SkeletonBuilder.freshGuid("CLayerGuid")
+							opacity255 = 255
+							_optionOfIOption = names.sharedOptions
+							_layeredImage = layeredImage
+							imageResource = cropResource
+							// CMO3: CLayer field boundsOnImageDoc - the layer's pixel rect on the
+							// layered-image doc: origin = the placement translation (equals the
+							// CModelImage's _materialLocalToCanvasTransform translation on all 892
+							// corpus layers), size = the imageResource dims (also 892 of 892).
+							boundsOnImageDoc =
+								CRect().apply {
+									// The placement translation is already snapped integral, so
+									// this equals the transform without a second rounding.
+									x = patchPlacement.m02.toInt()
+									y = patchPlacement.m12.toInt()
+									width = trimmedCrop.width
+									height = trimmedCrop.height
+								}
+							layerIdentifier =
+								CLayerIdentifier().apply {
+									layerName = region.drawableIdStr
+									layerIdValue_testImpl = -1
+								}
+							// CMO3: CLayer fields icon16 / icon64 - thumbnails on every corpus layer,
+							// the crop fitted into each square.
+							icon16 = Cmo3Icons.iconOf(trimmedCrop, 16, names.nextIconPath(), pngEntries)
+							icon64 = Cmo3Icons.iconOf(trimmedCrop, 64, names.nextIconPath(), pngEntries)
+							layerInfo = LinkedHashMap<String, Any?>()
+							this.group = rootLayerGroup
+						}
+					patchLayers.add(patchLayer)
+					layerEntryList.add(patchLayer)
+					val patchImage =
+						modelImageOver(region.drawableIdStr, layeredImage, patchLayer, cropResource, trimmedCrop, patchPlacement.copyAffine(), group.group, names, pngEntries, nowMillis)
+					group.modelImages.add(patchImage)
+					atlasEntries.add(
+						// The declared packing origin is the fit-inverse of the snapped placement
+						// (fractional, like every official entry), NOT the raw crop rect origin, so
+						// the web composes to the integer placement exactly.
+						packedEntry(
+							atlas = atlas,
+							modelImageGuid = patchImage.guid,
+							atlasLocalToCanvas = pageFit.copyAffine(),
+							packing =
+								writePacking(
+									GTransform2(),
+									positionX = packingOrigin?.get(0) ?: trimmedX0.toFloat(),
+									positionY = packingOrigin?.get(1) ?: trimmedY0.toFloat(),
+									scaleX = 1f,
+									scaleY = 1f,
+									rotationDegrees = 0f,
+								),
+						),
+					)
+					// The drawable icons show the crop, which IS the mesh's uv box; twins share the
+					// bytes and each takes an entry of its own, like the editor's one icon per drawable.
+					PatchWeb(patchImage.guid as Guid, Cmo3Icons.iconPngOf(trimmedCrop, 32), Cmo3Icons.iconPngOf(trimmedCrop, 16))
+				}
+			bindingByDrawableId[region.drawableIdStr] =
+				Cmo3DrawableTextureBinding(
+					texture,
+					atlas.guid as Guid,
+					patchWeb.imageGuid,
+					pageFit.copyAffine(),
+					icon32 = iconEntry(patchWeb.icon32Png, 32),
+					icon16 = iconEntry(patchWeb.icon16Png, 16),
+				)
+		}
+		group.linkedRawImageGuids.add(layeredImage.guid)
+		return wrapper
+	}
+
+	/**
+	 * One minted patch web, shared by every drawable sampling the same crop with the same mesh.
+	 *
+	 * @property Guid      imageGuid The crop's model image guid.
+	 * @property ByteArray icon32Png The 32px drawable icon's bytes.
+	 * @property ByteArray icon16Png The 16px drawable icon's bytes.
+	 */
+	private class PatchWeb(val imageGuid: Guid, val icon32Png: ByteArray, val icon16Png: ByteArray)
 }

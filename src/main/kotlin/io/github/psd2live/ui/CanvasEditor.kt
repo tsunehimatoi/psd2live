@@ -304,7 +304,7 @@ internal data class HierarchyPick(
  * pixels after its layer was re-cropped, which is why the atlas convention lives in one place.
  */
 internal class AtlasSlice(
-    val placement: AtlasPlacement,
+    val placement: io.github.psd2live.core.AtlasPlacement,
     val pageWidth: Int,
     val pageHeight: Int,
     /** The layer's source bounds in canvas pixels when this slice was packed. */
@@ -1181,7 +1181,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         )
         val oldAtlas = currentPreview.atlas
 
-        fun findPlacement(atlas: PackedAtlas, drawableId: String, layerId: String?): AtlasPlacement? {
+        fun findPlacement(atlas: PackedAtlas, drawableId: String, layerId: String?): io.github.psd2live.core.AtlasPlacement? {
             if (layerId != null && atlas.placementByLayerId.containsKey(layerId)) {
                 return atlas.placementByLayerId[layerId]
             }
@@ -1229,7 +1229,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         val targetPlacement = findPlacement(newAtlas, targetDrawable?.id?.raw ?: targetLid, targetClassified?.source?.id?.raw ?: targetLid)
             ?: newAtlas.placementByLayerId[targetLid]
             ?: newAtlas.placementByLayerId.values.firstOrNull()
-            ?: AtlasPlacement(0, 0, 0, newBounds.width, newBounds.height)
+            ?: io.github.psd2live.core.AtlasPlacement(0, 0, 0, newBounds.width, newBounds.height)
         val targetPage = newAtlas.pages.getOrNull(targetPlacement.page)
         val targetPageWidth = targetPage?.image?.width ?: currentPreview.config.atlasSize
         val targetPageHeight = targetPage?.image?.height ?: currentPreview.config.atlasSize

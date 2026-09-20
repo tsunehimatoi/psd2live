@@ -1,6 +1,8 @@
 package org.umamo.render
 
 import org.umamo.runtime.model.PuppetModel
+import org.umamo.runtime.model.atlasBindingFor
+import org.umamo.runtime.model.layerUvAffineOf
 
 /**
  * One drawable's source-artwork draw: which image it samples, and the affine carrying its stored
@@ -21,7 +23,7 @@ class DrawableLayerDraw(val layerKey: String, val uvAffine: FloatArray)
  * because its mapping never went away, and [unresolvedDrawableCount] keeps meaning "no artwork
  * exists" rather than drifting into "not resident right now".
  *
- * Cheap to build and cheap to hold: [layerByteCostByKey] comes from the store's inventory sizes, so
+ * Cheap to build and cheap to hold: [layerByteCostByKey] comes from the model's atlas tile sizes, so
  * the cost of every image is known BEFORE any of them decode, which is what makes a budget
  * enforceable up front instead of after the memory is already spent.
  *
@@ -83,13 +85,13 @@ class LayerRasterBatch(
 /**
  * Works out which source artwork each drawable would display from, and what each image would cost.
  *
- * Decodes NOTHING.  It reads only the store's inventory - sizes and bindings - so it is cheap enough
- * to build eagerly for the whole document and to rebuild whenever the drawable set changes.  Deciding
- * the mapping separately from paying for the pixels is what lets a budget be applied before any
- * memory is spent, and what keeps a budget-evicted layer promotable later.
+ * Decodes NOTHING.  It reads only the model's atlas - tile sizes and placements - so it is cheap
+ * enough to build eagerly for the whole document and to rebuild whenever the drawable set or a
+ * placement changes.  Deciding the mapping separately from paying for the pixels is what lets a budget
+ * be applied before any memory is spent, and what keeps a budget-evicted layer promotable later.
  *
- * Safe on a background thread: it reads only immutable model and store data and touches neither the
- * store's decode cache nor the device.
+ * Safe on a background thread: it reads only the immutable model and touches neither the document's
+ * decode cache nor the device.
  *
  * A drawable is left out (and counted in [LayerDrawPlan.unresolvedDrawableCount]) when the document
  * retains no art for it or when its placement will not invert.  A layer whose pixels turn out not to
@@ -97,11 +99,10 @@ class LayerRasterBatch(
  * exactly "no artwork exists" and never "not decoded yet".
  *
  * @param PuppetModel model The puppet whose drawables need artwork.
- * @param LayerTextures layers The document's source-art store.
  * @return LayerDrawPlan Each drawable's mapping plus the per-layer byte cost.
  */
-fun buildLayerDrawPlan(model: PuppetModel, layers: LayerTextures): LayerDrawPlan {
-	if (layers.isEmpty) {
+fun buildLayerDrawPlan(model: PuppetModel): LayerDrawPlan {
+	if (model.atlas.tiles.isEmpty()) {
 		return LayerDrawPlan.EMPTY
 	}
 	val drawsByDrawableId = HashMap<String, DrawableLayerDraw>()
@@ -111,16 +112,16 @@ fun buildLayerDrawPlan(model: PuppetModel, layers: LayerTextures): LayerDrawPlan
 		if (drawable.mesh == null) {
 			continue
 		}
-		val binding = layers.bindingForDrawable(drawable)
-		val entry = binding?.let { layers.layerFor(it.layerKey) }
-		val affine = if (binding != null && entry != null) layerUvAffineOf(binding, entry.width, entry.height) else null
-		if (binding == null || entry == null || affine == null) {
+		val binding = model.atlasBindingFor(drawable)
+		val tile = drawable.atlasTileId?.let { tileId -> model.atlas.tileById[tileId] }
+		val affine = if (binding != null && tile != null) layerUvAffineOf(binding, tile.width, tile.height) else null
+		if (binding == null || tile == null || affine == null) {
 			unresolved++
 			continue
 		}
 		// Four bytes per pixel: what the image occupies once decoded to RGBA and again once uploaded,
 		// which is the quantity the residency budget is denominated in.
-		layerByteCostByKey[binding.layerKey] = entry.width.toLong() * entry.height.toLong() * 4L
+		layerByteCostByKey[binding.layerKey] = tile.width.toLong() * tile.height.toLong() * 4L
 		drawsByDrawableId[drawable.id.raw] = DrawableLayerDraw(binding.layerKey, affine)
 	}
 	return LayerDrawPlan(drawsByDrawableId, layerByteCostByKey, unresolved)

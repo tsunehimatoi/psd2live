@@ -2,7 +2,6 @@ package org.umamo.interop.cmo3
 
 import org.umamo.format.cmo3.model.custom.CLabelColor
 import org.umamo.format.cmo3.model.custom.CModelSource
-import org.umamo.format.cmo3.model.custom.CWritableImage
 import org.umamo.format.cmo3.model.gen.CAffecterSourceSet
 import org.umamo.format.cmo3.model.gen.CArtPathBrushSetting
 import org.umamo.format.cmo3.model.gen.CDeformerSourceSet
@@ -11,7 +10,6 @@ import org.umamo.format.cmo3.model.gen.CEffectParameterGroups
 import org.umamo.format.cmo3.model.gen.CGameMotionSet
 import org.umamo.format.cmo3.model.gen.CGuidesSetting
 import org.umamo.format.cmo3.model.gen.CImageCanvas
-import org.umamo.format.cmo3.model.gen.CImageIcon
 import org.umamo.format.cmo3.model.gen.CLabelColorType
 import org.umamo.format.cmo3.model.gen.CModelInfo
 import org.umamo.format.cmo3.model.gen.CParameterGroup
@@ -32,7 +30,6 @@ import org.umamo.format.cmo3.model.gen.TextureImageGroup
 import org.umamo.format.cmo3.model.identity.Guid
 import org.umamo.format.cmo3.model.identity.Id
 import org.umamo.format.cmo3.model.type.CColor
-import org.umamo.format.cmo3.model.type.FileRef
 import org.umamo.format.cmo3.type.CArrayList
 import org.umamo.format.cmo3.type.CHashMap
 import org.umamo.format.png.PngCodec
@@ -105,12 +102,27 @@ internal object Cmo3SkeletonBuilder {
 	 * @param Int    canvasWidth     The canvas width in pixels (CImageCanvas field pixelWidth).
 	 * @param Int    canvasHeight    The canvas height in pixels (CImageCanvas field pixelHeight).
 	 * @param Int    targetVersionNo The persisted runtime target (CModelSource field targetVersionNo).
+	 * @param RasterImage modelThumbnail The model's rest-pose thumbnail the three model icons fit, or
+	 *                              null for the blank icons the editor writes for a model it never
+	 *                              rendered (ModelWithOffscreenPartClipping carries exactly that).
 	 * @return BlankSkeleton The fresh root plus icon PNG entries.
 	 */
-	internal fun buildBlank(modelName: String, canvasWidth: Int, canvasHeight: Int, targetVersionNo: Int): BlankSkeleton {
+	internal fun buildBlank(
+		modelName: String,
+		canvasWidth: Int,
+		canvasHeight: Int,
+		targetVersionNo: Int,
+		modelThumbnail: RasterImage? = null,
+	): BlankSkeleton {
 		val rootPart = buildRootPart()
 		val rootGroup = buildRootParameterGroup()
-		val icons = listOf(IconEntry("image.png", blankPng(64)), IconEntry("image_0.png", blankPng(32)), IconEntry("image_1.png", blankPng(16)))
+		// CMO3: CModelSource fields _icon64 / _icon32 / _icon16 - backed by image.png, image_0.png,
+		// image_1.png in the blank default, the model's rendered thumbnail at each size.
+		val iconPaths = listOf("image.png", "image_0.png", "image_1.png")
+		val icons =
+			Cmo3Icons.MODEL_ICON_SIZES.mapIndexed { sizeIndex, size ->
+				IconEntry(iconPaths[sizeIndex], if (modelThumbnail == null) blankPng(size) else Cmo3Icons.iconPngOf(modelThumbnail, size))
+			}
 		val root =
 			CModelSource().apply {
 				guid = freshGuid("CModelGuid")
@@ -163,9 +175,9 @@ internal object Cmo3SkeletonBuilder {
 						_effectParameterGroups = CEffectParameterGroups().apply { _parameterGroups = CHashMap<Any?, Any?>() }
 					}
 				modelOptions = CHashMap<String, Any?>()
-				_icon64 = iconOf(64, icons[0].path)
-				_icon32 = iconOf(32, icons[1].path)
-				_icon16 = iconOf(16, icons[2].path)
+				_icon64 = Cmo3Icons.iconReferencing(64, icons[0].path)
+				_icon32 = Cmo3Icons.iconReferencing(32, icons[1].path)
+				_icon16 = Cmo3Icons.iconReferencing(16, icons[2].path)
 				gameMotionSet =
 					CGameMotionSet().apply {
 						gameMotions = CArrayList<Any?>()
@@ -174,8 +186,8 @@ internal object Cmo3SkeletonBuilder {
 				modelViewerSetting = ModelViewerSetting().apply { trackCursorSettings = ArrayList<Any?>() }
 				guides = CGuidesSetting().apply { guidesModeling = CArrayList<Any?>() }
 				this.targetVersionNo = targetVersionNo
-				// CMO3: CModelSource field latestVersionOfLastModelerNo (matches targetVersionNo or Cubism 5.0).
-				latestVersionOfLastModelerNo = if (targetVersionNo == org.umamo.format.cmo3.Cmo3TargetVersion.LATEST_VERSION_NO) 5000000 else targetVersionNo
+				// CMO3: CModelSource field latestVersionOfLastModelerNo (BareMinimum writes 5030000).
+				latestVersionOfLastModelerNo = 5030000
 				artPathBrushesSetting = CArtPathBrushSetting().apply { brushes = CArrayList<Any?>() }
 				// CMO3: CModelSource fields randomPoseSetting / motionSyncSettingsSet /
 				// modelStateSetSet - every 5.4 corpus file writes all three (empty when the
@@ -334,23 +346,4 @@ internal object Cmo3SkeletonBuilder {
 	 * @return ByteArray The encoded PNG.
 	 */
 	internal fun blankPng(size: Int): ByteArray = PngCodec.write(RasterImage(size, size, ByteArray(size * size * 4)))
-
-	/**
-	 * An icon wrapper referencing an embedded PNG entry.
-	 *
-	 * @param Int    size The square dimension in pixels.
-	 * @param String path The archive entry path the icon references.
-	 * @return CImageIcon The fresh icon.
-	 */
-	private fun iconOf(size: Int, path: String): CImageIcon =
-		CImageIcon().apply {
-			image =
-				CWritableImage().apply {
-					width = size
-					height = size
-					// CMO3: CWritableImage attrs width/height/type + file child (BareMinimum icons).
-					type = "INT_ARGB"
-					image = FileRef().apply { archivePath = path }
-				}
-		}
 }

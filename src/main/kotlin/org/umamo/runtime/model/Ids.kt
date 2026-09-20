@@ -31,3 +31,20 @@ value class ParameterGroupId(val raw: String)
 
 @JvmInline
 value class KeyformId(val raw: String)
+
+/**
+ * One piece of source art in the document's atlas.
+ *
+ * Distinct from a source-LAYER identity, which says which artwork file and layer a tile came from:
+ * this only names a tile within one document, and the two coincide only for a rig built from layered
+ * art in the first place.
+ */
+@JvmInline
+value class AtlasTileId(val raw: String)
+
+/**
+ * One artwork file in the document's source list ([PuppetModel.sources]) - what a tile's
+ * [SourceLayerRef] names as the file half of its binding.
+ */
+@JvmInline
+value class ArtSourceId(val raw: String)

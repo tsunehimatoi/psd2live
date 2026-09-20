@@ -95,7 +95,9 @@ private const val UNDERLAY_TEXTURE_CACHE_SIZE = 4
  */
 class PuppetRenderer(
 	private val model: PuppetModel,
-	private val textures: PuppetTextures,
+	// var: the session owns the effective page set now - a repack swaps it mid-session through
+	// setAtlasPages, which re-points this at the set the uploaded handles came from.
+	private var textures: PuppetTextures,
 	private val device: RenderDevice,
 ) {
 	// Draw pipelines by blend x cull, plus the fixed-purpose ones, created lazily and reused every frame.
@@ -217,7 +219,10 @@ class PuppetRenderer(
 		val vertexCount: Int,
 		val indexCount: Int,
 		val cpTexture: GpuTexture?,
-		val atlasTexture: GpuTexture?,
+		// The atlas page this drawable samples.  A var because a repack swaps the page set mid-session
+		// and setAtlasPages re-stamps every resident - the index map moves with the pages, not just the
+		// handles.
+		var atlasTexture: GpuTexture?,
 		// The drawable's SOURCE ARTWORK alternative to the atlas, and the affine carrying its stored
 		// coordinates into that image's frame.  Both var: a drawable acquires them when the document
 		// switches to source-artwork display, which is a state change, not a re-upload.  Null means this
@@ -328,9 +333,9 @@ class PuppetRenderer(
 	private var atlasHandles: List<GpuTexture> = emptyList()
 
 	// Underlay images uploaded on demand (the UV editor's source-layer view), keyed by image identity and
-	// insertion-ordered so eviction drops the oldest. Unlike atlasHandles these arrive after initGl, so
-	// they are created and destroyed across the renderer's life rather than uploaded once - as the
-	// source-artwork textures below also are.
+	// insertion-ordered so eviction drops the oldest. Unlike atlasHandles, which upload and free as one
+	// whole page set (at init, or wholesale on a setAtlasPages swap), these arrive and are created or
+	// destroyed one at a time across the renderer's life - as the source-artwork textures below also are.
 	private val underlayTextures = LinkedHashMap<DecodedImage, GpuTexture>()
 
 	// Which artwork every drawable would display from - the mapping, complete for the whole document and
@@ -591,6 +596,44 @@ class PuppetRenderer(
 		val texture = draw?.let { layerTextures[it.layerKey] }
 		gpuDrawable.layerTexture = texture
 		gpuDrawable.layerUvAffine = if (texture != null) draw.uvAffine else null
+	}
+
+	/**
+	 * Swaps the atlas page set: destroys the uploaded pages, uploads [next]'s, re-points [textures], and
+	 * re-stamps every resident's page binding.  One operation, because freeing a page is only safe
+	 * together with the re-stamp that stops drawables sampling it - the same rule
+	 * [applySourceLayerDisplay] states for artwork.  Must run with the device's context current.
+	 *
+	 * @param PuppetTextures next The new page set.
+	 */
+	fun setAtlasPages(next: PuppetTextures) {
+		if (next === textures) {
+			// The set the handles already came from - a re-published wrapper around unchanged pages.
+			return
+		}
+		for (handle in atlasHandles) {
+			device.destroyTexture(handle)
+		}
+		textures = next
+		atlasHandles =
+			next.atlases.map { device.createTexture(it.width, it.height, TextureFormat.Rgba8, TextureFilter.Linear, it.rgba) }
+		applyAtlasBinding()
+	}
+
+	/**
+	 * Re-points every resident at its atlas page under the current [textures] - the atlas twin of
+	 * [applySourceLayerDisplay]'s stamp pass.  The index map is re-read per resident, not just the
+	 * handles: a repack can move a drawable to a different page, so the old index is as stale as the
+	 * old texture.
+	 */
+	private fun applyAtlasBinding() {
+		val bindingSourceById = currentModel.drawables.associateBy({ it.id }, { it.textureSourceId ?: it.id })
+		for ((drawableId, gpuDrawable) in gpuById) {
+			// The atlas mapping is keyed by the SOURCE format's drawable ids, exactly as at upload: a
+			// session-created copy resolves its page through the drawable it was duplicated from.
+			val bindingKey = (bindingSourceById[drawableId] ?: drawableId).raw
+			gpuDrawable.atlasTexture = textures.atlasIndexByDrawableId[bindingKey]?.let { atlasHandles.getOrNull(it) }
+		}
 	}
 
 	/**
@@ -1441,9 +1484,10 @@ class PuppetRenderer(
 	 * Draws an arbitrary image as the flat underlay - the UV editor's source-layer view, the pre-atlas
 	 * counterpart of [renderAtlasPage].
 	 *
-	 * Unlike the atlas pages, which upload once at init because the document's page set is fixed, a
-	 * layer image arrives whenever the editor is pointed at one, so its texture is created on first
-	 * sight and cached (see [underlayTextureFor]).  A null image paints the grid only.
+	 * Unlike the atlas pages, which upload as a whole set (at init, or wholesale on a [setAtlasPages]
+	 * swap) rather than one image at a time, a layer image arrives whenever the editor is pointed at
+	 * one, so its texture is created on first sight and cached (see [underlayTextureFor]).  A null
+	 * image paints the grid only.
 	 *
 	 * @param RenderTarget target         The surface to draw into.
 	 * @param DecodedImage image          The image to draw, or null for none.

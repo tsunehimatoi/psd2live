@@ -549,6 +549,7 @@ object RigBuilder {
 				opacity = layer.source.opacity.coerceIn(0f, 1f),
 				isVisible = layerVisibility(config, layer.source.id.raw, layer.source.visible),
 				texturePage = placement.page,
+				atlasTileId = PuppetSourceAtlas.tileIdFor(layer.source.id.raw),
 			)
 			drawables += drawable
 			classifiedByDrawable[id] = layer
@@ -654,6 +655,7 @@ object RigBuilder {
 		val standardIds = StandardParameters.all.map { it.id }.toSet()
 		val uniqueCustomParams = customParams.filter { it.id !in standardIds }
 		val parameterTree = parameterTree(uniqueCustomParams)
+		val (puppetAtlas, artSources) = PuppetSourceAtlas.build(inputAnalysis, atlas)
 		val puppet = PuppetModel(
 			parameters = StandardParameters.all + uniqueCustomParams,
 			parts = parts,
@@ -673,6 +675,8 @@ object RigBuilder {
 			worldOriginY = -analysis.source.heightPx * 0.5f,
 			// Compatibility baseline comes from the export dialog's SDK target.
 			runtimeTarget = config.runtimeTarget,
+			atlas = puppetAtlas,
+			sources = artSources,
 			deformPaths = builtDeformPaths,
 		).withDerivedRenderRoot()
 		val faceCenterCanvas = faceRig.coordinateSpace.toCanvas(faceRig.centerX, faceRig.centerY)
@@ -1974,6 +1978,7 @@ object RigBuilder {
             mesh = DrawableMesh(positions, uvs, indices),
             geometryGrid = geometry,
             texturePage = placement.page,
+            atlasTileId = PuppetSourceAtlas.tileIdFor(layer.source.id.raw),
             blendMode = BlendMode.Normal,
             isVisible = layerVisibility(config, layer.source.id.raw, layer.source.visible),
             drawOrder = (config.drawOrderOverrides[layer.source.id.raw] ?: (owner.drawOrder + 1f)).coerceIn(0f, 1000f),
