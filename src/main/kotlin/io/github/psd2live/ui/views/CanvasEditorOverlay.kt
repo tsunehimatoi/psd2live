@@ -1098,6 +1098,7 @@ private fun PlacementSettingsPanel(
     Column(
         modifier = Modifier
             .width(240.dp)
+            .tutorialTarget(TutorialTargetId.PLACEMENT_PANEL)
             .frostedGlass(shape = RoundedCornerShape(6.dp), isHovered = true, elevation = 6.dp, alpha = 0.94f)
             .border(BorderStroke(1.dp, colors.border.copy(alpha = 0.85f)), RoundedCornerShape(6.dp))
             .padding(horizontal = 9.dp, vertical = 8.dp),

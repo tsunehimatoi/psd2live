@@ -50,6 +50,8 @@ fun TutorialOverlay(
 	keymap: Keymap = Keymap.DEFAULT,
 	reviewing: Boolean = false,
 	isFirstStep: Boolean = false,
+	prerequisiteMet: Boolean = true,
+	spotlightTargetId: TutorialTargetId? = null,
 	onNext: () -> Unit,
 	onPrevious: () -> Unit,
 	onSkip: () -> Unit,
@@ -61,7 +63,8 @@ fun TutorialOverlay(
 	val colors = LocalToolColors.current
 	val density = LocalDensity.current
 	var origin by remember { mutableStateOf(Offset.Zero) }
-	val target = step.targetId?.let(registry::boundsOf)
+	val targetId = spotlightTargetId ?: step.targetId
+	val target = targetId?.let(registry::boundsOf)
 	val hole = target?.translate(-origin)?.inflate(with(density) { 4.dp.toPx() })
 	Layout(
 		modifier = Modifier.fillMaxSize()
@@ -91,13 +94,14 @@ fun TutorialOverlay(
 					),
 				)
 			}
-			key(tutorialId, step.key) {
+			key(tutorialId, step.key, prerequisiteMet) {
 				TutorialCoachCard(
 					tutorialId = tutorialId,
 					step = step,
 					stepIndex = stepIndex,
 					keymap = keymap,
 					isFirstStep = isFirstStep,
+					prerequisiteMet = prerequisiteMet,
 					onNext = onNext,
 					onPrevious = onPrevious,
 					onSkip = onSkip,
@@ -159,6 +163,7 @@ fun TutorialCoachCard(
 	stepIndex: Int,
 	keymap: Keymap = Keymap.DEFAULT,
 	isFirstStep: Boolean,
+	prerequisiteMet: Boolean = true,
 	onNext: () -> Unit,
 	onPrevious: () -> Unit,
 	onSkip: () -> Unit,
@@ -185,6 +190,7 @@ fun TutorialCoachCard(
 	val nextId = tutorialId.nextId
 	val bodyStyle = typography.caption.copy(fontSize = 11.5.sp, lineHeight = 16.sp)
 	val actionStyle = typography.caption.copy(lineHeight = 17.sp)
+	val canAdvance = prerequisiteMet && (step.allowsNext || reviewing)
 
 	Column(
 		modifier = modifier
@@ -218,16 +224,23 @@ fun TutorialCoachCard(
 			style = bodyStyle,
 			color = colors.textMuted,
 		)
-		if (targetMissing) {
+		if (!prerequisiteMet) {
+			Text(
+				tr(
+					if (step.requireLayerSelection) "tutorial.common.requireLayer"
+					else "tutorial.common.requireSelection",
+				),
+				style = typography.caption,
+				color = colors.accent,
+			)
+		} else if (targetMissing) {
 			Text(tr("tutorial.basic.targetMissing"), style = typography.caption, color = colors.accent)
 		}
-		if (!step.isDone) {
+		if (!step.isDone && step.showAction && prerequisiteMet) {
 			Column(
 				modifier = Modifier.fillMaxWidth()
 					.background(colors.accent.copy(alpha = 0.08f), RoundedCornerShape(6.dp)).padding(10.dp),
-				verticalArrangement = Arrangement.spacedBy(4.dp),
 			) {
-				Text(tr("tutorial.basic.action"), style = typography.caption, color = colors.accent)
 				TutorialRichText(
 					text = tr(step.actionKey(tutorialId)),
 					keymap = keymap,
@@ -235,8 +248,16 @@ fun TutorialCoachCard(
 					color = colors.textPrimary,
 				)
 			}
+		}
+		if (!step.isDone) {
 			Text(
-				tr(if (step.allowsNext || reviewing) "tutorial.basic.hint.manual" else "tutorial.basic.hint.auto"),
+				tr(
+					when {
+						!prerequisiteMet -> "tutorial.common.hint.prerequisite"
+						step.allowsNext || reviewing -> "tutorial.basic.hint.manual"
+						else -> "tutorial.basic.hint.auto"
+					},
+				),
 				style = typography.caption.copy(fontSize = 10.sp),
 				color = colors.textMuted,
 			)
@@ -286,6 +307,7 @@ fun TutorialCoachCard(
 				}
 				Spacer(modifier = Modifier.weight(1f))
 				when {
+					!prerequisiteMet -> { /* finish selection first — no Next/Skip */ }
 					step.allowsNext || reviewing ->
 						CompactButton(text = tr("tutorial.basic.next"), onClick = onNext, isPrimary = true, height = 24.dp)
 					else ->

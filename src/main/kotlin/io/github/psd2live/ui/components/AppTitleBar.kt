@@ -528,19 +528,46 @@ fun AppTitleBar(
 						activeSubmenu = null
 					}
 				},
+				modifier = Modifier.tutorialTarget(TutorialTargetId.TOOLS_MENU),
 			) {
+				val showToolsCoach = tutorialId != null && tutorialStep != null &&
+					tutorialHighlightTarget == TutorialTargetId.TOOLS_TEXTURE_UPSCALE
 				AppSeamlessDropdownMenu(
-					expanded = activeMenu == "tools",
+					expanded = activeMenu == "tools" || tutorialMenuForce == "tools",
 					onDismissRequest = {
-						activeMenu = null
-						activeSubmenu = null
+						if (tutorialMenuForce != "tools") {
+							activeMenu = null
+							activeSubmenu = null
+						}
 					},
 					modifier = Modifier.widthIn(min = 180.dp, max = 240.dp),
+					tutorialOverlay = if (showToolsCoach) {
+						{
+							LocalTutorialTargets.current?.let { registry ->
+								TutorialOverlay(
+									tutorialId = tutorialId,
+									step = tutorialStep,
+									stepIndex = tutorialStepIndex,
+									registry = registry,
+									keymap = keymap,
+									reviewing = tutorialReviewing,
+									isFirstStep = tutorialIsFirstStep,
+									onNext = onTutorialNext,
+									onPrevious = onTutorialPrevious,
+									onSkip = onTutorialSkip,
+									onExit = onTutorialExit,
+									onFinish = onTutorialExit,
+								)
+							}
+						}
+					} else null,
 				) {
 					AppMenuItem(
 						text = tr("menu.tools.textureUpscale"),
 						shortcut = keymap.labelFor(ShortcutAction.TEXTURE_UPSCALE),
 						enabled = hasInput && !isBusy,
+						highlighted = tutorialHighlightTarget == TutorialTargetId.TOOLS_TEXTURE_UPSCALE,
+						modifier = Modifier.tutorialTarget(TutorialTargetId.TOOLS_TEXTURE_UPSCALE),
 						onHover = { activeSubmenu = null },
 						onClick = {
 							activeMenu = null

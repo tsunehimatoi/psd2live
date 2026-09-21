@@ -95,7 +95,7 @@ fun WorkspaceTabStrip(
 					modifier = when (tab.kind) {
 						WorkspaceTabKind.PREVIEW -> Modifier.tutorialTarget(TutorialTargetId.PREVIEW_TAB)
 						WorkspaceTabKind.EDIT -> Modifier.tutorialTarget(TutorialTargetId.EDIT_TAB)
-						else -> Modifier
+						WorkspaceTabKind.HISTORY -> Modifier.tutorialTarget(TutorialTargetId.HISTORY_TAB)
 					},
 				)
 			}

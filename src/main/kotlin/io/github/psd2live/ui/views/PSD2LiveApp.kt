@@ -88,7 +88,9 @@ import io.github.psd2live.ui.tutorial.TutorialOverlay
 import io.github.psd2live.ui.tutorial.TutorialTargetId
 import io.github.psd2live.ui.tutorial.advance
 import io.github.psd2live.ui.tutorial.continueNextTutorial
+import io.github.psd2live.ui.tutorial.effectiveTargetId
 import io.github.psd2live.ui.tutorial.isComplete
+import io.github.psd2live.ui.tutorial.prerequisiteMet
 import io.github.psd2live.ui.tutorial.rememberTutorialTargetRegistry
 import io.github.psd2live.ui.tutorial.retreat
 import io.github.psd2live.ui.tutorial.start
@@ -300,7 +302,14 @@ fun FrameWindowScope.PSD2LiveApp(
 			tutorial.active
 
 		// Tutorial step side-effects and auto-advance
-		LaunchedEffect(tutorial.active, tutorial.tutorialId, tutorial.stepIndex) {
+		LaunchedEffect(
+			tutorial.active,
+			tutorial.tutorialId,
+			tutorial.stepIndex,
+			state.selectedLayerId,
+			state.selectedDeformerId,
+			state.hierarchyCollapsed,
+		) {
 			if (!tutorial.active) return@LaunchedEffect
 			val step = tutorial.step
 			if (step.ensureEditTab) {
@@ -310,7 +319,13 @@ fun FrameWindowScope.PSD2LiveApp(
 					edit == null -> viewModel.addTab(WorkspaceTabKind.EDIT)
 				}
 			}
+			if (step.ensureHistoryTab) {
+				viewModel.openHistoryTab()
+			}
 			if (step.ensureHierarchyVisible && state.hierarchyCollapsed) {
+				viewModel.setHierarchyView(collapsed = false)
+			}
+			if ((step.requireSelection || step.requireLayerSelection) && state.hierarchyCollapsed) {
 				viewModel.setHierarchyView(collapsed = false)
 			}
 			step.selectDock?.let { dock ->
@@ -321,8 +336,11 @@ fun FrameWindowScope.PSD2LiveApp(
 				viewModel.setInspectorCollapsed(false)
 				viewModel.setModelSettingsExpanded(true)
 			}
-			step.setHierarchyMode?.let { mode ->
-				viewModel.canvasEditor.setHierarchyMode(mode)
+			// Don't force a mode that needs a target until the user finishes selecting.
+			if (step.prerequisiteMet(state)) {
+				step.setHierarchyMode?.let { mode ->
+					viewModel.canvasEditor.setHierarchyMode(mode)
+				}
 			}
 		}
 		LaunchedEffect(tutorial.active, tutorial.tutorialId, tutorial.stepIndex, state.previewModel, state.activeTabKind, state.showExportDialog, tutorial.titleBarMenuOpen, tutorial.reviewing) {
@@ -477,8 +495,10 @@ fun FrameWindowScope.PSD2LiveApp(
 						onShowAbout = { helpDialogTab = HelpTab.ABOUT },
 						onShowHelp = { tab -> helpDialogTab = tab },
 						onOpenTutorialCatalog = { openTutorialCatalog() },
-						tutorialMenuForce = if (tutorial.active && tutorial.step.forcesFileMenu) "file" else null,
-						tutorialHighlightTarget = if (tutorial.active) tutorial.step.targetId else null,
+						tutorialMenuForce = if (tutorial.active) tutorial.step.forcesMenu else null,
+						tutorialHighlightTarget = if (tutorial.active) {
+							tutorial.step.effectiveTargetId(state)
+						} else null,
 						tutorialId = if (tutorial.active) tutorial.tutorialId else null,
 						tutorialStep = if (tutorial.active) tutorial.step else null,
 						tutorialStepIndex = tutorial.stepIndex,
@@ -529,17 +549,21 @@ fun FrameWindowScope.PSD2LiveApp(
 
 			if (tutorial.active && !tutorial.step.coachBesideMenu) {
 				// Menu steps render their overlay inside the menu popup.
+				val step = tutorial.step
+				val prereqOk = step.prerequisiteMet(state)
 				TutorialOverlay(
 					tutorialId = tutorial.tutorialId,
-					step = tutorial.step,
+					step = step,
 					stepIndex = tutorial.stepIndex,
 					registry = tutorialTargets,
 					keymap = state.keymap,
 					reviewing = tutorial.reviewing,
 					isFirstStep = tutorial.isFirstStep,
-					onNext = { advanceTutorial() },
+					prerequisiteMet = prereqOk,
+					spotlightTargetId = step.effectiveTargetId(state),
+					onNext = { if (prereqOk) advanceTutorial() },
 					onPrevious = { retreatTutorial() },
-					onSkip = { advanceTutorial() },
+					onSkip = { if (prereqOk) advanceTutorial() },
 					onExit = { stopInteractiveTutorial() },
 					onFinish = { stopInteractiveTutorial() },
 					onContinueNext = if (tutorial.isDoneStep && tutorial.nextTutorialId != null) {

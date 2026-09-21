@@ -53,4 +53,47 @@ class InteractiveTutorialCatalogTest {
 		assertTrue("placeSession" in keys)
 		assertEquals("done", keys.last())
 	}
+
+	@Test
+	fun variantsCoversToggleAndSwitchFlow() {
+		assertEquals(
+			listOf("types", "toggleWhy", "toggleSetup", "switchWhy", "switchSetup", "done"),
+			tutorialDefinition(TutorialId.VARIANTS).steps.map { it.key },
+		)
+	}
+
+	@Test
+	fun parametersCoversPanelDragKeysAndLink() {
+		assertEquals(
+			listOf("findTab", "panel", "drag", "keys", "operate", "link", "done"),
+			tutorialDefinition(TutorialId.PARAMETERS).steps.map { it.key },
+		)
+	}
+
+	@Test
+	fun createDeformerUsesTreeMenusAndPlacement() {
+		val steps = tutorialDefinition(TutorialId.CREATE_DEFORMER).steps
+		assertEquals(
+			listOf("selectFirst", "contextDeformer", "contextLayer", "placement", "done"),
+			steps.map { it.key },
+		)
+		assertTrue(steps[0].requireSelection)
+		assertEquals(TutorialTargetId.PLACEMENT_PANEL, steps[3].targetId)
+	}
+
+	@Test
+	fun projectHistoryAndUpscaleTargetsAreCorrect() {
+		val history = tutorialDefinition(TutorialId.PROJECT_HISTORY).steps.first { it.key == "historyTab" }
+		assertEquals(TutorialTargetId.HISTORY_TAB, history.targetId)
+		val entry = tutorialDefinition(TutorialId.TEXTURE_UPSCALE).steps.first { it.key == "entry" }
+		assertEquals(TutorialTargetId.TOOLS_TEXTURE_UPSCALE, entry.targetId)
+		assertEquals("tools", entry.forcesMenu)
+	}
+
+	@Test
+	fun deformBrushesRequireSelection() {
+		val brushes = tutorialDefinition(TutorialId.DEFORM_MODE).steps.first { it.key == "brushes" }
+		assertTrue(brushes.requireSelection)
+		assertTrue(brushes.showAction)
+	}
 }
