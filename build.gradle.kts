@@ -1,4 +1,4 @@
-import java.util.zip.ZipFile
+﻿import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 import java.util.zip.ZipEntry
 
@@ -11,7 +11,7 @@ plugins {
 }
 
 group = "io.github.psd2live"
-version = "1.0.0"
+version = "1.0.1"
 
 kotlin {
 	jvmToolchain(21)
@@ -107,7 +107,7 @@ compose.desktop {
 				org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi,
 			)
 			packageName = "PSD2Live"
-			packageVersion = "1.0.0"
+			packageVersion = "1.0.1"
 			description = "PSD2Live - Automated Live2D Rigging Pipeline"
 			copyright = "© 2026 PSD2Live. Licensed under GPL-3.0."
 			vendor = "PSD2Live"

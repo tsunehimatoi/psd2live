@@ -1,4 +1,4 @@
-package io.github.psd2live.agent
+﻿package io.github.psd2live.agent
 
 import io.github.psd2live.core.Bounds
 import io.ktor.http.HttpStatusCode
@@ -244,7 +244,7 @@ private suspend fun createTransport(
 
 internal fun createAgentMcpServer(workspace: AgentWorkspace, legacyTools: Boolean = false): Server {
 	val server = Server(
-		serverInfo = Implementation("psd2live", "1.0.0"),
+		serverInfo = Implementation("psd2live", "1.0.1"),
 		options = ServerOptions(
 			ServerCapabilities(
 				resources = ServerCapabilities.Resources(subscribe = false, listChanged = false),

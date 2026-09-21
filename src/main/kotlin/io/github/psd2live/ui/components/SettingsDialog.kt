@@ -1,4 +1,4 @@
-package io.github.psd2live.ui.components
+﻿package io.github.psd2live.ui.components
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -169,7 +169,7 @@ fun SettingsDialog(
 						color = colors.textPrimary,
 					)
 					Text(
-						text = "v1.0.0",
+						text = "v1.0.1",
 						style = typography.monoSmall.copy(fontSize = 10.sp),
 						color = colors.textMuted,
 					)

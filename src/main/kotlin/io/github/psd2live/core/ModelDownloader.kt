@@ -1,4 +1,4 @@
-package io.github.psd2live.core
+﻿package io.github.psd2live.core
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -202,7 +202,7 @@ object ModelDownloader {
         Files.deleteIfExists(targetFile)
         val request = HttpRequest.newBuilder()
             .uri(URI.create(urlString))
-            .header("User-Agent", "PSD2Live-ModelDownloader/1.0.0")
+            .header("User-Agent", "PSD2Live-ModelDownloader/1.0.1")
             .timeout(Duration.ofMinutes(15))
             .GET()
             .build()

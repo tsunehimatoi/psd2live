@@ -1,4 +1,4 @@
-package io.github.psd2live.core
+﻿package io.github.psd2live.core
 
 import io.github.psd2live.i18n.tr
 import kotlinx.serialization.json.Json
@@ -431,7 +431,7 @@ class PSD2LivePipeline {
 		{
 		  "version": 1,
 		  "model": ${quote(baseName)},
-		  "generator": "PSD2Live 1.0.0",
+		  "generator": "PSD2Live 1.0.1",
 		  "runtimeTarget": ${quote(rig.puppet.runtimeTarget.name)},
 		  "mocVersion": ${rig.puppet.runtimeTarget.mocVersion().byteValue},
 		  "cmo3TargetVersionNo": ${rig.puppet.runtimeTarget.cmo3TargetVersionNo()},
