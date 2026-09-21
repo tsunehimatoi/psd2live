@@ -231,6 +231,7 @@ fun FrameWindowScope.PSD2LiveApp(
 	}
 
 	CompactToolTheme(
+		darkTheme = state.darkTheme,
 		uiScale = state.uiScale,
 		fontScale = state.fontScale,
 	) {
@@ -459,6 +460,7 @@ fun FrameWindowScope.PSD2LiveApp(
 						currentLanguage = currentLanguage,
 						uiScale = state.uiScale,
 						fontScale = state.fontScale,
+						darkTheme = state.darkTheme,
 						keymap = state.keymap,
 						hierarchyVisible = !state.hierarchyCollapsed,
 						logVisible = state.logPanelExpanded,
@@ -482,6 +484,7 @@ fun FrameWindowScope.PSD2LiveApp(
 						onResetZoom = { viewModel.resetZoom() },
 						onSetUiScale = { viewModel.setUiScale(it) },
 						onSetFontScale = { viewModel.setFontScale(it) },
+						onToggleTheme = { viewModel.toggleDarkTheme() },
 						onShowSettings = { viewModel.openSettingsDialog() },
 						onShowAgentConnection = { showAgentDialog = true },
 						onShowTextureUpscale = { showUpscaleDialog = true },
@@ -653,6 +656,7 @@ fun FrameWindowScope.PSD2LiveApp(
 			SettingsDialog(
 				uiScale = state.uiScale,
 				fontScale = state.fontScale,
+				darkTheme = state.darkTheme,
 				clickToSelectLayer = state.clickToSelectLayer,
 				keymap = state.keymap,
 				keyPreset = state.keymapPreset,
@@ -660,6 +664,7 @@ fun FrameWindowScope.PSD2LiveApp(
 				currentLanguage = currentLanguage,
 				onUiScaleChange = viewModel::setUiScale,
 				onFontScaleChange = viewModel::setFontScale,
+				onDarkThemeChange = viewModel::setDarkTheme,
 				onClickToSelectLayerChange = viewModel::setClickToSelectLayer,
 				onLanguageChange = viewModel::setLanguage,
 				onKeyCapture = viewModel::beginKeyCapture,
@@ -671,6 +676,7 @@ fun FrameWindowScope.PSD2LiveApp(
 					viewModel.resetZoom()
 					viewModel.resetInteractionPrefs()
 					viewModel.resetKeymap()
+					viewModel.setDarkTheme(AppSettings.darkTheme)
 				},
 				onDismiss = { viewModel.closeSettingsDialog() },
 			)

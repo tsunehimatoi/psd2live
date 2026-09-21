@@ -459,7 +459,7 @@ private fun LogEntryRow(
 					modifier = Modifier
 						.padding(start = 54.dp)
 						.clip(RoundedCornerShape(4.dp))
-						.background(Color(0xFF141416))
+						.background(colors.inputBackground)
 						.border(BorderStroke(1.dp, colors.accent.copy(alpha = 0.4f)), RoundedCornerShape(4.dp))
 						.clickable { onImageClick(imgBytes, entry.imageLabel ?: entry.message) }
 						.padding(4.dp),

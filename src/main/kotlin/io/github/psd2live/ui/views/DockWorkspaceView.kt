@@ -65,7 +65,7 @@ private class DockSession(initial: DockNode) {
     private var dragWindow: java.awt.Window? = null
     private var grabOffset = java.awt.Point()
 
-    fun begin(module: String, title: String, window: java.awt.Window?) {
+    fun begin(module: String, title: String, window: java.awt.Window?, colors: io.github.psd2live.ui.theme.ToolColors) {
         cancel()
         dragging = module
         val point = MouseInfo.getPointerInfo()?.location ?: return
@@ -76,16 +76,21 @@ private class DockSession(initial: DockNode) {
             // A non-focusable preview follows the pointer without moving/remounting the panel
             // during the gesture, preserving pointer capture and editor state.
             val area = root?.containing(module)?.let { bounds[it.id]?.invoke()?.body }
+            val text = colors.textPrimary
+            val panel = colors.panelBackground
+            val accent = colors.accent
             dragPreview = javax.swing.JWindow().apply {
                 focusableWindowState = false
                 isAlwaysOnTop = true
                 val label = javax.swing.JLabel(title).apply {
-                    foreground = java.awt.Color(223, 225, 229)
-                    background = java.awt.Color(43, 45, 48)
+                    foreground = java.awt.Color(text.red, text.green, text.blue)
+                    background = java.awt.Color(panel.red, panel.green, panel.blue)
                     isOpaque = true
                     verticalAlignment = javax.swing.SwingConstants.TOP
                     border = javax.swing.BorderFactory.createCompoundBorder(
-                        javax.swing.BorderFactory.createLineBorder(java.awt.Color(75, 126, 232)),
+                        javax.swing.BorderFactory.createLineBorder(
+                            java.awt.Color(accent.red, accent.green, accent.blue),
+                        ),
                         javax.swing.BorderFactory.createEmptyBorder(5, 8, 5, 8))
                 }
                 contentPane.add(label)
@@ -293,7 +298,11 @@ internal fun DockWorkspaceView(
                     onDispose { session.floatingWindows.remove(id) }
                 }
                 // Match the main window's custom density and theme.
-                CompactToolTheme(uiScale = AppSettings.uiScale, fontScale = AppSettings.fontScale) {
+                CompactToolTheme(
+                    darkTheme = state.darkTheme,
+                    uiScale = AppSettings.uiScale,
+                    fontScale = AppSettings.fontScale,
+                ) {
                     Column(Modifier.fillMaxSize().background(LocalToolColors.current.panelBackground)) {
                         DockHeader(id, session, Modifier.fillMaxWidth(), floating = true, floatingWindow = window)
                         Box(Modifier.weight(1f).fillMaxWidth()) { content(id)() }
@@ -613,7 +622,7 @@ private fun DockHeader(id: String, session: DockSession, modifier: Modifier,
                 }
                 .pointerInput(id, session, floatingWindow) {
                     detectDragGestures(
-                        onDragStart = { session.begin(id, moduleTitle(id), floatingWindow) },
+                        onDragStart = { session.begin(id, moduleTitle(id), floatingWindow, colors) },
                         onDrag = { change, _ -> change.consume(); session.track() },
                         onDragEnd = { session.track(); session.finish() },
                         onDragCancel = { session.cancel() },

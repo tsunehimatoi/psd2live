@@ -111,7 +111,7 @@ fun ImageLightboxDialog(
 				modifier = Modifier
 					.weight(1f)
 					.fillMaxWidth()
-					.background(Color(0xFF18181B), RoundedCornerShape(4.dp))
+					.background(colors.inputBackground, RoundedCornerShape(4.dp))
 					.border(BorderStroke(1.dp, colors.divider), RoundedCornerShape(4.dp)),
 				contentAlignment = Alignment.Center,
 			) {
@@ -163,8 +163,8 @@ fun ImageLightboxDialog(
 fun CheckerboardBackground(
 	modifier: Modifier = Modifier,
 	squareSizePx: Float = 16f,
-	lightColor: Color = Color(0xFF222226),
-	darkColor: Color = Color(0xFF19191D),
+	lightColor: Color = LocalToolColors.current.checkerLight,
+	darkColor: Color = LocalToolColors.current.checkerDark,
 ) {
 	Canvas(modifier = modifier) {
 		val cols = (size.width / squareSizePx).toInt() + 1

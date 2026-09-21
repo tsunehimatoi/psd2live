@@ -1239,6 +1239,15 @@ class PSD2LiveViewModel : AutoCloseable {
 		_state.update { it.copy(fontScale = clamped) }
 	}
 
+	fun setDarkTheme(dark: Boolean) {
+		AppSettings.darkTheme = dark
+		_state.update { it.copy(darkTheme = dark) }
+	}
+
+	fun toggleDarkTheme() {
+		setDarkTheme(!_state.value.darkTheme)
+	}
+
 	fun zoomIn() {
 		val current = _state.value.uiScale
 		val next = zoomScaleSteps.firstOrNull { it > current + 0.03f } ?: (current + 0.25f).coerceAtMost(3.0f)

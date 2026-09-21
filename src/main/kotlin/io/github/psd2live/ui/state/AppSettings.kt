@@ -14,6 +14,7 @@ object AppSettings {
 	private const val KEY_UI_SCALE = "ui_scale"
 	private const val KEY_FONT_SCALE = "font_scale"
 	private const val KEY_CUSTOM_SCALE_SET = "has_custom_ui_scale"
+	private const val KEY_DARK_THEME = "dark_theme"
 
 	private val preferences by lazy {
 		Preferences.userRoot().node(PREFS_NODE_NAME)
@@ -61,6 +62,16 @@ object AppSettings {
 			val clamped = value.coerceIn(0.85f, 1.5f)
 			runCatching {
 				preferences.putFloat(KEY_FONT_SCALE, clamped)
+				preferences.flush()
+			}
+		}
+
+	/** Dark chrome is the shipped look; light is an explicit preference. */
+	var darkTheme: Boolean
+		get() = runCatching { preferences.getBoolean(KEY_DARK_THEME, true) }.getOrDefault(true)
+		set(value) {
+			runCatching {
+				preferences.putBoolean(KEY_DARK_THEME, value)
 				preferences.flush()
 			}
 		}
@@ -199,6 +210,7 @@ object AppSettings {
 			preferences.remove(KEY_UI_SCALE)
 			preferences.remove(KEY_FONT_SCALE)
 			preferences.remove(KEY_CUSTOM_SCALE_SET)
+			preferences.remove(KEY_DARK_THEME)
 			preferences.remove(KEY_CLICK_TO_SELECT_LAYER)
 			// Enumerated by prefix so there is no action-name list to keep up to date.
 			preferences.keys().filter { it.startsWith(KEYMAP_PREFIX) }.forEach { preferences.remove(it) }

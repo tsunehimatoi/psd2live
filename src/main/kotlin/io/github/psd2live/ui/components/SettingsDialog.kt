@@ -93,6 +93,7 @@ private enum class SettingsSection(val labelKey: String) {
 fun SettingsDialog(
 	uiScale: Float,
 	fontScale: Float,
+	darkTheme: Boolean = true,
 	clickToSelectLayer: Boolean = true,
 	keymap: Keymap = Keymap.DEFAULT,
 	keyPreset: KeymapPreset = KeymapPreset.PHOTOSHOP,
@@ -100,6 +101,7 @@ fun SettingsDialog(
 	currentLanguage: AppLanguage = I18n.currentLanguage,
 	onUiScaleChange: (Float) -> Unit,
 	onFontScaleChange: (Float) -> Unit,
+	onDarkThemeChange: (Boolean) -> Unit = {},
 	onClickToSelectLayerChange: (Boolean) -> Unit = {},
 	onLanguageChange: (AppLanguage) -> Unit = {},
 	onKeyCapture: (ShortcutAction, Int) -> Unit = { _, _ -> },
@@ -212,9 +214,11 @@ fun SettingsDialog(
 						SettingsSection.SCALE -> SettingsScaleSection(
 							uiScale = uiScale,
 							fontScale = fontScale,
+							darkTheme = darkTheme,
 							recommendedScale = displayMetrics.recommendedScale,
 							onUiScaleChange = onUiScaleChange,
 							onFontScaleChange = onFontScaleChange,
+							onDarkThemeChange = onDarkThemeChange,
 						)
 						SettingsSection.LANGUAGE -> SettingsLanguageSection(
 							currentLanguage = currentLanguage,
@@ -369,9 +373,11 @@ private fun SettingsSectionDescription(text: String) {
 private fun SettingsScaleSection(
 	uiScale: Float,
 	fontScale: Float,
+	darkTheme: Boolean,
 	recommendedScale: Float,
 	onUiScaleChange: (Float) -> Unit,
 	onFontScaleChange: (Float) -> Unit,
+	onDarkThemeChange: (Boolean) -> Unit,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -385,6 +391,30 @@ private fun SettingsScaleSection(
 	)
 
 	SettingsSectionDescription(tr("dialog.settings.scale.desc"))
+
+	Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+		Text(
+			text = tr("dialog.settings.theme"),
+			style = typography.header.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
+			color = colors.textPrimary,
+		)
+		Row(
+			modifier = Modifier.fillMaxWidth(),
+			horizontalArrangement = Arrangement.spacedBy(16.dp),
+			verticalAlignment = Alignment.CenterVertically,
+		) {
+			CompactRadioButton(
+				selected = darkTheme,
+				onClick = { onDarkThemeChange(true) },
+				label = tr("dialog.settings.theme.dark"),
+			)
+			CompactRadioButton(
+				selected = !darkTheme,
+				onClick = { onDarkThemeChange(false) },
+				label = tr("dialog.settings.theme.light"),
+			)
+		}
+	}
 
 	// Section 1: UI Scaling (界面缩放)
 	Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -49,12 +49,18 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathOperation
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.onPointerEvent
@@ -101,6 +107,7 @@ fun AppTitleBar(
 	currentLanguage: AppLanguage,
 	uiScale: Float = 1.0f,
 	fontScale: Float = 1.0f,
+	darkTheme: Boolean = true,
 	keymap: Keymap = Keymap.DEFAULT,
 	hierarchyVisible: Boolean = true,
 	logVisible: Boolean = true,
@@ -124,6 +131,7 @@ fun AppTitleBar(
 	onResetZoom: () -> Unit = {},
 	onSetUiScale: (Float) -> Unit = {},
 	onSetFontScale: (Float) -> Unit = {},
+	onToggleTheme: () -> Unit = {},
 	onShowSettings: () -> Unit = {},
 	onShowAgentConnection: () -> Unit,
 	onShowTextureUpscale: () -> Unit,
@@ -829,6 +837,10 @@ fun AppTitleBar(
 				icon = LayoutPanelIcon.RIGHT,
 				onClick = onToggleInspector,
 			)
+			TitleBarThemeToggle(
+				darkTheme = darkTheme,
+				onClick = onToggleTheme,
+			)
 
 			Spacer(modifier = Modifier.width(4.dp))
 
@@ -1333,6 +1345,86 @@ private fun TitleBarLayoutToggle(
 				}
 
 				drawPath(frame, color = outline, style = Stroke(stroke))
+			}
+		}
+	}
+}
+
+@OptIn(ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
+@Composable
+private fun TitleBarThemeToggle(
+	darkTheme: Boolean,
+	onClick: () -> Unit,
+) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	var isHovered by remember { mutableStateOf(false) }
+	val tooltip = if (darkTheme) tr("theme.toggle.toLight") else tr("theme.toggle.toDark")
+
+	TooltipArea(
+		tooltip = {
+			Surface(
+				color = colors.panelElevated,
+				shape = RoundedCornerShape(3.dp),
+				border = BorderStroke(1.dp, colors.border),
+				elevation = 4.dp,
+			) {
+				Text(
+					text = tooltip,
+					style = typography.caption.copy(fontSize = 10.sp),
+					color = colors.textPrimary,
+					modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+				)
+			}
+		},
+		delayMillis = 400,
+	) {
+		Box(
+			modifier = Modifier
+				.width(30.dp)
+				.fillMaxHeight()
+				.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
+				.onPointerEvent(PointerEventType.Enter) { isHovered = true }
+				.onPointerEvent(PointerEventType.Exit) { isHovered = false }
+				.clickable(onClick = onClick),
+			contentAlignment = Alignment.Center,
+		) {
+			Canvas(modifier = Modifier.size(14.dp)) {
+				val tint = if (isHovered) colors.textPrimary else colors.textMuted
+				val stroke = 1.15.dp.toPx()
+				if (darkTheme) {
+					val cx = size.width / 2f
+					val cy = size.height / 2f
+					val core = size.minDimension * 0.22f
+					drawCircle(tint, core, Offset(cx, cy), style = Stroke(stroke))
+					val inner = core + 1.6.dp.toPx()
+					val outer = size.minDimension * 0.48f
+					for (i in 0 until 8) {
+						val angle = i * PI / 4.0
+						val cosA = cos(angle).toFloat()
+						val sinA = sin(angle).toFloat()
+						drawLine(
+							color = tint,
+							start = Offset(cx + cosA * inner, cy + sinA * inner),
+							end = Offset(cx + cosA * outer, cy + sinA * outer),
+							strokeWidth = stroke,
+							cap = StrokeCap.Round,
+						)
+					}
+				} else {
+					val r = size.minDimension * 0.38f
+					val center = Offset(size.width * 0.46f, size.height * 0.50f)
+					val moon = Path().apply {
+						addOval(Rect(center.x - r, center.y - r, center.x + r, center.y + r))
+					}
+					val cutCenter = Offset(center.x + r * 0.42f, center.y - r * 0.18f)
+					val cutR = r * 0.88f
+					val cut = Path().apply {
+						addOval(Rect(cutCenter.x - cutR, cutCenter.y - cutR, cutCenter.x + cutR, cutCenter.y + cutR))
+					}
+					val crescent = Path().apply { op(moon, cut, PathOperation.Difference) }
+					drawPath(crescent, color = tint)
+				}
 			}
 		}
 	}
