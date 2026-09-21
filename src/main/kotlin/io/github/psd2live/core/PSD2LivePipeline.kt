@@ -1,4 +1,4 @@
-﻿package io.github.psd2live.core
+package io.github.psd2live.core
 
 import io.github.psd2live.i18n.tr
 import kotlinx.serialization.json.Json

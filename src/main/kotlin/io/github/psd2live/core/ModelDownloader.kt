@@ -1,4 +1,4 @@
-﻿package io.github.psd2live.core
+package io.github.psd2live.core
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext

@@ -1,4 +1,4 @@
-﻿package io.github.psd2live.agent
+package io.github.psd2live.agent
 
 import io.github.psd2live.core.Bounds
 import io.ktor.http.HttpStatusCode
