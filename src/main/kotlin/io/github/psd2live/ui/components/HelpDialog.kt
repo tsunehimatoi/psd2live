@@ -111,7 +111,7 @@ fun HelpDialog(
 						color = colors.textPrimary,
 					)
 					Text(
-						text = "v0.9.0",
+						text = "v1.0.0",
 						style = typography.monoSmall.copy(fontSize = 10.sp),
 						color = colors.textMuted,
 					)
@@ -577,7 +577,7 @@ private fun DccAboutContent() {
 				color = colors.textPrimary,
 			)
 			Text(
-				text = "v0.9.0",
+				text = "v1.0.0",
 				style = typography.monoSmall.copy(fontSize = 11.sp),
 				color = colors.accent,
 			)
