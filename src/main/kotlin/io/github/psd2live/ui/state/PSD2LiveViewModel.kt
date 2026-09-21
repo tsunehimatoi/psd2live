@@ -384,15 +384,23 @@ class PSD2LiveViewModel : AutoCloseable {
         previewRebuildJob?.cancel()
         activeWorkJob?.cancel()
         canvasEditor.resetPaintSession()
-        _state.value = state.copy(projectDirty = false, projectOpenGeneration = _state.value.projectOpenGeneration + 1)
+        state.projectFile?.let(AppSettings::rememberRecentFile)
+        _state.value = state.copy(
+            projectDirty = false,
+            projectOpenGeneration = _state.value.projectOpenGeneration + 1,
+            recentFiles = AppSettings.recentFiles(),
+        )
     }
     private val pendingProjectSaves = java.util.concurrent.atomic.AtomicInteger()
     internal fun projectSaveStarted() { pendingProjectSaves.incrementAndGet(); _state.update { it.copy(projectSaving = true, projectSaveError = null) } }
     internal fun projectSaveFailed(failure: Exception) { val saving = pendingProjectSaves.decrementAndGet() > 0; _state.update { it.copy(projectSaving = saving, projectDirty = true, projectSaveError = failure.message ?: "Save failed") } }
     internal fun projectSaveFinished(path: Path, headId: String, captured: PSD2LiveState) {
         val saving = pendingProjectSaves.decrementAndGet() > 0
-        _state.update { current -> current.copy(projectFile = path.toAbsolutePath().normalize().toString(), projectSaving = saving,
-            projectDirty = current.historySnapshot?.headNodeId != headId || current.projectAuxiliaryVersion != captured.projectAuxiliaryVersion || io.github.psd2live.project.WorkspaceStateCodec.editableIdentity(current) != io.github.psd2live.project.WorkspaceStateCodec.editableIdentity(captured), projectSaveError = null) }
+        val saved = path.toAbsolutePath().normalize().toString()
+        AppSettings.rememberRecentFile(saved)
+        _state.update { current -> current.copy(projectFile = saved, projectSaving = saving,
+            projectDirty = current.historySnapshot?.headNodeId != headId || current.projectAuxiliaryVersion != captured.projectAuxiliaryVersion || io.github.psd2live.project.WorkspaceStateCodec.editableIdentity(current) != io.github.psd2live.project.WorkspaceStateCodec.editableIdentity(captured),
+            projectSaveError = null, recentFiles = AppSettings.recentFiles()) }
     }
     internal fun markProjectAuxiliaryChanged() { _state.update { it.copy(projectDirty = true, projectEditVersion = it.projectEditVersion + 1, projectAuxiliaryVersion = it.projectAuxiliaryVersion + 1) } }
     private fun markWorkspaceChanged() { _state.update { if (it.analysis == null) it else it.copy(projectDirty = true, projectEditVersion = it.projectEditVersion + 1) } }
@@ -631,6 +639,9 @@ class PSD2LiveViewModel : AutoCloseable {
 
 	fun setInputPath(path: String) {
 		val normalized = path.trim()
+		if (classifyRecentPath(normalized) == RecentFileKind.PSD) {
+			AppSettings.rememberRecentFile(normalized)
+		}
 		_state.update { current ->
 			val currentOutput = current.outputPath
 			val nextOutput = if (currentOutput.isBlank() && normalized.isNotBlank()) {
@@ -643,7 +654,30 @@ class PSD2LiveViewModel : AutoCloseable {
 					currentOutput
 				}
 			} else currentOutput
-			current.copy(inputPath = normalized, outputPath = nextOutput)
+			current.copy(inputPath = normalized, outputPath = nextOutput, recentFiles = AppSettings.recentFiles())
+		}
+	}
+
+	fun openRecentFile(path: String) {
+		if (_state.value.isBusy) return
+		val target = runCatching { Path.of(path).toAbsolutePath().normalize() }.getOrNull()
+		if (target == null || !Files.isRegularFile(target)) {
+			AppSettings.forgetRecentFile(path)
+			_state.update {
+				it.copy(recentFiles = AppSettings.recentFiles(), errorMessage = tr("canvas.start.missing", path))
+			}
+			return
+		}
+		when (classifyRecentPath(target.toString())) {
+			RecentFileKind.PROJECT -> openProject(target)
+			RecentFileKind.PSD -> withSavedChanges {
+				setInputPath(target.toString())
+				analyze()
+			}
+			null -> {
+				AppSettings.forgetRecentFile(path)
+				_state.update { it.copy(recentFiles = AppSettings.recentFiles()) }
+			}
 		}
 	}
 

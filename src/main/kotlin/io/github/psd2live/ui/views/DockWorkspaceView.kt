@@ -180,6 +180,8 @@ internal fun DockWorkspaceView(
     modifier: Modifier = Modifier,
     mainWindow: java.awt.Window? = null,
 	onStartTutorial: (() -> Unit)? = null,
+	onOpenProject: (() -> Unit)? = null,
+	onOpenPsd: (() -> Unit)? = null,
 ) {
     val sessions = remember { mutableMapOf<String, DockSession>() }
     val tab = state.activeWorkspaceTab
@@ -214,9 +216,20 @@ internal fun DockWorkspaceView(
     }
     val latestState by rememberUpdatedState(state)
 	val latestOnStartTutorial by rememberUpdatedState(onStartTutorial)
+	val latestOnOpenProject by rememberUpdatedState(onOpenProject)
+	val latestOnOpenPsd by rememberUpdatedState(onOpenPsd)
     val contents = remember(tab.id) { mutableMapOf<String, @Composable () -> Unit>() }
     fun content(id: String): @Composable () -> Unit = contents.getOrPut(id) {
-        movableContentOf { DockModuleContent(id, latestState, viewModel, latestOnStartTutorial) }
+        movableContentOf {
+			DockModuleContent(
+				id,
+				latestState,
+				viewModel,
+				latestOnStartTutorial,
+				latestOnOpenProject,
+				latestOnOpenPsd,
+			)
+		}
     }
     DisposableEffect(session) { onDispose { session.cancel() } }
 	// Tutorial / programmatic focus: select a dock module tab and bring floating modules back.
@@ -634,6 +647,8 @@ private fun DockModuleContent(
 	state: PSD2LiveState,
 	vm: PSD2LiveViewModel,
 	onStartTutorial: (() -> Unit)? = null,
+	onOpenProject: (() -> Unit)? = null,
+	onOpenPsd: (() -> Unit)? = null,
 ) {
 	when (id) {
 		"canvas" -> CanvasViewportComposable(
@@ -643,6 +658,8 @@ private fun DockModuleContent(
 			modifier = Modifier.fillMaxSize(),
 			onLayerClicked = vm::selectLayer,
 			onStartTutorial = onStartTutorial,
+			onOpenProject = onOpenProject,
+			onOpenPsd = onOpenPsd,
 		)
 		"hierarchy" -> DockHierarchyView(
 			state,

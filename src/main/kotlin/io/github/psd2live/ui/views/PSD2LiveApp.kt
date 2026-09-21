@@ -528,6 +528,8 @@ fun FrameWindowScope.PSD2LiveApp(
 						Modifier.weight(1f).fillMaxWidth().padding(top = 2.dp),
 						window,
 						onStartTutorial = { startInteractiveTutorial(TutorialId.BASIC) },
+						onOpenProject = onOpenProjectAction,
+						onOpenPsd = onOpenPsdAction,
 					)
 					// Selection / tool hint bar ("已选 N 个对象 / M 个控制点 · …")
 					StatusBar(state, viewModel, Modifier.tutorialTarget(TutorialTargetId.STATUS_BAR))

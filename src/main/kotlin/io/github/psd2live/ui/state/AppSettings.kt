@@ -1,6 +1,8 @@
 package io.github.psd2live.ui.state
 
 import java.awt.GraphicsEnvironment
+import java.nio.file.Files
+import java.nio.file.Path
 import java.util.prefs.Preferences
 
 /**
@@ -64,6 +66,7 @@ object AppSettings {
 		}
 
 	private const val KEY_CLICK_TO_SELECT_LAYER = "click_to_select_layer"
+	private const val KEY_RECENT_FILES = "recent_files"
 
 	var clickToSelectLayer: Boolean
 		get() = runCatching { preferences.getBoolean(KEY_CLICK_TO_SELECT_LAYER, true) }.getOrDefault(true)
@@ -157,6 +160,37 @@ object AppSettings {
 		val parsed = ArrayList<KeyBinding>(parts.size)
 		for (part in parts) parsed.add(parseKeyBinding(part) ?: return null)
 		return parsed
+	}
+
+	fun recentFiles(): List<String> {
+		val raw = runCatching { preferences.get(KEY_RECENT_FILES, "") }.getOrDefault("")
+		return raw.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+	}
+
+	fun rememberRecentFile(path: String) {
+		val normalized = normalizeRecentPath(path) ?: return
+		val next = rememberRecentPaths(recentFiles(), normalized) { candidate ->
+			candidate.equals(normalized, ignoreCase = true) ||
+				runCatching { Files.isRegularFile(Path.of(candidate)) }.getOrDefault(false)
+		}
+		saveRecentFiles(next)
+	}
+
+	fun forgetRecentFile(path: String) {
+		saveRecentFiles(forgetRecentPath(recentFiles(), normalizeRecentPath(path) ?: path))
+	}
+
+	private fun saveRecentFiles(paths: List<String>) {
+		runCatching {
+			preferences.put(KEY_RECENT_FILES, paths.joinToString("\n"))
+			preferences.flush()
+		}
+	}
+
+	private fun normalizeRecentPath(path: String): String? {
+		val trimmed = path.trim()
+		if (trimmed.isEmpty() || classifyRecentPath(trimmed) == null) return null
+		return runCatching { Path.of(trimmed).toAbsolutePath().normalize().toString() }.getOrDefault(trimmed)
 	}
 
 	fun resetToDefaults() {

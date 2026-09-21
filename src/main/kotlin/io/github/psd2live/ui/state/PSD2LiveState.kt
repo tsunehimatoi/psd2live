@@ -192,6 +192,8 @@ data class PSD2LiveState(
     val canvasEditBusy: Boolean = false,
 	val projectId: String? = null,
     val projectFile: String? = null,
+	/** Recently opened .psd2live / PSD paths. Application preference, not part of the project. */
+	val recentFiles: List<String> = AppSettings.recentFiles(),
     val projectDirty: Boolean = false,
     val projectSaving: Boolean = false,
     val projectSaveError: String? = null,

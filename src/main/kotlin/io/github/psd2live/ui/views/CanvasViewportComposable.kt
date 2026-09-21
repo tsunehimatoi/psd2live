@@ -84,7 +84,6 @@ import io.github.psd2live.ui.ComponentPalette
 import io.github.psd2live.ui.CubismViewport
 import io.github.psd2live.ui.RigCanvasSupport
 import io.github.psd2live.ui.SkiaRigPainter
-import io.github.psd2live.ui.components.CompactButton
 import io.github.psd2live.ui.components.CompactToggleChip
 import io.github.psd2live.ui.components.IconMouse
 import io.github.psd2live.ui.components.IconPause
@@ -122,6 +121,8 @@ fun CanvasViewportComposable(
 	modifier: Modifier = Modifier,
 	onLayerClicked: ((String?) -> Unit)? = null,
 	onStartTutorial: (() -> Unit)? = null,
+	onOpenProject: (() -> Unit)? = null,
+	onOpenPsd: (() -> Unit)? = null,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -1058,28 +1059,17 @@ fun CanvasViewportComposable(
         }
         // Overlay: Empty hint or Stats Badge
 		if (previewModel == null) {
-			Column(
-				modifier = Modifier.align(Alignment.Center),
-				horizontalAlignment = Alignment.CenterHorizontally,
-				verticalArrangement = Arrangement.spacedBy(10.dp),
-			) {
-				Text(
-					text = when (mode) {
-						CanvasMode.EDIT -> tr("canvas.hierarchy.empty")
-						CanvasMode.PREVIEW -> tr("canvas.preview.empty")
-					},
-					style = typography.body.copy(fontSize = 12.sp),
-					color = colors.textMuted,
-				)
-				if (onStartTutorial != null) {
-					CompactButton(
-						text = tr("canvas.tutorial.start"),
-						onClick = onStartTutorial,
-						isPrimary = true,
-						height = 26.dp,
-					)
-				}
-			}
+			EmptyCanvasStart(
+				recentPaths = state.recentFiles,
+				enabled = !state.isBusy,
+				openProjectShortcut = state.keymap.labelFor(ShortcutAction.OPEN_PROJECT),
+				openPsdShortcut = state.keymap.labelFor(ShortcutAction.OPEN_PSD),
+				onStartTutorial = onStartTutorial,
+				onOpenProject = onOpenProject,
+				onOpenPsd = onOpenPsd,
+				onOpenRecent = viewModel::openRecentFile,
+				modifier = Modifier.align(Alignment.Center).fillMaxSize(),
+			)
 		} else {
 			// Floating Stats Pill Badge
 			val zoomPct = (zoom * 100).toInt()
