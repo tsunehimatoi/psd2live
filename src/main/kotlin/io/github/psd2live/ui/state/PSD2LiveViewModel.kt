@@ -11,7 +11,10 @@ import io.github.psd2live.core.RigStructureEdits
 import io.github.psd2live.core.CubismSdkFrame
 import io.github.psd2live.core.CubismSdkPreviewSession
 import io.github.psd2live.core.EyeJellyDynamics
+import io.github.psd2live.core.HierarchyImportTarget
 import io.github.psd2live.core.LayerClassificationOverride
+import io.github.psd2live.core.LayerImport
+import io.github.psd2live.core.LayerType
 import io.github.psd2live.core.PipelineAnalysis
 import io.github.psd2live.core.PipelineConfig
 import io.github.psd2live.core.ProgressListener
@@ -40,6 +43,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import org.umamo.runtime.model.ParameterId
 import org.umamo.runtime.model.PuppetModel
 import org.umamo.edit.freshParameterGroupId
@@ -52,6 +56,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.prefs.Preferences
 import kotlin.math.PI
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 class PSD2LiveViewModel : AutoCloseable {
@@ -1847,6 +1852,252 @@ class PSD2LiveViewModel : AutoCloseable {
 		}
 		schedulePreviewRebuild()
 	    editorChanged()
+	}
+
+	/**
+	 * Hit-test for external file drops over the hierarchy tree. Registered by [HierarchyTreeList]
+	 * while it is composed; coordinates are window-relative (Compose [positionInWindow] space).
+	 */
+	@Volatile
+	var hierarchyImportHitTest: ((windowX: Int, windowY: Int) -> HierarchyImportTarget?)? = null
+
+	/**
+	 * Imports transparent rasters as layers under [parentDeformerId] (null = root), then opens the
+	 * canvas placement panel for the last imported layer so the artist can fine-tune position.
+	 */
+	fun importLayersFromFiles(files: List<java.io.File>, parentDeformerId: String?, anchorLabel: String) {
+		val rasters = LayerImport.transparentRasterFiles(files)
+		if (rasters.isEmpty()) return
+		if (_state.value.previewModel == null || _state.value.isBusy) {
+			setErrorMessage(tr("error.importLayerBusy"))
+			return
+		}
+		scope.launch {
+			try {
+				_state.update { it.copy(statusText = tr("status.importingLayers", rasters.size)) }
+				val result = withContext(Dispatchers.Default) {
+					buildImportedLayersPreview(rasters, parentDeformerId)
+				}
+				_state.update {
+					it.copy(
+						parentOverrides = result.parentOverrides,
+						layerVisibility = result.layerVisibility,
+						layerOverrides = result.layerOverrides,
+					)
+				}
+				applyCommittedPaint(result.preview, tr("editor.importLayer.summary", result.layerIds.size))
+				val placeId = result.layerIds.lastOrNull() ?: return@launch
+				val placeName = result.preview.analysis.layers
+					.firstOrNull { it.source.id.raw == placeId }?.source?.name
+					?: placeId
+				val bounds = result.preview.analysis.source.layers
+					.firstOrNull { it.id.raw == placeId }?.bounds
+					?: return@launch
+				selectLayer(placeId)
+				// Let history-driven gesture cleanup run before arming the placement panel,
+				// so a cancel() from head-node churn cannot race the new LAYER session.
+				yield()
+				canvasEditor.beginLayerPlacement(
+					layerId = placeId,
+					layerName = placeName,
+					anchorLabel = anchorLabel,
+					parentDeformerId = parentDeformerId,
+					canvasLeft = bounds.left.toFloat(),
+					canvasTop = bounds.top.toFloat(),
+					canvasWidth = bounds.width.toFloat(),
+					canvasHeight = bounds.height.toFloat(),
+					cancelLayerIds = result.layerIds,
+				)
+			} catch (failure: Exception) {
+				if (failure is kotlinx.coroutines.CancellationException) throw failure
+				setErrorMessage(failure.message ?: tr("error.importLayerFailed"))
+			}
+		}
+	}
+
+	private fun buildImportedLayersPreview(
+		files: List<java.io.File>,
+		parentDeformerId: String?,
+	): ImportedLayersResult {
+		val current = _state.value
+		val preview = current.previewModel ?: error("No preview model")
+		val analysis = preview.analysis
+		val canvasW = analysis.source.widthPx
+		val canvasH = analysis.source.heightPx
+		val existing = analysis.source.layers.toMutableList()
+		val addedIds = mutableListOf<String>()
+		val overrides = current.parentOverrides.toMutableMap()
+		val visibility = current.layerVisibility.toMutableMap()
+		val classifications = current.layerOverrides.toMutableMap()
+		var nextOrder = (existing.maxOfOrNull { it.order } ?: 0) + 1
+		for (file in files) {
+			val image = LayerImport.decodeRasterFile(file)
+			val name = LayerImport.displayNameOf(file)
+			val layer = LayerImport.placedLayer(
+				image = image,
+				canvasWidth = canvasW,
+				canvasHeight = canvasH,
+				name = name,
+				order = nextOrder++,
+			)
+			existing += layer
+			addedIds += layer.id.raw
+			overrides[layer.id.raw] = parentDeformerId
+			visibility[layer.id.raw] = true
+			classifications[layer.id.raw] = LayerClassificationOverride(
+				type = LayerType.PRESET,
+				tag = SemanticTag.UNKNOWN,
+				side = Side.NONE,
+			)
+		}
+		val newSource = io.github.psd2live.agent.WorkspaceSourceArt(
+			widthPx = canvasW,
+			heightPx = canvasH,
+			layers = existing.mapIndexed { index, layer ->
+				val order = existing.size - index
+				if (layer is io.github.psd2live.agent.WorkspaceSourceLayer) layer.copy(order = order)
+				else io.github.psd2live.agent.WorkspaceSourceLayer.copyOf(layer, order)
+			},
+			groups = analysis.source.groups,
+		)
+		val config = current.buildConfig().copy(
+			parentOverrides = overrides,
+			layerVisibility = visibility,
+			layerOverrides = classifications,
+		)
+		val built = pipeline.buildPreview(newSource, config)
+		return ImportedLayersResult(built, addedIds, overrides, visibility, classifications)
+	}
+
+	private data class ImportedLayersResult(
+		val preview: RigPreviewModel,
+		val layerIds: List<String>,
+		val parentOverrides: Map<String, String?>,
+		val layerVisibility: Map<String, Boolean>,
+		val layerOverrides: Map<String, LayerClassificationOverride>,
+	)
+
+	/**
+	 * Moves/resizes an imported layer's canvas bounds and rebuilds its mesh.
+	 * [commitHistory] false is for live field scrubbing; true records an undoable step.
+	 */
+	fun relocateImportedLayer(
+		layerId: String,
+		name: String,
+		left: Float,
+		top: Float,
+		width: Float,
+		height: Float,
+		commitHistory: Boolean = true,
+	) {
+		val current = _state.value
+		val preview = current.previewModel ?: return
+		val analysis = preview.analysis
+		val w = width.roundToInt().coerceAtLeast(1)
+		val h = height.roundToInt().coerceAtLeast(1)
+		val newBounds = org.umamo.format.art.LayerBounds(
+			left.roundToInt(),
+			top.roundToInt(),
+			w,
+			h,
+		)
+		val existing = analysis.source.layers.firstOrNull { it.id.raw == layerId } ?: return
+		if (existing.bounds == newBounds && (name.isBlank() || name == existing.name)) return
+		val updatedLayers = analysis.source.layers.map { layer ->
+			if (layer.id.raw != layerId) layer
+			else {
+				val base = if (layer is io.github.psd2live.agent.WorkspaceSourceLayer) layer
+				else io.github.psd2live.agent.WorkspaceSourceLayer.copyOf(layer, layer.order) as io.github.psd2live.agent.WorkspaceSourceLayer
+				base.copy(name = name.ifBlank { base.name }, bounds = newBounds)
+			}
+		}
+		val newSource = io.github.psd2live.agent.WorkspaceSourceArt(
+			widthPx = analysis.source.widthPx,
+			heightPx = analysis.source.heightPx,
+			layers = updatedLayers,
+			groups = analysis.source.groups,
+		)
+		scope.launch {
+			try {
+				val built = withContext(Dispatchers.Default) {
+					pipeline.buildPreview(newSource, current.buildConfig())
+				}
+				if (commitHistory) {
+					applyCommittedPaint(built, tr("editor.importLayer.placed", name.ifBlank { layerId }))
+				} else {
+					applyPreviewWithoutHistory(built)
+				}
+				selectLayer(layerId)
+				// Keep paint session on the relocated layer if the artist was painting it.
+				if (canvasEditor.hierarchyMode == EditHierarchyMode.PAINT) {
+					canvasEditor.startPaintSession(layerId, forceReload = true)
+				}
+			} catch (failure: Exception) {
+				if (failure is kotlinx.coroutines.CancellationException) throw failure
+				setErrorMessage(failure.message ?: tr("error.importLayerFailed"))
+			}
+		}
+	}
+
+	/** Publish a rebuilt preview without opening a history node (live placement scrub). */
+	private fun applyPreviewWithoutHistory(updatedPreview: RigPreviewModel) {
+		_state.update {
+			it.copy(
+				previewModel = updatedPreview,
+				analysis = updatedPreview.analysis,
+				previewModelDirty = true,
+				projectDirty = true,
+			)
+		}
+		refreshSdkSession(updatedPreview)
+		markWorkspaceChanged()
+	}
+
+	/** Removes layers created by a cancelled import placement session. */
+	fun cancelImportedLayerPlacement(layerIds: List<String>) {
+		if (layerIds.isEmpty()) return
+		val current = _state.value
+		val preview = current.previewModel ?: return
+		val analysis = preview.analysis
+		val remaining = analysis.source.layers.filterNot { it.id.raw in layerIds }
+		if (remaining.size == analysis.source.layers.size) {
+			layerIds.forEach { deleteLayer(it) }
+			return
+		}
+		if (remaining.none { it.raster.width > 0 && it.raster.height > 0 }) {
+			layerIds.forEach { deleteLayer(it) }
+			return
+		}
+		val newSource = io.github.psd2live.agent.WorkspaceSourceArt(
+			widthPx = analysis.source.widthPx,
+			heightPx = analysis.source.heightPx,
+			layers = remaining.mapIndexed { index, layer ->
+				val order = remaining.size - index
+				if (layer is io.github.psd2live.agent.WorkspaceSourceLayer) layer.copy(order = order)
+				else io.github.psd2live.agent.WorkspaceSourceLayer.copyOf(layer, order)
+			},
+			groups = analysis.source.groups,
+		)
+		scope.launch {
+			try {
+				_state.update {
+					it.copy(
+						parentOverrides = it.parentOverrides - layerIds.toSet(),
+						layerVisibility = it.layerVisibility - layerIds.toSet(),
+						layerOverrides = it.layerOverrides - layerIds.toSet(),
+						deletedLayerIds = it.deletedLayerIds - layerIds.toSet(),
+						selectedLayerId = it.selectedLayerId?.takeUnless { id -> id in layerIds },
+					)
+				}
+				val built = withContext(Dispatchers.Default) {
+					pipeline.buildPreview(newSource, _state.value.buildConfig())
+				}
+				applyCommittedPaint(built, tr("editor.importLayer.cancelled"))
+			} catch (failure: Exception) {
+				if (failure is kotlinx.coroutines.CancellationException) throw failure
+				layerIds.forEach { deleteLayer(it) }
+			}
+		}
 	}
 
 	fun resetHierarchyOverrides() {

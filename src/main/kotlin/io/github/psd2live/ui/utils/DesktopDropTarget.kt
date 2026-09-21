@@ -53,7 +53,7 @@ object DesktopDropTarget {
 	fun install(
 		window: Window,
 		onDragStateChanged: ((Boolean) -> Unit)? = null,
-		onFilesDropped: (List<File>) -> Unit,
+		onFilesDropped: (files: List<File>, screenLocation: java.awt.Point?) -> Unit,
 	) {
 		val installTask = {
 			val activeDragCount = AtomicInteger(0)
@@ -118,7 +118,7 @@ object DesktopDropTarget {
 	private fun createListener(
 		activeDragCount: AtomicInteger,
 		onDragStateChanged: ((Boolean) -> Unit)?,
-		onFilesDropped: (List<File>) -> Unit,
+		onFilesDropped: (files: List<File>, screenLocation: java.awt.Point?) -> Unit,
 	): DropTargetListener {
 		return object : DropTargetListener {
 			override fun dragEnter(dtde: DropTargetDragEvent) {
@@ -167,7 +167,10 @@ object DesktopDropTarget {
 						dtde.acceptDrop(action)
 						val files = extractDroppedFiles(dtde.transferable)
 						if (files.isNotEmpty()) {
-							onFilesDropped(files)
+							val component = dtde.dropTargetContext.component
+							val screen = java.awt.Point(dtde.location)
+							runCatching { SwingUtilities.convertPointToScreen(screen, component) }
+							onFilesDropped(files, screen)
 							dtde.dropComplete(true)
 							return
 						}

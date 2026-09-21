@@ -638,39 +638,41 @@ internal fun BoxScope.CanvasEditorOverlay(
         // Place-then-confirm ghost (Blender-style)
         editor.placement?.let { place ->
             when (place.kind) {
-                CreatePlacementKind.WARP -> {
+                CreatePlacementKind.WARP, CreatePlacementKind.LAYER -> {
                     editor.placementScreenRect(viewport)?.let { r ->
                         drawRect(colors.accent.copy(alpha = 0.14f), r.topLeft, r.size)
                         drawRect(colors.accent, r.topLeft, r.size, style = Stroke(2f))
-                        // Conversion lattice (solid) — matches created warp.rows × columns
-                        val rows = place.rows.coerceAtLeast(1)
-                        val cols = place.cols.coerceAtLeast(1)
-                        for (row in 1 until rows) {
-                            val y = r.top + r.height * (row.toFloat() / rows)
-                            drawLine(colors.accent.copy(alpha = 0.55f), Offset(r.left, y), Offset(r.right, y), 1.2f)
-                        }
-                        for (col in 1 until cols) {
-                            val x = r.left + r.width * (col.toFloat() / cols)
-                            drawLine(colors.accent.copy(alpha = 0.55f), Offset(x, r.top), Offset(x, r.bottom), 1.2f)
-                        }
-                        // Bezier edit subdivision (dashed) when it differs from conversion
-                        val bRows = place.bezierRows.coerceAtLeast(1)
-                        val bCols = place.bezierCols.coerceAtLeast(1)
-                        if (bRows != rows || bCols != cols) {
-                            val dash = PathEffect.dashPathEffect(floatArrayOf(4f, 4f), 0f)
-                            for (row in 1 until bRows) {
-                                val y = r.top + r.height * (row.toFloat() / bRows)
-                                drawLine(
-                                    colors.accent.copy(alpha = 0.28f), Offset(r.left, y), Offset(r.right, y), 1f,
-                                    pathEffect = dash,
-                                )
+                        if (place.kind == CreatePlacementKind.WARP) {
+                            // Conversion lattice (solid) — matches created warp.rows × columns
+                            val rows = place.rows.coerceAtLeast(1)
+                            val cols = place.cols.coerceAtLeast(1)
+                            for (row in 1 until rows) {
+                                val y = r.top + r.height * (row.toFloat() / rows)
+                                drawLine(colors.accent.copy(alpha = 0.55f), Offset(r.left, y), Offset(r.right, y), 1.2f)
                             }
-                            for (col in 1 until bCols) {
-                                val x = r.left + r.width * (col.toFloat() / bCols)
-                                drawLine(
-                                    colors.accent.copy(alpha = 0.28f), Offset(x, r.top), Offset(x, r.bottom), 1f,
-                                    pathEffect = dash,
-                                )
+                            for (col in 1 until cols) {
+                                val x = r.left + r.width * (col.toFloat() / cols)
+                                drawLine(colors.accent.copy(alpha = 0.55f), Offset(x, r.top), Offset(x, r.bottom), 1.2f)
+                            }
+                            // Bezier edit subdivision (dashed) when it differs from conversion
+                            val bRows = place.bezierRows.coerceAtLeast(1)
+                            val bCols = place.bezierCols.coerceAtLeast(1)
+                            if (bRows != rows || bCols != cols) {
+                                val dash = PathEffect.dashPathEffect(floatArrayOf(4f, 4f), 0f)
+                                for (row in 1 until bRows) {
+                                    val y = r.top + r.height * (row.toFloat() / bRows)
+                                    drawLine(
+                                        colors.accent.copy(alpha = 0.28f), Offset(r.left, y), Offset(r.right, y), 1f,
+                                        pathEffect = dash,
+                                    )
+                                }
+                                for (col in 1 until bCols) {
+                                    val x = r.left + r.width * (col.toFloat() / bCols)
+                                    drawLine(
+                                        colors.accent.copy(alpha = 0.28f), Offset(x, r.top), Offset(x, r.bottom), 1f,
+                                        pathEffect = dash,
+                                    )
+                                }
                             }
                         }
                         listOf(
@@ -1117,6 +1119,7 @@ private fun PlacementSettingsPanel(
                     CreatePlacementKind.WARP -> IconWarpDeformer(tint = colors.accent, modifier = Modifier.size(13.dp))
                     CreatePlacementKind.ROTATION -> IconRotationDeformer(tint = colors.accent, modifier = Modifier.size(13.dp))
                     CreatePlacementKind.PATH -> IconDeformPath(tint = colors.accent, modifier = Modifier.size(13.dp))
+                    CreatePlacementKind.LAYER -> IconSelectionBounds(tint = colors.accent, modifier = Modifier.size(13.dp))
                 }
             }
             Text(
@@ -1124,6 +1127,7 @@ private fun PlacementSettingsPanel(
                     CreatePlacementKind.WARP -> tr("editor.tool.create_warp")
                     CreatePlacementKind.ROTATION -> tr("editor.tool.create_rotation")
                     CreatePlacementKind.PATH -> tr("editor.pathDeform")
+                    CreatePlacementKind.LAYER -> tr("editor.importLayer.placeTitle")
                 },
                 color = colors.textPrimary,
                 style = typography.body.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
@@ -1141,12 +1145,16 @@ private fun PlacementSettingsPanel(
         }
 
         // 2. Target relation info (single-line muted context)
-        val relationText = buildString {
-            val isParent = place.relation == CreateRelation.AS_PARENT
-            append(tr(if (isParent) "editor.placementAsParentOf" else "editor.placementAsChildOf", place.anchorLabel))
-            if (place.meshIds.isNotEmpty()) {
-                append(" · ")
-                append(tr("editor.placementMeshCount", place.meshIds.size))
+        val relationText = if (place.kind == CreatePlacementKind.LAYER) {
+            tr("editor.importLayer.placeUnder", place.anchorLabel)
+        } else {
+            buildString {
+                val isParent = place.relation == CreateRelation.AS_PARENT
+                append(tr(if (isParent) "editor.placementAsParentOf" else "editor.placementAsChildOf", place.anchorLabel))
+                if (place.meshIds.isNotEmpty()) {
+                    append(" · ")
+                    append(tr("editor.placementMeshCount", place.meshIds.size))
+                }
             }
         }
         Text(
@@ -1179,27 +1187,68 @@ private fun PlacementSettingsPanel(
                 )
             }
 
-            val partOptions = listOf("" to tr("editor.warpPart.inherit")) +
-                editor.model.parts.map { it.id.raw to it.name }
-            val partSelected = partOptions.firstOrNull { it.first == (place.partId ?: "") } ?: partOptions.first()
+            if (place.kind != CreatePlacementKind.LAYER) {
+                val partOptions = listOf("" to tr("editor.warpPart.inherit")) +
+                    editor.model.parts.map { it.id.raw to it.name }
+                val partSelected = partOptions.firstOrNull { it.first == (place.partId ?: "") } ?: partOptions.first()
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        text = tr("inspector.part"),
+                        color = colors.textMuted,
+                        fontSize = 10.sp,
+                        modifier = Modifier.width(28.dp),
+                    )
+                    CompactDropdown(
+                        items = partOptions,
+                        selectedItem = partSelected,
+                        onItemSelected = { if (!isClosing) editor.updatePlacementPart(it.first.takeIf { id -> id.isNotEmpty() }) },
+                        itemLabel = { it.second },
+                        modifier = Modifier.weight(1f),
+                        height = 22.dp,
+                    )
+                }
+            }
+        }
+
+        if (place.kind == CreatePlacementKind.LAYER) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(
-                    text = tr("inspector.part"),
-                    color = colors.textMuted,
-                    fontSize = 10.sp,
-                    modifier = Modifier.width(28.dp),
-                )
-                CompactDropdown(
-                    items = partOptions,
-                    selectedItem = partSelected,
-                    onItemSelected = { if (!isClosing) editor.updatePlacementPart(it.first.takeIf { id -> id.isNotEmpty() }) },
-                    itemLabel = { it.second },
+                PlacementFloatField(
+                    label = "X",
+                    value = place.localX,
+                    onValueChange = { if (!isClosing) editor.updatePlacementCanvasRect(it, place.localY, place.localW, place.localH) },
                     modifier = Modifier.weight(1f),
-                    height = 22.dp,
+                )
+                PlacementFloatField(
+                    label = "Y",
+                    value = place.localY,
+                    onValueChange = { if (!isClosing) editor.updatePlacementCanvasRect(place.localX, it, place.localW, place.localH) },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                PlacementFloatField(
+                    label = "W",
+                    value = place.localW,
+                    onValueChange = { if (!isClosing) editor.updatePlacementCanvasRect(place.localX, place.localY, it.coerceAtLeast(1f), place.localH) },
+                    modifier = Modifier.weight(1f),
+                )
+                PlacementFloatField(
+                    label = "H",
+                    value = place.localH,
+                    onValueChange = { if (!isClosing) editor.updatePlacementCanvasRect(place.localX, place.localY, place.localW, it.coerceAtLeast(1f)) },
+                    modifier = Modifier.weight(1f),
                 )
             }
         }
@@ -1450,7 +1499,7 @@ private fun PlacementSettingsPanel(
                 leadingIcon = { IconClose(modifier = Modifier.size(9.dp), tint = colors.textMuted) },
             )
             CompactButton(
-                text = "${tr("editor.placementConfirm")} (Enter)",
+                text = "${tr(if (place.kind == CreatePlacementKind.LAYER) "editor.importLayer.confirm" else "editor.placementConfirm")} (Enter)",
                 onClick = { if (!isClosing) { editor.confirmPlacement(); focus() } },
                 isPrimary = true,
                 enabled = !isClosing && editor.editable && !editor.busy &&
@@ -1462,6 +1511,38 @@ private fun PlacementSettingsPanel(
         }
     }
 }
+
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun PlacementFloatField(
+    label: String,
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = LocalToolColors.current
+    var text by remember(value) { mutableStateOf(formatPlacementFloat(value)) }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        modifier = modifier,
+    ) {
+        Text(text = label, color = colors.textMuted, fontSize = 10.sp, modifier = Modifier.width(12.dp))
+        CompactTextField(
+            value = text,
+            onValueChange = { raw ->
+                text = raw
+                raw.toFloatOrNull()?.let(onValueChange)
+            },
+            modifier = Modifier.weight(1f),
+            height = 22.dp,
+        )
+    }
+}
+
+private fun formatPlacementFloat(value: Float): String =
+    if (value == value.toInt().toFloat()) value.toInt().toString()
+    else "%.1f".format(value)
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -2429,6 +2510,42 @@ private fun BoxScope.HierarchyModeBar(
             }
         }
 
+        // Temporary place-then-confirm session name (warp / rotation / path / layer import).
+        val session = editor.placement
+        AnimatedVisibility(
+            visible = session != null,
+            enter = expandHorizontally(
+                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+                expandFrom = Alignment.Start,
+            ) + fadeIn(animationSpec = tween(150)),
+            exit = shrinkHorizontally(
+                animationSpec = tween(durationMillis = 160, easing = FastOutSlowInEasing),
+                shrinkTowards = Alignment.Start,
+            ) + fadeOut(animationSpec = tween(100)),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 2.dp)
+                        .height(14.dp)
+                        .width(1.dp)
+                        .background(colors.border.copy(alpha = 0.45f))
+                )
+                SessionNameChip(
+                    text = when (session?.kind) {
+                        CreatePlacementKind.WARP -> tr("editor.tool.create_warp")
+                        CreatePlacementKind.ROTATION -> tr("editor.tool.create_rotation")
+                        CreatePlacementKind.PATH -> tr("editor.pathDeform")
+                        CreatePlacementKind.LAYER -> tr("editor.importLayer.placeTitle")
+                        null -> ""
+                    },
+                )
+            }
+        }
+
         // Current edit target badge — shown whenever a mesh/deformer is selected so the label
         // tracks the pick in every hierarchy mode, not only after hovering the toolbar.
         AnimatedVisibility(
@@ -2464,6 +2581,24 @@ private fun BoxScope.HierarchyModeBar(
             }
         }
     }
+}
+
+@Composable
+private fun SessionNameChip(text: String) {
+    val colors = LocalToolColors.current
+    Text(
+        text = text,
+        fontSize = 10.5.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = colors.accent,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(colors.accent.copy(alpha = 0.16f))
+            .border(0.5.dp, colors.accent.copy(alpha = 0.45f), RoundedCornerShape(4.dp))
+            .padding(horizontal = 6.dp, vertical = 3.dp),
+    )
 }
 
 @Composable

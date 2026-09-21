@@ -180,7 +180,28 @@ fun FrameWindowScope.PSD2LiveApp(
 			DesktopDropTarget.install(
 				window = window,
 				onDragStateChanged = { isDraggingOver = it },
-				onFilesDropped = { files ->
+				onFilesDropped = { files, screenLocation ->
+					val rasters = io.github.psd2live.core.LayerImport.transparentRasterFiles(files)
+					val hasPreview = viewModel.state.value.previewModel != null
+					// Transparent rasters never go through the PSD/project drop path once a preview
+					// exists — otherwise Unsupported messaging looks like a PSD hijack.
+					if (rasters.isNotEmpty() && hasPreview) {
+						val target = screenLocation?.let { point ->
+							val origin = window?.locationOnScreen
+							val windowX = if (origin != null) point.x - origin.x else point.x
+							val windowY = if (origin != null) point.y - origin.y else point.y
+							viewModel.hierarchyImportHitTest?.invoke(windowX, windowY)
+						} ?: io.github.psd2live.core.HierarchyImportTarget(
+							parentDeformerId = null,
+							label = tr("canvas.hierarchy.root"),
+						)
+						viewModel.importLayersFromFiles(rasters, target.parentDeformerId, target.label)
+						return@install
+					}
+					if (rasters.isNotEmpty() && !hasPreview) {
+						viewModel.setErrorMessage(tr("error.importLayerBusy"))
+						return@install
+					}
 					when (val action = DesktopDropTarget.resolveDropAction(files)) {
 						is DesktopDropTarget.DroppedAction.OpenProject -> {
 							viewModel.openProject(action.file.toPath())

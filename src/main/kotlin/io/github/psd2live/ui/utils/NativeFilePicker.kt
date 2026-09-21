@@ -311,6 +311,42 @@ object NativeFilePicker {
 			isPicking.set(false)
 		}
 	}
+
+	/**
+	 * Opens a multi-select picker for transparent raster images (PNG / WebP / TIFF / BMP).
+	 */
+	fun chooseTransparentImages(window: Window? = null, initialPath: String? = null): List<File> {
+		if (!isPicking.compareAndSet(false, true)) {
+			return emptyList()
+		}
+		try {
+			val title = tr("dialog.chooseTransparentImages")
+			val extensions = arrayOf("png", "webp", "tif", "tiff", "bmp")
+			try {
+				UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
+				val chooser = JFileChooser().apply {
+					dialogTitle = title
+					isMultiSelectionEnabled = true
+					fileFilter = javax.swing.filechooser.FileNameExtensionFilter(
+						tr("dialog.transparentImageFilter"),
+						*extensions,
+					)
+					if (!initialPath.isNullOrBlank()) {
+						val f = File(initialPath)
+						if (f.exists()) currentDirectory = if (f.isDirectory) f else f.parentFile
+					}
+				}
+				if (chooser.showOpenDialog(window) == JFileChooser.APPROVE_OPTION) {
+					return chooser.selectedFiles
+						?.filter { it.isFile }
+						.orEmpty()
+				}
+			} catch (_: Throwable) {}
+			return emptyList()
+		} finally {
+			isPicking.set(false)
+		}
+	}
 }
 
 

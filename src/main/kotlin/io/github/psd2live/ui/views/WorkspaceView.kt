@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.IntOffset
@@ -33,6 +34,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import io.github.psd2live.core.HierarchyImportTarget
+import io.github.psd2live.ui.utils.NativeFilePicker
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Text
@@ -100,6 +103,7 @@ import io.github.psd2live.ui.components.IconPlay
 import io.github.psd2live.ui.components.IconReset
 import io.github.psd2live.ui.components.IconRotationDeformer
 import io.github.psd2live.ui.components.IconSearch
+import io.github.psd2live.ui.components.IconSelectionBounds
 import io.github.psd2live.ui.components.IconTrash
 import io.github.psd2live.ui.components.IconWarpDeformer
 import io.github.psd2live.ui.components.DrawOrderRuler
@@ -866,6 +870,45 @@ private fun HierarchyTreeList(
 	}
 
 	val scrollState = rememberScrollState()
+
+	DisposableEffect(containerCoordinates, itemBoundsMap.size, deformers, drawables, parentOverrides) {
+		viewModel.hierarchyImportHitTest = hit@{ windowX, windowY ->
+			val container = containerCoordinates ?: return@hit null
+			if (!container.isAttached) return@hit null
+			val origin = container.positionInWindow()
+			// Tolerate DPI / coordinate-space drift between AWT drop points and Compose layout.
+			val pad = 8f
+			val localX = windowX - origin.x
+			val localY = windowY - origin.y
+			if (localX < -pad || localX > container.size.width + pad ||
+				localY < -pad || localY > container.size.height + pad
+			) {
+				return@hit null
+			}
+			val hit = itemBoundsMap.values.firstOrNull { localY >= it.top - 2f && localY <= it.bottom + 2f }
+			when {
+				hit == null || hit.id == "ROOT" -> HierarchyImportTarget(
+					parentDeformerId = null,
+					label = tr("canvas.hierarchy.root"),
+				)
+				hit.isDeformer -> HierarchyImportTarget(
+					parentDeformerId = hit.targetId,
+					label = hit.name,
+				)
+				else -> HierarchyImportTarget(
+					parentDeformerId = hit.currentParentId,
+					label = hit.currentParentId
+						?.let { id -> deformers.firstOrNull { it.id.raw == id }?.name }
+						?: tr("canvas.hierarchy.root"),
+				)
+			}
+		}
+		onDispose {
+			if (viewModel.hierarchyImportHitTest != null) {
+				viewModel.hierarchyImportHitTest = null
+			}
+		}
+	}
 
 	Column(modifier = Modifier.fillMaxSize()) {
 		// Search & Expand/Collapse toolbar
@@ -1716,6 +1759,17 @@ private fun DeformerTreeItem(
 				},
 				icon = { IconRotationDeformer(tint = colors.textMuted, modifier = Modifier.size(13.dp)) },
 			)
+			CompactMenuItem(
+				text = tr("canvas.hierarchy.importLayer"),
+				onClick = {
+					showMenu = false
+					val picked = NativeFilePicker.chooseTransparentImages()
+					if (picked.isNotEmpty()) {
+						viewModel.importLayersFromFiles(picked, menuFocus.id.raw, menuFocus.name)
+					}
+				},
+				icon = { IconSelectionBounds(tint = colors.textMuted, modifier = Modifier.size(13.dp)) },
+			)
 
 			CompactMenuDivider()
 			CompactMenuSection(tr("canvas.hierarchy.menuHierarchy"))
@@ -2159,6 +2213,21 @@ private fun DrawableTreeItem(
 						icon = { IconDeformPath(modifier = Modifier.size(13.dp), tint = colors.textMuted) },
 					)
 				}
+				CompactMenuItem(
+					text = tr("canvas.hierarchy.importLayer"),
+					onClick = {
+						showMenu = false
+						val parentId = effectiveParent(drawable.id.raw, drawable.parentDeformerId?.raw, state.parentOverrides)
+						val parentLabel = parentId
+							?.let { id -> model.rig.puppet.deformers.firstOrNull { it.id.raw == id }?.name }
+							?: tr("canvas.hierarchy.root")
+						val picked = NativeFilePicker.chooseTransparentImages()
+						if (picked.isNotEmpty()) {
+							viewModel.importLayersFromFiles(picked, parentId, parentLabel)
+						}
+					},
+					icon = { IconSelectionBounds(tint = colors.textMuted, modifier = Modifier.size(13.dp)) },
+				)
 				CompactMenuDivider()
 
 				CompactMenuSection(tr("canvas.hierarchy.menuSettings"))

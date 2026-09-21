@@ -149,7 +149,7 @@ internal enum class CreateRelation {
     AS_CHILD,
 }
 
-internal enum class CreatePlacementKind { WARP, ROTATION, PATH }
+internal enum class CreatePlacementKind { WARP, ROTATION, PATH, LAYER }
 
 /** Which handle is being dragged while placing. */
 internal enum class PlacementHandle {
@@ -169,7 +169,7 @@ internal enum class PlacementHandle {
 internal data class CreatePlacement(
     val kind: CreatePlacementKind,
     val relation: CreateRelation,
-    /** "mesh" or "deformer" */
+    /** "mesh", "deformer", or "layer" */
     val anchorKind: String,
     val anchorId: String,
     val anchorLabel: String,
@@ -178,11 +178,12 @@ internal data class CreatePlacement(
     /**
      * Parent deformer whose local frame owns [localX]-[tipY]; null = model root.
      * Matches the parent / mesh parent that [CanvasEdits] will assign.
+     * For [CreatePlacementKind.LAYER], ignored — bounds are canvas pixels.
      */
     val spaceParentId: String?,
     var name: String,
     var partId: String?,
-    /** Parent-local AABB for Warp (mesh positions / lattice units). */
+    /** Parent-local AABB for Warp (mesh positions / lattice units), or canvas AABB for Layer. */
     var localX: Float,
     var localY: Float,
     var localW: Float,
@@ -198,6 +199,11 @@ internal data class CreatePlacement(
     /** Bezier edit division — Level-2 handle density. */
     var bezierRows: Int = 2,
     var bezierCols: Int = 2,
+    /**
+     * Source-layer ids to remove if this LAYER placement is cancelled
+     * (the whole drop batch, while only [anchorId] is being adjusted).
+     */
+    val cancelLayerIds: List<String> = emptyList(),
 )
 
 internal val PAINT_TOOLS = setOf(
@@ -402,6 +408,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             tool == CanvasTool.SELECT && source != null && drawsTransformBox -> "editor.transformHint"
             tool == CanvasTool.CREATE_WARP -> if (placement != null) "editor.placementDragHint" else "editor.createWarpHint"
             tool == CanvasTool.CREATE_ROTATION -> if (placement != null) "editor.placementRotationHint" else "editor.createRotationHint"
+            placement?.kind == CreatePlacementKind.LAYER -> "editor.placementLayerHint"
             tool == CanvasTool.GLUE -> "editor.glueHint"
             else -> "editor.hint"
         }
@@ -1609,7 +1616,11 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         knifeDraft = emptyList(); knifeDrawableId = null; subdividing = false; subdivideEdges = emptySet()
         knifeHover = null; knifeSnapKind = null
         isCreatingWarp = false; isCreatingRotation = false; creationStart = null; creationCurrent = null
-        placement = null; placementHandle = PlacementHandle.NONE; placementDragStart = null; placementDragSnapshot = null
+        // LAYER placement is a committed import waiting for confirm — do not treat gesture
+        // cleanup (history refresh, focus loss, tool churn) as Esc/Cancel.
+        if (placement?.kind != CreatePlacementKind.LAYER) {
+            placement = null; placementHandle = PlacementHandle.NONE; placementDragStart = null; placementDragSnapshot = null
+        }
         glueFirstMesh = null; glueHoverMesh = null
         activeBezierAnchor = null; activeBezierHandle = null
         activeBrushWeights = null; activeBrushCenter = null
@@ -1726,7 +1737,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             val d = model.deformers.firstOrNull { it.id.raw == anchorId } ?: return
             viewModel.selectDeformer(anchorId)
             when (kind) {
-                CreatePlacementKind.PATH -> return // paths attach to meshes only
+                CreatePlacementKind.PATH, CreatePlacementKind.LAYER -> return // paths/layers attach via other entry points
                 CreatePlacementKind.WARP -> {
                     val meshes = if (relation == CreateRelation.AS_PARENT) {
                         descendantMeshIds(anchorId)
@@ -1752,8 +1763,57 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                 CreatePlacementKind.WARP, CreatePlacementKind.ROTATION -> {
                     beginPlacement(kind, CreateRelation.AS_PARENT, "mesh", drawable.id.raw, drawable.name, listOf(drawable.id.raw))
                 }
+                CreatePlacementKind.LAYER -> return
             }
         }
+    }
+
+    /**
+     * Opens the bottom-left placement panel after a layer import so the artist can nudge
+     * canvas position/size before confirming.
+     */
+    fun beginLayerPlacement(
+        layerId: String,
+        layerName: String,
+        anchorLabel: String,
+        parentDeformerId: String?,
+        canvasLeft: Float,
+        canvasTop: Float,
+        canvasWidth: Float,
+        canvasHeight: Float,
+        cancelLayerIds: List<String>,
+    ) {
+        if (createSessionReturnMode == null) createSessionReturnMode = hierarchyMode
+        // Dismiss any in-progress warp/rotation/path ghost without deleting imported layers.
+        // A prior LAYER session keeps its layers at the last committed import position.
+        if (placement?.kind == CreatePlacementKind.LAYER) {
+            placement = null
+            placementHandle = PlacementHandle.NONE
+            placementDragStart = null
+            placementDragSnapshot = null
+        } else {
+            cancelKeepingReturnMode()
+        }
+        deferredMode = null
+        placement = CreatePlacement(
+            kind = CreatePlacementKind.LAYER,
+            relation = CreateRelation.AS_CHILD,
+            anchorKind = "layer",
+            anchorId = layerId,
+            anchorLabel = anchorLabel,
+            meshIds = emptyList(),
+            spaceParentId = parentDeformerId,
+            name = layerName,
+            partId = null,
+            localX = canvasLeft,
+            localY = canvasTop,
+            localW = canvasWidth.coerceAtLeast(1f),
+            localH = canvasHeight.coerceAtLeast(1f),
+            cancelLayerIds = cancelLayerIds.ifEmpty { listOf(layerId) },
+        )
+        tool = CanvasTool.SELECT
+        error = null
+        clearHover()
     }
 
     private fun descendantMeshIds(deformerId: String): List<String> {
@@ -1790,6 +1850,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             CreatePlacementKind.WARP -> tr("editor.defaultWarpName", anchorLabel)
             CreatePlacementKind.ROTATION -> tr("editor.defaultRotationName", anchorLabel)
             CreatePlacementKind.PATH -> anchorLabel
+            CreatePlacementKind.LAYER -> anchorLabel
         }
         val part = warpCreatePartId
             ?: meshIds.firstOrNull()?.let { model.partByDrawable()[DrawableId(it)]?.raw }
@@ -1823,6 +1884,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             CreatePlacementKind.WARP -> CanvasTool.CREATE_WARP
             CreatePlacementKind.ROTATION -> CanvasTool.CREATE_ROTATION
             CreatePlacementKind.PATH -> CanvasTool.CREATE_DEFORM_PATH
+            CreatePlacementKind.LAYER -> CanvasTool.SELECT
         }
         if (kind == CreatePlacementKind.PATH) {
             drawingPath = true
@@ -1896,12 +1958,38 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
 
     private fun cancelKeepingReturnMode() {
         val keep = createSessionReturnMode
-        cancel()
+        if (placement?.kind == CreatePlacementKind.LAYER) {
+            // Switching to another create tool: keep imported layers, only dismiss the panel.
+            placement = null
+            placementHandle = PlacementHandle.NONE
+            placementDragStart = null
+            placementDragSnapshot = null
+        } else {
+            cancel()
+        }
         createSessionReturnMode = keep
     }
 
     fun updatePlacementName(name: String) { placement = placement?.copy(name = name) }
     fun updatePlacementPart(partId: String?) { placement = placement?.copy(partId = partId) }
+    fun updatePlacementCanvasRect(x: Float, y: Float, w: Float, h: Float) {
+        val p = placement?.takeIf { it.kind == CreatePlacementKind.LAYER } ?: return
+        placement = p.copy(
+            localX = x,
+            localY = y,
+            localW = w.coerceAtLeast(1f),
+            localH = h.coerceAtLeast(1f),
+        )
+        viewModel.relocateImportedLayer(
+            layerId = p.anchorId,
+            name = p.name,
+            left = x,
+            top = y,
+            width = w.coerceAtLeast(1f),
+            height = h.coerceAtLeast(1f),
+            commitHistory = false,
+        )
+    }
     fun updatePlacementGrid(rows: Int, cols: Int) {
         placement = placement?.copy(rows = rows.coerceIn(1, 32), cols = cols.coerceIn(1, 32))
         warpCreateGridRows = rows.coerceIn(1, 32)
@@ -1927,6 +2015,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     }
 
     fun cancelPlacement() {
+        val cancelling = placement
         placement = null
         placementHandle = PlacementHandle.NONE
         placementDragStart = null
@@ -1940,6 +2029,9 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         }
         tool = CanvasTool.SELECT
         clearHover()
+        if (cancelling?.kind == CreatePlacementKind.LAYER) {
+            viewModel.cancelImportedLayerPlacement(cancelling.cancelLayerIds)
+        }
     }
 
     /** Commits the placed ghost into the model. */
@@ -1954,7 +2046,31 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             }
             CreatePlacementKind.WARP -> commitPlacedWarp(p)
             CreatePlacementKind.ROTATION -> commitPlacedRotation(p)
+            CreatePlacementKind.LAYER -> commitPlacedLayer(p)
         }
+    }
+
+    private fun commitPlacedLayer(p: CreatePlacement) {
+        viewModel.relocateImportedLayer(
+            layerId = p.anchorId,
+            name = p.name,
+            left = p.localX,
+            top = p.localY,
+            width = p.localW,
+            height = p.localH,
+            commitHistory = true,
+        )
+        placement = null
+        placementHandle = PlacementHandle.NONE
+        placementDragStart = null
+        placementDragSnapshot = null
+        createSessionReturnMode = null
+        deferredMode = null
+        hierarchyMode = EditHierarchyMode.SELECT
+        viewModel.applyHierarchyModeViewPreset(EditHierarchyMode.SELECT)
+        tool = CanvasTool.SELECT
+        clearHover()
+        viewModel.selectLayer(p.anchorId)
     }
 
     private fun commitPlacedWarp(p: CreatePlacement) {
@@ -2076,11 +2192,20 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     /** Screen AABB of the four projected parent-local corners (display / hit-test only). */
     fun placementScreenRect(viewport: CanvasViewport): Rect? {
         val p = placement ?: return null
-        if (p.kind != CreatePlacementKind.WARP) return null
-        return placementScreenRectOf(p, viewport)
+        return when (p.kind) {
+            CreatePlacementKind.WARP, CreatePlacementKind.LAYER -> placementScreenRectOf(p, viewport)
+            else -> null
+        }
     }
 
     private fun placementScreenRectOf(p: CreatePlacement, viewport: CanvasViewport): Rect? {
+        if (p.kind == CreatePlacementKind.LAYER) {
+            val left = viewport.x(p.localX).toFloat()
+            val top = (viewport.offsetY + p.localY * viewport.scale).toFloat()
+            val right = viewport.x(p.localX + p.localW).toFloat()
+            val bottom = (viewport.offsetY + (p.localY + p.localH) * viewport.scale).toFloat()
+            return Rect(left, top, right, bottom)
+        }
         if (p.kind != CreatePlacementKind.WARP) return null
         val mapping = placementMapping(p.spaceParentId)
         val corners = listOf(
@@ -2108,7 +2233,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     private fun hitPlacementHandle(pos: Offset, viewport: CanvasViewport): PlacementHandle {
         val p = placement ?: return PlacementHandle.NONE
         when (p.kind) {
-            CreatePlacementKind.WARP -> {
+            CreatePlacementKind.WARP, CreatePlacementKind.LAYER -> {
                 val r = placementScreenRect(viewport) ?: return PlacementHandle.NONE
                 val hs = 8f
                 fun near(x: Float, y: Float) = (pos - Offset(x, y)).getDistance() <= hs
@@ -2195,17 +2320,70 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                     }
                 }
             }
+            CreatePlacementKind.LAYER -> {
+                val aX = viewport.canvasX(start.x)
+                val aY = viewport.canvasY(start.y)
+                val bX = viewport.canvasX(pos.x)
+                val bY = viewport.canvasY(pos.y)
+                val ddx = bX - aX
+                val ddy = bY - aY
+                when (placementHandle) {
+                    PlacementHandle.BODY -> {
+                        placement = p.copy(
+                            localX = snap.localX + ddx,
+                            localY = snap.localY + ddy,
+                        )
+                    }
+                    PlacementHandle.NONE, PlacementHandle.PIVOT, PlacementHandle.TIP -> {}
+                    else -> {
+                        var left = snap.localX
+                        var top = snap.localY
+                        var right = snap.localX + snap.localW
+                        var bottom = snap.localY + snap.localH
+                        val minSize = 1f
+                        when (placementHandle) {
+                            PlacementHandle.E -> right = (snap.localX + snap.localW + ddx).coerceAtLeast(left + minSize)
+                            PlacementHandle.W -> left = (snap.localX + ddx).coerceAtMost(right - minSize)
+                            PlacementHandle.N -> top = (snap.localY + ddy).coerceAtMost(bottom - minSize)
+                            PlacementHandle.S -> bottom = (snap.localY + snap.localH + ddy).coerceAtLeast(top + minSize)
+                            PlacementHandle.NE -> {
+                                right = (snap.localX + snap.localW + ddx).coerceAtLeast(left + minSize)
+                                top = (snap.localY + ddy).coerceAtMost(bottom - minSize)
+                            }
+                            PlacementHandle.NW -> {
+                                left = (snap.localX + ddx).coerceAtMost(right - minSize)
+                                top = (snap.localY + ddy).coerceAtMost(bottom - minSize)
+                            }
+                            PlacementHandle.SE -> {
+                                right = (snap.localX + snap.localW + ddx).coerceAtLeast(left + minSize)
+                                bottom = (snap.localY + snap.localH + ddy).coerceAtLeast(top + minSize)
+                            }
+                            PlacementHandle.SW -> {
+                                left = (snap.localX + ddx).coerceAtMost(right - minSize)
+                                bottom = (snap.localY + snap.localH + ddy).coerceAtLeast(top + minSize)
+                            }
+                            else -> {}
+                        }
+                        placement = p.copy(
+                            localX = left,
+                            localY = top,
+                            localW = (right - left).coerceAtLeast(minSize),
+                            localH = (bottom - top).coerceAtLeast(minSize),
+                        )
+                    }
+                }
+            }
             CreatePlacementKind.ROTATION -> {
                 when (placementHandle) {
                     PlacementHandle.PIVOT -> {
                         val seed = snap.originX to snap.originY
                         val a = placementScreenToLocal(start, viewport, mapping, seed)
                         val b = placementScreenToLocal(pos, viewport, mapping, seed)
-                        val ddx = b.first - a.first
-                        val ddy = b.second - a.second
+                        val rdx = b.first - a.first
+                        val rdy = b.second - a.second
                         placement = p.copy(
-                            originX = snap.originX + ddx, originY = snap.originY + ddy,
-                            tipX = snap.tipX + ddx, tipY = snap.tipY + ddy,
+                            originX = snap.originX + rdx, originY = snap.originY + rdy,
+                            tipX = snap.tipX + rdx, tipY = snap.tipY + rdy,
                         )
                     }
                     PlacementHandle.TIP -> {
@@ -2224,7 +2402,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                     else -> {}
                 }
             }
-            else -> {}
+            CreatePlacementKind.PATH -> {}
         }
     }
 
@@ -3499,6 +3677,19 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         error = null; head = state.historySnapshot?.headNodeId; start = pos; previous = pos; dragStartPos = pos
         moved = false; additive = shift; subtractive = alt; pressedObject = null
 
+        // Place-then-confirm sessions own the canvas until Confirm/Esc (Warp / Rotation / Layer).
+        val activePlacement = placement
+        if (activePlacement != null && activePlacement.kind != CreatePlacementKind.PATH) {
+            val handle = hitPlacementHandle(pos, viewport!!)
+            if (handle != PlacementHandle.NONE) {
+                placementHandle = handle
+                placementDragStart = pos
+                placementDragSnapshot = activePlacement.copy()
+                dragging = true
+            }
+            return true
+        }
+
         // 0. Paint Mode (L1 raster paint engine)
         if (hierarchyMode == EditHierarchyMode.PAINT && tool in PAINT_TOOLS) {
             val layerId = paintSession?.layerId ?: state.selectedLayerId ?: targetLayerId(paintTarget()) ?: return true
@@ -3563,16 +3754,8 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             return true
         }
 
-        // Creation: place-then-confirm ghost, or start path points.
+        // Creation: place-then-confirm ghost already handled above; path points still start here.
         if (tool in setOf(CanvasTool.CREATE_WARP, CanvasTool.CREATE_ROTATION) && placement != null) {
-            val handle = hitPlacementHandle(pos, viewport!!)
-            if (handle != PlacementHandle.NONE) {
-                placementHandle = handle
-                placementDragStart = pos
-                placementDragSnapshot = placement!!.copy()
-                dragging = true
-                return true
-            }
             return true
         }
         if (tool in setOf(CanvasTool.CREATE_WARP, CanvasTool.CREATE_ROTATION, CanvasTool.CREATE_DEFORM_PATH) &&
@@ -4160,9 +4343,22 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         }
 
         if (placementHandle != PlacementHandle.NONE) {
+            val layerPlace = placement?.takeIf { it.kind == CreatePlacementKind.LAYER }
             placementHandle = PlacementHandle.NONE
             placementDragStart = null
             placementDragSnapshot = null
+            // Push the ghost rect onto the real layer so paint/mesh edits land where the artist placed it.
+            if (layerPlace != null) {
+                viewModel.relocateImportedLayer(
+                    layerId = layerPlace.anchorId,
+                    name = layerPlace.name,
+                    left = layerPlace.localX,
+                    top = layerPlace.localY,
+                    width = layerPlace.localW,
+                    height = layerPlace.localH,
+                    commitHistory = true,
+                )
+            }
             return
         }
 
