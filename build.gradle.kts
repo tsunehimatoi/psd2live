@@ -113,6 +113,7 @@ compose.desktop {
 			vendor = "PSD2Live"
 
 			windows {
+				iconFile.set(project.file("src/main/resources/icons/psd2live.ico"))
 				menuGroup = "PSD2Live"
 				upgradeUuid = "8e9c4b1a-2d3e-4f5a-6b7c-8d9e0f1a2b3c"
 			}

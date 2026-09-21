@@ -1,5 +1,6 @@
 package io.github.psd2live
 
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
@@ -55,6 +56,7 @@ fun main(arguments: Array<String>) {
 				Window(
 					onCloseRequest = closeApp,
 					title = tr("app.title"),
+					icon = painterResource("icons/psd2live.png"),
 					state = windowState,
 					undecorated = true,
 				) {
