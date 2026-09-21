@@ -1,54 +1,48 @@
-# PSD2Live 工程文件格式（版本 1）摘要
+# 工程格式 v1
 
-> [!NOTE]
-> 本页为中文摘要。完整规范（含全部字段语义与校验规则）目前仅有英文版：[工程格式完整规范](../../en/spec/PROJECT_FORMAT.md)。
+[English](../../en/spec/PROJECT_FORMAT.md) · [文档目录](../../README.md) · [操作速查](../guide/USER_GUIDE.md)
 
-`.psd2live` 是一个不加密的 ZIP 归档：普通解压工具即可展开，其中 JSON 为 UTF-8 缩进格式，栅格资源为无损 PNG。打开已保存工程时不依赖原始 PSD 路径，也不依赖其他机器的恢复缓存。
+`.psd2live` 是未加密 ZIP，JSON 使用 UTF-8，栅格资源为 PNG。保存后的工程包含继续编辑所需的源素材与历史，不依赖原 PSD 路径。导出报告 `.psd2live.json` 不是此格式。
 
-## 归档内容
+## 归档布局
 
-| 条目 | 用途 |
-| :--- | :--- |
-| `manifest.json` | 格式名、版本、稳定工程 UUID，以及所有载荷文件的 SHA-256 清单 |
-| `source/original.psd` | 导入时的原始源文件字节 |
-| `workspace.json` | 持久化 UI 状态：布局、相机、选择、参数预览/锁定、历史批注与日志 |
-| `images/<sha256>.png` | 日志条目引用的图像 |
-| `workspace/<projectId>/HEAD.json` | 当前历史节点与显式节点插入顺序 |
-| `workspace/<projectId>/history/nodes/*.json` | 不可变的父链节点：ID、修订、快照引用、摘要、执行者、任务与时间戳 |
-| `workspace/<projectId>/history/snapshots/*.json` | 可编辑的源图层/组、可见性、删除标记、分类、层级、参数/关键形覆盖与生成设置 |
-| `workspace/<projectId>/blobs/*-<width>x<height>.png` | 去重的 RGBA 图层/素材像素（含透明 alpha 之下的 RGB 值） |
-| `workspace/<projectId>/assets/*.json` | 暂存 PNG 素材及其空间放置 |
-| `workspace/<projectId>/views/*.json` | 已渲染视图的坐标映射 |
-| `workspace/<projectId>/view-images/*` | 渲染出的视图图像与「视图 ID → 图像」记录 |
-| `workspace/<projectId>/tasks.json` | Agent 计划、状态记录与追加式任务事件 |
+| 路径 | 内容 |
+| --- | --- |
+| `manifest.json` | 格式名、版本、工程 UUID、载荷 SHA-256 清单 |
+| `source/original.psd` | 原始导入源文件 |
+| `workspace.json` | 布局、镜头、选择、参数预览、历史注释和日志等持久 UI 状态 |
+| `images/<hash>.png` | 日志图片 |
+| `workspace/<projectId>/HEAD.json` | 当前节点与节点顺序 |
+| `workspace/<projectId>/history/nodes/` | 不可变父链节点和元数据 |
+| `workspace/<projectId>/history/snapshots/` | 源图层、配置、结构与编辑覆盖 |
+| `workspace/<projectId>/blobs/` | 去重 RGBA 栅格，以 PNG 保存 |
+| `workspace/<projectId>/assets/` | 暂存素材元数据 |
+| `workspace/<projectId>/views/`、`view-images/` | 观察图的空间映射与图像 |
+| `workspace/<projectId>/workflow/` | 素材参考包、注册 / 放置等辅助记录 |
+| `workspace/<projectId>/tasks.json` | Agent 任务和事件记录 |
 
-历史记录与栅格引用的内部文件名是其逻辑 ID 的 SHA-256 键。同一份栅格在多个快照间共享，因此反复保存只增加轻量节点，不会重复存储像素。
+内部文件名可使用逻辑 ID 的哈希，不能由显示名推断。PNG 保留透明像素下的 RGB；不同快照共享栅格资源。辅助目录按是否使用相关功能出现。
 
-## 保存与恢复
+## 保存和恢复
 
-- 每次成功保存都会先追加一个检查点，再写入归档；失败保存保留检查点与脏状态，并保持原有文件不变。
-- 写入流程为：关闭并刷新目标目录中的临时文件 → 校验完整清单 → 原子替换旧文件；不支持原子替换时报告失败而不覆盖。
-- 格式保留全部分支且不自动裁剪。切换分支即改变 `HEAD`，此后的编辑追加为新的子节点。隐藏分支不会删除快照、素材或 MCP 可见性。
-- 撤销沿父链回退；重做选择唯一子节点，或打开版本树在分支间选择。
-- 运行期预览由已保存的可编辑源与各快照自身的设置重建；SDK 句柄、套接字、活动任务与动画时钟不参与序列化。已保存的 Agent 任务是可供显式继续的记录，不是可执行作业。
+保存捕获不可变状态，按顺序写入同目录临时文件、校验清单，再原子替换目标。不支持原子替换时报告失败并保留旧工程。捕获后发生的新编辑仍属于未保存内容。
 
-## 校验与手工编辑
+当前内容与 HEAD 相同时，普通保存不新增历史；显式 `checkpoint` 可在未变化时留点。保存失败不应被当作已持久化，需检查界面错误。
 
-打开工程时会先行校验格式/版本、文件清单、校验和、栅格尺寸与内容、历史 ID、父链、`HEAD` 与环。重复条目、路径穿越/绝对路径与不支持的版本会被拒绝；解压上限为 1,000,000 个条目与 64 GiB 实际未压缩字节，且不信任 ZIP 中声明的大小。
+所有分支保留。撤销沿父节点，重做有多个后继时选择分支；从旧节点编辑会创建新分支。改标题、备注或隐藏分支不改写原始节点，不删除素材。
 
-JSON 与 PNG 均可直接查看，但手工改动包内容必须同步更新 manifest 校验和并维持所有引用的 ID 与快照哈希；日常批注与分支操作请使用历史界面。未来的不兼容格式必须使用新的 manifest 版本号，而不是静默重新解释本规范。
+重开工程由源图、设置和编辑日志重建模型。原生句柄、网络连接、正在执行的任务和动画时钟不保存；保存的 Agent 任务是记录，不会自动恢复执行。
 
-## UI 与 MCP 入口
+## 校验边界
 
-| 操作 | 入口 |
-| :--- | :--- |
-| 导入 PSD | `Ctrl+Shift+O`（可选自定义目录、PSD 所在目录或安装目录下的 `projects`；确认后立即写入首个工程） |
-| 打开 / 保存 / 另存为 | `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` |
-| 撤销 / 重做或选择分支 | `Ctrl+Z` / `Ctrl+Y` 或 `Ctrl+Shift+Z` |
-| `project_save`（现为 `revision` 的 `save`） | 保存到应用中所选位置并返回检查点节点 ID；未选择目标时报错 |
-| `history_checkpoint`（现为 `revision` 的 `checkpoint`） | 携带 `summary` 时显式追加节点（内容未变也追加）。这是唯一一条「无变化也开节点」的路径，其余写入在无变化时返回 `applied: false` 且不开节点 |
-| `project_get_state`（现为 `inspect` 的 `scope: project`） | 额外报告 `projectFile`、`projectDirty`、`projectSaving`、`projectSaveError` |
+打开时校验版本、清单、哈希、栅格、历史引用与 HEAD。拒绝重复条目、路径越界和不支持版本；解包限制为最多 1,000,000 条目、实际解压数据 64 GiB。不要依赖 ZIP 声明尺寸绕过限制。
 
-> MCP 服务当前只暴露 10 个合并工具（`inspect`、`deform`、`form`、`rig`、`view`、`parameter`、`asset`、`physics`、`appearance`、`revision`），上表括号内是各分支的底层契约；完整工具面见 [MCP 接口契约](../agent/MCP_AUTHORING.md)。
+可解压查看，但手工修改需同步全部引用与清单哈希。常规操作使用界面和历史工具。旧 `.rgba.gz` 恢复存储属于兼容读取，不是新工程的主写入格式。
 
-改动模型的 MCP 调用在校验/重建成功后提交一个节点；只读调用不追加历史。暂存素材与记录 Agent 任务事件属于辅助记录，随工程保存一并持久化。
+## 入口
+
+- 导入 PSD：`Ctrl+Shift+O`；打开工程：`Ctrl+O`。
+- 保存 / 另存为：`Ctrl+S` / `Ctrl+Shift+S`。
+- MCP：`revision` 的 `save/checkpoint/list/restore`；保存目的地先在 UI 选择。公开摘要不等于所有内部工程字段均可查询，见 [MCP 契约](../agent/MCP_AUTHORING.md)。
+
+实现：[ProjectArchive](../../../src/main/kotlin/io/github/psd2live/project/ProjectArchive.kt) · [ProjectSession](../../../src/main/kotlin/io/github/psd2live/project/ProjectSession.kt) · [AgentWorkspaceStore](../../../src/main/kotlin/io/github/psd2live/agent/AgentWorkspaceStore.kt)。

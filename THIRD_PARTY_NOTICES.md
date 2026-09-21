@@ -1,6 +1,8 @@
 # Third-party Notices
 
-PSD2Live is licensed under GNU GPL version 3. See `LICENSE`.
+[Documentation index](docs/README.md) · [Example artwork notices](examples/readme.md)
+
+PSD2Live is licensed under GNU GPL version 3. See [LICENSE](LICENSE).
 
 ## Umamo
 
