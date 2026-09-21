@@ -227,6 +227,8 @@ private fun buildTutorialCatalog(): Map<TutorialId, TutorialDefinition> = mapOf(
 			step("dragParent", TutorialTargetId.HIERARCHY_TREE, ensureEditTab = true, ensureHierarchyVisible = true, selectDock = "hierarchy"),
 			step("contextDeformer", TutorialTargetId.HIERARCHY_TREE, ensureEditTab = true, ensureHierarchyVisible = true, selectDock = "hierarchy"),
 			step("contextLayer", TutorialTargetId.HIERARCHY_TREE, ensureEditTab = true, ensureHierarchyVisible = true, selectDock = "hierarchy"),
+			step("importLayer", TutorialTargetId.HIERARCHY_TREE, ensureEditTab = true, ensureHierarchyVisible = true, selectDock = "hierarchy"),
+			step("placeSession", TutorialTargetId.MODE_BAR, ensureEditTab = true),
 			step("drawOrder", TutorialTargetId.DRAW_ORDER_RULER, ensureEditTab = true, ensureHierarchyVisible = true, selectDock = "hierarchy"),
 			step("modeBar", TutorialTargetId.MODE_BAR, ensureEditTab = true),
 			step("modeExtras", TutorialTargetId.MODE_BAR, ensureEditTab = true, setHierarchyMode = EditHierarchyMode.DEFORM),

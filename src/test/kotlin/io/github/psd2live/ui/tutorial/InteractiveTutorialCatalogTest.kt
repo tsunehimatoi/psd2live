@@ -45,4 +45,12 @@ class InteractiveTutorialCatalogTest {
 		assertEquals(0, state.stepIndex)
 		assertNotNull(state.step)
 	}
+
+	@Test
+	fun hierarchyIncludesImportAndPlacementSteps() {
+		val keys = tutorialDefinition(TutorialId.HIERARCHY).steps.map { it.key }
+		assertTrue("importLayer" in keys)
+		assertTrue("placeSession" in keys)
+		assertEquals("done", keys.last())
+	}
 }
