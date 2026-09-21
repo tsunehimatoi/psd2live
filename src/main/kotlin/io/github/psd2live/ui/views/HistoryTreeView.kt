@@ -952,10 +952,23 @@ private fun OperationListRow(
 
 @Composable
 private fun ActorBadge(actor: String, scale: Float = 1f) {
+	val dark = LocalToolColors.current.isDark
 	val (bg, fg, label) = when (actor.lowercase()) {
-		"agent" -> Triple(Color(0xFF3B2E58), Color(0xFFDCDCAA), "Agent")
-		"user" -> Triple(Color(0xFF1E3A5F), Color(0xFF9CDCFE), "User")
-		else -> Triple(Color(0xFF2E3440), Color(0xFFD8DEE9), "System")
+		"agent" -> if (dark) {
+			Triple(Color(0xFF3B2E58), Color(0xFFDCDCAA), "Agent")
+		} else {
+			Triple(Color(0xFFF1ECF8), Color(0xFF6B4FA0), "Agent")
+		}
+		"user" -> if (dark) {
+			Triple(Color(0xFF1E3A5F), Color(0xFF9CDCFE), "User")
+		} else {
+			Triple(Color(0xFFE6F0FA), Color(0xFF1A5FA8), "User")
+		}
+		else -> if (dark) {
+			Triple(Color(0xFF2E3440), Color(0xFFD8DEE9), "System")
+		} else {
+			Triple(Color(0xFFE8EEF4), Color(0xFF3A6B8C), "System")
+		}
 	}
 
 	Box(
