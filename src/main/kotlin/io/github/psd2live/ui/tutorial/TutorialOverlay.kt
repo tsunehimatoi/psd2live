@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.components.CompactButton
+import io.github.psd2live.ui.state.Keymap
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
 import kotlin.math.roundToInt
@@ -46,6 +47,7 @@ fun TutorialOverlay(
 	step: TutorialStep,
 	stepIndex: Int,
 	registry: TutorialTargetRegistry,
+	keymap: Keymap = Keymap.DEFAULT,
 	reviewing: Boolean = false,
 	isFirstStep: Boolean = false,
 	onNext: () -> Unit,
@@ -94,6 +96,7 @@ fun TutorialOverlay(
 					tutorialId = tutorialId,
 					step = step,
 					stepIndex = stepIndex,
+					keymap = keymap,
 					isFirstStep = isFirstStep,
 					onNext = onNext,
 					onPrevious = onPrevious,
@@ -154,6 +157,7 @@ fun TutorialCoachCard(
 	tutorialId: TutorialId,
 	step: TutorialStep,
 	stepIndex: Int,
+	keymap: Keymap = Keymap.DEFAULT,
 	isFirstStep: Boolean,
 	onNext: () -> Unit,
 	onPrevious: () -> Unit,
@@ -179,6 +183,8 @@ fun TutorialCoachCard(
 		tr("tutorial.basic.progress", displayIndex + 1, stepTotal)
 	}
 	val nextId = tutorialId.nextId
+	val bodyStyle = typography.caption.copy(fontSize = 11.5.sp, lineHeight = 16.sp)
+	val actionStyle = typography.caption.copy(lineHeight = 17.sp)
 
 	Column(
 		modifier = modifier
@@ -206,9 +212,10 @@ fun TutorialCoachCard(
 			style = typography.body.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
 			color = colors.textPrimary,
 		)
-		Text(
+		TutorialRichText(
 			text = tr(step.bodyKey(tutorialId)),
-			style = typography.caption.copy(fontSize = 11.5.sp, lineHeight = 16.sp),
+			keymap = keymap,
+			style = bodyStyle,
 			color = colors.textMuted,
 		)
 		if (targetMissing) {
@@ -221,9 +228,10 @@ fun TutorialCoachCard(
 				verticalArrangement = Arrangement.spacedBy(4.dp),
 			) {
 				Text(tr("tutorial.basic.action"), style = typography.caption, color = colors.accent)
-				Text(
-					tr(step.actionKey(tutorialId)),
-					style = typography.caption.copy(lineHeight = 17.sp),
+				TutorialRichText(
+					text = tr(step.actionKey(tutorialId)),
+					keymap = keymap,
+					style = actionStyle,
 					color = colors.textPrimary,
 				)
 			}

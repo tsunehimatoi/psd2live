@@ -229,6 +229,7 @@ fun AppTitleBar(
 									step = tutorialStep,
 									stepIndex = tutorialStepIndex,
 									registry = registry,
+									keymap = keymap,
 									reviewing = tutorialReviewing,
 									isFirstStep = tutorialIsFirstStep,
 									onNext = onTutorialNext,

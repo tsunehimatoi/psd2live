@@ -534,6 +534,7 @@ fun FrameWindowScope.PSD2LiveApp(
 					step = tutorial.step,
 					stepIndex = tutorial.stepIndex,
 					registry = tutorialTargets,
+					keymap = state.keymap,
 					reviewing = tutorial.reviewing,
 					isFirstStep = tutorial.isFirstStep,
 					onNext = { advanceTutorial() },
