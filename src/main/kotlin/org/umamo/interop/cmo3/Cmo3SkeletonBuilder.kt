@@ -345,6 +345,44 @@ internal object Cmo3SkeletonBuilder {
 			labelType = CLabelColorType.UNDEFINED
 		}
 
+	/** Converts a CMO3 [CLabelColor] into the runtime label color used by parameter folders. */
+	internal fun parameterLabelColorOf(label: CLabelColor?): org.umamo.runtime.model.ParameterLabelColor {
+		if (label == null) return org.umamo.runtime.model.ParameterLabelColor.None
+		return when (val type = label.labelType as? CLabelColorType) {
+			null, CLabelColorType.UNDEFINED -> org.umamo.runtime.model.ParameterLabelColor.None
+			CLabelColorType.CUSTOM -> org.umamo.runtime.model.ParameterLabelColor.Custom(label.customizedColorInt)
+			CLabelColorType.RED -> org.umamo.runtime.model.ParameterLabelColor.Preset(org.umamo.runtime.model.ParameterLabelColor.Preset.Kind.RED)
+			CLabelColorType.ORANGE -> org.umamo.runtime.model.ParameterLabelColor.Preset(org.umamo.runtime.model.ParameterLabelColor.Preset.Kind.ORANGE)
+			CLabelColorType.YELLOW -> org.umamo.runtime.model.ParameterLabelColor.Preset(org.umamo.runtime.model.ParameterLabelColor.Preset.Kind.YELLOW)
+			CLabelColorType.GREEN -> org.umamo.runtime.model.ParameterLabelColor.Preset(org.umamo.runtime.model.ParameterLabelColor.Preset.Kind.GREEN)
+			CLabelColorType.BLUE -> org.umamo.runtime.model.ParameterLabelColor.Preset(org.umamo.runtime.model.ParameterLabelColor.Preset.Kind.BLUE)
+			CLabelColorType.PURPLE -> org.umamo.runtime.model.ParameterLabelColor.Preset(org.umamo.runtime.model.ParameterLabelColor.Preset.Kind.PURPLE)
+		}
+	}
+
+	/** Converts a runtime label color into a CMO3 [CLabelColor] for export. */
+	internal fun cLabelColorOf(color: org.umamo.runtime.model.ParameterLabelColor): CLabelColor =
+		when (color) {
+			org.umamo.runtime.model.ParameterLabelColor.None -> undefinedLabelColor()
+			is org.umamo.runtime.model.ParameterLabelColor.Custom ->
+				CLabelColor().apply {
+					customizedColorInt = color.argb
+					labelType = CLabelColorType.CUSTOM
+				}
+			is org.umamo.runtime.model.ParameterLabelColor.Preset ->
+				CLabelColor().apply {
+					customizedColorInt = 0
+					labelType = when (color.kind) {
+						org.umamo.runtime.model.ParameterLabelColor.Preset.Kind.RED -> CLabelColorType.RED
+						org.umamo.runtime.model.ParameterLabelColor.Preset.Kind.ORANGE -> CLabelColorType.ORANGE
+						org.umamo.runtime.model.ParameterLabelColor.Preset.Kind.YELLOW -> CLabelColorType.YELLOW
+						org.umamo.runtime.model.ParameterLabelColor.Preset.Kind.GREEN -> CLabelColorType.GREEN
+						org.umamo.runtime.model.ParameterLabelColor.Preset.Kind.BLUE -> CLabelColorType.BLUE
+						org.umamo.runtime.model.ParameterLabelColor.Preset.Kind.PURPLE -> CLabelColorType.PURPLE
+					}
+				}
+		}
+
 	/**
 	 * A fully transparent square PNG for the model icons.
 	 *

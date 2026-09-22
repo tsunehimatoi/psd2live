@@ -27,6 +27,7 @@ import org.umamo.edit.withDrawableSelectable
 import org.umamo.edit.withOrgChildMoved
 import org.umamo.edit.withParameterGroupCreated
 import org.umamo.edit.withParameterGroupDeleted
+import org.umamo.edit.withParameterGroupLabelColor
 import org.umamo.edit.withParameterGroupOpen
 import org.umamo.edit.withParameterGroupRenamed
 import org.umamo.edit.withParameterLink
@@ -206,6 +207,7 @@ internal object RigStructureEdits {
             "delete" -> emptySet()
             "link" -> setOf("partner_id", "linked")
             "open" -> setOf("open")
+            "color" -> setOf("label_type", "color")
             else -> error("Unknown parameter-panel action: $action")
         }
         require((edit.keys - allowed - setOf("action", "kind", "id")).isEmpty()) { "Unexpected field for $action" }
@@ -286,6 +288,23 @@ internal object RigStructureEdits {
                 require(kind == "param_group") { "open belongs to a parameter folder" }
                 val open = edit.getValue("open").jsonPrimitive.boolean
                 model.withParameterGroupOpen(ParameterGroupId(id), open)
+            }
+            "color" -> {
+                require(kind == "param_group") { "color belongs to a parameter folder" }
+                val labelType = edit.string("label_type").uppercase()
+                val color = when (labelType) {
+                    "UNDEFINED", "NONE" -> ParameterLabelColor.None
+                    "CUSTOM" -> {
+                        val argb = edit.getValue("color").jsonPrimitive.int
+                        ParameterLabelColor.Custom(argb)
+                    }
+                    else -> {
+                        val kind = ParameterLabelColor.Preset.Kind.entries.firstOrNull { it.cmo3Name == labelType }
+                            ?: error("Unknown label_type: $labelType")
+                        ParameterLabelColor.Preset(kind)
+                    }
+                }
+                model.withParameterGroupLabelColor(ParameterGroupId(id), color)
             }
             "link" -> {
                 require(kind == "parameter") { "link belongs to a parameter" }

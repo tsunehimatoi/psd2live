@@ -324,6 +324,26 @@ class PSD2LiveViewModel : AutoCloseable {
         )
     }
 
+    fun setParameterGroupLabelColor(groupId: String, color: org.umamo.runtime.model.ParameterLabelColor) {
+        applyRigStructure(
+            "color",
+            "param_group",
+            groupId,
+            kotlinx.serialization.json.buildJsonObject {
+                when (color) {
+                    org.umamo.runtime.model.ParameterLabelColor.None ->
+                        put("label_type", kotlinx.serialization.json.JsonPrimitive("UNDEFINED"))
+                    is org.umamo.runtime.model.ParameterLabelColor.Preset ->
+                        put("label_type", kotlinx.serialization.json.JsonPrimitive(color.kind.cmo3Name))
+                    is org.umamo.runtime.model.ParameterLabelColor.Custom -> {
+                        put("label_type", kotlinx.serialization.json.JsonPrimitive("CUSTOM"))
+                        put("color", kotlinx.serialization.json.JsonPrimitive(color.argb))
+                    }
+                }
+            },
+        )
+    }
+
     /**
      * Moves a parameter or folder in the panel tree. [parentGroupId] null = root; [beforeId] null = append.
      * Flat parameter order is rewritten to tree preorder so CMO3 combined adjacency matches the panel.

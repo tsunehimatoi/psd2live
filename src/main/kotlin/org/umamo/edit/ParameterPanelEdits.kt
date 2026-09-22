@@ -144,6 +144,33 @@ fun PuppetModel.withParameterGroupOpen(id: ParameterGroupId, open: Boolean): Pup
 	return if (changed) copy(parameterTree = nextTree) else this
 }
 
+/** A copy with folder [id]'s Cubism label color set to [color] (CMO3 `labelColor`). */
+fun PuppetModel.withParameterGroupLabelColor(
+	id: ParameterGroupId,
+	color: org.umamo.runtime.model.ParameterLabelColor,
+): PuppetModel {
+	var changed = false
+	fun rewrite(nodes: List<ParameterNode>): List<ParameterNode> =
+		nodes.map { node ->
+			when (node) {
+				is ParameterNode.Param -> node
+				is ParameterNode.Group -> {
+					val children = rewrite(node.children)
+					if (node.id == id && node.labelColor != color) {
+						changed = true
+						node.copy(labelColor = color, children = children)
+					} else if (children !== node.children) {
+						node.copy(children = children)
+					} else {
+						node
+					}
+				}
+			}
+		}
+	val nextTree = rewrite(materializedParameterTree())
+	return if (changed) copy(parameterTree = nextTree) else this
+}
+
 /**
  * A copy with panel node [node] moved under [parentId] (null = root) and positioned before [before]
  * (null / absent = append). Rejects unknown nodes, unknown parents, and group cycles. After a

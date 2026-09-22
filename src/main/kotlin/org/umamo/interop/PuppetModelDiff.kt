@@ -44,7 +44,7 @@ import org.umamo.runtime.model.lineageRoot
 enum class ParameterField { NAME, RANGE, KIND }
 
 /** The changed aspects of a [ParameterNode.Group]. */
-enum class ParameterGroupField { NAME, INITIALLY_OPEN, CHILDREN }
+enum class ParameterGroupField { NAME, INITIALLY_OPEN, CHILDREN, LABEL_COLOR }
 
 /** The changed aspects of a [Part]. */
 enum class PartField { NAME, VISIBLE, SKETCH, SELECTABLE, GROUP_MODE, DRAW_ORDER, CHILDREN, CHANNELS, COMPOSITE }
@@ -290,6 +290,9 @@ private fun parameterGroupFields(baseline: ParameterNode.Group, edited: Paramete
 		}
 		if (nodeIdentities(baseline.children) != nodeIdentities(edited.children)) {
 			add(ParameterGroupField.CHILDREN)
+		}
+		if (baseline.labelColor != edited.labelColor) {
+			add(ParameterGroupField.LABEL_COLOR)
 		}
 	}
 

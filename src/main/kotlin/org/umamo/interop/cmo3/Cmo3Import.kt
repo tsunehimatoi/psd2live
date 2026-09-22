@@ -589,6 +589,8 @@ object Cmo3Import {
 							// CMO3: CParameterGroup.folderIsOpened - the editor's saved expand/collapse state.
 							initiallyOpen = childGroup.folderIsOpened,
 							children = childrenOf(childGroup),
+							// CMO3: CParameterGroup.labelColor - Cubism Label Color (preset / custom / none).
+							labelColor = Cmo3SkeletonBuilder.parameterLabelColorOf(childGroup.labelColor as? org.umamo.format.cmo3.model.custom.CLabelColor),
 						),
 					)
 				}

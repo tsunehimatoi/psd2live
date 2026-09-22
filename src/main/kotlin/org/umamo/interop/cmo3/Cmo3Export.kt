@@ -287,6 +287,7 @@ object Cmo3Export {
 										ParameterGroupField.NAME,
 										ParameterGroupField.INITIALLY_OPEN,
 										ParameterGroupField.CHILDREN,
+										ParameterGroupField.LABEL_COLOR,
 									),
 								)
 

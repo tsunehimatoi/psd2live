@@ -106,8 +106,10 @@ import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.ParameterKeyBoundComponent
 import io.github.psd2live.ui.ParameterKeyMarks
 import io.github.psd2live.ui.ParameterKeyOwner
+import io.github.psd2live.ui.components.ColorPickerPopupContent
 import io.github.psd2live.ui.components.CompactIconButton
 import io.github.psd2live.ui.components.CompactMenuItem
+import io.github.psd2live.ui.components.CompactMenuSection
 import io.github.psd2live.ui.components.CompactTextField
 import io.github.psd2live.ui.components.IconChevron
 import io.github.psd2live.ui.components.IconClose
@@ -130,6 +132,7 @@ import io.github.psd2live.ui.componentsAtParameterKey
 import io.github.psd2live.ui.componentsAtParameterKeys
 import io.github.psd2live.ui.selectedParameterOwner
 import org.umamo.runtime.model.ParameterId
+import org.umamo.runtime.model.ParameterLabelColor
 import io.github.psd2live.ui.parameterKeyMarks
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
@@ -727,6 +730,9 @@ internal fun ParametersListView(
 											onNewChildFolder = {
 												viewModel.createParameterGroup(tr("parameters.newFolderName"), row.group.id.raw)
 											},
+											onLabelColor = { color ->
+												viewModel.setParameterGroupLabelColor(row.group.id.raw, color)
+											},
 											canCreateParameter = state.historySnapshot != null && !state.canvasEditBusy,
 											menuOpen = folderMenuFor == row.group.id.raw,
 											menuOffset = folderMenuOffset,
@@ -1067,6 +1073,7 @@ private fun ParameterFolderRow(
 	onDelete: () -> Unit,
 	onNewChildParameter: () -> Unit,
 	onNewChildFolder: () -> Unit,
+	onLabelColor: (ParameterLabelColor) -> Unit,
 	canCreateParameter: Boolean,
 	menuOpen: Boolean,
 	menuOffset: Offset,
@@ -1079,19 +1086,26 @@ private fun ParameterFolderRow(
 	val isHovered by interactionSource.collectIsHoveredAsState()
 	var rowCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 	val renameFocus = remember { FocusRequester() }
+	var customColorOpen by remember { mutableStateOf(false) }
+	var customDraftArgb by remember { mutableStateOf(0xFFB3D4FF.toInt()) }
+	val density = LocalDensity.current
 	LaunchedEffect(renaming) {
 		if (renaming) runCatching { renameFocus.requestFocus() }
 	}
+	val labelArgb = row.group.labelColor.displayArgb()
+	val labelTint = labelArgb?.let { Color(it).copy(alpha = if (isHovered) 0.34f else 0.20f) }
+	val folderIconTint = labelArgb?.let { Color(it) } ?: colors.accent
 
 	Row(
 		modifier = Modifier
 			.fillMaxWidth()
 			.onGloballyPositioned { rowCoords = it }
 			.background(
-				when {
-					isHovered -> colors.controlHover.copy(alpha = 0.55f)
-					else -> colors.panelElevated.copy(alpha = 0.55f)
-				},
+				labelTint
+					?: when {
+						isHovered -> colors.controlHover.copy(alpha = 0.55f)
+						else -> colors.panelElevated.copy(alpha = 0.55f)
+					},
 			)
 			.hoverable(interactionSource)
 			.onPointerEvent(PointerEventType.Press) { event ->
@@ -1117,7 +1131,7 @@ private fun ParameterFolderRow(
 	) {
 		IconChevron(expanded = row.open, tint = colors.textMuted, modifier = Modifier.size(10.dp))
 		Spacer(Modifier.width(4.dp))
-		IconFolder(tint = colors.accent, modifier = Modifier.size(12.dp))
+		IconFolder(tint = folderIconTint, modifier = Modifier.size(12.dp))
 		Spacer(Modifier.width(4.dp))
 		if (renaming) {
 			CompactTextField(
@@ -1175,11 +1189,94 @@ private fun ParameterFolderRow(
 			text = tr("parameters.newChildFolder"),
 			onClick = { onMenuOpenChange(false, null); onNewChildFolder() },
 		)
+		CompactMenuSection(tr("parameters.labelColor"))
+		Row(
+			modifier = Modifier
+				.fillMaxWidth()
+				.padding(horizontal = 8.dp, vertical = 4.dp),
+			horizontalArrangement = Arrangement.spacedBy(4.dp),
+			verticalAlignment = Alignment.CenterVertically,
+		) {
+			ParameterLabelSwatch(
+				fill = Color.Transparent,
+				border = colors.border,
+				selected = row.group.labelColor is ParameterLabelColor.None,
+				onClick = {
+					onLabelColor(ParameterLabelColor.None)
+					onMenuOpenChange(false, null)
+				},
+			)
+			for (kind in ParameterLabelColor.Preset.Kind.entries) {
+				val selected = (row.group.labelColor as? ParameterLabelColor.Preset)?.kind == kind
+				ParameterLabelSwatch(
+					fill = Color(kind.swatchArgb),
+					border = if (selected) colors.accent else colors.border.copy(alpha = 0.5f),
+					selected = selected,
+					onClick = {
+						onLabelColor(ParameterLabelColor.Preset(kind))
+						onMenuOpenChange(false, null)
+					},
+				)
+			}
+		}
+		CompactMenuItem(
+			text = tr("parameters.labelColorCustom"),
+			onClick = {
+				customDraftArgb = labelArgb ?: 0xFFB3D4FF.toInt()
+				onMenuOpenChange(false, null)
+				customColorOpen = true
+			},
+			active = row.group.labelColor is ParameterLabelColor.Custom,
+		)
 		CompactMenuItem(
 			text = tr("parameters.deleteFolder"),
 			onClick = { onMenuOpenChange(false, null); onDelete() },
 		)
 	}
+
+	if (customColorOpen) {
+		Popup(
+			alignment = Alignment.TopStart,
+			offset = IntOffset(0, with(density) { 24.dp.roundToPx() }),
+			onDismissRequest = {
+				onLabelColor(ParameterLabelColor.Custom(customDraftArgb or 0xFF000000.toInt()))
+				customColorOpen = false
+			},
+			properties = PopupProperties(focusable = true),
+		) {
+			ColorPickerPopupContent(
+				initialColor = customDraftArgb and 0x00FFFFFF,
+				sampledColor = null,
+				onColorChanged = { rgb ->
+					customDraftArgb = rgb or 0xFF000000.toInt()
+				},
+				onDismiss = {
+					onLabelColor(ParameterLabelColor.Custom(customDraftArgb or 0xFF000000.toInt()))
+					customColorOpen = false
+				},
+			)
+		}
+	}
+}
+
+@Composable
+private fun ParameterLabelSwatch(
+	fill: Color,
+	border: Color,
+	selected: Boolean,
+	onClick: () -> Unit,
+) {
+	Box(
+		modifier = Modifier
+			.size(16.dp)
+			.background(fill, RoundedCornerShape(3.dp))
+			.border(
+				BorderStroke(if (selected) 1.5.dp else 1.dp, border),
+				RoundedCornerShape(3.dp),
+			)
+			.clickable(onClick = onClick)
+			.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR))),
+	)
 }
 
 /** Cubism-style single-line name (no id clutter). */

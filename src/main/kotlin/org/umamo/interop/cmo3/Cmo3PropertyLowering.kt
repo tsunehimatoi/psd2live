@@ -184,6 +184,11 @@ internal class Cmo3PropertyLowering(
 								editor.ensureChildSlot(group, "CParameterGroup", "folderIsOpened", "guid")
 							}
 							ParameterGroupField.CHILDREN -> rebuildGroupChildren(group, editedGroup.children)
+							ParameterGroupField.LABEL_COLOR -> {
+								// CMO3: CParameterGroup field labelColor - Cubism Label Color (exportable).
+								group.labelColor = Cmo3SkeletonBuilder.cLabelColorOf(editedGroup.labelColor)
+								editor.ensureChildSlot(group, "CParameterGroup", "labelColor")
+							}
 						}
 					}
 				}

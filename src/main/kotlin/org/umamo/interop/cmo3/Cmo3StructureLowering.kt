@@ -192,7 +192,7 @@ internal class Cmo3StructureLowering(
 				// CMO3: CParameterGroup fields description / labelColor - present on every corpus
 				// group, never null.
 				description = ""
-				labelColor = Cmo3SkeletonBuilder.undefinedLabelColor()
+				labelColor = Cmo3SkeletonBuilder.cLabelColorOf(editedGroup.labelColor)
 				folderIsOpened = editedGroup.initiallyOpen
 				_childGuids = CArrayList<Any?>()
 				parentGroupGuid = index.rootParameterGroup?.guid

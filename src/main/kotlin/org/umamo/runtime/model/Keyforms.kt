@@ -81,13 +81,44 @@ sealed interface ParameterNode {
 	 * @property String           name          The group's display label (user data - never localised).
 	 * @property Boolean          initiallyOpen The editor's saved expanded state (CMO3 folderIsOpened).
 	 * @property List             children      The ordered child nodes (parameters and/or nested groups).
+	 * @property ParameterLabelColor labelColor Cubism CParameterGroup.labelColor (exportable CMO3 tag).
 	 */
 	data class Group(
 		val id: ParameterGroupId,
 		val name: String,
 		val initiallyOpen: Boolean,
 		val children: List<ParameterNode>,
+		val labelColor: ParameterLabelColor = ParameterLabelColor.None,
 	) : ParameterNode
+}
+
+/**
+ * Cubism parameter-folder / hierarchy label color (CMO3 `CLabelColor` + `CLabelColorType`).
+ * Presets match the editor's Label Color menu; [Custom] stores an opaque ARGB int.
+ */
+sealed interface ParameterLabelColor {
+	data object None : ParameterLabelColor
+
+	data class Preset(val kind: Kind) : ParameterLabelColor {
+		enum class Kind(val cmo3Name: String, val swatchArgb: Int) {
+			RED("RED", 0xFFFFB3B3.toInt()),
+			ORANGE("ORANGE", 0xFFFFD0A0.toInt()),
+			YELLOW("YELLOW", 0xFFFFF0A0.toInt()),
+			GREEN("GREEN", 0xFFB8E6B8.toInt()),
+			BLUE("BLUE", 0xFFB3D4FF.toInt()),
+			PURPLE("PURPLE", 0xFFD9C2F0.toInt()),
+		}
+	}
+
+	/** Opaque ARGB (alpha typically 0xFF); matches CMO3 `customizedColorInt` when type is CUSTOM. */
+	data class Custom(val argb: Int) : ParameterLabelColor
+
+	/** Display tint for UI (preset swatch or custom). Null means no tint. */
+	fun displayArgb(): Int? = when (this) {
+		None -> null
+		is Preset -> kind.swatchArgb
+		is Custom -> argb or 0xFF000000.toInt()
+	}
 }
 
 /**
