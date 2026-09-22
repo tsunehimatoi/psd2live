@@ -73,7 +73,6 @@ import io.github.psd2live.ui.localizedName
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.state.InspectorTab
-import io.github.psd2live.ui.state.WorkspaceTabKind
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
 import io.github.psd2live.ui.tutorial.TutorialTargetId

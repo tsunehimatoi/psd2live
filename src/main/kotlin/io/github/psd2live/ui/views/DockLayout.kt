@@ -59,12 +59,11 @@ internal fun dockModule(root: DockNode?, module: String, target: String?, side: 
     return if (found) result else DockNode(first = clean, second = leaf, ratio = .75f)
 }
 
-internal fun defaultDockLayout(history: Boolean): DockNode {
-    val main = DockNode(modules = listOf(if (history) "history" else "canvas"))
-    val canvasAndLog = DockNode(horizontal = false, ratio = .72f, first = main,
+internal fun defaultDockLayout(): DockNode {
+    val canvasAndLog = DockNode(horizontal = false, ratio = .72f,
+        first = DockNode(modules = listOf("canvas")),
         second = DockNode(modules = listOf("log")))
-    val workspace = if (history) canvasAndLog else DockNode(ratio = .28f,
-        first = DockNode(modules = listOf("hierarchy")), second = canvasAndLog)
+    val workspace = DockNode(ratio = .28f, first = DockNode(modules = listOf("hierarchy")), second = canvasAndLog)
     return DockNode(ratio = .60f, first = workspace,
         second = DockNode(horizontal = false, ratio = .32f,
             first = DockNode(modules = listOf("settings")),

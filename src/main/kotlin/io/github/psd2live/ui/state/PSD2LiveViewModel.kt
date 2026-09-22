@@ -510,7 +510,7 @@ class PSD2LiveViewModel : AutoCloseable {
         val history = _state.value.historySnapshot ?: return
         val children = history.nodes.filter { it.parentId == history.headNodeId }
         if (children.size == 1) checkoutHistoryNode(children.single().id)
-        else openHistoryTab()
+        else showHistoryModule()
     }
     fun setHistoryView(zoom: Float, x: Float, y: Float, search: String, showHidden: Boolean) {
         _state.update { if (it.historyZoom == zoom && it.historyPanX == x && it.historyPanY == y && it.historySearch == search && it.historyShowHidden == showHidden) it
@@ -518,18 +518,20 @@ class PSD2LiveViewModel : AutoCloseable {
     }
     fun setHierarchyView(width: Float = _state.value.hierarchyWidth, collapsed: Boolean = _state.value.hierarchyCollapsed, search: String = _state.value.hierarchySearch) {
         val clampedWidth = width.coerceIn(100f, 600f)
-        _state.update {
-            val layoutChanged = it.hierarchyWidth != clampedWidth || it.hierarchyCollapsed != collapsed
-            val searchChanged = it.hierarchySearch != search
-            if (!layoutChanged && !searchChanged) it
-            else it.copy(
+        _state.update { current ->
+            val hidden = current.activeWorkspace.hiddenModules.toMutableSet().apply {
+                if (collapsed) add("hierarchy") else remove("hierarchy")
+            }
+            val layoutChanged = current.hierarchyWidth != clampedWidth || current.activeWorkspace.hiddenModules != hidden
+            val searchChanged = current.hierarchySearch != search
+            if (!layoutChanged && !searchChanged) current
+            else current.copy(
                 hierarchyWidth = clampedWidth,
-                hierarchyCollapsed = collapsed,
                 hierarchySearch = search,
                 // Search is a transient filter — do not dirty the project or bump edit version.
-                projectDirty = if (layoutChanged && it.analysis != null) true else it.projectDirty,
-                projectEditVersion = if (layoutChanged) it.projectEditVersion + 1 else it.projectEditVersion,
-            )
+                projectDirty = if (layoutChanged && current.analysis != null) true else current.projectDirty,
+                projectEditVersion = if (layoutChanged) current.projectEditVersion + 1 else current.projectEditVersion,
+            ).updateActiveWorkspace { it.copy(hiddenModules = hidden) }
         }
     }
 
@@ -570,9 +572,13 @@ class PSD2LiveViewModel : AutoCloseable {
     }
 
     fun setInspectorCollapsed(collapsed: Boolean) {
-        _state.update {
-            if (it.inspectorCollapsed == collapsed) it
-            else it.copy(inspectorCollapsed = collapsed, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1)
+        _state.update { current ->
+            val hidden = current.activeWorkspace.hiddenModules.toMutableSet().apply {
+                if (collapsed) addAll(INSPECTOR_DOCK_MODULES) else removeAll(INSPECTOR_DOCK_MODULES)
+            }
+            if (current.activeWorkspace.hiddenModules == hidden) current
+            else current.updateActiveWorkspace { it.copy(hiddenModules = hidden) }
+                .copy(projectDirty = current.analysis != null, projectEditVersion = current.projectEditVersion + 1)
         }
     }
 
@@ -592,10 +598,17 @@ class PSD2LiveViewModel : AutoCloseable {
             else it.copy(workspaceSplitRatio = next, projectDirty = it.analysis != null, projectEditVersion = it.projectEditVersion + 1)
         }
     }
-    fun setCanvasView(zoom: Float, x: Float, y: Float) {
+    fun setCanvasView(zoom: Float, x: Float, y: Float, canvasId: String = _state.value.activeCanvas.id) {
         _state.update { current ->
-            current.updateActiveTab { tab -> tab.copy(camera = TabCamera(zoom, x, y)) }
-                .copy(projectDirty = current.analysis != null, projectEditVersion = current.projectEditVersion + 1)
+            if (current.activeWorkspace.canvases.none { it.id == canvasId }) current
+            else current.updateActiveWorkspace { workspace ->
+                workspace.copy(
+                    activeCanvasId = canvasId,
+                    canvases = workspace.canvases.map { canvas ->
+                        if (canvas.id == canvasId) canvas.copy(camera = TabCamera(zoom, x, y)) else canvas
+                    },
+                )
+            }.copy(projectDirty = current.analysis != null, projectEditVersion = current.projectEditVersion + 1)
         }
     }
 
@@ -642,7 +655,7 @@ class PSD2LiveViewModel : AutoCloseable {
 	private var sdkSessionNeedsReload = false
 
 	private fun refreshSdkSession(preview: RigPreviewModel) {
-		if (_state.value.activeTabKind == WorkspaceTabKind.PREVIEW) {
+		if (_state.value.previewLive) {
 			sdkSession.load(preview.runtimeBundle, preview.rig.puppet.parameters.map { it.id })
 			sdkSessionNeedsReload = false
 		} else {
@@ -1451,125 +1464,288 @@ class PSD2LiveViewModel : AutoCloseable {
 	}
 
 
-	fun setActiveTab(id: String) {
+	fun setActiveWorkspace(id: String) {
         if (_state.value.canvasEditBusy) return
 		var changed = false
 		_state.update { current ->
-			if (current.activeWorkspaceTabId == id || current.workspaceTabs.none { it.id == id }) current
+			val target = current.workspaces.firstOrNull { it.id == id } ?: return@update current
+			if (current.activeWorkspaceId == id) current
 			else {
 				changed = true
-				val target = current.workspaceTabs.firstOrNull { it.id == id }
-				if (target?.kind != WorkspaceTabKind.PREVIEW) {
+				if (target.canvases.none { it.mode == CanvasMode.PREVIEW && it.id !in target.hiddenModules }) {
 					pointerActive = false
 					activeSoftwareMotionName = null
 				}
-				current.copy(activeWorkspaceTabId = id)
+				val (hierarchy, log, inspector) = target.panelFlags()
+				current.copy(
+					activeWorkspaceId = id,
+					hierarchyCollapsed = hierarchy,
+					logPanelExpanded = log,
+					inspectorCollapsed = inspector,
+				)
 			}
 		}
 		if (changed) {
 			markWorkspaceChanged()
-			if (_state.value.activeTabKind == WorkspaceTabKind.PREVIEW) {
-				ensureSdkSessionLoaded()
-			}
+			if (_state.value.previewLive) ensureSdkSessionLoaded()
 		}
 	}
 
-	/** Adds a tab after the last one of the same kind; [sourceTabId] duplicates that tab's view and camera. */
-	fun addTab(kind: WorkspaceTabKind, sourceTabId: String? = null): String {
+	/** A new workspace starts from the default arrangement and one edit canvas. */
+	fun addWorkspace(): String {
 		val current = _state.value
-		val source = sourceTabId?.let { id -> current.workspaceTabs.firstOrNull { it.id == id } }
-		val ordinal = (current.workspaceTabs.filter { it.kind == kind }.maxOfOrNull { it.ordinal } ?: 0) + 1
-		val tab = WorkspaceTabState(
+		val ordinal = current.workspaces.size + 1
+		val workspace = defaultEditorWorkspace().copy(
 			id = java.util.UUID.randomUUID().toString(),
-			kind = kind,
-			ordinal = ordinal,
-			pinned = false,
-			view = source?.view ?: kind.defaultViewOptions(),
-			camera = source?.camera ?: TabCamera(),
+			name = tr("workspace.numbered", ordinal),
 		)
-		_state.update { it.copy(workspaceTabs = it.workspaceTabs + tab, activeWorkspaceTabId = tab.id) }
+		_state.update { it.copy(workspaces = it.workspaces + workspace, activeWorkspaceId = workspace.id) }
 		markWorkspaceChanged()
-		if (kind == WorkspaceTabKind.PREVIEW) {
-			ensureSdkSessionLoaded()
-		}
-		return tab.id
+		return workspace.id
 	}
 
-	fun duplicateActiveTab(): String = duplicateTab(_state.value.activeWorkspaceTab.id)
-
-	/** Duplicates [id]'s kind, view options and camera into a new closable tab. */
-	fun duplicateTab(id: String): String {
-		val source = _state.value.workspaceTabs.firstOrNull { it.id == id } ?: return addTab(_state.value.activeTabKind)
-		// History is a singleton: its zoom, pan and search live in shared state, so a second history
-		// tab could never show anything the first one does not. Duplicating just brings it forward.
-		if (source.kind == WorkspaceTabKind.HISTORY) {
-			setActiveTab(source.id)
-			return source.id
-		}
-		return addTab(source.kind, source.id)
+	/** Copies layout, panel visibility and canvases into a new workspace. */
+	fun duplicateWorkspace(id: String = _state.value.activeWorkspace.id): String {
+		val source = _state.value.workspaces.firstOrNull { it.id == id } ?: return addWorkspace()
+		val workspace = source.copy(
+			id = java.util.UUID.randomUUID().toString(),
+			name = tr("workspace.copy", source.displayName()),
+			placeModules = emptyList(),
+		)
+		_state.update { it.copy(workspaces = it.workspaces + workspace, activeWorkspaceId = workspace.id) }
+		markWorkspaceChanged()
+		return workspace.id
 	}
 
-	fun closeTab(id: String) {
+	fun closeWorkspace(id: String) {
 		val current = _state.value
-		val tab = current.workspaceTabs.firstOrNull { it.id == id } ?: return
-		if (tab.pinned) {
-			_state.update { it.copy(statusText = tr("status.tabPinned")) }
+		val workspace = current.workspaces.firstOrNull { it.id == id } ?: return
+		if (current.workspaces.size <= 1) {
+			_state.update { it.copy(statusText = tr("status.workspaceLast")) }
 			return
 		}
-		val remaining = current.workspaceTabs.filterNot { it.id == id }
-		val nextActive = if (current.activeWorkspaceTabId != id) current.activeWorkspaceTabId else {
-			val index = current.workspaceTabs.indexOf(tab)
-			(remaining.getOrNull(index - 1) ?: remaining.getOrNull(index) ?: remaining.firstOrNull())?.id
-				?: PINNED_EDIT_TAB_ID
+		val remaining = current.workspaces.filterNot { it.id == id }
+		val next = if (current.activeWorkspaceId != id) remaining.first { it.id == current.activeWorkspaceId } else {
+			val index = current.workspaces.indexOf(workspace)
+			remaining.getOrNull(index - 1) ?: remaining.getOrNull(index) ?: remaining.first()
 		}
+		val (hierarchy, log, inspector) = next.panelFlags()
 		_state.update {
 			it.copy(
-				workspaceTabs = remaining,
-				activeWorkspaceTabId = nextActive,
-				statusText = tr("status.tabClosed", tabTitle(tab)),
+				workspaces = remaining,
+				activeWorkspaceId = next.id,
+				hierarchyCollapsed = hierarchy,
+				logPanelExpanded = log,
+				inspectorCollapsed = inspector,
+				statusText = tr("status.workspaceClosed", workspace.displayName()),
 			)
 		}
 		markWorkspaceChanged()
-		if (_state.value.activeTabKind == WorkspaceTabKind.PREVIEW) {
-			ensureSdkSessionLoaded()
+		if (_state.value.previewLive) ensureSdkSessionLoaded()
+		else {
+			pointerActive = false
+			activeSoftwareMotionName = null
 		}
 	}
 
-	/** Activates the existing history tab, or creates one when the workspace has none. */
-	fun openHistoryTab() {
-		val existing = _state.value.workspaceTabs.firstOrNull { it.kind == WorkspaceTabKind.HISTORY }
-		if (existing != null) {
-			setActiveTab(existing.id)
-		} else {
-			addTab(WorkspaceTabKind.HISTORY)
-		}
-	}
-
-	fun cycleTab(delta: Int) {
-		val tabs = _state.value.workspaceTabs
-		if (tabs.size < 2) return
-		val index = tabs.indexOfFirst { it.id == _state.value.activeWorkspaceTabId }.coerceAtLeast(0)
-		val next = ((index + delta) % tabs.size + tabs.size) % tabs.size
-		setActiveTab(tabs[next].id)
-	}
-
-	fun activateTabByIndex(index: Int) {
-		_state.value.workspaceTabs.getOrNull(index)?.let { setActiveTab(it.id) }
-	}
-
-	/** Applies the View menu / tab-strip toggles to the active tab. */
-	fun setTabViewOptions(options: TabViewOptions) {
-		val normalized = options.normalized()
+	fun renameWorkspace(id: String, name: String) {
+		val trimmed = name.trim()
 		var changed = false
 		_state.update { current ->
-			if (current.activeTabView == normalized) current
+			val target = current.workspaces.firstOrNull { it.id == id } ?: return@update current
+			if (target.name == trimmed) current
 			else {
 				changed = true
-				current.updateActiveTab { tab -> tab.copy(view = normalized) }
+				current.updateWorkspace(id) { it.copy(name = trimmed) }
 			}
 		}
 		if (changed) markWorkspaceChanged()
 	}
+
+	fun cycleWorkspace(delta: Int) {
+		val workspaces = _state.value.workspaces
+		if (workspaces.size < 2) return
+		val index = workspaces.indexOfFirst { it.id == _state.value.activeWorkspaceId }.coerceAtLeast(0)
+		val next = ((index + delta) % workspaces.size + workspaces.size) % workspaces.size
+		setActiveWorkspace(workspaces[next].id)
+	}
+
+	fun activateWorkspaceByIndex(index: Int) {
+		_state.value.workspaces.getOrNull(index)?.let { setActiveWorkspace(it.id) }
+	}
+
+	fun focusCanvas(canvasId: String) {
+		_state.update { current ->
+			val workspace = current.activeWorkspace
+			if (workspace.activeCanvasId == canvasId || workspace.canvases.none { it.id == canvasId }) current
+			else current.updateActiveWorkspace { it.copy(activeCanvasId = canvasId) }
+		}
+	}
+
+	fun setCanvasMode(canvasId: String, mode: CanvasMode) {
+		var changed = false
+		_state.update { current ->
+			val canvas = current.activeWorkspace.canvases.firstOrNull { it.id == canvasId } ?: return@update current
+			if (canvas.mode == mode) current.updateActiveWorkspace { it.copy(activeCanvasId = canvasId) }
+			else {
+				changed = true
+				current.updateActiveWorkspace { workspace ->
+					workspace.copy(
+						activeCanvasId = canvasId,
+						canvases = workspace.canvases.map { pane ->
+							if (pane.id == canvasId) pane.copy(mode = mode) else pane
+						},
+					)
+				}
+			}
+		}
+		if (changed) markWorkspaceChanged()
+		if (mode == CanvasMode.PREVIEW) ensureSdkSessionLoaded()
+		if (!_state.value.previewLive) {
+			pointerActive = false
+			activeSoftwareMotionName = null
+		}
+	}
+
+	/** Docks another canvas. [focus] makes it the one zoom shortcuts and the editor follow. */
+	fun addCanvas(mode: CanvasMode, focus: Boolean = true): String {
+		val id = "canvas:${java.util.UUID.randomUUID()}"
+		val pane = CanvasWindowState(id = id, mode = mode, view = mode.defaultViewOptions())
+		_state.update { current ->
+			current.updateActiveWorkspace { workspace ->
+				workspace.copy(
+					canvases = workspace.canvases + pane,
+					activeCanvasId = if (focus) id else workspace.activeCanvasId,
+				)
+			}
+		}
+		markWorkspaceChanged()
+		if (mode == CanvasMode.PREVIEW) ensureSdkSessionLoaded()
+		return id
+	}
+
+	fun closeCanvas(canvasId: String) {
+		val current = _state.value
+		val workspace = current.activeWorkspace
+		if (workspace.canvases.none { it.id == canvasId }) return
+		if (workspace.canvases.size <= 1) {
+			_state.update { it.copy(statusText = tr("status.canvasLast")) }
+			return
+		}
+		_state.update { state ->
+			state.updateActiveWorkspace { ws ->
+				val remaining = ws.canvases.filterNot { it.id == canvasId }
+				ws.copy(
+					canvases = remaining,
+					activeCanvasId = if (ws.activeCanvasId == canvasId) remaining.first().id else ws.activeCanvasId,
+					hiddenModules = ws.hiddenModules - canvasId,
+				)
+			}
+		}
+		markWorkspaceChanged()
+		if (!_state.value.previewLive) {
+			pointerActive = false
+			activeSoftwareMotionName = null
+		}
+	}
+
+	/**
+	 * Shows or hides one dock module in the active workspace.
+	 * Showing a module that is not in the layout asks the dock to place it.
+	 */
+	fun setModuleVisible(module: String, visible: Boolean) {
+		_state.update { current ->
+			current.updateActiveWorkspace { workspace ->
+				val hidden = if (visible) workspace.hiddenModules - module else workspace.hiddenModules + module
+				val place = if (visible) (workspace.placeModules + module).distinct() else workspace.placeModules
+				workspace.copy(hiddenModules = hidden, placeModules = place)
+			}
+		}
+		markWorkspaceChanged()
+		if (isCanvasModule(module) && !_state.value.previewLive) {
+			pointerActive = false
+			activeSoftwareMotionName = null
+		}
+	}
+
+	fun showHistoryModule() = setModuleVisible("history", true)
+
+	fun setPlaceModules(modules: List<String>) {
+		_state.update { current ->
+			if (current.activeWorkspace.placeModules == modules) current
+			else current.updateActiveWorkspace { it.copy(placeModules = modules) }
+		}
+	}
+
+	/** Remembers the dock tree. Called on a debounce from the dock, so it does not bump the edit version twice per pixel. */
+	fun setWorkspaceLayout(workspaceId: String, layoutJson: String) {
+		var changed = false
+		_state.update { current ->
+			val workspace = current.workspaces.firstOrNull { it.id == workspaceId } ?: return@update current
+			if (workspace.layoutJson == layoutJson) current
+			else {
+				changed = true
+				current.updateWorkspace(workspaceId) { it.copy(layoutJson = layoutJson) }
+			}
+		}
+		if (changed) markWorkspaceChanged()
+	}
+
+	fun resetWorkspaceArrangement() {
+		_state.update { current ->
+			current.updateActiveWorkspace { it.copy(layoutJson = null, placeModules = emptyList(), hiddenModules = emptySet()) }
+		}
+		markWorkspaceChanged()
+	}
+
+	/** Focuses an edit canvas, creating the mode on the active canvas when none exists. */
+	fun ensureEditCanvas() {
+		val workspace = _state.value.activeWorkspace
+		val existing = workspace.canvases.firstOrNull { it.mode == CanvasMode.EDIT }
+		if (existing != null) {
+			if (existing.id in workspace.hiddenModules) setModuleVisible(existing.id, true)
+			focusCanvas(existing.id)
+		} else {
+			setCanvasMode(workspace.activeCanvas.id, CanvasMode.EDIT)
+		}
+	}
+
+	/** Makes sure a preview canvas is on screen. [focus] selects it. */
+	fun ensurePreviewCanvas(focus: Boolean = false) {
+		val workspace = _state.value.activeWorkspace
+		val existing = workspace.canvases.firstOrNull { it.mode == CanvasMode.PREVIEW }
+		if (existing != null) {
+			if (existing.id in workspace.hiddenModules) setModuleVisible(existing.id, true)
+			if (focus) focusCanvas(existing.id)
+			ensureSdkSessionLoaded()
+		} else {
+			addCanvas(CanvasMode.PREVIEW, focus = focus)
+		}
+	}
+
+	fun canvasTitle(canvas: CanvasWindowState, workspace: EditorWorkspace = _state.value.activeWorkspace): String {
+		val index = workspace.canvases.indexOfFirst { it.id == canvas.id }
+		val mode = tr(if (canvas.mode == CanvasMode.EDIT) "tab.edit" else "tab.preview")
+		val base = tr("dock.canvas")
+		return if (workspace.canvases.size > 1 && index >= 0) "$base ${index + 1} · $mode" else "$base · $mode"
+	}
+
+	/** Applies view toggles to one canvas. Defaults to the canvas the editor is following. */
+	fun setCanvasViewOptions(canvasId: String = _state.value.activeCanvas.id, options: TabViewOptions) {
+		val normalized = options.normalized()
+		var changed = false
+		_state.update { current ->
+			val canvas = current.activeWorkspace.canvases.firstOrNull { it.id == canvasId } ?: return@update current
+			if (canvas.view == normalized) current
+			else {
+				changed = true
+				current.updateCanvas(canvasId) { it.copy(view = normalized) }
+			}
+		}
+		if (changed) markWorkspaceChanged()
+	}
+
+	fun setTabViewOptions(options: TabViewOptions) = setCanvasViewOptions(options = options)
 
 	/**
 	 * Seeds display toggles when entering a hierarchy mode. Presets differ by mode; afterwards the
@@ -1581,29 +1757,19 @@ class PSD2LiveViewModel : AutoCloseable {
 		if (next != current) setTabViewOptions(next)
 	}
 
-	/** Restores the active tab's canvas options to the defaults for its kind. */
-	fun resetActiveTabViewOptions() {
-		val id = _state.value.activeWorkspaceTab.id
+	/** Restores one canvas's display options to the defaults for its mode. */
+	fun resetCanvasViewOptions(canvasId: String = _state.value.activeCanvas.id) {
 		var changed = false
 		_state.update { current ->
-			val target = current.workspaceTabs.firstOrNull { it.id == id } ?: return@update current
-			val defaults = target.kind.defaultViewOptions()
-			if (target.view == defaults) current
+			val canvas = current.activeWorkspace.canvases.firstOrNull { it.id == canvasId } ?: return@update current
+			val defaults = canvas.mode.defaultViewOptions()
+			if (canvas.view == defaults) current
 			else {
 				changed = true
-				current.updateTab(id) { tab -> tab.copy(view = defaults) }
+				current.updateCanvas(canvasId) { it.copy(view = defaults) }
 			}
 		}
 		if (changed) markWorkspaceChanged()
-	}
-
-	/** Display title of a tab: localized kind name plus its creation ordinal for added tabs. */
-	fun tabTitle(tab: WorkspaceTabState): String = tr(tabTitleKey(tab.kind)) + if (tab.ordinal > 1) " ${tab.ordinal}" else ""
-
-	private fun tabTitleKey(kind: WorkspaceTabKind): String = when (kind) {
-		WorkspaceTabKind.EDIT -> "tab.edit"
-		WorkspaceTabKind.PREVIEW -> "tab.preview"
-		WorkspaceTabKind.HISTORY -> "tab.history"
 	}
 
 	fun addLog(
@@ -1656,9 +1822,12 @@ class PSD2LiveViewModel : AutoCloseable {
 	}
 
 	fun setLogPanelExpanded(expanded: Boolean) {
-		_state.update {
-			if (it.logPanelExpanded == expanded) it
-			else it.copy(logPanelExpanded = expanded)
+		_state.update { current ->
+			val hidden = current.activeWorkspace.hiddenModules.toMutableSet().apply {
+				if (expanded) remove("log") else add("log")
+			}
+			if (current.activeWorkspace.hiddenModules == hidden) current
+			else current.updateActiveWorkspace { it.copy(hiddenModules = hidden) }
 		}
 	    markWorkspaceChanged()
 	}
@@ -1736,16 +1905,8 @@ class PSD2LiveViewModel : AutoCloseable {
 	}
 
 	fun setAnimationEnabled(enabled: Boolean) {
-		_state.update { current ->
-			var nextState = current.copy(animationEnabled = enabled)
-			if (enabled && current.activeTabKind != WorkspaceTabKind.PREVIEW) {
-				val previewTab = current.workspaceTabs.firstOrNull { it.kind == WorkspaceTabKind.PREVIEW }
-				if (previewTab != null) {
-					nextState = nextState.copy(activeWorkspaceTabId = previewTab.id)
-				}
-			}
-			nextState
-		}
+		_state.update { it.copy(animationEnabled = enabled) }
+		if (enabled) ensurePreviewCanvas(focus = false)
 		lastTick = System.nanoTime()
 	    markWorkspaceChanged()
 	}
@@ -2527,8 +2688,8 @@ class PSD2LiveViewModel : AutoCloseable {
                         projectFile = null, projectDirty = true, showProjectLocationDialog = false, isAnalyzing = true,
                         layerVisibility = emptyMap(), layerOverrides = emptyMap(), deletedLayerIds = emptySet(), parentOverrides = emptyMap(), rigEdits = RigEditOverlay.Empty,
                         selectedLayerId = null, selectedDeformerId = null, isolatedLayerId = null, isolationSnapshot = null,
-                        workspaceTabs = current.workspaceTabs.map { tab ->
-                            if (tab.kind.canvasMode != null) tab.copy(camera = TabCamera()) else tab
+                        workspaces = current.workspaces.map { workspace ->
+                            workspace.copy(canvases = workspace.canvases.map { it.copy(camera = TabCamera()) })
                         },
                         historySnapshot = null, historyAnnotations = emptyMap(),
                         projectOpenGeneration = current.projectOpenGeneration + 1,
@@ -3005,16 +3166,8 @@ class PSD2LiveViewModel : AutoCloseable {
 	val activeMotionName: String? get() = activeSoftwareMotionName
 
 	fun triggerMotion(group: String) {
-		_state.update { current ->
-			var nextState = current.copy(animationEnabled = true)
-			if (current.activeTabKind != WorkspaceTabKind.PREVIEW) {
-				val previewTab = current.workspaceTabs.firstOrNull { it.kind == WorkspaceTabKind.PREVIEW }
-				if (previewTab != null) {
-					nextState = nextState.copy(activeWorkspaceTabId = previewTab.id)
-				}
-			}
-			nextState
-		}
+		_state.update { it.copy(animationEnabled = true) }
+		ensurePreviewCanvas(focus = true)
 		ensureSdkSessionLoaded()
 		sdkSession.startMotion(group, index = 0, priority = 3)
 		when (group.lowercase()) {
@@ -3047,7 +3200,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				lastTick = now
 
 				val current = _state.value
-				val inPreview = current.activeTabKind == WorkspaceTabKind.PREVIEW
+				val inPreview = current.previewLive
 				val isMeshOnly = current.meshOnly
 				val anim = inPreview && current.animationEnabled && !isMeshOnly
 				val tracking = inPreview && current.mouseTrackingEnabled && !isMeshOnly
@@ -3193,7 +3346,7 @@ class PSD2LiveViewModel : AutoCloseable {
 					latestLiveParameters = liveParams
 					if (current.sdkStatus != "ready") {
 						_state.update { latest ->
-							if (latest.activeTabKind != WorkspaceTabKind.PREVIEW) latest
+							if (!latest.previewLive) latest
 							else {
 								val mergedValues = parameterValuesAfterSoftwareFrame(latest, liveParams, pointerActive)
 								if (mergedValues === latest.previewParameterValues) latest
@@ -3280,7 +3433,7 @@ class PSD2LiveViewModel : AutoCloseable {
 	) {
 		val current = _state.value
 		val model = current.previewModel ?: return
-		val inPreview = current.activeTabKind == WorkspaceTabKind.PREVIEW
+		val inPreview = current.previewLive
 		if (inPreview && sdkSessionNeedsReload) {
 			ensureSdkSessionLoaded()
 		}
@@ -3354,7 +3507,7 @@ internal fun parameterValuesForPreview(
 	state: PSD2LiveState,
 	liveParams: Map<ParameterId, Float> = emptyMap(),
 ): Map<ParameterId, Float> {
-	if (!state.animationEnabled || state.activeTabKind != WorkspaceTabKind.PREVIEW) {
+	if (!state.animationEnabled || !state.previewLive) {
 		return state.parameterValues
 	}
 	if (state.meshOnly) {
@@ -3484,5 +3637,5 @@ internal fun parameterValuesAfterSoftwareFrame(
 internal fun previewFrameMatchesState(
 	state: PSD2LiveState,
 	frameAnimationEnabled: Boolean,
-): Boolean = (state.activeTabKind == WorkspaceTabKind.PREVIEW) &&
+): Boolean = state.previewLive &&
 	(frameAnimationEnabled == (state.animationEnabled && !state.meshOnly))

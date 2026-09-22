@@ -2,7 +2,7 @@ package io.github.psd2live.ui.tutorial
 
 import io.github.psd2live.ui.EditHierarchyMode
 import io.github.psd2live.ui.state.PSD2LiveState
-import io.github.psd2live.ui.state.WorkspaceTabKind
+import io.github.psd2live.ui.state.CanvasMode
 
 enum class TutorialId {
 	BASIC,
@@ -173,9 +173,9 @@ fun TutorialStep.isComplete(
 	TutorialCompletion.MANUAL -> false
 	TutorialCompletion.OPEN_FILE_MENU -> tutorial.titleBarMenuOpen == "file"
 	TutorialCompletion.HAS_PREVIEW_MODEL -> appState.previewModel != null
-	TutorialCompletion.PREVIEW_TAB -> appState.activeTabKind == WorkspaceTabKind.PREVIEW
-	TutorialCompletion.EDIT_TAB -> appState.activeTabKind == WorkspaceTabKind.EDIT
-	TutorialCompletion.HISTORY_TAB -> appState.activeTabKind == WorkspaceTabKind.HISTORY
+	TutorialCompletion.PREVIEW_TAB -> appState.activeCanvas.mode == CanvasMode.PREVIEW
+	TutorialCompletion.EDIT_TAB -> appState.activeCanvas.mode == CanvasMode.EDIT
+	TutorialCompletion.HISTORY_TAB -> appState.historyPanelShown
 	TutorialCompletion.EXPORT_DIALOG -> appState.showExportDialog
 }
 

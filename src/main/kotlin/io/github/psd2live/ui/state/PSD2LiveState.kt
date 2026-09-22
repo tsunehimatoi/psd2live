@@ -11,17 +11,11 @@ import io.github.psd2live.core.RigPreviewModel
 import io.github.psd2live.core.RigEditOverlay
 import io.github.psd2live.i18n.AppLanguage
 import io.github.psd2live.i18n.I18n
+import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.EditHierarchyMode
 import org.umamo.runtime.model.ParameterId
 
 import io.github.psd2live.agent.AgentHistorySnapshot
-
-/** Kind of a workspace tab; only [EDIT] and [PREVIEW] render the canvas. */
-enum class WorkspaceTabKind {
-	EDIT,
-	PREVIEW,
-	HISTORY,
-}
 
 /** Canvas rendering mode; [EDIT] shows rig geometry for editing, [PREVIEW] runs the animation. */
 enum class CanvasMode {
@@ -29,20 +23,30 @@ enum class CanvasMode {
 	PREVIEW,
 }
 
-val WorkspaceTabKind.canvasMode: CanvasMode?
-	get() = when (this) {
-		WorkspaceTabKind.EDIT -> CanvasMode.EDIT
-		WorkspaceTabKind.PREVIEW -> CanvasMode.PREVIEW
-		WorkspaceTabKind.HISTORY -> null
-	}
+/** Dock module id of the first canvas. Extra canvases use `canvas:<uuid>`. */
+internal const val PRIMARY_CANVAS_ID = "canvas"
+
+internal const val DEFAULT_WORKSPACE_ID = "workspace"
+
+/** Right-hand dock modules the title-bar inspector toggle shows and hides together. */
+internal val INSPECTOR_DOCK_MODULES = setOf(
+	"settings", "layers", "parameters", "tools", "inspector", "animation", "physics",
+)
+
+/** Modules a fresh workspace layout already contains. History is added from the window menu. */
+internal val DEFAULT_DOCK_MODULES = setOf(
+	PRIMARY_CANVAS_ID, "hierarchy", "log",
+) + INSPECTOR_DOCK_MODULES
+
+fun isCanvasModule(id: String): Boolean = id == PRIMARY_CANVAS_ID || id.startsWith("canvas:")
 
 /**
- * View options a fresh tab of this kind starts with (and what "reset view options" restores).
- * The Edit tab opens with the deformer guides enabled; they fade while nothing is selected.
+ * View options a fresh canvas of this mode starts with (and what "reset view options" restores).
+ * An edit canvas opens with the deformer guides enabled; they fade while nothing is selected.
  */
-fun WorkspaceTabKind.defaultViewOptions(): TabViewOptions = when (this) {
-	WorkspaceTabKind.EDIT -> TabViewOptions.Default.copy(showWarp = true, showRotation = true)
-	WorkspaceTabKind.PREVIEW, WorkspaceTabKind.HISTORY -> TabViewOptions.Default
+fun CanvasMode.defaultViewOptions(): TabViewOptions = when (this) {
+	CanvasMode.EDIT -> TabViewOptions.Default.copy(showWarp = true, showRotation = true)
+	CanvasMode.PREVIEW -> TabViewOptions.Default
 }
 
 /**
@@ -94,7 +98,7 @@ data class TabViewOptions(
 	}
 }
 
-/** Per-tab canvas camera, so duplicated tabs can keep their own zoom and pan. */
+/** Per-canvas camera, so two canvases in one workspace can keep their own zoom and pan. */
 @Immutable
 data class TabCamera(
 	val zoom: Float = 1f,
@@ -102,41 +106,55 @@ data class TabCamera(
 	val panY: Float = 0f,
 )
 
-/** One browser-style workspace tab. Pinned tabs (Edit / Preview) cannot be closed. */
+/** One canvas pane. Several can sit in the same workspace, each in edit or preview. */
 @Immutable
-data class WorkspaceTabState(
-	val id: String,
-	val kind: WorkspaceTabKind,
-	val ordinal: Int,
-	val pinned: Boolean = false,
+data class CanvasWindowState(
+	val id: String = PRIMARY_CANVAS_ID,
+	val mode: CanvasMode = CanvasMode.EDIT,
 	val view: TabViewOptions = TabViewOptions.Default,
 	val camera: TabCamera = TabCamera(),
 )
 
-internal const val PINNED_EDIT_TAB_ID = "edit"
-internal const val PINNED_PREVIEW_TAB_ID = "preview"
-internal const val PINNED_HISTORY_TAB_ID = "history"
+/**
+ * A named arrangement of docked panels and canvases.
+ *
+ * The project session (model, edits, parameters) is shared. A workspace only remembers where
+ * components sit, which of them are shown, and how each canvas is framed.
+ */
+@Immutable
+data class EditorWorkspace(
+	val id: String,
+	val name: String = "",
+	/** Serialized dock tree. Null means the built-in arrangement. */
+	val layoutJson: String? = null,
+	val hiddenModules: Set<String> = emptySet(),
+	/** Modules the user asked to show that are not in the layout yet. The dock consumes this list. */
+	val placeModules: List<String> = emptyList(),
+	val canvases: List<CanvasWindowState> = listOf(defaultEditCanvas()),
+	val activeCanvasId: String = canvases.firstOrNull()?.id ?: PRIMARY_CANVAS_ID,
+) {
+	val activeCanvas: CanvasWindowState
+		get() = canvases.firstOrNull { it.id == activeCanvasId }
+			?: canvases.firstOrNull()
+			?: defaultEditCanvas()
+}
 
-internal fun defaultWorkspaceTabs(): List<WorkspaceTabState> = listOf(
-	// History leads the strip and never closes: it is the one view of the project that no edit can
-	// invalidate, so it stays one click away from whichever canvas tab is in front.
-	WorkspaceTabState(id = PINNED_HISTORY_TAB_ID, kind = WorkspaceTabKind.HISTORY, ordinal = 1, pinned = true),
-	WorkspaceTabState(
-		id = PINNED_EDIT_TAB_ID,
-		kind = WorkspaceTabKind.EDIT,
-		ordinal = 1,
-		pinned = true,
-		view = WorkspaceTabKind.EDIT.defaultViewOptions(),
-	),
-	WorkspaceTabState(id = PINNED_PREVIEW_TAB_ID, kind = WorkspaceTabKind.PREVIEW, ordinal = 1, pinned = true),
+internal fun defaultEditCanvas(): CanvasWindowState = CanvasWindowState(
+	id = PRIMARY_CANVAS_ID,
+	mode = CanvasMode.EDIT,
+	view = CanvasMode.EDIT.defaultViewOptions(),
 )
 
-internal val FALLBACK_EDIT_TAB = WorkspaceTabState(
-	id = PINNED_EDIT_TAB_ID,
-	kind = WorkspaceTabKind.EDIT,
-	ordinal = 1,
-	pinned = true,
-	view = WorkspaceTabKind.EDIT.defaultViewOptions(),
+internal fun defaultEditorWorkspace(): EditorWorkspace = EditorWorkspace(id = DEFAULT_WORKSPACE_ID)
+
+/** Blank names stay localized; a name the user typed is kept as written. */
+fun EditorWorkspace.displayName(): String = name.ifBlank { tr("workspace.default") }
+
+/** Title-bar toggles projected from this workspace's hidden modules. */
+internal fun EditorWorkspace.panelFlags(): Triple<Boolean, Boolean, Boolean> = Triple(
+	"hierarchy" in hiddenModules,
+	"log" !in hiddenModules,
+	INSPECTOR_DOCK_MODULES.all { it in hiddenModules },
 )
 
 enum class LogSource {
@@ -220,8 +238,8 @@ data class PSD2LiveState(
     val inspectorCollapsed: Boolean = false,
 	/** One-shot request for DockWorkspaceView to select a dock module tab (e.g. "layers"). */
 	val requestedDockModule: String? = null,
-    val workspaceTabs: List<WorkspaceTabState> = defaultWorkspaceTabs(),
-    val activeWorkspaceTabId: String = PINNED_EDIT_TAB_ID,
+    val workspaces: List<EditorWorkspace> = listOf(defaultEditorWorkspace()),
+    val activeWorkspaceId: String = DEFAULT_WORKSPACE_ID,
     val historyAnnotations: Map<String, HistoryAnnotation> = emptyMap(),
     val inputPath: String = "",
 	/** Input identity that produced [analysis]; remains stable while the user edits the next path field. */
@@ -346,20 +364,32 @@ data class PSD2LiveState(
 	val errorMessage: String? = null,
 	val successExportMessage: String? = null,
 ) {
+	val activeWorkspace: EditorWorkspace
+		get() = workspaces.firstOrNull { it.id == activeWorkspaceId }
+			?: workspaces.firstOrNull()
+			?: defaultEditorWorkspace()
+
+	val activeCanvas: CanvasWindowState get() = activeWorkspace.activeCanvas
+
+	/** A preview canvas is shown, so playback and live parameters should keep running. */
+	val previewLive: Boolean
+		get() = activeWorkspace.canvases.any { canvas ->
+			canvas.mode == CanvasMode.PREVIEW && canvas.id !in activeWorkspace.hiddenModules
+		}
+
 	/**
-	 * The selected tab. An id that matches nothing falls back to the Edit tab -- the one the app
-	 * opens on -- and only then to the leftmost tab, so the strip's order (History leads it) never
-	 * decides which canvas the editor lands on.
+	 * History is on screen, or the user just asked for it and the dock has not written the layout yet.
 	 */
-	val activeWorkspaceTab: WorkspaceTabState
-		get() = workspaceTabs.firstOrNull { it.id == activeWorkspaceTabId }
-			?: workspaceTabs.firstOrNull { it.kind == WorkspaceTabKind.EDIT }
-			?: workspaceTabs.firstOrNull()
-			?: FALLBACK_EDIT_TAB
+	val historyPanelShown: Boolean
+		get() {
+			val workspace = activeWorkspace
+			if ("history" in workspace.hiddenModules) return false
+			if ("history" in workspace.placeModules) return true
+			val json = workspace.layoutJson ?: return false
+			return "\"history\"" in json
+		}
 
-	val activeTabKind: WorkspaceTabKind get() = activeWorkspaceTab.kind
-
-	val activeTabView: TabViewOptions get() = activeWorkspaceTab.view
+	val activeTabView: TabViewOptions get() = activeCanvas.view
 
 	val showWarp: Boolean get() = activeTabView.showWarp
 	val showRotation: Boolean get() = activeTabView.showRotation
@@ -375,16 +405,28 @@ data class PSD2LiveState(
 	val contextualWarp: Boolean get() = activeTabView.contextualWarp
 	val showSelectionBounds: Boolean get() = activeTabView.showSelectionBounds
 
-	val canvasZoom: Float get() = activeWorkspaceTab.camera.zoom
-	val canvasPanX: Float get() = activeWorkspaceTab.camera.panX
-	val canvasPanY: Float get() = activeWorkspaceTab.camera.panY
+	val canvasZoom: Float get() = activeCanvas.camera.zoom
+	val canvasPanX: Float get() = activeCanvas.camera.panX
+	val canvasPanY: Float get() = activeCanvas.camera.panY
 
-	/** Replaces one tab in place, preserving order and the active tab. */
-	fun updateTab(id: String, transform: (WorkspaceTabState) -> WorkspaceTabState): PSD2LiveState =
-		copy(workspaceTabs = workspaceTabs.map { if (it.id == id) transform(it) else it })
+	fun updateWorkspace(id: String, transform: (EditorWorkspace) -> EditorWorkspace): PSD2LiveState {
+		val next = copy(workspaces = workspaces.map { if (it.id == id) transform(it) else it })
+		if (id != next.activeWorkspaceId) return next
+		val (hierarchy, log, inspector) = next.activeWorkspace.panelFlags()
+		return next.copy(
+			hierarchyCollapsed = hierarchy,
+			logPanelExpanded = log,
+			inspectorCollapsed = inspector,
+		)
+	}
 
-	fun updateActiveTab(transform: (WorkspaceTabState) -> WorkspaceTabState): PSD2LiveState =
-		updateTab(activeWorkspaceTab.id, transform)
+	fun updateActiveWorkspace(transform: (EditorWorkspace) -> EditorWorkspace): PSD2LiveState =
+		updateWorkspace(activeWorkspace.id, transform)
+
+	fun updateCanvas(canvasId: String, transform: (CanvasWindowState) -> CanvasWindowState): PSD2LiveState =
+		updateActiveWorkspace { workspace ->
+			workspace.copy(canvases = workspace.canvases.map { if (it.id == canvasId) transform(it) else it })
+		}
 
 	fun buildConfig(): PipelineConfig {
 		val hasAnyMotion = motionIdle || motionBlink || motionNod || motionShake

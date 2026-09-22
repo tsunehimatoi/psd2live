@@ -47,7 +47,6 @@ import io.github.psd2live.ui.components.IconPlay
 import io.github.psd2live.ui.components.IconReset
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
-import io.github.psd2live.ui.state.WorkspaceTabKind
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
 
@@ -159,14 +158,10 @@ private fun MasterPlaybackCard(
 					label = tr("animation.mouseTracking"),
 				)
 
-				val inPreview = state.activeTabKind == WorkspaceTabKind.PREVIEW
-				if (!inPreview) {
+				if (!state.previewLive) {
 					CompactButton(
-						text = tr("workspace.tab.preview"),
-						onClick = {
-							val previewTab = state.workspaceTabs.firstOrNull { it.kind == WorkspaceTabKind.PREVIEW }
-							if (previewTab != null) viewModel.setActiveTab(previewTab.id)
-						},
+						text = tr("window.showPreview"),
+						onClick = { viewModel.ensurePreviewCanvas(focus = true) },
 						height = 20.dp,
 					)
 				}

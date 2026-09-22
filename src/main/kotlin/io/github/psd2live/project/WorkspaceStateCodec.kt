@@ -60,14 +60,64 @@ internal object WorkspaceStateCodec {
         )
     }
 
+    private fun encodeViewOptions(options: TabViewOptions): JsonObject = buildJsonObject {
+        put("showTexture", options.showTexture)
+        put("showMesh", options.showMesh)
+        put("showWarp", options.showWarp)
+        put("showRotation", options.showRotation)
+        put("showDeformPaths", options.showDeformPaths)
+        put("warpShowNames", options.warpShowNames)
+        put("warpShowIndices", options.warpShowIndices)
+        put("pathShowWidth", options.pathShowWidth)
+        put("pathShowHardness", options.pathShowHardness)
+        put("filterSelectedOnly", options.filterSelectedOnly)
+        put("dimUnselected", options.dimUnselected)
+        put("contextualWarp", options.contextualWarp)
+        put("showSelectionBounds", options.showSelectionBounds)
+    }
+
+    private fun encodeCamera(camera: TabCamera): JsonObject = buildJsonObject {
+        put("zoom", camera.zoom)
+        put("panX", camera.panX)
+        put("panY", camera.panY)
+    }
+
+    private fun decodeCanvas(obj: JsonObject, legacyViewOptions: Boolean): CanvasWindowState? {
+        val id = obj["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return null
+        val mode = obj["mode"]?.jsonPrimitive?.contentOrNull
+            ?.let { name -> CanvasMode.entries.firstOrNull { it.name == name } }
+            ?: CanvasMode.EDIT
+        return CanvasWindowState(
+            id = id,
+            mode = mode,
+            view = decodeViewOptions(obj["view"], mode.defaultViewOptions(), legacyViewOptions),
+            camera = decodeCamera(obj["camera"]),
+        )
+    }
+
+    private fun decodeWorkspace(obj: JsonObject, legacyViewOptions: Boolean): EditorWorkspace? {
+        val id = obj["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return null
+        val canvases = obj["canvases"]?.jsonArray?.mapNotNull { element ->
+            (element as? JsonObject)?.let { decodeCanvas(it, legacyViewOptions) }
+        }?.distinctBy { it.id }.orEmpty().ifEmpty { listOf(defaultEditCanvas()) }
+        val activeCanvasId = obj["activeCanvasId"]?.jsonPrimitive?.contentOrNull
+            ?.takeIf { requested -> canvases.any { it.id == requested } }
+            ?: canvases.first().id
+        return EditorWorkspace(
+            id = id,
+            name = obj["name"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            layoutJson = obj["layout"]?.jsonPrimitive?.contentOrNull,
+            hiddenModules = obj["hiddenModules"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty().toSet(),
+            canvases = canvases,
+            activeCanvasId = activeCanvasId,
+        )
+    }
+
     /**
-     * Decodes the browser-style tab list. A missing `workspaceTabs` key keeps [base]'s tabs (these
-     * decode calls are also used to rebuild a config from saved settings); an old
-     * `activeWorkspaceTab` name is migrated onto the tab it names among the defaults.
+     * Old files stored edit/preview/history as tabs of one session. Those tabs did not keep
+     * separate documents, so they collapse into one workspace and the canvas that was in front.
      */
-    private fun decodeWorkspaceTabs(value: JsonObject, base: PSD2LiveState): Pair<List<WorkspaceTabState>, String> {
-        val array = value["workspaceTabs"]?.jsonArray
-        val legacyViewOptions = (value["viewOptionsRevision"]?.jsonPrimitive?.intOrNull ?: 0) < VIEW_OPTIONS_REVISION
+    private fun migrateLegacyTabs(value: JsonObject, legacyViewOptions: Boolean): EditorWorkspace {
         val legacyCamera = if ("canvasZoom" in value || "canvasPanX" in value || "canvasPanY" in value) {
             TabCamera(
                 zoom = value["canvasZoom"]?.jsonPrimitive?.floatOrNull ?: 1f,
@@ -75,54 +125,60 @@ internal object WorkspaceStateCodec {
                 panY = value["canvasPanY"]?.jsonPrimitive?.floatOrNull ?: 0f,
             )
         } else null
-
-        if (array == null) {
-            val legacyName = value["activeWorkspaceTab"]?.jsonPrimitive?.contentOrNull ?: return base.workspaceTabs to base.activeWorkspaceTabId
-            val kind = when (legacyName) {
-                "HIERARCHY", "TOPOLOGY" -> WorkspaceTabKind.EDIT
-                "HISTORY" -> WorkspaceTabKind.HISTORY
-                else -> WorkspaceTabKind.PREVIEW
-            }
-            val defaults = defaultWorkspaceTabs().map { tab ->
-                if (legacyCamera != null && tab.kind.canvasMode != null) tab.copy(camera = legacyCamera) else tab
-            }
-            // History is one of the defaults now, so the legacy name needs no extra tab.
-            val active = defaults.firstOrNull { it.kind == kind } ?: defaults.first()
-            return defaults to active.id
-        }
-
-        val parsed = array.mapNotNull { element ->
+        data class LegacyTab(val id: String, val kind: String, val view: TabViewOptions, val camera: TabCamera)
+        val tabs = value["workspaceTabs"]?.jsonArray?.mapNotNull { element ->
             val obj = element as? JsonObject ?: return@mapNotNull null
             val id = obj["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            val kind = obj["kind"]?.jsonPrimitive?.contentOrNull
-                ?.let { name -> WorkspaceTabKind.entries.firstOrNull { it.name == name } }
-                ?: return@mapNotNull null
-            WorkspaceTabState(
+            val kind = obj["kind"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            val mode = if (kind == "PREVIEW") CanvasMode.PREVIEW else CanvasMode.EDIT
+            LegacyTab(
                 id = id,
                 kind = kind,
-                ordinal = (obj["ordinal"]?.jsonPrimitive?.intOrNull ?: 1).coerceAtLeast(1),
-                pinned = obj["pinned"]?.jsonPrimitive?.booleanOrNull ?: false,
-                view = decodeViewOptions(obj["view"], kind.defaultViewOptions(), legacyViewOptions),
+                view = decodeViewOptions(obj["view"], mode.defaultViewOptions(), legacyViewOptions),
                 camera = if (obj["camera"] != null) decodeCamera(obj["camera"]) else (legacyCamera ?: TabCamera()),
             )
-        }.distinctBy { it.id }
-
-        // A saved file contributes the pinned tabs' identity -- id, view options, camera -- but not
-        // their order or pinning: History, Edit and Preview always lead the strip in that order.
-        // Extra history tabs an older build allowed are dropped, the view being a singleton now.
-        val defaults = defaultWorkspaceTabs()
-        val pinned = listOf(WorkspaceTabKind.HISTORY, WorkspaceTabKind.EDIT, WorkspaceTabKind.PREVIEW).map { kind ->
-            (parsed.firstOrNull { it.kind == kind } ?: defaults.first { it.kind == kind })
-                .copy(pinned = true, ordinal = 1)
-        }
-        val pinnedIds = pinned.map { it.id }.toSet()
-        val tabs = pinned + parsed.filter { it.id !in pinnedIds && it.kind != WorkspaceTabKind.HISTORY }
+        }.orEmpty()
         val requested = value["activeWorkspaceTabId"]?.jsonPrimitive?.contentOrNull
-        // An id the file no longer carries (a tab closed since the save) lands on the Edit canvas --
-        // the tab the app itself opens on -- not on whichever pinned tab now happens to lead.
-        val activeId = tabs.firstOrNull { it.id == requested }?.id
-            ?: tabs.first { it.kind == WorkspaceTabKind.EDIT }.id
-        return tabs to activeId
+            ?: value["activeWorkspaceTab"]?.jsonPrimitive?.contentOrNull
+        val active = tabs.firstOrNull { it.id == requested }
+            ?: when (requested) {
+                "HIERARCHY", "TOPOLOGY", "EDIT" -> tabs.firstOrNull { it.kind == "EDIT" }
+                "PREVIEW" -> tabs.firstOrNull { it.kind == "PREVIEW" }
+                else -> null
+            }
+            ?: tabs.firstOrNull { it.kind == "EDIT" }
+            ?: tabs.firstOrNull { it.kind != "HISTORY" }
+        val mode = if (active?.kind == "PREVIEW") CanvasMode.PREVIEW else CanvasMode.EDIT
+        val canvas = CanvasWindowState(
+            id = PRIMARY_CANVAS_ID,
+            mode = mode,
+            view = active?.view ?: mode.defaultViewOptions(),
+            camera = active?.camera ?: legacyCamera ?: TabCamera(),
+        )
+        return defaultEditorWorkspace().copy(canvases = listOf(canvas), activeCanvasId = canvas.id)
+    }
+
+    /**
+     * Decodes workspaces. A missing key keeps [base] (these decode calls also rebuild a config
+     * from saved settings). Files that still have the old tab list are folded into one workspace.
+     */
+    private fun decodeWorkspaces(value: JsonObject, base: PSD2LiveState): Pair<List<EditorWorkspace>, String> {
+        val legacyViewOptions = (value["viewOptionsRevision"]?.jsonPrimitive?.intOrNull ?: 0) < VIEW_OPTIONS_REVISION
+        val array = value["workspaces"]?.jsonArray
+        if (array == null) {
+            if ("workspaceTabs" !in value && "activeWorkspaceTab" !in value && "activeWorkspaceTabId" !in value) {
+                return base.workspaces to base.activeWorkspaceId
+            }
+            val migrated = migrateLegacyTabs(value, legacyViewOptions)
+            return listOf(migrated) to migrated.id
+        }
+        val parsed = array.mapNotNull { element ->
+            (element as? JsonObject)?.let { decodeWorkspace(it, legacyViewOptions) }
+        }.distinctBy { it.id }
+        if (parsed.isEmpty()) return base.workspaces to base.activeWorkspaceId
+        val requested = value["activeWorkspaceId"]?.jsonPrimitive?.contentOrNull
+        val activeId = parsed.firstOrNull { it.id == requested }?.id ?: parsed.first().id
+        return parsed to activeId
     }
 
     fun editableIdentity(state: PSD2LiveState): JsonObject = encode(state)
@@ -196,33 +252,20 @@ internal object WorkspaceStateCodec {
         put("workspaceSplitRatio", state.workspaceSplitRatio)
         put("inspectorCollapsed", state.inspectorCollapsed)
         put("viewOptionsRevision", VIEW_OPTIONS_REVISION)
-        putJsonArray("workspaceTabs") { state.workspaceTabs.forEach { tab -> add(buildJsonObject {
-            put("id", tab.id)
-            put("kind", tab.kind.name)
-            put("ordinal", tab.ordinal)
-            put("pinned", tab.pinned)
-            putJsonObject("view") {
-                put("showTexture", tab.view.showTexture)
-                put("showMesh", tab.view.showMesh)
-                put("showWarp", tab.view.showWarp)
-                put("showRotation", tab.view.showRotation)
-                put("showDeformPaths", tab.view.showDeformPaths)
-                put("warpShowNames", tab.view.warpShowNames)
-                put("warpShowIndices", tab.view.warpShowIndices)
-                put("pathShowWidth", tab.view.pathShowWidth)
-                put("pathShowHardness", tab.view.pathShowHardness)
-                put("filterSelectedOnly", tab.view.filterSelectedOnly)
-                put("dimUnselected", tab.view.dimUnselected)
-                put("contextualWarp", tab.view.contextualWarp)
-                put("showSelectionBounds", tab.view.showSelectionBounds)
-            }
-            putJsonObject("camera") {
-                put("zoom", tab.camera.zoom)
-                put("panX", tab.camera.panX)
-                put("panY", tab.camera.panY)
-            }
+        putJsonArray("workspaces") { state.workspaces.forEach { workspace -> add(buildJsonObject {
+            put("id", workspace.id)
+            put("name", workspace.name)
+            workspace.layoutJson?.let { put("layout", it) }
+            putJsonArray("hiddenModules") { workspace.hiddenModules.sorted().forEach { add(it) } }
+            put("activeCanvasId", workspace.activeCanvasId)
+            putJsonArray("canvases") { workspace.canvases.forEach { canvas -> add(buildJsonObject {
+                put("id", canvas.id)
+                put("mode", canvas.mode.name)
+                put("view", encodeViewOptions(canvas.view))
+                put("camera", encodeCamera(canvas.camera))
+            }) } }
         }) } }
-        put("activeWorkspaceTabId", state.activeWorkspaceTabId)
+        put("activeWorkspaceId", state.activeWorkspaceId)
         put("outputPath", state.outputPath)
         put("atlasSize", state.atlasSize)
         put("textureUpscale", Json.encodeToJsonElement(state.textureUpscale))
@@ -307,7 +350,7 @@ internal object WorkspaceStateCodec {
         }) } }
     }
     fun decode(value: JsonObject, base: PSD2LiveState = PSD2LiveState()): PSD2LiveState {
-        val (workspaceTabs, activeWorkspaceTabId) = decodeWorkspaceTabs(value, base)
+        val (workspaces, activeWorkspaceId) = decodeWorkspaces(value, base)
         return base.copy(
         projectSourceName = value["projectSourceName"]?.jsonPrimitive?.contentOrNull ?: base.projectSourceName,
         historyZoom = value["historyZoom"]?.jsonPrimitive?.float ?: base.historyZoom,
@@ -323,8 +366,8 @@ internal object WorkspaceStateCodec {
 
         workspaceSplitRatio = value["workspaceSplitRatio"]?.jsonPrimitive?.float ?: base.workspaceSplitRatio,
         inspectorCollapsed = value["inspectorCollapsed"]?.jsonPrimitive?.boolean ?: base.inspectorCollapsed,
-        workspaceTabs = workspaceTabs,
-        activeWorkspaceTabId = activeWorkspaceTabId,
+        workspaces = workspaces,
+        activeWorkspaceId = activeWorkspaceId,
         outputPath = value["outputPath"]?.jsonPrimitive?.content ?: base.outputPath,
         atlasSize = value["atlasSize"]?.jsonPrimitive?.int ?: base.atlasSize,
         textureUpscale = value["textureUpscale"]?.let { Json.decodeFromJsonElement<io.github.psd2live.core.TextureUpscaleConfig>(it) } ?: base.textureUpscale,
@@ -408,6 +451,15 @@ internal object WorkspaceStateCodec {
                 detail = l["detail"]?.jsonPrimitive?.contentOrNull, imageLabel = l["imageLabel"]?.jsonPrimitive?.contentOrNull,
                 imageBytes = l["image"]?.jsonPrimitive?.content?.let { java.util.Base64.getDecoder().decode(it) })
         } ?: base.logEntries,
-        )
+        ).let { decoded ->
+            if ("workspaces" in value) decoded
+            else decoded.updateActiveWorkspace { workspace ->
+                val hidden = workspace.hiddenModules.toMutableSet()
+                if (decoded.hierarchyCollapsed) hidden += "hierarchy" else hidden -= "hierarchy"
+                if (!decoded.logPanelExpanded) hidden += "log" else hidden -= "log"
+                if (decoded.inspectorCollapsed) hidden += INSPECTOR_DOCK_MODULES else hidden -= INSPECTOR_DOCK_MODULES
+                workspace.copy(hiddenModules = hidden)
+            }
+        }
     }
 }

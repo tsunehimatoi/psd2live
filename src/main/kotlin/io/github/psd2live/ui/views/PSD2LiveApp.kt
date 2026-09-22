@@ -80,7 +80,7 @@ import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.state.ShortcutAction
 import io.github.psd2live.ui.state.ShortcutScope
-import io.github.psd2live.ui.state.WorkspaceTabKind
+import io.github.psd2live.ui.state.CanvasMode
 import io.github.psd2live.ui.tutorial.InteractiveTutorialState
 import io.github.psd2live.ui.tutorial.LocalTutorialTargets
 import io.github.psd2live.ui.tutorial.TutorialId
@@ -312,16 +312,8 @@ fun FrameWindowScope.PSD2LiveApp(
 		) {
 			if (!tutorial.active) return@LaunchedEffect
 			val step = tutorial.step
-			if (step.ensureEditTab) {
-				val edit = state.workspaceTabs.firstOrNull { it.kind == WorkspaceTabKind.EDIT }
-				when {
-					edit != null && state.activeWorkspaceTabId != edit.id -> viewModel.setActiveTab(edit.id)
-					edit == null -> viewModel.addTab(WorkspaceTabKind.EDIT)
-				}
-			}
-			if (step.ensureHistoryTab) {
-				viewModel.openHistoryTab()
-			}
+			if (step.ensureEditTab) viewModel.ensureEditCanvas()
+			if (step.ensureHistoryTab) viewModel.showHistoryModule()
 			if (step.ensureHierarchyVisible && state.hierarchyCollapsed) {
 				viewModel.setHierarchyView(collapsed = false)
 			}
@@ -343,7 +335,7 @@ fun FrameWindowScope.PSD2LiveApp(
 				}
 			}
 		}
-		LaunchedEffect(tutorial.active, tutorial.tutorialId, tutorial.stepIndex, state.previewModel, state.activeTabKind, state.showExportDialog, tutorial.titleBarMenuOpen, tutorial.reviewing) {
+		LaunchedEffect(tutorial.active, tutorial.tutorialId, tutorial.stepIndex, state.previewModel, state.activeCanvas.mode, state.historyPanelShown, state.showExportDialog, tutorial.titleBarMenuOpen, tutorial.reviewing) {
 			if (!tutorial.active) return@LaunchedEffect
 			val step = tutorial.step
 			if (step.isDone) return@LaunchedEffect
@@ -422,13 +414,13 @@ fun FrameWindowScope.PSD2LiveApp(
 							}
 							true
 						}
-						ShortcutAction.NEW_EDIT_TAB -> { viewModel.addTab(WorkspaceTabKind.EDIT); true }
-						ShortcutAction.NEW_PREVIEW_TAB -> { viewModel.addTab(WorkspaceTabKind.PREVIEW); true }
-						ShortcutAction.OPEN_HISTORY_TAB -> { viewModel.openHistoryTab(); true }
-						ShortcutAction.DUPLICATE_TAB -> { viewModel.duplicateActiveTab(); true }
-						ShortcutAction.CLOSE_TAB -> { viewModel.closeTab(state.activeWorkspaceTab.id); true }
-						ShortcutAction.NEXT_TAB -> { viewModel.cycleTab(1); true }
-						ShortcutAction.PREV_TAB -> { viewModel.cycleTab(-1); true }
+						ShortcutAction.NEW_EDIT_TAB -> { viewModel.addWorkspace(); true }
+						ShortcutAction.NEW_PREVIEW_TAB -> { viewModel.addCanvas(CanvasMode.PREVIEW); true }
+						ShortcutAction.OPEN_HISTORY_TAB -> { viewModel.showHistoryModule(); true }
+						ShortcutAction.DUPLICATE_TAB -> { viewModel.duplicateWorkspace(); true }
+						ShortcutAction.CLOSE_TAB -> { viewModel.closeWorkspace(state.activeWorkspace.id); true }
+						ShortcutAction.NEXT_TAB -> { viewModel.cycleWorkspace(1); true }
+						ShortcutAction.PREV_TAB -> { viewModel.cycleWorkspace(-1); true }
 						ShortcutAction.ZOOM_IN -> { viewModel.zoomIn(); true }
 						ShortcutAction.ZOOM_OUT -> { viewModel.zoomOut(); true }
 						ShortcutAction.ZOOM_RESET -> { viewModel.resetZoom(); true }
@@ -438,7 +430,7 @@ fun FrameWindowScope.PSD2LiveApp(
 							// The nine tab-jump actions share one body. A null index means this is a
 							// canvas action, which this handler does not own.
 							val jump = action.jumpIndex
-							if (jump == null) false else { viewModel.activateTabByIndex(jump - 1); true }
+							if (jump == null) false else { viewModel.activateWorkspaceByIndex(jump - 1); true }
 						}
 					}
 				},
@@ -487,13 +479,13 @@ fun FrameWindowScope.PSD2LiveApp(
 						onShowSettings = { viewModel.openSettingsDialog() },
 						onShowAgentConnection = { showAgentDialog = true },
 						onShowTextureUpscale = { viewModel.openTextureUpscaleDialog() },
-						onShowHistory = { viewModel.openHistoryTab() },
-						onNewEditTab = { viewModel.addTab(WorkspaceTabKind.EDIT) },
-						onNewPreviewTab = { viewModel.addTab(WorkspaceTabKind.PREVIEW) },
-						onDuplicateTab = { viewModel.duplicateActiveTab() },
-						onCloseTab = { viewModel.closeTab(state.activeWorkspaceTab.id) },
-						onNextTab = { viewModel.cycleTab(1) },
-						onPrevTab = { viewModel.cycleTab(-1) },
+						onShowHistory = { viewModel.showHistoryModule() },
+						onNewEditTab = { viewModel.addWorkspace() },
+						onNewPreviewTab = { viewModel.addCanvas(CanvasMode.PREVIEW) },
+						onDuplicateTab = { viewModel.duplicateWorkspace() },
+						onCloseTab = { viewModel.closeWorkspace(state.activeWorkspace.id) },
+						onNextTab = { viewModel.cycleWorkspace(1) },
+						onPrevTab = { viewModel.cycleWorkspace(-1) },
 						onShowAbout = { helpDialogTab = HelpTab.ABOUT },
 						onShowHelp = { tab -> helpDialogTab = tab },
 						onOpenTutorialCatalog = { openTutorialCatalog() },
@@ -720,7 +712,7 @@ private fun StatusBar(
 	val typography = LocalToolTypography.current
 	val editor = viewModel.canvasEditor
 	// Read editor snapshot fields so tool/selection changes recompose this bar.
-	val editorMessage = if (!state.isBusy && state.activeTabKind == WorkspaceTabKind.EDIT) {
+	val editorMessage = if (!state.isBusy && state.activeCanvas.mode == CanvasMode.EDIT) {
 		editor.statusBarMessage(state.selectedLayerId, state.selectedDeformerId)
 	} else {
 		null

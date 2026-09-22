@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.*
 import io.github.psd2live.i18n.tr
+import io.github.psd2live.ui.components.ViewOptionsMenuItems
 import io.github.psd2live.ui.state.*
 import io.github.psd2live.ui.theme.*
 import io.github.psd2live.ui.tutorial.TutorialTargetId
@@ -49,7 +50,6 @@ import java.awt.MouseInfo
 import java.awt.Cursor
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
-import java.util.prefs.Preferences
 
 private data class DockHitArea(val body: Rect, val header: Rect, val edge: Float)
 
@@ -180,7 +180,6 @@ private class DockSession(initial: DockNode) {
     }
 }
 
-private val dockPreferences by lazy { Preferences.userRoot().node("io.github.psd2live.docking.v1") }
 private val dockJson = Json { ignoreUnknownKeys = true }
 
 @Composable
@@ -193,42 +192,70 @@ internal fun DockWorkspaceView(
 	onOpenProject: (() -> Unit)? = null,
 	onOpenPsd: (() -> Unit)? = null,
 ) {
-    val sessions = remember { mutableMapOf<String, DockSession>() }
-    val tab = state.activeWorkspaceTab
-    val preferenceKey = "${tab.kind.name}-${tab.ordinal}"
-    val session = sessions.getOrPut(tab.id) {
-        val default = defaultDockLayout(tab.kind == WorkspaceTabKind.HISTORY)
-        val saved = runCatching {
-            dockJson.decodeFromString<DockNode>(dockPreferences.get(preferenceKey, ""))
-        }.getOrNull()?.remove("export")
-        DockSession(saved?.takeIf { it.allModules().toSet() == default.allModules().toSet() &&
-            it.allModules().size == default.allModules().size } ?: default)
+    val sessions = remember(state.projectOpenGeneration) { mutableMapOf<String, DockSession>() }
+    val workspace = state.activeWorkspace
+    val session = sessions.getOrPut(workspace.id) {
+        val allowed = DEFAULT_DOCK_MODULES + setOf("history") + workspace.canvases.map { it.id }
+        val saved = workspace.layoutJson?.let { raw ->
+            runCatching { dockJson.decodeFromString<DockNode>(raw) }.getOrNull()?.remove("export")
+        }?.takeIf { node -> node.allModules().all { it in allowed } }
+        DockSession(saved ?: defaultDockLayout())
     }
-    val hiddenModules = buildSet {
-        if (state.hierarchyCollapsed) add("hierarchy")
-        if (!state.logPanelExpanded) add("log")
-        if (state.inspectorCollapsed) addAll(listOf("settings", "layers", "parameters",
-            "tools", "inspector", "animation", "physics"))
-    }
+    val hiddenModules = workspace.hiddenModules
     // Visibility is a projection of the saved layout: toggling a panel must not remove
     // its tab group, split ratio, or floating-window placement from the layout.
     val visibleRoot = hiddenModules.fold(session.root) { layout, module -> layout?.remove(module) }
     SideEffect { session.hiddenModules = hiddenModules }
-    LaunchedEffect(state.workspaceTabs.map { it.id }) {
-        sessions.keys.retainAll(state.workspaceTabs.map { it.id }.toSet())
+    LaunchedEffect(state.workspaces.map { it.id }) {
+        sessions.keys.retainAll(state.workspaces.map { it.id }.toSet())
     }
-    // Debounce splitter updates; persist a docked fallback for floating panels so no panel is lost.
-    LaunchedEffect(session.root, session.floating.keys.toList()) {
+    LaunchedEffect(workspace.id, workspace.canvases.map { it.id }, workspace.placeModules) {
+        var root = session.root
+        val canvasIds = workspace.canvases.map { it.id }.toSet()
+        root?.allModules()?.filter { isCanvasModule(it) && it !in canvasIds }?.forEach { id ->
+            root = root?.remove(id)
+        }
+        workspace.canvases.forEach { canvas ->
+            if (root?.allModules()?.contains(canvas.id) != true) {
+                val anchor = root?.allModules()?.firstOrNull { isCanvasModule(it) }
+                root = dockModule(root, canvas.id, anchor, DockSide.RIGHT)
+            }
+        }
+        workspace.placeModules.forEach { module ->
+            if (root?.allModules()?.contains(module) != true) {
+                val anchor = root?.allModules()?.firstOrNull { isCanvasModule(it) } ?: root?.allModules()?.firstOrNull()
+                val side = if (module == "history") DockSide.LEFT else DockSide.BOTTOM
+                root = dockModule(root, module, anchor, side)
+            }
+        }
+        if (root != session.root) session.root = root
+    }
+    LaunchedEffect(workspace.layoutJson, workspace.placeModules) {
+        val pending = workspace.placeModules.filter { module ->
+            val json = workspace.layoutJson
+            val placed = if (json == null) module in DEFAULT_DOCK_MODULES else "\"$module\"" in json
+            !placed
+        }
+        if (pending != workspace.placeModules) viewModel.setPlaceModules(pending)
+    }
+    // Debounce splitter updates. Floating panels are written back into the tree so none are lost.
+    // The first pass is the layout just loaded; writing it back would dirty an unchanged project.
+    var layoutReady by remember(state.projectOpenGeneration, workspace.id) { mutableStateOf(false) }
+    LaunchedEffect(workspace.id, session.root, session.floating.keys.toList()) {
+        if (!layoutReady) {
+            layoutReady = true
+            return@LaunchedEffect
+        }
         delay(400)
         var saved = session.root
         session.floating.keys.forEach { saved = dockModule(saved, it, null, DockSide.RIGHT) }
-        saved?.let { runCatching { dockPreferences.put(preferenceKey, dockJson.encodeToString(it)) } }
+        saved?.let { viewModel.setWorkspaceLayout(workspace.id, dockJson.encodeToString(it)) }
     }
     val latestState by rememberUpdatedState(state)
 	val latestOnStartTutorial by rememberUpdatedState(onStartTutorial)
 	val latestOnOpenProject by rememberUpdatedState(onOpenProject)
 	val latestOnOpenPsd by rememberUpdatedState(onOpenPsd)
-    val contents = remember(tab.id) { mutableMapOf<String, @Composable () -> Unit>() }
+    val contents = remember(workspace.id) { mutableMapOf<String, @Composable () -> Unit>() }
     fun content(id: String): @Composable () -> Unit = contents.getOrPut(id) {
         movableContentOf {
 			DockModuleContent(
@@ -243,8 +270,9 @@ internal fun DockWorkspaceView(
     }
     DisposableEffect(session) { onDispose { session.cancel() } }
 	// Tutorial / programmatic focus: select a dock module tab and bring floating modules back.
-	LaunchedEffect(state.requestedDockModule, tab.id) {
+	LaunchedEffect(state.requestedDockModule, workspace.id) {
 		val module = state.requestedDockModule ?: return@LaunchedEffect
+		if (module in workspace.hiddenModules) viewModel.setModuleVisible(module, true)
 		if (module in session.floating) {
 			session.returnToDock(module)
 		}
@@ -266,19 +294,25 @@ internal fun DockWorkspaceView(
     Box(modifier) {
         Column(Modifier.fillMaxSize().background(colors.windowBackground)) {
             Row(Modifier.fillMaxWidth().height(28.dp), verticalAlignment = Alignment.CenterVertically) {
-                WorkspaceTabStrip(state, viewModel, Modifier.weight(1f))
+                WorkspaceStrip(
+                    state,
+                    viewModel,
+                    layoutModules = session.root?.allModules()?.toSet().orEmpty(),
+                    modifier = Modifier.weight(1f),
+                )
                 Text(tr("dock.reset"), color = colors.textMuted, fontSize = 11.sp,
                     modifier = Modifier.clickable {
                         session.floating.clear()
-                        session.root = defaultDockLayout(tab.kind == WorkspaceTabKind.HISTORY)
+                        session.root = defaultDockLayout()
+                        viewModel.resetWorkspaceArrangement()
                     }.padding(horizontal = 8.dp))
             }
-            key(tab.id) {
+            key(workspace.id) {
                 Box(Modifier.weight(1f).fillMaxWidth().onGloballyPositioned { coordinates ->
                     session.workspaceBounds = { screenBounds(coordinates, mainWindow) }
                 }) {
                     visibleRoot?.let {
-                        DockTree(it, session, Modifier.fillMaxSize(), mainWindow, ::content)
+                        DockTree(it, session, Modifier.fillMaxSize(), mainWindow, state, viewModel, ::content)
                         DockJunctionOverlay(it, session, mainWindow)
                     }
                         ?: Box(Modifier.fillMaxSize().background(
@@ -298,9 +332,9 @@ internal fun DockWorkspaceView(
         }
     }
     session.floating.toMap().forEach { (id, windowState) ->
-        key(tab.id, id) {
+        key(workspace.id, id) {
             Window(onCloseRequest = { session.returnToDock(id) }, state = windowState,
-                title = "${viewModel.tabTitle(tab)} · ${moduleTitle(id)}", undecorated = true,
+                title = floatingTitle(id, state, viewModel), undecorated = true,
                 visible = id !in hiddenModules) {
                 DisposableEffect(window) {
                     session.floatingWindows[id] = window
@@ -313,7 +347,7 @@ internal fun DockWorkspaceView(
                     fontScale = AppSettings.fontScale,
                 ) {
                     Column(Modifier.fillMaxSize().background(LocalToolColors.current.panelBackground)) {
-                        DockHeader(id, session, Modifier.fillMaxWidth(), floating = true, floatingWindow = window)
+                        DockHeader(id, session, Modifier.fillMaxWidth(), state, viewModel, floating = true, floatingWindow = window)
                         Box(Modifier.weight(1f).fillMaxWidth()) { content(id)() }
                     }
                 }
@@ -324,6 +358,7 @@ internal fun DockWorkspaceView(
 
 @Composable
 private fun DockTree(node: DockNode, session: DockSession, modifier: Modifier, window: java.awt.Window?,
+                     state: PSD2LiveState, viewModel: PSD2LiveViewModel,
                      content: (String) -> @Composable () -> Unit) {
     val colors = LocalToolColors.current
     val density = LocalDensity.current
@@ -354,13 +389,13 @@ private fun DockTree(node: DockNode, session: DockSession, modifier: Modifier, w
                 }
             }
             if (node.horizontal) Row(Modifier.fillMaxSize()) {
-                DockTree(node.first, session, Modifier.weight(node.ratio).fillMaxHeight(), window, content)
+                DockTree(node.first, session, Modifier.weight(node.ratio).fillMaxHeight(), window, state, viewModel, content)
                 Box(splitter.width(4.dp).fillMaxHeight())
-                DockTree(node.second, session, Modifier.weight(1f - node.ratio).fillMaxHeight(), window, content)
+                DockTree(node.second, session, Modifier.weight(1f - node.ratio).fillMaxHeight(), window, state, viewModel, content)
             } else Column(Modifier.fillMaxSize()) {
-                DockTree(node.first, session, Modifier.weight(node.ratio).fillMaxWidth(), window, content)
+                DockTree(node.first, session, Modifier.weight(node.ratio).fillMaxWidth(), window, state, viewModel, content)
                 Box(splitter.height(4.dp).fillMaxWidth())
-                DockTree(node.second, session, Modifier.weight(1f - node.ratio).fillMaxWidth(), window, content)
+                DockTree(node.second, session, Modifier.weight(1f - node.ratio).fillMaxWidth(), window, state, viewModel, content)
             }
         }
         return
@@ -393,13 +428,13 @@ private fun DockTree(node: DockNode, session: DockSession, modifier: Modifier, w
             .border(.5.dp, colors.divider, RoundedCornerShape(3.dp))) {
             val single = node.modules.size == 1
             if (single) {
-                DockHeader(node.selected, session, Modifier.fillMaxWidth(), standalone = true)
+                DockHeader(node.selected, session, Modifier.fillMaxWidth(), state, viewModel, standalone = true)
             } else {
                 Row(Modifier.fillMaxWidth().height(22.dp)
                     .background(colors.windowBackground)
                     .horizontalScroll(rememberScrollState())) {
                     node.modules.forEach { id ->
-                        DockHeader(id, session, Modifier, selected = id == node.selected, standalone = false,
+                        DockHeader(id, session, Modifier, state, viewModel, selected = id == node.selected, standalone = false,
                             onSelect = { session.root = session.root?.update(node.id) { it.copy(selected = id) } })
                     }
                 }
@@ -596,6 +631,7 @@ private fun screenBounds(coordinates: androidx.compose.ui.layout.LayoutCoordinat
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun DockHeader(id: String, session: DockSession, modifier: Modifier,
+                       state: PSD2LiveState, viewModel: PSD2LiveViewModel,
                        selected: Boolean = true, floating: Boolean = false, standalone: Boolean = true,
                        floatingWindow: java.awt.Window? = null, onSelect: () -> Unit = {}) {
     val colors = LocalToolColors.current
@@ -603,7 +639,12 @@ private fun DockHeader(id: String, session: DockSession, modifier: Modifier,
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     var menu by remember { mutableStateOf(false) }
+    var viewMenu by remember { mutableStateOf(false) }
+    val canvas = state.activeWorkspace.canvases.firstOrNull { it.id == id }
+    val title = canvas?.let { canvasHeaderTitle(it, state.activeWorkspace) } ?: moduleTitle(id)
+    val showCanvasTools = canvas != null && (standalone || floating || selected)
     Row(modifier.height(22.dp)
+        .then(if (id == "history") Modifier.tutorialTarget(TutorialTargetId.HISTORY_TAB) else Modifier)
         .clip(if (standalone) RoundedCornerShape(0.dp) else RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
         .background(when {
             hovered -> colors.controlHover
@@ -620,24 +661,62 @@ private fun DockHeader(id: String, session: DockSession, modifier: Modifier,
                     Offset(size.width, size.height - .5.dp.toPx()), .5.dp.toPx())
             }
         }, verticalAlignment = Alignment.CenterVertically) {
-        Text(moduleTitle(id), color = if (selected) colors.textPrimary else colors.textMuted,
+        Text(title, color = if (selected) colors.textPrimary else colors.textMuted,
             style = typography.body.copy(fontSize = 11.sp,
                 fontWeight = if (standalone || selected) FontWeight.Medium else FontWeight.Normal),
             maxLines = 1, overflow = TextOverflow.Ellipsis,
-            modifier = (if (standalone || floating) Modifier.weight(1f) else Modifier.widthIn(min = 54.dp, max = 140.dp))
+            modifier = (if (standalone || floating) Modifier.weight(1f) else Modifier.widthIn(min = 48.dp, max = 120.dp))
                 .pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR)))
                 .onPointerEvent(PointerEventType.Press) { event ->
                     if (event.button == PointerButton.Secondary) { menu = true; event.changes.forEach { it.consume() } }
                 }
-                .pointerInput(id, session, floatingWindow) {
+                .pointerInput(id, session, floatingWindow, title) {
                     detectDragGestures(
-                        onDragStart = { session.begin(id, moduleTitle(id), floatingWindow, colors) },
+                        onDragStart = { session.begin(id, title, floatingWindow, colors) },
                         onDrag = { change, _ -> change.consume(); session.track() },
                         onDragEnd = { session.track(); session.finish() },
                         onDragCancel = { session.cancel() },
                     )
                 }.clickable(interactionSource = interaction, indication = null, onClick = onSelect)
                 .padding(horizontal = 7.dp, vertical = 2.dp))
+        if (showCanvasTools && canvas != null) {
+            CanvasModeChip(
+                label = tr("tab.edit"),
+                active = canvas.mode == CanvasMode.EDIT,
+                modifier = Modifier.tutorialTarget(TutorialTargetId.EDIT_TAB),
+                onClick = { viewModel.setCanvasMode(canvas.id, CanvasMode.EDIT) },
+            )
+            CanvasModeChip(
+                label = tr("tab.preview"),
+                active = canvas.mode == CanvasMode.PREVIEW,
+                modifier = Modifier.tutorialTarget(TutorialTargetId.PREVIEW_TAB),
+                onClick = { viewModel.setCanvasMode(canvas.id, CanvasMode.PREVIEW) },
+            )
+            Box(Modifier.tutorialTarget(TutorialTargetId.VIEW_OPTIONS_MENU)) {
+                CanvasModeChip(
+                    label = "${tr("tab.options.short")} \u25BE",
+                    active = canvas.view != canvas.mode.defaultViewOptions(),
+                    modifier = Modifier,
+                    onClick = {
+                        viewModel.focusCanvas(canvas.id)
+                        viewMenu = true
+                    },
+                )
+                TabStripDropdown(expanded = viewMenu, onDismissRequest = { viewMenu = false }) {
+                    ViewOptionsMenuItems(
+                        options = canvas.view,
+                        onOptionsChange = { viewModel.setCanvasViewOptions(canvas.id, it) },
+                        onDismiss = { viewMenu = false },
+                        showHeaders = true,
+                        showPathGuides = canvas.mode == CanvasMode.EDIT,
+                        onReset = {
+                            viewMenu = false
+                            viewModel.resetCanvasViewOptions(canvas.id)
+                        },
+                    )
+                }
+            }
+        }
         if (floating) {
             Text("↙", color = colors.textMuted,
                 modifier = Modifier.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR))).clickable { session.returnToDock(id) }.padding(horizontal = 7.dp))
@@ -647,17 +726,47 @@ private fun DockHeader(id: String, session: DockSession, modifier: Modifier,
                 menu = false
                 if (floating) session.returnToDock(id) else session.detach(id)
             })
+            if (canvas != null) {
+                CompactMenuItem(
+                    text = tr("window.closeCanvas"),
+                    enabled = state.activeWorkspace.canvases.size > 1,
+                    onClick = {
+                        menu = false
+                        viewModel.closeCanvas(canvas.id)
+                    },
+                )
+            }
         }
     }
 }
 
-private fun moduleTitle(id: String): String = tr(when (id) {
-    "canvas" -> "dock.canvas"; "hierarchy" -> "dock.hierarchy"; "history" -> "dock.history"
-    "log" -> "dock.log"; "settings" -> "dock.settings"
-    "layers" -> "tab.layers"; "parameters" -> "tab.parameters"; "tools" -> "tab.toolDetails"
-    "inspector" -> "tab.inspector"; "animation" -> "tab.animation"; "physics" -> "tab.physics"
-    else -> id
-})
+@Composable
+private fun CanvasModeChip(label: String, active: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val colors = LocalToolColors.current
+    val typography = LocalToolTypography.current
+    Text(
+        text = label,
+        color = if (active) colors.textPrimary else colors.textMuted,
+        style = typography.body.copy(fontSize = 10.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal),
+        maxLines = 1,
+        modifier = modifier
+            .pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 4.dp),
+    )
+}
+
+private fun canvasHeaderTitle(canvas: CanvasWindowState, workspace: EditorWorkspace): String {
+    val index = workspace.canvases.indexOfFirst { it.id == canvas.id }
+    val base = tr("dock.canvas")
+    return if (workspace.canvases.size > 1 && index >= 0) "$base ${index + 1}" else base
+}
+
+private fun floatingTitle(id: String, state: PSD2LiveState, viewModel: PSD2LiveViewModel): String {
+    val canvas = state.activeWorkspace.canvases.firstOrNull { it.id == id }
+    val name = canvas?.let { viewModel.canvasTitle(it) } ?: moduleTitle(id)
+    return "${state.activeWorkspace.displayName()} · $name"
+}
 
 @Composable
 private fun DockModuleContent(
@@ -668,21 +777,30 @@ private fun DockModuleContent(
 	onOpenProject: (() -> Unit)? = null,
 	onOpenPsd: (() -> Unit)? = null,
 ) {
-	when (id) {
-		"canvas" -> CanvasViewportComposable(
-			mode = state.activeTabKind.canvasMode ?: CanvasMode.EDIT,
+	if (isCanvasModule(id)) {
+		val canvas = state.activeWorkspace.canvases.firstOrNull { it.id == id } ?: return
+		CanvasViewportComposable(
+			mode = canvas.mode,
 			state = state,
 			viewModel = vm,
+			canvasId = canvas.id,
+			viewOptions = canvas.view,
+			cameraZoom = canvas.camera.zoom,
+			cameraPanX = canvas.camera.panX,
+			cameraPanY = canvas.camera.panY,
 			modifier = Modifier.fillMaxSize(),
 			onLayerClicked = vm::selectLayer,
 			onStartTutorial = onStartTutorial,
 			onOpenProject = onOpenProject,
 			onOpenPsd = onOpenPsd,
 		)
+		return
+	}
+	when (id) {
 		"hierarchy" -> DockHierarchyView(
 			state,
 			vm,
-			state.activeTabKind.canvasMode ?: CanvasMode.EDIT,
+			state.activeCanvas.mode,
 			onRequestOpenDeformPaths = { vm.selectLayer(it); vm.requestCanvasPathTool() },
 			onRequestCreate = { kind, relation, isDeformer, target ->
 				vm.canvasEditor.beginTreeCreate(kind, relation, isDeformer, target)

@@ -136,7 +136,6 @@ import org.umamo.runtime.model.ParameterLabelColor
 import io.github.psd2live.ui.parameterKeyMarks
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
-import io.github.psd2live.ui.state.WorkspaceTabKind
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
 import java.awt.Cursor
@@ -545,7 +544,7 @@ internal fun ParametersListView(
 				)
 			}
 
-			val inPreview = state.activeTabKind == WorkspaceTabKind.PREVIEW
+			val inPreview = state.previewLive
 			Row(
 				modifier = Modifier.fillMaxWidth(),
 				verticalAlignment = Alignment.CenterVertically,
@@ -2070,7 +2069,7 @@ private fun ParameterKeyMarks?.toSliderMarks(): List<SliderKeyMark> {
 }
 
 private fun liveValue(param: Parameter, state: PSD2LiveState): Float =
-	if (state.activeTabKind == WorkspaceTabKind.PREVIEW && state.animationEnabled) {
+	if (state.previewLive && state.animationEnabled) {
 		state.previewParameterValues[param.id] ?: state.parameterValues[param.id] ?: param.default
 	} else {
 		state.parameterValues[param.id] ?: param.default

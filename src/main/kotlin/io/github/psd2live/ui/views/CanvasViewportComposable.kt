@@ -81,11 +81,12 @@ import io.github.psd2live.ui.CubismViewport
 import io.github.psd2live.ui.RigCanvasSupport
 import io.github.psd2live.ui.SkiaRigPainter
 import io.github.psd2live.ui.state.CanvasMode
+import io.github.psd2live.ui.state.PRIMARY_CANVAS_ID
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.state.ShortcutAction
 import io.github.psd2live.ui.state.ShortcutScope
-import io.github.psd2live.ui.state.WorkspaceTabKind
+import io.github.psd2live.ui.state.TabViewOptions
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
 import kotlinx.coroutines.channels.Channel
@@ -110,6 +111,11 @@ fun CanvasViewportComposable(
 	state: PSD2LiveState,
 	viewModel: PSD2LiveViewModel,
 	modifier: Modifier = Modifier,
+	canvasId: String = PRIMARY_CANVAS_ID,
+	viewOptions: TabViewOptions = state.activeTabView,
+	cameraZoom: Float = state.canvasZoom,
+	cameraPanX: Float = state.canvasPanX,
+	cameraPanY: Float = state.canvasPanY,
 	onLayerClicked: ((String?) -> Unit)? = null,
 	onStartTutorial: (() -> Unit)? = null,
 	onOpenProject: (() -> Unit)? = null,
@@ -124,9 +130,16 @@ fun CanvasViewportComposable(
 	// Window position of this canvas. Dock toggles move the canvas without changing zoom or pan;
 	// the mesh overlay has to redraw on that move or its picture stays at the old place.
 	var canvasOrigin by remember { mutableStateOf(Offset.Zero) }
-	var zoom by remember(state.projectOpenGeneration) { mutableStateOf(state.canvasZoom.toDouble()) }
-	var panX by remember(state.projectOpenGeneration) { mutableStateOf(state.canvasPanX.toDouble()) }
-	var panY by remember(state.projectOpenGeneration) { mutableStateOf(state.canvasPanY.toDouble()) }
+	val showMesh = viewOptions.showMesh
+	val showTexture = viewOptions.showTexture
+	val showRotation = viewOptions.showRotation
+	val showDeformPaths = viewOptions.showDeformPaths
+	val showSelectionBounds = viewOptions.showSelectionBounds
+	val dimUnselected = viewOptions.dimUnselected
+	val filterSelectedOnly = viewOptions.filterSelectedOnly
+	var zoom by remember(state.projectOpenGeneration, canvasId) { mutableStateOf(cameraZoom.toDouble()) }
+	var panX by remember(state.projectOpenGeneration, canvasId) { mutableStateOf(cameraPanX.toDouble()) }
+	var panY by remember(state.projectOpenGeneration, canvasId) { mutableStateOf(cameraPanY.toDouble()) }
 	var isDragging by remember { mutableStateOf(false) }
 	var lastDragPos by remember { mutableStateOf(Offset.Zero) }
 	var showContextMenu by remember { mutableStateOf(false) }
@@ -234,7 +247,7 @@ fun CanvasViewportComposable(
 		zoom = 1.0
 		panX = 0.0
 		panY = 0.0
-        viewModel.setCanvasView(zoom.toFloat(), panX.toFloat(), panY.toFloat())
+        viewModel.setCanvasView(zoom.toFloat(), panX.toFloat(), panY.toFloat(), canvasId)
 	}
 
     fun frameSelection() {
@@ -249,7 +262,7 @@ fun CanvasViewportComposable(
         val actual=next/zoom
         panX=-((minX+maxX)/2.0-viewSize.width/2.0-panX)*actual
         panY=-((minY+maxY)/2.0-viewSize.height/2.0-panY)*actual
-        zoom=next;viewModel.setCanvasView(zoom.toFloat(),panX.toFloat(),panY.toFloat())
+        zoom=next;viewModel.setCanvasView(zoom.toFloat(),panX.toFloat(),panY.toFloat(), canvasId)
     }
 
 
@@ -268,7 +281,7 @@ fun CanvasViewportComposable(
 		val centered = computeViewport(model, viewSize.width, viewSize.height)
 		panX += mouseX - (centered.offsetX + canvasX * centered.scale)
 		panY += mouseY - (centered.offsetY + canvasY * centered.scale)
-        viewModel.setCanvasView(zoom.toFloat(), panX.toFloat(), panY.toFloat())
+        viewModel.setCanvasView(zoom.toFloat(), panX.toFloat(), panY.toFloat(), canvasId)
 	}
 
 	// Vsync-driven frame pump. Cubism conflates requests while busy, so the newest
@@ -544,6 +557,10 @@ fun CanvasViewportComposable(
                 else -> Cursor.getDefaultCursor()
             }))
 			.onPointerEvent(PointerEventType.Press) { event ->
+				if (state.activeCanvas.id != canvasId) {
+					viewModel.focusCanvas(canvasId)
+					editor.state = viewModel.state.value
+				}
 				val change = event.changes.firstOrNull() ?: return@onPointerEvent
                 if(change.isConsumed) return@onPointerEvent
                 if(mode == CanvasMode.EDIT && previewModel != null) {
@@ -663,7 +680,7 @@ fun CanvasViewportComposable(
 					val delta = change.position - lastDragPos
 					panX += delta.x
 					panY += delta.y
-                    viewModel.setCanvasView(zoom.toFloat(), panX.toFloat(), panY.toFloat())
+                    viewModel.setCanvasView(zoom.toFloat(), panX.toFloat(), panY.toFloat(), canvasId)
 					lastDragPos = change.position
 				}
 				if (!isDragging && mode == CanvasMode.PREVIEW && state.mouseTrackingEnabled) {
@@ -727,11 +744,9 @@ fun CanvasViewportComposable(
 			// being drawn.
 			val warpIds = editor.activeWarpIds()
 			val rotationIds = editor.activeRotationIds()
-			val showMesh = state.showMesh
-			val showTexture = state.showTexture
-			val informationNames = state.warpShowNames
-			val informationIndices = state.warpShowIndices
-			val informationSelectedOnly = state.filterSelectedOnly
+			val informationNames = viewOptions.warpShowNames
+			val informationIndices = viewOptions.warpShowIndices
+			val informationSelectedOnly = filterSelectedOnly
 
 			val targetVisibleLayerIds: Set<String> = when {
 				!informationSelectedOnly -> state.effectiveVisibleLayerIds
@@ -750,7 +765,7 @@ fun CanvasViewportComposable(
 				state.selectedDeformerId != null -> descendantLayerIds(model, state.selectedDeformerId, state.parentOverrides)
 				else -> null
 			}
-			val isDimmingActive = state.dimUnselected && hasActiveSelection
+			val isDimmingActive = dimUnselected && hasActiveSelection
 
 			// Hover annotation: a wash over the artwork in the component's own colour, not a box around
 			// it. A deformer owns no texture of its own, so previewing one lights up everything it
@@ -771,7 +786,7 @@ fun CanvasViewportComposable(
 				warpIds.isEmpty() && rotationIds.isEmpty() && !showMesh && !informationSelectedOnly && showTexture &&
 				!isDimmingActive &&
 				state.hoveredLayerId == null && state.hoveredDeformerId == null &&
-				(!state.showSelectionBounds || !hasActiveSelection) &&
+				(!showSelectionBounds || !hasActiveSelection) &&
 				state.drawOrderOverrides.isEmpty() &&
 				nativeFrame != null && sdkBitmap != null &&
 				nativeFrame.image.width == w && nativeFrame.image.height == h
@@ -816,7 +831,7 @@ fun CanvasViewportComposable(
 							1.0f,
 							visibleLayerIds = effectiveVisible,
 							drawOrderOverrides = state.drawOrderOverrides,
-							dimUnselected = state.dimUnselected,
+							dimUnselected = dimUnselected,
 							highlightedLayerIds = highlightedLayerIds,
 							dimmedAlphaMultiplier = 0.22f,
 							tintLayerIds = hoverTintLayerIds,
@@ -917,7 +932,7 @@ fun CanvasViewportComposable(
 					val drawableBounds = RigCanvasSupport.boundsByDrawable(geometry)
 					val deformerBounds = RigCanvasSupport.boundsByDeformer(model, drawableBounds)
 					val deformEditTarget = state.selectedDeformerId?.takeIf {
-						state.showRotation && (
+						showRotation && (
 							editor.hierarchyMode == EditHierarchyMode.DEFORM ||
 								editor.hierarchyMode == EditHierarchyMode.EDIT
 							)
@@ -935,7 +950,7 @@ fun CanvasViewportComposable(
 							labels = informationNames,
 							selectedDeformerId = state.selectedDeformerId,
 							hoveredDeformerId = state.hoveredDeformerId,
-							dimUnselected = state.dimUnselected,
+							dimUnselected = dimUnselected,
 						)
 					}
 
@@ -946,7 +961,7 @@ fun CanvasViewportComposable(
 					// rectangles over the same artwork. The transform box wins: it is the one that is
 					// dragged. Every other tool leaves this as the only selection feedback.
 					val transformBoxOwnsSelection = mode == CanvasMode.EDIT && editor.drawsTransformBox
-					if (state.showSelectionBounds && !transformBoxOwnsSelection) {
+					if (showSelectionBounds && !transformBoxOwnsSelection) {
 						state.selectedLayerId?.let { layerId ->
 							val drawableId = model.rig.layerIdByDrawableId.entries.firstOrNull { it.value == layerId }?.key
 							val bounds = drawableId?.let(drawableBounds::get)
@@ -987,14 +1002,14 @@ fun CanvasViewportComposable(
 							pointIndices = informationIndices,
 							selectedDeformerId = state.selectedDeformerId,
 							hoveredDeformerId = state.hoveredDeformerId,
-							dimUnselected = state.dimUnselected,
+							dimUnselected = dimUnselected,
 						)
 					}
 
 					// 3e. Deform Paths (RigInformationOverlay). A path belongs to the part it
 					// deforms, so it is drawn only while that part (or the part's deformer) is
 					// selected -- an edit-time guide, never part of the Preview tab's render.
-					if (mode == CanvasMode.EDIT && state.showDeformPaths && model.rig.puppet.deformPaths.isNotEmpty()) {
+					if (mode == CanvasMode.EDIT && showDeformPaths && model.rig.puppet.deformPaths.isNotEmpty()) {
 						val selectedLayerDescendants = if (state.selectedDeformerId != null) {
 							descendantLayerIds(model, state.selectedDeformerId, state.parentOverrides)
 						} else {
@@ -1070,8 +1085,8 @@ fun CanvasViewportComposable(
                 keymap = state.keymap,
                 selectedLayerId = state.selectedLayerId,
                 selectedDeformerId = state.selectedDeformerId,
-                showMesh = state.showMesh,
-                showRotation = state.showRotation,
+                showMesh = showMesh,
+                showRotation = showRotation,
             ) { focusRequester.requestFocus() }
             CanvasContextMenu(
                 editor = editor,
@@ -1117,7 +1132,7 @@ fun CanvasViewportComposable(
 					previewModel.hasRuntimePhysics -> "${fpsStr}${tr("canvas.preview.physicsOn", zoomPct)}"
 					else -> "${fpsStr}${tr("canvas.preview.physicsOff", zoomPct)}"
 				}
-				CanvasMode.EDIT -> if (state.showMesh) {
+				CanvasMode.EDIT -> if (showMesh) {
 					val vertexCount = previewModel.rig.puppet.drawables.sumOf { it.mesh?.vertexCount ?: 0 }
 					val triangleCount = previewModel.rig.puppet.drawables.sumOf { it.mesh?.triangleCount ?: 0 }
 					tr("canvas.mesh.stats", previewModel.rig.puppet.drawables.size, vertexCount, triangleCount, zoomPct)
@@ -1149,9 +1164,9 @@ fun CanvasViewportComposable(
 			}
 			// Bottom-right: display-toggle rail (mirrors the left tool palette).
 			CanvasViewOptionsBar(
-				options = state.activeTabView,
-				onOptionsChange = viewModel::setTabViewOptions,
-				showPathGuides = state.activeTabKind == WorkspaceTabKind.EDIT,
+				options = viewOptions,
+				onOptionsChange = { viewModel.setCanvasViewOptions(canvasId, it) },
+				showPathGuides = mode == CanvasMode.EDIT,
 				modifier = Modifier
 					.align(Alignment.BottomEnd)
 					.padding(end = 8.dp, bottom = 8.dp),

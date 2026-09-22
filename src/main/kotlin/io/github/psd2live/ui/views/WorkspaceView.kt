@@ -118,8 +118,6 @@ import io.github.psd2live.ui.components.RebuildMeshPromptDialog
 import io.github.psd2live.ui.state.CanvasMode
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
-import io.github.psd2live.ui.state.WorkspaceTabKind
-import io.github.psd2live.ui.state.canvasMode
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
 import io.github.psd2live.ui.tutorial.TutorialTargetId
@@ -159,9 +157,10 @@ fun WorkspaceView(
 					.border(BorderStroke(1.dp, colors.divider)),
 				verticalAlignment = Alignment.CenterVertically,
 			) {
-				WorkspaceTabStrip(
+				WorkspaceStrip(
 					state = state,
 					viewModel = viewModel,
+					layoutModules = emptySet(),
 					modifier = Modifier.weight(1f),
 				)
 
@@ -170,35 +169,19 @@ fun WorkspaceView(
 			// Main workspace area: the active tab owns its canvas mode and view options.
 			// The hierarchy sidebar is a full-height sibling of (canvas + log), so the log
 			// dock never sits under the tree.
-			val activeTab = state.activeWorkspaceTab
 			Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-				key(activeTab.id) {
-					when (activeTab.kind) {
-						WorkspaceTabKind.HISTORY -> Column(modifier = Modifier.fillMaxSize()) {
-							HistoryTreeView(
-								state = state,
-								viewModel = viewModel,
-								modifier = Modifier.weight(1f).fillMaxWidth(),
-							)
-							BottomLogDock(
-								state = state,
-								viewModel = viewModel,
-							)
-						}
-						WorkspaceTabKind.EDIT, WorkspaceTabKind.PREVIEW -> HierarchyView(
-							state = state,
-							viewModel = viewModel,
-							canvasMode = activeTab.kind.canvasMode ?: CanvasMode.EDIT,
-							onRequestOpenDeformPaths = { layerId ->
-								viewModel.selectLayer(layerId)
-								viewModel.requestCanvasPathTool()
-							},
-							onRequestCreate = { kind, relation, isDeformer, id ->
-								viewModel.canvasEditor.beginTreeCreate(kind, relation, isDeformer, id)
-							},
-						)
-					}
-				}
+				HierarchyView(
+					state = state,
+					viewModel = viewModel,
+					canvasMode = state.activeCanvas.mode,
+					onRequestOpenDeformPaths = { layerId ->
+						viewModel.selectLayer(layerId)
+						viewModel.requestCanvasPathTool()
+					},
+					onRequestCreate = { kind, relation, isDeformer, id ->
+						viewModel.canvasEditor.beginTreeCreate(kind, relation, isDeformer, id)
+					},
+				)
 			}
 		}
 
