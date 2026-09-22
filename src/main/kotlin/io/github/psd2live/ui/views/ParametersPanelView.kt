@@ -16,7 +16,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -113,12 +112,13 @@ import io.github.psd2live.ui.components.CompactMenuSection
 import io.github.psd2live.ui.components.CompactTextField
 import io.github.psd2live.ui.components.IconChevron
 import io.github.psd2live.ui.components.IconClose
+import io.github.psd2live.ui.components.IconCollapseAll
 import io.github.psd2live.ui.components.IconDragHandle
+import io.github.psd2live.ui.components.IconExpandAll
 import io.github.psd2live.ui.components.IconFolder
 import io.github.psd2live.ui.components.IconLock
 import io.github.psd2live.ui.components.IconMeshWireframe
 import io.github.psd2live.ui.components.IconParameterLink
-import io.github.psd2live.ui.components.IconPlay
 import io.github.psd2live.ui.components.IconReset
 import io.github.psd2live.ui.components.IconRotationDeformer
 import io.github.psd2live.ui.components.IconSearch
@@ -166,6 +166,7 @@ internal sealed interface ParameterPanelRow {
 		val depth: Int,
 		val parentGroupId: String?,
 		val nextSiblingParam: Parameter?,
+		val folderLabelColor: ParameterLabelColor = ParameterLabelColor.None,
 	) : ParameterPanelRow
 
 	data class Linked(
@@ -173,6 +174,7 @@ internal sealed interface ParameterPanelRow {
 		val vertical: Parameter,
 		val depth: Int,
 		val parentGroupId: String?,
+		val folderLabelColor: ParameterLabelColor = ParameterLabelColor.None,
 	) : ParameterPanelRow
 }
 
@@ -422,6 +424,7 @@ internal fun ParametersListView(
 	val openOverrides = remember { mutableStateMapOf<String, Boolean>() }
 	var renamingGroupId by remember { mutableStateOf<String?>(null) }
 	var renameDraft by remember { mutableStateOf("") }
+	var renameOriginal by remember { mutableStateOf("") }
 	var renameSettled by remember { mutableStateOf(false) }
 	var folderMenuFor by remember { mutableStateOf<String?>(null) }
 	var folderMenuOffset by remember { mutableStateOf(Offset.Zero) }
@@ -430,14 +433,16 @@ internal fun ParametersListView(
 	fun startFolderRename(groupId: String, name: String) {
 		renamingGroupId = groupId
 		renameDraft = name
+		renameOriginal = name
 		renameSettled = false
 	}
 	fun commitFolderRename() {
 		if (renameSettled) return
 		val id = renamingGroupId ?: return
 		renameSettled = true
-		if (renameDraft.isNotBlank()) {
-			viewModel.renameParameterGroup(id, renameDraft)
+		val trimmed = renameDraft.trim()
+		if (trimmed.isNotEmpty() && trimmed != renameOriginal) {
+			viewModel.renameParameterGroup(id, trimmed)
 		}
 		renamingGroupId = null
 	}
@@ -555,15 +560,30 @@ internal fun ParametersListView(
 					) {
 						IconLock(locked = false, modifier = Modifier.size(11.dp), tint = colors.textPrimary)
 					}
-				} else {
-					CompactIconButton(
-						onClick = { viewModel.setAnimationEnabled(true) },
-						enabled = model != null,
-						size = 22.dp,
-						tooltip = tr("preview.animation.play"),
-					) {
-						IconPlay(modifier = Modifier.size(11.dp), tint = colors.accent)
-					}
+				}
+				CompactIconButton(
+					onClick = {
+						for (id in collectParameterGroupIds(puppet)) {
+							openOverrides[id] = true
+						}
+					},
+					enabled = puppet != null,
+					size = 22.dp,
+					tooltip = tr("canvas.hierarchy.expandAll"),
+				) {
+					IconExpandAll(modifier = Modifier.size(11.dp), tint = colors.textMuted)
+				}
+				CompactIconButton(
+					onClick = {
+						for (id in collectParameterGroupIds(puppet)) {
+							openOverrides[id] = false
+						}
+					},
+					enabled = puppet != null,
+					size = 22.dp,
+					tooltip = tr("canvas.hierarchy.collapseAll"),
+				) {
+					IconCollapseAll(modifier = Modifier.size(11.dp), tint = colors.textMuted)
 				}
 
                 io.github.psd2live.ui.components.CompactButton(
@@ -660,6 +680,11 @@ internal fun ParametersListView(
                             is ParameterPanelRow.Linked -> row.horizontal.id in relatedIds || row.vertical.id in relatedIds
                             is ParameterPanelRow.Folder -> row.group.containsParameter(relatedIds)
                         }
+						val folderTint = when (row) {
+							is ParameterPanelRow.Single -> row.folderLabelColor.displayArgb()
+							is ParameterPanelRow.Linked -> row.folderLabelColor.displayArgb()
+							is ParameterPanelRow.Folder -> null
+						}?.let { Color(it).copy(alpha = 0.10f) }
 						val isDragged = dragState.isDragging && dragState.draggedKey == key
 						val shift by animateFloatAsState(
 							targetValue = if (dragState.isDragging) parameterDragShift(layout, dragState, itemBoundsMap.values) else 0f,
@@ -669,7 +694,13 @@ internal fun ParametersListView(
 						Column(
 								modifier = Modifier
 									.fillMaxWidth()
-                                    .background(if (related) colors.selection.copy(alpha = 0.35f) else Color.Transparent)
+                                    .background(
+										when {
+											related -> colors.selection.copy(alpha = 0.35f)
+											folderTint != null -> folderTint
+											else -> Color.Transparent
+										},
+									)
 									.drawWithContent {
 										if (isDragged) {
 											dragPreview.record {
@@ -712,18 +743,15 @@ internal fun ParametersListView(
 											onCommitRename = { commitFolderRename() },
 											onCancelRename = { cancelFolderRename() },
 											onToggle = {
-												if (dragState.suppressClick || dragState.isDragging || dragState.isPressed) {
+												if (dragState.suppressClick) {
 													dragState.suppressClick = false
 													return@ParameterFolderRow
 												}
-												val next = !row.open
-												openOverrides[row.group.id.raw] = next
-												viewModel.setParameterGroupOpen(row.group.id.raw, next)
+												openOverrides[row.group.id.raw] = !row.open
 											},
 											onDelete = { viewModel.deleteParameterGroup(row.group.id.raw) },
 											onNewChildParameter = {
 												openOverrides[row.group.id.raw] = true
-												viewModel.setParameterGroupOpen(row.group.id.raw, true)
 												creatingUnderGroupId = row.group.id.raw
 												creatingParameter = true
 											},
@@ -940,6 +968,21 @@ private fun collectDescendantGroupIds(group: ParameterNode.Group): Set<String> {
 	return result
 }
 
+private fun collectParameterGroupIds(puppet: PuppetModel?): List<String> {
+	if (puppet == null) return emptyList()
+	val result = ArrayList<String>()
+	fun walk(nodes: List<ParameterNode>) {
+		for (node in nodes) {
+			if (node is ParameterNode.Group) {
+				result += node.id.raw
+				walk(node.children)
+			}
+		}
+	}
+	walk(puppet.materializedParameterTree())
+	return result
+}
+
 internal fun buildParameterPanelRows(
 	puppet: PuppetModel,
 	query: String,
@@ -956,7 +999,7 @@ internal fun buildParameterPanelRows(
 		(relatedIds == null || parameter.id in relatedIds) &&
             (query.isEmpty() || parameter.name.lowercase().contains(query) || parameter.id.raw.lowercase().contains(query))
 
-	fun walk(nodes: List<ParameterNode>, depth: Int, parentGroupId: String?) {
+	fun walk(nodes: List<ParameterNode>, depth: Int, parentGroupId: String?, parentLabelColor: ParameterLabelColor) {
 		var index = 0
 		while (index < nodes.size) {
 			when (val node = nodes[index]) {
@@ -964,7 +1007,7 @@ internal fun buildParameterPanelRows(
 					val open = filtering || (openOverrides[node.id.raw] ?: node.initiallyOpen)
 					val childRowsStart = rows.size
 					if (open || filtering) {
-						walk(node.children, depth + 1, node.id.raw)
+						walk(node.children, depth + 1, node.id.raw, node.labelColor)
 					}
 					val hasVisibleChildren = rows.size > childRowsStart ||
 						(!filtering && node.children.isNotEmpty())
@@ -1003,6 +1046,7 @@ internal fun buildParameterPanelRows(
 								vertical = vertical,
 								depth = depth,
 								parentGroupId = parentGroupId,
+								folderLabelColor = parentLabelColor,
 							)
 						}
 						index++
@@ -1016,6 +1060,7 @@ internal fun buildParameterPanelRows(
 							depth = depth,
 							parentGroupId = parentGroupId,
 							nextSiblingParam = nextParam,
+							folderLabelColor = parentLabelColor,
 						)
 					}
 					index++
@@ -1024,7 +1069,7 @@ internal fun buildParameterPanelRows(
 		}
 	}
 
-	walk(puppet.materializedParameterTree(), 0, null)
+	walk(puppet.materializedParameterTree(), 0, null, ParameterLabelColor.None)
 	return rows
 }
 
@@ -1161,11 +1206,7 @@ private fun ParameterFolderRow(
 				color = colors.textPrimary,
 				maxLines = 1,
 				overflow = TextOverflow.Ellipsis,
-				modifier = Modifier
-					.weight(1f)
-					.pointerInput(row.group.id) {
-						detectTapGestures(onDoubleTap = { onStartRename() })
-					},
+				modifier = Modifier.weight(1f),
 			)
 		}
 		ParameterDragHandle(onDragPress = onDragPress, rowCoords = rowCoords)
