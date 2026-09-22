@@ -72,7 +72,11 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -1096,6 +1100,7 @@ private fun ParameterTrack(
 	thumbShape: SliderKeyShape = SliderKeyShape.Circle,
 ) {
 	val colors = LocalToolColors.current
+	val labelMeasurer = rememberTextMeasurer()
 	val changeValue by rememberUpdatedState(onValueChange)
 	val span = (valueRange.endInclusive - valueRange.start).takeIf { it > 1e-6f } ?: 1f
 	val marks = remember(keyMarks, valueRange) {
@@ -1135,7 +1140,7 @@ private fun ParameterTrack(
 
 	Canvas(
 		modifier = modifier
-			.height(18.dp)
+			.height(28.dp)
 			.pointerHoverIcon(
 				if (enabled) PointerIcon(Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR))
 				else PointerIcon.Default,
@@ -1181,7 +1186,7 @@ private fun ParameterTrack(
 		val inset = insetDp.toPx()
 		val keyR = keyRadiusDp.toPx()
 		val thumbR = thumbRadiusDp.toPx()
-		val cy = size.height / 2f
+		val cy = size.height - thumbR - 1.dp.toPx()
 		val trackColor = colors.textMuted.copy(alpha = 0.55f)
 		val keyStroke = colors.textMuted.copy(alpha = 0.85f)
 		val onKey = marks.any { abs(it.value - value) < EPS_KEY }
@@ -1216,6 +1221,17 @@ private fun ParameterTrack(
 					drawRoundRect(keyStroke, tl, sz, cr, style = Stroke(width = 1.15.dp.toPx()))
 				}
 			}
+		}
+		val labelStyle = TextStyle(color = colors.textMuted, fontSize = 8.sp, fontFamily = FontFamily.Monospace)
+		var labelRight = Float.NEGATIVE_INFINITY
+		for (mark in marks.sortedBy { it.value }) {
+			val label = formatAxisValue(mark.value)
+			val layout = labelMeasurer.measure(label, labelStyle)
+			val x = xOf(size.width, mark.value, inset) - layout.size.width / 2f
+			val hovered = hoverKey != null && abs(hoverKey!! - mark.value) < 1e-4f
+			if (!hovered && x < labelRight + 1.dp.toPx()) continue
+			drawText(labelMeasurer, label, topLeft = Offset(x, 0f), style = labelStyle)
+			labelRight = x + layout.size.width
 		}
 
 		val thumbX = xOf(size.width, value, inset)
@@ -1328,7 +1344,7 @@ private fun ParameterRowItem(
 			.onGloballyPositioned { rowCoords = it }
 			.background(if (isLocked) colors.selection.copy(alpha = 0.22f) else Color.Transparent)
 			.padding(start = (4 + depth * 12).dp, end = 2.dp, top = 1.dp, bottom = 1.dp)
-			.height(22.dp),
+			.height(30.dp),
 		verticalAlignment = Alignment.CenterVertically,
 	) {
 		// Cubism: faint single chain link to the left of the name.
@@ -1405,7 +1421,7 @@ private fun LinkedParameterPad(
 			.fillMaxWidth()
 			.onGloballyPositioned { rowCoords = it }
 			.padding(start = (4 + depth * 12).dp, end = 2.dp, top = 3.dp, bottom = 3.dp)
-			.height(68.dp),
+			.height(84.dp),
 		verticalAlignment = Alignment.CenterVertically,
 	) {
 		// Cubism: tall interlocking two-chain link spanning both axis rows.
@@ -1553,9 +1569,10 @@ private fun ParameterPad2D(
 	val vMax by rememberUpdatedState(vertical.max)
 
 	var hoverKey by remember { mutableStateOf<Pair<Float, Float>?>(null) }
+	val labelMeasurer = rememberTextMeasurer()
 
-	val insetHorizontalDp = ParamTrackInsetHorizontal
-	val insetVerticalDp = 4.dp
+	val insetHorizontalDp = 18.dp
+	val insetVerticalDp = 14.dp
 	val keyRadiusDp = ParamKeyRadius
 	val thumbRadiusDp = ParamThumbRadius
 
@@ -1659,6 +1676,18 @@ private fun ParameterPad2D(
 			if (abs(y - insetY) > 2.5f && abs(y - (insetY + padH)) > 2.5f) {
 				drawLine(gridColor, Offset(insetX, y), Offset(insetX + padW, y), 1.dp.toPx(), pathEffect = dash)
 			}
+		}
+
+		val labelStyle = TextStyle(color = colors.textMuted, fontSize = 8.sp, fontFamily = FontFamily.Monospace)
+		for (kx in xKeyList) {
+			val label = formatAxisValue(kx)
+			val layout = labelMeasurer.measure(label, labelStyle)
+			drawText(labelMeasurer, label, topLeft = Offset(xPx(kx) - layout.size.width / 2f, 1.dp.toPx()), style = labelStyle)
+		}
+		for (ky in yKeyList) {
+			val label = formatAxisValue(ky)
+			val layout = labelMeasurer.measure(label, labelStyle)
+			drawText(labelMeasurer, label, topLeft = Offset(1.dp.toPx(), yPx(ky) - layout.size.height / 2f), style = labelStyle)
 		}
 
 		val hx = xPx(xValue)
