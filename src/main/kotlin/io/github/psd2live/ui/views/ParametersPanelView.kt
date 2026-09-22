@@ -95,6 +95,8 @@ import io.github.psd2live.ui.components.IconSearch
 import io.github.psd2live.ui.components.SliderKeyMark
 import io.github.psd2live.ui.components.SliderKeyShape
 import io.github.psd2live.ui.components.TreeContextMenu
+import io.github.psd2live.ui.selectedParameterOwner
+import org.umamo.runtime.model.ParameterId
 import io.github.psd2live.ui.parameterKeyMarks
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
@@ -112,7 +114,7 @@ import org.umamo.runtime.model.ParameterNode
 import org.umamo.runtime.model.PuppetModel
 
 /** One visible row in the parameter panel (folder header, single slider, or combined 2D pad). */
-private sealed interface ParameterPanelRow {
+internal sealed interface ParameterPanelRow {
 	data class Folder(
 		val group: ParameterNode.Group,
 		val depth: Int,
@@ -350,7 +352,18 @@ internal fun ParametersListView(
 	val model = state.previewModel
 	val puppet = model?.rig?.puppet
 	val allParameters = puppet?.parameters.orEmpty()
-	val keyMarksByParameter = remember(puppet) { puppet?.parameterKeyMarks().orEmpty() }
+    var creatingParameter by remember { mutableStateOf(false) }
+    if (creatingParameter && puppet != null) {
+        ParameterDefinitionDialog(null, state, viewModel) { creatingParameter = false }
+    }
+	val owner = remember(puppet, state.selectedLayerId, state.selectedDeformerId, model?.rig?.layerIdByDrawableId) {
+        puppet?.selectedParameterOwner(state.selectedLayerId, state.selectedDeformerId, model.rig.layerIdByDrawableId.orEmpty())
+    }
+    val keyMarksByParameter = remember(puppet) { puppet?.parameterKeyMarks().orEmpty() }
+    val selectedKeyMarks = remember(puppet, owner) { if (owner == null) emptyMap() else puppet?.parameterKeyMarks(owner).orEmpty() }
+    val relatedIds = selectedKeyMarks.keys
+    var relatedOnly by remember { mutableStateOf(false) }
+    val activeRelatedFilter = relatedOnly && owner != null
 	val query = state.parameterSearchQuery.trim().lowercase()
 	val openOverrides = remember { mutableStateMapOf<String, Boolean>() }
 	var renamingGroupId by remember { mutableStateOf<String?>(null) }
@@ -363,8 +376,8 @@ internal fun ParametersListView(
 	val itemBoundsMap = remember { mutableStateMapOf<String, ParamItemLayout>() }
 	var containerCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
-	val rows = remember(puppet, query, openOverrides.toMap()) {
-		if (puppet == null) emptyList() else buildParameterPanelRows(puppet, query, openOverrides)
+	val rows = remember(puppet, query, openOverrides.toMap(), activeRelatedFilter, relatedIds) {
+		if (puppet == null) emptyList() else buildParameterPanelRows(puppet, query, openOverrides, if (activeRelatedFilter) relatedIds else null)
 	}
 	val listState = rememberLazyListState()
 	val visibleCount = rows.sumOf { row ->
@@ -462,6 +475,12 @@ internal fun ParametersListView(
 					}
 				}
 
+                io.github.psd2live.ui.components.CompactButton(
+                    text = tr("parameters.create"),
+                    onClick = { creatingParameter = true },
+                    enabled = puppet != null && state.historySnapshot != null && !state.canvasEditBusy,
+                    height = 22.dp,
+                )
 				CompactIconButton(
 					onClick = { viewModel.createParameterGroup(tr("parameters.newFolderName")) },
 					enabled = puppet != null,
@@ -481,12 +500,28 @@ internal fun ParametersListView(
 			}
 		}
 
+        if (owner != null) {
+            Row(
+                Modifier.fillMaxWidth().background(colors.panelElevated).padding(horizontal = 6.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                io.github.psd2live.ui.components.CompactButton(
+                    text = tr("parameters.relatedOnly"),
+                    onClick = { relatedOnly = !relatedOnly },
+                    isPrimary = activeRelatedFilter,
+                    height = 22.dp,
+                )
+                Text(tr("parameters.relatedCount", relatedIds.size), style = typography.caption, color = colors.textMuted,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            }
+        }
 		Divider(color = colors.divider)
 
-		if (allParameters.isEmpty() || rows.isEmpty()) {
+		if (rows.isEmpty()) {
 			Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
 				Text(
-					text = if (allParameters.isEmpty()) tr("parameters.empty") else tr("parameters.noResults"),
+					text = if (allParameters.isEmpty()) tr("parameters.empty") else if (activeRelatedFilter) tr("parameters.noRelated") else tr("parameters.noResults"),
 					style = typography.caption.copy(fontSize = 11.sp),
 					color = colors.textMuted,
 					modifier = Modifier.padding(12.dp),
@@ -517,6 +552,11 @@ internal fun ParametersListView(
 					items(rows, key = { row -> rowKey(row) }) { row ->
 						val key = rowKey(row)
 						val layout = rowToLayout(row)
+                        val related = when (row) {
+                            is ParameterPanelRow.Single -> row.parameter.id in relatedIds
+                            is ParameterPanelRow.Linked -> row.horizontal.id in relatedIds || row.vertical.id in relatedIds
+                            is ParameterPanelRow.Folder -> row.group.containsParameter(relatedIds)
+                        }
 						val isDragged = dragState.isDragging && dragState.draggedKey == key
 						val shift by animateFloatAsState(
 							targetValue = if (dragState.isDragging) parameterDragShift(layout, dragState, itemBoundsMap.values) else 0f,
@@ -526,6 +566,7 @@ internal fun ParametersListView(
 						Column(
 								modifier = Modifier
 									.fillMaxWidth()
+                                    .background(if (related) colors.selection.copy(alpha = 0.35f) else Color.Transparent)
 									.drawWithContent {
 										if (isDragged) {
 											dragPreview.record {
@@ -533,7 +574,10 @@ internal fun ParametersListView(
 												this@drawWithContent.drawContent()
 											}
 										} else {
-											translate(top = shift) { this@drawWithContent.drawContent() }
+											translate(top = shift) {
+                                                this@drawWithContent.drawContent()
+                                                if (related) drawRect(colors.accent, size = Size(2.dp.toPx(), size.height))
+                                            }
 										}
 									}
 
@@ -612,6 +656,8 @@ internal fun ParametersListView(
 											state = state,
 											viewModel = viewModel,
 											keyMarks = keyMarksByParameter[row.parameter.id],
+                                            related = row.parameter.id in relatedIds,
+                                            selectedKeys = selectedKeyMarks[row.parameter.id]?.allKeys.orEmpty(),
 											nextSiblingParam = row.nextSiblingParam,
 											onLinkWith = { targetParamId ->
 												viewModel.setParameterLink(row.parameter.id.raw, targetParamId, true)
@@ -640,6 +686,9 @@ internal fun ParametersListView(
 											state = state,
 											viewModel = viewModel,
 											horizontalKeys = keyMarksByParameter[row.horizontal.id],
+                                            highlightedX = selectedKeyMarks[row.horizontal.id]?.allKeys.orEmpty(),
+                                            highlightedY = selectedKeyMarks[row.vertical.id]?.allKeys.orEmpty(),
+                                            relatedIds = relatedIds,
 											verticalKeys = keyMarksByParameter[row.vertical.id],
 											onUnlink = {
 												viewModel.setParameterLink(row.horizontal.id.raw, row.vertical.id.raw, false)
@@ -742,33 +791,35 @@ private fun collectDescendantGroupIds(group: ParameterNode.Group): Set<String> {
 	return result
 }
 
-private fun buildParameterPanelRows(
+internal fun buildParameterPanelRows(
 	puppet: PuppetModel,
 	query: String,
 	openOverrides: Map<String, Boolean>,
+    relatedIds: Set<ParameterId>? = null,
 ): List<ParameterPanelRow> {
 	val byId = puppet.parameters.associateBy { it.id }
 	val linkByHorizontal = puppet.parameterLinks.associateBy { it.horizontal }
 	val verticalIds = puppet.parameterLinks.map { it.vertical }.toSet()
 	val rows = ArrayList<ParameterPanelRow>()
-	val filtering = query.isNotEmpty()
+	val filtering = query.isNotEmpty() || relatedIds != null
 
 	fun matches(parameter: Parameter): Boolean =
-		!filtering || parameter.name.lowercase().contains(query) || parameter.id.raw.lowercase().contains(query)
+		(relatedIds == null || parameter.id in relatedIds) &&
+            (query.isEmpty() || parameter.name.lowercase().contains(query) || parameter.id.raw.lowercase().contains(query))
 
 	fun walk(nodes: List<ParameterNode>, depth: Int, parentGroupId: String?) {
 		var index = 0
 		while (index < nodes.size) {
 			when (val node = nodes[index]) {
 				is ParameterNode.Group -> {
-					val open = openOverrides[node.id.raw] ?: node.initiallyOpen || filtering
+					val open = filtering || (openOverrides[node.id.raw] ?: node.initiallyOpen)
 					val childRowsStart = rows.size
 					if (open || filtering) {
 						walk(node.children, depth + 1, node.id.raw)
 					}
 					val hasVisibleChildren = rows.size > childRowsStart ||
 						(!filtering && node.children.isNotEmpty())
-					val selfMatches = filtering && node.name.lowercase().contains(query)
+					val selfMatches = relatedIds == null && query.isNotEmpty() && node.name.lowercase().contains(query)
 					if (!filtering || hasVisibleChildren || selfMatches) {
 						rows.add(
 							childRowsStart,
@@ -1039,6 +1090,7 @@ private fun ParameterTrack(
 	onValueChange: (Float) -> Unit,
 	valueRange: ClosedFloatingPointRange<Float>,
 	keyMarks: List<SliderKeyMark>,
+    highlightedKeys: List<Float> = emptyList(),
 	modifier: Modifier = Modifier,
 	enabled: Boolean = true,
 	thumbShape: SliderKeyShape = SliderKeyShape.Circle,
@@ -1116,7 +1168,8 @@ private fun ParameterTrack(
 						} while (event.changes.any { it.pressed })
 						return@awaitEachGesture
 					}
-					changeValue(valueOf(down.position.x, size.width.toFloat(), inset))
+                    val clickedKey = hitKey(down.position.x, size.width.toFloat(), inset, 7.dp.toPx())
+                    changeValue(clickedKey ?: valueOf(down.position.x, size.width.toFloat(), inset))
 					down.consume()
 					drag(down.id) { change ->
 						change.consume()
@@ -1143,6 +1196,7 @@ private fun ParameterTrack(
 		)
 
 		for (mark in marks) {
+            val keyStroke = if (highlightedKeys.any { abs(it - mark.value) < EPS_KEY }) colors.accent else keyStroke
 			val mx = xOf(size.width, mark.value, inset)
 			val hovered = hoverKey != null && abs(hoverKey!! - mark.value) < 1e-4f
 			val r = if (hovered) keyR * 1.35f else keyR
@@ -1255,6 +1309,8 @@ private fun ParameterRowItem(
 	state: PSD2LiveState,
 	viewModel: PSD2LiveViewModel,
 	keyMarks: ParameterKeyMarks?,
+    related: Boolean,
+    selectedKeys: List<Float>,
 	nextSiblingParam: Parameter?,
 	onLinkWith: (String) -> Unit,
 	onDragPress: (localPos: Offset, rowCoords: LayoutCoordinates) -> Unit,
@@ -1296,13 +1352,14 @@ private fun ParameterRowItem(
 			)
 		}
 		Spacer(Modifier.width(ParamRowLockSpacer))
-		ParameterName(param, locked = isLocked, modifier = Modifier.width(ParamRowNameWidth))
+		EditableParameterName(param, isLocked, state, viewModel, related)
 		Spacer(Modifier.width(ParamRowBeforeTrackSpacer))
 		ParameterTrack(
 			value = currentValue.coerceIn(param.min, param.max),
 			onValueChange = { viewModel.setParameterValue(param.id, it) },
 			valueRange = param.min..param.max,
 			keyMarks = sliderMarks,
+            highlightedKeys = selectedKeys,
 			modifier = Modifier.weight(1f),
 			thumbShape = if (param.kind == ParameterKind.BLEND_SHAPE) SliderKeyShape.Square else SliderKeyShape.Circle,
 		)
@@ -1329,6 +1386,9 @@ private fun LinkedParameterPad(
 	state: PSD2LiveState,
 	viewModel: PSD2LiveViewModel,
 	horizontalKeys: ParameterKeyMarks?,
+    highlightedX: List<Float>,
+    highlightedY: List<Float>,
+    relatedIds: Set<ParameterId>,
 	verticalKeys: ParameterKeyMarks?,
 	onUnlink: () -> Unit,
 	onDragPress: (localPos: Offset, rowCoords: LayoutCoordinates) -> Unit,
@@ -1375,7 +1435,7 @@ private fun LinkedParameterPad(
 					)
 				}
 				Spacer(Modifier.width(ParamRowLockSpacer))
-				ParameterName(horizontal, locked = xLocked, modifier = Modifier.width(ParamRowNameWidth))
+				EditableParameterName(horizontal, xLocked, state, viewModel, horizontal.id in relatedIds)
 			}
 			Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
 				CompactIconButton(
@@ -1390,7 +1450,7 @@ private fun LinkedParameterPad(
 					)
 				}
 				Spacer(Modifier.width(ParamRowLockSpacer))
-				ParameterName(vertical, locked = yLocked, modifier = Modifier.width(ParamRowNameWidth))
+				EditableParameterName(vertical, yLocked, state, viewModel, vertical.id in relatedIds)
 			}
 		}
 		Spacer(Modifier.width(ParamRowBeforeTrackSpacer))
@@ -1402,6 +1462,8 @@ private fun LinkedParameterPad(
 			xLocked = xLocked,
 			yLocked = yLocked,
 			horizontalKeys = horizontalKeys,
+            highlightedX = highlightedX,
+            highlightedY = highlightedY,
 			verticalKeys = verticalKeys,
 			modifier = Modifier.weight(1f).fillMaxHeight(),
 			onChange = { x, y ->
@@ -1458,6 +1520,8 @@ private fun ParameterPad2D(
 	xLocked: Boolean,
 	yLocked: Boolean,
 	horizontalKeys: ParameterKeyMarks?,
+    highlightedX: List<Float>,
+    highlightedY: List<Float>,
 	verticalKeys: ParameterKeyMarks?,
 	modifier: Modifier,
 	onChange: (Float, Float) -> Unit,
@@ -1609,6 +1673,7 @@ private fun ParameterPad2D(
 		for (kx in xKeyList) {
 			val isBlendX = kx in blendX
 			for (ky in yKeyList) {
+                val keyStroke = if (highlightedX.any { abs(it - kx) < EPS_KEY } && highlightedY.any { abs(it - ky) < EPS_KEY }) colors.accent else keyStroke
 				val px = xPx(kx)
 				val py = yPx(ky)
 				val isBlend = isBlendX || ky in blendY
@@ -1656,3 +1721,35 @@ private fun liveValue(param: Parameter, state: PSD2LiveState): Float =
 
 private fun formatParamValue(value: Float): String =
 	if (abs(value) >= 10f) "%.1f".format(value) else "%.2f".format(value)
+
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun EditableParameterName(param: Parameter, locked: Boolean, state: PSD2LiveState, viewModel: PSD2LiveViewModel, related: Boolean) {
+    var editing by remember(param.id) { mutableStateOf(false) }
+    val editable = state.historySnapshot != null && !state.canvasEditBusy
+    ParameterName(
+        param,
+        locked = locked,
+        modifier = Modifier
+            .width(ParamRowNameWidth)
+            .semantics {
+                contentDescription = param.name + " — " + tr("parameters.properties") +
+                    if (related) " — " + tr("parameters.related") else ""
+            }
+            .clickable(enabled = editable, onClickLabel = tr("parameters.properties")) { editing = true }
+            .onPointerEvent(PointerEventType.Press) { event ->
+                if (event.button == PointerButton.Secondary && editable) {
+                    editing = true
+                    event.changes.forEach { it.consume() }
+                }
+            },
+    )
+    if (editing) ParameterDefinitionDialog(param, state, viewModel) { editing = false }
+}
+
+private fun ParameterNode.Group.containsParameter(ids: Set<ParameterId>): Boolean = children.any {
+    when (it) {
+        is ParameterNode.Param -> it.id in ids
+        is ParameterNode.Group -> it.containsParameter(ids)
+    }
+}

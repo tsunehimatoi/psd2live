@@ -29,6 +29,7 @@ internal object RigAuthoringJournal {
         "delete" -> applyKeyformDelete(model, RigKeyformDeleteEdit(target(edit.text("target")), edit.text("parameter"),
             edit.number("value"), edit["channel"]?.jsonPrimitive?.content))
         "warp" -> RigWarpEdit.fromJson(edit.getValue("warp").jsonObject).applyTo(model)
+        "parameter_keys" -> ParameterKeyEdits.apply(model, edit)
         "structure" -> RigStructureEdits.apply(model, edit.getValue("edits").jsonArray.map { it.jsonObject })
         else -> error("Unknown authoring journal operation")
     }
@@ -122,7 +123,7 @@ internal object RigAuthoringJournal {
                         put("points", JsonArray(points))
                     }
                 }
-                "set", "copy", "delete", "warp", "structure", "path_delete", "canvas_geometry", "canvas_topology", "canvas_create_warp", "canvas_create_rotation", "canvas_create_glue" -> command
+                "parameter_keys", "set", "copy", "delete", "warp", "structure", "path_delete", "canvas_geometry", "canvas_topology", "canvas_create_warp", "canvas_create_rotation", "canvas_create_glue" -> command
                 else -> error("Unknown authoring operation: $op")
             }
             // Ask against the model *before* this command is applied: the question is whether the slot
@@ -131,7 +132,7 @@ internal object RigAuthoringJournal {
             // change guard fire — see RigCommandDelta.
             val before = current
             current = apply(current, compiled)
-            if (!RigCommandDelta.isNoOp(before, compiled)) journal += compiled
+            if ((op != "parameter_keys" || current !== before) && !RigCommandDelta.isNoOp(before, compiled)) journal += compiled
         }
         return current to journal
     }

@@ -246,6 +246,26 @@ class PSD2LiveViewModel : AutoCloseable {
         saveAuthoringEdits(expected, kotlinx.serialization.json.JsonArray(listOf(command))) {}
     }
 
+    fun saveParameterDefinition(action: String, id: String, name: String, min: Float, default: Float, max: Float, parameterKind: org.umamo.runtime.model.ParameterKind = org.umamo.runtime.model.ParameterKind.NORMAL, keyEdits: List<kotlinx.serialization.json.JsonObject> = emptyList(), expectedState: String? = null, onComplete: (String?) -> Unit) {
+        flushEditorFields()
+        val expected = expectedState ?: _state.value.historySnapshot?.headNodeId
+        if (expected == null) { onComplete("Project workspace unavailable"); return }
+        val fields = kotlinx.serialization.json.buildJsonObject {
+            if (action == "create") put("parameter_kind", kotlinx.serialization.json.JsonPrimitive(parameterKind.name))
+            if (action != "delete") {
+                put("name", kotlinx.serialization.json.JsonPrimitive(name))
+                put("min", kotlinx.serialization.json.JsonPrimitive(min))
+                put("default", kotlinx.serialization.json.JsonPrimitive(default))
+                put("max", kotlinx.serialization.json.JsonPrimitive(max))
+            }
+        }
+        val command = kotlinx.serialization.json.buildJsonObject {
+            put("op", kotlinx.serialization.json.JsonPrimitive("structure"))
+            put("edits", kotlinx.serialization.json.JsonArray(listOf(structureEdit(action, "parameter", id, fields))))
+        }
+        saveAuthoringEdits(expected, kotlinx.serialization.json.JsonArray(listOf(command) + if (action == "delete") emptyList() else keyEdits), onComplete)
+    }
+
     /** Creates a parameter-panel folder (CMO3 CParameterGroup) at the panel root or under [parentGroupId]. */
     fun createParameterGroup(name: String, parentGroupId: String? = null) {
         val puppet = _state.value.previewModel?.rig?.puppet ?: return

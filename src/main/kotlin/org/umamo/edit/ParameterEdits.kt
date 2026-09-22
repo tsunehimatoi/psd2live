@@ -1,5 +1,6 @@
 package org.umamo.edit
 
+import org.umamo.runtime.eval.EPS_SPAN
 import org.umamo.runtime.model.ParameterId
 import org.umamo.runtime.model.ParameterLink
 import org.umamo.runtime.model.PuppetModel
@@ -30,7 +31,9 @@ fun PuppetModel.withParameterRange(id: ParameterId, min: Float, default: Float, 
 	val updated =
 		parameters.map { parameter ->
 			if (parameter.id == id) {
-				parameter.copy(min = low, max = high, default = clampedDefault)
+				val clipped = parameter.keys?.filter { it in low..high }
+				val keys = if (clipped == null || clipped.size == parameter.keys.size) parameter.keys else clipped
+				parameter.copy(min = low, max = high, default = clampedDefault, keys = keys)
 			} else {
 				parameter
 			}
@@ -39,6 +42,18 @@ fun PuppetModel.withParameterRange(id: ParameterId, min: Float, default: Float, 
 		return this
 	}
 	return copy(parameters = updated)
+}
+
+/** Replace this parameter's authored stops. An empty list is explicit and hides object-derived marks. */
+fun PuppetModel.withParameterKeys(id: ParameterId, keys: List<Float>): PuppetModel {
+	val parameter = parameters.find { it.id == id } ?: return this
+	val normalized = keys.distinct().sorted()
+	require(normalized.all { it.isFinite() && it in parameter.min..parameter.max }) {
+		"Keys must be finite and within the parameter range"
+	}
+	require(normalized.zipWithNext().all { (a, b) -> b - a >= EPS_SPAN }) { "Keys must remain distinct" }
+	if (parameter.keys == normalized) return this
+	return copy(parameters = parameters.map { if (it.id == id) it.copy(keys = normalized) else it })
 }
 
 /**

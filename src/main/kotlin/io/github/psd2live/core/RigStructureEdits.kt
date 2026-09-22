@@ -1,6 +1,9 @@
 package io.github.psd2live.core
 
 import kotlinx.serialization.json.*
+import org.umamo.edit.withParameterCreated
+import org.umamo.edit.withParameterDeleted
+import org.umamo.edit.withParameterRange
 import org.umamo.edit.ParameterPanelRef
 import org.umamo.edit.withDeformerDeleted
 import org.umamo.edit.withDeformerMoved
@@ -198,13 +201,35 @@ internal object RigStructureEdits {
         val allowed = when (action) {
             "rename" -> setOf("name")
             "move" -> setOf("parent_id", "before_id", "before_kind")
-            "create" -> setOf("name", "parent_id", "before_id", "before_kind", "open")
+            "create" -> setOf("name", "parent_id", "before_id", "before_kind", "open", "min", "max", "default", "parameter_kind")
+            "update" -> setOf("name", "min", "max", "default")
             "delete" -> emptySet()
             "link" -> setOf("partner_id", "linked")
             "open" -> setOf("open")
             else -> error("Unknown parameter-panel action: $action")
         }
         require((edit.keys - allowed - setOf("action", "kind", "id")).isEmpty()) { "Unexpected field for $action" }
+        if (kind == "parameter" && action in setOf("create", "update", "delete")) {
+            val parameterId = ParameterId(id)
+            require(id.isNotBlank()) { "Parameter ID is required" }
+            val existing = model.parameters.find { it.id == parameterId }
+            if (action == "delete") {
+                require(existing != null) { "Parameter not found: $id" }
+                return model.withParameterDeleted(parameterId)
+            }
+            require((existing == null) == (action == "create")) { "Parameter ID already exists or is missing: $id" }
+            val name = edit.string("name").trim()
+            val min = edit.getValue("min").jsonPrimitive.float
+            val max = edit.getValue("max").jsonPrimitive.float
+            val default = edit.getValue("default").jsonPrimitive.float
+            require(name.isNotEmpty()) { "Parameter name is required" }
+            require(min.isFinite() && max.isFinite() && default.isFinite() && min < max && default in min..max) {
+                "Use a finite range with minimum < maximum and default inside the range"
+            }
+            val base = if (action == "create") model.withParameterCreated(parameterId, name, edit["parameter_kind"]?.jsonPrimitive?.content?.let(ParameterKind::valueOf) ?: ParameterKind.NORMAL)
+                else model.withParameterRenamed(parameterId, name)
+            return base.withParameterRange(parameterId, min, default, max)
+        }
         fun parentId(): ParameterGroupId? {
             require("parent_id" in edit) { "Specify parent_id; null means panel root" }
             return edit["parent_id"]?.jsonPrimitive?.contentOrNull?.let(::ParameterGroupId)

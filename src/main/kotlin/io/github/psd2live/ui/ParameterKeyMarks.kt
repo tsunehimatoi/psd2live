@@ -20,11 +20,22 @@ data class ParameterKeyMarks(
 		get() = (gridKeys + blendKeys).distinct().sorted()
 }
 
-/**
- * Per-parameter key marks for this rig: sorted, deduplicated unions of every object's keyform-grid and
- * blend-shape keys. Mirrors Cubism / umamo's parameter-panel key points.
- */
-fun PuppetModel.parameterKeyMarks(): Map<ParameterId, ParameterKeyMarks> {
+/** Stable object identity for selection-scoped parameter marks. */
+data class ParameterKeyOwner(val kind: String, val id: String)
+
+/** Resolve the same deformer-first selection as the editor; layer IDs are not drawable IDs. */
+fun PuppetModel.selectedParameterOwner(layerId: String?, deformerId: String?, layerIdByDrawableId: Map<String, String>): ParameterKeyOwner? {
+    deformers.firstOrNull { it.id.raw == deformerId }?.let {
+        return ParameterKeyOwner("deformer", it.id.raw)
+    }
+    if (layerId == null) return null
+    val drawable = drawables.firstOrNull { layerIdByDrawableId[it.id.raw] == layerId }
+        ?: drawables.firstOrNull { it.id.raw == layerId }
+    return drawable?.let { ParameterKeyOwner("mesh", it.id.raw) }
+}
+
+/** Sorted geometry, channel and blend keys for one owner, or the whole rig when owner is null. */
+fun PuppetModel.parameterKeyMarks(owner: ParameterKeyOwner? = null): Map<ParameterId, ParameterKeyMarks> {
 	val gridKeysByParameter = HashMap<ParameterId, MutableSet<Float>>()
 	val blendKeysByParameter = HashMap<ParameterId, MutableSet<Float>>()
 
@@ -39,11 +50,13 @@ fun PuppetModel.parameterKeyMarks(): Map<ParameterId, ParameterKeyMarks> {
 	}
 
 	for (drawable in drawables) {
+        if (owner != null && (owner.kind != "mesh" || owner.id != drawable.id.raw)) continue
 		drawable.geometryGrid?.axes?.forEach { axis -> addGridKeys(axis.parameterId, axis.keys) }
 		drawable.channelGrids.allAxes().forEach { axis -> addGridKeys(axis.parameterId, axis.keys) }
 		drawable.blendShapes.forEach { binding -> addBlendKeys(binding.parameterId, binding.keys) }
 	}
 	for (deformer in deformers) {
+        if (owner != null && (owner.kind != "deformer" || owner.id != deformer.id.raw)) continue
 		when (deformer) {
 			is Deformer.Warp -> {
 				deformer.geometryGrid?.axes?.forEach { axis -> addGridKeys(axis.parameterId, axis.keys) }
@@ -58,18 +71,25 @@ fun PuppetModel.parameterKeyMarks(): Map<ParameterId, ParameterKeyMarks> {
 		}
 	}
 	for (part in parts) {
+        if (owner != null && (owner.kind != "part" || owner.id != part.id.raw)) continue
 		part.channelGrids.allAxes().forEach { axis -> addGridKeys(axis.parameterId, axis.keys) }
 	}
 	for (glue in glues) {
+        if (owner != null) continue
 		glue.channelGrids.allAxes().forEach { axis -> addGridKeys(axis.parameterId, axis.keys) }
 	}
 
 	val keyedParameters = gridKeysByParameter.keys + blendKeysByParameter.keys
-	return keyedParameters.associateWith { parameterId ->
+	val objectMarks = keyedParameters.associateWith { parameterId ->
 		ParameterKeyMarks(
 			gridKeys = gridKeysByParameter[parameterId]?.toList() ?: emptyList(),
 			blendKeys = blendKeysByParameter[parameterId]?.toList() ?: emptyList(),
 		)
+	}
+	if (owner != null) return objectMarks
+	return parameters.fold(objectMarks) { marks, parameter ->
+		val explicit = parameter.keys ?: return@fold marks
+		marks + (parameter.id to ParameterKeyMarks(explicit.sorted(), emptyList()))
 	}
 }
 

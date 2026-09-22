@@ -35,6 +35,12 @@ data class Parameter(
 	 * round-trip fidelity rather than driving deformation.
 	 */
 	val repeat: Boolean = false,
+	/**
+	 * Authored stops on this axis. Null means the slider still shows stops taken from object keyforms.
+	 * An explicit list, including an empty one, is the parameter's own points: shapes are captured later,
+	 * when a component is deformed at one of these values.
+	 */
+	val keys: List<Float>? = null,
 )
 
 /**
