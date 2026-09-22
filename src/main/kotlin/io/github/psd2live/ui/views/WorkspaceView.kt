@@ -26,6 +26,8 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import kotlin.math.roundToInt
 import androidx.compose.material.Divider
 import androidx.compose.foundation.lazy.LazyColumn
@@ -426,6 +428,29 @@ internal fun DockHierarchyView(
 						}
 					}
         }
+
+		// Dock panels clip to their rounded chrome; float the mesh card past the right edge
+		// onto the canvas, matching HierarchyView's overlay without being cropped.
+		if (model != null) {
+			meshPreviewHover.value?.let { hover ->
+				val panel = rowCoords?.takeIf { it.isAttached }
+				if (panel != null) {
+					val originY = panel.positionInRoot().y
+					val anchorY = hover.centerYInRoot - originY
+					val sidePx = with(density) { 180.dp.toPx() }
+					val top = (anchorY - sidePx / 2).coerceIn(0f, (panel.size.height - sidePx).coerceAtLeast(0f))
+					Popup(
+						alignment = Alignment.TopStart,
+						offset = IntOffset(panel.size.width, top.roundToInt()),
+						properties = PopupProperties(focusable = false, clippingEnabled = false),
+					) {
+						Box(Modifier.size(188.dp, 180.dp)) {
+							HierarchyMeshPreview(model, hover.drawableId, 0.dp, sidePx / 2)
+						}
+					}
+				}
+			}
+		}
 
 		// Modal Dialog for setting Draw Order
 		if (activeDrawOrderTarget != null) {
