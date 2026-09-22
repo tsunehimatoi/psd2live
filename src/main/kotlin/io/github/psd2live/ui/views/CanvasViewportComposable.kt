@@ -5,17 +5,10 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
@@ -84,11 +77,6 @@ import io.github.psd2live.ui.ComponentPalette
 import io.github.psd2live.ui.CubismViewport
 import io.github.psd2live.ui.RigCanvasSupport
 import io.github.psd2live.ui.SkiaRigPainter
-import io.github.psd2live.ui.components.CompactToggleChip
-import io.github.psd2live.ui.components.IconMouse
-import io.github.psd2live.ui.components.IconPause
-import io.github.psd2live.ui.components.IconPlay
-import io.github.psd2live.ui.components.IconReset
 import io.github.psd2live.ui.state.CanvasMode
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
@@ -1093,41 +1081,36 @@ fun CanvasViewportComposable(
 				}
 			}
 
-			// Bottom-right cluster: zoom/stats pill above the display-toggle rail. The rail mirrors
-			// the left tool palette; Edit shows hints in the app status bar, so only Preview needs
-			// extra clearance for its floating toolbar.
-			Column(
+			// Bottom-left: zoom/FPS/physics stats pill.
+			if (badgeText.isNotEmpty()) {
+				Box(
+					modifier = Modifier
+						.align(Alignment.BottomStart)
+						.padding(start = 8.dp, bottom = 8.dp)
+						.frostedGlass(
+							shape = RoundedCornerShape(6.dp),
+							isHovered = false,
+							elevation = 2.dp,
+							alpha = 0.78f,
+						)
+						.padding(horizontal = 8.dp, vertical = 4.dp),
+				) {
+					Text(
+						text = badgeText,
+						style = typography.caption.copy(fontSize = 11.sp),
+						color = colors.textPrimary,
+					)
+				}
+			}
+			// Bottom-right: display-toggle rail (mirrors the left tool palette).
+			CanvasViewOptionsBar(
+				options = state.activeTabView,
+				onOptionsChange = viewModel::setTabViewOptions,
+				showPathGuides = state.activeTabKind == WorkspaceTabKind.EDIT,
 				modifier = Modifier
 					.align(Alignment.BottomEnd)
-					.padding(end = 8.dp, bottom = if (mode == CanvasMode.EDIT) 8.dp else 48.dp),
-				horizontalAlignment = Alignment.End,
-				verticalArrangement = Arrangement.spacedBy(6.dp),
-			) {
-				if (badgeText.isNotEmpty()) {
-					Box(
-						modifier = Modifier
-							.frostedGlass(
-								shape = RoundedCornerShape(6.dp),
-								isHovered = false,
-								elevation = 2.dp,
-								alpha = 0.78f,
-							)
-							.padding(horizontal = 8.dp, vertical = 4.dp),
-					) {
-						Text(
-							text = badgeText,
-							style = typography.caption.copy(fontSize = 11.sp),
-							color = colors.textPrimary,
-						)
-					}
-				}
-				CanvasViewOptionsBar(
-					options = state.activeTabView,
-					onOptionsChange = viewModel::setTabViewOptions,
-					showPathGuides = state.activeTabKind == WorkspaceTabKind.EDIT,
-					modifier = Modifier,
-				)
-			}
+					.padding(end = 8.dp, bottom = 8.dp),
+			)
 		}
 	}
 }
