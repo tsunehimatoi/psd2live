@@ -106,9 +106,7 @@ import io.github.psd2live.ui.components.IconDragHandle
 import io.github.psd2live.ui.components.IconFolder
 import io.github.psd2live.ui.components.IconLock
 import io.github.psd2live.ui.components.IconMeshWireframe
-import io.github.psd2live.ui.components.IconMouse
 import io.github.psd2live.ui.components.IconParameterLink
-import io.github.psd2live.ui.components.IconPause
 import io.github.psd2live.ui.components.IconPlay
 import io.github.psd2live.ui.components.IconReset
 import io.github.psd2live.ui.components.IconRotationDeformer
@@ -503,31 +501,7 @@ internal fun ParametersListView(
 				verticalAlignment = Alignment.CenterVertically,
 				horizontalArrangement = Arrangement.spacedBy(3.dp),
 			) {
-				val isAnim = state.animationEnabled
-				val isMouseTracking = state.mouseTrackingEnabled
-
 				if (inPreview) {
-					CompactIconButton(
-						onClick = { viewModel.setAnimationEnabled(!isAnim) },
-						enabled = model != null,
-						size = 22.dp,
-						tooltip = if (isAnim) tr("preview.animation.pause") else tr("preview.animation.play"),
-					) {
-						if (isAnim) IconPause(modifier = Modifier.size(11.dp), tint = colors.textPrimary)
-						else IconPlay(modifier = Modifier.size(11.dp), tint = colors.accent)
-					}
-					CompactIconButton(
-						onClick = { viewModel.setMouseTrackingEnabled(!isMouseTracking) },
-						enabled = model != null,
-						size = 22.dp,
-						tooltip = if (isMouseTracking) tr("preview.mouseTracking.on") else tr("preview.mouseTracking.off"),
-					) {
-						IconMouse(
-							active = isMouseTracking,
-							modifier = Modifier.size(12.dp),
-							tint = if (isMouseTracking) colors.accent else colors.textDisabled,
-						)
-					}
 					CompactIconButton(
 						onClick = { viewModel.unlockAllParameters() },
 						enabled = state.lockedParameters.isNotEmpty(),

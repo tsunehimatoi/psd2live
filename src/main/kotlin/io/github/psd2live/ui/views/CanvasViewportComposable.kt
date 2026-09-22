@@ -1057,6 +1057,15 @@ fun CanvasViewportComposable(
                 onAction = { focusRequester.requestFocus() },
             )
         }
+		if (mode == CanvasMode.PREVIEW && previewModel != null) {
+			CanvasPreviewToolbar(
+				animationEnabled = state.animationEnabled,
+				mouseTrackingEnabled = state.mouseTrackingEnabled,
+				enabled = true,
+				onToggleAnimation = { viewModel.setAnimationEnabled(!state.animationEnabled) },
+				onToggleMouseTracking = { viewModel.setMouseTrackingEnabled(!state.mouseTrackingEnabled) },
+			)
+		}
         // Overlay: Empty hint or Stats Badge
 		if (previewModel == null) {
 			EmptyCanvasStart(
