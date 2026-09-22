@@ -24,7 +24,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
@@ -65,7 +65,10 @@ import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -118,6 +121,9 @@ fun CanvasViewportComposable(
     val density = LocalDensity.current.density
 
 	var viewSize by remember { mutableStateOf(IntSize(600, 600)) }
+	// Window position of this canvas. Dock toggles move the canvas without changing zoom or pan;
+	// the mesh overlay has to redraw on that move or its picture stays at the old place.
+	var canvasOrigin by remember { mutableStateOf(Offset.Zero) }
 	var zoom by remember(state.projectOpenGeneration) { mutableStateOf(state.canvasZoom.toDouble()) }
 	var panX by remember(state.projectOpenGeneration) { mutableStateOf(state.canvasPanX.toDouble()) }
 	var panY by remember(state.projectOpenGeneration) { mutableStateOf(state.canvasPanY.toDouble()) }
@@ -180,6 +186,13 @@ fun CanvasViewportComposable(
     val previewModel = state.previewModel?.let { source ->
         if (mode == CanvasMode.EDIT && editor.preview != null) source.copy(rig = source.rig.copy(puppet = editor.preview!!)) else source
     }
+	val viewportFor = remember(previewModel, zoom, panX, panY) {
+		val model = previewModel
+		{ drawSize: IntSize ->
+			if (model == null) CanvasViewport(1.0, 0.0, 0.0, 1f, 1f)
+			else computeEditorViewport(model, drawSize, zoom, panX, panY)
+		}
+	}
 	val editingPainter = remember(previewModel?.atlas) { previewModel?.atlas?.let(::SkiaRigPainter) }
 	DisposableEffect(editingPainter) { onDispose { editingPainter?.close() } }
 	val sdkFrame by viewModel.sdkFrame.collectAsState()
@@ -318,12 +331,19 @@ fun CanvasViewportComposable(
 	Box(
 		modifier = modifier
 			.fillMaxSize()
-			.clipToBounds()
+			// clipToBounds() is a graphics layer. On a dock resize that layer's picture keeps the
+			// previous window position until something else invalidates it, so mesh points stay
+			// behind while the artwork moves. A draw-time clip follows layout immediately.
+			.drawWithContent { clipRect { this@drawWithContent.drawContent() } }
 			.background(colors.windowBackground)
 			.focusRequester(focusRequester)
 			.onFocusChanged { if(!it.hasFocus) { editor.space=false; if(editor.inGesture)editor.cancel(); if(editor.adjustingBrush)editor.endBrushAdjust(cancel = false) } }
 			.focusable()
 			.onSizeChanged { viewSize = it }
+			.onGloballyPositioned { coordinates ->
+				val origin = coordinates.positionInRoot()
+				if (origin != canvasOrigin) canvasOrigin = origin
+			}
 			.onKeyEvent { event ->
 				// A capture in the settings panel owns the keyboard. The root handler already
 				// swallowed the event, but stay inert anyway so nothing reaches the canvas
@@ -676,6 +696,8 @@ fun CanvasViewportComposable(
 			},
 	) {
 		Canvas(modifier = Modifier.fillMaxSize()) {
+			// Same placement read as the mesh overlay, so both pictures invalidate together.
+			canvasOrigin.x
 			val w = size.width.toInt().coerceAtLeast(1)
 			val h = size.height.toInt().coerceAtLeast(1)
 
@@ -1037,11 +1059,13 @@ fun CanvasViewportComposable(
 		}
 
 		if(mode == CanvasMode.EDIT && previewModel != null) {
-            val vp = computeViewport(previewModel,viewSize.width,viewSize.height)
+            val vp = viewportFor(viewSize)
             editor.viewport = vp
             CanvasEditorOverlay(
                 editor = editor,
                 viewport = vp,
+                viewportFor = viewportFor,
+                placementOrigin = canvasOrigin,
                 viewModel = viewModel,
                 keymap = state.keymap,
                 selectedLayerId = state.selectedLayerId,

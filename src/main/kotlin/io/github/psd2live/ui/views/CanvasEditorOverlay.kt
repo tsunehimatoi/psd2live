@@ -58,6 +58,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
@@ -89,6 +90,12 @@ import org.umamo.edit.MeshTopology
 internal fun BoxScope.CanvasEditorOverlay(
     editor: CanvasEditor,
     viewport: CanvasViewport,
+    // Draw-size viewport. The composed [viewport] can still be the pre-resize centering for a frame
+    // after a dock change; points have to be projected with the canvas they are painted on.
+    viewportFor: (IntSize) -> CanvasViewport = { viewport },
+    // Root position of the canvas. Passed so a sidebar or log toggle cannot skip this overlay:
+    // zoom and pan are unchanged, and a skipped draw leaves the mesh points at the old place.
+    placementOrigin: Offset = Offset.Zero,
     viewModel: PSD2LiveViewModel,
     keymap: Keymap,
     // Selection must be parameters: Compose may skip this overlay when only StateFlow selection
@@ -113,6 +120,11 @@ internal fun BoxScope.CanvasEditorOverlay(
     val textMeasurer = rememberTextMeasurer()
 
     Canvas(Modifier.fillMaxSize()) {
+        // placementOrigin changes when the dock moves this canvas. The read keeps the draw from
+        // being reused at the previous window position.
+        placementOrigin.x
+        val viewport = viewportFor(IntSize(size.width.toInt().coerceAtLeast(1), size.height.toInt().coerceAtLeast(1)))
+        editor.viewport = viewport
         val currentTarget = editor.target() ?: target
         // 1. Mesh wireframe & vertices — same toggle as the global mesh channel, no mode privilege.
         if (showMesh && (editor.hierarchyMode == EditHierarchyMode.DEFORM || editor.hierarchyMode == EditHierarchyMode.EDIT) && currentTarget != null && currentTarget.kind == "mesh") {

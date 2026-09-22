@@ -12,9 +12,14 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.addOutline
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.input.pointer.PointerButton
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
@@ -383,7 +388,7 @@ private fun DockTree(node: DockNode, session: DockSession, modifier: Modifier, w
             }
         }
     }) {
-        Column(Modifier.fillMaxSize().clip(RoundedCornerShape(3.dp))
+        Column(Modifier.fillMaxSize().clipWithoutLayer(RoundedCornerShape(3.dp))
             .background(colors.panelBackground)
             .border(.5.dp, colors.divider, RoundedCornerShape(3.dp))) {
             val single = node.modules.size == 1
@@ -701,6 +706,18 @@ private fun DockModuleContent(
 		"inspector" -> InspectorPanelView(vm.canvasEditor, vm, state)
 		"animation" -> AnimationPanelView(vm, state)
 		"physics" -> PhysicsPanelView(vm, state)
+	}
+}
+
+/**
+ * Rounded clip without a graphics layer. [Modifier.clip] promotes a RenderNode whose window
+ * position is not updated when a sibling dock is collapsed, which leaves the canvas picture
+ * — mesh points in particular — at the previous layout position.
+ */
+private fun Modifier.clipWithoutLayer(shape: Shape): Modifier = drawWithContent {
+	val outline = shape.createOutline(size, layoutDirection, this)
+	clipPath(Path().apply { addOutline(outline) }) {
+		this@drawWithContent.drawContent()
 	}
 }
 
