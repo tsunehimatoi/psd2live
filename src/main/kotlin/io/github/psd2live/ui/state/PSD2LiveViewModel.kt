@@ -8,6 +8,8 @@ import io.github.psd2live.core.PackedAtlas
 
 import io.github.psd2live.core.PSD2LivePipeline
 import io.github.psd2live.core.RigStructureEdits
+import io.github.psd2live.core.Skeleton
+import io.github.psd2live.core.SkeletonMotions
 import io.github.psd2live.core.CubismSdkFrame
 import io.github.psd2live.core.CubismSdkPreviewSession
 import io.github.psd2live.core.EyeJellyDynamics
@@ -1110,6 +1112,21 @@ class PSD2LiveViewModel : AutoCloseable {
 			)
 		}
 		scheduleRuntimeBundleUpdate()
+		editorChanged()
+	}
+
+	/**
+	 * Replaces the rig's armature, or clears it with null.
+	 *
+	 * This goes through the full preview rebuild rather than the rig-edit overlay: a bone decides which
+	 * deformer a limb hangs under and what space its mesh is stored in, so the base rig has to be built
+	 * again rather than patched.
+	 */
+	fun applySkeleton(skeleton: Skeleton?) {
+		val next = skeleton?.takeIf { !it.isEmpty }
+		if (_state.value.rigEdits.skeleton == next) return
+		_state.update { it.copy(rigEdits = it.rigEdits.copy(skeleton = next)) }
+		schedulePreviewRebuild()
 		editorChanged()
 	}
 
@@ -3245,7 +3262,14 @@ class PSD2LiveViewModel : AutoCloseable {
 		val eyeBallX = if (hasIdle || isTracking) followX.coerceIn(-1f, 1f) else 0f
 		val eyeBallY = if (hasIdle || isTracking) (-followY).coerceIn(-1f, 1f) else 0f
 
-		return mapOf(
+		// A rigged skeleton drives the limbs, tail and weight itself, so the preview asks it for those
+		// values rather than guessing a whole-body sway that the bones would fight.
+		val skeleton = model.config.rigEdits.skeleton
+		val boneValues = if (hasIdle && skeleton != null && !skeleton.isEmpty) {
+			SkeletonMotions.liveIdle(skeleton, elapsed).mapKeys { ParameterId(it.key) }
+		} else emptyMap()
+
+		return boneValues + mapOf(
 			StandardParameters.ANGLE_X to (headAngleX + shakeAngleX),
 			StandardParameters.ANGLE_Y to (headAngleY + nodAngleY),
 			StandardParameters.ANGLE_Z to (idleAngleZ + shakeAngleZ),

@@ -104,6 +104,10 @@ internal fun CanvasContextMenu(
                 CreationToolContextMenuContent(editor, onDismissRequest, onAction)
                 return@Column
             }
+            // The armature is the one create flow that needs no selection, so it is offered from every
+            // mode rather than waiting behind a pick.
+            SkeletonEntrySection(editor, onDismissRequest, onAction)
+            CompactMenuDivider()
             when (editor.hierarchyMode) {
                 EditHierarchyMode.SELECT -> SelectModeContextMenu(editor, onDismissRequest, onAction)
                 EditHierarchyMode.DEFORM -> DeformModeContextMenu(editor, onDismissRequest, onAction)
@@ -112,6 +116,29 @@ internal fun CanvasContextMenu(
             }
         }
     }
+}
+
+/** Opens the armature editor, naming the act for what it is: a create, or an edit of an existing rig. */
+@Composable
+private fun ColumnScope.SkeletonEntrySection(
+    editor: CanvasEditor,
+    onDismissRequest: () -> Unit,
+    onAction: () -> Unit,
+) {
+    val hasSkeleton = editor.state.rigEdits.skeleton?.isEmpty == false
+    CompactButton(
+        text = tr(if (hasSkeleton) "editor.skeleton.menuEdit" else "editor.skeleton.menuCreate"),
+        onClick = {
+            editor.beginSkeleton()
+            onAction(); onDismissRequest()
+        },
+        enabled = editor.editable && editor.state.previewModel != null,
+        leadingIcon = {
+            ToolIcon(CanvasTool.CREATE_SKELETON, LocalToolColors.current.textMuted, iconSize = 12.dp)
+        },
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 3.dp),
+        height = 22.dp,
+    )
 }
 
 @Composable

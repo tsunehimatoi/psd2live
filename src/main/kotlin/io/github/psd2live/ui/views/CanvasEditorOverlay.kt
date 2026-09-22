@@ -1005,6 +1005,11 @@ internal fun BoxScope.CanvasEditorOverlay(
             }
         }
 
+        // 5z. The armature under edit: one joint, one shaft and one colour per bone.
+        editor.skeletonSession?.let { session ->
+            drawSkeleton(session, viewport, textMeasurer)
+        }
+
         // 6. Marquee selection box / lasso
         if (editor.marquee.isNotEmpty()) {
             val points = editor.marquee
@@ -1071,6 +1076,27 @@ internal fun BoxScope.CanvasEditorOverlay(
                 keymap = keymap,
                 focus = focus,
             )
+        }
+    }
+
+    // Bottom-left armature editor, sharing the placement panel's anchor and its confirm/cancel shape.
+    val skeletonSession = editor.skeletonSession
+    AnimatedVisibility(
+        visible = skeletonSession != null,
+        enter = slideInVertically(
+            initialOffsetY = { it / 3 },
+            animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+        ) + fadeIn(animationSpec = tween(durationMillis = 180)),
+        exit = slideOutVertically(
+            targetOffsetY = { it / 3 },
+            animationSpec = tween(durationMillis = 180, easing = FastOutLinearInEasing),
+        ) + fadeOut(animationSpec = tween(durationMillis = 140)),
+        modifier = Modifier
+            .align(Alignment.BottomStart)
+            .padding(start = 10.dp, bottom = 10.dp),
+    ) {
+        if (skeletonSession != null) {
+            SkeletonSettingsPanel(editor = editor, session = skeletonSession, keymap = keymap, focus = focus)
         }
     }
 
@@ -1505,6 +1531,260 @@ private fun PlacementSettingsPanel(
                 isPrimary = true,
                 enabled = !isClosing && editor.editable && !editor.busy &&
                     (place.kind != CreatePlacementKind.PATH || editor.draft.size >= 2),
+                modifier = Modifier.weight(1f),
+                height = 24.dp,
+                leadingIcon = { IconCheck(modifier = Modifier.size(9.dp), tint = colors.accentText) },
+            )
+        }
+    }
+}
+
+/**
+ * The armature editor's bottom-left panel: the joint list, what the selected joint claims and does,
+ * and the Confirm that spends a rebuild on it.
+ *
+ * It sits where the Warp and Rotation creators sit and answers to the same keys, because to the artist
+ * this is the same kind of act — place something, look at it, then commit.
+ */
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun SkeletonSettingsPanel(
+    editor: CanvasEditor,
+    session: SkeletonEditSession,
+    keymap: Keymap,
+    focus: () -> Unit,
+) {
+    val colors = LocalToolColors.current
+    val typography = LocalToolTypography.current
+    val outline = session.outline()
+    val selected = session.selectedBone
+
+    Column(
+        modifier = Modifier
+            .width(268.dp)
+            .frostedGlass(shape = RoundedCornerShape(6.dp), isHovered = true, elevation = 6.dp, alpha = 0.94f)
+            .border(BorderStroke(1.dp, colors.border.copy(alpha = 0.85f)), RoundedCornerShape(6.dp))
+            .padding(horizontal = 9.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        // 1. Header
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(20.dp)
+                    .background(colors.accent.copy(alpha = 0.16f), RoundedCornerShape(4.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                ToolIcon(CanvasTool.CREATE_SKELETON, colors.accent)
+            }
+            Text(
+                text = tr("editor.tool.create_skeleton"),
+                color = colors.textPrimary,
+                style = typography.body.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            CompactIconButton(
+                onClick = { editor.cancelSkeleton(); focus() },
+                size = 18.dp,
+                tooltip = "${tr("editor.placementCancel")} (Esc)",
+            ) {
+                IconClose(tint = colors.textMuted, modifier = Modifier.size(10.dp))
+            }
+        }
+
+        Text(
+            text = tr("editor.skeleton.summary", outline.count { it.first.binding == BoneBinding.ROTATION }, outline.count { it.first.binding == BoneBinding.PATH }),
+            color = colors.textMuted,
+            fontSize = 9.5.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        // 2. The joint list, indented by chain depth so a limb reads as a limb.
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 208.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(1.dp),
+        ) {
+            for ((bone, depth) in outline) {
+                val isSelected = bone.id == session.selectedBoneId
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            if (isSelected) colors.accent.copy(alpha = 0.16f) else Color.Transparent,
+                            RoundedCornerShape(3.dp),
+                        )
+                        .clickable { session.selectedBoneId = bone.id; focus() }
+                        .pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
+                        .padding(start = (4 + depth * 9).dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .background(session.colorOf(bone.id), RoundedCornerShape(2.dp)),
+                    )
+                    Text(
+                        text = bone.label,
+                        color = if (isSelected) colors.textPrimary else colors.textMuted,
+                        fontSize = 10.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = tr(if (bone.binding == BoneBinding.PATH) "editor.skeleton.bindingPathShort" else "editor.skeleton.bindingRotationShort"),
+                        color = colors.textDisabled,
+                        fontSize = 8.5.sp,
+                    )
+                }
+            }
+        }
+
+        Divider(color = colors.divider, thickness = 0.8.dp)
+
+        // 3. What the selected joint claims and how far it swings.
+        if (selected == null) {
+            Text(tr("editor.skeleton.selectJoint"), color = colors.textMuted, fontSize = 9.5.sp)
+        } else {
+            Text(
+                text = tr("editor.skeleton.claims", selected.layerIds.size),
+                color = colors.textMuted,
+                fontSize = 9.5.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                PlacementFloatField(
+                    label = "X",
+                    value = selected.pivotX,
+                    onValueChange = { session.replace(session.skeleton.withJointMoved(selected.id, it, selected.pivotY)) },
+                    modifier = Modifier.weight(1f),
+                )
+                PlacementFloatField(
+                    label = "Y",
+                    value = selected.pivotY,
+                    onValueChange = { session.replace(session.skeleton.withJointMoved(selected.id, selected.pivotX, it)) },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            // Read-only: whether a joint pivots or bends follows from how the PSD was cut, and moving
+            // the joint to the real seam does not change which of the two it is.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = tr(if (selected.binding == BoneBinding.PATH) "editor.skeleton.bindingPath" else "editor.skeleton.bindingRotation"),
+                    color = colors.textPrimary,
+                    fontSize = 9.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = session.bindingReason(selected.id),
+                    color = colors.textMuted,
+                    fontSize = 9.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            selected.drive?.let { drive ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        text = tr("skeleton.parameter.swing"),
+                        color = colors.textMuted,
+                        fontSize = 10.sp,
+                        modifier = Modifier.width(48.dp),
+                    )
+                    MiniStepper(
+                        value = drive.angle.roundToInt(),
+                        onValueChange = { session.setSwing(selected.id, it.toFloat()) },
+                        min = 0,
+                        max = 45,
+                        unit = "°",
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Text(
+                    text = drive.parameterId,
+                    color = colors.textDisabled,
+                    fontSize = 9.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+
+        // 4. Start over, or drop the armature and go back to the single body warp.
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            CompactButton(
+                text = tr("editor.skeleton.reinfer"),
+                onClick = { editor.reinferSkeleton(); focus() },
+                modifier = Modifier.weight(1f),
+                height = 22.dp,
+            )
+            if (selected != null && session.canRemove(selected.id)) {
+                CompactButton(
+                    text = tr("editor.skeleton.dropJoint"),
+                    onClick = { session.removeBone(selected.id); focus() },
+                    modifier = Modifier.weight(1f),
+                    height = 22.dp,
+                )
+            }
+            if (session.wasOnRig) {
+                CompactButton(
+                    text = tr("editor.skeleton.remove"),
+                    onClick = { editor.clearSkeleton(); focus() },
+                    danger = true,
+                    modifier = Modifier.weight(1f),
+                    height = 22.dp,
+                )
+            }
+        }
+
+        // 5. Confirm spends a rebuild, so it says so rather than pretending to be free.
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+        ) {
+            CompactButton(
+                text = "${tr("editor.placementCancel")} (Esc)",
+                onClick = { editor.cancelSkeleton(); focus() },
+                modifier = Modifier.weight(1f),
+                height = 24.dp,
+                leadingIcon = { IconClose(modifier = Modifier.size(9.dp), tint = colors.textMuted) },
+            )
+            CompactButton(
+                text = "${tr("editor.skeleton.confirm")} (${keymap.labelFor(ShortcutAction.FINISH_PATH).orEmpty().ifEmpty { "Enter" }})",
+                onClick = { editor.confirmSkeleton(); focus() },
+                isPrimary = true,
+                enabled = editor.editable && !editor.busy && !session.skeleton.isEmpty,
                 modifier = Modifier.weight(1f),
                 height = 24.dp,
                 leadingIcon = { IconCheck(modifier = Modifier.size(9.dp), tint = colors.accentText) },
@@ -2055,6 +2335,62 @@ private fun PaintShapeIcon(shape: PaintShape, color: Color, iconSize: Dp = 18.dp
 }
 
 /** The shape, drawn in an 18-unit box scaled to whatever the caller's canvas is. */
+/**
+ * Draws the armature under edit.
+ *
+ * A joint is a filled disc and a bone is the shaft from it to its tip, both in the bone's own colour —
+ * the colour the art it carries is washed in, so the pairing needs no legend. A bone that bends its
+ * parent's mesh rather than pivoting one of its own is drawn dashed, because that difference is the
+ * one thing about a joint the artist cannot see from its position.
+ */
+private fun DrawScope.drawSkeleton(
+    session: SkeletonEditSession,
+    viewport: CanvasViewport,
+    textMeasurer: androidx.compose.ui.text.TextMeasurer,
+) {
+    val focusId = session.hoveredBoneId ?: session.selectedBoneId
+    // Shafts first, then joints, so a joint is never hidden under the bone hanging off it.
+    for (bone in session.skeleton.bones) {
+        val pivot = session.screenOf(bone.pivotX, bone.pivotY, viewport)
+        val tip = session.screenOf(bone.tipX, bone.tipY, viewport)
+        val color = session.colorOf(bone.id)
+        val focused = bone.id == focusId
+        val dashed = bone.binding == BoneBinding.PATH
+        drawLine(Color.Black.copy(alpha = 0.45f), pivot, tip, if (focused) 5f else 3.5f)
+        drawLine(
+            color = color.copy(alpha = if (focused) 1f else 0.7f),
+            start = pivot,
+            end = tip,
+            strokeWidth = if (focused) 2.6f else 1.8f,
+            pathEffect = if (dashed) PathEffect.dashPathEffect(floatArrayOf(6f, 4f)) else null,
+        )
+    }
+    for (bone in session.skeleton.bones) {
+        val pivot = session.screenOf(bone.pivotX, bone.pivotY, viewport)
+        val tip = session.screenOf(bone.tipX, bone.tipY, viewport)
+        val color = session.colorOf(bone.id)
+        val focused = bone.id == focusId
+        // The tip only aims the bone, so it reads as a ring while the joint reads as a solid point.
+        drawCircle(Color.Black.copy(alpha = 0.55f), if (focused) 4.5f else 3.5f, tip, style = Stroke(2.5f))
+        drawCircle(color, if (focused) 4.5f else 3.5f, tip, style = Stroke(1.6f))
+        drawCircle(Color.Black.copy(alpha = 0.55f), if (focused) 7.5f else 6f, pivot)
+        drawCircle(Color.White, if (focused) 6.5f else 5f, pivot)
+        drawCircle(color, if (focused) 4.8f else 3.4f, pivot)
+    }
+    // Only the bone in focus is labelled: naming all of them at once buries the art they describe.
+    val focus = focusId?.let(session.skeleton.byId::get) ?: return
+    val anchor = session.screenOf(focus.pivotX, focus.pivotY, viewport)
+    val layout = textMeasurer.measure(
+        text = focus.label,
+        style = TextStyle(color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Medium),
+    )
+    val origin = Offset(anchor.x + 10f, anchor.y - layout.size.height - 8f)
+    val extent = Size(layout.size.width + 10f, layout.size.height + 4f)
+    drawRect(Color.Black.copy(alpha = 0.66f), origin, extent)
+    drawRect(session.colorOf(focus.id), origin, extent, style = Stroke(1f))
+    drawText(layout, topLeft = Offset(origin.x + 5f, origin.y + 2f))
+}
+
 private fun DrawScope.drawPaintShape(shape: PaintShape, color: Color) {
     val s = size.width / 18f
     when (shape) {
@@ -2071,13 +2407,15 @@ private fun DrawScope.drawPaintShape(shape: PaintShape, color: Color) {
 }
 
 @Composable
-private fun ToolIcon(
+internal fun ToolIcon(
     tool: CanvasTool,
     color: Color,
     brushShape: BrushShape? = null,
     paintShape: PaintShape? = null,
+    /** The glyphs are authored on an 18-unit grid and scale from it, so any size stays proportionate. */
+    iconSize: Dp = 18.dp,
 ) {
-    Canvas(Modifier.size(18.dp)) {
+    Canvas(Modifier.size(iconSize)) {
         val s = size.width / 18f
         fun p(x: Float, y: Float) = Offset(x * s, y * s)
         fun line(x: Float, y: Float, a: Float, b: Float) = drawLine(color, p(x, y), p(a, b), 1.3f * s)
@@ -2170,6 +2508,16 @@ private fun ToolIcon(
                     close()
                 }
                 drawPath(blade, color, style = Stroke(1.2f * s))
+            }
+            CanvasTool.CREATE_SKELETON -> {
+                // Two bones off a spine, with a joint at each end: the smallest thing that reads as a rig.
+                line(9f, 3f, 9f, 10f)
+                line(9f, 10f, 4.5f, 15f)
+                line(9f, 10f, 13.5f, 15f)
+                drawCircle(color, 1.7f * s, p(9f, 3f))
+                drawCircle(color, 1.7f * s, p(9f, 10f))
+                drawCircle(color, 1.4f * s, p(4.5f, 15f), style = Stroke(s))
+                drawCircle(color, 1.4f * s, p(13.5f, 15f), style = Stroke(s))
             }
             CanvasTool.GLUE -> {
                 drawCircle(color, 3.5f * s, p(6.5f, 9f), style = Stroke(s * 1.2f))

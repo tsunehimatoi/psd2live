@@ -205,6 +205,15 @@ data class RigEditOverlay(
     val structureEdits: List<kotlinx.serialization.json.JsonObject> = emptyList(),
     /** New authoring commands replay in actual order, after the legacy baseline. */
     val authoringJournal: List<kotlinx.serialization.json.JsonObject> = emptyList(),
+    /**
+     * The armature the base rig is built around, or null for the single-body-warp rig.
+     *
+     * Unlike every other field here this is not replayed over a finished rig: [RigBuilder] reads it
+     * while constructing one, because a bone decides which deformer a limb hangs under and what space
+     * its mesh is stored in — facts a later edit cannot change without rebuilding the mesh anyway.
+     * Persisting the skeleton rather than its output is what lets a joint be dragged again later.
+     */
+    val skeleton: Skeleton? = null,
 ) {
 	init {
 		require(warpEdits.map { it.id }.distinct().size == warpEdits.size) { "Duplicate Warp IDs" }

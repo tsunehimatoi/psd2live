@@ -124,6 +124,8 @@ object RigBuilder {
 		val deformers: List<Deformer>,
 		val pairFrames: Map<String, Bounds>,
 		val pairedParentByLayerId: Map<String, Pair<DeformerId, Bounds>>,
+		/** The armature these deformers were built around, or null for the single-body-warp rig. */
+		val lowered: LoweredSkeleton? = null,
 	)
 
 	/** Everything one layer contributes to the rig: its stored mesh, keyforms and mouth outline. */
@@ -167,6 +169,8 @@ object RigBuilder {
 		/** False when the config built no deformers, which leaves every mesh in canvas space. */
 		val deformersEnabled: Boolean,
 		val deformers: List<Deformer>,
+		/** The lowered armature, or null when this rig has no skeleton. */
+		val lowered: LoweredSkeleton?,
 	) {
 		/** The layer expressed in the coordinate system its mesh and its keyforms are authored in. */
 		fun rigLayer(layer: ClassifiedLayer): ClassifiedLayer = layer.riggedIn(analysis.anchors, headSpace)
@@ -288,6 +292,7 @@ object RigBuilder {
 			frameByDeformer[backHairPhysicsWarpId.raw] = it
 		}
 		frameByDeformer.putAll(deformerResult.pairFrames)
+		deformerResult.lowered?.let { frameByDeformer.putAll(it.frames) }
 
 		return RigContext(
 			analysis,
@@ -303,6 +308,7 @@ object RigBuilder {
 			deformerResult.pairedParentByLayerId,
 			deformersEnabled,
 			deformerResult.deformers,
+			deformerResult.lowered,
 		)
 	}
 
@@ -530,6 +536,15 @@ object RigBuilder {
 				meshCache = meshCache,
 			)
 			builtDeformPaths.addAll(parts.mouthPaths)
+			// A limb the skeleton bends rather than pivots carries the bend as ordinary mesh keyforms,
+			// with the path left on the drawable so the joint stays draggable.
+			val skeletonPaths = if (shouldBuildDeformers) {
+				context.lowered?.bendPaths(id, layer.source.id.raw, parts.mesh, parentFrame).orEmpty()
+			} else emptyList()
+			builtDeformPaths.addAll(skeletonPaths)
+			val geometryGrid = if (config.meshOnly) parts.geometryGrid else {
+				context.lowered?.bendGrid(layer.source.id.raw, parts.mesh, skeletonPaths) ?: parts.geometryGrid
+			}
 			val override = config.layerOverrides[layer.source.id.raw]
 			val channelGrids = if (config.meshOnly) ChannelGrids.Empty else buildChannels(layer, override, switchParamKeys)
 			val drawable = Drawable(
@@ -539,7 +554,7 @@ object RigBuilder {
 				blendMode = blendMode(layer.source.blend),
 				maskedBy = emptyList(),
 				mesh = parts.mesh,
-				geometryGrid = parts.geometryGrid,
+				geometryGrid = geometryGrid,
 				channelGrids = channelGrids,
 				// Cubism Editor stores draw order as an integer. Keeping this integral also makes
 				// fresh CMO3 conversion lossless instead of reporting one advisory per drawable.
@@ -653,11 +668,13 @@ object RigBuilder {
 			Part(bodyPartId, tr("model.part.body"), childrenFor(LayerGroup.BODY) + childrenFor(LayerGroup.UNKNOWN), groupMode = PartGroupMode.PassThrough),
 		)
 		val standardIds = StandardParameters.all.map { it.id }.toSet()
-		val uniqueCustomParams = customParams.filter { it.id !in standardIds }
-		val parameterTree = parameterTree(uniqueCustomParams)
+		val skeletonParams = context.lowered?.parameters.orEmpty().filter { it.id !in standardIds }
+		val skeletonIds = skeletonParams.map { it.id }.toSet()
+		val uniqueCustomParams = customParams.filter { it.id !in standardIds && it.id !in skeletonIds }
+		val parameterTree = parameterTree(uniqueCustomParams, skeletonParams)
 		val (puppetAtlas, artSources) = PuppetSourceAtlas.build(inputAnalysis, atlas)
 		val puppet = PuppetModel(
-			parameters = StandardParameters.all + uniqueCustomParams,
+			parameters = StandardParameters.all + skeletonParams + uniqueCustomParams,
 			parts = parts,
 			deformers = deformers,
 			drawables = maskedDrawables,
@@ -1033,14 +1050,24 @@ object RigBuilder {
 		extraPartId: PartId,
 		config: PipelineConfig,
 	): DeformerBuildResult {
+		// The armature comes first: it decides what the body warp hangs from, and therefore what space
+		// that warp's own lattice is written in.
+		val lowered = config.rigEdits.skeleton
+			?.takeIf { !it.isEmpty }
+			?.let { SkeletonRigLowering.lower(it, bodyPartId, extraPartId) }
+		// A warp under a bone stores its lattice in that bone's rotation-local space, which - every bone
+		// having a zero base angle - is canvas pixels offset by the bone's pivot.
+		val torsoOffsetX = lowered?.torsoOriginX ?: 0f
+		val torsoOffsetY = lowered?.torsoOriginY ?: 0f
 		val bodyGrid = warpGrid(
 			listOf(axis(StandardParameters.BODY_X, -10f, 0f, 10f), axis(StandardParameters.BODY_Y, -10f, 0f, 10f)),
 			columns = 4,
 			rows = 6,
 		) { u, v, values ->
-			bodyWarpPoint(character, u, v, values[0], values[1], config.bodyStrength)
+			val point = bodyWarpPoint(character, u, v, values[0], values[1], config.bodyStrength)
+			(point.first - torsoOffsetX) to (point.second - torsoOffsetY)
 		}
-		val body = Deformer.Warp(bodyWarpId, tr("model.deformer.body"), null, bodyPartId, 6, 4, true, bodyGrid)
+		val body = Deformer.Warp(bodyWarpId, tr("model.deformer.body"), lowered?.torsoParentId, bodyPartId, 6, 4, true, bodyGrid)
 
 		val breathGrid = warpGrid(
 			listOf(axis(StandardParameters.BODY_Z, -10f, 0f, 10f), axis(StandardParameters.BREATH, 0f, 0.5f, 1f)),
@@ -1214,7 +1241,10 @@ object RigBuilder {
 		val candidateLayers = analysis.layers.filter { layer ->
 			layer.opaquePixels > 0 &&
 				(layer.semantic.side == Side.LEFT || layer.semantic.side == Side.RIGHT) &&
-				!isHandledByFaceRegion(layer, faceRig)
+				!isHandledByFaceRegion(layer, faceRig) &&
+				// A limb the skeleton pivots has a bone of its own; wrapping it in a left/right pair warp
+				// as well would put a second, unkeyed cage between the bone and the art.
+				layer.source.id.raw !in lowered?.claimedLayerIds.orEmpty()
 		}
 		val grouped = candidateLayers.groupBy { layer ->
 			val (defaultParentId, _) = defaultParentAndFrame(layer, faceRig, analysis.anchors, character, head, faceFrame, frontHair, backHair)
@@ -1264,7 +1294,15 @@ object RigBuilder {
 			}
 		}
 
-		return DeformerBuildResult(deformers, pairFrames, pairedParentByLayerId)
+		if (lowered != null) {
+			deformers += lowered.deformers
+			// Written last so a bone outranks the paired parent for the same layer: the pair warp above is
+			// already skipped for claimed layers, and an override here keeps a hand-edited skeleton
+			// authoritative over anything the tag defaults would have chosen.
+			pairedParentByLayerId.putAll(lowered.parentByLayerId)
+		}
+
+		return DeformerBuildResult(deformers, pairFrames, pairedParentByLayerId, lowered)
 	}
 
 	private fun identityWarp(
@@ -2091,7 +2129,10 @@ object RigBuilder {
 	private fun scalarGrid(parameter: ParameterId, keys: FloatArray, value: (Float) -> Float): KeyformGrid<ChannelValue> =
 		oneDimGrid(parameter, keys) { key -> ChannelValue.Scalar(value(key)) }
 
-	private fun parameterTree(customParameters: List<Parameter> = emptyList()): List<ParameterNode> {
+	private fun parameterTree(
+		customParameters: List<Parameter> = emptyList(),
+		skeletonParameters: List<Parameter> = emptyList(),
+	): List<ParameterNode> {
 		fun group(id: String, name: String, parameters: List<ParameterId>) = ParameterNode.Group(
 			ParameterGroupId(id), name, true, parameters.map { ParameterNode.Param(it) },
 		)
@@ -2102,6 +2143,8 @@ object RigBuilder {
 			group("ParamGroupMouth", tr("model.group.mouth"), listOf(StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN)),
 			group("ParamGroupBody", tr("model.group.body"), listOf(StandardParameters.BODY_X, StandardParameters.BODY_Y, StandardParameters.BODY_Z, StandardParameters.BREATH)),
 			group("ParamGroupPhysics", tr("model.group.physics"), listOf(StandardParameters.HAIR_FRONT, StandardParameters.HAIR_BACK)),
+		) + if (skeletonParameters.isEmpty()) emptyList() else listOf(
+			group(SkeletonParameters.GROUP, tr("model.group.skeleton"), skeletonParameters.map { it.id }),
 		)
 		return if (customParameters.isNotEmpty()) {
 			base + group("ParamGroupCustom", tr("model.group.custom"), customParameters.map { it.id })

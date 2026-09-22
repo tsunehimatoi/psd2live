@@ -516,6 +516,9 @@ internal fun ToolDetailsView(
                 }
             }
 
+            // The armature editor keeps its controls on the canvas, next to the joints they move.
+            CanvasTool.CREATE_SKELETON -> Unit
+
             CanvasTool.GLUE -> {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(tr("editor.glueDistance"), style = typography.caption, color = colors.textMuted)

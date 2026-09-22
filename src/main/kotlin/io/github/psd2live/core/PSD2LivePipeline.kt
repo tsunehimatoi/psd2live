@@ -111,6 +111,9 @@ class PSD2LivePipeline {
 	): Boolean {
 		if (current == null) return false
 		if (current.analysis.source !== source && current.analysis.source != source) return false
+		// A skeleton is read while the base rig is constructed, not replayed over a finished one, so a
+		// changed armature cannot be served from the cached base rig.
+		if (current.config.rigEdits.skeleton != config.rigEdits.skeleton) return false
 		return current.config.copy(rigEdits = config.rigEdits) == config
 	}
 
@@ -262,14 +265,25 @@ class PSD2LivePipeline {
 			PhysicsGenerator.generate(useFrontHairPhysics, useBackHairPhysics, useEyeJellyPhysics, parameterIds, config.rigEdits.physicsEdits)?.let(CubismJson::normalize)
 		} else null
 
+		// A rigged skeleton changes what an idle can express, so the motions are generated against it.
+		val skeleton = config.rigEdits.skeleton?.takeIf { !it.isEmpty && !config.meshOnly && config.generateDeformers }
 		val motions = buildList<Pair<String, Pair<String, String>>> {
 			if (config.exportMotions && !config.meshOnly) {
 				if (config.motionIdle) {
 					val name = "$baseName.idle.motion3.json"
-					MotionGenerator.idle(parameterIds)?.let { motion ->
+					MotionGenerator.idle(parameterIds, skeleton)?.let { motion ->
 						val json = CubismJson.normalize(motion).also { Json.parseToJsonElement(it) }
 						add("Idle" to (name to json))
 					}
+				}
+				// Bone-only motions: each is dropped when the skeleton has no joint to drive it.
+				for ((group, suffix, motion) in listOf(
+					Triple("TailSwing", "tailswing", MotionGenerator.tailSwing(parameterIds, skeleton)),
+					Triple("Crouch", "crouch", MotionGenerator.crouch(parameterIds, skeleton)),
+					Triple("WeightShift", "weightshift", MotionGenerator.weightShift(parameterIds, skeleton)),
+				)) {
+					val json = motion?.let { CubismJson.normalize(it).also { text -> Json.parseToJsonElement(text) } } ?: continue
+					add(group to ("$baseName.$suffix.motion3.json" to json))
 				}
 				if (config.motionBlink) {
 					val name = "$baseName.blink.motion3.json"

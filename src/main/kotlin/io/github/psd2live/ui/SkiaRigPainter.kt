@@ -32,6 +32,12 @@ internal class SkiaRigPainter(atlas: PackedAtlas) : AutoCloseable {
         dimmedAlphaMultiplier: Float = 0.22f,
         tintLayerIds: Set<String>? = null,
         tintColor: Int = 0,
+        /**
+         * Per-layer wash colours, which override [tintColor] for the layers they name. The skeleton
+         * session needs this: several bones are lit at once and each has to wash its own limb in the
+         * colour its joint is drawn in, which one shared colour cannot say.
+         */
+        tintColorByLayerId: Map<String, Int> = emptyMap(),
         /** Defaults to the GpuRenderer's own wash, so the two paths tint by the same amount. */
         tintAlpha: Float = SELECTION_TINT_STRENGTH,
     ) {
@@ -100,12 +106,20 @@ internal class SkiaRigPainter(atlas: PackedAtlas) : AutoCloseable {
                         // instead of boxing them. Re-drawing the mesh keeps the tint on the artwork's own
                         // silhouette — a part lights up rather than growing a rectangle — and because it
                         // runs inside the same clip, a masked part is tinted only where it actually shows.
-                        if (tintColor != 0 && tintLayerIds != null &&
-                            ((layerId != null && layerId in tintLayerIds) || drawable.id.raw in tintLayerIds)
-                        ) {
+                        val sharedTint = tintColor.takeIf {
+                            it != 0 && tintLayerIds != null &&
+                                ((layerId != null && layerId in tintLayerIds) || drawable.id.raw in tintLayerIds)
+                        }
+                        val tint = layerId?.let(tintColorByLayerId::get)
+                            ?: tintColorByLayerId[drawable.id.raw]
+                            ?: sharedTint
+                        if (tint != null && tint != 0) {
                             paint.shader = null
-                            paint.color = tintColor
-                            paint.setAlphaf(tintAlpha)
+                            paint.color = tint
+                            // A translucent wash colour carries its own strength, which is how the
+                            // skeleton session dims every bone but the one under the pointer.
+                            val explicitAlpha = (tint ushr 24) and 0xff
+                            paint.setAlphaf(if (explicitAlpha in 1..254) explicitAlpha / 255f else tintAlpha)
                             canvas.drawVertices(VertexMode.TRIANGLES, positions, null, null, null, BlendMode.SRC_OVER, paint)
                         }
                     } finally { canvas.restoreToCount(saved) }

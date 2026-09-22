@@ -4,18 +4,58 @@
 object MotionGenerator {
 	fun idle(): String = idle(ALL_PARAMETERS)!!
 
-	fun idle(availableParameterIds: Set<String>): String? = buildMotionJson(
-		duration = 6.0f,
-		loop = true,
-		curves = listOf(
-			curve("ParamBreath", listOf(0f to 0f, 1.5f to 1f, 3f to 0f, 4.5f to 1f, 6f to 0f)),
+	fun idle(availableParameterIds: Set<String>): String? = idle(availableParameterIds, null)
+
+	/**
+	 * The idle animation. With a [skeleton], the body's single side-to-side lean is replaced by
+	 * per-joint drift from [SkeletonMotions] — the limbs, tail and weight each move on their own phase
+	 * instead of the whole figure swaying as one piece.
+	 */
+	fun idle(availableParameterIds: Set<String>, skeleton: Skeleton?): String? {
+		val face = listOf(
 			curve("ParamAngleZ", listOf(0f to -2f, 1.5f to 2f, 3f to -2f, 4.5f to 2f, 6f to -2f)),
-			curve("ParamBodyAngleX", listOf(0f to -1.2f, 3f to 1.2f, 6f to -1.2f)),
 			curve("ParamEyeLOpen", listOf(0f to 1f, 2.7f to 1f, 2.78f to 0f, 2.88f to 1f, 6f to 1f)),
 			curve("ParamEyeROpen", listOf(0f to 1f, 2.7f to 1f, 2.78f to 0f, 2.88f to 1f, 6f to 1f)),
-		),
-		availableParameterIds = availableParameterIds,
-	)
+		)
+		val body = if (skeleton == null || skeleton.isEmpty) {
+			listOf(
+				curve("ParamBreath", listOf(0f to 0f, 1.5f to 1f, 3f to 0f, 4.5f to 1f, 6f to 0f)),
+				curve("ParamBodyAngleX", listOf(0f to -1.2f, 3f to 1.2f, 6f to -1.2f)),
+			)
+		} else {
+			SkeletonMotions.idle(skeleton).map { (parameter, points) -> curve(parameter, points) }
+		}
+		return buildMotionJson(
+			duration = SkeletonMotions.IDLE_DURATION,
+			loop = true,
+			curves = face + body,
+			availableParameterIds = availableParameterIds,
+		)
+	}
+
+	/** A tail swing, or null for a character whose skeleton has no tail. */
+	fun tailSwing(availableParameterIds: Set<String>, skeleton: Skeleton?): String? =
+		skeletonMotion(availableParameterIds, skeleton, duration = 3f, SkeletonMotions::tailSwing)
+
+	/** A dip and recovery on the crouch joint. */
+	fun crouch(availableParameterIds: Set<String>, skeleton: Skeleton?): String? =
+		skeletonMotion(availableParameterIds, skeleton, duration = 1.8f, SkeletonMotions::crouch)
+
+	/** A weight shift onto one foot and back. */
+	fun weightShift(availableParameterIds: Set<String>, skeleton: Skeleton?): String? =
+		skeletonMotion(availableParameterIds, skeleton, duration = 3f, SkeletonMotions::weightShift)
+
+	private fun skeletonMotion(
+		availableParameterIds: Set<String>,
+		skeleton: Skeleton?,
+		duration: Float,
+		tracks: (Skeleton) -> List<MotionTrack>,
+	): String? {
+		if (skeleton == null || skeleton.isEmpty) return null
+		val curves = tracks(skeleton).map { (parameter, points) -> curve(parameter, points) }
+		if (curves.isEmpty()) return null
+		return buildMotionJson(duration, loop = false, curves = curves, availableParameterIds = availableParameterIds)
+	}
 
 	fun blink(): String = blink(ALL_PARAMETERS)!!
 

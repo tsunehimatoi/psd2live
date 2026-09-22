@@ -81,6 +81,7 @@ enum class ShortcutAction(val category: ShortcutCategory, val labelKey: String) 
     TOOL_CREATE_WARP(ShortcutCategory.CANVAS_TOOLS, "editor.tool.create_warp"),
     TOOL_CREATE_ROTATION(ShortcutCategory.CANVAS_TOOLS, "editor.tool.create_rotation"),
     TOOL_CREATE_DEFORM_PATH(ShortcutCategory.CANVAS_TOOLS, "editor.tool.create_deform_path"),
+    TOOL_CREATE_SKELETON(ShortcutCategory.CANVAS_TOOLS, "editor.tool.create_skeleton"),
     TOOL_GLUE(ShortcutCategory.CANVAS_TOOLS, "editor.tool.glue"),
     TOOL_SUBDIVIDE(ShortcutCategory.CANVAS_TOOLS, "editor.tool.subdivide"),
     TOOL_KNIFE(ShortcutCategory.CANVAS_TOOLS, "editor.tool.knife"),
@@ -200,6 +201,8 @@ private val PS_DEFAULTS: Map<ShortcutAction, List<KeyBinding>> = mapOf(
     ShortcutAction.TOOL_CREATE_WARP to keys("C"),
     ShortcutAction.TOOL_CREATE_ROTATION to keys("R"),
     ShortcutAction.TOOL_CREATE_DEFORM_PATH to keys("P", "D"),
+    // Shift+S: S alone is taken, and the armature is a create tool like C and R rather than a shape one.
+    ShortcutAction.TOOL_CREATE_SKELETON to keys("Shift+S"),
     ShortcutAction.TOOL_GLUE to keys("G"),
     // M and K were the free letters near the mesh tools. Blender's knife is K, so the paint bucket -
     // a PAINT-mode tool whose key only matters there - moves aside to Shift+K rather than the knife

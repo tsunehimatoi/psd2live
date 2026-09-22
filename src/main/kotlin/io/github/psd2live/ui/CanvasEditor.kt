@@ -92,6 +92,8 @@ internal enum class CanvasTool(val action: ShortcutAction) {
     CREATE_WARP(ShortcutAction.TOOL_CREATE_WARP),
     CREATE_ROTATION(ShortcutAction.TOOL_CREATE_ROTATION),
     CREATE_DEFORM_PATH(ShortcutAction.TOOL_CREATE_DEFORM_PATH),
+    /** The armature editor: infer joints from the layer preset, adjust them, then rebuild around them. */
+    CREATE_SKELETON(ShortcutAction.TOOL_CREATE_SKELETON),
     GLUE(ShortcutAction.TOOL_GLUE),
     /** Region subdivide: a radius brush over the mesh's edges. */
     SUBDIVIDE(ShortcutAction.TOOL_SUBDIVIDE),
@@ -118,7 +120,8 @@ internal val DEFORM_BRUSH_TOOLS = setOf(
 )
 
 internal val CREATION_TOOLS = setOf(
-    CanvasTool.CREATE_WARP, CanvasTool.CREATE_ROTATION, CanvasTool.CREATE_DEFORM_PATH, CanvasTool.GLUE
+    CanvasTool.CREATE_WARP, CanvasTool.CREATE_ROTATION, CanvasTool.CREATE_DEFORM_PATH,
+    CanvasTool.CREATE_SKELETON, CanvasTool.GLUE,
 )
 
 /** Where a new Warp attaches in the deformer tree (Cubism "Add to"). */
@@ -393,6 +396,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         val source = preview ?: state.previewModel?.rig?.puppet
         val target = source?.let { target(it, selectedLayerId, selectedDeformerId) }
         val hintKey = when {
+            skeletonSession != null -> "editor.skeleton.hint"
             tool == CanvasTool.KNIFE -> "editor.knifeGestureHint"
             tool == CanvasTool.SUBDIVIDE -> "editor.subdivideHint"
             tool == CanvasTool.SELECT && target?.kind == "rotation" -> "editor.rotationGestureHint"
@@ -544,6 +548,9 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         private set
     private var placementDragStart: Offset? = null
     private var placementDragSnapshot: CreatePlacement? = null
+    /** Active armature-editing session; null when the canvas is not editing a skeleton. */
+    var skeletonSession by mutableStateOf<SkeletonEditSession?>(null)
+        private set
     var glueDistance by mutableStateOf(40f)
     var glueFirstMesh by mutableStateOf<String?>(null)
     var glueHoverMesh by mutableStateOf<String?>(null)
@@ -1649,6 +1656,9 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
      */
     fun activateTool(next: CanvasTool) {
         if (busy) return
+        // Picking up another tool abandons an unconfirmed armature; nothing was written, so this is a
+        // cancel rather than a loss.
+        if (next != CanvasTool.CREATE_SKELETON && skeletonSession != null) cancelSkeleton()
         if (next in CREATION_TOOLS) {
             activateCreationTool(next)
             return
@@ -1674,6 +1684,10 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     private fun activateCreationTool(next: CanvasTool) {
         if (hierarchyMode == EditHierarchyMode.PAINT) {
             leavePaintForCreation()
+        }
+        if (next == CanvasTool.CREATE_SKELETON) {
+            beginSkeleton()
+            return
         }
         if (next == CanvasTool.GLUE) {
             if (createSessionReturnMode == null) createSessionReturnMode = hierarchyMode
@@ -2032,6 +2046,84 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         if (cancelling?.kind == CreatePlacementKind.LAYER) {
             viewModel.cancelImportedLayerPlacement(cancelling.cancelLayerIds)
         }
+    }
+
+    /**
+     * Opens the armature editor, inferring a skeleton from the layer preset when the rig has none.
+     *
+     * Re-opening a rigged skeleton hands back the persisted one rather than a fresh inference, so the
+     * joints the artist dragged last time are the joints they see this time.
+     */
+    fun beginSkeleton() {
+        if (busy || !editable) return
+        val analysis = state.previewModel?.analysis ?: run {
+            error = tr("editor.skeleton.needsAnalysis")
+            return
+        }
+        if (hierarchyMode == EditHierarchyMode.PAINT) leavePaintForCreation()
+        if (createSessionReturnMode == null) createSessionReturnMode = hierarchyMode
+        cancelKeepingReturnMode()
+        deferredMode = null
+        val existing = state.rigEdits.skeleton?.takeIf { !it.isEmpty }
+        val skeleton = existing ?: runCatching {
+            SkeletonInference.infer(analysis, state.alphaThreshold)
+        }.getOrElse {
+            error = it.message ?: tr("editor.skeleton.inferenceFailed")
+            return
+        }
+        if (skeleton.isEmpty) {
+            error = tr("editor.skeleton.nothingToRig")
+            return
+        }
+        skeletonSession = SkeletonEditSession(skeleton, wasOnRig = existing != null)
+        tool = CanvasTool.CREATE_SKELETON
+        error = null
+        clearHover()
+    }
+
+    /** Throws away the inference's joints and starts over from the layer preset. */
+    fun reinferSkeleton() {
+        val session = skeletonSession ?: return
+        val analysis = state.previewModel?.analysis ?: return
+        runCatching { SkeletonInference.infer(analysis, state.alphaThreshold) }
+            .onSuccess { if (!it.isEmpty) session.reset(it) }
+            .onFailure { error = it.message ?: tr("editor.skeleton.inferenceFailed") }
+    }
+
+    /**
+     * Writes the session's armature to the rig, which rebuilds around it: the limbs come out from under
+     * the body warp and onto their own joints, and the bone parameters and idle arrive with them.
+     */
+    fun confirmSkeleton() {
+        val session = skeletonSession ?: return
+        if (!editable || busy) return
+        viewModel.applySkeleton(session.skeleton)
+        endSkeletonSession()
+    }
+
+    /** Leaves the armature editor without touching the rig. */
+    fun cancelSkeleton() {
+        skeletonSession ?: return
+        endSkeletonSession()
+    }
+
+    /** Removes the armature from the rig entirely, returning to the single body warp. */
+    fun clearSkeleton() {
+        if (!editable || busy) return
+        viewModel.applySkeleton(null)
+        endSkeletonSession()
+    }
+
+    private fun endSkeletonSession() {
+        skeletonSession = null
+        val returnMode = createSessionReturnMode
+        createSessionReturnMode = null
+        if (returnMode != null && returnMode != hierarchyMode && returnMode != EditHierarchyMode.PAINT) {
+            hierarchyMode = returnMode
+        }
+        tool = CanvasTool.SELECT
+        error = null
+        clearHover()
     }
 
     /** Commits the placed ghost into the model. */
@@ -3677,6 +3769,16 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         error = null; head = state.historySnapshot?.headNodeId; start = pos; previous = pos; dragStartPos = pos
         moved = false; additive = shift; subtractive = alt; pressedObject = null
 
+        // The armature editor owns the canvas outright: every gesture in it moves a joint or picks one.
+        skeletonSession?.let { session ->
+            val hit = session.hit(pos, viewport)
+            if (hit != null) {
+                session.beginDrag(hit.first, hit.second)
+                dragging = hit.second != BoneHandle.NONE
+            }
+            return true
+        }
+
         // Place-then-confirm sessions own the canvas until Confirm/Esc (Warp / Rotation / Layer).
         val activePlacement = placement
         if (activePlacement != null && activePlacement.kind != CreatePlacementKind.PATH) {
@@ -4027,6 +4129,12 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
 
     fun move(pos: Offset, viewport: CanvasViewport, shift: Boolean, alt: Boolean = false, ctrl: Boolean = false) {
         this.viewport = viewport
+        skeletonSession?.let { session ->
+            // Bone hover is its own annotation, and it is what decides which limb the canvas lights up.
+            session.hoveredBoneId = session.hit(pos, viewport)?.first
+            if (dragging && !busy) session.drag(pos, viewport)
+            return
+        }
         updateHover(pos, viewport, ctrl, shift)
         shrinks = if (dragging && tool == CanvasTool.INFLATE) shrinkAtPress else inflateInvert xor alt
         if (!dragging || busy) return
@@ -4239,6 +4347,11 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     }
 
     fun release() {
+        skeletonSession?.let { session ->
+            session.endDrag()
+            dragging = false
+            return
+        }
         if (!dragging) return
         if (subdividing) {
             subdividing = false

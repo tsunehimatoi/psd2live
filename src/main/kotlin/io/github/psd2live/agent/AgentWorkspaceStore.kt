@@ -388,6 +388,7 @@ internal class AgentWorkspaceStore(
             putJsonArray("calibrationLayerIds") { document.rigEdits.calibrationLayerIds.sorted().forEach { add(JsonPrimitive(it)) } }
             put("structure", JsonArray(document.rigEdits.structureEdits))
             put("authoringJournal", JsonArray(document.rigEdits.authoringJournal))
+            document.rigEdits.skeleton?.let { put("skeleton", it.toJson()) }
             putJsonArray("warps") { document.rigEdits.warpEdits.forEach { add(it.toJson()) } }
             putJsonArray("physics") { document.rigEdits.physicsEdits.forEach { add(it.toJson()) } }
 			putJsonArray("parameters") {
@@ -549,6 +550,7 @@ internal class AgentWorkspaceStore(
             calibrationLayerIds = rigEditObject.optionalArray("calibrationLayerIds").map { it.jsonPrimitive.content }.toSet(),
             structureEdits = rigEditObject.optionalArray("structure").map { it.jsonObject },
             authoringJournal = rigEditObject.optionalArray("authoringJournal").map { it.jsonObject },
+            skeleton = (rigEditObject["skeleton"] as? JsonObject)?.let(io.github.psd2live.core.Skeleton::fromJson),
             warpEdits = rigEditObject.optionalArray("warps").map { io.github.psd2live.core.RigWarpEdit.fromJson(it.jsonObject) },
             physicsEdits = rigEditObject.optionalArray("physics").map { io.github.psd2live.core.RigPhysicsEdit.fromJson(it.jsonObject) },
 			parameterEdits = rigEditObject.optionalArray("parameters").map { element ->

@@ -381,6 +381,7 @@ fun CanvasViewportComposable(
 					ShortcutAction.TOOL_CREATE_WARP -> { editor.activateTool(CanvasTool.CREATE_WARP); true }
 					ShortcutAction.TOOL_CREATE_ROTATION -> { editor.activateTool(CanvasTool.CREATE_ROTATION); true }
 					ShortcutAction.TOOL_CREATE_DEFORM_PATH -> { editor.activateTool(CanvasTool.CREATE_DEFORM_PATH); true }
+					ShortcutAction.TOOL_CREATE_SKELETON -> { editor.activateTool(CanvasTool.CREATE_SKELETON); true }
 					ShortcutAction.TOOL_GLUE -> { editor.activateTool(CanvasTool.GLUE); true }
 					ShortcutAction.TOOL_SUBDIVIDE -> { editor.activateTool(CanvasTool.SUBDIVIDE); true }
 					ShortcutAction.TOOL_KNIFE -> { editor.activateTool(CanvasTool.KNIFE); true }
@@ -392,12 +393,17 @@ fun CanvasViewportComposable(
 							showContextMenu = false
 							true
 						} else {
-							if (editor.placement != null) editor.cancelPlacement() else editor.cancel()
+							when {
+								editor.skeletonSession != null -> editor.cancelSkeleton()
+								editor.placement != null -> editor.cancelPlacement()
+								else -> editor.cancel()
+							}
 							true
 						}
 					}
 					ShortcutAction.FINISH_PATH -> {
 						when {
+							editor.skeletonSession != null -> { editor.confirmSkeleton(); true }
 							editor.tool == CanvasTool.KNIFE -> { editor.finishKnife(); true }
 							editor.placement != null && editor.placement?.kind != CreatePlacementKind.PATH -> {
 								editor.confirmPlacement(); true
@@ -742,6 +748,12 @@ fun CanvasViewportComposable(
 			}
 			val hoverTintColor = (hoveredLayerId ?: hoveredDeformerId)?.let { ComponentPalette.strong(it).rgb } ?: 0
 
+			// While an armature is being edited, every bone washes the art it claims in the colour its
+			// joint is drawn in. That is the whole review: matching a joint to its ArtMesh by looking.
+			val skeletonTints = if (mode == CanvasMode.EDIT) {
+				editor.skeletonSession?.tintByLayerId().orEmpty()
+			} else emptyMap()
+
 			val nativeFrame = sdkFrame
 			// Path guides never paint outside the Edit tab (see 3e), so they cannot force the
 			// preview off its native SDK frame.
@@ -799,6 +811,7 @@ fun CanvasViewportComposable(
 							dimmedAlphaMultiplier = 0.22f,
 							tintLayerIds = hoverTintLayerIds,
 							tintColor = hoverTintColor,
+							tintColorByLayerId = skeletonTints,
 						) }
 					}
 
