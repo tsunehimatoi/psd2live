@@ -23,6 +23,21 @@ data class ParameterKeyMarks(
 /** Stable object identity for selection-scoped parameter marks. */
 data class ParameterKeyOwner(val kind: String, val id: String)
 
+/**
+ * A selectable (or listed) component that carries a keyform / blend key at a parameter key value.
+ *
+ * [kind] matches [ParameterKeyOwner]: `mesh`, `deformer`, `part`, or `glue`.
+ * [subtype] distinguishes warp vs rotation deformers for icons (`warp` / `rotation`).
+ */
+data class ParameterKeyBoundComponent(
+	val kind: String,
+	val id: String,
+	val name: String,
+	val subtype: String? = null,
+) {
+	val owner: ParameterKeyOwner get() = ParameterKeyOwner(kind, id)
+}
+
 /** Resolve the same deformer-first selection as the editor; layer IDs are not drawable IDs. */
 fun PuppetModel.selectedParameterOwner(layerId: String?, deformerId: String?, layerIdByDrawableId: Map<String, String>): ParameterKeyOwner? {
     deformers.firstOrNull { it.id.raw == deformerId }?.let {
@@ -32,6 +47,68 @@ fun PuppetModel.selectedParameterOwner(layerId: String?, deformerId: String?, la
     val drawable = drawables.firstOrNull { layerIdByDrawableId[it.id.raw] == layerId }
         ?: drawables.firstOrNull { it.id.raw == layerId }
     return drawable?.let { ParameterKeyOwner("mesh", it.id.raw) }
+}
+
+/**
+ * Components that store a keyform or blend-shape key at [keyValue] on [parameterId].
+ * Order follows the rig: parts, deformers, drawables, then glues.
+ */
+fun PuppetModel.componentsAtParameterKey(parameterId: ParameterId, keyValue: Float): List<ParameterKeyBoundComponent> {
+	val result = ArrayList<ParameterKeyBoundComponent>()
+	fun FloatArray.hasKey(): Boolean = any { abs(it - keyValue) < EPS_KEY }
+	fun List<KeyformAxis>.hasKey(): Boolean = any { it.parameterId == parameterId && it.keys.hasKey() }
+
+	for (part in parts) {
+		if (part.channelGrids.allAxes().hasKey()) {
+			result += ParameterKeyBoundComponent("part", part.id.raw, part.name)
+		}
+	}
+	for (deformer in deformers) {
+		val geometry = when (deformer) {
+			is Deformer.Warp -> deformer.geometryGrid
+			is Deformer.Rotation -> deformer.geometryGrid
+		}
+		val blendShapes = when (deformer) {
+			is Deformer.Warp -> deformer.blendShapes
+			is Deformer.Rotation -> deformer.blendShapes
+		}
+		val hit = geometry?.axes.orEmpty().hasKey() ||
+			deformer.channelGrids.allAxes().hasKey() ||
+			blendShapes.any { it.parameterId == parameterId && it.keys.hasKey() }
+		if (hit) {
+			val subtype = if (deformer is Deformer.Warp) "warp" else "rotation"
+			result += ParameterKeyBoundComponent("deformer", deformer.id.raw, deformer.name, subtype)
+		}
+	}
+	for (drawable in drawables) {
+		val hit = drawable.geometryGrid?.axes.orEmpty().hasKey() ||
+			drawable.channelGrids.allAxes().hasKey() ||
+			drawable.blendShapes.any { it.parameterId == parameterId && it.keys.hasKey() }
+		if (hit) {
+			result += ParameterKeyBoundComponent("mesh", drawable.id.raw, drawable.name)
+		}
+	}
+	for (glue in glues) {
+		if (glue.channelGrids.allAxes().hasKey()) {
+			val glueId = glue.id ?: "${glue.meshA.raw}:${glue.meshB.raw}"
+			val glueName = glue.id ?: "Glue ${glue.meshA.raw} · ${glue.meshB.raw}"
+			result += ParameterKeyBoundComponent("glue", glueId, glueName)
+		}
+	}
+	return result
+}
+
+/** Union of components keyed at any of the given (parameter, key) pairs, preserving first-seen order. */
+fun PuppetModel.componentsAtParameterKeys(keys: List<Pair<ParameterId, Float>>): List<ParameterKeyBoundComponent> {
+	if (keys.isEmpty()) return emptyList()
+	val seen = HashSet<ParameterKeyOwner>()
+	val result = ArrayList<ParameterKeyBoundComponent>()
+	for ((parameterId, keyValue) in keys) {
+		for (component in componentsAtParameterKey(parameterId, keyValue)) {
+			if (seen.add(component.owner)) result += component
+		}
+	}
+	return result
 }
 
 /** Sorted geometry, channel and blend keys for one owner, or the whole rig when owner is null. */

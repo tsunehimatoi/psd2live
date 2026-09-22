@@ -59,4 +59,31 @@ class SelectedParameterTest {
         assertEquals(listOf(0.25f), authored.parameterKeyMarks().getValue(a).gridKeys)
         assertEquals(listOf(-1f, 0f), authored.parameterKeyMarks(ParameterKeyOwner("mesh", "mesh1")).getValue(a).gridKeys)
     }
+
+    @Test fun componentsAtParameterKeyListsOwnersKeyedThere() {
+        val model = model()
+        assertEquals(
+            listOf(ParameterKeyBoundComponent("mesh", "mesh1", "mesh1")),
+            model.componentsAtParameterKey(a, -1f),
+        )
+        assertEquals(
+            listOf(
+                ParameterKeyBoundComponent("mesh", "mesh1", "mesh1"),
+                ParameterKeyBoundComponent("mesh", "mesh2", "mesh2"),
+            ),
+            model.componentsAtParameterKey(a, 0f),
+        )
+        assertEquals(
+            listOf(ParameterKeyBoundComponent("deformer", "rotation", "Rotation", "rotation")),
+            model.componentsAtParameterKey(b, 1f),
+        )
+        assertTrue(model.componentsAtParameterKey(a, 0.5f).isEmpty())
+        assertEquals(
+            listOf(
+                ParameterKeyBoundComponent("mesh", "mesh2", "mesh2"),
+                ParameterKeyBoundComponent("deformer", "rotation", "Rotation", "rotation"),
+            ),
+            model.componentsAtParameterKeys(listOf(a to 1f, b to 0f)),
+        )
+    }
 }

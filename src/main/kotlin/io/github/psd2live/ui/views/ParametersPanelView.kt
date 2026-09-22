@@ -30,14 +30,18 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Divider
 import androidx.compose.material.Surface
 import androidx.compose.material.Text
@@ -45,6 +49,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -78,10 +83,20 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import io.github.psd2live.i18n.tr
+import io.github.psd2live.ui.ParameterKeyBoundComponent
 import io.github.psd2live.ui.ParameterKeyMarks
+import io.github.psd2live.ui.ParameterKeyOwner
 import io.github.psd2live.ui.components.CompactIconButton
 import io.github.psd2live.ui.components.CompactMenuItem
 import io.github.psd2live.ui.components.CompactTextField
@@ -90,15 +105,20 @@ import io.github.psd2live.ui.components.IconClose
 import io.github.psd2live.ui.components.IconDragHandle
 import io.github.psd2live.ui.components.IconFolder
 import io.github.psd2live.ui.components.IconLock
+import io.github.psd2live.ui.components.IconMeshWireframe
 import io.github.psd2live.ui.components.IconMouse
 import io.github.psd2live.ui.components.IconParameterLink
 import io.github.psd2live.ui.components.IconPause
 import io.github.psd2live.ui.components.IconPlay
 import io.github.psd2live.ui.components.IconReset
+import io.github.psd2live.ui.components.IconRotationDeformer
 import io.github.psd2live.ui.components.IconSearch
+import io.github.psd2live.ui.components.IconWarpDeformer
 import io.github.psd2live.ui.components.SliderKeyMark
 import io.github.psd2live.ui.components.SliderKeyShape
 import io.github.psd2live.ui.components.TreeContextMenu
+import io.github.psd2live.ui.componentsAtParameterKey
+import io.github.psd2live.ui.componentsAtParameterKeys
 import io.github.psd2live.ui.selectedParameterOwner
 import org.umamo.runtime.model.ParameterId
 import io.github.psd2live.ui.parameterKeyMarks
@@ -110,6 +130,8 @@ import io.github.psd2live.ui.theme.LocalToolTypography
 import java.awt.Cursor
 import kotlin.math.abs
 import kotlin.math.hypot
+import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 import org.umamo.edit.materializedParameterTree
 import org.umamo.runtime.eval.EPS_KEY
 import org.umamo.runtime.model.Parameter
@@ -170,6 +192,13 @@ private sealed interface ParamDropTarget {
 	) : ParamDropTarget
 	data class Append(val parentGroupId: String?, val label: String) : ParamDropTarget
 }
+
+/** Hovered parameter key and the components bound at that key, for the left-side float panel. */
+private data class ParameterKeyOwnersHover(
+	val keyLabel: String,
+	val components: List<ParameterKeyBoundComponent>,
+	val panelY: Float,
+)
 
 /** Hierarchy-tree-style drag state for the parameter panel. */
 private class ParameterDragState {
@@ -379,6 +408,45 @@ internal fun ParametersListView(
 	val dragPreview = rememberGraphicsLayer()
 	val itemBoundsMap = remember { mutableStateMapOf<String, ParamItemLayout>() }
 	var containerCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+	var keyOwnersHover by remember { mutableStateOf<ParameterKeyOwnersHover?>(null) }
+	var keyOwnersPopupHovered by remember { mutableStateOf(false) }
+	var shownKeyOwnersHover by remember { mutableStateOf<ParameterKeyOwnersHover?>(null) }
+	LaunchedEffect(keyOwnersHover, keyOwnersPopupHovered) {
+		if (keyOwnersHover != null) {
+			shownKeyOwnersHover = keyOwnersHover
+		} else if (!keyOwnersPopupHovered) {
+			delay(140)
+			if (keyOwnersHover == null && !keyOwnersPopupHovered) {
+				shownKeyOwnersHover = null
+			}
+		}
+	}
+
+	val layerIdByDrawableId = model?.rig?.layerIdByDrawableId.orEmpty()
+	fun selectBoundComponent(component: ParameterKeyBoundComponent) {
+		when (component.kind) {
+			"mesh" -> viewModel.selectLayer(layerIdByDrawableId[component.id] ?: component.id)
+			"deformer" -> viewModel.selectDeformer(component.id)
+			else -> Unit
+		}
+	}
+	fun reportKeyHover(
+		keyLabel: String,
+		components: List<ParameterKeyBoundComponent>,
+		trackCoords: LayoutCoordinates?,
+		localY: Float,
+	) {
+		val parent = containerCoordinates
+		if (trackCoords == null || parent == null || !trackCoords.isAttached || !parent.isAttached) {
+			keyOwnersHover = null
+			return
+		}
+		val panelY = parent.localPositionOf(trackCoords, Offset(0f, localY)).y
+		keyOwnersHover = ParameterKeyOwnersHover(keyLabel, components, panelY)
+	}
+	fun clearKeyHover() {
+		keyOwnersHover = null
+	}
 
 	val rows = remember(puppet, query, openOverrides.toMap(), activeRelatedFilter, relatedIds) {
 		if (puppet == null) emptyList() else buildParameterPanelRows(puppet, query, openOverrides, if (activeRelatedFilter) relatedIds else null)
@@ -666,6 +734,18 @@ internal fun ParametersListView(
 											onLinkWith = { targetParamId ->
 												viewModel.setParameterLink(row.parameter.id.raw, targetParamId, true)
 											},
+											onKeyHover = { key, trackCoords, localY ->
+												if (key == null || puppet == null) {
+													clearKeyHover()
+												} else {
+													reportKeyHover(
+														keyLabel = "${row.parameter.name} = ${formatAxisValue(key)}",
+														components = puppet.componentsAtParameterKey(row.parameter.id, key),
+														trackCoords = trackCoords,
+														localY = localY,
+													)
+												}
+											},
 											onDragPress = { localPos, rowCoords ->
 												val parent = containerCoordinates
 												if (parent != null && rowCoords.isAttached && parent.isAttached) {
@@ -696,6 +776,20 @@ internal fun ParametersListView(
 											verticalKeys = keyMarksByParameter[row.vertical.id],
 											onUnlink = {
 												viewModel.setParameterLink(row.horizontal.id.raw, row.vertical.id.raw, false)
+											},
+											onKeyHover = { xKey, yKey, trackCoords, localY ->
+												if (xKey == null || yKey == null || puppet == null) {
+													clearKeyHover()
+												} else {
+													reportKeyHover(
+														keyLabel = "${row.horizontal.name}=${formatAxisValue(xKey)} · ${row.vertical.name}=${formatAxisValue(yKey)}",
+														components = puppet.componentsAtParameterKeys(
+															listOf(row.horizontal.id to xKey, row.vertical.id to yKey),
+														),
+														trackCoords = trackCoords,
+														localY = localY,
+													)
+												}
 											},
 											onDragPress = { localPos, rowCoords ->
 												val parent = containerCoordinates
@@ -732,6 +826,21 @@ internal fun ParametersListView(
 						val top = dragged.top + dragState.currentMousePos.y - dragState.pressPos.y
 						translate(top = top) { drawLayer(dragPreview) }
 					}
+				}
+
+				val hover = shownKeyOwnersHover
+				if (hover != null) {
+					ParameterKeyOwnersFloat(
+						hover = hover,
+						selectedOwner = owner,
+						onHoverChange = { keyOwnersPopupHovered = it },
+						onSelect = { component ->
+							selectBoundComponent(component)
+							clearKeyHover()
+							keyOwnersPopupHovered = false
+							shownKeyOwnersHover = null
+						},
+					)
 				}
 
 			}
@@ -1098,10 +1207,12 @@ private fun ParameterTrack(
 	modifier: Modifier = Modifier,
 	enabled: Boolean = true,
 	thumbShape: SliderKeyShape = SliderKeyShape.Circle,
+	onHoverKey: ((key: Float?, trackCoords: LayoutCoordinates?, localY: Float) -> Unit)? = null,
 ) {
 	val colors = LocalToolColors.current
 	val labelMeasurer = rememberTextMeasurer()
 	val changeValue by rememberUpdatedState(onValueChange)
+	val hoverKeyCb by rememberUpdatedState(onHoverKey)
 	val span = (valueRange.endInclusive - valueRange.start).takeIf { it > 1e-6f } ?: 1f
 	val marks = remember(keyMarks, valueRange) {
 		keyMarks
@@ -1110,6 +1221,7 @@ private fun ParameterTrack(
 	}
 	val marksState by rememberUpdatedState(marks)
 	var hoverKey by remember { mutableStateOf<Float?>(null) }
+	var trackCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
 	val insetDp = ParamTrackInsetHorizontal
 	val keyRadiusDp = ParamKeyRadius
@@ -1141,6 +1253,7 @@ private fun ParameterTrack(
 	Canvas(
 		modifier = modifier
 			.height(28.dp)
+			.onGloballyPositioned { trackCoords = it }
 			.pointerHoverIcon(
 				if (enabled) PointerIcon(Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR))
 				else PointerIcon.Default,
@@ -1149,9 +1262,14 @@ private fun ParameterTrack(
 				if (!enabled) return@onPointerEvent
 				val x = event.changes.firstOrNull()?.position?.x ?: return@onPointerEvent
 				val inset = insetDp.toPx()
-				hoverKey = hitKey(x, size.width.toFloat(), inset, 10.dp.toPx())
+				val key = hitKey(x, size.width.toFloat(), inset, 10.dp.toPx())
+				hoverKey = key
+				hoverKeyCb?.invoke(key, trackCoords, size.height * 0.62f)
 			}
-			.onPointerEvent(PointerEventType.Exit) { hoverKey = null }
+			.onPointerEvent(PointerEventType.Exit) {
+				hoverKey = null
+				hoverKeyCb?.invoke(null, null, 0f)
+			}
 			.onPointerEvent(PointerEventType.Press) { event ->
 				if (!enabled || event.button != PointerButton.Secondary) return@onPointerEvent
 				val x = event.changes.firstOrNull()?.position?.x ?: return@onPointerEvent
@@ -1329,6 +1447,7 @@ private fun ParameterRowItem(
     selectedKeys: List<Float>,
 	nextSiblingParam: Parameter?,
 	onLinkWith: (String) -> Unit,
+	onKeyHover: (key: Float?, trackCoords: LayoutCoordinates?, localY: Float) -> Unit,
 	onDragPress: (localPos: Offset, rowCoords: LayoutCoordinates) -> Unit,
 ) {
 	val colors = LocalToolColors.current
@@ -1378,6 +1497,7 @@ private fun ParameterRowItem(
             highlightedKeys = selectedKeys,
 			modifier = Modifier.weight(1f),
 			thumbShape = if (param.kind == ParameterKind.BLEND_SHAPE) SliderKeyShape.Square else SliderKeyShape.Circle,
+			onHoverKey = onKeyHover,
 		)
 		Spacer(Modifier.width(ParamRowAfterTrackSpacer))
 		ParameterValueInput(param, currentValue, { viewModel.setParameterValue(param.id, it) })
@@ -1407,6 +1527,7 @@ private fun LinkedParameterPad(
     relatedIds: Set<ParameterId>,
 	verticalKeys: ParameterKeyMarks?,
 	onUnlink: () -> Unit,
+	onKeyHover: (xKey: Float?, yKey: Float?, trackCoords: LayoutCoordinates?, localY: Float) -> Unit,
 	onDragPress: (localPos: Offset, rowCoords: LayoutCoordinates) -> Unit,
 ) {
 	val colors = LocalToolColors.current
@@ -1486,6 +1607,7 @@ private fun LinkedParameterPad(
 				if (!xLocked) viewModel.setParameterValue(horizontal.id, x)
 				if (!yLocked) viewModel.setParameterValue(vertical.id, y)
 			},
+			onHoverKey = onKeyHover,
 		)
 		Spacer(Modifier.width(ParamRowAfterTrackSpacer))
 		Column(
@@ -1541,6 +1663,7 @@ private fun ParameterPad2D(
 	verticalKeys: ParameterKeyMarks?,
 	modifier: Modifier,
 	onChange: (Float, Float) -> Unit,
+	onHoverKey: ((xKey: Float?, yKey: Float?, trackCoords: LayoutCoordinates?, localY: Float) -> Unit)? = null,
 ) {
 	val colors = LocalToolColors.current
 	val xKeyList = remember(horizontal, horizontalKeys) {
@@ -1557,6 +1680,7 @@ private fun ParameterPad2D(
 	val blendY = remember(verticalKeys) { verticalKeys?.blendKeys.orEmpty().toSet() }
 
 	val onChangeState by rememberUpdatedState(onChange)
+	val hoverKeyCb by rememberUpdatedState(onHoverKey)
 	val xLockedState by rememberUpdatedState(xLocked)
 	val yLockedState by rememberUpdatedState(yLocked)
 	val xValueState by rememberUpdatedState(xValue)
@@ -1569,6 +1693,7 @@ private fun ParameterPad2D(
 	val vMax by rememberUpdatedState(vertical.max)
 
 	var hoverKey by remember { mutableStateOf<Pair<Float, Float>?>(null) }
+	var padCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 	val labelMeasurer = rememberTextMeasurer()
 
 	val insetHorizontalDp = 18.dp
@@ -1578,6 +1703,7 @@ private fun ParameterPad2D(
 
 	Canvas(
 		modifier = modifier
+			.onGloballyPositioned { padCoords = it }
 			.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR)))
 			.onPointerEvent(PointerEventType.Move) { event ->
 				val pos = event.changes.firstOrNull()?.position ?: return@onPointerEvent
@@ -1600,8 +1726,17 @@ private fun ParameterPad2D(
 					}
 				}
 				hoverKey = best
+				if (best != null) {
+					val py = insetY + ((vMax - best.second) / spanY).coerceIn(0f, 1f) * h
+					hoverKeyCb?.invoke(best.first, best.second, padCoords, py)
+				} else {
+					hoverKeyCb?.invoke(null, null, null, 0f)
+				}
 			}
-			.onPointerEvent(PointerEventType.Exit) { hoverKey = null }
+			.onPointerEvent(PointerEventType.Exit) {
+				hoverKey = null
+				hoverKeyCb?.invoke(null, null, null, 0f)
+			}
 			.onPointerEvent(PointerEventType.Press) { event ->
 				if (event.button != PointerButton.Secondary) return@onPointerEvent
 				val hit = hoverKey ?: return@onPointerEvent
@@ -1782,3 +1917,146 @@ private fun ParameterNode.Group.containsParameter(ids: Set<ParameterId>): Boolea
         is ParameterNode.Group -> it.containsParameter(ids)
     }
 }
+
+/**
+ * Floating list of components keyed at the hovered parameter key, anchored just left of the parameter panel.
+ */
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun ParameterKeyOwnersFloat(
+	hover: ParameterKeyOwnersHover,
+	selectedOwner: ParameterKeyOwner?,
+	onHoverChange: (Boolean) -> Unit,
+	onSelect: (ParameterKeyBoundComponent) -> Unit,
+) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	val density = LocalDensity.current
+	val panelY = hover.panelY
+	val positionProvider = remember(panelY, density) {
+		object : PopupPositionProvider {
+			override fun calculatePosition(
+				anchorBounds: IntRect,
+				windowSize: IntSize,
+				layoutDirection: LayoutDirection,
+				popupContentSize: IntSize,
+			): IntOffset {
+				val gap = with(density) { 8.dp.roundToPx() }
+				val margin = with(density) { 6.dp.roundToPx() }
+				val x = (anchorBounds.left - popupContentSize.width - gap)
+					.coerceAtLeast(margin)
+				val preferredY = anchorBounds.top + panelY.roundToInt() - popupContentSize.height / 2
+				val y = preferredY.coerceIn(
+					margin,
+					(windowSize.height - popupContentSize.height - margin).coerceAtLeast(margin),
+				)
+				return IntOffset(x, y)
+			}
+		}
+	}
+	Popup(
+		popupPositionProvider = positionProvider,
+		properties = PopupProperties(focusable = false, clippingEnabled = false),
+	) {
+		Surface(
+			color = colors.panelElevated,
+			shape = RoundedCornerShape(6.dp),
+			border = BorderStroke(1.dp, colors.border),
+			elevation = 8.dp,
+			modifier = Modifier
+				.widthIn(min = 140.dp, max = 220.dp)
+				.onPointerEvent(PointerEventType.Enter) { onHoverChange(true) }
+				.onPointerEvent(PointerEventType.Exit) { onHoverChange(false) },
+		) {
+			Column(
+				modifier = Modifier
+					.padding(horizontal = 8.dp, vertical = 6.dp)
+					.heightIn(max = 220.dp)
+					.verticalScroll(rememberScrollState()),
+				verticalArrangement = Arrangement.spacedBy(2.dp),
+			) {
+				Text(
+					text = tr("parameters.keyOwnersTitle", hover.keyLabel),
+					style = typography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
+					color = colors.textMuted,
+					maxLines = 2,
+					overflow = TextOverflow.Ellipsis,
+				)
+				if (hover.components.isEmpty()) {
+					Text(
+						text = tr("parameters.keyOwnersEmpty"),
+						style = typography.caption.copy(fontSize = 11.sp),
+						color = colors.textDisabled,
+						modifier = Modifier.padding(vertical = 4.dp),
+					)
+				} else {
+					Text(
+						text = tr("parameters.keyOwnersCount", hover.components.size),
+						style = typography.caption.copy(fontSize = 9.sp),
+						color = colors.textDisabled,
+					)
+					for (component in hover.components) {
+						key(component.kind, component.id) {
+							val selectable = component.kind == "mesh" || component.kind == "deformer"
+							val selected = selectedOwner == component.owner
+							val interaction = remember { MutableInteractionSource() }
+							val rowHovered by interaction.collectIsHoveredAsState()
+							Row(
+								modifier = Modifier
+									.fillMaxWidth()
+									.background(
+										when {
+											selected -> colors.selection.copy(alpha = 0.45f)
+											rowHovered && selectable -> colors.controlHover.copy(alpha = 0.55f)
+											else -> Color.Transparent
+										},
+										RoundedCornerShape(3.dp),
+									)
+									.then(
+										if (selectable) {
+											Modifier
+												.hoverable(interaction)
+												.clickable(
+													interactionSource = interaction,
+													indication = null,
+													onClick = { onSelect(component) },
+												)
+												.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
+										} else Modifier.hoverable(interaction),
+									)
+									.padding(horizontal = 4.dp, vertical = 3.dp),
+								verticalAlignment = Alignment.CenterVertically,
+								horizontalArrangement = Arrangement.spacedBy(5.dp),
+							) {
+								ParameterKeyOwnerIcon(component, if (selected) colors.accent else colors.textMuted)
+								Text(
+									text = component.name,
+									style = typography.body.copy(fontSize = 11.sp),
+									color = if (selected) colors.accent else colors.textPrimary,
+									maxLines = 1,
+									overflow = TextOverflow.Ellipsis,
+									modifier = Modifier.weight(1f),
+								)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+@Composable
+private fun ParameterKeyOwnerIcon(component: ParameterKeyBoundComponent, tint: Color) {
+	val modifier = Modifier.size(12.dp)
+	when (component.kind) {
+		"mesh" -> IconMeshWireframe(tint = tint, modifier = modifier)
+		"deformer" -> when (component.subtype) {
+			"rotation" -> IconRotationDeformer(tint = tint, modifier = modifier)
+			else -> IconWarpDeformer(tint = tint, modifier = modifier)
+		}
+		"part" -> IconFolder(tint = tint, modifier = modifier)
+		else -> IconParameterLink(linked = false, tint = tint, modifier = modifier)
+	}
+}
+
