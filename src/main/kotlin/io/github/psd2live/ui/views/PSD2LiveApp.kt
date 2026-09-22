@@ -136,7 +136,6 @@ fun FrameWindowScope.PSD2LiveApp(
 	val state by viewModel.state.collectAsState()
 	var helpDialogTab by remember { mutableStateOf<HelpTab?>(null) }
 	var showAgentDialog by remember { mutableStateOf(false) }
-	var showUpscaleDialog by remember { mutableStateOf(false) }
 	var tutorial by remember { mutableStateOf(InteractiveTutorialState()) }
 	val tutorialTargets = rememberTutorialTargetRegistry()
 
@@ -291,7 +290,7 @@ fun FrameWindowScope.PSD2LiveApp(
 		// rather than true is deliberate — the dialogs keep their own key handling and text input.
 		val modalOpen = helpDialogTab != null ||
 			showAgentDialog ||
-			showUpscaleDialog ||
+			state.showTextureUpscaleDialog ||
 			state.lightboxImage != null ||
 			state.showProjectLocationDialog ||
 			state.showExportDialog ||
@@ -402,7 +401,7 @@ fun FrameWindowScope.PSD2LiveApp(
 						ShortcutAction.REEXPORT_PSD ->
 							if (hasInput && !isBusy) { viewModel.openExportPsdDialog(); true } else false
 						ShortcutAction.TEXTURE_UPSCALE -> {
-							if (hasInput && !isBusy) showUpscaleDialog = true
+							if (hasInput && !isBusy) viewModel.openTextureUpscaleDialog()
 							true
 						}
 						ShortcutAction.UNDO -> {
@@ -487,7 +486,7 @@ fun FrameWindowScope.PSD2LiveApp(
 						onToggleTheme = { viewModel.toggleDarkTheme() },
 						onShowSettings = { viewModel.openSettingsDialog() },
 						onShowAgentConnection = { showAgentDialog = true },
-						onShowTextureUpscale = { showUpscaleDialog = true },
+						onShowTextureUpscale = { viewModel.openTextureUpscaleDialog() },
 						onShowHistory = { viewModel.openHistoryTab() },
 						onNewEditTab = { viewModel.addTab(WorkspaceTabKind.EDIT) },
 						onNewPreviewTab = { viewModel.addTab(WorkspaceTabKind.PREVIEW) },
@@ -613,14 +612,14 @@ fun FrameWindowScope.PSD2LiveApp(
 			)
 		}
 
-		if (showUpscaleDialog) {
+		if (state.showTextureUpscaleDialog) {
 			TextureUpscaleDialog(
 				config = state.textureUpscale,
 				isBusy = isBusy,
 				isUpscaling = state.isUpscaling,
 				progress = state.progress,
 				statusText = state.statusText,
-				onDismiss = { showUpscaleDialog = false },
+				onDismiss = { viewModel.closeTextureUpscaleDialog() },
 				onApply = viewModel::setTextureUpscale,
 			)
 		}

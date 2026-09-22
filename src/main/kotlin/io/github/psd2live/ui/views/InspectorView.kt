@@ -294,19 +294,8 @@ internal fun ModelSettingsSection(
 						.padding(start = 12.dp, top = 1.dp, bottom = 1.dp),
 					verticalArrangement = Arrangement.spacedBy(2.dp),
 				) {
-					var showInspectorUpscaleDialog by remember { mutableStateOf(false) }
-					if (showInspectorUpscaleDialog) {
-						io.github.psd2live.ui.components.TextureUpscaleDialog(
-							config = state.textureUpscale,
-							isBusy = isBusy,
-							isUpscaling = state.isUpscaling,
-							progress = state.progress,
-							statusText = state.statusText,
-							onDismiss = { showInspectorUpscaleDialog = false },
-							onApply = viewModel::setTextureUpscale,
-						)
-					}
-					// Row 0: Texture Upscale
+					// Row 0: Texture Upscale — open the app-level dialog (fillMaxSize scrim
+					// must not be a Column child or it collapses siblings to solid black).
 					Row(
 						modifier = Modifier.fillMaxWidth(),
 						verticalAlignment = Alignment.CenterVertically,
@@ -323,7 +312,7 @@ internal fun ModelSettingsSection(
 							text = if (state.textureUpscale.scale == 1) tr("upscale.off") else "${state.textureUpscale.scale}× (${state.textureUpscale.tileSize}px)",
 							isPrimary = state.textureUpscale.scale > 1,
 							enabled = !isBusy,
-							onClick = { showInspectorUpscaleDialog = true },
+							onClick = { viewModel.openTextureUpscaleDialog() },
 							modifier = Modifier.weight(1f),
 							height = 20.dp,
 						)

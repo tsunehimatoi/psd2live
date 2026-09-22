@@ -327,6 +327,8 @@ data class PSD2LiveState(
 	/** Chrome palette. Like [uiScale], this is an application preference, not part of the project. */
 	val darkTheme: Boolean = AppSettings.darkTheme,
 	val showSettingsDialog: Boolean = false,
+	/** App-level texture upscale prompt; must not be mounted inside a Column (scrim is fillMaxSize). */
+	val showTextureUpscaleDialog: Boolean = false,
 	/**
 	 * Keyboard shortcuts. Not part of the project: like [uiScale] these are application preferences,
 	 * so they are absent from WorkspaceStateCodec and no edit here may mark the project dirty.

@@ -256,37 +256,41 @@ internal fun DockWorkspaceView(
         }
     }
     val colors = LocalToolColors.current
-    Column(modifier.background(colors.windowBackground)) {
-        Row(Modifier.fillMaxWidth().height(28.dp), verticalAlignment = Alignment.CenterVertically) {
-            WorkspaceTabStrip(state, viewModel, Modifier.weight(1f))
-            Text(tr("dock.reset"), color = colors.textMuted, fontSize = 11.sp,
-                modifier = Modifier.clickable {
-                    session.floating.clear()
-                    session.root = defaultDockLayout(tab.kind == WorkspaceTabKind.HISTORY)
-                }.padding(horizontal = 8.dp))
-        }
-        key(tab.id) {
-            Box(Modifier.weight(1f).fillMaxWidth().onGloballyPositioned { coordinates ->
-                session.workspaceBounds = { screenBounds(coordinates, mainWindow) }
-            }) {
-                visibleRoot?.let {
-                    DockTree(it, session, Modifier.fillMaxSize(), mainWindow, ::content)
-                    DockJunctionOverlay(it, session, mainWindow)
-                }
-                    ?: Box(Modifier.fillMaxSize().background(
-                        if (session.target?.first == "empty") colors.accent.copy(alpha = .08f) else Color.Transparent),
-                        contentAlignment = Alignment.Center) {
-                        Text(tr("dock.empty"), color = colors.textMuted, fontSize = 11.sp)
+    // Overlay the rebuild prompt on a Box so its fillMaxSize scrim cannot compete for
+    // Column height with the dock (which would collapse the workspace to solid black).
+    Box(modifier) {
+        Column(Modifier.fillMaxSize().background(colors.windowBackground)) {
+            Row(Modifier.fillMaxWidth().height(28.dp), verticalAlignment = Alignment.CenterVertically) {
+                WorkspaceTabStrip(state, viewModel, Modifier.weight(1f))
+                Text(tr("dock.reset"), color = colors.textMuted, fontSize = 11.sp,
+                    modifier = Modifier.clickable {
+                        session.floating.clear()
+                        session.root = defaultDockLayout(tab.kind == WorkspaceTabKind.HISTORY)
+                    }.padding(horizontal = 8.dp))
+            }
+            key(tab.id) {
+                Box(Modifier.weight(1f).fillMaxWidth().onGloballyPositioned { coordinates ->
+                    session.workspaceBounds = { screenBounds(coordinates, mainWindow) }
+                }) {
+                    visibleRoot?.let {
+                        DockTree(it, session, Modifier.fillMaxSize(), mainWindow, ::content)
+                        DockJunctionOverlay(it, session, mainWindow)
                     }
+                        ?: Box(Modifier.fillMaxSize().background(
+                            if (session.target?.first == "empty") colors.accent.copy(alpha = .08f) else Color.Transparent),
+                            contentAlignment = Alignment.Center) {
+                            Text(tr("dock.empty"), color = colors.textMuted, fontSize = 11.sp)
+                        }
+                }
             }
         }
-    }
-    if (viewModel.canvasEditor.showRebuildMeshDialog) {
-        io.github.psd2live.ui.components.RebuildMeshPromptDialog(
-            layerName = viewModel.canvasEditor.paintSession?.layerName.orEmpty(),
-            onConfirmRebuild = { viewModel.canvasEditor.commitPaintSession(rebuildMesh = true) },
-            onKeepExisting = { viewModel.canvasEditor.commitPaintSession(rebuildMesh = false) },
-            onDismiss = { viewModel.canvasEditor.showRebuildMeshDialog = false })
+        if (viewModel.canvasEditor.showRebuildMeshDialog) {
+            io.github.psd2live.ui.components.RebuildMeshPromptDialog(
+                layerName = viewModel.canvasEditor.paintSession?.layerName.orEmpty(),
+                onConfirmRebuild = { viewModel.canvasEditor.commitPaintSession(rebuildMesh = true) },
+                onKeepExisting = { viewModel.canvasEditor.commitPaintSession(rebuildMesh = false) },
+                onDismiss = { viewModel.canvasEditor.showRebuildMeshDialog = false })
+        }
     }
     session.floating.toMap().forEach { (id, windowState) ->
         key(tab.id, id) {

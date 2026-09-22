@@ -1313,6 +1313,19 @@ class PSD2LiveViewModel : AutoCloseable {
 		}
 	}
 
+	fun openTextureUpscaleDialog() {
+		_state.update { it.copy(showTextureUpscaleDialog = true) }
+	}
+
+	fun closeTextureUpscaleDialog() {
+		_state.update {
+			it.copy(
+				showTextureUpscaleDialog = false,
+				focusCanvasRequest = it.focusCanvasRequest + 1,
+			)
+		}
+	}
+
 	// -------------------------------------------------------------------------------------
 	// Keyboard shortcuts
 	//

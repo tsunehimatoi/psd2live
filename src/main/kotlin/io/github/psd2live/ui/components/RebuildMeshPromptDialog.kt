@@ -32,7 +32,7 @@ fun RebuildMeshPromptDialog(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.55f))
+            .background(Color(0x88000000))
             .clickable(onClick = onDismiss),
         contentAlignment = Alignment.Center,
     ) {
