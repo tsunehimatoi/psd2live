@@ -758,17 +758,34 @@ fun CanvasViewportComposable(
 			if (canUseNativeSdk && currentSdkBitmap != null) {
 				drawImage(currentSdkBitmap)
 			} else {
+				// Paint is an isolated document-canvas session: its live tiles belong only on the Edit
+				// tab, and only until Apply writes them into RigPreviewModel. The Preview tab always
+				// keeps showing the last committed atlas, never an in-progress stroke.
+				val paintSession = editor.paintSession?.takeIf {
+					mode == CanvasMode.EDIT && editor.hierarchyMode == EditHierarchyMode.PAINT
+				}
 				val buffer = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
 				val g = buffer.createGraphics()
 				try {
 					g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-					val geometry = RigCanvasSupport.evaluate(model, if (mode == CanvasMode.PREVIEW) informationPose else state.parameterValues)
+					// Document-space paint tiles only line up with the mesh at rest; driving the other
+					// layers with the live pose would leave the stroke floating off the art.
+					val poseForGeometry = when {
+						paintSession != null -> emptyMap<org.umamo.runtime.model.ParameterId, Float>()
+						mode == CanvasMode.PREVIEW -> informationPose
+						else -> state.parameterValues
+					}
+					val geometry = RigCanvasSupport.evaluate(model, poseForGeometry)
 
 					// 3a. Texture Channel. The artwork always renders opaque; legibility of the
 					// overlays comes from the focus/dim options instead of a global transparency.
 					if (showTexture) {
-						val paintLayerId = if (editor.hierarchyMode == EditHierarchyMode.PAINT) editor.paintSession?.layerId else null
-						val effectiveVisible = if (paintLayerId != null) targetVisibleLayerIds - setOf(paintLayerId) else targetVisibleLayerIds
+						val paintLayerId = paintSession?.layerId
+						val effectiveVisible = if (paintLayerId != null) {
+							targetVisibleLayerIds - setOf(paintLayerId)
+						} else {
+							targetVisibleLayerIds
+						}
 						drawIntoCanvas { target -> editingPainter?.paint(
 							target.skiaCanvas,
 							model,
@@ -783,31 +800,6 @@ fun CanvasViewportComposable(
 							tintLayerIds = hoverTintLayerIds,
 							tintColor = hoverTintColor,
 						) }
-
-						if (editor.hierarchyMode == EditHierarchyMode.PAINT) {
-							val session = editor.paintSession
-							if (session != null) {
-								// The layer's live pixels, tile by tile. Each tile's destination is drawn
-								// from its own edges rather than its size, so neighbouring tiles share an
-								// edge exactly and the seams between them land on whole pixels.
-								val scale = viewport.scale
-								for (tile in session.previewTiles) {
-									val left = Math.round(viewport.offsetX + tile.x * scale)
-									val top = Math.round(viewport.offsetY + tile.y * scale)
-									val right = Math.round(viewport.offsetX + (tile.x + tile.width) * scale)
-									val bottom = Math.round(viewport.offsetY + (tile.y + tile.height) * scale)
-									drawImage(
-										image = tile.image,
-										dstOffset = androidx.compose.ui.unit.IntOffset(left.toInt(), top.toInt()),
-										dstSize = androidx.compose.ui.unit.IntSize(
-											(right - left).toInt().coerceAtLeast(1),
-											(bottom - top).toInt().coerceAtLeast(1)
-										),
-										filterQuality = androidx.compose.ui.graphics.FilterQuality.Low
-									)
-								}
-							}
-						}
 					}
 
 					// 3b. Mesh Channel (Wireframe)
@@ -1021,6 +1013,26 @@ fun CanvasViewportComposable(
 					g.dispose()
 				}
 				drawImage(buffer.toComposeImageBitmap())
+				// Session tiles sit above the mesh overlays and never write into RigPreviewModel —
+				// Apply (commitPaintSession) is what publishes them to the shared preview.
+				if (showTexture && paintSession != null) {
+					val scale = viewport.scale
+					for (tile in paintSession.previewTiles) {
+						val left = Math.round(viewport.offsetX + tile.x * scale)
+						val top = Math.round(viewport.offsetY + tile.y * scale)
+						val right = Math.round(viewport.offsetX + (tile.x + tile.width) * scale)
+						val bottom = Math.round(viewport.offsetY + (tile.y + tile.height) * scale)
+						drawImage(
+							image = tile.image,
+							dstOffset = androidx.compose.ui.unit.IntOffset(left.toInt(), top.toInt()),
+							dstSize = androidx.compose.ui.unit.IntSize(
+								(right - left).toInt().coerceAtLeast(1),
+								(bottom - top).toInt().coerceAtLeast(1)
+							),
+							filterQuality = androidx.compose.ui.graphics.FilterQuality.Low
+						)
+					}
+				}
 			}
 		}
 
