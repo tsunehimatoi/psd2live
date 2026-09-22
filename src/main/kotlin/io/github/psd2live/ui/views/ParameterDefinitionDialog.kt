@@ -40,6 +40,7 @@ internal fun ParameterDefinitionDialog(
     parameter: Parameter?,
     state: PSD2LiveState,
     viewModel: PSD2LiveViewModel,
+    parentGroupId: String? = null,
     onDismiss: () -> Unit,
 ) {
     val colors = LocalToolColors.current
@@ -105,6 +106,7 @@ internal fun ParameterDefinitionDialog(
             parameterKind = parameter?.kind ?: ParameterKind.NORMAL,
             keyEdits = if (action == "delete") emptyList() else normalizedKeyEdits,
             expectedState = expectedState,
+            parentGroupId = if (creating) parentGroupId else null,
         ) { if (it == null) onDismiss() else failure = it }
     }
     val editorRegions = remember { InlineEditorRegions() }

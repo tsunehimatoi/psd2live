@@ -209,7 +209,19 @@ internal object RigStructureEdits {
             else -> error("Unknown parameter-panel action: $action")
         }
         require((edit.keys - allowed - setOf("action", "kind", "id")).isEmpty()) { "Unexpected field for $action" }
-        if (kind == "parameter" && action in setOf("create", "update", "delete")) {
+		fun parentId(): ParameterGroupId? {
+            require("parent_id" in edit) { "Specify parent_id; null means panel root" }
+            return edit["parent_id"]?.jsonPrimitive?.contentOrNull?.let(::ParameterGroupId)
+        }
+        fun beforeRef(): ParameterPanelRef? {
+            val beforeId = edit["before_id"]?.jsonPrimitive?.contentOrNull ?: return null
+            return when (edit.string("before_kind")) {
+                "parameter" -> ParameterPanelRef.Param(ParameterId(beforeId))
+                "param_group" -> ParameterPanelRef.Group(ParameterGroupId(beforeId))
+                else -> error("before_kind must be parameter or param_group")
+            }
+        }
+		if (kind == "parameter" && action in setOf("create", "update", "delete")) {
             val parameterId = ParameterId(id)
             require(id.isNotBlank()) { "Parameter ID is required" }
             val existing = model.parameters.find { it.id == parameterId }
@@ -226,21 +238,22 @@ internal object RigStructureEdits {
             require(min.isFinite() && max.isFinite() && default.isFinite() && min < max && default in min..max) {
                 "Use a finite range with minimum < maximum and default inside the range"
             }
-            val base = if (action == "create") model.withParameterCreated(parameterId, name, edit["parameter_kind"]?.jsonPrimitive?.content?.let(ParameterKind::valueOf) ?: ParameterKind.NORMAL)
-                else model.withParameterRenamed(parameterId, name)
-            return base.withParameterRange(parameterId, min, default, max)
-        }
-        fun parentId(): ParameterGroupId? {
-            require("parent_id" in edit) { "Specify parent_id; null means panel root" }
-            return edit["parent_id"]?.jsonPrimitive?.contentOrNull?.let(::ParameterGroupId)
-        }
-        fun beforeRef(): ParameterPanelRef? {
-            val beforeId = edit["before_id"]?.jsonPrimitive?.contentOrNull ?: return null
-            return when (edit.string("before_kind")) {
-                "parameter" -> ParameterPanelRef.Param(ParameterId(beforeId))
-                "param_group" -> ParameterPanelRef.Group(ParameterGroupId(beforeId))
-                else -> error("before_kind must be parameter or param_group")
-            }
+            var next = if (action == "create") {
+				model.withParameterCreated(
+					parameterId,
+					name,
+					edit["parameter_kind"]?.jsonPrimitive?.content?.let(ParameterKind::valueOf) ?: ParameterKind.NORMAL,
+				)
+			} else {
+				model.withParameterRenamed(parameterId, name)
+			}
+			next = next.withParameterRange(parameterId, min, default, max)
+			if (action == "create" && "parent_id" in edit) {
+				val parent = parentId()
+				require(parent == null || next.parameterTree.anyGroup(parent)) { "Parent folder not found: $parent" }
+				next = next.withParameterPanelNodeMoved(ParameterPanelRef.Param(parameterId), parent, beforeRef())
+			}
+			return next
         }
         return when (action) {
             "create" -> {

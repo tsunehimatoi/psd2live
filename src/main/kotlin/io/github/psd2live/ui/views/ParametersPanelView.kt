@@ -55,9 +55,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -66,7 +69,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerButton
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.onPointerEvent
@@ -112,6 +121,8 @@ import io.github.psd2live.ui.components.IconReset
 import io.github.psd2live.ui.components.IconRotationDeformer
 import io.github.psd2live.ui.components.IconSearch
 import io.github.psd2live.ui.components.IconWarpDeformer
+import io.github.psd2live.ui.components.InlineEditorRegions
+import io.github.psd2live.ui.components.LocalInlineEditorRegions
 import io.github.psd2live.ui.components.SliderKeyMark
 import io.github.psd2live.ui.components.SliderKeyShape
 import io.github.psd2live.ui.components.TreeContextMenu
@@ -384,8 +395,17 @@ internal fun ParametersListView(
 	val puppet = model?.rig?.puppet
 	val allParameters = puppet?.parameters.orEmpty()
     var creatingParameter by remember { mutableStateOf(false) }
+	var creatingUnderGroupId by remember { mutableStateOf<String?>(null) }
     if (creatingParameter && puppet != null) {
-        ParameterDefinitionDialog(null, state, viewModel) { creatingParameter = false }
+        ParameterDefinitionDialog(
+			null,
+			state,
+			viewModel,
+			parentGroupId = creatingUnderGroupId,
+		) {
+			creatingParameter = false
+			creatingUnderGroupId = null
+		}
     }
 	val owner = remember(puppet, state.selectedLayerId, state.selectedDeformerId, model?.rig?.layerIdByDrawableId) {
         puppet?.selectedParameterOwner(state.selectedLayerId, state.selectedDeformerId, model.rig.layerIdByDrawableId.orEmpty())
@@ -399,8 +419,30 @@ internal fun ParametersListView(
 	val openOverrides = remember { mutableStateMapOf<String, Boolean>() }
 	var renamingGroupId by remember { mutableStateOf<String?>(null) }
 	var renameDraft by remember { mutableStateOf("") }
+	var renameSettled by remember { mutableStateOf(false) }
 	var folderMenuFor by remember { mutableStateOf<String?>(null) }
 	var folderMenuOffset by remember { mutableStateOf(Offset.Zero) }
+	val focusManager = LocalFocusManager.current
+	val renameEditorRegions = remember { InlineEditorRegions() }
+	fun startFolderRename(groupId: String, name: String) {
+		renamingGroupId = groupId
+		renameDraft = name
+		renameSettled = false
+	}
+	fun commitFolderRename() {
+		if (renameSettled) return
+		val id = renamingGroupId ?: return
+		renameSettled = true
+		if (renameDraft.isNotBlank()) {
+			viewModel.renameParameterGroup(id, renameDraft)
+		}
+		renamingGroupId = null
+	}
+	fun cancelFolderRename() {
+		if (renameSettled) return
+		renameSettled = true
+		renamingGroupId = null
+	}
 
 	val dragState = remember { ParameterDragState() }
 	val dragPreview = rememberGraphicsLayer()
@@ -523,7 +565,10 @@ internal fun ParametersListView(
 
                 io.github.psd2live.ui.components.CompactButton(
                     text = tr("parameters.create"),
-                    onClick = { creatingParameter = true },
+                    onClick = {
+						creatingUnderGroupId = null
+						creatingParameter = true
+					},
                     enabled = puppet != null && state.historySnapshot != null && !state.canvasEditBusy,
                     height = 22.dp,
                 )
@@ -574,26 +619,35 @@ internal fun ParametersListView(
 				)
 			}
 		} else {
-			Box(
-				modifier = Modifier
-					.fillMaxSize()
-					.onGloballyPositioned { containerCoordinates = it }
-					.onPointerEvent(PointerEventType.Move) { event ->
-						val pos = event.changes.firstOrNull()?.position ?: return@onPointerEvent
-						dragState.onMove(pos, itemBoundsMap.values)
-					}
-					.onPointerEvent(PointerEventType.Release) { event ->
-						if (event.button == PointerButton.Primary && dragState.isPressed) {
-							dragState.onRelease(viewModel)
+			CompositionLocalProvider(LocalInlineEditorRegions provides renameEditorRegions) {
+				Box(
+					modifier = Modifier
+						.fillMaxSize()
+						.onGloballyPositioned { containerCoordinates = it }
+						.onPointerEvent(PointerEventType.Press, pass = PointerEventPass.Initial) {
+							if (renamingGroupId != null) renameEditorRegions.pressedInside = false
 						}
-					}
-					.pointerHoverIcon(
-						PointerIcon(
-							if (dragState.isDragging) Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR)
-							else Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR),
+						.onPointerEvent(PointerEventType.Press, pass = PointerEventPass.Final) {
+							if (renamingGroupId != null && !renameEditorRegions.pressedInside) {
+								focusManager.clearFocus(force = true)
+							}
+						}
+						.onPointerEvent(PointerEventType.Move) { event ->
+							val pos = event.changes.firstOrNull()?.position ?: return@onPointerEvent
+							dragState.onMove(pos, itemBoundsMap.values)
+						}
+						.onPointerEvent(PointerEventType.Release) { event ->
+							if (event.button == PointerButton.Primary && dragState.isPressed) {
+								dragState.onRelease(viewModel)
+							}
+						}
+						.pointerHoverIcon(
+							PointerIcon(
+								if (dragState.isDragging) Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR)
+								else Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR),
+							),
 						),
-					),
-			) {
+				) {
 				LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(end = 10.dp)) {
 					items(rows, key = { row -> rowKey(row) }) { row ->
 						val key = rowKey(row)
@@ -650,16 +704,10 @@ internal fun ParametersListView(
 											renameDraft = renameDraft,
 											onRenameDraft = { renameDraft = it },
 											onStartRename = {
-												renamingGroupId = row.group.id.raw
-												renameDraft = row.group.name
+												startFolderRename(row.group.id.raw, row.group.name)
 											},
-											onCommitRename = {
-												val id = renamingGroupId
-												if (id != null && renameDraft.isNotBlank()) {
-													viewModel.renameParameterGroup(id, renameDraft)
-												}
-												renamingGroupId = null
-											},
+											onCommitRename = { commitFolderRename() },
+											onCancelRename = { cancelFolderRename() },
 											onToggle = {
 												if (dragState.suppressClick || dragState.isDragging || dragState.isPressed) {
 													dragState.suppressClick = false
@@ -670,9 +718,16 @@ internal fun ParametersListView(
 												viewModel.setParameterGroupOpen(row.group.id.raw, next)
 											},
 											onDelete = { viewModel.deleteParameterGroup(row.group.id.raw) },
+											onNewChildParameter = {
+												openOverrides[row.group.id.raw] = true
+												viewModel.setParameterGroupOpen(row.group.id.raw, true)
+												creatingUnderGroupId = row.group.id.raw
+												creatingParameter = true
+											},
 											onNewChildFolder = {
 												viewModel.createParameterGroup(tr("parameters.newFolderName"), row.group.id.raw)
 											},
+											canCreateParameter = state.historySnapshot != null && !state.canvasEditBusy,
 											menuOpen = folderMenuFor == row.group.id.raw,
 											menuOffset = folderMenuOffset,
 											onMenuOpenChange = { open, offset ->
@@ -817,6 +872,7 @@ internal fun ParametersListView(
 					)
 				}
 
+				}
 			}
 		}
 	}
@@ -1006,9 +1062,12 @@ private fun ParameterFolderRow(
 	onRenameDraft: (String) -> Unit,
 	onStartRename: () -> Unit,
 	onCommitRename: () -> Unit,
+	onCancelRename: () -> Unit,
 	onToggle: () -> Unit,
 	onDelete: () -> Unit,
+	onNewChildParameter: () -> Unit,
 	onNewChildFolder: () -> Unit,
+	canCreateParameter: Boolean,
 	menuOpen: Boolean,
 	menuOffset: Offset,
 	onMenuOpenChange: (Boolean, Offset?) -> Unit,
@@ -1019,6 +1078,10 @@ private fun ParameterFolderRow(
 	val interactionSource = remember { MutableInteractionSource() }
 	val isHovered by interactionSource.collectIsHoveredAsState()
 	var rowCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+	val renameFocus = remember { FocusRequester() }
+	LaunchedEffect(renaming) {
+		if (renaming) runCatching { renameFocus.requestFocus() }
+	}
 
 	Row(
 		modifier = Modifier
@@ -1060,9 +1123,22 @@ private fun ParameterFolderRow(
 			CompactTextField(
 				value = renameDraft,
 				onValueChange = onRenameDraft,
-				modifier = Modifier.weight(1f),
+				modifier = Modifier
+					.weight(1f)
+					.focusRequester(renameFocus)
+					.onPreviewKeyEvent { event ->
+						if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+							onCancelRename()
+							true
+						} else {
+							false
+						}
+					},
 				height = 20.dp,
-				onEditEnd = onCommitRename,
+				selectAllOnFocus = true,
+				endEditOnSettle = false,
+				onCommit = onCommitRename,
+				onFocusLost = onCommitRename,
 			)
 		} else {
 			Text(
@@ -1089,6 +1165,11 @@ private fun ParameterFolderRow(
 		CompactMenuItem(
 			text = tr("parameters.renameFolder"),
 			onClick = { onMenuOpenChange(false, null); onStartRename() },
+		)
+		CompactMenuItem(
+			text = tr("parameters.newChildParameter"),
+			onClick = { onMenuOpenChange(false, null); onNewChildParameter() },
+			enabled = canCreateParameter,
 		)
 		CompactMenuItem(
 			text = tr("parameters.newChildFolder"),

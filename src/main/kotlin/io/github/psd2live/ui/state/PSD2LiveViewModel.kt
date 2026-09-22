@@ -246,12 +246,29 @@ class PSD2LiveViewModel : AutoCloseable {
         saveAuthoringEdits(expected, kotlinx.serialization.json.JsonArray(listOf(command))) {}
     }
 
-    fun saveParameterDefinition(action: String, id: String, name: String, min: Float, default: Float, max: Float, parameterKind: org.umamo.runtime.model.ParameterKind = org.umamo.runtime.model.ParameterKind.NORMAL, keyEdits: List<kotlinx.serialization.json.JsonObject> = emptyList(), expectedState: String? = null, onComplete: (String?) -> Unit) {
+    fun saveParameterDefinition(
+		action: String,
+		id: String,
+		name: String,
+		min: Float,
+		default: Float,
+		max: Float,
+		parameterKind: org.umamo.runtime.model.ParameterKind = org.umamo.runtime.model.ParameterKind.NORMAL,
+		keyEdits: List<kotlinx.serialization.json.JsonObject> = emptyList(),
+		expectedState: String? = null,
+		parentGroupId: String? = null,
+		onComplete: (String?) -> Unit,
+	) {
         flushEditorFields()
         val expected = expectedState ?: _state.value.historySnapshot?.headNodeId
         if (expected == null) { onComplete("Project workspace unavailable"); return }
         val fields = kotlinx.serialization.json.buildJsonObject {
-            if (action == "create") put("parameter_kind", kotlinx.serialization.json.JsonPrimitive(parameterKind.name))
+            if (action == "create") {
+				put("parameter_kind", kotlinx.serialization.json.JsonPrimitive(parameterKind.name))
+				if (parentGroupId != null) {
+					put("parent_id", kotlinx.serialization.json.JsonPrimitive(parentGroupId))
+				}
+			}
             if (action != "delete") {
                 put("name", kotlinx.serialization.json.JsonPrimitive(name))
                 put("min", kotlinx.serialization.json.JsonPrimitive(min))
