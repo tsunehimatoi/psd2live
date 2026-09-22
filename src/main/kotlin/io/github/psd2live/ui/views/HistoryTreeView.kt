@@ -17,14 +17,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.addOutline
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.onPointerEvent
@@ -190,7 +194,7 @@ fun HistoryTreeView(
 		modifier = modifier
 			.fillMaxSize()
 			.background(colors.windowBackground)
-			.clipToBounds(),
+			.clipRectToBounds(),
 	) {
 		// Unified Toolbar
 		Row(
@@ -292,7 +296,7 @@ fun HistoryTreeView(
 			modifier = Modifier
 				.weight(1f)
 				.fillMaxWidth()
-				.clipToBounds(),
+				.clipRectToBounds(),
 		) {
 			Row(modifier = Modifier.fillMaxSize()) {
 				// Photoshop-style operation list: the chain that led to the current state.
@@ -312,13 +316,14 @@ fun HistoryTreeView(
 					modifier = Modifier
 						.weight(1f)
 						.fillMaxHeight()
-						.clipToBounds(),
+						.clipRectToBounds(),
 				) {
 				// Interactive Tree Canvas
 				Box(
 					modifier = Modifier
 						.fillMaxSize()
-						.clipToBounds()
+						// clipToBounds() would keep this graph on a layer that ignores dock moves.
+						.clipRectToBounds()
 						.onSizeChanged { viewportSize = it }
 						.pointerHoverIcon(
 							PointerIcon(
@@ -447,7 +452,7 @@ fun HistoryTreeView(
 							modifier = Modifier
 								.offset { IntOffset(cardX, cardY) }
 								.size(width = cardWidthDp, height = cardHeightDp)
-								.clip(RoundedCornerShape(cornerRadius))
+								.clipShape(RoundedCornerShape(cornerRadius))
 								.background(
 									if (isSelected) colors.panelElevated
 									else colors.panelBackground.copy(alpha = if (matchesSearch) 0.95f else 0.35f)
@@ -1101,5 +1106,18 @@ internal fun calculateTreeLayout(nodes: List<AgentHistoryNodeSnapshot>): TreeCal
 	val maxX = allList.maxOfOrNull { it.x + NODE_WIDTH_DP } ?: 0f
 	val maxY = allList.maxOfOrNull { it.y + NODE_HEIGHT_DP } ?: 0f
 	return TreeCalculationResult(roots, allList, maxX, maxY)
+}
+
+/** Bounds clip without a graphics layer, so a dock resize cannot leave the graph behind. */
+private fun Modifier.clipRectToBounds(): Modifier = drawWithContent {
+	clipRect { this@drawWithContent.drawContent() }
+}
+
+/** Rounded clip without a graphics layer. Node cards pan inside the graph and must move with it. */
+private fun Modifier.clipShape(shape: Shape): Modifier = drawWithContent {
+	val outline = shape.createOutline(size, layoutDirection, this)
+	clipPath(Path().apply { addOutline(outline) }) {
+		this@drawWithContent.drawContent()
+	}
 }
 
