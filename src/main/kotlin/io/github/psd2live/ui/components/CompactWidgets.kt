@@ -97,11 +97,15 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -202,6 +206,58 @@ fun IconReset(
 			lineTo(w * 0.62f, h * 0.45f)
 		}
 		drawPath(arrowPath, color = tint, style = stroke)
+	}
+}
+
+/** Curved back arrow for undo. */
+@Composable
+fun IconUndo(
+	modifier: Modifier = Modifier.size(14.dp),
+	tint: Color = LocalToolColors.current.textPrimary,
+) {
+	Canvas(modifier = modifier) {
+		val stroke = Stroke(width = size.minDimension * 0.12f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+		val arc = Path().apply {
+			moveTo(size.width * 0.78f, size.height * 0.38f)
+			cubicTo(
+				size.width * 0.78f, size.height * 0.14f,
+				size.width * 0.52f, size.height * 0.08f,
+				size.width * 0.32f, size.height * 0.22f,
+			)
+		}
+		drawPath(arc, color = tint, style = stroke)
+		val head = Path().apply {
+			moveTo(size.width * 0.18f, size.height * 0.12f)
+			lineTo(size.width * 0.18f, size.height * 0.38f)
+			lineTo(size.width * 0.42f, size.height * 0.38f)
+		}
+		drawPath(head, color = tint, style = stroke)
+	}
+}
+
+/** Curved forward arrow for redo. */
+@Composable
+fun IconRedo(
+	modifier: Modifier = Modifier.size(14.dp),
+	tint: Color = LocalToolColors.current.textPrimary,
+) {
+	Canvas(modifier = modifier) {
+		val stroke = Stroke(width = size.minDimension * 0.12f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+		val arc = Path().apply {
+			moveTo(size.width * 0.22f, size.height * 0.38f)
+			cubicTo(
+				size.width * 0.22f, size.height * 0.14f,
+				size.width * 0.48f, size.height * 0.08f,
+				size.width * 0.68f, size.height * 0.22f,
+			)
+		}
+		drawPath(arc, color = tint, style = stroke)
+		val head = Path().apply {
+			moveTo(size.width * 0.82f, size.height * 0.12f)
+			lineTo(size.width * 0.82f, size.height * 0.38f)
+			lineTo(size.width * 0.58f, size.height * 0.38f)
+		}
+		drawPath(head, color = tint, style = stroke)
 	}
 }
 
@@ -1190,6 +1246,7 @@ fun CompactIconButton(
 }
 
 /** Practical Compact Text Field */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun CompactTextField(
 	value: String,
@@ -1205,14 +1262,29 @@ fun CompactTextField(
 	/** Brackets one editing session; see the note on [CompactNumberSpinner]'s identically named pair. */
 	onEditStart: () -> Unit = {},
 	onEditEnd: () -> Unit = {},
+	/** When true, focusing the field selects the whole value so typing replaces it. */
+	selectAllOnFocus: Boolean = false,
+	/** When false, pauses while typing do not end the edit session (inline number editors). */
+	endEditOnSettle: Boolean = true,
+	/** Always called when the field loses focus, even if the value never changed. */
+	onFocusLost: (() -> Unit)? = null,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 	val interactionSource = remember { MutableInteractionSource() }
 	val isHovered by interactionSource.collectIsHoveredAsState()
 	var editing by remember { mutableStateOf(false) }
-	LaunchedEffect(value, editing) {
-		if (!editing) return@LaunchedEffect
+	var fieldValue by remember { mutableStateOf(TextFieldValue(value)) }
+	// The node reports unfocused as soon as it is attached. That is not a blur.
+	var gainedFocus by remember { mutableStateOf(false) }
+	val editorRegions = LocalInlineEditorRegions.current
+	LaunchedEffect(value) {
+		if (fieldValue.text != value) {
+			fieldValue = TextFieldValue(value, TextRange(value.length))
+		}
+	}
+	LaunchedEffect(value, editing, endEditOnSettle) {
+		if (!endEditOnSettle || !editing) return@LaunchedEffect
 		delay(EDIT_SETTLE_MILLIS)
 		editing = false
 		onEditEnd()
@@ -1222,18 +1294,39 @@ fun CompactTextField(
 	val textStyle = if (isMono) typography.mono else typography.body
 
 	BasicTextField(
-		value = value,
+		value = fieldValue,
 		onValueChange = { input ->
 			if (!editing) { editing = true; onEditStart() }
-			onValueChange(input)
+			fieldValue = input
+			if (input.text != value) onValueChange(input.text)
 		},
 		modifier = modifier
 			.height(height)
+			.then(
+				if (editorRegions == null) Modifier else Modifier.onPointerEvent(
+					PointerEventType.Press,
+					pass = PointerEventPass.Initial,
+				) {
+					editorRegions.pressedInside = true
+				},
+			)
 			.background(colors.inputBackground, RoundedCornerShape(2.dp))
 			.border(BorderStroke(1.dp, if (isHovered && enabled) colors.borderHover else colors.border), RoundedCornerShape(2.dp))
 			.padding(horizontal = 6.dp)
 			.onFocusChanged { focus ->
-				if (!focus.isFocused && editing) { editing = false; onEditEnd() }
+				if (focus.isFocused) {
+					gainedFocus = true
+					if (selectAllOnFocus) {
+						fieldValue = fieldValue.copy(selection = TextRange(0, fieldValue.text.length))
+					}
+				} else if (gainedFocus) {
+					gainedFocus = false
+					if (editing) {
+						editing = false
+						onEditEnd()
+					}
+					onFocusLost?.invoke()
+				}
 			},
 		enabled = enabled,
 		textStyle = textStyle.copy(color = if (enabled) colors.textPrimary else colors.textDisabled, fontSize = 11.5.sp),

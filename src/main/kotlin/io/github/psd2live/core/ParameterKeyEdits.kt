@@ -124,6 +124,21 @@ internal object ParameterKeyEdits {
                 model.withParameterKeys(parameter.id, baseline.filterNot { same(it, value) })
                     .retargetBoundForms(parameter.id, value, null)
             }
+            "set" -> {
+                val target = values.distinct().sorted()
+                val sources = baseline.sorted()
+                val pairs = minOf(sources.size, target.size)
+                var current = model.withParameterKeys(parameter.id, target)
+                for (index in 0 until pairs) {
+                    if (!same(sources[index], target[index])) {
+                        current = current.retargetBoundForms(parameter.id, sources[index], target[index])
+                    }
+                }
+                for (index in pairs until sources.size) {
+                    current = current.retargetBoundForms(parameter.id, sources[index], null)
+                }
+                current
+            }
             else -> error("Unknown key edit: $action")
         }
     }

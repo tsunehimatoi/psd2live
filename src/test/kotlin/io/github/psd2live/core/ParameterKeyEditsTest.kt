@@ -130,4 +130,17 @@ class ParameterKeyEditsTest {
         })
     }
 
+    @Test fun redistributeKeepsOrderedShapesOnEvenStops() {
+        val before = model()
+        val set = buildJsonObject {
+            put("op", "parameter_keys"); put("parameter", "P"); put("action", "set")
+            put("values", JsonArray(listOf(-1f, 0.5f).map(::JsonPrimitive)))
+        }
+        val after = RigAuthoringJournal.apply(before, set)
+        assertEquals(listOf(-1f, 0.5f), after.parameters.single().keys)
+        assertContentEquals(floatArrayOf(-1f, 0.5f), after.drawables.first().geometryGrid!!.axes.single().keys)
+        assertSame(before.drawables.first().geometryGrid!!.cells[0].form, after.drawables.first().geometryGrid!!.cells[0].form)
+        assertSame(before.drawables.first().geometryGrid!!.cells[1].form, after.drawables.first().geometryGrid!!.cells[1].form)
+    }
+
 }

@@ -2,20 +2,24 @@ package io.github.psd2live.ui.views
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.Divider
 import androidx.compose.material.Surface
 import androidx.compose.material.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.onPointerEvent
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import io.github.psd2live.core.ParameterKeyEdits
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.components.CompactButton
 import io.github.psd2live.ui.components.CompactTextField
+import io.github.psd2live.ui.components.InlineEditorRegions
+import io.github.psd2live.ui.components.LocalInlineEditorRegions
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.theme.LocalToolColors
@@ -30,6 +34,7 @@ import org.umamo.runtime.model.Parameter
 import org.umamo.runtime.model.ParameterId
 import org.umamo.runtime.model.ParameterKind
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 internal fun ParameterDefinitionDialog(
     parameter: Parameter?,
@@ -39,6 +44,7 @@ internal fun ParameterDefinitionDialog(
 ) {
     val colors = LocalToolColors.current
     val typography = LocalToolTypography.current
+    val focusManager = LocalFocusManager.current
     val baseModel = remember { state.previewModel?.rig?.puppet }
     val expectedState = remember { state.historySnapshot?.headNodeId }
     var copying by remember { mutableStateOf(false) }
@@ -51,6 +57,7 @@ internal fun ParameterDefinitionDialog(
     var deleting by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }
     var keyEdits by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
+    var undone by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
     val low = min.toFloatOrNull()
     val neutral = default.toFloatOrNull()
     val high = max.toFloatOrNull()
@@ -85,6 +92,8 @@ internal fun ParameterDefinitionDialog(
     }
     val busy = state.canvasEditBusy
     fun submit(action: String) {
+        // Flush any open inline editors before reading dialog state.
+        focusManager.clearFocus(force = true)
         failure = null
         viewModel.saveParameterDefinition(
             action,
@@ -98,112 +107,130 @@ internal fun ParameterDefinitionDialog(
             expectedState = expectedState,
         ) { if (it == null) onDismiss() else failure = it }
     }
+    val editorRegions = remember { InlineEditorRegions() }
+    val focusState = rememberUpdatedState(focusManager)
     Dialog(onDismissRequest = { if (!busy) onDismiss() }) {
-        Surface(color = colors.panelElevated, shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, colors.divider)) {
-            Column(
-                Modifier.width(540.dp).heightIn(max = 680.dp).verticalScroll(rememberScrollState()).padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(
-                    tr(when {
-                        deleting -> "parameters.delete"
-                        copying -> "parameters.duplicate"
-                        parameter == null -> "parameters.create"
-                        else -> "parameters.properties"
-                    }),
-                    style = typography.title,
-                    color = colors.textPrimary,
-                )
-                if (deleting) {
-                    Text(tr("parameters.deleteWarning", parameter?.name.orEmpty()), style = typography.body, color = colors.textPrimary)
-                } else {
-                    DefinitionFields(id, { id = it }, name, { name = it }, min, { min = it }, default, { default = it }, max, { max = it }, creating, !busy)
-                    if (copying) Text(tr("parameters.duplicateHint"), style = typography.caption, color = colors.textMuted)
-                    if (!valid) Text(tr("parameters.invalidDefinition"), style = typography.caption, color = colors.error)
-                    Divider(color = colors.divider)
-                    if (axisModel != null && axisParameter != null) {
-                        ParameterKeysEditor(
-                            parameter = axisParameter,
-                            model = axisModel,
-                            enabled = !busy && valid && staged.isSuccess,
-                            onUndo = if (keyEdits.isEmpty()) null else {
-                                {
-                                    keyEdits = keyEdits.dropLast(1)
+        CompositionLocalProvider(LocalInlineEditorRegions provides editorRegions) {
+            Surface(color = colors.panelElevated, shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, colors.divider)) {
+                Column(
+                    Modifier
+                        .width(440.dp)
+                        .onPointerEvent(PointerEventType.Press, pass = PointerEventPass.Initial) {
+                            editorRegions.pressedInside = false
+                        }
+                        .onPointerEvent(PointerEventType.Press, pass = PointerEventPass.Final) {
+                            if (!editorRegions.pressedInside) focusState.value.clearFocus(force = true)
+                        }
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        tr(when {
+                            deleting -> "parameters.delete"
+                            copying -> "parameters.duplicate"
+                            parameter == null -> "parameters.create"
+                            else -> "parameters.properties"
+                        }),
+                        style = typography.header,
+                        color = colors.textPrimary,
+                    )
+                    if (deleting) {
+                        Text(
+                            tr("parameters.deleteWarning", parameter?.name.orEmpty()),
+                            style = typography.body,
+                            color = colors.textPrimary,
+                        )
+                    } else {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            DefinitionField("ID", id, creating && !busy) { id = it }
+                            DefinitionField(tr("parameters.fieldName"), name, !busy) { name = it }
+                        }
+                        if (copying) {
+                            Text(tr("parameters.duplicateHint"), style = typography.caption, color = colors.textMuted)
+                        }
+                        if (!valid) {
+                            Text(tr("parameters.invalidDefinition"), style = typography.caption, color = colors.error)
+                        }
+                        if (axisModel != null && axisParameter != null) {
+                            ParameterKeysEditor(
+                                parameter = axisParameter,
+                                model = axisModel,
+                                enabled = !busy && valid && staged.isSuccess,
+                                canUndo = keyEdits.isNotEmpty(),
+                                canRedo = undone.isNotEmpty(),
+                                onUndo = {
+                                    if (keyEdits.isNotEmpty()) {
+                                        undone = undone + keyEdits.last()
+                                        keyEdits = keyEdits.dropLast(1)
+                                        failure = null
+                                    }
+                                },
+                                onRedo = {
+                                    if (undone.isNotEmpty()) {
+                                        keyEdits = keyEdits + undone.last()
+                                        undone = undone.dropLast(1)
+                                        failure = null
+                                    }
+                                },
+                                onRange = { nextMin, nextDefault, nextMax ->
+                                    min = formatAxisValue(nextMin)
+                                    default = formatAxisValue(nextDefault)
+                                    max = formatAxisValue(nextMax)
+                                },
+                            ) { command ->
+                                try {
+                                    require(keyEdits.size < 127) { tr("parameters.axisEditLimit") }
+                                    val next = ParameterKeyEdits.apply(draftModel ?: axisModel, command)
+                                    if (next === (draftModel ?: axisModel)) return@ParameterKeysEditor false
+                                    keyEdits = keyEdits + command
+                                    undone = emptyList()
                                     failure = null
+                                    true
+                                } catch (error: IllegalArgumentException) {
+                                    failure = error.message
+                                    false
+                                } catch (error: IllegalStateException) {
+                                    failure = error.message
+                                    false
                                 }
-                            },
-                        ) { command ->
-                            try {
-                                require(keyEdits.size < 127) { tr("parameters.axisEditLimit") }
-                                val next = ParameterKeyEdits.apply(draftModel ?: axisModel, command)
-                                if (next === (draftModel ?: axisModel)) return@ParameterKeysEditor false
-                                keyEdits = keyEdits + command
-                                failure = null
-                                true
-                            } catch (error: IllegalArgumentException) {
-                                failure = error.message
-                                false
-                            } catch (error: IllegalStateException) {
-                                failure = error.message
-                                false
                             }
                         }
+                        if (valid && staged.isFailure) {
+                            Text(staged.exceptionOrNull()?.message.orEmpty(), style = typography.caption, color = colors.error)
+                        }
                     }
-                    if (valid && staged.isFailure) Text(staged.exceptionOrNull()?.message.orEmpty(), style = typography.caption, color = colors.error)
-                    Text(tr("parameters.axisDraftHint"), style = typography.caption, color = colors.textMuted)
-                }
-                failure?.let { Text(it, style = typography.caption, color = colors.error) }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (!creating && !deleting) {
-                        CompactButton(tr("parameters.delete"), { deleting = true }, enabled = !busy, danger = true)
-                        CompactButton(tr("parameters.copy"), {
-                            copying = true
-                            deleting = false
-                            keyEdits = emptyList()
-                            failure = null
-                            id = baseModel?.freshParameterId()?.raw.orEmpty()
-                            name = tr("parameters.copyName", parameter.name)
-                        }, enabled = !busy)
+                    failure?.let { Text(it, style = typography.caption, color = colors.error) }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (!creating && !deleting) {
+                            CompactButton(tr("parameters.delete"), { deleting = true }, enabled = !busy, danger = true, height = 22.dp)
+                            CompactButton(tr("parameters.copy"), {
+                                copying = true
+                                deleting = false
+                                keyEdits = emptyList()
+                                undone = emptyList()
+                                failure = null
+                                id = baseModel?.freshParameterId()?.raw.orEmpty()
+                                name = tr("parameters.copyName", parameter.name)
+                            }, enabled = !busy, height = 22.dp)
+                        }
+                        Spacer(Modifier.weight(1f))
+                        CompactButton(
+                            tr("parameters.cancel"),
+                            { if (deleting) deleting = false else onDismiss() },
+                            enabled = !busy,
+                            height = 22.dp,
+                        )
+                        CompactButton(
+                            tr(if (deleting) "parameters.delete" else "parameters.save"),
+                            { submit(if (deleting) "delete" else if (creating) "create" else "update") },
+                            enabled = !busy && (deleting || (valid && staged.isSuccess)),
+                            isPrimary = !deleting,
+                            danger = deleting,
+                            height = 22.dp,
+                        )
                     }
-                    Spacer(Modifier.weight(1f))
-                    CompactButton(tr("parameters.cancel"), { if (deleting) deleting = false else onDismiss() }, enabled = !busy)
-                    CompactButton(
-                        tr(if (deleting) "parameters.delete" else "parameters.save"),
-                        { submit(if (deleting) "delete" else if (creating) "create" else "update") },
-                        enabled = !busy && (deleting || (valid && staged.isSuccess)),
-                        isPrimary = !deleting,
-                        danger = deleting,
-                    )
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun DefinitionFields(
-    id: String,
-    onId: (String) -> Unit,
-    name: String,
-    onName: (String) -> Unit,
-    min: String,
-    onMin: (String) -> Unit,
-    default: String,
-    onDefault: (String) -> Unit,
-    max: String,
-    onMax: (String) -> Unit,
-    idEnabled: Boolean,
-    enabled: Boolean,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            DefinitionField("ID", id, idEnabled && enabled, onId)
-            DefinitionField(tr("parameters.fieldName"), name, enabled, onName)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            DefinitionField(tr("parameters.minimum"), min, enabled, onMin)
-            DefinitionField(tr("parameters.default"), default, enabled, onDefault)
-            DefinitionField(tr("parameters.maximum"), max, enabled, onMax)
         }
     }
 }
@@ -214,6 +241,6 @@ private fun RowScope.DefinitionField(label: String, value: String, enabled: Bool
     val typography = LocalToolTypography.current
     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(label, style = typography.caption, color = colors.textMuted)
-        CompactTextField(value, onValue, modifier = Modifier.fillMaxWidth(), enabled = enabled)
+        CompactTextField(value, onValue, modifier = Modifier.fillMaxWidth(), enabled = enabled, height = 22.dp)
     }
 }
