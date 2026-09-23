@@ -23,7 +23,7 @@ The built-in local Agent bridge uses the official Model Context Protocol Kotlin 
 
 `Live2D`, `Cubism`, `.cmo3`, `.moc3`, and associated schema identifiers are trademarks or registered trademarks of Live2D Inc., used herein solely for format specification and interoperability purposes. This project is not affiliated with, endorsed by, or sponsored by Live2D Inc., and strictly complies with the Live2D Proprietary Software License: **it does not embed, include, or redistribute official proprietary Live2D Cubism SDK binaries, headers, or shader sources**.
 
-An optional open-source C++ wrapper under `native/live2d_renderer/` can produce `live2d_renderer.dll` when linked against a **user-provided** local Cubism SDK for Native install. The wrapper sources are part of this repository; the proprietary Core library, Framework, and shaders must be obtained directly from Live2D and are never committed here.
+An optional open-source C++ wrapper under `native/live2d_renderer/` can produce a native renderer library (`live2d_renderer.dll` on Windows, `liblive2d_renderer.so` on Linux) when linked against a **user-provided** local Cubism SDK for Native install. The wrapper sources are part of this repository; the proprietary Core library, Framework, and shaders must be obtained directly from Live2D and are never committed here.
 
 For setup instructions, see:
 - [Live2D SDK Setup Guide (English)](docs/en/guide/CUBISM_SDK_SETUP.md)

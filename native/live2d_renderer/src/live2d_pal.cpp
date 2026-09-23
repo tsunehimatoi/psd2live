@@ -1,5 +1,4 @@
 #include "live2d_pal.h"
-#include <windows.h>
 #include <cstdio>
 #include <cstdarg>
 #include <iostream>
@@ -61,16 +60,16 @@ std::string Live2DPal::GetShaderDirectory()
     return s_shaderDir;
 }
 
-static Csm::csmByte* ReadBinaryFile(const std::wstring& wideStr, Csm::csmSizeInt* outSize)
+static Csm::csmByte* ReadBinaryFile(const std::string& path, Csm::csmSizeInt* outSize)
 {
-    struct _stat statBuf;
-    if (_wstat(wideStr.c_str(), &statBuf) != 0 || statBuf.st_size <= 0)
+    struct stat statBuf;
+    if (stat(path.c_str(), &statBuf) != 0 || statBuf.st_size <= 0)
     {
         return nullptr;
     }
 
-    int size = statBuf.st_size;
-    std::ifstream file(wideStr, std::ios::in | std::ios::binary);
+    int size = static_cast<int>(statBuf.st_size);
+    std::ifstream file(path, std::ios::in | std::ios::binary);
     if (!file.is_open())
     {
         return nullptr;
@@ -85,14 +84,11 @@ static Csm::csmByte* ReadBinaryFile(const std::wstring& wideStr, Csm::csmSizeInt
     return reinterpret_cast<Csm::csmByte*>(buf);
 }
 
-Csm::csmByte* Live2DPal::LoadFileAsBytes(const Csm::csmChar* filePath, Csm::csmSizeInt* outSize)
+Csm::csmByte* Live2DPal::LoadFileAsBytes(const std::string filePath, Csm::csmSizeInt* outSize)
 {
-    if (!filePath || !outSize) return nullptr;
+    if (filePath.empty() || !outSize) return nullptr;
 
-    wchar_t wideStr[MAX_PATH * 2];
-    MultiByteToWideChar(CP_UTF8, 0U, filePath, -1, wideStr, MAX_PATH * 2);
-
-    Csm::csmByte* res = ReadBinaryFile(wideStr, outSize);
+    Csm::csmByte* res = ReadBinaryFile(filePath, outSize);
     if (res)
     {
         return res;
@@ -121,8 +117,7 @@ Csm::csmByte* Live2DPal::LoadFileAsBytes(const Csm::csmChar* filePath, Csm::csmS
     for (const auto& dir : searchDirs)
     {
         std::string candidate = dir + "/" + filename;
-        MultiByteToWideChar(CP_UTF8, 0U, candidate.c_str(), -1, wideStr, MAX_PATH * 2);
-        res = ReadBinaryFile(wideStr, outSize);
+        res = ReadBinaryFile(candidate, outSize);
         if (res)
         {
             return res;
@@ -145,7 +140,7 @@ void Live2DPal::PrintLog(const Csm::csmChar* format, ...)
     va_list args;
     char buf[1024];
     va_start(args, format);
-    vsnprintf_s(buf, sizeof(buf), format, args);
+    vsnprintf(buf, sizeof(buf), format, args);
     std::cout << buf;
     va_end(args);
 }
@@ -155,7 +150,7 @@ void Live2DPal::PrintLogLn(const Csm::csmChar* format, ...)
     va_list args;
     char buf[1024];
     va_start(args, format);
-    vsnprintf_s(buf, sizeof(buf), format, args);
+    vsnprintf(buf, sizeof(buf), format, args);
     std::cout << buf << std::endl;
     va_end(args);
 }

@@ -2,7 +2,14 @@
 #include "live2d_model.h"
 #include "live2d_pal.h"
 
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <X11/Xlib.h>
+#include <GL/glx.h>
+#include <dlfcn.h>
+#include <climits>
+#endif
 #include <cstring>
 #include <iostream>
 #include <limits>
@@ -32,9 +39,9 @@ static void CoreLogHandler(const char* message)
     std::cout << message << std::endl;
 }
 
-#ifdef _WIN32
 static std::string GetCurrentDllDirectory()
 {
+#ifdef _WIN32
     char path[MAX_PATH];
     HMODULE hm = NULL;
     if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -48,13 +55,51 @@ static std::string GetCurrentDllDirectory()
             return p.substr(0, lastSlash);
         }
     }
+#else
+    Dl_info info;
+    if (dladdr(reinterpret_cast<void*>(&Live2D_Init), &info) && info.dli_fname)
+    {
+        std::string p(info.dli_fname);
+        size_t lastSlash = p.find_last_of('/');
+        if (lastSlash != std::string::npos)
+        {
+            return p.substr(0, lastSlash);
+        }
+    }
+#endif
     return ".";
 }
-#endif
 
+#ifdef _WIN32
 static HWND s_offscreenHwnd = NULL;
 static HDC s_offscreenHdc = NULL;
 static HGLRC s_offscreenHglrc = NULL;
+#else
+static Display* s_xDisplay = nullptr;
+static Window s_xWindow = 0;
+static GLXContext s_glxContext = nullptr;
+static Colormap s_xColormap = 0;
+#endif
+
+static bool HasOffscreenContext()
+{
+#ifdef _WIN32
+    return s_offscreenHglrc != NULL;
+#else
+    return s_glxContext != nullptr;
+#endif
+}
+
+static bool MakeOffscreenCurrent()
+{
+#ifdef _WIN32
+    return wglMakeCurrent(s_offscreenHdc, s_offscreenHglrc) == TRUE;
+#else
+    return s_xDisplay && s_glxContext &&
+           glXMakeCurrent(s_xDisplay, s_xWindow, s_glxContext) == True;
+#endif
+}
+
 static GLuint s_fbo = 0;
 static GLuint s_fboColorTex = 0;
 static GLuint s_fboDepthRb = 0;
@@ -86,8 +131,9 @@ static bool InitializeFramework()
 
 static bool InitializeOffscreenLocked()
 {
-    if (!s_offscreenHglrc)
+    if (!HasOffscreenContext())
     {
+#ifdef _WIN32
         WNDCLASSA wc = {0};
         wc.lpfnWndProc = DefWindowProcA;
         wc.hInstance = GetModuleHandle(NULL);
@@ -151,8 +197,69 @@ static bool InitializeOffscreenLocked()
             Fail("Cannot create the offscreen OpenGL context");
             return false;
         }
+#else
+
+        s_xDisplay = XOpenDisplay(nullptr);
+        if (!s_xDisplay)
+        {
+            Fail("Cannot open X11 display for offscreen OpenGL (is DISPLAY set?)");
+            return false;
+        }
+
+        static int visualAttribs[] = {
+            GLX_RGBA,
+            GLX_RED_SIZE, 8,
+            GLX_GREEN_SIZE, 8,
+            GLX_BLUE_SIZE, 8,
+            GLX_ALPHA_SIZE, 8,
+            GLX_DEPTH_SIZE, 24,
+            GLX_STENCIL_SIZE, 8,
+            GLX_DOUBLEBUFFER,
+            None
+        };
+        int screen = DefaultScreen(s_xDisplay);
+        XVisualInfo* vi = glXChooseVisual(s_xDisplay, screen, visualAttribs);
+        if (!vi)
+        {
+            Fail("Cannot choose a GLX visual for offscreen OpenGL");
+            return false;
+        }
+
+        s_xColormap = XCreateColormap(s_xDisplay, RootWindow(s_xDisplay, vi->screen), vi->visual, AllocNone);
+        XSetWindowAttributes swa;
+        swa.colormap = s_xColormap;
+        swa.border_pixel = 0;
+        swa.event_mask = StructureNotifyMask;
+        swa.override_redirect = True;
+        s_xWindow = XCreateWindow(
+            s_xDisplay,
+            RootWindow(s_xDisplay, vi->screen),
+            0, 0, 64, 64,
+            0,
+            vi->depth,
+            InputOutput,
+            vi->visual,
+            CWBorderPixel | CWColormap | CWEventMask | CWOverrideRedirect,
+            &swa);
+        if (!s_xWindow)
+        {
+            XFree(vi);
+            Fail("Cannot create the offscreen GLX host window");
+            return false;
+        }
+        XMapWindow(s_xDisplay, s_xWindow);
+        XFlush(s_xDisplay);
+
+        s_glxContext = glXCreateContext(s_xDisplay, vi, nullptr, True);
+        XFree(vi);
+        if (!s_glxContext)
+        {
+            Fail("Cannot create the offscreen GLX context");
+            return false;
+        }
+#endif
     }
-    if (!wglMakeCurrent(s_offscreenHdc, s_offscreenHglrc))
+    if (!MakeOffscreenCurrent())
     {
         Fail("Cannot activate the offscreen OpenGL context");
         return false;
@@ -274,9 +381,9 @@ Live2DModelHandle Live2D_CreateModel(const char* modelFilePath)
         Fail("Model manifest path is empty");
         return nullptr;
     }
-    if (s_offscreenHglrc)
+    if (HasOffscreenContext())
     {
-        if (!wglMakeCurrent(s_offscreenHdc, s_offscreenHglrc))
+        if (!MakeOffscreenCurrent())
         {
             Fail("Cannot activate OpenGL while loading the model");
             return nullptr;
@@ -396,7 +503,7 @@ void Live2D_DestroyModel(Live2DModelHandle handle)
 {
     if (!handle) return;
     std::lock_guard<std::mutex> lock(s_mutex);
-    if (s_offscreenHglrc) wglMakeCurrent(s_offscreenHdc, s_offscreenHglrc);
+    if (HasOffscreenContext()) MakeOffscreenCurrent();
     Live2DModel* model = reinterpret_cast<Live2DModel*>(handle);
     delete model;
 }
@@ -500,11 +607,11 @@ int Live2D_RenderToRgba(Live2DModelHandle handle, int width, int height, float s
     {
         return Fail("Invalid model, dimensions, or output buffer");
     }
-    if (!s_offscreenHglrc)
+    if (!HasOffscreenContext())
     {
         if (!InitializeOffscreenLocked()) return 0;
     }
-    if (!wglMakeCurrent(s_offscreenHdc, s_offscreenHglrc))
+    if (!MakeOffscreenCurrent())
     {
         return Fail("Cannot activate OpenGL while rendering");
     }
