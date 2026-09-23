@@ -426,8 +426,43 @@ class CubismSdkPreviewSession(
 	}
 
 	private object CubismNativeRuntime {
-		private val files = listOf(
-			"live2d_renderer.dll",
+		private fun isWindows(): Boolean =
+			System.getProperty("os.name").contains("windows", ignoreCase = true)
+
+		private fun isLinux(): Boolean =
+			System.getProperty("os.name").contains("linux", ignoreCase = true)
+
+		private fun requireAmd64(): String {
+			val arch = System.getProperty("os.arch").orEmpty().lowercase()
+			if (arch != "amd64" && arch != "x86_64") {
+				throw UnsupportedOperationException(
+					"Cubism SDK preview requires x86_64/amd64. " +
+						"Unsupported os.arch=$arch (os.name=${System.getProperty("os.name")})"
+				)
+			}
+			return arch
+		}
+
+		private fun getPlatformDir(): String {
+			requireAmd64()
+			return when {
+				isWindows() -> "windows-x86_64"
+				isLinux() -> "linux-x86_64"
+				else -> throw UnsupportedOperationException(
+					"Cubism SDK preview currently requires Windows or Linux x86-64. " +
+						"Platform: ${System.getProperty("os.name")} ${System.getProperty("os.arch")}"
+				)
+			}
+		}
+
+		private fun getLibraryName(): String = when {
+			isWindows() -> "live2d_renderer.dll"
+			isLinux() -> "liblive2d_renderer.so"
+			else -> throw UnsupportedOperationException("Unsupported platform")
+		}
+
+		private fun runtimeFiles(): List<String> = listOf(
+			getLibraryName(),
 			"FrameworkShaders/FragShaderSrc.frag",
 			"FrameworkShaders/FragShaderSrcAlphaBlend.frag",
 			"FrameworkShaders/FragShaderSrcBlend.frag",
@@ -453,9 +488,9 @@ class CubismSdkPreviewSession(
 		)
 
 		fun load(): Api {
-			require(System.getProperty("os.name").contains("windows", ignoreCase = true)) {
-				"Cubism SDK preview currently requires Windows x86-64"
-			}
+			val platformDir = getPlatformDir()
+			val libraryName = getLibraryName()
+
 			val customPathStr = System.getProperty("psd2live.cubism.path")
 				?.ifBlank { null }
 				?: System.getenv("CUBISM_SDK_PATH")?.ifBlank { null }
@@ -463,12 +498,12 @@ class CubismSdkPreviewSession(
 			val customDir = customPathStr?.let { Path.of(it) }
 
 			val directory = Files.createTempDirectory("psd2live-cubism-5-r5-")
-			for (relative in files) extract(directory, relative, customDir)
+			for (relative in runtimeFiles()) extract(directory, relative, customDir, platformDir)
 			System.setProperty("jna.library.path", directory.toString())
-			return Native.load(directory.resolve("live2d_renderer.dll").toString(), Api::class.java)
+			return Native.load(directory.resolve(libraryName).toString(), Api::class.java)
 		}
 
-		private fun extract(directory: Path, relative: String, customDir: Path? = null) {
+		private fun extract(directory: Path, relative: String, customDir: Path? = null, platformDir: String) {
 			val target = directory.resolve(relative).normalize()
 			require(target.startsWith(directory)) { "Invalid Cubism runtime resource path: $relative" }
 			Files.createDirectories(target.parent)
@@ -485,8 +520,8 @@ class CubismSdkPreviewSession(
 
 			// 2. Local filesystem paths relative to working directory
 			val localCandidates = listOf(
-				Path.of("cubism", "windows-x86_64", relative),
-				Path.of("src", "main", "resources", "cubism", "windows-x86_64", relative),
+				Path.of("cubism", platformDir, relative),
+				Path.of("src", "main", "resources", "cubism", platformDir, relative),
 			)
 			for (localCandidate in localCandidates) {
 				if (Files.isRegularFile(localCandidate)) {
@@ -497,13 +532,13 @@ class CubismSdkPreviewSession(
 			}
 
 			// 3. Classpath resource
-			val resource = "/cubism/windows-x86_64/$relative"
+			val resource = "/cubism/$platformDir/$relative"
 			val input = CubismSdkPreviewSession::class.java.getResourceAsStream(resource)
 				?: error(
 					"Missing Cubism SDK 5-r.5 runtime resource: $relative. " +
 						"Official Live2D SDK binaries are not distributed with PSD2Live. " +
-						"Please configure CUBISM_SDK_PATH or place binaries in src/main/resources/cubism/windows-x86_64/. " +
-						"See docs/zh/guide/CUBISM_SDK_SETUP.md for setup instructions."
+						"Please configure CUBISM_SDK_PATH or place binaries in src/main/resources/cubism/$platformDir/. " +
+						"See docs/en/guide/CUBISM_SDK_SETUP.md (also available in zh/ja) for setup instructions."
 				)
 			input.use { Files.copy(it, target, StandardCopyOption.REPLACE_EXISTING) }
 			target.toFile().deleteOnExit()
