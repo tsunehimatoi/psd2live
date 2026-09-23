@@ -3,6 +3,11 @@
 # This script does NOT include proprietary Cubism SDK binaries by default.
 # Developers must build and deploy the SDK locally if they want Cubism preview.
 #
+# Packaging approach:
+#   Prefer Compose Desktop packageUberJarForCurrentOS (runnable fat jar with
+#   Main-Class). Falls back to packageReleaseUberJarForCurrentOS, then to
+#   installDist + the generated start script if uber-jar packaging fails.
+#
 # Usage:
 #   ./native/package_linux.sh [--include-local-cubism]
 #
@@ -40,41 +45,104 @@ if [[ ! -f "$REPO_ROOT/build.gradle.kts" ]]; then
   exit 1
 fi
 
-# Build the application
-echo "[1/3] Building application with Gradle..."
 cd "$REPO_ROOT"
-./gradlew clean build -x test
 
-# Prefer the main application jar (exclude sources / javadoc / plain classifiers).
+run_gradle() {
+  # Invoke via bash so packaging works even when gradlew is not +x.
+  bash ./gradlew "$@"
+}
+
+# Locate a Compose Desktop uber jar under build/compose/jars/.
+find_uber_jar() {
+  local candidate=""
+  shopt -s nullglob
+  for candidate in "$REPO_ROOT/build/compose/jars"/*-linux-*.jar \
+                   "$REPO_ROOT/build/compose/jars"/*.jar; do
+    if [[ -f "$candidate" ]]; then
+      echo "$candidate"
+      shopt -u nullglob
+      return 0
+    fi
+  done
+  shopt -u nullglob
+  return 1
+}
+
+# Locate the Gradle application-plugin start script from installDist.
+find_install_start_script() {
+  local candidate=""
+  shopt -s nullglob
+  for candidate in "$REPO_ROOT/build/install"/*/bin/psd2live \
+                   "$REPO_ROOT/build/install"/*/bin/*; do
+    # Prefer non-.bat launcher
+    if [[ -f "$candidate" && "$candidate" != *.bat ]]; then
+      echo "$candidate"
+      shopt -u nullglob
+      return 0
+    fi
+  done
+  shopt -u nullglob
+  return 1
+}
+
+LAUNCH_MODE=""   # "uberjar" or "installdist"
 JAR_PATH=""
-shopt -s nullglob
-for candidate in "$REPO_ROOT/build/libs"/*.jar; do
-  base="$(basename "$candidate")"
-  case "$base" in
-    *-sources.jar|*-javadoc.jar|*-plain.jar) continue ;;
-  esac
-  JAR_PATH="$candidate"
-  break
-done
-shopt -u nullglob
+INSTALL_BIN=""
+INSTALL_ROOT=""
 
-if [[ -z "$JAR_PATH" || ! -f "$JAR_PATH" ]]; then
-  echo "[ERROR] Cannot find built application JAR in build/libs/" >&2
-  exit 1
+echo "[1/3] Building runnable Linux artifact with Gradle..."
+
+# Prefer Compose Desktop uber jar (Main-Class + deps) for java -jar.
+if run_gradle clean packageUberJarForCurrentOS -x test; then
+  if JAR_PATH="$(find_uber_jar)"; then
+    LAUNCH_MODE="uberjar"
+    echo " Built uber jar via packageUberJarForCurrentOS"
+  fi
 fi
 
-echo " Found JAR: $JAR_PATH"
+if [[ -z "$LAUNCH_MODE" ]]; then
+  echo " packageUberJarForCurrentOS did not produce a jar; trying packageReleaseUberJarForCurrentOS..."
+  if run_gradle packageReleaseUberJarForCurrentOS -x test; then
+    if JAR_PATH="$(find_uber_jar)"; then
+      LAUNCH_MODE="uberjar"
+      echo " Built uber jar via packageReleaseUberJarForCurrentOS"
+    fi
+  fi
+fi
+
+# Fallback: application installDist start script (starts MainKt via classpath).
+if [[ -z "$LAUNCH_MODE" ]]; then
+  echo " Uber jar packaging unavailable; falling back to installDist..."
+  run_gradle installDist -x test
+  if INSTALL_BIN="$(find_install_start_script)"; then
+    INSTALL_ROOT="$(cd "$(dirname "$INSTALL_BIN")/.." && pwd)"
+    LAUNCH_MODE="installdist"
+    echo " Built installDist at $INSTALL_ROOT"
+  else
+    echo "[ERROR] Could not build a runnable artifact (uber jar or installDist)." >&2
+    exit 1
+  fi
+fi
+
+if [[ "$LAUNCH_MODE" == "uberjar" ]]; then
+  echo " Found runnable JAR: $JAR_PATH"
+fi
 
 # Create distribution directory
 DIST_DIR="$REPO_ROOT/dist/linux-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$DIST_DIR"
 
-# Copy JAR
 echo "[2/3] Packaging..."
-cp "$JAR_PATH" "$DIST_DIR/psd2live.jar"
+
+if [[ "$LAUNCH_MODE" == "uberjar" ]]; then
+  cp "$JAR_PATH" "$DIST_DIR/psd2live.jar"
+else
+  # Copy the full installDist tree (bin/ + lib/) so the start script works.
+  cp -a "$INSTALL_ROOT/." "$DIST_DIR/"
+fi
 
 # Optionally include Cubism binaries (for personal use only) before writing the launcher,
-# so CUBISM_SDK_PATH is exported BEFORE exec java.
+# so CUBISM_SDK_PATH is exported BEFORE exec.
 CUBISM_INCLUDED=0
 if [[ "$INCLUDE_CUBISM" == "1" ]]; then
   CUBISM_SRC="$REPO_ROOT/src/main/resources/cubism/linux-x86_64"
@@ -108,10 +176,11 @@ NOTICE_EOF
 fi
 
 # Create launcher script (Cubism env must come before exec — exec never returns).
-if [[ "$CUBISM_INCLUDED" == "1" ]]; then
-  cat > "$DIST_DIR/psd2live.sh" << 'LAUNCHER_EOF'
+if [[ "$LAUNCH_MODE" == "uberjar" ]]; then
+  if [[ "$CUBISM_INCLUDED" == "1" ]]; then
+    cat > "$DIST_DIR/psd2live.sh" << 'LAUNCHER_EOF'
 #!/bin/bash
-# PSD2Live launcher for Linux
+# PSD2Live launcher for Linux (Compose Desktop uber jar)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -125,13 +194,13 @@ fi
 # Note: This package includes locally built Cubism SDK binaries (personal use only).
 export CUBISM_SDK_PATH="$SCRIPT_DIR/cubism/linux-x86_64"
 
-# Launch PSD2Live
+# Launch PSD2Live (fat jar with Main-Class)
 exec java -jar psd2live.jar "$@"
 LAUNCHER_EOF
-else
-  cat > "$DIST_DIR/psd2live.sh" << 'LAUNCHER_EOF'
+  else
+    cat > "$DIST_DIR/psd2live.sh" << 'LAUNCHER_EOF'
 #!/bin/bash
-# PSD2Live launcher for Linux
+# PSD2Live launcher for Linux (Compose Desktop uber jar)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -142,9 +211,39 @@ if ! command -v java &> /dev/null; then
     exit 1
 fi
 
-# Launch PSD2Live
+# Launch PSD2Live (fat jar with Main-Class)
 exec java -jar psd2live.jar "$@"
 LAUNCHER_EOF
+  fi
+else
+  # installDist: wrap the generated start script (bin/psd2live).
+  START_REL="bin/$(basename "$INSTALL_BIN")"
+  if [[ "$CUBISM_INCLUDED" == "1" ]]; then
+    cat > "$DIST_DIR/psd2live.sh" << LAUNCHER_EOF
+#!/bin/bash
+# PSD2Live launcher for Linux (Gradle installDist start script)
+
+SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+cd "\$SCRIPT_DIR"
+
+# Note: This package includes locally built Cubism SDK binaries (personal use only).
+export CUBISM_SDK_PATH="\$SCRIPT_DIR/cubism/linux-x86_64"
+
+exec "\$SCRIPT_DIR/$START_REL" "\$@"
+LAUNCHER_EOF
+  else
+    cat > "$DIST_DIR/psd2live.sh" << LAUNCHER_EOF
+#!/bin/bash
+# PSD2Live launcher for Linux (Gradle installDist start script)
+
+SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+cd "\$SCRIPT_DIR"
+
+exec "\$SCRIPT_DIR/$START_REL" "\$@"
+LAUNCHER_EOF
+  fi
+  # Ensure the nested start script is executable
+  chmod +x "$DIST_DIR/$START_REL" 2>/dev/null || true
 fi
 
 chmod +x "$DIST_DIR/psd2live.sh"
@@ -205,6 +304,7 @@ fi
 echo "[3/3] Package complete!"
 echo ""
 echo " Output: $DIST_DIR"
+echo " Mode:   $LAUNCH_MODE"
 echo " Launch: cd $DIST_DIR && ./psd2live.sh"
 
 if [[ "$CUBISM_INCLUDED" == "1" ]]; then
