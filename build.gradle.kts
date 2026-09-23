@@ -125,9 +125,11 @@ compose.desktop {
 			// runtime module scan can miss this API because it is only loaded when
 			// the optional texture-upscale workflow is opened.
 			modules("java.net.http")
+			// Compose only packages formats supported on the build host; Deb is for Linux.
 			targetFormats(
 				org.jetbrains.compose.desktop.application.dsl.TargetFormat.Exe,
 				org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi,
+				org.jetbrains.compose.desktop.application.dsl.TargetFormat.Deb,
 			)
 			packageName = "PSD2Live"
 			packageVersion = "1.1.1"
@@ -144,6 +146,135 @@ compose.desktop {
 	}
 }
 
+// Detect packaging host via Java (same approach as LWJGL natives) so Windows CI
+// keeps Windows-focused stripping while Linux packages retain Cubism JNA/.so.
+val packagingOsName = System.getProperty("os.name").lowercase()
+val packagingOsArch = System.getProperty("os.arch").lowercase()
+val packagingIsMac = packagingOsName.contains("mac") || packagingOsName.contains("darwin")
+val packagingIsLinux = packagingOsName.contains("linux") || packagingOsName.contains("nix")
+val packagingIsArm = packagingOsArch.startsWith("aarch64") || packagingOsArch == "arm64" ||
+	(packagingOsArch.startsWith("arm") && "64" in packagingOsArch)
+
+val packagingJnaLinuxDir = when {
+	packagingIsArm -> "linux-aarch64"
+	else -> "linux-x86-64"
+}
+val packagingJnaDarwinDir = when {
+	packagingIsArm -> "darwin-aarch64"
+	else -> "darwin-x86-64"
+}
+val packagingSqliteLinuxDir = when {
+	packagingIsArm -> "org/sqlite/native/Linux/aarch64/"
+	else -> "org/sqlite/native/Linux/x86_64/"
+}
+val packagingSqliteMacDir = when {
+	packagingIsArm -> "org/sqlite/native/Mac/aarch64/"
+	else -> "org/sqlite/native/Mac/x86_64/"
+}
+
+fun org.gradle.jvm.tasks.Jar.applyHostNativeExcludes() {
+	// Always drop exotic sqlite platforms.
+	exclude("org/sqlite/native/FreeBSD/**")
+	exclude("org/sqlite/native/Linux-Android/**")
+	exclude("org/sqlite/native/Linux-Musl/**")
+	exclude("com/sun/jna/aix*/**")
+	exclude("com/sun/jna/dragonflybsd*/**")
+	exclude("com/sun/jna/freebsd*/**")
+	exclude("com/sun/jna/openbsd*/**")
+	exclude("com/sun/jna/sunos*/**")
+
+	when {
+		packagingIsLinux -> {
+			// Keep Linux JNA + sqlite; strip Windows/Mac (and other linux arches).
+			exclude("org/sqlite/native/Windows/**")
+			exclude("org/sqlite/native/Mac/**")
+			exclude("org/sqlite/native/Linux/x86/**")
+			exclude("org/sqlite/native/Linux/arm/**")
+			exclude("org/sqlite/native/Linux/armv6/**")
+			exclude("org/sqlite/native/Linux/armv7/**")
+			exclude("org/sqlite/native/Linux/ppc64/**")
+			if (packagingIsArm) {
+				exclude("org/sqlite/native/Linux/x86_64/**")
+			} else {
+				exclude("org/sqlite/native/Linux/aarch64/**")
+			}
+			exclude("com/sun/jna/darwin*/**")
+			exclude("com/sun/jna/win32-*/**")
+			// Drop non-host linux JNA arches but keep packagingJnaLinuxDir.
+			exclude("com/sun/jna/linux-x86/**")
+			exclude("com/sun/jna/linux-arm/**")
+			exclude("com/sun/jna/linux-armel/**")
+			exclude("com/sun/jna/linux-ppc/**")
+			exclude("com/sun/jna/linux-ppc64le/**")
+			exclude("com/sun/jna/linux-mips64el/**")
+			exclude("com/sun/jna/linux-loongarch64/**")
+			exclude("com/sun/jna/linux-s390x/**")
+			exclude("com/sun/jna/linux-riscv64/**")
+			if (packagingIsArm) {
+				exclude("com/sun/jna/linux-x86-64/**")
+			} else {
+				exclude("com/sun/jna/linux-aarch64/**")
+			}
+		}
+		packagingIsMac -> {
+			exclude("org/sqlite/native/Windows/**")
+			exclude("org/sqlite/native/Linux/**")
+			if (packagingIsArm) {
+				exclude("org/sqlite/native/Mac/x86_64/**")
+			} else {
+				exclude("org/sqlite/native/Mac/aarch64/**")
+			}
+			exclude("com/sun/jna/linux*/**")
+			exclude("com/sun/jna/win32-*/**")
+			if (packagingIsArm) {
+				exclude("com/sun/jna/darwin-x86-64/**")
+			} else {
+				exclude("com/sun/jna/darwin-aarch64/**")
+			}
+		}
+		else -> {
+			// Windows (default / CI): unchanged Windows x86_64-focused stripping.
+			exclude("org/sqlite/native/Linux/**")
+			exclude("org/sqlite/native/Mac/**")
+			exclude("org/sqlite/native/Windows/aarch64/**")
+			exclude("org/sqlite/native/Windows/armv7/**")
+			exclude("org/sqlite/native/Windows/x86/**")
+			exclude("com/sun/jna/darwin*/**")
+			exclude("com/sun/jna/linux*/**")
+			exclude("com/sun/jna/win32-aarch64/**")
+			exclude("com/sun/jna/win32-x86/**")
+			// Keep win32-x86-64 (implicit by not excluding it).
+		}
+	}
+}
+
+fun shouldKeepPackagedNativeEntry(path: String): Boolean {
+	val p = path.replace('\\', '/')
+	if (p.startsWith("org/sqlite/native/")) {
+		return when {
+			packagingIsLinux -> p.startsWith(packagingSqliteLinuxDir)
+			packagingIsMac -> p.startsWith(packagingSqliteMacDir)
+			// Windows CI historically kept only Windows/x86_64.
+			else -> p.startsWith("org/sqlite/native/Windows/x86_64/")
+		}
+	}
+	if (!p.startsWith("com/sun/jna/")) {
+		return true
+	}
+	val isNativeLib = p.endsWith(".so") || p.endsWith(".dylib") || p.endsWith(".a") ||
+		p.endsWith(".jnilib") || p.endsWith(".dll")
+	val isWin32Dir = p.startsWith("com/sun/jna/win32-")
+	if (!isNativeLib && !isWin32Dir) {
+		return true
+	}
+	return when {
+		packagingIsLinux -> p.startsWith("com/sun/jna/$packagingJnaLinuxDir/")
+		packagingIsMac -> p.startsWith("com/sun/jna/$packagingJnaDarwinDir/")
+		// Windows CI historically kept only win32-x86-64.
+		else -> p.contains("win32-x86-64")
+	}
+}
+
 afterEvaluate {
 	tasks.findByName("compileTestKotlin")?.enabled = true
 	tasks.findByName("test")?.enabled = true
@@ -157,23 +288,7 @@ afterEvaluate {
 					if (!includeCubism) {
 						exclude("cubism/**")
 					}
-					exclude("org/sqlite/native/FreeBSD/**")
-					exclude("org/sqlite/native/Linux/**")
-					exclude("org/sqlite/native/Linux-Android/**")
-					exclude("org/sqlite/native/Linux-Musl/**")
-					exclude("org/sqlite/native/Mac/**")
-					exclude("org/sqlite/native/Windows/aarch64/**")
-					exclude("org/sqlite/native/Windows/armv7/**")
-					exclude("org/sqlite/native/Windows/x86/**")
-					exclude("com/sun/jna/aix*/**")
-					exclude("com/sun/jna/darwin*/**")
-					exclude("com/sun/jna/dragonflybsd*/**")
-					exclude("com/sun/jna/freebsd*/**")
-					exclude("com/sun/jna/linux*/**")
-					exclude("com/sun/jna/openbsd*/**")
-					exclude("com/sun/jna/sunos*/**")
-					exclude("com/sun/jna/win32-aarch64/**")
-					exclude("com/sun/jna/win32-x86/**")
+					applyHostNativeExcludes()
 				}
 			}
 		}
@@ -191,18 +306,7 @@ afterEvaluate {
 								val entries = zin.entries()
 								while (entries.hasMoreElements()) {
 									val entry = entries.nextElement()
-									val p = entry.name.replace('\\', '/')
-									var keep = true
-									if (p.startsWith("org/sqlite/native/") && !p.startsWith("org/sqlite/native/Windows/x86_64/")) {
-										keep = false
-									}
-									if (p.startsWith("com/sun/jna/") && (p.endsWith(".so") || p.endsWith(".dylib") || p.endsWith(".a") || p.endsWith(".jnilib")) && !p.contains("win32-x86-64")) {
-										keep = false
-									}
-									if (p.startsWith("com/sun/jna/win32-") && !p.contains("win32-x86-64")) {
-										keep = false
-									}
-									if (keep) {
+									if (shouldKeepPackagedNativeEntry(entry.name)) {
 										val newEntry = ZipEntry(entry.name).apply {
 											time = entry.time
 											comment = entry.comment
