@@ -16,7 +16,7 @@ public:
 class Live2DPal
 {
 public:
-    static Csm::csmByte* LoadFileAsBytes(const Csm::csmChar* filePath, Csm::csmSizeInt* outSize);
+    static Csm::csmByte* LoadFileAsBytes(const std::string filePath, Csm::csmSizeInt* outSize);
     static void ReleaseBytes(Csm::csmByte* byteData);
     static void PrintLog(const Csm::csmChar* format, ...);
     static void PrintLogLn(const Csm::csmChar* format, ...);

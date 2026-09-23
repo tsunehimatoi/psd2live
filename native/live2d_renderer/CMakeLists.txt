@@ -1,17 +1,22 @@
 cmake_minimum_required(VERSION 3.16)
 
-# Match the historically validated live2d_renderer.dll: static MSVC CRT (/MT),
+# Match the historically validated live2d_renderer.dll on Windows: static MSVC CRT (/MT),
 # so the DLL only depends on system OpenGL/USER32/GDI32 — no VC++ redistributable.
 # Must be set before project() / add_subdirectory so Framework & GLEW inherit it.
-if(POLICY CMP0091)
-  cmake_policy(SET CMP0091 NEW)
+if(MSVC)
+  if(POLICY CMP0091)
+    cmake_policy(SET CMP0091 NEW)
+  endif()
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "" FORCE)
 endif()
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "" FORCE)
 
 project(Live2DRenderer CXX)
 
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Required when linking static Framework/GLEW/Core into a shared .so on Linux.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 if(MSVC)
   add_compile_options(/utf-8)
@@ -45,31 +50,58 @@ set(GLEW_PATH "${THIRD_PARTY_PATH}/glew")
 set(STB_PATH "${THIRD_PARTY_PATH}/stb")
 set(FRAMEWORK_SHADER_PATH "${FRAMEWORK_PATH}/src/Rendering/OpenGL/Shaders/Standard")
 
-# /MT ↔ Core_MT.lib (Release), /MTd ↔ Core_MTd.lib (Debug). Do not mix with *_MD*.
-set(CORE_LIB_RELEASE "${CORE_PATH}/lib/windows/x86_64/143/Live2DCubismCore_MT.lib")
-set(CORE_LIB_DEBUG "${CORE_PATH}/lib/windows/x86_64/143/Live2DCubismCore_MTd.lib")
+# Platform-specific Core library paths
+if(WIN32)
+  # /MT ↔ Core_MT.lib (Release), /MTd ↔ Core_MTd.lib (Debug). Do not mix with *_MD*.
+  set(CORE_LIB_RELEASE "${CORE_PATH}/lib/windows/x86_64/143/Live2DCubismCore_MT.lib")
+  set(CORE_LIB_DEBUG "${CORE_PATH}/lib/windows/x86_64/143/Live2DCubismCore_MTd.lib")
+elseif(UNIX AND NOT APPLE)
+  # Linux: static Core library (typically libLive2DCubismCore.a)
+  set(CORE_LIB_RELEASE "${CORE_PATH}/lib/linux/x86_64/libLive2DCubismCore.a")
+  set(CORE_LIB_DEBUG "${CORE_LIB_RELEASE}")  # Linux SDK typically provides one static lib
+else()
+  message(FATAL_ERROR "Unsupported platform. Only Windows and Linux x86_64 are supported.")
+endif()
 
-foreach(required_path IN ITEMS
-    "${CORE_LIB_RELEASE}"
-    "${CORE_LIB_DEBUG}"
+# Verify required SDK files exist
+set(REQUIRED_PATHS
     "${GLEW_PATH}/include/GL/glew.h"
     "${STB_PATH}/stb_image.h"
-    "${FRAMEWORK_SHADER_PATH}/FragShaderSrc.frag")
+    "${FRAMEWORK_SHADER_PATH}/FragShaderSrc.frag"
+)
+
+if(WIN32)
+  # Multi-config MSVC generators need both CRT-matched Core libs available.
+  list(APPEND REQUIRED_PATHS "${CORE_LIB_RELEASE}" "${CORE_LIB_DEBUG}")
+else()
+  if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    list(APPEND REQUIRED_PATHS "${CORE_LIB_DEBUG}")
+  else()
+    list(APPEND REQUIRED_PATHS "${CORE_LIB_RELEASE}")
+  endif()
+endif()
+
+foreach(required_path IN LISTS REQUIRED_PATHS)
   if(NOT EXISTS "${required_path}")
     message(FATAL_ERROR "Missing required Cubism SDK file: ${required_path}")
   endif()
 endforeach()
 
 message(STATUS "Using Cubism SDK at: ${CUBISM_SDK_ROOT}")
-message(STATUS "MSVC runtime: static (/MT) — DLL will not depend on VCRUNTIME/MSVCP")
+if(MSVC)
+  message(STATUS "MSVC runtime: static (/MT) — DLL will not depend on VCRUNTIME/MSVCP")
+else()
+  message(STATUS "Building for Linux x86_64")
+endif()
 
 # GLEW (static)
 set(BUILD_UTILS OFF CACHE BOOL "" FORCE)
 add_subdirectory("${GLEW_PATH}/build/cmake" "${CMAKE_CURRENT_BINARY_DIR}/glew")
 
-# Live2D Cubism Core (static import of official .lib; not redistributed by this repo)
+# Live2D Cubism Core (static import of official .lib/.a; not redistributed by this repo)
 add_library(Live2DCubismCore STATIC IMPORTED)
 set_target_properties(Live2DCubismCore PROPERTIES
+  IMPORTED_LOCATION "${CORE_LIB_RELEASE}"
   IMPORTED_LOCATION_RELEASE "${CORE_LIB_RELEASE}"
   IMPORTED_LOCATION_RELWITHDEBINFO "${CORE_LIB_RELEASE}"
   IMPORTED_LOCATION_MINSIZEREL "${CORE_LIB_RELEASE}"
@@ -80,14 +112,20 @@ set_target_properties(Live2DCubismCore PROPERTIES
 # Framework
 set(FRAMEWORK_SOURCE OpenGL)
 add_subdirectory("${FRAMEWORK_PATH}" "${CMAKE_CURRENT_BINARY_DIR}/Framework")
-target_compile_definitions(Framework PUBLIC CSM_TARGET_WIN_GL GLEW_STATIC)
+
+if(WIN32)
+  target_compile_definitions(Framework PUBLIC CSM_TARGET_WIN_GL GLEW_STATIC)
+elseif(UNIX AND NOT APPLE)
+  target_compile_definitions(Framework PUBLIC CSM_TARGET_LINUX_GL GLEW_STATIC)
+endif()
+
 target_include_directories(Framework PUBLIC
   "${GLEW_PATH}/include"
   "${CORE_PATH}/include"
 )
 target_link_libraries(Framework Live2DCubismCore glew_s)
 
-# DLL target
+# Shared library target
 set(SOURCES
   src/live2d_renderer.cpp
   src/live2d_model.cpp
@@ -104,9 +142,15 @@ add_library(live2d_renderer SHARED ${SOURCES} ${HEADERS})
 
 target_compile_definitions(live2d_renderer PRIVATE
   LIVE2D_RENDERER_EXPORTS
-  CSM_TARGET_WIN_GL
   GLEW_STATIC
 )
+
+if(WIN32)
+  target_compile_definitions(live2d_renderer PRIVATE CSM_TARGET_WIN_GL)
+elseif(UNIX AND NOT APPLE)
+  # _GNU_SOURCE exposes dladdr() in <dlfcn.h> on glibc.
+  target_compile_definitions(live2d_renderer PRIVATE CSM_TARGET_LINUX_GL _GNU_SOURCE)
+endif()
 
 target_include_directories(live2d_renderer PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/include"
@@ -117,12 +161,24 @@ target_include_directories(live2d_renderer PRIVATE
   "${STB_PATH}"
 )
 
-target_link_libraries(live2d_renderer PRIVATE
-  Framework
-  Live2DCubismCore
-  glew_s
-  opengl32
-)
+if(WIN32)
+  target_link_libraries(live2d_renderer PRIVATE
+    Framework
+    Live2DCubismCore
+    glew_s
+    opengl32
+  )
+elseif(UNIX AND NOT APPLE)
+  target_link_libraries(live2d_renderer PRIVATE
+    Framework
+    Live2DCubismCore
+    glew_s
+    GL
+    X11
+    pthread
+    dl
+  )
+endif()
 
 set_target_properties(live2d_renderer PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin"
