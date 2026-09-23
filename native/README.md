@@ -43,6 +43,8 @@ Set `CUBISM_SDK_ROOT` to your extracted SDK directory before running.
 ./native/package_linux.sh --include-local-cubism
 ```
 
+Default Gradle jars/distributions **exclude** `src/main/resources/cubism/**`. Opt in with `-Ppsd2live.includeCubism=true` (or `PSD2LIVE_INCLUDE_CUBISM=true`). The `--include-local-cubism` flag passes that property and also copies binaries beside the jar, with the launcher setting `CUBISM_SDK_PATH`.
+
 **⚠️ IMPORTANT**: Packages created with `--include-local-cubism` contain proprietary Live2D binaries and **must not be redistributed publicly**. Public distributions should omit Cubism binaries and instruct users to build them locally.
 
 ## Documentation

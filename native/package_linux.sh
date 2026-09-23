@@ -7,12 +7,17 @@
 #   Prefer Compose Desktop packageUberJarForCurrentOS (runnable fat jar with
 #   Main-Class). Falls back to packageReleaseUberJarForCurrentOS, then to
 #   installDist + the generated start script if uber-jar packaging fails.
+#   Default Gradle builds exclude src/main/resources/cubism/** from jars
+#   unless -Ppsd2live.includeCubism=true (see build.gradle.kts).
 #
 # Usage:
 #   ./native/package_linux.sh [--include-local-cubism]
 #
 # Options:
-#   --include-local-cubism: Include locally deployed Cubism binaries (for personal use only)
+#   --include-local-cubism: Opt into Cubism for this package (personal use only):
+#                          passes -Ppsd2live.includeCubism=true to Gradle, and
+#                          copies deployed binaries beside the jar with
+#                          CUBISM_SDK_PATH set by the launcher.
 #                          WARNING: Do NOT distribute packages created with this flag!
 
 set -e
@@ -46,6 +51,13 @@ if [[ ! -f "$REPO_ROOT/build.gradle.kts" ]]; then
 fi
 
 cd "$REPO_ROOT"
+
+# Opt-in Gradle property so processResources/jar/uber-jar may embed cubism/**
+# when --include-local-cubism is set. Default builds keep jars Cubism-free.
+GRADLE_EXTRA_ARGS=()
+if [[ "$INCLUDE_CUBISM" == "1" ]]; then
+  GRADLE_EXTRA_ARGS+=(-Ppsd2live.includeCubism=true)
+fi
 
 run_gradle() {
   # Invoke via bash so packaging works even when gradlew is not +x.
@@ -93,7 +105,7 @@ INSTALL_ROOT=""
 echo "[1/3] Building runnable Linux artifact with Gradle..."
 
 # Prefer Compose Desktop uber jar (Main-Class + deps) for java -jar.
-if run_gradle clean packageUberJarForCurrentOS -x test; then
+if run_gradle clean packageUberJarForCurrentOS -x test "${GRADLE_EXTRA_ARGS[@]}"; then
   if JAR_PATH="$(find_uber_jar)"; then
     LAUNCH_MODE="uberjar"
     echo " Built uber jar via packageUberJarForCurrentOS"
@@ -102,7 +114,7 @@ fi
 
 if [[ -z "$LAUNCH_MODE" ]]; then
   echo " packageUberJarForCurrentOS did not produce a jar; trying packageReleaseUberJarForCurrentOS..."
-  if run_gradle packageReleaseUberJarForCurrentOS -x test; then
+  if run_gradle packageReleaseUberJarForCurrentOS -x test "${GRADLE_EXTRA_ARGS[@]}"; then
     if JAR_PATH="$(find_uber_jar)"; then
       LAUNCH_MODE="uberjar"
       echo " Built uber jar via packageReleaseUberJarForCurrentOS"
@@ -113,7 +125,7 @@ fi
 # Fallback: application installDist start script (starts MainKt via classpath).
 if [[ -z "$LAUNCH_MODE" ]]; then
   echo " Uber jar packaging unavailable; falling back to installDist..."
-  run_gradle installDist -x test
+  run_gradle installDist -x test "${GRADLE_EXTRA_ARGS[@]}"
   if INSTALL_BIN="$(find_install_start_script)"; then
     INSTALL_ROOT="$(cd "$(dirname "$INSTALL_BIN")/.." && pwd)"
     LAUNCH_MODE="installdist"
@@ -141,8 +153,8 @@ else
   cp -a "$INSTALL_ROOT/." "$DIST_DIR/"
 fi
 
-# Optionally include Cubism binaries (for personal use only) before writing the launcher,
-# so CUBISM_SDK_PATH is exported BEFORE exec.
+# Also copy Cubism binaries beside the artifact (for personal use only) before writing
+# the launcher, so CUBISM_SDK_PATH is exported BEFORE exec (matches runtime loader).
 CUBISM_INCLUDED=0
 if [[ "$INCLUDE_CUBISM" == "1" ]]; then
   CUBISM_SRC="$REPO_ROOT/src/main/resources/cubism/linux-x86_64"

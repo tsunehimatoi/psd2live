@@ -13,6 +13,14 @@ plugins {
 group = "io.github.psd2live"
 version = "1.1.1"
 
+// Cubism proprietary binaries under src/main/resources/cubism/ are opt-in only.
+// Default jars/distributions must NOT embed them. Enable with:
+//   -Ppsd2live.includeCubism=true
+// or env PSD2LIVE_INCLUDE_CUBISM=true
+val includeCubism: Boolean =
+	(findProperty("psd2live.includeCubism")?.toString()?.equals("true", ignoreCase = true) == true) ||
+		(System.getenv("PSD2LIVE_INCLUDE_CUBISM")?.equals("true", ignoreCase = true) == true)
+
 kotlin {
 	jvmToolchain(21)
 }
@@ -88,8 +96,23 @@ distributions {
 				into("docs")
 				exclude("imgs/**")
 			}
-			from("src/main/resources/cubism") { into("cubism") }
+			if (includeCubism) {
+				from("src/main/resources/cubism") { into("cubism") }
+			}
 		}
+	}
+}
+
+// Keep Cubism out of classpath resources unless explicitly opted in.
+tasks.processResources {
+	if (!includeCubism) {
+		exclude("cubism/**")
+	}
+}
+
+tasks.named<Jar>("jar") {
+	if (!includeCubism) {
+		exclude("cubism/**")
 	}
 }
 
@@ -131,6 +154,9 @@ afterEvaluate {
 		tasks.findByName(taskName)?.let { task ->
 			if (task is org.gradle.jvm.tasks.Jar) {
 				task.apply {
+					if (!includeCubism) {
+						exclude("cubism/**")
+					}
 					exclude("org/sqlite/native/FreeBSD/**")
 					exclude("org/sqlite/native/Linux/**")
 					exclude("org/sqlite/native/Linux-Android/**")
