@@ -13,6 +13,8 @@
 - 需要：`Core/lib/windows/x86_64/143/Live2DCubismCore_MT.lib`
 
 ### Linux x86_64
+- 支持平台：带 X11/GLX 的 Linux x86_64，包括 XWayland 和 `xvfb-run`
+- 不支持：没有 XWayland 的纯 Wayland、aarch64，或基于 musl 的 Alpine 等系统
 - CMake 3.16+
 - GCC 或 Clang，支持 C++14
 - OpenGL / GLX 开发包，例如 Debian/Ubuntu：`libgl1-mesa-dev` 与 `libglx-dev`（或 `libglx-mesa-dev`）；Fedora：`mesa-libGL-devel`

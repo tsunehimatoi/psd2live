@@ -13,6 +13,8 @@
 - 必要：`Core/lib/windows/x86_64/143/Live2DCubismCore_MT.lib`
 
 ### Linux x86_64
+- 対応プラットフォーム：X11/GLX を備えた Linux x86_64（XWayland と `xvfb-run` を含む）
+- 非対応：XWayland のない純粋な Wayland、aarch64、musl/Alpine 環境
 - CMake 3.16+
 - GCC または Clang（C++14 サポート）
 - OpenGL / GLX 開発パッケージ（例: Debian/Ubuntu の `libgl1-mesa-dev` と `libglx-dev` または `libglx-mesa-dev`、Fedora の `mesa-libGL-devel`）

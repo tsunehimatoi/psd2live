@@ -26,6 +26,8 @@ Requires:
 ```
 
 Requires:
+- Linux x86_64 with X11/GLX, including XWayland or `xvfb-run`
+- Not supported: pure Wayland without XWayland, aarch64, or musl/Alpine systems
 - GCC or Clang with C++14
 - CMake 3.16+
 - OpenGL and X11 development libraries

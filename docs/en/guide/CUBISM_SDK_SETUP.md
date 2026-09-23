@@ -13,6 +13,8 @@ The built-in renderer and basic exports do not require the official SDK. This pa
 - Expected: `Core/lib/windows/x86_64/143/Live2DCubismCore_MT.lib`
 
 ### Linux x86_64
+- Supported platform: Linux x86_64 with X11/GLX, including XWayland and `xvfb-run`
+- Not supported: pure Wayland without XWayland, aarch64, or musl/Alpine systems
 - CMake 3.16+
 - GCC or Clang with C++14 support
 - OpenGL / GLX development packages, e.g. Debian/Ubuntu: `libgl1-mesa-dev` and `libglx-dev` (or `libglx-mesa-dev`); Fedora: `mesa-libGL-devel`
