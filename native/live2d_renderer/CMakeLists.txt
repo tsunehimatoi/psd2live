@@ -70,10 +70,15 @@ set(REQUIRED_PATHS
     "${FRAMEWORK_SHADER_PATH}/FragShaderSrc.frag"
 )
 
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-  list(APPEND REQUIRED_PATHS "${CORE_LIB_DEBUG}")
+if(WIN32)
+  # Multi-config MSVC generators need both CRT-matched Core libs available.
+  list(APPEND REQUIRED_PATHS "${CORE_LIB_RELEASE}" "${CORE_LIB_DEBUG}")
 else()
-  list(APPEND REQUIRED_PATHS "${CORE_LIB_RELEASE}")
+  if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    list(APPEND REQUIRED_PATHS "${CORE_LIB_DEBUG}")
+  else()
+    list(APPEND REQUIRED_PATHS "${CORE_LIB_RELEASE}")
+  endif()
 endif()
 
 foreach(required_path IN LISTS REQUIRED_PATHS)
@@ -96,6 +101,7 @@ add_subdirectory("${GLEW_PATH}/build/cmake" "${CMAKE_CURRENT_BINARY_DIR}/glew")
 # Live2D Cubism Core (static import of official .lib/.a; not redistributed by this repo)
 add_library(Live2DCubismCore STATIC IMPORTED)
 set_target_properties(Live2DCubismCore PROPERTIES
+  IMPORTED_LOCATION "${CORE_LIB_RELEASE}"
   IMPORTED_LOCATION_RELEASE "${CORE_LIB_RELEASE}"
   IMPORTED_LOCATION_RELWITHDEBINFO "${CORE_LIB_RELEASE}"
   IMPORTED_LOCATION_MINSIZEREL "${CORE_LIB_RELEASE}"
@@ -142,7 +148,8 @@ target_compile_definitions(live2d_renderer PRIVATE
 if(WIN32)
   target_compile_definitions(live2d_renderer PRIVATE CSM_TARGET_WIN_GL)
 elseif(UNIX AND NOT APPLE)
-  target_compile_definitions(live2d_renderer PRIVATE CSM_TARGET_LINUX_GL)
+  # _GNU_SOURCE exposes dladdr() in <dlfcn.h> on glibc.
+  target_compile_definitions(live2d_renderer PRIVATE CSM_TARGET_LINUX_GL _GNU_SOURCE)
 endif()
 
 target_include_directories(live2d_renderer PRIVATE

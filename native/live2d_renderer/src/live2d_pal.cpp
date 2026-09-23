@@ -1,4 +1,7 @@
 #include "live2d_pal.h"
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <cstdio>
 #include <cstdarg>
 #include <iostream>
@@ -60,6 +63,59 @@ std::string Live2DPal::GetShaderDirectory()
     return s_shaderDir;
 }
 
+#ifdef _WIN32
+// UTF-8 path → wchar_t for Windows filesystem APIs (non-ASCII model / shader paths).
+static bool Utf8ToWide(const std::string& utf8, std::wstring& outWide)
+{
+    if (utf8.empty())
+    {
+        outWide.clear();
+        return false;
+    }
+    const int needed = MultiByteToWideChar(CP_UTF8, 0U, utf8.c_str(), -1, nullptr, 0);
+    if (needed <= 0) return false;
+    outWide.assign(static_cast<size_t>(needed), L'\0');
+    if (MultiByteToWideChar(CP_UTF8, 0U, utf8.c_str(), -1, &outWide[0], needed) <= 0)
+    {
+        outWide.clear();
+        return false;
+    }
+    // Drop the trailing null MultiByteToWideChar wrote into the buffer.
+    if (!outWide.empty() && outWide.back() == L'\0') outWide.pop_back();
+    return !outWide.empty();
+}
+
+static Csm::csmByte* ReadBinaryFileWide(const std::wstring& widePath, Csm::csmSizeInt* outSize)
+{
+    struct _stat statBuf;
+    if (_wstat(widePath.c_str(), &statBuf) != 0 || statBuf.st_size <= 0)
+    {
+        return nullptr;
+    }
+
+    int size = static_cast<int>(statBuf.st_size);
+    std::ifstream file(widePath, std::ios::in | std::ios::binary);
+    if (!file.is_open())
+    {
+        return nullptr;
+    }
+
+    char* buf = new char[size + 1];
+    file.read(buf, size);
+    buf[size] = '\0';
+    file.close();
+
+    *outSize = size;
+    return reinterpret_cast<Csm::csmByte*>(buf);
+}
+
+static Csm::csmByte* ReadBinaryFile(const std::string& path, Csm::csmSizeInt* outSize)
+{
+    std::wstring widePath;
+    if (!Utf8ToWide(path, widePath)) return nullptr;
+    return ReadBinaryFileWide(widePath, outSize);
+}
+#else
 static Csm::csmByte* ReadBinaryFile(const std::string& path, Csm::csmSizeInt* outSize)
 {
     struct stat statBuf;
@@ -83,6 +139,7 @@ static Csm::csmByte* ReadBinaryFile(const std::string& path, Csm::csmSizeInt* ou
     *outSize = size;
     return reinterpret_cast<Csm::csmByte*>(buf);
 }
+#endif
 
 Csm::csmByte* Live2DPal::LoadFileAsBytes(const std::string filePath, Csm::csmSizeInt* outSize)
 {
@@ -140,7 +197,11 @@ void Live2DPal::PrintLog(const Csm::csmChar* format, ...)
     va_list args;
     char buf[1024];
     va_start(args, format);
+#ifdef _WIN32
+    vsnprintf_s(buf, sizeof(buf), format, args);
+#else
     vsnprintf(buf, sizeof(buf), format, args);
+#endif
     std::cout << buf;
     va_end(args);
 }
@@ -150,7 +211,11 @@ void Live2DPal::PrintLogLn(const Csm::csmChar* format, ...)
     va_list args;
     char buf[1024];
     va_start(args, format);
+#ifdef _WIN32
+    vsnprintf_s(buf, sizeof(buf), format, args);
+#else
     vsnprintf(buf, sizeof(buf), format, args);
+#endif
     std::cout << buf << std::endl;
     va_end(args);
 }

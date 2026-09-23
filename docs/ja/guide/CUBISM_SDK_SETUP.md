@@ -15,8 +15,9 @@
 ### Linux x86_64
 - CMake 3.16+
 - GCC または Clang（C++14 サポート）
-- OpenGL 開発ライブラリ（`libgl-dev` または `mesa-libGL-devel`）
-- X11 開発ライブラリ（`libx11-dev` または `libX11-devel`）
+- OpenGL / GLX 開発パッケージ（例: Debian/Ubuntu の `libgl1-mesa-dev` と `libglx-dev` または `libglx-mesa-dev`、Fedora の `mesa-libGL-devel`）
+- X11 開発ライブラリ（`libx11-dev` / `libX11-devel`）
+- 実行時に有効な X11 `DISPLAY`（デスクトップ、またはヘッドレスでは `xvfb-run`）
 - ローカルの Cubism 5 SDK for Native (5-r.5 の構成)
 - 必要：`Core/lib/linux/x86_64/libLive2DCubismCore.a`
 
@@ -66,7 +67,9 @@ src/main/resources/cubism/linux-x86_64/
 VCRUNTIME / MSVCP エラーは /MD の古いビルドが原因の場合があります。現行スクリプトは /MT と静的 Core を使います。`dumpbin /DEPENDENTS` で確認できます。
 
 ### Linux
-`ldd liblive2d_renderer.so` で依存を確認します。期待されるシステムライブラリ：`libGL.so`、`libX11.so`、`libpthread.so`、`libdl.so`。
+`ldd liblive2d_renderer.so` で依存を確認します。期待されるシステムライブラリ：`libGL.so`、`libGLX.so`（または Mesa GLX）、`libX11.so`、`libpthread.so`、`libdl.so`。
+
+オフスクリーンプレビューは GLX コンテキストを開くため、有効な X11 `DISPLAY` が必要です。ヘッドレス環境では Xvfb を入れ、例として `xvfb-run -a ./gradlew run`（または `xvfb-run -a java -jar …`）で起動してください。`DISPLAY` が無いとネイティブ初期化に失敗し、内蔵ソフトウェア描画にフォールバックします。
 
 環境変数変更後は起動元プロセスを再起動してください。
 

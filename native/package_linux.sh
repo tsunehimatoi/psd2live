@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Helper script to package PSD2Live for Linux distribution.
-# This script does NOT include proprietary Cubism SDK binaries.
+# This script does NOT include proprietary Cubism SDK binaries by default.
 # Developers must build and deploy the SDK locally if they want Cubism preview.
 #
 # Usage:
@@ -45,10 +45,21 @@ echo "[1/3] Building application with Gradle..."
 cd "$REPO_ROOT"
 ./gradlew clean build -x test
 
-# Locate the built jar
-JAR_PATH=$(find "$REPO_ROOT/build/libs" -name "*.jar" -type f | head -n 1)
+# Prefer the main application jar (exclude sources / javadoc / plain classifiers).
+JAR_PATH=""
+shopt -s nullglob
+for candidate in "$REPO_ROOT/build/libs"/*.jar; do
+  base="$(basename "$candidate")"
+  case "$base" in
+    *-sources.jar|*-javadoc.jar|*-plain.jar) continue ;;
+  esac
+  JAR_PATH="$candidate"
+  break
+done
+shopt -u nullglob
+
 if [[ -z "$JAR_PATH" || ! -f "$JAR_PATH" ]]; then
-  echo "[ERROR] Cannot find built JAR in build/libs/" >&2
+  echo "[ERROR] Cannot find built application JAR in build/libs/" >&2
   exit 1
 fi
 
@@ -62,41 +73,17 @@ mkdir -p "$DIST_DIR"
 echo "[2/3] Packaging..."
 cp "$JAR_PATH" "$DIST_DIR/psd2live.jar"
 
-# Create launcher script
-cat > "$DIST_DIR/psd2live.sh" << 'LAUNCHER_EOF'
-#!/bin/bash
-# PSD2Live launcher for Linux
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
-
-# Check for Java
-if ! command -v java &> /dev/null; then
-    echo "Error: Java not found. Please install JDK 21 or later." >&2
-    exit 1
-fi
-
-# Launch PSD2Live
-exec java -jar psd2live.jar "$@"
-LAUNCHER_EOF
-
-chmod +x "$DIST_DIR/psd2live.sh"
-
-# Optionally include Cubism binaries (for personal use only)
+# Optionally include Cubism binaries (for personal use only) before writing the launcher,
+# so CUBISM_SDK_PATH is exported BEFORE exec java.
+CUBISM_INCLUDED=0
 if [[ "$INCLUDE_CUBISM" == "1" ]]; then
   CUBISM_SRC="$REPO_ROOT/src/main/resources/cubism/linux-x86_64"
   if [[ -d "$CUBISM_SRC" ]]; then
     echo " Including local Cubism SDK binaries (PERSONAL USE ONLY)..."
     mkdir -p "$DIST_DIR/cubism/linux-x86_64"
     cp -r "$CUBISM_SRC"/* "$DIST_DIR/cubism/linux-x86_64/"
-    
-    # Update launcher to set CUBISM_SDK_PATH
-    cat >> "$DIST_DIR/psd2live.sh" << 'CUBISM_EOF'
+    CUBISM_INCLUDED=1
 
-# Note: This package includes locally built Cubism SDK binaries
-export CUBISM_SDK_PATH="$SCRIPT_DIR/cubism/linux-x86_64"
-CUBISM_EOF
-    
     cat > "$DIST_DIR/CUBISM_NOTICE.txt" << 'NOTICE_EOF'
 WARNING: This package includes locally built Live2D Cubism SDK binaries.
 
@@ -120,8 +107,51 @@ NOTICE_EOF
   fi
 fi
 
-# Create README
-cat > "$DIST_DIR/README.txt" << 'README_EOF'
+# Create launcher script (Cubism env must come before exec — exec never returns).
+if [[ "$CUBISM_INCLUDED" == "1" ]]; then
+  cat > "$DIST_DIR/psd2live.sh" << 'LAUNCHER_EOF'
+#!/bin/bash
+# PSD2Live launcher for Linux
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Check for Java
+if ! command -v java &> /dev/null; then
+    echo "Error: Java not found. Please install JDK 21 or later." >&2
+    exit 1
+fi
+
+# Note: This package includes locally built Cubism SDK binaries (personal use only).
+export CUBISM_SDK_PATH="$SCRIPT_DIR/cubism/linux-x86_64"
+
+# Launch PSD2Live
+exec java -jar psd2live.jar "$@"
+LAUNCHER_EOF
+else
+  cat > "$DIST_DIR/psd2live.sh" << 'LAUNCHER_EOF'
+#!/bin/bash
+# PSD2Live launcher for Linux
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Check for Java
+if ! command -v java &> /dev/null; then
+    echo "Error: Java not found. Please install JDK 21 or later." >&2
+    exit 1
+fi
+
+# Launch PSD2Live
+exec java -jar psd2live.jar "$@"
+LAUNCHER_EOF
+fi
+
+chmod +x "$DIST_DIR/psd2live.sh"
+
+# Create README reflecting whether Cubism was included
+if [[ "$CUBISM_INCLUDED" == "1" ]]; then
+  cat > "$DIST_DIR/README.txt" << 'README_EOF'
 PSD2Live for Linux
 ==================
 
@@ -130,29 +160,54 @@ Launch:
 
 Requirements:
 - JDK 21 or later
-- OpenGL support (for preview rendering)
+- OpenGL / GLX (Mesa or vendor drivers) and an X11 display
+  Headless: use xvfb-run ./psd2live.sh (see CUBISM_SDK_SETUP.md)
 
-Optional Cubism SDK Preview:
-  This package does NOT include Live2D Cubism SDK binaries.
-  The application will use its built-in software renderer.
-  
-  To enable native Cubism preview:
-  1. Download Cubism SDK for Native (5-r.5) from Live2D
-  2. Build the native library following docs/en/guide/CUBISM_SDK_SETUP.md
-  3. Set CUBISM_SDK_PATH environment variable to the deployed directory
+Cubism SDK Preview:
+  This package INCLUDES locally built Cubism SDK binaries for PERSONAL USE ONLY.
+  See CUBISM_NOTICE.txt — do NOT redistribute this package.
+  The launcher sets CUBISM_SDK_PATH automatically.
 
 For more information, visit:
   https://github.com/tsunehimatoi/psd2live
 
 License: GNU GPL v3
 README_EOF
+else
+  cat > "$DIST_DIR/README.txt" << 'README_EOF'
+PSD2Live for Linux
+==================
+
+Launch:
+  ./psd2live.sh
+
+Requirements:
+- JDK 21 or later
+- OpenGL / GLX (Mesa or vendor drivers) and an X11 display (for Cubism preview)
+
+Optional Cubism SDK Preview:
+  This package does NOT include Live2D Cubism SDK binaries.
+  The application will use its built-in software renderer.
+
+  To enable native Cubism preview:
+  1. Download Cubism SDK for Native (5-r.5) from Live2D
+  2. Build the native library following docs/en/guide/CUBISM_SDK_SETUP.md
+  3. Set CUBISM_SDK_PATH environment variable to the deployed directory
+  4. On headless hosts, run under Xvfb (e.g. xvfb-run ./psd2live.sh)
+
+For more information, visit:
+  https://github.com/tsunehimatoi/psd2live
+
+License: GNU GPL v3
+README_EOF
+fi
 
 echo "[3/3] Package complete!"
 echo ""
 echo " Output: $DIST_DIR"
 echo " Launch: cd $DIST_DIR && ./psd2live.sh"
 
-if [[ "$INCLUDE_CUBISM" == "1" ]]; then
+if [[ "$CUBISM_INCLUDED" == "1" ]]; then
   echo ""
   echo " ⚠️  WARNING: This package includes Cubism SDK binaries!"
   echo "    FOR PERSONAL USE ONLY - DO NOT REDISTRIBUTE"

@@ -15,8 +15,9 @@ The built-in renderer and basic exports do not require the official SDK. This pa
 ### Linux x86_64
 - CMake 3.16+
 - GCC or Clang with C++14 support
-- OpenGL development libraries (`libgl-dev` or `mesa-libGL-devel`)
-- X11 development libraries (`libx11-dev` or `libX11-devel`)
+- OpenGL / GLX development packages, e.g. Debian/Ubuntu: `libgl1-mesa-dev` and `libglx-dev` (or `libglx-mesa-dev`); Fedora: `mesa-libGL-devel`
+- X11 development libraries (`libx11-dev` / `libX11-devel`)
+- Runtime: a working X11 `DISPLAY` (desktop session, or headless via `xvfb-run`)
 - Local Cubism 5 SDK for Native (5-r.5 layout)
 - Expected: `Core/lib/linux/x86_64/libLive2DCubismCore.a`
 
@@ -66,7 +67,9 @@ Keep the native library and FrameworkShaders together.
 VCRUNTIME / MSVCP failures can indicate an old /MD build; the current script uses /MT and static Core. Inspect with `dumpbin /DEPENDENTS`.
 
 ### Linux
-Check dependencies with `ldd liblive2d_renderer.so`. Expected system libraries: `libGL.so`, `libX11.so`, `libpthread.so`, `libdl.so`.
+Check dependencies with `ldd liblive2d_renderer.so`. Expected system libraries: `libGL.so`, `libGLX.so` (or Mesa GLX), `libX11.so`, `libpthread.so`, `libdl.so`.
+
+Offscreen preview opens a GLX context and needs a valid X11 `DISPLAY`. On headless hosts install Xvfb and run e.g. `xvfb-run -a ./gradlew run` (or `xvfb-run -a java -jar …`). Missing `DISPLAY` fails native init and falls back to the software renderer.
 
 Restart the launching process after changing environment variables.
 

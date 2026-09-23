@@ -426,8 +426,43 @@ class CubismSdkPreviewSession(
 	}
 
 	private object CubismNativeRuntime {
-		private val files = listOf(
-			if (isWindows()) "live2d_renderer.dll" else "liblive2d_renderer.so",
+		private fun isWindows(): Boolean =
+			System.getProperty("os.name").contains("windows", ignoreCase = true)
+
+		private fun isLinux(): Boolean =
+			System.getProperty("os.name").contains("linux", ignoreCase = true)
+
+		private fun requireAmd64(): String {
+			val arch = System.getProperty("os.arch").orEmpty().lowercase()
+			if (arch != "amd64" && arch != "x86_64") {
+				throw UnsupportedOperationException(
+					"Cubism SDK preview requires x86_64/amd64. " +
+						"Unsupported os.arch=$arch (os.name=${System.getProperty("os.name")})"
+				)
+			}
+			return arch
+		}
+
+		private fun getPlatformDir(): String {
+			requireAmd64()
+			return when {
+				isWindows() -> "windows-x86_64"
+				isLinux() -> "linux-x86_64"
+				else -> throw UnsupportedOperationException(
+					"Cubism SDK preview currently requires Windows or Linux x86-64. " +
+						"Platform: ${System.getProperty("os.name")} ${System.getProperty("os.arch")}"
+				)
+			}
+		}
+
+		private fun getLibraryName(): String = when {
+			isWindows() -> "live2d_renderer.dll"
+			isLinux() -> "liblive2d_renderer.so"
+			else -> throw UnsupportedOperationException("Unsupported platform")
+		}
+
+		private fun runtimeFiles(): List<String> = listOf(
+			getLibraryName(),
 			"FrameworkShaders/FragShaderSrc.frag",
 			"FrameworkShaders/FragShaderSrcAlphaBlend.frag",
 			"FrameworkShaders/FragShaderSrcBlend.frag",
@@ -452,31 +487,10 @@ class CubismSdkPreviewSession(
 			"FrameworkShaders/VertShaderSrcSetupMask.vert",
 		)
 
-		private fun isWindows(): Boolean =
-			System.getProperty("os.name").contains("windows", ignoreCase = true)
-
-		private fun isLinux(): Boolean =
-			System.getProperty("os.name").contains("linux", ignoreCase = true)
-
-		private fun getPlatformDir(): String = when {
-			isWindows() -> "windows-x86_64"
-			isLinux() -> "linux-x86_64"
-			else -> throw UnsupportedOperationException(
-				"Cubism SDK preview currently requires Windows or Linux x86-64. " +
-				"Platform: ${System.getProperty("os.name")} ${System.getProperty("os.arch")}"
-			)
-		}
-
-		private fun getLibraryName(): String = when {
-			isWindows() -> "live2d_renderer.dll"
-			isLinux() -> "liblive2d_renderer.so"
-			else -> throw UnsupportedOperationException("Unsupported platform")
-		}
-
 		fun load(): Api {
 			val platformDir = getPlatformDir()
 			val libraryName = getLibraryName()
-			
+
 			val customPathStr = System.getProperty("psd2live.cubism.path")
 				?.ifBlank { null }
 				?: System.getenv("CUBISM_SDK_PATH")?.ifBlank { null }
@@ -484,7 +498,7 @@ class CubismSdkPreviewSession(
 			val customDir = customPathStr?.let { Path.of(it) }
 
 			val directory = Files.createTempDirectory("psd2live-cubism-5-r5-")
-			for (relative in files) extract(directory, relative, customDir, platformDir)
+			for (relative in runtimeFiles()) extract(directory, relative, customDir, platformDir)
 			System.setProperty("jna.library.path", directory.toString())
 			return Native.load(directory.resolve(libraryName).toString(), Api::class.java)
 		}

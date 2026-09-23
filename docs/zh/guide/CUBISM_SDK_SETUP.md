@@ -15,8 +15,9 @@
 ### Linux x86_64
 - CMake 3.16+
 - GCC 或 Clang，支持 C++14
-- OpenGL 开发库（`libgl-dev` 或 `mesa-libGL-devel`）
-- X11 开发库（`libx11-dev` 或 `libX11-devel`）
+- OpenGL / GLX 开发包，例如 Debian/Ubuntu：`libgl1-mesa-dev` 与 `libglx-dev`（或 `libglx-mesa-dev`）；Fedora：`mesa-libGL-devel`
+- X11 开发库（`libx11-dev` / `libX11-devel`）
+- 运行时需要可用的 X11 `DISPLAY`（桌面会话，或无图形环境用 `xvfb-run`）
 - 本地 Cubism 5 SDK for Native (5-r.5 目录布局)
 - 需要：`Core/lib/linux/x86_64/libLive2DCubismCore.a`
 
@@ -66,7 +67,9 @@ src/main/resources/cubism/linux-x86_64/
 若缺 VCRUNTIME / MSVCP，检查是否误用了 /MD 构建；当前脚本使用 /MT 与静态 Core。可用 `dumpbin /DEPENDENTS` 检查。
 
 ### Linux
-使用 `ldd liblive2d_renderer.so` 检查依赖。预期系统库：`libGL.so`、`libX11.so`、`libpthread.so`、`libdl.so`。
+使用 `ldd liblive2d_renderer.so` 检查依赖。预期系统库：`libGL.so`、`libGLX.so`（或 Mesa GLX）、`libX11.so`、`libpthread.so`、`libdl.so`。
+
+离屏预览会创建 GLX 上下文，需要有效的 X11 `DISPLAY`。无图形环境请安装 Xvfb，例如 `xvfb-run -a ./gradlew run`（或 `xvfb-run -a java -jar …`）。缺少 `DISPLAY` 时原生初始化失败，会回退到内置软件渲染。
 
 修改环境变量后重启启动应用的进程。
 
