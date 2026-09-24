@@ -95,6 +95,7 @@ fun SettingsDialog(
 	fontScale: Float,
 	darkTheme: Boolean = true,
 	clickToSelectLayer: Boolean = true,
+	autoDetectMeshSplitsOnImport: Boolean = AppSettings.autoDetectMeshSplitsOnImport,
 	keymap: Keymap = Keymap.DEFAULT,
 	keyPreset: KeymapPreset = KeymapPreset.PHOTOSHOP,
 	keyCapture: KeyCapture? = null,
@@ -103,6 +104,7 @@ fun SettingsDialog(
 	onFontScaleChange: (Float) -> Unit,
 	onDarkThemeChange: (Boolean) -> Unit = {},
 	onClickToSelectLayerChange: (Boolean) -> Unit = {},
+	onAutoDetectMeshSplitsOnImportChange: (Boolean) -> Unit = { AppSettings.autoDetectMeshSplitsOnImport = it },
 	onLanguageChange: (AppLanguage) -> Unit = {},
 	onKeyCapture: (ShortcutAction, Int) -> Unit = { _, _ -> },
 	onKeyRemoveBinding: (ShortcutAction, Int) -> Unit = { _, _ -> },
@@ -227,6 +229,8 @@ fun SettingsDialog(
 						SettingsSection.CANVAS -> SettingsCanvasSection(
 							clickToSelectLayer = clickToSelectLayer,
 							onClickToSelectLayerChange = onClickToSelectLayerChange,
+							autoDetectMeshSplitsOnImport = autoDetectMeshSplitsOnImport,
+							onAutoDetectMeshSplitsOnImportChange = onAutoDetectMeshSplitsOnImportChange,
 						)
 						SettingsSection.SHORTCUTS -> SettingsShortcutsSection(
 							keymap = keymap,
@@ -571,6 +575,8 @@ private fun SettingsLanguageSection(
 private fun SettingsCanvasSection(
 	clickToSelectLayer: Boolean,
 	onClickToSelectLayerChange: (Boolean) -> Unit,
+	autoDetectMeshSplitsOnImport: Boolean,
+	onAutoDetectMeshSplitsOnImportChange: (Boolean) -> Unit,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -602,6 +608,27 @@ private fun SettingsCanvasSection(
 			)
 			Text(
 				text = tr("settings.canvas.clickToSelectLayer"),
+				style = typography.body.copy(fontSize = 11.5.sp),
+				color = colors.textPrimary,
+			)
+		}
+		Row(
+			modifier = Modifier
+				.fillMaxWidth()
+				.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
+				.clickable { onAutoDetectMeshSplitsOnImportChange(!autoDetectMeshSplitsOnImport) }
+				.padding(vertical = 2.dp),
+			verticalAlignment = Alignment.CenterVertically,
+			horizontalArrangement = Arrangement.spacedBy(8.dp),
+		) {
+			Text(
+				text = if (autoDetectMeshSplitsOnImport) "✓" else " ",
+				style = typography.body.copy(fontWeight = FontWeight.Bold),
+				color = if (autoDetectMeshSplitsOnImport) colors.accent else Color.Transparent,
+				modifier = Modifier.width(16.dp),
+			)
+			Text(
+				text = tr("editor.meshSplit.promptOnImport"),
 				style = typography.body.copy(fontSize = 11.5.sp),
 				color = colors.textPrimary,
 			)

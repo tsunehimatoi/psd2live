@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.psd2live.core.Side
 import io.github.psd2live.i18n.tr
+import io.github.psd2live.ui.state.AppSettings
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
@@ -36,6 +37,7 @@ internal fun MeshSplitDialog(
     offer: PSD2LiveViewModel.MeshSplitOffer,
     onSplit: (List<String>, List<Side>) -> Unit,
     onDismiss: () -> Unit,
+    onDismissAll: (() -> Unit)? = null,
 ) {
     val colors = LocalToolColors.current
     val typography = LocalToolTypography.current
@@ -120,9 +122,41 @@ internal fun MeshSplitDialog(
                     }
                 }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
-                CompactButton(tr("editor.meshSplit.keep"), onDismiss)
-                CompactButton(tr("editor.meshSplit.confirm"), { onSplit(generated, sides) }, enabled = valid, isPrimary = true)
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                var autoPromptOnImport by remember { mutableStateOf(AppSettings.autoDetectMeshSplitsOnImport) }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.clickable {
+                        autoPromptOnImport = !autoPromptOnImport
+                        AppSettings.autoDetectMeshSplitsOnImport = autoPromptOnImport
+                    },
+                ) {
+                    CompactCheckbox(
+                        checked = autoPromptOnImport,
+                        onCheckedChange = {
+                            autoPromptOnImport = it
+                            AppSettings.autoDetectMeshSplitsOnImport = it
+                        },
+                    )
+                    Text(
+                        tr("editor.meshSplit.promptOnImport"),
+                        style = typography.caption,
+                        color = colors.textMuted,
+                    )
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (onDismissAll != null) {
+                        CompactButton(tr("editor.meshSplit.keepAll"), onDismissAll)
+                    }
+                    CompactButton(tr("editor.meshSplit.keep"), onDismiss)
+                    CompactButton(tr("editor.meshSplit.confirm"), { onSplit(generated, sides) }, enabled = valid, isPrimary = true)
+                }
             }
         }
     }

@@ -199,6 +199,14 @@ fun WorkspaceView(
 				offer = offer,
 				onSplit = viewModel::confirmMeshSplit,
 				onDismiss = viewModel::dismissMeshSplit,
+				onDismissAll = viewModel::dismissAllMeshSplits,
+			)
+		}
+		viewModel.pendingBatchMeshSplit?.let { batchOffer ->
+			io.github.psd2live.ui.components.BatchMeshSplitDialog(
+				batchOffer = batchOffer,
+				onSplit = viewModel::confirmBatchMeshSplit,
+				onDismiss = viewModel::dismissBatchMeshSplit,
 			)
 		}
 	}

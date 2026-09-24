@@ -231,4 +231,51 @@ class MeshComponentSplitTest {
             assertTrue(before.form.controlPoints.contentEquals(after.form.controlPoints))
         }
     }
+
+    @Test fun batchSplittingMultipleLayersInSinglePass() {
+        val hairLayer = source(2).copy(id = LayerId("hair"), name = "Front Hair")
+        val shoesLayer = source(2).copy(id = LayerId("shoes"), name = "Shoes")
+        val originalSource = WorkspaceSourceArt(30, 20, listOf(hairLayer, shoesLayer), emptyList())
+        val pipeline = PSD2LivePipeline()
+        val preview = pipeline.buildPreview(originalSource)
+
+        val hairPlacement = preview.atlas.placementByLayerId.getValue("hair")
+        val hairPage = preview.atlas.pages[hairPlacement.page].image
+        val hairDrawable = preview.rig.puppet.drawables.single { preview.rig.layerIdByDrawableId[it.id.raw] == "hair" }
+        val hairPlan = assertNotNull(hairDrawable.mesh?.let {
+            MeshComponentSplit.detect(it, hairLayer, hairPlacement, hairPage.width, hairPage.height)
+        })
+        val hairPieces = hairPlan.pieces(listOf("Front Hair-r", "Front Hair-l"))
+
+        val shoesPlacement = preview.atlas.placementByLayerId.getValue("shoes")
+        val shoesPage = preview.atlas.pages[shoesPlacement.page].image
+        val shoesDrawable = preview.rig.puppet.drawables.single { preview.rig.layerIdByDrawableId[it.id.raw] == "shoes" }
+        val shoesPlan = assertNotNull(shoesDrawable.mesh?.let {
+            MeshComponentSplit.detect(it, shoesLayer, shoesPlacement, shoesPage.width, shoesPage.height)
+        })
+        val shoesPieces = shoesPlan.pieces(listOf("Shoes-r", "Shoes-l"))
+
+        val allPieces = hairPieces + shoesPieces
+        val config = preview.config.copy(
+            deletedLayerIds = setOf("hair", "shoes"),
+            rigEdits = preview.config.rigEdits.copy(splitBaselineLayerIds = setOf("hair", "shoes")),
+            parentOverrides = hairPieces.associate { it.id.raw to hairDrawable.parentDeformerId?.raw } +
+                shoesPieces.associate { it.id.raw to shoesDrawable.parentDeformerId?.raw },
+            layerOverrides = (hairPieces.mapIndexed { index, piece ->
+                piece.id.raw to LayerClassificationOverride(SemanticTag.FRONT_HAIR, if (index == 0) Side.RIGHT else Side.LEFT)
+            } + shoesPieces.mapIndexed { index, piece ->
+                piece.id.raw to LayerClassificationOverride(SemanticTag.FOOTWEAR, if (index == 0) Side.RIGHT else Side.LEFT)
+            }).toMap(),
+        )
+
+        val batchSource = WorkspaceSourceArt(30, 20, listOf(hairLayer, shoesLayer) + allPieces, emptyList())
+        val split = pipeline.buildPreviewAfterLayerSplit(preview, batchSource, config)
+
+        assertEquals(4, allPieces.size)
+        allPieces.forEach { piece ->
+            assertTrue(split.rig.layerIdByDrawableId.containsValue(piece.id.raw), "Drawable should exist for ${piece.id.raw}")
+        }
+        assertTrue(!split.rig.layerIdByDrawableId.containsValue("hair"), "Original hair layer should be replaced")
+        assertTrue(!split.rig.layerIdByDrawableId.containsValue("shoes"), "Original shoes layer should be replaced")
+    }
 }

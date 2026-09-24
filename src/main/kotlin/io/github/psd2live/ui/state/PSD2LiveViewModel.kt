@@ -74,7 +74,20 @@ class PSD2LiveViewModel : AutoCloseable {
         val preview: RigPreviewModel,
     )
 
+    internal data class LayerSplitDecision(
+        val offer: MeshSplitOffer,
+        val names: List<String>,
+        val sides: List<Side>,
+    )
+
+    internal data class BatchMeshSplitOffer(
+        val offers: List<MeshSplitOffer>,
+        val preview: RigPreviewModel,
+    )
+
     internal var pendingMeshSplit by mutableStateOf<MeshSplitOffer?>(null)
+        private set
+    internal var pendingBatchMeshSplit by mutableStateOf<BatchMeshSplitOffer?>(null)
         private set
     private val meshSplitQueue = ArrayDeque<String>()
     private val manualMeshSplitRequests = mutableSetOf<String>()
@@ -89,6 +102,7 @@ class PSD2LiveViewModel : AutoCloseable {
                 val next = reconcileCanvasPresentation(current, transform(current))
                 if (next.projectOpenGeneration != current.projectOpenGeneration) {
                     pendingMeshSplit = null
+                    pendingBatchMeshSplit = null
                     meshSplitQueue.clear()
                     manualMeshSplitRequests.clear()
                 }
@@ -106,6 +120,7 @@ class PSD2LiveViewModel : AutoCloseable {
         synchronized(stateLock) {
             if (next.projectOpenGeneration != _state.value.projectOpenGeneration) {
                 pendingMeshSplit = null
+                pendingBatchMeshSplit = null
                 meshSplitQueue.clear()
                 manualMeshSplitRequests.clear()
             }
@@ -185,10 +200,56 @@ class PSD2LiveViewModel : AutoCloseable {
 
     /** Offer one source split at a time after the new mesh is actually in the preview. */
     internal fun offerMeshSplit(layerIds: List<String>) {
+        if (layerIds.size > 1) {
+            offerImportMeshSplit(layerIds)
+            return
+        }
         layerIds.forEach { id ->
             if (id !in meshSplitQueue && pendingMeshSplit?.layerId != id) meshSplitQueue.addLast(id)
         }
         checkNextMeshSplit()
+    }
+
+    internal fun offerImportMeshSplit(layerIds: List<String>) {
+        if (!AppSettings.autoDetectMeshSplitsOnImport) return
+        val preview = _state.value.previewModel ?: return
+        meshSplitChecking = true
+        scope.launch {
+            try {
+                val candidateOffers = withContext(Dispatchers.Default) {
+                    layerIds.mapNotNull { id ->
+                        if (meshSplitWouldDiscardEdits(preview, id)) return@mapNotNull null
+                        val source = preview.analysis.source.layers.firstOrNull { it.id.raw == id }
+                            ?: preview.analysis.layers.firstOrNull { it.source.id.raw == id }?.source
+                            ?: return@mapNotNull null
+                        if (source.clipped || source.blend != org.umamo.format.art.LayerBlend.Normal ||
+                            source.channelMask != org.umamo.format.art.ChannelMask.ALL) return@mapNotNull null
+                        val drawable = preview.rig.puppet.drawables.firstOrNull {
+                            it.id.raw == id || preview.rig.layerIdByDrawableId[it.id.raw] == id
+                        } ?: return@mapNotNull null
+                        val placement = preview.atlas.placementByLayerId[id] ?: return@mapNotNull null
+                        val page = preview.atlas.pages.getOrNull(placement.page)?.image ?: return@mapNotNull null
+                        val plan = drawable.mesh?.let {
+                            MeshComponentSplit.detect(it, source, placement, page.width, page.height)
+                        } ?: return@mapNotNull null
+                        if (plan.components.size <= 1) return@mapNotNull null
+                        MeshSplitOffer(id, source.name, plan, preview)
+                    }
+                }
+                if (_state.value.previewModel === preview) {
+                    when {
+                        candidateOffers.isEmpty() -> Unit
+                        candidateOffers.size == 1 -> pendingMeshSplit = candidateOffers.first()
+                        else -> pendingBatchMeshSplit = BatchMeshSplitOffer(candidateOffers, preview)
+                    }
+                }
+            } catch (failure: Exception) {
+                if (failure is kotlinx.coroutines.CancellationException) throw failure
+                setErrorMessage(failure.message ?: failure.javaClass.simpleName)
+            } finally {
+                meshSplitChecking = false
+            }
+        }
     }
 
     internal fun requestMeshSplit(layerId: String) {
@@ -202,8 +263,19 @@ class PSD2LiveViewModel : AutoCloseable {
         checkNextMeshSplit()
     }
 
+    internal fun dismissBatchMeshSplit() {
+        pendingBatchMeshSplit = null
+    }
+
+    internal fun dismissAllMeshSplits() {
+        pendingMeshSplit = null
+        pendingBatchMeshSplit = null
+        meshSplitQueue.clear()
+        manualMeshSplitRequests.clear()
+    }
+
     private fun checkNextMeshSplit() {
-        if (meshSplitChecking || meshSplitApplying || pendingMeshSplit != null || meshSplitQueue.isEmpty()) return
+        if (meshSplitChecking || meshSplitApplying || pendingMeshSplit != null || pendingBatchMeshSplit != null || meshSplitQueue.isEmpty()) return
         val id = meshSplitQueue.removeFirst()
         val preview = _state.value.previewModel ?: return
         if (meshSplitWouldDiscardEdits(preview, id)) {
@@ -240,7 +312,7 @@ class PSD2LiveViewModel : AutoCloseable {
                 setErrorMessage(failure.message ?: failure.javaClass.simpleName)
             } finally {
                 meshSplitChecking = false
-                if (pendingMeshSplit == null) checkNextMeshSplit()
+                if (pendingMeshSplit == null && pendingBatchMeshSplit == null) checkNextMeshSplit()
             }
         }
     }
@@ -261,89 +333,170 @@ class PSD2LiveViewModel : AutoCloseable {
 
     internal fun confirmMeshSplit(names: List<String>, sides: List<Side>) {
         val offer = pendingMeshSplit ?: return
-        if (names.size != offer.plan.components.size || sides.size != names.size ||
-            names.any { it.isBlank() } || names.map(String::trim).distinct().size != names.size) return
+        confirmBatchMeshSplit(listOf(LayerSplitDecision(offer, names, sides)))
+    }
+
+    internal fun confirmBatchMeshSplit(decisions: List<LayerSplitDecision>) {
+        val batchOffer = pendingBatchMeshSplit
+        val singleOffer = pendingMeshSplit
+        val basePreview = batchOffer?.preview ?: singleOffer?.preview ?: decisions.firstOrNull()?.offer?.preview ?: return
+        if (decisions.isEmpty()) {
+            pendingBatchMeshSplit = null
+            pendingMeshSplit = null
+            return
+        }
+        val validDecisions = decisions.filter { d ->
+            d.names.size == d.offer.plan.components.size &&
+            d.sides.size == d.names.size &&
+            d.names.all { it.isNotBlank() } &&
+            d.names.map(String::trim).distinct().size == d.names.size
+        }
+        if (validDecisions.isEmpty()) return
+        pendingBatchMeshSplit = null
         pendingMeshSplit = null
         meshSplitApplying = true
         scope.launch {
             try {
                 val current = _state.value
-                if (current.previewModel !== offer.preview) return@launch
-                val original = offer.preview.analysis.source.layers.firstOrNull { it.id.raw == offer.layerId }
-                    ?: offer.preview.analysis.layers.first { it.source.id.raw == offer.layerId }.source
-                val pieces = withContext(Dispatchers.Default) { offer.plan.pieces(names) }
-                val ids = pieces.map { it.id.raw }
-                val classified = offer.preview.analysis.layers.firstOrNull { it.source.id.raw == offer.layerId }
-                val inherited = current.layerOverrides[offer.layerId] ?: classified?.semantic?.let {
-                    LayerClassificationOverride(it.type, it.tag, it.side, it.parameter, it.switchId)
-                } ?: LayerClassificationOverride()
-                val overrides = current.layerOverrides + ids.mapIndexed { index, id ->
-                    id to inherited.copy(side = if (sides[index] == Side.NONE) inherited.side else sides[index])
+                if (current.previewModel !== basePreview) return@launch
+
+                val generatedPiecesByLayer = withContext(Dispatchers.Default) {
+                    validDecisions.associate { d ->
+                        d.offer.layerId to d.offer.plan.pieces(d.names)
+                    }
                 }
-                val visibility = current.layerVisibility + ids.associateWith {
-                    current.layerVisibility[offer.layerId] ?: original.visible
+
+                val allNewPieces = generatedPiecesByLayer.values.flatten()
+                val allNewIds = allNewPieces.map { it.id.raw }
+                val splitLayerIds = validDecisions.map { it.offer.layerId }.toSet()
+
+                var updatedOverrides = current.layerOverrides
+                var updatedVisibility = current.layerVisibility
+                var updatedParents = current.parentOverrides
+                var updatedMeshOverrides = current.meshOverrides
+                var updatedDrawOrders = current.drawOrderOverrides
+
+                for (decision in validDecisions) {
+                    val offer = decision.offer
+                    val pieces = generatedPiecesByLayer[offer.layerId] ?: continue
+                    val ids = pieces.map { it.id.raw }
+                    val original = basePreview.analysis.source.layers.firstOrNull { it.id.raw == offer.layerId }
+                        ?: basePreview.analysis.layers.first { it.source.id.raw == offer.layerId }.source
+
+                    val classified = basePreview.analysis.layers.firstOrNull { it.source.id.raw == offer.layerId }
+                    val inherited = current.layerOverrides[offer.layerId] ?: classified?.semantic?.let {
+                        LayerClassificationOverride(it.type, it.tag, it.side, it.parameter, it.switchId)
+                    } ?: LayerClassificationOverride()
+
+                    updatedOverrides = updatedOverrides + ids.mapIndexed { index, id ->
+                        val side = decision.sides[index]
+                        id to inherited.copy(side = if (side == Side.NONE) inherited.side else side)
+                    }
+
+                    updatedVisibility = updatedVisibility + ids.associateWith {
+                        current.layerVisibility[offer.layerId] ?: original.visible
+                    }
+
+                    val oldDrawable = basePreview.rig.puppet.drawables.firstOrNull {
+                        it.id.raw == offer.layerId || basePreview.rig.layerIdByDrawableId[it.id.raw] == offer.layerId
+                    }
+                    val oldParentId = if (offer.layerId in current.parentOverrides) current.parentOverrides[offer.layerId]
+                        else oldDrawable?.parentDeformerId?.raw
+                    updatedParents = updatedParents + ids.associateWith { oldParentId }
+
+                    current.meshOverrides[offer.layerId]?.let { meshOv ->
+                        updatedMeshOverrides = updatedMeshOverrides + ids.associateWith { meshOv }
+                    }
+                    current.drawOrderOverrides[offer.layerId]?.let { drawOv ->
+                        updatedDrawOrders = updatedDrawOrders + ids.associateWith { drawOv }
+                    }
                 }
-                val oldDrawable = offer.preview.rig.puppet.drawables.firstOrNull {
-                    it.id.raw == offer.layerId || offer.preview.rig.layerIdByDrawableId[it.id.raw] == offer.layerId
+
+                val deleted = current.deletedLayerIds + splitLayerIds
+
+                val virtualOwnerMap = splitLayerIds.associateWith { splitId ->
+                    val originalIsInSource = basePreview.analysis.source.layers.any { it.id.raw == splitId }
+                    if (originalIsInSource) null else basePreview.analysis.source.layers
+                        .map { it.id.raw }.filter { splitId.startsWith("$it:") }.maxByOrNull(String::length)
                 }
-                val oldParentId = if (offer.layerId in current.parentOverrides) current.parentOverrides[offer.layerId]
-                    else oldDrawable?.parentDeformerId?.raw
-                val parents = current.parentOverrides + ids.associateWith { oldParentId }
-                val meshOverrides = current.meshOverrides + ids.mapNotNull { id ->
-                    current.meshOverrides[offer.layerId]?.let { id to it }
-                }.toMap()
-                val drawOrders = current.drawOrderOverrides + ids.mapNotNull { id ->
-                    current.drawOrderOverrides[offer.layerId]?.let { id to it }
-                }.toMap()
-                val deleted = current.deletedLayerIds + offer.layerId
-                val originalIsInSource = offer.preview.analysis.source.layers.any { it.id.raw == offer.layerId }
-                val virtualOwnerId = if (originalIsInSource) null else offer.preview.analysis.source.layers
-                    .map { it.id.raw }.filter { offer.layerId.startsWith("$it:") }.maxByOrNull(String::length)
-                val sourceLayers = offer.preview.analysis.source.layers.flatMap { layer ->
-                    if (layer.id.raw == offer.layerId || layer.id.raw == virtualOwnerId) listOf(layer) + pieces
-                    else listOf(layer)
-                }.let { if (originalIsInSource || virtualOwnerId != null) it else it + pieces }.mapIndexed { index, layer ->
-                    io.github.psd2live.agent.WorkspaceSourceLayer.copyOf(layer,
-                        offer.preview.analysis.source.layers.size + pieces.size - index)
+
+                val injectedLayerIds = mutableSetOf<String>()
+                val expandedLayers = basePreview.analysis.source.layers.flatMap { layer ->
+                    val matchingSplits = splitLayerIds.filter { splitId ->
+                        layer.id.raw == splitId || layer.id.raw == virtualOwnerMap[splitId]
+                    }
+                    if (matchingSplits.isNotEmpty()) {
+                        val piecesToInject = matchingSplits.flatMap { splitId ->
+                            if (injectedLayerIds.add(splitId)) {
+                                generatedPiecesByLayer[splitId].orEmpty()
+                            } else emptyList()
+                        }
+                        listOf(layer) + piecesToInject
+                    } else {
+                        listOf(layer)
+                    }
                 }
+
+                val remainingPieces = splitLayerIds.filter { it !in injectedLayerIds }.flatMap {
+                    generatedPiecesByLayer[it].orEmpty()
+                }
+                val allCombinedLayers = expandedLayers + remainingPieces
+
+                val reorderedLayers = allCombinedLayers.mapIndexed { index, layer ->
+                    io.github.psd2live.agent.WorkspaceSourceLayer.copyOf(
+                        layer,
+                        allCombinedLayers.size - index
+                    )
+                }
+
                 val newSource = io.github.psd2live.agent.WorkspaceSourceArt(
-                    offer.preview.analysis.source.widthPx, offer.preview.analysis.source.heightPx,
-                    sourceLayers, offer.preview.analysis.source.groups)
+                    basePreview.analysis.source.widthPx,
+                    basePreview.analysis.source.heightPx,
+                    reorderedLayers,
+                    basePreview.analysis.source.groups
+                )
+
                 val baselineIds = current.rigEdits.splitBaselineLayerIds.ifEmpty {
-                    (offer.preview.analysis.source.layers.map { it.id.raw }
+                    (basePreview.analysis.source.layers.map { it.id.raw }
                         .filterNot { it in current.deletedLayerIds } +
-                        offer.preview.analysis.layers.map { it.source.id.raw }).toSet()
+                        basePreview.analysis.layers.map { it.source.id.raw }).toSet()
                 }
+
                 val config = current.buildConfig().copy(
                     deletedLayerIds = deleted,
-                    layerOverrides = overrides,
-                    layerVisibility = visibility,
-                    parentOverrides = parents,
-                    meshOverrides = meshOverrides,
-                    drawOrderOverrides = drawOrders,
+                    layerOverrides = updatedOverrides,
+                    layerVisibility = updatedVisibility,
+                    parentOverrides = updatedParents,
+                    meshOverrides = updatedMeshOverrides,
+                    drawOrderOverrides = updatedDrawOrders,
                     rigEdits = current.rigEdits.copy(splitBaselineLayerIds = baselineIds),
                 )
+
                 val built = withContext(Dispatchers.Default) {
-                    pipeline.buildPreviewAfterLayerSplit(offer.preview, newSource, config)
+                    pipeline.buildPreviewAfterLayerSplit(basePreview, newSource, config)
                 }
-                if (_state.value.previewModel !== offer.preview) return@launch
+                if (_state.value.previewModel !== basePreview) return@launch
+
                 updateState { it.copy(
                     deletedLayerIds = deleted,
-                    layerOverrides = overrides,
-                    layerVisibility = visibility,
-                    parentOverrides = parents,
-                    meshOverrides = meshOverrides,
-                    drawOrderOverrides = drawOrders,
-                    selectedLayerId = ids.firstOrNull(),
+                    layerOverrides = updatedOverrides,
+                    layerVisibility = updatedVisibility,
+                    parentOverrides = updatedParents,
+                    meshOverrides = updatedMeshOverrides,
+                    drawOrderOverrides = updatedDrawOrders,
+                    selectedLayerId = allNewIds.firstOrNull(),
                 ) }
-                applyCommittedPaint(built, tr("canvas.hierarchy.meshSplitDone", ids.size))
-                selectLayer(ids.firstOrNull())
+
+                val summary = if (validDecisions.size == 1) tr("canvas.hierarchy.meshSplitDone", allNewIds.size)
+                    else tr("editor.meshSplit.batchDone", validDecisions.size, allNewIds.size)
+                applyCommittedPaint(built, summary)
+                selectLayer(allNewIds.firstOrNull())
             } catch (failure: Exception) {
                 if (failure is kotlinx.coroutines.CancellationException) throw failure
                 setErrorMessage(failure.message ?: failure.javaClass.simpleName)
             } finally {
                 meshSplitApplying = false
-                checkNextMeshSplit()
+                if (pendingMeshSplit == null && pendingBatchMeshSplit == null) checkNextMeshSplit()
             }
         }
     }
@@ -1802,7 +1955,8 @@ class PSD2LiveViewModel : AutoCloseable {
 	 */
 	fun resetInteractionPrefs() {
 		AppSettings.clickToSelectLayer = true
-		updateState { it.copy(clickToSelectLayer = true) }
+		AppSettings.autoDetectMeshSplitsOnImport = true
+		updateState { it.copy(clickToSelectLayer = true, autoDetectMeshSplitsOnImport = true) }
 	}
 
 	fun openSettingsDialog() {
@@ -2443,6 +2597,12 @@ class PSD2LiveViewModel : AutoCloseable {
 	fun setClickToSelectLayer(enabled: Boolean) {
 		AppSettings.clickToSelectLayer = enabled
 		updateState { it.copy(clickToSelectLayer = enabled) }
+		markWorkspaceChanged()
+	}
+
+	fun setAutoDetectMeshSplitsOnImport(enabled: Boolean) {
+		AppSettings.autoDetectMeshSplitsOnImport = enabled
+		updateState { it.copy(autoDetectMeshSplitsOnImport = enabled) }
 		markWorkspaceChanged()
 	}
 
@@ -3256,7 +3416,7 @@ class PSD2LiveViewModel : AutoCloseable {
                 resetCanvasPaintSessions()
                 (agentWorkspace as? io.github.psd2live.agent.ViewModelAgentWorkspace)?.importedPsd()
                 updateState { it.copy(isAnalyzing = false) }
-				offerMeshSplit(_state.value.analysis?.source?.layers.orEmpty().map { it.id.raw })
+				offerImportMeshSplit(_state.value.analysis?.source?.layers.orEmpty().map { it.id.raw })
 			} catch (failure: Throwable) {
                 if (failure is kotlinx.coroutines.CancellationException) throw failure
 				val detail = failure.message ?: failure.javaClass.simpleName

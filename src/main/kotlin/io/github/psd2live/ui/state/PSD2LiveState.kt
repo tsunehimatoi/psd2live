@@ -351,6 +351,7 @@ data class PSD2LiveState(
 	val selectedLayerIds: Set<String> = emptySet(),
 	val selectedDeformerId: String? = null,
 	val clickToSelectLayer: Boolean = AppSettings.clickToSelectLayer,
+	val autoDetectMeshSplitsOnImport: Boolean = AppSettings.autoDetectMeshSplitsOnImport,
 	val hoveredLayerId: String? = null,
 	val hoveredDeformerId: String? = null,
 	val layerVisibility: Map<String, Boolean> = emptyMap(),
