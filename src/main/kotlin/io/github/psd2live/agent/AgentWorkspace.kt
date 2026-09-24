@@ -43,6 +43,9 @@ data class AgentLayerSnapshot(
 	val order: Int,
 	val semanticTag: String,
 	val side: String,
+	val classificationType: String = "preset",
+	val parameterBinding: String = "",
+	val switchId: Int = 0,
 	val confidence: Float,
 	/** Full raster placement on the source canvas. */
 	val bounds: Bounds,
@@ -412,6 +415,16 @@ enum class MutationAuthor(val historyActor: String, val logSource: io.github.psd
 }
 
 interface AgentWorkspace {
+    fun projectSettings(): kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap())
+    suspend fun updateProjectSettings(state: String, changes: kotlinx.serialization.json.JsonObject): AgentWorkspaceMutationResult =
+        throw UnsupportedOperationException("Project settings are unavailable")
+    suspend fun exportModel(state: String, outputDirectory: String): kotlinx.serialization.json.JsonObject =
+        throw UnsupportedOperationException("Model export is unavailable")
+    suspend fun classifyLayer(
+        layerId: String,
+        classification: io.github.psd2live.core.LayerClassificationOverride,
+        expectedHead: String,
+    ): AgentWorkspaceMutationResult = throw UnsupportedOperationException("Layer classification is unavailable")
     suspend fun observeAuthoring(arguments: kotlinx.serialization.json.JsonObject): AgentWorkflowResult =
         throw UnsupportedOperationException("Version/motion observation unavailable")
     suspend fun createArtwork(arguments: kotlinx.serialization.json.JsonObject): AgentWorkspaceMutationResult =
@@ -435,6 +448,8 @@ interface AgentWorkspace {
     fun listPhysics(): List<io.github.psd2live.core.RigPhysicsEdit> = emptyList()
     suspend fun createWarp(edit: io.github.psd2live.core.RigWarpEdit, expectedHead: String, taskId: String?): AgentWorkspaceMutationResult = throw UnsupportedOperationException("Warp creation is unavailable")
     suspend fun putPhysics(edit: io.github.psd2live.core.RigPhysicsEdit, expectedHead: String, taskId: String?): AgentWorkspaceMutationResult = throw UnsupportedOperationException("Physics editing is unavailable")
+    suspend fun deletePhysics(id: String, expectedHead: String): AgentWorkspaceMutationResult =
+        throw UnsupportedOperationException("Physics deletion is unavailable")
 
     suspend fun saveProject(): AgentWorkspaceMutationResult = throw UnsupportedOperationException("Project saving is not available")
     suspend fun checkpoint(summary: String): AgentWorkspaceMutationResult = throw UnsupportedOperationException("History checkpoints are not available")

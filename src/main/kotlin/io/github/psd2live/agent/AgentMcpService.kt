@@ -744,6 +744,17 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace, legacyTools: Boolea
     } }
 
     server.addTool(
+        name = "physics_delete",
+        description = "Delete a custom physics group by ID. A built-in preset replaced by this group becomes active again when enabled.",
+        inputSchema = ToolSchema(properties = buildJsonObject {
+            putJsonObject("id") { put("type", "string") }
+            putJsonObject("expected_history_head_node_id") { put("type", "string") }
+        }, required = listOf("id", "expected_history_head_node_id")), toolAnnotations = MUTATING,
+    ) { request -> mutationResult {
+        workspace.deletePhysics(request.requiredString("id"), request.requiredString("expected_history_head_node_id")).toJson()
+    } }
+
+    server.addTool(
         name = "asset_inspect",
         description = "Inspect actual staged PNG pixels, spatial placement and transparency counts. Use for quick usability/alpha diagnosis, then trial assembly. Overlapping hair, minor tone differences and hidden-root/edge variation are not automatic rejection reasons; judge depth, seams and intended motion in composition.",
         inputSchema = ToolSchema(properties = buildJsonObject { putJsonObject("asset_id") { put("type", "string") } }, required = listOf("asset_id")),
@@ -1738,6 +1749,9 @@ private fun AgentLayerSnapshot.toJson(): JsonObject = buildJsonObject {
 	put("order", order)
 	put("semanticTag", semanticTag)
 	put("side", side)
+	put("classificationType", classificationType)
+	put("parameterBinding", parameterBinding)
+	put("switchId", switchId)
 	put("confidence", confidence)
 	put("visible", visible)
 	put("deleted", deleted)

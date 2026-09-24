@@ -2,7 +2,7 @@
 
 [文档目录](../../README.md) · [设计与验收](AGENT_DESIGN.md) · [能力实测](../../../STATUS.md)
 
-本页以 [AgentAuthoringTools.kt](../../../src/main/kotlin/io/github/psd2live/agent/AgentAuthoringTools.kt) 的公开注册为准。当前是 **11 个工具**。旧文档中的 `project_get_state`、`rig_transform`、`asset_import_png` 等是内部适配名称，不能直接当作当前公开工具调用。
+本页以 [AgentAuthoringTools.kt](../../../src/main/kotlin/io/github/psd2live/agent/AgentAuthoringTools.kt) 的公开注册为准。当前是 **16 个工具**。旧文档中的 `project_get_state`、`rig_transform`、`asset_import_png` 等是内部适配名称，不能直接当作当前公开工具调用。
 
 ## 接入
 
@@ -18,15 +18,20 @@ Token 允许编辑当前工作区，应保留在本机宿主配置中。工具�
 
 | 工具 | 请求结构 | 用途 / 分支 |
 | --- | --- | --- |
-| `inspect` | 顶层 `scope` / `target` | `project`、`objects`、`layers`、`parameters`、`physics`、`paths`；单对象摘要和继承链 |
+| `inspect` | 顶层 `scope` / `target` | `project`、`settings`、`objects`、`layers`、`parameters`、`physics`、`paths`；单对象摘要和继承链 |
+| `layer` | 顶层 `state`、`layer_id` 及分类字段 | 更新既有源图层的类型、部件、侧别、参数关联和切换 ID；省略的字段保持原值 |
+| `settings` | 顶层 `state`、`changes` | 修改自动 Rig、网格、贴图、高清化、物理预设、动作和导出配置；先用 `inspect.settings` 读取 |
+| `export` | 顶层 `state`、`output_directory` | 导出当前工程的模型文件族，返回文件与警告；目录需为绝对路径 |
 | `deform` | 顶层 `state`、`changes` | 在明确参数键上编辑 Mesh / Warp 连续形状 |
 | `form` | 顶层 `state`、`changes` | `op: seed/copy/set/delete`，编辑关键形集合、标量 / 颜色通道与旋转形状 |
 | `rig` | 顶层 `state`、`name`、`targets` | 为共用父 Warp 的 Mesh 创建独立 Warp |
 | `appearance` | 顶层 `state`、`edits` | 名称、显隐、结构等有序编辑 |
+| `structure` | 顶层 `state`、`edits` | 静态对象属性、变形器删除与 Part 归属、参数文件夹和 XY 关联 |
+| `canvas` | `request.mode` | `warp/rotation/glue/topology`，调用画布同源且可重放的几何命令 |
 | `view` | `request.mode` | `model/layer/context/poses/coverage/compare/motion` |
-| `parameter` | `request.mode` | `create/update`，当前没有公开 delete 分支 |
+| `parameter` | `request.mode` | `create/update/delete`；删除时在旧默认值处折叠关键形轴 |
 | `asset` | `request.mode` | `create/split/reference/import/register/preview/add/place/finalize/inspect/reprocess/remove` |
-| `physics` | `request.mode` | `put`，配置简化输入→输出摆锤组 |
+| `physics` | `request.mode` | `put/delete`，创建、替换或删除自定义简化摆锤组 |
 | `path` | `request.mode` | `get/list/preview/put/delete/deform` |
 | `revision` | `request.mode` | `save/checkpoint/list/restore` |
 
@@ -41,6 +46,14 @@ Token 允许编辑当前工作区，应保留在本机宿主配置中。工具�
 ```json
 {"scope":"project"}
 ```
+
+图层分类先读 `inspect.layers` 返回的 `type/role/side/parameter/switch_id`，再按需更新。例如将已有素材改成切换差分：
+
+```json
+{"state":"current-history-head","layer_id":"actualLayerId","type":"switch","parameter":"expression","switch_id":1}
+```
+
+这三个字段对应 UI 图层表格；`parameter.update` 只修改 Cubism 参数定义，不改变源图层的分类或差分关联。
 
 按需查询，再读单对象：
 
@@ -86,7 +99,7 @@ Token 允许编辑当前工作区，应保留在本机宿主配置中。工具�
 - 推进模型历史的写调用需要最新 `state`，成功返回后续调用可用的状态。过期时重新检查并协调编辑，不盲目覆盖。
 - 批内编辑先验证与重建，成功后提交；一次 `deform` / `form` 可包含 1–128 条更改，单条形变可含 1–16 个操作。
 - 普通无变化写入不应制造历史节点；`checkpoint` 是显式留点的例外。恢复是写操作，会移动 HEAD；从旧节点继续编辑形成分支，原分支保留。
-- `revision.save` 保存到 UI 已选择的工程位置。暂存素材不等于已经加入模型，也不等于已保存到磁盘。
+- `revision.save` 保存到 UI 已选择的工程位置。`export` 写出交付文件，但不替代工程保存。暂存素材不等于已经加入模型，也不等于已保存到磁盘。
 - 超时或断线后用 `inspect` 和 `revision.list` 检查是否已提交，再决定下一步。
 - 多工具跨调用事务、结构化 `history_diff` 和 `task_*` 执行控制未作为当前公开接口提供。
 

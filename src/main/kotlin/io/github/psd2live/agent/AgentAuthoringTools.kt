@@ -1,6 +1,10 @@
 package io.github.psd2live.agent
 
 import io.github.psd2live.core.RigWarpEdit
+import io.github.psd2live.core.LayerClassificationOverride
+import io.github.psd2live.core.LayerType
+import io.github.psd2live.core.SemanticTag
+import io.github.psd2live.core.Side
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.types.*
 import kotlinx.serialization.json.*
@@ -30,7 +34,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
     }
 
     tool("inspect", "Read project context, find objects/layers/parameters, or inspect one kind:id's direct axes, channels and parent. No point arrays. Query and page before expanding.",
-        buildJsonObject { put("scope", choices("project", "objects", "layers", "parameters", "physics", "paths")); put("query", string()); put("target", string()); put("offset", integer(0)); put("limit", integer(1, 64)) }) { a ->
+        buildJsonObject { put("scope", choices("project", "settings", "objects", "layers", "parameters", "physics", "paths")); put("query", string()); put("target", string()); put("offset", integer(0)); put("limit", integer(1, 64)) }) { a ->
         val snapshot = workspace.snapshot()
         val state = snapshot.historyHeadNodeId
         val target = a["target"]?.jsonPrimitive?.content
@@ -90,6 +94,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
                     snapshot.persistenceError?.let { put("persistenceError", it) }
                 }
                 "physics" -> put("groups", JsonArray(workspace.listPhysics().map { it.toJson() }))
+                "settings" -> put("settings", workspace.projectSettings())
                 else -> {
                     val scope = a.getValue("scope").jsonPrimitive.content
                     val items = when (scope) {
@@ -97,6 +102,8 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
                         "layers" -> snapshot.layers.filterNot { it.deleted }.map { layer -> buildJsonObject {
                             put("id", layer.id); put("name", layer.sourceName); put("visible", layer.visible)
                             put("role", layer.semanticTag); put("side", layer.side)
+                            put("type", layer.classificationType); put("parameter", layer.parameterBinding)
+                            put("switch_id", layer.switchId)
                             putJsonArray("bounds") { listOf(layer.opaqueBounds.left, layer.opaqueBounds.top, layer.opaqueBounds.right, layer.opaqueBounds.bottom).forEach { add(JsonPrimitive(it)) } }
                         } }
                         "parameters" -> snapshot.parameters.map { p -> buildJsonObject { put("id", p.id); put("name", p.name); put("min", p.min); put("max", p.max); put("default", p.default) } }
@@ -113,6 +120,59 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
                 }
             }
         }
+    }
+
+    tool("layer", "Classify an existing source layer using the same fields as the UI Layers table. Omitted fields retain their current values. This rebuilds the generated rig and commits a recoverable history edit.",
+        buildJsonObject {
+            put("state", string()); put("layer_id", string())
+            put("type", choices(*LayerType.entries.map { it.name.lowercase() }.toTypedArray()))
+            put("role", choices(*SemanticTag.entries.map { it.name.lowercase() }.toTypedArray()))
+            put("side", choices(*Side.entries.map { it.name.lowercase() }.toTypedArray()))
+            put("parameter", string()); put("switch_id", integer(0))
+        }, listOf("state", "layer_id"), true) { a ->
+        require(listOf("type", "role", "side", "parameter", "switch_id").any { it in a }) { "Provide at least one classification field" }
+        val id = a.text("layer_id")
+        val current = workspace.snapshot().layers.firstOrNull { it.id == id && !it.deleted }
+            ?: throw IllegalArgumentException("Layer not found: $id")
+        val classification = LayerClassificationOverride(
+            type = LayerType.valueOf((a["type"]?.jsonPrimitive?.content ?: current.classificationType).uppercase()),
+            tag = SemanticTag.valueOf((a["role"]?.jsonPrimitive?.content ?: current.semanticTag).uppercase()),
+            side = Side.valueOf((a["side"]?.jsonPrimitive?.content ?: current.side).uppercase()),
+            parameter = a["parameter"]?.jsonPrimitive?.content ?: current.parameterBinding,
+            switchId = a["switch_id"]?.jsonPrimitive?.int ?: current.switchId,
+        )
+        val result = workspace.classifyLayer(id, classification, a.text("state"))
+        buildJsonObject {
+            put("state", result.historyNodeId)
+            put("layer_id", id)
+            if (!result.applied) put("applied", false)
+        }
+    }
+
+    val upscaleSettings = objectSchema(buildJsonObject {
+        put("scale", integer(1, 4))
+        put("python", string()); put("nunifDirectory", string()); put("modelDirectory", string())
+        put("tileSize", integer(64, 512)); put("noiseLevel", integer(-1, 3)); put("neuralAlpha", boolean())
+    })
+    val projectSettingFields = objectSchema(buildJsonObject {
+        listOf("atlasSize", "meshSpacing", "texturePadding", "alphaThreshold").forEach { put(it, integer(0)) }
+        listOf("meshOuterMargin", "meshInnerMargin", "meshMaxEdgeDistance", "meshInteriorDensity",
+            "headStrength", "bodyStrength", "mouthThickness", "exportPixelsPerUnit").forEach { put(it, number()) }
+        listOf("meshOnly", "generateDeformers", "featureDisplacementEnabled", "mouthOutlineEnabled",
+            "generatePhysics", "physicsFrontHair", "physicsBackHair", "physicsEyeJelly",
+            "exportMotions", "motionIdle", "motionBlink", "motionNod", "motionShake",
+            "exportCmo3", "exportMoc3", "exportJson", "exportHiddenParts", "exportHiddenDrawables",
+            "exportGuideImageParts", "exportIncludePhysics", "exportIncludeUserData", "exportIncludeDisplayInfo").forEach { put(it, boolean()) }
+        put("mouthShape", choices("flat", "smile", "w", "custom"))
+        put("runtimeTarget", string()); put("textureUpscale", upscaleSettings)
+    })
+    tool("settings", "Update the project generation/export configuration used by the UI. Inspect scope=settings first. Rebuilds the model and commits history; textureUpscale fields are merged with the existing configuration.",
+        buildJsonObject { put("state", string()); put("changes", projectSettingFields) }, listOf("state", "changes"), true) { a ->
+        workspace.updateProjectSettings(a.text("state"), a.getValue("changes").jsonObject).compact()
+    }
+    tool("export", "Export the current source artwork and authored rig to the model file family at an absolute output directory. Uses inspect.settings export options and returns written files and warnings. Does not advance history.",
+        buildJsonObject { put("state", string()); put("output_directory", string()) }, listOf("state", "output_directory"), true) { a ->
+        workspace.exportModel(a.text("state"), a.text("output_directory"))
     }
 
     val key = buildJsonObject { put("type", "object"); put("minProperties", 1); put("additionalProperties", number()) }
@@ -199,14 +259,100 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
     }
     adapted("view", "Observe model poses with a fixed camera, source layers or coverage. poses returns one labeled sheet; shared parameters are overridden per tile. Reuse canvas rectangles across comparisons. Static sampling does not simulate physics. Inspect only relevant regions; images are not proof of unobserved poses.",
         mapOf("compare" to "view_compare_history", "motion" to "view_sample_motion", "poses" to "view_render_poses", "model" to "view_render_model", "layer" to "view_render_layer", "context" to "view_render_context", "coverage" to "view_check_coverage"), false)
-    adapted("parameter", "Create or change a parameter definition. A parameter alone produces no motion: form/deform author its object bindings and keys. IDs and ranges come from inspect.",
-        mapOf("create" to "parameter_create", "update" to "parameter_update"), true)
+    adapted("parameter", "Create, update, or delete a parameter definition. A parameter alone produces no motion: form/deform author its object bindings and keys. Deleting collapses keyed axes at the prior default.",
+        mapOf("create" to "parameter_create", "update" to "parameter_update", "delete" to "parameter_delete"), true)
     adapted("asset", "Use local PNG paths from your host image generator. create builds an empty workspace from placed source layers, bottom-to-top. split partitions a source layer into polygon-inside/remainder (canvas pixels), before motion authoring; hidden artwork is not generated. For additions prepare a reference, import/register PNG, preview, add. Reference/view handles preserve placement. Generated art is not proof of model motion.",
         mapOf("create" to "asset_create_artwork", "split" to "asset_split_artwork", "reference" to "asset_prepare_reference", "import" to "asset_import_png", "register" to "asset_register", "preview" to "asset_preview_composite", "add" to "layer_add_from_asset", "place" to "layer_set_placement", "finalize" to "layer_finalize_placement", "inspect" to "asset_inspect", "reprocess" to "asset_reprocess", "remove" to "layer_soft_delete"), true)
-    adapted("physics", "Configure an independent input→output parameter pendulum. Author the output parameter's endpoint forms first. This edits physics; static view poses do not establish settling or natural motion.", mapOf("put" to "physics_put"), true)
+    adapted("physics", "Create, replace, or delete an independent input→output parameter pendulum. Author the output parameter's endpoint forms first. Static view poses do not establish settling or natural motion.", mapOf("put" to "physics_put", "delete" to "physics_delete"), true)
     tool("appearance", "Rename, show/hide or reorganize objects in one ordered edit. For an animated switch use form opacity keys instead of static visibility. Local reparenting changes inherited motion.",
         buildJsonObject { put("state", string()); put("edits", legacy.getValue("object_edit").tool.inputSchema.properties!!.getValue("edits")) }, listOf("state", "edits"), true) { a ->
         workspace.authorRig(a.text("state"), buildJsonArray { add(buildJsonObject { put("op", "structure"); put("edits", a.getValue("edits")) }) }, MutationAuthor.AGENT).compact()
+    }
+    val structureEdit = objectSchema(buildJsonObject {
+        put("action", choices("static", "part", "delete", "create", "rename", "move", "link", "open", "color"))
+        put("kind", choices("mesh", "warp", "rotation", "part", "parameter", "param_group"))
+        put("id", string()); put("name", string())
+        // Null means the root of the corresponding hierarchy; the domain editor validates each action.
+        put("parent_id", buildJsonObject {}); put("before_id", buildJsonObject {})
+        put("before_kind", choices("mesh", "part", "parameter", "param_group"))
+        put("part_id", buildJsonObject {}); put("space", choices("local"))
+        put("opacity", number()); put("draw_order", number())
+        put("multiply_color", vector(3)); put("screen_color", vector(3))
+        put("blend_mode", string()); put("masked_by", arraySchema(string(), 0, 64))
+        put("invert_mask", boolean()); put("culling", boolean())
+        put("selectable", boolean()); put("quad", boolean())
+        put("partner_id", string()); put("linked", boolean()); put("open", boolean())
+        put("label_type", string()); put("color", integer(Int.MIN_VALUE))
+    }, listOf("action", "kind", "id"))
+    tool("structure", "Edit static object properties, delete deformers, assign a deformer Part, or organize parameter folders and 2D links. Edits are ordered and use the same persistent structure journal as the UI. Parameter definitions use parameter instead.",
+        buildJsonObject { put("state", string()); put("edits", arraySchema(structureEdit, 1, 128)) }, listOf("state", "edits"), true) { a ->
+        val edits = a.getValue("edits").jsonArray
+        require(edits.none { edit ->
+            val item = edit.jsonObject
+            item["kind"]?.jsonPrimitive?.content == "parameter" &&
+                item["action"]?.jsonPrimitive?.content in setOf("create", "update", "delete")
+        }) { "Use parameter for parameter definitions" }
+        workspace.authorRig(a.text("state"), buildJsonArray {
+            add(buildJsonObject { put("op", "structure"); put("edits", edits) })
+        }, MutationAuthor.AGENT).compact()
+    }
+    val canvasBounds = objectSchema(buildJsonObject {
+        listOf("x", "y", "w", "h").forEach { put(it, number()) }
+    }, listOf("x", "y", "w", "h"))
+    val canvasPose = buildJsonObject { put("type", "object"); put("additionalProperties", number()) }
+    val canvasBranches = listOf(
+        variant("mode", "warp", buildJsonObject {
+            put("state", string()); put("id", string()); put("name", string())
+            put("meshes", arraySchema(string(), 0, 64))
+            put("add_to", choices("parent_of_selected", "parent_of_deformer", "child_of_deformer", "specify_parent"))
+            put("deformer_id", string()); put("parent_id", string()); put("part_id", string())
+            put("bounds", canvasBounds); put("size_strategy", choices("selection_bounds", "keyform_envelope", "center_align"))
+            put("rows", integer(1, 32)); put("columns", integer(1, 32))
+        }, listOf("state", "name", "meshes")),
+        variant("mode", "rotation", buildJsonObject {
+            put("state", string()); put("id", string()); put("name", string())
+            put("meshes", arraySchema(string(), 0, 64))
+            put("add_to", choices("parent_of_selected", "parent_of_deformer"))
+            put("deformer_id", string()); put("part_id", string())
+            put("origin", vector(2)); put("angle", number()); put("handle_length", number())
+            put("preservePose", boolean())
+        }, listOf("state", "name")),
+        variant("mode", "glue", buildJsonObject {
+            put("state", string()); put("id", string()); put("mesh_a", string()); put("mesh_b", string())
+            put("pose", canvasPose); put("distance", number())
+        }, listOf("state", "mesh_a", "mesh_b")),
+        variant("mode", "topology", buildJsonObject {
+            put("state", string()); put("id", string())
+            put("action", choices("merge", "duplicate", "connect", "delete", "subdivide", "split", "knife"))
+            put("vertices", arraySchema(integer(0), 0, 65536))
+            put("anchors", arraySchema(objectSchema(buildJsonObject {
+                put("vertex", integer(0)); put("x", number()); put("y", number())
+            }), 0, 4096))
+            put("edges", arraySchema(arraySchema(integer(0), 2, 2), 0, 65536))
+        }, listOf("state", "id", "action", "vertices")),
+    )
+    tool("canvas", "Use the canvas editor's persisted algorithms to create a Warp or Rotation, pair Glue vertices at a pose, or edit mesh topology. Topology indices are from the current mesh and require fresh state. Creation accepts an optional stable ID; otherwise one is generated.",
+        buildJsonObject { put("request", oneOf(canvasBranches)) }, listOf("request"), true) { a ->
+        val input = a.getValue("request").jsonObject
+        validateAuthoringSchema(input, oneOf(canvasBranches))
+        val mode = input.text("mode")
+        val id = input["id"]?.jsonPrimitive?.content ?: "Agent${mode.replaceFirstChar(Char::uppercase)}_${UUID.randomUUID().toString().take(8)}"
+        val op = when (mode) {
+            "warp" -> "canvas_create_warp"
+            "rotation" -> "canvas_create_rotation"
+            "glue" -> "canvas_create_glue"
+            "topology" -> "canvas_topology"
+            else -> error("Unknown canvas mode")
+        }
+        val command = buildJsonObject {
+            put("op", op); put("id", id)
+            input.forEach { (key, value) -> if (key !in setOf("mode", "state", "id")) put(key, value) }
+        }
+        val result = workspace.authorRig(input.text("state"), buildJsonArray { add(command) }, MutationAuthor.AGENT)
+        buildJsonObject {
+            put("state", result.historyNodeId); put("id", id)
+            if (!result.applied) put("applied", false)
+        }
     }
     val pathBranches = listOf(
         variant("mode", "get", buildJsonObject {

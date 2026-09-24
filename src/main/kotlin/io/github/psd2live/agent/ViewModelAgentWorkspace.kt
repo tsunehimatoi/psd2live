@@ -1,6 +1,10 @@
 package io.github.psd2live.agent
 
 import io.github.psd2live.core.Bounds
+import io.github.psd2live.core.LayerClassificationOverride
+import io.github.psd2live.core.TextureUpscaleConfig
+import io.github.psd2live.core.ProgressListener
+import io.github.psd2live.project.WorkspaceStateCodec
 import io.github.psd2live.core.PipelineConfig
 import io.github.psd2live.core.PreviewRenderer
 import io.github.psd2live.core.RigKeyformChannelsEdit
@@ -25,10 +29,16 @@ import org.umamo.runtime.model.ParameterKind
 import org.umamo.runtime.model.PuppetModel
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.float
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.add
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -54,10 +64,107 @@ import java.util.concurrent.atomic.AtomicInteger
 
 private val PARAMETER_ID = Regex("[A-Za-z][A-Za-z0-9_]{0,63}")
 
+private fun validateAgentProjectSettings(
+    merged: kotlinx.serialization.json.JsonObject,
+    changes: kotlinx.serialization.json.JsonObject,
+) {
+    val ranges = mapOf(
+        "atlasSize" to (256.0..16384.0), "meshSpacing" to (16.0..128.0),
+        "meshOuterMargin" to (0.0..32.0), "meshInnerMargin" to (0.5..32.0),
+        "meshMaxEdgeDistance" to (6.0..128.0), "meshInteriorDensity" to (6.0..128.0),
+        "texturePadding" to (0.0..32.0), "alphaThreshold" to (0.0..255.0),
+        "headStrength" to (0.0..4.0), "bodyStrength" to (0.0..4.0),
+        "mouthThickness" to (0.5..8.0), "exportPixelsPerUnit" to (1.0..1000000.0),
+    )
+    val integers = setOf("atlasSize", "meshSpacing", "texturePadding", "alphaThreshold")
+    val booleans = setOf(
+        "meshOnly", "generateDeformers", "featureDisplacementEnabled", "mouthOutlineEnabled",
+        "generatePhysics", "physicsFrontHair", "physicsBackHair", "physicsEyeJelly",
+        "exportMotions", "motionIdle", "motionBlink", "motionNod", "motionShake",
+        "exportCmo3", "exportMoc3", "exportJson", "exportHiddenParts", "exportHiddenDrawables",
+        "exportGuideImageParts", "exportIncludePhysics", "exportIncludeUserData", "exportIncludeDisplayInfo",
+    )
+    require(changes.keys.all { it in ranges || it in booleans || it in setOf("textureUpscale", "mouthShape", "runtimeTarget") }) {
+        "Unknown project setting"
+    }
+    changes.forEach { (key, value) ->
+        when {
+            key in ranges -> {
+                val numeric = value.jsonPrimitive.doubleOrNull
+                require(numeric != null && numeric.isFinite() && numeric in ranges.getValue(key)) { "$key is outside its UI range" }
+                require(key !in integers || numeric % 1.0 == 0.0) { "$key must be an integer" }
+            }
+            key in booleans -> require(value.jsonPrimitive.booleanOrNull != null) { "$key must be boolean" }
+            key == "mouthShape" -> require(value.jsonPrimitive.content in setOf("flat", "smile", "w", "custom")) { "Unknown mouth shape" }
+            key == "runtimeTarget" -> require(org.umamo.runtime.model.RuntimeTarget.entries.any { it.name == value.jsonPrimitive.content }) { "Unknown runtime target" }
+        }
+    }
+    merged["textureUpscale"]?.let {
+        kotlinx.serialization.json.Json.decodeFromJsonElement<TextureUpscaleConfig>(it)
+    }
+}
+
 class ViewModelAgentWorkspace(
 	private val viewModel: PSD2LiveViewModel,
     private val storeRoot: Path = AgentWorkspaceStore.defaultRoot(),
 ) : AgentWorkspace, AutoCloseable {
+    override suspend fun exportModel(state: String, outputDirectory: String): kotlinx.serialization.json.JsonObject = editMutex.withLock {
+        val before = snapshot()
+        require(before.historyHeadNodeId == state) { "Workspace history changed; inspect again before exporting" }
+        val current = viewModel.state.value
+        require(!current.isAnalyzing && !current.isGenerating && !before.busy) { "Workspace is busy" }
+        val source = current.analysis?.source ?: throw IllegalStateException("No source artwork is loaded")
+        val target = Path.of(outputDirectory)
+        require(target.isAbsolute && !Files.isRegularFile(target)) { "Provide an absolute output directory" }
+        val config = current.buildConfig()
+        require(config.exportCmo3 || config.exportMoc3) { "Enable at least one model export format in settings" }
+        val result = withContext(Dispatchers.Default) {
+            viewModel.pipeline.run(source, current.projectSourceName ?: before.inputName ?: "model.psd", target, config,
+                ProgressListener { _, _ -> })
+        }
+        kotlinx.serialization.json.buildJsonObject {
+            put("state", state); put("revision", before.revisionId)
+            putJsonArray("files") { result.exportedFiles.forEach { file -> add(kotlinx.serialization.json.buildJsonObject {
+                put("path", file.path.toAbsolutePath().normalize().toString()); put("bytes", file.bytes)
+            }) } }
+            putJsonArray("warnings") { result.warnings.forEach { add(it) } }
+        }
+    }
+    override fun projectSettings(): kotlinx.serialization.json.JsonObject = WorkspaceStateCodec.settings(viewModel.state.value)
+
+    override suspend fun updateProjectSettings(
+        state: String,
+        changes: kotlinx.serialization.json.JsonObject,
+    ): AgentWorkspaceMutationResult {
+        require(changes.isNotEmpty()) { "Provide at least one setting" }
+        return mutateRigKeyform(state, null, "Updated project settings", "settings") { document, _ ->
+            val current = viewModel.state.value
+            val upscale = changes["textureUpscale"]?.jsonObject
+            val mergedUpscale = if (upscale != null) {
+                kotlinx.serialization.json.JsonObject(document.settings.getValue("textureUpscale").jsonObject + upscale)
+            } else null
+            val next = kotlinx.serialization.json.JsonObject(document.settings + changes +
+                listOfNotNull(mergedUpscale?.let { "textureUpscale" to it }).toMap())
+            validateAgentProjectSettings(next, changes)
+            val decoded = WorkspaceStateCodec.decode(next, current)
+            val minimumAtlas = decoded.minRequiredAtlasSize()
+            val normalized = if (decoded.atlasSize < minimumAtlas)
+                kotlinx.serialization.json.JsonObject(next + ("atlasSize" to kotlinx.serialization.json.JsonPrimitive(minimumAtlas)))
+            else next
+            // The decoder and PipelineConfig are the same path as project restore and UI rebuild.
+            document.copy(settings = normalized)
+        }.copy(affectedObjectIds = emptyList())
+    }
+
+    override suspend fun deletePhysics(id: String, expectedHead: String): AgentWorkspaceMutationResult {
+        require(id.isNotBlank()) { "Physics group ID is required" }
+        return mutateRigKeyform(expectedHead, null, "Deleted physics group $id", id) { document, _ ->
+            require(document.rigEdits.physicsEdits.any { it.id == id }) { "Custom physics group not found: $id" }
+            document.copy(rigEdits = document.rigEdits.copy(
+                physicsEdits = document.rigEdits.physicsEdits.filterNot { it.id == id },
+            ))
+        }.copy(affectedObjectIds = emptyList())
+    }
 	private val editMutex = Mutex()
 	private val historyLock = Any()
 	private var workspaceStore = AgentWorkspaceStore(storeRoot)
@@ -225,6 +332,9 @@ class ViewModelAgentWorkspace(
 				order = layer.source.order,
 				semanticTag = layer.semantic.tag.name.lowercase(),
 				side = layer.semantic.side.name.lowercase(),
+				classificationType = layer.semantic.type.name.lowercase(),
+				parameterBinding = layer.semantic.parameter,
+				switchId = layer.semantic.switchId,
 				confidence = layer.semantic.confidence,
 				bounds = Bounds(
 					layer.source.bounds.left.toFloat(),
@@ -604,6 +714,27 @@ class ViewModelAgentWorkspace(
 		)
 		AgentWorkspaceMutationResult(selection.node.id, nextRevision, listOf(layerId), summary)
 	}
+
+    override suspend fun classifyLayer(
+        layerId: String,
+        classification: LayerClassificationOverride,
+        expectedHead: String,
+    ): AgentWorkspaceMutationResult {
+        require(classification.switchId >= 0) { "switch_id must be nonnegative" }
+        val layer = viewModel.state.value.analysis?.layers?.firstOrNull { it.source.id.raw == layerId }
+            ?: throw IllegalArgumentException("Layer not found: $layerId")
+        require(layerId !in viewModel.state.value.deletedLayerIds) { "Layer is deleted: $layerId" }
+        return mutateRigKeyform(expectedHead, null, "Classified layer $layerId", layerId) { document, _ ->
+            val current = layer.semantic
+            if (current.type == classification.type && current.tag == classification.tag &&
+                current.side == classification.side && current.parameter == classification.parameter &&
+                current.switchId == classification.switchId
+            ) document else document.copy(layerOverrides = document.layerOverrides + (layerId to classification))
+        }.let { result -> result.copy(
+            affectedLayerIds = if (result.applied) listOf(layerId) else emptyList(),
+            affectedObjectIds = emptyList(),
+        ) }
+    }
 
 	override suspend fun createParameter(request: AgentCreateParameterRequest): AgentWorkspaceMutationResult {
 		val id = request.id.trim()
