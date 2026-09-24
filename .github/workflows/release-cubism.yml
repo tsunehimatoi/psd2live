@@ -267,6 +267,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             cmake g++ \
             libgl1-mesa-dev \
+            libglu1-mesa-dev \
             libx11-dev xvfb zip unzip
           sudo apt-get install -y --no-install-recommends libglx-dev \
             || sudo apt-get install -y --no-install-recommends libglx-mesa-dev
