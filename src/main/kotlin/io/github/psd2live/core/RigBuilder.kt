@@ -1583,19 +1583,11 @@ object RigBuilder {
 		if (layer.semantic.tag in setOf(SemanticTag.TOOTH_T, SemanticTag.TOOTH_B)) {
 			return buildRectangularFallbackMesh(layer, parentFrame, headSpace, placement, atlasWidth, atlasHeight, effectiveSpacing)
 		}
-		val settings = MeshSettings(outerMargin, innerMarginEnabled, innerMargin, effectiveSpacing, effectiveInteriorDensity)
+		val settings = MeshSettings(outerMargin, innerMarginEnabled, innerMargin, effectiveSpacing,
+			effectiveInteriorDensity, override?.fillAlgorithm ?: config.meshFillAlgorithm,
+			override?.suppressBoundaryDiagonals ?: config.meshSuppressBoundaryDiagonals)
 		val adaptive = if (meshCache != null) meshCache.generate(width, height, layer.source.raster.rgba, config.alphaThreshold, settings)
-		else AdaptiveMeshGenerator.generate(
-			width = width,
-			height = height,
-			rgba = layer.source.raster.rgba,
-			alphaThreshold = config.alphaThreshold,
-			spacing = effectiveSpacing,
-			interiorSpacing = effectiveInteriorDensity,
-			outerMargin = outerMargin,
-			innerMargin = innerMargin,
-			innerMarginEnabled = innerMarginEnabled,
-		)
+		else AdaptiveMeshGenerator.generate(width, height, layer.source.raster.rgba, config.alphaThreshold, settings)
 		if (adaptive != null) {
 			val positions = FloatArray(adaptive.positions.size)
 			val canvas = FloatArray(adaptive.positions.size)

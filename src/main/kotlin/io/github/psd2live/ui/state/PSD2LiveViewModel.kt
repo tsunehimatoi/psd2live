@@ -1172,6 +1172,18 @@ class PSD2LiveViewModel : AutoCloseable {
 	    editorChanged()
 	}
 
+	fun setMeshFillAlgorithm(algorithm: io.github.psd2live.core.MeshFillAlgorithm) {
+		updateState { it.copy(meshFillAlgorithm = algorithm) }
+		schedulePreviewRebuild()
+		editorChanged()
+	}
+
+	fun setMeshSuppressBoundaryDiagonals(enabled: Boolean) {
+		updateState { it.copy(meshSuppressBoundaryDiagonals = enabled) }
+		schedulePreviewRebuild()
+		editorChanged()
+	}
+
 	fun setPartMeshSettings(layerId: String, settings: MeshSettings) {
 		clearMeshSettingsPreviewState(layerId)
 		updateState { it.copy(meshOverrides = it.meshOverrides + (layerId to settings)) }
@@ -1666,6 +1678,8 @@ class PSD2LiveViewModel : AutoCloseable {
 				meshInnerMargin = 10.0f,
 				meshMaxEdgeDistance = 6.0f,
 				meshInteriorDensity = 40.0f,
+				meshFillAlgorithm = io.github.psd2live.core.MeshFillAlgorithm.GRADED_POISSON,
+				meshSuppressBoundaryDiagonals = false,
 				meshOverrides = emptyMap(),
 				texturePadding = 2,
 				alphaThreshold = 8,

@@ -30,6 +30,7 @@ For hands-on learning, open **Help → Tutorials**. The short guides follow the 
 | 工程格式 v1 | [打开](zh/spec/PROJECT_FORMAT.md) | [Open](en/spec/PROJECT_FORMAT.md) | 英文参考 |
 | 工程、运行时与导出边界 | [打开](zh/spec/RUNTIME_EXPORT_ARCHITECTURE_AND_GAPS.md) | 中文参考 | 中文参考 |
 | 绘画系统实现 | [打开](zh/spec/PAINT_SYSTEM_ARCHITECTURE_AND_PRD.md) | 中文参考 | 中文参考 |
+| 网格拓扑与图层拆分 | [打开](zh/spec/MESH_TOPOLOGY_AND_SPLIT.md) | 中文参考 | 中文参考 |
 
 ## Agent 与维护
 

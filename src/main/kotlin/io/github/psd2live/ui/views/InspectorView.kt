@@ -51,6 +51,7 @@ import androidx.compose.material.DropdownMenuItem
 import io.github.psd2live.core.ClassifiedLayer
 import io.github.psd2live.core.LayerClassificationOverride
 import io.github.psd2live.core.LayerType
+import io.github.psd2live.core.MeshFillAlgorithm
 import io.github.psd2live.core.MouthLipLayer
 import io.github.psd2live.core.MouthLipLayers
 import io.github.psd2live.core.SemanticTag
@@ -441,9 +442,12 @@ internal fun ModelSettingsSection(
 				if (!state.meshSubExpanded) {
 					Spacer(Modifier.width(6.dp))
 					Text(
-						text = "(${state.meshOuterMargin} / ${state.meshInnerMargin} / ${state.meshMaxEdgeDistance.toInt()} / ${state.meshInteriorDensity.toInt()} px)",
+							text = "${tr("settings.meshMaxEdgeDistance")} ${state.meshMaxEdgeDistance.toInt()} px · " +
+								"${tr("settings.meshInteriorDensity")} ${state.meshInteriorDensity.toInt()} px",
 						style = typography.caption.copy(fontSize = 9.5.sp),
 						color = colors.textMuted,
+							maxLines = 1,
+							overflow = TextOverflow.Ellipsis,
 					)
 				}
 			}
@@ -455,7 +459,9 @@ internal fun ModelSettingsSection(
 						.padding(start = 12.dp, top = 1.dp, bottom = 1.dp),
 					verticalArrangement = Arrangement.spacedBy(2.dp),
 				) {
-					// Form Row: Mesh Outer Margin (外边缘距离)
+					Text(tr("mesh.settings.shapeGroup"), style = typography.caption.copy(fontSize = 9.5.sp,
+						fontWeight = FontWeight.Bold), color = colors.textMuted)
+					// Form Row: Mesh Outer Margin
 					Row(
 						modifier = Modifier.fillMaxWidth(),
 						verticalAlignment = Alignment.CenterVertically,
@@ -535,7 +541,9 @@ internal fun ModelSettingsSection(
 						)
 					}
 
-					// Form Row: Max Edge Distance (最大边缘点距离)
+					Text(tr("mesh.settings.samplingGroup"), style = typography.caption.copy(fontSize = 9.5.sp,
+						fontWeight = FontWeight.Bold), color = colors.textMuted)
+					// Form Row: Max Edge Distance
 					Row(
 						modifier = Modifier.fillMaxWidth(),
 						verticalAlignment = Alignment.CenterVertically,
@@ -614,6 +622,28 @@ internal fun ModelSettingsSection(
 							height = 20.dp,
 						)
 					}
+					Text(tr("mesh.settings.fillAlgorithm"), style = typography.caption.copy(fontSize = 9.5.sp,
+						fontWeight = FontWeight.Bold), color = colors.textMuted)
+					CompactDropdown(
+						items = MeshFillAlgorithm.entries,
+						selectedItem = state.meshFillAlgorithm,
+						onItemSelected = viewModel::setMeshFillAlgorithm,
+						itemLabel = { tr("mesh.settings.fill.${it.name}") },
+						enabled = !isBusy,
+						modifier = Modifier.fillMaxWidth(),
+					)
+					Text(tr("mesh.settings.fillHint.${state.meshFillAlgorithm.name}"),
+						style = typography.caption.copy(fontSize = 9.sp), color = colors.textMuted)
+					Text(tr("mesh.settings.topologyGroup"), style = typography.caption.copy(fontSize = 9.5.sp,
+						fontWeight = FontWeight.Bold), color = colors.textMuted)
+					CompactCheckbox(
+						checked = state.meshSuppressBoundaryDiagonals,
+						onCheckedChange = viewModel::setMeshSuppressBoundaryDiagonals,
+						label = tr("mesh.settings.suppressBoundaryDiagonals"),
+						enabled = !isBusy,
+					)
+					Text(tr("mesh.settings.topologyHint"), style = typography.caption.copy(fontSize = 9.sp),
+						color = colors.textMuted)
 				}
 			}
 

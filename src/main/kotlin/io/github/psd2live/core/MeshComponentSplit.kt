@@ -156,27 +156,10 @@ internal object MeshComponentSplit {
             return Plan(retained.map(components::get), owners, source)
         }
 
-        // If the islands have a real gap along an axis, the midpoint of that gap is
-        // an unambiguous separator even when antialias pixels touch across the gap.
-        // This also avoids a sparse vertex flood stealing the other island's tip.
-        for (horizontal in listOf(true, false)) {
-            val spans = sorted.mapIndexed { index, vertices ->
-                val values = vertices.map { if (horizontal) localX(it) else localY(it) }
-                Triple(index, values.min(), values.max())
-            }.sortedBy { it.second }
-            if (spans.zipWithNext().any { (left, right) -> left.third >= right.second }) continue
-            // The visible contour can extend one raster cell beyond its sampled mesh edge.
-            val separators = spans.zipWithNext().map { (left, right) -> (left.third + right.second) * 0.5f + 1f }
-            val owners = IntArray(width * height) { pixel ->
-                val coordinate = if (horizontal) (pixel % width) + 0.5f else (pixel / width) + 0.5f
-                spans[separators.indexOfFirst { coordinate < it }.let { if (it < 0) spans.lastIndex else it }].first
-            }
-            return finish(owners)
-        }
+        axisSeparatedOwners(sorted, width, height, ::localX, ::localY)?.let { return finish(it) }
 
         // The mesh triangles, rather than their vertices, establish ownership of the art.
-        // A vertex Voronoi flood through transparent space can reach the nearby shoe before
-        // that shoe's own (sparse) vertices do, slicing pixels off the wrong island.
+        // A vertex Voronoi flood through transparent space can reach another island first.
         val alpha = ByteArray(width * height) { pixel -> source.raster.rgba[pixel * 4 + 3] }
         val vertexComponent = IntArray(mesh.vertexCount) { -1 }
         sorted.forEachIndexed { component, vertices -> vertices.forEach { vertexComponent[it] = component } }
@@ -211,21 +194,58 @@ internal object MeshComponentSplit {
             }
         }
 
-        // Keep the vertex flood only as a fallback for tiny opaque islands with no mesh.
+        // A vertex flood is used only to seed tiny unmeshed alpha islands.
         val vertexOwners = IntArray(width * height) { -1 }
-        val queue = IntArray(width * height)
-        var tail = 0
         sorted.forEachIndexed { component, vertices ->
             for (vertex in vertices) {
                 val x = localX(vertex).roundToInt().coerceIn(0, width - 1)
                 val y = localY(vertex).roundToInt().coerceIn(0, height - 1)
                 val pixel = y * width + x
-                if (vertexOwners[pixel] == -1) {
-                    vertexOwners[pixel] = component
-                    queue[tail++] = pixel
-                }
+                if (vertexOwners[pixel] == -1) vertexOwners[pixel] = component
             }
         }
+        floodOwners(vertexOwners, width, height)
+        val hasTriangleSeed = BooleanArray(sorted.size)
+        for (owner in owners) if (owner >= 0) hasTriangleSeed[owner] = true
+        for (pixel in owners.indices) {
+            val component = vertexOwners[pixel]
+            if (!hasTriangleSeed[component] && owners[pixel] == -1 && (alpha[pixel].toInt() and 0xff) > 0) {
+                owners[pixel] = component
+                hasTriangleSeed[component] = true
+            }
+        }
+        floodOwners(owners, width, height)
+        for (pixel in owners.indices) if (owners[pixel] == -1) owners[pixel] = vertexOwners[pixel]
+        return finish(owners)
+    }
+
+    /** Use a 1D separator when projected mesh islands do not overlap. */
+    private fun axisSeparatedOwners(
+        groups: List<List<Int>>, width: Int, height: Int,
+        localX: (Int) -> Float, localY: (Int) -> Float,
+    ): IntArray? {
+        for (horizontal in listOf(true, false)) {
+            val spans = groups.mapIndexed { index, vertices ->
+                val values = vertices.map { if (horizontal) localX(it) else localY(it) }
+                Triple(index, values.min(), values.max())
+            }.sortedBy { it.second }
+            if (spans.zipWithNext().any { (left, right) -> left.third >= right.second }) continue
+            // The visible contour can extend one raster cell beyond its sampled mesh edge.
+            val separators = spans.zipWithNext().map { (left, right) -> (left.third + right.second) * 0.5f + 1f }
+            val owners = IntArray(width * height) { pixel ->
+                val coordinate = if (horizontal) (pixel % width) + 0.5f else (pixel / width) + 0.5f
+                spans[separators.indexOfFirst { coordinate < it }.let { if (it < 0) spans.lastIndex else it }].first
+            }
+            return owners
+        }
+        return null
+    }
+
+    /** Fill unassigned cells from the complete seed footprints in Chebyshev distance order. */
+    private fun floodOwners(owners: IntArray, width: Int, height: Int) {
+        val queue = IntArray(width * height)
+        var tail = 0
+        for (pixel in owners.indices) if (owners[pixel] >= 0) queue[tail++] = pixel
         var head = 0
         while (head < tail) {
             val pixel = queue[head++]
@@ -237,47 +257,11 @@ internal object MeshComponentSplit {
                 val ny = y + dy
                 if (nx !in 0 until width || ny !in 0 until height) continue
                 val next = ny * width + nx
-                if (vertexOwners[next] == -1) {
-                    vertexOwners[next] = vertexOwners[pixel]
+                if (owners[next] == -1) {
+                    owners[next] = owners[pixel]
                     queue[tail++] = next
                 }
             }
         }
-        val hasTriangleSeed = BooleanArray(sorted.size)
-        for (owner in owners) if (owner >= 0) hasTriangleSeed[owner] = true
-        for (pixel in owners.indices) {
-            val component = vertexOwners[pixel]
-            if (!hasTriangleSeed[component] && owners[pixel] == -1 && (alpha[pixel].toInt() and 0xff) > 0) {
-                owners[pixel] = component
-                hasTriangleSeed[component] = true
-            }
-        }
-        // Grow from the complete triangle footprints. This measures distance from the
-        // actual mesh surface, not geodesic distance along touching alpha pixels.
-        fun grow(minAlpha: Int) {
-            head = 0
-            tail = 0
-            for (pixel in owners.indices) {
-                if (owners[pixel] >= 0 && (alpha[pixel].toInt() and 0xff) >= minAlpha) queue[tail++] = pixel
-            }
-            while (head < tail) {
-                val pixel = queue[head++]
-                val x = pixel % width
-                val y = pixel / width
-                for (dy in -1..1) for (dx in -1..1) {
-                    if (dx == 0 && dy == 0) continue
-                    val nx = x + dx; val ny = y + dy
-                    if (nx !in 0 until width || ny !in 0 until height) continue
-                    val next = ny * width + nx
-                    if (owners[next] == -1 && (alpha[next].toInt() and 0xff) >= minAlpha) {
-                        owners[next] = owners[pixel]
-                        queue[tail++] = next
-                    }
-                }
-            }
-        }
-        grow(0)
-        for (pixel in owners.indices) if (owners[pixel] == -1) owners[pixel] = vertexOwners[pixel]
-        return finish(owners)
     }
 }

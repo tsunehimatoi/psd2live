@@ -12,10 +12,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -29,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.psd2live.core.MeshSettings
+import io.github.psd2live.core.MeshFillAlgorithm
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.ComponentPalette
 import io.github.psd2live.ui.theme.LocalToolColors
@@ -59,13 +63,17 @@ fun MeshSettingsDialog(
 	var innerMargin by remember(target) { mutableStateOf(target.currentSettings.innerMargin) }
 	var maxEdgeDistance by remember(target) { mutableStateOf(target.currentSettings.maxEdgeDistance) }
 	var interiorDensity by remember(target) { mutableStateOf(target.currentSettings.interiorDensity) }
+	var fillAlgorithm by remember(target) { mutableStateOf(target.currentSettings.fillAlgorithm) }
+	var suppressBoundaryDiagonals by remember(target) { mutableStateOf(target.currentSettings.suppressBoundaryDiagonals) }
 	fun settings(
 		outer: Float = outerMargin,
 		innerEnabled: Boolean = innerMarginEnabled,
 		inner: Float = innerMargin,
 		edgeDistance: Float = maxEdgeDistance,
 		density: Float = interiorDensity,
-	) = MeshSettings(outer, innerEnabled, inner, edgeDistance, density)
+		algorithm: MeshFillAlgorithm = fillAlgorithm,
+		suppressDiagonals: Boolean = suppressBoundaryDiagonals,
+	) = MeshSettings(outer, innerEnabled, inner, edgeDistance, density, algorithm, suppressDiagonals)
 
 	Box(
 		modifier = Modifier
@@ -77,9 +85,11 @@ fun MeshSettingsDialog(
 		Column(
 			modifier = Modifier
 				.width(360.dp)
+				.heightIn(max = 560.dp)
 				.background(colors.panelBackground, RoundedCornerShape(6.dp))
 				.border(BorderStroke(1.dp, colors.border), RoundedCornerShape(6.dp))
 				.clickable(enabled = false) {}
+				.verticalScroll(rememberScrollState())
 				.padding(14.dp),
 			verticalArrangement = Arrangement.spacedBy(10.dp),
 		) {
@@ -124,7 +134,9 @@ fun MeshSettingsDialog(
 				)
 			}
 
-			// 1. Outer Margin (外边缘距离边缘距离)
+			Text(tr("mesh.settings.shapeGroup"), style = typography.caption.copy(fontSize = 10.sp,
+				fontWeight = FontWeight.Bold), color = colors.textMuted)
+			// 1. Outer Margin
 			Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
 				Row(
 					modifier = Modifier.fillMaxWidth(),
@@ -214,7 +226,9 @@ fun MeshSettingsDialog(
 				}
 			}
 
-			// 3. Max Edge Distance (最大边缘点距离)
+			Text(tr("mesh.settings.samplingGroup"), style = typography.caption.copy(fontSize = 10.sp,
+				fontWeight = FontWeight.Bold), color = colors.textMuted)
+			// 3. Max Edge Distance
 			Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
 				Row(
 					modifier = Modifier.fillMaxWidth(),
@@ -300,6 +314,27 @@ fun MeshSettingsDialog(
 				}
 			}
 
+			Text(tr("mesh.settings.fillAlgorithm"), style = typography.caption.copy(fontSize = 10.sp,
+				fontWeight = FontWeight.Bold), color = colors.textMuted)
+			CompactDropdown(
+				items = MeshFillAlgorithm.entries,
+				selectedItem = fillAlgorithm,
+				onItemSelected = { fillAlgorithm = it; onPreview(settings(algorithm = it)) },
+				itemLabel = { tr("mesh.settings.fill.${it.name}") },
+				modifier = Modifier.fillMaxWidth(),
+			)
+			Text(tr("mesh.settings.fillHint.${fillAlgorithm.name}"), style = typography.caption.copy(fontSize = 9.5.sp),
+				color = colors.textMuted)
+			// Topology
+			Text(tr("mesh.settings.topologyGroup"), style = typography.caption.copy(fontSize = 10.sp,
+				fontWeight = FontWeight.Bold), color = colors.textMuted)
+			CompactCheckbox(
+				checked = suppressBoundaryDiagonals,
+				onCheckedChange = { suppressBoundaryDiagonals = it; onPreview(settings(suppressDiagonals = it)) },
+				label = tr("mesh.settings.suppressBoundaryDiagonals"),
+			)
+			Text(tr("mesh.settings.topologyHint"), style = typography.caption.copy(fontSize = 9.5.sp),
+				color = colors.textMuted)
 			// Actions
 			Row(
 				modifier = Modifier

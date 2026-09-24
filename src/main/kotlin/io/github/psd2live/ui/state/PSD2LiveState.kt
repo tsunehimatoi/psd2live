@@ -1,6 +1,7 @@
 package io.github.psd2live.ui.state
 
 import io.github.psd2live.core.MeshSettings
+import io.github.psd2live.core.MeshFillAlgorithm
 import io.github.psd2live.core.SemanticTag
 
 import androidx.compose.runtime.Immutable
@@ -271,6 +272,8 @@ data class PSD2LiveState(
 	val meshInnerMargin: Float = 10.0f,
 	val meshMaxEdgeDistance: Float = 6.0f,
 	val meshInteriorDensity: Float = 40.0f,
+	val meshFillAlgorithm: MeshFillAlgorithm = MeshFillAlgorithm.GRADED_POISSON,
+	val meshSuppressBoundaryDiagonals: Boolean = false,
 	val meshOverrides: Map<String, MeshSettings> = emptyMap(),
 	val texturePadding: Int = 2,
 	val alphaThreshold: Int = 8,
@@ -460,6 +463,8 @@ data class PSD2LiveState(
 			meshInnerMargin = meshInnerMargin,
 			meshMaxEdgeDistance = meshMaxEdgeDistance,
 			meshInteriorDensity = meshInteriorDensity,
+			meshFillAlgorithm = meshFillAlgorithm,
+			meshSuppressBoundaryDiagonals = meshSuppressBoundaryDiagonals,
 			meshOverrides = meshOverrides,
 			alphaThreshold = alphaThreshold,
 			headTurnStrength = headStrength,
@@ -526,6 +531,8 @@ data class PSD2LiveState(
 			innerMargin = meshInnerMargin,
 			maxEdgeDistance = kotlin.math.max(12f, meshMaxEdgeDistance * semanticDensity),
 			interiorDensity = kotlin.math.max(12f, meshInteriorDensity * semanticDensity),
+			fillAlgorithm = meshFillAlgorithm,
+			suppressBoundaryDiagonals = meshSuppressBoundaryDiagonals,
 		)
 	}
 

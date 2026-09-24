@@ -380,6 +380,8 @@ internal class AgentWorkspaceStore(
 					put("innerMargin", s.innerMargin)
 					put("maxEdgeDistance", s.maxEdgeDistance)
 					put("interiorDensity", s.interiorDensity)
+					put("fillAlgorithm", s.fillAlgorithm.name)
+					put("suppressBoundaryDiagonals", s.suppressBoundaryDiagonals)
 				})
 			}
 		}
@@ -642,6 +644,10 @@ internal class AgentWorkspaceStore(
 				innerMargin = obj["innerMargin"]?.jsonPrimitive?.floatOrNull ?: 2.0f,
 				maxEdgeDistance = obj["maxEdgeDistance"]?.jsonPrimitive?.floatOrNull ?: 48.0f,
 				interiorDensity = obj["interiorDensity"]?.jsonPrimitive?.floatOrNull ?: 48.0f,
+				fillAlgorithm = obj["fillAlgorithm"]?.jsonPrimitive?.contentOrNull
+					?.let { runCatching { io.github.psd2live.core.MeshFillAlgorithm.valueOf(it) }.getOrNull() }
+					?: io.github.psd2live.core.MeshFillAlgorithm.GRADED_POISSON,
+				suppressBoundaryDiagonals = obj["suppressBoundaryDiagonals"]?.jsonPrimitive?.booleanOrNull ?: false,
 			)
 		}
 		return AgentWorkspaceDocument(

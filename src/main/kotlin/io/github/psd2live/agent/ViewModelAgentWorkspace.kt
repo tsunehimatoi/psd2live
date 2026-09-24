@@ -160,6 +160,8 @@ class ViewModelAgentWorkspace(
             put("outerMargin", settings.outerMargin); put("innerMarginEnabled", settings.innerMarginEnabled)
             put("innerMargin", settings.innerMargin); put("maxEdgeDistance", settings.maxEdgeDistance)
             put("interiorDensity", settings.interiorDensity)
+            put("fillAlgorithm", settings.fillAlgorithm.name)
+            put("suppressBoundaryDiagonals", settings.suppressBoundaryDiagonals)
         }
     }
     override suspend fun importPsd(path: String): AgentWorkspaceMutationResult = editMutex.withLock {
@@ -212,10 +214,15 @@ class ViewModelAgentWorkspace(
             if (reset) document.copy(meshOverrides = document.meshOverrides - layerId)
             else {
                 val change = requireNotNull(changes)
-                val allowed = setOf("outerMargin", "innerMarginEnabled", "innerMargin", "maxEdgeDistance", "interiorDensity")
+                val allowed = setOf("outerMargin", "innerMarginEnabled", "innerMargin", "maxEdgeDistance",
+                    "interiorDensity", "fillAlgorithm", "suppressBoundaryDiagonals")
                 require(change.keys.all { it in allowed }) { "Unknown layer mesh setting" }
                 require(change["innerMarginEnabled"] == null || change["innerMarginEnabled"]?.jsonPrimitive?.booleanOrNull != null) {
                     "innerMarginEnabled must be boolean"
+                }
+                require(change["suppressBoundaryDiagonals"] == null ||
+                    change["suppressBoundaryDiagonals"]?.jsonPrimitive?.booleanOrNull != null) {
+                    "suppressBoundaryDiagonals must be boolean"
                 }
                 val base = document.meshOverrides[layerId] ?: viewModel.state.value.getDefaultMeshSettings(layerId)
                 fun number(key: String, fallback: Float, range: ClosedFloatingPointRange<Float>): Float =
@@ -226,6 +233,12 @@ class ViewModelAgentWorkspace(
                     innerMargin = number("innerMargin", base.innerMargin, 0.5f..32f),
                     maxEdgeDistance = number("maxEdgeDistance", base.maxEdgeDistance, 6f..128f),
                     interiorDensity = number("interiorDensity", base.interiorDensity, 6f..128f),
+                    fillAlgorithm = change["fillAlgorithm"]?.jsonPrimitive?.contentOrNull?.let {
+                        runCatching { io.github.psd2live.core.MeshFillAlgorithm.valueOf(it) }.getOrNull()
+                            ?: error("Unknown fillAlgorithm: $it")
+                    } ?: base.fillAlgorithm,
+                    suppressBoundaryDiagonals = change["suppressBoundaryDiagonals"]?.jsonPrimitive?.booleanOrNull
+                        ?: base.suppressBoundaryDiagonals,
                 )
                 document.copy(meshOverrides = document.meshOverrides + (layerId to settings))
             }

@@ -1,6 +1,7 @@
 package io.github.psd2live.project
 
 import io.github.psd2live.core.MeshSettings
+import io.github.psd2live.core.MeshFillAlgorithm
 
 import io.github.psd2live.ui.state.*
 import org.umamo.runtime.model.ParameterId
@@ -248,6 +249,8 @@ internal object WorkspaceStateCodec {
         put("meshInnerMargin", state.meshInnerMargin)
         put("meshMaxEdgeDistance", state.meshMaxEdgeDistance)
         put("meshInteriorDensity", state.meshInteriorDensity)
+        put("meshFillAlgorithm", state.meshFillAlgorithm.name)
+        put("meshSuppressBoundaryDiagonals", state.meshSuppressBoundaryDiagonals)
         putJsonObject("meshOverrides") {
             state.meshOverrides.toSortedMap().forEach { (k, v) ->
                 put(k, buildJsonObject {
@@ -256,6 +259,8 @@ internal object WorkspaceStateCodec {
                     put("innerMargin", v.innerMargin)
                     put("maxEdgeDistance", v.maxEdgeDistance)
                     put("interiorDensity", v.interiorDensity)
+                    put("fillAlgorithm", v.fillAlgorithm.name)
+                    put("suppressBoundaryDiagonals", v.suppressBoundaryDiagonals)
                 })
             }
         }
@@ -335,6 +340,8 @@ internal object WorkspaceStateCodec {
         put("meshInnerMargin", state.meshInnerMargin)
         put("meshMaxEdgeDistance", state.meshMaxEdgeDistance)
         put("meshInteriorDensity", state.meshInteriorDensity)
+        put("meshFillAlgorithm", state.meshFillAlgorithm.name)
+        put("meshSuppressBoundaryDiagonals", state.meshSuppressBoundaryDiagonals)
         putJsonObject("meshOverrides") {
             state.meshOverrides.toSortedMap().forEach { (k, v) ->
                 put(k, buildJsonObject {
@@ -343,6 +350,8 @@ internal object WorkspaceStateCodec {
                     put("innerMargin", v.innerMargin)
                     put("maxEdgeDistance", v.maxEdgeDistance)
                     put("interiorDensity", v.interiorDensity)
+                    put("fillAlgorithm", v.fillAlgorithm.name)
+                    put("suppressBoundaryDiagonals", v.suppressBoundaryDiagonals)
                 })
             }
         }
@@ -438,6 +447,9 @@ internal object WorkspaceStateCodec {
         meshInnerMargin = value["meshInnerMargin"]?.jsonPrimitive?.float ?: base.meshInnerMargin,
         meshMaxEdgeDistance = value["meshMaxEdgeDistance"]?.jsonPrimitive?.float ?: base.meshMaxEdgeDistance,
         meshInteriorDensity = value["meshInteriorDensity"]?.jsonPrimitive?.float ?: base.meshInteriorDensity,
+        meshFillAlgorithm = value["meshFillAlgorithm"]?.jsonPrimitive?.contentOrNull
+            ?.let { runCatching { MeshFillAlgorithm.valueOf(it) }.getOrNull() } ?: base.meshFillAlgorithm,
+        meshSuppressBoundaryDiagonals = value["meshSuppressBoundaryDiagonals"]?.jsonPrimitive?.booleanOrNull ?: base.meshSuppressBoundaryDiagonals,
         meshOverrides = value["meshOverrides"]?.jsonObject?.mapNotNull { (k, v) ->
             val obj = v.jsonObject
             val outerMargin = obj["outerMargin"]?.jsonPrimitive?.floatOrNull ?: 2.0f
@@ -445,7 +457,11 @@ internal object WorkspaceStateCodec {
             val innerMargin = obj["innerMargin"]?.jsonPrimitive?.floatOrNull ?: 2.0f
             val maxEdgeDistance = obj["maxEdgeDistance"]?.jsonPrimitive?.floatOrNull ?: 48.0f
             val interiorDensity = obj["interiorDensity"]?.jsonPrimitive?.floatOrNull ?: 48.0f
-            k to MeshSettings(outerMargin, innerMarginEnabled, innerMargin, maxEdgeDistance, interiorDensity)
+            val fillAlgorithm = obj["fillAlgorithm"]?.jsonPrimitive?.contentOrNull
+                ?.let { runCatching { MeshFillAlgorithm.valueOf(it) }.getOrNull() } ?: MeshFillAlgorithm.GRADED_POISSON
+            val suppressBoundaryDiagonals = obj["suppressBoundaryDiagonals"]?.jsonPrimitive?.booleanOrNull ?: false
+            k to MeshSettings(outerMargin, innerMarginEnabled, innerMargin, maxEdgeDistance, interiorDensity,
+                fillAlgorithm, suppressBoundaryDiagonals)
         }?.toMap() ?: base.meshOverrides,
         texturePadding = value["texturePadding"]?.jsonPrimitive?.int ?: base.texturePadding,
         alphaThreshold = value["alphaThreshold"]?.jsonPrimitive?.int ?: base.alphaThreshold,

@@ -189,6 +189,8 @@ class PSD2LivePipeline {
 			current.config.meshInnerMargin != config.meshInnerMargin ||
 			current.config.meshMaxEdgeDistance != config.meshMaxEdgeDistance ||
 			current.config.meshInteriorDensity != config.meshInteriorDensity ||
+			current.config.meshFillAlgorithm != config.meshFillAlgorithm ||
+			current.config.meshSuppressBoundaryDiagonals != config.meshSuppressBoundaryDiagonals ||
 			current.config.alphaThreshold != config.alphaThreshold ||
 			current.config.meshOnly != config.meshOnly ||
 			current.config.mouthOutlineEnabled != config.mouthOutlineEnabled ||
