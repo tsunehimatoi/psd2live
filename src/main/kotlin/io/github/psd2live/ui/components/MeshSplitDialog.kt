@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -18,6 +19,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toComposeImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.psd2live.core.Side
@@ -38,6 +41,7 @@ internal fun MeshSplitDialog(
     val typography = LocalToolTypography.current
     val components = offer.plan.components
     val count = components.size
+    val previews = remember(offer) { offer.plan.previewImages.map { it.toComposeImageBitmap() } }
     val horizontal = count == 2 &&
         kotlin.math.abs(components[0].centerX - components[1].centerX) >=
         kotlin.math.abs(components[0].centerY - components[1].centerY)
@@ -69,7 +73,7 @@ internal fun MeshSplitDialog(
         contentAlignment = Alignment.Center,
     ) {
         Column(
-            Modifier.width(440.dp).clip(RoundedCornerShape(8.dp))
+            Modifier.width(520.dp).clip(RoundedCornerShape(8.dp))
                 .background(colors.panelElevated)
                 .border(BorderStroke(1.dp, colors.divider), RoundedCornerShape(8.dp))
                 .clickable(enabled = false) {}.padding(20.dp),
@@ -91,6 +95,19 @@ internal fun MeshSplitDialog(
                 components.indices.forEach { index ->
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("#${index + 1}", style = typography.caption, color = colors.textMuted, modifier = Modifier.width(30.dp))
+                        Box(
+                            Modifier.size(84.dp, 58.dp).clip(RoundedCornerShape(4.dp))
+                                .background(colors.inputBackground)
+                                .border(BorderStroke(1.dp, colors.divider), RoundedCornerShape(4.dp)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Image(
+                                bitmap = previews[index],
+                                contentDescription = tr("editor.meshSplit.preview", index + 1),
+                                modifier = Modifier.fillMaxSize().padding(3.dp),
+                                contentScale = ContentScale.Fit,
+                            )
+                        }
                         if (mode == SplitNames.CUSTOM) {
                             CompactTextField(
                                 value = custom[index],

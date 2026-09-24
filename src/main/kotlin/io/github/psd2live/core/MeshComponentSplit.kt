@@ -6,6 +6,7 @@ import org.umamo.format.art.LayerId
 import org.umamo.format.art.LayerRaster
 import org.umamo.format.art.SourceLayer
 import org.umamo.runtime.model.DrawableMesh
+import java.awt.image.BufferedImage
 import java.util.UUID
 import kotlin.math.roundToInt
 
@@ -18,6 +19,51 @@ internal object MeshComponentSplit {
         private val ownerByPixel: IntArray,
         private val source: SourceLayer,
     ) {
+        /** Small transparent thumbnails, prepared with the split plan so the dialog stays responsive. */
+        val previewImages: List<BufferedImage> = buildPreviewImages()
+
+        private fun buildPreviewImages(): List<BufferedImage> {
+            val raster = source.raster
+            val boxes = Array(components.size) { intArrayOf(raster.width, raster.height, -1, -1) }
+            for (pixel in ownerByPixel.indices) {
+                if ((raster.rgba[pixel * 4 + 3].toInt() and 0xff) == 0) continue
+                val box = boxes[ownerByPixel[pixel]]
+                val x = pixel % raster.width
+                val y = pixel / raster.width
+                if (x < box[0]) box[0] = x
+                if (y < box[1]) box[1] = y
+                if (x > box[2]) box[2] = x
+                if (y > box[3]) box[3] = y
+            }
+            val images = boxes.map { box ->
+                require(box[2] >= box[0] && box[3] >= box[1]) { "Every mesh island needs source pixels" }
+                val width = box[2] - box[0] + 1
+                val height = box[3] - box[1] + 1
+                val scale = minOf(1f, 96f / width, 64f / height)
+                val previewWidth = (width * scale).roundToInt().coerceAtLeast(1)
+                val previewHeight = (height * scale).roundToInt().coerceAtLeast(1)
+                BufferedImage(previewWidth, previewHeight, BufferedImage.TYPE_INT_ARGB)
+            }
+            for (pixel in ownerByPixel.indices) {
+                val component = ownerByPixel[pixel]
+                val box = boxes[component]
+                val offset = pixel * 4
+                val alpha = raster.rgba[offset + 3].toInt() and 0xff
+                if (alpha == 0) continue
+                val color = (alpha shl 24) or
+                    ((raster.rgba[offset].toInt() and 0xff) shl 16) or
+                    ((raster.rgba[offset + 1].toInt() and 0xff) shl 8) or
+                    (raster.rgba[offset + 2].toInt() and 0xff)
+                val width = box[2] - box[0] + 1
+                val height = box[3] - box[1] + 1
+                val preview = images[component]
+                val x = ((pixel % raster.width - box[0]) * preview.width / width).coerceIn(0, preview.width - 1)
+                val y = ((pixel / raster.width - box[1]) * preview.height / height).coerceIn(0, preview.height - 1)
+                preview.setRGB(x, y, color)
+            }
+            return images
+        }
+
         fun pieces(names: List<String>): List<WorkspaceSourceLayer> {
             require(names.size == components.size && names.all { it.isNotBlank() })
             val raster = source.raster
