@@ -128,6 +128,11 @@ internal object AdaptiveMeshGenerator {
 			holesByOuter[owner] += hole.points
 		}
 		val gridCandidates = sampleInterior(solidMask, gridSpacing)
+		// The bulk grid can be intentionally sparse, but a separate near-edge lattice keeps
+		// boundary vertices from fanning out to a handful of distant interior samples.
+		val edgeCandidateSpacing = min(gridSpacing, edgeSpacing * 1.35)
+		val edgeCandidates = if (edgeCandidateSpacing < gridSpacing * 0.9)
+			sampleInterior(solidMask, edgeCandidateSpacing) else emptyList()
 		val globalPoints = mutableListOf<Point>()
 		val globalTriangles = mutableListOf<Triangle>()
 		val globalBoundaryLoops = mutableListOf<IntArray>()
@@ -177,14 +182,14 @@ internal object AdaptiveMeshGenerator {
 			}
 			for (scale in doubleArrayOf(1.0, 0.5, 0.25, 0.125, 0.0625)) {
 				if (built != null) break
-				val band = buildBands(guides, gridCandidates, width, height, edgeSpacing, gridSpacing, scale, neighbors,
+				val band = buildBands(guides, gridCandidates, edgeCandidates, width, height, edgeSpacing, gridSpacing, scale, neighbors,
 					outerMargin.toDouble(), innerMargin.toDouble(), innerMarginEnabled)
 				if (band != null && isolated(band)) built = band
 			}
 			if (built == null) {
 				// Contour-preserving recovery, never replace a valid silhouette with its bounds.
 				for (recoveryLoops in listOf(guides, raw)) {
-					val local = triangulateDomain(recoveryLoops, gridCandidates, gridSpacing) ?: continue
+					val local = triangulateDomain(recoveryLoops, gridCandidates, edgeCandidates, gridSpacing, edgeSpacing) ?: continue
 					var cursor = 0
 					val loops = recoveryLoops.map { loop -> IntArray(loop.size) { cursor + it }.also { cursor += loop.size } }
 					val recovery = BandedMesh(local, loops, emptyList(), emptyList())
@@ -412,7 +417,7 @@ internal object AdaptiveMeshGenerator {
 		}
 
 	private fun buildBands(
-		guides: List<List<Point>>, candidates: List<Point>, width: Int, height: Int,
+		guides: List<List<Point>>, candidates: List<Point>, edgeCandidates: List<Point>, width: Int, height: Int,
 		edgeSpacing: Double, interiorSpacing: Double, scale: Double, neighbors: List<List<Point>>,
 		outerMargin: Double = min(2.75, max(0.8, edgeSpacing * 0.10)),
 		innerMargin: Double = min(2.75, max(0.8, edgeSpacing * 0.10)),
@@ -424,7 +429,7 @@ internal object AdaptiveMeshGenerator {
 			val outer = guides.map { offsetLoop(it, -outerDist, width, height, guides + neighbors) }
 			val inner = guides.map { offsetLoop(it, innerDist, width, height, guides + neighbors) }
 			if (!validDomain(outer) || !validDomain(inner)) return null
-			val core = triangulateDomain(inner, candidates, interiorSpacing) ?: return null
+			val core = triangulateDomain(inner, candidates, edgeCandidates, interiorSpacing, edgeSpacing) ?: return null
 			val points = core.points.toMutableList()
 			val triangles = core.triangles.toMutableList()
 			val lookup = points.withIndex().associate { it.value to it.index }.toMutableMap()
@@ -454,7 +459,7 @@ internal object AdaptiveMeshGenerator {
 			val outerDist = outerMargin * scale
 			val outer = if (outerDist > 1e-4) guides.map { offsetLoop(it, -outerDist, width, height, guides + neighbors) } else guides
 			if (!validDomain(outer)) return null
-			val core = triangulateDomain(outer, candidates, interiorSpacing) ?: return null
+			val core = triangulateDomain(outer, candidates, edgeCandidates, interiorSpacing, edgeSpacing) ?: return null
 			var cursor = 0
 			val outerIds = outer.map { loop -> IntArray(loop.size) { cursor + it }.also { cursor += loop.size } }
 			return BandedMesh(core, outerIds, emptyList(), emptyList())
@@ -734,7 +739,9 @@ internal object AdaptiveMeshGenerator {
 	private fun triangulateDomain(
 		loops: List<List<Point>>,
 		interiorCandidates: List<Point>,
+		edgeCandidates: List<Point>,
 		spacing: Double,
+		edgeSpacing: Double,
 	): LocalMesh? {
 		if (!validDomain(loops)) return null
 		val points = loops.flatten().toMutableList()
@@ -751,6 +758,22 @@ internal object AdaptiveMeshGenerator {
 		for (candidate in interiorCandidates) {
 			if (inDomain(candidate, loops) && loops.all { distanceSquaredToLoop(candidate, it) > 1.0 })
 				insertInteriorPoint(candidate, points, triangles)
+		}
+		val bandSquared = min(spacing * 0.75, edgeSpacing * 2.0).let { it * it }
+		val minimumSeparationSquared = edgeSpacing * edgeSpacing * 0.16
+		val outer = loops.first()
+		val left = outer.minOf { it.x }
+		val right = outer.maxOf { it.x }
+		val top = outer.minOf { it.y }
+		val bottom = outer.maxOf { it.y }
+		for (candidate in edgeCandidates) {
+			if (candidate.x !in left..right || candidate.y !in top..bottom) continue
+			if (!inDomain(candidate, loops)) continue
+			var nearest = Double.POSITIVE_INFINITY
+			for (loop in loops) nearest = min(nearest, distanceSquaredToLoop(candidate, loop))
+			if (nearest <= 1.0 || nearest > bandSquared) continue
+			if (points.any { distanceSquared(it, candidate) < minimumSeparationSquared }) continue
+			insertInteriorPoint(candidate, points, triangles)
 		}
 		relaxToConstrainedDelaunay(points, triangles, protectedEdges)
 		var refinementBudget = MAX_QUALITY_REFINEMENT_POINTS

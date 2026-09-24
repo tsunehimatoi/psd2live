@@ -141,9 +141,78 @@ internal object MeshComponentSplit {
         val components = sorted.map { group ->
             Component(group.map(::localX).average().toFloat(), group.map(::localY).average().toFloat())
         }
-        // Voronoi flood from the UV vertices assigns antialias fringes and tiny unmeshed islands
-        // without dropping any nontransparent source pixel.
+        fun finish(owners: IntArray): Plan? {
+            val occupied = BooleanArray(sorted.size)
+            for (pixel in owners.indices) {
+                if ((source.raster.rgba[pixel * 4 + 3].toInt() and 0xff) != 0) occupied[owners[pixel]] = true
+            }
+            val retained = components.indices.filter { occupied[it] }
+            if (retained.size < 2) return null
+            if (retained.size == components.size) return Plan(components, owners, source)
+            val remap = IntArray(components.size) { old ->
+                retained.indexOf(old).takeIf { it >= 0 } ?: 0
+            }
+            for (pixel in owners.indices) owners[pixel] = remap[owners[pixel]]
+            return Plan(retained.map(components::get), owners, source)
+        }
+
+        // If the islands have a real gap along an axis, the midpoint of that gap is
+        // an unambiguous separator even when antialias pixels touch across the gap.
+        // This also avoids a sparse vertex flood stealing the other island's tip.
+        for (horizontal in listOf(true, false)) {
+            val spans = sorted.mapIndexed { index, vertices ->
+                val values = vertices.map { if (horizontal) localX(it) else localY(it) }
+                Triple(index, values.min(), values.max())
+            }.sortedBy { it.second }
+            if (spans.zipWithNext().any { (left, right) -> left.third >= right.second }) continue
+            // The visible contour can extend one raster cell beyond its sampled mesh edge.
+            val separators = spans.zipWithNext().map { (left, right) -> (left.third + right.second) * 0.5f + 1f }
+            val owners = IntArray(width * height) { pixel ->
+                val coordinate = if (horizontal) (pixel % width) + 0.5f else (pixel / width) + 0.5f
+                spans[separators.indexOfFirst { coordinate < it }.let { if (it < 0) spans.lastIndex else it }].first
+            }
+            return finish(owners)
+        }
+
+        // The mesh triangles, rather than their vertices, establish ownership of the art.
+        // A vertex Voronoi flood through transparent space can reach the nearby shoe before
+        // that shoe's own (sparse) vertices do, slicing pixels off the wrong island.
+        val alpha = ByteArray(width * height) { pixel -> source.raster.rgba[pixel * 4 + 3] }
+        val vertexComponent = IntArray(mesh.vertexCount) { -1 }
+        sorted.forEachIndexed { component, vertices -> vertices.forEach { vertexComponent[it] = component } }
         val owners = IntArray(width * height) { -1 }
+        fun edge(ax: Float, ay: Float, bx: Float, by: Float, px: Float, py: Float): Float =
+            (bx - ax) * (py - ay) - (by - ay) * (px - ax)
+        for (triangle in mesh.indices.indices step 3) {
+            val a = mesh.indices[triangle]
+            val b = mesh.indices[triangle + 1]
+            val c = mesh.indices[triangle + 2]
+            val component = vertexComponent[a]
+            val ax = localX(a); val ay = localY(a)
+            val bx = localX(b); val by = localY(b)
+            val cx = localX(c); val cy = localY(c)
+            val area = edge(ax, ay, bx, by, cx, cy)
+            if (kotlin.math.abs(area) < 0.001f) continue
+            val left = kotlin.math.floor(minOf(ax, bx, cx).toDouble()).toInt().coerceIn(0, width - 1)
+            val right = kotlin.math.ceil(maxOf(ax, bx, cx).toDouble()).toInt().coerceIn(0, width - 1)
+            val top = kotlin.math.floor(minOf(ay, by, cy).toDouble()).toInt().coerceIn(0, height - 1)
+            val bottom = kotlin.math.ceil(maxOf(ay, by, cy).toDouble()).toInt().coerceIn(0, height - 1)
+            for (y in top..bottom) for (x in left..right) {
+                val pixel = y * width + x
+                if ((alpha[pixel].toInt() and 0xff) < 8) continue
+                val px = x + 0.5f; val py = y + 0.5f
+                val ab = edge(ax, ay, bx, by, px, py)
+                val bc = edge(bx, by, cx, cy, px, py)
+                val ca = edge(cx, cy, ax, ay, px, py)
+                if ((area > 0f && ab >= -0.001f && bc >= -0.001f && ca >= -0.001f) ||
+                    (area < 0f && ab <= 0.001f && bc <= 0.001f && ca <= 0.001f)) {
+                    owners[pixel] = component
+                }
+            }
+        }
+
+        // Keep the vertex flood only as a fallback for tiny opaque islands with no mesh.
+        val vertexOwners = IntArray(width * height) { -1 }
         val queue = IntArray(width * height)
         var tail = 0
         sorted.forEachIndexed { component, vertices ->
@@ -151,8 +220,8 @@ internal object MeshComponentSplit {
                 val x = localX(vertex).roundToInt().coerceIn(0, width - 1)
                 val y = localY(vertex).roundToInt().coerceIn(0, height - 1)
                 val pixel = y * width + x
-                if (owners[pixel] == -1) {
-                    owners[pixel] = component
+                if (vertexOwners[pixel] == -1) {
+                    vertexOwners[pixel] = component
                     queue[tail++] = pixel
                 }
             }
@@ -168,23 +237,47 @@ internal object MeshComponentSplit {
                 val ny = y + dy
                 if (nx !in 0 until width || ny !in 0 until height) continue
                 val next = ny * width + nx
-                if (owners[next] == -1) {
-                    owners[next] = owners[pixel]
+                if (vertexOwners[next] == -1) {
+                    vertexOwners[next] = vertexOwners[pixel]
                     queue[tail++] = next
                 }
             }
         }
-        val occupied = BooleanArray(sorted.size)
+        val hasTriangleSeed = BooleanArray(sorted.size)
+        for (owner in owners) if (owner >= 0) hasTriangleSeed[owner] = true
         for (pixel in owners.indices) {
-            if ((source.raster.rgba[pixel * 4 + 3].toInt() and 0xff) != 0) occupied[owners[pixel]] = true
+            val component = vertexOwners[pixel]
+            if (!hasTriangleSeed[component] && owners[pixel] == -1 && (alpha[pixel].toInt() and 0xff) > 0) {
+                owners[pixel] = component
+                hasTriangleSeed[component] = true
+            }
         }
-        val retained = components.indices.filter { occupied[it] }
-        if (retained.size < 2) return null
-        if (retained.size == components.size) return Plan(components, owners, source)
-        val remap = IntArray(components.size) { old ->
-            retained.indexOf(old).takeIf { it >= 0 } ?: 0
+        // Grow from the complete triangle footprints. This measures distance from the
+        // actual mesh surface, not geodesic distance along touching alpha pixels.
+        fun grow(minAlpha: Int) {
+            head = 0
+            tail = 0
+            for (pixel in owners.indices) {
+                if (owners[pixel] >= 0 && (alpha[pixel].toInt() and 0xff) >= minAlpha) queue[tail++] = pixel
+            }
+            while (head < tail) {
+                val pixel = queue[head++]
+                val x = pixel % width
+                val y = pixel / width
+                for (dy in -1..1) for (dx in -1..1) {
+                    if (dx == 0 && dy == 0) continue
+                    val nx = x + dx; val ny = y + dy
+                    if (nx !in 0 until width || ny !in 0 until height) continue
+                    val next = ny * width + nx
+                    if (owners[next] == -1 && (alpha[next].toInt() and 0xff) >= minAlpha) {
+                        owners[next] = owners[pixel]
+                        queue[tail++] = next
+                    }
+                }
+            }
         }
-        for (pixel in owners.indices) owners[pixel] = remap[owners[pixel]]
-        return Plan(retained.map(components::get), owners, source)
+        grow(0)
+        for (pixel in owners.indices) if (owners[pixel] == -1) owners[pixel] = vertexOwners[pixel]
+        return finish(owners)
     }
 }

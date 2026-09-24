@@ -92,6 +92,38 @@ class MeshComponentSplitTest {
         assertNull(MeshComponentSplit.detect(joined, source, AtlasPlacement(0, 0, 0, 20, 10), 20, 10))
     }
 
+    @Test fun overlappingBoundsUseTriangleCoverageInsteadOfVertexDistance() {
+        val size = 22
+        val rgba = ByteArray(size * size * 4)
+        for (y in 0 until size) for (x in 0 until size) {
+            val first = x >= 2 && y >= 2 && x + y <= 13
+            val second = x >= 10 && y >= 10 && x + y <= 29
+            if (first || second) rgba[(y * size + x) * 4 + 3] = -1
+        }
+        val layer = source(2).copy(bounds = LayerBounds(0, 0, size, size),
+            raster = LayerRaster(size, size, rgba))
+        val coordinates = floatArrayOf(2f, 2f, 12f, 2f, 2f, 12f,
+            10f, 10f, 20f, 10f, 10f, 20f)
+        val uv = FloatArray(coordinates.size) { coordinates[it] / size }
+        val mesh = DrawableMesh(coordinates, uv, intArrayOf(0, 1, 2, 3, 4, 5))
+        val plan = assertNotNull(MeshComponentSplit.detect(mesh, layer,
+            AtlasPlacement(0, 0, 0, size, size), size, size))
+        val pieces = plan.pieces(listOf("first", "second"))
+        for (y in 0 until size) for (x in 0 until size) {
+            val first = x >= 2 && y >= 2 && x + y <= 13
+            val second = x >= 10 && y >= 10 && x + y <= 29
+            if (!first && !second) continue
+            val actual = pieces.indices.single { index ->
+                val part = pieces[index]
+                val px = x - part.bounds.left
+                val py = y - part.bounds.top
+                px in 0 until part.raster.width && py in 0 until part.raster.height &&
+                    part.raster.rgba[(py * part.raster.width + px) * 4 + 3].toInt() != 0
+            }
+            assertEquals(if (first) 0 else 1, actual, "wrong triangle owns ($x, $y)")
+        }
+    }
+
     @Test fun emptyMeshIslandDoesNotHideOtherSplittableIslands() {
         val original = source(3)
         val rgba = original.raster.rgba.copyOf()
