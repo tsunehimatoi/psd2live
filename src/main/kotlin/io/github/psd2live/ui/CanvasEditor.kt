@@ -606,8 +606,6 @@ internal class CanvasEditor(
     var draft by mutableStateOf(emptyList<Pair<Float, Float>>())
     var cursor by mutableStateOf<Offset?>(null)
     var marquee by mutableStateOf(emptyList<Offset>())
-    /** Last finished lasso in canvas pixels, available for splitting a source layer from the hierarchy. */
-    var sourceSplitPolygon by mutableStateOf(emptyList<Pair<Float, Float>>())
     var preview by mutableStateOf<PuppetModel?>(null)
     var busy by mutableStateOf(false)
     var error by mutableStateOf<String?>(null)
@@ -1678,6 +1676,7 @@ internal class CanvasEditor(
             finalPreview,
             summary ?: tr("editor.paint.commitSummary", session.layerName),
         )
+        if (rebuildMesh) viewModel.offerMeshSplit(listOf(session.layerId))
 
         // 8. Refresh PaintSession baseline with new committed image
         paintSession = startPaintSession(session.layerId, forceReload = true)
@@ -2326,6 +2325,7 @@ internal class CanvasEditor(
             width = p.localW,
             height = p.localH,
             commitHistory = true,
+            splitCandidates = p.cancelLayerIds,
         )
         placement = null
         placementHandle = PlacementHandle.NONE
@@ -4692,12 +4692,6 @@ internal class CanvasEditor(
             pressedObject = null; marquee = emptyList(); original = null; head = null; return
         }
         val polygon = if (selectionStyle == SelectionStyle.LASSO) marquee else listOf(marquee.first(), Offset(marquee.last().x, marquee.first().y), marquee.last(), Offset(marquee.first().x, marquee.last().y))
-        if (selectionStyle == SelectionStyle.LASSO && polygon.size >= 3) {
-            val stride = kotlin.math.ceil(polygon.size / 32.0).toInt().coerceAtLeast(1)
-            sourceSplitPolygon = polygon.filterIndexed { index, _ -> index % stride == 0 }
-                .take(32).map { viewport.canvasX(it.x) to viewport.canvasY(it.y) }
-                .filter { (x, y) -> x.isFinite() && y.isFinite() }
-        }
         if (hierarchyMode == EditHierarchyMode.SELECT) {
             val found = state.effectiveVisibleLayerIds.filter { id -> target(model, id, null)?.let { item -> screen(item.geometry.points, item, viewport).any { insidePolygon(it, polygon) } } == true }.toSet()
             objects = when {

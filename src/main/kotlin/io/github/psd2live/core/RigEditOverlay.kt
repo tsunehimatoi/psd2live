@@ -202,6 +202,8 @@ data class RigEditOverlay(
     val physicsEdits: List<RigPhysicsEdit> = emptyList(),
     val assetLayers: Map<String, kotlinx.serialization.json.JsonObject> = emptyMap(),
     val calibrationLayerIds: Set<String> = emptySet(),
+    /** Source layers active before the first mesh split; preserves the generated Warp frames on rebuild. */
+    val splitBaselineLayerIds: Set<String> = emptySet(),
     val structureEdits: List<kotlinx.serialization.json.JsonObject> = emptyList(),
     /** New authoring commands replay in actual order, after the legacy baseline. */
     val authoringJournal: List<kotlinx.serialization.json.JsonObject> = emptyList(),

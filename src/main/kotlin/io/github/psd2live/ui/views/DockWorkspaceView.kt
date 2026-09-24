@@ -315,6 +315,13 @@ internal fun DockWorkspaceView(
                 onKeepExisting = { pendingPaint.commitPaintSession(rebuildMesh = false) },
                 onDismiss = { pendingPaint.showRebuildMeshDialog = false })
         }
+        viewModel.pendingMeshSplit?.let { offer ->
+            io.github.psd2live.ui.components.MeshSplitDialog(
+                offer = offer,
+                onSplit = viewModel::confirmMeshSplit,
+                onDismiss = viewModel::dismissMeshSplit,
+            )
+        }
     }
     session.floating.toMap().forEach { (id, windowState) ->
         key(workspace.id, id) {

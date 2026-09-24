@@ -13,21 +13,14 @@ object CharacterAnalyzer {
 					config.layerOverrides[layer.id.raw],
 				)
 			}
-		val preliminaryFaceCenter = initiallyClassified
-			.filter { it.semantic.tag == SemanticTag.FACE && it.opaquePixels > 0 }
-			.maxByOrNull { it.opaquePixels }
-			?.centroidX
-			?: source.widthPx * 0.5f
+		// Fresh layers stay intact until the UI offers a named split. Old projects may still
+		// reference generated :r/:l IDs, so retain those identities when they carry edits.
 		val layers = initiallyClassified.flatMap { original ->
-			(if (original.source.id.raw in config.rigEdits.assetLayers) listOf(original) else ComponentSplitter.split(original, preliminaryFaceCenter, config.alphaThreshold, config.meshSpacing.toFloat())).map { component ->
-				val directOverride = config.layerOverrides[component.source.id.raw]
-				val inheritedOverride = config.layerOverrides[original.source.id.raw]
-				when {
-					directOverride != null -> component.withOverride(directOverride)
-					inheritedOverride != null && component.source.id != original.source.id ->
-						component.withOverride(inheritedOverride, preserveSide = true)
-					else -> component.withOverride(inheritedOverride)
-				}
+			if (!preserveLegacySplit(original.source.id.raw, config)) listOf(original)
+			else ComponentSplitter.split(original, config.meshSpacing.toFloat(), config.alphaThreshold).map { component ->
+				val override = config.layerOverrides[component.source.id.raw]
+					?: config.layerOverrides[original.source.id.raw]
+				component.withOverride(override, preserveSide = component.source.id != original.source.id)
 			}
 		}.filter { it.source.id.raw !in config.deletedLayerIds }
 		val warnings = source.warnings.toMutableList()
@@ -88,6 +81,22 @@ object CharacterAnalyzer {
 	}
 
 	private fun union(bounds: List<Bounds>): Bounds = bounds.reduce(Bounds::union)
+
+	private fun preserveLegacySplit(sourceId: String, config: PipelineConfig): Boolean {
+		val ids = setOf("$sourceId:r", "$sourceId:l")
+		val edits = config.rigEdits
+		val tracked = config.layerOverrides.keys + config.parentOverrides.keys +
+			config.drawOrderOverrides.keys + config.meshOverrides.keys + config.deletedLayerIds +
+			config.layerVisibility.keys + edits.assetLayers.keys + edits.calibrationLayerIds
+		if (ids.any { it in tracked }) return true
+		if (edits.keyformSetEdits.any { it.target.id in ids } ||
+			edits.keyformDeleteEdits.any { it.target.id in ids } ||
+			edits.keyformCopyEdits.any { it.sourceTarget.id in ids || it.destinationTarget.id in ids } ||
+			edits.warpEdits.any { warp -> warp.meshIds.any { it in ids } }) return true
+		return (edits.structureEdits + edits.authoringJournal).any { command ->
+			ids.any { id -> command.toString().contains("\"$id\"") }
+		}
+	}
 
 	private fun ClassifiedLayer.withOverride(
 		override: LayerClassificationOverride?,

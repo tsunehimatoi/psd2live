@@ -24,6 +24,7 @@ import org.umamo.interop.moc3.import.Moc3Import
 import org.umamo.render.canvasToParentSpaceFor
 import org.umamo.render.restMeshesToCanvasSpace
 import org.umamo.runtime.model.PuppetModel
+import org.umamo.runtime.model.DrawableId
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
@@ -58,6 +59,29 @@ class PSD2LivePipeline {
 		val rig = baseRig.withRigEdits(config.rigEdits)
 		val runtimeBundle = buildRuntimeBundle("psd2live-preview", effectiveAnalysis, atlas, rig, config).first
 		return RigPreviewModel(effectiveAnalysis, atlas, rig, config, runtimeBundle, baseRig = baseRig)
+	}
+
+	/** A source partition keeps the existing Warp lattices and their coordinate frames verbatim. */
+	internal fun buildPreviewAfterLayerSplit(
+		current: RigPreviewModel,
+		source: SourceArt,
+		config: PipelineConfig,
+	): RigPreviewModel {
+		val analysis = MouthLipLayers.prepare(CharacterAnalyzer.analyze(source, config), config)
+		val atlas = AtlasPacker.pack(analysis.layers, config.atlasSize, config.texturePadding, config.textureUpscale)
+		val ids = current.rig.layerIdByDrawableId.map { (drawableId, layerId) -> layerId to DrawableId(drawableId) }.toMap()
+		val generated = RigBuilder.buildPreservingDeformers(
+			analysis, atlas, config, meshCache, current.analysis, current.config, ids,
+		)
+		val baseRig = generated.copy(puppet = generated.puppet.copy(
+			deformers = current.baseRig.puppet.deformers,
+		))
+		val replayed = baseRig.withRigEdits(config.rigEdits)
+		val rig = replayed.copy(puppet = replayed.puppet.copy(
+			deformers = current.rig.puppet.deformers,
+		))
+		val bundle = buildRuntimeBundle("psd2live-preview", analysis, atlas, rig, config).first
+		return RigPreviewModel(analysis, atlas, rig, config, bundle, baseRig)
 	}
 
 	/** Hierarchy-only edits retain textures but rebuild all parent-space geometry and keyforms. */

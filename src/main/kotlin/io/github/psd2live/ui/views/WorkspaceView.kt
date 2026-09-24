@@ -196,6 +196,13 @@ fun WorkspaceView(
 				onDismiss = { editor.showRebuildMeshDialog = false },
 			)
 		}
+		viewModel.pendingMeshSplit?.let { offer ->
+			io.github.psd2live.ui.components.MeshSplitDialog(
+				offer = offer,
+				onSplit = viewModel::confirmMeshSplit,
+				onDismiss = viewModel::dismissMeshSplit,
+			)
+		}
 	}
 }
 
@@ -2309,14 +2316,13 @@ private fun DrawableTreeItem(
 			if (layerId != null) {
 				CompactMenuDivider()
 				CompactMenuItem(
-					text = tr("canvas.hierarchy.splitFromLasso"),
-					enabled = viewModel.canvasEditor.sourceSplitPolygon.size >= 3 &&
-						state.analysis?.source?.layers?.any { it.id.raw == layerId } == true,
+					text = tr("canvas.hierarchy.splitMeshComponents"),
+					enabled = drawable.mesh != null,
 					onClick = {
-						viewModel.splitLayerByLastLasso(layerId)
+						viewModel.requestMeshSplit(layerId)
 						showMenu = false
 					},
-					icon = { IconSelectionBounds(tint = colors.textMuted, modifier = Modifier.size(12.dp)) },
+					icon = { IconMeshWireframe(tint = colors.textMuted, modifier = Modifier.size(12.dp)) },
 				)
 				CompactMenuItem(
 					text = tr("canvas.hierarchy.deleteLayer"),

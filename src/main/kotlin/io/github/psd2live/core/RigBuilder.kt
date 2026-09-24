@@ -168,6 +168,26 @@ object RigBuilder {
 		val deformersEnabled: Boolean,
 		val deformers: List<Deformer>,
 	) {
+		/** Replace only artwork while keeping every existing deformer and normalization frame. */
+		fun withArtwork(input: PipelineAnalysis): RigContext = RigContext(
+			analysis = input.copy(
+				layers = input.layers.filter { it.source !is MouthLipLayer },
+				anchors = analysis.anchors,
+				calibration = analysis.calibration,
+			),
+			character = character,
+			head = head,
+			face = face,
+			frontHair = frontHair,
+			backHair = backHair,
+			headSpace = headSpace,
+			faceRig = faceRig,
+			eyeWhiteLayers = eyeWhiteLayers,
+			frameByDeformer = frameByDeformer,
+			pairedParentByLayerId = pairedParentByLayerId,
+			deformersEnabled = deformersEnabled,
+			deformers = deformers,
+		)
 		/** The layer expressed in the coordinate system its mesh and its keyforms are authored in. */
 		fun rigLayer(layer: ClassifiedLayer): ClassifiedLayer = layer.riggedIn(analysis.anchors, headSpace)
 
@@ -216,6 +236,25 @@ object RigBuilder {
 	 * describe the same deformers' frames only while every layer bound that feeds them is unchanged.
 	 */
 	internal fun rigContext(inputAnalysis: PipelineAnalysis, config: PipelineConfig): RigContext {
+		val splitBaselineIds = config.rigEdits.splitBaselineLayerIds
+		if (splitBaselineIds.isNotEmpty()) {
+			val neededIds = splitBaselineIds + config.rigEdits.calibrationLayerIds
+			val originalLayers = inputAnalysis.source.layers.filter { it.id.raw in neededIds }
+			if (originalLayers.isNotEmpty()) {
+				val baselineSource = object : org.umamo.format.art.SourceArt {
+					override val widthPx = inputAnalysis.source.widthPx
+					override val heightPx = inputAnalysis.source.heightPx
+					override val groups = inputAnalysis.source.groups
+					override val layers = originalLayers
+				}
+				val baselineConfig = config.copy(
+					deletedLayerIds = config.deletedLayerIds - splitBaselineIds,
+					rigEdits = config.rigEdits.copy(splitBaselineLayerIds = emptySet()),
+				)
+				val baselineAnalysis = CharacterAnalyzer.analyze(baselineSource, baselineConfig)
+				return rigContext(baselineAnalysis, baselineConfig).withArtwork(inputAnalysis)
+			}
+		}
 		val analysis = inputAnalysis.copy(layers = inputAnalysis.layers.filter { it.source !is MouthLipLayer })
 		val character = analysis.anchors.character
 		val layout = analysis.calibration ?: analysis
@@ -408,9 +447,31 @@ object RigBuilder {
 		SemanticTag.TONGUE,
 	)
 
-	fun build(inputAnalysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig, meshCache: PreviewMeshCache? = null): BuiltRig {
+	fun build(inputAnalysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig, meshCache: PreviewMeshCache? = null): BuiltRig =
+		buildWithContext(inputAnalysis, atlas, config, meshCache, rigContext(inputAnalysis, config), emptyMap())
+
+	internal fun buildPreservingDeformers(
+		inputAnalysis: PipelineAnalysis,
+		atlas: PackedAtlas,
+		config: PipelineConfig,
+		meshCache: PreviewMeshCache?,
+		previousAnalysis: PipelineAnalysis,
+		previousConfig: PipelineConfig,
+		stableDrawableIds: Map<String, DrawableId>,
+	): BuiltRig = buildWithContext(
+		inputAnalysis, atlas, config, meshCache,
+		rigContext(previousAnalysis, previousConfig).withArtwork(inputAnalysis), stableDrawableIds,
+	)
+
+	private fun buildWithContext(
+		inputAnalysis: PipelineAnalysis,
+		atlas: PackedAtlas,
+		config: PipelineConfig,
+		meshCache: PreviewMeshCache?,
+		context: RigContext,
+		stableDrawableIds: Map<String, DrawableId>,
+	): BuiltRig {
         val generatedLips = generatedMouthLips(inputAnalysis)
-		val context = rigContext(inputAnalysis, config)
 		val analysis = context.analysis
 		val faceRig = context.faceRig
 		val shouldBuildDeformers = context.deformersEnabled
@@ -513,7 +574,9 @@ object RigBuilder {
 			}
 			val rigLayer = context.rigLayer(layer)
 			val (parentId, parentFrame) = context.parentAndFrame(layer, config)
-			val id = uniqueDrawableId(layer, idCounts)
+			val id = stableDrawableIds[layer.source.id.raw]
+				?: if (stableDrawableIds.isEmpty()) uniqueDrawableId(layer, idCounts)
+				else stableSplitDrawableId(layer.source.id.raw, stableDrawableIds.values)
 			val parts = buildDrawableMesh(
 				layer,
 				rigLayer,
@@ -2156,6 +2219,16 @@ object RigBuilder {
 		val key = "ArtMesh$base$side"
 		val ordinal = counts.merge(key, 1, Int::plus) ?: 1
 		return DrawableId(if (ordinal == 1) key else "$key$ordinal")
+	}
+
+	private fun stableSplitDrawableId(layerId: String, reserved: Collection<DrawableId>): DrawableId {
+		val hash = UUID.nameUUIDFromBytes(layerId.toByteArray(Charsets.UTF_8))
+			.toString().replace("-", "")
+		val base = "ArtMeshSplit$hash"
+		var candidate = base
+		var suffix = 2
+		while (reserved.any { it.raw == candidate }) candidate = "$base${suffix++}"
+		return DrawableId(candidate)
 	}
 
 	private fun blendMode(blend: LayerBlend): BlendMode = when (blend) {
