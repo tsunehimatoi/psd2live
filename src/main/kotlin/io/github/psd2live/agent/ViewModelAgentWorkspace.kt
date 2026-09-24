@@ -87,7 +87,8 @@ private fun validateAgentProjectSettings(
         "exportCmo3", "exportMoc3", "exportJson", "exportHiddenParts", "exportHiddenDrawables",
         "exportGuideImageParts", "exportIncludePhysics", "exportIncludeUserData", "exportIncludeDisplayInfo",
     )
-    require(changes.keys.all { it in ranges || it in booleans || it in setOf("textureUpscale", "mouthShape", "runtimeTarget", "meshEdgeMode") }) {
+    require(changes.keys.all { it in ranges || it in booleans ||
+        it in setOf("textureUpscale", "mouthShape", "runtimeTarget", "meshEdgeMode", "meshFillParameters") }) {
         "Unknown project setting"
     }
     changes.forEach { (key, value) ->
@@ -163,6 +164,7 @@ class ViewModelAgentWorkspace(
             put("interiorDensity", settings.interiorDensity)
             put("fillAlgorithm", settings.fillAlgorithm.name)
             put("suppressBoundaryDiagonals", settings.suppressBoundaryDiagonals)
+            put("fillParameters", WorkspaceStateCodec.encodeFillParameters(settings.fillParameters))
         }
     }
     override suspend fun importPsd(path: String): AgentWorkspaceMutationResult = editMutex.withLock {
@@ -216,7 +218,7 @@ class ViewModelAgentWorkspace(
             else {
                 val change = requireNotNull(changes)
                 val allowed = setOf("outerMargin", "edgeMode", "edgeWidth", "maxEdgeDistance",
-                    "interiorDensity", "fillAlgorithm", "suppressBoundaryDiagonals")
+                    "interiorDensity", "fillAlgorithm", "suppressBoundaryDiagonals", "fillParameters")
                 require(change.keys.all { it in allowed }) { "Unknown layer mesh setting" }
                 require(change["edgeMode"] == null || change["edgeMode"]?.jsonPrimitive?.contentOrNull
                     ?.let { raw -> io.github.psd2live.core.MeshEdgeMode.entries.any { it.name == raw } } == true) {
@@ -242,6 +244,10 @@ class ViewModelAgentWorkspace(
                     } ?: base.fillAlgorithm,
                     suppressBoundaryDiagonals = change["suppressBoundaryDiagonals"]?.jsonPrimitive?.booleanOrNull
                         ?: base.suppressBoundaryDiagonals,
+                    fillParameters = change["fillParameters"]?.let { fill ->
+                        WorkspaceStateCodec.mergeFillParameters(base.fillParameters,
+                            runCatching { fill.jsonObject }.getOrNull() ?: error("fillParameters must be an object"))
+                    } ?: base.fillParameters,
                 )
                 document.copy(meshOverrides = document.meshOverrides + (layerId to settings))
             }
@@ -312,8 +318,14 @@ class ViewModelAgentWorkspace(
             val mergedUpscale = if (upscale != null) {
                 kotlinx.serialization.json.JsonObject(document.settings.getValue("textureUpscale").jsonObject + upscale)
             } else null
+            val mergedFill = changes["meshFillParameters"]?.let { fill ->
+                WorkspaceStateCodec.encodeFillParameters(WorkspaceStateCodec.mergeFillParameters(
+                    WorkspaceStateCodec.decodeFillParameters(document.settings["meshFillParameters"]),
+                    runCatching { fill.jsonObject }.getOrNull() ?: error("meshFillParameters must be an object")))
+            }
             val next = kotlinx.serialization.json.JsonObject(document.settings + changes +
-                listOfNotNull(mergedUpscale?.let { "textureUpscale" to it }).toMap())
+                listOfNotNull(mergedUpscale?.let { "textureUpscale" to it },
+                    mergedFill?.let { "meshFillParameters" to it }).toMap())
             validateAgentProjectSettings(next, changes)
             val decoded = WorkspaceStateCodec.decode(next, current)
             val minimumAtlas = decoded.minRequiredAtlasSize()

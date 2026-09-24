@@ -52,6 +52,7 @@ internal object MouthLipLayers {
                     fillAlgorithm = config.meshOverrides[owner.source.id.raw]?.fillAlgorithm ?: config.meshFillAlgorithm,
                     suppressBoundaryDiagonals = config.meshOverrides[owner.source.id.raw]?.suppressBoundaryDiagonals
                         ?: config.meshSuppressBoundaryDiagonals,
+                    fillParameters = config.meshOverrides[owner.source.id.raw]?.fillParameters ?: config.meshFillParameters,
                 )
                 val lips = if (adaptive != null) {
                     val rigPositions = FloatArray(adaptive.positions.size)

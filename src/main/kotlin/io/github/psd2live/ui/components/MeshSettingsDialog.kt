@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.psd2live.core.MeshSettings
 import io.github.psd2live.core.MeshFillAlgorithm
+import io.github.psd2live.core.MeshFillParameters
 import io.github.psd2live.core.MeshEdgeMode
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.ComponentPalette
@@ -66,6 +67,7 @@ fun MeshSettingsDialog(
 	var interiorDensity by remember(target) { mutableStateOf(target.currentSettings.interiorDensity) }
 	var fillAlgorithm by remember(target) { mutableStateOf(target.currentSettings.fillAlgorithm) }
 	var suppressBoundaryDiagonals by remember(target) { mutableStateOf(target.currentSettings.suppressBoundaryDiagonals) }
+	var fillParameters by remember(target) { mutableStateOf(target.currentSettings.fillParameters) }
 	fun settings(
 		outer: Float = outerMargin,
 		mode: MeshEdgeMode = edgeMode,
@@ -74,7 +76,8 @@ fun MeshSettingsDialog(
 		density: Float = interiorDensity,
 		algorithm: MeshFillAlgorithm = fillAlgorithm,
 		suppressDiagonals: Boolean = suppressBoundaryDiagonals,
-	) = MeshSettings(outer, mode, width, edgeDistance, density, algorithm, suppressDiagonals)
+		fill: MeshFillParameters = fillParameters,
+	) = MeshSettings(outer, mode, width, edgeDistance, density, algorithm, suppressDiagonals, fill)
 
 	Box(
 		modifier = Modifier
@@ -324,6 +327,11 @@ fun MeshSettingsDialog(
 			)
 			Text(tr("mesh.settings.fillHint.${fillAlgorithm.name}"), style = typography.caption.copy(fontSize = 9.5.sp),
 				color = colors.textMuted)
+			MeshFillParameterControls(
+				algorithm = fillAlgorithm,
+				parameters = fillParameters,
+				onChange = { fillParameters = it; onPreview(settings(fill = it)) },
+			)
 			// Topology
 			Text(tr("mesh.settings.topologyGroup"), style = typography.caption.copy(fontSize = 10.sp,
 				fontWeight = FontWeight.Bold), color = colors.textMuted)

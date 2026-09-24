@@ -276,6 +276,7 @@ data class PSD2LiveState(
 	val meshInteriorDensity: Float = 40.0f,
 	val meshFillAlgorithm: MeshFillAlgorithm = MeshFillAlgorithm.GRADED_POISSON,
 	val meshSuppressBoundaryDiagonals: Boolean = false,
+	val meshFillParameters: io.github.psd2live.core.MeshFillParameters = io.github.psd2live.core.MeshFillParameters(),
 	val meshOverrides: Map<String, MeshSettings> = emptyMap(),
 	val texturePadding: Int = 2,
 	val alphaThreshold: Int = 8,
@@ -468,6 +469,7 @@ data class PSD2LiveState(
 			meshInteriorDensity = meshInteriorDensity,
 			meshFillAlgorithm = meshFillAlgorithm,
 			meshSuppressBoundaryDiagonals = meshSuppressBoundaryDiagonals,
+			meshFillParameters = meshFillParameters,
 			meshOverrides = meshOverrides,
 			alphaThreshold = alphaThreshold,
 			headTurnStrength = headStrength,
@@ -535,6 +537,7 @@ data class PSD2LiveState(
 			interiorDensity = kotlin.math.max(12f, meshInteriorDensity * semanticDensity),
 			fillAlgorithm = meshFillAlgorithm,
 			suppressBoundaryDiagonals = meshSuppressBoundaryDiagonals,
+			fillParameters = meshFillParameters,
 		)
 	}
 

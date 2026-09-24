@@ -2,11 +2,13 @@ package io.github.psd2live.core.mesh
 
 import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.hypot
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sin
 
 /**
  * Graded, pattern-based interior fills.
@@ -29,34 +31,70 @@ internal object StructuredMeshFill {
 		val interior: List<Point>,
 	)
 
-	/** Size growth per unit of depth. One 2:1 level per ring of its own size, so the bulk reaches the coarse spacing. */
-	private const val GRADATION = 1.0
-	private const val CLEARANCE = 0.6
-	/** Gap points only where the gap is at least two contour spacings wide. */
-	private const val GAP_CLEARANCE = 1.0
-	/** Coarsest leaf next to the contour, relative to its spacing: 4-8 levels are sqrt(2) apart, red-green levels 2. */
-	private const val FINEST_QUADTREE = 1.2
-	private const val FINEST_FRACTAL = 1.5
-	private const val SQRT3_2 = 0.8660254037844386
-	private const val MAX_CORE_TRIANGLES = 24_000
+	/**
+	 * [edgeRatio]: spacing of the first interior row over the contour spacing. [gradation]: spacing growth per
+	 * unit of depth. [angle]: lattice orientation in radians. [maxRows]: paving rows before the center lattice.
+	 */
+	class Options(val edgeRatio: Double, val gradation: Double, val angle: Double = 0.0, val maxRows: Int = MAX_ROWS)
 
-	private class SizingField(val loops: List<List<Point>>, val fine: Double, val coarse: Double) {
+	private const val CLEARANCE = 0.6
+	/** Largest rim move relative to the shortest incident core edge; larger moves distort the lattice. */
+	private const val RIM_REACH = 0.4
+	private const val RIM_PASSES = 2
+	private const val RIM_MIN_ANGLE = 0.35
+	/** Gap points only where the gap is wider than one first-row spacing. */
+	private const val GAP_CLEARANCE = 1.0
+	private const val SQRT3_2 = 0.8660254037844386
+	private const val SQRT2 = 1.4142135623730951
+	private const val MAX_CORE_TRIANGLES = 24_000
+	private const val MAX_ROWS = 24
+
+	/** Spacing starts at [first] next to the contour (spaced [fine]) and grows with depth up to [coarse]. */
+	private class SizingField(
+		val loops: List<List<Point>>, val fine: Double, val first: Double, val coarse: Double, val gradation: Double,
+	) {
 		val index = SegmentIndex(loops, fine)
 		fun distance(p: Point) = index.distance(p)
 		fun inside(p: Point) = inDomain(p, loops)
-		fun target(depth: Double) = (fine + GRADATION * depth).coerceIn(fine, coarse)
+		fun target(depth: Double) = (first + gradation * depth).coerceIn(first, coarse)
 	}
 
-	fun layout(kind: Kind, loops: List<List<Point>>, coarseSpacing: Double): Layout? {
-		if (loops.isEmpty() || loops.any { it.size < 3 }) return null
+	private fun sizingField(loops: List<List<Point>>, coarseSpacing: Double, options: Options): SizingField {
 		val segments = loops.flatMap { loop -> loop.indices.map { distance(loop[it], loop[(it + 1) % loop.size]) } }.sorted()
 		val fine = segments[segments.size / 2].coerceAtLeast(2.0)
 		val coarse = max(coarseSpacing, fine)
-		val field = SizingField(loops, fine, coarse)
+		return SizingField(loops, fine, (fine * options.edgeRatio).coerceIn(fine, coarse), coarse, options.gradation)
+	}
+
+	fun layout(kind: Kind, loops: List<List<Point>>, coarseSpacing: Double, options: Options): Layout? {
+		if (loops.isEmpty() || loops.any { it.size < 3 }) return null
+		if (kind == Kind.CONTOUR_PAVING || abs(options.angle) < 1e-9) return orientedLayout(kind, loops, coarseSpacing, options)
+		// Rotating the domain instead of the lattice keeps the lattice keys integral.
+		val all = loops.flatten()
+		val pivot = Point((all.minOf { it.x } + all.maxOf { it.x }) * 0.5, (all.minOf { it.y } + all.maxOf { it.y }) * 0.5)
+		fun rotate(p: Point, angle: Double): Point {
+			val c = cos(angle); val s = sin(angle)
+			val dx = p.x - pivot.x; val dy = p.y - pivot.y
+			return Point(pivot.x + dx * c - dy * s, pivot.y + dx * s + dy * c)
+		}
+		val local = orientedLayout(kind, loops.map { loop -> loop.map { rotate(it, -options.angle) } }, coarseSpacing, options)
+			?: return null
+		val domainCount = all.size
+		fun back(p: Point) = snap(rotate(p, options.angle))
+		return Layout(
+			all + local.points.drop(domainCount).map(::back),
+			local.triangles,
+			local.regions.map { Region(it.loops, it.candidates.map(::back), it.spacing) },
+			local.interior.map(::back),
+		)
+	}
+
+	private fun orientedLayout(kind: Kind, loops: List<List<Point>>, coarseSpacing: Double, options: Options): Layout? {
+		val field = sizingField(loops, coarseSpacing, options)
 		return when (kind) {
 			Kind.QUADTREE -> coreLayout(field, quadtreeTriangles(field))
 			Kind.TRIANGLE_FRACTAL -> coreLayout(field, fractalTriangles(field))
-			Kind.CONTOUR_PAVING -> pavingLayout(field)
+			Kind.CONTOUR_PAVING -> pavingLayout(field, options)
 		}
 	}
 
@@ -72,10 +110,9 @@ internal object StructuredMeshFill {
 		return doubleArrayOf(all.minOf { it.x }, all.minOf { it.y }, all.maxOf { it.x }, all.maxOf { it.y })
 	}
 
-	/** Whether a lattice triangle of nominal [size] still needs refinement. */
+	/** Whether a lattice triangle of nominal [size] still needs refinement; nothing is refined below [finest]. */
 	private fun needsRefinement(field: SizingField, a: Point, b: Point, c: Point, size: Double, finest: Double): Boolean {
-		// The gap triangulation absorbs a step up from the contour spacing, so the core may stop early.
-		if (size <= field.fine * finest) return false
+		if (size <= finest * 1.0001) return false
 		val center = Point((a.x + b.x + c.x) / 3, (a.y + b.y + c.y) / 3)
 		val radius = max(distance(center, a), max(distance(center, b), distance(center, c)))
 		val d = field.distance(center)
@@ -99,7 +136,7 @@ internal object StructuredMeshFill {
 	private fun quadtreeTriangles(field: SizingField): Pair<List<LatticeTriangle>, (Long) -> Point> {
 		val box = bounds(field.loops)
 		val minX = box[0]; val minY = box[1]; val maxX = box[2]; val maxY = box[3]
-		val levels = max(0, floor(ln(field.coarse / field.fine) / ln(2.0)).toInt()).coerceAtMost(10)
+		val levels = max(0, floor(ln(field.coarse / field.first) / ln(2.0)).toInt()).coerceAtMost(10)
 		val rootUnits = 1 shl (levels + 1)
 		val unit = field.coarse / rootUnits
 		val columns = max(1, ceil((maxX - minX) / field.coarse).toInt())
@@ -155,7 +192,7 @@ internal object StructuredMeshFill {
 			val t = queue.removeFirst()
 			if (!t.leaf) continue
 			val a = world(t.apex)
-			if (needsRefinement(field, a, world(t.left), world(t.right), distance(a, world(t.left)), FINEST_QUADTREE)) split(t)
+			if (needsRefinement(field, a, world(t.left), world(t.right), distance(a, world(t.left)), field.first)) split(t)
 		}
 		val leaves = all.filter { it.leaf }.map {
 			LatticeTriangle(it.apex, it.left, it.right, distance(world(it.apex), world(it.left)))
@@ -170,11 +207,12 @@ internal object StructuredMeshFill {
 	/**
 	 * Equilateral triangles split into four (red) where the sizing field asks for it, balanced so that
 	 * edge neighbors differ by at most one level. A leaf with one hanging midpoint is closed by a green
-	 * bisection; two or more hanging midpoints upgrade it to a red split.
+	 * bisection and one with two by a blue three-way split; only three hanging midpoints upgrade it to red.
 	 */
 	private fun fractalTriangles(field: SizingField): Pair<List<LatticeTriangle>, (Long) -> Point> {
 		val box = bounds(field.loops)
-		val levels = max(0, floor(ln(field.coarse / field.fine) / ln(2.0)).toInt()).coerceAtMost(10)
+		// Red-green levels are a factor 2 apart; the finest one is the nearest to the first-row spacing.
+		val levels = max(0, kotlin.math.round(ln(field.coarse / field.first) / ln(2.0)).toInt()).coerceAtMost(10)
 		val rootSize = 1 shl levels
 		val unit = field.coarse / rootSize
 		val rowHeight = field.coarse * SQRT3_2
@@ -211,7 +249,7 @@ internal object StructuredMeshFill {
 		while (queue.isNotEmpty() && leaves.size < MAX_CORE_TRIANGLES) {
 			val t = queue.removeFirst()
 			if (t !in leaves || t.size < 2) continue
-			if (needsRefinement(field, world(t.a), world(t.b), world(t.c), t.size * unit, FINEST_FRACTAL)) refine(t)
+			if (needsRefinement(field, world(t.a), world(t.b), world(t.c), t.size * unit, field.first * SQRT2)) refine(t)
 		}
 		queue.clear()
 		fun edges(t: EquilateralTriangle) = listOf(t.a to t.b, t.b to t.c, t.c to t.a)
@@ -229,19 +267,36 @@ internal object StructuredMeshFill {
 						if (key(keyX(p) + dx, keyY(p) + dy) in vertices || key(keyX(p) + dx * 3, keyY(p) + dy * 3) in vertices) deep = true
 					}
 				}
-				if (deep || hanging >= 2) { refine(t); changed = true }
+				if (deep || hanging == 3) { refine(t); changed = true }
 			}
 		} while (changed)
 		val output = mutableListOf<LatticeTriangle>()
 		for (t in leaves) {
 			val s = t.size * unit
-			val hanging = if (t.size < 2) null else edges(t).firstOrNull { (p, q) -> mid(p, q) in vertices }
-			if (hanging == null) { output += LatticeTriangle(t.a, t.b, t.c, s); continue }
-			val (p, q) = hanging
-			val o = listOf(t.a, t.b, t.c).first { it != p && it != q }
-			val m = mid(p, q)
-			output += LatticeTriangle(p, m, o, s * 0.5)
-			output += LatticeTriangle(m, q, o, s * 0.5)
+			val corners = listOf(t.a, t.b, t.c)
+			// Hanging midpoint per corner-opposite edge: edge i runs from corner i to corner i+1.
+			val hanging = if (t.size < 2) List(3) { false } else List(3) { i -> mid(corners[i], corners[(i + 1) % 3]) in vertices }
+			when (hanging.count { it }) {
+				0 -> output += LatticeTriangle(t.a, t.b, t.c, s)
+				1 -> {
+					// Green: bisect toward the opposite corner.
+					val i = hanging.indexOf(true)
+					val p = corners[i]; val q = corners[(i + 1) % 3]; val o = corners[(i + 2) % 3]
+					val m = mid(p, q)
+					output += LatticeTriangle(p, m, o, s * 0.5)
+					output += LatticeTriangle(m, q, o, s * 0.5)
+				}
+				else -> {
+					// Blue: cut the corner shared by both hanging edges, then split the remaining
+					// trapezoid; all three triangles keep angles of at least 30 degrees.
+					val free = hanging.indexOf(false)
+					val b = corners[free]; val c = corners[(free + 1) % 3]; val a = corners[(free + 2) % 3]
+					val ma = mid(c, a); val mb = mid(a, b)
+					output += LatticeTriangle(a, mb, ma, s * 0.5)
+					output += LatticeTriangle(mb, b, c, s * 0.5)
+					output += LatticeTriangle(mb, c, ma, s * 0.5)
+				}
+			}
 		}
 		return output to world
 	}
@@ -281,10 +336,11 @@ internal object StructuredMeshFill {
 		fun global(id: Int) = remap.getOrPut(id) { points += corePoints[id]; points.lastIndex }
 		val triangles = cleaned.map { Triangle(global(it[0]), global(it[1]), global(it[2])) }
 		val coreLoops = traceBoundary(triangles.map { intArrayOf(it.a, it.b, it.c) }) ?: return null
+		conformRim(points, triangles, coreLoops, field)
 		val regions = gapRegions(points, domainIds, coreLoops) ?: return null
-		// Where the core recedes (curved or diagonal contours), contour-spaced points keep the gap free of fans.
+		// Where the core recedes (curved or diagonal contours), first-row spaced points keep the gap free of fans.
 		return Layout(points, triangles, regions.map { loops ->
-			Region(loops, hexLattice(loops.map { ids -> ids.map { points[it] } }, field.fine, GAP_CLEARANCE), field.fine)
+			Region(loops, hexLattice(loops.map { ids -> ids.map { points[it] } }, field.first, GAP_CLEARANCE), field.first)
 		}, corePoints)
 	}
 
@@ -313,6 +369,48 @@ internal object StructuredMeshFill {
 	private fun pair(a: Int, b: Int): Long = (a.toLong() shl 32) or (b.toLong() and 0xffffffffL)
 
 	/** Boundary loops of a manifold, consistently wound triangle set (outer loops positive). */
+	/**
+	 * Pulls each core rim vertex to the height of an equilateral triangle on its rim edges, so the gap is one
+	 * even row of triangles fanning from the contour instead of a ragged band, or a second contour row.
+	 */
+	private fun conformRim(points: MutableList<Point>, triangles: List<Triangle>, rims: List<IntArray>, field: SizingField) {
+		val incident = HashMap<Int, MutableList<Triangle>>()
+		for (t in triangles) for (v in intArrayOf(t.a, t.b, t.c)) incident.getOrPut(v) { mutableListOf() } += t
+		fun corners(t: Triangle, v: Int, p: Point) =
+			Triple(if (t.a == v) p else points[t.a], if (t.b == v) p else points[t.b], if (t.c == v) p else points[t.c])
+		fun acceptable(v: Int, p: Point, target: Double): Boolean {
+			if (!field.inside(p) || field.distance(p) < 0.5 * target) return false
+			return incident.getValue(v).all { t ->
+				val (a, b, c) = corners(t, v, p)
+				val (a0, b0, c0) = corners(t, v, points[v])
+				cross(a, b, c) > GEOMETRY_EPSILON && minimumAngle(a, b, c) >= min(RIM_MIN_ANGLE, minimumAngle(a0, b0, c0))
+			}
+		}
+		repeat(RIM_PASSES) {
+			for (rim in rims) for ((i, v) in rim.withIndex()) {
+				val p = points[v]
+				val depth = field.distance(p)
+				val target = SQRT3_2 * 0.5 * (distance(p, points[rim[(i + 1) % rim.size]]) +
+					distance(p, points[rim[(i - 1 + rim.size) % rim.size]]))
+				val gx = field.distance(Point(p.x + 0.5, p.y)) - field.distance(Point(p.x - 0.5, p.y))
+				val gy = field.distance(Point(p.x, p.y + 0.5)) - field.distance(Point(p.x, p.y - 0.5))
+				val norm = hypot(gx, gy)
+				if (norm < 1e-6) continue
+				val shortest = incident.getValue(v).minOf { t ->
+					listOf(t.a, t.b, t.c).filter { it != v }.minOf { distance(points[it], p) }
+				}
+				val reach = RIM_REACH * shortest
+				var step = (target - depth).coerceIn(-reach, reach)
+				for (attempt in 0 until 4) {
+					if (abs(step) < 0.25) break
+					val moved = snap(Point(p.x + gx / norm * step, p.y + gy / norm * step))
+					if (acceptable(v, moved, target)) { points[v] = moved; break }
+					step *= 0.5
+				}
+			}
+		}
+	}
+
 	private fun traceBoundary(triangles: List<IntArray>): List<IntArray>? {
 		val directed = HashSet<Long>()
 		for (t in triangles) for (s in 0..2) directed += pair(t[s], t[(s + 1) % 3])
@@ -375,14 +473,14 @@ internal object StructuredMeshFill {
 	 * A loop stops at a bottleneck, a collapse, or once its spacing reaches the interior density; the
 	 * remaining center is filled with a triangular lattice.
 	 */
-	private fun pavingLayout(field: SizingField): Layout? {
+	private fun pavingLayout(field: SizingField, options: Options): Layout? {
 		val points = field.loops.flatten().toMutableList()
 		var cursor = 0
 		val rows = field.loops.map { loop -> IntArray(loop.size) { cursor + it }.also { cursor += loop.size } }.toMutableList()
 		val depths = DoubleArray(rows.size)
 		val active = BooleanArray(rows.size) { true }
 		val triangles = mutableListOf<Triangle>()
-		repeat(24) {
+		repeat(options.maxRows.coerceIn(0, MAX_ROWS)) {
 			if (active.none { it }) return@repeat
 			for (i in rows.indices) {
 				if (!active[i]) continue
@@ -401,12 +499,11 @@ internal object StructuredMeshFill {
 		if (!validDomain(free)) return null
 		val paved = points.drop(field.loops.sumOf { it.size })
 		// The center continues the gradation from the last row up to the interior density.
-		val segments = free.flatMap { loop -> loop.indices.map { distance(loop[it], loop[(it + 1) % loop.size]) } }.sorted()
-		val centerField = SizingField(free, segments[segments.size / 2].coerceAtLeast(2.0), field.coarse)
+		val centerField = sizingField(free, field.coarse, options)
 		val center = coreLayout(centerField, fractalTriangles(centerField))
 		if (center == null) {
 			val candidates = hexLattice(free, centerField.coarse)
-			return Layout(points, triangles, listOf(Region(rows.toList(), candidates, centerField.fine)), paved + candidates)
+			return Layout(points, triangles, listOf(Region(rows.toList(), candidates, centerField.first)), paved + candidates)
 		}
 		val rowIds = rows.flatMap { it.toList() }
 		val shift = points.size - rowIds.size

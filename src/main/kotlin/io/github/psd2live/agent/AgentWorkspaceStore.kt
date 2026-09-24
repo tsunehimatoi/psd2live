@@ -382,6 +382,7 @@ internal class AgentWorkspaceStore(
 					put("interiorDensity", s.interiorDensity)
 					put("fillAlgorithm", s.fillAlgorithm.name)
 					put("suppressBoundaryDiagonals", s.suppressBoundaryDiagonals)
+					put("fillParameters", io.github.psd2live.project.WorkspaceStateCodec.encodeFillParameters(s.fillParameters))
 				})
 			}
 		}
@@ -653,6 +654,7 @@ internal class AgentWorkspaceStore(
 					?.let { runCatching { io.github.psd2live.core.MeshFillAlgorithm.valueOf(it) }.getOrNull() }
 					?: io.github.psd2live.core.MeshFillAlgorithm.GRADED_POISSON,
 				suppressBoundaryDiagonals = obj["suppressBoundaryDiagonals"]?.jsonPrimitive?.booleanOrNull ?: false,
+				fillParameters = io.github.psd2live.project.WorkspaceStateCodec.decodeFillParameters(obj["fillParameters"]),
 			)
 		}
 		return AgentWorkspaceDocument(

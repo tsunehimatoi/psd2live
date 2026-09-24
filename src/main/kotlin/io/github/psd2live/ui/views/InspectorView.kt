@@ -71,6 +71,7 @@ import io.github.psd2live.ui.components.ExportActionSection
 import io.github.psd2live.ui.components.IconChevron
 import io.github.psd2live.ui.components.IconReset
 import io.github.psd2live.ui.components.IconTrash
+import io.github.psd2live.ui.components.MeshFillParameterControls
 import io.github.psd2live.ui.localizedName
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
@@ -645,6 +646,17 @@ internal fun ModelSettingsSection(
 					)
 					Text(tr("mesh.settings.fillHint.${state.meshFillAlgorithm.name}"),
 						style = typography.caption.copy(fontSize = 9.sp), color = colors.textMuted)
+					MeshFillParameterControls(
+						algorithm = state.meshFillAlgorithm,
+						parameters = state.meshFillParameters,
+						onChange = viewModel::setMeshFillParameters,
+						enabled = !isBusy,
+						labelWidth = 76.dp,
+						onGestureStart = viewModel::beginEditorGesture,
+						onGestureEnd = viewModel::endEditorGesture,
+						onEditStart = { viewModel.beginEditorField("setMeshFillParameters.$it") },
+						onEditEnd = { viewModel.endEditorField("setMeshFillParameters.$it") },
+					)
 					Text(tr("mesh.settings.topologyGroup"), style = typography.caption.copy(fontSize = 9.5.sp,
 						fontWeight = FontWeight.Bold), color = colors.textMuted)
 					CompactCheckbox(

@@ -31,12 +31,85 @@ class AdaptiveMeshTopologyTest {
             io.github.psd2live.project.WorkspaceStateCodec.decode(legacy).meshFillAlgorithm)
     }
 
+    @Test fun fillParametersSurviveProjectStateRoundTripPerAlgorithm() {
+        val custom = MeshFillParameters(
+            poisson = PoissonFillParameters(edgeRatio = 3f, gradation = 0.5f, jitter = 0.1f),
+            fractal = LatticeFillParameters(edgeRatio = 1.5f, gradation = 3f, angle = 30f),
+            paving = PavingFillParameters(maxRows = 4),
+        )
+        val state = io.github.psd2live.ui.state.PSD2LiveState(
+            meshFillParameters = custom,
+            meshOverrides = mapOf("part" to MeshSettings(fillParameters = custom.copy(quadtree = LatticeFillParameters(angle = 45f)))),
+        )
+        val codec = io.github.psd2live.project.WorkspaceStateCodec
+        val restored = codec.decode(codec.encode(state))
+        assertEquals(custom, restored.meshFillParameters)
+        assertEquals(state.meshOverrides, restored.meshOverrides)
+        // Older projects have no fill groups; partial groups keep the other defaults.
+        assertEquals(MeshFillParameters(), codec.decode(JsonObject(codec.encode(state).filterKeys { it != "meshFillParameters" }))
+            .meshFillParameters)
+        val merged = codec.mergeFillParameters(custom, kotlinx.serialization.json.buildJsonObject {
+            put("paving", kotlinx.serialization.json.buildJsonObject { put("maxRows", kotlinx.serialization.json.JsonPrimitive(8)) })
+        })
+        assertEquals(custom.copy(paving = custom.paving.copy(maxRows = 8)), merged)
+        assertTrue(runCatching { codec.mergeFillParameters(custom, kotlinx.serialization.json.buildJsonObject {
+            put("fractal", kotlinx.serialization.json.buildJsonObject { put("edgeRatio", kotlinx.serialization.json.JsonPrimitive(9)) })
+        }) }.isFailure, "out-of-range fill parameters must be rejected")
+    }
+
+    @Test fun gradedFillsDoNotRepeatTheContourRow() {
+        val shapes = listOf(ellipse(320, 240, 140.0, 100.0), rectangle(320, 240, 20, 20, 300, 220))
+        for ((width, height, rgba) in shapes) for (algorithm in MeshFillAlgorithm.entries - MeshFillAlgorithm.SIMPLE_TRIANGLES)
+            for (mode in listOf(MeshEdgeMode.SINGLE, MeshEdgeMode.TRIPLE)) {
+                val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, height, rgba, 8,
+                    MeshSettings(maxEdgeDistance = 12f, interiorDensity = 40f, edgeMode = mode, fillAlgorithm = algorithm)))
+                val rim = mesh.innerLoops.ifEmpty { mesh.boundaryLoops }
+                val structural = (mesh.boundaryLoops + mesh.middleLoops + mesh.innerLoops).flatMapTo(hashSetOf()) { it.toList() }
+                val spacing = rim.flatMap { loop -> loop.indices.map { dist(point(mesh, loop[it]), point(mesh, loop[(it + 1) % loop.size])) } }
+                    .sorted().let { it[it.size / 2] }
+                val interior = (0 until mesh.positions.size / 2).filter { it !in structural }
+                assertTrue(interior.isNotEmpty(), "$algorithm $mode left the interior empty")
+                for (v in interior) {
+                    val depth = sqrt(rim.minOf { distanceSquaredToPolygon(point(mesh, v), loopPoints(mesh, it)) })
+                    assertTrue(depth >= spacing * 0.9, "$algorithm $mode placed ${point(mesh, v)} ${"%.1f".format(depth)} px " +
+                        "inside a contour spaced ${"%.1f".format(spacing)} px, a second contour row")
+                }
+            }
+    }
+
+    @Test fun fillParametersControlOnlyTheirOwnAlgorithm() {
+        val (width, height, rgba) = rectangle(640, 440, 20, 20, 620, 420)
+        fun mesh(algorithm: MeshFillAlgorithm, parameters: MeshFillParameters) = assertNotNull(AdaptiveMeshGenerator.generate(
+            width, height, rgba, 8, MeshSettings(maxEdgeDistance = 12f, interiorDensity = 60f,
+                fillAlgorithm = algorithm, fillParameters = parameters)))
+        fun interior(m: AdaptiveMeshGenerator.Result) = m.positions.size / 2 - m.boundaryLoops.sumOf { it.size }
+        val base = MeshFillParameters()
+        fun ratio(p: MeshFillParameters, r: Float) = MeshFillParameters(
+            poisson = p.poisson.copy(edgeRatio = r), quadtree = p.quadtree.copy(edgeRatio = r),
+            fractal = p.fractal.copy(edgeRatio = r), paving = p.paving.copy(edgeRatio = r))
+        for (algorithm in MeshFillAlgorithm.entries - MeshFillAlgorithm.SIMPLE_TRIANGLES) {
+            val fine = interior(mesh(algorithm, ratio(base, 1f)))
+            val coarse = interior(mesh(algorithm, ratio(base, 3f)))
+            assertTrue(coarse < fine * 0.9, "$algorithm: edge transition 3 kept $coarse interior points vs $fine at 1")
+        }
+        val fractal = mesh(MeshFillAlgorithm.TRIANGLE_FRACTAL, base).positions.toList()
+        assertEquals(fractal, mesh(MeshFillAlgorithm.TRIANGLE_FRACTAL, base.copy(
+            poisson = PoissonFillParameters(jitter = 0f), quadtree = LatticeFillParameters(angle = 45f),
+            paving = PavingFillParameters(maxRows = 2))).positions.toList(), "other groups must not affect the fractal fill")
+        assertTrue(fractal != mesh(MeshFillAlgorithm.TRIANGLE_FRACTAL, base.copy(fractal = base.fractal.copy(angle = 30f)))
+            .positions.toList(), "grid angle must rotate the fractal lattice")
+        assertTrue(mesh(MeshFillAlgorithm.CONTOUR_PAVING, base).positions.toList() != mesh(MeshFillAlgorithm.CONTOUR_PAVING,
+			base.copy(paving = base.paving.copy(maxRows = 0))).positions.toList(), "max rows must change the paving")
+        assertTrue(mesh(MeshFillAlgorithm.GRADED_POISSON, base).positions.toList() != mesh(MeshFillAlgorithm.GRADED_POISSON,
+            base.copy(poisson = base.poisson.copy(jitter = 0f))).positions.toList(), "randomness must change the Poisson samples")
+    }
+
     @Test fun allFillAlgorithmsKeepValidConcaveContour() {
-        val width = 120
-        val height = 90
+        val width = 240
+        val height = 180
         val rgba = ByteArray(width * height * 4)
-        for (y in 10 until 80) for (x in 10 until 110) {
-            if (x in 40 until 70 && y in 10 until 45) continue // concave notch
+        for (y in 10 until 170) for (x in 10 until 230) {
+            if (x in 80 until 140 && y in 10 until 90) continue // concave notch
             rgba[(y * width + x) * 4 + 3] = -1
         }
         fun generate(algorithm: MeshFillAlgorithm, suppress: Boolean) = assertNotNull(AdaptiveMeshGenerator.generate(
@@ -193,7 +266,8 @@ class AdaptiveMeshTopologyTest {
             for (face in mesh.indices.toList().chunked(3)) for (v in face) neighbors.getOrPut(v) { mutableSetOf() } += face
             val (worst, set) = neighbors.filterKeys { it !in boundary }.maxBy { (_, set) -> set.count { it in boundary } }
             val worstFan = set.count { it in boundary }
-            assertTrue(worstFan <= 4, "$algorithm: interior vertex ${point(mesh, worst)} connects to " +
+            // A 2:1 first row meets three contour vertices per interior vertex, up to five where the contour curves.
+            assertTrue(worstFan <= 5, "$algorithm: interior vertex ${point(mesh, worst)} connects to " +
                 "${set.filter { it in boundary }.map { point(mesh, it) }}")
             val angles = mesh.indices.toList().chunked(3).map { face ->
                 val (a, b, c) = face.map { point(mesh, it) }

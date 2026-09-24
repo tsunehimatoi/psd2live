@@ -1584,7 +1584,8 @@ object RigBuilder {
 		}
 		val settings = MeshSettings(outerMargin, edgeMode, edgeWidth, effectiveSpacing,
 			effectiveInteriorDensity, override?.fillAlgorithm ?: config.meshFillAlgorithm,
-			override?.suppressBoundaryDiagonals ?: config.meshSuppressBoundaryDiagonals)
+			override?.suppressBoundaryDiagonals ?: config.meshSuppressBoundaryDiagonals,
+			override?.fillParameters ?: config.meshFillParameters)
 		val adaptive = if (meshCache != null) meshCache.generate(width, height, layer.source.raster.rgba, config.alphaThreshold, settings)
 		else AdaptiveMeshGenerator.generate(width, height, layer.source.raster.rgba, config.alphaThreshold, settings)
 		if (adaptive != null) {

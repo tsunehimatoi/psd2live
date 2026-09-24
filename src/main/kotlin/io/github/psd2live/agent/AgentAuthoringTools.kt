@@ -156,6 +156,14 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
         put("python", string()); put("nunifDirectory", string()); put("modelDirectory", string())
         put("tileSize", integer(64, 512)); put("noiseLevel", integer(-1, 3)); put("neuralAlpha", boolean())
     })
+    // Each fill algorithm reads only its own group; omitted groups and fields keep their values.
+    val fillParameterFields = objectSchema(buildJsonObject {
+        put("poisson", objectSchema(buildJsonObject { put("edgeRatio", number()); put("gradation", number()); put("jitter", number()) }))
+        for (group in listOf("quadtree", "fractal")) {
+            put(group, objectSchema(buildJsonObject { put("edgeRatio", number()); put("gradation", number()); put("angle", number()) }))
+        }
+        put("paving", objectSchema(buildJsonObject { put("edgeRatio", number()); put("gradation", number()); put("maxRows", integer(0, 24)) }))
+    })
     val projectSettingFields = objectSchema(buildJsonObject {
         listOf("atlasSize", "meshSpacing", "texturePadding", "alphaThreshold").forEach { put(it, integer(0)) }
         listOf("meshOuterMargin", "meshEdgeWidth", "meshMaxEdgeDistance", "meshInteriorDensity",
@@ -168,6 +176,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
         put("mouthShape", choices("flat", "smile", "w", "custom"))
         put("meshEdgeMode", choices("SINGLE", "DOUBLE", "TRIPLE"))
         put("runtimeTarget", string()); put("textureUpscale", upscaleSettings)
+        put("meshFillParameters", fillParameterFields)
     })
     tool("settings", "Update the project generation/export configuration used by the UI. Inspect scope=settings first. Rebuilds the model and commits history; textureUpscale fields are merged with the existing configuration.",
         buildJsonObject { put("state", string()); put("changes", projectSettingFields) }, listOf("state", "changes"), true) { a ->
@@ -191,6 +200,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
                 put("edgeWidth", number()); put("maxEdgeDistance", number()); put("interiorDensity", number())
                 put("fillAlgorithm", choices(*io.github.psd2live.core.MeshFillAlgorithm.entries.map { it.name }.toTypedArray()))
                 put("suppressBoundaryDiagonals", boolean())
+                put("fillParameters", fillParameterFields)
             }))
         }, listOf("state", "layer_id"), true) { a ->
         workspace.setLayerMeshSettings(a.text("state"), a.text("layer_id"), a["changes"]?.jsonObject,

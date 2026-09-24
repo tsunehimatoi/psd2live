@@ -102,6 +102,39 @@ data class RigAnchors(
 enum class MeshFillAlgorithm { GRADED_POISSON, ADAPTIVE_QUADTREE, SIMPLE_TRIANGLES, TRIANGLE_FRACTAL, CONTOUR_PAVING }
 enum class MeshEdgeMode { SINGLE, DOUBLE, TRIPLE }
 
+/**
+ * [edgeRatio]: first interior spacing over the contour spacing, so the fill never repeats the contour row.
+ * [gradation]: spacing growth per pixel of depth, up to the interior density.
+ */
+@kotlinx.serialization.Serializable
+data class PoissonFillParameters(val edgeRatio: Float = 2f, val gradation: Float = 1f, val jitter: Float = 0.45f)
+
+/** [angle]: lattice orientation in degrees. */
+@kotlinx.serialization.Serializable
+data class LatticeFillParameters(val edgeRatio: Float = 2f, val gradation: Float = 1f, val angle: Float = 0f)
+
+/** [maxRows]: contour-parallel rows before the center switches to a graded lattice. */
+@kotlinx.serialization.Serializable
+data class PavingFillParameters(val edgeRatio: Float = 2f, val gradation: Float = 1f, val maxRows: Int = 12)
+
+/** UI ranges of the fill parameters; the generator clamps to the same ranges. */
+object MeshFillRanges {
+	val edgeRatio = 1f..4f
+	val gradation = 0.25f..4f
+	val jitter = 0f..1f
+	val angle = 0f..90f
+	val maxRows = 0..24
+}
+
+/** Per-algorithm controls; each algorithm reads only its own group, so switching keeps every group. */
+@kotlinx.serialization.Serializable
+data class MeshFillParameters(
+	val poisson: PoissonFillParameters = PoissonFillParameters(),
+	val quadtree: LatticeFillParameters = LatticeFillParameters(),
+	val fractal: LatticeFillParameters = LatticeFillParameters(gradation = 2f),
+	val paving: PavingFillParameters = PavingFillParameters(),
+)
+
 data class MeshSettings(
 	val outerMargin: Float = 1.0f,
 	val edgeMode: MeshEdgeMode = MeshEdgeMode.SINGLE,
@@ -110,6 +143,7 @@ data class MeshSettings(
 	val interiorDensity: Float = 40.0f,
 	val fillAlgorithm: MeshFillAlgorithm = MeshFillAlgorithm.GRADED_POISSON,
 	val suppressBoundaryDiagonals: Boolean = false,
+	val fillParameters: MeshFillParameters = MeshFillParameters(),
 )
 
 data class PipelineConfig(
@@ -124,6 +158,7 @@ data class PipelineConfig(
 	val meshInteriorDensity: Float = 40.0f,
 	val meshFillAlgorithm: MeshFillAlgorithm = MeshFillAlgorithm.GRADED_POISSON,
 	val meshSuppressBoundaryDiagonals: Boolean = false,
+	val meshFillParameters: MeshFillParameters = MeshFillParameters(),
 	val meshOverrides: Map<String, MeshSettings> = emptyMap(),
 	val alphaThreshold: Int = 8,
 	val headTurnStrength: Float = 1f,

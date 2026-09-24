@@ -19,6 +19,50 @@ internal object WorkspaceStateCodec {
      */
     private const val VIEW_OPTIONS_REVISION = 1
 
+    private val fillJson = Json { encodeDefaults = true; ignoreUnknownKeys = true }
+
+    fun encodeFillParameters(value: io.github.psd2live.core.MeshFillParameters): JsonElement =
+        fillJson.encodeToJsonElement(value)
+
+    /** Missing groups or fields keep their defaults; a malformed value falls back to [fallback]. */
+    fun decodeFillParameters(
+        value: JsonElement?, fallback: io.github.psd2live.core.MeshFillParameters = io.github.psd2live.core.MeshFillParameters(),
+    ): io.github.psd2live.core.MeshFillParameters =
+        value?.let { runCatching { fillJson.decodeFromJsonElement<io.github.psd2live.core.MeshFillParameters>(it) }.getOrNull() }
+            ?: fallback
+
+    /** Applies per-group [changes] onto [base]; omitted groups and fields keep their values. Rejects unknown or out-of-range fields. */
+    fun mergeFillParameters(
+        base: io.github.psd2live.core.MeshFillParameters, changes: JsonObject,
+    ): io.github.psd2live.core.MeshFillParameters {
+        val current = encodeFillParameters(base).jsonObject
+        val merged = buildJsonObject {
+            current.forEach { (group, fields) -> put(group, fields) }
+            changes.forEach { (group, fields) ->
+                val known = requireNotNull(current[group]?.jsonObject) { "Unknown fill parameter group: $group" }
+                val update = runCatching { fields.jsonObject }.getOrNull() ?: error("$group must be an object")
+                require(update.keys.all { it in known }) { "Unknown $group parameter: ${update.keys - known.keys}" }
+                require(update.values.all { (it as? JsonPrimitive)?.doubleOrNull?.isFinite() == true }) { "$group parameters must be numbers" }
+                put(group, JsonObject(known + update))
+            }
+        }
+        val result = Json.decodeFromJsonElement<io.github.psd2live.core.MeshFillParameters>(merged)
+        val r = io.github.psd2live.core.MeshFillRanges
+        fun check(name: String, value: Float, range: ClosedFloatingPointRange<Float>) =
+            require(value in range) { "$name is outside its UI range $range" }
+        listOf("poisson" to result.poisson.edgeRatio, "quadtree" to result.quadtree.edgeRatio,
+            "fractal" to result.fractal.edgeRatio, "paving" to result.paving.edgeRatio)
+            .forEach { (group, value) -> check("$group.edgeRatio", value, r.edgeRatio) }
+        listOf("poisson" to result.poisson.gradation, "quadtree" to result.quadtree.gradation,
+            "fractal" to result.fractal.gradation, "paving" to result.paving.gradation)
+            .forEach { (group, value) -> check("$group.gradation", value, r.gradation) }
+        check("poisson.jitter", result.poisson.jitter, r.jitter)
+        check("quadtree.angle", result.quadtree.angle, r.angle)
+        check("fractal.angle", result.fractal.angle, r.angle)
+        require(result.paving.maxRows in r.maxRows) { "paving.maxRows is outside its UI range ${r.maxRows}" }
+        return result
+    }
+
     private fun decodeMouthCurve(value: JsonElement?): io.github.psd2live.core.MouthCurve? = runCatching {
         io.github.psd2live.core.MouthCurve(value!!.jsonArray.map { p ->
             io.github.psd2live.core.MouthCurvePoint(p.jsonObject.getValue("x").jsonPrimitive.float,
@@ -253,6 +297,7 @@ internal object WorkspaceStateCodec {
         put("meshInteriorDensity", state.meshInteriorDensity)
         put("meshFillAlgorithm", state.meshFillAlgorithm.name)
         put("meshSuppressBoundaryDiagonals", state.meshSuppressBoundaryDiagonals)
+        put("meshFillParameters", encodeFillParameters(state.meshFillParameters))
         putJsonObject("meshOverrides") {
             state.meshOverrides.toSortedMap().forEach { (k, v) ->
                 put(k, buildJsonObject {
@@ -263,6 +308,7 @@ internal object WorkspaceStateCodec {
                     put("interiorDensity", v.interiorDensity)
                     put("fillAlgorithm", v.fillAlgorithm.name)
                     put("suppressBoundaryDiagonals", v.suppressBoundaryDiagonals)
+                    put("fillParameters", encodeFillParameters(v.fillParameters))
                 })
             }
         }
@@ -345,6 +391,7 @@ internal object WorkspaceStateCodec {
         put("meshInteriorDensity", state.meshInteriorDensity)
         put("meshFillAlgorithm", state.meshFillAlgorithm.name)
         put("meshSuppressBoundaryDiagonals", state.meshSuppressBoundaryDiagonals)
+        put("meshFillParameters", encodeFillParameters(state.meshFillParameters))
         putJsonObject("meshOverrides") {
             state.meshOverrides.toSortedMap().forEach { (k, v) ->
                 put(k, buildJsonObject {
@@ -355,6 +402,7 @@ internal object WorkspaceStateCodec {
                     put("interiorDensity", v.interiorDensity)
                     put("fillAlgorithm", v.fillAlgorithm.name)
                     put("suppressBoundaryDiagonals", v.suppressBoundaryDiagonals)
+                    put("fillParameters", encodeFillParameters(v.fillParameters))
                 })
             }
         }
@@ -458,6 +506,7 @@ internal object WorkspaceStateCodec {
         meshFillAlgorithm = value["meshFillAlgorithm"]?.jsonPrimitive?.contentOrNull
             ?.let { runCatching { MeshFillAlgorithm.valueOf(it) }.getOrNull() } ?: base.meshFillAlgorithm,
         meshSuppressBoundaryDiagonals = value["meshSuppressBoundaryDiagonals"]?.jsonPrimitive?.booleanOrNull ?: base.meshSuppressBoundaryDiagonals,
+        meshFillParameters = decodeFillParameters(value["meshFillParameters"], base.meshFillParameters),
         meshOverrides = value["meshOverrides"]?.jsonObject?.mapNotNull { (k, v) ->
             val obj = v.jsonObject
             val outerMargin = obj["outerMargin"]?.jsonPrimitive?.floatOrNull ?: 2.0f
@@ -473,7 +522,7 @@ internal object WorkspaceStateCodec {
                 ?.let { runCatching { MeshFillAlgorithm.valueOf(it) }.getOrNull() } ?: MeshFillAlgorithm.GRADED_POISSON
             val suppressBoundaryDiagonals = obj["suppressBoundaryDiagonals"]?.jsonPrimitive?.booleanOrNull ?: false
             k to MeshSettings(outerMargin, edgeMode, edgeWidth, maxEdgeDistance, interiorDensity,
-                fillAlgorithm, suppressBoundaryDiagonals)
+                fillAlgorithm, suppressBoundaryDiagonals, decodeFillParameters(obj["fillParameters"]))
         }?.toMap() ?: base.meshOverrides,
         texturePadding = value["texturePadding"]?.jsonPrimitive?.int ?: base.texturePadding,
         alphaThreshold = value["alphaThreshold"]?.jsonPrimitive?.int ?: base.alphaThreshold,

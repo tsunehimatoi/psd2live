@@ -63,16 +63,25 @@ internal object AdaptiveMeshGenerator {
 	/** Guide variants of one island: raster contour, fitted stations, and interleaved stations. */
 	private data class Domain(val raw: List<List<Point>>, val guides: List<List<Point>>, val interleaved: List<List<Point>>)
 
-	/** Interior fill: sampled candidates for the point-insertion fills, or a structured pattern. */
+	/** Interior fill: fixed candidates, graded samples of each fill domain, or a structured pattern. */
 	private sealed interface Fill {
 		val spacing: Double
 		class Candidates(val points: List<Point>, override val spacing: Double) : Fill
-		class Structured(val kind: StructuredMeshFill.Kind, override val spacing: Double) : Fill
+		class Poisson(val parameters: PoissonFillParameters, override val spacing: Double) : Fill
+		class Structured(
+			val kind: StructuredMeshFill.Kind, val options: StructuredMeshFill.Options, override val spacing: Double,
+		) : Fill
 	}
 
 	private const val FILTER_PASSES = 2
 	private const val FILTER_MAX_OFFSET = 0.55
 	private const val CURVE_CHORD_ERROR = 0.85
+	/** Most contour vertices one interior vertex of a structured fill may connect to. */
+	private const val MAX_CONTOUR_FAN = 4
+	/** Poisson samples may sit this fraction of the first-row depth inside the domain; jitter spreads the row. */
+	private const val POISSON_RIM_TOLERANCE = 0.8
+	private const val SQRT3_2 = 0.8660254037844386
+	private const val FAN_REPAIR_PASSES = 3
 	/** Turn (radians, over the structural support window) above which a control is a sharp corner. */
 	private const val CORNER_TURN = 1.2
 	private const val MAX_CURVE_DENSITY = 12.0
@@ -108,6 +117,7 @@ internal object AdaptiveMeshGenerator {
 		edgeWidth = settings.edgeWidth,
 		fillAlgorithm = settings.fillAlgorithm,
 		suppressBoundaryDiagonals = settings.suppressBoundaryDiagonals,
+		fillParameters = settings.fillParameters,
 	)
 
 	fun generate(
@@ -122,6 +132,7 @@ internal object AdaptiveMeshGenerator {
 		edgeWidth: Float = 10f,
 		fillAlgorithm: MeshFillAlgorithm = MeshFillAlgorithm.GRADED_POISSON,
 		suppressBoundaryDiagonals: Boolean = false,
+		fillParameters: MeshFillParameters = MeshFillParameters(),
 	): Result? {
 		if (width <= 0 || height <= 0 || width.toLong() * height * 4 > rgba.size ||
 			!spacing.isFinite() || !interiorSpacing.isFinite() ||
@@ -166,14 +177,19 @@ internal object AdaptiveMeshGenerator {
 				.minByOrNull { contourArea(sources[it]) } ?: continue
 			holesByOuter[owner] += hole.points
 		}
-		val contourLoops = (sources + holesByOuter.flatMap { it }).map(::sourcePoints)
+		fun lattice(p: LatticeFillParameters) = StructuredMeshFill.Options(fillRatio(p.edgeRatio), fillGradation(p.gradation),
+			Math.toRadians((p.angle.takeIf { it.isFinite() } ?: 0f).coerceIn(MeshFillRanges.angle).toDouble()))
 		val fill: Fill = when (fillAlgorithm) {
-			MeshFillAlgorithm.GRADED_POISSON -> Fill.Candidates(sampleGradedPoisson(solidMask, contourLoops,
-				edgeSpacing, gridSpacing, budgetSpacing), gridSpacing)
+			MeshFillAlgorithm.GRADED_POISSON -> Fill.Poisson(fillParameters.poisson, gridSpacing)
 			MeshFillAlgorithm.SIMPLE_TRIANGLES -> Fill.Candidates(sampleInterior(solidMask, gridSpacing), gridSpacing)
-			MeshFillAlgorithm.ADAPTIVE_QUADTREE -> Fill.Structured(StructuredMeshFill.Kind.QUADTREE, gridSpacing)
-			MeshFillAlgorithm.TRIANGLE_FRACTAL -> Fill.Structured(StructuredMeshFill.Kind.TRIANGLE_FRACTAL, gridSpacing)
-			MeshFillAlgorithm.CONTOUR_PAVING -> Fill.Structured(StructuredMeshFill.Kind.CONTOUR_PAVING, gridSpacing)
+			MeshFillAlgorithm.ADAPTIVE_QUADTREE ->
+				Fill.Structured(StructuredMeshFill.Kind.QUADTREE, lattice(fillParameters.quadtree), gridSpacing)
+			MeshFillAlgorithm.TRIANGLE_FRACTAL ->
+				Fill.Structured(StructuredMeshFill.Kind.TRIANGLE_FRACTAL, lattice(fillParameters.fractal), gridSpacing)
+			MeshFillAlgorithm.CONTOUR_PAVING -> fillParameters.paving.let { p ->
+				Fill.Structured(StructuredMeshFill.Kind.CONTOUR_PAVING, StructuredMeshFill.Options(fillRatio(p.edgeRatio),
+					fillGradation(p.gradation), maxRows = p.maxRows.coerceIn(MeshFillRanges.maxRows)), gridSpacing)
+			}
 		}
 		val globalPoints = mutableListOf<Point>()
 		val globalTriangles = mutableListOf<Triangle>()
@@ -495,12 +511,18 @@ internal object AdaptiveMeshGenerator {
 	private fun fillDomain(loops: List<List<Point>>, fill: Fill, suppressBoundaryDiagonals: Boolean): LocalMesh? =
 		when (fill) {
 			is Fill.Candidates -> triangulateDomain(loops, fill.points, fill.spacing, suppressBoundaryDiagonals)
+			is Fill.Poisson -> if (!validDomain(loops)) null else triangulateDomain(loops,
+				sampleGradedPoisson(loops, fill.parameters, fill.spacing), fill.spacing, suppressBoundaryDiagonals)
 			is Fill.Structured -> structuredFill(loops, fill, suppressBoundaryDiagonals)
 		}
 
 	private fun structuredFill(loops: List<List<Point>>, fill: Fill.Structured, suppressBoundaryDiagonals: Boolean): LocalMesh? {
 		if (!validDomain(loops)) return null
-		val layout = StructuredMeshFill.layout(fill.kind, loops, fill.spacing)
+		val layout = StructuredMeshFill.layout(fill.kind, loops, fill.spacing, fill.options)
+		// A first row k contour spacings apart meets about k + 1 contour vertices per interior vertex.
+		val maxFan = max(MAX_CONTOUR_FAN, ceil(fill.options.edgeRatio).toInt() + 2)
+		val contourSpacing = loops.flatMap { loop -> loop.indices.map { distance(loop[it], loop[(it + 1) % loop.size]) } }
+			.sorted().let { it[it.size / 2] }
 		fun fallback(): LocalMesh? =
 			triangulateDomain(loops, layout?.interior.orEmpty(), fill.spacing, suppressBoundaryDiagonals)
 				?: triangulateDomain(loops, emptyList(), fill.spacing, suppressBoundaryDiagonals)
@@ -510,10 +532,20 @@ internal object AdaptiveMeshGenerator {
 		val triangles = layout.triangles.toMutableList()
 		for (region in layout.regions) {
 			val regionLoops = region.loops.map { ids -> ids.map { points[it] } }
-			val chordFree = region.loops.flatMap { ids -> ids.map { suppressBoundaryDiagonals && it < boundaryCount } }
-				.toBooleanArray()
-			val local = triangulateDomain(regionLoops, region.candidates, region.spacing,
+			val regionIds = region.loops.flatMap { it.toList() }
+			val chordFree = regionIds.map { suppressBoundaryDiagonals && it < boundaryCount }.toBooleanArray()
+			var candidates = region.candidates
+			var local = triangulateDomain(regionLoops, candidates, region.spacing,
 				chordFree.any { it }, chordFree) ?: return fallback()
+			// Gaps at convex corners let one core vertex see a long run of the contour; seed those fans.
+			for (pass in 0 until FAN_REPAIR_PASSES) {
+				val seeds = fanSeeds(local, maxFan, region.spacing * SQRT3_2, contourSpacing) {
+					it < regionIds.size && regionIds[it] < boundaryCount
+				}
+				if (seeds.isEmpty()) break
+				candidates = candidates + seeds
+				local = triangulateDomain(regionLoops, candidates, region.spacing, chordFree.any { it }, chordFree) ?: break
+			}
 			val map = IntArray(local.points.size)
 			var k = 0
 			for (ids in region.loops) for (id in ids) map[k++] = id
@@ -532,6 +564,28 @@ internal object AdaptiveMeshGenerator {
 			protectedEdges.any { it !in uses }) return fallback()
 		if (points.size - uses.size + triangles.size != 2 - loops.size) return fallback()
 		return LocalMesh(points, triangles)
+	}
+
+	/**
+	 * A point between each non-contour vertex and the contour run it fans out to, when that run is too long.
+	 * It sits [rowDepth] inside the run (at most halfway); a seed that would land within [minDepth] of the
+	 * contour is skipped, as it would only repeat the contour row.
+	 */
+	private fun fanSeeds(
+		mesh: LocalMesh, maxFan: Int, rowDepth: Double, minDepth: Double, isContour: (Int) -> Boolean,
+	): List<Point> {
+		val neighbors = HashMap<Int, MutableSet<Int>>()
+		for (t in mesh.triangles) for (v in intArrayOf(t.a, t.b, t.c)) neighbors.getOrPut(v) { mutableSetOf() } += listOf(t.a, t.b, t.c)
+		return neighbors.mapNotNull { (v, around) ->
+			if (isContour(v)) return@mapNotNull null
+			val contour = around.filter(isContour)
+			if (contour.size <= maxFan) return@mapNotNull null
+			val center = Point(contour.sumOf { mesh.points[it].x } / contour.size, contour.sumOf { mesh.points[it].y } / contour.size)
+			val reach = distance(center, mesh.points[v])
+			val depth = min(rowDepth, reach * 0.5)
+			if (depth < minDepth) return@mapNotNull null
+			lerp(center, mesh.points[v], depth / reach)
+		}
 	}
 
 	/** Join holes by visible, non-crossing bridges, reusing endpoint indices on both sides.
@@ -1118,15 +1172,9 @@ internal object AdaptiveMeshGenerator {
 	}
 
 	private data class FillCandidate(val point: Point, val radius: Double, val priority: Double)
-	private fun minimumFillSpacing(edgeSpacing: Double, interiorSpacing: Double, budgetSpacing: Double): Double =
-		min(interiorSpacing * 0.7, max(edgeSpacing * 1.25, budgetSpacing)).coerceAtLeast(6.0)
 
-	private fun contourDistance(point: Point, contours: List<List<Point>>): Double =
-		sqrt(contours.minOf { distanceSquaredToLoop(point, it) })
-
-	private fun localFillRadius(distance: Double, minimum: Double, maximum: Double): Double {
-		return minimum + (maximum - minimum) * (1.0 - exp(-distance / (maximum * 0.7)))
-	}
+	private fun fillRatio(value: Float) = (value.takeIf { it.isFinite() } ?: 2f).coerceIn(MeshFillRanges.edgeRatio).toDouble()
+	private fun fillGradation(value: Float) = (value.takeIf { it.isFinite() } ?: 1f).coerceIn(MeshFillRanges.gradation).toDouble()
 
 	private fun fillNoise(x: Int, y: Int, salt: Int): Double {
 		var value = x * 0x1f123bb5 + y * 0x5f356495 + salt * 0x45d9f3b
@@ -1135,26 +1183,38 @@ internal object AdaptiveMeshGenerator {
 		return ((value xor (value ushr 16)).toLong() and 0xffffffffL).toDouble() / 4294967296.0
 	}
 
-	/** Deterministic variable-radius Poisson thinning of a jittered candidate lattice. */
+	/**
+	 * Deterministic variable-radius Poisson thinning of a jittered candidate lattice over one fill domain.
+	 * The first row sits one equilateral height inside the domain at [PoissonFillParameters.edgeRatio] times the
+	 * contour spacing; nothing is placed closer, where it would only duplicate the contour row.
+	 */
 	private fun sampleGradedPoisson(
-		mask: SolidAlphaMask, contours: List<List<Point>>, edgeSpacing: Double,
-		interiorSpacing: Double, budgetSpacing: Double,
+		loops: List<List<Point>>, parameters: PoissonFillParameters, interiorSpacing: Double,
 	): List<Point> {
-		val minimum = minimumFillSpacing(edgeSpacing, interiorSpacing, budgetSpacing)
+		val segments = loops.flatMap { loop -> loop.indices.map { distance(loop[it], loop[(it + 1) % loop.size]) } }.sorted()
+		val contourSpacing = segments[segments.size / 2].coerceAtLeast(2.0)
+		val minimum = (contourSpacing * fillRatio(parameters.edgeRatio)).coerceIn(4.0, max(4.0, interiorSpacing))
+		val gradation = fillGradation(parameters.gradation)
+		val jitter = (parameters.jitter.takeIf { it.isFinite() } ?: 0.45f).coerceIn(MeshFillRanges.jitter).toDouble()
+		val rimDepth = minimum * SQRT3_2
+		val index = io.github.psd2live.core.mesh.SegmentIndex(loops, minimum)
+		val all = loops.flatten()
 		val step = minimum * 0.72
 		val candidates = mutableListOf<FillCandidate>()
-		for (row in 0 until ceil(mask.height / step).toInt()) {
-			for (column in 0 until ceil(mask.width / step).toInt()) {
-				val x = (column + 0.5 + (fillNoise(column, row, 1) - 0.5) * 0.45) * step
-				val y = (row + 0.5 + (fillNoise(column, row, 2) - 0.5) * 0.45) * step
-				if (!mask.isSolid(x.toInt(), y.toInt())) continue
+		for (row in floor(all.minOf { it.y } / step).toInt()..ceil(all.maxOf { it.y } / step).toInt()) {
+			for (column in floor(all.minOf { it.x } / step).toInt()..ceil(all.maxOf { it.x } / step).toInt()) {
+				val x = (column + 0.5 + (fillNoise(column, row, 1) - 0.5) * jitter) * step
+				val y = (row + 0.5 + (fillNoise(column, row, 2) - 0.5) * jitter) * step
 				val point = Point(x, y)
-				val radius = localFillRadius(contourDistance(point, contours), minimum, interiorSpacing)
+				if (!inDomain(point, loops)) continue
+				val depth = index.distance(point)
+				if (depth < rimDepth * POISSON_RIM_TOLERANCE) continue
+				val radius = (minimum + gradation * max(0.0, depth - rimDepth)).coerceIn(minimum, max(minimum, interiorSpacing))
 				candidates += FillCandidate(point, radius, fillNoise(column, row, 3))
 			}
 		}
 		val cellSize = minimum / 1.4142135623730951
-		val reach = ceil(interiorSpacing / cellSize).toInt() + 1
+		val reach = ceil(max(minimum, interiorSpacing) / cellSize).toInt() + 1
 		val accepted = mutableListOf<FillCandidate>()
 		val cells = HashMap<Long, MutableList<Int>>()
 		fun key(x: Int, y: Int) = (x.toLong() shl 32) xor (y.toLong() and 0xffffffffL)
