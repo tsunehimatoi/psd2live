@@ -1,5 +1,7 @@
 package io.github.psd2live.ui.state
 
+import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.key
@@ -60,8 +62,27 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 class PSD2LiveViewModel : AutoCloseable {
+    private val stateLock = Any()
+
     private inline fun updateState(transform: (PSD2LiveState) -> PSD2LiveState) {
-        _state.update { current -> reconcileCanvasPresentation(current, transform(current)) }
+        synchronized(stateLock) {
+            _state.update { current ->
+                val next = reconcileCanvasPresentation(current, transform(current))
+                // Pruning walks the entire rig and every canvas session. Pointer hover, camera
+                // and dock updates must never pay that cost; only a new model can invalidate ids.
+                if (next.previewModel !== current.previewModel ||
+                    next.projectOpenGeneration != current.projectOpenGeneration
+                ) pruneCanvasSessions(next) else next
+            }
+            _uiState.value = _state.value
+        }
+    }
+
+    private fun replaceState(next: PSD2LiveState) {
+        synchronized(stateLock) {
+            _state.value = next
+            _uiState.value = next
+        }
     }
 
     internal fun updateCanvasPresentation(
@@ -91,14 +112,20 @@ class PSD2LiveViewModel : AutoCloseable {
     private val canvasEditors = mutableMapOf<Pair<String, String>, CanvasEditor>()
     private var editorGeneration = -1L
     internal fun canvasEditorFor(canvasId: String): CanvasEditor {
-        val current = state.value
+        val current = uiState.value
         if (editorGeneration != current.projectOpenGeneration) {
             canvasEditors.clear()
             editorGeneration = current.projectOpenGeneration
         }
         return canvasEditors.getOrPut(current.activeWorkspace.id to canvasId) { CanvasEditor(this, current.activeWorkspace.id, canvasId) }
     }
-    internal val canvasEditor: CanvasEditor get() = canvasEditorFor(state.value.activeCanvas.id)
+    internal val canvasEditor: CanvasEditor get() = canvasEditorFor(uiState.value.activeCanvas.id)
+
+    /** Paint confirm for whichever canvas still has the dialog open, not only the focused one. */
+    internal fun canvasAwaitingMeshRebuild(): CanvasEditor? =
+        uiState.value.activeWorkspace.canvases.firstNotNullOfOrNull { canvas ->
+            canvasEditorFor(canvas.id).takeIf { it.showRebuildMeshDialog }
+        }
     private fun resetCanvasPaintSessions() = canvasEditors.values.forEach { it.resetPaintSession() }
 
 
@@ -127,8 +154,31 @@ class PSD2LiveViewModel : AutoCloseable {
     }
 
     fun requestCanvasPathTool() {
-        ensureEditCanvas()
-        canvasEditor.activateTool(io.github.psd2live.ui.CanvasTool.CREATE_DEFORM_PATH)
+        editorForFocusedCanvas().activateTool(io.github.psd2live.ui.CanvasTool.CREATE_DEFORM_PATH)
+    }
+
+    /**
+     * The editor of the canvas the panels are following. Structural tools stay on that canvas:
+     * a preview canvas is switched to its own edit session instead of focusing some other edit canvas
+     * and dropping the pick the hierarchy just made.
+     */
+    internal fun editorForFocusedCanvas(): CanvasEditor {
+        val current = uiState.value
+        val canvas = current.activeCanvas
+        if (canvas.mode != CanvasMode.EDIT) {
+            val layer = current.selectedLayerId
+            val deformer = current.selectedDeformerId
+            if (layer != null || deformer != null) {
+                updateCanvasPresentation(current.activeWorkspace.id, canvas.id, CanvasMode.EDIT) {
+                    it.copy(
+                        selectedLayerId = layer,
+                        selectedDeformerId = if (layer != null) null else deformer,
+                    )
+                }
+            }
+            setCanvasMode(canvas.id, CanvasMode.EDIT)
+        }
+        return canvasEditorFor(canvas.id)
     }
     fun saveAuthoringEdits(expectedState: String, edits: kotlinx.serialization.json.JsonArray, onComplete: (String?) -> Unit) {
         if (_state.value.canvasEditBusy) { onComplete("An editor operation is still being applied"); return }
@@ -484,11 +534,11 @@ class PSD2LiveViewModel : AutoCloseable {
         activeWorkJob?.cancel()
         resetCanvasPaintSessions()
         state.projectFile?.let(AppSettings::rememberRecentFile)
-        _state.value = state.copy(
+        replaceState(state.copy(
             projectDirty = false,
             projectOpenGeneration = _state.value.projectOpenGeneration + 1,
             recentFiles = AppSettings.recentFiles(),
-        )
+        ))
     }
     private val pendingProjectSaves = java.util.concurrent.atomic.AtomicInteger()
     internal fun projectSaveStarted() { pendingProjectSaves.incrementAndGet(); updateState { it.copy(projectSaving = true, projectSaveError = null) } }
@@ -678,6 +728,9 @@ class PSD2LiveViewModel : AutoCloseable {
 
 	private val _state = MutableStateFlow(PSD2LiveState(statusText = tr("status.ready")))
 	val state: StateFlow<PSD2LiveState> = _state.asStateFlow()
+	private val _uiState = mutableStateOf(_state.value)
+	/** Same document [state] publishes, readable as Compose snapshot state so one frame cannot mix two copies. */
+	val uiState: State<PSD2LiveState> get() = _uiState
 	private val _sdkFrame = MutableStateFlow<CubismSdkFrame?>(null)
 	val sdkFrame: StateFlow<CubismSdkFrame?> = _sdkFrame.asStateFlow()
     private val canvasFrames = mutableMapOf<String, MutableStateFlow<CubismSdkFrame?>>()
@@ -2034,14 +2087,35 @@ class PSD2LiveViewModel : AutoCloseable {
 	    markWorkspaceChanged()
 	}
 
-	fun selectLayer(layerId: String?) {
-		updateState {
-			it.copy(
-				selectedLayerId = layerId,
-				selectedDeformerId = if (layerId != null) null else it.selectedDeformerId,
+	/** Plain click replaces, Shift extends, Alt removes the focused canvas's layer set. */
+	fun selectLayer(layerId: String?, additive: Boolean = false, subtractive: Boolean = false) {
+		updateState { current ->
+			val previous = current.selectedLayerIds.ifEmpty { setOfNotNull(current.selectedLayerId) }
+			val selected = when {
+				layerId == null -> emptySet()
+				subtractive -> previous - layerId
+				additive -> previous + layerId
+				else -> setOf(layerId)
+			}
+			current.copy(
+				selectedLayerId = if (subtractive) current.selectedLayerId?.takeIf { it in selected }
+					?: selected.lastOrNull() else layerId,
+				selectedLayerIds = selected,
+				selectedDeformerId = if (selected.isNotEmpty()) null else current.selectedDeformerId,
 			)
 		}
 	    markWorkspaceChanged()
+	}
+
+	private fun selectOnCanvas(workspaceId: String, canvasId: String, mode: CanvasMode, layerId: String?) {
+		updateCanvasPresentation(workspaceId, canvasId, mode) {
+			it.copy(
+				selectedLayerId = layerId,
+				selectedLayerIds = setOfNotNull(layerId),
+				selectedDeformerId = if (layerId != null) null else it.selectedDeformerId,
+			)
+		}
+		markWorkspaceChanged()
 	}
 
 	fun selectDeformer(deformerId: String?) {
@@ -2049,6 +2123,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			it.copy(
 				selectedDeformerId = deformerId,
 				selectedLayerId = if (deformerId != null) null else it.selectedLayerId,
+				selectedLayerIds = if (deformerId != null) emptySet() else it.selectedLayerIds,
 			)
 		}
 	    markWorkspaceChanged()
@@ -2258,6 +2333,8 @@ class PSD2LiveViewModel : AutoCloseable {
 			setErrorMessage(tr("error.importLayerBusy"))
 			return
 		}
+		val workspaceId = _state.value.activeWorkspace.id
+		val canvasId = _state.value.activeCanvas.id
 		scope.launch {
 			try {
 				updateState { it.copy(statusText = tr("status.importingLayers", rasters.size)) }
@@ -2267,9 +2344,11 @@ class PSD2LiveViewModel : AutoCloseable {
 				updateState {
 					it.copy(
 						parentOverrides = result.parentOverrides,
-						layerVisibility = result.layerVisibility,
 						layerOverrides = result.layerOverrides,
 					)
+				}
+				updateCanvasPresentation(workspaceId, canvasId, CanvasMode.EDIT) {
+					it.copy(layerVisibility = it.layerVisibility + result.layerIds.associateWith { true })
 				}
 				applyCommittedPaint(result.preview, tr("editor.importLayer.summary", result.layerIds.size))
 				val placeId = result.layerIds.lastOrNull() ?: return@launch
@@ -2279,11 +2358,16 @@ class PSD2LiveViewModel : AutoCloseable {
 				val bounds = result.preview.analysis.source.layers
 					.firstOrNull { it.id.raw == placeId }?.bounds
 					?: return@launch
-				selectLayer(placeId)
+				updateCanvasPresentation(workspaceId, canvasId, CanvasMode.EDIT) {
+					it.copy(selectedLayerId = placeId, selectedDeformerId = null)
+				}
 				// Let history-driven gesture cleanup run before arming the placement panel,
 				// so a cancel() from head-node churn cannot race the new LAYER session.
 				yield()
-				canvasEditor.beginLayerPlacement(
+				if (_state.value.activeCanvas.id == canvasId && _state.value.activeCanvas.mode != CanvasMode.EDIT) {
+					setCanvasMode(canvasId, CanvasMode.EDIT)
+				}
+				canvasEditorFor(canvasId).beginLayerPlacement(
 					layerId = placeId,
 					layerName = placeName,
 					anchorLabel = anchorLabel,
@@ -2378,6 +2462,9 @@ class PSD2LiveViewModel : AutoCloseable {
 	) {
 		val current = _state.value
 		val preview = current.previewModel ?: return
+		val workspaceId = current.activeWorkspace.id
+		val canvasId = current.activeCanvas.id
+		val canvasMode = current.activeCanvas.mode
 		val analysis = preview.analysis
 		val w = width.roundToInt().coerceAtLeast(1)
 		val h = height.roundToInt().coerceAtLeast(1)
@@ -2413,10 +2500,11 @@ class PSD2LiveViewModel : AutoCloseable {
 				} else {
 					applyPreviewWithoutHistory(built)
 				}
-				selectLayer(layerId)
+				selectOnCanvas(workspaceId, canvasId, canvasMode, layerId)
 				// Keep paint session on the relocated layer if the artist was painting it.
-				if (canvasEditor.hierarchyMode == EditHierarchyMode.PAINT) {
-					canvasEditor.startPaintSession(layerId, forceReload = true)
+				val editor = canvasEditorFor(canvasId)
+				if (editor.hierarchyMode == EditHierarchyMode.PAINT) {
+					editor.startPaintSession(layerId, forceReload = true)
 				}
 			} catch (failure: Exception) {
 				if (failure is kotlinx.coroutines.CancellationException) throw failure
@@ -3635,7 +3723,7 @@ class PSD2LiveViewModel : AutoCloseable {
 	}
 
 	internal fun setStateForTest(state: PSD2LiveState) {
-		_state.value = state
+		replaceState(state)
 	}
 
 	private companion object {

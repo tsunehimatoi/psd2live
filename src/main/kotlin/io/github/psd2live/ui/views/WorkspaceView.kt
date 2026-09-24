@@ -65,6 +65,8 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.isShiftPressed
+import androidx.compose.ui.input.pointer.isAltPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import java.awt.Cursor
 import androidx.compose.ui.text.AnnotatedString
@@ -179,14 +181,14 @@ fun WorkspaceView(
 						viewModel.requestCanvasPathTool()
 					},
 					onRequestCreate = { kind, relation, isDeformer, id ->
-						viewModel.canvasEditor.beginTreeCreate(kind, relation, isDeformer, id)
+						viewModel.editorForFocusedCanvas().beginTreeCreate(kind, relation, isDeformer, id)
 					},
 				)
 			}
 		}
 
-		val editor = viewModel.canvasEditor
-		if (editor.showRebuildMeshDialog) {
+		val editor = viewModel.canvasAwaitingMeshRebuild()
+		if (editor != null) {
 			RebuildMeshPromptDialog(
 				layerName = editor.paintSession?.layerName ?: "",
 				onConfirmRebuild = { editor.commitPaintSession(rebuildMesh = true) },
@@ -930,6 +932,16 @@ private fun HierarchyTreeList(
 			verticalAlignment = Alignment.CenterVertically,
 			horizontalArrangement = Arrangement.spacedBy(4.dp),
 		) {
+			if (state.activeWorkspace.canvases.size > 1) {
+				Text(
+					text = viewModel.canvasTitle(state.activeCanvas),
+					color = colors.textMuted,
+					fontSize = 10.sp,
+					maxLines = 1,
+					overflow = TextOverflow.Ellipsis,
+					modifier = Modifier.widthIn(max = 108.dp),
+				)
+			}
 			CompactTextField(
 				value = searchQuery,
 				onValueChange = { viewModel.setHierarchySearch(it) },
@@ -987,6 +999,8 @@ private fun HierarchyTreeList(
 				}
 				.onPointerEvent(PointerEventType.Release) { event ->
 					if (event.button == PointerButton.Primary && treeDragState.isPressed) {
+						val additive = event.keyboardModifiers.isShiftPressed
+						val subtractive = event.keyboardModifiers.isAltPressed
 						treeDragState.onRelease(viewModel) { clickedItem ->
 							if (clickedItem.isDeformer) {
 								if (state.selectedDeformerId == clickedItem.selectId) {
@@ -995,10 +1009,11 @@ private fun HierarchyTreeList(
 									viewModel.selectDeformer(clickedItem.selectId)
 								}
 							} else {
-								if (state.selectedLayerId == clickedItem.selectId) {
+								if (!additive && !subtractive && state.selectedLayerId == clickedItem.selectId &&
+									state.selectedLayerIds.size <= 1) {
 									viewModel.selectLayer(null)
 								} else {
-									viewModel.selectLayer(clickedItem.selectId)
+									viewModel.selectLayer(clickedItem.selectId, additive, subtractive)
 								}
 							}
 						}
@@ -1933,7 +1948,7 @@ private fun DrawableTreeItem(
 	}
 	val layerId = model.rig.layerIdByDrawableId[drawable.id.raw]
 	val itemId = layerId ?: drawable.id.raw
-	val isLayerSelected = layerId != null && state.selectedLayerId == layerId
+	val isLayerSelected = layerId != null && (layerId == state.selectedLayerId || layerId in state.selectedLayerIds)
 	val isSelfVisible = layerId == null || state.isLayerVisible(layerId)
 	val isEffectiveVisible = layerId == null || layerId in state.effectiveVisibleLayerIds
 

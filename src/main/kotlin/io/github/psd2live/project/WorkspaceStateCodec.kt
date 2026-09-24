@@ -84,6 +84,7 @@ internal object WorkspaceStateCodec {
 
     private fun encodePresentation(p: CanvasPresentation): JsonObject = buildJsonObject {
         put("selectedLayerId", p.selectedLayerId)
+        putJsonArray("selectedLayerIds") { p.selectedLayerIds.forEach { add(it) } }
         put("selectedDeformerId", p.selectedDeformerId)
         put("isolatedLayerId", p.isolatedLayerId)
         put("animationEnabled", p.animationEnabled)
@@ -99,6 +100,8 @@ internal object WorkspaceStateCodec {
         val obj = value as? JsonObject ?: return CanvasPresentation()
         return CanvasPresentation(
             selectedLayerId = obj["selectedLayerId"]?.jsonPrimitive?.contentOrNull,
+            selectedLayerIds = obj["selectedLayerIds"]?.jsonArray?.map { it.jsonPrimitive.content }?.toSet()
+                ?: setOfNotNull(obj["selectedLayerId"]?.jsonPrimitive?.contentOrNull),
             selectedDeformerId = obj["selectedDeformerId"]?.jsonPrimitive?.contentOrNull,
             isolatedLayerId = obj["isolatedLayerId"]?.jsonPrimitive?.contentOrNull,
             animationEnabled = booleanOr(obj, "animationEnabled", false),
@@ -387,6 +390,7 @@ internal object WorkspaceStateCodec {
         put("logPanelHeight", state.logPanelHeight)
         put("selectedHistoryNodeId", state.selectedHistoryNodeId)
         put("selectedLayerId", state.selectedLayerId)
+        putJsonArray("selectedLayerIds") { state.selectedLayerIds.forEach { add(it) } }
         put("selectedDeformerId", state.selectedDeformerId)
         put("isolatedLayerId", state.isolatedLayerId)
         put("parameterSearchQuery", state.parameterSearchQuery)
@@ -489,6 +493,8 @@ internal object WorkspaceStateCodec {
         logPanelHeight = value["logPanelHeight"]?.jsonPrimitive?.float ?: base.logPanelHeight,
         selectedHistoryNodeId = if ("selectedHistoryNodeId" in value) value["selectedHistoryNodeId"]?.jsonPrimitive?.contentOrNull else base.selectedHistoryNodeId,
         selectedLayerId = if ("selectedLayerId" in value) value["selectedLayerId"]?.jsonPrimitive?.contentOrNull else base.selectedLayerId,
+        selectedLayerIds = value["selectedLayerIds"]?.jsonArray?.map { it.jsonPrimitive.content }?.toSet()
+            ?: setOfNotNull(value["selectedLayerId"]?.jsonPrimitive?.contentOrNull),
         selectedDeformerId = if ("selectedDeformerId" in value) value["selectedDeformerId"]?.jsonPrimitive?.contentOrNull else base.selectedDeformerId,
         isolatedLayerId = if ("isolatedLayerId" in value) value["isolatedLayerId"]?.jsonPrimitive?.contentOrNull else base.isolatedLayerId,
         parameterSearchQuery = value["parameterSearchQuery"]?.jsonPrimitive?.content ?: base.parameterSearchQuery,

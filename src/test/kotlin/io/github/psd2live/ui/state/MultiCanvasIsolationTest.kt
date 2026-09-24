@@ -447,4 +447,33 @@ class MultiCanvasIsolationTest {
         }
     }
 
+    @Test fun panelsKeepStructuralEditsOnTheFocusedCanvas() {
+        PSD2LiveViewModel().use { vm ->
+            val previewId = vm.state.value.activeCanvas.id
+            vm.setCanvasMode(previewId, CanvasMode.PREVIEW)
+            val editId = vm.addCanvas(CanvasMode.EDIT, focus = false)
+            vm.focusCanvas(previewId)
+            vm.selectLayer("picked")
+            vm.requestCanvasPathTool()
+            assertEquals(previewId, vm.state.value.activeCanvas.id)
+            assertEquals(CanvasMode.EDIT, vm.state.value.activeCanvas.mode)
+            assertEquals("picked", vm.state.value.selectedLayerId)
+            assertEquals(CanvasTool.CREATE_DEFORM_PATH, vm.canvasEditorFor(previewId).deferredMode?.tool)
+            assertNull(vm.canvasEditorFor(editId).deferredMode)
+            assertSame(vm.state.value, vm.uiState.value)
+        }
+    }
+
+    @Test fun missingWarpIdsDoNotFailTheGuide() {
+        val model = org.umamo.runtime.model.PuppetModel(
+            parameters = emptyList(),
+            parts = emptyList(),
+            deformers = emptyList(),
+            drawables = emptyList(),
+            rootChildren = emptyList(),
+            rootPartId = null,
+        )
+        assertTrue(io.github.psd2live.ui.RigInformationOverlay.warpPoints(model, emptyMap(), setOf("gone")).isEmpty())
+    }
+
 }

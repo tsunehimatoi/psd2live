@@ -7,6 +7,7 @@ import org.umamo.runtime.model.ParameterId
 @Immutable
 data class CanvasPresentation(
     val selectedLayerId: String? = null,
+    val selectedLayerIds: Set<String> = emptySet(),
     val selectedDeformerId: String? = null,
     val hoveredLayerId: String? = null,
     val hoveredDeformerId: String? = null,
@@ -22,6 +23,7 @@ data class CanvasPresentation(
 ) {
     fun applyTo(state: PSD2LiveState): PSD2LiveState = state.copy(
         selectedLayerId = selectedLayerId,
+        selectedLayerIds = selectedLayerIds,
         selectedDeformerId = selectedDeformerId,
         hoveredLayerId = hoveredLayerId,
         hoveredDeformerId = hoveredDeformerId,
@@ -39,6 +41,7 @@ data class CanvasPresentation(
     companion object {
         fun capture(state: PSD2LiveState) = CanvasPresentation(
             selectedLayerId = state.selectedLayerId,
+            selectedLayerIds = state.selectedLayerIds,
             selectedDeformerId = state.selectedDeformerId,
             hoveredLayerId = state.hoveredLayerId,
             hoveredDeformerId = state.hoveredDeformerId,
@@ -87,6 +90,72 @@ fun PSD2LiveState.previewControlCanvas(): CanvasWindowState =
 fun PSD2LiveState.previewPanelState(): PSD2LiveState {
     val canvas = previewControlCanvas()
     return forCanvas(canvas.id, mode = CanvasMode.PREVIEW)
+}
+
+/**
+ * Drops selections, hovers and parameter poses that name objects the current puppet no longer has.
+ * Every canvas and both of its modes are cleaned, so one canvas deleting a deformer cannot leave
+ * another canvas asking geometry for an id that will fail a bare `require`.
+ */
+internal fun pruneCanvasSessions(state: PSD2LiveState): PSD2LiveState {
+    val preview = state.previewModel ?: return state
+    val puppet = preview.rig.puppet
+    val layerIds = preview.analysis.layers.mapTo(HashSet()) { it.source.id.raw }
+    val deformerIds = puppet.deformers.mapTo(HashSet()) { it.id.raw }
+    val parameterIds = puppet.parameters.mapTo(HashSet()) { it.id }
+    fun CanvasPresentation.pruned(): CanvasPresentation {
+        val selectedLayer = selectedLayerId?.takeIf { it in layerIds }
+        val selectedLayers = selectedLayerIds.filterTo(LinkedHashSet()) { it in layerIds }
+        val selectedDeformer = selectedDeformerId?.takeIf { it in deformerIds }
+        val hoveredLayer = hoveredLayerId?.takeIf { it in layerIds }
+        val hoveredDeformer = hoveredDeformerId?.takeIf { it in deformerIds }
+        val isolated = isolatedLayerId?.takeIf { it in layerIds }
+        val snapshot = if (isolated == null) null else isolationSnapshot
+        val parameters = if (parameterValues.keys.all { it in parameterIds }) parameterValues
+            else parameterValues.filterKeys { it in parameterIds }
+        val locked = if (lockedParameters.all { it in parameterIds }) lockedParameters
+            else lockedParameters.filterTo(HashSet()) { it in parameterIds }
+        val livePreview = if (previewParameterValues.keys.all { it in parameterIds }) previewParameterValues
+            else previewParameterValues.filterKeys { it in parameterIds }
+        if (selectedLayer == selectedLayerId && selectedLayers == selectedLayerIds && selectedDeformer == selectedDeformerId &&
+            hoveredLayer == hoveredLayerId && hoveredDeformer == hoveredDeformerId &&
+            isolated == isolatedLayerId && snapshot === isolationSnapshot &&
+            parameters === parameterValues && locked === lockedParameters &&
+            livePreview === previewParameterValues) return this
+        return copy(
+            selectedLayerId = selectedLayer,
+            selectedLayerIds = selectedLayers,
+            selectedDeformerId = selectedDeformer,
+            hoveredLayerId = hoveredLayer,
+            hoveredDeformerId = hoveredDeformer,
+            isolatedLayerId = isolated,
+            isolationSnapshot = snapshot,
+            parameterValues = parameters,
+            lockedParameters = locked,
+            previewParameterValues = livePreview,
+        )
+    }
+    val workspaces = state.workspaces.map { workspace ->
+        var canvasChanged = false
+        val canvases = workspace.canvases.map { canvas ->
+            val edit = canvas.editSession.presentation.pruned()
+            val previewPresentation = canvas.previewSession.presentation.pruned()
+            if (edit === canvas.editSession.presentation && previewPresentation === canvas.previewSession.presentation) canvas
+            else {
+                canvasChanged = true
+                canvas.copy(
+                    editSession = if (edit === canvas.editSession.presentation) canvas.editSession
+                        else canvas.editSession.copy(presentation = edit),
+                    previewSession = if (previewPresentation === canvas.previewSession.presentation) canvas.previewSession
+                        else canvas.previewSession.copy(presentation = previewPresentation),
+                )
+            }
+        }
+        if (!canvasChanged) workspace else workspace.copy(canvases = canvases)
+    }
+    val pruned = if (workspaces == state.workspaces) state else state.copy(workspaces = workspaces)
+    val active = pruned.activeCanvas.presentation
+    return if (CanvasPresentation.capture(pruned) == active) pruned else active.applyTo(pruned)
 }
 
 /** Keep the panel projection and its owning canvas in the same atomic state update. */

@@ -356,30 +356,29 @@ internal class CanvasEditor(
     private val workspaceId: String = viewModel.state.value.activeWorkspace.id,
     private val canvasId: String = viewModel.state.value.activeCanvas.id,
 ) {
-    private var sourceState: PSD2LiveState? = null
-    private var projectedState: PSD2LiveState? = null
     val state: PSD2LiveState
-        get() {
-            val source = viewModel.state.value
-            if (source !== sourceState) {
-                sourceState = source
-                projectedState = source.forCanvas(canvasId, workspaceId, CanvasMode.EDIT)
-            }
-            return requireNotNull(projectedState)
-        }
+        get() = viewModel.uiState.value.forCanvas(canvasId, workspaceId, CanvasMode.EDIT)
     internal fun selectLayer(id: String?) = viewModel.updateCanvasPresentation(workspaceId, canvasId, CanvasMode.EDIT) {
-        it.copy(selectedLayerId = id, selectedDeformerId = if (id != null) null else it.selectedDeformerId)
+        it.copy(
+            selectedLayerId = id,
+            selectedLayerIds = if (id == null) emptySet() else objects.takeIf { id in it } ?: setOf(id),
+            selectedDeformerId = if (id != null) null else it.selectedDeformerId,
+        )
     }
     private fun selectDeformer(id: String?) = viewModel.updateCanvasPresentation(workspaceId, canvasId, CanvasMode.EDIT) {
-        it.copy(selectedDeformerId = id, selectedLayerId = if (id != null) null else it.selectedLayerId)
+        it.copy(selectedDeformerId = id, selectedLayerId = if (id != null) null else it.selectedLayerId,
+            selectedLayerIds = if (id != null) emptySet() else it.selectedLayerIds)
     }
+    // Hover is an input-frame detail. Keeping it on this editor prevents a mouse move in one
+    // canvas from emitting a document-wide state update and recomposing all dock panels.
+    var hoveredLayerId by mutableStateOf<String?>(null)
+        private set
+    var hoveredDeformerId by mutableStateOf<String?>(null)
+        private set
+
     private fun setHoveredItem(layerId: String?, deformerId: String?) {
-        val presentation = viewModel.state.value.workspaces.firstOrNull { it.id == workspaceId }
-            ?.canvases?.firstOrNull { it.id == canvasId }?.editSession?.presentation ?: return
-        if (presentation.hoveredLayerId == layerId && presentation.hoveredDeformerId == deformerId) return
-        viewModel.updateCanvasPresentation(workspaceId, canvasId, CanvasMode.EDIT) {
-            it.copy(hoveredLayerId = layerId, hoveredDeformerId = deformerId)
-        }
+        if (hoveredLayerId != layerId) hoveredLayerId = layerId
+        if (hoveredDeformerId != deformerId) hoveredDeformerId = deformerId
     }
     var viewport: CanvasViewport? = null
     var tool by mutableStateOf(CanvasTool.SELECT)
@@ -658,7 +657,19 @@ internal class CanvasEditor(
     var subdivideEdges by mutableStateOf<Set<MeshElement.Edge>>(emptySet())
     private var subdividing = false
     val objectMode get() = hierarchyMode == EditHierarchyMode.SELECT
-    var objects by mutableStateOf(emptySet<String>())
+    private var selectedObjects by mutableStateOf<Set<String>>(emptySet())
+    var objects: Set<String>
+        get() = selectedObjects
+        set(value) {
+            if (selectedObjects == value) return
+            selectedObjects = value
+            viewModel.updateCanvasPresentation(workspaceId, canvasId, CanvasMode.EDIT) { current ->
+                current.copy(
+                    selectedLayerIds = value,
+                    selectedLayerId = current.selectedLayerId?.takeIf { it in value } ?: value.lastOrNull(),
+                )
+            }
+        }
     var selectionStyle by mutableStateOf(SelectionStyle.BOX)
 
     // Visual feedback & hover state
@@ -814,7 +825,33 @@ internal class CanvasEditor(
         }
         val worlds = cachedWorlds
         if (parent != null && worlds[parent] == null) return null
-        return cachedTargets.getOrPut("$kind:$id") { CanvasTarget(kind, id, RigGeometryTools.geometry(resolvedSource, kind, id, pose), DrawableSpaceMapping(parent?.let { worlds[it] }), indices) }
+        return try {
+            cachedTargets.getOrPut("$kind:$id") {
+                CanvasTarget(
+                    kind, id,
+                    RigGeometryTools.geometry(resolvedSource, kind, id, sanitizedPose(resolvedSource)),
+                    DrawableSpaceMapping(parent?.let { worlds[it] }),
+                    indices,
+                )
+            }
+        } catch (failure: Exception) {
+            if (failure is kotlinx.coroutines.CancellationException) throw failure
+            null
+        }
+    }
+
+    /** Pose keys the current puppet does not have, or values outside its range, must not reach geometry(). */
+    private fun sanitizedPose(model: PuppetModel): Map<String, Float> {
+        val raw = state.parameterValues
+        if (raw.isEmpty()) return emptyMap()
+        val byId = model.parameters.associateBy { it.id.raw }
+        val out = LinkedHashMap<String, Float>(raw.size)
+        for ((id, value) in raw) {
+            val parameter = byId[id.raw] ?: continue
+            val finite = if (value.isFinite()) value else parameter.default
+            out[id.raw] = finite.coerceIn(parameter.min, parameter.max)
+        }
+        return out
     }
 
     fun screen(local: FloatArray, target: CanvasTarget, viewport: CanvasViewport): List<Offset> {
@@ -828,7 +865,7 @@ internal class CanvasEditor(
 
     /** Use the same parent-local endpoints for placement, drawing, hit-testing and dragging. */
     fun rotationGuideScreen(t: CanvasTarget, viewport: CanvasViewport): List<Offset> {
-        require(t.kind == "rotation")
+        if (t.kind != "rotation") return emptyList()
         return screen(t.geometry.points, t, viewport)
     }
 
@@ -944,8 +981,40 @@ internal class CanvasEditor(
         selectedEdges = emptySet()
         selectedFaces = emptySet()
     }
+
+    /**
+     * Drops index selections the document no longer has. A commit from another canvas, an undo or a
+     * panel can change the mesh this canvas was editing.
+     */
+    fun reconcileWithDocument() {
+        if (busy || dragging) return
+        val layerIds = state.previewModel?.analysis?.layers?.mapTo(HashSet()) { it.source.id.raw }
+        if (layerIds != null) {
+            val nextObjects = objects.filterTo(LinkedHashSet()) { it in layerIds }
+            if (nextObjects.size != objects.size) objects = nextObjects
+        }
+        val paths = state.previewModel?.rig?.puppet?.deformPaths?.mapTo(HashSet()) { it.id }
+        if (paths != null && activePath != null && activePath !in paths) {
+            activePath = null
+            pathPoint = -1
+        }
+        val t = target()
+        val count = t?.count ?: 0
+        val nextVertices = vertices.filterTo(LinkedHashSet()) { it in 0 until count }
+        if (nextVertices.size != vertices.size) vertices = nextVertices
+        val faces = (t?.indices?.size ?: 0) / 3
+        val nextFaces = selectedFaces.filterTo(LinkedHashSet()) { it in 0 until faces }
+        if (nextFaces.size != selectedFaces.size) selectedFaces = nextFaces
+        if (t == null || t.kind != "mesh") {
+            if (selectedEdges.isNotEmpty()) selectedEdges = emptySet()
+            return
+        }
+        val live = MeshTopology.uniqueEdges(t.indices)
+        val nextEdges = selectedEdges.filterTo(LinkedHashSet()) { it in live }
+        if (nextEdges.size != selectedEdges.size) selectedEdges = nextEdges
+    }
     private fun coordinate(t: CanvasTarget) = buildMap {
-        t.geometry.axes.forEach { a -> put(a.parameterId.raw, pose[a.parameterId.raw] ?: model.parameters.single { it.id == a.parameterId }.default) }
+        t.geometry.axes.forEach { a -> put(a.parameterId.raw, pose[a.parameterId.raw] ?: model.parameters.firstOrNull { it.id == a.parameterId }?.default ?: 0f) }
         parameter?.let { p -> model.parameters.firstOrNull { it.id.raw == p }?.let { put(p, pose[p] ?: it.default) } }
     }
 

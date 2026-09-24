@@ -537,7 +537,8 @@ internal fun ParametersListView(
 					height = 22.dp,
 				)
 				Text(
-					text = tr("parameters.count", visibleCount, allParameters.size, state.lockedParameters.size),
+					text = (if (state.activeWorkspace.canvases.size > 1) "${viewModel.canvasTitle(state.activeCanvas)} · " else "") +
+						tr("parameters.count", visibleCount, allParameters.size, state.lockedParameters.size),
 					style = typography.caption.copy(fontSize = 10.sp),
 					color = colors.textMuted,
 					maxLines = 1,

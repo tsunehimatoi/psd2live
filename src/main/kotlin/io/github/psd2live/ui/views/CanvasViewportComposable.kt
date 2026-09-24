@@ -125,8 +125,16 @@ fun CanvasViewportComposable(
 	onOpenProject: (() -> Unit)? = null,
 	onOpenPsd: (() -> Unit)? = null,
 ) {
-    val canvasState = state.forCanvas(canvasId)
-    key(canvasState.projectOpenGeneration, canvasState.activeWorkspace.id, canvasId, mode) {
+    val editor = viewModel.canvasEditorFor(canvasId)
+    val ownerState = state.forCanvas(canvasId)
+    key(ownerState.projectOpenGeneration, ownerState.activeWorkspace.id, canvasId, mode) {
+	// Hover belongs to the input session, so moving over this viewport invalidates only
+	// this viewport instead of the shared document and every docked panel.
+	val canvasState = if (mode == CanvasMode.EDIT &&
+		(editor.hoveredLayerId != null || editor.hoveredDeformerId != null)) ownerState.copy(
+		hoveredLayerId = editor.hoveredLayerId,
+		hoveredDeformerId = editor.hoveredDeformerId,
+	) else ownerState
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 	val focusRequester = remember { FocusRequester() }
@@ -169,7 +177,6 @@ fun CanvasViewportComposable(
 	val lastPointerActivityNanos = remember { AtomicLong(0L) }
 	val pointerActivity = remember { Channel<Unit>(Channel.CONFLATED) }
 
-	val editor = viewModel.canvasEditorFor(canvasId)
     val renderKey = viewModel.canvasRenderKey(canvasId, mode)
     val frameFlow = remember(viewModel, renderKey) { viewModel.retainCanvasFrame(renderKey) }
     DisposableEffect(viewModel, renderKey) {
@@ -197,10 +204,11 @@ fun CanvasViewportComposable(
 	LaunchedEffect(canvasState.focusCanvasRequest) {
 		if (canvasState.focusCanvasRequest > 0 && viewModel.state.value.activeCanvas.id == canvasId) focusRequester.requestFocus()
 	}
-    LaunchedEffect(mode, canvasState.selectedLayerId, canvasState.selectedDeformerId) {
+    LaunchedEffect(mode, canvasState.selectedLayerId, canvasState.selectedLayerIds, canvasState.selectedDeformerId) {
         if (mode == CanvasMode.EDIT && !editor.inGesture && !editor.busy) {
             editor.resetSelection()
-            if(canvasState.selectedLayerId !in editor.objects) editor.objects=setOfNotNull(canvasState.selectedLayerId)
+            val selectedObjects = canvasState.selectedLayerIds.ifEmpty { setOfNotNull(canvasState.selectedLayerId) }
+            if (editor.objects != selectedObjects) editor.objects = selectedObjects
             // Vertex mode is only meaningful for the tools that edit points. Forcing it for the object
             // tools left `objects` populated while objectMode said otherwise, and the transform bounding
             // box — which is computed from objectMode — then framed a different set than the one a drag
@@ -215,9 +223,10 @@ fun CanvasViewportComposable(
     LaunchedEffect(mode, canvasState.selectedLayerId, canvasState.selectedDeformerId) {
         if (mode == CanvasMode.EDIT) editor.resolveDeferredMode()
     }
-    LaunchedEffect(mode, canvasState.historySnapshot?.headNodeId, canvasState.parameterValues) {
+    LaunchedEffect(mode, canvasState.historySnapshot?.headNodeId, canvasState.parameterValues, canvasState.previewModel?.rig?.puppet) {
         if (mode == CanvasMode.EDIT) {
             if (!editor.busy && editor.inGesture) editor.cancel()
+            editor.reconcileWithDocument()
             if (!editor.busy && canvasState.previewModel != null) editor.target()?.let { t -> editor.vertices=editor.vertices.filter { it in 0 until t.count }.toSet() }
         }
     }
@@ -267,9 +276,11 @@ fun CanvasViewportComposable(
 	)
 	val warpPose = if (mode == CanvasMode.PREVIEW) informationPose else canvasState.parameterValues
 	val warpPoints = remember(previewModel?.rig?.puppet, warpPose, warpIds) {
-		if (previewModel != null && warpIds.isNotEmpty())
-			io.github.psd2live.ui.RigInformationOverlay.warpPoints(previewModel.rig.puppet, warpPose, warpIds)
-		else emptyMap()
+		runCatching {
+			if (previewModel != null && warpIds.isNotEmpty())
+				io.github.psd2live.ui.RigInformationOverlay.warpPoints(previewModel.rig.puppet, warpPose, warpIds)
+			else emptyMap()
+		}.getOrDefault(emptyMap())
 	}
 	val currentZoom by rememberUpdatedState(zoom)
 	val currentPanX by rememberUpdatedState(panX)
@@ -290,7 +301,15 @@ fun CanvasViewportComposable(
 		}
 	}
 
-	/** Marks a pointer change a paused preview has to render (see the frame pump). */
+	fun editorGuard(block: () -> Unit) {
+		try {
+			block()
+		} catch (failure: kotlinx.coroutines.CancellationException) {
+			throw failure
+		} catch (failure: Exception) {
+			editor.error = failure.message?.takeIf { it.isNotBlank() } ?: "Failed requirement."
+		}
+	}
 	fun notePointerActivity() {
 		lastPointerActivityNanos.set(System.nanoTime())
 		pointerActivity.trySend(Unit)
@@ -698,7 +717,11 @@ fun CanvasViewportComposable(
                         change.consume()
                         return@onPointerEvent
                     }
-                    if (editor.press(change.position,computeViewport(previewModel,viewSize.width,viewSize.height),event.keyboardModifiers.isShiftPressed,event.keyboardModifiers.isAltPressed,event.keyboardModifiers.isCtrlPressed)) {
+                    var handled = false
+                    editorGuard {
+                        handled = editor.press(change.position,computeViewport(previewModel,viewSize.width,viewSize.height),event.keyboardModifiers.isShiftPressed,event.keyboardModifiers.isAltPressed,event.keyboardModifiers.isCtrlPressed)
+                    }
+                    if (handled) {
                         change.consume(); return@onPointerEvent
                     }
                 }
@@ -723,8 +746,10 @@ fun CanvasViewportComposable(
                 }
                 if(change?.isConsumed==true && (mode != CanvasMode.EDIT || !editor.inGesture) && !isDragging) return@onPointerEvent
                 if(mode == CanvasMode.EDIT && previewModel != null && event.button == PointerButton.Primary && !isDragging) {
-                    editor.release()
-                    editor.finishSelection(computeViewport(previewModel,viewSize.width,viewSize.height))
+                    editorGuard {
+                        editor.release()
+                        editor.finishSelection(computeViewport(previewModel,viewSize.width,viewSize.height))
+                    }
                     return@onPointerEvent
                 }
                 if (isDragging) {
@@ -769,14 +794,16 @@ fun CanvasViewportComposable(
                 if (mode == CanvasMode.EDIT && previewModel != null && !isDragging) {
                     // The brush gesture takes over the pointer: skipping move() here is what keeps the outline
                     // parked at the press point, so the viewport stops feeding hover updates for the duration.
-                    if (editor.adjustingBrush) editor.updateBrushAdjust(change.position)
-                    else editor.move(
-                        change.position,
-                        computeViewport(previewModel, viewSize.width, viewSize.height),
-                        event.keyboardModifiers.isShiftPressed,
-                        event.keyboardModifiers.isAltPressed,
-                        event.keyboardModifiers.isCtrlPressed
-                    )
+                    editorGuard {
+                        if (editor.adjustingBrush) editor.updateBrushAdjust(change.position)
+                        else editor.move(
+                            change.position,
+                            computeViewport(previewModel, viewSize.width, viewSize.height),
+                            event.keyboardModifiers.isShiftPressed,
+                            event.keyboardModifiers.isAltPressed,
+                            event.keyboardModifiers.isCtrlPressed
+                        )
+                    }
                 }
                 if (isDragging) {
 					val delta = change.position - lastDragPos
@@ -1308,11 +1335,14 @@ private class CanvasGuideImageCache {
             val graphics = buffer.createGraphics()
             try {
                 paint(graphics)
+                image = buffer.toComposeImageBitmap()
+                this.key = key
+            } catch (_: Exception) {
+                // A bad guide frame must not escape into composition and stop this canvas.
             } finally {
                 graphics.dispose()
             }
-            image = buffer.toComposeImageBitmap()
-            this.key = key
+            return image ?: buffer.toComposeImageBitmap()
         }
         return requireNotNull(image)
     }

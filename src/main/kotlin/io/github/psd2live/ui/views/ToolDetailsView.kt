@@ -115,7 +115,8 @@ internal fun ToolDetailsView(
                             .background(colors.accent, RoundedCornerShape(2.dp))
                     )
                     Text(
-                        text = tr("editor.tool.${editor.tool.name.lowercase()}"),
+                        text = (if (state.activeWorkspace.canvases.size > 1) "${viewModel.canvasTitle(state.activeCanvas)} · " else "") +
+                            tr("editor.tool.${editor.tool.name.lowercase()}"),
                         style = typography.body.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
                         color = colors.textPrimary,
                     )

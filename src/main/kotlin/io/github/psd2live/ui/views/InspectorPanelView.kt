@@ -113,7 +113,7 @@ internal fun InspectorPanelView(
         // Tab Header bar matching screenshots
         Column(modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
             Text(
-                text = tr("tab.inspector"),
+                text = tr("tab.inspector") + if (state.activeWorkspace.canvases.size > 1) " · ${viewModel.canvasTitle(state.activeCanvas)}" else "",
                 style = typography.caption.copy(fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold),
                 color = colors.textPrimary,
                 modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),

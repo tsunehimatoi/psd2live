@@ -47,6 +47,7 @@ import io.github.psd2live.ui.components.IconPlay
 import io.github.psd2live.ui.components.IconReset
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
+import io.github.psd2live.ui.state.previewControlCanvas
 import io.github.psd2live.ui.state.previewPanelState
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
@@ -74,7 +75,11 @@ internal fun AnimationPanelView(
 		MasterPlaybackCard(viewModel, previewState, state.previewLive)
 
 		// 2. Motions List Section
-		CompactSectionHeader(title = tr("animation.motionsTitle"))
+		val previewCanvas = state.previewControlCanvas()
+		val motionsTitle = if (state.activeWorkspace.canvases.size > 1)
+			"${viewModel.canvasTitle(previewCanvas)} · ${tr("animation.motionsTitle")}"
+		else tr("animation.motionsTitle")
+		CompactSectionHeader(title = motionsTitle)
 		MotionsListSection(viewModel, previewState)
 
 		Spacer(Modifier.height(8.dp))

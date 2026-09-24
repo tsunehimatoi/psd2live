@@ -243,22 +243,14 @@ internal fun DockWorkspaceView(
         session.floating.keys.forEach { saved = dockModule(saved, it, null, DockSide.RIGHT) }
         saved?.let { viewModel.setWorkspaceLayout(workspace.id, dockJson.encodeToString(it)) }
     }
-    val latestState by rememberUpdatedState(state)
-	val latestOnStartTutorial by rememberUpdatedState(onStartTutorial)
-	val latestOnOpenProject by rememberUpdatedState(onOpenProject)
-	val latestOnOpenPsd by rememberUpdatedState(onOpenPsd)
-    val contents = remember(workspace.id, canvasIds) { mutableMapOf<String, @Composable () -> Unit>() }
-    fun content(id: String): @Composable () -> Unit = contents.getOrPut(id) {
-        movableContentOf {
-			DockModuleContent(
-				id,
-				latestState,
-				viewModel,
-				latestOnStartTutorial,
-				latestOnOpenProject,
-				latestOnOpenPsd,
-			)
-		}
+    // A module's composition belongs to its current dock leaf. Moving a canvas creates a
+    // fresh viewport while its durable session and editor stay keyed by workspace/canvas id.
+    // Reusing movableContent across a changing split tree retained stale pointer/focus nodes,
+    // especially for the canvas that existed before a second canvas was added.
+    fun content(id: String): @Composable () -> Unit = {
+        key(workspace.id, id) {
+            DockModuleContent(id, state, viewModel, onStartTutorial, onOpenProject, onOpenPsd)
+        }
     }
     DisposableEffect(session) { onDispose { session.cancel() } }
 	// Tutorial / programmatic focus: select a dock module tab and bring floating modules back.
@@ -315,12 +307,13 @@ internal fun DockWorkspaceView(
                 }
             }
         }
-        if (viewModel.canvasEditor.showRebuildMeshDialog) {
+        val pendingPaint = viewModel.canvasAwaitingMeshRebuild()
+        if (pendingPaint != null) {
             io.github.psd2live.ui.components.RebuildMeshPromptDialog(
-                layerName = viewModel.canvasEditor.paintSession?.layerName.orEmpty(),
-                onConfirmRebuild = { viewModel.canvasEditor.commitPaintSession(rebuildMesh = true) },
-                onKeepExisting = { viewModel.canvasEditor.commitPaintSession(rebuildMesh = false) },
-                onDismiss = { viewModel.canvasEditor.showRebuildMeshDialog = false })
+                layerName = pendingPaint.paintSession?.layerName.orEmpty(),
+                onConfirmRebuild = { pendingPaint.commitPaintSession(rebuildMesh = true) },
+                onKeepExisting = { pendingPaint.commitPaintSession(rebuildMesh = false) },
+                onDismiss = { pendingPaint.showRebuildMeshDialog = false })
         }
     }
     session.floating.toMap().forEach { (id, windowState) ->
@@ -797,7 +790,7 @@ private fun DockModuleContent(
 			state.activeCanvas.mode,
 			onRequestOpenDeformPaths = { vm.selectLayer(it); vm.requestCanvasPathTool() },
 			onRequestCreate = { kind, relation, isDeformer, target ->
-				vm.canvasEditor.beginTreeCreate(kind, relation, isDeformer, target)
+				vm.editorForFocusedCanvas().beginTreeCreate(kind, relation, isDeformer, target)
 			},
 		)
 		"history" -> HistoryTreeView(state, vm, Modifier.fillMaxSize())
@@ -814,8 +807,8 @@ private fun DockModuleContent(
 		}
 		"layers" -> LayersTableView(state, vm)
 		"parameters" -> ParametersListView(state, vm)
-		"tools" -> ToolDetailsView(vm.canvasEditor, vm, state)
-		"inspector" -> InspectorPanelView(vm.canvasEditor, vm, state)
+		"tools" -> ToolDetailsView(vm.canvasEditorFor(state.activeCanvas.id), vm, state)
+		"inspector" -> InspectorPanelView(vm.canvasEditorFor(state.activeCanvas.id), vm, state)
 		"animation" -> AnimationPanelView(vm, state)
 		"physics" -> PhysicsPanelView(vm, state)
 	}

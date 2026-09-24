@@ -340,6 +340,8 @@ data class PSD2LiveState(
 	 */
 	val previewModelDirty: Boolean = false,
 	val selectedLayerId: String? = null,
+	/** Object multi-selection of the focused canvas; [selectedLayerId] is its primary item. */
+	val selectedLayerIds: Set<String> = emptySet(),
 	val selectedDeformerId: String? = null,
 	val clickToSelectLayer: Boolean = AppSettings.clickToSelectLayer,
 	val hoveredLayerId: String? = null,

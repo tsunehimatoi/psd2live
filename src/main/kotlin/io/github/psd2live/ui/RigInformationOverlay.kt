@@ -25,7 +25,7 @@ import kotlin.math.sin
 internal object RigInformationOverlay {
     fun warpPoints(model: PuppetModel, parameters: Map<ParameterId, Float>, ids: Set<String>): Map<String, FloatArray> {
         val warps = model.deformers.filterIsInstance<Deformer.Warp>().filter { it.id.raw in ids }
-        require(warps.size == ids.size) { "Information layer requires existing Warp IDs" }
+        if (warps.isEmpty()) return emptyMap()
         val probes = warps.map { w ->
             val points = FloatArray((w.rows+1)*(w.columns+1)*2)
             for(r in 0..w.rows) for(c in 0..w.columns) { val i=(r*(w.columns+1)+c)*2; points[i]=c.toFloat()/w.columns; points[i+1]=r.toFloat()/w.rows }

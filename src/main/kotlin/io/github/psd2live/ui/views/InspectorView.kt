@@ -1091,8 +1091,9 @@ internal fun LayersTableView(
 			verticalAlignment = Alignment.CenterVertically,
 			horizontalArrangement = Arrangement.spacedBy(4.dp),
 		) {
+			val canvasPrefix = if (state.activeWorkspace.canvases.size > 1) "${viewModel.canvasTitle(state.activeCanvas)} · " else ""
 			Text(
-				text = if (analysis != null) tr("layers.summary", visibleCount, layers.size, recognized, unknown) else tr("layers.title"),
+				text = canvasPrefix + if (analysis != null) tr("layers.summary", visibleCount, layers.size, recognized, unknown) else tr("layers.title"),
 				style = typography.caption.copy(fontSize = 10.5.sp),
 				color = colors.textMuted,
 				modifier = Modifier.weight(1f),
@@ -1159,7 +1160,7 @@ internal fun LayersTableView(
 			LazyColumn(state = layerListState, modifier = Modifier.fillMaxSize()) {
 				itemsIndexed(layers) { index, layer ->
 					val layerId = layer.source.id.raw
-					val isSelected = state.selectedLayerId == layerId
+					val isSelected = state.selectedLayerId == layerId || layerId in state.selectedLayerIds
 					val isVisible = state.isLayerVisible(layerId, layer.source.visible)
 					val override = state.layerOverrides[layerId]
 					val currentType = override?.type ?: layer.semantic.type

@@ -33,7 +33,6 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.delay
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -133,7 +132,7 @@ fun FrameWindowScope.PSD2LiveApp(
 		window?.dispose()
 	},
 ) {
-	val state by viewModel.state.collectAsState()
+	val state by viewModel.uiState
 	var helpDialogTab by remember { mutableStateOf<HelpTab?>(null) }
 	var showAgentDialog by remember { mutableStateOf(false) }
 	var tutorial by remember { mutableStateOf(InteractiveTutorialState()) }
