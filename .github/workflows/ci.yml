@@ -1,0 +1,47 @@
+# Public CI — no Cubism SDK download or packaging.
+# Does not set PSD2LIVE_INCLUDE_CUBISM / -Ppsd2live.includeCubism.
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Run tests (Unix)
+        if: runner.os != 'Windows'
+        run: ./gradlew test --no-daemon
+
+      - name: Run tests (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: gradlew.bat test --no-daemon

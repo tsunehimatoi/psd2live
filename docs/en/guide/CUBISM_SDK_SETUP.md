@@ -1,6 +1,6 @@
 # Optional Cubism Native preview
 
-[Docs](../../README.md) · [User guide](USER_GUIDE.md)
+[Docs](../../README.md) · [User guide](USER_GUIDE.md) · [CI / release](CUBISM_CI_RELEASE.md)
 
 The built-in renderer and basic exports do not require the official SDK. This page configures the repository native preview bridge for observing official runtime rendering and physics. It does not promise identical behavior for every editor feature or pixel.
 
@@ -76,5 +76,7 @@ Offscreen preview opens a GLX context and needs a valid X11 `DISPLAY`. On headle
 Restart the launching process after changing environment variables.
 
 Only open-source bridge code is supplied. Obtain the official Core, Framework and shaders separately and follow their license. This guide grants no rights to those components.
+
+For automated builds and Cubism-inclusive releases, see [CUBISM_CI_RELEASE](CUBISM_CI_RELEASE.md) (never attach the SDK zip to a public Release on a public app repo).
 
 [Native build](../../../native/live2d_renderer/README.md) · [Build scripts](../../../native/) · [Third-party notices](../../../THIRD_PARTY_NOTICES.md)

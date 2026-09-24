@@ -15,6 +15,7 @@ For hands-on learning, open **Help → Tutorials**. The short guides follow the 
 | 操作速查 / User guide | [打开](zh/guide/USER_GUIDE.md) | [Open](en/guide/USER_GUIDE.md) | [開く](ja/guide/USER_GUIDE.md) |
 | 开发与 CLI / Development | [打开](zh/guide/DEVELOPMENT.md) | [Open](en/guide/DEVELOPMENT.md) | [開く](ja/guide/DEVELOPMENT.md) |
 | 可选 Native SDK 预览 | [打开](zh/guide/CUBISM_SDK_SETUP.md) | [Open](en/guide/CUBISM_SDK_SETUP.md) | [開く](ja/guide/CUBISM_SDK_SETUP.md) |
+| Cubism CI / 发行 | [打开](zh/guide/CUBISM_CI_RELEASE.md) | [Open](en/guide/CUBISM_CI_RELEASE.md) | 英文/中文参考 |
 | 画布编辑速查 | [打开](zh/guide/CANVAS_EDITOR.md) | 中文参考 | 中文参考 |
 | 变形路径（实验性） | [打开](zh/guide/DEFORM_PATHS.md) | 中文参考 | 中文参考 |
 | 纹理高清化 | [打开](zh/guide/TEXTURE_UPSCALE.md) | 中文参考 | 中文参考 |

@@ -1,0 +1,373 @@
+# Cubism-inclusive release packaging.
+# Downloads the proprietary Cubism SDK from a private Release (or configured
+# source repo), builds native bridges, and optionally publishes a GitHub Release.
+#
+# Maintainers: protect the GitHub Environment "release-cubism" (required reviewers).
+# On a PUBLIC application repo, NEVER store the SDK zip as a Release asset here —
+# point CUBISM_SDK_SOURCE_REPO at a private sibling repo. See docs/*/guide/CUBISM_CI_RELEASE.md.
+name: Release Cubism
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without leading v (e.g. 1.2.0)"
+        required: true
+        type: string
+      create_github_release:
+        description: "Create/update GitHub Release for v{version}"
+        required: false
+        type: boolean
+        default: true
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+# Same version from dispatch + subsequent tag push should not stack endlessly.
+concurrency:
+  group: cubism-release-${{ github.event.inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  DEFAULT_SDK_TAG: internal-sdk/cubism-5-r.5
+  DEFAULT_SDK_ASSET: CubismSdkForNative-5-r.5.zip
+  SDK_EXTRACT_DIR: CubismSdkForNative-5-r.5
+
+jobs:
+  prepare:
+    name: Prepare version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+      create_release: ${{ steps.ver.outputs.create_release }}
+    steps:
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+            VERSION="${VERSION#v}"
+            CREATE="${{ inputs.create_github_release }}"
+          else
+            REF="${{ github.ref_name }}"
+            VERSION="${REF#v}"
+            CREATE="true"
+          fi
+          if [[ -z "$VERSION" || ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-].*)?$ ]]; then
+            echo "::error::Invalid version: '$VERSION' (expected semver like 1.2.0)"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "create_release=$CREATE" >> "$GITHUB_OUTPUT"
+          echo "Resolved VERSION=$VERSION TAG=v$VERSION create_release=$CREATE"
+
+  build-windows:
+    name: Build Windows Cubism
+    needs: prepare
+    runs-on: windows-latest
+    environment: release-cubism
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Ensure CMake
+        shell: bash
+        run: |
+          if ! command -v cmake >/dev/null 2>&1; then
+            choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
+          fi
+          cmake --version
+
+      - name: Download Cubism SDK
+        env:
+          GH_TOKEN: ${{ secrets.SDK_FETCH_TOKEN || secrets.GITHUB_TOKEN }}
+          SDK_REPO: ${{ vars.CUBISM_SDK_SOURCE_REPO || github.repository }}
+          SDK_TAG: ${{ vars.CUBISM_SDK_RELEASE_TAG || 'internal-sdk/cubism-5-r.5' }}
+          SDK_ASSET: ${{ vars.CUBISM_SDK_ASSET_NAME || 'CubismSdkForNative-5-r.5.zip' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path vendor | Out-Null
+          Write-Host "Fetching $env:SDK_ASSET from $env:SDK_REPO @$env:SDK_TAG"
+          gh release download $env:SDK_TAG -p $env:SDK_ASSET -R $env:SDK_REPO --dir vendor
+          Expand-Archive -Path "vendor/$env:SDK_ASSET" -DestinationPath vendor -Force
+          $extract = Join-Path (Get-Location) "vendor/$env:SDK_EXTRACT_DIR"
+          if (Test-Path $extract) {
+            $sdkRoot = (Resolve-Path $extract).Path
+          } elseif (Test-Path "vendor/Core/include/Live2DCubismCore.h") {
+            $sdkRoot = (Resolve-Path "vendor").Path
+          } else {
+            $top = Get-ChildItem vendor -Directory | Where-Object { $_.Name -notlike '.*' } | Select-Object -First 1
+            if (-not $top) { throw "Could not locate extracted SDK root under vendor/" }
+            $sdkRoot = $top.FullName
+          }
+          "CUBISM_SDK_ROOT=$sdkRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Using CUBISM_SDK_ROOT=$sdkRoot"
+
+      - name: Verify Cubism Core (Windows)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $hdr = Join-Path $env:CUBISM_SDK_ROOT "Core/include/Live2DCubismCore.h"
+          $lib = Join-Path $env:CUBISM_SDK_ROOT "Core/lib/windows/x86_64/143/Live2DCubismCore_MT.lib"
+          if (-not (Test-Path $hdr)) { Write-Host "::error::Missing Core header: $hdr"; exit 1 }
+          if (-not (Test-Path $lib)) { Write-Host "::error::Missing Windows Core lib: $lib"; exit 1 }
+          Write-Host "SDK Core header and Windows lib OK"
+
+      - name: Build native renderer
+        shell: cmd
+        run: |
+          set CUBISM_SDK_ROOT=%CUBISM_SDK_ROOT%
+          native\build_live2d_renderer.bat -Clean -Deploy
+
+      - name: Confirm deployed DLL
+        shell: bash
+        run: |
+          DLL="src/main/resources/cubism/windows-x86_64/live2d_renderer.dll"
+          if [[ ! -f "$DLL" ]]; then
+            echo "::error::Expected $DLL after -Deploy"
+            exit 1
+          fi
+          ls -la src/main/resources/cubism/windows-x86_64/
+
+      - name: Package with Cubism
+        shell: cmd
+        run: |
+          gradlew.bat packageDistributionForCurrentOS createDistributable -Ppsd2live.includeCubism=true --no-daemon
+
+      - name: Collect Windows artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = "dist-artifacts"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $version = $env:VERSION
+
+          $appDir = Get-ChildItem -Path "build/compose/binaries" -Recurse -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -eq "app" } |
+            Select-Object -First 1
+          if (-not $appDir) {
+            $appDir = Get-ChildItem -Path "build/compose/binaries" -Recurse -Directory -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -eq "PSD2Live" } |
+              Select-Object -First 1
+          }
+          if (-not $appDir) {
+            Write-Host "::error::Could not find createDistributable app directory under build/compose/binaries"
+            Get-ChildItem -Path "build/compose/binaries" -Recurse -Directory -ErrorAction SilentlyContinue | Select-Object -First 40 FullName
+            exit 1
+          }
+          Write-Host "Zipping portable from: $($appDir.FullName)"
+          $portable = Join-Path (Resolve-Path $out) "PSD2Live-$version-windows-x86_64-portable-cubism.zip"
+          if (Test-Path $portable) { Remove-Item $portable -Force }
+          Compress-Archive -Path (Join-Path $appDir.FullName "*") -DestinationPath $portable -Force
+
+          $exe = Get-ChildItem -Path "build/compose/binaries" -Recurse -Filter "*.exe" -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notmatch "unins" } |
+            Select-Object -First 1
+          $msi = Get-ChildItem -Path "build/compose/binaries" -Recurse -Filter "*.msi" -File -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $exe) {
+            Write-Host "::error::No .exe under build/compose/binaries"
+            Get-ChildItem -Path "build/compose/binaries" -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 50 FullName
+            exit 1
+          }
+          if (-not $msi) {
+            Write-Host "::error::No .msi under build/compose/binaries"
+            exit 1
+          }
+          Copy-Item $exe.FullName (Join-Path $out "PSD2Live-$version-cubism.exe")
+          Copy-Item $msi.FullName (Join-Path $out "PSD2Live-$version-cubism.msi")
+          Get-ChildItem $out | Format-Table Name, Length
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-cubism
+          path: dist-artifacts/*
+          if-no-files-found: error
+
+  build-linux:
+    name: Build Linux Cubism
+    needs: prepare
+    runs-on: ubuntu-22.04
+    environment: release-cubism
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install native build deps
+        run: |
+          sudo apt-get update
+          # libglx-dev is virtual on some Ubuntu releases; fall back to mesa.
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ \
+            libgl1-mesa-dev \
+            libx11-dev xvfb zip unzip
+          sudo apt-get install -y --no-install-recommends libglx-dev \
+            || sudo apt-get install -y --no-install-recommends libglx-mesa-dev
+
+      - name: Set up JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Download Cubism SDK
+        env:
+          GH_TOKEN: ${{ secrets.SDK_FETCH_TOKEN || secrets.GITHUB_TOKEN }}
+          SDK_REPO: ${{ vars.CUBISM_SDK_SOURCE_REPO || github.repository }}
+          SDK_TAG: ${{ vars.CUBISM_SDK_RELEASE_TAG || 'internal-sdk/cubism-5-r.5' }}
+          SDK_ASSET: ${{ vars.CUBISM_SDK_ASSET_NAME || 'CubismSdkForNative-5-r.5.zip' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p vendor
+          echo "Fetching $SDK_ASSET from $SDK_REPO @$SDK_TAG"
+          gh release download "$SDK_TAG" -p "$SDK_ASSET" -R "$SDK_REPO" --dir vendor
+          unzip -q "vendor/$SDK_ASSET" -d vendor
+          if [[ -d "vendor/$SDK_EXTRACT_DIR" ]]; then
+            SDK_ROOT="$(pwd)/vendor/$SDK_EXTRACT_DIR"
+          elif [[ -f "vendor/Core/include/Live2DCubismCore.h" ]]; then
+            SDK_ROOT="$(pwd)/vendor"
+          else
+            TOP=$(find vendor -maxdepth 1 -mindepth 1 -type d ! -name '.*' | head -1)
+            SDK_ROOT="$(cd "$TOP" && pwd)"
+          fi
+          echo "CUBISM_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "Using CUBISM_SDK_ROOT=$SDK_ROOT"
+
+      - name: Verify Cubism Core (Linux)
+        shell: bash
+        run: |
+          set -euo pipefail
+          HDR="$CUBISM_SDK_ROOT/Core/include/Live2DCubismCore.h"
+          LIB="$CUBISM_SDK_ROOT/Core/lib/linux/x86_64/libLive2DCubismCore.a"
+          if [[ ! -f "$HDR" ]]; then
+            echo "::error::Missing Core header: $HDR"
+            exit 1
+          fi
+          if [[ ! -f "$LIB" ]]; then
+            echo "::error::Missing Linux Core lib: $LIB"
+            exit 1
+          fi
+          echo "SDK Core header and Linux lib OK"
+
+      - name: Build native renderer
+        run: |
+          export CUBISM_SDK_ROOT
+          ./native/build_live2d_renderer.sh --clean --deploy
+
+      - name: Confirm deployed shared library
+        run: |
+          SO="src/main/resources/cubism/linux-x86_64/liblive2d_renderer.so"
+          if [[ ! -f "$SO" ]]; then
+            echo "::error::Expected $SO after --deploy"
+            exit 1
+          fi
+          ls -la src/main/resources/cubism/linux-x86_64/
+
+      - name: Package Deb with Cubism
+        run: ./gradlew packageDeb -Ppsd2live.includeCubism=true --no-daemon
+
+      - name: Collect Linux artifacts
+        run: |
+          set -euo pipefail
+          OUT=dist-artifacts
+          mkdir -p "$OUT"
+          DEB=$(find build/compose/binaries -type f -name '*.deb' | head -1 || true)
+          if [[ -z "$DEB" ]]; then
+            echo "::error::No .deb under build/compose/binaries"
+            find build/compose/binaries -type f 2>/dev/null | head -50 || true
+            exit 1
+          fi
+          cp "$DEB" "$OUT/PSD2Live-${VERSION}-linux-amd64-cubism-preview.deb"
+          ls -la "$OUT"
+          # Soft file-existence smoke (no GUI): confirm package is non-empty
+          test -s "$OUT/PSD2Live-${VERSION}-linux-amd64-cubism-preview.deb"
+          # Optional GUI smoke is intentionally skipped in v1 (brittle under xvfb).
+          # Example if re-enabled later:
+          # xvfb-run -a timeout 15s ./gradlew run -Ppsd2live.includeCubism=true || true
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-cubism
+          path: dist-artifacts/*
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    needs: [prepare, build-windows, build-linux]
+    if: needs.prepare.outputs.create_release == 'true'
+    runs-on: ubuntu-latest
+    environment: release-cubism
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-cubism
+          path: release-assets
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-cubism
+          path: release-assets
+
+      # softprops creates the tag from target_commitish when missing (workflow_dispatch).
+      # Pushing a tag yourself also triggers this workflow; prefer one entry path.
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: PSD2Live ${{ env.VERSION }} (Cubism preview)
+          target_commitish: ${{ github.sha }}
+          draft: false
+          prerelease: true
+          fail_on_unmatched_files: true
+          body: |
+            Cubism-inclusive preview packages for PSD2Live **${{ env.VERSION }}**.
+
+            ### Platform notes
+            - **Linux**: X11/GLX required (XWayland / `xvfb-run` OK). Pure Wayland without XWayland, aarch64, and musl/Alpine are not supported.
+            - **Windows**: x86_64 with the bundled native bridge.
+            - **macOS**: deferred — not built by this workflow.
+
+            ### License / redistribution
+            These assets may include **proprietary Live2D Cubism** binaries built from an SDK you supply privately.
+            Do **not** redistribute proprietary bits beyond what your Live2D license allows.
+            Public application sources remain GPL; Cubism Core/Framework/shaders remain Live2D proprietary.
+            See `docs/*/guide/CUBISM_SDK_SETUP.md` and `THIRD_PARTY_NOTICES.md`.
+
+            ### Assets
+            - `PSD2Live-${{ env.VERSION }}-windows-x86_64-portable-cubism.zip`
+            - `PSD2Live-${{ env.VERSION }}-cubism.exe`
+            - `PSD2Live-${{ env.VERSION }}-cubism.msi`
+            - `PSD2Live-${{ env.VERSION }}-linux-amd64-cubism-preview.deb`
+          files: |
+            release-assets/PSD2Live-${{ env.VERSION }}-windows-x86_64-portable-cubism.zip
+            release-assets/PSD2Live-${{ env.VERSION }}-cubism.exe
+            release-assets/PSD2Live-${{ env.VERSION }}-cubism.msi
+            release-assets/PSD2Live-${{ env.VERSION }}-linux-amd64-cubism-preview.deb

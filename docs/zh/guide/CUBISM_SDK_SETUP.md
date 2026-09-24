@@ -1,6 +1,6 @@
 # 可选 Cubism Native 预览
 
-[Docs](../../README.md) · [User guide](USER_GUIDE.md)
+[Docs](../../README.md) · [User guide](USER_GUIDE.md) · [CI / 发行](CUBISM_CI_RELEASE.md)
 
 内置渲染和基础导出无需官方 SDK。本页只配置本仓库的原生预览桥接，用于检查官方运行时的渲染与物理；不承诺与编辑器所有功能或所有像素一致。
 
@@ -76,5 +76,7 @@ src/main/resources/cubism/linux-x86_64/
 修改环境变量后重启启动应用的进程。
 
 仓库只提供开源桥接代码，不包含官方 Core、Framework 或着色器。请自行取得 SDK 并遵守其许可；本页不是许可授权。
+
+自动化构建与含 Cubism 的发行流程见 [CUBISM_CI_RELEASE](CUBISM_CI_RELEASE.md)（公开仓库勿把 SDK zip 挂在公开 Release 上）。
 
 [Native build](../../../native/live2d_renderer/README.md) · [构建脚本](../../../native/) · [Third-party notices](../../../THIRD_PARTY_NOTICES.md)

@@ -56,6 +56,10 @@ Detailed setup instructions in multiple languages:
 - [简体中文](../docs/zh/guide/CUBISM_SDK_SETUP.md)
 - [日本語](../docs/ja/guide/CUBISM_SDK_SETUP.md)
 
+CI and Cubism-inclusive release packaging (GitHub Actions):
+- [English](../docs/en/guide/CUBISM_CI_RELEASE.md)
+- [简体中文](../docs/zh/guide/CUBISM_CI_RELEASE.md)
+
 ## License Compliance
 
 This directory contains only open-source wrapper code under GPL v3. The Live2D Cubism SDK (Core, Framework, shaders) is proprietary software owned by Live2D Inc. and governed by their Proprietary Software License. See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) for details.
