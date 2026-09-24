@@ -1155,7 +1155,128 @@ internal class CanvasEditor(
         showRebuildMeshDialog = true
     }
 
-    fun commitPaintSession(rebuildMesh: Boolean) {
+    /** Rebuild a tree-selected ArtMesh through the same parameter-aware route as paint apply. */
+    fun rebuildLayerMeshFromHierarchy(layerId: String) {
+        if (!editable) {
+            error = tr("editor.mesh.rebuildBusy")
+            return
+        }
+        if (isPainting || paintSession?.isDirty == true) {
+            error = tr("editor.mesh.rebuildDirtyPaint")
+            return
+        }
+        val preview = state.previewModel ?: run {
+            error = tr("editor.mesh.rebuildUnavailable")
+            return
+        }
+        val drawable = preview.rig.puppet.drawables.firstOrNull {
+            it.id.raw == layerId || preview.rig.layerIdByDrawableId[it.id.raw] == layerId
+        }
+        val sourceLayer = sourceLayerFor(preview.analysis, layerId)
+        if (drawable?.mesh == null || sourceLayer == null || sourceLayer is MouthLipLayer) {
+            error = tr("editor.mesh.rebuildUnavailable")
+            return
+        }
+
+        val previousSession = paintSession
+        val session = startPaintSession(layerId, forceReload = true) ?: run {
+            error = tr("editor.mesh.rebuildUnavailable")
+            return
+        }
+        error = null
+        try {
+            commitPaintSession(
+                rebuildMesh = true,
+                summary = tr("canvas.hierarchy.meshRebuilt", session.layerName),
+                preserveSourceRaster = true,
+            )
+        } catch (failure: Exception) {
+            if (state.previewModel === preview) paintSession = previousSession
+            error = tr("editor.mesh.rebuildFailed", failure.message ?: failure.javaClass.simpleName)
+        }
+    }
+
+    private fun resetRebuiltMeshEdits(
+        overlay: RigEditOverlay,
+        drawableId: String,
+        previousVertexCount: Int,
+        vertexCount: Int,
+    ): RigEditOverlay {
+        val meshTarget = "mesh:$drawableId"
+        val topologyChanged = previousVertexCount != vertexCount
+        val journal = overlay.authoringJournal.mapNotNull { command ->
+            when (command["op"]?.jsonPrimitive?.content) {
+                "canvas_topology" -> if (command["id"]?.jsonPrimitive?.content == drawableId) null else command
+                "canvas_geometry" -> {
+                    val isTargetMesh = command["kind"]?.jsonPrimitive?.content == "mesh" &&
+                        command["id"]?.jsonPrimitive?.content == drawableId
+                    val pointsMatch = command["points"]?.jsonArray?.size == vertexCount * 2
+                    val isBaseMove = command["key"]?.jsonObject.isNullOrEmpty()
+                    if (isTargetMesh && (isBaseMove || !pointsMatch)) null else command
+                }
+                "set" -> {
+                    val geometry = command["geometry"]?.jsonObject
+                    val positions = geometry?.get("positionDeltas")?.jsonArray
+                    if (command["target"]?.jsonPrimitive?.content == meshTarget &&
+                        positions != null && positions.size != vertexCount * 2
+                    ) {
+                        if (command["channels"] == null) null else buildJsonObject {
+                            command.forEach { (key, value) -> if (key != "geometry") put(key, value) }
+                        }
+                    } else command
+                }
+                "copy" -> {
+                    val source = command["target"]?.jsonPrimitive?.content
+                    val destination = command["destination"]?.jsonPrimitive?.content ?: source
+                    val touchesMesh = source == meshTarget || destination == meshTarget
+                    val channels = command["channels"]?.jsonArray
+                    val copiesGeometry = channels == null || channels.any {
+                        it.jsonPrimitive.content.equals("geometry", ignoreCase = true)
+                    }
+                    if (topologyChanged && touchesMesh && copiesGeometry) {
+                        val retainedChannels = channels?.map { it.jsonPrimitive.content }?.filterNot {
+                            it.equals("geometry", ignoreCase = true)
+                        } ?: listOf("opacity", "draw_order", "multiply_color", "screen_color", "flip_x", "flip_y")
+                        if (retainedChannels.isEmpty()) null else buildJsonObject {
+                            command.forEach { (key, value) -> if (key != "channels") put(key, value) }
+							put("channels", JsonArray(retainedChannels.map { JsonPrimitive(it) }))
+                        }
+                    } else command
+                }
+                else -> command
+            }
+        }
+        val keyformSets = overlay.keyformSetEdits.mapNotNull { edit ->
+            val positions = edit.geometry?.positionDeltas
+            if (edit.target.kind == RigTargetKind.ART_MESH && edit.target.id == drawableId &&
+                positions != null && positions.size != vertexCount * 2
+            ) {
+                if (edit.channels == null) null else edit.copy(geometry = null)
+            } else edit
+        }
+        val keyformCopies = overlay.keyformCopyEdits.mapNotNull { edit ->
+            val copiesGeometry = edit.channels == null || edit.channels.any { it.equals("geometry", ignoreCase = true) }
+            val touchesMesh =
+                (edit.sourceTarget.kind == RigTargetKind.ART_MESH && edit.sourceTarget.id == drawableId) ||
+                    (edit.destinationTarget.kind == RigTargetKind.ART_MESH && edit.destinationTarget.id == drawableId)
+            if (topologyChanged && copiesGeometry && touchesMesh) {
+                val retainedChannels = edit.channels?.filterNot { it.equals("geometry", ignoreCase = true) }
+                    ?: listOf("opacity", "draw_order", "multiply_color", "screen_color", "flip_x", "flip_y")
+                if (retainedChannels.isEmpty()) null else edit.copy(channels = retainedChannels)
+            } else edit
+        }
+        return overlay.copy(
+            keyformSetEdits = keyformSets,
+            keyformCopyEdits = keyformCopies,
+            authoringJournal = journal,
+        )
+    }
+
+    fun commitPaintSession(
+        rebuildMesh: Boolean,
+        summary: String? = null,
+        preserveSourceRaster: Boolean = false,
+    ) {
         val session = paintSession ?: return
         showRebuildMeshDialog = false
 
@@ -1169,49 +1290,57 @@ internal class CanvasEditor(
         val docW = session.docWidth
         val docH = session.docHeight
 
-        // 1. Scan workingImage to find tight non-transparent bounding box
-        var minX = docW
-        var minY = docH
-        var maxX = -1
-        var maxY = -1
-
-        val row = IntArray(docW)
-        for (y in 0 until docH) {
-            img.getRGB(0, y, docW, 1, row, 0, docW)
-            for (x in 0 until docW) {
-                val alpha = (row[x] ushr 24) and 0xFF
-                if (alpha > 0) {
-                    if (x < minX) minX = x
-                    if (x > maxX) maxX = x
-                    if (y < minY) minY = y
-                    if (y > maxY) maxY = y
-                }
-            }
-        }
-
         val newBounds: LayerBounds
         val newRaster: LayerRaster
 
-        if (maxX < minX || maxY < minY) {
-            // Completely erased / transparent layer
-            newBounds = LayerBounds(0, 0, 1, 1)
-            newRaster = LayerRaster(1, 1, ByteArray(4))
+        // A hierarchy rebuild changes only the mesh. Keep the exact saved pixels and bounds instead
+        // of running the paint-commit crop step over an untouched raster.
+        val existingLayer = sourceLayerFor(currentAnalysis, session.layerId)
+        if (preserveSourceRaster && existingLayer != null) {
+            newBounds = existingLayer.bounds
+            newRaster = existingLayer.raster
         } else {
-            val cropW = maxX - minX + 1
-            val cropH = maxY - minY + 1
-            newBounds = LayerBounds(minX, minY, cropW, cropH)
-            val croppedImg = img.getSubimage(minX, minY, cropW, cropH)
-            val pixels = IntArray(cropW * cropH)
-            croppedImg.getRGB(0, 0, cropW, cropH, pixels, 0, cropW)
-            val rgba = ByteArray(cropW * cropH * 4)
-            for (i in pixels.indices) {
-                val argb = pixels[i]
-                rgba[i * 4] = ((argb ushr 16) and 0xFF).toByte()     // R
-                rgba[i * 4 + 1] = ((argb ushr 8) and 0xFF).toByte()  // G
-                rgba[i * 4 + 2] = (argb and 0xFF).toByte()           // B
-                rgba[i * 4 + 3] = ((argb ushr 24) and 0xFF).toByte() // A
+            // 1. Scan workingImage to find tight non-transparent bounding box
+            var minX = docW
+            var minY = docH
+            var maxX = -1
+            var maxY = -1
+
+            val row = IntArray(docW)
+            for (y in 0 until docH) {
+                img.getRGB(0, y, docW, 1, row, 0, docW)
+                for (x in 0 until docW) {
+                    val alpha = (row[x] ushr 24) and 0xFF
+                    if (alpha > 0) {
+                        if (x < minX) minX = x
+                        if (x > maxX) maxX = x
+                        if (y < minY) minY = y
+                        if (y > maxY) maxY = y
+                    }
+                }
             }
-            newRaster = LayerRaster(cropW, cropH, rgba)
+
+            if (maxX < minX || maxY < minY) {
+                // Completely erased / transparent layer
+                newBounds = LayerBounds(0, 0, 1, 1)
+                newRaster = LayerRaster(1, 1, ByteArray(4))
+            } else {
+                val cropW = maxX - minX + 1
+                val cropH = maxY - minY + 1
+                newBounds = LayerBounds(minX, minY, cropW, cropH)
+                val croppedImg = img.getSubimage(minX, minY, cropW, cropH)
+                val pixels = IntArray(cropW * cropH)
+                croppedImg.getRGB(0, 0, cropW, cropH, pixels, 0, cropW)
+                val rgba = ByteArray(cropW * cropH * 4)
+                for (i in pixels.indices) {
+                    val argb = pixels[i]
+                    rgba[i * 4] = ((argb ushr 16) and 0xFF).toByte()     // R
+                    rgba[i * 4 + 1] = ((argb ushr 8) and 0xFF).toByte()  // G
+                    rgba[i * 4 + 2] = (argb and 0xFF).toByte()           // B
+                    rgba[i * 4 + 3] = ((argb ushr 24) and 0xFF).toByte() // A
+                }
+                newRaster = LayerRaster(cropW, cropH, rgba)
+            }
         }
 
         // 2. Identify target Drawable, ClassifiedLayer, and SourceLayer
@@ -1347,6 +1476,7 @@ internal class CanvasEditor(
 
         val droppedDrawables = mutableSetOf<DrawableId>()
         val rebuiltLips = mutableMapOf<String, RigBuilder.MouthLip>()
+        val reboundPathsById = mutableMapOf<String, DeformPath>()
         val updatedDrawables = currentPreview.rig.puppet.drawables.mapNotNull { drawable ->
             val layerId = currentPreview.rig.layerIdByDrawableId[drawable.id.raw] ?: drawable.id.raw
             val isTarget = (targetDrawable != null && drawable.id == targetDrawable.id) ||
@@ -1385,6 +1515,13 @@ internal class CanvasEditor(
                         generatedLips = regeneratedLips,
                         previous = drawable.mesh?.let { replacedMesh(it, oldAtlas, drawable.id.raw, layerId, oldBounds) },
                     )
+                    drawable.mesh?.let { previousMesh ->
+                        currentPreview.rig.puppet.deformPaths
+                            .filter { it.drawableId == drawable.id }
+                            .forEach { path ->
+                                reboundPathsById[path.id] = DeformPathJournal.rebind(path, previousMesh, rebuilt.mesh)
+                            }
+                    }
                     for (lip in rebuilt.mouthLips) rebuiltLips[lip.drawable.id.raw] = lip
 
                     drawable.copy(
@@ -1475,7 +1612,9 @@ internal class CanvasEditor(
             .copy(
                 drawables = drawablesAfterRepack,
                 parts = partsAfterRepack,
-                deformPaths = currentPreview.rig.puppet.deformPaths.filterNot { it.drawableId in droppedDrawables } +
+                deformPaths = currentPreview.rig.puppet.deformPaths
+                    .filterNot { it.drawableId in droppedDrawables }
+                    .map { reboundPathsById[it.id] ?: it } +
                     addedLips.mapNotNull { it.path },
             )
             .let { puppet -> if (addedLips.isEmpty()) puppet else puppet.withDerivedRenderRoot() }
@@ -1495,17 +1634,48 @@ internal class CanvasEditor(
             currentPreview.config,
         )
 
+        val committedConfig = if (rebuildMesh && targetDrawable != null) {
+            val rebuiltMesh = updatedRig.puppet.drawables
+                .firstOrNull { it.id == targetDrawable.id }?.mesh
+            val meshVertexCount = rebuiltMesh?.positions?.size?.div(2)
+            val baseEdits = if (preserveSourceRaster && meshVertexCount != null) {
+                resetRebuiltMeshEdits(
+                    currentPreview.config.rigEdits,
+                    targetDrawable.id.raw,
+                    targetDrawable.mesh?.vertexCount ?: 0,
+                    meshVertexCount,
+                )
+            } else currentPreview.config.rigEdits
+            val previousBasePaths = currentPreview.baseRig.puppet.deformPaths
+                .filter { it.drawableId == targetDrawable.id }
+            val survivingPaths = currentPreview.rig.puppet.deformPaths
+                .filter { it.drawableId == targetDrawable.id }
+                .mapNotNull { reboundPathsById[it.id] }
+            currentPreview.config.copy(
+                rigEdits = DeformPathJournal.replaceMeshPaths(
+                    baseEdits,
+                    targetDrawable.id.raw,
+                    previousBasePaths,
+                    survivingPaths,
+                ),
+            )
+        } else currentPreview.config
+
         val finalPreview = currentPreview.copy(
             analysis = updatedAnalysis,
             atlas = newAtlas,
             rig = updatedRig,
+            config = committedConfig,
             baseRig = currentPreview.baseRig.copy(puppet = updatedPuppet, pageByDrawableId = updatedPageByDrawableId, sourceBoundsByDrawableId = updatedSourceBounds),
             runtimeBundle = runtimeBundle,
         )
 
         // 7. Update state and project history. The canvas rebuilds its texture painter from the new
         // preview model, so the committed atlas reaches the screen without a swap of its own.
-        viewModel.applyCommittedPaint(finalPreview, tr("editor.paint.commitSummary", session.layerName))
+        viewModel.applyCommittedPaint(
+            finalPreview,
+            summary ?: tr("editor.paint.commitSummary", session.layerName),
+        )
 
         // 8. Refresh PaintSession baseline with new committed image
         paintSession = startPaintSession(session.layerId, forceReload = true)

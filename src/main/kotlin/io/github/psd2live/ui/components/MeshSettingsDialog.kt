@@ -46,6 +46,7 @@ data class MeshSettingsDialogTarget(
 @Composable
 fun MeshSettingsDialog(
 	target: MeshSettingsDialogTarget,
+	onPreview: (MeshSettings) -> Unit,
 	onConfirm: (MeshSettings) -> Unit,
 	onReset: () -> Unit,
 	onDismiss: () -> Unit,
@@ -58,6 +59,13 @@ fun MeshSettingsDialog(
 	var innerMargin by remember(target) { mutableStateOf(target.currentSettings.innerMargin) }
 	var maxEdgeDistance by remember(target) { mutableStateOf(target.currentSettings.maxEdgeDistance) }
 	var interiorDensity by remember(target) { mutableStateOf(target.currentSettings.interiorDensity) }
+	fun settings(
+		outer: Float = outerMargin,
+		innerEnabled: Boolean = innerMarginEnabled,
+		inner: Float = innerMargin,
+		edgeDistance: Float = maxEdgeDistance,
+		density: Float = interiorDensity,
+	) = MeshSettings(outer, innerEnabled, inner, edgeDistance, density)
 
 	Box(
 		modifier = Modifier
@@ -141,13 +149,13 @@ fun MeshSettingsDialog(
 				) {
 					CompactSlider(
 						value = outerMargin,
-						onValueChange = { outerMargin = it },
+						onValueChange = { outerMargin = it; onPreview(settings(outer = it)) },
 						valueRange = 0f..20f,
 						modifier = Modifier.weight(1f),
 					)
 					CompactNumberSpinner(
 						value = outerMargin.toDouble(),
-						onValueChange = { outerMargin = it.toFloat() },
+						onValueChange = { outerMargin = it.toFloat(); onPreview(settings(outer = it.toFloat())) },
 						min = 0.0,
 						max = 32.0,
 						step = 0.5,
@@ -168,7 +176,7 @@ fun MeshSettingsDialog(
 				) {
 					CompactCheckbox(
 						checked = innerMarginEnabled,
-						onCheckedChange = { innerMarginEnabled = it },
+						onCheckedChange = { innerMarginEnabled = it; onPreview(settings(innerEnabled = it)) },
 						label = tr("mesh.settings.innerMarginEnabled"),
 					)
 					if (innerMarginEnabled) {
@@ -187,13 +195,13 @@ fun MeshSettingsDialog(
 					) {
 						CompactSlider(
 							value = innerMargin,
-							onValueChange = { innerMargin = it },
+							onValueChange = { innerMargin = it; onPreview(settings(inner = it)) },
 							valueRange = 0.5f..20f,
 							modifier = Modifier.weight(1f),
 						)
 						CompactNumberSpinner(
 							value = innerMargin.toDouble(),
-							onValueChange = { innerMargin = it.toFloat() },
+							onValueChange = { innerMargin = it.toFloat(); onPreview(settings(inner = it.toFloat())) },
 							min = 0.5,
 							max = 32.0,
 							step = 0.5,
@@ -231,13 +239,13 @@ fun MeshSettingsDialog(
 				) {
 					CompactSlider(
 						value = maxEdgeDistance,
-						onValueChange = { maxEdgeDistance = it },
+						onValueChange = { maxEdgeDistance = it; onPreview(settings(edgeDistance = it)) },
 						valueRange = 6f..128f,
 						modifier = Modifier.weight(1f),
 					)
 					CompactNumberSpinner(
 						value = maxEdgeDistance.toDouble(),
-						onValueChange = { maxEdgeDistance = it.toFloat() },
+						onValueChange = { maxEdgeDistance = it.toFloat(); onPreview(settings(edgeDistance = it.toFloat())) },
 						min = 6.0,
 						max = 128.0,
 						step = 2.0,
@@ -274,13 +282,13 @@ fun MeshSettingsDialog(
 				) {
 					CompactSlider(
 						value = interiorDensity,
-						onValueChange = { interiorDensity = it },
+						onValueChange = { interiorDensity = it; onPreview(settings(density = it)) },
 						valueRange = 6f..128f,
 						modifier = Modifier.weight(1f),
 					)
 					CompactNumberSpinner(
 						value = interiorDensity.toDouble(),
-						onValueChange = { interiorDensity = it.toFloat() },
+						onValueChange = { interiorDensity = it.toFloat(); onPreview(settings(density = it.toFloat())) },
 						min = 6.0,
 						max = 128.0,
 						step = 2.0,
@@ -322,15 +330,7 @@ fun MeshSettingsDialog(
 					CompactButton(
 						text = tr("action.ok"),
 						onClick = {
-							onConfirm(
-								MeshSettings(
-									outerMargin = outerMargin,
-									innerMarginEnabled = innerMarginEnabled,
-									innerMargin = innerMargin,
-									maxEdgeDistance = maxEdgeDistance,
-									interiorDensity = interiorDensity,
-								)
-							)
+							onConfirm(settings())
 						},
 						isPrimary = true,
 						height = 24.dp,

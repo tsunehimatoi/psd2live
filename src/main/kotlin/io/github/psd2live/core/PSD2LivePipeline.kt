@@ -2,6 +2,8 @@ package io.github.psd2live.core
 
 import io.github.psd2live.i18n.tr
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import org.umamo.format.cmo3.Cmo3
 import org.umamo.format.cmo3.model.custom.CModelSource
 import org.umamo.format.art.SourceArt
@@ -71,7 +73,110 @@ class PSD2LivePipeline {
 			return current.copy(rig = rig, config = config, runtimeBundle = bundle, baseRig = baseRig)
 		}
 		val base = current.analysis.copy(layers = current.analysis.layers.filter { it.source !is MouthLipLayer })
-		return buildPreview(base, config, progress)
+		return buildPreviewPreservingPaths(current, base, config, progress)
+	}
+
+	/**
+	 * A mesh-setting or source rebuild can change triangle indices. Saved deform paths store barycentric
+	 * bindings, so replaying their old indices against the replacement mesh either moves the path or
+	 * rejects the entire preview. Build once without path journal entries, then rebind the saved path
+	 * positions to the new meshes before replaying them.
+	 */
+	private fun buildPreviewPreservingPaths(
+		current: RigPreviewModel,
+		analysis: PipelineAnalysis,
+		config: PipelineConfig,
+		progress: ProgressListener,
+	): RigPreviewModel {
+		val journal = config.rigEdits.authoringJournal
+		val pathPuts = journal.filter { it["op"]?.jsonPrimitive?.contentOrNull == "path_put" }
+		val pathDeletes = journal.filter { it["op"]?.jsonPrimitive?.contentOrNull == "path_delete" }
+		val rebuiltMeshIds = meshSettingsChangedDrawableIds(current, config)
+		if (pathPuts.isEmpty() && pathDeletes.isEmpty() && rebuiltMeshIds.isEmpty()) {
+			return buildPreview(analysis, config, progress)
+		}
+
+		val retainedJournal = journal.filterNot {
+			it["op"]?.jsonPrimitive?.contentOrNull == "path_put" ||
+				it["op"]?.jsonPrimitive?.contentOrNull == "path_delete"
+		}
+		var retainedEdits = config.rigEdits.copy(authoringJournal = retainedJournal)
+		val effectiveAnalysis = MouthLipLayers.prepare(analysis, config)
+		val atlas = AtlasPacker.pack(
+			effectiveAnalysis.layers,
+			config.atlasSize,
+			config.texturePadding,
+			config.textureUpscale,
+			progress,
+		)
+		val baseRig = RigBuilder.build(effectiveAnalysis, atlas, config, meshCache)
+		for (drawableId in rebuiltMeshIds) {
+			val previousVertexCount = current.baseRig.puppet.drawables
+				.firstOrNull { it.id.raw == drawableId }?.mesh?.vertexCount
+				?: current.rig.puppet.drawables.firstOrNull { it.id.raw == drawableId }?.mesh?.vertexCount
+				?: 0
+			val vertexCount = baseRig.puppet.drawables
+				.firstOrNull { it.id.raw == drawableId }?.mesh?.vertexCount ?: continue
+			retainedEdits = MeshRebuildEdits.reset(
+				retainedEdits,
+				drawableId,
+				previousVertexCount,
+				vertexCount,
+				meshSettingsChanged = true,
+			)
+		}
+		val retainedRig = baseRig.withRigEdits(retainedEdits)
+		val replacementBasePaths = baseRig.puppet.deformPaths.mapTo(HashSet()) { it.id }
+		val deleteCommands = pathDeletes
+			.distinctBy { it["id"]?.jsonPrimitive?.content }
+			.filter { command ->
+				command["id"]?.jsonPrimitive?.content?.let(replacementBasePaths::contains) == true
+			}
+
+		val authoredPathIds = pathPuts.mapNotNullTo(HashSet<String>()) { it["id"]?.jsonPrimitive?.content }
+		val replacementDrawables = retainedRig.puppet.drawables.associateBy { it.id.raw }
+		val previousDrawables = current.rig.puppet.drawables.associateBy { it.id.raw }
+		val putCommands = current.rig.puppet.deformPaths
+			.filter { it.id in authoredPathIds }
+			.mapNotNull { path ->
+				val oldMesh = previousDrawables[path.drawableId.raw]?.mesh ?: return@mapNotNull null
+				val newMesh = replacementDrawables[path.drawableId.raw]?.mesh ?: return@mapNotNull null
+				DeformPathJournal.encode(DeformPathJournal.rebind(path, oldMesh, newMesh))
+			}
+
+		val rebasedEdits = retainedEdits.copy(
+			authoringJournal = retainedEdits.authoringJournal + deleteCommands + putCommands,
+		)
+		val rebasedConfig = config.copy(rigEdits = rebasedEdits)
+		val rig = baseRig.withRigEdits(rebasedEdits)
+		val runtimeBundle = buildRuntimeBundle(
+			"psd2live-preview",
+			effectiveAnalysis,
+			atlas,
+			rig,
+			rebasedConfig,
+		).first
+		return RigPreviewModel(effectiveAnalysis, atlas, rig, rebasedConfig, runtimeBundle, baseRig)
+	}
+
+	private fun meshSettingsChangedDrawableIds(current: RigPreviewModel, config: PipelineConfig): Set<String> {
+		val globalSettingsChanged = current.config.meshSpacing != config.meshSpacing ||
+			current.config.meshOuterMargin != config.meshOuterMargin ||
+			current.config.meshInnerMargin != config.meshInnerMargin ||
+			current.config.meshMaxEdgeDistance != config.meshMaxEdgeDistance ||
+			current.config.meshInteriorDensity != config.meshInteriorDensity ||
+			current.config.alphaThreshold != config.alphaThreshold ||
+			current.config.meshOnly != config.meshOnly ||
+			current.config.mouthOutlineEnabled != config.mouthOutlineEnabled ||
+			current.config.layerOverrides != config.layerOverrides
+		return current.rig.puppet.drawables.asSequence()
+			.filter { it.mesh != null }
+			.filter { drawable ->
+				val layerId = current.rig.layerIdByDrawableId[drawable.id.raw] ?: drawable.id.raw
+				globalSettingsChanged || current.config.meshOverrides[layerId] != config.meshOverrides[layerId]
+			}
+			.map { it.id.raw }
+			.toSet()
 	}
 
 	/** Fast incremental update for physics, motions and sidecars without re-analyzing or re-packing. */

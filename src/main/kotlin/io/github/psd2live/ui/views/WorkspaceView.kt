@@ -348,8 +348,9 @@ private fun HierarchyView(
 			val target = activeMeshSettingsTarget!!
 			MeshSettingsDialog(
 				target = target,
+				onPreview = { settings -> viewModel.previewPartMeshSettings(target.layerId, settings) },
 				onConfirm = { newSettings ->
-					viewModel.setPartMeshSettings(target.layerId, newSettings)
+					viewModel.confirmPartMeshSettingsPreview(target.layerId, newSettings)
 					activeMeshSettingsTarget = null
 				},
 				onReset = {
@@ -357,6 +358,7 @@ private fun HierarchyView(
 					activeMeshSettingsTarget = null
 				},
 				onDismiss = {
+					viewModel.cancelPartMeshSettingsPreview(target.layerId)
 					activeMeshSettingsTarget = null
 				},
 			)
@@ -464,8 +466,9 @@ internal fun DockHierarchyView(
 			val target = activeMeshSettingsTarget!!
 			MeshSettingsDialog(
 				target = target,
+				onPreview = { settings -> viewModel.previewPartMeshSettings(target.layerId, settings) },
 				onConfirm = { newSettings ->
-					viewModel.setPartMeshSettings(target.layerId, newSettings)
+					viewModel.confirmPartMeshSettingsPreview(target.layerId, newSettings)
 					activeMeshSettingsTarget = null
 				},
 				onReset = {
@@ -473,6 +476,7 @@ internal fun DockHierarchyView(
 					activeMeshSettingsTarget = null
 				},
 				onDismiss = {
+					viewModel.cancelPartMeshSettingsPreview(target.layerId)
 					activeMeshSettingsTarget = null
 				},
 			)
@@ -1794,42 +1798,6 @@ private fun DeformerTreeItem(
 			)
 
 			CompactMenuDivider()
-			CompactMenuSection(tr("canvas.hierarchy.menuHierarchy"))
-			val isAlreadyRoot = headDeformer.parent == null
-			CompactMenuItem(
-				text = tr("canvas.hierarchy.moveToRoot"),
-				onClick = {
-					viewModel.reparentItem(headId, null)
-					showMenu = false
-				},
-				enabled = !isAlreadyRoot,
-				icon = { IconMoveToRoot(tint = if (!isAlreadyRoot) colors.textMuted else colors.textDisabled, modifier = Modifier.size(13.dp)) },
-			)
-			if (chain.deformers.any { state.parentOverrides.containsKey(it.id.raw) }) {
-				CompactMenuItem(
-					text = tr("canvas.hierarchy.resetItem"),
-					onClick = {
-						chain.deformers.forEach { viewModel.resetItemHierarchy(it.id.raw) }
-						showMenu = false
-					},
-					trailingBadge = {
-						Box(
-							modifier = Modifier
-								.background(colors.accent.copy(alpha = 0.15f), RoundedCornerShape(3.dp))
-								.padding(horizontal = 4.dp, vertical = 1.dp)
-						) {
-							Text(
-								text = tr("settings.reset").ifEmpty { "RESET" },
-								style = typography.monoSmall.copy(fontSize = 8.5.sp, fontWeight = FontWeight.SemiBold),
-								color = colors.accent,
-							)
-						}
-					},
-					icon = { IconReset(modifier = Modifier.size(13.dp), tint = colors.accent) },
-				)
-			}
-
-			CompactMenuDivider()
 			CompactMenuSection(tr("canvas.hierarchy.menuView"))
 			CompactMenuItem(
 				text = tr("canvas.hierarchy.expandBranch"),
@@ -2142,7 +2110,6 @@ private fun DrawableTreeItem(
 			onDismissRequest = { showMenu = false },
 			clickOffset = menuClickOffset,
 		) {
-			val isAlreadyRoot = drawable.parentDeformerId == null
 			val itemTypeBadge = if (drawable.mesh != null) "ArtMesh" else "Layer"
 
 			CompactMenuHeader(
@@ -2336,74 +2303,7 @@ private fun DrawableTreeItem(
 					} else null,
 					icon = { IconMeshWireframe(tint = if (isMeshOverridden) colors.accent else colors.textMuted, modifier = Modifier.size(13.dp)) },
 				)
-				if (drawable.mesh != null) {
-					CompactMenuItem(
-						text = tr("path.title"),
-						onClick = {
-							showMenu = false
-							onRequestOpenDeformPaths?.invoke(layerId)
-						},
-						icon = { IconDeformPath(modifier = Modifier.size(13.dp), tint = colors.accent) },
-					)
-				}
-				if (isMeshOverridden) {
-					CompactMenuItem(
-						text = tr("canvas.hierarchy.resetMeshSettings"),
-						onClick = {
-							viewModel.resetPartMeshSettings(layerId)
-							showMenu = false
-						},
-						trailingBadge = {
-							Box(
-								modifier = Modifier
-									.background(colors.accent.copy(alpha = 0.15f), RoundedCornerShape(3.dp))
-									.padding(horizontal = 4.dp, vertical = 1.dp)
-							) {
-								Text(
-									text = tr("settings.reset").ifEmpty { "RESET" },
-									style = typography.monoSmall.copy(fontSize = 8.5.sp, fontWeight = FontWeight.SemiBold),
-									color = colors.accent,
-								)
-							}
-						},
-						icon = { IconReset(modifier = Modifier.size(13.dp), tint = colors.accent) },
-					)
-				}
 				CompactMenuDivider()
-			}
-
-			CompactMenuSection(tr("canvas.hierarchy.menuHierarchy"))
-			CompactMenuItem(
-				text = tr("canvas.hierarchy.moveToRoot"),
-				onClick = {
-					viewModel.reparentItem(itemId, null)
-					showMenu = false
-				},
-				enabled = !isAlreadyRoot,
-				icon = { IconMoveToRoot(tint = if (!isAlreadyRoot) colors.textMuted else colors.textDisabled, modifier = Modifier.size(13.dp)) },
-			)
-			if (state.parentOverrides.containsKey(itemId)) {
-				CompactMenuItem(
-					text = tr("canvas.hierarchy.resetItem"),
-					onClick = {
-						viewModel.resetItemHierarchy(itemId)
-						showMenu = false
-					},
-					trailingBadge = {
-						Box(
-							modifier = Modifier
-								.background(colors.accent.copy(alpha = 0.15f), RoundedCornerShape(3.dp))
-								.padding(horizontal = 4.dp, vertical = 1.dp)
-						) {
-							Text(
-								text = tr("settings.reset").ifEmpty { "RESET" },
-								style = typography.monoSmall.copy(fontSize = 8.5.sp, fontWeight = FontWeight.SemiBold),
-								color = colors.accent,
-							)
-						}
-					},
-					icon = { IconReset(modifier = Modifier.size(13.dp), tint = colors.accent) },
-				)
 			}
 
 			if (layerId != null) {

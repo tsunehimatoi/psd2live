@@ -144,6 +144,7 @@ class PSD2LiveViewModel : AutoCloseable {
             it.copy(
                 previewModel = updatedPreview,
                 analysis = updatedPreview.analysis,
+                rigEdits = updatedPreview.config.rigEdits,
                 previewModelDirty = true,
                 projectDirty = true,
             ).withLog(tr("editor.paint.applied", summary), level = LogLevel.INFO, tag = "Paint")
@@ -760,6 +761,8 @@ class PSD2LiveViewModel : AutoCloseable {
     }
 
 	private var previewRebuildJob: Job? = null
+	private val previewMeshSettingsOverrides = mutableMapOf<String, MeshSettings>()
+	private var previewMeshSettingsBaseline: RigPreviewModel? = null
 	private var motionJob: Job? = null
 	private var activeWorkJob: Job? = null
 
@@ -976,15 +979,85 @@ class PSD2LiveViewModel : AutoCloseable {
 	}
 
 	fun setPartMeshSettings(layerId: String, settings: MeshSettings) {
+		clearMeshSettingsPreviewState(layerId)
 		updateState { it.copy(meshOverrides = it.meshOverrides + (layerId to settings)) }
 		schedulePreviewRebuild()
 	    editorChanged()
 	}
 
 	fun resetPartMeshSettings(layerId: String) {
+		clearMeshSettingsPreviewState(layerId)
 		updateState { it.copy(meshOverrides = it.meshOverrides - layerId) }
 		schedulePreviewRebuild()
 	    editorChanged()
+	}
+
+	fun previewPartMeshSettings(layerId: String, settings: MeshSettings) {
+		val changed = synchronized(stateLock) {
+			if (previewMeshSettingsOverrides[layerId] == settings) false else {
+				if (previewMeshSettingsOverrides.isEmpty()) previewMeshSettingsBaseline = _state.value.previewModel
+				previewMeshSettingsOverrides[layerId] = settings
+				true
+			}
+		}
+		if (changed) schedulePreviewRebuild()
+	}
+
+	fun cancelPartMeshSettingsPreview(layerId: String) {
+		var removed = false
+		val baseline = synchronized(stateLock) {
+			if (previewMeshSettingsOverrides.remove(layerId) != null) removed = true
+			if (previewMeshSettingsOverrides.isEmpty()) {
+				previewMeshSettingsBaseline.also { previewMeshSettingsBaseline = null }
+			} else null
+		}
+		if (!removed) return
+		if (baseline != null) {
+			previewRebuildJob?.cancel()
+			updateState {
+				it.copy(
+					previewModel = baseline,
+					analysis = baseline.analysis,
+					rigEdits = baseline.config.rigEdits,
+					isUpscaling = false,
+					progress = 1f,
+					statusText = tr("status.layerChangesApplied"),
+					errorMessage = null,
+				)
+			}
+			refreshSdkSession(baseline)
+		} else {
+			schedulePreviewRebuild()
+		}
+	}
+
+	fun confirmPartMeshSettingsPreview(layerId: String, settings: MeshSettings) {
+		val currentPreview = _state.value.previewModel
+		val previewIsReady = synchronized(stateLock) {
+			val ready = previewMeshSettingsOverrides[layerId] == settings &&
+				currentPreview?.config?.meshOverrides?.get(layerId) == settings
+			previewMeshSettingsOverrides.remove(layerId)
+			if (previewMeshSettingsOverrides.isEmpty()) previewMeshSettingsBaseline = null
+			ready
+		}
+		if (previewIsReady && currentPreview != null) {
+			updateState {
+				it.copy(
+					meshOverrides = it.meshOverrides + (layerId to settings),
+					rigEdits = currentPreview.config.rigEdits,
+				)
+			}
+			editorChanged()
+		} else {
+			setPartMeshSettings(layerId, settings)
+		}
+	}
+
+	private fun clearMeshSettingsPreviewState(layerId: String) {
+		synchronized(stateLock) {
+			previewMeshSettingsOverrides.remove(layerId)
+			if (previewMeshSettingsOverrides.isEmpty()) previewMeshSettingsBaseline = null
+		}
 	}
 
 	fun setHeadStrength(strength: Float) {
@@ -2519,6 +2592,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			it.copy(
 				previewModel = updatedPreview,
 				analysis = updatedPreview.analysis,
+				rigEdits = updatedPreview.config.rigEdits,
 				previewModelDirty = true,
 				projectDirty = true,
 			)
@@ -3318,7 +3392,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				)
 			}
 			try {
-				val config = _state.value.buildConfig()
+				val config = buildPreviewConfig(_state.value)
 				var lastReportedStage: String? = null
 				val progress = ProgressListener { stage, frac ->
 					updateState { current ->
@@ -3361,6 +3435,7 @@ class PSD2LiveViewModel : AutoCloseable {
 					base.copy(
 						previewModel = rebuilt,
 						analysis = rebuilt.analysis,
+						rigEdits = if (previewMeshSettingsOverrides.isEmpty()) rebuilt.config.rigEdits else current.rigEdits,
 						atlasSize = maxOf(current.atlasSize, packedAtlasSize),
 						isUpscaling = false,
 						progress = 1f,
@@ -3369,6 +3444,7 @@ class PSD2LiveViewModel : AutoCloseable {
 							param.id to (current.parameterValues[param.id] ?: param.default).coerceIn(param.min, param.max)
 						},
 						statusText = tr("status.layerChangesApplied"),
+						errorMessage = null,
 					)
 				}
 				refreshSdkSession(rebuilt)
@@ -3388,6 +3464,13 @@ class PSD2LiveViewModel : AutoCloseable {
 				}
 			}
 		}
+	}
+
+	private fun buildPreviewConfig(state: PSD2LiveState): PipelineConfig {
+		val config = state.buildConfig()
+		val previews = synchronized(stateLock) { previewMeshSettingsOverrides.toMap() }
+		if (previews.isEmpty()) return config
+		return config.copy(meshOverrides = config.meshOverrides + previews)
 	}
 
 	private var activeSoftwareMotionName: String? = null
