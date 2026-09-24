@@ -56,7 +56,8 @@ fun CanvasMode.defaultViewOptions(): TabViewOptions = when (this) {
  * toggles equally — modes never force overlays that the user turned off.
  */
 fun hierarchyModeViewPreset(mode: EditHierarchyMode, current: TabViewOptions): TabViewOptions = when (mode) {
-	EditHierarchyMode.SELECT -> current.copy(showMesh = false)
+	// Object mode shows every mesh wire faintly; only the selection draws at full strength.
+	EditHierarchyMode.SELECT -> current.copy(showMesh = true)
 	EditHierarchyMode.DEFORM -> current.copy(
 		showMesh = true,
 		showWarp = true,

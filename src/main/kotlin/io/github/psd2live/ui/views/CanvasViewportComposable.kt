@@ -991,6 +991,7 @@ fun CanvasViewportComposable(
 					// 3b. Mesh Channel (Wireframe)
 					// Outside SELECT mode, mesh wires are focus chrome for the active artmesh only —
 					// every other part stays texture-only so the canvas stays readable while editing.
+					// In SELECT (object) mode every mesh is drawn faded; only the selection is crisp.
 					if (showMesh) {
 						fun drawMeshWireframe(drawable: org.umamo.runtime.model.Drawable, selected: Boolean, dimmed: Boolean = false) {
 							val mesh = drawable.mesh ?: return
@@ -1057,10 +1058,17 @@ fun CanvasViewportComposable(
 								}
 							}
 						} else {
+							// Object mode: every mesh stays faded until it is in the selection;
+							// selected wires (and vertex dots for the primary) draw at full strength.
+							val objectModeMeshes = mode == CanvasMode.EDIT && editor.objectMode
 							for (drawable in model.rig.puppet.drawables) {
 								val layerId = model.rig.layerIdByDrawableId[drawable.id.raw]
 								if (layerId != selectedId) {
-									val isDimmed = isDimmingActive && (highlightedLayerIds != null && (layerId == null || layerId !in highlightedLayerIds))
+									val inFocus = highlightedLayerIds != null && layerId != null && layerId in highlightedLayerIds
+									val isDimmed = when {
+										objectModeMeshes -> !inFocus
+										else -> isDimmingActive && !inFocus
+									}
 									drawMeshWireframe(drawable, selected = false, dimmed = isDimmed)
 								}
 							}
