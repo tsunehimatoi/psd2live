@@ -483,7 +483,7 @@ internal fun BoxScope.CanvasEditorOverlay(
         // 3b. Object mode: the selection, outlined in the colour of the part it is. Object mode has no
         //     transform box, so this outline is the whole of the selection feedback — it is what tells a
         //     picked layer apart from the ones merely drawn, and it carries across a multi-select.
-        if ((editor.hierarchyMode == EditHierarchyMode.SELECT || (editor.hierarchyMode == EditHierarchyMode.PAINT && editor.tool == CanvasTool.SELECT)) && editor.tool == CanvasTool.SELECT) {
+        if (editor.hierarchyMode == EditHierarchyMode.SELECT && editor.tool == CanvasTool.SELECT) {
             editor.objects.forEach { layerId ->
                 val item = editor.target(editor.model, layerId, null) ?: return@forEach
                 // Rotation is an arrow, not a mesh AABB — a box around the two axis points stretches

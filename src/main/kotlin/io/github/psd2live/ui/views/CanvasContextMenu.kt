@@ -362,7 +362,6 @@ private fun ColumnScope.PaintModeContextMenu(
     onAction: () -> Unit,
 ) {
     when (editor.tool) {
-        CanvasTool.SELECT -> PaintHistorySection(editor, onDismissRequest, onAction)
         CanvasTool.PAINT_BRUSH -> {
             PaintColorBlock(editor)
             ParamsPanel {

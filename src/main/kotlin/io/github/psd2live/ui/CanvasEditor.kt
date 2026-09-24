@@ -264,7 +264,6 @@ internal fun toolbarGroups(mode: EditHierarchyMode): List<List<CanvasTool>> = wh
         listOf(CanvasTool.SUBDIVIDE, CanvasTool.KNIFE),
     )
     EditHierarchyMode.PAINT -> listOf(
-        listOf(CanvasTool.SELECT),
         listOf(CanvasTool.PAINT_BRUSH, CanvasTool.PAINT_PENCIL, CanvasTool.PAINT_ERASER),
         listOf(CanvasTool.PAINT_BUCKET, CanvasTool.PAINT_EYEDROPPER),
         listOf(CanvasTool.PAINT_SHAPE),
@@ -764,10 +763,12 @@ internal class CanvasEditor(
 
 
     /**
-     * Whether the active tool should draw a transform box at all. Object mode is selection only, so
-     * the box never appears there — and neither do its handles, which read the same frame.
+     * Whether the active tool should draw a transform box at all. Object and paint modes are selection /
+     * pixel work only, so the box never appears there — and neither do its handles, which read the same frame.
      */
-    val drawsTransformBox get() = hierarchyMode != EditHierarchyMode.SELECT && tool == CanvasTool.SELECT && selectionHasExtent
+    val drawsTransformBox get() =
+        hierarchyMode in setOf(EditHierarchyMode.DEFORM, EditHierarchyMode.EDIT) &&
+            tool == CanvasTool.SELECT && selectionHasExtent
 
     /**
      * Whether the selection spans enough to be scaled or turned, which is what both the transform box and
@@ -780,7 +781,7 @@ internal class CanvasEditor(
      */
     val selectionHasExtent: Boolean
         get() {
-            if (hierarchyMode == EditHierarchyMode.SELECT) return false
+            if (hierarchyMode !in setOf(EditHierarchyMode.DEFORM, EditHierarchyMode.EDIT)) return false
             val t = target() ?: return false
             if (t.kind == "rotation") return true
             if (t.kind !in POINT_BOX_KINDS) return false
@@ -795,7 +796,7 @@ internal class CanvasEditor(
      */
     val hasTransformSelection: Boolean
         get() {
-            if (hierarchyMode == EditHierarchyMode.SELECT) return false
+            if (hierarchyMode !in setOf(EditHierarchyMode.DEFORM, EditHierarchyMode.EDIT)) return false
             val t = target() ?: return false
             return t.kind == "rotation" || vertices.any { it in 0 until t.count }
         }
@@ -2837,7 +2838,7 @@ internal class CanvasEditor(
             ensureBezierState()
         }
         if (tool !in toolbarGroups(next).flatten()) {
-            tool = CanvasTool.SELECT
+            tool = toolbarGroups(next).flatten().first()
             if (objectMode) vertices = emptySet()
         }
         // Mode only seeds display presets — toggles stay fully user-controlled afterwards.
@@ -3903,8 +3904,10 @@ internal class CanvasEditor(
             return true
         }
 
-        // 0. Paint Mode (L1 raster paint engine)
-        if (hierarchyMode == EditHierarchyMode.PAINT && tool in PAINT_TOOLS) {
+        // 0. Paint Mode (L1 raster paint engine). Paint has no select/transform tool — anything else
+        //    that somehow stays armed is a no-op rather than falling into point-edit gestures.
+        if (hierarchyMode == EditHierarchyMode.PAINT) {
+            if (tool !in PAINT_TOOLS) return true
             val layerId = paintSession?.layerId ?: state.selectedLayerId ?: targetLayerId(paintTarget()) ?: return true
             val session = ensurePaintSession(layerId) ?: return true
             val t = target(layerId = layerId, deformerId = null) ?: paintTarget()
