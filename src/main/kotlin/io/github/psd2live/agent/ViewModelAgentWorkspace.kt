@@ -73,7 +73,7 @@ private fun validateAgentProjectSettings(
 ) {
     val ranges = mapOf(
         "atlasSize" to (256.0..16384.0), "meshSpacing" to (16.0..128.0),
-        "meshOuterMargin" to (0.0..32.0), "meshInnerMargin" to (0.5..32.0),
+        "meshOuterMargin" to (0.0..32.0), "meshEdgeWidth" to (0.5..32.0),
         "meshMaxEdgeDistance" to (6.0..128.0), "meshInteriorDensity" to (6.0..128.0),
         "texturePadding" to (0.0..32.0), "alphaThreshold" to (0.0..255.0),
         "headStrength" to (0.0..4.0), "bodyStrength" to (0.0..4.0),
@@ -87,7 +87,7 @@ private fun validateAgentProjectSettings(
         "exportCmo3", "exportMoc3", "exportJson", "exportHiddenParts", "exportHiddenDrawables",
         "exportGuideImageParts", "exportIncludePhysics", "exportIncludeUserData", "exportIncludeDisplayInfo",
     )
-    require(changes.keys.all { it in ranges || it in booleans || it in setOf("textureUpscale", "mouthShape", "runtimeTarget") }) {
+    require(changes.keys.all { it in ranges || it in booleans || it in setOf("textureUpscale", "mouthShape", "runtimeTarget", "meshEdgeMode") }) {
         "Unknown project setting"
     }
     changes.forEach { (key, value) ->
@@ -99,6 +99,7 @@ private fun validateAgentProjectSettings(
             }
             key in booleans -> require(value.jsonPrimitive.booleanOrNull != null) { "$key must be boolean" }
             key == "mouthShape" -> require(value.jsonPrimitive.content in setOf("flat", "smile", "w", "custom")) { "Unknown mouth shape" }
+            key == "meshEdgeMode" -> require(io.github.psd2live.core.MeshEdgeMode.entries.any { it.name == value.jsonPrimitive.content }) { "Unknown mesh edge mode" }
             key == "runtimeTarget" -> require(org.umamo.runtime.model.RuntimeTarget.entries.any { it.name == value.jsonPrimitive.content }) { "Unknown runtime target" }
         }
     }
@@ -157,8 +158,8 @@ class ViewModelAgentWorkspace(
         val settings = current.getEffectiveMeshSettings(layerId)
         return kotlinx.serialization.json.buildJsonObject {
             put("overridden", current.meshOverrides.containsKey(layerId))
-            put("outerMargin", settings.outerMargin); put("innerMarginEnabled", settings.innerMarginEnabled)
-            put("innerMargin", settings.innerMargin); put("maxEdgeDistance", settings.maxEdgeDistance)
+            put("outerMargin", settings.outerMargin); put("edgeMode", settings.edgeMode.name)
+            put("edgeWidth", settings.edgeWidth); put("maxEdgeDistance", settings.maxEdgeDistance)
             put("interiorDensity", settings.interiorDensity)
             put("fillAlgorithm", settings.fillAlgorithm.name)
             put("suppressBoundaryDiagonals", settings.suppressBoundaryDiagonals)
@@ -214,11 +215,12 @@ class ViewModelAgentWorkspace(
             if (reset) document.copy(meshOverrides = document.meshOverrides - layerId)
             else {
                 val change = requireNotNull(changes)
-                val allowed = setOf("outerMargin", "innerMarginEnabled", "innerMargin", "maxEdgeDistance",
+                val allowed = setOf("outerMargin", "edgeMode", "edgeWidth", "maxEdgeDistance",
                     "interiorDensity", "fillAlgorithm", "suppressBoundaryDiagonals")
                 require(change.keys.all { it in allowed }) { "Unknown layer mesh setting" }
-                require(change["innerMarginEnabled"] == null || change["innerMarginEnabled"]?.jsonPrimitive?.booleanOrNull != null) {
-                    "innerMarginEnabled must be boolean"
+                require(change["edgeMode"] == null || change["edgeMode"]?.jsonPrimitive?.contentOrNull
+                    ?.let { raw -> io.github.psd2live.core.MeshEdgeMode.entries.any { it.name == raw } } == true) {
+                    "edgeMode must be SINGLE, DOUBLE, or TRIPLE"
                 }
                 require(change["suppressBoundaryDiagonals"] == null ||
                     change["suppressBoundaryDiagonals"]?.jsonPrimitive?.booleanOrNull != null) {
@@ -229,8 +231,9 @@ class ViewModelAgentWorkspace(
                     change[key]?.jsonPrimitive?.float?.also { require(it.isFinite() && it in range) { "$key is outside its UI range" } } ?: fallback
                 val settings = MeshSettings(
                     outerMargin = number("outerMargin", base.outerMargin, 0f..32f),
-                    innerMarginEnabled = change["innerMarginEnabled"]?.jsonPrimitive?.booleanOrNull ?: base.innerMarginEnabled,
-                    innerMargin = number("innerMargin", base.innerMargin, 0.5f..32f),
+                    edgeMode = change["edgeMode"]?.jsonPrimitive?.contentOrNull
+                        ?.let(io.github.psd2live.core.MeshEdgeMode::valueOf) ?: base.edgeMode,
+                    edgeWidth = number("edgeWidth", base.edgeWidth, 0.5f..32f),
                     maxEdgeDistance = number("maxEdgeDistance", base.maxEdgeDistance, 6f..128f),
                     interiorDensity = number("interiorDensity", base.interiorDensity, 6f..128f),
                     fillAlgorithm = change["fillAlgorithm"]?.jsonPrimitive?.contentOrNull?.let {

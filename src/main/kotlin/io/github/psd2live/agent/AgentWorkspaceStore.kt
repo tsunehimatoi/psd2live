@@ -376,8 +376,8 @@ internal class AgentWorkspaceStore(
 			document.meshOverrides.toSortedMap().forEach { (id, s) ->
 				put(id, buildJsonObject {
 					put("outerMargin", s.outerMargin)
-					put("innerMarginEnabled", s.innerMarginEnabled)
-					put("innerMargin", s.innerMargin)
+					put("edgeMode", s.edgeMode.name)
+					put("edgeWidth", s.edgeWidth)
 					put("maxEdgeDistance", s.maxEdgeDistance)
 					put("interiorDensity", s.interiorDensity)
 					put("fillAlgorithm", s.fillAlgorithm.name)
@@ -640,8 +640,13 @@ internal class AgentWorkspaceStore(
 			val obj = element.jsonObject
 			io.github.psd2live.core.MeshSettings(
 				outerMargin = obj["outerMargin"]?.jsonPrimitive?.floatOrNull ?: 2.0f,
-				innerMarginEnabled = obj["innerMarginEnabled"]?.jsonPrimitive?.booleanOrNull ?: false,
-				innerMargin = obj["innerMargin"]?.jsonPrimitive?.floatOrNull ?: 2.0f,
+				edgeMode = obj["edgeMode"]?.jsonPrimitive?.contentOrNull?.let {
+					runCatching { io.github.psd2live.core.MeshEdgeMode.valueOf(it) }.getOrNull()
+				} ?: if (obj["innerMarginEnabled"]?.jsonPrimitive?.booleanOrNull == true)
+					io.github.psd2live.core.MeshEdgeMode.DOUBLE else io.github.psd2live.core.MeshEdgeMode.SINGLE,
+				edgeWidth = obj["edgeWidth"]?.jsonPrimitive?.floatOrNull
+					?: ((obj["outerMargin"]?.jsonPrimitive?.floatOrNull ?: 2.0f) +
+						(obj["innerMargin"]?.jsonPrimitive?.floatOrNull ?: 2.0f)),
 				maxEdgeDistance = obj["maxEdgeDistance"]?.jsonPrimitive?.floatOrNull ?: 48.0f,
 				interiorDensity = obj["interiorDensity"]?.jsonPrimitive?.floatOrNull ?: 48.0f,
 				fillAlgorithm = obj["fillAlgorithm"]?.jsonPrimitive?.contentOrNull

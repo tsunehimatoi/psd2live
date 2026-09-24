@@ -99,12 +99,13 @@ data class RigAnchors(
 	val hipY: Float,
 )
 
-enum class MeshFillAlgorithm { GRADED_POISSON, ADAPTIVE_QUADTREE, SIMPLE_TRIANGLES }
+enum class MeshFillAlgorithm { GRADED_POISSON, ADAPTIVE_QUADTREE, SIMPLE_TRIANGLES, TRIANGLE_FRACTAL, CONTOUR_PAVING }
+enum class MeshEdgeMode { SINGLE, DOUBLE, TRIPLE }
 
 data class MeshSettings(
 	val outerMargin: Float = 1.0f,
-	val innerMarginEnabled: Boolean = false,
-	val innerMargin: Float = 10.0f,
+	val edgeMode: MeshEdgeMode = MeshEdgeMode.SINGLE,
+	val edgeWidth: Float = 10.0f,
 	val maxEdgeDistance: Float = 6.0f,
 	val interiorDensity: Float = 40.0f,
 	val fillAlgorithm: MeshFillAlgorithm = MeshFillAlgorithm.GRADED_POISSON,
@@ -117,7 +118,8 @@ data class PipelineConfig(
 	val texturePadding: Int = 2,
 	val meshSpacing: Int = 40,
 	val meshOuterMargin: Float = 1.0f,
-	val meshInnerMargin: Float = 10.0f,
+	val meshEdgeMode: MeshEdgeMode = MeshEdgeMode.SINGLE,
+	val meshEdgeWidth: Float = 10.0f,
 	val meshMaxEdgeDistance: Float = 6.0f,
 	val meshInteriorDensity: Float = 40.0f,
 	val meshFillAlgorithm: MeshFillAlgorithm = MeshFillAlgorithm.GRADED_POISSON,

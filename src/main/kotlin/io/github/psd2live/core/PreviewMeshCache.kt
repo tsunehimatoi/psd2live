@@ -31,7 +31,7 @@ class PreviewMeshCache(private val capacity: Int = 128) {
     private fun AdaptiveMeshGenerator.Result.detached() = copy(
         positions = positions.copyOf(), indices = indices.copyOf(),
         boundaryLoops = boundaryLoops.map { it.copyOf() },
-        guideLoops = guideLoops.map { it.copyOf() },
+        middleLoops = middleLoops.map { it.copyOf() },
         innerLoops = innerLoops.map { it.copyOf() },
         spinePaths = spinePaths.map { it.copyOf() },
     )

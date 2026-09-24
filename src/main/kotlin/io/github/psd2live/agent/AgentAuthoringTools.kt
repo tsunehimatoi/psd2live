@@ -158,7 +158,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
     })
     val projectSettingFields = objectSchema(buildJsonObject {
         listOf("atlasSize", "meshSpacing", "texturePadding", "alphaThreshold").forEach { put(it, integer(0)) }
-        listOf("meshOuterMargin", "meshInnerMargin", "meshMaxEdgeDistance", "meshInteriorDensity",
+        listOf("meshOuterMargin", "meshEdgeWidth", "meshMaxEdgeDistance", "meshInteriorDensity",
             "headStrength", "bodyStrength", "mouthThickness", "exportPixelsPerUnit").forEach { put(it, number()) }
         listOf("meshOnly", "generateDeformers", "featureDisplacementEnabled", "mouthOutlineEnabled",
             "generatePhysics", "physicsFrontHair", "physicsBackHair", "physicsEyeJelly",
@@ -166,6 +166,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
             "exportCmo3", "exportMoc3", "exportJson", "exportHiddenParts", "exportHiddenDrawables",
             "exportGuideImageParts", "exportIncludePhysics", "exportIncludeUserData", "exportIncludeDisplayInfo").forEach { put(it, boolean()) }
         put("mouthShape", choices("flat", "smile", "w", "custom"))
+        put("meshEdgeMode", choices("SINGLE", "DOUBLE", "TRIPLE"))
         put("runtimeTarget", string()); put("textureUpscale", upscaleSettings)
     })
     tool("settings", "Update the project generation/export configuration used by the UI. Inspect scope=settings first. Rebuilds the model and commits history; textureUpscale fields are merged with the existing configuration.",
@@ -186,8 +187,10 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
         buildJsonObject {
             put("state", string()); put("layer_id", string()); put("reset", boolean())
             put("changes", objectSchema(buildJsonObject {
-                put("outerMargin", number()); put("innerMarginEnabled", boolean())
-                put("innerMargin", number()); put("maxEdgeDistance", number()); put("interiorDensity", number())
+                put("outerMargin", number()); put("edgeMode", choices("SINGLE", "DOUBLE", "TRIPLE"))
+                put("edgeWidth", number()); put("maxEdgeDistance", number()); put("interiorDensity", number())
+                put("fillAlgorithm", choices(*io.github.psd2live.core.MeshFillAlgorithm.entries.map { it.name }.toTypedArray()))
+                put("suppressBoundaryDiagonals", boolean())
             }))
         }, listOf("state", "layer_id"), true) { a ->
         workspace.setLayerMeshSettings(a.text("state"), a.text("layer_id"), a["changes"]?.jsonObject,

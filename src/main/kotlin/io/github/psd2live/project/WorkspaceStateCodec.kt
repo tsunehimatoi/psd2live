@@ -2,6 +2,7 @@ package io.github.psd2live.project
 
 import io.github.psd2live.core.MeshSettings
 import io.github.psd2live.core.MeshFillAlgorithm
+import io.github.psd2live.core.MeshEdgeMode
 
 import io.github.psd2live.ui.state.*
 import org.umamo.runtime.model.ParameterId
@@ -246,7 +247,8 @@ internal object WorkspaceStateCodec {
         put("textureUpscale", Json.encodeToJsonElement(state.textureUpscale))
         put("meshSpacing", state.meshSpacing)
         put("meshOuterMargin", state.meshOuterMargin)
-        put("meshInnerMargin", state.meshInnerMargin)
+        put("meshEdgeMode", state.meshEdgeMode.name)
+        put("meshEdgeWidth", state.meshEdgeWidth)
         put("meshMaxEdgeDistance", state.meshMaxEdgeDistance)
         put("meshInteriorDensity", state.meshInteriorDensity)
         put("meshFillAlgorithm", state.meshFillAlgorithm.name)
@@ -255,8 +257,8 @@ internal object WorkspaceStateCodec {
             state.meshOverrides.toSortedMap().forEach { (k, v) ->
                 put(k, buildJsonObject {
                     put("outerMargin", v.outerMargin)
-                    put("innerMarginEnabled", v.innerMarginEnabled)
-                    put("innerMargin", v.innerMargin)
+                    put("edgeMode", v.edgeMode.name)
+                    put("edgeWidth", v.edgeWidth)
                     put("maxEdgeDistance", v.maxEdgeDistance)
                     put("interiorDensity", v.interiorDensity)
                     put("fillAlgorithm", v.fillAlgorithm.name)
@@ -337,7 +339,8 @@ internal object WorkspaceStateCodec {
         put("textureUpscale", Json.encodeToJsonElement(state.textureUpscale))
         put("meshSpacing", state.meshSpacing)
         put("meshOuterMargin", state.meshOuterMargin)
-        put("meshInnerMargin", state.meshInnerMargin)
+        put("meshEdgeMode", state.meshEdgeMode.name)
+        put("meshEdgeWidth", state.meshEdgeWidth)
         put("meshMaxEdgeDistance", state.meshMaxEdgeDistance)
         put("meshInteriorDensity", state.meshInteriorDensity)
         put("meshFillAlgorithm", state.meshFillAlgorithm.name)
@@ -346,8 +349,8 @@ internal object WorkspaceStateCodec {
             state.meshOverrides.toSortedMap().forEach { (k, v) ->
                 put(k, buildJsonObject {
                     put("outerMargin", v.outerMargin)
-                    put("innerMarginEnabled", v.innerMarginEnabled)
-                    put("innerMargin", v.innerMargin)
+                    put("edgeMode", v.edgeMode.name)
+                    put("edgeWidth", v.edgeWidth)
                     put("maxEdgeDistance", v.maxEdgeDistance)
                     put("interiorDensity", v.interiorDensity)
                     put("fillAlgorithm", v.fillAlgorithm.name)
@@ -444,7 +447,12 @@ internal object WorkspaceStateCodec {
         textureUpscale = value["textureUpscale"]?.let { Json.decodeFromJsonElement<io.github.psd2live.core.TextureUpscaleConfig>(it) } ?: base.textureUpscale,
         meshSpacing = value["meshSpacing"]?.jsonPrimitive?.int ?: base.meshSpacing,
         meshOuterMargin = value["meshOuterMargin"]?.jsonPrimitive?.float ?: base.meshOuterMargin,
-        meshInnerMargin = value["meshInnerMargin"]?.jsonPrimitive?.float ?: base.meshInnerMargin,
+        meshEdgeMode = value["meshEdgeMode"]?.jsonPrimitive?.contentOrNull
+            ?.let { runCatching { MeshEdgeMode.valueOf(it) }.getOrNull() } ?: base.meshEdgeMode,
+        meshEdgeWidth = value["meshEdgeWidth"]?.jsonPrimitive?.floatOrNull
+            ?: value["meshInnerMargin"]?.jsonPrimitive?.floatOrNull?.let { inner ->
+                (value["meshOuterMargin"]?.jsonPrimitive?.floatOrNull ?: base.meshOuterMargin) + inner
+            } ?: base.meshEdgeWidth,
         meshMaxEdgeDistance = value["meshMaxEdgeDistance"]?.jsonPrimitive?.float ?: base.meshMaxEdgeDistance,
         meshInteriorDensity = value["meshInteriorDensity"]?.jsonPrimitive?.float ?: base.meshInteriorDensity,
         meshFillAlgorithm = value["meshFillAlgorithm"]?.jsonPrimitive?.contentOrNull
@@ -453,14 +461,18 @@ internal object WorkspaceStateCodec {
         meshOverrides = value["meshOverrides"]?.jsonObject?.mapNotNull { (k, v) ->
             val obj = v.jsonObject
             val outerMargin = obj["outerMargin"]?.jsonPrimitive?.floatOrNull ?: 2.0f
-            val innerMarginEnabled = obj["innerMarginEnabled"]?.jsonPrimitive?.booleanOrNull ?: false
-            val innerMargin = obj["innerMargin"]?.jsonPrimitive?.floatOrNull ?: 2.0f
+            val edgeMode = obj["edgeMode"]?.jsonPrimitive?.contentOrNull
+                ?.let { runCatching { MeshEdgeMode.valueOf(it) }.getOrNull() }
+                ?: if (obj["innerMarginEnabled"]?.jsonPrimitive?.booleanOrNull == true) MeshEdgeMode.DOUBLE
+                    else MeshEdgeMode.SINGLE
+            val edgeWidth = obj["edgeWidth"]?.jsonPrimitive?.floatOrNull
+                ?: (outerMargin + (obj["innerMargin"]?.jsonPrimitive?.floatOrNull ?: 2.0f))
             val maxEdgeDistance = obj["maxEdgeDistance"]?.jsonPrimitive?.floatOrNull ?: 48.0f
             val interiorDensity = obj["interiorDensity"]?.jsonPrimitive?.floatOrNull ?: 48.0f
             val fillAlgorithm = obj["fillAlgorithm"]?.jsonPrimitive?.contentOrNull
                 ?.let { runCatching { MeshFillAlgorithm.valueOf(it) }.getOrNull() } ?: MeshFillAlgorithm.GRADED_POISSON
             val suppressBoundaryDiagonals = obj["suppressBoundaryDiagonals"]?.jsonPrimitive?.booleanOrNull ?: false
-            k to MeshSettings(outerMargin, innerMarginEnabled, innerMargin, maxEdgeDistance, interiorDensity,
+            k to MeshSettings(outerMargin, edgeMode, edgeWidth, maxEdgeDistance, interiorDensity,
                 fillAlgorithm, suppressBoundaryDiagonals)
         }?.toMap() ?: base.meshOverrides,
         texturePadding = value["texturePadding"]?.jsonPrimitive?.int ?: base.texturePadding,

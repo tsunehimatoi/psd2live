@@ -47,8 +47,8 @@ internal object MouthLipLayers {
                     spacing = max(6f, config.meshMaxEdgeDistance * 0.45f),
                     interiorSpacing = max(12f, config.meshInteriorDensity * 0.45f),
                     outerMargin = 0f,
-                    innerMargin = config.meshInnerMargin,
-                    innerMarginEnabled = false,
+                    // Lip strokes are too thin for contour row bands.
+                    edgeMode = MeshEdgeMode.SINGLE,
                     fillAlgorithm = config.meshOverrides[owner.source.id.raw]?.fillAlgorithm ?: config.meshFillAlgorithm,
                     suppressBoundaryDiagonals = config.meshOverrides[owner.source.id.raw]?.suppressBoundaryDiagonals
                         ?: config.meshSuppressBoundaryDiagonals,

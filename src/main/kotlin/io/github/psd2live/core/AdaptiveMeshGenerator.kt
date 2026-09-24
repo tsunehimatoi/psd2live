@@ -1,5 +1,31 @@
 ﻿package io.github.psd2live.core
 
+import io.github.psd2live.core.mesh.EdgeBandBuilder
+import io.github.psd2live.core.mesh.Edge
+import io.github.psd2live.core.mesh.GEOMETRY_EPSILON
+import io.github.psd2live.core.mesh.LocalMesh
+import io.github.psd2live.core.mesh.Point
+import io.github.psd2live.core.mesh.StructuredMeshFill
+import io.github.psd2live.core.mesh.Triangle
+import io.github.psd2live.core.mesh.cross
+import io.github.psd2live.core.mesh.distance
+import io.github.psd2live.core.mesh.distanceSquared
+import io.github.psd2live.core.mesh.distanceSquaredToLoop
+import io.github.psd2live.core.mesh.edgeOf
+import io.github.psd2live.core.mesh.hasSelfIntersection
+import io.github.psd2live.core.mesh.inDomain
+import io.github.psd2live.core.mesh.lerp
+import io.github.psd2live.core.mesh.loopsTouch
+import io.github.psd2live.core.mesh.oppositeVertex
+import io.github.psd2live.core.mesh.orient
+import io.github.psd2live.core.mesh.pointInPolygon
+import io.github.psd2live.core.mesh.pointInTriangleInclusive
+import io.github.psd2live.core.mesh.pointOnSegment
+import io.github.psd2live.core.mesh.segmentsProperlyIntersect
+import io.github.psd2live.core.mesh.signedAreaTwice
+import io.github.psd2live.core.mesh.snap
+import io.github.psd2live.core.mesh.triangleEdges
+import io.github.psd2live.core.mesh.validDomain
 import org.umamo.format.art.analyzeAlpha
 import kotlin.math.abs
 import kotlin.math.acos
@@ -14,7 +40,7 @@ import kotlin.math.min
 import kotlin.math.sqrt
 import kotlin.math.sin
 
-/** Silhouette-constrained mesh: two edge bands around a Bezier guide, sparse triangular interior.
+/** Silhouette-constrained mesh: optional contour row bands around a Bezier guide, graded interior.
  * Outer rings and holes share the same material-side winding and constrained topology.
  */
 internal object AdaptiveMeshGenerator {
@@ -24,19 +50,25 @@ internal object AdaptiveMeshGenerator {
 		val indices: IntArray,
 		/** Global vertex indices for tests/integrity checks; closure is implicit. */
 		val boundaryLoops: List<IntArray>,
-		/** Always empty: the Bezier guide is a placement guide, never a mesh seam. */
-		val guideLoops: List<IntArray> = emptyList(),
-		/** The second real envelope row, constrained to the interior triangulation. */
+		/** The original contour row in three-layer mode. */
+		val middleLoops: List<IntArray> = emptyList(),
+		/** The innermost envelope row, constrained to the interior triangulation. */
 		val innerLoops: List<IntArray> = emptyList(),
 		/** Open, longitudinal paths for narrow ribbon meshes (not boundary loops). */
 		val spinePaths: List<IntArray> = emptyList(),
 	)
 
-	private data class Point(val x: Double, val y: Double)
-	private data class Triangle(val a: Int, val b: Int, val c: Int)
-	private data class Edge(val low: Int, val high: Int)
 	private data class Cubic(val p0: Point, val c1: Point, val c2: Point, val p1: Point)
-	private data class LocalMesh(val points: List<Point>, val triangles: List<Triangle>)
+
+	/** Guide variants of one island: raster contour, fitted stations, and interleaved stations. */
+	private data class Domain(val raw: List<List<Point>>, val guides: List<List<Point>>, val interleaved: List<List<Point>>)
+
+	/** Interior fill: sampled candidates for the point-insertion fills, or a structured pattern. */
+	private sealed interface Fill {
+		val spacing: Double
+		class Candidates(val points: List<Point>, override val spacing: Double) : Fill
+		class Structured(val kind: StructuredMeshFill.Kind, override val spacing: Double) : Fill
+	}
 
 	private const val FILTER_PASSES = 2
 	private const val FILTER_MAX_OFFSET = 0.55
@@ -46,7 +78,6 @@ internal object AdaptiveMeshGenerator {
 	private const val MAX_QUALITY_REFINEMENT_POINTS = 512
 	private const val MAX_INTERIOR_SAMPLES = 1_200
 	private const val MAX_INTERNAL_EDGE_FACTOR = 1.72
-	private const val GEOMETRY_EPSILON = 1e-8
 
 	/** Occupancy is read from the hardened alpha; enclosed transparency stays empty. */
 	private class SolidAlphaMask(val width: Int, val height: Int, val rgba: ByteArray) {
@@ -54,7 +85,7 @@ internal object AdaptiveMeshGenerator {
 			(rgba[(y * width + x) * 4 + 3].toInt() and 0xff) != 0
 	}
 
-	/** [spacing] controls the edge guides; [interiorSpacing] controls the staggered triangular fill.
+	/** [spacing] controls the edge guides; [interiorSpacing] controls the interior fill.
 	 * The default interior step is 35% larger (about 45% fewer bulk samples for a large region).
 	 */
 	fun generate(
@@ -71,8 +102,8 @@ internal object AdaptiveMeshGenerator {
 		spacing = settings.maxEdgeDistance,
 		interiorSpacing = settings.interiorDensity,
 		outerMargin = settings.outerMargin,
-		innerMargin = settings.innerMargin,
-		innerMarginEnabled = settings.innerMarginEnabled,
+		edgeMode = settings.edgeMode,
+		edgeWidth = settings.edgeWidth,
 		fillAlgorithm = settings.fillAlgorithm,
 		suppressBoundaryDiagonals = settings.suppressBoundaryDiagonals,
 	)
@@ -85,14 +116,14 @@ internal object AdaptiveMeshGenerator {
 		spacing: Float,
 		interiorSpacing: Float = spacing * 1.35f,
 		outerMargin: Float = min(2.75f, max(0.8f, spacing * 0.10f)),
-		innerMargin: Float = min(2.75f, max(0.8f, spacing * 0.10f)),
-		innerMarginEnabled: Boolean = true,
+		edgeMode: MeshEdgeMode = MeshEdgeMode.SINGLE,
+		edgeWidth: Float = 10f,
 		fillAlgorithm: MeshFillAlgorithm = MeshFillAlgorithm.GRADED_POISSON,
 		suppressBoundaryDiagonals: Boolean = false,
 	): Result? {
 		if (width <= 0 || height <= 0 || width.toLong() * height * 4 > rgba.size ||
 			!spacing.isFinite() || !interiorSpacing.isFinite() ||
-			!outerMargin.isFinite() || !innerMargin.isFinite()) return null
+			!outerMargin.isFinite() || !edgeWidth.isFinite() || edgeWidth < 0f) return null
 		val threshold = alphaThreshold.coerceIn(1, 255)
 		val hardened = AlphaEdgePreprocessor.process(width, height, rgba, threshold)
 		val geometryRgba = hardened?.rgba ?: ByteArray(rgba.size)
@@ -134,53 +165,56 @@ internal object AdaptiveMeshGenerator {
 			holesByOuter[owner] += hole.points
 		}
 		val contourLoops = (sources + holesByOuter.flatMap { it }).map(::sourcePoints)
-		val interiorCandidates = when (fillAlgorithm) {
-			MeshFillAlgorithm.GRADED_POISSON -> sampleGradedPoisson(solidMask, contourLoops, edgeSpacing, gridSpacing,
-				budgetSpacing)
-			MeshFillAlgorithm.ADAPTIVE_QUADTREE -> sampleAdaptiveQuadtree(solidMask, contourLoops, edgeSpacing,
-				gridSpacing, budgetSpacing)
-			MeshFillAlgorithm.SIMPLE_TRIANGLES -> sampleInterior(solidMask, gridSpacing)
+		val fill: Fill = when (fillAlgorithm) {
+			MeshFillAlgorithm.GRADED_POISSON -> Fill.Candidates(sampleGradedPoisson(solidMask, contourLoops,
+				edgeSpacing, gridSpacing, budgetSpacing), gridSpacing)
+			MeshFillAlgorithm.SIMPLE_TRIANGLES -> Fill.Candidates(sampleInterior(solidMask, gridSpacing), gridSpacing)
+			MeshFillAlgorithm.ADAPTIVE_QUADTREE -> Fill.Structured(StructuredMeshFill.Kind.QUADTREE, gridSpacing)
+			MeshFillAlgorithm.TRIANGLE_FRACTAL -> Fill.Structured(StructuredMeshFill.Kind.TRIANGLE_FRACTAL, gridSpacing)
+			MeshFillAlgorithm.CONTOUR_PAVING -> Fill.Structured(StructuredMeshFill.Kind.CONTOUR_PAVING, gridSpacing)
 		}
 		val globalPoints = mutableListOf<Point>()
 		val globalTriangles = mutableListOf<Triangle>()
 		val globalBoundaryLoops = mutableListOf<IntArray>()
-		val globalGuides = mutableListOf<IntArray>()
+		val globalMiddleLoops = mutableListOf<IntArray>()
 		val globalInnerLoops = mutableListOf<IntArray>()
 		val globalSpines = mutableListOf<IntArray>()
 		val completed = mutableListOf<BandedMesh>()
 		val domains = sources.indices.map { island ->
-			val raw = (listOf(sources[island]) + holesByOuter[island]).mapIndexed { index, contour ->
-				orient(sourcePoints(contour), index == 0)
+			val contours = listOf(sources[island]) + holesByOuter[island]
+			val raw = contours.mapIndexed { index, contour -> orient(sourcePoints(contour), index == 0) }
+			var interleaved = contours.mapIndexed { index, contour ->
+				EdgeBandBuilder.orientInterleaved(buildBezierBoundary(fitSources[contour] ?: contour, edgeSpacing), index == 0)
 			}
-			var guides = (listOf(sources[island]) + holesByOuter[island]).mapIndexed { index, contour ->
-				orient(buildBezierBoundary(fitSources[contour] ?: contour, edgeSpacing), index == 0)
-			}
+			var guides = interleaved.map(EdgeBandBuilder::stations)
 			// A fitted loop must preserve the whole domain, not just be individually simple.
-			if (!validDomain(guides)) guides = raw
-			raw to guides
+			if (!validDomain(guides)) { guides = raw; interleaved = raw.map(EdgeBandBuilder::interleave) }
+			Domain(raw, guides, interleaved)
 		}
 		// Independent Bezier fits can overshoot across a narrow gap between separate islands.
 		// Compare against both fitted and raw neighbors before adding any offset bands.
 		val safeDomains = domains.mapIndexed { index, domain ->
 			val collision = domains.withIndex().any { (otherIndex, other) ->
-				otherIndex != index && domain.second.any { loop ->
-					(other.first + other.second).any { loopsTouch(loop, it) }
+				otherIndex != index && domain.guides.any { loop ->
+					(other.raw + other.guides).any { loopsTouch(loop, it) }
 				}
 			}
-			if (collision) domain.first to domain.first else domain
+			if (collision) Domain(domain.raw, domain.raw, domain.raw.map(EdgeBandBuilder::interleave)) else domain
 		}
 		for ((island, domain) in safeDomains.withIndex()) {
-			val (raw, guides) = domain
+			val raw = domain.raw
+			val guides = domain.guides
 			val neighborDomains = safeDomains.filterIndexed { index, _ -> index != island }
-			val neighbors = neighborDomains.flatMap { it.first + it.second }
+			val neighbors = neighborDomains.flatMap { it.raw + it.guides }
 			fun isolated(mesh: BandedMesh, allowBoundaryContact: Boolean = false): Boolean {
 				val borders = mesh.boundaries.map { loop -> loop.map { mesh.mesh.points[it] } }
-				return neighborDomains.none { domainsOverlap(borders, it.first, allowBoundaryContact) ||
-					domainsOverlap(borders, it.second, allowBoundaryContact) } &&
+				return neighborDomains.none { domainsOverlap(borders, it.raw, allowBoundaryContact) ||
+					domainsOverlap(borders, it.guides, allowBoundaryContact) } &&
 					completed.none { previous -> domainsOverlap(borders,
 						previous.boundaries.map { loop -> loop.map { previous.mesh.points[it] } }, allowBoundaryContact) }
 			}
 			var built: BandedMesh? = null
+			// A ribbon is already a two-row strip, so slender islands use it in every edge mode.
 			if (raw.size == 1) {
 				for (scale in doubleArrayOf(1.0, 0.5, 0.25, 0.0)) {
 					val samplingScale = if (scale < 0.5) 0.25 else 1.0
@@ -194,14 +228,20 @@ internal object AdaptiveMeshGenerator {
 					}
 				}
 			}
+			if (built == null && edgeMode != MeshEdgeMode.SINGLE) {
+				for (scale in doubleArrayOf(1.0, 0.6, 0.35)) {
+					val band = buildEdgeBands(domain, fill, width, height, edgeWidth * scale, edgeMode, neighbors)
+					if (band != null && isolated(band)) { built = band; break }
+				}
+			}
+			// Single-row contour: the requested mode, or the fallback when a band cannot fit.
 			for (scale in doubleArrayOf(1.0, 0.5, 0.25, 0.125, 0.0625)) {
 				if (built != null) break
-				val band = buildBands(guides, interiorCandidates, width, height, edgeSpacing, gridSpacing, scale, neighbors,
-					outerMargin.toDouble(), innerMargin.toDouble(), innerMarginEnabled, suppressBoundaryDiagonals)
+				val band = buildSingle(guides, fill, width, height, scale, neighbors,
+					outerMargin.toDouble(), suppressBoundaryDiagonals)
 				if (band != null && isolated(band)) built = band
 				else if (suppressBoundaryDiagonals) {
-					val ordinary = buildBands(guides, interiorCandidates, width, height, edgeSpacing, gridSpacing,
-						scale, neighbors, outerMargin.toDouble(), innerMargin.toDouble(), innerMarginEnabled, false)
+					val ordinary = buildSingle(guides, fill, width, height, scale, neighbors, outerMargin.toDouble(), false)
 					if (ordinary != null && isolated(ordinary)) built = ordinary
 				}
 			}
@@ -211,8 +251,7 @@ internal object AdaptiveMeshGenerator {
 					var cursor = 0
 					val loops = recoveryLoops.map { loop -> IntArray(loop.size) { cursor + it }.also { cursor += loop.size } }
 					for (suppress in if (suppressBoundaryDiagonals) listOf(true, false) else listOf(false)) {
-						val local = triangulateDomain(recoveryLoops, interiorCandidates, gridSpacing, suppress)
-							?: continue
+						val local = fillDomain(recoveryLoops, fill, suppress) ?: continue
 						val recovery = BandedMesh(local, loops, emptyList(), emptyList())
 						// Raster islands can meet at a single corner. Keep their vertex indices separate.
 						if (isolated(recovery, allowBoundaryContact = true)) { built = recovery; break }
@@ -227,7 +266,7 @@ internal object AdaptiveMeshGenerator {
 			globalTriangles += built.mesh.triangles.map { Triangle(it.a + offset, it.b + offset, it.c + offset) }
 			fun shifted(loops: List<IntArray>) = loops.map { loop -> IntArray(loop.size) { loop[it] + offset } }
 			globalBoundaryLoops += shifted(built.boundaries)
-			globalGuides += shifted(built.guides)
+			globalMiddleLoops += shifted(built.middle)
 			globalInnerLoops += shifted(built.inner)
 			globalSpines += shifted(built.spines)
 		}
@@ -251,13 +290,13 @@ internal object AdaptiveMeshGenerator {
 				indices[index * 3 + 2] = triangle.b
 			}
 		}
-		return Result(positions, indices, globalBoundaryLoops, globalGuides, globalInnerLoops, globalSpines)
+		return Result(positions, indices, globalBoundaryLoops, globalMiddleLoops, globalInnerLoops, globalSpines)
 	}
 
 	private data class BandedMesh(
 		val mesh: LocalMesh,
 		val boundaries: List<IntArray>,
-		val guides: List<IntArray>,
+		val middle: List<IntArray>,
 		val inner: List<IntArray>,
 		val spines: List<IntArray> = emptyList(),
 	)
@@ -387,41 +426,14 @@ internal object AdaptiveMeshGenerator {
 		if (!validDomain(listOf(border.map { points[it] }))) return null
 		if (suppressBoundaryDiagonals) {
 			val contourEdges = border.indices.map { edgeOf(border[it], border[(it + 1) % border.size]) }.toSet()
-			if (!splitBoundaryDiagonals(points, triangles, contourEdges, points.size)) return null
+			val contourCount = points.size
+			if (!splitBoundaryDiagonals(points, triangles, contourEdges) { it < contourCount }) return null
 		}
 		return BandedMesh(LocalMesh(points, triangles), listOf(border), emptyList(), emptyList())
 	}
 
 	private fun sourcePoints(source: IntArray): List<Point> =
 		List(source.size / 2) { Point(source[it * 2].toDouble(), source[it * 2 + 1].toDouble()) }
-
-	private fun orient(loop: List<Point>, positive: Boolean): List<Point> =
-		(if ((signedAreaTwice(loop) > 0) == positive) loop else loop.reversed()).map(::snap)
-
-	// Construct topology at exported precision to avoid faces collapsing on Float conversion.
-	private fun snap(point: Point): Point = Point(point.x.toFloat().toDouble(), point.y.toFloat().toDouble())
-
-	private fun inDomain(point: Point, loops: List<List<Point>>): Boolean =
-		pointInPolygon(point, loops.first()) && loops.drop(1).none { pointInPolygon(point, it) }
-
-	private fun loopsTouch(a: List<Point>, b: List<Point>): Boolean = a.indices.any { i ->
-		b.indices.any { j ->
-			val p = a[i]; val q = a[(i + 1) % a.size]
-			val r = b[j]; val s = b[(j + 1) % b.size]
-			segmentsProperlyIntersect(p, q, r, s) || pointOnSegment(p, r, s) ||
-				pointOnSegment(q, r, s) || pointOnSegment(r, p, q) || pointOnSegment(s, p, q)
-		}
-	}
-
-	private fun validDomain(loops: List<List<Point>>): Boolean {
-		if (loops.isEmpty() || loops.any { it.size < 3 || abs(signedAreaTwice(it)) < 1e-6 || hasSelfIntersection(it) }) return false
-		for (i in loops.indices) for (j in 0 until i) {
-			if (loopsTouch(loops[i], loops[j])) return false
-			if (j == 0 && !pointInPolygon(loops[i][0], loops[0])) return false
-			if (j > 0 && (pointInPolygon(loops[i][0], loops[j]) || pointInPolygon(loops[j][0], loops[i]))) return false
-		}
-		return true
-	}
 
 	/** Signed material-side offset. Winding makes the same code work for holes and islands. */
 	private fun offsetLoop(
@@ -443,57 +455,90 @@ internal object AdaptiveMeshGenerator {
 				(q.y + ny / length * localAmount).coerceIn(0.0, height.toDouble())))
 		}
 
-	private fun buildBands(
-		guides: List<List<Point>>, candidates: List<Point>, width: Int, height: Int,
-		edgeSpacing: Double, interiorSpacing: Double, scale: Double, neighbors: List<List<Point>>,
-		outerMargin: Double = min(2.75, max(0.8, edgeSpacing * 0.10)),
-		innerMargin: Double = min(2.75, max(0.8, edgeSpacing * 0.10)),
-		innerMarginEnabled: Boolean = true,
-		suppressBoundaryDiagonals: Boolean = false,
+	/** One contour row, offset outward by the outer margin, around the chosen interior fill. */
+	private fun buildSingle(
+		guides: List<List<Point>>, fill: Fill, width: Int, height: Int, scale: Double,
+		neighbors: List<List<Point>>, outerMargin: Double, suppressBoundaryDiagonals: Boolean,
 	): BandedMesh? {
-		if (innerMarginEnabled) {
-			val outerDist = outerMargin * scale
-			val innerDist = innerMargin * scale
-			val outer = guides.map { offsetLoop(it, -outerDist, width, height, guides + neighbors) }
-			val inner = guides.map { offsetLoop(it, innerDist, width, height, guides + neighbors) }
-			if (!validDomain(outer) || !validDomain(inner)) return null
-			// The inner envelope is an interior support row; its diagonals are allowed.
-			val core = triangulateDomain(inner, candidates, interiorSpacing, false) ?: return null
-			val points = core.points.toMutableList()
-			val triangles = core.triangles.toMutableList()
-			val lookup = points.withIndex().associate { it.value to it.index }.toMutableMap()
-			fun vertices(loop: List<Point>) = loop.map { p -> lookup.getOrPut(p) { points.add(p); points.lastIndex } }.toIntArray()
-			val innerIds = inner.map { vertices(it) }
-			val outerIds = outer.map { vertices(it) }
-			fun strip(a: IntArray, b: IntArray): Boolean {
-				for (i in a.indices) {
-					val j = (i + 1) % a.size
-					// Alternating diagonals avoid a directional bias along the two edge bands.
-					val faces = if (i % 2 == 0) listOf(Triangle(a[i], a[j], b[i]), Triangle(a[j], b[j], b[i]))
-						else listOf(Triangle(a[i], a[j], b[j]), Triangle(a[i], b[j], b[i]))
-					for (t in faces) {
-						if (t.a == t.b || t.b == t.c || t.c == t.a) continue // clipped at the canvas boundary
-						if (cross(points[t.a], points[t.b], points[t.c]) <= GEOMETRY_EPSILON) return false
-						triangles += t
-					}
-				}
-				return true
+		val outerDist = outerMargin * scale
+		val outer = if (outerDist > 1e-4) guides.map { offsetLoop(it, -outerDist, width, height, guides + neighbors) } else guides
+		if (!validDomain(outer)) return null
+		val core = fillDomain(outer, fill, suppressBoundaryDiagonals) ?: return null
+		var cursor = 0
+		val outerIds = outer.map { loop -> IntArray(loop.size) { cursor + it }.also { cursor += loop.size } }
+		return BandedMesh(core, outerIds, emptyList(), emptyList())
+	}
+
+	/** Double/triple parallel rows joined by fixed `/\/\` and `\/\/` strips around the interior fill. */
+	private fun buildEdgeBands(
+		domain: Domain, fill: Fill, width: Int, height: Int, edgeWidth: Double, edgeMode: MeshEdgeMode,
+		neighbors: List<List<Point>>,
+	): BandedMesh? {
+		val rows = EdgeBandBuilder.build(domain.interleaved, edgeMode, edgeWidth, width, height, neighbors) ?: return null
+		val staggered = EdgeBandBuilder.rowStaggered(edgeMode)
+		// The innermost row is an interior support row; its diagonals are allowed.
+		val core = fillDomain(rows.map { it.last() }, fill, false) ?: return null
+		val points = core.points.toMutableList()
+		val triangles = core.triangles.toMutableList()
+		var cursor = 0
+		val innerIds = rows.map { loopRows -> IntArray(loopRows.last().size) { cursor + it }.also { cursor += it.size } }
+		val rowIds = rows.mapIndexed { loop, loopRows ->
+			loopRows.indices.map { r ->
+				if (r == loopRows.lastIndex) innerIds[loop]
+				else IntArray(loopRows[r].size) { i -> points.add(loopRows[r][i]); points.lastIndex }
 			}
-			for (i in guides.indices) if (!strip(outerIds[i], innerIds[i])) return null
-			val uses = triangles.flatMap { triangleEdges(it) }.groupingBy { it }.eachCount()
-			val boundaryEdges = outerIds.flatMap { ids -> ids.indices.map { edgeOf(ids[it], ids[(it + 1) % ids.size]) } }.toSet()
-			if (uses.any { (edge, count) -> count != if (edge in boundaryEdges) 1 else 2 }) return null
-			return BandedMesh(LocalMesh(points, triangles), outerIds, emptyList(), innerIds)
-		} else {
-			val outerDist = outerMargin * scale
-			val outer = if (outerDist > 1e-4) guides.map { offsetLoop(it, -outerDist, width, height, guides + neighbors) } else guides
-			if (!validDomain(outer)) return null
-			val core = triangulateDomain(outer, candidates, interiorSpacing,
-				suppressBoundaryDiagonals) ?: return null
-			var cursor = 0
-			val outerIds = outer.map { loop -> IntArray(loop.size) { cursor + it }.also { cursor += loop.size } }
-			return BandedMesh(core, outerIds, emptyList(), emptyList())
 		}
+		for (ids in rowIds) triangles += EdgeBandBuilder.stripTriangles(ids, staggered)
+		if (triangles.any { abs(cross(points[it.a], points[it.b], points[it.c])) <= GEOMETRY_EPSILON }) return null
+		val outerIds = rowIds.map { it.first() }
+		val uses = triangles.flatMap { triangleEdges(it) }.groupingBy { it }.eachCount()
+		val boundaryEdges = outerIds.flatMap { ids -> ids.indices.map { edgeOf(ids[it], ids[(it + 1) % ids.size]) } }.toSet()
+		if (uses.any { (edge, count) -> count != if (edge in boundaryEdges) 1 else 2 }) return null
+		val middleIds = if (edgeMode == MeshEdgeMode.TRIPLE) rowIds.map { it[1] } else emptyList()
+		return BandedMesh(LocalMesh(points, triangles), outerIds, middleIds, innerIds)
+	}
+
+	/** Triangulates a domain with the selected fill. Domain loop vertices come first, in loop order. */
+	private fun fillDomain(loops: List<List<Point>>, fill: Fill, suppressBoundaryDiagonals: Boolean): LocalMesh? =
+		when (fill) {
+			is Fill.Candidates -> triangulateDomain(loops, fill.points, fill.spacing, suppressBoundaryDiagonals)
+			is Fill.Structured -> structuredFill(loops, fill, suppressBoundaryDiagonals)
+		}
+
+	private fun structuredFill(loops: List<List<Point>>, fill: Fill.Structured, suppressBoundaryDiagonals: Boolean): LocalMesh? {
+		if (!validDomain(loops)) return null
+		val layout = StructuredMeshFill.layout(fill.kind, loops, fill.spacing)
+		fun fallback(): LocalMesh? =
+			triangulateDomain(loops, layout?.interior.orEmpty(), fill.spacing, suppressBoundaryDiagonals)
+				?: triangulateDomain(loops, emptyList(), fill.spacing, suppressBoundaryDiagonals)
+		if (layout == null) return fallback()
+		val boundaryCount = loops.sumOf { it.size }
+		val points = layout.points.toMutableList()
+		val triangles = layout.triangles.toMutableList()
+		for (region in layout.regions) {
+			val regionLoops = region.loops.map { ids -> ids.map { points[it] } }
+			val chordFree = region.loops.flatMap { ids -> ids.map { suppressBoundaryDiagonals && it < boundaryCount } }
+				.toBooleanArray()
+			val local = triangulateDomain(regionLoops, region.candidates, region.spacing,
+				chordFree.any { it }, chordFree) ?: return fallback()
+			val map = IntArray(local.points.size)
+			var k = 0
+			for (ids in region.loops) for (id in ids) map[k++] = id
+			for (i in k until local.points.size) { points += local.points[i]; map[i] = points.lastIndex }
+			triangles += local.triangles.map { Triangle(map[it.a], map[it.b], map[it.c]) }
+		}
+		if (triangles.any { abs(cross(points[it.a], points[it.b], points[it.c])) <= GEOMETRY_EPSILON }) return fallback()
+		var cursor = 0
+		val protectedEdges = HashSet<Edge>()
+		for (loop in loops) {
+			for (i in loop.indices) protectedEdges += edgeOf(cursor + i, cursor + (i + 1) % loop.size)
+			cursor += loop.size
+		}
+		val uses = triangles.flatMap { triangleEdges(it) }.groupingBy { it }.eachCount()
+		if (uses.any { (edge, count) -> count != if (edge in protectedEdges) 1 else 2 } ||
+			protectedEdges.any { it !in uses }) return fallback()
+		if (points.size - uses.size + triangles.size != 2 - loops.size) return fallback()
+		return LocalMesh(points, triangles)
 	}
 
 	/** Join holes by visible, non-crossing bridges, reusing endpoint indices on both sides.
@@ -526,6 +571,9 @@ internal object AdaptiveMeshGenerator {
 		return path
 	}
 
+	/** Fits a smooth closed Bezier guide and samples it as an interleaved loop: aligned stations on
+	 * even indices, half stations on odd indices, all on the curve.
+	 */
 	private fun buildBezierBoundary(
 		source: IntArray,
 		spacing: Double,
@@ -541,11 +589,11 @@ internal object AdaptiveMeshGenerator {
 		for (handleStrength in doubleArrayOf(1.0, 0.55, 0.25, 0.0)) {
 			val sampled = samplePeriodicBezier(controls, spacing, handleStrength)
 			val hasCollapsedEdge = sampled.indices.any { index ->
-				distance(sampled[index], sampled[(index + 1) % sampled.size]) < 0.15
+				distance(sampled[index], sampled[(index + 1) % sampled.size]) < 0.075
 			}
-			if (sampled.size >= 3 && !hasCollapsedEdge && !hasSelfIntersection(sampled)) return sampled
+			if (sampled.size >= 6 && !hasCollapsedEdge && !hasSelfIntersection(sampled)) return sampled
 		}
-		return sourcePoints(source)
+		return EdgeBandBuilder.interleave(sourcePoints(source))
 	}
 
 	/** Bounded low-pass filter: removes raster stair steps without deleting or merging controls. */
@@ -718,6 +766,7 @@ internal object AdaptiveMeshGenerator {
 	/**
 	 * Resample each ordered arc between critical curve locations. Critical locations are emitted
 	 * exactly once as arc starts; they are not appended afterward and are never deduplicated.
+	 * Every station interval also emits its metric midpoint, giving an interleaved loop.
 	 */
 	private fun resampleMetricArcs(
 		dense: List<Point>,
@@ -728,6 +777,7 @@ internal object AdaptiveMeshGenerator {
 		val totalMetric = cumulative.last()
 		if (totalMetric <= GEOMETRY_EPSILON) return emptyList()
 		val result = mutableListOf<Point>()
+		var stations = 0
 		for (anchorPosition in mandatoryIndices.indices) {
 			val startIndex = mandatoryIndices[anchorPosition]
 			val endIndex = mandatoryIndices[(anchorPosition + 1) % mandatoryIndices.size]
@@ -735,18 +785,19 @@ internal object AdaptiveMeshGenerator {
 			val endMetric = if (endIndex > startIndex) cumulative[endIndex] else totalMetric + cumulative[endIndex]
 			val arcMetric = (endMetric - startMetric).coerceAtLeast(GEOMETRY_EPSILON)
 			val intervals = ceil(arcMetric / spacing).toInt().coerceAtLeast(if (mandatoryIndices.size == 1) 3 else 1)
-			for (interval in 0 until intervals) {
-				val target = startMetric + arcMetric * interval / intervals
+			stations += intervals
+			for (half in 0 until intervals * 2) {
+				val target = startMetric + arcMetric * half / (intervals * 2)
 				result += pointAtMetric(dense, cumulative, target)
 			}
 		}
-		if (result.size > MAX_BOUNDARY_POINTS_PER_LOOP && mandatoryIndices.size < MAX_BOUNDARY_POINTS_PER_LOOP) {
+		if (stations > MAX_BOUNDARY_POINTS_PER_LOOP && mandatoryIndices.size < MAX_BOUNDARY_POINTS_PER_LOOP) {
 			// Re-run smooth arcs with a larger shared spacing; critical locations remain mandatory.
 			return resampleMetricArcs(
 				dense,
 				cumulative,
 				mandatoryIndices,
-				spacing * max(1.1, result.size.toDouble() / MAX_BOUNDARY_POINTS_PER_LOOP),
+				spacing * max(1.1, stations.toDouble() / MAX_BOUNDARY_POINTS_PER_LOOP),
 			)
 		}
 		return result
@@ -766,11 +817,17 @@ internal object AdaptiveMeshGenerator {
 		return lerp(dense[low], dense[next], (target - cumulative[low]) / metric)
 	}
 
+	/**
+	 * Constrained triangulation of [loops] with inserted candidates. [chordFreeVertices] marks the
+	 * loop vertices (in flattened loop order) that must not be joined by non-adjacent chords when
+	 * [suppressBoundaryDiagonals] is set; by default every loop vertex is protected.
+	 */
 	private fun triangulateDomain(
 		loops: List<List<Point>>,
 		interiorCandidates: List<Point>,
 		spacing: Double,
 		suppressBoundaryDiagonals: Boolean,
+		chordFreeVertices: BooleanArray? = null,
 	): LocalMesh? {
 		if (!validDomain(loops)) return null
 		val points = loops.flatten().toMutableList()
@@ -789,8 +846,8 @@ internal object AdaptiveMeshGenerator {
 				insertInteriorPoint(candidate, points, triangles)
 		}
 		val boundaryVertexCount = loops.sumOf { it.size }
-		relaxToConstrainedDelaunay(points, triangles, protectedEdges, boundaryVertexCount,
-			suppressBoundaryDiagonals)
+		val chordFree: (Int) -> Boolean = { it < boundaryVertexCount && (chordFreeVertices == null || chordFreeVertices[it]) }
+		relaxToConstrainedDelaunay(points, triangles, protectedEdges, chordFree, suppressBoundaryDiagonals)
 		var refinementBudget = MAX_QUALITY_REFINEMENT_POINTS
 		for (pass in 0 until 4) {
 			if (refinementBudget <= 0) break
@@ -803,11 +860,9 @@ internal object AdaptiveMeshGenerator {
 			)
 			if (inserted == 0) break
 			refinementBudget -= inserted
-			relaxToConstrainedDelaunay(points, triangles, protectedEdges, boundaryVertexCount,
-				suppressBoundaryDiagonals)
+			relaxToConstrainedDelaunay(points, triangles, protectedEdges, chordFree, suppressBoundaryDiagonals)
 		}
-		if (suppressBoundaryDiagonals && !splitBoundaryDiagonals(points, triangles, protectedEdges,
-				boundaryVertexCount)) return null
+		if (suppressBoundaryDiagonals && !splitBoundaryDiagonals(points, triangles, protectedEdges, chordFree)) return null
 		// Reject a failed mesh as a whole: dropping degenerate faces here would create cracks.
 		if (triangles.any { abs(cross(points[it.a], points[it.b], points[it.c])) <= GEOMETRY_EPSILON }) return null
 		val uses = triangles.flatMap { triangleEdges(it) }.groupingBy { it }.eachCount()
@@ -850,11 +905,11 @@ internal object AdaptiveMeshGenerator {
 	/** Remove chords between non-neighbor contour vertices without changing the contour itself. */
 	private fun splitBoundaryDiagonals(
 		points: MutableList<Point>, triangles: MutableList<Triangle>, protectedEdges: Set<Edge>,
-		boundaryVertexCount: Int,
+		chordFree: (Int) -> Boolean,
 	): Boolean {
 		while (true) {
 			val diagonal = triangles.asSequence().flatMap { triangleEdges(it).asSequence() }
-				.firstOrNull { it.low < boundaryVertexCount && it.high < boundaryVertexCount && it !in protectedEdges }
+				.firstOrNull { chordFree(it.low) && chordFree(it.high) && it !in protectedEdges }
 				?: return true
 			val midpoint = lerp(points[diagonal.low], points[diagonal.high], 0.5)
 			if (!insertInteriorPoint(midpoint, points, triangles)) return false
@@ -867,9 +922,12 @@ internal object AdaptiveMeshGenerator {
 		val remaining = boundary.indices.toMutableList()
 		val triangles = mutableListOf<Triangle>()
 		var guard = boundary.size * boundary.size
+		// Resume the scan where the last ear was cut; restarting at zero is cubic on long rings.
+		var cursor = 0
 		while (remaining.size > 3 && guard-- > 0) {
 			var clipped = false
-			for (position in remaining.indices) {
+			for (step in remaining.indices) {
+				val position = (cursor + step) % remaining.size
 				val previous = remaining[(position - 1 + remaining.size) % remaining.size]
 				val current = remaining[position]
 				val next = remaining[(position + 1) % remaining.size]
@@ -886,6 +944,7 @@ internal object AdaptiveMeshGenerator {
 				if (containsVertex) continue
 				triangles += Triangle(previous, current, next)
 				remaining.removeAt(position)
+				cursor = (position - 1 + remaining.size) % remaining.size
 				clipped = true
 				break
 			}
@@ -947,7 +1006,7 @@ internal object AdaptiveMeshGenerator {
 		points: List<Point>,
 		triangles: MutableList<Triangle>,
 		protectedEdges: Set<Edge>,
-		boundaryVertexCount: Int = 0,
+		chordFree: (Int) -> Boolean = { false },
 		suppressBoundaryDiagonals: Boolean = false,
 	) {
 		// A fan created by ear clipping a long, narrow strand may advance only one diagonal per pass
@@ -971,11 +1030,9 @@ internal object AdaptiveMeshGenerator {
 				if (firstOpposite == secondOpposite) continue
 				val replacement = edgeOf(firstOpposite, secondOpposite)
 				if (replacement in protectedEdges || adjacency.containsKey(replacement)) continue
-				if (suppressBoundaryDiagonals && replacement.low < boundaryVertexCount &&
-					replacement.high < boundaryVertexCount) continue
+				if (suppressBoundaryDiagonals && chordFree(replacement.low) && chordFree(replacement.high)) continue
 				if (!convexForFlip(edge, firstOpposite, secondOpposite, points)) continue
-				val removesBoundaryChord = suppressBoundaryDiagonals && edge.low < boundaryVertexCount &&
-					edge.high < boundaryVertexCount
+				val removesBoundaryChord = suppressBoundaryDiagonals && chordFree(edge.low) && chordFree(edge.high)
 				if (!removesBoundaryChord &&
 					!strictlyInCircumcircle(points[secondOpposite], edge.low, edge.high, firstOpposite, points)) continue
 				triangles[firstIndex] = Triangle(firstOpposite, secondOpposite, edge.low)
@@ -1095,105 +1152,6 @@ internal object AdaptiveMeshGenerator {
 		return accepted.map { it.point }
 	}
 
-	/** Axis-aligned multi-scale sampling; density follows the same boundary distance field. */
-	private fun sampleAdaptiveQuadtree(
-		mask: SolidAlphaMask, contours: List<List<Point>>, edgeSpacing: Double,
-		interiorSpacing: Double, budgetSpacing: Double,
-	): List<Point> {
-		val minimum = minimumFillSpacing(edgeSpacing, interiorSpacing, budgetSpacing)
-		val points = mutableListOf<Point>()
-		var root = 1.0
-		while (root < max(mask.width, mask.height)) root *= 2.0
-		fun visit(left: Double, top: Double, size: Double) {
-			if (left >= mask.width || top >= mask.height || points.size >= MAX_INTERIOR_SAMPLES) return
-			val center = Point(left + size * 0.5, top + size * 0.5)
-			val distance = contourDistance(center, contours)
-			val centerSolid = mask.isSolid(center.x.toInt(), center.y.toInt())
-			val touchesContour = distance <= size * 0.7071067811865476
-			if (!centerSolid && !touchesContour) return
-			val radius = localFillRadius(distance, minimum, interiorSpacing)
-			if (size > max(minimum, radius * 1.15) || (touchesContour && size > minimum * 1.2)) {
-				val half = size * 0.5
-				visit(left, top, half)
-				visit(left + half, top, half)
-				visit(left, top + half, half)
-				visit(left + half, top + half, half)
-			} else if (centerSolid) {
-				points += center
-			}
-		}
-		visit(0.0, 0.0, root)
-		return points
-	}
-
-	private fun pointInPolygon(point: Point, polygon: List<Point>): Boolean {
-		var inside = false
-		var previous = polygon.last()
-		for (current in polygon) {
-			if ((current.y > point.y) != (previous.y > point.y)) {
-				val crossingX = (previous.x - current.x) * (point.y - current.y) /
-					(previous.y - current.y) + current.x
-				if (point.x < crossingX) inside = !inside
-			}
-			previous = current
-		}
-		return inside
-	}
-
-	private fun pointInTriangleInclusive(point: Point, a: Point, b: Point, c: Point): Boolean {
-		val ab = cross(a, b, point)
-		val bc = cross(b, c, point)
-		val ca = cross(c, a, point)
-		val hasNegative = ab < -GEOMETRY_EPSILON || bc < -GEOMETRY_EPSILON || ca < -GEOMETRY_EPSILON
-		val hasPositive = ab > GEOMETRY_EPSILON || bc > GEOMETRY_EPSILON || ca > GEOMETRY_EPSILON
-		return !(hasNegative && hasPositive)
-	}
-
-	private fun pointOnSegment(point: Point, a: Point, b: Point): Boolean {
-		val length = distance(a, b).coerceAtLeast(GEOMETRY_EPSILON)
-		if (abs(cross(a, b, point)) / length > 1e-7) return false
-		return point.x >= min(a.x, b.x) - 1e-7 && point.x <= max(a.x, b.x) + 1e-7 &&
-			point.y >= min(a.y, b.y) - 1e-7 && point.y <= max(a.y, b.y) + 1e-7
-	}
-
-	private fun distanceSquaredToLoop(point: Point, loop: List<Point>): Double {
-		var best = Double.POSITIVE_INFINITY
-		for (index in loop.indices) {
-			val a = loop[index]
-			val b = loop[(index + 1) % loop.size]
-			val dx = b.x - a.x
-			val dy = b.y - a.y
-			val lengthSquared = dx * dx + dy * dy
-			val t = if (lengthSquared <= GEOMETRY_EPSILON) 0.0 else {
-				((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared
-			}.coerceIn(0.0, 1.0)
-			best = min(best, distanceSquared(point, Point(a.x + dx * t, a.y + dy * t)))
-		}
-		return best
-	}
-
-	private fun hasSelfIntersection(loop: List<Point>): Boolean {
-		if (loop.size < 4) return false
-		for (first in loop.indices) {
-			val firstNext = (first + 1) % loop.size
-			for (second in first + 1 until loop.size) {
-				val secondNext = (second + 1) % loop.size
-				if (first == second || firstNext == second || secondNext == first) continue
-				if (first == 0 && secondNext == 0) continue
-				if (segmentsProperlyIntersect(loop[first], loop[firstNext], loop[second], loop[secondNext])) return true
-			}
-		}
-		return false
-	}
-
-	private fun segmentsProperlyIntersect(a: Point, b: Point, c: Point, d: Point): Boolean {
-		val abC = cross(a, b, c)
-		val abD = cross(a, b, d)
-		val cdA = cross(c, d, a)
-		val cdB = cross(c, d, b)
-		return abC * abD < -GEOMETRY_EPSILON && cdA * cdB < -GEOMETRY_EPSILON
-	}
-
 	private fun evaluate(cubic: Cubic, t: Double): Point {
 		val oneMinus = 1.0 - t
 		val w0 = oneMinus * oneMinus * oneMinus
@@ -1206,18 +1164,6 @@ internal object AdaptiveMeshGenerator {
 		)
 	}
 
-	private fun lerp(a: Point, b: Point, t: Double): Point =
-		Point(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
-
-	private fun signedAreaTwice(points: List<Point>): Double {
-		var area = 0.0
-		for (index in points.indices) {
-			val next = (index + 1) % points.size
-			area += points[index].x * points[next].y - points[next].x * points[index].y
-		}
-		return area
-	}
-
 	private fun contourArea(points: IntArray): Double {
 		var areaTwice = 0.0
 		val count = points.size / 2
@@ -1228,30 +1174,4 @@ internal object AdaptiveMeshGenerator {
 		}
 		return abs(areaTwice) * 0.5
 	}
-
-	private fun triangleEdges(triangle: Triangle): List<Edge> = listOf(
-		edgeOf(triangle.a, triangle.b),
-		edgeOf(triangle.b, triangle.c),
-		edgeOf(triangle.c, triangle.a),
-	)
-
-	private fun oppositeVertex(triangle: Triangle, edge: Edge): Int =
-		when {
-			triangle.a != edge.low && triangle.a != edge.high -> triangle.a
-			triangle.b != edge.low && triangle.b != edge.high -> triangle.b
-			else -> triangle.c
-		}
-
-	private fun edgeOf(a: Int, b: Int): Edge = Edge(min(a, b), max(a, b))
-
-	private fun distance(a: Point, b: Point): Double = hypot(a.x - b.x, a.y - b.y)
-
-	private fun distanceSquared(a: Point, b: Point): Double {
-		val dx = a.x - b.x
-		val dy = a.y - b.y
-		return dx * dx + dy * dy
-	}
-
-	private fun cross(a: Point, b: Point, c: Point): Double =
-		(b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
 }

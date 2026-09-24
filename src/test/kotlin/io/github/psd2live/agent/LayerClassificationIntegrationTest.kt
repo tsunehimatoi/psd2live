@@ -78,7 +78,7 @@ class LayerClassificationIntegrationTest {
                 })
                 assertEquals(2.0f, workspace.projectSettings().getValue("headStrength").jsonPrimitive.float)
                 val meshed = workspace.setLayerMeshSettings(configured.historyNodeId, id, buildJsonObject {
-                    put("outerMargin", 3.0); put("innerMarginEnabled", true)
+                    put("outerMargin", 3.0); put("edgeMode", "DOUBLE")
                 }, reset = false)
                 assertEquals(3f, viewModel.state.value.meshOverrides.getValue(id).outerMargin)
                 val output = workspace.exportModel(meshed.historyNodeId, temp.resolve("export").toString())

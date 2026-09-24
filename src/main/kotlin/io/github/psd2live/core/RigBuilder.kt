@@ -1567,9 +1567,8 @@ object RigBuilder {
 		val outerMargin = if (config.mouthOutlineEnabled && !config.meshOnly &&
             layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)) 0f
             else override?.outerMargin ?: config.meshOuterMargin
-		val innerMargin = override?.innerMargin ?: config.meshInnerMargin
-		// Currently only face meshes use dual-line envelope by default; all other parts use single-line:
-		val innerMarginEnabled = override?.innerMarginEnabled ?: (layer.semantic.tag == SemanticTag.FACE)
+		val edgeMode = override?.edgeMode ?: config.meshEdgeMode
+		val edgeWidth = override?.edgeWidth ?: config.meshEdgeWidth
 		val effectiveSpacing = if (config.mouthOutlineEnabled && !config.meshOnly &&
             layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)) {
             override?.maxEdgeDistance ?: max(6f, config.meshMaxEdgeDistance * semanticDensity)
@@ -1583,7 +1582,7 @@ object RigBuilder {
 		if (layer.semantic.tag in setOf(SemanticTag.TOOTH_T, SemanticTag.TOOTH_B)) {
 			return buildRectangularFallbackMesh(layer, parentFrame, headSpace, placement, atlasWidth, atlasHeight, effectiveSpacing)
 		}
-		val settings = MeshSettings(outerMargin, innerMarginEnabled, innerMargin, effectiveSpacing,
+		val settings = MeshSettings(outerMargin, edgeMode, edgeWidth, effectiveSpacing,
 			effectiveInteriorDensity, override?.fillAlgorithm ?: config.meshFillAlgorithm,
 			override?.suppressBoundaryDiagonals ?: config.meshSuppressBoundaryDiagonals)
 		val adaptive = if (meshCache != null) meshCache.generate(width, height, layer.source.raster.rgba, config.alphaThreshold, settings)

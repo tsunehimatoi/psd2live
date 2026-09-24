@@ -52,6 +52,7 @@ import io.github.psd2live.core.ClassifiedLayer
 import io.github.psd2live.core.LayerClassificationOverride
 import io.github.psd2live.core.LayerType
 import io.github.psd2live.core.MeshFillAlgorithm
+import io.github.psd2live.core.MeshEdgeMode
 import io.github.psd2live.core.MouthLipLayer
 import io.github.psd2live.core.MouthLipLayers
 import io.github.psd2live.core.SemanticTag
@@ -461,8 +462,18 @@ internal fun ModelSettingsSection(
 				) {
 					Text(tr("mesh.settings.shapeGroup"), style = typography.caption.copy(fontSize = 9.5.sp,
 						fontWeight = FontWeight.Bold), color = colors.textMuted)
+					CompactDropdown(
+						items = MeshEdgeMode.entries,
+						selectedItem = state.meshEdgeMode,
+						onItemSelected = viewModel::setMeshEdgeMode,
+						itemLabel = { tr("mesh.settings.edgeMode.${it.name}") },
+						enabled = !isBusy,
+						modifier = Modifier.fillMaxWidth(),
+					)
+					Text(tr("mesh.settings.edgeModeHint.${state.meshEdgeMode.name}"),
+						style = typography.caption.copy(fontSize = 9.sp), color = colors.textMuted)
 					// Form Row: Mesh Outer Margin
-					Row(
+					if (state.meshEdgeMode == MeshEdgeMode.SINGLE) Row(
 						modifier = Modifier.fillMaxWidth(),
 						verticalAlignment = Alignment.CenterVertically,
 					) {
@@ -501,13 +512,13 @@ internal fun ModelSettingsSection(
 						)
 					}
 
-					// Form Row: Mesh Inner Margin (内边缘距离)
-					Row(
+					// Edge band width for double and triple modes
+					if (state.meshEdgeMode != MeshEdgeMode.SINGLE) Row(
 						modifier = Modifier.fillMaxWidth(),
 						verticalAlignment = Alignment.CenterVertically,
 					) {
 						Text(
-							text = tr("settings.meshInnerMargin"),
+							text = tr("mesh.settings.edgeWidth"),
 							style = typography.body.copy(fontSize = 10.5.sp),
 							color = colors.textPrimary,
 							modifier = Modifier.width(76.dp),
@@ -515,8 +526,8 @@ internal fun ModelSettingsSection(
 						)
 						Spacer(Modifier.width(5.dp))
 						CompactSlider(
-							value = state.meshInnerMargin,
-							onValueChange = viewModel::setMeshInnerMargin,
+							value = state.meshEdgeWidth,
+							onValueChange = viewModel::setMeshEdgeWidth,
 							onValueChangeStarted = viewModel::beginEditorGesture,
 							onValueChangeFinished = viewModel::endEditorGesture,
 							valueRange = 0.5f..20f,
@@ -526,10 +537,10 @@ internal fun ModelSettingsSection(
 						)
 						Spacer(Modifier.width(4.dp))
 						CompactNumberSpinner(
-							onEditStart = { viewModel.beginEditorField("setMeshInnerMargin") },
-							onEditEnd = { viewModel.endEditorField("setMeshInnerMargin") },
-							value = state.meshInnerMargin.toDouble(),
-							onValueChange = { viewModel.setMeshInnerMargin(it.toFloat()) },
+							onEditStart = { viewModel.beginEditorField("setMeshEdgeWidth") },
+							onEditEnd = { viewModel.endEditorField("setMeshEdgeWidth") },
+							value = state.meshEdgeWidth.toDouble(),
+							onValueChange = { viewModel.setMeshEdgeWidth(it.toFloat()) },
 							min = 0.5,
 							max = 32.0,
 							step = 0.5,

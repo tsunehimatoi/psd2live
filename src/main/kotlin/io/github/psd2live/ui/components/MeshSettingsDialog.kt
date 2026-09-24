@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.psd2live.core.MeshSettings
 import io.github.psd2live.core.MeshFillAlgorithm
+import io.github.psd2live.core.MeshEdgeMode
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.ComponentPalette
 import io.github.psd2live.ui.theme.LocalToolColors
@@ -59,21 +60,21 @@ fun MeshSettingsDialog(
 	val typography = LocalToolTypography.current
 
 	var outerMargin by remember(target) { mutableStateOf(target.currentSettings.outerMargin) }
-	var innerMarginEnabled by remember(target) { mutableStateOf(target.currentSettings.innerMarginEnabled) }
-	var innerMargin by remember(target) { mutableStateOf(target.currentSettings.innerMargin) }
+	var edgeMode by remember(target) { mutableStateOf(target.currentSettings.edgeMode) }
+	var edgeWidth by remember(target) { mutableStateOf(target.currentSettings.edgeWidth) }
 	var maxEdgeDistance by remember(target) { mutableStateOf(target.currentSettings.maxEdgeDistance) }
 	var interiorDensity by remember(target) { mutableStateOf(target.currentSettings.interiorDensity) }
 	var fillAlgorithm by remember(target) { mutableStateOf(target.currentSettings.fillAlgorithm) }
 	var suppressBoundaryDiagonals by remember(target) { mutableStateOf(target.currentSettings.suppressBoundaryDiagonals) }
 	fun settings(
 		outer: Float = outerMargin,
-		innerEnabled: Boolean = innerMarginEnabled,
-		inner: Float = innerMargin,
+		mode: MeshEdgeMode = edgeMode,
+		width: Float = edgeWidth,
 		edgeDistance: Float = maxEdgeDistance,
 		density: Float = interiorDensity,
 		algorithm: MeshFillAlgorithm = fillAlgorithm,
 		suppressDiagonals: Boolean = suppressBoundaryDiagonals,
-	) = MeshSettings(outer, innerEnabled, inner, edgeDistance, density, algorithm, suppressDiagonals)
+	) = MeshSettings(outer, mode, width, edgeDistance, density, algorithm, suppressDiagonals)
 
 	Box(
 		modifier = Modifier
@@ -136,8 +137,17 @@ fun MeshSettingsDialog(
 
 			Text(tr("mesh.settings.shapeGroup"), style = typography.caption.copy(fontSize = 10.sp,
 				fontWeight = FontWeight.Bold), color = colors.textMuted)
+			CompactDropdown(
+				items = MeshEdgeMode.entries,
+				selectedItem = edgeMode,
+				onItemSelected = { edgeMode = it; onPreview(settings(mode = it)) },
+				itemLabel = { tr("mesh.settings.edgeMode.${it.name}") },
+				modifier = Modifier.fillMaxWidth(),
+			)
+			Text(tr("mesh.settings.edgeModeHint.${edgeMode.name}"), style = typography.caption.copy(fontSize = 9.5.sp),
+				color = colors.textMuted)
 			// 1. Outer Margin
-			Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+			if (edgeMode == MeshEdgeMode.SINGLE) Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
 				Row(
 					modifier = Modifier.fillMaxWidth(),
 					verticalAlignment = Alignment.CenterVertically,
@@ -179,41 +189,31 @@ fun MeshSettingsDialog(
 				}
 			}
 
-			// 2. Inner Margin (内边缘开关与距离边缘距离)
-			Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+			if (edgeMode != MeshEdgeMode.SINGLE) Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
 				Row(
 					modifier = Modifier.fillMaxWidth(),
 					verticalAlignment = Alignment.CenterVertically,
 					horizontalArrangement = Arrangement.SpaceBetween,
 				) {
-					CompactCheckbox(
-						checked = innerMarginEnabled,
-						onCheckedChange = { innerMarginEnabled = it; onPreview(settings(innerEnabled = it)) },
-						label = tr("mesh.settings.innerMarginEnabled"),
-					)
-					if (innerMarginEnabled) {
-						Text(
-							text = "${"%.1f".format(innerMargin)} px",
-							style = typography.monoSmall.copy(fontSize = 9.5.sp),
-							color = colors.textMuted,
-						)
-					}
+					Text(tr("mesh.settings.edgeWidth"), style = typography.body.copy(fontSize = 10.5.sp,
+						fontWeight = FontWeight.Medium), color = colors.textPrimary)
+					Text("${"%.1f".format(edgeWidth)} px", style = typography.monoSmall.copy(fontSize = 9.5.sp),
+						color = colors.textMuted)
 				}
-				if (innerMarginEnabled) {
 					Row(
 						modifier = Modifier.fillMaxWidth(),
 						verticalAlignment = Alignment.CenterVertically,
 						horizontalArrangement = Arrangement.spacedBy(6.dp),
 					) {
 						CompactSlider(
-							value = innerMargin,
-							onValueChange = { innerMargin = it; onPreview(settings(inner = it)) },
+							value = edgeWidth,
+							onValueChange = { edgeWidth = it; onPreview(settings(width = it)) },
 							valueRange = 0.5f..20f,
 							modifier = Modifier.weight(1f),
 						)
 						CompactNumberSpinner(
-							value = innerMargin.toDouble(),
-							onValueChange = { innerMargin = it.toFloat(); onPreview(settings(inner = it.toFloat())) },
+							value = edgeWidth.toDouble(),
+							onValueChange = { edgeWidth = it.toFloat(); onPreview(settings(width = it.toFloat())) },
 							min = 0.5,
 							max = 32.0,
 							step = 0.5,
@@ -223,7 +223,6 @@ fun MeshSettingsDialog(
 							height = 22.dp,
 						)
 					}
-				}
 			}
 
 			Text(tr("mesh.settings.samplingGroup"), style = typography.caption.copy(fontSize = 10.sp,

@@ -186,7 +186,8 @@ class PSD2LivePipeline {
 	private fun meshSettingsChangedDrawableIds(current: RigPreviewModel, config: PipelineConfig): Set<String> {
 		val globalSettingsChanged = current.config.meshSpacing != config.meshSpacing ||
 			current.config.meshOuterMargin != config.meshOuterMargin ||
-			current.config.meshInnerMargin != config.meshInnerMargin ||
+			current.config.meshEdgeMode != config.meshEdgeMode ||
+			current.config.meshEdgeWidth != config.meshEdgeWidth ||
 			current.config.meshMaxEdgeDistance != config.meshMaxEdgeDistance ||
 			current.config.meshInteriorDensity != config.meshInteriorDensity ||
 			current.config.meshFillAlgorithm != config.meshFillAlgorithm ||

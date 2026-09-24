@@ -1,6 +1,7 @@
 package io.github.psd2live.ui.state
 
 import io.github.psd2live.core.MeshSettings
+import io.github.psd2live.core.MeshEdgeMode
 import io.github.psd2live.core.MeshFillAlgorithm
 import io.github.psd2live.core.SemanticTag
 
@@ -269,7 +270,8 @@ data class PSD2LiveState(
 	val textureUpscale: io.github.psd2live.core.TextureUpscaleConfig = io.github.psd2live.core.TextureUpscaleConfig(),
 	val meshSpacing: Int = 40,
 	val meshOuterMargin: Float = 1.0f,
-	val meshInnerMargin: Float = 10.0f,
+	val meshEdgeMode: MeshEdgeMode = MeshEdgeMode.SINGLE,
+	val meshEdgeWidth: Float = 10.0f,
 	val meshMaxEdgeDistance: Float = 6.0f,
 	val meshInteriorDensity: Float = 40.0f,
 	val meshFillAlgorithm: MeshFillAlgorithm = MeshFillAlgorithm.GRADED_POISSON,
@@ -460,7 +462,8 @@ data class PSD2LiveState(
 			texturePadding = texturePadding,
 			meshSpacing = meshSpacing,
 			meshOuterMargin = meshOuterMargin,
-			meshInnerMargin = meshInnerMargin,
+			meshEdgeMode = meshEdgeMode,
+			meshEdgeWidth = meshEdgeWidth,
 			meshMaxEdgeDistance = meshMaxEdgeDistance,
 			meshInteriorDensity = meshInteriorDensity,
 			meshFillAlgorithm = meshFillAlgorithm,
@@ -524,11 +527,10 @@ data class PSD2LiveState(
 			SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE -> 0.45f
 			else -> 1f
 		}
-		val isFace = layer?.semantic?.tag == SemanticTag.FACE
 		return MeshSettings(
 			outerMargin = meshOuterMargin,
-			innerMarginEnabled = isFace,
-			innerMargin = meshInnerMargin,
+			edgeMode = meshEdgeMode,
+			edgeWidth = meshEdgeWidth,
 			maxEdgeDistance = kotlin.math.max(12f, meshMaxEdgeDistance * semanticDensity),
 			interiorDensity = kotlin.math.max(12f, meshInteriorDensity * semanticDensity),
 			fillAlgorithm = meshFillAlgorithm,

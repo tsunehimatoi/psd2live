@@ -1154,10 +1154,16 @@ class PSD2LiveViewModel : AutoCloseable {
 	    editorChanged()
 	}
 
-	fun setMeshInnerMargin(margin: Float) {
-		updateState { it.copy(meshInnerMargin = margin.coerceIn(0.5f, 32f)) }
+	fun setMeshEdgeWidth(width: Float) {
+		updateState { it.copy(meshEdgeWidth = width.coerceIn(0.5f, 32f)) }
 		schedulePreviewRebuild()
 	    editorChanged()
+	}
+
+	fun setMeshEdgeMode(mode: io.github.psd2live.core.MeshEdgeMode) {
+		updateState { it.copy(meshEdgeMode = mode) }
+		schedulePreviewRebuild()
+		editorChanged()
 	}
 
 	fun setMeshMaxEdgeDistance(distance: Float) {
@@ -1675,7 +1681,8 @@ class PSD2LiveViewModel : AutoCloseable {
 				dynamicsSubExpanded = false,
 				meshSpacing = 40,
 				meshOuterMargin = 1.0f,
-				meshInnerMargin = 10.0f,
+				meshEdgeMode = io.github.psd2live.core.MeshEdgeMode.SINGLE,
+				meshEdgeWidth = 10.0f,
 				meshMaxEdgeDistance = 6.0f,
 				meshInteriorDensity = 40.0f,
 				meshFillAlgorithm = io.github.psd2live.core.MeshFillAlgorithm.GRADED_POISSON,
