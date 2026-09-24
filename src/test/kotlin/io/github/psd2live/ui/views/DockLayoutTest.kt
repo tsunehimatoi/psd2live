@@ -39,4 +39,14 @@ class DockLayoutTest {
         val custom = dockBesideModule(base, "canvas:custom", "canvas", DockSide.RIGHT)
         assertSame(custom, repairLegacyCanvasDocking(custom))
     }
+
+    @Test fun insertsMeshTabIntoLegacyInspectorLeaf() {
+        val legacy = DockNode(modules = listOf("layers", "parameters", "tools", "inspector", "animation", "physics"))
+        val updated = ensureMeshDockTab(legacy)
+        assertEquals(
+            listOf("layers", "parameters", "tools", "mesh", "inspector", "animation", "physics"),
+            updated.modules,
+        )
+        assertSame(updated, ensureMeshDockTab(updated))
+    }
 }

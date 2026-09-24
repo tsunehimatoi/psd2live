@@ -815,6 +815,7 @@ private fun DockModuleContent(
 		"layers" -> LayersTableView(state, vm)
 		"parameters" -> ParametersListView(state, vm)
 		"tools" -> ToolDetailsView(vm.canvasEditorFor(state.activeCanvas.id), vm, state)
+		"mesh" -> MeshPanelView(state, vm)
 		"inspector" -> InspectorPanelView(vm.canvasEditorFor(state.activeCanvas.id), vm, state)
 		"animation" -> AnimationPanelView(vm, state)
 		"physics" -> PhysicsPanelView(vm, state)

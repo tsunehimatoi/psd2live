@@ -76,6 +76,7 @@ internal val WINDOW_MODULES = listOf(
 	"layers",
 	"parameters",
 	"tools",
+	"mesh",
 	"inspector",
 	"animation",
 	"physics",
@@ -365,6 +366,7 @@ internal fun moduleTitle(id: String): String = when {
 		"layers" -> "tab.layers"
 		"parameters" -> "tab.parameters"
 		"tools" -> "tab.toolDetails"
+		"mesh" -> "tab.mesh"
 		"inspector" -> "tab.inspector"
 		"animation" -> "tab.animation"
 		"physics" -> "tab.physics"

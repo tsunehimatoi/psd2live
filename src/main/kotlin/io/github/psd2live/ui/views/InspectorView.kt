@@ -51,8 +51,6 @@ import androidx.compose.material.DropdownMenuItem
 import io.github.psd2live.core.ClassifiedLayer
 import io.github.psd2live.core.LayerClassificationOverride
 import io.github.psd2live.core.LayerType
-import io.github.psd2live.core.MeshFillAlgorithm
-import io.github.psd2live.core.MeshEdgeMode
 import io.github.psd2live.core.MouthLipLayer
 import io.github.psd2live.core.MouthLipLayers
 import io.github.psd2live.core.SemanticTag
@@ -71,7 +69,6 @@ import io.github.psd2live.ui.components.ExportActionSection
 import io.github.psd2live.ui.components.IconChevron
 import io.github.psd2live.ui.components.IconReset
 import io.github.psd2live.ui.components.IconTrash
-import io.github.psd2live.ui.components.MeshFillParameterControls
 import io.github.psd2live.ui.localizedName
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
@@ -119,11 +116,12 @@ fun InspectorView(
 
 		Divider(color = colors.divider, thickness = 1.dp)
 
-		// 3. Tabs Section: Layers, Parameters, Tool Details, Inspector, Animation & Physics
+		// 3. Tabs Section: Layers, Parameters, Tool Details, Mesh, Inspector, Animation & Physics
 		val inspectorTabs = listOf(
 			tr("tab.layers"),
 			tr("tab.parameters"),
 			tr("tab.toolDetails"),
+			tr("tab.mesh"),
 			tr("tab.inspector"),
 			tr("tab.animation"),
 			tr("tab.physics"),
@@ -132,9 +130,10 @@ fun InspectorView(
 			InspectorTab.LAYERS -> 0
 			InspectorTab.PARAMETERS -> 1
 			InspectorTab.TOOL_DETAILS -> 2
-			InspectorTab.INSPECTOR -> 3
-			InspectorTab.ANIMATION -> 4
-			InspectorTab.PHYSICS -> 5
+			InspectorTab.MESH -> 3
+			InspectorTab.INSPECTOR -> 4
+			InspectorTab.ANIMATION -> 5
+			InspectorTab.PHYSICS -> 6
 		}
 
 		CompactTabBar(
@@ -146,9 +145,10 @@ fun InspectorView(
 						0 -> InspectorTab.LAYERS
 						1 -> InspectorTab.PARAMETERS
 						2 -> InspectorTab.TOOL_DETAILS
-						3 -> InspectorTab.INSPECTOR
-						4 -> InspectorTab.ANIMATION
-						5 -> InspectorTab.PHYSICS
+						3 -> InspectorTab.MESH
+						4 -> InspectorTab.INSPECTOR
+						5 -> InspectorTab.ANIMATION
+						6 -> InspectorTab.PHYSICS
 						else -> InspectorTab.LAYERS
 					}
 				)
@@ -161,6 +161,7 @@ fun InspectorView(
 				InspectorTab.LAYERS -> LayersTableView(state, viewModel)
 				InspectorTab.PARAMETERS -> ParametersListView(state, viewModel)
 				InspectorTab.TOOL_DETAILS -> ToolDetailsView(viewModel.canvasEditor, viewModel, state)
+				InspectorTab.MESH -> MeshPanelView(state, viewModel)
 				InspectorTab.INSPECTOR -> InspectorPanelView(viewModel.canvasEditor, viewModel, state)
 				InspectorTab.ANIMATION -> AnimationPanelView(viewModel, state)
 				InspectorTab.PHYSICS -> PhysicsPanelView(viewModel, state)
@@ -420,259 +421,7 @@ internal fun ModelSettingsSection(
 
 			Divider(color = colors.divider.copy(alpha = 0.4f), thickness = 0.5.dp)
 
-			// Submenu 2: 几何网格 (Mesh Topology)
-			Row(
-				modifier = Modifier
-					.fillMaxWidth()
-					.clickable(enabled = !isBusy) {
-						viewModel.setMeshSubExpanded(!state.meshSubExpanded)
-					}
-					.padding(vertical = 1.dp),
-				verticalAlignment = Alignment.CenterVertically,
-			) {
-				IconChevron(
-					expanded = state.meshSubExpanded,
-					modifier = Modifier.size(9.dp),
-					tint = colors.textMuted,
-				)
-				Spacer(Modifier.width(4.dp))
-				Text(
-					text = tr("settings.group.mesh"),
-					style = typography.body.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium),
-					color = colors.textPrimary,
-				)
-				if (!state.meshSubExpanded) {
-					Spacer(Modifier.width(6.dp))
-					Text(
-							text = "${tr("settings.meshMaxEdgeDistance")} ${state.meshMaxEdgeDistance.toInt()} px · " +
-								"${tr("settings.meshInteriorDensity")} ${state.meshInteriorDensity.toInt()} px",
-						style = typography.caption.copy(fontSize = 9.5.sp),
-						color = colors.textMuted,
-							maxLines = 1,
-							overflow = TextOverflow.Ellipsis,
-					)
-				}
-			}
-
-			if (state.meshSubExpanded) {
-				Column(
-					modifier = Modifier
-						.fillMaxWidth()
-						.padding(start = 12.dp, top = 1.dp, bottom = 1.dp),
-					verticalArrangement = Arrangement.spacedBy(2.dp),
-				) {
-					Text(tr("mesh.settings.shapeGroup"), style = typography.caption.copy(fontSize = 9.5.sp,
-						fontWeight = FontWeight.Bold), color = colors.textMuted)
-					CompactDropdown(
-						items = MeshEdgeMode.entries,
-						selectedItem = state.meshEdgeMode,
-						onItemSelected = viewModel::setMeshEdgeMode,
-						itemLabel = { tr("mesh.settings.edgeMode.${it.name}") },
-						enabled = !isBusy,
-						modifier = Modifier.fillMaxWidth(),
-					)
-					Text(tr("mesh.settings.edgeModeHint.${state.meshEdgeMode.name}"),
-						style = typography.caption.copy(fontSize = 9.sp), color = colors.textMuted)
-					// Form Row: Mesh Outer Margin
-					if (state.meshEdgeMode == MeshEdgeMode.SINGLE) Row(
-						modifier = Modifier.fillMaxWidth(),
-						verticalAlignment = Alignment.CenterVertically,
-					) {
-						Text(
-							text = tr("settings.meshOuterMargin"),
-							style = typography.body.copy(fontSize = 10.5.sp),
-							color = colors.textPrimary,
-							modifier = Modifier.width(76.dp),
-							textAlign = TextAlign.Right,
-						)
-						Spacer(Modifier.width(5.dp))
-						CompactSlider(
-							value = state.meshOuterMargin,
-							onValueChange = viewModel::setMeshOuterMargin,
-							onValueChangeStarted = viewModel::beginEditorGesture,
-							onValueChangeFinished = viewModel::endEditorGesture,
-							valueRange = 0f..20f,
-							enabled = !isBusy,
-							height = 14.dp,
-							modifier = Modifier.weight(1f),
-						)
-						Spacer(Modifier.width(4.dp))
-						CompactNumberSpinner(
-							onEditStart = { viewModel.beginEditorField("setMeshOuterMargin") },
-							onEditEnd = { viewModel.endEditorField("setMeshOuterMargin") },
-							value = state.meshOuterMargin.toDouble(),
-							onValueChange = { viewModel.setMeshOuterMargin(it.toFloat()) },
-							min = 0.0,
-							max = 32.0,
-							step = 0.5,
-							decimals = 1,
-							unit = tr("settings.unit.px"),
-							enabled = !isBusy,
-							modifier = Modifier.width(62.dp),
-							height = 20.dp,
-						)
-					}
-
-					// Edge band width for double and triple modes
-					if (state.meshEdgeMode != MeshEdgeMode.SINGLE) Row(
-						modifier = Modifier.fillMaxWidth(),
-						verticalAlignment = Alignment.CenterVertically,
-					) {
-						Text(
-							text = tr("mesh.settings.edgeWidth"),
-							style = typography.body.copy(fontSize = 10.5.sp),
-							color = colors.textPrimary,
-							modifier = Modifier.width(76.dp),
-							textAlign = TextAlign.Right,
-						)
-						Spacer(Modifier.width(5.dp))
-						CompactSlider(
-							value = state.meshEdgeWidth,
-							onValueChange = viewModel::setMeshEdgeWidth,
-							onValueChangeStarted = viewModel::beginEditorGesture,
-							onValueChangeFinished = viewModel::endEditorGesture,
-							valueRange = 0.5f..20f,
-							enabled = !isBusy,
-							height = 14.dp,
-							modifier = Modifier.weight(1f),
-						)
-						Spacer(Modifier.width(4.dp))
-						CompactNumberSpinner(
-							onEditStart = { viewModel.beginEditorField("setMeshEdgeWidth") },
-							onEditEnd = { viewModel.endEditorField("setMeshEdgeWidth") },
-							value = state.meshEdgeWidth.toDouble(),
-							onValueChange = { viewModel.setMeshEdgeWidth(it.toFloat()) },
-							min = 0.5,
-							max = 32.0,
-							step = 0.5,
-							decimals = 1,
-							unit = tr("settings.unit.px"),
-							enabled = !isBusy,
-							modifier = Modifier.width(62.dp),
-							height = 20.dp,
-						)
-					}
-
-					Text(tr("mesh.settings.samplingGroup"), style = typography.caption.copy(fontSize = 9.5.sp,
-						fontWeight = FontWeight.Bold), color = colors.textMuted)
-					// Form Row: Max Edge Distance
-					Row(
-						modifier = Modifier.fillMaxWidth(),
-						verticalAlignment = Alignment.CenterVertically,
-					) {
-						Text(
-							text = tr("settings.meshMaxEdgeDistance"),
-							style = typography.body.copy(fontSize = 10.5.sp),
-							color = colors.textPrimary,
-							modifier = Modifier.width(76.dp),
-							textAlign = TextAlign.Right,
-						)
-						Spacer(Modifier.width(5.dp))
-						CompactSlider(
-							value = state.meshMaxEdgeDistance,
-							onValueChange = viewModel::setMeshMaxEdgeDistance,
-							onValueChangeStarted = viewModel::beginEditorGesture,
-							onValueChangeFinished = viewModel::endEditorGesture,
-							valueRange = 6f..128f,
-							enabled = !isBusy,
-							height = 14.dp,
-							modifier = Modifier.weight(1f),
-						)
-						Spacer(Modifier.width(4.dp))
-						CompactNumberSpinner(
-							onEditStart = { viewModel.beginEditorField("setMeshMaxEdgeDistance") },
-							onEditEnd = { viewModel.endEditorField("setMeshMaxEdgeDistance") },
-							value = state.meshMaxEdgeDistance.toDouble(),
-							onValueChange = { viewModel.setMeshMaxEdgeDistance(it.toFloat()) },
-							min = 6.0,
-							max = 128.0,
-							step = 4.0,
-							decimals = 0,
-							unit = tr("settings.unit.px"),
-							enabled = !isBusy,
-							modifier = Modifier.width(62.dp),
-							height = 20.dp,
-						)
-					}
-
-					// Form Row: Interior Mesh Density (内部网格密度)
-					Row(
-						modifier = Modifier.fillMaxWidth(),
-						verticalAlignment = Alignment.CenterVertically,
-					) {
-						Text(
-							text = tr("settings.meshInteriorDensity"),
-							style = typography.body.copy(fontSize = 10.5.sp),
-							color = colors.textPrimary,
-							modifier = Modifier.width(76.dp),
-							textAlign = TextAlign.Right,
-						)
-						Spacer(Modifier.width(5.dp))
-						CompactSlider(
-							value = state.meshInteriorDensity,
-							onValueChange = viewModel::setMeshInteriorDensity,
-							onValueChangeStarted = viewModel::beginEditorGesture,
-							onValueChangeFinished = viewModel::endEditorGesture,
-							valueRange = 6f..128f,
-							enabled = !isBusy,
-							height = 14.dp,
-							modifier = Modifier.weight(1f),
-						)
-						Spacer(Modifier.width(4.dp))
-						CompactNumberSpinner(
-							onEditStart = { viewModel.beginEditorField("setMeshInteriorDensity") },
-							onEditEnd = { viewModel.endEditorField("setMeshInteriorDensity") },
-							value = state.meshInteriorDensity.toDouble(),
-							onValueChange = { viewModel.setMeshInteriorDensity(it.toFloat()) },
-							min = 6.0,
-							max = 128.0,
-							step = 4.0,
-							decimals = 0,
-							unit = tr("settings.unit.px"),
-							enabled = !isBusy,
-							modifier = Modifier.width(62.dp),
-							height = 20.dp,
-						)
-					}
-					Text(tr("mesh.settings.fillAlgorithm"), style = typography.caption.copy(fontSize = 9.5.sp,
-						fontWeight = FontWeight.Bold), color = colors.textMuted)
-					CompactDropdown(
-						items = MeshFillAlgorithm.entries,
-						selectedItem = state.meshFillAlgorithm,
-						onItemSelected = viewModel::setMeshFillAlgorithm,
-						itemLabel = { tr("mesh.settings.fill.${it.name}") },
-						enabled = !isBusy,
-						modifier = Modifier.fillMaxWidth(),
-					)
-					Text(tr("mesh.settings.fillHint.${state.meshFillAlgorithm.name}"),
-						style = typography.caption.copy(fontSize = 9.sp), color = colors.textMuted)
-					MeshFillParameterControls(
-						algorithm = state.meshFillAlgorithm,
-						parameters = state.meshFillParameters,
-						onChange = viewModel::setMeshFillParameters,
-						enabled = !isBusy,
-						labelWidth = 76.dp,
-						onGestureStart = viewModel::beginEditorGesture,
-						onGestureEnd = viewModel::endEditorGesture,
-						onEditStart = { viewModel.beginEditorField("setMeshFillParameters.$it") },
-						onEditEnd = { viewModel.endEditorField("setMeshFillParameters.$it") },
-					)
-					Text(tr("mesh.settings.topologyGroup"), style = typography.caption.copy(fontSize = 9.5.sp,
-						fontWeight = FontWeight.Bold), color = colors.textMuted)
-					CompactCheckbox(
-						checked = state.meshSuppressBoundaryDiagonals,
-						onCheckedChange = viewModel::setMeshSuppressBoundaryDiagonals,
-						label = tr("mesh.settings.suppressBoundaryDiagonals"),
-						enabled = !isBusy,
-					)
-					Text(tr("mesh.settings.topologyHint"), style = typography.caption.copy(fontSize = 9.sp),
-						color = colors.textMuted)
-				}
-			}
-
-			Divider(color = colors.divider.copy(alpha = 0.4f), thickness = 0.5.dp)
-
-			// Submenu 3: 形变与口型 (Rigging & Facial)
+			// Submenu: 形变与口型 (Rigging & Facial)
 			Row(
 				modifier = Modifier
 					.fillMaxWidth()

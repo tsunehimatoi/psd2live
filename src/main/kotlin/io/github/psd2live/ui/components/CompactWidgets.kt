@@ -521,6 +521,28 @@ fun IconClose(
 	}
 }
 
+/** Circle with a lowercase “i” — toggle for optional help captions. */
+@Composable
+fun IconInfo(
+	modifier: Modifier = Modifier.size(12.dp),
+	tint: Color = LocalToolColors.current.textMuted,
+) {
+	Canvas(modifier = modifier) {
+		val stroke = Stroke(width = 1.2f, cap = StrokeCap.Round)
+		val r = minOf(size.width, size.height) / 2f
+		val c = Offset(size.width / 2f, size.height / 2f)
+		drawCircle(color = tint, radius = r - stroke.width / 2f, center = c, style = stroke)
+		drawCircle(color = tint, radius = r * 0.12f, center = Offset(c.x, c.y - r * 0.38f), style = Fill)
+		drawLine(
+			color = tint,
+			start = Offset(c.x, c.y - r * 0.12f),
+			end = Offset(c.x, c.y + r * 0.42f),
+			strokeWidth = stroke.width,
+			cap = StrokeCap.Round,
+		)
+	}
+}
+
 /** Vector Deform Path / Bezier Curve Icon */
 @Composable
 fun IconDeformPath(

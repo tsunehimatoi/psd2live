@@ -93,6 +93,7 @@ internal fun reconcileDockModules(
 
 /** Repair the exact root-level split produced by the old module-ID auto-placement bug. */
 internal fun repairLegacyCanvasDocking(saved: DockNode): DockNode {
+    val withMesh = ensureMeshDockTab(saved)
     val defaultShape = defaultDockLayout()
     fun sameDefaultShape(node: DockNode, expected: DockNode): Boolean =
         node.modules == expected.modules && node.horizontal == expected.horizontal && node.ratio == expected.ratio &&
@@ -112,8 +113,8 @@ internal fun repairLegacyCanvasDocking(saved: DockNode): DockNode {
         return base to (extras + added)
     }
 
-    val (base, extras) = unwrap(saved) ?: return saved
-    if (extras.isEmpty()) return saved
+    val (base, extras) = unwrap(withMesh) ?: return withMesh
+    if (extras.isEmpty()) return withMesh
     var repaired = base
     var anchor = "canvas"
     for (canvas in extras) {
@@ -121,6 +122,20 @@ internal fun repairLegacyCanvasDocking(saved: DockNode): DockNode {
         anchor = canvas
     }
     return repaired
+}
+
+/** Insert the mesh tab into the inspector leaf if an older saved layout is missing it. */
+internal fun ensureMeshDockTab(root: DockNode): DockNode {
+    if (root.allModules().contains("mesh")) return root
+    val host = root.containing("inspector") ?: root.containing("layers") ?: return root
+    return root.update(host.id) { node ->
+        val modules = node.modules.toMutableList()
+        val insertAt = modules.indexOf("inspector").takeIf { it >= 0 }
+            ?: (modules.indexOf("tools").takeIf { it >= 0 }?.plus(1))
+            ?: modules.size
+        modules.add(insertAt.coerceIn(0, modules.size), "mesh")
+        node.copy(modules = modules)
+    }
 }
 
 internal fun defaultDockLayout(): DockNode {
@@ -131,5 +146,5 @@ internal fun defaultDockLayout(): DockNode {
     return DockNode(ratio = .60f, first = workspace,
         second = DockNode(horizontal = false, ratio = .32f,
             first = DockNode(modules = listOf("settings")),
-            second = DockNode(modules = listOf("layers", "parameters", "tools", "inspector", "animation", "physics"))))
+            second = DockNode(modules = listOf("layers", "parameters", "tools", "mesh", "inspector", "animation", "physics"))))
 }

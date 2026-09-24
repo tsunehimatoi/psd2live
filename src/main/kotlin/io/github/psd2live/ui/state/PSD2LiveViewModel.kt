@@ -1196,6 +1196,25 @@ class PSD2LiveViewModel : AutoCloseable {
 		editorChanged()
 	}
 
+	/** Applies the global mesh defaults in one rebuild (panel “no selection” mode). */
+	fun setGlobalMeshSettings(settings: MeshSettings) {
+		updateState {
+			it.copy(
+				meshOuterMargin = settings.outerMargin.coerceIn(0f, 32f),
+				meshEdgeMode = settings.edgeMode,
+				meshEdgeWidth = settings.edgeWidth.coerceIn(0.5f, 32f),
+				meshMaxEdgeDistance = settings.maxEdgeDistance.coerceIn(6f, 128f),
+				meshSpacing = settings.maxEdgeDistance.toInt().coerceIn(16, 128),
+				meshInteriorDensity = settings.interiorDensity.coerceIn(6f, 128f),
+				meshFillAlgorithm = settings.fillAlgorithm,
+				meshSuppressBoundaryDiagonals = settings.suppressBoundaryDiagonals,
+				meshFillParameters = settings.fillParameters,
+			)
+		}
+		schedulePreviewRebuild()
+		editorChanged()
+	}
+
 	fun setPartMeshSettings(layerId: String, settings: MeshSettings) {
 		clearMeshSettingsPreviewState(layerId)
 		updateState { it.copy(meshOverrides = it.meshOverrides + (layerId to settings)) }
@@ -1661,11 +1680,6 @@ class PSD2LiveViewModel : AutoCloseable {
 	    markWorkspaceChanged()
 	}
 
-	fun setMeshSubExpanded(expanded: Boolean) {
-		updateState { it.copy(meshSubExpanded = expanded) }
-	    markWorkspaceChanged()
-	}
-
 	fun setStrengthSubExpanded(expanded: Boolean) {
 		updateState { it.copy(strengthSubExpanded = expanded) }
 	    markWorkspaceChanged()
@@ -1682,7 +1696,6 @@ class PSD2LiveViewModel : AutoCloseable {
 				atlasSize = 4096,
                 textureUpscale = io.github.psd2live.core.TextureUpscaleConfig(),
 				textureSubExpanded = false,
-				meshSubExpanded = false,
 				strengthSubExpanded = false,
 				dynamicsSubExpanded = false,
 				meshSpacing = 40,

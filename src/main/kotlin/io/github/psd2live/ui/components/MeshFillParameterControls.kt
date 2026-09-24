@@ -77,6 +77,7 @@ fun MeshFillParameterControls(
 	onChange: (MeshFillParameters) -> Unit,
 	enabled: Boolean = true,
 	labelWidth: Dp? = null,
+	showHints: Boolean = true,
 	onGestureStart: () -> Unit = {},
 	onGestureEnd: () -> Unit = {},
 	onEditStart: (String) -> Unit = {},
@@ -87,7 +88,7 @@ fun MeshFillParameterControls(
 	for (control in fillControls(algorithm, parameters)) key(algorithm, control.key) {
 		// Reads the parameters at event time: a slider drag outlives the composition that started it.
 		val update = { v: Float -> change(control.update(latest, v.coerceIn(control.range))) }
-		FillControlRow(control, update, enabled, labelWidth, onGestureStart, onGestureEnd,
+		FillControlRow(control, update, enabled, labelWidth, showHints, onGestureStart, onGestureEnd,
 			{ onEditStart(control.key) }, { onEditEnd(control.key) })
 	}
 }
@@ -98,6 +99,7 @@ private fun FillControlRow(
 	update: (Float) -> Unit,
 	enabled: Boolean,
 	labelWidth: Dp?,
+	showHints: Boolean,
 	onGestureStart: () -> Unit,
 	onGestureEnd: () -> Unit,
 	onEditStart: () -> Unit,
@@ -130,8 +132,10 @@ private fun FillControlRow(
 			}
 		}
 	}
-	Text(tr("mesh.settings.fillParamHint.${control.key}"), style = typography.caption.copy(fontSize = 9.sp),
-		color = colors.textMuted)
+	if (showHints) {
+		Text(tr("mesh.settings.fillParamHint.${control.key}"), style = typography.caption.copy(fontSize = 9.sp),
+			color = colors.textMuted)
+	}
 }
 
 @Composable

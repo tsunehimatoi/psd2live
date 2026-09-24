@@ -32,7 +32,7 @@ internal const val DEFAULT_WORKSPACE_ID = "workspace"
 
 /** Right-hand dock modules the title-bar inspector toggle shows and hides together. */
 internal val INSPECTOR_DOCK_MODULES = setOf(
-	"settings", "layers", "parameters", "tools", "inspector", "animation", "physics",
+	"settings", "layers", "parameters", "tools", "mesh", "inspector", "animation", "physics",
 )
 
 /** Modules a fresh workspace layout already contains. History is added from the window menu. */
@@ -218,6 +218,7 @@ enum class InspectorTab {
 	LAYERS,
 	PARAMETERS,
 	TOOL_DETAILS,
+	MESH,
 	INSPECTOR,
 	ANIMATION,
 	PHYSICS,
@@ -316,7 +317,6 @@ data class PSD2LiveState(
 	val dynamicsSubExpanded: Boolean = false,
 	val projectOutputsExpanded: Boolean = false,
 	val textureSubExpanded: Boolean = false,
-	val meshSubExpanded: Boolean = false,
 	val strengthSubExpanded: Boolean = false,
 	val advancedExpanded: Boolean = false,
 	val isAnalyzing: Boolean = false,

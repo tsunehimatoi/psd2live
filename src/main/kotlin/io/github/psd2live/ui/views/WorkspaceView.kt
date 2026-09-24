@@ -112,8 +112,6 @@ import io.github.psd2live.ui.components.IconTrash
 import io.github.psd2live.ui.components.IconWarpDeformer
 import io.github.psd2live.ui.components.DrawOrderRuler
 import io.github.psd2live.ui.components.DrawOrderInputDialog
-import io.github.psd2live.ui.components.MeshSettingsDialog
-import io.github.psd2live.ui.components.MeshSettingsDialogTarget
 import io.github.psd2live.ui.components.IconContextualWarp
 import io.github.psd2live.ui.components.IconMeshWireframe
 import io.github.psd2live.ui.components.RebuildMeshPromptDialog
@@ -226,7 +224,6 @@ private fun HierarchyView(
 	var rowCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 	var splitterCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 	var activeDrawOrderTarget by remember { mutableStateOf<DrawOrderDialogTarget?>(null) }
-	var activeMeshSettingsTarget by remember { mutableStateOf<MeshSettingsDialogTarget?>(null) }
 
 	Box(modifier = Modifier.fillMaxSize()) {
 		Row(
@@ -260,9 +257,6 @@ private fun HierarchyView(
 							viewModel = viewModel,
 							onRequestSetOrder = { targetId, name, currentOrder, defaultOrder, isOverridden ->
 								activeDrawOrderTarget = DrawOrderDialogTarget(targetId, name, currentOrder, defaultOrder, isOverridden)
-							},
-							onRequestSetMeshSettings = { target ->
-								activeMeshSettingsTarget = target
 							},
 							onRequestOpenDeformPaths = onRequestOpenDeformPaths,
 							onRequestCreate = onRequestCreate,
@@ -350,26 +344,6 @@ private fun HierarchyView(
 			)
 		}
 
-		// Modal Dialog for setting Part Mesh Settings
-		if (activeMeshSettingsTarget != null) {
-			val target = activeMeshSettingsTarget!!
-			MeshSettingsDialog(
-				target = target,
-				onPreview = { settings -> viewModel.previewPartMeshSettings(target.layerId, settings) },
-				onConfirm = { newSettings ->
-					viewModel.confirmPartMeshSettingsPreview(target.layerId, newSettings)
-					activeMeshSettingsTarget = null
-				},
-				onReset = {
-					viewModel.resetPartMeshSettings(target.layerId)
-					activeMeshSettingsTarget = null
-				},
-				onDismiss = {
-					viewModel.cancelPartMeshSettingsPreview(target.layerId)
-					activeMeshSettingsTarget = null
-				},
-			)
-		}
 	}
 }
 
@@ -390,7 +364,6 @@ internal fun DockHierarchyView(
 	var rowCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 	var splitterCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 	var activeDrawOrderTarget by remember { mutableStateOf<DrawOrderDialogTarget?>(null) }
-	var activeMeshSettingsTarget by remember { mutableStateOf<MeshSettingsDialogTarget?>(null) }
 
 	Box(modifier = Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().onGloballyPositioned { rowCoords = it }) {
@@ -411,9 +384,6 @@ internal fun DockHierarchyView(
 							viewModel = viewModel,
 							onRequestSetOrder = { targetId, name, currentOrder, defaultOrder, isOverridden ->
 								activeDrawOrderTarget = DrawOrderDialogTarget(targetId, name, currentOrder, defaultOrder, isOverridden)
-							},
-							onRequestSetMeshSettings = { target ->
-								activeMeshSettingsTarget = target
 							},
 							onRequestOpenDeformPaths = onRequestOpenDeformPaths,
 							onRequestCreate = onRequestCreate,
@@ -468,26 +438,6 @@ internal fun DockHierarchyView(
 			)
 		}
 
-		// Modal Dialog for setting Part Mesh Settings
-		if (activeMeshSettingsTarget != null) {
-			val target = activeMeshSettingsTarget!!
-			MeshSettingsDialog(
-				target = target,
-				onPreview = { settings -> viewModel.previewPartMeshSettings(target.layerId, settings) },
-				onConfirm = { newSettings ->
-					viewModel.confirmPartMeshSettingsPreview(target.layerId, newSettings)
-					activeMeshSettingsTarget = null
-				},
-				onReset = {
-					viewModel.resetPartMeshSettings(target.layerId)
-					activeMeshSettingsTarget = null
-				},
-				onDismiss = {
-					viewModel.cancelPartMeshSettingsPreview(target.layerId)
-					activeMeshSettingsTarget = null
-				},
-			)
-		}
 	}
 }
 
@@ -829,7 +779,6 @@ private fun HierarchyTreeList(
 	state: PSD2LiveState,
 	viewModel: PSD2LiveViewModel,
 	onRequestSetOrder: ((targetId: String, name: String, currentOrder: Float, defaultOrder: Float, isOverridden: Boolean) -> Unit)? = null,
-	onRequestSetMeshSettings: ((MeshSettingsDialogTarget) -> Unit)? = null,
 	onRequestOpenDeformPaths: ((String) -> Unit)? = null,
 	onRequestCreate: ((CreatePlacementKind, CreateRelation, Boolean, String) -> Unit)? = null,
 ) {
@@ -1169,7 +1118,6 @@ private fun HierarchyTreeList(
 						selectedAncestorDeformerIds = selectedAncestorDeformerIds,
 						selectedDescendantLabelByAncestor = selectedDescendantLabelByAncestor,
 						onRequestSetOrder = onRequestSetOrder,
-						onRequestSetMeshSettings = onRequestSetMeshSettings,
 						onRequestOpenDeformPaths = onRequestOpenDeformPaths,
 						onRequestCreate = onRequestCreate,
 					)
@@ -1189,7 +1137,6 @@ private fun HierarchyTreeList(
 						itemBoundsMap = itemBoundsMap,
 						searchFilter = searchFilter,
 						onRequestSetOrder = onRequestSetOrder,
-						onRequestSetMeshSettings = onRequestSetMeshSettings,
 						onRequestOpenDeformPaths = onRequestOpenDeformPaths,
 						onRequestCreate = onRequestCreate,
 					)
@@ -1328,7 +1275,6 @@ private fun DeformerTreeItem(
 	selectedAncestorDeformerIds: Set<String> = emptySet(),
 	selectedDescendantLabelByAncestor: Map<String, String> = emptyMap(),
 	onRequestSetOrder: ((targetId: String, name: String, currentOrder: Float, defaultOrder: Float, isOverridden: Boolean) -> Unit)? = null,
-	onRequestSetMeshSettings: ((MeshSettingsDialogTarget) -> Unit)? = null,
 	onRequestOpenDeformPaths: ((String) -> Unit)? = null,
 	onRequestCreate: ((CreatePlacementKind, CreateRelation, Boolean, String) -> Unit)? = null,
 ) {
@@ -1864,7 +1810,6 @@ private fun DeformerTreeItem(
 				selectedAncestorDeformerIds = selectedAncestorDeformerIds,
 				selectedDescendantLabelByAncestor = selectedDescendantLabelByAncestor,
 				onRequestSetOrder = onRequestSetOrder,
-				onRequestSetMeshSettings = onRequestSetMeshSettings,
 				onRequestOpenDeformPaths = onRequestOpenDeformPaths,
 				onRequestCreate = onRequestCreate,
 			)
@@ -1885,7 +1830,6 @@ private fun DeformerTreeItem(
 				itemBoundsMap = itemBoundsMap,
 				searchFilter = searchFilter,
 				onRequestSetOrder = onRequestSetOrder,
-				onRequestSetMeshSettings = onRequestSetMeshSettings,
 				onRequestOpenDeformPaths = onRequestOpenDeformPaths,
 				onRequestCreate = onRequestCreate,
 			)
@@ -1908,7 +1852,6 @@ private fun DrawableTreeItem(
 	itemBoundsMap: MutableMap<String, ItemLayoutInfo>,
 	searchFilter: HierarchySearchFilter = HierarchySearchFilter.Inactive,
 	onRequestSetOrder: ((targetId: String, name: String, currentOrder: Float, defaultOrder: Float, isOverridden: Boolean) -> Unit)? = null,
-	onRequestSetMeshSettings: ((MeshSettingsDialogTarget) -> Unit)? = null,
 	onRequestOpenDeformPaths: ((String) -> Unit)? = null,
 	onRequestCreate: ((CreatePlacementKind, CreateRelation, Boolean, String) -> Unit)? = null,
 ) {
@@ -2282,35 +2225,6 @@ private fun DrawableTreeItem(
 						icon = { IconReset(modifier = Modifier.size(13.dp), tint = colors.accent) },
 					)
 				}
-				val isMeshOverridden = state.meshOverrides.containsKey(layerId)
-				val effectiveMesh = state.getEffectiveMeshSettings(layerId)
-				val defaultMesh = state.getDefaultMeshSettings(layerId)
-				CompactMenuItem(
-					text = tr("canvas.hierarchy.meshSettings"),
-					onClick = {
-						showMenu = false
-						onRequestSetMeshSettings?.invoke(
-							MeshSettingsDialogTarget(
-								layerId = layerId,
-								layerName = drawable.name,
-								currentSettings = effectiveMesh,
-								defaultSettings = defaultMesh,
-								isOverridden = isMeshOverridden,
-							)
-						)
-					},
-					trailingBadge = if (isMeshOverridden) {
-						{
-							Box(
-								modifier = Modifier
-									.size(5.dp)
-									.background(colors.accent, CircleShape)
-							)
-						}
-					} else null,
-					icon = { IconMeshWireframe(tint = if (isMeshOverridden) colors.accent else colors.textMuted, modifier = Modifier.size(13.dp)) },
-				)
-				CompactMenuDivider()
 			}
 
 			if (layerId != null) {
