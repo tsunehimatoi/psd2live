@@ -1,6 +1,6 @@
 # PSD2Live
 
-[中文](README.md) · [English](README_en.md) · [Windows 版](https://github.com/tsunehimatoi/psd2live/releases/latest) · [ドキュメント](docs/README.md)
+[中文](README.md) · [English](README_en.md) · [リリースをダウンロード](https://github.com/tsunehimatoi/psd2live/releases/latest) · [ドキュメント](docs/README.md)
 
 **レイヤー付き PSD から Live2D モデルを生成し、同じ画面で編集・プレビュー・書き出し。**
 
@@ -11,6 +11,8 @@
 ## はじめに
 
 Windows 10/11 x64 向けの ZIP / EXE / MSI には Java ランタイムが含まれます。ZIP は展開して起動できます。
+
+同じリリースページから Linux amd64 向け Deb も入手できます。Cubism Native プレビューを含み、X11/GLX が必要です。ネイティブプレビューは XWayland に対応しますが、XWayland のない Wayland、aarch64、musl / Alpine には対応していません。詳しくは [SDK の設定](docs/ja/guide/CUBISM_SDK_SETUP.md) を参照してください。Linux でソースから実行する場合は JDK 21 が必要です。
 
 1. **ファイル → PSD をインポート**（初期設定 `Ctrl+Shift+O`）で素材を読み込みます。
 2. プレビューとレイヤーパネルでパーツ分類・左右を確認します。

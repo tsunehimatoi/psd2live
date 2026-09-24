@@ -1,6 +1,6 @@
 # PSD2Live
 
-[中文](README.md) · [日本語](README_ja.md) · [Windows downloads](https://github.com/tsunehimatoi/psd2live/releases/latest) · [Documentation](docs/README.md)
+[中文](README.md) · [日本語](README_ja.md) · [Download releases](https://github.com/tsunehimatoi/psd2live/releases/latest) · [Documentation](docs/README.md)
 
 **Generate a Live2D model from a layered PSD, then edit, preview and export it in one workspace.**
 
@@ -11,6 +11,8 @@ PSD2Live recognizes parts from layer names and builds meshes, deformers, facial 
 ## Get started
 
 Windows 10/11 x64 packages include a Java runtime. Extract the portable ZIP or use an EXE / MSI installer.
+
+The same release page offers a Linux amd64 Deb with Cubism Native preview. It requires X11/GLX; the native preview supports XWayland but not pure Wayland without XWayland, aarch64, or musl/Alpine. See [SDK setup](docs/en/guide/CUBISM_SDK_SETUP.md). Linux source builds require JDK 21.
 
 1. Import a layered PSD from **File → Import PSD** (`Ctrl+Shift+O` by default).
 2. Check the preview and correct part classifications and sides in the Layers panel.

@@ -1,6 +1,6 @@
 # PSD2Live
 
-[English](README_en.md) · [日本語](README_ja.md) · [下载 Windows 版](https://github.com/tsunehimatoi/psd2live/releases/latest) · [文档](docs/README.md)
+[English](README_en.md) · [日本語](README_ja.md) · [下载发行版](https://github.com/tsunehimatoi/psd2live/releases/latest) · [文档](docs/README.md)
 
 **从分层 PSD 生成 Live2D 模型，再在同一个工作区里编辑、预览和导出。**
 
@@ -11,6 +11,8 @@ PSD2Live 会根据图层名称识别部件，生成网格、变形器、面部�
 ## 开始使用
 
 Windows 10/11 x64 用户可下载便携 ZIP，解压后运行；也可使用 EXE / MSI 安装包。发布包包含 Java 运行时。
+
+**Linux 目前提供部分支持**：同一发布页提供 Linux amd64 Deb，包含 Cubism Native 预览，需 X11/GLX。也可安装 JDK 21 后从源码运行 GUI / CLI，或在 Linux 本机生成需要系统 Java 的启动包；自行构建的默认包使用内置渲染。原生预览仅支持带 X11/GLX 的 Linux x86_64（包括 XWayland 和 Xvfb），暂不支持无 XWayland 的纯 Wayland、aarch64 或 musl / Alpine，详见 [SDK 配置说明](docs/zh/guide/CUBISM_SDK_SETUP.md)。
 
 1. 导入分层 PSD：**文件 → 导入 PSD**（默认 `Ctrl+Shift+O`）。
 2. 在预览页检查效果，在图层面板核对部件类型与左右侧别。
@@ -63,7 +65,15 @@ Windows 10/11 x64 用户可下载便携 ZIP，解压后运行；也可使用 EXE
 .\gradlew.bat test
 ```
 
-Linux / macOS 将 `.\gradlew.bat` 换成 `./gradlew`，使用内置渲染；当前 Windows 发布包与可选原生桥接有独立的平台要求。构建、CLI 完整参数及发布方式见[开发与命令行](docs/zh/guide/DEVELOPMENT.md)。
+Linux 在仓库根目录运行以下命令（macOS 源码运行同样使用 `./gradlew`）：
+
+```bash
+./gradlew run
+./gradlew run --args="--input examples/tml/psd-input/tml.psd --output build/example-output"
+./native/package_linux.sh
+```
+
+打包脚本在 `dist/linux-<时间戳>/` 生成 `psd2live.sh` 启动器，运行时需安装 JDK 21。该脚本默认生成的本地包不含官方 Cubism SDK；如需自行构建 Linux x86_64 原生预览，参见 [Native 构建与打包说明](native/README.md)。构建、CLI 完整参数及其他发布方式见[开发与命令行](docs/zh/guide/DEVELOPMENT.md)。
 
 ## 文档与贡献
 
