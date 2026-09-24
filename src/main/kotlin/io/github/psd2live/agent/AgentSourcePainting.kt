@@ -13,6 +13,14 @@ internal fun AgentWorkspaceDocument.paintSource(arguments: JsonObject): AgentWor
     val id = arguments.getValue("layer_id").jsonPrimitive.content
     val layer = source.layers.singleOrNull { it.id.raw == id && id !in deletedLayerIds }
         ?: throw IllegalArgumentException("Source layer not found: $id")
+    // The analyzer cannot construct a rig from an entirely transparent source. Preserve its
+    // pixels for history restoration and remove it from generation, as the layer delete path does.
+    if (arguments.getValue("mode").jsonPrimitive.content == "clear") {
+        require(source.layers.any { it.id.raw != id && it.id.raw !in deletedLayerIds }) {
+            "Cannot clear the last active source layer; the analyzer requires artwork"
+        }
+        return copy(deletedLayerIds = deletedLayerIds + id)
+    }
     require(source.widthPx.toLong() * source.heightPx <= 16_777_216) { "Painting requires a canvas of at most 16 megapixels" }
     val width = source.widthPx
     val height = source.heightPx
@@ -72,14 +80,18 @@ internal fun AgentWorkspaceDocument.paintSource(arguments: JsonObject): AgentWor
             LayerPaintEngine.drawShape(image, x0.toInt(), y0.toInt(), x1.toInt(), y1.toInt(),
                 shape, color, opacity, strokeWidth, arguments["filled"]?.jsonPrimitive?.boolean ?: false)
         }
-        "clear" -> LayerPaintEngine.clear(image)
         else -> throw IllegalArgumentException("Unknown paint mode: $mode")
     }
     var left = width; var top = height; var right = 0; var bottom = 0
     for (y in 0 until height) for (x in 0 until width) if (image.getRGB(x, y) ushr 24 != 0) {
         left = minOf(left, x); top = minOf(top, y); right = maxOf(right, x + 1); bottom = maxOf(bottom, y + 1)
     }
-    require(right > left && bottom > top) { "Paint operation would leave the layer fully transparent" }
+    if (right <= left || bottom <= top) {
+        require(source.layers.any { it.id.raw != id && it.id.raw !in deletedLayerIds }) {
+            "Cannot erase the last active source layer; the analyzer requires artwork"
+        }
+        return copy(deletedLayerIds = deletedLayerIds + id)
+    }
     val output = ByteArray((right - left) * (bottom - top) * 4)
     for (y in top until bottom) for (x in left until right) {
         val pixel = image.getRGB(x, y)

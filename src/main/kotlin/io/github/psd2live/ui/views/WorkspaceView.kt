@@ -2309,6 +2309,16 @@ private fun DrawableTreeItem(
 			if (layerId != null) {
 				CompactMenuDivider()
 				CompactMenuItem(
+					text = tr("canvas.hierarchy.splitFromLasso"),
+					enabled = viewModel.canvasEditor.sourceSplitPolygon.size >= 3 &&
+						state.analysis?.source?.layers?.any { it.id.raw == layerId } == true,
+					onClick = {
+						viewModel.splitLayerByLastLasso(layerId)
+						showMenu = false
+					},
+					icon = { IconSelectionBounds(tint = colors.textMuted, modifier = Modifier.size(12.dp)) },
+				)
+				CompactMenuItem(
 					text = tr("canvas.hierarchy.deleteLayer"),
 					onClick = {
 						viewModel.deleteLayer(layerId)

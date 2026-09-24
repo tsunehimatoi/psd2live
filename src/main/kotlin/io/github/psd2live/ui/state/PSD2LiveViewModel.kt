@@ -46,6 +46,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.add
 import org.umamo.runtime.model.ParameterId
 import org.umamo.runtime.model.PuppetModel
 import org.umamo.edit.freshParameterGroupId
@@ -2321,6 +2325,39 @@ class PSD2LiveViewModel : AutoCloseable {
 			)
 		}
 	    markWorkspaceChanged()
+	}
+
+	fun splitLayerByLastLasso(layerId: String) {
+		val editor = canvasEditor
+		val polygon = editor.sourceSplitPolygon
+		if (polygon.size < 3) {
+			setErrorMessage(tr("canvas.hierarchy.splitNeedsLasso"))
+			return
+		}
+		val layerName = _state.value.analysis?.source?.layers?.firstOrNull { it.id.raw == layerId }?.name ?: layerId
+		scope.launch {
+			try {
+				val workspace = requireNotNull(agentWorkspace) { "Project workspace unavailable" }
+				val head = requireNotNull(workspace.snapshot().historyHeadNodeId) { "No project history" }
+				val result = withContext(Dispatchers.Default) {
+					workspace.splitArtwork(buildJsonObject {
+						put("state", head); put("layer_id", layerId)
+						putJsonArray("polygon") { polygon.forEach { (x, y) ->
+							add(kotlinx.serialization.json.buildJsonArray { add(x); add(y) })
+						} }
+						putJsonArray("names") {
+							add("$layerName (${tr("canvas.hierarchy.splitInside")})")
+							add("$layerName (${tr("canvas.hierarchy.splitRemainder")})")
+						}
+					}, io.github.psd2live.agent.MutationAuthor.USER)
+				}
+				editor.sourceSplitPolygon = emptyList()
+				selectLayer(result.affectedLayerIds.firstOrNull())
+			} catch (failure: Throwable) {
+				if (failure is kotlinx.coroutines.CancellationException) throw failure
+				setErrorMessage(failure.message ?: failure.javaClass.simpleName)
+			}
+		}
 	}
 
 	fun deleteLayer(layerId: String) {

@@ -441,7 +441,7 @@ interface AgentWorkspace {
         throw UnsupportedOperationException("Version/motion observation unavailable")
     suspend fun createArtwork(arguments: kotlinx.serialization.json.JsonObject): AgentWorkspaceMutationResult =
         throw UnsupportedOperationException("Artwork creation unavailable")
-    suspend fun splitArtwork(arguments: kotlinx.serialization.json.JsonObject): AgentWorkspaceMutationResult =
+    suspend fun splitArtwork(arguments: kotlinx.serialization.json.JsonObject, author: MutationAuthor = MutationAuthor.AGENT): AgentWorkspaceMutationResult =
         throw UnsupportedOperationException("Artwork splitting unavailable")
     suspend fun authorRig(state: String, edits: kotlinx.serialization.json.JsonArray, author: MutationAuthor): AgentWorkspaceMutationResult =
         throw UnsupportedOperationException("Ordered authoring is unavailable")

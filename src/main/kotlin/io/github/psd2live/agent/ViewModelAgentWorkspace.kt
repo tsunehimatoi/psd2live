@@ -1147,10 +1147,10 @@ class ViewModelAgentWorkspace(
         }))
     }
 
-    override suspend fun splitArtwork(arguments: kotlinx.serialization.json.JsonObject): AgentWorkspaceMutationResult {
+    override suspend fun splitArtwork(arguments: kotlinx.serialization.json.JsonObject, author: MutationAuthor): AgentWorkspaceMutationResult {
         val id = arguments.getValue("layer_id").jsonPrimitive.content
         var pieces = emptyList<String>()
-        return mutateRigKeyform(arguments.getValue("state").jsonPrimitive.content, null, "Split source layer $id", id) { document, puppet ->
+        return mutateRigKeyform(arguments.getValue("state").jsonPrimitive.content, null, "Split source layer $id", id, author) { document, puppet ->
             val meshIds = viewModel.state.value.previewModel!!.rig.layerIdByDrawableId.filterValues { it == id }.keys.toSet()
             require(document.rigEdits.authoringJournal.isEmpty() && document.rigEdits.keyformSetEdits.none { it.target.id in meshIds } &&
                 document.rigEdits.keyformCopyEdits.none { it.destinationTarget.id in meshIds } && document.rigEdits.warpEdits.none { w -> w.meshIds.any { it in meshIds } }) {

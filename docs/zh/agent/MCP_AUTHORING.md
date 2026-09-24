@@ -1,6 +1,6 @@
 # MCP 使用与接口
 
-[文档目录](../../README.md) · [设计与验收](AGENT_DESIGN.md) · [能力实测](../../../STATUS.md)
+[文档目录](../../README.md) · [设计与验收](AGENT_DESIGN.md) · [UI / MCP 双向清单](UI_MCP_PARITY_ISSUE_13.md) · [能力实测](../../../STATUS.md)
 
 本页以 [AgentAuthoringTools.kt](../../../src/main/kotlin/io/github/psd2live/agent/AgentAuthoringTools.kt) 的公开注册为准。当前是 **20 个工具**。旧文档中的 `project_get_state`、`rig_transform`、`asset_import_png` 等是内部适配名称，不能直接当作当前公开工具调用。
 
@@ -130,7 +130,7 @@ View 从模型数据渲染 PNG，不依赖桌面截图。`canvas_rect` 给出画
 
 对新增素材，通常使用 `reference → import → register → preview → add`，必要时 `place → finalize`。`create` 可从放置素材建立空工作区；`split` 按画布多边形拆成内部和余部，不会补画被遮挡内容，也不应被描述成自动拆发建模。
 
-已有 PSD 使用 `asset.psd` 从本地绝对路径打开。`paint` 的画笔、橡皮、油漆桶和形状使用 UI 的栅格算法；坐标为画布像素。绘画可能改变源图边界和网格拓扑，因此已有目标网格关键形、Warp 或 Glue 时会拒绝；应在这些绑定前完成源图像素修改。`layer_mesh` 修改单层网格参数，重置后继承全局值。
+已有 PSD 使用 `asset.psd` 从本地绝对路径打开。`paint` 的画笔、橡皮、油漆桶和形状使用 UI 的栅格算法；坐标为画布像素。`clear` 或擦除全部像素会软删除该层以便历史恢复；最后一个有效图层不可清空。绘画可能改变源图边界和网格拓扑，因此已有目标网格关键形、Warp 或 Glue 时会拒绝；应在这些绑定前完成源图像素修改。`layer_mesh` 修改单层网格参数，重置后继承全局值。
 
 `import` 接受已有本地 PNG 绝对路径或图像字节；不要让模型逐字生成 Base64。省略 `solid_background` 保留原生 Alpha；需要去底时显式给出真实纯色。棋盘格截图不是透明素材。
 

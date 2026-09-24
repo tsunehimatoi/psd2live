@@ -41,6 +41,10 @@ class LayerClassificationIntegrationTest {
                 })
                 assertTrue(painted.applied)
                 assertEquals(0f, workspace.snapshot().layers.single().opaqueBounds.left)
+                val paintedPixel = viewModel.state.value.analysis!!.source.layers.single().raster.rgba
+                assertEquals(0, paintedPixel[0].toInt() and 255)
+                assertEquals(255, paintedPixel[1].toInt() and 255)
+                assertTrue((paintedPixel[3].toInt() and 255) > 0)
                 workspace.checkoutHistory(created.historyNodeId, MutationAuthor.AGENT)
                 assertEquals(2f, workspace.snapshot().layers.single().opaqueBounds.left)
                 val classified = workspace.classifyLayer(id, LayerClassificationOverride(
@@ -85,6 +89,26 @@ class LayerClassificationIntegrationTest {
                         val imported = importedWorkspace.importPsd(psd.toString())
                         assertTrue(imported.affectedLayerIds.isNotEmpty())
                         assertEquals("roundtrip.psd", importedWorkspace.snapshot().inputName)
+                        val split = importedWorkspace.splitArtwork(buildJsonObject {
+                            put("state", imported.historyNodeId); put("layer_id", imported.affectedLayerIds.first())
+                            putJsonArray("polygon") {
+                                listOf(0 to 0, 8 to 0, 8 to 16, 0 to 16).forEach { (x, y) ->
+                                    add(buildJsonArray { add(x); add(y) })
+                                }
+                            }
+                            putJsonArray("names") { add("left"); add("right") }
+                        }, MutationAuthor.USER)
+                        assertEquals(2, split.affectedLayerIds.size)
+                        assertEquals("user", importedWorkspace.history().nodes.first { it.id == split.historyNodeId }.actor)
+                        val clear = importedWorkspace.paintSource(buildJsonObject {
+                            put("state", split.historyNodeId)
+                            put("layer_id", split.affectedLayerIds.first())
+                            put("mode", "clear")
+                        })
+                        assertTrue(clear.applied)
+                        assertTrue(importedWorkspace.snapshot().layers.first { it.id == split.affectedLayerIds.first() }.deleted)
+                        importedWorkspace.checkoutHistory(split.historyNodeId, MutationAuthor.USER)
+                        assertFalse(importedWorkspace.snapshot().layers.first { it.id == split.affectedLayerIds.first() }.deleted)
                     }
                 }
             }
