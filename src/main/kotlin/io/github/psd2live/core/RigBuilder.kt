@@ -1592,8 +1592,9 @@ object RigBuilder {
 			val canvas = FloatArray(adaptive.positions.size)
 			val uvs = FloatArray(adaptive.positions.size)
 			for (index in adaptive.positions.indices step 2) {
-				val localX = adaptive.positions[index].coerceIn(0f, width.toFloat())
-				val localY = adaptive.positions[index + 1].coerceIn(0f, height.toFloat())
+				// Edge rows may overhang the raster, like manually placed vertices; UVs extrapolate linearly.
+				val localX = adaptive.positions[index]
+				val localY = adaptive.positions[index + 1]
 				val canvasX = layer.source.bounds.left + localX
 				val canvasY = layer.source.bounds.top + localY
 				val rigPoint = headSpace?.toAligned(canvasX, canvasY) ?: (canvasX to canvasY)

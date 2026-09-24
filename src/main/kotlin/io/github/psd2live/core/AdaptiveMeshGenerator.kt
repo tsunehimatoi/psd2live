@@ -73,6 +73,8 @@ internal object AdaptiveMeshGenerator {
 	private const val FILTER_PASSES = 2
 	private const val FILTER_MAX_OFFSET = 0.55
 	private const val CURVE_CHORD_ERROR = 0.85
+	/** Turn (radians, over the structural support window) above which a control is a sharp corner. */
+	private const val CORNER_TURN = 1.2
 	private const val MAX_CURVE_DENSITY = 12.0
 	private const val MAX_BOUNDARY_POINTS_PER_LOOP = 480
 	private const val MAX_QUALITY_REFINEMENT_POINTS = 512
@@ -218,11 +220,11 @@ internal object AdaptiveMeshGenerator {
 			if (raw.size == 1) {
 				for (scale in doubleArrayOf(1.0, 0.5, 0.25, 0.0)) {
 					val samplingScale = if (scale < 0.5) 0.25 else 1.0
-					val ribbon = buildRibbon(raw.single(), neighbors, width, height, edgeSpacing, scale,
+					val ribbon = buildRibbon(raw.single(), neighbors, edgeSpacing, scale,
 						samplingScale, suppressBoundaryDiagonals)
 					if (ribbon != null && isolated(ribbon)) { built = ribbon; break }
 					if (suppressBoundaryDiagonals) {
-						val ordinary = buildRibbon(raw.single(), neighbors, width, height, edgeSpacing, scale,
+						val ordinary = buildRibbon(raw.single(), neighbors, edgeSpacing, scale,
 							samplingScale, false)
 						if (ordinary != null && isolated(ordinary)) { built = ordinary; break }
 					}
@@ -230,18 +232,18 @@ internal object AdaptiveMeshGenerator {
 			}
 			if (built == null && edgeMode != MeshEdgeMode.SINGLE) {
 				for (scale in doubleArrayOf(1.0, 0.6, 0.35)) {
-					val band = buildEdgeBands(domain, fill, width, height, edgeWidth * scale, edgeMode, neighbors)
+					val band = buildEdgeBands(domain, fill, edgeWidth * scale, edgeMode, neighbors)
 					if (band != null && isolated(band)) { built = band; break }
 				}
 			}
 			// Single-row contour: the requested mode, or the fallback when a band cannot fit.
 			for (scale in doubleArrayOf(1.0, 0.5, 0.25, 0.125, 0.0625)) {
 				if (built != null) break
-				val band = buildSingle(guides, fill, width, height, scale, neighbors,
+				val band = buildSingle(guides, fill, scale, neighbors,
 					outerMargin.toDouble(), suppressBoundaryDiagonals)
 				if (band != null && isolated(band)) built = band
 				else if (suppressBoundaryDiagonals) {
-					val ordinary = buildSingle(guides, fill, width, height, scale, neighbors, outerMargin.toDouble(), false)
+					val ordinary = buildSingle(guides, fill, scale, neighbors, outerMargin.toDouble(), false)
 					if (ordinary != null && isolated(ordinary)) built = ordinary
 				}
 			}
@@ -320,7 +322,7 @@ internal object AdaptiveMeshGenerator {
 	 * Branched shapes and holes continue through the general constrained mesher.
 	 */
 	private fun buildRibbon(
-		boundary: List<Point>, neighbors: List<List<Point>>, width: Int, height: Int,
+		boundary: List<Point>, neighbors: List<List<Point>>,
 		spacing: Double, expansionScale: Double, samplingScale: Double,
 		suppressBoundaryDiagonals: Boolean,
 	): BandedMesh? {
@@ -373,11 +375,7 @@ internal object AdaptiveMeshGenerator {
 		val clearance = boundary.minOf { p -> neighbors.minOfOrNull { sqrt(distanceSquaredToLoop(p, it)) }
 			?: Double.POSITIVE_INFINITY }
 		val margin = min(min(6.0, spacing * 0.16), clearance * 0.24) * expansionScale
-		// Tightly cropped textures may have no transparent room for widening. Spend vertices
-		// along their length instead; clamping a wide ribbon must not restore needle triangles.
-		val rasterThickness = width * abs(axisY) + height * abs(axisX)
-		val availableThickness = min(thickness + margin * 2, rasterThickness)
-		val step = min(spacing * 0.5, max(3.0, availableThickness * 1.25)) * samplingScale
+		val step = min(spacing * 0.5, max(3.0, (thickness + margin * 2) * 1.25)) * samplingScale
 		val intervals = ceil(length / step).toInt().coerceIn(2, MAX_BOUNDARY_POINTS_PER_LOOP)
 		val stations = List(intervals + 1) { start + length * it / intervals }
 		val lows = DoubleArray(stations.size)
@@ -410,8 +408,7 @@ internal object AdaptiveMeshGenerator {
 			// emitted as a vertex row: the two envelope sides are the complete mesh boundary.
 			for (side in listOf(-1, 1)) {
 				val y = center + halfWidth * side
-				points += snap(Point((stations[i] * axisX - y * axisY).coerceIn(0.0, width.toDouble()),
-					(stations[i] * axisY + y * axisX).coerceIn(0.0, height.toDouble())))
+				points += snap(Point(stations[i] * axisX - y * axisY, stations[i] * axisY + y * axisX))
 			}
 		}
 		val triangles = mutableListOf<Triangle>()
@@ -436,9 +433,7 @@ internal object AdaptiveMeshGenerator {
 		List(source.size / 2) { Point(source[it * 2].toDouble(), source[it * 2 + 1].toDouble()) }
 
 	/** Signed material-side offset. Winding makes the same code work for holes and islands. */
-	private fun offsetLoop(
-		loop: List<Point>, amount: Double, width: Int, height: Int, barriers: List<List<Point>>,
-	): List<Point> =
+	private fun offsetLoop(loop: List<Point>, amount: Double, barriers: List<List<Point>>): List<Point> =
 		loop.indices.map { i ->
 			val p = loop[(i + loop.size - 1) % loop.size]; val q = loop[i]; val r = loop[(i + 1) % loop.size]
 			val incoming = distance(p, q).coerceAtLeast(1e-8)
@@ -451,17 +446,16 @@ internal object AdaptiveMeshGenerator {
 				?: Double.POSITIVE_INFINITY
 			val limit = min(min(incoming, outgoing), clearance) * 0.3
 			val localAmount = amount.coerceIn(-limit, limit)
-			snap(Point((q.x + nx / length * localAmount).coerceIn(0.0, width.toDouble()),
-				(q.y + ny / length * localAmount).coerceIn(0.0, height.toDouble())))
+			snap(Point(q.x + nx / length * localAmount, q.y + ny / length * localAmount))
 		}
 
 	/** One contour row, offset outward by the outer margin, around the chosen interior fill. */
 	private fun buildSingle(
-		guides: List<List<Point>>, fill: Fill, width: Int, height: Int, scale: Double,
+		guides: List<List<Point>>, fill: Fill, scale: Double,
 		neighbors: List<List<Point>>, outerMargin: Double, suppressBoundaryDiagonals: Boolean,
 	): BandedMesh? {
 		val outerDist = outerMargin * scale
-		val outer = if (outerDist > 1e-4) guides.map { offsetLoop(it, -outerDist, width, height, guides + neighbors) } else guides
+		val outer = if (outerDist > 1e-4) guides.map { offsetLoop(it, -outerDist, guides + neighbors) } else guides
 		if (!validDomain(outer)) return null
 		val core = fillDomain(outer, fill, suppressBoundaryDiagonals) ?: return null
 		var cursor = 0
@@ -471,10 +465,9 @@ internal object AdaptiveMeshGenerator {
 
 	/** Double/triple parallel rows joined by fixed `/\/\` and `\/\/` strips around the interior fill. */
 	private fun buildEdgeBands(
-		domain: Domain, fill: Fill, width: Int, height: Int, edgeWidth: Double, edgeMode: MeshEdgeMode,
-		neighbors: List<List<Point>>,
+		domain: Domain, fill: Fill, edgeWidth: Double, edgeMode: MeshEdgeMode, neighbors: List<List<Point>>,
 	): BandedMesh? {
-		val rows = EdgeBandBuilder.build(domain.interleaved, edgeMode, edgeWidth, width, height, neighbors) ?: return null
+		val rows = EdgeBandBuilder.build(domain.interleaved, edgeMode, edgeWidth, neighbors) ?: return null
 		val staggered = EdgeBandBuilder.rowStaggered(edgeMode)
 		// The innermost row is an interior support row; its diagonals are allowed.
 		val core = fillDomain(rows.map { it.last() }, fill, false) ?: return null
@@ -663,20 +656,29 @@ internal object AdaptiveMeshGenerator {
 		val structuralTurns = DoubleArray(controls.size) { index ->
 			supportedTurn(controls, index, structuralSupport)
 		}
+		// A centered tangent at a real corner bows both adjacent sides outward (a rectangle becomes a
+		// pillow). Corners use one-sided tangents so straight sides stay on their chords.
+		fun direction(from: Point, to: Point): Point {
+			val length = hypot(to.x - from.x, to.y - from.y).coerceAtLeast(GEOMETRY_EPSILON)
+			return Point((to.x - from.x) / length, (to.y - from.y) / length)
+		}
+		val corner = BooleanArray(controls.size) { structuralTurns[it] >= CORNER_TURN }
 		val cubics = List(controls.size) { index ->
 			val next = (index + 1) % controls.size
 			val chord = hypot(controls[next].x - controls[index].x, controls[next].y - controls[index].y)
 			val firstHandle = min(handles[index], chord / 3.0)
 			val secondHandle = min(handles[next], chord / 3.0)
+			val outgoing = if (corner[index]) direction(controls[index], controls[next]) else tangents[index]
+			val incoming = if (corner[next]) direction(controls[index], controls[next]) else tangents[next]
 			Cubic(
 				controls[index],
 				Point(
-					controls[index].x + tangents[index].x * firstHandle,
-					controls[index].y + tangents[index].y * firstHandle,
+					controls[index].x + outgoing.x * firstHandle,
+					controls[index].y + outgoing.y * firstHandle,
 				),
 				Point(
-					controls[next].x - tangents[next].x * secondHandle,
-					controls[next].y - tangents[next].y * secondHandle,
+					controls[next].x - incoming.x * secondHandle,
+					controls[next].y - incoming.y * secondHandle,
 				),
 				controls[next],
 			)
@@ -911,9 +913,32 @@ internal object AdaptiveMeshGenerator {
 			val diagonal = triangles.asSequence().flatMap { triangleEdges(it).asSequence() }
 				.firstOrNull { chordFree(it.low) && chordFree(it.high) && it !in protectedEdges }
 				?: return true
-			val midpoint = lerp(points[diagonal.low], points[diagonal.high], 0.5)
-			if (!insertInteriorPoint(midpoint, points, triangles)) return false
+			if (!splitEdge(diagonal, points, triangles)) return false
 		}
+	}
+
+	/**
+	 * Bisects [edge] and both faces on it. The snapped midpoint can sit a float ulp off the edge, which
+	 * point location would treat as a face interior and leave the edge in place.
+	 */
+	private fun splitEdge(edge: Edge, points: MutableList<Point>, triangles: MutableList<Triangle>): Boolean {
+		val candidate = snap(lerp(points[edge.low], points[edge.high], 0.5))
+		if (points.any { distanceSquared(it, candidate) < 1e-8 }) return false
+		val adjacent = triangles.indices.filter { edge in triangleEdges(triangles[it]) }
+		if (adjacent.isEmpty()) return false
+		val pointIndex = points.size
+		val replacements = adjacent.flatMap { index ->
+			val opposite = oppositeVertex(triangles[index], edge)
+			listOf(Triangle(edge.low, pointIndex, opposite), Triangle(pointIndex, edge.high, opposite))
+		}
+		points += candidate
+		if (replacements.any { abs(cross(points[it.a], points[it.b], points[it.c])) < 1e-5 }) {
+			points.removeAt(pointIndex)
+			return false
+		}
+		for (index in adjacent.asReversed()) triangles.removeAt(index)
+		triangles += replacements
+		return true
 	}
 
 	private fun earClip(boundary: List<Point>): List<Triangle>? {

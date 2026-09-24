@@ -22,6 +22,9 @@ internal object EdgeBandBuilder {
 	/** Strip triangles need a height of at least this fraction of their longest edge. */
 	private const val SLIVER_RATIO = 0.2
 	private const val FOLD_RATIO = 1e-4
+	/** Smallest outer-row offset where the raster crop leaves no room: pixels, and share of the station spacing. */
+	private const val MIN_OUTWARD = 2.0
+	private const val MIN_OUTWARD_SHARE = 0.3
 	private const val NARROW_SCALE = 0.35
 	private const val NARROW_FRACTION = 0.3
 
@@ -56,10 +59,12 @@ internal object EdgeBandBuilder {
 	/**
 	 * Builds all rows for every loop of one island, outermost row first.
 	 * Returns null when the band cannot be embedded or is too narrow to be worth keeping.
+	 *
+	 * Rows are not bounded by the layer raster: like manually placed vertices, outer rows may overhang
+	 * it and their UVs extrapolate onto transparent texels.
 	 */
 	fun build(
-		loops: List<List<Point>>, mode: MeshEdgeMode, width: Double,
-		rasterWidth: Int, rasterHeight: Int, neighbors: List<List<Point>>,
+		loops: List<List<Point>>, mode: MeshEdgeMode, width: Double, neighbors: List<List<Point>>,
 	): List<List<List<Point>>>? {
 		if (mode == MeshEdgeMode.SINGLE || width <= 1e-3 || loops.any { it.size < 6 || it.size % 2 != 0 }) return null
 		val offsets = rowOffsets(mode, width)
@@ -75,7 +80,11 @@ internal object EdgeBandBuilder {
 			val arcs = DoubleArray(count) { distance(loop[it], loop[(it + 1) % count]) }
 			val roomIn = DoubleArray(count)
 			val roomOut = DoubleArray(count)
-			val thickness = outward + inward
+			// Near another contour or island the guide row stays on the curve and only the outer row is
+			// compressed, down to a floor tied to the station spacing rather than the band width, so wide
+			// bands do not drag the rows off the curve.
+			val stationSpacing = arcs.sorted()[count / 2] * 2
+			val minOutward = min(outward, max(MIN_OUTWARD, MIN_OUTWARD_SHARE * stationSpacing))
 			val shrink = DoubleArray(count) { 1.0 }
 			var scale = DoubleArray(count)
 			var rows: List<List<Point>>? = null
@@ -84,25 +93,25 @@ internal object EdgeBandBuilder {
 				for (k in 0 until count) {
 					val p = loop[k]
 					roomIn[k] = THICKNESS_SHARE * ownIndex.rayDistance(p, nx[k], ny[k])
-					var out = rasterRayDistance(p, -nx[k], -ny[k], rasterWidth, rasterHeight)
-					out = min(out, THICKNESS_SHARE * ownIndex.rayDistance(p, -nx[k], -ny[k]))
+					var out = THICKNESS_SHARE * ownIndex.rayDistance(p, -nx[k], -ny[k])
 					if (neighborIndex != null) out = min(out, THICKNESS_SHARE * neighborIndex.rayDistance(p, -nx[k], -ny[k]))
-					// Negative when the fitted guide overshoots the raster; the rows are pushed back inside.
 					roomOut[k] = out
 				}
-				scale = DoubleArray(count) { min(1.0, (roomIn[it] + roomOut[it]) / thickness) * shrink[it] }
-				minSmooth(scale, arcs, WIDTH_SLOPE / thickness)
-				val shift = DoubleArray(count) { max(0.0, outward * scale[it] - roomOut[it]) }
+				val out = DoubleArray(count) { max(min(outward, roomOut[it]), minOutward) * shrink[it] }
+				minSmooth(out, arcs, WIDTH_SLOPE)
+				val shift = DoubleArray(count) { max(0.0, out[it] - roomOut[it]) }
 				val required = shift.copyOf()
 				maxSmooth(shift, arcs, WIDTH_SLOPE)
-				for (k in 0 until count) shift[k] = max(required[k], min(shift[k], roomIn[k] - inward * scale[k]))
+				for (k in 0 until count) shift[k] = max(required[k], min(shift[k], max(0.0, roomIn[k] - inward)))
+				scale = DoubleArray(count) { (min(1.0, (roomIn[it] - shift[it]) / inward)).coerceAtLeast(0.0) * shrink[it] }
+				minSmooth(scale, arcs, WIDTH_SLOPE / inward)
 				val candidate = offsets.indices.map { r ->
 					val parity = if (staggered[r]) 1 else 0
 					List(count / 2) { i ->
 						val k = i * 2 + parity
-						val amount = shift[k] + offsets[r] * scale[k]
-						snap(Point((loop[k].x + nx[k] * amount).coerceIn(0.0, rasterWidth.toDouble()),
-							(loop[k].y + ny[k] * amount).coerceIn(0.0, rasterHeight.toDouble())))
+						val offset = if (offsets[r] < 0) offsets[r] / outward * out[k] else offsets[r] * scale[k]
+						val amount = shift[k] + offset
+						snap(Point(loop[k].x + nx[k] * amount, loop[k].y + ny[k] * amount))
 					}
 				}
 				val folded = badSamples(candidate, staggered, SLIVER_RATIO)
@@ -244,14 +253,6 @@ internal object EdgeBandBuilder {
 				values[k] = max(values[k], values[next] - slope * arcs[k])
 			}
 		}
-	}
-
-	/** Signed distance along a ray to where it leaves the raster; negative when [p] is already outside. */
-	fun rasterRayDistance(p: Point, dx: Double, dy: Double, width: Int, height: Int): Double {
-		var t = Double.POSITIVE_INFINITY
-		if (dx > 1e-12) t = min(t, (width - p.x) / dx) else if (dx < -1e-12) t = min(t, -p.x / dx)
-		if (dy > 1e-12) t = min(t, (height - p.y) / dy) else if (dy < -1e-12) t = min(t, -p.y / dy)
-		return t
 	}
 
 	/** Interleaved sample indices of strip triangles whose height is below [ratio] times their longest edge. */

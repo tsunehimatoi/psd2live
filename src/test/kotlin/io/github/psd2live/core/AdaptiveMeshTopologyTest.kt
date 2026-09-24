@@ -49,7 +49,7 @@ class AdaptiveMeshTopologyTest {
             val suppressed = generate(algorithm, true)
             assertTrue(normal.indices.isNotEmpty(), algorithm.name)
             assertEquals(normal.boundaryLoops.map { it.size }, suppressed.boundaryLoops.map { it.size }, algorithm.name)
-            assertNoBoundaryChords(suppressed)
+            assertNoBoundaryChords(suppressed, algorithm.name)
             layouts += normal.positions.toList()
         }
         assertEquals(layouts.size, layouts.distinct().size, "fill selection must change the mesh")
@@ -137,6 +137,27 @@ class AdaptiveMeshTopologyTest {
         }
     }
 
+    @Test fun wideBandsKeepTheGuideOnTheCurveInATightCrop() {
+        val (width, height, rgba) = ellipse(280, 200, 140.0, 100.0)
+        val contour = List(720) { i ->
+            val t = Math.PI * 2 * i / 720
+            140.0 + 140.0 * kotlin.math.cos(t) to 100.0 + 100.0 * kotlin.math.sin(t)
+        }
+        for (edgeWidth in listOf(8f, 24f)) {
+            val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, height, rgba, 8,
+                MeshSettings(edgeMode = MeshEdgeMode.TRIPLE, edgeWidth = edgeWidth, maxEdgeDistance = 12f, interiorDensity = 32f)))
+            val middle = mesh.middleLoops.single()
+            val inner = loopPoints(mesh, mesh.innerLoops.single())
+            for (id in middle) {
+                val p = point(mesh, id)
+                val drift = sqrt(distanceSquaredToPolygon(p, contour))
+                assertTrue(drift <= 5.0, "width $edgeWidth: middle row drifted $drift px off the curve at $p")
+                val gap = sqrt(distanceSquaredToPolygon(p, inner))
+                assertTrue(abs(gap - edgeWidth) <= edgeWidth * 0.15, "width $edgeWidth: inner gap $gap at $p")
+            }
+        }
+    }
+
     @Test fun tightlyCroppedTripleBandKeepsFullWidthTriangles() {
         val (width, height, rgba) = rectangle(120, 80, 0, 0, 120, 80)
         val edgeWidth = 8f
@@ -144,6 +165,13 @@ class AdaptiveMeshTopologyTest {
             MeshSettings(edgeMode = MeshEdgeMode.TRIPLE, edgeWidth = edgeWidth, maxEdgeDistance = 12f, interiorDensity = 32f)))
         assertEquals(1, mesh.innerLoops.size, "a tightly cropped layer must keep its edge band")
         assertManifold(mesh)
+        // Like manually placed vertices, the outer row overhangs the raster instead of being clamped to it.
+        val outer = loopPoints(mesh, mesh.boundaryLoops.single())
+        assertTrue(outer.minOf { it.first } < -edgeWidth * 0.75 && outer.maxOf { it.first } > width + edgeWidth * 0.75,
+            "outer row should overhang the raster by about one band width")
+        val middle = loopPoints(mesh, mesh.middleLoops.single())
+        val rim = listOf(0.0 to 0.0, width.toDouble() to 0.0, width.toDouble() to height.toDouble(), 0.0 to height.toDouble())
+        assertTrue(middle.all { sqrt(distanceSquaredToPolygon(it, rim)) <= 5.0 }, "middle row must follow the silhouette")
         val band = (mesh.boundaryLoops + mesh.middleLoops).flatMap { it.toList() }.toSet()
         for (face in mesh.indices.toList().chunked(3)) {
             if (face.none { it in band }) continue
@@ -178,15 +206,18 @@ class AdaptiveMeshTopologyTest {
 
     @Test fun interiorDensityVisiblyControlsStructuredFills() {
         val (width, height, rgba) = rectangle(640, 440, 20, 20, 620, 420)
-        for (algorithm in STRUCTURED) {
+        val counts = STRUCTURED.associateWith { algorithm ->
             fun interior(density: Float): Int {
                 val mesh = assertNotNull(AdaptiveMeshGenerator.generate(width, height, rgba, 8,
                     MeshSettings(maxEdgeDistance = 12f, interiorDensity = density, fillAlgorithm = algorithm)))
                 return mesh.positions.size / 2 - mesh.boundaryLoops.sumOf { it.size }
             }
-            val sparse = interior(40f)
-            val dense = interior(20f)
-            assertTrue(dense >= sparse * 2, "$algorithm: density 20 gave $dense interior points vs $sparse at 40")
+            interior(20f) to interior(40f)
+        }
+        // The graded rings from the fixed contour spacing cost the same at both densities; the bulk quarters.
+        for ((algorithm, pair) in counts) {
+            val (dense, sparse) = pair
+            assertTrue(dense >= sparse * 1.5, "$algorithm: density 20 gave $dense interior points vs $sparse at 40 (all: $counts)")
         }
     }
 
@@ -260,7 +291,7 @@ class AdaptiveMeshTopologyTest {
         return layer.raster.rgba[(y * layer.raster.width + x) * 4 + 3].toInt() and 0xff
     }
 
-    private fun assertNoBoundaryChords(mesh: AdaptiveMeshGenerator.Result) {
+    private fun assertNoBoundaryChords(mesh: AdaptiveMeshGenerator.Result, label: String = "mesh") {
         val boundary = mesh.boundaryLoops.flatMapTo(hashSetOf()) { it.toList() }
         val neighbors = mesh.boundaryLoops.flatMapTo(hashSetOf()) { loop ->
             loop.indices.map { index -> edge(loop[index], loop[(index + 1) % loop.size]) }
@@ -270,7 +301,7 @@ class AdaptiveMeshTopologyTest {
                 val a = mesh.indices[index + side]
                 val b = mesh.indices[index + (side + 1) % 3]
                 assertTrue(a !in boundary || b !in boundary || edge(a, b) in neighbors,
-                    "mesh has a nonadjacent contour chord: $a-$b")
+                    "$label has a nonadjacent contour chord: $a-$b at ${point(mesh, a)} - ${point(mesh, b)}")
             }
         }
     }
