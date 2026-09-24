@@ -95,19 +95,48 @@ if "%CLEAN%"=="1" (
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
 echo [1/3] Configuring CMake [/MT + Core_MT.lib]...
-rem Prefer VS 2022 (toolset 143 matches Cubism Core_MT.lib). Fall back to
-rem CMake auto-detect for newer images (e.g. VS 2026 on windows-latest).
-set "CMAKE_GEN=Visual Studio 17 2022"
-"%ProgramFiles(x86)%\Microsoft Visual Studio\Installerswhere.exe" -latest -products * -version "[17.0,18.0)" -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 >nul 2>nul
-if errorlevel 1 (
-  echo [INFO] VS 2022 not found; letting CMake pick the newest Visual Studio generator.
-  cmake -A x64 ^
+rem Prefer Ninja + cl.exe when msvc-dev-cmd (or vcvars) already put the toolchain
+rem on PATH — more reliable on GHA than the VS generator locator.
+rem Otherwise prefer VS 2022 (toolset 143 matches Cubism Core_MT.lib).
+set "USED_NINJA=0"
+set "HAVE_VS2022=0"
+
+where cl >nul 2>nul
+if not errorlevel 1 (
+  where ninja >nul 2>nul
+  if not errorlevel 1 set "USED_NINJA=1"
+)
+
+if "%USED_NINJA%"=="1" (
+  echo [INFO] cl.exe + ninja on PATH; configuring with Ninja generator.
+  cmake -G Ninja -DCMAKE_BUILD_TYPE=Release ^
+    -DCUBISM_SDK_ROOT="%CUBISM_SDK_ROOT%" ^
+    -DCMAKE_MSVC_RUNTIME_LIBRARY="MultiThreaded$<$<CONFIG:Debug>:Debug>" ^
+    -B "%BUILD_DIR%" ^
+    -S "%SRC_DIR%"
+  if errorlevel 1 (
+    echo [ERROR] CMake configuration failed.
+    exit /b 1
+  )
+  goto :build_step
+)
+
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if exist "%VSWHERE%" (
+  "%VSWHERE%" -latest -products * -version "[17.0,18.0)" -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 >nul 2>nul
+  if not errorlevel 1 set "HAVE_VS2022=1"
+)
+
+if "%HAVE_VS2022%"=="1" (
+  echo [INFO] Configuring with Visual Studio 17 2022 generator.
+  cmake -G "Visual Studio 17 2022" -A x64 ^
     -DCUBISM_SDK_ROOT="%CUBISM_SDK_ROOT%" ^
     -DCMAKE_MSVC_RUNTIME_LIBRARY="MultiThreaded$<$<CONFIG:Debug>:Debug>" ^
     -B "%BUILD_DIR%" ^
     -S "%SRC_DIR%"
 ) else (
-  cmake -G "!CMAKE_GEN!" -A x64 ^
+  echo [INFO] VS 2022 not found via vswhere; letting CMake pick the newest Visual Studio generator.
+  cmake -A x64 ^
     -DCUBISM_SDK_ROOT="%CUBISM_SDK_ROOT%" ^
     -DCMAKE_MSVC_RUNTIME_LIBRARY="MultiThreaded$<$<CONFIG:Debug>:Debug>" ^
     -B "%BUILD_DIR%" ^
@@ -118,15 +147,25 @@ if errorlevel 1 (
   exit /b 1
 )
 
+:build_step
 echo [2/3] Building Release...
-cmake --build "%BUILD_DIR%" --config Release --target live2d_renderer
+if "%USED_NINJA%"=="1" (
+  cmake --build "%BUILD_DIR%" --target live2d_renderer
+) else (
+  cmake --build "%BUILD_DIR%" --config Release --target live2d_renderer
+)
 if errorlevel 1 (
   echo [ERROR] Build failed.
   exit /b 1
 )
 
-set "DLL_OUT=%BUILD_DIR%\bin\Release\live2d_renderer.dll"
-set "SHADER_OUT=%BUILD_DIR%\bin\Release\FrameworkShaders"
+if "%USED_NINJA%"=="1" (
+  set "DLL_OUT=%BUILD_DIR%\bin\live2d_renderer.dll"
+  set "SHADER_OUT=%BUILD_DIR%\bin\FrameworkShaders"
+) else (
+  set "DLL_OUT=%BUILD_DIR%\bin\Release\live2d_renderer.dll"
+  set "SHADER_OUT=%BUILD_DIR%\bin\Release\FrameworkShaders"
+)
 if not exist "%DLL_OUT%" (
   echo [ERROR] Expected output missing: %DLL_OUT%
   exit /b 1

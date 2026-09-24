@@ -101,32 +101,81 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          if (Test-Path vendor) { Remove-Item -Recurse -Force vendor }
           New-Item -ItemType Directory -Force -Path vendor | Out-Null
           Write-Host "Fetching $env:SDK_ASSET from $env:SDK_REPO @$env:SDK_TAG"
           gh release download $env:SDK_TAG -p $env:SDK_ASSET -R $env:SDK_REPO --dir vendor
-          Expand-Archive -Path "vendor/$env:SDK_ASSET" -DestinationPath vendor -Force
+          $zipPath = Join-Path (Get-Location) "vendor/$env:SDK_ASSET"
+          if (-not (Test-Path $zipPath)) { throw "Downloaded zip missing: $zipPath" }
+          Write-Host "Zip size: $((Get-Item $zipPath).Length) bytes"
+          # Prefer Python zipfile over Expand-Archive (more reliable for large SDK zips).
+          python -c "import zipfile; zipfile.ZipFile(r'$zipPath').extractall('vendor')"
           $extract = Join-Path (Get-Location) "vendor/$env:SDK_EXTRACT_DIR"
           if (Test-Path $extract) {
             $sdkRoot = (Resolve-Path $extract).Path
           } elseif (Test-Path "vendor/Core/include/Live2DCubismCore.h") {
             $sdkRoot = (Resolve-Path "vendor").Path
           } else {
-            $top = Get-ChildItem vendor -Directory | Where-Object { $_.Name -notlike '.*' } | Select-Object -First 1
+            $top = Get-ChildItem vendor -Directory | Where-Object { $_.Name -notlike '.*' -and $_.Name -notlike '*.zip' } | Select-Object -First 1
             if (-not $top) { throw "Could not locate extracted SDK root under vendor/" }
             $sdkRoot = $top.FullName
           }
           "CUBISM_SDK_ROOT=$sdkRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "Using CUBISM_SDK_ROOT=$sdkRoot"
 
-      - name: Verify Cubism Core (Windows)
+      - name: Verify Cubism SDK tree (Windows)
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $hdr = Join-Path $env:CUBISM_SDK_ROOT "Core/include/Live2DCubismCore.h"
-          $lib = Join-Path $env:CUBISM_SDK_ROOT "Core/lib/windows/x86_64/143/Live2DCubismCore_MT.lib"
-          if (-not (Test-Path $hdr)) { Write-Host "::error::Missing Core header: $hdr"; exit 1 }
-          if (-not (Test-Path $lib)) { Write-Host "::error::Missing Windows Core lib: $lib"; exit 1 }
-          Write-Host "SDK Core header and Windows lib OK"
+          $root = $env:CUBISM_SDK_ROOT
+          $need = @(
+            "Core/include/Live2DCubismCore.h",
+            "Core/lib/windows/x86_64/143/Live2DCubismCore_MT.lib",
+            "Samples/OpenGL/thirdParty/glew/include/GL/glew.h",
+            "Samples/OpenGL/thirdParty/stb/stb_image.h"
+          )
+          $missing = @()
+          foreach ($rel in $need) {
+            $p = Join-Path $root $rel
+            if (-not (Test-Path $p)) {
+              Write-Host "::error::Missing required SDK file: $p"
+              $missing += $p
+            } else {
+              Write-Host "OK: $p"
+            }
+          }
+          $tp = Join-Path $root "Samples/OpenGL/thirdParty"
+          if (Test-Path $tp) {
+            Write-Host "=== thirdParty listing ==="
+            Get-ChildItem $tp -Recurse -Depth 3 | Select-Object -First 80 FullName, Length | Format-Table -AutoSize
+            $glewCount = (Get-ChildItem (Join-Path $tp "glew") -Recurse -File -ErrorAction SilentlyContinue | Measure-Object).Count
+            Write-Host "glew file count: $glewCount"
+          } else {
+            Write-Host "::error::thirdParty dir missing: $tp"
+            Write-Host "=== vendor / SDK layout (depth 3) ==="
+            Get-ChildItem $root -Recurse -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 120 FullName
+            $missing += $tp
+          }
+          if ($missing.Count -gt 0) {
+            Write-Host "=== find Samples (maxdepth 4) ==="
+            if (Test-Path (Join-Path $root "Samples")) {
+              Get-ChildItem (Join-Path $root "Samples") -Recurse -Depth 3 | Select-Object -First 100 FullName
+            }
+            exit 1
+          }
+          Write-Host "SDK Core + OpenGL thirdParty (glew/stb) OK"
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup MSVC developer command prompt
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Setup Ninja
+        shell: bash
+        run: choco install ninja -y
 
       - name: Build native renderer
         shell: cmd
@@ -237,10 +286,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf vendor
           mkdir -p vendor
           echo "Fetching $SDK_ASSET from $SDK_REPO @$SDK_TAG"
           gh release download "$SDK_TAG" -p "$SDK_ASSET" -R "$SDK_REPO" --dir vendor
-          unzip -q "vendor/$SDK_ASSET" -d vendor
+          ZIP="vendor/$SDK_ASSET"
+          test -f "$ZIP"
+          echo "Zip size: $(wc -c < "$ZIP") bytes"
+          # Prefer Python zipfile over unzip (more reliable for large SDK zips).
+          python3 -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall('vendor')" "$ZIP"
           if [[ -d "vendor/$SDK_EXTRACT_DIR" ]]; then
             SDK_ROOT="$(pwd)/vendor/$SDK_EXTRACT_DIR"
           elif [[ -f "vendor/Core/include/Live2DCubismCore.h" ]]; then
@@ -252,21 +306,47 @@ jobs:
           echo "CUBISM_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
           echo "Using CUBISM_SDK_ROOT=$SDK_ROOT"
 
-      - name: Verify Cubism Core (Linux)
+      - name: Verify Cubism SDK tree (Linux)
         shell: bash
         run: |
           set -euo pipefail
-          HDR="$CUBISM_SDK_ROOT/Core/include/Live2DCubismCore.h"
-          LIB="$CUBISM_SDK_ROOT/Core/lib/linux/x86_64/libLive2DCubismCore.a"
-          if [[ ! -f "$HDR" ]]; then
-            echo "::error::Missing Core header: $HDR"
+          ROOT="$CUBISM_SDK_ROOT"
+          fail=0
+          need=(
+            "Core/include/Live2DCubismCore.h"
+            "Core/lib/linux/x86_64/libLive2DCubismCore.a"
+            "Samples/OpenGL/thirdParty/glew/include/GL/glew.h"
+            "Samples/OpenGL/thirdParty/stb/stb_image.h"
+          )
+          for rel in "${need[@]}"; do
+            p="$ROOT/$rel"
+            if [[ ! -f "$p" ]]; then
+              echo "::error::Missing required SDK file: $p"
+              fail=1
+            else
+              echo "OK: $p"
+            fi
+          done
+          TP="$ROOT/Samples/OpenGL/thirdParty"
+          if [[ -d "$TP" ]]; then
+            echo "=== thirdParty disk usage ==="
+            du -sh "$TP" "$TP"/* 2>/dev/null || true
+            echo "glew file count: $(find "$TP/glew" -type f 2>/dev/null | wc -l)"
+            echo "stb file count: $(find "$TP/stb" -type f 2>/dev/null | wc -l)"
+            echo "=== thirdParty (maxdepth 3) ==="
+            find "$TP" -maxdepth 3 \( -type d -o -type f \) | head -80
+          else
+            echo "::error::thirdParty dir missing: $TP"
+            fail=1
+          fi
+          if [[ "$fail" -ne 0 ]]; then
+            echo "=== find Samples -maxdepth 4 ==="
+            find "$ROOT/Samples" -maxdepth 4 2>/dev/null | head -200 || true
+            echo "=== vendor top ==="
+            find vendor -maxdepth 3 2>/dev/null | head -100 || true
             exit 1
           fi
-          if [[ ! -f "$LIB" ]]; then
-            echo "::error::Missing Linux Core lib: $LIB"
-            exit 1
-          fi
-          echo "SDK Core header and Linux lib OK"
+          echo "SDK Core + OpenGL thirdParty (glew/stb) OK"
 
       - name: Build native renderer
         run: |
