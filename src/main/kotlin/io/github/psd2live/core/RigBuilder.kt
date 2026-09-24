@@ -1567,7 +1567,9 @@ object RigBuilder {
 		val outerMargin = if (config.mouthOutlineEnabled && !config.meshOnly &&
             layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)) 0f
             else override?.outerMargin ?: config.meshOuterMargin
-		val edgeMode = override?.edgeMode ?: config.meshEdgeMode
+		// Face defaults to a dual edge band (legacy inner-margin envelope); other parts use the global mode.
+		val edgeMode = override?.edgeMode
+			?: if (layer.semantic.tag == SemanticTag.FACE) MeshEdgeMode.DOUBLE else config.meshEdgeMode
 		val edgeWidth = override?.edgeWidth ?: config.meshEdgeWidth
 		val effectiveSpacing = if (config.mouthOutlineEnabled && !config.meshOnly &&
             layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)) {

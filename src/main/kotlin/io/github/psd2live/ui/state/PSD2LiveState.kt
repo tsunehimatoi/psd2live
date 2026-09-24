@@ -529,9 +529,11 @@ data class PSD2LiveState(
 			SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE -> 0.45f
 			else -> 1f
 		}
+		// Face keeps the pre-edgeMode dual envelope; other parts follow the global mode.
+		val edgeMode = if (layer?.semantic?.tag == SemanticTag.FACE) MeshEdgeMode.DOUBLE else meshEdgeMode
 		return MeshSettings(
 			outerMargin = meshOuterMargin,
-			edgeMode = meshEdgeMode,
+			edgeMode = edgeMode,
 			edgeWidth = meshEdgeWidth,
 			maxEdgeDistance = kotlin.math.max(12f, meshMaxEdgeDistance * semanticDensity),
 			interiorDensity = kotlin.math.max(12f, meshInteriorDensity * semanticDensity),
