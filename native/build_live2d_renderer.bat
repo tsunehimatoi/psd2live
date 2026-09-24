@@ -177,18 +177,36 @@ echo  DLL:     %DLL_OUT%
 echo  Shaders: %SHADER_OUT%
 echo  Expected dependents: OPENGL32 KERNEL32 USER32 GDI32  ^(no VCRUNTIME/MSVCP^)
 
-if "%DEPLOY%"=="1" (
-  echo [3/3] Deploying to src\main\resources\cubism\windows-x86_64\ ...
-  set "DEST=%REPO_ROOT%\src\main\resources\cubism\windows-x86_64"
-  if not exist "%DEST%" mkdir "%DEST%"
-  copy /Y "%DLL_OUT%" "%DEST%\live2d_renderer.dll" >nul
-  if exist "%DEST%\FrameworkShaders" rmdir /S /Q "%DEST%\FrameworkShaders"
-  xcopy /E /I /Y "%SHADER_OUT%" "%DEST%\FrameworkShaders" >nul
-  echo  Deployed to %DEST%
-  echo  ^(path is gitignored; will not be committed^)
-) else (
+if not "%DEPLOY%"=="1" (
   echo [3/3] Skip deploy. Pass -Deploy to copy into resources\, or copy manually.
+  goto :done
 )
+
+echo [3/3] Deploying to src\main\resources\cubism\windows-x86_64\ ...
+rem Set DEST outside a parenthesized block so %DEST% expands correctly.
+set "DEST=%REPO_ROOT%\src\main\resources\cubism\windows-x86_64"
+if not exist "%DEST%" mkdir "%DEST%"
+if not exist "%DLL_OUT%" (
+  echo [ERROR] DLL missing before deploy: %DLL_OUT%
+  exit /b 1
+)
+copy /Y "%DLL_OUT%" "%DEST%\live2d_renderer.dll" >nul
+if errorlevel 1 (
+  echo [ERROR] Failed to copy DLL to "%DEST%"
+  exit /b 1
+)
+if exist "%DEST%\FrameworkShaders" rmdir /S /Q "%DEST%\FrameworkShaders"
+if exist "%SHADER_OUT%" (
+  xcopy /E /I /Y "%SHADER_OUT%" "%DEST%\FrameworkShaders" >nul
+)
+if not exist "%DEST%\live2d_renderer.dll" (
+  echo [ERROR] Deploy did not produce "%DEST%\live2d_renderer.dll"
+  exit /b 1
+)
+echo  Deployed to %DEST%
+echo  ^(path is gitignored; will not be committed^)
+
+:done
 
 echo ===================================================
 exit /b 0

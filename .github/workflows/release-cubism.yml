@@ -334,16 +334,21 @@ jobs:
             echo "glew file count: $(find "$TP/glew" -type f 2>/dev/null | wc -l)"
             echo "stb file count: $(find "$TP/stb" -type f 2>/dev/null | wc -l)"
             echo "=== thirdParty (maxdepth 3) ==="
+            # Avoid pipefail+SIGPIPE from find|head aborting a successful verify.
+            set +o pipefail
             find "$TP" -maxdepth 3 \( -type d -o -type f \) | head -80
+            set -o pipefail
           else
             echo "::error::thirdParty dir missing: $TP"
             fail=1
           fi
           if [[ "$fail" -ne 0 ]]; then
             echo "=== find Samples -maxdepth 4 ==="
+            set +o pipefail
             find "$ROOT/Samples" -maxdepth 4 2>/dev/null | head -200 || true
             echo "=== vendor top ==="
             find vendor -maxdepth 3 2>/dev/null | head -100 || true
+            set -o pipefail
             exit 1
           fi
           echo "SDK Core + OpenGL thirdParty (glew/stb) OK"
