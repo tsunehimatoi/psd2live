@@ -82,16 +82,63 @@ internal object WorkspaceStateCodec {
         put("panY", camera.panY)
     }
 
+    private fun encodePresentation(p: CanvasPresentation): JsonObject = buildJsonObject {
+        put("selectedLayerId", p.selectedLayerId)
+        put("selectedDeformerId", p.selectedDeformerId)
+        put("isolatedLayerId", p.isolatedLayerId)
+        put("animationEnabled", p.animationEnabled)
+        put("mouseTrackingEnabled", p.mouseTrackingEnabled)
+        putJsonObject("layerVisibility") { p.layerVisibility.forEach { (id, visible) -> put(id, visible) } }
+        putJsonObject("deformerVisibility") { p.deformerVisibility.forEach { (id, visible) -> put(id, visible) } }
+        p.isolationSnapshot?.let { snapshot -> putJsonObject("isolationSnapshot") { snapshot.forEach { (id, visible) -> put(id, visible) } } }
+        putJsonObject("parameterValues") { p.parameterValues.forEach { (id, number) -> put(id.raw, number) } }
+        putJsonArray("lockedParameters") { p.lockedParameters.forEach { add(it.raw) } }
+    }
+
+    private fun decodePresentation(value: JsonElement?): CanvasPresentation {
+        val obj = value as? JsonObject ?: return CanvasPresentation()
+        return CanvasPresentation(
+            selectedLayerId = obj["selectedLayerId"]?.jsonPrimitive?.contentOrNull,
+            selectedDeformerId = obj["selectedDeformerId"]?.jsonPrimitive?.contentOrNull,
+            isolatedLayerId = obj["isolatedLayerId"]?.jsonPrimitive?.contentOrNull,
+            animationEnabled = booleanOr(obj, "animationEnabled", false),
+            mouseTrackingEnabled = booleanOr(obj, "mouseTrackingEnabled", true),
+            layerVisibility = obj["layerVisibility"]?.jsonObject?.mapValues { it.value.jsonPrimitive.boolean } ?: emptyMap(),
+            deformerVisibility = obj["deformerVisibility"]?.jsonObject?.mapValues { it.value.jsonPrimitive.boolean } ?: emptyMap(),
+            isolationSnapshot = obj["isolationSnapshot"]?.jsonObject?.mapValues { it.value.jsonPrimitive.boolean },
+            parameterValues = obj["parameterValues"]?.jsonObject?.map { (id, v) -> ParameterId(id) to v.jsonPrimitive.float }?.toMap() ?: emptyMap(),
+            lockedParameters = obj["lockedParameters"]?.jsonArray?.map { ParameterId(it.jsonPrimitive.content) }?.toSet() ?: emptySet(),
+        )
+    }
+
+    private fun decodeSession(value: JsonElement?, mode: CanvasMode, legacyViewOptions: Boolean): CanvasModeSession {
+        val obj = value as? JsonObject
+        return CanvasModeSession(
+            view = decodeViewOptions(obj?.get("view"), mode.defaultViewOptions(), legacyViewOptions),
+            camera = decodeCamera(obj?.get("camera")),
+            presentation = decodePresentation(obj?.get("presentation")),
+        )
+    }
+
+    private fun encodeSession(session: CanvasModeSession, presentation: CanvasPresentation = session.presentation): JsonObject =
+        buildJsonObject {
+            put("view", encodeViewOptions(session.view))
+            put("camera", encodeCamera(session.camera))
+            put("presentation", encodePresentation(presentation))
+        }
+
     private fun decodeCanvas(obj: JsonObject, legacyViewOptions: Boolean): CanvasWindowState? {
         val id = obj["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return null
         val mode = obj["mode"]?.jsonPrimitive?.contentOrNull
             ?.let { name -> CanvasMode.entries.firstOrNull { it.name == name } }
             ?: CanvasMode.EDIT
+        val savedEdit = obj["editSession"] ?: if (mode == CanvasMode.EDIT) obj else null
+        val savedPreview = obj["previewSession"] ?: if (mode == CanvasMode.PREVIEW) obj else null
         return CanvasWindowState(
             id = id,
             mode = mode,
-            view = decodeViewOptions(obj["view"], mode.defaultViewOptions(), legacyViewOptions),
-            camera = decodeCamera(obj["camera"]),
+            editSession = decodeSession(savedEdit, CanvasMode.EDIT, legacyViewOptions),
+            previewSession = decodeSession(savedPreview, CanvasMode.PREVIEW, legacyViewOptions),
         )
     }
 
@@ -149,11 +196,19 @@ internal object WorkspaceStateCodec {
             ?: tabs.firstOrNull { it.kind == "EDIT" }
             ?: tabs.firstOrNull { it.kind != "HISTORY" }
         val mode = if (active?.kind == "PREVIEW") CanvasMode.PREVIEW else CanvasMode.EDIT
+        val editTab = active?.takeIf { it.kind == "EDIT" } ?: tabs.firstOrNull { it.kind == "EDIT" }
+        val previewTab = active?.takeIf { it.kind == "PREVIEW" } ?: tabs.firstOrNull { it.kind == "PREVIEW" }
         val canvas = CanvasWindowState(
             id = PRIMARY_CANVAS_ID,
             mode = mode,
-            view = active?.view ?: mode.defaultViewOptions(),
-            camera = active?.camera ?: legacyCamera ?: TabCamera(),
+            editSession = CanvasModeSession(
+                view = editTab?.view ?: CanvasMode.EDIT.defaultViewOptions(),
+                camera = editTab?.camera ?: legacyCamera ?: TabCamera(),
+            ),
+            previewSession = CanvasModeSession(
+                view = previewTab?.view ?: CanvasMode.PREVIEW.defaultViewOptions(),
+                camera = previewTab?.camera ?: legacyCamera ?: TabCamera(),
+            ),
         )
         return defaultEditorWorkspace().copy(canvases = listOf(canvas), activeCanvasId = canvas.id)
     }
@@ -261,8 +316,11 @@ internal object WorkspaceStateCodec {
             putJsonArray("canvases") { workspace.canvases.forEach { canvas -> add(buildJsonObject {
                 put("id", canvas.id)
                 put("mode", canvas.mode.name)
-                put("view", encodeViewOptions(canvas.view))
-                put("camera", encodeCamera(canvas.camera))
+                val active = workspace.id == state.activeWorkspace.id && canvas.id == state.activeCanvas.id
+                put("editSession", encodeSession(canvas.editSession,
+                    if (active && canvas.mode == CanvasMode.EDIT) CanvasPresentation.capture(state) else canvas.editSession.presentation))
+                put("previewSession", encodeSession(canvas.previewSession,
+                    if (active && canvas.mode == CanvasMode.PREVIEW) CanvasPresentation.capture(state) else canvas.previewSession.presentation))
             }) } }
         }) } }
         put("activeWorkspaceId", state.activeWorkspaceId)
@@ -452,6 +510,18 @@ internal object WorkspaceStateCodec {
                 imageBytes = l["image"]?.jsonPrimitive?.content?.let { java.util.Base64.getDecoder().decode(it) })
         } ?: base.logEntries,
         ).let { decoded ->
+            val savedActive = value["workspaces"]?.jsonArray?.map { it.jsonObject }
+                ?.firstOrNull { it["id"]?.jsonPrimitive?.content == decoded.activeWorkspace.id }
+                ?.get("canvases")?.jsonArray?.map { it.jsonObject }
+                ?.firstOrNull { it["id"]?.jsonPrimitive?.content == decoded.activeCanvas.id }
+            val activeSessionKey = if (decoded.activeCanvas.mode == CanvasMode.EDIT) "editSession" else "previewSession"
+            val hasPresentation = savedActive?.containsKey("presentation") == true ||
+                (savedActive?.get(activeSessionKey) as? JsonObject)?.containsKey("presentation") == true
+            if (hasPresentation) decoded.activeCanvas.presentation.applyTo(decoded)
+            else decoded.updateCanvas(decoded.activeCanvas.id) { canvas ->
+                canvas.updateSession { it.copy(presentation = CanvasPresentation.capture(decoded)) }
+            }
+        }.let { decoded ->
             if ("workspaces" in value) decoded
             else decoded.updateActiveWorkspace { workspace ->
                 val hidden = workspace.hiddenModules.toMutableSet()

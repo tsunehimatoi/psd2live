@@ -119,3 +119,28 @@ internal class SkiaRigPainter(atlas: PackedAtlas) : AutoCloseable {
         images.forEach { it.close() }
     }
 }
+
+/** Keeps the unchanged texture pass as Skia draw commands for this one viewport. */
+internal class CachedSkiaPicture : AutoCloseable {
+    private var key: List<Any?>? = null
+    private var picture: Picture? = null
+
+    fun draw(canvas: Canvas, key: List<Any?>, width: Int, height: Int, record: (Canvas) -> Unit) {
+        if (picture == null || this.key != key) {
+            val next = PictureRecorder().use { recorder ->
+                record(recorder.beginRecording(Rect.makeWH(width.toFloat(), height.toFloat())))
+                recorder.finishRecordingAsPicture()
+            }
+            picture?.close()
+            picture = next
+            this.key = key
+        }
+        picture?.let { canvas.drawPicture(it) }
+    }
+
+    override fun close() {
+        picture?.close()
+        picture = null
+        key = null
+    }
+}

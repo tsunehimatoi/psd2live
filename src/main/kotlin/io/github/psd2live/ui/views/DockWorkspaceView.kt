@@ -199,36 +199,28 @@ internal fun DockWorkspaceView(
         val saved = workspace.layoutJson?.let { raw ->
             runCatching { dockJson.decodeFromString<DockNode>(raw) }.getOrNull()?.remove("export")
         }?.takeIf { node -> node.allModules().all { it in allowed } }
-        DockSession(saved ?: defaultDockLayout())
+        DockSession(saved?.let(::repairLegacyCanvasDocking) ?: defaultDockLayout())
+    }
+    LaunchedEffect(workspace.id, workspace.layoutJson) {
+        val saved = workspace.layoutJson?.let { runCatching { dockJson.decodeFromString<DockNode>(it) }.getOrNull() }
+            ?: return@LaunchedEffect
+        val repaired = repairLegacyCanvasDocking(saved)
+        if (repaired != saved) viewModel.setWorkspaceLayout(workspace.id, dockJson.encodeToString(repaired))
+    }
+    val canvasIds = workspace.canvases.map { it.id }
+    val reconciledRoot = remember(session.root, canvasIds, workspace.placeModules) {
+        reconcileDockModules(session.root, canvasIds, workspace.placeModules)
     }
     val hiddenModules = workspace.hiddenModules
     // Visibility is a projection of the saved layout: toggling a panel must not remove
     // its tab group, split ratio, or floating-window placement from the layout.
-    val visibleRoot = hiddenModules.fold(session.root) { layout, module -> layout?.remove(module) }
-    SideEffect { session.hiddenModules = hiddenModules }
+    val visibleRoot = hiddenModules.fold(reconciledRoot) { layout, module -> layout?.remove(module) }
+    SideEffect {
+        session.hiddenModules = hiddenModules
+        if (session.root != reconciledRoot) session.root = reconciledRoot
+    }
     LaunchedEffect(state.workspaces.map { it.id }) {
         sessions.keys.retainAll(state.workspaces.map { it.id }.toSet())
-    }
-    LaunchedEffect(workspace.id, workspace.canvases.map { it.id }, workspace.placeModules) {
-        var root = session.root
-        val canvasIds = workspace.canvases.map { it.id }.toSet()
-        root?.allModules()?.filter { isCanvasModule(it) && it !in canvasIds }?.forEach { id ->
-            root = root?.remove(id)
-        }
-        workspace.canvases.forEach { canvas ->
-            if (root?.allModules()?.contains(canvas.id) != true) {
-                val anchor = root?.allModules()?.firstOrNull { isCanvasModule(it) }
-                root = dockModule(root, canvas.id, anchor, DockSide.RIGHT)
-            }
-        }
-        workspace.placeModules.forEach { module ->
-            if (root?.allModules()?.contains(module) != true) {
-                val anchor = root?.allModules()?.firstOrNull { isCanvasModule(it) } ?: root?.allModules()?.firstOrNull()
-                val side = if (module == "history") DockSide.LEFT else DockSide.BOTTOM
-                root = dockModule(root, module, anchor, side)
-            }
-        }
-        if (root != session.root) session.root = root
     }
     LaunchedEffect(workspace.layoutJson, workspace.placeModules) {
         val pending = workspace.placeModules.filter { module ->
@@ -255,7 +247,7 @@ internal fun DockWorkspaceView(
 	val latestOnStartTutorial by rememberUpdatedState(onStartTutorial)
 	val latestOnOpenProject by rememberUpdatedState(onOpenProject)
 	val latestOnOpenPsd by rememberUpdatedState(onOpenPsd)
-    val contents = remember(workspace.id) { mutableMapOf<String, @Composable () -> Unit>() }
+    val contents = remember(workspace.id, canvasIds) { mutableMapOf<String, @Composable () -> Unit>() }
     fun content(id: String): @Composable () -> Unit = contents.getOrPut(id) {
         movableContentOf {
 			DockModuleContent(
@@ -677,9 +669,12 @@ private fun DockHeader(id: String, session: DockSession, modifier: Modifier,
                         onDragEnd = { session.track(); session.finish() },
                         onDragCancel = { session.cancel() },
                     )
-                }.clickable(interactionSource = interaction, indication = null, onClick = onSelect)
+                }.clickable(interactionSource = interaction, indication = null) {
+                    onSelect()
+                    if (canvas != null) viewModel.focusCanvas(canvas.id)
+                }
                 .padding(horizontal = 7.dp, vertical = 2.dp))
-        if (showCanvasTools && canvas != null) {
+        if (showCanvasTools) {
             CanvasModeChip(
                 label = tr("tab.edit"),
                 active = canvas.mode == CanvasMode.EDIT,
@@ -705,13 +700,13 @@ private fun DockHeader(id: String, session: DockSession, modifier: Modifier,
                 TabStripDropdown(expanded = viewMenu, onDismissRequest = { viewMenu = false }) {
                     ViewOptionsMenuItems(
                         options = canvas.view,
-                        onOptionsChange = { viewModel.setCanvasViewOptions(canvas.id, it) },
+                        onOptionsChange = { viewModel.setCanvasViewOptions(canvas.id, it, canvas.mode) },
                         onDismiss = { viewMenu = false },
                         showHeaders = true,
                         showPathGuides = canvas.mode == CanvasMode.EDIT,
                         onReset = {
                             viewMenu = false
-                            viewModel.resetCanvasViewOptions(canvas.id)
+                            viewModel.resetCanvasViewOptions(canvas.id, canvas.mode)
                         },
                     )
                 }
@@ -789,7 +784,6 @@ private fun DockModuleContent(
 			cameraPanX = canvas.camera.panX,
 			cameraPanY = canvas.camera.panY,
 			modifier = Modifier.fillMaxSize(),
-			onLayerClicked = vm::selectLayer,
 			onStartTutorial = onStartTutorial,
 			onOpenProject = onOpenProject,
 			onOpenPsd = onOpenPsd,

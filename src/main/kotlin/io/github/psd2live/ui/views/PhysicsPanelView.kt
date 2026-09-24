@@ -59,6 +59,7 @@ import io.github.psd2live.ui.components.IconPlay
 import io.github.psd2live.ui.components.IconReset
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
+import io.github.psd2live.ui.state.previewPanelState
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
 import java.util.Locale
@@ -98,6 +99,7 @@ internal fun PhysicsPanelView(
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 	val scrollState = rememberScrollState()
+	val previewState = state.previewPanelState()
 
 	// 1. Resolve real physics groups (Built-in + Custom overrides/additions)
 	val groups = remember(state.physicsFrontHair, state.physicsBackHair, state.physicsEyeJelly, state.rigEdits.physicsEdits) {
@@ -232,7 +234,7 @@ internal fun PhysicsPanelView(
 		// 1. Global & Test Control Card
 		PhysicsGlobalControlCard(
 			viewModel = viewModel,
-			state = state,
+			state = previewState,
 			selectedFps = selectedFps,
 			onFpsChange = { selectedFps = it },
 		)
@@ -301,7 +303,7 @@ internal fun PhysicsPanelView(
 		// 5. Interactive Real-time Pendulum Scope Card
 		PhysicsVisualizerCard(
 			viewModel = viewModel,
-			state = state,
+			state = previewState,
 			group = currentGroup,
 		)
 
@@ -375,7 +377,7 @@ private fun PhysicsGlobalControlCard(
 			// Reset Pose
 			CompactButton(
 				text = tr("physics.reset"),
-				onClick = { viewModel.resetAllParameters() },
+				onClick = { viewModel.resetPreviewParameters() },
 				leadingIcon = { IconReset(modifier = Modifier.size(10.dp), tint = colors.textPrimary) },
 				height = 24.dp,
 				modifier = Modifier.weight(1f),

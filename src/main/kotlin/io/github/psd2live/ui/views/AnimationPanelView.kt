@@ -47,6 +47,7 @@ import io.github.psd2live.ui.components.IconPlay
 import io.github.psd2live.ui.components.IconReset
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
+import io.github.psd2live.ui.state.previewPanelState
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
 
@@ -59,6 +60,7 @@ internal fun AnimationPanelView(
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 	val scrollState = rememberScrollState()
+	val previewState = state.previewPanelState()
 
 	Column(
 		modifier = modifier
@@ -69,11 +71,11 @@ internal fun AnimationPanelView(
 		verticalArrangement = Arrangement.spacedBy(8.dp),
 	) {
 		// 1. Master Playback & Quick Controls
-		MasterPlaybackCard(viewModel, state)
+		MasterPlaybackCard(viewModel, previewState, state.previewLive)
 
 		// 2. Motions List Section
 		CompactSectionHeader(title = tr("animation.motionsTitle"))
-		MotionsListSection(viewModel, state)
+		MotionsListSection(viewModel, previewState)
 
 		Spacer(Modifier.height(8.dp))
 	}
@@ -84,6 +86,7 @@ internal fun AnimationPanelView(
 private fun MasterPlaybackCard(
 	viewModel: PSD2LiveViewModel,
 	state: PSD2LiveState,
+	previewVisible: Boolean,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -120,7 +123,7 @@ private fun MasterPlaybackCard(
 
 					CompactButton(
 						text = tr("animation.resetPose"),
-						onClick = { viewModel.resetAllParameters() },
+						onClick = { viewModel.resetPreviewParameters() },
 						leadingIcon = { IconReset(modifier = Modifier.size(11.dp), tint = colors.textPrimary) },
 						height = 24.dp,
 					)
@@ -158,7 +161,7 @@ private fun MasterPlaybackCard(
 					label = tr("animation.mouseTracking"),
 				)
 
-				if (!state.previewLive) {
+				if (!previewVisible) {
 					CompactButton(
 						text = tr("window.showPreview"),
 						onClick = { viewModel.ensurePreviewCanvas(focus = true) },

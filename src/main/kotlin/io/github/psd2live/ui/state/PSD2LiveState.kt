@@ -106,14 +106,33 @@ data class TabCamera(
 	val panY: Float = 0f,
 )
 
-/** One canvas pane. Several can sit in the same workspace, each in edit or preview. */
+/** State owned by one mode of a canvas. The document/model is shared by the workspace. */
+@Immutable
+data class CanvasModeSession(
+	val view: TabViewOptions,
+	val camera: TabCamera = TabCamera(),
+	val presentation: CanvasPresentation = CanvasPresentation(),
+)
+
+/** One canvas pane with independent edit and preview sessions. */
 @Immutable
 data class CanvasWindowState(
 	val id: String = PRIMARY_CANVAS_ID,
 	val mode: CanvasMode = CanvasMode.EDIT,
-	val view: TabViewOptions = TabViewOptions.Default,
-	val camera: TabCamera = TabCamera(),
-)
+	val editSession: CanvasModeSession = CanvasModeSession(CanvasMode.EDIT.defaultViewOptions()),
+	val previewSession: CanvasModeSession = CanvasModeSession(CanvasMode.PREVIEW.defaultViewOptions()),
+) {
+	fun session(mode: CanvasMode = this.mode): CanvasModeSession =
+		if (mode == CanvasMode.EDIT) editSession else previewSession
+
+	val view: TabViewOptions get() = session().view
+	val camera: TabCamera get() = session().camera
+	val presentation: CanvasPresentation get() = session().presentation
+
+	fun updateSession(mode: CanvasMode = this.mode, transform: (CanvasModeSession) -> CanvasModeSession): CanvasWindowState =
+		if (mode == CanvasMode.EDIT) copy(editSession = transform(editSession))
+		else copy(previewSession = transform(previewSession))
+}
 
 /**
  * A named arrangement of docked panels and canvases.
@@ -142,7 +161,6 @@ data class EditorWorkspace(
 internal fun defaultEditCanvas(): CanvasWindowState = CanvasWindowState(
 	id = PRIMARY_CANVAS_ID,
 	mode = CanvasMode.EDIT,
-	view = CanvasMode.EDIT.defaultViewOptions(),
 )
 
 internal fun defaultEditorWorkspace(): EditorWorkspace = EditorWorkspace(id = DEFAULT_WORKSPACE_ID)
@@ -473,7 +491,7 @@ data class PSD2LiveState(
 			exportIncludeDisplayInfo = exportIncludeDisplayInfo,
 			exportPixelsPerUnit = exportPixelsPerUnit,
 			layerOverrides = layerOverrides,
-			layerVisibility = layerVisibility,
+			layerVisibility = emptyMap(), // Canvas visibility must never rewrite the shared model.
 			deletedLayerIds = deletedLayerIds,
 			parentOverrides = parentOverrides,
 			drawOrderOverrides = drawOrderOverrides,

@@ -2,6 +2,7 @@ package io.github.psd2live.ui.views
 
 import kotlinx.serialization.Serializable
 import java.util.UUID
+import io.github.psd2live.ui.state.isCanvasModule
 
 internal enum class DockSide { CENTER, LEFT, RIGHT, TOP, BOTTOM }
 
@@ -57,6 +58,69 @@ internal fun dockModule(root: DockNode?, module: String, target: String?, side: 
             second = if (side == DockSide.LEFT || side == DockSide.TOP) node else leaf)
     }
     return if (found) result else DockNode(first = clean, second = leaf, ratio = .75f)
+}
+
+/** Auto-placement chooses a module, while [dockModule] addresses a leaf node ID. */
+internal fun dockBesideModule(root: DockNode?, module: String, anchorModule: String?, side: DockSide): DockNode =
+    dockModule(root, module, anchorModule?.let { root?.containing(it)?.id }, side)
+
+/** Resolve canvas and requested panel modules before the tree is first composed. */
+internal fun reconcileDockModules(
+    root: DockNode?,
+    canvasIds: List<String>,
+    placeModules: List<String>,
+): DockNode? {
+    var result = root
+    val validCanvasIds = canvasIds.toSet()
+    result?.allModules()?.filter { isCanvasModule(it) && it !in validCanvasIds }?.forEach { id ->
+        result = result?.remove(id)
+    }
+    canvasIds.forEach { id ->
+        if (result?.allModules()?.contains(id) != true) {
+            val anchor = result?.allModules()?.firstOrNull(::isCanvasModule)
+            result = dockBesideModule(result, id, anchor, DockSide.RIGHT)
+        }
+    }
+    placeModules.forEach { module ->
+        if (result?.allModules()?.contains(module) != true) {
+            val anchor = result?.allModules()?.firstOrNull(::isCanvasModule) ?: result?.allModules()?.firstOrNull()
+            val side = if (module == "history") DockSide.LEFT else DockSide.BOTTOM
+            result = dockBesideModule(result, module, anchor, side)
+        }
+    }
+    return result
+}
+
+/** Repair the exact root-level split produced by the old module-ID auto-placement bug. */
+internal fun repairLegacyCanvasDocking(saved: DockNode): DockNode {
+    val defaultShape = defaultDockLayout()
+    fun sameDefaultShape(node: DockNode, expected: DockNode): Boolean =
+        node.modules == expected.modules && node.horizontal == expected.horizontal && node.ratio == expected.ratio &&
+            when {
+                node.first == null && node.second == null -> expected.first == null && expected.second == null
+                node.first != null && node.second != null && expected.first != null && expected.second != null ->
+                    sameDefaultShape(node.first, expected.first) && sameDefaultShape(node.second, expected.second)
+                else -> false
+            }
+
+    fun unwrap(node: DockNode): Pair<DockNode, List<String>>? {
+        if (sameDefaultShape(node, defaultShape)) return node to emptyList()
+        val added = node.second?.takeIf { it.first == null && it.second == null }
+            ?.modules?.singleOrNull()?.takeIf { it.startsWith("canvas:") } ?: return null
+        if (!node.horizontal || node.ratio != .75f) return null
+        val (base, extras) = node.first?.let(::unwrap) ?: return null
+        return base to (extras + added)
+    }
+
+    val (base, extras) = unwrap(saved) ?: return saved
+    if (extras.isEmpty()) return saved
+    var repaired = base
+    var anchor = "canvas"
+    for (canvas in extras) {
+        repaired = dockBesideModule(repaired, canvas, anchor, DockSide.RIGHT)
+        anchor = canvas
+    }
+    return repaired
 }
 
 internal fun defaultDockLayout(): DockNode {

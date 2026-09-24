@@ -47,13 +47,14 @@ internal object RigInformationOverlay {
         selectedDeformerId: String? = null,
         hoveredDeformerId: String? = null,
         dimUnselected: Boolean = false,
+        pointsById: Map<String, FloatArray>? = null,
     ) {
         if (ids.isEmpty()) return
-        val pointsById = warpPoints(model, parameters, ids)
+        val points = pointsById ?: warpPoints(model, parameters, ids)
         // Laid out once for the whole pass, because a mark's size depends on what else shares its corner.
-        val corners = RigCanvasSupport.deformerCorners(RigCanvasSupport.deformerOutlines(model, pointsById), viewport)
+        val corners = RigCanvasSupport.deformerCorners(RigCanvasSupport.deformerOutlines(model, points), viewport)
         val layers = model.deformers.filterIsInstance<Deformer.Warp>().filter { it.id.raw in ids }.mapNotNull { w ->
-            val p = pointsById[w.id.raw] ?: return@mapNotNull null
+            val p = points[w.id.raw] ?: return@mapNotNull null
             val isSelected = selectedDeformerId != null && w.id.raw == selectedDeformerId
             val isHovered = hoveredDeformerId != null && w.id.raw == hoveredDeformerId && !isSelected
             // Nothing selected means every warp is "unselected", so the whole rig guide fades to a

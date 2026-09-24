@@ -351,10 +351,36 @@ internal enum class CanvasStatusTone { NORMAL, WARNING, ERROR }
 /** Text and tone the app status bar shows while an Edit tab is active. */
 internal data class CanvasStatusMessage(val text: String, val tone: CanvasStatusTone)
 
-internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
-    var state: PSD2LiveState
-        get() = viewModel.state.value
-        set(_) {}
+internal class CanvasEditor(
+    val viewModel: PSD2LiveViewModel,
+    private val workspaceId: String = viewModel.state.value.activeWorkspace.id,
+    private val canvasId: String = viewModel.state.value.activeCanvas.id,
+) {
+    private var sourceState: PSD2LiveState? = null
+    private var projectedState: PSD2LiveState? = null
+    val state: PSD2LiveState
+        get() {
+            val source = viewModel.state.value
+            if (source !== sourceState) {
+                sourceState = source
+                projectedState = source.forCanvas(canvasId, workspaceId, CanvasMode.EDIT)
+            }
+            return requireNotNull(projectedState)
+        }
+    internal fun selectLayer(id: String?) = viewModel.updateCanvasPresentation(workspaceId, canvasId, CanvasMode.EDIT) {
+        it.copy(selectedLayerId = id, selectedDeformerId = if (id != null) null else it.selectedDeformerId)
+    }
+    private fun selectDeformer(id: String?) = viewModel.updateCanvasPresentation(workspaceId, canvasId, CanvasMode.EDIT) {
+        it.copy(selectedDeformerId = id, selectedLayerId = if (id != null) null else it.selectedLayerId)
+    }
+    private fun setHoveredItem(layerId: String?, deformerId: String?) {
+        val presentation = viewModel.state.value.workspaces.firstOrNull { it.id == workspaceId }
+            ?.canvases?.firstOrNull { it.id == canvasId }?.editSession?.presentation ?: return
+        if (presentation.hoveredLayerId == layerId && presentation.hoveredDeformerId == deformerId) return
+        viewModel.updateCanvasPresentation(workspaceId, canvasId, CanvasMode.EDIT) {
+            it.copy(hoveredLayerId = layerId, hoveredDeformerId = deformerId)
+        }
+    }
     var viewport: CanvasViewport? = null
     var tool by mutableStateOf(CanvasTool.SELECT)
 
@@ -947,7 +973,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         if (pos != null && viewport != null) {
             val hit = pickLayer(pos, viewport)
             if (hit != null) {
-                viewModel.selectLayer(hit)
+                selectLayer(hit)
                 return target(layerId = hit, deformerId = null)
             }
         }
@@ -1735,7 +1761,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         if (hierarchyMode == EditHierarchyMode.PAINT) leavePaintForCreation()
         if (anchorIsDeformer) {
             val d = model.deformers.firstOrNull { it.id.raw == anchorId } ?: return
-            viewModel.selectDeformer(anchorId)
+            selectDeformer(anchorId)
             when (kind) {
                 CreatePlacementKind.PATH, CreatePlacementKind.LAYER -> return // paths/layers attach via other entry points
                 CreatePlacementKind.WARP -> {
@@ -1755,7 +1781,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         } else {
             val drawable = model.drawables.firstOrNull { it.id.raw == anchorId } ?: return
             val layer = state.previewModel?.rig?.layerIdByDrawableId?.get(drawable.id.raw)
-            if (layer != null) viewModel.selectLayer(layer)
+            if (layer != null) selectLayer(layer)
             when (kind) {
                 CreatePlacementKind.PATH -> beginPlacement(
                     CreatePlacementKind.PATH, CreateRelation.AS_CHILD, "mesh", drawable.id.raw, drawable.name, listOf(drawable.id.raw),
@@ -2067,10 +2093,10 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         createSessionReturnMode = null
         deferredMode = null
         hierarchyMode = EditHierarchyMode.SELECT
-        viewModel.applyHierarchyModeViewPreset(EditHierarchyMode.SELECT)
+        viewModel.applyHierarchyModeViewPreset(EditHierarchyMode.SELECT, canvasId, workspaceId)
         tool = CanvasTool.SELECT
         clearHover()
-        viewModel.selectLayer(p.anchorId)
+        selectLayer(p.anchorId)
     }
 
     private fun commitPlacedWarp(p: CreatePlacement) {
@@ -2574,7 +2600,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             if (objectMode) vertices = emptySet()
         }
         // Mode only seeds display presets — toggles stay fully user-controlled afterwards.
-        viewModel.applyHierarchyModeViewPreset(next)
+        viewModel.applyHierarchyModeViewPreset(next, canvasId, workspaceId)
         clearHover()
     }
 
@@ -2625,7 +2651,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         isHoveringObject = false
         // The hierarchy panel publishes the same pair from its own hover, so only retract a highlight
         // this editor actually put up — a tool switch must not blink out the panel's.
-        if (hoveredPick != null) viewModel.setHoveredItem(null, null)
+        if (hoveredPick != null) setHoveredItem(null, null)
         hoveredPick = null
         shrinks = inflateInvert
     }
@@ -2750,35 +2776,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
      */
     fun activeWarpIds(): Set<String> {
         val preview = drawnPreview ?: return emptySet()
-        val puppet = preview.rig.puppet
-        val warps = puppet.deformers.filterIsInstance<Deformer.Warp>().map { it.id.raw }.toSet()
-        if (warps.isEmpty()) return emptySet()
-        val hovered = state.hoveredDeformerId?.takeIf { it in warps }
-        if (!state.showWarp && state.selectedDeformerId == null && hovered == null) return emptySet()
-        // A mesh is being edited, and the warps that shape it are not what the artist is looking at.
-        if (state.selectedLayerId != null) return emptySet()
-
-        val selected = state.selectedDeformerId
-        val base = if (selected == null) {
-            if (state.filterSelectedOnly) emptySet() else warps
-        } else {
-            // The deformer and everything under it — the chain that moves when it does.
-            val under = mutableSetOf(selected)
-            var grew = true
-            while (grew) {
-                grew = false
-                for (deformer in puppet.deformers) {
-                    if (deformer.id.raw in under) continue
-                    val parent = state.parentOverrides[deformer.id.raw] ?: deformer.parent?.raw
-                    if (parent in under) {
-                        under.add(deformer.id.raw)
-                        grew = true
-                    }
-                }
-            }
-            under.filter { it in warps }.toSet()
-        }
-        return (if (hovered != null) base + hovered else base).filter { state.isDeformerVisible(it) }.toSet()
+        return visibleCanvasGuideIds(preview, state, warp = true)
     }
 
     /**
@@ -2787,33 +2785,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
      */
     fun activeRotationIds(): Set<String> {
         val preview = drawnPreview ?: return emptySet()
-        val puppet = preview.rig.puppet
-        val rotations = puppet.deformers.filterIsInstance<Deformer.Rotation>().map { it.id.raw }.toSet()
-        if (rotations.isEmpty() || !state.showRotation) return emptySet()
-        val hovered = state.hoveredDeformerId?.takeIf { it in rotations }
-        // A mesh is being edited — rotation guides are not what the artist is looking at.
-        if (state.selectedLayerId != null) return emptySet()
-
-        val selected = state.selectedDeformerId
-        val base = if (selected == null) {
-            if (state.filterSelectedOnly) emptySet() else rotations
-        } else {
-            val under = mutableSetOf(selected)
-            var grew = true
-            while (grew) {
-                grew = false
-                for (deformer in puppet.deformers) {
-                    if (deformer.id.raw in under) continue
-                    val parent = state.parentOverrides[deformer.id.raw] ?: deformer.parent?.raw
-                    if (parent in under) {
-                        under.add(deformer.id.raw)
-                        grew = true
-                    }
-                }
-            }
-            under.filter { it in rotations }.toSet()
-        }
-        return (if (hovered != null) base + hovered else base).filter { state.isDeformerVisible(it) }.toSet()
+        return visibleCanvasGuideIds(preview, state, warp = false)
     }
 
     /**
@@ -2881,11 +2853,11 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                 val pick = objectPick(pos, viewport, ctrl)
                 hoveredPick = pick
                 isHoveringObject = pick != null
-                viewModel.setHoveredItem(pick?.layerId, pick?.deformerId)
+                setHoveredItem(pick?.layerId, pick?.deformerId)
             } else if (tool in SELECTION_TOOLS) {
                 val hit = layerCandidates(pos, viewport).firstOrNull()
                 isHoveringObject = hit != null
-                viewModel.setHoveredItem(hit, null)
+                setHoveredItem(hit, null)
             }
             return
         }
@@ -3209,7 +3181,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             createSessionReturnMode = null
             if (hierarchyMode != EditHierarchyMode.EDIT) {
                 hierarchyMode = EditHierarchyMode.EDIT
-                viewModel.applyHierarchyModeViewPreset(EditHierarchyMode.EDIT)
+                viewModel.applyHierarchyModeViewPreset(EditHierarchyMode.EDIT, canvasId, workspaceId)
             }
             tool = CanvasTool.SELECT
             pathClosed = false
@@ -3268,7 +3240,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
     fun selectAll(invert: Boolean = false) {
         if (objectMode) {
             objects = state.effectiveVisibleLayerIds.filter { (!invert || it !in objects) && target(model, it, null) != null }.toSet()
-            viewModel.selectLayer(objects.lastOrNull())
+            selectLayer(objects.lastOrNull())
         } else target()?.let { t ->
             if (hierarchyMode == EditHierarchyMode.EDIT && t.kind == "mesh" && elementMode == 1) {
                 selectedEdges = MeshTopology.uniqueEdges(t.indices).filterTo(LinkedHashSet()) { !invert || it !in selectedEdges }
@@ -3466,7 +3438,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
      */
     private fun finishCreateSession(newDeformerId: String) {
         vertices = emptySet()
-        viewModel.selectDeformer(newDeformerId)
+        selectDeformer(newDeformerId)
         if (sequentialCreate) {
             // Stay on the create tool; keep return mode for a later exit.
             return
@@ -3617,7 +3589,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         val layer = pick.layerId
         if (layer == null) {
             objects = emptySet()
-            if (state.selectedDeformerId != pick.deformerId) viewModel.selectDeformer(pick.deformerId)
+            if (state.selectedDeformerId != pick.deformerId) selectDeformer(pick.deformerId)
             return
         }
         objects = when (add) {
@@ -3625,7 +3597,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
             false -> objects - layer
             null -> if (layer in objects) objects else setOf(layer)
         }
-        if (add != false && state.selectedLayerId != layer) viewModel.selectLayer(layer)
+        if (add != false && state.selectedLayerId != layer) selectLayer(layer)
     }
 
     /**
@@ -3760,7 +3732,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
         }
         if (tool in setOf(CanvasTool.CREATE_WARP, CanvasTool.CREATE_ROTATION, CanvasTool.CREATE_DEFORM_PATH) &&
             target()?.kind != "mesh" && placement == null) {
-            pickLayer(pos, viewport)?.let { viewModel.selectLayer(it) }
+            pickLayer(pos, viewport)?.let { selectLayer(it) }
             error = tr("editor.creationSelectFirst")
             return true
         }
@@ -3898,8 +3870,8 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                 // Empty canvas clears the lot. Both calls are needed: each one only drops the other
                 // half when it is given a non-null id, so neither alone clears a deformer selection.
                 objects = emptySet()
-                viewModel.selectLayer(null)
-                viewModel.selectDeformer(null)
+                selectLayer(null)
+                selectDeformer(null)
             }
             marquee = listOf(pos, pos)
             dragging = true
@@ -4487,7 +4459,7 @@ internal class CanvasEditor(val viewModel: PSD2LiveViewModel) {
                 found.isEmpty() && pressedObject != null -> objects
                 else -> found
             }
-            viewModel.selectLayer(objects.lastOrNull()); pressedObject = null; marquee = emptyList(); original = null; head = null; return
+            selectLayer(objects.lastOrNull()); pressedObject = null; marquee = emptyList(); original = null; head = null; return
         }
         val t = targetAtPress ?: target() ?: return
         val found = screen(t.geometry.points, t, viewport).mapIndexedNotNull { i, p -> if (insidePolygon(p, polygon)) i else null }.toSet()

@@ -302,7 +302,6 @@ private fun HierarchyView(
 						state = state,
 						viewModel = viewModel,
 						modifier = Modifier.fillMaxSize(),
-						onLayerClicked = { viewModel.selectLayer(it) },
 					)
 				}
 				BottomLogDock(

@@ -18,6 +18,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.key
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -38,6 +39,7 @@ import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.skiaCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.toComposeImageBitmap
@@ -79,7 +81,10 @@ import io.github.psd2live.ui.CanvasViewport
 import io.github.psd2live.ui.ComponentPalette
 import io.github.psd2live.ui.CubismViewport
 import io.github.psd2live.ui.RigCanvasSupport
+import io.github.psd2live.ui.CachedSkiaPicture
 import io.github.psd2live.ui.SkiaRigPainter
+import io.github.psd2live.ui.visibleCanvasGuideIds
+import io.github.psd2live.ui.state.forCanvas
 import io.github.psd2live.ui.state.CanvasMode
 import io.github.psd2live.ui.state.PRIMARY_CANVAS_ID
 import io.github.psd2live.ui.state.PSD2LiveState
@@ -112,15 +117,16 @@ fun CanvasViewportComposable(
 	viewModel: PSD2LiveViewModel,
 	modifier: Modifier = Modifier,
 	canvasId: String = PRIMARY_CANVAS_ID,
-	viewOptions: TabViewOptions = state.activeTabView,
-	cameraZoom: Float = state.canvasZoom,
-	cameraPanX: Float = state.canvasPanX,
-	cameraPanY: Float = state.canvasPanY,
-	onLayerClicked: ((String?) -> Unit)? = null,
+	viewOptions: TabViewOptions = state.forCanvas(canvasId).activeTabView,
+	cameraZoom: Float = state.forCanvas(canvasId).canvasZoom,
+	cameraPanX: Float = state.forCanvas(canvasId).canvasPanX,
+	cameraPanY: Float = state.forCanvas(canvasId).canvasPanY,
 	onStartTutorial: (() -> Unit)? = null,
 	onOpenProject: (() -> Unit)? = null,
 	onOpenPsd: (() -> Unit)? = null,
 ) {
+    val canvasState = state.forCanvas(canvasId)
+    key(canvasState.projectOpenGeneration, canvasState.activeWorkspace.id, canvasId, mode) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 	val focusRequester = remember { FocusRequester() }
@@ -137,11 +143,22 @@ fun CanvasViewportComposable(
 	val showSelectionBounds = viewOptions.showSelectionBounds
 	val dimUnselected = viewOptions.dimUnselected
 	val filterSelectedOnly = viewOptions.filterSelectedOnly
-	var zoom by remember(state.projectOpenGeneration, canvasId) { mutableStateOf(cameraZoom.toDouble()) }
-	var panX by remember(state.projectOpenGeneration, canvasId) { mutableStateOf(cameraPanX.toDouble()) }
-	var panY by remember(state.projectOpenGeneration, canvasId) { mutableStateOf(cameraPanY.toDouble()) }
-	var isDragging by remember { mutableStateOf(false) }
+	var zoom by remember { mutableStateOf(cameraZoom.toDouble()) }
+	var panX by remember { mutableStateOf(cameraPanX.toDouble()) }
+	var panY by remember { mutableStateOf(cameraPanY.toDouble()) }
+    var isDragging by remember { mutableStateOf(false) }
+    var cameraDirty by remember { mutableStateOf(false) }
+    LaunchedEffect(cameraZoom, cameraPanX, cameraPanY) {
+        // A camera update can arrive after a newer pointer move. The local camera owns
+        // the position during a drag; applying that older state makes the canvas jump back.
+        if (!isDragging && !cameraDirty) {
+            zoom = cameraZoom.toDouble()
+            panX = cameraPanX.toDouble()
+            panY = cameraPanY.toDouble()
+        }
+    }
 	var lastDragPos by remember { mutableStateOf(Offset.Zero) }
+	var dragStartPos by remember { mutableStateOf(Offset.Zero) }
 	var showContextMenu by remember { mutableStateOf(false) }
 	var contextMenuOffset by remember { mutableStateOf(Offset.Zero) }
 	var fps by remember { mutableStateOf(0f) }
@@ -152,53 +169,77 @@ fun CanvasViewportComposable(
 	val lastPointerActivityNanos = remember { AtomicLong(0L) }
 	val pointerActivity = remember { Channel<Unit>(Channel.CONFLATED) }
 
-	val editor = viewModel.canvasEditor
+	val editor = viewModel.canvasEditorFor(canvasId)
+    val renderKey = viewModel.canvasRenderKey(canvasId, mode)
+    val frameFlow = remember(viewModel, renderKey) { viewModel.retainCanvasFrame(renderKey) }
+    DisposableEffect(viewModel, renderKey) {
+        onDispose {
+            viewModel.releaseRetainedCanvasFrame(renderKey)
+            if (mode == CanvasMode.EDIT) {
+                editor.space = false
+                editor.altHeld = false
+                if (editor.inGesture) editor.cancel()
+                if (editor.adjustingBrush) editor.endBrushAdjust(cancel = true)
+                editor.clearHover()
+            }
+        }
+    }
 
 	// A capture in the settings panel swallows key events, including the Space release that
 	// clears the pan latch, so drop it proactively — a stuck pan would look like a hung canvas.
-	LaunchedEffect(state.keyCapture, state.showSettingsDialog, state.showExportDialog) {
-		if (state.keyCapture != null || state.showSettingsDialog || state.showExportDialog) editor.space = false
+	LaunchedEffect(mode, canvasState.keyCapture, canvasState.showSettingsDialog, canvasState.showExportDialog) {
+		if (mode == CanvasMode.EDIT &&
+			(canvasState.keyCapture != null || canvasState.showSettingsDialog || canvasState.showExportDialog)) editor.space = false
 	}
 
 	// Rebinding happens in a modal that takes focus off the canvas. Pull it back on close so the
 	// key the user just recorded works straight away instead of needing a click on the canvas.
-	LaunchedEffect(state.focusCanvasRequest) {
-		if (state.focusCanvasRequest > 0) focusRequester.requestFocus()
+	LaunchedEffect(canvasState.focusCanvasRequest) {
+		if (canvasState.focusCanvasRequest > 0 && viewModel.state.value.activeCanvas.id == canvasId) focusRequester.requestFocus()
 	}
-    editor.state = state
-    LaunchedEffect(viewModel, mode) {
-                viewModel.canvasPathRequests.collect {
-            if (mode == CanvasMode.EDIT) {
-                // Deform paths ride the create strip; arm the tool without forcing Edit mode.
-                editor.activateTool(CanvasTool.CREATE_DEFORM_PATH)
-            }
-        }
-    }
-    LaunchedEffect(state.selectedLayerId, state.selectedDeformerId) {
-        if (!editor.inGesture && !editor.busy) {
+    LaunchedEffect(mode, canvasState.selectedLayerId, canvasState.selectedDeformerId) {
+        if (mode == CanvasMode.EDIT && !editor.inGesture && !editor.busy) {
             editor.resetSelection()
-            if(state.selectedLayerId !in editor.objects) editor.objects=setOfNotNull(state.selectedLayerId)
+            if(canvasState.selectedLayerId !in editor.objects) editor.objects=setOfNotNull(canvasState.selectedLayerId)
             // Vertex mode is only meaningful for the tools that edit points. Forcing it for the object
             // tools left `objects` populated while objectMode said otherwise, and the transform bounding
             // box — which is computed from objectMode — then framed a different set than the one a drag
             // actually moved.
-            if(state.selectedDeformerId!=null && editor.tool in VERTEX_TOOLS) { editor.objects=emptySet() }
+            if(canvasState.selectedDeformerId!=null && editor.tool in VERTEX_TOOLS) { editor.objects=emptySet() }
         }
     }
     // A mode asked for without a selection waits for one, and this is where the wait ends: a selection
     // arriving from any view — the canvas pick, the hierarchy tree, the inspector — is what a deferred
     // request was for. Deliberately outside the guard above: an object pick happens on the press of a
     // gesture that is still live, and the request has to be answered whether or not that gesture is.
-    LaunchedEffect(state.selectedLayerId, state.selectedDeformerId) {
-        editor.resolveDeferredMode()
+    LaunchedEffect(mode, canvasState.selectedLayerId, canvasState.selectedDeformerId) {
+        if (mode == CanvasMode.EDIT) editor.resolveDeferredMode()
     }
-    LaunchedEffect(state.historySnapshot?.headNodeId, state.parameterValues) {
-        if (!editor.busy && editor.inGesture) editor.cancel()
-        if (!editor.busy && state.previewModel != null) editor.target()?.let { t -> editor.vertices=editor.vertices.filter { it in 0 until t.count }.toSet() }
+    LaunchedEffect(mode, canvasState.historySnapshot?.headNodeId, canvasState.parameterValues) {
+        if (mode == CanvasMode.EDIT) {
+            if (!editor.busy && editor.inGesture) editor.cancel()
+            if (!editor.busy && canvasState.previewModel != null) editor.target()?.let { t -> editor.vertices=editor.vertices.filter { it in 0 until t.count }.toSet() }
+        }
     }
-    val previewModel = state.previewModel?.let { source ->
-        if (mode == CanvasMode.EDIT && editor.preview != null) source.copy(rig = source.rig.copy(puppet = editor.preview!!)) else source
+    val sourcePreviewModel = canvasState.previewModel
+    val editPuppet = if (mode == CanvasMode.EDIT) editor.preview else null
+    val previewModel = remember(sourcePreviewModel, editPuppet) {
+        sourcePreviewModel?.let { source ->
+            if (editPuppet != null) source.copy(rig = source.rig.copy(puppet = editPuppet)) else source
+        }
     }
+	val paintSession = if (mode == CanvasMode.EDIT && editor.hierarchyMode == EditHierarchyMode.PAINT)
+		editor.paintSession else null
+	val geometryPose = if (paintSession != null) emptyMap<org.umamo.runtime.model.ParameterId, Float>()
+		else canvasState.parameterValues
+	val editGeometry = remember(previewModel, geometryPose, mode) {
+		if (mode == CanvasMode.EDIT && previewModel != null) RigCanvasSupport.evaluate(previewModel, geometryPose)
+		else null
+	}
+	val warpIds = if (previewModel == null) emptySet() else if (mode == CanvasMode.EDIT) editor.activeWarpIds()
+		else visibleCanvasGuideIds(previewModel, canvasState, warp = true)
+	val rotationIds = if (previewModel == null) emptySet() else if (mode == CanvasMode.EDIT) editor.activeRotationIds()
+		else visibleCanvasGuideIds(previewModel, canvasState, warp = false)
 	val viewportFor = remember(previewModel, zoom, panX, panY) {
 		val model = previewModel
 		{ drawSize: IntSize ->
@@ -208,7 +249,10 @@ fun CanvasViewportComposable(
 	}
 	val editingPainter = remember(previewModel?.atlas) { previewModel?.atlas?.let(::SkiaRigPainter) }
 	DisposableEffect(editingPainter) { onDispose { editingPainter?.close() } }
-	val sdkFrame by viewModel.sdkFrame.collectAsState()
+	val artworkCache = remember { CachedSkiaPicture() }
+	DisposableEffect(artworkCache) { onDispose { artworkCache.close() } }
+	val guideCache = remember { CanvasGuideImageCache() }
+	val sdkFrame by frameFlow.collectAsState()
 	val sdkBitmap = remember(sdkFrame?.image) { sdkFrame?.image?.toComposeImageBitmap() }
 	val checkerboardBrush = remember(colors.checkerLight, colors.checkerDark) {
 		createCheckerboardBrush(colors.checkerLight, colors.checkerDark)
@@ -216,17 +260,26 @@ fun CanvasViewportComposable(
 	// One pose for the whole tab: artwork, diagnostic geometry and hit-testing. A paused preview
 	// is still live here, because the follow keeps moving the pose after the motion stops.
 	val informationPose = informationPreviewPose(
-		state.parameterValues,
-		state.previewParameterValues,
+		canvasState.parameterValues,
+		canvasState.previewParameterValues,
 		sdkFrame,
-		state.animationEnabled || (mode == CanvasMode.PREVIEW && state.mouseTrackingEnabled),
+		canvasState.animationEnabled || (mode == CanvasMode.PREVIEW && canvasState.mouseTrackingEnabled),
 	)
+	val warpPose = if (mode == CanvasMode.PREVIEW) informationPose else canvasState.parameterValues
+	val warpPoints = remember(previewModel?.rig?.puppet, warpPose, warpIds) {
+		if (previewModel != null && warpIds.isNotEmpty())
+			io.github.psd2live.ui.RigInformationOverlay.warpPoints(previewModel.rig.puppet, warpPose, warpIds)
+		else emptyMap()
+	}
 	val currentZoom by rememberUpdatedState(zoom)
 	val currentPanX by rememberUpdatedState(panX)
 	val currentPanY by rememberUpdatedState(panY)
+	val simultaneousPreviews = canvasState.activeWorkspace.canvases.count {
+		it.mode == CanvasMode.PREVIEW && it.id !in canvasState.activeWorkspace.hiddenModules
+	}
 
-	LaunchedEffect(viewModel) {
-		viewModel.sdkFrame.collect { frame ->
+	LaunchedEffect(frameFlow) {
+		frameFlow.collect { frame ->
 			if (frame == null) {
 				fpsCounter.reset()
 				fps = 0f
@@ -243,11 +296,30 @@ fun CanvasViewportComposable(
 		pointerActivity.trySend(Unit)
 	}
 
+    fun persistCamera() {
+        if (!cameraDirty) return
+        cameraDirty = false
+        viewModel.setCanvasView(zoom.toFloat(), panX.toFloat(), panY.toFloat(), canvasId, mode)
+    }
+
+    // A mode or workspace switch can remove this viewport before it receives Release.
+    DisposableEffect(viewModel, canvasId, mode, canvasState.projectOpenGeneration, canvasState.activeWorkspace.id) {
+        val projectGeneration = canvasState.projectOpenGeneration
+        val workspaceId = canvasState.activeWorkspace.id
+        onDispose {
+            val current = viewModel.state.value
+            if (cameraDirty && current.projectOpenGeneration == projectGeneration && current.activeWorkspace.id == workspaceId) {
+                persistCamera()
+            }
+        }
+    }
+
 	fun resetCamera() {
 		zoom = 1.0
 		panX = 0.0
 		panY = 0.0
-        viewModel.setCanvasView(zoom.toFloat(), panX.toFloat(), panY.toFloat(), canvasId)
+        cameraDirty = false
+        viewModel.setCanvasView(zoom.toFloat(), panX.toFloat(), panY.toFloat(), canvasId, mode)
 	}
 
     fun frameSelection() {
@@ -262,7 +334,7 @@ fun CanvasViewportComposable(
         val actual=next/zoom
         panX=-((minX+maxX)/2.0-viewSize.width/2.0-panX)*actual
         panY=-((minY+maxY)/2.0-viewSize.height/2.0-panY)*actual
-        zoom=next;viewModel.setCanvasView(zoom.toFloat(),panX.toFloat(),panY.toFloat(), canvasId)
+		zoom=next;cameraDirty=false;viewModel.setCanvasView(zoom.toFloat(),panX.toFloat(),panY.toFloat(), canvasId, mode)
     }
 
 
@@ -281,12 +353,16 @@ fun CanvasViewportComposable(
 		val centered = computeViewport(model, viewSize.width, viewSize.height)
 		panX += mouseX - (centered.offsetX + canvasX * centered.scale)
 		panY += mouseY - (centered.offsetY + canvasY * centered.scale)
-        viewModel.setCanvasView(zoom.toFloat(), panX.toFloat(), panY.toFloat(), canvasId)
+        cameraDirty = false
+        viewModel.setCanvasView(zoom.toFloat(), panX.toFloat(), panY.toFloat(), canvasId, mode)
 	}
 
 	// Vsync-driven frame pump. Cubism conflates requests while busy, so the newest
 	// parameters are rendered next without building latency in a callback queue.
-	LaunchedEffect(mode, previewModel, state.animationEnabled, state.mouseTrackingEnabled, viewSize, currentZoom, currentPanX, currentPanY, state.parameterValues) {
+    // Animated previews read the latest camera each frame. Restarting their pump for
+    // every pointer move stalls rendering and makes panning visibly trail the cursor.
+    val pausedCameraKey = if (canvasState.animationEnabled) Unit else Triple(zoom, panX, panY)
+	LaunchedEffect(renderKey, mode, previewModel, canvasState.animationEnabled, canvasState.mouseTrackingEnabled, viewSize, pausedCameraKey, canvasState.parameterValues, simultaneousPreviews) {
 		if (previewModel != null && viewSize.width > 0 && viewSize.height > 0) {
 			if (mode == CanvasMode.PREVIEW) {
 				fun requestFrame(deltaTime: Float, frameNanos: Long) {
@@ -306,12 +382,17 @@ fun CanvasViewportComposable(
 						sdkVp.offsetY,
 						deltaTime,
 						frameNanos,
+                        viewId = renderKey,
 					)
 				}
-				if (state.animationEnabled) {
+				if (canvasState.animationEnabled) {
 					var previousFrameNanos = 0L
+					// Native Cubism renders every preview on one GL thread. With multiple visible previews,
+					// cap each pump at 30 FPS so they cannot saturate that thread and stall input.
+					val frameIntervalNanos = if (simultaneousPreviews > 1) 30_000_000L else 0L
 					while (isActive) {
 						val frameNanos = withFrameNanos { it }
+						if (previousFrameNanos != 0L && frameNanos - previousFrameNanos < frameIntervalNanos) continue
 						val deltaTime = if (previousFrameNanos == 0L) {
 							1f / 60f
 						} else {
@@ -327,13 +408,17 @@ fun CanvasViewportComposable(
 					// render until that settle window closes instead of the single frame a pause
 					// used to ask for, which froze the pose mid-turn. Sleeping on the channel keeps
 					// an untouched preview from waking up every vsync.
-					while (isActive && state.mouseTrackingEnabled) {
+					while (isActive && canvasState.mouseTrackingEnabled) {
 						pointerActivity.receive()
+						var previousSettlingFrameNanos = 0L
 						while (isActive &&
 							System.nanoTime() - lastPointerActivityNanos.get() <= PAUSED_TRACKING_SETTLE_NANOS
 						) {
-							requestFrame(0f, System.nanoTime())
-							withFrameNanos { it }
+							val frameNanos = withFrameNanos { it }
+							if (simultaneousPreviews > 1 && previousSettlingFrameNanos != 0L &&
+								frameNanos - previousSettlingFrameNanos < 30_000_000L) continue
+							previousSettlingFrameNanos = frameNanos
+							requestFrame(0f, frameNanos)
 						}
 					}
 				}
@@ -350,7 +435,19 @@ fun CanvasViewportComposable(
 			.drawWithContent { clipRect { this@drawWithContent.drawContent() } }
 			.background(colors.windowBackground)
 			.focusRequester(focusRequester)
-			.onFocusChanged { if(!it.hasFocus) { editor.space=false; if(editor.inGesture)editor.cancel(); if(editor.adjustingBrush)editor.endBrushAdjust(cancel = false) } }
+			.onFocusChanged {
+                if (it.hasFocus) viewModel.focusCanvas(canvasId)
+                else {
+                    isDragging = false
+                    persistCamera()
+                    if (mode == CanvasMode.EDIT) {
+                        editor.altHeld = false
+                        editor.space = false
+                        if (editor.inGesture) editor.cancel()
+                        if (editor.adjustingBrush) editor.endBrushAdjust(cancel = false)
+                    }
+                }
+            }
 			.focusable()
 			.onSizeChanged { viewSize = it }
 			.onGloballyPositioned { coordinates ->
@@ -361,7 +458,7 @@ fun CanvasViewportComposable(
 				// A capture in the settings panel owns the keyboard. The root handler already
 				// swallowed the event, but stay inert anyway so nothing reaches the canvas
 				// mid-recording.
-				if (state.keyCapture != null) return@onKeyEvent false
+				if (canvasState.keyCapture != null) return@onKeyEvent false
 				// The pan latch and its release must outlive every gate below: it is a press /
 				// release pair rather than a discrete command, and it stays live while an edit
 				// commits. Space is deliberately not a bindable action.
@@ -383,7 +480,7 @@ fun CanvasViewportComposable(
                     editor.undoDraftPoint()
                     return@onKeyEvent true
                 }
-				val action = state.keymap.match(event, ShortcutScope.CANVAS)
+				val action = canvasState.keymap.match(event, ShortcutScope.CANVAS)
 					?: return@onKeyEvent false
 				// Camera commands sit outside the mode and busy gates, as they always have: a
 				// long commit must not take the view controls away.
@@ -401,7 +498,7 @@ fun CanvasViewportComposable(
 				if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
 				if (mode != CanvasMode.EDIT || previewModel == null) return@onKeyEvent false
 				// Consumes rather than falls through while a commit is running.
-				if (editor.busy || state.canvasEditBusy) return@onKeyEvent true
+				if (editor.busy || canvasState.canvasEditBusy) return@onKeyEvent true
 				return@onKeyEvent when (action) {
 					ShortcutAction.SELECT_ALL -> { editor.selectAll(); true }
 					ShortcutAction.INVERT_SELECTION -> { editor.selectAll(true); true }
@@ -557,9 +654,8 @@ fun CanvasViewportComposable(
                 else -> Cursor.getDefaultCursor()
             }))
 			.onPointerEvent(PointerEventType.Press) { event ->
-				if (state.activeCanvas.id != canvasId) {
+				if (viewModel.state.value.activeCanvas.id != canvasId) {
 					viewModel.focusCanvas(canvasId)
-					editor.state = viewModel.state.value
 				}
 				val change = event.changes.firstOrNull() ?: return@onPointerEvent
                 if(change.isConsumed) return@onPointerEvent
@@ -588,9 +684,11 @@ fun CanvasViewportComposable(
                     return@onPointerEvent
                 }
                 // Middle mouse drag or Space + Left drag -> Canvas Pan
-                if (event.button == PointerButton.Tertiary || (event.button == PointerButton.Primary && editor.space)) {
+                if (event.button == PointerButton.Tertiary ||
+                    (mode == CanvasMode.EDIT && event.button == PointerButton.Primary && editor.space)) {
                     isDragging = true
                     lastDragPos = change.position
+                    dragStartPos = change.position
                     change.consume()
                     return@onPointerEvent
                 }
@@ -607,6 +705,7 @@ fun CanvasViewportComposable(
 				if (event.button == PointerButton.Primary || event.button == PointerButton.Tertiary) {
 					isDragging = true
 					lastDragPos = change.position
+					dragStartPos = change.position
 					// Pressing deliberately leaves the look alone. It used to hand the pointer back
 					// to the idle pose, which snapped the character's head to neutral on every click
 					// and on the first frame of every pan; the follow already freezes on its own
@@ -618,11 +717,11 @@ fun CanvasViewportComposable(
                 // Must be tested before the consumed check below, and the button test is load-bearing: a middle
                 // button release during an adjustment has to fall through to the pan-end block, otherwise
                 // isDragging stays true and the canvas pans forever.
-                if (editor.adjustingBrush && event.button == PointerButton.Secondary) {
+                if (mode == CanvasMode.EDIT && editor.adjustingBrush && event.button == PointerButton.Secondary) {
                     editor.endBrushAdjust(cancel = false)
                     return@onPointerEvent
                 }
-                if(change?.isConsumed==true && !editor.inGesture && !isDragging) return@onPointerEvent
+                if(change?.isConsumed==true && (mode != CanvasMode.EDIT || !editor.inGesture) && !isDragging) return@onPointerEvent
                 if(mode == CanvasMode.EDIT && previewModel != null && event.button == PointerButton.Primary && !isDragging) {
                     editor.release()
                     editor.finishSelection(computeViewport(previewModel,viewSize.width,viewSize.height))
@@ -630,8 +729,9 @@ fun CanvasViewportComposable(
                 }
                 if (isDragging) {
 					isDragging = false
-					if (mode == CanvasMode.PREVIEW && event.button == PointerButton.Primary && change != null && (change.position - lastDragPos).getDistance() < 6f) {
-						if (state.clickToSelectLayer && previewModel != null && onLayerClicked != null) {
+					persistCamera()
+					if (mode == CanvasMode.PREVIEW && event.button == PointerButton.Primary && change != null && (change.position - dragStartPos).getDistance() < 6f) {
+						if (canvasState.clickToSelectLayer && previewModel != null) {
 							val viewport = computeViewport(previewModel, viewSize.width, viewSize.height)
 							// Hit the pose that is on screen, not the last animated one: a paused
 							// preview still follows the pointer, so the two drift apart.
@@ -642,22 +742,24 @@ fun CanvasViewportComposable(
 								drawableBounds = drawableBounds,
 								canvasX = viewport.canvasX(change.position.x.toInt()),
 								canvasY = viewport.canvasY(change.position.y.toInt()),
-								visibleLayerIds = state.effectiveVisibleLayerIds,
-								currentSelectedLayerId = state.selectedLayerId,
+								visibleLayerIds = canvasState.effectiveVisibleLayerIds,
+								currentSelectedLayerId = canvasState.selectedLayerId,
 								geometry = geometry,
-								drawOrderOverrides = state.drawOrderOverrides,
+								drawOrderOverrides = canvasState.drawOrderOverrides,
 							)
-							onLayerClicked(hit)
+							viewModel.updateCanvasPresentation(canvasState.activeWorkspace.id, canvasId, CanvasMode.PREVIEW) {
+								it.copy(selectedLayerId = hit, selectedDeformerId = if (hit != null) null else it.selectedDeformerId)
+							}
 						}
 					}
 				}
 			}
 			.onPointerEvent(PointerEventType.Exit) {
                 // Releasing the right button outside the window may never route a Release back here.
-                if (editor.adjustingBrush) editor.endBrushAdjust(cancel = false)
-				editor.clearHover()
+				if (mode == CanvasMode.EDIT && editor.adjustingBrush) editor.endBrushAdjust(cancel = false)
+				if (mode == CanvasMode.EDIT) editor.clearHover()
                 if (mode == CanvasMode.PREVIEW) {
-					viewModel.clearPointer()
+					viewModel.clearPointer(renderKey)
 					// One last frame puts the pose back to neutral now that the look is gone.
 					notePointerActivity()
 				}
@@ -678,15 +780,17 @@ fun CanvasViewportComposable(
                 }
                 if (isDragging) {
 					val delta = change.position - lastDragPos
-					panX += delta.x
-					panY += delta.y
-                    viewModel.setCanvasView(zoom.toFloat(), panX.toFloat(), panY.toFloat(), canvasId)
+					if (delta != Offset.Zero) {
+						panX += delta.x
+						panY += delta.y
+                        cameraDirty = true
+                    }
 					lastDragPos = change.position
 				}
-				if (!isDragging && mode == CanvasMode.PREVIEW && state.mouseTrackingEnabled) {
+				if (!isDragging && mode == CanvasMode.PREVIEW && canvasState.mouseTrackingEnabled) {
 					val normX = ((change.position.x - viewSize.width * 0.5f) / (viewSize.width * 0.5f).coerceAtLeast(1f)).coerceIn(-1f, 1f)
 					val normY = ((change.position.y - viewSize.height * 0.5f) / (viewSize.height * 0.5f).coerceAtLeast(1f)).coerceIn(-1f, 1f)
-					viewModel.updatePointer(normX, normY)
+					viewModel.updatePointer(normX, normY, renderKey)
 					notePointerActivity()
 				}
 			}
@@ -742,27 +846,25 @@ fun CanvasViewportComposable(
 			// that works out to is the editor's answer, asked for once and used for both the native-frame
 			// choice below and the channel itself, so the two cannot disagree about whether anything is
 			// being drawn.
-			val warpIds = editor.activeWarpIds()
-			val rotationIds = editor.activeRotationIds()
 			val informationNames = viewOptions.warpShowNames
 			val informationIndices = viewOptions.warpShowIndices
 			val informationSelectedOnly = filterSelectedOnly
 
 			val targetVisibleLayerIds: Set<String> = when {
-				!informationSelectedOnly -> state.effectiveVisibleLayerIds
-				state.selectedLayerId != null -> state.effectiveVisibleLayerIds.filter { it == state.selectedLayerId }.toSet()
-				state.selectedDeformerId != null -> {
-					val desc = descendantLayerIds(model, state.selectedDeformerId, state.parentOverrides)
-					state.effectiveVisibleLayerIds.filter { it in desc }.toSet()
+				!informationSelectedOnly -> canvasState.effectiveVisibleLayerIds
+				canvasState.selectedLayerId != null -> canvasState.effectiveVisibleLayerIds.filter { it == canvasState.selectedLayerId }.toSet()
+				canvasState.selectedDeformerId != null -> {
+					val desc = descendantLayerIds(model, canvasState.selectedDeformerId, canvasState.parentOverrides)
+					canvasState.effectiveVisibleLayerIds.filter { it in desc }.toSet()
 				}
-				else -> state.effectiveVisibleLayerIds
+				else -> canvasState.effectiveVisibleLayerIds
 			}
 
-			val hasActiveSelection = state.selectedLayerId != null || state.selectedDeformerId != null
+			val hasActiveSelection = canvasState.selectedLayerId != null || canvasState.selectedDeformerId != null
 			val highlightedLayerIds: Set<String>? = when {
                 mode==CanvasMode.EDIT && editor.objectMode && editor.objects.isNotEmpty() -> editor.objects
-				state.selectedLayerId != null -> setOf(state.selectedLayerId)
-				state.selectedDeformerId != null -> descendantLayerIds(model, state.selectedDeformerId, state.parentOverrides)
+				canvasState.selectedLayerId != null -> setOf(canvasState.selectedLayerId)
+				canvasState.selectedDeformerId != null -> descendantLayerIds(model, canvasState.selectedDeformerId, canvasState.parentOverrides)
 				else -> null
 			}
 			val isDimmingActive = dimUnselected && hasActiveSelection
@@ -770,11 +872,11 @@ fun CanvasViewportComposable(
 			// Hover annotation: a wash over the artwork in the component's own colour, not a box around
 			// it. A deformer owns no texture of its own, so previewing one lights up everything it
 			// deforms — which is exactly what the deformer is.
-			val hoveredLayerId = state.hoveredLayerId
-			val hoveredDeformerId = state.hoveredDeformerId
+			val hoveredLayerId = canvasState.hoveredLayerId
+			val hoveredDeformerId = canvasState.hoveredDeformerId
 			val hoverTintLayerIds = when {
 				hoveredLayerId != null -> setOf(hoveredLayerId)
-				hoveredDeformerId != null -> descendantLayerIds(model, hoveredDeformerId, state.parentOverrides)
+				hoveredDeformerId != null -> descendantLayerIds(model, hoveredDeformerId, canvasState.parentOverrides)
 				else -> null
 			}
 			val hoverTintColor = (hoveredLayerId ?: hoveredDeformerId)?.let { ComponentPalette.strong(it).rgb } ?: 0
@@ -783,36 +885,40 @@ fun CanvasViewportComposable(
 			// Path guides never paint outside the Edit tab (see 3e), so they cannot force the
 			// preview off its native SDK frame.
 			val canUseNativeSdk = mode == CanvasMode.PREVIEW &&
+                canvasState.layerVisibility.isEmpty() && canvasState.deformerVisibility.isEmpty() &&
 				warpIds.isEmpty() && rotationIds.isEmpty() && !showMesh && !informationSelectedOnly && showTexture &&
 				!isDimmingActive &&
-				state.hoveredLayerId == null && state.hoveredDeformerId == null &&
+				canvasState.hoveredLayerId == null && canvasState.hoveredDeformerId == null &&
 				(!showSelectionBounds || !hasActiveSelection) &&
-				state.drawOrderOverrides.isEmpty() &&
+				canvasState.drawOrderOverrides.isEmpty() &&
 				nativeFrame != null && sdkBitmap != null &&
 				nativeFrame.image.width == w && nativeFrame.image.height == h
 
 			val currentSdkBitmap = sdkBitmap
-			if (canUseNativeSdk && currentSdkBitmap != null) {
-				drawImage(currentSdkBitmap)
+			if (canUseNativeSdk) {
+				// Native rendering can finish several frames after a pan. Reproject its last
+				// image immediately so the visible artwork follows the local camera while
+				// the latest native frame is still in flight.
+				val frameCamera = nativeFrame
+				val desiredCamera = computeCubismViewport(model, w, h, zoom, panX, panY)
+				val ratio = (desiredCamera.scale / frameCamera.cameraScale)
+					.takeIf { it.isFinite() && it > 0f } ?: 1f
+				val halfWidth = w * 0.5f
+				val halfHeight = h * 0.5f
+				val left = halfWidth * (1f - ratio + desiredCamera.offsetX - ratio * frameCamera.cameraOffsetX)
+				val top = halfHeight * (1f - ratio - desiredCamera.offsetY + ratio * frameCamera.cameraOffsetY)
+				if (ratio == 1f && left == 0f && top == 0f) drawImage(currentSdkBitmap)
+				else withTransform({
+					translate(left, top)
+					scale(ratio, ratio, pivot = Offset.Zero)
+				}) { drawImage(currentSdkBitmap) }
 			} else {
 				// Paint is an isolated document-canvas session: its live tiles belong only on the Edit
 				// tab, and only until Apply writes them into RigPreviewModel. The Preview tab always
 				// keeps showing the last committed atlas, never an in-progress stroke.
-				val paintSession = editor.paintSession?.takeIf {
-					mode == CanvasMode.EDIT && editor.hierarchyMode == EditHierarchyMode.PAINT
-				}
-				val buffer = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
-				val g = buffer.createGraphics()
-				try {
-					g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-					// Document-space paint tiles only line up with the mesh at rest; driving the other
-					// layers with the live pose would leave the stroke floating off the art.
-					val poseForGeometry = when {
-						paintSession != null -> emptyMap<org.umamo.runtime.model.ParameterId, Float>()
-						mode == CanvasMode.PREVIEW -> informationPose
-						else -> state.parameterValues
-					}
-					val geometry = RigCanvasSupport.evaluate(model, poseForGeometry)
+				// Document-space paint tiles only line up with the mesh at rest; driving the other
+				// layers with the live pose would leave the stroke floating off the art.
+				val geometry = editGeometry ?: RigCanvasSupport.evaluate(model, informationPose)
 
 					// 3a. Texture Channel. The artwork always renders opaque; legibility of the
 					// overlays comes from the focus/dim options instead of a global transparency.
@@ -823,21 +929,37 @@ fun CanvasViewportComposable(
 						} else {
 							targetVisibleLayerIds
 						}
-						drawIntoCanvas { target -> editingPainter?.paint(
-							target.skiaCanvas,
-							model,
-							geometry,
-							viewport,
-							1.0f,
-							visibleLayerIds = effectiveVisible,
-							drawOrderOverrides = state.drawOrderOverrides,
-							dimUnselected = dimUnselected,
-							highlightedLayerIds = highlightedLayerIds,
-							dimmedAlphaMultiplier = 0.22f,
-							tintLayerIds = hoverTintLayerIds,
-							tintColor = hoverTintColor,
-						) }
+						if (editingPainter != null) drawIntoCanvas { target ->
+							val key = listOf(
+								editingPainter, model.rig.puppet, geometry, viewport, w, h,
+								effectiveVisible, canvasState.drawOrderOverrides, dimUnselected,
+								highlightedLayerIds, hoverTintLayerIds, hoverTintColor,
+							)
+							artworkCache.draw(target.skiaCanvas, key, w, h) { recording ->
+								editingPainter.paint(
+									recording, model, geometry, viewport, 1.0f,
+									visibleLayerIds = effectiveVisible,
+									drawOrderOverrides = canvasState.drawOrderOverrides,
+									dimUnselected = dimUnselected,
+									highlightedLayerIds = highlightedLayerIds,
+									dimmedAlphaMultiplier = 0.22f,
+									tintLayerIds = hoverTintLayerIds,
+									tintColor = hoverTintColor,
+								)
+							}
+						}
 					}
+
+				val guideKey = listOf(
+					model, geometryPose, editGeometry, informationPose, viewport, w, h,
+					viewOptions, warpIds, rotationIds, warpPoints, targetVisibleLayerIds,
+					canvasState.selectedLayerId, canvasState.selectedDeformerId,
+					canvasState.hoveredLayerId, canvasState.hoveredDeformerId,
+					canvasState.parentOverrides, editor.hierarchyMode, editor.objects,
+					editor.drawsTransformBox,
+				)
+				val guideImage = guideCache.imageFor(guideKey, w, h) { g ->
+					g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
 
 					// 3b. Mesh Channel (Wireframe)
 					// Outside SELECT mode, mesh wires are focus chrome for the active artmesh only —
@@ -896,7 +1018,7 @@ fun CanvasViewportComposable(
 							drawEdges(wireColor, strokeWidth)
 						}
 
-						val selectedId = state.selectedLayerId
+						val selectedId = canvasState.selectedLayerId
 						val meshFocusOnly = mode == CanvasMode.EDIT && !editor.objectMode
 						if (meshFocusOnly) {
 							if (selectedId != null) {
@@ -931,8 +1053,8 @@ fun CanvasViewportComposable(
 					// the interactive needle for the edit target when that toggle is on.
 					val drawableBounds = RigCanvasSupport.boundsByDrawable(geometry)
 					val deformerBounds = RigCanvasSupport.boundsByDeformer(model, drawableBounds)
-					val deformEditTarget = state.selectedDeformerId?.takeIf {
-						showRotation && (
+					val deformEditTarget = canvasState.selectedDeformerId?.takeIf {
+						mode == CanvasMode.EDIT && showRotation && (
 							editor.hierarchyMode == EditHierarchyMode.DEFORM ||
 								editor.hierarchyMode == EditHierarchyMode.EDIT
 							)
@@ -945,11 +1067,11 @@ fun CanvasViewportComposable(
 					if (globalRotationIds.isNotEmpty()) {
 						io.github.psd2live.ui.RigInformationOverlay.paintRotations(
 							g, model.rig.puppet,
-							if (mode == CanvasMode.PREVIEW) informationPose else state.parameterValues,
+							if (mode == CanvasMode.PREVIEW) informationPose else canvasState.parameterValues,
 							viewport, globalRotationIds,
 							labels = informationNames,
-							selectedDeformerId = state.selectedDeformerId,
-							hoveredDeformerId = state.hoveredDeformerId,
+							selectedDeformerId = canvasState.selectedDeformerId,
+							hoveredDeformerId = canvasState.hoveredDeformerId,
 							dimUnselected = dimUnselected,
 						)
 					}
@@ -962,7 +1084,7 @@ fun CanvasViewportComposable(
 					// dragged. Every other tool leaves this as the only selection feedback.
 					val transformBoxOwnsSelection = mode == CanvasMode.EDIT && editor.drawsTransformBox
 					if (showSelectionBounds && !transformBoxOwnsSelection) {
-						state.selectedLayerId?.let { layerId ->
+						canvasState.selectedLayerId?.let { layerId ->
 							val drawableId = model.rig.layerIdByDrawableId.entries.firstOrNull { it.value == layerId }?.key
 							val bounds = drawableId?.let(drawableBounds::get)
 							if (bounds != null) {
@@ -971,7 +1093,7 @@ fun CanvasViewportComposable(
 							}
 						}
 						if (mode != CanvasMode.EDIT) {
-							state.selectedDeformerId?.let { defId ->
+							canvasState.selectedDeformerId?.let { defId ->
 								val def = model.rig.puppet.deformers.firstOrNull { it.id.raw == defId }
 								if (def !is org.umamo.runtime.model.Deformer.Warp) {
 									val bounds = deformerBounds[defId]
@@ -996,13 +1118,14 @@ fun CanvasViewportComposable(
 					if (warpIds.isNotEmpty()) {
 						io.github.psd2live.ui.RigInformationOverlay.paint(
 							g, model.rig.puppet,
-							if (mode == CanvasMode.PREVIEW) informationPose else state.parameterValues,
+							if (mode == CanvasMode.PREVIEW) informationPose else canvasState.parameterValues,
 							viewport, warpIds,
 							labels = informationNames,
 							pointIndices = informationIndices,
-							selectedDeformerId = state.selectedDeformerId,
-							hoveredDeformerId = state.hoveredDeformerId,
+							selectedDeformerId = canvasState.selectedDeformerId,
+							hoveredDeformerId = canvasState.hoveredDeformerId,
 							dimUnselected = dimUnselected,
+							pointsById = warpPoints,
 						)
 					}
 
@@ -1010,20 +1133,20 @@ fun CanvasViewportComposable(
 					// deforms, so it is drawn only while that part (or the part's deformer) is
 					// selected -- an edit-time guide, never part of the Preview tab's render.
 					if (mode == CanvasMode.EDIT && showDeformPaths && model.rig.puppet.deformPaths.isNotEmpty()) {
-						val selectedLayerDescendants = if (state.selectedDeformerId != null) {
-							descendantLayerIds(model, state.selectedDeformerId, state.parentOverrides)
+						val selectedLayerDescendants = if (canvasState.selectedDeformerId != null) {
+							descendantLayerIds(model, canvasState.selectedDeformerId, canvasState.parentOverrides)
 						} else {
 							emptySet()
 						}
 						val selectedPathIds = model.rig.puppet.deformPaths.filter { path ->
 							val layerId = model.rig.layerIdByDrawableId[path.drawableId.raw]
-							(state.selectedLayerId != null && layerId == state.selectedLayerId) ||
-								(state.selectedDeformerId != null && layerId != null && layerId in selectedLayerDescendants)
+							(canvasState.selectedLayerId != null && layerId == canvasState.selectedLayerId) ||
+								(canvasState.selectedDeformerId != null && layerId != null && layerId in selectedLayerDescendants)
 						}.map { it.id }.toSet()
 
 						val hoveredPathIds = model.rig.puppet.deformPaths.filter { path ->
 							val layerId = model.rig.layerIdByDrawableId[path.drawableId.raw]
-							state.hoveredLayerId != null && layerId == state.hoveredLayerId
+							canvasState.hoveredLayerId != null && layerId == canvasState.hoveredLayerId
 						}.map { it.id }.toSet()
 
 						// Hovering a part in the tree previews its path -- same instant feedback the
@@ -1039,17 +1162,15 @@ fun CanvasViewportComposable(
 								pathIds = pathIds,
 								labels = false,
 								pointIndices = informationIndices,
-								showWidth = state.pathShowWidth,
-								showHardness = state.pathShowHardness,
+								showWidth = canvasState.pathShowWidth,
+								showHardness = canvasState.pathShowHardness,
 								selectedPathIds = selectedPathIds,
 								hoveredPathIds = hoveredPathIds,
 							)
 						}
 					}
-				} finally {
-					g.dispose()
 				}
-				drawImage(buffer.toComposeImageBitmap())
+				drawImage(guideImage)
 				// Session tiles sit above the mesh overlays and never write into RigPreviewModel —
 				// Apply (commitPaintSession) is what publishes them to the shared preview.
 				if (showTexture && paintSession != null) {
@@ -1082,9 +1203,9 @@ fun CanvasViewportComposable(
                 viewportFor = viewportFor,
                 placementOrigin = canvasOrigin,
                 viewModel = viewModel,
-                keymap = state.keymap,
-                selectedLayerId = state.selectedLayerId,
-                selectedDeformerId = state.selectedDeformerId,
+                keymap = canvasState.keymap,
+                selectedLayerId = canvasState.selectedLayerId,
+                selectedDeformerId = canvasState.selectedDeformerId,
                 showMesh = showMesh,
                 showRotation = showRotation,
             ) { focusRequester.requestFocus() }
@@ -1098,20 +1219,20 @@ fun CanvasViewportComposable(
         }
 		if (mode == CanvasMode.PREVIEW && previewModel != null) {
 			CanvasPreviewToolbar(
-				animationEnabled = state.animationEnabled,
-				mouseTrackingEnabled = state.mouseTrackingEnabled,
+				animationEnabled = canvasState.animationEnabled,
+				mouseTrackingEnabled = canvasState.mouseTrackingEnabled,
 				enabled = true,
-				onToggleAnimation = { viewModel.setAnimationEnabled(!state.animationEnabled) },
-				onToggleMouseTracking = { viewModel.setMouseTrackingEnabled(!state.mouseTrackingEnabled) },
+				onToggleAnimation = { viewModel.updateCanvasPresentation(canvasState.activeWorkspace.id, canvasId, CanvasMode.PREVIEW) { it.copy(animationEnabled = !it.animationEnabled) } },
+				onToggleMouseTracking = { viewModel.updateCanvasPresentation(canvasState.activeWorkspace.id, canvasId, CanvasMode.PREVIEW) { it.copy(mouseTrackingEnabled = !it.mouseTrackingEnabled) } },
 			)
 		}
         // Overlay: Empty hint or Stats Badge
 		if (previewModel == null) {
 			EmptyCanvasStart(
-				recentPaths = state.recentFiles,
-				enabled = !state.isBusy,
-				openProjectShortcut = state.keymap.labelFor(ShortcutAction.OPEN_PROJECT),
-				openPsdShortcut = state.keymap.labelFor(ShortcutAction.OPEN_PSD),
+				recentPaths = canvasState.recentFiles,
+				enabled = !canvasState.isBusy,
+				openProjectShortcut = canvasState.keymap.labelFor(ShortcutAction.OPEN_PROJECT),
+				openPsdShortcut = canvasState.keymap.labelFor(ShortcutAction.OPEN_PSD),
 				onStartTutorial = onStartTutorial,
 				onOpenProject = onOpenProject,
 				onOpenPsd = onOpenPsd,
@@ -1128,7 +1249,7 @@ fun CanvasViewportComposable(
 						if (previewModel.hasRuntimePhysics) "canvas.preview.cubismPhysicsOn" else "canvas.preview.cubismPhysicsOff",
 						zoomPct,
 					)}"
-					state.sdkStatus != null && state.sdkStatus != "ready" -> "${fpsStr}${tr("canvas.preview.softwareFallback", zoomPct)}"
+					canvasState.sdkStatus != null && canvasState.sdkStatus != "ready" -> "${fpsStr}${tr("canvas.preview.softwareFallback", zoomPct)}"
 					previewModel.hasRuntimePhysics -> "${fpsStr}${tr("canvas.preview.physicsOn", zoomPct)}"
 					else -> "${fpsStr}${tr("canvas.preview.physicsOff", zoomPct)}"
 				}
@@ -1165,7 +1286,7 @@ fun CanvasViewportComposable(
 			// Bottom-right: display-toggle rail (mirrors the left tool palette).
 			CanvasViewOptionsBar(
 				options = viewOptions,
-				onOptionsChange = { viewModel.setCanvasViewOptions(canvasId, it) },
+				onOptionsChange = { viewModel.setCanvasViewOptions(canvasId, it, mode) },
 				showPathGuides = mode == CanvasMode.EDIT,
 				modifier = Modifier
 					.align(Alignment.BottomEnd)
@@ -1173,6 +1294,28 @@ fun CanvasViewportComposable(
 			)
 		}
 	}
+    }
+}
+
+/** The Java2D guide pass is rebuilt only when this canvas's visible inputs change. */
+private class CanvasGuideImageCache {
+    private var key: List<Any?>? = null
+    private var image: ImageBitmap? = null
+
+    fun imageFor(key: List<Any?>, width: Int, height: Int, paint: (Graphics2D) -> Unit): ImageBitmap {
+        if (image == null || this.key != key) {
+            val buffer = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
+            val graphics = buffer.createGraphics()
+            try {
+                paint(graphics)
+            } finally {
+                graphics.dispose()
+            }
+            image = buffer.toComposeImageBitmap()
+            this.key = key
+        }
+        return requireNotNull(image)
+    }
 }
 
 private class ActualFpsCounter {

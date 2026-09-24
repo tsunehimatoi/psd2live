@@ -12,7 +12,6 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 import javax.swing.SwingUtilities
 
 /** A frame evaluated and rendered by the official Cubism 5-r.5 runtime. */
@@ -20,6 +19,10 @@ data class CubismSdkFrame(
 	val image: BufferedImage,
 	val parameters: Map<ParameterId, Float>,
 	val animationEnabled: Boolean = true,
+    val viewId: String = "",
+    val cameraScale: Float = 1f,
+    val cameraOffsetX: Float = 0f,
+    val cameraOffsetY: Float = 0f,
 )
 
 internal data class CubismPointerTrackingBinding(
@@ -84,6 +87,7 @@ class CubismSdkPreviewSession(
 		val animationEnabled: Boolean = true,
 		val parameterOverrides: Map<ParameterId, Float>,
 		val frameTimeNanos: Long = System.nanoTime(),
+        val viewId: String = "",
 	)
 
 	private data class QueuedRender(
@@ -100,9 +104,9 @@ class CubismSdkPreviewSession(
 		Thread(runnable, "cubism-sdk-preview").apply { isDaemon = true }
 	}
 	private val renderWorkerScheduled = AtomicBoolean(false)
-	private val latestRender = AtomicReference<QueuedRender?>()
+	private val latestRender = CanvasLatestQueue<QueuedRender>()
 	private val deliveryScheduled = AtomicBoolean(false)
-	private val latestDelivery = AtomicReference<QueuedDelivery?>()
+	private val latestDelivery = CanvasLatestQueue<QueuedDelivery>()
 	@Volatile private var generation = 0L
 	@Volatile private var loadedGeneration = -1L
 	@Volatile private var closed = false
@@ -113,14 +117,37 @@ class CubismSdkPreviewSession(
 	private var pixelMemoryCapacity = 0L
 	private var parameterMemory: Memory? = null
 	private var parameterMemoryCapacity = 0
-	private var lastRenderedFrameTimeNanos = 0L
-	private var previousFrameWasAnimated = false
+	private class NativeCanvas(val handle: Pointer) {
+        var lastRenderedFrameTimeNanos = 0L
+        var previousFrameWasAnimated = false
+        var lastPoseRequest: RenderRequest? = null
+    }
+    // All handles stay on the same native GL thread, but own their animation/physics state.
+    private val nativeCanvases = mutableMapOf<String, NativeCanvas>()
+    private var loadedManifest: Path? = null
+    private var hasIdleMotion = false
+
+    private fun canvasHandle(native: Api, viewId: String): NativeCanvas = nativeCanvases.getOrPut(viewId) {
+        // The model created while loading can serve the first view. Keeping it idle alongside
+        // per-view copies used an extra full Cubism model for every preview session.
+        val loaded = model
+        val handle = if (loaded != null) {
+            model = null
+            loaded
+        } else {
+            val manifest = requireNotNull(loadedManifest)
+            native.Live2D_CreateModel(manifest.toString())
+                ?: error(nativeError(native, "Could not create canvas preview"))
+        }
+        if (loaded == null && hasIdleMotion) native.Live2D_StartMotion(handle, "Idle", 0, 1)
+        NativeCanvas(handle)
+    }
 
 	fun load(bundle: CubismRuntimeBundle, parameters: List<ParameterId>) {
 		if (closed) return
 		val targetGeneration = ++generation
 		loadedGeneration = -1L
-		latestRender.set(null)
+		latestRender.clear()
 		postStatus(null)
 		executor.execute {
 			if (closed || targetGeneration != generation) return@execute
@@ -132,20 +159,23 @@ class CubismSdkPreviewSession(
 					api = it
 				}
 				stage = "dispose previous Cubism model"
-				model?.let(native::Live2D_DestroyModel)
+				nativeCanvases.values.forEach { native.Live2D_DestroyModel(it.handle) }
+                nativeCanvases.clear()
+                loadedManifest = null
+                model?.let(native::Live2D_DestroyModel)
 				model = null
 				stage = "materialize exported runtime family"
 				val manifest = materialize(bundle)
+                loadedManifest = manifest
 				stage = "create Cubism model"
 				val loaded = native.Live2D_CreateModel(manifest.toString())
 					?: error(nativeError(native, "Cubism Core rejected the exported MOC3 model"))
 				model = loaded
 				parameterIds = parameters
 				loadedGeneration = targetGeneration
-				lastRenderedFrameTimeNanos = 0L
-				previousFrameWasAnimated = false
 				val manifestText = bundle.assets.firstOrNull { it.path.endsWith(".model3.json") }?.bytes?.decodeToString()
 				val hasIdle = manifestText?.contains("\"Idle\"") == true
+                hasIdleMotion = hasIdle
 				if (hasIdle) {
 					stage = "start generated idle motion"
 					native.Live2D_StartMotion(loaded, "Idle", 0, 1)
@@ -158,12 +188,12 @@ class CubismSdkPreviewSession(
 		}
 	}
 
-	fun startMotion(group: String, index: Int = 0, priority: Int = 3) {
+	fun startMotion(group: String, index: Int = 0, priority: Int = 3, viewId: String = "") {
 		if (closed) return
 		executor.execute {
 			if (closed || loadedGeneration != generation) return@execute
 			val native = api ?: return@execute
-			val handle = model ?: return@execute
+			val handle = canvasHandle(native, viewId).handle
 			native.Live2D_StartMotion(handle, group, index, priority)
 		}
 	}
@@ -210,9 +240,17 @@ class CubismSdkPreviewSession(
 		return directory.resolve(bundle.manifestPath.replace('/', java.io.File.separatorChar)).toAbsolutePath().normalize()
 	}
 
+    fun removeView(viewId: String) {
+        latestRender.remove(viewId)
+        latestDelivery.remove(viewId)
+        if (!closed) executor.execute {
+            nativeCanvases.remove(viewId)?.let { api?.Live2D_DestroyModel(it.handle) }
+        }
+    }
+
 	fun render(request: RenderRequest) {
 		if (closed || request.width <= 0 || request.height <= 0) return
-		latestRender.set(QueuedRender(generation, request))
+		latestRender.put(request.viewId, QueuedRender(generation, request))
 		scheduleRenderWorker()
 	}
 
@@ -224,13 +262,13 @@ class CubismSdkPreviewSession(
 	private fun drainRenderRequests() {
 		try {
 			while (!closed) {
-				val queued = latestRender.getAndSet(null) ?: break
+				val queued = latestRender.poll() ?: break
 				if (queued.generation != generation || queued.generation != loadedGeneration) break
 				renderFrame(queued)
 		}
 		} finally {
 			renderWorkerScheduled.set(false)
-			if (!closed && latestRender.get() != null && loadedGeneration == generation) scheduleRenderWorker()
+			if (!closed && !latestRender.isEmpty() && loadedGeneration == generation) scheduleRenderWorker()
 		}
 	}
 
@@ -239,13 +277,21 @@ class CubismSdkPreviewSession(
 		try {
 			if (closed || queued.generation != generation) return
 			val native = api ?: return
-			val handle = model ?: return
+			val canvas = canvasHandle(native, request.viewId)
+            val handle = canvas.handle
+            val reusePose = request.animationEnabled && canvas.lastPoseRequest?.let { previous ->
+                previous.animationEnabled && previous.frameTimeNanos >= request.frameTimeNanos &&
+                    previous.pointerX == request.pointerX && previous.pointerY == request.pointerY &&
+                    previous.parameterOverrides == request.parameterOverrides
+            } == true
 			val needsRefresh: Boolean
-			if (request.animationEnabled) {
+            if (reusePose) {
+                needsRefresh = false
+            } else if (request.animationEnabled) {
 				// X runs through Cubism's look updater before physics so hair receives the head
 				// movement. Y is deliberately zero here because Cubism also maps it to AngleZ.
 				native.Live2D_SetDragging(handle, request.pointerX, CUBISM_NATIVE_POINTER_Y)
-				native.Live2D_Update(handle, animationDeltaTime(request))
+				native.Live2D_Update(handle, animationDeltaTime(canvas, request))
 				// Apply vertical head/eye tracking after the scheduler without touching AngleZ.
 				applyAnimatedVerticalTracking(native, handle, request.pointerY)
 				// Locked inspector values remain authoritative over motion/physics outputs.
@@ -253,8 +299,8 @@ class CubismSdkPreviewSession(
 				needsRefresh = request.pointerY != 0f || request.parameterOverrides.isNotEmpty()
 			} else {
 				// Do not call Update(0): Cubism may still restore the paused motion's old values.
-				previousFrameWasAnimated = false
-				lastRenderedFrameTimeNanos = request.frameTimeNanos
+				canvas.previousFrameWasAnimated = false
+				canvas.lastRenderedFrameTimeNanos = request.frameTimeNanos
 				applyParameterValues(native, handle, request.parameterOverrides)
 				// Paused previews cannot advance Cubism's smoothed drag manager. Apply the static
 				// look offsets directly so mouse tracking remains useful while inspecting a pose.
@@ -268,6 +314,7 @@ class CubismSdkPreviewSession(
 				needsRefresh = true
 			}
 			if (needsRefresh) native.Live2D_RefreshModel(handle)
+            if (!reusePose) canvas.lastPoseRequest = request
 
 			val pixelCount = Math.multiplyExact(Math.multiplyExact(request.width, request.height), 4)
 			val output = ensurePixelMemory(pixelCount.toLong())
@@ -285,6 +332,10 @@ class CubismSdkPreviewSession(
 				image = rgbaImage(request.width, request.height, output),
 				parameters = copyParameterValues(native, handle),
 				animationEnabled = request.animationEnabled,
+                viewId = request.viewId,
+                cameraScale = request.scale,
+                cameraOffsetX = request.offsetX,
+                cameraOffsetY = request.offsetY,
 			)
 			if (!closed && queued.generation == generation) postFrame(queued.generation, frame)
 		} catch (failure: Throwable) {
@@ -292,15 +343,15 @@ class CubismSdkPreviewSession(
 		}
 	}
 
-	private fun animationDeltaTime(request: RenderRequest): Float {
+	private fun animationDeltaTime(canvas: NativeCanvas, request: RenderRequest): Float {
 		val requested = request.deltaTime.coerceIn(0f, 0.1f)
-		val elapsed = if (previousFrameWasAnimated && lastRenderedFrameTimeNanos > 0L) {
-			((request.frameTimeNanos - lastRenderedFrameTimeNanos) / 1_000_000_000f).coerceIn(0.001f, 0.1f)
+		val elapsed = if (canvas.previousFrameWasAnimated && canvas.lastRenderedFrameTimeNanos > 0L) {
+			((request.frameTimeNanos - canvas.lastRenderedFrameTimeNanos) / 1_000_000_000f).coerceIn(0f, 0.1f)
 		} else {
 			requested
 		}
-		lastRenderedFrameTimeNanos = request.frameTimeNanos
-		previousFrameWasAnimated = true
+		canvas.lastRenderedFrameTimeNanos = maxOf(canvas.lastRenderedFrameTimeNanos, request.frameTimeNanos)
+		canvas.previousFrameWasAnimated = true
 		return elapsed
 	}
 
@@ -381,17 +432,17 @@ class CubismSdkPreviewSession(
 	}
 
 	private fun postFrame(frameGeneration: Long, frame: CubismSdkFrame) {
-		latestDelivery.set(QueuedDelivery(frameGeneration, frame))
+		latestDelivery.put(frame.viewId, QueuedDelivery(frameGeneration, frame))
 		if (deliveryScheduled.compareAndSet(false, true)) SwingUtilities.invokeLater(::deliverLatestFrame)
 	}
 
 	private fun deliverLatestFrame() {
 		try {
-			val delivery = latestDelivery.getAndSet(null)
+			val delivery = latestDelivery.poll()
 			if (!closed && delivery != null && delivery.generation == generation) onFrame(delivery.frame)
 		} finally {
 			deliveryScheduled.set(false)
-			if (!closed && latestDelivery.get() != null && deliveryScheduled.compareAndSet(false, true)) {
+			if (!closed && !latestDelivery.isEmpty() && deliveryScheduled.compareAndSet(false, true)) {
 				SwingUtilities.invokeLater(::deliverLatestFrame)
 			}
 		}
@@ -408,12 +459,15 @@ class CubismSdkPreviewSession(
 		if (closed) return
 		closed = true
 		generation++
-		latestRender.set(null)
-		latestDelivery.set(null)
+		latestRender.clear()
+		latestDelivery.clear()
 		executor.execute {
 			val native = api
 			if (native != null) {
-				model?.let(native::Live2D_DestroyModel)
+				nativeCanvases.values.forEach { native.Live2D_DestroyModel(it.handle) }
+                nativeCanvases.clear()
+                loadedManifest = null
+                model?.let(native::Live2D_DestroyModel)
 				model = null
 				native.Live2D_Shutdown()
 			}
