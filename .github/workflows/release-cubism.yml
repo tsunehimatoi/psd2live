@@ -70,7 +70,7 @@ jobs:
   build-windows:
     name: Build Windows Cubism
     needs: prepare
-    runs-on: windows-latest
+    runs-on: windows-2022  # Cubism Core_MT.lib is MSVC 143; windows-latest is VS 2026-only
     environment: release-cubism
     env:
       VERSION: ${{ needs.prepare.outputs.version }}

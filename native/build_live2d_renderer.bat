@@ -95,11 +95,24 @@ if "%CLEAN%"=="1" (
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
 echo [1/3] Configuring CMake [/MT + Core_MT.lib]...
-cmake -G "Visual Studio 17 2022" -A x64 ^
-  -DCUBISM_SDK_ROOT="%CUBISM_SDK_ROOT%" ^
-  -DCMAKE_MSVC_RUNTIME_LIBRARY="MultiThreaded$<$<CONFIG:Debug>:Debug>" ^
-  -B "%BUILD_DIR%" ^
-  -S "%SRC_DIR%"
+rem Prefer VS 2022 (toolset 143 matches Cubism Core_MT.lib). Fall back to
+rem CMake auto-detect for newer images (e.g. VS 2026 on windows-latest).
+set "CMAKE_GEN=Visual Studio 17 2022"
+"%ProgramFiles(x86)%\Microsoft Visual Studio\Installerswhere.exe" -latest -products * -version "[17.0,18.0)" -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 >nul 2>nul
+if errorlevel 1 (
+  echo [INFO] VS 2022 not found; letting CMake pick the newest Visual Studio generator.
+  cmake -A x64 ^
+    -DCUBISM_SDK_ROOT="%CUBISM_SDK_ROOT%" ^
+    -DCMAKE_MSVC_RUNTIME_LIBRARY="MultiThreaded$<$<CONFIG:Debug>:Debug>" ^
+    -B "%BUILD_DIR%" ^
+    -S "%SRC_DIR%"
+) else (
+  cmake -G "!CMAKE_GEN!" -A x64 ^
+    -DCUBISM_SDK_ROOT="%CUBISM_SDK_ROOT%" ^
+    -DCMAKE_MSVC_RUNTIME_LIBRARY="MultiThreaded$<$<CONFIG:Debug>:Debug>" ^
+    -B "%BUILD_DIR%" ^
+    -S "%SRC_DIR%"
+)
 if errorlevel 1 (
   echo [ERROR] CMake configuration failed.
   exit /b 1
