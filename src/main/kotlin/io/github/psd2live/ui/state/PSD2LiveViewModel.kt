@@ -3282,6 +3282,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		expectedParentOverrides: Map<String, String?>,
 		expectedRigEdits: RigEditOverlay,
         expectedSettings: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap()),
+		expectedMeshOverrides: Map<String, MeshSettings> = emptyMap(),
 		layerVisibility: Map<String, Boolean>,
 		deletedLayerIds: Set<String>,
 		layerOverrides: Map<String, LayerClassificationOverride>,
@@ -3289,6 +3290,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		rigEdits: RigEditOverlay,
 		status: String,
         settings: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap()),
+		meshOverrides: Map<String, MeshSettings> = emptyMap(),
 	): Boolean {
 		previewRebuildJob?.cancel()
 		resetCanvasPaintSessions()
@@ -3302,6 +3304,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				current.layerOverrides != expectedLayerOverrides ||
 				current.parentOverrides != expectedParentOverrides ||
 				current.rigEdits != expectedRigEdits ||
+                current.meshOverrides != expectedMeshOverrides ||
                 (expectedSettings.isNotEmpty() && io.github.psd2live.project.WorkspaceStateCodec.settings(current) != expectedSettings)
 			) return@updateState current
 			applied = true
@@ -3314,6 +3317,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				layerOverrides = layerOverrides,
 				parentOverrides = parentOverrides,
 				rigEdits = rigEdits,
+				meshOverrides = meshOverrides,
 				selectedLayerId = current.selectedLayerId?.takeIf { selected ->
 					preview.analysis.layers.any { it.source.id.raw == selected } && selected !in deletedLayerIds
 				},

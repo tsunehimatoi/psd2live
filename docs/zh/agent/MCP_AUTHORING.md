@@ -2,7 +2,7 @@
 
 [文档目录](../../README.md) · [设计与验收](AGENT_DESIGN.md) · [能力实测](../../../STATUS.md)
 
-本页以 [AgentAuthoringTools.kt](../../../src/main/kotlin/io/github/psd2live/agent/AgentAuthoringTools.kt) 的公开注册为准。当前是 **16 个工具**。旧文档中的 `project_get_state`、`rig_transform`、`asset_import_png` 等是内部适配名称，不能直接当作当前公开工具调用。
+本页以 [AgentAuthoringTools.kt](../../../src/main/kotlin/io/github/psd2live/agent/AgentAuthoringTools.kt) 的公开注册为准。当前是 **20 个工具**。旧文档中的 `project_get_state`、`rig_transform`、`asset_import_png` 等是内部适配名称，不能直接当作当前公开工具调用。
 
 ## 接入
 
@@ -18,10 +18,14 @@ Token 允许编辑当前工作区，应保留在本机宿主配置中。工具�
 
 | 工具 | 请求结构 | 用途 / 分支 |
 | --- | --- | --- |
-| `inspect` | 顶层 `scope` / `target` | `project`、`settings`、`objects`、`layers`、`parameters`、`physics`、`paths`；单对象摘要和继承链 |
+| `inspect` | 顶层 `scope` / `target` | `project`、`settings`、`preview`、`objects`、`layers`、`parameters`、`physics`、`paths`；图层摘要包含有效网格配置 |
 | `layer` | 顶层 `state`、`layer_id` 及分类字段 | 更新既有源图层的类型、部件、侧别、参数关联和切换 ID；省略的字段保持原值 |
+| `layer_mesh` | 顶层 `state`、`layer_id`、`changes` 或 `reset` | 逐图层覆盖或重置自适应网格参数；用 `inspect.layers` 读取当前值 |
+| `paint` | `request.mode` | `brush/eraser/bucket/shape/clear`；画布像素坐标，一次手势一个历史节点 |
+| `preview` | 顶层 `state`、`mode` | `set/reset`；修改当前预览参数值和锁定状态，不写关键形 |
 | `settings` | 顶层 `state`、`changes` | 修改自动 Rig、网格、贴图、高清化、物理预设、动作和导出配置；先用 `inspect.settings` 读取 |
 | `export` | 顶层 `state`、`output_directory` | 导出当前工程的模型文件族，返回文件与警告；目录需为绝对路径 |
+| `export_psd` | 顶层 `state`、`path` | 使用 UI 的 PSD 写入器，支持 1/2/4 倍及生成层选项 |
 | `deform` | 顶层 `state`、`changes` | 在明确参数键上编辑 Mesh / Warp 连续形状 |
 | `form` | 顶层 `state`、`changes` | `op: seed/copy/set/delete`，编辑关键形集合、标量 / 颜色通道与旋转形状 |
 | `rig` | 顶层 `state`、`name`、`targets` | 为共用父 Warp 的 Mesh 创建独立 Warp |
@@ -30,7 +34,7 @@ Token 允许编辑当前工作区，应保留在本机宿主配置中。工具�
 | `canvas` | `request.mode` | `warp/rotation/glue/topology`，调用画布同源且可重放的几何命令 |
 | `view` | `request.mode` | `model/layer/context/poses/coverage/compare/motion` |
 | `parameter` | `request.mode` | `create/update/delete`；删除时在旧默认值处折叠关键形轴 |
-| `asset` | `request.mode` | `create/split/reference/import/register/preview/add/place/finalize/inspect/reprocess/remove` |
+| `asset` | `request.mode` | `psd/create/split/reference/import/register/preview/add/place/finalize/inspect/reprocess/remove`；`psd` 从本地绝对路径导入空工作区 |
 | `physics` | `request.mode` | `put/delete`，创建、替换或删除自定义简化摆锤组 |
 | `path` | `request.mode` | `get/list/preview/put/delete/deform` |
 | `revision` | `request.mode` | `save/checkpoint/list/restore` |
@@ -125,6 +129,8 @@ View 从模型数据渲染 PNG，不依赖桌面截图。`canvas_rect` 给出画
 ## 素材工作流
 
 对新增素材，通常使用 `reference → import → register → preview → add`，必要时 `place → finalize`。`create` 可从放置素材建立空工作区；`split` 按画布多边形拆成内部和余部，不会补画被遮挡内容，也不应被描述成自动拆发建模。
+
+已有 PSD 使用 `asset.psd` 从本地绝对路径打开。`paint` 的画笔、橡皮、油漆桶和形状使用 UI 的栅格算法；坐标为画布像素。绘画可能改变源图边界和网格拓扑，因此已有目标网格关键形、Warp 或 Glue 时会拒绝；应在这些绑定前完成源图像素修改。`layer_mesh` 修改单层网格参数，重置后继承全局值。
 
 `import` 接受已有本地 PNG 绝对路径或图像字节；不要让模型逐字生成 Base64。省略 `solid_background` 保留原生 Alpha；需要去底时显式给出真实纯色。棋盘格截图不是透明素材。
 

@@ -22,6 +22,7 @@ internal fun registerSourceEditing(server: Server, workspace: AgentWorkspace) {
         }; putJsonArray("required") { add(JsonPrimitive("path")); add(JsonPrimitive("name")) }; put("additionalProperties", false)
     }
     val specs = mapOf(
+        "asset_import_psd" to ToolSchema(properties = buildJsonObject { put("path", text) }, required = listOf("path")),
         "asset_create_artwork" to ToolSchema(properties = buildJsonObject {
             putJsonObject("width") { put("type", "integer"); put("minimum", 1); put("maximum", 8192) }
             putJsonObject("height") { put("type", "integer"); put("minimum", 1); put("maximum", 8192) }
@@ -36,7 +37,11 @@ internal fun registerSourceEditing(server: Server, workspace: AgentWorkspace) {
     for ((name, schema) in specs) server.addTool(name, "Generic source artwork editing", schema,
         toolAnnotations = ToolAnnotations(readOnlyHint = false, destructiveHint = false, openWorldHint = false)) { request ->
         val arguments = request.arguments ?: JsonObject(emptyMap())
-        val result = if (name == "asset_create_artwork") workspace.createArtwork(arguments) else workspace.splitArtwork(arguments)
+        val result = when (name) {
+            "asset_import_psd" -> workspace.importPsd(arguments.text("path"))
+            "asset_create_artwork" -> workspace.createArtwork(arguments)
+            else -> workspace.splitArtwork(arguments)
+        }
         val value = buildJsonObject {
             put("state", result.historyNodeId)
             put("layers", JsonArray(result.affectedLayerIds.map(::JsonPrimitive)))

@@ -33,6 +33,16 @@ class LayerClassificationIntegrationTest {
                     }) }
                 })
                 val id = created.affectedLayerIds.single()
+                val painted = workspace.paintSource(buildJsonObject {
+                    put("state", created.historyNodeId); put("layer_id", id); put("mode", "brush")
+                    putJsonArray("points") { add(buildJsonArray { add(0); add(0) }) }
+                    putJsonArray("color") { listOf(0, 255, 0, 255).forEach { add(it) } }
+                    put("radius", 1.0)
+                })
+                assertTrue(painted.applied)
+                assertEquals(0f, workspace.snapshot().layers.single().opaqueBounds.left)
+                workspace.checkoutHistory(created.historyNodeId, MutationAuthor.AGENT)
+                assertEquals(2f, workspace.snapshot().layers.single().opaqueBounds.left)
                 val classified = workspace.classifyLayer(id, LayerClassificationOverride(
                     LayerType.TOGGLE, SemanticTag.OBJECTS, Side.NONE, "ParamDecoration", 0,
                 ), created.historyNodeId)
@@ -40,6 +50,13 @@ class LayerClassificationIntegrationTest {
                 assertEquals("toggle", workspace.snapshot().layers.single().classificationType)
                 assertEquals("ParamDecoration", workspace.snapshot().layers.single().parameterBinding)
                 assertTrue(workspace.snapshot().parameters.any { it.id == "ParamDecoration" })
+                val session = workspace.setPreviewSession(buildJsonObject {
+                    put("state", classified.historyNodeId); put("mode", "set")
+                    putJsonObject("values") { put("ParamDecoration", 1.0) }
+                    putJsonObject("locks") { put("ParamDecoration", true) }
+                })
+                assertEquals(1f, session.getValue("values").jsonObject.getValue("ParamDecoration").jsonPrimitive.float)
+                assertTrue(session.getValue("locked").jsonArray.any { it.jsonPrimitive.content == "ParamDecoration" })
 
                 val restored = workspace.checkoutHistory(created.historyNodeId, MutationAuthor.AGENT)
                 assertEquals("preset", workspace.snapshot().layers.single().classificationType)
@@ -50,11 +67,26 @@ class LayerClassificationIntegrationTest {
                     put("headStrength", 2.0); put("atlasSize", 512)
                 })
                 assertEquals(2.0f, workspace.projectSettings().getValue("headStrength").jsonPrimitive.float)
-                val output = workspace.exportModel(configured.historyNodeId, temp.resolve("export").toString())
+                val meshed = workspace.setLayerMeshSettings(configured.historyNodeId, id, buildJsonObject {
+                    put("outerMargin", 3.0); put("innerMarginEnabled", true)
+                }, reset = false)
+                assertEquals(3f, viewModel.state.value.meshOverrides.getValue(id).outerMargin)
+                val output = workspace.exportModel(meshed.historyNodeId, temp.resolve("export").toString())
                 assertTrue(output.getValue("files").jsonArray.isNotEmpty())
                 assertTrue(output.getValue("files").jsonArray.all { file ->
                     Files.isRegularFile(Path.of(file.jsonObject.getValue("path").jsonPrimitive.content))
                 })
+                val psd = temp.resolve("roundtrip.psd")
+                val psdResult = workspace.exportPsd(meshed.historyNodeId, psd.toString(), 1, true)
+                assertEquals(Files.size(psd).toInt(), psdResult.getValue("bytes").jsonPrimitive.int)
+                PSD2LiveViewModel().use { importedViewModel ->
+                    ViewModelAgentWorkspace(importedViewModel, temp.resolve("import-store")).use { importedWorkspace ->
+                        importedViewModel.attachAgentWorkspace(importedWorkspace)
+                        val imported = importedWorkspace.importPsd(psd.toString())
+                        assertTrue(imported.affectedLayerIds.isNotEmpty())
+                        assertEquals("roundtrip.psd", importedWorkspace.snapshot().inputName)
+                    }
+                }
             }
         }
     }

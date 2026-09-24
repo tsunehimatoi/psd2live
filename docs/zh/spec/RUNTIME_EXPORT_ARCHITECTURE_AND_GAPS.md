@@ -33,7 +33,7 @@ flowchart LR
 
 主画布已提供选择、形变、网格拓扑、变形器创建、Glue、路径和绘画会话。参数、检视、动画和物理面板提供相应控制。
 
-GUI 与 MCP 的能力不完全相同：MCP 当前是 16 个公开工具，参数公开 create/update/delete，既有源图层分类可通过 `layer` 更新，画布结构与拓扑有 `canvas/structure` 路径，模型设置与模型文件导出有 `settings/export` 路径；素材支持 create/split。低层对象方法不能自动视为公开接口。详见 [MCP 契约](../agent/MCP_AUTHORING.md)。
+GUI 与 MCP 的能力不完全相同：MCP 当前是 20 个公开工具，参数公开 create/update/delete，既有源图层分类可通过 `layer` 更新，画布结构与拓扑有 `canvas/structure` 路径，模型设置与模型文件导出有 `settings/export` 路径；素材支持 PSD 导入、create/split、源图绘画，另有逐图层网格配置、预览参数会话与 PSD 导出。低层对象方法不能自动视为公开接口。详见 [MCP 契约](../agent/MCP_AUTHORING.md)。
 
 `org.umamo.edit` 的通用编辑会话也不是 PSD2Live 历史的唯一权威入口。接入底层编辑能力时，需要转换为工作区可保存、可重放的操作。
 

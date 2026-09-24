@@ -34,7 +34,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
     }
 
     tool("inspect", "Read project context, find objects/layers/parameters, or inspect one kind:id's direct axes, channels and parent. No point arrays. Query and page before expanding.",
-        buildJsonObject { put("scope", choices("project", "settings", "objects", "layers", "parameters", "physics", "paths")); put("query", string()); put("target", string()); put("offset", integer(0)); put("limit", integer(1, 64)) }) { a ->
+        buildJsonObject { put("scope", choices("project", "settings", "preview", "objects", "layers", "parameters", "physics", "paths")); put("query", string()); put("target", string()); put("offset", integer(0)); put("limit", integer(1, 64)) }) { a ->
         val snapshot = workspace.snapshot()
         val state = snapshot.historyHeadNodeId
         val target = a["target"]?.jsonPrimitive?.content
@@ -95,6 +95,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
                 }
                 "physics" -> put("groups", JsonArray(workspace.listPhysics().map { it.toJson() }))
                 "settings" -> put("settings", workspace.projectSettings())
+                "preview" -> put("preview", workspace.previewSession())
                 else -> {
                     val scope = a.getValue("scope").jsonPrimitive.content
                     val items = when (scope) {
@@ -104,6 +105,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
                             put("role", layer.semanticTag); put("side", layer.side)
                             put("type", layer.classificationType); put("parameter", layer.parameterBinding)
                             put("switch_id", layer.switchId)
+                            put("mesh", workspace.layerMeshSettings(layer.id))
                             putJsonArray("bounds") { listOf(layer.opaqueBounds.left, layer.opaqueBounds.top, layer.opaqueBounds.right, layer.opaqueBounds.bottom).forEach { add(JsonPrimitive(it)) } }
                         } }
                         "parameters" -> snapshot.parameters.map { p -> buildJsonObject { put("id", p.id); put("name", p.name); put("min", p.min); put("max", p.max); put("default", p.default) } }
@@ -173,6 +175,54 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
     tool("export", "Export the current source artwork and authored rig to the model file family at an absolute output directory. Uses inspect.settings export options and returns written files and warnings. Does not advance history.",
         buildJsonObject { put("state", string()); put("output_directory", string()) }, listOf("state", "output_directory"), true) { a ->
         workspace.exportModel(a.text("state"), a.text("output_directory"))
+    }
+    tool("export_psd", "Export editable PSD layers using the same writer and upscale settings as the UI. Output path must be absolute; scale 2 or 4 requires configured texture upscale models. Does not advance history.",
+        buildJsonObject { put("state", string()); put("path", string()); put("scale", integer(1, 4)); put("include_generated_layers", boolean()) },
+        listOf("state", "path"), true) { a ->
+        workspace.exportPsd(a.text("state"), a.text("path"), a["scale"]?.jsonPrimitive?.int ?: 1,
+            a["include_generated_layers"]?.jsonPrimitive?.boolean ?: true)
+    }
+    tool("layer_mesh", "Set or reset a source layer's adaptive mesh settings using the same ranges as the UI layer mesh dialog. Omitted fields retain their current values; inspect scope=settings and inspect layers for context.",
+        buildJsonObject {
+            put("state", string()); put("layer_id", string()); put("reset", boolean())
+            put("changes", objectSchema(buildJsonObject {
+                put("outerMargin", number()); put("innerMarginEnabled", boolean())
+                put("innerMargin", number()); put("maxEdgeDistance", number()); put("interiorDensity", number())
+            }))
+        }, listOf("state", "layer_id"), true) { a ->
+        workspace.setLayerMeshSettings(a.text("state"), a.text("layer_id"), a["changes"]?.jsonObject,
+            a["reset"]?.jsonPrimitive?.boolean ?: false).compact()
+    }
+    val previewValues = buildJsonObject { put("type", "object"); put("additionalProperties", number()) }
+    val previewLocks = buildJsonObject { put("type", "object"); put("additionalProperties", boolean()) }
+    tool("preview", "Set current preview parameter values and locks, or reset them, through the UI session state. Values are checked against parameter ranges. This changes the preview session, not model keyforms or history.",
+        buildJsonObject {
+            put("state", string()); put("mode", choices("set", "reset"))
+            put("values", previewValues); put("locks", previewLocks)
+        }, listOf("state", "mode"), true) { a -> workspace.setPreviewSession(a) }
+    val paintPoint = vector(2)
+    val paintColor = arraySchema(integer(0, 255), 4, 4)
+    val paintCommon = buildJsonObject {
+        put("state", string()); put("layer_id", string()); put("color", paintColor); put("opacity", number())
+    }
+    tool("paint", "Commit one source-image paint gesture in canvas pixels with the UI paint engine. Brush/eraser, bucket and shapes share the UI raster algorithms. Paint before authoring mesh forms or glue; source edits rebuild topology and are history-recoverable.",
+        buildJsonObject { put("request", oneOf(listOf(
+            variant("mode", "brush", JsonObject(paintCommon + buildJsonObject {
+                put("points", arraySchema(paintPoint, 1, 512)); put("radius", number()); put("hardness", number())
+            }), listOf("state", "layer_id", "points")),
+            variant("mode", "eraser", JsonObject(paintCommon + buildJsonObject {
+                put("points", arraySchema(paintPoint, 1, 512)); put("radius", number()); put("hardness", number())
+            }), listOf("state", "layer_id", "points")),
+            variant("mode", "bucket", JsonObject(paintCommon + buildJsonObject {
+                put("point", paintPoint); put("tolerance", integer(0, 255))
+            }), listOf("state", "layer_id", "point")),
+            variant("mode", "shape", JsonObject(paintCommon + buildJsonObject {
+                put("from", paintPoint); put("to", paintPoint); put("shape", choices("line", "rectangle", "ellipse"))
+                put("stroke_width", number()); put("filled", boolean())
+            }), listOf("state", "layer_id", "from", "to", "shape")),
+            variant("mode", "clear", paintCommon, listOf("state", "layer_id"))
+        ))) }, listOf("request"), true) { a ->
+        workspace.paintSource(a.getValue("request").jsonObject).compact()
     }
 
     val key = buildJsonObject { put("type", "object"); put("minProperties", 1); put("additionalProperties", number()) }
@@ -261,8 +311,8 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
         mapOf("compare" to "view_compare_history", "motion" to "view_sample_motion", "poses" to "view_render_poses", "model" to "view_render_model", "layer" to "view_render_layer", "context" to "view_render_context", "coverage" to "view_check_coverage"), false)
     adapted("parameter", "Create, update, or delete a parameter definition. A parameter alone produces no motion: form/deform author its object bindings and keys. Deleting collapses keyed axes at the prior default.",
         mapOf("create" to "parameter_create", "update" to "parameter_update", "delete" to "parameter_delete"), true)
-    adapted("asset", "Use local PNG paths from your host image generator. create builds an empty workspace from placed source layers, bottom-to-top. split partitions a source layer into polygon-inside/remainder (canvas pixels), before motion authoring; hidden artwork is not generated. For additions prepare a reference, import/register PNG, preview, add. Reference/view handles preserve placement. Generated art is not proof of model motion.",
-        mapOf("create" to "asset_create_artwork", "split" to "asset_split_artwork", "reference" to "asset_prepare_reference", "import" to "asset_import_png", "register" to "asset_register", "preview" to "asset_preview_composite", "add" to "layer_add_from_asset", "place" to "layer_set_placement", "finalize" to "layer_finalize_placement", "inspect" to "asset_inspect", "reprocess" to "asset_reprocess", "remove" to "layer_soft_delete"), true)
+    adapted("asset", "Import an existing PSD or use local PNG paths from your host image generator. create builds an empty workspace from placed source layers, bottom-to-top. split partitions a source layer into polygon-inside/remainder (canvas pixels), before motion authoring; hidden artwork is not generated. For additions prepare a reference, import/register PNG, preview, add. Reference/view handles preserve placement. Generated art is not proof of model motion.",
+        mapOf("psd" to "asset_import_psd", "create" to "asset_create_artwork", "split" to "asset_split_artwork", "reference" to "asset_prepare_reference", "import" to "asset_import_png", "register" to "asset_register", "preview" to "asset_preview_composite", "add" to "layer_add_from_asset", "place" to "layer_set_placement", "finalize" to "layer_finalize_placement", "inspect" to "asset_inspect", "reprocess" to "asset_reprocess", "remove" to "layer_soft_delete"), true)
     adapted("physics", "Create, replace, or delete an independent input→output parameter pendulum. Author the output parameter's endpoint forms first. Static view poses do not establish settling or natural motion.", mapOf("put" to "physics_put", "delete" to "physics_delete"), true)
     tool("appearance", "Rename, show/hide or reorganize objects in one ordered edit. For an animated switch use form opacity keys instead of static visibility. Local reparenting changes inherited motion.",
         buildJsonObject { put("state", string()); put("edits", legacy.getValue("object_edit").tool.inputSchema.properties!!.getValue("edits")) }, listOf("state", "edits"), true) { a ->

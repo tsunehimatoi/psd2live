@@ -415,6 +415,18 @@ enum class MutationAuthor(val historyActor: String, val logSource: io.github.psd
 }
 
 interface AgentWorkspace {
+    fun previewSession(): kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap())
+    suspend fun setPreviewSession(arguments: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject =
+        throw UnsupportedOperationException("Preview session is unavailable")
+    fun layerMeshSettings(layerId: String): kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap())
+    suspend fun importPsd(path: String): AgentWorkspaceMutationResult =
+        throw UnsupportedOperationException("PSD import is unavailable")
+    suspend fun setLayerMeshSettings(state: String, layerId: String, changes: kotlinx.serialization.json.JsonObject?, reset: Boolean): AgentWorkspaceMutationResult =
+        throw UnsupportedOperationException("Layer mesh settings are unavailable")
+    suspend fun exportPsd(state: String, path: String, scale: Int, includeGeneratedLayers: Boolean): kotlinx.serialization.json.JsonObject =
+        throw UnsupportedOperationException("PSD export is unavailable")
+    suspend fun paintSource(arguments: kotlinx.serialization.json.JsonObject): AgentWorkspaceMutationResult =
+        throw UnsupportedOperationException("Source painting is unavailable")
     fun projectSettings(): kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap())
     suspend fun updateProjectSettings(state: String, changes: kotlinx.serialization.json.JsonObject): AgentWorkspaceMutationResult =
         throw UnsupportedOperationException("Project settings are unavailable")

@@ -6,6 +6,7 @@ import io.github.psd2live.core.TextureUpscaleConfig
 import io.github.psd2live.core.ProgressListener
 import io.github.psd2live.project.WorkspaceStateCodec
 import io.github.psd2live.core.PipelineConfig
+import io.github.psd2live.core.MeshSettings
 import io.github.psd2live.core.PreviewRenderer
 import io.github.psd2live.core.RigKeyformChannelsEdit
 import io.github.psd2live.core.RigKeyformCopyEdit
@@ -31,6 +32,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.float
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
@@ -38,6 +40,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import kotlinx.serialization.json.add
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
@@ -108,6 +111,156 @@ class ViewModelAgentWorkspace(
 	private val viewModel: PSD2LiveViewModel,
     private val storeRoot: Path = AgentWorkspaceStore.defaultRoot(),
 ) : AgentWorkspace, AutoCloseable {
+    override fun previewSession(): kotlinx.serialization.json.JsonObject {
+        val state = viewModel.state.value
+        return kotlinx.serialization.json.buildJsonObject {
+            putJsonObject("values") { state.parameterValues.toSortedMap(compareBy { it.raw }).forEach { (id, value) -> put(id.raw, value) } }
+            putJsonArray("locked") { state.lockedParameters.map { it.raw }.sorted().forEach { add(it) } }
+        }
+    }
+
+    override suspend fun setPreviewSession(arguments: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject = editMutex.withLock {
+        val before = snapshot()
+        require(before.historyHeadNodeId == arguments.getValue("state").jsonPrimitive.content) {
+            "Workspace history changed; inspect again before changing preview"
+        }
+        val mode = arguments.getValue("mode").jsonPrimitive.content
+        require(mode in setOf("set", "reset")) { "Unknown preview mode" }
+        if (mode == "reset") viewModel.resetAllParameters()
+        else {
+            val definitions = viewModel.state.value.previewModel?.rig?.puppet?.parameters?.associateBy { it.id.raw }
+                ?: throw IllegalStateException("No model is loaded")
+            val values = arguments["values"]?.jsonObject.orEmpty()
+            val locks = arguments["locks"]?.jsonObject.orEmpty()
+            require(values.isNotEmpty() || locks.isNotEmpty()) { "Provide values or locks" }
+            require((values.keys + locks.keys).all { it in definitions }) { "Unknown preview parameter" }
+            values.forEach { (raw, json) ->
+                val definition = definitions.getValue(raw)
+                val value = json.jsonPrimitive.float
+                require(value.isFinite() && value in definition.min..definition.max) { "$raw outside parameter range" }
+            }
+            require(locks.values.all { it.jsonPrimitive.booleanOrNull != null }) { "locks must contain booleans" }
+            values.forEach { (raw, json) ->
+                viewModel.setParameterValue(definitions.getValue(raw).id, json.jsonPrimitive.float)
+            }
+            locks.forEach { (raw, json) ->
+                val id = definitions.getValue(raw).id
+                if ((id in viewModel.state.value.lockedParameters) != json.jsonPrimitive.boolean)
+                    viewModel.toggleParameterLock(id)
+            }
+        }
+        previewSession()
+    }
+    override fun layerMeshSettings(layerId: String): kotlinx.serialization.json.JsonObject {
+        val current = viewModel.state.value
+        require(current.analysis?.source?.layers?.any { it.id.raw == layerId } == true) { "Layer not found: $layerId" }
+        val settings = current.getEffectiveMeshSettings(layerId)
+        return kotlinx.serialization.json.buildJsonObject {
+            put("overridden", current.meshOverrides.containsKey(layerId))
+            put("outerMargin", settings.outerMargin); put("innerMarginEnabled", settings.innerMarginEnabled)
+            put("innerMargin", settings.innerMargin); put("maxEdgeDistance", settings.maxEdgeDistance)
+            put("interiorDensity", settings.interiorDensity)
+        }
+    }
+    override suspend fun importPsd(path: String): AgentWorkspaceMutationResult = editMutex.withLock {
+        val current = viewModel.state.value
+        require(current.analysis == null && !current.isAnalyzing && !current.isGenerating) {
+            "PSD import requires an empty workspace"
+        }
+        val input = Path.of(path)
+        require(input.isAbsolute && Files.isRegularFile(input) && input.fileName.toString().endsWith(".psd", true)) {
+            "Provide an absolute local PSD path"
+        }
+        val preview = withContext(Dispatchers.Default) { viewModel.pipeline.buildPreview(input, current.buildConfig()) }
+        val source = preview.analysis.source
+        val id = java.util.UUID.randomUUID().toString()
+        val signature = "${Files.size(input)}:${Files.getLastModifiedTime(input).toMillis()}"
+        val installed = current.copy(
+            projectId = id, projectSourceName = input.fileName.toString(), projectFile = null,
+            inputPath = input.toString(), loadedInputPath = input.normalize().toString(),
+            loadedInputFileSignature = signature, analysis = preview.analysis, previewModel = preview,
+            layerOverrides = emptyMap(), layerVisibility = emptyMap(), deletedLayerIds = emptySet(),
+            parentOverrides = emptyMap(), rigEdits = io.github.psd2live.core.RigEditOverlay.Empty,
+            selectedLayerId = null, selectedDeformerId = null, historySnapshot = null,
+            parameterValues = preview.rig.puppet.parameters.associate { it.id to it.default },
+        )
+        val document = AgentWorkspaceDocument(source, emptyMap(), emptySet(), emptyMap(), emptyMap(),
+            io.github.psd2live.core.RigEditOverlay.Empty, WorkspaceStateCodec.settings(installed))
+        synchronized(historyLock) {
+            viewModel.installProjectState(installed)
+            val revision = revisionId(installed, document)
+            val tree = WorkspaceHistoryTree(document, revision, revision)
+            historyProjectId = id; historyTree = tree; taskProjectId = null
+            spatialByViewId.clear(); assetStore.clear(); layerTombstones.clear()
+            scheduleHistoryPersistence(id, tree)
+            viewModel.updateHistorySnapshot(history())
+        }
+        viewModel.loadAgentWorkspacePreview(preview)
+        val snapshot = snapshot()
+        AgentWorkspaceMutationResult(snapshot.historyHeadNodeId!!, snapshot.revisionId,
+            source.layers.map { it.id.raw }, "Imported PSD ${input.fileName}")
+    }
+
+    override suspend fun setLayerMeshSettings(
+        state: String, layerId: String, changes: kotlinx.serialization.json.JsonObject?, reset: Boolean,
+    ): AgentWorkspaceMutationResult {
+        require(reset || changes?.isNotEmpty() == true) { "Provide layer mesh changes or reset" }
+        return mutateRigKeyform(state, null, "Updated mesh settings for $layerId", layerId) { document, _ ->
+            require(document.source.layers.any { it.id.raw == layerId } && layerId !in document.deletedLayerIds) {
+                "Layer not found: $layerId"
+            }
+            if (reset) document.copy(meshOverrides = document.meshOverrides - layerId)
+            else {
+                val change = requireNotNull(changes)
+                val allowed = setOf("outerMargin", "innerMarginEnabled", "innerMargin", "maxEdgeDistance", "interiorDensity")
+                require(change.keys.all { it in allowed }) { "Unknown layer mesh setting" }
+                require(change["innerMarginEnabled"] == null || change["innerMarginEnabled"]?.jsonPrimitive?.booleanOrNull != null) {
+                    "innerMarginEnabled must be boolean"
+                }
+                val base = document.meshOverrides[layerId] ?: viewModel.state.value.getDefaultMeshSettings(layerId)
+                fun number(key: String, fallback: Float, range: ClosedFloatingPointRange<Float>): Float =
+                    change[key]?.jsonPrimitive?.float?.also { require(it.isFinite() && it in range) { "$key is outside its UI range" } } ?: fallback
+                val settings = MeshSettings(
+                    outerMargin = number("outerMargin", base.outerMargin, 0f..32f),
+                    innerMarginEnabled = change["innerMarginEnabled"]?.jsonPrimitive?.booleanOrNull ?: base.innerMarginEnabled,
+                    innerMargin = number("innerMargin", base.innerMargin, 0.5f..32f),
+                    maxEdgeDistance = number("maxEdgeDistance", base.maxEdgeDistance, 6f..128f),
+                    interiorDensity = number("interiorDensity", base.interiorDensity, 6f..128f),
+                )
+                document.copy(meshOverrides = document.meshOverrides + (layerId to settings))
+            }
+        }.copy(affectedLayerIds = listOf(layerId), affectedObjectIds = emptyList())
+    }
+
+    override suspend fun exportPsd(
+        state: String, path: String, scale: Int, includeGeneratedLayers: Boolean,
+    ): kotlinx.serialization.json.JsonObject = editMutex.withLock {
+        val before = snapshot()
+        require(before.historyHeadNodeId == state) { "Workspace history changed; inspect again before exporting" }
+        require(scale in setOf(1, 2, 4)) { "PSD scale must be 1, 2, or 4" }
+        val target = Path.of(path)
+        require(target.isAbsolute && target.fileName.toString().endsWith(".psd", true)) { "Provide an absolute PSD output path" }
+        val current = viewModel.state.value
+        require(!current.isAnalyzing && !current.isGenerating && !before.busy) { "Workspace is busy" }
+        val analysis = current.analysis ?: throw IllegalStateException("No source artwork is loaded")
+        val layers = if (includeGeneratedLayers) analysis.layers.map { it.source } else analysis.source.layers
+        val upscaled = if (scale > 1) withContext(Dispatchers.Default) {
+            io.github.psd2live.core.TextureUpscale.prepare(analysis.layers,
+                current.textureUpscale.copy(scale = scale))
+        } else emptyMap()
+        val bytes = withContext(Dispatchers.Default) {
+            org.umamo.format.psd.PsdWriter.write(analysis.source.widthPx, analysis.source.heightPx,
+                layers, analysis.source.groups, scale, upscaled)
+        }
+        withContext(Dispatchers.IO) {
+            target.parent?.let(Files::createDirectories)
+            Files.write(target, bytes)
+        }
+        kotlinx.serialization.json.buildJsonObject {
+            put("state", state); put("path", target.normalize().toString())
+            put("bytes", bytes.size); put("layers", layers.size)
+        }
+    }
     override suspend fun exportModel(state: String, outputDirectory: String): kotlinx.serialization.json.JsonObject = editMutex.withLock {
         val before = snapshot()
         require(before.historyHeadNodeId == state) { "Workspace history changed; inspect again before exporting" }
@@ -1008,6 +1161,23 @@ class ViewModelAgentWorkspace(
         }.copy(affectedLayerIds = pieces)
     }
 
+    override suspend fun paintSource(arguments: kotlinx.serialization.json.JsonObject): AgentWorkspaceMutationResult {
+        val id = arguments.getValue("layer_id").jsonPrimitive.content
+        return mutateRigKeyform(arguments.getValue("state").jsonPrimitive.content, null,
+            "Painted source layer $id", id) { document, puppet ->
+            val meshIds = viewModel.state.value.previewModel!!.rig.layerIdByDrawableId
+                .filterValues { it == id }.keys.toSet()
+            require(document.rigEdits.authoringJournal.isEmpty() &&
+                document.rigEdits.keyformSetEdits.none { it.target.id in meshIds } &&
+                document.rigEdits.keyformCopyEdits.none { it.destinationTarget.id in meshIds } &&
+                document.rigEdits.warpEdits.none { warp -> warp.meshIds.any { it in meshIds } } &&
+                puppet.glues.none { it.meshA.raw in meshIds || it.meshB.raw in meshIds }) {
+                "Paint source artwork before authoring mesh topology, forms, or glue"
+            }
+            document.paintSource(arguments)
+        }.copy(affectedLayerIds = listOf(id), affectedObjectIds = emptyList())
+    }
+
     override fun listRigObjects(): List<AgentKeyformTargetRef> {
         val puppet = viewModel.state.value.previewModel?.rig?.puppet ?: error("No rig is loaded")
         return puppet.drawables.map { AgentKeyformTargetRef("mesh", it.id.raw) } +
@@ -1797,6 +1967,7 @@ class ViewModelAgentWorkspace(
 			expectedParentOverrides = expected.parentOverrides,
 			expectedRigEdits = expected.rigEdits,
             expectedSettings = expected.settings,
+			expectedMeshOverrides = expected.meshOverrides,
 			layerVisibility = next.layerVisibility,
 			deletedLayerIds = next.deletedLayerIds,
 			layerOverrides = next.layerOverrides,
@@ -1804,6 +1975,7 @@ class ViewModelAgentWorkspace(
 			rigEdits = next.rigEdits,
 			status = status,
             settings = next.settings,
+			meshOverrides = next.meshOverrides,
 		)
 
 	private fun rasterDigest(rgba: ByteArray): String = rasterDigests[rgba] ?: sha256(rgba).also { digest ->
