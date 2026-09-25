@@ -1867,7 +1867,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				bodyStrength = 1.0f,
 				meshOnly = false,
 				generateDeformers = true,
-				featureDisplacementEnabled = true,
+				featureDisplacementEnabled = false,
                 mouthOutlineEnabled = true,
                 mouthShape = "smile",
                 mouthCurve = io.github.psd2live.core.MouthCurve.preset("smile"),

@@ -286,7 +286,7 @@ data class PSD2LiveState(
 	val bodyStrength: Float = 1.0f,
 	val meshOnly: Boolean = false,
 	val generateDeformers: Boolean = true,
-	val featureDisplacementEnabled: Boolean = true,
+	val featureDisplacementEnabled: Boolean = false,
 	val mouthOutlineEnabled: Boolean = true,
 	val mouthShape: String = "smile",
     val mouthCurve: io.github.psd2live.core.MouthCurve = io.github.psd2live.core.MouthCurve.preset("smile"),

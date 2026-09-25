@@ -165,7 +165,7 @@ data class PipelineConfig(
 	val bodyStrength: Float = 1f,
 	val meshOnly: Boolean = false,
 	val generateDeformers: Boolean = true,
-	val featureDisplacementEnabled: Boolean = true,
+	val featureDisplacementEnabled: Boolean = false,
 	val mouthOutlineEnabled: Boolean = true,
 	val mouthShape: String = "smile",
     val mouthCurve: io.github.psd2live.core.MouthCurve = io.github.psd2live.core.MouthCurve.preset("smile"),
