@@ -71,7 +71,12 @@ internal object Cmo3DeformPaths {
             val vertices=localDefault(model,drawable)
             val canvasVertices=requireNotNull(drawable.mesh).positions
             val widthScale=canvasScale(model,drawable)
-            val extensions=CArrayList<Any?>().apply { addAll(Cmo3Import.elementsOf(source._extensions).filterNot { it is CControllerExtension }) }
+            val extensions=CArrayList<Any?>().apply {
+                addAll(Cmo3Import.elementsOf(source._extensions).filterNot {
+                    it is CControllerExtension || it is CTopologyObserverExtension
+                })
+            }
+            val controllers=ArrayList<CControllerExtension>()
             for((level,curves) in paths.groupBy { it.editLevel }) {
                 val controls=CArrayList<Any?>()
                 val nativeCurves=CArrayList<Any?>()
@@ -108,6 +113,13 @@ internal object Cmo3DeformPaths {
                     nativeCurves.add(curve)
                 }
                 extensions.add(extension)
+                controllers.add(extension)
+            }
+            if(controllers.isNotEmpty()) {
+                extensions.add(CTopologyObserverExtension().apply {
+                    guid=guid("CExtensionGuid");_owner=source
+                    observers=CArrayList<Any?>().apply { addAll(controllers) }
+                })
             }
             source._extensions=extensions
             editor.ensureChildSlot(source,"ACParameterControllableSource","_extensions")
