@@ -22,6 +22,7 @@ import androidx.compose.material.Divider
 import androidx.compose.material.LinearProgressIndicator
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -36,6 +37,9 @@ import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
 import org.umamo.runtime.model.RuntimeTarget
+import org.umamo.interop.ExportNotice
+import org.umamo.interop.mocVersion
+import org.umamo.interop.moc3.export.Moc3VersionDowngrade
 
 private val exportRuntimeTargets = listOf(
 	RuntimeTarget.Cubism30,
@@ -209,6 +213,37 @@ internal fun ExportActionSection(
 				enabled = !isBusy,
 				height = 22.dp,
 			)
+		}
+		val previewPuppet = state.previewModel?.rig?.puppet
+		val downgradeItems = remember(previewPuppet, state.runtimeTarget, state.exportMoc3, state.exportCmo3) {
+			if (previewPuppet == null) emptyList() else buildList {
+				if (state.exportMoc3) {
+					addAll(Moc3VersionDowngrade.strip(previewPuppet, state.runtimeTarget.mocVersion()).notices
+						.filterIsInstance<ExportNotice.FeatureStripped>().map { "MOC3" to it })
+				}
+				if (state.exportCmo3) {
+					addAll(Moc3VersionDowngrade.stripForCmo3(previewPuppet, state.runtimeTarget).notices
+						.filterIsInstance<ExportNotice.FeatureStripped>().map { "CMO3" to it })
+				}
+			}
+		}
+		if (downgradeItems.isNotEmpty()) {
+			Column(
+				modifier = Modifier.fillMaxWidth()
+					.background(colors.panelElevated, RoundedCornerShape(3.dp))
+					.border(BorderStroke(1.dp, colors.warning), RoundedCornerShape(3.dp))
+					.padding(8.dp),
+				verticalArrangement = Arrangement.spacedBy(3.dp),
+			) {
+				Text(tr("export.downgrade.title"), style = typography.caption.copy(fontWeight = FontWeight.SemiBold), color = colors.warning)
+				for ((format, notice) in downgradeItems) {
+					Text(
+						tr("export.downgrade.item", format, tr("export.downgrade.feature.${notice.feature.name}"), notice.subjects.joinToString(", ")),
+						style = typography.caption.copy(fontSize = 10.sp),
+						color = colors.textPrimary,
+					)
+				}
+			}
 		}
 
 		Column(
