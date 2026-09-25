@@ -2,6 +2,7 @@ package org.umamo.edit
 
 import org.umamo.runtime.eval.EPS_SPAN
 import org.umamo.runtime.model.ParameterId
+import org.umamo.runtime.model.ParameterKind
 import org.umamo.runtime.model.ParameterLink
 import org.umamo.runtime.model.PuppetModel
 
@@ -84,8 +85,8 @@ fun PuppetModel.withParameterLink(horizontal: ParameterId, vertical: ParameterId
 		if (horizontal == vertical) {
 			return this
 		}
-		val knownIds = parameters.map { parameter -> parameter.id }.toSet()
-		if (horizontal !in knownIds || vertical !in knownIds) {
+		val known = parameters.filter { parameter -> parameter.id == horizontal || parameter.id == vertical }
+		if (known.size != 2 || known.any { it.kind == ParameterKind.BLEND_SHAPE }) {
 			return this
 		}
 		val linkedMembers = parameterLinks.flatMap { link -> listOf(link.horizontal, link.vertical) }.toSet()

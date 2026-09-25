@@ -1,6 +1,9 @@
 package io.github.psd2live.core
 
 import kotlinx.serialization.json.*
+import org.umamo.render.eval.meshBlendState
+import org.umamo.render.eval.rotationBlendDeltas
+import org.umamo.render.eval.warpBlendDeltas
 import org.umamo.runtime.eval.cellsByLinearIndex
 import org.umamo.runtime.eval.gridCorners
 import org.umamo.runtime.model.*
@@ -17,6 +20,9 @@ internal object RigGeometryTools {
 
     fun geometry(model: PuppetModel, kind: String, id: String, pose: Map<String, Float>): Geometry {
         val params = model.parameters.associateBy { it.id.raw }
+        val defaults = model.parameters.associate { it.id to it.default }
+        val paramValue: (ParameterId) -> Float = { id -> pose[id.raw] ?: defaults[id] ?: 0f }
+        val defaultValue: (ParameterId) -> Float = { id -> defaults[id] ?: 0f }
         require(pose.all { (id, v) -> params[id]?.let { v.isFinite() && v in it.min..it.max } == true }) { "Unknown or out-of-range parameter" }
         fun <T> sample(grid: KeyformGrid<T>?, base: FloatArray, values: (T) -> FloatArray): FloatArray {
             if (grid == null) return base.copyOf()
@@ -42,8 +48,11 @@ internal object RigGeometryTools {
                     angle+=corner.weight*form.angle; scale+=corner.weight*form.scale
                 } }
                 val length = rotationHandleLength(model, rotation)
-                val radians=(angle+rotation.baseAngle)*PI.toFloat()/180f
-                val points=floatArrayOf(x,y,x+cos(radians)*length*scale,y+sin(radians)*length*scale)
+                rotationBlendDeltas(rotation, paramValue, defaultValue)?.let { delta ->
+                    x += delta.originX; y += delta.originY; angle += delta.angle; scale += delta.scale
+                }
+                val shownRadians=(angle+rotation.baseAngle)*PI.toFloat()/180f
+                val points=floatArrayOf(x,y,x+cos(shownRadians)*length*scale,y+sin(shownRadians)*length*scale)
                 Geometry(points,points.copyOf(),floatArrayOf(0f,0f,1f,1f),null,null,grid?.axes.orEmpty(),grid?.cells?.size ?: 0,rotation.name,rotation.parent?.raw,angle)
             }
             "warp" -> {
@@ -54,6 +63,9 @@ internal object RigGeometryTools {
                     domain[i] = c.toFloat() / w.columns; domain[i + 1] = r.toFloat() / w.rows
                 }
                 val points = if (w.geometryGrid == null) domain.copyOf() else sample(w.geometryGrid, FloatArray(domain.size)) { it.controlPoints }
+                warpBlendDeltas(w, paramValue, defaultValue)?.let { delta ->
+                    for (i in points.indices) if (i < delta.size) points[i] += delta[i]
+                }
                 Geometry(points, domain, domain, w.rows, w.columns, w.geometryGrid?.axes.orEmpty(), w.geometryGrid?.cells?.size ?: 0, w.name, w.parent?.raw)
             }
             "mesh" -> {
@@ -62,7 +74,19 @@ internal object RigGeometryTools {
                 val bounds = bounds(base)
                 val domain = base.copyOf()
                 for (i in domain.indices step 2) { domain[i] = (base[i] - bounds[0]) / bounds[2]; domain[i+1] = (base[i+1] - bounds[1]) / bounds[3] }
-                Geometry(sample(d.geometryGrid, base) { it.positionDeltas }, base, domain, null, null,
+                val points = sample(d.geometryGrid, base) { it.positionDeltas }
+                val blend = meshBlendState(d, paramValue, defaultValue)
+                if (blend != null) {
+                    for (contribution in blend.contributions) {
+                        val deltas = contribution.form.positionDeltas
+                        for (i in points.indices) {
+                            val reference = blend.referenceDeltas?.getOrElse(i) { 0f } ?: 0f
+                            val component = deltas.getOrElse(i) { 0f }
+                            points[i] += contribution.weight * (component - reference)
+                        }
+                    }
+                }
+                Geometry(points, base, domain, null, null,
                     d.geometryGrid?.axes.orEmpty(), d.geometryGrid?.cells?.size ?: 0, d.name, d.parentDeformerId?.raw)
             }
             else -> error("Expected warp or mesh")
@@ -111,6 +135,44 @@ internal object RigGeometryTools {
         val v = solve(sxv, syv, sv)
         val out = floatArrayOf(u[0].toFloat(), u[1].toFloat(), v[0].toFloat(), v[1].toFloat(), u[2].toFloat(), v[2].toFloat())
         return if (out.all(Float::isFinite)) out else null
+    }
+
+    /** Additive blend currently shown on top of the grid. Subtract it before writing a normal keyform. */
+    fun blendOffset(model: PuppetModel, kind: String, id: String, pose: Map<String, Float>): FloatArray {
+        val defaults = model.parameters.associate { it.id to it.default }
+        val paramValue: (ParameterId) -> Float = { parameterId -> pose[parameterId.raw] ?: defaults[parameterId] ?: 0f }
+        val defaultValue: (ParameterId) -> Float = { parameterId -> defaults[parameterId] ?: 0f }
+        return when (kind) {
+            "warp" -> {
+                val warp = model.deformers.single { it.id.raw == id } as Deformer.Warp
+                warpBlendDeltas(warp, paramValue, defaultValue) ?: FloatArray(0)
+            }
+            "mesh" -> {
+                val drawable = model.drawables.single { it.id.raw == id }
+                val count = drawable.mesh?.positions?.size ?: 0
+                val offset = FloatArray(count)
+                val blend = meshBlendState(drawable, paramValue, defaultValue) ?: return offset
+                for (contribution in blend.contributions) {
+                    val deltas = contribution.form.positionDeltas
+                    for (index in offset.indices) {
+                        val reference = blend.referenceDeltas?.getOrElse(index) { 0f } ?: 0f
+                        offset[index] += contribution.weight * (deltas.getOrElse(index) { 0f } - reference)
+                    }
+                }
+                offset
+            }
+            else -> FloatArray(0)
+        }
+    }
+
+    /** Rotation blend added on top of the grid pivot, or null when the deformer has none. */
+    fun rotationBlendOffset(model: PuppetModel, id: String, pose: Map<String, Float>): RotationPivotForm? {
+        val rotation = model.deformers.single { it.id.raw == id } as Deformer.Rotation
+        val defaults = model.parameters.associate { it.id to it.default }
+        val paramValue: (ParameterId) -> Float = { parameterId -> pose[parameterId.raw] ?: defaults[parameterId] ?: 0f }
+        val defaultValue: (ParameterId) -> Float = { parameterId -> defaults[parameterId] ?: 0f }
+        val delta = rotationBlendDeltas(rotation, paramValue, defaultValue) ?: return null
+        return RotationPivotForm(delta.originX, delta.originY, delta.angle, delta.scale)
     }
 
     fun bounds(p: FloatArray): FloatArray {

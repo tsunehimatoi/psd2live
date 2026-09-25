@@ -1,6 +1,8 @@
 package io.github.psd2live.core
 
 import kotlinx.serialization.json.*
+import org.umamo.edit.removeBlendKey
+import org.umamo.edit.retargetBlendKeys
 import org.umamo.edit.withParameterKeys
 import org.umamo.runtime.eval.EPS_KEY
 import org.umamo.runtime.eval.EPS_SPAN
@@ -15,7 +17,7 @@ internal object ParameterKeyEdits {
         val ref = RigAuthoringJournal.target(edit.getValue("target").jsonPrimitive.content)
         val owner = ref.asKeyformOwner()
         val parameter = model.parameters.single { it.id.raw == edit.getValue("parameter").jsonPrimitive.content }
-        require(parameter.kind == ParameterKind.NORMAL) { "Blend shape keys require blend shape authoring" }
+        if (parameter.kind == ParameterKind.BLEND_SHAPE) return applyBlendObjectKeys(model, owner, edit, parameter)
         val action = edit.getValue("action").jsonPrimitive.content
         val values = edit.getValue("values").jsonArray.map { it.jsonPrimitive.float }
         require(values.isNotEmpty() && values.size <= 128 && values.all { it.isFinite() && it in parameter.min..parameter.max }) { "Keys must be finite and within the parameter range" }
@@ -98,7 +100,7 @@ internal object ParameterKeyEdits {
     /** Points live on the parameter. Moving or deleting one follows existing shapes; adding does not create them. */
     private fun applyParameterPoints(model: PuppetModel, edit: JsonObject): PuppetModel {
         val parameter = model.parameters.single { it.id.raw == edit.getValue("parameter").jsonPrimitive.content }
-        require(parameter.kind == ParameterKind.NORMAL) { "Blend shape keys require blend shape authoring" }
+        if (parameter.kind == ParameterKind.BLEND_SHAPE) return applyBlendParameterPoints(model, edit, parameter)
         val action = edit.getValue("action").jsonPrimitive.content
         val values = edit.getValue("values").jsonArray.map { it.jsonPrimitive.float }
         require(values.isNotEmpty() && values.all { it.isFinite() && it in parameter.min..parameter.max }) {
@@ -140,6 +142,69 @@ internal object ParameterKeyEdits {
                 current
             }
             else -> error("Unknown key edit: $action")
+        }
+    }
+
+    /** Slider stops for a blend parameter. Value 0 is the neutral key and is never moved or deleted. */
+    private fun applyBlendParameterPoints(model: PuppetModel, edit: JsonObject, parameter: Parameter): PuppetModel {
+        val action = edit.getValue("action").jsonPrimitive.content
+        val values = edit.getValue("values").jsonArray.map { it.jsonPrimitive.float }
+        require(values.isNotEmpty() && values.all { it.isFinite() && it in parameter.min..parameter.max }) {
+            "Keys must be finite and within the parameter range"
+        }
+        val baseline = (parameter.keys ?: listOf(0f)).let { keys -> if (keys.none { abs(it) < EPS_KEY } && 0f in parameter.min..parameter.max) listOf(0f) + keys else keys }
+        fun same(a: Float, b: Float) = abs(a - b) < EPS_KEY
+        return when (action) {
+            "add" -> model.withParameterKeys(parameter.id, (baseline + values).distinct().sorted())
+            "move" -> {
+                require(values.size == 1)
+                val from = edit.getValue("from").jsonPrimitive.float
+                val to = values.single()
+                require(baseline.any { same(it, from) }) { "Key no longer exists" }
+                require(!same(from, 0f) && !same(to, 0f)) { "The blend shape neutral key stays at 0" }
+                require(baseline.none { !same(it, from) && same(it, to) }) { "Keys must remain distinct" }
+                model.withParameterKeys(parameter.id, baseline.map { if (same(it, from)) to else it }.sorted())
+                    .retargetBlendKeys(parameter.id, from, to)
+            }
+            "delete" -> {
+                require(values.size == 1)
+                val value = values.single()
+                require(!same(value, 0f)) { "The blend shape neutral key stays at 0" }
+                require(baseline.any { same(it, value) }) { "Key no longer exists" }
+                model.withParameterKeys(parameter.id, baseline.filterNot { same(it, value) })
+                    .retargetBlendKeys(parameter.id, value, null)
+            }
+            "set" -> {
+                val target = values.distinct().sorted()
+                require(0f !in parameter.min..parameter.max || target.any { same(it, 0f) }) { "Blend shape keys include 0" }
+                val sources = baseline.sorted()
+                val pairs = minOf(sources.size, target.size)
+                var current = model.withParameterKeys(parameter.id, target)
+                for (index in 0 until pairs) {
+                    if (!same(sources[index], target[index]) && !same(sources[index], 0f)) {
+                        current = current.retargetBlendKeys(parameter.id, sources[index], target[index])
+                    }
+                }
+                for (index in pairs until sources.size) {
+                    if (!same(sources[index], 0f)) current = current.retargetBlendKeys(parameter.id, sources[index], null)
+                }
+                current
+            }
+            else -> error("Unknown key edit: $action")
+        }
+    }
+
+    private fun applyBlendObjectKeys(model: PuppetModel, owner: org.umamo.runtime.model.KeyformOwner, edit: JsonObject, parameter: Parameter): PuppetModel {
+        val action = edit.getValue("action").jsonPrimitive.content
+        val values = edit.getValue("values").jsonArray.map { it.jsonPrimitive.float }
+        require(values.size == 1 && values.single().isFinite() && values.single() in parameter.min..parameter.max) {
+            "Keys must be finite and within the parameter range"
+        }
+        val value = values.single()
+        return when (action) {
+            "delete" -> model.removeBlendKey(owner, parameter.id, value)
+            "add" -> model
+            else -> error("Blend shape object keys support delete; add a key by deforming at that value")
         }
     }
 

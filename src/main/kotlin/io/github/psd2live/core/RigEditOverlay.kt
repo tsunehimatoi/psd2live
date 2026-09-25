@@ -37,6 +37,11 @@ import org.umamo.runtime.model.ParameterId
 import org.umamo.runtime.model.ParameterKind
 import org.umamo.runtime.model.Part
 import org.umamo.runtime.model.PartId
+import org.umamo.edit.blendParametersIn
+import org.umamo.edit.gridCoordinateOf
+import org.umamo.edit.removeBlendBinding
+import org.umamo.edit.removeBlendKey
+import org.umamo.edit.withBlendShapeCaptured
 import org.umamo.runtime.model.PuppetModel
 import org.umamo.runtime.model.RotationPivotForm
 import org.umamo.runtime.model.WarpLatticeForm
@@ -302,6 +307,10 @@ internal fun applyKeyformDelete(model: PuppetModel, delete: RigKeyformDeleteEdit
 	val paramId = ParameterId(delete.parameterId)
 	val param = model.parameters.firstOrNull { it.id == paramId } ?: return model
 	val owner = delete.target.asKeyformOwner()
+	if (param.kind == ParameterKind.BLEND_SHAPE) {
+		return if (delete.keyValue == null) model.removeBlendBinding(owner, paramId)
+		else model.removeBlendKey(owner, paramId, delete.keyValue)
+	}
 	var current = model
 
 	val deleteGeometry = delete.channel == null || delete.channel.equals("geometry", ignoreCase = true)
@@ -355,12 +364,30 @@ internal fun applyKeyformDelete(model: PuppetModel, delete: RigKeyformDeleteEdit
 }
 
 internal fun applyKeyformSet(model: PuppetModel, set: RigKeyformSetEdit): PuppetModel {
-	var current = model
-	val owner = set.target.asKeyformOwner()
-	val poseFn: (ParameterId) -> Float = { id ->
-		set.coordinate[id.raw] ?: (current.parameters.firstOrNull { it.id == id }?.default ?: 0f)
+	val blendTargets = model.blendParametersIn(set.coordinate)
+	if (blendTargets.isNotEmpty()) {
+		val owner = set.target.asKeyformOwner()
+		val geo = set.geometry
+		return model.withBlendShapeCaptured(
+			owner,
+			set.coordinate,
+			observedMesh = geo?.positionDeltas?.toFloatArray(),
+			observedWarp = geo?.controlPoints?.toFloatArray(),
+			observedRotation = if (geo?.originX != null && geo.originY != null && geo.angle != null) {
+				RotationPivotForm(geo.originX, geo.originY, geo.angle, geo.scale ?: 1f)
+			} else null,
+			channels = set.channels,
+		)
 	}
-	val poseMap: Pose = set.coordinate.mapKeys { ParameterId(it.key) }
+	val gridCoordinate = model.gridCoordinateOf(set.coordinate)
+	val gridSet = if (gridCoordinate.size == set.coordinate.size) set else set.copy(coordinate = gridCoordinate)
+	if (gridSet.coordinate.isEmpty()) return model
+	var current = model
+	val owner = gridSet.target.asKeyformOwner()
+	val poseFn: (ParameterId) -> Float = { id ->
+		gridSet.coordinate[id.raw] ?: (current.parameters.firstOrNull { it.id == id }?.default ?: 0f)
+	}
+	val poseMap: Pose = gridSet.coordinate.mapKeys { ParameterId(it.key) }
 
 	// 1. Geometry edit
 	val geo = set.geometry
@@ -382,7 +409,7 @@ internal fun applyKeyformSet(model: PuppetModel, set: RigKeyformSetEdit): Puppet
 					}
 					var grid: KeyformGrid<WarpLatticeForm>? = deformer.geometryGrid
 						?: KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(), WarpLatticeForm(identity))))
-					for ((paramName, _) in set.coordinate) {
+					for ((paramName, _) in gridSet.coordinate) {
 						val param = current.parameters.firstOrNull { it.id.raw == paramName }
 							?: throw IllegalArgumentException("Parameter not found: $paramName")
 						if (grid == null || grid.axisIndexOf(param.id) < 0) {
@@ -405,7 +432,7 @@ internal fun applyKeyformSet(model: PuppetModel, set: RigKeyformSetEdit): Puppet
 				if (deformer != null && geo.angle != null && geo.originX != null && geo.originY != null) {
 					val form = RotationPivotForm(geo.originX, geo.originY, geo.angle, geo.scale ?: 1f)
 					var grid: KeyformGrid<RotationPivotForm>? = deformer.geometryGrid
-					for ((paramName, _) in set.coordinate) {
+					for ((paramName, _) in gridSet.coordinate) {
 						val param = current.parameters.firstOrNull { it.id.raw == paramName }
 							?: throw IllegalArgumentException("Parameter not found: $paramName")
 						if (grid == null || grid.axisIndexOf(param.id) < 0) {
@@ -434,7 +461,7 @@ internal fun applyKeyformSet(model: PuppetModel, set: RigKeyformSetEdit): Puppet
 					val neutralForm = MeshDeltaForm(FloatArray(expectedDeltas))
 					var grid: KeyformGrid<MeshDeltaForm>? = drawable.geometryGrid
 						?: KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(), neutralForm)))
-					for ((paramName, _) in set.coordinate) {
+					for ((paramName, _) in gridSet.coordinate) {
 						val param = current.parameters.firstOrNull { it.id.raw == paramName }
 							?: throw IllegalArgumentException("Parameter not found: $paramName")
 						if (grid == null || grid.axisIndexOf(param.id) < 0) {
@@ -471,7 +498,7 @@ internal fun applyKeyformSet(model: PuppetModel, set: RigKeyformSetEdit): Puppet
 			ch.flipY?.let { add(FormChannel.FLIP_Y to ChannelValue.Flag(it)) }
 		}
 		for ((channel, value) in channelEntries) {
-			for ((paramName, _) in set.coordinate) {
+			for ((paramName, _) in gridSet.coordinate) {
 				val param = current.parameters.firstOrNull { it.id.raw == paramName } ?: continue
 				current = current.withChannelKeyCaptured(KeyableTarget(owner, channel), param, poseMap, value)
 			}

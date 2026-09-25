@@ -166,7 +166,13 @@ fun PuppetModel.parameterKeyMarks(owner: ParameterKeyOwner? = null): Map<Paramet
 	if (owner != null) return objectMarks
 	return parameters.fold(objectMarks) { marks, parameter ->
 		val explicit = parameter.keys ?: return@fold marks
-		marks + (parameter.id to ParameterKeyMarks(explicit.sorted(), emptyList()))
+		val sorted = explicit.sorted()
+		val replacement = if (parameter.kind == org.umamo.runtime.model.ParameterKind.BLEND_SHAPE) {
+			ParameterKeyMarks(emptyList(), sorted)
+		} else {
+			ParameterKeyMarks(sorted, emptyList())
+		}
+		marks + (parameter.id to replacement)
 	}
 }
 

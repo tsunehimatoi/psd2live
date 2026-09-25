@@ -55,6 +55,7 @@ internal fun ParameterDefinitionDialog(
     var min by remember { mutableStateOf((parameter?.min ?: -1f).toString()) }
     var default by remember { mutableStateOf((parameter?.default ?: 0f).toString()) }
     var max by remember { mutableStateOf((parameter?.max ?: 1f).toString()) }
+    var kind by remember { mutableStateOf(parameter?.kind ?: ParameterKind.NORMAL) }
     var deleting by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }
     var keyEdits by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
@@ -67,12 +68,12 @@ internal fun ParameterDefinitionDialog(
         low != null && neutral != null && high != null && low.isFinite() && neutral.isFinite() && high.isFinite() &&
         low < high && neutral in low..high
     val normalizedKeyEdits = keyEdits.map { JsonObject(it + ("parameter" to JsonPrimitive(id.trim()))) }
-    val staged = remember(baseModel, id, name, low, neutral, high, valid, keyEdits, creating) {
+    val staged = remember(baseModel, id, name, low, neutral, high, valid, keyEdits, creating, kind) {
         runCatching {
             check(valid)
             val base = requireNotNull(baseModel)
             val paramId = ParameterId(id.trim())
-            val definition = if (creating) base.withParameterCreated(paramId, name.trim(), parameter?.kind ?: ParameterKind.NORMAL)
+            val definition = if (creating) base.withParameterCreated(paramId, name.trim(), kind)
             else base.withParameterRenamed(paramId, name.trim())
             normalizedKeyEdits.fold(definition.withParameterRange(paramId, low, neutral, high), ParameterKeyEdits::apply)
         }
@@ -103,7 +104,7 @@ internal fun ParameterDefinitionDialog(
             low ?: 0f,
             neutral ?: 0f,
             high ?: 1f,
-            parameterKind = parameter?.kind ?: ParameterKind.NORMAL,
+            parameterKind = kind,
             keyEdits = if (action == "delete") emptyList() else normalizedKeyEdits,
             expectedState = expectedState,
             parentGroupId = if (creating) parentGroupId else null,
@@ -146,6 +147,24 @@ internal fun ParameterDefinitionDialog(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             DefinitionField("ID", id, creating && !busy) { id = it }
                             DefinitionField(tr("parameters.fieldName"), name, !busy) { name = it }
+                        }
+                        if (creating) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                CompactButton(tr("parameters.kindNormal"), {
+                                    kind = ParameterKind.NORMAL
+                                }, enabled = !busy, isPrimary = kind == ParameterKind.NORMAL, height = 22.dp)
+                                CompactButton(tr("parameters.kindBlend"), {
+                                    kind = ParameterKind.BLEND_SHAPE
+                                    if (min == "-1.0" || min == "-1") min = "0"
+                                    if (max == "1.0" || max == "1") max = "1"
+                                    if (default == "0.0" || default == "0") default = "0"
+                                    if (low == -1f && high == 1f && neutral == 0f) {
+                                        min = "0"
+                                        default = "0"
+                                        max = "1"
+                                    }
+                                }, enabled = !busy, isPrimary = kind == ParameterKind.BLEND_SHAPE, height = 22.dp)
+                            }
                         }
                         if (copying) {
                             Text(tr("parameters.duplicateHint"), style = typography.caption, color = colors.textMuted)

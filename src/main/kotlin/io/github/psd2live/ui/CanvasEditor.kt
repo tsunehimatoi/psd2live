@@ -1022,6 +1022,11 @@ internal class CanvasEditor(
     private fun coordinate(t: CanvasTarget) = buildMap {
         t.geometry.axes.forEach { a -> put(a.parameterId.raw, pose[a.parameterId.raw] ?: model.parameters.firstOrNull { it.id == a.parameterId }?.default ?: 0f) }
         parameter?.let { p -> model.parameters.firstOrNull { it.id.raw == p }?.let { put(p, pose[p] ?: it.default) } }
+        val blends = model.parameters.filter { it.kind == org.umamo.runtime.model.ParameterKind.BLEND_SHAPE }
+        val named = parameter?.let { id -> blends.find { it.id.raw == id } }
+        val active = blends.filter { kotlin.math.abs((pose[it.id.raw] ?: it.default)) >= org.umamo.runtime.eval.EPS_KEY }
+        val chosen = named?.takeIf { kotlin.math.abs((pose[it.id.raw] ?: it.default)) >= org.umamo.runtime.eval.EPS_KEY } ?: active.singleOrNull()
+        if (chosen != null) put(chosen.id.raw, pose[chosen.id.raw] ?: chosen.default)
     }
 
     /** Only structural mesh editing moves UVs; deformation writes the current pose. */

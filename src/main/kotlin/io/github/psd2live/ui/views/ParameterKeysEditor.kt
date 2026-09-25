@@ -36,15 +36,16 @@ internal fun ParameterKeysEditor(
     onRange: (Float, Float, Float) -> Unit,
     onEdit: (JsonObject) -> Boolean,
 ) {
-    val keys = remember(model, parameter.id, parameter.keys) {
-        model.parameterKeyMarks()[parameter.id]?.gridKeys.orEmpty()
+    val keys = remember(model, parameter.id, parameter.keys, parameter.kind) {
+        val marks = model.parameterKeyMarks()[parameter.id]
+        if (parameter.kind == ParameterKind.BLEND_SHAPE) marks?.blendKeys.orEmpty() else marks?.gridKeys.orEmpty()
     }
     var selected by remember(parameter.id) { mutableStateOf<Float?>(null) }
     var snapStep by remember { mutableStateOf<Float?>(5f) }
     var stepDraft by remember { mutableStateOf(formatAxisValue(5f)) }
     val colors = LocalToolColors.current
     val typography = LocalToolTypography.current
-    val writable = enabled && parameter.kind == ParameterKind.NORMAL
+    val writable = enabled
     LaunchedEffect(keys) {
         if (selected !in keys) selected = keys.minByOrNull { abs(it - (selected ?: parameter.default)) }
     }
@@ -128,7 +129,7 @@ internal fun ParameterKeysEditor(
             onRange = onRange,
         )
         Text(
-            tr(if (parameter.kind == ParameterKind.BLEND_SHAPE) "parameters.blendKeysReadOnly" else "parameters.axisHelp"),
+            tr(if (parameter.kind == ParameterKind.BLEND_SHAPE) "parameters.blendAxisHelp" else "parameters.axisHelp"),
             style = typography.caption.copy(fontSize = 10.sp),
             color = colors.textDisabled,
         )

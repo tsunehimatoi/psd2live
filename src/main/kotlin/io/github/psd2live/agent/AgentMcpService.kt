@@ -304,7 +304,7 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace, legacyTools: Boolea
 
 	server.addTool(
 		name = "parameter_create",
-		description = "Create a real Cubism parameter in the authoritative rig. It survives layer/mesh rebuilds, history checkout, restart and export.",
+		description = "Create a real Cubism parameter in the authoritative rig. kind=blend_shape stores an additive blend-shape parameter (square keys, neutral at 0) instead of a keyform axis. It survives layer/mesh rebuilds, history checkout, restart and export.",
 		inputSchema = parameterCreateSchema(),
 		toolAnnotations = MUTATING,
 	) { request ->
@@ -392,7 +392,7 @@ internal fun createAgentMcpServer(workspace: AgentWorkspace, legacyTools: Boolea
 
 	server.addTool(
 		name = "keyform_set",
-		description = "Set or update keyform geometry and/or channels (opacity, draw order, multiply/screen color, glue intensity) on a target at an exact N-D parameter coordinate.",
+		description = "Set or update keyform geometry and/or channels on a target at an exact parameter coordinate. A blend_shape parameter in the coordinate is captured as an additive blend key (value 0 is the neutral base and is not stored); geometry is then the full local shape at that pose, and normal parameters in the same coordinate are only the viewing pose.",
 		inputSchema = keyformSetSchema(),
 		toolAnnotations = MUTATING,
 	) { request ->

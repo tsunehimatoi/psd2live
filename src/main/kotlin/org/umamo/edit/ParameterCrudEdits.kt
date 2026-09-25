@@ -90,7 +90,11 @@ fun PuppetModel.withParameterCreated(
 	if (parameters.any { parameter -> parameter.id == newId }) {
 		return this
 	}
-	val newParameter = Parameter(newId, name, min = -1f, max = 1f, default = 0f, kind = kind)
+	val newParameter = if (kind == ParameterKind.BLEND_SHAPE) {
+		Parameter(newId, name, min = 0f, max = 1f, default = 0f, kind = kind, keys = listOf(0f, 1f))
+	} else {
+		Parameter(newId, name, min = -1f, max = 1f, default = 0f, kind = kind)
+	}
 	val newLeaf = ParameterNode.Param(newId)
 	return copy(
 		parameters = parameters + newParameter,
@@ -244,7 +248,7 @@ fun PuppetModel.withParameterDeleted(id: ParameterId): PuppetModel {
 		deformers = newDeformers,
 		parts = newParts,
 		glues = newGlues,
-	).withDerivedRenderRoot()
+	).withoutBlendParameter(id).withDerivedRenderRoot()
 }
 
 /**
