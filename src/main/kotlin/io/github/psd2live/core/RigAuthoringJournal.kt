@@ -12,7 +12,7 @@ internal object RigAuthoringJournal {
     }
 
     fun apply(model: PuppetModel, edit: JsonObject): PuppetModel = when (edit.getValue("op").jsonPrimitive.content) {
-        "canvas_geometry", "canvas_topology", "canvas_create_warp", "canvas_create_rotation", "canvas_create_glue" -> CanvasEdits.apply(model, edit)
+        "canvas_geometry", "canvas_topology", "canvas_create_warp", "canvas_create_rotation", "canvas_create_glue", "canvas_glue_edit" -> CanvasEdits.apply(model, edit)
         "path_put", "path_delete" -> DeformPathJournal.apply(model, edit)
         "set" -> applyKeyformSet(model, RigKeyformSetEdit(target(edit.text("target")), edit.coordinate("key"),
             edit["geometry"]?.jsonObject?.let { g -> RigKeyformGeometryEdit(
@@ -123,7 +123,7 @@ internal object RigAuthoringJournal {
                         put("points", JsonArray(points))
                     }
                 }
-                "parameter_keys", "set", "copy", "delete", "warp", "structure", "path_delete", "canvas_geometry", "canvas_topology", "canvas_create_warp", "canvas_create_rotation", "canvas_create_glue" -> command
+                "parameter_keys", "set", "copy", "delete", "warp", "structure", "path_delete", "canvas_geometry", "canvas_topology", "canvas_create_warp", "canvas_create_rotation", "canvas_create_glue", "canvas_glue_edit" -> command
                 else -> error("Unknown authoring operation: $op")
             }
             // Ask against the model *before* this command is applied: the question is whether the slot

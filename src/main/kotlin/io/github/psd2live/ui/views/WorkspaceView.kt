@@ -65,8 +65,9 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerIcon
-import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.isAltPressed
+import androidx.compose.ui.input.pointer.isCtrlPressed
+import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import java.awt.Cursor
 import androidx.compose.ui.text.AnnotatedString
@@ -969,19 +970,28 @@ private fun HierarchyTreeList(
 					if (event.button == PointerButton.Primary && treeDragState.isPressed) {
 						val additive = event.keyboardModifiers.isShiftPressed
 						val subtractive = event.keyboardModifiers.isAltPressed
+						val toggle = event.keyboardModifiers.isCtrlPressed
+						val orderedLayers = itemBoundsMap.values
+							.filter { !it.isDeformer }
+							.sortedBy { it.top }
+							.map { it.selectId }
+							.distinct()
 						treeDragState.onRelease(viewModel) { clickedItem ->
 							if (clickedItem.isDeformer) {
+								if (additive || subtractive || toggle) return@onRelease
 								if (state.selectedDeformerId == clickedItem.selectId) {
 									viewModel.selectDeformer(null)
 								} else {
 									viewModel.selectDeformer(clickedItem.selectId)
 								}
 							} else {
-								if (!additive && !subtractive && state.selectedLayerId == clickedItem.selectId &&
-									state.selectedLayerIds.size <= 1) {
-									viewModel.selectLayer(null)
-								} else {
-									viewModel.selectLayer(clickedItem.selectId, additive, subtractive)
+								when {
+									subtractive -> viewModel.selectLayer(clickedItem.selectId, subtractive = true)
+									additive -> viewModel.selectLayerRange(orderedLayers, clickedItem.selectId)
+									toggle -> viewModel.toggleLayerSelection(clickedItem.selectId)
+									state.selectedLayerId == clickedItem.selectId && state.selectedLayerIds.size <= 1 ->
+										viewModel.selectLayer(null)
+									else -> viewModel.selectLayer(clickedItem.selectId)
 								}
 							}
 						}

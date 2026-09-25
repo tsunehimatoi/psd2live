@@ -102,6 +102,7 @@ internal fun BoxScope.CanvasEditorOverlay(
     // changes (editor/viewport/keymap are stable). Hovering the mode bar previously forced a
     // recomposition; reading these keys updates the target label as soon as a pick lands.
     selectedLayerId: String? = null,
+    selectedLayerIds: Set<String> = emptySet(),
     selectedDeformerId: String? = null,
     showMesh: Boolean = true,
     showRotation: Boolean = true,
@@ -127,77 +128,54 @@ internal fun BoxScope.CanvasEditorOverlay(
         editor.viewport = viewport
         val currentTarget = editor.target() ?: target
         // 1. Mesh wireframe & vertices — same toggle as the global mesh channel, no mode privilege.
-        if (showMesh && (editor.hierarchyMode == EditHierarchyMode.DEFORM || editor.hierarchyMode == EditHierarchyMode.EDIT) && currentTarget != null && currentTarget.kind == "mesh") {
-            val pts = editor.screen(currentTarget.geometry.points, currentTarget, viewport)
-            val brushWeights = editor.activeBrushWeights
+        //    Edit draws every mesh it is editing the same way: they are all editable, and a glued point -
+        //    one point both meshes share - is drawn once, as the single handle it is.
+        val primaryMesh = currentTarget?.takeIf { it.kind == "mesh" }
+        val editing = editor.hierarchyMode == EditHierarchyMode.EDIT
+        val meshTargets = (if (editing) editor.editMeshTargets() else emptyList()).ifEmpty { listOfNotNull(primaryMesh) }
+        if (showMesh && (editor.hierarchyMode == EditHierarchyMode.DEFORM || editing) && meshTargets.isNotEmpty()) {
+            val screens = meshTargets.associate { it.id to editor.screen(it.geometry.points, it, viewport) }
+            val selection = editor.selection
+            val gluePair = if (editor.tool == CanvasTool.GLUE) editor.glueMeshPair() else null
+            val meshColors = if (editing) editor.editMeshColors() else emptyMap()
 
-            // 1a. Real-time translucent mesh weight coloring rendered strictly on ArtMesh geometry (transforms with mesh)
-            if (brushWeights != null && currentTarget.indices.isNotEmpty() && pts.isNotEmpty()) {
-                val vertexCount = minOf(currentTarget.count, pts.size)
-                val positions = FloatArray(vertexCount * 2)
-                val colorsArr = IntArray(vertexCount)
-                for (i in 0 until vertexCount) {
-                    positions[i * 2] = pts[i].x
-                    positions[i * 2 + 1] = pts[i].y
-                    val w = brushWeights.getOrNull(i) ?: 0f
-                    if (w > 0.0001f) {
-                        val normW = if (editor.strength > 0.001f) (w / editor.strength).coerceIn(0f, 1f) else w.coerceIn(0f, 1f)
-                        val a = (normW * 0.62f * 255f).toInt()
-                        val red = (a * 248) / 255
-                        val green = (a * 24) / 255
-                        val blue = (a * 24) / 255
-                        colorsArr[i] = (a shl 24) or (red shl 16) or (green shl 8) or blue
+            // 1a. Weights washed onto the artwork. The deform brush shows its falloff in red while it is
+            //     live; the glue weight brush shows each side's weld weight in that side's colour.
+            for (t in meshTargets) {
+                val pts = screens.getValue(t.id)
+                if (pts.isEmpty() || t.indices.isEmpty()) continue
+                val brushWeights = editor.activeMeshBrushWeights[t.id]
+                    ?: editor.activeBrushWeights?.takeIf { t.id == primaryMesh?.id }
+                if (brushWeights != null) {
+                    drawWeightWash(pts.take(t.count), t.indices, BrushWeightColor) { i ->
+                        val w = brushWeights.getOrNull(i) ?: 0f
+                        if (w <= 0.0001f) 0f
+                        else (if (editor.strength > 0.001f) (w / editor.strength).coerceIn(0f, 1f) else w.coerceIn(0f, 1f)) * 0.62f
                     }
                 }
-
-                val affectedIndices = mutableListOf<Short>()
-                for (tri in 0 until currentTarget.indices.size step 3) {
-                    val a = currentTarget.indices[tri]
-                    val b = currentTarget.indices[tri + 1]
-                    val c = currentTarget.indices[tri + 2]
-                    if (a < vertexCount && b < vertexCount && c < vertexCount) {
-                        val wa = brushWeights.getOrNull(a) ?: 0f
-                        val wb = brushWeights.getOrNull(b) ?: 0f
-                        val wc = brushWeights.getOrNull(c) ?: 0f
-                        if (wa > 0.0001f || wb > 0.0001f || wc > 0.0001f) {
-                            affectedIndices.add(a.toShort())
-                            affectedIndices.add(b.toShort())
-                            affectedIndices.add(c.toShort())
-                        }
+                if (editor.tool == CanvasTool.GLUE && editor.glueSubTool == GlueSubTool.WEIGHT) {
+                    val shown = when (editor.glueWeightMode) {
+                        GlueWeightMode.A -> t.id == gluePair?.first
+                        GlueWeightMode.B -> t.id == gluePair?.second
+                        GlueWeightMode.BALANCE -> t.id == gluePair?.first || t.id == gluePair?.second
                     }
-                }
-
-                if (affectedIndices.isNotEmpty()) {
-                    val shortIndices = ShortArray(affectedIndices.size) { affectedIndices[it] }
-                    drawIntoCanvas { canvas ->
-                        val skiaCanvas = canvas.skiaCanvas
-                        val weightPaint = SkiaPaint().apply {
-                            isAntiAlias = true
-                        }
-                        try {
-                            skiaCanvas.drawVertices(
-                                SkiaVertexMode.TRIANGLES,
-                                positions,
-                                colorsArr,
-                                null,
-                                shortIndices,
-                                SkiaBlendMode.DST,
-                                weightPaint
-                            )
-                        } finally {
-                            weightPaint.close()
-                        }
+                    val weights = if (shown) editor.glueWeights(t.id) else null
+                    val color = editor.glueRoleColor(t.id)
+                    if (weights != null && color != null) {
+                        drawWeightWash(pts.take(minOf(t.count, weights.size)), t.indices, color) { i -> weights[i] * 0.62f }
                     }
                 }
             }
 
             // 1b. The faces the last topology op created - a hole fill, so far - washed faintly, so a
             //     provisional patch reads as a patch rather than as a stain. SRC_OVER, not the weight
-            //     block's DST: that one modulates the art underneath, this one lays a colour over it.
+            //     wash's DST: that one modulates the art underneath, this one lays a colour over it.
             //     Nothing is drawn once the patch marker is gone; it never outlives one commit.
-            val patch = editor.topologyFills?.takeIf { it.drawableId == currentTarget.id }
-            if (patch != null && currentTarget.indices.isNotEmpty() && pts.isNotEmpty()) {
-                val vertexCount = minOf(currentTarget.count, pts.size)
+            val patch = editor.topologyFills
+            val patchTarget = patch?.let { p -> meshTargets.firstOrNull { it.id == p.drawableId } }
+            if (patch != null && patchTarget != null && patchTarget.indices.isNotEmpty()) {
+                val pts = screens.getValue(patchTarget.id)
+                val vertexCount = minOf(patchTarget.count, pts.size)
                 val positions = FloatArray(vertexCount * 2)
                 for (i in 0 until vertexCount) {
                     positions[i * 2] = pts[i].x
@@ -207,10 +185,10 @@ internal fun BoxScope.CanvasEditorOverlay(
                 val patches = mutableListOf<Path>()
                 for (ordinal in patch.triangles) {
                     val base = ordinal * 3
-                    if (base + 2 >= currentTarget.indices.size) continue
-                    val a = currentTarget.indices[base]
-                    val b = currentTarget.indices[base + 1]
-                    val c = currentTarget.indices[base + 2]
+                    if (base + 2 >= patchTarget.indices.size) continue
+                    val a = patchTarget.indices[base]
+                    val b = patchTarget.indices[base + 1]
+                    val c = patchTarget.indices[base + 2]
                     if (a >= vertexCount || b >= vertexCount || c >= vertexCount) continue
                     corners.add(a.toShort()); corners.add(b.toShort()); corners.add(c.toShort())
                     patches.add(Path().apply {
@@ -244,8 +222,9 @@ internal fun BoxScope.CanvasEditorOverlay(
             }
 
             // Preview exactly the edges the brush collected and the reducer will split.
-            if (editor.tool == CanvasTool.SUBDIVIDE && editor.subdivideEdges.isNotEmpty()) {
-                MeshTopology.uniqueEdges(currentTarget.indices)
+            if (primaryMesh != null && editor.tool == CanvasTool.SUBDIVIDE && editor.subdivideEdges.isNotEmpty()) {
+                val pts = screens[primaryMesh.id].orEmpty()
+                MeshTopology.uniqueEdges(primaryMesh.indices)
                     .filter { it in editor.subdivideEdges }
                     .forEach { edge ->
                         val a = pts.getOrNull(edge.endpointLow)
@@ -256,63 +235,105 @@ internal fun BoxScope.CanvasEditorOverlay(
                     }
             }
 
-            if (editor.elementMode == 2) {
+            if (primaryMesh != null && editor.elementMode == 2) {
+                val pts = screens[primaryMesh.id].orEmpty()
                 editor.selectedFaces.forEach { face ->
-                    if (face in 0 until currentTarget.indices.size / 3) {
-                        val corners = (0..2).map { pts[currentTarget.indices[face * 3 + it]] }
-                        val shape = Path().apply {
-                            moveTo(corners[0].x, corners[0].y)
-                            lineTo(corners[1].x, corners[1].y)
-                            lineTo(corners[2].x, corners[2].y)
-                            close()
+                    if (face in 0 until primaryMesh.indices.size / 3) {
+                        val corners = (0..2).mapNotNull { pts.getOrNull(primaryMesh.indices[face * 3 + it]) }
+                        if (corners.size == 3) {
+                            val shape = Path().apply {
+                                moveTo(corners[0].x, corners[0].y)
+                                lineTo(corners[1].x, corners[1].y)
+                                lineTo(corners[2].x, corners[2].y)
+                                close()
+                            }
+                            drawPath(shape, colors.accent.copy(alpha = 0.2f))
                         }
-                        drawPath(shape, colors.accent.copy(alpha = 0.2f))
                     }
                 }
             }
-            MeshTopology.uniqueEdges(currentTarget.indices).forEach { edge ->
-                val a = edge.endpointLow; val b = edge.endpointHigh
-                val selected = editor.elementMode == 1 && edge in editor.selectedEdges
-                drawLine(Color.Black.copy(alpha = 0.45f), pts[a], pts[b], 2.5f)
-                drawLine(colors.accent.copy(alpha = if (selected) 1f else 0.65f), pts[a], pts[b], if (selected) 3f else 1f)
+
+            // 1c. Edges. Every edited mesh is drawn alike, each in its own colour when there are several.
+            for (t in meshTargets) {
+                val pts = screens.getValue(t.id)
+                val meshColor = meshColors[t.id] ?: colors.accent
+                val primary = t.id == primaryMesh?.id
+                MeshTopology.uniqueEdges(t.indices).forEach { edge ->
+                    val a = pts.getOrNull(edge.endpointLow) ?: return@forEach
+                    val b = pts.getOrNull(edge.endpointHigh) ?: return@forEach
+                    val selected = primary && editor.elementMode == 1 && edge in editor.selectedEdges
+                    drawLine(Color.Black.copy(alpha = 0.45f), a, b, 2.5f)
+                    drawLine(meshColor.copy(alpha = if (selected) 1f else 0.65f), a, b, if (selected) 3f else 1f)
+                }
             }
-            pts.forEachIndexed { i, p ->
-                val isSelected = i in editor.vertices
-                val isHovered = i == editor.hoveredVertex
-                val w = brushWeights?.getOrNull(i) ?: 0f
-                if (brushWeights != null) {
-                    if (w > 0.001f) {
-                        val normW = if (editor.strength > 0.001f) (w / editor.strength).coerceIn(0f, 1f) else w.coerceIn(0f, 1f)
-                        val r = 1.6f + normW * 0.8f
-                        drawCircle(Color.Black.copy(alpha = 0.75f), r + 0.8f, p)
-                        val redFill = Color(
-                            red = 1.0f - normW * 0.08f,
-                            green = 1.0f - normW * 0.90f,
-                            blue = 1.0f - normW * 0.88f,
-                            alpha = 1f
-                        )
-                        drawCircle(redFill, r, p)
+
+            // 1d. Vertices. A glued point is skipped here and drawn once in 1e.
+            val welds = if (editing) editor.weldGroups() else io.github.psd2live.core.WeldGroups.EMPTY
+            val hovered = editor.hoveredMeshVertex
+            val hoveredGroup = hovered?.let { welds.members(it) }.orEmpty()
+            for (t in meshTargets) {
+                val pts = screens.getValue(t.id)
+                val selected = selection[t.id].orEmpty()
+                val meshColor = meshColors[t.id] ?: colors.accent
+                val primary = t.id == primaryMesh?.id
+                val brushWeights = editor.activeMeshBrushWeights[t.id] ?: editor.activeBrushWeights?.takeIf { primary }
+                val stroked = when (t.id) {
+                    gluePair?.first -> editor.glueStrokeA
+                    gluePair?.second -> editor.glueStrokeB
+                    else -> emptySet()
+                }
+                pts.forEachIndexed { i, p ->
+                    val vertex = io.github.psd2live.core.MeshVertex(t.id, i)
+                    if (editing && welds.isWelded(vertex) && welds.members(vertex).any { it.mesh in screens }) return@forEachIndexed
+                    val isSelected = i in selected
+                    val isHovered = vertex == hovered || (primary && hovered == null && i == editor.hoveredVertex)
+                    val w = brushWeights?.getOrNull(i) ?: 0f
+                    if (brushWeights != null) {
+                        if (w > 0.001f) {
+                            val normW = if (editor.strength > 0.001f) (w / editor.strength).coerceIn(0f, 1f) else w.coerceIn(0f, 1f)
+                            val r = 1.6f + normW * 0.8f
+                            drawCircle(Color.Black.copy(alpha = 0.75f), r + 0.8f, p)
+                            drawCircle(Color(1.0f - normW * 0.08f, 1.0f - normW * 0.90f, 1.0f - normW * 0.88f), r, p)
+                        } else {
+                            drawCircle(Color.Black.copy(alpha = 0.65f), 2.2f, p)
+                            drawCircle(Color.White.copy(alpha = 0.9f), 1.5f, p)
+                        }
+                        if (isHovered) drawCircle(Color.White, 6f, p, style = Stroke(1.5f))
+                    } else if (isHovered) {
+                        drawCircle(Color.White, 7.5f, p, style = Stroke(1.8f))
+                        drawCircle(meshColor, 4.5f, p)
+                    } else if (isSelected || i in stroked) {
+                        drawCircle(colors.windowBackground, 5f, p)
+                        drawCircle(meshColor, 3.8f, p)
                     } else {
-                        drawCircle(Color.Black.copy(alpha = 0.65f), 2.2f, p)
-                        drawCircle(Color.White.copy(alpha = 0.9f), 1.5f, p)
+                        drawCircle(colors.windowBackground, 3.5f, p)
+                        drawCircle(meshColor.copy(alpha = 0.7f), 2.2f, p)
                     }
-                    if (isHovered) {
-                        drawCircle(Color.White, 6f, p, style = Stroke(1.5f))
+                }
+            }
+
+            // 1e. Glued points: one diamond per point, wherever its members sit. Members that drifted
+            //     apart (an older glue) are tied with a line so the pull the weld will apply is visible.
+            if (editing) {
+                for (group in welds.groups) {
+                    val points = group.mapNotNull { member -> screens[member.mesh]?.getOrNull(member.index) }
+                    if (points.isEmpty()) continue
+                    val anchor = points.first()
+                    points.drop(1).forEach { other ->
+                        if ((other - anchor).getDistance() > 1.5f) drawLine(GlueColorWeld.copy(alpha = 0.8f), anchor, other, 1.2f)
                     }
-                } else if (isHovered) {
-                    drawCircle(Color.White, 7.5f, p, style = Stroke(1.8f))
-                    drawCircle(colors.accent, 4.5f, p)
-                } else if (isSelected) {
-                    drawCircle(colors.windowBackground, 5f, p)
-                    drawCircle(colors.accent, 3.8f, p)
-                } else {
-                    drawCircle(colors.windowBackground, 3.5f, p)
-                    drawCircle(colors.textPrimary.copy(alpha = 0.7f), 2.2f, p)
+                    val selected = group.any { it.index in selection[it.mesh].orEmpty() }
+                    val hot = group.any { it in hoveredGroup } ||
+                        group.any { (it.mesh == gluePair?.first && it.index in editor.glueStrokeA) || (it.mesh == gluePair?.second && it.index in editor.glueStrokeB) }
+                    val radius = if (selected || hot) 5.2f else 4.2f
+                    if (hot) drawCircle(Color.White, radius + 3f, anchor, style = Stroke(1.6f))
+                    drawGluePoint(if (selected) Color.White else colors.windowBackground, radius + 1.2f, anchor)
+                    drawGluePoint(GlueColorWeld, radius, anchor)
                 }
             }
 
             // Dragging guide line
-            if (editor.inGesture && editor.vertices.isNotEmpty() && editor.marquee.isEmpty() && editor.cursor != null) {
+            if (editor.inGesture && selection.values.any { it.isNotEmpty() } && editor.marquee.isEmpty() && editor.cursor != null) {
                 drawLine(
                     color = colors.accent.copy(alpha = 0.6f),
                     start = editor.dragStartPos,
@@ -511,6 +532,14 @@ internal fun BoxScope.CanvasEditorOverlay(
                     drawRect(color.copy(alpha = 0.08f), origin, extent)
                     drawRect(color, origin, extent, style = Stroke(1.6f))
                 }
+            }
+        }
+
+        // Where Create glue would weld: each mark is one point both meshes will share.
+        if (editor.tool == CanvasTool.GLUE) {
+            editor.gluePreviewMarks(viewport).forEach { mark ->
+                drawCircle(Color.Black.copy(alpha = 0.5f), 4.2f, mark, style = Stroke(2.2f))
+                drawCircle(GlueColorWeld, 3.4f, mark, style = Stroke(1.3f))
             }
         }
 
@@ -763,7 +792,7 @@ internal fun BoxScope.CanvasEditorOverlay(
 
         // 3f. The subdivide brush's ring. It has no hardness and no shape - it takes every edge whose
         //     ends fall inside - so the radius is the whole preview.
-        if (editor.tool == CanvasTool.SUBDIVIDE) {
+        if (editor.tool == CanvasTool.SUBDIVIDE || editor.tool == CanvasTool.GLUE) {
             editor.cursor?.let { center ->
                 val r = (editor.radius * viewport.scale).toFloat()
                 drawCircle(Color.Black.copy(alpha = 0.5f), r, center, style = Stroke(2.5f))
@@ -1778,6 +1807,85 @@ private fun BoxScope.CanvasToolBar(
             }
         }
 
+        val glueReady = editor.hierarchyMode == EditHierarchyMode.EDIT && editor.glueMeshCount() == 2
+        AnimatedVisibility(
+            visible = glueReady,
+            enter = expandVertically(animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)) + fadeIn(animationSpec = tween(150)),
+            exit = shrinkVertically(animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)) + fadeOut(animationSpec = tween(120)),
+        ) {
+            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                        .height(1.dp)
+                        .background(colors.border.copy(alpha = 0.45f))
+                )
+                run {
+                    listOf(
+                        GlueSubTool.BRUSH to tr("editor.glueBrush"),
+                        GlueSubTool.WEIGHT to tr("editor.glueWeight"),
+                        GlueSubTool.REMERGE to tr("editor.glueRemerge"),
+                    ).forEach { (sub, label) ->
+                        ShapeItemRow(
+                            label = label,
+                            isSelected = editor.tool == CanvasTool.GLUE && editor.glueSubTool == sub,
+                            isToolbarExpanded = animatedWidth > 42.dp,
+                            textAlpha = textAlpha,
+                            textOffset = textOffset,
+                            isBusy = editor.busy,
+                            icon = { color ->
+                                Canvas(Modifier.size(14.dp)) {
+                                    drawCircle(color, size.minDimension * 0.28f, center = Offset(size.width * 0.32f, size.height * 0.5f), style = Stroke(1.2f))
+                                    drawCircle(
+                                        if (sub == GlueSubTool.BRUSH) GlueColorB else color,
+                                        size.minDimension * 0.28f,
+                                        center = Offset(size.width * 0.68f, size.height * 0.5f),
+                                        style = Stroke(1.2f),
+                                    )
+                                }
+                            },
+                            keyLabel = if (sub == GlueSubTool.BRUSH) "Ctrl+G" else "",
+                            onClick = {
+                                editor.glueSubTool = sub
+                                editor.activateTool(CanvasTool.GLUE)
+                                focus()
+                            },
+                        )
+                    }
+                    if (editor.tool == CanvasTool.GLUE && editor.glueSubTool == GlueSubTool.WEIGHT) {
+                        listOf(
+                            GlueWeightMode.BALANCE to "A:B",
+                            GlueWeightMode.A to "A",
+                            GlueWeightMode.B to "B",
+                        ).forEach { (mode, label) ->
+                            ShapeItemRow(
+                                label = label,
+                                isSelected = editor.glueWeightMode == mode,
+                                isToolbarExpanded = animatedWidth > 42.dp,
+                                textAlpha = textAlpha,
+                                textOffset = textOffset,
+                                isBusy = editor.busy,
+                                icon = {
+                                    Box(
+                                        Modifier.size(14.dp).background(
+                                            when (mode) {
+                                                GlueWeightMode.A -> GlueColorA
+                                                GlueWeightMode.B -> GlueColorB
+                                                GlueWeightMode.BALANCE -> GlueColorA
+                                            },
+                                            CircleShape,
+                                        )
+                                    )
+                                },
+                                onClick = { editor.glueWeightMode = mode; focus() },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         val isBrushTool = editor.tool in listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE)
 
         AnimatedVisibility(
@@ -2583,14 +2691,38 @@ private fun BoxScope.HierarchyModeBar(
                         .width(1.dp)
                         .background(colors.border.copy(alpha = 0.45f))
                 )
-                Text(
-                    text = targetLabel.orEmpty(),
-                    fontSize = 10.5.sp,
-                    color = colors.textMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(horizontal = 4.dp)
-                )
+                // Edit holding several meshes names each one in the colour it is drawn in on the canvas;
+                // with two, that is glue side A then B.
+                val editMeshes = editor.editMeshTargets()
+                val meshColors = editor.editMeshColors()
+                if (editMeshes.size > 1 && meshColors.isNotEmpty()) {
+                    editMeshes.forEach { mesh ->
+                        val color = meshColors[mesh.id] ?: colors.textMuted
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 3.dp),
+                        ) {
+                            Box(Modifier.size(7.dp).background(color, CircleShape))
+                            Text(
+                                text = editor.meshLabel(mesh.id),
+                                fontSize = 10.5.sp,
+                                color = color,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(start = 4.dp).widthIn(max = 140.dp),
+                            )
+                        }
+                    }
+                } else {
+                    Text(
+                        text = targetLabel.orEmpty(),
+                        fontSize = 10.5.sp,
+                        color = colors.textMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+                }
             }
         }
     }
@@ -2844,6 +2976,59 @@ private fun BrushShapeIcon(
  * larger root pivot, single solid color without gradient or arrowhead,
  * and a compact rotation indicator.
  */
+/**
+ * Tints the artwork under a mesh by a per-vertex weight, interpolated across each triangle, so the wash
+ * moves with the mesh. Only triangles with a weighted corner are drawn. [alpha] maps a vertex to 0..1.
+ */
+private fun DrawScope.drawWeightWash(pts: List<Offset>, indices: IntArray, color: Color, alpha: (Int) -> Float) {
+    val vertexCount = pts.size
+    if (vertexCount == 0 || indices.isEmpty()) return
+    val positions = FloatArray(vertexCount * 2)
+    val vertexColors = IntArray(vertexCount)
+    val red = (color.red * 255f + 0.5f).toInt()
+    val green = (color.green * 255f + 0.5f).toInt()
+    val blue = (color.blue * 255f + 0.5f).toInt()
+    for (i in 0 until vertexCount) {
+        positions[i * 2] = pts[i].x
+        positions[i * 2 + 1] = pts[i].y
+        val a = (alpha(i).coerceIn(0f, 1f) * 255f).toInt()
+        if (a > 0) vertexColors[i] = (a shl 24) or ((a * red / 255) shl 16) or ((a * green / 255) shl 8) or (a * blue / 255)
+    }
+    val corners = ArrayList<Short>()
+    for (tri in 0 until indices.size / 3) {
+        val a = indices[tri * 3]
+        val b = indices[tri * 3 + 1]
+        val c = indices[tri * 3 + 2]
+        if (a >= vertexCount || b >= vertexCount || c >= vertexCount) continue
+        if (vertexColors[a] == 0 && vertexColors[b] == 0 && vertexColors[c] == 0) continue
+        corners += a.toShort(); corners += b.toShort(); corners += c.toShort()
+    }
+    if (corners.isEmpty()) return
+    drawIntoCanvas { canvas ->
+        val paint = SkiaPaint().apply { isAntiAlias = true }
+        try {
+            canvas.skiaCanvas.drawVertices(
+                SkiaVertexMode.TRIANGLES,
+                positions,
+                vertexColors,
+                null,
+                ShortArray(corners.size) { corners[it] },
+                SkiaBlendMode.DST,
+                paint,
+            )
+        } finally {
+            paint.close()
+        }
+    }
+}
+
+private val BrushWeightColor = Color(0xFFF81818)
+
+/** A glued point: a diamond, so it never reads as an ordinary vertex. */
+private fun DrawScope.drawGluePoint(color: Color, radius: Float, center: Offset) {
+    drawPath(Path().apply { moveTo(center.x, center.y - radius); lineTo(center.x + radius, center.y); lineTo(center.x, center.y + radius); lineTo(center.x - radius, center.y); close() }, color)
+}
+
 private fun DrawScope.drawRotationArrow(
     pivot: Offset,
     tip: Offset,

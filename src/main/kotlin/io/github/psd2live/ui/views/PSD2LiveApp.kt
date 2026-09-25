@@ -365,6 +365,14 @@ fun FrameWindowScope.PSD2LiveApp(
 					val action = state.keymap.match(event, ShortcutScope.APP)
 						?: return@onPreviewKeyEvent false
 					if (action == ShortcutAction.GENERATE) {
+						val glueEditor = viewModel.canvasEditor
+						if (!modalOpen && !state.showExportDialog &&
+							glueEditor.hierarchyMode == io.github.psd2live.ui.EditHierarchyMode.EDIT &&
+							glueEditor.glueMeshPair() != null
+						) {
+							glueEditor.glueSelectedVertices()
+							return@onPreviewKeyEvent true
+						}
 						return@onPreviewKeyEvent when {
 							state.showExportDialog && canGenerate -> { onGenerateAction(); true }
 							state.showExportDialog -> true

@@ -24,6 +24,25 @@ class MultiCanvasIsolationTest {
         }
     }
 
+    /** Every canvas authoring commit rebuilds state through a settings-only decode; it must keep a multi-selection. */
+    @Test fun authoringCommitKeepsTheMultiSelection() {
+        PSD2LiveViewModel().use { vm ->
+            val canvasId = vm.state.value.activeCanvas.id
+            vm.updateCanvasPresentation(vm.state.value.activeWorkspace.id, canvasId, CanvasMode.EDIT) {
+                it.copy(selectedLayerId = "b", selectedLayerIds = linkedSetOf("a", "b"))
+            }
+            val current = vm.state.value
+            assertEquals(setOf("a", "b"), current.selectedLayerIds)
+            val settings = io.github.psd2live.project.WorkspaceStateCodec.settings(current)
+            val decoded = io.github.psd2live.project.WorkspaceStateCodec.decode(settings, current)
+            assertEquals(setOf("a", "b"), decoded.selectedLayerIds)
+            val reconciled = reconcileCanvasPresentation(current, decoded)
+            assertEquals(setOf("a", "b"), reconciled.selectedLayerIds)
+            assertEquals(setOf("a", "b"), reconciled.activeCanvas.presentation.selectedLayerIds)
+            assertEquals("b", reconciled.selectedLayerId)
+        }
+    }
+
     @Test fun toolsAndGesturesBelongToTheirCanvas() {
         PSD2LiveViewModel().use { vm ->
             val firstId = vm.state.value.activeCanvas.id

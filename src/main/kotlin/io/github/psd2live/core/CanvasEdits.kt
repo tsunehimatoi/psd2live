@@ -45,6 +45,43 @@ internal fun DrawableMesh.movedBy(shift: FloatArray): DrawableMesh {
 }
 
 /** Replayable canvas operations. The preview and persisted history use this same reducer. */
+/**
+ * Greedy nearest-neighbor weld: each vertex of mesh A takes at most one unused vertex of mesh B
+ * inside [distance]. Both buffers are interleaved x,y positions in the same space.
+ */
+internal fun matchGluePairs(positionsA: FloatArray, positionsB: FloatArray, distance: Float): List<GluePair> {
+    val usedB = mutableSetOf<Int>()
+    return (0 until positionsA.size / 2).mapNotNull { i ->
+        var nearest = -1
+        var best = distance
+        for (j in 0 until positionsB.size / 2) {
+            if (j in usedB) continue
+            val d = kotlin.math.hypot(
+                positionsA[i * 2] - positionsB[j * 2],
+                positionsA[i * 2 + 1] - positionsB[j * 2 + 1],
+            )
+            if (d <= best) {
+                nearest = j
+                best = d
+            }
+        }
+        if (nearest < 0) null else {
+            usedB += nearest
+            GluePair(i, nearest, 0.5f, 0.5f)
+        }
+    }
+}
+
+/** Visible-order range from [anchor] through [clicked], or just [clicked] when the anchor is not in the list. */
+internal fun layerSelectionRange(orderedLayerIds: List<String>, anchor: String?, clicked: String): List<String> {
+    val from = orderedLayerIds.indexOf(anchor)
+    val to = orderedLayerIds.indexOf(clicked)
+    if (from < 0 || to < 0) return listOf(clicked)
+    val start = minOf(from, to)
+    val end = maxOf(from, to)
+    return orderedLayerIds.subList(start, end + 1)
+}
+
 internal object CanvasEdits {
     fun apply(model: PuppetModel, edit: JsonObject): PuppetModel {
         val id = edit.getValue("id").jsonPrimitive.content
@@ -420,33 +457,117 @@ internal object CanvasEdits {
             "canvas_create_glue" -> {
                 val meshA = DrawableId(edit.getValue("mesh_a").jsonPrimitive.content)
                 val meshB = DrawableId(edit.getValue("mesh_b").jsonPrimitive.content)
-                require(meshA != meshB) { "Select two different meshes" }
-                require(model.glues.none { it.id == id }) { "Glue ID already exists" }
+                require(meshA != meshB) { "Glue requires two different meshes" }
+                require(model.drawables.any { it.id == meshA && it.mesh != null }) { "First mesh was not found" }
+                require(model.drawables.any { it.id == meshB && it.mesh != null }) { "Second mesh was not found" }
                 val parameters = edit["pose"]?.jsonObject?.map { ParameterId(it.key) to it.value.jsonPrimitive.float }?.toMap().orEmpty()
                 val positions = org.umamo.render.eval.CpuDeformationEvaluator().evaluate(model, parameters).worldPositions
                 val a = requireNotNull(positions[meshA]) { "First mesh is not visible at this pose" }
                 val b = requireNotNull(positions[meshB]) { "Second mesh is not visible at this pose" }
                 val distance = edit["distance"]?.jsonPrimitive?.float ?: 40f
                 require(distance.isFinite() && distance > 0f) { "Glue distance must be positive" }
-                val usedB = mutableSetOf<Int>()
-                val pairs = (0 until a.size / 2).mapNotNull { i ->
-                    var nearest = -1
-                    var best = distance
-                    for (j in 0 until b.size / 2) {
-                        if (j in usedB) continue
-                        val d = kotlin.math.hypot(a[i * 2] - b[j * 2], a[i * 2 + 1] - b[j * 2 + 1])
-                        if (d <= best) { nearest = j; best = d }
-                    }
-                    if (nearest < 0) null else {
-                        usedB += nearest
-                        GluePair(i, nearest, 0.5f, 0.5f)
-                    }
-                }
+                val pairs = matchGluePairs(a, b, distance)
                 require(pairs.isNotEmpty()) { "No nearby vertices to glue; increase the matching distance or move the meshes closer" }
-                val glue = Glue(meshA, meshB, pairs, intensity = 1f, id = id)
-                model.copy(glues = model.glues + glue)
+                val replace = edit["replace"]?.jsonPrimitive?.booleanOrNull == true
+                val samePair: (Glue) -> Boolean = { glue ->
+                    (glue.meshA == meshA && glue.meshB == meshB) || (glue.meshA == meshB && glue.meshB == meshA)
+                }
+                val byId = model.glues.indexOfFirst { it.id != null && it.id == id }.takeIf { it >= 0 }
+                val byPair = model.glues.indexOfFirst(samePair).takeIf { it >= 0 }
+                val existing = if (replace) byPair ?: byId else {
+                    require(byId == null) { "Glue ID already exists" }
+                    require(byPair == null) { "Glue already exists between these meshes" }
+                    null
+                }
+                if (existing != null) {
+                    val prior = model.glues[existing]
+                    val updated = prior.copy(meshA = meshA, meshB = meshB, pairs = pairs, id = prior.id ?: id)
+                    model.copy(glues = model.glues.mapIndexed { index, glue -> if (index == existing) updated else glue })
+                } else {
+                    require(model.glues.none { it.id == id }) { "Glue ID already exists" }
+                    require(model.glues.none(samePair)) { "Glue already exists between these meshes" }
+                    model.copy(glues = model.glues + Glue(meshA, meshB, pairs, intensity = 1f, id = id))
+                }
             }
+            "canvas_glue_edit" -> applyGlueEdit(model, edit)
             else -> error("Unknown canvas operation")
+        }
+    }
+
+    /**
+     * One glue tool stroke. `brush` welds the stroked vertices into coincident pairs (see [weldGlueSeam]),
+     * `remerge` drops the pairs under the stroke and welds them again (the whole outline when nothing was
+     * stroked), `unglue` only drops pairs, and `weights` paints the weld weights. Meshes only ever change
+     * the way the other Edit tools change them: inserts and UV-carrying slides, no keyform.
+     */
+    private fun applyGlueEdit(model: PuppetModel, edit: JsonObject): PuppetModel {
+        val meshA = DrawableId(edit.getValue("mesh_a").jsonPrimitive.content)
+        val meshB = DrawableId(edit.getValue("mesh_b").jsonPrimitive.content)
+        require(meshA != meshB) { "Glue requires two different meshes" }
+        val drawableA = requireNotNull(model.drawables.firstOrNull { it.id == meshA && it.mesh != null }) { "First mesh was not found" }
+        val drawableB = requireNotNull(model.drawables.firstOrNull { it.id == meshB && it.mesh != null }) { "Second mesh was not found" }
+        val action = edit["action"]?.jsonPrimitive?.content ?: "brush"
+        val hitsA = edit["hits_a"]?.jsonArray?.map { it.jsonPrimitive.int }?.toSet().orEmpty()
+        val hitsB = edit["hits_b"]?.jsonArray?.map { it.jsonPrimitive.int }?.toSet().orEmpty()
+        val distance = edit["distance"]?.jsonPrimitive?.float ?: 40f
+        require(distance.isFinite() && distance > 0f) { "Glue distance must be positive" }
+        val parameters = edit["pose"]?.jsonObject?.map { ParameterId(it.key) to it.value.jsonPrimitive.float }?.toMap().orEmpty()
+        val samePair: (Glue) -> Boolean = { glue ->
+            (glue.meshA == meshA && glue.meshB == meshB) || (glue.meshA == meshB && glue.meshB == meshA)
+        }
+        val existing = model.glues.firstOrNull(samePair)
+        // Pairs are stored in the glue's own A/B order; the edit speaks in its own. Work in the edit's.
+        val reversed = existing != null && existing.meshA != meshA
+        fun oriented(pair: GluePair) = if (reversed) GluePair(pair.indexB, pair.indexA, pair.weightB, pair.weightA) else pair
+        val prior = existing?.pairs.orEmpty().map(::oriented)
+        fun touched(pair: GluePair) = pair.indexA in hitsA || pair.indexB in hitsB
+
+        fun written(working: PuppetModel, pairs: List<GluePair>): PuppetModel {
+            val stored = pairs.map(::oriented)
+            if (existing == null) {
+                if (stored.isEmpty()) return working
+                val id = edit["id"]?.jsonPrimitive?.content ?: "Glue_${java.util.UUID.randomUUID()}"
+                return working.copy(glues = working.glues + Glue(meshA, meshB, stored, intensity = 1f, id = id))
+            }
+            // Ungluing the last pair removes the glue rather than leaving an empty affecter behind.
+            if (stored.isEmpty()) return working.copy(glues = working.glues.filterNot(samePair))
+            return working.copy(glues = working.glues.map { if (samePair(it)) it.copy(pairs = stored) else it })
+        }
+
+        return when (action) {
+            "weights" -> {
+                requireNotNull(existing) { "No glue between these meshes" }
+                val mode = when (edit["weight_mode"]?.jsonPrimitive?.content) {
+                    "a" -> GlueWeightPaint.A
+                    "b" -> GlueWeightPaint.B
+                    else -> GlueWeightPaint.BALANCE
+                }
+                val delta = edit["delta"]?.jsonPrimitive?.float ?: 0.35f
+                written(model, paintGlueWeights(prior, hitsA, hitsB, mode, delta))
+            }
+            "unglue" -> {
+                requireNotNull(existing) { "No glue between these meshes" }
+                written(model, prior.filterNot(::touched))
+            }
+            "brush", "remerge" -> {
+                val whole = action == "remerge" && hitsA.isEmpty() && hitsB.isEmpty()
+                val kept = when {
+                    action == "brush" -> prior
+                    whole -> emptyList()
+                    else -> prior.filterNot(::touched)
+                }
+                val seedsA = if (whole) outlineVertices(drawableA.mesh!!.indices, drawableA.mesh.vertexCount) else hitsA
+                val seedsB = if (whole) outlineVertices(drawableB.mesh!!.indices, drawableB.mesh.vertexCount) else hitsB
+                val welded = weldGlueSeam(
+                    model, meshA, meshB, seedsA, seedsB, parameters, distance,
+                    occupiedA = kept.mapTo(HashSet()) { it.indexA },
+                    occupiedB = kept.mapTo(HashSet()) { it.indexB },
+                )
+                val merged = kept + welded.pairs
+                require(merged.isNotEmpty()) { "No vertices to glue here; brush where the two meshes overlap or raise the matching distance" }
+                written(welded.model, merged)
+            }
+            else -> error("Unknown glue action: $action")
         }
     }
 

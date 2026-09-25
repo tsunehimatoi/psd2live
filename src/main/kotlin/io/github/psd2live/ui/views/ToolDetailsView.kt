@@ -519,18 +519,56 @@ internal fun ToolDetailsView(
             }
 
             CanvasTool.GLUE -> {
+                val pair = editor.glueMeshPair()
+                val ready = pair != null && editor.editable
+                val pairs = if (pair != null) editor.gluePreviewPoints().size else 0
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(tr("editor.glueDistance"), style = typography.caption, color = colors.textMuted)
-                    CompactNumberSpinner(value = editor.glueDistance.toDouble(), onValueChange = { editor.glueDistance = it.toFloat() }, min = 1.0, max = 500.0, unit = "px", height = 24.dp)
+                    CompactNumberSpinner(value = editor.glueDistance.toDouble(), onValueChange = { editor.glueDistance = it.toFloat() }, min = 0.5, max = 40.0, unit = "px", height = 24.dp)
+                    if (pair == null) {
+                        Text(
+                            text = tr("editor.glueNeedTwo", editor.glueMeshCount()),
+                            style = typography.caption.copy(fontSize = 10.5.sp),
+                            color = colors.warning,
+                        )
+                    } else {
+                        Text(
+                            text = tr("editor.glueMeshA") + "  " + editor.meshLabel(pair.first),
+                            style = typography.caption.copy(fontSize = 10.5.sp),
+                            color = io.github.psd2live.ui.GlueColorA,
+                        )
+                        Text(
+                            text = tr("editor.glueMeshB") + "  " + editor.meshLabel(pair.second),
+                            style = typography.caption.copy(fontSize = 10.5.sp),
+                            color = io.github.psd2live.ui.GlueColorB,
+                        )
+                        Text(
+                            text = if (pairs > 0) tr("editor.gluePairs", pairs) else tr("editor.glueNoPairs"),
+                            style = typography.caption.copy(fontSize = 10.5.sp),
+                            color = if (pairs > 0) colors.textMuted else colors.warning,
+                        )
+                    }
                     Text(
-                        text = tr("editor.tool.glue"),
-                        style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
-                        color = colors.textPrimary,
-                    )
-                    Text(
-                        text = tr("editor.glueHint"),
+                        text = tr("editor.glueBrushHint"),
                         style = typography.caption.copy(fontSize = 10.5.sp),
                         color = colors.textMuted,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        CompactButton(
+                            text = tr("editor.glueSwap"),
+                            onClick = { editor.swapGlueEnds() },
+                            enabled = ready,
+                        )
+                        CompactButton(
+                            text = tr(if (editor.glueAlreadyBound()) "editor.glueReplace" else "editor.glueCreate"),
+                            onClick = { editor.applyGlue() },
+                            enabled = ready && pairs > 0,
+                        )
+                    }
+                    CompactButton(
+                        text = tr("editor.glueRemergeAll"),
+                        onClick = { editor.remergeGlue() },
+                        enabled = ready,
                     )
                 }
             }

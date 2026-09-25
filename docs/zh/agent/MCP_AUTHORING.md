@@ -31,7 +31,7 @@ Token 允许编辑当前工作区，应保留在本机宿主配置中。工具�
 | `rig` | 顶层 `state`、`name`、`targets` | 为共用父 Warp 的 Mesh 创建独立 Warp |
 | `appearance` | 顶层 `state`、`edits` | 名称、显隐、结构等有序编辑 |
 | `structure` | 顶层 `state`、`edits` | 静态对象属性、变形器删除与 Part 归属、参数文件夹和 XY 关联 |
-| `canvas` | `request.mode` | `warp/rotation/glue/topology`，调用画布同源且可重放的几何命令 |
+| `canvas` | `request.mode` | `warp/rotation/glue/topology`。`glue` 必须同时给出两个不同的画元 `mesh_a` 与 `mesh_b` |
 | `view` | `request.mode` | `model/layer/context/poses/coverage/compare/motion` |
 | `parameter` | `request.mode` | `create/update/delete`；删除时在旧默认值处折叠关键形轴 |
 | `asset` | `request.mode` | `psd/create/split/reference/import/register/preview/add/place/finalize/inspect/reprocess/remove`；`psd` 从本地绝对路径导入空工作区 |

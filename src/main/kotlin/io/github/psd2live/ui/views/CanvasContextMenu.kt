@@ -623,6 +623,8 @@ private fun ColumnScope.CreationToolContextMenuContent(
             )
         }
         CanvasTool.GLUE -> {
+            val pair = editor.glueMeshPair()
+            val pairs = if (pair != null) editor.gluePreviewPoints().size else 0
             ParamsPanel {
                 ParamSliderRow(
                     label = tr("editor.glueDistance"),
@@ -632,17 +634,38 @@ private fun ColumnScope.CreationToolContextMenuContent(
                     display = "${editor.glueDistance.toInt()}px",
                 )
             }
+            if (pair == null) {
+                Text(
+                    text = tr("editor.glueNeedTwo", editor.glueMeshCount()),
+                    style = LocalToolTypography.current.caption.copy(fontSize = 10.5.sp),
+                    color = LocalToolColors.current.warning,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            } else {
+                Text(
+                    text = "${tr("editor.glueMeshA")} ${editor.meshLabel(pair.first)}",
+                    style = LocalToolTypography.current.caption.copy(fontSize = 10.5.sp),
+                    color = LocalToolColors.current.textPrimary,
+                    modifier = Modifier.padding(horizontal = 6.dp),
+                )
+                Text(
+                    text = "${tr("editor.glueMeshB")} ${editor.meshLabel(pair.second)}",
+                    style = LocalToolTypography.current.caption.copy(fontSize = 10.5.sp),
+                    color = LocalToolColors.current.textPrimary,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
             CompactButton(
-                text = tr("action.cancel"),
-                onClick = { editor.cancel(); onAction(); onDismissRequest() },
-                enabled = editor.glueFirstMesh != null,
-                danger = true,
-                leadingIcon = {
-                    IconClose(
-                        modifier = Modifier.size(9.dp),
-                        tint = if (editor.glueFirstMesh != null) LocalToolColors.current.error else LocalToolColors.current.textDisabled,
-                    )
-                },
+                text = tr("editor.glueSwap"),
+                onClick = { editor.swapGlueEnds(); onAction() },
+                enabled = pair != null && editor.editable,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 3.dp, vertical = 2.dp),
+                height = 22.dp,
+            )
+            CompactButton(
+                text = tr(if (editor.glueAlreadyBound()) "editor.glueReplace" else "editor.glueCreate"),
+                onClick = { editor.applyGlue(); onAction(); onDismissRequest() },
+                enabled = pair != null && pairs > 0 && editor.editable,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 3.dp, vertical = 2.dp),
                 height = 22.dp,
             )

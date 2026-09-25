@@ -32,12 +32,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerButton
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.onPointerEvent
+import androidx.compose.ui.input.pointer.isAltPressed
+import androidx.compose.ui.input.pointer.isCtrlPressed
+import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import java.awt.Cursor
 import androidx.compose.ui.text.font.FontWeight
@@ -852,6 +856,7 @@ private fun CompactSwitchParamField(
 	}
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 internal fun LayersTableView(
 	state: PSD2LiveState,
@@ -992,7 +997,19 @@ internal fun LayersTableView(
 								.weight(1.0f)
 								.fillMaxHeight()
 								.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
-								.clickable { viewModel.selectLayer(layerId) },
+								.onPointerEvent(PointerEventType.Press) { event ->
+									if (event.button != PointerButton.Primary) return@onPointerEvent
+									val ordered = layers.map { it.source.id.raw }
+									when {
+										event.keyboardModifiers.isAltPressed ->
+											viewModel.selectLayer(layerId, subtractive = true)
+										event.keyboardModifiers.isShiftPressed ->
+											viewModel.selectLayerRange(ordered, layerId)
+										event.keyboardModifiers.isCtrlPressed ->
+											viewModel.toggleLayerSelection(layerId)
+										else -> viewModel.selectLayer(layerId)
+									}
+								},
 							verticalAlignment = Alignment.CenterVertically,
 						) {
 							Text(

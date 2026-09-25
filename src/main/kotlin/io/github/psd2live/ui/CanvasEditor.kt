@@ -113,6 +113,25 @@ internal enum class CanvasTool(val action: ShortcutAction) {
 
 internal enum class SelectionStyle { BOX, LASSO }
 
+internal enum class GlueSubTool { BRUSH, WEIGHT, REMERGE }
+
+internal enum class GlueWeightMode { BALANCE, A, B }
+
+internal val GlueColorA = androidx.compose.ui.graphics.Color(0xFF5B8DEF)
+internal val GlueColorB = androidx.compose.ui.graphics.Color(0xFFE07A3D)
+
+/** A glued point - one point two meshes share - wherever it is drawn. */
+internal val GlueColorWeld = androidx.compose.ui.graphics.Color(0xFF4CC38A)
+
+/** Colours of the meshes Edit holds at once, in selection order: the first two are glue sides A and B. */
+internal val EditMeshPalette = listOf(
+    GlueColorA,
+    GlueColorB,
+    androidx.compose.ui.graphics.Color(0xFFB07BE0),
+    androidx.compose.ui.graphics.Color(0xFFD9B43A),
+    androidx.compose.ui.graphics.Color(0xFF3FBCD6),
+)
+
 internal val SELECTION_TOOLS = setOf(
     CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT
 )
@@ -265,7 +284,7 @@ internal fun toolbarGroups(mode: EditHierarchyMode): List<List<CanvasTool>> = wh
     EditHierarchyMode.EDIT -> listOf(
         listOf(CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT),
         listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE),
-        listOf(CanvasTool.SUBDIVIDE, CanvasTool.KNIFE),
+        listOf(CanvasTool.SUBDIVIDE, CanvasTool.KNIFE, CanvasTool.GLUE),
     )
     EditHierarchyMode.PAINT -> listOf(
         listOf(CanvasTool.PAINT_BRUSH, CanvasTool.PAINT_PENCIL, CanvasTool.PAINT_ERASER),
@@ -361,12 +380,15 @@ internal class CanvasEditor(
 ) {
     val state: PSD2LiveState
         get() = viewModel.uiState.value.forCanvas(canvasId, workspaceId, CanvasMode.EDIT)
-    internal fun selectLayer(id: String?) = viewModel.updateCanvasPresentation(workspaceId, canvasId, CanvasMode.EDIT) {
-        it.copy(
-            selectedLayerId = id,
-            selectedLayerIds = if (id == null) emptySet() else objects.takeIf { id in it } ?: setOf(id),
-            selectedDeformerId = if (id != null) null else it.selectedDeformerId,
-        )
+    internal fun selectLayer(id: String?) {
+        viewModel.updateCanvasPresentation(workspaceId, canvasId, CanvasMode.EDIT) {
+            it.copy(
+                selectedLayerId = id,
+                selectedLayerIds = if (id == null) emptySet() else objects.takeIf { id in it } ?: setOf(id),
+                selectedDeformerId = if (id != null) null else it.selectedDeformerId,
+            )
+        }
+        viewModel.noteSelectionAnchor(id)
     }
     private fun selectDeformer(id: String?) = viewModel.updateCanvasPresentation(workspaceId, canvasId, CanvasMode.EDIT) {
         it.copy(selectedDeformerId = id, selectedLayerId = if (id != null) null else it.selectedLayerId,
@@ -437,11 +459,17 @@ internal class CanvasEditor(
             tool == CanvasTool.CREATE_WARP -> if (placement != null) "editor.placementDragHint" else "editor.createWarpHint"
             tool == CanvasTool.CREATE_ROTATION -> if (placement != null) "editor.placementRotationHint" else "editor.createRotationHint"
             placement?.kind == CreatePlacementKind.LAYER -> "editor.placementLayerHint"
-            tool == CanvasTool.GLUE -> "editor.glueHint"
             else -> "editor.hint"
         }
-        val text = tr("editor.selectionCount", objects.size, vertices.size) + "   ·   " + tr(hintKey)
-        return CanvasStatusMessage(text, CanvasStatusTone.NORMAL)
+        val glueCount = if (tool == CanvasTool.GLUE) glueMeshCount() else -1
+        val hint = when {
+            tool == CanvasTool.GLUE && glueCount == 2 -> tr("editor.glueReadyHint")
+            tool == CanvasTool.GLUE -> tr("editor.glueNeedTwo", glueCount)
+            else -> tr(hintKey)
+        }
+        val text = tr("editor.selectionCount", objects.size, vertices.size) + "   ·   " + hint
+        val tone = if (tool == CanvasTool.GLUE && glueCount != 2) CanvasStatusTone.WARNING else CanvasStatusTone.NORMAL
+        return CanvasStatusMessage(text, tone)
     }
 
     // Painting system state (L1)
@@ -572,12 +600,37 @@ internal class CanvasEditor(
         private set
     private var placementDragStart: Offset? = null
     private var placementDragSnapshot: CreatePlacement? = null
-    var glueDistance by mutableStateOf(40f)
-    var glueFirstMesh by mutableStateOf<String?>(null)
-    var glueHoverMesh by mutableStateOf<String?>(null)
+    var glueDistance by mutableStateOf(6f)
+    /** When true, mesh A and mesh B are swapped relative to selection order. */
+    var glueSwapped by mutableStateOf(false)
+    var glueSubTool by mutableStateOf(GlueSubTool.BRUSH)
+    var glueWeightMode by mutableStateOf(GlueWeightMode.BALANCE)
+    var glueStrokeA by mutableStateOf<Set<Int>>(emptySet())
+    var glueStrokeB by mutableStateOf<Set<Int>>(emptySet())
+    private var glueStroking = false
+    private var glueErasing = false
     var brushSelecting by mutableStateOf(false)
 
-    var vertices by mutableStateOf(emptySet<Int>())
+    /**
+     * The vertex selection of every edited target, keyed by target id: the drawable id for a mesh, the
+     * deformer id for a lattice or a rotation. Edit mode edits all selected meshes at once, so one map
+     * holds them all, glued points always whole (see [WeldGroups]). Outside Edit it only ever holds
+     * the primary target.
+     */
+    var selection by mutableStateOf<Map<String, Set<Int>>>(emptyMap())
+
+    /** The primary target's slice of [selection] - all the single-target tools ever need. */
+    var vertices: Set<Int>
+        get() = target()?.id?.let { selection[it] }.orEmpty()
+        set(value) {
+            val id = target()?.id
+            val rest = if (hierarchyMode == EditHierarchyMode.EDIT) selection else emptyMap()
+            selection = when {
+                id == null -> emptyMap()
+                value.isEmpty() -> rest - id
+                else -> rest + (id to value)
+            }
+        }
     var radius by mutableStateOf(48f)
     var strength by mutableStateOf(0.5f)
     var hardness by mutableStateOf(0.35f)
@@ -664,12 +717,14 @@ internal class CanvasEditor(
     var objects: Set<String>
         get() = selectedObjects
         set(value) {
-            if (selectedObjects == value) return
-            selectedObjects = value
+            val ordered = LinkedHashSet(value)
+            if (selectedObjects == ordered) return
+            glueSwapped = false
+            selectedObjects = ordered
             viewModel.updateCanvasPresentation(workspaceId, canvasId, CanvasMode.EDIT) { current ->
                 current.copy(
-                    selectedLayerIds = value,
-                    selectedLayerId = current.selectedLayerId?.takeIf { it in value } ?: value.lastOrNull(),
+                    selectedLayerIds = ordered,
+                    selectedLayerId = current.selectedLayerId?.takeIf { it in ordered } ?: ordered.lastOrNull(),
                 )
             }
         }
@@ -983,7 +1038,7 @@ internal class CanvasEditor(
     }
 
     private fun clearMeshElementSelection() {
-        vertices = emptySet()
+        selection = emptyMap()
         selectedEdges = emptySet()
         selectedFaces = emptySet()
     }
@@ -1005,9 +1060,13 @@ internal class CanvasEditor(
             pathPoint = -1
         }
         val t = target()
-        val count = t?.count ?: 0
-        val nextVertices = vertices.filterTo(LinkedHashSet()) { it in 0 until count }
-        if (nextVertices.size != vertices.size) vertices = nextVertices
+        val counts = (preview ?: state.previewModel?.rig?.puppet)?.drawables.orEmpty()
+            .associate { it.id.raw to (it.mesh?.vertexCount ?: 0) }
+        val nextSelection = selection.mapValues { (id, set) ->
+            val count = if (id == t?.id) t.count else counts[id] ?: 0
+            set.filterTo(LinkedHashSet()) { it in 0 until count }
+        }.filterValues { it.isNotEmpty() }
+        if (nextSelection != selection) selection = nextSelection
         val faces = (t?.indices?.size ?: 0) / 3
         val nextFaces = selectedFaces.filterTo(LinkedHashSet()) { it in 0 until faces }
         if (nextFaces.size != selectedFaces.size) selectedFaces = nextFaces
@@ -1898,9 +1957,11 @@ internal class CanvasEditor(
         if (placement?.kind != CreatePlacementKind.LAYER) {
             placement = null; placementHandle = PlacementHandle.NONE; placementDragStart = null; placementDragSnapshot = null
         }
-        glueFirstMesh = null; glueHoverMesh = null
+        glueStroking = false
+        glueStrokeA = emptySet()
+        glueStrokeB = emptySet()
         activeBezierAnchor = null; activeBezierHandle = null
-        activeBrushWeights = null; activeBrushCenter = null
+        activeBrushWeights = null; activeBrushCenter = null; endMeshStroke()
         brushInitialBase = null; brushInitialScreen = null; brushAffectedIndices = emptySet()
         marquee = emptyList(); draft = emptyList(); draftPathId = null; drawingPath = false
         pathDragging = false
@@ -1916,7 +1977,7 @@ internal class CanvasEditor(
 
     fun resetSelection() {
         if (!busy) cancel()
-        vertices = emptySet(); selectedEdges = emptySet(); selectedFaces = emptySet()
+        selection = emptyMap(); selectedEdges = emptySet(); selectedFaces = emptySet()
         activePath = null; pathPoint = -1; pathDragging = false
     }
 
@@ -1941,7 +2002,7 @@ internal class CanvasEditor(
         error = null
         if (next == CanvasTool.LASSO_SELECT) selectionStyle = SelectionStyle.LASSO
         else if (next == CanvasTool.SELECT) selectionStyle = SelectionStyle.BOX
-        if (next == CanvasTool.SELECT && objectMode) vertices = emptySet()
+        if (next == CanvasTool.SELECT && objectMode) selection = emptyMap()
         clearHover()
     }
 
@@ -2728,7 +2789,7 @@ internal class CanvasEditor(
         cancel()
         discardPaintSession()
         hierarchyMode = EditHierarchyMode.SELECT
-        vertices = emptySet()
+        selection = emptyMap()
         clearHover()
     }
 
@@ -2739,7 +2800,7 @@ internal class CanvasEditor(
             deferredMode = null
             cancel()
             hierarchyMode = EditHierarchyMode.SELECT
-            vertices = emptySet()
+            selection = emptyMap()
             clearHover()
         } else {
             cancel()
@@ -2837,19 +2898,21 @@ internal class CanvasEditor(
         cancel()
         val prev = hierarchyMode
         hierarchyMode = next
+        // Only Edit edits several meshes; any other mode keeps the primary's slice alone.
+        if (next != EditHierarchyMode.EDIT) selection = target()?.id?.let { id -> selection.filterKeys { it == id } }.orEmpty()
         if (prev == EditHierarchyMode.PAINT && next != EditHierarchyMode.PAINT) {
             discardPaintSession()
         }
         if (next == EditHierarchyMode.PAINT) {
             startPaintSession(forceReload = true)
         } else if (next == EditHierarchyMode.SELECT) {
-            vertices = emptySet()
+            selection = emptyMap()
         } else if (next == EditHierarchyMode.DEFORM && editLevel == 2) {
             ensureBezierState()
         }
         if (tool !in toolbarGroups(next).flatten()) {
             tool = toolbarGroups(next).flatten().first()
-            if (objectMode) vertices = emptySet()
+            if (objectMode) selection = emptyMap()
         }
         // Mode only seeds display presets — toggles stay fully user-controlled afterwards.
         viewModel.applyHierarchyModeViewPreset(next, canvasId, workspaceId)
@@ -2895,7 +2958,7 @@ internal class CanvasEditor(
     fun clearHover() {
         cursor = null
         altHeld = false
-        hoveredVertex = null
+        hoveredVertex = null; hoveredMeshVertex = null
         hoveredPathPoint = null
         hoveredHandle = BoundingHandle.NONE
         hoveredBezierAnchor = null
@@ -2935,6 +2998,19 @@ internal class CanvasEditor(
      * what lets a box around three points of a cheek read as those three points.
      */
     private fun selectionFrame(viewport: CanvasViewport): TransformFrame? {
+        if (editsMeshes()) {
+            // One box around the selected points of every edited mesh. A glued point is one point, so
+            // it counts once: a lone glued point has no box, exactly like a lone vertex, instead of a
+            // hair-thin box whose scale handles sit on the point and tear its two sides apart.
+            val welds = weldGroups()
+            val seen = HashSet<MeshVertex>()
+            val points = editScreens(viewport).flatMap { (t, screen) ->
+                selection[t.id].orEmpty().mapNotNull { index ->
+                    screen.getOrNull(index)?.takeIf { seen.add(welds.members(MeshVertex(t.id, index)).first()) }
+                }
+            }
+            return frameOf(points, points.indices.toSet(), frameAngle)
+        }
         val t = target() ?: return null
         if (t.kind !in POINT_BOX_KINDS) return null
         if (vertices.isEmpty()) return null
@@ -2949,7 +3025,7 @@ internal class CanvasEditor(
      * not the whole mesh. That fallback would move artwork nobody asked to move.
      */
     private fun gestureIndices(t: CanvasTarget): Set<Int> =
-        if (t.kind != "rotation") vertices.filter { it in 0 until t.count }.toSet() else (0 until t.count).toSet()
+        if (t.kind != "rotation") selection[t.id].orEmpty().filter { it in 0 until t.count }.toSet() else (0 until t.count).toSet()
 
     private var cachedGeometrySource: PuppetModel? = null
     private var cachedGeometryPose = emptyMap<ParameterId, Float>()
@@ -3079,7 +3155,7 @@ internal class CanvasEditor(
         if (dragging) return
         hoveredBezierAnchor = null
         hoveredBezierHandle = null
-        hoveredVertex = null
+        hoveredVertex = null; hoveredMeshVertex = null
         hoveredPathPoint = null
         hoveredHandle = BoundingHandle.NONE
         isHoveringObject = false
@@ -3087,7 +3163,7 @@ internal class CanvasEditor(
 
         if (tool in CREATION_TOOLS) {
             if (tool == CanvasTool.GLUE) {
-                glueHoverMesh = layerCandidates(pos, viewport).firstOrNull { it != glueFirstMesh }
+                // The glue brush works on the edit set; hovering it must not advertise object picks.
             } else if (tool == CanvasTool.CREATE_DEFORM_PATH) {
                 val t = target()
                 if (t != null && t.kind == "mesh") {
@@ -3200,6 +3276,15 @@ internal class CanvasEditor(
      * pointer move.
      */
     private fun updatePointHover(pos: Offset, viewport: CanvasViewport, t: CanvasTarget?) {
+        if (editsMeshes()) {
+            val frame = selectionFrame(viewport)
+            hoveredHandle = frame?.let { transformRingAt(pos, it) } ?: BoundingHandle.NONE
+            val hit = if (hoveredHandle != BoundingHandle.NONE) null else pickEditVertex(pos, viewport)
+            hoveredMeshVertex = hit
+            hoveredVertex = hit?.takeIf { it.mesh == t?.id }?.index
+            return
+        }
+        hoveredMeshVertex = null
         val points = if (t != null) screen(t.geometry.points, t, viewport) else emptyList()
         // A rotation deformer never gets a box, so its points are screened for the vertex hover alone.
         val frame = if (t == null || t.kind !in POINT_BOX_KINDS) null else frameOf(points, vertices, frameAngle)
@@ -3233,7 +3318,7 @@ internal class CanvasEditor(
 
         if (hoveredBezierHandle != null || hoveredBezierAnchor != null) return hand
         if (hoveredHandle != BoundingHandle.NONE) return handleCursor(hoveredHandle)
-        if (hoveredVertex != null || hoveredPathPoint != null) return hand
+        if (hoveredVertex != null || hoveredMeshVertex != null || hoveredPathPoint != null) return hand
 
         if (hierarchyMode == EditHierarchyMode.SELECT) {
             if (tool == CanvasTool.SELECT) return if (isHoveringObject) hand else arrow
@@ -3301,11 +3386,30 @@ internal class CanvasEditor(
      * and marks the provisional fill. It is a pure function, so the answer the reducer computes is the
      * same one; see CanvasTopology.
      */
-    fun topology(action: String, selection: Set<Int> = vertices, edges: Set<MeshElement.Edge> = emptySet()) {
+    fun topology(action: String, picked: Set<Int>? = null, edges: Set<MeshElement.Edge> = emptySet()) {
         val t = target() ?: return
         if (t.kind != "mesh" || !editable) return
         head = null
-        val selected = selection
+        // Vertex-wise actions run on every edited mesh with a selection, as one history step. Merge and
+        // connect join vertices of one mesh, and brushed edges belong to the primary, so those stay there.
+        if (picked == null && editsMeshes() && edges.isEmpty() &&
+            action in setOf("delete", "duplicate", "subdivide", "split")
+        ) {
+            val meshes = editMeshTargets().filter { selection[it.id].orEmpty().isNotEmpty() }
+            if (meshes.size > 1 || meshes.singleOrNull()?.id?.let { it != t.id } == true) {
+                commitBatch(meshes.map { mesh ->
+                    buildJsonObject {
+                        put("op", "canvas_topology"); put("id", mesh.id); put("action", action)
+                        put("vertices", JsonArray(selection.getValue(mesh.id).sorted().map(::JsonPrimitive)))
+                    }
+                }) {
+                    selection = emptyMap()
+                    selectedEdges = emptySet(); selectedFaces = emptySet(); topologyFills = null
+                }
+                return
+            }
+        }
+        val selected = picked ?: vertices
         val chosenEdges = if (edges.isNotEmpty()) edges else if (action in setOf("subdivide", "split")) {
             when (elementMode) {
                 1 -> selectedEdges
@@ -3462,9 +3566,10 @@ internal class CanvasEditor(
         // The same pivot the transform box uses, so the panel and a canvas drag turn about one point.
         // A rotation deformer is the exception: it turns about its origin, which is its first axis point.
         val center = if (targets.size == 1 && targets[0].kind == "rotation") screen(targets[0].geometry.points, targets[0], viewport)[0] else selectionPivot(chosen)
-        val commands = targets.mapIndexed { itemIndex, item ->
+        val worlds = targets.map { it.mapping.localToWorld(it.geometry.points) }
+        val movedSets = targets.mapIndexed { itemIndex, item ->
             val indices = indexSets[itemIndex]
-            val world = item.mapping.localToWorld(item.geometry.points)
+            val world = worlds[itemIndex]
             screen(item.geometry.points, item, viewport).forEachIndexed { i, p ->
                 if (i in indices) {
                     val d = p - center
@@ -3477,7 +3582,11 @@ internal class CanvasEditor(
                     world[i * 2 + 1] = -((destination.y - viewport.offsetY) / viewport.scale).toFloat()
                 }
             }
-            geometryCommand(item, item.mapping.worldToLocal(world, item.geometry.points, indices))
+            indices.toHashSet()
+        }
+        if (editsMeshGeometry()) keepWeldsTogether(targets, worlds, movedSets)
+        val commands = targets.mapIndexed { itemIndex, item ->
+            geometryCommand(item, item.mapping.worldToLocal(worlds[itemIndex], item.geometry.points, movedSets[itemIndex]))
         }
         head = null; commitBatch(commands)
     }
@@ -3493,6 +3602,11 @@ internal class CanvasEditor(
         if (objectMode) {
             objects = state.effectiveVisibleLayerIds.filter { (!invert || it !in objects) && target(model, it, null) != null }.toSet()
             selectLayer(objects.lastOrNull())
+        } else if (editsMeshes()) {
+            val all = editMeshTargets().associate { t ->
+                t.id to (0 until t.count).filterTo(LinkedHashSet()) { !invert || it !in selection[t.id].orEmpty() }
+            }
+            selection = weldGroups().expand(all).filterValues { it.isNotEmpty() }
         } else target()?.let { t ->
             if (hierarchyMode == EditHierarchyMode.EDIT && t.kind == "mesh" && elementMode == 1) {
                 selectedEdges = MeshTopology.uniqueEdges(t.indices).filterTo(LinkedHashSet()) { !invert || it !in selectedEdges }
@@ -3507,6 +3621,23 @@ internal class CanvasEditor(
     }
 
     fun selectLinked() {
+        if (editsMeshes()) {
+            // Linked reaches across glue: a glued point joins the pieces of both meshes it sits on.
+            val targets = editMeshTargets().associateBy { it.id }
+            val adjacency = targets.mapValues { (_, t) -> MeshTopology.buildVertexAdjacency(t.count, t.indices) }
+            var current = weldGroups().expand(selection)
+            while (true) {
+                val grown = current.mapValues { (id, set) ->
+                    val links = adjacency[id] ?: return@mapValues set
+                    set.flatMapTo(LinkedHashSet()) { MeshTopology.connectedVertices(links, it) }
+                }
+                val next = weldGroups().expand(grown)
+                if (next == current) break
+                current = next
+            }
+            selection = current.filterValues { it.isNotEmpty() }
+            return
+        }
         val t = target() ?: return; if (t.indices.isEmpty()) return
         val adjacency = MeshTopology.buildVertexAdjacency(t.count, t.indices)
         vertices = vertices.flatMap { MeshTopology.connectedVertices(adjacency, it) }.toSet()
@@ -3689,7 +3820,7 @@ internal class CanvasEditor(
      * (sequential) or restore the mode the create session started from.
      */
     private fun finishCreateSession(newDeformerId: String) {
-        vertices = emptySet()
+        selection = emptyMap()
         selectDeformer(newDeformerId)
         if (sequentialCreate) {
             // Stay on the create tool; keep return mode for a later exit.
@@ -3747,20 +3878,468 @@ internal class CanvasEditor(
         return listOfNotNull(target()?.takeIf { it.kind == "mesh" }?.id).toSet()
     }
 
-    fun createGlue(meshA: String, meshB: String) {
-        val id = "Glue_${UUID.randomUUID()}"
+    /** Drawable ids of the selected art meshes, in the order they were selected. */
+    fun selectedMeshIds(): List<String> {
+        val ordered = LinkedHashSet(objects)
+        state.selectedLayerId?.let(ordered::add)
+        return ordered.mapNotNull { meshDrawableId(it) }.distinct()
+    }
+
+    private fun meshDrawableId(layerOrDrawableId: String): String? {
+        val puppet = preview ?: state.previewModel?.rig?.puppet ?: return null
+        val rig = state.previewModel?.rig ?: return null
+        val byLayer = puppet.drawables.firstOrNull { rig.layerIdByDrawableId[it.id.raw] == layerOrDrawableId && it.mesh != null }
+        if (byLayer != null) return byLayer.id.raw
+        return puppet.drawables.firstOrNull { it.id.raw == layerOrDrawableId && it.mesh != null }?.id?.raw
+    }
+
+    // ---- The Edit session: every selected mesh is edited at once ----
+
+    /**
+     * The meshes Edit mode is editing: every selected layer that resolves to a mesh, primary included,
+     * in selection order. Empty outside Edit, and when the primary target is a deformer.
+     */
+    fun editMeshTargets(source: PuppetModel? = preview ?: state.previewModel?.rig?.puppet): List<CanvasTarget> {
+        if (hierarchyMode != EditHierarchyMode.EDIT) return emptyList()
+        val primary = target(source) ?: return emptyList()
+        if (primary.kind != "mesh") return emptyList()
+        val layers = LinkedHashSet(objects).apply { state.selectedLayerId?.let(::add) }
+        val found = layers.mapNotNull { layer -> target(source, layer, null)?.takeIf { it.kind == "mesh" } }.distinctBy { it.id }
+        return found.ifEmpty { listOf(primary) }
+    }
+
+    /**
+     * Whether the point tools act on the whole edit set. Edge and face modes stay on the primary mesh:
+     * an edge or a face never spans two meshes.
+     */
+    fun editsMeshes(): Boolean =
+        hierarchyMode == EditHierarchyMode.EDIT && elementMode == 0 && target()?.kind == "mesh"
+
+    /**
+     * Whether a gesture edits rest meshes, whatever the element mode. Every such gesture moves a glued
+     * point as the one point it is: edge and face picks stay on the primary mesh, but what they move
+     * still carries the glued partners along.
+     */
+    private fun editsMeshGeometry(): Boolean =
+        hierarchyMode == EditHierarchyMode.EDIT && target()?.kind == "mesh"
+
+    /** A mesh target for [drawableId], edited set or not; null when it is hidden or has no mesh. */
+    private fun meshTarget(source: PuppetModel?, drawableId: String): CanvasTarget? {
+        val layer = layerIdForDrawable(drawableId) ?: return null
+        return target(source, layer, null)?.takeIf { it.kind == "mesh" && it.id == drawableId }
+    }
+
+    private var weldSource: List<org.umamo.runtime.model.Glue>? = null
+    private var weldCached = WeldGroups.EMPTY
+
+    /** The model's glued points, one group per point. */
+    fun weldGroups(): WeldGroups {
+        val source = preview ?: state.previewModel?.rig?.puppet ?: return WeldGroups.EMPTY
+        if (weldSource !== source.glues) {
+            val counts = source.drawables.associate { it.id.raw to (it.mesh?.vertexCount ?: 0) }
+            weldCached = WeldGroups.of(source.glues) { it.index in 0 until (counts[it.mesh] ?: 0) }
+            weldSource = source.glues
+        }
+        return weldCached
+    }
+
+    /** [found] merged into the selection the way a click or a marquee merges it, glued points whole. */
+    private fun mergedSelection(found: Map<String, Set<Int>>, add: Boolean, subtract: Boolean): Map<String, Set<Int>> {
+        val welds = weldGroups()
+        val grown = welds.expand(found)
+        val next = when {
+            subtract -> selection.mapValues { (id, set) -> set - grown[id].orEmpty() }
+            add -> (selection.keys + grown.keys).associateWith { selection[it].orEmpty() + grown[it].orEmpty() }
+            else -> grown
+        }
+        return welds.expand(next).filterValues { it.isNotEmpty() }
+    }
+
+    /** The screen points of every edited mesh, keyed by drawable id, for picking and marquees. */
+    private fun editScreens(viewport: CanvasViewport): List<Pair<CanvasTarget, List<Offset>>> =
+        editMeshTargets().map { it to screen(it.geometry.points, it, viewport) }
+
+    /** The edited vertex nearest [pos] within [reach] screen pixels. The primary mesh wins a tie. */
+    private fun pickEditVertex(pos: Offset, viewport: CanvasViewport, reach: Float = 10f): MeshVertex? {
+        val primary = target()?.id
+        val nearest = editScreens(viewport).mapNotNull { (t, points) ->
+            points.indices.minByOrNull { (points[it] - pos).getDistance() }
+                ?.let { i -> Triple(t.id, i, (points[i] - pos).getDistance()) }
+                ?.takeIf { it.third <= reach }
+        }
+        val closest = nearest.minByOrNull { it.third } ?: return null
+        // Overlapping meshes put points on top of each other; the one on the primary mesh wins a near tie.
+        val chosen = nearest.firstOrNull { it.first == primary && it.third <= closest.third + 0.5f } ?: closest
+        return MeshVertex(chosen.first, chosen.second)
+    }
+
+    /** Every edited vertex whose screen point [inside] accepts, per mesh. */
+    private fun editVerticesWhere(viewport: CanvasViewport, inside: (Offset) -> Boolean): Map<String, Set<Int>> =
+        editScreens(viewport).associate { (t, points) -> t.id to points.indices.filterTo(LinkedHashSet()) { inside(points[it]) } }
+            .filterValues { it.isNotEmpty() }
+
+    /**
+     * Moves the primary to [drawableId]'s layer within the same edit set. The vertex selection stays: the
+     * set did not change, only which mesh the single-mesh tools (knife, paths, edges) act on.
+     */
+    private fun makePrimary(drawableId: String) {
+        val layer = layerIdForDrawable(drawableId) ?: return
+        if (state.selectedLayerId == layer || layer !in objects) return
+        viewModel.updateCanvasPresentation(workspaceId, canvasId, CanvasMode.EDIT) { it.copy(selectedLayerId = layer) }
+    }
+
+    /** The glued point [vertex] belongs to is hovered, picked and moved as one. */
+    var hoveredMeshVertex by mutableStateOf<MeshVertex?>(null)
+
+    /** Per-mesh stroke state for the deform brushes when they act on the whole edit set. */
+    private class MeshStroke(
+        val targets: List<CanvasTarget>,
+        /** Only the edited meshes are brushed; the rest are glue partners that follow their points. */
+        val brushed: Set<String>,
+        val bases: List<FloatArray>,
+        val screens: List<List<Offset>>,
+        val weights: List<FloatArray>,
+    )
+
+    private var meshStroke: MeshStroke? = null
+
+    /** Live deform-brush weights of each edited mesh, for the overlay's wash. */
+    var activeMeshBrushWeights by mutableStateOf<Map<String, FloatArray>>(emptyMap())
+
+    /**
+     * The targets a gesture on the edit set writes: every edited mesh, plus each mesh a glued point of
+     * theirs is shared with. A glued point is moved on both sides or not at all.
+     */
+    private fun strokeTargets(source: PuppetModel?): List<CanvasTarget> {
+        val edited = editMeshTargets(source)
+        val ids = edited.mapTo(LinkedHashSet()) { it.id }
+        val partners = LinkedHashSet<String>()
+        for (group in weldGroups().groups) {
+            if (group.none { it.mesh in ids }) continue
+            group.forEach { if (it.mesh !in ids) partners += it.mesh }
+        }
+        return edited + partners.mapNotNull { meshTarget(source, it) }
+    }
+
+    /**
+     * Makes every glued point that any of [moved] touched land on one spot: the mean of its moved
+     * members' destinations. [worlds] and [moved] are index-aligned with [targets] and are updated.
+     */
+    private fun keepWeldsTogether(targets: List<CanvasTarget>, worlds: List<FloatArray>, moved: List<MutableSet<Int>>) {
+        val slot = targets.withIndex().associate { it.value.id to it.index }
+        for (group in weldGroups().groups) {
+            val present = group.filter { member -> slot[member.mesh]?.let { member.index in 0 until targets[it].count } == true }
+            if (present.size < 2) continue
+            val movers = present.filter { member -> member.index in moved[slot.getValue(member.mesh)] }
+            if (movers.isEmpty()) continue
+            var x = 0f
+            var y = 0f
+            for (member in movers) {
+                val world = worlds[slot.getValue(member.mesh)]
+                x += world[member.index * 2]
+                y += world[member.index * 2 + 1]
+            }
+            x /= movers.size
+            y /= movers.size
+            for (member in present) {
+                val at = slot.getValue(member.mesh)
+                worlds[at][member.index * 2] = x
+                worlds[at][member.index * 2 + 1] = y
+                moved[at] += member.index
+            }
+        }
+    }
+
+    /** Starts a deform-brush stroke over the whole edit set. */
+    private fun beginMeshStroke(pos: Offset, viewport: CanvasViewport, source: PuppetModel) {
+        val targets = strokeTargets(source)
+        val brushed = editMeshTargets(source).mapTo(HashSet()) { it.id }
+        val restricted = selection.values.any { it.isNotEmpty() }
+        val screenRadius = (radius * viewport.scale).toFloat()
+        val screens = targets.map { screen(it.geometry.points, it, viewport) }
+        val weights = targets.mapIndexed { at, t ->
+            val w = FloatArray(t.count)
+            if (t.id in brushed && tool == CanvasTool.BRUSH) {
+                for (i in screens[at].indices) {
+                    if (restricted && i !in selection[t.id].orEmpty()) continue
+                    w[i] = computeBrushWeight(screens[at][i], pos, pos, screenRadius, hardness, brushShape, brushAngle, brushAspect) * strength
+                }
+            }
+            w
+        }
+        meshStroke = MeshStroke(targets, brushed, targets.map { it.geometry.points.copyOf() }, screens, weights)
+        activeMeshBrushWeights = if (tool == CanvasTool.BRUSH) targets.withIndex()
+            .filter { it.value.id in brushed }.associate { it.value.id to weights[it.index] } else emptyMap()
+        objectTargets = targets
+        original = source
+        dragging = true
+    }
+
+    /** One pointer step of a deform brush over the whole edit set; previews every mesh it moves. */
+    private fun moveMeshStroke(pos: Offset, viewport: CanvasViewport, shift: Boolean, ctrl: Boolean) {
+        val stroke = meshStroke ?: return
+        val source = original ?: return
+        val screenRadius = (radius * viewport.scale).toFloat()
+        val restricted = selection.values.any { it.isNotEmpty() }
+        val deform = tool == CanvasTool.BRUSH && !shift
+        val smooth = tool == CanvasTool.SMOOTH || (tool == CanvasTool.BRUSH && shift)
+        val inflate = tool == CanvasTool.INFLATE
+        val live = preview
+        val worlds = ArrayList<FloatArray>()
+        val bases = ArrayList<FloatArray>()
+        val moved = stroke.targets.map { HashSet<Int>() }
+        stroke.targets.forEachIndexed { at, t ->
+            // The deform brush measures the whole stroke from the press; smooth and inflate work step by step.
+            val base = if (deform || live == null) stroke.bases[at] else RigGeometryTools.geometry(live, t.kind, t.id, pose).points
+            bases += base
+            val world = t.mapping.localToWorld(base)
+            worlds += world
+            if (t.id !in stroke.brushed) return@forEachIndexed
+            if (deform) {
+                val total = pos - start
+                for (i in stroke.screens[at].indices) {
+                    val w = stroke.weights[at][i]
+                    if (w <= 0.0001f) continue
+                    val destination = stroke.screens[at][i] + total * w
+                    world[i * 2] = ((destination.x - viewport.offsetX) / viewport.scale).toFloat()
+                    world[i * 2 + 1] = -((destination.y - viewport.offsetY) / viewport.scale).toFloat()
+                    moved[at] += i
+                }
+                return@forEachIndexed
+            }
+            val points = screen(base, t, viewport)
+            val delta = pos - previous
+            val adjacency = if (smooth) neighbors(t) else null
+            for (i in points.indices) {
+                if (restricted && i !in selection[t.id].orEmpty()) continue
+                val p = points[i]
+                if (!isPointInBrush(p, previous, pos, screenRadius, brushShape, brushAngle, brushAspect, hardness)) continue
+                val weight = computeBrushWeight(p, previous, pos, screenRadius, hardness, brushShape, brushAngle, brushAspect) * strength
+                val destination = when {
+                    inflate -> p + inflateOffset(p, previous, pos, delta.getDistance().coerceAtMost(screenRadius) * weight * INFLATE_GAIN * (if (shrinkAtPress) -1f else 1f))
+                    adjacency != null -> {
+                        val ns = adjacency[i]
+                        if (ns.isEmpty()) p else p + (Offset(ns.map { points[it].x }.average().toFloat(), ns.map { points[it].y }.average().toFloat()) - p) * weight
+                    }
+                    else -> p + delta * weight
+                }
+                world[i * 2] = ((destination.x - viewport.offsetX) / viewport.scale).toFloat()
+                world[i * 2 + 1] = -((destination.y - viewport.offsetY) / viewport.scale).toFloat()
+                moved[at] += i
+            }
+        }
+        keepWeldsTogether(stroke.targets, worlds, moved)
+        val commands = stroke.targets.indices.filter { moved[it].isNotEmpty() }.map { at ->
+            val t = stroke.targets[at]
+            geometryCommand(t, t.mapping.worldToLocal(worlds[at], bases[at], moved[at]), ctrl)
+        }
+        previous = pos
+        if (commands.isEmpty()) return
+        // Smooth and inflate accumulate, so each step builds on the last preview; the deform brush does not.
+        val merged = if (deform) commands else {
+            val byId = pendingObjects.associateBy { it.getValue("id").jsonPrimitive.content }.toMutableMap()
+            commands.forEach { byId[it.getValue("id").jsonPrimitive.content] = it }
+            byId.values.toList()
+        }
+        pendingObjects = merged
+        preview = merged.fold(source) { m, command -> RigAuthoringJournal.apply(m, command) }
+    }
+
+    private fun endMeshStroke() {
+        meshStroke = null
+        activeMeshBrushWeights = emptyMap()
+    }
+
+    fun glueMeshCount(): Int = selectedMeshIds().size
+
+    /**
+     * The two meshes glue will bind. The primary (last selected) mesh is B unless [glueSwapped].
+     * Null unless the selection is exactly two art meshes.
+     */
+    fun glueMeshPair(): Pair<String, String>? {
+        val meshes = selectedMeshIds()
+        if (meshes.size != 2) return null
+        val (first, second) = meshes
+        return if (glueSwapped) second to first else first to second
+    }
+
+    fun glueAlreadyBound(): Boolean {
+        val (meshA, meshB) = glueMeshPair() ?: return false
+        return model.glues.any { glue ->
+            (glue.meshA.raw == meshA && glue.meshB.raw == meshB) ||
+                (glue.meshA.raw == meshB && glue.meshB.raw == meshA)
+        }
+    }
+
+    fun meshLabel(drawableId: String): String =
+        model.drawables.firstOrNull { it.id.raw == drawableId }?.name ?: drawableId
+
+    fun swapGlueEnds() {
+        if (glueMeshPair() == null) return
+        glueSwapped = !glueSwapped
+    }
+
+    /**
+     * Enter / Create glue: welds the two outlines wherever they overlap or come within the matching
+     * distance. Existing pairs are kept, so this also extends an existing glue.
+     */
+    fun applyGlue() {
+        val pair = glueMeshPair()
+        if (pair == null) {
+            error = tr("editor.glueNeedTwo", glueMeshCount())
+            return
+        }
+        if (gluePreviewPoints().isEmpty()) {
+            error = tr("editor.glueNoPairs")
+            return
+        }
+        error = null
+        commitGlueEdit("brush", glueOutline(pair.first), glueOutline(pair.second))
+    }
+
+    /** Ctrl+G in edit mode: glue the vertices selected on the primary mesh to the other mesh. */
+    fun glueSelectedVertices() {
+        if (hierarchyMode != EditHierarchyMode.EDIT) return
+        val pair = glueMeshPair()
+        if (pair == null) {
+            error = tr("editor.glueNeedTwo", glueMeshCount())
+            return
+        }
+        // Both meshes are edited together, so the selection on either side takes part.
+        val hitsA = selection[pair.first].orEmpty()
+        val hitsB = selection[pair.second].orEmpty()
+        if (hitsA.isEmpty() && hitsB.isEmpty()) {
+            error = tr("editor.glueNoVertexSelection")
+            return
+        }
+        commitGlueEdit("brush", hitsA, hitsB)
+    }
+
+    /** Drops every pair and welds both outlines again from scratch. */
+    fun remergeGlue() {
+        if (glueMeshPair() == null) {
+            error = tr("editor.glueNeedTwo", glueMeshCount())
+            return
+        }
+        error = null
+        commitGlueEdit("remerge", emptySet(), emptySet())
+    }
+
+    private fun commitGlueEdit(action: String, hitsA: Set<Int>, hitsB: Set<Int>) {
+        val (a, b) = glueMeshPair() ?: return
+        val existingId = model.glues.firstOrNull { glue ->
+            (glue.meshA.raw == a && glue.meshB.raw == b) || (glue.meshA.raw == b && glue.meshB.raw == a)
+        }?.id
+        val delta = (if (glueErasing) -1f else 1f) * strength.coerceIn(0.05f, 1f)
+        val mode = when (glueWeightMode) {
+            GlueWeightMode.A -> "a"
+            GlueWeightMode.B -> "b"
+            GlueWeightMode.BALANCE -> "balance"
+        }
         val cmd = buildJsonObject {
-            put("op", "canvas_create_glue")
-            put("id", id)
-            put("name", "Glue")
-            put("mesh_a", meshA)
-            put("mesh_b", meshB)
+            put("op", "canvas_glue_edit")
+            put("id", existingId ?: "Glue_${UUID.randomUUID()}")
+            put("action", action)
+            put("mesh_a", a)
+            put("mesh_b", b)
             put("distance", glueDistance)
+            put("weight_mode", mode)
+            put("delta", delta)
+            put("hits_a", JsonArray(hitsA.sorted().map(::JsonPrimitive)))
+            put("hits_b", JsonArray(hitsB.sorted().map(::JsonPrimitive)))
             put("pose", JsonObject(pose.mapValues { JsonPrimitive(it.value) }))
         }
         head = null
         commit(cmd)
     }
+
+    private fun glueOutline(drawableId: String): Set<Int> {
+        val mesh = model.drawables.firstOrNull { it.id.raw == drawableId }?.mesh ?: return emptySet()
+        return io.github.psd2live.core.outlineVertices(mesh.indices, mesh.vertexCount)
+    }
+
+    /** Per-vertex weld weight of one mesh, for the texture wash. Null when the mesh is not glued. */
+    fun glueWeights(drawableId: String): FloatArray? {
+        val id = org.umamo.runtime.model.DrawableId(drawableId)
+        if (model.glues.none { it.meshA == id || it.meshB == id }) return null
+        val mesh = model.drawables.firstOrNull { it.id == id }?.mesh ?: return null
+        return io.github.psd2live.core.glueVertexWeights(model, id, mesh.vertexCount)
+    }
+
+    fun glueRoleColor(drawableId: String): androidx.compose.ui.graphics.Color? = when (drawableId) {
+        glueMeshPair()?.first -> GlueColorA
+        glueMeshPair()?.second -> GlueColorB
+        else -> null
+    }
+
+    /**
+     * Each edited mesh's own colour while Edit holds more than one, so overlapping meshes never read as
+     * one; glued points take [GlueColorWeld], a third colour. Empty for a single mesh, which keeps the
+     * accent. The first two follow the glue sides A and B, swap included.
+     */
+    fun editMeshColors(): Map<String, androidx.compose.ui.graphics.Color> {
+        val meshes = editMeshTargets()
+        if (meshes.size < 2) return emptyMap()
+        val pair = glueMeshPair()
+        return meshes.withIndex().associate { (index, t) ->
+            t.id to (glueRoleColor(t.id).takeIf { pair != null } ?: EditMeshPalette[index % EditMeshPalette.size])
+        }
+    }
+
+    internal fun layerIdForDrawable(drawableId: String): String? =
+        state.previewModel?.rig?.layerIdByDrawableId[drawableId]
+
+    private fun accumulateGlueHits(from: Offset, to: Offset, viewport: CanvasViewport) {
+        val pair = glueMeshPair() ?: return
+        val radius = (radius * viewport.scale).toFloat()
+        fun hits(drawableId: String): Set<Int> {
+            val layerId = layerIdForDrawable(drawableId) ?: return emptySet()
+            val item = target(model, layerId, null) ?: return emptySet()
+            return screen(item.geometry.points, item, viewport).mapIndexedNotNull { index, point ->
+                if (distanceToSegment(point, from, to) <= radius) index else null
+            }.toSet()
+        }
+        glueStrokeA = glueStrokeA + hits(pair.first)
+        glueStrokeB = glueStrokeB + hits(pair.second)
+    }
+
+    private var gluePreviewKey: String? = null
+    private var gluePreviewCached: List<Pair<Float, Float>> = emptyList()
+
+    /**
+     * World points where Create glue would weld the two outlines, from the same planner the reducer
+     * runs. Each direction is planned against the current meshes, so the count is a close preview
+     * rather than an exact one.
+     */
+    fun gluePreviewPoints(): List<Pair<Float, Float>> {
+        val pair = glueMeshPair() ?: return emptyList()
+        val geometry = evaluatedGeometry() ?: return emptyList()
+        val key = "${pair.first}|${pair.second}|$glueDistance|${cachedGeometrySource?.hashCode()}|${cachedGeometryPose.hashCode()}|${model.glues.hashCode()}"
+        if (key == gluePreviewKey) return gluePreviewCached
+        val idA = org.umamo.runtime.model.DrawableId(pair.first)
+        val idB = org.umamo.runtime.model.DrawableId(pair.second)
+        val a = geometry.worldPositions[idA] ?: return emptyList()
+        val b = geometry.worldPositions[idB] ?: return emptyList()
+        val meshA = model.drawables.firstOrNull { it.id == idA }?.mesh ?: return emptyList()
+        val meshB = model.drawables.firstOrNull { it.id == idB }?.mesh ?: return emptyList()
+        val glue = model.glues.firstOrNull { (it.meshA == idA && it.meshB == idB) || (it.meshA == idB && it.meshB == idA) }
+        val usedA = glue?.pairs?.mapTo(HashSet()) { if (glue.meshA == idA) it.indexA else it.indexB }.orEmpty()
+        val usedB = glue?.pairs?.mapTo(HashSet()) { if (glue.meshA == idA) it.indexB else it.indexA }.orEmpty()
+        val fromA = io.github.psd2live.core.planGlueWelds(
+            a, glueOutline(pair.first) - usedA, b, meshB.indices, glueDistance, usedB,
+        )
+        val fromB = io.github.psd2live.core.planGlueWelds(
+            b, glueOutline(pair.second) - usedB - fromA.mapNotNull { it.existing }.toSet(), a, meshA.indices,
+            glueDistance, usedA + fromA.map { it.seed },
+        )
+        val points = (fromA + fromB).map { it.x to it.y }
+        gluePreviewKey = key
+        gluePreviewCached = points
+        return points
+    }
+
+    fun gluePreviewMarks(viewport: CanvasViewport): List<Offset> =
+        gluePreviewPoints().map { (x, y) -> Offset(viewport.x(x).toFloat(), viewport.yFromWorld(y).toFloat()) }
 
     /**
      * The layer a click at [pos] picks. Clicking a stack walks it one layer per click — the same rule
@@ -3865,10 +4444,17 @@ internal class CanvasEditor(
     }
 
     /**
-     * What a transform gesture edits: the mesh or deformer the point tools are working on, always
-     * exactly one. Object mode never gets here — it has no box to grab and no body to drag.
+     * What a transform gesture edits: in Edit, every mesh with selected points - glue partners included,
+     * so a glued point moves on both sides - and otherwise the one mesh or deformer the point tools are
+     * working on. Object mode never gets here: it has no box to grab and no body to drag.
      */
-    private fun transformTargets(source: PuppetModel): List<CanvasTarget> = listOfNotNull(target(source))
+    private fun transformTargets(source: PuppetModel): List<CanvasTarget> {
+        if (!editsMeshGeometry()) return listOfNotNull(target(source))
+        // A gesture starts here, so this is where a selection made in edge or face mode - which only
+        // names the primary's vertices - is completed with the glued partners it moves.
+        selection = weldGroups().expand(selection).filterValues { it.isNotEmpty() }
+        return strokeTargets(source).filter { selection[it.id].orEmpty().isNotEmpty() }
+    }
 
     /**
      * Freezes the pose a transform gesture is about to edit. The handle grab and the body move both
@@ -3992,15 +4578,16 @@ internal class CanvasEditor(
             return true
         }
         if (tool == CanvasTool.GLUE) {
-            val hit = pickLayer(pos, viewport)
-            if (glueFirstMesh == null) {
-                glueFirstMesh = hit
-            } else if (hit != null && hit != glueFirstMesh) {
-                createGlue(glueFirstMesh!!, hit)
-                glueFirstMesh = null
-            } else {
-                glueFirstMesh = null
+            if (glueMeshPair() == null) {
+                error = tr("editor.glueNeedTwo", glueMeshCount())
+                return true
             }
+            glueErasing = alt
+            glueStrokeA = emptySet()
+            glueStrokeB = emptySet()
+            glueStroking = true
+            dragging = true
+            accumulateGlueHits(pos, pos, viewport)
             return true
         }
         if (tool == CanvasTool.CREATE_DEFORM_PATH) {
@@ -4071,7 +4658,9 @@ internal class CanvasEditor(
         // something already, and the handles in particular sit on the very corner a badge does. Ctrl is
         // left to object mode's own pick, where it means "step to the next node" and has to keep meaning
         // that wherever it is pressed.
-        if (tool in SELECTION_TOOLS && !(ctrl && hierarchyMode == EditHierarchyMode.SELECT)) {
+        // Not while Edit holds several meshes: picking a deformer there would drop the whole edit set for
+        // a click that was almost always meant for a vertex near the badge.
+        if (tool in SELECTION_TOOLS && !(ctrl && hierarchyMode == EditHierarchyMode.SELECT) && editMeshTargets().size < 2) {
             badgeAt(pos, viewport)?.let { id ->
                 applyObjectPick(HierarchyPick(deformerId = id), null)
                 return true
@@ -4095,7 +4684,10 @@ internal class CanvasEditor(
             brushSelecting = true
             dragging = true
             val t = target()
-            if (t != null) {
+            if (editsMeshes()) {
+                val r = (radius * viewport.scale).toFloat()
+                selection = mergedSelection(editVerticesWhere(viewport) { (it - pos).getDistance() <= r }, add = !alt, subtract = alt)
+            } else if (t != null) {
                 val points = screen(t.geometry.points, t, viewport)
                 val r = (radius * viewport.scale).toFloat()
                 val hits = points.indices.filter { (points[it] - pos).getDistance() <= r }.toSet()
@@ -4160,6 +4752,11 @@ internal class CanvasEditor(
                 }
                 if (beginPathInteraction(pos, pathTarget, viewport, ctrl)) return true
             }
+        }
+
+        if (editsMeshes() && (tool == CanvasTool.SELECT || tool in DEFORM_BRUSH_TOOLS)) {
+            clearPathPointSelection()
+            return pressEditMeshes(pos, viewport, shift, alt)
         }
 
         val editTarget = target() ?: return true
@@ -4245,10 +4842,52 @@ internal class CanvasEditor(
             }
         } else {
             marquee = listOf(pos, pos)
-            if (!shift && !alt) { vertices = emptySet(); selectedEdges = emptySet(); selectedFaces = emptySet() }
+            if (!shift && !alt) { selection = emptyMap(); selectedEdges = emptySet(); selectedFaces = emptySet() }
         }
         if (editTarget.kind == "rotation") vertices = if (picked == setOf(1)) setOf(1) else setOf(0, 1)
         if (alt && picked.isNotEmpty() && editTarget.kind != "rotation") dragging = false
+        // Edge and face picks on a rest mesh drag through the transform gesture too, which is what moves
+        // the glued partners of the vertices they cover instead of tearing them off.
+        if (tool == CanvasTool.SELECT && picked.isNotEmpty() && !alt && editsMeshGeometry()) {
+            val source = state.previewModel?.rig?.puppet ?: return true
+            beginTransformDrag(source, transformTargets(source), BoundingHandle.BODY, transformFrame(viewport), viewport)
+        }
+        return true
+    }
+
+    /**
+     * A press of the select tool or a deform brush while Edit holds its mesh set. Points of every edited
+     * mesh are picked alike, and a glued point is always picked, framed and moved as one.
+     */
+    private fun pressEditMeshes(pos: Offset, viewport: CanvasViewport, shift: Boolean, alt: Boolean): Boolean {
+        val source = state.previewModel?.rig?.puppet ?: return true
+        if (tool in DEFORM_BRUSH_TOOLS) {
+            shrinkAtPress = inflateInvert xor alt
+            beginMeshStroke(pos, viewport, source)
+            return true
+        }
+        val picked = pickEditVertex(pos, viewport)
+        val pickedSelected = picked != null &&
+            weldGroups().members(picked).all { it.index in selection[it.mesh].orEmpty() }
+        val frame = transformFrame(viewport)
+        if (frame != null && !shift && !alt &&
+            (frame.bounds.contains(pos.intoTransformFrame(frame.pivot, frame.angleDeg)) || pickedSelected)
+        ) {
+            beginTransformDrag(source, transformTargets(source), BoundingHandle.BODY, frame, viewport)
+            return true
+        }
+        if (picked == null) {
+            marquee = listOf(pos, pos)
+            if (!shift && !alt) selection = emptyMap()
+            original = model
+            dragging = true
+            return true
+        }
+        selection = mergedSelection(mapOf(picked.mesh to setOf(picked.index)), add = shift, subtract = alt)
+        if (alt) return true
+        makePrimary(picked.mesh)
+        // A press on a point grabs it straight away, as it does on a single mesh.
+        beginTransformDrag(source, transformTargets(source), BoundingHandle.BODY, selectionFrame(viewport), viewport)
         return true
     }
 
@@ -4263,6 +4902,12 @@ internal class CanvasEditor(
 
         if (subdividing) {
             targetAtPress?.let { t -> subdivideEdges = subdivideEdges + edgesWithin(previous, pos, t, viewport) }
+            previous = pos
+            return
+        }
+
+        if (glueStroking) {
+            accumulateGlueHits(previous, pos, viewport)
             previous = pos
             return
         }
@@ -4318,6 +4963,15 @@ internal class CanvasEditor(
             return
         }
 
+        if (tool == CanvasTool.BRUSH_SELECT && editsMeshes()) {
+            val r = (radius * viewport.scale).toFloat()
+            val from = previous
+            val hits = editVerticesWhere(viewport) { (it - pos).getDistance() <= r || distanceToSegment(it, from, pos) <= r }
+            selection = mergedSelection(hits, add = !alt, subtract = alt)
+            previous = pos
+            return
+        }
+
         if (tool == CanvasTool.BRUSH_SELECT) {
             val t = target() ?: return
             val points = screen(t.geometry.points, t, viewport)
@@ -4333,28 +4987,49 @@ internal class CanvasEditor(
             return
         }
 
+        if (meshStroke != null) {
+            try { moveMeshStroke(pos, viewport, shift, effectiveCtrl) } catch (e: Exception) { error = e.message }
+            return
+        }
+
         val t = targetAtPress ?: return; val source = original ?: return
 
         try {
             if (boxDrag) {
-                val b0 = initialBounds ?: return
                 val targets = objectTargets.ifEmpty { listOfNotNull(t) }
                 if (targets.isEmpty() || initialScreenPoints.size != targets.size) return
-                val result = TransformDrag(activeHandle, b0, framePivotAtPress, frameAngleAtPress, start)
-                    .apply(pos, axis, shift, alt)
-                currentDragBounds = result.bounds
-                frameAngle = result.frameAngle
-                pendingObjects = targets.mapIndexed { itemIndex, item ->
+                val editing = editsMeshGeometry()
+                // A selection that spans one point - a vertex, or a glued point - has no box; it is dragged
+                // directly, which is only meaningful for the Edit point tools.
+                val b0 = initialBounds
+                if (b0 == null && !editing) return
+                val result = b0?.let {
+                    TransformDrag(activeHandle, it, framePivotAtPress, frameAngleAtPress, start).apply(pos, axis, shift, alt)
+                }
+                if (result != null) {
+                    currentDragBounds = result.bounds
+                    frameAngle = result.frameAngle
+                }
+                val delta = pos - start
+                val worlds = targets.map { it.mapping.localToWorld(it.geometry.points) }
+                val movedSets = targets.mapIndexed { itemIndex, item ->
                     val indices = dragIndices.getOrElse(itemIndex) { (0 until item.count).toSet() }
-                    val world = item.mapping.localToWorld(item.geometry.points)
+                    val world = worlds[itemIndex]
                     val pressPoints = initialScreenPoints[itemIndex]
+                    val moved = HashSet<Int>()
                     for (i in indices) {
                         if (i !in pressPoints.indices) continue
-                        val dest = result.destination(pressPoints[i])
+                        val dest = result?.destination(pressPoints[i]) ?: (pressPoints[i] + delta)
                         world[i * 2] = ((dest.x - viewport.offsetX) / viewport.scale).toFloat()
                         world[i * 2 + 1] = -((dest.y - viewport.offsetY) / viewport.scale).toFloat()
+                        moved += i
                     }
-                    geometryCommand(item, item.mapping.worldToLocalLinearized(world, item.geometry.points, item.geometry.points, indices), effectiveCtrl)
+                    moved
+                }
+                // A glued point is one point: all of its members land on one spot, whatever the gesture.
+                if (editing) keepWeldsTogether(targets, worlds, movedSets)
+                pendingObjects = targets.mapIndexed { itemIndex, item ->
+                    geometryCommand(item, item.mapping.worldToLocalLinearized(worlds[itemIndex], item.geometry.points, item.geometry.points, movedSets[itemIndex]), effectiveCtrl)
                 }
                 preview = pendingObjects.fold(source) { m, command -> RigAuthoringJournal.apply(m, command) }
                 return
@@ -4478,6 +5153,25 @@ internal class CanvasEditor(
             return
         }
 
+        if (glueStroking) {
+            glueStroking = false
+            dragging = false
+            val hitsA = glueStrokeA
+            val hitsB = glueStrokeB
+            glueStrokeA = emptySet()
+            glueStrokeB = emptySet()
+            if (hitsA.isEmpty() && hitsB.isEmpty()) return
+            // Weights and ungluing only touch pairs that exist; without a glue there is nothing to do.
+            val onlyPairs = glueSubTool == GlueSubTool.WEIGHT || (glueSubTool == GlueSubTool.BRUSH && glueErasing)
+            if (onlyPairs && !glueAlreadyBound()) return
+            when (glueSubTool) {
+                GlueSubTool.WEIGHT -> commitGlueEdit("weights", hitsA, hitsB)
+                GlueSubTool.REMERGE -> commitGlueEdit("remerge", hitsA, hitsB)
+                GlueSubTool.BRUSH -> commitGlueEdit(if (glueErasing) "unglue" else "brush", hitsA, hitsB)
+            }
+            return
+        }
+
         if (hierarchyMode == EditHierarchyMode.PAINT && isPainting) {
             val session = paintSession
             val vp = viewport
@@ -4545,7 +5239,7 @@ internal class CanvasEditor(
         initialBounds = null
         initialScreenPoints = emptyList()
         boxDrag = false; dragIndices = emptyList()
-        activeBrushWeights = null; activeBrushCenter = null
+        activeBrushWeights = null; activeBrushCenter = null; endMeshStroke()
         brushInitialBase = null; brushInitialScreen = null; brushAffectedIndices = emptySet()
         endPathDrag()
 
@@ -4626,14 +5320,16 @@ internal class CanvasEditor(
     fun beginBrushAdjust(pos: Offset, shift: Boolean = false): Boolean {
         if (adjustingBrush || dragging) return false
         val painting = paintBrushActive
-        if (!painting && tool != CanvasTool.BRUSH && tool != CanvasTool.SMOOTH && tool != CanvasTool.INFLATE && tool != CanvasTool.SUBDIVIDE) return false
+        if (!painting && tool != CanvasTool.BRUSH && tool != CanvasTool.SMOOTH && tool != CanvasTool.INFLATE &&
+            tool != CanvasTool.SUBDIVIDE && tool != CanvasTool.BRUSH_SELECT && tool != CanvasTool.GLUE
+        ) return false
         adjustingBrush = true
         brushAxis = when {
             // A paint tip has no angle, so Shift latches its third parameter - the opacity - instead,
             // which is the same pairing Photoshop uses for its Shift + right-drag.
             painting && shift -> BrushAdjustAxis.OPACITY
             painting -> null
-            tool == CanvasTool.SUBDIVIDE -> null
+            tool == CanvasTool.SUBDIVIDE || tool == CanvasTool.BRUSH_SELECT || tool == CanvasTool.GLUE -> null
             shift && brushShape != BrushShape.CIRCLE -> BrushAdjustAxis.ANGLE
             else -> null
         }
@@ -4703,11 +5399,12 @@ internal class CanvasEditor(
         // already resolved and must not be re-derived here. Re-deriving it from a zero-area polygon
         // finds nothing and would blank the very selection the press just made, deformers especially,
         // which the marquee has no way to express at all.
-        if (hierarchyMode == EditHierarchyMode.SELECT && !moved) {
+        val pickingObjects = hierarchyMode == EditHierarchyMode.SELECT
+        if (pickingObjects && !moved) {
             pressedObject = null; marquee = emptyList(); original = null; head = null; return
         }
         val polygon = if (selectionStyle == SelectionStyle.LASSO) marquee else listOf(marquee.first(), Offset(marquee.last().x, marquee.first().y), marquee.last(), Offset(marquee.first().x, marquee.last().y))
-        if (hierarchyMode == EditHierarchyMode.SELECT) {
+        if (pickingObjects) {
             val found = state.effectiveVisibleLayerIds.filter { id -> target(model, id, null)?.let { item -> screen(item.geometry.points, item, viewport).any { insidePolygon(it, polygon) } } == true }.toSet()
             objects = when {
                 subtractive -> objects - found
@@ -4716,6 +5413,13 @@ internal class CanvasEditor(
                 else -> found
             }
             selectLayer(objects.lastOrNull()); pressedObject = null; marquee = emptyList(); original = null; head = null; return
+        }
+        if (editsMeshes()) {
+            val found = editVerticesWhere(viewport) { insidePolygon(it, polygon) }
+            selection = mergedSelection(found, add = additive, subtract = subtractive)
+            selectedEdges = emptySet(); selectedFaces = emptySet()
+            pressedObject = null; marquee = emptyList(); targetAtPress = null; original = null; head = null
+            return
         }
         val t = targetAtPress ?: target() ?: return
         val found = screen(t.geometry.points, t, viewport).mapIndexedNotNull { i, p -> if (insidePolygon(p, polygon)) i else null }.toSet()

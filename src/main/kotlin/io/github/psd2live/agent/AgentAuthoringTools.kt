@@ -382,7 +382,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
         }, listOf("state", "name")),
         variant("mode", "glue", buildJsonObject {
             put("state", string()); put("id", string()); put("mesh_a", string()); put("mesh_b", string())
-            put("pose", canvasPose); put("distance", number())
+            put("pose", canvasPose); put("distance", number()); put("replace", boolean())
         }, listOf("state", "mesh_a", "mesh_b")),
         variant("mode", "topology", buildJsonObject {
             put("state", string()); put("id", string())
@@ -394,7 +394,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
             put("edges", arraySchema(arraySchema(integer(0), 2, 2), 0, 65536))
         }, listOf("state", "id", "action", "vertices")),
     )
-    tool("canvas", "Use the canvas editor's persisted algorithms to create a Warp or Rotation, pair Glue vertices at a pose, or edit mesh topology. Topology indices are from the current mesh and require fresh state. Creation accepts an optional stable ID; otherwise one is generated.",
+    tool("canvas", "Use the canvas editor's persisted algorithms to create a Warp or Rotation, pair Glue vertices at a pose, or edit mesh topology. Glue requires two different art-mesh ids (mesh_a and mesh_b) and fails when a mesh is missing, the ids match, or no vertices fall inside distance. Set replace to update an existing glue on that pair. Topology indices are from the current mesh and require fresh state. Creation accepts an optional stable ID; otherwise one is generated.",
         buildJsonObject { put("request", oneOf(canvasBranches)) }, listOf("request"), true) { a ->
         val input = a.getValue("request").jsonObject
         validateAuthoringSchema(input, oneOf(canvasBranches))
@@ -410,11 +410,33 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
         val command = buildJsonObject {
             put("op", op); put("id", id)
             input.forEach { (key, value) -> if (key !in setOf("mode", "state", "id")) put(key, value) }
+            if (mode == "glue") {
+                val puppet = workspace.currentPuppet() ?: error("No model is loaded")
+                val meshA = resolveGlueMesh(puppet, input.text("mesh_a"))
+                val meshB = resolveGlueMesh(puppet, input.text("mesh_b"))
+                require(meshA != meshB) { "Glue requires two different meshes" }
+                put("mesh_a", meshA)
+                put("mesh_b", meshB)
+                if (input["replace"]?.jsonPrimitive?.booleanOrNull == true) {
+                    val existing = puppet.glues.firstOrNull { glue ->
+                        (glue.meshA.raw == meshA && glue.meshB.raw == meshB) ||
+                            (glue.meshA.raw == meshB && glue.meshB.raw == meshA)
+                    }
+                    if (existing?.id != null) put("id", existing.id)
+                }
+            }
         }
+        val writtenId = command.getValue("id").jsonPrimitive.content
         val result = workspace.authorRig(input.text("state"), buildJsonArray { add(command) }, MutationAuthor.AGENT)
         buildJsonObject {
-            put("state", result.historyNodeId); put("id", id)
+            put("state", result.historyNodeId); put("id", writtenId)
             if (!result.applied) put("applied", false)
+            if (mode == "glue") {
+                put("mesh_a", command.getValue("mesh_a").jsonPrimitive.content)
+                put("mesh_b", command.getValue("mesh_b").jsonPrimitive.content)
+                val glue = workspace.currentPuppet()?.glues?.firstOrNull { it.id == writtenId }
+                put("pair_count", glue?.pairs?.size ?: 0)
+            }
         }
     }
     val pathBranches = listOf(
@@ -609,6 +631,14 @@ private fun flattenVariantSet(node: JsonObject): JsonObject {
         put("additionalProperties", false)
     }
 }
+private fun resolveGlueMesh(puppet: org.umamo.runtime.model.PuppetModel, raw: String): String {
+    val id = raw.trim()
+    require(id.isNotEmpty()) { "Glue requires two different meshes" }
+    val drawable = puppet.drawables.firstOrNull { it.id.raw == id && it.mesh != null }
+        ?: error("Mesh not found: $id. Glue requires two different art-mesh ids from inspect.")
+    return drawable.id.raw
+}
+
 private fun stripSchemaDescriptions(value: JsonElement): JsonElement = when (value) {
     is JsonObject -> JsonObject(value.filterKeys { it !in setOf("description", "examples", "title") }.mapValues { stripSchemaDescriptions(it.value) })
     is JsonArray -> JsonArray(value.map(::stripSchemaDescriptions))

@@ -18,6 +18,7 @@ import io.github.psd2live.core.CubismSdkPreviewSession
 import io.github.psd2live.core.EyeJellyDynamics
 import io.github.psd2live.core.HierarchyImportTarget
 import io.github.psd2live.core.LayerClassificationOverride
+import io.github.psd2live.core.layerSelectionRange
 import io.github.psd2live.core.LayerImport
 import io.github.psd2live.core.LayerType
 import io.github.psd2live.core.PipelineAnalysis
@@ -2552,15 +2553,22 @@ class PSD2LiveViewModel : AutoCloseable {
 	    markWorkspaceChanged()
 	}
 
+	/** Last plain click. Shift-range stays anchored here until the next replace or toggle. */
+	private var selectionAnchorId: String? = null
+
+	internal fun noteSelectionAnchor(layerId: String?) {
+		selectionAnchorId = layerId
+	}
+
 	/** Plain click replaces, Shift extends, Alt removes the focused canvas's layer set. */
 	fun selectLayer(layerId: String?, additive: Boolean = false, subtractive: Boolean = false) {
 		updateState { current ->
-			val previous = current.selectedLayerIds.ifEmpty { setOfNotNull(current.selectedLayerId) }
+			val previous = LinkedHashSet(current.selectedLayerIds.ifEmpty { setOfNotNull(current.selectedLayerId) })
 			val selected = when {
-				layerId == null -> emptySet()
-				subtractive -> previous - layerId
-				additive -> previous + layerId
-				else -> setOf(layerId)
+				layerId == null -> LinkedHashSet()
+				subtractive -> LinkedHashSet(previous.filter { it != layerId })
+				additive -> LinkedHashSet(previous).apply { add(layerId) }
+				else -> LinkedHashSet<String>().apply { add(layerId) }
 			}
 			current.copy(
 				selectedLayerId = if (subtractive) current.selectedLayerId?.takeIf { it in selected }
@@ -2569,7 +2577,37 @@ class PSD2LiveViewModel : AutoCloseable {
 				selectedDeformerId = if (selected.isNotEmpty()) null else current.selectedDeformerId,
 			)
 		}
+		when {
+			layerId == null && !additive && !subtractive -> selectionAnchorId = null
+			!additive && !subtractive -> selectionAnchorId = layerId
+			additive && layerId != null -> selectionAnchorId = layerId
+			subtractive && selectionAnchorId == layerId -> selectionAnchorId = _state.value.selectedLayerId
+		}
 	    markWorkspaceChanged()
+	}
+
+	/**
+	 * Selects every layer from the anchor through [clickedId] in [orderedLayerIds].
+	 * The anchor stays put, and [clickedId] becomes the primary item.
+	 */
+	fun selectLayerRange(orderedLayerIds: List<String>, clickedId: String) {
+		val anchor = selectionAnchorId ?: _state.value.selectedLayerId
+		val range = layerSelectionRange(orderedLayerIds, anchor, clickedId)
+		updateState { current ->
+			current.copy(
+				selectedLayerId = clickedId,
+				selectedLayerIds = range.toCollection(LinkedHashSet()),
+				selectedDeformerId = null,
+			)
+		}
+		markWorkspaceChanged()
+	}
+
+	/** Ctrl-click: add the layer, or drop it when it is already selected. */
+	fun toggleLayerSelection(layerId: String) {
+		val selected = _state.value.selectedLayerIds.ifEmpty { setOfNotNull(_state.value.selectedLayerId) }
+		if (layerId in selected) selectLayer(layerId, subtractive = true)
+		else selectLayer(layerId, additive = true)
 	}
 
 	private fun selectOnCanvas(workspaceId: String, canvasId: String, mode: CanvasMode, layerId: String?) {
@@ -3723,6 +3761,9 @@ class PSD2LiveViewModel : AutoCloseable {
 				rigEdits = rigEdits,
 				meshOverrides = meshOverrides,
 				selectedLayerId = current.selectedLayerId?.takeIf { selected ->
+					preview.analysis.layers.any { it.source.id.raw == selected } && selected !in deletedLayerIds
+				},
+				selectedLayerIds = current.selectedLayerIds.filterTo(LinkedHashSet()) { selected ->
 					preview.analysis.layers.any { it.source.id.raw == selected } && selected !in deletedLayerIds
 				},
 				isolationSnapshot = null,

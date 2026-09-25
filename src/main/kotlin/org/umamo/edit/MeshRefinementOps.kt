@@ -396,21 +396,18 @@ object MeshRefinementOps {
 		data class AtPoint(val x: Float, val y: Float) : KnifeAnchor
 	}
 
-	/** A knife gesture is applied incrementally, so each new anchor can lie in a triangle created by the previous segment. */
-	fun knifeCut(mesh: DrawableMesh, anchors: List<KnifeAnchor>): TopologyOpResult? {
-		if (anchors.size < 2) return null
-		val originalCount = mesh.vertexCount
-		var working = mesh
-		val composed = ArrayList<VertexSource>(originalCount)
-		repeat(originalCount) { composed += VertexSource.FromOld(it) }
+	/**
+	 * Several append-only steps folded into one edit whose every [VertexSource] points at the ORIGINAL
+	 * mesh, so the whole gesture commits once and keyform deltas are interpolated once.
+	 */
+	private class ComposedSteps(original: DrawableMesh) {
+		private val originalCount = original.vertexCount
+		var working = original
+			private set
+		val composed = ArrayList<VertexSource>(originalCount).apply { repeat(originalCount) { add(VertexSource.FromOld(it)) } }
 
-		fun terms(source: VertexSource): List<Pair<Int, Float>> = when (source) {
-			is VertexSource.FromOld -> listOf(source.oldIndex to 1f)
-			is VertexSource.AverageOf -> source.oldIndices.map { it to 1f / source.oldIndices.size }
-			is VertexSource.LerpOf -> listOf(source.oldA to (1f - source.t), source.oldB to source.t)
-			is VertexSource.BarycentricOf -> listOf(source.oldA to source.wa, source.oldB to source.wb, source.oldC to source.wc)
-			is VertexSource.WeightedOf -> source.indices.indices.map { source.indices[it] to source.weights[it] }
-		}
+		/** The created vertex [index] as weights over the original vertices. */
+		fun rootTerms(index: Int): List<Pair<Int, Float>> = terms(composed[index])
 
 		fun fold(result: TopologyOpResult): Boolean {
 			val step = result.edit.vertexSources
@@ -431,19 +428,190 @@ object MeshRefinementOps {
 			return true
 		}
 
+		fun edit(): MeshTopologyEdit = MeshTopologyEdit(working, composed)
+
+		private fun terms(source: VertexSource): List<Pair<Int, Float>> = when (source) {
+			is VertexSource.FromOld -> listOf(source.oldIndex to 1f)
+			is VertexSource.AverageOf -> source.oldIndices.map { it to 1f / source.oldIndices.size }
+			is VertexSource.LerpOf -> listOf(source.oldA to (1f - source.t), source.oldB to source.t)
+			is VertexSource.BarycentricOf -> listOf(source.oldA to source.wa, source.oldB to source.wb, source.oldC to source.wc)
+			is VertexSource.WeightedOf -> source.indices.indices.map { source.indices[it] to source.weights[it] }
+		}
+	}
+
+	/**
+	 * The result of [insertPoints]: the composed edit, the vertex each requested point became (null when
+	 * it could not be placed), and [frame] extended with the created vertices.
+	 */
+	class PointInsertion(val result: TopologyOpResult, val placed: List<Int?>, val frame: FloatArray)
+
+	/**
+	 * Inserts one vertex at each of [points], all in one composed edit.
+	 *
+	 * [frame] is the mesh's vertices in the space [points] are given in - typically the deformed world
+	 * positions - with the mesh's own topology. A point is located in [frame] (on an edge, inside a face,
+	 * or, when [extend] allows, just outside the silhouette), and the created vertex is that same
+	 * combination of the rest positions and UVs. So the picture does not move, and at the frame's pose
+	 * the new vertex lands exactly on the requested point. Points are placed in order, so a later one can
+	 * land in a triangle an earlier one created.
+	 *
+	 * @param DrawableMesh mesh The mesh to edit.
+	 * @param FloatArray frame The mesh's vertex positions in the points' space.
+	 * @param List<Pair<Float, Float>> points The positions to create vertices at.
+	 * @param Boolean extend Whether a point outside the mesh may grow the silhouette to reach it.
+	 * @param Float edgeSnap A point this close to an edge (in frame units) splits the edge at its projection instead.
+	 * @return PointInsertion? The edit, or null when no point could be placed.
+	 */
+	fun insertPoints(
+		mesh: DrawableMesh,
+		frame: FloatArray,
+		points: List<Pair<Float, Float>>,
+		extend: Boolean = true,
+		edgeSnap: Float = 0f,
+	): PointInsertion? {
+		if (frame.size != mesh.positions.size || points.isEmpty()) return null
+		val originalFrame = frame.copyOf()
+		val steps = ComposedSteps(mesh)
+		var currentFrame = frame.copyOf()
+		val placed = ArrayList<Int?>(points.size)
+		for ((x, y) in points) {
+			if (!x.isFinite() || !y.isFinite()) {
+				placed += null
+				continue
+			}
+			val working = steps.working
+			val spot = locatePoint(currentFrame, working.indices, x, y, edgeSnap)
+			val step = when (spot) {
+				is PointSpot.OnEdge -> splitEdgeAt(working, spot.edge, listOf(spot.t))
+				is PointSpot.InFace -> insertPointInFace(working, spot.triangleIndex, spot.wa, spot.wb, spot.wc)
+				null -> if (extend) extendOutside(working, currentFrame, x, y, null) else null
+			}
+			if (step == null || !steps.fold(step)) {
+				placed += null
+				continue
+			}
+			val created = steps.working.vertexCount
+			val grown = currentFrame.copyOf(created * 2)
+			for (index in currentFrame.size / 2 until created) {
+				var fx = 0f
+				var fy = 0f
+				for ((root, weight) in steps.rootTerms(index)) {
+					fx += originalFrame[root * 2] * weight
+					fy += originalFrame[root * 2 + 1] * weight
+				}
+				grown[index * 2] = fx
+				grown[index * 2 + 1] = fy
+			}
+			currentFrame = grown
+			placed += step.newElements.filterIsInstance<MeshElement.Vertex>().firstOrNull()?.index
+		}
+		if (placed.all { it == null }) return null
+		val created = placed.filterNotNull().mapTo(LinkedHashSet()) { MeshElement.Vertex(it) }
+		return PointInsertion(TopologyOpResult(steps.edit(), created), placed, currentFrame)
+	}
+
+	/**
+	 * Flips the interior edges near [around] toward a Delaunay triangulation, judged in [frame].
+	 *
+	 * Inserting points one by one leaves the slivers every 1 -> 3 split makes; this is what tidies them.
+	 * A flip is only taken when it cannot change the picture: the quad must be convex in the rest positions
+	 * and in [frame], and its four UVs must lie on one affine map of position, so the two new triangles
+	 * sample exactly the texels the old two did. No vertex is created or moved, so indices, UVs and every
+	 * keyform stay valid.
+	 *
+	 * @param DrawableMesh mesh The mesh to tidy.
+	 * @param FloatArray frame The mesh's vertices in the space quality is judged in.
+	 * @param Set<Int> around Only edges with a vertex of this set among their four are considered.
+	 * @param Int maxFlips A bound on the work, far above what one gesture needs.
+	 * @return IntArray The new index buffer.
+	 */
+	fun flipTowardDelaunay(mesh: DrawableMesh, frame: FloatArray, around: Set<Int>, maxFlips: Int = 512): IntArray {
+		val triangles = mesh.indices.toList().chunked(3).map { it.toIntArray() }.toMutableList()
+		if (around.isEmpty() || frame.size != mesh.positions.size) return mesh.indices.copyOf()
+		fun area(values: FloatArray, a: Int, b: Int, c: Int): Float =
+			(values[b * 2] - values[a * 2]) * (values[c * 2 + 1] - values[a * 2 + 1]) -
+				(values[b * 2 + 1] - values[a * 2 + 1]) * (values[c * 2] - values[a * 2])
+		fun inCircle(a: Int, b: Int, c: Int, d: Int): Boolean {
+			val ax = (frame[a * 2] - frame[d * 2]).toDouble(); val ay = (frame[a * 2 + 1] - frame[d * 2 + 1]).toDouble()
+			val bx = (frame[b * 2] - frame[d * 2]).toDouble(); val by = (frame[b * 2 + 1] - frame[d * 2 + 1]).toDouble()
+			val cx = (frame[c * 2] - frame[d * 2]).toDouble(); val cy = (frame[c * 2 + 1] - frame[d * 2 + 1]).toDouble()
+			val det = (ax * ax + ay * ay) * (bx * cy - cx * by) - (bx * bx + by * by) * (ax * cy - cx * ay) +
+				(cx * cx + cy * cy) * (ax * by - bx * ay)
+			val orientation = area(frame, a, b, c)
+			return if (orientation > 0f) det > 1e-9 else det < -1e-9
+		}
+		fun affineUv(a: Int, b: Int, c: Int, d: Int): Boolean {
+			if (mesh.uvs.size != mesh.positions.size) return false
+			val p = mesh.positions
+			val weights = barycentricAt(p, a, b, c, p[d * 2], p[d * 2 + 1]) ?: return false
+			for (component in 0..1) {
+				val predicted = mesh.uvs[a * 2 + component] * weights[0] + mesh.uvs[b * 2 + component] * weights[1] +
+					mesh.uvs[c * 2 + component] * weights[2]
+				if (abs(predicted - mesh.uvs[d * 2 + component]) > 2e-4f) return false
+			}
+			return true
+		}
+		var flips = 0
+		var changed = true
+		while (changed && flips < maxFlips) {
+			changed = false
+			val owners = HashMap<MeshElement.Edge, MutableList<Int>>()
+			triangles.forEachIndexed { ordinal, tri ->
+				for (slot in 0..2) owners.getOrPut(MeshElement.Edge.of(tri[slot], tri[(slot + 1) % 3])) { ArrayList(2) } += ordinal
+			}
+			for ((edge, pair) in owners) {
+				if (pair.size != 2) continue
+				val first = triangles[pair[0]]
+				val second = triangles[pair[1]]
+				val slot = edgeSlot(first.toList(), edge.endpointLow, edge.endpointHigh)
+				if (slot < 0) continue
+				val a = first[slot]
+				val b = first[(slot + 1) % 3]
+				val c = first[(slot + 2) % 3]
+				val d = second.firstOrNull { it != a && it != b } ?: continue
+				if (a !in around && b !in around && c !in around && d !in around) continue
+				// The shared edge must run the other way in the second triangle, or the pair is not a proper quad.
+				val otherSlot = edgeSlot(second.toList(), b, a)
+				if (otherSlot < 0 || second[otherSlot] != b) continue
+				if (!inCircle(a, b, c, d)) continue
+				val keep = area(mesh.positions, a, b, c)
+				val keepFrame = area(frame, a, b, c)
+				val convex = listOf(intArrayOf(a, d, c), intArrayOf(d, b, c)).all { tri ->
+					val rest = area(mesh.positions, tri[0], tri[1], tri[2])
+					val seen = area(frame, tri[0], tri[1], tri[2])
+					rest * keep > 0f && seen * keepFrame > 0f &&
+						abs(rest) > abs(keep) * 1e-4f && abs(seen) > abs(keepFrame) * 1e-4f
+				}
+				if (!convex || !affineUv(a, b, c, d)) continue
+				triangles[pair[0]] = intArrayOf(a, d, c)
+				triangles[pair[1]] = intArrayOf(d, b, c)
+				flips++
+				changed = true
+				break
+			}
+		}
+		return triangles.flatMap { it.toList() }.toIntArray()
+	}
+
+	/** A knife gesture is applied incrementally, so each new anchor can lie in a triangle created by the previous segment. */
+	fun knifeCut(mesh: DrawableMesh, anchors: List<KnifeAnchor>): TopologyOpResult? {
+		if (anchors.size < 2) return null
+		val originalCount = mesh.vertexCount
+		val steps = ComposedSteps(mesh)
 		val resolved = ArrayList<Int>(anchors.size)
 		for (anchor in anchors) {
 			val current = when (anchor) {
 				is KnifeAnchor.AtVertex -> anchor.index.takeIf { it in 0 until originalCount } ?: return null
 				is KnifeAnchor.AtPoint -> {
 					if (!anchor.x.isFinite() || !anchor.y.isFinite()) return null
-					val spot = locatePoint(working, anchor.x, anchor.y)
+					val working = steps.working
+					val spot = locatePoint(working.positions, working.indices, anchor.x, anchor.y)
 					val placed = when (spot) {
 						is PointSpot.OnEdge -> splitEdgeAt(working, spot.edge, listOf(spot.t))
 						is PointSpot.InFace -> insertPointInFace(working, spot.triangleIndex, spot.wa, spot.wb, spot.wc)
-						null -> extendOutside(working, anchor.x, anchor.y, resolved.lastOrNull())
+						null -> extendOutside(working, working.positions, anchor.x, anchor.y, resolved.lastOrNull())
 					} ?: return null
-					if (!fold(placed)) return null
+					if (!steps.fold(placed)) return null
 					placed.newElements.filterIsInstance<MeshElement.Vertex>().firstOrNull()?.index ?: return null
 				}
 			}
@@ -451,18 +619,18 @@ object MeshRefinementOps {
 			if (previous != null) {
 				if (previous == current) return null
 				val edge = MeshElement.Edge.of(previous, current)
-				if (edge !in MeshTopology.uniqueEdges(working.indices)) {
-					val joined = MeshTopologyOps.connectVertices(working, previous, current) ?: return null
-					if (!fold(joined)) return null
+				if (edge !in MeshTopology.uniqueEdges(steps.working.indices)) {
+					val joined = MeshTopologyOps.connectVertices(steps.working, previous, current) ?: return null
+					if (!steps.fold(joined)) return null
 				}
 			}
 			resolved += current
 		}
-		return TopologyOpResult(MeshTopologyEdit(working, composed), resolved.mapTo(LinkedHashSet()) { MeshElement.Vertex(it) })
+		return TopologyOpResult(steps.edit(), resolved.mapTo(LinkedHashSet()) { MeshElement.Vertex(it) })
 	}
 
 	/** Extend the silhouette to a freely placed exterior point. Its UV and pose deltas extrapolate from the adjacent face. */
-	private fun extendOutside(mesh: DrawableMesh, x: Float, y: Float, preferred: Int?): TopologyOpResult? {
+	private fun extendOutside(mesh: DrawableMesh, frame: FloatArray, x: Float, y: Float, preferred: Int?): TopologyOpResult? {
 		val triangles = mesh.indices.toList().chunked(3)
 		val adjacency = HashMap<MeshElement.Edge, MutableList<Int>>()
 		triangles.forEachIndexed { index, tri ->
@@ -482,15 +650,15 @@ object MeshRefinementOps {
 			val tri = triangles[owners.single()]
 			val slot = edgeSlot(tri, edge.endpointLow, edge.endpointHigh)
 			val a = tri[slot]; val b = tri[(slot + 1) % 3]; val c = tri[(slot + 2) % 3]
-			val ax = mesh.positions[a * 2]; val ay = mesh.positions[a * 2 + 1]
-			val bx = mesh.positions[b * 2]; val by = mesh.positions[b * 2 + 1]
+			val ax = frame[a * 2]; val ay = frame[a * 2 + 1]
+			val bx = frame[b * 2]; val by = frame[b * 2 + 1]
 			val cross = (bx - ax) * (y - ay) - (by - ay) * (x - ax)
-			val inside = (bx - ax) * (mesh.positions[c * 2 + 1] - ay) - (by - ay) * (mesh.positions[c * 2] - ax)
+			val inside = (bx - ax) * (frame[c * 2 + 1] - ay) - (by - ay) * (frame[c * 2] - ax)
 			if (cross * inside >= -1e-8f) return@mapNotNull null
 			val blocked = boundary.keys.any { other ->
 				if (other == edge) false else {
-					val cx = mesh.positions[other.endpointLow * 2]; val cy = mesh.positions[other.endpointLow * 2 + 1]
-					val dx = mesh.positions[other.endpointHigh * 2]; val dy = mesh.positions[other.endpointHigh * 2 + 1]
+					val cx = frame[other.endpointLow * 2]; val cy = frame[other.endpointLow * 2 + 1]
+					val dx = frame[other.endpointHigh * 2]; val dy = frame[other.endpointHigh * 2 + 1]
 					properCross(ax, ay, x, y, cx, cy, dx, dy) || properCross(bx, by, x, y, cx, cy, dx, dy)
 				}
 			}
@@ -499,7 +667,7 @@ object MeshRefinementOps {
 				if (vertex == a || vertex == b) false else {
 					// Check the proposed (b,a,new) wedge directly, including a vertex on a new edge.
 					val v = barycentricAt(proposed, 0, 1, 2,
-						mesh.positions[vertex * 2], mesh.positions[vertex * 2 + 1])
+						frame[vertex * 2], frame[vertex * 2 + 1])
 					v != null && v.all { it >= -1e-5f }
 				}
 			}
@@ -509,7 +677,7 @@ object MeshRefinementOps {
 			Triple(intArrayOf(a, b, c), distance, preferred == a || preferred == b)
 		}.sortedWith(compareByDescending<Triple<IntArray, Float, Boolean>> { it.third }.thenBy { it.second })
 		for ((tri, _, _) in candidates) {
-			val weights = barycentricAt(mesh.positions, tri[0], tri[1], tri[2], x, y) ?: continue
+			val weights = barycentricAt(frame, tri[0], tri[1], tri[2], x, y) ?: continue
 			val appender = MeshAppender(mesh)
 			val point = appender.appendBarycentric(tri[0], tri[1], tri[2], weights[0], weights[1], weights[2])
 			val indices = mesh.indices.toMutableList()
@@ -528,9 +696,9 @@ object MeshRefinementOps {
 	/** Floating point tolerance only; actual snapping is a user gesture resolved by the editor. */
 	private const val EDGE_SNAP_FRACTION = 1e-6f
 
-	private fun locatePoint(mesh: DrawableMesh, x: Float, y: Float): PointSpot? {
-		val bounds = meshBounds(mesh)
-		val tolerance = EDGE_SNAP_FRACTION * maxOf(bounds[2], bounds[3])
+	private fun locatePoint(positions: FloatArray, indices: IntArray, x: Float, y: Float, edgeTolerance: Float = 0f): PointSpot? {
+		val bounds = meshBounds(positions)
+		val tolerance = maxOf(edgeTolerance, EDGE_SNAP_FRACTION * maxOf(bounds[2], bounds[3]))
 		val toleranceSquared = tolerance * tolerance
 
 		// Only exact-on-edge points (within float tolerance) are classified as edge points. The cutter must
@@ -538,11 +706,11 @@ object MeshRefinementOps {
 		var bestEdge: MeshElement.Edge? = null
 		var bestT = 0f
 		var bestDistance = Float.MAX_VALUE
-		for (edge in MeshTopology.uniqueEdges(mesh.indices)) {
-			val ax = mesh.positions[edge.endpointLow * 2]
-			val ay = mesh.positions[edge.endpointLow * 2 + 1]
-			val dx = mesh.positions[edge.endpointHigh * 2] - ax
-			val dy = mesh.positions[edge.endpointHigh * 2 + 1] - ay
+		for (edge in MeshTopology.uniqueEdges(indices)) {
+			val ax = positions[edge.endpointLow * 2]
+			val ay = positions[edge.endpointLow * 2 + 1]
+			val dx = positions[edge.endpointHigh * 2] - ax
+			val dy = positions[edge.endpointHigh * 2 + 1] - ay
 			val lengthSquared = dx * dx + dy * dy
 			if (lengthSquared < 1e-12f) continue
 			val t = (((x - ax) * dx + (y - ay) * dy) / lengthSquared).coerceIn(0f, 1f)
@@ -557,10 +725,10 @@ object MeshRefinementOps {
 		}
 		if (bestEdge != null && bestDistance <= toleranceSquared) return PointSpot.OnEdge(bestEdge, bestT)
 
-		val triangles = mesh.indices.toList().chunked(3)
+		val triangles = indices.toList().chunked(3)
 		for (ordinal in triangles.indices) {
 			val triangle = triangles[ordinal]
-			val weights = barycentricAt(mesh.positions, triangle[0], triangle[1], triangle[2], x, y) ?: continue
+			val weights = barycentricAt(positions, triangle[0], triangle[1], triangle[2], x, y) ?: continue
 			if (weights.all { it >= -1e-4f }) {
 				return PointSpot.InFace(ordinal, weights[0], weights[1], weights[2])
 			}
@@ -584,15 +752,15 @@ object MeshRefinementOps {
 	}
 
 	/** The mesh bounds as [left, top, width, height] in its own space, for scaling the snap tolerance. */
-	private fun meshBounds(mesh: DrawableMesh): FloatArray {
-		if (mesh.positions.isEmpty()) return floatArrayOf(0f, 0f, 1f, 1f)
+	private fun meshBounds(positions: FloatArray): FloatArray {
+		if (positions.isEmpty()) return floatArrayOf(0f, 0f, 1f, 1f)
 		var minX = Float.MAX_VALUE
 		var minY = Float.MAX_VALUE
 		var maxX = -Float.MAX_VALUE
 		var maxY = -Float.MAX_VALUE
-		for (index in mesh.positions.indices step 2) {
-			val x = mesh.positions[index]
-			val y = mesh.positions[index + 1]
+		for (index in positions.indices step 2) {
+			val x = positions[index]
+			val y = positions[index + 1]
 			if (x < minX) minX = x
 			if (y < minY) minY = y
 			if (x > maxX) maxX = x

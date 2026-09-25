@@ -570,8 +570,11 @@ internal object WorkspaceStateCodec {
         logPanelHeight = value["logPanelHeight"]?.jsonPrimitive?.float ?: base.logPanelHeight,
         selectedHistoryNodeId = if ("selectedHistoryNodeId" in value) value["selectedHistoryNodeId"]?.jsonPrimitive?.contentOrNull else base.selectedHistoryNodeId,
         selectedLayerId = if ("selectedLayerId" in value) value["selectedLayerId"]?.jsonPrimitive?.contentOrNull else base.selectedLayerId,
+        // Absent means "not part of this payload", as for selectedLayerId: a settings-only decode (every
+        // authoring commit runs one) must keep the live multi-selection rather than empty it.
         selectedLayerIds = value["selectedLayerIds"]?.jsonArray?.map { it.jsonPrimitive.content }?.toSet()
-            ?: setOfNotNull(value["selectedLayerId"]?.jsonPrimitive?.contentOrNull),
+            ?: if ("selectedLayerId" in value) setOfNotNull(value["selectedLayerId"]?.jsonPrimitive?.contentOrNull)
+            else base.selectedLayerIds,
         selectedDeformerId = if ("selectedDeformerId" in value) value["selectedDeformerId"]?.jsonPrimitive?.contentOrNull else base.selectedDeformerId,
         isolatedLayerId = if ("isolatedLayerId" in value) value["isolatedLayerId"]?.jsonPrimitive?.contentOrNull else base.isolatedLayerId,
         parameterSearchQuery = value["parameterSearchQuery"]?.jsonPrimitive?.content ?: base.parameterSearchQuery,

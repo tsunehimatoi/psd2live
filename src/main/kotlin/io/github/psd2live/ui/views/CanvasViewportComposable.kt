@@ -206,8 +206,12 @@ fun CanvasViewportComposable(
 	}
     LaunchedEffect(mode, canvasState.selectedLayerId, canvasState.selectedLayerIds, canvasState.selectedDeformerId) {
         if (mode == CanvasMode.EDIT && !editor.inGesture && !editor.busy) {
-            editor.resetSelection()
             val selectedObjects = canvasState.selectedLayerIds.ifEmpty { setOfNotNull(canvasState.selectedLayerId) }
+            // Edit mode edits the whole set at once, and picking a vertex on another mesh of the set only
+            // moves the primary. That must not throw away the vertex selection the pick just made.
+            val sameEditSet = editor.hierarchyMode == EditHierarchyMode.EDIT &&
+                canvasState.selectedDeformerId == null && editor.objects == selectedObjects
+            if (!sameEditSet) editor.resetSelection()
             if (editor.objects != selectedObjects) editor.objects = selectedObjects
             // Vertex mode is only meaningful for the tools that edit points. Forcing it for the object
             // tools left `objects` populated while objectMode said otherwise, and the transform bounding
@@ -556,6 +560,7 @@ fun CanvasViewportComposable(
 								editor.finishPath(); true
 							}
 							editor.placement != null -> { editor.confirmPlacement(); true }
+							editor.tool == CanvasTool.GLUE -> { editor.applyGlue(); true }
 							else -> false
 						}
 					}
@@ -879,7 +884,14 @@ fun CanvasViewportComposable(
 
 			val targetVisibleLayerIds: Set<String> = when {
 				!informationSelectedOnly -> canvasState.effectiveVisibleLayerIds
-				canvasState.selectedLayerId != null -> canvasState.effectiveVisibleLayerIds.filter { it == canvasState.selectedLayerId }.toSet()
+				canvasState.selectedLayerId != null -> {
+					val keep = if (mode == CanvasMode.EDIT && editor.hierarchyMode == EditHierarchyMode.EDIT && editor.objects.size > 1) {
+						editor.objects
+					} else {
+						setOf(canvasState.selectedLayerId)
+					}
+					canvasState.effectiveVisibleLayerIds.filter { it in keep }.toSet()
+				}
 				canvasState.selectedDeformerId != null -> {
 					val desc = descendantLayerIds(model, canvasState.selectedDeformerId, canvasState.parentOverrides)
 					canvasState.effectiveVisibleLayerIds.filter { it in desc }.toSet()
@@ -890,6 +902,7 @@ fun CanvasViewportComposable(
 			val hasActiveSelection = canvasState.selectedLayerId != null || canvasState.selectedDeformerId != null
 			val highlightedLayerIds: Set<String>? = when {
                 mode==CanvasMode.EDIT && editor.objectMode && editor.objects.isNotEmpty() -> editor.objects
+				mode == CanvasMode.EDIT && editor.hierarchyMode == EditHierarchyMode.EDIT && editor.objects.size > 1 -> editor.objects
 				canvasState.selectedLayerId != null -> setOf(canvasState.selectedLayerId)
 				canvasState.selectedDeformerId != null -> descendantLayerIds(model, canvasState.selectedDeformerId, canvasState.parentOverrides)
 				else -> null
@@ -983,7 +996,7 @@ fun CanvasViewportComposable(
 					canvasState.selectedLayerId, canvasState.selectedDeformerId,
 					canvasState.hoveredLayerId, canvasState.hoveredDeformerId,
 					canvasState.parentOverrides, editor.hierarchyMode, editor.objects,
-					editor.drawsTransformBox,
+					editor.glueSwapped, editor.drawsTransformBox,
 				)
 				val guideImage = guideCache.imageFor(guideKey, w, h) { g ->
 					g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
@@ -1049,7 +1062,9 @@ fun CanvasViewportComposable(
 						val selectedId = canvasState.selectedLayerId
 						val meshFocusOnly = mode == CanvasMode.EDIT && !editor.objectMode
 						if (meshFocusOnly) {
-							if (selectedId != null) {
+							// Edit mode draws its meshes on the editor overlay - every edited mesh in one style,
+							// glued points merged - so the guide adds nothing there. Deform keeps the active mesh.
+							if (selectedId != null && editor.hierarchyMode != EditHierarchyMode.EDIT) {
 								for (drawable in model.rig.puppet.drawables) {
 									val layerId = model.rig.layerIdByDrawableId[drawable.id.raw]
 									if (layerId == selectedId) {
@@ -1240,6 +1255,7 @@ fun CanvasViewportComposable(
                 viewModel = viewModel,
                 keymap = canvasState.keymap,
                 selectedLayerId = canvasState.selectedLayerId,
+                selectedLayerIds = canvasState.selectedLayerIds,
                 selectedDeformerId = canvasState.selectedDeformerId,
                 showMesh = showMesh,
                 showRotation = showRotation,

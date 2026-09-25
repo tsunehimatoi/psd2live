@@ -83,6 +83,132 @@ class RotationCreationTest {
         assertEquals(3, created.glues.single().pairs.size)
         assertEquals("seam", RigAuthoringJournal.apply(source, journal.single()).glues.single().id)
     }
+
+    @Test fun glueRequiresTwoDifferentMeshes() {
+        val mesh = drawable(null)
+        val source = PuppetModel(emptyList(), emptyList(), emptyList(), listOf(mesh), listOf(OrgChild.Drawable(mesh.id)), null)
+        val command = buildJsonObject {
+            put("op", "canvas_create_glue"); put("id", "seam"); put("mesh_a", mesh.id.raw); put("mesh_b", mesh.id.raw)
+        }
+        val failure = assertFailsWith<IllegalArgumentException> { CanvasEdits.apply(source, command) }
+        assertEquals("Glue requires two different meshes", failure.message)
+    }
+
+    @Test fun glueRejectsASecondBindingUnlessReplacing() {
+        val a = drawable(null)
+        val b = a.copy(id = DrawableId("other"), name = "Other")
+        val source = PuppetModel(emptyList(), emptyList(), emptyList(), listOf(a, b),
+            listOf(OrgChild.Drawable(a.id), OrgChild.Drawable(b.id)), null)
+        val command = buildJsonObject {
+            put("op", "canvas_create_glue"); put("id", "seam"); put("mesh_a", a.id.raw); put("mesh_b", b.id.raw); put("distance", 1f)
+        }
+        val created = CanvasEdits.apply(source, command)
+        val duplicate = buildJsonObject {
+            put("op", "canvas_create_glue"); put("id", "other-seam"); put("mesh_a", b.id.raw); put("mesh_b", a.id.raw); put("distance", 1f)
+        }
+        assertFailsWith<IllegalArgumentException> { CanvasEdits.apply(created, duplicate) }
+        val replaced = CanvasEdits.apply(created, JsonObject(duplicate + ("replace" to JsonPrimitive(true))))
+        assertEquals(1, replaced.glues.size)
+        assertEquals("seam", replaced.glues.single().id)
+        assertEquals(b.id, replaced.glues.single().meshA)
+        assertEquals(a.id, replaced.glues.single().meshB)
+    }
+
+    @Test fun glueBrushPairsOnlyTheStrokedVertex() {
+        val a = drawable(null)
+        val b = a.copy(id = DrawableId("other"), name = "Other")
+        val source = PuppetModel(listOf(Parameter(parameter, "Pose", 0f, 1f, 0f)), emptyList(), emptyList(), listOf(a, b),
+            listOf(OrgChild.Drawable(a.id), OrgChild.Drawable(b.id)), null)
+        val command = buildJsonObject {
+            put("op", "canvas_glue_edit"); put("id", "seam"); put("action", "brush")
+            put("mesh_a", a.id.raw); put("mesh_b", b.id.raw); put("distance", 1f)
+            put("hits_a", JsonArray(listOf(JsonPrimitive(0))))
+            put("hits_b", JsonArray(emptyList()))
+        }
+        val glued = CanvasEdits.apply(source, command)
+        assertEquals(1, glued.glues.single().pairs.size)
+        assertEquals(0, glued.glues.single().pairs.single().indexA)
+        assertEquals(0, glued.glues.single().pairs.single().indexB)
+    }
+
+    /** A big triangle whose UV is the affine x/200, y/200, so any vertex's UV can be checked against its position. */
+    private fun cover(vararg points: Float) = Drawable(DrawableId("cover"), "Cover", null, BlendMode.Normal, emptyList(),
+        DrawableMesh(points, FloatArray(points.size) { points[it] / 200f }, intArrayOf(0, 1, 2)),
+        grid(MeshDeltaForm(FloatArray(6)), MeshDeltaForm(FloatArray(6) { 3f })))
+
+    private fun glueStroke(a: Drawable, b: Drawable, action: String, hitsA: List<Int>, distance: Float = 6f) = buildJsonObject {
+        put("op", "canvas_glue_edit"); put("id", "seam"); put("action", action)
+        put("mesh_a", a.id.raw); put("mesh_b", b.id.raw); put("distance", distance)
+        put("hits_a", JsonArray(hitsA.map(::JsonPrimitive)))
+        put("hits_b", JsonArray(emptyList()))
+    }
+
+    private fun assertUvFollowsPosition(mesh: DrawableMesh) {
+        mesh.positions.indices.forEach { assertEquals(mesh.positions[it] / 200f, mesh.uvs[it], 1e-4f, "component=$it") }
+    }
+
+    @Test fun glueBrushInsertsACoincidentVertexWithoutMovingThePicture() {
+        val a = drawable(null)
+        val b = cover(0f, 0f, 200f, 0f, 0f, 200f)
+        val source = PuppetModel(listOf(Parameter(parameter, "Pose", 0f, 1f, 0f)), emptyList(), emptyList(), listOf(a, b),
+            listOf(OrgChild.Drawable(a.id), OrgChild.Drawable(b.id)), null)
+        val glued = CanvasEdits.apply(source, glueStroke(a, b, "brush", listOf(0)))
+        val pair = glued.glues.single().pairs.single()
+        val coverMesh = glued.drawables.single { it.id == b.id }.mesh!!
+        assertEquals(4, coverMesh.vertexCount)
+        assertEquals(0, pair.indexA)
+        assertEquals(3, pair.indexB)
+        // The old vertices and the texture mapping are untouched; the new vertex samples its own texel.
+        assertContentEquals(b.mesh!!.positions, coverMesh.positions.copyOf(6))
+        assertUvFollowsPosition(coverMesh)
+        // The pair starts on one point, so the weld does nothing at rest.
+        val world = CpuDeformationEvaluator().evaluate(glued, emptyMap()).worldPositions
+        val before = CpuDeformationEvaluator().evaluate(source, emptyMap()).worldPositions
+        assertEquals(world.getValue(a.id)[0], world.getValue(b.id)[6], 1e-3f)
+        assertEquals(world.getValue(a.id)[1], world.getValue(b.id)[7], 1e-3f)
+        before.getValue(a.id).indices.forEach { assertEquals(before.getValue(a.id)[it], world.getValue(a.id)[it], 1e-3f) }
+        // The inserted vertex keeps following the pose, interpolated from its triangle.
+        assertEquals(8, glued.drawables.single { it.id == b.id }.geometryGrid!!.cells.last().form.positionDeltas.size)
+    }
+
+    @Test fun glueBrushSlidesANearbyVertexCarryingItsUv() {
+        val a = drawable(null)
+        val b = cover(22f, 31f, 200f, 0f, 0f, 200f)
+        val source = PuppetModel(emptyList(), emptyList(), emptyList(), listOf(a, b),
+            listOf(OrgChild.Drawable(a.id), OrgChild.Drawable(b.id)), null)
+        val glued = CanvasEdits.apply(source, glueStroke(a, b, "brush", listOf(0)))
+        val coverMesh = glued.drawables.single { it.id == b.id }.mesh!!
+        assertEquals(3, coverMesh.vertexCount)
+        assertEquals(0, glued.glues.single().pairs.single().indexB)
+        assertEquals(20f, coverMesh.positions[0], 1e-3f)
+        assertEquals(30f, coverMesh.positions[1], 1e-3f)
+        assertUvFollowsPosition(coverMesh)
+    }
+
+    @Test fun glueBrushIgnoresVerticesOutOfReach() {
+        val a = drawable(null)
+        val b = cover(300f, 300f, 400f, 300f, 300f, 400f)
+        val source = PuppetModel(emptyList(), emptyList(), emptyList(), listOf(a, b),
+            listOf(OrgChild.Drawable(a.id), OrgChild.Drawable(b.id)), null)
+        assertFailsWith<IllegalArgumentException> { CanvasEdits.apply(source, glueStroke(a, b, "brush", listOf(0, 1, 2), distance = 10f)) }
+    }
+
+    @Test fun ungluingTheLastPairRemovesTheGlue() {
+        val a = drawable(null)
+        val b = cover(0f, 0f, 200f, 0f, 0f, 200f)
+        val source = PuppetModel(emptyList(), emptyList(), emptyList(), listOf(a, b),
+            listOf(OrgChild.Drawable(a.id), OrgChild.Drawable(b.id)), null)
+        val glued = CanvasEdits.apply(source, glueStroke(a, b, "brush", listOf(0, 1)))
+        assertEquals(2, glued.glues.single().pairs.size)
+        val partial = CanvasEdits.apply(glued, glueStroke(a, b, "unglue", listOf(0)))
+        assertEquals(listOf(1), partial.glues.single().pairs.map { it.indexA })
+        assertTrue(CanvasEdits.apply(partial, glueStroke(a, b, "unglue", listOf(1))).glues.isEmpty())
+    }
+
+    @Test fun layerSelectionRangeFollowsTheAnchor() {
+        assertEquals(listOf("b", "c"), layerSelectionRange(listOf("a", "b", "c", "d"), "c", "b"))
+        assertEquals(listOf("z"), layerSelectionRange(listOf("a", "b"), null, "z"))
+    }
     @Test fun rotationCrossing180KeepsContinuousKeyAngles() {
         val rotation = Deformer.Rotation(DeformerId("r"), "Rotation", null, null, 0f,
             KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(), RotationPivotForm(0f, 0f, 179f, 1f)))))
