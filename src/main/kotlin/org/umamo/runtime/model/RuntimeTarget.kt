@@ -4,11 +4,9 @@ package org.umamo.runtime.model
  * The document's runtime-compatibility target: which runtime the rigger intends this puppet to run
  * on, selected in Properties > Document > Runtime.
  *
- * A target gates EDITING CONTROLS ONLY.  It never gates rendering (a document whose content already
- * exceeds the target keeps rendering everything), never gates saving to the native format or to
- * CMO3 (both always carry every feature), and only informs MOC3 export, where it selects the moc
- * version and drives the feature-strip confirmation.  This mirrors the official editor's own
- * "Model target version selection" behavior, which likewise keeps out-of-target data in the file.
+ * A target gates editing controls and export copies. It never gates rendering or saving the
+ * native project: an over-target feature stays in the editable model. CMO3 and MOC3 exports
+ * lower only the features the selected SDK cannot use, with notices naming actual losses.
  *
  * Ayagami is a third-party runtime (not an Umamo project) that is effectively Cubism 5.0
  * compatible at present per its maintainer; it has its own entry, rather than aliasing Cubism50,

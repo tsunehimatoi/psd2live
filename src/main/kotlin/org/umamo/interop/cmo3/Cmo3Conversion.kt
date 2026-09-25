@@ -11,6 +11,7 @@ import org.umamo.interop.ExportNotice
 import org.umamo.interop.ExportReport
 import org.umamo.interop.cmo3FileFormatVersion
 import org.umamo.interop.cmo3TargetVersionNo
+import org.umamo.interop.moc3.export.Moc3VersionDowngrade
 import org.umamo.runtime.model.AtlasTileId
 import org.umamo.runtime.model.PuppetModel
 import kotlin.math.roundToInt
@@ -89,16 +90,18 @@ public object Cmo3Conversion {
 		tileRasters: (AtlasTileId) -> RasterImage? = { null },
 		modelThumbnail: RasterImage? = null,
 	): Result {
+		val downgrade = Moc3VersionDowngrade.stripForCmo3(puppet, puppet.runtimeTarget)
+		val compatiblePuppet = Cmo3MeshSanitizer.sanitize(downgrade.puppet)
 		// Real layers first: a drawable whose tile has a raster and an inventory row writes that
 		// raster as its own layer, and leaves the crop path - the un-dedup included, since a real
 		// tile's model image is the single-placement shape by construction.
-		val sourceImages = Cmo3SourceLayerWeb.inputsOf(puppet, tileRasters)
+		val sourceImages = Cmo3SourceLayerWeb.inputsOf(compatiblePuppet, tileRasters)
 		val realDrawableIds = sourceImages.flatMapTo(HashSet()) { image -> image.layers.flatMap { layer -> layer.drawableIds } }
 		val cropPageIndexByDrawableId = pageIndexByDrawableId.filterKeys { drawableId -> drawableId !in realDrawableIds }
 		// Baked twins (one atlas slot, several canvas placements) are unrepresentable in the
 		// model-image web; the prepass copies each additional placement's patch onto a synthesized
 		// page and remaps those drawables' uvs there.  Everything below runs on ITS outputs.
-		val undedup = Cmo3AtlasUndedup.undeduplicate(puppet, pages, cropPageIndexByDrawableId)
+		val undedup = Cmo3AtlasUndedup.undeduplicate(compatiblePuppet, pages, cropPageIndexByDrawableId)
 		val effectivePuppet = undedup.puppet
 		val effectivePages = undedup.pages
 		val effectivePageIndexByDrawableId = undedup.pageIndexByDrawableId
@@ -172,7 +175,7 @@ public object Cmo3Conversion {
 			val nameById = effectivePuppet.drawables.associate { drawable -> drawable.id.raw to drawable.name }
 			leading.add(ExportNotice.SharedAtlasSlotKept(undedup.sharedDrawableIds.map { drawableId -> nameById[drawableId] ?: drawableId }))
 		}
-		return Result(model, report.copy(notices = leading + report.notices), effectivePuppet)
+		return Result(model, report.copy(notices = downgrade.notices + leading + report.notices), effectivePuppet)
 	}
 
 	/**

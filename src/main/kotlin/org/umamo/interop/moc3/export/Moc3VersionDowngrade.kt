@@ -4,6 +4,7 @@ import org.umamo.format.moc3.moc.MocVersion
 import org.umamo.format.moc3.moc.Section
 import org.umamo.interop.ExportNotice
 import org.umamo.interop.nearestLegacyBlendMode
+import org.umamo.interop.runtimeTargetOfMocVersion
 import org.umamo.runtime.model.AlphaBlendMode
 import org.umamo.runtime.model.ChannelGrids
 import org.umamo.runtime.model.ChannelValue
@@ -35,19 +36,9 @@ import org.umamo.runtime.model.screenColor
  * recognizes ("Warp40", "ParamAngleX"), while the same loss detected after lowering could only name
  * section indices.
  *
- * What can be carried is asked of the SECTION TABLE, not of [RuntimeTarget.supports].  The two ladders
- * are close but not the same, and where they differ the section table is the one that decides what a
- * file can hold: [RuntimeTarget] follows the official editor's target dialog, which gates the reversed
- * mask at Cubism 4.0 and the parameter repeat at Cubism 5.3 even though both are carried by every MOC3 version back
- * to v1.  Stripping on the editor's ladder would make a v5 file that uses either one round-trip
- * LOSSILY through a v5 export - LimeBirb's repeating parameters are exactly that case in the corpus.
- * RuntimeTarget's own docblock anticipates this and says so: edit gating is editor parity, the
- * section-level nuances belong to export lowering.
- *
- * The consequence is that a pre-export confirmation built on
- * [org.umamo.runtime.model.unsupportedFeaturesInUse] can name a feature this does not strip.  That is
- * the conservative direction (it over-warns, never under-warns), and the report returned here is what
- * actually happened.
+ * A feature is retained only when both the MOC section table and the selected SDK's authoring
+ * policy support it. The editor policy is stricter for reversed masks and parameter repeat;
+ * stripping those fields on old targets keeps the written MOC3 and CMO3 aligned.
  *
  * @see <a href="https://docs.umamo.org/format/MOC3.md">MOC3.md § Export</a>
  */
@@ -68,7 +59,15 @@ object Moc3VersionDowngrade {
 	 * @return Stripped The reduced rig and its notices; the input model when nothing had to go.
 	 */
 	fun strip(puppet: PuppetModel, version: MocVersion): Stripped {
-		val unsupported = RuntimeFeature.entries.filterNot { feature -> carries(feature, version) }
+		val target = runtimeTargetOfMocVersion(version)
+		return stripUnsupported(puppet, RuntimeFeature.entries.filterNot { feature -> carries(feature, version) && target.supports(feature) })
+	}
+
+	/** Uses the editor's SDK feature ladder for a CMO3 project export. */
+	fun stripForCmo3(puppet: PuppetModel, target: RuntimeTarget): Stripped =
+		stripUnsupported(puppet, RuntimeFeature.entries.filterNot(target::supports))
+
+	private fun stripUnsupported(puppet: PuppetModel, unsupported: List<RuntimeFeature>): Stripped {
 		if (unsupported.isEmpty()) {
 			return Stripped(puppet, emptyList())
 		}
@@ -102,19 +101,46 @@ object Moc3VersionDowngrade {
 					RuntimeFeature.ExtendedBlendShapes -> stripExtendedBlendShapes(stripped, ::report)
 					RuntimeFeature.ExtendedBlendModes -> stripExtendedBlendModes(stripped, ::report)
 					RuntimeFeature.PartComposite -> stripPartComposites(stripped, ::report)
-					// Carried by EVERY moc version, so `carries` is unconditionally true for both and neither
-					// ever reaches this loop: the reversed mask is a bit in the constant-flag byte and
-					// parameter repeat is section 54, and both go back to v1.  The arm exists to keep the
-					// `when` exhaustive, not because there is work to do.  If a future version gate ever
-					// drops one of them, this has to grow a real strip - returning the model unchanged would
-					// write the feature into a file with nowhere to put it.
-					RuntimeFeature.ReversedMask, RuntimeFeature.ParameterRepeat -> stripped
+					// These fields have storage in older MOC revisions, but the editor's SDK target
+					// policy forbids authoring them there. Keep MOC3 and CMO3 downgrade behavior aligned.
+					RuntimeFeature.ReversedMask -> stripReversedMasks(stripped, ::report)
+					RuntimeFeature.ParameterRepeat -> stripParameterRepeat(stripped, ::report)
 					// Neither is representable in PuppetModel, so there is nothing here to remove: motion
 					// sync is a sidecar family and an art path survives only as CMO3 round-trip payload.
 					RuntimeFeature.MotionSync, RuntimeFeature.ArtPath -> stripped
 				}
 		}
 		return Stripped(stripped, notices)
+	}
+
+	private fun stripReversedMasks(puppet: PuppetModel, report: Reporter): PuppetModel {
+		val affected = ArrayList<String>()
+		val drawables = puppet.drawables.map { drawable ->
+			if (!drawable.invertMask) drawable else {
+				affected.add(drawable.name)
+				drawable.copy(invertMask = false)
+			}
+		}
+		val parts = puppet.parts.map { part ->
+			if (!part.isIsolated || !part.composite.invertMask) part else {
+				affected.add(part.name)
+				part.copy(composite = part.composite.copy(invertMask = false))
+			}
+		}
+		report(RuntimeFeature.ReversedMask, affected)
+		return if (affected.isEmpty()) puppet else puppet.copy(drawables = drawables, parts = parts)
+	}
+
+	private fun stripParameterRepeat(puppet: PuppetModel, report: Reporter): PuppetModel {
+		val affected = ArrayList<String>()
+		val parameters = puppet.parameters.map { parameter ->
+			if (!parameter.repeat) parameter else {
+				affected.add(parameter.id.raw)
+				parameter.copy(repeat = false)
+			}
+		}
+		report(RuntimeFeature.ParameterRepeat, affected)
+		return if (affected.isEmpty()) puppet else puppet.copy(parameters = parameters)
 	}
 
 	/**

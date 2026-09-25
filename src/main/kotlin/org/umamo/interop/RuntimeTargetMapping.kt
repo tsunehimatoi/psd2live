@@ -19,7 +19,7 @@ import org.umamo.runtime.model.RuntimeTarget
  */
 fun RuntimeTarget.mocVersion(): MocVersion =
 	when (this) {
-		RuntimeTarget.NoTarget -> MocVersion.V50
+		RuntimeTarget.NoTarget -> MocVersion.V53
 		RuntimeTarget.Ayagami -> MocVersion.V50
 		RuntimeTarget.Cubism30 -> MocVersion.V30
 		RuntimeTarget.Cubism33 -> MocVersion.V33
@@ -40,7 +40,7 @@ fun RuntimeTarget.mocVersion(): MocVersion =
  */
 fun RuntimeTarget.cmo3TargetVersion(): Cmo3TargetVersion? =
 	when (this) {
-		RuntimeTarget.NoTarget -> Cmo3TargetVersion.V50
+		RuntimeTarget.NoTarget -> null
 		// Ayagami writes its effective Cubism level, in lockstep with cubismLevel and mocVersion.
 		RuntimeTarget.Ayagami -> Cmo3TargetVersion.V50
 		RuntimeTarget.Cubism30 -> Cmo3TargetVersion.V30
@@ -59,16 +59,21 @@ fun RuntimeTarget.cmo3TargetVersion(): Cmo3TargetVersion? =
  */
 fun RuntimeTarget.cmo3TargetVersionNo(): Int =
 	// CMO3: CModelSource field targetVersionNo.
-	cmo3TargetVersion()?.versionNo ?: Cmo3TargetVersion.V50.versionNo
+	cmo3TargetVersion()?.versionNo ?: Cmo3TargetVersion.LATEST_VERSION_NO
 
 /**
- * The `<root fileFormatVersion>` a fresh CMO3 write uses for this target - kept in lockstep with
- * [cmo3TargetVersion] so selecting Cubism 5.0 cannot emit a 5.4-era `504000000` root.
+ * The editor project serialization revision, independent of the model's SDK target. A Cubism
+ * Editor 5.0 project writes `500000005` even when its targetVersionNo selects an older SDK.
+ * Newer targets select the corresponding newer writer profile.
  *
  * @return String The packed fileFormatVersion attribute value.
  */
 fun RuntimeTarget.cmo3FileFormatVersion(): String =
-	cmo3TargetVersion()?.fileFormatVersion ?: Cmo3TargetVersion.V50.fileFormatVersion
+	when (this) {
+		RuntimeTarget.NoTarget -> "504000000"
+		RuntimeTarget.Cubism53 -> Cmo3TargetVersion.V53.fileFormatVersion
+		else -> Cmo3TargetVersion.V50.fileFormatVersion
+	}
 
 /**
  * Maps a CMO3 document's decoded target version to the runtime target it selects, with unknown or

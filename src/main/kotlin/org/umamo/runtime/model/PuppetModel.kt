@@ -77,7 +77,7 @@ data class PuppetModel(
 	val pixelsPerUnit: Float? = null,
 	/**
 	 * The document's runtime-compatibility target; [RuntimeTarget.NoTarget] restricts nothing.  Gates
-	 * editing controls only - never rendering or saving.  See [RuntimeTarget].
+	 * editing controls and exported copies, never rendering or saving the native project.
 	 */
 	val runtimeTarget: RuntimeTarget = RuntimeTarget.Cubism50,
 	/**

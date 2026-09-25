@@ -100,6 +100,7 @@ internal class Cmo3PropertyLowering(
 	private val baselinePartById = baseline.parts.associateBy(Part::id)
 	private val baselineDeformerById = baseline.deformers.associateBy(Deformer::id)
 	private val baselineDrawableById = baseline.drawables.associateBy(Drawable::id)
+	private val writesExtendedBlend = (index.modelSource.targetVersionNo as? Int)?.supportsCmo3ExtendedBlend == true
 
 	/** Drawables whose base geometry/UVs diverged from the imported weld - one aggregated notice. */
 	private val weldDivergedDrawableNames = ArrayList<String>()
@@ -389,8 +390,10 @@ internal class Cmo3PropertyLowering(
 							}
 							DrawableField.ALPHA_BLEND_MODE -> {
 								// CMO3: CArtMeshSource field alphaComposition (absent pre-5.3).
-								source.alphaComposition = alphaCompositionOf(editedDrawable.alphaBlendMode)
-								editor.ensureChildSlot(source, "CArtMeshSource", "alphaComposition")
+								if (writesExtendedBlend) {
+									source.alphaComposition = alphaCompositionOf(editedDrawable.alphaBlendMode)
+									editor.ensureChildSlot(source, "CArtMeshSource", "alphaComposition")
+								}
 							}
 							DrawableField.MASKED_BY -> {
 								// CMO3: ACDrawableSource field clipGuidList - always drawable GUIDs.
@@ -864,7 +867,7 @@ internal class Cmo3PropertyLowering(
 			source.colorComposition = colorCompositionOf(editedComposite.blendMode)
 			editor.ensureChildSlot(source, "CPartSource", "colorComposition", "alphaComposition")
 		}
-		if (baselineComposite.alphaBlendMode != editedComposite.alphaBlendMode) {
+		if (writesExtendedBlend && baselineComposite.alphaBlendMode != editedComposite.alphaBlendMode) {
 			// CMO3: CPartSource field alphaComposition.
 			source.alphaComposition = alphaCompositionOf(editedComposite.alphaBlendMode)
 			editor.ensureChildSlot(source, "CPartSource", "alphaComposition", "targetDeformerGuid")

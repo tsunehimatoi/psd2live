@@ -47,9 +47,9 @@ import org.umamo.format.raster.RasterImage
  * too - their DontSerializeIfDefault annotations are hand-removed in the generated model, because
  * the official reader's custom deserializers reject their absence.
  *
- * ERA NOTE: fresh graphs write `fileFormatVersion` from the selected SDK target (Cubism 5.0 →
- * `500000000`, Cubism 5.3 → `503000000`) via [org.umamo.interop.cmo3FileFormatVersion], in lockstep
- * with [targetVersionNo].  Prologue PI tables still come from the 5.4 corpus.  A MOC3-origin
+ * ERA NOTE: the editor project schema and SDK target are separate. Cubism Editor 5.0 writes
+ * `fileFormatVersion=500000005` even for an older SDK target; targetVersionNo records that SDK.
+ * Fresh prologue PIs are chosen from editor-authored 5.0/5.3/5.4 samples. A MOC3-origin
  * conversion may still populate nothing 5.x while targetVersionNo says an older SDK.  Both files
  * that are known to RENDER for the same model - Cubism's own golden (402030000) and a third-party
  * converter's output (401030000) - are 4.x.  The standing theory for the MOC3-origin render gap
@@ -115,7 +115,7 @@ internal object Cmo3SkeletonBuilder {
 		targetVersionNo: Int,
 		modelThumbnail: RasterImage? = null,
 	): BlankSkeleton {
-		val rootPart = buildRootPart()
+		val rootPart = buildRootPart(targetVersionNo.supportsCmo3ExtendedBlend)
 		val rootGroup = buildRootParameterGroup()
 		// CMO3: CModelSource fields _icon64 / _icon32 / _icon16 - backed by image.png, image_0.png,
 		// image_1.png in the blank default, the model's rendered thumbnail at each size.
@@ -209,10 +209,11 @@ internal object Cmo3SkeletonBuilder {
 					org.umamo.format.cmo3.model.gen.CMotionSyncSettingSourceSet().apply {
 						_settingSourceSetMotionSync = LinkedHashSet<Any?>()
 					}
-				modelStateSetSet =
-					org.umamo.format.cmo3.model.gen.CModelStateSetSet().apply {
+				if (targetVersionNo.supportsCmo3V54Classes) {
+					modelStateSetSet = org.umamo.format.cmo3.model.gen.CModelStateSetSet().apply {
 						_modelStateSets = CArrayList<Any?>()
 					}
+				}
 			}
 		return BlankSkeleton(root, icons)
 	}
@@ -223,7 +224,7 @@ internal object Cmo3SkeletonBuilder {
 	 *
 	 * @return CPartSource The fresh root part.
 	 */
-	private fun buildRootPart(): CPartSource {
+	private fun buildRootPart(includeExtendedBlend: Boolean): CPartSource {
 		val part = CPartSource()
 		val formGuid = freshGuid("CFormGuid")
 		val form =
@@ -264,7 +265,7 @@ internal object Cmo3SkeletonBuilder {
 			_childGuids = CArrayList<Any?>()
 			clipGuidList = CArrayList<Any?>()
 			colorComposition = org.umamo.format.cmo3.model.gen.ColorComposition.NORMAL
-			alphaComposition = org.umamo.format.cmo3.model.gen.AlphaComposition.OVER
+			if (includeExtendedBlend) alphaComposition = org.umamo.format.cmo3.model.gen.AlphaComposition.OVER
 		}
 	}
 

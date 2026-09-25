@@ -5,6 +5,7 @@ import org.umamo.format.cmo3.model.custom.CModelSource
 import org.umamo.format.cmo3.model.custom.GEditableMesh2
 import org.umamo.format.cmo3.model.gen.CArtMeshSource
 import org.umamo.format.cmo3.model.gen.CEditableMeshExtension
+import org.umamo.format.cmo3.model.gen.CMeshGeneratorExtension
 import org.umamo.format.cmo3.model.gen.CParameterGroup
 import org.umamo.format.cmo3.model.gen.CParameterGroupSet
 import org.umamo.format.cmo3.model.gen.CParameterSource
@@ -12,6 +13,7 @@ import org.umamo.format.cmo3.model.gen.CParameterSourceSet
 import org.umamo.format.cmo3.model.gen.CTextureInputExtension
 import org.umamo.format.cmo3.model.gen.CTextureInput_ModelImage
 import org.umamo.format.cmo3.model.gen.GTexture2D
+import org.umamo.format.cmo3.model.gen.MeshGenerateSetting
 import org.umamo.format.cmo3.model.gen.Type
 import org.umamo.format.cmo3.model.identity.Guid
 import org.umamo.format.cmo3.model.identity.Id
@@ -293,6 +295,24 @@ internal class Cmo3StructureLowering(
 								}
 						},
 					)
+					// Cubism's automatic mesh generator reads its per-ArtMesh settings from this
+					// extension. The editable mesh alone is enough to display and manually edit
+					// triangles, but leaves automatic regeneration without a setting to apply.
+					add(
+						CMeshGeneratorExtension().apply {
+							guid = freshGuidLike(null, "CExtensionGuid")
+							_owner = fresh
+							meshGenerateSetting = MeshGenerateSetting().apply {
+								polygonOuterDensity = 100
+								polygonInnerDensity = 100
+								polygonMargin = 20
+								polygonInnerMargin = 20
+								polygonMinMargin = 5
+								polygonMinBoundsPt = 5
+								thresholdAlpha = 0
+							}
+						},
+					)
 				}
 		}
 		appendToCollection(sourceSet, "CDrawableSourceSet", "_sources", sourceSet._sources, { sourceSet._sources = it }, fresh)
@@ -423,7 +443,9 @@ internal class Cmo3StructureLowering(
 			_childGuids = CArrayList<Any?>()
 			clipGuidList = CArrayList<Any?>()
 			colorComposition = org.umamo.format.cmo3.model.gen.ColorComposition.NORMAL
-			alphaComposition = org.umamo.format.cmo3.model.gen.AlphaComposition.OVER
+			if ((modelSource.targetVersionNo as? Int)?.supportsCmo3ExtendedBlend == true) {
+				alphaComposition = org.umamo.format.cmo3.model.gen.AlphaComposition.OVER
+			}
 		}
 		appendToCollection(sourceSet, "CPartSourceSet", "_sources", sourceSet._sources, { sourceSet._sources = it }, part)
 		return true
@@ -643,7 +665,8 @@ internal class Cmo3StructureLowering(
 		// the MOC3 document loader normalizes parent-local rest meshes through :render's
 		// restMeshesToCanvasSpace at import (rendering never notices the base's frame - grids sum
 		// to one - but the editor's atlas and mesh-edit views read this field as canvas geometry).
-		source.indices = mesh.indices.copyOf()
+		val cleanIndices = Cmo3MeshSanitizer.cleanIndices(mesh)
+		source.indices = cleanIndices.copyOf()
 		editor.ensureChildSlot(source, "CArtMeshSource", "indices", "keyforms")
 		source.positions = mesh.positions.copyOf()
 		editor.ensureChildSlot(source, "CArtMeshSource", "positions", "uvs")
@@ -666,7 +689,7 @@ internal class Cmo3StructureLowering(
 			editableMesh.useDelaunayTriangulation = false
 			editor.ensurePresentAttr(editableMesh, "GEditableMesh2", "useDelaunayTriangulation")
 			if (vertexCount <= Short.MAX_VALUE.toInt()) {
-				editableMesh.edge = triangleEdges(mesh.indices)
+				editableMesh.edge = triangleEdges(cleanIndices)
 				editor.ensureChildSlot(editableMesh, "GEditableMesh2", "edge", "edgePriority")
 			} else {
 				unsupported(
@@ -759,6 +782,7 @@ internal class Cmo3StructureLowering(
 			for (cornerIndex in 0 until 3) {
 				val endpointA = indices[triangleStart + cornerIndex]
 				val endpointB = indices[triangleStart + (cornerIndex + 1) % 3]
+				if (endpointA == endpointB) continue
 				val low = minOf(endpointA, endpointB)
 				val high = maxOf(endpointA, endpointB)
 				seen.add(low shl 16 or high)

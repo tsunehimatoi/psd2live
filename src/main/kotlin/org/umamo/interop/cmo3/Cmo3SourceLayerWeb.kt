@@ -252,6 +252,7 @@ internal object Cmo3SourceLayerWeb {
 					modelImageGuid = modelImage.guid,
 					atlasLocalToCanvas = affineOf(entryHalf),
 					packing = Cmo3ImageChainBuilder.writePacking(GTransform2(), tilePlacement),
+					includeAutoLayoutLock = names.includeAutoLayoutLock,
 				),
 			)
 			for (drawableId in layerInput.drawableIds) {

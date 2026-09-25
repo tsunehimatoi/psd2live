@@ -286,6 +286,41 @@ internal val CMO3_VERSIONS_BY_TAG_5_4: Map<String, Pair<String, Int>> =
 		"WarpDeformerOriginalShape" to ("WarpDeformerOriginalShape" to 1),
 	)
 
+// Cubism Editor 5.0's blank save and auto-backups author CModelSource:14 and
+// CArtMeshSource:4. The remaining entries are the union of the version PIs in those
+// editor-authored files; in particular, CPartSource/CPartForm acquire their v2 PIs only
+// in the 5.3 samples. The 4.0 template bundled with that editor is a separate era.
+private val CMO3_VERSIONS_BY_TAG_5_0: Map<String, Pair<String, Int>> =
+	CMO3_VERSIONS_BY_TAG_5_4.filterKeys {
+		it in setOf(
+			"CArtMeshSource", "CArtPathBrush", "CArtPathBrush_TextureInput", "CFloatColor",
+			"CLabelColor", "CModelImage", "CModelSource", "CParameterGroup",
+			"CRotationDeformerForm", "FixWidthData", "KeyFormMorphTarget", "KeyformGridSource",
+			"ModelImageEntry", "SpriteData", "TextureUvData",
+		)
+	}.toMutableMap().apply {
+		put("CModelSource", "CModelSource" to 14)
+		put("CArtMeshSource", "CArtMeshSource" to 4)
+	}
+
+private val CMO3_VERSIONS_BY_TAG_4_0: Map<String, Pair<String, Int>> =
+	CMO3_VERSIONS_BY_TAG_5_0.filterKeys {
+		it in setOf("CArtMeshSource", "CModelImage", "CModelSource", "CParameterGroup", "CRotationDeformerForm", "KeyformGridSource", "ModelImageEntry")
+	}.toMutableMap().apply {
+		put("CModelSource", "CModelSource" to 13)
+		put("CParameterGroup", "CParameterGroup" to 3)
+	}
+
+internal fun cmo3VersionForTag(tag: String, fileFormatVersion: String?): Pair<String, Int>? =
+	when {
+		fileFormatVersion?.startsWith("500") == true -> CMO3_VERSIONS_BY_TAG_5_0[tag]
+		fileFormatVersion?.startsWith("503") == true ->
+			if (tag == "CModelSource") "CModelSource" to 15 else CMO3_VERSIONS_BY_TAG_5_4[tag]
+		fileFormatVersion?.startsWith("4") == true -> CMO3_VERSIONS_BY_TAG_4_0[tag]
+		fileFormatVersion?.startsWith("5") == true -> CMO3_VERSIONS_BY_TAG_5_4[tag]
+		else -> null
+	}
+
 // Tags owned by the serializer itself (structural, primitive, collection, and array tags) - they
 // deserialize without a class and therefore carry no import PI.
 internal val CMO3_STRUCTURAL_TAGS: Set<String> =

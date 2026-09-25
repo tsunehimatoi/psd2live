@@ -179,6 +179,7 @@ internal object Cmo3ImageChainBuilder {
 		// The skeleton's three model icons take image.png / image_0.png / image_1.png, so icon entries
 		// continue the editor's image_N naming from suffix 2.
 		private val mintIconPath: () -> String = FreshPathSequence("image", firstSuffix = 2)::next,
+		val includeAutoLayoutLock: Boolean = true,
 	) {
 		/** The one blend node every synthesized layer and group references. */
 		val sharedBlend: CBlend_Normal = CBlend_Normal()
@@ -845,11 +846,12 @@ internal object Cmo3ImageChainBuilder {
 		modelImageGuid: Any?,
 		atlasLocalToCanvas: CAffine,
 		packing: GTransform2,
+		includeAutoLayoutLock: Boolean = true,
 	): ModelImageEntry =
 		ModelImageEntry().apply {
 			this.atlas = atlas
 			this.modelImageGuid = modelImageGuid
-			autoLayoutLock = AutoLayoutLock.NONE
+			if (includeAutoLayoutLock) autoLayoutLock = AutoLayoutLock.NONE
 			atlasLocalToCanvasTransform = atlasLocalToCanvas
 			materialLocalToAtlasTransform = packing
 		}
@@ -1138,7 +1140,7 @@ internal object Cmo3ImageChainBuilder {
 		sourceImages: List<Cmo3SourceLayerWeb.SourceImageInput> = emptyList(),
 	): BuiltImageChain {
 		val textureManager = root.textureManager as? CTextureManager ?: error("skeleton has no texture manager")
-		val names = Cmo3FreshChainNames()
+		val names = Cmo3FreshChainNames(includeAutoLayoutLock = (root.targetVersionNo as? Int)?.supportsCmo3V54Classes == true)
 		val rawImages =
 			mutableGraphListOf(textureManager._rawImages) ?: error("skeleton texture manager has no raw-image list")
 		val textureAtlases =
@@ -1481,6 +1483,7 @@ internal object Cmo3ImageChainBuilder {
 							atlas = atlas,
 							modelImageGuid = patchImage.guid,
 							atlasLocalToCanvas = pageFit.copyAffine(),
+							includeAutoLayoutLock = names.includeAutoLayoutLock,
 							packing =
 								writePacking(
 									GTransform2(),

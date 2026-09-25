@@ -17,11 +17,10 @@ import org.umamo.format.cmo3.xml.XmlCodec
  */
 public object Cmo3Author {
 	/**
-	 * Default fresh-document `fileFormatVersion` when no SDK target is supplied (Cubism 5.0).
-	 * Prefer [org.umamo.interop.cmo3FileFormatVersion] / [Cmo3TargetVersion.fileFormatVersion] so the
-	 * root attribute tracks the selected SDK.
+	 * Default fresh-document `fileFormatVersion` from Cubism Editor 5.0's own blank save.
+	 * The SDK target is a separate CModelSource field.
 	 */
-	public const val FRESH_FILE_FORMAT_VERSION: String = "500000000"
+	public const val FRESH_FILE_FORMAT_VERSION: String = "500000005"
 
 	/**
 	 * Serializes [root] as a complete main.xml document with the prologue for [fileFormatVersion].
@@ -32,8 +31,7 @@ public object Cmo3Author {
 	 * or newly modeled class whose import the official editor's reader would miss.
 	 *
 	 * @param Any    root              The fresh model root (a CModelSource web built in memory, never read).
-	 * @param String fileFormatVersion The `<root fileFormatVersion>` to write; must match the SDK
-	 *                                 target (e.g. Cubism 5.0 → `500000000`).
+	 * @param String fileFormatVersion The editor serialization revision to write.
 	 * @return ByteArray The UTF-8 main.xml bytes, CRLF-framed like the editor's writer.
 	 */
 	public fun writeFreshMainXml(
@@ -56,7 +54,7 @@ public object Cmo3Author {
 		// reproducible, and readers key these by name.
 		val versions = ArrayList(CMO3_VERSIONS_ALWAYS_5_4)
 		for (tag in modelTags.sorted()) {
-			CMO3_VERSIONS_BY_TAG_5_4[tag]?.let { versionEntry -> versions.add(versionEntry) }
+			cmo3VersionForTag(tag, fileFormatVersion)?.let { versionEntry -> versions.add(versionEntry) }
 		}
 		// CMO3: root attribute fileFormatVersion - the root's only attribute in every corpus file.
 		document.rootElement.setAttribute("fileFormatVersion", fileFormatVersion)
@@ -79,8 +77,8 @@ public object Cmo3Author {
 	 * The official reader resolves element tags through the `<?import?>` list, so a missing import
 	 * makes the file unreadable in the editor.  This pass restores the corpus invariant: the
 	 * import list is exactly one sorted FQCN per distinct non-structural tag (an import whose tag
-	 * left the document is pruned; corpus files never carry stale imports).  Version PIs are only
-	 * ever APPENDED (5.4-era documents only - the per-tag numbers are era-specific), never pruned:
+	 * left the document is pruned; corpus files never carry stale imports). Version PIs are only
+	 * ever APPENDED using the document's editor era, never pruned:
 	 * corpus files do carry version PIs for classes with no matching element (BareMinimum's
 	 * ModelStateSet:1), so pruning would break replay byte-identity.
 	 *
@@ -112,17 +110,9 @@ public object Cmo3Author {
 
 		val replayedVersionNames = versionInstructions.map { it.data.trim().substringBeforeLast(':') }.toHashSet()
 		val fileFormatVersion = document.rootElement.getAttributeValue("fileFormatVersion")
-		val appendedVersions =
-			if (fileFormatVersion == FRESH_FILE_FORMAT_VERSION ||
-				fileFormatVersion == "504000000" ||
-				fileFormatVersion?.startsWith("5") == true
-			) {
-				modelTags.sorted().mapNotNull { tag ->
-					CMO3_VERSIONS_BY_TAG_5_4[tag]?.takeIf { (piName, _) -> piName !in replayedVersionNames }
-				}
-			} else {
-				emptyList()
-			}
+		val appendedVersions = modelTags.sorted().mapNotNull { tag ->
+			cmo3VersionForTag(tag, fileFormatVersion)?.takeIf { (piName, _) -> piName !in replayedVersionNames }
+		}
 
 		if (desiredImports == replayedImports && appendedVersions.isEmpty()) {
 			return
