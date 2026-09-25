@@ -205,6 +205,7 @@ jobs:
           $out = "dist-artifacts"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
           $version = $env:VERSION
+          $minExeBytes = 5MB
 
           $appDir = Get-ChildItem -Path "build/compose/binaries" -Recurse -Directory -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -eq "app" } |
@@ -224,20 +225,36 @@ jobs:
           if (Test-Path $portable) { Remove-Item $portable -Force }
           Compress-Archive -Path (Join-Path $appDir.FullName "*") -DestinationPath $portable -Force
 
-          $exe = Get-ChildItem -Path "build/compose/binaries" -Recurse -Filter "*.exe" -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -notmatch "unins" } |
-            Select-Object -First 1
-          $msi = Get-ChildItem -Path "build/compose/binaries" -Recurse -Filter "*.msi" -File -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-          if (-not $exe) {
+          # Prefer the largest installer .exe (exclude uninstallers). Compose may also
+          # emit a tiny launcher stub (~500KB); never publish that as the Release asset.
+          $exes = @(Get-ChildItem -Path "build/compose/binaries" -Recurse -Filter "*.exe" -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notmatch "(?i)unins" })
+          if ($exes.Count -eq 0) {
             Write-Host "::error::No .exe under build/compose/binaries"
             Get-ChildItem -Path "build/compose/binaries" -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 50 FullName
             exit 1
           }
-          if (-not $msi) {
+          $exe = $exes | Sort-Object Length -Descending | Select-Object -First 1
+          Write-Host "Candidate exes:"
+          $exes | Sort-Object Length -Descending | ForEach-Object {
+            Write-Host ("  {0:N0} bytes  {1}" -f $_.Length, $_.FullName)
+          }
+          if ($exe.Length -lt $minExeBytes) {
+            Write-Host "::error::No sufficiently large .exe (>= 5MB) under build/compose/binaries; refusing stub-sized installer."
+            $exes | Sort-Object Length -Descending | ForEach-Object {
+              Write-Host ("  {0:N0} bytes  {1}" -f $_.Length, $_.FullName)
+            }
+            exit 1
+          }
+
+          $msis = @(Get-ChildItem -Path "build/compose/binaries" -Recurse -Filter "*.msi" -File -ErrorAction SilentlyContinue)
+          if ($msis.Count -eq 0) {
             Write-Host "::error::No .msi under build/compose/binaries"
             exit 1
           }
+          $msi = $msis | Sort-Object Length -Descending | Select-Object -First 1
+          Write-Host "Selected exe: $($exe.FullName) ($($exe.Length) bytes)"
+          Write-Host "Selected msi: $($msi.FullName) ($($msi.Length) bytes)"
           Copy-Item $exe.FullName (Join-Path $out "PSD2Live-$version.exe")
           Copy-Item $msi.FullName (Join-Path $out "PSD2Live-$version.msi")
           Get-ChildItem $out | Format-Table Name, Length
@@ -437,7 +454,14 @@ jobs:
           body: |
             ## 主要更新
 
-            相对 v1.1.1，**${{ env.VERSION }}** 带来工作区、画布隔离、网格生成/分割、导出与 MCP/Agent 增强，并正式提供 Linux Cubism 预览包：
+            相对 v1.2.1，**${{ env.VERSION }}** 增强混合形状关键点编写与曲面变形器编辑：
+
+            - 混合形状（Blend Shape）关键点按加性增量（additive deltas）编写，更符合 Cubism 语义
+            - 在层级编辑模式，或在变形模式下按住 Ctrl 编辑曲面变形器时，保留子对象几何（子网格、关键点增量、混合形状、子旋转/曲面变形器），避免牵动子件
+
+            ## 1.2.1 更新说明
+
+            相对 v1.1.1，**1.2.1** 带来工作区、画布隔离、网格生成/分割、导出与 MCP/Agent 增强，并正式提供 Linux Cubism 预览包：
 
             - Linux x86_64 Cubism Native 预览桥接与 `.deb` 打包；文档说明 X11/GLX 限制
             - 命名布局工作区（替代共享标签）
