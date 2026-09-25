@@ -38,21 +38,21 @@ macOS 打包暂缓，本工作流不构建。
 
 作业 `build-windows`、`build-linux`、`release` 使用 GitHub Environment 名称 **`release-cubism`**。请在仓库 Settings → Environments 中创建该环境，并加上必需审阅者 / 部署分支限制，避免任意协作者直接打出含 SDK 的包。
 
-## 如何手动发 1.2.2（示例）
+## 如何手动发 1.2.3（示例）
 
 前提：私有 SDK 仓库已上传 zip；本仓库已配置上表变量/密钥与 `release-cubism` 环境。
 
 1. Actions → **Release Cubism** → **Run workflow**。
-2. `version` 填 `1.2.2`（不要带 `v`）。
+2. `version` 填 `1.2.3`（不要带 `v`）。
 3. `create_github_release` 按需勾选（默认 true）。
 4. 通过环境保护审批后等待 Windows / Linux 构建完成。
-5. 若勾选发布，会创建或更新标签 `v1.2.2` 的 **正式**（非 prerelease）GitHub Release，附件包括：
-   - `PSD2Live-1.2.2-windows-x86_64-portable.zip`
-   - `PSD2Live-1.2.2.exe`
-   - `PSD2Live-1.2.2.msi`
-   - `PSD2Live-1.2.2-linux-amd64.deb`
+5. 若勾选发布，会创建或更新标签 `v1.2.3` 的 **正式**（非 prerelease）GitHub Release，附件包括：
+   - `PSD2Live-1.2.3-windows-x86_64-portable.zip`
+   - `PSD2Live-1.2.3.exe`
+   - `PSD2Live-1.2.3.msi`
+   - `PSD2Live-1.2.3-linux-amd64.deb`
 
-也可只推送标签 `v1.2.2` 触发同一工作流。请选一种入口，避免重复跑完整矩阵。
+也可只推送标签 `v1.2.3` 触发同一工作流。请选一种入口，避免重复跑完整矩阵。
 
 工作流**不会**修改 `build.gradle.kts` 里的 `packageVersion`；版本号仅用于产物命名与 Release 标题。发布前请先在仓库中把 `version` / `packageVersion` 与产品字符串 bump 到目标版本。
 
