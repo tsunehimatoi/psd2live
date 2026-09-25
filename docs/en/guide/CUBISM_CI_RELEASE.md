@@ -38,21 +38,21 @@ Alternative: keep the zip in other private storage and adapt the fetch step; the
 
 Jobs `build-windows`, `build-linux`, and `release` use the GitHub Environment named **`release-cubism`**. Create it under Settings → Environments and add required reviewers / deployment branch rules so arbitrary collaborators cannot mint SDK-inclusive packages alone.
 
-## How to run workflow_dispatch for 1.2.1 (example)
+## How to run workflow_dispatch for 1.2.2 (example)
 
 Prerequisites: SDK zip uploaded to the private repo; variables/secrets above and the `release-cubism` environment configured.
 
 1. Actions → **Release Cubism** → **Run workflow**.
-2. Set `version` to `1.2.1` (no leading `v`).
+2. Set `version` to `1.2.2` (no leading `v`).
 3. Leave `create_github_release` enabled unless you only want artifacts.
 4. Approve the environment gate, then wait for Windows and Linux jobs.
-5. When publishing is enabled, tag `v1.2.1` is created or updated as a **formal** (non-prerelease) GitHub Release with:
-   - `PSD2Live-1.2.1-windows-x86_64-portable.zip`
-   - `PSD2Live-1.2.1.exe`
-   - `PSD2Live-1.2.1.msi`
-   - `PSD2Live-1.2.1-linux-amd64.deb`
+5. When publishing is enabled, tag `v1.2.2` is created or updated as a **formal** (non-prerelease) GitHub Release with:
+   - `PSD2Live-1.2.2-windows-x86_64-portable.zip`
+   - `PSD2Live-1.2.2.exe`
+   - `PSD2Live-1.2.2.msi`
+   - `PSD2Live-1.2.2-linux-amd64.deb`
 
-You can instead push tag `v1.2.1` to trigger the same workflow. Prefer one entry path to avoid a full double matrix.
+You can instead push tag `v1.2.2` to trigger the same workflow. Prefer one entry path to avoid a full double matrix.
 
 The workflow does **not** bump `packageVersion` in `build.gradle.kts`; the version is used for artifact names and the Release title only. Bump `version` / `packageVersion` and product-facing strings in the repo before shipping.
 
