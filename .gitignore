@@ -27,3 +27,4 @@ __pycache__/
 .kotlin/
 .vscode/
 dist/
+docs/local/
