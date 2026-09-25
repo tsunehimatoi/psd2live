@@ -49,6 +49,9 @@ internal class ArraySerializer(
 		element.setFieldName(name)
 		element.setAttribute(ATTR_COUNT, size(value).toString())
 		element.text = encode(value)
+		// A MeshPointRef must share its keyform's positions array. When the same array is written
+		// again, WriteContext hoists this definition into <shared> and emits xs.ref at both sites.
+		ctx.setWritten(value, element)
 		return element
 	}
 

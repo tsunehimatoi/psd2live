@@ -1,9 +1,14 @@
 package org.umamo.interop.cmo3
 
 import org.umamo.format.cmo3.Cmo3
+import org.umamo.format.cmo3.model.drawable.MeshPointRef
+import org.umamo.format.cmo3.model.drawable.PointOnCurve
 import org.umamo.format.cmo3.model.custom.CModelSource
+import org.umamo.format.cmo3.model.gen.CArtMeshForm
 import org.umamo.format.cmo3.model.gen.CControllerExtension
 import org.umamo.format.cmo3.model.gen.CTopologyObserverExtension
+import org.umamo.format.cmo3.model.gen.Effect
+import org.umamo.format.cmo3.model.gen.TargetPoint
 import org.umamo.format.png.PngCodec
 import org.umamo.format.raster.RasterImage
 import org.umamo.runtime.model.BlendMode
@@ -17,6 +22,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotSame
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 class Cmo3DeformPathsObserverTest {
     @Test fun topologyObserverTracksCurrentControllerOnFreshAndEditedExport() {
@@ -52,6 +58,29 @@ class Cmo3DeformPathsObserverTest {
             val observer = extensions.filterIsInstance<CTopologyObserverExtension>().single()
             assertSame(source, observer._owner)
             assertEquals(listOf(controller), Cmo3Import.elementsOf(observer.observers))
+            val form = Cmo3Import.elementsOf(source.keyforms).filterIsInstance<CArtMeshForm>().single()
+            val targets = Cmo3Import.elementsOf(controller.targetPoints).filterIsInstance<TargetPoint>()
+            assertEquals(3, targets.size)
+            targets.forEachIndexed { vertex, target ->
+                val point = target._point as MeshPointRef
+                assertSame(source, point._artMeshSource)
+                assertSame(form, point.keyForm)
+                assertSame(form.positions, point.positions)
+                assertSame(form.coordType, point.coordType)
+                assertEquals(vertex, point._index)
+                assertEquals(vertex.toLong(), point.pointUid)
+                assertEquals(Cmo3Import.uuidOf(source.guid), Cmo3Import.uuidOf(point.artMeshGuid))
+                val effect = Cmo3Import.elementsOf(target.effects).single() as Effect
+                val onCurve = effect.effectorPt as PointOnCurve
+                assertEquals(Cmo3Import.uuidOf((Cmo3Import.elementsOf(controller.controlCurves).single() as org.umamo.format.cmo3.model.gen.CControllerCurve).curveId), Cmo3Import.uuidOf(onCurve.curveId))
+                assertEquals(1f, effect.weight)
+                assertTrue(onCurve.totalT < 1f, "open-curve totalT must stay below the last point index")
+                if (vertex == 1) assertEquals(0f, onCurve.distance)
+                if (vertex == 2) {
+                    assertEquals(1f, onCurve.distance)
+                    assertEquals(0f, onCurve.totalT)
+                }
+            }
         }
 
         checkObserver()

@@ -2,7 +2,9 @@ package org.umamo.interop.cmo3
 
 import org.umamo.format.cmo3.Cmo3GraphEditor
 import org.umamo.format.cmo3.model.drawable.CoordType
+import org.umamo.format.cmo3.model.drawable.MeshPointRef
 import org.umamo.format.cmo3.model.drawable.PointInTriangle
+import org.umamo.format.cmo3.model.drawable.PointOnCurve
 import org.umamo.format.cmo3.model.gen.*
 import org.umamo.format.cmo3.model.identity.Guid
 import org.umamo.format.cmo3.model.type.GVector2
@@ -10,9 +12,96 @@ import org.umamo.format.cmo3.type.CArrayList
 import org.umamo.runtime.model.*
 import org.umamo.runtime.eval.meshGridDefaultDeltas
 import java.util.UUID
+import kotlin.math.sqrt
 
 /** Native editor controllers; the runtime intentionally sees only the baked ArtMesh forms. */
 internal object Cmo3DeformPaths {
+    private data class BoundCurve(val guid: Guid, val points: List<Pair<Float, Float>>, val closed: Boolean)
+
+    private data class Projection(val totalT: Float, val distance: Float, val nearest: Pair<Float, Float>)
+
+    /** Cubism's CArtMeshSource.getDefaultKeyForm() selects the middle of the keyform pool. */
+    private fun defaultKeyform(source: CArtMeshSource): CArtMeshForm {
+        val forms = Cmo3Import.elementsOf(source.keyforms).filterIsInstance<CArtMeshForm>()
+        return forms.getOrNull(forms.size / 2) ?: error("Deform path ArtMesh has no default keyform")
+    }
+
+    /** Cubism binds a controller to every point of the ArtMesh's default keyform. */
+    private fun bindTargets(source: CArtMeshSource, form: CArtMeshForm, curves: List<BoundCurve>): CArrayList<Any?> {
+        val positions = form.positions as? FloatArray ?: error("Deform path default keyform has no positions")
+        val coordType = form.coordType as? CoordType ?: error("Deform path default keyform has no coordinate type")
+        val pointUids = Cmo3Import.editableMeshOf(source)?.pointUid as? IntArray
+            ?: error("Deform path ArtMesh has no editable point UIDs")
+        val artMeshGuid = source.guid as? Guid ?: error("Deform path ArtMesh has no GUID")
+        require(positions.size == pointUids.size * 2) { "Deform path keyform and editable mesh have different vertex counts" }
+
+        return CArrayList<Any?>().apply {
+            for (vertex in pointUids.indices) {
+                val position = positions[vertex * 2] to positions[vertex * 2 + 1]
+                val effects = CArrayList<Any?>()
+                for (curve in curves) {
+                    val projection = nearestOnCurve(curve, position)
+                    effects.add(Effect().apply {
+                        effectorPt = PointOnCurve().apply {
+                            curveId = curve.guid
+                            totalT = projection.totalT
+                            distance = projection.distance
+                            _posOnLocal = GVector2().apply {
+                                x = projection.nearest.first
+                                y = projection.nearest.second
+                            }
+                        }
+                        weight = 1f
+                    })
+                }
+                add(TargetPoint().apply {
+                    _point = MeshPointRef().apply {
+                        pointUid = pointUids[vertex].toLong()
+                        this.coordType = coordType
+                        keyForm = form
+                        this.positions = positions
+                        step = 0
+                        _artMeshSource = source
+                        _index = vertex
+                        this.artMeshGuid = artMeshGuid
+                    }
+                    this.effects = effects
+                })
+            }
+        }
+    }
+
+    private fun nearestOnCurve(curve: BoundCurve, point: Pair<Float, Float>): Projection {
+        var best = Projection(0f, Float.POSITIVE_INFINITY, curve.points.first())
+        val segmentCount = if (curve.closed) curve.points.size else curve.points.size - 1
+        for (segment in 0 until segmentCount) {
+            val start = curve.points[segment]
+            val end = curve.points[(segment + 1) % curve.points.size]
+            val dx = end.first - start.first
+            val dy = end.second - start.second
+            val lengthSquared = dx * dx + dy * dy
+            val fraction = if (lengthSquared <= 1e-12f) 0f else
+                (((point.first - start.first) * dx + (point.second - start.second) * dy) / lengthSquared).coerceIn(0f, 1f)
+            val nearest = (start.first + dx * fraction) to (start.second + dy * fraction)
+            val distance = sqrt(
+                ((point.first - nearest.first) * (point.first - nearest.first) +
+                    (point.second - nearest.second) * (point.second - nearest.second)).toDouble()
+            ).toFloat()
+            if (distance < best.distance) best = Projection(segment + fraction, distance, nearest)
+        }
+        return best.copy(totalT = editorSafeT(best.totalT, curve))
+    }
+
+    /**
+     * Cubism splits curves at corner points; an open curve evaluated exactly at its last index lands in a
+     * one-node segment and throws on every drag frame. A closed curve at `size` wraps back to 0.
+     */
+    private fun editorSafeT(t: Float, curve: BoundCurve): Float {
+        val size = curve.points.size.toFloat()
+        return if (curve.closed) (if (t >= size) 0f else t)
+        else t.coerceAtMost(Math.nextDown(size - 1f))
+    }
+
     private fun localDefault(model: PuppetModel, drawable: Drawable): FloatArray {
         val base=requireNotNull(drawable.mesh).positions
         val deltas=meshGridDefaultDeltas(drawable) { id -> model.parameters.firstOrNull { it.id==id }?.default ?: 0f }
@@ -68,7 +157,8 @@ internal object Cmo3DeformPaths {
             val paths=model.deformPaths.filter { it.drawableId.raw==id }
             if(paths==baseline.deformPaths.filter { it.drawableId.raw==id }) continue
             val drawable=model.drawables.single { it.id.raw==id }
-            val vertices=localDefault(model,drawable)
+            val defaultForm=defaultKeyform(source)
+            val vertices=defaultForm.positions as? FloatArray ?: error("Deform path default keyform has no positions")
             val canvasVertices=requireNotNull(drawable.mesh).positions
             val widthScale=canvasScale(model,drawable)
             val extensions=CArrayList<Any?>().apply {
@@ -80,6 +170,7 @@ internal object Cmo3DeformPaths {
             for((level,curves) in paths.groupBy { it.editLevel }) {
                 val controls=CArrayList<Any?>()
                 val nativeCurves=CArrayList<Any?>()
+                val boundCurves=ArrayList<BoundCurve>()
                 val extension=CControllerExtension().apply {
                     guid=guid("CExtensionGuid");_owner=source;editLevel=level
                     maxBindCount=3;bindMethod=BindMethod.LINE_AND_DIRECTION
@@ -111,7 +202,9 @@ internal object Cmo3DeformPaths {
                         }
                     }
                     nativeCurves.add(curve)
+                    boundCurves.add(BoundCurve(curve.curveId as Guid, path.points.map { it.position(vertices) }, path.closed))
                 }
+                extension.targetPoints = bindTargets(source, defaultForm, boundCurves)
                 extensions.add(extension)
                 controllers.add(extension)
             }
