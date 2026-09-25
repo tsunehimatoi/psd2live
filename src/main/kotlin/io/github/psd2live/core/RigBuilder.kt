@@ -448,7 +448,49 @@ object RigBuilder {
 	)
 
 	fun build(inputAnalysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig, meshCache: PreviewMeshCache? = null): BuiltRig =
-		buildWithContext(inputAnalysis, atlas, config, meshCache, rigContext(inputAnalysis, config), emptyMap())
+		buildWithContext(inputAnalysis, atlas, config, meshCache, rigContext(inputAnalysis, config), splitStableDrawableIds(inputAnalysis, config))
+
+	/**
+	 * The drawable ids a document split with the layer splitter has to keep.
+	 *
+	 * The split's live preview keeps every drawable the baseline had under its old id and names each new
+	 * piece `ArtMeshSplit<hash of its layer id>`, and everything authored afterwards - geometry, topology,
+	 * glue - is journalled against those ids. A plain build would instead number every layer by tag, so
+	 * pieces would be renamed and same-tag layers renumbered: an export or a reopen then replays the
+	 * journal onto different meshes. So a build of a split document re-derives the baseline's ids the way
+	 * the pre-split build assigned them - same layers, same order, same skip rule - and leaves the rest
+	 * to the split naming.
+	 *
+	 * Only when the edits were authored against that naming, though. A split project that was reopened
+	 * before this existed got plain names on the rebuild, and anything authored since names those; the
+	 * journal itself says which naming it speaks. Empty when the document was never split.
+	 */
+	private fun splitStableDrawableIds(inputAnalysis: PipelineAnalysis, config: PipelineConfig): Map<String, DrawableId> {
+		val splitBaselineIds = config.rigEdits.splitBaselineLayerIds
+		if (splitBaselineIds.isEmpty() || !config.rigEdits.referencesSplitDrawable()) return emptyMap()
+		val neededIds = splitBaselineIds + config.rigEdits.calibrationLayerIds
+		val originalLayers = inputAnalysis.source.layers.filter { it.id.raw in neededIds }
+		if (originalLayers.isEmpty()) return emptyMap()
+		val baselineSource = object : org.umamo.format.art.SourceArt {
+			override val widthPx = inputAnalysis.source.widthPx
+			override val heightPx = inputAnalysis.source.heightPx
+			override val groups = inputAnalysis.source.groups
+			override val layers = originalLayers
+		}
+		val baselineConfig = config.copy(
+			deletedLayerIds = config.deletedLayerIds - splitBaselineIds,
+			rigEdits = config.rigEdits.copy(splitBaselineLayerIds = emptySet()),
+		)
+		val baseline = MouthLipLayers.prepare(CharacterAnalyzer.analyze(baselineSource, baselineConfig), baselineConfig)
+		val counts = mutableMapOf<String, Int>()
+		val ids = LinkedHashMap<String, DrawableId>()
+		for (layer in orderMouthLayers(baseline.layers.sortedBy { it.source.order })) {
+			// The atlas places exactly these layers, and the build names only placed layers.
+			if (layer.source.raster.width <= 0 || layer.source.raster.height <= 0 || layer.opaquePixels == 0) continue
+			ids[layer.source.id.raw] = uniqueDrawableId(layer, counts)
+		}
+		return ids
+	}
 
 	internal fun buildPreservingDeformers(
 		inputAnalysis: PipelineAnalysis,
@@ -2216,10 +2258,24 @@ object RigBuilder {
 		return DrawableId(if (ordinal == 1) key else "$key$ordinal")
 	}
 
+	/** Whether any edit names a drawable by its split id, i.e. was authored against the split naming. */
+	private fun RigEditOverlay.referencesSplitDrawable(): Boolean {
+		fun split(id: String) = id.startsWith(SPLIT_DRAWABLE_PREFIX)
+		val quoted = "\"$SPLIT_DRAWABLE_PREFIX"
+		return keyformSetEdits.any { split(it.target.id) } ||
+			keyformDeleteEdits.any { split(it.target.id) } ||
+			keyformCopyEdits.any { split(it.sourceTarget.id) || split(it.destinationTarget.id) } ||
+			warpEdits.any { warp -> warp.meshIds.any(::split) } ||
+			authoringJournal.any { quoted in it.toString() } ||
+			structureEdits.any { quoted in it.toString() }
+	}
+
+	private const val SPLIT_DRAWABLE_PREFIX = "ArtMeshSplit"
+
 	private fun stableSplitDrawableId(layerId: String, reserved: Collection<DrawableId>): DrawableId {
 		val hash = UUID.nameUUIDFromBytes(layerId.toByteArray(Charsets.UTF_8))
 			.toString().replace("-", "")
-		val base = "ArtMeshSplit$hash"
+		val base = "$SPLIT_DRAWABLE_PREFIX$hash"
 		var candidate = base
 		var suffix = 2
 		while (reserved.any { it.raw == candidate }) candidate = "$base${suffix++}"
