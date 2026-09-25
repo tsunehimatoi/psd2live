@@ -34,6 +34,11 @@ import io.github.psd2live.ui.BrushShape
 import io.github.psd2live.ui.CREATION_TOOLS
 import io.github.psd2live.ui.CanvasEditor
 import io.github.psd2live.ui.CanvasTool
+import io.github.psd2live.ui.GLUE_SUB_TOOL_LABELS
+import io.github.psd2live.ui.GLUE_WEIGHT_MODE_LABELS
+import io.github.psd2live.ui.GlueColorA
+import io.github.psd2live.ui.GlueColorB
+import io.github.psd2live.ui.GlueSubTool
 import io.github.psd2live.ui.CreatePlacementKind
 import io.github.psd2live.ui.CreateRelation
 import io.github.psd2live.ui.EditHierarchyMode
@@ -626,6 +631,32 @@ private fun ColumnScope.CreationToolContextMenuContent(
             val pair = editor.glueMeshPair()
             val pairs = if (pair != null) editor.gluePreviewPoints().size else 0
             ParamsPanel {
+                SegmentedChips {
+                    GLUE_SUB_TOOL_LABELS.forEach { (sub, key) ->
+                        CompactToggleChip(
+                            text = tr(key),
+                            selected = editor.glueSubTool == sub,
+                            onToggle = { editor.glueSubTool = sub },
+                            showCheckWhenSelected = false,
+                            height = 20.dp,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+                if (editor.glueSubTool == GlueSubTool.WEIGHT) {
+                    SegmentedChips {
+                        GLUE_WEIGHT_MODE_LABELS.forEach { (mode, label) ->
+                            CompactToggleChip(
+                                text = label,
+                                selected = editor.glueWeightMode == mode,
+                                onToggle = { editor.glueWeightMode = mode },
+                                showCheckWhenSelected = false,
+                                height = 20.dp,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                }
                 ParamSliderRow(
                     label = tr("editor.glueDistance"),
                     value = editor.glueDistance,
@@ -642,32 +673,45 @@ private fun ColumnScope.CreationToolContextMenuContent(
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                 )
             } else {
-                Text(
-                    text = "${tr("editor.glueMeshA")} ${editor.meshLabel(pair.first)}",
-                    style = LocalToolTypography.current.caption.copy(fontSize = 10.5.sp),
-                    color = LocalToolColors.current.textPrimary,
-                    modifier = Modifier.padding(horizontal = 6.dp),
-                )
-                Text(
-                    text = "${tr("editor.glueMeshB")} ${editor.meshLabel(pair.second)}",
-                    style = LocalToolTypography.current.caption.copy(fontSize = 10.5.sp),
-                    color = LocalToolColors.current.textPrimary,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                )
+                // Both ends on one line, each in its side's colour: the pair reads as A ↔ B.
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    val style = LocalToolTypography.current.caption.copy(fontSize = 10.5.sp)
+                    Text(
+                        text = editor.meshLabel(pair.first),
+                        style = style,
+                        color = GlueColorA,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Text(text = "↔", style = style, color = LocalToolColors.current.textMuted)
+                    Text(
+                        text = editor.meshLabel(pair.second),
+                        style = style,
+                        color = GlueColorB,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                }
             }
-            CompactButton(
-                text = tr("editor.glueSwap"),
-                onClick = { editor.swapGlueEnds(); onAction() },
-                enabled = pair != null && editor.editable,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 3.dp, vertical = 2.dp),
-                height = 22.dp,
-            )
-            CompactButton(
-                text = tr(if (editor.glueAlreadyBound()) "editor.glueReplace" else "editor.glueCreate"),
-                onClick = { editor.applyGlue(); onAction(); onDismissRequest() },
-                enabled = pair != null && pairs > 0 && editor.editable,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 3.dp, vertical = 2.dp),
-                height = 22.dp,
+            ActionGrid(
+                listOf(
+                    ActionSpec(tr("editor.glueSwap"), enabled = pair != null && editor.editable) {
+                        editor.swapGlueEnds(); onAction()
+                    },
+                    ActionSpec(
+                        tr(if (editor.glueAlreadyBound()) "editor.glueReplace" else "editor.glueCreate"),
+                        enabled = pair != null && pairs > 0 && editor.editable,
+                        primary = true,
+                    ) {
+                        editor.applyGlue(); onAction(); onDismissRequest()
+                    },
+                )
             )
         }
         else -> Unit

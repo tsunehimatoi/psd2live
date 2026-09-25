@@ -1758,7 +1758,10 @@ private fun BoxScope.CanvasToolBar(
         // composition has nothing left to animate out of — so the rows that a mode change adds or
         // removes would pop while the rest slid. Composing them all and hiding the ones the mode has no
         // use for makes the arriving and departing rows slide with everything else.
+        // Glue joins exactly two meshes, so it is offered only while two are selected.
+        val glueOffered = editor.glueMeshCount() == 2
         val availableTools = toolbarGroups(editor.hierarchyMode).flatten().toSet()
+            .let { if (glueOffered) it else it - CanvasTool.GLUE }
         val lastVisibleIndex = TOOLBAR_TOOL_ORDER.indexOfLast { it in availableTools }
 
         TOOLBAR_TOOL_ORDER.forEachIndexed { index, tool ->
@@ -1807,9 +1810,10 @@ private fun BoxScope.CanvasToolBar(
             }
         }
 
-        val glueReady = editor.hierarchyMode == EditHierarchyMode.EDIT && editor.glueMeshCount() == 2
+        // Glue's sub-tools unfold under it only while it is in hand, like the brush shapes below; the
+        // weight side is a setting of the weight sub-tool and lives in the tool panel and context menu.
         AnimatedVisibility(
-            visible = glueReady,
+            visible = CanvasTool.GLUE in availableTools && editor.tool == CanvasTool.GLUE,
             enter = expandVertically(animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)) + fadeIn(animationSpec = tween(150)),
             exit = shrinkVertically(animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)) + fadeOut(animationSpec = tween(120)),
         ) {
@@ -1822,13 +1826,9 @@ private fun BoxScope.CanvasToolBar(
                         .background(colors.border.copy(alpha = 0.45f))
                 )
                 run {
-                    listOf(
-                        GlueSubTool.BRUSH to tr("editor.glueBrush"),
-                        GlueSubTool.WEIGHT to tr("editor.glueWeight"),
-                        GlueSubTool.REMERGE to tr("editor.glueRemerge"),
-                    ).forEach { (sub, label) ->
+                    GLUE_SUB_TOOL_LABELS.forEach { (sub, key) ->
                         ShapeItemRow(
-                            label = label,
+                            label = tr(key),
                             isSelected = editor.tool == CanvasTool.GLUE && editor.glueSubTool == sub,
                             isToolbarExpanded = animatedWidth > 42.dp,
                             textAlpha = textAlpha,
@@ -1845,42 +1845,12 @@ private fun BoxScope.CanvasToolBar(
                                     )
                                 }
                             },
-                            keyLabel = if (sub == GlueSubTool.BRUSH) "Ctrl+G" else "",
                             onClick = {
                                 editor.glueSubTool = sub
                                 editor.activateTool(CanvasTool.GLUE)
                                 focus()
                             },
                         )
-                    }
-                    if (editor.tool == CanvasTool.GLUE && editor.glueSubTool == GlueSubTool.WEIGHT) {
-                        listOf(
-                            GlueWeightMode.BALANCE to "A:B",
-                            GlueWeightMode.A to "A",
-                            GlueWeightMode.B to "B",
-                        ).forEach { (mode, label) ->
-                            ShapeItemRow(
-                                label = label,
-                                isSelected = editor.glueWeightMode == mode,
-                                isToolbarExpanded = animatedWidth > 42.dp,
-                                textAlpha = textAlpha,
-                                textOffset = textOffset,
-                                isBusy = editor.busy,
-                                icon = {
-                                    Box(
-                                        Modifier.size(14.dp).background(
-                                            when (mode) {
-                                                GlueWeightMode.A -> GlueColorA
-                                                GlueWeightMode.B -> GlueColorB
-                                                GlueWeightMode.BALANCE -> GlueColorA
-                                            },
-                                            CircleShape,
-                                        )
-                                    )
-                                },
-                                onClick = { editor.glueWeightMode = mode; focus() },
-                            )
-                        }
                     }
                 }
             }

@@ -117,6 +117,19 @@ internal enum class GlueSubTool { BRUSH, WEIGHT, REMERGE }
 
 internal enum class GlueWeightMode { BALANCE, A, B }
 
+/** Glue's sub-tools and weight sides with the labels every picker shows them under. */
+internal val GLUE_SUB_TOOL_LABELS = listOf(
+    GlueSubTool.BRUSH to "editor.glueBrush",
+    GlueSubTool.WEIGHT to "editor.glueWeight",
+    GlueSubTool.REMERGE to "editor.glueRemerge",
+)
+
+internal val GLUE_WEIGHT_MODE_LABELS = listOf(
+    GlueWeightMode.BALANCE to "A:B",
+    GlueWeightMode.A to "A",
+    GlueWeightMode.B to "B",
+)
+
 internal val GlueColorA = androidx.compose.ui.graphics.Color(0xFF5B8DEF)
 internal val GlueColorB = androidx.compose.ui.graphics.Color(0xFFE07A3D)
 
@@ -257,7 +270,7 @@ internal val VERTEX_TOOLS = setOf(
 internal val TOOLBAR_TOOL_ORDER = listOf(
     CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT,
     CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE,
-    CanvasTool.SUBDIVIDE, CanvasTool.KNIFE,
+    CanvasTool.SUBDIVIDE, CanvasTool.KNIFE, CanvasTool.GLUE,
     CanvasTool.PAINT_BRUSH, CanvasTool.PAINT_PENCIL, CanvasTool.PAINT_ERASER,
     CanvasTool.PAINT_BUCKET, CanvasTool.PAINT_EYEDROPPER,
     CanvasTool.PAINT_SHAPE,

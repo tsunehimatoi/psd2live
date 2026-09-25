@@ -48,6 +48,9 @@ import io.github.psd2live.ui.PaintShape
 import io.github.psd2live.ui.CanvasEditor
 import io.github.psd2live.ui.CanvasTarget
 import io.github.psd2live.ui.CanvasTool
+import io.github.psd2live.ui.GLUE_SUB_TOOL_LABELS
+import io.github.psd2live.ui.GLUE_WEIGHT_MODE_LABELS
+import io.github.psd2live.ui.GlueSubTool
 import io.github.psd2live.ui.SelectionStyle
 import io.github.psd2live.ui.WarpAddTo
 import io.github.psd2live.ui.WarpSizeStrategy
@@ -523,6 +526,30 @@ internal fun ToolDetailsView(
                 val ready = pair != null && editor.editable
                 val pairs = if (pair != null) editor.gluePreviewPoints().size else 0
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        GLUE_SUB_TOOL_LABELS.forEach { (sub, key) ->
+                            CompactToggleChip(
+                                text = tr(key),
+                                selected = editor.glueSubTool == sub,
+                                onToggle = { editor.glueSubTool = sub },
+                                height = 24.dp,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                    if (editor.glueSubTool == GlueSubTool.WEIGHT) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            GLUE_WEIGHT_MODE_LABELS.forEach { (mode, label) ->
+                                CompactToggleChip(
+                                    text = label,
+                                    selected = editor.glueWeightMode == mode,
+                                    onToggle = { editor.glueWeightMode = mode },
+                                    height = 24.dp,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
+                    }
                     Text(tr("editor.glueDistance"), style = typography.caption, color = colors.textMuted)
                     CompactNumberSpinner(value = editor.glueDistance.toDouble(), onValueChange = { editor.glueDistance = it.toFloat() }, min = 0.5, max = 40.0, unit = "px", height = 24.dp)
                     if (pair == null) {
