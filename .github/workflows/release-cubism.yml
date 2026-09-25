@@ -220,7 +220,7 @@ jobs:
             exit 1
           }
           Write-Host "Zipping portable from: $($appDir.FullName)"
-          $portable = Join-Path (Resolve-Path $out) "PSD2Live-$version-windows-x86_64-portable-cubism.zip"
+          $portable = Join-Path (Resolve-Path $out) "PSD2Live-$version-windows-x86_64-portable.zip"
           if (Test-Path $portable) { Remove-Item $portable -Force }
           Compress-Archive -Path (Join-Path $appDir.FullName "*") -DestinationPath $portable -Force
 
@@ -238,8 +238,8 @@ jobs:
             Write-Host "::error::No .msi under build/compose/binaries"
             exit 1
           }
-          Copy-Item $exe.FullName (Join-Path $out "PSD2Live-$version-cubism.exe")
-          Copy-Item $msi.FullName (Join-Path $out "PSD2Live-$version-cubism.msi")
+          Copy-Item $exe.FullName (Join-Path $out "PSD2Live-$version.exe")
+          Copy-Item $msi.FullName (Join-Path $out "PSD2Live-$version.msi")
           Get-ChildItem $out | Format-Table Name, Length
 
       - name: Upload Windows artifacts
@@ -382,10 +382,10 @@ jobs:
             find build/compose/binaries -type f 2>/dev/null | head -50 || true
             exit 1
           fi
-          cp "$DEB" "$OUT/PSD2Live-${VERSION}-linux-amd64-cubism-preview.deb"
+          cp "$DEB" "$OUT/PSD2Live-${VERSION}-linux-amd64.deb"
           ls -la "$OUT"
           # Soft file-existence smoke (no GUI): confirm package is non-empty
-          test -s "$OUT/PSD2Live-${VERSION}-linux-amd64-cubism-preview.deb"
+          test -s "$OUT/PSD2Live-${VERSION}-linux-amd64.deb"
           # Optional GUI smoke is intentionally skipped in v1 (brittle under xvfb).
           # Example if re-enabled later:
           # xvfb-run -a timeout 15s ./gradlew run -Ppsd2live.includeCubism=true || true
@@ -428,32 +428,51 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
-          name: PSD2Live ${{ env.VERSION }} (Cubism preview)
+          name: PSD2Live v${{ env.VERSION }}
           target_commitish: ${{ github.sha }}
           draft: false
-          prerelease: true
+          prerelease: false
           fail_on_unmatched_files: true
+          make_latest: true
           body: |
-            Cubism-inclusive preview packages for PSD2Live **${{ env.VERSION }}**.
+            ## 主要更新
 
-            ### Platform notes
-            - **Linux**: X11/GLX required (XWayland / `xvfb-run` OK). Pure Wayland without XWayland, aarch64, and musl/Alpine are not supported.
-            - **Windows**: x86_64 with the bundled native bridge.
-            - **macOS**: deferred — not built by this workflow.
+            相对 v1.1.1，**${{ env.VERSION }}** 带来工作区、画布隔离、网格分割与 MCP/Agent 增强，并正式提供 Linux Cubism 预览包：
 
-            ### License / redistribution
-            These assets may include **proprietary Live2D Cubism** binaries built from an SDK you supply privately.
-            Do **not** redistribute proprietary bits beyond what your Live2D license allows.
-            Public application sources remain GPL; Cubism Core/Framework/shaders remain Live2D proprietary.
-            See `docs/*/guide/CUBISM_SDK_SETUP.md` and `THIRD_PARTY_NOTICES.md`.
+            - Linux x86_64 Cubism Native 预览桥接与 `.deb` 打包；文档说明 X11/GLX 限制
+            - 命名布局工作区（替代共享标签）
+            - 画布会话与选择隔离；预览运行时按画布隔离
+            - 套索分割源图层；不相连网格岛分割且不改父变形
+            - 分割对话框预览网格岛
+            - MCP/Agent：图层分类与共享写作工具；PSD / 绘画 / 网格 / 预览工作流共享
+            - 网格重建与预览设置时保留编辑
+            - GitHub Actions：公开 CI + 从私有仓库拉取 Cubism SDK 的发行工作流
 
-            ### Assets
-            - `PSD2Live-${{ env.VERSION }}-windows-x86_64-portable-cubism.zip`
-            - `PSD2Live-${{ env.VERSION }}-cubism.exe`
-            - `PSD2Live-${{ env.VERSION }}-cubism.msi`
-            - `PSD2Live-${{ env.VERSION }}-linux-amd64-cubism-preview.deb`
+            ## 1.1.1 更新说明
+
+            相对 v1.1.0，**1.1.1** 修复停靠栏收起后画布与历史图错位：
+
+            - 网格点跟随画布，不再停在旧窗口位置
+            - 历史图保持在面板内
+
+            ## 1.1.0 更新说明
+
+            相对 v1.0.1，**1.1.0** 完善参数编辑与预览交互：
+
+            - 完整参数编辑体验，轴上吸附、间隔与关键点编辑
+            - 参数轨道显示关键值标签；侧边浮层显示绑定该参数的组件
+            - 文件夹标签色（Cubism 兼容）、文件夹内创建参数与重命名稳定性
+            - 预览播放/暂停与鼠标跟踪移至画布工具栏；缩放与统计 pill 停靠左下
+            - 修复层级树网格预览悬停、全屏对话框遮罩压扁停靠栏、未提交笔触进入共享预览
+
+            ## 下载
+
+            - **便携版 ZIP** `PSD2Live-${{ env.VERSION }}-windows-x86_64-portable.zip`：解压后即可运行，无需安装。
+            - **Windows EXE** `PSD2Live-${{ env.VERSION }}.exe`：安装程序。
+            - **Windows MSI** `PSD2Live-${{ env.VERSION }}.msi`：Windows Installer 安装包。
+            - **Linux amd64 Deb（含 Cubism Native 预览）** `PSD2Live-${{ env.VERSION }}-linux-amd64.deb`：需 X11/GLX；内含官方运行时预览桥接，请遵守 Live2D SDK 许可，勿再二次公开分发专有组件。
           files: |
-            release-assets/PSD2Live-${{ env.VERSION }}-windows-x86_64-portable-cubism.zip
-            release-assets/PSD2Live-${{ env.VERSION }}-cubism.exe
-            release-assets/PSD2Live-${{ env.VERSION }}-cubism.msi
-            release-assets/PSD2Live-${{ env.VERSION }}-linux-amd64-cubism-preview.deb
+            release-assets/PSD2Live-${{ env.VERSION }}-windows-x86_64-portable.zip
+            release-assets/PSD2Live-${{ env.VERSION }}.exe
+            release-assets/PSD2Live-${{ env.VERSION }}.msi
+            release-assets/PSD2Live-${{ env.VERSION }}-linux-amd64.deb
