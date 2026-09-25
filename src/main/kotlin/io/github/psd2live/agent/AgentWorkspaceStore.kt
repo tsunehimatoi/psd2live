@@ -13,6 +13,7 @@ import io.github.psd2live.core.RigTargetKind
 import io.github.psd2live.core.RigTargetRef
 import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.Side
+import io.github.psd2live.core.SkeletonSpec
 import io.github.psd2live.history.WorkspaceHistoryNode
 import io.github.psd2live.history.WorkspaceHistorySelection
 import io.github.psd2live.history.WorkspaceHistoryState
@@ -387,6 +388,7 @@ internal class AgentWorkspaceStore(
 			}
 		}
 		putJsonObject("rigEdits") {
+			document.rigEdits.skeleton?.let { put("skeleton", it.toJson()) }
             put("assetLayers", JsonObject(document.rigEdits.assetLayers))
             putJsonArray("calibrationLayerIds") { document.rigEdits.calibrationLayerIds.sorted().forEach { add(JsonPrimitive(it)) } }
             putJsonArray("splitBaselineLayerIds") { document.rigEdits.splitBaselineLayerIds.sorted().forEach { add(JsonPrimitive(it)) } }
@@ -549,6 +551,8 @@ internal class AgentWorkspaceStore(
 		}
 		val rigEditObject = value.optionalObject("rigEdits")
 		val rigEdits = RigEditOverlay(
+			// Existing projects predate armatures; keep their authored deformer hierarchy on load.
+			skeleton = rigEditObject["skeleton"]?.jsonObject?.let(SkeletonSpec::fromJson) ?: SkeletonSpec.Disabled,
             assetLayers = rigEditObject.optionalObject("assetLayers").mapValues { it.value.jsonObject },
             calibrationLayerIds = rigEditObject.optionalArray("calibrationLayerIds").map { it.jsonPrimitive.content }.toSet(),
             splitBaselineLayerIds = rigEditObject.optionalArray("splitBaselineLayerIds").map { it.jsonPrimitive.content }.toSet(),

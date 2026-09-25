@@ -531,6 +531,7 @@ fun CanvasViewportComposable(
 					ShortcutAction.TOOL_BRUSH -> { editor.activateTool(CanvasTool.BRUSH); true }
 					ShortcutAction.TOOL_SMOOTH -> { editor.activateTool(CanvasTool.SMOOTH); true }
 					ShortcutAction.TOOL_INFLATE -> { editor.activateTool(CanvasTool.INFLATE); true }
+					ShortcutAction.TOOL_SKELETON_WARP -> { editor.activateTool(CanvasTool.SKELETON_WARP); true }
 					ShortcutAction.TOOL_CREATE_WARP -> { editor.activateTool(CanvasTool.CREATE_WARP); true }
 					ShortcutAction.TOOL_CREATE_ROTATION -> { editor.activateTool(CanvasTool.CREATE_ROTATION); true }
 					ShortcutAction.TOOL_CREATE_DEFORM_PATH -> { editor.activateTool(CanvasTool.CREATE_DEFORM_PATH); true }
@@ -1314,7 +1315,7 @@ fun CanvasViewportComposable(
 			}
 
 			// Bottom-left: zoom/FPS/physics stats pill.
-			if (badgeText.isNotEmpty()) {
+			if (badgeText.isNotEmpty() && (mode != CanvasMode.EDIT || (editor.skeletonDraft == null && editor.placement == null))) {
 				Box(
 					modifier = Modifier
 						.align(Alignment.BottomStart)

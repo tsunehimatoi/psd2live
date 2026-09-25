@@ -185,12 +185,12 @@ class ViewModelAgentWorkspace(
             inputPath = input.toString(), loadedInputPath = input.normalize().toString(),
             loadedInputFileSignature = signature, analysis = preview.analysis, previewModel = preview,
             layerOverrides = emptyMap(), layerVisibility = emptyMap(), deletedLayerIds = emptySet(),
-            parentOverrides = emptyMap(), rigEdits = io.github.psd2live.core.RigEditOverlay.Empty,
+            parentOverrides = emptyMap(), rigEdits = preview.config.rigEdits,
             selectedLayerId = null, selectedDeformerId = null, historySnapshot = null,
             parameterValues = preview.rig.puppet.parameters.associate { it.id to it.default },
         )
         val document = AgentWorkspaceDocument(source, emptyMap(), emptySet(), emptyMap(), emptyMap(),
-            io.github.psd2live.core.RigEditOverlay.Empty, WorkspaceStateCodec.settings(installed))
+            preview.config.rigEdits, WorkspaceStateCodec.settings(installed))
         synchronized(historyLock) {
             viewModel.installProjectState(installed)
             val revision = revisionId(installed, document)

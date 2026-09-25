@@ -107,6 +107,25 @@ object PhysicsGenerator {
 		rule.outputParameter in availableParameterIds && rule.inputs.all { it.parameter in availableParameterIds }
 	}
 
+	/** Gentle delayed motion on distal bones; each output is unique and can be overridden by a user edit. */
+	internal fun skeletonRules(spec: SkeletonSpec?, available: Set<String>): List<PhysicsRule> {
+		if (spec?.enabled != true) return emptyList()
+		return spec.bones.filter { it.role in setOf(BoneRole.FOREARM, BoneRole.SHIN, BoneRole.TAIL, BoneRole.WING) }
+			.mapNotNull { bone ->
+				val input = when (bone.role) {
+					BoneRole.WING -> "ParamBodyAngleZ"
+					BoneRole.TAIL -> spec.bone(bone.parentId ?: "")?.takeIf { it.role == BoneRole.TAIL }?.parameterId
+						?: "ParamBodyAngleZ"
+					else -> spec.bone(bone.parentId ?: "")?.parameterId ?: "ParamBodyAngleZ"
+				}
+				if (input !in available || bone.parameterId !in available || input == bone.parameterId) return@mapNotNull null
+				RigPhysicsEdit("PhysicsSkel_${bone.id}", bone.name, input, bone.parameterId,
+					length = (bone.length / 30f).coerceIn(3f, 16f), mobility = 0.55f,
+					delay = if (bone.role == BoneRole.TAIL) 0.65f else 0.9f,
+					acceleration = 0.8f, outputScale = if (bone.role == BoneRole.TAIL) 0.75f else 0.4f).rule()
+			}
+	}
+
 	private fun hairRule(
 		id: String,
 		name: String,
@@ -152,11 +171,12 @@ object PhysicsGenerator {
 		hasEyeJelly: Boolean,
 		availableParameterIds: Set<String>?,
         custom: List<RigPhysicsEdit> = emptyList(),
+		skeleton: SkeletonSpec? = null,
 	): String? {
 		val presets = if (availableParameterIds == null) {
 			rules(hasFrontHair, hasBackHair, hasEyeJelly)
 		} else {
-			validRules(hasFrontHair, hasBackHair, hasEyeJelly, availableParameterIds)
+			validRules(hasFrontHair, hasBackHair, hasEyeJelly, availableParameterIds) + skeletonRules(skeleton, availableParameterIds)
 		}
 		val rules = mergeCustomRules(presets, custom, availableParameterIds)
 		if (rules.isEmpty()) return null

@@ -45,6 +45,9 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.onPointerEvent
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import java.awt.Cursor
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -60,6 +63,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import kotlin.math.*
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
@@ -83,6 +87,8 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlin.math.hypot
+import org.umamo.runtime.model.DrawableId
 import org.umamo.edit.MeshTopology
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
@@ -441,6 +447,71 @@ internal fun BoxScope.CanvasEditorOverlay(
                         } else {
                             drawCircle(colors.windowBackground, 5.5f, ap)
                             drawCircle(colors.accent, 4f, ap)
+                        }
+                    }
+                }
+            } else if (editor.hierarchyMode == EditHierarchyMode.DEFORM && (editor.editLevel == 3 || editor.tool == CanvasTool.SKELETON_WARP)) {
+                // LEVEL 3 / SKELETON WARP: Interactive Skeleton Armature Deformer
+                editor.ensureSkeletonWarpState()
+                val sState = editor.skeletonWarpState
+                if (sState != null) {
+                    // Faint underlying lattice lines
+                    val columns = target.geometry.columns!! + 1
+                    pts.indices.flatMap { i ->
+                        listOfNotNull(
+                            if (i % columns < columns - 1) i to i + 1 else null,
+                            if (i + columns < pts.size) i to i + columns else null
+                        )
+                    }.forEach { (a, b) ->
+                        drawLine(colors.accent.copy(alpha = 0.22f), pts[a], pts[b], 1f)
+                    }
+
+                    // Render bones (Blender-style 2D octahedral bones)
+                    for (bone in sState.bones) {
+                        val j0 = sState.joints.getOrNull(bone.parentJointIndex) ?: continue
+                        val j1 = sState.joints.getOrNull(bone.childJointIndex) ?: continue
+                        val p0 = editor.screen(floatArrayOf(j0.x, j0.y), target, viewport).firstOrNull() ?: continue
+                        val p1 = editor.screen(floatArrayOf(j1.x, j1.y), target, viewport).firstOrNull() ?: continue
+
+                        val dx = p1.x - p0.x
+                        val dy = p1.y - p0.y
+                        val len = hypot(dx, dy)
+                        if (len > 1f) {
+                            val nx = -dy / len
+                            val ny = dx / len
+                            val headT = 0.2f
+                            val headW = min(14f, len * 0.18f)
+                            val midX = p0.x + dx * headT
+                            val midY = p0.y + dy * headT
+
+                            val bonePath = Path().apply {
+                                moveTo(p0.x, p0.y)
+                                lineTo(midX + nx * headW, midY + ny * headW)
+                                lineTo(p1.x, p1.y)
+                                lineTo(midX - nx * headW, midY - ny * headW)
+                                close()
+                            }
+
+                            // Bone fill & stroke
+                            drawPath(bonePath, colors.accent.copy(alpha = 0.35f))
+                            drawPath(bonePath, colors.accent, style = Stroke(1.8f))
+                        } else {
+                            drawLine(colors.accent, p0, p1, 2f)
+                        }
+                    }
+
+                    // Render joint handles
+                    for (joint in sState.joints) {
+                        val p = editor.screen(floatArrayOf(joint.x, joint.y), target, viewport).firstOrNull() ?: continue
+                        val isHovered = editor.hoveredSkeletonJoint == joint.index
+                        val isActive = editor.activeSkeletonJoint == joint.index
+
+                        if (isHovered || isActive) {
+                            drawCircle(Color.White, 9f, p, style = Stroke(2.2f))
+                            drawCircle(if (isActive) Color(0xFFFF9800) else colors.accent, 6f, p)
+                        } else {
+                            drawCircle(colors.windowBackground, 6f, p)
+                            drawCircle(if (joint.index == 0) Color(0xFF4CAF50) else colors.accent, 4.5f, p)
                         }
                     }
                 }
@@ -1067,6 +1138,184 @@ internal fun BoxScope.CanvasEditorOverlay(
         // describing — the brush outline and the hovered part's own highlight already say the same
         // thing without a box in the way.
     }
+    val skeleton = editor.skeletonDraft
+    if (skeleton != null) {
+        val currentSkeleton by rememberUpdatedState(skeleton)
+        val preview = editor.state.previewModel
+        val neutralGeometry = remember(preview?.rig?.puppet) { preview?.let { RigCanvasSupport.evaluate(it) } }
+        val palette = listOf(
+            Color(0xFFEA7A78), Color(0xFF7AB7EA), Color(0xFFDBB468), Color(0xFF8ED390),
+            Color(0xFFC69BE8), Color(0xFFED9F70), Color(0xFF6FD0CB), Color(0xFFE08CB7),
+        )
+        fun boneColor(id: String): Color = palette[(skeleton.bones.indexOfFirst { it.id == id }.coerceAtLeast(0)) % palette.size]
+        fun screen(x: Float, y: Float): Offset = Offset(viewport.x(x).toFloat(), (viewport.offsetY + y * viewport.scale).toFloat())
+        fun hitJoint(pos: Offset): Pair<String, BoneEnd>? = currentSkeleton.bones.asReversed().firstNotNullOfOrNull { bone ->
+            listOf(BoneEnd.HEAD to screen(bone.headX, bone.headY), BoneEnd.TAIL to screen(bone.tailX, bone.tailY))
+                .firstOrNull { (_, point) -> hypot(pos.x - point.x, pos.y - point.y) <= 14f }
+                ?.let { bone.id to it.first }
+        }
+        fun hitBoneBody(pos: Offset): String? = currentSkeleton.bones.asReversed().firstOrNull { bone ->
+            val h = screen(bone.headX, bone.headY)
+            val t = screen(bone.tailX, bone.tailY)
+            val dx = t.x - h.x
+            val dy = t.y - h.y
+            val lenSq = dx * dx + dy * dy
+            if (lenSq < 1e-4f) return@firstOrNull hypot(pos.x - h.x, pos.y - h.y) <= 12f
+            val u = (((pos.x - h.x) * dx + (pos.y - h.y) * dy) / lenSq).coerceIn(0f, 1f)
+            val projX = h.x + u * dx
+            val projY = h.y + u * dy
+            val dist = hypot(pos.x - projX, pos.y - projY)
+            val maxDist = (kotlin.math.sqrt(lenSq) * 0.12f).coerceIn(6f, 18f)
+            dist <= maxDist
+        }?.id
+        var draggedJoint by remember { mutableStateOf<Pair<String, BoneEnd>?>(null) }
+        Canvas(Modifier.fillMaxSize()
+            .pointerInput(editor, viewport) {
+                detectDragGestures(
+                    onDragStart = { draggedJoint = hitJoint(it) },
+                    onDragEnd = { draggedJoint = null },
+                    onDragCancel = { draggedJoint = null },
+                ) { change, _ ->
+                    draggedJoint?.let { (id, end) ->
+                        editor.moveBoneJoint(id, end, viewport.canvasX(change.position.x), viewport.canvasY(change.position.y))
+                        change.consume()
+                    }
+                }
+            }
+            .pointerInput(editor, viewport) {
+                detectTapGestures { pos ->
+                    val joint = hitJoint(pos)
+                    if (joint != null) {
+                        editor.selectBone(joint.first)
+                    } else {
+                        val body = hitBoneBody(pos)
+                        if (body != null) {
+                            editor.selectBone(body)
+                        } else {
+                            editor.pickSkeletonDrawable(pos, viewport)?.let(editor::bindDrawableToSelectedBone)
+                        }
+                    }
+                }
+            }
+        ) {
+            val drawables = preview?.rig?.puppet?.drawables?.associateBy { it.id.raw }.orEmpty()
+            // 1. Draw bound meshes with matching translucent fill and subtle border
+            for (bone in skeleton.bones) {
+                val color = boneColor(bone.id)
+                val isSelected = editor.selectedBoneId == bone.id
+                for (drawableId in bone.drawableIds) {
+                    val mesh = drawables[drawableId]?.mesh ?: continue
+                    val positions = neutralGeometry?.worldPositions?.get(DrawableId(drawableId)) ?: continue
+                    val shape = Path()
+                    for (i in mesh.indices.indices step 3) {
+                        if (i + 2 >= mesh.indices.size) break
+                        val a = mesh.indices[i] * 2; val b = mesh.indices[i + 1] * 2; val c = mesh.indices[i + 2] * 2
+                        if (maxOf(a, b, c) + 1 >= positions.size) continue
+                        shape.moveTo(viewport.x(positions[a]).toFloat(), viewport.yFromWorld(positions[a + 1]).toFloat())
+                        shape.lineTo(viewport.x(positions[b]).toFloat(), viewport.yFromWorld(positions[b + 1]).toFloat())
+                        shape.lineTo(viewport.x(positions[c]).toFloat(), viewport.yFromWorld(positions[c + 1]).toFloat())
+                        shape.close()
+                    }
+                    drawPath(shape, color.copy(alpha = if (isSelected) 0.28f else 0.10f))
+                    if (isSelected) {
+                        drawPath(shape, color.copy(alpha = 0.50f), style = Stroke(width = 1f))
+                    }
+                }
+            }
+
+            // 2. Draw Blender-style pyramidal/octahedral bones
+            val sortedBones = skeleton.bones.sortedBy { if (it.id == editor.selectedBoneId) 1 else 0 }
+            for (bone in sortedBones) {
+                val color = boneColor(bone.id)
+                val isSelected = editor.selectedBoneId == bone.id
+                val head = screen(bone.headX, bone.headY)
+                val tail = screen(bone.tailX, bone.tailY)
+                val dx = tail.x - head.x
+                val dy = tail.y - head.y
+                val len = hypot(dx, dy)
+
+                if (len >= 6f) {
+                    val ux = dx / len
+                    val uy = dy / len
+                    val nx = -uy
+                    val ny = ux
+
+                    val shoulderDist = (len * 0.18f).coerceIn(6f, 30f)
+                    val shoulderHalfWidth = (len * 0.10f).coerceIn(4f, 16f)
+
+                    val cx = head.x + ux * shoulderDist
+                    val cy = head.y + uy * shoulderDist
+
+                    val left = Offset(cx + nx * shoulderHalfWidth, cy + ny * shoulderHalfWidth)
+                    val right = Offset(cx - nx * shoulderHalfWidth, cy - ny * shoulderHalfWidth)
+
+                    val leftFacet = Path().apply {
+                        moveTo(head.x, head.y)
+                        lineTo(left.x, left.y)
+                        lineTo(tail.x, tail.y)
+                        close()
+                    }
+                    val rightFacet = Path().apply {
+                        moveTo(head.x, head.y)
+                        lineTo(right.x, right.y)
+                        lineTo(tail.x, tail.y)
+                        close()
+                    }
+                    val fullOutline = Path().apply {
+                        moveTo(head.x, head.y)
+                        lineTo(left.x, left.y)
+                        lineTo(tail.x, tail.y)
+                        lineTo(right.x, right.y)
+                        close()
+                    }
+
+                    // Shaded facets (Blender octahedral bone look)
+                    drawPath(leftFacet, color.copy(alpha = if (isSelected) 0.60f else 0.38f))
+                    drawPath(rightFacet, color.copy(alpha = if (isSelected) 0.36f else 0.20f))
+
+                    // Cross crease
+                    drawLine(
+                        color = (if (isSelected) Color.White else color).copy(alpha = 0.40f),
+                        start = left,
+                        end = right,
+                        strokeWidth = if (isSelected) 1.2f else 0.8f,
+                    )
+
+                    // Center ridge
+                    drawLine(
+                        color = if (isSelected) Color.White.copy(alpha = 0.90f) else color.copy(alpha = 0.70f),
+                        start = head,
+                        end = tail,
+                        strokeWidth = if (isSelected) 1.8f else 1.1f,
+                    )
+
+                    // Outer border
+                    drawPath(
+                        fullOutline,
+                        color = if (isSelected) Color.White else color.copy(alpha = 0.90f),
+                        style = Stroke(width = if (isSelected) 2.2f else 1.3f),
+                    )
+                } else {
+                    drawLine(color, head, tail, strokeWidth = if (isSelected) 3f else 1.8f)
+                }
+
+                // Head joint handle (Blender spherical head)
+                val headRadius = if (isSelected) 8.0f else 5.8f
+                drawCircle(if (isSelected) Color.White else color, headRadius, head)
+                drawCircle(color, headRadius * 0.75f, head)
+                drawCircle(Color.White, headRadius * 0.35f, head)
+
+                // Tail joint handle (Blender spherical tip)
+                val tailRadius = if (isSelected) 5.2f else 3.8f
+                drawCircle(if (isSelected) Color.White else color, tailRadius, tail)
+                drawCircle(color, tailRadius * 0.75f, tail)
+            }
+        }
+        if (editor.placement == null) {
+            SkeletonSettingsPanel(editor, { id -> boneColor(id) }, modifier = Modifier.align(Alignment.BottomStart).padding(start = 10.dp, bottom = 10.dp))
+        }
+    }
+
     // Left Animated Hover Toolbar (edit / deform / paint tools)
     CanvasToolBar(editor = editor, keymap = keymap, focus = focus)
 
@@ -1079,7 +1328,7 @@ internal fun BoxScope.CanvasEditorOverlay(
     val activePlacement = currentPlacement ?: lastPlacement
 
     AnimatedVisibility(
-        visible = currentPlacement != null && activePlacement != null,
+        visible = skeleton == null && currentPlacement != null && activePlacement != null,
         enter = slideInVertically(
             initialOffsetY = { it / 3 },
             animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
@@ -1122,6 +1371,94 @@ internal fun BoxScope.CanvasEditorOverlay(
         selectedDeformerId = selectedDeformerId,
         focus = focus,
     )
+}
+
+@Composable
+private fun SkeletonSettingsPanel(editor: CanvasEditor, boneColor: (String) -> Color, modifier: Modifier = Modifier) {
+    val spec = editor.skeletonDraft ?: return
+    val colors = LocalToolColors.current
+    val typography = LocalToolTypography.current
+    val selected = spec.bone(editor.selectedBoneId ?: "")
+    Column(
+        modifier = modifier.width(278.dp).heightIn(max = 470.dp)
+            .frostedGlass(shape = RoundedCornerShape(6.dp), isHovered = true, elevation = 6.dp, alpha = 0.96f)
+            .border(1.dp, colors.border, RoundedCornerShape(6.dp))
+            .padding(9.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(tr("skeleton.panel.title"), color = colors.textPrimary,
+            style = typography.body.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold))
+        Column(Modifier.fillMaxWidth().heightIn(max = 220.dp).verticalScroll(rememberScrollState())) {
+            for (bone in spec.topological()) {
+                val depth = generateSequence(bone.parentId) { spec.bone(it)?.parentId }.count()
+                Row(
+                    Modifier.fillMaxWidth().clickable { editor.selectBone(bone.id) }
+                        .background(if (bone.id == editor.selectedBoneId) colors.accent.copy(alpha = 0.2f) else Color.Transparent)
+                        .padding(start = (depth * 10).dp, top = 3.dp, bottom = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.size(8.dp).background(boneColor(bone.id), CircleShape))
+                    Spacer(Modifier.width(5.dp))
+                    Text(bone.name, color = colors.textPrimary, style = typography.body.copy(fontSize = 10.sp), maxLines = 1)
+                }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            for (role in listOf(BoneRole.TAIL, BoneRole.WING)) {
+                val present = spec.bones.any { it.role == role }
+                Text(
+                    text = (if (present) "☑ " else "□ ") + tr(if (role == BoneRole.TAIL) "skeleton.chain.tail" else "skeleton.chain.wing"),
+                    modifier = Modifier.clickable { editor.setOptionalSkeletonChain(role, !present) }.padding(3.dp),
+                    color = colors.textPrimary, style = typography.body.copy(fontSize = 10.sp),
+                )
+            }
+        }
+        if (selected != null) {
+            Text(tr("skeleton.panel.binding", selected.drawableIds.size), color = colors.textPrimary,
+                style = typography.body.copy(fontSize = 10.sp))
+            Column(Modifier.fillMaxWidth().heightIn(max = 72.dp).verticalScroll(rememberScrollState())) {
+                for (id in selected.drawableIds) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(id, modifier = Modifier.weight(1f), color = boneColor(selected.id),
+                            style = typography.body.copy(fontSize = 9.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("×", modifier = Modifier.clickable { editor.unbindSkeletonDrawable(id) },
+                            color = colors.textPrimary, style = typography.body.copy(fontSize = 12.sp))
+                    }
+                }
+            }
+            Text(tr("skeleton.panel.clickMesh"), color = colors.textPrimary.copy(alpha = 0.7f),
+                style = typography.body.copy(fontSize = 9.sp))
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                for (mode in JointMode.entries) {
+                    val label = when (mode) {
+                        JointMode.AUTO -> tr("skeleton.joint.auto")
+                        JointMode.WARP -> tr("skeleton.joint.warp")
+                        JointMode.ROTATION -> tr("skeleton.joint.rotation")
+                        JointMode.PATH -> tr("skeleton.joint.path")
+                    }
+                    Text(label, modifier = Modifier.background(if (selected.jointMode == mode) colors.accent.copy(alpha = 0.35f)
+                        else colors.border.copy(alpha = 0.25f), RoundedCornerShape(3.dp))
+                        .clickable { editor.setBoneJointMode(mode) }.padding(horizontal = 7.dp, vertical = 4.dp),
+                        color = colors.textPrimary, style = typography.body.copy(fontSize = 9.sp))
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(tr("skeleton.panel.add"), Modifier.clickable { editor.addBone() }.padding(4.dp),
+                color = colors.textPrimary, style = typography.body.copy(fontSize = 10.sp))
+            Text(tr("skeleton.panel.delete"), Modifier.clickable { editor.removeSelectedBone() }.padding(4.dp),
+                color = colors.textPrimary, style = typography.body.copy(fontSize = 10.sp))
+            if (editor.state.rigEdits.skeleton?.enabled == true) {
+                Text(tr("skeleton.panel.disable"), Modifier.clickable { editor.disableSkeleton() }.padding(4.dp),
+                    color = colors.warning, style = typography.body.copy(fontSize = 10.sp))
+            }
+            Spacer(Modifier.weight(1f))
+            Text(tr("skeleton.panel.cancel"), Modifier.clickable { editor.cancelSkeletonEdit() }.padding(4.dp),
+                color = colors.textPrimary, style = typography.body.copy(fontSize = 10.sp))
+            Text(tr("skeleton.panel.confirm"), Modifier.clickable { editor.confirmSkeletonEdit() }.padding(4.dp),
+                color = colors.accent, style = typography.body.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold))
+        }
+    }
 }
 
 @OptIn(ExperimentalComposeUiApi::class)
@@ -1856,6 +2193,53 @@ private fun BoxScope.CanvasToolBar(
             }
         }
 
+        if (editor.hierarchyMode != EditHierarchyMode.PAINT) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                    .height(1.dp)
+                    .background(colors.border.copy(alpha = 0.35f))
+            )
+            val isEditing = editor.skeletonDraft != null
+            ShapeItemRow(
+                label = tr("skeleton.panel.title"),
+                isSelected = isEditing,
+                isToolbarExpanded = animatedWidth > 42.dp,
+                textAlpha = textAlpha,
+                textOffset = textOffset,
+                isBusy = editor.busy,
+                icon = { tint ->
+                    Canvas(Modifier.size(16.dp)) {
+                        val head = Offset(3.5f, 12.5f)
+                        val tail = Offset(12.5f, 3.5f)
+                        val left = Offset(4.0f, 6.5f)
+                        val right = Offset(9.5f, 12.0f)
+                        val leftFacet = Path().apply {
+                            moveTo(head.x, head.y); lineTo(left.x, left.y); lineTo(tail.x, tail.y); close()
+                        }
+                        val rightFacet = Path().apply {
+                            moveTo(head.x, head.y); lineTo(right.x, right.y); lineTo(tail.x, tail.y); close()
+                        }
+                        drawPath(leftFacet, tint.copy(alpha = 0.65f))
+                        drawPath(rightFacet, tint.copy(alpha = 0.30f))
+                        val outline = Path().apply {
+                            moveTo(head.x, head.y); lineTo(left.x, left.y); lineTo(tail.x, tail.y); lineTo(right.x, right.y); close()
+                        }
+                        drawPath(outline, tint, style = Stroke(width = 1.2f))
+                        drawLine(tint, head, tail, strokeWidth = 1f)
+                        drawCircle(tint, 2.0f, head)
+                        drawCircle(tint, 1.5f, tail)
+                    }
+                },
+                keyLabel = "",
+                onClick = {
+                    if (editor.skeletonDraft == null) editor.beginSkeletonEdit() else editor.cancelSkeletonEdit()
+                    focus()
+                },
+            )
+        }
+
         val isBrushTool = editor.tool in listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE)
 
         AnimatedVisibility(
@@ -2214,6 +2598,18 @@ private fun ToolIcon(
                     line(tipX, tipY, tipX - dx * 2.2f - perpX, tipY - dy * 2.2f - perpY)
                 }
             }
+            CanvasTool.SKELETON_WARP -> {
+                val bone = Path().apply {
+                    moveTo(4.5f * s, 13.5f * s)
+                    lineTo(6.5f * s, 10f * s)
+                    lineTo(13.5f * s, 4.5f * s)
+                    lineTo(10f * s, 6.5f * s)
+                    close()
+                }
+                drawPath(bone, color, style = Stroke(1.3f * s))
+                drawCircle(color, 2.2f * s, p(4.5f, 13.5f))
+                drawCircle(color, 1.8f * s, p(13.5f, 4.5f))
+            }
             CanvasTool.CREATE_WARP -> {
                 drawRect(color, Offset(3 * s, 3 * s), Size(12 * s, 12 * s), style = Stroke(s * 1.3f))
                 line(7f, 3f, 7f, 15f)
@@ -2476,6 +2872,7 @@ private fun BoxScope.HierarchyModeBar(
                 listOf(
                     1 to (tr("editor.level.1") + " · " + tr("editor.level.1.desc")),
                     2 to (tr("editor.level.2") + " · " + tr("editor.level.2.desc")),
+                    3 to (tr("editor.level.3") + " · " + tr("editor.level.3.desc")),
                 ).forEach { (lvl, tooltip) ->
                     val isLvlSelected = editor.editLevel == lvl
                     DeformLevelChip(

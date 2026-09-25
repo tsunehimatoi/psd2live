@@ -164,6 +164,7 @@ object RigBuilder {
 		val eyeWhiteLayers: List<ClassifiedLayer>,
 		private val frameByDeformer: Map<String, Bounds>,
 		private val pairedParentByLayerId: Map<String, Pair<DeformerId, Bounds>>,
+		private val skeletonEnabled: Boolean,
 		/** False when the config built no deformers, which leaves every mesh in canvas space. */
 		val deformersEnabled: Boolean,
 		val deformers: List<Deformer>,
@@ -185,15 +186,19 @@ object RigBuilder {
 			eyeWhiteLayers = eyeWhiteLayers,
 			frameByDeformer = frameByDeformer,
 			pairedParentByLayerId = pairedParentByLayerId,
+			skeletonEnabled = skeletonEnabled,
 			deformersEnabled = deformersEnabled,
 			deformers = deformers,
 		)
 		/** The layer expressed in the coordinate system its mesh and its keyforms are authored in. */
-		fun rigLayer(layer: ClassifiedLayer): ClassifiedLayer = layer.riggedIn(analysis.anchors, headSpace)
+		fun rigLayer(layer: ClassifiedLayer): ClassifiedLayer =
+			if (skeletonEnabled && layer.semantic.tag in SkeletonAutoBuilder.limbTags) layer
+			else layer.riggedIn(analysis.anchors, headSpace)
 
 		/** The space head layers are aligned into, or null when the layer stays in canvas space. */
 		fun headSpaceFor(layer: ClassifiedLayer): HeadCoordinateSpace? =
-			if (deformersEnabled && inferredGroup(layer, analysis.anchors) == LayerGroup.HEAD) headSpace else null
+			if (deformersEnabled && !(skeletonEnabled && layer.semantic.tag in SkeletonAutoBuilder.limbTags) &&
+				inferredGroup(layer, analysis.anchors) == LayerGroup.HEAD) headSpace else null
 
 		/**
 		 * The deformer [layer] hangs under and the frame that deformer was fitted to. An override
@@ -201,7 +206,7 @@ object RigBuilder {
 		 * the automatically paired deformer, or the parent its semantic tag implies.
 		 */
 		fun parentAndFrame(layer: ClassifiedLayer, config: PipelineConfig): Pair<DeformerId?, Bounds> {
-			val paired = pairedParentByLayerId[layer.source.id.raw] ?: parentAndFrame(layer)
+			val paired = pairedParentByLayerId[layer.source.id.raw] ?: inferredParentAndFrame(layer, config)
 			if (!config.parentOverrides.containsKey(layer.source.id.raw)) return paired
 			val parentId = config.parentOverrides[layer.source.id.raw]
 				?.takeIf { it.isNotBlank() && !it.equals("root", true) }
@@ -220,13 +225,17 @@ object RigBuilder {
 			var id = parentId.raw
 			val seen = mutableSetOf<String>()
 			while (id !in frameByDeformer && seen.add(id)) {
+				if (id.startsWith("DeformSkel_") || config.rigEdits.skeleton?.bones?.any { it.deformerId == id } == true) {
+					return character
+				}
 				id = config.rigEdits.warpEdits.firstOrNull { it.id == id }?.parentId ?: return null
 			}
 			return frameByDeformer[id]
 		}
 
-		private fun parentAndFrame(layer: ClassifiedLayer): Pair<DeformerId, Bounds> =
-			defaultParentAndFrame(layer, faceRig, analysis.anchors, character, head, face, frontHair, backHair)
+		private fun inferredParentAndFrame(layer: ClassifiedLayer, config: PipelineConfig): Pair<DeformerId, Bounds> =
+			defaultParentAndFrame(layer, faceRig, analysis.anchors, character, head, face, frontHair, backHair,
+				config.rigEdits.skeleton?.enabled == true)
 	}
 
 	/**
@@ -340,6 +349,7 @@ object RigBuilder {
 			eyeWhiteLayers,
 			frameByDeformer,
 			deformerResult.pairedParentByLayerId,
+			config.rigEdits.skeleton?.enabled == true,
 			deformersEnabled,
 			deformerResult.deformers,
 		)
@@ -403,6 +413,7 @@ object RigBuilder {
 		faceFrame: Bounds,
 		frontHair: Bounds?,
 		backHair: Bounds?,
+		skeletonEnabled: Boolean = false,
 	): Pair<DeformerId, Bounds> = when (layer.semantic.tag) {
 		SemanticTag.FACE -> faceContourId to faceFrame
 		SemanticTag.IRIDES -> faceRig.regionFor(FaceFeature.IRIS, layer.semantic.side)?.let { gazeWarpId(it) to it.bounds }
@@ -422,6 +433,7 @@ object RigBuilder {
 		SemanticTag.BACK_HAIR -> backHair?.let { backHairPhysicsWarpId to it } ?: (headWarpId to head)
 		else -> when {
 			layer.semantic.tag in faceTags -> faceWarpId to faceFrame
+			skeletonEnabled && layer.semantic.tag in SkeletonAutoBuilder.limbTags -> bodyWarpId to character
 			inferredGroup(layer, anchors) == LayerGroup.HEAD -> headWarpId to head
 			else -> breathWarpId to character
 		}
@@ -785,8 +797,10 @@ object RigBuilder {
 			deformPaths = builtDeformPaths,
 		).withDerivedRenderRoot()
 		val faceCenterCanvas = faceRig.coordinateSpace.toCanvas(faceRig.centerX, faceRig.centerY)
+		val skeletonPuppet = config.rigEdits.skeleton?.takeIf { it.enabled && shouldBuildDeformers }
+			?.let { SkeletonConverter.apply(puppet, it, analysis.anchors.character) } ?: puppet
 		return BuiltRig(
-			puppet,
+			skeletonPuppet,
 			pageByDrawable,
 			sourceBoundsByDrawable,
 			layerIdByDrawable,
@@ -1319,10 +1333,12 @@ object RigBuilder {
 		val candidateLayers = analysis.layers.filter { layer ->
 			layer.opaquePixels > 0 &&
 				(layer.semantic.side == Side.LEFT || layer.semantic.side == Side.RIGHT) &&
+				!(config.rigEdits.skeleton?.enabled == true && layer.semantic.tag in SkeletonAutoBuilder.limbTags) &&
 				!isHandledByFaceRegion(layer, faceRig)
 		}
 		val grouped = candidateLayers.groupBy { layer ->
-			val (defaultParentId, _) = defaultParentAndFrame(layer, faceRig, analysis.anchors, character, head, faceFrame, frontHair, backHair)
+			val (defaultParentId, _) = defaultParentAndFrame(layer, faceRig, analysis.anchors, character, head, faceFrame, frontHair, backHair,
+				config.rigEdits.skeleton?.enabled == true)
 			val baseName = pairBaseName(layer.source.name)
 			defaultParentId to baseName.lowercase(Locale.ROOT).trim()
 		}
@@ -1332,7 +1348,8 @@ object RigBuilder {
 			if (!hasLeft || !hasRight) continue
 
 			val (defaultParentId, defaultParentFrame) =
-				defaultParentAndFrame(pairLayers.first(), faceRig, analysis.anchors, character, head, faceFrame, frontHair, backHair)
+				defaultParentAndFrame(pairLayers.first(), faceRig, analysis.anchors, character, head, faceFrame, frontHair, backHair,
+					config.rigEdits.skeleton?.enabled == true)
 			val cleanBaseName = pairBaseName(pairLayers.first().source.name)
 			val pairId = uniquePairDeformerId(cleanBaseName, pairLayers.first().semantic.tag, usedDeformerIds)
 			val pairName = tr("model.deformer.pair", cleanBaseName)

@@ -197,6 +197,15 @@ private fun ColumnScope.SelectModeContextMenu(
                             onAction()
                             onDismissRequest()
                         },
+                        ActionSpec(
+                            tr("skeleton.panel.title"),
+                            enabled = editor.editable,
+                            icon = { IconRotationDeformer(modifier = Modifier.size(12.dp), tint = it) },
+                        ) {
+                            editor.beginSkeletonEdit()
+                            onAction()
+                            onDismissRequest()
+                        },
                     )
                 )
             }

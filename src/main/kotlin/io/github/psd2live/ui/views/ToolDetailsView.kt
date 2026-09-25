@@ -943,6 +943,28 @@ internal fun ToolDetailsView(
                     CompactButton(text = tr("action.cancel"), onClick = { editor.cancel() }, enabled = !editor.busy && editor.knifeDraft.isNotEmpty())
                 }
             }
+            CanvasTool.SKELETON_WARP -> {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val sState = editor.skeletonWarpState
+                    Text(
+                        text = tr("editor.tool.skeleton_warp"),
+                        style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
+                        color = colors.textPrimary,
+                    )
+                    Text(
+                        text = if (sState != null) "骨骼段数: ${sState.bones.size} · 关节点数: ${sState.joints.size}" else "请选择一个 Warp 变形器",
+                        style = typography.caption.copy(fontSize = 10.5.sp),
+                        color = colors.textMuted,
+                    )
+                    CompactButton(
+                        text = tr("animation.resetPose"),
+                        onClick = { editor.resetSkeletonWarpPose() },
+                        enabled = editor.editable && editor.skeletonWarpState != null,
+                        modifier = Modifier.fillMaxWidth(),
+                        height = 24.dp,
+                    )
+                }
+            }
             CanvasTool.PAINT_BRUSH, CanvasTool.PAINT_PENCIL, CanvasTool.PAINT_ERASER,
             CanvasTool.PAINT_BUCKET, CanvasTool.PAINT_EYEDROPPER,
             CanvasTool.PAINT_SHAPE -> {

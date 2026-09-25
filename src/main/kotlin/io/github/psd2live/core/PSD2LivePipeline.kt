@@ -75,10 +75,12 @@ class PSD2LivePipeline {
 		)
 		val baseRig = generated.copy(puppet = generated.puppet.copy(
 			deformers = current.baseRig.puppet.deformers,
+			parameters = (generated.puppet.parameters + current.baseRig.puppet.parameters).distinctBy { it.id },
 		))
 		val replayed = baseRig.withRigEdits(config.rigEdits)
 		val rig = replayed.copy(puppet = replayed.puppet.copy(
 			deformers = current.rig.puppet.deformers,
+			parameters = (replayed.puppet.parameters + current.rig.puppet.parameters).distinctBy { it.id },
 		))
 		val bundle = buildRuntimeBundle("psd2live-preview", analysis, atlas, rig, config).first
 		return RigPreviewModel(analysis, atlas, rig, config, bundle, baseRig)
@@ -244,6 +246,7 @@ class PSD2LivePipeline {
 	): Boolean {
 		if (current == null) return false
 		if (current.analysis.source !== source && current.analysis.source != source) return false
+		if (current.config.rigEdits.skeleton != config.rigEdits.skeleton) return false
 		return current.config.copy(rigEdits = config.rigEdits) == config
 	}
 
@@ -345,8 +348,12 @@ class PSD2LivePipeline {
 			val useFrontHairPhysics = hasFrontHair && config.generatePhysics && config.physicsFrontHair && !config.meshOnly
 			val useBackHairPhysics = hasBackHair && config.generatePhysics && config.physicsBackHair && !config.meshOnly
 			val useEyeJellyPhysics = hasEyeJelly && config.generatePhysics && config.physicsEyeJelly && !config.meshOnly
-			if (useFrontHairPhysics || useBackHairPhysics || useEyeJellyPhysics || (config.generatePhysics && !config.meshOnly && config.rigEdits.physicsEdits.isNotEmpty())) {
-				Cmo3PhysicsInjector.inject(converted.model.root as CModelSource, useFrontHairPhysics, useBackHairPhysics, useEyeJellyPhysics, config.rigEdits.physicsEdits)
+			val skeletonPhysics = PhysicsGenerator.skeletonRules(config.rigEdits.skeleton,
+				rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }).isNotEmpty()
+			if (useFrontHairPhysics || useBackHairPhysics || useEyeJellyPhysics ||
+				(config.generatePhysics && !config.meshOnly && (config.rigEdits.physicsEdits.isNotEmpty() || skeletonPhysics))) {
+				Cmo3PhysicsInjector.inject(converted.model.root as CModelSource, useFrontHairPhysics, useBackHairPhysics,
+					useEyeJellyPhysics, config.rigEdits.physicsEdits, config.rigEdits.skeleton)
 			}
 			BezierWarp.configureEditor(converted.model.root as CModelSource)
 			val bytes = Cmo3.write(converted.model)
@@ -391,15 +398,18 @@ class PSD2LivePipeline {
 		val useFrontHairPhysics = hasFrontHair && config.generatePhysics && config.physicsFrontHair && !config.meshOnly
 		val useBackHairPhysics = hasBackHair && config.generatePhysics && config.physicsBackHair && !config.meshOnly
 		val useEyeJellyPhysics = hasEyeJelly && config.generatePhysics && config.physicsEyeJelly && !config.meshOnly
-		val physics = if (useFrontHairPhysics || useBackHairPhysics || useEyeJellyPhysics || (config.generatePhysics && !config.meshOnly && config.rigEdits.physicsEdits.isNotEmpty())) {
-			PhysicsGenerator.generate(useFrontHairPhysics, useBackHairPhysics, useEyeJellyPhysics, parameterIds, config.rigEdits.physicsEdits)?.let(CubismJson::normalize)
+		val skeletonPhysics = PhysicsGenerator.skeletonRules(config.rigEdits.skeleton, parameterIds).isNotEmpty()
+		val physics = if (useFrontHairPhysics || useBackHairPhysics || useEyeJellyPhysics ||
+			(config.generatePhysics && !config.meshOnly && (config.rigEdits.physicsEdits.isNotEmpty() || skeletonPhysics))) {
+			PhysicsGenerator.generate(useFrontHairPhysics, useBackHairPhysics, useEyeJellyPhysics, parameterIds,
+				config.rigEdits.physicsEdits, config.rigEdits.skeleton)?.let(CubismJson::normalize)
 		} else null
 
 		val motions = buildList<Pair<String, Pair<String, String>>> {
 			if (config.exportMotions && !config.meshOnly) {
 				if (config.motionIdle) {
 					val name = "$baseName.idle.motion3.json"
-					MotionGenerator.idle(parameterIds)?.let { motion ->
+					MotionGenerator.idle(parameterIds, config.rigEdits.skeleton)?.let { motion ->
 						val json = CubismJson.normalize(motion).also { Json.parseToJsonElement(it) }
 						add("Idle" to (name to json))
 					}

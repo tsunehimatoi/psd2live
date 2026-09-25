@@ -1,10 +1,12 @@
-﻿package io.github.psd2live.core
+package io.github.psd2live.core
+
+import org.umamo.runtime.model.ParameterId
 
 /** Demonstration motions that exercise the generated rig without audio assets. */
 object MotionGenerator {
 	fun idle(): String = idle(ALL_PARAMETERS)!!
 
-	fun idle(availableParameterIds: Set<String>): String? = buildMotionJson(
+	fun idle(availableParameterIds: Set<String>, skeleton: SkeletonSpec? = null): String? = buildMotionJson(
 		duration = 6.0f,
 		loop = true,
 		curves = listOf(
@@ -13,7 +15,7 @@ object MotionGenerator {
 			curve("ParamBodyAngleX", listOf(0f to -1.2f, 3f to 1.2f, 6f to -1.2f)),
 			curve("ParamEyeLOpen", listOf(0f to 1f, 2.7f to 1f, 2.78f to 0f, 2.88f to 1f, 6f to 1f)),
 			curve("ParamEyeROpen", listOf(0f to 1f, 2.7f to 1f, 2.78f to 0f, 2.88f to 1f, 6f to 1f)),
-		),
+		) + skeleton.orEmptyIdleCurves(),
 		availableParameterIds = availableParameterIds,
 	)
 
@@ -86,6 +88,19 @@ object MotionGenerator {
 	}
 
 	private data class Curve(val parameter: String, val json: String, val pointCount: Int)
+
+	private fun SkeletonSpec?.orEmptyIdleCurves(): List<Curve> =
+		if (this?.enabled != true) emptyList() else bones.filterNot { it.role.anchor }.map { bone ->
+			curve(bone.parameterId, (0..12).map { step ->
+				val time = step * 0.5f
+				time to (SkeletonIdle.sample(this, time.toDouble())[ParameterId(bone.parameterId)] ?: 0f)
+			})
+		} + if (bones.any { it.role == BoneRole.THIGH || it.role == BoneRole.SHIN }) listOf(
+			curve("ParamSquat", (0..12).map { step ->
+				val time = step * 0.5f
+				time to (SkeletonIdle.sample(this, time.toDouble())[ParameterId("ParamSquat")] ?: 0f)
+			})
+		) else emptyList()
 
 	private fun curve(parameter: String, points: List<Pair<Float, Float>>): Curve {
 		require(points.size >= 2)

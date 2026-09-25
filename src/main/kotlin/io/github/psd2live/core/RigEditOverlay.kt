@@ -198,6 +198,8 @@ data class RigKeyformCopyEdit(
  * included in Agent history snapshots and export configuration.
  */
 data class RigEditOverlay(
+	/** Null means no skeleton has been authored yet; [SkeletonSpec.Disabled] is an explicit opt-out. */
+	val skeleton: SkeletonSpec? = null,
 	val parameterEdits: List<RigParameterEdit> = emptyList(),
 	val deletedParameterIds: Set<String> = emptySet(),
 	val keyformSetEdits: List<RigKeyformSetEdit> = emptyList(),

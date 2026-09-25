@@ -1748,6 +1748,13 @@ class PSD2LiveViewModel : AutoCloseable {
 		editorChanged()
 	}
 
+	/** Commit an edited armature as one undoable project change and rebuild its derived rig. */
+	fun setSkeleton(spec: io.github.psd2live.core.SkeletonSpec) {
+		updateState { current -> current.copy(rigEdits = current.rigEdits.copy(skeleton = spec)) }
+		schedulePreviewRebuild()
+		editorChanged()
+	}
+
 	fun setExportCmo3(enabled: Boolean) {
 		updateState { it.copy(exportCmo3 = enabled) }
 	    editorChanged()
@@ -3426,7 +3433,7 @@ class PSD2LiveViewModel : AutoCloseable {
                         projectSourceName = input.fileName.toString(),
                         projectFile = null, projectDirty = true, showProjectLocationDialog = false, isAnalyzing = true,
                         layerVisibility = emptyMap(), deformerVisibility = emptyMap(), layerOverrides = emptyMap(),
-                        deletedLayerIds = emptySet(), parentOverrides = emptyMap(), rigEdits = RigEditOverlay.Empty,
+                        deletedLayerIds = emptySet(), parentOverrides = emptyMap(), rigEdits = preview.config.rigEdits,
                         selectedLayerId = null, selectedDeformerId = null, hoveredLayerId = null, hoveredDeformerId = null,
                         isolatedLayerId = null, isolationSnapshot = null, animationEnabled = false,
                         mouseTrackingEnabled = true, previewParameterValues = emptyMap(),
@@ -4163,7 +4170,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		val eyeBallX = if (hasIdle || isTracking) followX.coerceIn(-1f, 1f) else 0f
 		val eyeBallY = if (hasIdle || isTracking) (-followY).coerceIn(-1f, 1f) else 0f
 
-		return mapOf(
+		val base = mapOf(
 			StandardParameters.ANGLE_X to (headAngleX + shakeAngleX),
 			StandardParameters.ANGLE_Y to (headAngleY + nodAngleY),
 			StandardParameters.ANGLE_Z to (idleAngleZ + shakeAngleZ),
@@ -4181,6 +4188,10 @@ class PSD2LiveViewModel : AutoCloseable {
 			StandardParameters.HAIR_FRONT to if (hasFrontHair) frontHair.coerceIn(-1f, 1f) else 0f,
 			StandardParameters.HAIR_BACK to if (hasBackHair) backHair.coerceIn(-1f, 1f) else 0f,
 		)
+		val skeletonIdle = if (hasIdle) io.github.psd2live.core.SkeletonIdle.sample(model.config.rigEdits.skeleton, elapsed)
+			else emptyMap()
+		val available = model.rig.puppet.parameters.mapTo(HashSet()) { it.id }
+		return base + skeletonIdle.filterKeys(available::contains)
 	}
 
 	private fun blinkAt(phase: Double): Float = if (phase in 4.18..4.46) {

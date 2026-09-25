@@ -78,6 +78,7 @@ enum class ShortcutAction(val category: ShortcutCategory, val labelKey: String) 
     TOOL_BRUSH(ShortcutCategory.CANVAS_TOOLS, "editor.tool.brush"),
     TOOL_SMOOTH(ShortcutCategory.CANVAS_TOOLS, "editor.tool.smooth"),
     TOOL_INFLATE(ShortcutCategory.CANVAS_TOOLS, "editor.tool.inflate"),
+    TOOL_SKELETON_WARP(ShortcutCategory.CANVAS_TOOLS, "editor.tool.skeleton_warp"),
     TOOL_CREATE_WARP(ShortcutCategory.CANVAS_TOOLS, "editor.tool.create_warp"),
     TOOL_CREATE_ROTATION(ShortcutCategory.CANVAS_TOOLS, "editor.tool.create_rotation"),
     TOOL_CREATE_DEFORM_PATH(ShortcutCategory.CANVAS_TOOLS, "editor.tool.create_deform_path"),
@@ -197,6 +198,7 @@ private val PS_DEFAULTS: Map<ShortcutAction, List<KeyBinding>> = mapOf(
     ShortcutAction.TOOL_BRUSH to keys("B"),
     ShortcutAction.TOOL_SMOOTH to keys("Shift+B"),
     ShortcutAction.TOOL_INFLATE to keys("I"),
+    ShortcutAction.TOOL_SKELETON_WARP to keys("Shift+W"),
     ShortcutAction.TOOL_CREATE_WARP to keys("C"),
     ShortcutAction.TOOL_CREATE_ROTATION to keys("R"),
     ShortcutAction.TOOL_CREATE_DEFORM_PATH to keys("P", "D"),
@@ -252,6 +254,7 @@ private val BLENDER_OVERRIDES: Map<ShortcutAction, List<KeyBinding>> = mapOf(
     // Sculpt-mode brush keys.
     ShortcutAction.TOOL_BRUSH to keys("V"),
     ShortcutAction.TOOL_SMOOTH to keys("S"),
+    ShortcutAction.TOOL_SKELETON_WARP to keys("Shift+A"),
     ShortcutAction.TOOL_CREATE_WARP to keys("Shift+W"),
     ShortcutAction.TOOL_GLUE to keys("Shift+G"),
     ShortcutAction.TOOL_PAINT_ERASER to keys("Shift+E"),
