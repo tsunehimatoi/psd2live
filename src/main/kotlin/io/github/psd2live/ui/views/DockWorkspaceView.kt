@@ -666,7 +666,13 @@ private fun DockHeader(id: String, session: DockSession, modifier: Modifier,
                 fontWeight = if (standalone || selected) FontWeight.Medium else FontWeight.Normal),
             maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = (if (standalone || floating) Modifier.weight(1f) else Modifier.widthIn(min = 48.dp, max = 120.dp))
-                .pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR)))
+                // The move cursor appears only once a drag passes the slop; until then the
+                // cursor reflects what a click does (switch tab vs. nothing).
+                .pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(when {
+                    session.dragging == id -> Cursor.MOVE_CURSOR
+                    !standalone && !floating && !selected -> Cursor.HAND_CURSOR
+                    else -> Cursor.DEFAULT_CURSOR
+                })))
                 .onPointerEvent(PointerEventType.Press) { event ->
                     if (event.button == PointerButton.Secondary) { menu = true; event.changes.forEach { it.consume() } }
                 }
