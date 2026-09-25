@@ -42,12 +42,16 @@ internal fun canvasGeometryCommand(
     id: String,
     coordinate: Map<String, Float>,
     points: FloatArray,
+    ctrl: Boolean = false,
 ): JsonObject = buildJsonObject {
     val editMesh = kind == "mesh" && mode == EditHierarchyMode.EDIT
+    val editWarp = kind == "warp" && (mode == EditHierarchyMode.EDIT || ctrl)
     put("op", "canvas_geometry"); put("kind", kind); put("id", id)
-    put("key", JsonObject((if (editMesh) emptyMap() else coordinate).mapValues { JsonPrimitive(it.value) }))
-    if (editMesh) put("pose", JsonObject(coordinate.mapValues { JsonPrimitive(it.value) }))
-    put("preserve_image", editMesh)
+    val emptyKey = editMesh || (kind == "warp" && mode == EditHierarchyMode.EDIT) || (editWarp && coordinate.isEmpty())
+    put("key", JsonObject((if (emptyKey) emptyMap() else coordinate).mapValues { JsonPrimitive(it.value) }))
+    if (editMesh || editWarp) put("pose", JsonObject(coordinate.mapValues { JsonPrimitive(it.value) }))
+    put("preserve_image", editMesh || editWarp)
+    if (editWarp) put("preserve_children", true)
     put("points", JsonArray(points.map(::JsonPrimitive)))
 }
 
@@ -738,6 +742,7 @@ internal class CanvasEditor(
     /** When the painted bitmap was last republished, in [System.nanoTime] units. */
     private var lastPaintBitmapAt = 0L
     private var dragging = false
+    private var ctrlAtPress = false
 
     /** Active brush deformation vertex weights [0f..1f] for target points; non-null while a brush stroke is live. */
     var activeBrushWeights by mutableStateOf<FloatArray?>(null)
@@ -1020,8 +1025,8 @@ internal class CanvasEditor(
     }
 
     /** Only structural mesh editing moves UVs; deformation writes the current pose. */
-    private fun geometryCommand(t: CanvasTarget, points: FloatArray) =
-        canvasGeometryCommand(hierarchyMode, t.kind, t.id, coordinate(t), points)
+    private fun geometryCommand(t: CanvasTarget, points: FloatArray, ctrl: Boolean = false) =
+        canvasGeometryCommand(hierarchyMode, t.kind, t.id, coordinate(t), points, ctrl)
 
     fun targetLayerId(t: CanvasTarget? = target(deformerId = null)): String? {
         if (t == null) return state.selectedLayerId
@@ -3890,6 +3895,7 @@ internal class CanvasEditor(
         this.viewport = viewport
         error = null; head = state.historySnapshot?.headNodeId; start = pos; previous = pos; dragStartPos = pos
         moved = false; additive = shift; subtractive = alt; pressedObject = null
+        ctrlAtPress = ctrl
 
         // Place-then-confirm sessions own the canvas until Confirm/Esc (Warp / Rotation / Layer).
         val activePlacement = placement
@@ -4242,6 +4248,7 @@ internal class CanvasEditor(
     }
 
     fun move(pos: Offset, viewport: CanvasViewport, shift: Boolean, alt: Boolean = false, ctrl: Boolean = false) {
+        val effectiveCtrl = ctrl || ctrlAtPress
         this.viewport = viewport
         updateHover(pos, viewport, ctrl, shift)
         shrinks = if (dragging && tool == CanvasTool.INFLATE) shrinkAtPress else inflateInvert xor alt
@@ -4287,7 +4294,7 @@ internal class CanvasEditor(
             // Keep the authored handles when this lattice is committed. Reconstructing them
             // from sampled anchors would straighten the curves before the next gesture.
             bezierSourcePoints = evaluated.copyOf()
-            val cmd = geometryCommand(t, evaluated)
+            val cmd = geometryCommand(t, evaluated, effectiveCtrl)
             preview = RigAuthoringJournal.apply(source, cmd); pending = cmd; previous = pos
             return
         }
@@ -4301,7 +4308,7 @@ internal class CanvasEditor(
             val warp = source.deformers.filterIsInstance<Deformer.Warp>().firstOrNull { it.id.raw == t.id } ?: return
             val evaluated = bezierState?.evaluateLattice(warp.rows, warp.columns) ?: return
             bezierSourcePoints = evaluated.copyOf()
-            val cmd = geometryCommand(t, evaluated)
+            val cmd = geometryCommand(t, evaluated, effectiveCtrl)
             preview = RigAuthoringJournal.apply(source, cmd); pending = cmd; previous = pos
             return
         }
@@ -4342,7 +4349,7 @@ internal class CanvasEditor(
                         world[i * 2] = ((dest.x - viewport.offsetX) / viewport.scale).toFloat()
                         world[i * 2 + 1] = -((dest.y - viewport.offsetY) / viewport.scale).toFloat()
                     }
-                    geometryCommand(item, item.mapping.worldToLocalLinearized(world, item.geometry.points, item.geometry.points, indices))
+                    geometryCommand(item, item.mapping.worldToLocalLinearized(world, item.geometry.points, item.geometry.points, indices), effectiveCtrl)
                 }
                 preview = pendingObjects.fold(source) { m, command -> RigAuthoringJournal.apply(m, command) }
                 return
@@ -4424,7 +4431,7 @@ internal class CanvasEditor(
                     world[i * 2] = ((destination.x - viewport.offsetX) / viewport.scale).toFloat()
                     world[i * 2 + 1] = -((destination.y - viewport.offsetY) / viewport.scale).toFloat()
                 }
-                val cmd = geometryCommand(t, t.mapping.worldToLocal(world, base, affected))
+                val cmd = geometryCommand(t, t.mapping.worldToLocal(world, base, affected), effectiveCtrl)
                 preview = RigAuthoringJournal.apply(source, cmd); pending = cmd; previous = pos
                 return
             }
@@ -4449,7 +4456,7 @@ internal class CanvasEditor(
                 world[i * 2 + 1] = -((destination.y - viewport.offsetY) / viewport.scale).toFloat()
             }
             if (affected.isEmpty()) { previous = pos; return }
-            val cmd = geometryCommand(t, t.mapping.worldToLocal(world, base, affected))
+            val cmd = geometryCommand(t, t.mapping.worldToLocal(world, base, affected), effectiveCtrl)
             preview = RigAuthoringJournal.apply(source, cmd); pending = cmd; previous = pos
         } catch (e: Exception) { error = e.message }
     }
@@ -4529,7 +4536,7 @@ internal class CanvasEditor(
             return
         }
 
-        dragging = false; axis = null; activeHandle = BoundingHandle.NONE
+        dragging = false; ctrlAtPress = false; axis = null; activeHandle = BoundingHandle.NONE
         initialBounds = null
         initialScreenPoints = emptyList()
         boxDrag = false; dragIndices = emptyList()

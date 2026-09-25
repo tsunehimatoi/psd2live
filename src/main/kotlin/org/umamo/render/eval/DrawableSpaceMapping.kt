@@ -368,7 +368,7 @@ private fun invertWarp(warp: WarpWorld, targetX: Float, targetY: Float, local: F
  * @param FloatArray cp The lattice's world control points, interleaved x,y.
  * @return Float The squared world-distance tolerance.
  */
-private fun warpInverseToleranceSquared(cp: FloatArray): Float {
+internal fun warpInverseToleranceSquared(cp: FloatArray): Float {
 	var minX = Float.MAX_VALUE
 	var maxX = -Float.MAX_VALUE
 	var minY = Float.MAX_VALUE

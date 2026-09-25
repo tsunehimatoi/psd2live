@@ -354,3 +354,80 @@ internal fun rotationXform(
 		oy = oy,
 	)
 }
+
+/**
+ * Inverts point (u, v) under [cpOld] and maps it to the equivalent (u', v') under [cpNew] such that
+ * `warpApply(cpNew, u', v') == warpApply(cpOld, u, v)`.
+ */
+internal fun warpRemapPoint(
+	cpOld: FloatArray,
+	cpNew: FloatArray,
+	cols: Int,
+	rows: Int,
+	bilinear: Boolean,
+	u: Float,
+	v: Float,
+	scratch: FloatArray = FloatArray(2),
+	toleranceSquared: Float = warpInverseToleranceSquared(cpNew),
+): Pair<Float, Float> {
+	warpApply(cpOld, cols, rows, bilinear, u, v, scratch, 0)
+	val targetX = scratch[0]
+	val targetY = scratch[1]
+
+	var currentU = u
+	var currentV = v
+	var bestU = currentU
+	var bestV = currentV
+	var bestErrorSquared = Float.MAX_VALUE
+	val h = 1e-4f
+
+	for (iteration in 0 until 24) {
+		warpApply(cpNew, cols, rows, bilinear, currentU, currentV, scratch, 0)
+		val resX = scratch[0] - targetX
+		val resY = scratch[1] - targetY
+		val err = resX * resX + resY * resY
+		if (err < bestErrorSquared) {
+			bestErrorSquared = err
+			bestU = currentU
+			bestV = currentV
+		}
+		if (err <= toleranceSquared) break
+
+		warpApply(cpNew, cols, rows, bilinear, currentU + h, currentV, scratch, 0)
+		val dxDu = (scratch[0] - targetX - resX) / h
+		val dyDu = (scratch[1] - targetY - resY) / h
+
+		warpApply(cpNew, cols, rows, bilinear, currentU, currentV + h, scratch, 0)
+		val dxDv = (scratch[0] - targetX - resX) / h
+		val dyDv = (scratch[1] - targetY - resY) / h
+
+		val det = dxDu * dyDv - dxDv * dyDu
+		if (kotlin.math.abs(det) < 1e-12f) break
+
+		currentU += (-resX * dyDv + dxDv * resY) / det
+		currentV += (-resY * dxDu + dyDu * resX) / det
+	}
+	return Pair(bestU, bestV)
+}
+
+/**
+ * Remaps an interleaved array of (u, v) points from [cpOld] to [cpNew] preserving their parent-space positions.
+ */
+internal fun warpRemapPoints(
+	cpOld: FloatArray,
+	cpNew: FloatArray,
+	cols: Int,
+	rows: Int,
+	bilinear: Boolean,
+	points: FloatArray,
+	scratch: FloatArray = FloatArray(2),
+	toleranceSquared: Float = warpInverseToleranceSquared(cpNew),
+): FloatArray {
+	val out = FloatArray(points.size)
+	for (i in points.indices step 2) {
+		val (nu, nv) = warpRemapPoint(cpOld, cpNew, cols, rows, bilinear, points[i], points[i + 1], scratch, toleranceSquared)
+		out[i] = nu
+		out[i + 1] = nv
+	}
+	return out
+}

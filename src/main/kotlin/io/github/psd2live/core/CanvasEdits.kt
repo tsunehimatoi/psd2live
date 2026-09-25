@@ -10,7 +10,14 @@ import org.umamo.edit.MeshTopologyOps
 import org.umamo.edit.VertexSource
 import org.umamo.edit.withDeformerPart
 import org.umamo.edit.withMeshTopologyEdit
+import org.umamo.render.eval.warpApply
+import org.umamo.render.eval.warpInverseToleranceSquared
+import org.umamo.render.eval.warpRemapPoint
+import org.umamo.render.eval.warpRemapPoints
 import org.umamo.runtime.model.*
+import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.PI
 
 /**
  * A copy of this mesh with every vertex shifted by [shift], and each vertex's UV shifted by the same
@@ -203,7 +210,7 @@ internal object CanvasEdits {
                                 val norm = FloatArray(pts.size) { j -> if (j % 2 == 0) (pts[j] - x) / w else (pts[j] - y) / h }
                                 d.copy(
                                     parent = warp.id,
-                                    geometryGrid = d.geometryGrid?.let { grid ->
+                                    geometryGrid = d.geometryGrid.let { grid ->
                                         KeyformGrid(grid.axes, grid.cells.map { cell ->
                                             KeyformCell(cell.coordinate, WarpLatticeForm(FloatArray(cell.form.controlPoints.size) { j ->
                                                 if (j % 2 == 0) (cell.form.controlPoints[j] - x) / w else (cell.form.controlPoints[j] - y) / h
@@ -292,7 +299,12 @@ internal object CanvasEdits {
                 val points = edit.getValue("points").jsonArray.map { it.jsonPrimitive.float }.toFloatArray()
                 require(points.isNotEmpty() && points.size % 2 == 0 && points.all(Float::isFinite))
                 val key = edit.getValue("key").jsonObject.mapValues { it.value.jsonPrimitive.float }
-                val geometry = RigGeometryTools.geometry(model, kind, id, key)
+                val pose = edit["pose"]?.jsonObject?.mapValues { it.value.jsonPrimitive.float } ?: key
+                val geometry = RigGeometryTools.geometry(model, kind, id, if (pose.isEmpty()) key else pose)
+                val blendEdit = model.parameters.any { parameter ->
+                    parameter.kind == org.umamo.runtime.model.ParameterKind.BLEND_SHAPE &&
+                        abs((key[parameter.id.raw] ?: 0f)) >= org.umamo.runtime.eval.EPS_KEY
+                }
                 require(points.size == geometry.points.size)
                 if (key.isNotEmpty()) require(geometry.axes.all { it.parameterId.raw in key }) { "Include every bound parameter axis" }
                 if(kind == "rotation") {
@@ -312,17 +324,51 @@ internal object CanvasEdits {
                     val wrapped=kotlin.math.atan2(dy,dx)*180f/kotlin.math.PI.toFloat()-rotation.baseAngle
                     val reference = geometry.rotationAngle ?: 0f
                     val angle = wrapped + 360f * kotlin.math.round((reference - wrapped) / 360f)
-                    val form=RotationPivotForm(points[0],points[1],angle,scale)
+                    val blend = if (blendEdit) null else RigGeometryTools.rotationBlendOffset(model, id, pose)
+                    val form=RotationPivotForm(
+                        points[0] - (blend?.originX ?: 0f),
+                        points[1] - (blend?.originY ?: 0f),
+                        angle - (blend?.angle ?: 0f),
+                        scale - (blend?.scale ?: 0f),
+                    )
                     if(key.isEmpty())model.copy(deformers=model.deformers.map { if(it.id==rotation.id)rotation.copy(geometryGrid=KeyformGrid(emptyList(),listOf(KeyformCell(intArrayOf(),form)))) else it })
                     else applyKeyformSet(model,RigKeyformSetEdit(RigTargetRef(RigTargetKind.ROTATION_DEFORMER,id),key,RigKeyformGeometryEdit(originX=form.originX,originY=form.originY,angle=form.angle,scale=form.scale)))
-                } else if (key.isNotEmpty()) {
-                    applyKeyformSet(model, RigKeyformSetEdit(RigTargetRef(RigTargetKind.fromString(kind), id), key,
-                        if (kind == "warp") RigKeyformGeometryEdit(controlPoints = points.toList())
-                        else RigKeyformGeometryEdit(positionDeltas = points.indices.map { points[it] - geometry.base[it] })))
                 } else if (kind == "warp") {
-                    model.copy(deformers = model.deformers.map {
-                        if (it.id.raw == id && it is Deformer.Warp) it.copy(geometryGrid = KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(), WarpLatticeForm(points))))) else it
-                    })
+                    val oldWarp = model.deformers.firstOrNull { it.id.raw == id } as? Deformer.Warp
+                    val oldPoints = if (key.isNotEmpty()) RigGeometryTools.geometry(model, "warp", id, if (pose.isEmpty()) key else pose).points
+                        else (oldWarp?.geometryGrid?.cells?.singleOrNull()?.form?.controlPoints ?: RigGeometryTools.geometry(model, "warp", id, emptyMap()).points)
+                    val warpPoints = if (blendEdit) points else {
+                        val offset = RigGeometryTools.blendOffset(model, "warp", id, pose)
+                        FloatArray(points.size) { index -> points[index] - offset.getOrElse(index) { 0f } }
+                    }
+                    val updated = if (key.isNotEmpty()) {
+                        applyKeyformSet(model, RigKeyformSetEdit(RigTargetRef(RigTargetKind.WARP_DEFORMER, id), key, RigKeyformGeometryEdit(controlPoints = warpPoints.toList())))
+                    } else {
+                        val grid = oldWarp?.geometryGrid
+                        val newGrid = if (grid != null && grid.axes.isNotEmpty()) {
+                            val shift = FloatArray(points.size) { points[it] - oldPoints[it] }
+                            KeyformGrid(grid.axes, grid.cells.map { cell ->
+                                val cp = cell.form.controlPoints
+                                KeyformCell(cell.coordinate, WarpLatticeForm(FloatArray(cp.size) { j -> cp[j] + shift[j] }))
+                            })
+                        } else {
+                            KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(), WarpLatticeForm(points))))
+                        }
+                        model.copy(deformers = model.deformers.map {
+                            if (it.id.raw == id && it is Deformer.Warp) it.copy(geometryGrid = newGrid) else it
+                        })
+                    }
+                    val preserveChildren = edit["preserve_children"]?.jsonPrimitive?.booleanOrNull == true ||
+                        edit["preserve_image"]?.jsonPrimitive?.booleanOrNull == true
+                    if (oldWarp != null && preserveChildren) {
+                        preserveWarpChildren(updated, oldWarp, oldPoints, points, key)
+                    } else {
+                        updated
+                    }
+                } else if (key.isNotEmpty()) {
+                    val offset = if (blendEdit) FloatArray(0) else RigGeometryTools.blendOffset(model, "mesh", id, pose)
+                    applyKeyformSet(model, RigKeyformSetEdit(RigTargetRef(RigTargetKind.fromString(kind), id), key,
+                        RigKeyformGeometryEdit(positionDeltas = points.indices.map { points[it] - geometry.base[it] - offset.getOrElse(it) { 0f } })))
                 } else {
                     // The mesh moves by how far its DISPLAYED geometry moved, not to the displayed points.
                     // Assigning the displayed points to the rest mesh would apply a keyed default delta a
@@ -402,5 +448,145 @@ internal object CanvasEdits {
             }
             else -> error("Unknown canvas operation")
         }
+    }
+
+    private fun preserveWarpChildren(
+        model: PuppetModel,
+        oldWarp: Deformer.Warp,
+        cpOld: FloatArray,
+        cpNew: FloatArray,
+        key: Map<String, Float>,
+    ): PuppetModel {
+        val cols = oldWarp.columns
+        val rows = oldWarp.rows
+        val bilinear = oldWarp.isQuadTransform
+        val tolSq = warpInverseToleranceSquared(cpNew)
+        val scratch = FloatArray(2)
+
+        val updatedDrawables = model.drawables.map { d ->
+            if (d.parentDeformerId != oldWarp.id || d.mesh == null) d else {
+                val mesh = d.mesh
+                if (key.isEmpty()) {
+                    val newPositions = warpRemapPoints(cpOld, cpNew, cols, rows, bilinear, mesh.positions, scratch, tolSq)
+                    val newGrid = d.geometryGrid?.let { grid ->
+                        KeyformGrid(grid.axes, grid.cells.map { cell ->
+                            val deltas = cell.form.positionDeltas
+                            val newDeltas = FloatArray(deltas.size)
+                            for (i in deltas.indices step 2) {
+                                val uKeyed = mesh.positions[i] + deltas[i]
+                                val vKeyed = mesh.positions[i + 1] + deltas[i + 1]
+                                val (nu, nv) = warpRemapPoint(cpOld, cpNew, cols, rows, bilinear, uKeyed, vKeyed, scratch, tolSq)
+                                newDeltas[i] = nu - newPositions[i]
+                                newDeltas[i + 1] = nv - newPositions[i + 1]
+                            }
+                            KeyformCell(cell.coordinate, MeshDeltaForm(newDeltas))
+                        })
+                    }
+                    val newBlendShapes = d.blendShapes.map { binding ->
+                        binding.copy(forms = binding.forms.map { form ->
+                            form?.let { f ->
+                                val deltas = f.positionDeltas
+                                val newDeltas = FloatArray(deltas.size)
+                                for (i in deltas.indices step 2) {
+                                    val uBlend = mesh.positions[i] + deltas[i]
+                                    val vBlend = mesh.positions[i + 1] + deltas[i + 1]
+                                    val (nu, nv) = warpRemapPoint(cpOld, cpNew, cols, rows, bilinear, uBlend, vBlend, scratch, tolSq)
+                                    newDeltas[i] = nu - newPositions[i]
+                                    newDeltas[i + 1] = nv - newPositions[i + 1]
+                                }
+                                MeshForm(newDeltas, f.drawOrder, f.opacity, f.multiplyColor, f.screenColor)
+                            }
+                        })
+                    }
+                    d.copy(mesh = DrawableMesh(newPositions, mesh.uvs, mesh.indices), geometryGrid = newGrid, blendShapes = newBlendShapes)
+                } else {
+                    val grid = d.geometryGrid
+                    if (grid != null && grid.axes.isNotEmpty()) {
+                        val axisMap = grid.axes.mapIndexed { idx, axis -> axis.parameterId.raw to idx }.toMap()
+                        val targetCoord = if (axisMap.keys.all { it in key }) {
+                            IntArray(grid.axes.size) { axisIndex ->
+                                val axis = grid.axes[axisIndex]
+                                val paramVal = key[axis.parameterId.raw] ?: 0f
+                                axis.keys.indexOfFirst { abs(it - paramVal) < 1e-4f }
+                            }
+                        } else null
+
+                        if (targetCoord != null && targetCoord.all { it >= 0 }) {
+                            val newCells = grid.cells.map { cell ->
+                                if (!cell.coordinate.contentEquals(targetCoord)) cell else {
+                                    val deltas = cell.form.positionDeltas
+                                    val newDeltas = FloatArray(deltas.size)
+                                    for (i in deltas.indices step 2) {
+                                        val uKeyed = mesh.positions[i] + deltas[i]
+                                        val vKeyed = mesh.positions[i + 1] + deltas[i + 1]
+                                        val (nu, nv) = warpRemapPoint(cpOld, cpNew, cols, rows, bilinear, uKeyed, vKeyed, scratch, tolSq)
+                                        newDeltas[i] = nu - mesh.positions[i]
+                                        newDeltas[i + 1] = nv - mesh.positions[i + 1]
+                                    }
+                                    KeyformCell(cell.coordinate, MeshDeltaForm(newDeltas))
+                                }
+                            }
+                            d.copy(geometryGrid = KeyformGrid(grid.axes, newCells))
+                        } else d
+                    } else d
+                }
+            }
+        }
+
+        val updatedDeformers = model.deformers.map { def ->
+            if (def.parent != oldWarp.id) def else when (def) {
+                is Deformer.Rotation -> {
+                    val newGrid = def.geometryGrid?.let { grid ->
+                        KeyformGrid(grid.axes, grid.cells.map { cell ->
+                            val shouldRemap = if (key.isEmpty()) true else {
+                                if (grid.axes.isEmpty()) false else {
+                                    val axisMap = grid.axes.mapIndexed { idx, axis -> axis.parameterId.raw to idx }.toMap()
+                                    axisMap.keys.all { it in key && abs(grid.axes[axisMap[it]!!].keys[cell.coordinate[axisMap[it]!!]] - (key[it] ?: 0f)) < 1e-4f }
+                                }
+                            }
+                            if (!shouldRemap) cell else {
+                                val (nu, nv) = warpRemapPoint(cpOld, cpNew, cols, rows, bilinear, cell.form.originX, cell.form.originY, scratch, tolSq)
+                                val disp = -0.1f
+                                warpApply(cpOld, cols, rows, bilinear, cell.form.originX, cell.form.originY, scratch, 0)
+                                val oxOld = scratch[0]; val oyOld = scratch[1]
+                                warpApply(cpOld, cols, rows, bilinear, cell.form.originX, cell.form.originY + disp, scratch, 0)
+                                val aOld = atan2(scratch[1] - oyOld, scratch[0] - oxOld)
+
+                                warpApply(cpNew, cols, rows, bilinear, nu, nv, scratch, 0)
+                                val oxNew = scratch[0]; val oyNew = scratch[1]
+                                warpApply(cpNew, cols, rows, bilinear, nu, nv + disp, scratch, 0)
+                                val aNew = atan2(scratch[1] - oyNew, scratch[0] - oxNew)
+
+                                var deltaAngle = (aNew - aOld) * 180f / PI.toFloat()
+                                while (deltaAngle > 180f) deltaAngle -= 360f
+                                while (deltaAngle < -180f) deltaAngle += 360f
+
+                                KeyformCell(cell.coordinate, RotationPivotForm(nu, nv, cell.form.angle - deltaAngle, cell.form.scale))
+                            }
+                        })
+                    }
+                    def.copy(geometryGrid = newGrid)
+                }
+                is Deformer.Warp -> {
+                    val newGrid = def.geometryGrid?.let { grid ->
+                        KeyformGrid(grid.axes, grid.cells.map { cell ->
+                            val shouldRemap = if (key.isEmpty()) true else {
+                                if (grid.axes.isEmpty()) false else {
+                                    val axisMap = grid.axes.mapIndexed { idx, axis -> axis.parameterId.raw to idx }.toMap()
+                                    axisMap.keys.all { it in key && abs(grid.axes[axisMap[it]!!].keys[cell.coordinate[axisMap[it]!!]] - (key[it] ?: 0f)) < 1e-4f }
+                                }
+                            }
+                            if (!shouldRemap) cell else {
+                                val newCp = warpRemapPoints(cpOld, cpNew, cols, rows, bilinear, cell.form.controlPoints, scratch, tolSq)
+                                KeyformCell(cell.coordinate, WarpLatticeForm(newCp))
+                            }
+                        })
+                    }
+                    def.copy(geometryGrid = newGrid)
+                }
+            }
+        }
+
+        return model.copy(drawables = updatedDrawables, deformers = updatedDeformers)
     }
 }
