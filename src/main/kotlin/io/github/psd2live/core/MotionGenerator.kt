@@ -40,40 +40,38 @@ object MotionGenerator {
 
 	fun blink(): String = blink(ALL_PARAMETERS)!!
 
-	fun blink(availableParameterIds: Set<String>): String? = buildMotionJson(
-		duration = 1.2f,
-		loop = false,
-		curves = listOf(
-			curve("ParamEyeLOpen", listOf(0f to 1f, 0.35f to 1f, 0.45f to 0f, 0.58f to 1f, 1.2f to 1f)),
-			curve("ParamEyeROpen", listOf(0f to 1f, 0.35f to 1f, 0.45f to 0f, 0.58f to 1f, 1.2f to 1f)),
-		),
-		availableParameterIds = availableParameterIds,
-	)
+	fun blink(availableParameterIds: Set<String>): String? = oneShot(blinkTracks, availableParameterIds)
+
+	/** The blink's tracks; the preview samples the same points the export writes. */
+	val blinkTracks: List<MotionTrack> = listOf("ParamEyeLOpen", "ParamEyeROpen").map {
+		it to listOf(0f to 1f, 0.35f to 1f, 0.45f to 0f, 0.58f to 1f, 1.2f to 1f)
+	}
 
 	fun nod(): String = nod(ALL_PARAMETERS)!!
 
-	fun nod(availableParameterIds: Set<String>): String? = buildMotionJson(
-		duration = 2.0f,
-		loop = false,
-		curves = listOf(
-			curve("ParamAngleY", listOf(0f to 0f, 0.55f to -18f, 1.25f to 6f, 2.0f to 0f)),
-			curve("ParamBodyAngleY", listOf(0f to 0f, 0.55f to -4f, 1.25f to 1.5f, 2.0f to 0f)),
-			curve("ParamEyeLOpen", listOf(0f to 1f, 0.55f to 0.75f, 1.25f to 1f, 2.0f to 1f)),
-			curve("ParamEyeROpen", listOf(0f to 1f, 0.55f to 0.75f, 1.25f to 1f, 2.0f to 1f)),
-		),
-		availableParameterIds = availableParameterIds,
+	fun nod(availableParameterIds: Set<String>): String? = oneShot(nodTracks, availableParameterIds)
+
+	val nodTracks: List<MotionTrack> = listOf(
+		"ParamAngleY" to listOf(0f to 0f, 0.55f to -18f, 1.25f to 6f, 2.0f to 0f),
+		"ParamBodyAngleY" to listOf(0f to 0f, 0.55f to -4f, 1.25f to 1.5f, 2.0f to 0f),
+		"ParamEyeLOpen" to listOf(0f to 1f, 0.55f to 0.75f, 1.25f to 1f, 2.0f to 1f),
+		"ParamEyeROpen" to listOf(0f to 1f, 0.55f to 0.75f, 1.25f to 1f, 2.0f to 1f),
 	)
 
 	fun shake(): String = shake(ALL_PARAMETERS)!!
 
-	fun shake(availableParameterIds: Set<String>): String? = buildMotionJson(
-		duration = 2.0f,
+	fun shake(availableParameterIds: Set<String>): String? = oneShot(shakeTracks, availableParameterIds)
+
+	val shakeTracks: List<MotionTrack> = listOf(
+		"ParamAngleX" to listOf(0f to 0f, 0.4f to -20f, 0.9f to 20f, 1.4f to -8f, 2.0f to 0f),
+		"ParamBodyAngleX" to listOf(0f to 0f, 0.4f to -3f, 0.9f to 3f, 1.4f to -1.2f, 2.0f to 0f),
+		"ParamAngleZ" to listOf(0f to 0f, 0.4f to 2f, 0.9f to -2f, 1.4f to 1f, 2.0f to 0f),
+	)
+
+	private fun oneShot(tracks: List<MotionTrack>, availableParameterIds: Set<String>): String? = buildMotionJson(
+		duration = tracks.maxOf { it.second.last().first },
 		loop = false,
-		curves = listOf(
-			curve("ParamAngleX", listOf(0f to 0f, 0.4f to -20f, 0.9f to 20f, 1.4f to -8f, 2.0f to 0f)),
-			curve("ParamBodyAngleX", listOf(0f to 0f, 0.4f to -3f, 0.9f to 3f, 1.4f to -1.2f, 2.0f to 0f)),
-			curve("ParamAngleZ", listOf(0f to 0f, 0.4f to 2f, 0.9f to -2f, 1.4f to 1f, 2.0f to 0f)),
-		),
+		curves = tracks.map { (id, points) -> curve(id, points) },
 		availableParameterIds = availableParameterIds,
 	)
 

@@ -96,5 +96,6 @@ private:
     bool _motionUpdated;
     std::string _infoJsonCache;
     std::string _idleGroupName;
+    bool _hasIdleGroup;
 };
 

@@ -20,6 +20,13 @@
 using namespace Live2D::Cubism::Framework;
 using namespace Live2D::Cubism::Framework::DefaultParameterId;
 
+namespace
+{
+    // The priorities of the official samples: an idle yields to everything, a forced motion to nothing.
+    constexpr int PriorityIdle = 1;
+    constexpr int PriorityForce = 3;
+}
+
 Live2DModel::Live2DModel()
     : _modelSetting(nullptr)
     , _userTimeSeconds(0.0f)
@@ -31,6 +38,7 @@ Live2DModel::Live2DModel()
     , _idParamEyeBallX(nullptr)
     , _idParamEyeBallY(nullptr)
     , _idleGroupName("")
+    , _hasIdleGroup(false)
 {
     _mocConsistency = true;
     _motionConsistency = true;
@@ -302,6 +310,7 @@ void Live2DModel::SetupModel(ICubismModelSetting* setting)
         if (_idleGroupName.empty() && (groupLower == "idle" || groupLower.find("idle") != std::string::npos))
         {
             _idleGroupName = group;
+            _hasIdleGroup = true;
         }
     }
 
@@ -445,6 +454,12 @@ void Live2DModel::Update(float deltaTime)
 
     _model->LoadParameters();
 
+    // Once the queue empties, a one-shot has ended: fall back to the idle rather than freezing on its last
+    // pose. Only a real idle group qualifies; looping whichever group happens to come first would not.
+    if (_motionManager->IsFinished() && _hasIdleGroup)
+    {
+        StartMotion(_idleGroupName.c_str(), 0, PriorityIdle);
+    }
     if (!_motionManager->IsFinished())
     {
         _motionUpdated = _motionManager->UpdateMotion(_model, deltaTime);
@@ -502,7 +517,13 @@ bool Live2DModel::StartMotion(const char* group, int no, int priority)
     csmInt32 count = _modelSetting->GetMotionCount(group);
     if (no < 0 || no >= count) return false;
 
-    if (!_motionManager->ReserveMotion(priority))
+    // A forced motion always takes over. Reserving it would fail against a motion of the same priority
+    // still playing, and a looping one never finishes, so nothing could be started again.
+    if (priority >= PriorityForce)
+    {
+        _motionManager->SetReservePriority(priority);
+    }
+    else if (!_motionManager->ReserveMotion(priority))
     {
         return false;
     }
@@ -543,6 +564,8 @@ bool Live2DModel::StartMotion(const char* group, int no, int priority)
         return true;
     }
 
+    // Release the reservation, or it would turn away every later motion of this priority.
+    _motionManager->SetReservePriority(0);
     return false;
 }
 

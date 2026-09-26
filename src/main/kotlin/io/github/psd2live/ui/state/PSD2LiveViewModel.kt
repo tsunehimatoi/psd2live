@@ -1124,6 +1124,7 @@ class PSD2LiveViewModel : AutoCloseable {
 	private val previewMeshSettingsOverrides = mutableMapOf<String, MeshSettings>()
 	private var previewMeshSettingsBaseline: RigPreviewModel? = null
 	private var motionJob: Job? = null
+	private val motionPlayer = PreviewMotionPlayer()
 	private var activeWorkJob: Job? = null
 
 	private val canvasPointers = mutableMapOf<String, Pair<Float, Float>>()
@@ -1549,7 +1550,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			followX = 0f
 			followY = 0f
 			previousFollowX = 0f
-			activeSoftwareMotionName = null
+			motionPlayer.stop()
 		}
 		schedulePreviewRebuild()
 	    editorChanged()
@@ -1621,7 +1622,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		updateState { current ->
 			val next = current.copy(motionNod = enabled)
 			val updated = next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake || next.motionSkeleton)
-			if (!enabled && activeSoftwareMotionName == "nod") {
+			if (!enabled && motionPlayer.activeName == "nod") {
 				val nodReset = mapOf(
 					StandardParameters.ANGLE_Y to 0f,
 					StandardParameters.BODY_Y to 0f,
@@ -1629,7 +1630,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				updated.copy(parameterValues = updated.parameterValues + nodReset)
 			} else updated
 		}
-		if (!enabled && activeSoftwareMotionName == "nod") activeSoftwareMotionName = null
+		if (!enabled) motionPlayer.stop("nod")
 		scheduleRuntimeBundleUpdate()
 		if (enabled) triggerMotion("Nod")
 	    editorChanged()
@@ -1639,7 +1640,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		updateState { current ->
 			val next = current.copy(motionShake = enabled)
 			val updated = next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake || next.motionSkeleton)
-			if (!enabled && activeSoftwareMotionName == "shake") {
+			if (!enabled && motionPlayer.activeName == "shake") {
 				val shakeReset = mapOf(
 					StandardParameters.ANGLE_X to 0f,
 					StandardParameters.BODY_X to 0f,
@@ -1648,7 +1649,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				updated.copy(parameterValues = updated.parameterValues + shakeReset)
 			} else updated
 		}
-		if (!enabled && activeSoftwareMotionName == "shake") activeSoftwareMotionName = null
+		if (!enabled) motionPlayer.stop("shake")
 		scheduleRuntimeBundleUpdate()
 		if (enabled) triggerMotion("Shake")
 	    editorChanged()
@@ -1659,7 +1660,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			val next = current.copy(motionSkeleton = enabled)
 			next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake || next.motionSkeleton)
 		}
-		if (!enabled && activeSoftwareMotionName in skeletonMotionNames) activeSoftwareMotionName = null
+		if (!enabled && PreviewMotionPlayer.isSkeletonMotion(motionPlayer.activeName)) motionPlayer.stop()
 		scheduleRuntimeBundleUpdate()
 		editorChanged()
 	}
@@ -2116,7 +2117,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				changed = true
 				if (target.canvases.none { it.mode == CanvasMode.PREVIEW && it.id !in target.hiddenModules }) {
 					pointerActive = false
-					activeSoftwareMotionName = null
+					motionPlayer.stop()
 				}
 				val (hierarchy, log, inspector) = target.panelFlags()
 				current.copy(
@@ -2191,7 +2192,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		if (_state.value.previewLive) ensureSdkSessionLoaded()
 		else {
 			pointerActive = false
-			activeSoftwareMotionName = null
+			motionPlayer.stop()
 		}
 	}
 
@@ -2250,7 +2251,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		if (mode == CanvasMode.PREVIEW) ensureSdkSessionLoaded()
 		if (!_state.value.previewLive) {
 			pointerActive = false
-			activeSoftwareMotionName = null
+			motionPlayer.stop()
 		}
 	}
 
@@ -2294,7 +2295,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		markWorkspaceChanged()
 		if (!_state.value.previewLive) {
 			pointerActive = false
-			activeSoftwareMotionName = null
+			motionPlayer.stop()
 		}
 	}
 
@@ -2313,7 +2314,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		markWorkspaceChanged()
 		if (isCanvasModule(module) && !_state.value.previewLive) {
 			pointerActive = false
-			activeSoftwareMotionName = null
+			motionPlayer.stop()
 		}
 	}
 
@@ -3349,7 +3350,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		backHairVelocity = 0f
 		eyeJellyDynamics.reset()
 		elapsed = 0.0
-		activeSoftwareMotionName = null
+		motionPlayer.stop()
 		lastTick = System.nanoTime()
 	}
 
@@ -3984,224 +3985,146 @@ class PSD2LiveViewModel : AutoCloseable {
 		return config.copy(meshOverrides = config.meshOverrides + previews)
 	}
 
-	private var activeSoftwareMotionName: String? = null
-	private var activeSoftwareMotionElapsed: Float = 0f
-	private var activeSoftwareMotionDuration: Float = 2.0f
 	@Volatile private var latestLiveParameters: Map<ParameterId, Float> = emptyMap()
 
 	val currentLiveParameters: Map<ParameterId, Float> get() = latestLiveParameters
-	val activeMotionName: String? get() = activeSoftwareMotionName
+	val activeMotionName: String? get() = motionPlayer.activeName
 
-	fun triggerMotion(group: String) {
+	/**
+	 * Plays [name] on the preview from its start. Cubism plays the exported motion, forced over whatever is
+	 * playing; the software clock plays the same tracks, and drives the preview until Cubism is up.
+	 */
+	fun triggerMotion(name: String) {
 		ensurePreviewCanvas(focus = true)
 		updateState { it.copy(animationEnabled = true) }
 		ensureSdkSessionLoaded()
-		sdkSession.startMotion(group, index = 0, priority = 3, viewId = canvasRenderKey(state.value.activeCanvas.id))
-		when (group.lowercase()) {
-			"nod" -> {
-				activeSoftwareMotionName = "nod"
-				activeSoftwareMotionElapsed = 0f
-				activeSoftwareMotionDuration = 2.0f
-			}
-			"shake" -> {
-				activeSoftwareMotionName = "shake"
-				activeSoftwareMotionElapsed = 0f
-				activeSoftwareMotionDuration = 2.0f
-			}
-			"blink" -> {
-				activeSoftwareMotionName = "blink"
-				activeSoftwareMotionElapsed = 0f
-				activeSoftwareMotionDuration = 1.2f
-			}
-			"idle" -> {
-				elapsed = 0.0
-			}
-			in skeletonMotionNames -> {
-				activeSoftwareMotionName = group.lowercase()
-				activeSoftwareMotionElapsed = 0f
-			}
+		val current = _state.value
+		sdkSession.startMotion(name, priority = MOTION_PRIORITY_FORCE, viewId = canvasRenderKey(current.activeCanvas.id))
+		if (name.equals("Idle", ignoreCase = true)) {
+			motionPlayer.stop()
+			elapsed = 0.0
+		} else {
+			motionPlayer.start(name, current.previewModel?.config?.rigEdits?.skeleton)
 		}
 	}
-
-	private val skeletonMotionNames: Set<String>
-		get() = io.github.psd2live.core.SkeletonMotions.presets.mapTo(HashSet()) { it.name.lowercase() }
-
-	/** The tracks of a skeleton one-shot, as exported. */
-	private fun skeletonMotionTracks(name: String, spec: io.github.psd2live.core.SkeletonSpec?): List<io.github.psd2live.core.MotionTrack> =
-		io.github.psd2live.core.SkeletonMotions.presets.firstOrNull { it.name.lowercase() == name }?.tracks?.invoke(spec).orEmpty()
 
 	private fun startMotionLoop() {
 		motionJob = scope.launch {
 			while (isActive) {
-				val now = System.nanoTime()
-				val dt = ((now - lastTick) / 1_000_000_000.0).coerceIn(0.001, 0.08).toFloat()
-				lastTick = now
-
-				val current = _state.value
-				val inPreview = current.previewLive
-				val isMeshOnly = current.meshOnly
-				val anim = inPreview && current.animationEnabled && !isMeshOnly
-				val tracking = inPreview && current.mouseTrackingEnabled && !isMeshOnly
-				if (anim) elapsed += dt
-
-				// 1. Advance one-shot software motion (Nod / Shake / Blink)
-				var nodAngleY = 0f
-				var nodBodyY = 0f
-				var nodEyeBlink = 1f
-
-				var shakeAngleX = 0f
-				var shakeBodyX = 0f
-				var shakeAngleZ = 0f
-				var skeletonMotion: Map<ParameterId, Float> = emptyMap()
-
-				val activeMotion = activeSoftwareMotionName
-				if (activeMotion != null && anim) {
-					activeSoftwareMotionElapsed += dt
-					val t = activeSoftwareMotionElapsed
-					when (activeMotion) {
-						"nod" -> {
-							if (t <= 2.0f) {
-								nodAngleY = when {
-									t < 0.55f -> -18f * (t / 0.55f)
-									t < 1.25f -> -18f + 24f * ((t - 0.55f) / 0.70f)
-									else -> 6f * (1f - (t - 1.25f) / 0.75f)
-								}
-								nodBodyY = when {
-									t < 0.55f -> -4f * (t / 0.55f)
-									t < 1.25f -> -4f + 5.5f * ((t - 0.55f) / 0.70f)
-									else -> 1.5f * (1f - (t - 1.25f) / 0.75f)
-								}
-								nodEyeBlink = when {
-									t < 0.55f -> 1f - 0.25f * (t / 0.55f)
-									t < 1.25f -> 0.75f + 0.25f * ((t - 0.55f) / 0.70f)
-									else -> 1f
-								}
-							} else {
-								activeSoftwareMotionName = null
-							}
-						}
-						"shake" -> {
-							if (t <= 2.0f) {
-								shakeAngleX = when {
-									t < 0.4f -> -20f * (t / 0.4f)
-									t < 0.9f -> -20f + 40f * ((t - 0.4f) / 0.5f)
-									t < 1.4f -> 20f - 28f * ((t - 0.9f) / 0.5f)
-									else -> -8f * (1f - (t - 1.4f) / 0.6f)
-								}
-								shakeBodyX = when {
-									t < 0.4f -> -3f * (t / 0.4f)
-									t < 0.9f -> -3f + 6f * ((t - 0.4f) / 0.5f)
-									t < 1.4f -> 3f - 4.2f * ((t - 0.9f) / 0.5f)
-									else -> -1.2f * (1f - (t - 1.4f) / 0.6f)
-								}
-								shakeAngleZ = when {
-									t < 0.4f -> 2f * (t / 0.4f)
-									t < 0.9f -> 2f - 4f * ((t - 0.4f) / 0.5f)
-									t < 1.4f -> -2f + 3f * ((t - 0.9f) / 0.5f)
-									else -> 1f * (1f - (t - 1.4f) / 0.6f)
-								}
-							} else {
-								activeSoftwareMotionName = null
-							}
-						}
-						"blink" -> {
-							if (t > 1.2f) {
-								activeSoftwareMotionName = null
-							}
-						}
-						in skeletonMotionNames -> {
-							val tracks = skeletonMotionTracks(activeMotion, current.previewModel?.config?.rigEdits?.skeleton)
-							val values = io.github.psd2live.core.SkeletonMotions.oneShot(tracks, t.toDouble())
-							if (values == null) activeSoftwareMotionName = null else skeletonMotion = values
-						}
-					}
-				}
-
-				// 2. Eye Blink (Periodic + Triggered)
-				val hasBlink = anim && current.motionBlink
-				val periodicBlink = if (hasBlink) blinkAt(elapsed % 4.6) else 1f
-				val blink = minOf(periodicBlink, nodEyeBlink)
-
-				// 3. Eye Jelly Dynamics
-				val hasEyeJelly = anim && current.generatePhysics && current.physicsEyeJelly
-				eyeJellyDynamics.advance(blink, dt, hasEyeJelly)
-
-				// 4. Idle Motion (Head & Body Sway, Mouse Tracking)
-				val hasIdle = anim && current.motionIdle
-				val idleX = if (hasIdle) (sin(elapsed * 0.47) * 0.12).toFloat() else 0f
-				val idleY = if (hasIdle) (sin(elapsed * 0.31 + 1.1) * 0.08).toFloat() else 0f
-				val targetX = if (pointerActive && tracking) pointerX else idleX
-				val targetY = if (pointerActive && tracking) pointerY else idleY
-				val response = (dt * 7.5f).coerceAtMost(1f)
-				previousFollowX = followX
-				followX += (targetX - followX) * response
-				followY += (targetY - followY) * response
-
-				if (!pointerActive && kotlin.math.abs(followX - targetX) < 0.001f) followX = targetX
-				if (!pointerActive && kotlin.math.abs(followY - targetY) < 0.001f) followY = targetY
-
-				// 5. Hair Physics Simulation
-				val hasFrontHair = anim && current.generatePhysics && current.physicsFrontHair
-				val hasBackHair = anim && current.generatePhysics && current.physicsBackHair
-				if (anim && (hasFrontHair || hasBackHair)) {
-					val headVelocity = ((followX - previousFollowX) / dt).coerceIn(-5f, 5f)
-					val hairTarget = (-followX * 0.42f - headVelocity * 0.085f).coerceIn(-1f, 1f)
-					if (hasFrontHair) {
-						val frontEdit = current.rigEdits.physicsEdits.find { it.id == "PhysicsHairFront" || it.outputParameter == "ParamHairFront" }
-						val stiffness = if (frontEdit != null) 22f * (frontEdit.mobility / 0.77f).coerceIn(0.2f, 3f) else 22f
-						val damp = if (frontEdit != null) 7.2f * (frontEdit.delay / 1.45f).coerceIn(0.2f, 3f) else 7.2f
-						frontHairVelocity += ((hairTarget - frontHair) * stiffness - frontHairVelocity * damp) * dt
-						frontHair += frontHairVelocity * dt
-					} else {
-						frontHair = 0f
-						frontHairVelocity = 0f
-					}
-					if (hasBackHair) {
-						val backEdit = current.rigEdits.physicsEdits.find { it.id == "PhysicsHairBack" || it.outputParameter == "ParamHairBack" }
-						val stiffness = if (backEdit != null) 10f * (backEdit.mobility / 0.95f).coerceIn(0.2f, 3f) else 10f
-						val damp = if (backEdit != null) 4.2f * (backEdit.delay / 0.8f).coerceIn(0.2f, 3f) else 4.2f
-						backHairVelocity += ((hairTarget - backHair) * stiffness - backHairVelocity * damp) * dt
-						backHair += backHairVelocity * dt
-					} else {
-						backHair = 0f
-						backHairVelocity = 0f
-					}
-				} else {
-					frontHair = 0f
-					frontHairVelocity = 0f
-					backHair = 0f
-					backHairVelocity = 0f
-				}
-
-				val model = current.previewModel
-				if (model != null && inPreview && (anim || tracking)) {
-					val liveParams = if (isMeshOnly) {
-						model.rig.puppet.parameters.associate { it.id to it.default }
-					} else computeLiveParameters(
-						model = model,
-						current = current,
-						blink = blink,
-						nodAngleY = nodAngleY,
-						nodBodyY = nodBodyY,
-						shakeAngleX = shakeAngleX,
-						shakeBodyX = shakeBodyX,
-						shakeAngleZ = shakeAngleZ,
-						skeletonMotion = skeletonMotion,
+				try {
+					advanceMotionFrame()
+				} catch (cancelled: kotlinx.coroutines.CancellationException) {
+					throw cancelled
+				} catch (failure: Throwable) {
+					// One bad frame must not end the loop: nothing would play again until a restart.
+					motionPlayer.stop()
+					addLog(
+						message = failure.message ?: failure.javaClass.simpleName,
+						level = LogLevel.WARNING,
+						tag = "Motion",
+						detail = failure.stackTraceToString(),
 					)
-					latestLiveParameters = liveParams
-					if (current.sdkStatus != "ready") {
-						updateState { latest ->
-							if (!latest.previewLive) latest
-							else {
-								val mergedValues = parameterValuesAfterSoftwareFrame(latest, liveParams, pointerActive)
-								if (mergedValues === latest.previewParameterValues) latest
-								else latest.copy(previewParameterValues = mergedValues)
-							}
-						}
+				}
+				delay(33)
+			}
+		}
+	}
+
+	private fun advanceMotionFrame() {
+		val now = System.nanoTime()
+		val dt = ((now - lastTick) / 1_000_000_000.0).coerceIn(0.001, 0.08).toFloat()
+		lastTick = now
+
+		val current = _state.value
+		val inPreview = current.previewLive
+		val isMeshOnly = current.meshOnly
+		val anim = inPreview && current.animationEnabled && !isMeshOnly
+		val tracking = inPreview && current.mouseTrackingEnabled && !isMeshOnly
+		if (anim) elapsed += dt
+
+		// 1. Advance the triggered one-shot; a paused preview holds it where it is.
+		val motion = if (anim) motionPlayer.advance(dt) else emptyMap()
+
+		// 2. Eye Blink (Periodic + Triggered)
+		val hasBlink = anim && current.motionBlink
+		val periodicBlink = if (hasBlink) blinkAt(elapsed % 4.6) else 1f
+		val blink = minOf(
+			periodicBlink,
+			motion[StandardParameters.EYE_L_OPEN] ?: 1f,
+			motion[StandardParameters.EYE_R_OPEN] ?: 1f,
+		)
+
+		// 3. Eye Jelly Dynamics
+		val hasEyeJelly = anim && current.generatePhysics && current.physicsEyeJelly
+		eyeJellyDynamics.advance(blink, dt, hasEyeJelly)
+
+		// 4. Idle Motion (Head & Body Sway, Mouse Tracking)
+		val hasIdle = anim && current.motionIdle
+		val idleX = if (hasIdle) (sin(elapsed * 0.47) * 0.12).toFloat() else 0f
+		val idleY = if (hasIdle) (sin(elapsed * 0.31 + 1.1) * 0.08).toFloat() else 0f
+		val targetX = if (pointerActive && tracking) pointerX else idleX
+		val targetY = if (pointerActive && tracking) pointerY else idleY
+		val response = (dt * 7.5f).coerceAtMost(1f)
+		previousFollowX = followX
+		followX += (targetX - followX) * response
+		followY += (targetY - followY) * response
+
+		if (!pointerActive && kotlin.math.abs(followX - targetX) < 0.001f) followX = targetX
+		if (!pointerActive && kotlin.math.abs(followY - targetY) < 0.001f) followY = targetY
+
+		// 5. Hair Physics Simulation
+		val hasFrontHair = anim && current.generatePhysics && current.physicsFrontHair
+		val hasBackHair = anim && current.generatePhysics && current.physicsBackHair
+		if (anim && (hasFrontHair || hasBackHair)) {
+			val headVelocity = ((followX - previousFollowX) / dt).coerceIn(-5f, 5f)
+			val hairTarget = (-followX * 0.42f - headVelocity * 0.085f).coerceIn(-1f, 1f)
+			if (hasFrontHair) {
+				val frontEdit = current.rigEdits.physicsEdits.find { it.id == "PhysicsHairFront" || it.outputParameter == "ParamHairFront" }
+				val stiffness = if (frontEdit != null) 22f * (frontEdit.mobility / 0.77f).coerceIn(0.2f, 3f) else 22f
+				val damp = if (frontEdit != null) 7.2f * (frontEdit.delay / 1.45f).coerceIn(0.2f, 3f) else 7.2f
+				frontHairVelocity += ((hairTarget - frontHair) * stiffness - frontHairVelocity * damp) * dt
+				frontHair += frontHairVelocity * dt
+			} else {
+				frontHair = 0f
+				frontHairVelocity = 0f
+			}
+			if (hasBackHair) {
+				val backEdit = current.rigEdits.physicsEdits.find { it.id == "PhysicsHairBack" || it.outputParameter == "ParamHairBack" }
+				val stiffness = if (backEdit != null) 10f * (backEdit.mobility / 0.95f).coerceIn(0.2f, 3f) else 10f
+				val damp = if (backEdit != null) 4.2f * (backEdit.delay / 0.8f).coerceIn(0.2f, 3f) else 4.2f
+				backHairVelocity += ((hairTarget - backHair) * stiffness - backHairVelocity * damp) * dt
+				backHair += backHairVelocity * dt
+			} else {
+				backHair = 0f
+				backHairVelocity = 0f
+			}
+		} else {
+			frontHair = 0f
+			frontHairVelocity = 0f
+			backHair = 0f
+			backHairVelocity = 0f
+		}
+
+		val model = current.previewModel
+		if (model != null && inPreview && (anim || tracking)) {
+			val liveParams = if (isMeshOnly) {
+				model.rig.puppet.parameters.associate { it.id to it.default }
+			} else computeLiveParameters(
+				model = model,
+				current = current,
+				blink = blink,
+				motion = motion,
+			)
+			latestLiveParameters = liveParams
+			if (current.sdkStatus != "ready") {
+				updateState { latest ->
+					if (!latest.previewLive) latest
+					else {
+						val mergedValues = parameterValuesAfterSoftwareFrame(latest, liveParams, pointerActive)
+						if (mergedValues === latest.previewParameterValues) latest
+						else latest.copy(previewParameterValues = mergedValues)
 					}
 				}
-
-				delay(33)
 			}
 		}
 	}
@@ -4210,12 +4133,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		model: RigPreviewModel,
 		current: PSD2LiveState = _state.value,
 		blink: Float = blinkAt(elapsed % 4.6),
-		nodAngleY: Float = 0f,
-		nodBodyY: Float = 0f,
-		shakeAngleX: Float = 0f,
-		shakeBodyX: Float = 0f,
-		shakeAngleZ: Float = 0f,
-		skeletonMotion: Map<ParameterId, Float> = emptyMap(),
+		motion: Map<ParameterId, Float> = emptyMap(),
 	): Map<ParameterId, Float> {
 		if (current.meshOnly) {
 			return model.rig.puppet.parameters.associate { it.id to it.default }
@@ -4234,7 +4152,9 @@ class PSD2LiveViewModel : AutoCloseable {
 		// The idle the export writes, body parameters and skeleton poses alike; pointer follow adds on top.
 		val idle = if (hasIdle) io.github.psd2live.core.SkeletonMotions.liveIdle(model.config.rigEdits.skeleton, elapsed)
 			else emptyMap()
-		fun idleOf(id: ParameterId) = idle[id] ?: 0f
+		// A playing motion replaces the idle on what it drives, as Cubism's forced motion does; the pointer
+		// follow still adds on top, like Cubism's look updater.
+		fun idleOf(id: ParameterId) = motion[id] ?: idle[id] ?: 0f
 
 		val isTracking = pointerActive && current.mouseTrackingEnabled && !current.meshOnly
 		val headAngleX = if (hasIdle || isTracking) followX * 38f else 0f
@@ -4245,11 +4165,11 @@ class PSD2LiveViewModel : AutoCloseable {
 		val eyeBallY = if (hasIdle || isTracking) (-followY).coerceIn(-1f, 1f) else 0f
 
 		val base = mapOf(
-			StandardParameters.ANGLE_X to (headAngleX + idleOf(StandardParameters.ANGLE_X) + shakeAngleX),
-			StandardParameters.ANGLE_Y to (headAngleY + idleOf(StandardParameters.ANGLE_Y) + nodAngleY),
-			StandardParameters.ANGLE_Z to (idleOf(StandardParameters.ANGLE_Z) + shakeAngleZ),
-			StandardParameters.BODY_X to (bodyAngleX + idleOf(StandardParameters.BODY_X) + shakeBodyX),
-			StandardParameters.BODY_Y to (bodyAngleY + idleOf(StandardParameters.BODY_Y) + nodBodyY),
+			StandardParameters.ANGLE_X to (headAngleX + idleOf(StandardParameters.ANGLE_X)),
+			StandardParameters.ANGLE_Y to (headAngleY + idleOf(StandardParameters.ANGLE_Y)),
+			StandardParameters.ANGLE_Z to idleOf(StandardParameters.ANGLE_Z),
+			StandardParameters.BODY_X to (bodyAngleX + idleOf(StandardParameters.BODY_X)),
+			StandardParameters.BODY_Y to (bodyAngleY + idleOf(StandardParameters.BODY_Y)),
 			StandardParameters.BODY_Z to idleOf(StandardParameters.BODY_Z),
 			StandardParameters.EYE_BALL_X to eyeBallX,
 			StandardParameters.EYE_BALL_Y to eyeBallY,
@@ -4263,7 +4183,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			StandardParameters.HAIR_BACK to if (hasBackHair) backHair.coerceIn(-1f, 1f) else 0f,
 		)
 		val available = model.rig.puppet.parameters.mapTo(HashSet()) { it.id }
-		return base + idle.filterKeys { it !in base && it in available } + skeletonMotion.filterKeys(available::contains)
+		return base + idle.filterKeys { it !in base && it in available } + motion.filterKeys { it !in base && it in available }
 	}
 
 	private fun blinkAt(phase: Double): Float = if (phase in 4.18..4.46) {
@@ -4343,6 +4263,8 @@ class PSD2LiveViewModel : AutoCloseable {
 
 	private companion object {
 		const val SDK_PARAMETER_PUBLISH_INTERVAL_NANOS = 100_000_000L
+		/** Cubism's force priority: a triggered motion always replaces the one playing. */
+		const val MOTION_PRIORITY_FORCE = 3
 		const val PREF_LAST_EXPORT_DIR = "last_export_dir"
 		/** The token every slider shares; the call sites predate the per-field tokens and stay untouched. */
 		const val SLIDER_SESSION = "slider"

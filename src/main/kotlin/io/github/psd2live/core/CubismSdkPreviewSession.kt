@@ -4,6 +4,11 @@ import com.sun.jna.Library
 import com.sun.jna.Memory
 import com.sun.jna.Native
 import com.sun.jna.Pointer
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.umamo.runtime.model.ParameterId
 import java.awt.image.BufferedImage
 import java.awt.image.DataBufferInt
@@ -126,6 +131,7 @@ class CubismSdkPreviewSession(
     private val nativeCanvases = mutableMapOf<String, NativeCanvas>()
     private var loadedManifest: Path? = null
     private var hasIdleMotion = false
+    private var motionSlots: Map<String, Pair<String, Int>> = emptyMap()
 
     private fun canvasHandle(native: Api, viewId: String): NativeCanvas = nativeCanvases.getOrPut(viewId) {
         // The model created while loading can serve the first view. Keeping it idle alongside
@@ -176,6 +182,7 @@ class CubismSdkPreviewSession(
 				val manifestText = bundle.assets.firstOrNull { it.path.endsWith(".model3.json") }?.bytes?.decodeToString()
 				val hasIdle = manifestText?.contains("\"Idle\"") == true
                 hasIdleMotion = hasIdle
+				motionSlots = manifestText?.let(::cubismMotionSlots).orEmpty()
 				if (hasIdle) {
 					stage = "start generated idle motion"
 					native.Live2D_StartMotion(loaded, "Idle", 0, 1)
@@ -188,12 +195,17 @@ class CubismSdkPreviewSession(
 		}
 	}
 
-	fun startMotion(group: String, index: Int = 0, priority: Int = 3, viewId: String = "") {
+	/**
+	 * Starts the motion named [name] on [viewId]'s model. A name is a motion file's, so a loop preset
+	 * exported into the idle group is found there; a name no file carries is tried as a group.
+	 */
+	fun startMotion(name: String, priority: Int = 3, viewId: String = "") {
 		if (closed) return
 		executor.execute {
 			if (closed || loadedGeneration != generation) return@execute
 			val native = api ?: return@execute
 			val handle = canvasHandle(native, viewId).handle
+			val (group, index) = motionSlots[name.lowercase()] ?: (name to 0)
 			native.Live2D_StartMotion(handle, group, index, priority)
 		}
 	}
@@ -280,7 +292,7 @@ class CubismSdkPreviewSession(
 			val canvas = canvasHandle(native, request.viewId)
             val handle = canvas.handle
             val reusePose = request.animationEnabled && canvas.lastPoseRequest?.let { previous ->
-                previous.animationEnabled && previous.frameTimeNanos >= request.frameTimeNanos &&
+                previous.animationEnabled && previous.frameTimeNanos == request.frameTimeNanos &&
                     previous.pointerX == request.pointerX && previous.pointerY == request.pointerY &&
                     previous.parameterOverrides == request.parameterOverrides
             } == true
@@ -345,12 +357,16 @@ class CubismSdkPreviewSession(
 
 	private fun animationDeltaTime(canvas: NativeCanvas, request: RenderRequest): Float {
 		val requested = request.deltaTime.coerceIn(0f, 0.1f)
-		val elapsed = if (canvas.previousFrameWasAnimated && canvas.lastRenderedFrameTimeNanos > 0L) {
-			((request.frameTimeNanos - canvas.lastRenderedFrameTimeNanos) / 1_000_000_000f).coerceIn(0f, 0.1f)
+		val sinceLast = request.frameTimeNanos - canvas.lastRenderedFrameTimeNanos
+		// Frame stamps come from two clocks: the pump's vsync time, and System.nanoTime while paused. A stamp
+		// behind the last one must not pin the clock at zero: a motion that never reaches its end keeps its
+		// priority, and Cubism then turns every later motion away.
+		val elapsed = if (canvas.previousFrameWasAnimated && canvas.lastRenderedFrameTimeNanos > 0L && sinceLast > 0L) {
+			(sinceLast / 1_000_000_000f).coerceAtMost(0.1f)
 		} else {
 			requested
 		}
-		canvas.lastRenderedFrameTimeNanos = maxOf(canvas.lastRenderedFrameTimeNanos, request.frameTimeNanos)
+		canvas.lastRenderedFrameTimeNanos = request.frameTimeNanos
 		canvas.previousFrameWasAnimated = true
 		return elapsed
 	}
@@ -599,4 +615,23 @@ class CubismSdkPreviewSession(
 		}
 	}
 
+}
+
+/**
+ * Where each motion of a model3 manifest sits, keyed by the lower-case name its file carries
+ * (`model.idleCute.motion3.json` is `idlecute`): its group and its index within it.
+ */
+internal fun cubismMotionSlots(manifest: String): Map<String, Pair<String, Int>> {
+	val motions = runCatching {
+		Json.parseToJsonElement(manifest).jsonObject["FileReferences"]?.jsonObject?.get("Motions")?.jsonObject
+	}.getOrNull() ?: return emptyMap()
+	return buildMap {
+		for ((group, entries) in motions) {
+			(entries as? JsonArray)?.forEachIndexed { index, entry ->
+				val file = (entry as? JsonObject)?.get("File")?.jsonPrimitive?.content ?: return@forEachIndexed
+				val name = file.substringAfterLast('/').removeSuffix(".motion3.json").substringAfterLast('.')
+				putIfAbsent(name.lowercase(), group to index)
+			}
+		}
+	}
 }
