@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.components.IconDeformPath
+import io.github.psd2live.ui.components.IconSkeleton
 import io.github.psd2live.ui.components.IconMeshWireframe
 import io.github.psd2live.ui.components.IconRotationDeformer
 import io.github.psd2live.ui.components.IconSelectedOnly
@@ -188,6 +189,15 @@ internal fun CanvasViewOptionsBar(
 					onClick = { apply(options.copy(pathShowHardness = !options.pathShowHardness)) },
 				)
 			}
+			ViewOptionRow(
+				label = tr("canvas.visibility.skeleton"),
+				isChecked = options.showSkeleton,
+				isToolbarExpanded = isExpanded,
+				textAlpha = textAlpha,
+				textOffset = textOffset,
+				icon = { IconSkeleton(tint = it, modifier = Modifier.size(14.dp)) },
+				onClick = { apply(options.copy(showSkeleton = !options.showSkeleton)) },
+			)
 		}
 
 		Box(

@@ -570,9 +570,9 @@ internal class CanvasEditor(
 		poseHover = SkeletonPoseTool.hit(posedBones(), pos, viewport)
 	}
 
-	/** The bone under [pos] that an Object mode click would pick, when the skeleton is switched on. */
-	private fun skeletonBoneAt(pos: Offset, viewport: CanvasViewport): String? =
-		bakedSkeleton?.let { SkeletonPoseTool.hit(posedBones(), pos, viewport) }?.let { hit -> hit.boneId }
+	/** The bone under [pos] that an Object mode click would pick; a hidden armature picks nothing. */
+	private fun objectModeBoneHit(pos: Offset, viewport: CanvasViewport): BoneHit? =
+		bakedSkeleton?.takeIf { state.showSkeleton }?.let { SkeletonPoseTool.hit(posedBones(), pos, viewport) }
 
 	/** Every bone and leg pose back at rest. */
 	fun resetSkeletonPose() {
@@ -3469,7 +3469,7 @@ internal class CanvasEditor(
         // annotation names the thing a click would actually select — Ctrl included.
         if (hierarchyMode == EditHierarchyMode.SELECT) {
             if (tool == CanvasTool.SELECT) {
-                val bone = bakedSkeleton?.let { SkeletonPoseTool.hit(posedBones(), pos, viewport) }
+                val bone = objectModeBoneHit(pos, viewport)
                 if (poseHover?.boneId != bone?.boneId || poseHover?.tip != bone?.tip) poseHover = bone
                 if (bone != null) {
                     isHoveringObject = true
@@ -5019,8 +5019,8 @@ internal class CanvasEditor(
         //    begins a transform drag, which is what keeps the mode read-only.
         if (hierarchyMode == EditHierarchyMode.SELECT && tool == CanvasTool.SELECT) {
             // A bone sits over the art it moves, so it is tried first: clicking one picks the skeleton.
-            skeletonBoneAt(pos, viewport)?.let { boneId ->
-                selectSkeleton(boneId)
+            objectModeBoneHit(pos, viewport)?.let { hit ->
+                selectSkeleton(hit.boneId)
                 return true
             }
             val pick = objectPick(pos, viewport, ctrl)

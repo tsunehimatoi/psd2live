@@ -84,6 +84,8 @@ data class TabViewOptions(
 	val showWarp: Boolean = false,
 	val showRotation: Boolean = false,
 	val showDeformPaths: Boolean = true,
+	/** Object mode's faint armature, which is also what a click picks the skeleton by. */
+	val showSkeleton: Boolean = true,
 	val warpShowNames: Boolean = true,
 	val warpShowIndices: Boolean = false,
 	val pathShowWidth: Boolean = false,
@@ -440,6 +442,7 @@ data class PSD2LiveState(
 	val showRotation: Boolean get() = activeTabView.showRotation
 	val showDeformPaths: Boolean get() = activeTabView.showDeformPaths
 	val showMesh: Boolean get() = activeTabView.showMesh
+	val showSkeleton: Boolean get() = activeTabView.showSkeleton
 	val showTexture: Boolean get() = activeTabView.showTexture
 	val warpShowNames: Boolean get() = activeTabView.warpShowNames
 	val warpShowIndices: Boolean get() = activeTabView.warpShowIndices

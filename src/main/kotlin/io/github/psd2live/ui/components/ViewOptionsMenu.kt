@@ -505,6 +505,13 @@ fun ViewOptionsMenuItems(
 			onHover = onHover,
 			onClick = { apply(options.copy(pathShowHardness = !options.pathShowHardness)) },
 		)
+		AppMenuItem(
+			text = tr("canvas.visibility.skeleton"),
+			icon = { IconSkeleton(tint = it, modifier = Modifier.size(14.dp)) },
+			isChecked = options.showSkeleton,
+			onHover = onHover,
+			onClick = { apply(options.copy(showSkeleton = !options.showSkeleton)) },
+		)
 	}
 
 	AppMenuSeparator()

@@ -1247,7 +1247,8 @@ internal fun BoxScope.CanvasEditorOverlay(
 
     if (skeleton == null && editor.posing()) {
         SkeletonPoseLayer(editor, viewport)
-    } else if (skeleton == null && editor.hierarchyMode == EditHierarchyMode.SELECT && editor.bakedSkeleton != null) {
+    } else if (skeleton == null && editor.hierarchyMode == EditHierarchyMode.SELECT && editor.bakedSkeleton != null &&
+        editor.state.showSkeleton) {
         // Object mode shows the bones faintly so they can be clicked, which is how the skeleton is picked.
         SkeletonPoseLayer(editor, viewport, passive = true)
     }

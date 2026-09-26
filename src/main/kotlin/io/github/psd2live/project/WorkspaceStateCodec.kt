@@ -86,6 +86,7 @@ internal object WorkspaceStateCodec {
             showWarp = booleanOr(obj, "showWarp", defaults.showWarp),
             showRotation = booleanOr(obj, "showRotation", defaults.showRotation),
             showDeformPaths = booleanOr(obj, "showDeformPaths", defaults.showDeformPaths),
+            showSkeleton = booleanOr(obj, "showSkeleton", defaults.showSkeleton),
             warpShowNames = booleanOr(obj, "warpShowNames", defaults.warpShowNames),
             warpShowIndices = booleanOr(obj, "warpShowIndices", defaults.warpShowIndices),
             pathShowWidth = booleanOr(obj, "pathShowWidth", defaults.pathShowWidth),
@@ -113,6 +114,7 @@ internal object WorkspaceStateCodec {
         put("showWarp", options.showWarp)
         put("showRotation", options.showRotation)
         put("showDeformPaths", options.showDeformPaths)
+        put("showSkeleton", options.showSkeleton)
         put("warpShowNames", options.warpShowNames)
         put("warpShowIndices", options.warpShowIndices)
         put("pathShowWidth", options.pathShowWidth)
