@@ -218,6 +218,9 @@ internal object WorkspaceStateCodec {
         return EditorWorkspace(
             id = id,
             name = obj["name"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            preset = obj["preset"]?.jsonPrimitive?.contentOrNull
+                ?.let { saved -> WorkspacePreset.entries.firstOrNull { it.name == saved } }
+                ?: WorkspacePreset.EDIT,
             layoutJson = obj["layout"]?.jsonPrimitive?.contentOrNull,
             hiddenModules = obj["hiddenModules"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty().toSet(),
             canvases = canvases,
@@ -383,6 +386,7 @@ internal object WorkspaceStateCodec {
         putJsonArray("workspaces") { state.workspaces.forEach { workspace -> add(buildJsonObject {
             put("id", workspace.id)
             put("name", workspace.name)
+            put("preset", workspace.preset.name)
             workspace.layoutJson?.let { put("layout", it) }
             putJsonArray("hiddenModules") { workspace.hiddenModules.sorted().forEach { add(it) } }
             put("activeCanvasId", workspace.activeCanvasId)

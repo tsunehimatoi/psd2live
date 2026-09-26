@@ -2455,16 +2455,21 @@ class PSD2LiveViewModel : AutoCloseable {
 		}
 	}
 
-	/** A new workspace starts from the default arrangement and one edit canvas. */
-	fun addWorkspace(): String {
+	/**
+	 * A new workspace starts from [preset]'s canvases and arrangement. The name stays blank (it
+	 * follows the preset's localized title) unless another workspace already shows that title.
+	 */
+	fun addWorkspace(preset: WorkspacePreset = WorkspacePreset.EDIT): String {
 		val current = _state.value
-		val ordinal = current.workspaces.size + 1
-		val workspace = defaultEditorWorkspace().copy(
-			id = java.util.UUID.randomUUID().toString(),
-			name = tr("workspace.numbered", ordinal),
-		)
-		updateState { it.copy(workspaces = it.workspaces + workspace, activeWorkspaceId = workspace.id) }
-		markWorkspaceChanged()
+		val title = preset.title()
+		val taken = current.workspaces.map { it.displayName() }.toSet()
+		val name = if (title !in taken) "" else
+			generateSequence(2) { it + 1 }.map { "$title $it" }.first { it !in taken }
+		val workspace = presetEditorWorkspace(java.util.UUID.randomUUID().toString(), preset, name)
+		updateState { it.copy(workspaces = it.workspaces + workspace) }
+		// Switching syncs the panel toggles and the preview session, and marks the change itself.
+		setActiveWorkspace(workspace.id)
+		if (_state.value.activeWorkspaceId != workspace.id) markWorkspaceChanged()
 		return workspace.id
 	}
 
@@ -2662,9 +2667,12 @@ class PSD2LiveViewModel : AutoCloseable {
 		if (changed) markWorkspaceChanged()
 	}
 
+	/** Returns the active workspace to its preset's arrangement; its canvases are kept. */
 	fun resetWorkspaceArrangement() {
 		updateState { current ->
-			current.updateActiveWorkspace { it.copy(layoutJson = null, placeModules = emptyList(), hiddenModules = emptySet()) }
+			current.updateActiveWorkspace {
+				it.copy(layoutJson = null, placeModules = emptyList(), hiddenModules = it.preset.hiddenModules)
+			}
 		}
 		markWorkspaceChanged()
 	}

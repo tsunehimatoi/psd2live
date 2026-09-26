@@ -37,7 +37,7 @@ internal val INSPECTOR_DOCK_MODULES = setOf(
 
 /** Modules a fresh workspace layout already contains. History is added from the window menu. */
 internal val DEFAULT_DOCK_MODULES = setOf(
-	PRIMARY_CANVAS_ID, "hierarchy", "log", "animationEditor",
+	PRIMARY_CANVAS_ID, "hierarchy", "skeleton", "log", "animationEditor",
 ) + INSPECTOR_DOCK_MODULES
 
 fun isCanvasModule(id: String): Boolean = id == PRIMARY_CANVAS_ID || id.startsWith("canvas:")
@@ -155,6 +155,55 @@ data class CanvasWindowState(
 }
 
 /**
+ * What a workspace is for. A preset seeds the canvases, the dock arrangement (see
+ * `presetDockLayout`) and which panels start hidden; "reset layout" returns to it.
+ *
+ * Every preset's dock tree holds every panel, so a hidden panel shown from the window menu
+ * reappears where that task expects it rather than at an arbitrary edge.
+ */
+enum class WorkspacePreset(
+	/** Canvas modes in dock order. The first canvas takes [PRIMARY_CANVAS_ID]. */
+	val canvasModes: List<CanvasMode>,
+	val hiddenModules: Set<String>,
+) {
+	/** Deformers, keyforms and skeleton on one edit canvas, with every property panel at hand. */
+	EDIT(listOf(CanvasMode.EDIT), emptySet()),
+
+	/** Layer art and mesh topology: the layer table beside the canvas, mesh and tool options on the right. */
+	MESH(
+		listOf(CanvasMode.EDIT),
+		setOf("skeleton", "animationEditor", "settings", "parameters", "animation", "physics"),
+	),
+
+	/** Binding parameters: the edit canvas and a live preview side by side, parameters always visible. */
+	RIG(
+		listOf(CanvasMode.EDIT, CanvasMode.PREVIEW),
+		setOf("animationEditor", "settings", "layers", "mesh", "animation", "physics"),
+	),
+
+	/** Authoring motions: the preview canvas over a tall timeline, motions and physics on the right. */
+	ANIMATION(
+		listOf(CanvasMode.PREVIEW),
+		setOf("hierarchy", "skeleton", "log", "settings", "layers", "tools", "mesh", "inspector"),
+	),
+
+	/** Checking the finished model: a large preview with parameters, motions and physics only. */
+	PREVIEW(
+		listOf(CanvasMode.PREVIEW),
+		setOf("hierarchy", "skeleton", "log", "animationEditor", "settings", "layers", "tools", "mesh", "inspector"),
+	),
+	;
+
+	fun title(): String = tr("workspace.preset.${name.lowercase()}")
+
+	fun description(): String = tr("workspace.preset.${name.lowercase()}.desc")
+
+	fun canvases(): List<CanvasWindowState> = canvasModes.mapIndexed { index, mode ->
+		CanvasWindowState(id = if (index == 0) PRIMARY_CANVAS_ID else "canvas:${java.util.UUID.randomUUID()}", mode = mode)
+	}
+}
+
+/**
  * A named arrangement of docked panels and canvases.
  *
  * The project session (model, edits, parameters) is shared. A workspace only remembers where
@@ -164,7 +213,8 @@ data class CanvasWindowState(
 data class EditorWorkspace(
 	val id: String,
 	val name: String = "",
-	/** Serialized dock tree. Null means the built-in arrangement. */
+	val preset: WorkspacePreset = WorkspacePreset.EDIT,
+	/** Serialized dock tree. Null means the [preset]'s arrangement. */
 	val layoutJson: String? = null,
 	val hiddenModules: Set<String> = emptySet(),
 	/** Modules the user asked to show that are not in the layout yet. The dock consumes this list. */
@@ -185,8 +235,20 @@ internal fun defaultEditCanvas(): CanvasWindowState = CanvasWindowState(
 
 internal fun defaultEditorWorkspace(): EditorWorkspace = EditorWorkspace(id = DEFAULT_WORKSPACE_ID)
 
-/** Blank names stay localized; a name the user typed is kept as written. */
-fun EditorWorkspace.displayName(): String = name.ifBlank { tr("workspace.default") }
+internal fun presetEditorWorkspace(id: String, preset: WorkspacePreset, name: String = ""): EditorWorkspace {
+	val canvases = preset.canvases()
+	return EditorWorkspace(
+		id = id,
+		name = name,
+		preset = preset,
+		hiddenModules = preset.hiddenModules,
+		canvases = canvases,
+		activeCanvasId = canvases.first().id,
+	)
+}
+
+/** Blank names stay localized and follow the preset; a name the user typed is kept as written. */
+fun EditorWorkspace.displayName(): String = name.ifBlank { preset.title() }
 
 /** Title-bar toggles projected from this workspace's hidden modules. */
 internal fun EditorWorkspace.panelFlags(): Triple<Boolean, Boolean, Boolean> = Triple(

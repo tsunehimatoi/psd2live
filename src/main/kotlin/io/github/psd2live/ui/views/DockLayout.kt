@@ -2,6 +2,9 @@ package io.github.psd2live.ui.views
 
 import kotlinx.serialization.Serializable
 import java.util.UUID
+import io.github.psd2live.ui.state.EditorWorkspace
+import io.github.psd2live.ui.state.PRIMARY_CANVAS_ID
+import io.github.psd2live.ui.state.WorkspacePreset
 import io.github.psd2live.ui.state.isCanvasModule
 
 internal enum class DockSide { CENTER, LEFT, RIGHT, TOP, BOTTOM }
@@ -160,13 +163,52 @@ internal fun ensureAnimationEditorDockTab(root: DockNode): DockNode {
     }
 }
 
-internal fun defaultDockLayout(): DockNode {
+internal fun defaultDockLayout(canvas: String = PRIMARY_CANVAS_ID): DockNode {
     val canvasAndLog = DockNode(horizontal = false, ratio = .72f,
-        first = DockNode(modules = listOf("canvas")),
+        first = DockNode(modules = listOf(canvas)),
         second = DockNode(modules = listOf("log", "animationEditor")))
     val workspace = DockNode(ratio = .28f, first = DockNode(modules = listOf("hierarchy", "skeleton")), second = canvasAndLog)
     return DockNode(ratio = .60f, first = workspace,
         second = DockNode(horizontal = false, ratio = .32f,
             first = DockNode(modules = listOf("settings")),
             second = DockNode(modules = listOf("layers", "parameters", "tools", "mesh", "inspector", "animation", "physics"))))
+}
+
+private fun leaf(vararg modules: String) = DockNode(modules = modules.toList())
+private fun row(ratio: Float, first: DockNode, second: DockNode) =
+    DockNode(horizontal = true, ratio = ratio, first = first, second = second)
+private fun column(ratio: Float, first: DockNode, second: DockNode) =
+    DockNode(horizontal = false, ratio = ratio, first = first, second = second)
+
+/**
+ * The arrangement a workspace starts from and "reset layout" restores. Each preset canvas slot
+ * takes the first remaining canvas of its mode (or any remaining canvas); a slot with no canvas
+ * left is dropped, and canvases beyond the slots are docked by [reconcileDockModules].
+ */
+internal fun presetDockLayout(workspace: EditorWorkspace): DockNode {
+    val preset = workspace.preset
+    val unused = workspace.canvases.toMutableList()
+    val slots = preset.canvasModes.map { mode ->
+        val canvas = unused.firstOrNull { it.mode == mode } ?: unused.firstOrNull()
+        canvas?.let { unused.remove(it); it.id }
+    }
+    // Placeholders keep each tree readable; an unfilled one is pruned below.
+    val names = slots.mapIndexed { index, id -> id ?: "#slot$index" }
+    val layout = when (preset) {
+        WorkspacePreset.EDIT -> defaultDockLayout(names[0])
+        WorkspacePreset.MESH -> row(.22f, leaf("layers", "hierarchy", "skeleton"),
+            row(.72f, column(.78f, leaf(names[0]), leaf("log", "animationEditor")),
+                column(.55f, leaf("mesh", "tools"), leaf("inspector", "parameters", "settings", "animation", "physics"))))
+        WorkspacePreset.RIG -> row(.20f, leaf("hierarchy", "skeleton"),
+            row(.75f, column(.76f, row(.5f, leaf(names[0]), leaf(names[1])), leaf("log", "animationEditor")),
+                column(.45f, leaf("parameters"), leaf("inspector", "tools", "mesh", "layers", "settings", "animation", "physics"))))
+        WorkspacePreset.ANIMATION -> row(.20f, leaf("parameters", "hierarchy", "skeleton"),
+            row(.76f, column(.55f, leaf(names[0]), leaf("animationEditor", "log")),
+                column(.50f, leaf("animation"), leaf("physics", "settings", "layers", "tools", "mesh", "inspector"))))
+        WorkspacePreset.PREVIEW -> row(.16f, leaf("hierarchy", "skeleton"),
+            row(.78f, column(.80f, leaf(names[0]), leaf("log", "animationEditor")),
+                column(.50f, leaf("parameters"), leaf("animation", "physics", "settings", "layers", "tools", "mesh", "inspector"))))
+    }
+    return names.filterIndexed { index, _ -> slots[index] == null }
+        .fold(layout) { node, placeholder -> node.remove(placeholder) ?: node }
 }

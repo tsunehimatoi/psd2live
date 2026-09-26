@@ -199,7 +199,7 @@ internal fun DockWorkspaceView(
         val saved = workspace.layoutJson?.let { raw ->
             runCatching { dockJson.decodeFromString<DockNode>(raw) }.getOrNull()?.remove("export")
         }?.takeIf { node -> node.allModules().all { it in allowed } }
-        DockSession(saved?.let(::repairLegacyCanvasDocking) ?: defaultDockLayout())
+        DockSession(saved?.let(::repairLegacyCanvasDocking) ?: presetDockLayout(workspace))
     }
     LaunchedEffect(workspace.id, workspace.layoutJson) {
         val saved = workspace.layoutJson?.let { runCatching { dockJson.decodeFromString<DockNode>(it) }.getOrNull() }
@@ -286,7 +286,7 @@ internal fun DockWorkspaceView(
                 )
                 TabStripButton(label = tr("dock.reset")) {
                     session.floating.clear()
-                    session.root = defaultDockLayout()
+                    session.root = presetDockLayout(workspace)
                     viewModel.resetWorkspaceArrangement()
                 }
                 Spacer(Modifier.width(4.dp))

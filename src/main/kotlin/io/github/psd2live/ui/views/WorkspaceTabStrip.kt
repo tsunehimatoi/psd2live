@@ -64,6 +64,7 @@ import io.github.psd2live.ui.state.CanvasMode
 import io.github.psd2live.ui.state.EditorWorkspace
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
+import io.github.psd2live.ui.state.WorkspacePreset
 import io.github.psd2live.ui.state.displayName
 import io.github.psd2live.ui.state.isCanvasModule
 import io.github.psd2live.ui.theme.LocalToolColors
@@ -126,7 +127,7 @@ fun WorkspaceStrip(
 					onDuplicate = { viewModel.duplicateWorkspace(item.id) },
 				)
 			}
-			TabStripButton(label = "+") { viewModel.addWorkspace() }
+			NewWorkspaceButton(onCreate = { viewModel.addWorkspace(it) })
 		}
 
 		Box {
@@ -162,6 +163,41 @@ fun WorkspaceStrip(
 			}
 		}
 		Spacer(Modifier.width(2.dp))
+	}
+}
+
+/** "+" opens the presets; the hovered one's purpose is shown under the list. */
+@Composable
+private fun NewWorkspaceButton(onCreate: (WorkspacePreset) -> Unit) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	var expanded by remember { mutableStateOf(false) }
+	var hovered by remember { mutableStateOf<WorkspacePreset?>(null) }
+	Box {
+		TabStripButton(label = "+") {
+			hovered = null
+			expanded = true
+		}
+		TabStripDropdown(expanded = expanded, onDismissRequest = { expanded = false }) {
+			AppMenuHeader(tr("workspace.new"))
+			WorkspacePreset.entries.forEach { preset ->
+				AppMenuItem(
+					text = preset.title(),
+					onHover = { hovered = preset },
+					onClick = {
+						expanded = false
+						onCreate(preset)
+					},
+				)
+			}
+			AppMenuSeparator()
+			Text(
+				text = (hovered ?: WorkspacePreset.EDIT).description(),
+				style = typography.caption.copy(fontSize = 10.5.sp),
+				color = colors.textMuted,
+				modifier = Modifier.width(240.dp).padding(horizontal = 12.dp, vertical = 4.dp),
+			)
+		}
 	}
 }
 

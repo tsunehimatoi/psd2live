@@ -1,5 +1,11 @@
 package io.github.psd2live.ui.views
 
+import io.github.psd2live.ui.state.CanvasMode
+import io.github.psd2live.ui.state.DEFAULT_DOCK_MODULES
+import io.github.psd2live.ui.state.PRIMARY_CANVAS_ID
+import io.github.psd2live.ui.state.WorkspacePreset
+import io.github.psd2live.ui.state.isCanvasModule
+import io.github.psd2live.ui.state.presetEditorWorkspace
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -58,5 +64,35 @@ class DockLayoutTest {
         assertSame(updated, ensureAnimationEditorDockTab(updated))
         val withoutLog = DockNode(modules = listOf("canvas"))
         assertSame(withoutLog, ensureAnimationEditorDockTab(withoutLog))
+    }
+
+    @Test fun everyPresetDocksEachPanelOnceAndShowsItsCanvases() {
+        WorkspacePreset.entries.forEach { preset ->
+            val workspace = presetEditorWorkspace("w", preset)
+            val layout = presetDockLayout(workspace)
+            val modules = layout.allModules()
+            val canvasIds = workspace.canvases.map { it.id }
+
+            assertEquals(modules.size, modules.toSet().size, "$preset docks a panel twice")
+            assertEquals(DEFAULT_DOCK_MODULES - PRIMARY_CANVAS_ID + canvasIds, modules.toSet(), "$preset")
+            assertTrue(preset.hiddenModules.none(::isCanvasModule), "$preset")
+            // Legacy repair must leave a preset layout alone, and every panel must have a place to reappear.
+            assertSame(layout, repairLegacyCanvasDocking(layout))
+            assertSame(layout, reconcileDockModules(layout, canvasIds, emptyList()))
+            val visible = preset.hiddenModules.fold<String, DockNode?>(layout) { node, module -> node?.remove(module) }
+            assertTrue(visible?.allModules()?.containsAll(canvasIds) == true, "$preset")
+        }
+    }
+
+    @Test fun presetLayoutFillsCanvasSlotsFromTheCanvasesThatRemain() {
+        val rig = presetEditorWorkspace("w", WorkspacePreset.RIG)
+        val onlyEdit = rig.copy(canvases = rig.canvases.filter { it.mode == CanvasMode.EDIT })
+        assertEquals(listOf(PRIMARY_CANVAS_ID), presetDockLayout(onlyEdit).allModules().filter(::isCanvasModule))
+
+        val swapped = rig.copy(canvases = rig.canvases.reversed())
+        assertEquals(
+            rig.canvases.map { it.id },
+            presetDockLayout(swapped).allModules().filter(::isCanvasModule),
+        )
     }
 }

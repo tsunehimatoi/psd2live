@@ -24,6 +24,28 @@ class MultiCanvasIsolationTest {
         }
     }
 
+    @Test fun presetWorkspacesKeepTheirPresetThroughSaveAndReset() {
+        PSD2LiveViewModel().use { vm ->
+            vm.addWorkspace(WorkspacePreset.ANIMATION)
+            val workspace = vm.state.value.activeWorkspace
+            assertEquals(WorkspacePreset.ANIMATION, workspace.preset)
+            assertEquals(listOf(CanvasMode.PREVIEW), workspace.canvases.map { it.mode })
+            assertTrue(vm.state.value.hierarchyCollapsed)
+            assertFalse(vm.state.value.logPanelExpanded)
+
+            vm.setModuleVisible("log", true)
+            vm.resetWorkspaceArrangement()
+            assertEquals(WorkspacePreset.ANIMATION.hiddenModules, vm.state.value.activeWorkspace.hiddenModules)
+
+            val settings = io.github.psd2live.project.WorkspaceStateCodec.settings(vm.state.value)
+            val decoded = io.github.psd2live.project.WorkspaceStateCodec.decode(settings, vm.state.value)
+            assertEquals(WorkspacePreset.ANIMATION, decoded.workspaces.first { it.id == workspace.id }.preset)
+
+            vm.addWorkspace(WorkspacePreset.ANIMATION)
+            assertNotEquals(workspace.displayName(), vm.state.value.activeWorkspace.displayName())
+        }
+    }
+
     /** Every canvas authoring commit rebuilds state through a settings-only decode; it must keep a multi-selection. */
     @Test fun authoringCommitKeepsTheMultiSelection() {
         PSD2LiveViewModel().use { vm ->
