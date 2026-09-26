@@ -1170,92 +1170,11 @@ internal fun BoxScope.CanvasEditorOverlay(
                 }
             }
 
-            // 2. Draw Blender-style pyramidal/octahedral bones
-            val sortedBones = skeleton.bones.sortedBy { if (it.id == editor.selectedBoneId) 1 else 0 }
-            for (bone in sortedBones) {
-                val color = boneColor(bone.id)
-                val isSelected = editor.selectedBoneId == bone.id
-                val head = screen(bone.headX, bone.headY)
-                val tail = screen(bone.tailX, bone.tailY)
-                val dx = tail.x - head.x
-                val dy = tail.y - head.y
-                val len = hypot(dx, dy)
-
-                if (len >= 6f) {
-                    val ux = dx / len
-                    val uy = dy / len
-                    val nx = -uy
-                    val ny = ux
-
-                    val shoulderDist = (len * 0.18f).coerceIn(6f, 30f)
-                    val shoulderHalfWidth = (len * 0.10f).coerceIn(4f, 16f)
-
-                    val cx = head.x + ux * shoulderDist
-                    val cy = head.y + uy * shoulderDist
-
-                    val left = Offset(cx + nx * shoulderHalfWidth, cy + ny * shoulderHalfWidth)
-                    val right = Offset(cx - nx * shoulderHalfWidth, cy - ny * shoulderHalfWidth)
-
-                    val leftFacet = Path().apply {
-                        moveTo(head.x, head.y)
-                        lineTo(left.x, left.y)
-                        lineTo(tail.x, tail.y)
-                        close()
-                    }
-                    val rightFacet = Path().apply {
-                        moveTo(head.x, head.y)
-                        lineTo(right.x, right.y)
-                        lineTo(tail.x, tail.y)
-                        close()
-                    }
-                    val fullOutline = Path().apply {
-                        moveTo(head.x, head.y)
-                        lineTo(left.x, left.y)
-                        lineTo(tail.x, tail.y)
-                        lineTo(right.x, right.y)
-                        close()
-                    }
-
-                    // Shaded facets (Blender octahedral bone look)
-                    drawPath(leftFacet, color.copy(alpha = if (isSelected) 0.60f else 0.38f))
-                    drawPath(rightFacet, color.copy(alpha = if (isSelected) 0.36f else 0.20f))
-
-                    // Cross crease
-                    drawLine(
-                        color = (if (isSelected) Color.White else color).copy(alpha = 0.40f),
-                        start = left,
-                        end = right,
-                        strokeWidth = if (isSelected) 1.2f else 0.8f,
-                    )
-
-                    // Center ridge
-                    drawLine(
-                        color = if (isSelected) Color.White.copy(alpha = 0.90f) else color.copy(alpha = 0.70f),
-                        start = head,
-                        end = tail,
-                        strokeWidth = if (isSelected) 1.8f else 1.1f,
-                    )
-
-                    // Outer border
-                    drawPath(
-                        fullOutline,
-                        color = if (isSelected) Color.White else color.copy(alpha = 0.90f),
-                        style = Stroke(width = if (isSelected) 2.2f else 1.3f),
-                    )
-                } else {
-                    drawLine(color, head, tail, strokeWidth = if (isSelected) 3f else 1.8f)
-                }
-
-                // Head joint handle (Blender spherical head)
-                val headRadius = if (isSelected) 8.0f else 5.8f
-                drawCircle(if (isSelected) Color.White else color, headRadius, head)
-                drawCircle(color, headRadius * 0.75f, head)
-                drawCircle(Color.White, headRadius * 0.35f, head)
-
-                // Tail joint handle (Blender spherical tip)
-                val tailRadius = if (isSelected) 5.2f else 3.8f
-                drawCircle(if (isSelected) Color.White else color, tailRadius, tail)
-                drawCircle(color, tailRadius * 0.75f, tail)
+            // 2. The bones themselves, the selected one on top.
+            val halo = colors.windowBackground
+            for (bone in skeleton.bones.sortedBy { it.id == editor.selectedBoneId }) {
+                drawCanvasBone(screen(bone.headX, bone.headY), screen(bone.tailX, bone.tailY), boneColor(bone.id), halo,
+                    lit = editor.selectedBoneId == bone.id)
             }
         }
     }
@@ -2416,24 +2335,25 @@ private fun ToolIcon(
                 }
             }
             CanvasTool.SKELETON_POSE -> {
-                val bone = Path().apply {
-                    moveTo(4.5f * s, 13.5f * s)
-                    lineTo(6.5f * s, 10f * s)
-                    lineTo(13.5f * s, 4.5f * s)
-                    lineTo(10f * s, 6.5f * s)
+                // A bone swung about its head: posing turns bones.
+                drawBoneIcon(p(4f, 14f), p(11f, 7f), color, stroke = 1.2f * s, headRadius = 1.9f * s)
+                drawArc(color, -78f, 58f, false, p(-9f, 1f), Size(26 * s, 26 * s), style = Stroke(1.3f * s, cap = StrokeCap.Round))
+                val end = Math.toRadians(-20.0)
+                val tip = p(4f + 13f * kotlin.math.cos(end).toFloat(), 14f + 13f * kotlin.math.sin(end).toFloat())
+                val along = Offset(-kotlin.math.sin(end).toFloat(), kotlin.math.cos(end).toFloat())
+                val out = Offset(kotlin.math.cos(end).toFloat(), kotlin.math.sin(end).toFloat())
+                drawPath(Path().apply {
+                    moveTo(tip.x + along.x * 2.2f * s, tip.y + along.y * 2.2f * s)
+                    lineTo(tip.x + out.x * 2f * s, tip.y + out.y * 2f * s)
+                    lineTo(tip.x - out.x * 2f * s, tip.y - out.y * 2f * s)
                     close()
-                }
-                drawPath(bone, color, style = Stroke(1.3f * s))
-                drawCircle(color, 2.2f * s, p(4.5f, 13.5f))
-                drawCircle(color, 1.8f * s, p(13.5f, 4.5f))
+                }, color)
             }
             CanvasTool.SKELETON_EDIT -> {
-                // Two bones joined at a joint: editing is about where the joints sit.
-                line(3.5f, 14.5f, 9f, 9f)
-                line(9f, 9f, 14.5f, 6f)
-                drawCircle(color, 2.2f * s, p(3.5f, 14.5f), style = Stroke(1.2f * s))
-                drawCircle(color, 2.6f * s, p(9f, 9f))
-                drawCircle(color, 2.2f * s, p(14.5f, 6f), style = Stroke(1.2f * s))
+                // A bone with its two joints open as handles: editing is about where the joints sit.
+                drawBoneIcon(p(3.5f, 14.5f), p(14.5f, 3.5f), color, stroke = 1.2f * s, headRadius = 0f)
+                drawCircle(color, 2.4f * s, p(3.5f, 14.5f), style = Stroke(1.3f * s))
+                drawCircle(color, 2.4f * s, p(14.5f, 3.5f), style = Stroke(1.3f * s))
             }
             CanvasTool.CREATE_WARP -> {
                 drawRect(color, Offset(3 * s, 3 * s), Size(12 * s, 12 * s), style = Stroke(s * 1.3f))
@@ -3515,8 +3435,8 @@ private fun DrawScope.drawDeformPathInfluencePreview(
 }
 
 /**
- * The pose tool's layer: every bone where the rig currently holds it, drawn Spine-style as a tapered
- * blade from its pivot, with the tip handle that an IK drag pulls. With weights on, each skinned vertex
+ * The pose tool's layer: every bone where the rig currently holds it, drawn as in the armature editor,
+ * with the tip handle that an IK drag pulls. With weights on, each skinned vertex
  * is dotted in the color of the bone it follows, mixed toward the next bone across a joint band.
  */
 @Composable
@@ -3553,31 +3473,10 @@ private fun SkeletonPoseLayer(editor: CanvasEditor, viewport: CanvasViewport, pa
         }
         val active = editor.poseDrag ?: editor.poseHover
         for (posed in bones) {
-            val color = colorOf(posed.bone.id).let { it.copy(alpha = it.alpha * strength) }
             val lit = active?.boneId == posed.bone.id ||
                 (passive && editor.skeletonSelected && editor.selectedBoneId == posed.bone.id)
-            val head = screen(posed.headX, posed.headY)
-            val tail = screen(posed.tailX, posed.tailY)
-            val dx = tail.x - head.x
-            val dy = tail.y - head.y
-            val length = hypot(dx, dy)
-            if (length >= 4f) {
-                val nx = -dy / length
-                val ny = dx / length
-                val width = (length * 0.09f).coerceIn(3f, 11f)
-                val blade = Path().apply {
-                    moveTo(head.x + nx * width, head.y + ny * width)
-                    lineTo(tail.x, tail.y)
-                    lineTo(head.x - nx * width, head.y - ny * width)
-                    close()
-                }
-                drawPath(blade, color.copy(alpha = (if (lit) 0.75f else 0.45f) * strength))
-                drawPath(blade, if (lit) Color.White else color, style = Stroke(if (lit) 1.8f else 1.1f))
-            }
-            drawCircle(colors.windowBackground, 5.5f, head)
-            drawCircle(color, 4f, head)
-            val tipLit = lit && active?.tip == true
-            drawCircle(if (tipLit) Color.White else color, if (tipLit) 6f else 4.2f, tail, style = Stroke(1.6f))
+            drawCanvasBone(screen(posed.headX, posed.headY), screen(posed.tailX, posed.tailY), colorOf(posed.bone.id),
+                colors.windowBackground, lit = lit, tipLit = lit && active?.tip == true, strength = strength)
         }
     }
 }

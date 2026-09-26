@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
@@ -54,6 +53,7 @@ import io.github.psd2live.ui.components.CompactButton
 import io.github.psd2live.ui.components.CompactIconButton
 import io.github.psd2live.ui.components.CompactSlider
 import io.github.psd2live.ui.components.CompactToggleChip
+import io.github.psd2live.ui.components.IconBone
 import io.github.psd2live.ui.components.IconChevron
 import io.github.psd2live.ui.components.IconClose
 import io.github.psd2live.ui.components.IconCollapseAll
@@ -329,7 +329,7 @@ private fun Modifier.treeGuides(depth: Int, openLevels: List<Boolean>, isLast: B
 		}
 	}
 
-/** One bone of the tree: color swatch, fold chevron, name, and the parameter it drives. */
+/** One bone of the tree: bone icon in its color, fold chevron, name, and the parameter it drives. */
 @Composable
 private fun BoneRow(
 	spec: SkeletonSpec,
@@ -373,9 +373,7 @@ private fun BoneRow(
 		verticalAlignment = Alignment.CenterVertically,
 	) {
 		Spacer(Modifier.width(1.dp))
-		Box(Modifier.size(ICON_SIZE_DP.dp), contentAlignment = Alignment.Center) {
-			Box(Modifier.size(8.dp).background(SkeletonPalette.color(spec, bone.id), CircleShape))
-		}
+		IconBone(tint = SkeletonPalette.color(spec, bone.id), modifier = Modifier.size(ICON_SIZE_DP.dp))
 		Spacer(Modifier.width(2.dp))
 		Box(
 			Modifier.size(CHEVRON_WIDTH_DP.dp)
@@ -483,7 +481,7 @@ private fun BoneSettings(editor: CanvasEditor, spec: SkeletonSpec, bone: Skeleto
 			.border(BorderStroke(1.dp, colors.divider)).padding(horizontal = 8.dp),
 		verticalAlignment = Alignment.CenterVertically,
 	) {
-		Box(Modifier.size(8.dp).background(SkeletonPalette.color(spec, bone.id), CircleShape))
+		IconBone(tint = SkeletonPalette.color(spec, bone.id), modifier = Modifier.size(12.dp))
 		Spacer(Modifier.width(6.dp))
 		Text(bone.name, modifier = Modifier.weight(1f), color = colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis,
 			style = typography.header.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold))

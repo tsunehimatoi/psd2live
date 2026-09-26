@@ -564,24 +564,23 @@ fun IconDeformPath(
 	}
 }
 
-/** Two bones meeting at a joint: the skeleton overlay. */
+/** The skeleton overlay: one bone, as the icon is too small to read a chain. */
 @Composable
 fun IconSkeleton(
 	modifier: Modifier = Modifier.size(14.dp),
+	tint: Color = LocalToolColors.current.textPrimary,
+) = IconBone(modifier, tint)
+
+/** A single bone, drawn like the canvas bones: the bone tree rows and the skeleton overlay. */
+@Composable
+fun IconBone(
+	modifier: Modifier = Modifier.size(12.dp),
 	tint: Color = LocalToolColors.current.textPrimary,
 ) {
 	Canvas(modifier = modifier) {
 		val w = size.width
 		val h = size.height
-		val stroke = Stroke(width = 1.3f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-		val head = Offset(w * 0.2f, h * 0.82f)
-		val joint = Offset(w * 0.5f, h * 0.45f)
-		val tip = Offset(w * 0.85f, h * 0.22f)
-		drawLine(tint, head, joint, strokeWidth = stroke.width, cap = StrokeCap.Round)
-		drawLine(tint, joint, tip, strokeWidth = stroke.width, cap = StrokeCap.Round)
-		drawCircle(color = tint, radius = w * 0.12f, center = head, style = stroke)
-		drawCircle(color = tint, radius = w * 0.13f, center = joint, style = Fill)
-		drawCircle(color = tint, radius = w * 0.1f, center = tip, style = stroke)
+		drawBoneIcon(Offset(w * 0.16f, h * 0.84f), Offset(w * 0.88f, h * 0.12f), tint, stroke = 1.1f, headRadius = w * 0.13f)
 	}
 }
 
