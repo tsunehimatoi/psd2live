@@ -98,8 +98,38 @@ internal fun weldGlueSeam(
     occupiedB: Set<Int> = emptySet(),
 ): GlueWeldResult {
     val world = org.umamo.render.eval.CpuDeformationEvaluator().evaluate(model, pose).worldPositions
-    var frameA = requireNotNull(world[meshA]) { "First mesh is not visible at this pose" }
-    var frameB = requireNotNull(world[meshB]) { "Second mesh is not visible at this pose" }
+    val frameA = requireNotNull(world[meshA]) { "First mesh is not visible at this pose" }
+    val frameB = requireNotNull(world[meshB]) { "Second mesh is not visible at this pose" }
+    val welded = weldGlueFrames(model, meshA, meshB, frameA, frameB, hitsA, hitsB, tolerance, occupiedA, occupiedB)
+    return GlueWeldResult(welded.model, welded.pairs)
+}
+
+/** A weld in caller-given frames: the edited model, the new pairs as (A, B) and both meshes' frames after. */
+internal class GlueFrameWeld(val model: PuppetModel, val pairs: List<GluePair>, val frameA: FloatArray, val frameB: FloatArray)
+
+/**
+ * [weldGlueSeam] with both meshes' vertices already placed in one shared 2D space, [startFrameA] and
+ * [startFrameB].
+ *
+ * A [fixedA] / [fixedB] mesh keeps its topology and rest vertices: it is never inserted into or slid, and
+ * only takes seeds that already sit within [tolerance] of one of its vertices.
+ */
+internal fun weldGlueFrames(
+    model: PuppetModel,
+    meshA: DrawableId,
+    meshB: DrawableId,
+    startFrameA: FloatArray,
+    startFrameB: FloatArray,
+    hitsA: Set<Int>,
+    hitsB: Set<Int>,
+    tolerance: Float,
+    occupiedA: Set<Int> = emptySet(),
+    occupiedB: Set<Int> = emptySet(),
+    fixedA: Boolean = false,
+    fixedB: Boolean = false,
+): GlueFrameWeld {
+    var frameA = startFrameA
+    var frameB = startFrameB
     var working = model
     val usedA = occupiedA.toHashSet()
     val usedB = occupiedB.toHashSet()
@@ -112,13 +142,18 @@ internal fun weldGlueSeam(
         val usedTarget = if (fromA) usedB else usedA
         val targetMesh = working.drawables.first { it.id == targetId }.mesh ?: return
         val targetFrame = if (fromA) frameB else frameA
+        val fixed = if (fromA) fixedB else fixedA
         val plans = planGlueWelds(source, seeds - usedSource, targetFrame, targetMesh.indices, tolerance, usedTarget)
+            .filter { !fixed || it.existing != null }
         if (plans.isEmpty()) return
-        val placed = GlueTargetEdit(targetMesh, targetFrame).apply(plans, tolerance)
-        if (placed.edit != null) working = working.withMeshTopologyEdit(targetId, placed.edit)
-        working = working.copy(drawables = working.drawables.map { if (it.id == targetId) it.copy(mesh = placed.mesh) else it })
-        if (fromA) frameB = placed.frame else frameA = placed.frame
-        for ((plan, partner) in plans.zip(placed.partners)) {
+        val partners = if (fixed) plans.map { it.existing } else {
+            val placed = GlueTargetEdit(targetMesh, targetFrame).apply(plans, tolerance)
+            if (placed.edit != null) working = working.withMeshTopologyEdit(targetId, placed.edit)
+            working = working.copy(drawables = working.drawables.map { if (it.id == targetId) it.copy(mesh = placed.mesh) else it })
+            if (fromA) frameB = placed.frame else frameA = placed.frame
+            placed.partners
+        }
+        for ((plan, partner) in plans.zip(partners)) {
             if (partner == null) continue
             usedSource += plan.seed
             usedTarget += partner
@@ -131,7 +166,7 @@ internal fun weldGlueSeam(
     }
     pass(fromA = true, seeds = hitsA)
     pass(fromA = false, seeds = hitsB)
-    return GlueWeldResult(working, pairs)
+    return GlueFrameWeld(working, pairs, frameA, frameB)
 }
 
 /**

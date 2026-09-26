@@ -62,8 +62,18 @@ internal object SkeletonRig {
 	/** A bone carrying this share of a spanning mesh counts as part of the drawing. */
 	private const val SPANNED_SHARE = 0.15
 
-	/** Vertices of two parts this close at rest, in canvas pixels, are the same point and get glued. */
-	private const val GLUE_TOLERANCE = 1f
+	/**
+	 * How far, in canvas pixels, a vertex of one part may sit from a vertex or the outline of another and
+	 * still be welded to it, as the glue brush's matching distance.
+	 */
+	private const val GLUE_TOLERANCE = 2f
+
+	/**
+	 * Weld weights of a glue across a joint. The two sides sum to 1, so a pair still meets on one point,
+	 * and that point lies near the child part: the child keeps its shape and the parent's end follows it.
+	 */
+	private const val GLUE_CHILD_WEIGHT = 0.2f
+	private const val GLUE_PARENT_WEIGHT = 1f - GLUE_CHILD_WEIGHT
 
 	/** Most keyforms one mesh may carry; beyond it the keys thin out evenly. */
 	private const val MAX_MESH_CELLS = 600
@@ -139,6 +149,12 @@ internal object SkeletonRig {
 			canvas = canvas + (drawableId to frameAfter)
 		}
 
+		// 2b. Split parts of one limb welded wherever they overlap, before skinning so every new vertex
+		// gets its joints baked like the rest.
+		val seams = weldSplitParts(model, canvas, drawableRoot, treeBones, parentOf, lockedTopology)
+		model = seams.model
+		canvas = seams.canvas
+
 		// 3. One rotation deformer per bone, and the head carried by the upper body.
 		model = addRotations(model, bones, parentOf, spec, frame)
 		model = addParameters(model, bones)
@@ -153,8 +169,8 @@ internal object SkeletonRig {
 			model = skinDrawable(model, drawableId, canvas.getValue(drawableId), treeBones.getValue(root), parentOf)
 		}
 
-		// 6. Split parts of one limb welded where their outlines meet, and no deformer left holding nothing.
-		model = glueSplitParts(model, drawableRoot, canvas)
+		// 6. The welded parts glued, and no deformer left holding nothing.
+		model = model.copy(glues = model.glues + seams.glues)
 		model = pruneEmptyBones(model, bones)
 		return model.withDerivedRenderRoot()
 	}
@@ -673,48 +689,72 @@ internal object SkeletonRig {
 		})
 	}
 
+	/** Split parts welded at rest: the model, every mesh's rest vertices after, and the glues to add. */
+	private class Seams(val model: PuppetModel, val canvas: Map<DrawableId, FloatArray>, val glues: List<Glue>)
+
 	/**
-	 * Glues the parts of a split limb together.
+	 * Welds the parts of a split limb together wherever they overlap, the way the glue brush welds a
+	 * stroke over the whole of both meshes.
 	 *
-	 * Skinning already moves two overlapping parts identically - a vertex's skin depends only on where it
-	 * sits - so a seam cannot open by itself. The glue is for the vertices drawn on the seam of both
-	 * parts: welded, they stay one point through float rounding and through any keyform later added to one
-	 * side only. Only vertices that coincide at rest are paired, so the glue never pulls the picture.
+	 * Every vertex of one part that lies over the other, or within [GLUE_TOLERANCE] of its outline, gets a
+	 * partner there: a nearby vertex of the other part slides onto it, or the other part gains a vertex
+	 * exactly there. Both only rearrange the mesh under the same picture, and each pair starts on one
+	 * point, so the glue never pulls the artwork at rest. Skinning alone moves two overlapping parts almost
+	 * alike; the glue closes what their different triangles and keys leave, and holds through any keyform
+	 * later added to one side only.
+	 *
+	 * Parts hanging under the same bone move identically and are left alone. A part in [lockedTopology]
+	 * keeps its vertices and only pairs with seeds already on one of them.
 	 */
-	private fun glueSplitParts(model: PuppetModel, drawableRoot: Map<String, String>, canvas: Map<DrawableId, FloatArray>): PuppetModel {
-		val byTree = drawableRoot.entries.groupBy({ it.value }, { DrawableId(it.key) })
-		val glues = model.glues.toMutableList()
-		val parentOf = model.drawables.associate { it.id to it.parentDeformerId }
-		for (members in byTree.values) {
+	private fun weldSplitParts(
+		base: PuppetModel,
+		baseCanvas: Map<DrawableId, FloatArray>,
+		drawableRoot: Map<String, String>,
+		treeBones: Map<String, List<SkeletonBone>>,
+		parentOf: Map<String, SkeletonBone?>,
+		lockedTopology: Set<String>,
+	): Seams {
+		var model = base
+		val canvas = HashMap(baseCanvas)
+		val glues = ArrayList<Glue>()
+		for ((root, tree) in treeBones) {
+			val members = drawableRoot.filterValues { it == root }.keys.map(::DrawableId)
+			if (members.size < 2) continue
+			val skinBones = skinBones(tree, parentOf)
+			val home = members.associateWith { homeBone(SkeletonWeights.skin(canvas.getValue(it), skinBones), skinBones) }
+			fun isAncestor(ancestor: Int, bone: Int) =
+				generateSequence(skinBones[bone].parent.takeIf { it >= 0 }) { skinBones[it].parent.takeIf { p -> p >= 0 } }.any { it == ancestor }
 			for (i in members.indices) for (j in i + 1 until members.size) {
 				val a = members[i]
 				val b = members[j]
-				if (parentOf[a] == parentOf[b]) continue
-				if (glues.any { (it.meshA == a && it.meshB == b) || (it.meshA == b && it.meshB == a) }) continue
-				val pa = canvas[a] ?: continue
-				val pb = canvas[b] ?: continue
-				val pairs = ArrayList<GluePair>()
-				val used = HashSet<Int>()
-				for (va in 0 until pa.size / 2) {
-					var best = -1
-					var bestDistance = GLUE_TOLERANCE
-					for (vb in 0 until pb.size / 2) {
-						if (vb in used) continue
-						val d = hypot(pa[va * 2] - pb[vb * 2], pa[va * 2 + 1] - pb[vb * 2 + 1])
-						if (d <= bestDistance) {
-							best = vb
-							bestDistance = d
-						}
-					}
-					if (best >= 0) {
-						used += best
-						pairs += GluePair(va, best, 0.5f, 0.5f)
-					}
+				val homeA = home.getValue(a)
+				val homeB = home.getValue(b)
+				if (homeA == homeB) continue
+				if (model.glues.any { (it.meshA == a && it.meshB == b) || (it.meshA == b && it.meshB == a) }) continue
+				val frameA = canvas.getValue(a)
+				val frameB = canvas.getValue(b)
+				val welded = weldGlueFrames(
+					model, a, b, frameA, frameB,
+					hitsA = (0 until frameA.size / 2).toSet(),
+					hitsB = (0 until frameB.size / 2).toSet(),
+					tolerance = GLUE_TOLERANCE,
+					fixedA = a.raw in lockedTopology,
+					fixedB = b.raw in lockedTopology,
+				)
+				model = welded.model
+				canvas[a] = welded.frameA
+				canvas[b] = welded.frameB
+				if (welded.pairs.isEmpty()) continue
+				val (weightA, weightB) = when {
+					isAncestor(homeA, homeB) -> GLUE_PARENT_WEIGHT to GLUE_CHILD_WEIGHT
+					isAncestor(homeB, homeA) -> GLUE_CHILD_WEIGHT to GLUE_PARENT_WEIGHT
+					else -> GLUE_DEFAULT_WEIGHT to GLUE_DEFAULT_WEIGHT
 				}
-				if (pairs.isNotEmpty()) glues += Glue(a, b, pairs, intensity = 1f, id = "GlueSkel__${a.raw}__${b.raw}")
+				val pairs = welded.pairs.map { GluePair(it.indexA, it.indexB, weightA, weightB) }
+				glues += Glue(a, b, pairs, intensity = 1f, id = "GlueSkel__${a.raw}__${b.raw}")
 			}
 		}
-		return model.copy(glues = glues)
+		return Seams(model, canvas, glues)
 	}
 
 	/** Bone deformers with nothing under them - no mesh and no other deformer - removed, deepest first. */

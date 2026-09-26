@@ -133,6 +133,38 @@ class SkeletonRigTest {
 		}
 	}
 
+	@Test fun overlappingPartsAreGluedAcrossTheOverlapWithTheChildLeading() {
+		// The forearm is drawn over the end of the upper arm, and none of their vertices coincide.
+		val upper = strip("upper", 100f, 95f, 265f, 16f, 10f)
+		val fore = strip("fore", 100f, 242f, 370f, 15f, 9f, columns = 3)
+		val spec = SkeletonSpec(bones = listOf(
+			chest,
+			bone("upper", "chest", BoneRole.UPPER_ARM, 100f, 100f, 100f, 250f, listOf("upper")),
+			bone("fore", "upper", BoneRole.FOREARM, 100f, 250f, 100f, 370f, listOf("fore")),
+		))
+		val baked = SkeletonRig.apply(model(upper, fore), spec, frame)
+		val glue = baked.glues.single { setOf(it.meshA.raw, it.meshB.raw) == setOf("upper", "fore") }
+		val rest = canvas(baked)
+		val upperRest = rest.getValue(DrawableId("upper"))
+		val foreRest = rest.getValue(DrawableId("fore"))
+		// Every forearm vertex over the upper arm is welded, each pair on one point at rest.
+		val foreIndex = if (glue.meshA.raw == "fore") 0 else 1
+		val glued = glue.pairs.mapTo(HashSet()) { if (foreIndex == 0) it.indexA else it.indexB }
+		val original = fore.mesh!!.vertexCount
+		val over = (0 until original).filter { foreRest[it * 2 + 1] <= 265f }
+		assertTrue(over.size >= 8)
+		for (v in over) assertTrue(v in glued, "overlap vertex $v not glued")
+		for (pair in glue.pairs) {
+			val (u, f) = if (foreIndex == 0) pair.indexB to pair.indexA else pair.indexA to pair.indexB
+			val d = hypot(upperRest[u * 2] - foreRest[f * 2], upperRest[u * 2 + 1] - foreRest[f * 2 + 1])
+			assertTrue(d < 0.05f, "pair apart by $d at rest")
+			// The forearm is the child: it keeps its shape and the upper arm's end follows it.
+			val (wUpper, wFore) = if (foreIndex == 0) pair.weightB to pair.weightA else pair.weightA to pair.weightB
+			assertTrue(wFore < wUpper)
+			assertEquals(1f, wFore + wUpper, 1e-6f)
+		}
+	}
+
 	@Test fun rigidPartsFollowExactForwardKinematicsBetweenKeys() {
 		val arm = strip("arm", 100f, 95f, 435f, 18f, 10f)
 		val baked = SkeletonRig.apply(model(arm), arm("arm"), frame)
