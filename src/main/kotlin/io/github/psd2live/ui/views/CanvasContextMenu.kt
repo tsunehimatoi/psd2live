@@ -30,6 +30,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.psd2live.i18n.tr
+import io.github.psd2live.ui.BrushFalloff
 import io.github.psd2live.ui.BrushShape
 import io.github.psd2live.ui.CREATION_TOOLS
 import io.github.psd2live.ui.CanvasEditor
@@ -44,6 +45,7 @@ import io.github.psd2live.ui.CreateRelation
 import io.github.psd2live.ui.EditHierarchyMode
 import io.github.psd2live.ui.PaintShape
 import io.github.psd2live.ui.components.CompactButton
+import io.github.psd2live.ui.components.CompactCheckbox
 import io.github.psd2live.ui.components.CompactMenuDivider
 import io.github.psd2live.ui.components.CompactMenuItem
 import io.github.psd2live.ui.components.CompactSlider
@@ -900,6 +902,50 @@ private fun ColumnScope.DeformBrushParamsSection(editor: CanvasEditor) {
                 )
             }
         }
+    }
+    MenuSectionLabel(tr("editor.falloff"))
+    ParamsPanel {
+        CompactCheckbox(
+            checked = editor.connectedOnly,
+            onCheckedChange = { editor.connectedOnly = it },
+            label = tr("editor.connectedOnly"),
+        )
+        BrushFalloff.entries.chunked(2).forEach { row ->
+            SegmentedChips {
+                row.forEach { falloff ->
+                    val selected = editor.brushFalloff == falloff
+                    val colors = LocalToolColors.current
+                    CompactToggleChip(
+                        text = tr(falloff.labelKey),
+                        selected = selected,
+                        onToggle = { editor.brushFalloff = falloff },
+                        leadingIcon = { FalloffCurveIcon(falloff, if (selected) colors.accent else colors.textMuted) },
+                        showCheckWhenSelected = false,
+                        height = 20.dp,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** The profile itself drawn as a bump, the way Blender's falloff menu pictures each entry. */
+@Composable
+private fun FalloffCurveIcon(falloff: BrushFalloff, tint: Color, modifier: Modifier = Modifier.size(12.dp)) {
+    Canvas(modifier) {
+        val w = size.width
+        val h = size.height
+        val samples = 24
+        val path = Path()
+        for (s in 0..samples) {
+            val x = s / samples.toFloat()
+            val y = falloff.weight(1f - kotlin.math.abs(x * 2f - 1f), s)
+            val px = w * x
+            val py = h * (0.9f - 0.8f * y)
+            if (s == 0) path.moveTo(px, py) else path.lineTo(px, py)
+        }
+        drawPath(path, tint, style = Stroke(width = 1.3f, cap = StrokeCap.Round, join = StrokeJoin.Round))
     }
 }
 

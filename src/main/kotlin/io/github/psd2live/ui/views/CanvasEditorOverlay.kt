@@ -146,12 +146,16 @@ internal fun BoxScope.CanvasEditorOverlay(
             val meshColors = if (editing) editor.editMeshColors() else emptyMap()
 
             // 1a. Weights washed onto the artwork. The deform brush shows its falloff in red while it is
-            //     live; the glue weight brush shows each side's weld weight in that side's colour.
+            //     live, and while Alt + right-drag retunes it, what a press right there would pull - falloff
+            //     and connected-only reach included; the glue weight brush shows each side's weld weight in
+            //     that side's colour.
+            val retuneWeights = if (editor.adjustingBrush && editor.tool in DEFORM_BRUSH_TOOLS) editor.brushPreviewWeights(viewport) else emptyMap()
             for (t in meshTargets) {
                 val pts = screens.getValue(t.id)
                 if (pts.isEmpty() || t.indices.isEmpty()) continue
                 val brushWeights = editor.activeMeshBrushWeights[t.id]
                     ?: editor.activeBrushWeights?.takeIf { t.id == primaryMesh?.id }
+                    ?: retuneWeights[t.id]
                 if (brushWeights != null) {
                     drawWeightWash(pts.take(t.count), t.indices, BrushWeightColor) { i ->
                         val w = brushWeights.getOrNull(i) ?: 0f
@@ -842,7 +846,7 @@ internal fun BoxScope.CanvasEditorOverlay(
                             val samples = 24
                             val stops = Array(samples + 1) { i ->
                                 val t = i / samples.toFloat()
-                                t to Color.Red.copy(alpha = brushWeight(t * r, r, editor.hardness) * 0.6f)
+                                t to Color.Red.copy(alpha = brushWeight(t * r, r, editor.hardness, editor.brushFalloff, i) * RETUNE_TIP_ALPHA)
                             }
                             drawCircle(
                                 brush = Brush.radialGradient(colorStops = stops, center = center, radius = r.coerceAtLeast(1f)),
@@ -875,7 +879,7 @@ internal fun BoxScope.CanvasEditorOverlay(
                             val stops = Array(samples + 1) { i ->
                                 val t = i / samples.toFloat()
                                 val dist = kotlin.math.abs(t * 2f - 1f) * r
-                                t to Color.Red.copy(alpha = brushWeight(dist, r, editor.hardness) * 0.6f)
+                                t to Color.Red.copy(alpha = brushWeight(dist, r, editor.hardness, editor.brushFalloff, i) * RETUNE_TIP_ALPHA)
                             }
                             val bandBrush = Brush.linearGradient(
                                 colorStops = stops,
@@ -930,14 +934,14 @@ internal fun BoxScope.CanvasEditorOverlay(
                             val cornerRadius = CornerRadius(falloff, falloff)
 
                             if (editor.adjustingBrush) {
-                                // Real hardness preview: solid red core + smooth Euclidean Hermite falloff
+                                // Real hardness preview: solid red core + the chosen falloff around it
                                 val steps = 16
                                 for (step in steps downTo 1) {
                                     val t = step / steps.toFloat()
                                     val curDist = falloff * t
                                     val w = coreW + curDist
                                     val hStep = coreH + curDist
-                                    val alpha = (1f - t * t * (3f - 2f * t)) * 0.6f
+                                    val alpha = editor.brushFalloff.weight(1f - t, step) * RETUNE_TIP_ALPHA
                                     drawRoundRect(
                                         color = Color.Red.copy(alpha = alpha),
                                         topLeft = Offset(center.x - w, center.y - hStep),
@@ -947,7 +951,7 @@ internal fun BoxScope.CanvasEditorOverlay(
                                 }
                                 if (h > 0.02f) {
                                     drawRect(
-                                        color = Color.Red.copy(alpha = 0.6f),
+                                        color = Color.Red.copy(alpha = RETUNE_TIP_ALPHA),
                                         topLeft = Offset(center.x - coreW, center.y - coreH),
                                         size = Size(coreW * 2f, coreH * 2f),
                                     )
@@ -3200,6 +3204,12 @@ private fun DrawScope.drawWeightWash(pts: List<Offset>, indices: IntArray, color
 }
 
 private val BrushWeightColor = Color(0xFFF81818)
+
+/**
+ * The tip's own falloff fill while Alt + right-drag retunes a deform brush. Kept faint, so the wash of
+ * what the brush would really pull on the mesh underneath still reads through it.
+ */
+private const val RETUNE_TIP_ALPHA = 0.3f
 
 /** A glued point: a diamond, so it never reads as an ordinary vertex. */
 private fun DrawScope.drawGluePoint(color: Color, radius: Float, center: Offset) {

@@ -889,6 +889,10 @@ internal class CanvasEditor(
     var brushShape by mutableStateOf(BrushShape.CIRCLE)
     var brushAngle by mutableStateOf(0f)
     var brushAspect by mutableStateOf(1f)
+    /** How the deform brushes fade from core to rim. */
+    var brushFalloff by mutableStateOf(BrushFalloff.SMOOTH)
+    /** The deform brushes only reach what is joined by edges to the part under the pointer. */
+    var connectedOnly by mutableStateOf(false)
     /** Persistent direction toggle for the inflate brush; flipped by the options-bar chip and live Alt. */
     var inflateInvert by mutableStateOf(false)
     /** Live feedback only: the direction the next stroke would take right now. */
@@ -4347,22 +4351,61 @@ internal class CanvasEditor(
         }
     }
 
+    /**
+     * The strength-scaled weight a deform brush gives each point of [targets] (seen at [screens]) for the
+     * pointer segment [from] -> [to], with the chosen falloff and connected-only reach. Points [allowed]
+     * turns down weigh nothing.
+     */
+    private fun strokeWeights(
+        targets: List<CanvasTarget>,
+        screens: List<List<Offset>>,
+        from: Offset,
+        to: Offset,
+        viewport: CanvasViewport,
+        allowed: (CanvasTarget, Int) -> Boolean,
+    ): List<FloatArray> {
+        val tip = BrushTip((radius * viewport.scale).toFloat(), hardness, brushShape, brushAngle, brushAspect, brushFalloff)
+        val surfaces = targets.mapIndexed { at, t ->
+            BrushSurface(screens[at], if (connectedOnly) neighbors(t) else null, t.indices.takeIf { t.kind == "mesh" }, t.id.hashCode())
+        }
+        val weights = brushWeights(surfaces, from, to, tip, connectedOnly)
+        weights.forEachIndexed { at, w ->
+            for (i in w.indices) w[i] = if (allowed(targets[at], i)) w[i] * strength else 0f
+        }
+        return weights
+    }
+
+    /** Which points of [t] a brush on the edit set may move: the selected ones, when anything is selected. */
+    private fun brushableInEditSet(t: CanvasTarget, i: Int): Boolean =
+        selection.values.none { it.isNotEmpty() } || i in selection[t.id].orEmpty()
+
+    /**
+     * What a press at the pointer would weigh each target right now. The Alt + right-drag retune washes it
+     * on the art, so the falloff and the connected-only reach are judged on the real mesh.
+     */
+    fun brushPreviewWeights(viewport: CanvasViewport): Map<String, FloatArray> {
+        val center = cursor ?: return emptyMap()
+        val source = state.previewModel?.rig?.puppet ?: return emptyMap()
+        val edited = editsMeshes()
+        val targets = if (edited) editMeshTargets(source) else listOfNotNull(target(source)?.takeIf { it.kind != "rotation" })
+        if (targets.isEmpty()) return emptyMap()
+        val screens = targets.map { screen(it.geometry.points, it, viewport) }
+        val weights = strokeWeights(targets, screens, center, center, viewport) { t, i ->
+            if (edited) brushableInEditSet(t, i) else vertices.isEmpty() || i in vertices
+        }
+        return targets.indices.associate { targets[it].id to weights[it] }
+    }
+
     /** Starts a deform-brush stroke over the whole edit set. */
     private fun beginMeshStroke(pos: Offset, viewport: CanvasViewport, source: PuppetModel) {
         val targets = strokeTargets(source)
         val brushed = editMeshTargets(source).mapTo(HashSet()) { it.id }
-        val restricted = selection.values.any { it.isNotEmpty() }
-        val screenRadius = (radius * viewport.scale).toFloat()
         val screens = targets.map { screen(it.geometry.points, it, viewport) }
-        val weights = targets.mapIndexed { at, t ->
-            val w = FloatArray(t.count)
-            if (t.id in brushed && tool == CanvasTool.BRUSH) {
-                for (i in screens[at].indices) {
-                    if (restricted && i !in selection[t.id].orEmpty()) continue
-                    w[i] = computeBrushWeight(screens[at][i], pos, pos, screenRadius, hardness, brushShape, brushAngle, brushAspect) * strength
-                }
-            }
-            w
+        val weights = targets.mapTo(ArrayList()) { FloatArray(it.count) }
+        if (tool == CanvasTool.BRUSH) {
+            val brushedAt = targets.indices.filter { targets[it].id in brushed }
+            val computed = strokeWeights(brushedAt.map { targets[it] }, brushedAt.map { screens[it] }, pos, pos, viewport, ::brushableInEditSet)
+            brushedAt.forEachIndexed { k, at -> weights[at] = computed[k] }
         }
         meshStroke = MeshStroke(targets, brushed, targets.map { it.geometry.points.copyOf() }, screens, weights)
         activeMeshBrushWeights = if (tool == CanvasTool.BRUSH) targets.withIndex()
@@ -4377,7 +4420,6 @@ internal class CanvasEditor(
         val stroke = meshStroke ?: return
         val source = original ?: return
         val screenRadius = (radius * viewport.scale).toFloat()
-        val restricted = selection.values.any { it.isNotEmpty() }
         val deform = tool == CanvasTool.BRUSH && !shift
         val smooth = tool == CanvasTool.SMOOTH || (tool == CanvasTool.BRUSH && shift)
         val inflate = tool == CanvasTool.INFLATE
@@ -4389,11 +4431,13 @@ internal class CanvasEditor(
             // The deform brush measures the whole stroke from the press; smooth and inflate work step by step.
             val base = if (deform || live == null) stroke.bases[at] else RigGeometryTools.geometry(live, t.kind, t.id, pose).points
             bases += base
-            val world = t.mapping.localToWorld(base)
-            worlds += world
-            if (t.id !in stroke.brushed) return@forEachIndexed
-            if (deform) {
-                val total = pos - start
+            worlds += t.mapping.localToWorld(base)
+        }
+        val brushedAt = stroke.targets.indices.filter { stroke.targets[it].id in stroke.brushed }
+        if (deform) {
+            val total = pos - start
+            for (at in brushedAt) {
+                val world = worlds[at]
                 for (i in stroke.screens[at].indices) {
                     val w = stroke.weights[at][i]
                     if (w <= 0.0001f) continue
@@ -4402,27 +4446,32 @@ internal class CanvasEditor(
                     world[i * 2 + 1] = -((destination.y - viewport.offsetY) / viewport.scale).toFloat()
                     moved[at] += i
                 }
-                return@forEachIndexed
             }
-            val points = screen(base, t, viewport)
+        } else {
+            val screens = brushedAt.map { screen(bases[it], stroke.targets[it], viewport) }
+            // Weighed over the whole set at once, so connected-only starts from the one part under the pointer.
+            val weights = strokeWeights(brushedAt.map { stroke.targets[it] }, screens, previous, pos, viewport, ::brushableInEditSet)
             val delta = pos - previous
-            val adjacency = if (smooth) neighbors(t) else null
-            for (i in points.indices) {
-                if (restricted && i !in selection[t.id].orEmpty()) continue
-                val p = points[i]
-                if (!isPointInBrush(p, previous, pos, screenRadius, brushShape, brushAngle, brushAspect, hardness)) continue
-                val weight = computeBrushWeight(p, previous, pos, screenRadius, hardness, brushShape, brushAngle, brushAspect) * strength
-                val destination = when {
-                    inflate -> p + inflateOffset(p, previous, pos, delta.getDistance().coerceAtMost(screenRadius) * weight * INFLATE_GAIN * (if (shrinkAtPress) -1f else 1f))
-                    adjacency != null -> {
-                        val ns = adjacency[i]
-                        if (ns.isEmpty()) p else p + (Offset(ns.map { points[it].x }.average().toFloat(), ns.map { points[it].y }.average().toFloat()) - p) * weight
+            brushedAt.forEachIndexed { k, at ->
+                val world = worlds[at]
+                val points = screens[k]
+                val adjacency = if (smooth) neighbors(stroke.targets[at]) else null
+                for (i in points.indices) {
+                    val weight = weights[k].getOrElse(i) { 0f }
+                    if (weight <= 0f) continue
+                    val p = points[i]
+                    val destination = when {
+                        inflate -> p + inflateOffset(p, previous, pos, delta.getDistance().coerceAtMost(screenRadius) * weight * INFLATE_GAIN * (if (shrinkAtPress) -1f else 1f))
+                        adjacency != null -> {
+                            val ns = adjacency[i]
+                            if (ns.isEmpty()) p else p + (Offset(ns.map { points[it].x }.average().toFloat(), ns.map { points[it].y }.average().toFloat()) - p) * weight
+                        }
+                        else -> p + delta * weight
                     }
-                    else -> p + delta * weight
+                    world[i * 2] = ((destination.x - viewport.offsetX) / viewport.scale).toFloat()
+                    world[i * 2 + 1] = -((destination.y - viewport.offsetY) / viewport.scale).toFloat()
+                    moved[at] += i
                 }
-                world[i * 2] = ((destination.x - viewport.offsetX) / viewport.scale).toFloat()
-                world[i * 2 + 1] = -((destination.y - viewport.offsetY) / viewport.scale).toFloat()
-                moved[at] += i
             }
         }
         keepWeldsTogether(stroke.targets, worlds, moved)
@@ -5091,18 +5140,10 @@ internal class CanvasEditor(
             if (editTarget.kind == "rotation") { dragging = false; error = io.github.psd2live.i18n.tr("editor.rotationBrush"); return true }
             val basePoints = editTarget.geometry.points.copyOf()
             val initialScreen = points
-            val screenRadius = (radius * viewport.scale).toFloat()
-            val weights = FloatArray(initialScreen.size)
-            val affected = mutableSetOf<Int>()
-            for (i in initialScreen.indices) {
-                if (vertices.isNotEmpty() && i !in vertices) continue
-                val p = initialScreen[i]
-                val w = computeBrushWeight(p, pos, pos, screenRadius, hardness, brushShape, brushAngle, brushAspect) * strength
-                if (w > 0.0001f) {
-                    weights[i] = w
-                    affected.add(i)
-                }
-            }
+            val weights = strokeWeights(listOf(editTarget), listOf(initialScreen), pos, pos, viewport) { _, i ->
+                vertices.isEmpty() || i in vertices
+            }[0]
+            val affected = weights.indices.filterTo(mutableSetOf()) { weights[it] > 0.0001f }
             activeBrushWeights = weights
             activeBrushCenter = pos
             brushInitialBase = basePoints
@@ -5439,15 +5480,16 @@ internal class CanvasEditor(
 
             val base = if (brush && preview != null) RigGeometryTools.geometry(preview!!, t.kind, t.id, pose).points else t.geometry.points
             val screen = screen(base, t, viewport); val world = t.mapping.localToWorld(base)
-            val affected = if (brush) screen.indices.filter {
-                (vertices.isEmpty() || it in vertices) &&
-                isPointInBrush(screen[it], previous, pos, screenRadius, brushShape, brushAngle, brushAspect, hardness)
-            }.toSet() else vertices.filter { it in screen.indices }.toSet()
+            val weights = if (brush) strokeWeights(listOf(t), listOf(screen), previous, pos, viewport) { _, i ->
+                vertices.isEmpty() || i in vertices
+            }[0] else null
+            val affected = if (weights != null) screen.indices.filter { weights[it] > 0f }.toSet()
+            else vertices.filter { it in screen.indices }.toSet()
             val delta = if (brush) pos - previous else pos - start
             val adjacency = if (tool == CanvasTool.SMOOTH || (tool == CanvasTool.BRUSH && shift)) neighbors(t) else null
             for (i in affected) {
                 val p = screen[i]
-                val weight = if (brush) computeBrushWeight(p, previous, pos, screenRadius, hardness, brushShape, brushAngle, brushAspect) * strength else 1f
+                val weight = weights?.get(i) ?: 1f
                 val destination = when {
                     inflate -> p + inflateOffset(p, previous, pos, delta.getDistance().coerceAtMost(screenRadius) * weight * INFLATE_GAIN * (if (shrinkAtPress) -1f else 1f))
                     adjacency != null -> { val ns = adjacency[i]; if (ns.isEmpty()) p else p + (Offset(ns.map { screen[it].x }.average().toFloat(), ns.map { screen[it].y }.average().toFloat()) - p) * weight }
@@ -5761,9 +5803,9 @@ internal class CanvasEditor(
     }
 }
 
-internal fun brushWeight(distance: Float, radius: Float, hardness: Float): Float {
+internal fun brushWeight(distance: Float, radius: Float, hardness: Float, falloff: BrushFalloff = BrushFalloff.SMOOTH, seed: Int = 0): Float {
     val x = ((distance / radius.coerceAtLeast(1f) - hardness) / (1f - hardness.coerceAtMost(0.95f))).coerceIn(0f, 1f)
-    return 1 - x * x * (3 - 2 * x)
+    return falloff.weight(1f - x, seed)
 }
 
 /** Radial gain for the inflate brush: displacement = min(cursor travel, radius) * weight * gain. */
