@@ -278,4 +278,32 @@ class MeshComponentSplitTest {
         assertTrue(!split.rig.layerIdByDrawableId.containsValue("hair"), "Original hair layer should be replaced")
         assertTrue(!split.rig.layerIdByDrawableId.containsValue("shoes"), "Original shoes layer should be replaced")
     }
+
+    @Test fun skeletonBindingKeepsSplitDrawableIdsOnRebuild() {
+        val layer = source(2).copy(name = "Arm")
+        val pipeline = PSD2LivePipeline()
+        val preview = pipeline.buildPreview(WorkspaceSourceArt(30, 20, listOf(layer), emptyList()))
+        val drawable = preview.rig.puppet.drawables.single { preview.rig.layerIdByDrawableId[it.id.raw] == layer.id.raw }
+        val placement = preview.atlas.placementByLayerId.getValue(layer.id.raw)
+        val page = preview.atlas.pages[placement.page].image
+        val plan = assertNotNull(drawable.mesh?.let { MeshComponentSplit.detect(it, layer, placement, page.width, page.height) })
+        val pieces = plan.pieces(listOf("Arm R", "Arm L"))
+        val source = WorkspaceSourceArt(30, 20, listOf(layer) + pieces, emptyList())
+        val config = preview.config.copy(
+            deletedLayerIds = setOf(layer.id.raw),
+            rigEdits = preview.config.rigEdits.copy(splitBaselineLayerIds = setOf(layer.id.raw)),
+        )
+        val split = pipeline.buildPreviewAfterLayerSplit(preview, source, config)
+        val pieceIds = pieces.map { piece ->
+            split.rig.layerIdByDrawableId.entries.single { it.value == piece.id.raw }.key
+        }
+        assertTrue(pieceIds.all { it.startsWith("ArtMeshSplit") })
+        // Binding the pieces to a skeleton is the only edit naming them; a rebuild must keep those ids.
+        val bone = SkeletonBone("arm", "Arm", null, BoneRole.UPPER_ARM, headX = 0f, headY = 0f, tailX = 0f, tailY = 10f, drawableIds = pieceIds)
+        val bound = config.copy(rigEdits = config.rigEdits.copy(skeleton = SkeletonSpec(enabled = false, bones = listOf(bone))))
+        val rebuilt = pipeline.buildPreview(source, bound)
+        val rebuiltIds = rebuilt.rig.puppet.drawables.map { it.id.raw }.toSet()
+        assertTrue(rebuiltIds.containsAll(pieceIds), "rebuild renamed the bound pieces: $rebuiltIds")
+        assertEquals(listOf("Arm R", "Arm L"), pieceIds.map { id -> rebuilt.rig.puppet.drawables.single { it.id.raw == id }.name })
+    }
 }

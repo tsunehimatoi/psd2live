@@ -481,7 +481,9 @@ object RigBuilder {
 	 */
 	private fun splitStableDrawableIds(inputAnalysis: PipelineAnalysis, config: PipelineConfig): Map<String, DrawableId> {
 		val splitBaselineIds = config.rigEdits.splitBaselineLayerIds
-		if (splitBaselineIds.isEmpty() || !config.rigEdits.referencesSplitDrawable()) return emptyMap()
+		val splitNamed = config.rigEdits.referencesSplitDrawable() ||
+			config.drawOrderOverrides.keys.any { it.startsWith(SPLIT_DRAWABLE_PREFIX) }
+		if (splitBaselineIds.isEmpty() || !splitNamed) return emptyMap()
 		val neededIds = splitBaselineIds + config.rigEdits.calibrationLayerIds
 		val originalLayers = inputAnalysis.source.layers.filter { it.id.raw in neededIds }
 		if (originalLayers.isEmpty()) return emptyMap()
@@ -2291,6 +2293,7 @@ object RigBuilder {
 			keyformDeleteEdits.any { split(it.target.id) } ||
 			keyformCopyEdits.any { split(it.sourceTarget.id) || split(it.destinationTarget.id) } ||
 			warpEdits.any { warp -> warp.meshIds.any(::split) } ||
+			skeleton?.bones.orEmpty().any { bone -> bone.drawableIds.any(::split) } ||
 			authoringJournal.any { quoted in it.toString() } ||
 			structureEdits.any { quoted in it.toString() }
 	}
