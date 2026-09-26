@@ -614,7 +614,6 @@ internal class CanvasEditor(
 			io.github.psd2live.core.Side.NONE), parent.id, io.github.psd2live.core.BoneRole.CUSTOM,
 			headX = parent.tailX, headY = parent.tailY, tailX = parent.tailX, tailY = parent.tailY + 60f)
 		skeletonDraft = draft.withBone(bone)
-		selectedBoneId = id
 	}
 
 	fun removeSelectedBone() {
