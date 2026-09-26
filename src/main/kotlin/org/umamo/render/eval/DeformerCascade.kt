@@ -179,7 +179,7 @@ internal class RotationWorld(
 internal fun buildDeformerWorlds(
 	deformers: List<Deformer>,
 	paramValue: (ParameterId) -> Float,
-	defaultValue: (ParameterId) -> Float = paramValue,
+	defaultValue: (ParameterId) -> Float,
 	channelOverrides: Map<KeyableTarget, ChannelValue> = emptyMap(),
 ): Map<DeformerId, DeformerWorld> {
 	val worlds = HashMap<DeformerId, DeformerWorld>(deformers.size)

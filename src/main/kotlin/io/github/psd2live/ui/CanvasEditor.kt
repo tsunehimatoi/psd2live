@@ -1138,7 +1138,8 @@ internal class CanvasEditor(
         } else return null
         if (cachedSource !== resolvedSource || cachedPose != state.parameterValues) {
             cachedSource = resolvedSource; cachedPose = state.parameterValues; cachedTargets.clear()
-            cachedWorlds = buildDeformerWorlds(resolvedSource.deformers, { p -> state.parameterValues[p] ?: resolvedSource.parameters.firstOrNull { it.id == p }?.default ?: 0f })
+            val defaults = resolvedSource.parameters.associate { it.id to it.default }
+            cachedWorlds = buildDeformerWorlds(resolvedSource.deformers, { p -> state.parameterValues[p] ?: defaults[p] ?: 0f }, { defaults[it] ?: 0f })
         }
         val worlds = cachedWorlds
         if (parent != null && worlds[parent] == null) return null
@@ -2752,9 +2753,11 @@ internal class CanvasEditor(
             cachedSource = source
             cachedPose = state.parameterValues
             cachedTargets.clear()
+            val defaults = source.parameters.associate { it.id to it.default }
             cachedWorlds = buildDeformerWorlds(
                 source.deformers,
-                { p -> state.parameterValues[p] ?: source.parameters.firstOrNull { it.id == p }?.default ?: 0f },
+                { p -> state.parameterValues[p] ?: defaults[p] ?: 0f },
+                { defaults[it] ?: 0f },
             )
         }
         if (spaceParentId == null) return DrawableSpaceMapping(null)

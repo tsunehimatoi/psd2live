@@ -180,10 +180,9 @@ internal object RigInformationOverlay {
     ) {
         if (ids.isEmpty()) return
         val pose = parameters.mapKeys { it.key.raw }
-        val paramValue: (ParameterId) -> Float = { id ->
-            parameters[id] ?: model.parameters.firstOrNull { it.id == id }?.default ?: 0f
-        }
-        val worlds = buildDeformerWorlds(model.deformers, paramValue)
+        val defaults = model.parameters.associate { it.id to it.default }
+        val paramValue: (ParameterId) -> Float = { id -> parameters[id] ?: defaults[id] ?: 0f }
+        val worlds = buildDeformerWorlds(model.deformers, paramValue, { defaults[it] ?: 0f })
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
 
         for (rotation in model.deformers.filterIsInstance<Deformer.Rotation>()) {

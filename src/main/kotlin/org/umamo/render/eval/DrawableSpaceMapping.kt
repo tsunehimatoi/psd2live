@@ -253,7 +253,7 @@ fun drawableSpaceMapping(model: PuppetModel, parameters: Map<ParameterId, Float>
 	val parentDeformerId = drawable.parentDeformerId ?: return DrawableSpaceMapping(null)
 	val defaults = model.parameters.associate { it.id to it.default }
 	val paramValue: (ParameterId) -> Float = { parameters[it] ?: defaults[it] ?: 0f }
-	val parentWorld = buildDeformerWorlds(model.deformers, paramValue)[parentDeformerId] ?: return null
+	val parentWorld = buildDeformerWorlds(model.deformers, paramValue, { defaults[it] ?: 0f })[parentDeformerId] ?: return null
 	return DrawableSpaceMapping(parentWorld)
 }
 

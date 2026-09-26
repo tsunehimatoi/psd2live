@@ -330,6 +330,20 @@ class SkeletonRigTest {
 		assertEquals(handByHand.tailY, hand.tailY, 0.5f)
 	}
 
+	@Test fun aPosedDeformerStaysOnItsBoneWhileTheBoneIsTurned() {
+		val arm = strip("arm", 100f, 95f, 435f, 18f, 10f)
+		val spec = arm("arm")
+		val baked = SkeletonRig.apply(model(arm), spec, frame)
+		val upper = spec.bone("upper")!!
+		val values = mapOf(ParameterId(upper.parameterId) to 30f, SkeletonPoses.armSway.id to 1f)
+		val bone = io.github.psd2live.ui.SkeletonPoseTool.posed(baked, spec, values).single { it.bone.id == "upper" }
+		// The arm hangs under the upper arm's deformer, whose handle runs up its local -y for the bone's length.
+		val mapping = org.umamo.render.eval.drawableSpaceMapping(baked, values, arm.id)!!
+		val tail = mapping.localToWorld(floatArrayOf(0f, -upper.length))
+		assertEquals(bone.tailX, tail[0], 0.5f)
+		assertEquals(bone.tailY, -tail[1], 0.5f)
+	}
+
 	@Test fun ikSolversReachTheirTargets() {
 		val knee = SkeletonIk.twoBone(0.0, 0.0, 100.0, 100.0, 0.0, 150.0, 1.0)
 		assertEquals(100.0, hypot(knee[0], knee[1]), 1e-6)
