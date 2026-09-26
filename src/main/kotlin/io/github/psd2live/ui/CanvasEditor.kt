@@ -467,16 +467,34 @@ internal class CanvasEditor(
 		setHierarchyMode(EditHierarchyMode.DEFORM)
 	}
 
+	/** Edit mode's display toggles from before the skeleton edit, put back when it closes. */
+	private var viewBeforeSkeletonEdit: TabViewOptions? = null
+
+	/**
+	 * Bones are placed on the rest pose, so the parameters go back to their defaults. The display drops
+	 * the deformer guides and mesh wires and keeps only the bones' color tint over the art.
+	 */
 	private fun openSkeletonDraft() {
 		val spec = committedSkeleton ?: return
 		skeletonDraft = spec
 		if (selectedBoneId == null || spec.bone(selectedBoneId!!) == null) selectedBoneId = spec.bones.firstOrNull { !it.role.anchor }?.id
+		viewModel.resetAllParameters()
+		viewBeforeSkeletonEdit = viewModel.updateEditViewOptions(canvasId, workspaceId) {
+			it.copy(showMesh = false, showWarp = false, showRotation = false, warpShowIndices = false)
+		}
+	}
+
+	/** Ends the edit, handing Edit mode back the display it had before. */
+	private fun closeSkeletonDraft() {
+		skeletonDraft = null
+		viewBeforeSkeletonEdit?.let { before -> viewModel.updateEditViewOptions(canvasId, workspaceId) { before } }
+		viewBeforeSkeletonEdit = null
 	}
 
 	/** Writes the draft back when it changed. Keeps whether the skeleton is enabled. */
 	fun commitSkeletonDraft() {
 		val draft = skeletonDraft ?: return
-		skeletonDraft = null
+		closeSkeletonDraft()
 		val committed = state.rigEdits.skeleton
 		val next = draft.copy(enabled = committed?.enabled ?: true)
 		if (next != committed) viewModel.setSkeleton(next)
@@ -491,7 +509,7 @@ internal class CanvasEditor(
 	/** Leaves Edit mode on the skeleton and throws the edit away. The skeleton stays selected. */
 	fun cancelSkeletonEdit() {
 		if (skeletonDraft == null) return
-		skeletonDraft = null
+		closeSkeletonDraft()
 		setHierarchyMode(skeletonExitMode())
 	}
 
@@ -3190,9 +3208,10 @@ internal class CanvasEditor(
         cancel()
         val prev = hierarchyMode
         // Leaving skeleton Edit mode keeps the edit; entering it opens a working copy of the armature.
+        // The draft opens after the mode's own display toggles are swapped in, so its display switch sticks.
         if (next != EditHierarchyMode.EDIT || !skeletonSelected) commitSkeletonDraft()
-        if (next == EditHierarchyMode.EDIT && skeletonSelected && skeletonDraft == null) openSkeletonDraft()
         hierarchyMode = next
+        if (next == EditHierarchyMode.EDIT && skeletonSelected && skeletonDraft == null) openSkeletonDraft()
         // Only Edit edits several meshes; any other mode keeps the primary's slice alone.
         if (next != EditHierarchyMode.EDIT) selection = target()?.id?.let { id -> selection.filterKeys { it == id } }.orEmpty()
         if (prev == EditHierarchyMode.PAINT && next != EditHierarchyMode.PAINT) {

@@ -1083,6 +1083,9 @@ internal fun BoxScope.CanvasEditorOverlay(
         val currentSkeleton by rememberUpdatedState(skeleton)
         val preview = editor.state.previewModel
         val neutralGeometry = remember(preview?.rig?.puppet) { preview?.let { RigCanvasSupport.evaluate(it) } }
+        val meshOutlines = remember(preview?.rig?.puppet) {
+            preview?.rig?.puppet?.drawables?.mapNotNull { d -> d.mesh?.let { d.id.raw to outlineEdges(it.indices) } }?.toMap().orEmpty()
+        }
         fun boneColor(id: String): Color = SkeletonPalette.color(skeleton, id)
         fun screen(x: Float, y: Float): Offset = Offset(viewport.x(x).toFloat(), (viewport.offsetY + y * viewport.scale).toFloat())
         fun hitJoint(pos: Offset): Pair<String, BoneEnd>? = currentSkeleton.bones.asReversed().firstNotNullOfOrNull { bone ->
@@ -1136,7 +1139,8 @@ internal fun BoxScope.CanvasEditorOverlay(
         ) {
             val drawables = preview?.rig?.puppet?.drawables?.associateBy { it.id.raw }.orEmpty()
             // 1. Every bound mesh tinted in its bone's color - the tree lists it in the same color - so what
-            //    each bone will move reads at a glance. The selected bone's meshes stand out.
+            //    each bone will move reads at a glance. The selected bone's meshes stand out. Only the mesh's
+            //    outline is stroked: the inner triangle edges would put the mesh wires back over the art.
             for (bone in skeleton.bones) {
                 if (bone.role.anchor) continue
                 val color = boneColor(bone.id)
@@ -1154,8 +1158,15 @@ internal fun BoxScope.CanvasEditorOverlay(
                         shape.lineTo(viewport.x(positions[c]).toFloat(), viewport.yFromWorld(positions[c + 1]).toFloat())
                         shape.close()
                     }
-                    drawPath(shape, color.copy(alpha = if (isSelected) 0.50f else 0.32f))
-                    drawPath(shape, color.copy(alpha = if (isSelected) 0.85f else 0.45f), style = Stroke(width = if (isSelected) 1.2f else 0.7f))
+                    drawPath(shape, color.copy(alpha = if (isSelected) 0.70f else 0.32f))
+                    val outline = Path()
+                    for (edge in meshOutlines[drawableId].orEmpty()) {
+                        val a = edge.endpointLow * 2; val b = edge.endpointHigh * 2
+                        if (maxOf(a, b) + 1 >= positions.size) continue
+                        outline.moveTo(viewport.x(positions[a]).toFloat(), viewport.yFromWorld(positions[a + 1]).toFloat())
+                        outline.lineTo(viewport.x(positions[b]).toFloat(), viewport.yFromWorld(positions[b + 1]).toFloat())
+                    }
+                    drawPath(outline, color.copy(alpha = if (isSelected) 1f else 0.70f), style = Stroke(width = if (isSelected) 1.8f else 1.1f))
                 }
             }
 

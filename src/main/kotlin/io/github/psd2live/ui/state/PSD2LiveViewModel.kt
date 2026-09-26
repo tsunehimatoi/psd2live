@@ -2408,6 +2408,22 @@ class PSD2LiveViewModel : AutoCloseable {
         }
     }
 
+	/** Rewrites one canvas's edit-session display toggles and returns what they were before. */
+	fun updateEditViewOptions(canvasId: String, workspaceId: String, transform: (TabViewOptions) -> TabViewOptions): TabViewOptions? {
+		var before: TabViewOptions? = null
+		updateState { current ->
+			current.updateWorkspace(workspaceId) { workspace ->
+				workspace.copy(canvases = workspace.canvases.map {
+					if (it.id == canvasId) it.updateSession(CanvasMode.EDIT) { session ->
+						before = session.view
+						session.copy(view = transform(session.view).normalized())
+					} else it
+				})
+			}
+		}
+		return before
+	}
+
 	/** Restores one canvas's display options to the defaults for its mode. */
 	fun resetCanvasViewOptions(canvasId: String = _state.value.activeCanvas.id, mode: CanvasMode? = null) {
 		var changed = false

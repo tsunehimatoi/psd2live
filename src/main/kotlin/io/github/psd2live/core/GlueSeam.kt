@@ -328,7 +328,7 @@ internal fun outlineVertices(indices: IntArray, vertexCount: Int): Set<Int> {
     return edges.flatMapTo(HashSet()) { listOf(it.endpointLow, it.endpointHigh) }
 }
 
-private fun outlineEdges(indices: IntArray): List<MeshElement.Edge> {
+internal fun outlineEdges(indices: IntArray): List<MeshElement.Edge> {
     val counts = HashMap<MeshElement.Edge, Int>()
     for (triangle in 0 until indices.size / 3) {
         for (edge in MeshTopology.edgesOfTriangle(indices, triangle)) {
