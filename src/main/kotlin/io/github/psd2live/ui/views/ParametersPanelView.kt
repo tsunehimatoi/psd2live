@@ -512,13 +512,13 @@ internal fun ParametersListView(
 			modifier = Modifier
 				.fillMaxWidth()
 				.background(colors.panelElevated)
-				.padding(horizontal = 6.dp, vertical = 4.dp),
-			verticalArrangement = Arrangement.spacedBy(4.dp),
+				.padding(horizontal = 4.dp, vertical = 3.dp),
+			verticalArrangement = Arrangement.spacedBy(3.dp),
 		) {
 			Row(
 				modifier = Modifier.fillMaxWidth(),
 				verticalAlignment = Alignment.CenterVertically,
-				horizontalArrangement = Arrangement.spacedBy(6.dp),
+				horizontalArrangement = Arrangement.spacedBy(4.dp),
 			) {
 				CompactTextField(
 					value = state.parameterSearchQuery,
@@ -616,7 +616,7 @@ internal fun ParametersListView(
 
         if (owner != null) {
             Row(
-                Modifier.fillMaxWidth().background(colors.panelElevated).padding(horizontal = 6.dp, vertical = 4.dp),
+                Modifier.fillMaxWidth().background(colors.panelElevated).padding(horizontal = 4.dp, vertical = 3.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
@@ -671,7 +671,7 @@ internal fun ParametersListView(
 							),
 						),
 				) {
-				LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(end = 10.dp)) {
+				LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(end = 6.dp)) {
 					items(rows, key = { row -> rowKey(row) }) { row ->
 						val key = rowKey(row)
 						val layout = rowToLayout(row)
@@ -879,7 +879,7 @@ internal fun ParametersListView(
 
 				VerticalScrollbar(
 					adapter = rememberScrollbarAdapter(listState),
-					modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(8.dp),
+					modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(6.dp),
 				)
 
 				if (dragState.isDragging && dragState.draggedItem != null) {
@@ -1083,7 +1083,7 @@ private fun ParameterDragHandle(
 	var handleCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 	Box(
 		modifier = Modifier
-			.size(16.dp)
+			.size(ParamRowHandleWidth)
 			.onGloballyPositioned { handleCoords = it }
 			.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR)))
 			.onPointerEvent(PointerEventType.Press) { event ->
@@ -1171,7 +1171,7 @@ private fun ParameterFolderRow(
 						)
 				} else Modifier,
 			)
-			.padding(start = (6 + row.depth * 12).dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+			.padding(start = (4 + row.depth * ParamRowDepthIndent).dp, end = 2.dp, top = 2.dp, bottom = 2.dp),
 		verticalAlignment = Alignment.CenterVertically,
 	) {
 		IconChevron(expanded = row.open, tint = colors.textMuted, modifier = Modifier.size(10.dp))
@@ -1368,20 +1368,18 @@ private fun ParameterValueInput(param: Parameter, value: Float, onValueChange: (
 	)
 }
 
-private val ParamRowLinkWidth = 14.dp
-private val ParamRowLinkSpacer = 2.dp
-private val ParamRowLockWidth = 16.dp
-private val ParamRowLockSpacer = 4.dp
-private val ParamRowNameWidth = 88.dp
-private val ParamRowBeforeTrackSpacer = 6.dp
-
-private val ParamRowAfterTrackSpacer = 6.dp
+private val ParamRowLinkWidth = 12.dp
+private val ParamRowLinkSpacer = 1.dp
+private val ParamRowLockWidth = 14.dp
+private val ParamRowLockSpacer = 3.dp
+private val ParamRowNameWidth = 80.dp
 private val ParamRowInputWidth = 44.dp
 private val ParamRowInputSpacer = 2.dp
-private val ParamRowResetWidth = 16.dp
-private val ParamRowHandleWidth = 16.dp
+private val ParamRowResetWidth = 14.dp
+private val ParamRowHandleWidth = 14.dp
+private val ParamRowDepthIndent = 8
 
-private val ParamTrackInsetHorizontal = 4.dp
+private val ParamTrackInsetHorizontal = 6.dp
 private val ParamKeyRadius = 2.8.dp
 private val ParamThumbRadius = 5.2.dp
 
@@ -1655,7 +1653,7 @@ private fun ParameterRowItem(
 			.fillMaxWidth()
 			.onGloballyPositioned { rowCoords = it }
 			.background(if (isLocked) colors.selection.copy(alpha = 0.22f) else Color.Transparent)
-			.padding(start = (4 + depth * 12).dp, end = 2.dp, top = 1.dp, bottom = 1.dp)
+			.padding(start = (2 + depth * ParamRowDepthIndent).dp, end = 0.dp, top = 1.dp, bottom = 1.dp)
 			.height(30.dp),
 		verticalAlignment = Alignment.CenterVertically,
 	) {
@@ -1681,7 +1679,6 @@ private fun ParameterRowItem(
 		}
 		Spacer(Modifier.width(ParamRowLockSpacer))
 		EditableParameterName(param, isLocked, state, viewModel, related)
-		Spacer(Modifier.width(ParamRowBeforeTrackSpacer))
 		ParameterTrack(
 			value = currentValue.coerceIn(param.min, param.max),
 			onValueChange = { viewModel.setParameterValue(param.id, it) },
@@ -1692,7 +1689,6 @@ private fun ParameterRowItem(
 			thumbShape = if (param.kind == ParameterKind.BLEND_SHAPE) SliderKeyShape.Square else SliderKeyShape.Circle,
 			onHoverKey = onKeyHover,
 		)
-		Spacer(Modifier.width(ParamRowAfterTrackSpacer))
 		ParameterValueInput(param, currentValue, { viewModel.setParameterValue(param.id, it) })
 		Spacer(Modifier.width(ParamRowInputSpacer))
 		CompactIconButton(
@@ -1734,7 +1730,7 @@ private fun LinkedParameterPad(
 		modifier = Modifier
 			.fillMaxWidth()
 			.onGloballyPositioned { rowCoords = it }
-			.padding(start = (4 + depth * 12).dp, end = 2.dp, top = 3.dp, bottom = 3.dp)
+			.padding(start = (2 + depth * ParamRowDepthIndent).dp, end = 0.dp, top = 3.dp, bottom = 3.dp)
 			.height(84.dp),
 		verticalAlignment = Alignment.CenterVertically,
 	) {
@@ -1783,7 +1779,6 @@ private fun LinkedParameterPad(
 				EditableParameterName(vertical, yLocked, state, viewModel, vertical.id in relatedIds)
 			}
 		}
-		Spacer(Modifier.width(ParamRowBeforeTrackSpacer))
 		ParameterPad2D(
 			horizontal = horizontal,
 			vertical = vertical,
@@ -1802,7 +1797,6 @@ private fun LinkedParameterPad(
 			},
 			onHoverKey = onKeyHover,
 		)
-		Spacer(Modifier.width(ParamRowAfterTrackSpacer))
 		Column(
 			modifier = Modifier.width(ParamRowInputWidth),
 			verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -1889,7 +1883,7 @@ private fun ParameterPad2D(
 	var padCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 	val labelMeasurer = rememberTextMeasurer()
 
-	val insetHorizontalDp = 18.dp
+	val insetHorizontalDp = 16.dp
 	val insetVerticalDp = 14.dp
 	val keyRadiusDp = ParamKeyRadius
 	val thumbRadiusDp = ParamThumbRadius
