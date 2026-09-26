@@ -103,7 +103,7 @@ internal object SkeletonRig {
 	private const val MAX_WAIST_BAND = 0.45f
 
 	/** Columns of a body half's warp; its rows follow the waist band so the bend stays smooth. */
-	private const val BODY_WARP_COLUMNS = 8
+	private const val BODY_WARP_COLUMNS = 4
 
 	/** Most keyforms one mesh may carry; beyond it the keys thin out evenly. */
 	private const val MAX_MESH_CELLS = 600
@@ -286,8 +286,8 @@ internal object SkeletonRig {
 		private val bands = DoubleArray(bones.size) { waistBand(bones[it]).toDouble() }
 		val columns = BODY_WARP_COLUMNS
 
-		/** A row every three quarters of the narrowest band's half width, so each bend spans a few rows. */
-		val rows = ceil(frame.height / (bands.min() * 0.75)).toInt().coerceIn(8, 40)
+		/** A row every half width of the narrowest band, so each bend spans two rows. */
+		val rows = ceil(frame.height / bands.min()).toInt().coerceIn(6, 16)
 
 		private val local = FloatArray((rows + 1) * (columns + 1) * 2).also { points ->
 			var i = 0
