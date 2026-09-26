@@ -279,6 +279,9 @@ internal fun PhysicsPanelView(
 			},
 		)
 
+		// Swing pendulums are derived from their swings and tuned in the swing dialog.
+		SwingPhysicsCard(viewModel, state)
+
 		// 3. Input & Output Mapping Card
 		PhysicsMappingCard(
 			group = currentGroup,
@@ -396,6 +399,41 @@ private fun PhysicsGlobalControlCard(
 }
 
 /** Card 2: Physics Group Selection & Management */
+@Composable
+private fun SwingPhysicsCard(viewModel: PSD2LiveViewModel, state: PSD2LiveState) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	Column(
+		modifier = Modifier
+			.fillMaxWidth()
+			.background(colors.windowBackground, RoundedCornerShape(4.dp))
+			.border(BorderStroke(0.5.dp, colors.divider), RoundedCornerShape(4.dp))
+			.padding(8.dp),
+		verticalArrangement = Arrangement.spacedBy(6.dp),
+	) {
+		Text(
+			text = tr("swing.physicsGroups"),
+			style = typography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.SemiBold),
+			color = colors.textPrimary,
+		)
+		state.rigEdits.swingEdits.forEach { swing ->
+			Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+				Text(
+					text = "${swing.name} · ${tr("swing.kind.${swing.kind.name.lowercase()}")}" +
+						if (swing.physics == null) " · ${tr("swing.physics.off")}" else "",
+					style = typography.caption,
+					color = colors.textPrimary,
+					modifier = Modifier.weight(1f),
+				)
+				CompactButton(tr("swing.menuEdit"), { viewModel.beginSwing(swing.targets) }, height = 20.dp)
+			}
+		}
+		CompactButton(tr("swing.fromSelection"), {
+			viewModel.beginSwing(viewModel.canvasEditor.swingTargets())
+		}, modifier = Modifier.fillMaxWidth())
+	}
+}
+
 @Composable
 private fun PhysicsGroupManagementCard(
 	groups: List<PhysicsGroupItem>,

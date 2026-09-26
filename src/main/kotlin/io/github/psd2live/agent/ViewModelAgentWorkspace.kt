@@ -1260,6 +1260,23 @@ class ViewModelAgentWorkspace(
 
     override fun listPhysics() = viewModel.state.value.rigEdits.physicsEdits
 
+    override fun listSwings() = viewModel.state.value.rigEdits.swingEdits
+
+    override suspend fun putSwing(edit: io.github.psd2live.core.RigSwingEdit, estimatePhysics: Boolean, expectedHead: String,
+        taskId: String?, author: MutationAuthor) =
+        mutateRigKeyform(expectedHead, taskId, "Set swing ${edit.id}", edit.id, author) { document, puppet ->
+            val rigEdits = io.github.psd2live.core.SwingAuthoring.put(document.rigEdits, puppet, edit, estimatePhysics)
+            val physics = rigEdits.swingEdits.single { it.id == edit.id }.physics != null
+            document.copy(rigEdits = rigEdits, settings = if (!physics) document.settings else
+                kotlinx.serialization.json.JsonObject(document.settings + ("generatePhysics" to kotlinx.serialization.json.JsonPrimitive(true))))
+        }
+
+    override suspend fun deleteSwing(id: String, bake: Boolean, expectedHead: String, author: MutationAuthor) =
+        mutateRigKeyform(expectedHead, null, if (bake) "Baked swing $id" else "Deleted swing $id", id, author) { document, puppet ->
+            document.copy(rigEdits = if (bake) io.github.psd2live.core.SwingAuthoring.bake(document.rigEdits, puppet, id)
+                else io.github.psd2live.core.SwingAuthoring.remove(document.rigEdits, id))
+        }
+
     override suspend fun createWarp(edit: io.github.psd2live.core.RigWarpEdit, expectedHead: String, taskId: String?) =
         mutateRigKeyform(expectedHead, taskId, "Created Warp ${edit.id}", edit.id) { document, puppet ->
             edit.applyTo(puppet) // Validate before constructing the replacement preview.

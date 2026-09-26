@@ -207,6 +207,8 @@ data class RigEditOverlay(
 	val keyformCopyEdits: List<RigKeyformCopyEdit> = emptyList(),
     val warpEdits: List<RigWarpEdit> = emptyList(),
     val physicsEdits: List<RigPhysicsEdit> = emptyList(),
+    /** Regenerating sways; replayed after the journal so a changed setting rebuilds their forms. */
+    val swingEdits: List<RigSwingEdit> = emptyList(),
     val assetLayers: Map<String, kotlinx.serialization.json.JsonObject> = emptyMap(),
     val calibrationLayerIds: Set<String> = emptySet(),
     /** Source layers active before the first mesh split; preserves the generated Warp frames on rebuild. */
@@ -223,6 +225,8 @@ data class RigEditOverlay(
 		require(warpEdits.map { it.id }.distinct().size == warpEdits.size) { "Duplicate Warp IDs" }
         require(physicsEdits.map { it.id }.distinct().size == physicsEdits.size) { "Duplicate physics IDs" }
         require(physicsEdits.map { it.outputParameter }.distinct().size == physicsEdits.size) { "Independent physics must have distinct output parameters" }
+        require(swingEdits.map { it.id }.distinct().size == swingEdits.size) { "Duplicate swing IDs" }
+        require(swingEdits.flatMap { it.parameterIds }.let { it.distinct().size == it.size }) { "Each swing needs its own parameters" }
 		require(parameterEdits.map(RigParameterEdit::id).distinct().size == parameterEdits.size) {
 			"Rig parameter edits contain duplicate IDs"
 		}
@@ -261,7 +265,7 @@ data class RigEditOverlay(
 		for (delete in keyformDeleteEdits) {
 			model = applyKeyformDelete(model, delete)
 		}
-		return authoringJournal.fold(model, RigAuthoringJournal::apply)
+		return SwingGenerator.apply(authoringJournal.fold(model, RigAuthoringJournal::apply), swingEdits)
 	}
 
 	fun upsert(edit: RigParameterEdit): RigEditOverlay {

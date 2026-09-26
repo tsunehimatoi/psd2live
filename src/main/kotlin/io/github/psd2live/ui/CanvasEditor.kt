@@ -2223,6 +2223,7 @@ internal class CanvasEditor(
         }
         endBrushAdjust(cancel = true)
         preview = null; pending = null; dragging = false; targetAtPress = null; original = null; topologyFills = null
+        swingHandle = null
         knifeDraft = emptyList(); knifeDrawableId = null; subdividing = false; subdivideEdges = emptySet()
         knifeHover = null; knifeSnapKind = null
         isCreatingWarp = false; isCreatingRotation = false; creationStart = null; creationCurrent = null
@@ -3476,6 +3477,8 @@ internal class CanvasEditor(
         hoveredHandle = BoundingHandle.NONE
         isHoveringObject = false
         hoveredPick = null
+        // A swing session locks the canvas, so nothing under the cursor is advertised as pickable.
+        if (viewModel.swingSession != null) { setHoveredItem(null, null); return }
 
         if (tool in CREATION_TOOLS) {
             if (tool == CanvasTool.GLUE) {
@@ -3961,6 +3964,38 @@ internal class CanvasEditor(
         val t = target() ?: return; if (t.indices.isEmpty()) return
         val adjacency = MeshTopology.buildVertexAdjacency(t.count, t.indices)
         vertices = vertices.flatMap { MeshTopology.connectedVertices(adjacency, it) }.toSet()
+    }
+
+    /** The swing handle under a drag; the swing session itself lives on the view model. */
+    private var swingHandle: io.github.psd2live.core.SwingGizmo.Handle? = null
+
+    /** Whether a swing handle is being dragged; its preview updates must not read as the document changing. */
+    val swingDragging: Boolean get() = swingHandle != null
+
+    /** A canvas-pixel point (Y down, as the deformer cascade outputs) on screen. */
+    fun swingScreen(point: Pair<Float, Float>, viewport: CanvasViewport) =
+        Offset(viewport.x(point.first).toFloat(), (viewport.offsetY + point.second * viewport.scale).toFloat())
+
+    /** The swing handles on screen, in hit priority: the tip, middle and corners sit above the pivots. */
+    fun swingHandles(viewport: CanvasViewport): List<Pair<io.github.psd2live.core.SwingGizmo.Handle, Offset>> {
+        val gizmo = viewModel.swingSession?.gizmo ?: return emptyList()
+        return gizmo.handles().entries.sortedBy { if (it.key.name.startsWith("PIVOT")) 1 else 0 }
+            .map { it.key to swingScreen(it.value, viewport) }
+    }
+
+    private fun hitSwingHandle(pos: Offset, viewport: CanvasViewport) =
+        swingHandles(viewport).firstOrNull { (it.second - pos).getDistance() <= 10f }?.first
+
+    private fun dragSwing(handle: io.github.psd2live.core.SwingGizmo.Handle, pos: Offset, viewport: CanvasViewport) {
+        val gizmo = viewModel.swingSession?.gizmo ?: return
+        viewModel.updateSwingSettings(gizmo.drag(handle, viewport.canvasX(pos.x) to viewport.canvasY(pos.y)))
+    }
+
+    /** The selection as swing targets: its meshes and Warps. */
+    fun swingTargets(): List<String> {
+        val t = target() ?: return emptyList()
+        return objects.mapNotNull { target(model, it, null) }.ifEmpty { listOf(t) }
+            .filter { it.kind == "mesh" || it.kind == "warp" }.map { it.id }.distinct()
     }
 
     fun createWarp(rotation: Boolean = false) {
@@ -4873,6 +4908,18 @@ internal class CanvasEditor(
             return true
         }
 
+        // A swing session owns the canvas until Apply/Esc: a press off its handles does nothing, so a
+        // near miss cannot select or drag another object. More targets are registered from the tree.
+        val swing = viewModel.swingSession
+        if (swing != null) {
+            val handle = if (swing.busy) null else hitSwingHandle(pos, viewport)
+            if (handle != null) {
+                if (handle.name.startsWith("PIVOT")) dragSwing(handle, pos, viewport)
+                else { swingHandle = handle; dragging = true }
+            }
+            return true
+        }
+
         // 0. The pose tool turns bones; a press off every bone does nothing, so a stray click cannot
         //    select or move points while the tool is armed.
         if (posing()) {
@@ -5274,6 +5321,7 @@ internal class CanvasEditor(
         updateHover(pos, viewport, ctrl, shift)
         shrinks = if (dragging && tool == CanvasTool.INFLATE) shrinkAtPress else inflateInvert xor alt
         if (!dragging || busy) return
+        swingHandle?.let { handle -> dragSwing(handle, pos, viewport); previous = pos; return }
         moved = moved || (pos - start).getDistance() > 2f
         if (!moved) return
 
@@ -5527,6 +5575,11 @@ internal class CanvasEditor(
 
     fun release() {
         if (!dragging) return
+        if (swingHandle != null) {
+            swingHandle = null
+            dragging = false
+            return
+        }
         if (poseDrag != null) {
             endPose()
             dragging = false

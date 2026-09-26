@@ -211,6 +211,22 @@ private fun ColumnScope.SelectModeContextMenu(
                     )
                 )
             }
+            if (editor.target()?.kind in setOf("mesh", "warp")) {
+                CompactMenuDivider()
+                ActionGrid(
+                    listOf(
+                        ActionSpec(
+                            tr("swing.menu"),
+                            enabled = editor.editable,
+                            icon = { IconWarpDeformer(it, Modifier.size(12.dp)) },
+                        ) {
+                            editor.viewModel.beginSwing(editor.swingTargets())
+                            onAction()
+                            onDismissRequest()
+                        },
+                    )
+                )
+            }
         }
         else -> Unit
     }

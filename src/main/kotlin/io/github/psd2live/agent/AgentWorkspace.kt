@@ -462,6 +462,13 @@ interface AgentWorkspace {
     suspend fun putPhysics(edit: io.github.psd2live.core.RigPhysicsEdit, expectedHead: String, taskId: String?): AgentWorkspaceMutationResult = throw UnsupportedOperationException("Physics editing is unavailable")
     suspend fun deletePhysics(id: String, expectedHead: String): AgentWorkspaceMutationResult =
         throw UnsupportedOperationException("Physics deletion is unavailable")
+    fun listSwings(): List<io.github.psd2live.core.RigSwingEdit> = emptyList()
+    /** [estimatePhysics] sizes the pendulum from the first target instead of taking the edit's. */
+    suspend fun putSwing(edit: io.github.psd2live.core.RigSwingEdit, estimatePhysics: Boolean, expectedHead: String, taskId: String?,
+        author: MutationAuthor = MutationAuthor.AGENT): AgentWorkspaceMutationResult = throw UnsupportedOperationException("Swing editing is unavailable")
+    /** [bake] keeps the current forms as ordinary keys (and the pendulum); otherwise they go with the swing. */
+    suspend fun deleteSwing(id: String, bake: Boolean, expectedHead: String, author: MutationAuthor = MutationAuthor.AGENT): AgentWorkspaceMutationResult =
+        throw UnsupportedOperationException("Swing deletion is unavailable")
 
     suspend fun saveProject(): AgentWorkspaceMutationResult = throw UnsupportedOperationException("Project saving is not available")
     suspend fun checkpoint(summary: String): AgentWorkspaceMutationResult = throw UnsupportedOperationException("History checkpoints are not available")

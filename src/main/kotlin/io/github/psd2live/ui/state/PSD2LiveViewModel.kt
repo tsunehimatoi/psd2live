@@ -31,6 +31,15 @@ import io.github.psd2live.core.ProgressListener
 import io.github.psd2live.core.RigPreviewModel
 import io.github.psd2live.core.RigEditOverlay
 import io.github.psd2live.core.RigPhysicsEdit
+import io.github.psd2live.core.RigAuthoringJournal
+import io.github.psd2live.core.RigGeometryTools
+import io.github.psd2live.core.RigSwingEdit
+import io.github.psd2live.core.SwingAuthoring
+import io.github.psd2live.core.SwingGenerator
+import io.github.psd2live.core.SwingKind
+import io.github.psd2live.core.SwingPreset
+import io.github.psd2live.core.SwingPresets
+import org.umamo.runtime.model.Deformer
 import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.Side
 import io.github.psd2live.core.StandardParameters
@@ -94,6 +103,199 @@ class PSD2LiveViewModel : AutoCloseable {
         private set
     internal var pendingBatchMeshSplit by mutableStateOf<BatchMeshSplitOffer?>(null)
         private set
+
+    /**
+     * A swing being authored on the canvas. [draft] keeps the targets as picked (meshes stay meshes until the
+     * commit wraps them); [gizmo] is the handle geometry on the live preview, where those meshes are wrapped.
+     */
+    internal class SwingSession(val existingId: String?, draft: RigSwingEdit) {
+        var draft by mutableStateOf(draft)
+        var gizmo by mutableStateOf<io.github.psd2live.core.SwingGizmo?>(null)
+        var playing by mutableStateOf(false)
+        var busy by mutableStateOf(false)
+        var error by mutableStateOf<String?>(null)
+        /** The patched rig and the edit as replayed on it; the handles are rebuilt from these when the pose changes. */
+        internal var preview: Pair<PuppetModel, RigSwingEdit>? = null
+    }
+
+    internal var swingSession by mutableStateOf<SwingSession?>(null)
+        private set
+    /** The preview before the session's live forms were patched in, and whether it was already stale. */
+    private var swingPreviewBase: Pair<RigPreviewModel, Boolean>? = null
+    /** The preview this session last installed; anything else means a rebuild replaced it underneath. */
+    private var swingPatched: RigPreviewModel? = null
+    private var swingPlayer: Job? = null
+
+    /**
+     * Starts a swing session on Warps or meshes; a target already swung (or wrapped for a swing) edits that
+     * swing. The canvas switches to edit mode, where the handles live.
+     */
+    internal fun beginSwing(targets: List<String>) {
+        val state = _state.value
+        val puppet = state.previewModel?.rig?.puppet ?: return
+        if (targets.isEmpty() || state.canvasEditBusy) return
+        endSwing()
+        val parents = targets.mapNotNull { id -> puppet.drawables.firstOrNull { it.id.raw == id }?.parentDeformerId?.raw }
+        val existing = state.rigEdits.swingEdits.firstOrNull { swing -> swing.targets.any { it in targets || it in parents } }
+        val draft = existing ?: swingDefaults(targets, SwingKind.LATERAL, SwingPreset.HAIR, 1) ?: return
+        setCanvasMode(state.activeCanvas.id, CanvasMode.EDIT)
+        // One canvas session at a time: a pending placement would fight over the corner and the pointer.
+        if (canvasEditor.placement != null) canvasEditor.cancelPlacement()
+        swingSession = SwingSession(existing?.id, draft)
+        updateSwing(draft)
+    }
+
+    /** Leaves the session without recording anything. */
+    internal fun endSwing() {
+        playSwing(false)
+        previewSwing(null)
+        swingSession = null
+    }
+
+    /** Replaces the draft and refreshes the canvas preview and handles. */
+    internal fun updateSwing(draft: RigSwingEdit) {
+        val session = swingSession ?: return
+        session.draft = draft
+        session.error = null
+        val result = previewSwing(draft)
+        if (result == null) { session.error = tr("swing.failed"); return }
+        session.preview = result
+        refreshSwingGizmo()
+    }
+
+    /** Rebuilds the handles for the pose on screen, so they stay on the art when other parameters move. */
+    internal fun refreshSwingGizmo() {
+        val session = swingSession ?: return
+        val (puppet, prepared) = session.preview ?: return
+        session.gizmo = io.github.psd2live.core.SwingGizmo.of(puppet, prepared, values = _state.value.parameterValues)
+    }
+
+    /** Takes the settings a handle produced; the handles work on the wrap, the draft keeps the picked targets. */
+    internal fun updateSwingSettings(settings: RigSwingEdit) {
+        val draft = swingSession?.draft ?: return
+        updateSwing(settings.copy(id = draft.id, name = draft.name, targets = draft.targets, parameterIds = draft.parameterIds))
+    }
+
+    /** A new swing on [targets] with fresh IDs, preset values and a pendulum sized from the first target. */
+    internal fun swingDefaults(targets: List<String>, kind: SwingKind, preset: SwingPreset, segments: Int): RigSwingEdit? {
+        val state = _state.value
+        val puppet = (swingPreviewBase?.first ?: state.previewModel)?.rig?.puppet ?: return null
+        val first = targets.firstOrNull() ?: return null
+        val name = puppet.deformers.firstOrNull { it.id.raw == first }?.name
+            ?: puppet.drawables.firstOrNull { it.id.raw == first }?.name ?: first
+        val (id, parameters) = SwingAuthoring.freshIds(puppet, state.rigEdits, first, segments)
+        val shape = SwingPresets.shape(preset, kind)
+        return RigSwingEdit(id, tr("swing.defaultName", name), kind, targets, parameters,
+            magnitude = shape.magnitude, lift = shape.lift, softness = shape.softness, zoom = shape.zoom,
+            preset = preset, physics = SwingPresets.physics(preset, kind, swingLength(puppet, first)))
+    }
+
+    /** The pinned-edge-to-tip length of a Warp, or the long side of a mesh, in canvas pixels. */
+    private fun swingLength(puppet: PuppetModel, target: String): Float? {
+        SwingGenerator.measure(puppet, target)?.let { return it.second }
+        val drawable = puppet.drawables.firstOrNull { it.id.raw == target } ?: return null
+        val bounds = RigGeometryTools.bounds(drawable.mesh?.positions ?: return null)
+        // Under a Warp the mesh is in its 0..1 space; scale by that Warp's own length.
+        val scale = (puppet.deformers.firstOrNull { it.id == drawable.parentDeformerId } as? Deformer.Warp)
+            ?.let { SwingGenerator.measure(puppet, it.id.raw)?.second } ?: 1f
+        return maxOf(bounds[2], bounds[3]) * scale
+    }
+
+    /**
+     * Shows [edit]'s forms on the canvas without recording anything; null restores the committed preview.
+     * Returns the patched rig and the edit as replayed there, with mesh targets turned into their wraps.
+     */
+    private fun previewSwing(edit: RigSwingEdit?): Pair<PuppetModel, RigSwingEdit>? {
+        val current = _state.value
+        // A rebuild (undo, another edit) replaced the patched preview: that is the new base.
+        if (swingPreviewBase != null && current.previewModel !== swingPatched) swingPreviewBase = null
+        val base = swingPreviewBase
+        if (edit == null) {
+            if (base != null) {
+                swingPreviewBase = null
+                updateState { it.copy(previewModel = base.first, previewModelDirty = base.second) }
+            }
+            swingPatched = null
+            return null
+        }
+        val (preview, _) = base ?: ((current.previewModel ?: return null) to current.previewModelDirty).also { swingPreviewBase = it }
+        val result = runCatching {
+            val puppet = preview.rig.puppet
+            val overlay = SwingAuthoring.put(current.rigEdits, puppet, edit)
+            val prepared = overlay.swingEdits.single { it.id == edit.id }
+            val wrapped = overlay.authoringJournal.drop(current.rigEdits.authoringJournal.size).fold(puppet, RigAuthoringJournal::apply)
+            SwingGenerator.apply(wrapped, listOf(prepared)) to prepared
+        }.getOrNull() ?: return null
+        val patched = preview.copy(rig = preview.rig.copy(puppet = result.first))
+        swingPatched = patched
+        updateState { it.copy(previewModel = patched, previewModelDirty = true) }
+        return result
+    }
+
+    /** Sways the session's parameters between -1 and 1, each lower segment trailing, until stopped. */
+    internal fun playSwing(play: Boolean) {
+        val session = swingSession
+        swingPlayer?.cancel()
+        swingPlayer = null
+        if (session == null) return
+        session.playing = play
+        if (!play) {
+            val ids = session.draft.parameterIds.map(::ParameterId)
+            updateState { it.copy(parameterValues = it.parameterValues + ids.associateWith { 0f }) }
+            return
+        }
+        swingPlayer = scope.launch {
+            val start = System.nanoTime()
+            while (isActive) {
+                val t = (System.nanoTime() - start) / 1e9f
+                val values = session.draft.parameterIds.withIndex().associate { (k, id) ->
+                    ParameterId(id) to sin(2f * PI.toFloat() * t / 1.6f - k * 0.7f)
+                }
+                updateState { it.copy(parameterValues = it.parameterValues + values) }
+                delay(16)
+            }
+        }
+    }
+
+    /** Records the session's swing as one history node and ends the session. */
+    internal fun commitSwing() {
+        val session = swingSession ?: return
+        val draft = session.draft
+        runSwingMutation(session) { workspace, head -> workspace.putSwing(draft, false, head, null, io.github.psd2live.agent.MutationAuthor.USER) }
+    }
+
+    /** Deletes the edited swing; [bake] first keeps its current forms as ordinary keys. */
+    internal fun deleteSwing(bake: Boolean) {
+        val session = swingSession ?: return
+        val id = session.existingId ?: return
+        runSwingMutation(session) { workspace, head -> workspace.deleteSwing(id, bake, head, io.github.psd2live.agent.MutationAuthor.USER) }
+    }
+
+    private fun runSwingMutation(
+        session: SwingSession,
+        mutation: suspend (AgentWorkspace, String) -> io.github.psd2live.agent.AgentWorkspaceMutationResult,
+    ) {
+        if (_state.value.canvasEditBusy || session.busy) return
+        playSwing(false)
+        previewSwing(null)
+        session.busy = true
+        updateState { it.copy(canvasEditBusy = true) }
+        scope.launch {
+            try {
+                val workspace = requireNotNull(agentWorkspace) { "Project workspace unavailable" }
+                val head = requireNotNull(workspace.snapshot().historyHeadNodeId) { "Project history unavailable" }
+                withContext(Dispatchers.Default) { mutation(workspace, head) }
+                if (swingSession === session) swingSession = null
+            } catch (failure: Exception) {
+                if (failure is kotlinx.coroutines.CancellationException) throw failure
+                session.error = failure.message ?: tr("swing.failed")
+                if (swingSession === session) updateSwing(session.draft)
+            } finally {
+                session.busy = false
+                updateState { it.copy(canvasEditBusy = false) }
+            }
+        }
+    }
     private val meshSplitQueue = ArrayDeque<String>()
     private val manualMeshSplitRequests = mutableSetOf<String>()
     private var meshSplitChecking = false

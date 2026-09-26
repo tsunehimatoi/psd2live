@@ -349,11 +349,12 @@ class PSD2LivePipeline {
 			val useBackHairPhysics = hasBackHair && config.generatePhysics && config.physicsBackHair && !config.meshOnly
 			val useEyeJellyPhysics = hasEyeJelly && config.generatePhysics && config.physicsEyeJelly && !config.meshOnly
 			val skeletonPhysics = PhysicsGenerator.skeletonRules(config.rigEdits.skeleton,
-				rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }).isNotEmpty()
+				rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }).isNotEmpty() ||
+				PhysicsGenerator.swingRules(config.rigEdits.swingEdits, rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }).isNotEmpty()
 			if (useFrontHairPhysics || useBackHairPhysics || useEyeJellyPhysics ||
 				(config.generatePhysics && !config.meshOnly && (config.rigEdits.physicsEdits.isNotEmpty() || skeletonPhysics))) {
 				Cmo3PhysicsInjector.inject(converted.model.root as CModelSource, useFrontHairPhysics, useBackHairPhysics,
-					useEyeJellyPhysics, config.rigEdits.physicsEdits, config.rigEdits.skeleton)
+					useEyeJellyPhysics, config.rigEdits.physicsEdits, config.rigEdits.skeleton, config.rigEdits.swingEdits)
 			}
 			BezierWarp.configureEditor(converted.model.root as CModelSource)
 			val bytes = Cmo3.write(converted.model)
@@ -398,11 +399,12 @@ class PSD2LivePipeline {
 		val useFrontHairPhysics = hasFrontHair && config.generatePhysics && config.physicsFrontHair && !config.meshOnly
 		val useBackHairPhysics = hasBackHair && config.generatePhysics && config.physicsBackHair && !config.meshOnly
 		val useEyeJellyPhysics = hasEyeJelly && config.generatePhysics && config.physicsEyeJelly && !config.meshOnly
-		val skeletonPhysics = PhysicsGenerator.skeletonRules(config.rigEdits.skeleton, parameterIds).isNotEmpty()
+		val skeletonPhysics = PhysicsGenerator.skeletonRules(config.rigEdits.skeleton, parameterIds).isNotEmpty() ||
+			PhysicsGenerator.swingRules(config.rigEdits.swingEdits, parameterIds).isNotEmpty()
 		val physics = if (useFrontHairPhysics || useBackHairPhysics || useEyeJellyPhysics ||
 			(config.generatePhysics && !config.meshOnly && (config.rigEdits.physicsEdits.isNotEmpty() || skeletonPhysics))) {
 			PhysicsGenerator.generate(useFrontHairPhysics, useBackHairPhysics, useEyeJellyPhysics, parameterIds,
-				config.rigEdits.physicsEdits, config.rigEdits.skeleton)?.let(CubismJson::normalize)
+				config.rigEdits.physicsEdits, config.rigEdits.skeleton, config.rigEdits.swingEdits)?.let(CubismJson::normalize)
 		} else null
 
 		val motions = buildList<Pair<String, Pair<String, String>>> {

@@ -19,6 +19,7 @@ For hands-on learning, open **Help → Tutorials**. The short guides follow the 
 | 画布编辑速查 | [打开](zh/guide/CANVAS_EDITOR.md) | 中文参考 | 中文参考 |
 | 变形路径（实验性） | [打开](zh/guide/DEFORM_PATHS.md) | 中文参考 | 中文参考 |
 | 骨骼与姿态 | [打开](zh/guide/SKELETON.md) | 中文参考 | 中文参考 |
+| 摇摆生成 | [打开](zh/guide/SWING.md) | 中文参考 | 中文参考 |
 | 纹理高清化 | [打开](zh/guide/TEXTURE_UPSCALE.md) | 中文参考 | 中文参考 |
 
 ## 技术参考 · Reference

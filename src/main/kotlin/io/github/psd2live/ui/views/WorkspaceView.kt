@@ -1756,6 +1756,17 @@ private fun DeformerTreeItem(
 				},
 				icon = { IconRotationDeformer(tint = colors.textMuted, modifier = Modifier.size(13.dp)) },
 			)
+			if (menuFocus is Deformer.Warp) {
+				val swung = state.rigEdits.swingEdits.any { menuFocus.id.raw in it.targets }
+				CompactMenuItem(
+					text = tr(if (swung) "swing.menuEdit" else "swing.menu"),
+					onClick = {
+						viewModel.beginSwing(listOf(menuFocus.id.raw))
+						showMenu = false
+					},
+					icon = { IconWarpDeformer(tint = colors.textMuted, modifier = Modifier.size(13.dp)) },
+				)
+			}
 			CompactMenuItem(
 				text = tr("canvas.hierarchy.importLayer"),
 				onClick = {
@@ -2160,6 +2171,17 @@ private fun DrawableTreeItem(
 					},
 					icon = { IconRotationDeformer(tint = colors.textMuted, modifier = Modifier.size(13.dp)) },
 				)
+				if (drawable.mesh != null) {
+					val swung = state.rigEdits.swingEdits.any { swing -> swing.targets.any { it == drawable.id.raw || it == drawable.parentDeformerId?.raw } }
+					CompactMenuItem(
+						text = tr(if (swung) "swing.menuEdit" else "swing.menu"),
+						onClick = {
+							viewModel.beginSwing(listOf(drawable.id.raw))
+							showMenu = false
+						},
+						icon = { IconWarpDeformer(tint = colors.textMuted, modifier = Modifier.size(13.dp)) },
+					)
+				}
 				if (drawable.mesh != null) {
 					CompactMenuItem(
 						text = tr("editor.treeAddPath"),

@@ -78,6 +78,7 @@ import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
 import io.github.psd2live.ui.theme.ToolColors
 import io.github.psd2live.ui.theme.frostedGlass
+import io.github.psd2live.ui.components.SwingSessionPanel
 import io.github.psd2live.ui.theme.frostedGlassTopBar
 import io.github.psd2live.ui.tutorial.TutorialTargetId
 import io.github.psd2live.ui.tutorial.tutorialTarget
@@ -743,6 +744,44 @@ internal fun BoxScope.CanvasEditorOverlay(
             }
         }
 
+        // Swing session: the rest outline, both extremes with their centerlines, the pinned edge and the handles.
+        viewModel.swingSession?.gizmo?.let { gizmo ->
+            fun path(points: List<Pair<Float, Float>>, closed: Boolean) = Path().apply {
+                points.forEachIndexed { i, p -> val o = editor.swingScreen(p, viewport); if (i == 0) moveTo(o.x, o.y) else lineTo(o.x, o.y) }
+                if (closed) close()
+            }
+            val dash = PathEffect.dashPathEffect(floatArrayOf(5f, 4f), 0f)
+            drawPath(path(gizmo.outline(0f), true), colors.textMuted.copy(alpha = 0.7f), style = Stroke(1.2f, pathEffect = dash))
+            drawPath(path(gizmo.outline(-1f), true), colors.accent.copy(alpha = 0.35f), style = Stroke(1.2f))
+            drawPath(path(gizmo.centerline(-1f), false), colors.accent.copy(alpha = 0.35f), style = Stroke(1f))
+            drawPath(path(gizmo.outline(1f), true), colors.accent.copy(alpha = 0.9f), style = Stroke(1.6f))
+            drawPath(path(gizmo.centerline(1f), false), colors.accent.copy(alpha = 0.9f), style = Stroke(1.4f))
+            drawPath(path(gizmo.pinnedEdge, false), colors.accent, style = Stroke(4f, cap = StrokeCap.Round))
+            for ((handle, o) in editor.swingHandles(viewport)) {
+                when (handle) {
+                    SwingGizmo.Handle.TIP -> {
+                        drawCircle(colors.accent, 7f, o)
+                        drawCircle(Color.White, 7f, o, style = Stroke(1.5f))
+                    }
+                    SwingGizmo.Handle.MID -> {
+                        val d = Path().apply { moveTo(o.x, o.y - 6f); lineTo(o.x + 6f, o.y); lineTo(o.x, o.y + 6f); lineTo(o.x - 6f, o.y); close() }
+                        drawPath(d, colors.accent)
+                        drawPath(d, Color.White, style = Stroke(1.2f))
+                    }
+                    SwingGizmo.Handle.CORNER_START, SwingGizmo.Handle.CORNER_END -> {
+                        drawRect(colors.accent, Offset(o.x - 4f, o.y - 4f), Size(8f, 8f))
+                        drawRect(Color.White, Offset(o.x - 4f, o.y - 4f), Size(8f, 8f), style = Stroke(1f))
+                    }
+                    else -> {
+                        // Pivot choices: the pinned edge is already drawn; the others are hollow squares to click.
+                        if (handle.name.removePrefix("PIVOT_") == gizmo.fulcrum.name) continue
+                        drawRect(colors.panelElevated.copy(alpha = 0.85f), Offset(o.x - 5f, o.y - 5f), Size(10f, 10f))
+                        drawRect(colors.accent.copy(alpha = 0.8f), Offset(o.x - 5f, o.y - 5f), Size(10f, 10f), style = Stroke(1.2f))
+                    }
+                }
+            }
+        }
+
         // Interactive Creation Previews (legacy drag — only when no placement session)
         if (editor.placement == null && editor.isCreatingWarp && editor.creationStart != null && editor.creationCurrent != null) {
             val s = editor.creationStart!!; val e = editor.creationCurrent!!
@@ -1230,6 +1269,25 @@ internal fun BoxScope.CanvasEditorOverlay(
                 place = activePlacement,
                 isClosing = currentPlacement == null,
                 keymap = keymap,
+                focus = focus,
+            )
+        }
+    }
+
+    // Bottom-left swing session panel; the canvas stays visible, the handles do the shaping.
+    viewModel.swingSession?.let { session ->
+        // The handles follow the pose on screen; the swing's own parameters are left out, they only play.
+        val poseKey = editor.state.parameterValues.filterKeys { it.raw !in session.draft.parameterIds }
+        LaunchedEffect(session, poseKey) { viewModel.refreshSwingGizmo() }
+        Box(Modifier.align(Alignment.BottomStart).padding(start = 10.dp, bottom = 10.dp)) {
+            SwingSessionPanel(
+                viewModel = viewModel,
+                session = session,
+                targetLabel = { id ->
+                    editor.model.deformers.firstOrNull { it.id.raw == id }?.name
+                        ?: editor.model.drawables.firstOrNull { it.id.raw == id }?.name ?: id
+                },
+                selectionTargets = editor::swingTargets,
                 focus = focus,
             )
         }

@@ -234,7 +234,8 @@ fun CanvasViewportComposable(
         if (mode == CanvasMode.EDIT) {
             // A pose drag is the one gesture whose whole output is parameter values, so its own writes
             // must not read as the document changing under it.
-            if (!editor.busy && editor.inGesture && editor.poseDrag == null) editor.cancel()
+            // A swing handle drag patches the preview on every move for the same reason.
+            if (!editor.busy && editor.inGesture && editor.poseDrag == null && !editor.swingDragging) editor.cancel()
             editor.reconcileWithDocument()
             if (!editor.busy && canvasState.previewModel != null) editor.target()?.let { t -> editor.vertices=editor.vertices.filter { it in 0 until t.count }.toSet() }
         }
@@ -552,12 +553,14 @@ fun CanvasViewportComposable(
 							showContextMenu = false
 							true
 						} else {
-							if (editor.placement != null) editor.cancelPlacement() else editor.cancel()
+							if (viewModel.swingSession != null) viewModel.endSwing()
+							else if (editor.placement != null) editor.cancelPlacement() else editor.cancel()
 							true
 						}
 					}
 					ShortcutAction.FINISH_PATH -> {
 						when {
+							viewModel.swingSession != null -> { viewModel.commitSwing(); true }
 							editor.tool == CanvasTool.KNIFE -> { editor.finishKnife(); true }
 							editor.placement != null && editor.placement?.kind != CreatePlacementKind.PATH -> {
 								editor.confirmPlacement(); true
@@ -707,7 +710,7 @@ fun CanvasViewportComposable(
                 // Plain right-click opens the mode/tool context menu (parameters + topology/paint actions).
                 if (mode == CanvasMode.EDIT && previewModel != null && event.button == PointerButton.Secondary &&
                     !event.keyboardModifiers.isAltPressed && !isDragging && !editor.inGesture && !editor.adjustingBrush &&
-                    canvasContextMenuHasContent(editor)
+                    viewModel.swingSession == null && canvasContextMenuHasContent(editor)
                 ) {
                     contextMenuOffset = change.position
                     showContextMenu = true

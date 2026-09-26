@@ -34,7 +34,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
     }
 
     tool("inspect", "Read project context, find objects/layers/parameters, or inspect one kind:id's direct axes, channels and parent. No point arrays. Query and page before expanding.",
-        buildJsonObject { put("scope", choices("project", "settings", "preview", "objects", "layers", "parameters", "physics", "paths")); put("query", string()); put("target", string()); put("offset", integer(0)); put("limit", integer(1, 64)) }) { a ->
+        buildJsonObject { put("scope", choices("project", "settings", "preview", "objects", "layers", "parameters", "physics", "swings", "paths")); put("query", string()); put("target", string()); put("offset", integer(0)); put("limit", integer(1, 64)) }) { a ->
         val snapshot = workspace.snapshot()
         val state = snapshot.historyHeadNodeId
         val target = a["target"]?.jsonPrimitive?.content
@@ -94,6 +94,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
                     snapshot.persistenceError?.let { put("persistenceError", it) }
                 }
                 "physics" -> put("groups", JsonArray(workspace.listPhysics().map { it.toJson() }))
+                "swings" -> put("swings", JsonArray(workspace.listSwings().map { it.toJson() }))
                 "settings" -> put("settings", workspace.projectSettings())
                 "preview" -> put("preview", workspace.previewSession())
                 else -> {
@@ -326,6 +327,8 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
         mapOf("create" to "parameter_create", "update" to "parameter_update", "delete" to "parameter_delete"), true)
     adapted("asset", "Import an existing PSD or use local PNG paths from your host image generator. create builds an empty workspace from placed source layers, bottom-to-top. split partitions a source layer into polygon-inside/remainder (canvas pixels), before motion authoring; hidden artwork is not generated. For additions prepare a reference, import/register PNG, preview, add. Reference/view handles preserve placement. Generated art is not proof of model motion.",
         mapOf("psd" to "asset_import_psd", "create" to "asset_create_artwork", "split" to "asset_split_artwork", "reference" to "asset_prepare_reference", "import" to "asset_import_png", "register" to "asset_register", "preview" to "asset_preview_composite", "add" to "layer_add_from_asset", "place" to "layer_set_placement", "finalize" to "layer_finalize_placement", "inspect" to "asset_inspect", "reprocess" to "asset_reprocess", "remove" to "layer_soft_delete"), true)
+    adapted("swing", "Generate regenerating sway on Warps or meshes (wrapped in a tight Warp): kind=lateral swings the tip left/right, kind=vertical up/down, each on -1/0/1 keys per segment parameter, with a matching pendulum unless physics_enabled=false. Changing a swing recomputes its forms; delete with bake=true to keep them as ordinary keys. Verify with view poses at the parameter endpoints.",
+        mapOf("put" to "swing_put", "delete" to "swing_delete"), true)
     adapted("physics", "Create, replace, or delete an independent input→output parameter pendulum. Author the output parameter's endpoint forms first. Static view poses do not establish settling or natural motion.", mapOf("put" to "physics_put", "delete" to "physics_delete"), true)
     tool("appearance", "Rename, show/hide or reorganize objects in one ordered edit. For an animated switch use form opacity keys instead of static visibility. Local reparenting changes inherited motion.",
         buildJsonObject { put("state", string()); put("edits", legacy.getValue("object_edit").tool.inputSchema.properties!!.getValue("edits")) }, listOf("state", "edits"), true) { a ->

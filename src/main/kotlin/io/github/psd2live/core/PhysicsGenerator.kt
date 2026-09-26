@@ -21,6 +21,9 @@ object PhysicsGenerator {
 		val radius: Float,
 	)
 
+	/** An output on a pendulum vertex; past the first vertex the angle is relative to the segment above. */
+	internal data class OutputRule(val parameter: String, val vertexIndex: Int, val scale: Float)
+
 	internal data class PhysicsRule(
 		val id: String,
 		val name: String,
@@ -35,7 +38,10 @@ object PhysicsGenerator {
 		val angleMinimum: Float,
 		val angleDefault: Float,
 		val angleMaximum: Float,
-	)
+		val extraOutputs: List<OutputRule> = emptyList(),
+	) {
+		val outputs: List<OutputRule> get() = listOf(OutputRule(outputParameter, outputVertexIndex, outputScale)) + extraOutputs
+	}
 
 	internal fun rules(hasFrontHair: Boolean, hasBackHair: Boolean, hasEyeJelly: Boolean): List<PhysicsRule> = buildList {
 		if (hasFrontHair) {
@@ -129,6 +135,51 @@ object PhysicsGenerator {
 			}
 	}
 
+	/**
+	 * One pendulum per regenerating swing, with a vertex per segment. Left/right swings take the hair
+	 * inputs. A rigid pendulum hanging straight down ignores vertical travel, so up/down swings feed head
+	 * and body pitch in as sideways travel, and the resulting angle drives the up/down forms.
+	 */
+	internal fun swingRules(swings: List<RigSwingEdit>, available: Set<String>): List<PhysicsRule> = swings.mapNotNull { swing ->
+		val physics = swing.physics ?: return@mapNotNull null
+		if (swing.parameterIds.any { it !in available }) return@mapNotNull null
+		val inputs = when (swing.kind) {
+			SwingKind.LATERAL -> listOf(
+				InputRule("ParamAngleX", 60f, InputType.X),
+				InputRule("ParamAngleZ", 60f, InputType.ANGLE),
+				InputRule("ParamBodyAngleX", 40f, InputType.X),
+				InputRule("ParamBodyAngleZ", 40f, InputType.ANGLE),
+			)
+			SwingKind.VERTICAL -> listOf(
+				InputRule("ParamAngleY", 60f, InputType.X),
+				InputRule("ParamBodyAngleY", 40f, InputType.X),
+				InputRule("ParamAngleZ", 20f, InputType.ANGLE),
+			)
+		}.filter { it.parameter in available && it.parameter !in swing.parameterIds }
+		if (inputs.isEmpty()) return@mapNotNull null
+		val segment = physics.length / swing.segments
+		PhysicsRule(
+			id = swingPhysicsId(swing),
+			name = swing.name,
+			outputParameter = swing.parameterIds.first(),
+			outputScale = physics.outputScale,
+			outputVertexIndex = 1,
+			inputs = inputs,
+			vertices = listOf(VertexRule(0f, 1f, 1f, 1f, 0f)) + (1..swing.segments).map { k ->
+				VertexRule(segment * k, physics.mobility, physics.delay, physics.acceleration, segment)
+			},
+			positionMinimum = -10f,
+			positionDefault = 0f,
+			positionMaximum = 10f,
+			angleMinimum = -30f,
+			angleDefault = 0f,
+			angleMaximum = 30f,
+			extraOutputs = swing.parameterIds.drop(1).mapIndexed { k, id -> OutputRule(id, k + 2, physics.outputScale) },
+		)
+	}
+
+	internal fun swingPhysicsId(swing: RigSwingEdit) = "PhysicsSwing_${swing.id}"
+
 	private fun hairRule(
 		id: String,
 		name: String,
@@ -175,11 +226,13 @@ object PhysicsGenerator {
 		availableParameterIds: Set<String>?,
         custom: List<RigPhysicsEdit> = emptyList(),
 		skeleton: SkeletonSpec? = null,
+		swings: List<RigSwingEdit> = emptyList(),
 	): String? {
 		val presets = if (availableParameterIds == null) {
 			rules(hasFrontHair, hasBackHair, hasEyeJelly)
 		} else {
-			validRules(hasFrontHair, hasBackHair, hasEyeJelly, availableParameterIds) + skeletonRules(skeleton, availableParameterIds)
+			validRules(hasFrontHair, hasBackHair, hasEyeJelly, availableParameterIds) + skeletonRules(skeleton, availableParameterIds) +
+				swingRules(swings, availableParameterIds)
 		}
 		val rules = mergeCustomRules(presets, custom, availableParameterIds)
 		if (rules.isEmpty()) return null
@@ -191,7 +244,7 @@ object PhysicsGenerator {
 		  "Meta": {
 		    "PhysicsSettingCount": ${rules.size},
 		    "TotalInputCount": ${rules.sumOf { it.inputs.size }},
-		    "TotalOutputCount": ${rules.size},
+		    "TotalOutputCount": ${rules.sumOf { it.outputs.size }},
 		    "VertexCount": ${rules.sumOf { it.vertices.size }},
 		    "EffectiveForces": { "Gravity": { "X": 0, "Y": -1 }, "Wind": { "X": 0, "Y": 0 } },
 		    "PhysicsDictionary": [${dictionary.joinToString(",")}]
@@ -205,7 +258,7 @@ object PhysicsGenerator {
         if (available != null) custom.forEach { it.validate(available) }
         require(custom.map { it.id }.distinct().size == custom.size) { "Duplicate physics IDs" }
         require(custom.map { it.outputParameter }.distinct().size == custom.size) { "Independent physics must use distinct outputs" }
-        return presets.filterNot { p -> custom.any { it.id == p.id || it.outputParameter == p.outputParameter } } + custom.map { it.rule() }
+        return presets.filterNot { p -> custom.any { c -> c.id == p.id || p.outputs.any { it.parameter == c.outputParameter } } } + custom.map { it.rule() }
     }
 
 	private fun settingJson(rule: PhysicsRule): String {
@@ -215,6 +268,9 @@ object PhysicsGenerator {
 		val vertices = rule.vertices.joinToString(",\n") { vertex ->
 			"""    { "Position": { "X": 0, "Y": ${vertex.y} }, "Mobility": ${vertex.mobility}, "Delay": ${vertex.delay}, "Acceleration": ${vertex.acceleration}, "Radius": ${vertex.radius} }"""
 		}
+		val outputs = rule.outputs.joinToString(",\n") { output ->
+			"""    { "Destination": { "Target": "Parameter", "Id": ${JsonPrimitive(output.parameter)} }, "VertexIndex": ${output.vertexIndex}, "Scale": ${output.scale}, "Weight": 100, "Type": "Angle", "Reflect": false }"""
+		}
 		return """
 		{
 		  "Id": ${JsonPrimitive(rule.id)},
@@ -222,7 +278,7 @@ object PhysicsGenerator {
 		$inputs
 		  ],
 		  "Output": [
-		    { "Destination": { "Target": "Parameter", "Id": ${JsonPrimitive(rule.outputParameter)} }, "VertexIndex": ${rule.outputVertexIndex}, "Scale": ${rule.outputScale}, "Weight": 100, "Type": "Angle", "Reflect": false }
+		$outputs
 		  ],
 		  "Vertices": [
 		$vertices

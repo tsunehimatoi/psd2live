@@ -19,7 +19,8 @@ import java.util.UUID
 /** Writes editable Cubism physics settings into a fresh CMO3 graph. */
 internal object Cmo3PhysicsInjector {
 	fun inject(root: CModelSource, hasFrontHair: Boolean, hasBackHair: Boolean, hasEyeJelly: Boolean = false,
-		custom: List<RigPhysicsEdit> = emptyList(), skeleton: SkeletonSpec? = null): Int {
+		custom: List<RigPhysicsEdit> = emptyList(), skeleton: SkeletonSpec? = null,
+		swings: List<RigSwingEdit> = emptyList()): Int {
 		val physicsSet = root.physicsSettingsSourceSet as? CPhysicsSettingsSourceSet
 			?: error(tr("error.cmo3MissingPhysicsSet"))
 		// The pipeline only injects into its own fresh graph, so replace the known empty collection
@@ -30,12 +31,11 @@ internal object Cmo3PhysicsInjector {
 		val parameters = elements(parameterSet._sources).filterIsInstance<CParameterSource>()
 		val parameterById = parameters.associateBy { ((it.id as? Id)?.idstr).orEmpty() }
 		val presets = PhysicsGenerator.validRules(hasFrontHair, hasBackHair, hasEyeJelly, parameterById.keys) +
-			PhysicsGenerator.skeletonRules(skeleton, parameterById.keys)
+			PhysicsGenerator.skeletonRules(skeleton, parameterById.keys) +
+			PhysicsGenerator.swingRules(swings, parameterById.keys)
 		val rules = PhysicsGenerator.mergeCustomRules(presets, custom, parameterById.keys)
 		if (rules.isEmpty()) return 0
 		for (rule in rules) {
-			val output = parameterById[rule.outputParameter]
-				?: error(tr("error.cmo3MissingPhysicsOutput", rule.outputParameter))
 			val setting = CPhysicsSettingsSource().apply {
 				name = rule.name
 				guid = guid("CPhysicsSettingsGuid", rule.name)
@@ -44,18 +44,20 @@ internal object Cmo3PhysicsInjector {
 					rule.inputs.map { inputRule -> input(rule, parameterById, inputRule) },
 				)
 				outputs = CArrayList<Any?>(
-					listOf(
+					rule.outputs.map { outputRule ->
+						val output = parameterById[outputRule.parameter]
+							?: error(tr("error.cmo3MissingPhysicsOutput", outputRule.parameter))
 						CPhysicsOutput().apply {
-							guid = guid("CPhysicsDataGuid", "out_${rule.id}_${rule.outputParameter}")
+							guid = guid("CPhysicsDataGuid", "out_${rule.id}_${outputRule.parameter}")
 							destination = output.guid
-							vertexIndex = rule.outputVertexIndex
+							vertexIndex = outputRule.vertexIndex
 							translationScale = vector(0f, 0f)
-							angleScale = rule.outputScale
+							angleScale = outputRule.scale
 							weight = 100f
 							type = CPhysicsSourceType.SRC_TO_G_ANGLE
 							isReverse = false
-						},
-					),
+						}
+					},
 				)
 				vertices = CArrayList<Any?>(
 					rule.vertices.mapIndexed { index, vertex -> vertex(rule, index, vertex) },

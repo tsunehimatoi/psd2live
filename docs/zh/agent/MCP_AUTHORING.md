@@ -18,7 +18,7 @@ Token 允许编辑当前工作区，应保留在本机宿主配置中。工具�
 
 | 工具 | 请求结构 | 用途 / 分支 |
 | --- | --- | --- |
-| `inspect` | 顶层 `scope` / `target` | `project`、`settings`、`preview`、`objects`、`layers`、`parameters`、`physics`、`paths`；图层摘要包含有效网格配置 |
+| `inspect` | 顶层 `scope` / `target` | `project`、`settings`、`preview`、`objects`、`layers`、`parameters`、`physics`、`swings`、`paths`；图层摘要包含有效网格配置 |
 | `layer` | 顶层 `state`、`layer_id` 及分类字段 | 更新既有源图层的类型、部件、侧别、参数关联和切换 ID；省略的字段保持原值 |
 | `layer_mesh` | 顶层 `state`、`layer_id`、`changes` 或 `reset` | 逐图层覆盖或重置自适应网格参数；用 `inspect.layers` 读取当前值 |
 | `paint` | `request.mode` | `brush/eraser/bucket/shape/clear`；画布像素坐标，一次手势一个历史节点 |
@@ -35,6 +35,7 @@ Token 允许编辑当前工作区，应保留在本机宿主配置中。工具�
 | `view` | `request.mode` | `model/layer/context/poses/coverage/compare/motion` |
 | `parameter` | `request.mode` | `create/update/delete`；删除时在旧默认值处折叠关键形轴 |
 | `asset` | `request.mode` | `psd/create/split/reference/import/register/preview/add/place/finalize/inspect/reprocess/remove`；`psd` 从本地绝对路径导入空工作区 |
+| `swing` | `request.mode` | `put/delete`，在 Warp 或 Mesh（自动包一层 Warp）上生成左右 / 上下摇摆及摆锤；`delete` 可 `bake` 为普通关键，见[摇摆生成](../guide/SWING.md) |
 | `physics` | `request.mode` | `put/delete`，创建、替换或删除自定义简化摆锤组 |
 | `path` | `request.mode` | `get/list/preview/put/delete/deform` |
 | `revision` | `request.mode` | `save/checkpoint/list/restore` |
