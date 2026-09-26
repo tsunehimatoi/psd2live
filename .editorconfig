@@ -1,0 +1,7 @@
+root = true
+
+[*]
+end_of_line = lf
+
+[*.bat]
+end_of_line = crlf
