@@ -214,8 +214,12 @@ data class RigEditOverlay(
     val structureEdits: List<kotlinx.serialization.json.JsonObject> = emptyList(),
     /** New authoring commands replay in actual order, after the legacy baseline. */
     val authoringJournal: List<kotlinx.serialization.json.JsonObject> = emptyList(),
+    /** Authored motions and overrides of the generated ones; they do not touch the rig. */
+    val motionClips: List<MotionClip> = emptyList(),
 ) {
 	init {
+        require(motionClips.map { it.id }.distinct().size == motionClips.size) { "Duplicate motion IDs" }
+        require(motionClips.mapNotNull { it.builtin?.lowercase() }.let { it.distinct().size == it.size }) { "A generated motion has one override" }
 		require(warpEdits.map { it.id }.distinct().size == warpEdits.size) { "Duplicate Warp IDs" }
         require(physicsEdits.map { it.id }.distinct().size == physicsEdits.size) { "Duplicate physics IDs" }
         require(physicsEdits.map { it.outputParameter }.distinct().size == physicsEdits.size) { "Independent physics must have distinct output parameters" }

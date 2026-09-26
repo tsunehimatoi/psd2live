@@ -66,4 +66,21 @@ class PreviewMotionPlayerTest {
         assertEquals("Nod" to 0, slots["nod"])
         assertTrue(cubismMotionSlots("{").isEmpty())
     }
+
+    @Test fun anEditedMotionAndAUserClipPlayTheirKeys() {
+        val override = io.github.psd2live.core.MotionClip(
+            id = "o", name = "Nod", builtin = "Nod", duration = 1f,
+            curves = listOf(io.github.psd2live.core.MotionCurve("ParamAngleY",
+                listOf(io.github.psd2live.core.MotionKey(0f, 0f), io.github.psd2live.core.MotionKey(1f, 10f)))),
+        )
+        val custom = override.copy(id = "c", name = "Happy Jump", builtin = null)
+        val clips = listOf(override, custom)
+        val player = PreviewMotionPlayer()
+        assertTrue(player.start("Nod", skeleton = null, clips = clips))
+        assertEquals(5f, player.advance(0.5f).getValue(StandardParameters.ANGLE_Y), 1e-4f)
+        assertTrue(player.advance(0.6f).isEmpty())
+        assertTrue(player.start("happyJump", skeleton = null, clips = clips))
+        assertEquals("happyjump", player.activeName)
+        assertEquals(2.5f, player.advance(0.25f).getValue(StandardParameters.ANGLE_Y), 1e-4f)
+    }
 }

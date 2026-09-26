@@ -8,6 +8,10 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.key
 import io.github.psd2live.core.MeshSettings
+import io.github.psd2live.core.MotionClip
+import io.github.psd2live.core.MotionClips
+import io.github.psd2live.core.MotionHandle
+import io.github.psd2live.core.MotionKey
 import io.github.psd2live.core.MeshComponentSplit
 import io.github.psd2live.core.PackedAtlas
 
@@ -1771,6 +1775,323 @@ class PSD2LiveViewModel : AutoCloseable {
 		editorChanged()
 	}
 
+	// region Authored motions
+
+	/** Shared by the animation panel and the animation editor. */
+	internal val motionEditor = MotionEditorState()
+
+	val motionClips: List<MotionClip> get() = _state.value.rigEdits.motionClips
+
+	/** The clip the editor has open, if it still exists (an undo can remove it). */
+	fun editingMotionClip(state: PSD2LiveState = _state.value): MotionClip? =
+		motionEditor.clipId?.let { id -> state.rigEdits.motionClips.firstOrNull { it.id == id } }
+
+	internal fun motionParameterRanges(): Map<String, ClosedFloatingPointRange<Float>> =
+		_state.value.previewModel?.rig?.puppet?.parameters?.associate { it.id.raw to it.min..it.max }.orEmpty()
+
+	/**
+	 * One change to the authored motions. [commit] records a history node and refreshes the runtime bundle;
+	 * a drag passes false for its samples and commits once on release.
+	 */
+	private fun updateMotionClips(commit: Boolean = true, transform: (List<MotionClip>) -> List<MotionClip>) {
+		updateState { current ->
+			val next = transform(current.rigEdits.motionClips)
+			if (next == current.rigEdits.motionClips) current
+			else current.copy(rigEdits = current.rigEdits.copy(motionClips = next))
+		}
+		if (commit) {
+			scheduleRuntimeBundleUpdate()
+			editorChanged()
+		} else markWorkspaceChanged()
+	}
+
+	private fun updateMotionClip(id: String, commit: Boolean = true, transform: (MotionClip) -> MotionClip) =
+		updateMotionClips(commit) { clips -> clips.map { if (it.id == id) transform(it) else it } }
+
+	/** A new clip, blank or a copy of a generated motion's tracks, opened in the editor. */
+	fun createMotionClip(fromBuiltin: String? = null): String {
+		val clips = motionClips
+		val id = MotionClips.newId(clips)
+		val clip = if (fromBuiltin != null) {
+			val tracks = MotionClips.builtinTracks(fromBuiltin, _state.value.rigEdits.skeleton)
+			MotionClips.fromTracks(
+				id = id,
+				name = MotionClips.uniqueName(clips, fromBuiltin),
+				builtin = null,
+				loop = MotionClips.isLoopBuiltin(fromBuiltin),
+				tracks = tracks,
+				duration = MotionClips.builtinDuration(fromBuiltin, tracks),
+			)
+		} else MotionClip(id = id, name = MotionClips.uniqueName(clips, tr("animation.newMotionName")))
+		updateMotionClips { it + clip }
+		openMotionInEditor(id)
+		return id
+	}
+
+	fun duplicateMotionClip(id: String) {
+		val clips = motionClips
+		val source = clips.firstOrNull { it.id == id } ?: return
+		val copy = source.copy(id = MotionClips.newId(clips), name = MotionClips.uniqueName(clips, source.name), builtin = null)
+		updateMotionClips { it + copy }
+		openMotionInEditor(copy.id)
+	}
+
+	fun renameMotionClip(id: String, name: String) {
+		val trimmed = name.trim()
+		if (trimmed.isEmpty() || trimmed.any(Char::isISOControl)) return
+		val clip = motionClips.firstOrNull { it.id == id } ?: return
+		if (clip.builtin != null || clip.name == trimmed) return
+		val others = motionClips.filter { it.id != id }
+		updateMotionClip(id) { it.copy(name = MotionClips.uniqueName(others, trimmed)) }
+	}
+
+	fun deleteMotionClip(id: String) {
+		if (motionClips.none { it.id == id }) return
+		motionPlayer.stop()
+		updateMotionClips { clips -> clips.filterNot { it.id == id } }
+		if (motionEditor.clipId == id) closeMotionEditorClip()
+	}
+
+	/** Loop, duration, FPS, fades or the export switch; a shorter duration drops the keys past it. */
+	fun updateMotionClipProperties(id: String, transform: (MotionClip) -> MotionClip) =
+		updateMotionClip(id) { clip ->
+			val next = transform(clip)
+			if (next.duration != clip.duration) next.copy(curves = MotionKeyEdits.withDuration(clip, next.duration).curves) else next
+		}
+
+	/** The override of a generated motion, created from its tracks on first edit. */
+	fun ensureBuiltinOverride(name: String): String {
+		MotionClips.overrideOf(motionClips, name)?.let { return it.id }
+		val tracks = MotionClips.builtinTracks(name, _state.value.rigEdits.skeleton)
+		val id = MotionClips.newId(motionClips)
+		val clip = MotionClips.fromTracks(
+			id = id,
+			name = name,
+			builtin = name,
+			loop = MotionClips.isLoopBuiltin(name),
+			tracks = tracks,
+			duration = MotionClips.builtinDuration(name, tracks),
+		)
+		updateMotionClips { it + clip }
+		return id
+	}
+
+	fun editBuiltinMotion(name: String) = openMotionInEditor(ensureBuiltinOverride(name))
+
+	/** Drops the override so the generated motion plays and exports again. */
+	fun resetBuiltinMotion(name: String) {
+		val clip = MotionClips.overrideOf(motionClips, name) ?: return
+		deleteMotionClip(clip.id)
+	}
+
+	fun openMotionInEditor(id: String) {
+		if (motionEditor.clipId != id) {
+			motionEditor.playing = false
+			motionEditor.selection = emptySet()
+			motionEditor.focusedCurve = null
+			motionEditor.playhead = 0f
+		}
+		motionEditor.clipId = id
+		requestSelectDockModule("animationEditor")
+	}
+
+	/** Selects the editor's curve for [parameterId] of the open clip. */
+	fun focusMotionCurve(parameterId: String?) {
+		motionEditor.focusedCurve = parameterId
+	}
+
+	fun closeMotionEditorClip() {
+		motionEditor.playing = false
+		motionEditor.clipId = null
+		motionEditor.selection = emptySet()
+		motionEditor.focusedCurve = null
+	}
+
+	private fun updateEditingClip(commit: Boolean = true, transform: (MotionClip) -> MotionClip) {
+		val id = editingMotionClip()?.id ?: return
+		updateMotionClip(id, commit, transform)
+	}
+
+	/** A curve for [parameterId], keyed at the playhead with the pose the preview shows. */
+	fun addMotionCurve(parameterId: String) {
+		val clip = editingMotionClip() ?: return
+		motionEditor.focusedCurve = parameterId
+		if (clip.curve(parameterId) != null) return
+		val time = motionEditor.playhead.coerceIn(0f, clip.duration)
+		updateEditingClip { MotionKeyEdits.setKey(it, parameterId, MotionKey(time, currentMotionParameterValue(parameterId))) }
+		motionEditor.selection = setOf(MotionKeyRef(parameterId, time))
+	}
+
+	fun removeMotionCurve(parameterId: String) {
+		updateEditingClip { clip -> clip.copy(curves = clip.curves.filterNot { it.parameterId == parameterId }) }
+		motionEditor.selection = motionEditor.selection.filterTo(HashSet()) { it.parameterId != parameterId }
+		if (motionEditor.focusedCurve == parameterId) motionEditor.focusedCurve = null
+	}
+
+	/** The value the preview shows for [parameterId], else its default. */
+	private fun currentMotionParameterValue(parameterId: String): Float {
+		val state = _state.value.previewPanelState()
+		val id = ParameterId(parameterId)
+		return state.previewParameterValues[id] ?: state.parameterValues[id]
+			?: state.previewModel?.rig?.puppet?.parameters?.firstOrNull { it.id == id }?.default ?: 0f
+	}
+
+	/** A key at [time] on [parameterId], at [value] or the curve's value there. */
+	fun setMotionKey(parameterId: String, time: Float, value: Float? = null) {
+		val clip = editingMotionClip() ?: return
+		val at = time.coerceIn(0f, clip.duration)
+		val ref = MotionKeyRef(parameterId, at)
+		val curve = clip.curve(parameterId)
+		val existing = curve?.keys?.firstOrNull(ref::matches)
+		val v = value ?: curve?.let { MotionClips.sample(it, at) } ?: currentMotionParameterValue(parameterId)
+		updateEditingClip { MotionKeyEdits.setKey(it, parameterId, existing?.copy(value = v) ?: MotionKey(at, v)) }
+		motionEditor.selection = setOf(ref)
+	}
+
+	/** Keys every curve of the open clip at the playhead with the pose the preview shows now. */
+	fun keyCurrentPose() {
+		val clip = editingMotionClip() ?: return
+		val time = motionEditor.playhead.coerceIn(0f, clip.duration)
+		updateEditingClip { current ->
+			current.curves.fold(current) { next, curve ->
+				val existing = curve.keys.firstOrNull(MotionKeyRef(curve.parameterId, time)::matches)
+				val value = currentMotionParameterValue(curve.parameterId)
+				MotionKeyEdits.setKey(next, curve.parameterId, existing?.copy(value = value) ?: MotionKey(time, value))
+			}
+		}
+		motionEditor.selection = clip.curves.mapTo(HashSet()) { MotionKeyRef(it.parameterId, time) }
+	}
+
+	fun deleteSelectedMotionKeys() {
+		val selection = motionEditor.selection.takeIf { it.isNotEmpty() } ?: return
+		updateEditingClip { MotionKeyEdits.delete(it, selection) }
+		motionEditor.selection = emptySet()
+	}
+
+	/** Edits the selected keys in place: interpolation, handles, or a typed time or value. */
+	fun updateSelectedMotionKeys(transform: (String, MotionKey) -> MotionKey) {
+		val clip = editingMotionClip() ?: return
+		val selection = motionEditor.selection.takeIf { it.isNotEmpty() } ?: return
+		val ranges = motionParameterRanges()
+		val moved = mutableSetOf<MotionKeyRef>()
+		val next = MotionKeyEdits.mapKeys(clip, selection) { id, key ->
+			val edited = transform(id, key)
+			val range = ranges[id]
+			edited.copy(
+				time = edited.time.coerceIn(0f, clip.duration),
+				value = if (range != null) edited.value.coerceIn(range) else edited.value,
+			).also { moved += MotionKeyRef(id, it.time) }
+		}
+		updateEditingClip { next }
+		motionEditor.selection = moved
+	}
+
+	fun copySelectedMotionKeys() {
+		val clip = editingMotionClip() ?: return
+		motionEditor.clipboard = MotionKeyEdits.copy(clip, motionEditor.selection)
+	}
+
+	fun pasteMotionKeys() {
+		val keys = motionEditor.clipboard.takeIf { it.isNotEmpty() } ?: return
+		val clip = editingMotionClip() ?: return
+		val (next, pasted) = MotionKeyEdits.paste(clip, keys, motionEditor.playhead)
+		updateEditingClip { next }
+		motionEditor.selection = pasted
+	}
+
+	/** Starts a key or handle drag: samples apply to this clip, and the drag records one history node. */
+	fun beginMotionKeyDrag() {
+		motionEditor.dragOrigin = editingMotionClip() ?: return
+		motionEditor.dragSelection = motionEditor.selection
+		beginEditorField(MOTION_DRAG_SESSION)
+	}
+
+	fun dragMotionKeys(dt: Float, dv: Float = 0f, normalized: Boolean = false) {
+		val origin = motionEditor.dragOrigin ?: return
+		val (next, moved) = MotionKeyEdits.move(origin, motionEditor.dragSelection, dt, dv, motionParameterRanges(), normalized)
+		updateMotionClip(origin.id, commit = false) { next }
+		motionEditor.selection = moved
+	}
+
+	/** Sets one Bezier handle of [ref], relative to the drag's origin clip. */
+	internal fun dragMotionHandle(ref: MotionKeyRef, outgoing: Boolean, handle: MotionHandle) {
+		val origin = motionEditor.dragOrigin ?: return
+		val next = MotionKeyEdits.mapKeys(origin, setOf(ref)) { _, key ->
+			if (outgoing) key.copy(outHandle = handle.clamped()) else key.copy(inHandle = handle.clamped())
+		}
+		updateMotionClip(origin.id, commit = false) { next }
+	}
+
+	fun endMotionKeyDrag() {
+		if (motionEditor.dragOrigin == null) return
+		motionEditor.dragOrigin = null
+		motionEditor.dragSelection = emptySet()
+		scheduleRuntimeBundleUpdate()
+		endEditorField(MOTION_DRAG_SESSION)
+	}
+
+	/** Moves the playhead and poses the preview there; the preview pauses so the editor owns the pose. */
+	fun setMotionPlayhead(time: Float) {
+		val clip = editingMotionClip()
+		val t = if (clip != null) time.coerceIn(0f, clip.duration) else time.coerceAtLeast(0f)
+		motionEditor.playhead = t
+		if (clip != null) poseMotionPreview(clip, t)
+	}
+
+	/** Writes the clip's values at [time] onto the preview canvas' paused pose. */
+	private fun poseMotionPreview(clip: MotionClip, time: Float) {
+		if (clip.curves.isEmpty()) return
+		if (_state.value.activeWorkspace.canvases.none { it.mode == CanvasMode.PREVIEW }) ensurePreviewCanvas(focus = false)
+		val current = _state.value
+		val parameters = current.previewModel?.rig?.puppet?.parameters?.associateBy { it.id }.orEmpty()
+		val values = MotionClips.sampleAll(clip, time.toDouble(), loop = false)
+			.filterKeys { it in parameters }
+			.mapValues { (id, value) -> parameters.getValue(id).let { value.coerceIn(it.min, it.max) } }
+		motionPlayer.stop()
+		updateCanvasPresentation(current.activeWorkspace.id, current.previewControlCanvas().id, CanvasMode.PREVIEW) {
+			it.copy(
+				animationEnabled = false,
+				parameterValues = it.parameterValues + values,
+				previewParameterValues = it.previewParameterValues + values,
+			)
+		}
+	}
+
+	fun setMotionEditorPlaying(playing: Boolean) {
+		val clip = editingMotionClip()
+		if (playing && clip == null) return
+		if (playing && clip != null && motionEditor.playhead >= clip.duration - 1e-4f) motionEditor.playhead = 0f
+		motionEditor.playing = playing
+		if (playing && clip != null) poseMotionPreview(clip, motionEditor.playhead)
+	}
+
+	fun stopMotionEditorPlayback() {
+		motionEditor.playing = false
+		setMotionPlayhead(0f)
+	}
+
+	/** One tick of the editor's own playback; a loop wraps and a one-shot stops at its end. */
+	private fun advanceMotionEditor(dt: Float) {
+		if (!motionEditor.playing) return
+		val clip = editingMotionClip()
+		if (clip == null) {
+			motionEditor.playing = false
+			return
+		}
+		var t = motionEditor.playhead + dt
+		if (t >= clip.duration) {
+			if (clip.loop) t %= clip.duration
+			else {
+				t = clip.duration
+				motionEditor.playing = false
+			}
+		}
+		motionEditor.playhead = t
+		poseMotionPreview(clip, t)
+	}
+
+	// endregion
+
 	/** Commit an edited armature as one undoable project change and rebuild its derived rig. */
 	fun setSkeleton(spec: io.github.psd2live.core.SkeletonSpec) {
 		updateState { current -> current.copy(rigEdits = current.rigEdits.copy(skeleton = spec)) }
@@ -2585,7 +2906,11 @@ class PSD2LiveViewModel : AutoCloseable {
 	}
 
 	fun setAnimationEnabled(enabled: Boolean) {
-		if (enabled) focusPreviewControl()
+		if (enabled) {
+			// The editor's playback poses a paused preview; the running animation takes over.
+			motionEditor.playing = false
+			focusPreviewControl()
+		}
 		val current = _state.value
 		updateCanvasPresentation(current.activeWorkspace.id, current.previewControlCanvas().id, CanvasMode.PREVIEW) {
 			it.copy(animationEnabled = enabled)
@@ -3995,6 +4320,7 @@ class PSD2LiveViewModel : AutoCloseable {
 	 * playing; the software clock plays the same tracks, and drives the preview until Cubism is up.
 	 */
 	fun triggerMotion(name: String) {
+		motionEditor.playing = false
 		ensurePreviewCanvas(focus = true)
 		updateState { it.copy(animationEnabled = true) }
 		ensureSdkSessionLoaded()
@@ -4004,7 +4330,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			motionPlayer.stop()
 			elapsed = 0.0
 		} else {
-			motionPlayer.start(name, current.previewModel?.config?.rigEdits?.skeleton)
+			motionPlayer.start(name, current.previewModel?.config?.rigEdits?.skeleton, current.rigEdits.motionClips)
 		}
 	}
 
@@ -4041,6 +4367,9 @@ class PSD2LiveViewModel : AutoCloseable {
 		val anim = inPreview && current.animationEnabled && !isMeshOnly
 		val tracking = inPreview && current.mouseTrackingEnabled && !isMeshOnly
 		if (anim) elapsed += dt
+
+		// 0. The animation editor's own playback poses the paused preview.
+		advanceMotionEditor(dt)
 
 		// 1. Advance the triggered one-shot; a paused preview holds it where it is.
 		val motion = if (anim) motionPlayer.advance(dt) else emptyMap()
@@ -4150,8 +4479,13 @@ class PSD2LiveViewModel : AutoCloseable {
 		} else 0f
 
 		// The idle the export writes, body parameters and skeleton poses alike; pointer follow adds on top.
-		val idle = if (hasIdle) io.github.psd2live.core.SkeletonMotions.liveIdle(model.config.rigEdits.skeleton, elapsed)
-			else emptyMap()
+		// An edited idle plays its clip; its blink joins the periodic one rather than replacing the eyes.
+		val idleOverride = MotionClips.overrideOf(current.rigEdits.motionClips, "Idle")
+		val idle = when {
+			!hasIdle -> emptyMap()
+			idleOverride != null -> MotionClips.sampleAll(idleOverride, elapsed, loop = true)
+			else -> io.github.psd2live.core.SkeletonMotions.liveIdle(model.config.rigEdits.skeleton, elapsed)
+		}
 		// A playing motion replaces the idle on what it drives, as Cubism's forced motion does; the pointer
 		// follow still adds on top, like Cubism's look updater.
 		fun idleOf(id: ParameterId) = motion[id] ?: idle[id] ?: 0f
@@ -4174,8 +4508,8 @@ class PSD2LiveViewModel : AutoCloseable {
 			StandardParameters.EYE_BALL_X to eyeBallX,
 			StandardParameters.EYE_BALL_Y to eyeBallY,
 			StandardParameters.EYE_BALL_FORM to if (hasEyeJelly) eyeJellyDynamics.value else 0f,
-			StandardParameters.EYE_L_OPEN to blink,
-			StandardParameters.EYE_R_OPEN to blink,
+			StandardParameters.EYE_L_OPEN to minOf(blink, idle[StandardParameters.EYE_L_OPEN] ?: 1f),
+			StandardParameters.EYE_R_OPEN to minOf(blink, idle[StandardParameters.EYE_R_OPEN] ?: 1f),
 			StandardParameters.MOUTH_FORM to if (current.animationEnabled && hasIdle) sin(elapsed * 0.41).toFloat() * 0.18f else 0f,
 			StandardParameters.MOUTH_OPEN to mouthOpen,
 			StandardParameters.BREATH to idleOf(StandardParameters.BREATH),
@@ -4268,6 +4602,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		const val PREF_LAST_EXPORT_DIR = "last_export_dir"
 		/** The token every slider shares; the call sites predate the per-field tokens and stay untouched. */
 		const val SLIDER_SESSION = "slider"
+		const val MOTION_DRAG_SESSION = "motion-drag"
 	}
 }
 

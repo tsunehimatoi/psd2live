@@ -34,9 +34,25 @@ object MotionGenerator {
 	}
 
 	/** One blink partway through the idle's cycle. */
-	private fun idleBlink(): List<Curve> = listOf("ParamEyeLOpen", "ParamEyeROpen").map {
-		curve(it, listOf(0f to 1f, 2.7f to 1f, 2.78f to 0f, 2.88f to 1f, SkeletonMotions.IDLE_DURATION to 1f))
+	private fun idleBlink(): List<Curve> = idleBlinkTracks.map { (id, points) -> curve(id, points) }
+
+	val idleBlinkTracks: List<MotionTrack> = listOf("ParamEyeLOpen", "ParamEyeROpen").map {
+		it to listOf(0f to 1f, 2.7f to 1f, 2.78f to 0f, 2.88f to 1f, SkeletonMotions.IDLE_DURATION to 1f)
 	}
+
+	/**
+	 * An authored clip as motion3 JSON, each key's interpolation written as its segment type. A curve that
+	 * starts after zero holds its first value from zero, as the preview samples it.
+	 */
+	fun clip(clip: MotionClip, availableParameterIds: Set<String>): String? = buildMotionJson(
+		duration = clip.duration,
+		loop = clip.loop,
+		curves = clip.curves.map(::curve),
+		availableParameterIds = availableParameterIds,
+		fps = clip.fps,
+		fadeIn = clip.fadeIn,
+		fadeOut = clip.fadeOut,
+	)
 
 	fun blink(): String = blink(ALL_PARAMETERS)!!
 
@@ -80,17 +96,25 @@ object MotionGenerator {
 		loop: Boolean,
 		curves: List<Curve>,
 		availableParameterIds: Set<String>,
+		fps: Float = 30f,
+		fadeIn: Float? = null,
+		fadeOut: Float? = null,
 	): String? {
 		val retainedCurves = curves.filter { it.parameter in availableParameterIds }
 		if (retainedCurves.isEmpty()) return null
-		val segmentCount = retainedCurves.sumOf { it.pointCount - 1 }
+		val segmentCount = retainedCurves.sumOf { it.segmentCount }
 		val pointCount = retainedCurves.sumOf { it.pointCount }
+		// Same line as Fps: trimIndent runs after interpolation.
+		val fades = buildString {
+			fadeIn?.let { append(" \"FadeInTime\": $it,") }
+			fadeOut?.let { append(" \"FadeOutTime\": $it,") }
+		}
 		return """
 		{
 		  "Version": 3,
 		  "Meta": {
 		    "Duration": $duration,
-		    "Fps": 30.0,
+		    "Fps": ${fps.toDouble()},$fades
 		    "Loop": $loop,
 		    "AreBeziersRestricted": true,
 		    "CurveCount": ${retainedCurves.size},
@@ -104,22 +128,40 @@ object MotionGenerator {
 		""".trimIndent()
 	}
 
-	private data class Curve(val parameter: String, val json: String, val pointCount: Int)
+	private data class Curve(val parameter: String, val json: String, val pointCount: Int, val segmentCount: Int)
 
 	private fun curve(parameter: String, points: List<Pair<Float, Float>>): Curve {
 		require(points.size >= 2)
+		return curve(MotionCurve(parameter, points.map { (time, value) -> MotionKey(time, value) }))
+	}
+
+	private fun curve(source: MotionCurve): Curve {
+		val first = source.keys.first()
+		// A curve needs a segment; a lone key, or one after zero, holds from zero.
+		val keys = buildList {
+			if (first.time > MotionClips.TIME_EPSILON || source.keys.size == 1) add(first.copy(time = 0f, interpolation = MotionInterpolation.LINEAR))
+			addAll(source.keys)
+			if (size == 1) add(first.copy(time = maxOf(first.time, MotionClips.TIME_EPSILON)))
+		}
+		var points = 1
 		val segments = buildList<Number> {
-			add(points.first().first)
-			add(points.first().second)
-			for ((time, value) in points.drop(1)) {
-				add(0) // linear segment
-				add(time)
-				add(value)
+			add(keys.first().time)
+			add(keys.first().value)
+			for ((a, b) in keys.zipWithNext()) {
+				add(a.interpolation.ordinal)
+				if (a.interpolation == MotionInterpolation.BEZIER) {
+					val (c1, c2) = MotionClips.controlPoints(a, b)
+					add(c1.first); add(c1.second); add(c2.first); add(c2.second)
+					points += 2
+				}
+				add(b.time)
+				add(b.value)
+				points += 1
 			}
 		}.joinToString(",") { number ->
 			if (number is Int) number.toString() else number.toFloat().toString()
 		}
-		return Curve(parameter, """{"Target":"Parameter","Id":"$parameter","Segments":[$segments]}""", points.size)
+		return Curve(source.parameterId, """{"Target":"Parameter","Id":"${source.parameterId}","Segments":[$segments]}""", points, keys.size - 1)
 	}
 
 	private val ALL_PARAMETERS = setOf(

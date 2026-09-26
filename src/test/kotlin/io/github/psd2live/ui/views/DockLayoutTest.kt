@@ -49,4 +49,14 @@ class DockLayoutTest {
         )
         assertSame(updated, ensureMeshDockTab(updated))
     }
+
+    @Test fun insertsAnimationEditorTabBesideTheLog() {
+        assertEquals(listOf("log", "animationEditor"), defaultDockLayout().containing("log")?.modules)
+        val legacy = DockNode(modules = listOf("log"))
+        val updated = ensureAnimationEditorDockTab(legacy)
+        assertEquals(listOf("log", "animationEditor"), updated.modules)
+        assertSame(updated, ensureAnimationEditorDockTab(updated))
+        val withoutLog = DockNode(modules = listOf("canvas"))
+        assertSame(withoutLog, ensureAnimationEditorDockTab(withoutLog))
+    }
 }

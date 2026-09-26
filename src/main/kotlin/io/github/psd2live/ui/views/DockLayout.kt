@@ -93,7 +93,7 @@ internal fun reconcileDockModules(
 
 /** Repair the exact root-level split produced by the old module-ID auto-placement bug. */
 internal fun repairLegacyCanvasDocking(saved: DockNode): DockNode {
-    val withMesh = ensureSkeletonDockTab(ensureMeshDockTab(saved))
+    val withMesh = ensureAnimationEditorDockTab(ensureSkeletonDockTab(ensureMeshDockTab(saved)))
     val defaultShape = defaultDockLayout()
     fun sameDefaultShape(node: DockNode, expected: DockNode): Boolean =
         node.modules == expected.modules && node.horizontal == expected.horizontal && node.ratio == expected.ratio &&
@@ -149,10 +149,21 @@ internal fun ensureSkeletonDockTab(root: DockNode): DockNode {
     }
 }
 
+/** Insert the animation editor tab beside the log if an older saved layout is missing it. */
+internal fun ensureAnimationEditorDockTab(root: DockNode): DockNode {
+    if (root.allModules().contains("animationEditor")) return root
+    val host = root.containing("log") ?: return root
+    return root.update(host.id) { node ->
+        val modules = node.modules.toMutableList()
+        modules.add((modules.indexOf("log") + 1).coerceIn(0, modules.size), "animationEditor")
+        node.copy(modules = modules)
+    }
+}
+
 internal fun defaultDockLayout(): DockNode {
     val canvasAndLog = DockNode(horizontal = false, ratio = .72f,
         first = DockNode(modules = listOf("canvas")),
-        second = DockNode(modules = listOf("log")))
+        second = DockNode(modules = listOf("log", "animationEditor")))
     val workspace = DockNode(ratio = .28f, first = DockNode(modules = listOf("hierarchy", "skeleton")), second = canvasAndLog)
     return DockNode(ratio = .60f, first = workspace,
         second = DockNode(horizontal = false, ratio = .32f,

@@ -407,48 +407,39 @@ class PSD2LivePipeline {
 
 		val motions = buildList<Pair<String, Pair<String, String>>> {
 			if (config.exportMotions && !config.meshOnly) {
+				val clips = config.rigEdits.motionClips
+				fun add(group: String, file: String, motion: String?) {
+					motion ?: return
+					val json = CubismJson.normalize(motion).also { Json.parseToJsonElement(it) }
+					add(group to ("$baseName.$file.motion3.json" to json))
+				}
+				// An edited generated motion exports its clip in place of the generated one.
+				fun builtin(group: String, name: String, generated: () -> String?) {
+					val override = MotionClips.overrideOf(clips, name)
+					add(group, name.replaceFirstChar(Char::lowercase),
+						if (override != null) MotionGenerator.clip(override, parameterIds) else generated())
+				}
 				if (config.motionIdle) {
-					val name = "$baseName.idle.motion3.json"
 					val physicsDriven = if (physics != null && config.exportIncludePhysics) {
 						PhysicsGenerator.skeletonRules(config.rigEdits.skeleton, parameterIds).mapTo(HashSet()) { it.outputParameter }
 					} else emptySet()
-					MotionGenerator.idle(parameterIds, config.rigEdits.skeleton, physicsDriven)?.let { motion ->
-						val json = CubismJson.normalize(motion).also { Json.parseToJsonElement(it) }
-						add("Idle" to (name to json))
-					}
+					builtin("Idle", "Idle") { MotionGenerator.idle(parameterIds, config.rigEdits.skeleton, physicsDriven) }
 				}
-				if (config.motionBlink) {
-					val name = "$baseName.blink.motion3.json"
-					MotionGenerator.blink(parameterIds)?.let { motion ->
-						val json = CubismJson.normalize(motion).also { Json.parseToJsonElement(it) }
-						add("Blink" to (name to json))
-					}
-				}
-				if (config.motionNod) {
-					val name = "$baseName.nod.motion3.json"
-					MotionGenerator.nod(parameterIds)?.let { motion ->
-						val json = CubismJson.normalize(motion).also { Json.parseToJsonElement(it) }
-						add("Nod" to (name to json))
-					}
-				}
-				if (config.motionShake) {
-					val name = "$baseName.shake.motion3.json"
-					MotionGenerator.shake(parameterIds)?.let { motion ->
-						val json = CubismJson.normalize(motion).also { Json.parseToJsonElement(it) }
-						add("Shake" to (name to json))
-					}
-				}
+				if (config.motionBlink) builtin("Blink", "Blink") { MotionGenerator.blink(parameterIds) }
+				if (config.motionNod) builtin("Nod", "Nod") { MotionGenerator.nod(parameterIds) }
+				if (config.motionShake) builtin("Shake", "Shake") { MotionGenerator.shake(parameterIds) }
 				if (config.motionSkeleton) {
 					val skeleton = config.rigEdits.skeleton
 					for (preset in SkeletonMotions.presets) {
 						// A looping preset is another idle, played from the idle group beside the plain one.
 						val group = if (preset.loop) "Idle" else preset.name
-						val name = "$baseName.${preset.name.replaceFirstChar(Char::lowercase)}.motion3.json"
-						MotionGenerator.skeleton(preset.tracks(skeleton), parameterIds, loop = preset.loop)?.let { motion ->
-							val json = CubismJson.normalize(motion).also { Json.parseToJsonElement(it) }
-							add(group to (name to json))
-						}
+						builtin(group, preset.name) { MotionGenerator.skeleton(preset.tracks(skeleton), parameterIds, loop = preset.loop) }
 					}
+				}
+				// The user's own motions: a loop joins the idles, a one-shot is its own group under its name.
+				val stems = MotionClips.exportStems(clips)
+				for (clip in clips.filter { it.builtin == null && it.enabled }) {
+					add(if (clip.loop) "Idle" else clip.name, stems.getValue(clip.id), MotionGenerator.clip(clip, parameterIds))
 				}
 			}
 		}

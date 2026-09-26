@@ -76,6 +76,7 @@ internal val WINDOW_MODULES = listOf(
 	"skeleton",
 	"history",
 	"log",
+	"animationEditor",
 	"settings",
 	"layers",
 	"parameters",
@@ -368,6 +369,7 @@ internal fun moduleTitle(id: String): String = when {
 		"skeleton" -> "dock.skeleton"
 		"history" -> "dock.history"
 		"log" -> "dock.log"
+		"animationEditor" -> "dock.animationEditor"
 		"settings" -> "dock.settings"
 		"layers" -> "tab.layers"
 		"parameters" -> "tab.parameters"

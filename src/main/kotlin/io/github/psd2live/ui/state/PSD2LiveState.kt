@@ -37,7 +37,7 @@ internal val INSPECTOR_DOCK_MODULES = setOf(
 
 /** Modules a fresh workspace layout already contains. History is added from the window menu. */
 internal val DEFAULT_DOCK_MODULES = setOf(
-	PRIMARY_CANVAS_ID, "hierarchy", "log",
+	PRIMARY_CANVAS_ID, "hierarchy", "log", "animationEditor",
 ) + INSPECTOR_DOCK_MODULES
 
 fun isCanvasModule(id: String): Boolean = id == PRIMARY_CANVAS_ID || id.startsWith("canvas:")
@@ -476,7 +476,8 @@ data class PSD2LiveState(
 		}
 
 	fun buildConfig(): PipelineConfig {
-		val hasAnyMotion = motionIdle || motionBlink || motionNod || motionShake || motionSkeleton
+		val hasAnyMotion = motionIdle || motionBlink || motionNod || motionShake || motionSkeleton ||
+			rigEdits.motionClips.any { it.builtin == null && it.enabled }
 		val hasAnyPhysics = physicsFrontHair || physicsBackHair || physicsEyeJelly || rigEdits.physicsEdits.isNotEmpty()
 		return PipelineConfig(
 			atlasSize = atlasSize,

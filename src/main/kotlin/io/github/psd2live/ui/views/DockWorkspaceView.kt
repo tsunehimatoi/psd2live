@@ -823,6 +823,7 @@ private fun DockModuleContent(
 		"skeleton" -> SkeletonTreeView(state, vm)
 		"history" -> HistoryTreeView(state, vm, Modifier.fillMaxSize())
 		"log" -> BottomLogDock(state, vm, Modifier.fillMaxSize(), fillDock = true)
+		"animationEditor" -> AnimationEditorView(state, vm)
 		"settings" -> {
 			Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
 				ModelSettingsSection(
