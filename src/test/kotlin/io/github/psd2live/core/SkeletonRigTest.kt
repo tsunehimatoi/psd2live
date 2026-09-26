@@ -17,6 +17,7 @@ import org.umamo.runtime.model.OrgChild
 import org.umamo.runtime.model.ParameterId
 import org.umamo.runtime.model.ParameterKind
 import org.umamo.runtime.model.PuppetModel
+import org.umamo.runtime.model.RuntimeTarget
 import org.umamo.runtime.model.WarpLatticeForm
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -55,6 +56,9 @@ class SkeletonRigTest {
 	private fun model(vararg drawables: Drawable) = PuppetModel(emptyList(), emptyList(), listOf(body()),
 		drawables.toList(), drawables.map { OrgChild.Drawable(it.id) }, null)
 
+	/** A model for a runtime without blend shapes on rotation deformers, where every bone is a keyform axis. */
+	private fun legacy(vararg drawables: Drawable) = model(*drawables).copy(runtimeTarget = RuntimeTarget.Cubism42)
+
 	private fun bone(id: String, parent: String?, role: BoneRole, hx: Float, hy: Float, tx: Float, ty: Float,
 		meshes: List<String> = emptyList(), side: Side = Side.LEFT) =
 		SkeletonBone(id, id, parent, role, side, hx, hy, tx, ty, meshes)
@@ -80,7 +84,7 @@ class SkeletonRigTest {
 
 	@Test fun restPoseIsUnchanged() {
 		val arm = strip("arm", 100f, 95f, 435f, 18f, 10f)
-		val baked = SkeletonRig.apply(model(arm), arm("arm"), frame)
+		val baked = SkeletonRig.apply(legacy(arm), arm("arm"), frame)
 		val expected = rest(arm)
 		val actual = canvas(baked).getValue(arm.id)
 		// Refinement may append vertices; the original ones keep their indices and must not move.
@@ -314,7 +318,7 @@ class SkeletonRigTest {
 			bone("fore", "upper", BoneRole.FOREARM, 100f, 250f, 100f, 370f),
 			bone("hand", "fore", BoneRole.HAND, 100f, 370f, 100f, 430f, listOf("hand")),
 		))
-		val baked = SkeletonRig.apply(model(arm, hand), spec, frame)
+		val baked = SkeletonRig.apply(legacy(arm, hand), spec, frame)
 		// The elbow bends inside the arm's keyforms; the hand hangs from the shoulder and carries the elbow.
 		val rotations = baked.deformers.filterIsInstance<Deformer.Rotation>().associate { it.id.raw to it.parent?.raw }
 		assertEquals(mapOf("DeformSkel_upper" to "DeformSkelTorso", "DeformSkel_hand" to "DeformSkel_upper"), rotations)
@@ -346,8 +350,80 @@ class SkeletonRigTest {
 		for (id in listOf("fore", "hand")) {
 			val bone = bones.single { it.bone.id == id }
 			val (x, y) = if (id == "fore") bone.tailX to bone.tailY else bone.headX to bone.headY
-			assertEquals(wrist.first, x, 0.5f, "$id wrist x")
-			assertEquals(wrist.second, y, 0.5f, "$id wrist y")
+			// The folded pivot runs on chords of the arc, within a pixel of it.
+			assertEquals(wrist.first, x, 1f, "$id wrist x")
+			assertEquals(wrist.second, y, 1f, "$id wrist y")
+		}
+	}
+
+	@Test fun separateJointsTurnByBlendShapesThatAdd() {
+		val arm = strip("arm", 100f, 95f, 435f, 18f, 10f)
+		val spec = arm("arm")
+		val baked = SkeletonRig.apply(model(arm), spec, frame)
+		val old = SkeletonRig.apply(legacy(arm), spec, frame)
+		val bones = listOf("ParamArmLA", "ParamArmLB", "ParamHandL").map(::ParameterId)
+		// Every vertex follows one joint at most relative to the forearm, so each bone only adds.
+		for (id in bones) {
+			assertEquals(ParameterKind.BLEND_SHAPE, baked.parameters.single { it.id == id }.kind, id.raw)
+			assertEquals(ParameterKind.NORMAL, old.parameters.single { it.id == id }.kind, id.raw)
+		}
+		assertTrue(baked.deformers.none { d -> d.axes().any { it in bones } })
+		assertTrue(baked.drawables.none { d -> d.geometryGrid?.axes.orEmpty().any { it.parameterId in bones } })
+		val mesh = baked.drawables.single()
+		assertEquals(DeformerId("DeformSkel_fore"), mesh.parentDeformerId)
+		val forms = mesh.blendShapes.filter { it.parameterId in bones }.sumOf { it.keys.size }
+		val cells = old.drawables.single().geometryGrid!!.cells.size
+		assertTrue(forms * 4 < cells, "$forms blend keys against $cells keyforms")
+		// At rest nothing moves; turned, the arm lands where the multiplied keyforms put it.
+		val expected = rest(arm)
+		val actual = canvas(baked).getValue(arm.id)
+		for (i in expected.indices) assertEquals(expected[i], actual[i], 0.05f, "vertex coordinate $i")
+		for ((a, b, c) in listOf(Triple(17f, -23f, 11f), Triple(-60f, 95f, -70f), Triple(120f, -140f, 85f))) {
+			val values = mapOf("ParamArmLA" to a, "ParamArmLB" to b, "ParamHandL" to c)
+			val posed = canvas(baked, values).getValue(arm.id)
+			val reference = canvas(old, values).getValue(arm.id)
+			for (i in posed.indices) assertEquals(reference[i], posed[i], 2f, "vertex coordinate $i at $a/$b/$c")
+			for (v in 0 until expected.size / 2) {
+				val y = expected[v * 2 + 1]
+				if (y < 410f) continue // clear of the wrist band
+				var p = rotate(expected[v * 2], y, 100f, 370f, c)
+				p = rotate(p.first, p.second, 100f, 250f, b)
+				p = rotate(p.first, p.second, 100f, 100f, a)
+				assertEquals(p.first, posed[v * 2], 1f)
+				assertEquals(p.second, posed[v * 2 + 1], 1f)
+			}
+		}
+	}
+
+	@Test fun aLinkFoldsItsBlendShapeAlongTheArc() {
+		// The forearm draws nothing: its turn folds into the hand's rotation as a blend shape keyed along the arc.
+		val upperArm = strip("upper_arm", 100f, 95f, 250f, 16f, 10f)
+		val hand = strip("hand", 100f, 372f, 435f, 16f, 10f)
+		val spec = SkeletonSpec(bones = listOf(
+			chest,
+			bone("upper", "chest", BoneRole.UPPER_ARM, 100f, 100f, 100f, 250f, listOf("upper_arm")),
+			bone("fore", "upper", BoneRole.FOREARM, 100f, 250f, 100f, 370f),
+			bone("hand", "fore", BoneRole.HAND, 100f, 370f, 100f, 430f, listOf("hand")),
+		))
+		val baked = SkeletonRig.apply(model(upperArm, hand), spec, frame)
+		assertEquals(ParameterKind.BLEND_SHAPE, baked.parameters.single { it.id.raw == "ParamArmLB" }.kind)
+		val rotations = baked.deformers.filterIsInstance<Deformer.Rotation>().associateBy { it.id.raw }
+		assertEquals(setOf("DeformSkel_upper", "DeformSkel_hand"), rotations.keys)
+		val folded = rotations.getValue("DeformSkel_hand")
+		assertEquals(DeformerId("DeformSkel_upper"), folded.parent)
+		assertTrue(folded.geometryGrid!!.axes.isEmpty())
+		assertTrue(folded.blendShapes.single { it.parameterId.raw == "ParamArmLB" }.keys.size > 3)
+		val restPoints = rest(hand)
+		for ((a, b, c) in listOf(Triple(17f, -23f, 11f), Triple(-40f, 130f, 60f))) {
+			val posed = canvas(baked, mapOf("ParamArmLA" to a, "ParamArmLB" to b, "ParamHandL" to c)).getValue(hand.id)
+			for (v in 0 until restPoints.size / 2) {
+				if (restPoints[v * 2 + 1] < 395f) continue // clear of the wrist band
+				var p = rotate(restPoints[v * 2], restPoints[v * 2 + 1], 100f, 370f, c)
+				p = rotate(p.first, p.second, 100f, 250f, b)
+				p = rotate(p.first, p.second, 100f, 100f, a)
+				assertEquals(p.first, posed[v * 2], 1f, "x $v at $a/$b/$c")
+				assertEquals(p.second, posed[v * 2 + 1], 1f, "y $v at $a/$b/$c")
+			}
 		}
 	}
 
@@ -465,10 +541,11 @@ class SkeletonRigTest {
 		assertTrue(baked.deformers.none { d -> d.axes().any { it in poseIds } })
 		assertTrue(baked.drawables.none { d -> d.geometryGrid?.axes.orEmpty().any { it.parameterId in poseIds } })
 		assertTrue((baked.deformers.single { it.id == bodyId } as Deformer.Warp).blendShapes.map { it.parameterId }.toSet() == poseIds)
-		// The meshes carry every pose that turns a leg joint: not the hop, which only lifts the body, but the
-		// leg lift, which turns the joints without moving the hips.
+		// The meshes carry every pose that turns a leg joint, not the hop, which only lifts the body; the leg
+		// lift is a gesture on the bones' own parameters.
+		val allPoses = SkeletonPoses.all.mapTo(HashSet()) { it.id }
 		for (d in baked.drawables) {
-			assertEquals(poseIds - SkeletonPoses.hop.id + SkeletonPoses.legLift.id, d.blendShapes.map { it.parameterId }.toSet())
+			assertEquals(poseIds - SkeletonPoses.hop.id, d.blendShapes.map { it.parameterId }.filter { it in allPoses }.toSet())
 		}
 		val restL = canvas(baked).getValue(left.id)
 		// One pose at a time is solved exactly; both at once add their shapes, which holds only while one is slight.
@@ -527,22 +604,45 @@ class SkeletonRigTest {
 		is Deformer.Rotation -> geometryGrid?.axes.orEmpty().map { it.parameterId }
 	}
 
-	@Test fun aPoseBendsTheMeshAsItsBonesWould() {
+	@Test fun aGesturePlaysOnTheBonesOwnParameters() {
 		val arm = strip("arm", 100f, 95f, 435f, 18f, 10f)
 		val spec = arm("arm")
 		val baked = SkeletonRig.apply(model(arm), spec, frame)
 		assertEquals(listOf(SkeletonPoses.armSway, SkeletonPoses.arms), SkeletonPoses.available(spec))
-		val turns = SkeletonPoses.boneTurns(spec, SkeletonPoses.armSway, 1f)
-		assertEquals(setOf("upper", "fore", "hand"), turns.keys)
-		val posed = canvas(baked, mapOf(SkeletonPoses.armSway.id.raw to 1f)).getValue(arm.id)
-		val byHand = canvas(baked, turns.mapKeys { spec.bone(it.key)!!.parameterId }).getValue(arm.id)
-		for (i in posed.indices) assertEquals(byHand[i], posed[i], 1f, "component $i")
-		// The pose tool draws the hand where the pose put it.
-		val hand = io.github.psd2live.ui.SkeletonPoseTool.posed(baked, spec, mapOf(SkeletonPoses.armSway.id to 1f)).single { it.bone.id == "hand" }
-		val handByHand = io.github.psd2live.ui.SkeletonPoseTool.posed(baked, spec, turns.mapKeys { ParameterId(spec.bone(it.key)!!.parameterId) })
-			.single { it.bone.id == "hand" }
-		assertEquals(handByHand.tailX, hand.tailX, 0.5f)
-		assertEquals(handByHand.tailY, hand.tailY, 0.5f)
+		// A gesture has no parameter and no shape in the rig.
+		val gestures = setOf(SkeletonPoses.armSway.id, SkeletonPoses.arms.id)
+		assertTrue(baked.parameters.none { it.id in gestures })
+		assertTrue(baked.drawables.none { d -> d.blendShapes.any { it.parameterId in gestures } })
+		assertTrue(baked.deformers.none { d -> d is Deformer.Rotation && d.blendShapes.any { it.parameterId in gestures } })
+		// A motion plays it on the bones, added to what it writes there itself, point for point.
+		val sway = SkeletonPoses.armSway.id.raw
+		val played = SkeletonMotions.played(spec, listOf(
+			sway to listOf(0f to 0f, 1f to 1f, 2f to -0.5f),
+			"ParamArmLB" to listOf(0f to 10f, 2f to 30f),
+		)).toMap()
+		assertTrue(sway !in played)
+		for (time in listOf(0.0, 0.3, 1.0, 1.7, 2.0)) {
+			val value = SkeletonMotions.sample(listOf(0f to 0f, 1f to 1f, 2f to -0.5f), time, false)
+			val turns = SkeletonPoses.boneTurns(spec, SkeletonPoses.armSway, value)
+			for (bone in listOf("upper", "fore", "hand")) {
+				val id = spec.bone(bone)!!.parameterId
+				val own = if (id == "ParamArmLB") 10f + 10f * time.toFloat() else 0f
+				assertEquals(own + (turns[bone] ?: 0f), SkeletonMotions.sample(played.getValue(id), time, false), 1e-3f, "$id at $time")
+			}
+		}
+		// Played on the bones, the gesture stacks exactly with the arm turned by hand.
+		val turns = SkeletonPoses.boneTurns(spec, SkeletonPoses.arms, 1f)
+		val values = turns.map { (bone, turn) -> spec.bone(bone)!!.parameterId to turn + if (bone == "fore") -40f else 0f }.toMap()
+		val posed = canvas(baked, values).getValue(arm.id)
+		val expected = rest(arm)
+		for (v in 0 until expected.size / 2) {
+			if (expected[v * 2 + 1] < 410f) continue // clear of the wrist band
+			var p = rotate(expected[v * 2], expected[v * 2 + 1], 100f, 370f, values.getValue("ParamHandL"))
+			p = rotate(p.first, p.second, 100f, 250f, values.getValue("ParamArmLB"))
+			p = rotate(p.first, p.second, 100f, 100f, values.getValue("ParamArmLA"))
+			assertEquals(p.first, posed[v * 2], 1f)
+			assertEquals(p.second, posed[v * 2 + 1], 1f)
+		}
 	}
 
 	@Test fun aHopLiftsTheBodyWithTheLegsAndAddsOntoACrouch() {
@@ -591,12 +691,12 @@ class SkeletonRigTest {
 		assertTrue(SkeletonPoses.wave !in SkeletonPoses.available(SkeletonSpec(bones = listOf(chest) + side("l", Side.LEFT, 140f))))
 	}
 
-	@Test fun aPosedDeformerStaysOnItsBoneWhileTheBoneIsTurned() {
+	@Test fun thePoseToolDrawsABoneOnItsDeformer() {
 		val arm = strip("arm", 100f, 95f, 435f, 18f, 10f)
 		val spec = arm("arm")
-		val baked = SkeletonRig.apply(model(arm), spec, frame)
+		val baked = SkeletonRig.apply(legacy(arm), spec, frame)
 		val upper = spec.bone("upper")!!
-		val values = mapOf(ParameterId(upper.parameterId) to 30f, SkeletonPoses.armSway.id to 1f)
+		val values = mapOf(ParameterId(upper.parameterId) to 30f)
 		val bone = io.github.psd2live.ui.SkeletonPoseTool.posed(baked, spec, values).single { it.bone.id == "upper" }
 		// The arm hangs under the upper arm's deformer, whose handle runs up its local -y for the bone's length.
 		val mapping = org.umamo.render.eval.drawableSpaceMapping(baked, values, arm.id)!!
@@ -732,4 +832,5 @@ class SkeletonRigTest {
 		// A pose whose every bone is driven by physics stays out of the idle.
 		assertTrue(SkeletonMotions.idle(spec, exclude = setOf("ParamTail1")).none { it.first == SkeletonPoses.tailSwing.id.raw })
 	}
+
 }

@@ -68,7 +68,10 @@ object SkeletonMotions {
 	 * add, so a crouch on a shifted weight would bend the knees too far and slide the feet. The idle keeps
 	 * to the weight, and each leg one-shot holds the other leg pose at rest while it plays.
 	 */
-	fun idle(spec: SkeletonSpec?, exclude: Set<String> = emptySet()): List<MotionTrack> {
+	fun idle(spec: SkeletonSpec?, exclude: Set<String> = emptySet()): List<MotionTrack> = played(spec, idleTracks(spec, exclude))
+
+	/** The [idle] with its gestures still on their poses. */
+	private fun idleTracks(spec: SkeletonSpec?, exclude: Set<String>): List<MotionTrack> {
 		// Lags are fractions of a cycle behind the part that drives the track.
 		fun weightCycle(id: String, amplitude: Float, lag: Float) = sine(id, amplitude, cycles = 1, phase = -lag * TAU)
 		fun breathCycle(id: String, amplitude: Float, lag: Float, bias: Float = 0f) =
@@ -200,7 +203,8 @@ object SkeletonMotions {
 		val held = available.filter { it.legs }.associateWith { if (it == SkeletonPoses.kneesIn) 0.3f else 0f } +
 			available.filter { it == SkeletonPoses.arms }.associateWith { -0.3f }
 		val ids = held.keys.mapTo(HashSet()) { it.id.raw }
-		return idle(spec, exclude).filterNot { it.first in ids } + held.map { (pose, value) -> pose.id.raw to listOf(0f to value, IDLE_DURATION to value) }
+		return played(spec, idleTracks(spec, exclude).filterNot { it.first in ids } +
+			held.map { (pose, value) -> pose.id.raw to listOf(0f to value, IDLE_DURATION to value) })
 	}
 
 	/**
@@ -215,7 +219,50 @@ object SkeletonMotions {
 		val kept = tracks.filter { (id) -> SkeletonPoses.all.none { it.id.raw == id } || id in playable }
 		val held = available.filter { pose -> pose.legs && kept.none { it.first == pose.id.raw } }
 			.map { it.id.raw to listOf(0f to 0f, duration to 0f) }
-		return (kept + held).clamped()
+		return played(spec, (kept + held).clamped())
+	}
+
+	/**
+	 * [tracks] as the rig plays them: every gesture, and the limb turns of a rig pose, moved onto the
+	 * bones' own parameters and added to whatever the motion already writes there (see [SkeletonPoses]).
+	 *
+	 * Every track is linear between its points and every pose between its keys, so the bone tracks take a
+	 * point wherever a track has one or a pose passes one of its keys, and follow the poses exactly.
+	 */
+	internal fun played(spec: SkeletonSpec?, tracks: List<MotionTrack>): List<MotionTrack> {
+		if (spec?.enabled != true) return tracks
+		val poses = tracks.mapNotNull { (id, points) -> SkeletonPoses.all.firstOrNull { it.id.raw == id }?.let { it to points } }
+		val gestures = poses.filterNot { it.first.rig }.mapTo(HashSet()) { it.first.id.raw }
+		val bones = SkeletonRig.limbBones(spec)
+		val parameterOf = bones.associate { it.id to it.parameterId }
+		val reached = poses.flatMap { (pose) -> pose.keys.flatMap { SkeletonPoses.gestureTurns(spec, pose, it).keys } }
+			.mapNotNullTo(LinkedHashSet()) { parameterOf[it] }
+		val direct = tracks.filter { it.first in reached }.toMap()
+		val times = sortedSetOf<Float>()
+		for ((pose, points) in poses) {
+			for ((time) in points) times += time
+			for ((a, b) in points.zipWithNext()) for (key in pose.keys) {
+				if ((key - a.second) * (key - b.second) < 0f) times += a.first + (key - a.second) / (b.second - a.second) * (b.first - a.first)
+			}
+		}
+		for (points in direct.values) for ((time) in points) times += time
+		val turned = reached.associateWith { ArrayList<Pair<Float, Float>>() }
+		for (time in times) {
+			val sum = HashMap<String, Float>()
+			for ((id, points) in direct) sum[id] = sample(points, time.toDouble(), loop = false)
+			for ((pose, points) in poses) {
+				val value = sample(points, time.toDouble(), loop = false)
+				for ((boneId, turn) in SkeletonPoses.turnsAt(spec, pose, value, SkeletonPoses::gestureTurns)) {
+					val id = parameterOf[boneId] ?: continue
+					sum[id] = (sum[id] ?: 0f) + turn
+				}
+			}
+			for ((id, points) in turned) {
+				val bone = bones.first { it.parameterId == id }
+				points += time to (sum[id] ?: 0f).coerceIn(bone.minAngle, bone.maxAngle)
+			}
+		}
+		return tracks.filterNot { (id) -> id in gestures || id in reached } + turned.map { (id, points) -> id to points.toList() }
 	}
 
 	/**

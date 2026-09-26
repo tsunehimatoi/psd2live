@@ -83,9 +83,10 @@ class SkeletonPipelineIntegrationTest {
 		val skeletonGroup = puppet.parameterTree.filterIsInstance<org.umamo.runtime.model.ParameterNode.Group>()
 			.single { it.id.raw == "ParamGroupSkeleton" }
 		val grouped = skeletonGroup.children.filterIsInstance<org.umamo.runtime.model.ParameterNode.Param>().map { it.id.raw }.toSet()
-		assertTrue(arm.parameterId in grouped && SkeletonPoses.armSway.id.raw in grouped)
-
-		val idle = assertNotNull(preview.runtimeBundle.assets.firstOrNull { it.path.endsWith(".idle.motion3.json") })
-		assertTrue(idle.bytes.decodeToString().contains(SkeletonPoses.armSway.id.raw))
+		assertTrue(arm.parameterId in grouped)
+		// The arm sway is a gesture: no parameter of its own, the idle swings the arms by their bones.
+		assertTrue(puppet.parameters.none { it.id == SkeletonPoses.armSway.id })
+		val idle = assertNotNull(preview.runtimeBundle.assets.firstOrNull { it.path.endsWith(".idle.motion3.json") }).bytes.decodeToString()
+		assertTrue(arm.parameterId in idle && SkeletonPoses.armSway.id.raw !in idle)
 	}
 }

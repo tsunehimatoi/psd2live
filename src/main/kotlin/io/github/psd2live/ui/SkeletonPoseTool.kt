@@ -190,7 +190,7 @@ internal object SkeletonPoseTool {
 	fun rest(spec: SkeletonSpec?): Map<ParameterId, Float> =
 		if (spec?.enabled != true) emptyMap()
 		else SkeletonRig.limbBones(spec).associate { ParameterId(it.parameterId) to 0f } +
-			SkeletonPoses.all.associate { it.id to 0f }
+			SkeletonPoses.rigPoses.associate { it.id to 0f }
 
 	/**
 	 * Per-vertex weights for the heat map: for every skinned mesh, each vertex's two bones and the weight

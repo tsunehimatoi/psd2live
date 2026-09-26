@@ -31,11 +31,13 @@ import org.umamo.runtime.model.ParameterNode
 import org.umamo.runtime.model.PuppetModel
 import org.umamo.runtime.model.RotationForm
 import org.umamo.runtime.model.RotationPivotForm
+import org.umamo.runtime.model.RuntimeFeature
 import org.umamo.runtime.model.WarpForm
 import org.umamo.runtime.model.WarpLatticeForm
 import org.umamo.runtime.model.withDerivedRenderRoot
 import io.github.psd2live.i18n.tr
 import kotlin.math.abs
+import kotlin.math.acos
 import kotlin.math.atan2
 import kotlin.math.ceil
 import kotlin.math.hypot
@@ -60,8 +62,10 @@ import kotlin.math.max
  * - **Corrective mesh keyforms across each joint.** A mesh that spans a joint hangs under one of the
  *   bones (its "home") and its keyforms carry the rest of the limb: vertices past a joint turn with the
  *   bone across it, and vertices inside the joint band turn by a weighted fraction of that angle about the
- *   joint (see [SkeletonWeights]). The keys are dense in angle, so the linear blend between them stays
- *   on the arc.
+ *   joint (see [SkeletonWeights]). Each axis takes the fewest keys that keep the linear blend between
+ *   them on the arc. Where no vertex moves with two bones at once, their bends only add, and on a runtime
+ *   with blend shapes on rotation deformers such a bone turns by blend shapes rather than by a keyform
+ *   axis, so its keys add to the others' instead of multiplying them (see [planBlend]).
  *
  * On top of these, every preset pose of [SkeletonPoses] - a crouch, a weight shift, a tail swing - is one
  * blend-shape parameter that adds its turns to the bones and its bends to the meshes (see [addPoses]).
@@ -80,8 +84,14 @@ internal object SkeletonRig {
 	val legsWarpId = DeformerId("DeformSkelLegs")
 	private val skeletonGroupId = ParameterGroupId("ParamGroupSkeleton")
 
-	/** Widest angle step between two keys of a corrective keyform axis. */
+	/** Narrowest angle step between two keys of a corrective axis; a key never has to be denser. */
 	private const val KEY_STEP = 7.5
+
+	/**
+	 * Farthest, in home-space pixels, the linear blend between two neighbouring keys may stray from the
+	 * arc a vertex or a pivot really turns along. A corrective axis takes as few keys as keep within it.
+	 */
+	private const val KEY_TOLERANCE = 1.0
 
 	/**
 	 * How far, in canvas pixels, a vertex of one part may sit from a vertex or the outline of another and
@@ -179,6 +189,7 @@ internal object SkeletonRig {
 			drawableRoot.putIfAbsent(id, rootOf.getValue(bone.id))
 		}
 		val treeBones = joints.groupBy { rootOf.getValue(it.id) }
+		val candidates = blendCandidates(model, joints)
 
 		// 2. Enough vertices across every joint the mesh crosses.
 		for ((id, root) in drawableRoot) {
@@ -197,26 +208,30 @@ internal object SkeletonRig {
 
 		// 2b. Split parts of one limb welded wherever they overlap, before skinning so every new vertex
 		// gets its joints baked like the rest.
-		val seams = weldSplitParts(model, canvas, drawableRoot, treeBones, parentOf, lockedTopology)
+		val seams = weldSplitParts(model, canvas, drawableRoot, treeBones, parentOf, lockedTopology, candidates)
 		model = seams.model
 		canvas = seams.canvas
+
+		// 2c. The bone each mesh hangs under, and the bone parameters whose turns only ever add.
+		val plan = planBlend(canvas, drawableRoot, treeBones, parentOf, candidates)
 
 		// 3. The body halves spliced into the body chain as warps - the head rotation and everything else on
 		// the breath warp ends up under the upper body - and a rotation deformer per limb bone hung from them.
 		val bends = LinkedHashMap<String, BodyBend>()
 		model = addBodyWarps(model, bones.filter { it.role.body }, frame, bends)
-		model = addRotations(model, joints, parentOf, spec, frame, bends)
-		model = addParameters(model, bones)
+		model = addRotations(model, joints, parentOf, spec, frame, bends, plan.blend)
+		model = addParameters(model, bones, plan.blend)
 
 		// 4. The preset poses, hips that move while the feet stay put among them.
-		val poses = SkeletonPoses.available(spec)
+		val poses = SkeletonPoses.available(spec).filter { it.rig }
 		model = addPoses(model, spec, bones, poses, bends)
 
 		// 5. Every skinned mesh under its home bone, with its joints baked into its keyforms and its poses
 		// into its blend shapes.
 		for ((id, root) in drawableRoot) {
 			val drawableId = DrawableId(id)
-			model = skinDrawable(model, drawableId, canvas.getValue(drawableId), treeBones.getValue(root), parentOf, poses)
+			model = skinDrawable(model, drawableId, canvas.getValue(drawableId), treeBones.getValue(root), parentOf, poses,
+				plan.homes.getValue(id), plan.blend)
 		}
 
 		// 6. The welded parts glued, no deformer left holding nothing, and no joint inside one mesh left as a
@@ -226,6 +241,64 @@ internal object SkeletonRig {
 		model = foldLinkBones(model, joints)
 		model = withSkeletonGroup(model, bones, poses)
 		return model.withDerivedRenderRoot()
+	}
+
+	/**
+	 * The bone parameters that may become blend shapes at all: none on a runtime without blend shapes on
+	 * rotation deformers, and none the physics reads or writes (the tails and the wings, see
+	 * [PhysicsGenerator]).
+	 */
+	private fun blendCandidates(model: PuppetModel, joints: List<SkeletonBone>): Set<String> =
+		if (!model.runtimeTarget.supports(RuntimeFeature.ExtendedBlendShapes)) emptySet()
+		else joints.filter { it.role != BoneRole.TAIL && it.role != BoneRole.WING }.mapTo(HashSet()) { it.parameterId }
+
+	/** Where each skinned mesh hangs, by its bone's index in its tree, and the bone parameters that are blend shapes. */
+	private class BlendPlan(val homes: Map<String, Int>, val blend: Set<ParameterId>)
+
+	/**
+	 * Which of the [candidates] become blend shapes.
+	 *
+	 * A keyform grid holds a form for every combination of its axes, so a mesh bent at two joints carries
+	 * the product of both bones' keys. Where no vertex moves with more than one of them the bends simply
+	 * add, and blend shapes - which add - need only the sum of the keys. A parameter becomes a blend shape
+	 * when that holds everywhere it acts: in every mesh, and in every rotation its bone folds into as a link
+	 * (two links in a row carry a pivot round both turns at once). A parameter has one kind for the whole
+	 * model, so one use that multiplies it with another keeps it a keyform axis everywhere.
+	 */
+	private fun planBlend(
+		canvas: Map<DrawableId, FloatArray>,
+		drawableRoot: Map<String, String>,
+		treeBones: Map<String, List<SkeletonBone>>,
+		parentOf: Map<String, SkeletonBone?>,
+		candidates: Set<String>,
+	): BlendPlan {
+		val homes = HashMap<String, Int>()
+		val coupled = HashSet<String>()
+		for ((id, root) in drawableRoot) {
+			val tree = treeBones.getValue(root)
+			val skinBones = skinBones(tree, parentOf)
+			val skins = SkeletonWeights.skin(canvas.getValue(DrawableId(id)), skinBones)
+			val home = homeBone(skins, skinBones) { tree[it].parameterId in candidates }
+			homes[id] = home
+			for (moving in dependencies(skins, skinBones, home)) {
+				val parameters = moving.mapTo(HashSet()) { tree[it].parameterId }
+				if (parameters.size > 1) coupled += parameters
+			}
+		}
+		// A link holds no mesh but carries meshes below it, and folds into its children (see [foldLinkBones]).
+		val homeIds = drawableRoot.mapTo(HashSet()) { (id, root) -> treeBones.getValue(root)[homes.getValue(id)].id }
+		val bones = treeBones.values.flatten()
+		val children = bones.groupBy { parentOf[it.id]?.id }
+		fun holds(bone: SkeletonBone): Boolean = bone.id in homeIds || children[bone.id].orEmpty().any(::holds)
+		fun isLink(bone: SkeletonBone) = parentOf[bone.id] != null && bone.id !in homeIds && holds(bone)
+		for (bone in bones) {
+			val parent = parentOf[bone.id] ?: continue
+			if (isLink(bone) && isLink(parent)) {
+				coupled += bone.parameterId
+				coupled += parent.parameterId
+			}
+		}
+		return BlendPlan(homes, (candidates - coupled).mapTo(HashSet(), ::ParameterId))
 	}
 
 	/**
@@ -426,6 +499,7 @@ internal object SkeletonRig {
 		spec: SkeletonSpec,
 		frame: Bounds,
 		bends: Map<String, BodyBend>,
+		blend: Set<ParameterId>,
 	): PuppetModel {
 		val restWorlds = worlds(base, emptyMap())
 		val partId = base.parts.firstOrNull { it.id.raw == "PartBody" }?.id
@@ -450,9 +524,9 @@ internal object SkeletonRig {
 				parent = parentId,
 				partId = partId,
 				baseAngle = SkeletonIk.wrap(restOrientation(bone) - (parentBone?.let(::restOrientation) ?: 0.0)).toFloat(),
-				geometryGrid = ownAngleGrid(bone, origin[0], origin[1], 1f),
+				geometryGrid = null,
 				handleLength = bone.length,
-			)
+			).withOwnAngle(bone, origin[0], origin[1], 1f, blend)
 		}
 		var model = base.copy(deformers = base.deformers + rotations)
 		// A warp can carry a slight turn or scale at rest; take it out of the base angle and the scale so
@@ -465,7 +539,7 @@ internal object SkeletonRig {
 			val drift = SkeletonIk.wrap((angleOf(world) - restOrientation(bone))).toFloat()
 			val scale = scaleOf(world).takeIf { it > 1e-6f } ?: 1f
 			val form = deformer.geometryGrid!!.cells.first().form
-			deformer.copy(baseAngle = deformer.baseAngle - drift, geometryGrid = ownAngleGrid(bone, form.originX, form.originY, 1f / scale))
+			deformer.copy(baseAngle = deformer.baseAngle - drift).withOwnAngle(bone, form.originX, form.originY, 1f / scale, blend)
 		})
 		return model
 	}
@@ -483,25 +557,43 @@ internal object SkeletonRig {
 
 	/**
 	 * The bone's own axis: the angle it turns from its rest heading. Keys at the limits and at rest are
-	 * enough - a rotation deformer interpolates the angle itself, so every value between is exact.
+	 * enough - a rotation deformer interpolates the angle itself, so every value between is exact. A bone
+	 * in [blend] keeps one rest form and turns by a blend shape over the same keys, which interpolates the
+	 * angle just as exactly.
 	 */
-	private fun ownAngleGrid(bone: SkeletonBone, originX: Float, originY: Float, scale: Float): KeyformGrid<RotationPivotForm> {
+	private fun Deformer.Rotation.withOwnAngle(
+		bone: SkeletonBone,
+		originX: Float,
+		originY: Float,
+		scale: Float,
+		blend: Set<ParameterId>,
+	): Deformer.Rotation {
+		val id = ParameterId(bone.parameterId)
 		val keys = floatArrayOf(bone.minAngle, 0f, bone.maxAngle).distinct().sorted().toFloatArray()
-		val axis = KeyformAxis(ParameterId(bone.parameterId), keys)
-		return KeyformGrid(listOf(axis), keys.indices.map { i ->
-			KeyformCell(intArrayOf(i), RotationPivotForm(originX, originY, keys[i] * bone.direction, scale))
-		})
+		if (id !in blend) {
+			return copy(geometryGrid = KeyformGrid(listOf(KeyformAxis(id, keys)), keys.indices.map { i ->
+				KeyformCell(intArrayOf(i), RotationPivotForm(originX, originY, keys[i] * bone.direction, scale))
+			}))
+		}
+		val turn = blendBinding(id, keys) { i ->
+			RotationForm(originX, originY, keys[i] * bone.direction, scale, false, false, opacity, multiplyColor, screenColor)
+		}
+		return copy(
+			geometryGrid = KeyformGrid(emptyList(), listOf(KeyformCell(intArrayOf(), RotationPivotForm(originX, originY, 0f, scale)))),
+			blendShapes = blendShapes.filterNot { it.parameterId == id } + turn,
+		)
 	}
 
-	private fun addParameters(model: PuppetModel, bones: List<SkeletonBone>): PuppetModel {
+	private fun addParameters(model: PuppetModel, bones: List<SkeletonBone>, blend: Set<ParameterId>): PuppetModel {
 		var parameters = model.parameters
 		for (bone in bones) {
 			val id = ParameterId(bone.parameterId)
+			val kind = if (id in blend) ParameterKind.BLEND_SHAPE else ParameterKind.NORMAL
 			val existing = parameters.firstOrNull { it.id == id }
 			parameters = if (existing == null) {
-				parameters + Parameter(id, bone.name, bone.minAngle, bone.maxAngle, 0f)
+				parameters + Parameter(id, bone.name, bone.minAngle, bone.maxAngle, 0f, kind = kind)
 			} else {
-				parameters.map { if (it.id == id) it.copy(min = minOf(it.min, bone.minAngle), max = maxOf(it.max, bone.maxAngle)) else it }
+				parameters.map { if (it.id == id) it.copy(min = minOf(it.min, bone.minAngle), max = maxOf(it.max, bone.maxAngle), kind = kind) else it }
 			}
 		}
 		return model.copy(parameters = parameters)
@@ -567,12 +659,13 @@ internal object SkeletonRig {
 	}
 
 	/**
-	 * Adds every pose of [SkeletonPoses.available] as a blend-shape parameter.
+	 * Adds every rig pose of [SkeletonPoses.available] as a blend-shape parameter; the gestures play on
+	 * the bones' own parameters instead (see [SkeletonPoses]).
 	 *
 	 * Cubism parameters cannot drive other parameters, so a pose is baked where it acts: the leg poses
 	 * move the body warp by the hip motion and turn every leg's rotation deformers by the joint angles
 	 * that keep its ankle planted, solved by two-bone IK at each key; the other poses turn their bones by
-	 * [SkeletonPoses.boneTurns] - a body half by turning its warp's lattice about the waist, as its own
+	 * [SkeletonPoses.rigTurns] - a body half by turning its warp's lattice about the waist, as its own
 	 * parameter does. Each is a blend shape on those deformers, so it adds to the bones' own
 	 * parameters - a posed limb can still be swung by hand - and poses add to each other instead of
 	 * multiplying keyforms. Each leg pose is solved with the other at rest, so both at once only
@@ -605,7 +698,7 @@ internal object SkeletonRig {
 		}
 		val byId = bones.associateBy { it.id }
 		for (pose in poses) for ((ki, key) in pose.keys.withIndex()) {
-			for ((boneId, turn) in SkeletonPoses.boneTurns(spec, pose, key)) {
+			for ((boneId, turn) in SkeletonPoses.rigTurns(spec, pose, key)) {
 				val bone = byId[boneId] ?: continue
 				offset(boneId, pose)[ki] += turn * bone.direction
 			}
@@ -651,9 +744,12 @@ internal object SkeletonRig {
 	}
 
 	/** A blend binding of [pose] over its keys, with [form] at every key but the neutral one. */
-	private fun <T : Any> poseBinding(pose: SkeletonPose, form: (Int) -> T): BlendShapeBinding<T> {
-		val neutral = pose.keys.indexOfFirst { it == 0f }
-		return BlendShapeBinding(pose.id, pose.keys, neutral, pose.keys.indices.map { if (it == neutral) null else form(it) })
+	private fun <T : Any> poseBinding(pose: SkeletonPose, form: (Int) -> T): BlendShapeBinding<T> = blendBinding(pose.id, pose.keys, form)
+
+	/** A blend binding of [parameterId] over [keys], which hold 0, with [form] at every key but the neutral one. */
+	private fun <T : Any> blendBinding(parameterId: ParameterId, keys: FloatArray, form: (Int) -> T): BlendShapeBinding<T> {
+		val neutral = keys.indexOfFirst { it == 0f }
+		return BlendShapeBinding(parameterId, keys, neutral, keys.indices.map { if (it == neutral) null else form(it) })
 	}
 
 	/**
@@ -792,6 +888,8 @@ internal object SkeletonRig {
 		tree: List<SkeletonBone>,
 		parentOf: Map<String, SkeletonBone?>,
 		poses: List<SkeletonPose>,
+		home: Int,
+		blend: Set<ParameterId>,
 	): PuppetModel {
 		val drawable = base.drawables.firstOrNull { it.id == drawableId } ?: return base
 		val mesh = drawable.mesh ?: return base
@@ -800,17 +898,9 @@ internal object SkeletonRig {
 		val skins = SkeletonWeights.skin(canvas, skinBones)
 		val deformerOf = tree.map { DeformerId(it.deformerId) }
 
-		val home = homeBone(skins, skinBones)
-
 		// Bones whose angle changes where a vertex sits relative to home.
-		fun chain(index: Int): Set<Int> = generateSequence(index) { skinBones[it].parent.takeIf { p -> p >= 0 } }.toSet()
-		val homeChain = chain(home)
 		val driving = sortedSetOf<Int>()
-		for (skin in skins) {
-			driving += (chain(skin.from) - homeChain) + (homeChain - chain(skin.from))
-			if (!skin.rigid) driving += skin.to
-		}
-		val axes = meshAxes(driving.map { tree[it] })
+		for (moving in dependencies(skins, skinBones, home)) driving += moving
 
 		val relevant = deformerOf.toSet() + listOfNotNull(drawable.parentDeformerId)
 		val rest = worlds(base, emptyMap(), relevant)
@@ -848,6 +938,17 @@ internal object SkeletonRig {
 			return out
 		}
 
+		// Each bone keyed as sparsely as its arcs allow; the blend-shape bones add, the rest multiply.
+		val ranges = LinkedHashMap<ParameterId, Pair<Float, Float>>()
+		for (bone in driving.map { tree[it] }) {
+			val id = ParameterId(bone.parameterId)
+			val range = ranges[id]
+			ranges[id] = if (range == null) bone.minAngle to bone.maxAngle else minOf(range.first, bone.minAngle) to maxOf(range.second, bone.maxAngle)
+		}
+		val sides = ranges.mapValues { (id, range) -> fittedSides(range) { deltasAt(mapOf(id to it)) } }
+		val axes = gridAxes(sides.filterKeys { it !in blend }, ranges)
+		val blendAxes = sides.filterKeys { it in blend }.map { (id, side) -> KeyformAxis(id, keysOf(ranges.getValue(id), side.first, side.second)) }
+
 		val skinGrid = if (axes.isEmpty()) null else KeyformGrid(axes, cartesian(axes).map { coordinate ->
 			val values = axes.indices.associate { axes[it].parameterId to axes[it].keys[coordinate[it]] }
 			KeyformCell(coordinate, MeshDeltaForm(deltasAt(values)))
@@ -883,22 +984,24 @@ internal object SkeletonRig {
 			geometryGrid = grid,
 			blendShapes = blendShapes,
 		)
-		val posed = skinned.copy(blendShapes = skinned.blendShapes + poseShapes(base, skinned, poses, ::deltasAt))
+		val added = poses.map { KeyformAxis(it.id, it.keys) } + blendAxes
+		val posed = skinned.copy(blendShapes = skinned.blendShapes + additiveShapes(base, skinned, added, ::deltasAt))
 		return base.copy(drawables = base.drawables.map { if (it.id == drawableId) posed else it })
 	}
 
 	/**
-	 * The blend shapes the [poses] bend [drawable] by: at each key, how far the pose alone moves every
-	 * vertex relative to its home bone, as [deltasAt] measures it through the deformers the poses turn.
-	 * A pose that only carries the mesh rigidly with its home bone leaves it no shape.
+	 * The blend shapes the poses and the blend-shape bones in [axes] bend [drawable] by: at each key, how
+	 * far that parameter alone moves every vertex relative to its home bone, as [deltasAt] measures it
+	 * through the deformers it turns. One that only carries the mesh rigidly with its home bone leaves it
+	 * no shape.
 	 */
-	private fun poseShapes(
+	private fun additiveShapes(
 		model: PuppetModel,
 		drawable: Drawable,
-		poses: List<SkeletonPose>,
+		axes: List<KeyformAxis>,
 		deltasAt: (Map<ParameterId, Float>) -> FloatArray,
 	): List<BlendShapeBinding<MeshForm>> {
-		if (poses.isEmpty()) return emptyList()
+		if (axes.isEmpty()) return emptyList()
 		val defaults = model.parameters.associate { it.id to it.default }
 		val default: (ParameterId) -> Float = { defaults[it] ?: 0f }
 		val rest = deltasAt(emptyMap())
@@ -907,12 +1010,12 @@ internal object SkeletonRig {
 		val opacity = drawable.channelGrids.scalarAt(FormChannel.OPACITY, drawable.opacity, default)
 		val multiply = drawable.channelGrids.colorAt(FormChannel.MULTIPLY_COLOR, drawable.multiplyColor, default)
 		val screen = drawable.channelGrids.colorAt(FormChannel.SCREEN_COLOR, drawable.screenColor, default)
-		return poses.mapNotNull { pose ->
-			val shapes = pose.keys.map { key ->
-				if (key == 0f) null else deltasAt(mapOf(pose.id to key)).also { for (i in it.indices) it[i] -= rest[i] }
+		return axes.mapNotNull { axis ->
+			val shapes = axis.keys.map { key ->
+				if (key == 0f) null else deltasAt(mapOf(axis.parameterId to key)).also { for (i in it.indices) it[i] -= rest[i] }
 			}
 			if (shapes.all { shape -> shape == null || shape.all { abs(it) < POSE_EPSILON } }) return@mapNotNull null
-			poseBinding(pose) { ki ->
+			blendBinding(axis.parameterId, axis.keys) { ki ->
 				val shape = shapes[ki]!!
 				MeshForm(FloatArray(shape.size) { reference[it] + shape[it] }, drawOrder, opacity, multiply, screen)
 			}
@@ -928,39 +1031,89 @@ internal object SkeletonRig {
 	 * names. The rest of the mesh follows the other joints in its keyforms: the bones above it keep their
 	 * rotations as pivots that carry it, and those below it hold nothing and are pruned or folded.
 	 */
-	internal fun homeBone(skins: List<VertexSkin>, bones: List<SkinBone>): Int {
+	internal fun homeBone(skins: List<VertexSkin>, bones: List<SkinBone>, blendable: (Int) -> Boolean = { false }): Int {
 		val load = DoubleArray(bones.size)
 		for (skin in skins) {
 			load[skin.from] += 1.0 - skin.weight
 			load[skin.to] += skin.weight.toDouble()
 		}
-		return load.indices.maxBy { load[it] }
+		// Where the heaviest bone would leave some vertex moving with two bones, one of them a blend-shape
+		// candidate, a bone the mesh touches that keeps every joint apart wins instead (see [planBlend]).
+		fun coupled(home: Int) = dependencies(skins, bones, home).any { moving -> moving.size > 1 && moving.any(blendable) }
+		val carrying = load.indices.filter { load[it] > 0.0 }.ifEmpty { load.indices.toList() }
+		return carrying.minWith(compareBy<Int> { if (coupled(it)) 1 else 0 }.thenByDescending { load[it] })
 	}
 
 	/**
-	 * The keyform axes of a mesh driven by [bones]: each bone's own parameter keyed densely in angle.
-	 * Poses are not axes; they reach the mesh as blend shapes.
+	 * Per vertex, the bones whose turn moves it relative to [home]: every joint between the bone it
+	 * follows and home, and the joint it blends across.
 	 */
-	private fun meshAxes(bones: List<SkeletonBone>): List<KeyformAxis> {
-		val own = LinkedHashMap<ParameterId, Pair<Float, Float>>()
-		for (bone in bones) {
-			val id = ParameterId(bone.parameterId)
-			val range = own[id]
-			own[id] = if (range == null) bone.minAngle to bone.maxAngle else minOf(range.first, bone.minAngle) to maxOf(range.second, bone.maxAngle)
+	private fun dependencies(skins: List<VertexSkin>, bones: List<SkinBone>, home: Int): List<Set<Int>> {
+		fun chain(index: Int): Set<Int> = generateSequence(index) { bones[it].parent.takeIf { p -> p >= 0 } }.toSet()
+		val homeChain = chain(home)
+		val chains = HashMap<Int, Set<Int>>()
+		return skins.map { skin ->
+			val own = chains.getOrPut(skin.from) { chain(skin.from) }
+			val moving = (own - homeChain) + (homeChain - own)
+			if (skin.rigid) moving else moving + skin.to
 		}
-		var step = KEY_STEP
-		var ownKeys = own.mapValues { angleKeys(it.value, step) }
-		while (ownKeys.values.fold(1) { acc, keys -> acc * keys.size } > MAX_MESH_CELLS && step < 90.0) {
-			step *= 1.15
-			ownKeys = own.mapValues { angleKeys(it.value, step) }
+	}
+
+	/**
+	 * How many evenly spaced keys each side of 0 needs across [range] so the linear blend between two
+	 * neighbours of [at] - a mesh's home-space deltas at a value - strays from it by no more than
+	 * [KEY_TOLERANCE], with keys never closer than [KEY_STEP].
+	 */
+	private fun fittedSides(range: Pair<Float, Float>, at: (Float) -> FloatArray): Pair<Int, Int> {
+		val memo = HashMap<Float, FloatArray>()
+		fun sample(value: Float) = memo.getOrPut(value) { at(value) }
+		fun side(limit: Float): Int {
+			val most = ceil(abs(limit) / KEY_STEP - 1e-6).toInt()
+			return (1..most).firstOrNull { n ->
+				(0 until n).all { i -> straight(sample(limit * i / n), sample(limit * (i + 1) / n), sample(limit * (i + 0.5f) / n)) }
+			} ?: most
 		}
-		return ownKeys.map { KeyformAxis(it.key, it.value) }
+		return side(range.first) to side(range.second)
+	}
+
+	/** Whether every vertex of [middle] lies within [KEY_TOLERANCE] of halfway between [a] and [b]. */
+	private fun straight(a: FloatArray, b: FloatArray, middle: FloatArray): Boolean {
+		for (i in middle.indices step 2) {
+			val dx = middle[i] - (a[i] + b[i]) * 0.5
+			val dy = middle[i + 1] - (a[i + 1] + b[i + 1]) * 0.5
+			if (dx * dx + dy * dy > KEY_TOLERANCE * KEY_TOLERANCE) return false
+		}
+		return true
+	}
+
+	/**
+	 * The keyform axes of a mesh's multiplying bones, each with the keys of [sides] on either side of 0,
+	 * thinned from the densest side down while the grid would hold more than [MAX_MESH_CELLS] forms.
+	 */
+	private fun gridAxes(sides: Map<ParameterId, Pair<Int, Int>>, ranges: Map<ParameterId, Pair<Float, Float>>): List<KeyformAxis> {
+		val counts = sides.mapValues { intArrayOf(it.value.first, it.value.second) }
+		while (counts.values.fold(1) { acc, c -> acc * (c[0] + c[1] + 1) } > MAX_MESH_CELLS) {
+			val densest = counts.values.maxBy { it[0] + it[1] }
+			val side = if (densest[0] >= densest[1]) 0 else 1
+			if (densest[side] <= 1) break
+			densest[side]--
+		}
+		return counts.map { (id, c) -> KeyformAxis(id, keysOf(ranges.getValue(id), c[0], c[1])) }
 	}
 
 	/** Keys across [range] (which holds 0) no more than [step] degrees apart, even on each side of 0. */
-	private fun angleKeys(range: Pair<Float, Float>, step: Double): FloatArray {
-		val below = ceil(abs(range.first) / step - 1e-6).toInt()
-		val above = ceil(range.second / step - 1e-6).toInt()
+	private fun angleKeys(range: Pair<Float, Float>, step: Double): FloatArray =
+		keysOf(range, ceil(abs(range.first) / step - 1e-6).toInt(), ceil(range.second / step - 1e-6).toInt())
+
+	/**
+	 * The widest step that keeps a pivot [radius] pixels out within [KEY_TOLERANCE] of its arc between
+	 * two keys, and never narrower than [KEY_STEP].
+	 */
+	private fun arcStep(radius: Double): Double =
+		if (radius <= KEY_TOLERANCE) 90.0 else max(KEY_STEP, Math.toDegrees(2.0 * acos(1.0 - KEY_TOLERANCE / radius)))
+
+	/** [below] evenly spaced keys from [range]'s start to 0 and [above] from 0 to its end, 0 among them. */
+	private fun keysOf(range: Pair<Float, Float>, below: Int, above: Int): FloatArray {
 		return (-below..above).map { i ->
 			when {
 				i < 0 -> range.first * (-i).toFloat() / below
@@ -1024,6 +1177,7 @@ internal object SkeletonRig {
 		treeBones: Map<String, List<SkeletonBone>>,
 		parentOf: Map<String, SkeletonBone?>,
 		lockedTopology: Set<String>,
+		candidates: Set<String>,
 	): Seams {
 		var model = base
 		val canvas = HashMap(baseCanvas)
@@ -1032,7 +1186,9 @@ internal object SkeletonRig {
 			val members = drawableRoot.filterValues { it == root }.keys.map(::DrawableId)
 			if (members.size < 2) continue
 			val skinBones = skinBones(tree, parentOf)
-			val home = members.associateWith { homeBone(SkeletonWeights.skin(canvas.getValue(it), skinBones), skinBones) }
+			val home = members.associateWith { id ->
+				homeBone(SkeletonWeights.skin(canvas.getValue(id), skinBones), skinBones) { tree[it].parameterId in candidates }
+			}
 			fun isAncestor(ancestor: Int, bone: Int) =
 				generateSequence(skinBones[bone].parent.takeIf { it >= 0 }) { skinBones[it].parent.takeIf { p -> p >= 0 } }.any { it == ancestor }
 			for (i in members.indices) for (j in i + 1 until members.size) {
@@ -1097,6 +1253,7 @@ internal object SkeletonRig {
 	 */
 	private fun foldLinkBones(model: PuppetModel, bones: List<SkeletonBone>): PuppetModel {
 		val boneDeformers = bones.mapTo(HashSet()) { DeformerId(it.deformerId) }
+		val boneParameters = bones.mapTo(HashSet()) { ParameterId(it.parameterId) }
 		var result = model
 		for (bone in bones) {
 			val id = DeformerId(bone.deformerId)
@@ -1106,27 +1263,37 @@ internal object SkeletonRig {
 			if (result.drawables.any { it.parentDeformerId == id }) continue
 			val children = result.deformers.filter { it.parent == id }
 			if (children.isEmpty() || children.any { it !is Deformer.Rotation }) continue
-			result = foldLink(result, link, parent, children.map { it as Deformer.Rotation })
+			result = foldLink(result, link, parent, children.map { it as Deformer.Rotation }, boneParameters)
 		}
 		return result
 	}
 
 	/**
 	 * Re-hangs [children] from [link]'s parent [host] with [link] folded into each. The link's axes join
-	 * each child's, keyed as the host's meshes key them so the child's pivot moves between keys exactly
-	 * as the mesh it is drawn against; its angle and scale compose with the child's, and its pose shapes
-	 * add to the child's.
+	 * each child's, keyed densely enough that the child's pivot keeps to its arc between keys as closely
+	 * as the meshes around it keep to theirs; its angle and scale compose with the child's, and its pose
+	 * shapes add to the child's. A link whose own turn is a blend shape passes it on the same way, re-keyed
+	 * along the arc.
 	 */
-	private fun foldLink(model: PuppetModel, link: Deformer.Rotation, host: DeformerId, children: List<Deformer.Rotation>): PuppetModel {
+	private fun foldLink(
+		model: PuppetModel,
+		link: Deformer.Rotation,
+		host: DeformerId,
+		children: List<Deformer.Rotation>,
+		boneParameters: Set<ParameterId>,
+	): PuppetModel {
 		val defaults = model.parameters.associate { it.id to it.default }
 		val default: (ParameterId) -> Float = { defaults[it] ?: 0f }
-		val linkAxes = link.geometryGrid!!.axes.map { axis ->
-			val meshKeys = model.drawables.filter { it.parentDeformerId == host }
-				.mapNotNull { d -> d.geometryGrid?.axes?.firstOrNull { it.parameterId == axis.parameterId }?.keys }
-				.maxByOrNull { it.size }
-			KeyformAxis(axis.parameterId, meshKeys ?: angleKeys(axis.keys.first() to axis.keys.last(), KEY_STEP))
-		}
+		// The children's pivots swing round the link's at this reach, keyed to stay as close to the arc as the
+		// meshes around them stay to theirs.
+		val reach = children.maxOf { child -> rotationFormAt(child.geometryGrid, default)?.let { hypot(it.originX, it.originY) } ?: 0f }
+		val step = arcStep(reach.toDouble())
+		val linkAxes = link.geometryGrid!!.axes.map { axis -> KeyformAxis(axis.parameterId, angleKeys(axis.keys.first() to axis.keys.last(), step)) }
 		val linkRest = rotationFormAt(link.geometryGrid, default) ?: RotationPivotForm(0f, 0f, 0f, 1f)
+		val linkShapes = link.blendShapes.map { binding ->
+			if (binding.parameterId !in boneParameters || binding.keys.size < 2) binding
+			else resampled(binding, linkRest, angleKeys(binding.keys.first() to binding.keys.last(), step))
+		}
 
 		val folded = children.associate { child ->
 			val keys = LinkedHashMap<ParameterId, FloatArray>()
@@ -1152,9 +1319,9 @@ internal object SkeletonRig {
 				KeyformCell(coordinate, RotationPivotForm(origin[0], origin[1], l.angle + c.angle, l.scale * c.scale))
 			})
 
-			val poses = (link.blendShapes + child.blendShapes).map { it.parameterId }.distinct()
+			val poses = (linkShapes + child.blendShapes).map { it.parameterId }.distinct()
 			val blendShapes = child.blendShapes.filterNot { it.parameterId in poses } + poses.map { pose ->
-				val linkShape = link.blendShapes.firstOrNull { it.parameterId == pose }
+				val linkShape = linkShapes.firstOrNull { it.parameterId == pose }
 				val childShape = child.blendShapes.firstOrNull { it.parameterId == pose }
 				val binding = childShape ?: linkShape!!
 				binding.copy(forms = binding.keys.indices.map { ki ->
@@ -1170,6 +1337,23 @@ internal object SkeletonRig {
 			child.id to child.copy(parent = host, baseAngle = link.baseAngle + child.baseAngle, geometryGrid = grid, blendShapes = blendShapes)
 		}
 		return model.copy(deformers = model.deformers.mapNotNull { if (it.id == link.id) null else folded[it.id] ?: it })
+	}
+
+	/** [binding], a turn linear between its keys, re-keyed at [keys]; [rest] stands at its neutral key. */
+	private fun resampled(binding: BlendShapeBinding<RotationForm>, rest: RotationPivotForm, keys: FloatArray): BlendShapeBinding<RotationForm> {
+		val sample = binding.forms.firstNotNullOf { it }
+		fun at(i: Int) = binding.forms[i] ?: RotationForm(rest.originX, rest.originY, rest.angle, rest.scale,
+			sample.flipX, sample.flipY, sample.opacity, sample.multiplyColor, sample.screenColor)
+		return blendBinding(binding.parameterId, keys) { k ->
+			val value = keys[k]
+			val upper = binding.keys.indexOfFirst { it >= value }.coerceIn(1, binding.keys.size - 1)
+			val a = at(upper - 1)
+			val b = at(upper)
+			val t = ((value - binding.keys[upper - 1]) / (binding.keys[upper] - binding.keys[upper - 1])).coerceIn(0f, 1f)
+			fun mix(x: Float, y: Float) = x + (y - x) * t
+			RotationForm(mix(a.originX, b.originX), mix(a.originY, b.originY), mix(a.angle, b.angle), mix(a.scale, b.scale),
+				a.flipX, a.flipY, a.opacity, a.multiplyColor, a.screenColor)
+		}
 	}
 
 	// ---------------------------------------------------------------------------------------------------
