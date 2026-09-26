@@ -406,7 +406,7 @@ private fun childrenOf(nodes: List<ParameterNode>, parentId: ParameterGroupId?):
 	return findGroup(nodes, parentId)?.children.orEmpty()
 }
 
-private fun flattenParamIds(nodes: List<ParameterNode>): List<ParameterId> {
+internal fun flattenParamIds(nodes: List<ParameterNode>): List<ParameterId> {
 	val ids = ArrayList<ParameterId>()
 	fun walk(list: List<ParameterNode>) {
 		for (node in list) {

@@ -53,6 +53,15 @@ class SelectedParameterTest {
         assertEquals(1, buildParameterPanelRows(model, "", mapOf("folder" to false)).size)
     }
 
+    @Test fun parametersTheTreeDoesNotPlaceStillShowAtTheRoot() {
+        val c = ParameterId("C")
+        val model = model().copy(parameters = model().parameters + Parameter(c, "C", -1f, 1f, 0f))
+        val rows = buildParameterPanelRows(model, "", mapOf("folder" to true))
+        assertEquals(c, assertIs<ParameterPanelRow.Single>(rows.last()).parameter.id)
+        assertEquals(1, rows.count { it is ParameterPanelRow.Single })
+        assertEquals(1, buildParameterPanelRows(model, "c", emptyMap()).size)
+    }
+
     @Test fun explicitParameterPointsReplaceSliderMarksWithoutChangingComponentMarks() {
         val model = model()
         val authored = model.copy(parameters = model.parameters.map { if (it.id == a) it.copy(keys = listOf(0.25f)) else it })

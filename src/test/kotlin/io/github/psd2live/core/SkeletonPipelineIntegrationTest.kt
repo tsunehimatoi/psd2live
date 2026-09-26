@@ -72,6 +72,12 @@ class SkeletonPipelineIntegrationTest {
 				"${drawable.id.raw} did not follow the upper body")
 		}
 
+		// The bone and pose parameters sit in their own folder, so the panel lists every one of them.
+		val skeletonGroup = puppet.parameterTree.filterIsInstance<org.umamo.runtime.model.ParameterNode.Group>()
+			.single { it.id.raw == "ParamGroupSkeleton" }
+		val grouped = skeletonGroup.children.filterIsInstance<org.umamo.runtime.model.ParameterNode.Param>().map { it.id.raw }.toSet()
+		assertTrue(arm.parameterId in grouped && SkeletonPoses.armSway.id.raw in grouped)
+
 		val idle = assertNotNull(preview.runtimeBundle.assets.firstOrNull { it.path.endsWith(".idle.motion3.json") })
 		assertTrue(idle.bytes.decodeToString().contains(SkeletonPoses.armSway.id.raw))
 	}

@@ -59,14 +59,20 @@ fun PuppetModel.freshParameterId(): ParameterId {
  * [ParameterNode.Param] in the flat parameters order (which is what the panel already renders for an
  * empty tree), so the first edit has a tree to rewrite.
  *
- * @return List<ParameterNode> The existing tree, or a freshly materialized flat one.
+ * A parameter the tree does not place - one a later pass added to [PuppetModel.parameters] without a
+ * leaf - joins the root after the tree, in parameters order, so no parameter drops out of the panel.
+ *
+ * @return List<ParameterNode> The existing tree with any unplaced parameter appended, or a freshly
+ *   materialized flat one.
  */
-internal fun PuppetModel.materializedParameterTree(): List<ParameterNode> =
+internal fun PuppetModel.materializedParameterTree(): List<ParameterNode> {
 	if (parameterTree.isEmpty()) {
-		parameters.map { parameter -> ParameterNode.Param(parameter.id) }
-	} else {
-		parameterTree
+		return parameters.map { parameter -> ParameterNode.Param(parameter.id) }
 	}
+	val placed = flattenParamIds(parameterTree).toSet()
+	val unplaced = parameters.filter { parameter -> parameter.id !in placed }
+	return if (unplaced.isEmpty()) parameterTree else parameterTree + unplaced.map { parameter -> ParameterNode.Param(parameter.id) }
+}
 
 /**
  * A copy of this model with a new animatable parameter [newId] named [name] of [kind] appended to the axis

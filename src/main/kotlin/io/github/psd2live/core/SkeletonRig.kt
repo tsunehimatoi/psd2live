@@ -24,8 +24,10 @@ import org.umamo.runtime.model.KeyformGrid
 import org.umamo.runtime.model.MeshDeltaForm
 import org.umamo.runtime.model.MeshForm
 import org.umamo.runtime.model.Parameter
+import org.umamo.runtime.model.ParameterGroupId
 import org.umamo.runtime.model.ParameterId
 import org.umamo.runtime.model.ParameterKind
+import org.umamo.runtime.model.ParameterNode
 import org.umamo.runtime.model.PuppetModel
 import org.umamo.runtime.model.RotationForm
 import org.umamo.runtime.model.RotationPivotForm
@@ -61,6 +63,7 @@ internal object SkeletonRig {
 	private val bodyId = DeformerId("DeformBodyXY")
 	private val breathId = DeformerId("DeformBodyZBreath")
 	private val headRotationId = DeformerId("DeformHeadRotation")
+	private val skeletonGroupId = ParameterGroupId("ParamGroupSkeleton")
 
 	/** Widest angle step between two keys of a corrective keyform axis. */
 	private const val KEY_STEP = 7.5
@@ -183,7 +186,28 @@ internal object SkeletonRig {
 		// 6. The welded parts glued, and no deformer left holding nothing.
 		model = model.copy(glues = model.glues + seams.glues)
 		model = pruneEmptyBones(model, bones)
+		model = withSkeletonGroup(model, bones, poses)
 		return model.withDerivedRenderRoot()
+	}
+
+	/**
+	 * The bone and pose parameters gathered into one folder of the parameter tree, after the folders
+	 * already there. A model with no tree lists every parameter flat and is left so.
+	 */
+	private fun withSkeletonGroup(model: PuppetModel, bones: List<SkeletonBone>, poses: List<SkeletonPose>): PuppetModel {
+		if (model.parameterTree.isEmpty()) return model
+		val present = model.parameters.mapTo(HashSet()) { it.id }
+		val ids = (bones.map { ParameterId(it.parameterId) } + poses.map { it.id }).distinct().filter { it in present }
+		if (ids.isEmpty()) return model
+		val skeletonIds = ids.toSet()
+		fun without(nodes: List<ParameterNode>): List<ParameterNode> = nodes.mapNotNull { node ->
+			when (node) {
+				is ParameterNode.Param -> node.takeIf { it.id !in skeletonIds }
+				is ParameterNode.Group -> if (node.id == skeletonGroupId) null else node.copy(children = without(node.children))
+			}
+		}
+		val group = ParameterNode.Group(skeletonGroupId, tr("model.group.skeleton"), true, ids.map { ParameterNode.Param(it) })
+		return model.copy(parameterTree = without(model.parameterTree) + group)
 	}
 
 	/** Every drawable's rest vertices in canvas pixels (y down), before glue. */
