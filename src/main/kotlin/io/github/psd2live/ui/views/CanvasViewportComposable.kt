@@ -1324,7 +1324,7 @@ fun CanvasViewportComposable(
 			}
 
 			// Bottom-left: zoom/FPS/physics stats pill.
-			if (badgeText.isNotEmpty() && (mode != CanvasMode.EDIT || (editor.skeletonDraft == null && editor.placement == null))) {
+			if (badgeText.isNotEmpty() && (mode != CanvasMode.EDIT || (editor.skeletonDraft == null && editor.placement == null && viewModel.swingSession == null))) {
 				Box(
 					modifier = Modifier
 						.align(Alignment.BottomStart)
