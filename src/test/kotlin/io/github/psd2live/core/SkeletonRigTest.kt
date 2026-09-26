@@ -304,6 +304,88 @@ class SkeletonRigTest {
 		assertEquals(expected.second, tip[1], 0.5f)
 	}
 
+	@Test fun aJointInsideOneMeshGetsNoRotationOfItsOwn() {
+		// Upper arm and forearm drawn as one mesh, the hand as another.
+		val arm = strip("arm", 100f, 95f, 370f, 16f, 10f)
+		val hand = strip("hand", 100f, 370f, 435f, 16f, 10f)
+		val spec = SkeletonSpec(bones = listOf(
+			chest,
+			bone("upper", "chest", BoneRole.UPPER_ARM, 100f, 100f, 100f, 250f, listOf("arm")),
+			bone("fore", "upper", BoneRole.FOREARM, 100f, 250f, 100f, 370f),
+			bone("hand", "fore", BoneRole.HAND, 100f, 370f, 100f, 430f, listOf("hand")),
+		))
+		val baked = SkeletonRig.apply(model(arm, hand), spec, frame)
+		// The elbow bends inside the arm's keyforms; the hand hangs from the shoulder and carries the elbow.
+		val rotations = baked.deformers.filterIsInstance<Deformer.Rotation>().associate { it.id.raw to it.parent?.raw }
+		assertEquals(mapOf("DeformSkel_upper" to "DeformSkelTorso", "DeformSkel_hand" to "DeformSkel_upper"), rotations)
+		val restPoints = canvas(baked).getValue(hand.id)
+		val expectedRest = rest(hand)
+		for (i in expectedRest.indices) assertEquals(expectedRest[i], restPoints[i], 0.05f, "rest coordinate $i")
+		val a = 17f
+		val b = -23f
+		val c = 11f
+		val values = mapOf("ParamArmLA" to a, "ParamArmLB" to b, "ParamHandL" to c)
+		val posed = canvas(baked, values).getValue(hand.id)
+		var checked = 0
+		for (v in 0 until expectedRest.size / 2) {
+			val x = expectedRest[v * 2]
+			val y = expectedRest[v * 2 + 1]
+			if (y < 400f) continue // clear of the wrist band
+			var p = rotate(x, y, 100f, 370f, c)
+			p = rotate(p.first, p.second, 100f, 250f, b)
+			p = rotate(p.first, p.second, 100f, 100f, a)
+			assertEquals(p.first, posed[v * 2], 1f)
+			assertEquals(p.second, posed[v * 2 + 1], 1f)
+			checked++
+		}
+		assertTrue(checked > 0)
+		// The pose tool still finds the forearm, whose rotation is gone, and the hand on its own deformer.
+		val bones = io.github.psd2live.ui.SkeletonPoseTool.posed(baked, spec, values.mapKeys { ParameterId(it.key) })
+		var wrist = rotate(100f, 370f, 100f, 250f, b)
+		wrist = rotate(wrist.first, wrist.second, 100f, 100f, a)
+		for (id in listOf("fore", "hand")) {
+			val bone = bones.single { it.bone.id == id }
+			val (x, y) = if (id == "fore") bone.tailX to bone.tailY else bone.headX to bone.headY
+			assertEquals(wrist.first, x, 0.5f, "$id wrist x")
+			assertEquals(wrist.second, y, 0.5f, "$id wrist y")
+		}
+	}
+
+	@Test fun aMeshHangsUnderTheBoneItMostlyDraws() {
+		// A sleeve from the lower upper arm to the wrist, mostly forearm, as a stocking reaches up the thigh.
+		val sleeve = strip("sleeve", 100f, 200f, 370f, 16f, 10f)
+		val spec = SkeletonSpec(bones = listOf(
+			chest,
+			bone("upper", "chest", BoneRole.UPPER_ARM, 100f, 100f, 100f, 250f, listOf("sleeve")),
+			bone("fore", "upper", BoneRole.FOREARM, 100f, 250f, 100f, 370f),
+		))
+		val baked = SkeletonRig.apply(model(sleeve), spec, frame)
+		// The shoulder stays as the pivot that carries the forearm, which carries the sleeve.
+		val rotations = baked.deformers.filterIsInstance<Deformer.Rotation>().associate { it.id.raw to it.parent?.raw }
+		assertEquals(mapOf("DeformSkel_upper" to "DeformSkelTorso", "DeformSkel_fore" to "DeformSkel_upper"), rotations)
+		assertEquals("DeformSkel_fore", baked.drawables.single().parentDeformerId?.raw)
+		val restPoints = rest(sleeve)
+		val actual = canvas(baked).getValue(sleeve.id)
+		for (i in restPoints.indices) assertEquals(restPoints[i], actual[i], 0.05f, "rest coordinate $i")
+		// Both joints still move their own part of the drawing.
+		val a = 20f
+		val b = -30f
+		val posed = canvas(baked, mapOf("ParamArmLA" to a, "ParamArmLB" to b)).getValue(sleeve.id)
+		var checked = 0
+		for (v in 0 until restPoints.size / 2) {
+			val y = restPoints[v * 2 + 1]
+			val p = when {
+				y < 215f -> rotate(restPoints[v * 2], y, 100f, 100f, a)
+				y > 300f -> rotate(restPoints[v * 2], y, 100f, 250f, b).let { rotate(it.first, it.second, 100f, 100f, a) }
+				else -> continue
+			}
+			assertEquals(p.first, posed[v * 2], 1f, "x $v")
+			assertEquals(p.second, posed[v * 2 + 1], 1f, "y $v")
+			checked++
+		}
+		assertTrue(checked > 0)
+	}
+
 	@Test fun elbowBendKeepsTheLimbWidthAndNeverFolds() {
 		val arm = strip("arm", 100f, 95f, 435f, 18f, 8f)
 		val baked = SkeletonRig.apply(model(arm), arm("arm"), frame)

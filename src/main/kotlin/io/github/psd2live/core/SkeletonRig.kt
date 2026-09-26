@@ -83,12 +83,6 @@ internal object SkeletonRig {
 	/** Widest angle step between two keys of a corrective keyform axis. */
 	private const val KEY_STEP = 7.5
 
-	/** A mesh with this share of its vertices on one bone is that bone's part of a split limb. */
-	private const val SPLIT_PART_SHARE = 0.8
-
-	/** A bone carrying this share of a spanning mesh counts as part of the drawing. */
-	private const val SPANNED_SHARE = 0.15
-
 	/**
 	 * How far, in canvas pixels, a vertex of one part may sit from a vertex or the outline of another and
 	 * still be welded to it, as the glue brush's matching distance.
@@ -225,9 +219,11 @@ internal object SkeletonRig {
 			model = skinDrawable(model, drawableId, canvas.getValue(drawableId), treeBones.getValue(root), parentOf, poses)
 		}
 
-		// 6. The welded parts glued, and no deformer left holding nothing.
+		// 6. The welded parts glued, no deformer left holding nothing, and no joint inside one mesh left as a
+		// rotation of its own.
 		model = model.copy(glues = model.glues + seams.glues)
 		model = pruneEmptyBones(model, joints)
+		model = foldLinkBones(model, joints)
 		model = withSkeletonGroup(model, bones, poses)
 		return model.withDerivedRenderRoot()
 	}
@@ -918,14 +914,13 @@ internal object SkeletonRig {
 	}
 
 	/**
-	 * The bone a mesh hangs under.
+	 * The bone a mesh hangs under: the one carrying most of it.
 	 *
-	 * A mesh that is essentially one bone's part - a split forearm with a sliver of elbow blend - hangs
-	 * under that bone, so each part of a split limb gets its own rotation deformer pivoting on its joint.
-	 * A mesh that spans several bones hangs under the highest of them: one rotation deformer turns the
-	 * whole art mesh at the limb's root, and every joint below it bends in the mesh's own keyforms.
-	 * Hanging it lower would only give it a pivot in the middle of the drawing and extra deformers that
-	 * hold nothing.
+	 * Each part of a split limb hangs under its own bone, pivoting on its joint. A mesh that spans
+	 * several bones hangs under the one it mostly draws - a stocking under the shin even when its top
+	 * reaches up the thigh - so turning that bone's rotation deformer turns the part of the drawing it
+	 * names. The rest of the mesh follows the other joints in its keyforms: the bones above it keep their
+	 * rotations as pivots that carry it, and those below it hold nothing and are pruned or folded.
 	 */
 	internal fun homeBone(skins: List<VertexSkin>, bones: List<SkinBone>): Int {
 		val load = DoubleArray(bones.size)
@@ -933,11 +928,7 @@ internal object SkeletonRig {
 			load[skin.from] += 1.0 - skin.weight
 			load[skin.to] += skin.weight.toDouble()
 		}
-		val total = load.sum().coerceAtLeast(1e-9)
-		val main = load.indices.maxBy { load[it] }
-		if (load[main] >= total * SPLIT_PART_SHARE) return main
-		fun depth(index: Int) = generateSequence(index) { bones[it].parent.takeIf { p -> p >= 0 } }.count()
-		return load.indices.filter { load[it] >= total * SPANNED_SHARE }.minBy { depth(it) }
+		return load.indices.maxBy { load[it] }
 	}
 
 	/**
@@ -1087,6 +1078,92 @@ internal object SkeletonRig {
 			deformers = deformers.filterNot { it.id in empty }
 		}
 		return model.copy(deformers = deformers)
+	}
+
+	/**
+	 * Bone rotations that hold no mesh but still carry the bones below them folded into those bones, top
+	 * down, so one mesh never has more than one rotation deformer: a thigh and shin drawn as one mesh hang
+	 * under the thigh alone, and the shoe below takes the knee into its own keyforms instead of hanging
+	 * from a shin rotation that turns nothing else.
+	 *
+	 * Only a link under another bone's rotation folds: angles add across two rotations, so the child's
+	 * angle is the sum of both and only its pivot needs keys along the link's arc (see [foldLink]).
+	 */
+	private fun foldLinkBones(model: PuppetModel, bones: List<SkeletonBone>): PuppetModel {
+		val boneDeformers = bones.mapTo(HashSet()) { DeformerId(it.deformerId) }
+		var result = model
+		for (bone in bones) {
+			val id = DeformerId(bone.deformerId)
+			val link = result.deformers.firstOrNull { it.id == id } as? Deformer.Rotation ?: continue
+			val parent = link.parent?.takeIf { it in boneDeformers } ?: continue
+			if (result.deformers.none { it.id == parent && it is Deformer.Rotation }) continue
+			if (result.drawables.any { it.parentDeformerId == id }) continue
+			val children = result.deformers.filter { it.parent == id }
+			if (children.isEmpty() || children.any { it !is Deformer.Rotation }) continue
+			result = foldLink(result, link, parent, children.map { it as Deformer.Rotation })
+		}
+		return result
+	}
+
+	/**
+	 * Re-hangs [children] from [link]'s parent [host] with [link] folded into each. The link's axes join
+	 * each child's, keyed as the host's meshes key them so the child's pivot moves between keys exactly
+	 * as the mesh it is drawn against; its angle and scale compose with the child's, and its pose shapes
+	 * add to the child's.
+	 */
+	private fun foldLink(model: PuppetModel, link: Deformer.Rotation, host: DeformerId, children: List<Deformer.Rotation>): PuppetModel {
+		val defaults = model.parameters.associate { it.id to it.default }
+		val default: (ParameterId) -> Float = { defaults[it] ?: 0f }
+		val linkAxes = link.geometryGrid!!.axes.map { axis ->
+			val meshKeys = model.drawables.filter { it.parentDeformerId == host }
+				.mapNotNull { d -> d.geometryGrid?.axes?.firstOrNull { it.parameterId == axis.parameterId }?.keys }
+				.maxByOrNull { it.size }
+			KeyformAxis(axis.parameterId, meshKeys ?: angleKeys(axis.keys.first() to axis.keys.last(), KEY_STEP))
+		}
+		val linkRest = rotationFormAt(link.geometryGrid, default) ?: RotationPivotForm(0f, 0f, 0f, 1f)
+
+		val folded = children.associate { child ->
+			val keys = LinkedHashMap<ParameterId, FloatArray>()
+			for (axis in linkAxes + child.geometryGrid!!.axes) {
+				keys[axis.parameterId] = (keys[axis.parameterId]?.let { it + axis.keys } ?: axis.keys).distinct().sorted().toFloatArray()
+			}
+			val axes = keys.map { KeyformAxis(it.key, it.value) }
+			val childRest = rotationFormAt(child.geometryGrid, default) ?: RotationPivotForm(0f, 0f, 0f, 1f)
+
+			// The child's pivot in the host's space, where the evaluator puts it at [values].
+			fun pivot(values: Map<ParameterId, Float>): FloatArray {
+				val worlds = worlds(model, values, setOf(child.id))
+				val world = worlds.getValue(child.id) as RotationWorld
+				return inverse(worlds.getValue(host), world.xform.ox, world.xform.oy)
+			}
+
+			val grid = KeyformGrid(axes, cartesian(axes).map { coordinate ->
+				val values = axes.indices.associate { axes[it].parameterId to axes[it].keys[coordinate[it]] }
+				val at: (ParameterId) -> Float = { values[it] ?: default(it) }
+				val l = rotationFormAt(link.geometryGrid, at)!!
+				val c = rotationFormAt(child.geometryGrid, at)!!
+				val origin = pivot(values)
+				KeyformCell(coordinate, RotationPivotForm(origin[0], origin[1], l.angle + c.angle, l.scale * c.scale))
+			})
+
+			val poses = (link.blendShapes + child.blendShapes).map { it.parameterId }.distinct()
+			val blendShapes = child.blendShapes.filterNot { it.parameterId in poses } + poses.map { pose ->
+				val linkShape = link.blendShapes.firstOrNull { it.parameterId == pose }
+				val childShape = child.blendShapes.firstOrNull { it.parameterId == pose }
+				val binding = childShape ?: linkShape!!
+				binding.copy(forms = binding.keys.indices.map { ki ->
+					if (ki == binding.neutralIndex) return@map null
+					val l = linkShape?.forms?.getOrNull(ki)
+					val c = childShape?.forms?.getOrNull(ki)
+					val origin = pivot(mapOf(pose to binding.keys[ki]))
+					RotationForm(origin[0], origin[1], (l?.angle ?: linkRest.angle) + (c?.angle ?: childRest.angle),
+						(l?.scale ?: linkRest.scale) * (c?.scale ?: childRest.scale), false, false,
+						child.opacity, child.multiplyColor, child.screenColor)
+				})
+			}
+			child.id to child.copy(parent = host, baseAngle = link.baseAngle + child.baseAngle, geometryGrid = grid, blendShapes = blendShapes)
+		}
+		return model.copy(deformers = model.deformers.mapNotNull { if (it.id == link.id) null else folded[it.id] ?: it })
 	}
 
 	// ---------------------------------------------------------------------------------------------------
