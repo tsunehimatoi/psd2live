@@ -229,7 +229,9 @@ fun CanvasViewportComposable(
     }
     LaunchedEffect(mode, canvasState.historySnapshot?.headNodeId, canvasState.parameterValues, canvasState.previewModel?.rig?.puppet) {
         if (mode == CanvasMode.EDIT) {
-            if (!editor.busy && editor.inGesture) editor.cancel()
+            // A pose drag is the one gesture whose whole output is parameter values, so its own writes
+            // must not read as the document changing under it.
+            if (!editor.busy && editor.inGesture && editor.poseDrag == null) editor.cancel()
             editor.reconcileWithDocument()
             if (!editor.busy && canvasState.previewModel != null) editor.target()?.let { t -> editor.vertices=editor.vertices.filter { it in 0 until t.count }.toSet() }
         }
@@ -531,7 +533,7 @@ fun CanvasViewportComposable(
 					ShortcutAction.TOOL_BRUSH -> { editor.activateTool(CanvasTool.BRUSH); true }
 					ShortcutAction.TOOL_SMOOTH -> { editor.activateTool(CanvasTool.SMOOTH); true }
 					ShortcutAction.TOOL_INFLATE -> { editor.activateTool(CanvasTool.INFLATE); true }
-					ShortcutAction.TOOL_SKELETON_WARP -> { editor.activateTool(CanvasTool.SKELETON_WARP); true }
+					ShortcutAction.TOOL_SKELETON_POSE -> { editor.activateTool(CanvasTool.SKELETON_POSE); true }
 					ShortcutAction.TOOL_CREATE_WARP -> { editor.activateTool(CanvasTool.CREATE_WARP); true }
 					ShortcutAction.TOOL_CREATE_ROTATION -> { editor.activateTool(CanvasTool.CREATE_ROTATION); true }
 					ShortcutAction.TOOL_CREATE_DEFORM_PATH -> { editor.activateTool(CanvasTool.CREATE_DEFORM_PATH); true }

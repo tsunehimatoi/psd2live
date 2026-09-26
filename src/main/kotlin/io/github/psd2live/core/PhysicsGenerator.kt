@@ -107,16 +107,19 @@ object PhysicsGenerator {
 		rule.outputParameter in availableParameterIds && rule.inputs.all { it.parameter in availableParameterIds }
 	}
 
-	/** Gentle delayed motion on distal bones; each output is unique and can be overridden by a user edit. */
+	/**
+	 * Follow-through on the loose appendages: every tail segment after the first trails the one it hangs
+	 * from, and wings trail the body. Arms and legs stay off physics - they are posed and animated
+	 * directly, and a simulation would overwrite both. Each output is unique and a user edit overrides it.
+	 */
 	internal fun skeletonRules(spec: SkeletonSpec?, available: Set<String>): List<PhysicsRule> {
 		if (spec?.enabled != true) return emptyList()
-		return spec.bones.filter { it.role in setOf(BoneRole.FOREARM, BoneRole.SHIN, BoneRole.TAIL, BoneRole.WING) }
+		return spec.bones.filter { it.role == BoneRole.WING || (it.role == BoneRole.TAIL && it.chainIndex > 1) }
 			.mapNotNull { bone ->
 				val input = when (bone.role) {
-					BoneRole.WING -> "ParamBodyAngleZ"
 					BoneRole.TAIL -> spec.bone(bone.parentId ?: "")?.takeIf { it.role == BoneRole.TAIL }?.parameterId
 						?: "ParamBodyAngleZ"
-					else -> spec.bone(bone.parentId ?: "")?.parameterId ?: "ParamBodyAngleZ"
+					else -> "ParamBodyAngleZ"
 				}
 				if (input !in available || bone.parameterId !in available || input == bone.parameterId) return@mapNotNull null
 				RigPhysicsEdit("PhysicsSkel_${bone.id}", bone.name, input, bone.parameterId,

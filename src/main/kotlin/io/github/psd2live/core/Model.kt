@@ -176,6 +176,8 @@ data class PipelineConfig(
 	val motionBlink: Boolean = true,
 	val motionNod: Boolean = true,
 	val motionShake: Boolean = true,
+	/** Skeleton one-shots (tail swing, crouch, weight shift), exported when the skeleton can play them. */
+	val motionSkeleton: Boolean = true,
 	val generatePhysics: Boolean = true,
 	val physicsFrontHair: Boolean = true,
 	val physicsBackHair: Boolean = true,

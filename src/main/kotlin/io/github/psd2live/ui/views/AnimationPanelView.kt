@@ -1,5 +1,6 @@
 package io.github.psd2live.ui.views
 
+import io.github.psd2live.core.SkeletonMotions
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -262,6 +263,33 @@ private fun MotionsListSection(
 			activeMotionName = viewModel.activeMotionName,
 			isAnimRunning = state.animationEnabled,
 		)
+
+		// Skeleton one-shots: only the ones the current skeleton can actually play.
+		val skeleton = state.previewModel?.config?.rigEdits?.skeleton
+		for ((name, key, tracks) in listOf(
+			Triple("TailSwing", "export.motion.tailSwing", SkeletonMotions.tailSwing(skeleton)),
+			Triple("Crouch", "export.motion.crouch", SkeletonMotions.crouch(skeleton)),
+			Triple("WeightShift", "export.motion.weightShift", SkeletonMotions.weightShift(skeleton)),
+		)) {
+			if (tracks.isEmpty()) continue
+			DccMotionRow(
+				name = name,
+				title = tr(key),
+				enabled = state.motionSkeleton,
+				onEnabledChange = { viewModel.setMotionSkeleton(it) },
+				onPlay = { viewModel.triggerMotion(name) },
+				isLoop = false,
+				durationSec = tracks.maxOf { it.second.last().first },
+				curveCount = tracks.size,
+				affectedParams = tracks.map { (id, points) ->
+					val low = points.minOf { it.second }
+					val high = points.maxOf { it.second }
+					id to "%.1f ~ %.1f".format(low, high)
+				},
+				activeMotionName = viewModel.activeMotionName,
+				isAnimRunning = state.animationEnabled,
+			)
+		}
 	}
 }
 

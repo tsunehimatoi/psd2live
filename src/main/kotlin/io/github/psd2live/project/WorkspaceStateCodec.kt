@@ -331,6 +331,7 @@ internal object WorkspaceStateCodec {
         put("motionBlink", state.motionBlink)
         put("motionNod", state.motionNod)
         put("motionShake", state.motionShake)
+        put("motionSkeleton", state.motionSkeleton)
         put("generatePhysics", state.generatePhysics)
         put("physicsFrontHair", state.physicsFrontHair)
         put("physicsBackHair", state.physicsBackHair)
@@ -425,6 +426,7 @@ internal object WorkspaceStateCodec {
         put("motionBlink", state.motionBlink)
         put("motionNod", state.motionNod)
         put("motionShake", state.motionShake)
+        put("motionSkeleton", state.motionSkeleton)
         put("generatePhysics", state.generatePhysics)
         put("physicsFrontHair", state.physicsFrontHair)
         put("physicsBackHair", state.physicsBackHair)
@@ -541,6 +543,7 @@ internal object WorkspaceStateCodec {
         motionBlink = value["motionBlink"]?.jsonPrimitive?.boolean ?: base.motionBlink,
         motionNod = value["motionNod"]?.jsonPrimitive?.boolean ?: base.motionNod,
         motionShake = value["motionShake"]?.jsonPrimitive?.boolean ?: base.motionShake,
+        motionSkeleton = value["motionSkeleton"]?.jsonPrimitive?.boolean ?: base.motionSkeleton,
         generatePhysics = value["generatePhysics"]?.jsonPrimitive?.boolean ?: base.generatePhysics,
         physicsFrontHair = value["physicsFrontHair"]?.jsonPrimitive?.boolean ?: base.physicsFrontHair,
         physicsBackHair = value["physicsBackHair"]?.jsonPrimitive?.boolean ?: base.physicsBackHair,

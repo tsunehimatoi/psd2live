@@ -70,6 +70,7 @@ import java.awt.Cursor
 /** Dock modules the window menu can show or hide, in menu order. */
 internal val WINDOW_MODULES = listOf(
 	"hierarchy",
+	"skeleton",
 	"history",
 	"log",
 	"settings",
@@ -360,6 +361,7 @@ internal fun moduleTitle(id: String): String = when {
 	isCanvasModule(id) -> tr("dock.canvas")
 	else -> tr(when (id) {
 		"hierarchy" -> "dock.hierarchy"
+		"skeleton" -> "dock.skeleton"
 		"history" -> "dock.history"
 		"log" -> "dock.log"
 		"settings" -> "dock.settings"

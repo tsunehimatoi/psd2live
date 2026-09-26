@@ -961,7 +961,8 @@ class PSD2LiveViewModel : AutoCloseable {
         val clampedWidth = width.coerceIn(100f, 600f)
         updateState { current ->
             val hidden = current.activeWorkspace.hiddenModules.toMutableSet().apply {
-                if (collapsed) add("hierarchy") else remove("hierarchy")
+                // The skeleton tab shares the hierarchy's dock, so the two collapse together.
+                if (collapsed) { add("hierarchy"); add("skeleton") } else { remove("hierarchy"); remove("skeleton") }
             }
             val layoutChanged = current.hierarchyWidth != clampedWidth || current.activeWorkspace.hiddenModules != hidden
             val searchChanged = current.hierarchySearch != search
@@ -1564,7 +1565,7 @@ class PSD2LiveViewModel : AutoCloseable {
 	fun setMotionIdle(enabled: Boolean) {
 		updateState { current ->
 			val next = current.copy(motionIdle = enabled)
-			val updated = next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake)
+			val updated = next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake || next.motionSkeleton)
 			if (!enabled) {
 				val idleReset = mapOf(
 					StandardParameters.ANGLE_X to 0f,
@@ -1592,7 +1593,7 @@ class PSD2LiveViewModel : AutoCloseable {
 	fun setMotionBlink(enabled: Boolean) {
 		updateState { current ->
 			val next = current.copy(motionBlink = enabled)
-			val updated = next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake)
+			val updated = next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake || next.motionSkeleton)
 			if (!enabled) {
 				val blinkReset = mapOf(
 					StandardParameters.EYE_L_OPEN to 1.0f,
@@ -1608,7 +1609,7 @@ class PSD2LiveViewModel : AutoCloseable {
 	fun setMotionNod(enabled: Boolean) {
 		updateState { current ->
 			val next = current.copy(motionNod = enabled)
-			val updated = next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake)
+			val updated = next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake || next.motionSkeleton)
 			if (!enabled && activeSoftwareMotionName == "nod") {
 				val nodReset = mapOf(
 					StandardParameters.ANGLE_Y to 0f,
@@ -1626,7 +1627,7 @@ class PSD2LiveViewModel : AutoCloseable {
 	fun setMotionShake(enabled: Boolean) {
 		updateState { current ->
 			val next = current.copy(motionShake = enabled)
-			val updated = next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake)
+			val updated = next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake || next.motionSkeleton)
 			if (!enabled && activeSoftwareMotionName == "shake") {
 				val shakeReset = mapOf(
 					StandardParameters.ANGLE_X to 0f,
@@ -1640,6 +1641,16 @@ class PSD2LiveViewModel : AutoCloseable {
 		scheduleRuntimeBundleUpdate()
 		if (enabled) triggerMotion("Shake")
 	    editorChanged()
+	}
+
+	fun setMotionSkeleton(enabled: Boolean) {
+		updateState { current ->
+			val next = current.copy(motionSkeleton = enabled)
+			next.copy(exportMotions = next.motionIdle || next.motionBlink || next.motionNod || next.motionShake || next.motionSkeleton)
+		}
+		if (!enabled && activeSoftwareMotionName in skeletonMotionNames) activeSoftwareMotionName = null
+		scheduleRuntimeBundleUpdate()
+		editorChanged()
 	}
 
 	fun setGeneratePhysics(enabled: Boolean) {
@@ -1886,6 +1897,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				motionBlink = true,
 				motionNod = true,
 				motionShake = true,
+				motionSkeleton = true,
 				generatePhysics = true,
 				physicsFrontHair = true,
 				physicsBackHair = true,
@@ -3191,6 +3203,17 @@ class PSD2LiveViewModel : AutoCloseable {
 	    markWorkspaceChanged()
 	}
 
+	/** Several parameters in one state update, so a gesture that moves a chain redraws once, not per joint. */
+	fun setParameterValues(values: Map<ParameterId, Float>) {
+		if (values.isEmpty()) return
+		updateState { current ->
+			val parameters = current.previewModel?.rig?.puppet?.parameters?.associateBy { it.id }.orEmpty()
+			val clamped = values.mapValues { (id, value) -> parameters[id]?.let { value.coerceIn(it.min, it.max) } ?: value }
+			current.copy(parameterValues = current.parameterValues + clamped)
+		}
+		markWorkspaceChanged()
+	}
+
 	private var parameterSnapJob: Job? = null
 
 	/** True while a snap-to-nearest-key animation is running. */
@@ -3961,8 +3984,23 @@ class PSD2LiveViewModel : AutoCloseable {
 			"idle" -> {
 				elapsed = 0.0
 			}
+			in skeletonMotionNames -> {
+				activeSoftwareMotionName = group.lowercase()
+				activeSoftwareMotionElapsed = 0f
+			}
 		}
 	}
+
+	private val skeletonMotionNames: Set<String> get() = setOf("tailswing", "crouch", "weightshift")
+
+	/** The tracks of a skeleton one-shot, as exported. */
+	private fun skeletonMotionTracks(name: String, spec: io.github.psd2live.core.SkeletonSpec?): List<io.github.psd2live.core.MotionTrack> =
+		when (name) {
+			"tailswing" -> io.github.psd2live.core.SkeletonMotions.tailSwing(spec)
+			"crouch" -> io.github.psd2live.core.SkeletonMotions.crouch(spec)
+			"weightshift" -> io.github.psd2live.core.SkeletonMotions.weightShift(spec)
+			else -> emptyList()
+		}
 
 	private fun startMotionLoop() {
 		motionJob = scope.launch {
@@ -3986,6 +4024,7 @@ class PSD2LiveViewModel : AutoCloseable {
 				var shakeAngleX = 0f
 				var shakeBodyX = 0f
 				var shakeAngleZ = 0f
+				var skeletonMotion: Map<ParameterId, Float> = emptyMap()
 
 				val activeMotion = activeSoftwareMotionName
 				if (activeMotion != null && anim) {
@@ -4041,6 +4080,11 @@ class PSD2LiveViewModel : AutoCloseable {
 							if (t > 1.2f) {
 								activeSoftwareMotionName = null
 							}
+						}
+						in skeletonMotionNames -> {
+							val tracks = skeletonMotionTracks(activeMotion, current.previewModel?.config?.rigEdits?.skeleton)
+							val values = io.github.psd2live.core.SkeletonMotions.oneShot(tracks, t.toDouble())
+							if (values == null) activeSoftwareMotionName = null else skeletonMotion = values
 						}
 					}
 				}
@@ -4114,6 +4158,7 @@ class PSD2LiveViewModel : AutoCloseable {
 						shakeAngleX = shakeAngleX,
 						shakeBodyX = shakeBodyX,
 						shakeAngleZ = shakeAngleZ,
+						skeletonMotion = skeletonMotion,
 					)
 					latestLiveParameters = liveParams
 					if (current.sdkStatus != "ready") {
@@ -4142,6 +4187,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		shakeAngleX: Float = 0f,
 		shakeBodyX: Float = 0f,
 		shakeAngleZ: Float = 0f,
+		skeletonMotion: Map<ParameterId, Float> = emptyMap(),
 	): Map<ParameterId, Float> {
 		if (current.meshOnly) {
 			return model.rig.puppet.parameters.associate { it.id to it.default }
@@ -4188,10 +4234,10 @@ class PSD2LiveViewModel : AutoCloseable {
 			StandardParameters.HAIR_FRONT to if (hasFrontHair) frontHair.coerceIn(-1f, 1f) else 0f,
 			StandardParameters.HAIR_BACK to if (hasBackHair) backHair.coerceIn(-1f, 1f) else 0f,
 		)
-		val skeletonIdle = if (hasIdle) io.github.psd2live.core.SkeletonIdle.sample(model.config.rigEdits.skeleton, elapsed)
+		val skeletonIdle = if (hasIdle) io.github.psd2live.core.SkeletonMotions.liveIdle(model.config.rigEdits.skeleton, elapsed)
 			else emptyMap()
 		val available = model.rig.puppet.parameters.mapTo(HashSet()) { it.id }
-		return base + skeletonIdle.filterKeys(available::contains)
+		return base + skeletonIdle.filterKeys(available::contains) + skeletonMotion.filterKeys(available::contains)
 	}
 
 	private fun blinkAt(phase: Double): Float = if (phase in 4.18..4.46) {

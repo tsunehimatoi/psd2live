@@ -170,7 +170,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
             "headStrength", "bodyStrength", "mouthThickness", "exportPixelsPerUnit").forEach { put(it, number()) }
         listOf("meshOnly", "generateDeformers", "featureDisplacementEnabled", "mouthOutlineEnabled",
             "generatePhysics", "physicsFrontHair", "physicsBackHair", "physicsEyeJelly",
-            "exportMotions", "motionIdle", "motionBlink", "motionNod", "motionShake",
+            "exportMotions", "motionIdle", "motionBlink", "motionNod", "motionShake", "motionSkeleton",
             "exportCmo3", "exportMoc3", "exportJson", "exportHiddenParts", "exportHiddenDrawables",
             "exportGuideImageParts", "exportIncludePhysics", "exportIncludeUserData", "exportIncludeDisplayInfo").forEach { put(it, boolean()) }
         put("mouthShape", choices("flat", "smile", "w", "custom"))

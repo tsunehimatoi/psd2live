@@ -93,7 +93,7 @@ internal enum class CanvasTool(val action: ShortcutAction) {
     BRUSH(ShortcutAction.TOOL_BRUSH),
     SMOOTH(ShortcutAction.TOOL_SMOOTH),
     INFLATE(ShortcutAction.TOOL_INFLATE),
-    SKELETON_WARP(ShortcutAction.TOOL_SKELETON_WARP),
+    SKELETON_POSE(ShortcutAction.TOOL_SKELETON_POSE),
     CREATE_WARP(ShortcutAction.TOOL_CREATE_WARP),
     CREATE_ROTATION(ShortcutAction.TOOL_CREATE_ROTATION),
     CREATE_DEFORM_PATH(ShortcutAction.TOOL_CREATE_DEFORM_PATH),
@@ -271,6 +271,7 @@ internal val VERTEX_TOOLS = setOf(
 internal val TOOLBAR_TOOL_ORDER = listOf(
     CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT,
     CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE,
+    CanvasTool.SKELETON_POSE,
     CanvasTool.SUBDIVIDE, CanvasTool.KNIFE, CanvasTool.GLUE,
     CanvasTool.PAINT_BRUSH, CanvasTool.PAINT_PENCIL, CanvasTool.PAINT_ERASER,
     CanvasTool.PAINT_BUCKET, CanvasTool.PAINT_EYEDROPPER,
@@ -278,7 +279,7 @@ internal val TOOLBAR_TOOL_ORDER = listOf(
 )
 
 /** A divider is drawn after these, when there are visible tools on both sides of them. */
-internal val TOOLBAR_DIVIDERS = listOf(CanvasTool.BRUSH_SELECT, CanvasTool.SKELETON_WARP)
+internal val TOOLBAR_DIVIDERS = listOf(CanvasTool.BRUSH_SELECT, CanvasTool.SKELETON_POSE)
 
 /**
  * The left toolbar's palette for [mode]. Creation tools are not listed here — use the tree
@@ -290,11 +291,12 @@ internal val TOOLBAR_DIVIDERS = listOf(CanvasTool.BRUSH_SELECT, CanvasTool.SKELE
 internal fun toolbarGroups(mode: EditHierarchyMode): List<List<CanvasTool>> = when (mode) {
     EditHierarchyMode.SELECT -> listOf(
         listOf(CanvasTool.SELECT, CanvasTool.LASSO_SELECT),
+        listOf(CanvasTool.SKELETON_POSE),
     )
     EditHierarchyMode.DEFORM -> listOf(
         listOf(CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT),
         listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE),
-        listOf(CanvasTool.SKELETON_WARP),
+        listOf(CanvasTool.SKELETON_POSE),
     )
     EditHierarchyMode.EDIT -> listOf(
         listOf(CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT),
@@ -399,14 +401,18 @@ internal class CanvasEditor(
 	var selectedBoneId by mutableStateOf<String?>(null)
 		private set
 
+	/** Opens the skeleton for editing, proposing one from the layers' tags the first time. */
 	fun beginSkeletonEdit() {
 		if (placement != null) cancelPlacement()
 		val existing = state.rigEdits.skeleton?.takeIf { it.bones.isNotEmpty() }
 			?: state.previewModel?.config?.rigEdits?.skeleton?.takeIf { it.bones.isNotEmpty() }
-		skeletonDraft = existing ?: state.previewModel?.let { preview ->
-			io.github.psd2live.core.SkeletonAutoBuilder.build(preview.analysis, preview.rig)
-		}
-		selectedBoneId = skeletonDraft?.bones?.firstOrNull { !it.role.anchor }?.id
+		val spec = existing ?: state.previewModel?.let { io.github.psd2live.core.SkeletonAutoBuilder.build(it.analysis, it.rig) } ?: return
+		openSkeletonDraft(spec)
+	}
+
+	private fun openSkeletonDraft(spec: io.github.psd2live.core.SkeletonSpec) {
+		skeletonDraft = spec
+		selectedBoneId = spec.bones.firstOrNull { !it.role.anchor }?.id
 	}
 
 	fun cancelSkeletonEdit() {
@@ -418,6 +424,8 @@ internal class CanvasEditor(
 		val draft = skeletonDraft ?: return
 		viewModel.setSkeleton(draft.copy(enabled = true))
 		cancelSkeletonEdit()
+		// The next thing anyone does with a fresh skeleton is pull on it.
+		activateTool(CanvasTool.SKELETON_POSE)
 	}
 
 	fun disableSkeleton() {
@@ -432,10 +440,66 @@ internal class CanvasEditor(
 		selectedBoneId = id
 	}
 
-	fun setBoneJointMode(mode: io.github.psd2live.core.JointMode) {
+	/** Half width of the selected bone's joint blend band in canvas pixels; null returns it to automatic. */
+	fun setBoneBlendWidth(width: Float?) {
 		val draft = skeletonDraft ?: return
 		val bone = draft.bone(selectedBoneId ?: return) ?: return
-		skeletonDraft = draft.withBone(bone.copy(jointMode = mode))
+		skeletonDraft = draft.withBone(bone.copy(blendWidth = width?.coerceAtLeast(0f)))
+	}
+
+	/** The selected bone's joint limits in parameter degrees; each is kept on its own side of rest. */
+	fun setBoneLimits(min: Float, max: Float) {
+		val draft = skeletonDraft ?: return
+		val bone = draft.bone(selectedBoneId ?: return) ?: return
+		skeletonDraft = draft.withBone(bone.copy(minAngle = min.coerceIn(-180f, 0f), maxAngle = max.coerceIn(0f, 180f)))
+	}
+
+	/** The skeleton the rig was built with, which is what the pose tool drives. */
+	val bakedSkeleton: io.github.psd2live.core.SkeletonSpec?
+		get() = state.previewModel?.config?.rigEdits?.skeleton?.takeIf { it.enabled }
+
+	/** Bone under the pointer while the pose tool is armed, and the bone being dragged. */
+	var poseHover by mutableStateOf<BoneHit?>(null)
+	var poseDrag by mutableStateOf<BoneHit?>(null)
+
+	/** Whether the pose tool shades each skinned mesh by the bones it follows. */
+	var showSkeletonWeights by mutableStateOf(false)
+
+	private var posedCache: Triple<PuppetModel, Map<ParameterId, Float>, List<PosedBone>>? = null
+
+	/** The bones where the current pose holds them, cached per model and pose: hover asks on every move. */
+	fun posedBones(): List<PosedBone> {
+		val puppet = model
+		val values = state.parameterValues
+		posedCache?.let { (m, v, bones) -> if (m === puppet && v == values) return bones }
+		return SkeletonPoseTool.posed(puppet, bakedSkeleton, values).also { posedCache = Triple(puppet, values, it) }
+	}
+
+	fun beginPose(pos: Offset, viewport: CanvasViewport): Boolean {
+		poseDrag = SkeletonPoseTool.hit(posedBones(), pos, viewport)
+		return poseDrag != null
+	}
+
+	fun dragPose(pos: Offset, viewport: CanvasViewport, ik: Boolean) {
+		val hit = poseDrag ?: return
+		val spec = bakedSkeleton ?: return
+		val values = SkeletonPoseTool.drag(spec, posedBones(), hit, viewport.canvasX(pos.x), viewport.canvasY(pos.y), state.parameterValues, ik)
+		if (values.isNotEmpty()) viewModel.setParameterValues(values)
+	}
+
+	fun endPose() { poseDrag = null }
+
+	/** The pose tool is armed and has a baked skeleton to drive. */
+	fun posing(): Boolean = tool == CanvasTool.SKELETON_POSE &&
+		(hierarchyMode == EditHierarchyMode.SELECT || hierarchyMode == EditHierarchyMode.DEFORM) && bakedSkeleton != null
+
+	fun hoverPose(pos: Offset, viewport: CanvasViewport) {
+		poseHover = SkeletonPoseTool.hit(posedBones(), pos, viewport)
+	}
+
+	/** Every bone and leg pose back at rest. */
+	fun resetSkeletonPose() {
+		viewModel.setParameterValues(SkeletonPoseTool.rest(bakedSkeleton))
 	}
 
 	fun bindDrawableToSelectedBone(drawableId: String) {
@@ -672,11 +736,6 @@ internal class CanvasEditor(
     var activeBezierHandle by mutableStateOf<Triple<Int, Int, BezierHandleDir>?>(null)
     var hoveredBezierAnchor by mutableStateOf<Pair<Int, Int>?>(null)
     var hoveredBezierHandle by mutableStateOf<Triple<Int, Int, BezierHandleDir>?>(null)
-
-    // Level 3 Skeleton Warp Deformer state
-    var skeletonWarpState by mutableStateOf<SkeletonWarpState?>(null)
-    var activeSkeletonJoint by mutableStateOf<Int?>(null)
-    var hoveredSkeletonJoint by mutableStateOf<Int?>(null)
 
     // Interactive Creation state
     var isCreatingWarp by mutableStateOf(false)
@@ -1198,16 +1257,6 @@ internal class CanvasEditor(
     /** Only structural mesh editing moves UVs; deformation writes the current pose. */
     private fun geometryCommand(t: CanvasTarget, points: FloatArray, ctrl: Boolean = false) =
         canvasGeometryCommand(hierarchyMode, t.kind, t.id, coordinate(t), points, ctrl)
-
-    fun resetSkeletonWarpPose() {
-        val t = target() ?: return
-        val s = skeletonWarpState ?: return
-        s.resetPose()
-        val evaluated = s.evaluateLattice(s.latticeRows, s.latticeCols)
-        skeletonWarpSourcePoints = evaluated.copyOf()
-        val cmd = geometryCommand(t, evaluated)
-        commit(cmd)
-    }
 
     fun targetLayerId(t: CanvasTarget? = target(deformerId = null)): String? {
         if (t == null) return state.selectedLayerId
@@ -2077,8 +2126,8 @@ internal class CanvasEditor(
         glueStroking = false
         glueStrokeA = emptySet()
         glueStrokeB = emptySet()
+        poseDrag = null
         activeBezierAnchor = null; activeBezierHandle = null
-        activeSkeletonJoint = null
         activeBrushWeights = null; activeBrushCenter = null; endMeshStroke()
         brushInitialBase = null; brushInitialScreen = null; brushAffectedIndices = emptySet()
         marquee = emptyList(); draft = emptyList(); draftPathId = null; drawingPath = false
@@ -2118,10 +2167,6 @@ internal class CanvasEditor(
         cancel()
         tool = next
         error = null
-        if (next == CanvasTool.SKELETON_WARP) {
-            editLevel = 3
-            ensureSkeletonWarpState()
-        }
         if (next == CanvasTool.LASSO_SELECT) selectionStyle = SelectionStyle.LASSO
         else if (next == CanvasTool.SELECT) selectionStyle = SelectionStyle.BOX
         if (next == CanvasTool.SELECT && objectMode) selection = emptyMap()
@@ -2966,6 +3011,8 @@ internal class CanvasEditor(
      * Creation tools are handled separately and never force Edit.
      */
     private fun modeForTool(tool: CanvasTool): EditHierarchyMode = when {
+        // Posing needs no selected part; object mode is where it lands from paint or edit mode.
+        tool == CanvasTool.SKELETON_POSE -> EditHierarchyMode.SELECT
         tool in PAINT_TOOLS -> EditHierarchyMode.PAINT
         tool == CanvasTool.KNIFE || tool == CanvasTool.SUBDIVIDE -> EditHierarchyMode.EDIT
         else -> EditHierarchyMode.DEFORM
@@ -3031,7 +3078,6 @@ internal class CanvasEditor(
             selection = emptyMap()
         } else if (next == EditHierarchyMode.DEFORM) {
             if (editLevel == 2) ensureBezierState()
-            else if (editLevel == 3 || tool == CanvasTool.SKELETON_WARP) ensureSkeletonWarpState()
         }
         if (tool !in toolbarGroups(next).flatten()) {
             tool = toolbarGroups(next).flatten().first()
@@ -3047,9 +3093,6 @@ internal class CanvasEditor(
         editLevel = level
         if (level == 2 && hierarchyMode == EditHierarchyMode.DEFORM) {
             ensureBezierState()
-        } else if (level == 3 && hierarchyMode == EditHierarchyMode.DEFORM) {
-            ensureSkeletonWarpState()
-            tool = CanvasTool.SKELETON_WARP
         }
         clearHover()
     }
@@ -3081,31 +3124,6 @@ internal class CanvasEditor(
         }
     }
 
-    private var skeletonWarpTargetId: String? = null
-    private var skeletonWarpSourcePoints: FloatArray? = null
-
-    fun ensureSkeletonWarpState() {
-        val t = target()
-        if (t != null && t.kind == "warp") {
-            val warp = model.deformers.filterIsInstance<Deformer.Warp>().firstOrNull { it.id.raw == t.id }
-            if (warp != null) {
-                val rows = warp.rows
-                val cols = warp.columns
-                val cur = skeletonWarpState
-                if (cur == null || skeletonWarpTargetId != t.id || cur.latticeRows != rows || cur.latticeCols != cols ||
-                    (!dragging && !busy && skeletonWarpSourcePoints?.contentEquals(t.geometry.points) != true)) {
-                    val sState = SkeletonWarpState(rows, cols)
-                    sState.initFromLattice(t.geometry.points, rows, cols)
-                    skeletonWarpState = sState
-                    skeletonWarpTargetId = t.id
-                    skeletonWarpSourcePoints = t.geometry.points.copyOf()
-                }
-            }
-        } else {
-            skeletonWarpState = null
-        }
-    }
-
     fun clearHover() {
         cursor = null
         altHeld = false
@@ -3114,8 +3132,7 @@ internal class CanvasEditor(
         hoveredHandle = BoundingHandle.NONE
         hoveredBezierAnchor = null
         hoveredBezierHandle = null
-        hoveredSkeletonJoint = null
-        activeSkeletonJoint = null
+        poseHover = null
         isHoveringObject = false
         // The hierarchy panel publishes the same pair from its own hover, so only retract a highlight
         // this editor actually put up — a tool switch must not blink out the panel's.
@@ -3306,6 +3323,10 @@ internal class CanvasEditor(
             subdivideEdges = target()?.takeIf { it.kind == "mesh" }?.let { edgesWithin(pos, pos, it, viewport) }.orEmpty()
         }
         if (dragging) return
+        if (posing()) {
+            hoverPose(pos, viewport)
+            return
+        }
         hoveredBezierAnchor = null
         hoveredBezierHandle = null
         hoveredVertex = null; hoveredMeshVertex = null
@@ -3386,24 +3407,6 @@ internal class CanvasEditor(
                         hoveredHandle = if (frame != null) transformHandleAt(pos, frame) else BoundingHandle.NONE
                     }
                     return
-                } else if (editLevel == 3 || tool == CanvasTool.SKELETON_WARP) {
-                    ensureSkeletonWarpState()
-                    val sState = skeletonWarpState
-                    if (sState != null) {
-                        var bestJointDist = Float.MAX_VALUE
-                        var bestJoint: Int? = null
-                        sState.joints.forEach { j ->
-                            val sp = screen(floatArrayOf(j.x, j.y), t, viewport).firstOrNull() ?: return@forEach
-                            val dist = (sp - pos).getDistance()
-                            if (dist <= 14f && dist < bestJointDist) {
-                                bestJointDist = dist
-                                bestJoint = j.index
-                            }
-                        }
-                        hoveredSkeletonJoint = bestJoint
-                        if (bestJoint != null) return
-                    }
-                    return
                 } else {
                     updatePointHover(pos, viewport, t)
                     return
@@ -3476,7 +3479,7 @@ internal class CanvasEditor(
             if (marquee.isNotEmpty()) return cross
             if (tool in DEFORM_BRUSH_TOOLS || tool == CanvasTool.BRUSH_SELECT || tool == CanvasTool.SUBDIVIDE || tool == CanvasTool.KNIFE) return cross
             if (boxDrag) return handleCursor(activeHandle)
-            if (activeBezierAnchor != null || activeBezierHandle != null || activeSkeletonJoint != null) return hand
+            if (activeBezierAnchor != null || activeBezierHandle != null || poseDrag != null) return hand
             return move
         }
         if (tool in CREATION_TOOLS) {
@@ -3487,7 +3490,7 @@ internal class CanvasEditor(
         // Painting gets no crosshair: the cursor is exactly where the tip ring already is, and a cross
         // over the pixels being judged is worse than no mark at all.
 
-        if (hoveredBezierHandle != null || hoveredBezierAnchor != null || hoveredSkeletonJoint != null) return hand
+        if (hoveredBezierHandle != null || hoveredBezierAnchor != null || poseHover != null) return hand
         if (hoveredHandle != BoundingHandle.NONE) return handleCursor(hoveredHandle)
         if (hoveredVertex != null || hoveredMeshVertex != null || hoveredPathPoint != null) return hand
 
@@ -4004,7 +4007,6 @@ internal class CanvasEditor(
             hierarchyMode = returnMode
             if (returnMode == EditHierarchyMode.DEFORM) {
                 if (editLevel == 2) ensureBezierState()
-                else if (editLevel == 3 || tool == CanvasTool.SKELETON_WARP) ensureSkeletonWarpState()
             }
         }
         tool = CanvasTool.SELECT
@@ -4680,6 +4682,13 @@ internal class CanvasEditor(
             return true
         }
 
+        // 0. The pose tool turns bones; a press off every bone does nothing, so a stray click cannot
+        //    select or move points while the tool is armed.
+        if (posing()) {
+            if (beginPose(pos, viewport)) dragging = true
+            return true
+        }
+
         // 0. Paint Mode (L1 raster paint engine). Paint has no select/transform tool — anything else
         //    that somehow stays armed is a no-op rather than falling into point-edit gestures.
         if (hierarchyMode == EditHierarchyMode.PAINT) {
@@ -4818,21 +4827,6 @@ internal class CanvasEditor(
                 }
                 if (hoveredBezierAnchor != null) {
                     activeBezierAnchor = hoveredBezierAnchor
-                    targetAtPress = t
-                    original = model
-                    dragging = true
-                    return true
-                }
-            }
-        }
-
-        // 2b. Level 3 Skeleton Warp Deformer in DEFORM mode
-        if (hierarchyMode == EditHierarchyMode.DEFORM && (editLevel == 3 || tool == CanvasTool.SKELETON_WARP)) {
-            val t = target()
-            if (t != null && t.kind == "warp") {
-                if (hoveredSkeletonJoint != null) {
-                    if (viewModel.snapToNearestKeys(t.kind, t.id) { press(pos, viewport, shift, alt, ctrl) }) return true
-                    activeSkeletonJoint = hoveredSkeletonJoint
                     targetAtPress = t
                     original = model
                     dragging = true
@@ -5094,6 +5088,12 @@ internal class CanvasEditor(
         moved = moved || (pos - start).getDistance() > 2f
         if (!moved) return
 
+        if (poseDrag != null) {
+            dragPose(pos, viewport, ik = shift)
+            previous = pos
+            return
+        }
+
         if (subdividing) {
             targetAtPress?.let { t -> subdivideEdges = subdivideEdges + edgesWithin(previous, pos, t, viewport) }
             previous = pos
@@ -5163,19 +5163,6 @@ internal class CanvasEditor(
             val hits = editVerticesWhere(viewport) { (it - pos).getDistance() <= r || distanceToSegment(it, from, pos) <= r }
             selection = mergedSelection(hits, add = !alt, subtract = alt)
             previous = pos
-            return
-        }
-
-        if (activeSkeletonJoint != null) {
-            val jIdx = activeSkeletonJoint!!
-            val t = targetAtPress ?: return; val source = original ?: return
-            val (lx, ly) = local(pos, t, viewport)
-            skeletonWarpState?.dragJoint(jIdx, lx, ly)
-            val warp = source.deformers.filterIsInstance<Deformer.Warp>().firstOrNull { it.id.raw == t.id } ?: return
-            val evaluated = skeletonWarpState?.evaluateLattice(warp.rows, warp.columns) ?: return
-            skeletonWarpSourcePoints = evaluated.copyOf()
-            val cmd = geometryCommand(t, evaluated)
-            preview = RigAuthoringJournal.apply(source, cmd); pending = cmd; previous = pos
             return
         }
 
@@ -5350,6 +5337,11 @@ internal class CanvasEditor(
 
     fun release() {
         if (!dragging) return
+        if (poseDrag != null) {
+            endPose()
+            dragging = false
+            return
+        }
         if (subdividing) {
             subdividing = false
             dragging = false
@@ -5494,18 +5486,6 @@ internal class CanvasEditor(
         if (activeBezierAnchor != null || activeBezierHandle != null) {
             activeBezierAnchor = null
             activeBezierHandle = null
-            val cmd = pending
-            if (moved && cmd != null) {
-                commit(cmd)
-            } else {
-                preview = null; head = null
-            }
-            pending = null; targetAtPress = null; original = null
-            return
-        }
-
-        if (activeSkeletonJoint != null) {
-            activeSkeletonJoint = null
             val cmd = pending
             if (moved && cmd != null) {
                 commit(cmd)

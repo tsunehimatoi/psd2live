@@ -7,6 +7,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.float
+import kotlinx.serialization.json.floatOrNull
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
@@ -18,29 +19,28 @@ import kotlinx.serialization.json.putJsonArray
 /**
  * Anatomical role of a bone. Anchor roles describe the torso and head that the generated body and
  * head rig already deform; they carry no deformer of their own and only give limbs a parent.
+ *
+ * The limits are in degrees after [SkeletonBone.direction] is applied, so a positive value swings
+ * the limb away from the body on either side of the character. They are wide on purpose: a pose tool
+ * that stops a drag short of where the artist is pulling reads as broken, and every rigid part turns
+ * exactly at any angle anyway. Tighten them per bone when a joint must not go further.
  */
-enum class BoneRole(val anchor: Boolean, val maxAngle: Float) {
-	ROOT(true, 0f),
-	HIP(true, 0f),
-	CHEST(true, 0f),
-	NECK(true, 0f),
-	HEAD(true, 0f),
-	UPPER_ARM(false, 30f),
-	FOREARM(false, 40f),
-	HAND(false, 25f),
-	THIGH(false, 15f),
-	SHIN(false, 30f),
-	FOOT(false, 20f),
-	TAIL(false, 20f),
-	WING(false, 25f),
-	CUSTOM(false, 20f),
+enum class BoneRole(val anchor: Boolean, val minAngle: Float, val maxAngle: Float) {
+	ROOT(true, 0f, 0f),
+	HIP(true, 0f, 0f),
+	CHEST(true, 0f, 0f),
+	NECK(true, 0f, 0f),
+	HEAD(true, 0f, 0f),
+	UPPER_ARM(false, -90f, 150f),
+	FOREARM(false, -150f, 150f),
+	HAND(false, -90f, 90f),
+	THIGH(false, -60f, 120f),
+	SHIN(false, -120f, 120f),
+	FOOT(false, -60f, 60f),
+	TAIL(false, -90f, 90f),
+	WING(false, -60f, 120f),
+	CUSTOM(false, -120f, 120f),
 }
-
-/**
- * How a joint becomes a deformer. [AUTO] picks a rotation deformer when the bone owns its own meshes
- * and a deform-path bend inside the parent's meshes when it does not.
- */
-enum class JointMode { AUTO, WARP, ROTATION, PATH }
 
 /**
  * One bone in canvas pixels. The bone pivots about its head; a connected child's head sits on the
@@ -56,17 +56,28 @@ data class SkeletonBone(
 	val headY: Float,
 	val tailX: Float,
 	val tailY: Float,
+	/** Meshes skinned to this bone's limb. Which vertices follow which bone is weighted automatically. */
 	val drawableIds: List<String> = emptyList(),
-	val jointMode: JointMode = JointMode.AUTO,
 	/** Position within a tail chain, 1-based; 0 for every other bone. */
 	val chainIndex: Int = 0,
 	/** +1 or -1 so that a positive parameter swings the limb away from the body on either side. */
 	val direction: Float = 1f,
+	/** Lower limit of the joint, degrees in parameter space. */
+	val minAngle: Float = role.minAngle,
+	/** Upper limit of the joint, degrees in parameter space. */
+	val maxAngle: Float = role.maxAngle,
+	/**
+	 * Half width in pixels of the band around this bone's head joint where its meshes blend from the
+	 * parent bone into this one; null sizes it from the bone lengths.
+	 */
+	val blendWidth: Float? = null,
 ) {
 	init {
 		require(id.isNotBlank() && id.none(Char::isISOControl)) { "Bone ID must not be blank" }
 		require(parentId != id) { "A bone cannot be its own parent" }
-		require(listOf(headX, headY, tailX, tailY, direction).all(Float::isFinite)) { "Bone coordinates must be finite" }
+		require(listOf(headX, headY, tailX, tailY, direction, minAngle, maxAngle).all(Float::isFinite)) { "Bone coordinates must be finite" }
+		require(minAngle <= 0f && maxAngle >= 0f) { "Bone limits must contain the rest pose" }
+		require(blendWidth == null || (blendWidth.isFinite() && blendWidth >= 0f)) { "Blend width must be positive" }
 	}
 
 	val length: Float get() = kotlin.math.hypot(tailX - headX, tailY - headY)
@@ -112,29 +123,35 @@ data class SkeletonBone(
 		putJsonArray("head") { add(JsonPrimitive(headX)); add(JsonPrimitive(headY)) }
 		putJsonArray("tail") { add(JsonPrimitive(tailX)); add(JsonPrimitive(tailY)) }
 		putJsonArray("drawables") { drawableIds.forEach { add(JsonPrimitive(it)) } }
-		put("joint", jointMode.name)
 		put("chainIndex", chainIndex)
 		put("direction", direction)
+		put("minAngle", minAngle)
+		put("maxAngle", maxAngle)
+		blendWidth?.let { put("blendWidth", it) }
 	}
 
 	companion object {
 		fun fromJson(o: JsonObject): SkeletonBone {
 			val head = o.getValue("head").jsonArray
 			val tail = o.getValue("tail").jsonArray
+			val role = BoneRole.valueOf(o.getValue("role").jsonPrimitive.content)
+			// Version 1 stored a per-bone "joint" mode; every joint now uses the same skinning, so it is ignored.
 			return SkeletonBone(
 				id = o.getValue("id").jsonPrimitive.content,
 				name = o["name"]?.jsonPrimitive?.contentOrNull ?: o.getValue("id").jsonPrimitive.content,
 				parentId = o["parent"]?.jsonPrimitive?.contentOrNull,
-				role = BoneRole.valueOf(o.getValue("role").jsonPrimitive.content),
+				role = role,
 				side = o["side"]?.jsonPrimitive?.contentOrNull?.let(Side::valueOf) ?: Side.NONE,
 				headX = head[0].jsonPrimitive.float,
 				headY = head[1].jsonPrimitive.float,
 				tailX = tail[0].jsonPrimitive.float,
 				tailY = tail[1].jsonPrimitive.float,
 				drawableIds = o["drawables"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty(),
-				jointMode = o["joint"]?.jsonPrimitive?.contentOrNull?.let(JointMode::valueOf) ?: JointMode.AUTO,
 				chainIndex = o["chainIndex"]?.jsonPrimitive?.intOrNull ?: 0,
 				direction = o["direction"]?.jsonPrimitive?.float ?: 1f,
+				minAngle = o["minAngle"]?.jsonPrimitive?.floatOrNull ?: role.minAngle,
+				maxAngle = o["maxAngle"]?.jsonPrimitive?.floatOrNull ?: role.maxAngle,
+				blendWidth = o["blendWidth"]?.jsonPrimitive?.floatOrNull,
 			)
 		}
 	}
@@ -231,7 +248,7 @@ data class SkeletonSpec(
 	}
 
 	fun toJson(): JsonObject = buildJsonObject {
-		put("version", 1)
+		put("version", 2)
 		put("enabled", enabled)
 		putJsonArray("bones") { bones.forEach { add(it.toJson()) } }
 	}

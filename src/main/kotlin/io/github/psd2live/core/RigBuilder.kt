@@ -1,6 +1,8 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.i18n.tr
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import org.umamo.format.art.LayerBlend
 import org.umamo.runtime.model.BlendMode
 import org.umamo.runtime.model.ChannelGrids
@@ -798,7 +800,7 @@ object RigBuilder {
 		).withDerivedRenderRoot()
 		val faceCenterCanvas = faceRig.coordinateSpace.toCanvas(faceRig.centerX, faceRig.centerY)
 		val skeletonPuppet = config.rigEdits.skeleton?.takeIf { it.enabled && shouldBuildDeformers }
-			?.let { SkeletonConverter.apply(puppet, it, analysis.anchors.character) } ?: puppet
+			?.let { SkeletonRig.apply(puppet, it, analysis.anchors.character, handEditedTopology(config)) } ?: puppet
 		return BuiltRig(
 			skeletonPuppet,
 			pageByDrawable,
@@ -812,6 +814,12 @@ object RigBuilder {
 			faceRig.initialAngleZ,
 		)
 	}
+
+	/** Drawables whose topology the user edited by hand; the skeleton must not renumber their vertices. */
+	private fun handEditedTopology(config: PipelineConfig): Set<String> =
+		config.rigEdits.authoringJournal
+			.filter { it["op"]?.jsonPrimitive?.contentOrNull == "canvas_topology" }
+			.mapNotNullTo(HashSet()) { it["id"]?.jsonPrimitive?.contentOrNull }
 
 	/** A mesh a paint commit replaces, with the atlas slice its texture coordinates were sampled from. */
 	internal class ReplacedMesh internal constructor(

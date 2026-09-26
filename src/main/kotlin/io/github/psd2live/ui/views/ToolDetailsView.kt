@@ -55,6 +55,7 @@ import io.github.psd2live.ui.SelectionStyle
 import io.github.psd2live.ui.WarpAddTo
 import io.github.psd2live.ui.WarpSizeStrategy
 import io.github.psd2live.ui.components.CompactButton
+import io.github.psd2live.ui.components.CompactCheckbox
 import io.github.psd2live.ui.components.CompactDropdown
 import io.github.psd2live.ui.components.CompactNumberSpinner
 import io.github.psd2live.ui.components.CompactSectionHeader
@@ -943,23 +944,26 @@ internal fun ToolDetailsView(
                     CompactButton(text = tr("action.cancel"), onClick = { editor.cancel() }, enabled = !editor.busy && editor.knifeDraft.isNotEmpty())
                 }
             }
-            CanvasTool.SKELETON_WARP -> {
+            CanvasTool.SKELETON_POSE -> {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val sState = editor.skeletonWarpState
                     Text(
-                        text = tr("editor.tool.skeleton_warp"),
+                        text = tr("editor.tool.skeleton_pose"),
                         style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
                         color = colors.textPrimary,
                     )
                     Text(
-                        text = if (sState != null) "骨骼段数: ${sState.bones.size} · 关节点数: ${sState.joints.size}" else "请选择一个 Warp 变形器",
+                        text = if (editor.bakedSkeleton != null) tr("skeleton.pose.hint") else tr("skeleton.pose.none"),
                         style = typography.caption.copy(fontSize = 10.5.sp),
                         color = colors.textMuted,
                     )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        CompactCheckbox(checked = editor.showSkeletonWeights, onCheckedChange = { editor.showSkeletonWeights = it })
+                        Text(tr("skeleton.pose.weights"), color = colors.textPrimary, fontSize = 11.sp)
+                    }
                     CompactButton(
                         text = tr("animation.resetPose"),
-                        onClick = { editor.resetSkeletonWarpPose() },
-                        enabled = editor.editable && editor.skeletonWarpState != null,
+                        onClick = { editor.resetSkeletonPose() },
+                        enabled = editor.bakedSkeleton != null,
                         modifier = Modifier.fillMaxWidth(),
                         height = 24.dp,
                     )

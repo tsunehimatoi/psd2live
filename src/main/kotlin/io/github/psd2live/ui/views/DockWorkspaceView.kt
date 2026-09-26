@@ -814,6 +814,7 @@ private fun DockModuleContent(
 				vm.editorForFocusedCanvas().beginTreeCreate(kind, relation, isDeformer, target)
 			},
 		)
+		"skeleton" -> SkeletonTreeView(state, vm)
 		"history" -> HistoryTreeView(state, vm, Modifier.fillMaxSize())
 		"log" -> BottomLogDock(state, vm, Modifier.fillMaxSize(), fillDock = true)
 		"settings" -> {

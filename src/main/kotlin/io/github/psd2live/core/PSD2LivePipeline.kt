@@ -409,7 +409,10 @@ class PSD2LivePipeline {
 			if (config.exportMotions && !config.meshOnly) {
 				if (config.motionIdle) {
 					val name = "$baseName.idle.motion3.json"
-					MotionGenerator.idle(parameterIds, config.rigEdits.skeleton)?.let { motion ->
+					val physicsDriven = if (physics != null && config.exportIncludePhysics) {
+						PhysicsGenerator.skeletonRules(config.rigEdits.skeleton, parameterIds).mapTo(HashSet()) { it.outputParameter }
+					} else emptySet()
+					MotionGenerator.idle(parameterIds, config.rigEdits.skeleton, physicsDriven)?.let { motion ->
 						val json = CubismJson.normalize(motion).also { Json.parseToJsonElement(it) }
 						add("Idle" to (name to json))
 					}
@@ -433,6 +436,20 @@ class PSD2LivePipeline {
 					MotionGenerator.shake(parameterIds)?.let { motion ->
 						val json = CubismJson.normalize(motion).also { Json.parseToJsonElement(it) }
 						add("Shake" to (name to json))
+					}
+				}
+				if (config.motionSkeleton) {
+					val skeleton = config.rigEdits.skeleton
+					for ((group, tracks) in listOf(
+						"TailSwing" to SkeletonMotions.tailSwing(skeleton),
+						"Crouch" to SkeletonMotions.crouch(skeleton),
+						"WeightShift" to SkeletonMotions.weightShift(skeleton),
+					)) {
+						val name = "$baseName.${group.replaceFirstChar(Char::lowercase)}.motion3.json"
+						MotionGenerator.skeleton(tracks, parameterIds)?.let { motion ->
+							val json = CubismJson.normalize(motion).also { Json.parseToJsonElement(it) }
+							add(group to (name to json))
+						}
 					}
 				}
 			}

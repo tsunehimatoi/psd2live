@@ -1,23 +1,44 @@
 package io.github.psd2live.core
 
-import org.umamo.runtime.model.ParameterId
-
 /** Demonstration motions that exercise the generated rig without audio assets. */
 object MotionGenerator {
 	fun idle(): String = idle(ALL_PARAMETERS)!!
 
-	fun idle(availableParameterIds: Set<String>, skeleton: SkeletonSpec? = null): String? = buildMotionJson(
-		duration = 6.0f,
-		loop = true,
-		curves = listOf(
-			curve("ParamBreath", listOf(0f to 0f, 1.5f to 1f, 3f to 0f, 4.5f to 1f, 6f to 0f)),
-			curve("ParamAngleZ", listOf(0f to -2f, 1.5f to 2f, 3f to -2f, 4.5f to 2f, 6f to -2f)),
-			curve("ParamBodyAngleX", listOf(0f to -1.2f, 3f to 1.2f, 6f to -1.2f)),
-			curve("ParamEyeLOpen", listOf(0f to 1f, 2.7f to 1f, 2.78f to 0f, 2.88f to 1f, 6f to 1f)),
-			curve("ParamEyeROpen", listOf(0f to 1f, 2.7f to 1f, 2.78f to 0f, 2.88f to 1f, 6f to 1f)),
-		) + skeleton.orEmptyIdleCurves(),
-		availableParameterIds = availableParameterIds,
-	)
+	/**
+	 * The looping idle. With a skeleton its limb and pose tracks join in; parameters in [skeletonExclude]
+	 * are driven by exported physics instead and stay out of the motion.
+	 */
+	fun idle(
+		availableParameterIds: Set<String>,
+		skeleton: SkeletonSpec? = null,
+		skeletonExclude: Set<String> = emptySet(),
+	): String? {
+		val bones = SkeletonMotions.idle(skeleton, skeletonExclude).map { (id, points) -> curve(id, points) }
+		val boneIds = bones.mapTo(HashSet()) { it.parameter }
+		return buildMotionJson(
+			duration = 6.0f,
+			loop = true,
+			curves = listOf(
+				curve("ParamBreath", listOf(0f to 0f, 1.5f to 1f, 3f to 0f, 4.5f to 1f, 6f to 0f)),
+				curve("ParamAngleZ", listOf(0f to -2f, 1.5f to 2f, 3f to -2f, 4.5f to 2f, 6f to -2f)),
+				curve("ParamBodyAngleX", listOf(0f to -1.2f, 3f to 1.2f, 6f to -1.2f)),
+				curve("ParamEyeLOpen", listOf(0f to 1f, 2.7f to 1f, 2.78f to 0f, 2.88f to 1f, 6f to 1f)),
+				curve("ParamEyeROpen", listOf(0f to 1f, 2.7f to 1f, 2.78f to 0f, 2.88f to 1f, 6f to 1f)),
+			).filterNot { it.parameter in boneIds } + bones,
+			availableParameterIds = availableParameterIds,
+		)
+	}
+
+	/** A one-shot skeleton motion ([SkeletonMotions.tailSwing] and friends) as motion3 JSON. */
+	fun skeleton(tracks: List<MotionTrack>, availableParameterIds: Set<String>): String? {
+		if (tracks.isEmpty()) return null
+		return buildMotionJson(
+			duration = tracks.maxOf { it.second.last().first },
+			loop = false,
+			curves = tracks.map { (id, points) -> curve(id, points) },
+			availableParameterIds = availableParameterIds,
+		)
+	}
 
 	fun blink(): String = blink(ALL_PARAMETERS)!!
 
@@ -88,19 +109,6 @@ object MotionGenerator {
 	}
 
 	private data class Curve(val parameter: String, val json: String, val pointCount: Int)
-
-	private fun SkeletonSpec?.orEmptyIdleCurves(): List<Curve> =
-		if (this?.enabled != true) emptyList() else bones.filterNot { it.role.anchor }.map { bone ->
-			curve(bone.parameterId, (0..12).map { step ->
-				val time = step * 0.5f
-				time to (SkeletonIdle.sample(this, time.toDouble())[ParameterId(bone.parameterId)] ?: 0f)
-			})
-		} + if (bones.any { it.role == BoneRole.THIGH || it.role == BoneRole.SHIN }) listOf(
-			curve("ParamSquat", (0..12).map { step ->
-				val time = step * 0.5f
-				time to (SkeletonIdle.sample(this, time.toDouble())[ParameterId("ParamSquat")] ?: 0f)
-			})
-		) else emptyList()
 
 	private fun curve(parameter: String, points: List<Pair<Float, Float>>): Curve {
 		require(points.size >= 2)
