@@ -1,7 +1,12 @@
 package io.github.psd2live.ui.views
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,14 +20,24 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -34,15 +49,32 @@ import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.CanvasEditor
 import io.github.psd2live.ui.SkeletonPalette
 import io.github.psd2live.ui.components.CompactButton
-import io.github.psd2live.ui.components.CompactCheckbox
-import io.github.psd2live.ui.components.CompactSectionHeader
+import io.github.psd2live.ui.components.CompactIconButton
 import io.github.psd2live.ui.components.CompactSlider
+import io.github.psd2live.ui.components.CompactToggleChip
+import io.github.psd2live.ui.components.IconChevron
+import io.github.psd2live.ui.components.IconClose
+import io.github.psd2live.ui.components.IconCollapseAll
+import io.github.psd2live.ui.components.IconExpandAll
+import io.github.psd2live.ui.components.IconMeshWireframe
+import io.github.psd2live.ui.components.IconReset
+import io.github.psd2live.ui.components.IconTrash
 import io.github.psd2live.ui.state.CanvasMode
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
+import java.awt.Cursor
 import kotlin.math.roundToInt
+
+// Same geometry as the hierarchy tree, so the two tabs read as one tree control.
+private const val ROW_HEIGHT_DP = 20
+private const val INDENT_STEP_DP = 14
+private const val BASE_PADDING_DP = 4
+/** Horizontal center of the leading icon: 1.dp spacer + half of [ICON_SIZE_DP]. */
+private const val DOT_OFFSET_DP = 7
+private const val ICON_SIZE_DP = 12
+private const val CHEVRON_WIDTH_DP = 10
 
 /**
  * The skeleton tab beside the hierarchy: the bone tree with every bone's bound art meshes under it, in
@@ -64,6 +96,7 @@ internal fun SkeletonTreeView(state: PSD2LiveState, viewModel: PSD2LiveViewModel
 	val draft = editor.skeletonDraft
 	val baked = state.previewModel?.config?.rigEdits?.skeleton?.takeIf { it.enabled && it.bones.isNotEmpty() }
 	val shown = draft ?: baked
+	val rig = state.previewModel?.rig
 	// Meshes are listed by their layer's name - what the layers panel and a split named them - rather than
 	// the drawable id a split piece is given internally.
 	val drawableNames = state.previewModel?.let { preview ->
@@ -72,166 +105,343 @@ internal fun SkeletonTreeView(state: PSD2LiveState, viewModel: PSD2LiveViewModel
 			drawable.id.raw to (layerNames[preview.rig.layerIdByDrawableId[drawable.id.raw] ?: drawable.id.raw] ?: drawable.name)
 		}
 	}.orEmpty()
-	val small = typography.body.copy(fontSize = 10.sp)
+	// Bones start expanded; the map only records the ones folded away.
+	val collapsed = remember { mutableStateMapOf<String, Boolean>() }
+
+	if (state.previewModel == null) {
+		Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+			Text(tr("canvas.hierarchy.empty"), style = typography.caption.copy(fontSize = 11.sp),
+				color = colors.textMuted, modifier = Modifier.padding(12.dp))
+		}
+		return
+	}
 
 	Column(Modifier.fillMaxSize()) {
-		CompactSectionHeader(title = if (draft != null) tr("skeleton.tree.editing") else tr("dock.skeleton"))
-		Column(Modifier.fillMaxWidth().padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-			when {
-				state.previewModel == null -> Text(tr("canvas.hierarchy.empty"), color = colors.textMuted, style = small)
-				draft == null -> {
-					Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-						CompactButton(
-							text = tr(if (baked == null) "skeleton.tree.create" else "skeleton.tree.edit"),
-							onClick = { editor.beginSkeletonEdit() },
-							isPrimary = baked == null,
-						)
-						if (baked != null) {
-							CompactButton(text = tr("animation.resetPose"), onClick = { editor.resetSkeletonPose() })
-						}
-					}
-					if (baked != null) {
-						Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-							CompactCheckbox(checked = editor.showSkeletonWeights, onCheckedChange = { editor.showSkeletonWeights = it })
-							Text(tr("skeleton.pose.weights"), color = colors.textPrimary, style = small)
-						}
-					} else {
-						Text(tr("skeleton.tree.emptyHint"), color = colors.textMuted, style = small)
-					}
+		Toolbar {
+			if (draft != null) {
+				CompactButton(text = tr("skeleton.panel.add"), onClick = { editor.addBone() },
+					enabled = editor.selectedBoneId != null, height = 20.dp)
+				CompactIconButton(
+					onClick = { editor.removeSelectedBone() },
+					enabled = draft.bone(editor.selectedBoneId ?: "")?.role?.anchor == false,
+					size = 20.dp,
+					tooltip = tr("skeleton.panel.delete"),
+				) { IconTrash(Modifier.size(11.dp)) }
+				ToolbarSeparator()
+				for (role in listOf(BoneRole.TAIL, BoneRole.WING)) {
+					val present = draft.bones.any { it.role == role }
+					CompactToggleChip(
+						text = tr(if (role == BoneRole.TAIL) "skeleton.chain.tail" else "skeleton.chain.wing"),
+						selected = present,
+						onToggle = { editor.setOptionalSkeletonChain(role, !present) },
+						height = 20.dp,
+					)
 				}
-				else -> DraftControls(editor, draft)
-			}
-		}
-		if (shown != null) {
-			Box(Modifier.fillMaxWidth().height(1.dp).background(colors.divider))
-			Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(vertical = 4.dp)) {
-				for (bone in shown.topological()) {
-					BoneRow(
-						spec = shown,
-						bone = bone,
-						selected = draft != null && bone.id == editor.selectedBoneId,
-						editable = draft != null,
-						drawableNames = drawableNames,
-						onSelect = { if (draft != null) editor.selectBone(bone.id) },
-						onUnbind = editor::unbindSkeletonDrawable,
-						onPickMesh = { id -> viewModel.selectLayer(state.previewModel?.rig?.layerIdByDrawableId?.get(id) ?: id) },
+			} else {
+				CompactButton(
+					text = tr(if (baked == null) "skeleton.tree.create" else "skeleton.tree.edit"),
+					onClick = { editor.beginSkeletonEdit() },
+					isPrimary = baked == null,
+					height = 20.dp,
+				)
+				if (baked != null) {
+					CompactIconButton(onClick = { editor.resetSkeletonPose() }, size = 20.dp, tooltip = tr("animation.resetPose")) {
+						IconReset(Modifier.size(11.dp), tint = colors.textMuted)
+					}
+					CompactToggleChip(
+						text = tr("skeleton.tree.weights"),
+						selected = editor.showSkeletonWeights,
+						onToggle = { editor.showSkeletonWeights = !editor.showSkeletonWeights },
+						height = 20.dp,
 					)
 				}
 			}
-			if (draft != null) {
-				val selected = draft.bone(editor.selectedBoneId ?: "")
-				if (selected != null && !selected.role.anchor) {
-					Box(Modifier.fillMaxWidth().height(1.dp).background(colors.divider))
-					Column(Modifier.fillMaxWidth().padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-						Row(verticalAlignment = Alignment.CenterVertically) {
-							Box(Modifier.size(9.dp).background(SkeletonPalette.color(draft, selected.id), CircleShape))
-							Spacer(Modifier.width(6.dp))
-							Text(selected.name, color = colors.textPrimary, style = small.copy(fontWeight = FontWeight.SemiBold))
-						}
-						BoneSettings(editor, draft, selected)
-					}
+			Spacer(Modifier.weight(1f))
+			if (shown != null) {
+				CompactIconButton(onClick = { collapsed.clear() }, size = 20.dp, tooltip = tr("canvas.hierarchy.expandAll")) {
+					IconExpandAll(modifier = Modifier.size(11.dp), tint = colors.textMuted)
+				}
+				CompactIconButton(
+					onClick = { shown.bones.forEach { collapsed[it.id] = true } },
+					size = 20.dp,
+					tooltip = tr("canvas.hierarchy.collapseAll"),
+				) {
+					IconCollapseAll(modifier = Modifier.size(11.dp), tint = colors.textMuted)
 				}
 			}
 		}
-	}
-}
 
-/** The editing controls above the tree: what a click does, the optional chains, and confirm/cancel. */
-@Composable
-private fun DraftControls(editor: CanvasEditor, draft: SkeletonSpec) {
-	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-	val small = typography.body.copy(fontSize = 10.sp)
-	Text(tr("skeleton.panel.clickMesh"), color = colors.textMuted, style = small)
-	Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-		for (role in listOf(BoneRole.TAIL, BoneRole.WING)) {
-			val present = draft.bones.any { it.role == role }
-			Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-				CompactCheckbox(checked = present, onCheckedChange = { editor.setOptionalSkeletonChain(role, it) })
-				Text(tr(if (role == BoneRole.TAIL) "skeleton.chain.tail" else "skeleton.chain.wing"), color = colors.textPrimary, style = small)
+		if (draft != null) {
+			Text(
+				buildAnnotatedString {
+					withStyle(SpanStyle(color = colors.accent, fontWeight = FontWeight.SemiBold)) { append(tr("skeleton.tree.editing")) }
+					append(" · ")
+					append(tr("skeleton.panel.clickMesh"))
+				},
+				color = colors.textMuted,
+				style = typography.caption.copy(fontSize = 10.sp),
+				modifier = Modifier.fillMaxWidth().background(colors.accent.copy(alpha = 0.10f)).padding(horizontal = 8.dp, vertical = 3.dp),
+			)
+		}
+
+		if (shown == null) {
+			Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+				Text(tr("skeleton.tree.emptyHint"), color = colors.textMuted, style = typography.caption.copy(fontSize = 10.5.sp),
+					textAlign = TextAlign.Center, modifier = Modifier.padding(16.dp))
+			}
+			return@Column
+		}
+
+		val selectedLayers = state.selectedLayerIds + listOfNotNull(state.selectedLayerId)
+		Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(vertical = 2.dp)) {
+			for (bone in shown.topological()) {
+				if (bone.parentId != null && lineage(shown, bone).any { collapsed[it.id] == true }) continue
+				val expanded = collapsed[bone.id] != true
+				BoneRow(
+					spec = shown,
+					bone = bone,
+					expanded = expanded,
+					selected = draft != null && bone.id == editor.selectedBoneId,
+					editable = draft != null,
+					onToggle = { collapsed[bone.id] = expanded },
+					onSelect = { editor.selectBone(bone.id) },
+				)
+				// Anchor bones are skinned by the body rig, not by bones; their meshes stay out of the tree.
+				if (!expanded || bone.role.anchor) continue
+				val hasChildBones = shown.children(bone.id).isNotEmpty()
+				bone.drawableIds.forEachIndexed { index, id ->
+					val layerId = rig?.layerIdByDrawableId?.get(id) ?: id
+					MeshRow(
+						spec = shown,
+						bone = bone,
+						name = drawableNames[id] ?: id,
+						isLast = index == bone.drawableIds.lastIndex && !hasChildBones,
+						selected = layerId in selectedLayers,
+						editable = draft != null,
+						onPick = { viewModel.selectLayer(layerId) },
+						onUnbind = { editor.unbindSkeletonDrawable(id) },
+					)
+				}
 			}
 		}
-	}
-	Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-		CompactButton(text = tr("skeleton.panel.add"), onClick = { editor.addBone() }, enabled = editor.selectedBoneId != null)
-		CompactButton(
-			text = tr("skeleton.panel.delete"),
-			onClick = { editor.removeSelectedBone() },
-			enabled = draft.bone(editor.selectedBoneId ?: "")?.role?.anchor == false,
-		)
-		if (editor.state.rigEdits.skeleton?.enabled == true) {
-			CompactButton(text = tr("skeleton.panel.disable"), onClick = { editor.disableSkeleton() }, danger = true)
+
+		if (draft != null) {
+			val selected = draft.bone(editor.selectedBoneId ?: "")
+			if (selected != null && !selected.role.anchor) BoneSettings(editor, draft, selected)
+			Row(
+				Modifier.fillMaxWidth().height(30.dp).background(colors.panelElevated)
+					.border(BorderStroke(1.dp, colors.divider)).padding(horizontal = 6.dp),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.spacedBy(4.dp),
+			) {
+				if (editor.state.rigEdits.skeleton?.enabled == true) {
+					CompactButton(text = tr("skeleton.panel.disable"), onClick = { editor.disableSkeleton() }, danger = true, height = 22.dp)
+				}
+				Spacer(Modifier.weight(1f))
+				CompactButton(text = tr("skeleton.panel.cancel"), onClick = { editor.cancelSkeletonEdit() }, height = 22.dp)
+				CompactButton(text = tr("skeleton.panel.confirm"), onClick = { editor.confirmSkeletonEdit() }, isPrimary = true, height = 22.dp)
+			}
+		} else {
+			val meshes = shown.bones.filterNot { it.role.anchor }.flatMap { it.drawableIds }.distinct().size
+			Text(
+				tr("skeleton.tree.summary", shown.bones.count { !it.role.anchor }, meshes),
+				color = colors.textMuted,
+				style = typography.caption.copy(fontSize = 10.sp),
+				maxLines = 1,
+				modifier = Modifier.fillMaxWidth().background(colors.panelElevated)
+					.border(BorderStroke(1.dp, colors.divider)).padding(horizontal = 8.dp, vertical = 3.dp),
+			)
 		}
-	}
-	Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-		CompactButton(text = tr("skeleton.panel.cancel"), onClick = { editor.cancelSkeletonEdit() })
-		CompactButton(text = tr("skeleton.panel.confirm"), onClick = { editor.confirmSkeletonEdit() }, isPrimary = true)
 	}
 }
 
-/** One bone of the tree, indented by depth, with the meshes bound to it listed beneath in its color. */
+/** The strip above the tree, styled like the hierarchy's search toolbar. */
+@Composable
+private fun Toolbar(content: @Composable () -> Unit) {
+	val colors = LocalToolColors.current
+	Row(
+		Modifier.fillMaxWidth().height(26.dp).background(colors.panelElevated)
+			.border(BorderStroke(1.dp, colors.divider)).padding(horizontal = 6.dp, vertical = 2.dp),
+		verticalAlignment = Alignment.CenterVertically,
+		horizontalArrangement = Arrangement.spacedBy(4.dp),
+	) { content() }
+}
+
+@Composable
+private fun ToolbarSeparator() {
+	Box(Modifier.width(1.dp).height(14.dp).background(LocalToolColors.current.divider))
+}
+
+/** Every ancestor of [bone], nearest first. */
+private fun lineage(spec: SkeletonSpec, bone: SkeletonBone): List<SkeletonBone> =
+	generateSequence(bone.parentId?.let(spec::bone)) { it.parentId?.let(spec::bone) }.toList()
+
+private fun hasNextSibling(spec: SkeletonSpec, bone: SkeletonBone): Boolean =
+	spec.children(bone.parentId).lastOrNull()?.id != bone.id
+
+/**
+ * Tree guides in the hierarchy's style: a trunk down each open ancestor level, an elbow into this row,
+ * and a stub down from this row's icon when its children follow.
+ */
+private fun Modifier.treeGuides(depth: Int, openLevels: List<Boolean>, isLast: Boolean, hasChildrenBelow: Boolean, color: Color) =
+	drawBehind {
+		val midY = size.height * 0.5f
+		val stroke = 1.2f
+		fun levelX(level: Int) = (BASE_PADDING_DP + level * INDENT_STEP_DP + DOT_OFFSET_DP).dp.toPx()
+		for (level in 0 until depth - 1) {
+			if (openLevels.getOrElse(level) { false }) {
+				drawLine(color, Offset(levelX(level), 0f), Offset(levelX(level), size.height), stroke)
+			}
+		}
+		if (depth > 0) {
+			val x = levelX(depth - 1)
+			drawLine(color, Offset(x, 0f), Offset(x, if (isLast) midY else size.height), stroke)
+			drawLine(color, Offset(x, midY), Offset((BASE_PADDING_DP + depth * INDENT_STEP_DP + 1).dp.toPx(), midY), stroke)
+		}
+		if (hasChildrenBelow) {
+			val x = levelX(depth)
+			drawLine(color, Offset(x, midY + (ICON_SIZE_DP / 2f).dp.toPx()), Offset(x, size.height), stroke)
+		}
+	}
+
+/** One bone of the tree: color swatch, fold chevron, name, and the parameter it drives. */
 @Composable
 private fun BoneRow(
 	spec: SkeletonSpec,
 	bone: SkeletonBone,
+	expanded: Boolean,
 	selected: Boolean,
 	editable: Boolean,
-	drawableNames: Map<String, String>,
+	onToggle: () -> Unit,
 	onSelect: () -> Unit,
-	onUnbind: (String) -> Unit,
-	onPickMesh: (String) -> Unit,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
-	val depth = generateSequence(bone.parentId) { spec.bone(it)?.parentId }.count()
-	val color = SkeletonPalette.color(spec, bone.id)
+	val ancestors = lineage(spec, bone)
+	val depth = ancestors.size
+	// Level i is open when the ancestor at that depth still has siblings below it.
+	val openLevels = ancestors.asReversed().drop(1).map { hasNextSibling(spec, it) }
+	val meshCount = if (bone.role.anchor) 0 else bone.drawableIds.size
+	val hasChildren = meshCount > 0 || spec.children(bone.id).isNotEmpty()
+	val interaction = remember { MutableInteractionSource() }
+	val hovered by interaction.collectIsHoveredAsState()
+	val clickable = editable && !bone.role.anchor
+	val textColor = when {
+		selected -> colors.selectionText
+		bone.role.anchor -> colors.textMuted
+		else -> colors.textPrimary
+	}
+
 	Row(
-		Modifier.fillMaxWidth()
-			.background(if (selected) colors.accent.copy(alpha = 0.22f) else Color.Transparent)
-			.clickable(enabled = editable, onClick = onSelect)
-			.padding(start = (8 + depth * 12).dp, end = 8.dp, top = 3.dp, bottom = 3.dp),
+		Modifier.fillMaxWidth().height(ROW_HEIGHT_DP.dp)
+			.background(
+				when {
+					selected -> colors.selection
+					hovered && clickable -> colors.controlHover.copy(alpha = 0.3f)
+					else -> Color.Transparent
+				}
+			)
+			.treeGuides(depth, openLevels, !hasNextSibling(spec, bone), expanded && hasChildren, guideColor(colors.textMuted))
+			.hoverable(interaction)
+			.clickable(enabled = clickable, interactionSource = interaction, indication = null, onClick = onSelect)
+			.padding(start = (BASE_PADDING_DP + depth * INDENT_STEP_DP).dp, end = 6.dp),
 		verticalAlignment = Alignment.CenterVertically,
 	) {
-		Box(Modifier.size(9.dp).background(color, CircleShape))
-		Spacer(Modifier.width(6.dp))
+		Spacer(Modifier.width(1.dp))
+		Box(Modifier.size(ICON_SIZE_DP.dp), contentAlignment = Alignment.Center) {
+			Box(Modifier.size(8.dp).background(SkeletonPalette.color(spec, bone.id), CircleShape))
+		}
+		Spacer(Modifier.width(2.dp))
+		Box(
+			Modifier.size(CHEVRON_WIDTH_DP.dp)
+				.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
+				.clickable(enabled = hasChildren, onClick = onToggle),
+			contentAlignment = Alignment.Center,
+		) {
+			if (hasChildren) {
+				IconChevron(expanded = expanded, modifier = Modifier.size(7.dp), tint = if (selected) colors.selectionText else colors.accent)
+			}
+		}
+		Spacer(Modifier.width(2.dp))
 		Text(
 			bone.name,
 			modifier = Modifier.weight(1f),
-			color = if (bone.role.anchor) colors.textMuted else colors.textPrimary,
+			color = textColor,
 			style = typography.body.copy(fontSize = 11.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal),
 			maxLines = 1,
 			overflow = TextOverflow.Ellipsis,
 		)
-		if (!bone.role.anchor) {
-			Text(bone.parameterId, color = colors.textMuted, style = typography.body.copy(fontSize = 9.sp), maxLines = 1)
+		if (!expanded && meshCount > 0) {
+			Text("×$meshCount", color = if (selected) colors.selectionText else colors.accent,
+				style = typography.monoSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.SemiBold))
+			Spacer(Modifier.width(4.dp))
 		}
-	}
-	// Anchor bones list their meshes only for reference; they are skinned by the body rig, not by bones.
-	if (bone.role.anchor) return
-	for (id in bone.drawableIds) {
-		Row(
-			Modifier.fillMaxWidth()
-				.clickable { onPickMesh(id) }
-				.padding(start = (8 + depth * 12 + 15).dp, end = 8.dp, top = 2.dp, bottom = 2.dp),
-			verticalAlignment = Alignment.CenterVertically,
-		) {
-			Box(Modifier.size(width = 10.dp, height = 7.dp).background(color.copy(alpha = 0.55f), RoundedCornerShape(2.dp)))
-			Spacer(Modifier.width(6.dp))
-			Text(
-				drawableNames[id] ?: id,
-				modifier = Modifier.weight(1f),
-				color = color,
-				style = typography.body.copy(fontSize = 10.sp),
-				maxLines = 1,
-				overflow = TextOverflow.Ellipsis,
-			)
-			if (editable) {
-				Text("×", modifier = Modifier.clickable { onUnbind(id) }.padding(horizontal = 4.dp),
-					color = colors.textPrimary, style = typography.body.copy(fontSize = 12.sp))
-			}
+		if (!bone.role.anchor) {
+			Text(bone.parameterId, color = if (selected) colors.selectionText.copy(alpha = 0.7f) else colors.textMuted,
+				style = typography.monoSmall.copy(fontSize = 9.sp), maxLines = 1)
 		}
 	}
 }
+
+/** A mesh bound to [bone], one level under it, in the bone's color; picks its layer, or unbinds while editing. */
+@Composable
+private fun MeshRow(
+	spec: SkeletonSpec,
+	bone: SkeletonBone,
+	name: String,
+	isLast: Boolean,
+	selected: Boolean,
+	editable: Boolean,
+	onPick: () -> Unit,
+	onUnbind: () -> Unit,
+) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	val ancestors = lineage(spec, bone)
+	val depth = ancestors.size + 1
+	val openLevels = ancestors.asReversed().drop(1).map { hasNextSibling(spec, it) } + hasNextSibling(spec, bone)
+	val color = SkeletonPalette.color(spec, bone.id)
+	val interaction = remember { MutableInteractionSource() }
+	val hovered by interaction.collectIsHoveredAsState()
+
+	Row(
+		Modifier.fillMaxWidth().height(ROW_HEIGHT_DP.dp)
+			.background(
+				when {
+					selected -> colors.selection
+					hovered -> colors.controlHover.copy(alpha = 0.3f)
+					else -> Color.Transparent
+				}
+			)
+			.treeGuides(depth, openLevels, isLast, false, guideColor(colors.textMuted))
+			.hoverable(interaction)
+			.clickable(interactionSource = interaction, indication = null, onClick = onPick)
+			.padding(start = (BASE_PADDING_DP + depth * INDENT_STEP_DP).dp, end = 6.dp),
+		verticalAlignment = Alignment.CenterVertically,
+	) {
+		Spacer(Modifier.width(1.dp))
+		IconMeshWireframe(tint = color, modifier = Modifier.size(ICON_SIZE_DP.dp))
+		Spacer(Modifier.width((CHEVRON_WIDTH_DP + 4).dp))
+		Text(
+			name,
+			modifier = Modifier.weight(1f),
+			color = if (selected) colors.selectionText else color,
+			style = typography.body.copy(fontSize = 11.sp),
+			maxLines = 1,
+			overflow = TextOverflow.Ellipsis,
+		)
+		if (editable && hovered) {
+			Box(
+				Modifier.size(14.dp)
+					.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
+					.clickable(onClick = onUnbind),
+				contentAlignment = Alignment.Center,
+			) { IconClose(Modifier.size(7.dp), tint = if (selected) colors.selectionText else colors.textMuted) }
+		}
+	}
+}
+
+private fun guideColor(muted: Color) = muted.copy(alpha = 0.4f)
 
 /**
  * The selected bone's joint: how wide the blend band around its head is, and how far it may turn each
@@ -241,30 +451,52 @@ private fun BoneRow(
 private fun BoneSettings(editor: CanvasEditor, spec: SkeletonSpec, bone: SkeletonBone) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
-	val parent = generateSequence(bone.parentId?.let(spec::bone)) { it.parentId?.let(spec::bone) }.firstOrNull { !it.role.anchor }
-	val label = typography.body.copy(fontSize = 10.sp)
-	if (parent != null) {
-		val limit = (minOf(bone.length, parent.length) * 0.45f).coerceAtLeast(1f)
-		val automatic = bone.blendWidth == null
-		val shown = bone.blendWidth ?: SkeletonWeights.blendHalfWidth(bone, parent.length).toFloat()
-		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-			Text(tr("skeleton.panel.blend", shown.roundToInt()), color = colors.textPrimary, style = label, modifier = Modifier.width(92.dp))
-			CompactSlider(value = shown.coerceIn(0f, limit), onValueChange = { editor.setBoneBlendWidth(it) },
-				valueRange = 0f..limit, modifier = Modifier.weight(1f))
-			Text(tr("skeleton.panel.auto"), modifier = Modifier
-				.background(if (automatic) colors.accent.copy(alpha = 0.35f) else colors.border.copy(alpha = 0.25f), RoundedCornerShape(3.dp))
-				.clickable { editor.setBoneBlendWidth(null) }.padding(horizontal = 6.dp, vertical = 3.dp),
-				color = colors.textPrimary, style = typography.body.copy(fontSize = 9.sp))
+	val parent = lineage(spec, bone).firstOrNull { !it.role.anchor }
+	Row(
+		Modifier.fillMaxWidth().height(24.dp).background(colors.panelElevated)
+			.border(BorderStroke(1.dp, colors.divider)).padding(horizontal = 8.dp),
+		verticalAlignment = Alignment.CenterVertically,
+	) {
+		Box(Modifier.size(8.dp).background(SkeletonPalette.color(spec, bone.id), CircleShape))
+		Spacer(Modifier.width(6.dp))
+		Text(bone.name, modifier = Modifier.weight(1f), color = colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis,
+			style = typography.header.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold))
+		Text(bone.parameterId, color = colors.textMuted, style = typography.monoSmall.copy(fontSize = 9.sp), maxLines = 1)
+	}
+	Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+		if (parent != null) {
+			val limit = (minOf(bone.length, parent.length) * 0.45f).coerceAtLeast(1f)
+			val automatic = bone.blendWidth == null
+			val shown = bone.blendWidth ?: SkeletonWeights.blendHalfWidth(bone, parent.length).toFloat()
+			SettingRow(tr("skeleton.panel.blend"), "${shown.roundToInt()}px") {
+				CompactSlider(value = shown.coerceIn(0f, limit), onValueChange = { editor.setBoneBlendWidth(it) },
+					valueRange = 0f..limit, modifier = Modifier.weight(1f))
+				Spacer(Modifier.width(4.dp))
+				CompactToggleChip(text = tr("skeleton.panel.auto"), selected = automatic, onToggle = { editor.setBoneBlendWidth(null) },
+					showCheckWhenSelected = false, height = 18.dp)
+			}
+		}
+		SettingRow(tr("skeleton.panel.min"), "${bone.minAngle.roundToInt()}°") {
+			CompactSlider(value = bone.minAngle, onValueChange = { editor.setBoneLimits(it, bone.maxAngle) },
+				valueRange = -180f..0f, modifier = Modifier.weight(1f))
+		}
+		SettingRow(tr("skeleton.panel.max"), "${bone.maxAngle.roundToInt()}°") {
+			CompactSlider(value = bone.maxAngle, onValueChange = { editor.setBoneLimits(bone.minAngle, it) },
+				valueRange = 0f..180f, modifier = Modifier.weight(1f))
 		}
 	}
-	Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-		Text(tr("skeleton.panel.min", bone.minAngle.roundToInt()), color = colors.textPrimary, style = label, modifier = Modifier.width(92.dp))
-		CompactSlider(value = bone.minAngle, onValueChange = { editor.setBoneLimits(it, bone.maxAngle) },
-			valueRange = -180f..0f, modifier = Modifier.weight(1f))
-	}
-	Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-		Text(tr("skeleton.panel.max", bone.maxAngle.roundToInt()), color = colors.textPrimary, style = label, modifier = Modifier.width(92.dp))
-		CompactSlider(value = bone.maxAngle, onValueChange = { editor.setBoneLimits(bone.minAngle, it) },
-			valueRange = 0f..180f, modifier = Modifier.weight(1f))
+}
+
+/** A property row: muted label, the control, and the value right-aligned in a fixed column. */
+@Composable
+private fun SettingRow(label: String, value: String, control: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	Row(Modifier.fillMaxWidth().height(22.dp), verticalAlignment = Alignment.CenterVertically) {
+		Text(label, color = colors.textMuted, style = typography.caption.copy(fontSize = 9.5.sp), maxLines = 1,
+			overflow = TextOverflow.Ellipsis, modifier = Modifier.width(56.dp))
+		control()
+		Text(value, color = colors.textPrimary, style = typography.monoSmall.copy(fontSize = 10.sp), textAlign = TextAlign.End,
+			maxLines = 1, modifier = Modifier.width(42.dp))
 	}
 }
