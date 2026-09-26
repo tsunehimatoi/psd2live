@@ -15,22 +15,27 @@ object MotionGenerator {
 	): String? = buildMotionJson(
 		duration = SkeletonMotions.IDLE_DURATION,
 		loop = true,
-		curves = SkeletonMotions.idle(skeleton, skeletonExclude).map { (id, points) -> curve(id, points) } + listOf(
-			curve("ParamEyeLOpen", listOf(0f to 1f, 2.7f to 1f, 2.78f to 0f, 2.88f to 1f, 6f to 1f)),
-			curve("ParamEyeROpen", listOf(0f to 1f, 2.7f to 1f, 2.78f to 0f, 2.88f to 1f, 6f to 1f)),
-		),
+		curves = SkeletonMotions.idle(skeleton, skeletonExclude).map { (id, points) -> curve(id, points) } + idleBlink(),
 		availableParameterIds = availableParameterIds,
 	)
 
-	/** A one-shot skeleton motion ([SkeletonMotions.tailSwing] and friends) as motion3 JSON. */
-	fun skeleton(tracks: List<MotionTrack>, availableParameterIds: Set<String>): String? {
+	/**
+	 * A skeleton preset ([SkeletonMotions.presets]) as motion3 JSON. A [loop] stands in for the idle, so it
+	 * blinks like the idle does.
+	 */
+	fun skeleton(tracks: List<MotionTrack>, availableParameterIds: Set<String>, loop: Boolean = false): String? {
 		if (tracks.isEmpty()) return null
 		return buildMotionJson(
 			duration = tracks.maxOf { it.second.last().first },
-			loop = false,
-			curves = tracks.map { (id, points) -> curve(id, points) },
+			loop = loop,
+			curves = tracks.map { (id, points) -> curve(id, points) } + (if (loop) idleBlink() else emptyList()),
 			availableParameterIds = availableParameterIds,
 		)
+	}
+
+	/** One blink partway through the idle's cycle. */
+	private fun idleBlink(): List<Curve> = listOf("ParamEyeLOpen", "ParamEyeROpen").map {
+		curve(it, listOf(0f to 1f, 2.7f to 1f, 2.78f to 0f, 2.88f to 1f, SkeletonMotions.IDLE_DURATION to 1f))
 	}
 
 	fun blink(): String = blink(ALL_PARAMETERS)!!

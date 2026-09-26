@@ -3,6 +3,7 @@ package io.github.psd2live.ui
 import androidx.compose.ui.geometry.Offset
 import io.github.psd2live.core.SkeletonBone
 import io.github.psd2live.core.SkeletonIk
+import io.github.psd2live.core.SkeletonPose
 import io.github.psd2live.core.SkeletonPoses
 import io.github.psd2live.core.SkeletonRig
 import io.github.psd2live.core.SkeletonSpec
@@ -68,10 +69,9 @@ internal object SkeletonPoseTool {
 		fun param(bone: SkeletonBone) = ((values[ParameterId(bone.parameterId)] ?: 0f) + (poseTurns[bone.id] ?: 0f)) * bone.direction
 		// The IK turn the leg poses add to a shin or foot relative to its parent, weighed as the bake
 		// weighed it into the mesh.
-		val crouch = values[SkeletonPoses.crouch.id] ?: 0f
-		val weight = values[SkeletonPoses.weight.id] ?: 0f
-		val joints = if (legs.isEmpty() || (crouch == 0f && weight == 0f)) emptyMap() else legJoints(model, legs)
-		fun poseTurn(bone: SkeletonBone): Double = joints[bone.id]?.turnAt(crouch, weight)?.toDouble() ?: 0.0
+		val legValue = { pose: SkeletonPose -> values[pose.id] ?: 0f }
+		val joints = if (legs.isEmpty() || SkeletonPoses.legPoses.all { legValue(it) == 0f }) emptyMap() else legJoints(model, legs)
+		fun poseTurn(bone: SkeletonBone): Double = joints[bone.id]?.turnAt(legValue)?.toDouble() ?: 0.0
 		for (bone in bones) {
 			val id = SkeletonRig.deformerOf(model, bone)
 			val world = worlds[id]

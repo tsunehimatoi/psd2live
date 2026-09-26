@@ -440,13 +440,11 @@ class PSD2LivePipeline {
 				}
 				if (config.motionSkeleton) {
 					val skeleton = config.rigEdits.skeleton
-					for ((group, tracks) in listOf(
-						"TailSwing" to SkeletonMotions.tailSwing(skeleton),
-						"Crouch" to SkeletonMotions.crouch(skeleton),
-						"WeightShift" to SkeletonMotions.weightShift(skeleton),
-					)) {
-						val name = "$baseName.${group.replaceFirstChar(Char::lowercase)}.motion3.json"
-						MotionGenerator.skeleton(tracks, parameterIds)?.let { motion ->
+					for (preset in SkeletonMotions.presets) {
+						// A looping preset is another idle, played from the idle group beside the plain one.
+						val group = if (preset.loop) "Idle" else preset.name
+						val name = "$baseName.${preset.name.replaceFirstChar(Char::lowercase)}.motion3.json"
+						MotionGenerator.skeleton(preset.tracks(skeleton), parameterIds, loop = preset.loop)?.let { motion ->
 							val json = CubismJson.normalize(motion).also { Json.parseToJsonElement(it) }
 							add(group to (name to json))
 						}

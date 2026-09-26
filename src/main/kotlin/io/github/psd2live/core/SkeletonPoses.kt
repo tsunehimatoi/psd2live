@@ -2,10 +2,12 @@ package io.github.psd2live.core
 
 import org.umamo.runtime.model.ParameterId
 import kotlin.math.abs
+import kotlin.math.sign
 
 /**
  * A whole-body pose the rig carries as one blend-shape parameter. [legs] poses also move the hips and
- * plant the feet by IK; every other pose only turns bones by [SkeletonPoses.boneTurns].
+ * plant the feet by IK, unless [airborne] lets the legs ride along with the hips; every other pose only
+ * turns bones by [SkeletonPoses.boneTurns].
  */
 internal class SkeletonPose(
 	val id: ParameterId,
@@ -15,6 +17,7 @@ internal class SkeletonPose(
 	/** The values the pose is baked at, including the neutral 0. IK poses need them dense. */
 	val keys: FloatArray,
 	val legs: Boolean = false,
+	val airborne: Boolean = false,
 )
 
 /**
@@ -33,8 +36,28 @@ internal object SkeletonPoses {
 	val tailSwing = SkeletonPose(ParameterId("ParamSkelTailSwing"), "skeleton.param.tailSwing", -1f, 1f, floatArrayOf(-1f, 0f, 1f))
 	val armSway = SkeletonPose(ParameterId("ParamSkelArmSway"), "skeleton.param.armSway", -1f, 1f, floatArrayOf(-1f, 0f, 1f))
 	val wingFlap = SkeletonPose(ParameterId("ParamSkelWingFlap"), "skeleton.param.wingFlap", -1f, 1f, floatArrayOf(-1f, 0f, 1f))
+	/** Knock-kneed: the hips sink a little and the knees give inward instead of out. */
+	val kneesIn = SkeletonPose(ParameterId("ParamSkelKneesIn"), "skeleton.param.kneesIn", 0f, 1f,
+		floatArrayOf(0f, 0.25f, 0.5f, 0.75f, 1f), legs = true)
+	/** Both arms: -1 draws the hands together in front of the body, +1 throws the arms open and up. */
+	val arms = SkeletonPose(ParameterId("ParamSkelArms"), "skeleton.param.arms", -1f, 1f, floatArrayOf(-1f, -0.5f, 0f, 0.5f, 1f))
+	/** The character's right arm raised to wave, the forearm upright. */
+	val wave = SkeletonPose(ParameterId("ParamSkelWave"), "skeleton.param.wave", 0f, 1f, floatArrayOf(0f, 0.5f, 1f))
+	/** The raised forearm and hand swinging side to side, on top of [wave]. */
+	val waveSwing = SkeletonPose(ParameterId("ParamSkelWaveSwing"), "skeleton.param.waveSwing", -1f, 1f, floatArrayOf(-1f, 0f, 1f))
+	/** One leg kicked up behind: +1 the character's left, -1 the right. Pure turns, so it adds onto [weight]. */
+	val legLift = SkeletonPose(ParameterId("ParamSkelLegLift"), "skeleton.param.legLift", -1f, 1f,
+		floatArrayOf(-1f, -0.5f, 0f, 0.5f, 1f))
+	/**
+	 * The whole body lifted off the ground, legs and all. Nothing is planted, so it only moves the body
+	 * warp and adds exactly onto a planted leg pose: a hop out of a [crouch] keeps the knees bent in the air.
+	 */
+	val hop = SkeletonPose(ParameterId("ParamSkelHop"), "skeleton.param.hop", 0f, 1f, floatArrayOf(0f, 1f), legs = true, airborne = true)
 
-	val all = listOf(crouch, weight, tailSwing, armSway, wingFlap)
+	val all = listOf(crouch, weight, kneesIn, hop, tailSwing, armSway, wingFlap, arms, wave, waveSwing, legLift)
+
+	/** The poses that move the hips. Of the planted ones only one plays at a time. */
+	val legPoses = all.filter { it.legs }
 
 	/** World degrees the upper body leans back against the hips' tilt at full weight shift. */
 	private const val UPPER_BODY_COUNTER = 1.5f
@@ -62,8 +85,8 @@ internal object SkeletonPoses {
 
 	/**
 	 * The turn each bone takes at [value], in its parameter's units (degrees signed by
-	 * [SkeletonBone.direction]) and inside its limits, by bone ID. The leg IK of [crouch] and [weight] is
-	 * not here; it depends on where the rig puts the hips and is solved at bake time.
+	 * [SkeletonBone.direction]) and inside its limits, by bone ID. The leg IK of [legPoses] is not here;
+	 * it depends on where the rig puts the hips and is solved at bake time.
 	 */
 	fun boneTurns(spec: SkeletonSpec, pose: SkeletonPose, value: Float): Map<String, Float> {
 		if (value == 0f) return emptyMap()
@@ -72,6 +95,17 @@ internal object SkeletonPoses {
 		fun chain(roles: Set<BoneRole>, amplitude: Float, sided: Boolean) = bones.filter { it.role in roles }.associate { bone ->
 			bone.id to amplitude * decay(depth(spec, bone)) * (if (sided) side(bone) else 1f) * value
 		}
+		// A fixed turn per arm joint, away from the body; [only] keeps it to one side.
+		fun arm(upper: Float, fore: Float, hand: Float, only: Side? = null) = bones
+			.filter { only == null || it.side == only }
+			.mapNotNull { bone ->
+				when (bone.role) {
+					BoneRole.UPPER_ARM -> upper
+					BoneRole.FOREARM -> fore
+					BoneRole.HAND -> hand
+					else -> null
+				}?.let { bone.id to it * abs(value) }
+			}.toMap()
 		val turns = when (pose) {
 			crouch -> bones.filter { it.role == BoneRole.UPPER_ARM }.associate { it.id to 8f * value }
 			// The arms hang from the chest, so they trail the hips; the chest leans back against the tilt.
@@ -83,6 +117,22 @@ internal object SkeletonPoses {
 			}
 			armSway -> chain(setOf(BoneRole.UPPER_ARM, BoneRole.FOREARM, BoneRole.HAND), 4f, sided = true)
 			wingFlap -> chain(setOf(BoneRole.WING), 6f, sided = true)
+			kneesIn -> bones.filter { it.role == BoneRole.UPPER_ARM }.associate { it.id to -4f * value }
+			// Tucked, the forearms fold across the body; open, the arms lift clear of the shoulders.
+			arms -> if (value < 0f) arm(upper = -12f, fore = -35f, hand = -15f) else arm(upper = 70f, fore = 20f, hand = 10f)
+			// The elbow at shoulder height and the forearm upright, the way a hand waves beside the face.
+			wave -> arm(upper = 100f, fore = 65f, hand = 0f, only = Side.RIGHT)
+			waveSwing -> arm(upper = 0f, fore = 20f * value.sign, hand = 15f * value.sign, only = Side.RIGHT)
+			// The thigh draws in under the body and the shin flicks out, which is how a front-facing figure
+			// reads as kicking a foot up behind it.
+			legLift -> bones.filter { it.side == (if (value > 0f) Side.LEFT else Side.RIGHT) }.mapNotNull { bone ->
+				when (bone.role) {
+					BoneRole.THIGH -> -5f
+					BoneRole.SHIN -> 45f
+					BoneRole.FOOT -> 20f
+					else -> null
+				}?.let { bone.id to it * abs(value) }
+			}.toMap()
 			else -> emptyMap()
 		}
 		val byId = bones.associateBy { it.id }

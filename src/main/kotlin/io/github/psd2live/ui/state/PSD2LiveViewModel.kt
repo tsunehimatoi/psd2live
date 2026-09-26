@@ -4023,16 +4023,12 @@ class PSD2LiveViewModel : AutoCloseable {
 		}
 	}
 
-	private val skeletonMotionNames: Set<String> get() = setOf("tailswing", "crouch", "weightshift")
+	private val skeletonMotionNames: Set<String>
+		get() = io.github.psd2live.core.SkeletonMotions.presets.mapTo(HashSet()) { it.name.lowercase() }
 
 	/** The tracks of a skeleton one-shot, as exported. */
 	private fun skeletonMotionTracks(name: String, spec: io.github.psd2live.core.SkeletonSpec?): List<io.github.psd2live.core.MotionTrack> =
-		when (name) {
-			"tailswing" -> io.github.psd2live.core.SkeletonMotions.tailSwing(spec)
-			"crouch" -> io.github.psd2live.core.SkeletonMotions.crouch(spec)
-			"weightshift" -> io.github.psd2live.core.SkeletonMotions.weightShift(spec)
-			else -> emptyList()
-		}
+		io.github.psd2live.core.SkeletonMotions.presets.firstOrNull { it.name.lowercase() == name }?.tracks?.invoke(spec).orEmpty()
 
 	private fun startMotionLoop() {
 		motionJob = scope.launch {

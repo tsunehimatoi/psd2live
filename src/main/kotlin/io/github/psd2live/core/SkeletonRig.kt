@@ -538,14 +538,14 @@ internal object SkeletonRig {
 	/**
 	 * How far the thigh and the shin of [leg] turn from rest, in world degrees, so that its ankle stays
 	 * where it was drawn while its hip sits at ([hipX], [hipY]). Two-bone IK with the knee on the side
-	 * away from [centerX].
+	 * away from [centerX], or toward it when [inward].
 	 */
-	internal fun legTurns(leg: Leg, hipX: Double, hipY: Double, centerX: Double): Pair<Double, Double> {
+	internal fun legTurns(leg: Leg, hipX: Double, hipY: Double, centerX: Double, inward: Boolean = false): Pair<Double, Double> {
 		val kneeX = leg.shin.headX.toDouble()
 		val kneeY = leg.shin.headY.toDouble()
 		val l1 = hypot(kneeX - leg.thigh.headX, kneeY - leg.thigh.headY)
 		val l2 = hypot(leg.ankleX - kneeX, leg.ankleY - kneeY)
-		val outward = if (leg.thigh.headX < centerX) -1.0 else 1.0
+		val outward = (if (leg.thigh.headX < centerX) -1.0 else 1.0) * (if (inward) -1.0 else 1.0)
 		val knee = listOf(1.0, -1.0)
 			.map { SkeletonIk.twoBone(hipX, hipY, l1, l2, leg.ankleX, leg.ankleY, it) }
 			.maxBy { it[0] * outward }
@@ -558,7 +558,7 @@ internal object SkeletonRig {
 		return thighTurn to shinTurn
 	}
 
-	/** The rigid motion the body warp makes at crouch [t] and weight [w]: a turn about the hips, then a shift. */
+	/** The rigid motion the body warp makes under a leg pose: a turn about the hips, then a shift. */
 	private class HipMotion(val cx: Double, val cy: Double, val degrees: Double, val dx: Double, val dy: Double) {
 		fun apply(x: Double, y: Double): DoubleArray {
 			val p = SkeletonIk.rotate(x, y, cx, cy, degrees)
@@ -576,8 +576,8 @@ internal object SkeletonRig {
 	 * parameter does. Each is a blend shape on those deformers, so it adds to the bones' own
 	 * parameters - a posed limb can still be swung by hand - and poses add to each other instead of
 	 * multiplying keyforms. Each leg pose is solved with the other at rest, so both at once only
-	 * approximate the joint solve. The knee always gives outward, which is how a front-facing figure
-	 * reads as bending its knees.
+	 * approximate the joint solve. The knee gives outward, which is how a front-facing figure reads as
+	 * bending its knees, except under [SkeletonPoses.kneesIn].
 	 */
 	private fun addPoses(
 		base: PuppetModel,
@@ -600,9 +600,8 @@ internal object SkeletonRig {
 			model = posed
 			joints
 		}
-		for ((boneId, joint) in joints) {
-			offset(boneId, SkeletonPoses.crouch).let { for (i in it.indices) it[i] += joint.crouch[i] }
-			offset(boneId, SkeletonPoses.weight).let { for (i in it.indices) it[i] += joint.weight[i] }
+		for ((boneId, joint) in joints) for ((pose, turns) in joint.turns) {
+			if (pose in legPoses) offset(boneId, pose).let { for (i in it.indices) it[i] += turns[i] }
 		}
 		val byId = bones.associateBy { it.id }
 		for (pose in poses) for ((ki, key) in pose.keys.withIndex()) {
@@ -675,6 +674,9 @@ internal object SkeletonRig {
 		val crouchDrop = legLength * 0.06
 		val shift = legLength * 0.045
 		val tilt = 3.0
+		// Knees that meet in the middle need less drop than a crouch to read.
+		val kneesInDrop = legLength * 0.05
+		val hopLift = legLength * 0.18
 
 		fun motion(t: Double, w: Double, weightDrop: Double) =
 			HipMotion(centerX, centerY, -tilt * w, shift * w, crouchDrop * t + weightDrop * abs(w))
@@ -694,8 +696,12 @@ internal object SkeletonRig {
 			}
 			weightDrop = max(weightDrop, drop)
 		}
-		fun motionOf(pose: SkeletonPose, key: Float) =
-			if (pose == SkeletonPoses.crouch) motion(key.toDouble(), 0.0, weightDrop) else motion(0.0, key.toDouble(), weightDrop)
+		fun motionOf(pose: SkeletonPose, key: Float) = when (pose) {
+			SkeletonPoses.weight -> motion(0.0, key.toDouble(), weightDrop)
+			SkeletonPoses.kneesIn -> HipMotion(centerX, centerY, 0.0, 0.0, kneesInDrop * key)
+			SkeletonPoses.hop -> HipMotion(centerX, centerY, 0.0, 0.0, -hopLift * key)
+			else -> motion(key.toDouble(), 0.0, weightDrop)
+		}
 
 		val defaults = base.parameters.associate { it.id to it.default }
 		val default: (ParameterId) -> Float = { defaults[it] ?: 0f }
@@ -724,12 +730,13 @@ internal object SkeletonRig {
 	}
 
 	/**
-	 * One leg joint under the two leg poses: its turn relative to its parent, in world degrees, at every
-	 * key of [SkeletonPoses.crouch] and of [SkeletonPoses.weight], each solved with the other at rest.
+	 * One leg joint under the leg poses: its turn relative to its parent, in world degrees, at every key
+	 * of each of [SkeletonPoses.legPoses], each solved with the others at rest.
 	 */
-	internal class LegJointPose(val crouch: FloatArray, val weight: FloatArray) {
-		/** The turn at crouch [c] and weight [w], weighed between keys the way the evaluator weighs blend shapes. */
-		fun turnAt(c: Float, w: Float): Float = at(SkeletonPoses.crouch, crouch, c) + at(SkeletonPoses.weight, weight, w)
+	internal class LegJointPose(val turns: Map<SkeletonPose, FloatArray>) {
+		/** The turn at the pose values [value], weighed between keys the way the evaluator weighs blend shapes. */
+		fun turnAt(value: (SkeletonPose) -> Float): Float =
+			turns.entries.sumOf { (pose, keys) -> at(pose, keys, value(pose)).toDouble() }.toFloat()
 
 		private fun at(pose: SkeletonPose, turns: FloatArray, value: Float): Float =
 			SkeletonPoses.bracket(pose, value).sumOf { (key, t) -> (turns[pose.keys.indexOfFirst { it == key }] * t).toDouble() }.toFloat()
@@ -746,7 +753,7 @@ internal object SkeletonRig {
 		val centerX = legCenter(legs)
 		val rest = worlds(model, emptyMap())
 		fun turns(pose: SkeletonPose): List<Map<String, Float>> = pose.keys.map { key ->
-			if (key == 0f) return@map emptyMap()
+			if (key == 0f || pose.airborne) return@map emptyMap()
 			val posed = worlds(model, mapOf(pose.id to key))
 			buildMap {
 				for (leg in legs) {
@@ -754,17 +761,16 @@ internal object SkeletonRig {
 					val thigh = posed[thighId] ?: continue
 					val hip = FloatArray(2).also { thigh.apply(0f, 0f, it, 0) }
 					val inherited = SkeletonIk.wrap((angleOf(thigh) - angleOf(rest.getValue(thighId))).toDouble())
-					val (thighTurn, shinTurn) = legTurns(leg, hip[0].toDouble(), hip[1].toDouble(), centerX)
+					val (thighTurn, shinTurn) = legTurns(leg, hip[0].toDouble(), hip[1].toDouble(), centerX, pose == SkeletonPoses.kneesIn)
 					put(leg.thigh.id, SkeletonIk.wrap(thighTurn - inherited).toFloat())
 					put(leg.shin.id, SkeletonIk.wrap(shinTurn - thighTurn).toFloat())
 					leg.foot?.let { put(it.id, (-shinTurn).toFloat()) }
 				}
 			}
 		}
-		val crouch = turns(SkeletonPoses.crouch)
-		val weight = turns(SkeletonPoses.weight)
+		val solved = SkeletonPoses.legPoses.associateWith { turns(it) }
 		return legs.flatMap { listOfNotNull(it.thigh.id, it.shin.id, it.foot?.id) }.associateWith { id ->
-			LegJointPose(FloatArray(crouch.size) { crouch[it][id] ?: 0f }, FloatArray(weight.size) { weight[it][id] ?: 0f })
+			LegJointPose(solved.mapValues { (_, keys) -> FloatArray(keys.size) { keys[it][id] ?: 0f } })
 		}
 	}
 

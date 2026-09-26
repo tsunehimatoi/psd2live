@@ -266,19 +266,17 @@ private fun MotionsListSection(
 
 		// Skeleton one-shots: only the ones the current skeleton can actually play.
 		val skeleton = state.previewModel?.config?.rigEdits?.skeleton
-		for ((name, key, tracks) in listOf(
-			Triple("TailSwing", "export.motion.tailSwing", SkeletonMotions.tailSwing(skeleton)),
-			Triple("Crouch", "export.motion.crouch", SkeletonMotions.crouch(skeleton)),
-			Triple("WeightShift", "export.motion.weightShift", SkeletonMotions.weightShift(skeleton)),
-		)) {
+		for (preset in SkeletonMotions.presets) {
+			val name = preset.name
+			val tracks = preset.tracks(skeleton)
 			if (tracks.isEmpty()) continue
 			DccMotionRow(
 				name = name,
-				title = tr(key),
+				title = tr("export.motion.${name.replaceFirstChar(Char::lowercase)}"),
 				enabled = state.motionSkeleton,
 				onEnabledChange = { viewModel.setMotionSkeleton(it) },
 				onPlay = { viewModel.triggerMotion(name) },
-				isLoop = false,
+				isLoop = preset.loop,
 				durationSec = tracks.maxOf { it.second.last().first },
 				curveCount = tracks.size,
 				affectedParams = tracks.map { (id, points) ->
