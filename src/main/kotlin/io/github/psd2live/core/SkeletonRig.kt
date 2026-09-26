@@ -51,6 +51,7 @@ internal object SkeletonRig {
 
 	private val bodyId = DeformerId("DeformBodyXY")
 	private val breathId = DeformerId("DeformBodyZBreath")
+	private val headRotationId = DeformerId("DeformHeadRotation")
 
 	/** Widest angle step between two keys of a corrective keyform axis. */
 	private const val KEY_STEP = 7.5
@@ -85,6 +86,20 @@ internal object SkeletonRig {
 	}
 
 	/**
+	 * The skinning tree each limb bone belongs to, by the ID of the tree's root. A body bone roots its own
+	 * tree and so does every limb hanging from one: the limb turns with the body, but its meshes and the
+	 * torso's never blend into each other.
+	 */
+	fun skinRoots(bones: List<SkeletonBone>, parentOf: Map<String, SkeletonBone?>): Map<String, String> {
+		val rootOf = HashMap<String, String>()
+		for (bone in bones) {
+			val parent = parentOf[bone.id]
+			rootOf[bone.id] = if (parent == null || parent.role.body) bone.id else rootOf.getValue(parent.id)
+		}
+		return rootOf
+	}
+
+	/**
 	 * Bakes [spec] into [base]. [frame] is the character bounds the body warp spans. Meshes in
 	 * [lockedTopology] keep their vertices: they carry hand-made topology edits that replay by vertex
 	 * index, which new vertices would misplace.
@@ -100,8 +115,7 @@ internal object SkeletonRig {
 		var canvas = restCanvas(model)
 
 		// 1. Which meshes each limb tree skins: a mesh bound to any bone of the tree.
-		val rootOf = HashMap<String, String>()
-		for (bone in bones) rootOf[bone.id] = parentOf[bone.id]?.let { rootOf[it.id] } ?: bone.id
+		val rootOf = skinRoots(bones, parentOf)
 		val drawableRoot = LinkedHashMap<String, String>()
 		for (bone in bones) for (id in bone.drawableIds) {
 			val drawable = model.drawables.firstOrNull { it.id.raw == id } ?: continue
@@ -125,9 +139,10 @@ internal object SkeletonRig {
 			canvas = canvas + (drawableId to frameAfter)
 		}
 
-		// 3. One rotation deformer per bone.
+		// 3. One rotation deformer per bone, and the head carried by the upper body.
 		model = addRotations(model, bones, parentOf, spec, frame)
 		model = addParameters(model, bones)
+		bones.firstOrNull { it.role == BoneRole.UPPER_BODY }?.let { model = reparentKeepingRest(model, headRotationId, DeformerId(it.deformerId)) }
 
 		// 4. Hips that move while the feet stay put.
 		model = addLegPoses(model, spec, bones, parentOf)
@@ -168,11 +183,46 @@ internal object SkeletonRig {
 	// ---------------------------------------------------------------------------------------------------
 	// Rotation deformers
 
+	/**
+	 * The generated deformer a bone with no limb parent hangs from. Bones on the head turn with the head
+	 * Z rotation; the upper body bends with body Z and the breath; the lower body, and a bone hanging
+	 * from nothing, stay on the body warp alone so the feet stay where they stand.
+	 */
 	private fun attachWarp(model: PuppetModel, spec: SkeletonSpec, bone: SkeletonBone): DeformerId {
-		var anchor = bone.parentId?.let(spec::bone)
-		while (anchor != null && !anchor.role.anchor) anchor = anchor.parentId?.let(spec::bone)
-		val wantsHip = anchor == null || anchor.role == BoneRole.HIP || anchor.role == BoneRole.ROOT
-		return if (wantsHip || model.deformers.none { it.id == breathId }) bodyId else breathId
+		val lineage = generateSequence(bone) { it.parentId?.let(spec::bone) }
+		val present = model.deformers.mapTo(HashSet()) { it.id }
+		return when {
+			lineage.any { it.role == BoneRole.HEAD } && headRotationId in present -> headRotationId
+			lineage.any { it.role == BoneRole.UPPER_BODY } && breathId in present -> breathId
+			else -> bodyId
+		}
+	}
+
+	/**
+	 * Moves deformer [id] under [parentId] without moving it at rest: its pivot is carried into the new
+	 * parent's space, and its angle and scale lose whatever turn and scale the new parent adds.
+	 */
+	private fun reparentKeepingRest(model: PuppetModel, id: DeformerId, parentId: DeformerId): PuppetModel {
+		val deformer = model.deformers.firstOrNull { it.id == id } as? Deformer.Rotation ?: return model
+		if (deformer.parent == parentId || model.deformers.none { it.id == parentId }) return model
+		val before = worlds(model, emptyMap(), setOf(id, parentId))
+		val old = before[id] as? RotationWorld ?: return model
+		val pivot = FloatArray(2).also { old.apply(0f, 0f, it, 0) }
+		val origin = inverse(before.getValue(parentId), pivot[0], pivot[1])
+		val grid = deformer.geometryGrid ?: return model
+		fun moved(angleShift: Float, scaleFactor: Float) = deformer.copy(
+			parent = parentId,
+			baseAngle = deformer.baseAngle - angleShift,
+			geometryGrid = KeyformGrid(grid.axes, grid.cells.map { cell ->
+				KeyformCell(cell.coordinate, RotationPivotForm(origin[0], origin[1], cell.form.angle, cell.form.scale * scaleFactor))
+			}),
+		)
+		fun with(next: Deformer.Rotation) = model.copy(deformers = model.deformers.map { if (it.id == id) next else it })
+		val trial = with(moved(0f, 1f))
+		val now = worlds(trial, emptyMap(), setOf(id))[id] as? RotationWorld ?: return model
+		val drift = SkeletonIk.wrap((angleOf(now) - angleOf(old)).toDouble()).toFloat()
+		val scale = scaleOf(now).takeIf { it > 1e-6f }?.let { scaleOf(old) / it } ?: 1f
+		return with(moved(drift, scale))
 	}
 
 	private fun addRotations(
@@ -280,7 +330,7 @@ internal object SkeletonRig {
 		val bones = limbBones(spec)
 		val ids = bones.mapTo(HashSet()) { it.id }
 		val parentOf = bones.associate { it.id to limbParent(spec, it, ids) }
-		return bones.filter { it.role == BoneRole.THIGH && parentOf[it.id] == null }.mapNotNull { thigh ->
+		return bones.filter { it.role == BoneRole.THIGH && parentOf[it.id]?.role?.body != false }.mapNotNull { thigh ->
 			val shin = bones.firstOrNull { it.role == BoneRole.SHIN && parentOf[it.id]?.id == thigh.id } ?: return@mapNotNull null
 			val foot = bones.firstOrNull { it.role == BoneRole.FOOT && parentOf[it.id]?.id == shin.id }
 			Leg(thigh, shin, foot).takeIf { leg -> listOfNotNull(leg.thigh, leg.shin, leg.foot).any { it.drawableIds.isNotEmpty() } }

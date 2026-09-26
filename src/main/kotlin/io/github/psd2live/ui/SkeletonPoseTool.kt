@@ -148,7 +148,8 @@ internal object SkeletonPoseTool {
 			return mapOf(ParameterId(bone.parameterId) to next)
 		}
 		val limbIds = bones.mapTo(HashSet()) { it.bone.id }
-		val chain = generateSequence(grabbed.bone) { SkeletonRig.limbParent(spec, it, limbIds) }
+		// A limb's IK stops at the body bone it hangs from: pulling a hand should not tilt the torso.
+		val chain = generateSequence(grabbed.bone) { bone -> SkeletonRig.limbParent(spec, bone, limbIds)?.takeUnless { it.role.body } }
 			.take(IK_CHAIN).mapNotNull { byId[it.id] }.toList().asReversed()
 		val joints = DoubleArray((chain.size + 1) * 2)
 		chain.forEachIndexed { i, posed ->
@@ -190,8 +191,7 @@ internal object SkeletonPoseTool {
 		val bones = SkeletonRig.limbBones(spec)
 		val ids = bones.mapTo(HashSet()) { it.id }
 		val parentOf = bones.associate { it.id to SkeletonRig.limbParent(spec, it, ids) }
-		val rootOf = HashMap<String, String>()
-		for (bone in bones) rootOf[bone.id] = parentOf[bone.id]?.let { rootOf[it.id] } ?: bone.id
+		val rootOf = SkeletonRig.skinRoots(bones, parentOf)
 		val trees = bones.groupBy { rootOf.getValue(it.id) }
 		val rest = SkeletonRig.restCanvas(model)
 		val out = LinkedHashMap<DrawableId, Pair<List<SkeletonBone>, List<io.github.psd2live.core.VertexSkin>>>()

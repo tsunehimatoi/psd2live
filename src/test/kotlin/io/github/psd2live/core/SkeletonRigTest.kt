@@ -57,7 +57,7 @@ class SkeletonRigTest {
 		meshes: List<String> = emptyList(), side: Side = Side.LEFT) =
 		SkeletonBone(id, id, parent, role, side, hx, hy, tx, ty, meshes)
 
-	private val chest = bone("chest", null, BoneRole.CHEST, 100f, 200f, 100f, 60f, side = Side.NONE)
+	private val chest = bone("chest", null, BoneRole.UPPER_BODY, 100f, 200f, 100f, 60f, side = Side.NONE)
 	private fun arm(vararg meshes: String) = SkeletonSpec(bones = listOf(
 		chest,
 		bone("upper", "chest", BoneRole.UPPER_ARM, 100f, 100f, 100f, 250f, meshes.toList()),
@@ -83,11 +83,14 @@ class SkeletonRigTest {
 		val actual = canvas(baked).getValue(arm.id)
 		// Refinement may append vertices; the original ones keep their indices and must not move.
 		for (i in expected.indices) assertEquals(expected[i], actual[i], 0.05f, "vertex coordinate $i")
-		// One art mesh across the whole arm: one rotation deformer at the shoulder, pointing down the arm.
+		// One art mesh across the whole arm: one rotation deformer at the shoulder, pointing down the arm,
+		// hung from the upper body's deformer at the waist.
 		val skel = baked.deformers.filter { it.id.raw.startsWith("DeformSkel_") }
-		assertEquals(listOf("DeformSkel_upper"), skel.map { it.id.raw })
+		assertEquals(listOf("DeformSkel_chest", "DeformSkel_upper"), skel.map { it.id.raw })
+		val upper = skel.last() as Deformer.Rotation
+		assertEquals(DeformerId("DeformSkel_chest"), upper.parent)
 		// Cubism's handle points up at 0 and turns clockwise; an arm hanging straight down rests at 180.
-		assertEquals(180f, abs((skel.single() as Deformer.Rotation).baseAngle), 0.01f)
+		assertEquals(180f, abs(upper.baseAngle), 0.01f)
 		assertEquals(DeformerId("DeformSkel_upper"), baked.drawables.single().parentDeformerId)
 	}
 
@@ -227,7 +230,7 @@ class SkeletonRigTest {
 			SkeletonBone("shin_$s", "shin", "thigh_$s", BoneRole.SHIN, side, x, 350f, x, 450f),
 			SkeletonBone("foot_$s", "foot", "shin_$s", BoneRole.FOOT, side, x, 450f, x, 490f),
 		)
-		return SkeletonSpec(bones = listOf(bone("hip", null, BoneRole.HIP, 250f, 240f, 250f, 280f, side = Side.NONE)) +
+		return SkeletonSpec(bones = listOf(bone("hip", null, BoneRole.LOWER_BODY, 250f, 240f, 250f, 280f, side = Side.NONE)) +
 			leg("l", Side.RIGHT, 210f, -25f) + leg("r", Side.LEFT, 290f, 25f))
 	}
 
@@ -288,6 +291,38 @@ class SkeletonRigTest {
 		val read = SkeletonSpec.fromJson(v1.jsonObject).bone("fore")!!
 		assertEquals(BoneRole.FOREARM.minAngle, read.minAngle)
 		assertEquals(null, read.blendWidth)
+	}
+
+	@Test fun versionTwoAnchorsFoldIntoUpperAndLowerBody() {
+		fun anchor(id: String, parent: String?, role: String, drawables: List<String> = emptyList()) = buildJsonObject {
+			put("id", JsonPrimitive(id)); put("role", JsonPrimitive(role))
+			parent?.let { put("parent", JsonPrimitive(it)) }
+			put("head", kotlinx.serialization.json.buildJsonArray { add(JsonPrimitive(0f)); add(JsonPrimitive(0f)) })
+			put("tail", kotlinx.serialization.json.buildJsonArray { add(JsonPrimitive(0f)); add(JsonPrimitive(50f)) })
+			put("drawables", kotlinx.serialization.json.buildJsonArray { drawables.forEach { add(JsonPrimitive(it)) } })
+		}
+		val v2 = buildJsonObject {
+			put("version", JsonPrimitive(2))
+			put("bones", kotlinx.serialization.json.buildJsonArray {
+				add(anchor("root", null, "ROOT"))
+				add(anchor("hip", "root", "HIP", listOf("skirt")))
+				add(anchor("chest", "root", "CHEST", listOf("shirt")))
+				add(anchor("neck", "chest", "NECK", listOf("neck")))
+				add(anchor("head", "neck", "HEAD"))
+				add(anchor("arm", "chest", "UPPER_ARM"))
+				add(anchor("thigh", "hip", "THIGH"))
+			})
+		}
+		val spec = SkeletonSpec.fromJson(v2)
+		assertEquals(setOf(SkeletonSpec.UPPER_BODY_ID, SkeletonSpec.LOWER_BODY_ID, "head", "arm", "thigh"), spec.bones.map { it.id }.toSet())
+		val upper = spec.bone(SkeletonSpec.UPPER_BODY_ID)!!
+		assertEquals(BoneRole.UPPER_BODY, upper.role)
+		assertEquals(null, upper.parentId)
+		assertEquals(listOf("shirt", "neck"), upper.drawableIds)
+		assertEquals(BoneRole.LOWER_BODY, spec.bone(SkeletonSpec.LOWER_BODY_ID)!!.role)
+		assertEquals(SkeletonSpec.UPPER_BODY_ID, spec.bone("head")!!.parentId)
+		assertEquals(SkeletonSpec.UPPER_BODY_ID, spec.bone("arm")!!.parentId)
+		assertEquals(SkeletonSpec.LOWER_BODY_ID, spec.bone("thigh")!!.parentId)
 	}
 
 	@Test fun motionsLoopAndStayInsideTheLimits() {

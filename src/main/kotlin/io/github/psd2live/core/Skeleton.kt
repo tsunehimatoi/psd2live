@@ -17,8 +17,15 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 
 /**
- * Anatomical role of a bone. Anchor roles describe the torso and head that the generated body and
- * head rig already deform; they carry no deformer of their own and only give limbs a parent.
+ * Anatomical role of a bone.
+ *
+ * The upper and lower body are the two halves of the torso, both turning about the waist: each has its
+ * own deformer and parameter and carries the meshes bound to it, and the limbs hang from them - arms,
+ * wings and the head rotation from the upper body, legs and tail from the lower. A limb rides its body
+ * bone's turn but is skinned on its own, so swinging an arm never drags the torso with it.
+ *
+ * The head is an anchor: it stands on the pivot of the head Z rotation the face rig already builds, so it
+ * carries no deformer of its own and only gives bones on the head a parent.
  *
  * The limits are in degrees after [SkeletonBone.direction] is applied, so a positive value swings
  * the limb away from the body on either side of the character. They are wide on purpose: a pose tool
@@ -26,10 +33,8 @@ import kotlinx.serialization.json.putJsonArray
  * exactly at any angle anyway. Tighten them per bone when a joint must not go further.
  */
 enum class BoneRole(val anchor: Boolean, val minAngle: Float, val maxAngle: Float) {
-	ROOT(true, 0f, 0f),
-	HIP(true, 0f, 0f),
-	CHEST(true, 0f, 0f),
-	NECK(true, 0f, 0f),
+	UPPER_BODY(false, -30f, 30f),
+	LOWER_BODY(false, -20f, 20f),
 	HEAD(true, 0f, 0f),
 	UPPER_ARM(false, -90f, 150f),
 	FOREARM(false, -150f, 150f),
@@ -39,7 +44,10 @@ enum class BoneRole(val anchor: Boolean, val minAngle: Float, val maxAngle: Floa
 	FOOT(false, -60f, 60f),
 	TAIL(false, -90f, 90f),
 	WING(false, -60f, 120f),
-	CUSTOM(false, -120f, 120f),
+	CUSTOM(false, -120f, 120f);
+
+	/** A torso half: limbs hang from it but skin apart from it, and a skeleton always keeps it. */
+	val body: Boolean get() = this == UPPER_BODY || this == LOWER_BODY
 }
 
 /**
@@ -100,6 +108,8 @@ data class SkeletonBone(
 				Side.NONE -> ""
 			}
 			return when (role) {
+				BoneRole.UPPER_BODY -> "ParamSkelUpperBody"
+				BoneRole.LOWER_BODY -> "ParamSkelLowerBody"
 				BoneRole.UPPER_ARM -> "ParamArm${s}A"
 				BoneRole.FOREARM -> "ParamArm${s}B"
 				BoneRole.HAND -> "ParamHand$s"
@@ -131,10 +141,19 @@ data class SkeletonBone(
 	}
 
 	companion object {
+		/** Version 2 anchors; [SkeletonSpec.fromJson] folds the root and neck away after reading. */
+		internal val legacyRoles = mapOf(
+			"ROOT" to BoneRole.LOWER_BODY,
+			"HIP" to BoneRole.LOWER_BODY,
+			"CHEST" to BoneRole.UPPER_BODY,
+			"NECK" to BoneRole.UPPER_BODY,
+		)
+
 		fun fromJson(o: JsonObject): SkeletonBone {
 			val head = o.getValue("head").jsonArray
 			val tail = o.getValue("tail").jsonArray
-			val role = BoneRole.valueOf(o.getValue("role").jsonPrimitive.content)
+			val roleName = o.getValue("role").jsonPrimitive.content
+			val role = legacyRoles[roleName] ?: BoneRole.valueOf(roleName)
 			// Version 1 stored a per-bone "joint" mode; every joint now uses the same skinning, so it is ignored.
 			return SkeletonBone(
 				id = o.getValue("id").jsonPrimitive.content,
@@ -248,7 +267,7 @@ data class SkeletonSpec(
 	}
 
 	fun toJson(): JsonObject = buildJsonObject {
-		put("version", 2)
+		put("version", 3)
 		put("enabled", enabled)
 		putJsonArray("bones") { bones.forEach { add(it.toJson()) } }
 	}
@@ -256,10 +275,53 @@ data class SkeletonSpec(
 	companion object {
 		val Disabled = SkeletonSpec(enabled = false)
 
-		fun fromJson(o: JsonObject): SkeletonSpec = SkeletonSpec(
-			enabled = o["enabled"]?.jsonPrimitive?.booleanOrNull ?: true,
-			bones = o["bones"]?.jsonArray?.map { SkeletonBone.fromJson(it.jsonObject) }.orEmpty(),
-		)
+		fun fromJson(o: JsonObject): SkeletonSpec {
+			val raw = o["bones"]?.jsonArray?.map { it.jsonObject }.orEmpty()
+			val spec = SkeletonSpec(
+				enabled = o["enabled"]?.jsonPrimitive?.booleanOrNull ?: true,
+				bones = raw.map(SkeletonBone::fromJson),
+			)
+			return migrateAnchors(spec, raw.associate { it.getValue("id").jsonPrimitive.content to it.getValue("role").jsonPrimitive.content })
+		}
+
+		/**
+		 * Version 2 anchored the limbs on a root, a hip, a chest and a neck. The root and the neck only
+		 * relayed their parent, so they go (the neck's meshes join the upper body); the hip and the chest
+		 * become the lower and upper body under the IDs the auto builder uses.
+		 */
+		private fun migrateAnchors(read: SkeletonSpec, roleById: Map<String, String>): SkeletonSpec {
+			var spec = read
+			for ((id, role) in roleById) {
+				if (role != "ROOT" && role != "NECK") continue
+				val bone = spec.bone(id) ?: continue
+				spec.bone(bone.parentId ?: "")?.let { parent ->
+					spec = spec.withBone(parent.copy(drawableIds = (parent.drawableIds + bone.drawableIds).distinct()))
+				}
+				spec = spec.withoutBone(id)
+			}
+			for ((id, role) in roleById) {
+				val target = when (role) {
+					"HIP" -> LOWER_BODY_ID
+					"CHEST" -> UPPER_BODY_ID
+					else -> continue
+				}
+				val bone = spec.bone(id) ?: continue
+				if (id == target || spec.bone(target) != null) continue
+				val name = SkeletonNames.bone(bone.role, Side.NONE)
+				spec = spec.copy(bones = spec.bones.map {
+					when {
+						it.id == id -> it.copy(id = target, name = name)
+						it.parentId == id -> it.copy(parentId = target)
+						else -> it
+					}
+				})
+			}
+			return spec
+		}
+
+		const val UPPER_BODY_ID = "upper_body"
+		const val LOWER_BODY_ID = "lower_body"
+		const val HEAD_ID = "head"
 	}
 }
 
@@ -268,10 +330,8 @@ enum class BoneEnd { HEAD, TAIL }
 object SkeletonNames {
 	fun bone(role: BoneRole, side: Side, chainIndex: Int = 0): String {
 		val base = when (role) {
-			BoneRole.ROOT -> tr("skeleton.bone.root")
-			BoneRole.HIP -> tr("skeleton.bone.hip")
-			BoneRole.CHEST -> tr("skeleton.bone.chest")
-			BoneRole.NECK -> tr("skeleton.bone.neck")
+			BoneRole.UPPER_BODY -> tr("skeleton.bone.upperBody")
+			BoneRole.LOWER_BODY -> tr("skeleton.bone.lowerBody")
 			BoneRole.HEAD -> tr("skeleton.bone.head")
 			BoneRole.UPPER_ARM -> tr("skeleton.bone.upperArm")
 			BoneRole.FOREARM -> tr("skeleton.bone.forearm")

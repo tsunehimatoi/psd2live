@@ -129,7 +129,7 @@ internal fun SkeletonTreeView(state: PSD2LiveState, viewModel: PSD2LiveViewModel
 					enabled = editor.selectedBoneId != null, height = 20.dp)
 				CompactIconButton(
 					onClick = { editor.removeSelectedBone() },
-					enabled = draft.bone(editor.selectedBoneId ?: "")?.role?.anchor == false,
+					enabled = draft.bone(editor.selectedBoneId ?: "")?.role?.let { !it.anchor && !it.body } == true,
 					size = 20.dp,
 					tooltip = tr("skeleton.panel.delete"),
 				) { IconTrash(Modifier.size(11.dp)) }
@@ -475,7 +475,8 @@ private fun guideColor(muted: Color) = muted.copy(alpha = 0.4f)
 private fun BoneSettings(editor: CanvasEditor, spec: SkeletonSpec, bone: SkeletonBone) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
-	val parent = lineage(spec, bone).firstOrNull { !it.role.anchor }
+	// A limb skins apart from the body bone it hangs from, so only a joint inside the limb has a blend band.
+	val parent = lineage(spec, bone).firstOrNull { !it.role.anchor }?.takeUnless { it.role.body }
 	Row(
 		Modifier.fillMaxWidth().height(24.dp).background(colors.panelElevated)
 			.border(BorderStroke(1.dp, colors.divider)).padding(horizontal = 8.dp),

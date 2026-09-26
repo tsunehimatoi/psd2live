@@ -26,6 +26,10 @@ import kotlin.math.hypot
  * within the anatomical range, and at the proportional point otherwise.
  */
 object SkeletonAutoBuilder {
+	private const val UPPER_BODY = SkeletonSpec.UPPER_BODY_ID
+	private const val LOWER_BODY = SkeletonSpec.LOWER_BODY_ID
+	private const val HEAD = SkeletonSpec.HEAD_ID
+
 	/** Tags the skeleton takes out of the shared breath warp. */
 	val limbTags = setOf(SemanticTag.HANDWEAR, SemanticTag.LEGWEAR, SemanticTag.FOOTWEAR, SemanticTag.TAIL, SemanticTag.WINGS)
 
@@ -118,7 +122,6 @@ object SkeletonAutoBuilder {
 		layerIdByDrawableId: Map<String, String>,
 		verticesByDrawable: Map<String, FloatArray>,
 	): SkeletonSpec {
-		val anchors = analysis.anchors
 		val all = parts(analysis, puppet, layerIdByDrawableId, verticesByDrawable)
 		val body = BodyFrame.of(analysis, all)
 		val centerX = body.centerX
@@ -131,13 +134,19 @@ object SkeletonAutoBuilder {
 		fun anchor(id: String, parent: String?, role: BoneRole, hx: Float, hy: Float, tx: Float, ty: Float, meshes: List<String>) {
 			bones += SkeletonBone(id, SkeletonNames.bone(role, Side.NONE), parent, role, Side.NONE, hx, hy, tx, ty, meshes)
 		}
-		anchor("root", null, BoneRole.ROOT, centerX, hipY + torsoHeight * 0.15f, centerX, hipY, emptyList())
-		anchor("hip", "root", BoneRole.HIP, centerX, hipY, centerX, hipY + torsoHeight * 0.35f,
+		// The body splits at the waist into the two halves the body rig moves; the head stands on the
+		// pivot of the head Z rotation and leans with it, from the mouth line up to the top of the face.
+		anchor(UPPER_BODY, null, BoneRole.UPPER_BODY, centerX, hipY, centerX, shoulderY,
+			(tagged(SemanticTag.TOPWEAR) + tagged(SemanticTag.NECKWEAR) + tagged(SemanticTag.NECK)).map { it.drawableId })
+		anchor(LOWER_BODY, null, BoneRole.LOWER_BODY, centerX, hipY, centerX, hipY + torsoHeight * 0.35f,
 			tagged(SemanticTag.BOTTOMWEAR).map { it.drawableId })
-		anchor("chest", "root", BoneRole.CHEST, centerX, hipY, centerX, shoulderY,
-			(tagged(SemanticTag.TOPWEAR) + tagged(SemanticTag.NECKWEAR)).map { it.drawableId })
-		anchor("neck", "chest", BoneRole.NECK, centerX, shoulderY, anchors.chinX, anchors.chinY, tagged(SemanticTag.NECK).map { it.drawableId })
-		anchor("head", "neck", BoneRole.HEAD, anchors.chinX, anchors.chinY, anchors.faceCenterX, anchors.face.top, emptyList())
+		// Placed as the rig builder places the head rotation, so the two stay one pivot.
+		val rigged = analysis.copy(layers = analysis.layers.filter { it.source !is MouthLipLayer })
+		val faceRig = NinePoseFaceRig.from(rigged.calibration ?: rigged)
+		val headSpace = faceRig.coordinateSpace
+		val (pivotX, pivotY) = headSpace.toCanvas(faceRig.centerX, faceRig.mouthLineY)
+		val (crownX, crownY) = headSpace.toCanvas(faceRig.centerX, faceRig.face.top)
+		anchor(HEAD, UPPER_BODY, BoneRole.HEAD, pivotX, pivotY, crownX, crownY, emptyList())
 
 		fun direction(x: Float) = if (x < centerX) 1f else -1f
 
@@ -180,7 +189,7 @@ object SkeletonAutoBuilder {
 			val w = (e.first + (tip.first - e.first) * wristShare).toFloat() to (e.second + (tip.second - e.second) * wristShare).toFloat()
 			val s = side.name.first().lowercase()
 			val dir = direction(sx)
-			bones += SkeletonBone("arm_upper_$s", SkeletonNames.bone(BoneRole.UPPER_ARM, side), "chest", BoneRole.UPPER_ARM, side,
+			bones += SkeletonBone("arm_upper_$s", SkeletonNames.bone(BoneRole.UPPER_ARM, side), UPPER_BODY, BoneRole.UPPER_ARM, side,
 				sx, sy, e.first, e.second, arm.bind, direction = dir)
 			bones += SkeletonBone("arm_fore_$s", SkeletonNames.bone(BoneRole.FOREARM, side), "arm_upper_$s", BoneRole.FOREARM, side,
 				e.first, e.second, w.first, w.second, direction = dir)
@@ -197,7 +206,7 @@ object SkeletonAutoBuilder {
 			val foot = feet[side]?.takeIf { it.fit.isNotEmpty() }
 			if (leg == null && foot == null) continue
 			val s = side.name.first().lowercase()
-			var parent = "hip"
+			var parent = LOWER_BODY
 			var ankle: Pair<Float, Float>? = null
 			val footPoints = foot?.let { concat(it.fit.map { f -> f.first }) }
 			// The top of the shoe, where the leg goes in.
@@ -229,7 +238,7 @@ object SkeletonAutoBuilder {
 				val k = foldCorner(legPointsAll, hx, hy, a.first, a.second)
 					?: line.at(line.jointNear((even - 0.15).coerceAtLeast(0.05), (even + 0.15).coerceAtMost(ankleAt - 0.05), even))
 				val dir = direction(hx)
-				bones += SkeletonBone("leg_upper_$s", SkeletonNames.bone(BoneRole.THIGH, side), "hip", BoneRole.THIGH, side,
+				bones += SkeletonBone("leg_upper_$s", SkeletonNames.bone(BoneRole.THIGH, side), LOWER_BODY, BoneRole.THIGH, side,
 					hx, hy, k.first, k.second, leg.bind, direction = dir)
 				bones += SkeletonBone("leg_lower_$s", SkeletonNames.bone(BoneRole.SHIN, side), "leg_upper_$s", BoneRole.SHIN, side,
 					k.first, k.second, a.first, a.second, direction = dir)
@@ -258,7 +267,7 @@ object SkeletonAutoBuilder {
 			val fit = tails.filter { it.placesJoints }.ifEmpty { tails }.map { it.points to it.indices }
 			medial(fit, centerX, hipY)?.let { line ->
 				val count = if (line.length > torsoHeight * 1.2f) 4 else 3
-				var parent = "hip"
+				var parent = LOWER_BODY
 				for (i in 1..count) {
 					val head = line.at((i - 1).toDouble() / count)
 					val tail = line.at(i.toDouble() / count)
@@ -278,7 +287,7 @@ object SkeletonAutoBuilder {
 			val line = medial(wing.fit, rootX, rootY) ?: continue
 			val tip = line.at(1.0)
 			val s = side.name.first().lowercase()
-			bones += SkeletonBone("wing_$s", SkeletonNames.bone(BoneRole.WING, side), "chest", BoneRole.WING, side,
+			bones += SkeletonBone("wing_$s", SkeletonNames.bone(BoneRole.WING, side), UPPER_BODY, BoneRole.WING, side,
 				rootX, rootY, tip.first, tip.second, wing.bind, direction = direction(rootX))
 		}
 		return SkeletonSpec(enabled = true, bones = bones)

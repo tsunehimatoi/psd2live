@@ -51,6 +51,27 @@ class SkeletonPipelineIntegrationTest {
 			posed.getValue(after.keys.first { it.raw == id }).indices.any { i ->
 				kotlin.math.abs(posed.getValue(after.keys.first { it.raw == id })[i] - after.getValue(after.keys.first { it.raw == id })[i]) > 5f
 			} })
+
+		// The upper body turns at the waist and carries its meshes, the arms and the head with it.
+		val upperBody = spec.bones.single { it.role == BoneRole.UPPER_BODY }
+		val upperDeformer = puppet.deformers.single { it.id.raw == upperBody.deformerId }
+		assertTrue(upperBody.drawableIds.isNotEmpty())
+		for (id in upperBody.drawableIds) {
+			assertTrue(puppet.drawables.single { it.id.raw == id }.parentDeformerId == upperDeformer.id, "$id is not under the upper body")
+		}
+		assertTrue(puppet.deformers.single { it.id.raw == "DeformHeadRotation" }.parent == upperDeformer.id)
+		for ((id, expected) in before) {
+			val actual = after[id] ?: continue
+			for (i in expected.indices) assertTrue(kotlin.math.abs(expected[i] - actual[i]) < 0.5f, "${id.raw} moved at rest")
+		}
+		val leaned = evaluator.evaluate(puppet, mapOf(ParameterId(upperBody.parameterId) to 20f)).worldPositions
+		val faces = puppet.drawables.filter { layers[preview.rig.layerIdByDrawableId[it.id.raw] ?: it.id.raw]?.semantic?.tag == SemanticTag.FACE }
+		assertTrue(faces.isNotEmpty())
+		for (drawable in faces) {
+			assertTrue(leaned.getValue(drawable.id).indices.any { kotlin.math.abs(leaned.getValue(drawable.id)[it] - after.getValue(drawable.id)[it]) > 5f },
+				"${drawable.id.raw} did not follow the upper body")
+		}
+
 		val idle = assertNotNull(preview.runtimeBundle.assets.firstOrNull { it.path.endsWith(".idle.motion3.json") })
 		assertTrue(idle.bytes.decodeToString().contains("ParamArmLA"))
 	}

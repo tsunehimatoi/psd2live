@@ -43,6 +43,14 @@ class SkeletonAutoBuilderTest {
 			val preview = PSD2LivePipeline().buildPreview(Path.of("examples/$sample/psd-input/$sample.psd"))
 			val spec = SkeletonAutoBuilder.build(preview.analysis, preview.rig)
 			assertEquals(2, spec.bones.count { it.role == BoneRole.THIGH }, sample)
+			assertEquals(listOf(BoneRole.HEAD), spec.bones.filter { it.role.anchor }.map { it.role }, sample)
+			assertEquals(listOf(BoneRole.UPPER_BODY, BoneRole.LOWER_BODY), spec.bones.filter { it.role.body }.map { it.role }, sample)
+			for (bone in spec.bones.filter { it.role == BoneRole.UPPER_ARM || it.role == BoneRole.HEAD }) {
+				assertEquals(SkeletonSpec.UPPER_BODY_ID, bone.parentId, "$sample ${bone.id}")
+			}
+			for (thigh in spec.bones.filter { it.role == BoneRole.THIGH }) assertEquals(SkeletonSpec.LOWER_BODY_ID, thigh.parentId, sample)
+			// The head bone leans with the head Z rotation.
+			assertEquals(preview.rig.initialHeadAngleZ, spec.bone(SkeletonSpec.HEAD_ID)!!.angleDeg, 0.5f, sample)
 			// Hip joints sit under the hip line, not at the hem of a skirt.
 			val anchors = preview.analysis.anchors
 			for (thigh in spec.bones.filter { it.role == BoneRole.THIGH }) {

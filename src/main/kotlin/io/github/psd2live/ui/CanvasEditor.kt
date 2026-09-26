@@ -602,7 +602,7 @@ internal class CanvasEditor(
 	fun removeSelectedBone() {
 		val draft = skeletonDraft ?: return
 		val bone = draft.bone(selectedBoneId ?: return) ?: return
-		if (bone.role.anchor) return
+		if (bone.role.anchor || bone.role.body) return
 		skeletonDraft = draft.withoutBone(bone.id)
 		selectedBoneId = bone.parentId
 	}
@@ -613,7 +613,7 @@ internal class CanvasEditor(
 		if (!enabled) {
 			val removed = draft.bones.filter { it.role == role }.mapTo(HashSet()) { it.id }
 			skeletonDraft = draft.copy(bones = draft.bones.filterNot { it.id in removed })
-			if (selectedBoneId in removed) selectedBoneId = "hip"
+			if (selectedBoneId in removed) selectedBoneId = io.github.psd2live.core.SkeletonSpec.LOWER_BODY_ID
 			return
 		}
 		val preview = state.previewModel ?: return

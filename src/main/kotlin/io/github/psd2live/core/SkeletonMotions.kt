@@ -124,10 +124,11 @@ object SkeletonMotions {
 				phase = segment * SEGMENT_LAG * 1.6f, duration = duration)
 		}
 
-	/** How many limb bones [bone] hangs below. */
+	/** How many limb bones [bone] hangs below, not counting the body bone its chain starts from. */
 	private fun depth(spec: SkeletonSpec, bone: SkeletonBone): Int {
 		val ids = SkeletonRig.limbBones(spec).mapTo(HashSet()) { it.id }
-		return generateSequence(SkeletonRig.limbParent(spec, bone, ids)) { SkeletonRig.limbParent(spec, it, ids) }.count()
+		return generateSequence(SkeletonRig.limbParent(spec, bone, ids)) { SkeletonRig.limbParent(spec, it, ids) }
+			.count { !it.role.body }
 	}
 
 	/** How much of its chain's amplitude a joint [segment] deep keeps. */
