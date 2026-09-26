@@ -44,10 +44,10 @@ fun isCanvasModule(id: String): Boolean = id == PRIMARY_CANVAS_ID || id.startsWi
 
 /**
  * View options a fresh canvas of this mode starts with (and what "reset view options" restores).
- * An edit canvas opens with the deformer guides enabled; they fade while nothing is selected.
+ * An edit canvas opens with the warp guides enabled (rotation guides stay off until toggled); they fade while nothing is selected.
  */
 fun CanvasMode.defaultViewOptions(): TabViewOptions = when (this) {
-	CanvasMode.EDIT -> TabViewOptions.Default.copy(showWarp = true, showRotation = true)
+	CanvasMode.EDIT -> TabViewOptions.Default.copy(showWarp = true)
 	CanvasMode.PREVIEW -> TabViewOptions.Default
 }
 
@@ -61,7 +61,6 @@ fun hierarchyModeViewPreset(mode: EditHierarchyMode, current: TabViewOptions): T
 	EditHierarchyMode.DEFORM -> current.copy(
 		showMesh = true,
 		showWarp = true,
-		showRotation = true,
 		showDeformPaths = true,
 	)
 	EditHierarchyMode.EDIT -> current.copy(showMesh = true, showDeformPaths = true)
