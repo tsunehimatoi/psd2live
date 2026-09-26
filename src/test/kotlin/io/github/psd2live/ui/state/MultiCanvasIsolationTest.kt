@@ -413,11 +413,17 @@ class MultiCanvasIsolationTest {
                 val view = vm.state.value.activeCanvas.editSession.view
                 vm.setCanvasViewOptions(id, view.copy(showMesh = !view.showMesh), CanvasMode.EDIT)
             }
+            assertFalse(mesh())
             editor.hierarchyMode = io.github.psd2live.ui.EditHierarchyMode.EDIT
             assertTrue(mesh())
             editor.hierarchyMode = io.github.psd2live.ui.EditHierarchyMode.SELECT
-            toggleMesh()
             assertFalse(mesh())
+            toggleMesh()
+            assertTrue(mesh())
+            editor.hierarchyMode = io.github.psd2live.ui.EditHierarchyMode.EDIT
+            editor.hierarchyMode = io.github.psd2live.ui.EditHierarchyMode.SELECT
+            assertTrue(mesh())
+            toggleMesh()
             editor.hierarchyMode = io.github.psd2live.ui.EditHierarchyMode.EDIT
             assertTrue(mesh())
             editor.hierarchyMode = io.github.psd2live.ui.EditHierarchyMode.SELECT

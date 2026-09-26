@@ -56,8 +56,7 @@ fun CanvasMode.defaultViewOptions(): TabViewOptions = when (this) {
  * [CanvasModeSession.withHierarchyView]), so a preset never overrides what the user set there.
  */
 fun hierarchyModeViewPreset(mode: EditHierarchyMode, current: TabViewOptions): TabViewOptions = when (mode) {
-	// Object mode shows every mesh wire faintly; only the selection draws at full strength.
-	EditHierarchyMode.SELECT -> current.copy(showMesh = true)
+	EditHierarchyMode.SELECT -> current.copy(showMesh = false)
 	EditHierarchyMode.DEFORM -> current.copy(
 		showMesh = true,
 		showWarp = true,
@@ -121,10 +120,12 @@ data class CanvasModeSession(
 	/** Toggles the other hierarchy modes were left with, restored when they are entered again. */
 	val modeViews: Map<EditHierarchyMode, TabViewOptions> = emptyMap(),
 ) {
-	/** Parks [view] under its mode and brings up [next]'s own toggles, seeded by its preset on first visit. */
+	/**
+	 * Parks [view] under its mode and brings up [next]'s own toggles, seeded by its preset on first visit.
+	 * A canvas opens in object mode, so the view it shows before any switch is object mode's as is.
+	 */
 	fun withHierarchyView(next: EditHierarchyMode): CanvasModeSession {
-		val from = viewMode ?: return copy(viewMode = EditHierarchyMode.SELECT,
-			view = hierarchyModeViewPreset(EditHierarchyMode.SELECT, view)).withHierarchyView(next)
+		val from = viewMode ?: return copy(viewMode = EditHierarchyMode.SELECT).withHierarchyView(next)
 		if (from == next) return this
 		return copy(
 			view = modeViews[next] ?: hierarchyModeViewPreset(next, view),
