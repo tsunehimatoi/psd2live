@@ -52,14 +52,21 @@ class SkeletonPipelineIntegrationTest {
 				kotlin.math.abs(posed.getValue(after.keys.first { it.raw == id })[i] - after.getValue(after.keys.first { it.raw == id })[i]) > 5f
 			} })
 
-		// The upper body turns at the waist and carries its meshes, the arms and the head with it.
+		// The upper body bends the torso warp at the waist, which carries its meshes, the arms and the head.
 		val upperBody = spec.bones.single { it.role == BoneRole.UPPER_BODY }
-		val upperDeformer = puppet.deformers.single { it.id.raw == upperBody.deformerId }
+		val upperDeformer = puppet.deformers.single { it.id == SkeletonRig.deformerOf(puppet, upperBody) }
+		assertTrue(upperDeformer is Deformer.Warp && upperDeformer.parent?.raw == "DeformBodyZBreath")
 		assertTrue(upperBody.drawableIds.isNotEmpty())
 		for (id in upperBody.drawableIds) {
 			assertTrue(puppet.drawables.single { it.id.raw == id }.parentDeformerId == upperDeformer.id, "$id is not under the upper body")
 		}
 		assertTrue(puppet.deformers.single { it.id.raw == "DeformHeadRotation" }.parent == upperDeformer.id)
+		// The body warps above reach the bones below: the breath lifts the arms.
+		val breathing = evaluator.evaluate(puppet, mapOf(ParameterId("ParamBreath") to 1f)).worldPositions
+		assertTrue(arm.drawableIds.any { id ->
+			val drawable = after.keys.firstOrNull { it.raw == id } ?: return@any false
+			breathing.getValue(drawable).indices.any { kotlin.math.abs(breathing.getValue(drawable)[it] - after.getValue(drawable)[it]) > 1f }
+		}, "the breath does not reach the arm")
 		for ((id, expected) in before) {
 			val actual = after[id] ?: continue
 			for (i in expected.indices) assertTrue(kotlin.math.abs(expected[i] - actual[i]) < 0.5f, "${id.raw} moved at rest")

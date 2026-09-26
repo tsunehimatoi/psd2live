@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.psd2live.core.BoneRole
 import io.github.psd2live.core.SkeletonBone
+import io.github.psd2live.core.SkeletonRig
 import io.github.psd2live.core.SkeletonSpec
 import io.github.psd2live.core.SkeletonWeights
 import io.github.psd2live.i18n.tr
@@ -489,10 +490,12 @@ private fun BoneSettings(editor: CanvasEditor, spec: SkeletonSpec, bone: Skeleto
 		Text(bone.parameterId, color = colors.textMuted, style = typography.monoSmall.copy(fontSize = 9.sp), maxLines = 1)
 	}
 	Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-		if (parent != null) {
-			val limit = (minOf(bone.length, parent.length) * 0.45f).coerceAtLeast(1f)
+		// A body half bends about the waist across a band of its own.
+		if (parent != null || bone.role.body) {
+			val limit = ((if (parent != null) minOf(bone.length, parent.length) else bone.length) * 0.45f).coerceAtLeast(1f)
 			val automatic = bone.blendWidth == null
-			val shown = bone.blendWidth ?: SkeletonWeights.blendHalfWidth(bone, parent.length).toFloat()
+			val shown = if (parent != null) bone.blendWidth ?: SkeletonWeights.blendHalfWidth(bone, parent.length).toFloat()
+				else SkeletonRig.waistBand(bone)
 			SettingRow(tr("skeleton.panel.blend"), "${shown.roundToInt()}px") {
 				CompactSlider(value = shown.coerceIn(0f, limit), onValueChange = { editor.setBoneBlendWidth(it) },
 					valueRange = 0f..limit, modifier = Modifier.weight(1f))

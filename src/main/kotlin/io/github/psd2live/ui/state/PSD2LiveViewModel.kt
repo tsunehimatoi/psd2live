@@ -4208,10 +4208,10 @@ class PSD2LiveViewModel : AutoCloseable {
 			sin((mouthPhase - 1.25) / 1.20 * PI).toFloat().coerceAtLeast(0f)
 		} else 0f
 
-		val idleAngleZ = if (hasIdle) (sin(elapsed * PI / 1.5) * 2.0).toFloat() else 0f
-		val idleBodyX = if (hasIdle) sin(elapsed * 0.72).toFloat() * 1.2f else 0f
-		val idleBodyZ = if (hasIdle) sin(elapsed * 0.92).toFloat() * 2.2f else 0f
-		val breath = if (hasIdle) ((sin(elapsed * 1.45) + 1.0) * 0.5).toFloat() else 0f
+		// The idle the export writes, body parameters and skeleton poses alike; pointer follow adds on top.
+		val idle = if (hasIdle) io.github.psd2live.core.SkeletonMotions.liveIdle(model.config.rigEdits.skeleton, elapsed)
+			else emptyMap()
+		fun idleOf(id: ParameterId) = idle[id] ?: 0f
 
 		val isTracking = pointerActive && current.mouseTrackingEnabled && !current.meshOnly
 		val headAngleX = if (hasIdle || isTracking) followX * 38f else 0f
@@ -4222,12 +4222,12 @@ class PSD2LiveViewModel : AutoCloseable {
 		val eyeBallY = if (hasIdle || isTracking) (-followY).coerceIn(-1f, 1f) else 0f
 
 		val base = mapOf(
-			StandardParameters.ANGLE_X to (headAngleX + shakeAngleX),
-			StandardParameters.ANGLE_Y to (headAngleY + nodAngleY),
-			StandardParameters.ANGLE_Z to (idleAngleZ + shakeAngleZ),
-			StandardParameters.BODY_X to (bodyAngleX + idleBodyX + shakeBodyX),
-			StandardParameters.BODY_Y to (bodyAngleY + nodBodyY),
-			StandardParameters.BODY_Z to idleBodyZ,
+			StandardParameters.ANGLE_X to (headAngleX + idleOf(StandardParameters.ANGLE_X) + shakeAngleX),
+			StandardParameters.ANGLE_Y to (headAngleY + idleOf(StandardParameters.ANGLE_Y) + nodAngleY),
+			StandardParameters.ANGLE_Z to (idleOf(StandardParameters.ANGLE_Z) + shakeAngleZ),
+			StandardParameters.BODY_X to (bodyAngleX + idleOf(StandardParameters.BODY_X) + shakeBodyX),
+			StandardParameters.BODY_Y to (bodyAngleY + idleOf(StandardParameters.BODY_Y) + nodBodyY),
+			StandardParameters.BODY_Z to idleOf(StandardParameters.BODY_Z),
 			StandardParameters.EYE_BALL_X to eyeBallX,
 			StandardParameters.EYE_BALL_Y to eyeBallY,
 			StandardParameters.EYE_BALL_FORM to if (hasEyeJelly) eyeJellyDynamics.value else 0f,
@@ -4235,14 +4235,12 @@ class PSD2LiveViewModel : AutoCloseable {
 			StandardParameters.EYE_R_OPEN to blink,
 			StandardParameters.MOUTH_FORM to if (current.animationEnabled && hasIdle) sin(elapsed * 0.41).toFloat() * 0.18f else 0f,
 			StandardParameters.MOUTH_OPEN to mouthOpen,
-			StandardParameters.BREATH to breath,
+			StandardParameters.BREATH to idleOf(StandardParameters.BREATH),
 			StandardParameters.HAIR_FRONT to if (hasFrontHair) frontHair.coerceIn(-1f, 1f) else 0f,
 			StandardParameters.HAIR_BACK to if (hasBackHair) backHair.coerceIn(-1f, 1f) else 0f,
 		)
-		val skeletonIdle = if (hasIdle) io.github.psd2live.core.SkeletonMotions.liveIdle(model.config.rigEdits.skeleton, elapsed)
-			else emptyMap()
 		val available = model.rig.puppet.parameters.mapTo(HashSet()) { it.id }
-		return base + skeletonIdle.filterKeys(available::contains) + skeletonMotion.filterKeys(available::contains)
+		return base + idle.filterKeys { it !in base && it in available } + skeletonMotion.filterKeys(available::contains)
 	}
 
 	private fun blinkAt(phase: Double): Float = if (phase in 4.18..4.46) {

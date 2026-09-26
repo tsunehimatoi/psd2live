@@ -32,6 +32,7 @@ import org.umamo.runtime.model.PuppetModel
 import org.umamo.runtime.model.RotationForm
 import org.umamo.runtime.model.RotationPivotForm
 import org.umamo.runtime.model.WarpForm
+import org.umamo.runtime.model.WarpLatticeForm
 import org.umamo.runtime.model.withDerivedRenderRoot
 import io.github.psd2live.i18n.tr
 import kotlin.math.abs
@@ -43,18 +44,26 @@ import kotlin.math.max
 /**
  * Bakes an authored skeleton into a Cubism rig.
  *
- * Cubism has no bones, so the skeleton becomes two things a Cubism runtime already understands:
+ * Cubism has no bones, and a rotation deformer passes on only a pivot and an angle: whatever bends the
+ * warps above it never reaches what hangs below. So the skeleton is laid out the way the body deforms,
+ * warps first and rotations only where a part really is rigid:
  *
- * - **A rotation deformer per bone**, nested as the bones are. A rotation deformer interpolates its
- *   angle rather than its vertices, so a limb turned to any parameter value is an exact rigid rotation -
- *   it neither shortens between keys nor multiplies keyforms when several joints move at once.
+ * - **The two body halves bend warps at the end of the body chain.** The torso bend sits under the
+ *   breath warp and the legs bend under the body warp beside it, each an identity lattice over the
+ *   character that turns what lies past the waist about it and blends across a band there (see
+ *   [BodyBend], [addBodyWarps]). Every body turn, breath and bend above passes straight through them, to
+ *   the torso meshes and to the limbs and the head that hang from them.
+ * - **A rotation deformer per limb bone**, nested as the bones are and hung from its body half's bend. A
+ *   rotation deformer interpolates its angle rather than its vertices, so a limb turned to any parameter
+ *   value is an exact rigid rotation - it neither shortens between keys nor multiplies keyforms when
+ *   several joints move at once.
  * - **Corrective mesh keyforms across each joint.** A mesh that spans a joint hangs under one of the
  *   bones (its "home") and its keyforms carry the rest of the limb: vertices past a joint turn with the
  *   bone across it, and vertices inside the joint band turn by a weighted fraction of that angle about the
  *   joint (see [SkeletonWeights]). The keys are dense in angle, so the linear blend between them stays
  *   on the arc.
  *
- * On top of both, every preset pose of [SkeletonPoses] - a crouch, a weight shift, a tail swing - is one
+ * On top of these, every preset pose of [SkeletonPoses] - a crouch, a weight shift, a tail swing - is one
  * blend-shape parameter that adds its turns to the bones and its bends to the meshes (see [addPoses]).
  * The leg poses are solved by two-bone IK at bake time so the feet stay where they are while the hips
  * move.
@@ -63,6 +72,12 @@ internal object SkeletonRig {
 	private val bodyId = DeformerId("DeformBodyXY")
 	private val breathId = DeformerId("DeformBodyZBreath")
 	private val headRotationId = DeformerId("DeformHeadRotation")
+
+	/** The torso's bend: under the breath warp, over every mesh and limb the torso carries. */
+	val torsoWarpId = DeformerId("DeformSkelTorso")
+
+	/** The legs' bend: under the body warp beside the breath warp, over the legs and the tail. */
+	val legsWarpId = DeformerId("DeformSkelLegs")
 	private val skeletonGroupId = ParameterGroupId("ParamGroupSkeleton")
 
 	/** Widest angle step between two keys of a corrective keyform axis. */
@@ -87,15 +102,39 @@ internal object SkeletonRig {
 	private const val GLUE_CHILD_WEIGHT = 0.2f
 	private const val GLUE_PARENT_WEIGHT = 1f - GLUE_CHILD_WEIGHT
 
+	/** Default half width of a body half's waist band, as a fraction of the bone's length. */
+	private const val WAIST_BAND = 0.25f
+
+	/** Widest waist band, as a fraction of the bone's length. */
+	private const val MAX_WAIST_BAND = 0.45f
+
+	/** Columns of a body half's warp; its rows follow the waist band so the bend stays smooth. */
+	private const val BODY_WARP_COLUMNS = 8
+
 	/** Most keyforms one mesh may carry; beyond it the keys thin out evenly. */
 	private const val MAX_MESH_CELLS = 600
 
 	/** Home-space units below which a pose leaves a mesh no shape of its own. */
 	private const val POSE_EPSILON = 1e-4f
 
-	/** The limb bones of [spec] that get a deformer: non-anchor bones with a usable length. */
+	/** The bones of [spec] the rig moves: non-anchor bones with a usable length, body halves included. */
 	fun limbBones(spec: SkeletonSpec): List<SkeletonBone> =
 		spec.topological().filter { !it.role.anchor && it.length >= 1f }
+
+	/** The bones that turn a rotation deformer and skin meshes: every moving bone but the body halves, which bend warps. */
+	fun jointBones(spec: SkeletonSpec): List<SkeletonBone> = limbBones(spec).filterNot { it.role.body }
+
+	/** Half width in pixels of the band about the waist across which [bone], a body half, bends. */
+	fun waistBand(bone: SkeletonBone): Float {
+		val limit = (bone.length * MAX_WAIST_BAND).coerceAtLeast(1f)
+		return (bone.blendWidth ?: (bone.length * WAIST_BAND)).coerceIn(1f, limit)
+	}
+
+	/** Within a limb, a bone's parent is a limb bone: the body half a limb hangs from is not part of its skin. */
+	fun jointParents(spec: SkeletonSpec): Map<String, SkeletonBone?> {
+		val ids = limbBones(spec).mapTo(HashSet()) { it.id }
+		return jointBones(spec).associate { it.id to limbParent(spec, it, ids)?.takeUnless { p -> p.role.body } }
+	}
 
 	/** The nearest ancestor of [bone] that is itself a limb bone, or null when it hangs from an anchor. */
 	fun limbParent(spec: SkeletonSpec, bone: SkeletonBone, limbIds: Set<String>): SkeletonBone? {
@@ -108,9 +147,9 @@ internal object SkeletonRig {
 	}
 
 	/**
-	 * The skinning tree each limb bone belongs to, by the ID of the tree's root. A body bone roots its own
-	 * tree and so does every limb hanging from one: the limb turns with the body, but its meshes and the
-	 * torso's never blend into each other.
+	 * The skinning tree each limb bone belongs to, by the ID of the tree's root. A bone with no parent in
+	 * [parentOf] roots its own tree, as every limb hanging from a body half does: the limb rides the body's
+	 * warps, but its meshes and the torso's never blend into each other.
 	 */
 	fun skinRoots(bones: List<SkeletonBone>, parentOf: Map<String, SkeletonBone?>): Map<String, String> {
 		val rootOf = HashMap<String, String>()
@@ -130,21 +169,22 @@ internal object SkeletonRig {
 		if (!spec.enabled || base.deformers.none { it.id == bodyId }) return base
 		val bones = limbBones(spec)
 		if (bones.isEmpty()) return base
-		val limbIds = bones.mapTo(HashSet()) { it.id }
-		val parentOf = bones.associate { it.id to limbParent(spec, it, limbIds) }
+		val joints = bones.filterNot { it.role.body }
+		val parentOf = jointParents(spec)
 
 		var model = base
 		var canvas = restCanvas(model)
 
-		// 1. Which meshes each limb tree skins: a mesh bound to any bone of the tree.
-		val rootOf = skinRoots(bones, parentOf)
+		// 1. Which meshes each limb tree skins: a mesh bound to any bone of the tree. A mesh bound to a body
+		// half stays on the warp it hangs from, which that half's own warp is spliced above.
+		val rootOf = skinRoots(joints, parentOf)
 		val drawableRoot = LinkedHashMap<String, String>()
-		for (bone in bones) for (id in bone.drawableIds) {
+		for (bone in joints) for (id in bone.drawableIds) {
 			val drawable = model.drawables.firstOrNull { it.id.raw == id } ?: continue
 			if (drawable.mesh == null || drawable.id !in canvas) continue
 			drawableRoot.putIfAbsent(id, rootOf.getValue(bone.id))
 		}
-		val treeBones = bones.groupBy { rootOf.getValue(it.id) }
+		val treeBones = joints.groupBy { rootOf.getValue(it.id) }
 
 		// 2. Enough vertices across every joint the mesh crosses.
 		for ((id, root) in drawableRoot) {
@@ -167,14 +207,16 @@ internal object SkeletonRig {
 		model = seams.model
 		canvas = seams.canvas
 
-		// 3. One rotation deformer per bone, and the head carried by the upper body.
-		model = addRotations(model, bones, parentOf, spec, frame)
+		// 3. The body halves spliced into the body chain as warps - the head rotation and everything else on
+		// the breath warp ends up under the upper body - and a rotation deformer per limb bone hung from them.
+		val bends = LinkedHashMap<String, BodyBend>()
+		model = addBodyWarps(model, bones.filter { it.role.body }, frame, bends)
+		model = addRotations(model, joints, parentOf, spec, frame, bends)
 		model = addParameters(model, bones)
-		bones.firstOrNull { it.role == BoneRole.UPPER_BODY }?.let { model = reparentKeepingRest(model, headRotationId, DeformerId(it.deformerId)) }
 
 		// 4. The preset poses, hips that move while the feet stay put among them.
 		val poses = SkeletonPoses.available(spec)
-		model = addPoses(model, spec, bones, poses)
+		model = addPoses(model, spec, bones, poses, bends)
 
 		// 5. Every skinned mesh under its home bone, with its joints baked into its keyforms and its poses
 		// into its blend shapes.
@@ -185,7 +227,7 @@ internal object SkeletonRig {
 
 		// 6. The welded parts glued, and no deformer left holding nothing.
 		model = model.copy(glues = model.glues + seams.glues)
-		model = pruneEmptyBones(model, bones)
+		model = pruneEmptyBones(model, joints)
 		model = withSkeletonGroup(model, bones, poses)
 		return model.withDerivedRenderRoot()
 	}
@@ -232,48 +274,153 @@ internal object SkeletonRig {
 	}
 
 	// ---------------------------------------------------------------------------------------------------
-	// Rotation deformers
+	// Body warps
 
 	/**
-	 * The generated deformer a bone with no limb parent hangs from. Bones on the head turn with the head
-	 * Z rotation; the upper body bends with body Z and the breath; the lower body, and a bone hanging
-	 * from nothing, stay on the body warp alone so the feet stay where they stand.
+	 * How the body halves bend: an identity lattice over its host's space in which each half turns every
+	 * point past the waist about the bone's head - the joint of the two halves - fading in across
+	 * [waistBand] on either side of it. Past the band the turn is rigid, so a shoulder or a hip joint turns
+	 * exactly with its half, and inside it the torso bends instead of creasing.
+	 *
+	 * The lattice is fine because nothing below resamples it: a warp under a warp only moves the child's
+	 * control points, so each bend warp is the last warp above the meshes and limbs it carries.
 	 */
-	private fun attachWarp(model: PuppetModel, spec: SkeletonSpec, bone: SkeletonBone): DeformerId {
-		val lineage = generateSequence(bone) { it.parentId?.let(spec::bone) }
-		val present = model.deformers.mapTo(HashSet()) { it.id }
-		return when {
-			lineage.any { it.role == BoneRole.HEAD } && headRotationId in present -> headRotationId
-			lineage.any { it.role == BoneRole.UPPER_BODY } && breathId in present -> breathId
-			else -> bodyId
+	internal class BodyBend(val id: DeformerId, hostRest: DeformerWorld, val bones: List<SkeletonBone>, frame: Bounds) {
+		private val host = hostRest
+		private val bands = DoubleArray(bones.size) { waistBand(bones[it]).toDouble() }
+		val columns = BODY_WARP_COLUMNS
+
+		/** A row every three quarters of the narrowest band's half width, so each bend spans a few rows. */
+		val rows = ceil(frame.height / (bands.min() * 0.75)).toInt().coerceIn(8, 40)
+
+		private val local = FloatArray((rows + 1) * (columns + 1) * 2).also { points ->
+			var i = 0
+			for (row in 0..rows) for (column in 0..columns) {
+				points[i++] = column.toFloat() / columns
+				points[i++] = row.toFloat() / rows
+			}
+		}
+		private val canvas = FloatArray(local.size).also { for (i in local.indices step 2) hostRest.apply(local[i], local[i + 1], it, i) }
+
+		/** How much of the turn of bone [index] canvas point ([x], [y]) takes: none short of its band, all past it. */
+		fun weight(index: Int, x: Double, y: Double): Double {
+			val bone = bones[index]
+			val length = bone.length.toDouble().coerceAtLeast(1e-6)
+			val along = ((x - bone.headX) * (bone.tailX - bone.headX) + (y - bone.headY) * (bone.tailY - bone.headY)) / length
+			val t = ((along + bands[index]) / (2.0 * bands[index])).coerceIn(0.0, 1.0)
+			return t * t * (3.0 - 2.0 * t)
+		}
+
+		/** The lattice in the host's space with each of [bones] turned by [degrees] (the rig's convention). */
+		fun lattice(degrees: DoubleArray): FloatArray {
+			if (degrees.all { it == 0.0 }) return local.copyOf()
+			val out = FloatArray(local.size)
+			for (i in local.indices step 2) {
+				val x = canvas[i].toDouble()
+				val y = canvas[i + 1].toDouble()
+				var p = doubleArrayOf(x, y)
+				for (b in bones.indices) {
+					if (degrees[b] == 0.0) continue
+					p = SkeletonIk.rotate(p[0], p[1], bones[b].headX.toDouble(), bones[b].headY.toDouble(), degrees[b] * weight(b, x, y))
+				}
+				val back = inverse(host, p[0].toFloat(), p[1].toFloat(), floatArrayOf(local[i], local[i + 1]))
+				out[i] = back[0]
+				out[i + 1] = back[1]
+			}
+			return out
+		}
+
+		/** Every bone's own parameter as an axis, keyed densely enough that the turn stays on its arc. */
+		fun grid(): KeyformGrid<WarpLatticeForm> {
+			val axes = bones.map { KeyformAxis(ParameterId(it.parameterId), angleKeys(it.minAngle to it.maxAngle, KEY_STEP)) }
+			return KeyformGrid(axes, cartesian(axes).map { coordinate ->
+				KeyformCell(coordinate, WarpLatticeForm(lattice(DoubleArray(bones.size) { b ->
+					axes[b].keys[coordinate[b]] * bones[b].direction.toDouble()
+				})))
+			})
 		}
 	}
 
 	/**
-	 * Moves deformer [id] under [parentId] without moving it at rest: its pivot is carried into the new
-	 * parent's space, and its angle and scale lose whatever turn and scale the new parent adds.
+	 * Splices the body halves' bends into the body chain.
+	 *
+	 * The torso bend goes under the breath warp (the body warp when there is none) and takes over all its
+	 * children: the torso and the clothes, the arms, the wings and the head. It turns with both halves, so
+	 * a skirt follows the hips and a coat bends at the waist. The legs bend goes under the body warp beside
+	 * the breath, with the lower body alone: the legs and the tail hang from it, so breathing never lifts
+	 * the feet off the ground, while the hips turn them exactly as they turn the skirt.
+	 *
+	 * Being the identity in its host's space at rest, a bend warp moves nothing it takes over and changes
+	 * none of its coordinates. [bends] receives the warp each body bone is read from.
 	 */
-	private fun reparentKeepingRest(model: PuppetModel, id: DeformerId, parentId: DeformerId): PuppetModel {
-		val deformer = model.deformers.firstOrNull { it.id == id } as? Deformer.Rotation ?: return model
-		if (deformer.parent == parentId || model.deformers.none { it.id == parentId }) return model
-		val before = worlds(model, emptyMap(), setOf(id, parentId))
-		val old = before[id] as? RotationWorld ?: return model
-		val pivot = FloatArray(2).also { old.apply(0f, 0f, it, 0) }
-		val origin = inverse(before.getValue(parentId), pivot[0], pivot[1])
-		val grid = deformer.geometryGrid ?: return model
-		fun moved(angleShift: Float, scaleFactor: Float) = deformer.copy(
-			parent = parentId,
-			baseAngle = deformer.baseAngle - angleShift,
-			geometryGrid = KeyformGrid(grid.axes, grid.cells.map { cell ->
-				KeyformCell(cell.coordinate, RotationPivotForm(origin[0], origin[1], cell.form.angle, cell.form.scale * scaleFactor))
-			}),
+	private fun addBodyWarps(base: PuppetModel, bodies: List<SkeletonBone>, frame: Bounds, bends: MutableMap<String, BodyBend>): PuppetModel {
+		if (bodies.isEmpty()) return base
+		val halves = bodies.sortedBy { if (it.role == BoneRole.UPPER_BODY) 0 else 1 }
+		val torsoHost = if (base.deformers.any { it.id == breathId }) breathId else bodyId
+		var model = splice(base, torsoWarpId, tr("model.deformer.skeletonTorso"), torsoHost, halves, frame, adoptDeformers = true, bends)
+		val lower = halves.firstOrNull { it.role == BoneRole.LOWER_BODY }
+		if (lower != null && torsoHost != bodyId) {
+			model = splice(model, legsWarpId, tr("model.deformer.skeletonLegs"), bodyId, listOf(lower), frame, adoptDeformers = false, bends)
+		}
+		return model
+	}
+
+	/**
+	 * Adds the bend warp [id] of [bones] under [host], taking over the host's meshes - the limb meshes the
+	 * rig builder leaves on the body warp, bound to a bone or not - and its deformers when [adoptDeformers].
+	 */
+	private fun splice(
+		model: PuppetModel,
+		id: DeformerId,
+		name: String,
+		host: DeformerId,
+		bones: List<SkeletonBone>,
+		frame: Bounds,
+		adoptDeformers: Boolean,
+		bends: MutableMap<String, BodyBend>,
+	): PuppetModel {
+		val hostRest = worlds(model, emptyMap(), setOf(host))[host] ?: return model
+		val bend = BodyBend(id, hostRest, bones, frame)
+		val partId = model.parts.firstOrNull { it.id.raw == "PartBody" }?.id
+		val warp = Deformer.Warp(id, name, host, partId, bend.rows, bend.columns, true, bend.grid())
+		val deformers = if (!adoptDeformers) model.deformers else model.deformers.map { deformer ->
+			when {
+				deformer.parent != host -> deformer
+				deformer is Deformer.Warp -> deformer.copy(parent = id)
+				deformer is Deformer.Rotation -> deformer.copy(parent = id)
+				else -> deformer
+			}
+		}
+		val at = deformers.indexOfFirst { it.id == host } + 1
+		for (bone in bones) bends[bone.id] = bend
+		return model.copy(
+			deformers = deformers.subList(0, at) + warp + deformers.subList(at, deformers.size),
+			drawables = model.drawables.map { if (it.parentDeformerId == host) it.copy(parentDeformerId = id) else it },
 		)
-		fun with(next: Deformer.Rotation) = model.copy(deformers = model.deformers.map { if (it.id == id) next else it })
-		val trial = with(moved(0f, 1f))
-		val now = worlds(trial, emptyMap(), setOf(id))[id] as? RotationWorld ?: return model
-		val drift = SkeletonIk.wrap((angleOf(now) - angleOf(old)).toDouble()).toFloat()
-		val scale = scaleOf(now).takeIf { it > 1e-6f }?.let { scaleOf(old) / it } ?: 1f
-		return with(moved(drift, scale))
+	}
+
+	/** The deformer [bone] turns: a limb bone's own rotation, or the bend warp a body half is read from. */
+	fun deformerOf(model: PuppetModel, bone: SkeletonBone): DeformerId = when {
+		!bone.role.body -> DeformerId(bone.deformerId)
+		bone.role == BoneRole.LOWER_BODY && model.deformers.any { it.id == legsWarpId } -> legsWarpId
+		else -> torsoWarpId
+	}
+
+	// ---------------------------------------------------------------------------------------------------
+	// Rotation deformers
+
+	/**
+	 * The deformer a limb bone with no limb parent hangs from. Bones on the head turn with the head Z
+	 * rotation; a limb of a body half hangs from that half's warp, so it rides every bend of the body chain
+	 * down to there. Without one, an upper limb takes the breath warp and anything else the body warp.
+	 */
+	private fun attachDeformer(model: PuppetModel, spec: SkeletonSpec, bone: SkeletonBone, bends: Map<String, BodyBend>): DeformerId {
+		val lineage = generateSequence(bone) { it.parentId?.let(spec::bone) }
+		val present = model.deformers.mapTo(HashSet()) { it.id }
+		if (lineage.any { it.role == BoneRole.HEAD } && headRotationId in present) return headRotationId
+		val body = lineage.firstOrNull { it.role.body }
+		body?.let { bends[it.id] }?.let { return it.id }
+		return if (body?.role == BoneRole.UPPER_BODY && breathId in present) breathId else bodyId
 	}
 
 	private fun addRotations(
@@ -282,12 +429,13 @@ internal object SkeletonRig {
 		parentOf: Map<String, SkeletonBone?>,
 		spec: SkeletonSpec,
 		frame: Bounds,
+		bends: Map<String, BodyBend>,
 	): PuppetModel {
 		val restWorlds = worlds(base, emptyMap())
 		val partId = base.parts.firstOrNull { it.id.raw == "PartBody" }?.id
 		val rotations = bones.map { bone ->
 			val parentBone = parentOf[bone.id]
-			val parentId = parentBone?.let { DeformerId(it.deformerId) } ?: attachWarp(base, spec, bone)
+			val parentId = parentBone?.let { DeformerId(it.deformerId) } ?: attachDeformer(base, spec, bone, bends)
 			// A bone's local frame has its up axis (-y) along the bone, so its children sit in the parent's
 			// frame turned by the parent's own orientation.
 			val origin = if (parentBone != null) {
@@ -428,13 +576,20 @@ internal object SkeletonRig {
 	 * Cubism parameters cannot drive other parameters, so a pose is baked where it acts: the leg poses
 	 * move the body warp by the hip motion and turn every leg's rotation deformers by the joint angles
 	 * that keep its ankle planted, solved by two-bone IK at each key; the other poses turn their bones by
-	 * [SkeletonPoses.boneTurns]. Each is a blend shape on those deformers, so it adds to the bones' own
+	 * [SkeletonPoses.boneTurns] - a body half by turning its warp's lattice about the waist, as its own
+	 * parameter does. Each is a blend shape on those deformers, so it adds to the bones' own
 	 * parameters - a posed limb can still be swung by hand - and poses add to each other instead of
 	 * multiplying keyforms. Each leg pose is solved with the other at rest, so both at once only
 	 * approximate the joint solve. The knee always gives outward, which is how a front-facing figure
 	 * reads as bending its knees.
 	 */
-	private fun addPoses(base: PuppetModel, spec: SkeletonSpec, bones: List<SkeletonBone>, poses: List<SkeletonPose>): PuppetModel {
+	private fun addPoses(
+		base: PuppetModel,
+		spec: SkeletonSpec,
+		bones: List<SkeletonBone>,
+		poses: List<SkeletonPose>,
+		bends: Map<String, BodyBend>,
+	): PuppetModel {
 		if (poses.isEmpty()) return base
 		var model = base.copy(
 			parameters = base.parameters.filterNot { p -> SkeletonPoses.all.any { it.id == p.id } } +
@@ -461,18 +616,42 @@ internal object SkeletonRig {
 			}
 		}
 		val defaults = model.parameters.associate { it.id to it.default }
+		val default: (ParameterId) -> Float = { defaults[it] ?: 0f }
+		val bendById = bends.values.associateBy { it.id }
 		return model.copy(deformers = model.deformers.map { deformer ->
-			val bone = bones.firstOrNull { it.deformerId == deformer.id.raw }
-			val table = bone?.let { offsets[it.id] }
-			if (table == null || deformer !is Deformer.Rotation) return@map deformer
-			val reference = rotationFormAt(deformer.geometryGrid) { defaults[it] ?: 0f } ?: RotationPivotForm(0f, 0f, 0f, 1f)
-			deformer.copy(blendShapes = deformer.blendShapes.filterNot { b -> table.keys.any { it.id == b.parameterId } } +
-				table.map { (pose, angles) ->
-					poseBinding(pose) { ki ->
-						RotationForm(reference.originX, reference.originY, reference.angle + angles[ki], reference.scale, false, false,
-							deformer.opacity, deformer.multiplyColor, deformer.screenColor)
-					}
-				})
+			when (deformer) {
+				is Deformer.Rotation -> {
+					val bone = bones.firstOrNull { it.deformerId == deformer.id.raw && !it.role.body }
+					val table = bone?.let { offsets[it.id] } ?: return@map deformer
+					val reference = rotationFormAt(deformer.geometryGrid, default) ?: RotationPivotForm(0f, 0f, 0f, 1f)
+					deformer.copy(blendShapes = deformer.blendShapes.filterNot { b -> table.keys.any { it.id == b.parameterId } } +
+						table.map { (pose, angles) ->
+							poseBinding(pose) { ki ->
+								RotationForm(reference.originX, reference.originY, reference.angle + angles[ki], reference.scale, false, false,
+									deformer.opacity, deformer.multiplyColor, deformer.screenColor)
+							}
+						})
+				}
+				// A bend warp turns its lattice about the waist by what each of its halves takes from the pose, on
+				// top of whatever the halves' own parameters hold.
+				is Deformer.Warp -> {
+					val bend = bendById[deformer.id] ?: return@map deformer
+					val posed = poses.filter { pose -> bend.bones.any { offsets[it.id]?.containsKey(pose) == true } }
+					if (posed.isEmpty()) return@map deformer
+					val reference = warpControlPointsAt(deformer.geometryGrid, default) ?: return@map deformer
+					val straight = bend.lattice(DoubleArray(bend.bones.size))
+					deformer.copy(blendShapes = deformer.blendShapes.filterNot { b -> posed.any { it.id == b.parameterId } } +
+						posed.map { pose ->
+							poseBinding(pose) { ki ->
+								val turned = bend.lattice(DoubleArray(bend.bones.size) { b ->
+									offsets[bend.bones[b].id]?.get(pose)?.get(ki)?.toDouble() ?: 0.0
+								})
+								WarpForm(FloatArray(reference.size) { reference[it] + turned[it] - straight[it] },
+									deformer.opacity, deformer.multiplyColor, deformer.screenColor)
+							}
+						})
+				}
+			}
 		})
 	}
 
@@ -773,23 +952,25 @@ internal object SkeletonRig {
 			own[id] = if (range == null) bone.minAngle to bone.maxAngle else minOf(range.first, bone.minAngle) to maxOf(range.second, bone.maxAngle)
 		}
 		var step = KEY_STEP
-		fun keysFor(range: Pair<Float, Float>): FloatArray {
-			val below = ceil(abs(range.first) / step - 1e-6).toInt()
-			val above = ceil(range.second / step - 1e-6).toInt()
-			return (-below..above).map { i ->
-				when {
-					i < 0 -> range.first * (-i).toFloat() / below
-					i > 0 -> range.second * i.toFloat() / above
-					else -> 0f
-				}
-			}.toFloatArray()
-		}
-		var ownKeys = own.mapValues { keysFor(it.value) }
+		var ownKeys = own.mapValues { angleKeys(it.value, step) }
 		while (ownKeys.values.fold(1) { acc, keys -> acc * keys.size } > MAX_MESH_CELLS && step < 90.0) {
 			step *= 1.15
-			ownKeys = own.mapValues { keysFor(it.value) }
+			ownKeys = own.mapValues { angleKeys(it.value, step) }
 		}
 		return ownKeys.map { KeyformAxis(it.key, it.value) }
+	}
+
+	/** Keys across [range] (which holds 0) no more than [step] degrees apart, even on each side of 0. */
+	private fun angleKeys(range: Pair<Float, Float>, step: Double): FloatArray {
+		val below = ceil(abs(range.first) / step - 1e-6).toInt()
+		val above = ceil(range.second / step - 1e-6).toInt()
+		return (-below..above).map { i ->
+			when {
+				i < 0 -> range.first * (-i).toFloat() / below
+				i > 0 -> range.second * i.toFloat() / above
+				else -> 0f
+			}
+		}.toFloatArray()
 	}
 
 	/** Every coordinate of a grid over [axes], axis 0 fastest. */
@@ -890,9 +1071,12 @@ internal object SkeletonRig {
 		return Seams(model, canvas, glues)
 	}
 
-	/** Bone deformers with nothing under them - no mesh and no other deformer - removed, deepest first. */
+	/**
+	 * Bone deformers with nothing under them - no mesh and no other deformer - removed, deepest first, and
+	 * the legs bend with them when no leg or tail hangs from it.
+	 */
 	private fun pruneEmptyBones(model: PuppetModel, bones: List<SkeletonBone>): PuppetModel {
-		val boneDeformers = bones.mapTo(HashSet()) { DeformerId(it.deformerId) }
+		val boneDeformers = bones.mapTo(HashSet()) { DeformerId(it.deformerId) } + legsWarpId
 		var deformers = model.deformers
 		while (true) {
 			val used = HashSet<DeformerId>()

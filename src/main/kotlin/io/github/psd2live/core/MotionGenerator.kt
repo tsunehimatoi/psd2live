@@ -5,29 +5,22 @@ object MotionGenerator {
 	fun idle(): String = idle(ALL_PARAMETERS)!!
 
 	/**
-	 * The looping idle. With a skeleton its limb and pose tracks join in; parameters in [skeletonExclude]
-	 * are driven by exported physics instead and stay out of the motion.
+	 * The looping idle: the body tracks of [SkeletonMotions.idle], with a skeleton's pose tracks among them,
+	 * and a blink. Parameters in [skeletonExclude] are driven by exported physics instead and stay out of it.
 	 */
 	fun idle(
 		availableParameterIds: Set<String>,
 		skeleton: SkeletonSpec? = null,
 		skeletonExclude: Set<String> = emptySet(),
-	): String? {
-		val bones = SkeletonMotions.idle(skeleton, skeletonExclude).map { (id, points) -> curve(id, points) }
-		val boneIds = bones.mapTo(HashSet()) { it.parameter }
-		return buildMotionJson(
-			duration = 6.0f,
-			loop = true,
-			curves = listOf(
-				curve("ParamBreath", listOf(0f to 0f, 1.5f to 1f, 3f to 0f, 4.5f to 1f, 6f to 0f)),
-				curve("ParamAngleZ", listOf(0f to -2f, 1.5f to 2f, 3f to -2f, 4.5f to 2f, 6f to -2f)),
-				curve("ParamBodyAngleX", listOf(0f to -1.2f, 3f to 1.2f, 6f to -1.2f)),
-				curve("ParamEyeLOpen", listOf(0f to 1f, 2.7f to 1f, 2.78f to 0f, 2.88f to 1f, 6f to 1f)),
-				curve("ParamEyeROpen", listOf(0f to 1f, 2.7f to 1f, 2.78f to 0f, 2.88f to 1f, 6f to 1f)),
-			).filterNot { it.parameter in boneIds } + bones,
-			availableParameterIds = availableParameterIds,
-		)
-	}
+	): String? = buildMotionJson(
+		duration = SkeletonMotions.IDLE_DURATION,
+		loop = true,
+		curves = SkeletonMotions.idle(skeleton, skeletonExclude).map { (id, points) -> curve(id, points) } + listOf(
+			curve("ParamEyeLOpen", listOf(0f to 1f, 2.7f to 1f, 2.78f to 0f, 2.88f to 1f, 6f to 1f)),
+			curve("ParamEyeROpen", listOf(0f to 1f, 2.7f to 1f, 2.78f to 0f, 2.88f to 1f, 6f to 1f)),
+		),
+		availableParameterIds = availableParameterIds,
+	)
 
 	/** A one-shot skeleton motion ([SkeletonMotions.tailSwing] and friends) as motion3 JSON. */
 	fun skeleton(tracks: List<MotionTrack>, availableParameterIds: Set<String>): String? {
@@ -133,6 +126,7 @@ object MotionGenerator {
 		"ParamAngleZ",
 		"ParamBodyAngleX",
 		"ParamBodyAngleY",
+		"ParamBodyAngleZ",
 		"ParamEyeLOpen",
 		"ParamEyeROpen",
 	)

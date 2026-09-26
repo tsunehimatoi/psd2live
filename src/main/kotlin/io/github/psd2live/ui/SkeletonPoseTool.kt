@@ -44,7 +44,8 @@ internal object SkeletonPoseTool {
 	/**
 	 * Every limb bone of [spec] where [model] holds it at [values].
 	 *
-	 * A bone that owns a rotation deformer is read straight from it. A bone whose deformer was pruned - a
+	 * A bone that owns a deformer is read straight from it: a limb bone's rotation, or the warp a body half
+	 * bends, whose lattice turns everything past the waist band with it. A bone whose deformer was pruned - a
 	 * joint that bends inside an unsplit mesh's keyforms - turns about its head from wherever its parent
 	 * went, by its own parameter plus its poses' turns and the leg poses' IK angle, which is exactly what
 	 * those keyforms and blend shapes bake.
@@ -72,7 +73,7 @@ internal object SkeletonPoseTool {
 		val joints = if (legs.isEmpty() || (crouch == 0f && weight == 0f)) emptyMap() else legJoints(model, legs)
 		fun poseTurn(bone: SkeletonBone): Double = joints[bone.id]?.turnAt(crouch, weight)?.toDouble() ?: 0.0
 		for (bone in bones) {
-			val id = DeformerId(bone.deformerId)
+			val id = SkeletonRig.deformerOf(model, bone)
 			val world = worlds[id]
 			val restWorld = rest[id]
 			val parent = SkeletonRig.limbParent(spec, bone, ids)?.let { frames[it.id] }
@@ -198,9 +199,9 @@ internal object SkeletonPoseTool {
 	 */
 	fun weights(model: PuppetModel, spec: SkeletonSpec?): Map<DrawableId, Pair<List<SkeletonBone>, List<io.github.psd2live.core.VertexSkin>>> {
 		if (spec?.enabled != true) return emptyMap()
-		val bones = SkeletonRig.limbBones(spec)
-		val ids = bones.mapTo(HashSet()) { it.id }
-		val parentOf = bones.associate { it.id to SkeletonRig.limbParent(spec, it, ids) }
+		// The body halves bend warps rather than skin meshes, so only limb meshes have weights.
+		val bones = SkeletonRig.jointBones(spec)
+		val parentOf = SkeletonRig.jointParents(spec)
 		val rootOf = SkeletonRig.skinRoots(bones, parentOf)
 		val trees = bones.groupBy { rootOf.getValue(it.id) }
 		val rest = SkeletonRig.restCanvas(model)

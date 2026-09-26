@@ -227,7 +227,7 @@ object RigBuilder {
 			var id = parentId.raw
 			val seen = mutableSetOf<String>()
 			while (id !in frameByDeformer && seen.add(id)) {
-				if (id.startsWith("DeformSkel_") || config.rigEdits.skeleton?.bones?.any { it.deformerId == id } == true) {
+				if (id.startsWith("DeformSkel") || config.rigEdits.skeleton?.bones?.any { it.deformerId == id } == true) {
 					return character
 				}
 				id = config.rigEdits.warpEdits.firstOrNull { it.id == id }?.parentId ?: return null

@@ -10,6 +10,7 @@ import org.umamo.runtime.model.DeformerId
 import org.umamo.runtime.model.Drawable
 import org.umamo.runtime.model.DrawableId
 import org.umamo.runtime.model.DrawableMesh
+import org.umamo.runtime.model.KeyformAxis
 import org.umamo.runtime.model.KeyformCell
 import org.umamo.runtime.model.KeyformGrid
 import org.umamo.runtime.model.OrgChild
@@ -85,14 +86,117 @@ class SkeletonRigTest {
 		// Refinement may append vertices; the original ones keep their indices and must not move.
 		for (i in expected.indices) assertEquals(expected[i], actual[i], 0.05f, "vertex coordinate $i")
 		// One art mesh across the whole arm: one rotation deformer at the shoulder, pointing down the arm,
-		// hung from the upper body's deformer at the waist.
-		val skel = baked.deformers.filter { it.id.raw.startsWith("DeformSkel_") }
-		assertEquals(listOf("DeformSkel_chest", "DeformSkel_upper"), skel.map { it.id.raw })
+		// hung from the torso's bend, which the upper body turns.
+		val skel = baked.deformers.filter { it.id.raw.startsWith("DeformSkel") }
+		assertEquals(listOf("DeformSkelTorso", "DeformSkel_upper"), skel.map { it.id.raw })
+		assertTrue(skel.first() is Deformer.Warp)
 		val upper = skel.last() as Deformer.Rotation
-		assertEquals(DeformerId("DeformSkel_chest"), upper.parent)
+		assertEquals(SkeletonRig.torsoWarpId, upper.parent)
 		// Cubism's handle points up at 0 and turns clockwise; an arm hanging straight down rests at 180.
 		assertEquals(180f, abs(upper.baseAngle), 0.01f)
 		assertEquals(DeformerId("DeformSkel_upper"), baked.drawables.single().parentDeformerId)
+	}
+
+	private val breathId = DeformerId("DeformBodyZBreath")
+
+	/** A breath warp over the whole body whose breath key lifts the top edge, stretching the body. */
+	private fun breath() = Deformer.Warp(breathId, "Breath", bodyId, null, 1, 1, true, KeyformGrid(
+		listOf(KeyformAxis(ParameterId("ParamBreath"), floatArrayOf(0f, 1f))),
+		listOf(
+			KeyformCell(intArrayOf(0), WarpLatticeForm(floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f))),
+			KeyformCell(intArrayOf(1), WarpLatticeForm(floatArrayOf(0f, -0.04f, 1f, -0.04f, 0f, 1f, 1f, 1f))),
+		),
+	))
+
+	@Test fun theBodyChainBendsReachTheLimbsAndTheTorso() {
+		val arm = strip("arm", 100f, 95f, 435f, 18f, 10f)
+		// Torso and skirt hang from the breath warp, in its normalized space, as the rig builder hangs them.
+		val torso = strip("torso", 250f, 60f, 290f, 40f, 10f).copy(parentDeformerId = breathId)
+		val skirt = strip("skirt", 250f, 330f, 450f, 50f, 10f).copy(parentDeformerId = breathId)
+		// A shoe left on the body warp, bound to no bone, as the rig builder leaves an unsplit pair of legs.
+		val shoe = strip("shoe", 250f, 460f, 490f, 40f, 10f)
+		val source = PuppetModel(emptyList(), emptyList(), listOf(body(), breath()), listOf(arm, torso, skirt, shoe),
+			listOf(arm, torso, skirt, shoe).map { OrgChild.Drawable(it.id) }, null)
+		val waist = bone("chest", null, BoneRole.UPPER_BODY, 250f, 300f, 250f, 60f, listOf("torso"), side = Side.NONE)
+		val spec = SkeletonSpec(bones = listOf(
+			waist,
+			bone("hip", null, BoneRole.LOWER_BODY, 250f, 300f, 250f, 400f, listOf("skirt"), side = Side.NONE),
+			bone("upper", "chest", BoneRole.UPPER_ARM, 100f, 100f, 100f, 250f, listOf("arm")),
+			bone("fore", "upper", BoneRole.FOREARM, 100f, 250f, 100f, 370f),
+			bone("hand", "fore", BoneRole.HAND, 100f, 370f, 100f, 430f),
+		))
+		val baked = SkeletonRig.apply(source, spec, frame)
+		val rest = canvas(baked)
+		for (d in listOf(arm, torso, skirt, shoe)) {
+			val expected = rest(d)
+			val actual = rest.getValue(d.id)
+			for (i in expected.indices) assertEquals(expected[i], actual[i], 0.05f, "rest coordinate $i of " + d.id.raw)
+		}
+		// The torso bend ends the body chain, so every bend above reaches every mesh and bone below it; the
+		// legs bend beside the breath.
+		val parent = baked.deformers.associate { it.id.raw to it.parent?.raw }
+		assertEquals("DeformBodyXY", parent["DeformBodyZBreath"])
+		assertEquals("DeformBodyZBreath", parent["DeformSkelTorso"])
+		assertEquals("DeformBodyXY", parent["DeformSkelLegs"])
+		assertEquals("DeformSkelTorso", parent["DeformSkel_upper"])
+		assertEquals("DeformSkelTorso", baked.drawables.single { it.id == torso.id }.parentDeformerId?.raw)
+		assertEquals("DeformSkelTorso", baked.drawables.single { it.id == skirt.id }.parentDeformerId?.raw)
+		assertEquals("DeformSkelLegs", baked.drawables.single { it.id == shoe.id }.parentDeformerId?.raw)
+
+		// The breath stretches the body, and the arm rides it: its shoulder lifts with the torso beside it.
+		val breathing = canvas(baked, mapOf("ParamBreath" to 1f))
+		val armRest = rest.getValue(arm.id)
+		for (v in 0 until armRest.size / 2) {
+			val y = armRest[v * 2 + 1]
+			if (y > 105f) continue
+			val lift = 0.04f * size * (1f - y / size)
+			assertEquals(y - lift, breathing.getValue(arm.id)[v * 2 + 1], 0.5f, "shoulder vertex $v")
+		}
+		// It never lifts the feet.
+		for (i in rest.getValue(shoe.id).indices) assertEquals(rest.getValue(shoe.id)[i], breathing.getValue(shoe.id)[i], 0.05f)
+
+		// The upper body turns everything past the waist band about the waist, the arm with it; the skirt stays.
+		val turned = canvas(baked, mapOf(waist.parameterId to 15f))
+		val torsoRest = rest.getValue(torso.id)
+		for (v in 0 until torsoRest.size / 2) {
+			if (torsoRest[v * 2 + 1] > 200f) continue
+			val p = rotate(torsoRest[v * 2], torsoRest[v * 2 + 1], 250f, 300f, 15f)
+			assertEquals(p.first, turned.getValue(torso.id)[v * 2], 0.5f, "torso x $v")
+			assertEquals(p.second, turned.getValue(torso.id)[v * 2 + 1], 0.5f, "torso y $v")
+		}
+		for (v in 0 until armRest.size / 2) {
+			val p = rotate(armRest[v * 2], armRest[v * 2 + 1], 250f, 300f, 15f)
+			assertEquals(p.first, turned.getValue(arm.id)[v * 2], 1f, "arm x $v")
+			assertEquals(p.second, turned.getValue(arm.id)[v * 2 + 1], 1f, "arm y $v")
+		}
+		val skirtRest = rest.getValue(skirt.id)
+		// Clear of the waist band, which reaches a quarter of the upper body's length below the waist, and of
+		// the lattice row across its edge.
+		for (v in 0 until skirtRest.size / 2) {
+			if (skirtRest[v * 2 + 1] < 300f + 240f * 0.25f + size / 12f) continue
+			assertEquals(skirtRest[v * 2], turned.getValue(skirt.id)[v * 2], 0.05f, "skirt x $v")
+			assertEquals(skirtRest[v * 2 + 1], turned.getValue(skirt.id)[v * 2 + 1], 0.05f, "skirt y $v")
+		}
+		// The lower body turns the skirt about the waist and leaves the top of the torso.
+		val hips = canvas(baked, mapOf("ParamSkelLowerBody" to 10f))
+		val hem = (0 until skirtRest.size / 2).maxBy { skirtRest[it * 2 + 1] }
+		val p = rotate(skirtRest[hem * 2], skirtRest[hem * 2 + 1], 250f, 300f, 10f)
+		assertEquals(p.first, hips.getValue(skirt.id)[hem * 2], 0.5f)
+		assertEquals(p.second, hips.getValue(skirt.id)[hem * 2 + 1], 0.5f)
+		// The feet turn with the hips exactly as the skirt does.
+		val shoeRest = rest.getValue(shoe.id)
+		for (v in 0 until shoeRest.size / 2) {
+			val q = rotate(shoeRest[v * 2], shoeRest[v * 2 + 1], 250f, 300f, 10f)
+			assertEquals(q.first, hips.getValue(shoe.id)[v * 2], 0.5f, "shoe x $v")
+			assertEquals(q.second, hips.getValue(shoe.id)[v * 2 + 1], 0.5f, "shoe y $v")
+		}
+		assertEquals(torsoRest[0], hips.getValue(torso.id)[0], 0.05f)
+		// The pose tool draws the upper body where its warp put it.
+		val chest = io.github.psd2live.ui.SkeletonPoseTool.posed(baked, spec, mapOf(ParameterId(waist.parameterId) to 15f))
+			.single { it.bone.id == "chest" }
+		val tip = rotate(250f, 60f, 250f, 300f, 15f)
+		assertEquals(tip.first, chest.tailX, 0.5f)
+		assertEquals(tip.second, chest.tailY, 0.5f)
 	}
 
 	@Test fun splitPartsGetTheirOwnJointsAndAreGlued() {
@@ -415,12 +519,19 @@ class SkeletonRigTest {
 		assertEquals(setOf(SkeletonPoses.crouch, SkeletonPoses.weight, SkeletonPoses.tailSwing), SkeletonPoses.available(spec).toSet())
 		val idle = SkeletonMotions.idle(spec)
 		// The idle keeps to the weight: the leg poses only add, so they never play together.
-		assertEquals(setOf(SkeletonPoses.weight, SkeletonPoses.tailSwing).map { it.id.raw }.toSet(), idle.map { it.first }.toSet())
+		val posed = idle.map { it.first }.filter { id -> SkeletonPoses.all.any { it.id.raw == id } }.toSet()
+		assertEquals(setOf(SkeletonPoses.weight, SkeletonPoses.tailSwing).map { it.id.raw }.toSet(), posed)
+		// The body follows on the same loop, without a skeleton too.
+		val body = setOf("ParamBreath", "ParamBodyAngleX", "ParamBodyAngleZ", "ParamAngleZ")
+		assertTrue(idle.map { it.first }.containsAll(body))
+		assertTrue(SkeletonMotions.idle(null).map { it.first }.containsAll(body))
 		for ((id, points) in idle) {
 			assertEquals(points.first().second, points.last().second, 1e-3f, "$id loop seam")
-			val pose = SkeletonPoses.all.single { it.id.raw == id }
+			assertEquals(SkeletonMotions.IDLE_DURATION, points.last().first, 1e-4f, "$id duration")
+			val pose = SkeletonPoses.all.singleOrNull { it.id.raw == id } ?: continue
 			assertTrue(points.all { it.second in pose.min..pose.max }, "$id out of range")
 		}
+		assertTrue(idle.single { it.first == "ParamBreath" }.second.all { it.second in -1e-4f..1.0001f })
 		for (tracks in listOf(SkeletonMotions.crouch(spec), SkeletonMotions.weightShift(spec), SkeletonMotions.tailSwing(spec))) {
 			assertTrue(tracks.isNotEmpty())
 			for ((id, points) in tracks) {
