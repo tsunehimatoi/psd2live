@@ -1073,7 +1073,8 @@ internal fun BoxScope.CanvasEditorOverlay(
         // describing — the brush outline and the hovered part's own highlight already say the same
         // thing without a box in the way.
     }
-    val skeleton = editor.skeletonDraft
+    // The armature is only open for editing in Edit mode with the skeleton as the target.
+    val skeleton = editor.skeletonDraft?.takeIf { editor.skeletonSelected && editor.hierarchyMode == EditHierarchyMode.EDIT }
     if (skeleton != null) {
         val currentSkeleton by rememberUpdatedState(skeleton)
         val preview = editor.state.previewModel
@@ -1246,6 +1247,9 @@ internal fun BoxScope.CanvasEditorOverlay(
 
     if (skeleton == null && editor.posing()) {
         SkeletonPoseLayer(editor, viewport)
+    } else if (skeleton == null && editor.hierarchyMode == EditHierarchyMode.SELECT && editor.bakedSkeleton != null) {
+        // Object mode shows the bones faintly so they can be clicked, which is how the skeleton is picked.
+        SkeletonPoseLayer(editor, viewport, passive = true)
     }
 
     // Left Animated Hover Toolbar (edit / deform / paint tools)
@@ -1941,7 +1945,7 @@ private fun BoxScope.CanvasToolBar(
         // use for makes the arriving and departing rows slide with everything else.
         // Glue joins exactly two meshes, so it is offered only while two are selected.
         val glueOffered = editor.glueMeshCount() == 2
-        val availableTools = toolbarGroups(editor.hierarchyMode).flatten().toSet()
+        val availableTools = editor.palette().toSet()
             .let { if (glueOffered) it else it - CanvasTool.GLUE }
         val lastVisibleIndex = TOOLBAR_TOOL_ORDER.indexOfLast { it in availableTools }
 
@@ -2035,53 +2039,6 @@ private fun BoxScope.CanvasToolBar(
                     }
                 }
             }
-        }
-
-        if (editor.hierarchyMode != EditHierarchyMode.PAINT) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 4.dp, vertical = 2.dp)
-                    .height(1.dp)
-                    .background(colors.border.copy(alpha = 0.35f))
-            )
-            val isEditing = editor.skeletonDraft != null
-            ShapeItemRow(
-                label = tr("skeleton.panel.title"),
-                isSelected = isEditing,
-                isToolbarExpanded = animatedWidth > 42.dp,
-                textAlpha = textAlpha,
-                textOffset = textOffset,
-                isBusy = editor.busy,
-                icon = { tint ->
-                    Canvas(Modifier.size(16.dp)) {
-                        val head = Offset(3.5f, 12.5f)
-                        val tail = Offset(12.5f, 3.5f)
-                        val left = Offset(4.0f, 6.5f)
-                        val right = Offset(9.5f, 12.0f)
-                        val leftFacet = Path().apply {
-                            moveTo(head.x, head.y); lineTo(left.x, left.y); lineTo(tail.x, tail.y); close()
-                        }
-                        val rightFacet = Path().apply {
-                            moveTo(head.x, head.y); lineTo(right.x, right.y); lineTo(tail.x, tail.y); close()
-                        }
-                        drawPath(leftFacet, tint.copy(alpha = 0.65f))
-                        drawPath(rightFacet, tint.copy(alpha = 0.30f))
-                        val outline = Path().apply {
-                            moveTo(head.x, head.y); lineTo(left.x, left.y); lineTo(tail.x, tail.y); lineTo(right.x, right.y); close()
-                        }
-                        drawPath(outline, tint, style = Stroke(width = 1.2f))
-                        drawLine(tint, head, tail, strokeWidth = 1f)
-                        drawCircle(tint, 2.0f, head)
-                        drawCircle(tint, 1.5f, tail)
-                    }
-                },
-                keyLabel = "",
-                onClick = {
-                    if (editor.skeletonDraft == null) editor.beginSkeletonEdit() else editor.cancelSkeletonEdit()
-                    focus()
-                },
-            )
         }
 
         val isBrushTool = editor.tool in listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE)
@@ -2453,6 +2410,14 @@ private fun ToolIcon(
                 drawPath(bone, color, style = Stroke(1.3f * s))
                 drawCircle(color, 2.2f * s, p(4.5f, 13.5f))
                 drawCircle(color, 1.8f * s, p(13.5f, 4.5f))
+            }
+            CanvasTool.SKELETON_EDIT -> {
+                // Two bones joined at a joint: editing is about where the joints sit.
+                line(3.5f, 14.5f, 9f, 9f)
+                line(9f, 9f, 14.5f, 6f)
+                drawCircle(color, 2.2f * s, p(3.5f, 14.5f), style = Stroke(1.2f * s))
+                drawCircle(color, 2.6f * s, p(9f, 9f))
+                drawCircle(color, 2.2f * s, p(14.5f, 6f), style = Stroke(1.2f * s))
             }
             CanvasTool.CREATE_WARP -> {
                 drawRect(color, Offset(3 * s, 3 * s), Size(12 * s, 12 * s), style = Stroke(s * 1.3f))
@@ -3533,18 +3498,22 @@ private fun DrawScope.drawDeformPathInfluencePreview(
  * is dotted in the color of the bone it follows, mixed toward the next bone across a joint band.
  */
 @Composable
-private fun SkeletonPoseLayer(editor: CanvasEditor, viewport: CanvasViewport) {
+private fun SkeletonPoseLayer(editor: CanvasEditor, viewport: CanvasViewport, passive: Boolean = false) {
     val colors = LocalToolColors.current
     val spec = editor.bakedSkeleton ?: return
     val model = editor.model
     val pose = editor.state.parameterValues
     val bones = remember(model, spec, pose) { editor.posedBones() }
     fun colorOf(id: String) = SkeletonPalette.color(spec, id)
-    val weights = remember(model, spec, editor.showSkeletonWeights) {
-        if (editor.showSkeletonWeights) SkeletonPoseTool.weights(model, spec) else emptyMap()
+    // The passive (Object mode) armature is a pick target, not a posing aid: no weights, and only the
+    // picked skeleton is drawn at full strength.
+    val showWeights = editor.showSkeletonWeights && !passive
+    val strength = if (!passive || editor.skeletonSelected) 1f else 0.45f
+    val weights = remember(model, spec, showWeights) {
+        if (showWeights) SkeletonPoseTool.weights(model, spec) else emptyMap()
     }
-    val deformed = remember(model, pose, editor.showSkeletonWeights) {
-        if (editor.showSkeletonWeights) org.umamo.render.eval.CpuDeformationEvaluator().evaluate(model, pose).worldPositions else emptyMap()
+    val deformed = remember(model, pose, showWeights) {
+        if (showWeights) org.umamo.render.eval.CpuDeformationEvaluator().evaluate(model, pose).worldPositions else emptyMap()
     }
     Canvas(Modifier.fillMaxSize()) {
         fun screen(x: Float, y: Float) = Offset(viewport.x(x).toFloat(), (viewport.offsetY + y * viewport.scale).toFloat())
@@ -3562,8 +3531,9 @@ private fun SkeletonPoseLayer(editor: CanvasEditor, viewport: CanvasViewport) {
         }
         val active = editor.poseDrag ?: editor.poseHover
         for (posed in bones) {
-            val color = colorOf(posed.bone.id)
-            val lit = active?.boneId == posed.bone.id
+            val color = colorOf(posed.bone.id).let { it.copy(alpha = it.alpha * strength) }
+            val lit = active?.boneId == posed.bone.id ||
+                (passive && editor.skeletonSelected && editor.selectedBoneId == posed.bone.id)
             val head = screen(posed.headX, posed.headY)
             val tail = screen(posed.tailX, posed.tailY)
             val dx = tail.x - head.x
@@ -3579,7 +3549,7 @@ private fun SkeletonPoseLayer(editor: CanvasEditor, viewport: CanvasViewport) {
                     lineTo(head.x - nx * width, head.y - ny * width)
                     close()
                 }
-                drawPath(blade, color.copy(alpha = if (lit) 0.75f else 0.45f))
+                drawPath(blade, color.copy(alpha = (if (lit) 0.75f else 0.45f) * strength))
                 drawPath(blade, if (lit) Color.White else color, style = Stroke(if (lit) 1.8f else 1.1f))
             }
             drawCircle(colors.windowBackground, 5.5f, head)

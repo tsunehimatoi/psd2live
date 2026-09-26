@@ -47,6 +47,7 @@ import io.github.psd2live.core.SkeletonSpec
 import io.github.psd2live.core.SkeletonWeights
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.CanvasEditor
+import io.github.psd2live.ui.EditHierarchyMode
 import io.github.psd2live.ui.SkeletonPalette
 import io.github.psd2live.ui.components.CompactButton
 import io.github.psd2live.ui.components.CompactIconButton
@@ -80,9 +81,10 @@ private const val CHEVRON_WIDTH_DP = 10
  * The skeleton tab beside the hierarchy: the bone tree with every bone's bound art meshes under it, in
  * the bone's color - the same color the canvas tints those meshes while the skeleton is being edited.
  *
- * Outside editing it shows the skeleton the rig was built with and the posing controls. While editing
- * it is the editor: pick a bone to drag its joints on the canvas or click meshes to bind, add and
- * remove bones, tune the selected joint, then confirm or cancel.
+ * The skeleton is a canvas target like a layer: clicking a bone here (or on the canvas in Object mode)
+ * selects it, Deform mode then poses it and Edit mode reshapes it. While editing this tab is the editor:
+ * pick a bone to drag its joints on the canvas or click meshes to bind, add and remove bones, tune the
+ * selected joint. Leaving Edit mode keeps the edit; Cancel throws it away.
  */
 @Composable
 internal fun SkeletonTreeView(state: PSD2LiveState, viewModel: PSD2LiveViewModel) {
@@ -94,8 +96,12 @@ internal fun SkeletonTreeView(state: PSD2LiveState, viewModel: PSD2LiveViewModel
 		?: state.activeCanvas
 	val editor = viewModel.canvasEditorFor(editCanvas.id)
 	val draft = editor.skeletonDraft
-	val baked = state.previewModel?.config?.rigEdits?.skeleton?.takeIf { it.enabled && it.bones.isNotEmpty() }
-	val shown = draft ?: baked
+	// The authored skeleton, switched on or not: turning it off keeps the bones, so they stay listed.
+	val committed = state.rigEdits.skeleton?.takeIf { it.bones.isNotEmpty() }
+		?: state.previewModel?.config?.rigEdits?.skeleton?.takeIf { it.bones.isNotEmpty() }
+	val shown = draft ?: committed
+	val enabled = shown?.enabled == true
+	val posing = editor.skeletonSelected && editor.hierarchyMode == EditHierarchyMode.DEFORM
 	val rig = state.previewModel?.rig
 	// Meshes are listed by their layer's name - what the layers panel and a split named them - rather than
 	// the drawable id a split piece is given internally.
@@ -138,13 +144,19 @@ internal fun SkeletonTreeView(state: PSD2LiveState, viewModel: PSD2LiveViewModel
 					)
 				}
 			} else {
-				CompactButton(
-					text = tr(if (baked == null) "skeleton.tree.create" else "skeleton.tree.edit"),
-					onClick = { editor.beginSkeletonEdit() },
-					isPrimary = baked == null,
-					height = 20.dp,
-				)
-				if (baked != null) {
+				if (committed == null) {
+					CompactButton(text = tr("skeleton.tree.create"), onClick = { editor.beginSkeletonEdit() }, isPrimary = true, height = 20.dp)
+				} else {
+					CompactToggleChip(
+						text = tr("skeleton.tree.pose"),
+						selected = posing,
+						onToggle = { if (posing) editor.setHierarchyMode(EditHierarchyMode.SELECT) else editor.beginSkeletonPose() },
+						enabled = enabled,
+						height = 20.dp,
+					)
+					CompactButton(text = tr("skeleton.tree.edit"), onClick = { editor.beginSkeletonEdit() }, height = 20.dp)
+				}
+				if (committed != null && enabled) {
 					CompactIconButton(onClick = { editor.resetSkeletonPose() }, size = 20.dp, tooltip = tr("animation.resetPose")) {
 						IconReset(Modifier.size(11.dp), tint = colors.textMuted)
 					}
@@ -184,6 +196,17 @@ internal fun SkeletonTreeView(state: PSD2LiveState, viewModel: PSD2LiveViewModel
 			)
 		}
 
+		if (shown != null && !enabled) {
+			Row(
+				Modifier.fillMaxWidth().background(colors.textMuted.copy(alpha = 0.10f)).padding(horizontal = 8.dp, vertical = 2.dp),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				Text(tr("skeleton.tree.disabled"), color = colors.textMuted, style = typography.caption.copy(fontSize = 10.sp),
+					modifier = Modifier.weight(1f))
+				CompactButton(text = tr("skeleton.panel.enable"), onClick = { editor.setSkeletonEnabled(true) }, height = 18.dp)
+			}
+		}
+
 		if (shown == null) {
 			Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
 				Text(tr("skeleton.tree.emptyHint"), color = colors.textMuted, style = typography.caption.copy(fontSize = 10.5.sp),
@@ -201,10 +224,10 @@ internal fun SkeletonTreeView(state: PSD2LiveState, viewModel: PSD2LiveViewModel
 					spec = shown,
 					bone = bone,
 					expanded = expanded,
-					selected = draft != null && bone.id == editor.selectedBoneId,
-					editable = draft != null,
+					selected = editor.skeletonSelected && bone.id == editor.selectedBoneId,
+					editable = true,
 					onToggle = { collapsed[bone.id] = expanded },
-					onSelect = { editor.selectBone(bone.id) },
+					onSelect = { if (draft != null) editor.selectBone(bone.id) else editor.selectSkeleton(bone.id) },
 				)
 				// Anchor bones are skinned by the body rig, not by bones; their meshes stay out of the tree.
 				if (!expanded || bone.role.anchor) continue
@@ -218,7 +241,8 @@ internal fun SkeletonTreeView(state: PSD2LiveState, viewModel: PSD2LiveViewModel
 						isLast = index == bone.drawableIds.lastIndex && !hasChildBones,
 						selected = layerId in selectedLayers,
 						editable = draft != null,
-						onPick = { viewModel.selectLayer(layerId) },
+						// While editing, a mesh row points at its bone: picking the layer would end the edit.
+						onPick = { if (draft != null) editor.selectBone(bone.id) else viewModel.selectLayer(layerId) },
 						onUnbind = { editor.unbindSkeletonDrawable(id) },
 					)
 				}
@@ -234,12 +258,12 @@ internal fun SkeletonTreeView(state: PSD2LiveState, viewModel: PSD2LiveViewModel
 				verticalAlignment = Alignment.CenterVertically,
 				horizontalArrangement = Arrangement.spacedBy(4.dp),
 			) {
-				if (editor.state.rigEdits.skeleton?.enabled == true) {
-					CompactButton(text = tr("skeleton.panel.disable"), onClick = { editor.disableSkeleton() }, danger = true, height = 22.dp)
+				if (enabled) {
+					CompactButton(text = tr("skeleton.panel.disable"), onClick = { editor.setSkeletonEnabled(false) }, height = 22.dp)
 				}
 				Spacer(Modifier.weight(1f))
 				CompactButton(text = tr("skeleton.panel.cancel"), onClick = { editor.cancelSkeletonEdit() }, height = 22.dp)
-				CompactButton(text = tr("skeleton.panel.confirm"), onClick = { editor.confirmSkeletonEdit() }, isPrimary = true, height = 22.dp)
+				CompactButton(text = tr("skeleton.panel.done"), onClick = { editor.finishSkeletonEdit() }, isPrimary = true, height = 22.dp)
 			}
 		} else {
 			val meshes = shown.bones.filterNot { it.role.anchor }.flatMap { it.drawableIds }.distinct().size

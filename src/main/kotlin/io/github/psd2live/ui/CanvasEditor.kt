@@ -94,6 +94,7 @@ internal enum class CanvasTool(val action: ShortcutAction) {
     SMOOTH(ShortcutAction.TOOL_SMOOTH),
     INFLATE(ShortcutAction.TOOL_INFLATE),
     SKELETON_POSE(ShortcutAction.TOOL_SKELETON_POSE),
+    SKELETON_EDIT(ShortcutAction.TOOL_SKELETON_EDIT),
     CREATE_WARP(ShortcutAction.TOOL_CREATE_WARP),
     CREATE_ROTATION(ShortcutAction.TOOL_CREATE_ROTATION),
     CREATE_DEFORM_PATH(ShortcutAction.TOOL_CREATE_DEFORM_PATH),
@@ -271,7 +272,7 @@ internal val VERTEX_TOOLS = setOf(
 internal val TOOLBAR_TOOL_ORDER = listOf(
     CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT,
     CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE,
-    CanvasTool.SKELETON_POSE,
+    CanvasTool.SKELETON_POSE, CanvasTool.SKELETON_EDIT,
     CanvasTool.SUBDIVIDE, CanvasTool.KNIFE, CanvasTool.GLUE,
     CanvasTool.PAINT_BRUSH, CanvasTool.PAINT_PENCIL, CanvasTool.PAINT_ERASER,
     CanvasTool.PAINT_BUCKET, CanvasTool.PAINT_EYEDROPPER,
@@ -279,7 +280,7 @@ internal val TOOLBAR_TOOL_ORDER = listOf(
 )
 
 /** A divider is drawn after these, when there are visible tools on both sides of them. */
-internal val TOOLBAR_DIVIDERS = listOf(CanvasTool.BRUSH_SELECT, CanvasTool.SKELETON_POSE)
+internal val TOOLBAR_DIVIDERS = listOf(CanvasTool.BRUSH_SELECT, CanvasTool.SKELETON_EDIT)
 
 /**
  * The left toolbar's palette for [mode]. Creation tools are not listed here — use the tree
@@ -287,16 +288,23 @@ internal val TOOLBAR_DIVIDERS = listOf(CanvasTool.BRUSH_SELECT, CanvasTool.SKELE
  *
  * Object mode is the one without the vertex tools. Deform mode edits points without changing topology.
  * Edit mode handles mesh topology (subdivide / knife). Paint mode replaces layer pixels.
+ *
+ * With the skeleton as the target, Deform mode poses it and Edit mode reshapes it, and each offers only
+ * that one tool: none of the point tools has anything to act on.
  */
-internal fun toolbarGroups(mode: EditHierarchyMode): List<List<CanvasTool>> = when (mode) {
+internal fun toolbarGroups(mode: EditHierarchyMode, skeleton: Boolean = false): List<List<CanvasTool>> = when {
+    skeleton && mode == EditHierarchyMode.DEFORM -> listOf(listOf(CanvasTool.SKELETON_POSE))
+    skeleton && mode == EditHierarchyMode.EDIT -> listOf(listOf(CanvasTool.SKELETON_EDIT))
+    else -> drawableToolbarGroups(mode)
+}
+
+private fun drawableToolbarGroups(mode: EditHierarchyMode): List<List<CanvasTool>> = when (mode) {
     EditHierarchyMode.SELECT -> listOf(
         listOf(CanvasTool.SELECT, CanvasTool.LASSO_SELECT),
-        listOf(CanvasTool.SKELETON_POSE),
     )
     EditHierarchyMode.DEFORM -> listOf(
         listOf(CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT),
         listOf(CanvasTool.BRUSH, CanvasTool.SMOOTH, CanvasTool.INFLATE),
-        listOf(CanvasTool.SKELETON_POSE),
     )
     EditHierarchyMode.EDIT -> listOf(
         listOf(CanvasTool.SELECT, CanvasTool.LASSO_SELECT, CanvasTool.BRUSH_SELECT),
@@ -395,42 +403,107 @@ internal class CanvasEditor(
     private val workspaceId: String = viewModel.state.value.activeWorkspace.id,
     private val canvasId: String = viewModel.state.value.activeCanvas.id,
 ) {
-	/** Draft armature stays local to this canvas until Confirm creates one history entry. */
+	/**
+	 * The skeleton is a target of its own, like a drawable or a deformer: Object mode picks it, Deform mode
+	 * poses it and Edit mode reshapes it. It is kept on this canvas rather than in the document selection
+	 * because the armature is one per project; picking a layer or deformer anywhere drops it.
+	 */
+	var skeletonSelected by mutableStateOf(false)
+		private set
+
+	/** Edit mode's working copy of the armature. Leaving Edit mode writes it back as one history entry. */
 	var skeletonDraft by mutableStateOf<io.github.psd2live.core.SkeletonSpec?>(null)
 		private set
 	var selectedBoneId by mutableStateOf<String?>(null)
 		private set
 
-	/** Opens the skeleton for editing, proposing one from the layers' tags the first time. */
-	fun beginSkeletonEdit() {
-		if (placement != null) cancelPlacement()
-		val existing = state.rigEdits.skeleton?.takeIf { it.bones.isNotEmpty() }
+	/** The authored armature, enabled or not, once it has bones. */
+	val committedSkeleton: io.github.psd2live.core.SkeletonSpec?
+		get() = state.rigEdits.skeleton?.takeIf { it.bones.isNotEmpty() }
 			?: state.previewModel?.config?.rigEdits?.skeleton?.takeIf { it.bones.isNotEmpty() }
-		val spec = existing ?: state.previewModel?.let { io.github.psd2live.core.SkeletonAutoBuilder.build(it.analysis, it.rig) } ?: return
-		openSkeletonDraft(spec)
+
+	/** Makes the skeleton the target, dropping any layer or deformer selection, and keeps the current mode if it still applies. */
+	fun selectSkeleton(boneId: String? = null) {
+		val spec = committedSkeleton ?: return
+		if (!skeletonSelected) {
+			skeletonSelected = true
+			objects = emptySet()
+			selection = emptyMap()
+			viewModel.updateCanvasPresentation(workspaceId, canvasId, CanvasMode.EDIT) {
+				it.copy(selectedLayerId = null, selectedLayerIds = emptySet(), selectedDeformerId = null)
+			}
+		}
+		selectedBoneId = (skeletonDraft ?: spec).let { s -> boneId?.takeIf { s.bone(it) != null } ?: selectedBoneId?.takeIf { s.bone(it) != null }
+			?: s.bones.firstOrNull { !it.role.anchor }?.id }
+		settleModeOnTarget()
 	}
 
-	private fun openSkeletonDraft(spec: io.github.psd2live.core.SkeletonSpec) {
+	/** Drops the skeleton target; an open edit is kept, not thrown away. */
+	fun deselectSkeleton() {
+		if (!skeletonSelected) return
+		commitSkeletonDraft()
+		skeletonSelected = false
+		settleModeOnTarget()
+	}
+
+	/** Selects the skeleton and enters Edit mode on it, proposing one from the layers' tags the first time. */
+	fun beginSkeletonEdit() {
+		if (busy) return
+		if (placement != null) cancelPlacement()
+		if (committedSkeleton == null) {
+			val spec = state.previewModel?.let { io.github.psd2live.core.SkeletonAutoBuilder.build(it.analysis, it.rig) } ?: return
+			viewModel.setSkeleton(spec.copy(enabled = true))
+		}
+		selectSkeleton()
+		setHierarchyMode(EditHierarchyMode.EDIT)
+	}
+
+	/** Selects the skeleton and enters Deform mode on it, where the pose tool turns its bones. */
+	fun beginSkeletonPose() {
+		if (busy) return
+		selectSkeleton()
+		// Without a skeleton there is nothing to pose, and Deform mode would fall on the selected drawable.
+		if (!skeletonSelected || committedSkeleton?.enabled != true) { error = tr("skeleton.pose.none"); return }
+		setHierarchyMode(EditHierarchyMode.DEFORM)
+	}
+
+	private fun openSkeletonDraft() {
+		val spec = committedSkeleton ?: return
 		skeletonDraft = spec
-		selectedBoneId = spec.bones.firstOrNull { !it.role.anchor }?.id
+		if (selectedBoneId == null || spec.bone(selectedBoneId!!) == null) selectedBoneId = spec.bones.firstOrNull { !it.role.anchor }?.id
 	}
 
-	fun cancelSkeletonEdit() {
-		skeletonDraft = null
-		selectedBoneId = null
-	}
-
-	fun confirmSkeletonEdit() {
+	/** Writes the draft back when it changed. Keeps whether the skeleton is enabled. */
+	fun commitSkeletonDraft() {
 		val draft = skeletonDraft ?: return
-		viewModel.setSkeleton(draft.copy(enabled = true))
-		cancelSkeletonEdit()
-		// The next thing anyone does with a fresh skeleton is pull on it.
-		activateTool(CanvasTool.SKELETON_POSE)
+		skeletonDraft = null
+		val committed = state.rigEdits.skeleton
+		val next = draft.copy(enabled = committed?.enabled ?: true)
+		if (next != committed) viewModel.setSkeleton(next)
 	}
 
-	fun disableSkeleton() {
-		viewModel.setSkeleton(io.github.psd2live.core.SkeletonSpec.Disabled)
-		cancelSkeletonEdit()
+	/** Leaves Edit mode on the skeleton, keeping the edit. */
+	fun finishSkeletonEdit() {
+		if (skeletonDraft == null) return
+		setHierarchyMode(skeletonExitMode())
+	}
+
+	/** Leaves Edit mode on the skeleton and throws the edit away. The skeleton stays selected. */
+	fun cancelSkeletonEdit() {
+		if (skeletonDraft == null) return
+		skeletonDraft = null
+		setHierarchyMode(skeletonExitMode())
+	}
+
+	/** Where leaving skeleton Edit mode lands: posing when there is an enabled skeleton to pose. */
+	private fun skeletonExitMode() =
+		if (committedSkeleton?.enabled == true) EditHierarchyMode.DEFORM else EditHierarchyMode.SELECT
+
+	/** Turns the skeleton off or back on. The bones are kept either way, so turning it back on loses nothing. */
+	fun setSkeletonEnabled(enabled: Boolean) {
+		skeletonDraft?.let { skeletonDraft = it.copy(enabled = enabled) }
+		val committed = committedSkeleton ?: return
+		if (committed.enabled != enabled) viewModel.setSkeleton(committed.copy(enabled = enabled))
 	}
 
 	fun selectBone(id: String?) { selectedBoneId = id }
@@ -490,12 +563,16 @@ internal class CanvasEditor(
 	fun endPose() { poseDrag = null }
 
 	/** The pose tool is armed and has a baked skeleton to drive. */
-	fun posing(): Boolean = tool == CanvasTool.SKELETON_POSE &&
-		(hierarchyMode == EditHierarchyMode.SELECT || hierarchyMode == EditHierarchyMode.DEFORM) && bakedSkeleton != null
+	fun posing(): Boolean = tool == CanvasTool.SKELETON_POSE && skeletonSelected &&
+		hierarchyMode == EditHierarchyMode.DEFORM && bakedSkeleton != null
 
 	fun hoverPose(pos: Offset, viewport: CanvasViewport) {
 		poseHover = SkeletonPoseTool.hit(posedBones(), pos, viewport)
 	}
+
+	/** The bone under [pos] that an Object mode click would pick, when the skeleton is switched on. */
+	private fun skeletonBoneAt(pos: Offset, viewport: CanvasViewport): String? =
+		bakedSkeleton?.let { SkeletonPoseTool.hit(posedBones(), pos, viewport) }?.let { hit -> hit.boneId }
 
 	/** Every bone and leg pose back at rest. */
 	fun resetSkeletonPose() {
@@ -2159,8 +2236,14 @@ internal class CanvasEditor(
             return
         }
         createSessionReturnMode = null
-        if (next !in toolbarGroups(hierarchyMode).flatten()) {
+        if (next == CanvasTool.SKELETON_POSE || next == CanvasTool.SKELETON_EDIT) {
+            // The skeleton tools are how the skeleton is reached, so arming one selects it.
+            if (next == CanvasTool.SKELETON_EDIT) beginSkeletonEdit() else beginSkeletonPose()
+            return
+        }
+        if (next !in palette()) {
             val mode = modeForTool(next)
+            if (skeletonSelected) deselectSkeleton()
             if (!hasPartFor(mode)) { deferMode(mode, next); return }
             enterMode(mode)
         }
@@ -2177,6 +2260,8 @@ internal class CanvasEditor(
      * Arms a creation tool. With a valid selection, enters place-then-confirm; otherwise waits for a pick.
      */
     private fun activateCreationTool(next: CanvasTool) {
+        // Creation works on drawables and deformers; the skeleton target gives way, keeping its edit.
+        if (skeletonSelected) deselectSkeleton()
         if (hierarchyMode == EditHierarchyMode.PAINT) {
             leavePaintForCreation()
         }
@@ -2987,6 +3072,23 @@ internal class CanvasEditor(
         enterMode(next)
     }
 
+    /** The left toolbar's tools for the current mode and target. */
+    fun palette(): List<CanvasTool> = toolbarGroups(hierarchyMode, skeletonSelected).flatten()
+
+    /**
+     * Re-fits the mode to a target that changed kind — the skeleton picked, or dropped for a layer. The
+     * mode stays if it still has something to act on, and falls back to Object mode otherwise.
+     */
+    private fun settleModeOnTarget() {
+        if (busy) return
+        if (!hasPartFor(hierarchyMode)) { enterMode(EditHierarchyMode.SELECT); return }
+        if (hierarchyMode == EditHierarchyMode.EDIT && skeletonSelected && skeletonDraft == null) openSkeletonDraft()
+        if (tool !in palette()) {
+            cancel()
+            tool = palette().first()
+        }
+    }
+
     /**
      * Whether [mode] has the part it works on.
      *
@@ -2997,6 +3099,12 @@ internal class CanvasEditor(
      */
     private fun hasPartFor(mode: EditHierarchyMode): Boolean = when {
         mode == EditHierarchyMode.SELECT -> true
+        // The skeleton poses once it is switched on, and reshapes whether or not it is.
+        skeletonSelected -> when (mode) {
+            EditHierarchyMode.DEFORM -> committedSkeleton?.enabled == true
+            EditHierarchyMode.EDIT -> committedSkeleton != null
+            else -> false
+        }
         // No rig, no part: the canvas that would pick one is not there either, and there is no model for
         // [target] to read. The request waits, which is what it does anyway.
         state.previewModel == null -> false
@@ -3011,8 +3119,8 @@ internal class CanvasEditor(
      * Creation tools are handled separately and never force Edit.
      */
     private fun modeForTool(tool: CanvasTool): EditHierarchyMode = when {
-        // Posing needs no selected part; object mode is where it lands from paint or edit mode.
-        tool == CanvasTool.SKELETON_POSE -> EditHierarchyMode.SELECT
+        tool == CanvasTool.SKELETON_POSE -> EditHierarchyMode.DEFORM
+        tool == CanvasTool.SKELETON_EDIT -> EditHierarchyMode.EDIT
         tool in PAINT_TOOLS -> EditHierarchyMode.PAINT
         tool == CanvasTool.KNIFE || tool == CanvasTool.SUBDIVIDE -> EditHierarchyMode.EDIT
         else -> EditHierarchyMode.DEFORM
@@ -3066,6 +3174,9 @@ internal class CanvasEditor(
         createSessionReturnMode = null
         cancel()
         val prev = hierarchyMode
+        // Leaving skeleton Edit mode keeps the edit; entering it opens a working copy of the armature.
+        if (next != EditHierarchyMode.EDIT || !skeletonSelected) commitSkeletonDraft()
+        if (next == EditHierarchyMode.EDIT && skeletonSelected && skeletonDraft == null) openSkeletonDraft()
         hierarchyMode = next
         // Only Edit edits several meshes; any other mode keeps the primary's slice alone.
         if (next != EditHierarchyMode.EDIT) selection = target()?.id?.let { id -> selection.filterKeys { it == id } }.orEmpty()
@@ -3079,8 +3190,8 @@ internal class CanvasEditor(
         } else if (next == EditHierarchyMode.DEFORM) {
             if (editLevel == 2) ensureBezierState()
         }
-        if (tool !in toolbarGroups(next).flatten()) {
-            tool = toolbarGroups(next).flatten().first()
+        if (tool !in palette()) {
+            tool = palette().first()
             if (objectMode) selection = emptyMap()
         }
         // Mode only seeds display presets — toggles stay fully user-controlled afterwards.
@@ -3352,6 +3463,13 @@ internal class CanvasEditor(
         // annotation names the thing a click would actually select — Ctrl included.
         if (hierarchyMode == EditHierarchyMode.SELECT) {
             if (tool == CanvasTool.SELECT) {
+                val bone = bakedSkeleton?.let { SkeletonPoseTool.hit(posedBones(), pos, viewport) }
+                if (poseHover?.boneId != bone?.boneId || poseHover?.tip != bone?.tip) poseHover = bone
+                if (bone != null) {
+                    isHoveringObject = true
+                    setHoveredItem(null, null)
+                    return
+                }
                 val pick = objectPick(pos, viewport, ctrl)
                 hoveredPick = pick
                 isHoveringObject = pick != null
@@ -4897,8 +5015,14 @@ internal class CanvasEditor(
         //    tools, so a press here selects — Ctrl walks the hierarchy — or starts a marquee. It never
         //    begins a transform drag, which is what keeps the mode read-only.
         if (hierarchyMode == EditHierarchyMode.SELECT && tool == CanvasTool.SELECT) {
+            // A bone sits over the art it moves, so it is tried first: clicking one picks the skeleton.
+            skeletonBoneAt(pos, viewport)?.let { boneId ->
+                selectSkeleton(boneId)
+                return true
+            }
             val pick = objectPick(pos, viewport, ctrl)
             pressedObject = pick?.layerId
+            if (pick != null || (!shift && !alt)) deselectSkeleton()
             if (pick != null) {
                 applyObjectPick(pick, when { alt -> false; shift -> true; else -> null })
             } else if (!shift && !alt) {

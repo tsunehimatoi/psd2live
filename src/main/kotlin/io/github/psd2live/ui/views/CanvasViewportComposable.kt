@@ -225,7 +225,10 @@ fun CanvasViewportComposable(
     // request was for. Deliberately outside the guard above: an object pick happens on the press of a
     // gesture that is still live, and the request has to be answered whether or not that gesture is.
     LaunchedEffect(mode, canvasState.selectedLayerId, canvasState.selectedDeformerId) {
-        if (mode == CanvasMode.EDIT) editor.resolveDeferredMode()
+        if (mode != CanvasMode.EDIT) return@LaunchedEffect
+        // A layer or deformer picked from any view replaces the skeleton as the target; its edit is kept.
+        if (canvasState.selectedLayerId != null || canvasState.selectedDeformerId != null) editor.deselectSkeleton()
+        editor.resolveDeferredMode()
     }
     LaunchedEffect(mode, canvasState.historySnapshot?.headNodeId, canvasState.parameterValues, canvasState.previewModel?.rig?.puppet) {
         if (mode == CanvasMode.EDIT) {
@@ -534,6 +537,7 @@ fun CanvasViewportComposable(
 					ShortcutAction.TOOL_SMOOTH -> { editor.activateTool(CanvasTool.SMOOTH); true }
 					ShortcutAction.TOOL_INFLATE -> { editor.activateTool(CanvasTool.INFLATE); true }
 					ShortcutAction.TOOL_SKELETON_POSE -> { editor.activateTool(CanvasTool.SKELETON_POSE); true }
+					ShortcutAction.TOOL_SKELETON_EDIT -> { editor.activateTool(CanvasTool.SKELETON_EDIT); true }
 					ShortcutAction.TOOL_CREATE_WARP -> { editor.activateTool(CanvasTool.CREATE_WARP); true }
 					ShortcutAction.TOOL_CREATE_ROTATION -> { editor.activateTool(CanvasTool.CREATE_ROTATION); true }
 					ShortcutAction.TOOL_CREATE_DEFORM_PATH -> { editor.activateTool(CanvasTool.CREATE_DEFORM_PATH); true }

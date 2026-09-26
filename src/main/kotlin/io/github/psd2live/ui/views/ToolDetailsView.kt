@@ -969,6 +969,26 @@ internal fun ToolDetailsView(
                     )
                 }
             }
+            CanvasTool.SKELETON_EDIT -> {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = tr("editor.tool.skeleton_edit"),
+                        style = typography.caption.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
+                        color = colors.textPrimary,
+                    )
+                    Text(
+                        text = tr("skeleton.edit.hint"),
+                        style = typography.caption.copy(fontSize = 10.5.sp),
+                        color = colors.textMuted,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        CompactButton(text = tr("skeleton.panel.cancel"), onClick = { editor.cancelSkeletonEdit() },
+                            enabled = editor.skeletonDraft != null, modifier = Modifier.weight(1f), height = 24.dp)
+                        CompactButton(text = tr("skeleton.panel.done"), onClick = { editor.finishSkeletonEdit() },
+                            enabled = editor.skeletonDraft != null, isPrimary = true, modifier = Modifier.weight(1f), height = 24.dp)
+                    }
+                }
+            }
             CanvasTool.PAINT_BRUSH, CanvasTool.PAINT_PENCIL, CanvasTool.PAINT_ERASER,
             CanvasTool.PAINT_BUCKET, CanvasTool.PAINT_EYEDROPPER,
             CanvasTool.PAINT_SHAPE -> {

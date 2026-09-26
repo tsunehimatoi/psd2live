@@ -2155,7 +2155,11 @@ class PSD2LiveViewModel : AutoCloseable {
 			updateState { it.copy(statusText = tr("status.workspaceLast")) }
 			return
 		}
-		canvasEditors.keys.filter { it.first == id }.forEach { canvasEditors.remove(it)?.resetPaintSession() }
+		// The skeleton belongs to the project, not the canvas: an edit open on a closing canvas is kept.
+		canvasEditors.keys.filter { it.first == id }.forEach { key ->
+			canvasEditors[key]?.commitSkeletonDraft()
+			canvasEditors.remove(key)?.resetPaintSession()
+		}
 		val remaining = current.workspaces.filterNot { it.id == id }
 		val next = if (current.activeWorkspaceId != id) remaining.first { it.id == current.activeWorkspaceId } else {
 			val index = current.workspaces.indexOf(workspace)
@@ -2264,6 +2268,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			updateState { it.copy(statusText = tr("status.canvasLast")) }
 			return
 		}
+		canvasEditors[workspace.id to canvasId]?.commitSkeletonDraft()
 		updateState { state ->
 			state.updateActiveWorkspace { ws ->
 				val remaining = ws.canvases.filterNot { it.id == canvasId }
