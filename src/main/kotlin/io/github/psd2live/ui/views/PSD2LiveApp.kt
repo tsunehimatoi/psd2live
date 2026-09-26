@@ -486,6 +486,7 @@ fun FrameWindowScope.PSD2LiveApp(
 						onShowSettings = { viewModel.openSettingsDialog() },
 						onShowAgentConnection = { showAgentDialog = true },
 						onShowTextureUpscale = { viewModel.openTextureUpscaleDialog() },
+						onBatchMeshSplit = { viewModel.requestBatchMeshSplit() },
 						onShowHistory = { viewModel.showHistoryModule() },
 						onNewEditTab = { viewModel.addWorkspace() },
 						onNewPreviewTab = { viewModel.addCanvas(CanvasMode.PREVIEW) },

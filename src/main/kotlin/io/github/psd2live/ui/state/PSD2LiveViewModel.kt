@@ -213,6 +213,17 @@ class PSD2LiveViewModel : AutoCloseable {
 
     internal fun offerImportMeshSplit(layerIds: List<String>) {
         if (!AppSettings.autoDetectMeshSplitsOnImport) return
+        scanMeshSplits(layerIds, manual = false)
+    }
+
+    /** Tools menu: scan every source layer and offer all splittable meshes in one dialog. */
+    internal fun requestBatchMeshSplit() {
+        if (meshSplitChecking || meshSplitApplying || pendingMeshSplit != null || pendingBatchMeshSplit != null) return
+        val preview = _state.value.previewModel ?: return
+        scanMeshSplits(preview.analysis.source.layers.map { it.id.raw }, manual = true)
+    }
+
+    private fun scanMeshSplits(layerIds: List<String>, manual: Boolean) {
         val preview = _state.value.previewModel ?: return
         meshSplitChecking = true
         scope.launch {
@@ -239,7 +250,7 @@ class PSD2LiveViewModel : AutoCloseable {
                 }
                 if (_state.value.previewModel === preview) {
                     when {
-                        candidateOffers.isEmpty() -> Unit
+                        candidateOffers.isEmpty() -> if (manual) setErrorMessage(tr("editor.meshSplit.noneInModel"))
                         candidateOffers.size == 1 -> pendingMeshSplit = candidateOffers.first()
                         else -> pendingBatchMeshSplit = BatchMeshSplitOffer(candidateOffers, preview)
                     }
