@@ -52,8 +52,8 @@ fun CanvasMode.defaultViewOptions(): TabViewOptions = when (this) {
 }
 
 /**
- * Recommended display seeds when entering a hierarchy mode. Rendering always respects the resulting
- * toggles equally — modes never force overlays that the user turned off.
+ * Display seeds for a hierarchy mode's first visit. Each mode then keeps its own toggles (see
+ * [CanvasModeSession.withHierarchyView]), so a preset never overrides what the user set there.
  */
 fun hierarchyModeViewPreset(mode: EditHierarchyMode, current: TabViewOptions): TabViewOptions = when (mode) {
 	// Object mode shows every mesh wire faintly; only the selection draws at full strength.
@@ -115,7 +115,23 @@ data class CanvasModeSession(
 	val view: TabViewOptions,
 	val camera: TabCamera = TabCamera(),
 	val presentation: CanvasPresentation = CanvasPresentation(),
-)
+	/** Hierarchy mode [view] belongs to. Null until the canvas first enters one. */
+	val viewMode: EditHierarchyMode? = null,
+	/** Toggles the other hierarchy modes were left with, restored when they are entered again. */
+	val modeViews: Map<EditHierarchyMode, TabViewOptions> = emptyMap(),
+) {
+	/** Parks [view] under its mode and brings up [next]'s own toggles, seeded by its preset on first visit. */
+	fun withHierarchyView(next: EditHierarchyMode): CanvasModeSession {
+		val from = viewMode ?: return copy(viewMode = EditHierarchyMode.SELECT,
+			view = hierarchyModeViewPreset(EditHierarchyMode.SELECT, view)).withHierarchyView(next)
+		if (from == next) return this
+		return copy(
+			view = modeViews[next] ?: hierarchyModeViewPreset(next, view),
+			viewMode = next,
+			modeViews = modeViews - next + (from to view),
+		)
+	}
+}
 
 /** One canvas pane with independent edit and preview sessions. */
 @Immutable

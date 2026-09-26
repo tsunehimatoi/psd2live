@@ -145,7 +145,7 @@ class MultiCanvasIsolationTest {
             val secondId = vm.addCanvas(CanvasMode.EDIT)
             vm.selectLayer("second")
             vm.updateCanvasPresentation(workspace, firstId) { it.copy(hoveredLayerId = "first") }
-            vm.applyHierarchyModeViewPreset(io.github.psd2live.ui.EditHierarchyMode.PAINT, firstId, workspace)
+            vm.switchHierarchyModeView(io.github.psd2live.ui.EditHierarchyMode.PAINT, firstId, workspace)
             assertEquals(secondId, vm.state.value.activeCanvas.id)
             assertNull(vm.state.value.hoveredLayerId)
             assertEquals("first", vm.canvasEditorFor(firstId).state.hoveredLayerId)
@@ -379,6 +379,36 @@ class MultiCanvasIsolationTest {
             assertTrue(edit.showWarp)
             assertTrue(edit.showMesh)
             assertFalse(edit.showRotation)
+        }
+    }
+
+    @Test fun eachHierarchyModeKeepsItsOwnDisplayToggles() {
+        PSD2LiveViewModel().use { vm ->
+            val id = vm.state.value.activeCanvas.id
+            val editor = vm.canvasEditorFor(id)
+            fun mesh() = vm.state.value.forCanvas(id, mode = CanvasMode.EDIT).showMesh
+            fun toggleMesh() {
+                val view = vm.state.value.activeCanvas.editSession.view
+                vm.setCanvasViewOptions(id, view.copy(showMesh = !view.showMesh), CanvasMode.EDIT)
+            }
+            editor.hierarchyMode = io.github.psd2live.ui.EditHierarchyMode.EDIT
+            assertTrue(mesh())
+            editor.hierarchyMode = io.github.psd2live.ui.EditHierarchyMode.SELECT
+            toggleMesh()
+            assertFalse(mesh())
+            editor.hierarchyMode = io.github.psd2live.ui.EditHierarchyMode.EDIT
+            assertTrue(mesh())
+            editor.hierarchyMode = io.github.psd2live.ui.EditHierarchyMode.SELECT
+            assertFalse(mesh())
+
+            editor.hierarchyMode = io.github.psd2live.ui.EditHierarchyMode.EDIT
+            val restored = io.github.psd2live.project.WorkspaceStateCodec.decode(
+                io.github.psd2live.project.WorkspaceStateCodec.encode(vm.state.value)
+            )
+            val session = restored.activeWorkspace.canvases.first { it.id == id }.editSession
+            assertEquals(io.github.psd2live.ui.EditHierarchyMode.SELECT, session.viewMode)
+            assertFalse(session.view.showMesh)
+            assertTrue(session.modeViews.getValue(io.github.psd2live.ui.EditHierarchyMode.EDIT).showMesh)
         }
     }
 

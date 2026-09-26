@@ -4,6 +4,7 @@ import io.github.psd2live.core.MeshSettings
 import io.github.psd2live.core.MeshFillAlgorithm
 import io.github.psd2live.core.MeshEdgeMode
 
+import io.github.psd2live.ui.EditHierarchyMode
 import io.github.psd2live.ui.state.*
 import org.umamo.runtime.model.ParameterId
 import kotlinx.serialization.json.*
@@ -162,16 +163,29 @@ internal object WorkspaceStateCodec {
 
     private fun decodeSession(value: JsonElement?, mode: CanvasMode, legacyViewOptions: Boolean): CanvasModeSession {
         val obj = value as? JsonObject
-        return CanvasModeSession(
-            view = decodeViewOptions(obj?.get("view"), mode.defaultViewOptions(), legacyViewOptions),
+        val defaults = mode.defaultViewOptions()
+        val session = CanvasModeSession(
+            view = decodeViewOptions(obj?.get("view"), defaults, legacyViewOptions),
             camera = decodeCamera(obj?.get("camera")),
             presentation = decodePresentation(obj?.get("presentation")),
+            viewMode = obj?.get("viewMode")?.jsonPrimitive?.contentOrNull
+                ?.let { name -> EditHierarchyMode.entries.firstOrNull { it.name == name } },
+            modeViews = (obj?.get("modeViews") as? JsonObject).orEmpty().mapNotNull { (name, view) ->
+                EditHierarchyMode.entries.firstOrNull { it.name == name }
+                    ?.let { it to decodeViewOptions(view, defaults, legacyViewOptions) }
+            }.toMap(),
         )
+        // A reopened canvas starts in Object mode, so its toggles come up as the active set.
+        return if (session.viewMode == null) session else session.withHierarchyView(EditHierarchyMode.SELECT)
     }
 
     private fun encodeSession(session: CanvasModeSession, presentation: CanvasPresentation = session.presentation): JsonObject =
         buildJsonObject {
             put("view", encodeViewOptions(session.view))
+            session.viewMode?.let { put("viewMode", it.name) }
+            if (session.modeViews.isNotEmpty()) putJsonObject("modeViews") {
+                session.modeViews.forEach { (mode, view) -> put(mode.name, encodeViewOptions(view)) }
+            }
             put("camera", encodeCamera(session.camera))
             put("presentation", encodePresentation(presentation))
         }

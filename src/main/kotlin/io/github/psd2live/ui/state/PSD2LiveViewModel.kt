@@ -2392,16 +2392,16 @@ class PSD2LiveViewModel : AutoCloseable {
 	fun setTabViewOptions(options: TabViewOptions) = setCanvasViewOptions(options = options)
 
 	/**
-	 * Seeds display toggles when entering a hierarchy mode. Presets differ by mode; afterwards the
-	 * same toggles apply uniformly — no mode forces overlays that the user turned off.
+	 * Swaps the edit session's display toggles to [mode]'s own set. Each hierarchy mode remembers
+	 * what the user left it with; a mode's preset only seeds its first visit.
 	 */
-    fun applyHierarchyModeViewPreset(mode: EditHierarchyMode, canvasId: String = state.value.activeCanvas.id,
+    fun switchHierarchyModeView(mode: EditHierarchyMode, canvasId: String = state.value.activeCanvas.id,
         workspaceId: String = state.value.activeWorkspace.id) {
         updateState { current ->
             current.updateWorkspace(workspaceId) { workspace ->
                 workspace.copy(canvases = workspace.canvases.map {
                     if (it.id == canvasId) it.updateSession(CanvasMode.EDIT) { session ->
-                        session.copy(view = hierarchyModeViewPreset(mode, session.view))
+                        session.withHierarchyView(mode)
                     } else it
                 })
             }

@@ -652,7 +652,16 @@ internal class CanvasEditor(
     var tool by mutableStateOf(CanvasTool.SELECT)
 
     // Top-right Hierarchy & Level state
-    var hierarchyMode by mutableStateOf(EditHierarchyMode.SELECT)
+    private var hierarchyModeState by mutableStateOf(EditHierarchyMode.SELECT)
+
+    /** Every mode change, whichever path makes it, brings up that mode's own display toggles. */
+    var hierarchyMode: EditHierarchyMode
+        get() = hierarchyModeState
+        set(value) {
+            if (value == hierarchyModeState) return
+            hierarchyModeState = value
+            viewModel.switchHierarchyModeView(value, canvasId, workspaceId)
+        }
     var editLevel by mutableStateOf(2) // Level 1 (grid), Level 2 (bezier), Level 3 (macro)
 
     /**
@@ -2658,7 +2667,6 @@ internal class CanvasEditor(
         createSessionReturnMode = null
         deferredMode = null
         hierarchyMode = EditHierarchyMode.SELECT
-        viewModel.applyHierarchyModeViewPreset(EditHierarchyMode.SELECT, canvasId, workspaceId)
         tool = CanvasTool.SELECT
         clearHover()
         selectLayer(p.anchorId)
@@ -3194,8 +3202,6 @@ internal class CanvasEditor(
             tool = palette().first()
             if (objectMode) selection = emptyMap()
         }
-        // Mode only seeds display presets — toggles stay fully user-controlled afterwards.
-        viewModel.applyHierarchyModeViewPreset(next, canvasId, workspaceId)
         clearHover()
     }
 
@@ -3827,10 +3833,7 @@ internal class CanvasEditor(
             placement = null
             // After binding, enter EDIT so dragging control points rebinds without deforming.
             createSessionReturnMode = null
-            if (hierarchyMode != EditHierarchyMode.EDIT) {
-                hierarchyMode = EditHierarchyMode.EDIT
-                viewModel.applyHierarchyModeViewPreset(EditHierarchyMode.EDIT, canvasId, workspaceId)
-            }
+            hierarchyMode = EditHierarchyMode.EDIT
             tool = CanvasTool.SELECT
             pathClosed = false
             clearHover()
