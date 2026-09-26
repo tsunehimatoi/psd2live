@@ -284,12 +284,12 @@ internal fun DockWorkspaceView(
                     layoutModules = session.root?.allModules()?.toSet().orEmpty(),
                     modifier = Modifier.weight(1f),
                 )
-                Text(tr("dock.reset"), color = colors.textMuted, fontSize = 11.sp,
-                    modifier = Modifier.clickable {
-                        session.floating.clear()
-                        session.root = defaultDockLayout()
-                        viewModel.resetWorkspaceArrangement()
-                    }.padding(horizontal = 8.dp))
+                TabStripButton(label = tr("dock.reset")) {
+                    session.floating.clear()
+                    session.root = defaultDockLayout()
+                    viewModel.resetWorkspaceArrangement()
+                }
+                Spacer(Modifier.width(4.dp))
             }
             key(workspace.id) {
                 Box(Modifier.weight(1f).fillMaxWidth().onGloballyPositioned { coordinates ->
@@ -430,8 +430,14 @@ private fun DockTree(node: DockNode, session: DockSession, modifier: Modifier, w
             if (single) {
                 DockHeader(node.selected, session, Modifier.fillMaxWidth(), state, viewModel, standalone = true)
             } else {
+                // Same surface as a single module's header; the selected tab takes the content color
+                // and covers the strip's baseline so it reads as part of its panel.
                 Row(Modifier.fillMaxWidth().height(22.dp)
-                    .background(colors.windowBackground)
+                    .background(colors.panelElevated)
+                    .drawBehind {
+                        drawLine(colors.divider, Offset(0f, size.height - .5.dp.toPx()),
+                            Offset(size.width, size.height - .5.dp.toPx()), 1.dp.toPx())
+                    }
                     .horizontalScroll(rememberScrollState())) {
                     node.modules.forEach { id ->
                         DockHeader(id, session, Modifier, state, viewModel, selected = id == node.selected, standalone = false,
@@ -647,10 +653,10 @@ private fun DockHeader(id: String, session: DockSession, modifier: Modifier,
         .then(if (id == "history") Modifier.tutorialTarget(TutorialTargetId.HISTORY_TAB) else Modifier)
         .clip(if (standalone) RoundedCornerShape(0.dp) else RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
         .background(when {
-            hovered -> colors.controlHover
-            standalone -> colors.panelElevated
+            standalone -> if (hovered) colors.controlHover else colors.panelElevated
             selected -> colors.panelBackground
-            else -> colors.windowBackground
+            hovered -> colors.controlHover.copy(alpha = .6f)
+            else -> Color.Transparent
         })
         .drawBehind {
             if (!standalone && selected) {
@@ -662,10 +668,10 @@ private fun DockHeader(id: String, session: DockSession, modifier: Modifier,
             }
         }, verticalAlignment = Alignment.CenterVertically) {
         Text(title, color = if (selected) colors.textPrimary else colors.textMuted,
-            style = typography.body.copy(fontSize = 11.sp,
+            style = typography.body.copy(fontSize = if (standalone || floating) 11.sp else 10.5.sp,
                 fontWeight = if (standalone || selected) FontWeight.Medium else FontWeight.Normal),
             maxLines = 1, overflow = TextOverflow.Ellipsis,
-            modifier = (if (standalone || floating) Modifier.weight(1f) else Modifier.widthIn(min = 48.dp, max = 120.dp))
+            modifier = (if (standalone || floating) Modifier.weight(1f) else Modifier.widthIn(max = 120.dp))
                 // The move cursor appears only once a drag passes the slop; until then the
                 // cursor reflects what a click does (switch tab vs. nothing).
                 .pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(when {
@@ -687,7 +693,7 @@ private fun DockHeader(id: String, session: DockSession, modifier: Modifier,
                     onSelect()
                     if (canvas != null) viewModel.focusCanvas(canvas.id)
                 }
-                .padding(horizontal = 7.dp, vertical = 2.dp))
+                .padding(horizontal = if (standalone || floating) 7.dp else 10.dp, vertical = 2.dp))
         if (showCanvasTools) {
             CanvasModeChip(
                 label = tr("tab.edit"),

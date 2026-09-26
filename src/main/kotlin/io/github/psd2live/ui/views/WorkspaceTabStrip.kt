@@ -8,15 +8,18 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.DropdownMenu
 import androidx.compose.material.Text
@@ -29,12 +32,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
@@ -106,8 +109,10 @@ fun WorkspaceStrip(
 			modifier = Modifier
 				.weight(1f)
 				.fillMaxHeight()
-				.horizontalScroll(rememberScrollState()),
+				.horizontalScroll(rememberScrollState())
+				.padding(start = 4.dp),
 			verticalAlignment = Alignment.CenterVertically,
+			horizontalArrangement = Arrangement.spacedBy(2.dp),
 		) {
 			state.workspaces.forEach { item ->
 				WorkspaceChip(
@@ -180,20 +185,19 @@ private fun WorkspaceChip(
 	var renameArmed by remember(workspace.id) { mutableStateOf(false) }
 	val focusRequester = remember(workspace.id) { FocusRequester() }
 
+	// Workspace tabs are top-level pills; dock tabs below stay flat and join their panel.
 	val bg = when {
-		isActive -> colors.panelBackground
-		isHovered -> colors.controlHover
+		isActive -> colors.controlBackground
+		isHovered -> colors.controlHover.copy(alpha = 0.6f)
 		else -> Color.Transparent
 	}
 
 	Box {
 		Row(
 			modifier = Modifier
-				.fillMaxHeight()
+				.height(22.dp)
+				.clip(RoundedCornerShape(4.dp))
 				.background(bg)
-				.drawBehind {
-					if (isActive) drawRect(color = colors.accent, topLeft = Offset.Zero, size = Size(size.width, 2.dp.toPx()))
-				}
 				.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
 				.onPointerEvent(PointerEventType.Press, pass = PointerEventPass.Initial) { event ->
 					if (event.button == PointerButton.Secondary) {
@@ -212,8 +216,7 @@ private fun WorkspaceChip(
 						renaming = true
 					},
 				)
-				.border(BorderStroke(1.dp, if (isActive) colors.divider else Color.Transparent))
-				.padding(start = 10.dp, end = 3.dp),
+				.padding(start = 10.dp, end = 4.dp),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
 			if (renaming && isActive) {
@@ -306,7 +309,7 @@ private fun WorkspaceChip(
 }
 
 @Composable
-private fun TabStripButton(
+internal fun TabStripButton(
 	label: String,
 	highlighted: Boolean = false,
 	onClick: () -> Unit,
@@ -318,8 +321,9 @@ private fun TabStripButton(
 
 	Box(
 		modifier = Modifier
-			.fillMaxHeight()
-			.background(if (isHovered) colors.controlHover else Color.Transparent)
+			.height(22.dp)
+			.clip(RoundedCornerShape(4.dp))
+			.background(if (isHovered) colors.controlHover.copy(alpha = 0.6f) else Color.Transparent)
 			.pointerHoverIcon(PointerIcon(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)))
 			.clickable(interactionSource = interactionSource, indication = null) { onClick() }
 			.drawBehind {
