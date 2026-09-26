@@ -4,10 +4,18 @@ import org.umamo.render.eval.CpuDeformationEvaluator
 import org.umamo.render.eval.DeformerWorld
 import org.umamo.render.eval.RotationWorld
 import org.umamo.render.eval.buildDeformerWorlds
+import org.umamo.runtime.eval.colorAt
+import org.umamo.runtime.eval.meshGridDefaultDeltas
+import org.umamo.runtime.eval.rotationFormAt
+import org.umamo.runtime.eval.scalarAt
+import org.umamo.runtime.eval.warpControlPointsAt
+import org.umamo.runtime.model.BlendShapeBinding
 import org.umamo.runtime.model.Deformer
 import org.umamo.runtime.model.DeformerId
+import org.umamo.runtime.model.Drawable
 import org.umamo.runtime.model.DrawableId
 import org.umamo.runtime.model.DrawableMesh
+import org.umamo.runtime.model.FormChannel
 import org.umamo.runtime.model.Glue
 import org.umamo.runtime.model.GluePair
 import org.umamo.runtime.model.KeyformAxis
@@ -17,9 +25,11 @@ import org.umamo.runtime.model.MeshDeltaForm
 import org.umamo.runtime.model.MeshForm
 import org.umamo.runtime.model.Parameter
 import org.umamo.runtime.model.ParameterId
+import org.umamo.runtime.model.ParameterKind
 import org.umamo.runtime.model.PuppetModel
+import org.umamo.runtime.model.RotationForm
 import org.umamo.runtime.model.RotationPivotForm
-import org.umamo.runtime.model.WarpLatticeForm
+import org.umamo.runtime.model.WarpForm
 import org.umamo.runtime.model.withDerivedRenderRoot
 import io.github.psd2live.i18n.tr
 import kotlin.math.abs
@@ -42,13 +52,12 @@ import kotlin.math.max
  *   joint (see [SkeletonWeights]). The keys are dense in angle, so the linear blend between them stays
  *   on the arc.
  *
- * Legs additionally get two whole-body poses - a crouch and a weight shift - solved by two-bone IK at bake
- * time so the feet stay where they are while the hips move (see [addLegPoses]).
+ * On top of both, every preset pose of [SkeletonPoses] - a crouch, a weight shift, a tail swing - is one
+ * blend-shape parameter that adds its turns to the bones and its bends to the meshes (see [addPoses]).
+ * The leg poses are solved by two-bone IK at bake time so the feet stay where they are while the hips
+ * move.
  */
 internal object SkeletonRig {
-	val crouchId = ParameterId("ParamSkelCrouch")
-	val weightId = ParameterId("ParamSkelWeight")
-
 	private val bodyId = DeformerId("DeformBodyXY")
 	private val breathId = DeformerId("DeformBodyZBreath")
 	private val headRotationId = DeformerId("DeformHeadRotation")
@@ -78,8 +87,8 @@ internal object SkeletonRig {
 	/** Most keyforms one mesh may carry; beyond it the keys thin out evenly. */
 	private const val MAX_MESH_CELLS = 600
 
-	private val crouchKeys = floatArrayOf(0f, 0.25f, 0.5f, 0.75f, 1f)
-	private val weightKeys = floatArrayOf(-1f, -0.5f, 0f, 0.5f, 1f)
+	/** Home-space units below which a pose leaves a mesh no shape of its own. */
+	private const val POSE_EPSILON = 1e-4f
 
 	/** The limb bones of [spec] that get a deformer: non-anchor bones with a usable length. */
 	fun limbBones(spec: SkeletonSpec): List<SkeletonBone> =
@@ -160,13 +169,15 @@ internal object SkeletonRig {
 		model = addParameters(model, bones)
 		bones.firstOrNull { it.role == BoneRole.UPPER_BODY }?.let { model = reparentKeepingRest(model, headRotationId, DeformerId(it.deformerId)) }
 
-		// 4. Hips that move while the feet stay put.
-		model = addLegPoses(model, spec, bones, parentOf)
+		// 4. The preset poses, hips that move while the feet stay put among them.
+		val poses = SkeletonPoses.available(spec)
+		model = addPoses(model, spec, bones, poses)
 
-		// 5. Every skinned mesh under its home bone, with its joints baked into its keyforms.
+		// 5. Every skinned mesh under its home bone, with its joints baked into its keyforms and its poses
+		// into its blend shapes.
 		for ((id, root) in drawableRoot) {
 			val drawableId = DrawableId(id)
-			model = skinDrawable(model, drawableId, canvas.getValue(drawableId), treeBones.getValue(root), parentOf)
+			model = skinDrawable(model, drawableId, canvas.getValue(drawableId), treeBones.getValue(root), parentOf, poses)
 		}
 
 		// 6. The welded parts glued, and no deformer left holding nothing.
@@ -388,19 +399,77 @@ internal object SkeletonRig {
 	}
 
 	/**
-	 * Adds [crouchId] and [weightId] when the skeleton has legs.
+	 * Adds every pose of [SkeletonPoses.available] as a blend-shape parameter.
 	 *
-	 * Cubism parameters cannot drive other parameters, so a pose is extra axes rather than a macro: the
-	 * body warp gets the hip motion as keyforms, and every leg's rotation deformers get the joint angles
-	 * that keep its ankle planted, solved by two-bone IK at each key. The angles add to the leg's own
-	 * parameter, so a posed leg can still be swung by hand. The knee always gives outward, which is how
-	 * a front-facing figure reads as bending its knees.
+	 * Cubism parameters cannot drive other parameters, so a pose is baked where it acts: the leg poses
+	 * move the body warp by the hip motion and turn every leg's rotation deformers by the joint angles
+	 * that keep its ankle planted, solved by two-bone IK at each key; the other poses turn their bones by
+	 * [SkeletonPoses.boneTurns]. Each is a blend shape on those deformers, so it adds to the bones' own
+	 * parameters - a posed limb can still be swung by hand - and poses add to each other instead of
+	 * multiplying keyforms. Each leg pose is solved with the other at rest, so both at once only
+	 * approximate the joint solve. The knee always gives outward, which is how a front-facing figure
+	 * reads as bending its knees.
 	 */
-	private fun addLegPoses(base: PuppetModel, spec: SkeletonSpec, bones: List<SkeletonBone>, parentOf: Map<String, SkeletonBone?>): PuppetModel {
+	private fun addPoses(base: PuppetModel, spec: SkeletonSpec, bones: List<SkeletonBone>, poses: List<SkeletonPose>): PuppetModel {
+		if (poses.isEmpty()) return base
+		var model = base.copy(
+			parameters = base.parameters.filterNot { p -> SkeletonPoses.all.any { it.id == p.id } } +
+				poses.map { Parameter(it.id, tr(it.nameKey), it.min, it.max, 0f, kind = ParameterKind.BLEND_SHAPE) },
+		)
+		// World degrees each bone turns per pose, one entry per key of the pose.
+		val offsets = HashMap<String, LinkedHashMap<SkeletonPose, FloatArray>>()
+		fun offset(boneId: String, pose: SkeletonPose) =
+			offsets.getOrPut(boneId) { LinkedHashMap() }.getOrPut(pose) { FloatArray(pose.keys.size) }
+		val legPoses = poses.filter { it.legs }
+		val joints: Map<String, LegJointPose> = if (legPoses.isEmpty()) emptyMap() else addLegPoses(model, spec, legPoses).let { (posed, joints) ->
+			model = posed
+			joints
+		}
+		for ((boneId, joint) in joints) {
+			offset(boneId, SkeletonPoses.crouch).let { for (i in it.indices) it[i] += joint.crouch[i] }
+			offset(boneId, SkeletonPoses.weight).let { for (i in it.indices) it[i] += joint.weight[i] }
+		}
+		val byId = bones.associateBy { it.id }
+		for (pose in poses) for ((ki, key) in pose.keys.withIndex()) {
+			for ((boneId, turn) in SkeletonPoses.boneTurns(spec, pose, key)) {
+				val bone = byId[boneId] ?: continue
+				offset(boneId, pose)[ki] += turn * bone.direction
+			}
+		}
+		val defaults = model.parameters.associate { it.id to it.default }
+		return model.copy(deformers = model.deformers.map { deformer ->
+			val bone = bones.firstOrNull { it.deformerId == deformer.id.raw }
+			val table = bone?.let { offsets[it.id] }
+			if (table == null || deformer !is Deformer.Rotation) return@map deformer
+			val reference = rotationFormAt(deformer.geometryGrid) { defaults[it] ?: 0f } ?: RotationPivotForm(0f, 0f, 0f, 1f)
+			deformer.copy(blendShapes = deformer.blendShapes.filterNot { b -> table.keys.any { it.id == b.parameterId } } +
+				table.map { (pose, angles) ->
+					poseBinding(pose) { ki ->
+						RotationForm(reference.originX, reference.originY, reference.angle + angles[ki], reference.scale, false, false,
+							deformer.opacity, deformer.multiplyColor, deformer.screenColor)
+					}
+				})
+		})
+	}
+
+	/** A blend binding of [pose] over its keys, with [form] at every key but the neutral one. */
+	private fun <T : Any> poseBinding(pose: SkeletonPose, form: (Int) -> T): BlendShapeBinding<T> {
+		val neutral = pose.keys.indexOfFirst { it == 0f }
+		return BlendShapeBinding(pose.id, pose.keys, neutral, pose.keys.indices.map { if (it == neutral) null else form(it) })
+	}
+
+	/**
+	 * The hip motion of the leg [poses] as blend shapes on the body warp, and how every leg joint turns
+	 * under them (see [solveLegPoses]).
+	 */
+	private fun addLegPoses(
+		base: PuppetModel,
+		spec: SkeletonSpec,
+		poses: List<SkeletonPose>,
+	): Pair<PuppetModel, Map<String, LegJointPose>> {
 		val legs = legs(spec)
-		if (legs.isEmpty()) return base
-		val body = base.deformers.firstOrNull { it.id == bodyId } as? Deformer.Warp ?: return base
-		val bodyGrid = body.geometryGrid ?: return base
+		if (legs.isEmpty()) return base to emptyMap()
+		val body = base.deformers.firstOrNull { it.id == bodyId } as? Deformer.Warp ?: return base to emptyMap()
 		val centerX = legCenter(legs)
 		val centerY = legs.map { it.thigh.headY.toDouble() }.average()
 		val legLength = legs.map { it.reach }.average()
@@ -426,67 +495,78 @@ internal object SkeletonRig {
 			}
 			weightDrop = max(weightDrop, drop)
 		}
+		fun motionOf(pose: SkeletonPose, key: Float) =
+			if (pose == SkeletonPoses.crouch) motion(key.toDouble(), 0.0, weightDrop) else motion(0.0, key.toDouble(), weightDrop)
 
-		val bodyKeysCrouch = floatArrayOf(0f, 1f)
-		val bodyKeysWeight = floatArrayOf(-1f, 0f, 1f)
-		val newBodyAxes = bodyGrid.axes + KeyformAxis(crouchId, bodyKeysCrouch) + KeyformAxis(weightId, bodyKeysWeight)
-		val newBodyCells = ArrayList<KeyformCell<WarpLatticeForm>>()
-		for (cell in bodyGrid.cells) for (ci in bodyKeysCrouch.indices) for (wi in bodyKeysWeight.indices) {
-			val m = motion(bodyKeysCrouch[ci].toDouble(), bodyKeysWeight[wi].toDouble(), weightDrop)
-			val points = cell.form.controlPoints
-			val moved = FloatArray(points.size)
-			for (i in points.indices step 2) {
-				val p = m.apply(points[i].toDouble(), points[i + 1].toDouble())
-				moved[i] = p[0].toFloat()
-				moved[i + 1] = p[1].toFloat()
-			}
-			newBodyCells += KeyformCell(cell.coordinate + intArrayOf(ci, wi), WarpLatticeForm(moved))
-		}
-		var model = base.copy(
-			deformers = base.deformers.map { if (it.id == bodyId) body.copy(geometryGrid = KeyformGrid(newBodyAxes, newBodyCells)) else it },
-			parameters = base.parameters.filterNot { it.id == crouchId || it.id == weightId } +
-				Parameter(crouchId, tr("skeleton.param.crouch"), 0f, 1f, 0f) +
-				Parameter(weightId, tr("skeleton.param.weight"), -1f, 1f, 0f),
-		)
-
-		// Joint angles per (crouch, weight) key, read against the body the evaluator actually builds so
-		// the pivots the IK starts from are the ones the runtime will use.
-		val offsets = HashMap<String, Array<DoubleArray>>()
-		for (leg in legs) {
-			offsets[leg.thigh.id] = Array(crouchKeys.size) { DoubleArray(weightKeys.size) }
-			offsets[leg.shin.id] = Array(crouchKeys.size) { DoubleArray(weightKeys.size) }
-			leg.foot?.let { offsets[it.id] = Array(crouchKeys.size) { DoubleArray(weightKeys.size) } }
-		}
-		val rest = worlds(model, emptyMap())
-		for (ci in crouchKeys.indices) for (wi in weightKeys.indices) {
-			val posed = worlds(model, mapOf(crouchId to crouchKeys[ci], weightId to weightKeys[wi]))
-			for (leg in legs) {
-				val thighId = DeformerId(leg.thigh.deformerId)
-				val hip = FloatArray(2).also { posed.getValue(thighId).apply(0f, 0f, it, 0) }
-				val inherited = SkeletonIk.wrap((angleOf(posed.getValue(thighId)) - angleOf(rest.getValue(thighId))).toDouble())
-				val (thighTurn, shinTurn) = legTurns(leg, hip[0].toDouble(), hip[1].toDouble(), centerX)
-				offsets.getValue(leg.thigh.id)[ci][wi] = SkeletonIk.wrap(thighTurn - inherited)
-				offsets.getValue(leg.shin.id)[ci][wi] = SkeletonIk.wrap(shinTurn - thighTurn)
-				leg.foot?.let { offsets.getValue(it.id)[ci][wi] = -shinTurn }
+		val defaults = base.parameters.associate { it.id to it.default }
+		val default: (ParameterId) -> Float = { defaults[it] ?: 0f }
+		val reference = warpControlPointsAt(body.geometryGrid, default) ?: return base to emptyMap()
+		val opacity = body.channelGrids.scalarAt(FormChannel.OPACITY, body.opacity, default)
+		val multiply = body.channelGrids.colorAt(FormChannel.MULTIPLY_COLOR, body.multiplyColor, default)
+		val screen = body.channelGrids.colorAt(FormChannel.SCREEN_COLOR, body.screenColor, default)
+		val bodyShapes = poses.map { pose ->
+			poseBinding(pose) { ki ->
+				val m = motionOf(pose, pose.keys[ki])
+				val moved = FloatArray(reference.size)
+				for (i in reference.indices step 2) {
+					val p = m.apply(reference[i].toDouble(), reference[i + 1].toDouble())
+					moved[i] = p[0].toFloat()
+					moved[i + 1] = p[1].toFloat()
+				}
+				WarpForm(moved, opacity, multiply, screen)
 			}
 		}
-		model = model.copy(deformers = model.deformers.map { deformer ->
-			val bone = bones.firstOrNull { it.deformerId == deformer.id.raw }
-			val table = bone?.let { offsets[it.id] }
-			if (bone == null || table == null || deformer !is Deformer.Rotation) return@map deformer
-			val grid = deformer.geometryGrid!!
-			val own = grid.axes.single()
-			val cells = ArrayList<KeyformCell<RotationPivotForm>>()
-			for (oi in own.keys.indices) for (ci in crouchKeys.indices) for (wi in weightKeys.indices) {
-				val form = grid.cells.first { it.coordinate[0] == oi }.form
-				cells += KeyformCell(
-					intArrayOf(oi, ci, wi),
-					RotationPivotForm(form.originX, form.originY, form.angle + table[ci][wi].toFloat(), form.scale),
-				)
-			}
-			deformer.copy(geometryGrid = KeyformGrid(listOf(own, KeyformAxis(crouchId, crouchKeys), KeyformAxis(weightId, weightKeys)), cells))
+		val model = base.copy(deformers = base.deformers.map { deformer ->
+			if (deformer.id != bodyId) deformer
+			else body.copy(blendShapes = body.blendShapes.filterNot { b -> poses.any { it.id == b.parameterId } } + bodyShapes)
 		})
-		return model
+
+		return model to solveLegPoses(model, legs)
+	}
+
+	/**
+	 * One leg joint under the two leg poses: its turn relative to its parent, in world degrees, at every
+	 * key of [SkeletonPoses.crouch] and of [SkeletonPoses.weight], each solved with the other at rest.
+	 */
+	internal class LegJointPose(val crouch: FloatArray, val weight: FloatArray) {
+		/** The turn at crouch [c] and weight [w], weighed between keys the way the evaluator weighs blend shapes. */
+		fun turnAt(c: Float, w: Float): Float = at(SkeletonPoses.crouch, crouch, c) + at(SkeletonPoses.weight, weight, w)
+
+		private fun at(pose: SkeletonPose, turns: FloatArray, value: Float): Float =
+			SkeletonPoses.bracket(pose, value).sumOf { (key, t) -> (turns[pose.keys.indexOfFirst { it == key }] * t).toDouble() }.toFloat()
+	}
+
+	/**
+	 * Every leg joint of [legs] under the leg poses of [model], whose body warp already carries the hip
+	 * motion. The IK is read against the body the evaluator actually builds, so the pivots it starts
+	 * from are the ones the runtime will use. A thigh's turn is only right before the thighs carry their
+	 * own pose shapes; the joints below it read the same either way.
+	 */
+	internal fun solveLegPoses(model: PuppetModel, legs: List<Leg>): Map<String, LegJointPose> {
+		if (legs.isEmpty()) return emptyMap()
+		val centerX = legCenter(legs)
+		val rest = worlds(model, emptyMap())
+		fun turns(pose: SkeletonPose): List<Map<String, Float>> = pose.keys.map { key ->
+			if (key == 0f) return@map emptyMap()
+			val posed = worlds(model, mapOf(pose.id to key))
+			buildMap {
+				for (leg in legs) {
+					val thighId = DeformerId(leg.thigh.deformerId)
+					val thigh = posed[thighId] ?: continue
+					val hip = FloatArray(2).also { thigh.apply(0f, 0f, it, 0) }
+					val inherited = SkeletonIk.wrap((angleOf(thigh) - angleOf(rest.getValue(thighId))).toDouble())
+					val (thighTurn, shinTurn) = legTurns(leg, hip[0].toDouble(), hip[1].toDouble(), centerX)
+					put(leg.thigh.id, SkeletonIk.wrap(thighTurn - inherited).toFloat())
+					put(leg.shin.id, SkeletonIk.wrap(shinTurn - thighTurn).toFloat())
+					leg.foot?.let { put(it.id, (-shinTurn).toFloat()) }
+				}
+			}
+		}
+		val crouch = turns(SkeletonPoses.crouch)
+		val weight = turns(SkeletonPoses.weight)
+		return legs.flatMap { listOfNotNull(it.thigh.id, it.shin.id, it.foot?.id) }.associateWith { id ->
+			LegJointPose(FloatArray(crouch.size) { crouch[it][id] ?: 0f }, FloatArray(weight.size) { weight[it][id] ?: 0f })
+		}
 	}
 
 	// ---------------------------------------------------------------------------------------------------
@@ -506,6 +586,7 @@ internal object SkeletonRig {
 		canvas: FloatArray,
 		tree: List<SkeletonBone>,
 		parentOf: Map<String, SkeletonBone?>,
+		poses: List<SkeletonPose>,
 	): PuppetModel {
 		val drawable = base.drawables.firstOrNull { it.id == drawableId } ?: return base
 		val mesh = drawable.mesh ?: return base
@@ -524,7 +605,7 @@ internal object SkeletonRig {
 			driving += (chain(skin.from) - homeChain) + (homeChain - chain(skin.from))
 			if (!skin.rigid) driving += skin.to
 		}
-		val axes = meshAxes(base, driving.map { tree[it] })
+		val axes = meshAxes(driving.map { tree[it] })
 
 		val relevant = deformerOf.toSet() + listOfNotNull(drawable.parentDeformerId)
 		val rest = worlds(base, emptyMap(), relevant)
@@ -597,7 +678,40 @@ internal object SkeletonRig {
 			geometryGrid = grid,
 			blendShapes = blendShapes,
 		)
-		return base.copy(drawables = base.drawables.map { if (it.id == drawableId) skinned else it })
+		val posed = skinned.copy(blendShapes = skinned.blendShapes + poseShapes(base, skinned, poses, ::deltasAt))
+		return base.copy(drawables = base.drawables.map { if (it.id == drawableId) posed else it })
+	}
+
+	/**
+	 * The blend shapes the [poses] bend [drawable] by: at each key, how far the pose alone moves every
+	 * vertex relative to its home bone, as [deltasAt] measures it through the deformers the poses turn.
+	 * A pose that only carries the mesh rigidly with its home bone leaves it no shape.
+	 */
+	private fun poseShapes(
+		model: PuppetModel,
+		drawable: Drawable,
+		poses: List<SkeletonPose>,
+		deltasAt: (Map<ParameterId, Float>) -> FloatArray,
+	): List<BlendShapeBinding<MeshForm>> {
+		if (poses.isEmpty()) return emptyList()
+		val defaults = model.parameters.associate { it.id to it.default }
+		val default: (ParameterId) -> Float = { defaults[it] ?: 0f }
+		val rest = deltasAt(emptyMap())
+		val reference = meshGridDefaultDeltas(drawable, default) ?: FloatArray(rest.size)
+		val drawOrder = drawable.channelGrids.scalarAt(FormChannel.DRAW_ORDER, drawable.drawOrder, default)
+		val opacity = drawable.channelGrids.scalarAt(FormChannel.OPACITY, drawable.opacity, default)
+		val multiply = drawable.channelGrids.colorAt(FormChannel.MULTIPLY_COLOR, drawable.multiplyColor, default)
+		val screen = drawable.channelGrids.colorAt(FormChannel.SCREEN_COLOR, drawable.screenColor, default)
+		return poses.mapNotNull { pose ->
+			val shapes = pose.keys.map { key ->
+				if (key == 0f) null else deltasAt(mapOf(pose.id to key)).also { for (i in it.indices) it[i] -= rest[i] }
+			}
+			if (shapes.all { shape -> shape == null || shape.all { abs(it) < POSE_EPSILON } }) return@mapNotNull null
+			poseBinding(pose) { ki ->
+				val shape = shapes[ki]!!
+				MeshForm(FloatArray(shape.size) { reference[it] + shape[it] }, drawOrder, opacity, multiply, screen)
+			}
+		}
 	}
 
 	/**
@@ -624,21 +738,16 @@ internal object SkeletonRig {
 	}
 
 	/**
-	 * The keyform axes of a mesh driven by [bones]: each bone's own parameter keyed densely in angle,
-	 * plus any pose axis those bones' deformers carry.
+	 * The keyform axes of a mesh driven by [bones]: each bone's own parameter keyed densely in angle.
+	 * Poses are not axes; they reach the mesh as blend shapes.
 	 */
-	private fun meshAxes(model: PuppetModel, bones: List<SkeletonBone>): List<KeyformAxis> {
+	private fun meshAxes(bones: List<SkeletonBone>): List<KeyformAxis> {
 		val own = LinkedHashMap<ParameterId, Pair<Float, Float>>()
-		val poses = LinkedHashMap<ParameterId, FloatArray>()
 		for (bone in bones) {
 			val id = ParameterId(bone.parameterId)
 			val range = own[id]
 			own[id] = if (range == null) bone.minAngle to bone.maxAngle else minOf(range.first, bone.minAngle) to maxOf(range.second, bone.maxAngle)
-			val deformer = model.deformers.firstOrNull { it.id.raw == bone.deformerId } as? Deformer.Rotation
-			// A pose moves a mesh through the joint angles its IK chose, keyed as densely as the deformers.
-			deformer?.geometryGrid?.axes?.filter { it.parameterId != id }?.forEach { poses.putIfAbsent(it.parameterId, it.keys) }
 		}
-		val fixedCells = poses.values.fold(1) { acc, keys -> acc * keys.size }
 		var step = KEY_STEP
 		fun keysFor(range: Pair<Float, Float>): FloatArray {
 			val below = ceil(abs(range.first) / step - 1e-6).toInt()
@@ -652,11 +761,11 @@ internal object SkeletonRig {
 			}.toFloatArray()
 		}
 		var ownKeys = own.mapValues { keysFor(it.value) }
-		while (ownKeys.values.fold(fixedCells) { acc, keys -> acc * keys.size } > MAX_MESH_CELLS && step < 90.0) {
+		while (ownKeys.values.fold(1) { acc, keys -> acc * keys.size } > MAX_MESH_CELLS && step < 90.0) {
 			step *= 1.15
 			ownKeys = own.mapValues { keysFor(it.value) }
 		}
-		return ownKeys.map { KeyformAxis(it.key, it.value) } + poses.map { KeyformAxis(it.key, it.value) }
+		return ownKeys.map { KeyformAxis(it.key, it.value) }
 	}
 
 	/** Every coordinate of a grid over [axes], axis 0 fastest. */

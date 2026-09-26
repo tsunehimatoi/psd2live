@@ -73,6 +73,6 @@ class SkeletonPipelineIntegrationTest {
 		}
 
 		val idle = assertNotNull(preview.runtimeBundle.assets.firstOrNull { it.path.endsWith(".idle.motion3.json") })
-		assertTrue(idle.bytes.decodeToString().contains("ParamArmLA"))
+		assertTrue(idle.bytes.decodeToString().contains(SkeletonPoses.armSway.id.raw))
 	}
 }

@@ -3,6 +3,7 @@ package io.github.psd2live.ui
 import androidx.compose.ui.geometry.Offset
 import io.github.psd2live.core.SkeletonBone
 import io.github.psd2live.core.SkeletonIk
+import io.github.psd2live.core.SkeletonPoses
 import io.github.psd2live.core.SkeletonRig
 import io.github.psd2live.core.SkeletonSpec
 import io.github.psd2live.core.SkeletonWeights
@@ -28,6 +29,12 @@ internal class BoneHit(val boneId: String, val tip: Boolean)
  * the rig the export writes is exactly the rig being posed.
  */
 internal object SkeletonPoseTool {
+	/** The leg solve of each baked model, which takes a few dozen deformer evaluations to rebuild. */
+	private val legSolves = java.util.WeakHashMap<PuppetModel, Map<String, SkeletonRig.LegJointPose>>()
+
+	private fun legJoints(model: PuppetModel, legs: List<SkeletonRig.Leg>): Map<String, SkeletonRig.LegJointPose> =
+		synchronized(legSolves) { legSolves.getOrPut(model) { SkeletonRig.solveLegPoses(model, legs) } }
+
 	/** Screen pixels within which the pointer grabs a bone's tip. */
 	private const val TIP_RADIUS = 10f
 
@@ -39,7 +46,8 @@ internal object SkeletonPoseTool {
 	 *
 	 * A bone that owns a rotation deformer is read straight from it. A bone whose deformer was pruned - a
 	 * joint that bends inside an unsplit mesh's keyforms - turns about its head from wherever its parent
-	 * went, by its own parameter plus the leg pose's IK angle, which is exactly what those keyforms bake.
+	 * went, by its own parameter plus its poses' turns and the leg poses' IK angle, which is exactly what
+	 * those keyforms and blend shapes bake.
 	 */
 	fun posed(model: PuppetModel, spec: SkeletonSpec?, values: Map<ParameterId, Float>): List<PosedBone> {
 		if (spec?.enabled != true) return emptyList()
@@ -49,18 +57,20 @@ internal object SkeletonPoseTool {
 		val bones = SkeletonRig.limbBones(spec)
 		val ids = bones.mapTo(HashSet()) { it.id }
 		val legs = SkeletonRig.legs(spec)
-		val center = if (legs.isEmpty()) 0.0 else SkeletonRig.legCenter(legs)
 		val frames = HashMap<String, (Double, Double) -> DoubleArray>()
 		val scratch = FloatArray(2)
-		fun param(bone: SkeletonBone) = (values[ParameterId(bone.parameterId)] ?: 0f) * bone.direction
-		/** The IK turn a leg pose adds to [bone] relative to its parent, given where its thigh's hip went. */
-		fun poseTurn(bone: SkeletonBone): Double {
-			val leg = legs.firstOrNull { it.shin.id == bone.id || it.foot?.id == bone.id } ?: return 0.0
-			val thigh = frames[leg.thigh.id] ?: return 0.0
-			val hip = thigh(leg.thigh.headX.toDouble(), leg.thigh.headY.toDouble())
-			val (thighTurn, shinTurn) = SkeletonRig.legTurns(leg, hip[0], hip[1], center)
-			return if (bone.id == leg.shin.id) shinTurn - thighTurn else -shinTurn
+		// Every pose's turns in parameter units by bone, summed as the blend shapes sum them.
+		val poseTurns = HashMap<String, Float>()
+		for (pose in SkeletonPoses.available(spec)) {
+			for ((id, turn) in SkeletonPoses.turnsAt(spec, pose, values[pose.id] ?: 0f)) poseTurns[id] = (poseTurns[id] ?: 0f) + turn
 		}
+		fun param(bone: SkeletonBone) = ((values[ParameterId(bone.parameterId)] ?: 0f) + (poseTurns[bone.id] ?: 0f)) * bone.direction
+		// The IK turn the leg poses add to a shin or foot relative to its parent, weighed as the bake
+		// weighed it into the mesh.
+		val crouch = values[SkeletonPoses.crouch.id] ?: 0f
+		val weight = values[SkeletonPoses.weight.id] ?: 0f
+		val joints = if (legs.isEmpty() || (crouch == 0f && weight == 0f)) emptyMap() else legJoints(model, legs)
+		fun poseTurn(bone: SkeletonBone): Double = joints[bone.id]?.turnAt(crouch, weight)?.toDouble() ?: 0.0
 		for (bone in bones) {
 			val id = DeformerId(bone.deformerId)
 			val world = worlds[id]
@@ -175,11 +185,11 @@ internal object SkeletonPoseTool {
 		}
 	}
 
-	/** Every limb parameter back at rest. */
+	/** Every limb and pose parameter back at rest. */
 	fun rest(spec: SkeletonSpec?): Map<ParameterId, Float> =
 		if (spec?.enabled != true) emptyMap()
 		else SkeletonRig.limbBones(spec).associate { ParameterId(it.parameterId) to 0f } +
-			mapOf(SkeletonRig.crouchId to 0f, SkeletonRig.weightId to 0f)
+			SkeletonPoses.all.associate { it.id to 0f }
 
 	/**
 	 * Per-vertex weights for the heat map: for every skinned mesh, each vertex's two bones and the weight
