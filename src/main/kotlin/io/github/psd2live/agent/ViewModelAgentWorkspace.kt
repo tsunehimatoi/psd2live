@@ -1322,6 +1322,25 @@ class ViewModelAgentWorkspace(
 
     override fun listSimulations() = viewModel.state.value.rigEdits.simEdits
 
+    override suspend fun applyModelPreset(preset: io.github.psd2live.core.sim.ModelPresets.Preset, layers: Set<String>,
+        expectedHead: String, author: MutationAuthor): AgentWorkspaceMutationResult =
+        mutateRigKeyform(expectedHead, null, "Applied model preset ${preset.name}", "presets", author) { document, puppet ->
+            val preview = requireNotNull(viewModel.state.value.previewModel)
+            require(layers.all { id -> preview.analysis.layers.any { it.source.id.raw == id } }) { "Unknown preset layer" }
+            val applied = io.github.psd2live.core.sim.ModelPresets.apply(document.rigEdits, puppet, preview.analysis,
+                preview.rig.layerIdByDrawableId, preset, layers, document.toConfig(viewModel.state.value).alphaThreshold)
+            var overlay = applied.overlay
+            for (id in applied.simulationIds) {
+                val (rebaked, failure) = viewModel.trackSimulationBake(id) { progress, cancelled ->
+                    io.github.psd2live.core.sim.SimAuthoring.rebaked(overlay, preview.baseRig.puppet, id, progress, cancelled)
+                }
+                require(failure == null) { "$id: $failure" }
+                overlay = rebaked
+            }
+            document.copy(rigEdits = overlay, settings = if (applied.simulationIds.isEmpty()) document.settings
+                else kotlinx.serialization.json.JsonObject(document.settings + ("generatePhysics" to kotlinx.serialization.json.JsonPrimitive(true))))
+        }
+
     override suspend fun putSimulation(arguments: kotlinx.serialization.json.JsonObject, expectedHead: String, taskId: String?):
         Pair<AgentWorkspaceMutationResult, kotlinx.serialization.json.JsonObject> {
         val id = arguments["id"]?.jsonPrimitive?.contentOrNull ?: throw IllegalArgumentException("id is required")

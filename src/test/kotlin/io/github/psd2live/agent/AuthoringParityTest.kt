@@ -64,7 +64,7 @@ class AuthoringParityTest {
     @Test fun classificationMergesOmittedFieldsAndRejectsInvalidRequests() = runBlocking {
         val workspace = Workspace()
         val server = createAgentMcpServer(workspace)
-        assertEquals(25, server.tools.size)
+        assertEquals(26, server.tools.size)
         val layer = server.tools.getValue("layer")
         val result = layer.handler.invoke(connection, CallToolRequest(CallToolRequestParams("layer", buildJsonObject {
             put("state", "head"); put("layer_id", "hair"); put("type", "switch")

@@ -532,6 +532,24 @@ class PSD2LiveViewModel : AutoCloseable {
         runSimulationMutation("Deleted simulation $id") { workspace, head -> workspace.deleteSimulation(id, head) }
     }
 
+    internal fun applyModelPreset(preset: io.github.psd2live.core.sim.ModelPresets.Preset, selectedOnly: Boolean) {
+        val current = _state.value
+        val layers = if (selectedOnly) current.selectedLayerIds.ifEmpty { setOfNotNull(current.selectedLayerId) } else emptySet()
+        if (selectedOnly && layers.isEmpty()) return
+        _simulationStatus.value = SimulationStatus.Idle
+        runSimulationMutation("Applied model preset ${preset.name}") { workspace, head ->
+            workspace.applyModelPreset(preset, layers, head, io.github.psd2live.agent.MutationAuthor.USER)
+        }
+    }
+
+    internal fun beginCanvasCreationPreset(rotation: Boolean, divisions: Int = 5) {
+        val current = _state.value
+        setCanvasMode(current.activeCanvas.id, CanvasMode.EDIT)
+        canvasEditor.updatePlacementGrid(divisions, divisions)
+        canvasEditor.updatePlacementBezier(if (divisions > 5) 3 else 2, if (divisions > 5) 3 else 2)
+        canvasEditor.activateTool(if (rotation) io.github.psd2live.ui.CanvasTool.CREATE_ROTATION else io.github.psd2live.ui.CanvasTool.CREATE_WARP)
+    }
+
     /** A new simulation of the meshes of the selected layers; returns its ID, or null with nothing selected. */
     internal fun createSimulationFromSelection(kind: io.github.psd2live.core.sim.SimKind): String? {
         val current = _state.value
@@ -2745,26 +2763,11 @@ class PSD2LiveViewModel : AutoCloseable {
 	    markWorkspaceChanged()
 	}
 
-	fun resetSettingsToDefault() {
+	fun resetModelPresetsToDefault() {
 		updateState {
 			it.copy(
-				atlasSize = 4096,
-                textureUpscale = io.github.psd2live.core.TextureUpscaleConfig(),
-				textureSubExpanded = false,
 				strengthSubExpanded = false,
 				dynamicsSubExpanded = false,
-				meshSpacing = 40,
-				meshOuterMargin = 1.0f,
-				meshEdgeMode = io.github.psd2live.core.MeshEdgeMode.SINGLE,
-				meshEdgeWidth = 10.0f,
-				meshMaxEdgeDistance = 6.0f,
-				meshInteriorDensity = 40.0f,
-				meshFillAlgorithm = io.github.psd2live.core.MeshFillAlgorithm.GRADED_POISSON,
-				meshSuppressBoundaryDiagonals = false,
-				meshFillParameters = io.github.psd2live.core.MeshFillParameters(),
-				meshOverrides = emptyMap(),
-				texturePadding = 2,
-				alphaThreshold = 8,
 				headStrength = 1.0f,
 				bodyStrength = 1.0f,
 				meshOnly = false,
@@ -2785,17 +2788,6 @@ class PSD2LiveViewModel : AutoCloseable {
 				physicsFrontHair = true,
 				physicsBackHair = true,
 				physicsEyeJelly = true,
-				exportCmo3 = true,
-				exportMoc3 = true,
-				exportJson = true,
-				runtimeTarget = org.umamo.runtime.model.RuntimeTarget.Cubism50,
-				exportHiddenParts = false,
-				exportHiddenDrawables = false,
-				exportGuideImageParts = false,
-				exportIncludePhysics = true,
-				exportIncludeUserData = true,
-				exportIncludeDisplayInfo = true,
-				exportPixelsPerUnit = null,
 			)
 		}
 		schedulePreviewRebuild()

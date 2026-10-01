@@ -492,6 +492,10 @@ interface AgentWorkspace {
     suspend fun fitPhysics(id: String, target: Float, expectedHead: String): AgentWorkspaceMutationResult =
         throw UnsupportedOperationException("Physics scale fitting is unavailable")
     fun listSimulations(): List<io.github.psd2live.core.sim.RigSimEdit> = emptyList()
+    /** Apply materialized model presets and bake their simulations together as one history edit. */
+    suspend fun applyModelPreset(preset: io.github.psd2live.core.sim.ModelPresets.Preset, layers: Set<String>,
+        expectedHead: String, author: MutationAuthor = MutationAuthor.AGENT): AgentWorkspaceMutationResult =
+        throw UnsupportedOperationException("Model presets are unavailable")
     /**
      * [arguments] are a `simulation` put request, laid over the simulation with that ID. A simulation that
      * bakes on its own is baked again in the same step; the second value reports that bake or why it failed.

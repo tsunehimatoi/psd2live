@@ -107,6 +107,7 @@ fun ExportDialog(
 					.verticalScroll(rememberScrollState()),
 				verticalArrangement = Arrangement.spacedBy(10.dp),
 			) {
+				TextureAtlasSettingsSection(state, viewModel)
 				ExportActionSection(
 					state = state,
 					viewModel = viewModel,

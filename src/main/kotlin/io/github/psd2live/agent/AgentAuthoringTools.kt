@@ -387,6 +387,14 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
                 a["wind"]?.jsonArray?.let { it[0].jsonPrimitive.float to it[1].jsonPrimitive.float })
         }
     }
+    tool("model_preset", "Apply model presets as one undoable edit. front_hair/back_hair create root pins and bake hair simulations, bypassing the legacy hair sway on those meshes. clothing detects skirts/trousers from names and alpha silhouettes, pins the waist, releases hems and bakes cloth with leg colliders. auto_weights refreshes PIN groups and auto-bakes affected simulations. Optional layers narrows the preset; omitted applies to all recognized parts. Existing unrelated simulations are preserved; clothing/hair refuses conflicting targets.",
+        buildJsonObject {
+            put("preset", choices("front_hair", "back_hair", "clothing", "auto_weights")); put("state", string())
+            put("layers", arraySchema(string(), 0, 128))
+        }, listOf("preset", "state"), true) { a ->
+        workspace.applyModelPreset(io.github.psd2live.core.sim.ModelPresets.Preset.valueOf(a.text("preset").uppercase()),
+            a["layers"]?.jsonArray?.map { it.jsonPrimitive.content }?.toSet().orEmpty(), a.text("state")).compact()
+    }
     tool("vertex_group", "Editor-only per-vertex 0..1 weights on an ArtMesh that the simulation reads (never exported). kind: pin, collide, collider, stiffness, mass, damping, wind, goal. " +
         "rule: fill (every vertex value), outline (outline vertices value), gradient (along from->to canvas px, start at from to end at to), glue (vertices glued to another mesh take their glue weight x value), region (inside rect [x0, y0, x1, y1] canvas px). " +
         "mode combines with the existing group: replace (default), max, min, add, subtract. delete=true removes the group. inspect scope=vertex_groups lists groups.",
