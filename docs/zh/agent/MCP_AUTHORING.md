@@ -26,12 +26,12 @@ Token 允许编辑当前工作区，应保留在本机宿主配置中。工具�
 | `settings` | 顶层 `state`、`changes` | 修改自动 Rig、网格、贴图、高清化、物理预设、动作和导出配置；先用 `inspect.settings` 读取 |
 | `export` | 顶层 `state`、`output_directory` | 导出当前工程的模型文件族，返回文件与警告；目录需为绝对路径 |
 | `export_psd` | 顶层 `state`、`path` | 使用 UI 的 PSD 写入器，支持 1/2/4 倍及生成层选项 |
-| `deform` | 顶层 `state`、`changes` | 在明确参数键上编辑 Mesh / Warp 连续形状 |
-| `form` | 顶层 `state`、`changes` | `op: seed/copy/set/delete`，编辑关键形集合、标量 / 颜色通道与旋转形状 |
+| `deform` | 顶层 `state`、`changes`、可选 `dry_run` | 在明确参数键上编辑 Mesh / Warp 连续形状；`dry_run:true` 走同一候选编译与几何 gate，但不写入 |
+| `form` | 顶层 `state`、`changes`、可选 `dry_run` | `op: seed/copy/set/delete`，编辑关键形集合、标量 / 颜色通道与旋转形状；可零写入 dry-run |
 | `rig` | 顶层 `state`、`name`、`targets` | 为共用父 Warp 的 Mesh 创建独立 Warp |
 | `appearance` | 顶层 `state`、`edits` | 名称、显隐、结构等有序编辑 |
-| `structure` | 顶层 `state`、`edits` | 静态对象属性、变形器删除与 Part 归属、参数文件夹和 XY 关联 |
-| `canvas` | `request.mode` | `warp/rotation/glue/topology`。`glue` 必须同时给出两个不同的画元 `mesh_a` 与 `mesh_b` |
+| `structure` | 顶层 `state`、`edits`、可选 `dry_run` | 静态对象属性、变形器删除与 Part 归属、参数文件夹和 XY 关联；结构候选按最终完整 batch 验证 |
+| `canvas` | `request.mode`、可选 `request.dry_run` | `warp/rotation/glue/topology`。`glue` 必须同时给出两个不同的画元 `mesh_a` 与 `mesh_b`；dry-run 生成的 ID 可在 commit 时重用 |
 | `view` | `request.mode` | `model/layer/context/poses/coverage/compare/motion` |
 | `parameter` | `request.mode` | `create/update/delete`；删除时在旧默认值处折叠关键形轴 |
 | `asset` | `request.mode` | `psd/create/split/reference/import/register/preview/add/place/finalize/inspect/reprocess/remove`；`psd` 从本地绝对路径导入空工作区 |
@@ -104,10 +104,35 @@ Token 允许编辑当前工作区，应保留在本机宿主配置中。工具�
 
 这里的 `key` 必须涵盖目标直接绑定的相关轴；不要把观察姿态里的全部父级参数照搬为对象绑定。完成后使用返回的新 `state`，再渲染实际模型检查。
 
+先 dry-run 同一批形变：
+
+```json
+{
+  "state": "current-history-head",
+  "dry_run": true,
+  "changes": [{
+    "target": "warp:actualWarpId",
+    "key": {"ParamCustom":1},
+    "operations": [{"type":"translate","delta":[0.02,0]}]
+  }]
+}
+```
+
+返回的 `acceptedByGeometryGate`、`wouldChange`、`wouldCommit`、`currentState/currentRevision`、
+`compiledCommandCount`、`affectedTargets/affectedCoordinates` 与 `candidateDiagnostics` 都来自和
+真正 commit 相同的 ordered compile / validation 路径。dry-run 永远不推进 state、revision、
+history 或 journal。拒绝 reason code 固定为 `GEOMETRY_NON_FINITE`、
+`GEOMETRY_INVALID_TOPOLOGY`、`GEOMETRY_NEW_FLIP`、`GEOMETRY_NEW_DEGENERATE`、
+`GEOMETRY_NEW_COLLAPSE`。既有 flip/degenerate/collapse 会报告为 `preexisting*Count`，但不会单独
+阻挡没有新增结构失败的编辑。
+
+这是 parent-local 的结构几何检查，不等同于视觉安全证明。它不覆盖父级组合变形、mask 与实际绘制
+覆盖、物理效果或美学质量；这些仍须由相应的预览、运行时检查或人工审阅验证。
+
 ## 状态与历史
 
 - 推进模型历史的写调用需要最新 `state`，成功返回后续调用可用的状态。过期时重新检查并协调编辑，不盲目覆盖。
-- 批内编辑先验证与重建，成功后提交；一次 `deform` / `form` 可包含 1–128 条更改，单条形变可含 1–16 个操作。
+- 批内编辑先顺序编译完整候选，再对受影响目标的 native key coordinates 跑结构几何 gate；只有全批通过才提交一个历史节点。一次 `deform` / `form` 可包含 1–128 条更改，单条形变可含 1–16 个操作。
 - 普通无变化写入不应制造历史节点；`checkpoint` 是显式留点的例外。恢复是写操作，会移动 HEAD；从旧节点继续编辑形成分支，原分支保留。
 - `revision.save` 保存到 UI 已选择的工程位置。`export` 写出交付文件，但不替代工程保存。暂存素材不等于已经加入模型，也不等于已保存到磁盘。
 - 超时或断线后用 `inspect` 和 `revision.list` 检查是否已提交，再决定下一步。

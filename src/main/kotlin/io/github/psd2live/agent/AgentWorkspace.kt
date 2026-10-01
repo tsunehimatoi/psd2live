@@ -134,6 +134,19 @@ data class AgentWorkspaceMutationResult(
 	 * use that JSON key for the affected-object list.
 	 */
 	val applied: Boolean = true,
+	/** Present for ordered rig authoring commits evaluated by the structural geometry gate. */
+	val geometrySafety: kotlinx.serialization.json.JsonObject? = null,
+)
+
+data class AgentRigDryRunResult(
+	val currentState: String,
+	val currentRevision: String,
+	val candidateRevision: String,
+	val acceptedByGeometryGate: Boolean,
+	val wouldChange: Boolean,
+	val wouldCommit: Boolean,
+	val compiledCommandCount: Int,
+	val geometrySafety: kotlinx.serialization.json.JsonObject,
 )
 
 data class AgentCreateParameterRequest(
@@ -458,6 +471,9 @@ interface AgentWorkspace {
         throw UnsupportedOperationException("Artwork splitting unavailable")
     suspend fun authorRig(state: String, edits: kotlinx.serialization.json.JsonArray, author: MutationAuthor): AgentWorkspaceMutationResult =
         throw UnsupportedOperationException("Ordered authoring is unavailable")
+    /** Compile and geometry-gate the same ordered batch as [authorRig], without applying or persisting it. */
+    suspend fun dryRunRig(state: String, edits: kotlinx.serialization.json.JsonArray, author: MutationAuthor): AgentRigDryRunResult =
+        throw UnsupportedOperationException("Ordered authoring dry-run is unavailable")
     fun listRigObjectSummaries(): List<kotlinx.serialization.json.JsonObject> = listRigObjects().map {
         kotlinx.serialization.json.JsonObject(mapOf("kind" to kotlinx.serialization.json.JsonPrimitive(it.kind), "id" to kotlinx.serialization.json.JsonPrimitive(it.id)))
     }

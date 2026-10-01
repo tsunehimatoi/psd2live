@@ -35,6 +35,11 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
         }
     }
 
+    suspend fun orderedAuthoring(arguments: JsonObject, edits: JsonArray): JsonObject =
+        if (arguments["dry_run"]?.jsonPrimitive?.booleanOrNull == true)
+            workspace.dryRunRig(arguments.text("state"), edits, MutationAuthor.AGENT).compact()
+        else workspace.authorRig(arguments.text("state"), edits, MutationAuthor.AGENT).compact()
+
     tool("inspect", "Read project context, find objects/layers/parameters, or inspect one kind:id's direct axes, channels and parent. No point arrays. Query and page before expanding.",
         buildJsonObject { put("scope", choices("project", "settings", "preview", "objects", "layers", "parameters", "physics", "swings", "paths", "simulations", "vertex_groups")); put("query", string()); put("target", string()); put("offset", integer(0)); put("limit", integer(1, 64)) }) { a ->
         val snapshot = workspace.snapshot()
@@ -273,16 +278,16 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
         operation("curve", buildJsonObject { put("axis", choices("x", "y")); put("controls", vector(4)) }, listOf("controls")),
         operation("landmarks", buildJsonObject { put("from", arraySchema(vector(2), 1, 16)); put("to", arraySchema(vector(2), 1, 16)) }, listOf("from", "to"))
     )), 1, 16)
-    tool("deform", "Edit whole ArtMesh/Warp surfaces at exact keys, atomically across changes. All points participate including empty cage regions. Units: fixed input bounds, normalized x-right/y-down; rotations in degrees. arc bends cross-sections along root→tip; root_pin is a fixed length fraction. Optional brush hardness gives a broad plateau. Unspecified directly bound axes are an error. This edits local shapes; parent motion is inherited.",
+    tool("deform", "Edit whole ArtMesh/Warp surfaces at exact keys, atomically across changes. Set dry_run=true to compile and run the same pre-persist geometry safety gate without changing project, journal, history, or revision. Commits reject GEOMETRY_NON_FINITE, GEOMETRY_INVALID_TOPOLOGY, GEOMETRY_NEW_FLIP, GEOMETRY_NEW_DEGENERATE, and GEOMETRY_NEW_COLLAPSE. Existing defects are reported and do not fail an otherwise safe batch. All points participate including empty cage regions. Units: fixed input bounds, normalized x-right/y-down; rotations in degrees. arc bends cross-sections along root→tip; root_pin is a fixed length fraction. Optional brush hardness gives a broad plateau. Unspecified directly bound axes are an error. This edits local shapes; parent motion is inherited.",
         buildJsonObject {
-            put("state", string()); put("changes", arraySchema(objectSchema(buildJsonObject {
+            put("state", string()); put("dry_run", boolean()); put("changes", arraySchema(objectSchema(buildJsonObject {
                 put("target", string()); put("key", key); put("operations", operations); put("selection", selection)
             }, listOf("target", "key", "operations")), 1, 128))
         }, listOf("state", "changes"), true) { a ->
         val edits = JsonArray(a.getValue("changes").jsonArray.map { change ->
             JsonObject(change.jsonObject + ("op" to JsonPrimitive("deform")))
         })
-        workspace.authorRig(a.text("state"), edits, MutationAuthor.AGENT).compact()
+        orderedAuthoring(a, edits)
     }
 
     val channels = objectSchema(buildJsonObject {
@@ -290,15 +295,15 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
         put("glueIntensity", number()); put("flipX", boolean()); put("flipY", boolean())
     })
     val formBase = buildJsonObject { put("target", string()); put("key", key) }
-    tool("form", "Author key collections atomically. seed captures interpolated geometry without changing other keys. copy transfers selected channels (omit for all) from an explicit source key. set writes scalar/color channels or a rotation form, never mesh point arrays. Keys name only the destination object's axes, not the viewing pose.",
-        buildJsonObject { put("state", string()); put("changes", arraySchema(oneOf(listOf(
+    tool("form", "Author key collections atomically. Set dry_run=true to compile the identical candidate and return geometry-gate evidence with zero mutation. seed captures interpolated geometry without changing other keys. copy transfers selected channels (omit for all) from an explicit source key. set writes scalar/color channels or a rotation form, never mesh point arrays. Keys name only the destination object's axes, not the viewing pose.",
+        buildJsonObject { put("state", string()); put("dry_run", boolean()); put("changes", arraySchema(oneOf(listOf(
             variant("op", "seed", formBase, listOf("target", "key")),
             variant("op", "copy", JsonObject(formBase + buildJsonObject { put("from", key); put("destination", string()); put("channels", arraySchema(string(), 1, 8)) }), listOf("target", "from", "key")),
             variant("op", "set", JsonObject(formBase + buildJsonObject { put("channels", channels); put("geometry", objectSchema(buildJsonObject {
                 put("originX", number()); put("originY", number()); put("angle", number()); put("scale", number())
             })) }), listOf("target", "key")),
             variant("op", "delete", buildJsonObject { put("target", string()); put("parameter", string()); put("value", number()); put("channel", string()) }, listOf("target", "parameter"))
-        )), 1, 128)) }, listOf("state", "changes"), true) { a -> workspace.authorRig(a.text("state"), a.getValue("changes").jsonArray, MutationAuthor.AGENT).compact() }
+        )), 1, 128)) }, listOf("state", "changes"), true) { a -> orderedAuthoring(a, a.getValue("changes").jsonArray) }
 
     tool("rig", "Create a fitted independent Warp for meshes sharing a parent. Existing keyforms and UVs migrate; the parent lattice constrains fit precision. Use deform directly when no independent motion layer is needed. Returned target is the new Warp.",
         buildJsonObject { put("state", string()); put("name", string()); put("targets", arraySchema(string(), 1, 64)) }, listOf("state", "name", "targets"), true) { a ->
@@ -448,17 +453,17 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
         put("partner_id", string()); put("linked", boolean()); put("open", boolean())
         put("label_type", string()); put("color", integer(Int.MIN_VALUE))
     }, listOf("action", "kind", "id"))
-    tool("structure", "Edit static object properties, delete deformers, assign a deformer Part, or organize parameter folders and 2D links. Edits are ordered and use the same persistent structure journal as the UI. Parameter definitions use parameter instead.",
-        buildJsonObject { put("state", string()); put("edits", arraySchema(structureEdit, 1, 128)) }, listOf("state", "edits"), true) { a ->
+    tool("structure", "Edit static object properties, delete deformers, assign a deformer Part, or organize parameter folders and 2D links. Set dry_run=true to compile the identical final batch and return geometry-gate evidence without persistence. Edits are ordered and use the same persistent structure journal as the UI. Parameter definitions use parameter instead.",
+        buildJsonObject { put("state", string()); put("dry_run", boolean()); put("edits", arraySchema(structureEdit, 1, 128)) }, listOf("state", "edits"), true) { a ->
         val edits = a.getValue("edits").jsonArray
         require(edits.none { edit ->
             val item = edit.jsonObject
             item["kind"]?.jsonPrimitive?.content == "parameter" &&
                 item["action"]?.jsonPrimitive?.content in setOf("create", "update", "delete")
         }) { "Use parameter for parameter definitions" }
-        workspace.authorRig(a.text("state"), buildJsonArray {
+        orderedAuthoring(a, buildJsonArray {
             add(buildJsonObject { put("op", "structure"); put("edits", edits) })
-        }, MutationAuthor.AGENT).compact()
+        })
     }
     val canvasBounds = objectSchema(buildJsonObject {
         listOf("x", "y", "w", "h").forEach { put(it, number()) }
@@ -466,7 +471,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
     val canvasPose = buildJsonObject { put("type", "object"); put("additionalProperties", number()) }
     val canvasBranches = listOf(
         variant("mode", "warp", buildJsonObject {
-            put("state", string()); put("id", string()); put("name", string())
+            put("state", string()); put("dry_run", boolean()); put("id", string()); put("name", string())
             put("meshes", arraySchema(string(), 0, 64))
             put("add_to", choices("parent_of_selected", "parent_of_deformer", "child_of_deformer", "specify_parent"))
             put("deformer_id", string()); put("parent_id", string()); put("part_id", string())
@@ -474,7 +479,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
             put("rows", integer(1, 32)); put("columns", integer(1, 32))
         }, listOf("state", "name", "meshes")),
         variant("mode", "rotation", buildJsonObject {
-            put("state", string()); put("id", string()); put("name", string())
+            put("state", string()); put("dry_run", boolean()); put("id", string()); put("name", string())
             put("meshes", arraySchema(string(), 0, 64))
             put("add_to", choices("parent_of_selected", "parent_of_deformer"))
             put("deformer_id", string()); put("part_id", string())
@@ -482,11 +487,11 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
             put("preservePose", boolean())
         }, listOf("state", "name")),
         variant("mode", "glue", buildJsonObject {
-            put("state", string()); put("id", string()); put("mesh_a", string()); put("mesh_b", string())
+            put("state", string()); put("dry_run", boolean()); put("id", string()); put("mesh_a", string()); put("mesh_b", string())
             put("pose", canvasPose); put("distance", number()); put("replace", boolean())
         }, listOf("state", "mesh_a", "mesh_b")),
         variant("mode", "topology", buildJsonObject {
-            put("state", string()); put("id", string())
+            put("state", string()); put("dry_run", boolean()); put("id", string())
             put("action", choices("merge", "duplicate", "connect", "delete", "subdivide", "split", "knife"))
             put("vertices", arraySchema(integer(0), 0, 65536))
             put("anchors", arraySchema(objectSchema(buildJsonObject {
@@ -495,7 +500,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
             put("edges", arraySchema(arraySchema(integer(0), 2, 2), 0, 65536))
         }, listOf("state", "id", "action", "vertices")),
     )
-    tool("canvas", "Use the canvas editor's persisted algorithms to create a Warp or Rotation, pair Glue vertices at a pose, or edit mesh topology. Glue requires two different art-mesh ids (mesh_a and mesh_b) and fails when a mesh is missing, the ids match, or no vertices fall inside distance. Set replace to update an existing glue on that pair. Topology indices are from the current mesh and require fresh state. Creation accepts an optional stable ID; otherwise one is generated.",
+    tool("canvas", "Use the canvas editor's persisted algorithms to create a Warp or Rotation, pair Glue vertices at a pose, or edit mesh topology. Set request.dry_run=true to compile and geometry-gate the identical canvas command without persistence; reuse the returned generated id when committing. Glue requires two different art-mesh ids (mesh_a and mesh_b) and fails when a mesh is missing, the ids match, or no vertices fall inside distance. Set replace to update an existing glue on that pair. Topology indices are from the current mesh and require fresh state. Creation accepts an optional stable ID; otherwise one is generated.",
         buildJsonObject { put("request", oneOf(canvasBranches)) }, listOf("request"), true) { a ->
         val input = a.getValue("request").jsonObject
         validateAuthoringSchema(input, oneOf(canvasBranches))
@@ -510,7 +515,7 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
         }
         val command = buildJsonObject {
             put("op", op); put("id", id)
-            input.forEach { (key, value) -> if (key !in setOf("mode", "state", "id")) put(key, value) }
+            input.forEach { (key, value) -> if (key !in setOf("mode", "state", "dry_run", "id")) put(key, value) }
             if (mode == "glue") {
                 val puppet = workspace.currentPuppet() ?: error("No model is loaded")
                 val meshA = resolveGlueMesh(puppet, input.text("mesh_a"))
@@ -528,15 +533,19 @@ internal fun installAuthoringTools(server: Server, workspace: AgentWorkspace) {
             }
         }
         val writtenId = command.getValue("id").jsonPrimitive.content
-        val result = workspace.authorRig(input.text("state"), buildJsonArray { add(command) }, MutationAuthor.AGENT)
+        val dryRun = input["dry_run"]?.jsonPrimitive?.booleanOrNull == true
+        val result = if (dryRun) workspace.dryRunRig(input.text("state"), buildJsonArray { add(command) }, MutationAuthor.AGENT).compact()
+            else workspace.authorRig(input.text("state"), buildJsonArray { add(command) }, MutationAuthor.AGENT).compact()
         buildJsonObject {
-            put("state", result.historyNodeId); put("id", writtenId)
-            if (!result.applied) put("applied", false)
+            result.forEach(::put)
+            put("id", writtenId)
             if (mode == "glue") {
                 put("mesh_a", command.getValue("mesh_a").jsonPrimitive.content)
                 put("mesh_b", command.getValue("mesh_b").jsonPrimitive.content)
-                val glue = workspace.currentPuppet()?.glues?.firstOrNull { it.id == writtenId }
-                put("pair_count", glue?.pairs?.size ?: 0)
+                if (!dryRun) {
+                    val glue = workspace.currentPuppet()?.glues?.firstOrNull { it.id == writtenId }
+                    put("pair_count", glue?.pairs?.size ?: 0)
+                }
             }
         }
     }
@@ -788,10 +797,40 @@ private fun AgentWorkspaceMutationResult.compact() = buildJsonObject {
     // response keeps the common payload small.
     if (!applied) put("applied", false)
     if (affectedObjectIds.isNotEmpty()) put("changed", JsonArray(affectedObjectIds.map(::JsonPrimitive)))
+    geometrySafety?.let { safety ->
+        put("acceptedByGeometryGate", true)
+        put("wouldChange", applied)
+        put("wouldCommit", applied)
+        put("candidateDiagnostics", safety)
+    }
+}
+private fun AgentRigDryRunResult.compact() = buildJsonObject {
+    put("dryRun", true)
+    put("acceptedByGeometryGate", acceptedByGeometryGate)
+    put("wouldChange", wouldChange)
+    put("wouldCommit", wouldCommit)
+    put("currentState", currentState)
+    put("currentRevision", currentRevision)
+    put("candidateRevision", candidateRevision)
+    put("compiledCommandCount", compiledCommandCount)
+    put("candidateDiagnostics", geometrySafety)
+    geometrySafety["affectedTargets"]?.let { put("affectedTargets", it) }
+    geometrySafety["affectedCoordinates"]?.let { put("affectedCoordinates", it) }
+    put("rejectedReasons", JsonArray((geometrySafety["violations"] as? JsonArray).orEmpty()
+        .mapNotNull { it.jsonObject["reason"]?.jsonPrimitive?.contentOrNull }.distinct().map(::JsonPrimitive)))
 }
 private fun compactResult(value: JsonObject) = CallToolResult(content = listOf(TextContent(value.toString())), structuredContent = value)
 private fun authoringError(e: Exception, workspace: AgentWorkspace): CallToolResult {
-    val value = buildJsonObject { put("error", e.message ?: "Invalid authoring request"); workspace.snapshot().historyHeadNodeId?.let { put("state", it) } }
+    val value = buildJsonObject {
+        put("error", e.message ?: "Invalid authoring request")
+        workspace.snapshot().historyHeadNodeId?.let { put("state", it) }
+        if (e is io.github.psd2live.core.GeometrySafetyRejectedException) {
+            put("acceptedByGeometryGate", false)
+            put("wouldCommit", false)
+            put("candidateDiagnostics", e.safetyReport.toJson())
+            put("rejectedReasons", JsonArray(e.safetyReport.violations.map { it.reason.name }.distinct().map(::JsonPrimitive)))
+        }
+    }
     return CallToolResult(content = listOf(TextContent(value.toString())), structuredContent = value, isError = true)
 }
 private fun string() = buildJsonObject { put("type", "string") }

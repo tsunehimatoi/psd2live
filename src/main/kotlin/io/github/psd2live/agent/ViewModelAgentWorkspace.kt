@@ -1132,13 +1132,92 @@ class ViewModelAgentWorkspace(
 
     override suspend fun authorRig(state: String, edits: kotlinx.serialization.json.JsonArray, author: MutationAuthor): AgentWorkspaceMutationResult {
         val ids = edits.mapNotNull { it.jsonObject["target"]?.jsonPrimitive?.content }.distinct()
-        val result = mutateRigKeyform(state, null, "Authored ${edits.size} ordered edits", ids.firstOrNull() ?: "rig", author) { document, puppet ->
-            val (_, journal) = io.github.psd2live.core.RigAuthoringJournal.compile(puppet, edits)
-            document.copy(rigEdits = document.rigEdits.copy(authoringJournal = document.rigEdits.authoringJournal + journal))
-        }
+        val result = authorRigCandidate(state, edits, author, dryRun = false).mutation!!
         // Every edit was dropped as ineffective: report the targets as untouched rather than as changed,
         // so a caller reading the affected list is not told to re-read objects nothing happened to.
-        return if (result.applied) result.copy(affectedObjectIds = ids) else result
+        return if (result.applied) result.copy(affectedObjectIds = (ids + result.affectedObjectIds).distinct()) else result
+    }
+
+    override suspend fun dryRunRig(state: String, edits: kotlinx.serialization.json.JsonArray, author: MutationAuthor): AgentRigDryRunResult =
+        requireNotNull(authorRigCandidate(state, edits, author, dryRun = true).dryRun)
+
+    private data class RigAuthoringCandidateResult(
+        val mutation: AgentWorkspaceMutationResult? = null,
+        val dryRun: AgentRigDryRunResult? = null,
+    )
+
+    /** The only compile/validation path for both public dry-run and persistent ordered authoring. */
+    private suspend fun authorRigCandidate(
+        expectedHeadNodeId: String,
+        edits: kotlinx.serialization.json.JsonArray,
+        author: MutationAuthor,
+        dryRun: Boolean,
+    ): RigAuthoringCandidateResult = editMutex.withLock {
+        val before = snapshot()
+        val projectId = before.projectId ?: throw IllegalStateException("No PSD is loaded")
+        require(recoveringProjectId != projectId) { "Persisted workspace HEAD is still being restored; retry shortly" }
+        val current = viewModel.state.value
+        require(!current.isAnalyzing && !current.isGenerating) { "Workspace is busy" }
+        val puppet = current.previewModel?.rig?.puppet ?: throw IllegalStateException("No rig preview is available")
+        val baseDocument = documentFrom(current)
+        val tree = synchronized(historyLock) {
+            synchronizeHistory(projectId, before.revisionId, baseDocument).also {
+                if (it.head().node.id != expectedHeadNodeId) throw StaleWorkspaceHeadException(expectedHeadNodeId, it.head().node.id)
+            }
+        }
+        val baseline = rigBaseline(current, baseDocument, puppet)
+        val (candidate, journal) = io.github.psd2live.core.RigAuthoringJournal.compile(baseline, edits)
+        val safety = io.github.psd2live.core.GeometrySafetyEvaluator.evaluate(baseline, candidate)
+        val safetyJson = safety.toJson()
+        val nextDocument = baseDocument.copy(rigEdits = baseDocument.rigEdits.copy(
+            authoringJournal = baseDocument.rigEdits.authoringJournal + journal,
+        ))
+        val nextRevision = revisionId(current, nextDocument)
+        val wouldChange = nextRevision != revisionId(current, baseDocument)
+
+        if (dryRun) return@withLock RigAuthoringCandidateResult(dryRun = AgentRigDryRunResult(
+            currentState = before.historyHeadNodeId ?: expectedHeadNodeId,
+            currentRevision = before.revisionId,
+            candidateRevision = nextRevision,
+            acceptedByGeometryGate = safety.safe,
+            wouldChange = wouldChange,
+            wouldCommit = wouldChange && safety.safe,
+            compiledCommandCount = journal.size,
+            geometrySafety = safetyJson,
+        ))
+
+        if (!safety.safe) throw io.github.psd2live.core.GeometrySafetyRejectedException(safety)
+        val summary = "Authored ${edits.size} ordered edits"
+        if (!wouldChange) return@withLock RigAuthoringCandidateResult(mutation = AgentWorkspaceMutationResult(
+            historyNodeId = before.historyHeadNodeId ?: expectedHeadNodeId,
+            revisionId = before.revisionId,
+            summary = summary,
+            applied = false,
+            geometrySafety = safetyJson,
+        ))
+
+        // Persistence begins only after the complete compiled candidate has passed the gate.
+        val preview = viewModel.buildAgentWorkspacePreview(nextDocument.source, nextDocument.toConfig(current))
+        val selection = synchronized(historyLock) {
+            require(historyTree === tree && tree.head().node.id == before.historyHeadNodeId) { "Workspace history changed during the operation; refresh HEAD" }
+            applyPreviewOrThrow(preview, baseDocument, nextDocument, summary)
+            tree.commit(expectedHeadNodeId, nextDocument, nextRevision, nextRevision, summary, author.historyActor, null)
+        }
+        scheduleHistoryPersistence(projectId, tree)
+        viewModel.loadAgentWorkspacePreview(preview)
+        viewModel.addLog(
+            message = if (author == MutationAuthor.USER) "Editor: $summary" else "Agent Keyform: $summary",
+            level = io.github.psd2live.ui.state.LogLevel.INFO,
+            source = author.logSource,
+            tag = if (author == MutationAuthor.USER) "Edit" else "Keyform",
+        )
+        RigAuthoringCandidateResult(mutation = AgentWorkspaceMutationResult(
+            historyNodeId = selection.node.id,
+            revisionId = nextRevision,
+            summary = summary,
+            affectedObjectIds = safety.affectedTargets,
+            geometrySafety = safetyJson,
+        ))
     }
 
     override suspend fun createArtwork(arguments: kotlinx.serialization.json.JsonObject): AgentWorkspaceMutationResult = editMutex.withLock {

@@ -25,6 +25,7 @@ class AuthoringParityTest {
         var classified: Pair<String, LayerClassificationOverride>? = null
         var armature: SkeletonSpec? = null
         var clips: List<MotionClip> = emptyList()
+        var dryRunCalls = 0
         override fun skeletonSpec() = armature
         override fun proposeSkeleton() = SkeletonSpec(bones = listOf(
             SkeletonBone("body", "Body", null, BoneRole.LOWER_BODY, headX = 0f, headY = 0f, tailX = 0f, tailY = 10f)))
@@ -55,6 +56,19 @@ class AuthoringParityTest {
             assertEquals("head", expectedHead)
             classified = layerId to classification
             return AgentWorkspaceMutationResult("next", "revision-next", listOf(layerId), "classified")
+        }
+        override suspend fun dryRunRig(state: String, edits: JsonArray, author: MutationAuthor): AgentRigDryRunResult {
+            assertEquals("head", state)
+            assertEquals(MutationAuthor.AGENT, author)
+            assertEquals(1, edits.size)
+            dryRunCalls++
+            val safety = buildJsonObject {
+                put("safe", true)
+                putJsonArray("affectedTargets") { add("mesh:m") }
+                putJsonObject("affectedCoordinates") { putJsonArray("mesh:m") { add(buildJsonObject { put("P", 0f) }) } }
+                putJsonArray("violations") { }
+            }
+            return AgentRigDryRunResult("head", "revision", "candidate", true, true, true, 1, safety)
         }
         override suspend fun renderLayer(layerId: String, background: AgentViewBackground, output: AgentViewOutputSpec): AgentRenderedView = error("unused")
         override suspend fun renderContext(layerId: String, objectScale: Float, aspectRatio: Float, background: AgentViewBackground, output: AgentViewOutputSpec): AgentRenderedView = error("unused")
@@ -92,6 +106,28 @@ class AuthoringParityTest {
         assertTrue(server.tools.getValue("asset").tool.inputSchema.properties.toString().contains("psd"))
         assertFalse("parameter_delete" in server.tools.keys)
         assertTrue(server.tools.getValue("parameter").tool.inputSchema.properties.toString().contains("delete"))
+        assertTrue(server.tools.getValue("deform").tool.inputSchema.properties.toString().contains("dry_run"))
+    }
+
+    @Test fun publicDeformDryRunReturnsDiscoverableGateEvidence() = runBlocking {
+        val workspace = Workspace()
+        val tool = createAgentMcpServer(workspace).tools.getValue("deform")
+        val result = tool.handler.invoke(connection, CallToolRequest(CallToolRequestParams("deform", buildJsonObject {
+            put("state", "head"); put("dry_run", true)
+            putJsonArray("changes") { add(buildJsonObject {
+                put("target", "mesh:m"); putJsonObject("key") { put("P", 0f) }
+                putJsonArray("operations") { add(buildJsonObject {
+                    put("type", "translate"); putJsonArray("delta") { add(0.1f); add(0f) }
+                }) }
+            }) }
+        })))
+        assertFalse(result.isError == true)
+        assertEquals(1, workspace.dryRunCalls)
+        assertEquals(true, result.structuredContent?.get("dryRun")?.jsonPrimitive?.boolean)
+        assertEquals(true, result.structuredContent?.get("acceptedByGeometryGate")?.jsonPrimitive?.boolean)
+        assertEquals("head", result.structuredContent?.get("currentState")?.jsonPrimitive?.content)
+        assertEquals(1, result.structuredContent?.get("compiledCommandCount")?.jsonPrimitive?.int)
+        assertEquals("mesh:m", result.structuredContent?.get("affectedTargets")?.jsonArray?.single()?.jsonPrimitive?.content)
     }
 
     @Test fun skeletonAndMotionRoutesExposePersistentEdits() = runBlocking {
