@@ -6,7 +6,7 @@ import kotlinx.serialization.json.*
 internal object WorkspaceGeometryQualitySchemas {
     private val s = WorkspaceResultSchema
     private val coordinate = s.dictionary(s.number())
-    private val violation = s.obj(mapOf("reason" to s.choices(*QualityRule.entries.map { it.name }.toTypedArray()),
+    private val violation = s.obj(mapOf("reason" to s.choices(*QualityRule.entries.filter { it.domain == io.github.psd2live.core.quality.QualityDomain.GEOMETRY }.map { it.name }.toTypedArray()),
         "target" to s.handle(), "coordinate" to coordinate, "triangleIds" to s.array(s.integer(0), 1, 32), "detail" to s.string()),
         setOf("reason", "target", "coordinate"))
     private val counts = listOf("newFlipCount", "newDegenerateCount", "newInvalidTopologyCount", "newNonFiniteCount",

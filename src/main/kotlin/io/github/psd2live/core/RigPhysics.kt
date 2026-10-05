@@ -1,5 +1,7 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.core.quality.*
+
 import kotlinx.serialization.json.*
 
 /** How a parameter moves a pendulum's root, or how a pendulum vertex writes a parameter. */
@@ -297,6 +299,11 @@ data class PhysicsGroup(
         put("enabled", enabled)
         if (overridden) put("overridden", true)
         put("active", active)
+        put("quality", QualityInspection.combine(QualityFence.OBSERVATION, listOf(QualityCheckResult("physics:$id", "Catalog activation and output ownership", buildList {
+            issue?.let { add(QualityFinding(QualityRule.PHYSICS_INACTIVE_GROUP, "physics:$id", QualityEvidence.metrics(emptyMap(),
+                mapOf("issue" to it.code.name), it.message))) }
+            shadowedBy?.let { add(QualityFinding(QualityRule.PHYSICS_SHADOWED_GROUP, "physics:$id", QualityEvidence.metrics(emptyMap(), mapOf("owner" to it)))) }
+        }))).toJson())
         issue?.let { put("issue", it.message) }
         shadowedBy?.let { put("replaced_by", it) }
         setting.toJson().forEach { (k, v) -> put(k, v) }

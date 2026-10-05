@@ -1,5 +1,6 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.core.quality.*
 import org.umamo.format.art.SourceArt
 import org.umamo.format.art.SourceLayer
 import java.awt.image.BufferedImage
@@ -310,6 +311,7 @@ data class PipelineAnalysis(
 	val warnings: List<String>,
 	val preview: BufferedImage,
     val calibration: PipelineAnalysis? = null,
+    val qualityFindings: List<QualityFinding> = emptyList(),
 )
 
 /** The exact atlas and rig shown by the workbench before export. */
@@ -333,6 +335,8 @@ data class PipelineResult(
 	val exportedFiles: List<ExportedFile>,
 	val warnings: List<String>,
 	val previewModel: RigPreviewModel,
+    val quality: QualityReport = QualityInspection.combine(QualityFence.EXPORT_PUBLICATION,
+        listOf(QualityCheckResult("export.unchecked", "No quality checks supplied", emptyList(), complete = false))),
 )
 
 fun interface ProgressListener {

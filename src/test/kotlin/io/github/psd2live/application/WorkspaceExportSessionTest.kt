@@ -1,6 +1,7 @@
 package io.github.psd2live.application
 
 import io.github.psd2live.core.*
+import io.github.psd2live.core.quality.*
 import io.github.psd2live.project.*
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
@@ -42,6 +43,17 @@ class WorkspaceExportSessionTest {
         assertTrue(fractions.isNotEmpty() && fractions.last() >= 0.8f)
         assertTrue(fractions.zipWithNext().all { (before, after) -> before <= after })
         validateWorkspaceResult("project_export_model", WorkspaceJobResultSchemas.result("project_export_model"), exported)
+        val quality = exported.getValue("quality").jsonObject
+        assertEquals("export_publication", quality.getValue("fence").jsonPrimitive.content)
+        assertTrue(quality.getValue("can_proceed").jsonPrimitive.boolean)
+        assertTrue(quality.getValue("checks").jsonArray.any { it.jsonObject.getValue("id").jsonPrimitive.content == "model.cmo3" })
+        assertTrue(quality.getValue("findings").jsonArray.any {
+            it.jsonObject["code"] == JsonPrimitive(QualityRule.GENERATION_FEW_SEMANTIC_LAYERS.name) &&
+                it.jsonObject["severity"] == JsonPrimitive("info")
+        })
+        val projectReport = exported.getValue("files").jsonArray.map { Path.of(it.jsonObject.getValue("path").jsonPrimitive.content) }
+            .single { it.toString().endsWith(".psd2live.json") }
+        assertEquals(quality, Json.parseToJsonElement(Files.readString(projectReport)).jsonObject.getValue("quality"))
         assertEquals(original.state, exported.getValue("state").jsonPrimitive.content)
         assertEquals(original.revision, exported.getValue("revision").jsonPrimitive.content)
         val cmo3 = exported.getValue("files").jsonArray.map { Path.of(it.jsonObject.getValue("path").jsonPrimitive.content) }

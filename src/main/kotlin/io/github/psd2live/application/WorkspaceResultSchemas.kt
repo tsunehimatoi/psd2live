@@ -39,6 +39,7 @@ internal object WorkspaceResultSchema {
         fun branch(code: JsonObject, details: Map<String, JsonObject> = emptyMap()) =
             obj(linkedMapOf("code" to code, "message" to string()) + details)
         union(listOf(
+            branch(constant("quality_rejected"), mapOf("diagnostics" to WorkspaceQualitySchemas.report)),
             branch(constant("geometry_unsafe"), mapOf("diagnostics" to WorkspaceGeometryQualitySchemas.report)),
             branch(constant("invalid_request"), mapOf("field" to string())),
             branch(constant("output_contract"), mapOf("field" to string(), "operation" to handle())),

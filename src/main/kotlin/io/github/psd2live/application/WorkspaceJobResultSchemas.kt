@@ -11,7 +11,7 @@ internal object WorkspaceJobResultSchemas {
     private val batch = s.obj(lifecycleFields + mapOf("edit_count" to s.integer(1, 128), "changed" to s.array(s.handle()),
         "geometry_diagnostics" to WorkspaceGeometryQualitySchemas.report), lifecycleFields.keys + setOf("edit_count", "changed"))
     private val modelExport = s.obj(mapOf("state" to s.handle(), "revision" to s.handle(),
-        "files" to s.array(s.obj(mapOf("path" to s.handle(), "bytes" to s.integer(0)))), "warnings" to s.array(s.string())))
+        "files" to s.array(s.obj(mapOf("path" to s.handle(), "bytes" to s.integer(0)))), "warnings" to s.array(s.string()), "quality" to WorkspaceQualitySchemas.report))
     private val psdExport = s.obj(mapOf("state" to s.handle(), "path" to s.handle(), "bytes" to s.integer(0), "layers" to s.integer(0)))
 
     private val results = linkedMapOf(

@@ -1,5 +1,6 @@
 package io.github.psd2live.core.sim
 
+import io.github.psd2live.core.quality.*
 import io.github.psd2live.core.PhysicsSourceType
 import io.github.psd2live.core.RigEditOverlay
 import kotlinx.serialization.json.*
@@ -191,6 +192,9 @@ object SimAuthoring {
         val settled = scene.state.positions()
         for (i in 0 until scene.state.count) restDrift = max(restDrift, hypot(settled[i * 2] - rest[i * 2], settled[i * 2 + 1] - rest[i * 2 + 1]))
         return buildJsonObject {
+            put("quality", QualityInspection.inspect(SimulationQualityInput(edit.id, mapOf(
+                "calibration_residual_px" to residual, "rest_drift_px" to restDrift, "max_stretch_percent" to worstStretch * 100f), scene.notes),
+                listOf(SimulationQualityCheck), QualityFence.OBSERVATION).toJson())
             put("id", edit.id); put("particles", scene.state.count)
             put("pinned", (0 until scene.state.count).count { scene.solver.pinWeight[it] > 0f })
             put("calibration_residual_px", round(residual)); put("rest_drift_px", round(restDrift))
@@ -255,7 +259,11 @@ object SimAuthoring {
         require(overlay.simEdits.any { it.id == id }) { "Simulation not found: $id" }
         // Replay must use the same six-significant-digit offsets as the v1 archive. Keeping the solver's
         // extra precision only in memory changes keyforms (and rendered edge pixels) after reopening.
-        val persisted = bake?.let { SimBakeResult.fromJson(it.toJson()) }
+        val persisted = bake?.let {
+            val quality = it.quality(id, QualityFence.BAKE_PUBLICATION)
+            quality.fence.requireAccepted(quality) { quality.toJson() }
+            SimBakeResult.fromJson(it.toJson())
+        }
         return rebased(overlay, overlay.copy(simEdits = overlay.simEdits.map { if (it.id == id) it.copy(bake = persisted) else it }))
     }
 

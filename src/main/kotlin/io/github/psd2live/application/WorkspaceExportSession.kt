@@ -1,6 +1,7 @@
 package io.github.psd2live.application
 
 import io.github.psd2live.core.*
+import io.github.psd2live.core.quality.*
 import io.github.psd2live.project.config
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
@@ -27,6 +28,7 @@ internal class WorkspaceExportSession(
             val result = runInterruptible(Dispatchers.Default) {
                 pipeline.run(captured.document.source, sourceName, stage, config, progress(context, 0f, 0.9f))
             }
+            result.quality.fence.requireAccepted(result.quality) { result.quality.toJson() }
             val files = result.exportedFiles.map { file ->
                 val relative = stage.relativize(file.path.toAbsolutePath().normalize())
                 require(!relative.isAbsolute && relative.none { it.toString() == ".." }) { "Export escaped its staging directory" }
@@ -39,6 +41,7 @@ internal class WorkspaceExportSession(
                     put("path", paths.second.toString()); put("bytes", file.bytes)
                 }) } }
                 put("warnings", JsonArray(result.warnings.map(::JsonPrimitive)))
+                put("quality", result.quality.toJson())
             }
             return complete(context, files, output)
         } finally { cleanup(stage) }

@@ -1,6 +1,7 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.i18n.tr
+import io.github.psd2live.core.quality.*
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import org.umamo.format.art.SourceArt
@@ -35,19 +36,19 @@ object CharacterAnalyzer {
 		val unitScale = MeshResolution.unitScale(config, source)
 		val layers = initiallyClassified.flatMap { expandLayer(it, config, unitScale) }
 			.filter { it.source.id.raw !in config.deletedLayerIds }
-		val warnings = source.warnings.toMutableList()
+		val findings = source.warnings.map { QualityFinding.message(QualityRule.SOURCE_IMPORT_NOTICE, "source", it) }.toMutableList()
 		val nonEmpty = layers.filter { it.opaquePixels > 0 }
 		require(nonEmpty.isNotEmpty()) { tr("error.psdNoVisibleLayers") }
 
 		val anchors = anchorsFor(nonEmpty)
 
 		val recognized = layers.count { it.semantic.tag != SemanticTag.UNKNOWN }
-		if (recognized < 4) warnings += tr("warning.fewSemanticLayers", recognized)
-		if (nonEmpty.none { it.semantic.tag == SemanticTag.FACE }) warnings += tr("warning.missingFace")
-		if (layers.none { it.semantic.tag in EYE_TAGS }) warnings += tr("warning.missingEyes")
-		if (layers.none { it.semantic.tag in MOUTH_BASE_TAGS }) warnings += tr("warning.missingMouth")
+		if (recognized < 4) findings += QualityFinding.message(QualityRule.GENERATION_FEW_SEMANTIC_LAYERS, "source", tr("warning.fewSemanticLayers", recognized))
+		if (nonEmpty.none { it.semantic.tag == SemanticTag.FACE }) findings += QualityFinding.message(QualityRule.GENERATION_MISSING_FACE, "source", tr("warning.missingFace"))
+		if (layers.none { it.semantic.tag in EYE_TAGS }) findings += QualityFinding.message(QualityRule.GENERATION_MISSING_EYES, "source", tr("warning.missingEyes"))
+		if (layers.none { it.semantic.tag in MOUTH_BASE_TAGS }) findings += QualityFinding.message(QualityRule.GENERATION_MISSING_MOUTH, "source", tr("warning.missingMouth"))
 		val duplicateBaseNames = layers.groupBy { it.semantic.normalizedName }.filterValues { it.size > 1 }.keys
-		if (duplicateBaseNames.isNotEmpty()) warnings += tr("warning.duplicateLayers", duplicateBaseNames.take(6).joinToString())
+		if (duplicateBaseNames.isNotEmpty()) findings += QualityFinding.message(QualityRule.GENERATION_DUPLICATE_NAMES, "source", tr("warning.duplicateLayers", duplicateBaseNames.take(6).joinToString()))
 		val unknown = layers.filter { it.semantic.type == LayerType.PRESET && it.semantic.tag == SemanticTag.UNKNOWN }
 
 		val calibrationIds = config.rigEdits.calibrationLayerIds
@@ -61,7 +62,7 @@ object CharacterAnalyzer {
             require(baseline.layers.size == calibrationIds.size) { "Registration calibration source layers are missing" }
             analyze(baseline, config.copy(deletedLayerIds = emptySet(), rigEdits = config.rigEdits.copy(calibrationLayerIds = emptySet())))
         }
-        return PipelineAnalysis(source, layers, calibration?.anchors ?: anchors, warnings, PreviewRenderer.composite(source), calibration)
+        return PipelineAnalysis(source, layers, calibration?.anchors ?: anchors, findings.filter { it.rule.severity != QualitySeverity.INFO }.map { it.message }, PreviewRenderer.composite(source), calibration, findings)
 	}
 
 	/** Refit rig anchors after the actual renderable mesh footprints replace pixel alpha boxes. */

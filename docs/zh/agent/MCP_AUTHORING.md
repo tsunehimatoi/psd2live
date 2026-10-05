@@ -157,7 +157,7 @@ CMO3 导入共用独立应用层导入器，GUI 入口确认后携带可信用�
 
 质量等级与提交栅栏统一定义在 [质量检验规范](../spec/QUALITY_INSPECTION.md)。检查覆盖受影响对象的父级局部几何，包含普通关键点、混合形关键点与权重限制点的组合。新增局部翻面与明显塌缩为 `info`，新增零面积或近零面积为 `warning`，均允许提交，无需确认。非有限坐标和非法拓扑为 `error`，由统一作者提交栅栏阻止提交，返回 `geometry_unsafe`。既有形态单独计数；整表面的可逆仿射镜像与压缩豁免形态信息。
 
-`diagnostics.quality` 是统一报告，包含 `version/fence/decision/can_commit/complete/scope/findings`；每项 finding 明确 `code/severity/category/target/evidence`。`safe` 只作为 `can_commit` 的兼容别名，不表示美观合格。`violations` 只包含阻断错误，`warnings` 只包含警告，`information` 只包含信息，全部由同一规则表派生。正式提交的 `geometry_diagnostics` 保留与预演相同的报告；没有涉及几何对象时省略该字段。
+`diagnostics.quality` 是统一报告，采用版本 2，包含 `version/fence/decision/can_proceed/can_commit/complete/scope/checks/findings`；每项 finding 明确 `code/severity/category/domain/target/evidence`。`safe` 只作为 `can_commit` 的兼容别名，不表示美观合格。`violations` 只包含阻断错误，`warnings` 只包含警告，`information` 只包含信息，全部由同一规则表派生。正式提交的 `geometry_diagnostics` 保留与预演相同的报告；没有涉及几何对象时省略该字段。
 
 每对象最多采样 16384 个关键点组合。超预算对象在原始数据有效性检查后跳过组合采样，返回覆盖警告 `GEOMETRY_SAMPLING_LIMIT`、`not_sampled` 与 `complete:false`，不阻断有效的作者提交。仍继续检查其他对象。面积不足参考形 1% 为塌缩信息；有向面积绝对值不足 `1e-12` 或比例不超过 `1e-6` 为退化警告，不重复报告极小负面积的翻面。
 
@@ -476,3 +476,9 @@ View 从模型数据渲染 PNG，不依赖桌面截图。`canvas_rect` 给出画
 - [工程存储](../../../src/main/kotlin/io/github/psd2live/project/WorkspaceStore.kt)
 
 本页记录接口，不据此升级[能力实测](../STATUS.md)的评价。完整效果仍需实际模型、宿主与任务样本验证。
+
+## 跨领域质量报告
+
+[统一质量规范](../spec/QUALITY_INSPECTION.md) 同时约束生成、模型完整性、导出、模拟、物理和素材诊断。检验器提供类型化证据与覆盖记录；统一注册表确定等级，流程栅栏决定动作。观察报告、模型导出终态与项目 JSON、模拟响应及烘焙摘要、物理目录、素材处理和配准结果使用版本 2 的 `quality` 报告。旧素材记录允许缺少报告，不据此宣称已完成检验。
+
+`observation` 允许读取包括 error 在内的证据；`authoring_commit/export_publication/bake_publication` 仅阻断 error，信息、警告与覆盖不足保留并放行。通用放行字段为 `can_proceed`，只有作者提交额外提供 `can_commit`。非几何质量拒绝码为 `quality_rejected`，diagnostics 为统一报告；请求无效、状态冲突、取消和 I/O 失败仍使用各自的错误契约。

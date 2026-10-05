@@ -1,5 +1,7 @@
 package io.github.psd2live.application
 
+import io.github.psd2live.core.quality.*
+
 import java.awt.image.BufferedImage
 import kotlin.math.abs
 import kotlin.math.max
@@ -135,9 +137,13 @@ internal fun processGeneratedMatte(image: BufferedImage, hex: String, tolerance:
         }
     }
     val nearMatte = pixels.indices.count { !removed[it] && !protect[it] && distance(original[it]) <= tolerance }
-    val mismatch = borderMatch < .6
+    val quality = QualityInspection.inspect(MatteQualityInput(borderMatch, uncertain, nearMatte, removed.count { it }, unmixed),
+        listOf(MatteQualityCheck), QualityFence.OBSERVATION)
+    val mismatch = quality.findings.any { it.rule == QualityRule.ASSET_MATTE_MISMATCH }
+    val reviewEdges = quality.findings.any { it.rule == QualityRule.ASSET_EDGE_UNCERTAINTY }
     val diagnostic = buildJsonObject {
-        put("status", if (mismatch) "background_mismatch" else if (uncertain>0 || nearMatte>0) "review_edges" else "processed")
+        put("quality", quality.toJson())
+        put("status", if (mismatch) "background_mismatch" else if (reviewEdges) "review_edges" else "processed")
         put("matte_color", hex); put("border_match_fraction", borderMatch)
         put("removed_pixels", removed.count { it }); put("unmixed_edge_pixels", unmixed)
         put("unresolved_edge_pixels", uncertain); put("possible_enclosed_matte_pixels", nearMatte)

@@ -1,5 +1,7 @@
 package io.github.psd2live.application
 
+import io.github.psd2live.core.quality.*
+
 import io.github.psd2live.project.WorkspaceAddLayerRequest
 import io.github.psd2live.project.WorkspaceCanvasPlacement
 import io.github.psd2live.project.WorkspaceImportedPngAsset
@@ -85,7 +87,8 @@ internal class WorkspacePngAssetStore(private val checkCancelled: () -> Unit = {
             put("version", kotlinx.serialization.json.JsonPrimitive(2)); put("reference_id", kotlinx.serialization.json.JsonPrimitive(request.referenceId))
             put("solid_background", kotlinx.serialization.json.JsonPrimitive(request.solidBackground)); put("background_tolerance", kotlinx.serialization.json.JsonPrimitive(request.backgroundTolerance))
             put("registration_required", kotlinx.serialization.json.JsonPrimitive(true)); put("processing", request.processing)
-            put("diagnostics", matte?.diagnostics ?: kotlinx.serialization.json.buildJsonObject { put("mode", kotlinx.serialization.json.JsonPrimitive("native_alpha")) }); put("raw_sha256", kotlinx.serialization.json.JsonPrimitive(sha256(request.png)))
+            put("diagnostics", matte?.diagnostics ?: kotlinx.serialization.json.buildJsonObject { put("mode", kotlinx.serialization.json.JsonPrimitive("native_alpha")); put("quality", QualityInspection.combine(QualityFence.OBSERVATION,
+                listOf(QualityCheckResult("asset.native_alpha", "Supplied alpha channel; no matte removal", emptyList()))).toJson()) }); put("raw_sha256", kotlinx.serialization.json.JsonPrimitive(sha256(request.png)))
             var left=image.width; var top=image.height; var right=0; var bottom=0
             for (i in 0 until image.width*image.height) {
                 if (i % 4096 == 0) checkCancelled()

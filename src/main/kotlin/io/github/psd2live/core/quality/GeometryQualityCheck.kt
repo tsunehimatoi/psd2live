@@ -43,9 +43,10 @@ internal data class GeometryInspectionReport(
     val evidence: List<GeometryEvidence>,
     val diagnostics: List<JsonObject>,
 ) {
-    val quality: QualityReport = QualityFence.AUTHORING_COMMIT.inspect(evidence.map { finding ->
-        QualityFinding(finding.reason, finding.target, JsonObject(finding.toJson() - setOf("reason", "target")))
-    }, SCOPE)
+    val quality: QualityReport = QualityInspection.combine(QualityFence.AUTHORING_COMMIT, listOf(
+        QualityCheckResult("geometry.candidate", SCOPE, evidence.map { finding ->
+            QualityFinding(finding.reason, finding.target, JsonObject(finding.toJson() - setOf("reason", "target")))
+        })))
     val safe: Boolean get() = quality.canCommit
     val violations get() = evidence.filter { it.reason.severity == QualitySeverity.ERROR }
     val warnings get() = evidence.filter { it.reason.severity == QualitySeverity.WARNING }

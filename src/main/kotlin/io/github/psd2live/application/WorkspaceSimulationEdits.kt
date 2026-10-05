@@ -1,6 +1,7 @@
 package io.github.psd2live.application
 
 import io.github.psd2live.core.*
+import io.github.psd2live.core.quality.*
 import io.github.psd2live.core.sim.*
 import io.github.psd2live.project.*
 import kotlinx.coroutines.CancellationException
@@ -74,7 +75,10 @@ internal object WorkspaceSimulationEdits {
         }
         val bake = overlay.simEdits.single { it.id == id }.bake
         val report = buildJsonObject {
-            if (failure != null) put("bake_error", failure)
+            if (failure != null) {
+                put("bake_error", failure)
+                put("quality", SimulationQualityCheck.failedBake(id, failure).toJson())
+            }
             else if (bake !== put.simEdits.single { it.id == id }.bake && bake != null) put("bake", bake.summary())
         }
         return WorkspaceSimulationCandidate(document.copy(rigEdits = overlay, settings = physicsSettings(document.settings, bake != null)), report)
@@ -104,7 +108,9 @@ internal object WorkspaceSimulationEdits {
             applied.toJson().forEach { (key, value) -> put(key, value) }
             putJsonObject("bakes") {
                 for (id in applied.simulationIds) {
-                    failures[id]?.let { put(id, buildJsonObject { put("error", it) }) }
+                    failures[id]?.let { failure -> put(id, buildJsonObject {
+                        put("error", failure); put("quality", SimulationQualityCheck.failedBake(id, failure).toJson())
+                    }) }
                         ?: overlay.simEdits.firstOrNull { it.id == id }?.bake?.let { put(id, it.summary()) }
                 }
             }

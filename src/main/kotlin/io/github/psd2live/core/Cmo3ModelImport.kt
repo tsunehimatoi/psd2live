@@ -1,5 +1,7 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.core.quality.*
+
 import org.umamo.format.art.*
 import org.umamo.format.cmo3.Cmo3
 import org.umamo.format.cmo3.model.custom.CModelSource
@@ -185,7 +187,8 @@ internal object Cmo3ModelImport {
         val box = Bounds(0f, 0f, source.widthPx.toFloat(), source.heightPx.toFloat())
         val anchors = if (layers.any { it.opaquePixels > 0 }) CharacterAnalyzer.anchorsFor(layers)
             else RigAnchors(box, box, box, box.centerX, box.centerY, box.centerX, box.bottom, box.centerY, box.bottom)
-        return PipelineAnalysis(source, layers, anchors, source.warnings, PreviewRenderer.composite(source))
+        return PipelineAnalysis(source, layers, anchors, source.warnings, PreviewRenderer.composite(source),
+            qualityFindings = source.warnings.map { QualityFinding.message(QualityRule.SOURCE_IMPORT_NOTICE, "source", it) })
     }
 
     /** Imported atlas coordinates address image pages, whereas source partitions address canvas art.

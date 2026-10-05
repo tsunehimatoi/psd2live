@@ -1,6 +1,7 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.i18n.tr
+import io.github.psd2live.core.quality.*
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import org.umamo.edit.withDeformerDeleted
@@ -105,6 +106,7 @@ data class BuiltRig(
 	val faceRadiusY: Float,
 	val warnings: List<String>,
 	val initialHeadAngleZ: Float = 0f,
+    val qualityFindings: List<QualityFinding> = emptyList(),
 )
 
 internal data class MeshData(
@@ -697,6 +699,7 @@ object RigBuilder {
 		val faceRig = context.faceRig
 		val shouldBuildDeformers = context.deformersEnabled
 		val warnings = mutableListOf<String>()
+        val qualityFindings = mutableListOf<QualityFinding>()
 		val headPartId = PartId("PartHead")
 		val facePartId = PartId("PartFace")
 		val frontHairPartId = PartId("PartHairFront")
@@ -791,7 +794,7 @@ object RigBuilder {
 		for ((drawIndex, layer) in orderedLayers.withIndex()) {
 			val placement = atlas.placementByLayerId[layer.source.id.raw]
 			if (placement == null || layer.opaquePixels == 0) {
-				warnings += tr("warning.emptyLayerSkipped", layer.source.name)
+				qualityFindings += QualityFinding.message(QualityRule.GENERATION_EMPTY_LAYER, "layer:${layer.source.id.raw}", tr("warning.emptyLayerSkipped", layer.source.name))
 				continue
 			}
 			val rigLayer = context.rigLayer(layer)
@@ -986,6 +989,7 @@ object RigBuilder {
 			faceRig.radiusY,
 			warnings,
 			faceRig.initialAngleZ,
+            qualityFindings,
 		)
 	}
 

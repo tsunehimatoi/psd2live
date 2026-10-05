@@ -1,6 +1,7 @@
 package io.github.psd2live.agent
 
 import io.github.psd2live.application.*
+import io.github.psd2live.core.quality.*
 import io.github.psd2live.project.*
 import io.modelcontextprotocol.kotlin.sdk.server.ClientConnection
 import io.modelcontextprotocol.kotlin.sdk.types.*
@@ -27,6 +28,7 @@ class AgentOperationToolsTest {
             release.await()
             return buildJsonObject {
                 put("state", state); put("revision", "revision"); put("warnings", JsonArray(emptyList()))
+                put("quality", QualityInspection.combine(QualityFence.EXPORT_PUBLICATION, emptyList()).toJson())
                 putJsonArray("files") { add(buildJsonObject { put("path", outputDirectory + "/model.cmo3"); put("bytes", 42) }) }
             }
         }

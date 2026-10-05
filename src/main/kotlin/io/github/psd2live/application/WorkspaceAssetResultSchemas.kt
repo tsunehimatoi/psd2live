@@ -16,9 +16,9 @@ internal object WorkspaceAssetResultSchemas {
         "status" to s.choices("background_mismatch", "review_edges", "processed"), "matte_color" to s.string(),
         "border_match_fraction" to s.number(0, 1), "removed_pixels" to s.integer(0), "unmixed_edge_pixels" to s.integer(0),
         "unresolved_edge_pixels" to s.integer(0), "possible_enclosed_matte_pixels" to s.integer(0),
-        "orientation_changed" to s.constant(false), "advice" to s.string(),
-    ))
-    private val diagnostic = s.union(listOf(s.obj(mapOf("mode" to s.constant("native_alpha"))), matteDiagnostic))
+        "orientation_changed" to s.constant(false), "advice" to s.string(), "quality" to WorkspaceQualitySchemas.report,
+    ), setOf("status", "matte_color", "border_match_fraction", "removed_pixels", "unmixed_edge_pixels", "unresolved_edge_pixels", "possible_enclosed_matte_pixels", "orientation_changed", "advice"))
+    private val diagnostic = s.union(listOf(s.obj(mapOf("mode" to s.constant("native_alpha"), "quality" to WorkspaceQualitySchemas.report), setOf("mode")), matteDiagnostic))
     private val detailFields = mapOf("version" to s.integer(2, 2), "reference_id" to s.handle(),
         "solid_background" to s.nullable(s.string()), "background_tolerance" to s.integer(0, 64),
         "registration_required" to s.constant(true), "processing" to processing, "diagnostics" to diagnostic,
@@ -38,9 +38,10 @@ internal object WorkspaceAssetResultSchemas {
         "source_parent_id" to s.handle(), "occlusion" to s.string(), "calibration_layer_ids" to s.array(s.handle()), "generation_brief" to s.string())
     private val reference = s.obj(referenceFields, referenceFields.keys - "source_parent_id")
     private val registration = s.obj(record + mapOf("kind" to s.constant("registration"), "asset_id" to s.handle(), "reference_id" to s.handle(),
-        "mode" to s.choices("frame", "landmarks", "absolute"), "transform" to transform, "canvas_bounds" to rectangle,
+        "quality" to WorkspaceQualitySchemas.report, "mode" to s.choices("frame", "landmarks", "absolute"), "transform" to transform, "canvas_bounds" to rectangle,
         "anchor_rms_canvas_units" to s.number(0), "orientation_conflict" to s.boolean(), "orientation" to s.choices("explicit_reflection", "preserved"),
-        "generated_anchors" to anchors, "target_anchors" to anchors, "source_revision" to s.handle(), "current_revision" to s.handle(), "advice" to s.string()))
+        "generated_anchors" to anchors, "target_anchors" to anchors, "source_revision" to s.handle(), "current_revision" to s.handle(), "advice" to s.string()),
+        (record.keys + setOf("kind", "asset_id", "reference_id", "mode", "transform", "canvas_bounds", "anchor_rms_canvas_units", "orientation_conflict", "orientation", "generated_anchors", "target_anchors", "source_revision", "current_revision", "advice")))
     private val inspectedDetails = s.union(listOf(s.obj(emptyMap()), s.obj(detailFields, detailFields.keys - "content_pixel_rect"),
         s.obj(detailFields + mapOf("reference" to reference, "registrations" to s.array(registration), "orientation_diagnostic" to s.string()),
             (detailFields.keys - "content_pixel_rect") + setOf("reference", "registrations", "orientation_diagnostic"))))

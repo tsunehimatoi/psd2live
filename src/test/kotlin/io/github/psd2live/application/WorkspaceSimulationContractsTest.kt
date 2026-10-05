@@ -2,6 +2,7 @@ package io.github.psd2live.application
 
 import io.github.psd2live.core.*
 import io.github.psd2live.core.sim.*
+import io.github.psd2live.core.quality.*
 import kotlinx.serialization.json.*
 import org.umamo.runtime.model.*
 import kotlin.test.*
@@ -33,7 +34,9 @@ class WorkspaceSimulationContractsTest {
         validateOperationSchema(JsonObject(identity + summary), schema("simulation_bake"))
         validateOperationSchema(JsonObject(identity + ("bake" to summary)), schema("simulation_put"))
         validateOperationSchema(identity, schema("simulation_put"))
-        validateOperationSchema(JsonObject(identity + ("bake_error" to JsonPrimitive("No input motion"))), schema("simulation_put"))
+        val failed = QualityInspection.combine(QualityFence.OBSERVATION, listOf(QualityCheckResult("simulation:sway", "Bake failed",
+            listOf(QualityFinding.message(QualityRule.SIMULATION_BAKE_ERROR, "simulation:sway", "No input motion")), complete = false)))
+        validateOperationSchema(JsonObject(identity + mapOf("bake_error" to JsonPrimitive("No input motion"), "quality" to failed.toJson())), schema("simulation_put"))
         val report = SimAuthoring.report(model, edit, hold = 0f, release = 0.2f, wind = 1200f to 0f)
         validateOperationSchema(report, schema("simulation_simulate"))
         assertEquals(listOf(angle.raw, "wind"), report.getValue("phases").jsonArray.map { it.jsonObject.getValue("input").jsonPrimitive.content })
@@ -70,7 +73,9 @@ class WorkspaceSimulationContractsTest {
         val report = buildJsonObject {
             put("simulations", JsonArray(listOf(JsonPrimitive("skirt"))))
             putJsonObject("garments") { put("mesh", garment) }
-            putJsonObject("bakes") { put("skirt", summary); put("other", buildJsonObject { put("error", "No motion") }) }
+            putJsonObject("bakes") { put("skirt", summary); put("other", buildJsonObject {
+                put("error", "No motion"); put("quality", SimulationQualityCheck.failedBake("other", "No motion").toJson())
+            }) }
         }
         val result = JsonObject(identity + report)
         validateOperationSchema(result, schema("model_apply_preset"))

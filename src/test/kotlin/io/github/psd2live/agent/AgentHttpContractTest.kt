@@ -1,5 +1,7 @@
 package io.github.psd2live.agent
 
+import io.github.psd2live.core.quality.*
+
 import io.github.psd2live.application.WorkspaceBackendStub
 
 import io.github.psd2live.application.WorkspaceOperations
@@ -98,6 +100,7 @@ class AgentHttpContractTest {
             release.await()
             return buildJsonObject {
                 put("state", state); put("revision", "revision"); put("warnings", JsonArray(emptyList()))
+                put("quality", QualityInspection.combine(QualityFence.EXPORT_PUBLICATION, emptyList()).toJson())
                 putJsonArray("files") { add(buildJsonObject { put("path", outputDirectory + "/model.cmo3"); put("bytes", 42) }) }
             }
         }
@@ -105,6 +108,7 @@ class AgentHttpContractTest {
             bakes.incrementAndGet(); bakeRelease.await()
             return WorkspaceMutationResult("baked-head", "baked-revision", emptyList(), "Baked simulation",
                 affectedObjectIds = listOf("parameter:SimAxis"), state = "generation:1", projectId = "project") to buildJsonObject {
+                put("quality", QualityInspection.combine(QualityFence.OBSERVATION, emptyList()).toJson())
                 putJsonArray("modes") { add(buildJsonObject { put("parameter", "SimAxis"); put("amplitude_px", 12); put("energy", 1) }) }
                 for (field in listOf("fit_r2", "error_p95_px", "parameter_peak", "clipped_frames", "jerk_ratio")) put(field, 0.5)
             }
@@ -134,6 +138,7 @@ class AgentHttpContractTest {
             cancelled(); progress(1f)
             return buildJsonObject {
                 put("id", id); put("particles", 8); put("pinned", 2); put("phases", JsonArray(emptyList()))
+                put("quality", QualityInspection.combine(QualityFence.OBSERVATION, emptyList()).toJson())
                 put("calibration_residual_px", 0); put("rest_drift_px", 0); put("max_stretch_percent", 1)
             }
         }

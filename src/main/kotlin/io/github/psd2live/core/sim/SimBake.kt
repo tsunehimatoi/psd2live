@@ -1,5 +1,7 @@
 package io.github.psd2live.core.sim
 
+import io.github.psd2live.core.quality.*
+
 import io.github.psd2live.core.RigPhysicsEdit
 import kotlinx.serialization.json.*
 import org.umamo.runtime.model.PuppetModel
@@ -106,7 +108,18 @@ class SimBakeResult(
     }
 
     /** What the panel and MCP show: no arrays. */
+    fun quality(id: String, fence: QualityFence = QualityFence.OBSERVATION, stale: Boolean = false): QualityReport {
+        val finiteGeometry = (statics + modes.map { it.axis }).all { axis -> axis.keys.all(Float::isFinite) &&
+            axis.offsets.values.all { forms -> forms.all { it.all(Float::isFinite) && it.size % 2 == 0 } } } &&
+            modes.all { it.amplitude.isFinite() && it.energy.isFinite() }
+        val checked = QualityInspection.inspect(SimulationQualityInput(id, mapOf("fit_r2" to fit, "error_p95_px" to maxErrorPx,
+            "parameter_peak" to peak, "clipped_frames" to clipped, "jerk_ratio" to jerk), stale = stale, bake = true), listOf(SimulationQualityCheck), fence)
+        return if (finiteGeometry) checked else checked.copy(findings = checked.findings +
+            QualityFinding.message(QualityRule.SIMULATION_NON_FINITE, "simulation:$id", "Baked keys or offsets are not finite coordinate pairs"))
+    }
+
     fun summary() = buildJsonObject {
+        put("quality", quality(fingerprint).toJson())
         putJsonArray("modes") {
             for (mode in modes) addJsonObject { put("parameter", mode.axis.parameter); put("amplitude_px", mode.amplitude); put("energy", mode.energy) }
         }

@@ -1,6 +1,7 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.i18n.tr
+import io.github.psd2live.core.quality.*
 import org.umamo.render.eval.CpuDeformationEvaluator
 import org.umamo.runtime.model.Deformer
 import org.umamo.runtime.model.DrawableId
@@ -17,7 +18,8 @@ import kotlin.math.max
  * A container round-trip is not enough: a model can retain every ID and still place a whole
  * deformer subtree outside the canvas.  This validator compares evaluated canvas-space geometry
  * with the PSD layer bounds. Bounds deviations are diagnostics and must not prevent export;
- * malformed, missing, non-finite or collapsed geometry still fails validation.
+ * Structured findings distinguish quality risks and missing coverage from invalid data;
+ * publication policy belongs to the shared quality fence.
  */
 object RigIntegrityValidator {
 	private enum class LatticeExtent { RowWidth, ColumnHeight }
@@ -25,6 +27,7 @@ object RigIntegrityValidator {
 	data class Result(
 		val boundsByDrawableId: Map<String, Bounds>,
 		val warnings: List<String>,
+        val findings: List<QualityFinding> = emptyList(),
 	)
 
 	fun validateNeutralPose(
@@ -33,7 +36,7 @@ object RigIntegrityValidator {
 		expectedBoundsByDrawableId: Map<String, Bounds>,
 	): Result {
 		val geometry = CpuDeformationEvaluator().evaluate(puppet, emptyMap())
-		val warnings = mutableListOf<String>()
+		val warnings = mutableListOf<QualityFinding>()
 		val actualBounds = linkedMapOf<String, Bounds>()
 		val missing = mutableListOf<String>()
 
@@ -44,7 +47,7 @@ object RigIntegrityValidator {
 				continue
 			}
 			if (positions.size % 2 != 0) {
-				warnings += tr("validation.vertexArrayOdd", label, drawable.id.raw)
+				warnings += QualityFinding.message(QualityRule.MODEL_INVALID_VERTEX_ARRAY, "mesh:${drawable.id.raw}", tr("validation.vertexArrayOdd", label, drawable.id.raw))
 				continue
 			}
 			var left = Float.POSITIVE_INFINITY
@@ -56,7 +59,7 @@ object RigIntegrityValidator {
 				val x = positions[index]
 				val y = -positions[index + 1] // evaluator world Y-up -> PSD/canvas Y-down
 				if (!x.isFinite() || !y.isFinite()) {
-					warnings += tr("validation.nonFiniteVertex", label, drawable.id.raw)
+					warnings += QualityFinding.message(QualityRule.MODEL_NON_FINITE_GEOMETRY, "mesh:${drawable.id.raw}", tr("validation.nonFiniteVertex", label, drawable.id.raw))
 					hasNonFinite = true
 					break
 				}
@@ -76,7 +79,7 @@ object RigIntegrityValidator {
 			}
 			actualBounds[drawable.id.raw] = safeActual
 			if (safeActual.width <= 1e-3f || safeActual.height <= 1e-3f) {
-				warnings += tr("validation.neutralCollapsed", label, drawable.id.raw, safeActual.width, safeActual.height)
+				warnings += QualityFinding.message(QualityRule.MODEL_COLLAPSED_POSE, "mesh:${drawable.id.raw}", tr("validation.neutralCollapsed", label, drawable.id.raw, safeActual.width, safeActual.height))
 			}
 
 			val expected = expectedBoundsByDrawableId[drawable.id.raw] ?: continue
@@ -88,19 +91,19 @@ object RigIntegrityValidator {
 			// Preserve severe deviations (including their bounds) in the export logs/report, but
 			// allow usable geometry to export even when its neutral bounds differ from the PSD.
 			if (centerError > mismatchTolerance || sizeError > mismatchTolerance) {
-				warnings += tr("validation.neutralMismatch", label, drawable.id.raw, expected, safeActual)
+				warnings += QualityFinding.message(QualityRule.MODEL_BOUNDS_MISMATCH, "mesh:${drawable.id.raw}", tr("validation.neutralMismatch", label, drawable.id.raw, expected, safeActual))
 			} else if (centerError > warningTolerance || sizeError > warningTolerance) {
-				warnings += tr("validation.neutralWarning", label, drawable.id.raw, expected, safeActual)
+				warnings += QualityFinding.message(QualityRule.MODEL_BOUNDS_DEVIATION, "mesh:${drawable.id.raw}", tr("validation.neutralWarning", label, drawable.id.raw, expected, safeActual))
 			}
 		}
 
 		if (missing.isNotEmpty()) {
-			warnings += tr("validation.missingNeutralGeometry", label, missing.joinToString())
+			warnings += QualityFinding.message(QualityRule.MODEL_MISSING_GEOMETRY, "model", tr("validation.missingNeutralGeometry", label, missing.joinToString()))
 		}
 		if (actualBounds.size != puppet.drawables.count { it.mesh != null }) {
-			warnings += tr("validation.incompleteNeutralGeometry", label)
+			warnings += QualityFinding.message(QualityRule.MODEL_MISSING_GEOMETRY, "model", tr("validation.incompleteNeutralGeometry", label))
 		}
-		return Result(actualBounds, warnings)
+		return Result(actualBounds, warnings.filter { it.rule.severity != QualitySeverity.INFO }.map { it.message }, warnings)
 	}
 
 	/**
@@ -108,12 +111,12 @@ object RigIntegrityValidator {
 	 * drawable as a single AngleX=0 keyform: that model looks correct at rest but loses geometry as
 	 * soon as the viewer moves the parameter.
 	 */
-	fun validateHeadAnglePoses(
+	fun inspectHeadAnglePoses(
 		label: String,
 		puppet: PuppetModel,
 		neutralBoundsByDrawableId: Map<String, Bounds>,
-	): List<String> {
-		val warnings = mutableListOf<String>()
+	): List<QualityFinding> {
+		val warnings = mutableListOf<QualityFinding>()
 		val poses = listOf(
 			"AngleX=-45" to mapOf(StandardParameters.ANGLE_X to -45f),
 			"AngleX=45" to mapOf(StandardParameters.ANGLE_X to 45f),
@@ -132,7 +135,7 @@ object RigIntegrityValidator {
 					if (missing.isNotEmpty()) add(missing.joinToString { it.raw })
 					if (unexpected.isNotEmpty()) add("extra: " + unexpected.joinToString { it.raw })
 				}.joinToString("; ")
-				warnings += tr("validation.poseGeometryMissing", label, poseName, details)
+				warnings += QualityFinding.message(QualityRule.MODEL_MISSING_GEOMETRY, "model", tr("validation.poseGeometryMissing", label, poseName, details))
 			}
 			for (drawableId in expectedIds) {
 				val positions = geometry.worldPositions[drawableId] ?: continue
@@ -141,17 +144,17 @@ object RigIntegrityValidator {
 				val minimumWidth = max(1e-3f, neutral.width * 0.08f)
 				val minimumHeight = max(1e-3f, neutral.height * 0.08f)
 				if (actual.width < minimumWidth || actual.height < minimumHeight) {
-					warnings += tr("validation.poseCollapsed", label, poseName, drawableId.raw, neutral, actual)
+					warnings += QualityFinding.message(QualityRule.MODEL_COLLAPSED_POSE, "mesh:${drawableId.raw}", tr("validation.poseCollapsed", label, poseName, drawableId.raw, neutral, actual))
 				}
 				if (actual.width > neutral.width * 4f + 4f || actual.height > neutral.height * 4f + 4f) {
-					warnings += tr("validation.poseEnlarged", label, poseName, drawableId.raw, neutral, actual)
+					warnings += QualityFinding.message(QualityRule.MODEL_ENLARGED_POSE, "mesh:${drawableId.raw}", tr("validation.poseEnlarged", label, poseName, drawableId.raw, neutral, actual))
 				}
 				val neutralOpacity = neutralGeometry.opacity[drawableId] ?: 0f
 				val poseOpacity = geometry.opacity[drawableId]
 				if (poseOpacity == null || !poseOpacity.isFinite()) {
-					warnings += tr("validation.poseOpacityInvalid", label, poseName, drawableId.raw)
+					warnings += QualityFinding.message(QualityRule.MODEL_INVALID_OPACITY, "mesh:${drawableId.raw}", tr("validation.poseOpacityInvalid", label, poseName, drawableId.raw))
 				} else if (neutralOpacity > 1e-3f && poseOpacity <= 1e-3f) {
-					warnings += tr("validation.poseOpacityZero", label, poseName, drawableId.raw)
+					warnings += QualityFinding.message(QualityRule.MODEL_HIDDEN_POSE, "mesh:${drawableId.raw}", tr("validation.poseOpacityZero", label, poseName, drawableId.raw))
 				}
 			}
 		}
@@ -165,16 +168,16 @@ object RigIntegrityValidator {
 	 * body's Body Y: leaning in and standing up straight are different poses, and both change the upper
 	 * body's size in perspective, which the rotations hung from it follow on their Body Y keys.
 	 */
-	fun validateDirectionalWarpDimensions(label: String, puppet: PuppetModel): List<String> {
+	fun inspectDirectionalWarpDimensions(label: String, puppet: PuppetModel): List<QualityFinding> {
 		if (puppet.deformers.isEmpty()) return emptyList()
-		val warnings = mutableListOf<String>()
+		val warnings = mutableListOf<QualityFinding>()
 		val warps = puppet.deformers.filterIsInstance<Deformer.Warp>()
 		val byId = warps.associateBy { it.id.raw }
 
 		fun checkWarp(id: String): Deformer.Warp? {
 			val warp = byId[id]
 			if (warp == null) {
-				warnings += tr("validation.missingDirectionalWarp", label, id)
+				warnings += QualityFinding.message(QualityRule.MODEL_MISSING_DIRECTIONAL_WARP, "model", tr("validation.missingDirectionalWarp", label, id))
 			}
 			return warp
 		}
@@ -201,7 +204,7 @@ object RigIntegrityValidator {
 		for (warp in warps.filter { it.id.raw.endsWith("Physics") && it.id.raw.startsWith("DeformHair") }) {
 			val parameter = warp.geometryGrid?.axes?.singleOrNull()?.parameterId
 			if (parameter == null) {
-				warnings += tr("validation.physicsNotSingleAxis", label, warp.id.raw)
+				warnings += QualityFinding.message(QualityRule.MODEL_DIRECTIONAL_ASSUMPTION, "warp:${warp.id.raw}", tr("validation.physicsNotSingleAxis", label, warp.id.raw))
 				continue
 			}
 			auditSymmetricExtent(label, warp, parameter, LatticeExtent.RowWidth, true, warnings)
@@ -216,12 +219,20 @@ object RigIntegrityValidator {
 				if (shaping.any { grid.axes[it].keys[cell.coordinate[it]] != 0f }) continue
 				val form: RotationPivotForm = cell.form
 				if (!form.scale.isFinite() || abs(form.scale - 1f) > 1e-5f) {
-					warnings += tr("validation.directionalRotationScale", label, rotation.id.raw, cell.coordinate.contentToString(), form.scale)
+					warnings += QualityFinding.message(if (form.scale.isFinite()) QualityRule.MODEL_DIRECTIONAL_ASSUMPTION else QualityRule.MODEL_NON_FINITE_GEOMETRY,
+                        "rotation:${rotation.id.raw}", tr("validation.directionalRotationScale", label, rotation.id.raw, cell.coordinate.contentToString(), form.scale))
 				}
 			}
 		}
 		return warnings
 	}
+
+    /** Compatibility presentation for callers that only display text; decisions use typed findings. */
+    fun validateHeadAnglePoses(label: String, puppet: PuppetModel, neutralBoundsByDrawableId: Map<String, Bounds>): List<String> =
+        inspectHeadAnglePoses(label, puppet, neutralBoundsByDrawableId).map { it.message }
+
+    fun validateDirectionalWarpDimensions(label: String, puppet: PuppetModel): List<String> =
+        inspectDirectionalWarpDimensions(label, puppet).map { it.message }
 
 	private fun auditSymmetricExtent(
 		label: String,
@@ -229,16 +240,16 @@ object RigIntegrityValidator {
 		parameter: ParameterId,
 		extent: LatticeExtent,
 		mustEqualNeutral: Boolean,
-		warnings: MutableList<String>,
+		warnings: MutableList<QualityFinding>,
 	) {
 		val grid = warp.geometryGrid
 		if (grid == null) {
-			warnings += tr("validation.missingKeyforms", label, warp.id.raw)
+			warnings += QualityFinding.message(QualityRule.MODEL_DIRECTIONAL_ASSUMPTION, "warp:${warp.id.raw}", tr("validation.missingKeyforms", label, warp.id.raw))
 			return
 		}
 		val axisIndex = grid.axes.indexOfFirst { it.parameterId == parameter }
 		if (axisIndex < 0) {
-			warnings += tr("validation.parameterUnbound", label, warp.id.raw, parameter.raw)
+			warnings += QualityFinding.message(QualityRule.MODEL_DIRECTIONAL_ASSUMPTION, "warp:${warp.id.raw}", tr("validation.parameterUnbound", label, warp.id.raw, parameter.raw))
 			return
 		}
 		val keys = grid.axes[axisIndex].keys
@@ -246,7 +257,7 @@ object RigIntegrityValidator {
 		val positiveIndex = keys.indices.filter { keys[it] > 0f }.maxByOrNull { keys[it] }
 		val neutralIndex = keys.indices.minByOrNull { abs(keys[it]) }
 		if (negativeIndex == null || positiveIndex == null || neutralIndex == null) {
-			warnings += tr("validation.symmetricKeysMissing", label, warp.id.raw, parameter.raw)
+			warnings += QualityFinding.message(QualityRule.MODEL_DIRECTIONAL_ASSUMPTION, "warp:${warp.id.raw}", tr("validation.symmetricKeysMissing", label, warp.id.raw, parameter.raw))
 			return
 		}
 
@@ -258,7 +269,7 @@ object RigIntegrityValidator {
 					val linear = grid.linearIndexOf(coordinate)
 					val cell = grid.cellsByLinearIndex[linear]
 					if (cell == null) {
-						warnings += tr("validation.keyformCellMissing", label, warp.id.raw, coordinate.contentToString())
+						warnings += QualityFinding.message(QualityRule.MODEL_MISSING_KEYFORM, "warp:${warp.id.raw}", tr("validation.keyformCellMissing", label, warp.id.raw, coordinate.contentToString()))
 						return null
 					}
 					return cell.form
@@ -294,14 +305,19 @@ object RigIntegrityValidator {
 		warp: Deformer.Warp,
 		form: WarpLatticeForm,
 		extent: LatticeExtent,
-		warnings: MutableList<String>,
+		warnings: MutableList<QualityFinding>,
 	): FloatArray? {
 		val points = form.controlPoints
 		val expected = (warp.columns + 1) * (warp.rows + 1) * 2
 		if (points.size != expected) {
-			warnings += tr("validation.controlPointCount", label, warp.id.raw, points.size, expected)
+			warnings += QualityFinding.message(QualityRule.MODEL_INVALID_CONTROL_POINTS, "warp:${warp.id.raw}", tr("validation.controlPointCount", label, warp.id.raw, points.size, expected))
 			return null
 		}
+        if (points.any { !it.isFinite() }) {
+            warnings += QualityFinding(QualityRule.MODEL_NON_FINITE_GEOMETRY, "warp:${warp.id.raw}",
+                QualityEvidence.metrics(emptyMap(), mapOf("invalid_field" to "control_points")))
+            return null
+        }
 		return when (extent) {
 			LatticeExtent.RowWidth -> FloatArray(warp.rows + 1) { row ->
 				val left = row * (warp.columns + 1) * 2
@@ -324,11 +340,11 @@ object RigIntegrityValidator {
 		second: Float,
 		pair: String,
 		index: Int,
-		warnings: MutableList<String>,
+		warnings: MutableList<QualityFinding>,
 	) {
 		val tolerance = max(1f, max(abs(first), abs(second))) * 2e-4f
 		if (!first.isFinite() || !second.isFinite() || abs(first - second) > tolerance) {
-			warnings += tr("validation.asymmetricExtent", label, warp.id.raw, parameter.raw, pair, index, first, second)
+			warnings += QualityFinding.message(QualityRule.MODEL_DIRECTIONAL_ASSUMPTION, "warp:${warp.id.raw}", tr("validation.asymmetricExtent", label, warp.id.raw, parameter.raw, pair, index, first, second))
 		}
 	}
 
@@ -336,10 +352,10 @@ object RigIntegrityValidator {
 		label: String,
 		drawableId: DrawableId,
 		positions: FloatArray,
-		warnings: MutableList<String>,
+		warnings: MutableList<QualityFinding>,
 	): Bounds? {
 		if (positions.size < 2 || positions.size % 2 != 0) {
-			warnings += tr("validation.invalidVertexArray", label, drawableId.raw)
+			warnings += QualityFinding.message(QualityRule.MODEL_INVALID_VERTEX_ARRAY, "mesh:${drawableId.raw}", tr("validation.invalidVertexArray", label, drawableId.raw))
 			return null
 		}
 		var left = Float.POSITIVE_INFINITY
@@ -350,7 +366,7 @@ object RigIntegrityValidator {
 			val x = positions[index]
 			val y = -positions[index + 1]
 			if (!x.isFinite() || !y.isFinite()) {
-				warnings += tr("validation.nonFiniteVertex", label, drawableId.raw)
+				warnings += QualityFinding.message(QualityRule.MODEL_NON_FINITE_GEOMETRY, "mesh:${drawableId.raw}", tr("validation.nonFiniteVertex", label, drawableId.raw))
 				return null
 			}
 			left = minOf(left, x)

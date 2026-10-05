@@ -1,6 +1,9 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.i18n.tr
+import io.github.psd2live.core.quality.*
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -14,7 +17,6 @@ import org.umamo.format.moc3.json.Model3Group
 import org.umamo.format.moc3.json.Model3Json
 import org.umamo.format.moc3.json.Model3Motion
 import org.umamo.format.psd.PsdReader
-import org.umamo.interop.ExportNotice
 import org.umamo.interop.cmo3.Cmo3Conversion
 import org.umamo.interop.cmo3.Cmo3Import
 import org.umamo.interop.cmo3FileFormatVersion
@@ -442,10 +444,11 @@ class PSD2LivePipeline {
 		val (_, atlas, baseRig) = prepared
 		val analysis = RigLayerDeletion.analysis(prepared.analysis, config)
 		val rig = RigLayerDeletion.rig(baseRig.withRigEdits(config.rigEdits, config.layerVisibility, config.drawOrderOverrides), prepared.analysis, config)
-		val generatedLabel = tr("validation.generated")
-		val neutralRig = RigIntegrityValidator.validateNeutralPose(generatedLabel, rig.puppet, rig.sourceBoundsByDrawableId)
-		val generatedAngleWarnings = RigIntegrityValidator.validateHeadAnglePoses(generatedLabel, rig.puppet, neutralRig.boundsByDrawableId)
-		val generatedWarpWarnings = RigIntegrityValidator.validateDirectionalWarpDimensions(generatedLabel, rig.puppet)
+        val checks = mutableListOf(QualityCheckResult("generation", "Source classification and mesh generation", analysis.qualityFindings + rig.qualityFindings),
+            ModelIntegrityCheck.inspect(ModelIntegrityInput("model.generated", rig.puppet, rig.sourceBoundsByDrawableId, tr("validation.generated"))))
+        fun quality() = QualityInspection.combine(QualityFence.EXPORT_PUBLICATION, checks)
+        fun fence() { val report = quality(); report.fence.requireAccepted(report) { report.toJson() } }
+        fence()
 		progress.update(tr("progress.keyforms"), 0.58)
 		// CMO3's editable base mesh is canvas-space. The keyform absolutes remain in parent space;
 		// Umamo's conversion preserves that mixed-space invariant exactly.
@@ -454,21 +457,19 @@ class PSD2LivePipeline {
 		val exportPuppet = restMeshesToCanvasSpace(rig.puppet, if (imported) emptyMap() else mapOf(StandardParameters.MOUTH_OPEN to 1.0f))
 		val outputRoot = outputDirectory.toAbsolutePath().normalize()
 		Files.createDirectories(outputRoot)
-		val files = mutableListOf<ExportedFile>()
-		val warnings = (analysis.warnings + rig.warnings + neutralRig.warnings + generatedAngleWarnings + generatedWarpWarnings).toMutableList()
+		val pendingFiles = mutableListOf<Pair<String, ByteArray>>()
+
 		val (runtimeBundle, runtimeReport) = buildRuntimeBundle(baseName, analysis, atlas, rig, config)
 
 		if (config.exportMoc3) {
-			for (file in runtimeBundle.assets) files += writeContained(outputRoot, file.path, file.bytes)
-			warnings += runtimeReport.notices.map { noticeText("MOC3", it) }
+			checks += ExportConversionCheck.inspect(ExportConversionInput("MOC3", runtimeReport.notices))
 			val mocBytes = runtimeBundle.assets.first { it.path.endsWith(".moc3") }.bytes
 			val reimported = Moc3Import.fromMocDocument(Moc3.read(mocBytes), null)
-			warnings += validateRigShape("MOC3", exportPuppet, reimported)
-			val moc3Label = tr("validation.moc3Readback")
-			val mocNeutral = RigIntegrityValidator.validateNeutralPose(moc3Label, reimported, rig.sourceBoundsByDrawableId)
-			warnings += mocNeutral.warnings
-			warnings += RigIntegrityValidator.validateHeadAnglePoses(moc3Label, reimported, mocNeutral.boundsByDrawableId)
-			warnings += RigIntegrityValidator.validateDirectionalWarpDimensions(moc3Label, reimported)
+			checks += ExportIdentityCheck.inspect(ExportIdentityInput("MOC3", exportPuppet, reimported, runtimeReport.notices))
+            checks += ModelIntegrityCheck.inspect(ModelIntegrityInput("model.moc3", reimported, rig.sourceBoundsByDrawableId, tr("validation.moc3Readback")))
+            fence()
+            for (file in runtimeBundle.assets) pendingFiles += file.path to file.bytes
+
 		}
 		progress.update(tr("progress.exportMoc3"), 0.77)
 
@@ -490,26 +491,28 @@ class PSD2LivePipeline {
 			if (physics.isNotEmpty()) Cmo3PhysicsInjector.inject(converted.model.root as CModelSource, physics, config.rigEdits.physicsFps)
 			BezierWarp.configureEditor(converted.model.root as CModelSource, config.rigEdits)
 			val bytes = Cmo3.write(converted.model)
-			files += writeContained(outputRoot, "$baseName.cmo3", bytes)
-			warnings += converted.report.notices.map { noticeText("CMO3", it) }
+			checks += ExportConversionCheck.inspect(ExportConversionInput("CMO3", converted.report.notices))
 			val source = Cmo3.read(bytes).root as? CModelSource ?: error(tr("error.cmo3Root"))
 			val reimported = Cmo3Import.fromModelSource(source)
-			warnings += validateRigShape("CMO3", converted.puppet, reimported)
-			val cmo3Label = tr("validation.cmo3Readback")
-			val cmoNeutral = RigIntegrityValidator.validateNeutralPose(cmo3Label, reimported, rig.sourceBoundsByDrawableId)
-			warnings += cmoNeutral.warnings
-			warnings += RigIntegrityValidator.validateHeadAnglePoses(cmo3Label, reimported, cmoNeutral.boundsByDrawableId)
-			warnings += RigIntegrityValidator.validateDirectionalWarpDimensions(cmo3Label, reimported)
+			checks += ExportIdentityCheck.inspect(ExportIdentityInput("CMO3", converted.puppet, reimported, converted.report.notices))
+            checks += ModelIntegrityCheck.inspect(ModelIntegrityInput("model.cmo3", reimported, rig.sourceBoundsByDrawableId, tr("validation.cmo3Readback")))
+            fence()
+            pendingFiles += "$baseName.cmo3" to bytes
+
 		}
 		progress.update(tr("progress.exportCmo3"), 0.91)
 
-		if (config.exportJson) {
-			val report = projectReport(baseName, analysis, rig, atlas, config, warnings)
+        val qualityReport = quality()
+        val warnings = qualityReport.findings.filter { it.rule.severity != QualitySeverity.INFO }.map { it.message }
+        if (config.exportJson) {
+			val report = JsonObject(Json.parseToJsonElement(projectReport(baseName, analysis, rig, atlas, config, warnings)).jsonObject + ("quality" to qualityReport.toJson())).toString()
 			Json.parseToJsonElement(report)
-			files += writeContained(outputRoot, "$baseName.psd2live.json", report.encodeToByteArray())
+			pendingFiles += "$baseName.psd2live.json" to report.encodeToByteArray()
 		}
+        fence()
+        val files = pendingFiles.map { (path, bytes) -> writeContained(outputRoot, path, bytes) }
 		progress.update(tr("progress.validated"), 1.0)
-		return PipelineResult(analysis, files, warnings, RigPreviewModel(analysis, atlas, rig, config, runtimeBundle, baseRig = baseRig))
+		return PipelineResult(analysis, files, warnings, RigPreviewModel(analysis, atlas, rig, config, runtimeBundle, baseRig = baseRig), qualityReport)
 	}
 
 	internal fun buildRuntimeBundle(
@@ -644,19 +647,6 @@ class PSD2LivePipeline {
 		}
 	}
 
-	private fun validateRigShape(label: String, expected: PuppetModel, actual: PuppetModel): List<String> {
-		val warnings = mutableListOf<String>()
-		fun <T> checkSame(kind: String, left: Set<T>, right: Set<T>) {
-			if (left != right) {
-				warnings += tr("error.rigShape", label, kind, left - right, right - left)
-			}
-		}
-		checkSame(tr("validation.parameter"), expected.parameters.map { it.id.raw }.toSet(), actual.parameters.map { it.id.raw }.toSet())
-		checkSame(tr("validation.deformer"), expected.deformers.map { it.id.raw }.toSet(), actual.deformers.map { it.id.raw }.toSet())
-		checkSame(tr("validation.drawable"), expected.drawables.map { it.id.raw }.toSet(), actual.drawables.map { it.id.raw }.toSet())
-		return warnings
-	}
-
 	private fun writeContained(root: Path, relativeName: String, bytes: ByteArray): ExportedFile {
 		val target = root.resolve(relativeName.replace('/', java.io.File.separatorChar)).normalize()
 		require(target.startsWith(root)) { tr("error.outputEscapesRoot", relativeName) }
@@ -669,13 +659,6 @@ class PSD2LivePipeline {
 		.replace(Regex("[^A-Za-z0-9._-]+"), "_")
 		.trim('_', '.')
 		.ifEmpty { "model" }
-
-	private fun noticeText(format: String, notice: ExportNotice): String =
-		when (notice) {
-			is ExportNotice.MissingSourceArt ->
-				tr("warning.sourceArtRebuilt", format, notice.pageCount)
-			else -> tr("warning.exportNotice", format, notice)
-		}
 
 	private fun projectReport(
 		baseName: String,

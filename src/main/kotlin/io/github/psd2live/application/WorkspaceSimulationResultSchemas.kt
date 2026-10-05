@@ -9,18 +9,19 @@ import org.umamo.runtime.model.VertexGroupKind
 internal object WorkspaceSimulationResultSchemas {
     private val s = WorkspaceResultSchema
     private val summaryFields = linkedMapOf(
+        "quality" to WorkspaceQualitySchemas.report,
         "modes" to s.array(s.obj(mapOf("parameter" to s.handle(), "amplitude_px" to s.number(), "energy" to s.number()))),
         "keys" to s.integer(2), "pendulum" to s.handle(), "segments" to s.integer(1),
         "own_pendulums" to s.array(s.handle(), 1, Int.MAX_VALUE), "static_inputs" to s.array(s.handle(), 1, Int.MAX_VALUE),
     ) + listOf("fit_r2", "error_p95_px", "parameter_peak", "clipped_frames", "jerk_ratio").associateWith { s.number() }
-    private val summaryRequired = setOf("modes", "fit_r2", "error_p95_px", "parameter_peak", "clipped_frames", "jerk_ratio")
+    private val summaryRequired = setOf("quality", "modes", "fit_r2", "error_p95_px", "parameter_peak", "clipped_frames", "jerk_ratio")
     val bakeSummary = s.obj(summaryFields, summaryRequired)
     private val compactFields = WorkspaceAuthoringResultSchemas.compactFields
     private val compactRequired = s.identity.keys
     private val put = s.union(listOf(
         s.obj(compactFields, compactRequired),
         s.obj(compactFields + ("bake" to bakeSummary), compactRequired + "bake"),
-        s.obj(compactFields + ("bake_error" to s.string()), compactRequired + "bake_error"),
+        s.obj(compactFields + mapOf("bake_error" to s.string(), "quality" to WorkspaceQualitySchemas.report), compactRequired + setOf("bake_error", "quality")),
     ))
     private val bake = s.obj(compactFields + summaryFields, compactRequired + summaryRequired)
     private val garmentFields = mapOf("garment" to s.choices(*ClothFit.Wear.entries.map { it.jsonName }.toTypedArray()),
@@ -29,9 +30,9 @@ internal object WorkspaceSimulationResultSchemas {
     private val garments = s.dictionary(s.obj(garmentFields, setOf("garment", "loose", "simulated")))
     private val preset = s.union(listOf(s.obj(compactFields, compactRequired),
         s.obj(compactFields + mapOf("simulations" to s.array(s.handle()), "garments" to garments,
-            "bakes" to s.dictionary(s.union(listOf(bakeSummary, s.obj(mapOf("error" to s.string())))))),
+            "bakes" to s.dictionary(s.union(listOf(bakeSummary, s.obj(mapOf("error" to s.string(), "quality" to WorkspaceQualitySchemas.report)))))),
             compactRequired + setOf("simulations", "bakes"))))
-    private val reportFields = mapOf("id" to s.handle(), "particles" to s.integer(0), "pinned" to s.integer(0),
+    private val reportFields = mapOf("quality" to WorkspaceQualitySchemas.report, "id" to s.handle(), "particles" to s.integer(0), "pinned" to s.integer(0),
         "calibration_residual_px" to s.number(), "rest_drift_px" to s.number(), "max_stretch_percent" to s.number(),
         "phases" to s.array(s.union(listOf(
             s.obj(mapOf("input" to s.handle(), "type" to s.choices("x", "angle"), "peak_px" to s.number(), "after_release_px" to s.number())),
@@ -52,7 +53,7 @@ internal object WorkspaceSimulationResultSchemas {
         "output_names" to s.dictionary(s.handle()), "outputs" to s.dictionary(output))
     private val simulationRequired = setOf("id", "name", "kind", "targets", "material", "inputs")
     val inspectedSimulation = s.union(listOf(s.obj(simulationFields, simulationRequired),
-        s.obj(simulationFields + mapOf("bake" to bakeSummary, "bake_stale" to s.boolean()), simulationRequired + "bake")))
+        s.obj(simulationFields + mapOf("bake" to bakeSummary, "bake_stale" to s.boolean(), "quality" to WorkspaceQualitySchemas.report), simulationRequired + "bake")))
 
     fun forOperation(id: String): JsonObject? = when (id) {
         "simulation_put" -> put
@@ -75,6 +76,6 @@ internal object WorkspacePhysicsResultTypes {
     val group = s.obj(mapOf("id" to s.handle(), "name" to s.handle(), "inputs" to s.array(input), "outputs" to s.array(output),
         "segments" to s.array(segment, 1, Int.MAX_VALUE), "normalization" to s.obj(mapOf("position" to range, "angle" to range)),
         "origin" to s.choices(*PhysicsOrigin.entries.map { it.name.lowercase() }.toTypedArray()), "enabled" to s.boolean(),
-        "overridden" to s.constant(true), "active" to s.boolean(), "issue" to s.string(), "replaced_by" to s.handle()),
+        "overridden" to s.constant(true), "active" to s.boolean(), "issue" to s.string(), "replaced_by" to s.handle(), "quality" to WorkspaceQualitySchemas.report),
         setOf("id", "name", "inputs", "outputs", "segments", "origin", "enabled", "active"))
 }

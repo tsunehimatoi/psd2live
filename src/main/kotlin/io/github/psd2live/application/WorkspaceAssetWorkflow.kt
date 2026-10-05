@@ -1,5 +1,7 @@
 package io.github.psd2live.application
 
+import io.github.psd2live.core.quality.*
+
 
 import io.github.psd2live.project.preview
 
@@ -143,6 +145,7 @@ internal class WorkspaceAssetWorkflow(
         require(bounds.width>0 && bounds.height>0 && bounds.width.toDouble()*bounds.height<=16_777_216) { "Placement exceeds raster size budget" }
         val r=save("registration",buildJsonObject {
             put("asset_id",asset.public.id); put("reference_id",referenceId); put("mode",mode); put("transform",transform.json())
+            put("quality", QualityInspection.inspect(RegistrationQualityInput(asset.public.id, residual, conflict, mode), listOf(RegistrationQualityCheck), QualityFence.OBSERVATION).toJson())
             put("canvas_bounds",bounds.json()); put("anchor_rms_canvas_units",residual); put("orientation_conflict",conflict)
             put("orientation",if(transform.mirrorX xor transform.mirrorY) "explicit_reflection" else "preserved")
             put("generated_anchors",a["generated_anchors"] ?: JsonObject(emptyMap()))

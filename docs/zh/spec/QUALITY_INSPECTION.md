@@ -1,56 +1,89 @@
-# 质量检验等级与提交栅栏
+# 通用质量检验、信息等级与流程栅栏
 
-本文规定模型作者流程的质量检验架构。已实现范围为几何候选检验；不代表所有导出、模拟或素材诊断都已迁移，也不代表模型视觉质量已得到证明。
+本文是生成、作者编辑、模型检查、导出、模拟、物理和素材处理共同遵循的质量检验规范。几何候选检查是其中一个领域实现。新增质量判断必须接入此层，不得在操作处理器或界面中另设提醒等级与拒绝条件。
 
 ## 分层与职责
 
-1. **证据层**：`core/quality/RigGeometryDiagnostics` 测量三角形，`GeometryQualityCheck` 对比原模型与完整重建后的候选，产出稳定规则码、对象、坐标和证据。不直接抛出质量拒绝，不接受调用方的严格程度开关。
-2. **规则与报告层**：`core/quality/QualityInspection.kt` 定义 `QualityRule`、`QualitySeverity`、`QualityCategory`、`QualityFinding` 和 `QualityReport`。规则表是默认等级的唯一来源；传输层从同一规则表生成严格 schema。
-3. **栅栏层**：`QualityFence.AUTHORING_COMMIT` 根据报告决定放行。`application/WorkspaceCandidateQuality` 选择适用检查并在提交前执行栅栏。GUI journal、内部 typed 编辑、MCP 单项/批量及试运行使用同一入口。检测器、界面、操作处理器不自行改变等级或决定拒绝。
+1. **测量与领域检验**：`QualityCheck<C>` 接收明确的上下文，返回 `QualityCheckResult`，包含稳定检查 ID、声明范围、结构化证据和覆盖状态。领域算法保留在各自模块；在证据产生处指定规则，不从本地化消息文本猜测等级。
+2. **规则注册表**：`core/quality/QualityInspection.kt` 的 `QualityRule` 是稳定规则码、默认等级、分类及领域的唯一来源。传输 schema 从同一表生成。调用方不能传入严格模式、覆盖规则等级或临时修改阻断策略。
+3. **检验编排与报告**：`QualityInspection.inspect/combine` 执行检验器、合并证据与逐项覆盖记录。重复检查 ID 为编排错误；未配置或未完成检查产生 `INSPECTION_NOT_RUN`，不能用空成功冒充已检验。编排保留取消检查。
+4. **流程栅栏**：`QualityFence` 使用报告决定是否允许当前动作。应用层选择适用的检验器与栅栏，并在文档 CAS、文件发布、烘焙写入前执行。检验器只描述证据，不自行拒绝质量风险。
+5. **呈现与兼容**：GUI/MCP/导出报告读取同一报告。原有警告字符串、几何兼容字段和测量字段可保留，但等级、范围和动作以统一报告为准。
 
-检查在运行时锁外执行，状态核对与 CAS 仍由工作区命令负责。信息和警告不弹确认、不要求用户豁免、不产生额外历史节点。取消、状态冲突、请求 schema、ID/引用有效性与资源预算等业务不变式使用各自的操作契约；它们不是可以随质量等级降级的美观检查。
+昂贵求值在状态锁外执行，随后核对原 state 并 CAS。信息和警告不弹确认、不要求豁免、不产生额外历史节点。请求 schema、ID/引用有效性、取消、状态冲突、I/O、资源权限和算法不可执行条件仍使用各自的操作契约；不能把所有异常都转成质量警告后继续执行。
 
-## 统一等级
+## 等级、分类与领域
 
-| 等级 | 含义 | 作者提交栅栏 |
+| 等级 | 含义 | 写入/发布栅栏 |
 | --- | --- | --- |
-| `info`（信息） | 可正常制作出的形态变化，供观察者了解 | 放行 |
-| `warning`（警告） | 值得检查的质量风险，或检查覆盖不完整 | 放行，并保留诊断 |
-| `error`（错误） | 数据不满足求值与结构有效性要求 | 阻止提交 |
+| `info` | 中性测量、正常制作选择、可合理出现的形态与制作假设偏离 | 放行并保留证据 |
+| `warning` | 值得复核的质量风险、降级结果或检验覆盖不足 | 放行并保留诊断 |
+| `error` | 已证实的数据有效性或格式完整性错误 | 阻断当前写入/发布 |
 
-等级描述证据，栅栏决定动作；两者是不同概念。当前只实现作者提交栅栏，不能通过布尔参数临时启用一套隐藏的严格策略。将来若新增生成验收或导出栅栏，须在统一栅栏表、公开契约和规范中显式定义，不得改写现有证据等级。
+等级描述证据；栅栏决定动作。`quality` 表示质量判断，`validity` 表示数据有效性，`coverage` 表示检查或派生结果不完整。领域为 `general/geometry/generation/model/export/simulation/physics/asset`；领域只用于归属与展示，不隐含一套额外拒绝策略。
 
-| 稳定规则码 | 分类 | 等级 |
+典型规则如下；完整注册表以 `QualityRule` 为准，新增或调整规则须同时核对本规范与公开契约。
+
+| 规则/情况 | 等级与分类 |
+| --- | --- |
+| 翻面、明显压缩、少语义层、缺少脸/眼/嘴、重复名称、跳过空图层 | `info / quality` |
+| 普通边界偏差、隐藏姿态、方向形变制作假设偏离、源图重建、按导出选项省略隐藏/引导对象、物理输出被覆盖 | `info / quality` |
+| 有限坐标的数值退化、塌缩姿态、较大边界偏差、姿态扩大、格式转换提示 | `warning / quality` |
+| 素材底色不匹配、边缘无法确定、配准方向冲突、物理组未激活 | `warning / quality` |
+| 采样超限、缺少求值几何/关键形、陈旧烘焙、自动烘焙失败、未运行检查 | `warning / coverage` |
+| 非有限坐标/模拟数值、非法拓扑/坐标维度/控制点数量、不合法透明度、导出读回对象身份不一致 | `error / validity` |
+| 模拟拟合与响应测量、素材处理与配准残差测量 | `info / quality`，测量本身不证明视觉合格 |
+
+翻面与压缩可以是正常制作行为。有限坐标下的零面积不等同于文件损坏；NaN、无穷值与索引越界仍属于有效性错误。本项目阈值是诊断规则，不代表 Cubism 导出限制。公开制作背景：[ArtMesh](https://docs.live2d.com/en/cubism-editor-manual/concept-of-artmesh/#culling)、[变形路径](https://docs.live2d.com/en/cubism-editor-manual/deformpath/)。
+
+## 栅栏
+
+| 栅栏 | 使用位置 | 策略 |
 | --- | --- | --- |
-| `GEOMETRY_NEW_FLIP` | `quality` | `info` |
-| `GEOMETRY_NEW_COLLAPSE` | `quality` | `info` |
-| `GEOMETRY_NEW_DEGENERATE` | `quality` | `warning` |
-| `GEOMETRY_SAMPLING_LIMIT` | `coverage` | `warning` |
-| `GEOMETRY_NON_FINITE` | `validity` | `error` |
-| `GEOMETRY_INVALID_TOPOLOGY` | `validity` | `error` |
+| `observation` | inspect、模拟测量、物理目录、素材诊断 | 保留包括 error 在内的全部证据；读取始终放行 |
+| `authoring_commit` | GUI journal、typed 编辑、MCP 单项/批量/试运行 | error 阻断文档提交；info/warning 放行 |
+| `export_publication` | 流水线生成与格式读回、工作区导出 | error 阻断文件发布；info/warning 放行 |
+| `bake_publication` | 烘焙结果写入 `RigEditOverlay` 前 | error 阻断烘焙替换；已有结果不受影响 |
 
-翻面及压缩可用于正常的镜像、布料折叠与姿态制作。有限坐标下的零面积或近零面积也是质量风险，不等同于文件损坏；NaN、无穷值、索引越界与几何维度不匹配仍是有效性错误。Cubism 的 Culling 默认关闭，允许双面绘制；变形路径也明确支持翻折效果。依据：[ArtMesh](https://docs.live2d.com/en/cubism-editor-manual/concept-of-artmesh/#culling)、[变形路径](https://docs.live2d.com/en/cubism-editor-manual/deformpath/)。本文阈值是本项目的诊断规则，不是 Cubism 的导出限制。
+观察栅栏中的 `can_proceed:true` 表示允许读取，不表示可写入。相同证据在各栅栏下的等级始终相同。覆盖不足明确报告，但当前不独立阻断写入；如将来需要必须完成的检查，应新增并声明栅栏规则，不能偷偷提升证据等级。
 
-## 报告与兼容字段
+## 统一报告与公开契约
 
-统一报告位于几何诊断的 `quality` 字段：
+各诊断入口的 `quality` 字段统一采用版本 2：
 
-- `version:1`：协议版本。
-- `fence:"authoring_commit"`：采用的栅栏。
-- `decision`：`accept`、`accept_with_diagnostics` 或 `reject`。
-- `can_commit`：栅栏是否放行；不表示视觉质量合格。
-- `complete`：是否完成声明范围内的检验；采样超预算为 false。即使 true，也不代表覆盖全部动画和视觉行为。
-- `scope`：具体检查边界。
-- `findings`：稳定 `code`、`severity`、`category`、`target` 及结构化 `evidence`。调用方不得从英文详情文本判断等级或业务行为。
+- `version:2`；`fence`；`decision:accept/accept_with_diagnostics/reject`。
+- `can_proceed`：当前栅栏是否放行。作者提交报告额外提供 `can_commit` 兼容字段；其他栅栏不提供该字段。
+- `complete`：全部声明检查均完成且无 coverage 诊断；不代表检查全部动画或视觉行为。
+- `scope`：合并的检查范围；`checks` 逐项提供 `id/scope/complete`。
+- `findings`：`code/severity/category/domain/target/evidence`。通用证据支持 `detail`、数值 `metrics`、字符串 `attributes`，并保留几何的 `coordinate/triangleIds` 兼容字段。
 
-原有 `safe` 保留为 `quality.can_commit` 的兼容别名；`violations` 只包含阻断的错误，`warnings` 只包含警告，新增 `information` 只包含信息。它们从同一证据和规则表派生，不维护另一套分级。试运行的 `would_commit` 还要求候选实际有变化。正式结果的 `geometry_diagnostics` 与试运行的 `diagnostics` 对同一输入及候选应完全一致。
+非有限测量值不直接写入统一证据的 JSON 数字；证据列出 `attributes.non_finite_metrics`。模拟检验将非有限指标分类为有效性错误；其他领域仍须遵守其输入与算法的有效性约束。详细文本只用于说明，不能成为机器判断依据。
 
-## 几何覆盖与数值规则
+几何 `safe` 是 `quality.can_commit` 的兼容别名；`violations` 仅含阻断错误，`warnings` 仅含警告，`information` 仅含信息。试运行 `would_commit` 还要求候选实际有变化。正式 `geometry_diagnostics` 与试运行 `diagnostics` 对同一候选使用同一证据。几何作者拒绝保留 `geometry_unsafe`；其他质量栅栏拒绝使用 `quality_rejected` 和统一报告。
 
-检查受影响对象的父级局部普通关键点、混合形关键点及权重限制点组合，仅检查最终完整重建后的候选。原模型在候选坐标上采样，以区分既有和新增形态；拓扑变化时采用新参考网格。整表面的可逆仿射镜像与压缩豁免翻面和明显塌缩提示。
+模型导出终态与 `.psd2live.json` 包含 quality；旧 warnings 列表从非信息 finding 派生。模拟响应、烘焙摘要、自动烘焙/预设失败、物理目录、素材处理与配准提供同形报告。旧素材记录可无 quality，读取不会虚构旧记录已经完成检查。报告不写入烘焙顶点归档，不改变编辑重放精度。
 
-三角形面积比例不足参考形的 1% 为明显塌缩信息；有向面积绝对值不足 `1e-12` 或面积比例不超过 `1e-6` 为数值退化警告。同一个三角形退化时不再将极小负面积重复标为翻面。
+## 当前检验覆盖
 
-每对象最多展开 16384 个关键点组合；超限对象先检查原始几何有效性，再跳过该对象的组合采样，返回 `GEOMETRY_SAMPLING_LIMIT`、对象级 `not_sampled` 和 `complete:false`。继续检查其他对象，不能用部分结果冒充全覆盖，也不能让预算超限隐藏原始数据错误。
+- **生成**：源导入提示、语义层完整性、重复名称和空图层。源格式的既有字符串提示用显式规则桥接，不解析消息内容。
+- **模型**：中性姿态边界、头部角度极值、方向形变制作假设与控制点维度。检查不能代替完整动画扫描。
+- **导出**：目标格式转换提示、对象身份集合（按类型化提示核对已声明的省略及 ID 缩短）、生成及 MOC3/CMO3 读回模型检验。所有质量栅栏通过后才开始写入文件；工作区继续使用暂存和事务发布。
+- **模拟**：声明场景提示、采样响应与留出烘焙指标、烘焙坐标/模式的有限性与陈旧状态。场景旧 notes 显式桥接为 setup notice，不以文本内容分类；不随意把拟合数值变成合格阈值。
+- **物理**：已有类型化激活问题与输出归属。请求参数的结构约束仍由物理编辑契约负责。
+- **素材**：底色匹配、无法确定的边缘/封闭底色、配准方向与锚点残差。原生 alpha 声明不等同于前景覆盖已经验证。
 
-这些检验不覆盖关键点之间的插值扫描、父级组合变形、Glue、遮罩、像素覆盖、物理或美观。新增检查必须明确范围与未覆盖项，保留可取消性、基线对比和稳定规则码，并补充统一规则及预演/提交契约测试。原始数值查询可以返回测量值；一旦表达质量等级或影响提交，必须进入本规范的规则与栅栏层。
+## 几何领域规则
+
+几何检验比较原模型与完整重建候选，覆盖受影响对象的父级局部普通关键点、混合形关键点及权重限制点组合。原模型在候选坐标上采样以区分既有与新增形态；拓扑变化采用新参考网格。整表面的可逆仿射镜像与压缩豁免翻面和明显塌缩提示。
+
+面积比例不足参考形 1% 为明显塌缩信息；有向面积绝对值不足 `1e-12` 或比例不超过 `1e-6` 为数值退化警告。退化时不将极小负面积重复标为翻面。
+
+每对象最多展开 16384 个关键点组合；超限先检查原始几何有效性，再跳过组合采样，记录 `GEOMETRY_SAMPLING_LIMIT`、`not_sampled` 和 `complete:false`，继续检查其他对象。预算超限不能隐藏原始数据错误。
+
+此领域不覆盖关键点间插值、父级组合变形、Glue、遮罩、像素覆盖、物理或美观。
+
+## 扩展与回归要求
+
+新增检验须声明输入、稳定检查 ID、范围、未覆盖项、规则码和证据。在适用领域实现 `QualityCheck` 或提交类型化 `QualityCheckResult`，由统一编排合并；选择已经声明的流程栅栏并在实际写入前执行。禁止在 GUI/MCP 适配器另造规则或从消息字符串反推级别。
+
+回归须覆盖跨领域等级与 schema 一致性、同一证据的观察/提交差异、未完成检查、无效数据不能修改已有状态或发布文件，以及相关保存重开、历史重放、导出读回和呈现行为。
