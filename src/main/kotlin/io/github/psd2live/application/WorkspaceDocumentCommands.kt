@@ -1,9 +1,7 @@
 package io.github.psd2live.application
 
 import io.github.psd2live.core.RigPreviewModel
-import io.github.psd2live.core.GeometrySafetyEvaluator
-import io.github.psd2live.core.GeometrySafetyRejectedException
-import io.github.psd2live.core.GeometrySafetyReport
+import io.github.psd2live.core.quality.GeometryInspectionReport
 import io.github.psd2live.project.MutationAuthor
 import io.github.psd2live.project.WorkspaceDocument
 import io.github.psd2live.project.WorkspaceMutationResult
@@ -39,7 +37,7 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
         require(batch == null || batch.edits == edits) { "A nested document command cannot replace the active batch" }
         val prepared = prepare(projectId, state, edits, resources)
         val geometry = checkGeometry(prepared)
-        if (!geometry.safe) throw GeometrySafetyRejectedException(geometry)
+        WorkspaceCandidateQuality.requireAccepted(geometry)
         val diagnostics = geometry.takeIf { it.affectedTargets.isNotEmpty() }?.toJson()
         val result = runtime.commitPrepared(projectId, state, summary, author, prepared.draft.document, prepared.model,
             taskId = taskId, auxiliary = prepared.draft.auxiliary.takeIf { it != prepared.before.auxiliary },
@@ -55,7 +53,7 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
 
     /** Same preparation and gate as commit, without projection, CAS, history or resource publication. */
     suspend fun preview(projectId: String, state: String, edits: List<WorkspaceDocumentOperation>): JsonObject {
-        require(edits.all { it.operation in WorkspaceGeometrySafety.operations }) { "Preview supports geometry authoring operations only" }
+        require(edits.all { it.operation in WorkspaceCandidateQuality.operations }) { "Preview supports geometry authoring operations only" }
         require(edits.filter { it.operation in setOf("canvas_warp", "canvas_rotation", "canvas_glue") }
             .all { !it.request["id"]?.jsonPrimitive?.contentOrNull.isNullOrBlank() }) { "Preview creation requires an explicit id; reuse it when committing" }
         val prepared = prepare(projectId, state, edits, null)
@@ -109,11 +107,9 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
         return prepared
     }
 
-    private suspend fun checkGeometry(prepared: WorkspacePreparedDraft<RigPreviewModel>): GeometrySafetyReport =
+    private suspend fun checkGeometry(prepared: WorkspacePreparedDraft<RigPreviewModel>): GeometryInspectionReport =
         runInterruptible(Dispatchers.Default) {
-            if (WorkspaceGeometrySafety.changed(prepared.before.document, prepared.draft.document))
-                GeometrySafetyEvaluator.evaluate(prepared.before.model.rig.puppet, prepared.model.rig.puppet, blockFoldovers = false)
-            else GeometrySafetyReport.noGeometryChange()
+            WorkspaceCandidateQuality.inspect(prepared)
         }
 
     /** Materialized GUI gestures and public authoring operations use this same isolated journal draft. */
@@ -133,7 +129,7 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
             draft.copy(document = previews.normalizeMeshEdits(candidate, model))
         }))
         val geometry = checkGeometry(prepared)
-        if (!geometry.safe) throw GeometrySafetyRejectedException(geometry)
+        WorkspaceCandidateQuality.requireAccepted(geometry)
         val diagnostics = geometry.takeIf { it.affectedTargets.isNotEmpty() }?.toJson()
         return runtime.commitPrepared(projectId, state, summary, author, prepared.draft.document, prepared.model,
             taskId = taskId, beforeCommit = beforeCommit).copy(geometryDiagnostics = diagnostics)

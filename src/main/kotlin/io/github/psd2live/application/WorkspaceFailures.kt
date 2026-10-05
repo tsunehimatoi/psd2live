@@ -23,7 +23,7 @@ internal data class WorkspaceFailure private constructor(
         fun from(failure: Exception): WorkspaceFailure {
             require(failure !is CancellationException) { "Cancellation is a terminal job state, not a failure" }
             val code = when (failure) {
-                is io.github.psd2live.core.GeometrySafetyRejectedException -> "geometry_unsafe"
+                is io.github.psd2live.core.quality.QualityFenceRejectedException -> "geometry_unsafe"
                 is WorkspaceBatchEditException -> "invalid_edit"
                 is WorkspaceValidationException -> "invalid_request"
                 is WorkspaceOutputContractFailure -> "output_contract"
@@ -40,7 +40,7 @@ internal data class WorkspaceFailure private constructor(
             }
             val details = buildJsonObject {
                 when (failure) {
-                    is io.github.psd2live.core.GeometrySafetyRejectedException -> put("diagnostics", failure.safetyReport.toJson())
+                    is io.github.psd2live.core.quality.QualityFenceRejectedException -> put("diagnostics", failure.diagnostics)
                     is WorkspaceValidationException -> put("field", failure.fieldPath)
                     is WorkspaceOutputContractFailure -> {
                         put("field", failure.validation.fieldPath); put("operation", failure.operation)

@@ -9,7 +9,7 @@ internal object WorkspaceJobResultSchemas {
     private val lifecycle = s.obj(lifecycleFields)
     private val source = s.obj(lifecycleFields + ("layers" to s.array(s.handle())))
     private val batch = s.obj(lifecycleFields + mapOf("edit_count" to s.integer(1, 128), "changed" to s.array(s.handle()),
-        "geometry_diagnostics" to WorkspaceGeometrySafetySchemas.report), lifecycleFields.keys + setOf("edit_count", "changed"))
+        "geometry_diagnostics" to WorkspaceGeometryQualitySchemas.report), lifecycleFields.keys + setOf("edit_count", "changed"))
     private val modelExport = s.obj(mapOf("state" to s.handle(), "revision" to s.handle(),
         "files" to s.array(s.obj(mapOf("path" to s.handle(), "bytes" to s.integer(0)))), "warnings" to s.array(s.string())))
     private val psdExport = s.obj(mapOf("state" to s.handle(), "path" to s.handle(), "bytes" to s.integer(0), "layers" to s.integer(0)))
@@ -18,7 +18,7 @@ internal object WorkspaceJobResultSchemas {
         "project_import_psd" to source, "project_create_artwork" to source, "project_import_cmo3" to lifecycle,
         "project_open" to lifecycle, "project_save" to lifecycle, "project_save_as" to lifecycle,
         "project_export_model" to modelExport, "project_export_psd" to psdExport, "workspace_apply_edits" to batch,
-        "workspace_preview_edits" to WorkspaceGeometrySafetySchemas.preview,
+        "workspace_preview_edits" to WorkspaceGeometryQualitySchemas.preview,
     ).apply {
         put("preview_pose", requireNotNull(WorkspaceAuthoringResultSchemas.forOperation("preview_pose")))
         put("paint_session_commit", WorkspacePaintSessionSchemas.commit)

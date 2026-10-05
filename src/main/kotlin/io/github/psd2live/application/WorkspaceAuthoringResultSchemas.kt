@@ -8,7 +8,7 @@ internal object WorkspaceAuthoringResultSchemas {
     private val s = WorkspaceResultSchema
     private val changed = s.array(s.handle(), 1, Int.MAX_VALUE)
     val compactFields = s.identity + mapOf("applied" to s.constant(false), "changed" to changed,
-        "geometry_diagnostics" to WorkspaceGeometrySafetySchemas.report)
+        "geometry_diagnostics" to WorkspaceGeometryQualitySchemas.report)
     private val compact = s.obj(compactFields, s.identity.keys)
     private fun compactWith(fields: Map<String, JsonObject>) = s.obj(compactFields + fields, s.identity.keys + fields.keys)
     private val normalizedFields = s.identity + mapOf("revision" to s.handle(), "applied" to s.boolean())
@@ -52,12 +52,12 @@ internal object WorkspaceAuthoringResultSchemas {
             setOf("project_id", "state", "workspace_id", "time", "playing", "tracking", "pointer_active", "values", "animation", "elapsed"))
         "layer_classify" -> s.obj(s.identity + mapOf("layer_id" to s.handle(), "applied" to s.constant(false)), s.identity.keys + "layer_id")
         "rig_create_warp" -> compactWith(mapOf("target" to s.handle()))
-        "canvas_warp", "canvas_rotation", "canvas_topology" -> s.obj(s.identity + mapOf("id" to s.handle(), "applied" to s.constant(false), "geometry_diagnostics" to WorkspaceGeometrySafetySchemas.report), s.identity.keys + "id")
-        "canvas_glue" -> s.obj(s.identity + mapOf("id" to s.handle(), "applied" to s.constant(false), "mesh_a" to s.handle(), "mesh_b" to s.handle(), "pair_count" to s.integer(0), "geometry_diagnostics" to WorkspaceGeometrySafetySchemas.report),
+        "canvas_warp", "canvas_rotation", "canvas_topology" -> s.obj(s.identity + mapOf("id" to s.handle(), "applied" to s.constant(false), "geometry_diagnostics" to WorkspaceGeometryQualitySchemas.report), s.identity.keys + "id")
+        "canvas_glue" -> s.obj(s.identity + mapOf("id" to s.handle(), "applied" to s.constant(false), "mesh_a" to s.handle(), "mesh_b" to s.handle(), "pair_count" to s.integer(0), "geometry_diagnostics" to WorkspaceGeometryQualitySchemas.report),
             s.identity.keys + setOf("id", "mesh_a", "mesh_b", "pair_count"))
         "path_put" -> s.obj(s.identity + mapOf("path_id" to s.handle(), "target" to s.handle()))
         "path_delete" -> s.obj(s.identity + ("deleted" to s.handle()))
-        "path_deform" -> s.obj(s.identity + mapOf("target" to s.handle(), "key" to key, "changed" to changed, "geometry_diagnostics" to WorkspaceGeometrySafetySchemas.report), s.identity.keys + setOf("target", "key"))
+        "path_deform" -> s.obj(s.identity + mapOf("target" to s.handle(), "key" to key, "changed" to changed, "geometry_diagnostics" to WorkspaceGeometryQualitySchemas.report), s.identity.keys + setOf("target", "key"))
         "source_split_polygon", "source_split_components", "source_split_depth" -> WorkspaceJobResultSchemas.result("project_create_artwork")
         "source_get_components" -> s.obj(mapOf("project_id" to s.handle(), "state" to s.handle(), "revision" to s.handle(),
             "layer_id" to s.handle(), "can_split" to s.boolean(), "count" to s.integer(0), "components" to s.array(s.obj(mapOf(

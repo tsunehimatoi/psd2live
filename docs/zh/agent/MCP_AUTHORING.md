@@ -155,13 +155,13 @@ CMO3 导入共用独立应用层导入器，GUI 入口确认后携带可信用�
 
 `workspace_preview_edits` 使用与正式提交相同的有序候选准备、重建和检查，但不调用投影或 CAS，不改变 state、历史、未保存标志、姿态或资源。它是只读后台任务，仍要求 `request_id/project_id/state`，通过 `job_wait/job_get.result` 获取 `dry_run:true`、输入 `revision`、`candidate_revision`、`would_change`、`would_commit`、新建对象的 `changed` 句柄和 `diagnostics`。创建 Warp、Rotation 或 Glue 时须提供显式 `id`，之后在同一 state 上向 `workspace_apply_edits` 提交相同 edits；候选 revision 才可重复比较。试运行不预留对象 ID，也不授权绕过后续的状态冲突检查。几何以外的成员不接受试运行，支持范围以该操作的 schema 为准。
 
-检查覆盖受影响对象的父级局部几何，包含普通关键点、混合形关键点与权重限制点的组合。非有限坐标、非法拓扑及新增零面积退化会阻止提交，返回 `geometry_unsafe` 和结构化 `diagnostics.violations`。新增局部翻面及面积不足参考三角形 1% 的局部塌缩保存在 `diagnostics.warnings`，默认不阻断：现有作者流程允许有意折叠，不能把翻面数直接当成制作失败。已有翻面、退化和塌缩单独计数，不阻止未新增缺陷的编辑。整张表面的可逆仿射镜像与压缩允许通过，零面积变换仍拒绝。拓扑变更无法沿用旧三角形身份时，使用新网格的参考几何。每对象最多检查 16384 个混合坐标组合；超出预算明确拒绝，不以部分采样冒充检查通过。
+质量等级与提交栅栏统一定义在 [质量检验规范](../spec/QUALITY_INSPECTION.md)。检查覆盖受影响对象的父级局部几何，包含普通关键点、混合形关键点与权重限制点的组合。新增局部翻面与明显塌缩为 `info`，新增零面积或近零面积为 `warning`，均允许提交，无需确认。非有限坐标和非法拓扑为 `error`，由统一作者提交栅栏阻止提交，返回 `geometry_unsafe`。既有形态单独计数；整表面的可逆仿射镜像与压缩豁免形态信息。
 
-诊断只覆盖这些采样点，不证明关键点之间的插值、父级组合变形、Glue、遮罩、像素覆盖、物理或视觉美观。试运行结果属于输入版本；工程后来被编辑或重开时，结果不会变成新版本的依据。
+`diagnostics.quality` 是统一报告，包含 `version/fence/decision/can_commit/complete/scope/findings`；每项 finding 明确 `code/severity/category/target/evidence`。`safe` 只作为 `can_commit` 的兼容别名，不表示美观合格。`violations` 只包含阻断错误，`warnings` 只包含警告，`information` 只包含信息，全部由同一规则表派生。正式提交的 `geometry_diagnostics` 保留与预演相同的报告；没有涉及几何对象时省略该字段。
 
-正式几何作者提交也可返回 `geometry_diagnostics`，包含同样的阻断项和 warnings；几何检查没有涉及对象时省略该字段。无需以修改回滚来表达翻面警告。
+每对象最多采样 16384 个关键点组合。超预算对象在原始数据有效性检查后跳过组合采样，返回覆盖警告 `GEOMETRY_SAMPLING_LIMIT`、`not_sampled` 与 `complete:false`，不阻断有效的作者提交。仍继续检查其他对象。面积不足参考形 1% 为塌缩信息；有向面积绝对值不足 `1e-12` 或比例不超过 `1e-6` 为退化警告，不重复报告极小负面积的翻面。
 
-零面积判定包含浮点误差：三角形有向面积绝对值不足 `1e-12`，或其面积比例不超过参考形的 `1e-6`，视为数值退化；不会因顶点重合留下极小负面积而只报告翻面警告。
+诊断只覆盖声明的采样点，不证明插值过程、父级组合变形、Glue、遮罩、像素覆盖、物理或视觉美观。试运行结果属于输入版本；后续修改或重开不会改变其依据。`would_commit` 表示候选有变化且栅栏放行，检查不完整时也可为 true，须同时读取 `quality.complete`。
 
 GUI 参数定义、文件夹位置和参数关键点可组合为一次共享提交；画布 journal、内部 typed 编辑和字段完成队列也进入同一候选/重建/CAS 边界。GUI 摆动会话、字段编辑、模拟修改和离线烘焙保留开始时的状态，避免把旧结果提交到重开或已变更的工程；GUI 作者由可信适配器指定为 `user`。其余业务准备和状态所有权还在迁移。
 

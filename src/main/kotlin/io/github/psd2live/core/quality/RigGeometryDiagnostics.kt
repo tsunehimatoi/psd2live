@@ -1,4 +1,4 @@
-package io.github.psd2live.core
+package io.github.psd2live.core.quality
 
 import kotlinx.serialization.json.*
 import kotlin.math.abs
@@ -42,10 +42,12 @@ internal object RigGeometryDiagnostics {
             val ratio = b / a
             minimum = minimum?.let { minOf(it, ratio) } ?: ratio
             maximum = maximum?.let { maxOf(it, ratio) } ?: ratio
-            if (ratio < 0) flipped += triangle
             // Float geometry can leave a tiny signed residue when two vertices coincide.
             if (abs(b) < DEGENERATE_AREA_EPSILON || abs(ratio) <= DEGENERATE_AREA_RATIO) degenerate += triangle
-            else if (abs(ratio) < COLLAPSE_AREA_RATIO) collapsed += triangle
+            else {
+                if (ratio < 0) flipped += triangle
+                if (abs(ratio) < COLLAPSE_AREA_RATIO) collapsed += triangle
+            }
         }
         return TriangleStatus(flipped, collapsed, degenerate, degenerateReference, minimum, maximum)
     }

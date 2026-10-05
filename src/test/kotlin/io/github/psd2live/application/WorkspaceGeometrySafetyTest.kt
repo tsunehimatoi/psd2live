@@ -3,6 +3,7 @@ package io.github.psd2live.application
 import io.github.psd2live.core.*
 import io.github.psd2live.project.*
 import kotlinx.coroutines.*
+import io.github.psd2live.core.quality.*
 import kotlinx.serialization.json.*
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
@@ -58,6 +59,11 @@ class WorkspaceGeometrySafetyTest {
             }) }
         }) }
     })
+    private fun pixels(model: RigPreviewModel) = WorkspaceViewRenderer.modelComposite(model, "geometry", mapOf("P" to 0f),
+        model.rig.layerIdByDrawableId.values.toSet(), emptySet(),
+        WorkspaceViewFrame.CanvasRect(Bounds(0f, 0f, model.analysis.source.widthPx.toFloat(), model.analysis.source.heightPx.toFloat())),
+        WorkspaceViewBackground.TRANSPARENT, WorkspaceViewOutputSpec(256)).png
+
     private fun input(runtime: WorkspaceRuntime<RigPreviewModel>, id: String, edits: List<WorkspaceDocumentOperation>) = buildJsonObject {
         val c = runtime.capture()
         put("request_id", id); put("state", c.state); put("project_id", c.projectId)
@@ -68,7 +74,14 @@ class WorkspaceGeometrySafetyTest {
     private suspend fun WorkspaceOperations.wait(job: JsonObject) = call("job_wait", buildJsonObject { put("id", job.getValue("id")) })
 
     @Test fun safeDryRunMatchesCommitAndRejectsDoNotPublishHistoryOrDirtyState() = runBlocking {
-        val runtime = runtime(); val host = Host(runtime); val before = runtime.capture(); val history = runtime.history()
+        var invalidBuild = false
+        val runtime = runtime { document ->
+            val model = builder.build(document)
+            if (!invalidBuild) model else model.copy(rig = model.rig.copy(puppet = model.rig.puppet.copy(
+                drawables = model.rig.puppet.drawables.map { drawable -> drawable.copy(mesh = drawable.mesh?.let { mesh -> org.umamo.runtime.model.DrawableMesh(mesh.positions, mesh.uvs, intArrayOf(0, 1, Int.MAX_VALUE)) }) })))
+        }
+        val host = Host(runtime); val before = runtime.capture(); val history = runtime.history()
+        invalidBuild = true
         WorkspaceOperations(host).use { operations ->
             val unsafe = listOf(deform(runtime, 1f, 0f))
             val preview = operations.wait(operations.call("workspace_preview_edits", input(runtime, "unsafe-preview", unsafe)))
@@ -82,6 +95,7 @@ class WorkspaceGeometrySafetyTest {
             assertEquals("geometry_unsafe", commit.getValue("error").jsonObject.getValue("code").jsonPrimitive.content)
             assertEquals(report.getValue("diagnostics"), commit.getValue("error").jsonObject.getValue("diagnostics"))
             assertEquals(before, runtime.capture()); assertEquals(history, runtime.history())
+            invalidBuild = false
             val safe = listOf(deform(runtime, 0.9f, 0.9f), deform(runtime, 1.1f, 1.1f))
             val request = input(runtime, "safe-preview", safe)
             val job = operations.call("workspace_preview_edits", request)
@@ -107,12 +121,8 @@ class WorkspaceGeometrySafetyTest {
             val expected = evaluator.evaluate(final.model.rig.puppet, emptyMap()).worldPositions
             val actual = evaluator.evaluate(cmo, emptyMap()).worldPositions
             expected.forEach { (id, points) -> points.indices.forEach { assertEquals(points[it], actual.getValue(id)[it], 0.001f) } }
-            fun png(model: RigPreviewModel) = WorkspaceViewRenderer.modelComposite(model, "geometry", mapOf("P" to 0f),
-                model.rig.layerIdByDrawableId.values.toSet(), emptySet(),
-                WorkspaceViewFrame.CanvasRect(Bounds(0f, 0f, model.analysis.source.widthPx.toFloat(), model.analysis.source.heightPx.toFloat())),
-                WorkspaceViewBackground.TRANSPARENT, WorkspaceViewOutputSpec(256)).png
-            val pixels = png(final.model)
-            assertContentEquals(pixels, png(reopened))
+            val pixels = pixels(final.model)
+            assertContentEquals(pixels, pixels(reopened))
             val visual = Path.of("build/geometry-safety-visual"); Files.createDirectories(visual)
             Files.write(visual.resolve("accepted.png"), pixels)
             runtime.checkout(final.projectId, final.state, before.historyHead)
@@ -121,12 +131,9 @@ class WorkspaceGeometrySafetyTest {
         }
     }
 
-    @Test fun internalJournalUsesTheSameGateAndNoopPreviewPreservesCapture() = runBlocking {
+    @Test fun internalJournalAcceptsDegeneracyWarningsAndNoopPreviewPreservesCapture() = runBlocking {
         val runtime = runtime(); val commands = WorkspaceDocumentCommands(runtime); val before = runtime.capture()
         val change = deform(runtime, 1f, 0f).request.getValue("changes").jsonArray.single().jsonObject
-        assertFailsWith<GeometrySafetyRejectedException> { commands.executeJournal(before.projectId, before.state, "GUI geometry",
-            JsonArray(listOf(JsonObject(change + ("op" to JsonPrimitive("deform"))))), MutationAuthor.USER) }
-        assertEquals(before, runtime.capture())
         // A channel no-op does not create a journal, state or history node.
         val noop = WorkspaceDocumentOperation("object_edit_appearance", buildJsonObject { putJsonArray("edits") {
             add(buildJsonObject { put("action", "static"); put("kind", "mesh"); put("id", before.model.rig.puppet.drawables.first().id.raw); put("opacity", 1f) })
@@ -134,6 +141,20 @@ class WorkspaceGeometrySafetyTest {
         val preview = commands.preview(before.projectId, before.state, listOf(noop))
         assertFalse(preview.getValue("would_change").jsonPrimitive.boolean)
         assertEquals(before, runtime.capture())
+        val warningPreview = commands.preview(before.projectId, before.state, listOf(deform(runtime, 1f, 0f)))
+        assertTrue(warningPreview.getValue("would_commit").jsonPrimitive.boolean)
+        val diagnostics = warningPreview.getValue("diagnostics").jsonObject
+        assertTrue(diagnostics.getValue("warnings").jsonArray.isNotEmpty())
+        assertEquals("accept_with_diagnostics", diagnostics.getValue("quality").jsonObject.getValue("decision").jsonPrimitive.content)
+        assertEquals(before, runtime.capture())
+        val result = commands.executeJournal(before.projectId, before.state, "GUI geometry",
+            JsonArray(listOf(JsonObject(change + ("op" to JsonPrimitive("deform"))))), MutationAuthor.USER)
+        assertTrue(result.applied)
+        assertEquals(diagnostics, result.geometryDiagnostics)
+        val reopened = builder.build(result.capture.document)
+        assertContentEquals(result.capture.model.rig.puppet.drawables.first().geometryGrid!!.cells.first().form.positionDeltas,
+            reopened.rig.puppet.drawables.first().geometryGrid!!.cells.first().form.positionDeltas)
+
     }
 
     @Test fun previewCancellationAndConcurrentCommitDoNotPublishPrivateCandidates() = runBlocking {
@@ -180,7 +201,7 @@ class WorkspaceGeometrySafetyTest {
         assertEquals(3, runtime.history().selections.size)
     }
 
-    @Test fun intentionalFoldoverWarningsSurvivePublicPreviewAndCommitContracts() = runBlocking {
+    @Test fun intentionalFoldoverInformationSurvivesPublicPreviewAndCommitContracts() = runBlocking {
         val runtime = runtime(); val before = runtime.capture()
         val source = deform(runtime, 1f, 0f)
         val change = source.request.getValue("changes").jsonArray.single().jsonObject
@@ -191,11 +212,44 @@ class WorkspaceGeometrySafetyTest {
         WorkspaceOperations(Host(runtime)).use { operations ->
             val preview = operations.wait(operations.call("workspace_preview_edits", input(runtime, "fold-preview", listOf(edit)))).getValue("result").jsonObject
             assertTrue(preview.getValue("would_commit").jsonPrimitive.boolean)
-            assertTrue(preview.getValue("diagnostics").jsonObject.getValue("warnings").jsonArray.isNotEmpty())
+            assertTrue(preview.getValue("diagnostics").jsonObject.getValue("information").jsonArray.isNotEmpty())
+            assertTrue(preview.getValue("diagnostics").jsonObject.getValue("warnings").jsonArray.isEmpty())
             val job = operations.wait(operations.call("workspace_apply_edits", input(runtime, "fold-commit", listOf(edit))))
             assertEquals("completed", job.getValue("status").jsonPrimitive.content)
             assertEquals(preview.getValue("diagnostics"), job.getValue("result").jsonObject.getValue("geometry_diagnostics"))
             assertNotEquals(before.state, runtime.capture().state)
         }
     }
+    @Test fun degeneracyWarningSurvivesPublicCommitArchiveExportAndHistoryReplay() = runBlocking {
+        val runtime = runtime(); val before = runtime.capture()
+        val edits = listOf(deform(runtime, 1f, 0f))
+        WorkspaceOperations(Host(runtime)).use { operations ->
+            val preview = operations.wait(operations.call("workspace_preview_edits", input(runtime, "flat-preview", edits))).getValue("result").jsonObject
+            assertTrue(preview.getValue("would_commit").jsonPrimitive.boolean)
+            assertEquals(before, runtime.capture())
+            val job = operations.wait(operations.call("workspace_apply_edits", input(runtime, "flat-commit", edits)))
+            assertEquals("completed", job.getValue("status").jsonPrimitive.content)
+            val report = job.getValue("result").jsonObject.getValue("geometry_diagnostics").jsonObject
+            assertEquals(preview.getValue("diagnostics"), report)
+            assertTrue(report.getValue("violations").jsonArray.isEmpty())
+            assertTrue(report.getValue("warnings").jsonArray.isNotEmpty())
+            assertEquals("warning", report.getValue("quality").jsonObject.getValue("findings").jsonArray.first().jsonObject.getValue("severity").jsonPrimitive.content)
+            val final = runtime.capture()
+            val archive = temporary.resolve("flat.psd2live")
+            ProjectRepository().save(ProjectSaveCapture(final.projectId, runtime.history(), JsonObject(emptyMap()), null,
+                WorkspaceStore(temporary.resolve("flat-store"))), archive)
+            val reopened = ProjectRepository().open(archive).use { builder.build(it.history.head().snapshot) }
+            assertContentEquals(pixels(final.model), pixels(reopened))
+            val exported = PSD2LivePipeline().run(final.document.source, "flat", temporary.resolve("flat-export"), final.document.config()).exportedFiles
+            val cmo = Cmo3ModelImport.read(Files.readAllBytes(exported.single { it.path.toString().endsWith(".cmo3") }.path)).puppet
+            val evaluator = CpuDeformationEvaluator()
+            val expected = evaluator.evaluate(final.model.rig.puppet, emptyMap()).worldPositions
+            val actual = evaluator.evaluate(cmo, emptyMap()).worldPositions
+            expected.forEach { (id, points) -> points.indices.forEach { assertEquals(points[it], actual.getValue(id)[it], 0.001f) } }
+            runtime.checkout(final.projectId, final.state, before.historyHead)
+            runtime.checkout(final.projectId, runtime.capture().state, final.historyHead)
+            assertEquals(final.revision, runtime.capture().revision)
+        }
+    }
+
 }

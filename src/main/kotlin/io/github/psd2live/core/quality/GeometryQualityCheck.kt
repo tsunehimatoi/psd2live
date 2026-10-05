@@ -1,20 +1,12 @@
-package io.github.psd2live.core
+package io.github.psd2live.core.quality
+
+import io.github.psd2live.core.RigGeometryTools
 
 import kotlinx.serialization.json.*
 import org.umamo.runtime.model.*
 
-/** Stable machine-readable reasons returned by the Agent geometry commit gate. */
-internal enum class GeometrySafetyReason {
-    GEOMETRY_NON_FINITE,
-    GEOMETRY_INVALID_TOPOLOGY,
-    GEOMETRY_NEW_FLIP,
-    GEOMETRY_NEW_DEGENERATE,
-    GEOMETRY_NEW_COLLAPSE,
-    GEOMETRY_SAMPLING_LIMIT,
-}
-
-internal data class GeometrySafetyViolation(
-    val reason: GeometrySafetyReason,
+internal data class GeometryEvidence(
+    val reason: QualityRule,
     val target: String,
     val coordinate: Map<String, Float>,
     val triangleIds: List<Int> = emptyList(),
@@ -32,12 +24,12 @@ internal data class GeometrySafetyViolation(
 /**
  * Structural geometry evidence for one completely compiled candidate model.
  *
- * The evaluator is deliberately parent-local. It proves finite, well-formed native geometry and
- * prevents newly inverted/degenerate/collapsed triangles at affected native key coordinates. It is
+ * The check is deliberately parent-local. Within its declared sampling scope it checks native geometry and
+ * reports changed triangles at affected native key coordinates. Classification and commit decisions
+ * belong to the shared quality rule registry and fence. It is
  * not a visual, mask, painted-coverage, physics, or aesthetic oracle.
  */
-internal data class GeometrySafetyReport(
-    val safe: Boolean,
+internal data class GeometryInspectionReport(
     val affectedTargets: List<String>,
     val affectedCoordinates: Map<String, List<Map<String, Float>>>,
     val newFlipCount: Int,
@@ -48,12 +40,20 @@ internal data class GeometrySafetyReport(
     val preexistingDegenerateCount: Int,
     val preexistingCollapseCount: Int,
     val newCollapseCount: Int,
-    val violations: List<GeometrySafetyViolation>,
+    val evidence: List<GeometryEvidence>,
     val diagnostics: List<JsonObject>,
-    val warnings: List<GeometrySafetyViolation> = emptyList(),
 ) {
+    val quality: QualityReport = QualityFence.AUTHORING_COMMIT.inspect(evidence.map { finding ->
+        QualityFinding(finding.reason, finding.target, JsonObject(finding.toJson() - setOf("reason", "target")))
+    }, SCOPE)
+    val safe: Boolean get() = quality.canCommit
+    val violations get() = evidence.filter { it.reason.severity == QualitySeverity.ERROR }
+    val warnings get() = evidence.filter { it.reason.severity == QualitySeverity.WARNING }
+    val information get() = evidence.filter { it.reason.severity == QualitySeverity.INFO }
+
     fun toJson(): JsonObject = buildJsonObject {
         put("safe", safe)
+        put("quality", quality.toJson())
         put("affectedTargets", JsonArray(affectedTargets.map(::JsonPrimitive)))
         putJsonObject("affectedCoordinates") {
             affectedCoordinates.forEach { (target, coordinates) ->
@@ -74,13 +74,14 @@ internal data class GeometrySafetyReport(
         put("newCollapseCount", newCollapseCount)
         put("violations", JsonArray(violations.map { it.toJson() }))
         put("warnings", JsonArray(warnings.map { it.toJson() }))
+        put("information", JsonArray(information.map { it.toJson() }))
         put("diagnostics", JsonArray(diagnostics))
-        put("scope", "Affected parent-local native key coordinates only; no parent composition, masks, painted coverage, physics, or aesthetics.")
+        put("scope", SCOPE)
     }
 
     companion object {
-        fun noGeometryChange(): GeometrySafetyReport = GeometrySafetyReport(
-            safe = true,
+        const val SCOPE = "Affected parent-local native key coordinates only; no interpolation sweep, parent composition, masks, painted coverage, physics, or aesthetics."
+        fun noGeometryChange(): GeometryInspectionReport = GeometryInspectionReport(
             affectedTargets = emptyList(),
             affectedCoordinates = emptyMap(),
             newFlipCount = 0,
@@ -91,17 +92,14 @@ internal data class GeometrySafetyReport(
             preexistingDegenerateCount = 0,
             preexistingCollapseCount = 0,
             newCollapseCount = 0,
-            violations = emptyList(),
+            evidence = emptyList(),
             diagnostics = emptyList(),
         )
     }
 }
 
-internal class GeometrySafetyRejectedException(val safetyReport: GeometrySafetyReport) :
-    IllegalArgumentException("Geometry safety gate rejected the candidate: " +
-        safetyReport.violations.map { it.reason.name }.distinct().joinToString(","))
-
-internal object GeometrySafetyEvaluator {
+internal object GeometryQualityCheck {
+    private class GeometrySamplingLimit : RuntimeException()
     private data class Target(
         val ref: String,
         val kind: String,
@@ -112,19 +110,20 @@ internal object GeometrySafetyEvaluator {
         val triangles: IntArray,
         val reference: FloatArray,
         val pointCount: Int,
+        val rawFinite: () -> Boolean,
         val rawValidation: () -> String?,
     ) {
         val coordinates by lazy(coordinateSource)
     }
 
-    fun evaluate(before: PuppetModel, candidate: PuppetModel, blockFoldovers: Boolean = true): GeometrySafetyReport {
+    fun evaluate(before: PuppetModel, candidate: PuppetModel): GeometryInspectionReport {
         val beforeTargets = targets(before)
         val afterTargets = targets(candidate)
         val beforeParameters = before.parameters.mapTo(HashSet()) { it.id.raw }
         val direct = (beforeTargets.keys + afterTargets.keys).filterTo(mutableSetOf()) { ref ->
             beforeTargets[ref]?.let { old -> afterTargets[ref]?.let { next -> old.signature != next.signature || old.parent != next.parent } ?: true } ?: true
         }
-        if (direct.isEmpty()) return GeometrySafetyReport.noGeometryChange()
+        if (direct.isEmpty()) return GeometryInspectionReport.noGeometryChange()
 
         // A changed Warp changes the inherited path of descendants even where their local forms are
         // unchanged. Include those descendants in the evidence scope instead of silently skipping them.
@@ -147,7 +146,7 @@ internal object GeometrySafetyEvaluator {
         var oldDegenerates = 0
         var oldCollapses = 0
         var newCollapses = 0
-        val violations = mutableListOf<GeometrySafetyViolation>()
+        val evidence = mutableListOf<GeometryEvidence>()
         val diagnostics = mutableListOf<JsonObject>()
         val coordinateEvidence = linkedMapOf<String, List<Map<String, Float>>>()
 
@@ -162,22 +161,35 @@ internal object GeometrySafetyEvaluator {
             }
             next.rawValidation()?.let { detail ->
                 invalid++
-                violations += GeometrySafetyViolation(GeometrySafetyReason.GEOMETRY_INVALID_TOPOLOGY, ref, emptyMap(), detail = detail)
+                evidence += GeometryEvidence(QualityRule.GEOMETRY_INVALID_TOPOLOGY, ref, emptyMap(), detail = detail)
                 diagnostics += buildJsonObject { put("target", ref); put("status", "invalid_topology"); put("detail", detail) }
                 continue
             }
-            coordinateEvidence[ref] = next.coordinates
-            for (coordinate in next.coordinates) {
+            if (!next.rawFinite()) {
+                nonFinite++
+                evidence += GeometryEvidence(QualityRule.GEOMETRY_NON_FINITE, ref, emptyMap(),
+                    detail = "Non-finite native geometry or UV data")
+                continue
+            }
+            val coordinates = try { next.coordinates } catch (_: GeometrySamplingLimit) {
+                coordinateEvidence[ref] = emptyList()
+                evidence += GeometryEvidence(QualityRule.GEOMETRY_SAMPLING_LIMIT, ref, emptyMap(),
+                    detail = "More than 16384 geometry coordinates; this target was not sampled")
+                diagnostics += buildJsonObject { put("target", ref); put("status", "not_sampled") }
+                continue
+            }
+            coordinateEvidence[ref] = coordinates
+            for (coordinate in coordinates) {
                 checkpoint()
                 val candidatePoints = sample(candidate, next, coordinate)
                 if (candidatePoints == null) {
                     invalid++
-                    violations += GeometrySafetyViolation(GeometrySafetyReason.GEOMETRY_INVALID_TOPOLOGY, ref, coordinate, detail = "Geometry cannot be evaluated at native coordinate")
+                    evidence += GeometryEvidence(QualityRule.GEOMETRY_INVALID_TOPOLOGY, ref, coordinate, detail = "Geometry cannot be evaluated at native coordinate")
                     continue
                 }
                 if (!candidatePoints.all(Float::isFinite)) {
                     nonFinite++
-                    violations += GeometrySafetyViolation(GeometrySafetyReason.GEOMETRY_NON_FINITE, ref, coordinate)
+                    evidence += GeometryEvidence(QualityRule.GEOMETRY_NON_FINITE, ref, coordinate)
                     continue
                 }
                 if (next.triangles.isEmpty()) {
@@ -193,7 +205,7 @@ internal object GeometrySafetyEvaluator {
                 val candidateStatus = runCatching { RigGeometryDiagnostics.inspect(reference, candidatePoints, next.triangles) }.getOrNull()
                 if (referenceStatus == null || candidateStatus == null) {
                     invalid++
-                    violations += GeometrySafetyViolation(GeometrySafetyReason.GEOMETRY_INVALID_TOPOLOGY, ref, coordinate, detail = "Geometry scalar count or triangle indices are malformed")
+                    evidence += GeometryEvidence(QualityRule.GEOMETRY_INVALID_TOPOLOGY, ref, coordinate, detail = "Geometry scalar count or triangle indices are malformed")
                     continue
                 }
                 val oldStatus = oldComparable?.takeIf { it.all(Float::isFinite) }?.let {
@@ -201,7 +213,7 @@ internal object GeometrySafetyEvaluator {
                 }
                 if (oldComparable != null && oldStatus == null) {
                     invalid++
-                    violations += GeometrySafetyViolation(GeometrySafetyReason.GEOMETRY_INVALID_TOPOLOGY, ref, coordinate, detail = "Baseline geometry cannot be compared")
+                    evidence += GeometryEvidence(QualityRule.GEOMETRY_INVALID_TOPOLOGY, ref, coordinate, detail = "Baseline geometry cannot be compared")
                     continue
                 }
 
@@ -210,7 +222,7 @@ internal object GeometrySafetyEvaluator {
                 oldCollapses += oldStatus?.collapsedTriangles?.size ?: 0
 
                 // A whole-surface invertible affine mirror or compression is a valid authoring edit.
-                // Local foldovers, zero-area geometry and non-affine collapses still fail the gate.
+                // Local shape changes are retained as evidence and classified by the shared rule registry.
                 val affine = oldComparable != null && invertibleAffine(oldComparable, candidatePoints, next.triangles)
                 val newlyFlipped = candidateStatus.flippedTriangles.filter { !affine && it !in oldStatus?.flippedTriangles.orEmpty() }
                 val oldDegenerateTriangles = oldStatus?.let { it.degenerateTriangles + it.degenerateReferenceTriangles }.orEmpty()
@@ -221,15 +233,15 @@ internal object GeometrySafetyEvaluator {
                 }
                 if (newlyFlipped.isNotEmpty()) {
                     newFlips += newlyFlipped.size
-                    violations += GeometrySafetyViolation(GeometrySafetyReason.GEOMETRY_NEW_FLIP, ref, coordinate, newlyFlipped)
+                    evidence += GeometryEvidence(QualityRule.GEOMETRY_NEW_FLIP, ref, coordinate, newlyFlipped)
                 }
                 if (newlyDegenerate.isNotEmpty()) {
                     newDegenerates += newlyDegenerate.size
-                    violations += GeometrySafetyViolation(GeometrySafetyReason.GEOMETRY_NEW_DEGENERATE, ref, coordinate, newlyDegenerate)
+                    evidence += GeometryEvidence(QualityRule.GEOMETRY_NEW_DEGENERATE, ref, coordinate, newlyDegenerate)
                 }
                 if (newlyCollapsed.isNotEmpty()) {
                     newCollapses += newlyCollapsed.size
-                    violations += GeometrySafetyViolation(GeometrySafetyReason.GEOMETRY_NEW_COLLAPSE, ref, coordinate, newlyCollapsed)
+                    evidence += GeometryEvidence(QualityRule.GEOMETRY_NEW_COLLAPSE, ref, coordinate, newlyCollapsed)
                 }
                 diagnostics += buildJsonObject {
                     put("target", ref)
@@ -244,12 +256,8 @@ internal object GeometrySafetyEvaluator {
                 }
             }
         }
-        val warnings = if (blockFoldovers) emptyList() else violations.filter {
-            it.reason in setOf(GeometrySafetyReason.GEOMETRY_NEW_FLIP, GeometrySafetyReason.GEOMETRY_NEW_COLLAPSE)
-        }
-        val blockers = violations - warnings.toSet()
-        return GeometrySafetyReport(blockers.isEmpty(), affected.sorted(), coordinateEvidence, newFlips, newDegenerates,
-            invalid, nonFinite, oldFlips, oldDegenerates, oldCollapses, newCollapses, blockers, diagnostics, warnings)
+        return GeometryInspectionReport(affected.sorted(), coordinateEvidence, newFlips, newDegenerates,
+            invalid, nonFinite, oldFlips, oldDegenerates, oldCollapses, newCollapses, evidence, diagnostics)
     }
 
     private fun coordinateDiagnostic(ref: String, coordinate: Map<String, Float>, status: String, points: Int) = buildJsonObject {
@@ -266,7 +274,10 @@ internal object GeometrySafetyEvaluator {
             put(ref, Target(ref, "mesh", drawable.id.raw, drawable.parentDeformerId?.raw,
                 listOf(drawableGeometrySignature(drawable), blendIdentity(drawable.blendShapes) { it.positionDeltas }),
                 { coordinates(drawable.geometryGrid, drawable.blendShapes) }, mesh.indices, mesh.positions,
-                mesh.positions.size / 2) { validateMesh(drawable) })
+                mesh.positions.size / 2, {
+                    mesh.positions.all(Float::isFinite) && mesh.uvs.all(Float::isFinite) &&
+                        formsFinite(drawable.geometryGrid, drawable.blendShapes, { it.positionDeltas }, { it.positionDeltas })
+                }) { validateMesh(drawable) })
         }
         model.deformers.forEach { deformer ->
             when (deformer) {
@@ -275,13 +286,18 @@ internal object GeometrySafetyEvaluator {
                     val domain = warpDomain(deformer.rows, deformer.columns)
                     put(ref, Target(ref, "warp", deformer.id.raw, deformer.parent?.raw,
                         listOf(warpGeometrySignature(deformer), blendIdentity(deformer.blendShapes) { it.controlPoints }), { coordinates(deformer.geometryGrid, deformer.blendShapes) },
-                        RigGeometryDiagnostics.lattice(deformer.rows, deformer.columns), domain, domain.size / 2) { validateWarp(deformer) })
+                        RigGeometryDiagnostics.lattice(deformer.rows, deformer.columns), domain, domain.size / 2, {
+                            formsFinite(deformer.geometryGrid, deformer.blendShapes, { it.controlPoints }, { it.controlPoints })
+                        }) { validateWarp(deformer) })
                 }
                 is Deformer.Rotation -> {
                     val ref = "rotation:${deformer.id.raw}"
                     put(ref, Target(ref, "rotation", deformer.id.raw, deformer.parent?.raw,
                         listOf(rotationGeometrySignature(deformer), blendIdentity(deformer.blendShapes) { floatArrayOf(it.originX, it.originY, it.angle, it.scale) }),
-                        { coordinates(deformer.geometryGrid, deformer.blendShapes) }, IntArray(0), FloatArray(4), 2) { validateRotation(deformer) })
+                        { coordinates(deformer.geometryGrid, deformer.blendShapes) }, IntArray(0), FloatArray(4), 2, {
+                            deformer.baseAngle.isFinite() && (deformer.handleLength?.isFinite() != false) && formsFinite(deformer.geometryGrid, deformer.blendShapes,
+                                { floatArrayOf(it.originX, it.originY, it.angle, it.scale) }, { floatArrayOf(it.originX, it.originY, it.angle, it.scale) })
+                        }) { validateRotation(deformer) })
                 }
             }
         }
@@ -314,6 +330,7 @@ internal object GeometrySafetyEvaluator {
                 }
             }
         }.distinctBy(::coordinateKey).sortedBy(::coordinateKey)
+        if (base.size > 16384) throw GeometrySamplingLimit()
         val axes = linkedMapOf<String, MutableSet<Float>>()
         blends.forEach { blend ->
             axes.getOrPut(blend.parameterId.raw) { linkedSetOf() }.addAll(blend.keys.toList())
@@ -322,13 +339,16 @@ internal object GeometrySafetyEvaluator {
         var result = base
         axes.forEach { (id, values) ->
             require(values.all { it.isFinite() }) { "Blend coordinates must be finite" }
-            if (result.size.toLong() * values.size > 16384) throw GeometrySafetyRejectedException(
-                GeometrySafetyReport.noGeometryChange().copy(safe = false, violations = listOf(
-                    GeometrySafetyViolation(GeometrySafetyReason.GEOMETRY_SAMPLING_LIMIT, "rig", emptyMap(), detail = "More than 16384 geometry coordinates on one target"))))
+            if (result.size.toLong() * values.size > 16384) throw GeometrySamplingLimit()
             result = result.flatMap { coordinate -> values.sorted().map { coordinate + (id to it) } }.distinctBy(::coordinateKey)
         }
         return result
     }
+
+    private fun <T, B : Any> formsFinite(grid: KeyformGrid<T>?, blends: List<BlendShapeBinding<B>>,
+                                         gridValues: (T) -> FloatArray, blendValues: (B) -> FloatArray): Boolean =
+        grid?.cells.orEmpty().all { gridValues(it.form).all(Float::isFinite) } &&
+            blends.all { blend -> blend.forms.filterNotNull().all { blendValues(it).all(Float::isFinite) } }
 
     private fun validateMesh(drawable: Drawable): String? {
         val mesh = drawable.mesh ?: return "Drawable has no mesh"
@@ -355,6 +375,7 @@ internal object GeometrySafetyEvaluator {
         for (blend in blends) {
             if (blend.keys.isEmpty() || blend.keys.size != blend.forms.size || blend.neutralIndex !in blend.keys.indices ||
                 blend.keys.any { !it.isFinite() } || blend.keys.toList().zipWithNext().any { (a, b) -> a >= b }) return "Malformed blend keys"
+            if (blend.limits.any { limit -> limit.points.any { !it.value.isFinite() || !it.weight.isFinite() } }) return "Malformed blend limit coordinates or weights"
             if (blend.forms.filterNotNull().any { values(it).size != count }) return "Malformed blend geometry"
         }
         return null

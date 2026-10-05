@@ -22,7 +22,7 @@ internal object WorkspaceRigGeometry {
         val g=if(preview==null) source else source.copy(points=RigGeometryTools.transform(source,preview,
             a["selection"]?.jsonObject ?: JsonObject(emptyMap()), a["range"]?.jsonObject ?: JsonObject(emptyMap())))
         val reference=if(preview==null) RigGeometryTools.geometry(model,kind,id,emptyMap()).points else source.points
-        val triangles=if(kind=="warp") io.github.psd2live.core.RigGeometryDiagnostics.lattice(g.rows!!,g.columns!!)
+        val triangles=if(kind=="warp") io.github.psd2live.core.quality.RigGeometryDiagnostics.lattice(g.rows!!,g.columns!!)
             else model.drawables.single { it.id.raw==id }.mesh!!.indices
         val offset=a["offset"]?.jsonPrimitive?.int ?: 0
         val limit=a["limit"]?.jsonPrimitive?.int ?: 64
@@ -59,7 +59,7 @@ internal object WorkspaceRigGeometry {
             put("recommendedEditTool","deform")
             put("previewOnly",preview!=null)
             put("diagnosticReference",if(preview==null) "parameter_defaults" else "input_pose_before_operations")
-            put("diagnostics",io.github.psd2live.core.RigGeometryDiagnostics.compare(reference,g.points,triangles))
+            put("diagnostics",io.github.psd2live.core.quality.RigGeometryDiagnostics.compare(reference,g.points,triangles))
             put("pointCount",g.points.size/2);put("keyformCount",g.keyCount)
             g.rows?.let { put("rows",it) };g.columns?.let { put("columns",it) }
             putJsonArray("axes") { g.axes.forEach { axis -> add(buildJsonObject { put("id",axis.parameterId.raw);put("keys",JsonArray(axis.keys.map(::JsonPrimitive))) }) } }

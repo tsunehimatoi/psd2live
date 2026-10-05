@@ -1,10 +1,11 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.core.quality.*
 import kotlinx.serialization.json.*
 import org.umamo.runtime.model.*
 import kotlin.test.*
 
-class GeometrySafetyEvaluatorTest {
+class GeometryQualityCheckTest {
     private val p = ParameterId("P")
     private val q = ParameterId("Q")
     private val base = floatArrayOf(0f, 0f, 1f, 0f, 1f, 1f, 0f, 1f)
@@ -25,7 +26,7 @@ class GeometrySafetyEvaluatorTest {
         for (i in points.indices) result[i] = points[i] - base[i]
     }
 
-    private fun report(before: PuppetModel, after: PuppetModel) = GeometrySafetyEvaluator.evaluate(before, after)
+    private fun report(before: PuppetModel, after: PuppetModel) = GeometryQualityCheck.evaluate(before, after)
 
     @Test fun safeEditPassesAndReportsNativeCoordinate() {
         val before = model()
@@ -37,25 +38,25 @@ class GeometrySafetyEvaluatorTest {
         assertTrue(result.violations.isEmpty())
     }
 
-    @Test fun rejectsNewFlipDegeneracyAndSevereCollapse() {
+    @Test fun classifiesNewFlipDegeneracyAndSevereCollapseWithoutRejectingAuthoring() {
         val before = model()
         val flipped = model(listOf(KeyformCell(intArrayOf(), MeshDeltaForm(deltas(0f, 0f, 1f, 0f, 1f, -1f, 0f, 1f)))))
         val flipReport = report(before, flipped)
-        assertFalse(flipReport.safe)
+        assertTrue(flipReport.safe)
         assertEquals(1, flipReport.newFlipCount)
-        assertEquals(GeometrySafetyReason.GEOMETRY_NEW_FLIP, flipReport.violations.single().reason)
+        assertEquals(QualityRule.GEOMETRY_NEW_FLIP, flipReport.information.single().reason)
 
         val degenerate = model(listOf(KeyformCell(intArrayOf(), MeshDeltaForm(deltas(0f, 0f, 1f, 0f, 1f, 0f, 0f, 1f)))))
         val degenerateReport = report(before, degenerate)
-        assertFalse(degenerateReport.safe)
+        assertTrue(degenerateReport.safe)
         assertEquals(1, degenerateReport.newDegenerateCount)
-        assertTrue(degenerateReport.violations.any { it.reason == GeometrySafetyReason.GEOMETRY_NEW_DEGENERATE })
+        assertTrue(degenerateReport.warnings.any { it.reason == QualityRule.GEOMETRY_NEW_DEGENERATE })
 
         val collapsed = model(listOf(KeyformCell(intArrayOf(), MeshDeltaForm(deltas(0f, 0f, 1f, 0f, 1f, 0.005f, 0f, 1f)))))
         val collapseReport = report(before, collapsed)
-        assertFalse(collapseReport.safe)
+        assertTrue(collapseReport.safe)
         assertEquals(1, collapseReport.newCollapseCount)
-        assertTrue(collapseReport.violations.any { it.reason == GeometrySafetyReason.GEOMETRY_NEW_COLLAPSE })
+        assertTrue(collapseReport.information.any { it.reason == QualityRule.GEOMETRY_NEW_COLLAPSE })
     }
 
     @Test fun rejectsInvalidTopologyAndNonFiniteGeometry() {
@@ -64,7 +65,7 @@ class GeometrySafetyEvaluatorTest {
         val invalidReport = report(before, invalid)
         assertFalse(invalidReport.safe)
         assertEquals(1, invalidReport.newInvalidTopologyCount)
-        assertEquals(GeometrySafetyReason.GEOMETRY_INVALID_TOPOLOGY, invalidReport.violations.single().reason)
+        assertEquals(QualityRule.GEOMETRY_INVALID_TOPOLOGY, invalidReport.violations.single().reason)
 
         val values = FloatArray(8)
         values[2] = Float.NaN
@@ -72,10 +73,10 @@ class GeometrySafetyEvaluatorTest {
         val nonFiniteReport = report(before, nonFinite)
         assertFalse(nonFiniteReport.safe)
         assertEquals(1, nonFiniteReport.newNonFiniteCount)
-        assertEquals(GeometrySafetyReason.GEOMETRY_NON_FINITE, nonFiniteReport.violations.single().reason)
+        assertEquals(QualityRule.GEOMETRY_NON_FINITE, nonFiniteReport.violations.single().reason)
     }
 
-    @Test fun reportsButAllowsPreexistingFlipAndRejectsWorsening() {
+    @Test fun reportsExistingAndNewFlipsWithoutTreatingEitherAsInvalidData() {
         val axis = KeyformAxis(p, floatArrayOf(-1f, 1f))
         val safe = MeshDeltaForm(FloatArray(8))
         val oneFlip = MeshDeltaForm(deltas(0f, 0f, 1f, 0f, 1f, -1f, 0f, 1f))
@@ -92,7 +93,7 @@ class GeometrySafetyEvaluatorTest {
         val twoFlips = MeshDeltaForm(deltas(0f, 0f, 1f, 0f, -1f, -1f, 0f, 1f))
         val worsening = model(listOf(KeyformCell(intArrayOf(0), safe), KeyformCell(intArrayOf(1), twoFlips)), listOf(axis))
         val rejected = report(before, worsening)
-        assertFalse(rejected.safe)
+        assertTrue(rejected.safe)
         assertTrue(rejected.preexistingFlipCount >= 1)
         assertEquals(1, rejected.newFlipCount)
     }
@@ -138,18 +139,19 @@ class GeometrySafetyEvaluatorTest {
         }
         val (candidate, journal) = RigAuthoringJournal.compile(before, buildJsonArray { add(addKey); add(setNewKey) })
         assertEquals(2, journal.size)
-        assertTrue(GeometrySafetyEvaluator.evaluate(before, candidate).safe)
+        assertTrue(GeometryQualityCheck.evaluate(before, candidate).safe)
         assertContentEquals(floatArrayOf(-1f, 0f, 1f), candidate.drawables.single().geometryGrid!!.axes.single().keys)
     }
 
-    @Test fun wholeSurfaceAffineMirrorAndCompressionAreValidButZeroAreaIsNot() {
+    @Test fun wholeSurfaceAffineMirrorAndCompressionAreExemptAndZeroAreaIsWarning() {
         val before = model()
         for (scale in listOf(-1f, 0.005f)) {
             val after = model(listOf(KeyformCell(intArrayOf(), MeshDeltaForm(deltas(0f, 0f, 1f, 0f, 1f, scale, 0f, scale)))))
             assertTrue(report(before, after).safe)
         }
         val zero = model(listOf(KeyformCell(intArrayOf(), MeshDeltaForm(deltas(0f, 0f, 1f, 0f, 1f, 0f, 0f, 0f)))))
-        assertFalse(report(before, zero).safe)
+        assertTrue(report(before, zero).safe)
+        assertTrue(report(before, zero).warnings.isNotEmpty())
     }
 
     @Test fun pureBlendEditAndSimultaneousBlendKeysAreChecked() {
@@ -159,11 +161,11 @@ class GeometrySafetyEvaluatorTest {
             listOf(null, MeshForm(floatArrayOf(0f, 0f, 0f, 0f, 0f, amount, 0f, 0f), opacity = 1f)))
         val after = before.copy(drawables = listOf(before.drawables.single().copy(blendShapes = listOf(blend(p, -0.6f), blend(q, -0.6f)))))
         val result = report(before, after)
-        assertFalse(result.safe)
+        assertTrue(result.safe)
         assertEquals(4, result.affectedCoordinates.getValue("mesh:mesh").size)
-        assertTrue(result.violations.any { it.coordinate == mapOf("P" to 1f, "Q" to 1f) })
+        assertTrue(result.information.any { it.coordinate == mapOf("P" to 1f, "Q" to 1f) })
         val single = before.copy(drawables = listOf(before.drawables.single().copy(blendShapes = listOf(blend(p, -2f)))))
-        assertFalse(report(before, single).safe)
+        assertTrue(report(before, single).safe)
     }
 
     @Test fun newInterpolatedKeyDoesNotMisclassifyAnExistingDefect() {
@@ -176,25 +178,52 @@ class GeometrySafetyEvaluatorTest {
         assertEquals(0, report(before, after).newFlipCount)
     }
 
-    @Test fun excessiveBlendCombinationsFailExplicitlyInsteadOfSilentlySkippingGeometry() {
+    @Test fun excessiveBlendCombinationsReportIncompleteCoverageWithoutRejectingAuthoring() {
         val parameters = (0..14).map { Parameter(ParameterId("Blend$it"), "Blend $it", 0f, 1f, 0f, ParameterKind.BLEND_SHAPE) }
         val before = model().copy(parameters = parameters)
         val blends = parameters.map { BlendShapeBinding(it.id, floatArrayOf(0f, 1f), 0,
             listOf(null, MeshForm(FloatArray(8), opacity = 1f))) }
         val after = before.copy(drawables = listOf(before.drawables.single().copy(blendShapes = blends)))
-        val failure = assertFailsWith<GeometrySafetyRejectedException> { report(before, after) }
-        assertEquals(GeometrySafetyReason.GEOMETRY_SAMPLING_LIMIT, failure.safetyReport.violations.single().reason)
+        val result = report(before, after)
+        assertTrue(result.safe)
+        assertFalse(result.quality.complete)
+        assertEquals(QualityDecision.ACCEPT_WITH_DIAGNOSTICS, result.quality.decision)
+        assertEquals(QualityRule.GEOMETRY_SAMPLING_LIMIT, result.warnings.single().reason)
+        assertEquals(emptyList(), result.affectedCoordinates.getValue("mesh:mesh"))
+        // A budget limit must not hide invalid native data.
+        val corrupt = after.copy(drawables = listOf(after.drawables.single().copy(
+            mesh = DrawableMesh(FloatArray(8) { Float.NaN }, base.copyOf(), triangles))))
+        assertFalse(report(before, corrupt).safe)
+        assertEquals(QualityRule.GEOMETRY_NON_FINITE, report(before, corrupt).violations.single().reason)
+        val mixed = after.copy(drawables = after.drawables + corrupt.drawables.single().copy(id = DrawableId("second")))
+        val mixedReport = report(before, mixed)
+        assertFalse(mixedReport.safe)
+        assertFalse(mixedReport.quality.complete)
+        assertEquals(QualityRule.GEOMETRY_SAMPLING_LIMIT, mixedReport.warnings.single().reason)
+        assertEquals(QualityRule.GEOMETRY_NON_FINITE, mixedReport.violations.single().reason)
     }
 
-    @Test fun authoringPolicyReportsFoldoversAsWarningsButStillRejectsDegenerateGeometry() {
+    @Test fun allCallersUseTheSharedInformationAndWarningPolicy() {
         val before = model()
         val flipped = model(listOf(KeyformCell(intArrayOf(), MeshDeltaForm(deltas(0f, 0f, 1f, 0f, 1f, -1f, 0f, 1f)))))
-        val allowed = GeometrySafetyEvaluator.evaluate(before, flipped, blockFoldovers = false)
+        val allowed = GeometryQualityCheck.evaluate(before, flipped)
         assertTrue(allowed.safe)
         assertTrue(allowed.violations.isEmpty())
-        assertEquals(GeometrySafetyReason.GEOMETRY_NEW_FLIP, allowed.warnings.single().reason)
+        assertEquals(QualityRule.GEOMETRY_NEW_FLIP, allowed.information.single().reason)
         val degenerate = model(listOf(KeyformCell(intArrayOf(), MeshDeltaForm(deltas(0f, 0f, 1f, 0f, 1f, 0f, 0f, 1f)))))
-        assertFalse(GeometrySafetyEvaluator.evaluate(before, degenerate, blockFoldovers = false).safe)
+        assertTrue(GeometryQualityCheck.evaluate(before, degenerate).safe)
+        assertEquals(QualitySeverity.WARNING, report(before, degenerate).quality.findings.single().rule.severity)
+    }
+
+    @Test fun tinyNegativeAreaProducesOnlyTheDegeneracyWarning() {
+        val before = model()
+        val after = model(listOf(KeyformCell(intArrayOf(), MeshDeltaForm(deltas(0f, 0f, 1f, 0f, 1f, -1e-7f, 0f, 1f)))))
+        val result = report(before, after)
+        assertTrue(result.safe)
+        assertEquals(0, result.newFlipCount)
+        assertEquals(1, result.newDegenerateCount)
+        assertTrue(result.information.isEmpty())
+        assertEquals(QualityRule.GEOMETRY_NEW_DEGENERATE, result.warnings.single().reason)
     }
 
     @Test fun newlyBoundParameterStillComparesExistingGeometryAtItsBaselinePose() {

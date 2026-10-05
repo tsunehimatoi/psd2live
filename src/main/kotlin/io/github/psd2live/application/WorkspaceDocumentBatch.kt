@@ -63,10 +63,10 @@ internal fun registerDocumentBatch(registry: WorkspaceOperationRegistry, port: W
     }
     registry.register(WorkspaceOperationDefinition("workspace_preview_edits",
         "Dry-run 1..128 geometry authoring operations using the same ordered candidate preparation, rebuild and geometry gate as commit. No state, pose, history, dirty flag or resources are published. Returns a read-only job; diagnostics describe the captured input state. New IDs for canvas creation must be explicit so a later commit with the same state and edits reproduces the candidate revision. The geometry scope is parent-local sampled keys, not visual quality or composed animation.",
-        schema(variants.filter { it.getValue("properties").jsonObject.getValue("operation").jsonObject.getValue("const").jsonPrimitive.content in WorkspaceGeometrySafety.operations }),
+        schema(variants.filter { it.getValue("properties").jsonObject.getValue("operation").jsonObject.getValue("const").jsonPrimitive.content in WorkspaceCandidateQuality.operations }),
         WorkspaceOperationKind.QUERY, jobBacked = true, workspaceBound = true,
         resultSchema = requireNotNull(WorkspaceJobResultSchemas.operationOutput("workspace_preview_edits")),
-        jobResultSchema = WorkspaceGeometrySafetySchemas.preview)) { request, _ ->
+        jobResultSchema = WorkspaceGeometryQualitySchemas.preview)) { request, _ ->
         val edits = request.getValue("edits").jsonArray.map { raw ->
             val edit = raw.jsonObject
             WorkspaceDocumentOperation(edit.getValue("operation").jsonPrimitive.content, edit.getValue("request").jsonObject)
