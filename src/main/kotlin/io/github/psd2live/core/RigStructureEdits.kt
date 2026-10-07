@@ -46,7 +46,21 @@ internal object RigStructureEdits {
     fun replay(model: PuppetModel, edits: List<JsonObject>): PuppetModel = edits.fold(model) { current, edit ->
         val missingMesh = edit["kind"]?.jsonPrimitive?.contentOrNull == "mesh" &&
             edit["id"]?.jsonPrimitive?.contentOrNull?.let { id -> current.drawables.none { it.id.raw == id } } == true
-        if (missingMesh) current else applyOne(current, edit)
+        if (missingMesh || vanishedParent(current, edit)) current else applyOne(current, edit)
+    }
+
+    /**
+     * A recorded bind or deformer move into a deformer [model] lacks keeps the object where it is. Every deformer the
+     * journal made before the edit exists again when it replays, so only the base generation can have dropped it: a
+     * generation setting changed after the edit (an enabled skeleton drops the arm hang warps). New edits go through
+     * [apply] and still fail on a missing parent.
+     */
+    private fun vanishedParent(model: PuppetModel, edit: JsonObject): Boolean {
+        val action = edit["action"]?.jsonPrimitive?.contentOrNull
+        val kind = edit["kind"]?.jsonPrimitive?.contentOrNull
+        if (!(action == "bind" && kind == "mesh" || action == "move" && (kind == "warp" || kind == "rotation"))) return false
+        val parent = edit["parent_id"]?.jsonPrimitive?.contentOrNull ?: return false
+        return model.deformers.none { it.id.raw == parent }
     }
 
     private fun applyOne(model: PuppetModel, edit: JsonObject): PuppetModel {

@@ -140,15 +140,33 @@ internal object RasterMeshJournal {
         val id = DrawableId(command.getValue("id").jsonPrimitive.content)
         val drawable = model.drawables.single { it.id == id }
         val previous = requireNotNull(drawable.mesh)
-        require(fingerprint(previous) == command.getValue("before_mesh").jsonPrimitive.content) { "Mesh migration baseline changed: ${id.raw}" }
-        require(drawable.parentDeformerId?.raw == command.getValue("parent").jsonPrimitive.contentOrNull) { "Mesh migration parent changed: ${id.raw}" }
+        val recordedParent = command.getValue("parent").jsonPrimitive.contentOrNull
+        // Recorded under a parent the base no longer generates ([VanishedParent]): the mesh is the recorded one in
+        // another space, so its fingerprint cannot match; the vertex count still has to.
+        val vanished = recordedParent != null && drawable.parentDeformerId?.raw != recordedParent &&
+            model.deformers.none { it.id.raw == recordedParent }
+        if (vanished) require(command.getValue("glue_map").jsonArray.size == previous.vertexCount) { "Mesh migration baseline changed: ${id.raw}" }
+        else {
+            require(fingerprint(previous) == command.getValue("before_mesh").jsonPrimitive.content) { "Mesh migration baseline changed: ${id.raw}" }
+            require(drawable.parentDeformerId?.raw == recordedParent) { "Mesh migration parent changed: ${id.raw}" }
+        }
         val texture = TextureCoordinates(model, drawable)
         require(texture.layer.key == command.getValue("source").jsonPrimitive.content &&
             texture.sourceId.raw == command.getValue("source_id").jsonPrimitive.content) { "Mesh migration artwork changed: ${id.raw}" }
-        val points = command.getValue("points").jsonArray.map { it.jsonPrimitive.float }.toFloatArray()
+        val recordedPoints = command.getValue("points").jsonArray.map { it.jsonPrimitive.float }.toFloatArray()
         val triangles = command.getValue("triangles").jsonArray.map { it.jsonPrimitive.int }.toIntArray()
         val canvas = command.getValue("texture_canvas").jsonArray.map { it.jsonPrimitive.float }.toFloatArray()
-        require(canvas.size == points.size && canvas.all(Float::isFinite)) { "Invalid mesh migration texture coordinates" }
+        require(canvas.size == recordedPoints.size && canvas.all(Float::isFinite)) { "Invalid mesh migration texture coordinates" }
+        val recordedPrevious = command["previous_parent_points"]?.jsonArray?.map { it.jsonPrimitive.float }?.toFloatArray()
+        var points = recordedPoints
+        var previousPositions = recordedPrevious
+        if (vanished) {
+            val failure = "Mesh migration parent cannot be evaluated: ${id.raw}"
+            val fit = requireNotNull(VanishedParent.Affine.fit(recordedPoints, canvas)) { failure }
+            val space = VanishedParent.Space(model, drawable, failure)
+            points = space.toLocal(fit.map(recordedPoints))
+            previousPositions = recordedPrevious?.let { space.toLocal(fit.map(it)) }
+        }
         val mesh = DrawableMesh(points, texture.toUvs(canvas), triangles)
         val sources = command.getValue("sources").jsonArray.map { value ->
             val row = value.jsonArray
@@ -160,7 +178,6 @@ internal object RasterMeshJournal {
             }
         }
         val glueMap = command.getValue("glue_map").jsonArray.map { it.jsonPrimitive.int }.toIntArray()
-        val previousPositions = command["previous_parent_points"]?.jsonArray?.map { it.jsonPrimitive.float }?.toFloatArray()
         return apply(model, id, Plan(mesh, sources, glueMap, previousPositions))
     }
 

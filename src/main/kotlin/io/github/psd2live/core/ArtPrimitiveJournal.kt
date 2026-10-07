@@ -237,7 +237,8 @@ internal object ArtPrimitiveJournal {
 		}
 		val textureSource = command.text("texture_source_id")
 		val built = records.map { record ->
-			skins.drawables[DrawableId(record.text("id"))]?.let { adopt(model, it, record, textureSource) } ?: decodePrimitive(model, record, textureSource)
+			skins.drawables[DrawableId(record.text("id"))]?.let { adopt(model, it, record, textureSource) }
+				?: decodePrimitive(model, record, textureSource, home = rehome(model, command, record, emptyList()))
 		}
 		val byId = built.associateBy { it.id }
 		fun replacing(id: DrawableId) = replace[id].orEmpty()
@@ -306,14 +307,15 @@ internal object ArtPrimitiveJournal {
 	 * primitive whose parent or keyform parameters the base lacks (they come from earlier journal entries), or that
 	 * carries paths or vertex groups (the bake would not carry them onto new vertices), is left to its record.
 	 */
-	fun skinnable(model: PuppetModel, command: JsonObject, ids: Set<String>): List<Drawable> {
+	fun skinnable(model: PuppetModel, command: JsonObject, ids: Set<String>, earlier: List<JsonObject> = emptyList()): List<Drawable> {
 		if (command["v"]?.jsonPrimitive?.intOrNull != VERSION) return emptyList()
 		return primitives(command).filter { it.text("id") in ids && model.drawables.none { d -> d.id.raw == it.text("id") } &&
 			it.getValue("paths").jsonArray.isEmpty() && it.getValue("vertex_groups").jsonArray.isEmpty() }
 			.mapNotNull { record ->
 				try {
 					// Masks name drawables of the replayed rig; the record gives them back when it places the part.
-					decodePrimitive(model, record, command.text("texture_source_id"), textured = false).copy(maskedBy = emptyList())
+					decodePrimitive(model, record, command.text("texture_source_id"), textured = false,
+						home = rehome(model, command, record, earlier)).copy(maskedBy = emptyList())
 				} catch (_: IllegalArgumentException) {
 					null
 				}
@@ -335,13 +337,76 @@ internal object ArtPrimitiveJournal {
 		return placed.copy(mesh = DrawableMesh(mesh.positions, RasterMeshJournal.TextureCoordinates(model, placed).toUvs(mesh.uvs), mesh.indices))
 	}
 
-	/** One primitive of [record]: textured from [model]'s atlas, or with its canvas texture coordinates and no tile. */
-	private fun decodePrimitive(model: PuppetModel, record: JsonObject, textureSource: String, textured: Boolean = true): Drawable {
+	/** The parent a primitive takes in place of a recorded one the rig no longer has ([rehome]). */
+	private class Home(val parent: DeformerId?)
+
+	/**
+	 * Where a primitive of [command] goes when [model] lacks its recorded parent: null while [model] has it (or it
+	 * has none), and when the drawable it replaces cannot be found either - the record then fails as before.
+	 *
+	 * A recorded parent missing at the record is one the base generation no longer makes ([VanishedParent]). The
+	 * primitive then goes where the drawable it replaces lives now. That drawable is in [model] when the record replays; a part of an earlier
+	 * record is not in the base the skeleton bake decodes from, so [earlier] (the `art_primitive` records before
+	 * [command]) resolve it the same way, through the drawable that part replaced.
+	 */
+	private fun rehome(model: PuppetModel, command: JsonObject, record: JsonObject, earlier: List<JsonObject>): Home? {
+		val parent = record["parent"]?.jsonPrimitive?.contentOrNull?.let(::DeformerId) ?: return null
+		if (model.deformers.any { it.id == parent }) return null
+		val id = record.text("id")
+		val replaced = command.getValue("replace").jsonObject.entries.firstOrNull { (_, value) ->
+			value.jsonArray.any { it.jsonPrimitive.content == id }
+		}?.key ?: command.getValue("supersedes").jsonArray.singleOrNull()?.jsonPrimitive?.content ?: return null
+		model.drawables.firstOrNull { it.id.raw == replaced }?.let { return Home(it.parentDeformerId) }
+		for (index in earlier.indices.reversed()) {
+			val previous = primitives(earlier[index]).firstOrNull { it.text("id") == replaced } ?: continue
+			val previousParent = previous["parent"]?.jsonPrimitive?.contentOrNull?.let(::DeformerId)
+			if (previousParent == null || model.deformers.any { it.id == previousParent }) return Home(previousParent)
+			return rehome(model, earlier[index], previous, earlier.subList(0, index))
+		}
+		return null
+	}
+
+	/**
+	 * [drawable], decoded from a record whose positions and keyforms are in the space of a parent the rig no longer
+	 * has, moved into the space of its new parent in [model] ([VanishedParent]): positions keep their canvas place at
+	 * the default pose, keyform deltas their canvas displacement there.
+	 */
+	private fun rehomed(model: PuppetModel, drawable: Drawable, canvas: FloatArray): Drawable {
+		val failure = "Art primitive parent cannot be evaluated: ${drawable.id.raw}"
+		val mesh = requireNotNull(drawable.mesh)
+		val fit = requireNotNull(VanishedParent.Affine.fit(mesh.positions, canvas)) { failure }
+		val rest = fit.map(mesh.positions)
+		val space = VanishedParent.Space(model, drawable, failure)
+		val local = space.toLocal(rest)
+		fun carry(deltas: FloatArray): FloatArray {
+			val moved = space.toLocal(fit.displace(rest, deltas), local)
+			return FloatArray(deltas.size) { moved[it] - local[it] }
+		}
+		return drawable.copy(mesh = DrawableMesh(local, mesh.uvs, mesh.indices),
+			geometryGrid = drawable.geometryGrid?.let { grid ->
+				KeyformGrid(grid.axes, grid.cells.map { KeyformCell(it.coordinate, MeshDeltaForm(carry(it.form.positionDeltas))) })
+			},
+			blendShapes = drawable.blendShapes.map { binding -> binding.copy(forms = binding.forms.map { form ->
+				form?.let { MeshForm(carry(it.positionDeltas), it.drawOrder, it.opacity, it.multiplyColor, it.screenColor) }
+			}) })
+	}
+
+	/**
+	 * One primitive of [record]: textured from [model]'s atlas, or with its canvas texture coordinates and no tile.
+	 * [home] stands in for a recorded parent [model] no longer has ([rehome]).
+	 */
+	private fun decodePrimitive(model: PuppetModel, record: JsonObject, textureSource: String, textured: Boolean = true,
+	                            home: Home? = null): Drawable {
+		val decoded = decodeRecorded(model, record, textureSource, textured, home)
+		return if (home == null) decoded else rehomed(model, decoded, record.floats("canvas_uvs"))
+	}
+
+	private fun decodeRecorded(model: PuppetModel, record: JsonObject, textureSource: String, textured: Boolean, home: Home?): Drawable {
 		val id = DrawableId(record.text("id"))
 		val layer = record.text("layer_id")
 		require(layer.isNotBlank()) { "Art primitive layer is missing" }
 		RasterMeshCreation.sourceBounds(record)
-		val parent = record["parent"]?.jsonPrimitive?.contentOrNull?.let(::DeformerId)
+		val parent = if (home != null) home.parent else record["parent"]?.jsonPrimitive?.contentOrNull?.let(::DeformerId)
 		require(parent == null || model.deformers.any { it.id == parent }) { "Art primitive parent is missing: ${id.raw}" }
 		val tile = if (!textured) null else model.atlas.tiles.singleOrNull { it.source?.let { source ->
 			source.sourceId.raw == textureSource && source.layerKey == layer } == true }

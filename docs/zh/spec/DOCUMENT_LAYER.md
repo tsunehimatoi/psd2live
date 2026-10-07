@@ -269,13 +269,24 @@
 
 **部件之后的编辑**：部件是普通源图层，可绘画、删除/恢复、再拆分（被拆分的部件同样被取代）。修改部件的网格设置时由 `MaterializedMeshRebuild` 追加 `canvas_mesh_rebuild`，迁移关键形与绑定。部件不再随生成规则自动重新生成。
 
-**骨架蒙皮**：骨架在日志之前烘焙基础 Rig，而部件要到记录重放才出现，单看基础 Rig 时骨骼绑定的部件并不存在（左右合画后拆分的腿、鞋因此不会被蒙皮，腿骨只剩没有关键形的参数）。所以骨架阶段（`RigBuilder`）先从记录解码骨骼绑定的部件（`ArtPrimitiveJournal.skinnable`：画布单位纹理坐标、不带图块与遮罩），与基础 Rig 一起烘焙，再把蒙皮后的部件及烘焙给它们加的 Glue 从基础 Rig 中取出，存入 `BuiltRig.primitiveSkins`。基础 Rig 仍只含被取代的原网格，记录之前的日志照常重放；记录重放时用蒙皮结果代替自行解码（父级为骨骼变形器，纹理坐标经当前纹理集换算，遮罩取自记录），两端都已就位的 Glue 随后加入。以下部件仍由记录自行解码：父级或关键形参数要由更早的日志条目创建、带路径或顶点组（烘焙不会把它们迁移到新增顶点上）。重放检查点以 `primitiveSkins` 的实例为键的一部分；`RigEditOverlay.applyTo` / `authored` 与模拟烘焙都要传入它（`authored(BuiltRig)`）。
+**骨架蒙皮**：骨架在日志之前烘焙基础 Rig，而部件要到记录重放才出现，单看基础 Rig 时骨骼绑定的部件并不存在（左右合画后拆分的腿、鞋因此不会被蒙皮，腿骨只剩没有关键形的参数）。所以骨架阶段（`RigBuilder`）先从记录解码骨骼绑定的部件（`ArtPrimitiveJournal.skinnable`：画布单位纹理坐标、不带图块与遮罩），与基础 Rig 一起烘焙，再把蒙皮后的部件及烘焙给它们加的 Glue 从基础 Rig 中取出，存入 `BuiltRig.primitiveSkins`。基础 Rig 仍只含被取代的原网格，记录之前的日志照常重放；记录重放时用蒙皮结果代替自行解码（父级为骨骼变形器，纹理坐标经当前纹理集换算，遮罩取自记录），两端都已就位的 Glue 随后加入。以下部件仍由记录自行解码：父级或关键形参数要由更早的日志条目创建、带路径或顶点组（烘焙不会把它们迁移到新增顶点上）。记录的父级不再由基础生成产生时，解码按[父级不再生成](#父级不再生成)改挂。重放检查点以 `primitiveSkins` 的实例为键的一部分；`RigEditOverlay.applyTo` / `authored` 与模拟烘焙都要传入它（`authored(BuiltRig)`）。
 
 **拥有关系**：部件属于编辑日志节点（`journal` 拥有的 `rig:authored`），不在生成器依赖图中单列；摆动与模拟照常读取它们。被取代网格上原有的 `generated_override` 失去目标后按孤立报告。
 
 **引用被取代的 ID**：文档操作中引用字段（`layer_id`、`target`、`source_id`、`middle_ids`、`meshes` 等）指向被取代的图层或网格时，返回错误并列出取代它的当前 ID（跨多次拆分逐级展开）；`source_get_components` 同样。`layer_restore` 不能带回原图层（它不在 `deletedLayerIds` 中）。
 
 **兼容**：旧的 `canvas_source_partition`、`canvas_depth_split` 按原规则重放，打开时不升级；`LegacySplitReplayTest` 用旧版本保存的工程核对各历史节点重放后的 IR 哈希与旧版本一致，旧工程中的软删除原图层仍可恢复，旧工程上的新拆分按物化规则进行。导入 CMO3 模型的拆分仍使用旧规则（原图层软删除）。记录目前内联在日志中，没有使用 v2 的载荷节点。
+
+### 父级不再生成
+
+日志在某条记录之前创建的变形器，重放到该记录时都会再次存在；因此记录的父级若在重放位置缺失，只可能是基础生成不再产生它：拆分之后改了生成设置（启用骨架后不再生成手臂下垂 Warp `DeformArmHang_L/R`，由骨骼接管手臂）。此时记录按下述规则重放，存储的记录不改写；规则由 `VanishedParent` 与各记录的重放实现，结果确定：
+
+- **版本 1 部件**（`ArtPrimitiveJournal.rehome`）：部件改挂到它所替换的网格（`replace` 中的键）当前所在的父级；该网格本身是更早记录的部件、而骨架烘焙解码时基础 Rig 中还没有它（`skinnable` 的 `earlier`）时，沿那条记录继续向前找它替换的网格。位置按“记录顶点 → 画布纹理坐标”的最小二乘仿射拟合（规则静止网格或刚性框架下精确）还原为默认姿态下的画布位置，再求逆到新父级空间；关键形与混合形的位移经拟合的线性部分换算为画布位移后同样换入。找不到被替换的网格时照旧报错 `Art primitive parent is missing`。
+- **`canvas_mesh_rebuild`**（`RasterMeshJournal.replay`）：网格已在另一个父级空间，几何指纹无法再核对，改为只核对顶点数（`glue_map` 长度）；记录的 `points` 与 `previous_parent_points` 按同样的仿射拟合换到网格当前父级的空间。
+- **结构编辑 `bind`（网格）与 `move`（变形器）**（`RigStructureEdits.replay`）：目标父级缺失时该项不生效，对象留在原处。新提交的编辑走 `RigStructureEdits.apply`，缺失父级仍报错。
+- **`canvas_mesh_create`** 没有被替换的网格可循，父级缺失时照旧报错。
+
+骨架烘焙不绑定日志自行安放的网格（`RigBuilder.journalPlaced`）：结构编辑 `bind` 到非骨骼变形器的网格，以及 `warp` 编辑包进新 Warp 的网格。这些编辑保留网格的局部坐标，而烘焙会把绑定网格的坐标换到骨骼空间，二者不能同时成立，因此以日志的安放为准。
 
 
 ### 版本 2 记录

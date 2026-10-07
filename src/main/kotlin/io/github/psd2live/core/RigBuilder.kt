@@ -1271,7 +1271,7 @@ object RigBuilder {
 			deformPaths = builtDeformPaths,
 		)
 		if (RigBuildProfile.recording) RigBuildProfile.add("assembly: masks, parts, parameters, model", System.nanoTime() - assemblyStart)
-		val skeleton = config.rigEdits.skeleton?.takeIf { it.enabled && shouldBuildDeformers }
+		val skeleton = config.rigEdits.skeleton?.takeIf { it.enabled && shouldBuildDeformers }?.let { withoutBindings(it, journalPlaced(it, config.rigEdits.authoringJournal)) }
 		val faceCenterCanvas = faceRig.coordinateSpace.toCanvas(faceRig.centerX, faceRig.centerY)
 		var skeletonKey: String? = null
 		fun finish(): BuiltRig {
@@ -1433,10 +1433,35 @@ object RigBuilder {
 	private fun skinnablePrimitives(model: PuppetModel, skeleton: SkeletonSpec, config: PipelineConfig): List<Drawable> {
 		val bound = skeleton.bones.flatMapTo(HashSet()) { it.drawableIds }
 		val parts = ArrayList<Drawable>()
+		val records = ArtPrimitiveJournal.commands(config.rigEdits)
 		for (command in skinnedRecords(skeleton, config)) {
-			for (part in ArtPrimitiveJournal.skinnable(model, command, bound)) if (parts.none { it.id == part.id }) parts += part
+			// The records before this one place a part whose recorded parent the base no longer generates.
+			val earlier = records.subList(0, records.indexOfFirst { it === command }.coerceAtLeast(0))
+			for (part in ArtPrimitiveJournal.skinnable(model, command, bound, earlier)) if (parts.none { it.id == part.id }) parts += part
 		}
 		return parts
+	}
+
+	/**
+	 * Meshes the journal places under a deformer of its own choosing: a structure `bind` to a deformer that is not
+	 * a bone of [skeleton], or a `warp` edit wrapping them. Those edits keep the mesh's local geometry, which the
+	 * bake would have moved into a bone's space, so the journal's placement wins and no bone binds them.
+	 */
+	internal fun journalPlaced(skeleton: SkeletonSpec, journal: List<kotlinx.serialization.json.JsonObject>): Set<DrawableId> {
+		val bones = skeleton.bones.mapTo(HashSet()) { it.deformerId }
+		val placed = HashSet<DrawableId>()
+		for (command in journal) when (command["op"]?.jsonPrimitive?.contentOrNull) {
+			"structure" -> for (edit in (command["edits"] as? kotlinx.serialization.json.JsonArray).orEmpty()) {
+				val e = edit as? kotlinx.serialization.json.JsonObject ?: continue
+				if (e["action"]?.jsonPrimitive?.contentOrNull != "bind" || e["kind"]?.jsonPrimitive?.contentOrNull != "mesh") continue
+				if (e["parent_id"]?.jsonPrimitive?.contentOrNull in bones) continue
+				e["id"]?.jsonPrimitive?.contentOrNull?.let { placed += DrawableId(it) }
+			}
+			"warp" -> (command["warp"] as? kotlinx.serialization.json.JsonObject)?.get("mesh_ids")?.let { ids ->
+				(ids as? kotlinx.serialization.json.JsonArray).orEmpty().forEach { placed += DrawableId(it.jsonPrimitive.content) }
+			}
+		}
+		return placed
 	}
 
 	/** [spec] without bindings of [drawables]: a passenger never binds to a bone. */

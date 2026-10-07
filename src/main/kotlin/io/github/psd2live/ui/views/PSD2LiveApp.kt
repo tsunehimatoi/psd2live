@@ -822,6 +822,7 @@ fun FrameWindowScope.PSD2LiveApp(
 	}
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun StatusBar(
 	state: PSD2LiveState,
@@ -853,14 +854,20 @@ private fun StatusBar(
 			.padding(horizontal = 8.dp),
 		verticalAlignment = Alignment.CenterVertically,
 	) {
-		Text(
-			text = statusText,
-			style = typography.caption.copy(fontSize = 11.sp),
-			color = statusColor,
-			maxLines = 1,
-			overflow = TextOverflow.Ellipsis,
+		// One line here; the whole message (a failed edit's cause can run long) on hover.
+		androidx.compose.foundation.TooltipArea(
+			tooltip = { Box(Modifier.widthIn(max = 720.dp)) { ParameterTooltip(statusText) } },
 			modifier = Modifier.weight(1f),
-		)
+			delayMillis = 400,
+		) {
+			Text(
+				text = statusText,
+				style = typography.caption.copy(fontSize = 11.sp),
+				color = statusColor,
+				maxLines = 1,
+				overflow = TextOverflow.Ellipsis,
+			)
+		}
 
 		if (task != null) {
 			Spacer(Modifier.width(12.dp))
