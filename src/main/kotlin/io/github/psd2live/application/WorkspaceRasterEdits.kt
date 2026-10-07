@@ -92,13 +92,17 @@ internal object WorkspaceRasterEdits {
         }
         val rebuild = visiblePixels && (request.rebuildMesh || missingMesh) && !DepthSplit.isFrontLayer(model, id)
         if (samePixels && !rebuild) return document
+        // The generation input with this layer's unpainted pixels: a layer added after the input was frozen
+        // would otherwise generate from the painted ones, regenerating a kept mesh or the base a rebuild migrates.
+        val generation = if (document.rigEdits.importedCmo3 != null) document.generationSource ?: document.source
+            else RigGenerationSource.pinned(document.generationSource, document.source, layer, document.rigEdits)
         if (!rebuild && document.rigEdits.importedCmo3 == null) {
             // A repaint that keeps every mesh commits pixels only: no journal record, no mesh input. The new rig,
             // atlas and bundle are the rebuild's, which reads the frozen generation input below, so geometry
             // stays and only the textures follow the pixels.
             val repainted = RasterPaintCommit.paintedSource(model, id, pixels, request.preserveSourceRaster, work::checkpoint)
             work.progress(1f, "Prepared painted document")
-            return document.copy(source = repainted.source, generationSource = document.generationSource ?: document.source)
+            return document.copy(source = repainted.source, generationSource = generation)
         }
         val working = if (document.rigEdits.importedCmo3 == null) model else Cmo3ModelImport.paintingPreview(pipeline, document.source,
             document.config().copy(generationSource = document.generationSource ?: document.source))
@@ -121,7 +125,7 @@ internal object WorkspaceRasterEdits {
         val journal = if (records.isEmpty()) emptyList() else RigAuthoringJournal.compile(inventory, JsonArray(records)).second
         work.progress(1f, "Prepared painted document")
         val source = if (samePixels) document.source else prepared.analysis.source
-        val meshInputs = document.meshSource ?: document.generationSource ?: document.source
+        val meshInputs = document.meshSource ?: generation
         val savedMeshInput = meshInputs.layers.singleOrNull { it.id == layer.id }
         val previousMeshInput = savedMeshInput ?: layer
         val currentMeshInput = source.layers.single { it.id == layer.id }
@@ -133,7 +137,7 @@ internal object WorkspaceRasterEdits {
             meshInputs.layers.map { old -> if (old.id == layer.id) currentMeshInput else old } +
                 listOfNotNull(currentMeshInput.takeIf { savedMeshInput == null }), source.groups)
         if (samePixels && journal.isEmpty() && !changedMeshInput) return document
-        return document.copy(source = source, generationSource = document.generationSource ?: document.source,
+        return document.copy(source = source, generationSource = generation,
             meshSource = meshSource, rigEdits = document.rigEdits.copy(authoringJournal = document.rigEdits.authoringJournal + journal))
     }
 }

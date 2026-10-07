@@ -55,7 +55,12 @@ internal object WorkspaceLayerInsertionEdits {
                 byId.getValue(id)
             } else entry
         } + records.filterNot { it.getValue("id").jsonPrimitive.content in replaced }
-        return document.copy(generationSource = WorkspaceSourceArt(baseline.widthPx, baseline.heightPx, baseline.layers + blanks.filterNot { layer -> baseline.layers.any { it.id == layer.id } }, baseline.groups),
+        // A layer whose unpainted pixels a paint pinned holds them no longer; a blank it already holds stays as it is.
+        val held = baseline.layers.map { layer ->
+            if (layer.id.raw !in ids || layer.raster.let { it.width == 1 && it.height == 1 && it.rgba.all { byte -> byte == 0.toByte() } }) layer
+            else (WorkspaceSourceLayer.copyOf(layer, layer.order) as WorkspaceSourceLayer).copy(raster = LayerRaster(1, 1, ByteArray(4)))
+        }
+        return document.copy(generationSource = WorkspaceSourceArt(baseline.widthPx, baseline.heightPx, held + blanks.filterNot { layer -> baseline.layers.any { it.id == layer.id } }, baseline.groups),
             rigEdits = document.rigEdits.copy(authoringJournal = journal))
     }
 }

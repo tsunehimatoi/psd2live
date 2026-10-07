@@ -52,7 +52,8 @@ internal object LayerImageReplace {
 		val replaced = (WorkspaceSourceLayer.copyOf(layer, layer.order) as WorkspaceSourceLayer).copy(raster = laid)
 		val source = WorkspaceSourceArt(document.source.widthPx, document.source.heightPx,
 			layers.mapIndexed { i, old -> if (i == index) replaced else old }, document.source.groups)
-		return document.copy(source = source, generationSource = document.generationSource ?: document.source)
+		return document.copy(source = source,
+			generationSource = RigGenerationSource.pinned(document.generationSource, document.source, layer, document.rigEdits))
 	}
 
 	/** [raster] centred on transparent pixels so its aspect ratio becomes [aspect] (width over height). */

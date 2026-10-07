@@ -19,7 +19,7 @@ internal object DepthSplit {
 
     fun frontLayerIds(config: PipelineConfig): Set<String> = frontLayerIds(config.rigEdits)
 
-    private fun frontLayerIds(overlay: RigEditOverlay): Set<String> = overlay.authoringJournal.mapNotNullTo(LinkedHashSet()) {
+    fun frontLayerIds(overlay: RigEditOverlay): Set<String> = overlay.authoringJournal.mapNotNullTo(LinkedHashSet()) {
         when (it["op"]?.jsonPrimitive?.contentOrNull) {
             OP -> it["layer_id"]?.jsonPrimitive?.contentOrNull
             ArtPrimitiveJournal.OP -> (it["depth"] as? JsonObject)?.get("front")?.jsonPrimitive?.contentOrNull

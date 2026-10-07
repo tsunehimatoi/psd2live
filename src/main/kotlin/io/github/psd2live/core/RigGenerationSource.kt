@@ -128,6 +128,30 @@ internal object RigGenerationSource {
             piece.getValue("layer_id").jsonPrimitive.content to LayerBounds(left, top, right - left, bottom - top)
         }
 
+    /**
+     * The document's generation input once [layer] - its pixels before an edit changes them - is pinned in it.
+     * A layer added after the input was frozen generates from its current pixels ([geometrySource]), so a
+     * repaint or image replacement would silently regenerate its mesh and leave a mesh migration recorded
+     * against the old one without a base to replay on. Pinning its previous pixels keeps that base: a repaint
+     * keeps the geometry and a rebuild migrates from it. A layer already in the input keeps its entry, and the
+     * layers whose geometry other records own (depth-split fronts, art primitive layers, partition pieces)
+     * keep their own rules. Without a saved input the whole [current] source becomes it, as before.
+     *
+     * The layer is pinned as analysis reads it, at one pixel per canvas unit over its integer bounds: the saved
+     * input keeps a layer's bounds and raster but not its float rectangle, so a denser raster or a fractional
+     * rectangle would otherwise generate a slightly different mesh than the one it has.
+     */
+    internal fun pinned(reference: SourceArt?, current: SourceArt, layer: SourceLayer, overlay: RigEditOverlay): SourceArt {
+        reference ?: return current
+        val id = layer.id.raw
+        if (reference.layers.any { it.id.raw == id } || id in DepthSplit.frontLayerIds(overlay) ||
+            id in ArtPrimitiveJournal.ownedLayers(overlay) || id in ArtPrimitiveJournal.supersededLayers(overlay) ||
+            PrimitiveResolution.of(overlay).isPartLayer(id) || id in partitionCoverage(overlay)) return reference
+        return io.github.psd2live.project.WorkspaceSourceArt(reference.widthPx, reference.heightPx,
+            reference.layers + io.github.psd2live.project.WorkspaceSourceLayer.copyOf(CanvasDensity.canvasLayer(layer), layer.order),
+            reference.groups)
+    }
+
     internal fun geometrySource(current: SourceArt, reference: SourceArt, overlay: RigEditOverlay = RigEditOverlay.Empty): SourceArt {
         require(reference.widthPx == current.widthPx && reference.heightPx == current.heightPx) {
             "Generation source dimensions must match the current canvas"

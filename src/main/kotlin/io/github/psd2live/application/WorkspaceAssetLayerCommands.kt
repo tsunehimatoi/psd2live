@@ -86,8 +86,12 @@ internal object WorkspaceAssetLayerEdits {
         val creation = document.rigEdits.authoringJournal.any {
             it["op"]?.jsonPrimitive?.content == RasterMeshCreation.OP && it["layer_id"]?.jsonPrimitive?.content == id
         }
+        // A generated mesh follows the new placement: unpainted pixels a paint pinned no longer describe it.
         return if (creation) WorkspaceLayerInsertionEdits.materialize(candidate, model, setOf(id), document.parentOverrides[id], checkCancelled)
-        else candidate
+        else candidate.copy(generationSource = candidate.generationSource?.let { generation ->
+            if (generation.layers.none { it.id.raw == id }) generation
+            else WorkspaceSourceArt(generation.widthPx, generation.heightPx, generation.layers.filterNot { it.id.raw == id }, generation.groups)
+        })
     }
 
     private fun editable(document: WorkspaceDocument, model: RigPreviewModel, id: String) {
