@@ -122,6 +122,7 @@ import io.github.psd2live.ui.state.MouseInput
 import io.github.psd2live.ui.state.buttonBindingOf
 import io.github.psd2live.ui.state.wheelBindingOf
 import io.github.psd2live.ui.state.TabViewOptions
+import io.github.psd2live.ui.state.TabCamera
 import io.github.psd2live.ui.theme.LocalToolColors
 import io.github.psd2live.ui.theme.LocalToolTypography
 import io.github.psd2live.ui.tutorial.TutorialTargetId
@@ -172,7 +173,9 @@ fun CanvasViewportComposable(
     val editor = viewModel.canvasEditorFor(canvasId)
     val ownerState = state.forCanvas(canvasId)
     var temporarySelectKey by remember(canvasId, ownerState.activeWorkspace.id) { mutableStateOf<Key?>(null) }
-    key(ownerState.projectOpenGeneration, ownerState.activeWorkspace.id, canvasId, mode) {
+    // Not keyed on [mode]: a switch between editing and preview keeps this viewport, its measured size, camera,
+    // painter and caches, and the state below follows the mode instead of being built again.
+    key(ownerState.projectOpenGeneration, ownerState.activeWorkspace.id, canvasId) {
 	// Hover belongs to the input session, so moving over this viewport invalidates only
 	// this viewport instead of the shared document and every docked panel.
 	val canvasState = if (mode == CanvasMode.EDIT &&
@@ -185,7 +188,9 @@ fun CanvasViewportComposable(
 	val focusRequester = remember { FocusRequester() }
     val density = LocalDensity.current.density
 
-	var viewSize by remember { mutableStateOf(IntSize(600, 600)) }
+	// Zero until the first layout: nothing is framed, hit-tested or rendered against a guessed size.
+	var viewSize by remember { mutableStateOf(IntSize.Zero) }
+	val sized = viewSize.width > 0 && viewSize.height > 0
 	// Window position of this canvas. Dock toggles move the canvas without changing zoom or pan;
 	// the mesh overlay has to redraw on that move or its picture stays at the old place.
 	var canvasOrigin by remember { mutableStateOf(Offset.Zero) }
@@ -235,6 +240,12 @@ fun CanvasViewportComposable(
     DisposableEffect(viewModel, renderKey) {
         onDispose {
             viewModel.releaseRetainedCanvasFrame(renderKey)
+            // Interaction state of the mode being left; the viewport itself stays.
+            showContextMenu = false
+            brushAdjustButton = null
+            temporarySelectButton = null
+            zoomDragAnchor = null
+            isDragging = false
             if (mode == CanvasMode.EDIT) {
                 editor.endTemporarySelection()
                 temporarySelectKey = null
@@ -358,16 +369,18 @@ fun CanvasViewportComposable(
 	LaunchedEffect(softwareCanvas) { if (!softwareCanvas) CanvasRenderService.ensureStarted() }
 	val gpuStatus by CanvasRenderService.status.collectAsState()
 	val gpuReady = !softwareCanvas && !sourcePixels && gpuStatus is CanvasRenderService.Status.Ready
-	val gpuFrame by remember(renderKey) { CanvasRenderService.frames(renderKey) }.collectAsState()
+	// One GPU view per canvas whatever its mode: a switch keeps its meshes and page textures on the GPU.
+	val gpuKey = viewModel.canvasRenderKey(canvasId, CanvasMode.EDIT)
+	val gpuFrame by remember(gpuKey) { CanvasRenderService.frames(gpuKey) }.collectAsState()
 	val gpuImage = remember(gpuFrame) { gpuFrame?.bitmap?.asComposeImageBitmap() }
-	val gpuSubmission = remember(renderKey) { GpuSceneSubmission(renderKey) }
+	val gpuSubmission = remember(gpuKey) { GpuSceneSubmission(gpuKey) }
 	// The last snapshot ghost's geometry: its frame must not show at full strength once the hover has moved on.
-	val ghostGeometry = remember(renderKey) { arrayOfNulls<org.umamo.render.eval.DeformedGeometry>(1) }
+	val ghostGeometry = remember(gpuKey) { arrayOfNulls<org.umamo.render.eval.DeformedGeometry>(1) }
 	// The last regular frame and its image, shown while a ghost frame is the newest one.
-	val lastArtwork = remember(renderKey) { arrayOfNulls<Pair<io.github.psd2live.render.RenderedFrame, ImageBitmap>>(1) }
+	val lastArtwork = remember(gpuKey) { arrayOfNulls<Pair<io.github.psd2live.render.RenderedFrame, ImageBitmap>>(1) }
 	// The paint session this view's GPU texture holds in full; another session, or a new view, uploads all of it.
-	val paintUploaded = remember(renderKey) { arrayOfNulls<Any>(1) }
-	DisposableEffect(renderKey) { onDispose { CanvasRenderService.release(renderKey) } }
+	val paintUploaded = remember(gpuKey) { arrayOfNulls<Any>(1) }
+	DisposableEffect(gpuKey) { onDispose { CanvasRenderService.release(gpuKey) } }
 	val drawnGeometry = remember { DrawnGeometryMemo() }
 	// A session shown by the GPU hands it changed areas instead of painting preview tiles.
 	LaunchedEffect(paintSession, gpuReady) { paintSession?.gpuPreview = gpuReady }
@@ -444,15 +457,18 @@ fun CanvasViewportComposable(
     }
 
     // The document learns the camera once the wheel settles; a pan still hands it over on release.
+    // Until then the view model knows the camera too, so a mode or workspace switch carries it.
     LaunchedEffect(zoom, panX, panY, cameraDirty, isDragging) {
+        if (cameraDirty) viewModel.notePendingCanvasCamera(canvasState.projectOpenGeneration, canvasState.activeWorkspace.id,
+            canvasId, TabCamera(zoom.toFloat(), panX.toFloat(), panY.toFloat()))
         if (cameraDirty && !isDragging) {
             delay(CAMERA_PERSIST_DELAY_MILLIS)
             persistCamera()
         }
     }
 
-    // A mode or workspace switch can remove this viewport before it receives Release.
-    DisposableEffect(viewModel, canvasId, mode, canvasState.projectOpenGeneration, canvasState.activeWorkspace.id) {
+    // A workspace switch can remove this viewport before it receives Release.
+    DisposableEffect(viewModel, canvasId, canvasState.projectOpenGeneration, canvasState.activeWorkspace.id) {
         val projectGeneration = canvasState.projectOpenGeneration
         val workspaceId = canvasState.activeWorkspace.id
         onDispose {
@@ -1631,7 +1647,7 @@ fun CanvasViewportComposable(
 			}
 		}
 
-		if(mode == CanvasMode.EDIT && previewModel != null && snapshotGeometry == null) {
+		if(mode == CanvasMode.EDIT && previewModel != null && snapshotGeometry == null && sized) {
             val vp = viewportFor(viewSize)
             editor.viewport = vp
             CanvasEditorOverlay(
@@ -1908,6 +1924,11 @@ private class RepeatedImageBrush(private val image: ImageBitmap) : ShaderBrush()
 	)
 }
 
+/**
+ * The native frame's camera for the same view the edit canvas shows: one zoom and pan frame the model alike in
+ * both modes, so switching between them does not resize or move it. Cubism spans the model's height over two
+ * units and the shorter side of the view over two units, centred; the edit canvas fits the model inside its margin.
+ */
 private fun computeCubismViewport(
 	model: RigPreviewModel,
 	width: Int,
@@ -1918,19 +1939,9 @@ private fun computeCubismViewport(
 ): CubismViewport {
 	val safeWidth = width.coerceAtLeast(1).toDouble()
 	val safeHeight = height.coerceAtLeast(1).toDouble()
-	val viewportAspect = safeWidth / safeHeight
-	val canvasWidth = model.analysis.source.widthPx.coerceAtLeast(1).toDouble()
-	val canvasHeight = model.analysis.source.heightPx.coerceAtLeast(1).toDouble()
-	val modelAspect = canvasWidth / canvasHeight
-	val baseScaleX = if (viewportAspect >= 1.0) 1.0 / viewportAspect else 1.0
-	val baseScaleY = if (viewportAspect >= 1.0) 1.0 else viewportAspect
-	val fitScale = if (modelAspect > viewportAspect) {
-		1.0 / (baseScaleX * modelAspect) * 0.95
-	} else {
-		1.0 / baseScaleY * 0.95
-	}
+	val edit = computeEditorViewport(model, IntSize(width.coerceAtLeast(1), height.coerceAtLeast(1)), zoom, panX, panY)
 	return CubismViewport(
-		(fitScale * zoom).toFloat(),
+		(edit.canvasHeight * edit.scale / minOf(safeWidth, safeHeight)).toFloat(),
 		(panX / (safeWidth * 0.5)).toFloat(),
 		(-panY / (safeHeight * 0.5)).toFloat(),
 	)

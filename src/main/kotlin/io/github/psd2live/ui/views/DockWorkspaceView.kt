@@ -229,8 +229,14 @@ internal fun DockWorkspaceView(
     val sessions = remember(state.projectOpenGeneration) { mutableMapOf<String, DockSession>() }
     val workspace = state.activeWorkspace
     val session = sessions.getOrPut(workspace.id) { DockSession(workspaceDockRoot(workspace)) }
+    // Layouts already checked for legacy canvas docking, by workspace: switching back to a workspace must not
+    // decode its layout again on the UI thread.
+    val repairChecked = remember(state.projectOpenGeneration) { mutableMapOf<String, String>() }
     LaunchedEffect(workspace.id, workspace.layoutJson) {
-        val saved = workspace.layoutJson?.let { runCatching { dockJson.decodeFromString<DockNode>(it) }.getOrNull() }
+        val json = workspace.layoutJson ?: return@LaunchedEffect
+        if (repairChecked[workspace.id] == json) return@LaunchedEffect
+        repairChecked[workspace.id] = json
+        val saved = runCatching { dockJson.decodeFromString<DockNode>(json) }.getOrNull()
             ?: return@LaunchedEffect
         val repaired = repairLegacyCanvasDocking(saved)
         if (repaired != saved) viewModel.setWorkspaceLayout(workspace.id, dockJson.encodeToString(repaired))

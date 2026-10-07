@@ -2559,18 +2559,62 @@ class PSD2LiveViewModel : AutoCloseable {
 			if (it.requestedDockModule == null) it else it.copy(requestedDockModule = null)
 		}
 	}
+    /**
+     * Cameras a canvas holds locally and has not written yet (a wheel zoom waiting for the wheel to settle,
+     * a pan still in flight), by [pendingCameraKey]. A mode or workspace switch folds them into the same
+     * update, so the view neither jumps back nor loses the zoom when the viewport goes away first.
+     */
+    private val pendingCanvasCameras = java.util.concurrent.ConcurrentHashMap<String, TabCamera>()
+
+    private fun pendingCameraKey(generation: Long, workspaceId: String, canvasId: String) = "$generation/$workspaceId/$canvasId"
+
+    /** The camera [canvasId] shows but has not yet written with [setCanvasView]. */
+    internal fun notePendingCanvasCamera(generation: Long, workspaceId: String, canvasId: String, camera: TabCamera) {
+        pendingCanvasCameras[pendingCameraKey(generation, workspaceId, canvasId)] = camera
+    }
+
+    /** Takes [workspaceId]'s unwritten cameras out of the pending map; [withPendingCameras] applies them. */
+    private fun takePendingCameras(state: PSD2LiveState, workspaceId: String): Map<String, TabCamera> {
+        val prefix = "${state.projectOpenGeneration}/$workspaceId/"
+        val taken = mutableMapOf<String, TabCamera>()
+        val iterator = pendingCanvasCameras.entries.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            if (entry.key.startsWith(prefix)) {
+                taken[entry.key.removePrefix(prefix)] = entry.value
+                iterator.remove()
+            } else if (!entry.key.startsWith("${state.projectOpenGeneration}/")) iterator.remove()
+        }
+        return taken
+    }
+
+    private fun PSD2LiveState.withPendingCameras(workspaceId: String, cameras: Map<String, TabCamera>): PSD2LiveState =
+        if (cameras.isEmpty()) this else updateWorkspace(workspaceId) { workspace ->
+            workspace.copy(canvases = workspace.canvases.map { canvas ->
+                val camera = cameras[canvas.id]
+                if (camera == null) canvas else canvas.updateSession { it.copy(camera = camera) }
+            })
+        }
+
     fun setCanvasView(
         zoom: Float, x: Float, y: Float,
         canvasId: String = _state.value.activeCanvas.id,
         mode: CanvasMode? = null,
     ) {
+        val snapshot = _state.value
+        pendingCanvasCameras.remove(pendingCameraKey(snapshot.projectOpenGeneration, snapshot.activeWorkspace.id, canvasId))
+        val camera = TabCamera(zoom, x, y)
+        // Writing back the camera the canvas already has must not dirty the project or wake every panel.
+        val unchanged = snapshot.activeWorkspace.canvases.firstOrNull { it.id == canvasId }
+            ?.let { it.session(mode ?: it.mode).camera == camera } == true
+        if (unchanged) return
         updateState { current ->
             if (current.activeWorkspace.canvases.none { it.id == canvasId }) current
             else current.updateActiveWorkspace { workspace ->
                 workspace.copy(
                     canvases = workspace.canvases.map { canvas ->
                         if (canvas.id == canvasId) canvas.updateSession(mode ?: canvas.mode) {
-                            it.copy(camera = TabCamera(zoom, x, y))
+                            it.copy(camera = camera)
                         } else canvas
                     },
                 )
@@ -4687,6 +4731,10 @@ class PSD2LiveViewModel : AutoCloseable {
 
 	fun setActiveWorkspace(id: String) {
         if (_state.value.workspaceEditBusy) return
+		val before = _state.value
+		if (before.activeWorkspaceId == id || before.workspaces.none { it.id == id }) return
+		// The workspace being left keeps the camera its canvases show, even one not written yet.
+		val cameras = takePendingCameras(before, before.activeWorkspace.id)
 		var changed = false
 		updateState { current ->
 			val target = current.workspaces.firstOrNull { it.id == id } ?: return@updateState current
@@ -4697,13 +4745,13 @@ class PSD2LiveViewModel : AutoCloseable {
 					pointerActive = false
 					stopProcessMotion()
 				}
-				current.copy(activeWorkspaceId = id)
+				// One update: the switch and the change mark land together.
+				val switched = current.withPendingCameras(current.activeWorkspace.id, cameras).copy(activeWorkspaceId = id)
+				if (switched.analysis == null) switched
+				else switched.copy(projectDirty = true, projectEditVersion = switched.projectEditVersion + 1)
 			}
 		}
-		if (changed) {
-			markWorkspaceChanged()
-			if (_state.value.previewLive) ensureSdkSessionLoaded()
-		}
+		if (changed && _state.value.previewLive) ensureSdkSessionLoaded()
 	}
 
 	/**
@@ -4852,24 +4900,38 @@ class PSD2LiveViewModel : AutoCloseable {
 		updateState { it.copy(focusCanvasRequest = it.focusCanvasRequest + 1) }
 	}
 
+	/**
+	 * Switches [canvasId] between editing and preview. The camera goes along: both modes look at the
+	 * model through it, so a switch never moves the view. A camera the canvas holds but has not written
+	 * yet is taken first, in the same update.
+	 */
 	fun setCanvasMode(canvasId: String, mode: CanvasMode) {
+		val before = _state.value
+		val switching = before.activeWorkspace.canvases.firstOrNull { it.id == canvasId }?.let { it.mode != mode } == true
+		val pending = if (!switching) null else pendingCanvasCameras.remove(
+			pendingCameraKey(before.projectOpenGeneration, before.activeWorkspace.id, canvasId))
 		var changed = false
 		updateState { current ->
 			val canvas = current.activeWorkspace.canvases.firstOrNull { it.id == canvasId } ?: return@updateState current
 			if (canvas.mode == mode) current.updateActiveWorkspace { it.copy(activeCanvasId = canvasId) }
 			else {
 				changed = true
-				current.updateActiveWorkspace { workspace ->
+				val camera = pending ?: canvas.camera
+				val next = current.updateActiveWorkspace { workspace ->
 					workspace.copy(
 						activeCanvasId = canvasId,
 						canvases = workspace.canvases.map { pane ->
-							if (pane.id == canvasId) pane.copy(mode = mode) else pane
+							if (pane.id == canvasId) pane
+								.updateSession(pane.mode) { it.copy(camera = camera) }
+								.updateSession(mode) { it.copy(camera = camera) }
+								.copy(mode = mode)
+							else pane
 						},
 					)
 				}
+				if (next.analysis == null) next else next.copy(projectDirty = true, projectEditVersion = next.projectEditVersion + 1)
 			}
 		}
-		if (changed) markWorkspaceChanged()
 		if (mode == CanvasMode.PREVIEW) ensureSdkSessionLoaded()
 		if (!_state.value.previewLive) {
 			pointerActive = false
@@ -5072,6 +5134,10 @@ class PSD2LiveViewModel : AutoCloseable {
 	 */
     fun switchHierarchyModeView(mode: EditHierarchyMode, canvasId: String = state.value.activeCanvas.id,
         workspaceId: String = state.value.activeWorkspace.id) {
+        // Re-entering the mode the view already belongs to is common (a mode menu pick, a tutorial step); skip the update.
+        val session = _state.value.workspaces.firstOrNull { it.id == workspaceId }
+            ?.canvases?.firstOrNull { it.id == canvasId }?.editSession ?: return
+        if (session.withHierarchyView(mode) == session) return
         updateState { current ->
             current.updateWorkspace(workspaceId) { workspace ->
                 workspace.copy(canvases = workspace.canvases.map {

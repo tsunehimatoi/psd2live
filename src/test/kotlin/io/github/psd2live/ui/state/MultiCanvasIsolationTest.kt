@@ -444,7 +444,8 @@ class MultiCanvasIsolationTest {
             assertFalse(vm.state.value.showWarp)
             assertFalse(vm.state.value.showRotation)
             assertFalse(vm.state.value.showMesh)
-            assertEquals(TabCamera(), vm.state.value.activeCanvas.camera)
+            // The camera is the one thing a switch carries: the view must not move.
+            assertEquals(TabCamera(2f, 40f, -15f), vm.state.value.activeCanvas.camera)
             assertNull(vm.state.value.selectedLayerId)
             assertEquals(0.4f, vm.state.value.parameterValues[parameter])
             assertTrue(vm.state.value.isLayerVisible("hidden-edit"))
@@ -462,7 +463,7 @@ class MultiCanvasIsolationTest {
 
             vm.setCanvasMode(canvasId, CanvasMode.EDIT)
             assertEquals("edit-again", vm.state.value.selectedLayerId)
-            assertEquals(2f, vm.state.value.canvasZoom)
+            assertEquals(0.5f, vm.state.value.canvasZoom)
             assertTrue(vm.state.value.showRotation)
             assertTrue(vm.state.value.showMesh)
             assertEquals(-0.6f, vm.state.value.parameterValues[parameter])
@@ -538,6 +539,57 @@ class MultiCanvasIsolationTest {
             assertEquals(io.github.psd2live.ui.EditHierarchyMode.SELECT, session.viewMode)
             assertFalse(session.view.showMesh)
             assertTrue(session.modeViews.getValue(io.github.psd2live.ui.EditHierarchyMode.EDIT).showMesh)
+        }
+    }
+
+    @Test fun modeSwitchCarriesTheCameraTheCanvasHasNotWrittenYet() {
+        PSD2LiveViewModel().use { vm ->
+            val id = vm.state.value.activeCanvas.id
+            val workspaceId = vm.state.value.activeWorkspace.id
+            vm.setCanvasView(1.5f, 10f, 5f, id)
+            // A wheel zoom still waiting to be written when the mode changes.
+            vm.notePendingCanvasCamera(vm.state.value.projectOpenGeneration, workspaceId, id, TabCamera(3f, -12f, 8f))
+            vm.setCanvasMode(id, CanvasMode.PREVIEW)
+            val canvas = vm.state.value.activeCanvas
+            assertEquals(TabCamera(3f, -12f, 8f), canvas.previewSession.camera)
+            assertEquals(TabCamera(3f, -12f, 8f), canvas.editSession.camera)
+
+            // The canvas writing the same camera after the switch changes nothing.
+            val before = vm.state.value
+            vm.setCanvasView(3f, -12f, 8f, id)
+            assertSame(before, vm.state.value)
+
+            vm.setCanvasView(0.75f, 4f, 2f, id)
+            vm.setCanvasMode(id, CanvasMode.EDIT)
+            assertEquals(TabCamera(0.75f, 4f, 2f), vm.state.value.activeCanvas.camera)
+        }
+    }
+
+    @Test fun workspaceSwitchKeepsTheCameraTheLeavingCanvasHasNotWrittenYet() {
+        PSD2LiveViewModel().use { vm ->
+            val id = vm.state.value.activeCanvas.id
+            val first = vm.state.value.activeWorkspace.id
+            vm.notePendingCanvasCamera(vm.state.value.projectOpenGeneration, first, id, TabCamera(2.5f, 30f, -6f))
+            val second = vm.addWorkspace(WorkspacePreset.EDIT)
+            assertEquals(second, vm.state.value.activeWorkspace.id)
+            val kept = vm.state.value.workspaces.first { it.id == first }.canvases.first { it.id == id }
+            assertEquals(TabCamera(2.5f, 30f, -6f), kept.camera)
+            // Taken once: coming back does not apply it again over a later camera.
+            vm.setActiveWorkspace(first)
+            vm.setCanvasView(1f, 0f, 0f, id)
+            vm.setActiveWorkspace(second)
+            assertEquals(TabCamera(), vm.state.value.workspaces.first { it.id == first }.canvases.first { it.id == id }.camera)
+        }
+    }
+
+    @Test fun reenteringTheShownHierarchyModeLeavesTheStateAlone() {
+        PSD2LiveViewModel().use { vm ->
+            val id = vm.state.value.activeCanvas.id
+            val workspace = vm.state.value.activeWorkspace.id
+            vm.switchHierarchyModeView(io.github.psd2live.ui.EditHierarchyMode.DEFORM, id, workspace)
+            val before = vm.state.value
+            vm.switchHierarchyModeView(io.github.psd2live.ui.EditHierarchyMode.DEFORM, id, workspace)
+            assertSame(before, vm.state.value)
         }
     }
 
