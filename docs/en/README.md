@@ -16,7 +16,7 @@ PSD2Live recognizes parts from layer names and generates meshes, a deformer hier
 
 | Area | Capabilities |
 | --- | --- |
-| Automatic rigging | Chinese / English / Japanese layer names, automatic splitting of paired parts, adaptive meshes, head and body deformer chains, eye, mouth, gaze and brow parameters, idle / blink / nod / shake motions, hair and eye-jelly physics |
+| Automatic rigging | Chinese / English / Japanese / Korean layer names, automatic splitting of paired parts, adaptive meshes, head and body deformer chains, eye, mouth, gaze and brow parameters, idle / blink / nod / shake motions, hair and eye-jelly physics |
 | Canvas editing | Seven modes: Select, Deform, Edit, Simulate, Skeleton, Paint and Preview; deformation brushes, mesh subdivision and cuts, splitting by mesh or polygon, front / back depth split, Warp / Rotation creation, Glue, deform paths (experimental) |
 | Skeleton | Inferred skeletons for limbs, tails and wings with FK / IK posing; joints shaped after human joint poses; baked on export into native Cubism deformers, parameters and corrective keyforms that run without PSD2Live |
 | Swing, physics and simulation | Lateral / vertical sway with matching pendulums; visual pendulum editing, response curves and chained groups, evaluated to match the Cubism Native Framework; 2D cloth and hair simulation baked into parameters, keyforms and pendulums |

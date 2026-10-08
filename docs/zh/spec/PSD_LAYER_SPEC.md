@@ -20,40 +20,40 @@
 
 | Tag | Names / 名称 |
 | --- | --- |
-| `BACK_HAIR` | `back hair`, `后发`, `后髪`, `后脑勺` |
-| `FRONT_HAIR` | `front hair`, `前发`, `前髪`, `刘海` |
-| `HEADWEAR` | `headwear`, `帽子`, `头饰`, `頭飾` |
-| `FACE` | `face`, `脸`, `臉`, `脸部` |
-| `FACE_DETAIL` | `facedetail`, `脸部细节`, `面部细节`, `腮红` |
-| `IRIDES` | `irides`, `瞳孔`, `虹膜`, `眼珠` |
-| `EYEBROW` | `eyebrow`, `眉毛`, `眉`, `まゆ毛` |
-| `EYEWHITE` | `eyewhite`, `眼白`, `白眼`, `白目` |
-| `EYELASH` | `eyelash`, `睫毛`, `まつ毛`, `まつげ` |
-| `EYE_CLOSE` | `eye close`, `闭眼`, `閉眼`, `目閉じ` |
-| `EYEWEAR` | `eyewear`, `眼镜`, `眼鏡`, `めがね` |
-| `EARS` | `ears`, `耳朵`, `耳`, `みみ` |
-| `EARWEAR` | `earwear`, `耳环`, `耳環`, `耳饰` |
-| `NOSE` | `nose`, `鼻子`, `鼻`, `はな` |
-| `MOUTH` | `mouth`, `口`, `嘴`, `嘴巴` |
-| `MOUTH_OPEN` | `mouth open`, `张嘴`, `張嘴`, `开口` |
-| `MOUTH_CLOSE` | `mouth close`, `闭嘴`, `閉嘴`, `闭口` |
-| `TOOTH_T` | `tooth-t`, `上牙`, `上歯`, `上齿` |
-| `TOOTH_B` | `tooth-b`, `下牙`, `下歯`, `下齿` |
-| `TONGUE` | `tongue`, `舌头`, `舌頭`, `舌` |
-| `NECK` | `neck`, `脖子`, `颈部`, `頸部` |
-| `NECKWEAR` | `neckwear`, `领饰`, `領飾`, `围巾` |
-| `TOPWEAR` | `topwear`, `上衣`, `衣服`, `服装` |
-| `HANDWEAR` | `handwear`, `手臂`, `手`, `腕` |
-| `BOTTOMWEAR` | `bottomwear`, `下装`, `下裝`, `裤子` |
-| `LEGWEAR` | `legwear`, `腿`, `大腿`, `小腿` |
-| `FOOTWEAR` | `footwear`, `脚`, `腳`, `鞋` |
-| `TAIL` | `tail`, `尾巴`, `尾`, `しっぽ` |
-| `WINGS` | `wings`, `翅膀`, `翼`, `つばさ` |
-| `OBJECTS` | `objects`, `道具`, `物件` |
+| `BACK_HAIR` | `back hair`, `后发`, `后髪`, `后脑勺`, `뒷머리` |
+| `FRONT_HAIR` | `front hair`, `前发`, `前髪`, `刘海`, `앞머리` |
+| `HEADWEAR` | `headwear`, `帽子`, `头饰`, `頭飾`, `모자` |
+| `FACE` | `face`, `脸`, `臉`, `脸部`, `얼굴` |
+| `FACE_DETAIL` | `facedetail`, `脸部细节`, `面部细节`, `腮红`, `볼터치` |
+| `IRIDES` | `irides`, `瞳孔`, `虹膜`, `眼珠`, `눈동자` |
+| `EYEBROW` | `eyebrow`, `眉毛`, `眉`, `まゆ毛`, `눈썹` |
+| `EYEWHITE` | `eyewhite`, `眼白`, `白眼`, `白目`, `흰자` |
+| `EYELASH` | `eyelash`, `睫毛`, `まつ毛`, `まつげ`, `속눈썹` |
+| `EYE_CLOSE` | `eye close`, `闭眼`, `閉眼`, `目閉じ`, `감은 눈` |
+| `EYEWEAR` | `eyewear`, `眼镜`, `眼鏡`, `めがね`, `안경` |
+| `EARS` | `ears`, `耳朵`, `耳`, `みみ`, `귀` |
+| `EARWEAR` | `earwear`, `耳环`, `耳環`, `耳饰`, `귀걸이` |
+| `NOSE` | `nose`, `鼻子`, `鼻`, `はな`, `코` |
+| `MOUTH` | `mouth`, `口`, `嘴`, `嘴巴`, `입` |
+| `MOUTH_OPEN` | `mouth open`, `张嘴`, `張嘴`, `开口`, `벌린 입` |
+| `MOUTH_CLOSE` | `mouth close`, `闭嘴`, `閉嘴`, `闭口`, `다문 입` |
+| `TOOTH_T` | `tooth-t`, `上牙`, `上歯`, `上齿`, `윗니` |
+| `TOOTH_B` | `tooth-b`, `下牙`, `下歯`, `下齿`, `아랫니` |
+| `TONGUE` | `tongue`, `舌头`, `舌頭`, `舌`, `혀` |
+| `NECK` | `neck`, `脖子`, `颈部`, `頸部`, `목` |
+| `NECKWEAR` | `neckwear`, `领饰`, `領飾`, `围巾`, `목도리` |
+| `TOPWEAR` | `topwear`, `上衣`, `衣服`, `服装`, `상의` |
+| `HANDWEAR` | `handwear`, `手臂`, `手`, `腕`, `팔` |
+| `BOTTOMWEAR` | `bottomwear`, `下装`, `下裝`, `裤子`, `치마` |
+| `LEGWEAR` | `legwear`, `腿`, `大腿`, `小腿`, `다리` |
+| `FOOTWEAR` | `footwear`, `脚`, `腳`, `鞋`, `신발` |
+| `TAIL` | `tail`, `尾巴`, `尾`, `しっぽ`, `꼬리` |
+| `WINGS` | `wings`, `翅膀`, `翼`, `つばさ`, `날개` |
+| `OBJECTS` | `objects`, `道具`, `物件`, `소품` |
 
 ## 左右与拆分
 
-左右指角色自身：角色左侧通常在画面右边。可用 `eyelash-l`、`eyelash-r`、`eyelash_left`、`左睫毛` 等名称。无侧别且符合条件的图层会基于生成网格的两个不相连分量拆分，例如眼睛、眉毛、发片或四肢；脸、嘴与口腔内部件排除在自动拆分之外。相连、位置异常或碎片过多时应手动分层并检查分类。
+左右指角色自身：角色左侧通常在画面右边。可用 `eyelash-l`、`eyelash-r`、`eyelash_left`、`左睫毛`、`왼쪽 속눈썹`、`속눈썹_우` 等名称；韩文单字 `좌` / `우` 需用分隔符或括号隔开。无侧别且符合条件的图层会基于生成网格的两个不相连分量拆分，例如眼睛、眉毛、发片或四肢；脸、嘴与口腔内部件排除在自动拆分之外。相连、位置异常或碎片过多时应手动分层并检查分类。
 
 ## 数字与差分
 
