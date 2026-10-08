@@ -130,7 +130,7 @@ Manual edits must preserve references and update inventory hashes. Use the UI fo
 ## Entry points
 
 - Import PSD: `Ctrl+Shift+O`; open project: `Ctrl+O`.
-- Save / save as: `Ctrl+S` / `Ctrl+Shift+S`.
+- Save / save as: `Ctrl+S` / `Ctrl+Shift+S`. Save As starts beside the current project with a suggested name that is neither the current project file nor an existing file (`name-2`, `name-3`…); an existing target is confirmed in the window before it is replaced, with its own message when it is the current project file. A save or Save As asked for while an edit is still being applied is queued, shown in the status bar and run when the edit finishes; a later `Ctrl+S` does not turn a queued Save As into a plain save. System file dialogs are owned by the main window; asking for one while another is open brings that one to the front.
 - MCP: `project_save`, `project_save_as`, `project_open`, and `history_checkpoint`, `history_list`, `history_checkout`. Save-as and open use absolute paths without requiring a UI file selection. Mutations carry the current `project_id`, opaque `state` and unique `request_id`; reopening the same node invalidates earlier state tokens. Public summaries do not expose every internal persistence field; see the [MCP contract](../../zh/agent/MCP_AUTHORING.md).
 
 [ProjectArchive](../../../src/main/kotlin/io/github/psd2live/project/ProjectArchive.kt) · [ProjectFormatV2](../../../src/main/kotlin/io/github/psd2live/project/ProjectFormatV2.kt) · [ProjectRepository](../../../src/main/kotlin/io/github/psd2live/project/ProjectRepository.kt) · [WorkspaceStore](../../../src/main/kotlin/io/github/psd2live/project/WorkspaceStore.kt)

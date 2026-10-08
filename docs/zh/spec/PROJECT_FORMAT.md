@@ -132,7 +132,7 @@ GUI 捕获的画布像素与 MCP 栅格手势进入同一文档候选；完全�
 ## 入口
 
 - 导入 PSD：`Ctrl+Shift+O`；打开工程：`Ctrl+O`。
-- 保存 / 另存为：`Ctrl+S` / `Ctrl+Shift+S`。
+- 保存 / 另存为：`Ctrl+S` / `Ctrl+Shift+S`。另存为默认放在当前工程同目录，建议的文件名既不是当前工程文件也不与已有文件重名（`名称-2`、`名称-3`…）；目标已存在时在窗口内确认覆盖，目标正是当前工程文件时另行说明。编辑仍在应用时请求的保存或另存为会排队并在状态栏提示，编辑完成后执行；排队的另存为不会被随后的 `Ctrl+S` 降级为普通保存。系统文件对话框以主窗口为父窗口；已有一个打开时再次请求会把它提到前面。
 - MCP：`project_save`、`project_save_as`、`project_open`，以及 `history_checkpoint`、`history_list`、`history_checkout`。另存为和打开使用绝对路径，不需要先在 UI 选择目的地。修改请求使用当前 `project_id`、不透明 `state` 和唯一 `request_id`；同一节点重开也会使旧状态失效。公开摘要不等于所有内部工程字段均可查询，见 [MCP 契约](../agent/MCP_AUTHORING.md)。
 
 实现：[ProjectArchive](../../../src/main/kotlin/io/github/psd2live/project/ProjectArchive.kt) · [ProjectFormatV2](../../../src/main/kotlin/io/github/psd2live/project/ProjectFormatV2.kt) · [ProjectRepository](../../../src/main/kotlin/io/github/psd2live/project/ProjectRepository.kt) · [WorkspaceStore](../../../src/main/kotlin/io/github/psd2live/project/WorkspaceStore.kt)。

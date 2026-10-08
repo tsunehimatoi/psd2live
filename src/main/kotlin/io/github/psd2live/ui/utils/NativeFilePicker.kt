@@ -1,13 +1,18 @@
 package io.github.psd2live.ui.utils
 
 import io.github.psd2live.i18n.tr
+import java.awt.Component
 import java.awt.Dialog
+import java.awt.EventQueue
 import java.awt.FileDialog
 import java.awt.Frame
+import java.awt.KeyboardFocusManager
+import java.awt.Toolkit
 import java.awt.Window
 import java.io.File
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicBoolean
+import javax.swing.JDialog
 import javax.swing.JFileChooser
 import javax.swing.UIManager
 
@@ -15,10 +20,44 @@ object NativeFilePicker {
 
 	private val isPicking = AtomicBoolean(false)
 
+	/** The picker window on screen, while one is. */
+	@Volatile private var openPicker: Window? = null
+
+	/** Whether a picker is open; a second request raises it instead of opening another. */
+	val isOpen: Boolean get() = isPicking.get()
+
+	/**
+	 * The window a picker belongs to: [window], or else the application's active or first showing frame. A picker
+	 * without an owner is a top-level window of its own that can open behind the main window and look like a hang.
+	 */
+	internal fun owner(window: Window?): Window? = window
+		?: KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow
+		?: Window.getWindows().firstOrNull { it is Frame && it.isShowing }
+
+	/**
+	 * A picker is already open (one at a time, so two requests cannot stack dialogs): raises it and gives it focus,
+	 * or beeps when it has no window yet. Returns whether one was raised.
+	 */
+	fun focusOpenPicker(): Boolean {
+		val picker = openPicker?.takeIf { it.isShowing }
+			?: Window.getWindows().firstOrNull { it.isShowing && (it is FileDialog || it is JDialog && it.contentPane.components.any { c -> c is JFileChooser }) }
+		val raise = Runnable {
+			if (picker == null) Toolkit.getDefaultToolkit().beep()
+			else { picker.toFront(); picker.requestFocus() }
+		}
+		if (EventQueue.isDispatchThread()) raise.run() else EventQueue.invokeLater(raise)
+		return picker != null
+	}
+
+	/** A file chooser whose dialog is registered as the open picker. */
+	private fun chooser(): JFileChooser = object : JFileChooser() {
+		override fun createDialog(parent: Component?): JDialog = super.createDialog(parent).also { openPicker = it }
+	}
+
 	private fun createFileDialog(window: Window?, title: String, mode: Int): FileDialog {
-		return when (window) {
-			is Dialog -> FileDialog(window, title, mode)
-			is Frame -> FileDialog(window, title, mode)
+		return when (val owner = owner(window)) {
+			is Dialog -> FileDialog(owner, title, mode)
+			is Frame -> FileDialog(owner, title, mode)
 			else -> FileDialog(null as Frame?, title, mode)
 		}
 	}
@@ -34,6 +73,7 @@ object NativeFilePicker {
 
 	private fun chooseSourceFile(window: Window?, initialPath: String?, extension: String, title: String, filterLabel: String): String? {
 		if (!isPicking.compareAndSet(false, true)) {
+			focusOpenPicker()
 			return null
 		}
 		try {
@@ -47,6 +87,7 @@ object NativeFilePicker {
 						val f = File(initialPath)
 						if (f.exists()) directory = if (f.isDirectory) f.absolutePath else f.parent
 					}
+					openPicker = this
 					isVisible = true
 				}
 				val dir = dialog.directory
@@ -64,7 +105,7 @@ object NativeFilePicker {
 			// 2. Fallback to System Look & Feel JFileChooser only if native picker threw exception
 			try {
 				UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
-				val chooser = JFileChooser().apply {
+				val chooser = chooser().apply {
 					dialogTitle = title
 					fileFilter = javax.swing.filechooser.FileNameExtensionFilter(filterLabel, extension)
 					if (!initialPath.isNullOrBlank()) {
@@ -72,26 +113,28 @@ object NativeFilePicker {
 						if (f.exists()) currentDirectory = if (f.isDirectory) f else f.parentFile
 					}
 				}
-				if (chooser.showOpenDialog(window) == JFileChooser.APPROVE_OPTION) {
+				if (chooser.showOpenDialog(owner(window)) == JFileChooser.APPROVE_OPTION) {
 					return chooser.selectedFile.toPath().toAbsolutePath().normalize().toString()
 				}
 			} catch (_: Throwable) {}
 
 			return null
 		} finally {
+			openPicker = null
 			isPicking.set(false)
 		}
 	}
 
 	/** Opens the native OS file picker for a Cubism physics3.json to import. */
 	fun choosePhysicsFile(window: Window? = null): String? {
-		if (!isPicking.compareAndSet(false, true)) return null
+		if (!isPicking.compareAndSet(false, true)) { focusOpenPicker(); return null }
 		try {
 			val title = tr("dialog.choosePhysics")
 			try {
 				val dialog = createFileDialog(window, title, FileDialog.LOAD).apply {
 					setFilenameFilter { _, name -> name.endsWith(".json", ignoreCase = true) }
 					file = "*.physics3.json"
+					openPicker = this
 					isVisible = true
 				}
 				val dir = dialog.directory
@@ -100,16 +143,17 @@ object NativeFilePicker {
 			} catch (_: Throwable) {}
 			try {
 				UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
-				val chooser = JFileChooser().apply {
+				val chooser = chooser().apply {
 					dialogTitle = title
 					fileFilter = javax.swing.filechooser.FileNameExtensionFilter(tr("dialog.physicsFilter"), "json")
 				}
-				if (chooser.showOpenDialog(window) == JFileChooser.APPROVE_OPTION) {
+				if (chooser.showOpenDialog(owner(window)) == JFileChooser.APPROVE_OPTION) {
 					return chooser.selectedFile.toPath().toAbsolutePath().normalize().toString()
 				}
 			} catch (_: Throwable) {}
 			return null
 		} finally {
+			openPicker = null
 			isPicking.set(false)
 		}
 	}
@@ -119,6 +163,7 @@ object NativeFilePicker {
 	 */
 	fun chooseProjectFile(window: Window? = null, initialPath: String? = null): String? {
 		if (!isPicking.compareAndSet(false, true)) {
+			focusOpenPicker()
 			return null
 		}
 		try {
@@ -131,6 +176,7 @@ object NativeFilePicker {
 						val f = File(initialPath)
 						if (f.exists()) directory = if (f.isDirectory) f.absolutePath else f.parent
 					}
+					openPicker = this
 					isVisible = true
 				}
 				val dir = dialog.directory
@@ -147,7 +193,7 @@ object NativeFilePicker {
 
 			try {
 				UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
-				val chooser = JFileChooser().apply {
+				val chooser = chooser().apply {
 					dialogTitle = title
 					fileFilter = javax.swing.filechooser.FileNameExtensionFilter("PSD2Live (*.psd2live)", "psd2live")
 					if (!initialPath.isNullOrBlank()) {
@@ -155,12 +201,13 @@ object NativeFilePicker {
 						if (f.exists()) currentDirectory = if (f.isDirectory) f else f.parentFile
 					}
 				}
-				if (chooser.showOpenDialog(window) == JFileChooser.APPROVE_OPTION) {
+				if (chooser.showOpenDialog(owner(window)) == JFileChooser.APPROVE_OPTION) {
 					return chooser.selectedFile.toPath().toAbsolutePath().normalize().toString()
 				}
 			} catch (_: Throwable) {}
 			return null
 		} finally {
+			openPicker = null
 			isPicking.set(false)
 		}
 	}
@@ -170,6 +217,7 @@ object NativeFilePicker {
 	 */
 	fun chooseSaveProjectFile(window: Window? = null, defaultName: String? = null, initialDir: String? = null): String? {
 		if (!isPicking.compareAndSet(false, true)) {
+			focusOpenPicker()
 			return null
 		}
 		try {
@@ -184,6 +232,7 @@ object NativeFilePicker {
 						val f = File(initialDir)
 						if (f.exists()) directory = if (f.isDirectory) f.absolutePath else f.parent
 					}
+					openPicker = this
 					isVisible = true
 				}
 				val dir = dialog.directory
@@ -198,7 +247,7 @@ object NativeFilePicker {
 
 			try {
 				UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
-				val chooser = JFileChooser().apply {
+				val chooser = chooser().apply {
 					dialogTitle = title
 					fileFilter = javax.swing.filechooser.FileNameExtensionFilter("PSD2Live (*.psd2live)", "psd2live")
 					selectedFile = File(defaultFileName)
@@ -207,7 +256,7 @@ object NativeFilePicker {
 						if (f.exists()) currentDirectory = if (f.isDirectory) f else f.parentFile
 					}
 				}
-				if (chooser.showSaveDialog(window) == JFileChooser.APPROVE_OPTION) {
+				if (chooser.showSaveDialog(owner(window)) == JFileChooser.APPROVE_OPTION) {
 					val f = chooser.selectedFile
 					val name = if (f.name.endsWith(".psd2live", ignoreCase = true)) f.name else "${f.name}.psd2live"
 					return File(f.parentFile ?: File("."), name).toPath().toAbsolutePath().normalize().toString()
@@ -215,6 +264,7 @@ object NativeFilePicker {
 			} catch (_: Throwable) {}
 			return null
 		} finally {
+			openPicker = null
 			isPicking.set(false)
 		}
 	}
@@ -224,6 +274,7 @@ object NativeFilePicker {
 	 */
 	fun chooseSavePsdFile(window: Window? = null, defaultName: String? = null, initialDir: String? = null): String? {
 		if (!isPicking.compareAndSet(false, true)) {
+			focusOpenPicker()
 			return null
 		}
 		try {
@@ -238,6 +289,7 @@ object NativeFilePicker {
 						val f = File(initialDir)
 						if (f.exists()) directory = if (f.isDirectory) f.absolutePath else f.parent
 					}
+					openPicker = this
 					isVisible = true
 				}
 				val dir = dialog.directory
@@ -252,7 +304,7 @@ object NativeFilePicker {
 
 			try {
 				UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
-				val chooser = JFileChooser().apply {
+				val chooser = chooser().apply {
 					dialogTitle = title
 					fileFilter = javax.swing.filechooser.FileNameExtensionFilter("Photoshop Document (*.psd)", "psd")
 					selectedFile = File(defaultFileName)
@@ -261,7 +313,7 @@ object NativeFilePicker {
 						if (f.exists()) currentDirectory = if (f.isDirectory) f else f.parentFile
 					}
 				}
-				if (chooser.showSaveDialog(window) == JFileChooser.APPROVE_OPTION) {
+				if (chooser.showSaveDialog(owner(window)) == JFileChooser.APPROVE_OPTION) {
 					val f = chooser.selectedFile
 					val name = if (f.name.endsWith(".psd", ignoreCase = true)) f.name else "${f.name}.psd"
 					return File(f.parentFile ?: File("."), name).toPath().toAbsolutePath().normalize().toString()
@@ -269,6 +321,7 @@ object NativeFilePicker {
 			} catch (_: Throwable) {}
 			return null
 		} finally {
+			openPicker = null
 			isPicking.set(false)
 		}
 	}
@@ -278,6 +331,7 @@ object NativeFilePicker {
 	 */
 	fun chooseSavePngFile(window: Window? = null, title: String, defaultName: String? = null): String? {
 		if (!isPicking.compareAndSet(false, true)) {
+			focusOpenPicker()
 			return null
 		}
 		try {
@@ -288,6 +342,7 @@ object NativeFilePicker {
 				val dialog = createFileDialog(window, title, FileDialog.SAVE).apply {
 					setFilenameFilter { _, name -> name.endsWith(".png", ignoreCase = true) }
 					file = defaultFileName
+					openPicker = this
 					isVisible = true
 				}
 				val dir = dialog.directory
@@ -301,18 +356,19 @@ object NativeFilePicker {
 
 			try {
 				UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
-				val chooser = JFileChooser().apply {
+				val chooser = chooser().apply {
 					dialogTitle = title
 					fileFilter = javax.swing.filechooser.FileNameExtensionFilter("PNG (*.png)", "png")
 					selectedFile = File(defaultFileName)
 				}
-				if (chooser.showSaveDialog(window) == JFileChooser.APPROVE_OPTION) {
+				if (chooser.showSaveDialog(owner(window)) == JFileChooser.APPROVE_OPTION) {
 					val f = chooser.selectedFile
 					return File(f.parentFile ?: File("."), named(f.name)).toPath().toAbsolutePath().normalize().toString()
 				}
 			} catch (_: Throwable) {}
 			return null
 		} finally {
+			openPicker = null
 			isPicking.set(false)
 		}
 	}
@@ -322,6 +378,7 @@ object NativeFilePicker {
 	 */
 	fun chooseDirectory(window: Window? = null, initialPath: String? = null, title: String? = null): String? {
 		if (!isPicking.compareAndSet(false, true)) {
+			focusOpenPicker()
 			return null
 		}
 		try {
@@ -344,7 +401,9 @@ object NativeFilePicker {
 					System.setProperty("apple.awt.fileDialogForDirectories", "true")
 					val dialog = createFileDialog(window, dialogTitle, FileDialog.LOAD).apply {
 						if (initialDir.isNotBlank()) directory = initialDir
-						isVisible = true
+						openPicker = this
+						openPicker = this
+					isVisible = true
 					}
 					System.setProperty("apple.awt.fileDialogForDirectories", "false")
 					val dir = dialog.directory
@@ -365,7 +424,7 @@ object NativeFilePicker {
 			// 2. System Look & Feel directory chooser for Windows and Linux
 			try {
 				UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
-				val chooser = JFileChooser().apply {
+				val chooser = chooser().apply {
 					this.dialogTitle = dialogTitle
 					fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
 					if (initialFile != null) {
@@ -373,7 +432,7 @@ object NativeFilePicker {
 						selectedFile = initialFile
 					}
 				}
-				if (chooser.showOpenDialog(window) == JFileChooser.APPROVE_OPTION) {
+				if (chooser.showOpenDialog(owner(window)) == JFileChooser.APPROVE_OPTION) {
 					val selected = chooser.selectedFile ?: return null
 					return selected.toPath().toAbsolutePath().normalize().toString()
 				}
@@ -381,6 +440,7 @@ object NativeFilePicker {
 
 			return null
 		} finally {
+			openPicker = null
 			isPicking.set(false)
 		}
 	}
@@ -390,6 +450,7 @@ object NativeFilePicker {
 	 */
 	fun chooseTransparentImages(window: Window? = null, initialPath: String? = null): List<File> {
 		if (!isPicking.compareAndSet(false, true)) {
+			focusOpenPicker()
 			return emptyList()
 		}
 		try {
@@ -397,7 +458,7 @@ object NativeFilePicker {
 			val extensions = arrayOf("png", "webp", "tif", "tiff", "bmp")
 			try {
 				UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
-				val chooser = JFileChooser().apply {
+				val chooser = chooser().apply {
 					dialogTitle = title
 					isMultiSelectionEnabled = true
 					fileFilter = javax.swing.filechooser.FileNameExtensionFilter(
@@ -409,7 +470,7 @@ object NativeFilePicker {
 						if (f.exists()) currentDirectory = if (f.isDirectory) f else f.parentFile
 					}
 				}
-				if (chooser.showOpenDialog(window) == JFileChooser.APPROVE_OPTION) {
+				if (chooser.showOpenDialog(owner(window)) == JFileChooser.APPROVE_OPTION) {
 					return chooser.selectedFiles
 						?.filter { it.isFile }
 						.orEmpty()
@@ -417,6 +478,7 @@ object NativeFilePicker {
 			} catch (_: Throwable) {}
 			return emptyList()
 		} finally {
+			openPicker = null
 			isPicking.set(false)
 		}
 	}

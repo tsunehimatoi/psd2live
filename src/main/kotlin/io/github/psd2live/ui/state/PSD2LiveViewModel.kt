@@ -1667,7 +1667,7 @@ class PSD2LiveViewModel : AutoCloseable {
                 onComplete(failure.message ?: "Could not save editor changes")
             } finally {
                 updateState { it.copy(canvasEditBusy = false) }
-                queuedCanvasSave?.let { saveAs -> queuedCanvasSave=null; requestProjectSave(saveAs) }
+                runQueuedProjectSave()
             }
         }
     }
@@ -1955,14 +1955,33 @@ class PSD2LiveViewModel : AutoCloseable {
             1 -> action()
         }
     }
+    /**
+     * The save asked for while an edit was being applied: true for Save As. One slot, and a Save As in it is never
+     * turned into a plain save by a later Ctrl+S (the Save As dialog saves the same content), nor dropped.
+     */
+    internal val queuedProjectSave: Boolean? get() = queuedCanvasSave
+
     fun requestProjectSave(saveAs: Boolean = false) {
         // A save captures the workspace, so it has to see the value still sitting in a focused field.
         flushEditorFields()
-        if (_state.value.workspaceEditBusy) { queuedCanvasSave=saveAs; return }
+        if (_state.value.workspaceEditBusy) {
+            val queued = queuedCanvasSave == true || saveAs
+            queuedCanvasSave = queued
+            updateState { it.copy(statusText = tr(if (queued) "project.saveAsQueued" else "project.saveQueued")) }
+            return
+        }
         if (_state.value.analysis == null) return
         if (saveAs || _state.value.projectFile == null) {
             updateState { it.copy(showProjectLocationDialog = true, projectSaveError = null) }
         } else saveProjectTo(Path.of(_state.value.projectFile!!))
+    }
+    /** Runs the save [requestProjectSave] queued, once no edit is being applied; a Save As opens its dialog. */
+    internal fun runQueuedProjectSave() {
+        if (_state.value.workspaceEditBusy) return
+        val saveAs = queuedCanvasSave ?: return
+        queuedCanvasSave = null
+        if (_state.value.statusText == tr(if (saveAs) "project.saveAsQueued" else "project.saveQueued")) updateState { it.copy(statusText = tr("status.ready")) }
+        requestProjectSave(saveAs)
     }
     fun clearProjectSaveError() { updateState { it.copy(projectSaveError = null) } }
     fun cancelProjectLocation() {
@@ -2204,7 +2223,7 @@ class PSD2LiveViewModel : AutoCloseable {
 	private fun publishPoseCommitBusy() {
 		val busy = synchronized(stateLock) { poseCommitsQueued > 0 }
 		updateState { if (it.poseCommitBusy == busy) it else it.copy(poseCommitBusy = busy) }
-		if (!busy && !_state.value.canvasEditBusy) queuedCanvasSave?.let { saveAs -> queuedCanvasSave = null; requestProjectSave(saveAs) }
+		if (!busy && !_state.value.canvasEditBusy) runQueuedProjectSave()
 	}
 
 	/** Registers a change that a gesture fills in sample by sample before it is submitted. */
