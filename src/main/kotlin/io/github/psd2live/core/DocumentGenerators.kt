@@ -12,7 +12,8 @@ import org.umamo.runtime.model.PuppetModel
  * the scaffold (anchors, face rig, frames and deformers), each layer's mesh and keyforms, then assembly and the
  * atlas binding - whose outputs [RigStageCache] keeps under keys of only what each reads; the skeleton stage bakes the authored
  * skeleton into it; the journal replays the user's edits; each swing and each baked simulation then adds the
- * keyforms of its own parameters; generated overrides merge the user's edits of those keyforms; physics and
+ * keyforms of its own parameters (and the skeleton skins the meshes the journal placed under deformers of its own,
+ * [SKIN]); generated overrides merge the user's edits of those keyforms; physics and
  * the generated motions read the finished rig. Replay runs the swings and simulations in the graph's order,
  * and an edit of a keyform is recorded as an override of the generator that owns it.
  *
@@ -30,6 +31,12 @@ internal object DocumentGenerators {
 	/** The mesh stage of layer [layerId]. */
 	fun meshId(layerId: String) = MESH + layerId
 	const val SKELETON = "skeleton"
+
+	/**
+	 * The skin of the meshes the journal places under deformers of their own ([SkeletonCanvasSkin]): it runs after the
+	 * journal and owns their keyforms on the bone and rig pose parameters.
+	 */
+	const val SKIN = "skeleton.skin"
 
 	/** The pinned inputs of version 2 `art_primitive` records ([ArtPrimitiveV2]): their parts' meshes, layers and roles. */
 	const val PRIMITIVES = "document:primitives"
@@ -95,6 +102,13 @@ internal object DocumentGenerators {
 		nodes += GeneratorNode(JOURNAL, setOf("rig:skeleton", "document:journal"), claim(listOf("rig:authored")))
 		val keyforms = LinkedHashSet<String>()
 		val parameters = LinkedHashSet<String>()
+		// Present only when the journal places a bound mesh, so every other document keeps its graph.
+		val placed = SkeletonCanvasSkin.placed(overlay)
+		if (placed.isNotEmpty()) {
+			val writes = claim(SkeletonCanvasSkin.claims(overlay.skeleton!!, placed).flatMap { (mesh, ids) -> ids.map { keyform("mesh", mesh, it) } })
+			nodes += GeneratorNode(SKIN, setOf("rig:authored", "document:skeleton"), writes)
+			keyforms += writes
+		}
 		for (swing in overlay.swingEdits) {
 			val writes = if (swing.baked) emptySet() else claim(swing.parameterIds.map { "parameter:$it" } +
 				swing.targets.flatMap { target -> swing.parameterIds.map { keyform("warp", target, it) } })
@@ -119,14 +133,21 @@ internal object DocumentGenerators {
 	fun owner(graph: GeneratorGraph, objectId: String): GeneratorNode? = graph.order.firstOrNull { objectId in it.writes }
 
 	/**
-	 * Runs the generators that write onto the replayed rig - swings, then simulations - in the graph's order.
-	 * Each is a pure function of its settings and the rig before it.
+	 * Runs the generators that write onto the replayed rig - the skin of journal-placed meshes, swings, then
+	 * simulations - in the graph's order. Each is a pure function of its settings and the rig before it.
 	 */
 	fun generate(model: PuppetModel, overlay: RigEditOverlay, graph: GeneratorGraph = graph(overlay)): PuppetModel {
 		val swings = overlay.swingEdits.associateBy(::swingId)
 		val sims = overlay.simEdits.associateBy(::simulationId)
 		var current = model
 		for (node in graph.order) {
+			if (node.id == SKIN) {
+				val spec = overlay.skeleton ?: continue
+				val placed = SkeletonCanvasSkin.placed(overlay)
+				current = GeneratorReuse.run(node.id, spec to placed, current, SkeletonCanvasSkin.reads(current, placed)) {
+					RigBuildProfile.stage("skeleton: canvas skin") { SkeletonCanvasSkin.apply(it, spec, placed) }
+				}
+			}
 			swings[node.id]?.let { swing ->
 				current = GeneratorReuse.run(node.id, swing, current, swingReads(current, swing)) { SwingGenerator.apply(it, listOf(swing)) }
 			}

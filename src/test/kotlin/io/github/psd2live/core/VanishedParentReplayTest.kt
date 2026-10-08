@@ -116,7 +116,7 @@ class VanishedParentReplayTest {
 		assertFailsWith<IllegalArgumentException> { RigStructureEdits.apply(model, listOf(bind)) }
 	}
 
-	@Test fun meshesTheJournalPlacesUnderItsOwnDeformerAreNotBoundToBones() {
+	@Test fun meshesTheJournalPlacesUnderItsOwnDeformerAreSkinnedAfterTheJournal() {
 		val upper = SkeletonBone("upper", "Upper", null, BoneRole.UPPER_ARM, Side.RIGHT, 0f, 0f, 0f, 10f, listOf("Sleeve", "Hand", "Cuff"))
 		val spec = SkeletonSpec(bones = listOf(upper))
 		val journal = listOf(
@@ -127,7 +127,11 @@ class VanishedParentReplayTest {
 			} },
 			RigWarpEdit("Wrap", "Wrap", "Body", listOf("Cuff")).let { buildJsonObject { put("op", "warp"); put("warp", it.toJson()) } },
 		)
-		assertEquals(setOf(DrawableId("Sleeve"), DrawableId("Cuff")), RigBuilder.journalPlaced(spec, journal))
+		assertEquals(setOf("Sleeve", "Cuff"), SkeletonCanvasSkin.placed(RigEditOverlay(skeleton = spec, authoringJournal = journal)))
+		// The skin stage owns their keyforms on the bone's parameter, so canvas edits of them merge as overrides.
+		val graph = DocumentGenerators.graph(RigEditOverlay(skeleton = spec, authoringJournal = journal))
+		assertEquals(DocumentGenerators.SKIN, DocumentGenerators.owner(graph, DocumentGenerators.keyform("mesh", "Sleeve", upper.parameterId))?.id)
+		assertNull(DocumentGenerators.owner(graph, DocumentGenerators.keyform("mesh", "Hand", upper.parameterId)))
 	}
 
 	@Test fun aMeshRebuildRecordedUnderAVanishedParentMovesIntoTheCurrentParent() {

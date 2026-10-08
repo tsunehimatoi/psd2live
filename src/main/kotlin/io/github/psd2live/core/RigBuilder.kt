@@ -1271,7 +1271,9 @@ object RigBuilder {
 			deformPaths = builtDeformPaths,
 		)
 		if (RigBuildProfile.recording) RigBuildProfile.add("assembly: masks, parts, parameters, model", System.nanoTime() - assemblyStart)
-		val skeleton = config.rigEdits.skeleton?.takeIf { it.enabled && shouldBuildDeformers }?.let { withoutBindings(it, journalPlaced(it, config.rigEdits.authoringJournal)) }
+		val skeleton = config.rigEdits.skeleton?.takeIf { it.enabled && shouldBuildDeformers }
+		// Bound meshes the journal places under deformers of its own: skinned after it replays (see [SkeletonCanvasSkin]).
+		val canvasSkinned = skeleton?.let { SkeletonCanvasSkin.placed(config.rigEdits) }.orEmpty()
 		val faceCenterCanvas = faceRig.coordinateSpace.toCanvas(faceRig.centerX, faceRig.centerY)
 		var skeletonKey: String? = null
 		fun finish(): BuiltRig {
@@ -1284,12 +1286,14 @@ object RigBuilder {
 			if (v2) {
 				// Version 2 parts bake with the base - a deferred-parent part has no skin - and passengers never bind.
 				val baked = maskedParts.filter { it.id !in deferredParts }
-				val locked = handEditedTopology(config) + resolution.parts.filter { it.fixedTopology }.map { it.drawableId.raw }
-				val spec = skeleton?.let { withoutBindings(it, ghostIds) }
 				val withParts = unbound.copy(drawables = unbound.drawables + parts + baked)
+				val locked = handEditedTopology(config) + resolution.parts.filter { it.fixedTopology }.map { it.drawableId.raw } +
+					SkeletonCanvasSkin.lockedTopology(withParts, config.rigEdits, canvasSkinned)
+				val spec = skeleton?.let { withoutBindings(it, ghostIds) }
 				val skeletal = spec?.let { RigBuildProfile.stage("skeleton") {
 					SkeletonRig.takeLastKey()
-					SkeletonRig.generate(withParts, it, context.bodyFrame, locked, context.stance).also { skeletonKey = SkeletonRig.takeLastKey() }
+					SkeletonRig.generate(withParts, it, context.bodyFrame, locked, context.stance, canvasSkinned - ghostIds.mapTo(HashSet()) { id -> id.raw })
+						.also { skeletonKey = SkeletonRig.takeLastKey() }
 				} } ?: withParts
 				val (skinnedBase, skins) = parked(skeletal, parts.mapTo(HashSet()) { it.id }, maskedParts, deferredParts, resolution,
 					generatedMasks, partSlots, partLayerById, partNeutralBounds)
@@ -1302,8 +1306,10 @@ object RigBuilder {
 			val skeletal = skeleton
 				?.let { RigBuildProfile.stage("skeleton") {
 					SkeletonRig.takeLastKey()
-					SkeletonRig.generate(unbound.copy(drawables = unbound.drawables + parts), it, context.bodyFrame, handEditedTopology(config),
-						context.stance).also { skeletonKey = SkeletonRig.takeLastKey() }
+					val withParts = unbound.copy(drawables = unbound.drawables + parts)
+					SkeletonRig.generate(withParts, it, context.bodyFrame, handEditedTopology(config) +
+						SkeletonCanvasSkin.lockedTopology(withParts, config.rigEdits, canvasSkinned), context.stance, canvasSkinned)
+						.also { skeletonKey = SkeletonRig.takeLastKey() }
 				} } ?: unbound
 			val (skinnedBase, skins) = withoutSkinnedPrimitives(skeletal, parts.mapTo(HashSet()) { it.id })
 			val skeletonPuppet = RigBuildProfile.stage("binding: UvBinding.bind") {
@@ -1331,7 +1337,7 @@ object RigBuilder {
 			atlas.pages.map { it.image.width to it.image.height }, inputAnalysis.layers.map(::bindingMeta),
 			classifiedByDrawable.entries.associate { it.key.raw to it.value.source.id.raw },
 			skeleton?.let { listOf(it, handEditedTopology(config), context.bodyFrame, context.stance.contentKey, SkeletonRig.clears,
-				skinnedRecords(it, config)) },
+				skinnedRecords(it, config), canvasSkinned, SkeletonCanvasSkin.addressedCounts(config.rigEdits.authoringJournal).filterKeys { id -> id in canvasSkinned }) },
 			listOf(pageByDrawable, sourceBoundsByDrawable, layerIdByDrawable, warnings.toList(), faceCenterCanvas,
 				faceRig.radiusX, faceRig.radiusY, faceRig.initialAngleZ),
 			io.github.psd2live.i18n.I18n.currentLanguage.tag,
@@ -1440,28 +1446,6 @@ object RigBuilder {
 			for (part in ArtPrimitiveJournal.skinnable(model, command, bound, earlier)) if (parts.none { it.id == part.id }) parts += part
 		}
 		return parts
-	}
-
-	/**
-	 * Meshes the journal places under a deformer of its own choosing: a structure `bind` to a deformer that is not
-	 * a bone of [skeleton], or a `warp` edit wrapping them. Those edits keep the mesh's local geometry, which the
-	 * bake would have moved into a bone's space, so the journal's placement wins and no bone binds them.
-	 */
-	internal fun journalPlaced(skeleton: SkeletonSpec, journal: List<kotlinx.serialization.json.JsonObject>): Set<DrawableId> {
-		val bones = skeleton.bones.mapTo(HashSet()) { it.deformerId }
-		val placed = HashSet<DrawableId>()
-		for (command in journal) when (command["op"]?.jsonPrimitive?.contentOrNull) {
-			"structure" -> for (edit in (command["edits"] as? kotlinx.serialization.json.JsonArray).orEmpty()) {
-				val e = edit as? kotlinx.serialization.json.JsonObject ?: continue
-				if (e["action"]?.jsonPrimitive?.contentOrNull != "bind" || e["kind"]?.jsonPrimitive?.contentOrNull != "mesh") continue
-				if (e["parent_id"]?.jsonPrimitive?.contentOrNull in bones) continue
-				e["id"]?.jsonPrimitive?.contentOrNull?.let { placed += DrawableId(it) }
-			}
-			"warp" -> (command["warp"] as? kotlinx.serialization.json.JsonObject)?.get("mesh_ids")?.let { ids ->
-				(ids as? kotlinx.serialization.json.JsonArray).orEmpty().forEach { placed += DrawableId(it.jsonPrimitive.content) }
-			}
-		}
-		return placed
 	}
 
 	/** [spec] without bindings of [drawables]: a passenger never binds to a bone. */

@@ -39,13 +39,34 @@ internal object SkeletonPoseSolver {
 	 */
 	fun posed(model: PuppetModel, spec: SkeletonSpec?, values: Map<ParameterId, Float>): List<PosedBone> {
 		if (spec?.enabled != true) return emptyList()
+		val bones = SkeletonRig.limbBones(spec)
+		val frames = frames(model, spec, values)
+		return bones.map { bone ->
+			val frame = frames.getValue(bone.id)
+			val head = frame(bone.headX.toDouble(), bone.headY.toDouble())
+			val tail = frame(bone.tailX.toDouble(), bone.tailY.toDouble())
+			PosedBone(bone, head[0].toFloat(), head[1].toFloat(), tail[0].toFloat(), tail[1].toFloat())
+		}
+	}
+
+	/**
+	 * Where every limb bone of [spec] carries a canvas point at [values], as [posed] reads the bones, by bone id: a
+	 * point at rest in canvas pixels to where the bone moves it. [rest] is the rig's deformers at the defaults, when
+	 * the caller already has them.
+	 */
+	fun frames(
+		model: PuppetModel,
+		spec: SkeletonSpec,
+		values: Map<ParameterId, Float>,
+		rest: Map<org.umamo.runtime.model.DeformerId, org.umamo.render.eval.DeformerWorld>? = null,
+	): Map<String, (Double, Double) -> DoubleArray> {
 		val defaults = model.parameters.associate { it.id to it.default }
 		val worlds = buildDeformerWorlds(model.deformers, { values[it] ?: defaults[it] ?: 0f }, { defaults[it] ?: 0f })
-		val rest = buildDeformerWorlds(model.deformers, { defaults[it] ?: 0f }, { defaults[it] ?: 0f })
+		val rest = rest ?: buildDeformerWorlds(model.deformers, { defaults[it] ?: 0f }, { defaults[it] ?: 0f })
 		val bones = SkeletonRig.limbBones(spec)
 		val ids = bones.mapTo(HashSet()) { it.id }
 		val legs = SkeletonRig.legs(spec)
-		val frames = HashMap<String, (Double, Double) -> DoubleArray>()
+		val frames = LinkedHashMap<String, (Double, Double) -> DoubleArray>()
 		val scratch = FloatArray(2)
 		// Every pose's turns in parameter units by bone, summed as the blend shapes sum them.
 		val poseTurns = HashMap<String, Float>()
@@ -84,12 +105,7 @@ internal object SkeletonPoseSolver {
 				}
 			}
 		}
-		return bones.map { bone ->
-			val frame = frames.getValue(bone.id)
-			val head = frame(bone.headX.toDouble(), bone.headY.toDouble())
-			val tail = frame(bone.tailX.toDouble(), bone.tailY.toDouble())
-			PosedBone(bone, head[0].toFloat(), head[1].toFloat(), tail[0].toFloat(), tail[1].toFloat())
-		}
+		return frames
 	}
 
 	/**

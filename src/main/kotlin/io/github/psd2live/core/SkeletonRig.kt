@@ -76,7 +76,7 @@ import kotlin.math.max
  * are solved by two-bone IK at bake time so the feet stay where they are while the hips move.
  */
 internal object SkeletonRig {
-	private val bodyId = DeformerId("DeformBodyXY")
+	internal val bodyId = DeformerId("DeformBodyXY")
 	private val breathId = DeformerId("DeformBodyZBreath")
 	private val headRotationId = DeformerId("DeformHeadRotation")
 
@@ -107,7 +107,7 @@ internal object SkeletonRig {
 	private const val BODY_WARP_COLUMNS = 4
 
 	/** Home-space units below which a pose leaves a mesh no shape of its own. */
-	private const val POSE_EPSILON = 1e-4f
+	internal const val POSE_EPSILON = 1e-4f
 
 	/** The bones of [spec] the rig moves: non-anchor bones with a usable length, body halves included. */
 	fun limbBones(spec: SkeletonSpec): List<SkeletonBone> =
@@ -232,10 +232,11 @@ internal object SkeletonRig {
 		frame: Bounds,
 		lockedTopology: Set<String> = emptySet(),
 		stance: BodyStance? = null,
+		canvasSkinned: Set<String> = emptySet(),
 	): PuppetModel {
 		if (!spec.enabled || base.deformers.none { it.id == bodyId } || limbBones(spec).isEmpty()) return base
 		val inputs = bakeInputs(base, spec)
-		val key = cacheKey(base, spec, frame, lockedTopology, stance, inputs)
+		val key = cacheKey(base, spec, frame, lockedTopology, stance, inputs, canvasSkinned)
 		lastKey.set(key)
 		synchronized(bakes) {
 			val cached = bakes[key]
@@ -245,7 +246,7 @@ internal object SkeletonRig {
 			}
 			misses++
 		}
-		val output = apply(base, spec, frame, lockedTopology, stance)
+		val output = apply(base, spec, frame, lockedTopology, stance, canvasSkinned)
 		val bake = recordBake(base, output, inputs, spec.toJson().toString())
 		synchronized(bakes) { bakes[key] = bake }
 		return output
@@ -267,7 +268,7 @@ internal object SkeletonRig {
 	}
 
 	private fun cacheKey(base: PuppetModel, spec: SkeletonSpec, frame: Bounds, lockedTopology: Set<String>, stance: BodyStance?,
-						 inputs: BakeInputs): String {
+						 inputs: BakeInputs, canvasSkinned: Set<String>): String {
 		val read = base.copy(
 			drawables = base.drawables.filter { it.id in inputs.drawables },
 			deformers = base.deformers.filter { it.id in inputs.deformers },
@@ -277,7 +278,9 @@ internal object SkeletonRig {
 		return io.github.psd2live.format.compile.document.ContentHash.of(BAKE_VERSION, io.github.psd2live.targets.cubism.PuppetIr.toIr(read),
 			base.deformers.map { Triple(it.id.raw, it.parent?.raw, it.javaClass.simpleName) },
 			base.drawables.map { it.id.raw to it.parentDeformerId?.raw }, spec.toJson(), frame,
-			lockedTopology.filter { DrawableId(it) in inputs.drawables }.sorted(), stance?.contentKey, io.github.psd2live.i18n.I18n.currentLanguage.tag)
+			lockedTopology.filter { DrawableId(it) in inputs.drawables }.sorted(), stance?.contentKey, io.github.psd2live.i18n.I18n.currentLanguage.tag,
+			// Only when there are any, so the key of every other bake stays what it was.
+			*listOfNotNull(canvasSkinned.filter { DrawableId(it) in inputs.drawables }.sorted().takeIf { it.isNotEmpty() }).toTypedArray())
 	}
 
 	private fun fullHash(model: PuppetModel) =
@@ -388,6 +391,11 @@ internal object SkeletonRig {
 	 * figure stands, which places the leg poses; without one it is read off the skeleton. Meshes in
 	 * [lockedTopology] keep their vertices: they carry hand-made topology edits that replay by vertex
 	 * index, which new vertices would misplace.
+	 *
+	 * Meshes in [canvasSkinned] are those the journal hangs under a deformer of its own (see [SkeletonCanvasSkin]):
+	 * the bake refines and welds them with the rest of their limb and counts them in the blend plan, but leaves
+	 * them where they hang, unskinned. The bone their limb would hang them from keeps its deformer, as if they
+	 * hung there, and the skin is written onto them after the journal replays.
 	 */
 	fun apply(
 		base: PuppetModel,
@@ -395,6 +403,7 @@ internal object SkeletonRig {
 		frame: Bounds,
 		lockedTopology: Set<String> = emptySet(),
 		stance: BodyStance? = null,
+		canvasSkinned: Set<String> = emptySet(),
 	): PuppetModel {
 		if (!spec.enabled || base.deformers.none { it.id == bodyId }) return base
 		val bones = limbBones(spec)
@@ -439,7 +448,7 @@ internal object SkeletonRig {
 		canvas = seams.canvas
 
 		// 2c. The bone each mesh hangs under, and the bone parameters whose turns only ever add.
-		val plan = planBlend(model, canvas, drawableRoot, treeBones, parentOf, candidates, spec.manualWeights)
+		val plan = planBlend(model, canvas, drawableRoot, treeBones, parentOf, candidates, spec.manualWeights, canvasSkinned)
 
 		// 3. The body halves spliced into the body chain as a warp - the head rotation and everything else on
 		// the breath warp ends up under it - and a rotation deformer per limb bone hung from it, the legs'
@@ -458,6 +467,7 @@ internal object SkeletonRig {
 		// Body Y, since its rotation passes on none of the legs warp's bend.
 		val legHomes = LinkedHashMap<SkeletonBone, MutableList<DrawableId>>()
 		for ((id, root) in drawableRoot) {
+			if (id in canvasSkinned) continue
 			val home = treeBones.getValue(root)[plan.homes.getValue(id)]
 			if (home.role in legRoles) legHomes.getOrPut(home) { ArrayList() } += DrawableId(id)
 		}
@@ -467,6 +477,7 @@ internal object SkeletonRig {
 		// 5. Every skinned mesh under its home bone, with its joints baked into its keyforms and its poses
 		// into its blend shapes.
 		for ((id, root) in drawableRoot) {
+			if (id in canvasSkinned) continue
 			val drawableId = DrawableId(id)
 			val tree = treeBones.getValue(root)
 			val home = plan.homes.getValue(id)
@@ -477,8 +488,12 @@ internal object SkeletonRig {
 		// 6. The welded parts glued, no deformer left holding nothing, and no joint inside one mesh left as a
 		// rotation of its own.
 		model = model.copy(glues = model.glues + seams.glues)
-		model = pruneEmptyBones(model, joints)
-		model = foldLinkBones(model, joints, spec.sampling)
+		// The bone each mesh skinned after the journal would hang from holds it all the same.
+		val held = drawableRoot.filterKeys { it in canvasSkinned }.mapTo(HashSet()) { (id, root) ->
+			DeformerId(treeBones.getValue(root)[plan.homes.getValue(id)].deformerId)
+		}
+		model = pruneEmptyBones(model, joints, held)
+		model = foldLinkBones(model, joints, spec.sampling, held)
 		stance?.let { model = withLean(model, joints, it) }
 		model = withArmSwing(model, joints, standing)
 		model = withSkeletonGroup(model, bones, poses)
@@ -515,6 +530,7 @@ internal object SkeletonRig {
 		parentOf: Map<String, SkeletonBone?>,
 		candidates: Set<String>,
 		manualWeights: Map<String, SkeletonWeightMap>,
+		canvasSkinned: Set<String> = emptySet(),
 	): BlendPlan {
 		val homes = HashMap<String, Int>()
 		val coupled = HashSet<String>()
@@ -527,7 +543,8 @@ internal object SkeletonRig {
 			val skins = SkeletonManualWeights.weights(frame, triangles, tree, parentOf, manualWeights[id])
 			val home = homeBone(skins, skinBones, frame, triangles) { tree[it].parameterId in candidates }
 			homes[id] = home
-			for (moving in dependencies(skins, skinBones, home)) {
+			// A mesh skinned in canvas space hangs from no bone: every bone up its limb moves it.
+			for (moving in if (id in canvasSkinned) canvasDependencies(skins, skinBones) else dependencies(skins, skinBones, home)) {
 				val parameters = moving.mapTo(HashSet()) { tree[it].parameterId }
 				if (parameters.size > 1) coupled += parameters
 			}
@@ -1061,7 +1078,7 @@ internal object SkeletonRig {
 	private fun <T : Any> poseBinding(pose: SkeletonPose, form: (Int) -> T): BlendShapeBinding<T> = blendBinding(pose.id, pose.keys, form)
 
 	/** A blend binding of [parameterId] over [keys], which hold 0, with [form] at every key but the neutral one. */
-	private fun <T : Any> blendBinding(parameterId: ParameterId, keys: FloatArray, form: (Int) -> T): BlendShapeBinding<T> {
+	internal fun <T : Any> blendBinding(parameterId: ParameterId, keys: FloatArray, form: (Int) -> T): BlendShapeBinding<T> {
 		val neutral = keys.indexOfFirst { it == 0f }
 		return BlendShapeBinding(parameterId, keys, neutral, keys.indices.map { if (it == neutral) null else form(it) })
 	}
@@ -1380,14 +1397,7 @@ internal object SkeletonRig {
 				doubleArrayOf((points[2] - points[0]).toDouble(), (points[4] - points[0]).toDouble(),
 					(points[3] - points[1]).toDouble(), (points[5] - points[1]).toDouble())
 			}
-			val (guide, guideWeights) = jointTemplates.guide(seed, angles, carry, target)
-			val folding = jointTemplates.folding(angles)
-			val corrected = arap.solve(target, seed, guide, guideWeights, folding)
-			val closedFold = jointTemplates.folding(angles, closed = true)
-			for (v in skins.indices) if (closedFold[v]) {
-				corrected[v * 2] = guide[v * 2]; corrected[v * 2 + 1] = guide[v * 2 + 1]
-			}
-			surface.apply(corrected, jointTemplates.fairing(angles))
+			val corrected = corrected(arap, jointTemplates, surface, target, seed, angles, carry)
 			for (vertex in skins.indices) {
 				val inHome = inverse(homeWorld, corrected[vertex * 2], corrected[vertex * 2 + 1])
 				out[vertex * 2] = inHome[0] - restBase[vertex * 2]
@@ -1460,6 +1470,24 @@ internal object SkeletonRig {
 		val added = poses.map { KeyformAxis(it.id, it.keys) } + blendAxes
 		val posed = skinned.copy(blendShapes = skinned.blendShapes + additiveShapes(base, skinned, added, ::deltasAt))
 		return base.copy(drawables = base.drawables.map { if (it.id == drawableId) posed else it })
+	}
+
+	/**
+	 * The skin at one pose: [target] (each vertex where its bones carry it, blended across its joint) corrected by
+	 * the joint templates, the ARAP solve seeded with [seed] and the surface fairing. [angles] is each bone's turn
+	 * from rest in degrees and [carry] the linear part of each bone's transform, row-major.
+	 */
+	internal fun corrected(arap: SkeletonArap, jointTemplates: SkeletonJointTemplates, surface: SkeletonSurfaceFairing,
+						   target: FloatArray, seed: FloatArray, angles: FloatArray, carry: List<DoubleArray>): FloatArray {
+		val (guide, guideWeights) = jointTemplates.guide(seed, angles, carry, target)
+		val folding = jointTemplates.folding(angles)
+		val corrected = arap.solve(target, seed, guide, guideWeights, folding)
+		val closedFold = jointTemplates.folding(angles, closed = true)
+		for (v in 0 until corrected.size / 2) if (closedFold[v]) {
+			corrected[v * 2] = guide[v * 2]; corrected[v * 2 + 1] = guide[v * 2 + 1]
+		}
+		surface.apply(corrected, jointTemplates.fairing(angles))
+		return corrected
 	}
 
 	/** Painter order for a folded 2D limb: draw proximal material before distal material.
@@ -1579,12 +1607,19 @@ internal object SkeletonRig {
 		}
 	}
 
+	/** Per vertex, every bone whose turn moves it on the canvas: the bones up from the one it follows, and the joint it blends across. */
+	internal fun canvasDependencies(skins: List<VertexSkin>, bones: List<SkinBone>): List<Set<Int>> {
+		val chains = HashMap<Int, Set<Int>>()
+		fun chain(index: Int): Set<Int> = chains.getOrPut(index) { generateSequence(index) { bones[it].parent.takeIf { p -> p >= 0 } }.toSet() }
+		return skins.map { skin -> if (skin.rigid) chain(skin.from) else chain(skin.from) + chain(skin.to) }
+	}
+
 	/**
 	 * How many evenly spaced keys each side of 0 needs across [range] so the linear blend between two
 	 * neighbours of [at] - a mesh's home-space deltas at a value - strays from it by no more than
 	 * the configured tolerance, with keys never closer than the configured minimum step.
 	 */
-	private fun fittedSides(range: Pair<Float, Float>, sampling: SkeletonSampling, at: (Float) -> FloatArray): Pair<Int, Int> {
+	internal fun fittedSides(range: Pair<Float, Float>, sampling: SkeletonSampling, at: (Float) -> FloatArray): Pair<Int, Int> {
 		val memo = HashMap<Float, FloatArray>()
 		fun sample(value: Float) = memo.getOrPut(value) { at(value) }
 		fun side(limit: Float): Int {
@@ -1610,7 +1645,7 @@ internal object SkeletonRig {
 	 * The keyform axes of a mesh's multiplying bones, each with the keys of [sides] on either side of 0,
 	 * thinned from the densest side down while the grid would hold more than the configured limit.
 	 */
-	private fun gridAxes(sides: Map<ParameterId, Pair<Int, Int>>, ranges: Map<ParameterId, Pair<Float, Float>>, sampling: SkeletonSampling): List<KeyformAxis> {
+	internal fun gridAxes(sides: Map<ParameterId, Pair<Int, Int>>, ranges: Map<ParameterId, Pair<Float, Float>>, sampling: SkeletonSampling): List<KeyformAxis> {
 		val counts = sides.mapValues { intArrayOf(it.value.first, it.value.second) }
 		while (counts.values.fold(1L) { acc, c ->
 			if (acc > sampling.maxMeshKeyforms) acc else acc * (c[0] + c[1] + 1)
@@ -1635,7 +1670,7 @@ internal object SkeletonRig {
 		if (radius <= sampling.tolerancePx) 90.0 else max(sampling.minimumStepDegrees.toDouble(), Math.toDegrees(2.0 * acos(1.0 - sampling.tolerancePx / radius)))
 
 	/** [below] evenly spaced keys from [range]'s start to 0 and [above] from 0 to its end, 0 among them. */
-	private fun keysOf(range: Pair<Float, Float>, below: Int, above: Int): FloatArray {
+	internal fun keysOf(range: Pair<Float, Float>, below: Int, above: Int): FloatArray {
 		return (-below..above).map { i ->
 			when {
 				i < 0 -> range.first * (-i).toFloat() / below
@@ -1646,7 +1681,7 @@ internal object SkeletonRig {
 	}
 
 	/** Every coordinate of a grid over [axes], axis 0 fastest. */
-	private fun cartesian(axes: List<KeyformAxis>): List<IntArray> {
+	internal fun cartesian(axes: List<KeyformAxis>): List<IntArray> {
 		val total = axes.fold(1) { acc, axis -> acc * axis.keys.size }
 		return (0 until total).map { linear ->
 			var rest = linear
@@ -1753,11 +1788,11 @@ internal object SkeletonRig {
 	 * Bone deformers with nothing under them - no mesh and no other deformer - removed, deepest first, and
 	 * the legs bend with them when no leg or tail hangs from it.
 	 */
-	private fun pruneEmptyBones(model: PuppetModel, bones: List<SkeletonBone>): PuppetModel {
+	private fun pruneEmptyBones(model: PuppetModel, bones: List<SkeletonBone>, held: Set<DeformerId>): PuppetModel {
 		val boneDeformers = bones.mapTo(HashSet()) { DeformerId(it.deformerId) }
 		var deformers = model.deformers
 		while (true) {
-			val used = HashSet<DeformerId>()
+			val used = HashSet<DeformerId>(held)
 			deformers.forEach { d -> d.parent?.let(used::add) }
 			model.drawables.forEach { d -> d.parentDeformerId?.let(used::add) }
 			val empty = deformers.filter { it.id in boneDeformers && it.id !in used }.mapTo(HashSet()) { it.id }
@@ -1776,7 +1811,7 @@ internal object SkeletonRig {
 	 * Only a link under another bone's rotation folds: angles add across two rotations, so the child's
 	 * angle is the sum of both and only its pivot needs keys along the link's arc (see [foldLink]).
 	 */
-	private fun foldLinkBones(model: PuppetModel, bones: List<SkeletonBone>, sampling: SkeletonSampling): PuppetModel {
+	private fun foldLinkBones(model: PuppetModel, bones: List<SkeletonBone>, sampling: SkeletonSampling, held: Set<DeformerId>): PuppetModel {
 		val boneDeformers = bones.mapTo(HashSet()) { DeformerId(it.deformerId) }
 		val boneParameters = bones.mapTo(HashSet()) { ParameterId(it.parameterId) }
 		var result = model
@@ -1785,7 +1820,7 @@ internal object SkeletonRig {
 			val link = result.deformers.firstOrNull { it.id == id } as? Deformer.Rotation ?: continue
 			val parent = link.parent?.takeIf { it in boneDeformers } ?: continue
 			if (result.deformers.none { it.id == parent && it is Deformer.Rotation }) continue
-			if (result.drawables.any { it.parentDeformerId == id }) continue
+			if (id in held || result.drawables.any { it.parentDeformerId == id }) continue
 			val children = result.deformers.filter { it.parent == id }
 			if (children.isEmpty() || children.any { it !is Deformer.Rotation }) continue
 			result = foldLink(result, link, parent, children.map { it as Deformer.Rotation }, boneParameters, sampling)
