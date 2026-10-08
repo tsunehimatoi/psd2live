@@ -117,6 +117,7 @@ PSD2LIVE_TOOLS=1 PSD2LIVE_SAMPLE=ds ./gradlew test --tests "io.github.psd2live.t
 | `CommitPerfTool.profile` / `.desktop` | 1 回の編集コミットにかかる時間。`profile` はアプリケーション層のコマンド境界を通し、段階別（リビジョン、設定のデコード、再構築、ジオメトリ検査）に分けて計測。`desktop` はデスクトップのビューモデルとアダプタを通してメッシュ頂点編集とブラシのストロークを続けてコミットし、コミット時間と UI スレッドの最長停止を報告。`JAVA_TOOL_OPTIONS=-XX:StartFlightRecording=...` と併用してサンプリング可能 | `commit-perf/report.txt`、`desktop.txt` |
 | `CommitPerfTool.baseline` | コミット経路の段階別ベースライン。自動スケルトン、揺れ 2 つ、ベイク済みシミュレーション 1 つを持つプロジェクトで、完全再構築の各段階（解析、テクスチャアトラスのパッキングと PNG エンコード、基礎 Rig、スケルトンキャッシュのヒット/ミス、ジャーナル再生、揺れ/シミュレーションの書き戻し、上書き、IR、moc3 バンドル、`validateBundle`、リビジョンハッシュ、ランタイムファイルの書き出し）と、ジオメトリのコミット、小さなレイヤーへの描画、画像の差し替え（同形状/メッシュ再構築）、無関係なトポロジー編集後のスケルトンキャッシュ、ジャーナル 50/200 件追加時のコミット時間と増加を計測。各コミット後に履歴を保存する。ネイティブプレビューの再読み込み（GL コンテキストが必要）は計測しない | `commit-perf/baseline.json`、`baseline.md` |
 | `OpenPerfTool.profile` | プロジェクトを開く時間。自動スケルトン、揺れ 2 つ、ベイク済みシミュレーション 1 つを持つプロジェクトをヘッドキャッシュあり/なしで保存し、空のスケルトンキャッシュでそれぞれ 3 回開いて、展開/シードとヘッドの再構築を計測し、両者の再構築モデルが同一であることを確認 | `open-perf/report.json`、`report.md` |
+| `SavePerfTool.profile` | 現実的な規模の生成プロジェクト（`PSD2LIVE_SAVE_LAYERS`、`PSD2LIVE_SAVE_SIZE`、`PSD2LIVE_SAVE_REVISIONS`）の保存時間。同じキャプチャを 3 回、開き直した後に 2 回保存し、1 回開く | `save-perf/report.txt` |
 | `Cmo3HiresTool` | キャンバスより高密度のレイヤーを `.cmo3` に書く方法の調査。tml の目のレイヤー 1 枚を 4 倍に拡大し（中央 3 分の 1 に 1 テクセルの市松模様）、ベースライン、レイヤーはキャンバス解像度でアトラスのみ高解像度、高解像度レイヤーにモデル画像のスケールアフィン（レイヤー矩形はラスターサイズまたはキャンバスサイズ）、レイヤー画像全体を 4 倍にしたものをそれぞれ書き出し、リーダーで配置を読み戻す。ファイルは Cubism Editor で手動確認する | `cmo3-hires/*.cmo3`、`report.txt`、`README.txt` |
 
 | 環境変数 | 効果 |

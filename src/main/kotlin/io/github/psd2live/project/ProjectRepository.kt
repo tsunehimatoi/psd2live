@@ -25,7 +25,8 @@ internal class ProjectRepository(
                     Files.createTempDirectory("psd2live-project-").also { staging = it }
                 }
                 withContext(Dispatchers.IO) {
-                    val store = WorkspaceStore(root.resolve("workspace"))
+                    // Rasters the live store holds are linked from it rather than encoded again.
+                    val store = WorkspaceStore(root.resolve("workspace"), rasterSource = capture.store)
                     store.persistHistory(capture.projectId, capture.history)
                     capture.store.copyAuxiliary(capture.projectId, root.resolve("workspace").resolve(capture.projectId),
                         capture.assetCatalog)
@@ -41,7 +42,7 @@ internal class ProjectRepository(
                     } else {
                         require(Files.isRegularFile(original)) { "Original source is unavailable: $original" }
                         val sourceName = if (original.fileName.toString().endsWith(".cmo3", true)) "original.cmo3" else "original.psd"
-                        Files.copy(original, root.resolve("source/$sourceName"))
+                        ProjectArchive.copyKeepingTime(original, root.resolve("source/$sourceName"))
                     }
                     val ui = capture.presentation.toMutableMap()
                     capture.auxiliary["assetCatalog"]?.let { ui["assetCatalog"] = it }

@@ -4,6 +4,8 @@
 
 `.psd2live` is an unencrypted ZIP containing UTF-8 JSON and PNG raster resources. A saved project carries its source artwork and history without relying on the original PSD path. Export reports named `.psd2live.json` are not projects.
 
+ZIP entry methods: PNGs (`assets/`, `images/`, view images) and a CMO3 source are compressed already and are written `STORED`. Other non-JSON files of 1 MiB or more (such as the source PSD) are sampled first: they are DEFLATEd (at the fastest level) only when the sample shrinks to under half at that level, and `STORED` otherwise. JSON and every other entry are DEFLATEd as before. `manifest.json` is the last entry. Readers accept either method and any entry order; archives from earlier builds, with every entry DEFLATEd and the manifest among the others, open as before. Methods and entry order are not part of the format's identity; manifest hashes cover the uncompressed bytes.
+
 ## Archive layout (v2)
 
 Saves write v2. Each history revision is split into content-addressed document nodes, which revisions share where they did not change; each node carries its own schema version.
@@ -86,6 +88,8 @@ Internal filenames may hash logical IDs rather than display names. PNG resources
 ## Save and recovery
 
 Saves capture immutable state and serialize writes. The writer builds and validates a temporary archive beside the destination, then replaces the destination atomically. Unsupported atomic replacement fails while keeping the previous project. Later edits remain unsaved after an earlier capture completes.
+
+A save does not encode again what exists already: raster PNGs the working directory holds are hard-linked into the staging directory (or, where links are unavailable, copied keeping their modification time) instead of being encoded from pixels. Writing the archive reads each file once, taking its SHA-256 and CRC-32 as it is written and building the manifest from them; digests of `STORED` entries are cached in the process by entry name, length and modification time (opening a project records them too), so an unchanged raster saved again is copied without being hashed. After the temporary file is written and `fsync`ed it is read back as a stream: the entry set must be exactly the written entries plus the manifest, each entry's length and CRC must match what was written, and the manifest bytes must be the same; the archive is no longer extracted to disk and hashed again. A stale cache cannot produce a wrong archive: a `STORED` entry's bytes are checked against its CRC and length while written and once more when read back, and any mismatch fails the save and keeps the existing file. Opening still verifies every SHA-256.
 
 Ordinary saves do not append a history node when content already matches HEAD. Explicit checkpoints may record unchanged content. A failed save is not durable completion; inspect the error state.
 

@@ -66,6 +66,11 @@ import java.util.zip.GZIPOutputStream
  */
 internal class WorkspaceStore(
 	private val root: Path = defaultRoot(),
+	/**
+	 * A store whose raster files this one takes instead of encoding the pixels again: a save stages the live
+	 * working store's PNG for every raster it already holds, linked (or copied with its attributes).
+	 */
+	private val rasterSource: WorkspaceStore? = null,
 ) : WorkspaceAssetRepository {
 	private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
 	/**
@@ -89,14 +94,18 @@ internal class WorkspaceStore(
                 Files.createDirectories(destination.parent)
                 if (folder == "workflow" && targetProjectId != projectId) {
                     ProjectArchive.writeJson(destination, JsonObject(readJson(file) + ("project_id" to JsonPrimitive(targetProjectId))))
-                } else Files.copy(file, destination, StandardCopyOption.REPLACE_EXISTING)
+                } else ProjectArchive.copyKeepingTime(file, destination, StandardCopyOption.REPLACE_EXISTING)
             } }
         }
-        // Re-encode staged assets as PNG, including assets not yet used by a layer.
+        // Staged assets' rasters as PNG, including assets not yet used by a layer: the stored PNG when there is
+        // one, else (a legacy .rgba.gz blob) encoded from the pixels.
         val assets = source.resolve("assets")
         if (Files.isDirectory(assets)) Files.list(assets).use { paths -> paths.filter(Files::isRegularFile).forEach { file ->
-            val id = readJson(file).requiredString("id")
+            val metadata = readJson(file)
+            val id = metadata.requiredString("id")
             if (catalog != null && id !in catalog.assets) return@forEach
+            val name = rasterFileName(metadata.requiredString("rgbaBlob"), metadata.requiredInt("pixelWidth"), metadata.requiredInt("pixelHeight"))
+            if (linkRaster(source.resolve("blobs").resolve(name), target.resolve("blobs").resolve(name))) return@forEach
             val asset = loadAsset(projectId, id)!!
             persistRaster(target, asset.rgba, asset.public.pixelWidth, asset.public.pixelHeight)
         } }
@@ -916,13 +925,41 @@ internal class WorkspaceStore(
 
 	private fun persistRaster(project: Path, rgba: ByteArray, width: Int, height: Int): String {
 		val hash = WorkspaceRevisions.rasterDigest(rgba)
-        val path = project.resolve("blobs/${fileKey(hash)}-${width}x${height}.png")
+        val name = rasterFileName(hash, width, height)
+        val path = project.resolve("blobs/$name")
         if (isStored(path)) return hash
+        val existing = rasterSource?.projectRoot(project.fileName.toString())?.resolve("blobs/$name")
+        if (existing != null && linkRaster(existing, path)) { stored.add(path); return hash }
         val image = io.github.psd2live.core.PreviewRenderer.rasterImage(width, height, rgba)
         val bytes = ByteArrayOutputStream().use { out -> javax.imageio.ImageIO.write(image, "png", out); out.toByteArray() }
         writeImmutable(path, bytes)
 		stored.add(path)
 		return hash
+	}
+
+	private fun rasterFileName(hash: String, width: Int, height: Int) = "${fileKey(hash)}-${width}x${height}.png"
+
+	/**
+	 * Gives [target] the immutable raster file [source] when there is one: a hard link, or where links are not
+	 * possible a copy that keeps its attributes, so the archive writer knows the file's digest
+	 * ([ProjectArchive.Digests]). False when [source] is missing; true when [target] exists already.
+	 */
+	private fun linkRaster(source: Path, target: Path): Boolean {
+		if (Files.isRegularFile(target)) return true
+		if (!Files.isRegularFile(source)) return false
+		Files.createDirectories(target.parent)
+		try { Files.createLink(target, source) }
+		catch (_: java.nio.file.FileAlreadyExistsException) {}
+		catch (_: Exception) {
+			val temporary = target.resolveSibling(".${target.fileName}.${UUID.randomUUID()}.tmp")
+			try {
+				ProjectArchive.copyKeepingTime(source, temporary)
+				try { Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE) }
+				catch (_: java.nio.file.FileAlreadyExistsException) {}
+				catch (_: AtomicMoveNotSupportedException) { if (!Files.exists(target)) Files.move(temporary, target) }
+			} finally { Files.deleteIfExists(temporary) }
+		}
+		return true
 	}
 
 	private fun loadRaster(project: Path, hash: String, width: Int, height: Int): ByteArray {
