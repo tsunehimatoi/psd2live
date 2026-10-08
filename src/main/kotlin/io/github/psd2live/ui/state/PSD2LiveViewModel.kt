@@ -6911,8 +6911,9 @@ class PSD2LiveViewModel : AutoCloseable {
 			}
 		} else if (current.sdkStatus != "ready" && !pausedPhysicsOn && pausedPhysics.isEmpty()) {
 			// Stopped and not following the pointer: the software preview shows the authored pose again, so the
-			// sliders must not keep the last animated frame.
-			setLivePose(emptyMap())
+			// sliders must not keep the last animated frame. An SDK frame may have arrived since this tick read
+			// the state; it publishes its pose and the ready status under the lock, so check again there.
+			synchronized(stateLock) { if (_state.value.sdkStatus != "ready") setLivePose(emptyMap()) }
 		}
 		// 5. Paused, physics still runs, on the pose the user sets: a slider or the pointer's look swings it.
 		stepPausedPhysics(current, model, pausedPhysicsOn, tracking, dt)
@@ -6979,8 +6980,14 @@ class PSD2LiveViewModel : AutoCloseable {
 		pausedPhysics = out
 		if (current.sdkStatus != "ready") {
 			val shown = io.github.psd2live.core.boundedPreviewPose(pose + out, model.rig.puppet.parameters)
-			setLivePose((if (tracking && pointerActive) pose.filterKeys { it in POINTER_POSE_PARAMETERS } else emptyMap()) + out)
-			updateState { latest -> if (!latest.previewLive || latest.previewParameterValues == shown) latest else latest.copy(previewParameterValues = shown) }
+			updateState { latest ->
+				// An SDK frame may have arrived since this tick read the state; it owns the live pose then.
+				if (latest.sdkStatus == "ready") latest
+				else {
+					setLivePose((if (tracking && pointerActive) pose.filterKeys { it in POINTER_POSE_PARAMETERS } else emptyMap()) + out)
+					if (!latest.previewLive || latest.previewParameterValues == shown) latest else latest.copy(previewParameterValues = shown)
+				}
+			}
 		}
 	}
 
