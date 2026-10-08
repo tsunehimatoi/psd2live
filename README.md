@@ -1,6 +1,6 @@
 # PSD2Live
 
-[English](docs/en/README.md) · [日本語](docs/ja/README.md) · [下载](https://github.com/tsunehimatoi/psd2live/releases/latest) · [更新日志](docs/zh/CHANGELOG.md) · [文档](docs/README.md)
+[English](docs/en/README.md) · [日本語](docs/ja/README.md) · [한국어](docs/ko/README.md) · [下载](https://github.com/tsunehimatoi/psd2live/releases/latest) · [更新日志](docs/zh/CHANGELOG.md) · [文档](docs/README.md)
 
 **从分层 PSD 自动生成 Live2D 模型，在同一个桌面工作区里完成修形、绑定、动画、物理与纹理，再导出到 Cubism、VTube Studio、网页或视频。**
 

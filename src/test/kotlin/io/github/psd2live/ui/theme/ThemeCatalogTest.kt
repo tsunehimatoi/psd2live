@@ -81,7 +81,7 @@ class ThemeCatalogTest {
 		val keys = ThemeCatalog.builtIns.map { it.nameKey } +
 			ColorTokenGroup.entries.map { it.labelKey } +
 			ColorToken.entries.map { it.labelKey }
-		for (bundle in listOf("Messages", "Messages_zh_CN", "Messages_ja")) {
+		for (bundle in listOf("Messages", "Messages_zh_CN", "Messages_ja", "Messages_ko")) {
 			val properties = Properties()
 			javaClass.getResourceAsStream("/i18n/$bundle.properties")!!.reader(Charsets.UTF_8).use(properties::load)
 			for (key in keys) assertTrue(properties.containsKey(key), "$bundle is missing $key")

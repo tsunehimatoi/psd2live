@@ -76,7 +76,7 @@ class InteractiveTutorialCatalogTest {
 
 	@Test
 	fun openModelStepHasTranslationsAcrossLocales() {
-		listOf("Messages", "Messages_zh_CN", "Messages_ja").forEach { name ->
+		listOf("Messages", "Messages_zh_CN", "Messages_ja", "Messages_ko").forEach { name ->
 			val props = java.util.Properties()
 			javaClass.getResourceAsStream("/i18n/$name.properties")!!.reader(Charsets.UTF_8).use(props::load)
 			listOf(
@@ -178,7 +178,7 @@ class InteractiveTutorialCatalogTest {
 
 	@Test
 	fun allTutorialStepsHaveTranslationsAcrossLocales() {
-		val bundles = listOf("Messages", "Messages_zh_CN", "Messages_ja").map { name ->
+		val bundles = listOf("Messages", "Messages_zh_CN", "Messages_ja", "Messages_ko").map { name ->
 			val props = java.util.Properties()
 			javaClass.getResourceAsStream("/i18n/$name.properties")!!.reader(Charsets.UTF_8).use(props::load)
 			name to props
@@ -206,7 +206,7 @@ class InteractiveTutorialCatalogTest {
 
 	@Test
 	fun startCanvasUpdatesHaveTranslationsAcrossLocales() {
-		val bundles = listOf("Messages", "Messages_zh_CN", "Messages_ja").map { name ->
+		val bundles = listOf("Messages", "Messages_zh_CN", "Messages_ja", "Messages_ko").map { name ->
 			val props = java.util.Properties()
 			javaClass.getResourceAsStream("/i18n/$name.properties")!!.reader(Charsets.UTF_8).use(props::load)
 			name to props

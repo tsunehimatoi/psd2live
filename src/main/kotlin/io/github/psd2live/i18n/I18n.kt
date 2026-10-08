@@ -13,7 +13,8 @@ enum class AppLanguage(
 ) {
 	CHINESE("zh", Locale.SIMPLIFIED_CHINESE, "language.chinese"),
 	ENGLISH("en", Locale.ENGLISH, "language.english"),
-	JAPANESE("ja", Locale.JAPANESE, "language.japanese");
+	JAPANESE("ja", Locale.JAPANESE, "language.japanese"),
+	KOREAN("ko", Locale.KOREAN, "language.korean");
 
 	companion object {
 		fun fromTag(tag: String?): AppLanguage? {

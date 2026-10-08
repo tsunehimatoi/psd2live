@@ -1,6 +1,6 @@
 # PSD2Live
 
-[中文](../../README.md) · [日本語](../ja/README.md) · [Download](https://github.com/tsunehimatoi/psd2live/releases/latest) · [Changelog](../zh/CHANGELOG.md) · [Documentation](../README.md)
+[中文](../../README.md) · [日本語](../ja/README.md) · [한국어](../ko/README.md) · [Download](https://github.com/tsunehimatoi/psd2live/releases/latest) · [Changelog](../zh/CHANGELOG.md) · [Documentation](../README.md)
 
 **Generate a Live2D model from a layered PSD, refine, rig, animate, simulate and texture it in one desktop workspace, then export it to Cubism, VTube Studio, the web or video.**
 

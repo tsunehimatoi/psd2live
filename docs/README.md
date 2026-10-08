@@ -1,6 +1,6 @@
 # 文档目录 · Documentation · ドキュメント
 
-[中文首页](../README.md) · [English](en/README.md) · [日本語](ja/README.md) · [更新日志](zh/CHANGELOG.md)
+[中文首页](../README.md) · [English](en/README.md) · [日本語](ja/README.md) · [한국어](ko/README.md) · [更新日志](zh/CHANGELOG.md)
 
 学习操作请先用程序内的 **帮助 → 教程…**（`F1`）：零基础路线 18 课，Cubism 经验者路线 13 课。下列文档用于回看操作和查阅技术细节。中文为主要语言；尚无译文的页面在英文、日文列中标注为中文参考。
 

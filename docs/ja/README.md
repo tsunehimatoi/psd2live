@@ -1,6 +1,6 @@
 # PSD2Live
 
-[中文](../../README.md) · [English](../en/README.md) · [ダウンロード](https://github.com/tsunehimatoi/psd2live/releases/latest) · [更新履歴](../zh/CHANGELOG.md) · [ドキュメント](../README.md)
+[中文](../../README.md) · [English](../en/README.md) · [한국어](../ko/README.md) · [ダウンロード](https://github.com/tsunehimatoi/psd2live/releases/latest) · [更新履歴](../zh/CHANGELOG.md) · [ドキュメント](../README.md)
 
 **レイヤー付き PSD から Live2D モデルを自動生成し、調整・リギング・アニメーション・物理・テクスチャまでを一つのデスクトップ画面で行い、Cubism、VTube Studio、Web、動画へ書き出します。**
 
