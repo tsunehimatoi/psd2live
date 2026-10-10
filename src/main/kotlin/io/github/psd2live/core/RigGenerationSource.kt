@@ -93,7 +93,9 @@ internal object RigGenerationSource {
         val owned = ArtPrimitiveJournal.ownedLayers(config.rigEdits)
         val superseded = ArtPrimitiveJournal.supersededLayers(config.rigEdits)
         val primitiveCoverage = ArtPrimitiveJournal.coverage(config.rigEdits)
-        fun gone(id: String) = id !in current && superseded.any { id == it || id.startsWith("$it:") }
+        // A part a later record superseded, or one deleted since (its pinned stand-in still generates, up to the
+        // record that removes its mesh).
+        fun gone(id: String) = id !in current && (superseded.any { id == it || id.startsWith("$it:") } || resolution.isPartLayer(id))
         val generated = RigBuildProfile.stage("prepare: texture lips") { (if (RigGenerationBaseline.present(config.rigEdits))
             RigGenerationTextures.layers(config.meshSource ?: input.source, textureConfig) else
             MouthLipLayers.prepare(lipInputs, textureConfig).layers.filter { it.source is MouthLipLayer }) }
@@ -122,7 +124,7 @@ internal object RigGenerationSource {
                     ?.let { parent -> object : SourceLayer by parent {
                         override val id = layer.source.id
                         override val name = layer.source.name
-                    } } ?: error("Generation layer has no current artwork")
+                    } } ?: error("Generation layer ${layer.source.id.raw} has no current artwork")
                 val classified = resolution.classify(CharacterAnalyzer.classify(artwork, textureConfig), textureConfig)
                 val covered = padded(artwork, layer.source.bounds).let { source -> creationCoverage[artwork.id.raw]?.let { padded(source, it) } ?: source }
                 layer.copy(source = covered, semantic = classified.semantic, bounds = classified.bounds,

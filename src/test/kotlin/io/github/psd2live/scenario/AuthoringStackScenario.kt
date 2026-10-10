@@ -22,14 +22,14 @@ class AuthoringStackScenario {
 		val sleeve = mesh("sleeve_r"); val top = mesh("top"); val face = mesh("face")
 		structural("make a rotation for the right sleeve and a new axis",
 			"parameter_create" to req("parameter_id" to "ParamWing", "name" to "Wing", "min" to -1, "max" to 1),
-			// As the canvas makes it: the pose kept, the pivot given in canvas pixels.
-			"canvas_rotation" to req("id" to "ElbowR", "name" to "Elbow R", "meshes" to listOf(sleeve), "origin" to listOf(162, 134), "preservePose" to true))
+			// As an agent makes it: the pivot in canvas pixels, nothing said about the pose (the sleeve must stay put).
+			"canvas_rotation" to req("id" to "ElbowR", "name" to "Elbow R", "meshes" to listOf(sleeve), "origin" to listOf(162, 134)))
 		val pivot = (puppet.deformers.single { it.id.raw == "ElbowR" } as Deformer.Rotation).geometryGrid!!.cells.single().form
+		// The second key gives only the angle: the pivot stays where the rotation has it.
 		edit("turn the rotation on the axis", "keyform_apply", req("changes" to listOf(
 			mapOf("target" to "rotation:ElbowR", "key" to mapOf("ParamWing" to 0), "op" to "set",
 				"geometry" to mapOf("originX" to pivot.originX, "originY" to pivot.originY, "angle" to pivot.angle)),
-			mapOf("target" to "rotation:ElbowR", "key" to mapOf("ParamWing" to 1), "op" to "set",
-				"geometry" to mapOf("originX" to pivot.originX, "originY" to pivot.originY, "angle" to pivot.angle + 30)))))
+			mapOf("target" to "rotation:ElbowR", "key" to mapOf("ParamWing" to 1), "op" to "set", "geometry" to mapOf("angle" to pivot.angle + 30)))))
 		expect("rotation", motion(sleeve, "ParamWing", 1f) > 10.0) { "the rotation does not swing the sleeve" }
 
 		edit("glue the sleeve to the top", "canvas_glue", req("id" to "ShoulderGlue", "mesh_a" to sleeve, "mesh_b" to top, "distance" to 8))

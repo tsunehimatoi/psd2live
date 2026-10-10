@@ -820,7 +820,10 @@ object RigRegeneration {
 				}
 				val a = counts[value.meshA] ?: -1; val b = counts[value.meshB] ?: -1
 				if (a < 0 || b < 0 || value.pairs.any { it.indexA !in 0 until a || it.indexB !in 0 until b }) {
-					if (userOwned) issue(IssueKind.DROPPED, "glue:$k", "its meshes changed"); continue
+					// A split's follower welds are its own bookkeeping: they go with a deleted piece they tie, unreported.
+					val pieceGone = (a < 0 || b < 0) && SourcePartitionJournal.isFollower(value)
+					if (userOwned && !pieceGone) issue(IssueKind.DROPPED, "glue:$k", "its meshes changed")
+					continue
 				}
 				result += value
 			}

@@ -189,7 +189,7 @@ internal object WorkspacePartitionEdits {
             meshOverrides = document.meshOverrides + ids.mapNotNull { next -> document.meshOverrides[id]?.let { next to it } }.toMap(),
             settings = if (drawOrders.isEmpty()) document.settings else JsonObject(document.settings + ("drawOrderOverrides" to JsonObject(drawOrders))),
             rigEdits = document.rigEdits.copy(splitBaselineLayerIds = document.rigEdits.splitBaselineLayerIds.ifEmpty {
-                (document.source.layers.map { it.id.raw }.filterNot { it in document.deletedLayerIds } + model.analysis.layers.map { it.source.id.raw }).toSet()
+                (document.source.layers.map { it.id.raw }.filterNot { it in document.deletedLayerIds } + model.analysis.layers.map { it.source.id.raw }).sorted().toSet()
             }))
         // Allocate identities before rebuilding, so subsequent batch members and reopen use the same names.
         val existing = model.rig.layerIdByDrawableId.map { (drawable, layer) -> layer to DrawableId(drawable) }.toMap() +

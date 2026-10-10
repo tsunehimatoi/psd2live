@@ -2321,6 +2321,18 @@ class PSD2LiveViewModel : AutoCloseable {
 		pendingPoseValues(generation, workspaceId, commit)
 	}
 
+	/**
+	 * [state] advanced through the editor drafts queued before the pose (a settings switch committing, say): those
+	 * are the user's own earlier edits, so the pose follows them rather than conflicting. Anything else since then
+	 * leaves [state] as it is, and the commit conflicts as before.
+	 */
+	private suspend fun settledPoseState(state: String): String {
+		val projectId = _state.value.projectId ?: return state
+		val drafts = workspaceBackend as? io.github.psd2live.application.WorkspaceEditorDraftPort ?: return state
+		return try { drafts.settleEditorDrafts(projectId, state) }
+		catch (failure: Exception) { if (failure is kotlinx.coroutines.CancellationException) throw failure; state }
+	}
+
 	private fun ownPoseLineage(expected: String): String = synchronized(stateLock) {
 		var state = expected
 		val seen = HashSet<String>()
@@ -2367,7 +2379,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			try {
 				poseCommits.withLock {
 					check(_state.value.projectOpenGeneration == pending.generation) { "The project changed before its pose was saved" }
-					val state = ownPoseLineage(expected)
+					val state = settledPoseState(ownPoseLineage(expected))
 					val result = withContext(Dispatchers.Default + PendingPoseCommit(pending.id, pending.workspaceId)) { commit(state) }
 					val committed = result["state"]?.jsonPrimitive?.content
 					synchronized(stateLock) {

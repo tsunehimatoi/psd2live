@@ -77,18 +77,30 @@ object MotionClips {
 		val definitions = parameters.associateBy { it.id.raw }
 		return clips.map { clip -> clip.copy(curves = clip.curves.mapNotNull { curve ->
 			val parameter = definitions[curve.parameterId] ?: return@mapNotNull null
-			curve.copy(keys = curve.keys.map { key ->
-				val value = key.value.coerceIn(parameter.min, parameter.max)
-				fun constrain(handle: MotionHandle): MotionHandle {
-					val control = key.value + handle.y
-					return if (value == key.value && control in parameter.min..parameter.max) handle
-					else handle.copy(y = control.coerceIn(parameter.min, parameter.max) - value)
-				}
-				key.copy(value = value,
-					inHandle = constrain(key.inHandle), outHandle = constrain(key.outHandle))
-			})
+			clamped(curve, parameter.min, parameter.max)
 		}) }
 	}
+
+	/**
+	 * [clips] once parameter [parameterId] spans [min]..[max]: its keys and their handles are held inside the range,
+	 * as the export plays them, so the clips stay valid to edit.
+	 */
+	fun withParameterRange(clips: List<MotionClip>, parameterId: String, min: Float, max: Float): List<MotionClip> =
+		clips.map { clip -> clip.copy(curves = clip.curves.map { if (it.parameterId == parameterId) clamped(it, min, max) else it }) }
+
+	/** [clips] without the curves of parameter [parameterId], once it is deleted. */
+	fun withoutParameter(clips: List<MotionClip>, parameterId: String): List<MotionClip> =
+		clips.map { clip -> clip.copy(curves = clip.curves.filterNot { it.parameterId == parameterId }) }
+
+	private fun clamped(curve: MotionCurve, min: Float, max: Float): MotionCurve = curve.copy(keys = curve.keys.map { key ->
+		val value = key.value.coerceIn(min, max)
+		fun constrain(handle: MotionHandle): MotionHandle {
+			val control = key.value + handle.y
+			return if (value == key.value && control in min..max) handle
+			else handle.copy(y = control.coerceIn(min, max) - value)
+		}
+		key.copy(value = value, inHandle = constrain(key.inHandle), outHandle = constrain(key.outHandle))
+	})
 
 	/** The basic generated motions, which every rig can play; the model presets switch them as one group. */
 	val BASIC_NAMES: List<String> = listOf("Idle", "Blink", "Nod", "Shake")

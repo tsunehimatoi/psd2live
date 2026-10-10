@@ -157,7 +157,7 @@ internal object WorkspaceDocumentEdits {
             require(id !in GeneratedParameterAdoption.generated(model.rig.puppet, model.authored.rig.puppet)) {
                 "$id belongs to a swing or simulation; remove that instead"
             }
-            return appendParameterCommand(document, model, mode, id)
+            return appendParameterCommand(document, model, mode, id).withMotionClips { MotionClips.withoutParameter(it, id) }
         }
         if (mode == "create") {
             require(Regex("[A-Za-z][A-Za-z0-9_]{0,63}").matches(id)) { "New parameter ID must be 1-64 ASCII letters, digits, or underscores and start with a letter" }
@@ -178,7 +178,13 @@ internal object WorkspaceDocumentEdits {
             created = mode == "create" || document.rigEdits.parameterEdits.any { it.id == id && it.created })
         if (mode == "update" && current != null && current.name == edit.name && current.min == edit.min &&
             current.max == edit.max && current.default == edit.default && current.kind == edit.kind && current.repeat == edit.repeat) return document
-        return appendParameterCommand(document, model, mode, id, edit)
+        return appendParameterCommand(document, model, mode, id, edit).withMotionClips { MotionClips.withParameterRange(it, id, edit.min, edit.max) }
+    }
+
+    /** Motions keep playing within the axes they drive: a narrowed or deleted axis takes their keys with it. */
+    private fun WorkspaceDocument.withMotionClips(change: (List<MotionClip>) -> List<MotionClip>): WorkspaceDocument {
+        val clips = change(rigEdits.motionClips)
+        return if (clips == rigEdits.motionClips) this else copy(rigEdits = rigEdits.copy(motionClips = clips))
     }
 
     /**

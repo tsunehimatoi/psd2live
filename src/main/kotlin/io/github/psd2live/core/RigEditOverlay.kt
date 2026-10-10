@@ -227,7 +227,10 @@ data class RigEditOverlay(
     val swingEdits: List<RigSwingEdit> = emptyList(),
     val assetLayers: Map<String, kotlinx.serialization.json.JsonObject> = emptyMap(),
     val calibrationLayerIds: Set<String> = emptySet(),
-    /** Source layers active before the first mesh split; preserves the generated Warp frames on rebuild. */
+    /**
+     * Source layers active before the first mesh split; preserves the generated Warp frames on rebuild. Kept sorted,
+     * as the store writes it: the revision hashes this text, so another order would change it on reopen.
+     */
     val splitBaselineLayerIds: Set<String> = emptySet(),
     /** Committed drawable ids, including formally named split pieces, preserved across rebuilds. */
     val splitDrawableIds: Map<String, String> = emptyMap(),
