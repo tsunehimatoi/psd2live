@@ -177,7 +177,7 @@ fun SettingsDialog(
 		bodyPadding = PaddingValues(0.dp),
 		bodySpacing = 0.dp,
 		titleTrailing = {
-			Text(text = "v3.3.0", style = typography.monoSmall.copy(fontSize = 10.sp), color = colors.textMuted)
+			Text(text = "v3.3.1", style = typography.monoSmall.copy(fontSize = 10.sp), color = colors.textMuted)
 		},
 		footerStart = {
 			CompactButton(text = tr("dialog.settings.resetDefaults"), onClick = onResetDefaults)

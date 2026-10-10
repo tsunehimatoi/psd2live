@@ -40,7 +40,7 @@ macOS 打包暂缓，本工作流不构建。
 
 ## 发布一个版本
 
-前提：私有 SDK 仓库已上传 zip，本仓库已配置上表的变量、密钥与 `release-cubism` 环境。下文以 `<version>` 表示目标版本号，例如 `3.3.0`。
+前提：私有 SDK 仓库已上传 zip，本仓库已配置上表的变量、密钥与 `release-cubism` 环境。下文以 `<version>` 表示目标版本号，例如 `3.3.1`。
 
 1. **先提升版本号**：工作流不会修改仓库内容。在 `build.gradle.kts` 中把 `version` 与 `packageVersion` 改为目标版本，同步界面中的版本字符串；在 `docs/zh/CHANGELOG.md` 添加本版条目，并把本版说明写入 `.github/release-notes.md`（中文在前，英文放在折叠的 `<details><summary>English</summary>` 中；不写下载区，发布时由 `.github/scripts/release_notes.py` 按实际附件生成分类的下载徽章）；提交并推送。
 2. 打开 Actions → **Release Cubism** → **Run workflow**，`version` 填 `<version>`（不带 `v`）。

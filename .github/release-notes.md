@@ -1,76 +1,54 @@
-导入图片重做：一次提交带上网格，移动、缩放、旋转与其他对象一样流畅，旋转过的图层也能直接绘画；删除图层改为真删除；导出 CMO3 时另存 Cubism Animator 工程（.can3）；改生成设置、拆分与长编辑历史更快更稳；导出的模型与预览逐字节一致。
-
-> 编辑过的工程会以新的修订格式保存，旧版本程序无法打开。
+修复版本：崩溃后可恢复未保存的编辑；修复骨架与网格重建合并后手臂脱离肩膀等问题，并在画布上提示可修复的旧合并结果；GIF 颜色更准，分层 PSD 正确导出高清图层，内存占用与工程体积更小。
 
 ## 主要更新
 
 ### 新增
 
-- **导入图片重做**：导入的图片一次提交就带着自己的网格，直接用变换工具移动、缩放、旋转，拖动时不再逐帧重建整个模型（`tml` 示例上每次提交约 40–60 毫秒）；撤销即取消导入，挂到任意变形器下后仍可移动，像素从不重新采样。
-- **图层整体变换**：任何图层都可整体移动、缩放、旋转（MCP `layer_transform`），不触发再生成；旋转、缩放过的图层可直接绘画，笔刷大小按图层自身像素换算，屏幕上大小不变，光标圈与笔触一致。
-- **删除图层改为真删除**：像素、网格及引用它们的遮罩、Glue、路径和权重一起移除，撤销即恢复。MCP `layer_soft_delete` 改为 `layer_delete`。
-- **网格重建与覆盖提示**：网格面板显示顶点数与边长，可“按当前像素重建”（MCP `layer_mesh_rebuild`）；像素落在网格外时提示不会显示的比例。图层面板悬停显示原图、纹理块与画布尺寸。
-- **导出 Cubism Animator 工程（.can3）**：导出 CMO3 时，动作另存为同名 `.can3`，每个动作一个场景，可在 Cubism Editor 的 Animator 中继续编辑。
-- **预览生成结果更新**：“工具 → 预览生成结果更新”先报告更新会改变什么，不改动工程；MCP `workspace_preview_regeneration` 可试运行会重新生成 Rig 的编辑。
-- **MCP**：`project_export_target` 按单个目标导出；`simulation_put` 新增 `obstacles`，可让头发与布料避开手臂、腿、躯干。
+- **崩溃后恢复未保存的编辑**：程序崩溃或因内存不足被关闭后，下次启动会询问是否恢复上次未保存的编辑。
+- **旧合并结果修复提示**：工程中有旧版本合并、可能导致骨骼表现异常（如弯曲小臂时手臂脱离肩膀）的生成结果时，画布顶部提示，可直接“更新生成结果”或“预览变化”，之后的编辑都会保留。
+- **历史面板“回到最新”**。
 
 ### 改进
 
-- **生成与编辑合并更稳**：改脸部、站姿、骨架、分类等生成设置或拆分图层时，新的生成结果与已有编辑直接合并并固定保存；拆分出的部件继续跟随生成，原层上的关键形、路径、权重与胶水带到部件上。同时改生成设置又改写较早编辑的提交会被拒绝并提示分开提交。
-- **长编辑历史不再变慢**：模型定期固定保存，提交、撤销、重做与拖动只在最近的固定点之后重算；旧工程第一次编辑时固化一次，此后不再按旧记录重放。
-- **打开与保存工程显示进度**：状态栏显示当前步骤和百分比。
-- **模拟更快、起步更稳**：参考模拟、实时模拟与烘焙快约三分之一；重置后的轻微晃动从约 3–6 px 减到 1–1.5 px。模拟结果因此有变化，已有烘焙会显示为过期，重新烘焙即可。
-
-### 移除
-
-- `asset_import_png` 的 `spatial_reference_id`；“工具 → 升级拆分记录”与 MCP `source_upgrade_split_records`（不再需要）。
+- 参数名称列更宽不再截断；物理预设按组记忆；窗口记住上次的大小与最大化状态；导出进度条在未报告进度时显示为不确定状态。
+- 内存上限改为本机内存的一半，不再固定 8 GB；保存的工程不再带上 MCP 渲染的视图图片，体积更小。
+- GIF 每个动作生成自己的调色板并默认抖动，不再偏色、出现色块。
+- MCP：纹理超出预算时给出提示与处理方法；`view_sample_motion`、`model_apply_preset`、`motion_seed_builtin` 的失败与警告更清楚。
 
 ### 修复
 
-- **导出与预览一致**：导出 Live2D 模型直接写出已提交的模型，不再从源图重新生成，导出的 moc3 与预览逐字节相同。
-- **层级拖放改父级**：网格拖到另一个变形器下时留在画布原位，不再飞出画布、缩成一点或消失。
-- **导入图片**：高分辨率图片不再报“does not fit an atlas page”；可在层级面板拖到其他父级下；头部倾斜的角色上导入到头部变形器不再偏移。
-- **拆分后修改图层分类**不再报“Art primitive part was not generated”或“Mesh creation artwork is missing”。
-- **纹理集**：在图层上绘画超出原网格后，嵌套的相邻图块不再互相覆盖。
-- **烘焙摆动**：在编辑过的模型上删除摆动并保留为关键形不再报错。
+- **骨架与再生成合并**：重建网格与创建骨架无论先后，手臂都不再脱离肩膀、袖子不再被重复带动；被骨架接管的变形器下的网格保持画布位置；“工具 → 更新生成结果”会按新规则修复旧合并。
+- 分层 PSD 导出 2 倍分辨率图层时不再只显示左上四分之一。
+- 闭嘴时不再多出张嘴图层的线条。
+- 文本框快速输入不再丢字，退格不再需要按两次。
+- 精灵图帧数不匹配时在渲染前就报错；从源码运行时 rustc 过旧不再导致构建失败；MCP 不再无限保留请求结果，对话框中的命令示例隐藏令牌。
 
 <details>
 <summary>English</summary>
 
-Image import is rebuilt: an import commits with its own mesh and moves, scales and rotates as smoothly as any other object, and rotated layers can be painted directly. Deleting a layer now really deletes it. Exporting CMO3 also writes a Cubism Animator project (.can3). Generation setting changes, splits and long edit histories are faster and steadier, and the exported model matches the preview byte for byte.
-
-> Edited projects are saved in a new revision format that earlier versions cannot open.
+A fix release: unsaved edits can be restored after a crash; arms no longer come off the shoulder after a mesh rebuild and a skeleton merge, and the canvas points out older merges that can be repaired; GIF colors are truer, layered PSD exports high-resolution layers correctly, and memory use and project size are smaller.
 
 ## Highlights
 
 ### New
 
-- **Image import rebuilt**: an imported image commits with its own mesh and is moved, scaled and rotated with the transform tools, without rebuilding the whole model each frame (about 40–60 ms per commit on the `tml` sample); undo cancels the import, it can still be moved once hung under any deformer, and its pixels are never resampled.
-- **Whole-layer transforms**: any layer can be moved, scaled or rotated as a whole (MCP `layer_transform`) without regenerating; rotated or scaled layers can be painted directly, with brush sizes converted to the layer's own pixels so they look the same on screen and the cursor ring matches the stroke.
-- **Deleting a layer deletes it**: its pixels and meshes leave the project with the masks, glue, paths and weights that refer to them; undo restores it. MCP `layer_soft_delete` becomes `layer_delete`.
-- **Mesh rebuild and coverage hints**: the mesh panel shows vertex count and edge length and can rebuild from the current pixels (MCP `layer_mesh_rebuild`); it warns how much of the art falls outside the mesh. Hovering a layer shows its source, texture tile and canvas sizes.
-- **Cubism Animator project export (.can3)**: exporting CMO3 also writes the motions to a `.can3` of the same name, one scene per motion, to keep editing in Cubism Editor's Animator.
-- **Preview a generation update**: Tools → Preview generation update reports what an update would change without touching the project; MCP `workspace_preview_regeneration` dry-runs edits that regenerate the rig.
-- **MCP**: `project_export_target` exports one target; `simulation_put` adds `obstacles` that keep hair and cloth out of arms, legs and the torso.
+- **Restore unsaved edits after a crash**: after a crash or an out-of-memory kill, the next start offers to restore the unsaved edits.
+- **Repair hint for older merges**: when a project holds generated results merged by an earlier version that may misbehave (such as the arm leaving the shoulder when the forearm bends), the canvas shows a notice with Update generated rig and Preview changes; later edits are kept.
+- **Latest button in the history panel**.
 
 ### Improvements
 
-- **Generation and edits merge steadily**: changing face, stance, skeleton or classification settings, or splitting a layer, merges the new generation with your edits and stores the result; split pieces keep following generation and inherit the keyforms, paths, weights and glue of the source layer. A commit that changes generation settings and rewrites earlier edits at once is refused with a hint to split it.
-- **Long histories stay fast**: the model is pinned periodically, so commits, undo, redo and drags recompute only past the latest pin; older projects are materialized once on their first edit.
-- **Open and save show progress** in the status bar.
-- **Faster, steadier simulation**: reference, live and baked simulation are about a third faster; the twitch after a reset drops from about 3–6 px to 1–1.5 px. Existing bakes show as stale; bake again.
-
-### Removed
-
-- `spatial_reference_id` of `asset_import_png`; Tools → Upgrade split records and MCP `source_upgrade_split_records` (no longer needed).
+- The parameter name column is wider and no longer cuts names; physics presets are remembered per group; the window reopens at its last size and maximized state; the export progress bar is indeterminate until progress is reported.
+- The memory limit is half the machine's memory instead of a fixed 8 GB; saved projects leave out the views MCP tools rendered and are smaller.
+- GIFs use a palette from each motion's own frames with dithering on by default, without color shifts or blotches.
+- MCP: texture budget overruns come with notices and remedies; failures and warnings of `view_sample_motion`, `model_apply_preset` and `motion_seed_builtin` say what happened.
 
 ### Fixes
 
-- **Export matches the preview**: Export Live2D model writes the committed model instead of regenerating it, so the exported moc3 equals the preview byte for byte.
-- **Reparenting in the hierarchy**: a mesh dragged under another deformer stays where it shows on the canvas instead of flying off, shrinking to a dot or vanishing.
-- **Imported images**: large images no longer fail with "does not fit an atlas page", can be dragged under other parents in the hierarchy, and no longer shift when imported under the head deformers of a tilted head.
-- **Changing a layer's classification after a split** no longer fails with "Art primitive part was not generated" or "Mesh creation artwork is missing".
-- **Texture atlas**: painting past a layer's mesh no longer makes nested neighbouring tiles overwrite each other.
-- **Swing bakes**: deleting a swing and keeping it as keyforms on an edited model no longer fails.
+- **Skeleton and regeneration merges**: whichever comes first, a mesh rebuild or the skeleton, the arm no longer leaves the shoulder and sleeves are not moved twice; meshes under deformers the skeleton takes over keep their place on the canvas; Tools → Update generated rig repairs older merges by the new rules.
+- Layered PSD export no longer shows only the top-left quarter of a 2x layer.
+- A closed mouth no longer shows the open-mouth layer's line.
+- Typing fast in text fields no longer drops characters, and Backspace no longer needs two presses.
+- Sprite sheets report a mismatched frame count before rendering; an old rustc no longer fails a source build; MCP no longer keeps every request result, and the dialog's command snippet hides the token.
 
 </details>

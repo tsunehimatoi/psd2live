@@ -785,7 +785,7 @@ class PSD2LivePipeline {
 		{
 		  "version": 1,
 		  "model": ${quote(baseName)},
-		  "generator": "PSD2Live 3.3.0",
+		  "generator": "PSD2Live 3.3.1",
 		  "runtimeTarget": ${quote(rig.puppet.runtimeTarget.name)},
 		  "mocVersion": ${rig.puppet.runtimeTarget.mocVersion().byteValue},
 		  "cmo3TargetVersionNo": ${rig.puppet.runtimeTarget.cmo3TargetVersionNo()},
