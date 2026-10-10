@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.skiaCanvas
 import org.jetbrains.skia.BlendMode as SkiaBlendMode
 import org.jetbrains.skia.Paint as SkiaPaint
@@ -629,7 +630,31 @@ internal fun BoxScope.CanvasEditorOverlay(
                 val s = editor.paintStrokeStart!!
                 val c = editor.paintStrokeCurrent!!
                 val fill = editor.paintShapeFilled && editor.paintShape.canFill
-                when (editor.paintShape) {
+                val frame = editor.paintSession?.frame ?: io.github.psd2live.project.LayerTransform.IDENTITY
+                if (editor.paintShape != PaintShape.LINE && !frame.isIdentity && !frame.isAxisAligned) {
+                    // A turned layer takes the shape in its own frame, so the box turns with the layer: drawn there,
+                    // through the layer's transform and the viewport.
+                    val scale = viewport.scale.toFloat()
+                    val inverse = frame.inverse()
+                    fun inFrame(p: Offset): Offset {
+                        val x = viewport.canvasX(p.x); val y = viewport.canvasY(p.y)
+                        return Offset(inverse.x(x, y), inverse.y(x, y))
+                    }
+                    val p0 = inFrame(s); val p1 = inFrame(c)
+                    val matrix = androidx.compose.ui.graphics.Matrix().apply {
+                        this[0, 0] = frame.a * scale; this[0, 1] = frame.b * scale
+                        this[1, 0] = frame.c * scale; this[1, 1] = frame.d * scale
+                        this[3, 0] = viewport.offsetX.toFloat() + frame.e * scale; this[3, 1] = viewport.offsetY.toFloat() + frame.f * scale
+                    }
+                    val unit = scale * kotlin.math.sqrt(kotlin.math.abs(frame.a * frame.d - frame.b * frame.c))
+                    val topLeft = Offset(minOf(p0.x, p1.x), minOf(p0.y, p1.y))
+                    val size = Size(maxOf(1f / unit, kotlin.math.abs(p1.x - p0.x)), maxOf(1f / unit, kotlin.math.abs(p1.y - p0.y)))
+                    val style = if (fill) androidx.compose.ui.graphics.drawscope.Fill else Stroke(strokeWidth / unit)
+                    withTransform({ transform(matrix) }) {
+                        if (editor.paintShape == PaintShape.RECTANGLE) drawRect(col, topLeft, size, style = style)
+                        else drawOval(col, topLeft, size, style = style)
+                    }
+                } else when (editor.paintShape) {
                     PaintShape.LINE -> {
                         drawLine(col, s, c, strokeWidth = strokeWidth, cap = StrokeCap.Round)
                     }

@@ -1404,8 +1404,7 @@ fun CanvasViewportComposable(
 								val full = paintUploaded[0] !== session
 								paintUploaded[0] = session
 								io.github.psd2live.render.PaintScene(session, session.docWidth, session.docHeight,
-									listOfNotNull(session.takeGpuUpload(full)), session.shownLeft, session.shownTop,
-									session.shownWidth, session.shownHeight)
+									listOfNotNull(session.takeGpuUpload(full)), session.shownCorners)
 							}
 							CanvasScene(w, h, viewport, model, geometry,
 								if (showTexture) ArtworkDrawList.build(model, geometry, options) else emptyList(),
@@ -1608,23 +1607,42 @@ fun CanvasViewportComposable(
 				if (showTexture && paintSession != null && !paintSession.gpuPreview) {
 					val scale = viewport.scale
 					// Tiles are raster pixels; a dense layer's raster is stretched over its canvas rectangle.
-					// Shown where the layer was moved or scaled to: its frame through the layer's transform.
-					val ox = paintSession.shownLeft; val oy = paintSession.shownTop
-					val sx = paintSession.docWidth / paintSession.shownWidth; val sy = paintSession.docHeight / paintSession.shownHeight
-					for (tile in paintSession.previewTiles) {
-						val left = Math.round(viewport.offsetX + (ox + tile.x / sx) * scale)
-						val top = Math.round(viewport.offsetY + (oy + tile.y / sy) * scale)
-						val right = Math.round(viewport.offsetX + (ox + (tile.x + tile.width) / sx) * scale)
-						val bottom = Math.round(viewport.offsetY + (oy + (tile.y + tile.height) / sy) * scale)
-						drawImage(
-							image = tile.image,
-							dstOffset = androidx.compose.ui.unit.IntOffset(left.toInt(), top.toInt()),
-							dstSize = androidx.compose.ui.unit.IntSize(
-								(right - left).toInt().coerceAtLeast(1),
-								(bottom - top).toInt().coerceAtLeast(1)
-							),
-							filterQuality = androidx.compose.ui.graphics.FilterQuality.Low
-						)
+					// Shown where the layer was moved, scaled or turned to: its frame through the layer's transform.
+					val corners = paintSession.shownCorners
+					if (paintSession.frame.isIdentity || paintSession.frame.isAxisAligned) {
+						val ox = corners[0]; val oy = corners[1]
+						val sx = paintSession.docWidth / (corners[2] - corners[0]); val sy = paintSession.docHeight / (corners[5] - corners[1])
+						for (tile in paintSession.previewTiles) {
+							val left = Math.round(viewport.offsetX + (ox + tile.x / sx) * scale)
+							val top = Math.round(viewport.offsetY + (oy + tile.y / sy) * scale)
+							val right = Math.round(viewport.offsetX + (ox + (tile.x + tile.width) / sx) * scale)
+							val bottom = Math.round(viewport.offsetY + (oy + (tile.y + tile.height) / sy) * scale)
+							drawImage(
+								image = tile.image,
+								dstOffset = androidx.compose.ui.unit.IntOffset(left.toInt(), top.toInt()),
+								dstSize = androidx.compose.ui.unit.IntSize(
+									(right - left).toInt().coerceAtLeast(1),
+									(bottom - top).toInt().coerceAtLeast(1)
+								),
+								filterQuality = androidx.compose.ui.graphics.FilterQuality.Low
+							)
+						}
+					} else {
+						// Turned: raster pixel (u, v) goes to the screen through the quad's two edges.
+						val w = paintSession.docWidth.toFloat(); val h = paintSession.docHeight.toFloat()
+						val matrix = androidx.compose.ui.graphics.Matrix().apply {
+							this[0, 0] = (corners[2] - corners[0]) / w * scale.toFloat(); this[0, 1] = (corners[3] - corners[1]) / w * scale.toFloat()
+							this[1, 0] = (corners[4] - corners[0]) / h * scale.toFloat(); this[1, 1] = (corners[5] - corners[1]) / h * scale.toFloat()
+							this[3, 0] = (viewport.offsetX + corners[0] * scale).toFloat(); this[3, 1] = (viewport.offsetY + corners[1] * scale).toFloat()
+						}
+						withTransform({ transform(matrix) }) {
+							for (tile in paintSession.previewTiles) drawImage(
+								image = tile.image,
+								dstOffset = androidx.compose.ui.unit.IntOffset(tile.x, tile.y),
+								dstSize = androidx.compose.ui.unit.IntSize(tile.width, tile.height),
+								filterQuality = androidx.compose.ui.graphics.FilterQuality.Low
+							)
+						}
 					}
 				}
 			}

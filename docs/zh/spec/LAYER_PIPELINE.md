@@ -281,7 +281,7 @@ Drawable { id, layerId, mesh { positions (父级空间), uvs (图层图像像素
 | --- | --- | --- |
 | 4.1 / 4.2 像素 + 放置、UV 锚定图像 | 图层保留原有的帧（整数边界与浮点 `rect`），新增 `LayerTransform`（2×3 仿射）表示整体移动、缩放、旋转 | 不迁移 UV：纹理坐标原本就锚定在图层帧上（换绑经源图清单中的帧，而非画布），帧不变即等价于“锚定图像”；变换只作用于网格顶点与显示，旧工程无需转换 |
 | 5.1 导入 | `layer_import_images` 一次提交即带网格（`canvas_mesh_create`，挂在所给父级），之后用普通变换工具调整；素材库 `layer_add_from_asset` 同样总是建网格。生成器把创建记录拥有的图层当作透明占位（`RigGenerationSource.createdCoverage`），不冻结生成输入、不写空白占位 | 没有提交前的“导入会话”：导入即一个历史节点，调整是之后的变换节点，取消即撤销。放置面板、`layer_set_bounds`、`layer_cancel_import`、`placementSource` 已删除 |
-| 5.2 变换 | `layer_transform`：每个网格写一条选择模式 `canvas_geometry` 并记录变换；选择模式拖动整个图层时画布提交该操作（`AffineFit`）；`layer_set_canvas_rect` 改为从当前显示位置出发的变换；绘画按变换显示与映射 | 拖动预览沿用画布已有的进程内预览（命令作用于当前模型，不跑流水线），未另做 GPU 仿射；旋转过的图层暂不能绘画（明确拒绝）。实测 `tml`：移动提交约 40–60 ms |
+| 5.2 变换 | `layer_transform`：每个网格写一条选择模式 `canvas_geometry` 并记录变换；选择模式拖动整个图层时画布提交该操作（`AffineFit`）；`layer_set_canvas_rect` 改为从当前显示位置出发的变换；绘画按变换显示与映射 | 拖动预览沿用画布已有的进程内预览（命令作用于当前模型，不跑流水线），未另做 GPU 仿射；旋转过的图层同样可绘画（会话栅格按完整仿射显示，形状预览在图层帧内绘制）。实测 `tml`：移动提交约 40–60 ms |
 | 5.3 删除 | `layer_delete`：图层离开源图与生成输入，日志记录 `layer_delete` 从作者态 Rig 删除其网格，构建在其前写固化点；最后一个图层不能删除 | 旧版本软删除的图层（`deletedLayerIds`）仍可读、可经 `layer_restore` 恢复；嘴唇条带、旧版左右半边等非独立源图层的行仍按旧方式隐藏 |
 | 6.1 网格触发点 | `layer_mesh_rebuild`（网格面板“按当前像素重建”）；重建与重新物化按图层变换放置；网格面板显示顶点数、边长与未被覆盖的可见像素比例（`MeshCoverage`） | 没有网格的图层首次绘画出可见像素时仍自动建网格（列为明确的触发点） |
 | 6.2 密度 | 面板显示实际边长（画布单位） | 未改生成器的密度规则：网格单位仍按文档长边 2048 归一（`MeshUnits.DOCUMENT`，同一角色在不同分辨率 PSD 上得到相同网格），12 的下限保留；改它会改变所有工程在下一次更新生成时的网格 |
@@ -290,5 +290,5 @@ Drawable { id, layerId, mesh { positions (父级空间), uvs (图层图像像素
 | 9 界面 | 图层名悬停显示原图、纹理块（占原图百分比）、显示尺寸、顶点数、是否导入与是否变换；纹理面板的位置与尺寸为显示位置 | 图层列表仍包含派生行 |
 | 10 MCP | 新增 `layer_transform`、`layer_mesh_rebuild`；`layer_soft_delete` 改名 `layer_delete`；删除 `layer_set_bounds`、`layer_cancel_import` | 未合并为单一 `layer_import`，文件导入与素材库各自保留原命令名 |
 
-测试：`WorkspaceLayerTransformTest`（导入、移动缩放、挂到头部旋转下、旋转、再生成、保存重开、撤销；PSD 图层移动；重建后保持位置；覆盖比例）、`WorkspaceLayerDeleteTest`、`WorkspaceLayerIdentityTest`、`ImportTransformFlowTest`（经视图模型与画布编辑器：导入后选中、拖动提交为变换、绘画对齐），以及开发工具 `LayerFlowPerfTool`。
+测试：`WorkspaceLayerTransformTest`（导入、移动缩放、挂到头部旋转下、旋转、再生成、保存重开、撤销；PSD 图层移动；重建后保持位置；覆盖比例）、`WorkspaceLayerDeleteTest`、`WorkspaceLayerIdentityTest`、`ImportTransformFlowTest`（经视图模型与画布编辑器：导入后选中、拖动提交为变换、绘画对齐；旋转后绘画落在图层像素上，保存并重建的网格随图层旋转），以及开发工具 `LayerFlowPerfTool`。
 

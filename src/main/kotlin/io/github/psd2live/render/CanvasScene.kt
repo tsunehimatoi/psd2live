@@ -60,16 +60,17 @@ internal class PaintUpload(val x: Int, val y: Int, val width: Int, val height: I
 
 /**
  * The paint session's raster, drawn over the frame as one texture at its place on the document: [width] x [height]
- * raster pixels stretched over the canvas rectangle at ([left], [top]), [canvasWidth] x [canvasHeight] units - the
- * whole canvas, pixel for pixel, for a layer at one pixel per canvas unit.
+ * raster pixels stretched over the canvas quad [corners] - top-left, top-right, bottom-left, bottom-right, as x, y
+ * pairs in canvas units - which is the whole canvas, pixel for pixel, for a layer at one pixel per canvas unit, and
+ * turns with a layer that was rotated.
  *
  * @property session  The session the texture belongs to; another session starts a new texture.
  * @property uploads  The areas to write into the texture before drawing, oldest first.
  */
 internal class PaintScene(val session: Any, val width: Int, val height: Int, val uploads: List<PaintUpload>,
-	val left: Float = 0f, val top: Float = 0f, val canvasWidth: Float = width.toFloat(), val canvasHeight: Float = height.toFloat()) {
+	val corners: FloatArray = floatArrayOf(0f, 0f, width.toFloat(), 0f, 0f, height.toFloat(), width.toFloat(), height.toFloat())) {
 	/** This scene with [earlier]'s uploads first, when it is the same session; for a scene that replaces an undrawn one. */
 	fun after(earlier: PaintScene?): PaintScene =
 		if (earlier == null || earlier.session !== session || earlier.uploads.isEmpty()) this
-		else PaintScene(session, width, height, earlier.uploads + uploads, left, top, canvasWidth, canvasHeight)
+		else PaintScene(session, width, height, earlier.uploads + uploads, corners)
 }

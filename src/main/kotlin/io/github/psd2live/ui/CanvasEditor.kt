@@ -1157,7 +1157,7 @@ internal class CanvasEditor(
      * 16 of the layer's pixels however large or small the layer is shown; 1 with no paint session.
      */
     val paintPixelsPerUnit: Float
-        get() = paintSession?.let { sqrt(it.scaleX * it.scaleY) / sqrt(it.frame.a * it.frame.d) }?.takeIf { it.isFinite() && it > 0f } ?: 1f
+        get() = paintSession?.let { sqrt(it.scaleX * it.scaleY) / sqrt(kotlin.math.abs(it.frame.a * it.frame.d - it.frame.b * it.frame.c)) }?.takeIf { it.isFinite() && it > 0f } ?: 1f
 
     /** Whether the active tool stamps the paint tip, which is what the brush keys and HUD act on. */
     val paintBrushActive: Boolean
@@ -1867,10 +1867,9 @@ internal class CanvasEditor(
         if (currentSession != null) {
             discardPaintSession()
         }
-        // The session paints in the layer's own frame; the canvas shows it where the layer was moved or scaled to.
+        // The session paints in the layer's own frame; the canvas shows it where the layer was moved, scaled or turned to.
         val frame = state.previewModel?.analysis?.source?.layers?.singleOrNull { it.id.raw == targetLid }?.transform
             ?: io.github.psd2live.project.LayerTransform.IDENTITY
-        if (!frame.isIdentity && !frame.isAxisAligned) { error = tr("editor.paintTurnedLayer"); return null }
         val handle = viewModel.beginPaintSession(targetLid) ?: return null
         val newSession = PaintSession(handle).also { it.frame = frame }
         paintSession = newSession

@@ -34,15 +34,20 @@ class PaintSession(val handle: WorkspacePaintSession) {
     val scaleX get() = handle.scaleX
     val scaleY get() = handle.scaleY
     /**
-     * Where the canvas shows the layer's own frame - the space the session paints in - after the layer was moved or
-     * scaled as a whole ([io.github.psd2live.project.LayerTransform]); axis-aligned, identity for a layer never moved.
+     * Where the canvas shows the layer's own frame - the space the session paints in - after the layer was moved,
+     * scaled or turned as a whole ([io.github.psd2live.project.LayerTransform]); identity for a layer never moved.
      */
     var frame: io.github.psd2live.project.LayerTransform = io.github.psd2live.project.LayerTransform.IDENTITY
-    /** The session raster's rectangle on the canvas as shown, in canvas units. */
-    val shownLeft get() = frame.x(originX, originY)
-    val shownTop get() = frame.y(originX, originY)
-    val shownWidth get() = docWidth / scaleX * frame.a
-    val shownHeight get() = docHeight / scaleY * frame.d
+    /**
+     * The session raster's corners on the canvas as shown, in canvas units: top-left, top-right, bottom-left,
+     * bottom-right, as x, y pairs. A rectangle only while the layer is not turned.
+     */
+    val shownCorners: FloatArray get() {
+        val l = originX; val t = originY
+        val r = originX + docWidth / scaleX; val b = originY + docHeight / scaleY
+        return floatArrayOf(frame.x(l, t), frame.y(l, t), frame.x(r, t), frame.y(r, t),
+            frame.x(l, b), frame.y(l, b), frame.x(r, b), frame.y(r, b))
+    }
     /** A canvas point in the layer's frame, where the session paints and samples. */
     fun toFrame(x: Float, y: Float): Pair<Float, Float> = frame.inverse().let { it.x(x, y) to it.y(x, y) }
     /** Detached observation; writes must use the shared session gestures. */

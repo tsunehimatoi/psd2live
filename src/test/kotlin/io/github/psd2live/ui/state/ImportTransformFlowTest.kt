@@ -2,11 +2,13 @@ package io.github.psd2live.ui.state
 
 import androidx.compose.ui.geometry.Offset
 import io.github.psd2live.core.RigPreviewModel
+import io.github.psd2live.project.canvasRect
 import io.github.psd2live.project.transform
 import io.github.psd2live.ui.BoundingHandle
 import io.github.psd2live.ui.CanvasTool
 import io.github.psd2live.ui.EditHierarchyMode
 import io.github.psd2live.ui.transformHandleAt
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -72,7 +74,54 @@ class ImportTransformFlowTest {
                 // Painting it paints where it now shows.
                 val session = assertNotNull(editor.startPaintSession(id))
                 assertEquals(transform, session.frame)
-                assertEquals(session.originX + 1f, session.shownLeft, 1e-3f)
+                assertEquals(session.originX + 1f, session.shownCorners[0], 1e-3f)
+                editor.discardPaintSession()
+
+                // Turned a quarter about its top-left corner, it still paints: a stroke lands on the layer's own pixel under the
+                // pointer, not on the canvas pixel there.
+                val turned = CompletableDeferred<String?>()
+                vm.saveDocumentEdits(assertNotNull(vm.currentWorkspaceState()), "turn", listOf(
+                    io.github.psd2live.application.WorkspaceDocumentOperation(io.github.psd2live.application.WorkspaceLayerTransform.OP,
+                        buildJsonObject { put("layer_id", id); put("rotate", 90); putJsonArray("pivot") { add(5); add(4) } }))) { turned.complete(it) }
+                assertNull(turned.await())
+                until { vm.state.value.analysis?.source?.layers?.single { it.id.raw == id }?.transform?.isAxisAligned == false && !editor.busy }
+                val quarter = vm.state.value.analysis!!.source.layers.single { it.id.raw == id }.transform
+                editor.setHierarchyMode(EditHierarchyMode.PAINT)
+                editor.tool = CanvasTool.PAINT_PENCIL
+                editor.paintPencilSize = 1f
+                editor.paintColor = androidx.compose.ui.graphics.Color.Green
+                val painting = assertNotNull(editor.startPaintSession(id))
+                assertEquals(quarter, painting.frame)
+                assertNull(editor.error)
+                val corners = painting.shownCorners
+                assertNotEquals(corners[1], corners[3], 0.5f, "the raster is shown turned")
+                // Frame pixel (6, 5), shown elsewhere once turned.
+                val shown = Offset(quarter.x(6.5f, 5.5f) * 20f, quarter.y(6.5f, 5.5f) * 20f)
+                assertTrue(editor.press(shown, viewport, shift = false, alt = false))
+                editor.release()
+                assertEquals(0xff, painting.sample(6, 5) ushr 24 and 0xff, "the layer's pixel under the pointer is painted")
+                val canvasX = (shown.x / 20f).toInt(); val canvasY = (shown.y / 20f).toInt()
+                assertEquals(0x00ff00, painting.sample(6, 5) and 0xffffff)
+                assertTrue(canvasX != 6 || canvasY != 5)
+                assertNotEquals(0x00ff00, painting.sample(canvasX, canvasY) and 0xffffff, "the canvas pixel there is not")
+
+                // Saved with a new mesh, the mesh is laid over the layer's pixels where they show: turned with it.
+                editor.commitPaintSession(rebuildMesh = true)
+                until { editor.paintSession.let { it != null && it !== painting } && !vm.state.value.workspaceEditBusy }
+                assertNull(vm.state.value.errorMessage)
+                val saved = vm.state.value.analysis!!.source.layers.single { it.id.raw == id }
+                assertEquals(quarter, saved.transform, "a repaint keeps where the layer shows")
+                val rect = saved.canvasRect()
+                val rebuilt = assertNotNull(vm.state.value.previewModel)
+                val mesh = rebuilt.rig.puppet.drawables.single { rebuilt.rig.layerIdByDrawableId[it.id.raw] == id }
+                val world = org.umamo.render.eval.CpuDeformationEvaluator().evaluate(rebuilt.rig.puppet, emptyMap()).worldPositions.getValue(mesh.id)
+                val back = quarter.inverse()
+                for (i in 0 until world.size / 2) {
+                    val x = world[i * 2]; val y = -world[i * 2 + 1]
+                    val fx = back.x(x, y); val fy = back.y(x, y)
+                    assertTrue(fx in rect.left - 1.5f..rect.right + 1.5f && fy in rect.top - 1.5f..rect.top + rect.height + 1.5f,
+                        "vertex $i at $x, $y is $fx, $fy in the layer's frame, outside $rect")
+                }
                 editor.discardPaintSession()
             }
         }
