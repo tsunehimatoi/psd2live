@@ -29,11 +29,16 @@ object SimCompare {
 
     /** The motions [motions] name in [overlay] (see [SimMotions.resolve]), compared side by side for simulation [id]. */
     fun compare(overlay: RigEditOverlay, base: PuppetModel, id: String, motions: List<String>, skins: PrimitiveSkins = PrimitiveSkins.None,
+                record: Boolean = false, progress: (Float) -> Unit = {}, cancelled: () -> Boolean = { false }): List<Result> =
+        compare(overlay, SimAuthoring.AuthoredRigs.replayedOn(base, skins), id, motions, record, progress, cancelled)
+
+    /** [compare] on the overlay's finished [authored] rig. */
+    fun compare(overlay: RigEditOverlay, authored: SimAuthoring.AuthoredRigs, id: String, motions: List<String>,
                 record: Boolean = false, progress: (Float) -> Unit = {}, cancelled: () -> Boolean = { false }): List<Result> {
         val edit = requireNotNull(overlay.simEdits.firstOrNull { it.id == id }) { "Simulation not found: $id" }
         val bake = requireNotNull(edit.bake) { "$id is not baked; bake it first" }
         require(motions.isNotEmpty()) { "Name at least one motion" }
-        val model = SimAuthoring.unbakedModel(overlay, base, id, skins)
+        val model = SimAuthoring.unbakedModel(overlay, authored, id)
         val defaults = model.parameters.associate { it.id.raw to it.default }
         val tracks = motions.map { name ->
             val clip = requireNotNull(SimMotions.resolve(overlay, name)) { "Motion not found: $name" }
@@ -42,7 +47,7 @@ object SimCompare {
         // The baked rig at gain 1, and its pendulums as the export writes them.
         val plain = edit.copy(exaggeration = 1f, outputs = edit.outputs.mapValues { it.value.copy(gain = null) }.filterValues { !it.isDefault })
         val bakedEdit = plain.copy(bake = bake)
-        val baked = overlay.copy(simEdits = overlay.simEdits.map { if (it.id == id) bakedEdit else it }).applyTo(base, skins)
+        val baked = overlay.copy(simEdits = overlay.simEdits.map { if (it.id == id) bakedEdit else it }).let { it.finish(authored.of(it)).model }
         val rules = SimGenerator.physicsRules(listOf(bakedEdit), baked.parameters.mapTo(HashSet()) { it.id.raw })
         val modes = bake.parameters.map { bakedEdit.outputId(it) to bakedEdit.outputRange(it) }
         val ranges = PhysicsEngine.ranges(baked.parameters)

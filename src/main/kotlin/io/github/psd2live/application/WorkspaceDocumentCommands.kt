@@ -77,6 +77,51 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
         }
     }
 
+    /**
+     * A regeneration's dry run: the same candidate preparation and rebuild as commit, without publishing anything. Reports
+     * the checkpoints the commit would add to the journal - a merge of what the generators make now onto the user's rig
+     * ([io.github.psd2live.core.RigRegenerationCheckpoint]) with what did not carry over cleanly, or the authored rig
+     * checkpointed before new entries - and the objects the candidate adds and removes.
+     */
+    suspend fun previewRegeneration(projectId: String, state: String, edits: List<WorkspaceDocumentOperation>): JsonObject {
+        require(edits.size in 1..128) { "Use 1..128 edits" }
+        require(edits.all { it.operation in WorkspaceDocumentEdits.supported && it.operation !in WorkspaceAssetLayerEdits.supported }) {
+            "Regeneration preview supports document operations other than asset layer placement" }
+        val prepared = prepare(projectId, state, edits, null)
+        val before = prepared.before
+        return runInterruptible(Dispatchers.Default) {
+            val revision = WorkspaceRevisions.of(prepared.draft.document)
+            val wouldChange = revision != before.revision
+            val earlier = before.model.config.rigEdits.authoringJournal
+            val journal = prepared.model.config.rigEdits.authoringJournal
+            val boundary = (0 until minOf(earlier.size, journal.size)).firstOrNull { earlier[it] !== journal[it] && earlier[it] != journal[it] }
+                ?: minOf(earlier.size, journal.size)
+            val authored by lazy { before.model.authored }
+            buildJsonObject {
+                put("project_id", JsonPrimitive(before.projectId))
+                put("state", JsonPrimitive(before.state))
+                put("history_node_id", JsonPrimitive(before.historyHead))
+                put("revision", JsonPrimitive(before.revision))
+                put("candidate_revision", JsonPrimitive(revision))
+                put("dry_run", JsonPrimitive(true))
+                put("would_change", JsonPrimitive(wouldChange))
+                put("checkpoints", JsonArray((boundary until journal.size).filter { io.github.psd2live.core.RigCheckpoint.isRecord(journal[it]) }.map { index ->
+                    val record = journal[index]
+                    val key = io.github.psd2live.core.RigCheckpoint.decode(record).bindingKey
+                    // The authored rig the edit started from, stored unchanged, is a checkpoint before new entries.
+                    val materialized = io.github.psd2live.core.MaterializedRigCodec.index(authored, key) == record["authored"]
+                    buildJsonObject {
+                        put("index", JsonPrimitive(index))
+                        put("kind", JsonPrimitive(if (materialized) "materialized" else "regeneration"))
+                        put("issues", WorkspaceGenerationUpdate.issues(io.github.psd2live.core.RigCheckpoint.issues(record)))
+                    }
+                }))
+                put("added", JsonArray(createdObjectIds(before.model.rig.puppet, prepared.model.rig.puppet).map(::JsonPrimitive)))
+                put("removed", JsonArray(createdObjectIds(prepared.model.rig.puppet, before.model.rig.puppet).map(::JsonPrimitive)))
+            }
+        }
+    }
+
     private suspend fun prepare(projectId: String, state: String, edits: List<WorkspaceDocumentOperation>,
                                 resources: WorkspaceAssetWorkflow?): WorkspacePreparedDraft<RigPreviewModel> {
         val context = currentCoroutineContext()

@@ -13,6 +13,8 @@ interface WorkspaceDocumentPort {
     suspend fun applyDocumentEdits(state: String, summary: String, edits: List<WorkspaceDocumentOperation>,
                                   author: MutationAuthor): WorkspaceMutationResult
     suspend fun previewDocumentEdits(state: String, edits: List<WorkspaceDocumentOperation>): JsonObject
+    /** [WorkspaceDocumentCommands.previewRegeneration] on the current workspace. */
+    suspend fun previewRegeneration(state: String, edits: List<WorkspaceDocumentOperation>): JsonObject
 }
 
 internal object WorkspaceDocumentEdits {

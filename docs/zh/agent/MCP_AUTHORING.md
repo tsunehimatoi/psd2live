@@ -21,7 +21,7 @@
 工具集只决定 `tools/list` 发布哪些工具，所有操作在两种工具集下都能调用，执行与校验相同。
 
 - **精简（默认）**：25 个工具，直接覆盖 98 项操作（输入 schema 与说明约 7 万字符；完整工具集约 45 万字符，另有约 275 万字符的输出 schema）。
-  - 单项工具：`workspace_overview`、`workspace_inspect`、`workspace_list_operations`、`workspace_get_operation`、`workspace_apply_edits`、`workspace_preview_edits`、`rig_deform`、`keyform_apply`，以及意图工具 `author_axis`、`author_physics`、`author_compile`（见[意图工具](#意图工具)）。
+  - 单项工具：`workspace_overview`、`workspace_inspect`、`workspace_list_operations`、`workspace_get_operation`、`workspace_apply_edits`、`workspace_preview_edits`、`workspace_preview_regeneration`、`rig_deform`、`keyform_apply`，以及意图工具 `author_axis`、`author_physics`、`author_compile`（见[意图工具](#意图工具)）。
   - 族工具：`view`、`parameter`、`motion`、`skeleton`、`path`、`physics`、`simulation`、`swing`、`source_paint`、`snapshot`、`history`、`project`、`job`。调用 `{"op":"set_key","request":{...},"wait_ms":20000}` 执行 `<族>_<op>`（此例为 `motion_set_key`），结果的 `operation` 为该操作 ID，`request` 按该操作的完整 schema 校验。成员取注册表中带该前缀的全部操作，私有草稿、试听与实时预览会话（`skeleton_draft_*`、`physics_audition*`、`*_preview*`）、历史注释和全局物理预设库除外。族工具发布各成员字段的扁平并集（不含 `oneOf`、`const`、`$ref`，形状因成员而异的字段只给说明），各 op 的必填字段列在工具说明中。
   - 其他操作经 `workspace_call` 调用：`{"operation":"layer_classify","request":{...}}`。操作 ID 同时是 `workspace_apply_edits` 成员名。
   - 不发布 `outputSchema`（结果仍以 `structuredContent` 返回，契约见 `workspace_get_operation`）；原子批量的 `edits` 成员只发布操作名枚举与 `request` 对象，成员字段执行时按单项 schema 严格校验。
@@ -50,6 +50,7 @@
 | `workspace_get_operation` | `id` | 读取单项 schema、字段说明与执行元数据 |
 | `workspace_apply_edits` | `state`、`edits`（1–128 项），可选 `summary` | 后台有序编辑同一候选文档，全部成功后提交一个历史节点；返回任务句柄，成员支持情况见 `batchable` |
 | `workspace_preview_edits` | `state`、`edits`（1–128 项），共用请求上下文 | 后台试运行几何作者编辑，返回候选 revision 与诊断；不发布文档、姿态、历史或资源 |
+| `workspace_preview_regeneration` | `state`、`edits`（1–128 项，资源图层操作除外），共用请求上下文 | 后台试运行会再生成 Rig 的编辑（设置、分类、拆分、`rig_update_generation` 等），返回候选 revision、将写入的固化点及其合并问题、增删的对象；不发布任何东西 |
 | `workspace_inspect` | `request` 内 `scope` / `target` | scope 为 `project/settings/preview/objects/layers/parameters/physics/swings/paths/simulations/vertex_groups`；图层摘要包含有效网格配置；工程已加载时 `project` 带 `quality.overrides`：观察报告（版本 3），两项检查——未按记录生效的生成结果覆盖（冲突 / 孤立，均为 warning），以及因只引用后续版本 2 拆分所取代的网格而按空操作重放的日志条目（`SUPERSEDED_ENTRY_SKIPPED`，info，`target` 为 `journal:<序号>`）；另带 `quality.regeneration`：观察报告（版本 1），列出日志最后一个固化点的再生成合并未能干净迁移的内容（`REGENERATION_CONFLICT`、`REGENERATION_TOPOLOGY_KEPT` 为 warning，`REGENERATION_DROPPED` 为 warning / validity，改挂、保留退役对象、改父级与顶点迁移为 info），`can_proceed` 恒为 true |
 | `layer_classify` | `request` 内 `state`、`layer_id` 及分类字段 | 后台更新既有源图层的类型、部件、侧别、参数关联和切换 ID；省略的字段保持捕获时的原值 |
 | `layer_mesh_update` | `request` 内 `state`、`layer_id`、`changes` 或 `reset` | 后台逐图层覆盖或重置自适应网格参数；用 `workspace_inspect scope=layers` 读取当前值 |
@@ -94,7 +95,7 @@
 
 表中列出业务字段；所有修改还须携带 `request_id`，工作区修改须携带 `project_id` 和 `state`（精简工具集可省略前两者，见[工具集](#工具集)）。只读后台采样 `physics_simulate/simulation_simulate/simulation_compare/view_sample_motion` 同样要求这三个字段，用于去重并固定采样版本。各项操作字段不同，调用前读取当前服务提供的 JSON Schema。所有公开工具统一使用 `{"request": {...}}` 包装。发布与校验保留同一份 `oneOf`、`const`、字段约束及说明，外层和业务对象都拒绝未知字段。结果统一为 `{"ok":true,"operation":"...","data":{...}}`；错误包含 `ok:false` 和 `error.code/message`，字段校验错误还带 `field`。PNG 以 MCP 图片内容返回。
 
-全部 188 项公开操作（其中 70 项后台、87 项可批量）都必须声明完整 `outputSchema`，完整工具集发布它，能力详情中的 `output_schema` 与其一致；成功 data 和失败 error 严格互斥。注册表在执行及去重边界校验业务结果，MCP 校验完整返回包装，遗漏结果契约不能注册。后台操作必须另有终态 `job_result_schema`，非后台操作不允许该字段。能力详情通过本地 `$defs/$ref` 描述嵌套 schema，查询自己的 schema 也可校验；实际 HTTP 保留所有根约束。`output_contract` 表示服务实现的结果与声明不符，不能作为修改已回滚的证据。
+全部 189 项公开操作（其中 71 项后台、87 项可批量）都必须声明完整 `outputSchema`，完整工具集发布它，能力详情中的 `output_schema` 与其一致；成功 data 和失败 error 严格互斥。注册表在执行及去重边界校验业务结果，MCP 校验完整返回包装，遗漏结果契约不能注册。后台操作必须另有终态 `job_result_schema`，非后台操作不允许该字段。能力详情通过本地 `$defs/$ref` 描述嵌套 schema，查询自己的 schema 也可校验；实际 HTTP 保留所有根约束。`output_contract` 表示服务实现的结果与声明不符，不能作为修改已回滚的证据。
 
 图片追加使用 `layer_import_images`：必需 `state` 和 1–128 个绝对路径组成的 `paths`，可选 `parent_deformer_id` 指向已有父变形器；省略时绑定模型根。透明边缘裁剪后居中；栅格保持原分辨率，超过画布时只把画布矩形等比缩小到画布内（图层密度大于 1 像素/画布单位），网格按画布分辨率生成。单文件最多 64 MiB、16 百万像素，整批最多 32 百万像素。一次成功只追加一个历史节点，任意文件失败则整批不发布；它读取文件，不能作为原子文档批量成员。新增源图及网格句柄从任务终态 `affectedLayerIds/affectedObjectIds` 获取。原图像素写入工程，后续重开不依赖输入文件。
 
@@ -202,6 +203,8 @@ CMO3 导入共用独立应用层导入器，GUI 入口确认后携带可信用�
 `rig_deform`、`keyform_apply`、`rig_edit_structure`、`object_edit_appearance`、`canvas_warp/rotation/glue/topology`、`canvas_deform_stroke` 和 `path_deform` 的几何作者日志，在应用层完整重建后、正式 CAS 前接受几何检查；对应 GUI journal 与 MCP 使用同一规则。批量只检查最终候选，允许前项临时退化、后项修复。其他文档操作不因这项规则自动扩大检查范围。
 
 `workspace_preview_edits` 使用与正式提交相同的有序候选准备、重建和检查，但不调用投影或 CAS，不改变 state、历史、未保存标志、姿态或资源。它是只读后台任务，仍要求 `request_id/project_id/state`，通过 `job_wait/job_get.result` 获取 `dry_run:true`、输入 `revision`、`candidate_revision`、`would_change`、`would_commit`、新建对象的 `changed` 句柄和 `diagnostics`。创建 Warp、Rotation 或 Glue 时须提供显式 `id`，之后在同一 state 上向 `workspace_apply_edits` 提交相同 edits；候选 revision 才可重复比较。试运行不预留对象 ID，也不授权绕过后续的状态冲突检查。几何以外的成员不接受试运行，支持范围以该操作的 schema 为准。
+
+`workspace_preview_regeneration` 以同样方式试运行任意文档操作（资源图层操作除外），用于在提交前查看再生成的结果：`checkpoints` 列出提交会写入日志的固化点（`index` 为其在候选日志中的位置；`kind: "regeneration"` 是生成结果合并到用户 Rig 上，`issues` 与 `rig_update_generation` 的问题格式相同；`kind: "materialized"` 是新条目之前固化的当前作者态），`added`/`removed` 为候选增删的对象句柄，另有 `dry_run:true`、`revision`、`candidate_revision`、`would_change`。
 
 检查覆盖受影响对象的父级局部几何，包含普通关键点、混合形关键点与权重限制点的组合。非有限坐标、非法拓扑及新增零面积退化会阻止提交，返回 `geometry_unsafe` 和结构化 `diagnostics.violations`。新增局部翻面及面积不足参考三角形 1% 的局部塌缩保存在 `diagnostics.warnings`，默认不阻断：现有作者流程允许有意折叠，不能把翻面数直接当成制作失败。已有翻面、退化和塌缩单独计数，不阻止未新增缺陷的编辑。整张表面的可逆仿射镜像与压缩允许通过，零面积变换仍拒绝。拓扑变更无法沿用旧三角形身份时，使用新网格的参考几何。混合坐标的笛卡尔积超过 16384 时，改用确定性的分散采样，保留两端组合，不再以 GEOMETRY_SAMPLING_LIMIT 拒绝候选。报告 scope 明确注明大组合域使用采样，这不是对全部组合的证明。
 

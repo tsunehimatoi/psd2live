@@ -490,17 +490,21 @@ class PSD2LivePipeline {
 	}
 
 	/** Fast incremental update for rig and keyform edits replayed onto the cached base rig. */
-	fun updateRigEdits(
+	internal fun updateRigEdits(
 		current: RigPreviewModel,
 		config: PipelineConfig,
 		baseName: String = "psd2live-preview",
+		stored: AuthoredRig? = null,
 	): RigPreviewModel {
 		// A deferred deletion model keeps the complete generated base and atlas; only its replayed rig and
 		// analysis are filtered. Replay onto that base and filter the same way instead of regenerating it.
 		if (RigLayerDeletion.deferred(config) != RigLayerDeletion.deferred(current.config)) return buildPreview(current.analysis.source, config)
-		// Entries added to the journal act on the current authored rig: no base, no replay of the entries before them.
+		// Entries added to the journal act on the current authored rig, and other edits of the journal replay from its last
+		// checkpoint: no base, no replay of the entries before it.
+		// [stored] is the authored state of [config]'s edits already built (an undo, a redo).
 		val appended = if (config.rigEdits == RigEditOverlay.Empty) null
-			else config.rigEdits.appendedTo(current.config.rigEdits, current.authored)
+			else stored?.let { val bound = current.authored.rig.puppet; it.reboundTo(bound.atlas, bound.sources) }
+				?: current.authoredWithoutBase(config.rigEdits)
 		val sources = appended?.let { authored ->
 			val previous = current.sources
 			PreviewRigSources.materialized(config.rigEdits, authored, previous.bindingKey) { previous.base }

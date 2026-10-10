@@ -88,6 +88,20 @@ internal fun registerDocumentBatch(registry: WorkspaceOperationRegistry, port: W
             WorkspaceOperationOutput(port.previewDocumentEdits(request.getValue("state").jsonPrimitive.content, edits))
         }
     }
+    registry.register(WorkspaceOperationDefinition("workspace_preview_regeneration",
+        "Dry-run 1..128 document operations - typically ones that regenerate the rig: settings_update, layer_classify, source splits, rig_update_generation - with the same ordered candidate preparation and rebuild as workspace_apply_edits, without publishing state, history or resources. Reports the checkpoints the commit would add to the journal (kind regeneration: what the generators make now merged onto the user's rig, with the issues the merge could not carry over cleanly; kind materialized: the authored rig checkpointed before new entries) and the object handles the candidate adds and removes. Asset layer operations are excluded. Returns a read-only job.",
+        schema(variants.filter { it.getValue("properties").jsonObject.getValue("operation").jsonObject.getValue("const").jsonPrimitive.content !in WorkspaceAssetLayerEdits.supported }),
+        WorkspaceOperationKind.QUERY, jobBacked = true, workspaceBound = true,
+        resultSchema = requireNotNull(WorkspaceJobResultSchemas.operationOutput("workspace_preview_regeneration")),
+        jobResultSchema = WorkspaceJobResultSchemas.regenerationPreview)) { request, _ ->
+        val edits = request.getValue("edits").jsonArray.map { raw ->
+            val edit = raw.jsonObject
+            WorkspaceDocumentOperation(edit.getValue("operation").jsonPrimitive.content, edit.getValue("request").jsonObject)
+        }
+        startWorkspaceOperationJob(statePort, jobs, "workspace_preview_regeneration") {
+            WorkspaceOperationOutput(port.previewRegeneration(request.getValue("state").jsonPrimitive.content, edits))
+        }
+    }
 }
 
 internal fun WorkspaceMutationResult.batchResult(count: Int): JsonObject = buildJsonObject {

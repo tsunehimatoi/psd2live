@@ -18,6 +18,7 @@ import org.umamo.runtime.model.VertexGroupKind
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import io.github.psd2live.core.legacy.ReplayCheckpoints
 
 /**
  * Skeleton commits on a large document: wall time and the rig builder's stages of creating, binding and moving
@@ -152,12 +153,12 @@ class SkeletonCommitTool {
 			// What matching replay checkpoints by the base's content would cost against what it could save.
 			val model = s.runtime.capture().model
 			report.appendLine("base content hash (IR): %.1f ms".format(mean(3) { ContentHash.of(PuppetIr.toIr(model.baseRig.puppet)) }))
-			val was = ReplayCheckpoints.enabled
-			ReplayCheckpoints.enabled = false
+			val was = ReplayCheckpoints.enabled; val reuse = GeneratorReuse.enabled
+			ReplayCheckpoints.enabled = false; GeneratorReuse.enabled = false
 			try {
 				report.appendLine("full replay of ${model.config.rigEdits.authoringJournal.size} entries: %.1f ms".format(mean(3) {
 					model.baseRig.withRigEdits(model.config.rigEdits, model.config.layerVisibility, model.config.drawOrderOverrides) }))
-			} finally { ReplayCheckpoints.enabled = was }
+			} finally { ReplayCheckpoints.enabled = was; GeneratorReuse.enabled = reuse }
 		}
 		File(out, "report.txt").writeText(report.toString())
 		println(report)
@@ -176,11 +177,11 @@ class SkeletonCommitTool {
 	 * from: [document] generated and replayed.
 	 */
 	private fun cold(document: WorkspaceDocument): RigPreviewModel {
-		val stages = RigStageCache.enabled; val checkpoints = ReplayCheckpoints.enabled
-		RigStageCache.enabled = false; ReplayCheckpoints.enabled = false
+		val stages = RigStageCache.enabled; val checkpoints = ReplayCheckpoints.enabled; val reuse = GeneratorReuse.enabled
+		RigStageCache.enabled = false; ReplayCheckpoints.enabled = false; GeneratorReuse.enabled = false
 		SkeletonRig.clearCache()
 		try { return withoutMaterializedRigs { runBlocking { WorkspacePreviewBuilder().build(document) } } }
-		finally { RigStageCache.enabled = stages; ReplayCheckpoints.enabled = checkpoints }
+		finally { RigStageCache.enabled = stages; ReplayCheckpoints.enabled = checkpoints; GeneratorReuse.enabled = reuse }
 	}
 
 	/**

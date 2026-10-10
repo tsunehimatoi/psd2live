@@ -231,8 +231,8 @@ internal object DocumentGenerators {
 internal object GeneratorReuse {
 	private const val ENTRIES = 16
 
-	/** Off: every generator runs (the replay checkpoints' switch turns both off). */
-	val enabled: Boolean get() = ReplayCheckpoints.enabled
+	/** Off: every generator runs (`-Dpsd2live.replayCheckpoints=false` turns this and the replay checkpoints off). */
+	@Volatile var enabled: Boolean = System.getProperty("psd2live.replayCheckpoints") != "false"
 
 	private val hitCount = java.util.concurrent.atomic.AtomicLong()
 	private val missCount = java.util.concurrent.atomic.AtomicLong()

@@ -443,8 +443,8 @@ internal class WorkspaceReadSession(
 
     override fun compareSimulation(id: String, motions: List<String>, progress: (Float) -> Unit, cancelled: () -> Boolean): JsonObject {
         val captured = capture()
-        val base = captured.model.baseRig
-        val results = io.github.psd2live.core.sim.SimCompare.compare(captured.document.rigEdits, base.puppet, id, motions, base.primitiveSkins,
+        val results = io.github.psd2live.core.sim.SimCompare.compare(captured.document.rigEdits,
+            io.github.psd2live.core.sim.SimAuthoring.AuthoredRigs(captured.model::authoredPuppet), id, motions,
             progress = progress, cancelled = cancelled)
         return buildJsonObject {
             put("id", id)

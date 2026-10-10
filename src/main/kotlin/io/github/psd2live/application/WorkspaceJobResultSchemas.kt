@@ -14,6 +14,12 @@ internal object WorkspaceJobResultSchemas {
     val generationUpdate = s.obj(lifecycleFields + mapOf("updated" to s.boolean(), "issues" to s.array(s.obj(mapOf(
         "kind" to s.choices(*io.github.psd2live.core.RigRegeneration.IssueKind.entries.map { it.code }.toTypedArray()),
         "target" to s.string(), "detail" to s.string()), setOf("kind", "target")))))
+    /** A dry run of document edits: the checkpoints a commit would add and the objects it would add and remove. */
+    val regenerationPreview = s.obj(s.identity + mapOf("revision" to s.handle(), "candidate_revision" to s.handle(),
+        "dry_run" to s.constant(true), "would_change" to s.boolean(),
+        "checkpoints" to s.array(s.obj(mapOf("index" to s.integer(0), "kind" to s.choices("regeneration", "materialized"),
+            "issues" to generationUpdate.getValue("properties").jsonObject.getValue("issues").jsonObject))),
+        "added" to s.array(s.handle()), "removed" to s.array(s.handle())))
     private val batch = s.obj(lifecycleFields + mapOf("edit_count" to s.integer(1, 128), "changed" to s.array(s.handle()),
         "geometry_diagnostics" to WorkspaceGeometrySafetySchemas.report), lifecycleFields.keys + setOf("edit_count", "changed"))
     private val modelExport = s.obj(mapOf("state" to s.handle(), "revision" to s.handle(),
@@ -25,6 +31,7 @@ internal object WorkspaceJobResultSchemas {
         "project_open" to lifecycle, "project_save" to lifecycle, "project_save_as" to lifecycle,
         "project_export_model" to modelExport, "project_export_psd" to psdExport, "workspace_apply_edits" to batch,
         "workspace_preview_edits" to WorkspaceGeometrySafetySchemas.preview,
+        "workspace_preview_regeneration" to regenerationPreview,
     ).apply {
         for (id in WorkspaceIntentOperations.batches) put(id, batch)
         put("preview_pose", requireNotNull(WorkspaceAuthoringResultSchemas.forOperation("preview_pose")))

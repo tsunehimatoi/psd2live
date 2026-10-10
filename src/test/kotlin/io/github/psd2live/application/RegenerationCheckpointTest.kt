@@ -14,6 +14,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.zip.ZipFile
 import kotlin.test.*
+import io.github.psd2live.core.legacy.ReplayCheckpoints
 
 /**
  * An edit that changes what the generators make under the journal - here back hair simulation, which drops the

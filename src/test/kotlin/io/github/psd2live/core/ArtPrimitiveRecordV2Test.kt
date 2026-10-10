@@ -8,6 +8,7 @@ import org.umamo.runtime.model.*
 import kotlin.math.abs
 import kotlin.test.*
 import io.github.psd2live.core.legacy.ArtPrimitiveReplay
+import io.github.psd2live.core.legacy.ReplayCheckpoints
 
 /**
  * Version 2 `art_primitive` records (Rule B) on a hand-built rig: a mesh of two islands with a generator axis

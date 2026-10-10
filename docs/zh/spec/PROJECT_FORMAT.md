@@ -36,7 +36,7 @@ ZIP 条目的压缩方式：PNG（`assets/`、`images/`、观察图）与 CMO3 �
 
 ### 固化点
 
-日志条目 `rig_checkpoint`（`{op, v:1, authored:{header, frame, deformers, meshes}, issues}`）把作者态 Rig 作为数据保存在它在日志中的位置：`authored` 是下文作者态 Rig 的索引（头部与对象哈希），`issues` 是写下它的再生成合并未能干净迁移的内容（`{kind, target, detail}`，见[固化 Rig](MATERIALIZED_RIG.md#5-再生成合并)）。重放从最后一个固化点开始：其作者态 Rig（纹理集变化时按画布纹理坐标重新绑定）加上之后的条目；之前的条目只作历史，不再重放。编辑使基础生成的结果发生变化时由程序写出固化点（见[文档层](DOCUMENT_LAYER.md#固化点)），用户不直接编辑它。
+日志条目 `rig_checkpoint`（`{op, v:1, authored:{header, frame, deformers, meshes}, issues}`）把作者态 Rig 作为数据保存在它在日志中的位置：`authored` 是下文作者态 Rig 的索引（头部与对象哈希），`issues` 是写下它的再生成合并未能干净迁移的内容（`{kind, target, detail}`，见[固化 Rig](MATERIALIZED_RIG.md#5-再生成合并)）。重放从最后一个固化点开始：其作者态 Rig（纹理集变化时按画布纹理坐标重新绑定）加上之后的条目；之前的条目只作历史，不再重放。编辑使基础生成的结果发生变化时、生成的模型第一次编辑时、以及最后一个固化点之后满 32 条时由程序写出固化点（见[文档层](DOCUMENT_LAYER.md#固化点)），用户不直接编辑它；后两者保存编辑之前的作者态 Rig，生成快照 `generated` 沿用上一个固化点的。因此本版本编辑过的生成工程都是修订 3。
 
 固化点的对象属于文档：工作目录在写入引用它们的快照之前把对象写到 `<project>/rig-objects/`，保存时归档到 `rig/objects/`。
 

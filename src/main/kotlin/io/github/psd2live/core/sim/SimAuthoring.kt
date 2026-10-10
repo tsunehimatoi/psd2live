@@ -202,16 +202,33 @@ object SimAuthoring {
     }
 
     /**
-     * The rig [overlay] rebuilds on [base] without simulation [id]'s bake, the rig a bake of it must read:
-     * baking over its own keys would count them twice.
+     * The authored rig ([RigEditOverlay.replayAuthored]) of an overlay, before its swings and simulations write their
+     * keyforms: what a simulation bakes on once the overlay finishes it. A preview gives it from its own authored rig
+     * ([io.github.psd2live.core.RigPreviewModel.authoredPuppet]) without generating the base.
      */
-    fun unbakedModel(overlay: RigEditOverlay, base: PuppetModel, id: String, skins: PrimitiveSkins = PrimitiveSkins.None): PuppetModel =
-        overlay.copy(simEdits = overlay.simEdits.map { if (it.id == id) it.copy(bake = null) else it }).applyTo(base, skins)
+    fun interface AuthoredRigs {
+        fun of(overlay: RigEditOverlay): PuppetModel
+
+        companion object {
+            /** Each overlay replayed on [base], whose skeleton skinned [skins]. */
+            fun replayedOn(base: PuppetModel, skins: PrimitiveSkins = PrimitiveSkins.None) = AuthoredRigs { it.replayAuthored(base, skins).model }
+        }
+    }
 
     /**
-     * Bakes simulation [id] of [overlay] on the rig rebuilt from [base], its pendulum fitted at [overlay]'s
-     * physics rate; takes a second or so, so call it off the frame thread.
+     * The rig [overlay] finishes without simulation [id]'s bake, the rig a bake of it must read: baking over its own
+     * keys would count them twice.
      */
+    fun unbakedModel(overlay: RigEditOverlay, authored: AuthoredRigs, id: String): PuppetModel {
+        val unbaked = overlay.copy(simEdits = overlay.simEdits.map { if (it.id == id) it.copy(bake = null) else it })
+        return unbaked.finish(authored.of(unbaked)).model
+    }
+
+    /** [unbakedModel] with the overlay replayed on [base]. */
+    fun unbakedModel(overlay: RigEditOverlay, base: PuppetModel, id: String, skins: PrimitiveSkins = PrimitiveSkins.None): PuppetModel =
+        unbakedModel(overlay, AuthoredRigs.replayedOn(base, skins), id)
+
+    /** [bake] with the overlay replayed on [base]. */
     fun bake(
         overlay: RigEditOverlay,
         base: PuppetModel,
@@ -219,9 +236,21 @@ object SimAuthoring {
         progress: (Float) -> Unit = {},
         cancelled: () -> Boolean = { false },
         skins: PrimitiveSkins = PrimitiveSkins.None,
+    ): SimBakeResult = bake(overlay, AuthoredRigs.replayedOn(base, skins), id, progress, cancelled)
+
+    /**
+     * Bakes simulation [id] of [overlay] on its finished [authored] rig, its pendulum fitted at [overlay]'s physics
+     * rate; takes a second or so, so call it off the frame thread.
+     */
+    fun bake(
+        overlay: RigEditOverlay,
+        authored: AuthoredRigs,
+        id: String,
+        progress: (Float) -> Unit = {},
+        cancelled: () -> Boolean = { false },
     ): SimBakeResult {
         val edit = requireNotNull(overlay.simEdits.firstOrNull { it.id == id }) { "Simulation not found: $id" }
-        val model = unbakedModel(overlay, base, id, skins)
+        val model = unbakedModel(overlay, authored, id)
         return SimBaker.bake(model, edit,
             SimBaker.Options(physicsFps = overlay.physicsFps, progress = progress, cancelled = cancelled, trainingMotions = trainingMotions(overlay, edit, model)))
     }
@@ -251,10 +280,20 @@ object SimAuthoring {
         cancelled: () -> Boolean = { false },
         autoBake: Boolean? = null,
         skins: PrimitiveSkins = PrimitiveSkins.None,
+    ): Pair<RigEditOverlay, String?> = rebaked(overlay, AuthoredRigs.replayedOn(base, skins), id, progress, cancelled, autoBake)
+
+    /** [rebaked] on the overlay's finished [authored] rig. */
+    fun rebaked(
+        overlay: RigEditOverlay,
+        authored: AuthoredRigs,
+        id: String,
+        progress: (Float) -> Unit = {},
+        cancelled: () -> Boolean = { false },
+        autoBake: Boolean? = null,
     ): Pair<RigEditOverlay, String?> {
         val edit = overlay.simEdits.firstOrNull { it.id == id } ?: return overlay to null
         if (!(autoBake ?: edit.autoBake) || !edit.enabled) return overlay to null
-        val model = unbakedModel(overlay, base, id, skins)
+        val model = unbakedModel(overlay, authored, id)
         if (edit.bake != null && edit.bake.fingerprint == SimBake.fingerprint(model, edit)) return overlay to null
         return try {
             withBake(overlay, id, SimBaker.bake(model, edit, SimBaker.Options(physicsFps = overlay.physicsFps, previous = edit.bake?.physics, previousExtra = edit.bake?.extraPhysics.orEmpty(),

@@ -53,7 +53,7 @@ internal object WorkspaceSimulationEdits {
             "simulation_clear_bake" -> WorkspaceSimulationCandidate(withBakes(document, mapOf(request.text("id") to null)))
             "simulation_bake" -> {
                 val id = request.text("id")
-                val bake = work.run(id) { progress, cancelled -> SimAuthoring.bake(document.rigEdits, preview.baseRig.puppet, id, progress, cancelled, preview.baseRig.primitiveSkins) }
+                val bake = work.run(id) { progress, cancelled -> SimAuthoring.bake(document.rigEdits, SimAuthoring.AuthoredRigs(preview::authoredPuppet), id, progress, cancelled) }
                 WorkspaceSimulationCandidate(withBakes(document, mapOf(id to bake)), bake.summary())
             }
             "model_apply_preset" -> when (val name = request.text("preset")) {
@@ -72,7 +72,7 @@ internal object WorkspaceSimulationEdits {
         val id = arguments.text("id")
         val put = SimAuthoring.put(document.rigEdits, preview.rig.puppet, arguments)
         val (overlay, failure) = work.run(id) { progress, cancelled ->
-            SimAuthoring.rebaked(put, preview.baseRig.puppet, id, progress, cancelled, autoBake, preview.baseRig.primitiveSkins)
+            SimAuthoring.rebaked(put, SimAuthoring.AuthoredRigs(preview::authoredPuppet), id, progress, cancelled, autoBake)
         }
         val bake = overlay.simEdits.single { it.id == id }.bake
         val report = buildJsonObject {
@@ -100,14 +100,14 @@ internal object WorkspaceSimulationEdits {
                 model = pipeline.buildPreview(document.source, checkpointed, previousAtlas = preview.atlas)
             } else model = pipeline.rebuildPreview(preview, switched)
         }
-        val base = model.baseRig
+        val authored = SimAuthoring.AuthoredRigs(model::authoredPuppet)
         // Parts of a materialized split exist only after the journal: address meshes by the replayed layer map.
         val applied = ModelPresets.apply(next.rigEdits, model.rig.puppet, model.analysis, model.rig.layerIdByDrawableId, preset, layers,
             next.config().alphaThreshold)
         var overlay = applied.overlay
         val failures = LinkedHashMap<String, String>()
         for (id in applied.simulationIds) {
-            val (rebaked, failure) = work.run(id) { progress, cancelled -> SimAuthoring.rebaked(overlay, base.puppet, id, progress, cancelled, autoBake, base.primitiveSkins) }
+            val (rebaked, failure) = work.run(id) { progress, cancelled -> SimAuthoring.rebaked(overlay, authored, id, progress, cancelled, autoBake) }
             if (failure != null) failures[id] = failure
             overlay = rebaked
         }

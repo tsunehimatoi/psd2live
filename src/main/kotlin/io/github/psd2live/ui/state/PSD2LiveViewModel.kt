@@ -526,13 +526,13 @@ class PSD2LiveViewModel : AutoCloseable {
                 val progress = { value: Float -> _simulationBaking.value = SimulationBaking(id, value, index, ids.size) }
                 try {
                     if (round.getValue(id)) {
-                        val bake = io.github.psd2live.core.sim.SimAuthoring.bake(overlay, model.baseRig.puppet, id, progress, cancelled,
-                            model.baseRig.primitiveSkins)
+                        val bake = io.github.psd2live.core.sim.SimAuthoring.bake(overlay,
+                            io.github.psd2live.core.sim.SimAuthoring.AuthoredRigs(model::authoredPuppet), id, progress, cancelled)
                         overlay = io.github.psd2live.core.sim.SimAuthoring.withBake(overlay, id, bake)
                         bakes[id] = bake
                     } else {
-                        val (next, failure) = io.github.psd2live.core.sim.SimAuthoring.rebaked(overlay, model.baseRig.puppet, id, progress, cancelled,
-                            autoBake = true, skins = model.baseRig.primitiveSkins)
+                        val (next, failure) = io.github.psd2live.core.sim.SimAuthoring.rebaked(overlay,
+                            io.github.psd2live.core.sim.SimAuthoring.AuthoredRigs(model::authoredPuppet), id, progress, cancelled, autoBake = true)
                         if (cancelled()) throw kotlinx.coroutines.CancellationException("Bake cancelled")
                         if (failure != null) failures += "$id: $failure"
                         else next.simEdits.single { it.id == id }.bake?.takeIf { next !== overlay }?.let { bakes[id] = it }
@@ -710,7 +710,8 @@ class PSD2LiveViewModel : AutoCloseable {
         simChecking = scope.launch(Dispatchers.Default) {
             val job = coroutineContext[kotlinx.coroutines.Job]
             val result = try {
-                val results = io.github.psd2live.core.sim.SimCompare.compare(overlay, model.baseRig.puppet, id, motions, model.baseRig.primitiveSkins,
+                val results = io.github.psd2live.core.sim.SimCompare.compare(overlay,
+                    io.github.psd2live.core.sim.SimAuthoring.AuthoredRigs(model::authoredPuppet), id, motions,
                     cancelled = { job?.isCancelled == true })
                 SimulationCheck(motions, results.map { io.github.psd2live.core.sim.SimMotionCheck(it.motion, it.check) })
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }

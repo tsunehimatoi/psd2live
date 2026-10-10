@@ -86,11 +86,13 @@
 - **生成设置与分类**（`RigGenerationMigration.changed` 认定的变化：脸部特征、嘴型、仅网格、头身强度、`rigTuning`、图层分类）：生成的模型在准备编辑时即合并并写固化点（`WorkspacePreviewBuilder.normalizeMeshEdits`），G′ 由当前源图生成（保存的网格输入照用，`generationSource` 冻结之后加入的图层也在其中），不再写 `rig_generation_transition`、`rig_generation_frames` 与随迁移创建的网格记录。导入 CMO3 的模型没有生成结果可合并，仍写迁移记录（见[旧版重放](#旧版重放)）。
 - **拆分**（`RigRegenerationCheckpoint.split`）：见[拆分物化](#拆分物化画元记录-art_primitive)；固化点写在拆分记录之后，记录本身不重放。
 - **记录**（`RigCheckpoint`）：作者态 Rig 的索引（对象在 `RigObjects`，随文档持久化）、它所基于的生成快照与合并问题。模型预设开启头发模拟时在预设内部同样合并并写固化点，再按合并后的 Rig 计算权重。
-- **重放**：`replayAuthored` 从最后一个固化点开始，其 Rig 经 `reboundTo` 绑定到基础 Rig 的纹理集，再重放之后的条目（照常使用重放检查点）；`authoredRig` 的网格映射取自固化点头部。之后没有 `art_primitive` 记录时，构建直接由固化点进行（`RigEditOverlay.authoredFromCheckpoint`、`materializedPreview(rebind = true)`），不生成基础 Rig。
+- **直接编辑**：生成的模型上，延续日志并追加条目的编辑在日志没有固化点、或最后一个固化点之后已有 `RigEditOverlay.CHECKPOINT_INTERVAL`（32）条时，先在原日志末尾、新条目之前写入当前作者态 Rig 的固化点（`RigEditOverlay.checkpointsBeforeEntries`、`WorkspacePreviewBuilder`）；生成快照沿用上一个固化点保存的，没有时取当前基础 Rig。因此第一次编辑后任何构建最多重放 32 条加本次编辑的条目：追加的条目作用于当前作者态 Rig，改写较早条目（拖动合并、撤销、重做）的编辑从固化点重放其后的条目或取已保存的修订（`PSD2LivePipeline.updateRigEdits`、`RigPreviewModel.authoredWithoutBase`），都不生成基础 Rig。tml 样例上第一次编辑约 0.2 s、之后的固化约 50 ms，冷构建约 0.2 s。
+- **重放**：`replayAuthored` 从最后一个固化点开始，其 Rig 经 `reboundTo` 绑定到基础 Rig 的纹理集，再逐条重放之后的条目（不经重放检查点；重放检查点 `core.legacy.ReplayCheckpoints` 只用于没有固化点的日志）；`authoredRig` 的网格映射取自固化点头部。之后没有 `art_primitive` 记录时，构建直接由固化点进行（`RigEditOverlay.authoredFromCheckpoint`、`materializedPreview(rebind = true)`），不生成基础 Rig。
 - **生成基线**：`rig_generation_baseline` 冻结的生成设置与分类只在其后没有固化点时约束基础生成（`RigGenerationBaseline.restore`）；之后的条目都从固化点开始重放，基础生成按文档当前的设置进行。
 - **提交**：运行时把重建插入的固化点并入提交的文档（`WorkspaceRuntime.adopted`）；批量成员由前一个候选构建（`rebuildFrom`），合并的 M 是前一个候选的作者态。
 - **收尾阶段**照常扫描整条日志：生成结果覆盖与延后的面板编辑不受固化点影响。
-- **报告**：最后一个固化点的问题经 `RegenerationQuality` 进入 `workspace_inspect` 的 `quality.regeneration`。
+- **报告**：最后一个固化点的问题经 `RegenerationQuality` 进入 `workspace_inspect` 的 `quality.regeneration`。提交前可用 `workspace_preview_regeneration` 试运行：与提交相同地准备并重建候选，报告将写入的固化点（`regeneration` 带合并问题，`materialized` 为新条目前的作者态）与增删的对象，不发布任何东西（`WorkspaceDocumentCommands.previewRegeneration`）。
+- **模拟烘焙**读取作者态 Rig 经收尾阶段的结果（`SimAuthoring.AuthoredRigs`、`RigPreviewModel.authoredPuppet`），不生成基础 Rig。
 - 生成的模型启用骨架后不再在日志中重采样顶点组（合并迁移它们）；导入 CMO3 的模型没有生成结果可合并，仍按原方式处理。
 
 ## 生成结果覆盖

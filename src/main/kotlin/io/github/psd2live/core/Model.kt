@@ -497,6 +497,27 @@ data class RigPreviewModel(
 	internal val authored: AuthoredRig get() = sources.authored(config.rigEdits)
 
 	/**
+	 * The authored rig of [overlay] - [config]'s edits with entries appended or rewritten, or its swings and simulations
+	 * changed - bound to [authored]'s atlas, without generating the base: [authored] with the added entries
+	 * ([RigEditOverlay.appendedTo]), else the journal's checkpoint and the entries after it
+	 * ([RigEditOverlay.authoredFromCheckpoint]). Null when neither gives it: a document without a checkpoint, or one whose
+	 * entries after it need the base.
+	 */
+	internal fun authoredWithoutBase(overlay: RigEditOverlay): AuthoredRig? {
+		val authored = authored
+		overlay.appendedTo(config.rigEdits, authored)?.let { return it }
+		val (stored, _) = overlay.authoredFromCheckpoint() ?: return null
+		return stored.reboundTo(authored.rig.puppet.atlas, authored.rig.puppet.sources)
+	}
+
+	/** [authoredWithoutBase]'s puppet, else [overlay] replayed on [baseRig]. */
+	internal fun authoredPuppet(overlay: RigEditOverlay): org.umamo.runtime.model.PuppetModel =
+		authoredWithoutBase(overlay)?.rig?.puppet ?: overlay.replayAuthored(baseRig.puppet, primitiveSkinsOf(overlay)).model
+
+	private fun primitiveSkinsOf(overlay: RigEditOverlay): PrimitiveSkins =
+		if (overlay.authoringJournal.none(ArtPrimitiveJournal::isRecord)) PrimitiveSkins.None else baseRig.primitiveSkins
+
+	/**
 	 * The split parts [baseRig] holds for the journal's `art_primitive` records ([BuiltRig.primitiveSkins]); none, without
 	 * generating the base, when the journal has no such record.
 	 */

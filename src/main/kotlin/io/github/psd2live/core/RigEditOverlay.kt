@@ -58,6 +58,7 @@ import io.github.psd2live.core.legacy.RigGenerationScaffold
 import io.github.psd2live.core.legacy.RigMeshActivation
 import io.github.psd2live.core.legacy.SupersededEntryNote
 import io.github.psd2live.core.legacy.StubTolerance
+import io.github.psd2live.core.legacy.ReplayCheckpoints
 
 /**
  * A durable, replayable edit to one parameter. The complete desired value is stored instead of a
@@ -190,6 +191,9 @@ data class RigKeyformCopyEdit(
  * included in Agent history snapshots and export configuration.
  */
 /** The rig after the legacy edits and the journal ([RigEditOverlay.replayAuthored]), with the entries that replay skipped. */
+/** The state a journal replay carries: the model and the entries skipped so far. */
+internal class ReplayState(val model: PuppetModel, val notes: List<SupersededEntryNote>)
+
 internal class AuthoredReplay(val model: PuppetModel, val notes: List<SupersededEntryNote>)
 
 data class RigEditOverlay(
@@ -300,6 +304,15 @@ data class RigEditOverlay(
 			afterCheckpoint.any { it["op"]?.jsonPrimitive?.contentOrNull in LEGACY_OPS }
 	}
 
+	/**
+	 * Whether an edit that adds entries to this journal checkpoints its authored rig first, where the journal ends, so a
+	 * build of the result - any edit of the entries after the checkpoint included - replays at most
+	 * [CHECKPOINT_INTERVAL] entries and the edit's own, without the base: the journal replays legacy records
+	 * ([replaysLegacy]), has no checkpoint yet, or has [CHECKPOINT_INTERVAL] entries after its last.
+	 */
+	internal val checkpointsBeforeEntries: Boolean
+		get() = replaysLegacy || checkpointIndex < 0 || afterCheckpoint.size >= CHECKPOINT_INTERVAL
+
 	/** One journal entry replayed onto [state]; an entry that only addresses parts a later split supersedes is skipped and noted. */
 	private fun replayEntry(state: ReplayState, command: kotlinx.serialization.json.JsonObject, skins: PrimitiveSkins): ReplayState {
 		val model = state.model
@@ -340,12 +353,12 @@ data class RigEditOverlay(
 			val record = authoringJournal[checkpointIndex]
 			val start = RigCheckpoint.authoredOn(record, base)
 			val notes = RigCheckpoint.decode(record).authored.rig.supersededEntryNotes
-			val legacy = ReplayCheckpoints.Legacy(listOf(RigCheckpoint.OP, record, generatedIds, io.github.psd2live.i18n.I18n.currentLanguage.tag, skins))
-			val replayed = ReplayCheckpoints.replay(start, legacy, afterCheckpoint, start = { ReplayState(start, notes) }) { state, command ->
-				replayEntry(state, command, skins)
-			}
-			return AuthoredReplay(replayed.model, replayed.notes)
+			// At most [CHECKPOINT_INTERVAL] entries and the edit's own follow a checkpoint: they replay in full.
+			var state = ReplayState(start, notes)
+			for (command in afterCheckpoint) state = replayEntry(state, command, skins)
+			return AuthoredReplay(state.model, state.notes)
 		}
+		// A journal without a checkpoint: one older builds wrote, or a new document's before its first edit checkpoints it.
 		val earlyStructureEdits = structureEdits.filterNot(::generatedPanelEdit)
 		// Everything the legacy stage reads, and what decides how the journal's structure edits split.
 		val legacy = ReplayCheckpoints.Legacy(listOf(deletedParameterIds, parameterEdits, warpEdits, structureEdits,
@@ -529,6 +542,8 @@ data class RigEditOverlay(
 		val FPS_CHOICES = listOf(30, 60, 90, 120, UNLIMITED_FPS)
 		fun validFps(fps: Int) = fps == UNLIMITED_FPS || fps in PHYSICS_FPS_RANGE
 		/** Journal records only older builds write and only the legacy replay reads ([replaysLegacy]). */
+		/** How many entries may follow the journal's last checkpoint before an edit adding more checkpoints it ([checkpointsBeforeEntries]). */
+		internal const val CHECKPOINT_INTERVAL = 32
 		private val LEGACY_OPS = setOf(ArtPrimitiveJournal.OP, RigGenerationJournal.OP, RigGenerationFrames.OP, RigGenerationScaffold.OP,
 			RigMeshActivation.OP, SourcePartitionJournal.OP, DepthSplit.OP)
 		val Empty = RigEditOverlay()

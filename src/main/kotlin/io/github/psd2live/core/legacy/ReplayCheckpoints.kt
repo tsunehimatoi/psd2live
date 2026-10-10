@@ -1,14 +1,16 @@
-package io.github.psd2live.core
+package io.github.psd2live.core.legacy
 
 import kotlinx.serialization.json.JsonObject
 import org.umamo.runtime.model.PuppetModel
 import java.lang.ref.SoftReference
 import java.lang.ref.WeakReference
-import io.github.psd2live.core.legacy.SupersededEntryNote
+import io.github.psd2live.core.RigBuildProfile
 
 /**
- * Intermediate models of [RigEditOverlay.applyTo]'s journal replay, so a document that appends to, undoes or
- * branches from a recently replayed journal replays only the entries after the longest replayed prefix.
+ * Intermediate models of the journal replay of a document without a checkpoint ([io.github.psd2live.core.RigEditOverlay.replayAuthored]),
+ * so a document that appends to, undoes or branches from a recently replayed journal replays only the entries after
+ * the longest replayed prefix. A journal with a checkpoint replays at most the entries after it, without these: only
+ * journals older builds wrote, and a new document's before its first edit, come here.
  *
  * A checkpoint is the model after the legacy static edits and the first `i` journal entries. It is found by
  * content, never by position: the base model must be the same instance, the legacy part ([Legacy]) equal, and
@@ -21,7 +23,7 @@ import io.github.psd2live.core.legacy.SupersededEntryNote
  * references; at most [CHAINS] chains (most recently used first) are kept, so undo and redo across a branch
  * both find a near checkpoint.
  */
-internal object ReplayCheckpoints {
+object ReplayCheckpoints {
 	const val INTERVAL = 16
 	const val RECENT = 3
 	const val CHAINS = 4
@@ -137,5 +139,3 @@ internal object ReplayCheckpoints {
 	}
 }
 
-/** The state a journal replay checkpoints: the model and the entries skipped so far. */
-internal class ReplayState(val model: org.umamo.runtime.model.PuppetModel, val notes: List<SupersededEntryNote>)

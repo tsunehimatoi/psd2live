@@ -142,6 +142,11 @@ class DesktopWorkspace(
         if (state != before.state) throw WorkspaceConflict(state, before.state)
         return documentCommands.preview(before.projectId, before.state, edits)
     }
+    override suspend fun previewRegeneration(state: String, edits: List<WorkspaceDocumentOperation>): JsonObject {
+        val before = captureForMutation()
+        if (state != before.state) throw WorkspaceConflict(state, before.state)
+        return documentCommands.previewRegeneration(before.projectId, before.state, edits)
+    }
     override suspend fun applyDocumentEdits(state: String, summary: String, edits: List<WorkspaceDocumentOperation>,
                                             author: MutationAuthor): WorkspaceMutationResult = editMutex.withLock {
         require(edits.size in 1..128) { "Use 1..128 edits" }

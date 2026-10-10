@@ -33,6 +33,7 @@ import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import java.io.File
 import javax.imageio.ImageIO
+import io.github.psd2live.core.legacy.ReplayCheckpoints
 
 private fun List<Double>.median(): Double = sorted().let { if (it.isEmpty()) 0.0 else it[it.size / 2] }
 
@@ -544,9 +545,9 @@ internal class CommitBaseline(private val sample: Sample, private val out: File,
 	}
 
 	private fun <T> withoutCheckpoints(block: () -> T): T {
-		val was = ReplayCheckpoints.enabled
-		ReplayCheckpoints.enabled = false
-		try { return block() } finally { ReplayCheckpoints.enabled = was }
+		val was = ReplayCheckpoints.enabled; val reuse = GeneratorReuse.enabled
+		ReplayCheckpoints.enabled = false; GeneratorReuse.enabled = false
+		try { return block() } finally { ReplayCheckpoints.enabled = was; GeneratorReuse.enabled = reuse }
 	}
 
 	/** The replay of a journal whose prefix (all but the last entry) was replayed just before. */
