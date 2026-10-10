@@ -1816,6 +1816,18 @@ fun CanvasViewportComposable(
 			if (mode == CanvasMode.EDIT && editor.hierarchyMode == EditHierarchyMode.SKELETON && editor.committedSkeleton == null) {
 				SkeletonCreatePrompt(editor, Modifier.align(Alignment.Center))
 			}
+			// Merges an earlier version made that this one makes differently: offered where the trouble shows, not only in Tools.
+			if (canvasState.staleRegenerations > 0 && !canvasState.staleRegenerationsDismissed && viewModel.canUpdateGeneration(canvasState)) {
+				io.github.psd2live.ui.views.texture.NoticeBanner(
+					listOf(tr("canvas.staleRegeneration.message", canvasState.staleRegenerations) to colors.warning),
+					onClose = { viewModel.dismissStaleRegenerations() },
+					modifier = Modifier.align(Alignment.TopCenter).padding(top = 52.dp),
+					actions = listOf(
+						tr("menu.tools.updateGeneration") to { viewModel.updateGeneration(); focusRequester.requestFocus() },
+						tr("canvas.staleRegeneration.preview") to { viewModel.previewGenerationUpdate(); focusRequester.requestFocus() },
+					),
+				)
+			}
 			// Bottom-right: display-toggle rail (mirrors the left tool palette).
 			CanvasViewOptionsBar(
 				options = viewOptions,

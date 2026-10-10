@@ -109,6 +109,10 @@ internal object RigRegenerationCheckpoint {
 		return next.copy(rigEdits = next.rigEdits.copy(authoringJournal = journal + record))
 	}
 
+	/** [RigMergeRepair.stale] for [model], with the deformer names a generation migration gave the authored rig. */
+	fun staleMerges(model: RigPreviewModel, checkpoint: () -> Unit = {}): List<RigRegeneration.Issue> =
+		RigMergeRepair.stale(model, RigGenerationFrames::named, checkpoint)
+
 	/** A regeneration with this build's generators: the new configuration and what its merge reported. */
 	class Update(val config: PipelineConfig, val issues: List<RigRegeneration.Issue>)
 

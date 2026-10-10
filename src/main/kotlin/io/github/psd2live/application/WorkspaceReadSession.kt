@@ -149,6 +149,8 @@ internal class WorkspaceReadSession(
     override fun regenerationIssues(): List<io.github.psd2live.core.RigRegeneration.Issue> =
         read.runtime.capture?.document?.rigEdits?.authoringJournal?.lastOrNull(io.github.psd2live.core.RigCheckpoint::isRecord)
             ?.let(io.github.psd2live.core.RigCheckpoint::issues).orEmpty()
+    override fun staleRegenerations(): List<io.github.psd2live.core.RigRegeneration.Issue> =
+        read.runtime.capture?.model?.let { io.github.psd2live.core.RigRegenerationCheckpoint.staleMerges(it) }.orEmpty()
     override fun skeletonBindingIssues(): List<io.github.psd2live.core.quality.SkeletonBindingIssue> {
         val captured = read.runtime.capture ?: return emptyList()
         return io.github.psd2live.core.quality.SkeletonBindingQuality.issues(captured.model.rig.puppet, captured.document.rigEdits.skeleton)

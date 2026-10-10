@@ -122,4 +122,46 @@ class RegenerationOrderTest {
 	@Test fun aRebuiltSleeveFollowsASkeletonPutOnAfterIt() = scenario(rebuildFirst = true)
 
 	@Test fun aSleeveRebuiltOnTheSkeletonStillFollowsIt() = scenario(rebuildFirst = false)
+
+	/**
+	 * A skeleton regeneration an earlier build merged badly - the sleeve left off its bone, without the bone's keyforms -
+	 * is found without asking, reported to agents, and repaired by updating the generated rig.
+	 */
+	@Test fun aRegenerationAnEarlierBuildMergedBadlyIsFoundAndRepairedByTheUpdate() = runBlocking<Unit> {
+		val runtime = runtime()
+		val document = document()
+		runtime.install(runtime.state.value.state, "project", document, builder.build(document))
+		runtime.rebuildSleeve()
+		val done = runtime.skeleton()
+		val sleeve = DrawableId(done.layerMesh("sleeve"))
+		assertEquals(emptyList(), WorkspaceReadSession(runtime.read()).staleRegenerations())
+		// The skeleton's regeneration: the last checkpoint whose generated rig differs from the one before.
+		val journal = done.document.rigEdits.authoringJournal
+		val generated = journal.indices.filter { RigCheckpoint.isRecord(journal[it]) && RigCheckpoint.generated(journal[it]) != null }
+		fun generation(at: Int) = io.github.psd2live.targets.cubism.PuppetIr.toIr(RigCheckpoint.generated(journal[at])!!.authored.rig.puppet)
+		val index = generated.zipWithNext().last { (a, b) -> generation(a) != generation(b) }.second
+		val stored = RigCheckpoint.decode(journal[index])
+		val bad = stored.authored.copy(rig = stored.authored.rig.copy(puppet = stored.authored.rig.puppet.let { puppet ->
+			puppet.copy(drawables = puppet.drawables.map { if (it.id != sleeve) it else it.copy(parentDeformerId = org.umamo.runtime.model.DeformerId("DeformBodyZBreath"),
+				geometryGrid = null, blendShapes = emptyList()) })
+		}))
+		val record = RigCheckpoint.encode(bad, stored.bindingKey, RigCheckpoint.issues(journal[index]), generated = RigCheckpoint.generated(journal[index])!!.authored)
+		val damaged = done.document.copy(rigEdits = done.document.rigEdits.copy(authoringJournal = journal.toMutableList().also { it[index] = record }))
+		MaterializedRigStore.clear()
+		runtime.install(runtime.state.value.state, done.projectId, damaged, builder.build(damaged), discardUnsaved = true)
+		val stale = WorkspaceReadSession(runtime.read()).staleRegenerations()
+		assertEquals(listOf("journal:$index"), stale.map { it.target })
+		val report = WorkspaceReadSession(runtime.read()).inspect(buildJsonObject { put("scope", "project") })
+			.getValue("quality").jsonObject.getValue("regeneration").jsonObject
+		assertTrue(report.getValue("findings").jsonArray.any { it.jsonObject.getValue("code").jsonPrimitive.content == "REGENERATION_REPAIR_AVAILABLE" }, "$report")
+		val before = runtime.capture()
+		val updated = WorkspaceGenerationUpdateCommands(runtime).execute(before.projectId, before.state, "Update", MutationAuthor.USER)
+		assertTrue(updated.result.getValue("updated").jsonPrimitive.boolean)
+		assertEquals(emptyList(), WorkspaceReadSession(runtime.read()).staleRegenerations(), "nothing left to repair")
+		assertReached(updated.commit.capture, "repaired")
+		// A second update finds nothing to do.
+		val again = runtime.capture()
+		assertFalse(WorkspaceGenerationUpdateCommands(runtime).execute(again.projectId, again.state, "Update", MutationAuthor.USER)
+			.result.getValue("updated").jsonPrimitive.boolean)
+	}
 }

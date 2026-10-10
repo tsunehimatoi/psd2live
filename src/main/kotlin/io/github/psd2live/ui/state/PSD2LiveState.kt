@@ -418,6 +418,13 @@ enum class InspectorTab {
 @Immutable
 data class PSD2LiveState(
     val canvasEditBusy: Boolean = false,
+    /**
+     * Regeneration merges of the open document that this build makes differently and an update of the generated rig
+     * would repair, found in the background whenever the journal's checkpoints change; the canvas offers the update.
+     */
+    val staleRegenerations: Int = 0,
+    /** The canvas notice about [staleRegenerations] was closed for the checkpoints it was found on. */
+    val staleRegenerationsDismissed: Boolean = false,
     val editorDraftBusy: Boolean = false,
     /** Authored pose changes the panels already show are still waiting for their commits, in order. */
     val poseCommitBusy: Boolean = false,

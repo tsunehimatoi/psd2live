@@ -71,6 +71,27 @@ internal object RigMergeRepair {
 		return Repair(result.model, issues + result.issues)
 	}
 
+	/** [stale]'s last answer, by model identity: a repair check merges again, so a model asks it once. */
+	@Volatile private var checked: Pair<RigPreviewModel, List<RigRegeneration.Issue>>? = null
+
+	/**
+	 * The regeneration checkpoints of [model]'s journal that this build merges differently and whose correction would
+	 * change its rig - what "update generated rig" would repair - as `remerged` issues; empty when there is nothing to
+	 * repair, or the model has no generated rig to compare (an imported CMO3 model, a journal with fewer than two
+	 * checkpoints storing one). The answer is kept per model.
+	 */
+	fun stale(model: RigPreviewModel, named: (PuppetModel, List<kotlinx.serialization.json.JsonObject>) -> PuppetModel = { m, _ -> m },
+	          checkpoint: () -> Unit = {}): List<RigRegeneration.Issue> {
+		checked?.let { (seen, answer) -> if (seen === model) return answer }
+		val overlay = model.config.rigEdits
+		val found = if (overlay.importedCmo3 != null ||
+			overlay.authoringJournal.count { RigCheckpoint.isRecord(it) && RigCheckpoint.generated(it) != null } < 2) emptyList()
+		else repaired(overlay, model.authoredPuppet(overlay), model.rig.puppet.atlas, model.rig.puppet.sources, named, checkpoint)
+			?.issues?.filter { it.kind == RigRegeneration.IssueKind.REMERGED }.orEmpty()
+		checked = model to found
+		return found
+	}
+
 	/** What a merge decides about each object's place and shape, without the values a rebuild reproduces only to rounding. */
 	fun structure(model: PuppetModel): Map<String, Any?> = buildMap {
 		for (deformer in model.deformers) put("deformer:${deformer.id.raw}", deformer.parent?.raw)

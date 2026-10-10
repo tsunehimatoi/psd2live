@@ -740,7 +740,8 @@ internal fun RadioMark(selected: Boolean, enabled: Boolean = true) {
 
 /** The notices of the last command and the layout, one per line, in a frosted banner the user can close. */
 @Composable
-internal fun NoticeBanner(messages: List<Pair<String, Color>>, onClose: (() -> Unit)?, modifier: Modifier = Modifier) {
+internal fun NoticeBanner(messages: List<Pair<String, Color>>, onClose: (() -> Unit)?, modifier: Modifier = Modifier,
+                          actions: List<Pair<String, () -> Unit>> = emptyList()) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 	val accent = messages.firstOrNull()?.second ?: colors.warning
@@ -763,6 +764,9 @@ internal fun NoticeBanner(messages: List<Pair<String, Color>>, onClose: (() -> U
 			for ((message, color) in messages) {
 				Text(message, style = typography.caption.copy(fontSize = 10.5.sp), color = if (color == colors.error) color else colors.textPrimary,
 					maxLines = 3, overflow = TextOverflow.Ellipsis)
+			}
+			if (actions.isNotEmpty()) Row(Modifier.padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+				for ((label, onClick) in actions) AccentButton(label, onClick)
 			}
 		}
 		if (onClose != null) Box(Modifier.clip(RoundedCornerShape(3.dp)).clickable(onClick = onClose).padding(2.dp)) { IconClose(tint = colors.textMuted) }

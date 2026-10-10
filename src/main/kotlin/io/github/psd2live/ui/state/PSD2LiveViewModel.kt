@@ -82,6 +82,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -7321,7 +7322,28 @@ class PSD2LiveViewModel : AutoCloseable {
 				notices.forEach { addLog(it, level = LogLevel.WARNING, tag = "Texture") }
 			}
 		}
+		// Regenerations an earlier build merged differently: looked for whenever the checkpoints change, off the UI thread.
+		scope.launch {
+			_state.map { state -> state.previewModel?.let { CheckpointsKey(it.config.rigEdits.authoringJournal.filter(io.github.psd2live.core.RigCheckpoint::isRecord)) } }
+				.distinctUntilChanged().collectLatest { key ->
+					val found = if (key == null || key.records.size < 2) emptyList() else withContext(Dispatchers.Default) {
+						runCatching { workspaceBackend?.captureQueries()?.staleRegenerations() }.getOrNull().orEmpty()
+					}
+					updateState { it.copy(staleRegenerations = found.size, staleRegenerationsDismissed = false) }
+					if (found.isNotEmpty()) addLog(tr("status.generationUpdate.staleFound", found.size), level = LogLevel.WARNING, tag = "Generation")
+				}
+		}
 	}
+
+	/** A journal's checkpoint records compared by identity: content equality would walk them on every state change. */
+	private class CheckpointsKey(val records: List<kotlinx.serialization.json.JsonObject>) {
+		override fun equals(other: Any?) = other is CheckpointsKey && other.records.size == records.size &&
+			records.indices.all { records[it] === other.records[it] }
+		override fun hashCode() = records.size
+	}
+
+	/** Closes the canvas notice about stale regenerations until the checkpoints change. */
+	internal fun dismissStaleRegenerations() = updateState { it.copy(staleRegenerationsDismissed = true) }
 
 	override fun close() {
 		if (!isClosed.compareAndSet(false, true)) return
