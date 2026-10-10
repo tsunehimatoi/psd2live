@@ -5541,6 +5541,9 @@ class PSD2LiveViewModel : AutoCloseable {
 	}
 
 	fun checkoutHistoryNode(nodeId: String) {
+		// Busy from the press until the checkout lands: an undo pressed meanwhile would read the old head and be lost.
+		val marked = !_state.value.canvasEditBusy
+		if (marked) updateState { it.copy(canvasEditBusy = true) }
 		scope.launch {
 			try {
 				val ws = workspaceBackend ?: throw IllegalStateException("Agent workspace is not attached")
@@ -5559,6 +5562,8 @@ class PSD2LiveViewModel : AutoCloseable {
 				val err = failure.message ?: failure.javaClass.simpleName
 				// The error the window reports is logged with it.
 				updateState { it.copy(errorMessage = err) }
+			} finally {
+				if (marked) updateState { it.copy(canvasEditBusy = false) }
 			}
 		}
 	}
