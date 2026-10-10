@@ -69,6 +69,7 @@ internal fun WorkspaceQueries.inspect(a: JsonObject): JsonObject {
                 if (snapshot.loaded) putJsonObject("quality") {
                     put("overrides", io.github.psd2live.core.quality.GeneratedOverrideQuality.report(queries.generatedOverrideIssues(), queries.supersededEntryNotes()))
                     put("regeneration", io.github.psd2live.core.quality.RegenerationQuality.report(queries.regenerationIssues()))
+                    put("skeleton", io.github.psd2live.core.quality.SkeletonBindingQuality.report(queries.skeletonBindingIssues()))
                 }
             }
             "physics" -> { put("fps", queries.physicsFps()); put("groups", JsonArray(queries.listPhysics().map { it.toJson() })) }

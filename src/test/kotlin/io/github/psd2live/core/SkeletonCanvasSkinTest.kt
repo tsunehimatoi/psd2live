@@ -116,6 +116,33 @@ class SkeletonCanvasSkinTest {
 		assertTrue(maxDistance(canvas(onBone, emptyMap()).getValue(DrawableId(sleeve)), canvas(placed, emptyMap()).getValue(DrawableId(sleeve))) < 0.05f)
 	}
 
+	@Test fun aMeshACheckpointHoldsOutsideItsBonesTurnsWithThemWithoutARecord() {
+		// However it got there - a record, a regeneration merge, an older build - a bound mesh the checkpoint's authored
+		// rig holds outside its bones is skinned like one the journal places.
+		val spec = armSpec(withHand = false)
+		val onBone = build(spec).rig.puppet
+		val overlay = RigEditOverlay(skeleton = spec, authoringJournal = listOf(bind(sleeve, "DeformBodyZBreath")))
+		val placing = PSD2LivePipeline().buildPreview(source, baseConfig.copy(rigEdits = overlay))
+		val authored = placing.sources.authored(overlay)
+		assertEquals(setOf(sleeve), io.github.psd2live.core.quality.SkeletonBindingQuality.issues(authored.rig.puppet, spec)
+			.filter { it.rule == io.github.psd2live.core.quality.SkeletonBindingRule.SKELETON_BINDING_INEFFECTIVE }.mapTo(HashSet()) { it.mesh })
+		val record = RigCheckpoint.encode(authored, placing.sources.bindingKey ?: "test")
+		val checkpointed = RigEditOverlay(skeleton = spec, authoringJournal = listOf(record))
+		assertTrue(SkeletonCanvasSkin.placedByRecords(checkpointed).isEmpty(), "no record places the sleeve")
+		assertEquals(setOf(sleeve), SkeletonCanvasSkin.placed(checkpointed))
+		val model = build(spec, listOf(record)).rig.puppet
+		assertEquals("DeformBodyZBreath", model.drawables.single { it.id.raw == sleeve }.parentDeformerId?.raw)
+		assertTrue(io.github.psd2live.core.quality.SkeletonBindingQuality.issues(model, spec).none {
+			it.rule == io.github.psd2live.core.quality.SkeletonBindingRule.SKELETON_BINDING_INEFFECTIVE })
+		for (values in keys(model, sleeve)) {
+			val distance = maxDistance(canvas(onBone, values).getValue(DrawableId(sleeve)), canvas(model, values).getValue(DrawableId(sleeve)))
+			assertTrue(distance < 1.5f, "$values: the checkpointed sleeve is $distance px off the skinned one")
+		}
+		// Bound back to its bone after the checkpoint, the bake owns it again.
+		val rebound = RigEditOverlay(skeleton = spec, authoringJournal = listOf(record, bind(sleeve, "DeformSkel_armL")))
+		assertTrue(SkeletonCanvasSkin.placed(rebound).isEmpty())
+	}
+
 	@Test fun gluedSeamsBetweenAWarpedMeshAndABoneMeshStayClosed() {
 		val placed = build(armSpec(), placing(sleeve)).rig.puppet
 		for (values in keys(placed, sleeve)) {

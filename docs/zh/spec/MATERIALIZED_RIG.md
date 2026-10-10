@@ -258,3 +258,26 @@ A 类命令在用户看到的完成态 Rig（M 加修改器）上记录，作用
 **实测**（含 6 个修订的一个用户工程，无骨架）：头部修订由生成与重放构建约 2.2 s，由保存的作者态 Rig 冷打开并构建约 0.4 s，IR 哈希一致；归档增加约 0.3 MB。
 
 **测试**：`SplitMergeRulesTest`（未改动的原网格拆成生成的部件；用户对原网格的移动带到部件上，切口按画布上画的位置；之后改设置再生成，移动仍保留）、`LegacyMaterializeOnceTest`（`legacy-split.psd2live` 第一次编辑在原日志末尾固化一次，结果与旧记录重放一致，冷构建不再重放）、`LegacyReplayBoundaryTest`（引用 `core.legacy` 的文件限定在已知的分派点）、`ImportedEditCheckpointTest`（导入模型的固化点与完整重放一致）、`AuthoredEditCheckpointTest`（第一次编辑与每 32 条写固化点、冷构建与改写较早条目都不生成基础 Rig、结果与去掉固化点后完整重放一致）、`RegenerationPreviewTest`（试运行报告再生成的固化点、不发布，提交得到同一候选修订）、`RegenerationCheckpointTest`（经运行时开启头发模拟：固化点位于原日志末尾、部件改挂且位置不变；冷构建与固化点之前的坏条目无关；无基础 Rig 构建与换纹理集的重新绑定；撤销、重做、保存为 schema 3 并冷打开；更新生成采用生成器的新输出而保留用户部件，第二次更新不提交）、`WorkspaceInspectionContractsTest`（`quality.regeneration`）、`RigRegenerationTest`（手工 Rig 上的合并规则：两侧未改、消失 Warp 下的用户网格、随改挂迁移的用户关键形、被丢弃但仍被使用的参数、细分网格的顶点组与关键形、用户删除与冲突）、`MaterializedPreviewTest`（作者态 Rig 构建与完整构建的 IR 哈希一致、不生成基础 Rig、纹理集不同则拒绝、追加条目不需要基础 Rig）、`MaterializedRigProjectTest`（保存后冷打开各修订均由作者态 Rig 构建且一致；日志已无法重放的修订仍可由作者态 Rig 打开）、`RigIrBinaryTest`（对象拆分、拼回、共享与拒绝）、`SkeletonCanvasSkinTest`。
+
+## 11. 结构接替与合并忠实性
+
+### 11.1 问题
+
+再生成改变结构（父级、拓扑、插入或删除变形器）而用户数据以旧结构表达，是一类反复出现的问题（`2d6d0b7d`、`5019b69b`、`18f24b89`、`9eff1d60`、`e72fc541`、`da426e1f`、`7f30f7aa` 等）。在固化点模型下，它有三个共同成因：
+
+1. **合并按差异推断意图，错误会自我固化**：“用户改过”由 M 与 G 的位比较判定。一次合并若没能把生成器的结构变化带到对象上（M′ ≠ G′ 但用户没改过），下一次合并就把这个差异当成用户修改保留，再也不会跟随生成器。实例：用户重建过拓扑的袖子在启用骨架时按“保留用户拓扑”留在已不生成的 `DeformArmHang_L/R` 下，被收拢到呼吸 Warp，丢掉了骨骼蒙皮；此后每次合并都报告“用户改挂了它”。
+2. **生成器知道对象去了哪里，合并只能猜**：骨架的躯干 Warp 接管呼吸 Warp 上的全部内容，启用骨架时骨骼接替手臂下垂 Warp，但这些关系不随生成结果输出，合并只能用沿祖先链就近改挂（`VanishedParent`、`rehomed`）之类的启发式。实例：导入后绑到呼吸 Warp 的图片不进入躯干 Warp，不随上身转动。
+3. **设计与实现的缺口是静默的**：第 5 节规定用户改过拓扑时“G′ 相对 G 的生成变化经迁移计划映射到用户拓扑”，实现只整份保留 M，问题以 warning 记入不显示的报告。
+
+### 11.2 方案
+
+按四层处理，前一层的失效由后一层兜底或发现：
+
+| 层 | 内容 | 解决 |
+| --- | --- | --- |
+| 骨骼作用按状态判定 | `skeleton.skin` 蒙皮的网格除日志记录安放的（`placedByRecords`）外，还包括最后一个固化点的作者态 Rig 中不受其肢体任何骨骼带动的绑定网格（`SkeletonCanvasSkin.unskinned`：父级链上没有该肢体的骨骼变形器，网格也没有该肢体参数上的关键形轴或混合形）。烘焙仍只按记录决定不改挂哪些网格 | 不论网格怎样到达那里（记录、合并、旧版本），绑定的网格总随骨骼运动：挂在骨骼下由烘焙带动，否则在画布上蒙皮 |
+| 骨架作用检查 | 观察报告 `quality.skeleton`（`SkeletonBindingQuality`）：骨骼绑定却不受骨骼带动的网格（`SKELETON_BINDING_INEFFECTIVE`，warning）、挂在呼吸 Warp 下却绕过躯干 Warp 且不以身体半段为轴的网格（`SKELETON_TORSO_BYPASSED`，warning）、绑定了 Rig 中没有的网格（`SKELETON_BINDING_MISSING`，info） | 静默失效变为可见 |
+| 生成器声明接替关系 | 生成阶段移除或插入变形器时输出接替表（例：呼吸 Warp 的内容 → 躯干 Warp；手臂下垂 Warp → 对应手臂骨骼），随生成快照保存；合并时只在 M 中的对象与用户未改父级的对象沿接替表改挂；用户改过拓扑而生成侧换了父级时跟随新父级，生成变化经迁移计划映射到用户拓扑（补齐第 5 节） | 合并不再猜测结构去向 |
+| 合并忠实性 | 不变式：M′ 的某值 ≠ G′ ⇒ M 的同一值 ≠ G（用户没改过的值等于新生成的值）；测试中断言，运行时违反则取 G′ 并报告。另以“先 A 后 B / 先 B 后 A”的顺序矩阵测试 B 类操作与 A 类操作的组合；提供从最后一个忠实的固化点重新合并的修复操作 | 合并错误不再自我固化，已损坏工程可修复 |
+
+**进度**：前两层已实现（`SkeletonCanvasSkinTest.aMeshACheckpointHoldsOutsideItsBonesTurnsWithThemWithoutARecord`、`SkeletonBindingQualityTest`）；接替表与合并忠实性为下一步。

@@ -77,7 +77,7 @@ import kotlin.math.max
  */
 internal object SkeletonRig {
 	internal val bodyId = DeformerId("DeformBodyXY")
-	private val breathId = DeformerId("DeformBodyZBreath")
+	internal val breathId = DeformerId("DeformBodyZBreath")
 	private val headRotationId = DeformerId("DeformHeadRotation")
 
 	/** The torso's bend: under the breath warp, over every mesh and limb the torso carries. */

@@ -1327,7 +1327,7 @@ object RigBuilder {
 		if (RigBuildProfile.recording) RigBuildProfile.add("assembly: masks, parts, parameters, model", System.nanoTime() - assemblyStart)
 		val skeleton = config.rigEdits.skeleton?.takeIf { it.enabled && shouldBuildDeformers }
 		// Bound meshes the journal places under deformers of its own: skinned after it replays (see [SkeletonCanvasSkin]).
-		val canvasSkinned = skeleton?.let { SkeletonCanvasSkin.placed(config.rigEdits) }.orEmpty()
+		val canvasSkinned = skeleton?.let { SkeletonCanvasSkin.placedByRecords(config.rigEdits) }.orEmpty()
 		val faceCenterCanvas = faceRig.coordinateSpace.toCanvas(faceRig.centerX, faceRig.centerY)
 		var skeletonKey: String? = null
 		fun finish(): BuiltRig {
@@ -1563,7 +1563,7 @@ object RigBuilder {
 	 */
 	internal fun skeletonJournalInputs(config: PipelineConfig): List<Any>? {
 		val skeleton = config.rigEdits.skeleton?.takeIf { it.enabled } ?: return null
-		val canvasSkinned = SkeletonCanvasSkin.placed(config.rigEdits)
+		val canvasSkinned = SkeletonCanvasSkin.placedByRecords(config.rigEdits)
 		val addressed = canvasSkinned + SkeletonCanvasSkin.boundMeshes(config.rigEdits)
 		return listOf(handEditedTopology(config), skinnedRecords(skeleton, config), canvasSkinned,
 			SkeletonCanvasSkin.addressedCounts(config.rigEdits.authoringJournal).filterKeys { it in addressed })

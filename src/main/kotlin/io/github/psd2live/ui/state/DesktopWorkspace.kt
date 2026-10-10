@@ -1204,6 +1204,7 @@ class DesktopWorkspace(
     override fun generatedOverrideIssues() = captureQueries().generatedOverrideIssues()
     override fun supersededEntryNotes() = captureQueries().supersededEntryNotes()
     override fun regenerationIssues() = captureQueries().regenerationIssues()
+    override fun skeletonBindingIssues() = captureQueries().skeletonBindingIssues()
 
     override fun listSimulations() = captureQueries().listSimulations()
 

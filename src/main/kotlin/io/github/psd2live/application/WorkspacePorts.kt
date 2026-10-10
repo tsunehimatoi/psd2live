@@ -69,6 +69,8 @@ interface WorkspaceQueries : WorkspaceStatePort {
     fun supersededEntryNotes(): List<SupersededEntryNote>
     /** What the captured document's last regeneration checkpoint could not carry over cleanly, in merge order. */
     fun regenerationIssues(): List<io.github.psd2live.core.RigRegeneration.Issue>
+    /** Where the captured model's skeleton does not reach what it should ([io.github.psd2live.core.quality.SkeletonBindingQuality]). */
+    fun skeletonBindingIssues(): List<io.github.psd2live.core.quality.SkeletonBindingIssue>
 }
 
 /** Capture once before composing a response; the returned queries never revisit live state. */

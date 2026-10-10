@@ -60,11 +60,75 @@ internal object SkeletonCanvasSkin {
 	private const val STILL_PX = 1e-3f
 
 	/**
-	 * Meshes bound to a limb bone of [overlay]'s skeleton that its edits place under a deformer of their own: the
-	 * last structure `bind` of the mesh names a deformer other than a bone's, or a `warp` record wraps it. Legacy
-	 * edits count first, then the journal in order. Empty without an enabled skeleton.
+	 * The meshes this stage skins: those [placedByRecords] names, and those the authored rig of the journal's last
+	 * checkpoint holds outside their bones ([unskinned]) - whatever put them there, a record, a regeneration merge
+	 * or an older build. A bound mesh then always follows its bones: hung under them by the bake, or skinned here.
 	 */
 	fun placed(overlay: RigEditOverlay): Set<String> {
+		val records = placedByRecords(overlay)
+		val spec = overlay.skeleton?.takeIf { it.enabled } ?: return records
+		val index = overlay.checkpointIndex
+		if (index < 0) return records
+		val record = overlay.authoringJournal[index]
+		val held = synchronized(checkpointed) { checkpointed[record]?.takeIf { it.first == spec }?.second }
+			?: unskinned(RigCheckpoint.decode(record).authored.rig.puppet, spec).also { synchronized(checkpointed) { checkpointed[record] = spec to it } }
+		if (held.isEmpty()) return records
+		// A record after the checkpoint still decides: binding the mesh to a bone's deformer hands it back to the bake.
+		return LinkedHashSet(held).apply { removeAll(boundToBonesAfter(overlay, spec, index)); addAll(records) }
+	}
+
+	/** [unskinned] of each checkpoint record's authored rig, for the skeleton it was computed with. */
+	private val checkpointed = java.util.WeakHashMap<JsonObject, Pair<SkeletonSpec, Set<String>>>()
+
+	/**
+	 * The meshes bound to a limb bone of [spec] that no bone of their limb moves in [model]: none of the limb's bone
+	 * deformers is among the mesh's parents, and the mesh has no keyform axis or blend shape on the limb's parameters
+	 * (the bake skins a mesh it hangs under a bone into both). A mesh [model] lacks is left out.
+	 */
+	fun unskinned(model: PuppetModel, spec: SkeletonSpec): Set<String> {
+		val joints = SkeletonRig.jointBones(spec)
+		if (joints.none { it.drawableIds.isNotEmpty() }) return emptySet()
+		val rootOf = SkeletonRig.skinRoots(joints, SkeletonRig.jointParents(spec))
+		val deformers = model.deformers.associateBy { it.id }
+		val drawables = model.drawables.associateBy { it.id.raw }
+		val out = LinkedHashSet<String>()
+		for (bone in joints) for (id in bone.drawableIds) {
+			val drawable = drawables[id]?.takeIf { it.mesh != null } ?: continue
+			val tree = joints.filter { rootOf[it.id] == rootOf[bone.id] }
+			val limb = tree.flatMapTo(HashSet()) { listOf(it.deformerId, it.deformerId + "Stance") }
+			val parameters = tree.mapTo(HashSet()) { ParameterId(it.parameterId) }
+			val chain = generateSequence(drawable.parentDeformerId) { deformers[it]?.parent }
+			if (chain.any { it.raw in limb }) continue
+			if (drawable.geometryGrid?.axes.orEmpty().any { it.parameterId in parameters }) continue
+			if (drawable.blendShapes.any { it.parameterId in parameters }) continue
+			out += id
+		}
+		return out
+	}
+
+	/** The bound meshes a structure `bind` after journal entry [index] hangs under one of [spec]'s bone deformers. */
+	private fun boundToBonesAfter(overlay: RigEditOverlay, spec: SkeletonSpec, index: Int): Set<String> {
+		val bones = spec.bones.mapTo(HashSet()) { it.deformerId }
+		val out = HashSet<String>()
+		for (command in overlay.authoringJournal.subList(index + 1, overlay.authoringJournal.size)) {
+			if (command["op"]?.jsonPrimitive?.contentOrNull != "structure") continue
+			for (edit in (command["edits"] as? JsonArray).orEmpty()) {
+				val o = edit as? JsonObject ?: continue
+				if (o["action"]?.jsonPrimitive?.contentOrNull != "bind" || o["kind"]?.jsonPrimitive?.contentOrNull != "mesh") continue
+				val id = o["id"]?.jsonPrimitive?.contentOrNull ?: continue
+				if (o["parent_id"]?.jsonPrimitive?.contentOrNull in bones) out += id else out -= id
+			}
+		}
+		return out
+	}
+
+	/**
+	 * Meshes bound to a limb bone of [overlay]'s skeleton that its edits place under a deformer of their own: the
+	 * last structure `bind` of the mesh names a deformer other than a bone's, or a `warp` record wraps it. Legacy
+	 * edits count first, then the journal in order. Empty without an enabled skeleton. The bake leaves these where
+	 * they hang (see [SkeletonRig.apply]); the records replay in their local coordinates.
+	 */
+	fun placedByRecords(overlay: RigEditOverlay): Set<String> {
 		val spec = overlay.skeleton?.takeIf { it.enabled } ?: return emptySet()
 		val bound = SkeletonRig.jointBones(spec).flatMapTo(HashSet()) { it.drawableIds }
 		if (bound.isEmpty()) return emptySet()
