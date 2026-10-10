@@ -15,7 +15,7 @@
 | 骨架与动作缓存 | `core/SkeletonRig.generate`、`core/MotionPresets.tracks` | 骨架烘焙与生成动作按输入内容哈希接入 `GenerationCache` |
 | 重放检查点 | `core/ReplayCheckpoints` | 按基础 Rig 实例与日志前缀内容缓存重放的中间模型；追加只重放新条目，撤销命中已有检查点 |
 | 生成器复用 | `core/DocumentGenerators`（`GeneratorReuse`） | 摆动与模拟声明对象级读取；读取不变时把上次输出作为补丁套用，不重新生成 |
-| 拆分物化 | `core/ArtPrimitiveJournal`、`application/WorkspaceArtPrimitives` | 拆分把原图层的当前状态写成部件的 `art_primitive` 记录，原图层离开源图；见[拆分物化](#拆分物化画元记录-art_primitive) |
+| 拆分物化 | `core/ArtPrimitiveJournal`、`core/RigRegenerationCheckpoint`（`split`）、`application/WorkspaceArtPrimitives` | 拆分是一次再生成：部件取代原图层参与生成，用户对原图层的修改经三方合并带到部件上，`art_primitive` 记录之后写固化点；见[拆分物化](#拆分物化画元记录-art_primitive) |
 | 作者态 Rig 与固化点 | `core/RigEditOverlay`（`replayAuthored`/`finish`）、`core/RigCheckpoint`、`core/RigRegeneration`、`project/MaterializedRigStore` | 重放分为作者态阶段与收尾阶段；作者态 Rig 按修订保存并直接用于构建；生成结果在日志之下变化时三方合并并写固化点，见[固化点](#固化点)与[固化 Rig](MATERIALIZED_RIG.md) |
 | 工程格式 v2 | `project/ProjectFormatV2` | 每个修订拆为按内容寻址、带 schema 版本的文档节点；v1 打开后在下次保存时迁移，见[工程格式](PROJECT_FORMAT.md) |
 
@@ -80,11 +80,14 @@
 
 ## 固化点
 
-日志重放的前提是条目写下时所面对的生成结果不变。改变生成输入的编辑（头发模拟开关、骨架、拆分改变的框架等）使基础 Rig 变化后，旧条目不再在新结果上重放，而是合并后保存为数据：
+日志重放的前提是条目写下时所面对的生成结果不变。改变生成输入的编辑（头发模拟开关、骨架、生成设置与分类、拆分等）使基础 Rig 变化后，旧条目不再在新结果上重放，而是合并后保存为数据：
 
 - **触发**（`WorkspacePreviewBuilder.build`，`RigRegenerationCheckpoint.checkpointed`）：新文档延续当前文档（`RigEditOverlay.continues`：日志以当前日志开头，旧格式静态字段相同），且不能走追加路径。生成新文档的基础 Rig，取旧条目所见的部分（`BuiltRig.resolvedPuppet(records)`：边界之前的 v2 拆分记录的部件就位，之后记录的乘客保留），与当前基础 Rig 的 `resolvedPuppet()` 按中立 IR 比较；不同则以当前基础为 G、新基础为 G′、当前作者态 Rig 为 M 合并（`RigRegeneration.merge`，G 与 M 先重新绑定到新纹理集），在当前日志末尾、本次编辑的新条目之前插入 `rig_checkpoint`。相同则照常重放。
-- **记录**（`RigCheckpoint`）：作者态 Rig 的索引（对象在 `RigObjects`，随文档持久化）与合并问题。模型预设开启头发模拟时在预设内部同样合并并写固化点，再按合并后的 Rig 计算权重。
+- **生成设置与分类**（`RigGenerationMigration.changed` 认定的变化：脸部特征、嘴型、仅网格、头身强度、`rigTuning`、图层分类）：生成的模型在准备编辑时即合并并写固化点（`WorkspacePreviewBuilder.normalizeMeshEdits`），G′ 由当前源图生成（保存的网格输入照用，`generationSource` 冻结之后加入的图层也在其中），不再写 `rig_generation_transition`、`rig_generation_frames` 与随迁移创建的网格记录。导入 CMO3 的模型没有生成结果可合并，仍写迁移记录（见[旧版重放](#旧版重放)）。
+- **拆分**（`RigRegenerationCheckpoint.split`）：见[拆分物化](#拆分物化画元记录-art_primitive)；固化点写在拆分记录之后，记录本身不重放。
+- **记录**（`RigCheckpoint`）：作者态 Rig 的索引（对象在 `RigObjects`，随文档持久化）、它所基于的生成快照与合并问题。模型预设开启头发模拟时在预设内部同样合并并写固化点，再按合并后的 Rig 计算权重。
 - **重放**：`replayAuthored` 从最后一个固化点开始，其 Rig 经 `reboundTo` 绑定到基础 Rig 的纹理集，再重放之后的条目（照常使用重放检查点）；`authoredRig` 的网格映射取自固化点头部。之后没有 `art_primitive` 记录时，构建直接由固化点进行（`RigEditOverlay.authoredFromCheckpoint`、`materializedPreview(rebind = true)`），不生成基础 Rig。
+- **生成基线**：`rig_generation_baseline` 冻结的生成设置与分类只在其后没有固化点时约束基础生成（`RigGenerationBaseline.restore`）；之后的条目都从固化点开始重放，基础生成按文档当前的设置进行。
 - **提交**：运行时把重建插入的固化点并入提交的文档（`WorkspaceRuntime.adopted`）；批量成员由前一个候选构建（`rebuildFrom`），合并的 M 是前一个候选的作者态。
 - **收尾阶段**照常扫描整条日志：生成结果覆盖与延后的面板编辑不受固化点影响。
 - **报告**：最后一个固化点的问题经 `RegenerationQuality` 进入 `workspace_inspect` 的 `quality.regeneration`。
@@ -284,7 +287,14 @@
 
 此前的拆分（`canvas_source_partition`、`canvas_depth_split`）把原图层留在源图中并软删除，重放时先逐位重新生成原网格（核对几何指纹与父级），再在记录位置把它的绑定复制到部件。这有三个问题：生成规则一变，旧记录就无法重放；纹理集仍打包原图层，CMO3 导出带着它的像素；“恢复全部”会把原图层带回来。现在拆分把原图层**物化**为部件：部件是唯一的绘制对象，原图层不再存在，只能撤销回拆分前。
 
-**记录**（日志条目，版本 1；版本 2 见[下文](#版本-2-记录)）：
+**拆分即再生成**（`WorkspaceArtPrimitives.materialize`、`RigRegenerationCheckpoint.split`）：拆分改变源图（原图层由部件取代），按[固化点](#固化点)的方式合并。G 为当前生成结果，G′ 为部件代替原图层后的生成结果；G 与当前作者态 M 中的原网格都由拆分自身（`SplitParts`：连通块/多边形为 `SourcePartitionJournal.splitParts`，前后分层为 `DepthSplit.splitParts`）切成同样的部件——各取自己那份原网格的静止位置、关键形、通道、混合形、路径、顶点组与 Glue，经同一组顶点来源——所以用户没动过的部件与生成的部件逐位相同，用户对原网格的修改成为部件上的修改，三方合并（`RigRegeneration.merge`）把它们带到 G′ 的部件上（父级变化时经父级空间换算，骨架插入关节行时经画布纹理坐标迁移）。拆分自己新建的 Glue（多边形切点跟随、前后分层的方向 Glue）只在 M 一侧，属于用户。拆分写入 `art_primitive` 记录，紧随其后写 `rig_checkpoint`（合并结果与 G′ 快照），记录本身从不重放；之后的构建从这个固化点开始，不需要基础 Rig。
+
+- 原网格由生成器生成时，记录为版本 2 的**声明**：每个部件的静止画布网格（由 G 中原网格切出的部件经生成变形器在默认姿态下换到画布）、图层、分类与 `fixed_topology`（部件带用户 Glue、顶点组或路径时为真），`authored` 为空对象，`glues` 为空。基础生成据此生成部件（见[版本 2 记录](#版本-2-记录)）。之后的脸部设置、站姿、骨架与分类变化经下一次合并同样到达部件。
+- 原网格不是生成的（日志创建的网格，例如生成输入冻结后导入的图片）时，记录为版本 1，部件带着全部数据，其图层不进入基础生成，部件在合并中是用户对象。
+- 没有版本 1 回退、两遍捕获或守卫：合并不会失败，迁移不干净的地方作为合并问题报告。原网格的拓扑被手工改过时，G 一侧切不出同样的部件，部件按用户拓扑保留（与合并中的 `topology_kept` 相同）。
+
+
+**记录**（日志条目，版本 1——现在只为非生成的原网格写出，较早版本的拆分都写它；版本 2 见[下文](#版本-2-记录)）：
 
 | 字段 | 内容 |
 | --- | --- |
@@ -297,7 +307,7 @@
 | `glues` | `replaced`：按模型顺序，每个接触被取代网格的 Glue 对应的替换 Glue；`appended`：追加在最后的 Glue（连通块拆分的切点跟随、前后分层的方向 Glue） |
 | `depth` | 仅前后分层：`back`、`front` 图层 ID 与 `glue_id`；`DepthSplit.isFrontLayer` 据此让前层绘画保留拓扑 |
 
-**重放**（`ArtPrimitiveJournal.replay`，纯函数，可被重放检查点缓存）：缺失的参数按记录创建；删除 `supersedes` 中的网格，部件在原网格的列表与部件树位置就位（原网格已不存在时加入记录的部件或根）；其他网格的遮罩按 `masks`/`replace` 改写；接触被取代网格的 Glue 依次换成 `replaced` 中的对应项（数量与当前不符时，删除全部接触 Glue 后按顺序追加替换项），再追加 `appended`；被取代网格的路径与顶点组删除，部件的路径与顶点组按记录写入。重放不读取被取代网格的几何，也不核对其指纹。纹理坐标存画布单位（与 `canvas_mesh_create`、`canvas_mesh_rebuild` 一致），重放时经当前纹理集换算：绘画会重新裁剪图层矩形，同一画布点仍对应同一像素。
+**重放**（`ArtPrimitiveReplay.replay`，旧版重放，只在记录之后没有固化点的旧日志中进行，见[旧版重放](#旧版重放)）：缺失的参数按记录创建；删除 `supersedes` 中的网格，部件在原网格的列表与部件树位置就位（原网格已不存在时加入记录的部件或根）；其他网格的遮罩按 `masks`/`replace` 改写；接触被取代网格的 Glue 依次换成 `replaced` 中的对应项（数量与当前不符时，删除全部接触 Glue 后按顺序追加替换项），再追加 `appended`；被取代网格的路径与顶点组删除，部件的路径与顶点组按记录写入。重放不读取被取代网格的几何，也不核对其指纹。纹理坐标存画布单位，重放时经当前纹理集换算。
 
 **拆分时捕获的状态**：`RigEditOverlay.authored` 给出旧格式编辑与整条日志之后、摆动和模拟写回之前的模型；部件取自该模型，因此摆动与模拟生成的轴不写入记录。连通块/多边形部件的顶点、关键形、混合形、路径、顶点组与 Glue 按原分区算法迁移；模拟目标、烘焙偏移与 Glue 角色转到部件（前后分层转到后层），之后由模拟照常写回。
 
@@ -310,19 +320,19 @@
 
 **部件之后的编辑**：部件是普通源图层，可绘画、删除/恢复、再拆分（被拆分的部件同样被取代）。修改部件的网格设置时由 `MaterializedMeshRebuild` 追加 `canvas_mesh_rebuild`，迁移关键形与绑定。部件不再随生成规则自动重新生成。
 
-**骨架蒙皮**：骨架在日志之前烘焙基础 Rig，而部件要到记录重放才出现，单看基础 Rig 时骨骼绑定的部件并不存在（左右合画后拆分的腿、鞋因此不会被蒙皮，腿骨只剩没有关键形的参数）。所以骨架阶段（`RigBuilder`）先从记录解码骨骼绑定的部件（`ArtPrimitiveJournal.skinnable`：画布单位纹理坐标、不带图块与遮罩），与基础 Rig 一起烘焙，再把蒙皮后的部件及烘焙给它们加的 Glue 从基础 Rig 中取出，存入 `BuiltRig.primitiveSkins`。基础 Rig 仍只含被取代的原网格，记录之前的日志照常重放；记录重放时用蒙皮结果代替自行解码（父级为骨骼变形器，纹理坐标经当前纹理集换算，遮罩取自记录），两端都已就位的 Glue 随后加入。以下部件仍由记录自行解码：父级或关键形参数要由更早的日志条目创建、带路径或顶点组（烘焙不会把它们迁移到新增顶点上）。记录的父级不再由基础生成产生时，解码按[父级不再生成](#父级不再生成)改挂。重放检查点以 `primitiveSkins` 的实例为键的一部分；`RigEditOverlay.applyTo` / `authored` 与模拟烘焙都要传入它（`authored(BuiltRig)`）。
+**骨架蒙皮**（版本 1 部件，旧版重放）：骨架在日志之前烘焙基础 Rig，而部件要到记录重放才出现，单看基础 Rig 时骨骼绑定的部件并不存在（左右合画后拆分的腿、鞋因此不会被蒙皮，腿骨只剩没有关键形的参数）。所以骨架阶段（`RigBuilder`）先从记录解码骨骼绑定的部件（`ArtPrimitiveReplay.skinnable`：画布单位纹理坐标、不带图块与遮罩），与基础 Rig 一起烘焙，再把蒙皮后的部件及烘焙给它们加的 Glue 从基础 Rig 中取出，存入 `BuiltRig.primitiveSkins`。基础 Rig 仍只含被取代的原网格，记录之前的日志照常重放；记录重放时用蒙皮结果代替自行解码（父级为骨骼变形器，纹理坐标经当前纹理集换算，遮罩取自记录），两端都已就位的 Glue 随后加入。以下部件仍由记录自行解码：父级或关键形参数要由更早的日志条目创建、带路径或顶点组（烘焙不会把它们迁移到新增顶点上）。记录的父级不再由基础生成产生时，解码按[父级不再生成](#父级不再生成)改挂。重放检查点以 `primitiveSkins` 的实例为键的一部分；`RigEditOverlay.applyTo` / `authored` 与模拟烘焙都要传入它（`authored(BuiltRig)`）。
 
 **拥有关系**：部件属于编辑日志节点（`journal` 拥有的 `rig:authored`），不在生成器依赖图中单列；摆动与模拟照常读取它们。被取代网格上原有的 `generated_override` 失去目标后按孤立报告。
 
 **引用被取代的 ID**：文档操作中引用字段（`layer_id`、`target`、`source_id`、`middle_ids`、`meshes` 等）指向被取代的图层或网格时，返回错误并列出取代它的当前 ID（跨多次拆分逐级展开）；`source_get_components` 同样。`layer_restore` 不能带回原图层（它不在 `deletedLayerIds` 中）。
 
-**兼容**：旧的 `canvas_source_partition`、`canvas_depth_split` 按原规则重放，打开时不升级；`LegacySplitReplayTest` 用旧版本保存的工程核对各历史节点重放后的 IR 哈希与旧版本一致，旧工程中的软删除原图层仍可恢复，旧工程上的新拆分按物化规则进行。导入 CMO3 模型的拆分仍使用旧规则（原图层软删除）。记录目前内联在日志中，没有使用 v2 的载荷节点。
+**兼容**：旧的 `canvas_source_partition`、`canvas_depth_split` 按原规则重放，第一次编辑时被固化（见[旧版重放](#旧版重放)）；`LegacySplitReplayTest` 用旧版本保存的工程核对各历史节点重放后的 IR 哈希与旧版本一致，旧工程中的软删除原图层仍可恢复，旧工程上的新拆分按物化规则进行。导入 CMO3 模型的拆分仍使用旧规则（原图层软删除）。
 
 ### 父级不再生成
 
 日志在某条记录之前创建的变形器，重放到该记录时都会再次存在；因此记录的父级若在重放位置缺失，只可能是基础生成不再产生它：拆分之后改了生成设置（启用骨架后不再生成手臂下垂 Warp `DeformArmHang_L/R`，由骨骼接管手臂）。此时记录按下述规则重放，存储的记录不改写；规则由 `VanishedParent` 与各记录的重放实现，结果确定：
 
-- **版本 1 部件**（`ArtPrimitiveJournal.rehome`）：部件改挂到它所替换的网格（`replace` 中的键）当前所在的父级；该网格本身是更早记录的部件、而骨架烘焙解码时基础 Rig 中还没有它（`skinnable` 的 `earlier`）时，沿那条记录继续向前找它替换的网格。位置按“记录顶点 → 画布纹理坐标”的最小二乘仿射拟合（规则静止网格或刚性框架下精确）还原为默认姿态下的画布位置，再求逆到新父级空间；关键形与混合形的位移经拟合的线性部分换算为画布位移后同样换入。找不到被替换的网格时照旧报错 `Art primitive parent is missing`。
+- **版本 1 部件**（`ArtPrimitiveReplay.rehome`，旧版重放）：部件改挂到它所替换的网格（`replace` 中的键）当前所在的父级；该网格本身是更早记录的部件、而骨架烘焙解码时基础 Rig 中还没有它（`skinnable` 的 `earlier`）时，沿那条记录继续向前找它替换的网格。位置按“记录顶点 → 画布纹理坐标”的最小二乘仿射拟合（规则静止网格或刚性框架下精确）还原为默认姿态下的画布位置，再求逆到新父级空间；关键形与混合形的位移经拟合的线性部分换算为画布位移后同样换入。找不到被替换的网格时照旧报错 `Art primitive parent is missing`。
 - **`canvas_mesh_rebuild`**（`RasterMeshJournal.replay`）：网格已在另一个父级空间，几何指纹无法再核对，改为只核对顶点数（`glue_map` 长度）；记录的 `points` 与 `previous_parent_points` 按同样的仿射拟合换到网格当前父级的空间。
 - **结构编辑 `bind`（网格）与 `move`（变形器）**（`RigStructureEdits.replay`）：目标父级缺失时该项不生效，对象留在原处。新提交的编辑走 `RigStructureEdits.apply`，缺失父级仍报错。
 - **`canvas_mesh_create`** 没有被替换的网格可循，父级缺失时照旧报错。
@@ -343,7 +353,7 @@
 
 ### 版本 2 记录
 
-版本 1 把原图层拆分时刻的作者态整体快照进部件：基础生成仍只看见原图层（乘客），看不见部件，生成器写进网格的关键形（眼睛开合、骨架蒙皮等）也冻结在记录里，之后的脸部设置、站姿或骨架变化到不了部件。版本 2 让部件参与基础生成，记录只保存生成之外的作者数据。新拆分默认写版本 2；JVM 系统属性 `psd2live.artPrimitiveV2=false` 关闭（测试：`-Ppsd2live.artPrimitiveV2=false`），此时新拆分写版本 1、升级命令报告 `disabled`。开关只决定新拆分写哪个版本，读取与重放不看开关。
+版本 1 把原图层拆分时刻的作者态整体快照进部件：基础生成仍只看见原图层（乘客），看不见部件，生成器写进网格的关键形（眼睛开合、骨架蒙皮等）也冻结在记录里，之后的脸部设置、站姿或骨架变化到不了部件。版本 2 让部件参与基础生成。生成的原网格的拆分都写版本 2，没有开关。现在的版本 2 记录只是声明（`authored` 为空，用户数据在其后的固化点中，见[拆分即再生成](#拆分物化画元记录-art_primitive)）；较早版本写下的版本 2 记录在 `authored` 中带作者数据，下文的残差、两遍捕获、乘客容错与重放描述的是它们，只在[旧版重放](#旧版重放)中使用。
 
 **已解析图层集**（`core/PrimitiveResolution`）：生成图层去掉被 v2 记录取代的图层，加上 v2 部件图层。锚点、脸部 Rig、头部空间、框架、站姿与腿、身体框架、变形器（含成对 Warp、手臂下垂 Warp）、眼白、作为遮罩来源的网格、嘴唇的脸部 Rig 与骨架绑定都只读这个集合；预览分析与之一致。部件像素取当前像素按 `source_bounds` 补透明，网格仍取记录值；分类取 `layerOverrides`（拆分时继承），没有时取记录的 `classification`。带拆分基线（`splitBaselineLayerIds`）的上下文同样计入部件、排除被取代图层；保留变形器的构建（`buildPreservingDeformers`，绘画提交用）也一样。
 
@@ -357,30 +367,36 @@
 
 **重放**：删除乘客，放置停放的部件（画布纹理坐标经当前纹理集换算，延迟父级换到其父级空间），恢复生成遮罩与部件槽，两端都在时加入焊接，写入生成路径，再加残差与作者层。停放拓扑与记录不同（骨架加入关节行、之后的网格重建）时，逐顶点数据按画布纹理坐标迁移到新网格。
 
-**两遍捕获与守卫**（`application/WorkspaceArtPrimitives.decide`）：第一遍写基础字段；随后由 `PrimitiveBaseProvider` 构建候选基础（应用默认 `PipelineBaseProvider`：候选文档只保留 v2 记录构建，GUI、MCP 单项拆分与原子批量都经此入口；测试可替换）；第二遍对照候选基础写残差与覆盖。候选基础在拆分的后台候选内构建（`Dispatchers.Default`），进度落在拆分任务的 0.8–0.92，原协程取消即中止且不会被当作回退。只有候选基础仍生成既有日志引用的每个变形器、参数与网格（原图层除外），且整条日志能在其上重放时才写 v2（日志已有固化点时，按提交时的方式在拆分之前先合并出新的固化点再重放，否则拆分新生成的变形器——例如左右拆分的成对 Warp——不在旧固化点里）；否则写版本 1，并在记录上加 `v2_fallback {reason, detail}`。原因码：`base_unavailable`（无候选基础）、`original_not_generated`（原网格不是生成网格）、`parts_not_generated`、`reference_missing`、`replay_failed`、`capture_failed`。
+**两遍捕获与守卫**（较早版本）：拆分先写基础字段，再由候选基础生成部件、对照它写残差与覆盖；只有候选基础仍生成既有日志引用的全部对象且整条日志能在其上重放时才写版本 2，否则回退版本 1 并带 `v2_fallback {reason, detail}`。现在的拆分以合并代替，没有回退；旧记录上的 `v2_fallback` 只作历史。
 
 **乘客容错**：记录之前的条目若只因其引用的网格全是后续 v2 记录的乘客而失败，按空操作重放并记一条说明（`SupersededEntryNote`：日志序号、`op`、目标、原因）；其他失败照常报错。说明随重放检查点保存，从检查点续放也完整，并经 `BuiltRig.supersededEntryNotes` 进入 `workspace_inspect` 的 `quality.overrides`（`SUPERSEDED_ENTRY_SKIPPED`，info，不阻断）。
 
-**再拆分**：v2 部件可再拆分；捕获时原件的生成形式取自停放区（`WorkspaceArtPrimitives.generated`）。原件网格已被重建（网格设置、`rebuild_mesh` 绘画）时回退版本 1；版本 1 记录取代 v2 部件时，该部件以透明占位和固定网格留在已解析集合中，基础框架不变。
+**再拆分**：部件可再拆分，与拆分普通图层相同：G 与 M 中的部件各自被切开再合并。较早的版本 1 记录取代 v2 部件时，该部件以透明占位和固定网格留在已解析集合中，基础框架不变。
 
 **部件之后的编辑**：绘画只换像素，部件网格保持记录值；`rebuild_mesh` 绘画或逐层网格设置修改在记录之后追加 `canvas_mesh_rebuild`，迁移关键形与绑定。
 
 **拥有关系与缓存**：`DocumentGenerators` 的文档输入 `document:primitives`（v2 记录的固定输入）被足迹、框架、网格与骨架读取；部件的 `keyform:mesh:<部件>@<参数>` 按停放的拥有关系归 `mesh:<图层>` / `rig.meshes`（特征轴）或 `skeleton`（骨骼轴），`GeneratedOverrides.capture` 据此把之后对这些单元的编辑写成覆盖。阶段缓存与绑定缓存的键包含 v2 记录的固定输入摘要。
 
-**显式升级**（`application/WorkspaceSplitUpgradeEdits`，MCP `source_upgrade_split_records`，GUI“工具 > 升级拆分记录”）：把已有版本 1 记录改写为版本 2，只在用户发起时进行，读取与历史切换从不改写。记录按其在 `art_primitive` 记录中的序号（v1、v2 一并计数）选择，省略时选全部 v1 记录；按日志顺序逐条处理，每条之后重建候选，后一条看到前一条已生成的部件（因此 v1 部件的再拆分记录在前一条升级后也可升级）。单条升级（`WorkspaceArtPrimitives.upgrade`）还原该位置拆分会做的捕获：原件作者态 = 记录之前的日志在当前基础上重放（含此前 v2 部件的覆盖），生成形式取自当前基础，部件取记录自身（网格、材质与用户数据，纹理坐标为画布单位）；部件顶点按记录的父级空间静止位置在原件顶点中定位来源（连通块为同一顶点，多边形切点为重心插值，深度切片为恒等）。v2 记录原位替换 v1 记录，其 `generated_override` 紧随其后，之后的条目不变（部件 ID 不变，后续引用照常重放）；绑定原件的骨骼改绑部件（深度拆分为后层切片）；原件没有显式父级覆盖时，删除 v1 拆分为部件固定的同值父级覆盖，交给生成。候选基础保留全部 `art_primitive` 记录（含之后的 v1 记录，例如对其部件的再拆分）构建；守卫与拆分相同（候选基础仍生成日志其余条目引用的对象、整条日志可重放），另有 `already_version_2`（所选记录已是 v2）与 `imported_model`（导入 CMO3 模型）；开关关闭时报告 `disabled`。未通过的记录保持 v1 原样（不加 `v2_fallback`）。全部结果作为一次候选提交一个可撤销历史节点；没有记录被升级时文档不变、不追加节点。改写较早的日志条目会使从该位置起的重放检查点按前缀内容失效。对一个从拆分起未再变化的文档，升级写出的日志与当时直接写 v2 的拆分一致（多边形切点只有浮点舍入差）。
-
-**兼容**：版本 1 记录照旧重放（含骨架蒙皮与自行解码），读取时不改写；没有 v2 记录的文档走原代码路径（`ExportGoldenTool` 逐字节一致）；v1 与 v2 记录可以混用，v2 记录取代 v1 部件时将其删除。
+**兼容**：较早版本写下的版本 1 与带作者数据的版本 2 记录在其后没有固化点时照旧重放（含骨架蒙皮与自行解码），读取时不改写，第一次编辑时被固化（见[旧版重放](#旧版重放)）；没有 v2 记录的文档走原代码路径（`ExportGoldenTool` 逐字节一致）；v1 与 v2 记录可以混用，v2 记录取代 v1 部件时将其删除。声明式记录被重放时（例如在没有固化点的构建中）按生成的部件放置。旧版本的显式升级命令（`source_upgrade_split_records`）已移除。
 
 **已知限制**：
 
 - 被拆分嘴部的生成嘴唇仍取自被取代的嘴部（乘客的冻结像素），而不是部件当前像素的合成。拆分时二者一致；之后在部件上绘画，嘴唇纹理不跟随（普通嘴部的嘴唇纹理同样取自网格输入，重建网格前也不跟随），重建部件网格也不会重新生成嘴唇。
-- `frozen_axes`：写入端总是写空，原图层的网格拓扑被手工编辑过（生成单元无法映射到部件）时直接回退版本 1；读取端遇到非空 `frozen_axes` 会把该部件的整张生成网格归零、只保留作者数据，因此当前不会出现。
+- `frozen_axes`：写入端总是写空；读取端遇到非空 `frozen_axes` 会把该部件的整张生成网格归零、只保留作者数据，因此当前不会出现。
 - 部件网格重建后，针对其生成单元的 `generated_override` 不迁移，形状不符时按孤立报告。
 - 嘴型轮廓开启时，嘴部部件的固定网格是原件的轮廓网格，足迹与原件的栅格网格略有不同：由嘴部框定的生成嘴唇静止位置相差约 0.4 px；部件本身的开口形状不含轮廓贡献（约 0.13 px）。
 - v2 部件参与框架生成：固定网格的画布位置经父级往返有浮点舍入，未拆分网格的局部坐标与框架控制点可能相差几个 ulp（世界坐标 < 1e-4 px）；版本 1 逐位不变。
-- 升级按静止位置定位部件顶点来源，要求记录中部件的父级与原件在该位置的作者态父级相同；拆分后生成设置改变了原件的父级等情况报告 `capture_failed`，保持版本 1。
+- 原网格的拓扑被手工改过时，部件按用户拓扑保留为用户对象，生成器之后的变化不再到达这些部件的几何。
 
-**测试**：`PrimitiveResolutionTest`（手写 v2 记录的基础生成）、`ArtPrimitiveRecordV2Test`（编码、残差、重放、乘客容错与检查点续放的说明）；在 tml 上的拆分效果用 `ArtPrimitiveV2VisualTool` 目视检查。
+**测试**：`PrimitiveResolutionTest`（手写 v2 记录的基础生成）、`ArtPrimitiveRecordV2Test`（旧版记录的编码、残差、重放、乘客容错与检查点续放的说明；编码器在测试中的 `LegacyArtPrimitiveV2`）、`SplitPartsCheckpointTest`（拆分的固化点、成对 Warp 与骨架蒙皮）；在 tml 上的拆分效果用 `ArtPrimitiveV2VisualTool` 目视检查（未拆分与拆分在各姿态的差异，与此前的版本 2 记录相同）。
+
+## 旧版重放
+
+较早版本把一些编辑写成要在基础 Rig 上重放的记录：拆分的 `art_primitive`（版本 1，以及带作者数据的版本 2）、生成迁移（`rig_generation_transition`、`rig_generation_frames`、`rig_generation_scaffold`、`rig_mesh_activation`）、旧的 `canvas_source_partition` / `canvas_depth_split`，以及日志之前的旧格式静态字段。生成的模型不再写它们；导入 CMO3 的模型没有生成结果可合并，仍写迁移记录与旧分区。
+
+- **只固化一次**：日志在最后一个固化点之后仍有这类记录（没有固化点时也包括旧格式静态字段，`RigEditOverlay.replaysLegacy`）时，延续它的第一次编辑先在原日志末尾、新条目之前写入当前作者态 Rig 的固化点（`WorkspacePreviewBuilder`），生成快照在手时一并保存；这些记录就此重放最后一次，之后的构建都从固化点开始。打开、切换历史和保存不改写日志，旧修订照旧按记录构建。
+- **代码**：只在这条路径与导入模型上使用的部分在 `core.legacy`：`ArtPrimitiveReplay`（版本 1 与带作者数据的版本 2 记录的重放、骨架烘焙前解码版本 1 部件、再生成合并时放入版本 1 部件）、`StubTolerance` 与 `SupersededEntryNote`（乘客容错）、`VanishedParent`，以及生成迁移的写入与重放（`RigGenerationMigration`、`RigGenerationJournal`、`RigGenerationFrames`、`RigGenerationScaffold`、`RigMeshActivation`、`RigGenerationResidual`、`RigGenerationTextures`）。`ArtPrimitiveJournal` 保留记录格式与文档查询（取代关系、拥有的图层、贴图覆盖）。
+- **锁定**：`LegacySplitReplayTest` 用旧版本保存的工程核对各历史节点按记录构建的 IR 哈希。
 
 ## 后续
 
