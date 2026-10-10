@@ -55,7 +55,7 @@ internal object WorkspaceRevisions {
 		document.rigEdits.deletedParameterIds.sorted().forEach { append("|pd:").append(it) }
 		document.rigEdits.parameterEdits.forEach { edit -> append("|pe:").append(edit) }
 		// Omit the field entirely for v1 documents without a separate generation input.
-		listOf("generation" to document.generationSource, "meshSource" to document.meshSource, "placementSource" to document.placementSource).forEach { (kind, source) ->
+		listOf("generation" to document.generationSource, "meshSource" to document.meshSource).forEach { (kind, source) ->
 			if (source == null) return@forEach
 			append("|$kind:").append(source.widthPx).append('x').append(source.heightPx)
 			source.groups.forEach { group ->
@@ -78,6 +78,7 @@ internal object WorkspaceRevisions {
 			layer.storedCanvasRect?.let { rect ->
 				append(":rect=").append(rect.left).append(',').append(rect.top).append(',').append(rect.width).append(',').append(rect.height)
 			}
+			layer.transform.takeUnless { it.isIdentity }?.let { append(":transform=").append(it.toList().joinToString(",")) }
 		}
 	}
 

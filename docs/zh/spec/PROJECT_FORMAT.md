@@ -17,7 +17,7 @@ ZIP 条目的压缩方式：PNG（`assets/`、`images/`、观察图）与 CMO3 �
 | `history/HEAD.json` | 当前节点与节点顺序 |
 | `history/nodes/` | 不可变父链节点和元数据（与 v1 相同） |
 | `history/revisions/<key>.json` | 每个修订的索引：`{schema, nodes:{类型:哈希}, overrides?, clips?, payloads?}` |
-| `document/nodes/<类型>/<sha256>.json` | 文档节点 `{schema, kind, value}`；类型为 `source`（源图层与组）、`generation-source` / `mesh-source` / `placement-source`、`layers`（可见性、软删除、分类、父级、网格与纹理覆盖）、`settings`、`rig`（参数、骨架、摆动、模拟、物理等 Rig 定义）、`journal`（作者编辑日志，不含覆盖）、`document`（其余字段） |
+| `document/nodes/<类型>/<sha256>.json` | 文档节点 `{schema, kind, value}`；类型为 `source`（源图层与组）、`generation-source` / `mesh-source`（旧版写入的 `placement-source` 读取时忽略）、`layers`（可见性、软删除、分类、父级、网格与纹理覆盖）、`settings`、`rig`（参数、骨架、摆动、模拟、物理等 Rig 定义）、`journal`（作者编辑日志，不含覆盖）、`document`（其余字段） |
 | `document/nodes/payload/<sha256>.json` | 大型日志条目的内容寻址载荷节点，由 schema 2 修订在 `payloads` 中列出 |
 | `document/overrides/<sha256>.json` | 生成结果覆盖 `generated_override`，连同其在编辑日志中的位置 |
 | `document/clips/<sha256>.json` | 动作片段与生成动作设置 |
@@ -78,6 +78,7 @@ ZIP 条目的压缩方式：PNG（`assets/`、`images/`、观察图）与 CMO3 �
 | --- | --- | --- |
 | 节点 1 | 不含下列字段的节点 | — |
 | 节点 2 | `source` 及三种附加源图节点中有图层带 `rect`；`layers` 含 `textureOverrides`；`settings` 含 `atlas` 或 `atlasArrangement` | 见下文纹理字段 |
+| 节点 3 | `source` 或附加源图节点中有图层带 `transform` | 图层整体变换 `[a, b, c, d, e, f]`（`x' = a·x + c·y + e`，`y' = b·x + d·y + f`，画布单位、y 向下），作用于图层的帧（整数边界与 `rect`）；纹理坐标锚定在帧上，生成只读帧。单位变换不写 |
 | 修订 1 | 日志不引用载荷节点 | — |
 | 修订 2 | 日志引用载荷节点，索引列出 `payloads` | `{"$payload": "<sha256>"}` 日志条目 |
 | 修订 3 | 日志含固化点记录 `rig_checkpoint` | 索引的 `rig` 列出记录引用的 Rig 对象，归档在 `rig/objects/` 中保存它们；可同时列出 `payloads` |

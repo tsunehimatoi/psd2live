@@ -149,7 +149,6 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
             editFailure = { index, failure -> WorkspaceBatchEditException(index, edits[index].operation, failure) })
         runInterruptible(Dispatchers.Default) {
             WorkspaceAssetLayerEdits.validate(prepared.before.document, prepared.draft.document, prepared.model)
-            validateRegisteredNeutral(prepared.model, edits.filter { it.operation == "layer_set_bounds" }.mapTo(HashSet()) { it.request.getValue("layer_id").jsonPrimitive.content })
             // Tile moves and densities land on their spots or not at all, as the same single commands do; a batch that
             // also lays the atlas out anew (budget, packing, new pixels) places tiles by its own rule.
             val operations = edits.mapTo(HashSet()) { it.operation }

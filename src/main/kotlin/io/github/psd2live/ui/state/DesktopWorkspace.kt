@@ -320,7 +320,6 @@ class DesktopWorkspace(
 
     private suspend fun captureSourceImport(discardUnsaved: Boolean): Pair<WorkspaceRuntimeState<io.github.psd2live.core.RigPreviewModel>, PSD2LiveState> {
         draftQueue.awaitSettled()
-        imagePlacements.forEach { it.awaitSettled() }
         val state = runtime.state.value
         currentCoroutineContext()[WorkspaceExecution]?.check(state.capture?.projectId, state.state)
         val current = viewModel.state.value
@@ -342,7 +341,6 @@ class DesktopWorkspace(
     override suspend fun importCmo3(path: Path, mode: io.github.psd2live.core.Cmo3ImportMode,
                                     discardUnsaved: Boolean): WorkspaceMutationResult = editMutex.withLock {
         draftQueue.awaitSettled()
-        imagePlacements.forEach { it.awaitSettled() }
         val state = runtime.state.value
         currentCoroutineContext()[WorkspaceExecution]?.check(state.capture?.projectId, state.state)
         val current = viewModel.state.value
@@ -528,8 +526,6 @@ class DesktopWorkspace(
     private val projectController = ProjectController(viewModel)
     private val draftScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val draftQueue = WorkspaceDraftQueue(runtime, draftScope)
-    private val imagePlacements = java.util.concurrent.CopyOnWriteArrayList<WorkspaceImagePlacementSession>()
-    private val imagePlacementCommands = WorkspaceImagePlacementCommands(runtime)
     private val textureCommands = WorkspaceTextureCommands(runtime)
     private val sourceImporter = WorkspaceSourceImporter(runtime, { document -> previewBuilder.build(document) })
     private val cmo3Importer = WorkspaceCmo3Importer(runtime, { document, current -> previewBuilder.build(document, current) })
@@ -539,14 +535,11 @@ class DesktopWorkspace(
     }
     private fun discardEditorQueues() {
         paintSessions.clear()
-        imagePlacements.forEach { it.dismiss() }; imagePlacements.clear()
-        viewModel.dismissImagePlacements(); draftQueue.discard()
+        draftQueue.discard()
     }
 
     private suspend fun captureForMutation(): WorkspaceCapture<io.github.psd2live.core.RigPreviewModel> {
         draftQueue.awaitSettled()
-        imagePlacements.forEach { it.awaitSettled() }
-        imagePlacements.removeIf { it.finished }
         return runtime.capture().also { currentCoroutineContext()[WorkspaceExecution]?.check(it.projectId, it.state) }
     }
 
@@ -578,7 +571,6 @@ class DesktopWorkspace(
             rigEdits = capture.document.rigEdits, meshOverrides = capture.document.meshOverrides,
             generationSource = capture.document.generationSource,
             meshSource = capture.document.meshSource,
-            placementSource = capture.document.placementSource,
             textureOverrides = capture.document.textureOverrides,
             projectDirty = capture.dirty || ui.projectDirty)
         val workspaces = persisted.workspaces.map { workspace ->
@@ -694,13 +686,10 @@ class DesktopWorkspace(
 
     override suspend fun awaitEditorDrafts() {
         draftQueue.awaitIdle()
-        imagePlacements.forEach { it.awaitIdle() }
-        imagePlacements.removeIf { it.finished }
     }
 
     override suspend fun settleEditorDrafts(projectId: String, state: String): String {
         val settled = draftQueue.settleCommand(projectId, state)
-        imagePlacements.forEach { it.awaitIdle() }
         val captured = runtime.capture()
         if (captured.projectId != projectId || captured.state != settled) throw WorkspaceConflict(settled, captured.state)
         return settled
@@ -769,7 +758,6 @@ class DesktopWorkspace(
                 deletedLayerIds = document.deletedLayerIds, parentOverrides = document.parentOverrides, rigEdits = document.rigEdits,
                 generationSource = document.generationSource,
                 meshSource = document.meshSource,
-            placementSource = document.placementSource,
                 textureOverrides = document.textureOverrides,
                 ), expected)
             }
@@ -908,51 +896,6 @@ class DesktopWorkspace(
             scheduleHistoryPersistence(before.projectId)
             viewModel.updateHistorySnapshot(history())
             viewModel.refreshWorkspaceRenderer(result.commit.capture.model)
-        }
-        result.mutation
-    }
-
-    override fun beginImagePlacement(state: String, layerIds: List<String>): WorkspaceImagePlacement {
-        val before = runtime.capture(); requireExpected(state, before)
-        imagePlacements.removeIf { it.finished }
-        val expectedUi = viewModel.state.value
-        return WorkspaceImagePlacementSession(runtime, before, layerIds, draftScope,
-            projectPreview = preview@ { captured, model ->
-                val ui = viewModel.state.value
-                if (ui.projectId != expectedUi.projectId || ui.projectOpenGeneration != expectedUi.projectOpenGeneration) return@preview
-                if (io.github.psd2live.project.WorkspaceRevisions.of(documentFrom(ui)) != captured.revision) return@preview
-                viewModel.projectImagePlacementPreview(model)
-            }, beforeCommit = { captured, document, model ->
-                val ui = viewModel.state.value
-                check(ui.projectId == expectedUi.projectId && ui.projectOpenGeneration == expectedUi.projectOpenGeneration) { "Placement belongs to an old project load" }
-                applyPreviewOrThrow(model, captured.document, document, "Placed imported image", ui)
-            }, committed = { result ->
-                runtime.withCapture { current ->
-                    val ui = viewModel.state.value
-                    if (current.state == result.capture.state && ui.projectId == expectedUi.projectId && ui.projectOpenGeneration == expectedUi.projectOpenGeneration) {
-                        if (result.applied) scheduleHistoryPersistence(result.capture.projectId)
-                        viewModel.updateHistorySnapshot(history())
-                        viewModel.refreshWorkspaceRenderer(result.capture.model)
-                    }
-                }
-            }).also { imagePlacements.add(it) }
-    }
-
-    override suspend fun setImageBounds(state: String, bounds: io.github.psd2live.project.WorkspaceImageBounds) =
-        imagePlacement(bounds.operation(), state, "Placed imported image ${bounds.layerId}")
-
-    override suspend fun cancelImageImport(state: String, layerIds: List<String>) = imagePlacement(WorkspaceDocumentOperation("layer_cancel_import",
-        buildJsonObject { put("layer_ids", JsonArray(layerIds.map(::JsonPrimitive))) }), state, "Cancelled imported images")
-
-    private suspend fun imagePlacement(operation: WorkspaceDocumentOperation, state: String, summary: String): WorkspaceMutationResult = editMutex.withLock {
-        val before = captureForMutation(); requireExpected(state, before)
-        val ui = viewModel.state.value
-        if (ui.isAnalyzing || ui.isGenerating) throw WorkspaceBusy()
-        val result = imagePlacementCommands.execute(before.projectId, before.state, operation, summary, mutationAuthor(MutationAuthor.AGENT)) { _, document, model ->
-            applyPreviewOrThrow(model, documentFrom(ui), document, summary, ui)
-        }
-        if (result.commit.applied) {
-            scheduleHistoryPersistence(before.projectId); viewModel.updateHistorySnapshot(history()); viewModel.refreshWorkspaceRenderer(result.commit.capture.model)
         }
         result.mutation
     }
@@ -1681,7 +1624,6 @@ class DesktopWorkspace(
 			expectedRigEdits = expected.rigEdits,
             expectedGenerationSource = expected.generationSource,
             expectedMeshSource = expected.meshSource,
-            expectedPlacementSource = expected.placementSource,
             expectedTextureOverrides = expected.textureOverrides,
             expectedSettings = expected.settings,
 			expectedMeshOverrides = expected.meshOverrides,
@@ -1692,7 +1634,6 @@ class DesktopWorkspace(
 			rigEdits = next.rigEdits,
             generationSource = next.generationSource,
             meshSource = next.meshSource,
-            placementSource = next.placementSource,
             textureOverrides = next.textureOverrides,
 			status = status,
             settings = next.settings,

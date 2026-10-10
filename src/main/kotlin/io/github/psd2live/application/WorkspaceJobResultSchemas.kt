@@ -45,7 +45,7 @@ internal object WorkspaceJobResultSchemas {
         put("simulation_preview_step", WorkspaceSimulationPreviewSchemas.result)
         for (id in WorkspaceWarpControlEdits.supported) put(id, WorkspaceWarpControlSchemas.result(id))
         for (id in WorkspaceTextureSchemas.jobs) put(id, WorkspaceTextureSchemas.result(id))
-        for (id in WorkspaceSimulationEdits.supported + WorkspacePhysicsEdits.supported + WorkspaceRasterCommands.supported + WorkspaceLayerEdits.supported + WorkspaceAssetLayerEdits.supported + WorkspaceImagePlacementEdits.supported + WorkspaceImageLayerCommands.OP + WorkspaceGenerationCommands.supported + WorkspaceWarpEdits.supported)
+        for (id in WorkspaceSimulationEdits.supported + WorkspacePhysicsEdits.supported + WorkspaceRasterCommands.supported + WorkspaceLayerEdits.supported + WorkspaceAssetLayerEdits.supported + WorkspaceImageLayerCommands.OP + WorkspaceGenerationCommands.supported + WorkspaceWarpEdits.supported)
             put(id, requireNotNull(WorkspaceAuthoringResultSchemas.forOperation(id)))
         for (id in WorkspacePartitionCommands.supported) put(id, split)
         for (id in WorkspaceGenerationUpdate.supported) put(id, generationUpdate)

@@ -753,7 +753,7 @@ internal fun BoxScope.CanvasEditorOverlay(
         // Place-then-confirm ghost (Blender-style)
         editor.placement?.let { place ->
             when (place.kind) {
-                CreatePlacementKind.WARP, CreatePlacementKind.LAYER -> {
+                CreatePlacementKind.WARP -> {
                     editor.placementScreenRect(viewport)?.let { r ->
                         drawRect(colors.accent.copy(alpha = 0.14f), r.topLeft, r.size)
                         drawRect(colors.accent, r.topLeft, r.size, style = Stroke(2f))
@@ -1553,7 +1553,6 @@ internal fun PlacementSettingsPanel(
                     CreatePlacementKind.WARP -> IconWarpDeformer(tint = colors.accent, modifier = Modifier.size(13.dp))
                     CreatePlacementKind.ROTATION -> IconRotationDeformer(tint = colors.accent, modifier = Modifier.size(13.dp))
                     CreatePlacementKind.PATH -> IconDeformPath(tint = colors.accent, modifier = Modifier.size(13.dp))
-                    CreatePlacementKind.LAYER -> IconSelectionBounds(tint = colors.accent, modifier = Modifier.size(13.dp))
                 }
             }
             Text(
@@ -1561,7 +1560,6 @@ internal fun PlacementSettingsPanel(
                     CreatePlacementKind.WARP -> tr("editor.tool.create_warp")
                     CreatePlacementKind.ROTATION -> tr("editor.tool.create_rotation")
                     CreatePlacementKind.PATH -> tr("editor.pathDeform")
-                    CreatePlacementKind.LAYER -> tr("editor.importLayer.placeTitle")
                 },
                 color = colors.textPrimary,
                 style = typography.body.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
@@ -1580,16 +1578,12 @@ internal fun PlacementSettingsPanel(
         }
 
         // 2. Target relation info (single-line muted context)
-        val relationText = if (place.kind == CreatePlacementKind.LAYER) {
-            tr("editor.importLayer.placeUnder", place.anchorLabel)
-        } else {
-            buildString {
-                val isParent = place.relation == CreateRelation.AS_PARENT
-                append(tr(if (isParent) "editor.placementAsParentOf" else "editor.placementAsChildOf", place.anchorLabel))
-                if (place.meshIds.isNotEmpty()) {
-                    append(" · ")
-                    append(tr("editor.placementMeshCount", place.meshIds.size))
-                }
+        val relationText = buildString {
+            val isParent = place.relation == CreateRelation.AS_PARENT
+            append(tr(if (isParent) "editor.placementAsParentOf" else "editor.placementAsChildOf", place.anchorLabel))
+            if (place.meshIds.isNotEmpty()) {
+                append(" · ")
+                append(tr("editor.placementMeshCount", place.meshIds.size))
             }
         }
         Text(
@@ -1622,7 +1616,7 @@ internal fun PlacementSettingsPanel(
                 )
             }
 
-            if (place.kind != CreatePlacementKind.LAYER) {
+            run {
                 val partOptions = listOf("" to tr("editor.warpPart.inherit")) +
                     editor.model.parts.map { it.id.raw to it.name }
                 val partSelected = partOptions.firstOrNull { it.first == (place.partId ?: "") } ?: partOptions.first()
@@ -1646,45 +1640,6 @@ internal fun PlacementSettingsPanel(
                         height = 22.dp,
                     )
                 }
-            }
-        }
-
-        if (place.kind == CreatePlacementKind.LAYER) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                PlacementFloatField(
-                    label = "X",
-                    value = place.localX,
-                    onValueChange = { if (!isClosing) editor.updatePlacementCanvasRect(it, place.localY, place.localW, place.localH) },
-                    modifier = Modifier.weight(1f),
-                )
-                PlacementFloatField(
-                    label = "Y",
-                    value = place.localY,
-                    onValueChange = { if (!isClosing) editor.updatePlacementCanvasRect(place.localX, it, place.localW, place.localH) },
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                PlacementFloatField(
-                    label = "W",
-                    value = place.localW,
-                    onValueChange = { if (!isClosing) editor.updatePlacementCanvasRect(place.localX, place.localY, it.coerceAtLeast(1f), place.localH) },
-                    modifier = Modifier.weight(1f),
-                )
-                PlacementFloatField(
-                    label = "H",
-                    value = place.localH,
-                    onValueChange = { if (!isClosing) editor.updatePlacementCanvasRect(place.localX, place.localY, place.localW, it.coerceAtLeast(1f)) },
-                    modifier = Modifier.weight(1f),
-                )
             }
         }
 
@@ -1940,7 +1895,7 @@ internal fun PlacementSettingsPanel(
                 leadingIcon = { IconClose(modifier = Modifier.size(9.dp), tint = colors.textMuted) },
             )
             CompactButton(
-                text = "${tr(if (place.kind == CreatePlacementKind.LAYER) "editor.importLayer.confirm" else "editor.placementConfirm")} (Enter)",
+                text = "${tr("editor.placementConfirm")} (Enter)",
                 onClick = { if (!isClosing) { editor.confirmPlacement(); focus() } },
                 isPrimary = true,
                 enabled = !isClosing && editor.editable && !editor.busy &&
@@ -1953,37 +1908,6 @@ internal fun PlacementSettingsPanel(
     }
 }
 
-@OptIn(ExperimentalComposeUiApi::class)
-@Composable
-private fun PlacementFloatField(
-    label: String,
-    value: Float,
-    onValueChange: (Float) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val colors = LocalToolColors.current
-    var text by remember(value) { mutableStateOf(formatPlacementFloat(value)) }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
-        modifier = modifier,
-    ) {
-        Text(text = label, color = colors.textMuted, fontSize = 10.sp, modifier = Modifier.width(12.dp))
-        CompactTextField(
-            value = text,
-            onValueChange = { raw ->
-                text = raw
-                raw.toFloatOrNull()?.let(onValueChange)
-            },
-            modifier = Modifier.weight(1f),
-            height = 22.dp,
-        )
-    }
-}
-
-private fun formatPlacementFloat(value: Float): String =
-    if (value == value.toInt().toFloat()) value.toInt().toString()
-    else "%.1f".format(value)
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -2404,7 +2328,6 @@ private fun BoxScope.HierarchyModeBar(
                         CreatePlacementKind.WARP -> tr("editor.tool.create_warp")
                         CreatePlacementKind.ROTATION -> tr("editor.tool.create_rotation")
                         CreatePlacementKind.PATH -> tr("editor.pathDeform")
-                        CreatePlacementKind.LAYER -> tr("editor.importLayer.placeTitle")
                         null -> ""
                     },
                 )

@@ -33,6 +33,18 @@ class PaintSession(val handle: WorkspacePaintSession) {
     val originY get() = handle.originY
     val scaleX get() = handle.scaleX
     val scaleY get() = handle.scaleY
+    /**
+     * Where the canvas shows the layer's own frame - the space the session paints in - after the layer was moved or
+     * scaled as a whole ([io.github.psd2live.project.LayerTransform]); axis-aligned, identity for a layer never moved.
+     */
+    var frame: io.github.psd2live.project.LayerTransform = io.github.psd2live.project.LayerTransform.IDENTITY
+    /** The session raster's rectangle on the canvas as shown, in canvas units. */
+    val shownLeft get() = frame.x(originX, originY)
+    val shownTop get() = frame.y(originX, originY)
+    val shownWidth get() = docWidth / scaleX * frame.a
+    val shownHeight get() = docHeight / scaleY * frame.d
+    /** A canvas point in the layer's frame, where the session paints and samples. */
+    fun toFrame(x: Float, y: Float): Pair<Float, Float> = frame.inverse().let { it.x(x, y) to it.y(x, y) }
     /** Detached observation; writes must use the shared session gestures. */
     val workingImage: BufferedImage get() = handle.image()
     var isDirty by mutableStateOf(false)

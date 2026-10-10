@@ -37,7 +37,6 @@ internal object WorkspaceStateCodec {
         meshOverrides = state.meshOverrides.toMap(),
         generationSource = state.generationSource,
         meshSource = state.meshSource,
-            placementSource = state.placementSource,
         textureOverrides = state.textureOverrides,
     )
     /**

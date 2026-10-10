@@ -60,9 +60,6 @@ class WorkspaceImportObjectMoveTest {
         val imported = runtime.capture()
         val id = WorkspaceImageLayerCommands(runtime).importImages(imported.projectId, imported.state, listOf(file), null, "Import", MutationAuthor.USER)
             .mutation.affectedLayerIds.single()
-        runtime.capture().let {
-            WorkspaceImagePlacementCommands(runtime).execute(it.projectId, it.state, WorkspaceImageBounds(id, 60f, 60f, 40f, 40f).operation(), "Place", MutationAuthor.USER)
-        }
         // Select mode moves and widens the whole mesh at the pose it shows: one base geometry edit, as the canvas commits it.
         val placed = runtime.capture()
         val drawable = placed.model.rig.puppet.drawables.single { placed.model.rig.layerIdByDrawableId[it.id.raw] == id }.id.raw
@@ -90,18 +87,33 @@ class WorkspaceImportObjectMoveTest {
         }
     }
 
+    /** Moves [id]'s one mesh by [dx] canvas units in Select mode, as the canvas commits it. */
+    private suspend fun move(runtime: WorkspaceRuntime<RigPreviewModel>, id: String, dx: Float): WorkspaceCapture<RigPreviewModel> {
+        val before = runtime.capture()
+        val drawable = before.model.rig.puppet.drawables.single { before.model.rig.layerIdByDrawableId[it.id.raw] == id }.id.raw
+        val geometry = RigGeometryTools.geometry(before.model.rig.puppet, "mesh", drawable, emptyMap())
+        val world = before.model.rig.puppet.let { evaluator.evaluate(it, emptyMap()).worldPositions.getValue(org.umamo.runtime.model.DrawableId(drawable)) }
+        val local = geometry.points
+        // Root meshes: local positions are canvas positions; translate in that space.
+        require(world.indices.all { i -> abs(if (i % 2 == 0) world[i] - local[i] else -world[i] - local[i]) < 1e-2f }) { "fixture mesh must sit at the root" }
+        val points = FloatArray(local.size) { local[it] + if (it % 2 == 0) dx else 0f }
+        val command = canvasGeometryCommand(EditHierarchyMode.SELECT, "mesh", drawable,
+            canvasDeformationCoordinate(before.model.rig.puppet, geometry.axes, emptyMap(), emptyList()), points)
+        return WorkspaceDocumentCommands(runtime).executeJournal(before.projectId, before.state, "Move",
+            JsonArray(RigAuthoringJournal.compile(before.model.rig.puppet, JsonArray(listOf(command))).second), MutationAuthor.USER).capture
+    }
+
     /**
-     * A placement after a checkpoint that holds the imported mesh - generated from the layer until placed, or created by
-     * an earlier placement - replaces that mesh after the checkpoint: rewriting its creation before the checkpoint never
-     * replayed (the move was lost), and a second creation collided with it ("Mesh creation ID already exists").
+     * An imported image is the user's mesh: moving it is a mesh edit, before or after a regeneration writes a checkpoint
+     * that holds it, and it never gains a second, generated mesh.
      */
-    @Test fun aPlacementAfterACheckpointMovesTheMesh() = runBlocking<Unit> {
+    @Test fun anImportMovesLikeAnyMeshAcrossRegenerations() = runBlocking<Unit> {
         val layers = listOf(ellipse("body", "body", 0, 100, 230, 50, 60), ellipse("face", "face", 1, 100, 110, 50, 60))
         val config = PipelineConfig(atlasSize = 512, meshSpacing = 16, generatePhysics = false, exportMoc3 = false)
         val document = WorkspaceDocument(WorkspaceSourceArt(200, 300, layers, emptyList()), emptyMap(), emptySet(), emptyMap(),
             emptyMap(), RigEditOverlay.Empty, WorkspaceSettingsCodec.encode(config))
         val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) }, rebuildFrom = { d, previous -> builder.build(d, previous) })
-        runtime.install(runtime.state.value.state, "place-project", document, builder.build(document))
+        runtime.install(runtime.state.value.state, "move-project", document, builder.build(document))
         val file = temporary.resolve("patch.png").also { Files.write(it, PngCodec.write(RasterImage(40, 40, ByteArray(40 * 40 * 4) { -1 }))) }
         val imported = runtime.capture()
         val id = WorkspaceImageLayerCommands(runtime).importImages(imported.projectId, imported.state, listOf(file), null, "Import", MutationAuthor.USER)
@@ -110,25 +122,22 @@ class WorkspaceImportObjectMoveTest {
             WorkspaceDocumentCommands(runtime).execute(it.projectId, it.state, "Head", listOf(WorkspaceDocumentOperation("settings_update",
                 buildJsonObject { putJsonObject("changes") { put("headStrength", strength) } })), MutationAuthor.USER)
         }
-        suspend fun place(left: Float): WorkspaceCapture<RigPreviewModel> {
-            val before = runtime.capture()
-            WorkspaceImagePlacementCommands(runtime).execute(before.projectId, before.state, WorkspaceImageBounds(id, left, 60f, 40f, 40f).operation(), "Place", MutationAuthor.USER)
-            val placed = runtime.capture()
-            val mesh = placed.model.rig.puppet.drawables.single { placed.model.rig.layerIdByDrawableId[it.id.raw] == id }
-            assertEquals(left, mesh.mesh!!.positions.filterIndexed { i, _ -> i % 2 == 0 }.min(), 0.5f, "the mesh is where it was placed")
-            val cold = builder.build(placed.document).rig.puppet.drawables.single { it.id == mesh.id }
-            assertContentEquals(mesh.mesh!!.positions, cold.mesh!!.positions, "a cold build places it there too")
-            assertEquals(1, placed.model.rig.puppet.drawables.count { placed.model.rig.layerIdByDrawableId[it.id.raw] == id })
-            return placed
+        fun left(capture: WorkspaceCapture<RigPreviewModel>) = world(capture, id).filterIndexed { i, _ -> i % 2 == 0 }.min()
+        suspend fun checkMove(dx: Float) {
+            val before = left(runtime.capture())
+            val moved = move(runtime, id, dx)
+            assertEquals(before + dx, left(moved), 0.05f, "the mesh moved")
+            assertEquals(1, moved.model.rig.puppet.drawables.count { moved.model.rig.layerIdByDrawableId[it.id.raw] == id }, "one mesh")
+            val mesh = moved.model.rig.puppet.drawables.single { moved.model.rig.layerIdByDrawableId[it.id.raw] == id }.id
+            val replayed = evaluator.evaluate(builder.build(moved.document).rig.puppet, emptyMap()).worldPositions.getValue(mesh)
+            assertEquals(left(moved), replayed.filterIndexed { i, _ -> i % 2 == 0 }.min(), 1e-3f, "a cold build agrees")
         }
-        // The checkpoint the regeneration writes holds the mesh generated from the import.
+        checkMove(10f)
         regenerate(2)
-        val first = place(60f).document.rigEdits.authoringJournal.last { it["op"]?.jsonPrimitive?.content == RasterMeshCreation.OP }
-        assertTrue(RasterMeshCreation.replaces(first), "the creation replaces the checkpointed mesh")
-        // Now the mesh's creation lies before the next regeneration's checkpoint.
+        checkMove(15f)
         regenerate(3)
-        place(90f)
-        place(100f)
+        checkMove(-5f)
+        assertEquals(imported.document.generationSource, runtime.capture().document.generationSource, "no generation input is frozen for an image")
     }
 
     @Test fun aReplacingCreationKeepsTheMeshInItsPlaceOrCreatesIt() = runBlocking<Unit> {

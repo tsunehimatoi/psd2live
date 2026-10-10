@@ -28,7 +28,7 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
         val motionObservation = id == WorkspaceObservationJobs.motion
         val physics = id in WorkspacePhysicsEdits.supported
         val raster = id in WorkspaceRasterCommands.supported
-        val layer = id in WorkspaceLayerEdits.supported || id in WorkspaceAssetLayerEdits.supported || id in WorkspaceImagePlacementEdits.supported || id == WorkspaceImageLayerCommands.OP
+        val layer = id in WorkspaceLayerEdits.supported || id in WorkspaceAssetLayerEdits.supported || id == WorkspaceImageLayerCommands.OP
         val generation = id in WorkspaceGenerationCommands.supported
         val partition = id in WorkspacePartitionCommands.supported
         val regeneration = id in WorkspaceGenerationUpdate.supported
@@ -86,7 +86,7 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
         }
     }
 
-    register(WorkspaceImageLayerCommands.OP, "Import 1..128 PNG, lossless WebP, TIFF or BMP files as editable source layers. Trims transparent borders, centres and scales down to fit the canvas. parent_deformer_id attaches the new meshes to that existing deformer; omission places them at the model root. Preserves existing object identities and commits the complete batch as one history edit. Each file is limited to 64 MiB and 16 megapixels; the complete batch is limited to 32 megapixels.",
+    register(WorkspaceImageLayerCommands.OP, "Import 1..128 PNG, lossless WebP, TIFF or BMP files as editable layers. Trims transparent borders, centres and scales down to fit the canvas without resampling the pixels. Each image gets its own mesh in the authored rig, which the generators never regenerate; parent_deformer_id attaches it to that existing deformer (default the model root). Move, scale or rotate it afterwards with layer_transform; undo removes it. Preserves existing object identities and commits the complete batch as one history edit. Each file is limited to 64 MiB and 16 megapixels; the complete batch is limited to 32 megapixels.",
         objectSchema(buildJsonObject { put("state", string()); put("paths", arraySchema(string(), 1, 128)); put("parent_deformer_id", string()) },
             listOf("state", "paths")), WorkspaceOperationKind.DOCUMENT) { request ->
         WorkspaceOperationOutput(workspace.importImages(request.text("state"), request.getValue("paths").jsonArray.map {
@@ -94,16 +94,21 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
         }, request["parent_deformer_id"]?.jsonPrimitive?.content).layerResult())
     }
 
-    register("layer_set_bounds", "Move or resize a file-imported layer to absolute canvas-pixel bounds, sampling original saved pixels. Rounds to integer pixels; at most 16 megapixels. Preserves IDs, existing objects and inherited parent motion; rejects dedicated bindings or edited pixels. Repeat placement is a no-op.",
+    register(WorkspaceLayerTransform.OP, "Move, scale or rotate a layer as a whole - imported or from the PSD, at the root or under any deformer, bound or not. Give matrix [a, b, c, d, e, f] (x' = a·x + c·y + e, y' = b·x + d·y + f in canvas units, y down), or translate [x, y], scale [sx, sy] or one number, rotate (degrees, clockwise on screen) and pivot [x, y]; the transform composes with the layer's current one. Its pixels, texture and texture coordinates never change and nothing is regenerated: every mesh of the layer moves at rest, keyforms keep their offsets, and the layer remembers where its pixels now show for painting. One undoable history edit.",
         objectSchema(buildJsonObject {
-            put("state", string()); put("layer_id", string()); put("left", number()); put("top", number())
-            put("width", JsonObject(number() + ("minimum" to JsonPrimitive(1)))); put("height", JsonObject(number() + ("minimum" to JsonPrimitive(1)))); put("name", string())
-        }, listOf("state", "layer_id", "left", "top", "width", "height")), WorkspaceOperationKind.DOCUMENT) { request ->
-        WorkspaceOperationOutput(workspace.setImageBounds(request.text("state"), io.github.psd2live.project.WorkspaceImageBounds.parse(request)).layerResult())
-    }
-    register("layer_cancel_import", "Cancel a file-image import batch in one history edit. Removes its unbound layers and creation records; retains a legacy generation frame or the final source as soft-deleted artwork. Use layer IDs returned by layer_import_images. Atomic and undoable; dedicated bindings prevent cancellation.",
-        objectSchema(buildJsonObject { put("state", string()); put("layer_ids", JsonObject(arraySchema(string(), 1, 128) + ("uniqueItems" to JsonPrimitive(true)))) }, listOf("state", "layer_ids")), WorkspaceOperationKind.DOCUMENT) { request ->
-        WorkspaceOperationOutput(workspace.cancelImageImport(request.text("state"), request.strings("layer_ids")).layerResult())
+            put("state", string()); put("layer_id", string())
+            put("matrix", arraySchema(number(), 6, 6)); put("translate", arraySchema(number(), 2, 2))
+            put("scale", buildJsonObject { putJsonArray("oneOf") { add(number()); add(arraySchema(number(), 2, 2)) } })
+            put("rotate", number()); put("pivot", arraySchema(number(), 2, 2))
+        }, listOf("state", "layer_id")), WorkspaceOperationKind.DOCUMENT) { request ->
+        val id = request.text("layer_id")
+        val result = workspace.applyDocumentEdits(request.text("state"), "Transformed layer $id",
+            listOf(WorkspaceDocumentOperation(WorkspaceLayerTransform.OP, JsonObject(request - "state"))), MutationAuthor.AGENT)
+        WorkspaceOperationOutput(buildJsonObject {
+            put("state", requireNotNull(result.state)); put("history_node_id", result.historyNodeId); put("project_id", requireNotNull(result.projectId))
+            put("layer_id", id)
+            if (!result.applied) put("applied", false)
+        })
     }
 
     register(WorkspaceGenerationUpdate.OP, "Regenerate the rig with this build's generators. A project whose journal has a regeneration checkpoint keeps what the generators made when it was written, even after an update; this merges what they make now onto the user's edits: what the user left follows the new output, the user's changes stay, and what does not carry over cleanly is reported in issues (also in workspace_inspect quality.regeneration). Commits one undoable history node, or none when the generators make the same rig (updated: false). Imported CMO3 models have no generated rig and are refused.",

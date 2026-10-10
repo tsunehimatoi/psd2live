@@ -77,9 +77,6 @@ interface WorkspaceReadPort : WorkspaceQueries {
 }
 
 interface WorkspaceSourcePort {
-    fun beginImagePlacement(state: String, layerIds: List<String>): WorkspaceImagePlacement
-    suspend fun setImageBounds(state: String, bounds: WorkspaceImageBounds): WorkspaceMutationResult
-    suspend fun cancelImageImport(state: String, layerIds: List<String>): WorkspaceMutationResult
     /** Import a complete file batch as editable artwork in one history node. */
     suspend fun importImages(state: String, paths: List<java.nio.file.Path>, parentDeformerId: String?): WorkspaceMutationResult
     suspend fun importPsd(path: String, discardUnsaved: Boolean = false): WorkspaceMutationResult

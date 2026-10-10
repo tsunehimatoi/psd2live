@@ -318,30 +318,39 @@ class WorkspaceTextureCommandsTest {
         }
     }
 
-    @Test fun movingAGeneratedLayerMovesItsMeshAndAuthoredLayersAreRejected() = runBlocking<Unit> {
+    /**
+     * layer_set_canvas_rect moves a layer as a whole (a layer_transform): its meshes move, its pixels, texture tile and
+     * integer frame stay, the texture reports where it now shows, and a layer with keyforms moves with them.
+     */
+    @Test fun movingALayerMovesItsMeshesAndKeepsItsPixels() = runBlocking<Unit> {
         val runtime = fixture(); val before = runtime.capture()
+        fun centre(model: RigPreviewModel): Pair<Float, Float> {
+            val points = pupil(model).mesh!!.positions
+            return points.filterIndexed { i, _ -> i % 2 == 0 }.average().toFloat() to points.filterIndexed { i, _ -> i % 2 == 1 }.average().toFloat()
+        }
         WorkspaceOperations(Host(runtime)).use { operations ->
             operations.completed("layer_set_canvas_rect", input(runtime, "move", buildJsonObject {
                 put("layer_id", "pupil"); putJsonObject("rect") { put("left", 80); put("top", 40); put("width", 32); put("height", 32) }
             }))
             val moved = runtime.capture()
-            fun centre(model: RigPreviewModel): Pair<Float, Float> {
-                val points = pupil(model).mesh!!.positions
-                return points.filterIndexed { i, _ -> i % 2 == 0 }.average().toFloat() to points.filterIndexed { i, _ -> i % 2 == 1 }.average().toFloat()
-            }
             val (x0, y0) = centre(before.model); val (x1, y1) = centre(moved.model)
             assertTrue(abs(x1 - x0 - 10f) < 1f && abs(y1 - y0 - 10f) < 1f, "Moved by ${x1 - x0}, ${y1 - y0}")
-            assertEquals(LayerBounds(80, 40, 32, 32), moved.document.source.layers.single { it.id.raw == "pupil" }.bounds)
+            val layerBefore = before.document.source.layers.single { it.id.raw == "pupil" }
+            val layerAfter = moved.document.source.layers.single { it.id.raw == "pupil" }
+            assertEquals(layerBefore.bounds, layerAfter.bounds, "the layer's own frame stays")
+            assertContentEquals(layerBefore.raster.rgba, layerAfter.raster.rgba)
+            assertEquals(before.model.atlas.placementByLayerId.getValue("pupil"), moved.model.atlas.placementByLayerId.getValue("pupil"))
+            assertEquals(before.document.generationSource, moved.document.generationSource)
 
-            // A fractional rectangle keeps its float value inside enclosing integer bounds.
+            // A fractional rectangle: the texture reports where the layer shows.
             operations.completed("layer_set_canvas_rect", input(runtime, "fraction", buildJsonObject {
                 put("layer_id", "pupil"); putJsonObject("rect") { put("left", 80.5); put("top", 40); put("width", 31.25); put("height", 32) }
             }))
             val texture = operations.call("layer_get_texture", buildJsonObject { put("layer_id", "pupil") }).data
-            assertEquals(80.5f, texture.getValue("canvas_rect").jsonObject.getValue("left").jsonPrimitive.float)
-            assertEquals(80, texture.getValue("bounds").jsonObject.getValue("left").jsonPrimitive.int)
-            assertEquals(32, texture.getValue("bounds").jsonObject.getValue("width").jsonPrimitive.int)
+            assertEquals(80.5f, texture.getValue("canvas_rect").jsonObject.getValue("left").jsonPrimitive.float, 1e-3f)
+            assertEquals(31.25f, texture.getValue("canvas_rect").jsonObject.getValue("width").jsonPrimitive.float, 1e-3f)
 
+            // A layer with keyforms moves with them.
             val mesh = pupil(runtime.capture().model)
             operations.completed("workspace_apply_edits", input(runtime, "author", buildJsonObject {
                 putJsonArray("edits") {
@@ -353,11 +362,12 @@ class WorkspaceTextureCommandsTest {
                 }
             }))
             val authored = runtime.capture()
-            val rejected = operations.job("layer_set_canvas_rect", input(runtime, "rejected", buildJsonObject {
-                put("layer_id", "pupil"); putJsonObject("rect") { put("left", 0); put("top", 0); put("width", 32); put("height", 32) }
+            operations.completed("layer_set_canvas_rect", input(runtime, "authored", buildJsonObject {
+                put("layer_id", "pupil"); putJsonObject("rect") { put("left", 0); put("top", 0); put("width", 31.25); put("height", 32) }
             }))
-            assertEquals("invalid_argument", rejected.getValue("error").jsonObject.getValue("code").jsonPrimitive.content)
-            assertEquals(authored, runtime.capture())
+            val again = runtime.capture()
+            assertTrue(centre(again.model).first < centre(authored.model).first - 70f)
+            assertEquals(pupil(authored.model).channelGrids, pupil(again.model).channelGrids)
         }
     }
 

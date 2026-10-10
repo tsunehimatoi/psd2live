@@ -21,62 +21,28 @@ class WorkspaceImportResolutionTest {
 
     private fun pupil(model: RigPreviewModel, id: String) = model.rig.puppet.drawables.single { model.rig.layerIdByDrawableId[it.id.raw] == id }
 
-    @Test fun aLargeFileImportKeepsItsPixelsAndRescalingOnlyMovesItsRectangle() = runBlocking<Unit> {
+    @Test fun aLargeFileImportKeepsItsPixelsAndGetsItsOwnMesh() = runBlocking<Unit> {
         val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) })
         val original = simulationFixture(runtime)
         val file = temporary.resolve("disc.png").also { Files.write(it, PngCodec.write(disc(1024))) }
         val added = WorkspaceImageLayerCommands(runtime).importImages(original.projectId, original.state, listOf(file), null, "Import", MutationAuthor.USER)
         val id = added.mutation.affectedLayerIds.single()
-        val imported = runtime.capture().document.source.layers.single { it.id.raw == id }
+        val capture = runtime.capture()
+        val imported = capture.document.source.layers.single { it.id.raw == id }
         // Larger than the 64 x 96 canvas: fitted, every source pixel kept.
         assertTrue(imported.raster.width > 900 && imported.raster.width == imported.raster.height)
         assertTrue(abs(imported.canvasRect().width - 64f) < 1e-3f, "${imported.canvasRect()}")
-
-        suspend fun place(left: Float, top: Float, width: Float, height: Float): WorkspaceCapture<RigPreviewModel> = runtime.capture().let {
-            WorkspaceImagePlacementCommands(runtime).execute(it.projectId, it.state,
-                WorkspaceImageBounds(id, left, top, width, height).operation(), "Place", MutationAuthor.USER).commit.capture
-        }
-        val first = place(20f, 12f, 32f, 32f)
-        val placed = first.document.source.layers.single { it.id.raw == id }
-        assertEquals(LayerCanvasRect(20f, 12f, 32f, 32f), placed.canvasRect())
-        assertContentEquals(imported.raster.rgba, placed.raster.rgba)
-        assertEquals(imported.raster.width, placed.raster.width)
-        validateRegisteredNeutral(first.model, setOf(id))
+        validateRegisteredNeutral(capture.model, setOf(id))
         // Meshed at canvas density: a few dozen vertices, not thousands.
-        assertTrue(pupil(first.model, id).mesh!!.vertexCount < 200, "${pupil(first.model, id).mesh!!.vertexCount} vertices")
-
-        place(10.5f, 40.25f, 20f, 20f)
-        val again = place(20f, 12f, 32f, 32f)
-        val back = again.document.source.layers.single { it.id.raw == id }
-        assertContentEquals(imported.raster.rgba, back.raster.rgba)
-        assertContentEquals(pupil(first.model, id).mesh!!.positions, pupil(again.model, id).mesh!!.positions)
-        assertContentEquals(pupil(first.model, id).mesh!!.indices, pupil(again.model, id).mesh!!.indices)
-
-        // Squeezing it onto a speck is refused by name, and nothing is published.
-        val before = runtime.capture()
-        val refused = assertFailsWith<IllegalArgumentException> { place(0f, 0f, 1f, 1f) }
-        assertTrue("density" in refused.message!!, refused.message)
-        assertEquals(before.state, runtime.capture().state)
-    }
-
-    @Test fun legacyPlacementsReturnToTheirOriginalPixels() = runBlocking<Unit> {
-        // A layer placed by an earlier build holds the original scaled to its bounds; a move restores the original.
-        val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) })
-        val original = simulationFixture(runtime)
-        val file = temporary.resolve("disc.png").also { Files.write(it, PngCodec.write(disc(16))) }
-        val id = WorkspaceImageLayerCommands(runtime).importImages(original.projectId, original.state, listOf(file), null, "Import", MutationAuthor.USER)
-            .mutation.affectedLayerIds.single()
-        val capture = runtime.capture()
-        val layer = capture.document.source.layers.single { it.id.raw == id } as WorkspaceSourceLayer
-        val scaled = org.umamo.format.art.LayerRaster(layer.raster.width * 2, layer.raster.height * 2, LayerImport.scaleRgba(
-            RasterImage(layer.raster.width, layer.raster.height, layer.raster.rgba), layer.raster.width * 2, layer.raster.height * 2) {})
-        val legacy = layer.copy(raster = scaled, bounds = org.umamo.format.art.LayerBounds(layer.bounds.left, layer.bounds.top, scaled.width, scaled.height))
-        val document = capture.document.copy(source = WorkspaceSourceArt(capture.document.source.widthPx, capture.document.source.heightPx,
-            capture.document.source.layers.map { if (it.id.raw == id) legacy else it }, capture.document.source.groups))
-        val moved = WorkspaceImagePlacementEdits.apply(document, capture.model, WorkspaceImageBounds(id, 4f, 4f, 30f, 30f).operation()) {}
-        val result = moved.source.layers.single { it.id.raw == id }
-        assertContentEquals(layer.raster.rgba, result.raster.rgba)
-        assertEquals(LayerCanvasRect(4f, 4f, 30f, 30f), result.canvasRect())
+        assertTrue(pupil(capture.model, id).mesh!!.vertexCount < 200, "${pupil(capture.model, id).mesh!!.vertexCount} vertices")
+        // The mesh is the user's, created once in the journal; the generators never mesh the layer, and nothing else is frozen.
+        val creations = capture.document.rigEdits.authoringJournal.filter { it["op"]?.jsonPrimitive?.content == RasterMeshCreation.OP }
+        assertEquals(listOf(id), creations.map { it.getValue("layer_id").jsonPrimitive.content })
+        assertEquals(original.document.generationSource, capture.document.generationSource)
+        assertTrue(capture.model.baseRig.puppet.drawables.none { capture.model.baseRig.layerIdByDrawableId[it.id.raw] == id })
+        assertEquals(1, capture.model.rig.puppet.drawables.count { capture.model.rig.layerIdByDrawableId[it.id.raw] == id })
+        val cold = builder.build(capture.document)
+        assertContentEquals(pupil(capture.model, id).mesh!!.positions, pupil(cold, id).mesh!!.positions)
     }
 
     private fun asset(size: Int, rect: Bounds): WorkspacePngAsset {

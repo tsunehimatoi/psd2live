@@ -1404,8 +1404,8 @@ fun CanvasViewportComposable(
 								val full = paintUploaded[0] !== session
 								paintUploaded[0] = session
 								io.github.psd2live.render.PaintScene(session, session.docWidth, session.docHeight,
-									listOfNotNull(session.takeGpuUpload(full)), session.originX, session.originY,
-									session.docWidth / session.scaleX, session.docHeight / session.scaleY)
+									listOfNotNull(session.takeGpuUpload(full)), session.shownLeft, session.shownTop,
+									session.shownWidth, session.shownHeight)
 							}
 							CanvasScene(w, h, viewport, model, geometry,
 								if (showTexture) ArtworkDrawList.build(model, geometry, options) else emptyList(),
@@ -1608,8 +1608,9 @@ fun CanvasViewportComposable(
 				if (showTexture && paintSession != null && !paintSession.gpuPreview) {
 					val scale = viewport.scale
 					// Tiles are raster pixels; a dense layer's raster is stretched over its canvas rectangle.
-					val ox = paintSession.originX; val oy = paintSession.originY
-					val sx = paintSession.scaleX; val sy = paintSession.scaleY
+					// Shown where the layer was moved or scaled to: its frame through the layer's transform.
+					val ox = paintSession.shownLeft; val oy = paintSession.shownTop
+					val sx = paintSession.docWidth / paintSession.shownWidth; val sy = paintSession.docHeight / paintSession.shownHeight
 					for (tile in paintSession.previewTiles) {
 						val left = Math.round(viewport.offsetX + (ox + tile.x / sx) * scale)
 						val top = Math.round(viewport.offsetY + (oy + tile.y / sy) * scale)

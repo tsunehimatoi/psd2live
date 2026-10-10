@@ -17,7 +17,7 @@ Saves write v2. Each history revision is split into content-addressed document n
 | `history/HEAD.json` | Current node and node order |
 | `history/nodes/` | Immutable parent-linked nodes and metadata (as in v1) |
 | `history/revisions/<key>.json` | Per revision: `{schema, nodes:{kind:hash}, overrides?, clips?, payloads?}` |
-| `document/nodes/<kind>/<sha256>.json` | Document nodes `{schema, kind, value}`; kinds are `source` (layers and groups), `generation-source` / `mesh-source` / `placement-source`, `layers` (visibility, soft deletion, classification, parent, mesh and texture overrides), `settings`, `rig` (parameter, skeleton, swing, simulation, physics and other rig definitions), `journal` (authoring journal without overrides) and `document` (remaining fields) |
+| `document/nodes/<kind>/<sha256>.json` | Document nodes `{schema, kind, value}`; kinds are `source` (layers and groups), `generation-source` / `mesh-source` (a `placement-source` written by older builds is ignored on read), `layers` (visibility, soft deletion, classification, parent, mesh and texture overrides), `settings`, `rig` (parameter, skeleton, swing, simulation, physics and other rig definitions), `journal` (authoring journal without overrides) and `document` (remaining fields) |
 | `document/nodes/payload/<sha256>.json` | Content-addressed payload nodes for large journal entries, listed under `payloads` by a schema-2 revision |
 | `document/overrides/<sha256>.json` | Generated overrides (`generated_override`) with their places in the journal |
 | `document/clips/<sha256>.json` | Motion clips and generated-motion settings |
@@ -78,6 +78,7 @@ A node or revision index moves to a newer schema only when it uses a newer field
 | --- | --- | --- |
 | Node 1 | nodes without the fields below | — |
 | Node 2 | a `source` or extra source-art node with a layer `rect`; `layers` with `textureOverrides`; `settings` with `atlas` or `atlasArrangement` | see texture fields below |
+| Node 3 | a `source` or extra source-art node with a layer `transform` | the layer's whole-layer transform `[a, b, c, d, e, f]` (`x' = a·x + c·y + e`, `y' = b·x + d·y + f`, canvas units, y down), applied to the layer's frame (integer bounds and `rect`); texture coordinates are anchored to the frame and generation reads only the frame. Identity is not written |
 | Revision 1 | the journal names no payload node | — |
 | Revision 2 | the journal names payload nodes, listed under `payloads` | `{"$payload": "<sha256>"}` journal entries |
 | Revision 3 | the journal holds `rig_checkpoint` records | the index lists the rig objects they name under `rig`, kept in the archive's `rig/objects/`; it may list `payloads` too |

@@ -1092,16 +1092,14 @@ class PSD2LiveViewModel : AutoCloseable {
 
     // Canvas IDs may repeat across workspaces. Transient editing state belongs to both.
     // Guarded by itself: the UI thread and workspace commands both reach it. Two unsynchronized lookups
-    // could each create an editor for one canvas and orphan one, whose placement is then never dismissed.
+    // could each create an editor for one canvas and orphan one.
     private val canvasEditors = mutableMapOf<Pair<String, String>, CanvasEditor>()
     private var editorGeneration = -1L
     private fun editorsSnapshot(): List<CanvasEditor> = synchronized(canvasEditors) { canvasEditors.values.toList() }
     internal fun canvasEditorFor(canvasId: String): CanvasEditor {
         val current = uiState.value
-        var retired = emptyList<CanvasEditor>()
-        val editor = synchronized(canvasEditors) {
+        return synchronized(canvasEditors) {
             if (editorGeneration != current.projectOpenGeneration) {
-                retired = canvasEditors.values.toList()
                 canvasEditors.clear()
                 editorGeneration = current.projectOpenGeneration
             }
@@ -1109,9 +1107,6 @@ class PSD2LiveViewModel : AutoCloseable {
                 CanvasEditor(this, current.activeWorkspace.id, canvasId)
             }
         }
-        // Callbacks run outside the map lock; they may take the workspace runtime's lock.
-        retired.forEach { it.dismissImagePlacement() }
-        return editor
     }
     internal val canvasEditor: CanvasEditor get() = canvasEditorFor(uiState.value.activeCanvas.id)
 
@@ -2198,7 +2193,6 @@ class PSD2LiveViewModel : AutoCloseable {
             analysis = preview.analysis, previewModel = preview, previewModelDirty = false,
             rigEdits = document.rigEdits, generationSource = document.generationSource,
             meshSource = document.meshSource,
-            placementSource = document.placementSource,
             textureOverrides = document.textureOverrides,
             layerOverrides = document.layerOverrides, documentLayerVisibility = document.layerVisibility,
             deletedLayerIds = document.deletedLayerIds, parentOverrides = document.parentOverrides, meshOverrides = document.meshOverrides,
@@ -5853,8 +5847,8 @@ class PSD2LiveViewModel : AutoCloseable {
 	var hierarchyImportHitTest: ((windowX: Int, windowY: Int) -> HierarchyImportTarget?)? = null
 
 	/**
-	 * Imports transparent rasters as layers under [parentDeformerId] (null = root), then opens the
-	 * canvas placement panel for the last imported layer so the artist can fine-tune position.
+	 * Imports transparent rasters as layers under [parentDeformerId] (null = root), each with its mesh, and selects
+	 * the last one for the transform tool.
 	 */
     internal suspend fun importImagesNow(files: List<java.io.File>, parentDeformerId: String?,
                                          expected: WorkspaceProjectSnapshot): WorkspaceMutationResult {
@@ -5880,79 +5874,19 @@ class PSD2LiveViewModel : AutoCloseable {
             try {
                 updateState { it.copy(statusText = tr("status.importingLayers", files.size)) }
                 val result = importImagesNow(files, parentDeformerId, expected)
-                // Opening or another command after this commit cannot arm an old placement panel.
+                // The import is committed with its meshes: select the last image in object mode, where the transform
+                // handles move, scale and rotate it like any mesh (undo removes the import).
                 if (workspaceBackend?.snapshot()?.state != result.state || _state.value.activeWorkspace.id != workspaceId) return@launch
-                val preview = _state.value.previewModel ?: return@launch
                 val ids = result.affectedLayerIds
                 val placeId = ids.lastOrNull() ?: return@launch
-                val source = preview.analysis.source.layers.singleOrNull { it.id.raw == placeId } ?: return@launch
                 val revealed = revealCanvasLayers(result.state, workspaceId, canvasId, ids)
-                updateCanvasPresentation(workspaceId, canvasId, CanvasMode.EDIT) {
-                    it.copy(selectedLayerId = placeId, selectedDeformerId = null)
-                }
-                yield()
                 if (workspaceBackend?.snapshot()?.state != revealed || _state.value.activeWorkspace.id != workspaceId) return@launch
-                if (_state.value.activeCanvas.id == canvasId && _state.value.activeCanvas.mode != CanvasMode.EDIT) {
-                    setCanvasMode(canvasId, CanvasMode.EDIT)
-                }
-                val bounds = source.bounds
-                canvasEditorFor(canvasId).beginLayerPlacement(placeId, source.name, anchorLabel, parentDeformerId,
-                    bounds.left.toFloat(), bounds.top.toFloat(), bounds.width.toFloat(), bounds.height.toFloat(), ids,
-                    requireNotNull(workspaceBackend).beginImagePlacement(requireNotNull(revealed), ids))
+                if (_state.value.activeCanvas.id == canvasId && _state.value.activeCanvas.mode != CanvasMode.EDIT) setCanvasMode(canvasId, CanvasMode.EDIT)
+                canvasEditorFor(canvasId).selectImportedLayer(placeId)
+                selectOnCanvas(workspaceId, canvasId, CanvasMode.EDIT, placeId)
+                offerMeshSplit(ids)
             } catch (failure: Exception) {
                 if (failure is kotlinx.coroutines.CancellationException) throw failure
-                setErrorMessage(failure.message ?: tr("error.importLayerFailed"))
-            }
-        }
-    }
-
-    /** Only the display model changes; the document projection remains the committed baseline. */
-    internal fun projectImagePlacementPreview(preview: RigPreviewModel) {
-        updateState { it.copy(previewModel = preview) }
-        refreshSdkSession(preview)
-    }
-
-    internal fun dismissImagePlacements() {
-        editorsSnapshot().forEach { it.dismissImagePlacement() }
-    }
-
-    fun relocateImportedLayer(
-        placement: io.github.psd2live.application.WorkspaceImagePlacement,
-        layerId: String, name: String, left: Float, top: Float, width: Float, height: Float,
-        commitHistory: Boolean = true, splitCandidates: List<String> = emptyList(), onCommitted: () -> Unit = {},
-    ) {
-        val ui = _state.value
-        val workspaceId = ui.activeWorkspace.id; val canvasId = ui.activeCanvas.id; val mode = ui.activeCanvas.mode
-        val request = io.github.psd2live.project.WorkspaceImageBounds(layerId, left, top, width, height, name.takeUnless { it.isBlank() })
-        val pending = try {
-            if (commitHistory) placement.commit(request, tr("editor.importLayer.placed", name.ifBlank { layerId })) else placement.preview(request)
-        } catch (failure: Exception) { setErrorMessage(failure.message ?: tr("error.importLayerFailed")); return }
-        scope.launch {
-            try {
-                val result = pending.await()
-                if (commitHistory) {
-                    onCommitted()
-                    if (result is WorkspaceMutationResult && workspaceBackend?.snapshot()?.state == result.state && _state.value.activeWorkspace.id == workspaceId) {
-                        selectOnCanvas(workspaceId, canvasId, mode, layerId)
-                        offerMeshSplit(splitCandidates)
-                        val editor = canvasEditorFor(canvasId)
-                        if (editor.hierarchyMode == EditHierarchyMode.PAINT) editor.startPaintSession(layerId, forceReload = true)
-                    }
-                }
-            } catch (failure: Exception) {
-                if (failure is kotlinx.coroutines.CancellationException) return@launch
-                setErrorMessage(failure.message ?: tr("error.importLayerFailed"))
-            }
-        }
-    }
-
-    fun cancelImportedLayerPlacement(placement: io.github.psd2live.application.WorkspaceImagePlacement, onCancelled: () -> Unit) {
-        val pending = try { placement.cancel(tr("editor.importLayer.cancelled")) }
-            catch (failure: Exception) { setErrorMessage(failure.message ?: tr("error.importLayerFailed")); return }
-        scope.launch {
-            try { pending.await(); onCancelled() }
-            catch (failure: Exception) {
-                if (failure is kotlinx.coroutines.CancellationException) return@launch
                 setErrorMessage(failure.message ?: tr("error.importLayerFailed"))
             }
         }
@@ -6758,7 +6692,6 @@ class PSD2LiveViewModel : AutoCloseable {
 		expectedMeshOverrides: Map<String, MeshSettings> = emptyMap(),
         expectedGenerationSource: SourceArt? = null,
         expectedMeshSource: SourceArt? = null,
-        expectedPlacementSource: SourceArt? = null,
         expectedTextureOverrides: Map<String, io.github.psd2live.project.TextureOverride> = emptyMap(),
 		layerVisibility: Map<String, Boolean>,
 		deletedLayerIds: Set<String>,
@@ -6770,7 +6703,6 @@ class PSD2LiveViewModel : AutoCloseable {
 		meshOverrides: Map<String, MeshSettings> = emptyMap(),
         generationSource: SourceArt? = null,
         meshSource: SourceArt? = null,
-        placementSource: SourceArt? = null,
         textureOverrides: Map<String, io.github.psd2live.project.TextureOverride> = emptyMap(),
 	): Boolean {
 		var applied = false
@@ -6786,7 +6718,6 @@ class PSD2LiveViewModel : AutoCloseable {
 				current.rigEdits != expectedRigEdits ||
                 current.generationSource != expectedGenerationSource ||
                 current.meshSource != expectedMeshSource ||
-                current.placementSource != expectedPlacementSource ||
                 current.textureOverrides != expectedTextureOverrides ||
                 current.meshOverrides != expectedMeshOverrides ||
                 (expectedSettings.isNotEmpty() && io.github.psd2live.ui.state.WorkspaceStateCodec.settings(current) != expectedSettings)
@@ -6803,7 +6734,6 @@ class PSD2LiveViewModel : AutoCloseable {
 				rigEdits = rigEdits,
 				generationSource = generationSource,
 				meshSource = meshSource,
-                placementSource = placementSource,
                 textureOverrides = textureOverrides,
 				meshOverrides = meshOverrides,
 				selectedLayerId = current.selectedLayerId?.takeIf { selected ->

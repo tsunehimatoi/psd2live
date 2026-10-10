@@ -22,6 +22,24 @@ internal object WorkspaceLayerInsertionEdits {
         return document.copy(rigEdits = document.rigEdits.copy(splitDrawableIds = document.rigEdits.splitDrawableIds + fixed))
     }
 
+    /**
+     * The mesh ID each of [ids] gets: the one its mesh already has, else a fresh `ArtMeshImage…` no rig, journal record or
+     * other layer holds. A one-layer build alone would name every image the same.
+     */
+    private fun meshIds(document: WorkspaceDocument, current: RigPreviewModel, ids: Set<String>): Map<String, String> {
+        val existing = current.rig.layerIdByDrawableId.entries.filter { it.value in ids }.groupBy({ it.value }, { it.key })
+        val taken = HashSet<String>()
+        current.rig.puppet.drawables.mapTo(taken) { it.id.raw }
+        current.authored.rig.puppet.drawables.mapTo(taken) { it.id.raw }
+        document.rigEdits.authoringJournal.filter { it["op"]?.jsonPrimitive?.content == RasterMeshCreation.OP }
+            .mapTo(taken) { it.getValue("id").jsonPrimitive.content }
+        taken += document.rigEdits.splitDrawableIds.values
+        return ids.associateWith { layer ->
+            document.rigEdits.splitDrawableIds[layer] ?: existing[layer]?.singleOrNull()
+                ?: StableIds.fresh("ArtMeshImage") { it in taken }.also { taken += it }
+        }
+    }
+
     /** Generated root geometry is converted through the actual parent's neutral transform. */
     fun materialize(document: WorkspaceDocument, current: RigPreviewModel, ids: Set<String>, parent: String?,
                             checkCancelled: () -> Unit): WorkspaceDocument {
@@ -30,7 +48,7 @@ internal object WorkspaceLayerInsertionEdits {
             document.source.layers.filter { it.id.raw in ids }, document.source.groups)
         val config = document.config().copy(meshOnly = true, generateDeformers = false, generatePhysics = false,
             parentOverrides = emptyMap(), generationSource = null, meshSource = null, deletedLayerIds = emptySet(),
-            rigEdits = RigEditOverlay.Empty.copy(splitDrawableIds = document.rigEdits.splitDrawableIds.filterKeys { it in ids }))
+            rigEdits = RigEditOverlay.Empty.copy(splitDrawableIds = meshIds(document, current, ids)))
         val generated = PSD2LivePipeline().buildPreview(source, config, ProgressListener { _, _ -> checkCancelled() })
         val parentId = parent?.let(::DeformerId)
         val rig = RasterMeshPlacement.underParents(generated.rig, current.rig.puppet, { parentId }, checkCancelled)
@@ -40,11 +58,6 @@ internal object WorkspaceLayerInsertionEdits {
                 if (document.rigEdits.importedCmo3 == null) command else JsonObject(command +
                     ("source_id" to JsonPrimitive(Cmo3ModelImport.PAINT_SOURCE_ID)))
             }
-        }
-        val baseline = requireNotNull(document.generationSource)
-        // These meshes replay from their creation record, rather than being generated a second time.
-        val blanks = source.layers.map { layer ->
-            (WorkspaceSourceLayer.copyOf(layer, layer.order) as WorkspaceSourceLayer).copy(raster = LayerRaster(1, 1, ByteArray(4)))
         }
         val byId = records.associateBy { it.getValue("id").jsonPrimitive.content }
         val replaced = mutableSetOf<String>()
@@ -62,12 +75,7 @@ internal object WorkspaceLayerInsertionEdits {
             val id = record.getValue("id").jsonPrimitive.content
             if (current.authored.rig.puppet.drawables.any { it.id.raw == id }) RasterMeshCreation.replacing(record) else record
         }
-        // A layer whose unpainted pixels a paint pinned holds them no longer; a blank it already holds stays as it is.
-        val held = baseline.layers.map { layer ->
-            if (layer.id.raw !in ids || layer.raster.let { it.width == 1 && it.height == 1 && it.rgba.all { byte -> byte == 0.toByte() } }) layer
-            else (WorkspaceSourceLayer.copyOf(layer, layer.order) as WorkspaceSourceLayer).copy(raster = LayerRaster(1, 1, ByteArray(4)))
-        }
-        return document.copy(generationSource = WorkspaceSourceArt(baseline.widthPx, baseline.heightPx, held + blanks.filterNot { layer -> baseline.layers.any { it.id == layer.id } }, baseline.groups),
-            rigEdits = document.rigEdits.copy(authoringJournal = journal))
+        // The generators never mesh a layer a creation record owns ([RigGenerationSource.createdCoverage]); no placeholder is stored.
+        return document.copy(rigEdits = document.rigEdits.copy(authoringJournal = journal))
     }
 }

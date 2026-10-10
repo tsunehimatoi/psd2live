@@ -14,7 +14,7 @@ internal object RigGenerationSource {
     data class Analyses(val geometry: PipelineAnalysis, val textures: PipelineAnalysis)
 
     fun analyze(source: SourceArt, config: PipelineConfig): PipelineAnalysis = AnalysisMemo.get(source, config.generationSource, config, "source") {
-        val input = config.generationSource?.let { geometrySource(source, it, config.rigEdits) } ?: source
+        val input = generationReference(source, config)?.let { geometrySource(source, it, config.rigEdits) } ?: source
         // The analysis stands for the current art, so it composites that, never the generation input.
         val analysis = CharacterAnalyzer.analyze(input, RigLayerDeletion.generationConfig(config)) { PreviewRenderer.composite(source) }
         if (input === source) analysis else analysis.copy(source = source)
@@ -43,8 +43,36 @@ internal object RigGenerationSource {
         }
     }
 
+    /**
+     * What the generators read a layer's geometry from: the frozen generation input, else - when a creation record owns
+     * a layer's mesh - the current art with that layer as a stand-in ([geometrySource]), else nothing (the current art).
+     */
+    private fun generationReference(source: SourceArt, config: PipelineConfig): SourceArt? =
+        config.generationSource ?: source.takeIf { createdCoverage(config.rigEdits).isNotEmpty() }
+
+    /**
+     * The layers whose meshes creation records own (imported images, meshes created on art the generation never read),
+     * with the canvas area their meshes sample. The generators never mesh them: they are textured like any layer, and
+     * their meshes are the records' - in the authored rig, not the generated one.
+     */
+    internal fun createdCoverage(overlay: RigEditOverlay): Map<String, LayerBounds> {
+        val coverage = LinkedHashMap<String, LayerBounds>()
+        for (command in overlay.authoringJournal) {
+            if (command["op"]?.jsonPrimitive?.contentOrNull != RasterMeshCreation.OP) continue
+            val layer = command.getValue("layer_id").jsonPrimitive.content
+            val bounds = RasterMeshCreation.sourceBounds(command)
+            coverage[layer] = coverage[layer]?.let { union(it, bounds) } ?: bounds
+        }
+        return coverage
+    }
+
+    private fun union(a: LayerBounds, b: LayerBounds): LayerBounds {
+        val left = minOf(a.left, b.left); val top = minOf(a.top, b.top)
+        return LayerBounds(left, top, maxOf(a.left + a.width, b.left + b.width) - left, maxOf(a.top + a.height, b.top + b.height) - top)
+    }
+
     fun prepare(input: PipelineAnalysis, config: PipelineConfig, textureConfig: PipelineConfig = config): Analyses {
-        val reference = config.generationSource ?: return RigBuildProfile.stage("prepare: mouth lips") {
+        val reference = generationReference(input.source, config) ?: return RigBuildProfile.stage("prepare: mouth lips") {
             MouthLipLayers.prepare(PrimitiveResolution.of(config.rigEdits).let { if (it.active) currentParts(input, it, config) else input }, config)
         }.let { Analyses(it, it) }
         val resolution = PrimitiveResolution.of(config.rigEdits)
@@ -57,10 +85,7 @@ internal object RigGenerationSource {
             .let { if (resolution.active) resolvedAnalysis(it, resolution, config) else it }
         val geometry = RigBuildProfile.stage("prepare: geometry mouth lips") { MouthLipLayers.prepare(geometryAnalysis, config) }
         val current = input.source.layers.associateBy { it.id.raw }
-        val creationCoverage = config.rigEdits.authoringJournal.filter { it["op"]?.jsonPrimitive?.contentOrNull == RasterMeshCreation.OP }
-            .associate { command ->
-                command.getValue("layer_id").jsonPrimitive.content to RasterMeshCreation.sourceBounds(command)
-            }
+        val creationCoverage = createdCoverage(config.rigEdits)
         val meshSources = (config.meshSource ?: reference).layers.associateBy { it.id.raw }
         val lipInputs = geometry.copy(layers = geometry.layers.filter { it.source !is MouthLipLayer }.map { layer ->
             meshSources[layer.source.id.raw]?.let { source -> CharacterAnalyzer.classify(source, textureConfig) } ?: layer
@@ -167,6 +192,7 @@ internal object RigGenerationSource {
         }
         val previous = reference.layers.associateBy { it.id.raw }
         val partitions = partitionCoverage(overlay)
+        val created = createdCoverage(overlay)
         val resolution = PrimitiveResolution.of(overlay)
         // Version 2 parts generate like any layer (Rule A); only version 1 parts stay out of the generation.
         val owned = if (resolution.active) resolution.legacyOwnedLayers else ArtPrimitiveJournal.ownedLayers(overlay)
@@ -183,12 +209,12 @@ internal object RigGenerationSource {
             override val layers = (if (owned.isEmpty() && restored.isEmpty()) current.layers else
                 current.layers.filterNot { it.id.raw in owned } + restored).map { layer ->
                 if (layer.id.raw in superseded && layer.id.raw !in currentById) return@map layer
-                partitions[layer.id.raw]?.let { coverage ->
+                (partitions[layer.id.raw] ?: created[layer.id.raw])?.let { coverage ->
                     val old = previous[layer.id.raw]?.bounds ?: layer.bounds
                     val left = minOf(old.left, coverage.left); val top = minOf(old.top, coverage.top)
                     val right = maxOf(old.left + old.width, coverage.left + coverage.width)
                     val bottom = maxOf(old.top + old.height, coverage.top + coverage.height)
-                    // The ordered partition journal owns this geometry. Keep its texture extent
+                    // A partition or creation record owns this geometry. Keep its texture extent
                     // without adding derived pixels to the durable original generation source.
                     return@map object : SourceLayer by layer {
                         override val bounds = LayerBounds(left, top, right - left, bottom - top)

@@ -18,8 +18,6 @@ data class WorkspaceDocument(
 	val generationSource: SourceArt? = null,
 	/** Pixels at the last explicit mesh rebuild, used by generated contour textures. */
 	val meshSource: SourceArt? = null,
-    /** Original imported pixels used by absolute placement; excluded from rig generation. */
-    val placementSource: SourceArt? = null,
 	/**
 	 * Per-layer texture settings by source layer ID (density, lock, atlas pin). Absent or default entries mean
 	 * the automatic atlas budget; the atlas packer reads them through [PipelineConfig.textureOverrides].
@@ -65,6 +63,71 @@ data class LayerCanvasRect(
 	}
 }
 
+/**
+ * Where a layer sits on the canvas after the user moved, scaled or rotated it: canvas' = A·canvas + t, applied to the
+ * layer's own frame (its [LayerCanvasRect]). The frame is what the layer's pixels, texture tile and texture coordinates
+ * are anchored to, so a transform never resamples pixels, repacks the atlas or touches texture coordinates; it moves
+ * the layer's meshes (the `layer_transform` edit) and where the canvas shows its pixels
+ * for painting. Generation reads the frame, not the transform: moving a layer is the user's edit, not a new input.
+ *
+ * `x' = a·x + c·y + e`, `y' = b·x + d·y + f`, in canvas units with y down.
+ */
+data class LayerTransform(val a: Float, val b: Float, val c: Float, val d: Float, val e: Float, val f: Float) {
+	init {
+		require(listOf(a, b, c, d, e, f).all(Float::isFinite)) { "Layer transform must be finite" }
+		require(kotlin.math.abs(a * d - b * c) > 1e-8f) { "Layer transform must be invertible" }
+	}
+
+	val isIdentity: Boolean get() = a == 1f && b == 0f && c == 0f && d == 1f && e == 0f && f == 0f
+
+	/** Whether this only moves and scales along the canvas axes (no turn, skew or flip). */
+	val isAxisAligned: Boolean get() = b == 0f && c == 0f && a > 0f && d > 0f
+
+	fun x(x: Float, y: Float): Float = a * x + c * y + e
+	fun y(x: Float, y: Float): Float = b * x + d * y + f
+
+	/** This after [first]: the transform that applies [first], then this. */
+	fun after(first: LayerTransform) = LayerTransform(
+		a * first.a + c * first.b + 0f, b * first.a + d * first.b + 0f,
+		a * first.c + c * first.d + 0f, b * first.c + d * first.d + 0f,
+		a * first.e + c * first.f + e + 0f, b * first.e + d * first.f + f + 0f)
+
+	fun inverse(): LayerTransform {
+		val det = a * d - b * c
+		val ia = d / det; val ib = -b / det; val ic = -c / det; val id = a / det
+		return LayerTransform(ia, ib, ic, id, -(ia * e + ic * f), -(ib * e + id * f))
+	}
+
+	/** [rect] transformed; only for an axis-aligned transform. */
+	fun applyTo(rect: LayerCanvasRect): LayerCanvasRect {
+		require(isAxisAligned) { "Only a move or scale keeps a rectangle a rectangle" }
+		return LayerCanvasRect(x(rect.left, rect.top), y(rect.left, rect.top), rect.width * a, rect.height * d)
+	}
+
+	fun toList(): List<Float> = listOf(a, b, c, d, e, f)
+
+	companion object {
+		val IDENTITY = LayerTransform(1f, 0f, 0f, 1f, 0f, 0f)
+
+		fun of(values: List<Float>): LayerTransform {
+			require(values.size == 6) { "A layer transform has six numbers [a, b, c, d, e, f]" }
+			return LayerTransform(values[0], values[1], values[2], values[3], values[4], values[5])
+		}
+	}
+}
+
+/** The layer's transform on the canvas; identity for a layer never moved as a whole. */
+internal val SourceLayer.transform: LayerTransform
+	get() = (this as? WorkspaceSourceMetadata)?.layerTransform ?: LayerTransform.IDENTITY
+
+/**
+ * Where the canvas shows the layer's pixels: its frame under its [transform]; null when the transform turns or skews
+ * it, so no rectangle describes it.
+ */
+internal fun SourceLayer.displayedRect(): LayerCanvasRect? = transform.let { t ->
+	if (t.isIdentity) canvasRect() else if (t.isAxisAligned) t.applyTo(canvasRect()) else null
+}
+
 /** The layer's float canvas rectangle when it differs from its integer bounds; null means exactly the bounds. */
 internal val SourceLayer.storedCanvasRect: LayerCanvasRect?
 	get() = (this as? WorkspaceSourceMetadata)?.rect?.takeUnless { it.matches(bounds) }
@@ -79,6 +142,8 @@ internal interface WorkspaceSourceMetadata : SourceLayer {
 	val sourceSpatialReferenceId: String?
 	/** Float canvas rectangle; null (or equal to [bounds]) means the integer bounds. */
 	val rect: LayerCanvasRect? get() = null
+	/** The layer's [LayerTransform]; null means identity. */
+	val layerTransform: LayerTransform? get() = null
 }
 
 internal data class WorkspaceSourceArt(
@@ -105,6 +170,7 @@ internal data class WorkspaceSourceLayer(
 	override val sourceSpatialReferenceId: String?,
 	override val derived: Boolean,
 	override val rect: LayerCanvasRect? = null,
+	override val layerTransform: LayerTransform? = null,
 ) : WorkspaceSourceMetadata {
 	init {
 		require(rect == null || rect.within(bounds)) { "Layer rectangle must lie within its integer bounds" }
@@ -128,6 +194,7 @@ internal data class WorkspaceSourceLayer(
 			sourceSpatialReferenceId = (layer as? WorkspaceSourceMetadata)?.sourceSpatialReferenceId,
 			derived = (layer as? WorkspaceSourceMetadata)?.derived == true,
 			rect = (layer as? WorkspaceSourceMetadata)?.rect,
+			layerTransform = (layer as? WorkspaceSourceMetadata)?.layerTransform?.takeUnless { it.isIdentity },
 		)
 	}
 }

@@ -455,7 +455,6 @@ internal class WorkspaceStore(
 		encodeSource(document.source, project).forEach { (key, value) -> put(key, value) }
 		document.generationSource?.let { put("generationSource", encodeSource(it, project)) }
 		document.meshSource?.let { put("meshSource", encodeSource(it, project)) }
-        document.placementSource?.let { put("placementSource", encodeSource(it, project)) }
 		putJsonObject("layerVisibility") { document.layerVisibility.toSortedMap().forEach { (id, visible) -> put(id, visible) } }
 		putJsonArray("deletedLayerIds") { document.deletedLayerIds.sorted().forEach { add(JsonPrimitive(it)) } }
 		putJsonObject("layerOverrides") {
@@ -760,7 +759,6 @@ internal class WorkspaceStore(
 			source = source,
 			generationSource = value["generationSource"]?.let { decodeSource(it.jsonObject, project, rasterCache) },
 			meshSource = value["meshSource"]?.let { decodeSource(it.jsonObject, project, rasterCache) },
-            placementSource = value["placementSource"]?.let { decodeSource(it.jsonObject, project, rasterCache) },
 			layerVisibility = value.optionalObject("layerVisibility").mapValues { it.value.jsonPrimitive.booleanOrNull ?: invalid("layerVisibility.${it.key}") },
 			deletedLayerIds = value.optionalArray("deletedLayerIds").map { it.jsonPrimitive.content }.toSet(),
 			layerOverrides = overrides,
@@ -819,6 +817,9 @@ internal class WorkspaceStore(
 					layer.storedCanvasRect?.let { rect ->
 						putJsonArray("rect") { add(JsonPrimitive(rect.left)); add(JsonPrimitive(rect.top)); add(JsonPrimitive(rect.width)); add(JsonPrimitive(rect.height)) }
 					}
+					layer.transform.takeUnless { it.isIdentity }?.let { transform ->
+						putJsonArray("transform") { transform.toList().forEach { add(JsonPrimitive(it)) } }
+					}
 				})
 			}
 		}
@@ -859,6 +860,10 @@ internal class WorkspaceStore(
 					val values = element.jsonArray.map { it.jsonPrimitive.floatOrNull ?: invalid("rect") }
 					if (values.size != 4) invalid("rect")
 					LayerCanvasRect(values[0], values[1], values[2], values[3])
+				},
+				layerTransform = layer["transform"]?.let { element ->
+					val values = element.jsonArray.map { it.jsonPrimitive.floatOrNull ?: invalid("transform") }
+					runCatching { LayerTransform.of(values) }.getOrElse { invalid("transform") }.takeUnless { it.isIdentity }
 				},
 			)
 		}

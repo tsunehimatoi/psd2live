@@ -13,9 +13,6 @@ class WorkspacePortBindingsTest {
     @Test fun sourceAndObservationCatalogsRunWithoutACompleteBackendOrGui() = runBlocking<Unit> {
         val requests = mutableListOf<JsonObject>()
         val source = object : WorkspaceSourcePort {
-            override fun beginImagePlacement(state: String, layerIds: List<String>): WorkspaceImagePlacement = error("Unexpected placement")
-            override suspend fun setImageBounds(state: String, bounds: WorkspaceImageBounds): WorkspaceMutationResult = error("Unexpected placement")
-            override suspend fun cancelImageImport(state: String, layerIds: List<String>): WorkspaceMutationResult = error("Unexpected cancellation")
             override suspend fun importImages(state: String, paths: List<Path>, parentDeformerId: String?): WorkspaceMutationResult = error("Unexpected image import")
             override suspend fun createArtwork(arguments: JsonObject): WorkspaceMutationResult {
                 requests += arguments

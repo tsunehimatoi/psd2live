@@ -39,6 +39,8 @@ internal object ProjectFormatV2 {
 	const val NODE_SCHEMA = 1
 	/** Schema of a node holding texture fields (layer `rect`, `textureOverrides`, the `atlas` setting). */
 	const val NODE_SCHEMA_TEXTURES = 2
+	/** A node with a layer moved as a whole ([LayerTransform], `transform`), which schema-2 readers would drop. */
+	const val NODE_SCHEMA_TRANSFORMS = 3
 	/** Schema of a revision index whose journal names no payload node. */
 	const val REVISION_SCHEMA = 1
 	/** Schema of a revision index whose journal names payload nodes (listed under `payloads`). */
@@ -211,6 +213,13 @@ internal object ProjectFormatV2 {
 	 */
 	private fun schemaOf(kind: String, value: JsonObject): Int {
 		fun layersHaveRect(source: JsonObject?) = source?.get("layers")?.jsonArray.orEmpty().any { (it as? JsonObject)?.containsKey("rect") == true }
+		fun layersHaveTransform(source: JsonObject?) = source?.get("layers")?.jsonArray.orEmpty().any { (it as? JsonObject)?.containsKey("transform") == true }
+		val transformed = when (kind) {
+			"source" -> layersHaveTransform(value)
+			in sourceParts.values -> value.values.any { layersHaveTransform(it as? JsonObject) }
+			else -> false
+		}
+		if (transformed) return NODE_SCHEMA_TRANSFORMS
 		val newer = when (kind) {
 			"source" -> layersHaveRect(value)
 			in sourceParts.values -> value.values.any { layersHaveRect(it as? JsonObject) }
@@ -240,7 +249,7 @@ internal object ProjectFormatV2 {
 		}
 		fun load(folder: String, kind: String, hash: String): JsonObject {
 			val value = cache.getOrPut("$folder/$hash") { read(root, folder, hash) }
-			require(value["schema"]?.jsonPrimitive?.intOrNull in NODE_SCHEMA..NODE_SCHEMA_TEXTURES && value["kind"]?.jsonPrimitive?.contentOrNull == kind) {
+			require(value["schema"]?.jsonPrimitive?.intOrNull in NODE_SCHEMA..NODE_SCHEMA_TRANSFORMS && value["kind"]?.jsonPrimitive?.contentOrNull == kind) {
 				"Unsupported document node: $kind $hash"
 			}
 			return value

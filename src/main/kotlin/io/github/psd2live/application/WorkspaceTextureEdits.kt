@@ -157,8 +157,10 @@ class WorkspaceTextureView internal constructor(private val capture: WorkspaceCa
         val layer = document.source.layers.firstOrNull { it.id.raw == layerId }
             ?: model.analysis.layers.firstOrNull { it.source.id.raw == layerId }?.source?.textureLayer
             ?: throw IllegalArgumentException("Layer not found: $layerId")
-        val space = LayerSpace.of(layer)
-        return WorkspaceLayerTexture(layerId, layer.name, layer.canvasRect(), layer.bounds, layer.raster.width, layer.raster.height,
+        // Where the canvas shows the layer, after it was moved or scaled as a whole; its pixels per canvas unit follow.
+        val shown = layer.displayedRect() ?: layer.canvasRect()
+        val space = LayerSpace(shown.left, shown.top, shown.width, shown.height, layer.raster.width, layer.raster.height)
+        return WorkspaceLayerTexture(layerId, layer.name, shown, layer.bounds, layer.raster.width, layer.raster.height,
             space.scaleX, space.scaleY, document.textureOverrides[layerId] ?: TextureOverride(), layerId in document.deletedLayerIds,
             tile(layerId), model.atlas.fit)
     }
@@ -370,7 +372,7 @@ internal object WorkspaceTextureEdits {
 
     /** Edits whose results must keep every tile on its spot; budget, packing and pixel edits lay tiles out anew by design. */
     val placementEdits = setOf("atlas_set_tile", "layer_set_pixel_density")
-    val relayoutEdits = setOf("atlas_set_budget", "atlas_pack", "layer_replace_image", "layer_set_canvas_rect")
+    val relayoutEdits = setOf("atlas_set_budget", "atlas_pack", "layer_replace_image")
 
     /** The layers whose texture [edit] changed between [before] and [after]. */
     fun changedLayers(edit: WorkspaceTextureEdit, before: WorkspaceDocument, after: WorkspaceDocument): List<String> = when (edit) {
@@ -405,25 +407,22 @@ internal object WorkspaceTextureEdits {
         require(id !in document.deletedLayerIds) { "Layer is deleted: $id" }
     }
 
+    /**
+     * Moves and scales [edit]'s layer so the canvas shows its pixels over the rectangle: a [WorkspaceLayerTransform] from
+     * where they show now. The pixels, the texture and the generation input stay; the layer's meshes move.
+     */
     private fun canvasRect(document: WorkspaceDocument, model: RigPreviewModel, edit: WorkspaceTextureEdit.SetCanvasRect): WorkspaceDocument {
         val layer = sourceLayer(document, edit.layerId)
         val rect = edit.rect
         require(rect.width > 0f && rect.height > 0f) { "Canvas rectangle needs a positive width and height" }
-        val left = floor(rect.left.toDouble()); val top = floor(rect.top.toDouble())
-        val right = ceil(rect.right.toDouble()); val bottom = ceil(rect.bottom.toDouble())
-        require(left >= Int.MIN_VALUE / 2 && top >= Int.MIN_VALUE / 2 && right <= Int.MAX_VALUE / 2 && bottom <= Int.MAX_VALUE / 2) {
-            "Canvas rectangle exceeds the canvas coordinate range"
-        }
-        val bounds = LayerBounds(left.toInt(), top.toInt(), (right - left).toInt().coerceAtLeast(1), (bottom - top).toInt().coerceAtLeast(1))
-        require(bounds.width.toLong() * bounds.height <= MAX_PIXELS) { "Canvas rectangle covers more than 16 megapixels" }
-        val stored = rect.takeUnless { it.matches(bounds) }
-        if (layer.bounds == bounds && layer.canvasRect() == (stored ?: LayerCanvasRect.of(bounds))) return document
-        requireUnbound(document, model, edit.layerId, "Moving a layer's canvas rectangle")
-        fun moved(old: SourceLayer) = (WorkspaceSourceLayer.copyOf(old, old.order) as WorkspaceSourceLayer).copy(bounds = bounds, rect = stored)
-        // The generation inputs move with the layer, so the generator places its mesh by the new rectangle.
-        return document.copy(source = swap(document.source, edit.layerId, ::moved)!!,
-            generationSource = swap(document.generationSource, edit.layerId, ::moved),
-            meshSource = swap(document.meshSource, edit.layerId, ::moved))
+        val shown = requireNotNull(layer.displayedRect()) { "The layer is turned; move it with layer_transform" }
+        require(shown.width > 0f && shown.height > 0f) { "The layer has no area to scale" }
+        val sx = rect.width / shown.width; val sy = rect.height / shown.height
+        if (sx == 1f && sy == 1f && rect.left == shown.left && rect.top == shown.top) return document
+        val delta = LayerTransform(sx, 0f, 0f, sy, rect.left - shown.left * sx, rect.top - shown.top * sy)
+        return WorkspaceLayerTransform.apply(document, model, buildJsonObject {
+            put("layer_id", edit.layerId); put("matrix", JsonArray(delta.toList().map(::JsonPrimitive)))
+        })
     }
 
     private fun replace(document: WorkspaceDocument, model: RigPreviewModel, edit: WorkspaceTextureEdit.ReplaceImage,
@@ -603,7 +602,7 @@ internal object WorkspaceTextureEdits {
             if (op in identityRecords || !references(entry)) continue
             require(op !in materializedRecords) {
                 "$action is not supported for layer $id: its mesh geometry is materialized by a $op record (split, created or rebuilt mesh). " +
-                    "Use layer_set_bounds for file-imported layers, or history_checkout before that record"
+                    "Move it as a mesh (canvas_geometry), or history_checkout before that record"
             }
             throw IllegalArgumentException("$action is not supported for layer $id: authored edits ($op) are bound to its meshes. " +
                 "Move it before authoring, or undo those edits first")

@@ -25,7 +25,8 @@ internal class WorkspaceImageLayerCommands(private val runtime: WorkspaceRuntime
         require(parent == null || before.model.rig.puppet.deformers.any { it.id.raw == parent }) { "Parent deformer not found" }
         val layers = runInterruptible(Dispatchers.Default) {
             var pixels = 0L
-            // Each layer is named from its file and place in the batch, so the same import names the same layers.
+            // A fresh ID per imported layer: undoing an import and importing the same file again never revives state kept
+            // under the earlier layer's ID.
             val taken = before.document.source.layers.mapTo(HashSet()) { it.id.raw }
             paths.mapIndexed { index, path ->
                 context.ensureActive()
@@ -34,7 +35,7 @@ internal class WorkspaceImageLayerCommands(private val runtime: WorkspaceRuntime
                 val image = LayerImport.decodeRasterFile(file, { context.ensureActive() })
                 pixels += image.width.toLong() * image.height
                 require(pixels <= 33_554_432L) { "Image batch exceeds 32 megapixels" }
-                val id = StableIds.fresh(StableIds.stem("import:", index, path.toString(), image.width, image.height)) { it in taken }
+                val id = StableIds.fresh("import:" + java.util.UUID.randomUUID().toString().replace("-", "").take(12)) { it in taken }
                 taken += id
                 LayerImport.placedLayer(image, before.document.source.widthPx, before.document.source.heightPx,
                     LayerImport.displayNameOf(file), id, checkCancelled = { context.ensureActive() })
@@ -44,19 +45,14 @@ internal class WorkspaceImageLayerCommands(private val runtime: WorkspaceRuntime
         val ids = layers.map { it.id.raw }
         val committed = commands.executeCandidate(projectId, state, summary, author, mutation = { document, model ->
             context.ensureActive()
-            val frozen = WorkspaceLayerInsertionEdits.freeze(document, model)
-            val all = frozen.source.layers + layers
-            val source = WorkspaceSourceArt(frozen.source.widthPx, frozen.source.heightPx,
-                all.mapIndexed { index, layer -> WorkspaceSourceLayer.copyOf(layer, all.lastIndex - index) }, frozen.source.groups)
-            val originals = frozen.placementSource
-            val placementSource = WorkspaceSourceArt(source.widthPx, source.heightPx, originals?.layers.orEmpty() + layers, originals?.groups.orEmpty())
-            val candidate = frozen.copy(source = source, placementSource = placementSource, parentOverrides = frozen.parentOverrides + ids.associateWith { parent },
-                layerVisibility = frozen.layerVisibility + ids.associateWith { true },
-                layerOverrides = frozen.layerOverrides + ids.associateWith { LayerClassificationOverride(LayerType.PRESET, SemanticTag.UNKNOWN, Side.NONE) })
-            val identified = WorkspaceLayerInsertionEdits.identities(candidate, model)
-            if (candidate.rigEdits.importedCmo3 != null || parent != null && model.baseRig.puppet.deformers.none { it.id.raw == parent })
-                WorkspaceLayerInsertionEdits.materialize(identified, model, ids.toSet(), parent) { context.ensureActive() }
-            else identified
+            val all = document.source.layers + layers
+            val source = WorkspaceSourceArt(document.source.widthPx, document.source.heightPx,
+                all.mapIndexed { index, layer -> WorkspaceSourceLayer.copyOf(layer, all.lastIndex - index) }, document.source.groups)
+            // An imported image is the user's object: its mesh is created once, under its parent, in the authored rig, and the
+            // generators never read it ([RigGenerationSource.createdCoverage]). Moving it later is a mesh edit like any other.
+            val candidate = document.copy(source = source, layerVisibility = document.layerVisibility + ids.associateWith { true },
+                layerOverrides = document.layerOverrides + ids.associateWith { LayerClassificationOverride(LayerType.PRESET, SemanticTag.UNKNOWN, Side.NONE) })
+            WorkspaceLayerInsertionEdits.materialize(candidate, model, ids.toSet(), parent) { context.ensureActive() }
         }, beforeCommit = { captured, document, model ->
             context.ensureActive()
             context[WorkspaceJobContext]?.progress(0.95f, "Committing imported images")

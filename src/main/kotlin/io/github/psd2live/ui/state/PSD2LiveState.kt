@@ -604,7 +604,6 @@ data class PSD2LiveState(
 	val rigEdits: RigEditOverlay = RigEditOverlay.Empty,
 	val generationSource: org.umamo.format.art.SourceArt? = null,
 	val meshSource: org.umamo.format.art.SourceArt? = null,
-    val placementSource: org.umamo.format.art.SourceArt? = null,
 	/** Projection of the document's per-layer texture overrides; kept so GUI commits do not drop them. */
 	val textureOverrides: Map<String, io.github.psd2live.project.TextureOverride> = emptyMap(),
 	/** Projection of the optional `atlas` budget setting; null keeps the legacy atlasSize/texturePadding behaviour. */

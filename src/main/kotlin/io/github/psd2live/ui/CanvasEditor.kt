@@ -12,8 +12,8 @@ import androidx.compose.ui.geometry.Rect
 import io.github.psd2live.application.CanvasDraftScope
 import io.github.psd2live.application.CanvasDraftSubmit
 import io.github.psd2live.application.WorkspaceCanvasInputDraft
-import io.github.psd2live.application.operation
 import io.github.psd2live.core.*
+import io.github.psd2live.project.transform
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.tutorial.expandShortcutMarkup
 import io.github.psd2live.ui.state.*
@@ -42,37 +42,6 @@ enum class EditHierarchyMode {
     SKELETON,
     /** 绘画: raster repainting of one layer slice. */
     PAINT,
-}
-
-/**
- * Where a box drag that moved [before] to [after] takes [rect], or null when the drag did more than move and scale
- * along the canvas axes (a turn, a flip, a skew, or points dragged apart).
- *
- * Both point lists are world coordinates (canvas pixels, y up); [rect] and the result are canvas pixels, y down.
- */
-internal fun movedLayerRect(before: FloatArray, after: FloatArray, rect: io.github.psd2live.project.LayerCanvasRect): io.github.psd2live.project.LayerCanvasRect? {
-    if (before.size != after.size || before.size < 6) return null
-    fun span(points: FloatArray, axis: Int): Pair<Float, Float> {
-        var lo = Float.POSITIVE_INFINITY; var hi = Float.NEGATIVE_INFINITY
-        for (i in axis until points.size step 2) { lo = min(lo, points[i]); hi = max(hi, points[i]) }
-        return lo to hi
-    }
-    val (x0, x1) = span(before, 0); val (y0, y1) = span(before, 1)
-    val (u0, u1) = span(after, 0); val (v0, v1) = span(after, 1)
-    if (x1 - x0 < 1e-3f || y1 - y0 < 1e-3f || u1 - u0 < 1e-3f || v1 - v0 < 1e-3f) return null
-    val sx = (u1 - u0) / (x1 - x0); val sy = (v1 - v0) / (y1 - y0)
-    val tolerance = 0.05f + 1e-4f * max(u1 - u0, v1 - v0)
-    for (i in 0 until before.size / 2) {
-        if (abs(u0 + (before[i * 2] - x0) * sx - after[i * 2]) > tolerance) return null
-        if (abs(v0 + (before[i * 2 + 1] - y0) * sy - after[i * 2 + 1]) > tolerance) return null
-    }
-    val left = u0 + (rect.left - x0) * sx
-    val right = u0 + (rect.left + rect.width - x0) * sx
-    // Canvas y is world -y, so the rectangle's top edge is its highest world y.
-    val top = -(v0 + (-rect.top - y0) * sy)
-    val bottom = -(v0 + (-(rect.top + rect.height) - y0) * sy)
-    if (!(right - left > 0f && bottom - top > 0f)) return null
-    return io.github.psd2live.project.LayerCanvasRect(left, top, right - left, bottom - top)
 }
 
 /** Persist the mode's intent so preview and history replay use identical UV semantics. */
@@ -246,7 +215,7 @@ internal enum class CreateRelation {
     AS_CHILD,
 }
 
-internal enum class CreatePlacementKind { WARP, ROTATION, PATH, LAYER }
+internal enum class CreatePlacementKind { WARP, ROTATION, PATH }
 
 /** Which handle is being dragged while placing: the ghost box (see [CanvasEditor.placementBoxHandle]), or a Rotation's pivot or tip. */
 internal enum class PlacementHandle { NONE, BOX, PIVOT, TIP }
@@ -277,12 +246,11 @@ internal data class CreatePlacement(
     /**
      * Parent deformer whose local frame owns [localX]-[tipY]; null = model root.
      * Matches the parent / mesh parent that [CanvasEdits] will assign.
-     * For [CreatePlacementKind.LAYER], ignored — bounds are canvas pixels.
      */
     val spaceParentId: String?,
     var name: String,
     var partId: String?,
-    /** Parent-local AABB for Warp (mesh positions / lattice units), or canvas AABB for Layer. */
+    /** Parent-local AABB for Warp (mesh positions / lattice units). */
     var localX: Float,
     var localY: Float,
     var localW: Float,
@@ -298,12 +266,6 @@ internal data class CreatePlacement(
     /** Bezier edit division — Level-2 handle density. */
     var bezierRows: Int = 2,
     var bezierCols: Int = 2,
-    /**
-     * Source-layer ids to remove if this LAYER placement is cancelled
-     * (the whole drop batch, while only [anchorId] is being adjusted).
-     */
-    val cancelLayerIds: List<String> = emptyList(),
-    val imagePlacement: io.github.psd2live.application.WorkspaceImagePlacement? = null,
     /** The ghost box's anchor as a point of the box (see [TransformFrame.anchorUv]); null on its centre. */
     val anchor: Offset? = null,
 )
@@ -1108,7 +1070,6 @@ internal class CanvasEditor(
             tool == CanvasTool.TRANSFORM -> "editor.transformHint"
             tool == CanvasTool.CREATE_WARP -> if (placement != null) "editor.placementDragHint" else "editor.createWarpHint"
             tool == CanvasTool.CREATE_ROTATION -> if (placement != null) "editor.placementRotationHint" else "editor.createRotationHint"
-            placement?.kind == CreatePlacementKind.LAYER -> "editor.placementLayerHint"
             else -> "editor.hint"
         }
         val glueCount = if (tool == CanvasTool.GLUE) glueMeshCount() else -1
@@ -1196,7 +1157,7 @@ internal class CanvasEditor(
      * 16 of the layer's pixels however large or small the layer is shown; 1 with no paint session.
      */
     val paintPixelsPerUnit: Float
-        get() = paintSession?.let { sqrt(it.scaleX * it.scaleY) }?.takeIf { it.isFinite() && it > 0f } ?: 1f
+        get() = paintSession?.let { sqrt(it.scaleX * it.scaleY) / sqrt(it.frame.a * it.frame.d) }?.takeIf { it.isFinite() && it > 0f } ?: 1f
 
     /** Whether the active tool stamps the paint tip, which is what the brush keys and HUD act on. */
     val paintBrushActive: Boolean
@@ -1561,7 +1522,6 @@ internal class CanvasEditor(
     private var objectTargets = emptyList<CanvasTarget>()
     private var pendingObjects = emptyList<JsonObject>()
     /** The rectangle an object-mode box drag moves a file-imported layer to, when the drag only moves and scales it. */
-    private var pendingBounds: io.github.psd2live.project.WorkspaceImageBounds? = null
     private var start = Offset.Zero
     private var previous = Offset.Zero
     private var targetAtPress: CanvasTarget? = null
@@ -1907,8 +1867,12 @@ internal class CanvasEditor(
         if (currentSession != null) {
             discardPaintSession()
         }
+        // The session paints in the layer's own frame; the canvas shows it where the layer was moved or scaled to.
+        val frame = state.previewModel?.analysis?.source?.layers?.singleOrNull { it.id.raw == targetLid }?.transform
+            ?: io.github.psd2live.project.LayerTransform.IDENTITY
+        if (!frame.isIdentity && !frame.isAxisAligned) { error = tr("editor.paintTurnedLayer"); return null }
         val handle = viewModel.beginPaintSession(targetLid) ?: return null
-        val newSession = PaintSession(handle)
+        val newSession = PaintSession(handle).also { it.frame = frame }
         paintSession = newSession
         return newSession
     }
@@ -1992,8 +1956,9 @@ internal class CanvasEditor(
 
     fun screenToCanvasPixel(pos: Offset, viewport: CanvasViewport): Pair<Int, Int>? {
         val session = paintSession ?: return null
-        val cx = viewport.canvasX(pos.x).toInt()
-        val cy = viewport.canvasY(pos.y).toInt()
+        val (fx, fy) = session.toFrame(viewport.canvasX(pos.x).toFloat(), viewport.canvasY(pos.y).toFloat())
+        val cx = kotlin.math.floor(fx).toInt()
+        val cy = kotlin.math.floor(fy).toInt()
         if (cx !in 0 until session.canvasWidth || cy !in 0 until session.canvasHeight) return null
         return cx to cy
     }
@@ -2048,8 +2013,8 @@ internal class CanvasEditor(
      * between two pixels, not on one of them, and rounding here would make a slow drag step.
      */
     private fun screenToCanvasPoint(pos: Offset, viewport: CanvasViewport): Pair<Float, Float>? {
-        paintSession ?: return null
-        return viewport.canvasX(pos.x) to viewport.canvasY(pos.y)
+        val session = paintSession ?: return null
+        return session.toFrame(viewport.canvasX(pos.x).toFloat(), viewport.canvasY(pos.y).toFloat())
     }
 
     /**
@@ -2100,11 +2065,7 @@ internal class CanvasEditor(
         knifeDraft = emptyList(); knifeDrawableId = null; subdividing = false; subdivideEdges = emptySet()
         knifeHover = null; knifeSnapKind = null
         placementInput = null; knifeInput = null; pathInput = null
-        // LAYER placement is a committed import waiting for confirm — do not treat gesture
-        // cleanup (history refresh, focus loss, tool churn) as Esc/Cancel.
-        if (placement?.kind != CreatePlacementKind.LAYER) {
-            placement?.imagePlacement?.dismiss(); placement = null; placementHandle = PlacementHandle.NONE; placementDragStart = null; placementDragSnapshot = null
-        }
+        placement = null; placementHandle = PlacementHandle.NONE; placementDragStart = null; placementDragSnapshot = null
         glueStroking = false
         weightStroking = false
         weightStroke = emptyMap()
@@ -2241,7 +2202,7 @@ internal class CanvasEditor(
             val d = model.deformers.firstOrNull { it.id.raw == anchorId } ?: return
             selectDeformer(anchorId)
             when (kind) {
-                CreatePlacementKind.PATH, CreatePlacementKind.LAYER -> return // paths/layers attach via other entry points
+                CreatePlacementKind.PATH -> return // paths attach via other entry points
                 CreatePlacementKind.WARP -> {
                     val meshes = if (relation == CreateRelation.AS_PARENT) {
                         descendantMeshIds(anchorId)
@@ -2267,58 +2228,20 @@ internal class CanvasEditor(
                 CreatePlacementKind.WARP, CreatePlacementKind.ROTATION -> {
                     beginPlacement(kind, CreateRelation.AS_PARENT, "mesh", drawable.id.raw, drawable.name, listOf(drawable.id.raw))
                 }
-                CreatePlacementKind.LAYER -> return
             }
         }
     }
 
     /**
-     * Opens the bottom-left placement panel after a layer import so the artist can nudge
-     * canvas position/size before confirming.
+     * Selects an imported image for the transform tool in object mode: the import is committed with its mesh, and moving,
+     * scaling or rotating it is the same mesh edit as for any object.
      */
-    fun beginLayerPlacement(
-        layerId: String,
-        layerName: String,
-        anchorLabel: String,
-        parentDeformerId: String?,
-        canvasLeft: Float,
-        canvasTop: Float,
-        canvasWidth: Float,
-        canvasHeight: Float,
-        cancelLayerIds: List<String>,
-        imagePlacement: io.github.psd2live.application.WorkspaceImagePlacement,
-    ) {
-        if (createSessionReturnMode == null) createSessionReturnMode = hierarchyMode
-        // Dismiss any in-progress warp/rotation/path ghost without deleting imported layers.
-        // A prior LAYER session keeps its layers at the last committed import position.
-        if (placement?.kind == CreatePlacementKind.LAYER) {
-            placement?.imagePlacement?.dismiss()
-            placement = null
-            placementHandle = PlacementHandle.NONE
-            placementDragStart = null
-            placementDragSnapshot = null
-        } else {
-            cancelKeepingReturnMode()
-        }
+    fun selectImportedLayer(layerId: String) {
+        cancel()
         deferredMode = null
-        placement = CreatePlacement(
-            kind = CreatePlacementKind.LAYER,
-            relation = CreateRelation.AS_CHILD,
-            anchorKind = "layer",
-            anchorId = layerId,
-            anchorLabel = anchorLabel,
-            meshIds = emptyList(),
-            spaceParentId = parentDeformerId,
-            name = layerName,
-            partId = null,
-            localX = canvasLeft,
-            localY = canvasTop,
-            localW = canvasWidth.coerceAtLeast(1f),
-            localH = canvasHeight.coerceAtLeast(1f),
-            cancelLayerIds = cancelLayerIds.ifEmpty { listOf(layerId) },
-            imagePlacement = imagePlacement,
-        )
-        tool = CanvasTool.SELECT
+        hierarchyMode = EditHierarchyMode.SELECT
+        tool = CanvasTool.TRANSFORM
+        selectLayer(layerId)
         error = null
         clearHover()
     }
@@ -2358,7 +2281,6 @@ internal class CanvasEditor(
             CreatePlacementKind.WARP -> tr("editor.defaultWarpName", anchorLabel)
             CreatePlacementKind.ROTATION -> tr("editor.defaultRotationName", anchorLabel)
             CreatePlacementKind.PATH -> anchorLabel
-            CreatePlacementKind.LAYER -> anchorLabel
         }
         val part = warpCreatePartId
             ?: meshIds.firstOrNull()?.let { model.partByDrawable()[DrawableId(it)]?.raw }
@@ -2395,7 +2317,6 @@ internal class CanvasEditor(
             CreatePlacementKind.WARP -> CanvasTool.CREATE_WARP
             CreatePlacementKind.ROTATION -> CanvasTool.CREATE_ROTATION
             CreatePlacementKind.PATH -> CanvasTool.CREATE_DEFORM_PATH
-            CreatePlacementKind.LAYER -> CanvasTool.SELECT
         }
         if (kind == CreatePlacementKind.PATH) {
             drawingPath = true
@@ -2469,40 +2390,12 @@ internal class CanvasEditor(
 
     private fun cancelKeepingReturnMode() {
         val keep = createSessionReturnMode
-        if (placement?.kind == CreatePlacementKind.LAYER) {
-            // Switching to another create tool: keep imported layers, only dismiss the panel.
-            placement?.imagePlacement?.dismiss()
-            placement = null
-            placementHandle = PlacementHandle.NONE
-            placementDragStart = null
-            placementDragSnapshot = null
-        } else {
-            cancel()
-        }
+        cancel()
         createSessionReturnMode = keep
     }
 
     fun updatePlacementName(name: String) { placement = placement?.copy(name = name) }
     fun updatePlacementPart(partId: String?) { placement = placement?.copy(partId = partId) }
-    fun updatePlacementCanvasRect(x: Float, y: Float, w: Float, h: Float) {
-        val p = placement?.takeIf { it.kind == CreatePlacementKind.LAYER } ?: return
-        placement = p.copy(
-            localX = x,
-            localY = y,
-            localW = w.coerceAtLeast(1f),
-            localH = h.coerceAtLeast(1f),
-        )
-        viewModel.relocateImportedLayer(
-            placement = requireNotNull(p.imagePlacement),
-            layerId = p.anchorId,
-            name = p.name,
-            left = x,
-            top = y,
-            width = w.coerceAtLeast(1f),
-            height = h.coerceAtLeast(1f),
-            commitHistory = false,
-        )
-    }
     fun updatePlacementGrid(rows: Int, cols: Int) {
         placement = placement?.copy(rows = rows.coerceIn(1, 32), cols = cols.coerceIn(1, 32))
         warpCreateGridRows = rows.coerceIn(1, 32)
@@ -2527,20 +2420,7 @@ internal class CanvasEditor(
         )
     }
 
-    fun cancelPlacement() {
-        val p = placement
-        if (p?.kind == CreatePlacementKind.LAYER) {
-            viewModel.cancelImportedLayerPlacement(requireNotNull(p.imagePlacement)) {
-                if (placement?.imagePlacement === p.imagePlacement) clearPlacementUi()
-            }
-        } else clearPlacementUi()
-    }
-
-    internal fun dismissImagePlacement() {
-        val p = placement?.takeIf { it.kind == CreatePlacementKind.LAYER } ?: return
-        p.imagePlacement?.dismiss()
-        clearPlacementUi()
-    }
+    fun cancelPlacement() = clearPlacementUi()
 
     private fun clearPlacementUi() {
         placement = null
@@ -2571,22 +2451,6 @@ internal class CanvasEditor(
             }
             CreatePlacementKind.WARP -> commitPlacedWarp(p)
             CreatePlacementKind.ROTATION -> commitPlacedRotation(p)
-            CreatePlacementKind.LAYER -> commitPlacedLayer(p)
-        }
-    }
-
-    private fun commitPlacedLayer(p: CreatePlacement) {
-        viewModel.relocateImportedLayer(
-            placement = requireNotNull(p.imagePlacement), layerId = p.anchorId, name = p.name,
-            left = p.localX, top = p.localY, width = p.localW, height = p.localH,
-            commitHistory = true, splitCandidates = p.cancelLayerIds,
-        ) {
-            if (placement?.imagePlacement === p.imagePlacement) {
-                p.imagePlacement.dismiss()
-                clearPlacementUi()
-                deferredMode = null; hierarchyMode = EditHierarchyMode.SELECT
-                selectLayer(p.anchorId)
-            }
         }
     }
 
@@ -2595,7 +2459,7 @@ internal class CanvasEditor(
         StableIds.fresh(StableIds.stem(prefix, *inputs)) { id -> model.deformers.any { it.id.raw == id } }
 
     private fun commitPlacedWarp(p: CreatePlacement) {
-        val id = newDeformerId("Warp_", p.copy(imagePlacement = null))
+        val id = newDeformerId("Warp_", p)
         val cmd = buildJsonObject {
             put("op", "canvas_create_warp")
             put("id", id)
@@ -2634,7 +2498,7 @@ internal class CanvasEditor(
     }
 
     private fun commitPlacedRotation(p: CreatePlacement) {
-        val id = newDeformerId("Rotation_", p.copy(imagePlacement = null))
+        val id = newDeformerId("Rotation_", p)
         val angleDeg = Math.toDegrees(
             atan2((p.tipY - p.originY).toDouble(), (p.tipX - p.originX).toDouble()),
         ).toFloat()
@@ -2742,19 +2606,12 @@ internal class CanvasEditor(
     fun placementScreenRect(viewport: CanvasViewport): Rect? {
         val p = placement ?: return null
         return when (p.kind) {
-            CreatePlacementKind.WARP, CreatePlacementKind.LAYER -> placementScreenRectOf(p, viewport)
+            CreatePlacementKind.WARP -> placementScreenRectOf(p, viewport)
             else -> null
         }
     }
 
     private fun placementScreenRectOf(p: CreatePlacement, viewport: CanvasViewport): Rect? {
-        if (p.kind == CreatePlacementKind.LAYER) {
-            val left = viewport.x(p.localX).toFloat()
-            val top = (viewport.offsetY + p.localY * viewport.scale).toFloat()
-            val right = viewport.x(p.localX + p.localW).toFloat()
-            val bottom = (viewport.offsetY + (p.localY + p.localH) * viewport.scale).toFloat()
-            return Rect(left, top, right, bottom)
-        }
         if (p.kind != CreatePlacementKind.WARP) return null
         val mapping = placementMapping(p.spaceParentId)
         val corners = listOf(
@@ -2779,7 +2636,7 @@ internal class CanvasEditor(
             projection.toScreen(Offset(p.tipX, p.tipY))
     }
 
-    /** The Warp or Layer ghost as a transform box: upright, centred on its rectangle, with its anchor. */
+    /** The Warp ghost as a transform box: upright, centred on its rectangle, with its anchor. */
     fun placementFrame(viewport: CanvasViewport): TransformFrame? = placement?.let { placementFrameOf(it, viewport) }
 
     private fun placementFrameOf(p: CreatePlacement, viewport: CanvasViewport): TransformFrame? {
@@ -2790,7 +2647,7 @@ internal class CanvasEditor(
     private fun hitPlacementHandle(pos: Offset, viewport: CanvasViewport): PlacementHandle {
         val p = placement ?: return PlacementHandle.NONE
         when (p.kind) {
-            CreatePlacementKind.WARP, CreatePlacementKind.LAYER -> {
+            CreatePlacementKind.WARP -> {
                 val frame = placementFrameOf(p, viewport) ?: return PlacementHandle.NONE
                 placementBoxHandle = transformHandleAt(pos, frame, PLACEMENT_HANDLES)
                 return if (placementBoxHandle == BoundingHandle.NONE) PlacementHandle.NONE else PlacementHandle.BOX
@@ -2830,17 +2687,8 @@ internal class CanvasEditor(
                     val local = screenAabbToLocalBounds(Rect(box.minX, box.minY, box.maxX, box.maxY), viewport, snap, mapping)
                     placement = p.copy(localX = local[0], localY = local[1], localW = local[2], localH = local[3])
                 }
-                CreatePlacementKind.LAYER -> {
-                    val left = viewport.canvasX(box.minX); val top = viewport.canvasY(box.minY)
-                    placement = p.copy(
-                        localX = left, localY = top,
-                        localW = (viewport.canvasX(box.maxX) - left).coerceAtLeast(1f),
-                        localH = (viewport.canvasY(box.maxY) - top).coerceAtLeast(1f),
-                    )
-                }
                 else -> {}
             }
-            relocatePlacedLayer()
             return
         }
         when (p.kind) {
@@ -2852,13 +2700,6 @@ internal class CanvasEditor(
                     localX = snap.localX + (b.first - a.first),
                     localY = snap.localY + (b.second - a.second),
                 )
-            }
-            CreatePlacementKind.LAYER -> {
-                placement = p.copy(
-                    localX = snap.localX + viewport.canvasX(pos.x) - viewport.canvasX(start.x),
-                    localY = snap.localY + viewport.canvasY(pos.y) - viewport.canvasY(start.y),
-                )
-                relocatePlacedLayer()
             }
             CreatePlacementKind.ROTATION -> {
                 when (placementHandle) {
@@ -2891,13 +2732,6 @@ internal class CanvasEditor(
             }
             CreatePlacementKind.PATH -> {}
         }
-    }
-
-    /** Shows a Layer ghost's rectangle on its imported layer, without a history step. */
-    private fun relocatePlacedLayer() {
-        val updated = placement?.takeIf { it.kind == CreatePlacementKind.LAYER } ?: return
-        viewModel.relocateImportedLayer(requireNotNull(updated.imagePlacement), updated.anchorId, updated.name,
-            updated.localX, updated.localY, updated.localW, updated.localH, commitHistory = false)
     }
 
     /** Invert a screen AABB into parent-local bounds, seeding each corner from the nearest snap corner. */
@@ -3531,7 +3365,7 @@ internal class CanvasEditor(
 
         // A Warp or Layer ghost owns the canvas while it is placed, as its press does.
         placementHover = BoundingHandle.NONE
-        placement?.takeIf { it.kind == CreatePlacementKind.WARP || it.kind == CreatePlacementKind.LAYER }?.let { p ->
+        placement?.takeIf { it.kind == CreatePlacementKind.WARP }?.let { p ->
             placementHover = placementFrameOf(p, viewport)?.let { transformHandleAt(pos, it, PLACEMENT_HANDLES) } ?: BoundingHandle.NONE
             return
         }
@@ -3722,44 +3556,54 @@ internal class CanvasEditor(
         commitBatch(listOf(command))
     }
 
+    /** The layers a Select-mode box drag moves as wholes, and the canvas transform it applies to all of them. */
+    private class LayerMove(val layerIds: List<String>, val transform: io.github.psd2live.project.LayerTransform)
+    private var pendingLayers: LayerMove? = null
+
     /**
-     * The rectangle a box drag moves an imported layer to, or null when the drag is not a plain move or
-     * scale of one such layer at rest.
-     *
-     * A file-imported layer keeps its pixels and places them by its canvas rectangle, so moving or scaling it
-     * in object mode changes that rectangle (layer_set_bounds) rather than bending its mesh away from it:
-     * the layer, its mesh and the paint view then agree on where the art is. A turn, a flip, a layer bound to
-     * motion or one shown at a pose keeps the mesh edit.
+     * The whole-layer move a box drag makes, or null when it moves anything else: every mesh of each layer it touches,
+     * all their points, at rest. Such a drag is a [io.github.psd2live.application.WorkspaceLayerTransform] - the meshes
+     * move and the layer remembers where its pixels now show, so painting follows - rather than a bare mesh edit.
      */
-    private fun importedBounds(targets: List<CanvasTarget>, worlds: List<FloatArray>, movedSets: List<Set<Int>>): io.github.psd2live.project.WorkspaceImageBounds? {
-        val item = targets.singleOrNull()?.takeIf { it.kind == "mesh" } ?: return null
-        if (movedSets.single().size != item.count || item.count < 3) return null
+    private fun wholeLayerTransform(targets: List<CanvasTarget>, worlds: List<FloatArray>, movedSets: List<Set<Int>>): LayerMove? {
+        if (targets.isEmpty() || targets.any { it.kind != "mesh" }) return null
+        if (targets.indices.any { movedSets[it].size != targets[it].count || targets[it].count < 3 }) return null
         val model = state.previewModel ?: return null
-        val layerId = model.rig.layerIdByDrawableId[item.id] ?: return null
-        if (model.rig.layerIdByDrawableId.count { it.value == layerId } != 1) return null
-        val layer = model.analysis.source.layers.singleOrNull { it.id.raw == layerId } ?: return null
-        val metadata = layer as? io.github.psd2live.project.WorkspaceSourceMetadata ?: return null
-        if (!metadata.derived || metadata.sourceAssetId != null) return null
         val atRest = model.rig.puppet.parameters.all { p -> abs((pose[p.id.raw] ?: p.default) - p.default) < 1e-4f }
         if (!atRest) return null
-        val space = LayerSpace.of(layer)
-        val rect = movedLayerRect(item.mapping.localToWorld(item.geometry.points), worlds.single(),
-            io.github.psd2live.project.LayerCanvasRect(space.left, space.top, space.width, space.height)) ?: return null
-        return io.github.psd2live.project.WorkspaceImageBounds(layerId, rect.left, rect.top, rect.width, rect.height)
+        val layerOf = model.rig.layerIdByDrawableId
+        val layers = targets.map { layerOf[it.id] ?: return null }.distinct()
+        val ids = targets.mapTo(HashSet()) { it.id }
+        if (layers.any { layer -> layerOf.any { (mesh, owner) -> owner == layer && mesh !in ids } }) return null
+        // Canvas points (y down) before and after the drag, fitted with one affine map.
+        val before = ArrayList<Float>(); val after = ArrayList<Float>()
+        targets.forEachIndexed { index, item ->
+            val start = item.mapping.localToWorld(item.geometry.points)
+            for (i in 0 until start.size / 2) {
+                before += start[i * 2]; before += -start[i * 2 + 1]
+                after += worlds[index][i * 2]; after += -worlds[index][i * 2 + 1]
+            }
+        }
+        val fit = io.github.psd2live.core.AffineFit.fit(before.toFloatArray(), after.toFloatArray()) ?: return null
+        val transform = runCatching { io.github.psd2live.project.LayerTransform.of(fit.toList()) }.getOrNull() ?: return null
+        return LayerMove(layers, transform)
     }
 
-    /** Commits an imported layer's new rectangle, or the mesh edit the drag also made when the layer refuses it. */
-    private fun commitImportedBounds(bounds: io.github.psd2live.project.WorkspaceImageBounds, fallback: List<JsonObject>) {
+    /** Commits a whole-layer move; an edit the workspace refuses leaves the layers where they were, with its reason. */
+    private fun commitLayerTransform(move: LayerMove) {
         if (!editable) { preview = null; endTransformBox(); return }
         val expected = gestureState ?: viewModel.currentWorkspaceState() ?: run { preview = null; endTransformBox(); return }
-        val name = state.previewModel?.analysis?.source?.layers?.singleOrNull { it.id.raw == bounds.layerId }?.name ?: bounds.layerId
+        val names = move.layerIds.map { id -> state.previewModel?.analysis?.source?.layers?.singleOrNull { it.id.raw == id }?.name ?: id }
+        val operations = move.layerIds.map { id ->
+            io.github.psd2live.application.WorkspaceDocumentOperation(io.github.psd2live.application.WorkspaceLayerTransform.OP, buildJsonObject {
+                put("layer_id", id); put("matrix", JsonArray(move.transform.toList().map(::JsonPrimitive)))
+            })
+        }
         busy = true; error = null
-        viewModel.saveDocumentEdits(expected, tr("editor.importLayer.placed", name), listOf(bounds.operation())) { failure ->
+        viewModel.saveDocumentEdits(expected, tr("editor.layerTransformed", names.joinToString(", ")), operations) { failure ->
             busy = false
-            if (failure == null) { preview = null; pending = null; gestureState = null; endTransformBox(); return@saveDocumentEdits }
-            // Bound motion, edited pixels or an earlier mesh edit: the layer keeps its rectangle and the mesh moves.
-            gestureState = expected
-            if (!commitBatch(fallback)) preview = null
+            preview = null; pending = null; gestureState = null; endTransformBox()
+            if (failure != null) error = failure
         }
     }
 
@@ -5560,7 +5404,7 @@ internal class CanvasEditor(
                 pendingObjects = targets.mapIndexed { itemIndex, item ->
                     geometryCommand(item, item.mapping.worldToLocalLinearized(worlds[itemIndex], item.geometry.points, item.geometry.points, movedSets[itemIndex]), effectiveCtrl)
                 }
-                pendingBounds = if (objectMode && !editing) importedBounds(targets, worlds, movedSets) else null
+                pendingLayers = if (objectMode && !editing) wholeLayerTransform(targets, worlds, movedSets) else null
                 preview = pendingObjects.fold(source) { m, command -> RigAuthoringJournal.apply(m, command) }
                 return
             }
@@ -5752,24 +5596,9 @@ internal class CanvasEditor(
         endPathDrag()
 
         if (placementHandle != PlacementHandle.NONE) {
-            // Moving the anchor leaves the layer where it is.
-            val layerPlace = placement?.takeIf { it.kind == CreatePlacementKind.LAYER && placementBoxHandle != BoundingHandle.ANCHOR }
             placementHandle = PlacementHandle.NONE
             placementDragStart = null
             placementDragSnapshot = null
-            // Push the ghost rect onto the real layer so paint/mesh edits land where the artist placed it.
-            if (layerPlace != null) {
-                viewModel.relocateImportedLayer(
-                    placement = requireNotNull(layerPlace.imagePlacement),
-                    layerId = layerPlace.anchorId,
-                    name = layerPlace.name,
-                    left = layerPlace.localX,
-                    top = layerPlace.localY,
-                    width = layerPlace.localW,
-                    height = layerPlace.localH,
-                    commitHistory = true,
-                )
-            }
             return
         }
 
@@ -5794,8 +5623,8 @@ internal class CanvasEditor(
         if (marquee.isNotEmpty()) { endTransformBox(); return }
 
         val cmd = pending
-        val bounds = pendingBounds; pendingBounds = null
-        if (moved && bounds != null && pendingObjects.size == 1) commitImportedBounds(bounds, pendingObjects)
+        val layers = pendingLayers; pendingLayers = null
+        if (moved && layers != null) commitLayerTransform(layers)
         else if (moved && pendingObjects.isNotEmpty()) { if (!commitBatch(pendingObjects)) preview = null }
         else if (moved && cmd != null) { if (!commitBatch(listOf(cmd))) preview = null }
         else { preview = null; gestureState = null; endTransformBox() }

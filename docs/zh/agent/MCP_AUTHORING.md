@@ -96,11 +96,11 @@
 
 表中列出业务字段；所有修改还须携带 `request_id`，工作区修改须携带 `project_id` 和 `state`（精简工具集可省略前两者，见[工具集](#工具集)）。只读后台采样 `physics_simulate/simulation_simulate/simulation_compare/view_sample_motion` 同样要求这三个字段，用于去重并固定采样版本。各项操作字段不同，调用前读取当前服务提供的 JSON Schema。所有公开工具统一使用 `{"request": {...}}` 包装。发布与校验保留同一份 `oneOf`、`const`、字段约束及说明，外层和业务对象都拒绝未知字段。结果统一为 `{"ok":true,"operation":"...","data":{...}}`；错误包含 `ok:false` 和 `error.code/message`，字段校验错误还带 `field`。PNG 以 MCP 图片内容返回。
 
-全部 190 项公开操作（其中 72 项后台、87 项可批量）都必须声明完整 `outputSchema`，完整工具集发布它，能力详情中的 `output_schema` 与其一致；成功 data 和失败 error 严格互斥。注册表在执行及去重边界校验业务结果，MCP 校验完整返回包装，遗漏结果契约不能注册。后台操作必须另有终态 `job_result_schema`，非后台操作不允许该字段。能力详情通过本地 `$defs/$ref` 描述嵌套 schema，查询自己的 schema 也可校验；实际 HTTP 保留所有根约束。`output_contract` 表示服务实现的结果与声明不符，不能作为修改已回滚的证据。
+全部 189 项公开操作（其中 70 项后台、86 项可批量）都必须声明完整 `outputSchema`，完整工具集发布它，能力详情中的 `output_schema` 与其一致；成功 data 和失败 error 严格互斥。注册表在执行及去重边界校验业务结果，MCP 校验完整返回包装，遗漏结果契约不能注册。后台操作必须另有终态 `job_result_schema`，非后台操作不允许该字段。能力详情通过本地 `$defs/$ref` 描述嵌套 schema，查询自己的 schema 也可校验；实际 HTTP 保留所有根约束。`output_contract` 表示服务实现的结果与声明不符，不能作为修改已回滚的证据。
 
-图片追加使用 `layer_import_images`：必需 `state` 和 1–128 个绝对路径组成的 `paths`，可选 `parent_deformer_id` 指向已有父变形器；省略时绑定模型根。透明边缘裁剪后居中；栅格保持原分辨率，超过画布时只把画布矩形等比缩小到画布内（图层密度大于 1 像素/画布单位），网格按画布分辨率生成。单文件最多 64 MiB、16 百万像素，整批最多 32 百万像素。一次成功只追加一个历史节点，任意文件失败则整批不发布；它读取文件，不能作为原子文档批量成员。新增源图及网格句柄从任务终态 `affectedLayerIds/affectedObjectIds` 获取。原图像素写入工程，后续重开不依赖输入文件。
+图片追加使用 `layer_import_images`：必需 `state` 和 1–128 个绝对路径组成的 `paths`，可选 `parent_deformer_id` 指向已有父变形器；省略时绑定模型根。透明边缘裁剪后居中；栅格保持原分辨率，超过画布时只把画布矩形等比缩小到画布内（图层密度大于 1 像素/画布单位），网格按画布分辨率生成。单文件最多 64 MiB、16 百万像素，整批最多 32 百万像素。一次成功只追加一个历史节点，任意文件失败则整批不发布；它读取文件，不能作为原子文档批量成员。新增源图及网格句柄从任务终态 `affectedLayerIds/affectedObjectIds` 获取。原图像素写入工程，后续重开不依赖输入文件。每张图片在作者态 Rig 中得到自己的网格（`canvas_mesh_create`，挂在所给父级下），生成器从不重新生成它；撤销即取消导入。
 
-文件导入图层定位使用 `layer_set_bounds`：`layer_id/left/top/width/height` 为必需，`name` 可选；坐标是源画布单位，可为小数，作为图层画布矩形保存（整数边界取外包框）。定位只改变画布矩形，不重采样像素，重复缩放后像素逐字节不变，已绘画的像素同样保留；旧版本按边界缩放过的导入图层在再次定位时恢复为保存的导入原像素。宽高至少 0.5 单位，外包框不超过 16MP，栅格密度不超过 256 像素/画布单位，超限时明确拒绝。定位会改变网格几何，因此有专属绑定、Glue/遮罩依赖时仍拒绝；保留原网格 ID、父级及其他对象的运动。`layer_cancel_import` 接收 1–128 个唯一 `layer_ids`，整批一次历史提交；普通新增图层移除，旧生成基线及最后源图保留像素并软删除，重复取消无变化。两项均返回后台任务，也可加入原子文档批量；任务终态返回 `affectedLayerIds/state/history_node_id`。它们针对文件导入图层，素材配准图层继续使用 `layer_set_placement`。
+图层整体变换使用 `layer_transform`（任何图层：导入的或 PSD 的，根部或任意变形器下，有无绑定均可）：必需 `state/layer_id`，再给 `matrix [a,b,c,d,e,f]`（`x' = a·x + c·y + e`，`y' = b·x + d·y + f`，画布单位、y 向下），或 `translate [x,y]`、`scale`（数或 `[sx,sy]`）、`rotate`（度，屏幕上顺时针）与 `pivot [x,y]`；与图层已有变换复合。像素、纹理图块与纹理坐标都不变，不触发再生成：图层的每个网格在静止姿态下按该变换移动（关键形保持偏移），图层记下自己的像素显示在哪里，绘画随之对齐（暂不支持在旋转过的图层上绘画）。一次可撤销的历史提交，可加入原子文档批量。
 
 ### 纹理与纹理集
 
@@ -109,7 +109,7 @@
 - `layer_get_texture`（查询）：`layer_id`；返回 `canvas_rect`、整数外包 `bounds`、`raster`、`native_density`、`override{density,lock,pin}`、`deleted`、`tile`（页、纹理像素矩形、每栅格像素的纹理像素 `scale_x/scale_y`、密度、锁定与固定；透明或已删除图层为 null）及 `atlas_fit`，全部来自同一捕获版本。
 - `atlas_get`（查询）：可选 `page` 过滤图块；返回有效 `budget{page_size,max_pages,padding}`、`fit`、`notices`、`auto`（是否每次自动排布）、`pages[{index,width,height,tile_count,occupancy}]` 与 `tiles`。
 - `atlas_render_page`（只读后台任务，要求 `request_id/project_id/state`）：`page`，可选 `max_size`（64–16384，默认 2048，按长边缩小）；终态含 `revision`、原尺寸与渲染尺寸、`sha256`、该页图层，PNG 以图片内容返回，`job_get/job_wait` 可重复取图。
-- `layer_set_canvas_rect`：`layer_id`、`rect{left,top,width,height}`；栅格拉伸到新矩形，整数 bounds 取外包框，生成输入同步移动，由生成器按新矩形放置网格。网格带作者编辑（关键形、路径、Glue 等日志引用）、骨架/摆动/模拟绑定、物化几何（拆分、新建或重建网格；文件导入图层改用 `layer_set_bounds`）或导入 CMO3 时拒绝（`invalid_argument`）。相同矩形无变化。
+- `layer_set_canvas_rect`：`layer_id`、`rect{left,top,width,height}`；把图层移动、缩放到画布在该矩形处显示其像素，即一次从当前显示位置出发的 `layer_transform`（旋转过的图层拒绝，改用 `layer_transform`）。像素、纹理与生成输入不变，网格连同关键形移动；任何图层均可。`layer_get_texture` 的 `canvas_rect` 是图层当前显示的位置。相同矩形无变化。
 - `layer_replace_image`：`layer_id` 与 `path`（绝对路径，PNG/WebP/TIFF/BMP，仅单项）或 `png_base64` 二选一，可选 `fit`（`stretch` 默认铺满，`contain` 保持比例居中补透明）与 `rebuild_mesh`（默认 false）。画布矩形不变，生成输入冻结在首次替换前的像素，网格、关键形与绑定保留，仅图块和 UV 改变；`rebuild_mesh=true` 改由新像素重新生成该层网格，带作者编辑或物化几何时拒绝。单项先核对状态再读取文件；批量成员只接受 `png_base64`，给出 `path` 时整批以 `invalid_edit` 失败。最多 16MP，像素相同为无变化。
 - `atlas_check_placement`（查询）：`placements` 为 1–128 项 `{layer_id, page?, x?, y?, rotation?, density?}`，省略字段沿用已提交值；返回 `clear` 与每个图块的目标 `page/x/y/width/height/rotation`、`outside_page`（旋转后的外接框是否超出页面或页号超出预算）和 `overlaps`（网格会与之相交的图块）。与其他已提交图块及本次一并检查的图块比较，规则与提交时完全相同：两图块按间距外扩后的外接框相交时，才按网格实际使用的单元格（外扩间距）判断，两个都无网格且未旋转时按矩形判断。纹理集视图拖动、缩放、旋转时用的也是这一规则，`clear` 的放置一定原样落地，有冲突的放置会被下面的命令拒绝。
 - `layer_set_pixel_density`：1–128 个唯一 `layer_ids`、必需的 `density`（1/64–16 连续取值，`null` 恢复为 1），可选 `lock`（省略保持原值）。已有排布时各图块保持左上角，若变大后会超出页面或与其他图块的网格相交，以 `tile_collides` 拒绝且不做任何修改。

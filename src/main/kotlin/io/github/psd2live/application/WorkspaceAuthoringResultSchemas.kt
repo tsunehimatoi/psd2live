@@ -29,7 +29,7 @@ internal object WorkspaceAuthoringResultSchemas {
     private val normalizedOperations = setOf(
         "parameter_create", "parameter_update", "parameter_delete", "swing_put", "swing_delete",
         "physics_put", "physics_delete", "physics_fit", "physics_config",
-        "history_checkpoint", "history_checkout", "layer_add_from_asset", "layer_set_placement", "layer_finalize_placement", "layer_soft_delete", "layer_restore", "layer_import_images", "layer_set_bounds", "layer_cancel_import",
+        "history_checkpoint", "history_checkout", "layer_add_from_asset", "layer_set_placement", "layer_finalize_placement", "layer_soft_delete", "layer_restore", "layer_import_images",
     )
 
     fun forOperation(id: String): JsonObject? = when (id) {
@@ -50,7 +50,7 @@ internal object WorkspaceAuthoringResultSchemas {
             "tracking" to s.boolean(), "smooth_tracking" to s.boolean(), "pointer_active" to s.boolean(), "values" to key, "animation" to s.boolean(),
             "elapsed" to s.number(0), "active_motion" to s.handle(), "sequence" to s.integer(0)),
             setOf("project_id", "state", "workspace_id", "time", "playing", "tracking", "pointer_active", "values", "animation", "elapsed", "sequence"))
-        "layer_classify" -> s.obj(s.identity + mapOf("layer_id" to s.handle(), "applied" to s.constant(false)), s.identity.keys + "layer_id")
+        "layer_classify", WorkspaceLayerTransform.OP -> s.obj(s.identity + mapOf("layer_id" to s.handle(), "applied" to s.constant(false)), s.identity.keys + "layer_id")
         "rig_create_warp" -> compactWith(mapOf("target" to s.handle()))
         "canvas_warp", "canvas_rotation", "canvas_topology" -> s.obj(s.identity + mapOf("id" to s.handle(), "applied" to s.constant(false), "geometry_diagnostics" to WorkspaceGeometrySafetySchemas.report), s.identity.keys + "id")
         "canvas_glue" -> s.obj(s.identity + mapOf("id" to s.handle(), "applied" to s.constant(false), "mesh_a" to s.handle(), "mesh_b" to s.handle(), "pair_count" to s.integer(0), "geometry_diagnostics" to WorkspaceGeometrySafetySchemas.report),
