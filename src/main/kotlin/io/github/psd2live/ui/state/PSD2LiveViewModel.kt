@@ -7329,7 +7329,10 @@ class PSD2LiveViewModel : AutoCloseable {
 					val found = if (key == null || key.records.size < 2) emptyList() else withContext(Dispatchers.Default) {
 						runCatching { workspaceBackend?.captureQueries()?.staleRegenerations() }.getOrNull().orEmpty()
 					}
-					updateState { it.copy(staleRegenerations = found.size, staleRegenerationsDismissed = false) }
+					// updateState always publishes a new state, so leave it alone when nothing was found and nothing was shown.
+					val current = _state.value
+					if (current.staleRegenerations != found.size || current.staleRegenerationsDismissed)
+						updateState { it.copy(staleRegenerations = found.size, staleRegenerationsDismissed = false) }
 					if (found.isNotEmpty()) addLog(tr("status.generationUpdate.staleFound", found.size), level = LogLevel.WARNING, tag = "Generation")
 				}
 		}
