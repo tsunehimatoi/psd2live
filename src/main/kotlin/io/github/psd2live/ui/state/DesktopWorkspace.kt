@@ -1450,8 +1450,8 @@ class DesktopWorkspace(
         }
 
     override suspend fun deleteSwing(id: String, bake: Boolean, expectedState: String, author: MutationAuthor) =
-        mutateRigKeyform(expectedState, null, if (bake) "Baked swing $id" else "Deleted swing $id", id, author) { document, puppet ->
-            WorkspaceDocumentEdits.removeSwing(document, puppet, id, bake)
+        mutateModel(expectedState, null, if (bake) "Baked swing $id" else "Deleted swing $id", id, author) { document, model ->
+            WorkspaceDocumentEdits.removeSwing(document, model.rig.puppet, id, bake, model.authored.rig.puppet)
         }
 
     override suspend fun createWarp(edit: io.github.psd2live.core.RigWarpEdit, expectedState: String, taskId: String?) =

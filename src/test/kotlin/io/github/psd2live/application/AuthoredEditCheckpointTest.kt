@@ -103,6 +103,31 @@ class AuthoredEditCheckpointTest {
 		assertTrue(model.rig.puppet.parameters.none { it.id.raw == "B" })
 		assertEquals(hash(replayed(document)), hash(model))
 	}
+
+	@Test fun bakingASwingAfterTheCheckpointCreatesItsParametersInTheJournal() = runBlocking {
+		val runtime = runtime()
+		create(runtime, "First")
+		fun run(label: String, operation: String, arguments: JsonObject) = runBlocking {
+			val before = runtime.capture()
+			WorkspaceDocumentCommands(runtime).execute(before.projectId, before.state, label,
+				listOf(WorkspaceDocumentOperation(operation, arguments)), MutationAuthor.USER).capture
+		}
+		val put = run("Swing", "swing_put", buildJsonObject {
+			put("id", "s"); put("kind", "lateral"); putJsonArray("targets") { add("DeformHairBackPhysics") } })
+		val grid = { model: RigPreviewModel -> (model.rig.puppet.deformers.single { it.id.raw == "DeformHairBackPhysics" }
+			as org.umamo.runtime.model.Deformer.Warp).geometryGrid!! }
+		val parameter = put.model.rig.puppet.parameters.single { it.id.raw.startsWith("ParamSwing") }.id
+		val baked = run("Bake", "swing_delete", buildJsonObject { put("id", "s"); put("bake", true) })
+		assertTrue(baked.document.rigEdits.parameterEdits.none { it.id == parameter.raw }, "a checkpointed journal never reads them")
+		val (swung, kept) = grid(put.model) to grid(baked.model)
+		assertEquals(swung.axes.single { it.parameterId == parameter }.keys.toList(), kept.axes.single { it.parameterId == parameter }.keys.toList())
+		for (cell in swung.cells) {
+			val other = kept.cells.single { it.coordinate.contentEquals(cell.coordinate) }
+			for (i in cell.form.controlPoints.indices) assertEquals(cell.form.controlPoints[i], other.form.controlPoints[i], 1e-4f)
+		}
+		MaterializedRigStore.clear()
+		assertEquals(hash(baked.model), hash(builder.build(baked.document)))
+	}
 }
 
 /** A regeneration's dry run reports the checkpoint its merge would write and publishes nothing. */

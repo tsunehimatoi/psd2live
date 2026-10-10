@@ -132,9 +132,10 @@ internal object SwingAuthoring {
 
     /**
      * Writes [id]'s current forms into the journal as ordinary keys, so they can be edited by hand. The
-     * swing stays, baked, to keep its pendulums; without any it is removed.
+     * swing stays, baked, to keep its pendulums; without any it is removed. [authored] is the rig before the swings,
+     * whose parameters the bake leaves alone.
      */
-    fun bake(overlay: RigEditOverlay, model: PuppetModel, id: String): RigEditOverlay {
+    fun bake(overlay: RigEditOverlay, model: PuppetModel, id: String, authored: PuppetModel? = null): RigEditOverlay {
         val swing = requireNotNull(overlay.swingEdits.firstOrNull { it.id == id }) { "Swing not found: $id" }
         require(!swing.baked) { "Swing is already baked: $id" }
         // Journal keys replay before every swing, so the other swings' axes are left out of the bake.
@@ -156,16 +157,22 @@ internal object SwingAuthoring {
                 putJsonObject("geometry") { putJsonArray("controlPoints") { cell.form.controlPoints.forEach { add(it) } } }
             }
         }
-        // Swing parameters are created while the swing replays; baked keys need them before the journal.
-        var next = overlay
-        for (p in model.parameters.filter { it.id.raw in swing.parameterIds }) {
-            if (next.parameterEdits.none { it.id == p.id.raw }) {
-                next = next.upsert(RigParameterEdit(p.id.raw, p.name, p.min, p.max, p.default, p.kind, p.repeat, created = true))
+        // Swing parameters are created after the journal replays; the baked keys need them first, so the journal
+        // creates them. A journal that replays from a checkpoint never reads the static parameter edits.
+        val existing = authored?.parameters?.mapTo(HashSet()) { it.id.raw }.orEmpty() + overlay.parameterEdits.map { it.id }
+        val created = model.parameters.filter { it.id.raw in swing.parameterIds && it.id.raw !in existing }.map { p ->
+            buildJsonObject {
+                put("op", "structure")
+                putJsonArray("edits") { add(buildJsonObject {
+                    put("action", "create"); put("kind", "parameter"); put("id", p.id.raw); put("name", p.name)
+                    put("min", p.min); put("max", p.max); put("default", p.default)
+                    put("parameter_kind", p.kind.name); put("repeat", p.repeat)
+                }) }
             }
         }
-        val swings = if (!swing.hasPhysics) next.swingEdits.filterNot { it.id == id }
-            else next.swingEdits.map { if (it.id == id) it.copy(baked = true) else it }
-        return next.copy(authoringJournal = next.authoringJournal + commands, swingEdits = swings)
+        val swings = if (!swing.hasPhysics) overlay.swingEdits.filterNot { it.id == id }
+            else overlay.swingEdits.map { if (it.id == id) it.copy(baked = true) else it }
+        return overlay.copy(authoringJournal = overlay.authoringJournal + created + commands, swingEdits = swings)
     }
 
     /** Removes [id]; an unbaked swing takes its generated axes and parameters with it. */

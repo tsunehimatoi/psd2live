@@ -86,7 +86,8 @@ internal object WorkspaceDocumentEdits {
                 journal(document, model, JsonArray(listOf(command)))
             }
             "swing_put" -> SwingAuthoring.request(request).let { swing(document, model.rig.puppet, it.edit, it.estimatePhysics) }
-            "swing_delete" -> removeSwing(document, model.rig.puppet, request.text("id"), request["bake"]?.jsonPrimitive?.boolean ?: false)
+            "swing_delete" -> removeSwing(document, model.rig.puppet, request.text("id"), request["bake"]?.jsonPrimitive?.boolean ?: false,
+                model.authored.rig.puppet)
             in WorkspacePhysicsEdits.batchable -> WorkspacePhysicsEdits.apply(operation, document, model, physicsWork)
             "path_put", "path_delete", "path_deform" -> {
                 val command = when (operation.operation) {
@@ -236,8 +237,9 @@ internal object WorkspaceDocumentEdits {
             JsonObject(document.settings + ("generatePhysics" to JsonPrimitive(true))))
     }
 
-    fun removeSwing(document: WorkspaceDocument, puppet: org.umamo.runtime.model.PuppetModel, id: String, bake: Boolean): WorkspaceDocument =
-        document.copy(rigEdits = if (bake) SwingAuthoring.bake(document.rigEdits, puppet, id)
+    fun removeSwing(document: WorkspaceDocument, puppet: org.umamo.runtime.model.PuppetModel, id: String, bake: Boolean,
+                    authored: org.umamo.runtime.model.PuppetModel? = null): WorkspaceDocument =
+        document.copy(rigEdits = if (bake) SwingAuthoring.bake(document.rigEdits, puppet, id, authored)
             else SwingAuthoring.remove(document.rigEdits, id))
 
     fun physicsCatalog(document: WorkspaceDocument, model: RigPreviewModel): List<PhysicsGroup> =
