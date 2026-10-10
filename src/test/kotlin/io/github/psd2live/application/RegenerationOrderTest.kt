@@ -96,6 +96,9 @@ class RegenerationOrderTest {
 		val puppet = capture.model.rig.puppet
 		assertEquals(emptyList(), SkeletonBindingQuality.issues(puppet, capture.document.rigEdits.skeleton), label)
 		val sleeve = capture.layerMesh("sleeve")
+		val drawable = puppet.drawables.single { it.id.raw == sleeve }
+		val axes = drawable.geometryGrid?.axes.orEmpty().map { it.parameterId }
+		assertEquals(emptyList(), drawable.blendShapes.map { it.parameterId }.filter { it in axes }, "$label: no bone moves the sleeve twice")
 		assertTrue(motion(puppet, sleeve, "ParamArmLA", 60f) > 20.0, "$label: the upper arm turns the sleeve")
 		assertTrue(motion(puppet, sleeve, "ParamArmLB", 60f) > 2.0, "$label: the forearm bends the sleeve")
 		assertTrue(motion(puppet, sleeve, "ParamSkelUpperBody", 20f) > 10.0, "$label: the upper body carries the sleeve")

@@ -23,7 +23,8 @@ internal object RigMergeRepair {
 
 	/**
 	 * [current], the authored rig at the end of [overlay]'s journal, with the corrections of every regeneration checkpoint
-	 * this build merges differently, all rigs bound to [atlas] and [sources]; null when it merges every one alike.
+	 * this build merges differently, all rigs bound to [atlas] and [sources]; null when it merges every one alike, or
+	 * the corrections leave [current]'s structure as it is (a repair carried them already).
 	 * [named] gives a generated rig the deformer names the journal entries before a checkpoint gave it, as the
 	 * regeneration that wrote the checkpoint merged it (a generation migration's frames).
 	 */
@@ -40,6 +41,8 @@ internal object RigMergeRepair {
 			val before = requireNotNull(RigCheckpoint.generated(journal[previousIndex])).authored.rig.puppet
 			val after = requireNotNull(RigCheckpoint.generated(journal[index])).authored.rig.puppet
 			if (PuppetIr.toIr(before) == PuppetIr.toIr(after)) continue
+			// A checkpoint a repair wrote holds every correction before it: the rig is right from there on.
+			if (RigCheckpoint.issues(journal[index]).any { it.kind == RigRegeneration.IssueKind.REMERGED }) { correction = null; issues.clear(); continue }
 			val stored = bound(RigCheckpoint.decode(journal[index]).authored.rig.puppet)
 			// A split merges its own way (the original cut into parts on both sides): only a correction carries over it.
 			val split = journal.getOrNull(index - 1)?.get("op")?.jsonPrimitive?.contentOrNull == ArtPrimitiveJournal.OP
@@ -61,7 +64,10 @@ internal object RigMergeRepair {
 			correction = stored to merged.model
 		}
 		val (old, new) = correction ?: return null
-		val result = RigRegeneration.merge(old, new, bound(current), checkpoint)
+		val rig = bound(current)
+		val result = RigRegeneration.merge(old, new, rig, checkpoint)
+		// The stale checkpoints stay in the journal; once a repair carried their correction, there is nothing left to do.
+		if (structure(result.model) == structure(rig)) return null
 		return Repair(result.model, issues + result.issues)
 	}
 

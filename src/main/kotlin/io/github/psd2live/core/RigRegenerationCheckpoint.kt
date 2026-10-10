@@ -137,7 +137,7 @@ internal object RigRegenerationCheckpoint {
 		checkpoint()
 		val authored = repair?.let { current.authored.copy(rig = current.authored.rig.copy(puppet = it.authored)) } ?: current.authored
 		val merged = merged(RigGenerationFrames.named(previous, journal), RigGenerationFrames.named(now, journal), authored, base, bindingKey,
-			base.resolvedPuppet(journal.filter(ArtPrimitiveV2::isV2)), checkpoint)
+			now, checkpoint)
 		return Update(current.config.copy(rigEdits = overlay.copy(authoringJournal = journal + merged.record)), repair?.issues.orEmpty() + merged.issues)
 	}
 

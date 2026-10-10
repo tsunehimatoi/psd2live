@@ -522,7 +522,7 @@ object RigRegeneration {
 		 * already in the result's space carries as it is.
 		 */
 		inner class Geometry(val drawable: Drawable, val user: Boolean, val fromNext: ((FloatArray) -> FloatArray)? = { it },
-		                     toNext: () -> ((FloatArray) -> FloatArray)?) {
+		                     val fromPrevious: ((FloatArray) -> FloatArray)? = null, toNext: () -> ((FloatArray) -> FloatArray)?) {
 			val toNext by lazy(toNext)
 		}
 
@@ -652,8 +652,9 @@ object RigRegeneration {
 			}
 			val residual = if (changed) KeyformGrid(axes, cells) else null
 			val next = fromNext?.let { PrimitiveResidual.carry(g2d.geometryGrid, it) }
+			val fromPrevious = fromG?.let { s -> { values: FloatArray -> PrimitiveResidual.transfer(values, s) } }
 			Geometry(result.copy(parentDeformerId = g2d.parentDeformerId, mesh = DrawableMesh(rest, mesh.uvs, mesh.indices),
-				geometryGrid = sum(parameters, next, residual, size)), false, fromNext) { toNext } to (fromNext != null)
+				geometryGrid = sum(parameters, next, residual, size)), false, fromNext, fromPrevious) { toNext } to (fromNext != null)
 		} catch (failure: IllegalArgumentException) {
 			null
 		}
@@ -683,18 +684,32 @@ object RigRegeneration {
 				geometry.toNext?.let { carry -> binding.copy(forms = binding.forms.map { form ->
 					form?.let { MeshForm(carry(it.positionDeltas), it.drawOrder, it.opacity, it.multiplyColor, it.screenColor) }
 				}) }
+			// On the user's own vertices a shape compares with G's sampled onto them: every shape differs from G's by count alone.
+			val byG = gd.blendShapes.associateBy { it.parameterId }
+			fun unchanged(id: ParameterId): Boolean {
+				val previous = geometry.fromPrevious ?: return irM[id.raw] == irG[id.raw]
+				val mine = byM[id] ?: return false; val theirs = byG[id] ?: return false
+				if (!mine.keys.contentEquals(theirs.keys) || mine.neutralIndex != theirs.neutralIndex || mine.limits != theirs.limits) return false
+				return mine.forms.zip(theirs.forms).all { (a, b) ->
+					if (a == null || b == null) a == b else {
+						val sampled = previous(b.positionDeltas)
+						a.positionDeltas.size == sampled.size && a.positionDeltas.indices.all { kotlin.math.abs(a.positionDeltas[it] - sampled[it]) < 1e-3f } &&
+							a.drawOrder == b.drawOrder && a.opacity == b.opacity && a.multiplyColor == b.multiplyColor && a.screenColor == b.screenColor
+					}
+				}
+			}
 			val ids = (g2d.blendShapes.map { it.parameterId } + md.blendShapes.map { it.parameterId }).distinct()
 			return ids.mapNotNull { id ->
 				val gv = irG[id.raw]; val g2v = irG2[id.raw]; val mv = irM[id.raw]
 				// Whose version the three-way rule keeps: the user's (true), the generators' (false), or neither (null).
 				val users = when {
 					gv != null && g2v != null && mv != null -> when {
-						mv == gv -> false
-						g2v == gv || mv == g2v -> true
+						unchanged(id) -> false
+						g2v == gv || (geometry.fromPrevious == null && mv == g2v) -> true
 						else -> { issue(IssueKind.CONFLICT, target, "blend shape ${id.raw}"); true }
 					}
 					gv != null && mv == null -> null // the user deleted it
-					gv != null -> if (mv != gv) true else null // the generators dropped it; the user's change stays
+					gv != null -> if (!unchanged(id)) true else null // the generators dropped it; the user's change stays
 					g2v != null -> { if (mv != null) issue(IssueKind.CONFLICT, target, "blend shape ${id.raw} added by both"); mv != null }
 					else -> true
 				} ?: return@mapNotNull null

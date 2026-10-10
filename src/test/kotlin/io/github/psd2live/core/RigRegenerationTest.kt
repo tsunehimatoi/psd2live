@@ -222,8 +222,34 @@ class RigRegenerationTest {
 		val remerged = repair.issues.single { it.kind == RigRegeneration.IssueKind.REMERGED }
 		assertEquals("journal:1", remerged.target)
 		assertEquals("mesh:Bow", remerged.detail)
+		// Once repaired, the stale checkpoint stays in the journal but asks for nothing more.
+		val repaired = RigEditOverlay(authoringJournal = overlay.authoringJournal + checkpoint(repair.authored, g1))
+		assertNull(RigMergeRepair.repaired(repaired, repair.authored, g1.atlas, g1.sources))
 		// A journal this build merges alike needs nothing.
 		val faithful = RigEditOverlay(authoringJournal = listOf(checkpoint(m0, g0), checkpoint(RigRegeneration.merge(g0, g1, m0).model, g1)))
 		assertNull(RigMergeRepair.repaired(faithful, current, g1.atlas, g1.sources))
+	}
+
+	@Test fun aRebuiltMeshDropsTheBlendShapeItsGeneratorsMovedOntoAKeyformAxis() {
+		// A skeleton change can turn a bone from a blend shape into a keyform axis. On the user's own vertices every shape
+		// differs from G's by count alone; one that is G's sampled onto them is not the user's and must not stay beside the axis.
+		val gen = ParameterId("ParamGen")
+		val unitDeltas = FloatArray(8) { if (it % 2 == 0) 0.1f else 0f }
+		fun withGen(model: PuppetModel) = model.withParameterCreated(gen, "Gen").withParameterRange(gen, 0f, 0f, 1f)
+		val g = withGen(generated(withSway = false)).let { model -> model.copy(drawables = model.drawables.map { if (it.id != hair) it else
+			it.copy(blendShapes = listOf(BlendShapeBinding(gen, floatArrayOf(0f, 1f), 0, listOf(null, MeshForm(unitDeltas))))) }) }
+		val g2 = withGen(generated(withSway = false)).let { model -> model.copy(drawables = model.drawables.map { if (it.id != hair) it else
+			it.copy(geometryGrid = KeyformGrid(listOf(KeyformAxis(gen, floatArrayOf(0f, 1f))),
+				listOf(KeyformCell(intArrayOf(0), MeshDeltaForm(FloatArray(8))), KeyformCell(intArrayOf(1), MeshDeltaForm(unitDeltas))))) }) }
+		// The user rebuilt the hair as a 3 x 2 grid; its blend shape is G's on the new vertices.
+		val rebuilt = DrawableMesh(floatArrayOf(0f, 0f, 0.5f, 0f, 1f, 0f, 0f, 0.5f, 0.5f, 0.5f, 1f, 0.5f),
+			floatArrayOf(0f, 0f, 0.5f, 0f, 1f, 0f, 0f, 0.5f, 0.5f, 0.5f, 1f, 0.5f), intArrayOf(0, 1, 3, 1, 4, 3, 1, 2, 4, 2, 5, 4))
+		val m = g.copy(drawables = g.drawables.map { if (it.id != hair) it else it.copy(mesh = rebuilt,
+			blendShapes = listOf(BlendShapeBinding(gen, floatArrayOf(0f, 1f), 0, listOf(null, MeshForm(FloatArray(12) { if (it % 2 == 0) 0.1f else 0f }))))) })
+		val result = RigRegeneration.merge(g, g2, m)
+		val merged = result.model.drawables.single { it.id == hair }
+		assertTrue(merged.blendShapes.none { it.parameterId == gen }, "the stale blend shape is gone: ${merged.blendShapes.map { it.parameterId }}")
+		val rest = canvas(result.model).getValue(hair); val moved = canvas(result.model, mapOf(gen to 1f)).getValue(hair)
+		for (i in rest.indices step 2) assertEquals(rest[i] + 10f, moved[i], 1e-2f, "moved once, not twice")
 	}
 }
