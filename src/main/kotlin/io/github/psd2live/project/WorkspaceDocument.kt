@@ -80,17 +80,34 @@ data class LayerTransform(val a: Float, val b: Float, val c: Float, val d: Float
 
 	val isIdentity: Boolean get() = a == 1f && b == 0f && c == 0f && d == 1f && e == 0f && f == 0f
 
-	/** Whether this only moves and scales along the canvas axes (no turn, skew or flip). */
-	val isAxisAligned: Boolean get() = b == 0f && c == 0f && a > 0f && d > 0f
+	/**
+	 * Whether this only moves and scales along the canvas axes (no turn, skew or flip). A turn of a few millionths - float
+	 * noise a stored transform may carry - is none: across a 4096-pixel layer it is a hundredth of a pixel.
+	 */
+	val isAxisAligned: Boolean get() = a > 0f && d > 0f && kotlin.math.abs(b) <= AXIS_NOISE * a && kotlin.math.abs(c) <= AXIS_NOISE * d
 
 	fun x(x: Float, y: Float): Float = a * x + c * y + e
 	fun y(x: Float, y: Float): Float = b * x + d * y + f
 
-	/** This after [first]: the transform that applies [first], then this. */
-	fun after(first: LayerTransform) = LayerTransform(
-		a * first.a + c * first.b + 0f, b * first.a + d * first.b + 0f,
-		a * first.c + c * first.d + 0f, b * first.c + d * first.d + 0f,
-		a * first.e + c * first.f + e + 0f, b * first.e + d * first.f + f + 0f)
+	/**
+	 * This after [first]: the transform that applies [first], then this. Float noise is dropped from the result - a turn
+	 * or a scale off one by a few millionths, a move by a few hundred-thousandths - so moving a layer back and forth
+	 * leaves it exactly where it began rather than turned by rounding.
+	 */
+	fun after(first: LayerTransform): LayerTransform {
+		val na = a * first.a + c * first.b; val nb = b * first.a + d * first.b
+		val nc = a * first.c + c * first.d; val nd = b * first.c + d * first.d
+		val ne = a * first.e + c * first.f + e; val nf = b * first.e + d * first.f + f
+		val scale = maxOf(kotlin.math.abs(na), kotlin.math.abs(nb), kotlin.math.abs(nc), kotlin.math.abs(nd))
+		fun linear(v: Float) = when {
+			kotlin.math.abs(v) <= COMPOSE_NOISE * scale -> 0f
+			kotlin.math.abs(kotlin.math.abs(v) - 1f) <= COMPOSE_NOISE -> kotlin.math.sign(v)
+			else -> v
+		}
+		// + 0f turns a negative zero into zero, so equal transforms compare equal.
+		fun move(v: Float) = if (kotlin.math.abs(v) <= 1e-5f) 0f else v + 0f
+		return LayerTransform(linear(na) + 0f, linear(nb) + 0f, linear(nc) + 0f, linear(nd) + 0f, move(ne), move(nf))
+	}
 
 	fun inverse(): LayerTransform {
 		val det = a * d - b * c
@@ -108,6 +125,10 @@ data class LayerTransform(val a: Float, val b: Float, val c: Float, val d: Float
 
 	companion object {
 		val IDENTITY = LayerTransform(1f, 0f, 0f, 1f, 0f, 0f)
+		/** The relative turn below which a transform still counts as moving and scaling along the axes. */
+		private const val AXIS_NOISE = 1e-5f
+		/** The relative rounding [after] drops from a composed transform. */
+		private const val COMPOSE_NOISE = 1e-6f
 
 		fun of(values: List<Float>): LayerTransform {
 			require(values.size == 6) { "A layer transform has six numbers [a, b, c, d, e, f]" }

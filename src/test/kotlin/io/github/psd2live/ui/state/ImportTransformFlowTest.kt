@@ -68,6 +68,7 @@ class ImportTransformFlowTest {
                 val transform = vm.state.value.analysis!!.source.layers.single { it.id.raw == id }.transform
                 assertEquals(1f, transform.e, 1e-3f); assertEquals(0f, transform.f, 1e-3f)
                 assertEquals(1f, transform.a, 1e-3f); assertEquals(1f, transform.d, 1e-3f)
+                assertEquals(io.github.psd2live.project.LayerTransform(1f, 0f, 0f, 1f, transform.e, transform.f), transform, "a plain drag is a plain move")
                 assertNull(editor.error)
                 assertEquals(nodes + 2, backend.history().nodes.size, "the drag is one history node")
 
