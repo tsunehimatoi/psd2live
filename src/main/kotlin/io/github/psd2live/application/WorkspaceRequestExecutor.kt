@@ -52,11 +52,28 @@ internal class WorkspaceRequestExecutor(private val workspace: WorkspaceStatePor
                 action()
             }
             entries[key] = Entry(definition.id, request, context.author, pending)
+            evictSettled()
             pending.start()
             pending
         }
         return result.await()
     }
+
+    /**
+     * Keeps the newest [MAX_SETTLED] settled requests. Every result used to stay until the app exited, images
+     * included, so a long agent session grew without bound. A retry of an evicted ID runs again, and its stale state
+     * makes a workspace-bound one fail with a conflict rather than apply twice. Requests still running are never evicted.
+     */
+    private fun evictSettled() {
+        var settled = entries.values.count { it.result.isCompleted }
+        if (settled <= MAX_SETTLED) return
+        val iterator = entries.values.iterator()
+        while (settled > MAX_SETTLED && iterator.hasNext()) {
+            if (iterator.next().result.isCompleted) { iterator.remove(); settled-- }
+        }
+    }
+
+    private companion object { const val MAX_SETTLED = 512 }
 
     override fun close() = synchronized(lock) {
         if (!closed) { closed = true; scope.cancel() }

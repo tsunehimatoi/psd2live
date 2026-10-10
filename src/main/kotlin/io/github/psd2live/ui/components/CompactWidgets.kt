@@ -1027,10 +1027,20 @@ fun CompactTextField(
 	val isHovered by interactionSource.collectIsHoveredAsState()
 	var editing by remember { mutableStateOf(false) }
 	var fieldValue by remember { mutableStateOf(TextFieldValue(value)) }
+	// Texts sent through onValueChange that [value] has not echoed back yet. The echo of a keystroke can arrive after
+	// the next keystroke, so an echo is matched against this queue rather than the field: resetting the field to it
+	// would drop the newer keystroke. Only a focused field is typed in, so an unfocused one always takes [value].
+	val unechoed = remember { ArrayDeque<String>() }
 	// The node reports unfocused as soon as it is attached. That is not a blur.
 	var gainedFocus by remember { mutableStateOf(false) }
 	val editorRegions = LocalInlineEditorRegions.current
 	LaunchedEffect(value) {
+		val echo = if (gainedFocus) unechoed.indexOf(value) else -1
+		if (echo >= 0) {
+			repeat(echo + 1) { unechoed.removeFirst() }
+			return@LaunchedEffect
+		}
+		unechoed.clear()
 		if (fieldValue.text != value) {
 			fieldValue = TextFieldValue(value, TextRange(value.length))
 		}
@@ -1049,8 +1059,13 @@ fun CompactTextField(
 		value = fieldValue,
 		onValueChange = { input ->
 			if (!editing) { editing = true; onEditStart() }
+			val changed = input.text != fieldValue.text
 			fieldValue = input
-			if (input.text != value) onValueChange(input.text)
+			if (changed) {
+				if (unechoed.size >= MAX_UNECHOED_EDITS) unechoed.removeFirst()
+				unechoed.addLast(input.text)
+				onValueChange(input.text)
+			}
 		},
 		modifier = modifier
 			.height(height)
@@ -1073,6 +1088,7 @@ fun CompactTextField(
 					}
 				} else if (gainedFocus) {
 					gainedFocus = false
+					unechoed.clear()
 					if (editing) {
 						editing = false
 						onEditEnd()
@@ -1730,3 +1746,5 @@ fun CompactSectionHeader(
 
 /** Quiet period that ends an abandoned field session; see CompactNumberSpinner. */
 private const val EDIT_SETTLE_MILLIS = 800L
+/** Bounds [CompactTextField]'s queue of unechoed edits when a caller never echoes them back. */
+private const val MAX_UNECHOED_EDITS = 64

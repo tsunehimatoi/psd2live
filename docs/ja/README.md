@@ -214,7 +214,7 @@ PSD2Live は Cubism Editor や SDK なしで動作し、Cubism の形式とは�
 
 ## Agent との連携（MCP）
 
-1. PSD2Live を起動したまま **ツール → MCP…** を開き、ポート、アクセストークン、公開するツールセット（既定はコンパクト）を設定します。
+1. MCP サーバーは既定で有効で、PSD2Live の起動とともに `http://127.0.0.1:23871/mcp` で待ち受けます。**ツール → MCP…** で無効にしたり、ポート、アクセストークン、公開するツールセット（既定はコンパクト）を設定したりできます。アクセストークンはローカルのユーザー設定（Java Preferences）に平文で保存されます。
 2. 使用するホストに合ったコマンドまたは設定（Claude Code、Codex、汎用 JSON）をコピーします。Stdio のみのホストはリポジトリ直下の [`mcp_proxy.py`](../../mcp_proxy.py) を使います。
 3. Agent にはまず `workspace_overview` でプロジェクトの概要を、`workspace_inspect` で個々のオブジェクトを読ませてください。ツールとして公開されていない操作は `workspace_list_operations` で探し、`workspace_call` で呼び出します。
 
@@ -225,7 +225,7 @@ PSD2Live は Cubism Editor や SDK なしで動作し、Cubism の形式とは�
 
 ## ソースからのビルド
 
-JDK 21 が必要で、Gradle はリポジトリ同梱のラッパーを使います。Rust（cargo）があれば Rust ランタイムも同時にビルドし、なければ自動でスキップしてエディタは内蔵の評価器を使います。
+JDK 21 が必要で、Gradle はリポジトリ同梱のラッパーを使います。Rust（cargo、rustc 1.87 以降）があれば Rust ランタイムも同時にビルドします。cargo がない場合や rustc が古い場合は通知を出してスキップし、エディタは内蔵の評価器を使います（`rustup update` でビルドできるようになります）。
 
 ```bash
 # GUI を起動（Windows：.\gradlew.bat run または run-gui.bat）

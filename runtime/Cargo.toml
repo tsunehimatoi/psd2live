@@ -2,6 +2,8 @@
 name = "p2l-runtime"
 version = "0.1.0"
 edition = "2021"
+# The oldest rustc the dependencies build with (ruzstd 0.8 needs 1.87). The app build skips the runtime below it.
+rust-version = "1.87"
 license = "MIT"
 description = "Plays .p2lrt rigs compiled by PSD2Live: deformation, physics and clips, with a C ABI."
 publish = false

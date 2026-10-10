@@ -264,6 +264,9 @@ object RigBuilder {
 		/** The frame the body warps span: the body's own parts and the neck. */
 		val bodyFrame: Bounds,
 	) {
+		/** A closed mouth draws the mouth at rest, so an open mouth beside it fades out there; see [buildChannels]. */
+		val hasClosedMouth: Boolean = analysis.layers.any { it.semantic.tag == SemanticTag.MOUTH && it.opaquePixels > 0 }
+
 		/** Replace only artwork while keeping every existing deformer and normalization frame. */
 		fun withArtwork(input: PipelineAnalysis): RigContext = RigContext(
 			analysis = input.copy(
@@ -1102,7 +1105,7 @@ object RigBuilder {
 			val override = config.layerOverrides[layer.source.id.raw]
 			val classification = override?.type ?: layer.semantic.type
 			val channelGrids = if (config.meshOnly && classification == LayerType.PRESET) ChannelGrids.Empty
-				else channelStage(layer, override, switchParamKeys, config.rigTuning, stages).let { grids ->
+				else channelStage(layer, override, switchParamKeys, config.rigTuning, context.hasClosedMouth, stages).let { grids ->
 					if (v2 && resolution.isStubLayer(layer.source.id.raw) &&
 						grids.gridsByChannel.values.any { grid -> grid.axes.any { it.parameterId !in knownParameters } }) ChannelGrids.Empty else grids
 				}
@@ -1425,12 +1428,12 @@ object RigBuilder {
 
 	/** [buildChannels] under a key of what it reads. */
 	private fun channelStage(layer: ClassifiedLayer, override: LayerClassificationOverride?, switchParamKeys: Map<String, FloatArray>,
-	                         tuning: RigTuning, stages: RigStageCache?): ChannelGrids {
-		if (stages == null) return buildChannels(layer, override, switchParamKeys, tuning)
+	                         tuning: RigTuning, closedMouth: Boolean, stages: RigStageCache?): ChannelGrids {
+		if (stages == null) return buildChannels(layer, override, switchParamKeys, tuning, closedMouth)
 		val parameter = (override?.parameter ?: layer.semantic.parameter).trim()
 		val key = listOf(override?.type ?: layer.semantic.type, parameter, override?.switchId ?: layer.semantic.switchId,
-			switchParamKeys[parameter]?.toList(), layer.semantic.tag, layer.semantic.side, tuning.teethFade)
-		return stages.get(RigStageCache.CHANNELS, 256, key) { buildChannels(layer, override, switchParamKeys, tuning) }
+			switchParamKeys[parameter]?.toList(), layer.semantic.tag, layer.semantic.side, tuning.teethFade, closedMouth)
+		return stages.get(RigStageCache.CHANNELS, 256, key) { buildChannels(layer, override, switchParamKeys, tuning, closedMouth) }
 	}
 
 	/**
@@ -1811,7 +1814,7 @@ object RigBuilder {
 		val override = config.layerOverrides[layer.source.id.raw]
 		val classification = override?.type ?: layer.semantic.type
 		val channels = if (deferred || config.meshOnly && classification == LayerType.PRESET) ChannelGrids.Empty
-			else channelStage(layer, override, switchParamKeys, config.rigTuning, stages)
+			else channelStage(layer, override, switchParamKeys, config.rigTuning, context.hasClosedMouth, stages)
 		val drawable = Drawable(
 			id = part.drawableId,
 			name = part.name,
@@ -3187,8 +3190,12 @@ object RigBuilder {
 		override: LayerClassificationOverride?,
 		switchParamKeys: Map<String, FloatArray>,
 		tuning: RigTuning,
+		/** Whether a closed mouth layer draws the mouth at rest; see [RigContext.hasClosedMouth]. */
+		closedMouth: Boolean,
 	): ChannelGrids {
 		val type = override?.type ?: layer.semantic.type
+		// Teeth, tongue and an open mouth fade in over the first teethFade percent of the opening.
+		val fadeIn = (tuning.teethFade / 100f).coerceAtLeast(0.01f)
 		val opacityGrid = when (type) {
 			LayerType.TOGGLE -> {
 				val paramName = (override?.parameter ?: layer.semantic.parameter).trim()
@@ -3216,9 +3223,12 @@ object RigBuilder {
 					}
 					SemanticTag.MOUTH_CLOSE -> scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, 1f)) { 1f - it }
 					SemanticTag.TONGUE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B ->
-						scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, tuning.teethFade / 100f, 1f)) { open ->
-							(open / (tuning.teethFade / 100f)).coerceIn(0f, 1f)
-						}
+						scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, fadeIn, 1f)) { open -> (open / fadeIn).coerceIn(0f, 1f) }
+					// Beside a closed mouth the open one only flattens at rest, and it and its lip ribbons (which copy
+					// its channels) showed as a second, differently coloured line under the closed mouth. Alone it
+					// is the only mouth there is and stays.
+					SemanticTag.MOUTH_OPEN -> if (!closedMouth) null
+						else scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, fadeIn, 1f)) { open -> (open / fadeIn).coerceIn(0f, 1f) }
 					else -> null
 				}
 			}

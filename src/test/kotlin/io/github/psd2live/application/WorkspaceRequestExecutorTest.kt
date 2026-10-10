@@ -116,4 +116,21 @@ class WorkspaceRequestExecutorTest {
             assertEquals(1, executions)
         }
     }
+
+    @Test fun onlyTheNewestSettledRequestsAreRemembered() = runBlocking {
+        WorkspaceRequestExecutor(Backend()).use { executor ->
+            val registry = WorkspaceOperationRegistry(executor)
+            val executions = mutableMapOf<Int, Int>()
+            registry.register(definition) { business, _ ->
+                val value = business.getValue("value").jsonPrimitive.int
+                executions[value] = (executions[value] ?: 0) + 1
+                WorkspaceOperationOutput(buildJsonObject { put("state", "load:1:0") })
+            }
+            for (i in 0..600) registry.invoke("settings_update", request(id = "r$i", value = i), context)
+            registry.invoke("settings_update", request(id = "r600", value = 600), context)
+            assertEquals(1, executions[600], "a recent retry shares its first result")
+            registry.invoke("settings_update", request(id = "r0", value = 0), context)
+            assertEquals(2, executions[0], "an evicted request runs again")
+        }
+    }
 }
