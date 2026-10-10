@@ -109,6 +109,7 @@ internal fun WorkspaceMutationResult.batchResult(count: Int): JsonObject = build
     put("history_node_id", historyNodeId); put("revision", revisionId); put("applied", applied)
     put("edit_count", count); put("changed", JsonArray(affectedObjectIds.map(::JsonPrimitive)))
     geometryDiagnostics?.let { put("geometry_diagnostics", it) }
+    atlasFit?.let { fit -> put("atlas_fit", fit); put("notices", JsonArray(atlasNotices.map(::JsonPrimitive))) }
 }
 
 /** Only the exact batch owns this completion marker; nested or unrelated document work cannot claim it. */

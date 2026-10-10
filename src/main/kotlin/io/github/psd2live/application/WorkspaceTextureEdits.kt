@@ -79,7 +79,35 @@ data class WorkspaceTextureResult(
     val mutation: WorkspaceMutationResult,
     val layerIds: List<String>,
     val atlasFit: Float,
+    /** What the atlas reports about fitting its budget; see [atlasBudgetNotices]. */
+    val notices: List<String> = emptyList(),
 )
+
+/**
+ * What [atlas] reports about fitting [budget], and how to resolve it. A stored arrangement keeps its fit, so a
+ * replaced, denser image that outgrows it is either shrunk below the density asked for ([overrides], else 1) or
+ * placed on pages past the budget; neither shows in the fit, so both are named here.
+ */
+internal fun atlasBudgetNotices(atlas: PackedAtlas, budget: AtlasBudget, overrides: Map<String, TextureOverride>): List<String> {
+    val notices = atlas.notices.toMutableList()
+    val remedy = "Arrange the atlas again with atlas_pack, or raise page_size or max_pages with atlas_set_budget."
+    if (atlas.pages.size > budget.maxPages) {
+        if (notices.none { "more than the budget" in it })
+            notices += "Textures take ${atlas.pages.size} atlas pages, more than the budget of ${budget.maxPages}."
+        notices += remedy
+    }
+    val shrunk = atlas.placementByLayerId.filter { (id, placement) ->
+        val wanted = (overrides[id]?.density ?: 1f) * atlas.fit
+        minOf(placement.scaleX, placement.scaleY) < wanted * 0.99f
+    }
+    if (shrunk.isNotEmpty()) {
+        val least = shrunk.values.minOf { minOf(it.scaleX, it.scaleY) }
+        notices += "Textures of ${shrunk.keys.sorted().joinToString()} are stored below the density asked for (down to " +
+            "${String.format(java.util.Locale.ROOT, "%.0f", least * 100)}%) to fit the page."
+        if (remedy !in notices) notices += remedy
+    }
+    return notices
+}
 
 /** One layer's atlas tile; positions and sizes are texture pixels. */
 data class WorkspaceAtlasTile(
@@ -170,13 +198,20 @@ class WorkspaceTextureView internal constructor(private val capture: WorkspaceCa
         val pages = model.atlas.pages.mapIndexed { index, page ->
             val onPage = tiles.filter { it.page == index }
             val area = page.image.width.toLong() * page.image.height
+            // A shaped tile counts only the cells its meshes use: nested tiles' rectangles overlap, so summing
+            // rectangles read a half-empty page as full.
+            val used = onPage.sumOf { tile ->
+                val rect = tile.width.toDouble() * tile.height
+                meshFootprint(tile.layerId)?.let { rect * it.area / (it.columns.toDouble() * it.rows) } ?: rect
+            }
             WorkspaceAtlasPage(index, page.image.width, page.image.height, onPage.size,
-                if (area == 0L) 0f else (onPage.sumOf { it.width.toLong() * it.height } / area.toDouble()).toFloat().coerceIn(0f, 1f))
+                if (area == 0L) 0f else (used / area).toFloat().coerceIn(0f, 1f))
         }
         val overflow = WorkspaceAtlasFootprints.overflowing(model)
-        val notices = if (overflow.isEmpty()) emptyList() else listOf("Meshes of " + overflow.joinToString() +
+        val budget = document.config().effectiveAtlasBudget()
+        val notices = atlasBudgetNotices(model.atlas, budget, document.textureOverrides) + if (overflow.isEmpty()) emptyList() else listOf("Meshes of " + overflow.joinToString() +
             " reach beyond the footprint they were arranged by; arrange the atlas again so their tiles keep clear of their neighbours.")
-        return WorkspaceAtlasSnapshot(document.config().effectiveAtlasBudget(), pages, model.atlas.fit, notices, tiles, !model.atlas.arranged)
+        return WorkspaceAtlasSnapshot(budget, pages, model.atlas.fit, notices, tiles, !model.atlas.arranged)
     }
 
     /** The page's canonical PNG, byte for byte what exports write. */
@@ -239,7 +274,8 @@ class WorkspaceTextureView internal constructor(private val capture: WorkspaceCa
  */
 internal class WorkspaceTileCollision(val layerIds: List<String>) : IllegalArgumentException(
     "This placement would push tiles ${layerIds.joinToString()} off their spots (past the page, or where tiles' meshes meet); " +
-        "nothing was changed. Check placements with atlas_check_placement first")
+        "nothing was changed. Check placements with atlas_check_placement first; to make room, atlas_pack the atlas or raise its budget " +
+        "with atlas_set_budget, in the same workspace_apply_edits batch as this edit")
 
 /**
  * Whether tiles may stand where an edit would put them: the one rule the atlas view tests while dragging, the
