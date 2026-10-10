@@ -24,12 +24,15 @@ internal object WorkspaceJobResultSchemas {
         "geometry_diagnostics" to WorkspaceGeometrySafetySchemas.report), lifecycleFields.keys + setOf("edit_count", "changed"))
     private val modelExport = s.obj(mapOf("state" to s.handle(), "revision" to s.handle(),
         "files" to s.array(s.obj(mapOf("path" to s.handle(), "bytes" to s.integer(0)))), "warnings" to s.array(s.string())))
+    private val targetExport = s.obj(mapOf("state" to s.handle(), "revision" to s.handle(), "target" to s.handle(), "compiler" to s.string(),
+        "directory" to s.handle(), "files" to s.array(s.string()), "losses" to s.array(s.obj(mapOf("object" to s.string(), "feature" to s.string(),
+            "handling" to s.string(), "note" to s.string(), "error" to s.string()), required = setOf("object", "feature", "handling", "note")))))
     private val psdExport = s.obj(mapOf("state" to s.handle(), "path" to s.handle(), "bytes" to s.integer(0), "layers" to s.integer(0)))
 
     private val results = linkedMapOf(
         "project_import_psd" to source, "project_create_artwork" to source, "project_import_cmo3" to lifecycle,
         "project_open" to lifecycle, "project_save" to lifecycle, "project_save_as" to lifecycle,
-        "project_export_model" to modelExport, "project_export_psd" to psdExport, "workspace_apply_edits" to batch,
+        "project_export_model" to modelExport, "project_export_target" to targetExport, "project_export_psd" to psdExport, "workspace_apply_edits" to batch,
         "workspace_preview_edits" to WorkspaceGeometrySafetySchemas.preview,
         "workspace_preview_regeneration" to regenerationPreview,
     ).apply {

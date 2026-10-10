@@ -574,7 +574,7 @@ private fun pngImportSchema(): WorkspaceCommandSchema = WorkspaceCommandSchema(
 	properties = buildJsonObject {
         putJsonObject("state") { put("type", "string") }
         putJsonObject("png_path") { put("type", "string"); put("description", "Absolute local PNG path from the image generator; avoids transferring base64 through model context") }
-        putJsonObject("reference_id") { put("type", "string"); put("description", "Reference package from asset_prepare_reference. V2 import keeps raw PNG, removes declared matte, and requires asset_register before adding a layer. Replaces spatial_reference_id.") }
+        putJsonObject("reference_id") { put("type", "string"); put("description", "Reference package from asset_prepare_reference. V2 import keeps raw PNG, removes declared matte, and requires asset_register before adding a layer.") }
         put("processing", processingSchema())
         putJsonObject("solid_background") { put("type", "string"); put("pattern", "^#[0-9a-fA-F]{6}$"); put("description", "Actual generated matte color. Default generation to pure white #FFFFFF for dark hair or pure black #000000 for light hair to avoid colored fringe; do not guess or automatically strip alpha when omitted. Removes only border-connected near-color pixels, not a baked checkerboard. Inspect remaining matte in composition.") }
         putJsonObject("background_tolerance") { put("type", "integer"); put("minimum", 0); put("maximum", 64); put("default", 16) }
@@ -583,10 +583,6 @@ private fun pngImportSchema(): WorkspaceCommandSchema = WorkspaceCommandSchema(
 		putJsonObject("png_base64") {
 			put("type", "string")
 			put("description", "PNG bytes encoded as Base64, optionally as a data:image/png;base64 URI")
-		}
-		putJsonObject("spatial_reference_id") {
-			put("type", "string")
-			put("description", "spatialReferenceId returned by a View tool in this workspace session")
 		}
 		putJsonObject("source_pixel_rect") {
 			put("type", "object")
@@ -601,7 +597,7 @@ private fun pngImportSchema(): WorkspaceCommandSchema = WorkspaceCommandSchema(
 			}
 		}
 	},
-	required = listOf("state"),
+	required = listOf("state", "reference_id"),
 )
 
 private fun parameterCreateSchema(): WorkspaceCommandSchema = WorkspaceCommandSchema(

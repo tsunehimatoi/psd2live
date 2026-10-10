@@ -13,7 +13,7 @@
 | 文档生成器图 | 根项目 `core/DocumentGenerators` | 把工程的生成器登记为依赖图节点；重放按图的顺序运行摆动与模拟；覆盖按图查找关键形的拥有者 |
 | 生成结果覆盖 | `core/GeneratedOverrides` | 摆动 Warp 关键形与烘焙模拟网格关键形上的画布编辑记录为 `generated_override`，在所有生成器之后按控制点 / 顶点三方合并重放 |
 | 骨架与动作缓存 | `core/SkeletonRig.generate`、`core/MotionPresets.tracks` | 骨架烘焙与生成动作按输入内容哈希接入 `GenerationCache` |
-| 重放检查点 | `core/ReplayCheckpoints` | 按基础 Rig 实例与日志前缀内容缓存重放的中间模型；追加只重放新条目，撤销命中已有检查点 |
+| 重放检查点 | `core/legacy/ReplayCheckpoints` | 只用于没有固化点的日志：按基础 Rig 实例与日志前缀内容缓存重放的中间模型；追加只重放新条目，撤销命中已有检查点 |
 | 生成器复用 | `core/DocumentGenerators`（`GeneratorReuse`） | 摆动与模拟声明对象级读取；读取不变时把上次输出作为补丁套用，不重新生成 |
 | 拆分物化 | `core/ArtPrimitiveJournal`、`core/RigRegenerationCheckpoint`（`split`）、`application/WorkspaceArtPrimitives` | 拆分是一次再生成：部件取代原图层参与生成，用户对原图层的修改经三方合并带到部件上，`art_primitive` 记录之后写固化点；见[拆分物化](#拆分物化画元记录-art_primitive) |
 | 作者态 Rig 与固化点 | `core/RigEditOverlay`（`replayAuthored`/`finish`）、`core/RigCheckpoint`、`core/RigRegeneration`、`project/MaterializedRigStore` | 重放分为作者态阶段与收尾阶段；作者态 Rig 按修订保存并直接用于构建；生成结果在日志之下变化时三方合并并写固化点，见[固化点](#固化点)与[固化 Rig](MATERIALIZED_RIG.md) |
@@ -47,16 +47,16 @@
 
 ## 增量重放
 
-`RigEditOverlay.applyTo` 依次执行旧格式静态编辑（参数删除/创建、静态 Warp、结构、关键形 set/copy/delete）、`authoringJournal` 各条目、摆动与模拟、覆盖合并和延后的面板编辑。前两步是基础 Rig 和条目的纯函数，由 `ReplayCheckpoints` 缓存中间结果；后两步由 `GeneratorReuse` 按读取集复用。
+`RigEditOverlay.applyTo` 依次执行作者态（有固化点时从最后一个固化点开始，只重放其后的条目，见[固化点](#固化点)；没有固化点时执行旧格式静态编辑——参数删除/创建、静态 Warp、结构、关键形 set/copy/delete——与 `authoringJournal` 全部条目）、摆动与模拟、覆盖合并和延后的面板编辑。生成的文档第一次编辑后就有固化点，之后最多重放 `CHECKPOINT_INTERVAL` 条；下面的重放检查点只服务没有固化点的日志（较早版本写下、尚未编辑过的修订）。摆动与模拟由 `GeneratorReuse` 按读取集复用。
 
-**重放检查点**
+**重放检查点**（`core.legacy.ReplayCheckpoints`，只用于没有固化点的日志）
 
 - 检查点是“旧格式静态编辑 + 前 `i` 条日志”之后的模型。查找条件：基础模型是同一个实例；旧格式部分相等（含摆动/模拟参数集合，它决定结构编辑哪些延后，以及界面语言）；前 `i` 条每条都与检查点重放过的条目相同（先比引用，不同再比内容）。
 - 失效只看前缀内容，不看下标。改写较早条目的命令（拖动合并、生成结果覆盖的捕获、网格规范化）会让该条及之后的检查点自然失配，从最近的有效检查点重放。
 - 每条链保留下标 0、每 16 条以及最后 3 条的状态，均为软引用（内存紧张时释放）；最多保留 4 条链（最近使用优先）。分支时保留旧链，供重做或切回使用。
 - 追加一条只重放这一条；撤销到前一个状态直接命中，不重放。完整重建（重开、改变图块尺寸的绘画与换图）产生新的基础 Rig 实例，从头重放；不改变任何图块尺寸与位置的绘画或换图沿用同一基础 Rig 实例（见下文“纹理集与绘画”），检查点照常命中。
 - 骨架在基础 Rig 内烘焙（日志之前），日志之后只有画布蒙皮写回。骨架编辑改变基础 Rig 的内容，此前所有检查点都不再成立，因此从头重放；“从第一条受影响条目之前续放”对骨架不适用。不按内容匹配基础 Rig：在 2 倍 tml（4096²）上整个基础 Rig 的 IR 内容哈希约 160 ms，而 26 条日志的完整重放约 6 ms；内容相同的重建由阶段缓存交回同一实例（见“Rig 生成阶段”），实例匹配已覆盖。
-- `PuppetModel` 及其对象按不可变值共享。`-Dpsd2live.replayCheckpoints=false`（或 `ReplayCheckpoints.enabled = false`）同时关闭检查点和生成器复用。
+- `PuppetModel` 及其对象按不可变值共享。`-Dpsd2live.replayCheckpoints=false` 同时关闭检查点和生成器复用；代码中二者是两个开关（`ReplayCheckpoints.enabled`、`GeneratorReuse.enabled`），可分别关闭。
 
 **生成器复用**
 
@@ -107,7 +107,7 @@
 - 在其他对象上使用生成参数（打键、通道关键形、改名、改范围）时，先在日志中按生成器当前定义创建该参数（`GeneratedParameterAdoption`），之后参数属于文档，生成器沿用它；见[固化 Rig](MATERIALIZED_RIG.md#41-记录层与作用层)。
 - 覆盖不影响基础 Rig 生成：生成几何缓存的键忽略覆盖命令，增删覆盖不会让基础 Rig 重新生成。
 - **问题报告**：每次重放把未按记录生效的覆盖作为结构化记录（`GeneratedOverrideIssue`：类型 `conflict` / `orphaned`、生成器 ID、目标、完整键、冲突点数或孤立覆盖的点数、形状总点数，孤立时附原因 `missing_keyform` / `shape_mismatch` / `superseded`）存入 `BuiltRig.overrideIssues`，按日志顺序排列，不改变合并语义。被拆分取代的网格上的覆盖原因为 `superseded`。
-- `core/quality/GeneratedOverrideQuality` 把这些记录转为观察报告（版本 2，领域 `overrides`，单项检查 `generated_overrides`）：冲突为 `GENERATED_OVERRIDE_CONFLICT`，孤立为 `GENERATED_OVERRIDE_ORPHANED`，等级由规则枚举唯一决定（均为 warning，`can_proceed` 恒为 true），不从文本推断；没有问题时报告完整且 findings 为空。MCP `workspace_inspect`（scope `project`，工程已加载时）返回 `quality.overrides`；严格结构见 `WorkspaceQualitySchemas`。
+- `core/quality/GeneratedOverrideQuality` 把这些记录转为观察报告（版本 3，领域 `overrides`，两项检查：`generated_overrides`，以及 `superseded_entries`——版本 2 拆分之前、只因其取代的网格失败而按空操作重放的条目，等级 info）：冲突为 `GENERATED_OVERRIDE_CONFLICT`，孤立为 `GENERATED_OVERRIDE_ORPHANED`，等级由规则枚举唯一决定（均为 warning，`can_proceed` 恒为 true），不从文本推断；没有问题时报告完整且 findings 为空。MCP `workspace_inspect`（scope `project`，工程已加载时）返回 `quality.overrides`；严格结构见 `WorkspaceQualitySchemas`。
 - 检查器工具栏在有问题时显示计数徽标，选中对象的问题在检查器顶部列出；点击徽标切换为列出全部问题。文案按类型与原因代码本地化（中/英/日）。
 
 骨架烘焙的修正关键形没有改为覆盖（`skeleton.skin` 写在日志安放网格上的关键形除外，见[日志安放的网格](#日志安放的网格)）：骨架在编辑日志之前运行，日志中的画布编辑本来就在骨架之后重放，并会随网格重建一起迁移到新拓扑；改为覆盖反而会在重新划分网格后变成孤立。物理组与生成动作沿用已有的整体覆盖（同 ID 的用户物理组取代生成组，`builtin` 动作片段取代生成动作）。
@@ -384,7 +384,7 @@
 **已知限制**：
 
 - 被拆分嘴部的生成嘴唇仍取自被取代的嘴部（乘客的冻结像素），而不是部件当前像素的合成。拆分时二者一致；之后在部件上绘画，嘴唇纹理不跟随（普通嘴部的嘴唇纹理同样取自网格输入，重建网格前也不跟随），重建部件网格也不会重新生成嘴唇。
-- `frozen_axes`：写入端总是写空；读取端遇到非空 `frozen_axes` 会把该部件的整张生成网格归零、只保留作者数据，因此当前不会出现。
+- `frozen_axes`：写入端总是写空，因此当前不会出现。基础生成读到非空值时，若生成网格的轴里有被冻结的轴，就把该部件的整张生成网格归零、只保留作者数据；旧版重放遇到非空值直接报错（不支持）。
 - 部件网格重建后，针对其生成单元的 `generated_override` 不迁移，形状不符时按孤立报告。
 - 嘴型轮廓开启时，嘴部部件的固定网格是原件的轮廓网格，足迹与原件的栅格网格略有不同：由嘴部框定的生成嘴唇静止位置相差约 0.4 px；部件本身的开口形状不含轮廓贡献（约 0.13 px）。
 - v2 部件参与框架生成：固定网格的画布位置经父级往返有浮点舍入，未拆分网格的局部坐标与框架控制点可能相差几个 ulp（世界坐标 < 1e-4 px）；版本 1 逐位不变。
@@ -402,6 +402,6 @@
 
 ## 后续
 
-- 分类修改的剩余耗时在分析：生成迁移与拆分基线对新栅格重复运行 `CharacterAnalyzer.analyze`（逐层分类约 0.5 s/次），以及迁移内的多次完整构建；可按图层元数据与栅格摘要缓存分类结果。
+- 分类修改的剩余耗时在分析：生成的模型改为合并后不再走生成迁移，剩下导入 CMO3 模型的迁移与拆分基线对新栅格重复运行 `CharacterAnalyzer.analyze`（逐层分类约 0.5 s/次）；可按图层元数据与栅格摘要缓存分类结果。
 - 以混合形写回的模拟关键形的覆盖；覆盖报告并入统一质量检验框架后改用其规则注册表与栅栏。
 - 打开工程时直接读取固化结果：作者态 Rig 的保存与读取、固化点、再生成合并与试运行均已实现（[固化 Rig · 实现进度](MATERIALIZED_RIG.md#10-实现进度)）；导入 CMO3 的模型在导入基线上从固化点重放，不单独由作者态 Rig 构建。

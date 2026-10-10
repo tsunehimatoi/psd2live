@@ -55,7 +55,7 @@ For hands-on learning, open **Help → Tutorials…** (`F1`). Chinese is the pri
 
 | 文档 | 内容 |
 | --- | --- |
-| [MCP 使用与接口](zh/agent/MCP_AUTHORING.md) | 接入方式、189 项公开操作、原子批量与试运行、调用示例、状态与历史 |
+| [MCP 使用与接口](zh/agent/MCP_AUTHORING.md) | 接入方式、190 项公开操作、原子批量与试运行、调用示例、状态与历史 |
 | [Agent 设计与验收](zh/agent/AGENT_DESIGN.md) | 分工边界、工具设计原则、任务验收步骤 |
 | [能力实测](zh/STATUS.md) | 真实任务的实测记录与记录格式 |
 | [归档](zh/agent/archive/) | 2026-09-13 调研、应用层重构记录与 UI / MCP 对照表，历史背景，不代表当前接口 |

@@ -127,6 +127,10 @@ object SimAuthoring {
         edit.inputs.forEach { require(it.parameter in parameters) { "Parameter ${it.parameter} does not exist" } }
         val glues = model.glues.mapTo(HashSet(), ::glueKey)
         edit.glueRoles.keys.forEach { require(it in glues) { "No glue $it; glue keys are meshA|meshB as inspect lists them" } }
+        for (obstacle in edit.colliders) {
+            val mesh = requireNotNull(model.drawables.firstOrNull { it.id.raw == obstacle.mesh }?.mesh) { "Obstacle mesh not found: ${obstacle.mesh}" }
+            require(maxOf(obstacle.a, obstacle.b) < mesh.positions.size / 2) { "Obstacle vertices of ${obstacle.mesh} are within 0..${mesh.positions.size / 2 - 1}" }
+        }
         SimScene.build(model, edit)
     }
 

@@ -1125,17 +1125,6 @@ class PSD2LiveViewModel : AutoCloseable {
         editorsSnapshot().forEach { it.resetPaintSession() }
     }
 
-
-    fun updatePuppetModel(transform: (PuppetModel) -> PuppetModel) {
-        val currentPreview = _state.value.previewModel ?: return
-        val newPuppet = transform(currentPreview.rig.puppet)
-        val updatedRig = currentPreview.rig.copy(puppet = newPuppet)
-        val updatedPreview = currentPreview.copy(rig = updatedRig)
-        updateState { it.copy(previewModel = updatedPreview, previewModelDirty = true, projectDirty = true) }
-        markWorkspaceChanged()
-        editorChanged()
-    }
-
     suspend fun applyCommittedPaint(updatedPreview: RigPreviewModel, summary: String) {
         updateState {
             it.copy(

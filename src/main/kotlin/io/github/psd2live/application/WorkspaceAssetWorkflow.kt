@@ -102,7 +102,7 @@ internal class WorkspaceAssetWorkflow(
             put("generation_brief","Paint only ${a.text("piece_id")} as its own complete root-to-tip volume. Preserve reference frame and direction where possible, extend under declared occluders, and retain padding. Use UNIFORM $matte background; no transparency claim, checkerboard, labels or cast shadows. Red labels are context only. If the generator recenters the content, use landmark registration, never assume its position was retained.")
             put("_clean_png",Base64.getEncoder().encodeToString(clean)); put("_context_png",Base64.getEncoder().encodeToString(contextPng))
         })
-        // Save its affine spatial reference separately for the legacy import machinery.
+        // Its affine spatial reference: asset_import_png places the generated PNG through it.
         store.persistSpatial(projectId,r.text("id"), WorkspaceViewSpatialMetadata(pixelWidth=width,pixelHeight=height,
             canvasWidth=document.source.widthPx.toFloat(),canvasHeight=document.source.heightPx.toFloat(),requestedViewRect=rect,viewRect=rect,
             canvasUnitsPerPixelX=rect.width/width,canvasUnitsPerPixelY=rect.height/height))
@@ -113,7 +113,7 @@ internal class WorkspaceAssetWorkflow(
         checkCancelled()
         val asset=asset(a.text("asset_id"))
         val referenceId = asset.public.details["reference_id"]?.jsonPrimitive?.content
-            ?: a["reference_id"]?.jsonPrimitive?.content ?: throw IllegalArgumentException("reference_id is required for legacy asset registration")
+            ?: a["reference_id"]?.jsonPrimitive?.content ?: throw IllegalArgumentException("reference_id is required for an asset imported without one")
         val ref=record(referenceId,"reference")
         val mode=a.text("mode")
         var residual=0.0; var conflict=false
@@ -158,7 +158,7 @@ internal class WorkspaceAssetWorkflow(
     fun reprocess(a: JsonObject): WorkspaceWorkflowResult {
         val previous=asset(a.text("asset_id")); val referenceId=previous.public.details.text("reference_id")
         val ref=record(referenceId,"reference"); val spatial=store.loadSpatial(projectId,referenceId) ?: error("Reference spatial metadata missing")
-        val imported=assets.import(WorkspacePngImportRequest(requireNotNull(previous.originalPng) { "Legacy asset has no original PNG" },referenceId,
+        val imported=assets.import(WorkspacePngImportRequest(requireNotNull(previous.originalPng) { "This asset kept no original PNG to reprocess" },referenceId,
             solidBackground=a["solid_background"]?.jsonPrimitive?.content ?: previous.public.details["solid_background"]?.jsonPrimitive?.contentOrNull,
             backgroundTolerance=a.number("background_tolerance",previous.public.details.number("background_tolerance",16.0)).toInt(),requireTransparency=true,referenceId=referenceId,
             processing=a["processing"] as? JsonObject ?: JsonObject(emptyMap())),spatial)

@@ -105,7 +105,7 @@ ABI 版本：头文件的 `P2L_ABI_VERSION_MAJOR` / `P2L_ABI_VERSION_MINOR` 与�
 
 ## 尚未完成
 
-- 网格渲染（遮罩、混合模式）由宿主完成，运行时只提供几何与属性。
+- GPU 渲染由宿主完成：运行时提供几何与属性，并以 `p2l_render`（CPU 软件渲染，见下节）画出遮罩与全部合成模式；GPU 宿主按同一规则自行绘制（Web 目标的绘制见[导出目标](EXPORT_TARGETS.md)）。
 
 ## 软件渲染
 

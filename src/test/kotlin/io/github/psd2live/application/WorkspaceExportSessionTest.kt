@@ -79,6 +79,17 @@ class WorkspaceExportSessionTest {
         assertFalse(cold.model.sources.baseKnown, "exporting never generated the base")
     }
 
+    @Test fun aTargetExportWritesTheCommittedModelAndItsLosses() = runBlocking<Unit> {
+        val runtime = fixture(); val committed = runtime.capture()
+        val exported = WorkspaceExportSession(committed, "Committed.psd").target("p2lrt", temporary.resolve("runtime"), emptyMap())
+        validateWorkspaceResult("project_export_target", WorkspaceJobResultSchemas.result("project_export_target"), exported)
+        assertEquals(committed.revision, exported.getValue("revision").jsonPrimitive.content)
+        val files = exported.getValue("files").jsonArray.map { it.jsonPrimitive.content }
+        assertTrue(files.any { it.endsWith(".p2lrt") }, files.toString())
+        files.forEach { assertTrue(Files.isRegularFile(temporary.resolve("runtime").resolve(it)), it) }
+        assertTrue(Files.isRegularFile(temporary.resolve("runtime").resolve("Committed.p2lrt.report.json")))
+    }
+
     @Test fun publishingFailureRestoresOverwrittenFilesAndRemovesTransactionBackups() {
         val stage = Files.createDirectories(temporary.resolve("stage")); val target = Files.createDirectories(temporary.resolve("target"))
         val files = (1..2).map { index ->

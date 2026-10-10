@@ -8,8 +8,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * Place-then-confirm commits parent-local bounds directly - the same contract as create-from-selection and
- * createWarpFromBounds (screen → [local] → bounds), never a camera-world AABB. At the root that is model space;
+ * Place-then-confirm commits parent-local bounds directly (screen → [local] → bounds), never a camera-world AABB. At the root that is model space;
  * under a Warp parent it is UV.
  *
  * Camera-world Y (already negated) written straight into a root lattice still looks like identity (UV remapping
@@ -136,7 +135,7 @@ class PlacementParentLocalBoundsTest {
 
     @Test
     fun parentLocalUvBoundsDoNotShrinkToCenter() {
-        // Selection-style padded UV box — what beginPlacement / createWarpFromBounds write.
+        // Selection-style padded UV box — what beginPlacement writes.
         val created = create(nestedSource(), "child", 0.06f, 0.06f, 0.88f, 0.88f)
         val child = created.deformers.single { it.id.raw == "child" } as Deformer.Warp
         val pts = child.geometryGrid!!.cells.single().form.controlPoints

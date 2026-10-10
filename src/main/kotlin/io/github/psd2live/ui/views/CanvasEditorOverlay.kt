@@ -872,29 +872,6 @@ internal fun BoxScope.CanvasEditorOverlay(
             }
         }
 
-        // Interactive Creation Previews (legacy drag — only when no placement session)
-        if (editor.placement == null && editor.isCreatingWarp && editor.creationStart != null && editor.creationCurrent != null) {
-            val s = editor.creationStart!!; val e = editor.creationCurrent!!
-            val origin = Offset(minOf(s.x, e.x), minOf(s.y, e.y))
-            val extent = Size(abs(s.x - e.x), abs(s.y - e.y))
-            drawRect(colors.accent.copy(alpha = 0.12f), origin, extent)
-            drawRect(colors.accent, origin, extent, style = Stroke(1.5f))
-            val rows = editor.warpCreateGridRows
-            val cols = editor.warpCreateGridCols
-            for (r in 1 until rows) {
-                val y = origin.y + extent.height * (r.toFloat() / rows)
-                drawLine(colors.accent.copy(alpha = 0.45f), Offset(origin.x, y), Offset(origin.x + extent.width, y), 1f)
-            }
-            for (c in 1 until cols) {
-                val x = origin.x + extent.width * (c.toFloat() / cols)
-                drawLine(colors.accent.copy(alpha = 0.45f), Offset(x, origin.y), Offset(x, origin.y + extent.height), 1f)
-            }
-        }
-
-        if (editor.isCreatingRotation && editor.creationStart != null && editor.creationCurrent != null) {
-            drawRotationArrow(editor.creationStart!!, editor.creationCurrent!!, colors.accent, Color(0xFF7BBB99))
-        }
-
         // Rotation create scope: highlight every drawable the root wrap would affect
         if (editor.tool == CanvasTool.CREATE_ROTATION) {
             val (_, drawableIds) = editor.rotationScopeIds()

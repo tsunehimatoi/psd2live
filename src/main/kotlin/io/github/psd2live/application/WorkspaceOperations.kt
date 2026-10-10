@@ -112,6 +112,23 @@ internal class WorkspaceOperations(private val workspace: WorkspaceBackend,
                 workspace.exportModel(request.text("state"), request.text("output_directory"))
             }
         }
+        val targets = io.github.psd2live.core.ExportService.registry(io.github.psd2live.core.PipelineConfig()).targets
+            .map { it.id }.filterNot { it in io.github.psd2live.core.ExportService.experimental }
+        register("project_export_target", "Export the committed model through one export target into an absolute output directory, as File > Export as does: " +
+            "${targets.joinToString(", ")}. settings are the target's own keys (psd2live targets lists them with their ranges); unset keys take the target's default " +
+            "or the project's export settings. Writes the files and <name>.<target>.report.json; returns a job handle whose result lists the files and what the target could not carry (losses).",
+            schema(mapOf("request_id" to string(), "state" to string(), "target" to buildJsonObject {
+                put("type", "string"); put("enum", JsonArray(targets.map(::JsonPrimitive)))
+            }, "output_directory" to string(), "settings" to buildJsonObject {
+                put("type", "object"); put("additionalProperties", string())
+            }), listOf("request_id", "state", "target", "output_directory")),
+            WorkspaceOperationKind.OUTPUT, jobBacked = true) { request ->
+            val directory = absolutePath(request.text("output_directory"))
+            start("project_export_target") {
+                workspace.exportTarget(request.text("state"), request.text("target"), directory.toString(),
+                    request["settings"]?.jsonObject?.mapValues { it.value.jsonPrimitive.content }.orEmpty())
+            }
+        }
         register("project_export_psd", "Export editable source layers to an absolute PSD path. Returns a job handle. Scale 2 or 4 uses the project's configured texture upscale models.",
             schema(mapOf("request_id" to string(), "state" to string(), "path" to string(), "scale" to buildJsonObject {
                 put("type", "integer"); put("enum", JsonArray(listOf(1, 2, 4).map(::JsonPrimitive)))

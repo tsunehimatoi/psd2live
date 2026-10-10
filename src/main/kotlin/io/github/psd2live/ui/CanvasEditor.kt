@@ -261,8 +261,8 @@ internal val PLACEMENT_HANDLES = TransformHandles(rotates = false)
  * An in-progress create: target and relation are fixed from the tree/toolbar; the artist places and
  * sizes a ghost on the canvas, then confirms. Nothing is written to the model until [CanvasEditor.confirmPlacement].
  *
- * Bounds / origin / tip are stored in the new deformer parent-local space — the same units
- * non-UI create-from-selection / [createWarpFromBounds] write. Screen is display-only via
+ * Bounds / origin / tip are stored in the new deformer parent-local space — the units the
+ * `canvas_create_warp` / `canvas_create_rotation` commands take. Screen is display-only via
  * [DrawableSpaceMapping.localToWorld]; commit copies these fields as-is (no camera-world round-trip).
  */
 internal data class CreatePlacement(
@@ -1280,11 +1280,6 @@ internal class CanvasEditor(
     var hoveredBezierAnchor by mutableStateOf<Pair<Int, Int>?>(null)
     var hoveredBezierHandle by mutableStateOf<Triple<Int, Int, BezierHandleDir>?>(null)
 
-    // Interactive Creation state
-    var isCreatingWarp by mutableStateOf(false)
-    var isCreatingRotation by mutableStateOf(false)
-    var creationStart by mutableStateOf<Offset?>(null)
-    var creationCurrent by mutableStateOf<Offset?>(null)
     var warpCreateGridRows by mutableStateOf(5)
     var warpCreateGridCols by mutableStateOf(5)
     var warpCreateBezierRows by mutableStateOf(2)
@@ -1612,7 +1607,6 @@ internal class CanvasEditor(
     val inGesture get() = dragging
     val model get() = preview ?: state.previewModel!!.rig.puppet
     val pose get() = viewModel.canvasPose(state).mapKeys { it.key.raw }
-
 
     /** Only the transform tool owns the box and its handles. */
     val drawsTransformBox get() =
@@ -2106,7 +2100,6 @@ internal class CanvasEditor(
         knifeDraft = emptyList(); knifeDrawableId = null; subdividing = false; subdivideEdges = emptySet()
         knifeHover = null; knifeSnapKind = null
         placementInput = null; knifeInput = null; pathInput = null
-        isCreatingWarp = false; isCreatingRotation = false; creationStart = null; creationCurrent = null
         // LAYER placement is a committed import waiting for confirm — do not treat gesture
         // cleanup (history refresh, focus loss, tool churn) as Esc/Cancel.
         if (placement?.kind != CreatePlacementKind.LAYER) {
@@ -2610,7 +2603,7 @@ internal class CanvasEditor(
             put("rows", p.rows)
             put("columns", p.cols)
             if (p.partId != null) put("part_id", p.partId!!)
-            // Bounds already parent-local — same payload shape as [createWarpFromBounds].
+            // Bounds already parent-local, as the command takes them.
             put("bounds", buildJsonObject {
                 put("x", p.localX); put("y", p.localY); put("w", p.localW); put("h", p.localH)
             })
@@ -3698,7 +3691,6 @@ internal class CanvasEditor(
         if (eyedropperArmed) return CanvasCursors.eyedropper
         if (dragging) {
             if (placementHandle == PlacementHandle.BOX) return CanvasCursors.transform(placementBoxHandle, 0f)
-            if (isCreatingWarp || isCreatingRotation) return cross
             if (marquee.isNotEmpty()) return cross
             if (tool in DEFORM_BRUSH_TOOLS || tool == CanvasTool.BRUSH_SELECT || tool == CanvasTool.SUBDIVIDE || tool == CanvasTool.KNIFE) return cross
             if (boxDrag || anchorDragging) return CanvasCursors.transform(activeHandle, frameAngle)
@@ -3728,16 +3720,6 @@ internal class CanvasEditor(
 
     fun commit(command: JsonObject) {
         commitBatch(listOf(command))
-    }
-
-    private fun commitWarpCreation(command: JsonObject, rows: Int = warpCreateBezierRows, columns: Int = warpCreateBezierCols) {
-        try {
-            val created = CanvasEdits.apply(model, command)
-            val controls = RigBezierJournal.prepare(created, state.previewModel?.config?.rigEdits ?: state.rigEdits, "divisions", buildJsonObject {
-                put("target", "warp:${command.getValue("id").jsonPrimitive.content}"); put("rows", rows); put("columns", columns)
-            })
-            commitBatch(listOf(command, controls))
-        } catch (failure: Exception) { error = failure.message }
     }
 
     /**
@@ -4121,175 +4103,6 @@ internal class CanvasEditor(
         val t = target() ?: return emptyList()
         return objects.mapNotNull { target(model, it, null) }.ifEmpty { listOf(t) }
             .filter { it.kind == "mesh" || it.kind == "warp" }.map { it.id }.distinct()
-    }
-
-    fun createWarp(rotation: Boolean = false) {
-        if (rotation) {
-            createWarpRotationFromSelection()
-            return
-        }
-        if (warpAddTo == WarpAddTo.CHILD_OF_SELECTED_DEFORMER) {
-            createEmptyWarpUnderSelectedDeformer()
-            return
-        }
-        val t = target() ?: return
-        if (t.kind != "mesh" || !editable) return
-        val targets = objects.mapNotNull { target(model, it, null) }.ifEmpty { listOf(t) }
-            .filter { it.kind == "mesh" }
-        if (targets.isEmpty()) return
-        val parents = targets.map { it.let { tg -> model.drawables.first { d -> d.id.raw == tg.id }.parentDeformerId } }.distinct()
-        if (parents.size != 1) {
-            error = tr("editor.createWarpSameParent")
-            return
-        }
-        val name = defaultCreateName(targets.first().id, rotation = false)
-        val id = newDeformerId("Warp_", name, targets.map { it.id }, warpCreateGridRows, warpCreateGridCols, warpSizeStrategy)
-        gestureState = null
-        commitWarpCreation(buildJsonObject {
-            put("op", "canvas_create_warp")
-            put("id", id); put("name", name)
-            put("rows", warpCreateGridRows); put("columns", warpCreateGridCols)
-            put("size_strategy", warpSizeStrategy.name.lowercase())
-            putCreationPlacement(this, targets.map { it.id })
-            put("meshes", JsonArray(targets.map { JsonPrimitive(it.id) }))
-        })
-    }
-
-    private fun createWarpRotationFromSelection() {
-        val t = target() ?: return
-        if (t.kind != "mesh" || !editable) return
-        val name = defaultCreateName(t.id, rotation = true)
-        val id = newDeformerId("Rotation_", name, t.id, objects.sorted())
-        val targets = objects.mapNotNull { target(model, it, null) }.ifEmpty { listOf(t) }
-            .filter { it.kind == "mesh" }
-        if (targets.isEmpty()) return
-        // Origin in the meshes' shared parent-local space (UV under Warp, etc.).
-        val locals = targets.flatMap { it.geometry.points.toList().chunked(2) }
-        gestureState = null
-        commit(buildJsonObject {
-            put("op", "canvas_create_rotation")
-            put("id", id); put("name", name); put("preservePose", true)
-            put("add_to", "parent_of_selected")
-            if (locals.isNotEmpty()) put(
-                "origin",
-                JsonArray(
-                    listOf(
-                        (locals.minOf { it[0] } + locals.maxOf { it[0] }) / 2f,
-                        (locals.minOf { it[1] } + locals.maxOf { it[1] }) / 2f,
-                    ).map(::JsonPrimitive),
-                ),
-            )
-            put("angle", 0f)
-            putCreationPartId(this, targets.map { it.id })
-            put("meshes", JsonArray(targets.map { JsonPrimitive(it.id) }))
-        })
-    }
-
-    private fun createEmptyWarpUnderSelectedDeformer() {
-        val parentId = state.selectedDeformerId ?: return
-        if (!editable) return
-        val parent = model.deformers.firstOrNull { it.id.raw == parentId } ?: return
-        val name = tr("editor.defaultWarpName", parent.name)
-        val id = newDeformerId("Warp_", name, parentId, warpCreateGridRows, warpCreateGridCols)
-        gestureState = null
-        commitWarpCreation(buildJsonObject {
-            put("op", "canvas_create_warp")
-            put("id", id); put("name", name)
-            put("rows", warpCreateGridRows); put("columns", warpCreateGridCols)
-            put("add_to", "child_of_deformer")
-            put("parent_id", parentId)
-            putCreationPartId(this, emptyList(), fallbackDeformerPart = parent.partId?.raw)
-            put("meshes", JsonArray(emptyList()))
-        })
-    }
-
-    fun createWarpFromBounds(s: Offset, e: Offset, viewport: CanvasViewport) {
-        val target = target()?.takeIf { it.kind == "mesh" } ?: return
-        val corners = listOf(s, e, Offset(s.x, e.y), Offset(e.x, s.y)).map { local(it, target, viewport) }
-        val wX = corners.minOf { it.first }; val wY = corners.minOf { it.second }
-        val wW = corners.maxOf { it.first } - wX; val wH = corners.maxOf { it.second } - wY
-
-        val targetMeshes = objects.mapNotNull { target(model, it, null)?.id }.ifEmpty { listOfNotNull(target()?.takeIf { it.kind == "mesh" }?.id) }
-        if (targetMeshes.isEmpty()) return
-        val id = newDeformerId("Warp_", targetMeshes, wX, wY, wW, wH, warpCreateGridRows, warpCreateGridCols)
-        val name = defaultCreateName(targetMeshes.first(), rotation = false)
-        val cmd = buildJsonObject {
-            put("op", "canvas_create_warp")
-            put("id", id)
-            put("name", name)
-            put("rows", warpCreateGridRows)
-            put("columns", warpCreateGridCols)
-            put("bounds", buildJsonObject {
-                put("x", wX)
-                put("y", wY)
-                put("w", wW)
-                put("h", wH)
-            })
-            putCreationPlacement(this, targetMeshes)
-            put("meshes", JsonArray(targetMeshes.map(::JsonPrimitive)))
-        }
-        gestureState = null
-        commitWarpCreation(cmd)
-    }
-
-    fun createRotationFromPoints(s: Offset, e: Offset, viewport: CanvasViewport) {
-        val meshTarget = target()?.takeIf { it.kind == "mesh" } ?: return
-        val origin = local(s, meshTarget, viewport)
-        val endpoint = rotationProjection(origin.first, origin.second, viewport, meshTarget.mapping).toLocal(e)
-        val tip = endpoint.x to endpoint.y
-        val angleDeg = Math.toDegrees(atan2((tip.second - origin.second).toDouble(), (tip.first - origin.first).toDouble())).toFloat()
-
-        val targetMeshes = objects.mapNotNull { target(model, it, null)?.id }.ifEmpty { listOf(meshTarget.id) }
-        if (targetMeshes.isEmpty()) return
-        val id = newDeformerId("Rotation_", targetMeshes, origin, tip)
-        val name = defaultCreateName(targetMeshes.first(), rotation = true)
-        val cmd = buildJsonObject {
-            put("op", "canvas_create_rotation")
-            put("preservePose", true)
-            put("add_to", "parent_of_selected")
-            put("id", id)
-            put("name", name)
-            put("origin", JsonArray(listOf(origin.first, origin.second).map(::JsonPrimitive)))
-            put("angle", angleDeg)
-            put("handle_length", hypot(tip.first - origin.first, tip.second - origin.second).coerceAtLeast(1e-4f))
-            putCreationPartId(this, targetMeshes)
-            put("meshes", JsonArray(targetMeshes.map(::JsonPrimitive)))
-        }
-        gestureState = null
-        commit(cmd)
-    }
-
-    private fun defaultCreateName(meshId: String, rotation: Boolean): String {
-        val meshName = model.drawables.firstOrNull { it.id.raw == meshId }?.name ?: meshId
-        return if (rotation) tr("editor.defaultRotationName", meshName) else tr("editor.defaultWarpName", meshName)
-    }
-
-    private fun putCreationPlacement(obj: kotlinx.serialization.json.JsonObjectBuilder, meshIds: List<String>) {
-        when (warpAddTo) {
-            WarpAddTo.PARENT_OF_SELECTED -> obj.put("add_to", "parent_of_selected")
-            WarpAddTo.CHILD_OF_SELECTED_DEFORMER -> {
-                obj.put("add_to", "child_of_deformer")
-                state.selectedDeformerId?.let { obj.put("parent_id", it) }
-            }
-            WarpAddTo.SPECIFY_PARENT -> {
-                obj.put("add_to", "specify_parent")
-                warpSpecifyParentId?.let { obj.put("parent_id", it) }
-            }
-        }
-        putCreationPartId(obj, meshIds)
-    }
-
-    private fun putCreationPartId(
-        obj: kotlinx.serialization.json.JsonObjectBuilder,
-        meshIds: List<String>,
-        fallbackDeformerPart: String? = null,
-    ) {
-        val part = warpCreatePartId
-            ?: meshIds.firstOrNull()?.let { id ->
-                model.partByDrawable()[org.umamo.runtime.model.DrawableId(id)]?.raw
-            }
-            ?: fallbackDeformerPart
-        if (part != null) obj.put("part_id", part)
     }
 
     /**
@@ -5641,11 +5454,6 @@ internal class CanvasEditor(
             return
         }
 
-        if (isCreatingWarp || isCreatingRotation) {
-            creationCurrent = if (isCreatingRotation && shift) CanvasGestureGeometry.direction(creationStart!!, pos, snap = true) else pos
-            return
-        }
-
         if (activeBezierHandle != null) {
             val (br, bc, dir) = activeBezierHandle!!
             val t = targetAtPress ?: return; val source = original ?: return
@@ -5942,27 +5750,6 @@ internal class CanvasEditor(
         boxDrag = false; dragIndices = emptyList()
         activeBrushWeights = null; activeBrushCenter = null; endMeshStroke()
         endPathDrag()
-
-        if (isCreatingWarp) {
-            isCreatingWarp = false
-            val s = creationStart; val e = creationCurrent
-            creationStart = null; creationCurrent = null
-            // Legacy drag-create only when no place-then-confirm session is active.
-            if (placement == null && s != null && e != null && abs(s.x - e.x) > 10f && abs(s.y - e.y) > 10f && viewport != null) {
-                createWarpFromBounds(s, e, viewport!!)
-            }
-            return
-        }
-
-        if (isCreatingRotation) {
-            isCreatingRotation = false
-            val s = creationStart; val e = creationCurrent
-            creationStart = null; creationCurrent = null
-            if (placement == null && s != null && e != null && (s - e).getDistance() > 10f && viewport != null) {
-                createRotationFromPoints(s, e, viewport!!)
-            }
-            return
-        }
 
         if (placementHandle != PlacementHandle.NONE) {
             // Moving the anchor leaves the layer where it is.

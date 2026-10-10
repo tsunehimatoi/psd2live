@@ -119,20 +119,17 @@ internal class WorkspaceAssetSessions(private val runtime: WorkspaceRuntime<RigP
                 Files.readAllBytes(file)
             } ?: decodePngBase64(a.text("png_base64")).also { require(it.size in 8..(64 * 1024 * 1024)) { "PNG exceeds the import budget" } }
         }
-        val reference = a["reference_id"]?.jsonPrimitive?.content
-        val spatialId = reference ?: a.text("spatial_reference_id")
-        if (reference != null) {
-            val record = candidate.loadWorkflow(before.projectId, reference)
-            require(record.text("kind") == "reference") { "Expected reference record" }
-            require(record.number("canvas_width").toInt() == before.document.source.widthPx &&
-                record.number("canvas_height").toInt() == before.document.source.heightPx) { "Reference canvas size changed; prepare a new reference" }
-        }
-        val spatial = requireNotNull(candidate.loadSpatial(before.projectId, spatialId)) { "Spatial reference not found: $spatialId" }
+        val reference = a.text("reference_id")
+        val record = candidate.loadWorkflow(before.projectId, reference)
+        require(record.text("kind") == "reference") { "Expected reference record" }
+        require(record.number("canvas_width").toInt() == before.document.source.widthPx &&
+            record.number("canvas_height").toInt() == before.document.source.heightPx) { "Reference canvas size changed; prepare a new reference" }
+        val spatial = requireNotNull(candidate.loadSpatial(before.projectId, reference)) { "Spatial reference not found: $reference" }
         val rect = a["source_pixel_rect"]?.jsonObject?.let { value ->
             WorkspacePixelRect(value.getValue("left").jsonPrimitive.int, value.getValue("top").jsonPrimitive.int,
                 value.getValue("width").jsonPrimitive.int, value.getValue("height").jsonPrimitive.int)
         }
-        val imported = assets.import(WorkspacePngImportRequest(png, spatialId, rect,
+        val imported = assets.import(WorkspacePngImportRequest(png, reference, rect,
             a["solid_background"]?.jsonPrimitive?.content, a["background_tolerance"]?.jsonPrimitive?.int ?: 16,
             a["require_transparency"]?.jsonPrimitive?.boolean ?: false, reference, a["processing"]?.jsonObject ?: JsonObject(emptyMap())), spatial)
         candidate.persistAsset(before.projectId, assets.require(imported.id))
