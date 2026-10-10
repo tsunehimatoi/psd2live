@@ -104,6 +104,25 @@ class AuthoredEditCheckpointTest {
 		assertEquals(hash(replayed(document)), hash(model))
 	}
 
+	@Test fun aGenerationChangeMergesUnlessItRewritesEarlierEdits() = runBlocking {
+		val runtime = runtime()
+		create(runtime, "A")
+		val current = create(runtime, "B")
+		val settings = JsonObject(current.document.settings + ("headStrength" to JsonPrimitive(2)))
+		// The static fields only a journal without a checkpoint replays: past one, they do not break the continuation.
+		val legacy = current.document.copy(settings = settings, rigEdits = current.document.rigEdits.copy(
+			parameterEdits = listOf(RigParameterEdit("Stale", "Stale", -1f, 1f, 0f, created = true))))
+		val merged = builder.normalizeMeshEdits(legacy, current.model).rigEdits.authoringJournal
+		assertEquals(current.document.rigEdits.authoringJournal.size + 1, merged.size)
+		assertTrue(RigCheckpoint.isRecord(merged.last()), "the regeneration checkpoints its merge")
+		// Rewriting an earlier entry in the same edit would replay it on the new generation: refused.
+		val journal = current.document.rigEdits.authoringJournal
+		val rewritten = Json.parseToJsonElement(journal.last().toString().replace("\"B\"", "\"C\"")).jsonObject
+		val failure = assertFailsWith<IllegalArgumentException> { builder.normalizeMeshEdits(current.document.copy(settings = settings,
+			rigEdits = current.document.rigEdits.copy(authoringJournal = journal.dropLast(1) + rewritten)), current.model) }
+		assertTrue("commit them separately" in failure.message.orEmpty())
+	}
+
 	@Test fun bakingASwingAfterTheCheckpointCreatesItsParametersInTheJournal() = runBlocking {
 		val runtime = runtime()
 		create(runtime, "First")

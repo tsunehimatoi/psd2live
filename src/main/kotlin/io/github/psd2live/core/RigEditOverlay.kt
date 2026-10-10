@@ -424,30 +424,33 @@ data class RigEditOverlay(
 	/**
 	 * Whether this overlay continues [previous]: its journal starts with [previous]'s and everything else the legacy
 	 * stage reads is equal - what a regeneration checkpoint between the two journals needs ([RigRegenerationCheckpoint]).
+	 * Past a checkpoint in that shared start nothing reads the legacy fields, so they may differ.
 	 */
 	internal fun continues(previous: RigEditOverlay): Boolean {
 		if (previous === this) return true
 		val journal = authoringJournal
 		val before = previous.authoringJournal
 		if (journal.size < before.size || (0 until before.size).any { journal[it] !== before[it] && journal[it] != before[it] }) return false
-		return deletedParameterIds == previous.deletedParameterIds && parameterEdits == previous.parameterEdits && warpEdits == previous.warpEdits &&
+		return previous.checkpointIndex >= 0 || sameLegacyStage(previous)
+	}
+
+	/** Whether the static fields only a journal without a checkpoint replays are [previous]'s. */
+	private fun sameLegacyStage(previous: RigEditOverlay) =
+		deletedParameterIds == previous.deletedParameterIds && parameterEdits == previous.parameterEdits && warpEdits == previous.warpEdits &&
 			structureEdits == previous.structureEdits && keyformSetEdits == previous.keyformSetEdits && keyformCopyEdits == previous.keyformCopyEdits &&
 			keyformDeleteEdits == previous.keyformDeleteEdits
-	}
 
 	/**
 	 * Whether this overlay's authored state is [previous]'s with entries added to the journal ([appendedTo]): the
-	 * journal starts with [previous]'s, everything else the authored stage reads is equal, and no added entry is an
-	 * `art_primitive` record.
+	 * journal starts with [previous]'s, everything else the authored stage reads is equal (the legacy fields only
+	 * without a checkpoint), and no added entry is an `art_primitive` record.
 	 */
 	internal fun extends(previous: RigEditOverlay): Boolean {
 		if (previous === this) return true
 		val journal = authoringJournal
 		val before = previous.authoringJournal
 		if (journal.size < before.size || (0 until before.size).any { journal[it] !== before[it] && journal[it] != before[it] }) return false
-		if (deletedParameterIds != previous.deletedParameterIds || parameterEdits != previous.parameterEdits || warpEdits != previous.warpEdits ||
-			structureEdits != previous.structureEdits || keyformSetEdits != previous.keyformSetEdits || keyformCopyEdits != previous.keyformCopyEdits ||
-			keyformDeleteEdits != previous.keyformDeleteEdits || generatedIds != previous.generatedIds) return false
+		if ((previous.checkpointIndex < 0 && !sameLegacyStage(previous)) || generatedIds != previous.generatedIds) return false
 		return (before.size until journal.size).none { journal[it]["op"]?.jsonPrimitive?.contentOrNull in setOf(ArtPrimitiveJournal.OP, RigCheckpoint.OP) }
 	}
 

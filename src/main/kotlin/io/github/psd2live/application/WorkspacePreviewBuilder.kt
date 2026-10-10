@@ -77,9 +77,13 @@ internal class WorkspacePreviewBuilder {
                 // A generated model merges what the generators make now onto the user's rig and checkpoints the result
                 // ([RigRegenerationCheckpoint]). Only an imported model, which has no generated rig to merge onto, records
                 // the migration in its journal.
+                // The merge starts from the rig at the end of [current]'s journal, so the edit may only add entries after it:
+                // replaying rewritten ones on the new generation is what the merge replaces.
                 if (pipeline.materializable(config) && pipeline.materializable(current.config)) {
-                    if (!config.rigEdits.continues(current.config.rigEdits)) document
-                    else RigRegenerationCheckpoint.checkpointed(pipeline, current, config, document.source,
+                    require(config.rigEdits.continues(current.config.rigEdits)) {
+                        "A change to how the rig is generated cannot also rewrite earlier rig edits; commit them separately"
+                    }
+                    RigRegenerationCheckpoint.checkpointed(pipeline, current, config, document.source,
                         { progress.update("Merging regenerated rig", 0.5) }, currentSource = true)
                         ?.let { document.copy(rigEdits = it.rigEdits) } ?: document
                 } else {
