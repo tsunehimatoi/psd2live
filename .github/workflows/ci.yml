@@ -42,6 +42,11 @@ jobs:
         if: runner.arch == 'ARM64'
         uses: dtolnay/rust-toolchain@stable
 
+      # Skiko's linux-arm64 library links EGL/GL, which the x64 image has and the arm64 one lacks.
+      - name: Install EGL/GL (Linux arm64)
+        if: runner.os == 'Linux' && runner.arch == 'ARM64'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1 libgl1
+
       # The Rust runtime: its own tests, and the library the runtime conformance tests load.
       - name: Build and test the runtime
         working-directory: runtime
