@@ -69,9 +69,9 @@ The images below come from the two example PSDs in the repository (the knee test
 
 ### Physics and simulation
 
-The body angle moves up and down, side to side, then round an ellipse. Front hair, back hair and skirt follow by baked simulation: they lag behind each rise and turn and swing back once the body stops.
+The body angle moves up and down, side to side, then round an ellipse. Hair, skirt, sleeves and bow follow by baked simulation: they lag behind each rise and turn and swing back once the body stops. On the left, each part's pin weights: 1 follows the body, 0 is free, values between pull in proportion.
 
-<p align="center"><img src="../imgs/readme/star-orbit.webp" alt="A long-haired character driven up and down, side to side and round an ellipse by the body angle; front hair, back hair and skirt lag and swing" height="640"></p>
+<p align="center"><img src="../imgs/readme/star-orbit.webp" alt="Left: the pin weights of every simulated part (back hair, front hair, skirt, sleeves, bow); right: the body angle drives the character up and down, side to side and round an ellipse, and the hair and cloth lag and swing" width="785"></p>
 
 <p align="center"><img src="../imgs/readme/sim-skirt.webp" alt="Skirt close-up under the same body motion: simulation off on the left, the skirt follows the body rigidly; baked cloth simulation on the right, the skirt lags and swings back" width="660"></p>
 

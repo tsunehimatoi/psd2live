@@ -473,7 +473,8 @@ class ReadmeShowcaseTool {
 	/**
 	 * Body orbit: ParamBodyAngleX / Y driven up and down, left and right, then round an ellipse (PSD2LIVE_ORBIT =
 	 * "x,y" amplitudes, default 8,10; PSD2LIVE_ORBIT_PERIOD seconds a round), exported as PNG frames with physics on and off for each project in
-	 * PSD2LIVE_ORBIT_PROJECTS (comma separated .psd2live paths): build/tools/readme-orbit/<name>-{on,off}/.
+	 * PSD2LIVE_ORBIT_PROJECTS (comma separated .psd2live paths): build/tools/readme-orbit/<name>-{on,off}/, with the
+	 * simulations' pin weight maps in <name>-pins/.
 	 */
 	@Test fun bodyOrbit() = kotlinx.coroutines.runBlocking {
 		requireTools()
@@ -518,6 +519,64 @@ class ReadmeShowcaseTool {
 				val report = io.github.psd2live.core.ExportService.export(preview, target, options, dir)
 				println("$name $label: ${report.files.size} files")
 			}
+			pinMap(preview.rig.puppet, preview.config.rigEdits.simEdits, output("readme-orbit/$name-on"), output("readme-orbit/$name-pins"))
 		}
+	}
+
+	/**
+	 * Each simulation's meshes at rest, washed in their pin weight (Blender's ramp, as the editor shows it) at twice the
+	 * exported frames' pixels: build/tools/readme-orbit/<name>-pins/pins-<i>.png, the simulations listed in pins.txt.
+	 */
+	private fun pinMap(puppet: org.umamo.runtime.model.PuppetModel, sims: List<io.github.psd2live.core.sim.RigSimEdit>, frames: File, dir: File) {
+		val first = ImageIO.read(frames.listFiles { f -> f.extension == "png" }!!.minBy { it.name })
+		val zoom = 2
+		val scale = zoom * first.width / puppet.canvasWidth
+		val world = org.umamo.render.eval.CpuDeformationEvaluator().evaluate(puppet, emptyMap()).worldPositions
+		val ramp = listOf(0x2A48E0, 0x22B8D8, 0x3CC84A, 0xE8D030, 0xE83A2A).map { floatArrayOf((it shr 16 and 255).toFloat(), (it shr 8 and 255).toFloat(), (it and 255).toFloat()) }
+		fun heat(w: Float): Int {
+			val x = w.coerceIn(0f, 1f) * (ramp.size - 1); val i = x.toInt().coerceAtMost(ramp.size - 2); val t = x - i
+			val c = FloatArray(3) { ramp[i][it] + (ramp[i + 1][it] - ramp[i][it]) * t }
+			return (255 shl 24) or (c[0].toInt() shl 16) or (c[1].toInt() shl 8) or c[2].toInt()
+		}
+		dir.listFiles()?.forEach { it.delete() }
+		val notes = StringBuilder()
+		for ((index, sim) in sims.withIndex()) {
+			val scene = io.github.psd2live.core.sim.SimScene.build(puppet, sim)
+			notes.append("$index\t${sim.kind}\t${sim.name}\t${scene.offsets.keys.joinToString(", ") { id -> puppet.drawables.first { it.id == id }.name }}\n")
+			val image = BufferedImage(first.width * zoom, first.height * zoom, BufferedImage.TYPE_INT_ARGB)
+			val wires = ArrayList<FloatArray>()
+			for ((id, offset) in scene.offsets) {
+				val mesh = puppet.drawables.first { it.id == id }.mesh ?: continue
+				val p = world[id] ?: continue
+				val px = FloatArray(p.size) { if (it % 2 == 0) p[it] * scale else -p[it] * scale } // world y is negated canvas y
+				val w = FloatArray(mesh.vertexCount) { scene.solver.pinWeight[offset + it] }
+				for (t in 0 until mesh.triangleCount) {
+					val a = mesh.indices[t * 3]; val b = mesh.indices[t * 3 + 1]; val c = mesh.indices[t * 3 + 2]
+					val ax = px[a * 2]; val ay = px[a * 2 + 1]; val bx = px[b * 2]; val by = px[b * 2 + 1]; val cx = px[c * 2]; val cy = px[c * 2 + 1]
+					val d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+					if (abs(d) < 1e-6f) continue
+					for (y in max(0, min(ay, min(by, cy)).toInt())..min(image.height - 1, max(ay, max(by, cy)).toInt() + 1))
+						for (x in max(0, min(ax, min(bx, cx)).toInt())..min(image.width - 1, max(ax, max(bx, cx)).toInt() + 1)) {
+							val fx = x + 0.5f; val fy = y + 0.5f
+							val l1 = ((by - cy) * (fx - cx) + (cx - bx) * (fy - cy)) / d
+							val l2 = ((cy - ay) * (fx - cx) + (ax - cx) * (fy - cy)) / d
+							val l3 = 1 - l1 - l2
+							if (l1 < -1e-4f || l2 < -1e-4f || l3 < -1e-4f) continue
+							image.setRGB(x, y, heat(l1 * w[a] + l2 * w[b] + l3 * w[c]))
+						}
+					wires += floatArrayOf(ax, ay, bx, by, cx, cy)
+				}
+			}
+			val g = image.createGraphics()
+			g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+			g.color = Color(255, 255, 255, 60); g.stroke = BasicStroke(0.8f)
+			for (t in wires) {
+				g.draw(Line2D.Float(t[0], t[1], t[2], t[3])); g.draw(Line2D.Float(t[2], t[3], t[4], t[5])); g.draw(Line2D.Float(t[4], t[5], t[0], t[1]))
+			}
+			g.dispose()
+			ImageIO.write(image, "png", File(dir, "pins-$index.png"))
+		}
+		File(dir, "pins.txt").writeText(notes.toString())
+		println(notes)
 	}
 }
