@@ -48,8 +48,8 @@ internal object WorkspaceAuthoringResultSchemas {
         "preview_playback", "preview_playback_get" -> s.obj(mapOf("project_id" to s.handle(), "state" to s.handle(),
             "workspace_id" to s.handle(), "clip_id" to s.handle(), "time" to s.number(0), "playing" to s.boolean(),
             "tracking" to s.boolean(), "smooth_tracking" to s.boolean(), "pointer_active" to s.boolean(), "values" to key, "animation" to s.boolean(),
-            "elapsed" to s.number(0), "active_motion" to s.handle()),
-            setOf("project_id", "state", "workspace_id", "time", "playing", "tracking", "pointer_active", "values", "animation", "elapsed"))
+            "elapsed" to s.number(0), "active_motion" to s.handle(), "sequence" to s.integer(0)),
+            setOf("project_id", "state", "workspace_id", "time", "playing", "tracking", "pointer_active", "values", "animation", "elapsed", "sequence"))
         "layer_classify" -> s.obj(s.identity + mapOf("layer_id" to s.handle(), "applied" to s.constant(false)), s.identity.keys + "layer_id")
         "rig_create_warp" -> compactWith(mapOf("target" to s.handle()))
         "canvas_warp", "canvas_rotation", "canvas_topology" -> s.obj(s.identity + mapOf("id" to s.handle(), "applied" to s.constant(false), "geometry_diagnostics" to WorkspaceGeometrySafetySchemas.report), s.identity.keys + "id")

@@ -3991,6 +3991,8 @@ class PSD2LiveViewModel : AutoCloseable {
 	private val playbackFrameLock = Any()
 	/** Counts applied playback commands, so a clock frame read before one cannot switch its result back. */
 	@Volatile private var playbackCommands = 0L
+	/** The newest session sequence applied: a result computed before it - a restart that lost a race - is dropped. */
+	private var playbackSequence = 0L
 	/** The session the GUI's play and tracking switches were last handed to: load generation and workspace. */
 	private var playbackSyncKey: String? = null
 
@@ -4005,6 +4007,11 @@ class PSD2LiveViewModel : AutoCloseable {
 		if (frame.getValue("project_id").jsonPrimitive.content != current.projectId ||
 			frame.getValue("state").jsonPrimitive.content != currentWorkspaceState()) return@synchronized
 		if (commandsSeen != null && commandsSeen != playbackCommands) return@synchronized
+		// Commands and restarts reach the GUI from several threads; the session numbers its changes, so one applied
+		// after a newer one (an authored commit's restart, computed before a tracking switch) cannot undo it.
+		val sequence = frame["sequence"]?.jsonPrimitive?.long ?: 0L
+		if (sequence < playbackSequence) return@synchronized
+		playbackSequence = sequence
 		if (commandsSeen == null) playbackCommands++
 		playbackSyncKey = "${current.projectOpenGeneration}/${current.activeWorkspace.id}/${frame.getValue("state").jsonPrimitive.content.substringBeforeLast(':')}"
 		frame["clip_id"]?.jsonPrimitive?.content?.let {

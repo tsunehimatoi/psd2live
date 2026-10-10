@@ -6,6 +6,9 @@ import org.umamo.runtime.model.ParameterId
 
 /** Process-owned playback clocks and tracking inputs; evaluated frames are never durable poses. */
 internal class WorkspacePlaybackSessions(private val runtime: WorkspaceRuntime<RigPreviewModel>) {
+    /** The [sequences] value of each workspace's session. */
+    private val sequenceByWorkspace = HashMap<String, Long>()
+
     private data class Session(val projectId: String, val generation: String, val clipId: String? = null, val time: Float = 0f,
                                val playing: Boolean = false, val tracking: Boolean = false,
                                val smoothTracking: Boolean = false, val trackingClock: PreviewAnimationClock = PreviewAnimationClock(),
@@ -93,6 +96,7 @@ internal class WorkspacePlaybackSessions(private val runtime: WorkspaceRuntime<R
             else -> error("Unknown playback mode: $mode")
         }
         sessions[workspaceId] = next.copy(clockNanos = System.nanoTime())
+        sequenceByWorkspace[workspaceId] = sequences.incrementAndGet()
         return result(capture, workspaceId, next)
     }
 
@@ -125,6 +129,7 @@ internal class WorkspacePlaybackSessions(private val runtime: WorkspaceRuntime<R
         val next = Session(projectId, generation, clipId = current.clipId.takeIf { clip != null }, time = clip?.let { current.time.coerceAtMost(it.duration) } ?: 0f,
             tracking = current.tracking, pointer = current.pointer, smoothTracking = current.smoothTracking)
         sessions[workspaceId] = next
+        sequenceByWorkspace[workspaceId] = sequences.incrementAndGet()
         return result(capture, workspaceId, next)
     }
 
@@ -174,6 +179,7 @@ internal class WorkspacePlaybackSessions(private val runtime: WorkspaceRuntime<R
         put("time", session.time); put("playing", session.playing); put("tracking", session.tracking)
         put("animation", session.animation); put("elapsed", session.animationClock.elapsed)
         put("smooth_tracking", session.smoothTracking)
+        put("sequence", sequenceByWorkspace[workspaceId] ?: 0L)
         session.activeMotion?.let { put("active_motion", it) }
         put("pointer_active", session.pointer != null)
         putJsonObject("values") { values.forEach { (id, value) -> put(id.raw, value) } }
@@ -207,6 +213,12 @@ internal class WorkspacePlaybackSessions(private val runtime: WorkspaceRuntime<R
     }
 
     companion object {
+        /**
+         * Rises with every change a command or restart makes to a session, across every session in the process. A
+         * result carries the value its session had, so whoever shows them can drop one that arrives after a newer one.
+         */
+        private val sequences = java.util.concurrent.atomic.AtomicLong()
+
         /** GUI scrubbing and process sessions use the same bounded, lock-aware frame composition. */
         fun sample(model: RigPreviewModel, pose: WorkspacePose, clip: MotionClip?, time: Float,
                    tracking: Boolean = false, pointer: Pair<Float, Float>? = null): Map<ParameterId, Float> {
