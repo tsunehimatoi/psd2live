@@ -141,6 +141,10 @@ data class WorkspaceMutationResult(
     val state: String? = null,
     val projectId: String? = null,
     val geometryDiagnostics: JsonObject? = null,
+    /** The atlas fit after a batch that edited textures; null when the batch left them alone. */
+    val atlasFit: Float? = null,
+    /** What that atlas reports about fitting its budget. */
+    val atlasNotices: List<String> = emptyList(),
 )
 
 data class WorkspaceCreateParameterRequest(

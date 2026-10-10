@@ -45,7 +45,9 @@ internal class WorkspaceTextureCommands(private val runtime: WorkspaceRuntime<Ri
         val mutation = WorkspaceMutationResult(result.capture.historyHead, result.capture.revision, layers, summary,
             applied = result.applied, state = result.capture.state, projectId = result.capture.projectId,
             geometryDiagnostics = result.geometryDiagnostics)
-        val texture = WorkspaceTextureResult(mutation, layers, result.capture.model.atlas.fit)
+        val texture = WorkspaceTextureResult(mutation, layers, result.capture.model.atlas.fit,
+            atlasBudgetNotices(result.capture.model.atlas, result.capture.model.config.effectiveAtlasBudget(),
+                result.capture.document.textureOverrides))
         // No suspension after CAS: a host refresh failure or a late cancellation cannot discard the result.
         job?.committed(edit.operation, texture.toJson())
         return WorkspaceTextureCommit(result, texture)
@@ -66,6 +68,7 @@ internal fun WorkspaceTextureResult.toJson(): JsonObject = buildJsonObject {
     put("history_node_id", mutation.historyNodeId); put("revision", mutation.revisionId); put("applied", mutation.applied)
     put("layers", JsonArray(layerIds.map(::JsonPrimitive)))
     put("atlas_fit", atlasFit)
+    put("notices", JsonArray(notices.map(::JsonPrimitive)))
     mutation.geometryDiagnostics?.let { put("geometry_diagnostics", it) }
 }
 

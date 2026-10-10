@@ -21,7 +21,8 @@ internal object WorkspaceJobResultSchemas {
             "issues" to generationUpdate.getValue("properties").jsonObject.getValue("issues").jsonObject))),
         "added" to s.array(s.handle()), "removed" to s.array(s.handle())))
     private val batch = s.obj(lifecycleFields + mapOf("edit_count" to s.integer(1, 128), "changed" to s.array(s.handle()),
-        "geometry_diagnostics" to WorkspaceGeometrySafetySchemas.report), lifecycleFields.keys + setOf("edit_count", "changed"))
+        "geometry_diagnostics" to WorkspaceGeometrySafetySchemas.report, "atlas_fit" to s.number(0, 1), "notices" to s.array(s.string())),
+        lifecycleFields.keys + setOf("edit_count", "changed"))
     private val modelExport = s.obj(mapOf("state" to s.handle(), "revision" to s.handle(),
         "files" to s.array(s.obj(mapOf("path" to s.handle(), "bytes" to s.integer(0)))), "warnings" to s.array(s.string())))
     private val targetExport = s.obj(mapOf("state" to s.handle(), "revision" to s.handle(), "target" to s.handle(), "compiler" to s.string(),

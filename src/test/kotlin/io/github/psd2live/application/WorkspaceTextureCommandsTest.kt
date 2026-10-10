@@ -177,6 +177,40 @@ class WorkspaceTextureCommandsTest {
         }
     }
 
+    /** A denser image outgrows an arranged atlas: every result says so, and set_budget plus pack in one batch fixes it. */
+    @Test fun pagesPastTheBudgetAreReportedWhereverTheAtlasChanges() = runBlocking<Unit> {
+        val runtime = fixture()
+        WorkspaceOperations(Host(runtime)).use { operations ->
+            operations.completed("atlas_set_budget", input(runtime, "small", buildJsonObject { put("page_size", 256); put("max_pages", 1) }))
+            operations.completed("atlas_pack", input(runtime, "arrange", JsonObject(emptyMap())))
+            val pupil = runtime.capture().document.source.layers.single { it.id.raw == "pupil" }.raster
+            fun notices(result: JsonObject) = result.getValue("notices").jsonArray.map { it.jsonPrimitive.content }
+            suspend fun replace(request: String, factor: Int) = operations.completed("layer_replace_image", input(runtime, request, buildJsonObject {
+                put("layer_id", "pupil"); put("png_base64", Base64.getEncoder().encodeToString(png(upscaled(pupil, factor))))
+            }))
+            // 7x (224 px) still fits a page alone, beside the body no longer: a second page, past the budget of one.
+            val paged = replace("dense", 7)
+            assertEquals(2, runtime.capture().model.atlas.pages.size)
+            assertTrue(notices(paged).any { "more than the budget" in it } && notices(paged).any { "atlas_pack" in it }, notices(paged).toString())
+            assertTrue(notices(operations.call("atlas_get", JsonObject(emptyMap())).data).any { "more than the budget" in it })
+            // 9x (288 px) fits no page: it is stored shrunk, which the fit of 1 does not show.
+            val shrunk = replace("denser", 9)
+            assertEquals(1.0, shrunk.getValue("atlas_fit").jsonPrimitive.double)
+            assertTrue(notices(shrunk).any { "pupil" in it && "below the density" in it }, notices(shrunk).toString())
+
+            fun edit(id: String, fields: JsonObject) = buildJsonObject { put("operation", id); put("request", fields) }
+            val fixed = operations.completed("workspace_apply_edits", input(runtime, "repack", buildJsonObject {
+                putJsonArray("edits") {
+                    add(edit("atlas_set_budget", buildJsonObject { put("page_size", 1024) }))
+                    add(edit("atlas_pack", JsonObject(emptyMap())))
+                }
+            }))
+            assertEquals(1, runtime.capture().model.atlas.pages.size)
+            assertEquals(emptyList(), notices(fixed))
+            assertTrue(fixed.getValue("atlas_fit").jsonPrimitive.float > 0f)
+        }
+    }
+
     @Test fun aBatchCommitsTextureMembersAsOneNodeAndRejectsFilePaths() = runBlocking<Unit> {
         val runtime = fixture(); val nodes = runtime.history().selections.size; val before = runtime.capture()
         WorkspaceOperations(Host(runtime)).use { operations ->

@@ -109,7 +109,7 @@
 图层的画布矩形（画布单位，可为小数）与栅格像素相互独立：原生密度是每画布单位的栅格像素，纹理集图块保存 `栅格像素 × 密度 × fit`。密度默认 1；超出预算时，未锁定图块共用一个 fit（≤1）统一缩小，锁定与固定位置放不下时被取消（说明只写入程序日志，不进入工具结果）。几何不感知纹理集：密度、预算、固定位置和重排只改变图块与绑定 UV，不改变网格。
 
 - `layer_get_texture`（查询）：`layer_id`；返回 `canvas_rect`、整数外包 `bounds`、`raster`、`native_density`、`override{density,lock,pin}`、`deleted`、`tile`（页、纹理像素矩形、每栅格像素的纹理像素 `scale_x/scale_y`、密度、锁定与固定；透明或已删除图层为 null）及 `atlas_fit`，全部来自同一捕获版本。
-- `atlas_get`（查询）：可选 `page` 过滤图块；返回有效 `budget{page_size,max_pages,padding}`、`fit`、`notices`、`auto`（是否每次自动排布）、`pages[{index,width,height,tile_count,occupancy}]` 与 `tiles`。
+- `atlas_get`（查询）：可选 `page` 过滤图块；返回有效 `budget{page_size,max_pages,padding}`、`fit`、`notices`、`auto`（是否每次自动排布）、`pages[{index,width,height,tile_count,occupancy}]` 与 `tiles`。`occupancy` 对按网格排布的图块只计网格实际使用的单元格。`notices` 会指出页数超出预算，以及为放进页面而低于所设密度存放的图块：已保存的排布会保持 `fit`，所以换成更高分辨率的图像后，这两种情况都不会体现在 `fit` 里。纹理编辑与含纹理编辑的 `workspace_apply_edits` 结果也带 `atlas_fit` 与 `notices`；用 `atlas_set_budget` 加 `atlas_pack`（可与替换放在同一批中）即可收回预算内。
 - `atlas_render_page`（只读后台任务，要求 `request_id/project_id/state`）：`page`，可选 `max_size`（64–16384，默认 2048，按长边缩小）；终态含 `revision`、原尺寸与渲染尺寸、`sha256`、该页图层，PNG 以图片内容返回，`job_get/job_wait` 可重复取图。
 - `layer_set_canvas_rect`：`layer_id`、`rect{left,top,width,height}`；把图层移动、缩放到画布在该矩形处显示其像素，即一次从当前显示位置出发的 `layer_transform`（旋转过的图层拒绝，改用 `layer_transform`）。像素、纹理与生成输入不变，网格连同关键形移动；任何图层均可。`layer_get_texture` 的 `canvas_rect` 是图层当前显示的位置。相同矩形无变化。
 - `layer_replace_image`：`layer_id` 与 `path`（绝对路径，PNG/WebP/TIFF/BMP，仅单项）或 `png_base64` 二选一，可选 `fit`（`stretch` 默认铺满，`contain` 保持比例居中补透明）与 `rebuild_mesh`（默认 false）。画布矩形不变，生成输入冻结在首次替换前的像素，网格、关键形与绑定保留，仅图块和 UV 改变；`rebuild_mesh=true` 改由新像素重新生成该层网格，带作者编辑或物化几何时拒绝。单项先核对状态再读取文件；批量成员只接受 `png_base64`，给出 `path` 时整批以 `invalid_edit` 失败。最多 16MP，像素相同为无变化。

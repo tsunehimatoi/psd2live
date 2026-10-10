@@ -230,7 +230,12 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
                     .map { "layer:$it" }).distinct()
             return WorkspaceMutationResult(result.capture.historyHead, result.capture.revision, emptyList(), summary,
                 affectedObjectIds = changed, applied = result.applied, state = result.capture.state, projectId = result.capture.projectId,
-                geometryDiagnostics = result.geometryDiagnostics)
+                geometryDiagnostics = result.geometryDiagnostics,
+                // A batch that replaced images or moved tiles says how the atlas came out, as the single texture edits do.
+                atlasFit = result.capture.model.atlas.fit.takeIf { edits.any { it.operation in WorkspaceTextureEdits.supported } },
+                atlasNotices = if (edits.none { it.operation in WorkspaceTextureEdits.supported }) emptyList()
+                    else atlasBudgetNotices(result.capture.model.atlas, result.capture.model.config.effectiveAtlasBudget(),
+                        result.capture.document.textureOverrides))
         }
 
         /** Stable handles include generated IDs even when a request omitted an optional ID. */
