@@ -621,7 +621,8 @@ internal fun BoxScope.CanvasEditorOverlay(
         // 3c. Paint mode: live stroke & shape preview while dragging
         if (editor.hierarchyMode == EditHierarchyMode.PAINT && editor.isPainting) {
             val col = editor.paintColor.copy(alpha = editor.paintOpacity)
-            val strokeWidth = ((editor.paintSize / editor.paintPixelsPerUnit).coerceIn(1f, 512f) * viewport.scale.toFloat()).coerceAtLeast(1f)
+            // The width the shape lands with, in the layer's frame, as the canvas shows it.
+            val strokeWidth = ((editor.paintSize / editor.paintPixelsPerUnit).coerceIn(1f, 512f) * editor.paintShownScale * viewport.scale.toFloat()).coerceAtLeast(1f)
 
             // The tips draw nothing of their own: the pixels are already on the layer, with exactly the
             // hardness and opacity that were asked for, and anything laid over them would misreport
@@ -689,7 +690,8 @@ internal fun BoxScope.CanvasEditorOverlay(
             // the cursor promises is what the pixels do. The eraser draws no colour of its own, so its
             // falloff is shown in the neutral ring colour instead.
             val tip = editor.paintTip()
-            val scale = viewport.scale.toFloat()
+            // The tip is sized in the layer's frame; the canvas shows that frame through the layer's transform.
+            val scale = viewport.scale.toFloat() * editor.paintShownScale
             val r = (tip.radius * scale).coerceAtLeast(1f)
             val tint = if (editor.tool == CanvasTool.PAINT_ERASER) colors.textPrimary else editor.paintColor
             if (editor.adjustingBrush) {

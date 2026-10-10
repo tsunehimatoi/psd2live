@@ -1098,10 +1098,11 @@ internal class CanvasEditor(
 
     /**
      * The largest size any brush takes: never below [MIN_BRUSH_SIZE_LIMIT], and otherwise the document's longest
-     * side, since a brush wider than the document has nothing more to cover.
+     * side, since a brush wider than the document has nothing more to cover - counted in the painted layer's own
+     * pixels while painting one denser than the canvas.
      */
     val brushSizeLimit: Float
-        get() = maxOf(MIN_BRUSH_SIZE_LIMIT, documentLongSide.toFloat())
+        get() = maxOf(MIN_BRUSH_SIZE_LIMIT, documentLongSide * (if (hierarchyMode == EditHierarchyMode.PAINT) paintPixelsPerShownUnit.coerceAtLeast(1f) else 1f))
 
     /**
      * How much larger brushes start on this document: 1 up to [io.github.psd2live.core.MeshResolution.REFERENCE_SIDE],
@@ -1153,11 +1154,42 @@ internal class CanvasEditor(
         }
 
     /**
-     * The painted part's own pixels per canvas unit. Paint sizes count those pixels, so a brush of 16 px paints
-     * 16 of the layer's pixels however large or small the layer is shown; 1 with no paint session.
+     * The painted layer's own pixels per unit of its frame - the unit strokes are handed to the session in. Paint sizes
+     * count those pixels, so a brush of 16 px paints 16 of the layer's pixels; 1 with no paint session.
      */
     val paintPixelsPerUnit: Float
-        get() = paintSession?.let { sqrt(it.scaleX * it.scaleY) / sqrt(kotlin.math.abs(it.frame.a * it.frame.d - it.frame.b * it.frame.c)) }?.takeIf { it.isFinite() && it > 0f } ?: 1f
+        get() = paintSession?.let { sqrt(it.scaleX * it.scaleY) }?.takeIf { it.isFinite() && it > 0f } ?: 1f
+
+    /**
+     * Canvas units per unit of the painted layer's frame as the canvas shows it: the scale of the layer's transform,
+     * which the tip ring and shape previews are drawn through. 1 with no paint session or an unscaled layer.
+     */
+    val paintShownScale: Float
+        get() = paintSession?.frame?.let { sqrt(abs(it.a * it.d - it.b * it.c)) }?.takeIf { it.isFinite() && it > 0f } ?: 1f
+
+    /** The painted layer's pixels per canvas unit as shown: how large a pixel of it looks against the canvas. */
+    val paintPixelsPerShownUnit: Float
+        get() = paintPixelsPerUnit / paintShownScale
+
+    /** [paintPixelsPerShownUnit] the paint sizes were last chosen at: 1, the canvas, until a layer is painted. */
+    private var paintSizeDensity = 1f
+
+    /**
+     * Converts every paint size to the layer just taken up so the tip keeps the size it had on screen: a layer with
+     * ten pixels to each canvas unit takes ten times the pixels, so a brush picked on the canvas does not arrive as a
+     * speck. The sizes stay in the layer's pixels and the readouts say so.
+     */
+    private fun keepPaintSizesOnScreen() {
+        val density = paintPixelsPerShownUnit
+        if (abs(density - paintSizeDensity) <= 1e-3f * paintSizeDensity) return
+        val k = density / paintSizeDensity
+        val limit = brushSizeLimit
+        paintBrushSize = (paintBrushSize * k).coerceIn(1f, limit)
+        paintPencilSize = (paintPencilSize * k).coerceIn(1f, limit)
+        paintEraserSize = (paintEraserSize * k).coerceIn(1f, limit)
+        paintShapeSize = (paintShapeSize * k).coerceIn(1f, limit)
+        paintSizeDensity = density
+    }
 
     /** Whether the active tool stamps the paint tip, which is what the brush keys and HUD act on. */
     val paintBrushActive: Boolean
@@ -1873,6 +1905,7 @@ internal class CanvasEditor(
         val handle = viewModel.beginPaintSession(targetLid) ?: return null
         val newSession = PaintSession(handle).also { it.frame = frame }
         paintSession = newSession
+        keepPaintSizesOnScreen()
         return newSession
     }
 

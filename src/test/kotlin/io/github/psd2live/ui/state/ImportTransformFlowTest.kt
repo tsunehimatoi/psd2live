@@ -124,6 +124,37 @@ class ImportTransformFlowTest {
                         "vertex $i at $x, $y is $fx, $fy in the layer's frame, outside $rect")
                 }
                 editor.discardPaintSession()
+
+                // Shown twice as large, each of its pixels covers two canvas units: a brush keeps its size on screen,
+                // so it takes half the pixels, and the tip it paints with is the ring the cursor shows.
+                editor.tool = CanvasTool.PAINT_BRUSH
+                editor.paintBrushSize = 16f
+                val onCanvas = editor.paintTip().radius * editor.paintShownScale
+                editor.discardPaintSession()
+                suspend fun scaled(by: Float) {
+                    val expected = io.github.psd2live.project.LayerTransform(by, 0f, 0f, by, 0f, 0f).after(
+                        vm.state.value.analysis!!.source.layers.single { it.id.raw == id }.transform)
+                    val done = CompletableDeferred<String?>()
+                    vm.saveDocumentEdits(assertNotNull(vm.currentWorkspaceState()), "scale", listOf(
+                        io.github.psd2live.application.WorkspaceDocumentOperation(io.github.psd2live.application.WorkspaceLayerTransform.OP,
+                            buildJsonObject { put("layer_id", id); put("scale", by) }))) { done.complete(it) }
+                    assertNull(done.await())
+                    until { vm.state.value.analysis?.source?.layers?.single { it.id.raw == id }?.transform == expected && !editor.busy }
+                }
+                scaled(2f)
+                assertNotNull(editor.startPaintSession(id))
+                assertEquals(0.5f, editor.paintPixelsPerShownUnit, 1e-3f)
+                assertEquals(8f, editor.paintBrushSize, 1e-3f, "half the pixels for the same size on screen")
+                assertEquals(onCanvas, editor.paintTip().radius * editor.paintShownScale, 1e-3f, "the ring the stroke paints")
+                assertEquals(4f, editor.paintTip().radius, 1e-3f, "the tip in the layer's frame is its own pixels")
+                editor.discardPaintSession()
+                // Shown at a quarter of that, its pixels are denser than the canvas: the brush takes more of them.
+                scaled(0.25f)
+                assertNotNull(editor.startPaintSession(id))
+                assertEquals(2f, editor.paintPixelsPerShownUnit, 1e-3f)
+                assertEquals(32f, editor.paintBrushSize, 1e-3f)
+                assertEquals(onCanvas, editor.paintTip().radius * editor.paintShownScale, 1e-3f)
+                editor.discardPaintSession()
             }
         }
     }
