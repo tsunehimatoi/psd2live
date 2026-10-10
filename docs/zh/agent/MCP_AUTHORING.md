@@ -83,7 +83,7 @@
 | `layer_import_images` | `request` | 从 PNG、无损 WebP、TIFF 或 BMP 文件一次导入多层源图，后台完成后返回图层与网格句柄 |
 | `layer_get_texture / atlas_get / atlas_render_page` | `layer_id`；`atlas_get` 可选 `page`；渲染要求 `page`，可选 `max_size` | 从同一捕获读取图层画布矩形、栅格像素、原生密度、纹理覆盖与图块，或纹理集预算、fit、提示、页面占用与全部图块；渲染页面为只读后台任务，终态返回 PNG |
 | `layer_set_canvas_rect / layer_replace_image / layer_set_pixel_density / atlas_set_tile / atlas_set_budget / atlas_pack` | `request` 内 `state` 及各自字段 | 后台修改图层画布矩形、替换任意分辨率图像、设置纹理密度与锁定、移动图块、修改纹理集预算与自动排布，或一次性排布；均可加入原子批量，见[纹理与纹理集](#纹理与纹理集) |
-| `source_get_components / source_split_components / source_split_polygon / source_split_depth / rig_update_generation / asset_prepare_reference / asset_import_png / asset_register / asset_preview_composite / layer_add_from_asset / layer_set_placement / layer_finalize_placement / asset_inspect / asset_reprocess / layer_soft_delete / layer_restore` | `request` | 源图拆分、拆分记录升级与素材的参考、导入、配准、预览、添加、定位、确认、检查、重处理、软删除和恢复 |
+| `source_get_components / source_split_components / source_split_polygon / source_split_depth / rig_update_generation / asset_prepare_reference / asset_import_png / asset_register / asset_preview_composite / layer_add_from_asset / layer_set_placement / layer_finalize_placement / asset_inspect / asset_reprocess / layer_delete / layer_restore` | `request` | 源图拆分、拆分记录升级与素材的参考、导入、配准、预览、添加、定位、确认、检查、重处理、软删除和恢复 |
 | `swing_put / swing_delete` | `request` | `put/delete`，在 Warp 或 Mesh（自动包一层 Warp）上生成左右 / 上下摇摆及摆锤；`motions` 组合左右与上下，`parallel` 让多束头发平行摆动，`tilt` / `offset_along` / `offset_across` 旋转和平移摇摆矩形；`delete` 可 `bake` 为普通关键，见[摇摆生成](../guide/SWING.md) |
 | `physics_put / physics_delete / physics_simulate / physics_fit / physics_config / physics_import` | `request` | `put/delete/simulate/fit/config/import`：按 ID 新建或局部修改任意物理组（含生成的预设、骨骼、摆动组）、删除自定义组或恢复生成值、后台只读阶跃采样，通过任务结果返回峰值与稳定时间、按标准晃动或 `observed_peaks` 实测峰值调整输出倍率、设置计算顺序与计算 FPS、导入 physics3.json，见[物理](../guide/PHYSICS.md) |
 | `simulation_put / simulation_delete / simulation_simulate / simulation_compare / simulation_bake / simulation_clear_bake` | `request` 内 `state`、`id` | `put/delete/bake/clear_bake` 返回进程任务句柄（终态含原编辑结果与烘焙诊断）；`simulate`、`compare` 同样返回只读任务句柄，不改变工程，`compare` 用 `motions` 中的动作对比烘焙结果与参考模拟并返回视觉检查。网格上的 2D 布料 / 头发模拟，只在编辑器内运行；`bake` 把它烘焙成 -30…30 的 `ParamSim<id>_<k>` 参数（`keys` 个关键点，`blend_shapes` 选择写法，默认自动）与拟合摆锤 `PhysicsSim_<id>`，点头、身体上下和前后倾另外烘焙成由平移输入的摆锤 `PhysicsSim_<id>_y` 驱动的 `ParamSim<id>_Y`，不带动物体的输入不参与，并返回每个输入的读取结果、检验动作上的视觉检查（摆幅、滞后、回落、抖动等）以及 R²、误差、参数用量、顶到极值的帧占比和急动度比；`force_inputs` 强制保留输入，`training_clips` 让模型自己的动作参与训练；`exaggeration` 放大模态摆动且无需重新烘焙；`auto_bake` 开启（默认）时 `put` 在同一步内重新烘焙；新建未给 `inputs` 时写入默认输入，空数组即没有输入；`output_names` 重命名烘焙出的参数和摆锤；`input_ranges` 按输入设置训练范围，`vertical` 开关上下参数（`null` 为自动），`outputs` 按生成的模态参数 ID 改写出的 ID、范围（±1…±100）和增益（0…3），不需要重新烘焙；`obstacles`（整组替换）是粒子被挡在外面的障碍物：随另一网格变形的圆（顶点 `a`）或胶囊（`a` 到 `b`），`radius` 到 `radius_b` 渐变，`friction` 0…1，参与模拟与烘焙并导出到 p2lrt / 网页目标；物理面板对模拟摆锤的覆盖在重新烘焙后三方合并，见[模拟与烘焙](../guide/SIMULATION.md) |
@@ -223,7 +223,7 @@ GUI 参数定义、文件夹位置和参数关键点可组合为一次共享提�
 
 参数定义现在按实际编辑顺序写入 journal，删除会读取此前关键形及最后一次默认值；旧工程静态参数覆盖保持兼容读取，不改写历史。透明度和颜色等纯通道修改也会持久化，重复捕获已存在且相同的关键点不追加历史。
 
-当前 87 项支持批量（包含素材图层添加、配准定位、确认、图片定位/取消及六项纹理编辑）：设置、图层分类/网格配置、源图多边形/连通块/深度拆分及软删除/恢复、参数定义、独立 Warp 创建、Rig 变形/关键形/结构/外观/顶点组、六种源图绘画、七种骨架修改、六种动作修改、四种画布编辑、路径 put/delete/deform、摇摆 put/delete、物理 put/delete/config/fit，以及 simulation put/delete/bake/clear_bake 和 model_apply_preset。设置、分类、网格配置、源图拆分、图片定位/取消、图层软删除/恢复、独立 Warp、绘画、物理、模拟与预设的单项调用使用后台任务；批量直接执行同一应用层候选，拆分、绘画、烘焙和拟合进度包含所在批量成员，准备期间可取消整批，不嵌套成员的单项任务；`classic_front_hair/classic_back_hair` 支持 `sway:false`，移除模拟后关闭该类传统摆动。发现工具返回 `batchable:true` 才表示支持；GUI 字段完成已接入异步候选队列，生成设置/分类/网格草稿转换为共享纯候选。
+当前 87 项支持批量（包含素材图层添加、配准定位、确认、图层整体变换、网格重建及六项纹理编辑）：设置、图层分类/网格配置、源图多边形/连通块/深度拆分及删除/恢复、参数定义、独立 Warp 创建、Rig 变形/关键形/结构/外观/顶点组、六种源图绘画、七种骨架修改、六种动作修改、四种画布编辑、路径 put/delete/deform、摇摆 put/delete、物理 put/delete/config/fit，以及 simulation put/delete/bake/clear_bake 和 model_apply_preset。设置、分类、网格配置、源图拆分、图片定位/取消、图层软删除/恢复、独立 Warp、绘画、物理、模拟与预设的单项调用使用后台任务；批量直接执行同一应用层候选，拆分、绘画、烘焙和拟合进度包含所在批量成员，准备期间可取消整批，不嵌套成员的单项任务；`classic_front_hair/classic_back_hair` 支持 `sway:false`，移除模拟后关闭该类传统摆动。发现工具返回 `batchable:true` 才表示支持；GUI 字段完成已接入异步候选队列，生成设置/分类/网格草稿转换为共享纯候选。
 
 素材图层添加支持导入模型及自建父变形器。应用候选将源画布几何转换到实际父级的中性坐标，并保存网格创建记录；重新配准使用原处理像素，原位替换创建几何而保留对象 ID 和父级。已有专属绑定或遮罩依赖仍拒绝单层定位。素材图层保持素材的原分辨率：裁剪透明边缘后，像素直接成为图层栅格，素材放置或配准给出的画布矩形成为图层矩形（`canvasUnitsPerPixelX/Y` 为实际比值），例如 1024 像素素材配准到 32 单位区域即 32 单位、1024 像素的图层。平移/缩放（含显式镜像，仅翻转行列）的配准不经过插值；只有带旋转的配准按素材自身密度栅格化到外包框。素材清单与图层都保存原始像素，不再缩回画布分辨率。分配前检查坐标、外包框 16MP 与栅格 16MP 及密度上限，准备阶段响应取消；GUI 连续放置经独立应用会话，保存排除预览并等待正式确认。
 
@@ -517,7 +517,7 @@ View 从模型数据渲染 PNG，不依赖桌面截图。`canvas_rect` 给出画
 
 生成嘴唇跟随显式重建或首次创建时保存的轮廓和颜色，后续保留网格绘画不重新生成派生贴图。GUI 冻结像素与 MCP 手势通过独立 `WorkspaceRasterCommands` 共用文档候选、重建及状态检查；创建数据进入有序日志，保存重开和导出重新解析当前贴图。准备过程中报告进度并检查取消，提交前取消保留原像素和历史；成功提交后的迟到取消或刷新失败仍保留完整完成结果。断线或取消等待不会停止任务。新网格的单层设置更新同样写入文档，保留 ID、重绑路径及权重。
 
-`layer_soft_delete` 与 `layer_restore` 都返回进程任务，支持原子批量；通过 `job_wait/job_get` 的 `result` 读取实际状态、历史节点和受影响图层。`layer_restore` 可传 1–256 个唯一 `layer_ids`，省略时恢复全部（被拆分取代的原图层不在其中，指定它会报错并列出部件）；恢复活动图层、重复删除及无删除内容时恢复属于无变化，不追加历史。GUI 删除和“恢复全部”使用同一应用命令。删除保留像素和编辑日志；含新建网格记录的工程先完整重放，再过滤已删除图层及派生嘴唇，当前模型清理其遮罩引用、Glue、路径和权重，恢复重新取得保存的绑定。删除期间的全局网格设置变更也持久化隐藏网格的新几何及重绑数据。提交前取消或冲突保留原状态，CAS 后的迟到取消或刷新失败保留成功；旧历史节点不改写。
+`layer_delete` 与 `layer_restore` 都返回进程任务，支持原子批量；通过 `job_wait/job_get` 的 `result` 读取实际状态、历史节点和受影响图层。`layer_delete` 真正删除图层：像素离开工程，它的网格经日志记录 `layer_delete` 离开作者态 Rig，连同引用它们的遮罩、Glue、路径和权重；生成器读取的图层同时离开生成输入，随后的再生成不再为它生成网格，也不再影响任何框架。之前的历史节点保留它，`history_checkout` 即撤销。最后一个图层不能删除。嘴唇条带、旧版左右半边等不是独立源图层的行仍按旧方式隐藏。`layer_restore` 只恢复旧版本软删除的图层：可传 1–256 个唯一 `layer_ids`，省略时恢复全部（被拆分取代的原图层不在其中，指定它会报错并列出部件）；无删除内容时属于无变化，不追加历史。
 
 全局网格单位使用 `settings_update` 的 `meshUnits`：`DOCUMENT` 以文档长边 2048 像素为参照，同一图像放大后使用相同密度；`PIXELS` 使用源像素长度。两种模式的单层参数仍表示所选单位内的长度。旧 v1 设置存在 `meshSpacing` 而没有单位时沿用 `PIXELS`，避免重开改变旧网格；新设置、生成基线与导出保存实际单位。GUI 单位开关和公开修改使用同一候选重生与拓扑迁移。`meshTrace` 决定轮廓读什么：`TEXTURE`（新工程默认）读图层自身像素，按最大 alpha 缩减到至多网格单位 4 倍细的分辨率，细于画布像素的笔画也留在网格内，顶点间距不变；`CANVAS` 读缩放到画布分辨率的视图。没有该字段的已有设置按 `CANVAS` 读取，`CANVAS` 也不写出该字段，旧工程的设置文本与网格不变。`meshWrap`（0–64 网格单位，默认 0）为包裹拓扑：描轮廓前闭合窄于该值的缝隙与凹口，睫毛、发梢等细小凸起共用一个包络，所有绘制像素仍在网格内；`layer_mesh` 的 `changes.wrap` 按图层覆盖，`inspect` 的图层网格设置返回实际 `wrap`。值为 0 时不写出字段，没有字段的设置读作 0。详见[网格拓扑](../spec/MESH_TOPOLOGY_AND_SPLIT.md#包裹拓扑)。
 
@@ -525,7 +525,7 @@ View 从模型数据渲染 PNG，不依赖桌面截图。`canvas_rect` 给出画
 
 `register` 可使用画框、对应锚点或绝对变换；锚点的目标位置是画布坐标，生成图坐标是原始完整 PNG 像素。镜像、非等比拉伸须明确声明。分辨率提高不应自动扩大模型中的占地。
 
-先试拼并检查父级、绘制顺序、遮罩和运动余量，再正式加入或软删除替代层。已经有独立绑定、关键形或完成定位的素材可能拒绝整体重定位，以实际错误和 Schema 为准。
+先试拼并检查父级、绘制顺序、遮罩和运动余量，再正式加入或删除替代层。已经有独立绑定、关键形或完成定位的素材可能拒绝整体重定位，以实际错误和 Schema 为准。
 
 ## 相关实现
 

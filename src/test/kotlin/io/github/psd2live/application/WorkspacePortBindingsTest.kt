@@ -27,7 +27,7 @@ class WorkspacePortBindingsTest {
             override suspend fun splitDepth(state: String, request: JsonObject): WorkspaceMutationResult = error("Unexpected depth split")
             override suspend fun paintSource(arguments: JsonObject): WorkspaceMutationResult = error("Unexpected paint")
             override suspend fun commitPaintRaster(state: String, request: WorkspacePaintRaster): WorkspaceMutationResult = error("Unexpected raster commit")
-            override suspend fun softDeleteLayer(layerId: String, expectedState: String, taskId: String?): WorkspaceMutationResult = error("Unexpected deletion")
+            override suspend fun deleteLayer(layerId: String, expectedState: String, taskId: String?): WorkspaceMutationResult = error("Unexpected deletion")
             override suspend fun restoreDeletedLayers(layerIds: List<String>?, expectedState: String, taskId: String?): WorkspaceMutationResult = error("Unexpected restoration")
             override suspend fun classifyLayer(layerId: String, fields: JsonObject, expectedState: String): WorkspaceMutationResult = error("Unexpected classification")
         }

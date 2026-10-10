@@ -916,13 +916,13 @@ class DesktopWorkspace(
         result.result
     }
 
-	override suspend fun softDeleteLayer(
+	override suspend fun deleteLayer(
 		layerId: String,
 		expectedState: String,
 		taskId: String?,
-	): WorkspaceMutationResult = layerMembership(WorkspaceDocumentOperation("layer_soft_delete", buildJsonObject {
+	): WorkspaceMutationResult = layerMembership(WorkspaceDocumentOperation("layer_delete", buildJsonObject {
         put("layer_id", layerId)
-    }), expectedState, "Soft-deleted layer $layerId", taskId)
+    }), expectedState, "Deleted layer $layerId", taskId)
 
     override suspend fun restoreDeletedLayers(layerIds: List<String>?, expectedState: String, taskId: String?): WorkspaceMutationResult =
         layerMembership(WorkspaceDocumentOperation("layer_restore", buildJsonObject {

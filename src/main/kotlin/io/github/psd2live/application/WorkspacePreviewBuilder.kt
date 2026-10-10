@@ -143,9 +143,12 @@ internal class WorkspacePreviewBuilder {
      */
     private fun checkpoints(current: RigPreviewModel, config: io.github.psd2live.core.PipelineConfig): Boolean {
         val before = current.config.rigEdits
-        if (pipeline.materializable(current.config) != pipeline.materializable(config) || !before.checkpointsBeforeEntries ||
-            !config.rigEdits.continues(before)) return false
+        if (pipeline.materializable(current.config) != pipeline.materializable(config) || !config.rigEdits.continues(before)) return false
         if (config.rigEdits.checkpointIndex >= before.authoringJournal.size) return false
+        // A deleted layer takes its artwork along: nothing before its deletion (its own creation record) may replay again.
+        val added = config.rigEdits.authoringJournal.subList(before.authoringJournal.size, config.rigEdits.authoringJournal.size)
+        if (added.any { it["op"]?.jsonPrimitive?.contentOrNull == io.github.psd2live.core.LayerDeletionJournal.OP }) return true
+        if (!before.checkpointsBeforeEntries) return false
         return before.replaysLegacy || config.rigEdits.authoringJournal.size > before.authoringJournal.size
     }
 

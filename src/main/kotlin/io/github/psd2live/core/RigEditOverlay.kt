@@ -552,6 +552,13 @@ internal fun AuthoredRig.withJournalMeshes(commands: List<JsonObject>): Authored
 	val visible = visibilityTargets.toMutableList()
 	for (command in commands) {
 		val op = command["op"]?.jsonPrimitive?.contentOrNull
+		if (op == LayerDeletionJournal.OP) {
+			for (id in LayerDeletionJournal.meshes(command)) {
+				layers -= id; bounds -= id; pages -= id
+				visible.removeAll { it.first == id }
+			}
+			continue
+		}
 		if (op == SourcePartitionJournal.OP) {
 			for (piece in SourcePartitionJournal.pieces(command)) {
 				val id = piece.getValue("id").jsonPrimitive.content

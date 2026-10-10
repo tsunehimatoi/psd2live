@@ -8,19 +8,29 @@ import kotlinx.serialization.json.*
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 
-/** Soft deletion changes membership only; pixels and ordered authoring stay available for restoration. */
+/**
+ * Deleting a layer removes it: its pixels leave the document (history keeps them, so undo brings it back), and its
+ * meshes leave the authored rig through a `layer_delete` journal entry ([LayerDeletionJournal]). A layer the generators
+ * read leaves their input too, so the regeneration that follows stops making its meshes and no longer shapes any frame.
+ * Nothing is kept aside for a later restore.
+ *
+ * `layer_restore` only brings back layers an older version soft-deleted ([WorkspaceDocument.deletedLayerIds]); a row
+ * that is not a source layer of its own (a mouth lip ribbon, a legacy left or right half) is still hidden that way.
+ */
 internal object WorkspaceLayerEdits {
-    val supported = setOf("layer_soft_delete", "layer_restore")
+    const val DELETE = "layer_delete"
+    val supported = setOf(DELETE, "layer_restore")
 
     fun apply(document: WorkspaceDocument, model: RigPreviewModel, operation: WorkspaceDocumentOperation): WorkspaceDocument {
         val known = document.source.layers.mapTo(HashSet()) { it.id.raw } + model.analysis.layers.map { it.source.id.raw } +
             document.deletedLayerIds
         return when (operation.operation) {
-            "layer_soft_delete" -> {
+            DELETE -> {
                 val id = operation.request.getValue("layer_id").jsonPrimitive.content
                 require(id in known) { "Layer not found: $id" }
-                if (id in document.deletedLayerIds) document else document.copy(deletedLayerIds = document.deletedLayerIds + id,
-                    rigEdits = RigLayerDeletion.preserve(model, document.config()))
+                if (document.source.layers.any { it.id.raw == id }) delete(document, model, id)
+                else if (id in document.deletedLayerIds) document
+                else document.copy(deletedLayerIds = document.deletedLayerIds + id, rigEdits = RigLayerDeletion.preserve(model, document.config()))
             }
             "layer_restore" -> {
                 val ids = operation.request["layer_ids"]?.jsonArray?.map { it.jsonPrimitive.content }
@@ -32,6 +42,28 @@ internal object WorkspaceLayerEdits {
             }
             else -> error("Not a layer membership operation")
         }
+    }
+
+    private fun delete(document: WorkspaceDocument, model: RigPreviewModel, id: String): WorkspaceDocument {
+        val remaining = document.source.layers.filterNot { it.id.raw == id }
+        require(remaining.isNotEmpty()) { "The last layer cannot be deleted" }
+        // Its meshes, and the ones generated from it under derived IDs (mouth lip ribbons, legacy halves).
+        val meshes = model.rig.layerIdByDrawableId.filter { (_, layer) -> layer == id || layer.startsWith("$id:") }.keys
+        fun without(source: org.umamo.format.art.SourceArt?) = source?.let { art ->
+            if (art.layers.none { it.id.raw == id }) art else WorkspaceSourceArt(art.widthPx, art.heightPx, art.layers.filterNot { it.id.raw == id }, art.groups)
+        }
+        val candidate = document.copy(
+            source = WorkspaceSourceArt(document.source.widthPx, document.source.heightPx,
+                remaining.mapIndexed { index, layer -> WorkspaceSourceLayer.copyOf(layer, remaining.lastIndex - index) }, document.source.groups),
+            generationSource = without(document.generationSource), meshSource = without(document.meshSource),
+            layerVisibility = document.layerVisibility - id, layerOverrides = document.layerOverrides - id,
+            parentOverrides = document.parentOverrides - id, meshOverrides = document.meshOverrides - id,
+            textureOverrides = document.textureOverrides - id, deletedLayerIds = document.deletedLayerIds - id,
+            rigEdits = document.rigEdits.copy(splitDrawableIds = document.rigEdits.splitDrawableIds - id,
+                assetLayers = document.rigEdits.assetLayers - id, calibrationLayerIds = document.rigEdits.calibrationLayerIds - id))
+        if (meshes.isEmpty()) return candidate
+        return candidate.copy(rigEdits = candidate.rigEdits.copy(authoringJournal = candidate.rigEdits.authoringJournal +
+            LayerDeletionJournal.encode(id, meshes)))
     }
 }
 

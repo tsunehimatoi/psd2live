@@ -29,7 +29,7 @@ internal object WorkspaceAuthoringResultSchemas {
     private val normalizedOperations = setOf(
         "parameter_create", "parameter_update", "parameter_delete", "swing_put", "swing_delete",
         "physics_put", "physics_delete", "physics_fit", "physics_config",
-        "history_checkpoint", "history_checkout", "layer_add_from_asset", "layer_set_placement", "layer_finalize_placement", "layer_soft_delete", "layer_restore", "layer_import_images",
+        "history_checkpoint", "history_checkout", "layer_add_from_asset", "layer_set_placement", "layer_finalize_placement", "layer_delete", "layer_restore", "layer_import_images",
     )
 
     fun forOperation(id: String): JsonObject? = when (id) {

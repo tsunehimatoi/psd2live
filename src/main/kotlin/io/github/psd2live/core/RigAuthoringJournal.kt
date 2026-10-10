@@ -58,6 +58,7 @@ internal object RigAuthoringJournal {
         ArtPrimitiveJournal.OP -> ArtPrimitiveReplay.replay(model, edit, skins)
         RasterMeshJournal.OP -> RasterMeshJournal.replay(model, edit)
         RasterMeshCreation.OP -> RasterMeshCreation.replay(model, edit)
+        LayerDeletionJournal.OP -> LayerDeletionJournal.replay(model, edit)
         "canvas_geometry", "canvas_topology", "canvas_create_warp", "canvas_create_rotation", "canvas_create_glue", "canvas_glue_edit" -> CanvasEdits.apply(model, edit)
         "path_put", "path_delete" -> DeformPathJournal.apply(model, edit)
         VertexGroupJournal.PUT, VertexGroupJournal.DELETE -> VertexGroupJournal.apply(model, edit)
@@ -185,7 +186,7 @@ internal object RigAuthoringJournal {
                 VertexGroupJournal.RULE -> VertexGroupJournal.compileRule(current, command)
                 // Absolute points from the producer become sparse deltas against the geometry shown here.
                 "canvas_geometry" -> CanvasGeometryJournal.encode(current, command)
-                GeneratedOverrides.OP, DepthSplit.OP, MeshGenerationBaseline.OP, RigGenerationBaseline.OP, RigGenerationScaffold.OP, RigGenerationJournal.OP, RigGenerationFrames.OP, RigMeshActivation.OP, RigWarpTopology.OP, RigBezierJournal.OP, SourcePartitionJournal.OP, ArtPrimitiveJournal.OP, RasterMeshJournal.OP, RasterMeshCreation.OP, "parameter_keys", "set", "copy", "delete", "warp", "structure", "path_delete", VertexGroupJournal.PUT, VertexGroupJournal.DELETE, "canvas_topology", "canvas_create_warp", "canvas_create_rotation" -> command
+                GeneratedOverrides.OP, DepthSplit.OP, MeshGenerationBaseline.OP, RigGenerationBaseline.OP, RigGenerationScaffold.OP, RigGenerationJournal.OP, RigGenerationFrames.OP, RigMeshActivation.OP, RigWarpTopology.OP, RigBezierJournal.OP, SourcePartitionJournal.OP, ArtPrimitiveJournal.OP, RasterMeshJournal.OP, RasterMeshCreation.OP, LayerDeletionJournal.OP, "parameter_keys", "set", "copy", "delete", "warp", "structure", "path_delete", VertexGroupJournal.PUT, VertexGroupJournal.DELETE, "canvas_topology", "canvas_create_warp", "canvas_create_rotation" -> command
                 // Glue pairs vertices where both meshes rest, as Cubism's glue: a weld does nothing at rest. Older records keep their pose.
                 "canvas_create_glue", "canvas_glue_edit" -> JsonObject(command - "pose")
                 else -> error("Unknown authoring operation: $op")

@@ -451,11 +451,11 @@ private fun registerCatalogAssetCommands(catalog: WorkspaceCommands, asset: Work
 
 private fun registerCatalogSourceCommands(catalog: WorkspaceCommands, source: WorkspaceSourcePort) {
 	catalog.register(
-		name = "layer_soft_delete",
-		description = "Remove a layer from the active model without erasing its pixels, authoring or history. Restore it with layer_restore or history_checkout.",
+		name = "layer_delete",
+		description = "Delete a layer: its pixels leave the project and its meshes leave the rig, with the glue, masks, paths and weights on them; a layer the generators read leaves their input, so the rig regenerates without it. One undoable history edit (history_checkout brings it back). The last layer cannot be deleted.",
 		inputSchema = WorkspaceCommandSchema(
 			properties = buildJsonObject {
-				putJsonObject("layer_id") { put("type", "string"); put("description", "Stable layer ID to remove from the active workspace") }
+				putJsonObject("layer_id") { put("type", "string"); put("description", "Stable layer ID to delete") }
 				putJsonObject("state") { put("type", "string"); put("description", "Opaque state from workspace_inspect or the preceding result") }
 				putJsonObject("task_id") { put("type", "string"); put("description", "Optional long-task correlation ID") }
 			},
@@ -464,7 +464,7 @@ private fun registerCatalogSourceCommands(catalog: WorkspaceCommands, source: Wo
 		hints = MUTATING,
 	) { request ->
 		mutationResult {
-			source.softDeleteLayer(
+			source.deleteLayer(
 				layerId = request.requiredString("layer_id"),
 				expectedState = request.requiredString("state"),
 				taskId = request.optionalString("task_id"),
@@ -473,7 +473,7 @@ private fun registerCatalogSourceCommands(catalog: WorkspaceCommands, source: Wo
 	}
     catalog.register(
         name = "layer_restore",
-        description = "Restore deleted layers with their saved pixels and authoring. Omit layer_ids to restore all deleted layers; restoring active layers is a no-op.",
+        description = "Restore layers an older version soft-deleted (layer_delete removes layers for good; undo it with history_checkout). Omit layer_ids to restore them all; restoring active layers is a no-op.",
         inputSchema = WorkspaceCommandSchema(properties = buildJsonObject {
             putJsonObject("state") { put("type", "string") }
             putJsonObject("layer_ids") {

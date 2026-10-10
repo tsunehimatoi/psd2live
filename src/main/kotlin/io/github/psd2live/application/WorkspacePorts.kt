@@ -89,8 +89,8 @@ interface WorkspaceSourcePort {
     suspend fun splitDepth(state: String, request: JsonObject): WorkspaceMutationResult
     suspend fun paintSource(arguments: JsonObject): WorkspaceMutationResult
     suspend fun commitPaintRaster(state: String, request: WorkspacePaintRaster): WorkspaceMutationResult
-    /** Soft-delete a layer while retaining all pixels and prior history nodes. */
-    suspend fun softDeleteLayer(
+    /** Delete a layer and its meshes; earlier history nodes keep them. */
+    suspend fun deleteLayer(
         layerId: String,
         expectedState: String,
         taskId: String? = null,

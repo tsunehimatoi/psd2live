@@ -5767,7 +5767,7 @@ class PSD2LiveViewModel : AutoCloseable {
 	fun deleteLayer(layerId: String) {
 		if (workspaceBackend != null) {
             val port: io.github.psd2live.application.WorkspaceSourcePort = requireNotNull(workspaceBackend)
-            runWorkspaceCommand { state -> port.softDeleteLayer(layerId, state) }
+            runWorkspaceCommand { state -> port.deleteLayer(layerId, state) }
             return
         }
 		val analysis = _state.value.analysis

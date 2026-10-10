@@ -48,7 +48,7 @@ class TexturePerfTool {
 				val start = runtime.capture()
 				val victim = start.model.atlas.placementByLayerId.entries.minBy { it.value.width.toLong() * it.value.height }.key
 				io.github.psd2live.application.WorkspaceLayerCommands(runtime).execute(start.projectId, start.state,
-					io.github.psd2live.application.WorkspaceDocumentOperation("layer_soft_delete", kotlinx.serialization.json.buildJsonObject {
+					io.github.psd2live.application.WorkspaceDocumentOperation("layer_delete", kotlinx.serialization.json.buildJsonObject {
 						put("layer_id", kotlinx.serialization.json.JsonPrimitive(victim)) }), "Delete", MutationAuthor.USER)
 			}
 			val tiles = runtime.capture().model.atlas.placementByLayerId.entries.sortedBy { it.key }
