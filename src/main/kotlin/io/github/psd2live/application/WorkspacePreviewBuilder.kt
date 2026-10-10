@@ -4,6 +4,7 @@ import io.github.psd2live.core.PSD2LivePipeline
 import io.github.psd2live.core.RigPreviewModel
 import io.github.psd2live.core.ProgressListener
 import io.github.psd2live.core.RigRegenerationCheckpoint
+import io.github.psd2live.core.RigGenerationChange
 import io.github.psd2live.core.VertexGroupJournal
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -73,7 +74,7 @@ internal class WorkspacePreviewBuilder {
                 }
                 return@runInterruptible document.copy(rigEdits = overlay.copy(authoringJournal = journal + groups.map(VertexGroupJournal::encode)))
             }
-            if (RigGenerationMigration.changed(current, config)) {
+            if (RigGenerationChange.changed(current, config)) {
                 // A generated model merges what the generators make now onto the user's rig and checkpoints the result
                 // ([RigRegenerationCheckpoint]). Only an imported model, which has no generated rig to merge onto, records
                 // the migration in its journal.
@@ -172,7 +173,7 @@ internal class WorkspacePreviewBuilder {
             if (current != null && !fast && revision != null && pipeline.materializable(current.config) &&
                 config.rigEdits.continues(current.config.rigEdits)) {
                 RigRegenerationCheckpoint.checkpointed(pipeline, current, config, document.source, { progress.update("Merging regenerated rig", 0.5) },
-                    currentSource = RigGenerationMigration.changed(current, config))
+                    currentSource = RigGenerationChange.changed(current, config))
                     ?.let { checkpointed ->
                         val model = pipeline.buildPreview(document.source, checkpointed, progress, current.atlas)
                         MaterializedRigStore.remember(WorkspaceRevisions.of(document.copy(rigEdits = checkpointed.rigEdits)), checkpointed.rigEdits,

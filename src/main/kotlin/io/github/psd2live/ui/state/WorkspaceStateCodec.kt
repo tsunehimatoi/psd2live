@@ -302,79 +302,14 @@ internal object WorkspaceStateCodec {
     }
 
     fun editableIdentity(state: PSD2LiveState): JsonObject = encode(state)
+    /**
+     * The document settings of [state]: the document codec's own text of its chosen settings, so the two never
+     * differ - a revision hashes the settings text, and any difference would make every save commit a spurious
+     * history node - followed by the atlas budget and arrangement, written only when set so documents without
+     * them keep their settings text and revision.
+     */
     fun settings(state: PSD2LiveState): JsonObject = buildJsonObject {
-        put("atlasSize", state.atlasSize)
-        put("textureUpscale", Json.encodeToJsonElement(state.textureUpscale))
-        put("meshSpacing", state.meshSpacing)
-        // Same key order as WorkspaceSettingsCodec.encode: a revision hashes the settings text, so an order
-        // difference alone makes every save see a change and commit a spurious history node.
-        put("meshUnits", state.meshUnits.name)
-        if (state.meshTrace != io.github.psd2live.core.MeshTrace.CANVAS) put("meshTrace", state.meshTrace.name)
-        if (state.meshWrap != 0f) put("meshWrap", state.meshWrap)
-        put("meshOuterMargin", state.meshOuterMargin)
-        put("meshEdgeMode", state.meshEdgeMode.name)
-        put("meshEdgeWidth", state.meshEdgeWidth)
-        put("meshMaxEdgeDistance", state.meshMaxEdgeDistance)
-        put("meshInteriorDensity", state.meshInteriorDensity)
-        put("meshFillAlgorithm", state.meshFillAlgorithm.name)
-        put("meshSuppressBoundaryDiagonals", state.meshSuppressBoundaryDiagonals)
-        put("meshFillParameters", encodeFillParameters(state.meshFillParameters))
-        putJsonObject("meshOverrides") {
-            state.meshOverrides.toSortedMap().forEach { (k, v) ->
-                put(k, buildJsonObject {
-                    put("outerMargin", v.outerMargin)
-                    put("edgeMode", v.edgeMode.name)
-                    put("edgeWidth", v.edgeWidth)
-                    put("maxEdgeDistance", v.maxEdgeDistance)
-                    put("interiorDensity", v.interiorDensity)
-                    put("fillAlgorithm", v.fillAlgorithm.name)
-                    put("suppressBoundaryDiagonals", v.suppressBoundaryDiagonals)
-                    put("fillParameters", encodeFillParameters(v.fillParameters))
-                    if (v.wrap != 0f) put("wrap", v.wrap)
-                })
-            }
-        }
-        putJsonObject("drawOrderOverrides") { state.drawOrderOverrides.toSortedMap().forEach { (k, v) -> put(k, v) } }
-        put("texturePadding", state.texturePadding)
-        put("alphaThreshold", state.alphaThreshold)
-        put("headStrength", state.headStrength)
-        put("bodyStrength", state.bodyStrength)
-        put("rigTuning", encodeRigTuning(state.rigTuning))
-        put("meshOnly", state.meshOnly)
-        put("generateDeformers", state.generateDeformers)
-        put("featureDisplacementEnabled", state.featureDisplacementEnabled)
-        put("mouthOutlineEnabled", state.mouthOutlineEnabled)
-        put("mouthShape", state.mouthShape)
-        putJsonArray("mouthCurve") { state.mouthCurve.points.forEach { p ->
-            add(buildJsonObject { put("x", p.x); put("y", p.y) })
-        } }
-        put("mouthColor", state.mouthColor?.let(::JsonPrimitive) ?: JsonNull)
-        put("mouthThickness", state.mouthThickness)
-        put("exportMotions", state.exportMotions)
-        put("motionBasic", state.motionBasic)
-        put("motionIdle", state.motionIdle)
-        put("motionBlink", state.motionBlink)
-        put("motionNod", state.motionNod)
-        put("motionShake", state.motionShake)
-        put("motionSkeleton", state.motionSkeleton)
-        put("generatePhysics", state.generatePhysics)
-        put("physicsFrontHair", state.physicsFrontHair)
-        put("physicsBackHair", state.physicsBackHair)
-        put("physicsEyeJelly", state.physicsEyeJelly)
-        put("hairSimulationFront", state.hairSimulationFront)
-        put("hairSimulationBack", state.hairSimulationBack)
-        put("exportCmo3", state.exportCmo3)
-        put("exportMoc3", state.exportMoc3)
-        put("exportJson", state.exportJson)
-        put("runtimeTarget", state.runtimeTarget.name)
-        put("exportHiddenParts", state.exportHiddenParts)
-        put("exportHiddenDrawables", state.exportHiddenDrawables)
-        put("exportGuideImageParts", state.exportGuideImageParts)
-        put("exportIncludePhysics", state.exportIncludePhysics)
-        put("exportIncludeUserData", state.exportIncludeUserData)
-        put("exportIncludeDisplayInfo", state.exportIncludeDisplayInfo)
-        put("exportPixelsPerUnit", state.exportPixelsPerUnit?.let(::JsonPrimitive) ?: JsonNull)
-        // Written only when set, so documents without a budget keep their settings text and revision.
+        io.github.psd2live.project.WorkspaceSettingsCodec.encode(state.rawConfig()).forEach { (key, value) -> put(key, value) }
         state.atlasBudget?.let { put(io.github.psd2live.project.WorkspaceSettingsCodec.ATLAS, io.github.psd2live.project.WorkspaceSettingsCodec.encodeAtlasBudget(it)) }
         state.atlasArrangement?.let { put(io.github.psd2live.project.AtlasArrangementCodec.KEY, io.github.psd2live.project.AtlasArrangementCodec.encode(it)) }
     }
