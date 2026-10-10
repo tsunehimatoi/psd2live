@@ -161,7 +161,7 @@ PSD 导入与图片创建共用独立应用层导入器。`project_import_psd` �
 
 CMO3 导入共用独立应用层导入器，GUI 入口确认后携带可信用户身份调用，MCP 不进入对话框。`mode=new` 使用新工程 ID 和加载代次；`mode=replace` 要求已加载工程，保留未出现的对象以及参数快照和历史注释，文档与姿态重置在同一次提交中发布。导入模型不套用 PSD 自动 Rig 或动作预设。任务进度依次覆盖文件读取、候选准备、重建及提交；提交前取消保留原工程，提交后取消保留完成结果。
 
-同一工程内，同一 `request_id` 和相同操作、参数及作者重试返回原结果（导出为原任务句柄）；改动后必须使用新 ID。成功和失败结果均保留到应用退出。此去重在应用进程内共享，不依赖 MCP 连接。任务进度通过查询返回，不沿用已结束调用的 progress token。旧的 `export`、`export_psd` 名称已移除。
+同一工程内，同一 `request_id` 和相同操作、参数及作者重试返回原结果（导出为原任务句柄）；改动后必须使用新 ID。成功和失败结果保留最近 512 个，更早的会被清除；重试已清除的 ID 会重新执行（带旧 `state` 的修改会因冲突而失败，不会重复应用）。此去重在应用进程内共享，不依赖 MCP 连接。任务进度通过查询返回，不沿用已结束调用的 progress token。旧的 `export`、`export_psd` 名称已移除。
 
 ```json
 {"request":{"request_id":"export-001","project_id":"project-id-from-inspect","state":"opaque-state-from-inspect","output_directory":"D:/exports/model"}}

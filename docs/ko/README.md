@@ -214,7 +214,7 @@ PSD2Live는 Cubism Editor나 SDK 없이 동작하면서 Cubism 형식과의 호�
 
 ## 에이전트 연결(MCP)
 
-1. PSD2Live를 실행한 상태에서 **도구 → MCP…**를 열고 포트, 액세스 토큰, 공개할 도구 세트(기본값은 간소화)를 설정합니다.
+1. MCP 서버는 기본으로 켜져 있으며 PSD2Live와 함께 `http://127.0.0.1:23871/mcp`에서 시작합니다. **도구 → MCP…**에서 끄거나 포트, 액세스 토큰, 공개할 도구 세트(기본값은 간소화)를 설정할 수 있습니다. 액세스 토큰은 로컬 사용자 설정(Java Preferences)에 평문으로 저장됩니다.
 2. 사용하는 호스트(Claude Code, Codex, 일반 JSON)에 맞는 명령이나 설정을 복사합니다. Stdio만 지원하는 호스트는 저장소 루트의 [`mcp_proxy.py`](../../mcp_proxy.py)를 사용합니다.
 3. 에이전트가 먼저 `workspace_overview`로 프로젝트 개요를, `workspace_inspect`로 개별 객체를 읽게 합니다. 도구로 나열되지 않은 작업은 `workspace_list_operations`로 찾아 `workspace_call`로 호출합니다.
 
@@ -225,7 +225,7 @@ PSD2Live는 Cubism Editor나 SDK 없이 동작하면서 Cubism 형식과의 호�
 
 ## 소스에서 빌드
 
-JDK 21이 필요하며 Gradle은 저장소에 포함된 Wrapper를 사용합니다. Rust(cargo)가 설치되어 있으면 Rust 런타임도 함께 빌드하고, 없으면 자동으로 건너뛰며 편집기는 내장 평가기를 사용합니다.
+JDK 21이 필요하며 Gradle은 저장소에 포함된 Wrapper를 사용합니다. Rust(cargo, rustc 1.87 이상)가 설치되어 있으면 Rust 런타임도 함께 빌드합니다. cargo가 없거나 rustc가 오래되었으면 알림을 표시하고 건너뛰며 편집기는 내장 평가기를 사용합니다(`rustup update` 후 빌드할 수 있습니다).
 
 ```bash
 # GUI 실행(Windows: .\gradlew.bat run 또는 run-gui.bat)

@@ -2993,13 +2993,28 @@ class PSD2LiveViewModel : AutoCloseable {
 		updateState { it.copy(recentFiles = AppSettings.recentFiles()) }
 	}
 
+	/** Stores the field as typed: trimming here would fight the text field mid-edit. Readers trim. */
 	fun setOutputPath(path: String) {
 		val trimmed = path.trim()
 		if (trimmed.isNotBlank()) {
 			lastExportDirectory = trimmed
 		}
-		updateState { it.copy(outputPath = trimmed) }
+		if (path == _state.value.outputPath) return
+		updateState { it.copy(outputPath = path) }
 	    markWorkspaceChanged()
+	}
+
+	/**
+	 * The export folder [output] names, or null after reporting why not. A relative path would resolve against the
+	 * app's working directory, which is nowhere the user chose, so it is refused like the MCP export refuses it.
+	 */
+	private fun exportDirectoryOf(output: String): Path? {
+		val path = runCatching { Path.of(output) }.getOrNull()
+		if (path == null || !path.isAbsolute) {
+			updateState { it.copy(errorMessage = tr("dialog.outputAbsolute", output)) }
+			return null
+		}
+		return path.normalize()
 	}
 
 	fun setTextureUpscale(config: io.github.psd2live.core.TextureUpscaleConfig) {
@@ -6496,7 +6511,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		if (!current.exportCmo3 && !current.exportMoc3) {
 			updateState { it.copy(errorMessage = tr("dialog.exportFormatRequired")) }; return
 		}
-		val directory = Path.of(output).toAbsolutePath().normalize()
+		val directory = exportDirectoryOf(output) ?: return
 		lastExportDirectory = directory.toString()
 		launchWorkspaceExport(false, { port, state -> port.exportModel(state, directory.toString()) }) { result ->
 			val files = result.getValue("files").jsonArray
@@ -6580,10 +6595,10 @@ class PSD2LiveViewModel : AutoCloseable {
 
 	/** Exports the committed rig through [targetId] into a folder named after the target under the output path. */
 	internal fun exportOtherFormat(targetId: String, settings: Map<String, String>) {
-		val root = _state.value.outputPath.takeIf { it.isNotBlank() }
+		val root = _state.value.outputPath.trim().takeIf { it.isNotBlank() }
 			?: run { updateState { it.copy(errorMessage = tr("export.other.noOutput")) }; return }
 		val name = (_state.value.projectSourceName ?: "model").substringBeforeLast('.')
-		val target = Path.of(root).toAbsolutePath().normalize().resolve("$name-$targetId")
+		val target = (exportDirectoryOf(root) ?: return).resolve("$name-$targetId")
 		launchWorkspaceExport(false, { port, state -> port.exportTarget(state, targetId, target.toString(), settings) }) { result ->
 			val count = result.getValue("files").jsonArray.size
 			val losses = result["losses"]?.jsonArray.orEmpty().map { it.jsonObject }

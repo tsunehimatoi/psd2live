@@ -214,7 +214,7 @@ Format and evaluation rules: [runtime](../zh/spec/RUNTIME.md) and [`.p2lrt` 2.0 
 
 ## Connecting an agent (MCP)
 
-1. Keep PSD2Live running and open **Tools → MCP…** to set the port, access token and published tool set (compact by default).
+1. The MCP server is on by default: it starts with PSD2Live at `http://127.0.0.1:23871/mcp`. Open **Tools → MCP…** to turn it off or set the port, access token and published tool set (compact by default). The access token is stored in plain text in your local user preferences (Java Preferences).
 2. Copy the command or configuration for your host (Claude Code, Codex, generic JSON). Stdio-only hosts use [`mcp_proxy.py`](../../mcp_proxy.py) at the repository root.
 3. Have the agent read the project with `workspace_overview` and single objects with `workspace_inspect`; operations not listed as tools are found with `workspace_list_operations` and called through `workspace_call`.
 
@@ -225,7 +225,7 @@ Format and evaluation rules: [runtime](../zh/spec/RUNTIME.md) and [`.p2lrt` 2.0 
 
 ## Building from source
 
-Requires JDK 21; Gradle runs through the bundled wrapper. With Rust (cargo) installed, the Rust runtime is built as well; without it the build skips it and the editor uses its built-in evaluator.
+Requires JDK 21; Gradle runs through the bundled wrapper. With Rust (cargo, rustc 1.87 or later) installed, the Rust runtime is built as well; without cargo, or with an older rustc, the build skips it with a notice and the editor uses its built-in evaluator (`rustup update` lets it build).
 
 ```bash
 # Start the GUI (Windows: .\gradlew.bat run or run-gui.bat)

@@ -195,10 +195,42 @@ tasks.named<Jar>("jar") {
 // it; without it the app falls back to the editor's evaluator.
 val runtimeLibrary = file("runtime/target/release/" + System.mapLibraryName("p2l_runtime"))
 val cargoAvailable: Boolean = runCatching { ProcessBuilder("cargo", "--version").start().waitFor() == 0 }.getOrDefault(false)
+// A rustc older than runtime/Cargo.toml's rust-version cannot build the dependencies, so it counts as no cargo at
+// all: the build skips the runtime with a warning instead of failing `run`.
+val runtimeRustVersion: String? = Regex("^rust-version\\s*=\\s*\"([0-9.]+)\"", RegexOption.MULTILINE)
+	.find(file("runtime/Cargo.toml").readText())?.groupValues?.get(1)
+val rustcVersion: String? = if (!cargoAvailable) null else runCatching {
+	val process = ProcessBuilder("rustc", "--version").directory(file("runtime")).redirectErrorStream(true).start()
+	val output = process.inputStream.bufferedReader().readText()
+	if (process.waitFor() == 0) Regex("rustc (\\d+(\\.\\d+)*)").find(output)?.groupValues?.get(1) else null
+}.getOrNull()
+fun versionAtLeast(version: String, minimum: String): Boolean {
+	val have = version.split('.').map { it.toIntOrNull() ?: 0 }
+	val need = minimum.split('.').map { it.toIntOrNull() ?: 0 }
+	for (i in 0 until maxOf(have.size, need.size)) {
+		val a = have.getOrElse(i) { 0 }
+		val b = need.getOrElse(i) { 0 }
+		if (a != b) return a > b
+	}
+	return true
+}
 val buildRuntime = tasks.register<Exec>("buildRuntime") {
 	group = "build"
-	description = "Builds the Rust runtime library with cargo (skipped without cargo)."
-	onlyIf { cargoAvailable }
+	description = "Builds the Rust runtime library with cargo (skipped without cargo or with a rustc older than the runtime needs)."
+	onlyIf {
+		if (!cargoAvailable) {
+			logger.lifecycle("Skipping the Rust runtime: cargo was not found. The app falls back to the editor's evaluator.")
+			return@onlyIf false
+		}
+		val have = rustcVersion
+		val need = runtimeRustVersion
+		if (have != null && need != null && !versionAtLeast(have, need)) {
+			logger.warn("Skipping the Rust runtime: rustc $have is older than $need, which runtime/Cargo.toml needs. " +
+				"Run `rustup update` to build it; until then the app falls back to the editor's evaluator.")
+			return@onlyIf false
+		}
+		true
+	}
 	workingDir = file("runtime")
 	commandLine("cargo", "build", "--release", "--lib")
 	inputs.dir("runtime/src")
@@ -232,7 +264,9 @@ tasks.withType<Sync>().matching { it.name == "prepareAppResources" }.configureEa
 compose.desktop {
 	application {
 		mainClass = "io.github.psd2live.MainKt"
-		jvmArgs += listOf("-Xmx8g", "-Dfile.encoding=UTF-8", "-Dsun.java2d.uiScale.enabled=true")
+		// Half the machine's memory rather than a fixed 8 GB: a fixed cap left no room for the canvas's native
+		// (GPU, Skia) memory on 8 and 16 GB machines, where the system killed the app instead of it running out of heap.
+		jvmArgs += listOf("-XX:MaxRAMPercentage=50", "-Dfile.encoding=UTF-8", "-Dsun.java2d.uiScale.enabled=true")
 		nativeDistributions {
 			// ModelDownloader uses java.net.http.HttpClient. Compose's automatic
 			// runtime module scan can miss this API because it is only loaded when

@@ -277,7 +277,7 @@ fun FrameWindowScope.PSD2LiveApp(
 		val hasOutput = state.outputPath.isNotBlank()
 		val canGenerate = hasInput && (state.exportCmo3 || state.exportMoc3) && !isBusy
 		val canOpenOutput = hasOutput && try {
-			Files.isDirectory(Path.of(state.outputPath))
+			Files.isDirectory(Path.of(state.outputPath.trim()))
 		} catch (_: Exception) {
 			false
 		}

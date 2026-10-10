@@ -119,9 +119,12 @@ fun AgentMcpDialog(
 					Spacer(Modifier.width(8.dp))
 					CompactButton(tr("dialog.agent.copy"), onClick = { copy(snippet, CLIENT_LABELS.getValue(client)) }, isPrimary = true, height = 22.dp)
 				}
+				// Copy still takes the real token; only what is on screen (and in a screenshot) is masked.
+				val shownSnippet = if (tokenVisible || connection.token.isEmpty()) snippet
+					else snippet.replace(connection.token, TOKEN_MASK)
 				SelectionContainer {
 					Text(
-						snippet,
+						shownSnippet,
 						style = typography.mono.copy(fontSize = 10.5.sp, lineHeight = 15.sp),
 						color = colors.codeString,
 						modifier = Modifier.fillMaxWidth()
@@ -150,7 +153,7 @@ fun AgentMcpDialog(
 			if (tokenVisible) {
 				CompactTextField(token, { token = it.trim() }, Modifier.weight(1f), isMono = true, enabled = !applying)
 			} else {
-				Text("•".repeat(24), style = typography.monoSmall.copy(fontSize = 11.sp), color = colors.textPrimary,
+				Text(TOKEN_MASK, style = typography.monoSmall.copy(fontSize = 11.sp), color = colors.textPrimary,
 					modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Clip)
 			}
 			CompactButton(tr(if (tokenVisible) "dialog.agent.token.hide" else "dialog.agent.token.show"), { tokenVisible = !tokenVisible }, height = 22.dp)
@@ -223,3 +226,5 @@ private fun ProfileOption(selected: Boolean, title: String, description: String,
 			modifier = Modifier.padding(start = 20.dp))
 	}
 }
+
+private val TOKEN_MASK = "•".repeat(24)
