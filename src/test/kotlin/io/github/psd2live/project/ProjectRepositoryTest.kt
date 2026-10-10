@@ -56,6 +56,18 @@ class ProjectRepositoryTest {
         assertFalse(Files.exists(extracted), "Unadopted extraction must be disposed")
     }
 
+    @Test fun renderedViewImagesStayOutOfTheSavedProject() = runBlocking {
+        val before = capture()
+        val project = before.store.projectRoot(before.projectId)
+        Files.createDirectories(project.resolve("view-images"))
+        Files.write(project.resolve("view-images/rendered.png"), byteArrayOf(1, 2, 3))
+        val target = temporary.resolve("artwork.psd2live")
+        ProjectRepository().save(before, target)
+        val entries = java.util.zip.ZipFile(target.toFile()).use { zip -> zip.entries().toList().map { it.name } }
+        assertTrue(entries.isNotEmpty())
+        assertTrue(entries.none { "view-images" in it }, entries.toString())
+    }
+
     @Test fun transferredExtractionSurvivesCloseUntilItsOwnerDisposesIt() = runBlocking {
         val repository = ProjectRepository()
         val target = temporary.resolve("adopted.psd2live")

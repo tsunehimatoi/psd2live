@@ -40,6 +40,10 @@ internal data class WorkspaceSimulationCandidate(val document: WorkspaceDocument
 
 /** Pure document preparation shared by single calls, GUI commands and ordered atomic batches. */
 internal object WorkspaceSimulationEdits {
+    /** Below this share of the simulated motion reproduced, or past this 95th-percentile miss, a preset's bake is flagged. */
+    private const val MIN_FIT_R2 = 0.6f
+    private const val MAX_ERROR_P95_PX = 20f
+
     private val pipeline = PSD2LivePipeline()
     val supported = setOf("simulation_put", "simulation_delete", "simulation_bake", "simulation_clear_bake", "model_apply_preset")
 
@@ -88,7 +92,8 @@ internal object WorkspaceSimulationEdits {
         val flag = when (preset) { ModelPresets.Preset.FRONT_HAIR -> "hairSimulationFront"; ModelPresets.Preset.BACK_HAIR -> "hairSimulationBack"; else -> null }
         var next = document
         var model = preview
-        if (flag != null && document.settings[flag]?.jsonPrimitive?.booleanOrNull != true) {
+        val replacesSway = flag != null && document.settings[flag]?.jsonPrimitive?.booleanOrNull != true
+        if (replacesSway) {
             next = document.copy(settings = JsonObject(document.settings + (flag to JsonPrimitive(true))))
             val config = next.config()
             val switched = preview.config.copy(hairSimulationFront = config.hairSimulationFront, hairSimulationBack = config.hairSimulationBack)
@@ -119,6 +124,16 @@ internal object WorkspaceSimulationEdits {
                         ?: overlay.simEdits.firstOrNull { it.id == id }?.bake?.let { put(id, it.summary()) }
                 }
             }
+            // The numbers alone read as success: say when the bake reproduces the simulation poorly, and what went.
+            val warnings = applied.simulationIds.mapNotNull { id ->
+                val bake = overlay.simEdits.firstOrNull { it.id == id }?.bake ?: return@mapNotNull null
+                if (bake.fit >= MIN_FIT_R2 && bake.maxErrorPx <= MAX_ERROR_P95_PX) null
+                else "$id reproduces the simulation poorly (fit_r2 ${"%.2f".format(java.util.Locale.ROOT, bake.fit)}, " +
+                    "error_p95_px ${"%.1f".format(java.util.Locale.ROOT, bake.maxErrorPx)}): check it with view_render_poses at full range, " +
+                    "and roll it back with history_checkout if the art tears. A short cut may suit the classic sway better."
+            } + listOfNotNull(("This replaced the generated hair sway (its parameter and physics group) with the simulation; " +
+                "history_checkout restores it.").takeIf { replacesSway })
+            if (warnings.isNotEmpty()) putJsonArray("warnings") { warnings.forEach { add(JsonPrimitive(it)) } }
         }
         val baked = overlay.simEdits.any { it.id in applied.simulationIds && it.bake != null }
         return WorkspaceSimulationCandidate(next.copy(rigEdits = overlay, settings = physicsSettings(next.settings, baked)), report)

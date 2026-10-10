@@ -81,10 +81,17 @@ internal class WorkspaceStore(
 
 	private fun isStored(path: Path): Boolean = path in stored || Files.isRegularFile(path).also { if (it) stored.add(path) }
 
+    /**
+     * Copies [projectId]'s auxiliary data to [target]. [viewImages] includes the PNG of every view the agent tools
+     * rendered: nothing reads them back, and a long session left hundreds in each saved project, so saving leaves
+     * them out. The views' spatial references stay, since assets placed from a view name it.
+     */
     @Synchronized
-    internal fun copyAuxiliary(projectId: String, target: Path, catalog: WorkspaceAssetCatalog? = null, targetProjectId: String = projectId) {
+    internal fun copyAuxiliary(projectId: String, target: Path, catalog: WorkspaceAssetCatalog? = null, targetProjectId: String = projectId,
+                               viewImages: Boolean = true) {
         val source = projectRoot(projectId)
         for (folder in listOf("assets", "views", "view-images", "workflow")) {
+            if (folder == "view-images" && !viewImages) continue
             val directory = source.resolve(folder)
             if (!Files.isDirectory(directory)) continue
             Files.walk(directory).use { paths -> paths.filter(Files::isRegularFile).forEach { file ->

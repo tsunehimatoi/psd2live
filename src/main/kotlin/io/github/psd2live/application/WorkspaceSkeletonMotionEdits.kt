@@ -118,7 +118,12 @@ internal object WorkspaceSkeletonMotionEdits {
                 require(name in MotionClips.BUILTIN_NAMES) { "Unknown built-in motion: $name" }
                 if (current.any { it.builtin == name }) current else {
                     val tracks = MotionClips.builtinTracks(name, skeleton)
-                    require(tracks.isNotEmpty()) { "Built-in motion has no tracks for this model: $name" }
+                    require(tracks.isNotEmpty()) {
+                        // Every built-in but Blink, Nod and Shake moves bones.
+                        if (skeleton == null || skeleton.bones.isEmpty() || !skeleton.enabled)
+                            "Built-in motion $name moves the skeleton, and this model has none enabled; create one first with skeleton_auto"
+                        else "Built-in motion $name has no tracks for this model: its skeleton lacks the bones $name moves"
+                    }
                     current + MotionClips.fromTracks(
                         id = request["id"]?.jsonPrimitive?.contentOrNull ?: MotionClips.newId(current),
                         name = name, builtin = name, loop = MotionClips.isLoopBuiltin(name), tracks = tracks,

@@ -6,7 +6,7 @@ import com.sun.jna.Native
 import com.sun.jna.NativeLibrary
 import com.sun.jna.Pointer
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -410,10 +410,14 @@ class CubismSdkPreviewSession internal constructor(
         return result
     }
 
-    /** Coroutine cancellation cancels the queued future and stops the native loop at its next frame. */
+    /**
+     * Coroutine cancellation cancels the queued future and stops the native loop at its next frame. A runtime that
+     * never answers fails with why: a timeout is a cancellation to coroutines, which would end the job as if the
+     * caller had cancelled it.
+     */
     suspend fun sampleMotionAwait(bundle: CubismRuntimeBundle, parameters: List<ParameterId>, group: String,
                                  frames: Int, fps: Int, progress: (Float) -> Unit, cancelled: () -> Boolean): List<Map<ParameterId, Float>> =
-        withTimeout(45_000) {
+        withTimeoutOrNull(SAMPLE_TIMEOUT_MILLIS) {
             suspendCancellableCoroutine { continuation ->
                 val future = sampleMotion(bundle, parameters, group, frames, fps, progress, cancelled)
                 continuation.invokeOnCancellation { future.cancel(false) }
@@ -421,7 +425,9 @@ class CubismSdkPreviewSession internal constructor(
                     if (failure == null) continuation.resume(samples) else continuation.resumeWithException(failure)
                 }
             }
-        }
+        } ?: throw IllegalStateException("The Cubism runtime did not answer within ${SAMPLE_TIMEOUT_MILLIS / 1000} s. It runs on the " +
+            "canvas's OpenGL thread, which a display without GPU rendering may never start; motion_sample with view_render_model " +
+            "gives the same poses from the editor's evaluator.")
 
 	private fun materialize(bundle: CubismRuntimeBundle, directory: Path = Files.createTempDirectory("psd2live-preview-model-"), cleanupOnExit: Boolean = true): Path {
 		for (asset in bundle.assets) {
@@ -837,3 +843,6 @@ internal fun cubismMotionSlots(manifest: String): Map<String, Pair<String, Int>>
 		}
 	}
 }
+
+/** How long a motion sample may wait for the native runtime before it fails. */
+private const val SAMPLE_TIMEOUT_MILLIS = 45_000L
