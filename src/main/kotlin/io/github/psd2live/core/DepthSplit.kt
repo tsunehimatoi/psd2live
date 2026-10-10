@@ -308,7 +308,7 @@ internal object DepthSplit {
                 splitBaselineLayerIds = config.rigEdits.splitBaselineLayerIds.ifEmpty {
                     current.analysis.source.layers.filterNot {
                         !RigLayerDeletion.deferred(config) && it.id.raw in config.deletedLayerIds
-                    }.mapTo(LinkedHashSet()) { it.id.raw }
+                    }.map { it.id.raw }.sorted().toSet()
                 },
                 splitDrawableIds = config.rigEdits.splitDrawableIds + ids,
                 importedLayerIds = if (config.rigEdits.importedCmo3 == null) config.rigEdits.importedLayerIds else

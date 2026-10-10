@@ -2321,6 +2321,18 @@ class PSD2LiveViewModel : AutoCloseable {
 		pendingPoseValues(generation, workspaceId, commit)
 	}
 
+	/**
+	 * [state] advanced through the editor drafts queued before the pose (a settings switch committing, say): those
+	 * are the user's own earlier edits, so the pose follows them rather than conflicting. Anything else since then
+	 * leaves [state] as it is, and the commit conflicts as before.
+	 */
+	private suspend fun settledPoseState(state: String): String {
+		val projectId = _state.value.projectId ?: return state
+		val drafts = workspaceBackend as? io.github.psd2live.application.WorkspaceEditorDraftPort ?: return state
+		return try { drafts.settleEditorDrafts(projectId, state) }
+		catch (failure: Exception) { if (failure is kotlinx.coroutines.CancellationException) throw failure; state }
+	}
+
 	private fun ownPoseLineage(expected: String): String = synchronized(stateLock) {
 		var state = expected
 		val seen = HashSet<String>()
@@ -2367,7 +2379,7 @@ class PSD2LiveViewModel : AutoCloseable {
 			try {
 				poseCommits.withLock {
 					check(_state.value.projectOpenGeneration == pending.generation) { "The project changed before its pose was saved" }
-					val state = ownPoseLineage(expected)
+					val state = settledPoseState(ownPoseLineage(expected))
 					val result = withContext(Dispatchers.Default + PendingPoseCommit(pending.id, pending.workspaceId)) { commit(state) }
 					val committed = result["state"]?.jsonPrimitive?.content
 					synchronized(stateLock) {
@@ -5529,6 +5541,9 @@ class PSD2LiveViewModel : AutoCloseable {
 	}
 
 	fun checkoutHistoryNode(nodeId: String) {
+		// Busy from the press until the checkout lands: an undo pressed meanwhile would read the old head and be lost.
+		val marked = !_state.value.canvasEditBusy
+		if (marked) updateState { it.copy(canvasEditBusy = true) }
 		scope.launch {
 			try {
 				val ws = workspaceBackend ?: throw IllegalStateException("Agent workspace is not attached")
@@ -5547,6 +5562,8 @@ class PSD2LiveViewModel : AutoCloseable {
 				val err = failure.message ?: failure.javaClass.simpleName
 				// The error the window reports is logged with it.
 				updateState { it.copy(errorMessage = err) }
+			} finally {
+				if (marked) updateState { it.copy(canvasEditBusy = false) }
 			}
 		}
 	}

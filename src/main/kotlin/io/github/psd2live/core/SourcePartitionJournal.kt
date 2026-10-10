@@ -180,6 +180,11 @@ internal object SourcePartitionJournal {
         (if (user) parts else parts.copy(glues = parts.glues.filterNot { it in followers })).withDrawablesDeleted(setOf(sourceId))
     }
 
+    /** Whether [glue] is one of the welds [cutVertexFollowers] makes, rather than a glue the user authored. */
+    fun isFollower(glue: Glue): Boolean = glue.id?.contains(FOLLOWER) == true
+
+    private const val FOLLOWER = "/partition-follow/"
+
     /** New cut vertices follow the already welded triangle, in exactly its rendered affine space.
      * Standard directional Glue pairs express the barycentric sum without moving any source vertex.
      * Non-owner copies of old boundary vertices likewise follow their one canonical owner. */
@@ -191,7 +196,7 @@ internal object SourcePartitionJournal {
             val target = oldToNew[owner][old]
             require(target >= 0) { "Partition lost a cut vertex ancestor" }
             result += Glue(ids[piece], ids[owner], listOf(GluePair(vertex, target, weight, 0f)),
-                id = "${source.raw}/partition-follow/$piece/$vertex/$step")
+                id = "${source.raw}$FOLLOWER$piece/$vertex/$step")
         }
         sources.forEachIndexed { piece, vertices -> vertices.forEachIndexed { vertex, ancestry ->
             when (ancestry) {

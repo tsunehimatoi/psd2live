@@ -574,7 +574,8 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
             put("meshes", arraySchema(string(), 0, 64))
             put("add_to", choices("parent_of_selected", "parent_of_deformer"))
             put("deformer_id", string()); put("part_id", string())
-            put("origin", vector(2)); put("angle", number()); put("handle_length", number())
+            put("origin", JsonObject(vector(2) + ("description" to JsonPrimitive("Pivot in canvas pixels, y down."))))
+            put("angle", number()); put("handle_length", number())
             put("preservePose", boolean())
         }, listOf("state", "name")),
         variant("mode", "glue", buildJsonObject {

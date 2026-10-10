@@ -83,6 +83,30 @@ internal object RigAuthoringJournal {
         }
     }
 
+    /**
+     * [command] with a rotation geometry it leaves partial (only an angle, say) completed from the rotation's own
+     * keyform at the key, as the canvas would show it: replay applies a rotation form only when it is whole.
+     */
+    private fun completedRotation(model: PuppetModel, command: JsonObject): JsonObject {
+        val geometry = command["geometry"] as? JsonObject ?: return command
+        val fields = listOf("originX", "originY", "angle", "scale")
+        if (fields.all { it in geometry } || fields.none { it in geometry }) return command
+        val ref = target(model, command.text("target"))
+        if (ref.kind != RigTargetKind.ROTATION_DEFORMER) return command
+        val rotation = model.deformers.firstOrNull { it.id.raw == ref.id } as? Deformer.Rotation ?: return command
+        val grid = requireNotNull(rotation.geometryGrid) { "Rotation ${rotation.id.raw} has no keyform to complete a partial geometry from" }
+        val key = command.coordinate("key")
+        val defaults = model.parameters.associate { it.id to it.default }
+        val cells = org.umamo.runtime.eval.cellsByLinearIndex(grid)
+        val corners = requireNotNull(org.umamo.runtime.eval.gridCorners(grid) { key[it.raw] ?: defaults[it] ?: 0f }) { "No rotation keyform at the key" }
+        val shown = FloatArray(4)
+        for (corner in corners) requireNotNull(cells[corner.linearIndex]).form.let { form ->
+            shown[0] += corner.weight * form.originX; shown[1] += corner.weight * form.originY
+            shown[2] += corner.weight * form.angle; shown[3] += corner.weight * form.scale
+        }
+        return JsonObject(command + ("geometry" to JsonObject(fields.withIndex().associate { (i, field) -> field to (geometry[field] ?: JsonPrimitive(shown[i])) })))
+    }
+
     private fun validateGlueBindings(model: PuppetModel, edit: JsonObject) {
         val op = edit["op"]?.jsonPrimitive?.contentOrNull
         if (op !in setOf("set", "copy", "delete", "parameter_keys")) return
@@ -183,10 +207,11 @@ internal object RigAuthoringJournal {
                         put("points", JsonArray(points))
                     }
                 }
+                "set" -> completedRotation(current, command)
                 VertexGroupJournal.RULE -> VertexGroupJournal.compileRule(current, command)
                 // Absolute points from the producer become sparse deltas against the geometry shown here.
                 "canvas_geometry" -> CanvasGeometryJournal.encode(current, command)
-                GeneratedOverrides.OP, DepthSplit.OP, MeshGenerationBaseline.OP, RigGenerationBaseline.OP, RigGenerationScaffold.OP, RigGenerationJournal.OP, RigGenerationFrames.OP, RigMeshActivation.OP, RigWarpTopology.OP, RigBezierJournal.OP, SourcePartitionJournal.OP, ArtPrimitiveJournal.OP, RasterMeshJournal.OP, RasterMeshCreation.OP, LayerDeletionJournal.OP, "parameter_keys", "set", "copy", "delete", "warp", "structure", "path_delete", VertexGroupJournal.PUT, VertexGroupJournal.DELETE, "canvas_topology", "canvas_create_warp", "canvas_create_rotation" -> command
+                GeneratedOverrides.OP, DepthSplit.OP, MeshGenerationBaseline.OP, RigGenerationBaseline.OP, RigGenerationScaffold.OP, RigGenerationJournal.OP, RigGenerationFrames.OP, RigMeshActivation.OP, RigWarpTopology.OP, RigBezierJournal.OP, SourcePartitionJournal.OP, ArtPrimitiveJournal.OP, RasterMeshJournal.OP, RasterMeshCreation.OP, LayerDeletionJournal.OP, "parameter_keys", "copy", "delete", "warp", "structure", "path_delete", VertexGroupJournal.PUT, VertexGroupJournal.DELETE, "canvas_topology", "canvas_create_warp", "canvas_create_rotation" -> command
                 // Glue pairs vertices where both meshes rest, as Cubism's glue: a weld does nothing at rest. Older records keep their pose.
                 "canvas_create_glue", "canvas_glue_edit" -> JsonObject(command - "pose")
                 else -> error("Unknown authoring operation: $op")

@@ -73,13 +73,13 @@
 | `job_list` | 可选 `project_id`、`offset`、`limit` | 分页查询应用内任务 |
 | `job_cancel` | `request_id`、`id` | 请求取消；已完成提交保留 completed 状态 |
 | `rig_deform` | `request` 内 `state`、`changes` | 在明确参数键上编辑 Mesh / Warp 连续形状 |
-| `keyform_apply` | `request` 内 `state`、`changes` | `op: seed/copy/set/delete`，编辑关键形集合、标量 / 颜色通道与旋转形状 |
+| `keyform_apply` | `request` 内 `state`、`changes` | `op: seed/copy/set/delete`，编辑关键形集合、标量 / 颜色通道与旋转形状；旋转 `set` 只给部分字段（例如只给 `angle`）时，其余字段取该旋转在此关键点处的现值 |
 | `rig_create_warp` | `name`、`targets`；可选 `id`、`rows/columns`、`fit_local` | 后台创建共用父 Warp 的 Mesh 的独立 Warp，也支持原子批量；终态返回 `target` |
 | `object_edit_appearance` | `request` 内 `state`、`edits` | 名称、显隐、结构等有序编辑；网格 `bind` 的 `space=local` 保留局部坐标与关键形（继承的运动与位置随新父级改变），`space=canvas` 把静止网格、关键形与混合形经新父级换算，使网格在默认姿态下留在画布原位（层级树拖放与检查器改父级即用此项）；变形器 `move` 只接受 `space=local` |
 | `rig_edit_structure` | `request` 内 `state`、`edits` | 静态对象属性、变形器删除与 Part 归属、参数文件夹和 XY 关联 |
-| `canvas_warp / canvas_rotation / canvas_glue / canvas_topology` | `request` | `warp/rotation/glue/topology`。`glue` 必须同时给出两个不同的画元 `mesh_a` 与 `mesh_b` |
+| `canvas_warp / canvas_rotation / canvas_glue / canvas_topology` | `request` | `warp/rotation/glue/topology`。`glue` 必须同时给出两个不同的画元 `mesh_a` 与 `mesh_b`。`rotation` 的 `origin` 为画布像素（y 向下），提交时换算到其父变形器的局部空间；`preservePose` 缺省为 true，网格在静止姿态下保持原位 |
 | `view_render_model / view_render_layer / view_render_context / view_render_poses / view_check_coverage / view_compare_history / view_sample_motion` | `request` | `model/layer/context/poses/coverage/compare/motion`；动作采样返回只读任务句柄，终态包含采样拼图与参数范围 |
-| `parameter_create / parameter_update / parameter_delete` | `request` | `create/update/delete`；删除时按最后一次默认值选择最近的已写关键点切片并折叠轴 |
+| `parameter_create / parameter_update / parameter_delete` | `request` | `create/update/delete`；删除时按最后一次默认值选择最近的已写关键点切片并折叠轴。收窄范围时，动作中该参数的关键点与手柄被夹入新范围；删除参数时同时移除动作中该参数的曲线 |
 | `layer_import_images` | `request` | 从 PNG、无损 WebP、TIFF 或 BMP 文件一次导入多层源图，后台完成后返回图层与网格句柄 |
 | `layer_get_texture / atlas_get / atlas_render_page` | `layer_id`；`atlas_get` 可选 `page`；渲染要求 `page`，可选 `max_size` | 从同一捕获读取图层画布矩形、栅格像素、原生密度、纹理覆盖与图块，或纹理集预算、fit、提示、页面占用与全部图块；渲染页面为只读后台任务，终态返回 PNG |
 | `layer_set_canvas_rect / layer_replace_image / layer_set_pixel_density / atlas_set_tile / atlas_set_budget / atlas_pack` | `request` 内 `state` 及各自字段 | 后台修改图层画布矩形、替换任意分辨率图像、设置纹理密度与锁定、移动图块、修改纹理集预算与自动排布，或一次性排布；均可加入原子批量，见[纹理与纹理集](#纹理与纹理集) |

@@ -22,7 +22,7 @@ internal object RigLayerDeletion {
         val journal = config.rigEdits.authoringJournal + buildJsonObject { put("op", OP) }
         if (config.rigEdits.importedCmo3 != null) return config.rigEdits.copy(authoringJournal = journal)
         val baseline = config.rigEdits.splitBaselineLayerIds.ifEmpty {
-            current.analysis.source.layers.filterNot { it.id.raw in config.deletedLayerIds }.mapTo(LinkedHashSet()) { it.id.raw }
+            current.analysis.source.layers.filterNot { it.id.raw in config.deletedLayerIds }.map { it.id.raw }.sorted().toSet()
         }
         val existing = config.rigEdits.splitDrawableIds +
             current.baseRig.layerIdByDrawableId.entries.associate { it.value to it.key } +
