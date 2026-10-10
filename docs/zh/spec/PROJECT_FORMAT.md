@@ -23,7 +23,7 @@ ZIP 条目的压缩方式：PNG（`assets/`、`images/`、观察图）与 CMO3 �
 | `document/clips/<sha256>.json` | 动作片段与生成动作设置 |
 | `assets/` | 去重 RGBA 栅格，以 PNG 保存 |
 | `auxiliary/assets/` | 暂存素材元数据 |
-| `auxiliary/views/`、`auxiliary/view-images/` | 观察图的空间映射与图像 |
+| `auxiliary/views/`、`auxiliary/view-images/` | 观察图的空间映射；较早保存的工程还带有每张渲染图，现在保存时不再写入 |
 | `auxiliary/workflow/` | 素材参考包、注册 / 放置等辅助记录 |
 | `auxiliary/tasks.json` | Agent 任务和事件记录 |
 | `workspace.json` | 布局、镜头、选择、参数预览、历史注释和日志等持久 UI 状态 |

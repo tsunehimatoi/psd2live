@@ -35,7 +35,7 @@ internal object WorkspaceSimulationResultSchemas {
     private val garments = s.dictionary(s.obj(garmentFields, setOf("garment", "loose", "simulated")))
     private val preset = s.union(listOf(s.obj(compactFields, compactRequired),
         s.obj(compactFields + mapOf("simulations" to s.array(s.handle()), "garments" to garments,
-            "bakes" to s.dictionary(s.union(listOf(bakeSummary, s.obj(mapOf("error" to s.string())))))),
+            "bakes" to s.dictionary(s.union(listOf(bakeSummary, s.obj(mapOf("error" to s.string()))))), "warnings" to s.array(s.string())),
             compactRequired + setOf("simulations", "bakes"))))
     private val reportFields = mapOf("id" to s.handle(), "particles" to s.integer(0), "pinned" to s.integer(0),
         "calibration_residual_px" to s.number(), "rest_drift_px" to s.number(), "max_stretch_percent" to s.number(),

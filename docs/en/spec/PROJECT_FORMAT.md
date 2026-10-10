@@ -23,7 +23,7 @@ Saves write v2. Each history revision is split into content-addressed document n
 | `document/clips/<sha256>.json` | Motion clips and generated-motion settings |
 | `assets/` | Deduplicated RGBA rasters encoded as PNG |
 | `auxiliary/assets/` | Staged artwork metadata |
-| `auxiliary/views/`, `auxiliary/view-images/` | Spatial references and rendered images |
+| `auxiliary/views/`, `auxiliary/view-images/` | Spatial references of rendered views; older projects also hold every rendered image, which saving no longer keeps |
 | `auxiliary/workflow/` | Reference packages, registrations and placement records |
 | `auxiliary/tasks.json` | Agent task records and events |
 | `workspace.json` | Durable UI layout, camera, selection, parameter preview, annotations and logs |

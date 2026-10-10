@@ -33,7 +33,7 @@ internal class ProjectRepository(
                     store.persistHistory(capture.projectId, capture.history)
                     staged(1)
                     capture.store.copyAuxiliary(capture.projectId, root.resolve("workspace").resolve(capture.projectId),
-                        capture.assetCatalog)
+                        capture.assetCatalog, viewImages = false)
                     capture.spatial.forEach { (id, spatial) -> store.persistSpatial(capture.projectId, id, spatial) }
                     store.persistTasks(capture.projectId, capture.tasks)
                     staged(2)
