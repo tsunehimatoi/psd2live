@@ -7,6 +7,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.json.*
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
+import io.github.psd2live.core.legacy.RigGenerationJournal
 
 internal data class WorkspaceGenerationCommit(val commit: WorkspaceCommit<RigPreviewModel>, val mutation: WorkspaceMutationResult)
 
@@ -20,7 +21,7 @@ internal class WorkspaceGenerationCommands(private val runtime: WorkspaceRuntime
         // A public command may have already materialized the complete draft. Re-normalizing
         // that journal against the gesture's original model would append the transition twice.
         if (draft.generationSource != null && draft.rigEdits.authoringJournal != before.rigEdits.authoringJournal &&
-            draft.rigEdits.authoringJournal.lastOrNull()?.get("op")?.jsonPrimitive?.contentOrNull == io.github.psd2live.core.RigGenerationJournal.OP)
+            draft.rigEdits.authoringJournal.lastOrNull()?.get("op")?.jsonPrimitive?.contentOrNull == RigGenerationJournal.OP)
             return draft
         val changes = JsonObject(draft.settings.filter { (key, value) -> before.settings[key] != value })
         if (before.copy(settings = draft.settings, layerOverrides = draft.layerOverrides, meshOverrides = draft.meshOverrides) != draft ||

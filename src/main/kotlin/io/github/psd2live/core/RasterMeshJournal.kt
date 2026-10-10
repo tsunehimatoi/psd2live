@@ -8,6 +8,7 @@ import org.umamo.runtime.model.*
 import java.nio.ByteBuffer
 import java.security.MessageDigest
 import kotlin.math.abs
+import io.github.psd2live.core.legacy.VanishedParent
 
 /** Materialized mesh replacement; replay never reruns a paint gesture or depends on atlas packing. */
 internal object RasterMeshJournal {

@@ -9,6 +9,8 @@ import org.umamo.render.eval.CpuDeformationEvaluator
 import org.umamo.runtime.model.ParameterId
 import org.umamo.runtime.model.PuppetModel
 import kotlin.test.*
+import io.github.psd2live.core.legacy.RigGenerationJournal
+import io.github.psd2live.core.legacy.RigGenerationFrames
 
 /**
  * A skeleton committed onto a journal the generators' new output merged under (see [RigRegenerationCheckpoint]) skins

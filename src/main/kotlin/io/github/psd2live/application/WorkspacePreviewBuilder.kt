@@ -3,7 +3,6 @@ package io.github.psd2live.application
 import io.github.psd2live.core.PSD2LivePipeline
 import io.github.psd2live.core.RigPreviewModel
 import io.github.psd2live.core.ProgressListener
-import io.github.psd2live.core.RigGenerationMigration
 import io.github.psd2live.core.RigRegenerationCheckpoint
 import io.github.psd2live.core.VertexGroupJournal
 import kotlinx.serialization.json.contentOrNull
@@ -17,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import io.github.psd2live.core.legacy.RigGenerationMigration
 
 /** Sees how far a preview build is, from 0 to 1, where no workspace job reports it - such as installing an opened project. */
 internal class WorkspacePreviewProgress(val update: (Float) -> Unit) : kotlin.coroutines.AbstractCoroutineContextElement(Key) {
@@ -96,6 +96,19 @@ internal class WorkspacePreviewBuilder {
         }
     }
 
+    /**
+     * [config] - which continues [current]'s edits - with [current]'s authored rig checkpointed where [current]'s journal
+     * ends, before the entries [config] adds: the generated rig it came from is stored with it when already at hand.
+     */
+    private fun materialized(current: RigPreviewModel, config: io.github.psd2live.core.PipelineConfig): io.github.psd2live.core.PipelineConfig {
+        val authored = current.authored
+        val bindingKey = current.sources.bindingKey ?: pipeline.bindingKey(current.analysis.source, current.config)
+        val generated = if (current.sources.baseKnown) io.github.psd2live.core.AuthoredRig(current.baseRig.copy(puppet = current.baseRig.resolvedPuppet()), emptyList()) else null
+        val record = io.github.psd2live.core.RigCheckpoint.encode(authored, bindingKey, generated = generated)
+        val journal = ArrayList(config.rigEdits.authoringJournal).apply { add(current.config.rigEdits.authoringJournal.size, record) }
+        return config.copy(rigEdits = config.rigEdits.copy(authoringJournal = journal))
+    }
+
     suspend fun build(document: WorkspaceDocument, current: RigPreviewModel? = null,
                       legacyDrawOrders: Map<String, Float> = current?.config?.drawOrderOverrides.orEmpty()): RigPreviewModel {
         val progress = progress(0.6f, 0.85f)
@@ -130,6 +143,18 @@ internal class WorkspacePreviewBuilder {
                             model.sources) { model.sources.bindingKey }
                         return@runInterruptible model
                     }
+            }
+            // An edit of a document whose journal still replays records only older builds wrote checkpoints its authored rig
+            // first: those records replay this once, and every later build starts after them.
+            if (current != null && revision != null && pipeline.materializable(current.config) && current.config.rigEdits.replaysLegacy &&
+                config.rigEdits.continues(current.config.rigEdits) && config.rigEdits.checkpointIndex < current.config.rigEdits.authoringJournal.size) {
+                val materialized = materialized(current, config)
+                val model = materialized.rigEdits.authoredFromCheckpoint()?.let { (authored, bindingKey) ->
+                    pipeline.materializedPreview(document.source, materialized, authored, bindingKey, progress, current.atlas, rebind = true)
+                } ?: pipeline.buildPreview(document.source, materialized, progress, current.atlas)
+                MaterializedRigStore.remember(WorkspaceRevisions.of(document.copy(rigEdits = materialized.rigEdits)), materialized.rigEdits,
+                    model.sources) { pipeline.bindingKey(document.source, materialized) }
+                return@runInterruptible model
             }
             // The journal's checkpoint is the authored rig itself: build from it, re-bound when the atlas moved.
             if (revision != null && !cheaper) config.rigEdits.authoredFromCheckpoint()?.let { (authored, bindingKey) ->

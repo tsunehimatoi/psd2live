@@ -14,6 +14,7 @@ import java.nio.ByteBuffer
 import java.nio.file.Path
 import kotlin.math.ceil
 import kotlin.math.floor
+import io.github.psd2live.core.legacy.RigGenerationFrames
 
 /** How a replacement raster of another aspect ratio lies on the layer's unchanged canvas rectangle. */
 enum class WorkspaceImageFit { STRETCH, CONTAIN }

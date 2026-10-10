@@ -1,4 +1,6 @@
-package io.github.psd2live.core
+package io.github.psd2live.core.legacy
+
+import io.github.psd2live.core.*
 
 import kotlinx.serialization.json.*
 import org.umamo.runtime.eval.*

@@ -7,6 +7,7 @@ import org.umamo.format.art.SourceLayer
 import org.umamo.runtime.model.DrawableMesh
 import kotlinx.serialization.json.*
 import java.awt.image.BufferedImage
+import io.github.psd2live.core.legacy.RigGenerationTextures
 
 /** Rebuild geometry from its saved input while packing the currently painted pixels. */
 internal object RigGenerationSource {

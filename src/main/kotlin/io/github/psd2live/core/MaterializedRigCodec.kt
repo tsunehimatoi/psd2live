@@ -4,6 +4,7 @@ import io.github.psd2live.format.compile.Compiler
 import io.github.psd2live.format.compile.RigIrObjects
 import io.github.psd2live.targets.cubism.PuppetIr
 import kotlinx.serialization.json.*
+import io.github.psd2live.core.legacy.SupersededEntryNote
 
 /**
  * An [AuthoredRig] as a revision stores it: the authored puppet as [RigIrObjects] (frame, deformers, meshes) and a

@@ -30,6 +30,7 @@ import org.umamo.edit.withDrawablesDeleted
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
+import io.github.psd2live.core.legacy.RigGenerationMigration
 
 class PSD2LivePipeline {
 	internal val meshCache = PreviewMeshCache()

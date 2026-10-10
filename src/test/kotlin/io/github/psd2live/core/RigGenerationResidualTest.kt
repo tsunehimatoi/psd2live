@@ -7,6 +7,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import io.github.psd2live.core.legacy.RigGenerationResidual
 
 class RigGenerationResidualTest {
 	private val meshId = DrawableId("mesh")

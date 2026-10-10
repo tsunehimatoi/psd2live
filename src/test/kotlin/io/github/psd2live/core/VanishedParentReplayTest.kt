@@ -7,6 +7,7 @@ import org.umamo.format.art.LayerBounds
 import org.umamo.render.eval.CpuDeformationEvaluator
 import org.umamo.runtime.model.*
 import kotlin.test.*
+import io.github.psd2live.core.legacy.ArtPrimitiveReplay
 
 /**
  * Journal records written under a generator-owned deformer that a later generation setting drops - the arm hang
@@ -70,7 +71,7 @@ class VanishedParentReplayTest {
 	private val first by lazy { record(recorded(), "Arm", "arm", listOf("P1", "P2"), listOf("p1", "p2")) }
 	private val second by lazy { record(recorded(), "P2", "p2", listOf("Q1", "Q2"), listOf("q1", "q2")) }
 
-	private fun replayed(model: PuppetModel) = ArtPrimitiveJournal.replay(ArtPrimitiveJournal.replay(model, first), second)
+	private fun replayed(model: PuppetModel) = ArtPrimitiveReplay.replay(ArtPrimitiveReplay.replay(model, first), second)
 
 	private fun assertSameWorld(expected: PuppetModel, actual: PuppetModel, ids: List<String>) {
 		for (x in listOf(0f, 1f)) {
@@ -97,15 +98,15 @@ class VanishedParentReplayTest {
 
 	@Test fun theSkeletonBakeResolvesAPartOfAnEarlierRecordThroughTheDrawableThatPartReplaced() {
 		// The base the bake decodes from holds the original arm only, not the first record's parts.
-		val parts = ArtPrimitiveJournal.skinnable(skeletal(), second, setOf("Q1"), listOf(first))
+		val parts = ArtPrimitiveReplay.skinnable(skeletal(), second, setOf("Q1"), listOf(first))
 		assertEquals(listOf("Q1"), parts.map { it.id.raw })
 		assertEquals(bone, parts.single().parentDeformerId)
-		assertTrue(ArtPrimitiveJournal.skinnable(skeletal(), second, setOf("Q1")).isEmpty(), "without the earlier record nothing places it")
+		assertTrue(ArtPrimitiveReplay.skinnable(skeletal(), second, setOf("Q1")).isEmpty(), "without the earlier record nothing places it")
 	}
 
 	@Test fun aMissingParentWithoutTheReplacedDrawableStillFails() {
 		val orphan = skeletal().let { it.copy(drawables = emptyList(), rootChildren = emptyList()).withDerivedRenderRoot() }
-		val error = assertFailsWith<IllegalArgumentException> { ArtPrimitiveJournal.replay(orphan, first) }
+		val error = assertFailsWith<IllegalArgumentException> { ArtPrimitiveReplay.replay(orphan, first) }
 		assertEquals("Art primitive parent is missing: P1", error.message)
 	}
 
@@ -135,13 +136,13 @@ class VanishedParentReplayTest {
 	}
 
 	@Test fun aMeshRebuildRecordedUnderAVanishedParentMovesIntoTheCurrentParent() {
-		val before = ArtPrimitiveJournal.replay(recorded(), first)
+		val before = ArtPrimitiveReplay.replay(recorded(), first)
 		val p1 = before.drawables.single { it.id.raw == "P1" }
 		// The other diagonal; the points stay in the warp's lattice, as the record holds them.
 		val replacement = DrawableMesh(p1.mesh!!.positions, p1.mesh!!.uvs, intArrayOf(0, 1, 3, 0, 3, 2))
 		val command = RasterMeshJournal.encode(before, p1.id, replacement)
 		val reference = RasterMeshJournal.replay(before, command)
-		val rebuilt = RasterMeshJournal.replay(ArtPrimitiveJournal.replay(skeletal(), first), command)
+		val rebuilt = RasterMeshJournal.replay(ArtPrimitiveReplay.replay(skeletal(), first), command)
 		assertEquals(bone, rebuilt.drawables.single { it.id.raw == "P1" }.parentDeformerId)
 		assertContentEquals(replacement.indices, rebuilt.drawables.single { it.id.raw == "P1" }.mesh!!.indices)
 		assertSameWorld(reference, rebuilt, listOf("P1"))

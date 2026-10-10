@@ -4,6 +4,7 @@ import kotlinx.serialization.json.*
 import org.umamo.format.art.*
 import org.umamo.edit.VertexSource
 import org.umamo.runtime.model.*
+import io.github.psd2live.core.legacy.ArtPrimitiveReplay
 
 /**
  * The version 2 `art_primitive` primitive with an authored layer, as builds before splits became regenerations wrote
@@ -71,7 +72,7 @@ internal object LegacyArtPrimitiveV2 {
 		val pinned = fixedTopology || delta != null || userBlends.isNotEmpty() || userPaths.isNotEmpty() || userGroups.isNotEmpty()
 		val residual = if (parked == null || parkedModel == null) null else {
 			val parkedMesh = requireNotNull(parked.mesh)
-			val map = ArtPrimitiveJournal.partMap(parked, mesh.uvs, mesh.indices)
+			val map = ArtPrimitiveReplay.partMap(parked, mesh.uvs, mesh.indices)
 			val seed = if (map == null) parkedMesh.positions else FloatArray(mesh.positions.size) { 0.5f }
 			val space = PrimitiveResidual.ParentSpace(authoredModel, a, parkedModel, parked, seed)
 			// A part the base generates no keyforms for (a zero grid: a split lip ribbon, a part under a parent a journal

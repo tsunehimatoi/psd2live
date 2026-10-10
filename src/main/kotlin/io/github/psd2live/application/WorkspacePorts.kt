@@ -7,6 +7,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.coroutines.Deferred
 import org.umamo.runtime.model.PuppetModel
+import io.github.psd2live.core.legacy.SupersededEntryNote
 
 private val noSamplingProgress: (Float) -> Unit = {}
 private val noSamplingCancellation: () -> Boolean = { false }
@@ -66,7 +67,7 @@ interface WorkspaceQueries : WorkspaceStatePort {
     /** Generated overrides of the captured model that did not apply as recorded, in journal order. */
     fun generatedOverrideIssues(): List<io.github.psd2live.core.GeneratedOverrideIssue>
     /** Journal entries of the captured model that replay skipped because they address only what a later split supersedes. */
-    fun supersededEntryNotes(): List<io.github.psd2live.core.SupersededEntryNote>
+    fun supersededEntryNotes(): List<SupersededEntryNote>
     /** What the captured document's last regeneration checkpoint could not carry over cleanly, in merge order. */
     fun regenerationIssues(): List<io.github.psd2live.core.RigRegeneration.Issue>
 }

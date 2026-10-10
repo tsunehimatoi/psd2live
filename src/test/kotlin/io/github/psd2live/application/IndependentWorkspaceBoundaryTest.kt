@@ -26,7 +26,7 @@ class IndependentWorkspaceBoundaryTest {
             }
         }
         for (name in listOf("RigCanvasSupport", "RigInformationOverlay", "RotationGuideFrame", "RasterPaintEngine", "RasterPaintCommit", "RasterMeshJournal", "RigGenerationSource",
-            "CanvasBrushGeometry", "CanvasWeightAuthoring", "MotionKeyEdits", "ParameterKeyPose", "PreviewAnimationClock", "RigGenerationFrames", "RigGenerationTextures")) {
+            "CanvasBrushGeometry", "CanvasWeightAuthoring", "MotionKeyEdits", "ParameterKeyPose", "PreviewAnimationClock", "legacy/RigGenerationFrames", "legacy/RigGenerationTextures")) {
             val source = Files.readString(root.resolve("core/$name.kt"))
             assertFalse(source.contains("androidx.compose"), "$name must be usable without Compose")
         }

@@ -10,6 +10,7 @@ import org.umamo.runtime.eval.gridCorners
 import org.umamo.runtime.eval.scalarAt
 import org.umamo.runtime.model.*
 import kotlin.math.abs
+import io.github.psd2live.core.legacy.RigGenerationResidual
 
 /**
  * Rule B of version 2 `art_primitive` records ([ArtPrimitiveV2]): what the user authored on a split part is kept

@@ -4,6 +4,7 @@ import kotlinx.serialization.json.JsonObject
 import org.umamo.runtime.model.PuppetModel
 import java.lang.ref.SoftReference
 import java.lang.ref.WeakReference
+import io.github.psd2live.core.legacy.SupersededEntryNote
 
 /**
  * Intermediate models of [RigEditOverlay.applyTo]'s journal replay, so a document that appends to, undoes or
@@ -135,3 +136,6 @@ internal object ReplayCheckpoints {
 		}
 	}
 }
+
+/** The state a journal replay checkpoints: the model and the entries skipped so far. */
+internal class ReplayState(val model: org.umamo.runtime.model.PuppetModel, val notes: List<SupersededEntryNote>)

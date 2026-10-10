@@ -4,6 +4,7 @@ import io.github.psd2live.format.compile.document.ThreeWayMerge
 import kotlinx.serialization.json.*
 import org.umamo.runtime.model.*
 import kotlin.math.abs
+import io.github.psd2live.core.legacy.SupersededEntryNote
 
 /**
  * What an override did not do as recorded. Orphaned: the generated keyform it edits is gone or has another

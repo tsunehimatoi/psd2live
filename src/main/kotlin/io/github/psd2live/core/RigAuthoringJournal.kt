@@ -2,6 +2,11 @@ package io.github.psd2live.core
 
 import kotlinx.serialization.json.*
 import org.umamo.runtime.model.*
+import io.github.psd2live.core.legacy.RigGenerationJournal
+import io.github.psd2live.core.legacy.RigGenerationFrames
+import io.github.psd2live.core.legacy.RigGenerationScaffold
+import io.github.psd2live.core.legacy.RigMeshActivation
+import io.github.psd2live.core.legacy.ArtPrimitiveReplay
 
 /** Materialized edits: no point arrays cross the MCP boundary, but replay never reinterprets a brush. */
 internal object RigAuthoringJournal {
@@ -50,7 +55,7 @@ internal object RigAuthoringJournal {
         RigBezierJournal.OP -> RigBezierJournal.replay(model, edit)
         DepthSplit.OP -> DepthSplit.apply(model, edit)
         SourcePartitionJournal.OP -> SourcePartitionJournal.apply(model, edit)
-        ArtPrimitiveJournal.OP -> ArtPrimitiveJournal.replay(model, edit, skins)
+        ArtPrimitiveJournal.OP -> ArtPrimitiveReplay.replay(model, edit, skins)
         RasterMeshJournal.OP -> RasterMeshJournal.replay(model, edit)
         RasterMeshCreation.OP -> RasterMeshCreation.replay(model, edit)
         "canvas_geometry", "canvas_topology", "canvas_create_warp", "canvas_create_rotation", "canvas_create_glue", "canvas_glue_edit" -> CanvasEdits.apply(model, edit)

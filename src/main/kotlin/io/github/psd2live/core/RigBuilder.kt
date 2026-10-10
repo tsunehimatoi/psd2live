@@ -47,6 +47,8 @@ import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.sin
+import io.github.psd2live.core.legacy.ArtPrimitiveReplay
+import io.github.psd2live.core.legacy.SupersededEntryNote
 
 object StandardParameters {
 	val ANGLE_X = ParameterId("ParamAngleX")
@@ -1493,7 +1495,7 @@ object RigBuilder {
 		for (command in skinnedRecords(skeleton, config)) {
 			// The records before this one place a part whose recorded parent the base no longer generates.
 			val earlier = records.subList(0, records.indexOfFirst { it === command }.coerceAtLeast(0))
-			for (part in ArtPrimitiveJournal.skinnable(model, command, bound, earlier)) if (parts.none { it.id == part.id }) parts += part
+			for (part in ArtPrimitiveReplay.skinnable(model, command, bound, earlier)) if (parts.none { it.id == part.id }) parts += part
 		}
 		return parts
 	}

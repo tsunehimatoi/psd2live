@@ -2,8 +2,8 @@ package io.github.psd2live.core.quality
 
 import io.github.psd2live.core.GeneratedOverrideIssue
 import io.github.psd2live.core.GeneratedOverrideIssueKind
-import io.github.psd2live.core.SupersededEntryNote
 import kotlinx.serialization.json.*
+import io.github.psd2live.core.legacy.SupersededEntryNote
 
 /**
  * Stable codes for generated-override findings. The rule alone decides severity and category; callers and the

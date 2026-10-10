@@ -7,6 +7,7 @@ import org.umamo.format.art.isEffectivelyVisible
 import org.umamo.runtime.model.Deformer
 import org.umamo.runtime.model.FormChannel
 import org.umamo.runtime.model.PuppetModel
+import io.github.psd2live.core.legacy.SupersededEntryNote
 
 /** Ephemeral host indicators only; model, source, settings, history and authored pose come from the read. */
 internal data class WorkspaceQueryPresentation(
@@ -144,7 +145,7 @@ internal class WorkspaceReadSession(
     }
     override fun listSwings(): List<RigSwingEdit> = capture().document.rigEdits.swingEdits
     override fun generatedOverrideIssues(): List<GeneratedOverrideIssue> = read.runtime.capture?.model?.rig?.overrideIssues.orEmpty()
-    override fun supersededEntryNotes(): List<io.github.psd2live.core.SupersededEntryNote> = read.runtime.capture?.model?.rig?.supersededEntryNotes.orEmpty()
+    override fun supersededEntryNotes(): List<SupersededEntryNote> = read.runtime.capture?.model?.rig?.supersededEntryNotes.orEmpty()
     override fun regenerationIssues(): List<io.github.psd2live.core.RigRegeneration.Issue> =
         read.runtime.capture?.document?.rigEdits?.authoringJournal?.lastOrNull(io.github.psd2live.core.RigCheckpoint::isRecord)
             ?.let(io.github.psd2live.core.RigCheckpoint::issues).orEmpty()

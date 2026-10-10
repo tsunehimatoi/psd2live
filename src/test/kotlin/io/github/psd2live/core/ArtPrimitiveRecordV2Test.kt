@@ -7,6 +7,7 @@ import org.umamo.format.art.LayerBounds
 import org.umamo.runtime.model.*
 import kotlin.math.abs
 import kotlin.test.*
+import io.github.psd2live.core.legacy.ArtPrimitiveReplay
 
 /**
  * Version 2 `art_primitive` records (Rule B) on a hand-built rig: a mesh of two islands with a generator axis
@@ -79,7 +80,7 @@ class ArtPrimitiveRecordV2Test {
 				LayerBounds(0, 0, 40, 10), Bounds(0f, 0f, 40f, 10f), LayerClassificationOverride(), false,
 				parkedModel?.let { m -> parked?.let { m.copy(drawables = m.drawables + it) } }, parked, skins)
 		}
-		val groups = split.partitionedA.glueGroups.map { group -> group.filterNot(ArtPrimitiveJournal::isSkeletonWeld) }.filter { it.isNotEmpty() }
+		val groups = split.partitionedA.glueGroups.map { group -> group.filterNot(ArtPrimitiveReplay::isSkeletonWeld) }.filter { it.isNotEmpty() }
 		val record = ArtPrimitiveJournal.encode("split", "src", listOf(ghost), listOf("ghost"), mapOf(ghost to parts), encoded.map { it.primitive },
 			groups, split.partitionedA.followers, version = ArtPrimitiveV2.VERSION_V2)
 		return record to encoded.flatMap { it.overrides }
@@ -104,7 +105,7 @@ class ArtPrimitiveRecordV2Test {
 		val (record, overrides) = record(split, skins, split.generated)
 		assertTrue(ArtPrimitiveV2.isV2(record))
 		ArtPrimitiveV2.resolve(RigEditOverlay(authoringJournal = listOf(record))).parts.forEach { assertTrue(it.canvasPositions) }
-		val replayed = ArtPrimitiveJournal.replay(split.authored, record, skins)
+		val replayed = ArtPrimitiveReplay.replay(split.authored, record, skins)
 		val merged = GeneratedOverrides.applyAll(replayed, overrides)
 		assertTrue(merged.issues.isEmpty(), merged.conflicts.toString())
 		for (id in parts) assertSameGeometry(split.partitionedA.model.drawables.single { it.id == id }, merged.model.drawables.single { it.id == id })
@@ -142,7 +143,7 @@ class ArtPrimitiveRecordV2Test {
 		// Replayed, the user Glue lands on the part holding its vertex and the skeleton weld comes from the base.
 		val weld = Glue(parts[1], other, listOf(GluePair(1, 4, 0.5f, 0.5f)), id = "GlueSkel__PartB__Other")
 		val withWeld = PrimitiveSkinsFixture.fromParts(split.partitionedG.model, parts, stubs = setOf(ghost), owner = mapOf(eye to "mesh:ghost"), welds = listOf(weld))
-		val replayed = ArtPrimitiveJournal.replay(split.authored, record, withWeld)
+		val replayed = ArtPrimitiveReplay.replay(split.authored, record, withWeld)
 		assertEquals(setOf("Weld", "GlueSkel__PartB__Other"), replayed.glues.mapNotNull { it.id }.toSet())
 		assertEquals(parts[0], replayed.glues.single { it.id == "Weld" }.meshA)
 		assertTrue(replayed.deformPaths.none { it.drawableId == ghost })
@@ -153,7 +154,7 @@ class ArtPrimitiveRecordV2Test {
 		val split = split()
 		val (record, _) = record(split, skins(split), split.generated)
 		val partial = PrimitiveSkinsFixture.fromParts(split.partitionedG.model, parts.take(1), stubs = setOf(ghost))
-		val failure = assertFailsWith<IllegalArgumentException> { ArtPrimitiveJournal.replay(split.authored, record, partial) }
+		val failure = assertFailsWith<IllegalArgumentException> { ArtPrimitiveReplay.replay(split.authored, record, partial) }
 		assertTrue(failure.message!!.contains("PartB"))
 	}
 
@@ -165,9 +166,9 @@ class ArtPrimitiveRecordV2Test {
 		val recorded = primitive.getValue(ArtPrimitiveV2.MESH).jsonObject
 		val canvas = recorded.getValue(ArtPrimitiveV2.CANVAS_UVS).jsonArray.map { it.jsonPrimitive.float }.toFloatArray()
 		val recordedTriangles = recorded.getValue(ArtPrimitiveV2.TRIANGLES).jsonArray.map { it.jsonPrimitive.int }.toIntArray()
-		assertNull(ArtPrimitiveJournal.vertexMap(canvas, recordedTriangles, canvas.copyOf(), recordedTriangles))
+		assertNull(ArtPrimitiveReplay.vertexMap(canvas, recordedTriangles, canvas.copyOf(), recordedTriangles))
 		val grown = canvas + floatArrayOf((canvas[0] + canvas[2]) / 2, (canvas[1] + canvas[3]) / 2)
-		val map = assertNotNull(ArtPrimitiveJournal.vertexMap(canvas, recordedTriangles, grown, intArrayOf(0, 3, 2, 3, 1, 2)))
+		val map = assertNotNull(ArtPrimitiveReplay.vertexMap(canvas, recordedTriangles, grown, intArrayOf(0, 3, 2, 3, 1, 2)))
 		val residual = RasterMeshCreation.decodeGrid(primitive.getValue(ArtPrimitiveV2.AUTHORED).jsonObject
 			.getValue(ArtPrimitiveV2.GEOMETRY_RESIDUAL).jsonObject, split.authored) { value ->
 			MeshDeltaForm(value.jsonArray.map { it.jsonPrimitive.float }.toFloatArray())
@@ -180,7 +181,7 @@ class ArtPrimitiveRecordV2Test {
 		assertEquals(0.5f, atRest[0], 1e-4f); assertEquals(0.5f, atRest[1], 1e-4f)
 		assertEquals(0.25f, atRest[6], 1e-4f); assertEquals(0.25f, atRest[7], 1e-4f)
 		// Overrides recorded on the old vertices no longer match a regenerated mesh: reported, not applied.
-		val regrown = ArtPrimitiveJournal.replay(split.authored, record, skins).let { model ->
+		val regrown = ArtPrimitiveReplay.replay(split.authored, record, skins).let { model ->
 			model.copy(drawables = model.drawables.map { d ->
 				if (d.id != parts[0]) d else d.copy(mesh = DrawableMesh(grown, grown, intArrayOf(0, 3, 2, 3, 1, 2)),
 					geometryGrid = PrimitiveResidual.carry(d.geometryGrid) { PrimitiveResidual.transfer(it, map.sources) })
@@ -228,7 +229,7 @@ class ArtPrimitiveRecordV2Test {
 	@Test fun capturedOverridesUseTheSideChannelOwnership() {
 		val split = split(); val skins = skins(split)
 		val (record, overrides) = record(split, skins, split.generated)
-		val model = GeneratedOverrides.applyAll(ArtPrimitiveJournal.replay(split.authored, record, skins), overrides).model
+		val model = GeneratedOverrides.applyAll(ArtPrimitiveReplay.replay(split.authored, record, skins), overrides).model
 		val part = model.drawables.single { it.id == parts[1] }
 		fun edit(key: Map<String, Float>) = JsonArray(listOf(buildJsonObject {
 			put("op", "canvas_geometry"); put("kind", "mesh"); put("id", part.id.raw)

@@ -20,6 +20,8 @@ import java.awt.geom.AffineTransform
 import java.awt.geom.Path2D
 import kotlin.math.ceil
 import kotlin.math.floor
+import io.github.psd2live.core.legacy.RigMeshActivation
+import io.github.psd2live.core.legacy.RigGenerationTextures
 
 enum class Cmo3ImportMode { REPLACE, NEW }
 

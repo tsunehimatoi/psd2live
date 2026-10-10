@@ -52,6 +52,12 @@ import org.umamo.runtime.model.RotationPivotForm
 import org.umamo.runtime.model.WarpLatticeForm
 import org.umamo.runtime.model.channelGridsOf
 import org.umamo.runtime.model.withDerivedRenderRoot
+import io.github.psd2live.core.legacy.RigGenerationJournal
+import io.github.psd2live.core.legacy.RigGenerationFrames
+import io.github.psd2live.core.legacy.RigGenerationScaffold
+import io.github.psd2live.core.legacy.RigMeshActivation
+import io.github.psd2live.core.legacy.SupersededEntryNote
+import io.github.psd2live.core.legacy.StubTolerance
 
 /**
  * A durable, replayable edit to one parameter. The complete desired value is stored instead of a
@@ -282,6 +288,18 @@ data class RigEditOverlay(
 	internal val afterCheckpoint: List<kotlinx.serialization.json.JsonObject>
 		get() = if (checkpointIndex < 0) authoringJournal else authoringJournal.subList(checkpointIndex + 1, authoringJournal.size)
 
+	/**
+	 * Whether building this overlay's authored state replays what only older builds wrote: after the last checkpoint, a
+	 * split record (whose parts the generated base holds), a generation migration or a legacy partition; without a
+	 * checkpoint, also the legacy static edits. Edits that continue such an overlay checkpoint its authored rig first
+	 * ([RigCheckpoint]), so these replay once and no more.
+	 */
+	internal val replaysLegacy: Boolean by lazy {
+		(checkpointIndex < 0 && (parameterEdits.isNotEmpty() || deletedParameterIds.isNotEmpty() || warpEdits.isNotEmpty() ||
+			structureEdits.isNotEmpty() || keyformSetEdits.isNotEmpty() || keyformCopyEdits.isNotEmpty() || keyformDeleteEdits.isNotEmpty())) ||
+			afterCheckpoint.any { it["op"]?.jsonPrimitive?.contentOrNull in LEGACY_OPS }
+	}
+
 	/** One journal entry replayed onto [state]; an entry that only addresses parts a later split supersedes is skipped and noted. */
 	private fun replayEntry(state: ReplayState, command: kotlinx.serialization.json.JsonObject, skins: PrimitiveSkins): ReplayState {
 		val model = state.model
@@ -510,6 +528,9 @@ data class RigEditOverlay(
 		/** The rates the preview toolbar offers. */
 		val FPS_CHOICES = listOf(30, 60, 90, 120, UNLIMITED_FPS)
 		fun validFps(fps: Int) = fps == UNLIMITED_FPS || fps in PHYSICS_FPS_RANGE
+		/** Journal records only older builds write and only the legacy replay reads ([replaysLegacy]). */
+		private val LEGACY_OPS = setOf(ArtPrimitiveJournal.OP, RigGenerationJournal.OP, RigGenerationFrames.OP, RigGenerationScaffold.OP,
+			RigMeshActivation.OP, SourcePartitionJournal.OP, DepthSplit.OP)
 		val Empty = RigEditOverlay()
 	}
 }
