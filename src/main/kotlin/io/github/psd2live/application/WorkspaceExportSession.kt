@@ -82,7 +82,7 @@ internal class WorkspaceExportSession(
             context.ensureActive()
             progress(context, 0f, 1f).update("Writing PSD", 0.85)
             org.umamo.format.psd.PsdWriter.write(captured.document.source.widthPx, captured.document.source.heightPx,
-                layers, captured.document.source.groups, scale, upscaled)
+                layers, captured.document.source.groups, scale, upscaled, fitToBounds = true)
         }
         val target = path.normalize()
         val stage = staging(target.parent)

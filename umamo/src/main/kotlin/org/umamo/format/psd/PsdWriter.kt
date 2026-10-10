@@ -149,6 +149,9 @@ object PsdWriter {
 	 * @param groups Folder hierarchy metadata.
 	 * @param scale Integer scale factor (1, 2, or 4).
 	 * @param upscaledTextures Optional map from layer ID to upscaled PNG file paths.
+	 * @param fitToBounds Resample each layer to its canvas rectangle times [scale]. A layer whose raster is denser
+	 *   than its rectangle (a replaced higher-resolution image) is otherwise written pixel for pixel and overruns the
+	 *   canvas; without it the raster is written as is, which keeps a stored source exactly as read.
 	 */
 	fun write(
 		width: Int,
@@ -157,6 +160,7 @@ object PsdWriter {
 		groups: List<SourceGroup> = emptyList(),
 		scale: Int = 1,
 		upscaledTextures: Map<String, Path> = emptyMap(),
+		fitToBounds: Boolean = false,
 	): ByteArray {
 		require(scale in listOf(1, 2, 4)) { "Scale must be 1, 2, or 4" }
 		val canvasWidth = width * scale
@@ -204,45 +208,25 @@ object PsdWriter {
 		}
 
 		fun resolveRaster(layer: SourceLayer): LayerRaster {
-			if (scale == 1) return layer.raster
+			val raster = layer.raster
+			val dstW = if (fitToBounds) layer.bounds.width * scale else raster.width * scale
+			val dstH = if (fitToBounds) layer.bounds.height * scale else raster.height * scale
+			if (raster.width == dstW && raster.height == dstH) return raster
 			val upscaledPath = upscaledTextures[layer.id.raw]
 			if (upscaledPath != null && Files.isRegularFile(upscaledPath)) {
 				val img = ImageIO.read(upscaledPath.toFile())
-				if (img != null && img.width == layer.raster.width * scale && img.height == layer.raster.height * scale) {
-					val argb = img.getRGB(0, 0, img.width, img.height, null, 0, img.width)
-					val rgba = ByteArray(img.width * img.height * 4)
-					for (i in argb.indices) {
-						val p = argb[i]
-						rgba[i * 4] = ((p ushr 16) and 0xFF).toByte()
-						rgba[i * 4 + 1] = ((p ushr 8) and 0xFF).toByte()
-						rgba[i * 4 + 2] = (p and 0xFF).toByte()
-						rgba[i * 4 + 3] = ((p ushr 24) and 0xFF).toByte()
-					}
-					return LayerRaster(img.width, img.height, rgba)
-				}
+				if (img != null && img.width == dstW && img.height == dstH) return rasterOf(img)
 			}
-			// Bilinear fallback for layers without explicit neural upscale PNG
-			val srcW = layer.raster.width
-			val srcH = layer.raster.height
-			if (srcW <= 0 || srcH <= 0) return LayerRaster(0, 0, ByteArray(0))
-			val dstW = srcW * scale
-			val dstH = srcH * scale
-			val srcImg = rgbaImage(srcW, srcH, layer.raster.rgba)
+			if (raster.width <= 0 || raster.height <= 0 || dstW <= 0 || dstH <= 0) return LayerRaster(0, 0, ByteArray(0))
+			// A dense layer shrinks by area averaging; bilinear is the fallback for layers without a neural upscale PNG.
+			if (dstW <= raster.width && dstH <= raster.height) return areaAverage(raster, dstW, dstH)
+			val srcImg = rgbaImage(raster.width, raster.height, raster.rgba)
 			val dstImg = BufferedImage(dstW, dstH, BufferedImage.TYPE_INT_ARGB)
 			val g = dstImg.createGraphics()
 			g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR)
 			g.drawImage(srcImg, 0, 0, dstW, dstH, null)
 			g.dispose()
-			val argb = dstImg.getRGB(0, 0, dstW, dstH, null, 0, dstW)
-			val rgba = ByteArray(dstW * dstH * 4)
-			for (i in argb.indices) {
-				val p = argb[i]
-				rgba[i * 4] = ((p ushr 16) and 0xFF).toByte()
-				rgba[i * 4 + 1] = ((p ushr 8) and 0xFF).toByte()
-				rgba[i * 4 + 2] = (p and 0xFF).toByte()
-				rgba[i * 4 + 3] = ((p ushr 24) and 0xFF).toByte()
-			}
-			return LayerRaster(dstW, dstH, rgba)
+			return rasterOf(dstImg)
 		}
 
 		fun parseLayerId(raw: String): Int? {
@@ -492,3 +476,79 @@ private fun rgbaImage(width: Int, height: Int, rgba: ByteArray): BufferedImage {
 	}
 	return BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB).also { it.setRGB(0, 0, width, height, argb, 0, width) }
 }
+
+private fun rasterOf(image: BufferedImage): LayerRaster {
+	val argb = image.getRGB(0, 0, image.width, image.height, null, 0, image.width)
+	val rgba = ByteArray(argb.size * 4)
+	for (i in argb.indices) {
+		val p = argb[i]
+		rgba[i * 4] = ((p ushr 16) and 0xFF).toByte()
+		rgba[i * 4 + 1] = ((p ushr 8) and 0xFF).toByte()
+		rgba[i * 4 + 2] = (p and 0xFF).toByte()
+		rgba[i * 4 + 3] = ((p ushr 24) and 0xFF).toByte()
+	}
+	return LayerRaster(image.width, image.height, rgba)
+}
+
+/**
+ * Shrinks [raster] to [width] x [height], each output pixel the coverage-weighted mean of the source pixels under it.
+ * Colour is averaged premultiplied, so transparent pixels (often black) do not darken the edges.
+ */
+internal fun areaAverage(raster: LayerRaster, width: Int, height: Int): LayerRaster {
+	val srcW = raster.width
+	val srcH = raster.height
+	val rgba = raster.rgba
+	// Per destination column (row): the first source column (row) it covers and each covered one's weight.
+	fun spans(src: Int, dst: Int): List<Pair<Int, FloatArray>> = List(dst) { d ->
+		val start = d.toDouble() * src / dst
+		val end = (d + 1).toDouble() * src / dst
+		val first = start.toInt()
+		val last = minOf(src - 1, kotlin.math.ceil(end).toInt() - 1)
+		first to FloatArray(last - first + 1) { i ->
+			val cell = first + i
+			(minOf(end, cell + 1.0) - maxOf(start, cell.toDouble())).toFloat()
+		}
+	}
+	val columns = spans(srcW, width)
+	val rows = spans(srcH, height)
+	// Horizontal pass into premultiplied floats, then vertical.
+	val horizontal = FloatArray(width * srcH * 4)
+	for (y in 0 until srcH) for (x in 0 until width) {
+		val (first, weights) = columns[x]
+		var r = 0f; var g = 0f; var b = 0f; var a = 0f; var total = 0f
+		for (i in weights.indices) {
+			val o = (y * srcW + first + i) * 4
+			val alpha = (rgba[o + 3].toInt() and 0xFF) / 255f
+			val w = weights[i]
+			r += (rgba[o].toInt() and 0xFF) * alpha * w
+			g += (rgba[o + 1].toInt() and 0xFF) * alpha * w
+			b += (rgba[o + 2].toInt() and 0xFF) * alpha * w
+			a += alpha * w
+			total += w
+		}
+		val o = (y * width + x) * 4
+		horizontal[o] = r / total; horizontal[o + 1] = g / total; horizontal[o + 2] = b / total; horizontal[o + 3] = a / total
+	}
+	val out = ByteArray(width * height * 4)
+	for (y in 0 until height) for (x in 0 until width) {
+		val (first, weights) = rows[y]
+		var r = 0f; var g = 0f; var b = 0f; var a = 0f; var total = 0f
+		for (i in weights.indices) {
+			val o = ((first + i) * width + x) * 4
+			val w = weights[i]
+			r += horizontal[o] * w; g += horizontal[o + 1] * w; b += horizontal[o + 2] * w; a += horizontal[o + 3] * w
+			total += w
+		}
+		val alpha = a / total
+		val o = (y * width + x) * 4
+		if (alpha > 0f) {
+			out[o] = (r / total / alpha).roundToByte()
+			out[o + 1] = (g / total / alpha).roundToByte()
+			out[o + 2] = (b / total / alpha).roundToByte()
+		}
+		out[o + 3] = (alpha * 255f).roundToByte()
+	}
+	return LayerRaster(width, height, out)
+}
+
+private fun Float.roundToByte(): Byte = kotlin.math.round(this).coerceIn(0f, 255f).toInt().toByte()

@@ -112,15 +112,21 @@ internal class WorkspaceOperations(private val workspace: WorkspaceBackend,
                 workspace.exportModel(request.text("state"), request.text("output_directory"))
             }
         }
-        val targets = io.github.psd2live.core.ExportService.registry(io.github.psd2live.core.PipelineConfig()).targets
-            .map { it.id }.filterNot { it in io.github.psd2live.core.ExportService.experimental }
+        val exportTargets = io.github.psd2live.core.ExportService.registry(io.github.psd2live.core.PipelineConfig()).targets
+            .filterNot { it.id in io.github.psd2live.core.ExportService.experimental }
+        val targets = exportTargets.map { it.id }
+        // Each target's keys as `key=<values> (default)`, so an agent need not find the CLI to learn them.
+        val targetSettings = exportTargets.filter { it.settings.isNotEmpty() }.joinToString("; ") { target ->
+            "${target.id}: " + target.settings.joinToString(", ") { io.github.psd2live.ExportCli.usage(it) }
+        }
         register("project_export_target", "Export the committed model through one export target into an absolute output directory, as File > Export as does: " +
-            "${targets.joinToString(", ")}. settings are the target's own keys (psd2live targets lists them with their ranges); unset keys take the target's default " +
+            "${targets.joinToString(", ")}. settings are the target's own keys (listed on the settings field); unset keys take the target's default " +
             "or the project's export settings. Writes the files and <name>.<target>.report.json; returns a job handle whose result lists the files and what the target could not carry (losses).",
             schema(mapOf("request_id" to string(), "state" to string(), "target" to buildJsonObject {
                 put("type", "string"); put("enum", JsonArray(targets.map(::JsonPrimitive)))
             }, "output_directory" to string(), "settings" to buildJsonObject {
                 put("type", "object"); put("additionalProperties", string())
+                put("description", "Values are strings. Keys per target: $targetSettings")
             }), listOf("request_id", "state", "target", "output_directory")),
             WorkspaceOperationKind.OUTPUT, jobBacked = true) { request ->
             val directory = absolutePath(request.text("output_directory"))

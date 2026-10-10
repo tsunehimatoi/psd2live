@@ -112,14 +112,12 @@ public class RasterTargets(private val renderer: FrameRenderer) {
 	}
 
 	/** One sheet of frames in a grid plus a TexturePacker "hash" JSON describing them. */
-	public val sheet: ExportTarget = target("sprite-sheet", "Sprite sheet (PNG + TexturePacker JSON)") { frames, options, clip, fps ->
+	public val sheet: ExportTarget = target("sprite-sheet", "Sprite sheet (PNG + TexturePacker JSON)",
+		precheck = { count, width, height -> sheetGrid(count, width, height) }) { frames, options, clip, fps ->
 		val width = frames.first().width
 		val height = frames.first().height
-		val columns = kotlin.math.ceil(kotlin.math.sqrt(frames.size.toDouble())).toInt()
+		val (columns, _) = sheetGrid(frames.size, width, height)
 		val rows = (frames.size + columns - 1) / columns
-		require(columns.toLong() * width <= MAX_SHEET && rows.toLong() * height <= MAX_SHEET) {
-			"Sprite sheet ${columns * width}x${rows * height} exceeds $MAX_SHEET px; lower the size or the frame rate"
-		}
 		val sheetWidth = columns * width; val sheetHeight = rows * height
 		val pixels = IntArray(sheetWidth * sheetHeight)
 		frames.forEachIndexed { index, frame ->
@@ -148,15 +146,38 @@ public class RasterTargets(private val renderer: FrameRenderer) {
 		write
 	}
 
-	/** An animated GIF: 256 colors, 1-bit transparency, looping when the clip loops. */
+	/** An animated GIF: 255 colors cut from the clip itself plus transparency, looping when the clip loops. */
 	public val gif: ExportTarget = target("gif", "Animated GIF", extraLoss = LossEntry("*", Feature.TEXTURE_SIZE, Handling.APPROXIMATED,
-		note = "GIF holds 256 colors and 1-bit transparency")) { frames, options, clip, fps ->
-		{ sink: OutputSink -> sink.write("${options.baseName}.gif", gif(frames, fps, clip?.loop ?: false)) }
+		note = "GIF holds 256 colors and 1-bit transparency"), extraSettings = listOf(TargetSetting.Flag("dither", true))) { frames, options, clip, fps ->
+		{ sink: OutputSink -> sink.write("${options.baseName}.gif", gif(frames, fps, clip?.loop ?: false, options.flag("dither", true))) }
 	}
+
+	/**
+	 * The columns and rows a sheet of [count] frames of [width] x [height] takes, refused past [MAX_SHEET]. Known from
+	 * the settings alone, so it is checked before a single frame is rendered.
+	 */
+	private fun sheetGrid(count: Int, width: Int, height: Int): Pair<Int, Int> {
+		val columns = kotlin.math.ceil(kotlin.math.sqrt(count.toDouble())).toInt()
+		val rows = (count + columns - 1) / columns
+		require(columns.toLong() * width <= MAX_SHEET && rows.toLong() * height <= MAX_SHEET) {
+			"Sprite sheet ${columns.toLong() * width}x${rows.toLong() * height} ($count frames of ${width}x$height) exceeds " +
+				"$MAX_SHEET px; lower the size or the fps, or pick a shorter clip"
+		}
+		return columns to rows
+	}
+
+	/** The clip [wanted] names, by id or else by name; refused with the clips there are. */
+	private fun clipNamed(ir: RigIR, wanted: String): Clip =
+		ir.clips.firstOrNull { it.id == wanted } ?: ir.clips.firstOrNull { it.name == wanted }
+			?: ir.clips.firstOrNull { it.name.equals(wanted, ignoreCase = true) }
+			?: throw IllegalArgumentException("Unknown clip: $wanted. Clips: " +
+				ir.clips.joinToString { if (it.name == it.id) it.id else "${it.id} (${it.name})" }.ifEmpty { "none" })
 
 	private fun target(
 		id: String, description: String, extraLoss: LossEntry? = null, opaqueBackground: Boolean = false,
 		extraSettings: List<TargetSetting> = emptyList(),
+		/** Refuses settings the writer would refuse, from the frame count and size, before anything renders. */
+		precheck: ((count: Int, width: Int, height: Int) -> Unit)? = null,
 		writer: (List<RasterImage>, ExportOptions, Clip?, Float) -> (OutputSink) -> Unit,
 	): ExportTarget = object : ExportTarget {
 		override val id: String = id
@@ -169,8 +190,7 @@ public class RasterTargets(private val renderer: FrameRenderer) {
 			TargetSetting.Text("background", "AARRGGBB"),
 		) + extraSettings
 		override fun plan(ir: RigIR, options: ExportOptions): LoweredExport {
-			val clip = options.setting("clip")?.let { wanted -> ir.clips.firstOrNull { it.id == wanted } ?: throw IllegalArgumentException("Unknown clip: $wanted") }
-				?: ir.clips.firstOrNull()
+			val clip = options.setting("clip")?.let { clipNamed(ir, it) } ?: ir.clips.firstOrNull()
 			val fps = options.float("fps", clip?.fps ?: 30f)
 			require(fps.isFinite() && fps in 1f..120f) { "FPS must be within 1..120" }
 			val size = options.int("size", 1024)
@@ -181,6 +201,7 @@ public class RasterTargets(private val renderer: FrameRenderer) {
 			val spec = FrameSpec.canvas(ir, size, background)
 			val times = clip?.let { ClipSampler.frameTimes(it, fps) } ?: listOf(0f)
 			require(times.size <= MAX_FRAMES) { "${times.size} frames exceed the limit of $MAX_FRAMES" }
+			precheck?.invoke(times.size, spec.outputWidth, spec.outputHeight)
 			var simulated = false
 			val frames = renderer.open(ir, physics).use { session ->
 				var previous = 0f
@@ -203,14 +224,15 @@ public class RasterTargets(private val renderer: FrameRenderer) {
 
 	private fun png(frame: RasterImage): ByteArray = ByteArrayOutputStream().also { check(ImageIO.write(image(frame), "png", it)) }.toByteArray()
 
-	private fun gif(frames: List<RasterImage>, fps: Float, loop: Boolean): ByteArray {
+	private fun gif(frames: List<RasterImage>, fps: Float, loop: Boolean, dither: Boolean): ByteArray {
 		val writer = ImageIO.getImageWritersByFormatName("gif").next()
 		val output = ByteArrayOutputStream()
 		ImageIO.createImageOutputStream(output).use { stream ->
 			writer.output = stream
 			writer.prepareWriteSequence(null)
 			val delay = (100f / fps).toInt().coerceAtLeast(1)
-			val palettized = frames.parallelStream().map(::indexed).toList()
+			val palette = GifPalette.of(frames)
+			val palettized = frames.parallelStream().map { indexed(it, palette, dither) }.toList()
 			palettized.forEachIndexed { index, indexed ->
 				val metadata = writer.getDefaultImageMetadata(ImageTypeSpecifier.createFromRenderedImage(indexed), null)
 				val format = metadata.nativeMetadataFormatName
@@ -252,31 +274,13 @@ public class RasterTargets(private val renderer: FrameRenderer) {
 		return IIOMetadataNode(name).also(root::appendChild)
 	}
 
-	/**
-	 * A 256-color image whose index 0 is transparent: pixels under half opacity become transparent, the rest
-	 * map to a 6x7x6 color cube. Deterministic, unlike an adaptive palette search.
-	 */
-	private fun indexed(frame: RasterImage): BufferedImage {
-		val reds = IntArray(256); val greens = IntArray(256); val blues = IntArray(256)
-		var n = 1
-		for (r in 0 until 6) for (g in 0 until 7) for (b in 0 until 6) {
-			reds[n] = r * 255 / 5; greens[n] = g * 255 / 6; blues[n] = b * 255 / 5; n++
-		}
-		val model = java.awt.image.IndexColorModel(8, 256, reds.map(Int::toByte).toByteArray(), greens.map(Int::toByte).toByteArray(),
-			blues.map(Int::toByte).toByteArray(), 0)
+	/** [frame] as a 256-color image over [palette], whose index 0 is transparent. */
+	private fun indexed(frame: RasterImage, palette: GifPalette, dither: Boolean): BufferedImage {
+		val model = java.awt.image.IndexColorModel(8, 256, palette.reds.map(Int::toByte).toByteArray(),
+			palette.greens.map(Int::toByte).toByteArray(), palette.blues.map(Int::toByte).toByteArray(), 0)
 		val image = BufferedImage(frame.width, frame.height, BufferedImage.TYPE_BYTE_INDEXED, model)
 		// An 8-bit indexed image keeps one byte per pixel, row by row.
-		val samples = (image.raster.dataBuffer as java.awt.image.DataBufferByte).data
-		for (i in frame.argb.indices) {
-			val argb = frame.argb[i]
-			val index = if ((argb ushr 24) < 128) 0 else {
-				val r = (((argb shr 16) and 255) * 5 + 127) / 255
-				val g = (((argb shr 8) and 255) * 6 + 127) / 255
-				val b = ((argb and 255) * 5 + 127) / 255
-				1 + (r * 7 + g) * 6 + b
-			}
-			samples[i] = index.toByte()
-		}
+		palette.map(frame, dither).copyInto((image.raster.dataBuffer as java.awt.image.DataBufferByte).data)
 		return image
 	}
 
