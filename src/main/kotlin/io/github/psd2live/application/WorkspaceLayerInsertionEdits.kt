@@ -48,13 +48,20 @@ internal object WorkspaceLayerInsertionEdits {
         }
         val byId = records.associateBy { it.getValue("id").jsonPrimitive.content }
         val replaced = mutableSetOf<String>()
-        val journal = document.rigEdits.authoringJournal.map { entry ->
+        // Replay starts at the checkpoint, so only a creation record after it is rewritten. A mesh the authored rig already
+        // holds - its creation before the checkpoint, or generated from the layer and checkpointed since - gets a record
+        // that replaces it: a rewrite before the checkpoint would never replay, and a second creation would collide.
+        val checkpoint = document.rigEdits.checkpointIndex
+        val journal = document.rigEdits.authoringJournal.mapIndexed { index, entry ->
             val id = entry["id"]?.jsonPrimitive?.content
-            if (entry["op"]?.jsonPrimitive?.content == RasterMeshCreation.OP && id in byId) {
+            if (index > checkpoint && entry["op"]?.jsonPrimitive?.content == RasterMeshCreation.OP && id in byId) {
                 require(replaced.add(requireNotNull(id))) { "Duplicate mesh creation record" }
-                byId.getValue(id)
+                byId.getValue(id).let { if (RasterMeshCreation.replaces(entry)) RasterMeshCreation.replacing(it) else it }
             } else entry
-        } + records.filterNot { it.getValue("id").jsonPrimitive.content in replaced }
+        } + records.filterNot { it.getValue("id").jsonPrimitive.content in replaced }.map { record ->
+            val id = record.getValue("id").jsonPrimitive.content
+            if (current.authored.rig.puppet.drawables.any { it.id.raw == id }) RasterMeshCreation.replacing(record) else record
+        }
         // A layer whose unpainted pixels a paint pinned holds them no longer; a blank it already holds stays as it is.
         val held = baseline.layers.map { layer ->
             if (layer.id.raw !in ids || layer.raster.let { it.width == 1 && it.height == 1 && it.rgba.all { byte -> byte == 0.toByte() } }) layer

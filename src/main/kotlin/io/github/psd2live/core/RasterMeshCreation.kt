@@ -60,8 +60,19 @@ internal object RasterMeshCreation {
         }
     }
 
+    /**
+     * [command] as a replacement: replay swaps the mesh the rig holds under its ID for the recorded one, in its place in
+     * the draw list and its part, and creates it when the rig has none. A placement records one for a mesh the authored
+     * rig already holds; a regeneration merge before it may have dropped that mesh (one the generators made and the
+     * user never changed), or kept it.
+     */
+    fun replacing(command: JsonObject) = JsonObject(command + ("replace" to JsonPrimitive(true)))
+
+    fun replaces(command: JsonObject) = command["replace"]?.jsonPrimitive?.booleanOrNull == true
+
     fun replay(input: PuppetModel, command: JsonObject): PuppetModel {
         val id = DrawableId(command.text("id"))
+        if (replaces(command)) return replaced(input, id, JsonObject(command - "replace"))
         require(input.drawables.none { it.id == id }) { "Mesh creation ID already exists: ${id.raw}" }
         sourceBounds(command)
         require(command.text("layer_id").isNotBlank()) { "Mesh creation layer is missing" }
@@ -133,6 +144,26 @@ internal object RasterMeshCreation {
         model = model.copy(drawables = model.drawables + drawable, parts = parts, rootChildren = roots).withDerivedRenderRoot()
         for (path in command.getValue("paths").jsonArray) model = DeformPathJournal.apply(model, path.jsonObject)
         return model
+    }
+
+    private fun replaced(input: PuppetModel, id: DrawableId, command: JsonObject): PuppetModel {
+        val index = input.drawables.indexOfFirst { it.id == id }
+        if (index < 0) return replay(input, command)
+        val child = OrgChild.Drawable(id)
+        val owner = input.parts.singleOrNull { child in it.children }
+        val position = owner?.children?.indexOf(child) ?: input.rootChildren.indexOf(child)
+        val removed = input.copy(drawables = input.drawables.filterNot { it.id == id },
+            parts = input.parts.map { if (it === owner) it.copy(children = it.children - child) else it },
+            rootChildren = input.rootChildren - child, deformPaths = input.deformPaths.filterNot { it.drawableId == id })
+        val created = replay(removed, command)
+        fun <T> List<T>.movedTo(item: T, at: Int) = (this - item).toMutableList().apply { add(at.coerceIn(0, size), item) }
+        val drawable = created.drawables.single { it.id == id }
+        val newOwner = created.parts.singleOrNull { child in it.children }
+        return created.copy(drawables = created.drawables.movedTo(drawable, index),
+            parts = if (newOwner == null || newOwner.id != owner?.id) created.parts
+                else created.parts.map { if (it.id == newOwner.id) it.copy(children = it.children.movedTo(child, position)) else it },
+            rootChildren = if (newOwner == null && owner == null && position >= 0) created.rootChildren.movedTo(child, position) else created.rootChildren
+        ).withDerivedRenderRoot()
     }
 
     internal fun sourceBounds(command: JsonObject): LayerBounds {

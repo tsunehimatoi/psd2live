@@ -89,4 +89,66 @@ class WorkspaceImportObjectMoveTest {
             assertTrue(replayed.indices.all { abs(replayed[it] - shown[it]) < 0.1f }, "replayed under $parent: ${replayed.take(4)}")
         }
     }
+
+    /**
+     * A placement after a checkpoint that holds the imported mesh - generated from the layer until placed, or created by
+     * an earlier placement - replaces that mesh after the checkpoint: rewriting its creation before the checkpoint never
+     * replayed (the move was lost), and a second creation collided with it ("Mesh creation ID already exists").
+     */
+    @Test fun aPlacementAfterACheckpointMovesTheMesh() = runBlocking<Unit> {
+        val layers = listOf(ellipse("body", "body", 0, 100, 230, 50, 60), ellipse("face", "face", 1, 100, 110, 50, 60))
+        val config = PipelineConfig(atlasSize = 512, meshSpacing = 16, generatePhysics = false, exportMoc3 = false)
+        val document = WorkspaceDocument(WorkspaceSourceArt(200, 300, layers, emptyList()), emptyMap(), emptySet(), emptyMap(),
+            emptyMap(), RigEditOverlay.Empty, WorkspaceSettingsCodec.encode(config))
+        val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) }, rebuildFrom = { d, previous -> builder.build(d, previous) })
+        runtime.install(runtime.state.value.state, "place-project", document, builder.build(document))
+        val file = temporary.resolve("patch.png").also { Files.write(it, PngCodec.write(RasterImage(40, 40, ByteArray(40 * 40 * 4) { -1 }))) }
+        val imported = runtime.capture()
+        val id = WorkspaceImageLayerCommands(runtime).importImages(imported.projectId, imported.state, listOf(file), null, "Import", MutationAuthor.USER)
+            .mutation.affectedLayerIds.single()
+        suspend fun regenerate(strength: Int) = runtime.capture().let {
+            WorkspaceDocumentCommands(runtime).execute(it.projectId, it.state, "Head", listOf(WorkspaceDocumentOperation("settings_update",
+                buildJsonObject { putJsonObject("changes") { put("headStrength", strength) } })), MutationAuthor.USER)
+        }
+        suspend fun place(left: Float): WorkspaceCapture<RigPreviewModel> {
+            val before = runtime.capture()
+            WorkspaceImagePlacementCommands(runtime).execute(before.projectId, before.state, WorkspaceImageBounds(id, left, 60f, 40f, 40f).operation(), "Place", MutationAuthor.USER)
+            val placed = runtime.capture()
+            val mesh = placed.model.rig.puppet.drawables.single { placed.model.rig.layerIdByDrawableId[it.id.raw] == id }
+            assertEquals(left, mesh.mesh!!.positions.filterIndexed { i, _ -> i % 2 == 0 }.min(), 0.5f, "the mesh is where it was placed")
+            val cold = builder.build(placed.document).rig.puppet.drawables.single { it.id == mesh.id }
+            assertContentEquals(mesh.mesh!!.positions, cold.mesh!!.positions, "a cold build places it there too")
+            assertEquals(1, placed.model.rig.puppet.drawables.count { placed.model.rig.layerIdByDrawableId[it.id.raw] == id })
+            return placed
+        }
+        // The checkpoint the regeneration writes holds the mesh generated from the import.
+        regenerate(2)
+        val first = place(60f).document.rigEdits.authoringJournal.last { it["op"]?.jsonPrimitive?.content == RasterMeshCreation.OP }
+        assertTrue(RasterMeshCreation.replaces(first), "the creation replaces the checkpointed mesh")
+        // Now the mesh's creation lies before the next regeneration's checkpoint.
+        regenerate(3)
+        place(90f)
+        place(100f)
+    }
+
+    @Test fun aReplacingCreationKeepsTheMeshInItsPlaceOrCreatesIt() = runBlocking<Unit> {
+        val layers = listOf(ellipse("body", "body", 0, 100, 230, 50, 60), ellipse("face", "face", 1, 100, 110, 50, 60))
+        val config = PipelineConfig(atlasSize = 512, meshSpacing = 16, generatePhysics = false, exportMoc3 = false, meshOnly = true)
+        val model = builder.build(WorkspaceDocument(WorkspaceSourceArt(200, 300, layers, emptyList()), emptyMap(), emptySet(), emptyMap(),
+            emptyMap(), RigEditOverlay.Empty, WorkspaceSettingsCodec.encode(config)))
+        val puppet = model.rig.puppet
+        val target = puppet.drawables.first().id
+        val record = RasterMeshCreation.replacing(RasterMeshCreation.encode(model.rig, target))
+        val moved = JsonObject(record + ("positions" to JsonArray(record.getValue("positions").jsonArray.mapIndexed { i, v ->
+            JsonPrimitive(v.jsonPrimitive.float + if (i % 2 == 0) 5f else 0f) })))
+        val replaced = RasterMeshCreation.replay(puppet, moved)
+        assertEquals(puppet.drawables.map { it.id }, replaced.drawables.map { it.id }, "the mesh keeps its place in the draw list")
+        assertEquals(puppet.parts.map { it.children }, replaced.parts.map { it.children }, "and in its part")
+        assertEquals(puppet.drawables.first().mesh!!.positions[0] + 5f, replaced.drawables.first().mesh!!.positions[0], 1e-4f)
+        val removed = puppet.copy(drawables = puppet.drawables.drop(1),
+            parts = puppet.parts.map { it.copy(children = it.children - org.umamo.runtime.model.OrgChild.Drawable(target)) },
+            rootChildren = puppet.rootChildren - org.umamo.runtime.model.OrgChild.Drawable(target))
+        assertTrue(RasterMeshCreation.replay(removed, moved).drawables.any { it.id == target }, "without the mesh it is created")
+        assertFailsWith<IllegalArgumentException> { RasterMeshCreation.replay(puppet, JsonObject(moved - "replace")) }
+    }
 }
