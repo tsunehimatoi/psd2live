@@ -28,9 +28,14 @@ internal object RigGenerationBaseline {
         return overlay.copy(authoringJournal = overlay.authoringJournal + marker)
     }
 
+    /**
+     * [config] with the generation rules its journal's baseline froze, while entries after it still replay on the base:
+     * once a checkpoint follows the baseline those entries are history, and the document's own rules generate.
+     */
     fun restore(config: PipelineConfig): PipelineConfig {
-        val markers = config.rigEdits.authoringJournal.filter { it["op"]?.jsonPrimitive?.contentOrNull == OP }
-        if (markers.isEmpty()) return config
+        val journal = config.rigEdits.authoringJournal
+        val markers = journal.filter { it["op"]?.jsonPrimitive?.contentOrNull == OP }
+        if (markers.isEmpty() || journal.indexOfLast { it["op"]?.jsonPrimitive?.contentOrNull == OP } < config.rigEdits.checkpointIndex) return config
         require(markers.size == 1) { "Duplicate rig generation baseline" }
         val command = markers.single()
         validate(command)

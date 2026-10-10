@@ -269,7 +269,8 @@ class PSD2LivePipeline {
 		config: PipelineConfig,
 		progress: ProgressListener = ProgressListener { _, _ -> },
 	): RigPreviewModel {
-        if (RigGenerationMigration.changed(current, config)) {
+        // A generated model's regeneration merges and checkpoints where the document builds ([RigRegenerationCheckpoint]).
+        if (!(materializable(config) && materializable(current.config)) && RigGenerationMigration.changed(current, config)) {
             val prepared = RigGenerationMigration.prepare(this, current, config,
                 progress = ProgressListener { message, fraction -> progress.update(message, fraction * 0.8) })
             return buildPreview(current.analysis.source, prepared,

@@ -31,13 +31,12 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
         val layer = id in WorkspaceLayerEdits.supported || id in WorkspaceAssetLayerEdits.supported || id in WorkspaceImagePlacementEdits.supported || id == WorkspaceImageLayerCommands.OP
         val generation = id in WorkspaceGenerationCommands.supported
         val partition = id in WorkspacePartitionCommands.supported
-        val upgrade = id in WorkspaceSplitUpgradeEdits.supported
         val regeneration = id in WorkspaceGenerationUpdate.supported
         val warp = id in WorkspaceWarpEdits.supported
         val asset = id in WorkspaceAssetSessions.supported
         val pose = id == "preview_pose"
         val swing = id in setOf("swing_preview", "swing_preview_commit")
-        val background = id in WorkspaceSimulationEdits.supported || physics || raster || layer || generation || partition || upgrade || regeneration || warp || asset || sampling || motionObservation || pose || swing
+        val background = id in WorkspaceSimulationEdits.supported || physics || raster || layer || generation || partition || regeneration || warp || asset || sampling || motionObservation || pose || swing
         registry.register(WorkspaceOperationDefinition(id,
             description + if (background) " Returns a process-owned job handle; use job_wait/job_get for the result, state and diagnostics. Disconnecting does not cancel execution." else "",
             schema, kind, jobBacked = background, workspaceBound = background || kind != WorkspaceOperationKind.QUERY,
@@ -52,7 +51,6 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
                     else if (layer) WorkspaceLayerJobExecution(id, completion)
                     else if (generation) WorkspaceGenerationJobExecution(id, completion)
                     else if (partition) WorkspacePartitionJobExecution(id, completion)
-                    else if (upgrade) WorkspaceSplitUpgradeJobExecution(completion)
                     else if (regeneration) WorkspaceGenerationUpdateJobExecution(completion)
                     else if (warp) WorkspaceWarpJobExecution(completion)
                     else if (asset) WorkspaceAssetJobExecution(id, completion)
@@ -106,14 +104,6 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
     register("layer_cancel_import", "Cancel a file-image import batch in one history edit. Removes its unbound layers and creation records; retains a legacy generation frame or the final source as soft-deleted artwork. Use layer IDs returned by layer_import_images. Atomic and undoable; dedicated bindings prevent cancellation.",
         objectSchema(buildJsonObject { put("state", string()); put("layer_ids", JsonObject(arraySchema(string(), 1, 128) + ("uniqueItems" to JsonPrimitive(true)))) }, listOf("state", "layer_ids")), WorkspaceOperationKind.DOCUMENT) { request ->
         WorkspaceOperationOutput(workspace.cancelImageImport(request.text("state"), request.strings("layer_ids")).layerResult())
-    }
-
-    register(WorkspaceSplitUpgradeEdits.OP, "Upgrade version 1 split records (art_primitive) to version 2, whose parts take part in base generation: face, body, skeleton and classification changes then reach the parts like any mesh, with the user's edits kept as residuals. record_indexes number the art_primitive records in journal order (version 1 and 2 alike); omit it for every version 1 record. Each record is upgraded in place, in journal order, where the same guard as a split passes; otherwise it stays version 1 and its reason is reported. Commits one undoable history node, or none when nothing was upgraded. Nothing is rewritten on read.",
-        objectSchema(buildJsonObject {
-            put("state", string())
-            put("record_indexes", JsonObject(arraySchema(integer(0), 1, 4096) + ("uniqueItems" to JsonPrimitive(true))))
-        }, listOf("state")), WorkspaceOperationKind.DOCUMENT) { request ->
-        WorkspaceOperationOutput(workspace.upgradeSplitRecords(request.text("state"), request["record_indexes"]?.jsonArray?.map { it.jsonPrimitive.int }))
     }
 
     register(WorkspaceGenerationUpdate.OP, "Regenerate the rig with this build's generators. A project whose journal has a regeneration checkpoint keeps what the generators made when it was written, even after an update; this merges what they make now onto the user's edits: what the user left follows the new output, the user's changes stay, and what does not carry over cleanly is reported in issues (also in workspace_inspect quality.regeneration). Commits one undoable history node, or none when the generators make the same rig (updated: false). Imported CMO3 models have no generated rig and are refused.",

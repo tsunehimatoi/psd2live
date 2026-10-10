@@ -32,7 +32,7 @@ internal class WorkspacePreviewBuilder {
         return ProgressListener { message, fraction ->
             context.ensureActive()
             context[WorkspacePreviewProgress]?.update(fraction.toFloat().coerceIn(0f, 1f))
-            if (context[WorkspaceGenerationJobExecution] != null || context[WorkspacePartitionJobExecution] != null || context[WorkspaceSplitUpgradeJobExecution] != null || context[WorkspaceGenerationUpdateJobExecution] != null || context[WorkspaceWarpJobExecution] != null || context[WorkspaceWarpControlJobExecution] != null || context[WorkspaceLayerJobExecution] != null)
+            if (context[WorkspaceGenerationJobExecution] != null || context[WorkspacePartitionJobExecution] != null || context[WorkspaceGenerationUpdateJobExecution] != null || context[WorkspaceWarpJobExecution] != null || context[WorkspaceWarpControlJobExecution] != null || context[WorkspaceLayerJobExecution] != null)
                 context[WorkspaceJobContext]?.progress(start + (end - start) * fraction.toFloat().coerceIn(0f, 1f), message)
         }
     }
@@ -69,8 +69,18 @@ internal class WorkspacePreviewBuilder {
                 return@runInterruptible document.copy(rigEdits = overlay.copy(authoringJournal = journal + groups.map(VertexGroupJournal::encode)))
             }
             if (RigGenerationMigration.changed(current, config)) {
-                val prepared = RigGenerationMigration.prepare(pipeline, current, config, document.source, progress)
-                document.copy(rigEdits = prepared.rigEdits, generationSource = prepared.generationSource, meshSource = prepared.meshSource)
+                // A generated model merges what the generators make now onto the user's rig and checkpoints the result
+                // ([RigRegenerationCheckpoint]). Only an imported model, which has no generated rig to merge onto, records
+                // the migration in its journal.
+                if (pipeline.materializable(config) && pipeline.materializable(current.config)) {
+                    if (!config.rigEdits.continues(current.config.rigEdits)) document
+                    else RigRegenerationCheckpoint.checkpointed(pipeline, current, config, document.source,
+                        { progress.update("Merging regenerated rig", 0.5) }, currentSource = true)
+                        ?.let { document.copy(rigEdits = it.rigEdits) } ?: document
+                } else {
+                    val prepared = RigGenerationMigration.prepare(pipeline, current, config, document.source, progress)
+                    document.copy(rigEdits = prepared.rigEdits, generationSource = prepared.generationSource, meshSource = prepared.meshSource)
+                }
             }
             // Source replacement without a generation transition uses its specific source command.
             else if ((current.analysis.source !== document.source && current.analysis.source != document.source) ||
@@ -112,7 +122,8 @@ internal class WorkspacePreviewBuilder {
             // Before the journal's own checkpoint: that holds the rig of the old generation (a skeleton committed after it would not bake).
             if (current != null && !fast && revision != null && pipeline.materializable(current.config) &&
                 config.rigEdits.continues(current.config.rigEdits)) {
-                RigRegenerationCheckpoint.checkpointed(pipeline, current, config, document.source) { progress.update("Merging regenerated rig", 0.5) }
+                RigRegenerationCheckpoint.checkpointed(pipeline, current, config, document.source, { progress.update("Merging regenerated rig", 0.5) },
+                    currentSource = RigGenerationMigration.changed(current, config))
                     ?.let { checkpointed ->
                         val model = pipeline.buildPreview(document.source, checkpointed, progress, current.atlas)
                         MaterializedRigStore.remember(WorkspaceRevisions.of(document.copy(rigEdits = checkpointed.rigEdits)), checkpointed.rigEdits,

@@ -115,8 +115,9 @@ internal object WorkspacePartitionEdits {
     }
 
     /**
-     * The parts become the only drawables: each is an `art_primitive` carrying the original's authored state at
-     * this point, and the original leaves the source art. Only undo returns to it.
+     * The parts become the only drawables and the original leaves the source art: only undo returns to it. The split
+     * is a regeneration ([WorkspaceArtPrimitives.materialize]): the parts take the original's place in the generated rig
+     * and the user's changes to the original carry onto them.
      */
     private fun materialize(document: WorkspaceDocument, model: RigPreviewModel, id: String, pieces: List<WorkspaceSourceLayer>,
                             sides: List<Side>, names: List<String>, componentPlan: MeshComponentSplit.Plan?, request: JsonObject,
@@ -126,45 +127,37 @@ internal object WorkspacePartitionEdits {
         val frozen = WorkspaceLayerInsertionEdits.freeze(document, model)
         val pieceIds = WorkspaceArtPrimitives.allocate(frozen, model, pieces)
         work.checkpoint()
-        val authored = model.config.rigEdits.authored(model.baseRig)
-        val legacy = SourcePartitionJournal.encode(authored, drawable.id, pieces.map { it.id.raw }, pieceIds, names, geometry,
+        val authored = model.authored.rig.puppet
+        val command = SourcePartitionJournal.encode(authored, drawable.id, pieces.map { it.id.raw }, pieceIds, names, geometry,
             followCutVertices = componentPlan == null)
-        val partitioned = SourcePartitionJournal.partition(authored, legacy) { clone, canvas -> clone to canvas }
+        val partitioned = SourcePartitionJournal.partition(authored, command) { clone, canvas -> clone to canvas }
         work.checkpoint()
+        // The parts as the user's own: what a split of an original the generators do not make declares.
         val primitives = partitioned.ids.mapIndexed { index, pieceId ->
             val piece = partitioned.model.drawables.single { it.id == pieceId }
             val canvas = requireNotNull(piece.mesh).uvs
             ArtPrimitiveJournal.encodePrimitive(partitioned.model, piece, pieces[index].id.raw, PuppetSourceAtlas.SOURCE_ID_RAW,
                 ArtPrimitiveJournal.coverage(pieces[index].bounds, canvas), ArtPrimitiveJournal.canvasBounds(canvas))
         }
-        val record = ArtPrimitiveJournal.encode("split", PuppetSourceAtlas.SOURCE_ID_RAW, listOf(drawable.id), listOf(id),
+        val userRecord = ArtPrimitiveJournal.encode("split", PuppetSourceAtlas.SOURCE_ID_RAW, listOf(drawable.id), listOf(id),
             mapOf(drawable.id to partitioned.ids), primitives, partitioned.glueGroups, partitioned.followers)
-        val overlay = SourcePartitionJournal.migrateSimulations(MeshGenerationBaseline.preserve(frozen.rigEdits, model.config),
-            authored, drawable.id.raw, pieceIds, geometry)
-        val placed = WorkspaceArtPrimitives.replaceLayer(frozen, model, id, pieces, sides)
-        val v1 = placed.copy(rigEdits = overlay.copy(authoringJournal = overlay.authoringJournal + record,
-            splitDrawableIds = overlay.splitDrawableIds + pieces.map { it.id.raw }.zip(pieceIds)))
-        return WorkspaceArtPrimitives.decide(v1, record, model, capture = {
-            // Version 2 captures the authored rig with the overrides of earlier v2 parts, and the base beside it.
-            val captured = WorkspaceArtPrimitives.capturedAuthored(model)
-            val split = SourcePartitionJournal.partition(captured, legacy) { clone, canvas -> clone to canvas }
-            val layers = pieces.map { it.id.raw }
-            val classification = document.layerOverrides[id] ?: model.analysis.layers.firstOrNull { it.source.id.raw == id }?.semantic?.let {
-                LayerClassificationOverride(it.type, it.tag, it.side, it.parameter, it.switchId)
-            } ?: LayerClassificationOverride()
-            WorkspaceArtPrimitives.SplitCapture("split", PuppetSourceAtlas.SOURCE_ID_RAW, drawable.id, id, captured, WorkspaceArtPrimitives.generated(model.baseRig, drawable.id),
-                split.model, split.ids, layers, geometry.pieces.map { it.sources },
-                split.ids.mapIndexed { index, part -> ArtPrimitiveJournal.coverage(pieces[index].bounds, requireNotNull(split.model.drawables.single { it.id == part }.mesh).uvs) },
-                split.ids.map { part -> ArtPrimitiveJournal.canvasBounds(requireNotNull(split.model.drawables.single { it.id == part }.mesh).uvs) },
-                sides.map { side -> classification.copy(side = side.takeUnless { it == Side.NONE } ?: classification.side) },
-                mapOf(drawable.id to split.ids), mapOf(drawable.id to split.ids), split.glueGroups, split.followers)
-        }, v2Document = { v2Record, overrides ->
-            val moved = SourcePartitionJournal.migrateBones(SourcePartitionJournal.migrateSimulations(
-                MeshGenerationBaseline.preserve(frozen.rigEdits, model.config), authored, drawable.id.raw, pieceIds, geometry), drawable.id.raw, pieceIds)
-            WorkspaceArtPrimitives.replaceLayer(frozen, model, id, pieces, sides, explicitParentOnly = true).copy(rigEdits = moved.copy(
-                authoringJournal = moved.authoringJournal + v2Record + overrides,
-                splitDrawableIds = moved.splitDrawableIds + pieces.map { it.id.raw }.zip(pieceIds)))
-        }, work = work)
+        val classification = document.layerOverrides[id] ?: model.analysis.layers.firstOrNull { it.source.id.raw == id }?.semantic?.let {
+            LayerClassificationOverride(it.type, it.tag, it.side, it.parameter, it.switchId)
+        } ?: LayerClassificationOverride()
+        val parts = partitioned.ids.mapIndexed { index, part ->
+            WorkspaceArtPrimitives.Part(part, pieces[index].id.raw,
+                ArtPrimitiveJournal.coverage(pieces[index].bounds, requireNotNull(partitioned.model.drawables.single { it.id == part }.mesh).uvs),
+                classification.copy(side = sides[index].takeUnless { it == Side.NONE } ?: classification.side))
+        }
+        return WorkspaceArtPrimitives.materialize({ generated ->
+            val simulations = SourcePartitionJournal.migrateSimulations(MeshGenerationBaseline.preserve(frozen.rigEdits, model.config),
+                authored, drawable.id.raw, pieceIds, geometry)
+            // Generated parts take the bones of the original; their parents are generated unless the original's was chosen.
+            val overlay = if (generated) SourcePartitionJournal.migrateBones(simulations, drawable.id.raw, pieceIds) else simulations
+            WorkspaceArtPrimitives.replaceLayer(frozen, model, id, pieces, sides, explicitParentOnly = generated).copy(rigEdits = overlay.copy(
+                splitDrawableIds = overlay.splitDrawableIds + pieces.map { it.id.raw }.zip(pieceIds)))
+        }, model, "split", drawable.id, id, parts, SourcePartitionJournal.splitParts(command),
+            mapOf(drawable.id to partitioned.ids), mapOf(drawable.id to partitioned.ids), JsonObject(emptyMap()), userRecord, work)
     }
 
     private fun install(document: WorkspaceDocument, model: RigPreviewModel, id: String,
@@ -241,8 +234,7 @@ internal class WorkspacePartitionCommands(private val runtime: WorkspaceRuntime<
             result.capture.document.source.layers.map { it.id.raw }.filterNot { it in oldIds }, summary,
             affectedObjectIds = WorkspaceDocumentCommands.createdObjectIds(before.model.rig.puppet, result.capture.model.rig.puppet),
             applied = result.applied, state = result.capture.state, projectId = result.capture.projectId)
-        job?.committed(JsonObject(mutation.sourceResult() +
-            WorkspaceArtPrimitives.recordVersion(before.document.rigEdits, result.capture.document.rigEdits)))
+        job?.committed(JsonObject(mutation.sourceResult()))
         return WorkspacePartitionCommit(result, mutation)
     }
 }

@@ -8,19 +8,12 @@ internal object WorkspaceJobResultSchemas {
     private val lifecycleFields = s.identity + mapOf("revision" to s.handle(), "applied" to s.boolean())
     private val lifecycle = s.obj(lifecycleFields)
     private val source = s.obj(lifecycleFields + ("layers" to s.array(s.handle())))
-    /** A split: a source result, with the `art_primitive` record version it wrote while version 2 is enabled. */
-    val split = s.obj(lifecycleFields + mapOf("layers" to s.array(s.handle()), "record_version" to s.integer(1, 2),
-        "record_version_reason" to s.handle()), lifecycleFields.keys + "layers")
+    /** A split: a source result. */
+    val split = s.obj(lifecycleFields + ("layers" to s.array(s.handle())), lifecycleFields.keys + "layers")
     /** A regeneration with this build's generators: whether anything changed and what the merge could not carry over. */
     val generationUpdate = s.obj(lifecycleFields + mapOf("updated" to s.boolean(), "issues" to s.array(s.obj(mapOf(
         "kind" to s.choices(*io.github.psd2live.core.RigRegeneration.IssueKind.entries.map { it.code }.toTypedArray()),
         "target" to s.string(), "detail" to s.string()), setOf("kind", "target")))))
-    /** An upgrade of version 1 split records: per selected record whether it became version 2, else why not. */
-    val splitUpgrade = s.obj(lifecycleFields + ("records" to s.array(s.obj(mapOf("index" to s.integer(0), "layers" to s.array(s.handle()),
-        "upgraded" to s.boolean(), "reason" to s.choices(WorkspaceArtPrimitives.REASON_DISABLED, WorkspaceArtPrimitives.REASON_NO_BASE,
-            WorkspaceArtPrimitives.REASON_ORIGINAL, WorkspaceArtPrimitives.REASON_PARTS, WorkspaceArtPrimitives.REASON_REFERENCE,
-            WorkspaceArtPrimitives.REASON_REPLAY, WorkspaceArtPrimitives.REASON_CAPTURE, WorkspaceArtPrimitives.REASON_ALREADY,
-            WorkspaceArtPrimitives.REASON_IMPORTED), "detail" to s.string()), setOf("index", "layers", "upgraded")))))
     private val batch = s.obj(lifecycleFields + mapOf("edit_count" to s.integer(1, 128), "changed" to s.array(s.handle()),
         "geometry_diagnostics" to WorkspaceGeometrySafetySchemas.report), lifecycleFields.keys + setOf("edit_count", "changed"))
     private val modelExport = s.obj(mapOf("state" to s.handle(), "revision" to s.handle(),
@@ -45,7 +38,6 @@ internal object WorkspaceJobResultSchemas {
         for (id in WorkspaceSimulationEdits.supported + WorkspacePhysicsEdits.supported + WorkspaceRasterCommands.supported + WorkspaceLayerEdits.supported + WorkspaceAssetLayerEdits.supported + WorkspaceImagePlacementEdits.supported + WorkspaceImageLayerCommands.OP + WorkspaceGenerationCommands.supported + WorkspaceWarpEdits.supported)
             put(id, requireNotNull(WorkspaceAuthoringResultSchemas.forOperation(id)))
         for (id in WorkspacePartitionCommands.supported) put(id, split)
-        for (id in WorkspaceSplitUpgradeEdits.supported) put(id, splitUpgrade)
         for (id in WorkspaceGenerationUpdate.supported) put(id, generationUpdate)
         for (id in WorkspaceAssetSessions.supported) put(id, requireNotNull(WorkspaceAssetResultSchemas.forOperation(id)))
         for (id in WorkspaceSamplingJobs.supported + WorkspaceObservationJobs.motion) {

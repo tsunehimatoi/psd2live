@@ -74,7 +74,7 @@ class ArtPrimitiveRecordV2Test {
 	private fun record(split: Split, skins: PrimitiveSkins, parkedModel: PuppetModel?): Pair<JsonObject, List<JsonObject>> {
 		val encoded = parts.mapIndexed { index, id ->
 			val parked = skins.drawables[id]
-			ArtPrimitiveJournal.encodePrimitiveV2(split.partitionedA.model, split.partitionedA.model.drawables.single { it.id == id },
+			LegacyArtPrimitiveV2.encode(split.partitionedA.model, split.partitionedA.model.drawables.single { it.id == id },
 				split.authored, split.generated, ghost, split.plan.pieces[index].sources, listOf("a", "b")[index], "src",
 				LayerBounds(0, 0, 40, 10), Bounds(0f, 0f, 40f, 10f), LayerClassificationOverride(), false,
 				parkedModel?.let { m -> parked?.let { m.copy(drawables = m.drawables + it) } }, parked, skins)

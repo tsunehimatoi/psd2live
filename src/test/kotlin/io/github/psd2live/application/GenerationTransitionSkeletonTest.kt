@@ -11,8 +11,8 @@ import org.umamo.runtime.model.PuppetModel
 import kotlin.test.*
 
 /**
- * A skeleton committed onto a journal the generators' new output merges under (see [RigRegenerationCheckpoint]) skins
- * the meshes the user left and never bends one the user moved with a shape made for another parent.
+ * A skeleton committed onto a journal the generators' new output merged under (see [RigRegenerationCheckpoint]) skins
+ * the meshes the user left.
  */
 class GenerationTransitionSkeletonTest {
 	private val builder = WorkspacePreviewBuilder()
@@ -67,45 +67,24 @@ class GenerationTransitionSkeletonTest {
 	}
 
 	/**
-	 * A setting that migrates the generation (`rig_generation_frames`) moves every mesh under a renamed copy of its
-	 * generated frame; the merge reads G and G' under those names, so the tail is not taken for a mesh the user re-parented.
+	 * A setting that changes the generation merges the new output onto the user's rig and checkpoints it; a skeleton
+	 * committed after it skins the tail the user left.
 	 */
-	@Test fun aSkeletonAfterAGenerationMigrationSkinsTheTail() = runBlocking<Unit> {
+	@Test fun aSkeletonAfterAGenerationChangeSkinsTheTail() = runBlocking<Unit> {
 		val runtime = runtime()
 		val start = runtime.capture()
-		val migrated = WorkspaceDocumentCommands(runtime).executeCandidate(start.projectId, start.state, "Features", MutationAuthor.USER, mutation = { document, _ ->
+		val changed = WorkspaceDocumentCommands(runtime).executeCandidate(start.projectId, start.state, "Features", MutationAuthor.USER, mutation = { document, _ ->
 			document.copy(settings = JsonObject(document.settings + ("featureDisplacementEnabled" to JsonPrimitive(true))))
 		}).capture
-		assertTrue(migrated.document.rigEdits.authoringJournal.any { it["op"]?.jsonPrimitive?.contentOrNull == RigGenerationFrames.OP },
-			"the setting migrates the generation")
-		val tail = tailOf(migrated)
-		assertTrue(migrated.model.rig.puppet.drawables.single { it.id.raw == tail }.parentDeformerId?.raw.orEmpty().startsWith("GenerationFrame"))
+		val journal = changed.document.rigEdits.authoringJournal
+		assertTrue(journal.isNotEmpty() && RigCheckpoint.isRecord(journal.last()), "the setting checkpoints the generation it changes")
+		assertTrue(journal.none { it["op"]?.jsonPrimitive?.contentOrNull in setOf(RigGenerationFrames.OP, RigGenerationJournal.OP) },
+			"no generation transition is recorded")
+		val tail = tailOf(changed)
 		val puppet = skeleton(runtime).model.rig.puppet
 		val skinned = puppet.drawables.single { it.id.raw == tail }
 		assertTrue(skinned.parentDeformerId?.raw.orEmpty().startsWith("DeformSkel"), "the tail hangs from its bones: ${skinned.parentDeformerId?.raw}")
 		assertTrue(skinned.geometryGrid?.axes.orEmpty().any { it.parameterId.raw == "ParamTail2" }, "the tail keys on its bones")
 		assertSwingsInPlace(puppet, tail)
-	}
-
-	/**
-	 * Merged without the frames' names, the migrated meshes read as ones the user re-parented and keep their frames; the
-	 * pose shapes the skin made under the bones are in another space and stay off them, so the swing cannot throw the
-	 * tail across the canvas.
-	 */
-	@Test fun aMeshKeptUnderTheUsersParentTakesNoShapeMadeUnderAnother() = runBlocking<Unit> {
-		val runtime = runtime()
-		val start = runtime.capture()
-		val migrated = WorkspaceDocumentCommands(runtime).executeCandidate(start.projectId, start.state, "Features", MutationAuthor.USER, mutation = { document, _ ->
-			document.copy(settings = JsonObject(document.settings + ("featureDisplacementEnabled" to JsonPrimitive(true))))
-		}).capture
-		val tail = tailOf(migrated)
-		val committed = skeleton(runtime)
-		val next = committed.model.baseRig.resolvedPuppet()
-		assertTrue(next.drawables.single { it.id.raw == tail }.blendShapes.any { it.parameterId == SkeletonPoses.tailSwing.id })
-		val merged = RigRegeneration.merge(migrated.model.baseRig.resolvedPuppet(), next, migrated.model.authored.rig.puppet).model
-		val kept = merged.drawables.single { it.id.raw == tail }
-		assertEquals(migrated.model.rig.puppet.drawables.single { it.id.raw == tail }.parentDeformerId, kept.parentDeformerId)
-		assertTrue(kept.blendShapes.none { it.parameterId == SkeletonPoses.tailSwing.id }, "the swing made under the bones is not applied here")
-		assertSwingsInPlace(merged, tail)
 	}
 }

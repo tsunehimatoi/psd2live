@@ -116,12 +116,12 @@ class RegenerationCheckpointTest {
 	 * checkpointed: the journal replays on the new generation, and the split parts keep their place once the legacy
 	 * sway warp they hang on is gone. (A runtime that rebuilds from the previous model checkpoints the split itself.)
 	 */
-	@Test fun aSettingSwitchedWithoutACheckpointReplaysThePartsInPlace() = runBlocking<Unit> {
+	@Test fun aSettingSwitchedAfterASplitKeepsThePartsInPlace() = runBlocking<Unit> {
 		val (split, parts) = split(WorkspaceRuntime({ builder.build(it) }))
-		assertTrue(split.document.rigEdits.authoringJournal.none(RigCheckpoint::isRecord))
+		assertTrue(RigCheckpoint.isRecord(split.document.rigEdits.authoringJournal.last()), "the split checkpoints its merge")
 		assertEquals(listOf("DeformHairBackPhysics", "DeformHairBackPhysics"),
 			split.model.rig.puppet.drawables.filter { it.id in parts }.map { it.parentDeformerId?.raw })
-		val simulated = builder.build(split.document.copy(settings = JsonObject(split.document.settings + ("hairSimulationBack" to JsonPrimitive(true)))))
+		val simulated = builder.build(split.document.copy(settings = JsonObject(split.document.settings + ("hairSimulationBack" to JsonPrimitive(true)))), split.model)
 		val puppet = simulated.rig.puppet
 		assertTrue(puppet.deformers.none { it.id.raw == "DeformHairBackPhysics" })
 		val evaluator = CpuDeformationEvaluator()

@@ -7,8 +7,8 @@ import kotlinx.serialization.json.*
 import kotlin.test.*
 
 /**
- * Split parts across regeneration checkpoints: a split past a checkpoint replays from the one its commit adds, and
- * the skeleton's skin and welds reach version 1 parts, which only their records create, through the merge.
+ * Split parts across regeneration checkpoints: a split merges onto the rig and checkpoints it, a split past a checkpoint
+ * hangs its parts on what its own generation adds, and the skeleton's skin and welds reach the parts through the merge.
  */
 class SplitPartsCheckpointTest {
 	private val builder = WorkspacePreviewBuilder()
@@ -59,29 +59,23 @@ class SplitPartsCheckpointTest {
 		assertTrue(legs.document.rigEdits.authoringJournal.any(RigCheckpoint::isRecord), "the first split checkpoints the generation it changes")
 		val shoes = split(runtime, "source_split_components", sides("shoes"))
 		val record = ArtPrimitiveJournal.commands(shoes.document.rigEdits).last()
-		assertNull(record[ArtPrimitiveV2.FALLBACK], "the split past the checkpoint replays from the one its commit adds")
 		assertEquals(ArtPrimitiveV2.VERSION_V2, record["v"]?.jsonPrimitive?.int)
+		assertTrue(RigCheckpoint.isRecord(shoes.document.rigEdits.authoringJournal.last()), "the split checkpoints the rig it merged")
 		val puppet = shoes.model.rig.puppet
 		for (id in ArtPrimitiveJournal.primitives(record).map { it.getValue("id").jsonPrimitive.content })
 			assertEquals(true, puppet.drawables.single { it.id.raw == id }.parentDeformerId?.raw?.startsWith("DeformPair_"), id)
 	}
 
-	@Test fun theSkeletonWeldsVersion1PartsThroughTheCheckpointItsSwitchAdds() = runBlocking<Unit> {
+	@Test fun theSkeletonSkinsAndWeldsSplitPartsThroughTheCheckpointItsSwitchAdds() = runBlocking<Unit> {
 		val runtime = installed(document(figure + layer("sleeve", 4, intArrayOf(258, 120, 400, 148)),
 			classified + ("sleeve" to LayerClassificationOverride(SemanticTag.HANDWEAR, Side.LEFT))))
-		// The sleeve cut at the elbow, as a version 1 record.
-		val was = System.getProperty(ArtPrimitiveV2.FLAG_PROPERTY)
-		System.setProperty(ArtPrimitiveV2.FLAG_PROPERTY, "false")
-		val parted = try {
-			split(runtime, "source_split_polygon", buildJsonObject {
-				put("layer_id", "sleeve"); putJsonArray("names") { add("Upper"); add("Fore") }; putJsonArray("piece_ids") { add("upper"); add("fore") }
-				putJsonArray("polygon") { listOf(250 to 100, 330 to 100, 330 to 170, 250 to 170).forEach { (x, y) -> add(buildJsonArray { add(x); add(y) }) } }
-			})
-		} finally {
-			if (was == null) System.clearProperty(ArtPrimitiveV2.FLAG_PROPERTY) else System.setProperty(ArtPrimitiveV2.FLAG_PROPERTY, was)
-		}
+		// The sleeve cut at the elbow: its parts are generated in its place.
+		val parted = split(runtime, "source_split_polygon", buildJsonObject {
+			put("layer_id", "sleeve"); putJsonArray("names") { add("Upper"); add("Fore") }; putJsonArray("piece_ids") { add("upper"); add("fore") }
+			putJsonArray("polygon") { listOf(250 to 100, 330 to 100, 330 to 170, 250 to 170).forEach { (x, y) -> add(buildJsonArray { add(x); add(y) }) } }
+		})
 		val record = ArtPrimitiveJournal.commands(parted.document.rigEdits).single()
-		assertEquals(ArtPrimitiveJournal.VERSION, record["v"]?.jsonPrimitive?.int)
+		assertEquals(ArtPrimitiveV2.VERSION_V2, record["v"]?.jsonPrimitive?.int)
 		val (upper, fore) = ArtPrimitiveJournal.primitives(record).map { it.getValue("id").jsonPrimitive.content }
 		val spec = SkeletonSpec(bones = listOf(
 			SkeletonBone("armL", "Upper arm L", null, BoneRole.UPPER_ARM, Side.LEFT, 262f, 134f, 330f, 134f, listOf(upper)),

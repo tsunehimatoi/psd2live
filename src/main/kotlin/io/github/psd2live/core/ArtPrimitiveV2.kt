@@ -23,23 +23,17 @@ import org.umamo.runtime.model.ParameterId
  * - base generation builds from [resolve]: superseded layers and drawables as stubs in their slots, every part on its
  *   recorded mesh, and hands the parts, their paths, generated axes and the stubs over in [PrimitiveSkins]
  *   ([BuiltRig.resolvedPuppet] removes the stubs and splices the parts in);
- * - the record encoder and replay write v2 records at split time (or version 1 when v2 is unsafe, reporting
- *   [RECORD_VERSION]) and place each part from [PrimitiveSkins] with its authored layer. v2 replay requires every
- *   primitive of the record to be present in the skins; a missing one is an error;
- * - replay and migration tolerate entries before a v2 record that address only its stubs, and build migration
- *   baselines from [BuiltRig.resolvedPuppet].
+ * - a split of a generated original writes a version 2 record that only declares the parts (an empty [AUTHORED]
+ *   layer) and a `rig_checkpoint` right after it: the split is a regeneration merged onto the user's rig
+ *   ([RigRegenerationCheckpoint.split]), so the record itself is never replayed;
+ * - records with an authored layer come from earlier builds, which replayed them: they still replay where no checkpoint
+ *   follows them ([ArtPrimitiveJournal.replay] places each part from [PrimitiveSkins] with its authored layer; a missing
+ *   part is an error), and replay tolerates entries before them that address only their stubs.
  *
- * Reading never depends on [enabled]: the flag only decides whether new splits write version 2. Documents without
- * version 2 records resolve to [ResolvedLayers.Empty] and build exactly as before.
+ * Documents without version 2 records resolve to [ResolvedLayers.Empty] and build exactly as before.
  */
 object ArtPrimitiveV2 {
 	const val VERSION_V2 = 2
-
-	/** System property that decides whether new splits write version 2 records. On by default; `false` turns it off. */
-	const val FLAG_PROPERTY = "psd2live.artPrimitiveV2"
-
-	/** Whether new splits write version 2 records ([FLAG_PROPERTY]); read on every call so tests can toggle it. */
-	val enabled: Boolean get() = System.getProperty(FLAG_PROPERTY)?.toBooleanStrictOrNull() ?: true
 
 	// Record level.
 	const val OP = ArtPrimitiveJournal.OP
@@ -58,9 +52,6 @@ object ArtPrimitiveV2 {
 	const val GLUES = "glues"
 	const val GLUES_REPLACED = "replaced"
 	const val GLUES_APPENDED = "appended"
-
-	/** Result field of split commands: the record version they wrote (1 when version 2 was not safe). */
-	const val RECORD_VERSION = "record_version"
 
 	// Primitive, read by the base build.
 	const val ID = "id"
@@ -118,13 +109,6 @@ object ArtPrimitiveV2 {
 	 * `channels` encoding); replay adds them cell by cell to the generated channels.
 	 */
 	const val CHANNELS_RESIDUAL = "channels_residual"
-
-	/** On a version 1 record written while version 2 was enabled: `{reason, detail}`, why version 2 was not safe. */
-	const val FALLBACK = "v2_fallback"
-	const val FALLBACK_REASON = "reason"
-	const val FALLBACK_DETAIL = "detail"
-	/** Result field of split commands beside [RECORD_VERSION]: the fallback reason code of a version 1 record. */
-	const val RECORD_VERSION_REASON = "record_version_reason"
 
 	/** Whether [command] is an `art_primitive` record of version 2. */
 	fun isV2(command: JsonObject): Boolean =

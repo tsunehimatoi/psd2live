@@ -4,6 +4,7 @@ import io.github.psd2live.core.sim.*
 import kotlinx.serialization.json.*
 import org.umamo.edit.MeshTopologyEdit
 import org.umamo.edit.VertexSource
+import org.umamo.edit.withDrawablesDeleted
 import org.umamo.edit.withMeshTopologyEdit
 import org.umamo.runtime.model.*
 
@@ -144,6 +145,39 @@ internal object SourcePartitionJournal {
             }) }, parts = current.parts.map { it.copy(children = children(it.children)) }, rootChildren = children(current.rootChildren))
             .withDerivedRenderRoot(), ids, glues.filterIndexed { index, _ -> model.glues[index].let { it.meshA == source.id || it.meshB == source.id } },
             followers)
+    }
+
+    /**
+     * [command] as a split of whichever rig holds its source ([RigRegenerationCheckpoint.SplitParts]): each part takes
+     * that rig's source vertices through its vertex sources, at rest and in every keyform, and its texture coordinates
+     * through the rig's atlas when the atlas has its layer (canvas units otherwise); the source goes. Null when the rig
+     * has no such source or other vertices than the command cut. The Glues that make cut vertices follow are the user's.
+     */
+    fun splitParts(command: JsonObject): RigRegenerationCheckpoint.SplitParts = RigRegenerationCheckpoint.SplitParts { model, user ->
+        val sourceId = DrawableId(command.getValue("source").jsonPrimitive.content)
+        val source = model.drawables.firstOrNull { it.id == sourceId } ?: return@SplitParts null
+        val mesh = source.mesh ?: return@SplitParts null
+        if (command.getValue("owners").jsonArray.size != mesh.vertexCount) return@SplitParts null
+        val records = pieces(command)
+        val partitioned = try {
+            partition(model, command) { clone, canvas ->
+                val tile = model.atlas.tiles.firstOrNull { it.id == clone.atlasTileId }
+                if (tile?.placement == null) clone to canvas else {
+                    val placed = clone.copy(texturePage = tile.placement!!.pageIndex)
+                    placed to RasterMeshJournal.TextureCoordinates(model, placed).toUvs(canvas)
+                }
+            }
+        } catch (failure: IllegalArgumentException) {
+            return@SplitParts null
+        }
+        val rests = partitioned.ids.withIndex().associate { (index, id) -> id to interpolate(mesh.positions, sources(records[index])) }
+        val parts = partitioned.model.copy(drawables = partitioned.model.drawables.map { drawable ->
+            val rest = rests[drawable.id] ?: return@map drawable
+            val part = requireNotNull(drawable.mesh)
+            drawable.copy(mesh = DrawableMesh(rest, part.uvs, part.indices))
+        })
+        val followers = partitioned.followers.toHashSet()
+        (if (user) parts else parts.copy(glues = parts.glues.filterNot { it in followers })).withDrawablesDeleted(setOf(sourceId))
     }
 
     /** New cut vertices follow the already welded triangle, in exactly its rendered affine space.

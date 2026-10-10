@@ -497,144 +497,6 @@ internal object ArtPrimitiveJournal {
 		return vertexMap(canvas, triangles, mesh.uvs, mesh.indices)
 	}
 
-	/** One part of a version 2 record and the `generated_override` entries for its edited generator cells. */
-	class EncodedPart(val primitive: JsonObject, val overrides: List<JsonObject>)
-
-	/**
-	 * One version 2 primitive. [authoredPart] is the part in [authoredModel] (the superseded drawable's authored
-	 * state carried onto it by the partition, texture coordinates in canvas units). [ghost] is the superseded
-	 * drawable in [ghostAuthored] (the authored rig the partition ran on) and [ghostGenerated] (the base rig);
-	 * [sources] derive the part's vertices from the ghost's. [parked] is the part the pinned base generated, in
-	 * [parkedModel] (that base with the part spliced in); null for the first pass, which records no residual. The
-	 * record's base fields never depend on [parked], so the base the first pass builds stays valid.
-	 */
-	fun encodePrimitiveV2(authoredModel: PuppetModel, authoredPart: Drawable, ghostAuthored: PuppetModel, ghostGenerated: PuppetModel,
-	                      ghost: DrawableId, sources: List<VertexSource>,
-	                      layerId: String, textureSourceId: String, sourceBounds: LayerBounds, neutralBounds: Bounds,
-	                      classification: LayerClassificationOverride, fixedTopology: Boolean,
-	                      parkedModel: PuppetModel? = null, parked: Drawable? = null, skins: PrimitiveSkins = PrimitiveSkins.None,
-	                      checkpoint: () -> Unit = {}): EncodedPart {
-		val mesh = requireNotNull(authoredPart.mesh) { "An art primitive needs a mesh" }
-		RasterMeshJournal.validateMesh(mesh)
-		require(sources.size == mesh.vertexCount) { "Art primitive vertex sources do not match its mesh" }
-		val authoredGhost = ghostAuthored.drawables.single { it.id == ghost }
-		val generatedPart = ghostGenerated.drawables.singleOrNull { it.id == ghost }
-			?: throw IllegalArgumentException("The split original is not generated: ${ghost.raw}")
-		val generatedModel = ghostGenerated
-		val ghostVertices = requireNotNull(authoredGhost.mesh).vertexCount
-		require(requireNotNull(generatedPart.mesh).vertexCount == ghostVertices &&
-			RasterMeshJournal.fingerprint(generatedPart.mesh!!) == RasterMeshJournal.fingerprint(authoredGhost.mesh!!)) {
-			"The split original's mesh was edited by hand"
-		}
-		// Rest positions through the parent at the default pose, without the part's own keyforms (those are the residual's).
-		// Under its generated parent the part is placed through the generated deformers: the base normalises these
-		// positions into that parent, and the journal's own edits of the parent chain (a moved rest lattice) replay on
-		// top, so taking them from the authored rig would apply those edits twice. A parent a journal edit chose is
-		// held in canvas units and placed into the authored parent on replay, so it maps through the authored rig.
-		val generatedParent = authoredPart.parentDeformerId == generatedPart.parentDeformerId &&
-			(authoredPart.parentDeformerId == null || ghostGenerated.deformers.any { it.id == authoredPart.parentDeformerId })
-		val placement = if (generatedParent) ghostGenerated.copy(drawables = ghostGenerated.drawables.filterNot { it.id == authoredPart.id } +
-			authoredPart.copy(geometryGrid = null, blendShapes = emptyList())) else authoredModel
-		val world = requireNotNull(org.umamo.render.eval.drawableSpaceMapping(placement, emptyMap(), authoredPart.id)) {
-			"Art primitive parent cannot be evaluated: ${authoredPart.id.raw}"
-		}.localToWorld(mesh.positions)
-		val canvasPositions = FloatArray(world.size) { if (it % 2 == 0) world[it] else -world[it] }
-		fun owner(model: PuppetModel, drawable: Drawable) = model.parts.singleOrNull { OrgChild.Drawable(drawable.id) in it.children }?.id
-		val a = authoredPart; val g = generatedPart
-		val generatedPaths = generatedModel.deformPaths.filter { it.drawableId == g.id }.mapTo(HashSet()) { it.id }
-		val generatedGroups = generatedModel.vertexGroups.filter { it.drawableId == g.id }
-		val generatedBlends = g.blendShapes.mapTo(HashSet()) { it.parameterId }
-		val userBlends = a.blendShapes.filter { it.parameterId !in generatedBlends }
-		// The partition names a carried path `<part>/<path>` (a depth front `<glue>/<path>`); generated ones stay with the base.
-		val userPaths = authoredModel.deformPaths.filter { path -> path.drawableId == a.id &&
-			path.id !in generatedPaths && generatedPaths.none { path.id.endsWith("/$it") } }
-		val userGroups = authoredModel.vertexGroups.filter { group -> group.drawableId == a.id &&
-			generatedGroups.none { it.name == group.name && it.kind == group.kind &&
-				PrimitiveResidual.transferScalars(it.weights, sources).let { weights -> weights.indices.all { i -> kotlin.math.abs(weights[i] - group.weights[i]) <= 1e-6f } } } }
-		val parameters = authoredModel.parameters.associateBy { it.id }
-		val delta = PrimitiveResidual.delta(ghostAuthored, authoredGhost, ghostGenerated, generatedPart, sources, checkpoint)
-		// Per-vertex user data pins the recorded topology: the skeleton must not insert joint rows under it.
-		val pinned = fixedTopology || delta != null || userBlends.isNotEmpty() || userPaths.isNotEmpty() || userGroups.isNotEmpty()
-		val residual = if (parked == null || parkedModel == null) null else {
-			val parkedMesh = requireNotNull(parked.mesh)
-			val map = partMap(parked, mesh.uvs, mesh.indices)
-			val seed = if (map == null) parkedMesh.positions else FloatArray(mesh.positions.size) { 0.5f }
-			val space = PrimitiveResidual.ParentSpace(authoredModel, a, parkedModel, parked, seed)
-			// A part the base generates no keyforms for (a zero grid: a split lip ribbon, a part under a parent a journal
-			// edit made) has nothing to add back the original's generated motion: its residual is the whole authored form.
-			val unkeyed = parked.geometryGrid?.axes.isNullOrEmpty() && generatedPart.geometryGrid?.axes?.isNotEmpty() == true
-			val residualDelta = if (!unkeyed) delta else PrimitiveResidual.delta(ghostAuthored, authoredGhost, ghostGenerated,
-				generatedPart.copy(geometryGrid = null), sources, checkpoint)
-			PrimitiveResidual.geometry(parameters, residualDelta, mesh.positions.size, parked, space::convert,
-				{ values -> map?.let { PrimitiveResidual.transfer(values, it.sources) } ?: values }, { skins.owner(parked.id, it) }, checkpoint)
-		}
-		// Channels belong to the drawable, not its vertices: the part's own (a depth slice drops its draw order grid) over the original's.
-		val channels = if (parked == null) ChannelGrids.Empty else PrimitiveResidual.channels(authoredModel, a, g, checkpoint)
-		val used = (residual?.residual?.axes.orEmpty().map { it.parameterId } + channels.gridsByChannel.values.flatMap { grid -> grid.axes.map { it.parameterId } } +
-			userBlends.flatMap { binding -> listOf(binding.parameterId) + binding.limits.map { it.parameterId } }).distinct()
-		val generatedParameters = generatedModel.parameters.mapTo(HashSet()) { it.id }
-		val authored = buildJsonObject {
-			if (owner(authoredModel, a) != owner(generatedModel, g)) put(ArtPrimitiveV2.PART, owner(authoredModel, a)?.raw?.let(::JsonPrimitive) ?: JsonNull)
-			if (a.blendMode != g.blendMode) put(ArtPrimitiveV2.BLEND, a.blendMode.name)
-			if (a.opacity != g.opacity) put(ArtPrimitiveV2.OPACITY, a.opacity)
-			put(ArtPrimitiveV2.ORDER, a.drawOrder)
-			if (a.isVisible != g.isVisible) put(ArtPrimitiveV2.VISIBLE, a.isVisible)
-			if (a.isSelectable != g.isSelectable) put(ArtPrimitiveV2.SELECTABLE, a.isSelectable)
-			if (a.multiplyColor != g.multiplyColor) put(ArtPrimitiveV2.MULTIPLY, color(a.multiplyColor))
-			if (a.screenColor != g.screenColor) put(ArtPrimitiveV2.SCREEN, color(a.screenColor))
-			if (a.invertMask != g.invertMask) put(ArtPrimitiveV2.INVERT_MASK, a.invertMask)
-			if (a.alphaBlendMode != g.alphaBlendMode) put(ArtPrimitiveV2.ALPHA_BLEND, a.alphaBlendMode.name)
-			if (a.culling != g.culling) put(ArtPrimitiveV2.CULLING, a.culling)
-			if (a.userData != g.userData) put(ArtPrimitiveV2.USER_DATA, a.userData)
-			if (a.maskedBy != g.maskedBy) put(ArtPrimitiveV2.MASKS, JsonArray(a.maskedBy.map { JsonPrimitive(it.raw) }))
-			put(ArtPrimitiveV2.PARAMETERS, JsonArray(used.filter { it !in generatedParameters }.map { axis ->
-				val parameter = authoredModel.parameters.single { it.id == axis }
-				buildJsonObject {
-					put("id", axis.raw); put("name", parameter.name); put("min", parameter.min)
-					put("max", parameter.max); put("default", parameter.default); put("kind", parameter.kind.name); put("repeat", parameter.repeat)
-				}
-			}))
-			put(ArtPrimitiveV2.GEOMETRY_RESIDUAL, residual?.residual?.let { grid -> RasterMeshCreation.grid(grid) { floats(it.positionDeltas) } } ?: JsonNull)
-			put(ArtPrimitiveV2.CHANNELS_RESIDUAL, GeneratedRigJournalCodec.channels(channels))
-			put(ArtPrimitiveV2.BLENDS, JsonArray(userBlends.map(::encodeBlend)))
-			put(ArtPrimitiveV2.PATHS, JsonArray(userPaths.map(DeformPathJournal::encode)))
-			put(ArtPrimitiveV2.VERTEX_GROUPS, JsonArray(userGroups.map { group -> buildJsonObject {
-				put("name", group.name); put("kind", group.kind.jsonName); put("weights", floats(group.weights))
-			} }))
-		}
-		val primitive = buildJsonObject {
-			put(ArtPrimitiveV2.ID, a.id.raw); put(ArtPrimitiveV2.LAYER_ID, layerId); put(ArtPrimitiveV2.SOURCE_ID, textureSourceId)
-			put(ArtPrimitiveV2.SOURCE_BOUNDS, floats(floatArrayOf(sourceBounds.left.toFloat(), sourceBounds.top.toFloat(),
-				(sourceBounds.left + sourceBounds.width).toFloat(), (sourceBounds.top + sourceBounds.height).toFloat())))
-			put(ArtPrimitiveV2.NEUTRAL_BOUNDS, floats(floatArrayOf(neutralBounds.left, neutralBounds.top, neutralBounds.right, neutralBounds.bottom)))
-			put(ArtPrimitiveV2.NAME, a.name)
-			put(ArtPrimitiveV2.CLASSIFICATION, ArtPrimitiveV2.encodeClassification(classification))
-			// Generated unless a journal edit had reparented the original.
-			put(ArtPrimitiveV2.PARENT, a.parentDeformerId?.takeIf { it != g.parentDeformerId }?.raw?.let(::JsonPrimitive) ?: JsonNull)
-			putJsonObject(ArtPrimitiveV2.MESH) {
-				put(ArtPrimitiveV2.CANVAS_POSITIONS, floats(canvasPositions))
-				put(ArtPrimitiveV2.TRIANGLES, JsonArray(mesh.indices.map(::JsonPrimitive)))
-				put(ArtPrimitiveV2.CANVAS_UVS, floats(mesh.uvs))
-			}
-			put(ArtPrimitiveV2.FIXED_TOPOLOGY, pinned)
-			put(ArtPrimitiveV2.FROZEN_AXES, JsonArray(emptyList()))
-			put(ArtPrimitiveV2.AUTHORED, authored)
-		}
-		return EncodedPart(primitive, residual?.overrides.orEmpty())
-	}
-
-	private fun encodeBlend(binding: BlendShapeBinding<MeshForm>) = buildJsonObject {
-		put("parameter", binding.parameterId.raw); put("keys", floats(binding.keys)); put("neutral", binding.neutralIndex)
-		put("forms", JsonArray(binding.forms.map { form -> form?.let { buildJsonObject {
-			put("deltas", floats(it.positionDeltas)); put("order", it.drawOrder); put("opacity", it.opacity)
-			put("multiply", color(it.multiplyColor)); put("screen", color(it.screenColor))
-		} } ?: JsonNull }))
-		put("limits", JsonArray(binding.limits.map { limit -> buildJsonObject {
-			put("parameter", limit.parameterId.raw)
-			put("points", JsonArray(limit.points.map { point -> buildJsonArray { add(point.value); add(point.weight) } }))
-		} }))
-	}
-
 	private fun decodeBlends(blends: JsonArray, model: PuppetModel, size: Int, carry: (FloatArray) -> FloatArray): List<BlendShapeBinding<MeshForm>> = blends.map { element ->
 		val b = element.jsonObject
 		val parameter = ParameterId(b.text("parameter"))
@@ -673,7 +535,8 @@ internal object ArtPrimitiveJournal {
 	 * welds once both their meshes are placed, and the record's authored layer applied on top: material fields,
 	 * masks, slot, residual geometry and channels, user blends, paths, vertex groups and Glues. When a part's
 	 * generated mesh is not the recorded one (joint rows the skeleton inserted, a later regeneration), everything
-	 * per vertex is carried over by canvas texture coordinates ([vertexMap]).
+	 * per vertex is carried over by canvas texture coordinates ([vertexMap]). A declaration - the record of a split that
+	 * checkpointed its merge, with an empty authored layer - places the parts as generated.
 	 */
 	private fun replayV2(input: PuppetModel, command: JsonObject, skins: PrimitiveSkins): PuppetModel {
 		val superseded = command.getValue("supersedes").jsonArray.mapTo(LinkedHashSet()) { DrawableId(it.jsonPrimitive.content) }
@@ -692,7 +555,7 @@ internal object ArtPrimitiveJournal {
 		for (id in ids) require(skins.holds(id)) { "Art primitive part was not generated: ${id.raw}" }
 		val authoredLayers = records.map { it.getValue(ArtPrimitiveV2.AUTHORED).jsonObject }
 		var model = input
-		for (authored in authoredLayers) for (element in authored.getValue(ArtPrimitiveV2.PARAMETERS).jsonArray) {
+		for (authored in authoredLayers) for (element in authored[ArtPrimitiveV2.PARAMETERS]?.jsonArray.orEmpty()) {
 			val p = element.jsonObject
 			if (model.parameters.any { it.id.raw == p.text("id") }) continue
 			model = RigStructureEdits.replay(model, listOf(creationOf(p)))
@@ -745,8 +608,8 @@ internal object ArtPrimitiveJournal {
 			}
 			val geometry = PrimitiveResidual.compose(parameters, part.geometryGrid, PrimitiveResidual.carry(residual, ::carry), parkedMesh.positions.size)
 			val channels = PrimitiveResidual.composeChannels(parameters, part,
-				GeneratedRigJournalCodec.channels(authored.getValue(ArtPrimitiveV2.CHANNELS_RESIDUAL).jsonObject, model))
-			val blends = decodeBlends(authored.getValue(ArtPrimitiveV2.BLENDS).jsonArray, model, recordedSize, ::carry)
+				authored[ArtPrimitiveV2.CHANNELS_RESIDUAL]?.jsonObject?.let { GeneratedRigJournalCodec.channels(it, model) } ?: ChannelGrids.Empty)
+			val blends = decodeBlends(authored[ArtPrimitiveV2.BLENDS]?.jsonArray ?: JsonArray(emptyList()), model, recordedSize, ::carry)
 			val userBlends = blends.mapTo(HashSet()) { it.parameterId }
 			part.copy(geometryGrid = geometry, channelGrids = channels,
 				blendShapes = part.blendShapes.filterNot { it.parameterId in userBlends } + blends,
@@ -833,7 +696,7 @@ internal object ArtPrimitiveJournal {
 			val authored = authoredLayers[index]
 			val map = maps[index]
 			val parked = byId.getValue(id)
-			for (path in authored.getValue(ArtPrimitiveV2.PATHS).jsonArray) {
+			for (path in authored[ArtPrimitiveV2.PATHS]?.jsonArray.orEmpty()) {
 				val encoded = path.jsonObject
 				require(encoded["target"]?.jsonPrimitive?.contentOrNull == "mesh:${id.raw}") { "Art primitive path targets another mesh" }
 				result = if (map == null) DeformPathJournal.apply(result, encoded) else {
@@ -848,7 +711,7 @@ internal object ArtPrimitiveJournal {
 					result.copy(deformPaths = result.deformPaths.filterNot { it.id == rebound.id } + rebound)
 				}
 			}
-			val groups = authored.getValue(ArtPrimitiveV2.VERTEX_GROUPS).jsonArray.map { element ->
+			val groups = authored[ArtPrimitiveV2.VERTEX_GROUPS]?.jsonArray.orEmpty().map { element ->
 				val group = element.jsonObject
 				val weights = group.floats("weights")
 				require(weights.size == recordedMeshes[index].vertexCount) { "Art primitive vertex group does not match its mesh" }

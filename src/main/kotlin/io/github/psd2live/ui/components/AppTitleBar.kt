@@ -154,8 +154,6 @@ fun AppTitleBar(
 	onShowTextureUpscale: () -> Unit,
 	onStartScreen: () -> Unit = {},
 	/** Tools > Upgrade split records: enabled while the document holds version 1 split records. */
-	canUpgradeSplitRecords: Boolean = false,
-	onUpgradeSplitRecords: () -> Unit = {},
 	canUpdateGeneration: Boolean = false,
 	onUpdateGeneration: () -> Unit = {},
 	onShowHistory: () -> Unit,
@@ -659,16 +657,6 @@ fun AppTitleBar(
 							activeMenu = null
 							activeSubmenu = null
 							onStartScreen()
-						},
-					)
-					AppMenuItem(
-						text = tr("menu.tools.upgradeSplitRecords"),
-						enabled = hasInput && !isBusy && canUpgradeSplitRecords,
-						onHover = { activeSubmenu = null },
-						onClick = {
-							activeMenu = null
-							activeSubmenu = null
-							onUpgradeSplitRecords()
 						},
 					)
 					AppMenuItem(

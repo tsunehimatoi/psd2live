@@ -14,7 +14,7 @@ import kotlin.test.*
 /**
  * Rule A of version 2 art primitives: the base generates from the resolved layer set - parts on their pinned meshes,
  * superseded layers only as passengers in their slots - and parks the parts for their records. The records here are
- * written by hand rather than by [ArtPrimitiveJournal.encodePrimitiveV2], which encodes a part from an authored
+ * written by hand rather than by [LegacyArtPrimitiveV2.encode], which encodes a part from an authored
  * partition of the superseded drawable; they take the flat mesh form, `positions` holding rest canvas positions.
  */
 class PrimitiveResolutionTest {

@@ -136,18 +136,4 @@ class ArtPrimitiveV2Test {
 			primitive { with("id", JsonPrimitive("LegR_part")).with("canvas_uvs", Json.parseToJsonElement("[10, 20, 30, 20, 10, 60, 30, 61]")) }))))
 		assertNotEquals(resolved.contentKey, moved.contentKey)
 	}
-
-	@Test fun flagIsOnByDefaultAndTurnsOff() {
-		val previous = System.getProperty(ArtPrimitiveV2.FLAG_PROPERTY)
-		try {
-			System.clearProperty(ArtPrimitiveV2.FLAG_PROPERTY)
-			assertTrue(ArtPrimitiveV2.enabled)
-			System.setProperty(ArtPrimitiveV2.FLAG_PROPERTY, "false")
-			assertFalse(ArtPrimitiveV2.enabled)
-			System.setProperty(ArtPrimitiveV2.FLAG_PROPERTY, "true")
-			assertTrue(ArtPrimitiveV2.enabled)
-		} finally {
-			if (previous == null) System.clearProperty(ArtPrimitiveV2.FLAG_PROPERTY) else System.setProperty(ArtPrimitiveV2.FLAG_PROPERTY, previous)
-		}
-	}
 }

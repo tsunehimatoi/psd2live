@@ -588,8 +588,6 @@ fun FrameWindowScope.PSD2LiveApp(
 						onShowAgentConnection = { showAgentDialog = true },
 						onShowTextureUpscale = { viewModel.openTextureUpscaleDialog() },
 						onStartScreen = { viewModel.requestStartScreen() },
-						canUpgradeSplitRecords = viewModel.canUpgradeSplitRecords(state),
-						onUpgradeSplitRecords = { viewModel.upgradeSplitRecords() },
 						canUpdateGeneration = viewModel.canUpdateGeneration(state),
 						onUpdateGeneration = { viewModel.updateGeneration() },
 						onShowHistory = { viewModel.showHistoryModule() },

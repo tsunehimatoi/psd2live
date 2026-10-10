@@ -1484,40 +1484,6 @@ class PSD2LiveViewModel : AutoCloseable {
 
     internal fun dismissDepthSplit() { pendingDepthSplit = null }
 
-    /** Tools > Upgrade split records is offered while version 2 records are enabled and a version 1 split record remains. */
-    internal fun canUpgradeSplitRecords(state: PSD2LiveState): Boolean =
-        io.github.psd2live.core.ArtPrimitiveV2.enabled && io.github.psd2live.application.WorkspaceSplitUpgradeEdits.upgradable(state.rigEdits)
-
-    /** Rewrites every version 1 split record as version 2 through the shared command, as one undoable user edit. */
-    internal fun upgradeSplitRecords() {
-        val current = _state.value
-        if (current.isBusy || current.workspaceEditBusy || !canUpgradeSplitRecords(current)) return
-        val port: io.github.psd2live.application.WorkspaceSplitUpgradePort = workspaceBackend ?: return
-        val expected = workspaceBackend?.snapshot() ?: return
-        updateState { it.copy(canvasEditBusy = true, statusText = tr("status.splitUpgrade.working")) }
-        scope.launch {
-            try {
-                val result = withContext(Dispatchers.Default + io.github.psd2live.application.WorkspaceExecution(
-                    expected.projectId, expected.state, MutationAuthor.USER)) {
-                    port.upgradeSplitRecords(requireNotNull(expected.state), null, MutationAuthor.USER)
-                }
-                val records = result.getValue("records").jsonArray.map { it.jsonObject }
-                val upgraded = records.count { it.getValue("upgraded").jsonPrimitive.boolean }
-                val kept = records.filterNot { it.getValue("upgraded").jsonPrimitive.boolean }.joinToString("; ") { record ->
-                    val layers = record.getValue("layers").jsonArray.joinToString { it.jsonPrimitive.content }
-                    "$layers: ${record["reason"]?.jsonPrimitive?.content}"
-                }
-                updateState { it.copy(statusText = if (kept.isEmpty()) tr("status.splitUpgrade.done", upgraded)
-                    else tr("status.splitUpgrade.partial", upgraded, records.size, kept)) }
-            } catch (failure: Exception) {
-                if (failure is kotlinx.coroutines.CancellationException) throw failure
-                setErrorMessage(failure.message ?: tr("status.splitUpgrade.failed"))
-            } finally {
-                updateState { it.copy(canvasEditBusy = false) }
-            }
-        }
-    }
-
     /** Tools > Update Generated Rig is offered once the journal holds a checkpoint storing the generation it came from. */
     internal fun canUpdateGeneration(state: PSD2LiveState): Boolean =
         io.github.psd2live.application.WorkspaceGenerationUpdate.updatable(state.rigEdits)

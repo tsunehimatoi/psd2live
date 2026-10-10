@@ -59,7 +59,6 @@ internal object WorkspaceAuthoringResultSchemas {
         "path_delete" -> s.obj(s.identity + ("deleted" to s.handle()))
         "path_deform" -> s.obj(s.identity + mapOf("target" to s.handle(), "key" to key, "changed" to changed, "geometry_diagnostics" to WorkspaceGeometrySafetySchemas.report), s.identity.keys + setOf("target", "key"))
         "source_split_polygon", "source_split_components", "source_split_depth" -> WorkspaceJobResultSchemas.split
-        in WorkspaceSplitUpgradeEdits.supported -> WorkspaceJobResultSchemas.splitUpgrade
         in WorkspaceGenerationUpdate.supported -> WorkspaceJobResultSchemas.generationUpdate
         "source_get_components" -> s.obj(mapOf("project_id" to s.handle(), "state" to s.handle(), "revision" to s.handle(),
             "layer_id" to s.handle(), "can_split" to s.boolean(), "count" to s.integer(0), "components" to s.array(s.obj(mapOf(

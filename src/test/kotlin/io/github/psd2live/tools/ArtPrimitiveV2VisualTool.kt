@@ -8,6 +8,7 @@ import io.github.psd2live.application.WorkspaceSourceImporter
 import io.github.psd2live.core.ArtPrimitiveJournal
 import io.github.psd2live.core.ArtPrimitiveV2
 import io.github.psd2live.core.Bounds
+import io.github.psd2live.core.RigCheckpoint
 import io.github.psd2live.core.RigPreviewModel
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
@@ -18,10 +19,10 @@ import kotlin.math.abs
 import kotlin.test.Test
 
 /**
- * Before/after images of materialized splits on tml written as version 1 and version 2 `art_primitive` records:
- * the legs split per side, the left eyelash split by a polygon (open and closed) and the mouth split by a polygon
- * (closed and open). Each sheet shows the unsplit rig, the version 1 and version 2 splits at the same poses and the
- * difference of the two splits (x4), for checking seams, misplaced parts and missing pixels. Writes
+ * Before/after images of materialized splits on tml: the legs split per side, the left eyelash split by a polygon
+ * (open and closed) and the mouth split by a polygon (closed and open). Each sheet shows the unsplit rig, the split -
+ * a version 2 record and the checkpoint its regeneration merge writes - at the same poses and their difference (x4),
+ * for checking seams, misplaced parts and missing pixels. Writes
  * build/tools/art-primitive-v2/<case>.png. PSD2LIVE_TOOLS=1 ./gradlew test --tests '*ArtPrimitiveV2VisualTool*'
  */
 class ArtPrimitiveV2VisualTool {
@@ -48,33 +49,25 @@ class ArtPrimitiveV2VisualTool {
 
 	@Test fun render() = runBlocking<Unit> {
 		requireTools()
-		val previous = System.getProperty(ArtPrimitiveV2.FLAG_PROPERTY)
 		val builder = WorkspacePreviewBuilder()
 		val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) })
 		WorkspaceSourceImporter(runtime).importPsd(Path.of("examples/tml/psd-input/tml.psd").toAbsolutePath(), null, runtime.state.value.state)
 		val start = runtime.capture()
 		val out = output("art-primitive-v2")
-		try {
-			for (case in cases) {
-				fun splitWith(v2: Boolean): RigPreviewModel {
-					System.setProperty(ArtPrimitiveV2.FLAG_PROPERTY, v2.toString())
-					val document = runBlocking { WorkspacePartitionEdits.apply(case.split(start.model), start.document, start.model) }
-					val record = ArtPrimitiveJournal.commands(document.rigEdits).single()
-					check(ArtPrimitiveV2.isV2(record) == v2) { "${case.name}: wrote ${record["v"]} ${record[ArtPrimitiveV2.FALLBACK]}" }
-					return runBlocking { builder.build(document) }
-				}
-				val v1 = splitWith(false); val v2 = splitWith(true)
-				val frames = ArrayList<Pair<String, BufferedImage>>()
-				for ((label, pose) in case.poses) {
-					val images = listOf(start.model, v1, v2).map { Renderer(it, 360).render(pose, case.rect) }
-					frames += "unsplit $label" to images[0]; frames += "v1 $label" to images[1]; frames += "v2 $label" to images[2]
-					frames += "|v1-v2| x4 $label" to difference(images[1], images[2])
-					println("${case.name} $label: max channel difference v1/v2 ${maxDifference(images[1], images[2])}, unsplit/v2 ${maxDifference(images[0], images[2])}")
-				}
-				sheet(frames, File(out, "${case.name}.png"), columns = 4)
+		for (case in cases) {
+			val document = runBlocking { WorkspacePartitionEdits.apply(case.split(start.model), start.document, start.model) }
+			val record = ArtPrimitiveJournal.commands(document.rigEdits).single()
+			check(ArtPrimitiveV2.isV2(record)) { "${case.name}: wrote ${record["v"]}" }
+			check(RigCheckpoint.isRecord(document.rigEdits.authoringJournal.last())) { "${case.name}: no checkpoint after the split" }
+			val split = runBlocking { builder.build(document) }
+			val frames = ArrayList<Pair<String, BufferedImage>>()
+			for ((label, pose) in case.poses) {
+				val images = listOf(start.model, split).map { Renderer(it, 360).render(pose, case.rect) }
+				frames += "unsplit $label" to images[0]; frames += "split $label" to images[1]
+				frames += "|unsplit-split| x4 $label" to difference(images[0], images[1])
+				println("${case.name} $label: max channel difference unsplit/split ${maxDifference(images[0], images[1])}")
 			}
-		} finally {
-			if (previous == null) System.clearProperty(ArtPrimitiveV2.FLAG_PROPERTY) else System.setProperty(ArtPrimitiveV2.FLAG_PROPERTY, previous)
+			sheet(frames, File(out, "${case.name}.png"), columns = 3)
 		}
 	}
 

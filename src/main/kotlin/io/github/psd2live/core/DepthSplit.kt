@@ -4,6 +4,7 @@ import io.github.psd2live.project.WorkspaceSourceArt
 import io.github.psd2live.project.WorkspaceSourceLayer
 import io.github.psd2live.i18n.tr
 import kotlinx.serialization.json.*
+import org.umamo.edit.withDrawablesDeleted
 import org.umamo.format.art.LayerId
 import org.umamo.format.art.LayerRaster
 import org.umamo.format.art.SourceArt
@@ -106,11 +107,6 @@ internal object DepthSplit {
         val original = authored.drawables.single { it.id == source.id }
         val mesh = requireNotNull(original.mesh)
         val canvas = RasterMeshJournal.TextureCoordinates(authored, original).toCanvas(mesh.uvs)
-        fun atOrder(drawable: Drawable, order: Float): Drawable = drawable.copy(drawOrder = order,
-            channelGrids = ChannelGrids(drawable.channelGrids.gridsByChannel - FormChannel.DRAW_ORDER),
-            blendShapes = drawable.blendShapes.map { binding -> binding.copy(forms = binding.forms.map { form ->
-                form?.let { MeshForm(it.positionDeltas, order, it.opacity, it.multiplyColor, it.screenColor) }
-            }) })
         val backMesh = atOrder(original.copy(id = DrawableId(backDrawableId), name = backName,
             mesh = DrawableMesh(mesh.positions.copyOf(), canvas, mesh.indices.copyOf())), backOrder)
         val frontMesh = atOrder(original.copy(id = DrawableId(frontDrawableId), name = frontName,
@@ -155,6 +151,62 @@ internal object DepthSplit {
         return Slices(back, front, layerId, record, orders, inherited, source.parentDeformerId?.raw, source.isVisible, simulations,
             authored, staged, slices, replaced, weld, coverage, neutral, source.id)
     }
+
+    /**
+     * [slices] as a split of whichever rig holds their source ([RigRegenerationCheckpoint.SplitParts]): the back and the
+     * front are that rig's source at their draw orders, textured through the rig's atlas when it has their layers; the
+     * back takes the source's Glues and masks, and the source goes. Null when the rig has no such source or another mesh
+     * than the slices copied. The Glue that makes the front follow the back is the user's.
+     */
+    fun splitParts(slices: Slices): RigRegenerationCheckpoint.SplitParts {
+        val sourceId = requireNotNull(slices.source)
+        val staged = requireNotNull(slices.staged)
+        val (backId, frontId) = slices.sliceIds
+        val templates = listOf(backId to slices.back.id.raw, frontId to slices.front.id.raw).map { (id, layer) ->
+            staged.drawables.single { it.id == id } to layer
+        }
+        val glueId = requireNotNull(slices.weld).id
+        return RigRegenerationCheckpoint.SplitParts { model, user ->
+            val source = model.drawables.firstOrNull { it.id == sourceId } ?: return@SplitParts null
+            val mesh = source.mesh ?: return@SplitParts null
+            val template = requireNotNull(templates.first().first.mesh)
+            if (mesh.vertexCount != template.vertexCount || !mesh.indices.contentEquals(template.indices)) return@SplitParts null
+            val parts = templates.map { (sliceTemplate, layer) ->
+                val canvas = requireNotNull(sliceTemplate.mesh).uvs
+                val tileId = PuppetSourceAtlas.tileIdFor(layer, PuppetSourceAtlas.SOURCE_ID_RAW)
+                val tile = model.atlas.tiles.firstOrNull { it.id == tileId }
+                val unplaced = source.copy(id = sliceTemplate.id, name = sliceTemplate.name, atlasTileId = tileId, textureSourceId = null,
+                    mesh = DrawableMesh(mesh.positions.copyOf(), canvas, mesh.indices.copyOf()))
+                val placed = if (tile?.placement == null) unplaced else unplaced.copy(texturePage = tile.placement!!.pageIndex).let { it.copy(mesh =
+                    DrawableMesh(mesh.positions.copyOf(), RasterMeshJournal.TextureCoordinates(model, it).toUvs(canvas), mesh.indices.copyOf())) }
+                atOrder(placed, sliceTemplate.drawOrder)
+            }
+            val (back, front) = parts
+            fun children(old: List<OrgChild>) = old.flatMap { if (it == OrgChild.Drawable(sourceId)) parts.map { part -> OrgChild.Drawable(part.id) } else listOf(it) }
+            val glues = model.glues.map { glue ->
+                if (glue.meshA != sourceId && glue.meshB != sourceId) glue
+                else glue.copy(meshA = if (glue.meshA == sourceId) back.id else glue.meshA, meshB = if (glue.meshB == sourceId) back.id else glue.meshB)
+            } + listOfNotNull(slices.weld.takeIf { user })
+            model.copy(drawables = model.drawables.map { drawable ->
+                    drawable.copy(maskedBy = drawable.maskedBy.map { if (it == sourceId) back.id else it })
+                } + parts,
+                parts = model.parts.map { it.copy(children = children(it.children)) }, rootChildren = children(model.rootChildren),
+                glues = glues,
+                deformPaths = model.deformPaths + model.deformPaths.filter { it.drawableId == sourceId }.flatMap { path ->
+                    listOf(path.copy(drawableId = back.id), path.copy(id = "$glueId/${path.id}", drawableId = front.id))
+                },
+                vertexGroups = model.vertexGroups + model.vertexGroups.filter { it.drawableId == sourceId }.flatMap { group ->
+                    listOf(group.copy(drawableId = back.id, weights = group.weights.copyOf()), group.copy(drawableId = front.id, weights = group.weights.copyOf()))
+                }).withDrawablesDeleted(setOf(sourceId))
+        }
+    }
+
+    /** [drawable] drawn at [order]: no draw order keyforms, its blend shapes at the same order. */
+    private fun atOrder(drawable: Drawable, order: Float): Drawable = drawable.copy(drawOrder = order,
+        channelGrids = ChannelGrids(drawable.channelGrids.gridsByChannel - FormChannel.DRAW_ORDER),
+        blendShapes = drawable.blendShapes.map { binding -> binding.copy(forms = binding.forms.map { form ->
+            form?.let { MeshForm(it.positionDeltas, order, it.opacity, it.multiplyColor, it.screenColor) }
+        }) })
 
     fun build(pipeline: PSD2LivePipeline, current: RigPreviewModel, config: PipelineConfig,
               sourceId: String, middleId: String): Result =
