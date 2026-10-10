@@ -510,6 +510,8 @@ data class RigEditOverlay(
 		/** Journal records only older builds write and only the legacy replay reads ([replaysLegacy]). */
 		/** How many entries may follow the journal's last checkpoint before an edit adding more checkpoints it ([checkpointsBeforeEntries]). */
 		internal const val CHECKPOINT_INTERVAL = 32
+		/** Whether [entry] is a record that replays on the base rather than acting on the authored rig. */
+		internal fun isLegacyRecord(entry: kotlinx.serialization.json.JsonObject) = entry["op"]?.jsonPrimitive?.contentOrNull in LEGACY_OPS
 		private val LEGACY_OPS = setOf(ArtPrimitiveJournal.OP, RigGenerationJournal.OP, RigGenerationFrames.OP, RigGenerationScaffold.OP,
 			RigMeshActivation.OP, SourcePartitionJournal.OP, DepthSplit.OP)
 		val Empty = RigEditOverlay()

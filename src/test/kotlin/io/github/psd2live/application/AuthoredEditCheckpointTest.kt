@@ -104,6 +104,43 @@ class AuthoredEditCheckpointTest {
 		assertEquals(hash(replayed(document)), hash(model))
 	}
 
+	@Test fun paintingNeverReachesTheGenerationAndAnUpdateFindsNothingToDo() = runBlocking {
+		val runtime = runtime()
+		create(runtime, "First")
+		val before = runtime.capture()
+		// Erasing the lower half of the hair would change its generated mesh, were the generation to read the art now.
+		val painted = WorkspaceDocumentCommands(runtime).execute(before.projectId, before.state, "Erase", listOf(WorkspaceDocumentOperation(
+			"source_paint_eraser", buildJsonObject {
+				put("layer_id", "hair"); put("radius", 12)
+				putJsonArray("points") { for (x in listOf(20, 32, 44)) add(buildJsonArray { add(x); add(48) }) }
+			})), MutationAuthor.USER).capture
+		assertNotNull(painted.document.generationSource, "painting freezes the generation input")
+		val update = WorkspaceGenerationUpdateCommands(runtime).execute(painted.projectId, painted.state, "Update", MutationAuthor.USER)
+		assertFalse(update.result.getValue("updated").jsonPrimitive.boolean, "the generators make what they made: the frozen art")
+		assertEquals(hash(painted.model), hash(runtime.capture().model))
+	}
+
+	@Test fun parentAndDrawOrderOverridesRegenerate() = runBlocking {
+		val runtime = runtime()
+		val current = create(runtime, "A")
+		val hair = current.model.rig.puppet.drawables.single { current.model.rig.layerIdByDrawableId[it.id.raw] == "hair" }
+		val parent = current.model.rig.puppet.deformers.first { it.id != hair.parentDeformerId }.id.raw
+		// A generation input: merged and checkpointed, so a build from the checkpoint has the mesh where it was moved.
+		val reparented = builder.normalizeMeshEdits(current.document.copy(parentOverrides = mapOf("hair" to parent)), current.model)
+		assertTrue(RigCheckpoint.isRecord(reparented.rigEdits.authoringJournal.last()))
+		MaterializedRigStore.clear()
+		val model = builder.build(reparented)
+		assertEquals(parent, model.rig.puppet.drawables.single { it.id == hair.id }.parentDeformerId?.raw)
+		// The base reads draw-order overrides too: a regeneration like the parent, and a cold build from its checkpoint shows it.
+		val ordered = WorkspaceDocumentCommands(runtime).execute(current.projectId, current.state, "Order", listOf(
+			WorkspaceDocumentOperation(WorkspaceDrawOrderEdits.OP, buildJsonObject { put("target", "layer:hair"); put("order", 900) })),
+			MutationAuthor.USER).capture
+		assertTrue(RigCheckpoint.isRecord(ordered.document.rigEdits.authoringJournal.last()))
+		assertEquals(900f, ordered.model.rig.puppet.drawables.single { it.id == hair.id }.drawOrder)
+		MaterializedRigStore.clear()
+		assertEquals(hash(ordered.model), hash(builder.build(ordered.document)))
+	}
+
 	@Test fun aGenerationChangeMergesUnlessItRewritesEarlierEdits() = runBlocking {
 		val runtime = runtime()
 		create(runtime, "A")
@@ -208,3 +245,37 @@ class ImportedEditCheckpointTest {
 		assertEquals(ContentHash.of(PuppetIr.toIr(last.model.rig.puppet)), ContentHash.of(PuppetIr.toIr(builder.build(last.document).rig.puppet)))
 	}
 }
+
+/** An imported model's split replays once, in its own commit: the commit checkpoints the authored rig after its record. */
+class ImportedSplitCheckpointTest {
+	@org.junit.jupiter.api.io.TempDir lateinit var temporary: java.nio.file.Path
+	private val builder = WorkspacePreviewBuilder()
+
+	@Test fun anImportedSplitIsCheckpointedInItsOwnCommit() = runBlocking {
+		val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) }, rebuildFrom = { document, previous -> builder.build(document, previous) })
+		val file = writeCmo3Fixture(temporary.resolve("model.cmo3"), "old", "shared")
+		WorkspaceCmo3Importer(runtime).import(file, Cmo3ImportMode.NEW, null, runtime.state.value.state, MutationAuthor.USER,
+			initialConfig = PipelineConfig(atlasSize = 256))
+		val imported = runtime.capture()
+		val layer = imported.document.rigEdits.importedLayerIds.getValue("old")
+		val split = WorkspaceDocumentCommands(runtime).execute(imported.projectId, imported.state, "Split", listOf(WorkspaceDocumentOperation(
+			"source_split_polygon", buildJsonObject {
+				put("layer_id", layer); putJsonArray("names") { add("Left"); add("Right") }
+				putJsonArray("polygon") { for ((x, y) in listOf(0 to 0, 7 to 0, 7 to 32, 0 to 32)) add(buildJsonArray { add(x); add(y) }) }
+			})), MutationAuthor.USER).capture
+		val journal = split.document.rigEdits.authoringJournal
+		assertTrue(RigCheckpoint.isRecord(journal.last()), "the commit ends with the checkpoint")
+		assertTrue(RigEditOverlay.isLegacyRecord(journal[journal.size - 2]), "right after the split's record")
+		assertFalse(split.document.rigEdits.replaysLegacy, "nothing replays the record again")
+		val hash = { model: RigPreviewModel -> ContentHash.of(PuppetIr.toIr(model.rig.puppet)) }
+		assertEquals(hash(split.model), hash(builder.build(split.document)), "a cold build from the checkpoint is the committed model")
+		// Undo leaves the import as it was; redo returns the checkpointed split.
+		runtime.checkout(split.projectId, split.state, imported.historyHead)
+		assertEquals(imported.document, runtime.capture().document)
+		val undone = runtime.capture()
+		runtime.checkout(undone.projectId, undone.state, split.historyHead)
+		assertEquals(split.document, runtime.capture().document)
+		assertEquals(hash(split.model), hash(runtime.capture().model))
+	}
+}
+

@@ -83,6 +83,7 @@
 日志重放的前提是条目写下时所面对的生成结果不变。改变生成输入的编辑（头发模拟开关、骨架、生成设置与分类、拆分等）使基础 Rig 变化后，旧条目不再在新结果上重放，而是合并后保存为数据：
 
 - **触发**（`WorkspacePreviewBuilder.build`，`RigRegenerationCheckpoint.checkpointed`）：新文档延续当前文档（`RigEditOverlay.continues`：日志以当前日志开头；共同开头没有固化点时旧格式静态字段也须相同，有固化点时不再读取它们），且不能走追加路径。生成新文档的基础 Rig，取旧条目所见的部分（`BuiltRig.resolvedPuppet(records)`：边界之前的 v2 拆分记录的部件就位，之后记录的乘客保留），与当前基础 Rig 的 `resolvedPuppet()` 按中立 IR 比较；不同则以当前基础为 G、新基础为 G′、当前作者态 Rig 为 M 合并（`RigRegeneration.merge`，G 与 M 先重新绑定到新纹理集），在当前日志末尾、本次编辑的新条目之前插入 `rig_checkpoint`。相同则照常重放。
+- **父级覆盖与绘制顺序覆盖**：都是基础生成的输入，生成的模型上改动它们同样按再生成合并并写固化点（只经固化点构建时不生成基础 Rig，不合并就看不到它们）。
 - **生成设置与分类**（`RigGenerationChange.changed` 认定的变化：脸部特征、嘴型、仅网格、头身强度、`rigTuning`、图层分类）：生成的模型在准备编辑时即合并并写固化点（`WorkspacePreviewBuilder.normalizeMeshEdits`），G′ 由当前源图生成（保存的网格输入照用，`generationSource` 冻结之后加入的图层也在其中），不再写 `rig_generation_transition`、`rig_generation_frames` 与随迁移创建的网格记录。合并从当前日志末尾的作者态 Rig 出发，所以同一次编辑只能在其后追加条目；同时改写较早条目的编辑被拒绝（“分开提交”），不再静默地把旧条目重放到新生成结果上。导入 CMO3 的模型没有生成结果可合并，仍写迁移记录（见[旧版重放](#旧版重放)）。
 - **拆分**（`RigRegenerationCheckpoint.split`）：见[拆分物化](#拆分物化画元记录-art_primitive)；固化点写在拆分记录之后，记录本身不重放。
 - **记录**（`RigCheckpoint`）：作者态 Rig 的索引（对象在 `RigObjects`，随文档持久化）、它所基于的生成快照与合并问题。模型预设开启头发模拟时在预设内部同样合并并写固化点，再按合并后的 Rig 计算权重。
@@ -394,7 +395,7 @@
 
 ## 旧版重放
 
-较早版本把一些编辑写成要在基础 Rig 上重放的记录：拆分的 `art_primitive`（版本 1，以及带作者数据的版本 2）、生成迁移（`rig_generation_transition`、`rig_generation_frames`、`rig_generation_scaffold`、`rig_mesh_activation`）、旧的 `canvas_source_partition` / `canvas_depth_split`，以及日志之前的旧格式静态字段。生成的模型不再写它们；导入 CMO3 的模型没有生成结果可合并，仍写迁移记录与旧分区。
+较早版本把一些编辑写成要在基础 Rig 上重放的记录：拆分的 `art_primitive`（版本 1，以及带作者数据的版本 2）、生成迁移（`rig_generation_transition`、`rig_generation_frames`、`rig_generation_scaffold`、`rig_mesh_activation`）、旧的 `canvas_source_partition` / `canvas_depth_split`，以及日志之前的旧格式静态字段。生成的模型不再写它们；导入 CMO3 的模型没有生成结果可合并，仍写迁移记录与旧分区，但写下它们的提交随即在其后写入导入模型的固化点（`WorkspacePreviewBuilder.importedRecordsCheckpointed`），记录只在这次构建中重放，之后的构建、打开与撤销都从固化点开始。因此 `core.legacy` 只在两处运行：没有固化过的旧日志第一次被编辑之前，以及导入模型写下这类记录的那一次提交。
 
 - **只固化一次**：日志在最后一个固化点之后仍有这类记录（没有固化点时也包括旧格式静态字段，`RigEditOverlay.replaysLegacy`）时，延续它的第一次编辑先在原日志末尾、新条目之前写入当前作者态 Rig 的固化点（`WorkspacePreviewBuilder`），生成快照在手时一并保存；这些记录就此重放最后一次，之后的构建都从固化点开始。打开、切换历史和保存不改写日志，旧修订照旧按记录构建。
 - **代码**：只在这条路径与导入模型上使用的部分在 `core.legacy`：`ArtPrimitiveReplay`（版本 1 与带作者数据的版本 2 记录的重放、骨架烘焙前解码版本 1 部件、再生成合并时放入版本 1 部件）、`StubTolerance` 与 `SupersededEntryNote`（乘客容错）、`VanishedParent`，以及生成迁移的写入与重放（`RigGenerationMigration`、`RigGenerationJournal`、`RigGenerationFrames`、`RigGenerationScaffold`、`RigMeshActivation`、`RigGenerationResidual`、`RigGenerationTextures`）。`ArtPrimitiveJournal` 保留记录格式与文档查询（取代关系、拥有的图层、贴图覆盖）。判断编辑是否改变生成结果的 `RigGenerationChange` 是合并路径的触发条件，在 `core`；合并（`RigRegenerationCheckpoint`）仍从 `core.legacy` 读取旧迁移记录给变形器起的名字与版本 1 部件，使旧日志的 G 与 G′ 按同样方式放置——这些是兼容读取，不随新功能扩展（`LegacyReplayBoundaryTest` 固定可引用它的文件）。

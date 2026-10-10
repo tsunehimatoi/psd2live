@@ -155,14 +155,22 @@ class PSD2LivePipeline {
 	                             previousAtlas: PackedAtlas? = null): GenerationInputs {
 		val baselineConfig = RigGenerationBaseline.restore(MeshGenerationBaseline.restore(config))
 		val analyses = RigBuildProfile.stage("pipeline: analysis prepare") { RigGenerationSource.prepare(input, baselineConfig, config) }
+		val generationConfig = baselineConfig.copy(parentOverrides = generatedParentOverrides(config))
+		val atlas = RigBuildProfile.stage("pipeline: atlas layout") { AtlasLayout.pack(analyses.textures.layers, config, progress, previousAtlas) }
+		val visible = ArtPrimitiveJournal.visibleAnalysis(analyses.textures, config.rigEdits)
+		return GenerationInputs(baselineConfig, analyses, generationConfig, atlas, visible)
+	}
+
+	/**
+	 * The parent overrides the generation reads: those of the layers it meshes. A layer the journal creates a mesh for
+	 * (an imported image, a partition piece) hangs where its creation puts it, so its override is not a generation input.
+	 */
+	internal fun generatedParentOverrides(config: PipelineConfig): Map<String, String?> {
 		val createdLayers = config.rigEdits.authoringJournal.filter { it["op"]?.jsonPrimitive?.contentOrNull == RasterMeshCreation.OP }
 			.mapTo(HashSet()) { it.getValue("layer_id").jsonPrimitive.content }
 		createdLayers += SourcePartitionJournal.commands(config.rigEdits).flatMap(SourcePartitionJournal::pieces)
 			.map { it.getValue("layer_id").jsonPrimitive.content }
-		val generationConfig = baselineConfig.copy(parentOverrides = config.parentOverrides - createdLayers)
-		val atlas = RigBuildProfile.stage("pipeline: atlas layout") { AtlasLayout.pack(analyses.textures.layers, config, progress, previousAtlas) }
-		val visible = ArtPrimitiveJournal.visibleAnalysis(analyses.textures, config.rigEdits)
-		return GenerationInputs(baselineConfig, analyses, generationConfig, atlas, visible)
+		return config.parentOverrides - createdLayers
 	}
 
 	/** Preview, path normalization and export must use the same saved generation input. */

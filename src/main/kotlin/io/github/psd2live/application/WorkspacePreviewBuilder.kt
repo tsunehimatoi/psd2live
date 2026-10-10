@@ -74,7 +74,11 @@ internal class WorkspacePreviewBuilder {
                 }
                 return@runInterruptible document.copy(rigEdits = overlay.copy(authoringJournal = journal + groups.map(VertexGroupJournal::encode)))
             }
-            if (RigGenerationChange.changed(current, config)) {
+            // A parent override is a generation input (the base hangs the layer's mesh there), so on a generated model,
+            // whose builds start from a checkpoint without generating the base, it changes the rig only as a regeneration.
+            val reparented = pipeline.materializable(config) && pipeline.materializable(current.config) &&
+                pipeline.generatedParentOverrides(current.config) != pipeline.generatedParentOverrides(config)
+            if (RigGenerationChange.changed(current, config) || reparented) {
                 // A generated model merges what the generators make now onto the user's rig and checkpoints the result
                 // ([RigRegenerationCheckpoint]). Only an imported model, which has no generated rig to merge onto, records
                 // the migration in its journal.
@@ -145,8 +149,29 @@ internal class WorkspacePreviewBuilder {
         return before.replaysLegacy || config.rigEdits.authoringJournal.size > before.authoringJournal.size
     }
 
+    /**
+     * [model] - the build of an edit of [current]'s imported model - with its authored rig checkpointed after the entries
+     * the edit added, when one of them is a record that replays on the import (a partition, a depth split, a migration):
+     * an import has no generated rig to merge a split or a settings change onto, so these records replay once, in the
+     * edit's own build, and every later build, open and undo starts after them.
+     */
+    private fun importedRecordsCheckpointed(model: RigPreviewModel, current: RigPreviewModel?): RigPreviewModel {
+        if (current == null || pipeline.materializable(model.config) || pipeline.materializable(current.config)) return model
+        val overlay = model.config.rigEdits
+        val before = current.config.rigEdits.authoringJournal
+        if (!overlay.continues(current.config.rigEdits) || overlay.authoringJournal.size <= before.size) return model
+        val added = overlay.authoringJournal.subList(before.size, overlay.authoringJournal.size)
+        if (added.none(io.github.psd2live.core.RigEditOverlay::isLegacyRecord)) return model
+        val record = io.github.psd2live.core.RigCheckpoint.encode(model.authored, IMPORTED_BINDING)
+        return model.copy(config = model.config.copy(rigEdits = overlay.copy(authoringJournal = overlay.authoringJournal + record)))
+    }
+
     suspend fun build(document: WorkspaceDocument, current: RigPreviewModel? = null,
-                      legacyDrawOrders: Map<String, Float> = current?.config?.drawOrderOverrides.orEmpty()): RigPreviewModel {
+                      legacyDrawOrders: Map<String, Float> = current?.config?.drawOrderOverrides.orEmpty()): RigPreviewModel =
+        importedRecordsCheckpointed(buildModel(document, current, legacyDrawOrders), current)
+
+    private suspend fun buildModel(document: WorkspaceDocument, current: RigPreviewModel?,
+                                   legacyDrawOrders: Map<String, Float>): RigPreviewModel {
         val progress = progress(0.6f, 0.85f)
         return runInterruptible(Dispatchers.Default) {
             val decoded = document.config()
