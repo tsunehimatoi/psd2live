@@ -56,6 +56,37 @@ class WorkspaceProjectPersistenceTest {
         }
     }
 
+    /** A run that ends without the save-or-discard prompt (a crash, a kill) leaves its edits to be offered back. */
+    @Test fun unsavedEditsOfAKilledSessionAreOfferedBackRestoredAndForgottenOnceSaved() = runBlocking {
+        val store = temp.resolve("recovery-store")
+        lateinit var edited: String
+        PSD2LiveViewModel().use { viewModel ->
+            DesktopWorkspace(viewModel, store).use { workspace ->
+                viewModel.attachWorkspace(workspace)
+                assertNull(viewModel.recoveryOffer.value)
+                create(workspace)
+                val layerId = workspace.snapshot().layers.single().id
+                edited = workspace.paintSource(buildJsonObject {
+                    put("state", workspace.snapshot().state); put("layer_id", layerId); put("mode", "brush")
+                    putJsonArray("points") { add(buildJsonArray { add(4); add(4) }) }
+                    put("radius", 2); putJsonArray("color") { add(10); add(200); add(30); add(255) }
+                }).historyNodeId
+            }
+        }
+        PSD2LiveViewModel().use { viewModel ->
+            DesktopWorkspace(viewModel, store).use { workspace ->
+                viewModel.attachWorkspace(workspace)
+                val offer = assertNotNull(viewModel.recoveryOffer.value, "the killed session's edits are offered")
+                workspace.restoreSession(offer)
+                assertEquals(edited, workspace.snapshot().historyHeadNodeId)
+                assertTrue(viewModel.state.value.projectDirty, "restored edits stay unsaved until saved")
+                viewModel.saveProjectNow(temp.resolve("restored.psd2live"))
+                assertFalse(viewModel.state.value.projectDirty)
+            }
+        }
+        assertNull(SessionRecovery(store).pending(), "a saved project leaves nothing to recover")
+    }
+
     @Test fun explicitPreviewDoesNotRecordKeysWhenGuiAutoKeyIsEnabled() = runBlocking {
         PSD2LiveViewModel().use { viewModel ->
             DesktopWorkspace(viewModel, temp.resolve("preview-store")).use { workspace ->

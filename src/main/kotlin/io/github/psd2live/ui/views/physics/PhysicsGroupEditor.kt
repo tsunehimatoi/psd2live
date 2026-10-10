@@ -118,7 +118,7 @@ internal fun PhysicsGroupEditor(
 		}
 
 		PhysicsSection(tr("physics.segmentTable"), pendulumOpen, { pendulumOpen = !pendulumOpen }) {
-			PhysicsPresetBar(PhysicsPresets.Kind.PENDULUM, setting) { viewModel.applyPhysicsPreset(group.id, it); segment = null }
+			PhysicsPresetBar(PhysicsPresets.Kind.PENDULUM, group.id, setting) { viewModel.applyPhysicsPreset(group.id, it); segment = null }
 			SegmentBar(
 				count = setting.segments.size,
 				selected = shownSegment,
@@ -151,7 +151,7 @@ internal fun PhysicsGroupEditor(
 				edit { it.copy(inputs = it.inputs + PhysicsInput(id, 50f, if (id.endsWith("AngleZ")) PhysicsSourceType.ANGLE else PhysicsSourceType.X)) }
 			}
 		}) {
-			PhysicsPresetBar(PhysicsPresets.Kind.INPUT, setting) { viewModel.applyPhysicsPreset(group.id, it) }
+			PhysicsPresetBar(PhysicsPresets.Kind.INPUT, group.id, setting) { viewModel.applyPhysicsPreset(group.id, it) }
 			if (setting.inputs.isEmpty()) Hint(tr("physics.inputs.empty"))
 			setting.inputs.forEachIndexed { index, input ->
 				InputRow(viewModel, input, parameters, setting, label,

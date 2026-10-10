@@ -56,6 +56,11 @@ public class Cmo3Target(
 		if (Cmo3LayerArt.of(options.setting(Cmo3LayerArt.SETTING)) == Cmo3LayerArt.NATIVE) emptyList()
 		else Cmo3LayerArtLowering.losses(Cmo3LayerArtLowering.canvasResolution(ir))
 
+	/** [textureLosses] in one line for a log; null when there are none. */
+	public fun textureLossSummary(ir: RigIR, options: ExportOptions): String? =
+		if (Cmo3LayerArt.of(options.setting(Cmo3LayerArt.SETTING)) == Cmo3LayerArt.NATIVE) null
+		else Cmo3LayerArtLowering.summary(Cmo3LayerArtLowering.canvasResolution(ir))
+
 	/**
 	 * The can3 of [ir]'s clips on [converted], the cmo3 of the same export; null when `clips` is false or no clip
 	 * has a curve the Animator holds.

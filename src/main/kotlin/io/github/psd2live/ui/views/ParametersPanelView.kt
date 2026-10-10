@@ -907,15 +907,17 @@ internal fun ParametersListView(
 					}
 				}
 
-				if ((dividerHovered || dividerDrag != null) && !dragState.isDragging) {
+				// A faint line at rest shows the name column can be dragged wider; the accent while hovered or dragged.
+				if (!dragState.isDragging && itemBoundsMap.isNotEmpty()) {
+					val active = dividerHovered || dividerDrag != null
 					val rowsTop = itemBoundsMap.values.minOfOrNull { it.top }?.coerceAtLeast(0f) ?: 0f
 					val rowsBottom = itemBoundsMap.values.maxOfOrNull { it.bottom } ?: 0f
 					Canvas(Modifier.fillMaxSize()) {
 						drawLine(
-							colors.accent,
+							if (active) colors.accent else colors.divider.copy(alpha = 0.6f),
 							Offset(dividerCenter, rowsTop),
 							Offset(dividerCenter, rowsBottom.coerceAtMost(size.height)),
-							strokeWidth = 1.5.dp.toPx(),
+							strokeWidth = (if (active) 1.5.dp else 1.dp).toPx(),
 						)
 					}
 				}
@@ -1456,7 +1458,7 @@ private fun ParameterValueEditor(param: Parameter, value: () -> Float, enabled: 
 
 private val ParamRowLinkWidth = 12.dp
 private val ParamRowLinkSpacer = 1.dp
-private val ParamRowNameWidth = 40.dp
+private val ParamRowNameWidth = AppSettings.DEFAULT_PARAMETER_NAME_WIDTH.dp
 private val ParamRowNameWidthRange = 24.dp..240.dp
 private val ParamRowDividerWidth = 7.dp
 private val ParamRowInputWidth = 44.dp

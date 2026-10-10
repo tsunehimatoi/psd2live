@@ -93,7 +93,26 @@ internal object Cmo3LayerArtLowering {
 	 * A loss entry per placed tile whose page holds more texels per canvas unit than its cmo3 layer: the editor
 	 * rebuilds the atlas from those layers, so the extra resolution survives only until it does.
 	 */
-	fun losses(lowered: RigIR): List<LossEntry> {
+	fun losses(lowered: RigIR): List<LossEntry> = denser(lowered).map { (tile, density) ->
+		LossEntry(tile.id, Feature.TEXTURE_SIZE, Handling.APPROXIMATED,
+			note = "Atlas holds ${"%.2f".format(java.util.Locale.ROOT, density)}x the canvas resolution of '${tile.name}'; $REBUILDS")
+	}
+
+	/**
+	 * [losses] as one line, for a log that would otherwise repeat the same sentence for every layer of a
+	 * higher-resolution model; null when there are none.
+	 */
+	fun summary(lowered: RigIR): String? {
+		val dense = denser(lowered)
+		if (dense.size <= 1) return losses(lowered).singleOrNull()?.note
+		val names = dense.map { it.first.name }
+		val shown = names.take(SUMMARY_NAMES).joinToString() + if (names.size > SUMMARY_NAMES) " and ${names.size - SUMMARY_NAMES} more" else ""
+		return "Atlas holds up to ${"%.2f".format(java.util.Locale.ROOT, dense.maxOf { it.second })}x the canvas resolution of " +
+			"${dense.size} layers ($shown); $REBUILDS"
+	}
+
+	/** The placed tiles whose page holds more texels per canvas unit than their cmo3 layer, with that density. */
+	private fun denser(lowered: RigIR): List<Pair<TextureTile, Float>> {
 		val rows = lowered.authoring.sources.associate { file -> file.id to file.layers.associateBy { it.key } }
 		return lowered.textures.tiles.mapNotNull { tile ->
 			val placement = tile.placement ?: return@mapNotNull null
@@ -102,12 +121,12 @@ internal object Cmo3LayerArtLowering {
 			if (layer.width <= 0 || layer.height <= 0) return@mapNotNull null
 			val densityX = placement.scaleX * tile.width / layer.width
 			val densityY = placement.scaleY * tile.height / layer.height
-			if (maxOf(densityX, densityY) <= 1.0001f) null
-			else LossEntry(tile.id, Feature.TEXTURE_SIZE, Handling.APPROXIMATED,
-				note = "Atlas holds ${"%.2f".format(java.util.Locale.ROOT, maxOf(densityX, densityY))}x the canvas resolution of '${tile.name}'; " +
-					"Cubism Editor rebuilds the atlas from canvas-resolution layers")
+			if (maxOf(densityX, densityY) <= 1.0001f) null else tile to maxOf(densityX, densityY)
 		}
 	}
+
+	private const val REBUILDS = "Cubism Editor rebuilds the atlas from canvas-resolution layers"
+	private const val SUMMARY_NAMES = 5
 
 	/**
 	 * [Cmo3LayerArt.NATIVE]: each dense tile's model image maps its full-resolution layer onto the canvas

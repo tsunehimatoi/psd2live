@@ -31,6 +31,10 @@ import kotlin.io.path.absolutePathString
 import kotlin.system.exitProcess
 
 import androidx.compose.ui.window.rememberWindowState
+import androidx.compose.ui.window.WindowPlacement
+import androidx.compose.ui.window.WindowPosition
+import androidx.compose.ui.Alignment
+import io.github.psd2live.ui.state.AppSettings
 
 fun main(arguments: Array<String>) {
 	System.setProperty("sun.java2d.uiScale.enabled", "true")
@@ -138,13 +142,24 @@ private fun runGui() {
 
 	useAppIconInDock()
 	var status = 0
+	// Set when the user quits through the save-or-discard prompt; any other end (a crash, a kill) keeps the
+	// recovery marker so the next start offers the unsaved edits back.
+	val quitByUser = AtomicBoolean(false)
 	try {
 		// Exit from main rather than letting Compose call System.exit on the EDT, which would block
 		// the EDT while the shutdown hooks run.
 		application(exitProcessOnExit = false) {
-			val windowState = rememberWindowState(size = DpSize(1280.dp, 820.dp))
+			// The size and maximized state the window last closed with, centred on the screen.
+			val windowState = rememberWindowState(
+				placement = if (AppSettings.windowMaximized) WindowPlacement.Maximized else WindowPlacement.Floating,
+				position = WindowPosition(Alignment.Center),
+				size = DpSize(AppSettings.windowWidth.dp, AppSettings.windowHeight.dp),
+			)
 			val closeApp: () -> Unit = {
 				viewModel.withSavedChanges {
+					AppSettings.rememberWindow(windowState.size.width.value, windowState.size.height.value,
+						windowState.placement == WindowPlacement.Maximized)
+					quitByUser.set(true)
 					watchdog.arm()
 					exitApplication()
 				}
@@ -197,6 +212,7 @@ private fun runGui() {
 	}
 	watchdog.arm()
 	shutdown()
+	if (quitByUser.get() && status == 0) agentWorkspace.sessionRecovery.forget()
 	runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
 	instanceLock?.close()
 	// AWT, Skiko and pooled threads would otherwise keep the JVM alive.

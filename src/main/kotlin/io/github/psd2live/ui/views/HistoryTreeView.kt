@@ -207,6 +207,23 @@ fun HistoryTreeView(
 		panOffset = Offset(targetPanX, marginPx)
 	}
 
+	/** Pans so node [id] sits in the middle of the viewport, at the current zoom. */
+	fun centerOn(id: String) {
+		val layout = allLayoutNodes.firstOrNull { it.node.id == id } ?: return
+		val worldX = layout.x + NODE_WIDTH_DP / 2f + CANVAS_PADDING_DP
+		val worldY = layout.y + NODE_HEIGHT_DP / 2f + CANVAS_PADDING_DP
+		panOffset = Offset(viewportSize.width / 2f - worldX * scale * densityFactor, viewportSize.height / 2f - worldY * scale * densityFactor)
+	}
+
+	// The newest version, wherever HEAD has been checked out to: what "back to latest" returns to.
+	val newestNode = remember(fullHistory) { fullHistory?.nodes?.maxByOrNull { it.createdAt } }
+	// Centred once the checkout lands and the tree is laid out again with it.
+	var pendingCenter by remember { mutableStateOf<String?>(null) }
+	LaunchedEffect(allLayoutNodes, pendingCenter) {
+		val id = pendingCenter ?: return@LaunchedEffect
+		if (allLayoutNodes.any { it.node.id == id && it.node.isHead }) { centerOn(id); pendingCenter = null }
+	}
+
 	/** Zooms by [factor] about [anchor], a point in the viewport that stays put. */
 	fun zoomAbout(factor: Float, anchor: Offset = Offset(viewportSize.width / 2f, viewportSize.height / 2f)) {
 		val nextScale = (scale * factor).coerceIn(MIN_SCALE, MAX_SCALE)
@@ -235,6 +252,14 @@ fun HistoryTreeView(
 			onSearchChange = { searchQuery = it },
 			onUndo = viewModel::undoHistory,
 			onRedo = viewModel::redoHistory,
+			latestEnabled = newestNode != null && !state.workspaceEditBusy,
+			onLatest = {
+				val newest = newestNode
+				if (newest != null) {
+					if (newest.isHead) centerOn(newest.id)
+					else { pendingCenter = newest.id; viewModel.checkoutHistoryNode(newest.id) }
+				}
+			},
 		)
 
 		Row(
@@ -413,18 +438,30 @@ private fun HistoryToolbar(
 	onSearchChange: (String) -> Unit,
 	onUndo: () -> Unit,
 	onRedo: () -> Unit,
+	latestEnabled: Boolean,
+	onLatest: () -> Unit,
 ) {
 	val colors = LocalToolColors.current
 	// Labels appear in this order as the panel widens, each only once everything before it fits.
-	val labels = listOf(tr("history.operations"), tr("project.historyShow"))
+	val labels = listOf(tr("history.latest"), tr("history.operations"), tr("project.historyShow"))
 	PanelToolbar(
 		labels = labels,
-		iconCount = 4,
+		iconCount = 5,
 		search = PanelSearch(searchQuery, onSearchChange, tr("history.search")),
 	) { labelsShown ->
 		PanelToolButton(
 			label = labels[0],
 			showLabel = labelsShown > 0,
+			onClick = onLatest,
+			enabled = latestEnabled,
+			tooltip = tr("history.latest.tooltip"),
+		) {
+			Text("⇥", style = LocalToolTypography.current.body.copy(fontSize = 12.sp), color = colors.textPrimary)
+		}
+		PanelToolbarSeparator()
+		PanelToolButton(
+			label = labels[1],
+			showLabel = labelsShown > 1,
 			onClick = onToggleOperationList,
 			enabled = true,
 			active = operationListOpen,
@@ -441,8 +478,8 @@ private fun HistoryToolbar(
 		}
 		PanelToolbarSeparator()
 		PanelToolButton(
-			label = labels[1],
-			showLabel = labelsShown > 1,
+			label = labels[2],
+			showLabel = labelsShown > 2,
 			onClick = onToggleHidden,
 			enabled = true,
 			active = showHidden,
