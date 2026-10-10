@@ -20,6 +20,10 @@ enum class RegenerationRule(val severity: String, val category: String) {
 	REGENERATION_TOPOLOGY_MIGRATED("info", "quality"),
 	/** The user's own mesh topology stays; the generators' new mesh was not taken. */
 	REGENERATION_TOPOLOGY_KEPT("warning", "quality"),
+	/** The user's own mesh topology stays, under the generators' new parent and with their new keyforms moved onto it. */
+	REGENERATION_TOPOLOGY_FOLLOWED("info", "quality"),
+	/** A user object followed its parent's contents to the deformer the generators handed them to. */
+	REGENERATION_FOLLOWED("info", "quality"),
 	/** A user object lost what it refers to and was removed. */
 	REGENERATION_DROPPED("warning", "validity"),
 	;
@@ -32,6 +36,8 @@ enum class RegenerationRule(val severity: String, val category: String) {
 			RigRegeneration.IssueKind.REPARENTED -> REGENERATION_REPARENTED
 			RigRegeneration.IssueKind.TOPOLOGY_MIGRATED -> REGENERATION_TOPOLOGY_MIGRATED
 			RigRegeneration.IssueKind.TOPOLOGY_KEPT -> REGENERATION_TOPOLOGY_KEPT
+			RigRegeneration.IssueKind.TOPOLOGY_FOLLOWED -> REGENERATION_TOPOLOGY_FOLLOWED
+			RigRegeneration.IssueKind.FOLLOWED -> REGENERATION_FOLLOWED
 			RigRegeneration.IssueKind.DROPPED -> REGENERATION_DROPPED
 		}
 	}

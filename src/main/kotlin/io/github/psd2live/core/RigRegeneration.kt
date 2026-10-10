@@ -3,6 +3,7 @@ package io.github.psd2live.core
 import io.github.psd2live.targets.cubism.PuppetIr
 import org.umamo.edit.VertexSource
 import org.umamo.edit.withDeformerDeleted
+import org.umamo.edit.withDeformerMoved
 import org.umamo.runtime.keyform.FormInterpolator
 import org.umamo.runtime.keyform.RotationPivotInterpolator
 import org.umamo.runtime.keyform.WarpLatticeInterpolator
@@ -41,6 +42,10 @@ object RigRegeneration {
 		TOPOLOGY_MIGRATED("topology_migrated"),
 		/** The user changed a mesh's vertices; the generators' new mesh was not taken. */
 		TOPOLOGY_KEPT("topology_kept"),
+		/** The user changed a mesh's vertices; they stay, and the generators' new parent and keyforms moved onto them. */
+		TOPOLOGY_FOLLOWED("topology_followed"),
+		/** A user object followed what its parent held to the deformer the generators handed it to. */
+		FOLLOWED("followed"),
 		/** A user object that no longer has what it refers to (a mesh, a vertex) was removed. */
 		DROPPED("dropped"),
 	}
@@ -92,6 +97,7 @@ object RigRegeneration {
 				glues = mergeGlues(model, drawables))
 			model = withTree(model)
 			model = withMasks(model)
+			model = followSuccessors(model, deformers.vanished.toSet())
 			// Generated deformers the user left that the generators dropped: their user children re-home upward, rest pose baked.
 			for (id in deformers.vanished) {
 				// A child the generators dropped too is no user object moving up.
@@ -103,6 +109,101 @@ object RigRegeneration {
 			}
 			model = withParameters(model, parameters)
 			return Result(model.withDerivedRenderRoot(), issues)
+		}
+
+		// ---- Succession
+
+		/**
+		 * The deformers whose contents the generators handed to another, read off G and G': every object G hangs under
+		 * D that G' still has hangs under one deformer X != D in G', and either D is gone from G' (the arm hang warps a
+		 * skeleton replaces) or X is new in G' and sits below D (the torso warp a skeleton splices under the breath warp).
+		 * Objects split across several parents name no successor.
+		 */
+		fun successors(): Map<DeformerId, DeformerId> {
+			val g2Deformers = g2.deformers.associateBy { it.id }
+			val inG = g.deformers.mapTo(HashSet()) { it.id }
+			val g2Parents = HashMap<String, DeformerId?>()
+			g2.deformers.forEach { g2Parents["d:${it.id.raw}"] = it.parent }
+			g2.drawables.forEach { g2Parents["m:${it.id.raw}"] = it.parentDeformerId }
+			val children = HashMap<DeformerId, MutableList<String>>()
+			g.deformers.forEach { d -> d.parent?.let { children.getOrPut(it) { ArrayList() } += "d:${d.id.raw}" } }
+			g.drawables.forEach { d -> d.parentDeformerId?.let { children.getOrPut(it) { ArrayList() } += "m:${d.id.raw}" } }
+			val out = LinkedHashMap<DeformerId, DeformerId>()
+			for (deformer in g.deformers) {
+				val kept = children[deformer.id].orEmpty().filter { it in g2Parents }
+				if (kept.isEmpty()) continue
+				val target = kept.map { g2Parents[it] }.distinct().singleOrNull() ?: continue
+				if (target == deformer.id) continue
+				val vanished = deformer.id !in g2Deformers
+				val interposed = target !in inG && generateSequence(g2Deformers[target]?.parent) { g2Deformers[it]?.parent }.any { it == deformer.id }
+				// A vanished deformer whose contents went to its own parent re-homes them there anyway, rest pose and all.
+				if (vanished && target == deformer.parent) continue
+				if (vanished || interposed) out[deformer.id] = target
+			}
+			return out
+		}
+
+		/**
+		 * [model] with each user object - one the user created, or hung under another parent than G gives it - whose
+		 * parent the generators handed on ([successors]) under the successor: a mesh where it shows at the default pose
+		 * (as a structure `bind` with space=canvas carries it), a deformer when the move leaves every mesh below it in
+		 * place. [vanished] are the generated deformers about to be unwrapped; what they still hold re-homes upward.
+		 */
+		fun followSuccessors(model: PuppetModel, vanished: Set<DeformerId>): PuppetModel {
+			val successors = successors()
+			if (successors.isEmpty()) return model
+			val present = model.deformers.mapTo(HashSet()) { it.id }
+			fun successor(parent: DeformerId?): DeformerId? {
+				var current = parent ?: return null
+				val seen = HashSet<DeformerId>()
+				while (seen.add(current)) {
+					val next = successors[current] ?: break
+					if (next !in present) break
+					current = next
+				}
+				return current.takeIf { it != parent }
+			}
+			val gDrawables = g.drawables.associateBy { it.id }; val gDeformers = g.deformers.associateBy { it.id }
+			var current = model
+			for (drawable in model.drawables) {
+				val generated = gDrawables[drawable.id]
+				if (generated != null && generated.parentDeformerId == drawable.parentDeformerId) continue
+				val target = successor(drawable.parentDeformerId) ?: continue
+				val moved = current.copy(drawables = current.drawables.map { if (it.id == drawable.id) it.copy(parentDeformerId = target) else it })
+				current = try {
+					RigStructureEdits.carriedToParent(current, moved, drawable.id).also { issue(IssueKind.FOLLOWED, "mesh:${drawable.id.raw}", target.raw) }
+				} catch (failure: IllegalArgumentException) {
+					if (drawable.parentDeformerId !in vanished) issue(IssueKind.CONFLICT, "mesh:${drawable.id.raw}", "it could not follow its parent's contents to ${target.raw}")
+					current
+				}
+			}
+			for (deformer in model.deformers) {
+				val generated = gDeformers[deformer.id]
+				if (generated != null && generated.parent == deformer.parent) continue
+				val target = successor(deformer.parent) ?: continue
+				if (target in current.deformerSelfAndDescendants(deformer.id)) continue
+				val moved = current.withDeformerMoved(deformer.id, target, null)
+				if (sameRest(current, moved, current.deformerSelfAndDescendants(deformer.id))) {
+					current = moved
+					issue(IssueKind.FOLLOWED, "deformer:${deformer.id.raw}", target.raw)
+				} else if (deformer.parent !in vanished) {
+					issue(IssueKind.CONFLICT, "deformer:${deformer.id.raw}", "it could not follow its parent's contents to ${target.raw}")
+				}
+			}
+			return current
+		}
+
+		/** Whether every mesh under [deformers] shows in [b] at the default pose where it does in [a]. */
+		fun sameRest(a: PuppetModel, b: PuppetModel, deformers: Set<DeformerId>): Boolean {
+			val ids = a.drawables.filter { it.parentDeformerId in deformers }.mapTo(HashSet()) { it.id }
+			if (ids.isEmpty()) return true
+			val evaluator = org.umamo.render.eval.CpuDeformationEvaluator()
+			val before = evaluator.evaluate(a, emptyMap()).worldPositions
+			val after = evaluator.evaluate(b, emptyMap()).worldPositions
+			return ids.all { id ->
+				val x = before[id] ?: return@all true; val y = after[id] ?: return@all false
+				x.size == y.size && x.indices.all { kotlin.math.abs(x[it] - y[it]) < 0.05f }
+			}
 		}
 
 		/** [deformer] with one unkeyed form: its grid at every parameter's default. */
@@ -418,7 +519,8 @@ object RigRegeneration {
 		 * [toNext] carries a delta from the user's space into the generators' (null: it cannot be carried); a delta
 		 * already in the result's space carries as it is.
 		 */
-		inner class Geometry(val drawable: Drawable, val user: Boolean, toNext: () -> ((FloatArray) -> FloatArray)?) {
+		inner class Geometry(val drawable: Drawable, val user: Boolean, val fromNext: (FloatArray) -> FloatArray = { it },
+		                     toNext: () -> ((FloatArray) -> FloatArray)?) {
 			val toNext by lazy(toNext)
 		}
 
@@ -452,6 +554,11 @@ object RigRegeneration {
 			}
 			if (topology(md.mesh) != topology(gd.mesh)) {
 				userTopology += gd.id
+				val generatorsChanged = g2i.geometry != gi.geometry || g2i.offsets != gi.offsets || g2i.parent != gi.parent
+				if (generatorsChanged) onUserTopology(frame, parameters, result, gd, g2d, md)?.let {
+					issue(IssueKind.TOPOLOGY_FOLLOWED, target)
+					return it
+				}
 				if (topology(g2d.mesh) != topology(gd.mesh) || g2i.parent != gi.parent) issue(IssueKind.TOPOLOGY_KEPT, target)
 				return user(result.copy(parentDeformerId = md.parentDeformerId, mesh = md.mesh, geometryGrid = md.geometryGrid))
 			}
@@ -484,6 +591,63 @@ object RigRegeneration {
 		}
 
 		/**
+		 * A mesh whose topology the user changed (under the parent G gave it) while the generators changed it: the
+		 * user's vertices under G''s parent, carrying G''s change. Each of G and G' is sampled on the user's vertices
+		 * through canvas texture coordinates; the rest is where M shows it, moved as the generators moved the mesh on
+		 * the canvas; the keyforms are G''s plus the user's residual over G, carried into the new parent at rest. Null
+		 * when the meshes cannot be matched or the new parent cannot hold the mesh where it shows.
+		 */
+		fun onUserTopology(frame: PuppetModel, parameters: Map<ParameterId, Parameter>, result: Drawable, gd: Drawable, g2d: Drawable,
+		                   md: Drawable): Geometry? = try {
+			val mesh = requireNotNull(md.mesh); val size = mesh.positions.size
+			val userCanvas = canvasMesh(m, md)
+			val fromG = RasterMeshJournal.prepare(canvasMesh(g, gd), userCanvas, checkpoint).sources
+			val fromG2 = RasterMeshJournal.prepare(canvasMesh(g2, g2d), userCanvas, checkpoint).sources
+			fun world(model: PuppetModel, drawable: Drawable) = requireNotNull(org.umamo.render.eval.drawableSpaceMapping(model, emptyMap(), drawable.id))
+				.localToWorld(requireNotNull(drawable.mesh).positions)
+			val shifted = PrimitiveResidual.transfer(world(g2, g2d), fromG2).let { next ->
+				val previous = PrimitiveResidual.transfer(world(g, gd), fromG)
+				val shown = world(m, md)
+				FloatArray(size) { shown[it] + next[it] - previous[it] }
+			}
+			val placed = md.copy(parentDeformerId = g2d.parentDeformerId)
+			val from = requireNotNull(org.umamo.render.eval.drawableSpaceMapping(m, emptyMap(), md.id))
+			val to = requireNotNull(org.umamo.render.eval.drawableSpaceMapping(frame.copy(drawables = listOf(placed)), emptyMap(), md.id))
+			val all = (0 until size / 2).toSet()
+			val rest = to.worldToLocalLinearized(shifted, FloatArray(size) { 0.5f }, shifted, all)
+			val reached = to.localToWorld(rest)
+			require(rest.all(Float::isFinite) && reached.indices.all { kotlin.math.abs(reached[it] - shifted[it]) < 0.05f }) { "The new parent cannot hold the mesh" }
+			val toNext: (FloatArray) -> FloatArray = { delta ->
+				if (delta.all { it == 0f }) FloatArray(delta.size) else {
+					val moved = to.worldToLocalLinearized(from.localToWorld(FloatArray(size) { mesh.positions[it] + delta[it] }), rest, shifted, all)
+					FloatArray(size) { moved[it] - rest[it] }
+				}
+			}
+			val fromNext: (FloatArray) -> FloatArray = { PrimitiveResidual.transfer(it, fromG2) }
+			// The user's residual over G on the user's vertices, in the parent both share.
+			fun default(id: ParameterId) = parameters[id]?.default ?: 0f
+			val axes = PrimitiveResidual.unionAxes((md.geometryGrid?.axes.orEmpty() + gd.geometryGrid?.axes.orEmpty()).filter { it.parameterId in parameters })
+			val gSize = requireNotNull(gd.mesh).positions.size
+			var changed = false
+			val cells = PrimitiveResidual.coordinates(axes).map { coordinate ->
+				checkpoint()
+				val key = PrimitiveResidual.key(axes, coordinate)
+				val value = { id: ParameterId -> key[id] ?: default(id) }
+				val authored = PrimitiveResidual.sample(md.geometryGrid, size, value)
+				val generated = PrimitiveResidual.transfer(PrimitiveResidual.sample(gd.geometryGrid, gSize, value), fromG)
+				val residual = toNext(FloatArray(size) { authored[it] - generated[it] })
+				if (residual.any { kotlin.math.abs(it) > 1e-5f }) changed = true
+				KeyformCell(coordinate, MeshDeltaForm(residual))
+			}
+			val residual = if (changed) KeyformGrid(axes, cells) else null
+			val next = PrimitiveResidual.carry(g2d.geometryGrid, fromNext)
+			Geometry(result.copy(parentDeformerId = g2d.parentDeformerId, mesh = DrawableMesh(rest, mesh.uvs, mesh.indices),
+				geometryGrid = sum(parameters, next, residual, size)), false, fromNext) { toNext }
+		} catch (failure: IllegalArgumentException) {
+			null
+		}
+
+		/**
 		 * The blend shapes of a merged mesh, parameter by parameter: one the user left follows G', one the generators left
 		 * keeps the user's, one both changed keeps the user's; the user's own stay and the generators' new ones arrive.
 		 * A shape's deltas are in its mesh's parent space and on its vertices, so each must be in [geometry]'s: in the
@@ -497,7 +661,11 @@ object RigRegeneration {
 			val byG2 = g2d.blendShapes.associateBy { it.parameterId }; val byM = md.blendShapes.associateBy { it.parameterId }
 			val size = geometry.drawable.mesh?.positions?.size
 			// Each side's binding in the result's space; null when it cannot be put there.
-			fun generated(binding: BlendShapeBinding<MeshForm>) = binding.takeIf { !geometry.user || geometry.toNext != null }
+			fun generated(binding: BlendShapeBinding<MeshForm>) = binding.takeIf { !geometry.user || geometry.toNext != null }?.let { kept ->
+				kept.copy(forms = kept.forms.map { form ->
+					form?.let { MeshForm(geometry.fromNext(it.positionDeltas), it.drawOrder, it.opacity, it.multiplyColor, it.screenColor) }
+				})
+			}
 			fun authored(binding: BlendShapeBinding<MeshForm>): BlendShapeBinding<MeshForm>? = if (geometry.user) binding else
 				geometry.toNext?.let { carry -> binding.copy(forms = binding.forms.map { form ->
 					form?.let { MeshForm(carry(it.positionDeltas), it.drawOrder, it.opacity, it.multiplyColor, it.screenColor) }

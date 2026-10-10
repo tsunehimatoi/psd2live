@@ -231,7 +231,7 @@ internal object RigStructureEdits {
      * had from the rest shape there. A parent that cannot reproduce the rest shape (a hidden ancestor, a folded
      * lattice) refuses the bind rather than place the mesh somewhere else.
      */
-    private fun carriedToParent(before: PuppetModel, after: PuppetModel, id: DrawableId): PuppetModel {
+    internal fun carriedToParent(before: PuppetModel, after: PuppetModel, id: DrawableId): PuppetModel {
         val drawable = after.drawables.single { it.id == id }
         val mesh = requireNotNull(drawable.mesh) { "Mesh has no geometry: ${id.raw}" }
         val from = requireNotNull(org.umamo.render.eval.drawableSpaceMapping(before, emptyMap(), id)) { "The current parent cannot place the mesh" }

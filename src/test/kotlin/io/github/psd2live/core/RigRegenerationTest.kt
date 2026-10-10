@@ -143,4 +143,62 @@ class RigRegenerationTest {
 		assertEquals("Generated", merged.name)
 		assertTrue(result.issues.any { it.kind == RigRegeneration.IssueKind.CONFLICT && it.detail == "opacity" })
 	}
+
+	/** [g] with a torso warp spliced between the body warp and everything on it, bending on ParamBend. */
+	private fun spliced(g: PuppetModel): PuppetModel {
+		val bend = ParameterId("ParamBend")
+		val torso = warp(DeformerId("Torso"), body, floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f), bend)
+		val deformers = g.deformers.map { if (it is Deformer.Warp && it.parent == body) it.copy(parent = torso.id) else it }
+		val at = deformers.indexOfFirst { it.id == body } + 1
+		return g.copy(deformers = deformers.subList(0, at) + torso + deformers.subList(at, deformers.size),
+			drawables = g.drawables.map { if (it.parentDeformerId == body) it.copy(parentDeformerId = torso.id) else it })
+			.withParameterCreated(bend, "Bend").withParameterRange(bend, -1f, 0f, 1f).withDerivedRenderRoot()
+	}
+
+	@Test fun aUserMeshOnAWarpTheGeneratorsSpliceANewWarpUnderFollowsWhatItHeld() {
+		// The torso warp a skeleton splices under the breath warp takes over all it held; so does a mesh the user put there.
+		val g = generated(); val g2 = spliced(g)
+		val bow = quad(DrawableId("Bow"), body, floatArrayOf(0.2f, 0.6f, 0.4f, 0.6f, 0.2f, 0.8f, 0.4f, 0.8f), floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f))
+		val m = g.copy(drawables = g.drawables + bow, rootChildren = g.rootChildren + OrgChild.Drawable(bow.id)).withDerivedRenderRoot()
+		val result = RigRegeneration.merge(g, g2, m)
+		val merged = result.model
+		assertEquals(DeformerId("Torso"), merged.drawables.single { it.id == bow.id }.parentDeformerId)
+		assertTrue(result.issues.any { it.kind == RigRegeneration.IssueKind.FOLLOWED && it.target == "mesh:Bow" && it.detail == "Torso" }, "${result.issues}")
+		assertNear(canvas(m).getValue(bow.id), canvas(merged).getValue(bow.id), label = "bow at rest")
+		// It bends with the skirt beside it.
+		val bent = mapOf(ParameterId("ParamBend") to 1f)
+		val bowShift = canvas(merged, bent).getValue(bow.id)[0] - canvas(merged).getValue(bow.id)[0]
+		val skirtShift = canvas(merged, bent).getValue(skirt)[0] - canvas(merged).getValue(skirt)[0]
+		assertTrue(bowShift > 1f, "the bow bends: $bowShift")
+		assertEquals(skirtShift, bowShift, 1e-3f)
+		// A generated mesh the user left follows the new generation as before.
+		assertEquals(DeformerId("Torso"), merged.drawables.single { it.id == skirt }.parentDeformerId)
+	}
+
+	@Test fun aMeshWhoseTopologyTheUserRebuiltTakesTheGeneratorsNewParentAndKeyforms() {
+		val gen = ParameterId("ParamGen")
+		val g = generated()
+		// The generators drop the sway warp and key the hair 10 px right on a new parameter.
+		val g2 = generated(withSway = false).withParameterCreated(gen, "Gen").withParameterRange(gen, 0f, 0f, 1f).let { model ->
+			model.copy(drawables = model.drawables.map { if (it.id != hair) it else it.copy(geometryGrid = KeyformGrid(listOf(KeyformAxis(gen, floatArrayOf(0f, 1f))),
+				listOf(KeyformCell(intArrayOf(0), MeshDeltaForm(FloatArray(8))), KeyformCell(intArrayOf(1), MeshDeltaForm(FloatArray(8) { if (it % 2 == 0) 0.1f else 0f }))))) })
+		}
+		// The user rebuilt the hair as a 3 x 2 grid on the sway warp and keyed it 5 px down on their own parameter.
+		val rebuilt = DrawableMesh(floatArrayOf(0f, 0f, 0.5f, 0f, 1f, 0f, 0f, 1f, 0.5f, 1f, 1f, 1f),
+			floatArrayOf(0f, 0f, 0.5f, 0f, 1f, 0f, 0f, 0.5f, 0.5f, 0.5f, 1f, 0.5f), intArrayOf(0, 1, 3, 1, 4, 3, 1, 2, 4, 2, 5, 4))
+		val m = g.withParameterCreated(user, "User").withParameterRange(user, 0f, 0f, 1f).let { model ->
+			model.copy(drawables = model.drawables.map { if (it.id != hair) it else it.copy(mesh = rebuilt, geometryGrid = KeyformGrid(listOf(KeyformAxis(user, floatArrayOf(0f, 1f))),
+				listOf(KeyformCell(intArrayOf(0), MeshDeltaForm(FloatArray(12))), KeyformCell(intArrayOf(1), MeshDeltaForm(FloatArray(12) { if (it % 2 == 1) 0.1f else 0f }))))) })
+		}
+		val result = RigRegeneration.merge(g, g2, m)
+		val merged = result.model.drawables.single { it.id == hair }
+		assertEquals(body, merged.parentDeformerId, "the generators' new parent")
+		assertEquals(6, merged.mesh!!.vertexCount, "the user's vertices")
+		assertTrue(result.issues.any { it.kind == RigRegeneration.IssueKind.TOPOLOGY_FOLLOWED && it.target == "mesh:Hair" }, "${result.issues}")
+		val rest = canvas(result.model).getValue(hair)
+		assertNear(canvas(m).getValue(hair), rest, label = "hair at rest")
+		val generated = canvas(result.model, mapOf(gen to 1f)).getValue(hair)
+		for (i in rest.indices step 2) { assertEquals(rest[i] + 10f, generated[i], 1e-2f); assertEquals(rest[i + 1], generated[i + 1], 1e-2f) }
+		assertNear(canvas(m, mapOf(user to 1f)).getValue(hair), canvas(result.model, mapOf(user to 1f)).getValue(hair), tolerance = 1e-2f, label = "hair at User = 1")
+	}
 }

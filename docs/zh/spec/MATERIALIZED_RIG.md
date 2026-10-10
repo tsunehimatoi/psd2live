@@ -119,18 +119,18 @@ A 类命令在用户看到的完成态 Rig（M 加修改器）上记录，作用
 
 | 情形 | 规则 | 报告 |
 | --- | --- | --- |
-| 只在 M 中（用户创建） | 保留。父级在 M′ 中不存在时，沿它在 G 中的祖先链找到 G′ 仍有的最近祖先改挂，默认姿态下的画布位置不变，关键形位移按父级空间的线性部分换算 | `rehomed` |
+| 只在 M 中（用户创建） | 保留。父级的内容由生成器交给了另一个变形器（[接替](#113-接替)）时随之改挂；否则父级在 M′ 中不存在时，沿它在 G 中的祖先链找到 G′ 仍有的最近祖先改挂。默认姿态下的画布位置不变，关键形位移按父级空间的线性部分换算 | `followed` / `rehomed` |
 | G 有、G′ 无 | M 中该对象与 G 相同：删除；不同：保留为退役对象 | `retired_kept` |
 | G 有、M 无（用户删除） | 保持删除，即使 G′ 仍生成它 | — |
 | G′ 新增 | 加入 | — |
 | 三者都有：字段 | 逐字段三方合并：用户未改的跟随 G′，生成未变的保留用户值，两边都改时保留用户值 | `conflict` |
-| 三者都有：父级 | 用户未改父级而 G′ 改了：跟随 G′，按画布位置不变换算局部坐标与关键形 | `reparented` |
+| 三者都有：父级 | 用户未改父级而 G′ 改了：跟随 G′，按画布位置不变换算局部坐标与关键形。用户改挂到的父级被接替时随之改挂 | `reparented` / `followed` |
 | 三者都有：关键形 | 轴取并集；逐格、逐顶点（或控制点）三方合并 | `conflict` |
 | 拓扑不同（G 与 G′） | 用户差值 M − G 经画布纹理坐标迁移（`RasterMeshJournal.prepare` 的顶点来源）到 G′ 的拓扑上再加回；顶点组、路径、Glue 顶点对随同一迁移计划移动（沿用 `MaterializedMeshRebuild`） | `topology_migrated` |
-| 用户改过拓扑（M 与 G 拓扑不同） | 保留用户拓扑；G′ 相对 G 的生成变化经迁移计划映射到用户拓扑 | `topology_kept` |
+| 用户改过拓扑（M 与 G 拓扑不同） | 保留用户拓扑；G′ 相对 G 的生成变化经画布纹理坐标映射到用户顶点：取 G′ 的父级，静止位置为 M 显示的位置加上 G′ 相对 G 在画布上的移动，关键形与混合形为 G′ 的（采样到用户顶点）加上用户相对 G 的差值（换到新父级）。网格无法匹配或新父级容纳不了时整份保留 M | `topology_followed` / `topology_kept` |
 | 参数被 G′ 删除而 M 中有引用 | 保留参数为退役参数及其上的用户关键形 | `retired_kept` |
 
-- 问题以结构化记录报告（`RigRegeneration.Issue`：类型、对象、说明），等级只由 `core/quality/RegenerationRule` 决定：冲突、保留用户拓扑与丢弃对象为 warning，改挂、保留退役对象、改父级与拓扑迁移为 info。合并在写固化点时已经完成，报告是观察性的（`RegenerationQuality`，`can_proceed` 恒为 true），不阻断提交；最后一个固化点的问题进入 `workspace_inspect` 的 `quality.regeneration`。
+- 问题以结构化记录报告（`RigRegeneration.Issue`：类型、对象、说明），等级只由 `core/quality/RegenerationRule` 决定：冲突、保留用户拓扑与丢弃对象为 warning，改挂、随接替改挂、保留退役对象、改父级、拓扑迁移与用户拓扑跟随生成为 info。合并在写固化点时已经完成，报告是观察性的（`RegenerationQuality`，`can_proceed` 恒为 true），不阻断提交；最后一个固化点的问题进入 `workspace_inspect` 的 `quality.regeneration`。
 - B 类操作的试运行：`workspace_preview_regeneration`（MCP）与“工具 → 预览生成结果更新”（GUI）返回将写入的固化点及其合并问题，不提交。
 - 设计拟复用 `format-compile` 的 `ThreeWayMerge`（MIT）；实现的合并引擎 `RigRegeneration` 在产品层按中立 IR 内容比较，`ThreeWayMerge` 只用于生成结果覆盖（`GeneratedOverrides`）。
 
@@ -277,7 +277,15 @@ A 类命令在用户看到的完成态 Rig（M 加修改器）上记录，作用
 | --- | --- | --- |
 | 骨骼作用按状态判定 | `skeleton.skin` 蒙皮的网格除日志记录安放的（`placedByRecords`）外，还包括最后一个固化点的作者态 Rig 中不受其肢体任何骨骼带动的绑定网格（`SkeletonCanvasSkin.unskinned`：父级链上没有该肢体的骨骼变形器，网格也没有该肢体参数上的关键形轴或混合形）。烘焙仍只按记录决定不改挂哪些网格 | 不论网格怎样到达那里（记录、合并、旧版本），绑定的网格总随骨骼运动：挂在骨骼下由烘焙带动，否则在画布上蒙皮 |
 | 骨架作用检查 | 观察报告 `quality.skeleton`（`SkeletonBindingQuality`）：骨骼绑定却不受骨骼带动的网格（`SKELETON_BINDING_INEFFECTIVE`，warning）、挂在呼吸 Warp 下却绕过躯干 Warp 且不以身体半段为轴的网格（`SKELETON_TORSO_BYPASSED`，warning）、绑定了 Rig 中没有的网格（`SKELETON_BINDING_MISSING`，info） | 静默失效变为可见 |
-| 生成器声明接替关系 | 生成阶段移除或插入变形器时输出接替表（例：呼吸 Warp 的内容 → 躯干 Warp；手臂下垂 Warp → 对应手臂骨骼），随生成快照保存；合并时只在 M 中的对象与用户未改父级的对象沿接替表改挂；用户改过拓扑而生成侧换了父级时跟随新父级，生成变化经迁移计划映射到用户拓扑（补齐第 5 节） | 合并不再猜测结构去向 |
+| 接替 | 合并从 G 与 G′ 读出生成器把哪个变形器的内容交给了哪个（例：呼吸 Warp 的内容 → 躯干 Warp；手臂下垂 Warp → 对应手臂骨骼，见 [11.3](#113-接替)）；用户创建或改挂的对象随之改挂；用户改过拓扑而生成侧改了父级或几何时，取新父级并把生成变化经画布纹理坐标映射到用户拓扑（补齐第 5 节） | 合并不再猜测结构去向 |
 | 合并忠实性 | 不变式：M′ 的某值 ≠ G′ ⇒ M 的同一值 ≠ G（用户没改过的值等于新生成的值）；测试中断言，运行时违反则取 G′ 并报告。另以“先 A 后 B / 先 B 后 A”的顺序矩阵测试 B 类操作与 A 类操作的组合；提供从最后一个忠实的固化点重新合并的修复操作 | 合并错误不再自我固化，已损坏工程可修复 |
 
-**进度**：前两层已实现（`SkeletonCanvasSkinTest.aMeshACheckpointHoldsOutsideItsBonesTurnsWithThemWithoutARecord`、`SkeletonBindingQualityTest`）；接替表与合并忠实性为下一步。
+**进度**：前三层已实现（`SkeletonCanvasSkinTest.aMeshACheckpointHoldsOutsideItsBonesTurnsWithThemWithoutARecord`、`SkeletonBindingQualityTest`、`RigRegenerationTest` 的接替与用户拓扑两条）；合并忠实性为下一步。
+
+### 11.3 接替
+
+接替关系不另存，由合并从 G 与 G′ 本身读出（`RigRegeneration.successors`）：G 中挂在变形器 D 下、G′ 仍有的对象，在 G′ 中全部挂在同一个 X ≠ D 下，并且 D 已不在 G′ 中（启用骨架后不再生成的手臂下垂 Warp），或 X 是 G′ 新增、位于 D 之下的变形器（骨架插在呼吸 Warp 下的躯干 Warp）。对象分散到多个父级时不认定接替；消失的 D 若把内容交给了自己的父级，照常按 `rehomed` 收拢。因此已保存的固化点（都存有 G）无需改格式即可使用，规则也不依赖某个生成阶段的约定。
+
+合并时，用户创建的对象与用户改挂过的对象，若父级被接替（可逐级），随之改挂：网格按结构编辑 `bind` 的 `space=canvas` 方式保持默认姿态下的画布位置（`RigStructureEdits.carriedToParent`），变形器在改挂不改变其下任何网格的静止位置时才改挂；做不到时保持原样并报告 `conflict`（父级随后消失的，照旧收拢）。
+
+在带骨架的实际工程上重做启用骨架时的合并：重建过拓扑的袖子挂到手臂骨骼下，保留用户的顶点，骨骼在其上的关键形与混合形（姿态、小臂、手）随之迁移，静止位置偏差小于 0.01 px；导入后绑到呼吸 Warp 的图片与前后分层的上衣部件随接替进入躯干 Warp，随上身转动。
