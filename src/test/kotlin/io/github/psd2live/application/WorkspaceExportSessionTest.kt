@@ -59,6 +59,26 @@ class WorkspaceExportSessionTest {
         Files.list(temporary).use { files -> assertFalse(files.anyMatch { it.fileName.toString().startsWith(".psd2live-") }) }
     }
 
+    @Test fun theModelExportWritesTheCommittedModelWithoutRebuildingIt() = runBlocking<Unit> {
+        val builder = WorkspacePreviewBuilder()
+        val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) }, rebuildFrom = { document, previous -> builder.build(document, previous) })
+        val root = simulationFixture(runtime)
+        val committed = WorkspaceDocumentCommands(runtime).execute(root.projectId, root.state, "Drive", listOf(
+            WorkspaceDocumentOperation("parameter_create", buildJsonObject { put("parameter_id", "Drive"); put("name", "Drive") }),
+            WorkspaceDocumentOperation("settings_update", buildJsonObject { putJsonObject("changes") { put("exportMoc3", true) } })),
+            MutationAuthor.USER).capture
+        // A cold build from the journal's checkpoint, as a reopened project has: no generated base.
+        MaterializedRigStore.clear()
+        val cold = committed.copy(model = builder.build(committed.document))
+        assertFalse(cold.model.sources.baseKnown)
+        val exported = WorkspaceExportSession(cold, "Committed.psd").model(temporary.resolve("committed"))
+        val moc3 = exported.getValue("files").jsonArray.map { Path.of(it.jsonObject.getValue("path").jsonPrimitive.content) }
+            .single { it.toString().endsWith(".moc3") }
+        assertContentEquals(cold.model.runtimeBundle.assets.single { it.path.endsWith(".moc3") }.bytes, Files.readAllBytes(moc3),
+            "the file is the preview's own compile")
+        assertFalse(cold.model.sources.baseKnown, "exporting never generated the base")
+    }
+
     @Test fun publishingFailureRestoresOverwrittenFilesAndRemovesTransactionBackups() {
         val stage = Files.createDirectories(temporary.resolve("stage")); val target = Files.createDirectories(temporary.resolve("target"))
         val files = (1..2).map { index ->

@@ -120,4 +120,4 @@ Spine 有骨骼没有参数。导出的骨骼空间原点为画布底边中点�
 
 - 界面：“文件 → 导出 Live2D 模型…”导出 moc3 / cmo3；“文件 → 导出为”按运行时与播放器、图像与视频、分层 PSD 分组列出其余非实验性目标，每个目标打开自己的对话框，导出当前已提交状态并列出损失。每个目标在 `ExportTarget.settings` 中声明它读取的设置键（动作选择、开关、带范围的数值、文本），对话框按声明生成对应的行，只发送用户改动过的值，其余取目标默认值或工程导出设置；改动在本次运行中按目标保留。新目标须登记到菜单分组（`exportMenuGroups`，`ExportTargetSettingsTest` 检查）。
 - 命令行：见[开发与命令行](../guide/DEVELOPMENT.md)中的 `export` 命令；`psd2live targets` 列出每个目标及其设置键、取值范围与默认值。
-- 编辑器自身的 Cubism 预览包与 `moc3` 导出是同一次编译。
+- 编辑器自身的 Cubism 预览包与 `moc3` 导出是同一次编译：“导出 Live2D 模型”（MCP `project_export_model`）与“导出为”都写出已提交的模型本身（`PSD2LivePipeline.export`），不从源图重建，也不生成基础 Rig；两者只是报告不同（前者读回校验并写 `.psd2live.json`，后者写损失报告）。命令行先按同一构建路径（`buildPreview`）得到模型再写出。

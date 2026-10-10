@@ -544,14 +544,8 @@ class PSD2LivePipeline {
 		progress: ProgressListener = ProgressListener { _, _ -> },
 	): PipelineResult {
 		progress.update(tr("progress.readPsd"), 0.04)
-		val analysis = inspect(psd, config)
-		return exportAnalysis(
-			inputAnalysis = analysis,
-			baseName = safeBaseName(psd.fileName.toString().substringBeforeLast('.')),
-			outputDirectory = outputDirectory,
-			config = config,
-			progress = progress,
-		)
+		val model = buildPreview(inspect(psd, config), config, building(progress))
+		return export(model, psd.fileName.toString(), outputDirectory, progress)
 	}
 
 	/** Export the current authoritative source, including Agent-created layers, without rereading the PSD. */
@@ -563,36 +557,21 @@ class PSD2LivePipeline {
 		progress: ProgressListener = ProgressListener { _, _ -> },
 	): PipelineResult {
 		progress.update(tr("progress.readPsd"), 0.04)
-		val analysis = if (config.rigEdits.importedCmo3 != null) Cmo3ModelImport.analysis(source, config)
-			else RigGenerationSource.analyze(source, config)
-		return exportAnalysis(
-			inputAnalysis = analysis,
-			baseName = safeBaseName(sourceName.substringBeforeLast('.')),
-			outputDirectory = outputDirectory,
-			config = config,
-			progress = progress,
-		)
+		return export(buildPreview(source, config, building(progress)), sourceName, outputDirectory, progress)
 	}
 
-	private fun exportAnalysis(
-		inputAnalysis: PipelineAnalysis,
-		baseName: String,
-		outputDirectory: Path,
-		config: PipelineConfig,
-		progress: ProgressListener,
-	): PipelineResult {
+	/** The build's own progress, in the part of an export before the model is written. */
+	private fun building(progress: ProgressListener) = ProgressListener { stage, fraction -> progress.update(stage, 0.04 + fraction * 0.54) }
+
+	/**
+	 * Writes [model] - the rig the editor shows, as built - as the formats its config enables, each read back and
+	 * checked. The workspace exports its committed model this way, so the files are the preview, never a rebuild.
+	 */
+	fun export(model: RigPreviewModel, sourceName: String, outputDirectory: Path,
+	           progress: ProgressListener = ProgressListener { _, _ -> }): PipelineResult {
+		val (analysis, atlas, rig, config) = model
+		val baseName = safeBaseName(sourceName.substringBeforeLast('.'))
 		val imported = config.rigEdits.importedCmo3 != null
-		progress.update(tr("progress.classify"), 0.18)
-		val replayConfig = RigLayerDeletion.generationConfig(config)
-		val replayAnalysis = if (replayConfig == config) inputAnalysis else RigGenerationSource.analyze(inputAnalysis.source, replayConfig)
-		val prepared = if (imported) {
-			val (atlas, rig) = Cmo3ModelImport.baseRig(inputAnalysis.source, replayConfig)
-			GeneratedBase(replayAnalysis, atlas, rig)
-		} else generatedBase(replayAnalysis, replayConfig, progress)
-		val (_, fullAtlas, baseRig) = prepared
-		val analysis = RigLayerDeletion.analysis(prepared.analysis, config)
-		val (atlas, rig) = RigLayerDeletion.compact(fullAtlas, prepared.analysis, analysis,
-			RigLayerDeletion.rig(baseRig.withRigEdits(config.rigEdits, config.layerVisibility, config.drawOrderOverrides), prepared.analysis, config), config)
 		val generatedLabel = tr("validation.generated")
 		val neutralRig = RigIntegrityValidator.validateNeutralPose(generatedLabel, rig.puppet, rig.sourceBoundsByDrawableId)
 		val generatedAngleWarnings = RigIntegrityValidator.validateHeadAnglePoses(generatedLabel, rig.puppet, neutralRig.boundsByDrawableId)
@@ -651,8 +630,7 @@ class PSD2LivePipeline {
 			files += writeContained(outputRoot, "$baseName.psd2live.json", report.encodeToByteArray())
 		}
 		progress.update(tr("progress.validated"), 1.0)
-		return PipelineResult(analysis, files, warnings, RigPreviewModel(analysis, atlas, rig, config, runtimeBundle, PreviewRigSources.of(baseRig),
-			generationAtlas = fullAtlas.takeIf { it !== atlas }))
+		return PipelineResult(analysis, files, warnings, model)
 	}
 
 	/**

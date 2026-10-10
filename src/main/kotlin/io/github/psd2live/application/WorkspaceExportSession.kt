@@ -8,7 +8,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 
-/** An export owns one committed input; later GUI drafts or project switches cannot change it. */
+/** An export owns one committed model and writes it as built; later GUI drafts or project switches cannot change it. */
 internal class WorkspaceExportSession(
     private val captured: WorkspaceCapture<RigPreviewModel>,
     private val sourceName: String,
@@ -17,7 +17,7 @@ internal class WorkspaceExportSession(
 ) {
     suspend fun model(outputDirectory: Path): JsonObject {
         require(outputDirectory.isAbsolute && !Files.isRegularFile(outputDirectory)) { "Provide an absolute output directory" }
-        val config = captured.document.config()
+        val config = captured.model.config
         require(config.exportCmo3 || config.exportMoc3) { "Enable at least one model export format in settings" }
         val context = currentCoroutineContext()
         context.ensureActive()
@@ -25,7 +25,7 @@ internal class WorkspaceExportSession(
         val stage = staging(target.parent ?: target)
         try {
             val result = runInterruptible(Dispatchers.Default) {
-                pipeline.run(captured.document.source, sourceName, stage, config, progress(context, 0f, 0.9f))
+                pipeline.export(captured.model, sourceName, stage, progress(context, 0f, 0.9f))
             }
             val files = result.exportedFiles.map { file ->
                 val relative = stage.relativize(file.path.toAbsolutePath().normalize())
