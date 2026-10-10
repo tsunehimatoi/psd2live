@@ -85,7 +85,7 @@ class ImportTransformFlowTest {
                     io.github.psd2live.application.WorkspaceDocumentOperation(io.github.psd2live.application.WorkspaceLayerTransform.OP,
                         buildJsonObject { put("layer_id", id); put("rotate", 90); putJsonArray("pivot") { add(5); add(4) } }))) { turned.complete(it) }
                 assertNull(turned.await())
-                until { vm.state.value.analysis?.source?.layers?.single { it.id.raw == id }?.transform?.isAxisAligned == false && !editor.busy }
+                until { vm.state.value.analysis?.source?.layers?.single { it.id.raw == id }?.transform?.isAxisAligned == false && !editor.busy && !vm.state.value.workspaceEditBusy }
                 val quarter = vm.state.value.analysis!!.source.layers.single { it.id.raw == id }.transform
                 editor.setHierarchyMode(EditHierarchyMode.PAINT)
                 editor.tool = CanvasTool.PAINT_PENCIL
@@ -139,7 +139,7 @@ class ImportTransformFlowTest {
                         io.github.psd2live.application.WorkspaceDocumentOperation(io.github.psd2live.application.WorkspaceLayerTransform.OP,
                             buildJsonObject { put("layer_id", id); put("scale", by) }))) { done.complete(it) }
                     assertNull(done.await())
-                    until { vm.state.value.analysis?.source?.layers?.single { it.id.raw == id }?.transform == expected && !editor.busy }
+                    until { vm.state.value.analysis?.source?.layers?.single { it.id.raw == id }?.transform == expected && !editor.busy && !vm.state.value.workspaceEditBusy }
                 }
                 scaled(2f)
                 assertNotNull(editor.startPaintSession(id))
