@@ -2,7 +2,7 @@
 
 [文档目录](../../README.md) · [固化 Rig](MATERIALIZED_RIG.md) · [文档层](DOCUMENT_LAYER.md) · [工程格式](PROJECT_FORMAT.md)
 
-> 状态：设计稿，未实现。取代图片导入、放置、变换、纹理集与网格重建这一整条线路的现有设计；不是对现有代码打补丁。现状的事实描述以 [文档层](DOCUMENT_LAYER.md) 为准，本页第 2 节只列出必须推翻的部分。
+> 状态：主体已实现（见[实现进度](#14-实现进度)，其中列出与本设计的差异）。本页其余部分保留设计时的论证；已实现部分的事实以 [文档层](DOCUMENT_LAYER.md) 与 [MCP 接口](../agent/MCP_AUTHORING.md) 为准。
 >
 > 本页建立在 [固化 Rig](MATERIALIZED_RIG.md) 之上：M（作者态 Rig，权威数据）、G（生成快照，只作再生成合并的公共祖先）、操作分类 A（直接作用于 M）/ B（再生成事务）/ C（修改器设置）/ D（纹理集绑定与导出）沿用不变。
 
@@ -274,3 +274,21 @@ Drawable { id, layerId, mesh { positions (父级空间), uvs (图层图像像素
 | 删除改为可撤销的真删除，去掉“全部恢复” | 采用 | 用户习惯的“全部恢复”消失（撤销可替代） |
 | 工程格式升级、旧版本不能打开新工程 | 采用 | 与旧版本不能来回切换 |
 | 网格间距改为画布单位、与文档尺寸无关 | 采用，只影响新建与重建的网格 | 同一设置值在大画布上得到更密的网格（这正是预期） |
+
+## 14. 实现进度
+
+| 设计 | 实现 | 与设计的差异 |
+| --- | --- | --- |
+| 4.1 / 4.2 像素 + 放置、UV 锚定图像 | 图层保留原有的帧（整数边界与浮点 `rect`），新增 `LayerTransform`（2×3 仿射）表示整体移动、缩放、旋转 | 不迁移 UV：纹理坐标原本就锚定在图层帧上（换绑经源图清单中的帧，而非画布），帧不变即等价于“锚定图像”；变换只作用于网格顶点与显示，旧工程无需转换 |
+| 5.1 导入 | `layer_import_images` 一次提交即带网格（`canvas_mesh_create`，挂在所给父级），之后用普通变换工具调整；素材库 `layer_add_from_asset` 同样总是建网格。生成器把创建记录拥有的图层当作透明占位（`RigGenerationSource.createdCoverage`），不冻结生成输入、不写空白占位 | 没有提交前的“导入会话”：导入即一个历史节点，调整是之后的变换节点，取消即撤销。放置面板、`layer_set_bounds`、`layer_cancel_import`、`placementSource` 已删除 |
+| 5.2 变换 | `layer_transform`：每个网格写一条选择模式 `canvas_geometry` 并记录变换；选择模式拖动整个图层时画布提交该操作（`AffineFit`）；`layer_set_canvas_rect` 改为从当前显示位置出发的变换；绘画按变换显示与映射 | 拖动预览沿用画布已有的进程内预览（命令作用于当前模型，不跑流水线），未另做 GPU 仿射；旋转过的图层暂不能绘画（明确拒绝）。实测 `tml`：移动提交约 40–60 ms |
+| 5.3 删除 | `layer_delete`：图层离开源图与生成输入，日志记录 `layer_delete` 从作者态 Rig 删除其网格，构建在其前写固化点；最后一个图层不能删除 | 旧版本软删除的图层（`deletedLayerIds`）仍可读、可经 `layer_restore` 恢复；嘴唇条带、旧版左右半边等非独立源图层的行仍按旧方式隐藏 |
+| 6.1 网格触发点 | `layer_mesh_rebuild`（网格面板“按当前像素重建”）；重建与重新物化按图层变换放置；网格面板显示顶点数、边长与未被覆盖的可见像素比例（`MeshCoverage`） | 没有网格的图层首次绘画出可见像素时仍自动建网格（列为明确的触发点） |
+| 6.2 密度 | 面板显示实际边长（画布单位） | 未改生成器的密度规则：网格单位仍按文档长边 2048 归一（`MeshUnits.DOCUMENT`，同一角色在不同分辨率 PSD 上得到相同网格），12 的下限保留；改它会改变所有工程在下一次更新生成时的网格 |
+| 4.4 生成输入记入 G | 未做 | `generationSource` / `meshSource` 保留为内部机制：绘画保持网格靠前者，显式重建与生成规则变化读当前像素；导入不再写入它们 |
+| 7 身份 | 改变生成输入的编辑先把每个现有网格的 ID 固定到 `splitDrawableIds`（`pinnedIdentities`），改分类、增删图层不再改名或重新编号；导入的图片 ID 每次随机生成、不再复用；新网格 ID `ArtMeshImage…` 全局唯一 | 未统一为 `L` + base32 的图层 ID 格式，沿用各来源的 ID |
+| 9 界面 | 图层名悬停显示原图、纹理块（占原图百分比）、显示尺寸、顶点数、是否导入与是否变换；纹理面板的位置与尺寸为显示位置 | 图层列表仍包含派生行 |
+| 10 MCP | 新增 `layer_transform`、`layer_mesh_rebuild`；`layer_soft_delete` 改名 `layer_delete`；删除 `layer_set_bounds`、`layer_cancel_import` | 未合并为单一 `layer_import`，文件导入与素材库各自保留原命令名 |
+
+测试：`WorkspaceLayerTransformTest`（导入、移动缩放、挂到头部旋转下、旋转、再生成、保存重开、撤销；PSD 图层移动；重建后保持位置；覆盖比例）、`WorkspaceLayerDeleteTest`、`WorkspaceLayerIdentityTest`、`ImportTransformFlowTest`（经视图模型与画布编辑器：导入后选中、拖动提交为变换、绘画对齐），以及开发工具 `LayerFlowPerfTool`。
+
