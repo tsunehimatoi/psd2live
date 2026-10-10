@@ -126,7 +126,9 @@ internal object RasterPaintCommit {
         val updatedSourceArt = painted.source
         val rebuild = rebuildMesh && !DepthSplit.isFrontLayer(currentPreview, layerId)
         // A layer moved as a whole shows its frame elsewhere on the canvas: the rebuilt mesh goes where it shows.
-        val shownAs = sourceLayerFor(currentPreview, currentPreview.analysis, layerId)?.transform ?: io.github.psd2live.project.LayerTransform.IDENTITY
+        // The document's layer, not the classified one: a model reused across a move carries the new layer only in its source.
+        val shownAs = sourceLayerFor(currentPreview, currentPreview.analysis, layerId)?.id?.raw
+            ?.let { id -> currentPreview.analysis.source.layers.firstOrNull { it.id.raw == id } }?.transform ?: io.github.psd2live.project.LayerTransform.IDENTITY
         val currentAnalysis = currentPreview.analysis
         // The frames the live rig was built on. Rebuilt from the previous analysis on purpose: the
         // commit preserves every deformer, so a mesh rebuilt against frames moved by the new paint

@@ -1,5 +1,10 @@
 package io.github.psd2live.ui.views
 
+import io.github.psd2live.project.displayedRect
+import io.github.psd2live.project.canvasRect
+import io.github.psd2live.project.transform
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -457,7 +462,35 @@ private fun CompactSwitchParamField(
 	}
 }
 
-@OptIn(ExperimentalComposeUiApi::class)
+/**
+ * One line on a layer's pixels: its original raster, the texture tile it renders from (and what share of the original
+ * that is), where the canvas shows it, how many vertices its meshes have, and whether it is an imported image or was
+ * moved as a whole. The atlas is derived from these; nothing here is hidden.
+ */
+private fun layerPixelSummary(state: PSD2LiveState, layerId: String): String {
+	val model = state.previewModel ?: return layerId
+	val source = model.analysis.source.layers.firstOrNull { it.id.raw == layerId }
+	val parts = ArrayList<String>()
+	if (source != null) {
+		parts += tr("layers.info.original", source.raster.width, source.raster.height)
+		model.atlas.placementByLayerId[layerId]?.let { tile ->
+			val share = if (source.raster.width > 0) 100f * tile.width / source.raster.width else 100f
+			parts += tr("layers.info.texture", tile.width, tile.height, "%.0f".format(share))
+		}
+		val shown = source.displayedRect() ?: source.canvasRect()
+		parts += tr("layers.info.canvas", "%.0f".format(shown.width), "%.0f".format(shown.height))
+	}
+	val vertices = model.rig.puppet.drawables.filter { model.rig.layerIdByDrawableId[it.id.raw] == layerId }.sumOf { it.mesh?.vertexCount ?: 0 }
+	if (vertices > 0) parts += tr("layers.info.vertices", vertices)
+	val created = model.config.rigEdits.authoringJournal.any {
+		it["op"]?.jsonPrimitive?.contentOrNull == io.github.psd2live.core.RasterMeshCreation.OP && it["layer_id"]?.jsonPrimitive?.contentOrNull == layerId
+	}
+	if (created) parts += tr("layers.info.created")
+	if (source != null && !source.transform.isIdentity) parts += tr("layers.info.moved")
+	return parts.joinToString(" · ")
+}
+
+@OptIn(ExperimentalComposeUiApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 internal fun LayersTableView(
 	state: PSD2LiveState,
@@ -604,13 +637,25 @@ internal fun LayersTableView(
 								color = colors.textMuted,
 								modifier = Modifier.width(26.dp).padding(start = 2.dp),
 							)
-							Text(
-								text = layer.source.name,
-								style = typography.body.copy(fontSize = 11.sp),
-								color = if (isVisible) (if (isSelected) colors.selectionText else colors.textPrimary) else colors.textDisabled,
-								maxLines = 1,
-								overflow = TextOverflow.Ellipsis,
-							)
+							// What the layer's pixels are and where they go: original, texture tile, canvas, mesh.
+							androidx.compose.foundation.TooltipArea(
+								tooltip = {
+									androidx.compose.material.Surface(color = colors.panelElevated, shape = androidx.compose.foundation.shape.RoundedCornerShape(3.dp),
+										border = BorderStroke(1.dp, colors.border), elevation = 4.dp) {
+										Text(text = layerPixelSummary(state, layerId), style = typography.caption.copy(fontSize = 10.sp),
+											color = colors.textPrimary, modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp))
+									}
+								},
+								delayMillis = 500,
+							) {
+								Text(
+									text = layer.source.name,
+									style = typography.body.copy(fontSize = 11.sp),
+									color = if (isVisible) (if (isSelected) colors.selectionText else colors.textPrimary) else colors.textDisabled,
+									maxLines = 1,
+									overflow = TextOverflow.Ellipsis,
+								)
+							}
 						}
 
 						// 1. Type Dropdown (预设 / 开关差分 / 切换差分)

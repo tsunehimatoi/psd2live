@@ -190,9 +190,35 @@ internal class WorkspacePreviewBuilder {
         return model.copy(config = model.config.copy(rigEdits = overlay.copy(authoringJournal = overlay.authoringJournal + record)))
     }
 
+    /**
+     * Whether [document] differs from [current]'s inputs only in layers the generators never read - layers whose meshes
+     * creation records own, added or removed - and in layer moves: then the generated rig cannot have changed, and the
+     * build skips generating it again to compare.
+     */
+    private fun onlyUsersLayersChanged(current: RigPreviewModel, document: WorkspaceDocument, config: io.github.psd2live.core.PipelineConfig): Boolean {
+        // Only the journal may differ (the edit's own entries); the skeleton, pins and the rest of the overlay feed generation.
+        if (current.config.copy(rigEdits = config.rigEdits) != config ||
+            current.config.rigEdits.copy(authoringJournal = config.rigEdits.authoringJournal) != config.rigEdits) return false
+        val before = current.analysis.source.layers.associateBy { it.id.raw }
+        val after = document.source.layers.associateBy { it.id.raw }
+        val created = io.github.psd2live.core.RigGenerationSource.createdCoverage(config.rigEdits).keys +
+            io.github.psd2live.core.RigGenerationSource.createdCoverage(current.config.rigEdits).keys
+        for ((id, layer) in after) {
+            val old = before[id] ?: if (id in created) continue else return false
+            if (old !== layer && old != layer && !(old is io.github.psd2live.project.WorkspaceSourceLayer && layer is io.github.psd2live.project.WorkspaceSourceLayer &&
+                    old.copy(layerTransform = null, order = 0) == layer.copy(layerTransform = null, order = 0) && (id in created || old.order == layer.order))) return false
+        }
+        return before.keys.all { it in after || it in created }
+    }
+
     suspend fun build(document: WorkspaceDocument, current: RigPreviewModel? = null,
                       legacyDrawOrders: Map<String, Float> = current?.config?.drawOrderOverrides.orEmpty()): RigPreviewModel =
-        importedRecordsCheckpointed(buildModel(document, current, legacyDrawOrders), current)
+        importedRecordsCheckpointed(buildModel(document, current, legacyDrawOrders), current).let { model ->
+            // A model reused across a layer move carries the moved layers, so the canvas and paint read where they now are.
+            if (model.analysis.source !== document.source && model.analysis.source != document.source &&
+                pipeline.sameArt(model.analysis.source, document.source)) model.copy(analysis = model.analysis.copy(source = document.source))
+            else model
+        }
 
     private suspend fun buildModel(document: WorkspaceDocument, current: RigPreviewModel?,
                                    legacyDrawOrders: Map<String, Float>): RigPreviewModel {
@@ -220,7 +246,7 @@ internal class WorkspacePreviewBuilder {
             // The generated rig changed under the journal: merge onto the new one and checkpoint, instead of replaying old entries on it.
             // Before the journal's own checkpoint: that holds the rig of the old generation (a skeleton committed after it would not bake).
             if (current != null && !fast && revision != null && pipeline.materializable(current.config) &&
-                config.rigEdits.continues(current.config.rigEdits)) {
+                config.rigEdits.continues(current.config.rigEdits) && !onlyUsersLayersChanged(current, document, config)) {
                 RigRegenerationCheckpoint.checkpointed(pipeline, current, config, document.source, { progress.update("Merging regenerated rig", 0.5) },
                     currentSource = RigGenerationChange.changed(current, config))
                     ?.let { checkpointed ->
