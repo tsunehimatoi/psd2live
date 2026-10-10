@@ -24,6 +24,8 @@ enum class RegenerationRule(val severity: String, val category: String) {
 	REGENERATION_TOPOLOGY_FOLLOWED("info", "quality"),
 	/** A user object followed its parent's contents to the deformer the generators handed them to. */
 	REGENERATION_FOLLOWED("info", "quality"),
+	/** An earlier build merged a regeneration differently; this build merged it again and carried the correction forward. */
+	REGENERATION_REMERGED("info", "quality"),
 	/** A user object lost what it refers to and was removed. */
 	REGENERATION_DROPPED("warning", "validity"),
 	;
@@ -38,6 +40,7 @@ enum class RegenerationRule(val severity: String, val category: String) {
 			RigRegeneration.IssueKind.TOPOLOGY_KEPT -> REGENERATION_TOPOLOGY_KEPT
 			RigRegeneration.IssueKind.TOPOLOGY_FOLLOWED -> REGENERATION_TOPOLOGY_FOLLOWED
 			RigRegeneration.IssueKind.FOLLOWED -> REGENERATION_FOLLOWED
+			RigRegeneration.IssueKind.REMERGED -> REGENERATION_REMERGED
 			RigRegeneration.IssueKind.DROPPED -> REGENERATION_DROPPED
 		}
 	}

@@ -123,7 +123,7 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
         })
     }
 
-    register(WorkspaceGenerationUpdate.OP, "Regenerate the rig with this build's generators. A project whose journal has a regeneration checkpoint keeps what the generators made when it was written, even after an update; this merges what they make now onto the user's edits: what the user left follows the new output, the user's changes stay, and what does not carry over cleanly is reported in issues (also in workspace_inspect quality.regeneration). Commits one undoable history node, or none when the generators make the same rig (updated: false). Imported CMO3 models have no generated rig and are refused.",
+    register(WorkspaceGenerationUpdate.OP, "Regenerate the rig with this build's generators. A project whose journal has a regeneration checkpoint keeps what the generators made when it was written, even after an update; this merges what they make now onto the user's edits: what the user left follows the new output, the user's changes stay, and what does not carry over cleanly is reported in issues (also in workspace_inspect quality.regeneration). Earlier regeneration merges this build makes differently are merged again first and their correction carried onto the current rig (issue kind remerged, target journal:<index>). Commits one undoable history node, or none when the generators make the same rig and every merge comes out alike (updated: false). Imported CMO3 models have no generated rig and are refused.",
         objectSchema(buildJsonObject { put("state", string()) }, listOf("state")), WorkspaceOperationKind.DOCUMENT) { request ->
         WorkspaceOperationOutput(workspace.updateGeneration(request.text("state")))
     }

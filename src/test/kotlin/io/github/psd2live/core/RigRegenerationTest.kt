@@ -201,4 +201,29 @@ class RigRegenerationTest {
 		for (i in rest.indices step 2) { assertEquals(rest[i] + 10f, generated[i], 1e-2f); assertEquals(rest[i + 1], generated[i + 1], 1e-2f) }
 		assertNear(canvas(m, mapOf(user to 1f)).getValue(hair), canvas(result.model, mapOf(user to 1f)).getValue(hair), tolerance = 1e-2f, label = "hair at User = 1")
 	}
+
+	private fun checkpoint(authored: PuppetModel, generated: PuppetModel) = RigCheckpoint.encode(
+		AuthoredRig(BuiltRig(authored, emptyMap(), emptyMap(), emptyMap(), 0f, 0f, 0f, 0f, emptyList()), emptyList()), "test",
+		generated = AuthoredRig(BuiltRig(generated, emptyMap(), emptyMap(), emptyMap(), 0f, 0f, 0f, 0f, emptyList()), emptyList()))
+
+	@Test fun aRegenerationAnEarlierBuildMergedDifferentlyIsMergedAgainAndTheCorrectionCarriedOntoLaterEdits() {
+		val g0 = generated(); val g1 = spliced(g0)
+		val bow = quad(DrawableId("Bow"), body, floatArrayOf(0.2f, 0.6f, 0.4f, 0.6f, 0.2f, 0.8f, 0.4f, 0.8f), floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f))
+		val m0 = g0.copy(drawables = g0.drawables + bow, rootChildren = g0.rootChildren + OrgChild.Drawable(bow.id)).withDerivedRenderRoot()
+		// What an earlier build made of the splice: the bow left on the body warp, beside the torso warp.
+		val stale = g1.copy(drawables = g1.drawables + bow, rootChildren = g1.rootChildren + OrgChild.Drawable(bow.id)).withDerivedRenderRoot()
+		val overlay = RigEditOverlay(authoringJournal = listOf(checkpoint(m0, g0), checkpoint(stale, g1)))
+		// A later edit: the skirt half transparent.
+		val current = stale.copy(drawables = stale.drawables.map { if (it.id == skirt) it.copy(opacity = 0.5f) else it })
+		val repair = assertNotNull(RigMergeRepair.repaired(overlay, current, g1.atlas, g1.sources))
+		assertEquals(DeformerId("Torso"), repair.authored.drawables.single { it.id == bow.id }.parentDeformerId)
+		assertEquals(0.5f, repair.authored.drawables.single { it.id == skirt }.opacity, "the later edit stays")
+		assertNear(canvas(current).getValue(bow.id), canvas(repair.authored).getValue(bow.id), label = "bow at rest")
+		val remerged = repair.issues.single { it.kind == RigRegeneration.IssueKind.REMERGED }
+		assertEquals("journal:1", remerged.target)
+		assertEquals("mesh:Bow", remerged.detail)
+		// A journal this build merges alike needs nothing.
+		val faithful = RigEditOverlay(authoringJournal = listOf(checkpoint(m0, g0), checkpoint(RigRegeneration.merge(g0, g1, m0).model, g1)))
+		assertNull(RigMergeRepair.repaired(faithful, current, g1.atlas, g1.sources))
+	}
 }
