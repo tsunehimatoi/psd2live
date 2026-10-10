@@ -67,6 +67,27 @@ internal object WorkspaceRasterEdits {
             checkpoint = work::checkpoint), work)
     }
 
+    const val REBUILD_MESH = "layer_mesh_rebuild"
+
+    /**
+     * Rebuilds [layerId]'s meshes from its pixels as they are now - the one way, besides a paint or image replacement
+     * that asks for it, a layer's mesh is made again. Keyforms, paths, weights and glue migrate onto the new topology;
+     * a layer moved as a whole keeps its place.
+     */
+    fun rebuildMesh(document: WorkspaceDocument, model: RigPreviewModel, layerId: String,
+                    work: WorkspaceRasterWork = WorkspaceRasterWork.Direct): WorkspaceDocument {
+        val id = RasterPaintCommit.sourceLayerFor(model, model.analysis, layerId)?.id?.raw
+            ?: throw IllegalArgumentException("Layer not found: $layerId")
+        val layer = document.source.layers.singleOrNull { it.id.raw == id && id !in document.deletedLayerIds }
+            ?: throw IllegalArgumentException("Layer not found: $layerId")
+        val own = PaintSpace.of(layer, document.source.widthPx, document.source.heightPx).cropLayer(layer, work::checkpoint)
+        require((0 until own.raster.width * own.raster.height).any { (own.raster.rgba[it * 4 + 3].toInt() and 255) > model.config.alphaThreshold }) {
+            "Layer $layerId has no visible pixels to mesh"
+        }
+        return prepare(document, model, WorkspacePaintRaster(layerId, own.raster, rebuildMesh = true,
+            rect = own.rect ?: LayerCanvasRect.of(own.bounds)), work)
+    }
+
     fun prepare(document: WorkspaceDocument, model: RigPreviewModel, request: WorkspacePaintRaster,
                 work: WorkspaceRasterWork = WorkspaceRasterWork.Direct): WorkspaceDocument {
         work.progress(0.25f, "Preparing painted pixels")

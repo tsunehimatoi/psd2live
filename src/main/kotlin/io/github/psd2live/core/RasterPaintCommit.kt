@@ -4,6 +4,7 @@ import io.github.psd2live.project.LayerCanvasRect
 import io.github.psd2live.project.WorkspaceSourceArt
 import io.github.psd2live.project.WorkspaceSourceLayer
 import io.github.psd2live.project.storedCanvasRect
+import io.github.psd2live.project.transform
 import kotlinx.serialization.json.*
 import org.umamo.edit.withDrawablesDeleted
 import org.umamo.format.art.LayerBounds
@@ -124,6 +125,8 @@ internal object RasterPaintCommit {
         val newPixels = PaintedLayer(painted.bounds, painted.rect, painted.raster)
         val updatedSourceArt = painted.source
         val rebuild = rebuildMesh && !DepthSplit.isFrontLayer(currentPreview, layerId)
+        // A layer moved as a whole shows its frame elsewhere on the canvas: the rebuilt mesh goes where it shows.
+        val shownAs = sourceLayerFor(currentPreview, currentPreview.analysis, layerId)?.transform ?: io.github.psd2live.project.LayerTransform.IDENTITY
         val currentAnalysis = currentPreview.analysis
         // The frames the live rig was built on. Rebuilt from the previous analysis on purpose: the
         // commit preserves every deformer, so a mesh rebuilt against frames moved by the new paint
@@ -290,13 +293,13 @@ internal object RasterPaintCommit {
                     )
                     for (lip in rebuilt.mouthLips) {
                         val unplaced = requireNotNull(lip.drawable.mesh)
-                        val placed = lip.canvas?.let { RasterMeshPlacement.underParent(puppet, lip.drawable, it) }
+                        val placed = lip.canvas?.let { RasterMeshPlacement.underParent(puppet, lip.drawable, RasterMeshPlacement.shown(it, shownAs)) }
                         rebuiltLips[lip.drawable.id.raw] = if (placed == null) lip else RigBuilder.MouthLip(
                             lip.drawable.copy(mesh = DrawableMesh(placed, unplaced.uvs, unplaced.indices)),
                             lip.ownerId, lip.layer, lip.path, lip.neutralBounds, lip.canvas)
                     }
 
-                    val placed = RasterMeshPlacement.underParent(puppet, drawable, rebuilt.canvas)
+                    val placed = RasterMeshPlacement.underParent(puppet, drawable, RasterMeshPlacement.shown(rebuilt.canvas, shownAs))
                     // The generated grid moves the frame's mesh; it fits the placed one only where the frame
                     // is the parent's actual space.
                     val framed = placed == null || placed.indices.all { abs(placed[it] - rebuilt.mesh.positions[it]) <= 1e-3f }

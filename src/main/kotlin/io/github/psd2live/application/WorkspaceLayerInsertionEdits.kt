@@ -12,16 +12,6 @@ internal object WorkspaceLayerInsertionEdits {
         rigEdits = RigLayerDeletion.preserve(model, document.config()),
         generationSource = document.generationSource ?: document.source)
 
-    fun identities(document: WorkspaceDocument, model: RigPreviewModel): WorkspaceDocument {
-        val config = document.config()
-        val analysis = RigGenerationSource.prepare(RigGenerationSource.analyze(document.source, config), config).geometry
-        val known = document.rigEdits.splitDrawableIds.mapValues { DrawableId(it.value) } +
-            model.baseRig.layerIdByDrawableId.entries.associate { it.value to DrawableId(it.key) } +
-            model.rig.layerIdByDrawableId.entries.associate { it.value to DrawableId(it.key) }
-        val fixed = RigBuilder.assignSplitDrawableIds(analysis, known).mapValues { it.value.raw }
-        return document.copy(rigEdits = document.rigEdits.copy(splitDrawableIds = document.rigEdits.splitDrawableIds + fixed))
-    }
-
     /**
      * The mesh ID each of [ids] gets: the one its mesh already has, else a fresh `ArtMeshImage…` no rig, journal record or
      * other layer holds. A one-layer build alone would name every image the same.
@@ -51,7 +41,9 @@ internal object WorkspaceLayerInsertionEdits {
             rigEdits = RigEditOverlay.Empty.copy(splitDrawableIds = meshIds(document, current, ids)))
         val generated = PSD2LivePipeline().buildPreview(source, config, ProgressListener { _, _ -> checkCancelled() })
         val parentId = parent?.let(::DeformerId)
-        val rig = RasterMeshPlacement.underParents(generated.rig, current.rig.puppet, { parentId }, checkCancelled)
+        val transforms = document.source.layers.filter { it.id.raw in ids }.associate { it.id.raw to it.transform }
+        val rig = RasterMeshPlacement.underParents(generated.rig, current.rig.puppet, { parentId },
+            { mesh -> generated.rig.layerIdByDrawableId[mesh.raw]?.let(transforms::get) ?: LayerTransform.IDENTITY }, checkCancelled)
         val records = rig.puppet.drawables.map { drawable ->
             checkCancelled()
             RasterMeshCreation.encode(rig, drawable.id).let { command ->

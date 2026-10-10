@@ -96,6 +96,7 @@ internal fun MeshPanelView(
 				onToggleHints = { showHints = !showHints },
 				viewModel = viewModel,
 				reloadBaseline = { state.getEffectiveMeshSettings(layerId) },
+				previewModel = state.previewModel,
 			)
 		}
 	}
@@ -254,6 +255,7 @@ private fun SelectedMeshSettingsEditor(
 	onToggleHints: () -> Unit,
 	viewModel: PSD2LiveViewModel,
 	reloadBaseline: () -> MeshSettings,
+	previewModel: io.github.psd2live.core.RigPreviewModel?,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -307,13 +309,27 @@ private fun SelectedMeshSettingsEditor(
 			)
 		}
 
+		// What the layer's mesh is now: its vertices, and the edge spacing in canvas units its settings give.
+		val meshes = previewModel?.rig?.let { rig -> rig.puppet.drawables.filter { rig.layerIdByDrawableId[it.id.raw] == layerId } }.orEmpty()
+		val unitScale = previewModel?.let { MeshResolution.unitScale(it.config, it.analysis.source) } ?: 1f
+		Text(tr("mesh.settings.current", meshes.sumOf { it.mesh?.vertexCount ?: 0 }.toString(), "%.1f".format(draft.maxEdgeDistance * unitScale)),
+			style = typography.caption.copy(fontSize = 9.sp), color = colors.textMuted, modifier = Modifier.padding(horizontal = 8.dp))
+		val uncovered = remember(previewModel, layerId) { previewModel?.let { io.github.psd2live.core.MeshCoverage.uncovered(it, layerId) } }
+		if (uncovered != null && uncovered >= 0.005f) Text(tr("mesh.settings.uncovered", "%.0f".format(uncovered * 100)),
+			style = typography.caption.copy(fontSize = 9.sp), color = colors.warning, modifier = Modifier.padding(horizontal = 8.dp))
 		Row(
 			modifier = Modifier
 				.fillMaxWidth()
 				.padding(horizontal = 8.dp, vertical = 8.dp),
 			verticalAlignment = Alignment.CenterVertically,
-			horizontalArrangement = Arrangement.End,
+			horizontalArrangement = Arrangement.SpaceBetween,
 		) {
+			CompactButton(
+				text = tr("mesh.rebuild"),
+				onClick = { viewModel.rebuildLayerMesh(layerId) },
+				enabled = !isBusy,
+				height = 24.dp,
+			)
 			Row(
 				verticalAlignment = Alignment.CenterVertically,
 				horizontalArrangement = Arrangement.spacedBy(6.dp),

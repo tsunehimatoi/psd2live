@@ -157,4 +157,71 @@ class WorkspaceLayerTransformTest {
             buildJsonObject { putJsonObject("changes") { put("bodyStrength", 2) } })), MutationAuthor.USER).capture
         assertMapped(canvas(moved.model, "body"), canvas(regenerated.model, "body"), LayerTransform.IDENTITY, "kept through the regeneration")
     }
+
+    /** Rebuilding a moved image's mesh makes it again where the image shows, not where it was imported. */
+    @Test fun aRebuiltMeshStaysWhereTheLayerWasMoved() = runBlocking<Unit> {
+        val layers = listOf(ellipse("body", "body", 0, 100, 230, 50, 60), ellipse("face", "face", 1, 100, 110, 50, 60))
+        val config = PipelineConfig(atlasSize = 512, meshSpacing = 16, generatePhysics = false, exportMoc3 = false)
+        val document = WorkspaceDocument(WorkspaceSourceArt(200, 300, layers, emptyList()), emptyMap(), emptySet(), emptyMap(),
+            emptyMap(), RigEditOverlay.Empty, WorkspaceSettingsCodec.encode(config))
+        val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) }, rebuildFrom = { d, previous -> builder.build(d, previous) })
+        runtime.install(runtime.state.value.state, "rebuild", document, builder.build(document))
+        val commands = WorkspaceDocumentCommands(runtime)
+        val disc = ByteArray(64 * 64 * 4).also { rgba ->
+            for (y in 0 until 64) for (x in 0 until 64) if ((x - 31.5) * (x - 31.5) + (y - 31.5) * (y - 31.5) < 30 * 30) {
+                val i = (y * 64 + x) * 4; rgba[i] = 9; rgba[i + 3] = -1
+            }
+        }
+        val file = temporary.resolve("disc.png").also { Files.write(it, PngCodec.write(RasterImage(64, 64, disc))) }
+        val start = runtime.capture()
+        val id = WorkspaceImageLayerCommands(runtime).importImages(start.projectId, start.state, listOf(file), null, "Import", MutationAuthor.USER)
+            .mutation.affectedLayerIds.single()
+        val before = runtime.capture()
+        val moved = commands.execute(before.projectId, before.state, "Move", listOf(WorkspaceDocumentOperation(WorkspaceLayerTransform.OP,
+            buildJsonObject { put("layer_id", id); putJsonArray("translate") { add(30); add(40) }; put("scale", 1.5) })), MutationAuthor.USER).capture
+        fun box(points: FloatArray) = listOf(points.filterIndexed { i, _ -> i % 2 == 0 }.min(), points.filterIndexed { i, _ -> i % 2 == 1 }.min(),
+            points.filterIndexed { i, _ -> i % 2 == 0 }.max(), points.filterIndexed { i, _ -> i % 2 == 1 }.max())
+        val shown = box(canvas(moved.model, id))
+        val rebuilt = commands.execute(moved.projectId, moved.state, "Rebuild", listOf(WorkspaceDocumentOperation(WorkspaceRasterEdits.REBUILD_MESH,
+            buildJsonObject { put("layer_id", id) })), MutationAuthor.USER).capture
+        assertNotEquals(moved.document.rigEdits.authoringJournal.size, rebuilt.document.rigEdits.authoringJournal.size, "the rebuild is recorded")
+        val after = box(canvas(rebuilt.model, id))
+        assertTrue(shown.indices.all { abs(shown[it] - after[it]) < 3f }, "rebuilt at $after, shown at $shown")
+        assertEquals(moved.document.source.layers.single { it.id.raw == id }.transform, rebuilt.document.source.layers.single { it.id.raw == id }.transform)
+        assertMapped(canvas(rebuilt.model, id), canvas(builder.build(rebuilt.document), id), LayerTransform.IDENTITY, "cold build")
+    }
+
+    /** Pixels beyond the mesh are reported as not showing, and a rebuild from the pixels brings them in. */
+    @Test fun pixelsBeyondTheMeshAreReportedUntilARebuild() = runBlocking<Unit> {
+        val layers = listOf(ellipse("body", "body", 0, 100, 230, 50, 60), ellipse("face", "face", 1, 100, 110, 50, 60))
+        val config = PipelineConfig(atlasSize = 512, meshSpacing = 16, generatePhysics = false, exportMoc3 = false)
+        val document = WorkspaceDocument(WorkspaceSourceArt(200, 300, layers, emptyList()), emptyMap(), emptySet(), emptyMap(),
+            emptyMap(), RigEditOverlay.Empty, WorkspaceSettingsCodec.encode(config))
+        val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) }, rebuildFrom = { d, previous -> builder.build(d, previous) })
+        runtime.install(runtime.state.value.state, "coverage", document, builder.build(document))
+        val commands = WorkspaceDocumentCommands(runtime)
+        val disc = ByteArray(64 * 64 * 4).also { rgba ->
+            for (y in 0 until 64) for (x in 0 until 64) if ((x - 31.5) * (x - 31.5) + (y - 31.5) * (y - 31.5) < 31 * 31) {
+                val i = (y * 64 + x) * 4; rgba[i] = 9; rgba[i + 3] = -1
+            }
+        }
+        val file = temporary.resolve("disc.png").also { Files.write(it, PngCodec.write(RasterImage(64, 64, disc))) }
+        val start = runtime.capture()
+        val id = WorkspaceImageLayerCommands(runtime).importImages(start.projectId, start.state, listOf(file), null, "Import", MutationAuthor.USER)
+            .mutation.affectedLayerIds.single()
+        val imported = runtime.capture()
+        assertTrue(assertNotNull(MeshCoverage.uncovered(imported.model, id)) < 0.03f, "an import is covered")
+        // Its corners filled in, as a paint that keeps the mesh would leave them: about a fifth of the pixels show nowhere.
+        val painted = commands.executeCandidate(imported.projectId, imported.state, "Paint", MutationAuthor.USER, mutation = { doc, _ ->
+            doc.copy(source = WorkspaceSourceArt(doc.source.widthPx, doc.source.heightPx, doc.source.layers.map { layer ->
+                if (layer.id.raw != id) layer else (layer as WorkspaceSourceLayer).copy(raster = org.umamo.format.art.LayerRaster(
+                    layer.raster.width, layer.raster.height, ByteArray(layer.raster.rgba.size) { if (it % 4 == 3) -1 else 9 }))
+            }, doc.source.groups))
+        }).capture
+        val missing = assertNotNull(MeshCoverage.uncovered(painted.model, id))
+        assertTrue(missing in 0.12f..0.3f, "uncovered $missing")
+        val rebuilt = commands.execute(painted.projectId, painted.state, "Rebuild", listOf(WorkspaceDocumentOperation(WorkspaceRasterEdits.REBUILD_MESH,
+            buildJsonObject { put("layer_id", id) })), MutationAuthor.USER).capture
+        assertTrue(assertNotNull(MeshCoverage.uncovered(rebuilt.model, id)) < 0.03f, "the rebuild covers the pixels")
+    }
 }

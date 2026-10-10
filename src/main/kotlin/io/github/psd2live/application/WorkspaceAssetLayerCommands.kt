@@ -62,13 +62,10 @@ internal object WorkspaceAssetLayerEdits {
         val reference = registration?.let { resources.record(it.text("reference_id"), "reference") }
         val parent = request.parentDeformerId ?: reference?.get("source_parent_id")?.jsonPrimitive?.content
         require(parent == null || model.rig.puppet.deformers.any { it.id.raw == parent }) { "Reference parent no longer exists" }
-        val frozen = WorkspaceLayerInsertionEdits.freeze(document, model)
-        val (added, id) = frozen.addLayer(registration?.let { placedAsset(asset, it) } ?: asset, request.copy(parentDeformerId = parent), checkCancelled)
+        val (added, id) = document.addLayer(registration?.let { placedAsset(asset, it) } ?: asset, request.copy(parentDeformerId = parent), checkCancelled)
         val placed = if (registration == null) added else placement(added, id, asset, registration, requireNotNull(reference))
-        val identified = WorkspaceLayerInsertionEdits.identities(placed, model)
-        return if (placed.rigEdits.importedCmo3 != null || parent != null && model.baseRig.puppet.deformers.none { it.id.raw == parent })
-            WorkspaceLayerInsertionEdits.materialize(identified, model, setOf(id), parent, checkCancelled)
-        else identified
+        // Like a file import: the layer is the user's, with its own mesh under its parent, which the generators never make.
+        return WorkspaceLayerInsertionEdits.materialize(placed, model, setOf(id), parent, checkCancelled)
     }
 
     private fun place(document: WorkspaceDocument, model: RigPreviewModel, id: String, registrationId: String,
@@ -83,15 +80,10 @@ internal object WorkspaceAssetLayerEdits {
         val asset = resources.asset(registration.text("asset_id"))
         val candidate = placement(document.replacePlacedLayer(id, placedAsset(asset, registration), checkCancelled), id, asset, registration,
             resources.record(registration.text("reference_id"), "reference"))
-        val creation = document.rigEdits.authoringJournal.any {
-            it["op"]?.jsonPrimitive?.content == RasterMeshCreation.OP && it["layer_id"]?.jsonPrimitive?.content == id
-        }
-        // A generated mesh follows the new placement: unpainted pixels a paint pinned no longer describe it.
-        return if (creation) WorkspaceLayerInsertionEdits.materialize(candidate, model, setOf(id), document.parentOverrides[id], checkCancelled)
-        else candidate.copy(generationSource = candidate.generationSource?.let { generation ->
-            if (generation.layers.none { it.id.raw == id }) generation
-            else WorkspaceSourceArt(generation.widthPx, generation.heightPx, generation.layers.filterNot { it.id.raw == id }, generation.groups)
-        })
+        // The layer's own mesh is made again over the new placement, under the parent it hangs from.
+        val parent = model.rig.puppet.drawables.firstOrNull { model.rig.layerIdByDrawableId[it.id.raw] == id }?.parentDeformerId?.raw
+            ?: document.parentOverrides[id]
+        return WorkspaceLayerInsertionEdits.materialize(candidate, model, setOf(id), parent, checkCancelled)
     }
 
     private fun editable(document: WorkspaceDocument, model: RigPreviewModel, id: String) {

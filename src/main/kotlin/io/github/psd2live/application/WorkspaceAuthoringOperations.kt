@@ -111,6 +111,18 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
         })
     }
 
+    register(WorkspaceRasterEdits.REBUILD_MESH, "Rebuild a layer's meshes from its pixels as they are now, at its mesh settings: after painting or replacing pixels beyond the mesh, or to apply changed density. Keyforms, paths, weights and glue migrate onto the new topology, and a layer moved as a whole keeps its place. Nothing else rebuilds a mesh except the paint and image-replacement rebuild_mesh option, mesh settings and regenerations. One undoable history edit.",
+        objectSchema(buildJsonObject { put("state", string()); put("layer_id", string()) }, listOf("state", "layer_id")), WorkspaceOperationKind.DOCUMENT) { request ->
+        val id = request.text("layer_id")
+        val result = workspace.applyDocumentEdits(request.text("state"), "Rebuilt mesh of $id",
+            listOf(WorkspaceDocumentOperation(WorkspaceRasterEdits.REBUILD_MESH, JsonObject(request - "state"))), MutationAuthor.AGENT)
+        WorkspaceOperationOutput(buildJsonObject {
+            put("state", requireNotNull(result.state)); put("history_node_id", result.historyNodeId); put("project_id", requireNotNull(result.projectId))
+            put("layer_id", id)
+            if (!result.applied) put("applied", false)
+        })
+    }
+
     register(WorkspaceGenerationUpdate.OP, "Regenerate the rig with this build's generators. A project whose journal has a regeneration checkpoint keeps what the generators made when it was written, even after an update; this merges what they make now onto the user's edits: what the user left follows the new output, the user's changes stay, and what does not carry over cleanly is reported in issues (also in workspace_inspect quality.regeneration). Commits one undoable history node, or none when the generators make the same rig (updated: false). Imported CMO3 models have no generated rig and are refused.",
         objectSchema(buildJsonObject { put("state", string()) }, listOf("state")), WorkspaceOperationKind.DOCUMENT) { request ->
         WorkspaceOperationOutput(workspace.updateGeneration(request.text("state")))

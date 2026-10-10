@@ -20,7 +20,7 @@ interface WorkspaceDocumentPort {
 internal object WorkspaceDocumentEdits {
     val supported: Set<String> = setOf("settings_update", "layer_classify", "layer_mesh_update",
         "parameter_create", "parameter_update", "parameter_delete", "rig_deform", "keyform_apply",
-        "rig_edit_structure", "object_edit_appearance", "vertex_group_update", WorkspaceDrawOrderEdits.OP) + WorkspaceLayerTransform.supported +
+        "rig_edit_structure", "object_edit_appearance", "vertex_group_update", WorkspaceDrawOrderEdits.OP, WorkspaceRasterEdits.REBUILD_MESH) + WorkspaceLayerTransform.supported +
         WorkspaceRasterCommands.supported + WorkspaceLayerEdits.supported + WorkspaceAssetLayerEdits.supported + WorkspacePartitionCommands.supported + WorkspaceGenerationUpdate.supported + WorkspaceWarpEdits.supported + WorkspaceWarpControlEdits.supported +
         setOf("auto", "put", "enable", "bone", "move", "bind", "remove", "delete").map { "skeleton_$it" } +
         setOf("put", "delete", "seed_builtin", "set_key", "delete_key", "remove_curve", "pose", "move_keys", "delete_keys", "paste_keys", "replace_keys", "preset", "create", "duplicate", "rename", "properties").map { "motion_$it" } +
@@ -38,6 +38,7 @@ internal object WorkspaceDocumentEdits {
         return when (operation.operation) {
             WorkspaceDrawOrderEdits.OP -> WorkspaceDrawOrderEdits.apply(document, model, request)
             WorkspaceLayerTransform.OP -> WorkspaceLayerTransform.apply(document, model, request)
+            WorkspaceRasterEdits.REBUILD_MESH -> WorkspaceRasterEdits.rebuildMesh(document, model, request.text("layer_id"), rasterWork)
             in WorkspaceTextureEdits.supported -> WorkspaceTextureEdits.apply(operation, document, model, rasterWork::checkpoint)
             in WorkspaceCanvasWeightEdits.supported -> WorkspaceCanvasWeightEdits.apply(operation, document, model)
             in WorkspaceCanvasDeformEdits.supported -> WorkspaceCanvasDeformEdits.apply(operation, document, model)

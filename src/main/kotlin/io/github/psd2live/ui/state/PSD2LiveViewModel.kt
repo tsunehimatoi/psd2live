@@ -5892,6 +5892,16 @@ class PSD2LiveViewModel : AutoCloseable {
         }
     }
 
+	/** Rebuilds [layerId]'s meshes from its current pixels, migrating their bindings (`layer_mesh_rebuild`). */
+	fun rebuildLayerMesh(layerId: String) {
+		val workspace = workspaceBackend?.takeUnless { editorSessions.anyOpen } ?: return
+		val port: io.github.psd2live.application.WorkspaceDocumentPort = workspace
+		val name = _state.value.analysis?.source?.layers?.firstOrNull { it.id.raw == layerId }?.name ?: layerId
+		runWorkspaceCommand { state -> port.applyDocumentEdits(state, tr("mesh.rebuild.summary", name), listOf(
+			io.github.psd2live.application.WorkspaceDocumentOperation(io.github.psd2live.application.WorkspaceRasterEdits.REBUILD_MESH,
+				kotlinx.serialization.json.buildJsonObject { put("layer_id", layerId) })), MutationAuthor.USER) }
+	}
+
 	fun setLayerDrawOrder(targetId: String, order: Float) {
 		changeLayerDrawOrder(targetId, order)
 	}
