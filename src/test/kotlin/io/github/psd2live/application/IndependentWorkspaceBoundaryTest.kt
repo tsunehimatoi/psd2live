@@ -54,3 +54,25 @@ class IndependentWorkspaceBoundaryTest {
         assertTrue(WorkspaceProjectLifecycle::class.java in seen)
     }
 }
+
+/** The replay of what only older builds wrote stays in core.legacy, reached from a fixed set of dispatch points. */
+class LegacyReplayBoundaryTest {
+    @Test fun onlyTheKnownDispatchPointsReachTheLegacyReplay() {
+        val root = Path.of("src/main/kotlin/io/github/psd2live")
+        val users = Files.walk(root).use { files ->
+            files.filter { it.toString().endsWith(".kt") && !it.startsWith(root.resolve("core/legacy")) }.toList()
+        }.filter { Files.readString(it).contains("io.github.psd2live.core.legacy") }.map { root.relativize(it).toString().replace('\\', '/') }.toSet()
+        val allowed = setOf(
+            // Imported models, which have no generated rig to merge onto, still migrate.
+            "application/WorkspaceGenerationCommands.kt", "application/WorkspacePorts.kt", "application/WorkspacePreviewBuilder.kt",
+            "application/WorkspaceReadSession.kt", "application/WorkspaceTextureEdits.kt", "core/Cmo3ModelImport.kt", "core/PSD2LivePipeline.kt",
+            "core/RigGenerationSource.kt", "core/RasterMeshJournal.kt",
+            // Journals without a checkpoint, and the records the journal replays only before one.
+            "core/RigEditOverlay.kt", "core/RigAuthoringJournal.kt", "core/RigBuilder.kt", "core/GeneratedOverrides.kt",
+            "core/quality/GeneratedOverrideQuality.kt", "core/MaterializedRigCodec.kt",
+            // A regeneration's G and G' place the parts of older split records the same way.
+            "core/RigRegenerationCheckpoint.kt", "core/PrimitiveResidual.kt",
+        )
+        assertTrue(users.all { it in allowed }, "New references to core.legacy: ${users - allowed}")
+    }
+}

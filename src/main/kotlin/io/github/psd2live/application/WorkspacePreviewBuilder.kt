@@ -27,6 +27,11 @@ internal class WorkspacePreviewProgress(val update: (Float) -> Unit) : kotlin.co
 internal class WorkspacePreviewBuilder {
     private val pipeline = PSD2LivePipeline()
 
+    private companion object {
+        /** The binding key an imported model's checkpoints carry: its rig is bound to the import's atlas. */
+        const val IMPORTED_BINDING = "cmo3-import"
+    }
+
     private suspend fun progress(start: Float, end: Float): ProgressListener {
         val context = currentCoroutineContext()
         return ProgressListener { message, fraction ->
@@ -105,6 +110,13 @@ internal class WorkspacePreviewBuilder {
     private fun materialized(current: RigPreviewModel, config: io.github.psd2live.core.PipelineConfig): io.github.psd2live.core.PipelineConfig {
         val before = current.config.rigEdits
         val authored = current.authored
+        // An imported model's rig is bound to the import's own atlas, which no binding key describes: its checkpoint is only
+        // replayed on that base (never built from alone), and stores no generation - its base is the import, not regenerated.
+        if (!pipeline.materializable(current.config)) {
+            val record = io.github.psd2live.core.RigCheckpoint.encode(authored, IMPORTED_BINDING)
+            val journal = ArrayList(config.rigEdits.authoringJournal).apply { add(before.authoringJournal.size, record) }
+            return config.copy(rigEdits = config.rigEdits.copy(authoringJournal = journal))
+        }
         val bindingKey = current.sources.bindingKey ?: pipeline.bindingKey(current.analysis.source, current.config)
         val stored = before.checkpointIndex.takeIf { it >= 0 }?.let { before.authoringJournal[it]["generated"] as? kotlinx.serialization.json.JsonObject }
         val record = if (stored != null) kotlinx.serialization.json.JsonObject(
@@ -122,7 +134,8 @@ internal class WorkspacePreviewBuilder {
      */
     private fun checkpoints(current: RigPreviewModel, config: io.github.psd2live.core.PipelineConfig): Boolean {
         val before = current.config.rigEdits
-        if (!pipeline.materializable(current.config) || !before.checkpointsBeforeEntries || !config.rigEdits.continues(before)) return false
+        if (pipeline.materializable(current.config) != pipeline.materializable(config) || !before.checkpointsBeforeEntries ||
+            !config.rigEdits.continues(before)) return false
         if (config.rigEdits.checkpointIndex >= before.authoringJournal.size) return false
         return before.replaysLegacy || config.rigEdits.authoringJournal.size > before.authoringJournal.size
     }
@@ -166,13 +179,15 @@ internal class WorkspacePreviewBuilder {
             // An edit adding entries to a journal without a checkpoint, or with many entries after it, checkpoints the authored
             // rig first, so builds of later edits replay only the entries after it; a journal still replaying records only
             // older builds wrote replays them this once.
-            if (current != null && revision != null && checkpoints(current, config)) {
+            if (current != null && checkpoints(current, config)) {
                 val materialized = materialized(current, config)
-                val model = (if (fast) pipeline.updateRigEdits(current, materialized) else null) ?: materialized.rigEdits.authoredFromCheckpoint()?.let { (authored, bindingKey) ->
-                    pipeline.materializedPreview(document.source, materialized, authored, bindingKey, progress, current.atlas, rebind = true)
-                } ?: pipeline.buildPreview(document.source, materialized, progress, current.atlas)
-                MaterializedRigStore.remember(WorkspaceRevisions.of(document.copy(rigEdits = materialized.rigEdits)), materialized.rigEdits,
-                    model.sources) { pipeline.bindingKey(document.source, materialized) }
+                val model = (if (fast) pipeline.updateRigEdits(current, materialized) else null)
+                    ?: (if (revision != null) materialized.rigEdits.authoredFromCheckpoint()?.let { (authored, bindingKey) ->
+                        pipeline.materializedPreview(document.source, materialized, authored, bindingKey, progress, current.atlas, rebind = true)
+                    } else null)
+                    ?: pipeline.buildPreview(document.source, materialized, progress, current.atlas)
+                if (revision != null) MaterializedRigStore.remember(WorkspaceRevisions.of(document.copy(rigEdits = materialized.rigEdits)),
+                    materialized.rigEdits, model.sources) { pipeline.bindingKey(document.source, materialized) }
                 return@runInterruptible model
             }
             // The journal's checkpoint is the authored rig itself: build from it, re-bound when the atlas moved.

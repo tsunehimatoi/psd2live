@@ -590,6 +590,7 @@ fun FrameWindowScope.PSD2LiveApp(
 						onStartScreen = { viewModel.requestStartScreen() },
 						canUpdateGeneration = viewModel.canUpdateGeneration(state),
 						onUpdateGeneration = { viewModel.updateGeneration() },
+						onPreviewGenerationUpdate = { viewModel.previewGenerationUpdate() },
 						onShowHistory = { viewModel.showHistoryModule() },
 						onNewEditTab = { viewModel.addWorkspace() },
 						onNewPreviewTab = { viewModel.addCanvas(CanvasMode.PREVIEW) },

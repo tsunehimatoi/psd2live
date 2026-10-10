@@ -137,3 +137,30 @@ class RegenerationPreviewTest {
 		assertTrue(RigCheckpoint.isRecord(committed.document.rigEdits.authoringJournal[checkpoints.single().getValue("index").jsonPrimitive.int]))
 	}
 }
+
+/** An imported model checkpoints its authored rig the same way; its base is the import, which it never regenerates. */
+class ImportedEditCheckpointTest {
+	@org.junit.jupiter.api.io.TempDir lateinit var temporary: java.nio.file.Path
+	private val builder = WorkspacePreviewBuilder()
+
+	@Test fun editsOfAnImportedModelCheckpointAndReplayTheSame() = runBlocking {
+		val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) }, rebuildFrom = { document, previous -> builder.build(document, previous) })
+		val file = writeCmo3Fixture(temporary.resolve("model.cmo3"), "old", "shared")
+		WorkspaceCmo3Importer(runtime).import(file, Cmo3ImportMode.NEW, null, runtime.state.value.state, MutationAuthor.USER,
+			initialConfig = PipelineConfig(atlasSize = 256))
+		var last = runtime.capture()
+		repeat(RigEditOverlay.CHECKPOINT_INTERVAL + 2) {
+			val before = runtime.capture()
+			last = WorkspaceDocumentCommands(runtime).execute(before.projectId, before.state, "P$it", listOf(WorkspaceDocumentOperation("parameter_create",
+				buildJsonObject { put("parameter_id", "P$it"); put("name", "P$it") })), MutationAuthor.USER).capture
+		}
+		val journal = last.document.rigEdits.authoringJournal
+		assertEquals(listOf(0, RigEditOverlay.CHECKPOINT_INTERVAL + 1), journal.indices.filter { RigCheckpoint.isRecord(journal[it]) })
+		assertTrue(journal.filter(RigCheckpoint::isRecord).none { "generated" in it }, "an import is not regenerated")
+		val config = last.document.config()
+		val replayed = PSD2LivePipeline().buildPreview(last.document.source,
+			config.copy(rigEdits = config.rigEdits.copy(authoringJournal = journal.filterNot(RigCheckpoint::isRecord))))
+		assertEquals(ContentHash.of(PuppetIr.toIr(replayed.rig.puppet)), ContentHash.of(PuppetIr.toIr(last.model.rig.puppet)))
+		assertEquals(ContentHash.of(PuppetIr.toIr(last.model.rig.puppet)), ContentHash.of(PuppetIr.toIr(builder.build(last.document).rig.puppet)))
+	}
+}

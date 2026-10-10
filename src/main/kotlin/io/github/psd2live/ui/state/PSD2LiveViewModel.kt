@@ -1503,11 +1503,49 @@ class PSD2LiveViewModel : AutoCloseable {
                     port.updateGeneration(requireNotNull(expected.state), MutationAuthor.USER)
                 }
                 val issues = result.getValue("issues").jsonArray.size
-                updateState { it.copy(statusText = when {
+                val message = when {
                     !result.getValue("updated").jsonPrimitive.boolean -> tr("status.generationUpdate.unchanged")
                     issues == 0 -> tr("status.generationUpdate.done")
                     else -> tr("status.generationUpdate.issues", issues)
-                }) }
+                }
+                // The canvas hint covers the status bar while editing: the log keeps the outcome.
+                addLog(message, level = if (issues == 0) LogLevel.INFO else LogLevel.WARNING, tag = "Generation")
+                updateState { it.copy(statusText = message) }
+            } catch (failure: Exception) {
+                if (failure is kotlinx.coroutines.CancellationException) throw failure
+                setErrorMessage(failure.message ?: tr("status.generationUpdate.failed"))
+            } finally {
+                updateState { it.copy(canvasEditBusy = false) }
+            }
+        }
+    }
+
+    /**
+     * Tools > Preview Generated Rig Update: the same update as a dry run ([io.github.psd2live.application.WorkspaceDocumentPort.previewRegeneration]),
+     * reporting whether it would change the rig and what its merge could not carry over, without committing anything.
+     */
+    internal fun previewGenerationUpdate() {
+        val current = _state.value
+        if (current.isBusy || current.workspaceEditBusy || !canUpdateGeneration(current)) return
+        val port: io.github.psd2live.application.WorkspaceDocumentPort = workspaceBackend ?: return
+        val expected = workspaceBackend?.snapshot() ?: return
+        updateState { it.copy(canvasEditBusy = true, statusText = tr("status.generationUpdate.previewing")) }
+        scope.launch {
+            try {
+                val result = withContext(Dispatchers.Default) {
+                    port.previewRegeneration(requireNotNull(expected.state), listOf(io.github.psd2live.application.WorkspaceDocumentOperation(
+                        io.github.psd2live.application.WorkspaceGenerationUpdate.OP, kotlinx.serialization.json.JsonObject(emptyMap()))))
+                }
+                val regenerations = result.getValue("checkpoints").jsonArray.map { it.jsonObject }
+                    .filter { it.getValue("kind").jsonPrimitive.content == "regeneration" }
+                val issues = regenerations.flatMap { it.getValue("issues").jsonArray }.map { it.jsonObject.getValue("target").jsonPrimitive.content }
+                val message = when {
+                    regenerations.isEmpty() -> tr("status.generationUpdate.unchanged")
+                    issues.isEmpty() -> tr("status.generationUpdate.previewClean")
+                    else -> tr("status.generationUpdate.previewIssues", issues.size, issues.distinct().take(3).joinToString(", "))
+                }
+                addLog(message, level = if (issues.isEmpty()) LogLevel.INFO else LogLevel.WARNING, tag = "Generation")
+                updateState { it.copy(statusText = message) }
             } catch (failure: Exception) {
                 if (failure is kotlinx.coroutines.CancellationException) throw failure
                 setErrorMessage(failure.message ?: tr("status.generationUpdate.failed"))

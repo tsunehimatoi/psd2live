@@ -156,6 +156,7 @@ fun AppTitleBar(
 	/** Tools > Upgrade split records: enabled while the document holds version 1 split records. */
 	canUpdateGeneration: Boolean = false,
 	onUpdateGeneration: () -> Unit = {},
+	onPreviewGenerationUpdate: () -> Unit = {},
 	onShowHistory: () -> Unit,
 	onNewEditTab: () -> Unit = {},
 	onNewPreviewTab: () -> Unit = {},
@@ -667,6 +668,16 @@ fun AppTitleBar(
 							activeMenu = null
 							activeSubmenu = null
 							onUpdateGeneration()
+						},
+					)
+					AppMenuItem(
+						text = tr("menu.tools.previewGenerationUpdate"),
+						enabled = hasInput && !isBusy && canUpdateGeneration,
+						onHover = { activeSubmenu = null },
+						onClick = {
+							activeMenu = null
+							activeSubmenu = null
+							onPreviewGenerationUpdate()
 						},
 					)
 
