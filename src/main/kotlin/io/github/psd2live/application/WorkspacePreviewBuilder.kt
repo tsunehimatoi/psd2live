@@ -43,10 +43,31 @@ internal class WorkspacePreviewBuilder {
         }
     }
 
+    /**
+     * [document] with every mesh of [current] pinned to the ID it has now ([io.github.psd2live.core.RigEditOverlay.splitDrawableIds]),
+     * when the edit changes what the generators read - a layer added or removed, a classification or generation setting
+     * changed. Generated mesh IDs are otherwise derived from classification and sibling order, so such an edit would
+     * rename a mesh (or renumber its siblings) and the regeneration merge would keep the user's old mesh beside a new
+     * one. A layer's mesh keeps its ID for good once pinned; new layers get theirs when they first generate.
+     */
+    private fun pinnedIdentities(document: WorkspaceDocument, current: RigPreviewModel, config: io.github.psd2live.core.PipelineConfig): WorkspaceDocument {
+        if (!pipeline.materializable(current.config) || !pipeline.materializable(config)) return document
+        val layers = document.source.layers.mapTo(HashSet()) { it.id.raw }
+        val sameLayers = current.analysis.source.layers.size == layers.size && current.analysis.source.layers.all { it.id.raw in layers }
+        if (sameLayers && !RigGenerationChange.changed(current, config)) return document
+        val pins = document.rigEdits.splitDrawableIds
+        val owned = current.rig.layerIdByDrawableId.entries.groupBy({ it.value }, { it.key })
+        val added = owned.filter { (layer, meshes) -> layer !in pins && meshes.size == 1 &&
+            (layer in layers || layers.any { layer.startsWith("$it:") }) }.mapValues { it.value.single() }
+        if (added.isEmpty()) return document
+        return document.copy(rigEdits = document.rigEdits.copy(splitDrawableIds = pins + added))
+    }
+
     /** Persist the generation baseline and ordered topology migration together with the settings. */
-    suspend fun normalizeMeshEdits(document: WorkspaceDocument, current: RigPreviewModel): WorkspaceDocument {
+    suspend fun normalizeMeshEdits(input: WorkspaceDocument, current: RigPreviewModel): WorkspaceDocument {
         val progress = progress(0.3f, 0.6f)
         return runInterruptible(Dispatchers.Default) {
+            val document = pinnedIdentities(input, current, input.config())
             val decoded = document.config()
             val config = if ("drawOrderOverrides" in document.settings) decoded
                 else decoded.copy(drawOrderOverrides = current.config.drawOrderOverrides)
