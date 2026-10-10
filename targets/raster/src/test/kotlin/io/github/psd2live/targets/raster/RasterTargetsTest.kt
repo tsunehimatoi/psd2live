@@ -74,6 +74,43 @@ class RasterTargetsTest {
 		assertTrue(report.losses.any { it.feature == Feature.PHYSICS }, "physics turned off is reported")
 	}
 
+	@Test fun gifColorsComeFromTheFramesThemselves() {
+		// A navy uniform, a skin tone and a lilac: a fixed color cube moved each by tens of levels.
+		val colors = intArrayOf(0xff1e2350.toInt(), 0xfffadcc8.toInt(), 0xffbeb4d2.toInt())
+		val frame = RasterImage(30, 10, IntArray(300) { colors[(it % 30) / 10] })
+		val palette = GifPalette.of(listOf(frame))
+		val indices = palette.map(frame, dither = false)
+		for (i in frame.argb.indices) {
+			val want = frame.argb[i]
+			val k = indices[i].toInt() and 255
+			assertNotEquals(0, k, "opaque pixels never take the transparent index")
+			for ((got, shift) in listOf(palette.reds[k] to 16, palette.greens[k] to 8, palette.blues[k] to 0))
+				assertEquals((want shr shift) and 255, got, "pixel $i is ${Integer.toHexString(want)}")
+		}
+	}
+
+	@Test fun ditheringIsASetting() {
+		val target = RasterTargets(FakeRenderer()).gif
+		assertTrue(target.settings.any { it.key == "dither" })
+		val (files, _) = export(target, "size" to "64", "physics" to "false", "dither" to "false")
+		assertTrue(files.getValue("anim.gif").isNotEmpty())
+	}
+
+	@Test fun anOversizedSheetIsRefusedBeforeAnyFrameRenders() {
+		val renderer = FakeRenderer()
+		val failure = assertFailsWith<IllegalArgumentException> { export(RasterTargets(renderer).sheet, "size" to "8192", "fps" to "120") }
+		assertTrue("exceeds" in failure.message.orEmpty(), failure.message)
+		assertEquals(emptyList(), renderer.calls)
+	}
+
+	@Test fun aClipIsFoundByItsNameAndAnUnknownOneListsTheClips() {
+		val renderer = FakeRenderer()
+		export(RasterTargets(renderer).sequence, "size" to "64", "clip" to "Move")
+		assertEquals(4, renderer.calls.size)
+		val failure = assertFailsWith<IllegalArgumentException> { export(RasterTargets(FakeRenderer()).sequence, "clip" to "Nod") }
+		assertTrue("move (Move)" in failure.message.orEmpty(), failure.message)
+	}
+
 	@Test fun invalidSettingsAreRejected() {
 		val target = RasterTargets(FakeRenderer()).sequence
 		for (bad in listOf("clip" to "missing", "fps" to "0", "size" to "8")) assertFailsWith<IllegalArgumentException> { export(target, bad) }

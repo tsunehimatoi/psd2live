@@ -46,7 +46,7 @@ MIT 模块不依赖任何 GPL 模块，由 Gradle 依赖关系在编译期保证
 | `psd-pose` | 合成/时间轴 | 每个可见网格一层，按静止绘制顺序 | 变形器和参数不保留；按参数变化的绘制顺序取静止值 |
 | `png-sequence` | 光栅 | 编号 PNG 帧 | 结构全部烘焙为像素 |
 | `sprite-sheet` | 光栅 | 网格排列的精灵表 PNG + TexturePacker（hash）JSON | 同上 |
-| `gif` | 光栅 | 动态 GIF | 256 色、1 位透明 |
+| `gif` | 光栅 | 动态 GIF | 256 色（由整段动作自身的像素中位切分出 255 色，所有帧共用）、1 位透明 |
 | `mp4` | 光栅 | H.264 视频（ffmpeg） | 无透明，合成到背景色（默认白色） |
 | `webm` | 光栅 | VP9 视频，带透明（ffmpeg） | 透明保存在 VP9 侧通道，需要 libvpx 解码 |
 | `mov` | 光栅 | ProRes 4444，带透明（ffmpeg） | — |
@@ -64,7 +64,7 @@ MIT 模块不依赖任何 GPL 模块，由 Gradle 依赖关系在编译期保证
 | `spine` | `binary`（写出二进制 `.skel` 而非 JSON，默认 false）、`clip_fps`（动作采样帧率，默认 15）、`clips`（是否写出动作，默认 true）、`key_tolerance`（关键帧精简容差，像素，默认 0.25）、`sample_pairs` |
 | `psd-pose` | `clip` 与 `time`（秒）按动作片段摆姿势，或 `pose`（`ParamAngleX=20,ParamEyeLOpen=0`，覆盖片段）；`scale`（0.25–2，默认 1） |
 | 视频类 | 同光栅类，另有 `ffmpeg`（ffmpeg 路径；缺省依次取环境变量 `PSD2LIVE_FFMPEG`、安装包自带的 `resources/ffmpeg/` 与 PATH） |
-| 光栅类 | `clip`（默认第一个片段，无片段时为静止姿势）、`fps`（默认片段帧率）、`size`（长边像素，默认 1024）、`background`（ARGB 十六进制，默认透明）、`physics`（默认 true） |
+| 光栅类 | `clip`（片段 ID 或名称，默认第一个片段，无片段时为静止姿势；未知时报错并列出现有片段）、`fps`（默认片段帧率）、`size`（长边像素，默认 1024）、`background`（ARGB 十六进制，默认透明）、`physics`（默认 true）；`gif` 另有 `dither`（Floyd–Steinberg 抖动，默认 true）。`sprite-sheet` 在渲染前按帧数与尺寸检查，超过 16384 px 时直接拒绝 |
 
 ## Cubism Animator
 
