@@ -46,6 +46,7 @@ For hands-on learning, open **Help → Tutorials…** (`F1`). Chinese is the pri
 | 文档层 | 生成器依赖图、生成结果覆盖、缓存、逐层尺寸与拆分物化 | [打开](zh/spec/DOCUMENT_LAYER.md) | [中文参考](zh/spec/DOCUMENT_LAYER.md) | [中国語参考](zh/spec/DOCUMENT_LAYER.md) |
 | 固化 Rig | 按修订保存的固化 Rig、检查点、再生成合并与实现进度 | [打开](zh/spec/MATERIALIZED_RIG.md) | [中文参考](zh/spec/MATERIALIZED_RIG.md) | [中国語参考](zh/spec/MATERIALIZED_RIG.md) |
 | 运行时与导出边界 | 数据流、格式支持范围、交付检查 | [打开](zh/spec/RUNTIME_EXPORT_ARCHITECTURE_AND_GAPS.md) | [中文参考](zh/spec/RUNTIME_EXPORT_ARCHITECTURE_AND_GAPS.md) | [中国語参考](zh/spec/RUNTIME_EXPORT_ARCHITECTURE_AND_GAPS.md) |
+| 图层、纹理与网格（重新设计） | 图片导入与变换、图层像素与纹理集、网格触发点与密度、图层身份与删除的新设计（未实现） | [打开](zh/spec/LAYER_PIPELINE.md) | [中文参考](zh/spec/LAYER_PIPELINE.md) | [中国語参考](zh/spec/LAYER_PIPELINE.md) |
 | 网格拓扑与图层拆分 | 自适应网格生成、填充算法、图层拆分 | [打开](zh/spec/MESH_TOPOLOGY_AND_SPLIT.md) | [中文参考](zh/spec/MESH_TOPOLOGY_AND_SPLIT.md) | [中国語参考](zh/spec/MESH_TOPOLOGY_AND_SPLIT.md) |
 | 绘画系统 | 绘画会话、组件分工、坐标与提交 | [打开](zh/spec/PAINT_SYSTEM_ARCHITECTURE_AND_PRD.md) | [中文参考](zh/spec/PAINT_SYSTEM_ARCHITECTURE_AND_PRD.md) | [中国語参考](zh/spec/PAINT_SYSTEM_ARCHITECTURE_AND_PRD.md) |
 | 画布渲染器 | 编辑画布、纹理集页面与预览的渲染架构，播放与跟踪会话 | [打开](zh/spec/CANVAS_RENDERER.md) | [中文参考](zh/spec/CANVAS_RENDERER.md) | [中国語参考](zh/spec/CANVAS_RENDERER.md) |
