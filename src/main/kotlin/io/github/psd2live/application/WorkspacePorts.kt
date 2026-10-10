@@ -44,7 +44,6 @@ interface WorkspaceQueries : WorkspaceStatePort {
     fun sampleSourceColor(layerId: String, x: Int, y: Int): List<Int>
     fun sourceMeshComponents(layerId: String): JsonObject
     fun projectSettings(): JsonObject
-    fun listRigObjects(): List<WorkspaceKeyformTargetRef>
     fun listRigObjectSummaries(): List<JsonObject>
     fun inspectRigGeometry(arguments: JsonObject): JsonObject
     /** Inspect a target drawable, deformer, part, or glue: topology, geometry, and keyforms. */
@@ -149,19 +148,8 @@ interface WorkspaceParameterPort {
 
 interface WorkspaceRigPort {
     suspend fun authorRig(state: String, edits: JsonArray, author: MutationAuthor): WorkspaceMutationResult
-    suspend fun editObjects(arguments: JsonObject): WorkspaceMutationResult
-    suspend fun transformRigGeometry(arguments: JsonObject): WorkspaceMutationResult
-    suspend fun createWarp(edit: RigWarpEdit, expectedState: String, taskId: String?): WorkspaceMutationResult
     suspend fun createIndependentWarp(request: JsonObject, expectedState: String): WorkspaceMutationResult
     suspend fun editWarpControls(operation: String, expectedState: String, request: JsonObject, author: MutationAuthor): JsonObject
-    /** Set or update keyform geometry and/or channels at an exact N-D parameter coordinate. */
-    suspend fun setKeyform(request: WorkspaceKeyformSetRequest): WorkspaceMutationResult
-    /** Delete a keyform key or parameter axis from a target. */
-    suspend fun deleteKeyform(request: WorkspaceKeyformDeleteRequest): WorkspaceMutationResult
-    /** Copy keyform geometry and channels from source coordinate to destination coordinate. */
-    suspend fun copyKeyform(request: WorkspaceKeyformCopyRequest): WorkspaceMutationResult
-    /** Capture the current pose deformation as a keyform (K rig). */
-    suspend fun rigKPose(request: WorkspaceRigKPoseRequest): WorkspaceMutationResult
 }
 
 interface WorkspaceSkeletonPort {
@@ -336,20 +324,6 @@ interface WorkspaceHistoryPort {
     suspend fun checkoutHistory(nodeId: String, author: MutationAuthor): WorkspaceMutationResult
 }
 
-interface WorkspaceTaskRecordPort {
-    fun startTask(objective: String, plan: List<String>): WorkspaceTaskSnapshot
-    fun updateTask(
-        taskId: String,
-        status: WorkspaceTaskStatus,
-        plan: List<String>?,
-        currentStep: Int?,
-        progress: Float?,
-        message: String,
-        artifactIds: List<String>,
-    ): WorkspaceTaskSnapshot
-    fun task(taskId: String): WorkspaceTaskSnapshot
-    fun tasks(): List<WorkspaceTaskSnapshot>
-}
 
 /** The explicit regeneration with this build's generators; GUI and MCP commit through the same command. */
 interface WorkspaceGenerationUpdatePort {
@@ -384,7 +358,6 @@ interface WorkspaceBackend :
     WorkspaceAssetPort,
     WorkspaceOutputPort,
     WorkspaceHistoryPort,
-    WorkspaceTaskRecordPort,
     WorkspaceProjectLifecycle,
     WorkspaceDocumentPort,
     WorkspaceAuxiliaryPort,

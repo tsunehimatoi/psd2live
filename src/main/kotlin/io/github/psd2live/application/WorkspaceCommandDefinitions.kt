@@ -6,11 +6,6 @@ import io.github.psd2live.application.WorkspaceBackend
 import io.github.psd2live.project.WorkspaceCreateParameterRequest
 import io.github.psd2live.project.WorkspaceHistorySnapshot
 import io.github.psd2live.project.WorkspaceImportedPngAsset
-import io.github.psd2live.project.WorkspaceKeyformChannels
-import io.github.psd2live.project.WorkspaceKeyformCopyRequest
-import io.github.psd2live.project.WorkspaceKeyformDeleteRequest
-import io.github.psd2live.project.WorkspaceKeyformGeometry
-import io.github.psd2live.project.WorkspaceKeyformSetRequest
 import io.github.psd2live.project.WorkspaceKeyformTargetRef
 import io.github.psd2live.project.WorkspaceLayerInsertion
 import io.github.psd2live.project.WorkspaceLayerSnapshot
@@ -21,7 +16,6 @@ import io.github.psd2live.project.WorkspacePixelRect
 import io.github.psd2live.project.WorkspacePngImportRequest
 import io.github.psd2live.project.WorkspaceProjectSnapshot
 import io.github.psd2live.project.WorkspaceRenderedView
-import io.github.psd2live.project.WorkspaceRigKPoseRequest
 import io.github.psd2live.project.WorkspaceTaskSnapshot
 import io.github.psd2live.project.WorkspaceTaskStatus
 import io.github.psd2live.project.WorkspaceUpdateParameterRequest
@@ -35,73 +29,18 @@ import kotlinx.serialization.json.*
 import java.util.Base64
 
 internal fun registerWorkspaceCommands(catalog: WorkspaceCommands, workspace: WorkspaceBackend) {
-    registerCatalogStateCommands(catalog, workspace)
     registerCatalogParameterCommands(catalog, workspace)
     registerCatalogQueriesCommands(catalog, workspace)
-    registerCatalogRigCommands(catalog, workspace)
-    registerCatalogOutputCommands(catalog, workspace)
     registerCatalogHistoryCommands(catalog, workspace)
-    registerCatalogTaskRecordCommands(catalog, workspace)
     registerCatalogRenderCommands(catalog, workspace)
     registerCatalogPoseCommands(catalog, workspace)
     registerCatalogPhysicsCommands(catalog, workspace)
     registerCatalogSwingCommands(catalog, workspace)
     registerCatalogAssetCommands(catalog, workspace)
     registerCatalogSourceCommands(catalog, workspace)
-    registerCatalogQueriesRigCommands(catalog, workspace, workspace)
     registerAssetCommands(catalog, workspace)
     registerSourceCommands(catalog, workspace)
     registerObservationCommands(catalog, workspace)
-}
-
-private fun registerCatalogStateCommands(catalog: WorkspaceCommands, state: WorkspaceStatePort) {
-	catalog.register(
-		name = "project_get_state",
-		description = "Read the current PSD2Live project, revision, selection, canvas and summary. Call this before planning work.",
-		hints = READ_ONLY,
-	) {
-		val json = state.snapshot().toJson(includeLayers = false)
-		jsonResult(json)
-	}
-
-	catalog.register(
-		name = "project_list_layers",
-		description = "List stable layer IDs, semantic labels, bounds, visibility and deletion state without reading PSD binary data.",
-		inputSchema = WorkspaceCommandSchema(
-			properties = buildJsonObject {
-				putJsonObject("semantic_tag") {
-					put("type", "string")
-					put("description", "Optional lowercase semantic tag filter, such as front_hair or unknown")
-				}
-				putJsonObject("include_deleted") {
-					put("type", "boolean")
-					put("description", "Include soft-deleted layers; defaults to false")
-				}
-			},
-		),
-		hints = READ_ONLY,
-	) { request ->
-		val semanticTag = request.arguments.get("semantic_tag")?.jsonPrimitive?.contentOrNull
-		val includeDeleted = request.arguments.get("include_deleted")?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
-		val snapshot = state.snapshot()
-		val layers = snapshot.layers.filter { layer ->
-			(includeDeleted || !layer.deleted) && (semanticTag == null || layer.semanticTag == semanticTag.lowercase())
-		}
-		jsonResult(snapshot.toJson(includeLayers = true, layers = layers))
-	}
-
-	catalog.register(
-		name = "project_list_parameters",
-		description = "List every parameter ID, range, default, current value and kind in the evaluated rig.",
-		hints = READ_ONLY,
-	) {
-		val snapshot = state.snapshot()
-		jsonResult(buildJsonObject {
-			put("revisionId", snapshot.revisionId)
-			put("parameterCount", snapshot.parameters.size)
-			put("parameters", JsonArray(snapshot.parameters.map(WorkspaceParameterSnapshot::toJson)))
-		})
-	}
 }
 
 private fun registerCatalogParameterCommands(catalog: WorkspaceCommands, parameter: WorkspaceParameterPort) {
@@ -175,21 +114,6 @@ private fun registerCatalogParameterCommands(catalog: WorkspaceCommands, paramet
 }
 
 private fun registerCatalogQueriesCommands(catalog: WorkspaceCommands, queries: WorkspaceQueries) {
-	catalog.register(
-		name = "object_get",
-		description = "Read an authoritative rig object (mesh, warp deformer, rotation deformer, part, glue) including its current keyforms, channels, deformer hierarchy, and geometry bounds.",
-		inputSchema = objectGetSchema(),
-		hints = READ_ONLY,
-	) { request ->
-		mutationResult {
-			queries.getObject(request.targetRef()).toJson()
-		}
-	}
-
-    catalog.register(name="rig_inspect", description="Budgeted geometry inspection at coordinate: summary (default, representation and native control availability, no points), or points (paged up to 256). Local or evaluated canvas coordinates. Does not dump all keyforms.",
-        inputSchema=rigGeometrySchema(false), hints=READ_ONLY) { request ->
-        mutationResult { queries.inspectRigGeometry(requireNotNull(request.arguments)) }
-    }
 
 	catalog.register(
 		name = "history_list",
@@ -198,42 +122,6 @@ private fun registerCatalogQueriesCommands(catalog: WorkspaceCommands, queries: 
 	) {
 		mutationResult { queries.history().toJson() }
 	}
-
-    catalog.register(
-        name = "rig_preview",
-        description = "Evaluate proposed rig_transform operations without editing or advancing history. Returns compact displacement and triangle diagnostics relative to the input pose. Does not judge painted coverage or appearance.",
-        inputSchema = WorkspaceCommandSchema(properties = rigGeometrySchema(true).properties,
-            required = listOf("target", "coordinate", "operations")), hints = READ_ONLY,
-    ) { request -> mutationResult { queries.inspectRigGeometry(request.arguments) } }
-
-    catalog.register(
-        name = "rig_list_objects",
-        description = "Find meshes, Parts and deformers by name or stable ID. Returns compact names, parent relationships and source layer IDs without geometry. Optional query/kind and pagination keep discovery small.",
-        inputSchema = WorkspaceCommandSchema(properties = buildJsonObject {
-            for(key in listOf("query","kind")) putJsonObject(key) { put("type","string") }
-            putJsonObject("offset") { put("type","integer");put("minimum",0) }
-            putJsonObject("limit") { put("type","integer");put("minimum",1);put("maximum",256);put("default",64) }
-        }), hints = READ_ONLY,
-    ) { request -> mutationResult {
-        val query=request.optionalString("query")
-        val kind=request.optionalString("kind")
-        require(kind==null || kind in setOf("mesh","warp","rotation","part")) { "Unknown kind" }
-        val all=queries.listRigObjectSummaries().filter { entry ->
-            (kind==null || entry["kind"]?.jsonPrimitive?.content==kind) &&
-            (query==null || listOf("id","name","layerId").any { entry[it]?.jsonPrimitive?.contentOrNull?.contains(query,ignoreCase=true)==true })
-        }
-        val offset=request.arguments.get("offset")?.jsonPrimitive?.int ?: 0
-        val limit=request.arguments.get("limit")?.jsonPrimitive?.int ?: 64
-        require(offset>=0 && limit in 1..256)
-        buildJsonObject { put("objects",JsonArray(all.drop(offset).take(limit)));put("total",all.size)
-            if(offset.toLong()+limit<all.size)put("nextOffset",offset+limit) }
-    } }
-
-    catalog.register(
-        name = "physics_list",
-        description = "List every physics group the model exports or could: hair/eye presets, skeleton follow-through, swing pendulums and user groups, each with origin, enabled/active, what replaces it, and why an inactive one does not export.",
-        inputSchema = WorkspaceCommandSchema(properties = buildJsonObject {}), hints = READ_ONLY,
-    ) { mutationResult { buildJsonObject { putJsonArray("groups") { queries.listPhysics().forEach { add(it.toJson()) } } } } }
 
     catalog.register(
         name = "physics_simulate",
@@ -248,229 +136,6 @@ private fun registerCatalogQueriesCommands(catalog: WorkspaceCommands, queries: 
         }, required = listOf("inputs")), hints = READ_ONLY,
     ) { request -> mutationResult { queries.simulatePhysics(request.arguments) } }
 
-    catalog.register(
-        name = "swing_list",
-        description = "List regenerating swings: target Warps and, per direction, the driven parameters, shape and pendulum.",
-        inputSchema = WorkspaceCommandSchema(properties = buildJsonObject {}), hints = READ_ONLY,
-    ) { mutationResult { buildJsonObject { putJsonArray("swings") { queries.listSwings().forEach { add(it.toJson()) } } } } }
-
-    catalog.register(
-        name = "path_inspect",
-        description = "Inspect deform paths by mesh target or path ID, returning point positions in mesh coordinates and barycentric bindings.",
-        inputSchema = WorkspaceCommandSchema(
-            properties = buildJsonObject {
-                putJsonObject("target") { put("type", "string"); put("description", "Optional mesh target, e.g. mesh:hair") }
-                putJsonObject("path_id") { put("type", "string"); put("description", "Optional path ID") }
-            },
-        ),
-        hints = READ_ONLY,
-    ) { request ->
-        val puppet = queries.currentPuppet() ?: error("No model loaded")
-        val json = WorkspacePathEdits.inspect(puppet, request.arguments)
-        jsonResult(json)
-    }
-
-    catalog.register(
-        name = "path_preview",
-        description = "Preview mesh vertex displacements caused by moving deform path control points without modifying the project.",
-        inputSchema = WorkspaceCommandSchema(
-            properties = buildJsonObject {
-                putJsonObject("target") { put("type", "string"); put("description", "Mesh target, e.g. mesh:hair") }
-                putJsonObject("path_id") { put("type", "string"); put("description", "ID of the deform path") }
-                putJsonObject("moved_points") { put("type", "array"); put("description", "Array of moved [x, y] coordinates") }
-                putJsonObject("width") { put("type", "number"); put("description", "Optional custom influence width to preview deformation with") }
-                putJsonObject("hardness") { put("type", "number"); put("description", "Optional custom falloff hardness percent (0..100) to preview deformation with") }
-                putJsonObject("show_width") { put("type", "boolean"); put("description", "Whether to draw the influence width boundary circle in preview image (default: true)") }
-                putJsonObject("show_hardness") { put("type", "boolean"); put("description", "Whether to draw the core hardness circle in preview image (default: true)") }
-                putJsonObject("render") { put("type", "boolean"); put("description", "Whether to render a diagnostic visual preview image (default: true)") }
-            },
-            required = listOf("target", "path_id", "moved_points"),
-        ),
-        hints = READ_ONLY,
-    ) { request ->
-        val puppet = queries.currentPuppet() ?: error("No model loaded")
-        val json = WorkspacePathEdits.preview(puppet, request.arguments)
-        val previewBase64 = json["previewImage"]?.jsonPrimitive?.contentOrNull
-        if (previewBase64 != null) {
-            WorkspaceOperationOutput(JsonObject(json - "previewImage"), listOf(Base64.getDecoder().decode(previewBase64)))
-        } else {
-            jsonResult(json)
-        }
-    }
-}
-
-private fun registerCatalogRigCommands(catalog: WorkspaceCommands, rig: WorkspaceRigPort) {
-    catalog.register(name="rig_transform", description="Apply 1..32 ordered translate/scale/rotate/bend/curve/smooth operations to one Warp or mesh at an exact coordinate. Server edits all points in one history commit. Shared selection + range + ordered operations avoid transferring dense geometry. Supports index, rectangle, point-radius and line-radius selections. Includes root-anchored sway. rig_inspect provides coordinate and axis information.",
-        inputSchema=rigGeometrySchema(true), hints=MUTATING) { request ->
-        mutationResult { rig.transformRigGeometry(requireNotNull(request.arguments)).toJson() }
-    }
-
-	catalog.register(
-		name = "keyform_set",
-		description = "Set or update keyform geometry and/or channels on a target at an exact parameter coordinate. A blend_shape parameter in the coordinate is captured as an additive blend key (value 0 is the neutral base and is not stored); geometry is then the full local shape at that pose, and normal parameters in the same coordinate are only the viewing pose.",
-		inputSchema = keyformSetSchema(),
-		hints = MUTATING,
-	) { request ->
-		mutationResult {
-			rig.setKeyform(
-				WorkspaceKeyformSetRequest(
-					expectedState = request.requiredString("state"),
-					target = request.targetRef(),
-					coordinate = request.coordinateMap(),
-					geometry = request.optionalGeometry(),
-					channels = request.optionalChannels(),
-					taskId = request.optionalString("task_id"),
-				),
-			).toJson()
-		}
-	}
-
-	catalog.register(
-		name = "keyform_delete",
-		description = "Delete a keyform key or an entire parameter axis from a target's geometry grid or specific channel track.",
-		inputSchema = keyformDeleteSchema(),
-		hints = MUTATING,
-	) { request ->
-		mutationResult {
-			rig.deleteKeyform(
-				WorkspaceKeyformDeleteRequest(
-					expectedState = request.requiredString("state"),
-					target = request.targetRef(),
-					parameterId = request.requiredString("parameter_id"),
-					keyValue = request.optionalFloat("key_value"),
-					channel = request.optionalString("channel"),
-					taskId = request.optionalString("task_id"),
-				),
-			).toJson()
-		}
-	}
-
-	catalog.register(
-		name = "keyform_copy",
-		description = "Copy keyform geometry and/or channels from a source parameter coordinate to a destination parameter coordinate (on the same or another target).",
-		inputSchema = keyformCopySchema(),
-		hints = MUTATING,
-	) { request ->
-		mutationResult {
-			rig.copyKeyform(
-				WorkspaceKeyformCopyRequest(
-					expectedState = request.requiredString("state"),
-					sourceTarget = request.targetRef("source_target"),
-					sourceCoordinate = request.coordinateMap("source_coordinate"),
-					destinationTarget = if (request.hasTarget("destination_target")) request.targetRef("destination_target") else null,
-					destinationCoordinate = request.coordinateMap("destination_coordinate"),
-					channels = request.optionalStringList("channels"),
-					taskId = request.optionalString("task_id"),
-				),
-			).toJson()
-		}
-	}
-
-	catalog.register(
-		name = "rig_k_pose",
-		description = "Capture an explicit or current parameter pose deformation onto a target as keyform keys across all specified parameters.",
-		inputSchema = rigKPoseSchema(),
-		hints = MUTATING,
-	) { request ->
-		mutationResult {
-			val params = if (request.arguments.containsKey("parameters") == true) {
-				request.floatMap("parameters")
-			} else {
-				request.coordinateMap("coordinate")
-			}
-			rig.rigKPose(
-				WorkspaceRigKPoseRequest(
-					expectedState = request.requiredString("state"),
-					target = request.targetRef(),
-					parameters = params,
-					geometry = request.optionalGeometry(),
-					channels = request.optionalChannels(),
-					taskId = request.optionalString("task_id"),
-				),
-			).toJson()
-		}
-	}
-
-    catalog.register(
-        name = "object_edit",
-        description = "Rename, show/hide, organize or rebind objects. Applies 1..128 ordered edits atomically in one recoverable history commit. Stable IDs are unchanged. Organizational moves and deformation bindings are separate operations.",
-        inputSchema = objectEditSchema(), hints = MUTATING,
-    ) { request -> mutationResult { rig.editObjects(request.arguments).toJson() } }
-
-    catalog.register(
-        name = "warp_create",
-        description = "Create an independent identity Warp for one or more existing meshes under their common Warp parent. Preserves mesh pixels, keyforms, masks and inherited motion. The new lattice uses parent-normalized 0..1 coordinates across the parent frame; requested rows/columns are minima, rounded up together to align parent knots and preserve inherited motion. Inspect actual dimensions with object_get. Use rig_list_objects and object_get first; animate with keyform_set. No special hair-split API is required.",
-        inputSchema = rigObjectCreateSchema(), hints = MUTATING,
-    ) { request -> mutationResult {
-        rig.createWarp(io.github.psd2live.core.RigWarpEdit.fromJson(request.arguments),
-            request.requiredString("state"), request.optionalString("task_id")).toJson()
-    } }
-
-    catalog.register(
-        name = "path_delete",
-        description = "Delete a deform path by ID.",
-        inputSchema = WorkspaceCommandSchema(
-            properties = buildJsonObject {
-                putJsonObject("state") { put("type", "string"); put("description", "Optimistic concurrency state") }
-                putJsonObject("path_id") { put("type", "string"); put("description", "ID of the deform path to delete") }
-            },
-            required = listOf("state", "path_id"),
-        ),
-        hints = MUTATING,
-    ) { request ->
-        mutationResult {
-            val args = request.arguments
-            val (pathId, command) = WorkspacePathEdits.createDeleteCommand(args)
-            val state = request.requiredString("state")
-            val res = rig.authorRig(state, buildJsonArray { add(command) }, MutationAuthor.AGENT)
-            buildJsonObject {
-                put("historyNodeId", res.historyNodeId)
-                put("state", requireNotNull(res.state)); put("project_id", requireNotNull(res.projectId))
-                put("revisionId", res.revisionId)
-                put("deletedPathId", pathId)
-                put("summary", res.summary)
-            }
-        }
-    }
-
-    catalog.register(
-        name = "path_deform",
-        description = "Deform an ArtMesh by moving deform path control points and baking the result as a keyform at the specified parameter key.",
-        inputSchema = WorkspaceCommandSchema(
-            properties = buildJsonObject {
-                putJsonObject("state") { put("type", "string"); put("description", "Optimistic concurrency state") }
-                putJsonObject("target") { put("type", "string"); put("description", "Mesh target, e.g. mesh:hair") }
-                putJsonObject("path_id") { put("type", "string"); put("description", "ID of the deform path") }
-                putJsonObject("key") { put("type", "object"); put("description", "Destination parameter key coordinate") }
-                putJsonObject("moved_points") { put("type", "array"); put("description", "Array of moved [x, y] coordinates matching path points") }
-            },
-            required = listOf("state", "target", "path_id", "key", "moved_points"),
-        ),
-        hints = MUTATING,
-    ) { request ->
-        mutationResult {
-            val args = request.arguments
-            val command = WorkspacePathEdits.createDeformCommand(args)
-            val state = request.requiredString("state")
-            val res = rig.authorRig(state, buildJsonArray { add(command) }, MutationAuthor.AGENT)
-            buildJsonObject {
-                put("historyNodeId", res.historyNodeId)
-                put("state", requireNotNull(res.state)); put("project_id", requireNotNull(res.projectId))
-                put("revisionId", res.revisionId)
-                put("target", command.getValue("target"))
-                put("key", command.getValue("key"))
-                put("summary", res.summary)
-            }
-        }
-    }
-}
-
-private fun registerCatalogOutputCommands(catalog: WorkspaceCommands, output: WorkspaceOutputPort) {
-    catalog.register(
-        name = "project_save",
-        hints = MUTATING,
-        description = "Save the complete portable project to its selected file, creating an immediate history checkpoint. Choose the file location in the UI first.",
-    ) { mutationResult { output.saveProject().toJson() } }
 }
 
 private fun registerCatalogHistoryCommands(catalog: WorkspaceCommands, history: WorkspaceHistoryPort) {
@@ -493,69 +158,6 @@ private fun registerCatalogHistoryCommands(catalog: WorkspaceCommands, history: 
 		hints = MUTATING,
 	) { request ->
 		mutationResult { history.checkoutHistory(request.requiredString("node_id"), MutationAuthor.AGENT).toJson() }
-	}
-}
-
-private fun registerCatalogTaskRecordCommands(catalog: WorkspaceCommands, taskRecord: WorkspaceTaskRecordPort) {
-	catalog.register(
-		name = "task_start",
-		description = "Create a resumable in-app checkpoint record from the Agent's own dynamic plan. This does not prescribe or approve the workflow.",
-		inputSchema = WorkspaceCommandSchema(
-			properties = buildJsonObject {
-				putJsonObject("objective") { put("type", "string") }
-				putJsonObject("plan") {
-					put("type", "array")
-					putJsonObject("items") { put("type", "string") }
-				}
-			},
-			required = listOf("objective", "plan"),
-		),
-		hints = MUTATING,
-	) { request ->
-		mutationResult {
-			taskRecord.startTask(request.requiredString("objective"), request.stringList("plan")).toJson()
-		}
-	}
-
-	catalog.register(
-		name = "task_update",
-		description = "Append a progress/checkpoint event to a long Agent task, including artifact/view/asset/history references.",
-		inputSchema = taskUpdateSchema(),
-		hints = MUTATING,
-	) { request ->
-		mutationResult {
-			val status = runCatching { WorkspaceTaskStatus.valueOf(request.requiredString("status").uppercase()) }
-				.getOrElse { throw IllegalArgumentException("Unknown task status") }
-			taskRecord.updateTask(
-				taskId = request.requiredString("task_id"),
-				status = status,
-				plan = request.optionalStringList("plan"),
-				currentStep = request.optionalInteger("current_step"),
-				progress = request.optionalFloat("progress"),
-				message = request.optionalString("message").orEmpty(),
-				artifactIds = request.stringList("artifact_ids", required = false),
-			).toJson()
-		}
-	}
-
-	catalog.register(
-		name = "task_get",
-		description = "Read one long task with its Agent-authored plan, status, progress, artifacts and append-only event log.",
-		inputSchema = WorkspaceCommandSchema(
-			properties = buildJsonObject { putJsonObject("task_id") { put("type", "string") } },
-			required = listOf("task_id"),
-		),
-		hints = READ_ONLY,
-	) { request -> mutationResult { taskRecord.task(request.requiredString("task_id")).toJson() } }
-
-	catalog.register(
-		name = "task_list",
-		description = "List long tasks persisted for the currently loaded PSD version.",
-		hints = READ_ONLY,
-	) {
-		jsonResult(buildJsonObject {
-			putJsonArray("tasks") { taskRecord.tasks().forEach { add(it.toJson(includeEvents = false)) } }
-		})
 	}
 }
 
@@ -885,54 +487,6 @@ private fun registerCatalogSourceCommands(catalog: WorkspaceCommands, source: Wo
     } }
 }
 
-private fun registerCatalogQueriesRigCommands(catalog: WorkspaceCommands, queries: WorkspaceQueries, rig: WorkspaceRigPort) {
-    catalog.register(
-        name = "path_put",
-        description = "Create or update a deform path on an ArtMesh. Points can be local [x, y] coordinates (automatically bound to triangles) or barycentric objects.",
-        inputSchema = WorkspaceCommandSchema(
-            properties = buildJsonObject {
-                putJsonObject("state") { put("type", "string"); put("description", "Optimistic concurrency state") }
-                putJsonObject("target") { put("type", "string"); put("description", "Mesh target, e.g. mesh:hair") }
-                putJsonObject("id") { put("type", "string"); put("description", "Optional path ID (auto-generated if omitted)") }
-                putJsonObject("points") { put("type", "array"); put("description", "Array of points: [[x,y],...] or [{x, y, corner},...]") }
-                putJsonObject("width") { put("type", "number"); put("description", "Cubism influence radius in canvas pixels (default 50)") }
-                putJsonObject("hardness") { put("type", "number"); put("description", "Cubism hardness percent 0..100 (default 50)") }
-                putJsonObject("closed") { put("type", "boolean"); put("description", "Whether path is closed loop (default false)") }
-                putJsonObject("level") { put("type", "integer"); put("description", "Edit level 2 or 3 (default 2)") }
-            },
-            required = listOf("state", "target", "points"),
-        ),
-        hints = MUTATING,
-    ) { request ->
-        mutationResult {
-            val args = request.arguments
-            val puppet = queries.currentPuppet() ?: error("No model loaded")
-            val (pathId, command) = WorkspacePathEdits.createPutCommand(puppet, args)
-            val state = request.requiredString("state")
-            val res = rig.authorRig(state, buildJsonArray { add(command) }, MutationAuthor.AGENT)
-            buildJsonObject {
-                put("historyNodeId", res.historyNodeId)
-                put("state", requireNotNull(res.state)); put("project_id", requireNotNull(res.projectId))
-                put("revisionId", res.revisionId)
-                put("pathId", pathId)
-                put("target", command.getValue("target"))
-                put("summary", res.summary)
-            }
-        }
-    }
-}
-
-private fun rigObjectCreateSchema(): WorkspaceCommandSchema = WorkspaceCommandSchema(
-    properties = buildJsonObject {
-        listOf("id", "name", "state", "task_id").forEach { key -> putJsonObject(key) { put("type", "string") } }
-        putJsonObject("parent_id") { put("type", "string"); put("description", "Existing common Warp parent from object_get") }
-        putJsonObject("mesh_ids") { put("type", "array"); put("minItems", 1); put("uniqueItems", true); putJsonObject("items") { put("type", "string") } }
-        putJsonObject("fit_local") { put("type", "boolean") }
-        listOf("rows", "columns").forEach { key -> putJsonObject(key) { put("type", "integer"); put("minimum", 1); put("maximum", 32) } }
-    },
-    required = listOf("id", "name", "state", "parent_id", "mesh_ids"),
-)
-
 private fun physicsPutSchema(): WorkspaceCommandSchema = WorkspaceCommandSchema(
     properties = buildJsonObject {
         listOf("id", "name", "state", "task_id").forEach { key -> putJsonObject(key) { put("type", "string") } }
@@ -1131,36 +685,6 @@ private fun addLayerSchema(): WorkspaceCommandSchema = WorkspaceCommandSchema(
 	required = listOf("asset_id", "state", "name"),
 )
 
-private fun taskUpdateSchema(): WorkspaceCommandSchema = WorkspaceCommandSchema(
-	properties = buildJsonObject {
-		putJsonObject("task_id") { put("type", "string") }
-		putJsonObject("status") {
-			put("type", "string")
-			putJsonArray("enum") {
-				WorkspaceTaskStatus.entries.forEach { add(JsonPrimitive(it.name.lowercase())) }
-			}
-		}
-		putJsonObject("current_step") {
-			put("type", "integer")
-			put("minimum", 0)
-			put("description", "Zero-based index into the Agent-authored plan")
-		}
-		putJsonObject("plan") {
-			put("type", "array")
-			put("description", "Optional replacement for the Agent-authored dynamic plan")
-			putJsonObject("items") { put("type", "string") }
-		}
-		putJsonObject("progress") { put("type", "number"); put("minimum", 0); put("maximum", 1) }
-		putJsonObject("message") { put("type", "string") }
-		putJsonObject("artifact_ids") {
-			put("type", "array")
-			put("description", "View, PNG asset, layer or history node IDs produced at this checkpoint")
-			putJsonObject("items") { put("type", "string") }
-		}
-	},
-	required = listOf("task_id", "status"),
-)
-
 private fun viewSchema(includeBackground: Boolean, includeFocus: Boolean = false): WorkspaceCommandSchema = WorkspaceCommandSchema(
 	properties = buildJsonObject {
 		putJsonObject("layer_id") {
@@ -1280,173 +804,11 @@ private fun modelViewSchema(): WorkspaceCommandSchema = WorkspaceCommandSchema(
 	required = listOf("viewport"),
 )
 
-private fun targetSchemaProperty(description: String = "Authoritative rig target reference"): JsonObject = buildJsonObject {
-	put("type", "object")
-	put("description", description)
-	putJsonObject("properties") {
-		putJsonObject("kind") {
-			put("type", "string")
-			putJsonArray("enum") {
-				listOf("mesh", "warp", "rotation", "part", "glue").forEach { add(JsonPrimitive(it)) }
-			}
-			put("description", "Object type: mesh, warp, rotation, part, or glue")
-		}
-		putJsonObject("id") {
-			put("type", "string")
-			put("description", "Stable object ID (e.g. layer ID for mesh, deformer ID, part ID)")
-		}
-		putJsonObject("secondary_id") {
-			put("type", "string")
-			put("description", "Optional secondary ID for composite targets such as glue bindings")
-		}
-	}
-	putJsonArray("required") {
-		add(JsonPrimitive("kind"))
-		add(JsonPrimitive("id"))
-	}
-}
-
-private fun geometrySchemaProperty(): JsonObject = buildJsonObject {
-	put("type", "object")
-	put("description", "Keyform geometry deformation values")
-	putJsonObject("properties") {
-		putJsonObject("control_points") {
-			put("type", "array")
-			put("description", "Flat list of [x0, y0, x1, y1, ...] warp lattice control points")
-			putJsonObject("items") { put("type", "number") }
-		}
-		putJsonObject("origin_x") { put("type", "number"); put("description", "Rotation deformer pivot X") }
-		putJsonObject("origin_y") { put("type", "number"); put("description", "Rotation deformer pivot Y") }
-		putJsonObject("angle") { put("type", "number"); put("description", "Rotation angle in degrees") }
-		putJsonObject("scale") { put("type", "number"); put("description", "Rotation scale factor") }
-		putJsonObject("position_deltas") {
-			put("type", "array")
-			put("description", "Flat list of [dx0, dy0, dx1, dy1, ...] vertex deltas for ArtMesh")
-			putJsonObject("items") { put("type", "number") }
-		}
-	}
-}
-
-private fun channelsSchemaProperty(): JsonObject = buildJsonObject {
-	put("type", "object")
-	put("description", "Keyform visual/state channel values")
-	putJsonObject("properties") {
-		putJsonObject("opacity") { put("type", "number"); put("minimum", 0); put("maximum", 1) }
-		putJsonObject("draw_order") { put("type", "number") }
-		putJsonObject("multiply_color") {
-			put("type", "array")
-			put("description", "Normalized RGBA [r, g, b, a] multiply color")
-			putJsonObject("items") { put("type", "number") }
-		}
-		putJsonObject("screen_color") {
-			put("type", "array")
-			put("description", "Normalized RGB [r, g, b] screen color")
-			putJsonObject("items") { put("type", "number") }
-		}
-		putJsonObject("glue_intensity") { put("type", "number"); put("minimum", 0); put("maximum", 1) }
-		putJsonObject("flip_x") { put("type", "boolean") }
-		putJsonObject("flip_y") { put("type", "boolean") }
-	}
-}
-
-private fun objectGetSchema(): WorkspaceCommandSchema = WorkspaceCommandSchema(
-	properties = buildJsonObject {
-		put("target", targetSchemaProperty())
-		putJsonObject("kind") {
-			put("type", "string")
-			putJsonArray("enum") {
-				listOf("mesh", "warp", "rotation", "part", "glue").forEach { add(JsonPrimitive(it)) }
-			}
-		}
-		putJsonObject("id") { put("type", "string") }
-		putJsonObject("secondary_id") { put("type", "string") }
-	},
-)
-
-private fun keyformSetSchema(): WorkspaceCommandSchema = WorkspaceCommandSchema(
-	properties = buildJsonObject {
-		putJsonObject("state") { put("type", "string") }
-		put("target", targetSchemaProperty())
-		putJsonObject("coordinate") {
-			put("type", "object")
-			put("description", "Keyform parameter coordinate, e.g. {\"ParamAngleX\": 0.0, \"ParamAngleY\": 1.0}")
-			putJsonObject("additionalProperties") { put("type", "number") }
-		}
-		put("geometry", geometrySchemaProperty())
-		put("channels", channelsSchemaProperty())
-		putJsonObject("task_id") { put("type", "string") }
-	},
-	required = listOf("state", "coordinate"),
-)
-
-private fun keyformDeleteSchema(): WorkspaceCommandSchema = WorkspaceCommandSchema(
-	properties = buildJsonObject {
-		putJsonObject("state") { put("type", "string") }
-		put("target", targetSchemaProperty())
-		putJsonObject("parameter_id") { put("type", "string") }
-		putJsonObject("key_value") {
-			put("type", "number")
-			put("description", "Specific key value to remove. If omitted, the entire parameter axis is deleted.")
-		}
-		putJsonObject("channel") {
-			put("type", "string")
-			put("description", "Optional channel name (e.g. opacity, draw_order). If omitted, operates on geometry.")
-		}
-		putJsonObject("task_id") { put("type", "string") }
-	},
-	required = listOf("state", "parameter_id"),
-)
-
-private fun keyformCopySchema(): WorkspaceCommandSchema = WorkspaceCommandSchema(
-	properties = buildJsonObject {
-		putJsonObject("state") { put("type", "string") }
-		put("source_target", targetSchemaProperty("Source target reference"))
-		putJsonObject("source_coordinate") {
-			put("type", "object")
-			putJsonObject("additionalProperties") { put("type", "number") }
-		}
-		put("destination_target", targetSchemaProperty("Destination target (defaults to source if omitted)"))
-		putJsonObject("destination_coordinate") {
-			put("type", "object")
-			putJsonObject("additionalProperties") { put("type", "number") }
-		}
-		putJsonObject("channels") {
-			put("type", "array")
-			put("description", "Optional list of channels to copy (e.g. [\"geometry\", \"opacity\"]). Null copies all.")
-			putJsonObject("items") { put("type", "string") }
-		}
-		putJsonObject("task_id") { put("type", "string") }
-	},
-	required = listOf("state", "source_coordinate", "destination_coordinate"),
-)
-
-private fun rigKPoseSchema(): WorkspaceCommandSchema = WorkspaceCommandSchema(
-	properties = buildJsonObject {
-		putJsonObject("state") { put("type", "string") }
-		put("target", targetSchemaProperty())
-		putJsonObject("parameters") {
-			put("type", "object")
-			put("description", "Pose parameters to set/capture, e.g. {\"ParamAngleX\": 30.0}")
-			putJsonObject("additionalProperties") { put("type", "number") }
-		}
-		putJsonObject("coordinate") {
-			put("type", "object")
-			putJsonObject("additionalProperties") { put("type", "number") }
-		}
-		put("geometry", geometrySchemaProperty())
-		put("channels", channelsSchemaProperty())
-		putJsonObject("task_id") { put("type", "string") }
-	},
-	required = listOf("state"),
-)
-
 private suspend fun renderResult(block: suspend () -> WorkspaceRenderedView): WorkspaceOperationOutput {
     val view = block()
     return WorkspaceOperationOutput(view.toJson(), listOf(view.png))
 }
 private suspend fun mutationResult(block: suspend () -> JsonObject): WorkspaceOperationOutput = WorkspaceOperationOutput(block())
-private fun jsonResult(json: JsonObject) = WorkspaceOperationOutput(json)
-
 private fun WorkspaceCommandInput.requiredString(name: String): String =
 	arguments.get(name)?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank)
 		?: throw IllegalArgumentException("Missing required argument: $name")
@@ -1464,33 +826,10 @@ private fun WorkspaceCommandInput.optionalBoolean(name: String): Boolean? =
 			?: throw IllegalArgumentException("$name must be a boolean")
 	}
 
-private fun WorkspaceCommandInput.optionalInteger(name: String): Int? =
-	arguments.get(name)?.let { value ->
-		value.jsonPrimitive.intOrNull ?: throw IllegalArgumentException("$name must be an integer")
-	}
-
 private fun WorkspaceCommandInput.optionalFloat(name: String): Float? =
 	arguments.get(name)?.let { value ->
 		value.jsonPrimitive.floatOrNull ?: throw IllegalArgumentException("$name must be numeric")
 	}
-
-private fun WorkspaceCommandInput.stringList(
-	name: String,
-	required: Boolean = true,
-): List<String> {
-	val value = arguments.get(name)
-	if (value == null) {
-		if (required) throw IllegalArgumentException("Missing required argument: $name")
-		return emptyList()
-	}
-	return value.jsonArray.map { item ->
-		item.jsonPrimitive.contentOrNull?.trim()?.takeIf(String::isNotEmpty)
-			?: throw IllegalArgumentException("$name must contain non-empty strings")
-	}
-}
-
-private fun WorkspaceCommandInput.optionalStringList(name: String): List<String>? =
-	if (arguments.containsKey(name) == true) stringList(name) else null
 
 private fun WorkspaceCommandInput.outputSpec(): WorkspaceViewOutputSpec =
 	WorkspaceViewOutputSpec(
@@ -1570,90 +909,6 @@ private fun WorkspaceCommandInput.layerInsertion(): WorkspaceLayerInsertion {
 		"below" -> WorkspaceLayerInsertion.Below(reference())
 		else -> throw IllegalArgumentException("insertion.mode must be top, bottom, above, or below")
 	}
-}
-
-private fun WorkspaceCommandInput.hasTarget(prefix: String = "target"): Boolean {
-	if (arguments.containsKey(prefix) == true) return true
-	if (arguments.containsKey("${prefix}_kind") == true && arguments.containsKey("${prefix}_id") == true) return true
-	if (prefix == "target" && arguments.containsKey("kind") == true && arguments.containsKey("id") == true) return true
-	return false
-}
-
-private fun WorkspaceCommandInput.targetRef(
-	prefix: String = "target",
-): WorkspaceKeyformTargetRef {
-	val obj = (arguments.get(prefix) ?: if (prefix == "source_target") arguments.get("target") else null)?.jsonObject
-	if (obj != null) {
-		val kind = obj["kind"]?.jsonPrimitive?.contentOrNull
-			?: throw IllegalArgumentException("$prefix.kind is required")
-		val id = obj["id"]?.jsonPrimitive?.contentOrNull
-			?: throw IllegalArgumentException("$prefix.id is required")
-		val secondaryId = obj["secondary_id"]?.jsonPrimitive?.contentOrNull
-			?: obj["secondaryId"]?.jsonPrimitive?.contentOrNull
-		return WorkspaceKeyformTargetRef(kind = kind, id = id, secondaryId = secondaryId)
-	}
-	val kind = arguments.get("${prefix}_kind")?.jsonPrimitive?.contentOrNull
-		?: (if (prefix == "target" || prefix == "source_target") arguments.get("target_kind")?.jsonPrimitive?.contentOrNull ?: arguments.get("kind")?.jsonPrimitive?.contentOrNull else null)
-		?: throw IllegalArgumentException("Missing target kind")
-	val id = arguments.get("${prefix}_id")?.jsonPrimitive?.contentOrNull
-		?: (if (prefix == "target" || prefix == "source_target") arguments.get("target_id")?.jsonPrimitive?.contentOrNull ?: arguments.get("id")?.jsonPrimitive?.contentOrNull else null)
-		?: throw IllegalArgumentException("Missing target id")
-	val secondaryId = arguments.get("${prefix}_secondary_id")?.jsonPrimitive?.contentOrNull
-		?: (if (prefix == "target" || prefix == "source_target") arguments.get("secondary_id")?.jsonPrimitive?.contentOrNull else null)
-	return WorkspaceKeyformTargetRef(kind = kind, id = id, secondaryId = secondaryId)
-}
-
-private fun WorkspaceCommandInput.coordinateMap(
-	name: String = "coordinate",
-): Map<String, Float> {
-	val obj = arguments.get(name)?.jsonObject
-		?: throw IllegalArgumentException("Missing required argument: $name")
-	return obj.mapValues { (k, v) ->
-		v.jsonPrimitive.floatOrNull ?: throw IllegalArgumentException("Coordinate $k must be numeric")
-	}
-}
-
-private fun WorkspaceCommandInput.optionalGeometry(
-	name: String = "geometry",
-): WorkspaceKeyformGeometry? {
-	val obj = arguments.get(name)?.jsonObject ?: return null
-	fun fl(key: String, alt: String? = null): Float? =
-		(obj[key] ?: alt?.let { obj[it] })?.jsonPrimitive?.floatOrNull
-	fun flList(key: String, alt: String? = null): List<Float>? {
-		val arr = (obj[key] ?: alt?.let { obj[it] })?.jsonArray ?: return null
-		return arr.map { it.jsonPrimitive.floatOrNull ?: throw IllegalArgumentException("$key must contain numbers") }
-	}
-	return WorkspaceKeyformGeometry(
-		controlPoints = flList("control_points", "controlPoints"),
-		originX = fl("origin_x", "originX"),
-		originY = fl("origin_y", "originY"),
-		angle = fl("angle"),
-		scale = fl("scale"),
-		positionDeltas = flList("position_deltas", "positionDeltas"),
-	)
-}
-
-private fun WorkspaceCommandInput.optionalChannels(
-	name: String = "channels",
-): WorkspaceKeyformChannels? {
-	val obj = arguments.get(name)?.jsonObject ?: return null
-	fun fl(key: String, alt: String? = null): Float? =
-		(obj[key] ?: alt?.let { obj[it] })?.jsonPrimitive?.floatOrNull
-	fun bl(key: String, alt: String? = null): Boolean? =
-		(obj[key] ?: alt?.let { obj[it] })?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull()
-	fun flList(key: String, alt: String? = null): List<Float>? {
-		val arr = (obj[key] ?: alt?.let { obj[it] })?.jsonArray ?: return null
-		return arr.map { it.jsonPrimitive.floatOrNull ?: throw IllegalArgumentException("$key must contain numbers") }
-	}
-	return WorkspaceKeyformChannels(
-		opacity = fl("opacity"),
-		drawOrder = fl("draw_order", "drawOrder"),
-		multiplyColor = flList("multiply_color", "multiplyColor"),
-		screenColor = flList("screen_color", "screenColor"),
-		glueIntensity = fl("glue_intensity", "glueIntensity"),
-		flipX = bl("flip_x", "flipX"),
-		flipY = bl("flip_y", "flipY"),
-	)
 }
 
 internal fun WorkspaceProjectSnapshot.toJson(

@@ -494,43 +494,6 @@ data class RigEditOverlay(
 	/** Per journal entry (by identity) before a version 2 split, the drawables later v2 records supersede ([StubTolerance]). */
 	private val stubTolerance: java.util.IdentityHashMap<kotlinx.serialization.json.JsonObject, Set<String>> by lazy { StubTolerance.of(authoringJournal) }
 
-	fun upsert(edit: RigParameterEdit): RigEditOverlay {
-		val index = parameterEdits.indexOfFirst { it.id == edit.id }
-		val next = if (index < 0) parameterEdits + edit else parameterEdits.toMutableList().also { it[index] = edit }
-		return copy(parameterEdits = next, deletedParameterIds = deletedParameterIds - edit.id)
-	}
-
-	fun delete(id: String): RigEditOverlay = copy(
-		parameterEdits = parameterEdits.filterNot { it.id == id },
-		deletedParameterIds = deletedParameterIds + id,
-	)
-
-	fun setKeyform(edit: RigKeyformSetEdit): RigEditOverlay {
-		val index = keyformSetEdits.indexOfFirst { it.target == edit.target && it.coordinate == edit.coordinate }
-		val next = if (index < 0) keyformSetEdits + edit else keyformSetEdits.toMutableList().also { it[index] = edit }
-		return copy(keyformSetEdits = next)
-	}
-
-	fun deleteKeyform(edit: RigKeyformDeleteEdit): RigEditOverlay {
-		val filteredSets = keyformSetEdits.filterNot {
-			it.target == edit.target &&
-				it.coordinate.containsKey(edit.parameterId) &&
-				(edit.keyValue == null || it.coordinate[edit.parameterId] == edit.keyValue)
-		}
-		val filteredCopies = keyformCopyEdits.filterNot {
-			it.destinationTarget == edit.target &&
-				it.destinationCoordinate.containsKey(edit.parameterId) &&
-				(edit.keyValue == null || it.destinationCoordinate[edit.parameterId] == edit.keyValue)
-		}
-		return copy(
-			keyformSetEdits = filteredSets,
-			keyformCopyEdits = filteredCopies,
-			keyformDeleteEdits = keyformDeleteEdits + edit,
-		)
-	}
-
-	fun copyKeyform(edit: RigKeyformCopyEdit): RigEditOverlay = copy(keyformCopyEdits = keyformCopyEdits + edit)
-
 	companion object {
 		/** Cubism Editor's default physics rate. */
 		const val DEFAULT_PHYSICS_FPS = 60

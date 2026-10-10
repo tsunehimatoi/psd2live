@@ -175,62 +175,6 @@ data class WorkspaceKeyformTargetRef(
 	val glueId: String? = null,
 )
 
-data class WorkspaceKeyformGeometry(
-	val controlPoints: List<Float>? = null,
-	val originX: Float? = null,
-	val originY: Float? = null,
-	val angle: Float? = null,
-	val scale: Float? = null,
-	val positionDeltas: List<Float>? = null,
-)
-
-data class WorkspaceKeyformChannels(
-	val opacity: Float? = null,
-	val drawOrder: Float? = null,
-	val multiplyColor: List<Float>? = null,
-	val screenColor: List<Float>? = null,
-	val glueIntensity: Float? = null,
-	val flipX: Boolean? = null,
-	val flipY: Boolean? = null,
-)
-
-data class WorkspaceKeyformSetRequest(
-	val expectedState: String,
-	val target: WorkspaceKeyformTargetRef,
-	val coordinate: Map<String, Float>,
-	val geometry: WorkspaceKeyformGeometry? = null,
-	val channels: WorkspaceKeyformChannels? = null,
-	val taskId: String? = null,
-)
-
-data class WorkspaceKeyformDeleteRequest(
-	val expectedState: String,
-	val target: WorkspaceKeyformTargetRef,
-	val parameterId: String,
-	val keyValue: Float? = null,
-	val channel: String? = null,
-	val taskId: String? = null,
-)
-
-data class WorkspaceKeyformCopyRequest(
-	val expectedState: String,
-	val sourceTarget: WorkspaceKeyformTargetRef,
-	val sourceCoordinate: Map<String, Float>,
-	val destinationTarget: WorkspaceKeyformTargetRef? = null,
-	val destinationCoordinate: Map<String, Float>,
-	val channels: List<String>? = null,
-	val taskId: String? = null,
-)
-
-data class WorkspaceRigKPoseRequest(
-	val expectedState: String,
-	val target: WorkspaceKeyformTargetRef,
-	val parameters: Map<String, Float>,
-	val geometry: WorkspaceKeyformGeometry? = null,
-	val channels: WorkspaceKeyformChannels? = null,
-	val taskId: String? = null,
-)
-
 data class WorkspaceObjectAxisSnapshot(
 	val parameterId: String,
 	val keys: List<Float>,

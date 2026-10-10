@@ -31,9 +31,6 @@ import io.github.psd2live.project.WorkspaceCreateParameterRequest
 import io.github.psd2live.project.WorkspaceHistoryNodeSnapshot
 import io.github.psd2live.project.WorkspaceHistorySnapshot
 import io.github.psd2live.project.WorkspaceImportedPngAsset
-import io.github.psd2live.project.WorkspaceKeyformCopyRequest
-import io.github.psd2live.project.WorkspaceKeyformDeleteRequest
-import io.github.psd2live.project.WorkspaceKeyformSetRequest
 import io.github.psd2live.project.WorkspaceKeyformTargetRef
 import io.github.psd2live.project.WorkspaceLayerSnapshot
 import io.github.psd2live.project.WorkspaceModelViewRequest
@@ -46,7 +43,6 @@ import io.github.psd2live.project.WorkspaceParameterSnapshot
 import io.github.psd2live.project.WorkspacePngImportRequest
 import io.github.psd2live.project.WorkspaceProjectSnapshot
 import io.github.psd2live.project.WorkspaceRenderedView
-import io.github.psd2live.project.WorkspaceRigKPoseRequest
 import io.github.psd2live.project.WorkspaceTaskSnapshot
 import io.github.psd2live.project.WorkspaceTaskStatus
 import io.github.psd2live.project.WorkspaceUpdateParameterRequest
@@ -1245,44 +1241,11 @@ class DesktopWorkspace(
         result.mutation
     }
 
-    override fun listRigObjects(): List<WorkspaceKeyformTargetRef> = captureQueries().listRigObjects()
-
-    override suspend fun editObjects(arguments: kotlinx.serialization.json.JsonObject): WorkspaceMutationResult {
-        val edits = arguments.getValue("edits").jsonArray.map { it.jsonObject }
-        require(edits.size in 1..128) { "Use 1..128 edits" }
-        require(edits.all { it["action"]?.jsonPrimitive?.content in setOf("rename", "visibility", "move", "bind") }) { "Unknown object action" }
-        val ids = edits.map { it.getValue("id").jsonPrimitive.content }.distinct()
-        return mutateRigKeyform(arguments.getValue("state").jsonPrimitive.content,
-            arguments["task_id"]?.jsonPrimitive?.contentOrNull, "Edit ${ids.size} objects: ${edits.map { it["action"] }.distinct()}", ids.first()) { document, puppet ->
-            io.github.psd2live.core.RigStructureEdits.apply(puppet, edits)
-            document.copy(rigEdits = document.rigEdits.copy(structureEdits = document.rigEdits.structureEdits + edits))
-        }.let { result -> result.copy(affectedObjectIds = if (result.applied) ids else emptyList()) }
-    }
 
     override fun currentPuppet(): org.umamo.runtime.model.PuppetModel? =
         captureQueries().currentPuppet()
 
     override fun inspectRigGeometry(arguments: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject = captureQueries().inspectRigGeometry(arguments)
-
-    override suspend fun transformRigGeometry(arguments: kotlinx.serialization.json.JsonObject): WorkspaceMutationResult {
-        val kind=WorkspaceRigGeometry.kind(arguments); val id=WorkspaceRigGeometry.id(arguments)
-        val pose=WorkspaceRigGeometry.pose(arguments)
-        require(pose.isNotEmpty()) { "Specify at least one parameter coordinate for a keyform edit" }
-        val operations=arguments.getValue("operations").jsonArray
-        val result = mutateRigKeyform(arguments.getValue("state").jsonPrimitive.content,
-            arguments["task_id"]?.jsonPrimitive?.contentOrNull, "Transform $id at $pose: ${operations.map { it.jsonObject["type"] }}", id) { document, puppet ->
-            val g=io.github.psd2live.core.RigGeometryTools.geometry(puppet,kind,id,pose)
-            require(g.axes.all { it.parameterId.raw in pose }) { "Supply every bound geometry axis in coordinate" }
-            val points=io.github.psd2live.core.RigGeometryTools.transform(g,operations, arguments["selection"]?.jsonObject ?: kotlinx.serialization.json.JsonObject(emptyMap()), arguments["range"]?.jsonObject ?: kotlinx.serialization.json.JsonObject(emptyMap()))
-            val geometry=if(kind=="warp") RigKeyformGeometryEdit(controlPoints=points.toList())
-                else RigKeyformGeometryEdit(positionDeltas=points.indices.map { points[it]-g.base[it] })
-            val edit=RigKeyformSetEdit(RigTargetRef(RigTargetKind.fromString(kind),id),pose,geometry)
-            // Geometry-only edits must retain previously authored channels at this coordinate.
-            val previous=document.rigEdits.keyformSetEdits.firstOrNull { it.target==edit.target && it.coordinate==pose }
-            document.copy(rigEdits=document.rigEdits.setKeyform(edit.copy(channels=previous?.channels)))
-        }
-        return result
-    }
 
     override fun listPhysics(): List<io.github.psd2live.core.PhysicsGroup> = captureQueries().listPhysics()
 
@@ -1454,9 +1417,6 @@ class DesktopWorkspace(
             WorkspaceDocumentEdits.removeSwing(document, model.rig.puppet, id, bake, model.authored.rig.puppet)
         }
 
-    override suspend fun createWarp(edit: io.github.psd2live.core.RigWarpEdit, expectedState: String, taskId: String?) =
-        independentWarp(JsonObject(emptyMap()), expectedState, edit, taskId)
-
     override suspend fun createIndependentWarp(request: JsonObject, expectedState: String) = independentWarp(request, expectedState)
 
     override suspend fun editWarpControls(operation: String, expectedState: String, request: JsonObject, author: MutationAuthor): JsonObject = editMutex.withLock {
@@ -1476,14 +1436,13 @@ class DesktopWorkspace(
         result.output
     }
 
-    private suspend fun independentWarp(request: JsonObject, expectedState: String, edit: io.github.psd2live.core.RigWarpEdit? = null,
-                                       taskId: String? = null): WorkspaceMutationResult = editMutex.withLock {
+    private suspend fun independentWarp(request: JsonObject, expectedState: String): WorkspaceMutationResult = editMutex.withLock {
         val before = captureForMutation()
         requireExpected(expectedState, before)
         require(recoveringProjectId != before.projectId) { "Workspace is still being restored; retry shortly" }
         val current = viewModel.state.value
         if (current.isAnalyzing || current.isGenerating) throw WorkspaceBusy()
-        val result = warpCommands.execute(before.projectId, before.state, request, mutationAuthor(MutationAuthor.AGENT), taskId, edit) { _, document, model ->
+        val result = warpCommands.execute(before.projectId, before.state, request, mutationAuthor(MutationAuthor.AGENT)) { _, document, model ->
             applyPreviewOrThrow(model, documentFrom(current), document, "Created independent Warp", current)
         }
         if (result.commit.applied) {
@@ -1563,107 +1522,6 @@ class DesktopWorkspace(
 
 	override fun getObject(target: WorkspaceKeyformTargetRef): WorkspaceObjectSnapshot = captureQueries().getObject(target)
 
-    private fun resolveKeyformTarget(target: WorkspaceKeyformTargetRef, state: String): RigTargetRef {
-        val capture = runtime.capture()
-        if (capture.state != state) throw WorkspaceConflict(state, capture.state)
-        return if (target.kind.equals("glue", ignoreCase = true) && target.secondaryId == null && target.glueId == null)
-            RigAuthoringJournal.target(capture.model.rig.puppet, "glue:${target.id.trim()}")
-        else RigTargetRef(RigTargetKind.fromString(target.kind), target.id.trim(), target.secondaryId?.trim(), glueId = target.glueId?.trim())
-    }
-
-	override suspend fun setKeyform(request: WorkspaceKeyformSetRequest): WorkspaceMutationResult {
-		val targetRef = resolveKeyformTarget(request.target, request.expectedState)
-		val geo = request.geometry?.let {
-			RigKeyformGeometryEdit(
-				controlPoints = it.controlPoints,
-				originX = it.originX,
-				originY = it.originY,
-				angle = it.angle,
-				scale = it.scale,
-				positionDeltas = it.positionDeltas,
-			)
-		}
-		val ch = request.channels?.let {
-			RigKeyformChannelsEdit(
-				opacity = it.opacity,
-				drawOrder = it.drawOrder,
-				multiplyColor = it.multiplyColor,
-				screenColor = it.screenColor,
-				glueIntensity = it.glueIntensity,
-				flipX = it.flipX,
-				flipY = it.flipY,
-			)
-		}
-		val edit = RigKeyformSetEdit(
-			target = targetRef,
-			coordinate = request.coordinate,
-			geometry = geo,
-			channels = ch,
-		)
-		val coordStr = request.coordinate.entries.joinToString(",") { "${it.key}=${it.value}" }
-		return mutateRigKeyform(
-			expectedState = request.expectedState,
-			taskId = request.taskId,
-			summary = "Set keyform on ${targetRef.id} at ($coordStr)",
-			affectedObjectId = targetRef.id,
-		) { document, _ ->
-			document.copy(rigEdits = document.rigEdits.setKeyform(edit))
-		}
-	}
-
-	override suspend fun deleteKeyform(request: WorkspaceKeyformDeleteRequest): WorkspaceMutationResult {
-		val targetRef = resolveKeyformTarget(request.target, request.expectedState)
-		val edit = RigKeyformDeleteEdit(
-			target = targetRef,
-			parameterId = request.parameterId.trim(),
-			keyValue = request.keyValue,
-			channel = request.channel?.trim(),
-		)
-		val detail = if (request.keyValue != null) "key ${request.keyValue} on ${request.parameterId}" else "axis ${request.parameterId}"
-		return mutateRigKeyform(
-			expectedState = request.expectedState,
-			taskId = request.taskId,
-			summary = "Deleted $detail on ${targetRef.id}",
-			affectedObjectId = targetRef.id,
-		) { document, _ ->
-			document.copy(rigEdits = document.rigEdits.deleteKeyform(edit))
-		}
-	}
-
-	override suspend fun copyKeyform(request: WorkspaceKeyformCopyRequest): WorkspaceMutationResult {
-		val srcTarget = resolveKeyformTarget(request.sourceTarget, request.expectedState)
-		val destTarget = request.destinationTarget?.let {
-			resolveKeyformTarget(it, request.expectedState)
-		} ?: srcTarget
-		val edit = RigKeyformCopyEdit(
-			sourceTarget = srcTarget,
-			sourceCoordinate = request.sourceCoordinate,
-			destinationTarget = destTarget,
-			destinationCoordinate = request.destinationCoordinate,
-			channels = request.channels,
-		)
-		return mutateRigKeyform(
-			expectedState = request.expectedState,
-			taskId = request.taskId,
-			summary = "Copied keyform from ${srcTarget.id} to ${destTarget.id}",
-			affectedObjectId = destTarget.id,
-		) { document, _ ->
-			document.copy(rigEdits = document.rigEdits.copyKeyform(edit))
-		}
-	}
-
-	override suspend fun rigKPose(request: WorkspaceRigKPoseRequest): WorkspaceMutationResult {
-		return setKeyform(
-			WorkspaceKeyformSetRequest(
-				expectedState = request.expectedState,
-				target = request.target,
-				coordinate = request.parameters,
-				geometry = request.geometry,
-				channels = request.channels,
-				taskId = request.taskId,
-			),
-		)
-	}
 
 	private suspend fun mutateRigKeyform(
 		expectedState: String,
@@ -1720,40 +1578,6 @@ class DesktopWorkspace(
             applied = before.historyHead != selected.historyHead, state = selected.state, projectId = selected.projectId)
     }
 
-	override fun startTask(objective: String, plan: List<String>): WorkspaceTaskSnapshot {
-		val project = snapshot()
-		val head = project.historyHeadNodeId ?: throw IllegalStateException("No PSD is loaded")
-		val manager = taskManagerFor(project.projectId!!)
-		return manager.start(objective, plan, project.revisionId, head).also {
-			scheduleTaskPersistence(project.projectId, manager)
-		}
-	}
-
-	override fun updateTask(
-		taskId: String,
-		status: WorkspaceTaskStatus,
-		plan: List<String>?,
-		currentStep: Int?,
-		progress: Float?,
-		message: String,
-		artifactIds: List<String>,
-	): WorkspaceTaskSnapshot {
-		val projectId = snapshot().projectId ?: throw IllegalStateException("No PSD is loaded")
-		val manager = taskManagerFor(projectId)
-		return manager.update(taskId, status, plan, currentStep, progress, message, artifactIds).also {
-			scheduleTaskPersistence(projectId, manager)
-		}
-	}
-
-	override fun task(taskId: String): WorkspaceTaskSnapshot {
-		val projectId = snapshot().projectId ?: throw IllegalStateException("No PSD is loaded")
-		return taskManagerFor(projectId).get(taskId)
-	}
-
-	override fun tasks(): List<WorkspaceTaskSnapshot> {
-		val projectId = snapshot().projectId ?: return emptyList()
-		return taskManagerFor(projectId).list()
-	}
 
 	private fun projectId(state: PSD2LiveState): String {
         state.projectId?.let { return it }

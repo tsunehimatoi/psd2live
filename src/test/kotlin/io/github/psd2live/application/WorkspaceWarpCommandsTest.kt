@@ -67,10 +67,11 @@ class WorkspaceWarpCommandsTest {
         assertEquals(before.document, runtime.history().selections.first().snapshot)
     }
 
-    @Test fun typedWarpUsesOrderedJournalAfterAParentCreatedByAuthoring() = runBlocking<Unit> {
+    @Test fun aWarpUsesTheOrderedJournalAfterAParentCreatedByAuthoring() = runBlocking<Unit> {
         val runtime = fixture(); val before = prepare(runtime); val mesh = before.model.rig.puppet.drawables.single()
-        val edit = RigWarpEdit("typed", "Typed", "parent", listOf(mesh.id.raw), 4, 4, true)
-        val result = WorkspaceWarpCommands(runtime).execute(before.projectId, before.state, JsonObject(emptyMap()), MutationAuthor.USER, edit = edit)
+        val request = buildJsonObject { put("id", "typed"); put("name", "Typed"); putJsonArray("targets") { add("mesh:${mesh.id.raw}") }
+            put("rows", 4); put("columns", 4) }
+        val result = WorkspaceWarpCommands(runtime).execute(before.projectId, before.state, request, MutationAuthor.USER)
         assertEquals("warp:typed", result.mutation.warpResult().getValue("target").jsonPrimitive.content)
         assertTrue(result.commit.capture.document.rigEdits.warpEdits.isEmpty())
         assertEquals("user", runtime.history().selections.last().node.actor)

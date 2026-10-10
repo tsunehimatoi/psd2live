@@ -502,7 +502,7 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
         workspace.authorRig(a.text("state"), JsonArray(listOf(command)), MutationAuthor.AGENT).compact()
     }
     registerJsonOperation("appearance", "Rename, show/hide or reorganize objects in one ordered edit. For an animated switch use form opacity keys instead of static visibility. Local reparenting changes inherited motion.",
-        buildJsonObject { put("state", string()); put("edits", commands.get("object_edit").schema.properties.getValue("edits")) }, listOf("state", "edits"), true) { a ->
+        buildJsonObject { put("state", string()); put("edits", objectEditSchema().properties.getValue("edits")) }, listOf("state", "edits"), true) { a ->
         workspace.authorRig(a.text("state"), buildJsonArray { add(buildJsonObject { put("op", "structure"); put("edits", a.getValue("edits")) }) }, MutationAuthor.AGENT).compact()
     }
     val structureEdit = objectSchema(buildJsonObject {

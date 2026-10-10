@@ -412,7 +412,7 @@ internal class WorkspaceReadSession(
             model.parts.map { p -> record("part",p.id.raw,p.name,model.parts.firstOrNull { org.umamo.runtime.model.OrgChild.Part(p.id) in it.children }?.id?.raw) }
     }
 
-    override fun listRigObjects(): List<WorkspaceKeyformTargetRef> {
+    fun listRigObjects(): List<WorkspaceKeyformTargetRef> {
         val puppet = capture().model.rig.puppet
         return puppet.drawables.map { WorkspaceKeyformTargetRef("mesh", it.id.raw) } +
             puppet.deformers.map { WorkspaceKeyformTargetRef(if (it is Deformer.Warp) "warp" else "rotation", it.id.raw) } +

@@ -28,13 +28,10 @@ internal object WorkspaceWarpEdits {
             request.getValue("name").jsonPrimitive.content, parents.single()!!.raw, targets,
             request["rows"]?.jsonPrimitive?.int ?: 16, request["columns"]?.jsonPrimitive?.int ?: 16,
             request["fit_local"]?.jsonPrimitive?.boolean ?: true)
-        return typed(document, model, edit)
-    }
-
-    fun typed(document: WorkspaceDocument, model: RigPreviewModel, edit: RigWarpEdit): WorkspaceDocument =
-        WorkspaceDocumentEdits.journal(document, model, buildJsonArray {
+        return WorkspaceDocumentEdits.journal(document, model, buildJsonArray {
             add(buildJsonObject { put("op", "warp"); put("warp", edit.toJson()) })
         })
+    }
 }
 
 internal data class WorkspaceWarpCommit(val commit: WorkspaceCommit<RigPreviewModel>, val mutation: WorkspaceMutationResult)
@@ -44,7 +41,6 @@ internal class WorkspaceWarpCommands(private val runtime: WorkspaceRuntime<RigPr
     private val commands = WorkspaceDocumentCommands(runtime)
 
     suspend fun execute(projectId: String, state: String, request: JsonObject, author: MutationAuthor, taskId: String? = null,
-        edit: RigWarpEdit? = null,
         beforeCommit: (WorkspaceCapture<RigPreviewModel>, WorkspaceDocument, RigPreviewModel) -> Unit = { _, _, _ -> }): WorkspaceWarpCommit {
         val context = currentCoroutineContext()
         val job = context[WorkspaceWarpJobExecution]
@@ -55,7 +51,7 @@ internal class WorkspaceWarpCommands(private val runtime: WorkspaceRuntime<RigPr
         context[WorkspaceJobContext]?.progress(0.1f, "Preparing independent Warp")
         val summary = "Created independent Warp"
         val result = commands.executeCandidate(projectId, state, summary, author, taskId, mutation = { document, model ->
-            (if (edit == null) WorkspaceWarpEdits.apply(document, model, request) else WorkspaceWarpEdits.typed(document, model, edit)).also {
+            WorkspaceWarpEdits.apply(document, model, request).also {
                 context.ensureActive(); context[WorkspaceJobContext]?.progress(0.3f, "Rebuilding independent Warp")
             }
         }, beforeCommit = { captured, document, model ->

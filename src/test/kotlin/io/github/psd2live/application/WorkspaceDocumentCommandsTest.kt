@@ -173,12 +173,12 @@ class WorkspaceDocumentCommandsTest {
     }
 
     @Test fun legacyParameterOverridesKeepTheirRevisionAndReplayWithOrderedDeletion() = runBlocking {
-        val original = document().copy(rigEdits = RigEditOverlay.Empty.upsert(RigParameterEdit("LegacyAxis", "Legacy axis", -1f, 1f, 0f, created = true)))
+        val original = document().copy(rigEdits = RigEditOverlay.Empty.copy(parameterEdits = listOf(RigParameterEdit("LegacyAxis", "Legacy axis", -1f, 1f, 0f, created = true))))
         val builder = WorkspacePreviewBuilder()
         val model = builder.build(original)
         val target = RigTargetRef(RigTargetKind.ART_MESH, model.rig.puppet.drawables.first().id.raw)
-        val legacy = original.copy(rigEdits = original.rigEdits.setKeyform(RigKeyformSetEdit(target,
-            mapOf("LegacyAxis" to 0f), channels = RigKeyformChannelsEdit(opacity = 0.4f))))
+        val legacy = original.copy(rigEdits = original.rigEdits.copy(keyformSetEdits = listOf(RigKeyformSetEdit(target,
+            mapOf("LegacyAxis" to 0f), channels = RigKeyformChannelsEdit(opacity = 0.4f)))))
         val revision = WorkspaceRevisions.of(legacy)
         val runtime = WorkspaceRuntime<RigPreviewModel>({ doc -> builder.build(doc) })
         val before = runtime.install(runtime.state.value.state, "legacy", legacy, builder.build(legacy))
