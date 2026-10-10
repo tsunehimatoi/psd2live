@@ -35,22 +35,26 @@ import io.github.psd2live.ui.theme.LocalToolTypography
  * can be applied and saved over as a new name, not changed.
  */
 @Composable
-internal fun PhysicsPresetBar(kind: PhysicsPresets.Kind, setting: RigPhysicsEdit, onApply: (PhysicsPresets.Preset) -> Unit) {
+internal fun PhysicsPresetBar(kind: PhysicsPresets.Kind, groupId: String, setting: RigPhysicsEdit, onApply: (PhysicsPresets.Preset) -> Unit) {
 	val colors = LocalToolColors.current
 	val library by PhysicsPresetStore.state.collectAsState()
 	val presets = PhysicsPresets.builtins(kind).mapIndexed { index, preset ->
 		WorkspacePhysicsPresetEntry("builtin:${kind.name.lowercase()}:$index", preset)
 	} + library.entries.filter { it.preset.kind == kind }
-	var chosenId by remember(kind) { mutableStateOf<String?>(null) }
+	// Each group starts from the preset its settings match, so the back hair's group shows the back hair preset
+	// rather than whichever preset another group last picked.
+	var chosenId by remember(kind, groupId) {
+		mutableStateOf(presets.firstOrNull { PhysicsPresets.matches(it.preset, setting) }?.id)
+	}
 	val chosen = presets.firstOrNull { chosenId == it.id } ?: presets.first()
 	// Naming: null, or whether the typed name saves a new preset (true) or renames the chosen one (false).
-	var naming by remember(kind) { mutableStateOf<Boolean?>(null) }
-	var draft by remember(kind) { mutableStateOf("") }
+	var naming by remember(kind, groupId) { mutableStateOf<Boolean?>(null) }
+	var draft by remember(kind, groupId) { mutableStateOf("") }
 	var menu by remember { mutableStateOf(false) }
-	var namingState by remember(kind) { mutableStateOf(library.state) }
-	var namingId by remember(kind) { mutableStateOf(chosen.id) }
-	var namingSetting by remember(kind) { mutableStateOf(setting) }
-	var error by remember(kind) { mutableStateOf<String?>(null) }
+	var namingState by remember(kind, groupId) { mutableStateOf(library.state) }
+	var namingId by remember(kind, groupId) { mutableStateOf(chosen.id) }
+	var namingSetting by remember(kind, groupId) { mutableStateOf(setting) }
+	var error by remember(kind, groupId) { mutableStateOf<String?>(null) }
 	fun update(action: () -> Unit) {
 		try { action(); error = null }
 		catch (failure: Exception) { error = tr("physics.preset.failed", failure.message ?: failure.javaClass.simpleName) }

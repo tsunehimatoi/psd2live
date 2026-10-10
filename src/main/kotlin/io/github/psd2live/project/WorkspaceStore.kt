@@ -65,7 +65,7 @@ import java.util.zip.GZIPOutputStream
  * are immutable/content-addressed. Only HEAD and the task checkpoint document are atomically replaced.
  */
 internal class WorkspaceStore(
-	private val root: Path = defaultRoot(),
+	internal val root: Path = defaultRoot(),
 	/**
 	 * A store whose raster files this one takes instead of encoding the pixels again: a save stages the live
 	 * working store's PNG for every raster it already holds, linked (or copied with its attributes).

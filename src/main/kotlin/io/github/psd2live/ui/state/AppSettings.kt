@@ -23,10 +23,29 @@ object AppSettings {
 		Preferences.userRoot().node(PREFS_NODE_NAME)
 	}
 
+	/** The window's size in dp and whether it was maximized when it last closed; 1280 x 820 the first time. */
+	val windowWidth: Float get() = runCatching { preferences.getFloat("window_width", 1280f) }.getOrDefault(1280f).let { if (it.isFinite()) it.coerceIn(640f, 8192f) else 1280f }
+	val windowHeight: Float get() = runCatching { preferences.getFloat("window_height", 820f) }.getOrDefault(820f).let { if (it.isFinite()) it.coerceIn(400f, 8192f) else 820f }
+	val windowMaximized: Boolean get() = runCatching { preferences.getBoolean("window_maximized", false) }.getOrDefault(false)
+
+	fun rememberWindow(width: Float, height: Float, maximized: Boolean) {
+		runCatching {
+			preferences.putBoolean("window_maximized", maximized)
+			// A maximized window keeps the floating size it restores to.
+			if (!maximized && width.isFinite() && height.isFinite()) {
+				preferences.putFloat("window_width", width); preferences.putFloat("window_height", height)
+			}
+			preferences.flush()
+		}
+	}
+
+	/** Wide enough for names like "Angle X" or "Eye L Open"; 40 dp cut nearly every name to its first word. */
+	const val DEFAULT_PARAMETER_NAME_WIDTH = 96f
+
 	/** Panel dimensions are in dp; like colour dragging, writes sync asynchronously. */
 	var parameterNameWidth: Float
-		get() = runCatching { preferences.getFloat("parameter_name_width", 40f) }
-			.getOrDefault(40f).let { if (it.isFinite()) it.coerceIn(24f, 240f) else 40f }
+		get() = runCatching { preferences.getFloat("parameter_name_width", DEFAULT_PARAMETER_NAME_WIDTH) }
+			.getOrDefault(DEFAULT_PARAMETER_NAME_WIDTH).let { if (it.isFinite()) it.coerceIn(24f, 240f) else DEFAULT_PARAMETER_NAME_WIDTH }
 		set(value) {
 			if (value.isFinite()) runCatching { preferences.putFloat("parameter_name_width", value.coerceIn(24f, 240f)) }
 		}

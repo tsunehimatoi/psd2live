@@ -2748,9 +2748,33 @@ class PSD2LiveViewModel : AutoCloseable {
         }
     }
 
+	/** Unsaved edits the last run left behind when it was killed; the window asks once whether to restore them. */
+	internal val recoveryOffer = kotlinx.coroutines.flow.MutableStateFlow<SessionRecovery.Session?>(null)
+
+	/** Restores [session]'s edits as an unsaved project; see [DesktopWorkspace.restoreSession]. */
+	internal fun restoreRecoveredSession(session: SessionRecovery.Session) {
+		recoveryOffer.value = null
+		val workspace = workspaceBackend as? DesktopWorkspace ?: return
+		scope.launch {
+			try {
+				workspace.restoreSession(session)
+				addLog(tr("recovery.restored", session.name), level = LogLevel.SUCCESS, tag = "Project")
+			} catch (failure: Exception) {
+				if (failure is kotlinx.coroutines.CancellationException) throw failure
+				updateState { it.copy(errorMessage = tr("recovery.failed", failure.message ?: failure.javaClass.simpleName)) }
+			}
+		}
+	}
+
+	internal fun discardRecoveredSession() {
+		recoveryOffer.value = null
+		(workspaceBackend as? DesktopWorkspace)?.sessionRecovery?.forget()
+	}
+
 	fun attachWorkspace(workspace: WorkspaceBackend) {
 		workspaceBackend = workspace
         (workspace as? DesktopWorkspace)?.attachCurrentWorkspace()
+		recoveryOffer.value = (workspace as? DesktopWorkspace)?.sessionRecovery?.pending()
 		runCatching {
 			val snapshot = workspace.history()
 			updateState { it.copy(historySnapshot = snapshot, projectDirty = it.projectDirty || (it.historySnapshot != null && it.historySnapshot.headNodeId != snapshot.headNodeId), projectEditVersion = it.projectEditVersion + if (it.historySnapshot?.headNodeId != snapshot.headNodeId) 1 else 0) }
@@ -6653,13 +6677,15 @@ class PSD2LiveViewModel : AutoCloseable {
 				_state.value.projectOpenGeneration == generation
 			if (!currentExport()) return@launch
 			val completion = io.github.psd2live.application.WorkspaceJobCompletion()
+			// Indeterminate until the export reports a fraction: export targets render and encode without
+			// reporting, and a bar stuck at 0 read as a hang.
 			updateState { it.copy(isGenerating = !psd, isExportingPsd = psd, showExportPsdDialog = false,
-				progress = 0f, isIndeterminateProgress = false, errorMessage = null, exportSuccess = null,
+				progress = 0f, isIndeterminateProgress = true, errorMessage = null, exportSuccess = null,
 				statusText = tr("status.generating")) }
 			try {
 				val settled = workspace.settleEditorDrafts(expected.projectId, expected.state)
 				val progress = io.github.psd2live.application.WorkspaceJobContext { fraction, message ->
-					if (currentExport()) updateState { it.copy(progress = fraction, statusText = message) }
+					if (currentExport()) updateState { it.copy(progress = fraction, isIndeterminateProgress = false, statusText = message) }
 				}
 				val result = withContext(Dispatchers.Default + completion + progress +
 					io.github.psd2live.application.WorkspaceExecution(expected.projectId, settled, MutationAuthor.USER)) {
@@ -6675,7 +6701,7 @@ class PSD2LiveViewModel : AutoCloseable {
 					if (currentExport()) updateState { it.withLog(tr("log.failed", detail), level = LogLevel.ERROR, tag = "Export")
 						.copy(statusText = tr("status.failed", detail), errorMessage = detail) }
 				}
-			} finally { if (currentExport()) updateState { it.copy(isGenerating = false, isExportingPsd = false) } }
+			} finally { if (currentExport()) updateState { it.copy(isGenerating = false, isExportingPsd = false, isIndeterminateProgress = false) } }
 		}
 		activeWorkJob = exportJob
 		exportJob.start()

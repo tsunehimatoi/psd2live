@@ -632,7 +632,8 @@ class PSD2LivePipeline {
 			val bytes = Cmo3.write(converted.model)
 			files += writeContained(outputRoot, "$baseName.cmo3", bytes)
 			warnings += converted.report.notices.map { noticeText("CMO3", it) }
-			warnings += cmo3.textureLosses(ir, cmo3Options).map { "CMO3: ${it.objectId}: ${it.note}" }
+			// One line for every layer held above canvas resolution, not one per layer.
+			cmo3.textureLossSummary(ir, cmo3Options)?.let { warnings += "CMO3: $it" }
 			cmo3.can3(ir, cmo3Options, converted)?.let { files += writeContained(outputRoot, "$baseName.can3", it) }
 			warnings += cmo3.can3Losses(ir, cmo3Options).map { "CAN3: ${it.objectId}: ${it.note}" }
 			val source = Cmo3.read(bytes).root as? CModelSource ?: error(tr("error.cmo3Root"))

@@ -486,6 +486,8 @@ class DesktopWorkspace(
 	private val editMutex = Mutex()
 	private val historyLock = Any()
 	private var workspaceStore = WorkspaceStore(storeRoot)
+	/** Names the project whose unsaved edits only the store holds, so a killed app can offer them back. */
+	internal val sessionRecovery = SessionRecovery(storeRoot)
 	private val persistenceJob = SupervisorJob()
 	private val persistenceScope = CoroutineScope(persistenceJob + Dispatchers.IO.limitedParallelism(1))
 	private val pendingPersistenceWrites = AtomicInteger()
@@ -584,7 +586,10 @@ class DesktopWorkspace(
         return projected.activeWorkspace.pose!!.applyTo(projected)
     }
 
-    internal fun projectSaved(capture: ProjectCapture) = runtime.saved(capture.runtimeState)
+    internal fun projectSaved(capture: ProjectCapture) = runtime.saved(capture.runtimeState).also {
+        // Queued after the history writes before it, which may still record the marker.
+        if (runtime.state.value.capture?.dirty != true) schedulePersistence { sessionRecovery.forget() }
+    }
 
     internal fun savedResult(capture: ProjectCapture): WorkspaceMutationResult {
         val head = capture.history.selections.single { it.node.id == capture.history.headNodeId }.node
@@ -729,10 +734,12 @@ class DesktopWorkspace(
     }
 
     internal suspend fun installProject(
-        id: String, file: Path, source: Path, state: PSD2LiveState,
+        id: String, file: Path?, source: Path, state: PSD2LiveState,
         tree: WorkspaceHistoryTree<WorkspaceDocument>, store: WorkspaceStore, expectation: ProjectOpenExpectation,
         discardUnsaved: Boolean,
         auxiliary: JsonObject = JsonObject(emptyMap()),
+        /** Installed with unsaved edits: a restored session that was never saved as it stands. */
+        dirty: Boolean = false,
     ) = editMutex.withLock {
         val expected = expectation.uiState
         val expectedRuntime = expectation.runtimeState
@@ -750,16 +757,16 @@ class DesktopWorkspace(
             require(current.projectId == expected.projectId && current.projectOpenGeneration == expected.projectOpenGeneration &&
                 current.projectEditVersion == expected.projectEditVersion) { "Workspace changed while opening project; open again after saving your edits" }
             installed = runtime.install(expectedRuntime, id, document, preview, tree.state(),
-                auxiliary = JsonObject(auxiliaryJson(state) + ("assetCatalog" to catalog.encode())), discardUnsaved = discardUnsaved) {
+                auxiliary = JsonObject(auxiliaryJson(state) + ("assetCatalog" to catalog.encode())), discardUnsaved = discardUnsaved, dirty = dirty) {
                 viewModel.installProjectState(state.copy(
-                projectId = id, projectFile = file.toString(), inputPath = source.toString(), loadedInputPath = source.toString(),
+                projectId = id, projectFile = file?.toString(), inputPath = source.toString(), loadedInputPath = source.toString(),
                 analysis = preview.analysis, previewModel = preview,
                 documentLayerVisibility = document.layerVisibility, layerOverrides = document.layerOverrides,
                 deletedLayerIds = document.deletedLayerIds, parentOverrides = document.parentOverrides, rigEdits = document.rigEdits,
                 generationSource = document.generationSource,
                 meshSource = document.meshSource,
                 textureOverrides = document.textureOverrides,
-                ), expected)
+                ), expected, dirty = dirty)
             }
             discardEditorQueues()
             workspaceStore = store
@@ -1560,8 +1567,32 @@ class DesktopWorkspace(
         draftQueue.forgetRejected()
         val captured = runtime.history()
         val store = workspaceStore
-        schedulePersistence { store.persistHistory(projectId, captured) }
+        // In the same queue as the history it points at, so the marker never names a history not yet written.
+        val session = if (runtime.state.value.capture?.dirty != true) null else viewModel.state.value.let { ui ->
+            SessionRecovery.Session(store.root, projectId, ui.projectFile, ui.inputPath,
+                (ui.projectFile ?: ui.inputPath).let { runCatching { Path.of(it).fileName?.toString() }.getOrNull() }
+                    ?: ui.projectSourceName ?: projectId)
+        }
+        schedulePersistence {
+            store.persistHistory(projectId, captured)
+            if (session != null) sessionRecovery.record(session) else sessionRecovery.forget()
+        }
         viewModel.updateHistorySnapshot(history())
+    }
+
+    /**
+     * Installs the history [session] left unsaved, as opening a project would, and leaves it unsaved: the user
+     * saves it where they choose. The marker stays until then, so a second crash still finds it.
+     */
+    internal suspend fun restoreSession(session: SessionRecovery.Session): WorkspaceMutationResult {
+        val store = WorkspaceStore(session.storeRoot)
+        val tree = withContext(Dispatchers.IO) { store.loadHistory(session.projectId) }
+            ?: error("The unsaved history of ${session.name} is no longer on disk")
+        val expected = captureProjectOpen(discardUnsaved = true)
+        val installed = installProject(session.projectId, session.projectFile?.let(Path::of), Path.of(session.inputPath),
+            viewModel.state.value, tree, store, expected, discardUnsaved = true, dirty = true)
+        viewModel.refreshWorkspaceRenderer(installed.model)
+        return openedResult(installed)
     }
 
 	private fun scheduleTaskPersistence(projectId: String, manager: WorkspaceTaskRecords) {

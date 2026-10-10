@@ -185,6 +185,19 @@ fun FrameWindowScope.PSD2LiveApp(
         JOptionPane.showOptionDialog(window, tr("project.unsaved"), tr("project.save"), JOptionPane.DEFAULT_OPTION,
             JOptionPane.QUESTION_MESSAGE, null, arrayOf(tr("project.save"), tr("project.discard"), tr("project.cancel")), tr("project.save"))
     }
+    val recovery by viewModel.recoveryOffer.collectAsState()
+    LaunchedEffect(recovery) {
+        val session = recovery ?: return@LaunchedEffect
+        val choice = JOptionPane.showOptionDialog(window, tr("recovery.message", session.name), tr("recovery.title"),
+            JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null, arrayOf(tr("recovery.restore"), tr("recovery.discard")),
+            tr("recovery.restore"))
+        // Closing the prompt throws nothing away: the marker stays until this session's own unsaved edits replace it.
+        when (choice) {
+            0 -> viewModel.restoreRecoveredSession(session)
+            1 -> viewModel.discardRecoveredSession()
+            else -> viewModel.recoveryOffer.value = null
+        }
+    }
     LaunchedEffect(state.projectFile, state.projectDirty) { window?.title = "PSD2Live — " + (state.projectFile ?: tr("project.untitled")) + if (state.projectDirty) " *" else "" }
     // Language key tracking for recomposition
 	val currentLanguage = state.currentLanguage

@@ -70,6 +70,12 @@ object PhysicsPresets {
 		}
 	}
 
+	/** Whether [setting] holds exactly [preset]'s inputs and normalization, or its pendulums. */
+	fun matches(preset: Preset, setting: RigPhysicsEdit): Boolean = when (preset.kind) {
+		Kind.INPUT -> preset.inputs == setting.inputs && preset.normalization == setting.normalization
+		Kind.PENDULUM -> preset.segments == setting.segments
+	}
+
 	/** [setting]'s inputs or pendulums saved as [name]. */
 	fun capture(kind: Kind, name: String, setting: RigPhysicsEdit) = when (kind) {
 		Kind.INPUT -> Preset(kind, name.trim(), setting.inputs, setting.normalization)
