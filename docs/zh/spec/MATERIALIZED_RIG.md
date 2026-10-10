@@ -131,7 +131,7 @@ A 类命令在用户看到的完成态 Rig（M 加修改器）上记录，作用
 | 参数被 G′ 删除而 M 中有引用 | 保留参数为退役参数及其上的用户关键形 | `retired_kept` |
 
 - 问题以结构化记录报告（`RigRegeneration.Issue`：类型、对象、说明），等级只由 `core/quality/RegenerationRule` 决定：冲突、保留用户拓扑与丢弃对象为 warning，改挂、保留退役对象、改父级与拓扑迁移为 info。合并在写固化点时已经完成，报告是观察性的（`RegenerationQuality`，`can_proceed` 恒为 true），不阻断提交；最后一个固化点的问题进入 `workspace_inspect` 的 `quality.regeneration`。
-- B 类操作的试运行（返回合并报告而不提交）尚未实现。
+- B 类操作的试运行：`workspace_preview_regeneration`（MCP）与“工具 → 预览生成结果更新”（GUI）返回将写入的固化点及其合并问题，不提交。
 - 设计拟复用 `format-compile` 的 `ThreeWayMerge`（MIT）；实现的合并引擎 `RigRegeneration` 在产品层按中立 IR 内容比较，`ThreeWayMerge` 只用于生成结果覆盖（`GeneratedOverrides`）。
 
 ### 5.1 用此模型重述现有特例
