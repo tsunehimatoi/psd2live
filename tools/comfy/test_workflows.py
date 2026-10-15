@@ -24,6 +24,8 @@ class WorkflowTest(unittest.TestCase):
         self.check(workflows.klein("a.png", "Remove the bangs.", 1024, 1024, base=True, cfg=4, negative="bangs"))
         self.check(workflows.qwen_edit("a.png", "Remove the bangs."))
         self.check(workflows.sdxl_txt2img("1girl", "lowres", batch=2))
+        self.check(workflows.kontext("a.png", "Remove the bangs.", lora="kontext/UndoMask_kontext_v2.safetensors"))
+        self.check(workflows.sdxl_inpaint("a.png", "m.png", "1girl", "lowres", loras=(("sdxl/a.safetensors", 0.5),)))
         self.check(workflows.sdxl_inpaint("a.png", "m.png", "1girl", "lowres", union="tile"))
         self.check(workflows.sam3("a.png", ["bangs", ""], positive_points=[{"x": 1, "y": 2}]))
         self.check(workflows.matte("a.png"))

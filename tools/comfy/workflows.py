@@ -23,6 +23,10 @@ MODELS = {
     "qwen_encoder": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
     "qwen_vae": "qwen_image_vae.safetensors",
     "upscale": "4x-UltraSharp.pth",
+    "kontext": "flux1-kontext-dev-Q6_K.gguf",
+    "clip_l": "clip_l.safetensors",
+    "t5": "t5xxl_fp8_e4m3fn_scaled.safetensors",
+    "flux_vae": "ae.safetensors",
 }
 
 UNION_TYPES = ("tile", "canny/lineart/anime_lineart/mlsd", "depth", "hed/pidi/scribble/ted", "normal", "segment", "openpose")
@@ -78,6 +82,25 @@ def klein(image: str, prompt: str, width: int, height: int, seed: int = 1, steps
     return g.nodes
 
 
+def kontext(image: str, prompt: str, seed: int = 1, steps: int = 24, guidance: float = 2.5, lora: str | None = None,
+            lora_strength: float = 1.0, name: str = "kontext") -> dict:
+    """Flux.1 Kontext edit of [image] from a plain-sentence instruction, at the image's own size (keep its sides
+    multiples of 16). lora names a Kontext LoRA from the server's loras folder, such as one that extracts clothes."""
+    g = Graph()
+    model = g("UnetLoaderGGUF", unet_name=MODELS["kontext"])
+    if lora:
+        model = g("LoraLoaderModelOnly", model=model, lora_name=lora, strength_model=lora_strength)
+    clip = g("DualCLIPLoader", clip_name1=MODELS["clip_l"], clip_name2=MODELS["t5"], type="flux", device="default")
+    vae = g("VAELoader", vae_name=MODELS["flux_vae"])
+    latent = g("VAEEncode", pixels=g.load(image), vae=vae)
+    positive = g("FluxGuidance", conditioning=g("ReferenceLatent", conditioning=g("CLIPTextEncode", clip=clip, text=prompt), latent=latent),
+                 guidance=guidance)
+    sample = g("KSampler", model=model, seed=seed, steps=steps, cfg=1.0, sampler_name="euler", scheduler="simple",
+               positive=positive, negative=g("ConditioningZeroOut", conditioning=positive), latent_image=latent, denoise=1.0)
+    g.save(g("VAEDecode", samples=sample, vae=vae), name)
+    return g.nodes
+
+
 def qwen_edit(image: str, prompt: str, seed: int = 1, steps: int = 20, cfg: float = 2.5, negative: str = "",
               refs: tuple[str, ...] = (), name: str = "qwen") -> dict:
     """Qwen-Image-Edit: follows instructions closely and draws clean anime shapes (a hairline), but shifts the image by
@@ -115,16 +138,19 @@ def sdxl_txt2img(positive: str, negative: str, width: int = 832, height: int = 1
 def sdxl_inpaint(image: str, mask: str, positive: str, negative: str, seed: int = 1, denoise: float = 0.75, steps: int = 28,
                  cfg: float = 5.5, grow: int = 8, feather: int = 12, union: str | None = None, union_strength: float = 0.6,
                  union_end: float = 1.0, control: str | None = None, checkpoint: str | None = None, name: str = "sdxl",
-                 sampler: str = "euler_ancestral") -> dict:
+                 sampler: str = "euler_ancestral", loras: tuple[tuple[str, float], ...] = ()) -> dict:
     """SDXL repaint of [mask] (red channel, white where to paint) in [image] with Differential Diffusion, composited
     back so unmasked pixels stay the input's own. Prompts are danbooru tags. A whole-image mask with union "tile" and
     denoise 0.3-0.45 sharpens an upscaled close-up in its own style. A v-prediction checkpoint (name holding "Vpred")
-    gets its sampling set."""
+    gets its sampling set. loras are (name, strength) pairs from the server's loras folder."""
     if union is not None and union not in UNION_TYPES:
         raise ValueError(f"union is one of {UNION_TYPES}")
     g = Graph()
     loader = g.add("CheckpointLoaderSimple", ckpt_name=checkpoint or MODELS["sdxl"])
     model, clip, vae = [loader, 0], [loader, 1], [loader, 2]
+    for lora, strength in loras:
+        applied = g.add("LoraLoader", model=model, clip=clip, lora_name=lora, strength_model=strength, strength_clip=strength)
+        model, clip = [applied, 0], [applied, 1]
     if "vpred" in (checkpoint or MODELS["sdxl"]).lower():
         model = g("ModelSamplingDiscrete", model=model, sampling="v_prediction", zsnr=True)
     model = g("DifferentialDiffusion", model=model)

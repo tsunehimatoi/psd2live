@@ -27,8 +27,10 @@ python -m unittest discover -s tools/comfy -p "test_*.py"
 |---|---|---|
 | 高清底图 | `upscale` + `sdxl_inpaint(union="tile")` | 保留原画风格；Klein 重绘会把线条变成硬黑描边、颜色发白 |
 | 去掉部件、露出下面 | `klein` | 与输入像素对齐，约 25 秒；会轻微改动整张图，所以只取被揭开区域（`material_peel` 处理） |
-| 去掉部件（要求更好看的形状） | `qwen_edit` | 发际线等形状最像动画画法，但会偏移一两个像素并改动别处，约 4 分钟 |
-| 按蒙版补画 | `sdxl_inpaint` | 补虹膜被挡的部分、发帘内侧等；Klein 不会重画平涂色块 |
+| 去掉部件、换装 | `kontext`（可带 LoRA） | Flux.1 Kontext，自然语言指令；尺寸保持 16 的倍数 |
+| 新图 | `sdxl_txt2img` | 用标签生成参考图，再放大与 tile 锐化 |
+| 去掉部件（不推荐） | `qwen_edit` | 慢，实测效果不如 Klein，会偏移一两个像素并改动别处 |
+| 按蒙版补画 | `sdxl_inpaint`（`loras` 可叠加 LoRA） | 补虹膜被挡的部分、发帘内侧等；Klein 不会重画平涂色块 |
 | 部件蒙版 | `sam3` | 短英文名词；成对部件用 `separate` 或点选 |
 | 半透明剪影 | `matte` | 发丝边缘 |
 | 前后顺序 | `depth` | 在人物范围内读相对深度 |
@@ -37,7 +39,7 @@ python -m unittest discover -s tools/comfy -p "test_*.py"
 
 ## 提示词
 
-- **Flux 系（Klein、Qwen 编辑）写自然语言指令**：说要去掉什么、下面露出什么，再加一句保持其余不变。
+- **Flux 系（Klein、Kontext）写自然语言指令**：说要去掉什么、下面露出什么，再加一句保持其余不变。
 
   > Remove the front bangs and every hair strand hanging in front of the forehead and face. Show the bare forehead skin and the natural hairline underneath, with the eyebrows fully visible. Keep the eyes, face, side hair, braid, hair clip, colors, lighting and art style exactly the same, same framing.
 
