@@ -135,6 +135,30 @@ class ReferenceLayoutScenario {
 		expect("recompose", recomposed <= 2) { "the part over the image under it is $recomposed off the image" }
 		expect("placement", now.document.layout.materials.item("part")?.placement == image.copy().let { now.document.layout.materials.item(image.id)?.placement }) {
 			"the part does not sit where the image does" }
+
+		// A generator also changes a speck far from the part; keep points hold the part to the piece they touch.
+		fun speck(x: Int, y: Int) = x in 4..9 && y in 50..55
+		val specked = png("specked.png") { x, y -> if (speck(x, y)) intArrayOf(20, 20, 20) else ground(x, y).map { it - 9 }.toIntArray() }
+		edit("import the specked version", "material_add", req("staging" to WorkspaceMaterialStaging.stage(WorkspaceMaterialFiles.read(listOf(specked)))))
+		val speckedId = now.document.layout.materials.items.single { it.name == "specked" }.id
+		refused("a keep point away from the part", "material_peel", req("id" to image.id, "revealed" to speckedId, "keep" to listOf(listOf(60, 2))))
+		edit("peel the disc, kept by a point on it", "material_peel", req("id" to image.id, "revealed" to speckedId, "keep" to listOf(listOf(32, 32)),
+			"part_id" to "kept", "base_id" to "kept_base"))
+		val kept = requireNotNull(now.document.layout.materials.item("kept")).raster
+		val keptBase = requireNotNull(now.document.layout.materials.item("kept_base")).raster
+		expect("keep", at(kept, 32, 32, 3) == 255 && at(kept, 6, 52, 3) == 0 && at(keptBase, 6, 52, 0) == src[(52 * size + 6) * 4].toInt() and 255) {
+			"the speck was not left out: part alpha ${at(kept, 6, 52, 3)} there" }
+
+		// An output enlarged from a smaller size differs from the image pixel by pixel (here a checker of +-40); measured
+		// at the size it was made, only the removed disc remains.
+		val enlarged = png("enlarged.png") { x, y -> ground(x, y).map { it - 9 + if ((x + y) % 2 == 0) 40 else -40 }.toIntArray() }
+		edit("import the enlarged version", "material_add", req("staging" to WorkspaceMaterialStaging.stage(WorkspaceMaterialFiles.read(listOf(enlarged)))))
+		val enlargedId = now.document.layout.materials.items.single { it.name == "enlarged" }.id
+		edit("peel compared at half size", "material_peel", req("id" to image.id, "revealed" to enlargedId, "compare_scale" to 2,
+			"part_id" to "halved", "base_id" to "halved_base"))
+		val halved = requireNotNull(now.document.layout.materials.item("halved")).raster
+		expect("compare scale", at(halved, 32, 32, 3) == 255 && at(halved, 52, 10, 3) == 0) {
+			"the enlargement read as the part: alpha ${at(halved, 52, 10, 3)} far from the disc" }
 		reopen()
 		expect("saved", now.document.layout.materials.item("base") != null) { "the peel did not survive saving" }
 	}

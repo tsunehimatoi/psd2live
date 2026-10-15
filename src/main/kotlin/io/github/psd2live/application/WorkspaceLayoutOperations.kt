@@ -99,6 +99,9 @@ internal object WorkspaceLayoutOperations {
             "threshold" to buildJsonObject { put("type", "array"); put("items", range(0, 255)); put("minItems", 2); put("maxItems", 2) },
             "grow" to integer(0, WorkspaceMaterialPeel.MAX_RADIUS), "core" to integer(0, WorkspaceMaterialPeel.MAX_RADIUS),
             "close" to integer(0, WorkspaceMaterialPeel.MAX_RADIUS), "band" to integer(0, WorkspaceMaterialPeel.MAX_RADIUS), "color_match" to boolean(),
+            "keep" to buildJsonObject { put("type", "array"); put("minItems", 1); put("maxItems", WorkspaceMaterialPeel.MAX_KEEP)
+                put("items", buildJsonObject { put("type", "array"); put("items", integer(0, 65535)); put("minItems", 2); put("maxItems", 2) }) },
+            "compare_scale" to integer(1, WorkspaceMaterialPeel.MAX_COMPARE_SCALE),
             "name" to string(), "part_id" to string(), "base_id" to string()), listOf("state", "id", "revealed")),
         WorkspaceMaterialPeel.PLACEMENT to schema(state + mapOf("id" to string(),
             "canvas_rect" to buildJsonObject { put("oneOf", buildJsonArray { add(rect); add(buildJsonObject { put("type", "null") }) }) },
@@ -148,7 +151,8 @@ internal object WorkspaceLayoutOperations {
             "(threshold [low, high] colour difference 0..255, default [8, 30], soft between), and the image under it, id with only the part's area taken from revealed. " +
             "Generators redraw a whole image slightly, so everything outside the part keeps id's pixels and the part over the image under it gives id again; a tone shift over the whole image (each channel's median offset, so the part should cover less than half of it) is not counted as a difference. " +
             "region (an item of the same size, white or opaque where the part may be, such as a segmentation mask) keeps the part inside it, grown by grow pixels; core forces the region shrunk by core pixels fully into the part; " +
-            "close fills gaps up to that radius (default 2). color_match (default true) moves revealed's colours to id's over a band pixels wide (default 24) of untouched pixels around the part. " +
+            "close fills gaps up to that radius (default 2). keep ([x, y] points in id's pixels, on or within ${WorkspaceMaterialPeel.KEEP_REACH} pixels of the part) keeps only the connected pieces of the part those points touch, dropping specks the generator changed elsewhere. " +
+            "compare_scale (1..${WorkspaceMaterialPeel.MAX_COMPARE_SCALE}, default 1) measures the difference with both images shrunk by that factor: give the factor revealed was enlarged by when the generator ran smaller than id, so the enlargement's softer lines do not read as the part. color_match (default true) moves revealed's colours to id's over a band pixels wide (default 24) of untouched pixels around the part. " +
             "Peel the front part first, then peel the next part off the image under it. name names the part; part_id and base_id name the new items for later batch members. One history edit; the changed list names them (material:<id>).",
         WorkspaceMaterialPeel.PLACEMENT to "Set where a material item sits on the canvas, its default place for layer_place: canvas_rect in canvas units, from another item's place (a sharper image generated from a close-up takes the close-up's place, " +
             "its extra pixels becoming a denser texture), or canvas_rect null to clear it. The pixels are unchanged. One history edit.",

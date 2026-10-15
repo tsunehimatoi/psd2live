@@ -12,6 +12,7 @@ import kotlin.math.cbrt
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
@@ -26,12 +27,19 @@ internal object WorkspaceMaterialPeel {
     const val PLACEMENT = "material_set_placement"
     val supported = setOf(PEEL, PLACEMENT)
     const val MAX_RADIUS = 64
+    const val MAX_KEEP = 64
+    const val MAX_COMPARE_SCALE = 8
+    /** How far a keep point may sit from the part and still pick the piece nearest to it, in pixels. */
+    const val KEEP_REACH = 16
 
     data class Options(val low: Float = 8f, val high: Float = 30f, val grow: Int = 0, val core: Int = 0, val close: Int = 2,
-                       val colorMatch: Boolean = true, val band: Int = 24) {
+                       val colorMatch: Boolean = true, val band: Int = 24, val keep: List<Pair<Int, Int>> = emptyList(),
+                       val compareScale: Int = 1) {
         init {
             require(low >= 0f && high > low && high <= 255f) { "threshold needs 0 <= low < high <= 255" }
             require(listOf(grow, core, close, band).all { it in 0..MAX_RADIUS }) { "grow, core, close and band are 0..$MAX_RADIUS pixels" }
+            require(keep.size <= MAX_KEEP) { "keep takes at most $MAX_KEEP points" }
+            require(compareScale in 1..MAX_COMPARE_SCALE) { "compare_scale is 1..$MAX_COMPARE_SCALE" }
         }
     }
 
@@ -85,7 +93,9 @@ internal object WorkspaceMaterialPeel {
         val options = Options(low = threshold?.get(0) ?: 8f, high = threshold?.get(1) ?: 30f,
             grow = request["grow"]?.jsonPrimitive?.int ?: 0, core = request["core"]?.jsonPrimitive?.int ?: 0,
             close = request["close"]?.jsonPrimitive?.int ?: 2, colorMatch = request["color_match"]?.jsonPrimitive?.boolean ?: true,
-            band = request["band"]?.jsonPrimitive?.int ?: 24)
+            band = request["band"]?.jsonPrimitive?.int ?: 24,
+            keep = request["keep"]?.jsonArray?.map { point -> point.jsonArray.let { it[0].jsonPrimitive.int to it[1].jsonPrimitive.int } }.orEmpty(),
+            compareScale = request["compare_scale"]?.jsonPrimitive?.int ?: 1)
         val result = peel(source.raster, revealed.raster, region?.raster, options, work::checkpoint)
         require(result.coverage > 0f) { "${source.id} and ${revealed.id} do not differ above the threshold${if (region != null) " inside the region" else ""}; nothing to peel" }
         val ids = library.folders.mapTo(HashSet()) { it.id } + library.items.map { it.id }
@@ -111,34 +121,7 @@ internal object WorkspaceMaterialPeel {
     fun peel(before: LayerRaster, after: LayerRaster, region: LayerRaster?, options: Options, checkpoint: () -> Unit = {}): Result {
         val w = before.width; val h = before.height; val n = w * h
         val b = before.rgba; val r = after.rgba
-        // A generator shifts the whole image's tone a little: each channel's median offset over the pixels both show
-        // is taken out before comparing, so the shift alone never reads as a part.
-        val shift = IntArray(3)
-        run {
-            val histogram = Array(3) { IntArray(511) }; var count = 0
-            for (i in 0 until n) {
-                val o = i * 4
-                if ((b[o + 3].toInt() and 255) < 250 || (r[o + 3].toInt() and 255) < 250) continue
-                for (c in 0..2) histogram[c][(r[o + c].toInt() and 255) - (b[o + c].toInt() and 255) + 255]++
-                count++
-            }
-            if (count > 0) for (c in 0..2) {
-                var seen = 0; var k = 0
-                while (seen + histogram[c][k] <= count / 2) { seen += histogram[c][k]; k++ }
-                shift[c] = k - 255
-            }
-        }
-        // Colours over black, so a transparent pixel compares by what it shows.
-        val diff = FloatArray(n)
-        for (i in 0 until n) {
-            if (i % 65536 == 0) checkpoint()
-            val o = i * 4
-            val ab = (b[o + 3].toInt() and 255) / 255f; val ar = (r[o + 3].toInt() and 255) / 255f
-            var d = abs(ab - ar) * 255f
-            for (c in 0..2) d = max(d, abs((b[o + c].toInt() and 255) * ab - ((r[o + c].toInt() and 255) - shift[c]) * ar))
-            diff[i] = d
-        }
-        val smooth = boxBlur(boxBlur(diff, w, h, 1, checkpoint), w, h, 1, checkpoint)
+        val smooth = difference(before, after, options.compareScale, checkpoint)
         val span = options.high - options.low
         val alpha = FloatArray(n) { ((smooth[it] - options.low) / span).coerceIn(0f, 1f) }
         if (region != null) {
@@ -152,6 +135,7 @@ internal object WorkspaceMaterialPeel {
             }
         }
         val closed = if (options.close > 0) minFilter(maxFilter(alpha, w, h, options.close, checkpoint), w, h, options.close, checkpoint) else alpha
+        if (options.keep.isNotEmpty()) keepConnected(closed, w, h, options.keep, checkpoint)
         val coverage = closed.count { it > 0.5f }.toFloat() / n
         val matched = if (options.colorMatch) colorMatched(before, after, closed, options.band, checkpoint) else null
         val source = matched ?: r
@@ -171,6 +155,108 @@ internal object WorkspaceMaterialPeel {
             base[o + 3] = (outA + 0.5f).toInt().coerceIn(0, 255).toByte()
         }
         return Result(LayerRaster(w, h, part), LayerRaster(w, h, base), coverage, matched != null)
+    }
+
+    /**
+     * How much [after] differs from [before] at each pixel, lightly smoothed. With [scale] above 1 both are averaged
+     * over scale-square blocks first and the result is spread back bilinearly: a generator's output enlarged to the
+     * image's size differs from it along every line, and at the size the generator worked at only its edits remain.
+     */
+    private fun difference(before: LayerRaster, after: LayerRaster, scale: Int, checkpoint: () -> Unit): FloatArray {
+        val w = before.width; val h = before.height
+        val sw = (w + scale - 1) / scale; val sh = (h + scale - 1) / scale
+        fun shrink(rgba: ByteArray): FloatArray {
+            if (scale == 1) return FloatArray(w * h * 4) { (rgba[it].toInt() and 255).toFloat() }
+            val out = FloatArray(sw * sh * 4); val count = IntArray(sw * sh)
+            for (y in 0 until h) {
+                if (y % 64 == 0) checkpoint()
+                for (x in 0 until w) {
+                    val o = (y * w + x) * 4; val t = (y / scale) * sw + x / scale
+                    // Colours weighted by alpha, so a transparent pixel adds nothing but its transparency.
+                    val a = (rgba[o + 3].toInt() and 255).toFloat()
+                    for (c in 0..2) out[t * 4 + c] += (rgba[o + c].toInt() and 255) * a / 255f
+                    out[t * 4 + 3] += a; count[t]++
+                }
+            }
+            for (t in count.indices) for (c in 0..3) out[t * 4 + c] /= count[t]
+            if (scale > 1) for (t in count.indices) { val a = out[t * 4 + 3] / 255f
+                for (c in 0..2) out[t * 4 + c] = if (a > 0f) out[t * 4 + c] / a else 0f }
+            return out
+        }
+        val b = shrink(before.rgba); val r = shrink(after.rgba)
+        val n = sw * sh
+        // A generator shifts the whole image's tone a little: each channel's median offset over the pixels both show
+        // is taken out before comparing, so the shift alone never reads as a part.
+        val shift = IntArray(3)
+        run {
+            val histogram = Array(3) { IntArray(511) }; var count = 0
+            for (i in 0 until n) {
+                val o = i * 4
+                if (b[o + 3] < 249.5f || r[o + 3] < 249.5f) continue
+                for (c in 0..2) histogram[c][(r[o + c] - b[o + c]).roundToInt().coerceIn(-255, 255) + 255]++
+                count++
+            }
+            if (count > 0) for (c in 0..2) {
+                var seen = 0; var k = 0
+                while (seen + histogram[c][k] <= count / 2) { seen += histogram[c][k]; k++ }
+                shift[c] = k - 255
+            }
+        }
+        // Colours over black, so a transparent pixel compares by what it shows.
+        val diff = FloatArray(n)
+        for (i in 0 until n) {
+            if (i % 65536 == 0) checkpoint()
+            val o = i * 4
+            val ab = b[o + 3] / 255f; val ar = r[o + 3] / 255f
+            var d = abs(ab - ar) * 255f
+            for (c in 0..2) d = max(d, abs(b[o + c] * ab - (r[o + c] - shift[c]) * ar))
+            diff[i] = d
+        }
+        val smooth = boxBlur(boxBlur(diff, sw, sh, 1, checkpoint), sw, sh, 1, checkpoint)
+        if (scale == 1) return smooth
+        val out = FloatArray(w * h)
+        for (y in 0 until h) {
+            if (y % 64 == 0) checkpoint()
+            val fy = ((y + 0.5f) / scale - 0.5f).coerceIn(0f, (sh - 1).toFloat()); val y0 = fy.toInt(); val y1 = min(sh - 1, y0 + 1); val ty = fy - y0
+            for (x in 0 until w) {
+                val fx = ((x + 0.5f) / scale - 0.5f).coerceIn(0f, (sw - 1).toFloat()); val x0 = fx.toInt(); val x1 = min(sw - 1, x0 + 1); val tx = fx - x0
+                val top = smooth[y0 * sw + x0] * (1 - tx) + smooth[y0 * sw + x1] * tx
+                val bottom = smooth[y1 * sw + x0] * (1 - tx) + smooth[y1 * sw + x1] * tx
+                out[y * w + x] = top * (1 - ty) + bottom * ty
+            }
+        }
+        return out
+    }
+
+    /**
+     * Clears every piece of [alpha] (8-connected pixels above zero) that no [keep] point lies on or within
+     * [KEEP_REACH] pixels of, so stray specks a generator changed elsewhere stay out of the part.
+     */
+    private fun keepConnected(alpha: FloatArray, w: Int, h: Int, keep: List<Pair<Int, Int>>, checkpoint: () -> Unit) {
+        val kept = BooleanArray(alpha.size)
+        val queue = IntArray(alpha.size); var tail = 0
+        for ((kx, ky) in keep) {
+            require(kx in 0 until w && ky in 0 until h) { "keep point [$kx, $ky] is outside the ${w}x$h image" }
+            var best = -1; var bestDistance = Int.MAX_VALUE
+            for (y in max(0, ky - KEEP_REACH)..min(h - 1, ky + KEEP_REACH)) for (x in max(0, kx - KEEP_REACH)..min(w - 1, kx + KEEP_REACH)) {
+                val d = (x - kx) * (x - kx) + (y - ky) * (y - ky)
+                if (alpha[y * w + x] > 0f && d < bestDistance && d <= KEEP_REACH * KEEP_REACH) { best = y * w + x; bestDistance = d }
+            }
+            require(best >= 0) { "keep point [$kx, $ky] is not on the part" }
+            if (!kept[best]) { kept[best] = true; queue[tail++] = best }
+        }
+        var head = 0
+        while (head < tail) {
+            if (head % 65536 == 0) checkpoint()
+            val i = queue[head++]; val x = i % w; val y = i / w
+            for (dy in -1..1) for (dx in -1..1) {
+                val nx = x + dx; val ny = y + dy
+                if (nx !in 0 until w || ny !in 0 until h) continue
+                val j = ny * w + nx
+                if (!kept[j] && alpha[j] > 0f) { kept[j] = true; queue[tail++] = j }
+            }
+        }
+        for (i in alpha.indices) if (!kept[i]) alpha[i] = 0f
     }
 
     /**
