@@ -95,6 +95,23 @@ def qwen_edit(image: str, prompt: str, seed: int = 1, steps: int = 20, cfg: floa
     return g.nodes
 
 
+def sdxl_txt2img(positive: str, negative: str, width: int = 832, height: int = 1216, seed: int = 1, steps: int = 28,
+                 cfg: float = 5.5, batch: int = 1, checkpoint: str | None = None, name: str = "txt2img",
+                 sampler: str = "euler_ancestral") -> dict:
+    """A new SDXL picture from danbooru tags, such as the reference a model starts from; enlarge it afterwards with
+    upscale and an sdxl_inpaint tile pass rather than generating large."""
+    g = Graph()
+    loader = g.add("CheckpointLoaderSimple", ckpt_name=checkpoint or MODELS["sdxl"])
+    model, clip, vae = [loader, 0], [loader, 1], [loader, 2]
+    if "vpred" in (checkpoint or MODELS["sdxl"]).lower():
+        model = g("ModelSamplingDiscrete", model=model, sampling="v_prediction", zsnr=True)
+    sample = g("KSampler", model=model, seed=seed, steps=steps, cfg=cfg, sampler_name=sampler, scheduler="normal",
+               positive=g("CLIPTextEncode", clip=clip, text=positive), negative=g("CLIPTextEncode", clip=clip, text=negative),
+               latent_image=g("EmptyLatentImage", width=width, height=height, batch_size=batch), denoise=1.0)
+    g.save(g("VAEDecode", samples=sample, vae=vae), name)
+    return g.nodes
+
+
 def sdxl_inpaint(image: str, mask: str, positive: str, negative: str, seed: int = 1, denoise: float = 0.75, steps: int = 28,
                  cfg: float = 5.5, grow: int = 8, feather: int = 12, union: str | None = None, union_strength: float = 0.6,
                  union_end: float = 1.0, control: str | None = None, checkpoint: str | None = None, name: str = "sdxl",

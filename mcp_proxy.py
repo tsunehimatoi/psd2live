@@ -379,7 +379,7 @@ class Client:
         self.session_id: str | None = None
         self.protocol_version = "2025-03-26"
         self._ids = 0
-        self._tools: set[str] | None = None
+        self._tools: dict[str, dict] | None = None
 
     def __enter__(self) -> "Client":
         return self
@@ -436,8 +436,13 @@ class Client:
         self._post({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
     def tools(self) -> set[str]:
+        return set(self._schemas())
+
+    def _schemas(self) -> dict[str, dict]:
+        """Each tool's request properties, by tool name."""
         if self._tools is None:
-            self._tools = {tool["name"] for tool in self._rpc("tools/list", {}).get("tools", [])}
+            self._tools = {tool["name"]: tool.get("inputSchema", {}).get("properties", {}).get("request", {}).get("properties", {})
+                           for tool in self._rpc("tools/list", {}).get("tools", [])}
         return self._tools
 
     def _tool(self, name: str, arguments: dict) -> tuple[dict, list[bytes]]:
@@ -461,10 +466,12 @@ class Client:
         wait_ms is for background operations only; they are waited for until they end either way."""
         request = dict(request or {})
         if operation in self.tools():
+            fields = self._schemas()[operation]
             if "workspace_call" not in self.tools():
-                # The full profile needs the request's identity; the core profile fills it in.
-                request.setdefault("request_id", f"script-{uuid.uuid4().hex}")
-                if "project_id" not in request and operation != "workspace_inspect" and "state" in request:
+                # The full profile asks edits for their identity; the core profile fills it in.
+                if "request_id" in fields:
+                    request.setdefault("request_id", f"script-{uuid.uuid4().hex}")
+                if "project_id" in fields and "project_id" not in request:
                     request["project_id"] = self.project()["project_id"]
             data, images = self._tool(operation, {"request": request})
         else:
