@@ -67,6 +67,7 @@ dependencies {
 	implementation(project(":format-eval"))
 	implementation(project(":targets:web"))
 	implementation(project(":targets:gltf"))
+	implementation(project(":targets:unity"))
 	implementation(project(":targets:dragonbones"))
 
 	// LWJGL (OpenGL rendering pipeline)

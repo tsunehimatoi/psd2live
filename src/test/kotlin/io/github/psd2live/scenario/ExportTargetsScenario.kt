@@ -71,10 +71,10 @@ class ExportTargetsScenario {
 			} }
 		} ?: println("p2lrt: the native runtime is not built; its playback was not compared")
 
-		for (target in listOf("spine", "dragonbones", "gltf", "web")) {
+		for (target in listOf("spine", "dragonbones", "gltf", "unity", "web")) {
 			val files = export(target)
 			expect(target, files.isNotEmpty()) { "$target wrote nothing" }
-			files.filter { it.toString().endsWith(".json") || it.toString().endsWith(".gltf") }.forEach { file ->
+			files.filter { it.toString().endsWith(".json") || it.toString().endsWith(".gltf") || it.toString().endsWith(".p2lunity") }.forEach { file ->
 				step("parse ${file.fileName}") { Json.parseToJsonElement(Files.readString(file)) }
 			}
 		}

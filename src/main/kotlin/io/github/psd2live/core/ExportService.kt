@@ -27,6 +27,7 @@ internal object ExportService {
 	/**
 	 * Skeletal-animation targets that bake parameters into additive animations. Their combined poses still differ
 	 * visibly from the editor, so the editor's menu leaves them out; the command line marks them experimental.
+	 * Unity stays in the menu: its importer installs itself once, so more than one character can be exported.
 	 */
 	val experimental: Set<String> = setOf("spine", "dragonbones", "gltf")
 
@@ -40,6 +41,7 @@ internal object ExportService {
 		io.github.psd2live.targets.runtime.P2lrtTarget,
 		io.github.psd2live.targets.web.WebTarget,
 		io.github.psd2live.targets.gltf.GltfTarget(geometry),
+		io.github.psd2live.targets.unity.UnityTarget(geometry),
 	) + RasterTargets(IrFrameRenderer).all)
 
 	/** Built-in options for [target] from the document's export settings; explicit [settings] win. */

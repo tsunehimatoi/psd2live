@@ -26,7 +26,7 @@ class ExportPerfTool {
 		val label = setting("PSD2LIVE_GOLDEN_LABEL", "current")
 		val scales = setting("PSD2LIVE_EXPORT_SCALES", "1,2").split(',').map { it.trim().toInt() }
 		val targets = setting("PSD2LIVE_EXPORT_TARGETS",
-			"moc3,cmo3,vtube-studio,psd-pose,spine,dragonbones,p2lrt,web,gltf,png-sequence,sprite-sheet,gif").split(',').map(String::trim)
+			"moc3,cmo3,vtube-studio,psd-pose,spine,dragonbones,p2lrt,web,gltf,unity,png-sequence,sprite-sheet,gif").split(',').map(String::trim)
 		val sample = Sample.fromEnvironment()
 		val original = PsdReader.read(sample.path.toFile().readBytes())
 		val timings = StringBuilder()
