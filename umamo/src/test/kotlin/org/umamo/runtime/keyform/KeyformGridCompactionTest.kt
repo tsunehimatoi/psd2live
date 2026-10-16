@@ -84,6 +84,20 @@ class KeyformGridCompactionTest {
 	}
 
 	/**
+	 * A key on a slope stays even when it is exactly the blend of its neighbours: a pose within EPS_KEY of it
+	 * snaps onto it, which a blend across the gap would not.
+	 */
+	@Test
+	fun aKeyOnASlopeStays() {
+		val axis = KeyformAxis(angleX, floatArrayOf(0f, 0.15f, 0.25f, 0.5f, 1f))
+		val original = grid(listOf(axis)) { coordinate -> floatArrayOf(3f, 4.5f, 6f, 6f, 6f)[coordinate[0]] }
+		val reduced = assertIs<CompactionResult.Reduced<ChannelValue>>(original.compacted(ChannelValueInterpolator)).grid
+		assertEquals(listOf(0f, 0.15f, 0.25f, 1f), reduced.axes.single().keys.toList(), "only the plateau key drops")
+		val nearKey = mapOf(angleX to 0.1505f)
+		assertEquals(original.valueAt(nearKey), reduced.valueAt(nearKey))
+	}
+
+	/**
 	 * A grid far larger than any rig carries.  Copying the grid and rebuilding a lookup per candidate key
 	 * made this quadratic - minutes - where a linear pass takes milliseconds.
 	 */
