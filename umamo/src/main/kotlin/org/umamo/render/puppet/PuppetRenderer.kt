@@ -45,6 +45,7 @@ import org.umamo.render.eval.RenderPlanNode
 import org.umamo.render.eval.RotationWorld
 import org.umamo.render.eval.WarpWorld
 import org.umamo.render.eval.applyCpuDeform
+import org.umamo.render.eval.deformMeshWorldFromCorners
 import org.umamo.render.eval.preparePose
 import org.umamo.render.glsl.MAX_BLEND_CORNERS
 import org.umamo.render.glsl.MAX_CORNERS
@@ -299,6 +300,9 @@ class PuppetRenderer(
 	// The single-partner shader represents independent pairs. Shared vertices require the
 	// CPU evaluator's ordered weld algebra; upload its final positions once per pose.
 	private var cpuGluePositions: Map<DrawableId, FloatArray> = emptyMap()
+	// Meshes posed with more corners than the deform shader blends: setPose uploads their CPU-deformed
+	// positions, and they draw like a sequential-glue mesh, undeformed by the shader.
+	private var cpuOverflowIds: Set<DrawableId> = emptySet()
     private var gpuGlueLayoutValid = true
 	private var glueDeformList: List<GpuDrawable> = emptyList()
 	private var gpuById: Map<DrawableId, GpuDrawable> = emptyMap()
@@ -668,6 +672,7 @@ class PuppetRenderer(
 	 */
 	fun disposeGl() {
         cpuGluePositions = emptyMap()
+		cpuOverflowIds = emptySet()
 		for (gpuDrawable in gpuById.values) {
 			deleteDrawable(gpuDrawable)
 		}
@@ -724,10 +729,17 @@ class PuppetRenderer(
 			gpuDrawable.blend = posedDrawable.blend
 			gpuDrawable.visible = true
 		}
-		val sequentialGlue = requiresSequentialGlue(currentModel) || !gpuGlueLayoutValid && currentModel.glues.isNotEmpty()
+		// The deform shader blends at most MAX_CORNERS corners, but a mesh posed with five or more fractional
+		// axes has more; those are deformed on the CPU and uploaded instead. A glue mesh among them sends the
+		// whole weld through the sequential CPU path, which blends every corner.
+		val overflowing = resolved.posed.values.filter { posedDrawable -> posedDrawable.corners.size > MAX_CORNERS }
+		val participants = currentModel.glues.flatMapTo(HashSet()) { listOf(it.meshA, it.meshB) }
+		val sequentialGlue =
+			requiresSequentialGlue(currentModel) ||
+				!gpuGlueLayoutValid && currentModel.glues.isNotEmpty() ||
+				overflowing.any { posedDrawable -> posedDrawable.drawableId in participants }
 		if (sequentialGlue) {
 			val evaluated = applyCpuDeform(currentModel, inputs)
-			val participants = currentModel.glues.flatMapTo(HashSet()) { listOf(it.meshA, it.meshB) }
             cpuGluePositions = evaluated.worldPositions.filterKeys { it in participants }
 			for ((id, positions) in cpuGluePositions) {
 				val resident = gpuById[id] ?: continue
@@ -741,6 +753,28 @@ class PuppetRenderer(
 			}
 			cpuGluePositions = emptyMap()
 		}
+		val overflowIds = HashSet<DrawableId>()
+		for (posedDrawable in overflowing) {
+			val id = posedDrawable.drawableId
+			val resident = gpuById[id] ?: continue
+			if (id in cpuGluePositions) {
+				continue
+			}
+			val drawable = currentModel.drawables.singleOrNull { it.id == id } ?: continue
+			val base = drawable.mesh?.positions ?: continue
+			val positions = deformMeshWorldFromCorners(drawable.geometryGrid, base, posedDrawable.corners, posedDrawable.parentWorld, posedDrawable.blend)
+			device.updateMeshPositions(resident.mesh, FloatArray(positions.size) { i -> if (i % 2 == 0) positions[i] else -positions[i] })
+			overflowIds += id
+		}
+		// A mesh back under the limit (or now uploaded as a glue mesh) returns to its rest positions for the shader.
+		for (id in cpuOverflowIds) {
+			if (id in overflowIds || id in cpuGluePositions) {
+				continue
+			}
+			val resident = gpuById[id] ?: continue
+			currentModel.drawables.singleOrNull { it.id == id }?.mesh?.let { device.updateMeshPositions(resident.mesh, it.positions) }
+		}
+		cpuOverflowIds = overflowIds
 		// resolvePose filled glueIntensities (this renderer's own array) in place - no copy needed.
 		currentPlan = resolved.renderPlan
 		currentCompositeStates = inputs.partCompositeStates
@@ -1705,7 +1739,7 @@ class PuppetRenderer(
 		// fragment scratch. A glue draw does not deform, so it needs no delta / control-point textures.
 		texturesScratch.atlas = gpuDrawable.activeTexture()
 		texturesScratch.maskCoverage = maskCoverage
-		if (gpuDrawable.id in cpuGluePositions) {
+		if (gpuDrawable.id in cpuGluePositions || gpuDrawable.id in cpuOverflowIds) {
 			texturesScratch.deltaTexture = null
 			texturesScratch.warpControlPoints = null
 			deformScratch.cornerCount = 0

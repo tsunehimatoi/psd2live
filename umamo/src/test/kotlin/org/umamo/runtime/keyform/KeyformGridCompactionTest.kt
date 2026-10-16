@@ -2,12 +2,14 @@ package org.umamo.runtime.keyform
 
 import org.junit.jupiter.api.Assertions.assertTimeoutPreemptively
 import org.junit.jupiter.api.function.ThrowingSupplier
+import org.umamo.runtime.eval.gridCorners
 import org.umamo.runtime.model.ChannelValue
 import org.umamo.runtime.model.KeyformAxis
 import org.umamo.runtime.model.KeyformCell
 import org.umamo.runtime.model.KeyformGrid
 import org.umamo.runtime.model.ParameterId
 import java.time.Duration
+import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -98,5 +100,38 @@ class KeyformGridCompactionTest {
 		val reduced = assertIs<CompactionResult.Reduced<ChannelValue>>(result).grid
 		assertTrue(reduced.axes[0].keys.size < axes[0].keys.size / 10, "plateaus compact")
 		assertEquals(reduced.axes.fold(1) { count, axis -> count * axis.keys.size }, reduced.cells.size)
+	}
+
+	/** The track's multilinear value at [pose]. */
+	private fun KeyformGrid<ChannelValue>.valueAt(pose: Map<ParameterId, Float>): Float {
+		val corners = assertNotNull(gridCorners(this) { parameterId -> pose.getValue(parameterId) })
+		return corners.sumOf { corner -> (cellsByLinearIndex.getValue(corner.linearIndex).form as ChannelValue.Scalar).value.toDouble() * corner.weight }.toFloat()
+	}
+
+	/**
+	 * Cubism Core blends every fractional axis.  A 16-corner cap once snapped the fifth one to its lower key,
+	 * so dropping four constant axes let a draw-order track that snapped at 400 blend to about 442 instead.
+	 */
+	@Test
+	fun droppingConstantAxesKeepsTheValueWithFiveFractionalAxes() {
+		val parameters = List(5) { axisIndex -> ParameterId("Param$axisIndex") }
+		val axes =
+			listOf(
+				KeyformAxis(parameters[0], floatArrayOf(-1f, 0f, 1f)),
+				KeyformAxis(parameters[1], floatArrayOf(-1f, 0f, 1f)),
+				KeyformAxis(parameters[2], floatArrayOf(0f, 1f)),
+				KeyformAxis(parameters[3], floatArrayOf(0f, 1f, 2f, 3f)),
+				KeyformAxis(parameters[4], floatArrayOf(0f, 1f)),
+			)
+		val pose = parameters.zip(listOf(0.3f, -0.4f, 0.45f, 1.55f, 0.85f)).toMap()
+		val original = grid(axes) { coordinate -> if (coordinate[4] == 0) 400f else 450f }
+		val reduced = assertIs<CompactionResult.Reduced<ChannelValue>>(original.compacted(ChannelValueInterpolator)).grid
+		assertEquals(listOf(parameters[4]), reduced.axes.map { axis -> axis.parameterId })
+		assertEquals(442.5f, original.valueAt(pose), 1e-3f)
+		assertEquals(original.valueAt(pose), reduced.valueAt(pose), 1e-4f)
+		// Varying along every axis, all five blend: the value is the sum of each axis's own interpolation.
+		val separable = grid(axes) { coordinate -> coordinate.indices.sumOf { axisIndex -> axes[axisIndex].keys[coordinate[axisIndex]].toDouble() * (axisIndex + 1) }.toFloat() }
+		val expected = pose.values.withIndex().sumOf { (axisIndex, value) -> value.toDouble() * (axisIndex + 1) }.toFloat()
+		assertTrue(abs(separable.valueAt(pose) - expected) < 1e-4f, "every fractional axis blends")
 	}
 }

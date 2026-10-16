@@ -30,10 +30,6 @@ public const val EPS_KEY: Float = 0.001f
 
 const val EPS_SPAN = 0.0015f
 
-// The Umamo C++ Runtime caps the multilinear corner set at 16 (kbCorners `maxc`); past that an axis snaps to its
-// lower key instead of splitting. Replicated for fidelity (matters only for >4 fractional axes).
-private const val MAX_CORNERS = 16
-
 /**
  * One axis's bracket of a parameter value: the lower key [index] and the [fraction] toward `index+1`
  * (0 when snapped exactly onto a key).
@@ -87,6 +83,13 @@ public fun bindBracket(keys: FloatArray, value: Float): AxisBracket? {
  * list (weights ×= frac / 1−frac) and folds a stride-based linear cell index, matching how
  * [cellsByLinearIndex] folds each [KeyformCell.coordinate].
  *
+ * Every fractional axis blends: there is no corner budget.  Cubism Core blends all of them (probed with a
+ * moc3 whose cells vary along six fractional axes, 64 corners, matching to float rounding), and so does
+ * the exported runtime.  An earlier 16-corner cap snapped every axis past the fourth fractional one to its
+ * lower key - wrong against Core, and it made channel compaction change evaluation, since dropping a
+ * constant axis freed budget for a varying one.  The GPU deform's own 16-corner uniform limit is the
+ * renderer's to work around, not this function's.
+ *
  * @param KeyformGrid grid       The entity's keyform grid (only its axes are read).
  * @param Function    paramValue Current value for a given parameter id.
  * @return List<WeightedCell>? The weighted corner cells, or null when hidden.
@@ -96,8 +99,7 @@ public fun gridCorners(grid: KeyformGrid<*>, paramValue: (ParameterId) -> Float)
 	var stride = 1
 	for (axis in grid.axes) {
 		val bracket = bindBracket(axis.keys, paramValue(axis.parameterId)) ?: return null
-		val split = bracket.fraction > 0f && corners.size * 2 <= MAX_CORNERS
-		if (split) {
+		if (bracket.fraction > 0f) {
 			val next = ArrayList<WeightedCell>(corners.size * 2)
 			for (corner in corners) {
 				next.add(
@@ -115,7 +117,7 @@ public fun gridCorners(grid: KeyformGrid<*>, paramValue: (ParameterId) -> Float)
 			}
 			corners = next
 		} else {
-			// Snap (on a key, or over the corner budget): every corner takes the lower key, weight kept.
+			// On a key: every corner takes it, weight kept.
 			for (cornerIndex in corners.indices) {
 				val corner = corners[cornerIndex]
 				corners[cornerIndex] = WeightedCell(corner.linearIndex + bracket.index * stride, corner.weight)

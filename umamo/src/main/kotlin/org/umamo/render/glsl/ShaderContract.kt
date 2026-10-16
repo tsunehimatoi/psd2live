@@ -11,9 +11,10 @@ package org.umamo.render.glsl
 /**
  * The most keyform-grid corners a single mesh's morph can blend at once.
  *
- * A hard ceiling, not a guess: it sizes the `cornerCell` / `cornerWeight` uniform arrays, so a mesh with
- * more active corners has the surplus dropped rather than blended.  16 corners is a 4-dimensional
- * keyform grid (2^4).
+ * A hard ceiling, not a guess: it sizes the `cornerCell` / `cornerWeight` uniform arrays.  16 corners is a
+ * 4-dimensional keyform grid (2^4).  The evaluator blends every fractional axis, as Cubism Core does, so a
+ * mesh posed with more active corners is deformed on the CPU and drawn from uploaded positions instead
+ * (PuppetRenderer.setPose); the shader never sees the surplus.
  */
 internal const val MAX_CORNERS = 16
 
