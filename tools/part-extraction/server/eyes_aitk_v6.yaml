@@ -1,0 +1,67 @@
+# Part-extraction edit LoRA on FLUX.2 klein base 4B: the close-up is the control image, the part on gray the target.
+job: extension
+config:
+  name: "eyes_aitk_v6"
+  process:
+    - type: "sd_trainer"
+      training_folder: "/root/autodl-tmp/l2d/aitk_output"
+      device: cuda:0
+      network:
+        type: "lora"
+        linear: 32
+        linear_alpha: 32
+      save:
+        dtype: bf16
+        save_every: 500
+        max_step_saves_to_keep: 12
+      datasets:
+        - folder_path: "/root/autodl-tmp/l2d/data_v6/train_tgt"
+          control_path: "/root/autodl-tmp/l2d/data_v6/train_in"
+          caption_ext: "txt"
+          caption_dropout_rate: 0.0
+          shuffle_tokens: false
+          cache_latents_to_disk: true
+          resolution: [256, 512, 768]
+      train:
+        batch_size: 1
+        steps: 6000
+        gradient_accumulation_steps: 1
+        train_unet: true
+        train_text_encoder: false
+        gradient_checkpointing: true
+        noise_scheduler: "flowmatch"
+        optimizer: "adamw8bit"
+        lr: 5e-5
+        timestep_type: "weighted"
+        dtype: bf16
+      model:
+        name_or_path: "/root/autodl-tmp/comfyui/models/diffusion_models"
+        arch: "flux2_klein_4b"
+        quantize: false
+      sample:
+        sampler: "flowmatch"
+        sample_every: 500
+        sample_start_step: 0
+        width: 768
+        height: 768
+        prompts:
+          - "Live2D layer split: keep only the iris layer, the whole iris with its pupil and highlights drawn complete, including the part hidden under the eyelid, exactly in place, on a flat gray background. --ctrl_img /root/autodl-tmp/l2d/test/m031_r_0.png"
+          - "Live2D layer split: keep only the eyelid layers, the eyelashes, lid lines and eyelid skin, exactly in place, on a flat gray background. --ctrl_img /root/autodl-tmp/l2d/test/m031_r_0.png"
+          - "Live2D layer split: keep only the iris layer, the whole iris with its pupil and highlights drawn complete, including the part hidden under the eyelid, exactly in place, on a flat gray background. --ctrl_img /root/autodl-tmp/l2d/test/m003_l_0.png"
+          - "Live2D layer split: keep only the eye white layer, its complete shape including the part under the eyelashes, exactly in place, on a flat gray background. --ctrl_img /root/autodl-tmp/l2d/test/m033_l_0.png"
+          - "Live2D layer split: keep only the iris layer, the whole iris with its pupil and highlights drawn complete, including the part hidden under the eyelid, exactly in place, on a flat gray background. --ctrl_img /root/autodl-tmp/l2d/test/ai_eyeR.png"
+          - "Live2D layer split: keep only the eyelid layers, the eyelashes, lid lines and eyelid skin, exactly in place, on a flat gray background. --ctrl_img /root/autodl-tmp/l2d/test/ai_eyeR.png"
+          - "Live2D layer split: keep only the iris layer, the whole iris with its pupil and highlights drawn complete, including the part hidden under the eyelid, exactly in place, on a flat gray background. --ctrl_img /root/autodl-tmp/l2d/test/ai_stella.png"
+          - "Live2D layer split: keep only the iris layer, the whole iris with its pupil and highlights drawn complete, including the part hidden under the eyelid, exactly in place, on a flat gray background. --ctrl_img /root/autodl-tmp/l2d/test/c089_l_0.png"
+          - "Live2D layer split: keep only the eye white layer, its complete shape including the part under the eyelashes, exactly in place, on a flat gray background. --ctrl_img /root/autodl-tmp/l2d/test/c089_l_0.png"
+          - "Live2D layer split: keep only the eyelid layers, the eyelashes, lid lines and eyelid skin, exactly in place, on a flat gray background. --ctrl_img /root/autodl-tmp/l2d/test/c089_l_0.png"
+          - "Live2D layer split: keep only the iris layer, the whole iris with its pupil and highlights drawn complete, including the part hidden under the eyelid, exactly in place, on a flat gray background. --ctrl_img /root/autodl-tmp/l2d/test/c201_l_0.png"
+          - "Live2D layer split: keep only the eyelid layers, the eyelashes, lid lines and eyelid skin, exactly in place, on a flat gray background. --ctrl_img /root/autodl-tmp/l2d/test/c201_l_0.png"
+        neg: ""
+        seed: 42
+        walk_seed: false
+        guidance_scale: 4
+        sample_steps: 24
+meta:
+  name: "[name]"
+  version: "1.0"

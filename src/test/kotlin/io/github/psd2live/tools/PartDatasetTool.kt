@@ -231,15 +231,35 @@ class PartDatasetTool {
 		fun relative(id: String, move: Float): Float { val b = box(base, listOf(id)); return move / max(1f, max(b.w, b.h)) }
 		// Iris, pupil and highlights: whatever follows the eye ball, and follows it closely: some rigs let the lids
 		// and lashes trail the eye ball a little, and those belong to the lids.
-		val followers = visible.filter { id -> val m = ball[id] ?: 0f; m > 1f && relative(id, m) > 0.06f }
-		val strongest = followers.maxOfOrNull { ball[it] ?: 0f } ?: 0f
-		val iris = followers.filter { (ball[it] ?: 0f) >= strongest * 0.5f }
-		if (iris.isEmpty()) return "$head\t0\tno mesh follows the eye ball"
-		// Two eyes: split the iris meshes at the widest gap along x.
-		val byX = iris.sortedBy { box(base, listOf(it)).cx }
-		val gaps = byX.zipWithNext { a, b -> box(base, listOf(b)).cx - box(base, listOf(a)).cx }
-		val split = gaps.withIndex().maxByOrNull { it.value }?.takeIf { it.value > box(base, iris).w * 0.2f }?.index
-		val clusters = if (split == null) listOf(byX) else listOf(byX.subList(0, split + 1), byX.subList(split + 1, byX.size))
+		val moving = visible.filter { id -> val m = ball[id] ?: 0f; m > 1f && relative(id, m) > 0.06f }
+		val fastest = moving.maxOfOrNull { ball[it] ?: 0f } ?: 0f
+		val followers = moving.filter { (ball[it] ?: 0f) >= fastest * 0.25f }
+		if (followers.isEmpty()) return "$head\t0\tno mesh follows the eye ball"
+		// One eye's iris, pupil and highlights overlap; followers that touch, transitively, are one eye. Rigs also let
+		// decorative eyes follow the eye ball (on a hood, a mascot, a hair clip), and those have no lids: an eye is a
+		// group with lids around it that close with eye-open, and a face has at most two.
+		val groups = followers.associateWith { mutableSetOf(it) }.toMutableMap()
+		for ((i, a) in followers.withIndex()) for (b in followers.drop(i + 1)) {
+			val p = box(base, listOf(a)).grown(1.25f); val q = box(base, listOf(b)).grown(1.25f)
+			if (p.x0 <= q.x1 && q.x0 <= p.x1 && p.y0 <= q.y1 && q.y0 <= p.y1 && groups[a] !== groups[b]) {
+				val merged = groups.getValue(a).apply { addAll(groups.getValue(b)) }
+				merged.forEach { groups[it] = merged }
+			}
+		}
+		val scored = groups.values.distinctBy { System.identityHashCode(it) }.map { group ->
+			val strongest = group.maxOf { ball[it] ?: 0f }
+			val eyeBall = group.filter { (ball[it] ?: 0f) >= strongest * 0.5f }.sortedBy { box(base, listOf(it)).cx }
+			val b = box(base, eyeBall)
+			val lids = visible.filter { id -> id !in eyeBall && box(base, listOf(id)).let { abs(it.cx - b.cx) < b.w * 1.5f + 4f && abs(it.cy - b.cy) < b.h * 2f + 4f } }
+				.sumOf { max(closeL[it] ?: 0f, closeR[it] ?: 0f).toDouble() }
+			eyeBall to lids
+		}
+		// Rigs that blink by swapping closed-eye art in move no lids; with at most two groups, those are the eyes.
+		val best = scored.maxOf { it.second }
+		val clusters = (if (best <= 2.0 && scored.size <= 2) scored else scored.filter { it.second > 2.0 && it.second >= best * 0.25 })
+			.sortedByDescending { it.second }.take(2).map { it.first }.sortedBy { box(base, it).cx }
+		if (clusters.isEmpty()) return "$head\t0\tno eye ball with lids around it"
+		val iris = clusters.flatten()
 		val meshes = ir.meshes.associateBy { it.id }
 		val unmaskedIr = ir.copy(meshes = ir.meshes.map { if (it.id in iris) it.copy(maskedBy = emptyList()) else it })
 		val rasterizer = SoftwareRasterizer(ir) { pixels[it] }
@@ -256,11 +276,12 @@ class PartDatasetTool {
 				abs(b.cx - irisBox.cx) < irisBox.w * 0.8f && abs(b.cy - irisBox.cy) < irisBox.h * 0.8f &&
 					b.w >= irisBox.w * minW && b.w <= irisBox.w * maxW && b.h <= irisBox.h * maxH }
 			// Highlights some models keep still while the iris moves: small, drawn above the iris and lying inside it
-			// (eyeliner and lash tips above the iris stick out of it).
+			// (eyeliner and lash tips above the iris stick out of it, or close with the lids).
 			fun inside(id: String) = box(base, listOf(id)).let { b ->
 				b.x0 >= irisBox.x0 - irisBox.w * 0.1f && b.x1 <= irisBox.x1 + irisBox.w * 0.1f &&
 					b.y0 >= irisBox.y0 - irisBox.h * 0.1f && b.y1 <= irisBox.y1 + irisBox.h * 0.1f }
-			val highlights = visible.filter { id -> id !in iris && (order[id] ?: 0) > irisTop && (ball[id] ?: 0f) <= 1f && sized(id, 0f, 0.5f, 0.5f) && inside(id) }
+			val highlights = visible.filter { id -> id !in iris && (order[id] ?: 0) > irisTop && (ball[id] ?: 0f) <= 1f && sized(id, 0f, 0.5f, 0.5f) && inside(id) &&
+				max(closeL[id] ?: 0f, closeR[id] ?: 0f) <= 1f }
 			val cluster = eyeBall + highlights
 			// The eye white clips the iris; models that do not clip stack the lids over the iris instead, and their
 			// eye white is drawn right under the iris, a little larger than it.
