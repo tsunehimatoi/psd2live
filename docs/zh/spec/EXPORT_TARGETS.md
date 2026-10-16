@@ -14,6 +14,7 @@
 | `:targets:runtime` | `p2lrt`：PSD2Live 运行时模型，见[运行时](RUNTIME.md) | MIT |
 | `:format-eval` | Rust 运行时的 JVM 绑定（JNA），可作为几何求值器 | MIT |
 | `:targets:gltf` | `gltf`：glTF 2.0 二进制（`.glb`），变形按参数关键点烘焙为变形目标，由宿主提供的几何求值器采样 | MIT |
+| `:targets:unity` | `unity`：Unity 预制体（`.p2lunity` + 贴图 + Editor 导入脚本），参数关键点烘焙为 Blend Shape，动作写成 Animator 片段 | MIT |
 | `:targets:web` | `web`：网页播放器（运行时的 WebAssembly 构建、WebGL 播放脚本、页面与模型） | MIT |
 | `:targets:cubism` | `PuppetModel` 与 IR 的双向转换器（`PuppetIr`）、`moc3`、`cmo3`、`vtube-studio`、motion3 / physics3 写出 | GPL-3 |
 | `:targets:psd` | `psd-pose`：指定姿势的分层 PSD | GPL-3 |
@@ -31,7 +32,7 @@ MIT 模块不依赖任何 GPL 模块，由 Gradle 依赖关系在编译期保证
 
 ## 导出目标
 
-`spine`、`dragonbones`、`gltf` 为实验性目标：按参数逐个烘焙后叠加，组合姿势与编辑器差异明显，已从“文件 → 导出为”菜单隐藏，只能经命令行导出（`psd2live targets` 标注为 experimental），暂停开发、是否继续待定。下文对它们的描述保留现状。
+`spine`、`dragonbones`、`gltf` 为实验性目标：按参数逐个烘焙后叠加，组合姿势与编辑器差异明显，已从“文件 → 导出为”菜单隐藏，只能经命令行导出（`psd2live targets` 标注为 experimental）。`unity` 使用同一份烘焙，但会出现在“文件 → 导出为”中：把导出目录整份拷进 Unity 工程的 `Assets` 后，附带的安装脚本会把导入器放到 `Assets/PSD2Live/Editor` 并删掉自己，因此第二个角色也可以整份复制。下文对实验性目标的描述保留现状。
 
 | ID | 类别 | 输出 | 主要损失 |
 | --- | --- | --- | --- |
@@ -43,6 +44,7 @@ MIT 模块不依赖任何 GPL 模块，由 Gradle 依赖关系在编译期保证
 | `p2lrt` | 结构化绑定 | `.p2lrt`（PSD2Live 运行时） | 编辑器附带数据（来源图层、图块、编辑路径）不写入；GPU 绘制由宿主完成，运行时的 `p2l_render`（ABI 1.3 起）可在 CPU 上画出遮罩与全部合成模式 |
 | `web` | 结构化绑定 | `index.html`、`p2l.js`、`p2l_runtime.wasm`、`.p2lrt` | 按运行时头文件的合成规则绘制全部颜色与 Alpha 混合模式（需要读取下层的模式复制网格下方像素后在着色器中合成）和隔离组（子网格先画入图层，再按组的不透明度、乘算/屏幕色、遮罩与混合模式合成）；遮罩（含组遮罩）以模板缓冲近似，纹素不透明度 ≥ 0.5 视为覆盖；无法创建图层帧缓冲时隔离组按直通绘制；需通过 http 访问 |
 | `gltf` | 结构化绑定 | `.glb`（无光照材质、变形目标、权重动画） | 每个参数关键点一个变形目标，参数组合为叠加近似并报告误差；绘制顺序按静止值以深度分层；遮罩、混合模式、按参数变化的透明度与物理不写入 |
+| `unity` | 结构化绑定 | `.p2lunity`、贴图页、一次性安装脚本 | 同一张贴图上的网格合成一个蒙皮网格；每个参数关键点一个 Blend Shape，参数组合为叠加近似并报告误差；动作进 Animator，默认播放名为 Idle 的片段；遮罩、非普通混合、屏幕色、不透明度曲线与物理不写入。导出目录整份拷进 `Assets` 后，安装脚本把导入器放到 `Assets/PSD2Live/Editor` 并删除自己，第二个角色同样整份复制 |
 | `psd-pose` | 合成/时间轴 | 每个可见网格一层，按静止绘制顺序 | 变形器和参数不保留；按参数变化的绘制顺序取静止值 |
 | `png-sequence` | 光栅 | 编号 PNG 帧 | 结构全部烘焙为像素 |
 | `sprite-sheet` | 光栅 | 网格排列的精灵表 PNG + TexturePacker（hash）JSON | 同上 |
@@ -62,6 +64,7 @@ MIT 模块不依赖任何 GPL 模块，由 Gradle 依赖关系在编译期保证
 | `moc3` | `physics`、`user_data`、`display_info`、`hidden_parts`、`hidden_meshes`、`guide_parts`（布尔）、`pixels_per_unit`（正数）；缺省取工程导出设置 |
 | `cmo3` | `timestamp`（毫秒，默认 0）、`clips`（是否写出 `.can3`，默认 true）；内部未公开的 `layer_art`：`canvas`（默认，密度不为 1 的图层以画布分辨率写入，高分辨率只留在纹理集页，并给出 `texture_size` / `approximated` 损失项“Cubism Editor rebuilds the atlas from canvas-resolution layers”）或 `native`（按原分辨率写入图层，未经编辑器实测），见[文档层](DOCUMENT_LAYER.md#逐层尺寸) |
 | `spine` | `binary`（写出二进制 `.skel` 而非 JSON，默认 false）、`clip_fps`（动作采样帧率，默认 15）、`clips`（是否写出动作，默认 true）、`key_tolerance`（关键帧精简容差，像素，默认 0.25）、`sample_pairs` |
+| `unity` | `clips`（是否写出动作，默认 true）、`clip_fps`（动作采样帧率，默认 30）、`pixels_per_unit`（多少像素为一 Unity 单位，默认 100）、`sample_pairs` |
 | `psd-pose` | `clip` 与 `time`（秒）按动作片段摆姿势，或 `pose`（`ParamAngleX=20,ParamEyeLOpen=0`，覆盖片段）；`scale`（0.25–2，默认 1） |
 | 视频类 | 同光栅类，另有 `ffmpeg`（ffmpeg 路径；缺省依次取环境变量 `PSD2LIVE_FFMPEG`、安装包自带的 `resources/ffmpeg/` 与 PATH） |
 | 光栅类 | `clip`（片段 ID 或名称，默认第一个片段，无片段时为静止姿势；未知时报错并列出现有片段）、`fps`（默认片段帧率）、`size`（长边像素，默认 1024）、`background`（ARGB 十六进制，默认透明）、`physics`（默认 true）；`gif` 另有 `dither`（Floyd–Steinberg 抖动，默认 true）。`sprite-sheet` 在渲染前按帧数与尺寸检查，超过 16384 px 时直接拒绝 |
@@ -100,6 +103,10 @@ Spine 有骨骼没有参数。导出的骨骼空间原点为画布底边中点�
 ## glTF
 
 每个可见网格成为一个无光照（`KHR_materials_unlit`）、双面、半透明混合的平面网格，处于静止姿势，按绘制顺序每层朝观察者前移 0.5 毫米；单位为米（`pixels_per_meter`，默认 1000），y 向上，原点在画布底边中点。每个参数的每个非默认关键点对它移动的网格成为一个变形目标（`extras.targetNames` 为 `参数=关键点`），参数值到权重的映射是关键点之间的线性帽函数，参数及其关键点列在 `extras.psd2live.parameters`。动作片段按 `clip_fps` 采样为权重动画并用 `KeyReduction` 精简。验证：单元测试由权重重建采样姿势；tml 导出经 Khronos glTF Validator 校验零错误零警告，并在 Godot 4.4 中按静止姿势和摇头动作渲染正确。
+
+## Unity
+
+导出目录可整份放进 Unity 工程的 `Assets`。附带的安装脚本把 `Psd2LiveUnityImporter.cs` 装到 `Assets/PSD2Live/Editor`（已有且版本不旧则不覆盖）后删掉自己，所以第二个角色也整份复制即可。导入器把同一张贴图上的网格合成一个蒙皮网格，贴在共享根骨骼上；每个参数的非默认关键点成为一个 Blend Shape（权重 0–100 的帽函数，与 glTF 相同）。动作片段按 `clip_fps` 采样成 Animator 片段，有名为 Idle 的片段时它是默认状态，否则播放第一个片段。每个参数另有一条不进入默认状态机的 `param_<id>` 片段，可在项目里单独播放。单位是 `pixels_per_unit`（默认 100）分之一，y 向上，原点在画布中心；贴图 V 从 PSD2Live 的左上原点翻到 Unity 的左下原点。角色在画面外时不播放。验证：目标模块的单元测试对照一个滑动方块的顶点、Blend Shape 与 0.5 秒权重；再由 Unity 编辑器导入该夹具，烘焙网格并采样 Idle。
 
 ## 损失报告
 

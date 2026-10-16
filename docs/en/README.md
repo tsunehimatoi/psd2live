@@ -35,7 +35,7 @@ PSD2Live is a complete 2D character rigging toolchain: it generates meshes, defo
 | **Experienced and tired of repetitive work** | Meshes, deformer chains, facial parameters and physics in one click, then refine on the canvas; hand edits are stored as replayable records and survive regeneration |
 | **Looking for an open-source alternative** | Editor, engine and project format are all open source; edit, preview and export `.moc3` / `.cmo3` without the official SDK |
 | **Held back by what Cubism offers** | Skeletons and IK, 2D cloth and hair simulation and automatic armatures, tools Cubism does not have, baked into native structures on export |
-| **Putting characters into your own program** | The open-source Rust runtime p2lrt plugs into C / C++, .NET, Android, the web and Godot, with its own software renderer; also video, frame sequences, and Spine and glTF (experimental) |
+| **Putting characters into your own program** | The open-source Rust runtime p2lrt plugs into C / C++, .NET, Android, the web and Godot, with its own software renderer; also video, frame sequences, and Spine, glTF and Unity (experimental) |
 
 ## Core capabilities
 
@@ -179,7 +179,7 @@ The full naming table is in [PSD preparation](spec/PSD_LAYER_SPEC.md). Unrecogni
 | **Your program / engine / the web** | A `.p2lrt` rig for C / C++, .NET, Unity, Godot and Android, or a WebGL player page that opens in a browser |
 | **Images and video** | PNG sequences, sprite sheets, GIF; APNG, animated WebP, MP4, WebM, ProRes 4444 (through ffmpeg) |
 | **PSD** | A layered PSD at the current pose, or the source PSD with generated layers |
-| **Experimental** | Spine 4.2, DragonBones 5.5, glTF 2.0, from the command line only |
+| **Experimental** | Spine 4.2, DragonBones 5.5 and glTF 2.0, from the command line only. The Unity prefab is under **File → Export as** |
 
 `Ctrl+G` exports Cubism formats for target versions 3.0 – 5.3 (default 5.0); the rest are under **File → Export as**. See [export targets](../zh/spec/EXPORT_TARGETS.md) (Chinese).
 

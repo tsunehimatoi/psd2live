@@ -35,7 +35,7 @@ PSD2Live 是一套完整的 2D 角色绑定工具链：从分层 PSD 自动生�
 | **有经验，想省掉重复劳动** | 网格、变形器链、五官参数、物理一键生成，再在画布上逐项精修；手工修改以可重放的编辑保存，重新生成后依然有效 |
 | **需要开源替代** | 编辑器、引擎和工程格式全部开源，不依赖官方 SDK 即可编辑、预览和导出 `.moc3` / `.cmo3` |
 | **不满足于 Cubism 的功能** | 骨骼与 IK、2D 布料与头发模拟、自动骨架等 Cubism 没有的工具，导出时烘焙为原生结构 |
-| **要把角色放进自己的程序** | 开源 Rust 运行时 p2lrt：C / C++、.NET、Android、网页与 Godot 均可接入，自带软件渲染器；也可导出视频、序列帧与 Spine、glTF（实验性） |
+| **要把角色放进自己的程序** | 开源 Rust 运行时 p2lrt：C / C++、.NET、Android、网页与 Godot 均可接入，自带软件渲染器；也可导出视频、序列帧与 Spine、glTF、Unity（实验性） |
 
 ## 核心能力
 
@@ -179,7 +179,7 @@ PSD2Live 不依赖 Cubism Editor 或 SDK 运行，但与 Cubism 格式保持兼�
 | **自己的程序 / 引擎 / 网页** | `.p2lrt` 模型，用于 C / C++、.NET、Unity、Godot、Android，或可直接在浏览器打开的 WebGL 播放页面 |
 | **图片与视频** | PNG 序列帧、精灵表、GIF；APNG、WebP 动图、MP4、WebM、ProRes 4444（经 ffmpeg） |
 | **PSD** | 按当前姿势输出分层 PSD，或导出含生成图层的源 PSD |
-| **实验性** | Spine 4.2、DragonBones 5.5、glTF 2.0，只能经命令行导出 |
+| **实验性** | Spine 4.2、DragonBones 5.5、glTF 2.0 只能经命令行导出。Unity 预制体在 **文件 → 导出为** 中 |
 
 `Ctrl+G` 导出 Cubism 格式，目标版本可选 3.0 – 5.3（默认 5.0）；其余在 **文件 → 导出为** 中。详见[导出目标](docs/zh/spec/EXPORT_TARGETS.md)。
 
