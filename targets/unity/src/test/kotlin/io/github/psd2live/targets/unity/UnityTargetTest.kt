@@ -82,7 +82,7 @@ class UnityTargetTest {
 		assertContentEquals(listOf(0x89.toByte(), 'P'.code.toByte(), 'N'.code.toByte(), 'G'.code.toByte()), first.getValue("Textures/page_00.png").take(4))
 		val script = first.keys.single { it.endsWith("Psd2LiveUnityImporter.cs.txt") }
 		assertTrue("ScriptedImporter" in first.getValue(script).decodeToString())
-		assertTrue("psd2live-importer 7" in first.getValue(script).decodeToString())
+		assertTrue("psd2live-importer 8" in first.getValue(script).decodeToString())
 		val setup = first.keys.single { "Psd2LiveUnitySetup_" in it && it.endsWith(".cs") }
 		val setupId = setup.substringAfter("Psd2LiveUnitySetup_").removeSuffix(".cs")
 		val setupSource = first.getValue(setup).decodeToString()

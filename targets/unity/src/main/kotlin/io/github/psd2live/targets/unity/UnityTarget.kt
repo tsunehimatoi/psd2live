@@ -366,15 +366,16 @@ private fun unitySetup(id: String) = """
 private fun readme(name: String) = """
 PSD2Live Unity export (experimental)
 
+Requires Unity 6.0 (6000.0) or newer.
 Copy this whole folder into a Unity project's Assets directory, including Editor.
 Unity installs one importer for the project and then removes that Editor copy, so the
 next character can be copied in the same way. $name.p2lunity becomes a prefab and
-$name.controller appears beside it.
+$name.controller appears beside it. The prefab's Animator uses that controller.
 Drag the prefab into a scene and press Play. The controller's default state is Idle
 when that motion exists. Edit transitions on $name.controller; the .p2lunity file
 itself is the source document and cannot store Animator edits. Parts that share a
-texture are one mesh, so the character is a single draw. Animation pauses while it
-is off screen.
+texture and are next to each other in draw order become one mesh. A part that sits
+between them keeps its own draw order. Animation pauses while it is off screen.
 
 Blend shapes are one per parameter key and they add up, so poses that combine
 several parameters can differ from PSD2Live. Masks, non-normal blend modes and
@@ -382,14 +383,15 @@ physics are listed in the loss report rather than reproduced.
 
 ---
 
+Unity 6.0(6000.0) 이상이 필요합니다.
 이 폴더를 Editor까지 포함해 Unity 프로젝트의 Assets 안에 복사하세요.
 임포터는 프로젝트에 하나만 설치되고, 캐릭터 폴더의 Editor 사본은 지워지므로
 다음 캐릭터도 같은 방식으로 넣으면 됩니다. $name.p2lunity 가 프리팹으로 들어오고,
-옆에 $name.controller 가 생깁니다.
+옆에 $name.controller 가 생깁니다. 프리팹의 Animator는 그 컨트롤러를 사용합니다.
 프리팹을 씬에 넣고 Play 하면 Idle이 기본 상태입니다. 전이는 $name.controller 에서
 편집하세요. .p2lunity 파일은 원본이라 Animator 수정이 저장되지 않습니다.
-같은 텍스처를 쓰는 파츠는 메시 하나로 합쳐져 드로우가 한 번입니다. 화면 밖에서는
-애니메이션이 쉬어 있습니다.
+같은 텍스처를 쓰고 그리는 순서가 맞닿은 파츠만 메시 하나로 합칩니다. 그 사이에
+끼는 파츠는 순서를 유지합니다. 화면 밖에서는 애니메이션이 쉬어 있습니다.
 
 블렌드셰이프는 파라미터 키마다 하나씩이며 서로 더해집니다. 여러 파라미터가
 겹친 포즈는 PSD2Live와 달라질 수 있습니다. 마스크, 일반이 아닌 블렌드 모드,

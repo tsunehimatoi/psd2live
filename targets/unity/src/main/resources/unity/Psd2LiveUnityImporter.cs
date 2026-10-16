@@ -1,7 +1,9 @@
-// psd2live-importer 7
-// Imports a PSD2Live .p2lunity file as a prefab. Meshes that share a texture become one skinned
-// mesh, so a character is one draw and one blend-shape evaluation. The Animator default state is
-// Idle when that clip exists. Keep a single copy of this file under an Editor folder. MIT License.
+// psd2live-importer 8
+// Imports a PSD2Live .p2lunity file as a prefab. Meshes combine only while they share a texture
+// and sit next to each other in draw order, so a part on an earlier page can still render in
+// front. The Animator default state is Idle when that clip exists, and the prefab uses the
+// sibling .controller once that file exists. Requires Unity 6.0 (6000.0) or newer.
+// Keep a single copy of this file under an Editor folder. MIT License.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -13,7 +15,7 @@ using UnityEngine.Rendering;
 
 namespace PSD2Live.UnityExport
 {
-    [ScriptedImporter(7, "p2lunity")]
+    [ScriptedImporter(8, "p2lunity")]
     public sealed class Psd2LiveUnityImporter : ScriptedImporter
     {
         public override void OnImportAsset(AssetImportContext ctx)
@@ -38,7 +40,7 @@ namespace PSD2Live.UnityExport
             bone.transform.SetParent(root.transform, false);
             var paths = new Dictionary<string, string>();
             var usedNames = new HashSet<string>();
-            var groups = GroupByTexture(document.meshes);
+            var groups = GroupContiguous(document.meshes);
 
             for (var groupIndex = 0; groupIndex < groups.Count; groupIndex++)
             {
@@ -159,19 +161,25 @@ namespace PSD2Live.UnityExport
             return mesh;
         }
 
-        static List<List<MeshSource>> GroupByTexture(MeshSource[] meshes)
+        /// <summary>
+        /// One renderer per contiguous draw-order run on the same texture. Merging a whole page
+        /// would put every part of that page on one side of the other pages.
+        /// </summary>
+        static List<List<MeshSource>> GroupContiguous(MeshSource[] meshes)
         {
             var groups = new List<List<MeshSource>>();
-            var indexOf = new Dictionary<int, int>();
+            List<MeshSource> current = null;
+            var texture = int.MinValue;
+            if (meshes == null) return groups;
             foreach (var mesh in meshes)
             {
-                if (!indexOf.TryGetValue(mesh.texture, out var index))
+                if (current == null || mesh.texture != texture)
                 {
-                    index = groups.Count;
-                    indexOf[mesh.texture] = index;
-                    groups.Add(new List<MeshSource>());
+                    current = new List<MeshSource>();
+                    groups.Add(current);
+                    texture = mesh.texture;
                 }
-                groups[index].Add(mesh);
+                current.Add(mesh);
             }
             return groups;
         }
@@ -277,7 +285,8 @@ namespace PSD2Live.UnityExport
                 new AnimatorControllerLayer { name = "Base", defaultWeight = 1f, stateMachine = machine }
             };
             var animator = root.AddComponent<Animator>();
-            animator.runtimeAnimatorController = controller;
+            var external = AssetDatabase.LoadAssetAtPath<AnimatorController>(Path.ChangeExtension(ctx.assetPath, ".controller"));
+            animator.runtimeAnimatorController = external != null ? external : controller;
             animator.applyRootMotion = false;
             animator.cullingMode = AnimatorCullingMode.CullCompletely;
         }
@@ -440,22 +449,47 @@ namespace PSD2Live.UnityExport
     {
         static readonly HashSet<string> pending = new HashSet<string>();
         static readonly HashSet<string> rebuild = new HashSet<string>();
+        static readonly HashSet<string> reimportQueued = new HashSet<string>();
+        static bool hierarchyQueued;
 
         [InitializeOnLoadMethod]
         static void RetargetAfterLoad()
         {
             EditorApplication.update += RetargetOnce;
+            EditorApplication.hierarchyChanged += QueueHierarchy;
+        }
+
+        static void QueueHierarchy()
+        {
+            if (hierarchyQueued || EditorApplication.isPlayingOrWillChangePlaymode) return;
+            hierarchyQueued = true;
+            EditorApplication.update += RetargetHierarchy;
+        }
+
+        static void RetargetHierarchy()
+        {
+            EditorApplication.update -= RetargetHierarchy;
+            hierarchyQueued = false;
+            if (EditorApplication.isPlayingOrWillChangePlaymode) return;
+            foreach (var assetPath in Documents())
+            {
+                var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(Path.ChangeExtension(assetPath, ".controller"));
+                if (Ready(controller)) Retarget(assetPath, controller);
+            }
         }
 
         static void RetargetOnce()
         {
             EditorApplication.update -= RetargetOnce;
+            foreach (var assetPath in Documents()) Ensure(assetPath, false);
+        }
+
+        static IEnumerable<string> Documents()
+        {
             var root = Application.dataPath;
+            if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) yield break;
             foreach (var file in Directory.EnumerateFiles(root, "*.p2lunity", SearchOption.AllDirectories))
-            {
-                var assetPath = "Assets" + file.Substring(root.Length).Replace('\\', '/');
-                Ensure(assetPath, false);
-            }
+                yield return "Assets" + file.Substring(root.Length).Replace('\\', '/');
         }
 
         internal static void Ensure(string assetPath, bool syncClips)
@@ -498,6 +532,7 @@ namespace PSD2Live.UnityExport
             if (!syncClips && Ready(controller))
             {
                 Retarget(assetPath, controller);
+                BindPrefab(assetPath, controller);
                 return;
             }
 
@@ -564,6 +599,26 @@ namespace PSD2Live.UnityExport
                 AssetDatabase.SaveAssets();
             }
             Retarget(assetPath, controller);
+            BindPrefab(assetPath, controller);
+        }
+
+        /// <summary>
+        /// The import assigns the sibling controller when it already exists. The first import
+        /// still embeds one, so a single reimport binds the prefab. A second miss stops, so a
+        /// controller that cannot be referenced cannot reimport forever.
+        /// </summary>
+        static void BindPrefab(string assetPath, AnimatorController controller)
+        {
+            if (controller == null) return;
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
+            var animator = prefab != null ? prefab.GetComponent<Animator>() : null;
+            if (animator == null || animator.runtimeAnimatorController == controller)
+            {
+                reimportQueued.Remove(assetPath);
+                return;
+            }
+            if (!reimportQueued.Add(assetPath)) return;
+            AssetDatabase.ImportAsset(assetPath);
         }
 
         static void Retarget(string assetPath, AnimatorController controller)
