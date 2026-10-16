@@ -98,7 +98,7 @@ class PartDatasetTool {
 		requireTools()
 		val file = File(setting("PARTS_DUMP", ""))
 		if (!file.isFile) return
-		val ir = load(file).ir
+		val ir = loadRig(file).ir
 		val text = StringBuilder()
 		text.append("parameters: ").append(ir.parameters.joinToString { "${it.id}(${it.name})" }).append('\n')
 		val parts = ir.parts.associateBy { it.id }
@@ -111,7 +111,7 @@ class PartDatasetTool {
 		requireTools()
 		val file = File(setting("PARTS_DUMP", ""))
 		if (!file.isFile) return
-		val ir = load(file).ir
+		val ir = loadRig(file).ir
 		val ballX = param(ir, "ParamEyeBallX", "PARAM_EYE_BALL_X")!!
 		val openL = param(ir, "ParamEyeLOpen", "PARAM_EYE_L_OPEN")!!
 		val openR = param(ir, "ParamEyeROpen", "PARAM_EYE_R_OPEN")!!
@@ -133,65 +133,6 @@ class PartDatasetTool {
 	}
 
 	/** Each mesh's position in the order the render tree draws (back to front), with draw orders as the rasterizer sorts. */
-	private fun renderOrder(ir: RigIR): Map<String, Int> {
-		val order = HashMap<String, Int>()
-		val meshes = ir.meshes.associateBy { it.id }
-		fun visit(node: RenderNode) {
-			when (node) {
-				is RenderMesh -> order[node.id] = order.size
-				is RenderGroup -> node.children.sortedBy { child ->
-					when (child) { is RenderMesh -> meshes[child.id]?.drawOrder ?: 0f; is RenderGroup -> child.drawOrder.toFloat() }
-				}.forEach(::visit)
-			}
-		}
-		visit(ir.renderRoot)
-		return order
-	}
-
-	private class Loaded(val ir: RigIR, val pixels: IdentityHashMap<ByteArray, IntArray>)
-
-	private fun load(file: File): Loaded = if (file.name.endsWith(".cmo3", true)) loadCmo3(file) else loadModel3(file)
-
-	/** A cmo3 through the editor's own import, packed into a budget large enough that no layer is scaled down. */
-	private fun loadCmo3(file: File): Loaded {
-		val base = PipelineConfig(atlasBudget = AtlasBudget(pageSize = 8192, maxPages = 32), exportJson = false)
-		val (source, config) = Cmo3ModelImport.prepare(file.readBytes(), Cmo3ImportMode.NEW, null, base)
-		// A cmo3 keeps its layers at full size in its own atlas, so the pages it brings are already the authored art.
-		val ir = RigIrCompiler.compile(PSD2LivePipeline().buildPreview(source, config))
-		val pixels = IdentityHashMap<ByteArray, IntArray>()
-		for (page in ir.textures.pages) {
-			val bytes = page.png.shared()
-			val image = requireNotNull(ImageIO.read(ByteArrayInputStream(bytes))) { "atlas page is not readable" }
-			pixels[bytes] = image.getRGB(0, 0, image.width, image.height, null, 0, image.width)
-		}
-		return Loaded(ir, pixels)
-	}
-
-	private fun loadModel3(model3: File): Loaded {
-		val dir = model3.parentFile
-		val manifest = Moc3.readModel3(model3.readText())
-		val doc = Moc3.read(File(dir, manifest.fileReferences.moc).readBytes())
-		val cdi = manifest.fileReferences.displayInfo?.let { File(dir, it) }?.takeIf { it.isFile }?.let { Moc3.readCdi3(it.readText()) }
-		// Rendering needs no compacted channels, and compaction can take hours on some models.
-		val puppet = Moc3Import.fromMocDocument(doc, cdi, compactChannels = false)
-		val pixels = IdentityHashMap<ByteArray, IntArray>()
-		val pages = manifest.fileReferences.textures.map { name ->
-			val bytes = File(dir, name).readBytes()
-			val image = requireNotNull(ImageIO.read(ByteArrayInputStream(bytes))) { "texture $name is not readable" }
-			pixels[bytes] = image.getRGB(0, 0, image.width, image.height, null, 0, image.width)
-			TexturePage(image.width, image.height, Bytes.wrap(bytes))
-		}
-		return Loaded(PuppetIr.toIr(puppet, pages), pixels)
-	}
-
-	/** Mean vertex displacement of each mesh between two poses, in canvas pixels. */
-	private fun moved(a: PoseGeometry, b: PoseGeometry): Map<String, Float> = a.positions.mapValues { (id, p) ->
-		val q = b.positions[id] ?: return@mapValues 0f
-		var sum = 0.0
-		for (i in 0 until min(p.size, q.size) / 2) sum += hypot((p[i * 2] - q[i * 2]).toDouble(), (p[i * 2 + 1] - q[i * 2 + 1]).toDouble())
-		(sum / max(1, p.size / 2)).toFloat()
-	}
-
 	private class Box(var x0: Float = Float.MAX_VALUE, var y0: Float = Float.MAX_VALUE, var x1: Float = -Float.MAX_VALUE, var y1: Float = -Float.MAX_VALUE) {
 		fun add(p: FloatArray) { for (i in 0 until p.size / 2) { x0 = min(x0, p[i * 2]); x1 = max(x1, p[i * 2]); y0 = min(y0, p[i * 2 + 1]); y1 = max(y1, p[i * 2 + 1]) } }
 		val w get() = x1 - x0
@@ -210,7 +151,7 @@ class PartDatasetTool {
 		?: ids.firstNotNullOfOrNull { id -> ir.parameters.firstOrNull { it.id.contains(id.removePrefix("Param"), ignoreCase = true) } }
 
 	private fun renderModel(file: File, dir: File, key: String, samples: StringBuilder): String {
-		val (ir, pixels) = load(file).let { it.ir to it.pixels }
+		val (ir, pixels) = loadRig(file).let { it.ir to it.pixels }
 		val ballX = param(ir, "ParamEyeBallX", "PARAM_EYE_BALL_X")
 		val ballY = param(ir, "ParamEyeBallY", "PARAM_EYE_BALL_Y")
 		val openL = param(ir, "ParamEyeLOpen", "PARAM_EYE_L_OPEN")
@@ -347,7 +288,7 @@ class PartDatasetTool {
 	}
 
 	private fun renderHead(file: File, dir: File, key: String, samples: StringBuilder): String {
-		val (ir, pixels) = load(file).let { it.ir to it.pixels }
+		val (ir, pixels) = loadRig(file).let { it.ir to it.pixels }
 		val session = IrGeometryEvaluator.open(ir)
 		val base = session.evaluate(emptyMap())
 		val visible = base.opacity.filter { it.value > 0.05f }.keys
