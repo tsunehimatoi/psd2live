@@ -3,7 +3,10 @@
   python sheets.py make MODEL_DIR [MAX_CONF]   write MODEL_DIR/review/sheet_<n>.png and review/groups.json for every
                                                 group (meshes under one deformer) whose rule label is below MAX_CONF
                                                 (0.35); each tile shows the group lit in its surroundings
-  python sheets.py apply MODEL_DIR             fold review/answers.json ({"<tile>": {"tag", "role"}}) into labels.json
+  python sheets.py batch SCENE_ROOT OUT [N]     sheets for every family representative (families.json), batched N
+                                                review folders per reviewer into OUT (json list of lists)
+  python sheets.py apply MODEL_DIR             fold sure answers (review/answers_haiku.json, review/answers.json)
+                                                into labels.json; unsure or mixed ones go to review/pending.json
 
 A group is the meshes one deformer holds directly: what the rig moves as one piece, so one label.
 """
@@ -23,7 +26,7 @@ ROWS = 4
 def groups_of(scene: dict, labels: dict) -> list[dict]:
     grouped = defaultdict(list)
     for m in scene["meshes"]:
-        if "at" in m:
+        if "at" in m and m.get("opacity", 1) >= 0.05:  # meshes hidden at rest are other states, not this picture
             grouped[m.get("deformer") or m.get("part") or m["id"]].append(m)
     out = []
     for key, meshes in grouped.items():
@@ -128,14 +131,23 @@ def make(folder: Path, max_conf: float = 0.35) -> int:
     return len(listed)
 
 
-def apply(folder: Path) -> None:
+def apply(folder: Path) -> dict:
+    """Fold a reviewer's sure answers into labels.json; return the unsure and mixed ones for a second look.
+    review/answers.json (a second reviewer's) wins over review/answers_haiku.json."""
     review = folder / "review"
     groups = {str(g["tile"]): g for g in json.loads((review / "groups.json").read_text(encoding="utf-8"))}
-    answers = json.loads((review / "answers.json").read_text(encoding="utf-8"))
+    answers = {}
+    for name in ("answers_haiku.json", "answers.json"):
+        if (review / name).exists():
+            answers.update({str(k): dict(v, source=name) for k, v in json.loads((review / name).read_text(encoding="utf-8")).items()})
     data = json.loads((folder / "labels.json").read_text(encoding="utf-8"))
+    pending = {}
     for tile_id, answer in answers.items():
-        g = groups.get(str(tile_id))
+        g = groups.get(tile_id)
         if not g:
+            continue
+        if answer["source"] == "answers_haiku.json" and (not answer.get("sure", True) or answer.get("mixed")):
+            pending[tile_id] = answer
             continue
         for mid in g["meshes"]:
             lab = data["labels"][mid]
@@ -144,14 +156,31 @@ def apply(folder: Path) -> None:
             lab["tag"] = answer.get("tag", lab["tag"])
             if answer.get("role"):
                 lab["role"] = answer["role"]
-            lab["confidence"] = 0.6 if answer.get("sure", True) else 0.4
-            lab["by"] = "review"
+            lab["confidence"] = 0.6
+            lab["by"] = answer["source"].removesuffix(".json")
     (folder / "labels.json").write_text(json.dumps(data, ensure_ascii=False, indent=0), encoding="utf-8")
+    (review / "pending.json").write_text(json.dumps(pending, ensure_ascii=False, indent=0), encoding="utf-8")
+    return pending
+
+
+def batch(root: Path, out: Path, size: int, max_conf: float = 0.35) -> None:
+    """Sheets for every family representative, and batches of review folders, one batch per reviewer."""
+    families = json.loads((root / "families.json").read_text(encoding="utf-8"))
+    folders = []
+    for f in families:
+        folder = root / f["members"][0]
+        if (folder / "labels.json").exists() and make(folder, max_conf) > 0:
+            folders.append(str((folder / "review").resolve()))
+    batches = [folders[i:i + size] for i in range(0, len(folders), size)]
+    out.write_text(json.dumps(batches, ensure_ascii=False, indent=0), encoding="utf-8")
+    print(len(folders), "folders to review in", len(batches), "batches")
 
 
 if __name__ == "__main__":
     command, target = sys.argv[1], Path(sys.argv[2])
     if command == "make":
         print(make(target, *(float(a) for a in sys.argv[3:4])), "groups to review")
+    elif command == "batch":
+        batch(target, Path(sys.argv[3]), int(sys.argv[4]) if len(sys.argv) > 4 else 5)
     else:
-        apply(target)
+        print(len(apply(target)), "tiles left for a second look")

@@ -57,7 +57,7 @@ WORDS = [
     ("legwear", r"靴下|ニーソ|タイツ|ストッキング|袜|\b(sock|socks|stocking|stockings|tights|kneesocks)\b"),
     ("leg", r"脚|腿|太もも|もも|膝|\b(leg|legs|thigh|knee|ashi)\b"),
     ("bottomwear", r"ベルト|腰带|\b(belt|waist)\b|スカート|ズボン|パンツ|短パン|裙|裤|褲|\b(skirt|pants|shorts|trousers)\b"),
-    ("topwear", r"服|衣|シャツ|上着|ジャケット|袖|外套|コート|ブラウス|セーラー|ドレス|ワンピ|ベスト|パーカー|ボタン|\b(shirt|jacket|coat|sleeve|sleeves|sode|blouse|dress|vest|hoodie|uniform|clothes|cloth|button)\b"),
+    ("topwear", r"服|衣|シャツ|上着|ジャケット|袖|外套|コート|ブラウス|セーラー|ドレス|ワンピ|ローブ|マント|ケープ|ポンチョ|着物|羽織|袴|浴衣|コルセット|フリル|ベスト|パーカー|ボタン|\b(shirt|jacket|coat|sleeve|sleeves|sode|robe|cape|cloak|mantle|poncho|kimono|yukata|corset|frill|parka|sweater|cardigan|blouse|dress|vest|hoodie|uniform|clothes|cloth|button)\b"),
     ("body", r"体|胴|胸|腹|おなか|身体|躯|軀|\b(body|torso|chest|bust|belly|breast|karada)\b"),
     ("tail", r"尻尾|しっぽ|尾巴|\b(tail|shippo)\b"),
     ("wings", r"翼|羽|翅|\b(wing|wings|feather)\b"),
@@ -111,12 +111,14 @@ def label_model(folder: Path) -> dict:
         """(text, weight, source) pairs for one mesh."""
         out = []
         if named(m["name"]):
-            out.append((m["name"], 3.0, "mesh"))
+            out.append((m["name"], 5.0, "mesh"))
+        # The nearest named part speaks for the mesh; ancestors only lean (a staff's part sits in the arm's).
         part, depth = m.get("part"), 0
         while part and part in parts:
             if named(parts[part]["name"]):
-                out.append((parts[part]["name"], max(0.6, 2.5 - 0.7 * depth), "part"))
-            part, depth = parts[part].get("parent"), depth + 1
+                out.append((parts[part]["name"], 4.0 if depth == 0 else 1.2 * 0.6 ** (depth - 1), "part"))
+                depth += 1
+            part = parts[part].get("parent")
         d, depth = m.get("deformer"), 0
         while d and d in deformers:
             if named(deformers[d]["name"]):
@@ -131,7 +133,7 @@ def label_model(folder: Path) -> dict:
             own = [p for r, p in moving if r <= least * 2 + 2]
             for p in own:
                 info = params.get(p, {})
-                w = 2.5 / len(own) ** 0.5
+                w = 2.5 / len(own)  # all its own parameters together weigh as one name
                 out.append((f"{p} {info.get('name', '')}", w, "param"))
                 if info.get("group"):
                     out.append((info["group"], w * 0.6, "param group"))
@@ -226,7 +228,7 @@ def refine(scene, labels, by_id, folder):
     irides = [m["render"] for m in meshes if labels[m["id"]]["tag"] == "irides"]
     under_eyes = min(irides) if irides else 10 ** 9
     warm = lambda rgb: rgb[0] >= rgb[1] >= rgb[2] - 10 and rgb[0] - rgb[2] > 15 and lum(rgb) > 110
-    faces = [m for m in solid if labels[m["id"]]["tag"] == "face"] or \
+    faces = [m for m in solid if labels[m["id"]]["tag"] == "face" and warm(m["look"]["rgb"])] or \
         [m for m in solid if m["id"] in head and m["render"] < under_eyes and warm(m["look"]["rgb"])
          and labels[m["id"]]["tag"] in ("unknown", "face", "neck", "ears")]
     face = max(faces, key=lambda m: m["look"]["solid"], default=None)
@@ -318,7 +320,7 @@ def label_map(folder: Path, scene: dict, labels: dict) -> None:
     canvas = np.zeros((full.height, full.width, 3), np.float32) + 40
     for m in sorted(scene["meshes"], key=lambda m: m["render"]):
         path = folder / "meshes" / f"{m['render']}.png"
-        if "at" not in m or not path.exists():
+        if "at" not in m or not path.exists() or m.get("opacity", 1) < 0.05:
             continue
         lab = labels[m["id"]]
         a = np.asarray(Image.open(path).convert("RGBA"), np.float32)[..., 3:] / 255
@@ -358,20 +360,26 @@ def label_map(folder: Path, scene: dict, labels: dict) -> None:
     out.save(folder / "labelmap.png")
 
 
+def label_folder(folder: Path) -> str:
+    result = label_model(folder)
+    (folder / "labels.json").write_text(json.dumps(result, ensure_ascii=False, indent=0), encoding="utf-8")
+    scene = json.loads((folder / "scene.json").read_text(encoding="utf-8"))
+    label_map(folder, scene, result["labels"])
+    counts = defaultdict(int)
+    for lab in result["labels"].values():
+        counts[lab["tag"]] += 1
+    low = sum(1 for lab in result["labels"].values() if lab["confidence"] < 0.25)
+    return f"{folder.name} {scene['model']} {len(result['labels'])} meshes, {low} low {dict(sorted(counts.items(), key=lambda kv: -kv[1])[:6])}"
+
+
 def main(dirs):
+    from multiprocessing import Pool
+    folders = []
     for d in dirs:
-        for folder in sorted(Path(d).glob("*/")):
-            if not (folder / "scene.json").exists():
-                continue
-            result = label_model(folder)
-            (folder / "labels.json").write_text(json.dumps(result, ensure_ascii=False, indent=0), encoding="utf-8")
-            scene = json.loads((folder / "scene.json").read_text(encoding="utf-8"))
-            label_map(folder, scene, result["labels"])
-            counts = defaultdict(int)
-            for lab in result["labels"].values():
-                counts[lab["tag"]] += 1
-            low = sum(1 for lab in result["labels"].values() if lab["confidence"] < 0.25)
-            print(folder.name, scene["model"], f"{len(result['labels'])} meshes, {low} low", dict(sorted(counts.items(), key=lambda kv: -kv[1])[:6]))
+        folders += [Path(d)] if (Path(d) / "scene.json").exists() else [f for f in sorted(Path(d).glob("*/")) if (f / "scene.json").exists()]
+    with Pool(min(16, max(1, len(folders)))) as pool:
+        for line in pool.imap(label_folder, folders):
+            print(line, flush=True)
 
 
 if __name__ == "__main__":

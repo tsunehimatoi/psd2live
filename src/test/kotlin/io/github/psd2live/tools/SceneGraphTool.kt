@@ -65,7 +65,7 @@ class SceneGraphTool {
 		val (ir, pixels) = loadRig(file).let { it.ir to it.pixels }
 		val session = IrGeometryEvaluator.open(ir)
 		val base = session.evaluate(emptyMap())
-		val order = renderOrder(ir)
+		val order = renderOrder(ir, base, IrColors(ir).parts(emptyMap()))
 		val boxes = ir.meshes.associate { mesh -> mesh.id to base.positions[mesh.id]?.let(::bounds) }
 
 		// How each mesh answers each parameter, at either end with the rest at their defaults.

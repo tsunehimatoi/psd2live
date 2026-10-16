@@ -7,6 +7,7 @@ import io.github.psd2live.core.PSD2LivePipeline
 import io.github.psd2live.core.PipelineConfig
 import io.github.psd2live.core.RigIrCompiler
 import io.github.psd2live.format.compile.PoseGeometry
+import io.github.psd2live.format.compile.render.IrColors
 import io.github.psd2live.format.model.*
 import io.github.psd2live.targets.cubism.PuppetIr
 import org.umamo.format.moc3.Moc3
@@ -21,14 +22,21 @@ import kotlin.math.min
 
 // Downloaded Live2D models (model3.json or cmo3) as IR rigs with decoded texture pages, for the dataset tools.
 
-internal fun renderOrder(ir: RigIR): Map<String, Int> {
+/**
+ * Each mesh's position in the order the render tree draws (back to front). With a [pose] and its [parts], draw
+ * orders are the posed ones, as the rasterizer sorts them; without, the static ones.
+ */
+internal fun renderOrder(ir: RigIR, pose: PoseGeometry? = null, parts: Map<String, IrColors.PartComposite> = emptyMap()): Map<String, Int> {
 	val order = HashMap<String, Int>()
 	val meshes = ir.meshes.associateBy { it.id }
 	fun visit(node: RenderNode) {
 		when (node) {
 			is RenderMesh -> order[node.id] = order.size
 			is RenderGroup -> node.children.sortedBy { child ->
-				when (child) { is RenderMesh -> meshes[child.id]?.drawOrder ?: 0f; is RenderGroup -> child.drawOrder.toFloat() }
+				when (child) {
+					is RenderMesh -> pose?.drawOrder?.get(child.id) ?: meshes[child.id]?.drawOrder ?: 0f
+					is RenderGroup -> child.part?.let { parts[it]?.drawOrder } ?: child.drawOrder.toFloat()
+				}
 			}.forEach(::visit)
 		}
 	}

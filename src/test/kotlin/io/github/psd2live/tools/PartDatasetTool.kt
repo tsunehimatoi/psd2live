@@ -132,7 +132,6 @@ class PartDatasetTool {
 		File(output("part-dataset"), "debug_eyes.txt").writeText(text.toString())
 	}
 
-	/** Each mesh's position in the order the render tree draws (back to front), with draw orders as the rasterizer sorts. */
 	private class Box(var x0: Float = Float.MAX_VALUE, var y0: Float = Float.MAX_VALUE, var x1: Float = -Float.MAX_VALUE, var y1: Float = -Float.MAX_VALUE) {
 		fun add(p: FloatArray) { for (i in 0 until p.size / 2) { x0 = min(x0, p[i * 2]); x1 = max(x1, p[i * 2]); y0 = min(y0, p[i * 2 + 1]); y1 = max(y1, p[i * 2 + 1]) } }
 		val w get() = x1 - x0
