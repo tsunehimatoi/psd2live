@@ -1,11 +1,12 @@
 package org.umamo.runtime.keyform
 
+import org.umamo.runtime.eval.EPS_KEY
 import org.umamo.runtime.eval.EPS_SPAN
 import org.umamo.runtime.model.ChannelValueKind
 import org.umamo.runtime.model.KeyformAxis
 import org.umamo.runtime.model.KeyformCell
 import org.umamo.runtime.model.KeyformGrid
-import org.umamo.runtime.model.ParameterId
+import kotlin.math.abs
 
 /*
  * Exact-only keyform-grid compaction: drop every axis a track does not actually vary along, and every
@@ -19,9 +20,10 @@ import org.umamo.runtime.model.ParameterId
  * EXACT, never an epsilon.  A key that is merely close to its interpolated neighbours is a value the
  * rigger chose, and silently replacing it would alter their rig - which the fidelity contract forbids.
  * The greedy drop test compares against the same FormInterpolator expression refinedToUnion re-inserts
- * with, and the drop set is then VERIFIED by running refinedToUnion itself and re-keeping any key whose
- * restored slice is not bit-identical (two adjacent drops restore through a different rounding sequence
- * than the one that justified them): compaction and refinement are mutual inverses by construction.
+ * with, and the drop set is then VERIFIED by replaying refinedToUnion's insertions and re-keeping any key
+ * whose restored slice is not bit-identical (two adjacent drops restore through a different rounding
+ * sequence than the one that justified them, and a key too close to a neighbour is not re-inserted at
+ * all): compaction and refinement are mutual inverses by construction.
  *
  * OUT-OF-SPAN SAFETY.  A pose outside any axis's key span makes the whole track fall back to its owner's
  * static, so an axis whose keys do not bracket the parameter's range acts as a GATE - dropping it (or
@@ -113,91 +115,314 @@ fun <TForm> KeyformGrid<TForm>.compacted(
  *
  * The greedy pass validates each drop against the CURRENT neighbours, but a neighbour used to justify a
  * drop can itself drop later, and refinedToUnion then re-blends the first key from the surviving
- * endpoints - a different IEEE-754 rounding sequence that matches only algebraically.  So the greedy
- * result is verified by running the ACTUAL inverse and re-keeping every key involved in a slice that did
- * not restore bit-identically, until the round trip verifies.
+ * endpoints - a different IEEE-754 rounding sequence that matches only algebraically.  A dropped key can
+ * also fail to come back at all: refinedToUnion skips a key within EPS_KEY of a neighbour, or one that
+ * would leave a span under EPS_SPAN.  So the greedy result is verified by replaying refinedToUnion's own
+ * insertions and re-keeping every key of a cell that did not restore bit-identically, until the round
+ * trip verifies.
  *
- * Terminates: a mismatched cell always involves at least one dropped key (a cell whose keys all survived
- * is carried verbatim), so every iteration moves at least one key from dropped to kept.
+ * Everything runs over one dense array indexed like the grid, without copying the grid or rebuilding a
+ * lookup per candidate: a greedy pass and a replay each visit every cell a constant number of times per
+ * axis, so a round is linear in the cell count.
+ *
+ * Terminates: a cell whose keys all survived is carried verbatim, so a mismatched cell always has a
+ * dropped key, and every round moves at least one key from dropped to kept.  Cells are compared by their
+ * key VALUES - a skipped insertion leaves the restored grid a key short, and comparing by linear index
+ * then lines up the wrong cells and blames only kept keys, which once looped forever.
+ *
+ * A grid with two axes on one parameter, or keys not strictly ascending, keeps every key: refinedToUnion
+ * would not restore it the way this replay does.
  *
  * @param FormInterpolator interpolator The blend and exact-equality tests.
  * @return KeyformGrid The reduced grid whose refinement restores this grid bit-for-bit.
  */
 private fun <TForm> KeyformGrid<TForm>.withVerifiedInteriorKeyDrops(interpolator: FormInterpolator<TForm>): KeyformGrid<TForm> {
-	val mustKeep = HashMap<ParameterId, MutableSet<Float>>()
+	if (axes.distinctBy { axis -> axis.parameterId }.size != axes.size || axes.any { axis -> !axis.keys.isStrictlyAscending() }) {
+		return this
+	}
+	val dense = DenseKeyforms(this)
+	val mustKeep = axes.map { axis -> BooleanArray(axis.keys.size) }
 	while (true) {
-		val reduced = withGreedyInteriorKeyDrops(interpolator, mustKeep)
-		if (reduced === this) {
+		val kept = dense.greedyKeptKeys(interpolator, mustKeep)
+		if (kept.all { mask -> mask.all { it } }) {
 			return this
 		}
-		val unionKeysByParameter = axes.associate { axis -> axis.parameterId to axis.keys }
-		val restored = reduced.refinedToUnion(unionKeysByParameter, emptyMap(), interpolator)
-		val offending = mismatchedKeyValues(restored, interpolator)
-		if (offending.isEmpty()) {
-			return reduced
-		}
-		for ((parameterId, keyValues) in offending) {
-			mustKeep.getOrPut(parameterId) { HashSet() }.addAll(keyValues)
+		val restored = dense.restoredForms(kept, interpolator)
+		when (dense.keepMismatchedKeys(restored, kept, mustKeep, interpolator)) {
+			Verification.Restored -> return withOnlyKeptKeys(kept)
+			Verification.Retry -> continue
+			Verification.Stuck -> return this
 		}
 	}
 }
 
+/** The outcome of one verification round. */
+private enum class Verification {
+	/** Every cell restored bit-exact. */
+	Restored,
+
+	/** Some cell did not; its dropped keys are now kept. */
+	Retry,
+
+	/** Some cell did not, yet every key it touches was already kept - cannot happen, but must never loop. */
+	Stuck,
+}
+
 /**
- * The original greedy interior-key drop pass, skipping any key value listed in [mustKeep].
+ * A dense grid's forms in one array by linear index, with its keys and strides - what the drop passes
+ * walk instead of copying the grid.
  *
- * @param FormInterpolator interpolator The blend and exact-equality tests.
- * @param Map mustKeep Key values (per parameter) that a prior verification round proved non-restorable.
- * @return KeyformGrid The reduced grid, or this same instance when nothing dropped.
+ * @param KeyformGrid grid A dense grid.
  */
-private fun <TForm> KeyformGrid<TForm>.withGreedyInteriorKeyDrops(
-	interpolator: FormInterpolator<TForm>,
-	mustKeep: Map<ParameterId, Set<Float>>,
-): KeyformGrid<TForm> {
-	var working = this
-	for (targetAxisIndex in working.axes.indices) {
-		var keyIndex = 1
-		while (keyIndex < working.axes[targetAxisIndex].keys.size - 1) {
-			val axis = working.axes[targetAxisIndex]
-			val keptExplicitly = mustKeep[axis.parameterId]?.contains(axis.keys[keyIndex]) == true
-			if (!keptExplicitly && working.isKeyInterpolable(targetAxisIndex, keyIndex, interpolator)) {
-				working = working.withKeyIndexDropped(targetAxisIndex, keyIndex)
-			} else {
-				keyIndex++
+private class DenseKeyforms<TForm>(grid: KeyformGrid<TForm>) {
+	val keys: List<FloatArray> = grid.axes.map { axis -> axis.keys }
+	val strides: IntArray = grid.strides()
+	private val forms: Array<Any?> = arrayOfNulls(grid.cells.size)
+
+	init {
+		for (cell in grid.cells) {
+			forms[grid.linearIndexOf(cell.coordinate)] = cell.form
+		}
+	}
+
+	/**
+	 * The keys the greedy pass keeps, per axis: axis by axis, each interior key not in [mustKeep] drops
+	 * when its whole slice is bit-equal to the blend of the last kept key below and the next key above.
+	 *
+	 * The slice spans the keys earlier axes kept and every key of later ones - the cells left in the grid
+	 * by the time the pass reaches that axis.
+	 *
+	 * @param FormInterpolator interpolator The blend and exact-equality tests.
+	 * @param List mustKeep Per axis, the keys a verification round proved must stay.
+	 * @return List Per axis, true for each kept key.
+	 */
+	fun greedyKeptKeys(interpolator: FormInterpolator<TForm>, mustKeep: List<BooleanArray>): List<BooleanArray> {
+		val kept = keys.map { axisKeys -> BooleanArray(axisKeys.size) { true } }
+		for (axisIndex in keys.indices) {
+			val axisKeys = keys[axisIndex]
+			if (axisKeys.size < 3) {
+				continue
+			}
+			val starts = lineStarts(axisIndex, List(keys.size) { otherAxis -> if (otherAxis < axisIndex) kept[otherAxis] else null })
+			var lowerKeyIndex = 0
+			for (keyIndex in 1 until axisKeys.size - 1) {
+				if (!mustKeep[axisIndex][keyIndex] && isBlendOfNeighbours(axisIndex, starts, lowerKeyIndex, keyIndex, interpolator)) {
+					kept[axisIndex][keyIndex] = false
+				} else {
+					lowerKeyIndex = keyIndex
+				}
+			}
+		}
+		return kept
+	}
+
+	/**
+	 * The forms [refinedToUnion] rebuilds from the grid holding only the [kept] keys, by linear index of
+	 * this grid; null where it leaves a cell out.
+	 *
+	 * Replays its insertions exactly: axis by axis, each dropped key in ascending order, blended from the
+	 * nearest present key on either side with the same fraction expression - and skipped, as it skips
+	 * one, when the key is within EPS_KEY of a neighbour or a span would fall under EPS_SPAN.
+	 *
+	 * @param List kept Per axis, true for each kept key.
+	 * @param FormInterpolator interpolator The blend.
+	 * @return Array The restored forms.
+	 */
+	fun restoredForms(kept: List<BooleanArray>, interpolator: FormInterpolator<TForm>): Array<Any?> {
+		val restored = arrayOfNulls<Any?>(forms.size)
+		forEachCell { linearIndex, coordinate ->
+			if (coordinate.indices.all { axisIndex -> kept[axisIndex][coordinate[axisIndex]] }) {
+				restored[linearIndex] = forms[linearIndex]
+			}
+		}
+		val present = kept.map { mask -> mask.copyOf() }
+		for (axisIndex in keys.indices) {
+			val axisKeys = keys[axisIndex]
+			val axisPresent = present[axisIndex]
+			if (axisPresent.all { it }) {
+				continue
+			}
+			val starts = lineStarts(axisIndex, present)
+			val stride = strides[axisIndex]
+			for (keyIndex in axisKeys.indices) {
+				if (axisPresent[keyIndex]) {
+					continue
+				}
+				val keyValue = axisKeys[keyIndex]
+				// Endpoints are never dropped, so a present key always lies on both sides.
+				val lowerKeyIndex = (keyIndex - 1 downTo 0).first { index -> axisPresent[index] }
+				val upperKeyIndex = (keyIndex + 1 until axisKeys.size).first { index -> axisPresent[index] }
+				val lowerKey = axisKeys[lowerKeyIndex]
+				val upperKey = axisKeys[upperKeyIndex]
+				// keyIndexAt's snap, then spansStayResolvable: on ascending keys only the nearest two can trip either.
+				if (abs(lowerKey - keyValue) < EPS_KEY || abs(upperKey - keyValue) < EPS_KEY) {
+					continue
+				}
+				if (keyValue - lowerKey < EPS_SPAN || upperKey - keyValue < EPS_SPAN) {
+					continue
+				}
+				val span = upperKey - lowerKey
+				val fraction = if (span >= EPS_SPAN) (keyValue - lowerKey) / span else 0f
+				for (start in starts) {
+					val lowerForm = restored.formAt(start + lowerKeyIndex * stride) ?: continue
+					val upperForm = restored.formAt(start + upperKeyIndex * stride) ?: continue
+					restored[start + keyIndex * stride] = interpolator.interpolate(lowerForm, upperForm, fraction)
+				}
+				axisPresent[keyIndex] = true
+			}
+		}
+		return restored
+	}
+
+	/**
+	 * Marks in [mustKeep] every key of each cell whose [restored] form is missing or not bit-identical.
+	 *
+	 * Conservative on purpose: every key of a mismatched cell is marked, including kept ones - the next
+	 * greedy pass then measures their neighbours against them as they stand.
+	 *
+	 * @param Array restored The forms [restoredForms] rebuilt.
+	 * @param List kept Per axis, the keys this round kept.
+	 * @param List mustKeep Per axis, the keys that must stay; updated in place.
+	 * @param FormInterpolator interpolator Supplies the exact-equality test.
+	 * @return Verification Whether the round trip verified, or how to go on.
+	 */
+	fun keepMismatchedKeys(
+		restored: Array<Any?>,
+		kept: List<BooleanArray>,
+		mustKeep: List<BooleanArray>,
+		interpolator: FormInterpolator<TForm>,
+	): Verification {
+		var mismatched = false
+		var keptADroppedKey = false
+		forEachCell { linearIndex, coordinate ->
+			val restoredForm = restored.formAt(linearIndex)
+			if (restoredForm == null || !interpolator.isExactlyEqual(restoredForm, forms.formAt(linearIndex)!!)) {
+				mismatched = true
+				for (axisIndex in coordinate.indices) {
+					val keyIndex = coordinate[axisIndex]
+					if (!mustKeep[axisIndex][keyIndex]) {
+						mustKeep[axisIndex][keyIndex] = true
+						keptADroppedKey = keptADroppedKey || !kept[axisIndex][keyIndex]
+					}
+				}
+			}
+		}
+		return when {
+			!mismatched -> Verification.Restored
+			keptADroppedKey -> Verification.Retry
+			else -> Verification.Stuck
+		}
+	}
+
+	/**
+	 * Whether every cell at [keyIndex] on [axisIndex], over the lines from [starts], is bit-equal to the
+	 * blend of its counterparts at [lowerKeyIndex] and the next key up.
+	 */
+	private fun isBlendOfNeighbours(
+		axisIndex: Int,
+		starts: IntArray,
+		lowerKeyIndex: Int,
+		keyIndex: Int,
+		interpolator: FormInterpolator<TForm>,
+	): Boolean {
+		val axisKeys = keys[axisIndex]
+		val upperKeyIndex = keyIndex + 1
+		val span = axisKeys[upperKeyIndex] - axisKeys[lowerKeyIndex]
+		if (span < EPS_SPAN) {
+			return false
+		}
+		val fraction = (axisKeys[keyIndex] - axisKeys[lowerKeyIndex]) / span
+		val stride = strides[axisIndex]
+		for (start in starts) {
+			val lowerForm = forms.formAt(start + lowerKeyIndex * stride)!!
+			val upperForm = forms.formAt(start + upperKeyIndex * stride)!!
+			if (!interpolator.isExactlyEqual(interpolator.interpolate(lowerForm, upperForm, fraction), forms.formAt(start + keyIndex * stride)!!)) {
+				return false
+			}
+		}
+		return true
+	}
+
+	/**
+	 * The linear index of every cell at key index 0 on [axisIndex] whose key on each other axis is
+	 * allowed - the starts of the lines along [axisIndex] through the cells a pass looks at.
+	 *
+	 * @param Int axisIndex The axis the lines run along.
+	 * @param List allowed Per axis, the key indices allowed (true), or null for all of them.
+	 * @return IntArray The line starts.
+	 */
+	private fun lineStarts(axisIndex: Int, allowed: List<BooleanArray?>): IntArray {
+		var starts = intArrayOf(0)
+		for (otherAxis in keys.indices) {
+			if (otherAxis == axisIndex) {
+				continue
+			}
+			val mask = allowed[otherAxis]
+			val keyIndices = keys[otherAxis].indices.filter { keyIndex -> mask == null || mask[keyIndex] }
+			val next = IntArray(starts.size * keyIndices.size)
+			var writeIndex = 0
+			for (keyIndex in keyIndices) {
+				val offset = keyIndex * strides[otherAxis]
+				for (start in starts) {
+					next[writeIndex++] = start + offset
+				}
+			}
+			starts = next
+		}
+		return starts
+	}
+
+	/** Calls [action] with every cell's linear index and coordinate, in linear order (axis 0 fastest). */
+	private inline fun forEachCell(action: (Int, IntArray) -> Unit) {
+		val coordinate = IntArray(keys.size)
+		for (linearIndex in forms.indices) {
+			action(linearIndex, coordinate)
+			var axisIndex = 0
+			while (axisIndex < coordinate.size) {
+				coordinate[axisIndex]++
+				if (coordinate[axisIndex] < keys[axisIndex].size) {
+					break
+				}
+				coordinate[axisIndex] = 0
+				axisIndex++
 			}
 		}
 	}
-	return working
+
+	/** The form at [linearIndex] of a form array, or null where none is held. */
+	@Suppress("UNCHECKED_CAST")
+	private fun Array<Any?>.formAt(linearIndex: Int): TForm? = this[linearIndex] as TForm?
 }
 
+/** Whether every key is below the next one (false for a NaN key). */
+private fun FloatArray.isStrictlyAscending(): Boolean = (0 until size - 1).all { index -> this[index] < this[index + 1] }
+
 /**
- * The key values (per parameter) touched by any cell of this grid whose counterpart in [restored] is not
- * bit-identical.
+ * This grid holding only the [kept] keys, its cells in their original order with re-projected coordinates.
  *
- * Conservative on purpose: every coordinate of a mismatched cell is reported, including keys that were
- * never dropped - re-keeping a kept key is a no-op, and the dropped key among them is the one that makes
- * the next verification round converge.
- *
- * @param KeyformGrid restored This grid's shape rebuilt from the reduced grid by [refinedToUnion].
- * @param FormInterpolator interpolator Supplies the exact-equality test.
- * @return Map The offending key values per parameter; empty when the round trip is bit-exact.
+ * @param List kept Per axis, true for each kept key; every endpoint is kept.
+ * @return KeyformGrid The reduced grid.
  */
-private fun <TForm> KeyformGrid<TForm>.mismatchedKeyValues(
-	restored: KeyformGrid<TForm>,
-	interpolator: FormInterpolator<TForm>,
-): Map<ParameterId, Set<Float>> {
-	val offending = HashMap<ParameterId, MutableSet<Float>>()
-	val restoredByIndex = restored.cells.associate { cell -> restored.linearIndexOf(cell.coordinate) to cell.form }
-	for (cell in cells) {
-		val counterpart = restoredByIndex[linearIndexOf(cell.coordinate)]
-		if (counterpart != null && interpolator.isExactlyEqual(counterpart, cell.form)) {
-			continue
+private fun <TForm> KeyformGrid<TForm>.withOnlyKeptKeys(kept: List<BooleanArray>): KeyformGrid<TForm> {
+	val newKeyIndex =
+		kept.map { mask ->
+			var nextIndex = 0
+			IntArray(mask.size) { keyIndex -> if (mask[keyIndex]) nextIndex++ else -1 }
 		}
-		for (axisIndex in axes.indices) {
-			val axis = axes[axisIndex]
-			offending.getOrPut(axis.parameterId) { HashSet() }.add(axis.keys[cell.coordinate[axisIndex]])
+	val newAxes =
+		axes.mapIndexed { axisIndex, axis ->
+			KeyformAxis(axis.parameterId, axis.keys.filterIndexed { keyIndex, _ -> kept[axisIndex][keyIndex] }.toFloatArray())
 		}
-	}
-	return offending
+	val newCells =
+		cells.mapNotNull { cell ->
+			val coordinate = IntArray(cell.coordinate.size) { axisIndex -> newKeyIndex[axisIndex][cell.coordinate[axisIndex]] }
+			when {
+				coordinate.any { keyIndex -> keyIndex < 0 } -> null
+				coordinate.contentEquals(cell.coordinate) -> cell
+				else -> KeyformCell(coordinate, cell.form)
+			}
+		}
+	return KeyformGrid(newAxes, newCells)
 }
 
 /**
@@ -220,42 +445,6 @@ private fun <TForm> KeyformGrid<TForm>.isConstantAlong(axisIndex: Int, interpola
 		val baseCoordinate = cell.coordinate.copyOf().also { it[axisIndex] = 0 }
 		val baseForm = formByIndex[linearIndexOf(baseCoordinate)] ?: return false
 		if (!interpolator.isExactlyEqual(baseForm, cell.form)) {
-			return false
-		}
-	}
-	return true
-}
-
-/**
- * Whether the whole slice at [keyIndex] on [axisIndex] is bit-equal to the blend of its neighbours - so
- * the evaluator would reproduce it exactly without the key being stored.
- *
- * @param Int axisIndex The axis the key sits on.
- * @param Int keyIndex The interior key's index.
- * @param FormInterpolator interpolator The blend and exact-equality tests.
- * @return Boolean True when the key carries no information.
- */
-private fun <TForm> KeyformGrid<TForm>.isKeyInterpolable(
-	axisIndex: Int,
-	keyIndex: Int,
-	interpolator: FormInterpolator<TForm>,
-): Boolean {
-	val keys = axes[axisIndex].keys
-	val span = keys[keyIndex + 1] - keys[keyIndex - 1]
-	if (span < EPS_SPAN) {
-		return false
-	}
-	val fraction = (keys[keyIndex] - keys[keyIndex - 1]) / span
-	val formByIndex = cells.associate { cell -> linearIndexOf(cell.coordinate) to cell.form }
-	for (cell in cells) {
-		if (cell.coordinate[axisIndex] != keyIndex) {
-			continue
-		}
-		val lowerCoordinate = cell.coordinate.copyOf().also { it[axisIndex] = keyIndex - 1 }
-		val upperCoordinate = cell.coordinate.copyOf().also { it[axisIndex] = keyIndex + 1 }
-		val lowerForm = formByIndex[linearIndexOf(lowerCoordinate)] ?: return false
-		val upperForm = formByIndex[linearIndexOf(upperCoordinate)] ?: return false
-		if (!interpolator.isExactlyEqual(interpolator.interpolate(lowerForm, upperForm, fraction), cell.form)) {
 			return false
 		}
 	}
@@ -288,33 +477,4 @@ private fun <TForm> KeyformGrid<TForm>.withAxisDropped(axisIndex: Int): KeyformG
 				KeyformCell(reduced, cell.form)
 			}
 	return KeyformGrid(newAxes, newCells)
-}
-
-/**
- * This grid with key [keyIndex] dropped from [axisIndex], re-projecting the coordinates above it.
- *
- * The index-addressed counterpart of [withKeyRemoved], without that function's collapse guard: compaction
- * only ever drops interior keys, so at least the two endpoints always remain.
- *
- * @param Int axisIndex The axis to drop a key from.
- * @param Int keyIndex The key index to drop.
- * @return KeyformGrid The grid with the key removed.
- */
-private fun <TForm> KeyformGrid<TForm>.withKeyIndexDropped(axisIndex: Int, keyIndex: Int): KeyformGrid<TForm> {
-	val oldKeys = axes[axisIndex].keys
-	val newKeys = FloatArray(oldKeys.size - 1)
-	oldKeys.copyInto(newKeys, destinationOffset = 0, startIndex = 0, endIndex = keyIndex)
-	oldKeys.copyInto(newKeys, destinationOffset = keyIndex, startIndex = keyIndex + 1, endIndex = oldKeys.size)
-	val newAxes = axes.toMutableList()
-	newAxes[axisIndex] = KeyformAxis(axes[axisIndex].parameterId, newKeys)
-	val newCells =
-		cells.mapNotNull { cell ->
-			val keyOnAxis = cell.coordinate[axisIndex]
-			when {
-				keyOnAxis == keyIndex -> null
-				keyOnAxis > keyIndex -> KeyformCell(cell.coordinate.copyOf().also { it[axisIndex] = keyOnAxis - 1 }, cell.form)
-				else -> cell
-			}
-		}
-	return KeyformGrid(newAxes.toList(), newCells)
 }
