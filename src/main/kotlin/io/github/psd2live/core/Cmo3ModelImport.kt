@@ -70,9 +70,11 @@ internal object Cmo3ModelImport {
             .filterIsInstance<CParameterSource>().associate { Cmo3Import.uuidOf(it.guid) to Cmo3Import.idStrOf(it.id) }
         fun parameter(guid: Any?): String = parameters[Cmo3Import.uuidOf(guid)] ?: error("CMO3 physics references an unknown parameter")
         fun type(value: Any?) = if (value == CPhysicsSourceType.SRC_TO_X) PhysicsSourceType.X else PhysicsSourceType.ANGLE
-        val physics = Cmo3Import.elementsOf(set?._sourceCubismPhysics).filterIsInstance<CPhysicsSettingsSource>().map { s ->
+        val settings = Cmo3Import.elementsOf(set?._sourceCubismPhysics).filterIsInstance<CPhysicsSettingsSource>()
+        val ids = uniqueIds(settings.map { Cmo3Import.idStrOf(it.id) ?: error("CMO3 physics ID missing") })
+        val physics = settings.mapIndexed { index, s ->
             RigPhysicsEdit(
-                Cmo3Import.idStrOf(s.id) ?: error("CMO3 physics ID missing"), s.name.orEmpty().ifBlank { Cmo3Import.idStrOf(s.id)!! },
+                ids[index], s.name.orEmpty().ifBlank { ids[index] },
                 Cmo3Import.elementsOf(s.inputs).filterIsInstance<CPhysicsInput>().map { PhysicsInput(parameter(it.source), it.weight, type(it.type), it.isReverse) },
                 Cmo3Import.elementsOf(s.outputs).filterIsInstance<CPhysicsOutput>().map {
                     PhysicsOutput(parameter(it.destination), it.vertexIndex,
@@ -88,6 +90,20 @@ internal object Cmo3ModelImport {
         }
         return Document(puppet, PackedAtlas(pages, emptyMap()), textures.atlasIndexByDrawableId, physics, set?.settingFPS,
             textureDensities(cmo3AtlasIngest(root)))
+    }
+
+    /**
+     * [ids] with every repeat after the first renamed `<id>_2`, `_3`, ... past each ID the file holds: Cubism Editor
+     * saves settings that share an ID, and the edit overlay keys physics by ID. Read from the file alone, so every
+     * read of the same file names them the same.
+     */
+    internal fun uniqueIds(ids: List<String>): List<String> {
+        val used = ids.toHashSet()
+        val seen = HashSet<String>()
+        return ids.map { id ->
+            if (seen.add(id)) id
+            else generateSequence(2) { it + 1 }.map { "${id}_$it" }.first { it !in used }.also { used += it }
+        }
     }
 
     /**

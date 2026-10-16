@@ -18,6 +18,8 @@ All of the model's physics groups are listed in the Physics panel, from five sou
 
 Generated groups can be edited directly. Once edited a group becomes **Edited** and your version is saved; later changes to its source (swing, skeleton) do not overwrite it. A simulation's pendulum is merged three ways after a rebake or an output rename, keeping only the fields you changed while the rest follow the new fit (see [Simulation and baking](SIMULATION.md)); **Reset to generated** goes back to the generated version. Every group can be turned off on its own, and turned-off groups are not exported. When a custom group drives an output parameter of a generated group, that generated group shows **Replaced** and is not exported either.
 
+Physics settings in an imported CMO3 keep the IDs the file gives them. Cubism Editor can save several settings under one ID; the second and later ones then become `<id>_2`, `<id>_3`… (skipping IDs the file already uses), so every setting is kept, each import gives the same IDs, and exports use them.
+
 A parameter can be driven by only one active group. An invalid group (a missing parameter, no inputs or outputs, a parameter that is both an input and an output) is marked **Invalid** in the list and is not exported; the editing area shows why.
 
 ## Physics panel
