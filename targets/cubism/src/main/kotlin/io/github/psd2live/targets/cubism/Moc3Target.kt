@@ -130,5 +130,7 @@ public object Moc3Target : ExportTarget {
 			note = "${notice.pageCount} texture pages rebuilt without source art")
 		is ExportNotice.SharedAtlasSlotKept -> LossEntry(notice.drawableNames.joinToString(","), Feature.TEXTURE_SIZE, Handling.APPROXIMATED,
 			note = "Meshes keep a shared atlas slot")
+		is ExportNotice.DrawOrdersRenumbered -> LossEntry(notice.subjects.joinToString(","), Feature.STRUCTURE, Handling.APPROXIMATED,
+			note = "Fractional draw orders renumbered to whole numbers; the stacking is unchanged")
 	}
 }

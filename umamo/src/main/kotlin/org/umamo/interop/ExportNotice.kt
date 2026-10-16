@@ -80,6 +80,14 @@ sealed interface ExportNotice {
 	 * @property List drawableNames The affected drawables' display names, in document order.
 	 */
 	data class SharedAtlasSlotKept(val drawableNames: List<String>) : ExportNotice
+
+	/**
+	 * Draw orders renumbered onto whole numbers, as CMO3 stores them, because the model holds a fractional
+	 * one. The stacking is unchanged; the numbers the official editor shows differ from the document's.
+	 *
+	 * @property List subjects The renumbered drawables' and parts' display names, in document order.
+	 */
+	data class DrawOrdersRenumbered(val subjects: List<String>) : ExportNotice
 }
 
 /**

@@ -19,10 +19,13 @@ internal object Cmo3DeformPaths {
 
     private data class Projection(val totalT: Float, val distance: Float, val nearest: Pair<Float, Float>)
 
-    /** Cubism's CArtMeshSource.getDefaultKeyForm() selects the middle of the keyform pool. */
-    private fun defaultKeyform(source: CArtMeshSource): CArtMeshForm {
+    /**
+     * Cubism's CArtMeshSource.getDefaultKeyForm() selects the middle of the keyform pool; null when the keyform
+     * lowering left the pool empty (it reported why), which leaves nothing to bind a controller to.
+     */
+    private fun defaultKeyform(source: CArtMeshSource): CArtMeshForm? {
         val forms = Cmo3Import.elementsOf(source.keyforms).filterIsInstance<CArtMeshForm>()
-        return forms.getOrNull(forms.size / 2) ?: error("Deform path ArtMesh has no default keyform")
+        return forms.getOrNull(forms.size / 2)
     }
 
     /** Cubism binds a controller to every point of the ArtMesh's default keyform. */
@@ -132,7 +135,7 @@ internal object Cmo3DeformPaths {
             val paths=model.deformPaths.filter { it.drawableId.raw==id }
             val drawable=model.drawables.single { it.id.raw==id }
             if(paths==baseline.deformPaths.filter { it.drawableId.raw==id }) continue
-            val defaultForm=defaultKeyform(source)
+            val defaultForm=defaultKeyform(source) ?: continue
             val vertices=defaultForm.positions as? FloatArray ?: error("Deform path default keyform has no positions")
             val canvasVertices=requireNotNull(drawable.mesh).positions
             val extensions=CArrayList<Any?>().apply {

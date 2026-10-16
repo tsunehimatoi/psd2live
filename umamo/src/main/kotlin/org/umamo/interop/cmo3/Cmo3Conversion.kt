@@ -91,7 +91,8 @@ public object Cmo3Conversion {
 		modelThumbnail: RasterImage? = null,
 	): Result {
 		val downgrade = Moc3VersionDowngrade.stripForCmo3(puppet, puppet.runtimeTarget)
-		val compatiblePuppet = Cmo3MeshSanitizer.sanitize(downgrade.puppet)
+		val orders = Cmo3DrawOrders.integral(downgrade.puppet)
+		val compatiblePuppet = Cmo3MeshSanitizer.sanitize(orders.puppet)
 		// Real layers first: a drawable whose tile has a raster and an inventory row writes that
 		// raster as its own layer, and leaves the crop path - the un-dedup included, since a real
 		// tile's model image is the single-placement shape by construction.
@@ -170,6 +171,9 @@ public object Cmo3Conversion {
 		val leading = ArrayList<ExportNotice>()
 		if (!everyDrawableIsReal) {
 			leading.add(ExportNotice.MissingSourceArt(effectivePages.size))
+		}
+		if (orders.renumbered.isNotEmpty()) {
+			leading.add(ExportNotice.DrawOrdersRenumbered(orders.renumbered))
 		}
 		if (undedup.sharedDrawableIds.isNotEmpty()) {
 			val nameById = effectivePuppet.drawables.associate { drawable -> drawable.id.raw to drawable.name }
