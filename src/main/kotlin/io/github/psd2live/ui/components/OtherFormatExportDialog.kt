@@ -47,7 +47,7 @@ import kotlinx.serialization.json.jsonPrimitive
  * has its own dialog.
  */
 internal val exportMenuGroups: List<Pair<String, List<String>>> = listOf(
-	"export.group.runtime" to listOf("vtube-studio", "p2lrt", "web"),
+	"export.group.runtime" to listOf("vtube-studio", "p2lrt", "web", "unity"),
 	"export.group.media" to listOf("png-sequence", "sprite-sheet", "gif", "apng", "webp", "mp4", "webm", "mov"),
 	"export.group.psd" to listOf("psd-pose"),
 )
