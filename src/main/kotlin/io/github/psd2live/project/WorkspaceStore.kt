@@ -569,6 +569,8 @@ internal class WorkspaceStore(
             if (document.rigEdits.disabledPhysicsIds.isNotEmpty()) putJsonArray("physicsDisabled") { document.rigEdits.disabledPhysicsIds.sorted().forEach { add(JsonPrimitive(it)) } }
             if (document.rigEdits.physicsOrder.isNotEmpty()) putJsonArray("physicsOrder") { document.rigEdits.physicsOrder.forEach { add(JsonPrimitive(it)) } }
             if (document.rigEdits.physicsFps != io.github.psd2live.core.RigEditOverlay.DEFAULT_PHYSICS_FPS) put("physicsFps", document.rigEdits.physicsFps)
+            if (document.rigEdits.interiorEffects.isNotEmpty()) putJsonArray("interiorEffects") { document.rigEdits.interiorEffects.forEach { add(it.toJson()) } }
+            if (document.rigEdits.interiorEdits.isNotEmpty()) putJsonArray("interiorSurfaces") { document.rigEdits.interiorEdits.forEach { add(it.toJson()) } }
             putJsonArray("swings") { document.rigEdits.swingEdits.forEach { add(it.toJson()) } }
             putJsonArray("motions") { document.rigEdits.motionClips.forEach { add(io.github.psd2live.core.MotionClips.toJson(it)) } }
             if (document.rigEdits.motionPresets.isNotEmpty()) put("motionPresets", io.github.psd2live.core.MotionPresets.toJson(document.rigEdits.motionPresets))
@@ -710,6 +712,8 @@ internal class WorkspaceStore(
             disabledPhysicsIds = rigEditObject.optionalArray("physicsDisabled").map { it.jsonPrimitive.content }.toSet(),
             physicsOrder = rigEditObject.optionalArray("physicsOrder").map { it.jsonPrimitive.content },
             physicsFps = rigEditObject["physicsFps"]?.jsonPrimitive?.intOrNull ?: io.github.psd2live.core.RigEditOverlay.DEFAULT_PHYSICS_FPS,
+            interiorEffects = rigEditObject.optionalArray("interiorEffects").map { io.github.psd2live.core.interior.NativeInteriorEffect.fromJson(it.jsonObject) },
+            interiorEdits = rigEditObject.optionalArray("interiorSurfaces").map { io.github.psd2live.core.interior.RigInteriorEdit.fromJson(it.jsonObject) },
             swingEdits = rigEditObject.optionalArray("swings").map { io.github.psd2live.core.RigSwingEdit.fromJson(it.jsonObject) },
             motionClips = rigEditObject.optionalArray("motions").map { io.github.psd2live.core.MotionClips.fromJson(it.jsonObject) },
             motionPresets = io.github.psd2live.core.MotionPresets.fromJson(rigEditObject["motionPresets"]?.jsonObject),

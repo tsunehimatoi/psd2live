@@ -39,7 +39,7 @@ internal const val DEFAULT_WORKSPACE_ID = "workspace"
 
 /** Right-hand dock modules the title-bar inspector toggle shows and hides together. */
 internal val INSPECTOR_DOCK_MODULES = setOf(
-	"settings", "layers", "parameters", "tools", "mesh", "inspector", "animation", "physics", "simulation",
+	"settings", "layers", "parameters", "tools", "mesh", "inspector", "animation", "physics", "simulation", "interior",
 )
 
 /** Modules a fresh workspace layout already contains. History is added from the window menu. */

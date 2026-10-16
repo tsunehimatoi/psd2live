@@ -27,6 +27,8 @@ For hands-on learning, open the **Tutorials** on the Help page (`F1`). Chinese i
 
 ## 构建与发布 · Build and release
 
+开发中功能：[内部造型生成器与编辑器入口](zh/spec/INTERIOR_SURFACE.md) · [English](en/spec/INTERIOR_SURFACE.md)。
+
 | 文档 | 内容 | 译文 · Translations |
 | --- | --- | --- |
 | [开发与命令行](zh/guide/DEVELOPMENT.md) | 源码运行、CLI 参数、测试与打包、代码结构 | [English](en/guide/DEVELOPMENT.md) · [日本語](ja/guide/DEVELOPMENT.md) |

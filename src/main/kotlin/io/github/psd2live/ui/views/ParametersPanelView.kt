@@ -1999,7 +1999,7 @@ private fun LinkedParameterPad(
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
-private fun ParameterPad2D(
+internal fun ParameterPad2D(
 	horizontal: Parameter,
 	vertical: Parameter,
 	/** Read where the pad draws and when a gesture needs them, like [ParameterTrack]'s value. */
@@ -2016,8 +2016,10 @@ private fun ParameterPad2D(
 	onHoverKey: ((xKey: Float?, yKey: Float?, trackCoords: LayoutCoordinates?, localY: Float) -> Unit)? = null,
 	onGestureStart: () -> Unit = {},
 	onGestureEnd: () -> Unit = {},
+    reverseY: Boolean = false,
 ) {
 	val colors = LocalToolColors.current
+    val reverseYNow by rememberUpdatedState(reverseY)
 	val xKeyList = remember(horizontal, horizontalKeys) {
 		horizontalKeys?.allKeys.orEmpty()
 			.filter { it >= horizontal.min - 1e-4f && it <= horizontal.max + 1e-4f }
@@ -2072,7 +2074,7 @@ private fun ParameterPad2D(
 				var bestDist = hitR
 				for (kx in xKeysState) for (ky in yKeysState) {
 					val px = insetX + ((kx - hMin) / spanX).coerceIn(0f, 1f) * w
-					val py = insetY + ((vMax - ky) / spanY).coerceIn(0f, 1f) * h
+					val py = insetY + ((if(reverseYNow)ky-vMin else vMax-ky) / spanY).coerceIn(0f, 1f) * h
 					val dist = hypot(px - pos.x, py - pos.y)
 					if (dist <= bestDist) {
 						bestDist = dist
@@ -2081,7 +2083,7 @@ private fun ParameterPad2D(
 				}
 				hoverKey = best
 				if (best != null) {
-					val py = insetY + ((vMax - best.second) / spanY).coerceIn(0f, 1f) * h
+					val py = insetY + ((if(reverseYNow)best.second-vMin else vMax-best.second) / spanY).coerceIn(0f, 1f) * h
 					hoverKeyCb?.invoke(best.first, best.second, padCoords, py)
 				} else {
 					hoverKeyCb?.invoke(null, null, null, 0f)
@@ -2121,7 +2123,7 @@ private fun ParameterPad2D(
 						val ny = ((pos.y - insetY) / h).coerceIn(0f, 1f)
 						onChangeState(
 							if (!xLockedState) hMin + nx * (hMax - hMin) else xValueNow(),
-							if (!yLockedState) vMax - ny * (vMax - vMin) else yValueNow(),
+							if (!yLockedState) if(reverseYNow)vMin+ny*(vMax-vMin)else vMax-ny*(vMax-vMin) else yValueNow(),
 						)
 					}
 					try {
@@ -2148,7 +2150,7 @@ private fun ParameterPad2D(
 		val borderColor = colors.textMuted.copy(alpha = 0.50f)
 
 		fun xPx(v: Float) = insetX + ((v - horizontal.min) / spanX).coerceIn(0f, 1f) * padW
-		fun yPx(v: Float) = insetY + ((vertical.max - v) / spanY).coerceIn(0f, 1f) * padH
+		fun yPx(v: Float) = insetY + ((if(reverseY) v-vertical.min else vertical.max-v) / spanY).coerceIn(0f, 1f) * padH
 
 		// Dashed boundary rectangle matching Cubism 2D Pad (clean, no tinted fill background)
 		drawRect(

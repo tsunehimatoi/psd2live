@@ -243,6 +243,9 @@ data class RigEditOverlay(
     val motionPresets: Map<String, MotionPresetSettings> = emptyMap(),
     /** Simulated bodies; they read the rebuilt rig and, once baked, write back through their own generator. */
     val simEdits: List<io.github.psd2live.core.sim.RigSimEdit> = emptyList(),
+    /** Authoring-only interior surface recipes; ordinary Mesh keyforms are replayed after the journal. */
+    val interiorEdits: List<io.github.psd2live.core.interior.RigInteriorEdit> = emptyList(),
+    val interiorEffects: List<io.github.psd2live.core.interior.NativeInteriorEffect> = emptyList(),
 ) {
 	init {
         require(motionClips.map { it.id }.distinct().size == motionClips.size) { "Duplicate motion IDs" }
@@ -251,6 +254,7 @@ data class RigEditOverlay(
         require(physicsEdits.map { it.id }.distinct().size == physicsEdits.size) { "Duplicate physics IDs" }
         require(validFps(physicsFps)) { "FPS must be $UNLIMITED_FPS (unlimited) or within $PHYSICS_FPS_RANGE" }
         require(swingEdits.map { it.id }.distinct().size == swingEdits.size) { "Duplicate swing IDs" }
+        require(interiorEdits.map { it.id }.distinct().size == interiorEdits.size) { "Duplicate interior surface IDs" }
         require(simEdits.map { it.id }.distinct().size == simEdits.size) { "Duplicate simulation IDs" }
         require(simEdits.flatMap { it.outputParameters }.let { it.distinct().size == it.size }) { "Each simulation needs its own parameters" }
         require(swingEdits.flatMap { it.parameterIds }.let { it.distinct().size == it.size }) { "Each swing needs its own parameters" }
@@ -337,7 +341,7 @@ data class RigEditOverlay(
 	}
 
 	/** Generated axes do not exist until swing/simulation materialization: panel moves and links that name them. */
-	private val generatedIds: Set<String> by lazy { swingEdits.flatMap { it.parameterIds }.toSet() + simEdits.flatMap { it.outputParameters } }
+	private val generatedIds: Set<String> by lazy { swingEdits.flatMap { it.parameterIds }.toSet() + simEdits.flatMap { it.outputParameters } + interiorEdits.flatMap { it.createdParameterIds } + interiorEffects.flatMap { it.parameterIds } }
 
 	private fun generatedPanelEdit(edit: kotlinx.serialization.json.JsonObject): Boolean =
 		edit["kind"]?.jsonPrimitive?.contentOrNull == "parameter" &&

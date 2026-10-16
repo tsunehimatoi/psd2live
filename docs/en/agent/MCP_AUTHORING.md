@@ -589,3 +589,7 @@ Trial-composite first and check parent, draw order, masks and motion headroom be
 - [Project storage](../../../src/main/kotlin/io/github/psd2live/project/WorkspaceStore.kt)
 
 This page documents the interface and is not grounds for raising the ratings in [Measured capabilities](../../zh/STATUS.md) (Chinese). Actual results still need verification with real models, hosts and task samples.
+
+### Interior surface authoring
+
+`interior_put` is a background, batchable operation shared with the native dock. Require `state` and `target` (mesh id or `mesh:<id>`); optional `enabled`, `settings`, `motion`, two `parameters` ids, and `guides`. An enabled-only update retains the recipe without rebaking. Omitted bindings prefer body X/Y; an explicit empty id creates a private source. The stored native fields and physics use standard export paths. See the interior specification for ranges and safety/recovery behavior.

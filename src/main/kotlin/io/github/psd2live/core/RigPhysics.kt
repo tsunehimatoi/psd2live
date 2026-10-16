@@ -260,7 +260,7 @@ data class RigPhysicsEdit(
 }
 
 /** Where a physics group comes from. Every generated group can be replaced or turned off. */
-enum class PhysicsOrigin { PRESET, SKELETON, SWING, SIMULATION, CUSTOM }
+enum class PhysicsOrigin { PRESET, SKELETON, SWING, SIMULATION, INTERIOR, CUSTOM }
 
 /** Why a group does not reach the model. */
 data class PhysicsIssue(val code: Code, val parameter: String? = null, val group: String? = null) {

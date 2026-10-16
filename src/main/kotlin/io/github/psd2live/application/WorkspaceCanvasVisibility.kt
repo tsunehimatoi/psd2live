@@ -40,6 +40,8 @@ data class CanvasVisibilityScope(val layers: List<CanvasLayer>, val layerIds: Se
 }
 
 sealed interface CanvasVisibilityIntent {
+    /** Restore a temporary view operation without changing document visibility. */
+    data class Restore(val value: CanvasVisibility) : CanvasVisibilityIntent
     data class Layers(val visibility: Map<String, Boolean>) : CanvasVisibilityIntent
     data class Deformers(val visibility: Map<String, Boolean>) : CanvasVisibilityIntent
     data class AllLayers(val visible: Boolean) : CanvasVisibilityIntent
@@ -57,6 +59,11 @@ object CanvasVisibilityProcessor {
         fun layers() = requireNotNull(scope) { "No model is loaded" }.layers
         fun requireLayer(id: String) = require(scope == null || id in scope.layerIds) { "Layer not found: $id" }
         return when (intent) {
+            is CanvasVisibilityIntent.Restore -> {
+                val value=intent.value
+                require(scope==null || (value.layers.keys.all { it in scope.layerIds } && value.deformers.keys.all { it in scope.deformerIds }))
+                value
+            }
             // Any explicit layer choice ends a solo without restoring it, as the hierarchy always has.
             is CanvasVisibilityIntent.Layers -> {
                 require(intent.visibility.isNotEmpty()) { "Provide at least one layer" }
