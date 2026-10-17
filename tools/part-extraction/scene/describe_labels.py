@@ -30,7 +30,7 @@ def glue_pairs(glue_dir: Path | None) -> dict[str, list[tuple[str, str]]]:
     pairs = {}
     for tsv in (glue_dir.glob("*.tsv") if glue_dir else []):
         for line in tsv.read_text(encoding="utf-8").splitlines()[1:]:
-            c = line.split("	")
+            c = line.split("\t")
             if len(c) >= 7 and c[1] not in ("none", "error"):
                 pairs.setdefault(c[0], []).append((c[2], c[5]))
     return pairs
@@ -71,7 +71,7 @@ def main(root: Path, families: Path, describe: list[Path], glue_dir: Path | None
         idx = sc / "index.tsv"
         if idx.exists():
             for line in idx.read_text(encoding="utf-8").splitlines()[1:]:
-                k, m = line.split("	")[:2]
+                k, m = line.split("\t")[:2]
                 model_of[(sc.name, k)] = m
     tags = {}  # (scene, key) -> mesh -> tag, or None (unknown, effect, background) to leave the mesh out
     for line in (l for path in describe for l in path.read_text(encoding="utf-8").splitlines()):
