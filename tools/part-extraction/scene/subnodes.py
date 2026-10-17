@@ -2,6 +2,7 @@
 front hair, each prompted in the reviewer's words.
 
   python subnodes.py SCENE_ROOT DESCRIBE.jsonl[,DESCRIBE.jsonl...] OUT.jsonl [PER_GROUP] [LAYER_UNITS.jsonl]
+      [LAYERED_REVIEW.jsonl]
 
 DESCRIBE.jsonl is describe.py's collect output. Within a model, meshes whose names agree once synonyms are folded
 (lock, tuft and strand; bangs and front hair; shade and shadow) make a group per tag, role and side:
@@ -11,9 +12,11 @@ DESCRIBE.jsonl is describe.py's collect output. Within a model, meshes whose nam
   nodes of their own ("the front hair strand"); the hint, the node's visible area, tells them apart.
 A piece is a mesh, or every mesh of a layer cut apart (layer_units.py), so a strand is never a segment of it. A
 picture laid in front of and behind something (a sleeve around a hand) gives three nodes: the whole thing, its part in
-front of what lies between and its part behind it.
+front of what lies between and its part behind it; with LAYERED_REVIEW (layered_review.py collect) only the pairs a
+reviewer kept, in the reviewer's names.
 Guesses (sure false) are kept: they are mostly about which tag a piece falls under, and the prompt is the name. Writes one line per node for NodeDatasetTool
-(SUBNODES): {"model", "node", "tag", "role", "prompt", "meshes"}, each model's nodes in a fixed shuffled order.
+(SUBNODES): {"model", "node", "tag", "role", "prompt", "meshes"}, each model's nodes in a fixed shuffled order, the
+front-and-back ones first.
 """
 import json
 import random
@@ -55,8 +58,16 @@ def plural(phrase: str) -> str:
     return phrase if phrase.endswith("s") else phrase + "s"
 
 
-def main(root: Path, describe: list[Path], out: Path, per_group: int = 3, units_path: Path | None = None) -> None:
+def main(root: Path, describe: list[Path], out: Path, per_group: int = 3, units_path: Path | None = None,
+         review_path: Path | None = None) -> None:
     layers = read_units(units_path)
+    review = None
+    if review_path:
+        review = {}
+        for line in review_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                r = json.loads(line)
+                review[(r["model"], r["pair"])] = r
     models = {}
     for scene_dir in root.glob("scene*"):
         idx = scene_dir / "index.tsv"
@@ -140,6 +151,11 @@ def main(root: Path, describe: list[Path], out: Path, per_group: int = 3, units_
                 # What lies between, in the reviewer's words; a thing passing in front of and behind more of itself
                 # has no clear front.
                 other_name = Counter(clean(r["part"]) for r in over).most_common(1)[0][0]
+                if review is not None:
+                    seen = review.get((model, front[0]))
+                    if not seen or not seen["keep"]:
+                        continue
+                    name, other_name = clean(seen["name"]), clean(seen["other"])
                 if key(tag, other_name) == key(tag, name):
                     continue
                 other = f"the {other_name}"
@@ -149,6 +165,7 @@ def main(root: Path, describe: list[Path], out: Path, per_group: int = 3, units_
                     nodes.append({"model": model, "node": f"d_{tag}_layered{n}_{kind}", "tag": tag, "role": "base",
                                   "prompt": words, "meshes": sorted(i for i in ids if i in meshes)})
             random.Random(model).shuffle(nodes)
+            nodes.sort(key=lambda n: "_layered" not in n["node"])  # few and reviewed: never cut by SUBNODES_PER_MODEL
             for n in nodes:
                 f.write(json.dumps(n, ensure_ascii=False) + "\n")
                 written["single" if len(n["meshes"]) == 1 else "group"] += 1
@@ -158,4 +175,4 @@ def main(root: Path, describe: list[Path], out: Path, per_group: int = 3, units_
 
 if __name__ == "__main__":
     main(Path(sys.argv[1]), [Path(p) for p in sys.argv[2].split(",")], Path(sys.argv[3]), *(int(a) for a in sys.argv[4:5]),
-         *(Path(a) for a in sys.argv[5:6]))
+         *(Path(a) for a in sys.argv[5:7]))

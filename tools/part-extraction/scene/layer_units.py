@@ -1,15 +1,18 @@
 """Which meshes of a model are one drawn layer, and which layers are one picture laid in front of and behind something.
 
-  python layer_units.py SCENE_ROOT GLUE_DIR OUT.jsonl
+  python layer_units.py SCENE_ROOT GLUE_DIR OUT.jsonl [DESCRIBE.jsonl[,DESCRIBE.jsonl...]]
 
 A Live2D author cuts a layer into meshes to move its parts apart (Cubism's skinning cuts a strand into one segment per
 bone) and glues the cut edges. A cut keeps one picture, so the glued vertices sit at the same texture coordinates on
 both sides; layers drawn apart and glued at a seam (a stocking and its shoe, line art and its colour) do not. So:
 
 - glued meshes whose cut edge lies at one place on the texture (median UV gap under GAP) are one layer, unless
-- something else is drawn between them that covers either of them (OVERLAP of the smaller one's pixels): then the
+- something else is drawn between them that covers either of them (OVERLAP of the smaller one's pixels; a side not shown
+  at rest has none to cover): then the
   picture was laid in front of and behind it (a sleeve around a hand, a strand passing behind the body), and the two
-  sides stay apart as the front and back of one thing.
+  sides stay apart as the front and back of one thing. Only a drawn piece counts as between: with the reviewer's roles
+  (DESCRIBE, describe.py collect) line art, shading and highlights do not, since a layer whose line art is drawn on a
+  separate layer above its colour (line and colour separated) is still one picture.
 
 The meshes of a skinning part ("<layer>_Skinning", "<layer>(蒙皮)") are one layer too where glue says nothing. GLUE_DIR
 holds GlueSurveyTool's tables of the family representatives; each family member takes its representative's units by
@@ -69,7 +72,7 @@ class Pixels:
         return int(p[0].sum()) if p else 0
 
 
-def units_of(folder: Path, scene: dict, glues: list[tuple[str, str, float]]):
+def units_of(folder: Path, scene: dict, glues: list[tuple[str, str, float]], roles: dict[str, str] | None = None):
     meshes = {m["id"]: m for m in scene["meshes"]}
     names = {p["id"]: p["name"] for p in scene["parts"]}
     pixels = Pixels(folder, scene)
@@ -90,9 +93,10 @@ def units_of(folder: Path, scene: dict, glues: list[tuple[str, str, float]]):
         if a not in meshes or b not in meshes or gap >= GAP:
             continue  # drawn apart: separate layers
         lo, hi = sorted([meshes[a]["render"], meshes[b]["render"]])
-        small = max(1, min(pixels.size(a), pixels.size(b)))
-        between = [m["id"] for m in scene["meshes"] if lo < m["render"] < hi and m.get("opacity", 1) >= 0.05
+        small = min(pixels.size(a), pixels.size(b))
+        between = small and [m["id"] for m in scene["meshes"] if lo < m["render"] < hi and m.get("opacity", 1) >= 0.05
                    and m.get("part") not in (meshes[a].get("part"), meshes[b].get("part"))
+                   and (roles or {}).get(m["id"], "base") == "base"
                    and max(pixels.overlap(m["id"], a), pixels.overlap(m["id"], b)) >= OVERLAP * small]
         if between:
             front, back = (a, b) if meshes[a]["render"] > meshes[b]["render"] else (b, a)
@@ -131,8 +135,13 @@ def read(path: Path | None) -> dict[str, dict]:
     return out
 
 
-def main(root: Path, glue_dir: Path, out: Path) -> None:
+def main(root: Path, glue_dir: Path, out: Path, describe: list[Path] = ()) -> None:
     glues = glued(glue_dir)
+    roles = defaultdict(dict)  # "scene/key" -> mesh -> the reviewer's role
+    for line in (l for path in describe for l in path.read_text(encoding="utf-8").splitlines()):
+        if line.strip():
+            d = json.loads(line)
+            roles[f"{d['scene']}/{d['key']}"][d["mesh"]] = d.get("role")
     families = json.loads((root / "families.json").read_text(encoding="utf-8"))
     model_of = {}
     for sc in root.glob("scene*"):
@@ -148,7 +157,7 @@ def main(root: Path, glue_dir: Path, out: Path) -> None:
             if rep not in model_of or model_of[rep] not in glues and not os.path.exists(root / rep / "scene.json"):
                 continue
             scene = json.loads((root / rep / "scene.json").read_text(encoding="utf-8"))
-            units, layered = units_of(root / rep, scene, glues.get(model_of[rep], []))
+            units, layered = units_of(root / rep, scene, glues.get(model_of[rep], []), roles.get(rep))
             for member in family["members"]:
                 if member not in model_of or not (root / member / "scene.json").exists():
                     continue
@@ -165,4 +174,4 @@ def main(root: Path, glue_dir: Path, out: Path) -> None:
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]))
+    main(Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), [Path(p) for p in sys.argv[4].split(",")] if len(sys.argv) > 4 else [])
