@@ -1,9 +1,9 @@
 """Training pairs from NodeDatasetTool renders: (close-up, hint) -> the node alone, with a prompt from its tag.
 
   python make_node_pairs.py OUT NODES_DIR [NODES_DIR...] [--verdicts V.jsonl] [--families F.json] [--held H,...]
-      [--size 768] [--min 128] [--reviewed-only]
+      [--size 768] [--min 128] [--reviewed-only] [--styles styles.tsv]
 
-OUT/train_in (close-up), OUT/train_hint (visible area), OUT/train_tgt (+ .txt prompt), OUT/test/<name>_{input,hint,
+OUT/train_in (close-up, JPEG), OUT/train_hint (visible area), OUT/train_tgt (+ .txt prompt), OUT/test/<name>_{input,hint,
 target}.png and OUT/test/prompts.jsonl. Verdicts (review_nodes.py) relabel or drop nodes; with --reviewed-only
 nodes nobody reviewed are left out. A model whose family holds a held-out model goes to the test set whole.
 """
@@ -28,10 +28,40 @@ PHRASES = {
 GRAY = (128, 128, 128)
 
 
-def prompt(tag: str, piece: int) -> str:
+def prompt(tag: str, piece: int, style: dict | None = None) -> str:
+    """The node in words; where authors build the part in different ways, the way this model's author did."""
     what = PHRASES[tag] + (", one piece of it" if piece else "")
+    style = style or {}
+    if tag == "mouth" and style.get("mouth.skin_border") in ("True", "False"):
+        what += ", with the skin-coloured patch around it" if style["mouth.skin_border"] == "True" else ", lips and lines only"
     return (f"Live2D layer split: keep only {what}, the part marked in the second image, drawn complete including "
             f"any part hidden behind other layers, exactly in place, on a flat gray background.")
+
+
+def write_pair(j: dict, out: str, index: int) -> None:
+    """One pair: the close-up on a random light background, the hint, the target on gray; training pairs flipped
+    at random. Each pair draws from its own seed, so pairs come out the same however the work is split."""
+    rng = random.Random(index)
+    out = Path(out)
+    inp = Image.open(f"{j['stem']}_input.png").convert("RGBA")
+    hint = Image.open(f"{j['stem']}_hint.png").convert("RGB")
+    tgt = Image.open(f"{j['stem']}_target.png").convert("RGBA")
+    bg = tuple(rng.randint(200, 250) for _ in range(3))
+    side = j["side"]
+    if j["test"]:
+        name = j["test_name"]
+        over(inp, bg).resize((side, side), Image.LANCZOS).save(out / "test" / f"{name}_input.png")
+        hint.resize((side, side), Image.NEAREST).save(out / "test" / f"{name}_hint.png")
+        over(tgt, GRAY).resize((side, side), Image.LANCZOS).save(out / "test" / f"{name}_target.png")
+        return
+    images = [inp, hint, tgt]
+    if rng.random() < 0.5:
+        images = [i.transpose(Image.FLIP_LEFT_RIGHT) for i in images]
+    name = j["name"]
+    over(images[0], bg).resize((side, side), Image.LANCZOS).save(out / "train_in" / f"{name}.jpg", quality=95)
+    images[1].resize((side, side), Image.NEAREST).save(out / "train_hint" / f"{name}.png")
+    over(images[2], GRAY).resize((side, side), Image.LANCZOS).save(out / "train_tgt" / f"{name}.png")
+    (out / "train_tgt" / f"{name}.txt").write_text(j["prompt"], encoding="utf-8")
 
 
 def over(img: Image.Image, color) -> Image.Image:
@@ -50,15 +80,23 @@ def main():
     ap.add_argument("--size", type=int, default=768)
     ap.add_argument("--min", type=int, default=128)
     ap.add_argument("--reviewed-only", action="store_true")
+    ap.add_argument("--pieces-once", action="store_true", help="only the rest-pose close-up of each piece")
+    ap.add_argument("--styles", help="styles.tsv from styles.py: authoring conventions by model")
     a = ap.parse_args()
     out = Path(a.out)
-    rng = random.Random(0)
     verdicts = {}
     if a.verdicts:
         for line in Path(a.verdicts).read_text(encoding="utf-8").splitlines():
             if line.strip():
                 v = json.loads(line)
                 verdicts[(v["dir"], v["key"], v["node"])] = v
+    styles = {}
+    if a.styles:
+        rows = Path(a.styles).read_text(encoding="utf-8").splitlines()
+        head = rows[0].split("\t")
+        for row in rows[1:]:
+            values = dict(zip(head, row.split("\t")))
+            styles[values["model"]] = values
     held = [h for h in a.held.split(",") if h]
     held_models = set()
     if a.families and held:
@@ -68,9 +106,7 @@ def main():
                 held_models.update(f["models"])
     for d in ("train_in", "train_hint", "train_tgt", "test"):
         (out / d).mkdir(parents=True, exist_ok=True)
-    n_train = n_test = dropped = small = 0
-    stats = {}
-    tests = []
+    jobs, dropped, small = [], 0, 0
     for nodes_dir in map(Path, a.nodes):
         for line in (nodes_dir / "samples.jsonl").read_text(encoding="utf-8").splitlines():
             if not line.strip():
@@ -78,6 +114,8 @@ def main():
             s = json.loads(line)
             if s["pixels"] < a.min:
                 small += 1
+                continue
+            if a.pieces_once and s["piece"] and s["variant"]:
                 continue
             v = verdicts.get((nodes_dir.name, s["key"], s["node"]))
             if v is not None and not v["keep"]:
@@ -88,31 +126,24 @@ def main():
             tag = v["tag"] if v else s["tag"]
             if tag not in PHRASES:
                 continue
-            stem = nodes_dir / s["key"] / f"{s['node']}_{s['variant']}"
-            side = min(a.size, max(256, s["pixels"] // 64 * 64))
-            inp = Image.open(f"{stem}_input.png")
-            hint = Image.open(f"{stem}_hint.png").convert("RGB")
-            tgt = Image.open(f"{stem}_target.png")
-            bg = tuple(rng.randint(200, 250) for _ in range(3))
             test = s["model"] in held_models or any(h in s["model"] for h in held)
-            if test:
-                name = f"{nodes_dir.name}_{s['key']}_{s['node']}_{s['variant']}"
-                over(inp, bg).resize((side, side), Image.LANCZOS).save(out / "test" / f"{name}_input.png")
-                hint.resize((side, side), Image.NEAREST).save(out / "test" / f"{name}_hint.png")
-                over(tgt, GRAY).resize((side, side), Image.LANCZOS).save(out / "test" / f"{name}_target.png")
-                tests.append({"name": name, "tag": tag, "prompt": prompt(tag, s["piece"])})
-                n_test += 1
-                continue
-            images = [inp.convert("RGBA"), hint, tgt.convert("RGBA")]
-            if rng.random() < 0.5:
-                images = [i.transpose(Image.FLIP_LEFT_RIGHT) for i in images]
-            name = f"{n_train:06d}"
-            over(images[0], bg).resize((side, side), Image.LANCZOS).save(out / "train_in" / f"{name}.png")
-            images[1].resize((side, side), Image.NEAREST).save(out / "train_hint" / f"{name}.png")
-            over(images[2], GRAY).resize((side, side), Image.LANCZOS).save(out / "train_tgt" / f"{name}.png")
-            (out / "train_tgt" / f"{name}.txt").write_text(prompt(tag, s["piece"]), encoding="utf-8")
-            stats[tag] = stats.get(tag, 0) + 1
-            n_train += 1
+            jobs.append({"stem": str(nodes_dir / s["key"] / f"{s['node']}_{s['variant']}"), "side": min(a.size, max(256, s["pixels"] // 64 * 64)),
+                         "test": test, "tag": tag, "prompt": prompt(tag, s["piece"], styles.get(s["model"])),
+                         "test_name": f"{nodes_dir.name}_{s['key']}_{s['node']}_{s['variant']}"})
+    train_index = 0
+    for j in jobs:  # numbering fixed before the workers run, so the output does not depend on their order
+        if not j["test"]:
+            j["name"] = f"{train_index:06d}"
+            train_index += 1
+    from multiprocessing import Pool
+    with Pool(32) as pool:
+        pool.starmap(write_pair, [(j, str(out), i) for i, j in enumerate(jobs)])
+    tests = [{"name": j["test_name"], "tag": j["tag"], "prompt": j["prompt"]} for j in jobs if j["test"]]
+    stats = {}
+    for j in jobs:
+        if not j["test"]:
+            stats[j["tag"]] = stats.get(j["tag"], 0) + 1
+    n_train, n_test = train_index, len(tests)
     (out / "test" / "prompts.jsonl").write_text("\n".join(json.dumps(t) for t in tests) + "\n", encoding="utf-8")
     print(f"train {n_train}, test {n_test}, dropped {dropped} by review, {small} too small")
     print(dict(sorted(stats.items(), key=lambda kv: -kv[1])))

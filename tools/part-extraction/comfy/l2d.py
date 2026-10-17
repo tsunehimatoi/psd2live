@@ -50,8 +50,10 @@ def train_graph(folder_in: str, folder_tgt: str, name: str, steps: int, rank: in
 
 
 def edit_graph(image: str, prompt: str, width: int, height: int, lora: str | None = None, strength: float = 1.0,
-               steps: int = 4, seed: int = 1, name: str = "l2d_edit", unet: str = UNET, cfg: float = 1.0) -> dict:
-    """The distilled model samples in 4 steps without guidance; the base model wants about 20 to 30 steps and cfg 3 to 5."""
+               steps: int = 4, seed: int = 1, name: str = "l2d_edit", unet: str = UNET, cfg: float = 1.0,
+               refs: tuple[str, ...] = ()) -> dict:
+    """The distilled model samples in 4 steps without guidance; the base model wants about 20 to 30 steps and cfg 3 to 5.
+    refs are further reference images after [image] (the general split's hint: the part's visible area)."""
     g = Graph(prefix="l2d")
     model = g("UNETLoader", unet_name=unet, weight_dtype="default")
     if lora:
@@ -60,10 +62,11 @@ def edit_graph(image: str, prompt: str, width: int, height: int, lora: str | Non
     vae = g("VAELoader", vae_name=VAE)
     positive = g("CLIPTextEncode", clip=clip, text=prompt)
     negative = g("ConditioningZeroOut", conditioning=positive)
-    reference = g("VAEEncode", pixels=g.load(image), vae=vae)
-    positive = g("ReferenceLatent", conditioning=positive, latent=reference)
-    if cfg != 1.0:
-        negative = g("ReferenceLatent", conditioning=negative, latent=reference)
+    for picture in (image, *refs):
+        reference = g("VAEEncode", pixels=g.load(picture), vae=vae)
+        positive = g("ReferenceLatent", conditioning=positive, latent=reference)
+        if cfg != 1.0:
+            negative = g("ReferenceLatent", conditioning=negative, latent=reference)
     sample = g.add("SamplerCustomAdvanced", noise=g("RandomNoise", noise_seed=seed),
                    guider=g("CFGGuider", model=model, positive=positive, negative=negative, cfg=cfg),
                    sampler=g("KSamplerSelect", sampler_name="euler"), sigmas=g("Flux2Scheduler", steps=steps, width=width, height=height),

@@ -83,7 +83,9 @@ def verdicts(out: Path, target: Path) -> None:
             t = tiles.get(str(number))
             if not t:
                 continue
-            keep = bool(a.get("clean", True)) and a.get("sure", True) and a.get("tag") not in (None, "unknown")
+            # Kept when clean and either the reviewer is sure or it agrees with the rules: two independent
+            # readings that match are confirmation enough.
+            keep = bool(a.get("clean", True)) and (a.get("sure", True) or a.get("tag") == t["tag"]) and a.get("tag") not in (None, "unknown")
             n_keep += keep
             n_changed += keep and a["tag"] != t["tag"]
             lines.append(json.dumps({"dir": t["dir"], "key": t["key"], "node": t["node"], "rules": t["tag"],
