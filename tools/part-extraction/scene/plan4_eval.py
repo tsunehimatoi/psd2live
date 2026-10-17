@@ -17,6 +17,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).parent))
 import split_image as si  # noqa: E402
+from plan4_data import load_amodal  # noqa: E402
 
 SIZES = (0, 1000, 4000, 16000, 10 ** 9)  # true layer pixels in the 1024 close-up
 
@@ -32,6 +33,7 @@ def main():
     ap.add_argument("--no-eyes", action="store_true", help="no close-ups of the eyes and mouth inside the head's")
     ap.add_argument("--no-join", action="store_true", help="leave layers kin big parts' borders cut in two apart")
     ap.add_argument("--whole", action="store_true", help="no big parts: the whole picture is one close-up")
+    ap.add_argument("--v5", action="store_true", help="CHECKPOINT is a planner v5 (train_planner5.py), planned by plan5.py")
     a = ap.parse_args()
     data = Path(a.data)
     stems = sorted(str(p.with_suffix("")) for p in data.glob("*_whole_*.json"))
@@ -40,10 +42,15 @@ def main():
         si.p4.ABSORB = a.absorb
     if a.merge is not None:
         si.p4.MERGE = a.merge
-    run = si.Planner4Run(Path(a.checkpoint))
+    if a.v5:
+        import plan5
+        run = plan5.Planner5Run(Path(a.checkpoint))
+    else:
+        run = si.Planner4Run(Path(a.checkpoint))
     classes = run.classes
     found, planned, true, matched, everything = 0, 0, 0, 0, 0
     kinds = defaultdict(int)
+    covered, fits = [0, 0], []
     by_size = defaultdict(lambda: [0, 0])
     by_tag = defaultdict(lambda: [0, 0])
     for stem in stems:
@@ -54,7 +61,10 @@ def main():
         image = rgb.convert("RGBA")
         image.putalpha(Image.fromarray((silhouette * 255).astype(np.uint8)))
         tags = np.where(silhouette, classes.index("topwear"), 255).astype(np.uint8) if a.whole else None
-        leaves, _ = si.plan_layers(image, silhouette, run, a.grain, 400, tags, eyes=not a.no_eyes, join=not a.no_join)
+        if a.v5:
+            leaves, _ = plan5.plan_layers(image, silhouette, run, a.grain, 400)
+        else:
+            leaves, _ = si.plan_layers(image, silhouette, run, a.grain, 400, tags, eyes=not a.no_eyes, join=not a.no_join)
         # A planned layer mostly on pixels left out of the truth (layers too small at this size, fragments) is not
         # scored: it may well be right.
         ignored = inst == 65535
@@ -62,6 +72,20 @@ def main():
         planned += sum(1 for m in masks if (m & ignored).sum() * 2 < m.sum())
         everything += len(masks)
         hit = set()
+        # Whole shapes (plan4_data.py export --amodal): covered layers found by a planned whole shape, and how well the
+        # planned whole shapes of found layers fit.
+        amodal = Path(stem + "_amodal.npz")
+        if amodal.exists() and any("whole" in leaf for leaf in leaves):
+            half = inst.shape[0] // 2
+            truth = load_amodal(amodal, (half, half))
+            shrink = lambda m: np.asarray(Image.fromarray(m.astype(np.uint8) * 255).resize((half, half), Image.NEAREST)) > 127
+            planned_whole = [shrink(leaf["whole"]) for leaf in leaves]
+            for k, info in enumerate(meta["instances"]):
+                if info.get("shown", True):
+                    continue
+                covered[1] += 1
+                ious = [(w & truth[k]).sum() / max(1, (w | truth[k]).sum()) for w in planned_whole]
+                covered[0] += bool(ious) and max(ious) > 0.5
         for k, info in enumerate(meta["instances"], start=1):
             t = inst == k
             n = int(t.sum())
@@ -74,6 +98,9 @@ def main():
                 if inter * 2 > n and inter / int((m | t).sum()) > 0.5:
                     ok = True
                     hit.add(j)
+                    if amodal.exists() and "whole" in leaves[j]:
+                        w = planned_whole[j]
+                        fits.append((w & truth[k - 1]).sum() / max(1, (w | truth[k - 1]).sum()))
                     break
             found += ok
             size = next(f"{SIZES[i]}-{SIZES[i + 1]}" for i in range(len(SIZES) - 1) if SIZES[i] <= n < SIZES[i + 1])
@@ -89,8 +116,9 @@ def main():
             ids, counts = np.unique(inst[m & (inst > 0) & ~ignored], return_counts=True)
             kinds["piece" if len(ids) and counts.max() * 4 >= 3 * counts.sum() else "across"] += 1
         print(Path(stem).name, len(masks), "planned,", sum(1 for k in range(1, len(meta["instances"]) + 1) if (inst == k).any()), "true", file=sys.stderr)
-    line = {"checkpoint": a.checkpoint, "grain": a.grain, "absorb": si.p4.ABSORB, "merge": si.p4.MERGE, "eyes": not a.no_eyes, "join": not a.no_join, "whole": a.whole, "pictures": len(stems), "layers": everything, "planned": planned, "true": true,
+    line = {"checkpoint": a.checkpoint, "grain": a.grain, "v5": a.v5, "absorb": si.p4.ABSORB, "merge": si.p4.MERGE, "eyes": not a.no_eyes, "join": not a.no_join, "whole": a.whole, "pictures": len(stems), "layers": everything, "planned": planned, "true": true,
             "precision": round(matched / max(planned, 1), 3), "recall": round(found / max(true, 1), 3), "unmatched": dict(kinds),
+            "covered_recall": [covered[1], round(covered[0] / max(covered[1], 1), 3)], "whole_iou": round(float(np.mean(fits)), 3) if fits else None,
             "recall_by_size": {k: [v[0], round(v[1] / v[0], 3)] for k, v in sorted(by_size.items(), key=lambda kv: int(kv[0].split("-")[0]))},
             "recall_by_tag": {k: [v[0], round(v[1] / v[0], 3)] for k, v in sorted(by_tag.items(), key=lambda kv: -kv[1][0])}}
     print(json.dumps(line))

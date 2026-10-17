@@ -4,11 +4,15 @@ repainted whole (hidden parts included) by the split LoRA from a close-up of it,
   python split_image.py IMAGE OUT_DIR --planner planner.pt --lora NAME [--min 400] [--size 1024]
   python split_image.py IMAGE OUT_DIR --planner4 planner4.pt [--planner planner.pt] [--grain unit] --lora NAME
   python split_image.py IMAGE OUT_DIR --planner4 planner4.pt --plan-only
+  python split_image.py IMAGE OUT_DIR --planner5 planner5.pt [--grain unit] (--lora NAME | --plan-only)
 
 With --planner4 (train_planner4.py) the split has as many layers as the picture holds: the big parts found on the whole
 picture (by --planner when given) are each planned again in a close-up, the head as one, and their pixels clustered
 into parts, the groups in them and the single layers (--grain stops sooner); each layer sits in the Layout group of
 its big part, part and group. --plan-only writes the plan (plan.png, plan_layers.png, regions/, plan.json) and stops.
+With --planner5 (train_planner5.py, plan5.py) the picture is planned in tiles at three zooms instead, each layer with
+its whole shape too (regions/<name>_whole.png): a layer the picture does not show at all is planned by it alone, and
+its whole shape is the LoRA's hint.
 
 Needs the planner checkpoint (train_planner.py) on a local GPU and a ComfyUI with the LoRA (L2D_COMFY_URL, see
 comfy/env.py). Writes OUT_DIR/layout.json, a PSD2Live Layout manifest (docs/zh/spec/LAYOUT_MANIFEST.md) that opens
@@ -360,14 +364,15 @@ def main():
     ap.add_argument("out")
     ap.add_argument("--planner", help="planner v3 (train_planner.py): the tags, or with --planner4 only the big parts")
     ap.add_argument("--planner4", help="planner v4 (train_planner4.py): every part's layers, planned in close-ups")
+    ap.add_argument("--planner5", help="planner v5 (train_planner5.py): every layer, shown or covered, planned in tiles")
     ap.add_argument("--grain", choices=("part", "group", "unit"), default="unit", help="how finely planner v4 splits")
     ap.add_argument("--plan-only", action="store_true", help="write the plan (plan.png, regions/, plan.json) and stop")
     ap.add_argument("--lora")
     ap.add_argument("--min", type=int, default=400)
     ap.add_argument("--size", type=int, default=1024)
     a = ap.parse_args()
-    if not (a.planner or a.planner4) or not (a.lora or a.plan_only):
-        ap.error("needs --planner or --planner4, and --lora unless --plan-only")
+    if not (a.planner or a.planner4 or a.planner5) or not (a.lora or a.plan_only):
+        ap.error("needs --planner, --planner4 or --planner5, and --lora unless --plan-only")
     out = Path(a.out)
     (out / "parts").mkdir(parents=True, exist_ok=True)
     (out / "work").mkdir(exist_ok=True)
@@ -386,13 +391,20 @@ def main():
         run = Planner4Run(Path(a.planner4))
         leaves, tags = plan_layers(image, silhouette, run, a.grain, a.min, tags)
         classes = run.classes
+    if a.planner5:
+        import plan5
+        run = plan5.Planner5Run(Path(a.planner5))
+        leaves, tags = plan5.plan_layers(image, silhouette, run, a.grain, a.min)
+        classes = run.classes
+    layered = bool(a.planner4 or a.planner5)
     if "background" in classes:
         tags[tags == classes.index("background")] = 255
     rng = np.random.RandomState(1)
     palette = rng.randint(40, 255, (256, 3)).astype(np.uint8)
     palette[255] = 0
     Image.fromarray(palette[tags]).save(out / "plan.png")
-    if a.planner4:
+    wholes = {}
+    if layered:
         # Each leaf: its tag and side, its Layout group (the big part, then the part and group it was clustered into),
         # and whether it is one of several pieces of its tag in its big part.
         many = {}
@@ -404,8 +416,10 @@ def main():
             ids = [p for p in leaf["path"] if not isinstance(p, str)]
             return "/".join([leaf["big"]] + named + [f"{g[0]}{j}" for g, j in zip(("part", "group"), ids[:-1])])
 
-        found = [(leaf["tag"], leaf["side"], leaf["mask"], group_of(leaf),
+        # A covered layer (planner v5) has no pixels of its own: its whole shape is its region.
+        found = [(leaf["tag"], leaf["side"], leaf["mask"] if leaf["mask"].any() else leaf["whole"], group_of(leaf),
                   int(many[(leaf["big"], leaf["tag"])] > 1), leaf["roles"]) for leaf in leaves]
+        wholes = {n: leaf["whole"] for n, leaf in enumerate(leaves) if "whole" in leaf}
         sheet = np.zeros((image.height, image.width, 3), np.uint8)
         for n, (tag, side, mask, group, piece, roles) in enumerate(found):
             sheet[mask] = palette[n % 255]
@@ -414,12 +428,15 @@ def main():
         found = [(tag, side, mask, "head" if tag in HEAD else None, 0, [])
                  for tag, side, mask in sorted(nodes(tags, classes, a.min), key=lambda t: ORDER.index(t[0]) if t[0] in ORDER else len(ORDER))]
     names = [f"{n:02d}_{tag}_{side}" for n, (tag, side, *_) in enumerate(found)]
-    for name, (tag, side, mask, *_) in zip(names, found):
+    for n, (name, (tag, side, mask, *_)) in enumerate(zip(names, found)):
         Image.fromarray((mask * 255).astype(np.uint8)).save(out / "regions" / f"{name}.png")
+        if n in wholes:
+            Image.fromarray((wholes[n] * 255).astype(np.uint8)).save(out / "regions" / f"{name}_whole.png")
     if a.plan_only:
         (out / "plan.json").write_text(json.dumps([{"name": name, "tag": tag, "side": side, "group": group, "piece": piece, "roles": roles,
-                                                    "pixels": int(mask.sum()), "region": f"regions/{name}.png"}
-                                                   for name, (tag, side, mask, group, piece, roles) in zip(names, found)], indent=1), encoding="utf-8")
+                                                    "pixels": int(mask.sum()), "region": f"regions/{name}.png",
+                                                    **({"whole": f"regions/{name}_whole.png", "covered": bool(leaves[n].get("covered"))} if n in wholes else {})}
+                                                   for n, (name, (tag, side, mask, group, piece, roles)) in enumerate(zip(names, found))], indent=1), encoding="utf-8")
         print(len(found), "layers planned")
         return
     from env import client
@@ -445,6 +462,7 @@ def main():
             "tags": WORDS.get(tag, []) + ([own] if own else []) + [tag],
             "split": {"tag": tag, "side_on_picture": side, "order": n, "prompt": got["prompt"], "roles": roles,
                       "region": f"regions/{name}.png", "region_pixels": int(mask.sum()),
+                      **({"whole": f"regions/{name}_whole.png", "covered": bool(leaves[n].get("covered"))} if n in wholes else {}),
                       "close_up": str(got["input"].relative_to(out)).replace("\\", "/"),
                       "hint": str(got["hint"].relative_to(out)).replace("\\", "/"),
                       "generated": str(got["raw"].relative_to(out)).replace("\\", "/"),
@@ -453,7 +471,7 @@ def main():
     manifest = {"format": "psd2live-layout", "version": 1, "name": Path(a.image).stem,
                 "canvas": {"width": image.width, "height": image.height},
                 "groups": [{"path": g} for g in sorted(groups)], "layers": layers,
-                "split": {"planner": str(a.planner), "planner4": str(a.planner4), "grain": a.grain, "classes": classes,
+                "split": {"planner": str(a.planner), "planner4": str(a.planner4), "planner5": str(a.planner5), "grain": a.grain, "classes": classes,
                           "lora": a.lora, "size": a.size, "min": a.min, "plan": "plan.png", "order": ORDER}}
     (out / "layout.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
 
