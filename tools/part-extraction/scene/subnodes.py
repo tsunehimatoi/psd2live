@@ -1,7 +1,7 @@
 """Finer nodes from the reviewer's names: a skirt's lace trim, the jacket's shadow, a sleeve cuff, one strand of the
 front hair, each prompted in the reviewer's words.
 
-  python subnodes.py SCENE_ROOT DESCRIBE.jsonl OUT.jsonl [PER_GROUP] [LAYER_UNITS.jsonl]
+  python subnodes.py SCENE_ROOT DESCRIBE.jsonl[,DESCRIBE.jsonl...] OUT.jsonl [PER_GROUP] [LAYER_UNITS.jsonl]
 
 DESCRIBE.jsonl is describe.py's collect output. Within a model, meshes whose names agree once synonyms are folded
 (lock, tuft and strand; bangs and front hair; shade and shadow) make a group per tag, role and side:
@@ -55,7 +55,7 @@ def plural(phrase: str) -> str:
     return phrase if phrase.endswith("s") else phrase + "s"
 
 
-def main(root: Path, describe: Path, out: Path, per_group: int = 3, units_path: Path | None = None) -> None:
+def main(root: Path, describe: list[Path], out: Path, per_group: int = 3, units_path: Path | None = None) -> None:
     layers = read_units(units_path)
     models = {}
     for scene_dir in root.glob("scene*"):
@@ -65,7 +65,7 @@ def main(root: Path, describe: Path, out: Path, per_group: int = 3, units_path: 
                 k, model = line.split("\t")[:2]
                 models[(scene_dir.name, k)] = model
     by_model = defaultdict(list)
-    for line in describe.read_text(encoding="utf-8").splitlines():
+    for line in (l for path in describe for l in path.read_text(encoding="utf-8").splitlines()):
         if not line.strip():
             continue
         r = json.loads(line)
@@ -131,7 +131,8 @@ def main(root: Path, describe: Path, out: Path, per_group: int = 3, units_path: 
             for n, pair in enumerate(info["layered"]):
                 front, back, between = pair["front"], pair["back"], pair["between"]
                 named = [said[i] for i in front + back if i in said]
-                over = [said[i] for i in between if i in said]
+                # Only a drawn piece counts as what lies between: a strand does not pass behind its own line art.
+                over = [said[i] for i in between if i in said and said[i]["role"] == "base"]
                 if not named or not over:
                     continue
                 name = Counter(clean(r["part"]) for r in named).most_common(1)[0][0]
@@ -156,5 +157,5 @@ def main(root: Path, describe: Path, out: Path, per_group: int = 3, units_path: 
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), *(int(a) for a in sys.argv[4:5]),
+    main(Path(sys.argv[1]), [Path(p) for p in sys.argv[2].split(",")], Path(sys.argv[3]), *(int(a) for a in sys.argv[4:5]),
          *(Path(a) for a in sys.argv[5:6]))
