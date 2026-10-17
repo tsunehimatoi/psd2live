@@ -64,7 +64,7 @@ def main(root: Path, describe: Path, out: Path, per_group: int = 3) -> None:
         if not line.strip():
             continue
         r = json.loads(line)
-        if r.get("tag") not in PHRASES or not (r.get("part") or "").strip() or r.get("role") not in ROLES:
+        if r.get("tag") not in PHRASES or not (r.get("part") or "").strip() or r.get("role") not in ROLES or r.get("fragment"):
             continue
         by_model[(r["scene"], r["key"])].append(r)
     written = Counter()

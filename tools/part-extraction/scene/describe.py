@@ -305,7 +305,7 @@ def collect(out: Path, skip: set[str] = frozenset()) -> None:
                 t = by_tile.get(str(int(k) + offset)) if str(k).isdigit() else None
                 if t and isinstance(a, dict):
                     rows.append({"scene": info["scene"], "key": info["key"], "mesh": t["mesh"], "rules": t["rules"],
-                                 **{f: a.get(f) for f in ("tag", "role", "part", "detail", "sure")}})
+                                 **{f: a.get(f) for f in ("tag", "role", "part", "detail", "sure", "fragment")}})
     with open(out / "describe.jsonl", "w", encoding="utf-8") as f:
         for r in rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
