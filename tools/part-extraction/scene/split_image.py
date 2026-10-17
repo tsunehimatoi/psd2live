@@ -1,14 +1,15 @@
 """Splits a character illustration into Live2D-style layers: the planner tags every pixel, each tagged region is
 extracted whole (hidden parts included) by the split LoRA, and the layers are stacked into a PSD.
 
-  python split_image.py IMAGE OUT_DIR --planner planner.pt --lora NAME [--min 400] [--size 512]
+  python split_image.py IMAGE OUT_DIR --planner planner.pt --lora NAME [--min 400] [--size 1024]
 
 Needs the planner checkpoint (train_planner.py) on a local GPU and a ComfyUI with the LoRA (L2D_COMFY_URL, see
 comfy/env.py). Writes OUT_DIR/plan.png (tag map), OUT_DIR/layers/<order>_<tag>_<n>.png (full canvas, transparent)
 and OUT_DIR/<image>.psd with the layers bottom to top.
 
-Each layer keeps the illustration's own pixels where the part shows (its hint) and takes the LoRA's only where the
-part was hidden, so what is visible is exact and only the completion is generated.
+Each layer is the LoRA's whole picture of the part, repainted from a close-up with its surroundings at up to the
+model's native size, its background taken off by BiRefNet (ComfyUI node BiRefNetMatte); the planner's region is only
+the hint the LoRA reads. No pixel of the illustration is pasted in and no threshold or mask cuts a layer.
 """
 import argparse
 import json
@@ -32,19 +33,12 @@ ORDER = json.loads(_PRACTICES.read_text(encoding="utf-8"))["order"] if _PRACTICE
     "topwear", "neck", "neckwear", "objects", "ears", "earwear", "face", "facedetail", "nose", "mouth_inside", "mouth",
     "eyewhite", "irides", "eyelash", "eyebrow", "eyewear", "side_hair", "front_hair", "headwear"]
 PAIRED = {"irides", "eyewhite", "eyelash", "eyebrow", "ears", "earwear", "arm", "hand", "leg", "handwear", "legwear", "footwear"}
-GRAY = 128
 
 
 def close(mask: np.ndarray, r: int = 2) -> np.ndarray:
     """Dilate then erode a boolean mask by [r] pixels."""
     im = Image.fromarray(mask.astype(np.uint8) * 255)
     return np.asarray(im.filter(ImageFilter.MaxFilter(2 * r + 1)).filter(ImageFilter.MinFilter(2 * r + 1))) > 127
-
-
-def open_(mask: np.ndarray, r: int = 1) -> np.ndarray:
-    """Erode then dilate a boolean mask by [r] pixels."""
-    im = Image.fromarray(mask.astype(np.uint8) * 255)
-    return np.asarray(im.filter(ImageFilter.MinFilter(2 * r + 1)).filter(ImageFilter.MaxFilter(2 * r + 1))) > 127
 
 
 @torch.no_grad()
@@ -95,36 +89,27 @@ def words(tag: str) -> str:
 
 
 def extract(client, image: Image.Image, tag: str, mask: np.ndarray, lora: str, size: int, work: Path, n: int) -> np.ndarray:
-    """The node whole, as an RGBA canvas-sized array: the LoRA on a crop around the node, gray made transparent."""
+    """The node whole, as an RGBA canvas-sized array: the LoRA's matted picture of it from a close-up around it."""
     import l2d
     ys, xs = np.nonzero(mask)
     x0, x1, y0, y1 = xs.min(), xs.max(), ys.min(), ys.max()
     span = int(max(x1 - x0, y1 - y0) * 1.3) + 16
     cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
     box = (cx - span // 2, cy - span // 2, cx - span // 2 + span, cy - span // 2 + span)
-    side = max(256, min(size, span // 16 * 16))
+    side = max(512, min(size, span // 16 * 16))
     crop = image.convert("RGB").crop(box).resize((side, side), Image.LANCZOS)
     hint = Image.fromarray((mask * 255).astype(np.uint8)).crop(box).resize((side, side), Image.NEAREST).convert("RGB")
     crop.save(work / f"{n}_input.png")
     hint.save(work / f"{n}_hint.png")
     a = client.upload(work / f"{n}_input.png", f"l2d_split_{n}_input.png")
     b = client.upload(work / f"{n}_hint.png", f"l2d_split_{n}_hint.png")
-    files = client.run(l2d.edit_graph(a, words(tag), side, side, lora=lora, refs=(b,), name=f"split_{n}"), work, f"pred_{n}")
-    pred = np.asarray(Image.open(files[0]).convert("RGB").resize((span, span), Image.LANCZOS)).astype(np.int16)
-    alpha = (np.abs(pred - GRAY).max(axis=2) > 18).astype(np.uint8) * 255
-    alpha = open_(alpha > 0).astype(np.uint8) * 255
-    layer = np.zeros((image.height, image.width, 4), np.uint8)
-    # Paste the crop back where it lies on the canvas.
-    sx0, sy0 = max(0, box[0]), max(0, box[1])
-    sx1, sy1 = min(image.width, box[2]), min(image.height, box[3])
-    px0, py0 = sx0 - box[0], sy0 - box[1]
-    region = (slice(sy0, sy1), slice(sx0, sx1))
-    layer[region + (slice(0, 3),)] = pred[py0:py0 + sy1 - sy0, px0:px0 + sx1 - sx0].clip(0, 255).astype(np.uint8)
-    layer[region + (3,)] = alpha[py0:py0 + sy1 - sy0, px0:px0 + sx1 - sx0]
-    # Where the part shows, the illustration itself.
-    rgb = np.asarray(image.convert("RGB"))
-    layer[mask, :3] = rgb[mask]
-    layer[mask, 3] = 255
+    files = client.run(l2d.edit_graph(a, words(tag), side, side, lora=lora, refs=(b,), name=f"split_{n}", matte=True),
+                       work, f"pred_{n}")
+    # The part's picture, scaled from the generator's size to the close-up's and placed where the close-up lies.
+    pred = Image.open(files[0]).convert("RGBA").resize((span, span), Image.LANCZOS)
+    canvas = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    canvas.paste(pred, box[:2])
+    layer = np.asarray(canvas).copy()
     return layer
 
 
@@ -135,7 +120,7 @@ def main():
     ap.add_argument("--planner", required=True)
     ap.add_argument("--lora", required=True)
     ap.add_argument("--min", type=int, default=400)
-    ap.add_argument("--size", type=int, default=512)
+    ap.add_argument("--size", type=int, default=1024)
     a = ap.parse_args()
     out = Path(a.out)
     (out / "layers").mkdir(parents=True, exist_ok=True)
@@ -144,8 +129,7 @@ def main():
     flat = Image.new("RGBA", image.size, (255, 255, 255, 255))
     flat.alpha_composite(image)
     tags, classes = plan(flat, Path(a.planner))
-    # Nothing is planned where the illustration is empty, and a part's hidden rest lies under something drawn, so
-    # inside the silhouette; the planner's own background class is no part either.
+    # No part is planned where the illustration is empty, nor on the planner's own background class.
     silhouette = np.asarray(image)[..., 3] >= 128
     tags = tags.copy()
     tags[~silhouette] = 255
@@ -161,7 +145,6 @@ def main():
     layers = []
     for n, (tag, side, mask) in enumerate(found):
         layer = extract(c, flat, tag, mask, a.lora, a.size, out / "work", n)
-        layer[~silhouette, 3] = 0
         name = f"{n:02d}_{tag}_{side}"
         Image.fromarray(layer).save(out / "layers" / f"{name}.png")
         layers.append((name, layer))
