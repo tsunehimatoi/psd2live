@@ -89,6 +89,11 @@ def nodes(tags: np.ndarray, classes: list[str], min_pixels: int):
     return out
 
 
+def words(tag: str) -> str:
+    """The node's prompt; a torso hidden under the clothes is asked for with underwear on it, never bare."""
+    return prompt(tag, 0, cover="complete", wear="underwear") if tag == "body" else prompt(tag, 0)
+
+
 def extract(client, image: Image.Image, tag: str, mask: np.ndarray, lora: str, size: int, work: Path, n: int) -> np.ndarray:
     """The node whole, as an RGBA canvas-sized array: the LoRA on a crop around the node, gray made transparent."""
     import l2d
@@ -104,7 +109,7 @@ def extract(client, image: Image.Image, tag: str, mask: np.ndarray, lora: str, s
     hint.save(work / f"{n}_hint.png")
     a = client.upload(work / f"{n}_input.png", f"l2d_split_{n}_input.png")
     b = client.upload(work / f"{n}_hint.png", f"l2d_split_{n}_hint.png")
-    files = client.run(l2d.edit_graph(a, prompt(tag, 0), side, side, lora=lora, refs=(b,), name=f"split_{n}"), work, f"pred_{n}")
+    files = client.run(l2d.edit_graph(a, words(tag), side, side, lora=lora, refs=(b,), name=f"split_{n}"), work, f"pred_{n}")
     pred = np.asarray(Image.open(files[0]).convert("RGB").resize((span, span), Image.LANCZOS)).astype(np.int16)
     alpha = (np.abs(pred - GRAY).max(axis=2) > 18).astype(np.uint8) * 255
     alpha = open_(alpha > 0).astype(np.uint8) * 255

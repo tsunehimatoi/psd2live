@@ -148,7 +148,7 @@ def main():
                 held_models.update(f["models"])
     for d in ("train_in", "train_hint", "train_tgt", "test"):
         (out / d).mkdir(parents=True, exist_ok=True)
-    jobs, dropped, small = [], 0, 0
+    jobs, dropped, small, bare = [], 0, 0, 0
     for nodes_dir in map(Path, a.nodes):
         for line in (nodes_dir / "samples.jsonl").read_text(encoding="utf-8").splitlines():
             if not line.strip():
@@ -168,10 +168,15 @@ def main():
             tag = v["tag"] if v else s["tag"]
             if tag not in PHRASES:
                 continue
+            # No bare torso is taught as a completion: a body drawn whole under the clothes counts only with underwear
+            # or tight wear painted on it, and the body's finer pieces are left out.
+            cover, worn = skin_cover(dict(s, tag=tag)), wear.get((nodes_dir.name, s["key"], s["node"]))
+            if tag == "body" and (s.get("prompt") or (cover == "complete" and worn not in ("underwear", "tight"))):
+                bare += 1
+                continue
             test = s["model"] in held_models or any(h in s["model"] for h in held)
             # A finer node named by a reviewer carries its own words.
-            words = s.get("prompt") or prompt(tag, s["piece"], styles.get(s["model"]), skin_cover(dict(s, tag=tag)),
-                                              wear.get((nodes_dir.name, s["key"], s["node"])))
+            words = s.get("prompt") or prompt(tag, s["piece"], styles.get(s["model"]), cover, worn)
             jobs.append({"stem": str(nodes_dir / s["key"] / f"{s['node']}_{s['variant']}"), "side": min(a.size, max(256, s["pixels"] // 64 * 64)),
                          "test": test, "tag": tag, "prompt": words,
                          "test_name": f"{nodes_dir.name}_{s['key']}_{s['node']}_{s['variant']}", "rough": a.rough_hints})
@@ -190,7 +195,7 @@ def main():
             stats[j["tag"]] = stats.get(j["tag"], 0) + 1
     n_train, n_test = train_index, len(tests)
     (out / "test" / "prompts.jsonl").write_text("\n".join(json.dumps(t) for t in tests) + "\n", encoding="utf-8")
-    print(f"train {n_train}, test {n_test}, dropped {dropped} by review, {small} too small")
+    print(f"train {n_train}, test {n_test}, dropped {dropped} by review, {small} too small, {bare} bare torsos")
     print(dict(sorted(stats.items(), key=lambda kv: -kv[1])))
 
 
