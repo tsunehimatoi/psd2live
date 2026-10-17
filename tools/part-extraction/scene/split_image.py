@@ -1,7 +1,7 @@
 """Splits a character illustration into Live2D-style layers: the planner tags every pixel, each tagged region is
 extracted whole (hidden parts included) by the split LoRA, and the layers are stacked into a PSD.
 
-  python split_image.py IMAGE OUT_DIR --planner planner.pt --lora NAME [--min 400] [--size 1024]
+  python split_image.py IMAGE OUT_DIR --planner planner.pt --lora NAME [--min 400] [--size 1024] [--scale 1]
 
 Needs the planner checkpoint (train_planner.py) on a local GPU and a ComfyUI with the LoRA (L2D_COMFY_URL, see
 comfy/env.py). Writes OUT_DIR/plan.png (tag map), OUT_DIR/layers/<order>_<tag>_<n>.png (full canvas, transparent)
@@ -9,7 +9,9 @@ and OUT_DIR/<image>.psd with the layers bottom to top.
 
 Each layer is the LoRA's whole picture of the part, repainted from a close-up with its surroundings at up to the
 model's native size, its background taken off by BiRefNet (ComfyUI node BiRefNetMatte); the planner's region is only
-the hint the LoRA reads. No pixel of the illustration is pasted in and no threshold or mask cuts a layer.
+the hint the LoRA reads. No pixel of the illustration is pasted in and no threshold or mask cuts a layer. --scale
+makes the PSD that many times larger than the illustration, each part generated that much larger (up to --size), so
+the LoRA paints it at the art's sharpness however small the illustration is.
 """
 import argparse
 import json
@@ -88,7 +90,8 @@ def words(tag: str) -> str:
     return prompt(tag, 0, cover="complete", wear="underwear") if tag == "body" else prompt(tag, 0)
 
 
-def extract(client, image: Image.Image, tag: str, mask: np.ndarray, lora: str, size: int, work: Path, n: int) -> np.ndarray:
+def extract(client, image: Image.Image, tag: str, mask: np.ndarray, lora: str, size: int, work: Path, n: int,
+            scale: float = 1.0) -> np.ndarray:
     """The node whole, as an RGBA canvas-sized array: the LoRA's matted picture of it from a close-up around it."""
     import l2d
     ys, xs = np.nonzero(mask)
@@ -96,8 +99,8 @@ def extract(client, image: Image.Image, tag: str, mask: np.ndarray, lora: str, s
     span = int(max(x1 - x0, y1 - y0) * 1.3) + 16
     cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
     box = (cx - span // 2, cy - span // 2, cx - span // 2 + span, cy - span // 2 + span)
-    side = max(256, min(size, span // 16 * 16))  # the native size, as the pairs were trained
-    crop = image.convert("RGB").crop(box).resize((side, side), Image.LANCZOS)
+    side = max(256, min(size, int(span * scale) // 16 * 16))  # the part's size on the output canvas, as trained
+    crop = image.convert("RGB").crop(box).resize((side, side), Image.LANCZOS if side <= span else Image.BICUBIC)
     hint = Image.fromarray((mask * 255).astype(np.uint8)).crop(box).resize((side, side), Image.NEAREST).convert("RGB")
     crop.save(work / f"{n}_input.png")
     hint.save(work / f"{n}_hint.png")
@@ -106,9 +109,10 @@ def extract(client, image: Image.Image, tag: str, mask: np.ndarray, lora: str, s
     files = client.run(l2d.edit_graph(a, words(tag), side, side, lora=lora, refs=(b,), name=f"split_{n}", matte=True),
                        work, f"pred_{n}")
     # The part's picture, scaled from the generator's size to the close-up's and placed where the close-up lies.
-    pred = Image.open(files[0]).convert("RGBA").resize((span, span), Image.LANCZOS)
-    canvas = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    canvas.paste(pred, box[:2])
+    out_span = round(span * scale)
+    pred = Image.open(files[0]).convert("RGBA").resize((out_span, out_span), Image.LANCZOS)
+    canvas = Image.new("RGBA", (round(image.width * scale), round(image.height * scale)), (0, 0, 0, 0))
+    canvas.paste(pred, (round(box[0] * scale), round(box[1] * scale)))
     layer = np.asarray(canvas).copy()
     return layer
 
@@ -121,6 +125,7 @@ def main():
     ap.add_argument("--lora", required=True)
     ap.add_argument("--min", type=int, default=400)
     ap.add_argument("--size", type=int, default=1024)
+    ap.add_argument("--scale", type=float, default=1.0, help="the PSD this many times the illustration's size")
     a = ap.parse_args()
     out = Path(a.out)
     (out / "layers").mkdir(parents=True, exist_ok=True)
@@ -144,12 +149,12 @@ def main():
     found = sorted(nodes(tags, classes, a.min), key=lambda t: ORDER.index(t[0]) if t[0] in ORDER else len(ORDER))
     layers = []
     for n, (tag, side, mask) in enumerate(found):
-        layer = extract(c, flat, tag, mask, a.lora, a.size, out / "work", n)
+        layer = extract(c, flat, tag, mask, a.lora, a.size, out / "work", n, a.scale)
         name = f"{n:02d}_{tag}_{side}"
         Image.fromarray(layer).save(out / "layers" / f"{name}.png")
         layers.append((name, layer))
         print(name, int(mask.sum()), flush=True)
-    write_psd(image.size, layers, out / f"{Path(a.image).stem}.psd")
+    write_psd((round(image.width * a.scale), round(image.height * a.scale)), layers, out / f"{Path(a.image).stem}.psd")
     (out / "layers.json").write_text(json.dumps([n for n, _ in layers]), encoding="utf-8")
 
 

@@ -1,9 +1,10 @@
 """Scores a general-split LoRA on held-out nodes (make_node_pairs' test folder): shape, completion and colour per tag.
 
-usage: python node_metrics.py LORA OUT_DIR TEST_DIR [PER_TAG] [--sheet]
+usage: python node_metrics.py LORA OUT_DIR TEST_DIR [PER_TAG] [--sheet] [--soft]
   LORA is relative to ComfyUI's loras folder ("none" runs the bare model). PER_TAG rest-pose nodes per tag (6).
   Runs the distilled model, 4 steps, with the close-up and the hint as references; writes metrics.jsonl, a summary
-  per tag and, with --sheet, sheet.png (input, hint, prediction, truth per row).
+  per tag and, with --sheet, sheet.png (input, hint, prediction, truth per row). --soft reads each close-up from a
+  three times smaller picture (make_node_pairs' _input_soft, nodes of 512 and up), to score restored detail.
 """
 import json
 import sys
@@ -27,13 +28,15 @@ def main():
     rows_in = [json.loads(l) for l in (test / "prompts.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
     chosen, count = [], defaultdict(int)
     for r in sorted(rows_in, key=lambda r: r["name"]):
-        if r["name"].endswith("_0") and count[r["tag"]] < per_tag:
+        soft_ok = "--soft" not in sys.argv or (test / f"{r['name']}_input_soft.png").exists()
+        if r["name"].endswith("_0") and soft_ok and count[r["tag"]] < per_tag:
             chosen.append(r)
             count[r["tag"]] += 1
     c = client(timeout=900)
     rows, cells = [], []
     for r in chosen:
-        inp_path, hint_path, truth_path = (test / f"{r['name']}_{k}.png" for k in ("input", "hint", "target"))
+        inp_path, hint_path, truth_path = (test / f"{r['name']}_{k}.png" for k in
+                                           ("input_soft" if "--soft" in sys.argv else "input", "hint", "target"))
         inp = np.asarray(Image.open(inp_path).convert("RGB"))
         h, w = inp.shape[:2]
         a = c.upload(inp_path, f"l2d_node_{inp_path.name}")
@@ -42,7 +45,8 @@ def main():
                                      name=f"node_{r['name']}"), out, f"pred_{r['name']}")
         pred = np.asarray(Image.open(files[0]).convert("RGB").resize((w, h)))
         truth = np.asarray(Image.open(truth_path).convert("RGB"))
-        row = {"name": r["name"], "tag": r["tag"], "size": w, **score(pred, truth, visible_part(inp, truth))}
+        sharp = np.asarray(Image.open(test / f"{r['name']}_input.png").convert("RGB"))  # what shows, from the sharp close-up
+        row = {"name": r["name"], "tag": r["tag"], "size": w, **score(pred, truth, visible_part(sharp, truth))}
         rows.append(row)
         cells.append((r, inp_path, hint_path, files[0], truth_path))
         print(json.dumps(row), flush=True)
