@@ -35,6 +35,7 @@ EMB = 8
 GRAINS = ("unit", "group", "part")
 DELTA_V, DELTA_D = 0.5, 1.5
 ABSORB = 64  # clusters under this many pixels (at the embedding's size) join a neighbour
+MERGE = 0.0  # neighbouring clusters with means closer than this, along a shared border, are one (0: never)
 ROLES = 4
 NONE, IGNORE = 0, 65535
 
@@ -179,12 +180,15 @@ def fit_state(model: nn.Module, state: dict) -> dict:
 
 @torch.no_grad()
 def cluster(emb: torch.Tensor, mask: torch.Tensor, threshold: float = DELTA_D, min_pixels: int = 12,
-            absorb: int | None = None) -> torch.Tensor:
+            absorb: int | None = None, merge: float | None = None) -> torch.Tensor:
     """Mean-shift clustering of emb (D, H, W) over mask: 0 outside, 1.. per cluster. Seeds are taken densest first
     (of a sample, the pixel with most others within DELTA_V); a seed's mean is refined over the pixels within threshold
     of it, and those pixels take the cluster. Then clusters under absorb pixels, and pixels left over, join the
-    neighbouring cluster whose mean is nearest: the in-between embeddings along a border are not layers of their own."""
+    neighbouring cluster whose mean is nearest: the in-between embeddings along a border are not layers of their own.
+    Last, neighbouring clusters whose means are within merge of each other join (a long frill drifting in shade along
+    its length cut into lengths)."""
     absorb = ABSORB if absorb is None else absorb
+    merge = MERGE if merge is None else merge
     D, H, W = emb.shape
     e = emb.flatten(1).T
     todo = mask.flatten().clone()
@@ -239,6 +243,28 @@ def cluster(emb: torch.Tensor, mask: torch.Tensor, threshold: float = DELTA_D, m
             break
         labels = torch.where(grown, best, labels)
         free &= ~grown
+    if merge > 0:
+        parent = torch.arange(n + 1, device=emb.device)
+        means = torch.zeros(n + 1, D, device=emb.device).index_add_(0, labels.flatten(), e)             / torch.bincount(labels.flatten(), minlength=n + 1).clamp(min=1)[:, None]
+        a, b = labels[:, :-1].flatten(), labels[:, 1:].flatten()
+        c, d = labels[:-1, :].flatten(), labels[1:, :].flatten()
+        x, y = torch.cat([a, c]), torch.cat([b, d])
+        keep = (x > 0) & (y > 0) & (x != y)
+        pairs = torch.unique(torch.stack([torch.minimum(x[keep], y[keep]), torch.maximum(x[keep], y[keep])], 1), dim=0)
+        close = (means[pairs[:, 0]] - means[pairs[:, 1]]).norm(dim=1) < merge
+        for i, j in pairs[close].tolist():
+            while parent[i] != i:
+                i = int(parent[i])
+            while parent[j] != j:
+                j = int(parent[j])
+            if i != j:
+                parent[max(i, j)] = min(i, j)
+        for i in range(n + 1):
+            r = i
+            while parent[r] != r:
+                r = int(parent[r])
+            parent[i] = r
+        labels = parent[labels]
     # Renumber 1..k.
     ids = torch.unique(labels)
     ids = ids[ids > 0]
@@ -324,6 +350,7 @@ def main():
     ap.add_argument("--eval", default="", help="score this checkpoint on the validation set instead of training")
     ap.add_argument("--thresholds", default="", help="with --eval: clustering thresholds to try, comma separated")
     ap.add_argument("--absorbs", default="", help="with --eval: smallest cluster sizes to try, comma separated")
+    ap.add_argument("--merges", default="", help="with --eval: neighbour merge distances to try, comma separated")
     a = ap.parse_args()
     data, out = Path(a.data), Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -337,13 +364,15 @@ def main():
     if a.eval:
         model = Planner4(len(classes)).cuda()
         model.load_state_dict(fit_state(model, torch.load(a.eval, map_location="cuda")["state"]))
-        global ABSORB
+        global ABSORB, MERGE
         for absorb in [int(v) for v in a.absorbs.split(",") if v] or [ABSORB]:
-            ABSORB = absorb
-            for t in [float(t) for t in a.thresholds.split(",") if t] or [DELTA_D]:
-                line = {"checkpoint": a.eval, "threshold": t, "absorb": absorb, **evaluate(model, val, len(classes), classes, t)}
-                with open(out / "eval.jsonl", "a", encoding="utf-8") as f:
-                    print(json.dumps(line), file=f)
+            for merge in [float(v) for v in a.merges.split(",") if v] or [MERGE]:
+                ABSORB, MERGE = absorb, merge
+                for t in [float(t) for t in a.thresholds.split(",") if t] or [DELTA_D]:
+                    line = {"checkpoint": a.eval, "threshold": t, "absorb": absorb, "merge": merge,
+                            **evaluate(model, val, len(classes), classes, t)}
+                    with open(out / "eval.jsonl", "a", encoding="utf-8") as f:
+                        print(json.dumps(line), file=f)
         return
     counts = np.zeros(len(classes))
     for s in train[::20]:

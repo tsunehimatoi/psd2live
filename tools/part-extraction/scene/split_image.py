@@ -148,7 +148,7 @@ THRESHOLDS = {"part": 2.0, "group": p4.DELTA_D, "unit": p4.DELTA_D}
 
 
 def plan_layers(image: Image.Image, silhouette: np.ndarray, run: Planner4Run, grain: str, min_pixels: int,
-                tags: np.ndarray | None = None, eyes: bool = True, join: bool = False):
+                tags: np.ndarray | None = None, eyes: bool = True, join: bool = True):
     """Planner v4, recursively. The whole picture's tags (or tags, from a planner v3) give the big parts; each big
     part's close-up, and the head's, is planned again, and its own pixels there are clustered into parts, the groups
     in each part, then the layers in each group, down to grain. Returns the leaves back to front, each with its tag,
@@ -259,8 +259,21 @@ def plan_layers(image: Image.Image, silhouette: np.ndarray, run: Planner4Run, gr
     return sorted(leaves, key=lambda leaf: leaf["order"]), tags
 
 
+# Big parts one drawn layer often runs across: the whole picture calls a stocking's thigh leg and its calf legwear, a
+# lock of hair front at the top and side below, a dress top and skirt.
+KIN = [{"leg", "legwear"}, {"front_hair", "side_hair", "back_hair"}, {"topwear", "bottomwear", "body"},
+       {"arm", "hand", "handwear"}, {"headwear", "ears"}]
+
+
+def kin(a: str, b: str) -> bool:
+    """Whether big parts a and b (tag_side names) are ones a layer runs across."""
+    ta, tb = a.rsplit("_", 1)[0] if a.endswith(("_l", "_r")) else a, b.rsplit("_", 1)[0] if b.endswith(("_l", "_r")) else b
+    same_side = a[-2:] == b[-2:] or not (a.endswith(("_l", "_r")) and b.endswith(("_l", "_r")))
+    return same_side and any(ta in k and tb in k for k in KIN)
+
+
 def join_across(leaves: list[dict], whole_units: np.ndarray, share: float = 0.6, cover: float = 0.0) -> list[dict]:
-    """Leaves of different big parts that touch and lie mostly (share) in one layer of the whole picture's, each
+    """Leaves of kin big parts (KIN) that touch and lie mostly (share) in one layer of the whole picture's, each
     covering a good part (cover) of it, are one layer the big parts' border cut in two: each such set becomes one leaf,
     the biggest one's tag, side, group and order kept. A small leaf in a big layer of the whole picture's is a layer
     only its close-up could see, and stays; inside a big part its close-up's finer split stands."""
@@ -289,7 +302,7 @@ def join_across(leaves: list[dict], whole_units: np.ndarray, share: float = 0.6,
         y0, y1, x0, x1 = boxes[i]
         near = None
         for j in range(i + 1, len(leaves)):
-            if key[j] != key[i] or leaves[j]["big"] == leaves[i]["big"] or find(i) == find(j):
+            if key[j] != key[i] or leaves[j]["big"] == leaves[i]["big"] or not kin(leaves[i]["big"], leaves[j]["big"]) or find(i) == find(j):
                 continue
             b = boxes[j]
             if b[0] > y1 + 3 or b[1] < y0 - 3 or b[2] > x1 + 3 or b[3] < x0 - 3:
