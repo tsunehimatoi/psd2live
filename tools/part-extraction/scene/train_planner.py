@@ -114,9 +114,9 @@ def main():
         state = torch.load(a.eval, map_location="cuda")
         assert state["classes"] == classes, "the checkpoint was trained on other classes"
         if any(k.startswith("embed.") for k in state["state"]):  # planner v4: its tag head alone
-            from train_planner4 import Planner4
+            from train_planner4 import Planner4, fit_state
             model = TagsOf(Planner4(len(classes)))
-            model.v4.load_state_dict(state["state"])
+            model.v4.load_state_dict(fit_state(model.v4, state["state"]))
         else:
             model = Planner(len(classes))
             model.load_state_dict(state["state"])

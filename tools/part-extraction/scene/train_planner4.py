@@ -2,6 +2,8 @@
 (the single layer, its named group, its part) and how far back that layer is drawn. Trained on plan4_data.py export.
 
   python train_planner4.py DATA OUT [--steps 30000] [--batch 2] [--accum 2] [--init planner_v3/planner.pt]
+  python train_planner4.py DATA OUT --init OUT/planner4.pt --start 15000 --steps 20000  (resume)
+  python train_planner4.py DATA OUT --eval OUT/planner4.pt [--thresholds 1.0,1.5,2.0]
 
 The backbone, neck and tag head are planner v3's (DINOv2 from Depth Anything V2 Base, DPT), started from --init. The
 new heads: roles (shadow, highlight, line, detail; one sigmoid each), an embedding of 3 x EMB dimensions, and a draw
@@ -9,7 +11,8 @@ order score. Each third of the embedding learns one grain with the discriminativ
 pixels of one layer (group, part) pulled within DELTA_V of their mean, means of different ones pushed 2 DELTA_D apart.
 Inference clusters them in turn (cluster()): parts, the groups in a part, the layers in a group, so the grain is
 chosen by where one stops. The order score is trained on every pair of layers in a close-up to rank as their draw
-order does. Held-out close-ups (plan4_data.py held) are the validation set; OUT gets planner4.pt and log.txt.
+order does. Held-out close-ups (plan4_data.py held) are the validation set; OUT gets planner4.pt and log.txt, and
+with --eval a checkpoint's scores at each clustering threshold (OUT/eval.jsonl).
 """
 import argparse
 import json
@@ -31,6 +34,7 @@ SIZE = 728  # 52 patches
 EMB = 8
 GRAINS = ("unit", "group", "part")
 DELTA_V, DELTA_D = 0.5, 1.5
+ABSORB = 64  # clusters under this many pixels (at the embedding's size) join a neighbour
 ROLES = 4
 NONE, IGNORE = 0, 65535
 
@@ -154,18 +158,44 @@ def losses(out: dict, cls, role, inst, group, part, render, weights) -> dict:
     return {"cls": l_cls, "role": l_role, "emb": torch.stack(l_emb).mean() * len(GRAINS), "order": torch.stack(l_ord).mean()}
 
 
+# transformers 5 renamed the DINOv2 attention weights; checkpoints saved under either name load under the other.
+RENAMES = [("attention.attention.query.", "attention.q_proj."), ("attention.attention.key.", "attention.k_proj."),
+           ("attention.attention.value.", "attention.v_proj."), ("attention.output.dense.", "attention.o_proj.")]
+
+
+def fit_state(model: nn.Module, state: dict) -> dict:
+    """state with its keys named as model names them."""
+    expected = set(model.state_dict())
+    out = {}
+    for k, v in state.items():
+        if k not in expected:
+            for a, b in RENAMES:
+                for old, new in ((a, b), (b, a)):
+                    if old in k and k.replace(old, new) in expected:
+                        k = k.replace(old, new)
+        out[k] = v
+    return out
+
+
 @torch.no_grad()
-def cluster(emb: torch.Tensor, mask: torch.Tensor, threshold: float = DELTA_D, min_pixels: int = 12) -> torch.Tensor:
-    """Greedy mean-shift clustering of emb (D, H, W) over mask: 0 outside, 1.. per cluster. A seed's mean is refined
-    over the pixels within threshold of it; pixels within threshold of the mean take the cluster."""
+def cluster(emb: torch.Tensor, mask: torch.Tensor, threshold: float = DELTA_D, min_pixels: int = 12,
+            absorb: int | None = None) -> torch.Tensor:
+    """Mean-shift clustering of emb (D, H, W) over mask: 0 outside, 1.. per cluster. Seeds are taken densest first
+    (of a sample, the pixel with most others within DELTA_V); a seed's mean is refined over the pixels within threshold
+    of it, and those pixels take the cluster. Then clusters under absorb pixels, and pixels left over, join the
+    neighbouring cluster whose mean is nearest: the in-between embeddings along a border are not layers of their own."""
+    absorb = ABSORB if absorb is None else absorb
     D, H, W = emb.shape
     e = emb.flatten(1).T
     todo = mask.flatten().clone()
     labels = torch.zeros(H * W, dtype=torch.long, device=emb.device)
+    gen = torch.Generator(device=emb.device).manual_seed(0)
     n = 0
     while todo.sum() >= min_pixels:
         idx = torch.nonzero(todo)[:, 0]
-        centre = e[idx[torch.randint(len(idx), (1,), device=emb.device)]][0]
+        cand = idx[torch.randperm(len(idx), generator=gen, device=emb.device)[:256]]
+        dense = torch.cat([(torch.cdist(e[c], e[idx]) < DELTA_V).sum(1) for c in cand.split(64)])
+        centre = e[cand[dense.argmax()]]
         for _ in range(10):
             near = idx[(e[idx] - centre).norm(dim=1) < threshold]
             if len(near) == 0:
@@ -175,13 +205,46 @@ def cluster(emb: torch.Tensor, mask: torch.Tensor, threshold: float = DELTA_D, m
                 break
             centre = new
         near = idx[(e[idx] - centre).norm(dim=1) < threshold]
+        if len(near) == 0:
+            break
         todo[near] = False
         if len(near) >= min_pixels:
             n += 1
             labels[near] = n
-        elif len(near) == 0:
+    if n == 0:
+        return labels.view(H, W)
+    sizes = torch.bincount(labels, minlength=n + 1)
+    keep = sizes >= absorb
+    keep[0] = False
+    if not keep.any():
+        keep = sizes == sizes[1:].max()
+        keep[0] = False
+    means = torch.zeros(n + 1, D, device=emb.device).index_add_(0, labels, e) / sizes.clamp(min=1)[:, None]
+    labels = torch.where(keep[labels], labels, torch.zeros_like(labels)).view(H, W)
+    free = mask & (labels == 0)
+    E = emb.permute(1, 2, 0)
+    for _ in range(64):  # grow the kept clusters into the free pixels, one ring at a time
+        if not free.any():
             break
-    return labels.view(H, W)
+        best, best_d = torch.zeros_like(labels), torch.full(labels.shape, float("inf"), device=emb.device)
+        padded = F.pad(labels, (1, 1, 1, 1))
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                nb = padded[1 + dy:1 + dy + H, 1 + dx:1 + dx + W]
+                d = (E - means[nb]).norm(dim=-1)
+                better = free & (nb > 0) & (d < best_d)
+                best, best_d = torch.where(better, nb, best), torch.where(better, d, best_d)
+        grown = best > 0
+        if not grown.any():
+            break
+        labels = torch.where(grown, best, labels)
+        free &= ~grown
+    # Renumber 1..k.
+    ids = torch.unique(labels)
+    ids = ids[ids > 0]
+    remap = torch.zeros(n + 1, dtype=torch.long, device=emb.device)
+    remap[ids] = torch.arange(1, len(ids) + 1, device=emb.device)
+    return remap[labels]
 
 
 def instance_scores(pred: torch.Tensor, truth: torch.Tensor) -> tuple[int, int, int]:
@@ -203,7 +266,7 @@ def instance_scores(pred: torch.Tensor, truth: torch.Tensor) -> tuple[int, int, 
 
 
 @torch.no_grad()
-def evaluate(model, stems, n_classes, classes) -> dict:
+def evaluate(model, stems, n_classes, classes, threshold: float = DELTA_D) -> dict:
     model.eval()
     inter, union = np.zeros((3, n_classes)), np.zeros((3, n_classes))
     counts = {g: np.zeros(3) for g in GRAINS}
@@ -224,7 +287,7 @@ def evaluate(model, stems, n_classes, classes) -> dict:
         mask = inst.cuda() > 0  # the layers' own pixels, so instance scores do not depend on the tag head
         for g, truth in zip(GRAINS, (inst, group, part)):
             k = GRAINS.index(g)
-            labels = cluster(emb[k * EMB:(k + 1) * EMB], mask)
+            labels = cluster(emb[k * EMB:(k + 1) * EMB], mask, threshold)
             counts[g] += instance_scores(labels.cpu(), truth)
         # Order: share of layer pairs ranked as drawn.
         o = out["order"][0, 0].float().cpu()
@@ -255,8 +318,12 @@ def main():
     ap.add_argument("--batch", type=int, default=2)
     ap.add_argument("--accum", type=int, default=2, help="batches per step")
     ap.add_argument("--init", default="")
+    ap.add_argument("--start", type=int, default=0, help="resume a run from --init: the step it stopped at")
     ap.add_argument("--eval-every", type=int, default=5000)
     ap.add_argument("--val-limit", type=int, default=300)
+    ap.add_argument("--eval", default="", help="score this checkpoint on the validation set instead of training")
+    ap.add_argument("--thresholds", default="", help="with --eval: clustering thresholds to try, comma separated")
+    ap.add_argument("--absorbs", default="", help="with --eval: smallest cluster sizes to try, comma separated")
     a = ap.parse_args()
     data, out = Path(a.data), Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -267,6 +334,17 @@ def main():
     # Validation: the held-out close-ups as framed (not the random variants), at most val-limit of them.
     val = sorted(s for s in held if s.endswith("_0"))
     val = val[::max(1, len(val) // a.val_limit)][:a.val_limit]
+    if a.eval:
+        model = Planner4(len(classes)).cuda()
+        model.load_state_dict(fit_state(model, torch.load(a.eval, map_location="cuda")["state"]))
+        global ABSORB
+        for absorb in [int(v) for v in a.absorbs.split(",") if v] or [ABSORB]:
+            ABSORB = absorb
+            for t in [float(t) for t in a.thresholds.split(",") if t] or [DELTA_D]:
+                line = {"checkpoint": a.eval, "threshold": t, "absorb": absorb, **evaluate(model, val, len(classes), classes, t)}
+                with open(out / "eval.jsonl", "a", encoding="utf-8") as f:
+                    print(json.dumps(line), file=f)
+        return
     counts = np.zeros(len(classes))
     for s in train[::20]:
         lab = np.asarray(Image.open(s + "_cls.png"))
@@ -276,16 +354,17 @@ def main():
     model = Planner4(len(classes)).cuda()
     if a.init:
         state = torch.load(a.init, map_location="cuda")["state"]
-        missing, unexpected = model.load_state_dict(state, strict=False)
+        missing, unexpected = model.load_state_dict(fit_state(model, state), strict=False)
         print("init from", a.init, "new:", sorted({k.split(".")[0] for k in missing}), file=open(out / "log.txt", "a", encoding="utf-8"))
     new = [p for n, p in model.named_parameters() if not n.startswith("backbone")]
     opt = torch.optim.AdamW([{"params": model.backbone.parameters(), "lr": 2e-5}, {"params": new, "lr": 2e-4}], weight_decay=0.01)
     loader = torch.utils.data.DataLoader(Closeups(train, True), batch_size=a.batch, shuffle=True, num_workers=6, drop_last=True,
                                          persistent_workers=True)
-    sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda step: min(1, step / 300) * 0.5 * (1 + math.cos(math.pi * step / a.steps)))
+    # Warm up, then cosine to 0 at --steps; a resumed run warms up again (fresh optimizer state) from where it was.
+    sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1, s / 300) * 0.5 * (1 + math.cos(math.pi * (a.start + s) / a.steps)))
     log = open(out / "log.txt", "a", encoding="utf-8")
     print(f"{len(train)} training close-ups, {len(val)} validation", file=log, flush=True)
-    step, n = 0, 0
+    step, n = a.start, 0
     while step < a.steps:
         for batch in loader:
             x, cls, role, inst, group, part, render, _ = (t.cuda(non_blocking=True) for t in batch)
