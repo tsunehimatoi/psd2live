@@ -54,7 +54,8 @@ def edit_graph(image: str, prompt: str, width: int, height: int, lora: str | Non
                refs: tuple[str, ...] = (), matte: bool = False) -> dict:
     """The distilled model samples in 4 steps without guidance; the base model wants about 20 to 30 steps and cfg 3 to 5.
     refs are further reference images after [image] (the general split's hint: the part's visible area). matte saves
-    the result with its background taken off by BiRefNet (the BiRefNetMatte node), as an RGBA PNG."""
+    the result with its background taken off by BiRefNet (the BiRefNetMatte node), as an RGBA PNG, beside the result
+    as generated (<name>_raw)."""
     g = Graph(prefix="l2d")
     model = g("UNETLoader", unet_name=unet, weight_dtype="default")
     if lora:
@@ -73,5 +74,9 @@ def edit_graph(image: str, prompt: str, width: int, height: int, lora: str | Non
                    sampler=g("KSamplerSelect", sampler_name="euler"), sigmas=g("Flux2Scheduler", steps=steps, width=width, height=height),
                    latent_image=g("EmptyFlux2LatentImage", width=width, height=height, batch_size=1))
     decoded = g("VAEDecode", samples=[sample, 0], vae=vae)
-    g.save(g("BiRefNetMatte", image=decoded) if matte else decoded, name)
+    if matte:
+        g.save(decoded, f"{name}_raw")
+        g.save(g("BiRefNetMatte", image=decoded), name)
+    else:
+        g.save(decoded, name)
     return g.nodes

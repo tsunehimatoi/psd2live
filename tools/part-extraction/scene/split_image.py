@@ -4,13 +4,18 @@ repainted whole (hidden parts included) by the split LoRA from a close-up of it,
   python split_image.py IMAGE OUT_DIR --planner planner.pt --lora NAME [--min 400] [--size 1024]
 
 Needs the planner checkpoint (train_planner.py) on a local GPU and a ComfyUI with the LoRA (L2D_COMFY_URL, see
-comfy/env.py). Writes OUT_DIR/plan.png (tag map), OUT_DIR/parts/<order>_<tag>_<side>.png and OUT_DIR/parts.json.
+comfy/env.py). Writes OUT_DIR/layout.json, a PSD2Live Layout manifest (docs/zh/spec/LAYOUT_MANIFEST.md) that opens
+the split as a Layout project: the illustration as a reference layer, then every part back to front, its picture
+kept at the generator's size on the square of the canvas it covers (more pixels than canvas units, which PSD2Live
+keeps as texture density), with the part and side words of the semantic tags. Each layer also carries a "split"
+object (ignored by PSD2Live) with everything the split knew: the tag and side as planned, order, prompt, the close-up,
+hint, region and the picture as generated before matting. OUT_DIR keeps source.png, plan.png, parts/, regions/ and
+work/.
 
 Each part is the LoRA's whole picture of it, kept at the size it was generated (--size, whatever the part's size in
 the illustration: the LoRA is trained to paint at the art's sharpness from a softer close-up), its background taken
 off by BiRefNet (ComfyUI node BiRefNetMatte). The close-up frames the part with its surroundings; the planner's region
-is only the hint the LoRA reads. Nothing is pasted, cut or composited: parts.json lists, back to front, each part's
-file, tag, side and the square of the illustration its picture covers (box: x, y, width, height), for placing it.
+is only the hint the LoRA reads. Nothing is pasted, cut or composited.
 """
 import argparse
 import json
@@ -33,6 +38,17 @@ ORDER = json.loads(_PRACTICES.read_text(encoding="utf-8"))["order"] if _PRACTICE
     "back_hair", "tail", "wings", "body", "leg", "legwear", "footwear", "bottomwear", "arm", "hand", "handwear",
     "topwear", "neck", "neckwear", "objects", "ears", "earwear", "face", "facedetail", "nose", "mouth_inside", "mouth",
     "eyewhite", "irides", "eyelash", "eyebrow", "eyewear", "side_hair", "front_hair", "headwear"]
+# The planner's tags in PSD2Live's semantic words (LayerTags.kt); the parts it has no tag of its own for take the
+# nearest one, and the planner's tag always rides along as a user tag.
+WORDS = {
+    "back_hair": ["hair", "back"], "front_hair": ["hair", "front"], "side_hair": ["hair", "front"], "headwear": ["headwear"],
+    "face": ["face"], "facedetail": ["face", "detail"], "irides": ["eye", "iris"], "eyewhite": ["eye", "white"],
+    "eyelash": ["eye", "lash"], "eyebrow": ["brow"], "ears": ["ear"], "earwear": ["ear", "accessory"], "nose": ["nose"],
+    "mouth": ["mouth"], "mouth_inside": ["mouth"], "eyewear": ["eyewear"], "neck": ["neck"], "neckwear": ["neck", "accessory"],
+    "body": ["top"], "topwear": ["top"], "arm": ["arm"], "hand": ["arm"], "handwear": ["arm"], "bottomwear": ["bottom"],
+    "leg": ["leg"], "legwear": ["leg"], "footwear": ["foot"], "tail": ["tail"], "wings": ["wings"], "objects": ["object"]}
+HEAD = {"back_hair", "front_hair", "side_hair", "headwear", "face", "facedetail", "irides", "eyewhite", "eyelash", "eyebrow",
+        "ears", "earwear", "nose", "mouth", "mouth_inside", "eyewear"}
 PAIRED = {"irides", "eyewhite", "eyelash", "eyebrow", "ears", "earwear", "arm", "hand", "leg", "handwear", "legwear", "footwear"}
 
 
@@ -89,8 +105,9 @@ def words(tag: str) -> str:
     return prompt(tag, 0, cover="complete", wear="underwear") if tag == "body" else prompt(tag, 0)
 
 
-def extract(client, image: Image.Image, tag: str, mask: np.ndarray, lora: str, size: int, work: Path, n: int):
-    """The part whole, matted, at the generator's size, and the square of the illustration it covers."""
+def extract(client, image: Image.Image, tag: str, mask: np.ndarray, lora: str, size: int, work: Path, n: int) -> dict:
+    """The part whole at the generator's size, matted; returns its files, the square of the canvas it covers and its
+    prompt."""
     import l2d
     ys, xs = np.nonzero(mask)
     x0, x1, y0, y1 = xs.min(), xs.max(), ys.min(), ys.max()
@@ -103,9 +120,13 @@ def extract(client, image: Image.Image, tag: str, mask: np.ndarray, lora: str, s
     hint.save(work / f"{n}_hint.png")
     a = client.upload(work / f"{n}_input.png", f"l2d_split_{n}_input.png")
     b = client.upload(work / f"{n}_hint.png", f"l2d_split_{n}_hint.png")
-    files = client.run(l2d.edit_graph(a, words(tag), size, size, lora=lora, refs=(b,), name=f"split_{n}", matte=True),
+    words_ = words(tag)
+    files = client.run(l2d.edit_graph(a, words_, size, size, lora=lora, refs=(b,), name=f"split_{n}", matte=True),
                        work, f"pred_{n}")
-    return Image.open(files[0]).convert("RGBA"), [int(box[0]), int(box[1]), span, span]
+    raw = next(f for f in files if "_raw_" in f.name)
+    matted = next(f for f in files if "_raw_" not in f.name)
+    return {"matted": matted, "raw": raw, "input": work / f"{n}_input.png", "hint": work / f"{n}_hint.png",
+            "rect": [int(box[0]), int(box[1]), span, span], "prompt": words_}
 
 
 def main():
@@ -137,16 +158,38 @@ def main():
     from env import client
     c = client(timeout=900)
     found = sorted(nodes(tags, classes, a.min), key=lambda t: ORDER.index(t[0]) if t[0] in ORDER else len(ORDER))
-    listed = []
+    image.save(out / "source.png")
+    (out / "regions").mkdir(exist_ok=True)
+    layers = [{"id": "source", "name": "source", "image": {"path": "source.png", "width": image.width, "height": image.height},
+               "rect": {"left": 0, "top": 0, "width": image.width, "height": image.height}, "reference": True, "opacity": 0.5}]
     for n, (tag, side, mask) in enumerate(found):
-        picture, box = extract(c, flat, tag, mask, a.lora, a.size, out / "work", n)
+        got = extract(c, flat, tag, mask, a.lora, a.size, out / "work", n)
         name = f"{n:02d}_{tag}_{side}"
+        picture = Image.open(got["matted"])
         picture.save(out / "parts" / f"{name}.png")
-        listed.append({"file": f"parts/{name}.png", "tag": tag, "side": side, "order": n, "box": box,
-                       "size": list(picture.size)})
+        Image.fromarray((mask * 255).astype(np.uint8)).save(out / "regions" / f"{name}.png")
+        # Sides on the picture (l: left of the face's centre) are the character's own right, and the other way round.
+        own = {"l": "right", "r": "left"}.get(side)
+        left, top, w, h = got["rect"]
+        layers.append({
+            "id": name, "name": f"{tag.replace('_', ' ')}" + (f" {own}" if own else ""),
+            "image": {"path": f"parts/{name}.png", "width": picture.width, "height": picture.height},
+            "rect": {"left": left, "top": top, "width": w, "height": h},
+            **({"group": "head"} if tag in HEAD else {}),
+            "tags": WORDS.get(tag, []) + ([own] if own else []) + [tag],
+            "split": {"tag": tag, "side_on_picture": side, "order": n, "prompt": got["prompt"],
+                      "region": f"regions/{name}.png", "region_pixels": int(mask.sum()),
+                      "close_up": str(got["input"].relative_to(out)).replace("\\", "/"),
+                      "hint": str(got["hint"].relative_to(out)).replace("\\", "/"),
+                      "generated": str(got["raw"].relative_to(out)).replace("\\", "/"),
+                      "generated_size": [picture.width, picture.height]}})
         print(name, int(mask.sum()), flush=True)
-    (out / "parts.json").write_text(json.dumps({"image": Path(a.image).name, "canvas": list(image.size), "parts": listed},
-                                               indent=1), encoding="utf-8")
+    manifest = {"format": "psd2live-layout", "version": 1, "name": Path(a.image).stem,
+                "canvas": {"width": image.width, "height": image.height},
+                "groups": [{"path": "head"}], "layers": layers,
+                "split": {"planner": str(a.planner), "classes": classes, "lora": a.lora, "size": a.size, "min": a.min,
+                          "plan": "plan.png", "order": ORDER}}
+    (out / "layout.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
 if __name__ == "__main__":
