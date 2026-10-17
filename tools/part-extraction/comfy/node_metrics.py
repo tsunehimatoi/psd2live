@@ -1,4 +1,5 @@
-"""Scores a general-split LoRA on held-out nodes (make_node_pairs' test folder): shape, completion and colour per tag.
+"""Scores a general-split LoRA on held-out nodes (make_node_pairs' test folder): shape, completion, colour and residue
+per tag.
 
 usage: python node_metrics.py LORA OUT_DIR TEST_DIR [PER_TAG] [--sheet] [--soft | --soften F] [--layered] [--by kind|tier]
   LORA is relative to ComfyUI's loras folder ("none" runs the bare model). PER_TAG rest-pose nodes per tag (6).
@@ -102,10 +103,12 @@ def main():
     for r in rows:
         by_tag[r["group"]].append(r)
     avg = lambda rs, k: np.mean([r[k] for r in rs if r[k] is not None]) if any(r[k] is not None for r in rs) else float("nan")
-    lines = [f"{by if not layered else 'asked for':14}{'n':>4}{'IoU':>7}{'hidden':>8}{'colour':>8}"]
+    lines = [f"{by if not layered else 'asked for':14}{'n':>4}{'IoU':>7}{'hidden':>8}{'colour':>8}{'residue':>9}"]
+    line = lambda name, rs: (f"{name:14}{len(rs):4}{avg(rs, 'iou'):7.3f}{avg(rs, 'hidden_iou'):8.3f}"
+                             f"{avg(rs, 'colour_err'):8.1f}{avg(rs, 'residue'):9.3f}")
     for tag, rs in sorted(by_tag.items()):
-        lines.append(f"{tag:14}{len(rs):4}{avg(rs, 'iou'):7.3f}{avg(rs, 'hidden_iou'):8.3f}{avg(rs, 'colour_err'):8.1f}")
-    lines.append(f"{'all':14}{len(rows):4}{avg(rows, 'iou'):7.3f}{avg(rows, 'hidden_iou'):8.3f}{avg(rows, 'colour_err'):8.1f}")
+        lines.append(line(tag, rs))
+    lines.append(line("all", rows))
     (out / "summary.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines))
     if "--sheet" in sys.argv:
