@@ -197,12 +197,11 @@ def head_response(m):
 def refine(scene, labels, by_id, folder):
     """Context the per-mesh votes cannot see:
     - meshes with no evidence of their own take the tag most of their deformer siblings have;
-    - the face is the large skin-coloured head mesh drawn under the eyes, and its colour is the skin reference;
-    - limbs and body that are not skin-coloured are clothing on them (feet lowest), skin-coloured head meshes face;
+    - the face is the head mesh the eyes are drawn on;
+    - a body part drawn over another of the same tag is clothing on it (feet lowest), by occlusion, not colour;
     - generic hair goes front or back by draw order against the face;
     - the eye white and lids are told apart by colour."""
     meshes = scene["meshes"]
-    solid = [m for m in meshes if m.get("look", {}).get("rgb") and m["look"]["solid"] > 0]
     head = {m["id"] for m in meshes if head_response(m) > 0.01}
 
     def siblings_vote():
@@ -224,35 +223,24 @@ def refine(scene, labels, by_id, folder):
                 if lab["tag"] == "unknown":
                     lab["tag"], lab["confidence"], lab["by"] = tag, round(0.3 * share, 3), "siblings"
 
-    # The skin reference: a face the names found, else the largest light, warm head mesh under the irides.
-    irides = [m["render"] for m in meshes if labels[m["id"]]["tag"] == "irides"]
-    under_eyes = min(irides) if irides else 10 ** 9
-    warm = lambda rgb: rgb[0] >= rgb[1] >= rgb[2] - 10 and rgb[0] - rgb[2] > 15 and lum(rgb) > 110
-    faces = [m for m in solid if labels[m["id"]]["tag"] == "face" and warm(m["look"]["rgb"])] or \
-        [m for m in solid if m["id"] in head and m["render"] < under_eyes and warm(m["look"]["rgb"])
-         and labels[m["id"]]["tag"] in ("unknown", "face", "neck", "ears")]
-    face = max(faces, key=lambda m: m["look"]["solid"], default=None)
-    skin = face["look"]["rgb"] if face else None
+    # Who covers whom, from drawing order and the meshes' own pixels: colour cannot tell pale skin from white cloth.
+    cover = occlusion(folder, meshes)
+    by_id = {m["id"]: m for m in meshes}
 
-    def is_skin(m):
-        """Whether most of the mesh's solid pixels share the skin's hue, at any shading."""
-        if skin is None or "at" not in m:
-            return None
-        path = folder / "meshes" / f"{m['render']}.png"
-        if not path.exists():
-            return None
-        px = np.asarray(Image.open(path).convert("RGBA"), np.float32).reshape(-1, 4)
-        px = px[px[:, 3] >= 128][:, :3]
-        if len(px) == 0:
-            return None
-        ref = np.array(skin, np.float32)
-        chroma = px / (px.sum(1, keepdims=True) + 1)
-        near = np.linalg.norm(chroma - ref / (ref.sum() + 1), axis=1) < 0.045
-        light = px.mean(1)
-        return float((near & (light > ref.mean() * 0.45) & (light < ref.mean() * 1.12)).mean()) > 0.35
+    # The face is the head mesh the eyes are drawn on: what the eye parts cover most.
+    eyes = [m["id"] for m in meshes if labels[m["id"]]["tag"] in ("irides", "eyewhite", "eyelash")]
+    under_eyes = defaultdict(int)
+    for e in eyes:
+        for u, n in cover["covers"].get(e, {}).items():
+            if u in head and labels[u]["tag"] in ("unknown", "face", "neck", "ears", "hair", "back_hair"):
+                under_eyes[u] += n
+    face = max(under_eyes, key=lambda u: (under_eyes[u], cover["area"].get(u, 0)), default=None)
+    if face and labels[face]["tag"] != "face" and cover["area"].get(face, 0) > 0:
+        labels[face].update(tag="face", confidence=0.5, by="under the eyes")
 
-    if face and labels[face["id"]]["tag"] != "face":
-        labels[face["id"]].update(tag="face", confidence=0.5, by="skin reference")
+    # A base body part is drawn under its clothing: a mesh of the same body tag drawn over another one, lying mostly
+    # on it and not clipped to it (shading is), is a garment on that part (a sleeve over an arm, a stocking over a
+    # leg); the lowest stays the base.
     feet_line = None
     boxes = [m["box"] for m in meshes if m.get("box") and m.get("at")]
     if boxes:
@@ -261,17 +249,19 @@ def refine(scene, labels, by_id, folder):
     clothing = {"arm": "topwear", "hand": "handwear", "body": "topwear", "neck": "neckwear"}
     for m in meshes:
         lab = labels[m["id"]]
-        skinny = is_skin(m)
-        if lab["tag"] in clothing and skinny is False:
-            lab.update(tag=clothing[lab["tag"]], confidence=round(lab["confidence"] * 0.7, 3), by="not skin")
-        elif lab["tag"] == "leg" and skinny is False:
+        t = lab["tag"]
+        if t not in clothing and t != "leg" or lab["role"] != "base" or not cover["area"].get(m["id"]):
+            continue
+        on_same = sum(n for u, n in cover["covers"].get(m["id"], {}).items()
+                      if labels[u]["tag"] == t and u not in m.get("masks", []) and labels[u]["role"] == "base")
+        if on_same < 0.3 * cover["area"][m["id"]]:
+            continue
+        if t == "leg":
             low = feet_line is not None and m.get("box") and m["box"][1] > feet_line - (m["box"][3] - m["box"][1]) * 0.5
-            lab.update(tag="footwear" if low else "legwear", confidence=round(lab["confidence"] * 0.6, 3), by="not skin")
-        elif lab["tag"] == "unknown" and m["id"] in head and face and m["render"] < under_eyes:
-            if skinny:
-                lab.update(tag="face", confidence=0.3, by="head skin")
-            elif m.get("box") and face.get("box") and m["box"][3] < face["box"][1] + (face["box"][3] - face["box"][1]) * 0.2:
-                lab.update(tag="headwear", confidence=0.2, by="above the face")
+            new_tag = "footwear" if low else "legwear"
+        else:
+            new_tag = clothing[t]
+        lab.update(tag=new_tag, confidence=round(lab["confidence"] * 0.7, 3), by=f"over the base {t}")
     siblings_vote()
     contained(meshes, labels)
     face_meshes = [m for m in meshes if labels[m["id"]]["tag"] == "face"]
@@ -285,6 +275,31 @@ def refine(scene, labels, by_id, folder):
             rgb = m["look"]["rgb"]
             if lab["tag"] == "eyelash" and lum(rgb) > 215 and m["look"].get("thickness", 0) > 4 and "eyewhite" not in lab["votes"]:
                 lab["tag"], lab["confidence"] = "eyewhite", round(lab["confidence"] * 0.7, 3)
+
+
+def occlusion(folder: Path, meshes) -> dict:
+    """Each visible mesh's solid pixels ("area"), and for each, how many of its pixels lie over each mesh drawn
+    before it ("covers"), painting the meshes back to front at rest."""
+    full = Image.open(folder / "full.png")
+    top = np.full((full.height, full.width), -1, np.int32)
+    ids = []
+    area, covers = {}, {}
+    for m in sorted(meshes, key=lambda m: m["render"]):
+        path = folder / "meshes" / f"{m['render']}.png"
+        if "at" not in m or not path.exists() or m.get("opacity", 1) < 0.05:
+            continue
+        a = np.asarray(Image.open(path).convert("RGBA"))[..., 3] >= 128
+        x, y = m["at"]
+        region = top[y:y + a.shape[0], x:x + a.shape[1]]
+        a = a[:region.shape[0], :region.shape[1]]
+        under = region[a]
+        area[m["id"]] = int(a.sum())
+        if under.size:
+            counts = np.bincount(under[under >= 0], minlength=len(ids)) if (under >= 0).any() else []
+            covers[m["id"]] = {ids[i]: int(n) for i, n in enumerate(counts) if n}
+        region[a] = len(ids)
+        ids.append(m["id"])
+    return {"area": area, "covers": covers}
 
 
 def contained(meshes, labels):

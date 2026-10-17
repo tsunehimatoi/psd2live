@@ -80,11 +80,6 @@ class Pictures(torch.utils.data.Dataset):
         return (x - MEAN) / STD, torch.from_numpy(np.asarray(label).astype(np.int64))
 
 
-def flipped_pairs(classes):
-    """Left/right tags are not split here, so flips need no label swap."""
-    return None
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("data")
@@ -133,18 +128,20 @@ def main():
             if step % 50 == 0:
                 print(f"epoch {epoch} step {step}/{total} loss {loss.item():.4f}", file=log, flush=True)
         if (epoch + 1) % 5 == 0 or epoch + 1 == a.epochs:
+            torch.save({"state": model.state_dict(), "classes": classes}, out / "planner.pt")
             ious = evaluate(model, val, len(classes))
             line = {"epoch": epoch + 1, "miou": float(np.nanmean(ious)),
                     "per_class": {c: (None if np.isnan(v) else round(float(v), 3)) for c, v in zip(classes, ious)}}
             print(json.dumps(line), file=log, flush=True)
-            torch.save({"state": model.state_dict(), "classes": classes}, out / "planner.pt")
 
 
 @torch.no_grad()
 def evaluate(model, stems, n):
     model.eval()
     inter, union = np.zeros(n), np.zeros(n)
-    for x, y in Pictures(stems, False):
+    pictures = Pictures(stems, False)
+    for i in range(len(pictures)):  # a Dataset has no end of its own when iterated
+        x, y = pictures[i]
         with torch.autocast("cuda", dtype=torch.bfloat16):
             pred = model(x[None].cuda()).argmax(1)[0].cpu().numpy()
         y = y.numpy()

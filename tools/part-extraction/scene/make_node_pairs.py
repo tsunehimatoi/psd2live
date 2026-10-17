@@ -12,28 +12,45 @@ import json
 import random
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageFilter
 
 PHRASES = {
     "back_hair": "the back hair", "front_hair": "the front hair (bangs)", "side_hair": "the side locks of hair",
-    "headwear": "the headwear or hair ornament", "face": "the face skin", "facedetail": "the face details (blush, marks)",
+    "headwear": "the headwear or hair ornament", "face": "the base face layer", "facedetail": "the face details (blush, marks)",
     "irides": "the iris with its pupil and highlights", "eyewhite": "the eye white",
     "eyelash": "the eyelid layers (eyelashes, lid lines and eyelid skin)", "eyebrow": "the eyebrow", "ears": "the ear",
     "earwear": "the earring", "nose": "the nose", "mouth": "the mouth", "mouth_inside": "the inside of the mouth (teeth and tongue)",
-    "eyewear": "the glasses", "neck": "the neck", "neckwear": "the collar or neckwear", "body": "the body skin",
-    "arm": "the arm", "hand": "the hand", "leg": "the leg", "topwear": "the top clothing", "bottomwear": "the skirt or pants",
+    "eyewear": "the glasses", "neck": "the base neck layer", "neckwear": "the collar or neckwear", "body": "the base body layer (torso), with whatever is painted onto it",
+    "arm": "the base arm layer", "hand": "the base hand layer", "leg": "the base leg layer, with whatever is painted onto it", "topwear": "the top clothing", "bottomwear": "the skirt or pants",
     "handwear": "the glove", "legwear": "the stocking or sock", "footwear": "the shoe", "tail": "the tail",
     "wings": "the wings", "objects": "the held object or accessory",
 }
 GRAY = (128, 128, 128)
 
 
-def prompt(tag: str, piece: int, style: dict | None = None) -> str:
+# Base body parts: the character's own body layers as authored, with whatever is painted onto them (underwear,
+# painted tights, tattoos), never cut down to bare skin.
+SKIN = {"body", "arm", "leg", "neck"}
+
+
+def skin_cover(sample: dict) -> str | None:
+    """How much of a skin node the author painted where clothing hides it: the hidden share of its whole area.
+    Some paint the body whole under the clothes, some only the edges, some only what shows."""
+    if sample.get("tag") not in SKIN or not sample.get("area"):
+        return None
+    hidden = 1 - min(1.0, sample["visible"] / sample["area"])
+    return "complete" if hidden >= 0.5 else "visible" if hidden < 0.15 else "edges"
+
+
+def prompt(tag: str, piece: int, style: dict | None = None, cover: str | None = None) -> str:
     """The node in words; where authors build the part in different ways, the way this model's author did."""
     what = PHRASES[tag] + (", one piece of it" if piece else "")
     style = style or {}
     if tag == "mouth" and style.get("mouth.skin_border") in ("True", "False"):
         what += ", with the skin-coloured patch around it" if style["mouth.skin_border"] == "True" else ", lips and lines only"
+    if tag in SKIN and cover:
+        what += {"complete": ", drawn complete under the clothes", "edges": ", drawn a little past the clothing edges",
+                 "visible": ", only where it shows"}[cover]
     return (f"Live2D layer split: keep only {what}, the part marked in the second image, drawn complete including "
             f"any part hidden behind other layers, exactly in place, on a flat gray background.")
 
@@ -54,6 +71,11 @@ def write_pair(j: dict, out: str, index: int) -> None:
         hint.resize((side, side), Image.NEAREST).save(out / "test" / f"{name}_hint.png")
         over(tgt, GRAY).resize((side, side), Image.LANCZOS).save(out / "test" / f"{name}_target.png")
         return
+    if j.get("rough") and rng.random() < 0.5:
+        # A rougher hint, as a planner would draw it: grown or shrunk by a few percent of the frame.
+        r = max(1, int(hint.width * rng.uniform(0.005, 0.03)))
+        grow = rng.random() < 0.6
+        hint = hint.filter(ImageFilter.MaxFilter(2 * r + 1) if grow else ImageFilter.MinFilter(2 * r + 1))
     images = [inp, hint, tgt]
     if rng.random() < 0.5:
         images = [i.transpose(Image.FLIP_LEFT_RIGHT) for i in images]
@@ -74,19 +96,20 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("out")
     ap.add_argument("nodes", nargs="+")
-    ap.add_argument("--verdicts")
+    ap.add_argument("--verdicts", action="append", default=[], help="review verdicts; later files override earlier ones")
     ap.add_argument("--families")
     ap.add_argument("--held", default="")
     ap.add_argument("--size", type=int, default=768)
     ap.add_argument("--min", type=int, default=128)
     ap.add_argument("--reviewed-only", action="store_true")
     ap.add_argument("--pieces-once", action="store_true", help="only the rest-pose close-up of each piece")
+    ap.add_argument("--rough-hints", action="store_true", help="grow or shrink half the training hints")
     ap.add_argument("--styles", help="styles.tsv from styles.py: authoring conventions by model")
     a = ap.parse_args()
     out = Path(a.out)
     verdicts = {}
-    if a.verdicts:
-        for line in Path(a.verdicts).read_text(encoding="utf-8").splitlines():
+    for path in a.verdicts:
+        for line in Path(path).read_text(encoding="utf-8").splitlines():
             if line.strip():
                 v = json.loads(line)
                 verdicts[(v["dir"], v["key"], v["node"])] = v
@@ -128,8 +151,8 @@ def main():
                 continue
             test = s["model"] in held_models or any(h in s["model"] for h in held)
             jobs.append({"stem": str(nodes_dir / s["key"] / f"{s['node']}_{s['variant']}"), "side": min(a.size, max(256, s["pixels"] // 64 * 64)),
-                         "test": test, "tag": tag, "prompt": prompt(tag, s["piece"], styles.get(s["model"])),
-                         "test_name": f"{nodes_dir.name}_{s['key']}_{s['node']}_{s['variant']}"})
+                         "test": test, "tag": tag, "prompt": prompt(tag, s["piece"], styles.get(s["model"]), skin_cover(dict(s, tag=tag))),
+                         "test_name": f"{nodes_dir.name}_{s['key']}_{s['node']}_{s['variant']}", "rough": a.rough_hints})
     train_index = 0
     for j in jobs:  # numbering fixed before the workers run, so the output does not depend on their order
         if not j["test"]:

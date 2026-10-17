@@ -40,11 +40,15 @@ def tile(stem: Path) -> Image.Image:
     return image
 
 
-def sheets(nodes: Path, out: Path, models: int | None = None) -> None:
+def sheets(nodes: Path, out: Path, models: int | None = None, only: Path | None = None) -> None:
     samples = []
     for f in sorted(nodes.glob("*/samples.jsonl")):
         samples += [dict(json.loads(l), dir=str(f.parent)) for l in f.read_text(encoding="utf-8").splitlines() if l.strip()]
     first = [s for s in samples if s["variant"] == 0]
+    if only:
+        # Just these nodes (lines "dir<TAB>key<TAB>node"), for a second look at some.
+        wanted = {tuple(l.split("	")[:3]) for l in only.read_text(encoding="utf-8").splitlines() if l.strip()}
+        first = [s for s in first if (Path(s["dir"]).name, s["key"], s["node"]) in wanted]
     if models:
         keep = sorted({(s["dir"], s["key"]) for s in first})[:models]
         first = [s for s in first if (s["dir"], s["key"]) in set(keep)]
@@ -96,6 +100,8 @@ def verdicts(out: Path, target: Path) -> None:
 
 if __name__ == "__main__":
     if sys.argv[1] == "sheets":
-        sheets(Path(sys.argv[2]), Path(sys.argv[3]), int(sys.argv[4]) if len(sys.argv) > 4 else None)
+        only = next((Path(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--only=")), None)
+        rest = [a for a in sys.argv[4:] if not a.startswith("--")]
+        sheets(Path(sys.argv[2]), Path(sys.argv[3]), int(rest[0]) if rest else None, only)
     else:
         verdicts(Path(sys.argv[2]), Path(sys.argv[3]))
