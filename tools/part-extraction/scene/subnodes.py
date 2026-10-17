@@ -1,7 +1,7 @@
 """Finer nodes from the reviewer's names: a skirt's lace trim, the jacket's shadow, a sleeve cuff, one strand of the
 front hair, each prompted in the reviewer's words.
 
-  python subnodes.py SCENE_ROOT DESCRIBE.jsonl OUT.jsonl [PER_GROUP]
+  python subnodes.py SCENE_ROOT DESCRIBE.jsonl OUT.jsonl [PER_GROUP] [GLUE_DIR]
 
 DESCRIBE.jsonl is describe.py's collect output. Within a model, meshes whose names agree once synonyms are folded
 (lock, tuft and strand; bangs and front hair; shade and shadow) make a group per tag, role and side:
@@ -9,7 +9,8 @@ DESCRIBE.jsonl is describe.py's collect output. Within a model, meshes whose nam
   node already covers;
 - a group of three or more base pieces (strands, fingers, panels) also gives its PER_GROUP (3) largest pieces as
   nodes of their own ("the front hair strand"); the hint, the node's visible area, tells them apart.
-A piece is a mesh, or every segment of a layer Cubism's skinning cut up (skin_units), so a strand is never a segment.
+A piece is a mesh, or every mesh of a layer cut apart (layer_units: glued within a part, or skinning), so a strand is
+never a segment of it.
 Guesses (sure false) are kept: they are mostly about which tag a piece falls under, and the prompt is the name. Writes one line per node for NodeDatasetTool
 (SUBNODES): {"model", "node", "tag", "role", "prompt", "meshes"}, each model's nodes in a fixed shuffled order.
 """
@@ -23,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from make_node_pairs import PHRASES
 from plan_data import PAIRED
-from describe_labels import skin_units
+from describe_labels import glue_pairs, layer_units
 
 SIDE = re.compile(r"\b(left|right|l|r)\b")
 ROLES = {"base", "shadow", "highlight", "line", "detail"}
@@ -53,7 +54,8 @@ def plural(phrase: str) -> str:
     return phrase if phrase.endswith("s") else phrase + "s"
 
 
-def main(root: Path, describe: Path, out: Path, per_group: int = 3) -> None:
+def main(root: Path, describe: Path, out: Path, per_group: int = 3, glue_dir: Path | None = None) -> None:
+    glued = glue_pairs(glue_dir)
     models = {}
     for scene_dir in root.glob("scene*"):
         idx = scene_dir / "index.tsv"
@@ -77,7 +79,7 @@ def main(root: Path, describe: Path, out: Path, per_group: int = 3) -> None:
                 continue
             scene_doc = json.loads((root / scene / key_ / "scene.json").read_text(encoding="utf-8"))
             meshes = {m["id"]: m for m in scene_doc["meshes"] if m.get("box")}
-            unit_of = skin_units(scene_doc)
+            unit_of = layer_units(scene_doc, glued.get(model, []))
             segments = defaultdict(list)
             for mesh, unit in unit_of.items():
                 if mesh in meshes:
@@ -135,4 +137,5 @@ def main(root: Path, describe: Path, out: Path, per_group: int = 3) -> None:
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), *(int(a) for a in sys.argv[4:5]))
+    main(Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), *(int(a) for a in sys.argv[4:5]),
+         *(Path(a) for a in sys.argv[5:6]))

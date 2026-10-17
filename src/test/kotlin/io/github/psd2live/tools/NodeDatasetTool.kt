@@ -113,11 +113,23 @@ class NodeDatasetTool {
 		val base = session.evaluate(emptyMap())
 		val visible = base.opacity.filter { it.value > 0.05f }.keys
 		val meshes = ir.meshes.associateBy { it.id }
-		// Cubism's skinning cuts one drawn layer into segments, one per bone, under a part named "<layer>_Skinning":
-		// the segments of one such part are one piece.
+		// One drawn layer cut into meshes is one piece: meshes glued together within one part (Cubism's skinning glues
+		// the segments it cuts a layer into, one per bone, and authors glue a layer they cut by hand), and the meshes of
+		// a skinning part ("<layer>_Skinning", "<layer>(蒙皮)", "<layer>_スキニング"). Glue across parts joins layers at a
+		// seam and does not count.
+		val partOf = HashMap<String, Part>()
+		for (part in ir.parts) for (child in part.children) if (child is ChildRef.MeshRef) partOf[child.id] = part
+		val joinedTo = HashMap<String, String>()
+		fun find(id: String): String { var r = id; while (joinedTo[r] != null && joinedTo[r] != r) r = joinedTo[r]!!; return r }
+		fun join(a: String, b: String) { val ra = find(a); val rb = find(b); if (ra != rb) joinedTo[ra] = rb }
+		for (g in ir.glues) if (partOf[g.meshA] != null && partOf[g.meshA] === partOf[g.meshB]) join(g.meshA, g.meshB)
+		val skinning = Regex("""(?i)(_skinning|蒙皮|スキニング)\)?$""")
+		for (part in ir.parts) if (skinning.containsMatchIn(part.name.trim())) {
+			val ids = part.children.filterIsInstance<ChildRef.MeshRef>().map { it.id }
+			for (id in ids.drop(1)) join(ids.first(), id)
+		}
 		val skinOf = HashMap<String, String>()
-		for (part in ir.parts) if (part.name.endsWith("_Skinning", ignoreCase = true))
-			for (child in part.children) if (child is ChildRef.MeshRef) skinOf[child.id] = part.id
+		for (id in joinedTo.keys + joinedTo.values) skinOf[id] = find(id)
 		fun box(ids: Collection<String>): FloatArray {
 			var x0 = Float.MAX_VALUE; var y0 = Float.MAX_VALUE; var x1 = -Float.MAX_VALUE; var y1 = -Float.MAX_VALUE
 			for (id in ids) base.positions[id]?.let { p -> for (i in 0 until p.size / 2) { x0 = min(x0, p[i * 2]); x1 = max(x1, p[i * 2]); y0 = min(y0, p[i * 2 + 1]); y1 = max(y1, p[i * 2 + 1]) } }
