@@ -10,7 +10,10 @@ nodes nobody reviewed are left out. A model whose family holds a held-out model 
 With --subnodes (subnodes.py's files, which say what kind each finer node is) a single piece of a group (one strand,
 one finger) needs --piece-min pixels on a side (the side of a square of its area at native size; the close-up's own
 size says little, as small parts are framed to at least 256) and makes at most --piece-share of the training pairs, drawn at random,
-so the whole tag and the named groups keep their weight. --dry counts the pairs by kind and size without writing.
+so the whole tag and the named groups keep their weight. --low-face/--high-face sort models by how wide their face is
+drawn: a low resolution model keeps --low-keep of its training pairs and is never softened (its target is no sharper
+than its close-up), a sharp one is softened at --soften-high. A finer node of kind "dropped" (piece_kinds.py: a piece that is
+only a cut-off segment of one thing, or too small for its character) is left out. --dry counts the pairs by kind and size without writing.
 """
 import argparse
 import io
@@ -103,7 +106,8 @@ def write_pair(j: dict, out: str, index: int) -> None:
     if side >= 256 and rng.random() < j.get("soften", 0):
         # A blurrier close-up than the target: the LoRA learns to paint the part at the art's own sharpness whatever
         # the size of the illustration it reads.
-        close_up = soft(close_up, rng.uniform(2, 4), rng)
+        # Up to soften_max times smaller, never under 64 pixels a side.
+        close_up = soft(close_up, rng.uniform(2, max(2.0, min(j.get("soften_max", 4), side / 64))), rng)
     close_up.save(out / "train_in" / f"{name}.jpg", quality=95)
     images[1].resize((side, side), Image.NEAREST).save(out / "train_hint" / f"{name}.png")
     over(images[2], GRAY).resize((side, side), Image.LANCZOS).save(out / "train_tgt" / f"{name}.png")
@@ -144,6 +148,11 @@ def main():
     ap.add_argument("--subnodes", action="append", default=[], help="subnodes.py output, for each finer node's kind")
     ap.add_argument("--piece-min", type=int, default=0, help="smallest single piece of a group: side of a square of its area at native size")
     ap.add_argument("--piece-share", type=float, default=1.0, help="largest share of training pairs from single pieces")
+    ap.add_argument("--low-face", type=float, default=0, help="a model whose face is narrower than this (native pixels) is low resolution")
+    ap.add_argument("--high-face", type=float, default=0, help="a model whose face is at least this wide is sharp")
+    ap.add_argument("--low-keep", type=float, default=1.0, help="share of a low resolution model's training pairs kept")
+    ap.add_argument("--soften-high", type=float, default=None, help="--soften for sharp models (low resolution ones get none)")
+    ap.add_argument("--soften-max", type=float, default=4, help="largest factor a softened close-up is shrunk by")
     ap.add_argument("--dry", action="store_true", help="count the pairs by kind and size, write nothing")
     a = ap.parse_args()
     out = Path(a.out)
@@ -180,6 +189,18 @@ def main():
             if line.strip():
                 j = json.loads(line)
                 kinds[(j["model"], j["node"])] = j.get("kind", "group")
+    # How sharp each model is drawn: its face's width at native size (the side of a square of the face node's area).
+    face = {}
+    if a.low_face or a.high_face:
+        for nodes_dir in map(Path, a.nodes):
+            for line in (nodes_dir / "samples.jsonl").read_text(encoding="utf-8").splitlines():
+                s = json.loads(line)
+                if s["tag"] == "face" and not s.get("prompt"):
+                    face[s["model"]] = max(face.get(s["model"], 0), s["pixels"] * s.get("area", 0) ** 0.5)
+    tier = lambda model: ("low" if 0 < face.get(model, 0) < a.low_face else
+                          "high" if a.high_face and face.get(model, 0) >= a.high_face else "mid")
+    soften = {"low": 0.0 if a.soften_high is not None else a.soften, "mid": a.soften,
+              "high": a.soften if a.soften_high is None else a.soften_high}
     for d in ("train_in", "train_hint", "train_tgt", "test"):
         if not a.dry:
             (out / d).mkdir(parents=True, exist_ok=True)
@@ -190,7 +211,7 @@ def main():
                 continue
             s = json.loads(line)
             kind = kinds.get((s["model"], s["node"]), "group") if s.get("prompt") else "tag"
-            if s["pixels"] < a.min or kind == "piece" and s["pixels"] * s.get("area", 1) ** 0.5 < a.piece_min:
+            if s["pixels"] < a.min or kind == "dropped" or kind == "piece" and s["pixels"] * s.get("area", 1) ** 0.5 < a.piece_min:
                 small += 1
                 continue
             if a.pieces_once and s["piece"] and s["variant"]:
@@ -218,7 +239,12 @@ def main():
             jobs.append({"stem": str(nodes_dir / s["key"] / f"{s['node']}_{s['variant']}"), "side": min(a.size, max(256, s["pixels"] // 64 * 64)),
                          "test": test, "tag": tag, "prompt": words,
                          "test_name": f"{nodes_dir.name}_{s['key']}_{s['node']}_{s['variant']}", "rough": a.rough_hints,
-                         "soften": a.soften, "kind": kind, "pixels": s["pixels"]})
+                         "soften": soften[tier(s["model"])], "kind": kind, "pixels": s["pixels"], "tier": tier(s["model"]),
+                         "soften_max": a.soften_max})
+    # Low resolution models teach less: a share of their training pairs, drawn at random.
+    if a.low_keep < 1:
+        pick = random.Random(1)
+        jobs = [j for j in jobs if j["test"] or j["tier"] != "low" or pick.random() < a.low_keep]
     # Single pieces are many; a random share of them keeps the whole tags and named groups weighted.
     train = [j for j in jobs if not j["test"]]
     pieces = [j for j in train if j["kind"] == "piece"]
@@ -233,6 +259,11 @@ def main():
             count.setdefault(j["kind"], {}).setdefault(band, 0)
             count[j["kind"]][band] += 1
     print("training pairs by kind and close-up size:", json.dumps(count), f"({len(pieces)} single pieces before sampling)")
+    tiers = {}
+    for j in jobs:
+        if not j["test"]:
+            tiers[j["tier"]] = tiers.get(j["tier"], 0) + 1
+    print("training pairs by model sharpness:", json.dumps(tiers), {k: v for k, v in soften.items()})
     if a.dry:
         print(f"{small} too small, {dropped} dropped by review, {bare} bare torsos")
         return
