@@ -5,7 +5,7 @@ neck with a new classification head, trained on plan_data.py's partial labels (2
 
 Held-out characters (by model path) are the validation set; OUT gets planner.pt, log.txt and per-class IoU. With
 --eval, a trained checkpoint is scored on DATA's validation set instead (OUT/eval.jsonl), so two planners trained on
-different labels can be compared on the same ones.
+different labels can be compared on the same ones; a planner v4 checkpoint (train_planner4.py) by its tag head.
 """
 import argparse
 import json
@@ -39,6 +39,17 @@ class Planner(nn.Module):
         maps = self.backbone.forward_with_filtered_kwargs(pixels).feature_maps
         fused = self.neck(maps, h // self.patch, w // self.patch)
         return F.interpolate(self.head(fused[-1]), size=(h, w), mode="bilinear", align_corners=False)
+
+
+class TagsOf(nn.Module):
+    """A planner v4 (train_planner4.py) answering as a planner v3: its tag logits."""
+
+    def __init__(self, v4: nn.Module):
+        super().__init__()
+        self.v4 = v4
+
+    def forward(self, pixels: torch.Tensor) -> torch.Tensor:
+        return self.v4(pixels)["classes"]
 
 
 class Pictures(torch.utils.data.Dataset):
@@ -102,8 +113,14 @@ def main():
     if a.eval:
         state = torch.load(a.eval, map_location="cuda")
         assert state["classes"] == classes, "the checkpoint was trained on other classes"
-        model = Planner(len(classes)).cuda()
-        model.load_state_dict(state["state"])
+        if any(k.startswith("embed.") for k in state["state"]):  # planner v4: its tag head alone
+            from train_planner4 import Planner4
+            model = TagsOf(Planner4(len(classes)))
+            model.v4.load_state_dict(state["state"])
+        else:
+            model = Planner(len(classes))
+            model.load_state_dict(state["state"])
+        model = model.cuda()
         ious = evaluate(model, val, len(classes))
         line = {"checkpoint": a.eval, "data": a.data, "models": len(val), "miou": float(np.nanmean(ious)),
                 "per_class": {c: (None if np.isnan(v) else round(float(v), 3)) for c, v in zip(classes, ious)}}
