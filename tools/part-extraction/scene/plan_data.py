@@ -1,6 +1,6 @@
 """Planner training data: each model at rest and its per-pixel tag map, labels corrected by the node review.
 
-  python plan_data.py SCENE_ROOT NODES_INDEX VERDICTS[,VERDICTS...] OUT [SIZE] [--describe D.jsonl] [--skip DIR,...]
+  python plan_data.py SCENE_ROOT NODES_INDEX VERDICTS[,VERDICTS...] OUT [SIZE] [--describe D.jsonl[,D.jsonl...]] [--skip DIR,...]
 
 SCENE_ROOT holds scene*/<key>/{scene.json,labels.json,full.png,meshes/} (SceneGraphTool, label.py); NODES_INDEX holds
 <nodes dir>.tsv (NodeDatasetTool's index.tsv from the machine that made the nodes, mapping its keys to models);
@@ -10,7 +10,7 @@ longer side SIZE, 1024) and .png (tag index per pixel, 255 where unknown or reje
 A mesh takes its rules tag (confidence 0.3 and up, as the nodes did); a reviewed whole-tag node relabels or rejects
 the meshes it holds, found as NodeDatasetTool found them (tag, and side of the face for paired tags). A mesh a reviewer
 described one by one (describe.py collect) takes that tag instead, unless the reviewer was guessing against the rules,
-which leaves it out. --skip leaves whole scene dirs out.
+which leaves it out, and so does a fragment (a scrap cut off a bigger piece). --skip leaves whole scene dirs out.
 """
 import json
 import random
@@ -29,7 +29,7 @@ PAIRED = {"irides", "eyewhite", "eyelash", "eyebrow", "ears", "earwear", "arm", 
 SCENE_OF = {"nodes": "scene", "nodes_eik": "scene_eik", "nodes_kis": "scene_kis", "nodes_col": "scene_col"}
 
 
-def main(root: Path, index_dir: Path, verdict_paths: list[Path], out: Path, size: int = 1024, describe: Path | None = None,
+def main(root: Path, index_dir: Path, verdict_paths: list[Path], out: Path, size: int = 1024, describe: list[Path] = (),
          skip: frozenset = frozenset()) -> None:
     out.mkdir(parents=True, exist_ok=True)
     (out / "classes.json").write_text(json.dumps(CLASSES), encoding="utf-8")
@@ -59,12 +59,11 @@ def main(root: Path, index_dir: Path, verdict_paths: list[Path], out: Path, size
         if model and scene and (scene, model) in local:
             reviews[(scene, local[(scene, model)])][v["node"]] = v
     described = defaultdict(dict)  # (scene dir, key) -> mesh -> tag, or None where the reviewer guessed against the rules
-    if describe:
-        for line in describe.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                d = json.loads(line)
-                guess = d.get("sure") is False and d.get("tag") != d.get("rules")
-                described[(d["scene"], d["key"])][d["mesh"]] = None if guess or d.get("tag") not in PHRASES else d["tag"]
+    for line in (l for path in describe for l in path.read_text(encoding="utf-8").splitlines()):
+        if line.strip():
+            d = json.loads(line)
+            guess = d.get("sure") is False and d.get("tag") != d.get("rules") or d.get("fragment")
+            described[(d["scene"], d["key"])][d["mesh"]] = None if guess or d.get("tag") not in PHRASES else d["tag"]
     rng = random.Random(0)
     n = 0
     for folder in sorted(root.glob("scene*/*/")):
@@ -128,7 +127,7 @@ if __name__ == "__main__":
     ap.add_argument("verdicts")
     ap.add_argument("out", type=Path)
     ap.add_argument("size", type=int, nargs="?", default=1024)
-    ap.add_argument("--describe", type=Path)
+    ap.add_argument("--describe", default="")
     ap.add_argument("--skip", default="")
     a = ap.parse_args()
-    main(a.root, a.index_dir, [Path(p) for p in a.verdicts.split(",")], a.out, a.size, a.describe, frozenset(filter(None, a.skip.split(","))))
+    main(a.root, a.index_dir, [Path(p) for p in a.verdicts.split(",")], a.out, a.size, [Path(p) for p in a.describe.split(",") if p], frozenset(filter(None, a.skip.split(","))))
