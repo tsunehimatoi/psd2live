@@ -1,7 +1,8 @@
 """Sheets for a reviewer to name every sizeable mesh directly: its tag, its role, and in free words what piece it is
 and what fine detail it carries (a skirt's lace trim, a fluffy fur rim), so the splits can go finer than the tags.
 
-  python describe.py make SCENE_ROOT OUT [MIN_SOLID]   one folder per family representative under OUT, with
+  python describe.py make SCENE_ROOT OUT [MIN_SOLID [MAX_SOLID [SKIP,...]]]
+                                                       one folder per family representative under OUT, with
                                                         sheet_<n>.png, sheet_<n>.txt (names and rule guesses per tile)
                                                         and tiles.json; writes OUT/batches.json and OUT/batch_<n>.txt
                                                         (about 160 tiles each)
@@ -139,7 +140,7 @@ def names_of(scene: dict, m: dict) -> str:
 
 
 def make_one(job) -> tuple[str, int]:
-    folder, out, min_solid = job
+    folder, out, min_solid, max_solid = job
     scene = json.loads((folder / "scene.json").read_text(encoding="utf-8"))
     labels = json.loads((folder / "labels.json").read_text(encoding="utf-8"))["labels"]
     full = np.asarray(Image.open(folder / "full.png").convert("RGBA")).astype(np.float32)
@@ -150,7 +151,7 @@ def make_one(job) -> tuple[str, int]:
     groups = defaultdict(list)
     for m in shown:
         groups[m.get("deformer") or m.get("part") or m["id"]].append(m)
-    chosen = [m for m in shown if m["look"]["solid"] >= min_solid]
+    chosen = [m for m in shown if min_solid <= m["look"]["solid"] < max_solid]
     # Draw order back to front so a reviewer meets the base before what sits on it.
     chosen.sort(key=lambda m: m["render"])
     out.mkdir(parents=True, exist_ok=True)
@@ -187,13 +188,14 @@ def make_one(job) -> tuple[str, int]:
     return str(out), len(listed)
 
 
-def make(root: Path, out: Path, min_solid: float = 300) -> None:
+def make(root: Path, out: Path, min_solid: float = 300, max_solid: float = float("inf"), skip: set[str] = frozenset()) -> None:
+    """Sheets of each family representative's meshes with min_solid <= solid pixels < max_solid; skip: scene dirs."""
     families = json.loads((root / "families.json").read_text(encoding="utf-8"))
     jobs = []
     for f in families:
         folder = root / f["members"][0]
-        if (folder / "labels.json").exists():
-            jobs.append((folder, out / f"{folder.parent.name}_{folder.name}", min_solid))
+        if folder.parent.name not in skip and (folder / "labels.json").exists():
+            jobs.append((folder, out / f"{folder.parent.name}_{folder.name}", min_solid, max_solid))
     with Pool(16) as pool:
         done = pool.map(make_one, jobs, chunksize=1)
     # Batches of whole sheets, about PER_BATCH tiles each; a model may span batches.
@@ -316,6 +318,7 @@ if __name__ == "__main__":
     elif sys.argv[1] == "missing":
         missing(Path(sys.argv[2]), set(sys.argv[3].split(",")) if len(sys.argv) > 3 else set())
     elif sys.argv[1] == "make":
-        make(Path(sys.argv[2]), Path(sys.argv[3]), *(float(a) for a in sys.argv[4:5]))
+        make(Path(sys.argv[2]), Path(sys.argv[3]), *(float(a) for a in sys.argv[4:6]),
+             *([set(sys.argv[6].split(","))] if len(sys.argv) > 6 else []))
     else:
         collect(Path(sys.argv[2]), set(sys.argv[3].split(",")) if len(sys.argv) > 3 else set())
