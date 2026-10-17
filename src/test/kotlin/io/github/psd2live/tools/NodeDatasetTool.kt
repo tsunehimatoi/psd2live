@@ -52,6 +52,10 @@ class NodeDatasetTool {
 	/** Nodes per model at most, rare tags first, so a model with forty strands does not drown the rest. */
 	private val perModel = setting("NODES_PER_MODEL", "40").toInt()
 	private val subPerModel = setting("SUBNODES_PER_MODEL", "20").toInt()
+	/** The labels file in each scene folder (describe_labels.py writes labels_described.json); labels.json without it. */
+	private val labelsName = setting("PARTS_LABELS", "labels.json")
+	/** Close-ups narrower than this many texels take in more of the surroundings instead of being dropped (0: off). */
+	private val minFrame = setting("PARTS_MIN_FRAME", "0").toInt()
 
 	private val paired = setOf("irides", "eyewhite", "eyelash", "eyebrow", "ears", "earwear", "arm", "hand", "leg",
 		"handwear", "legwear", "footwear")
@@ -76,7 +80,8 @@ class NodeDatasetTool {
 				val key = "$prefix%03d".format(index)
 				val samples = StringBuilder()
 				val model = file.relativeTo(root).path.replace('\\', '/')
-				val labels = File(scenes, "${keyOf[model] ?: key}/labels.json")
+				val folder = File(scenes, keyOf[model] ?: key)
+				val labels = File(folder, labelsName).takeIf { it.isFile } ?: File(folder, "labels.json")
 				val status = if (!labels.isFile) "no labels" else
 					runCatching { render(file, labels, File(out, key), key, samples, subnodes[model].orEmpty()) }.getOrElse { "error: ${it.javaClass.simpleName}: ${it.message?.take(160)}" }
 				println("$key $status")
@@ -93,7 +98,10 @@ class NodeDatasetTool {
 
 	private fun render(file: File, labelFile: File, dir: File, key: String, samples: StringBuilder, subnodes: List<JsonObject>): String {
 		val (ir, pixels) = loadRig(file).let { it.ir to it.pixels }
-		val labels = Json.parseToJsonElement(labelFile.readText()).jsonObject["labels"]!!.jsonObject
+		val labelDoc = Json.parseToJsonElement(labelFile.readText()).jsonObject
+		val labels = labelDoc["labels"]!!.jsonObject
+		// Nodes grouped by the reviewer's own per-mesh tags need no node review.
+		val described = labelDoc["source"]?.jsonPrimitive?.content == "describe"
 		val tagOf = HashMap<String, String>()
 		for ((id, value) in labels) {
 			val lab = value.jsonObject
@@ -173,7 +181,8 @@ class NodeDatasetTool {
 				}
 				val pose = if (first) base else session.evaluate(values)
 				val nodeBox = if (first) region else posedBox(pose, node.meshes)
-				val span = max(nodeBox[2] - nodeBox[0], nodeBox[3] - nodeBox[1]) * (if (first) 1.3f else random.nextDouble(1.15, 2.0).toFloat()) + 8f
+				var span = max(nodeBox[2] - nodeBox[0], nodeBox[3] - nodeBox[1]) * (if (first) 1.3f else random.nextDouble(1.15, 2.0).toFloat()) + 8f
+				if (minFrame > 0 && density > 0f && span * density < minFrame) span = minFrame / density
 				val shift = if (first) 0f else span * 0.08f
 				val cx = (nodeBox[0] + nodeBox[2]) / 2 + random.nextDouble(-1.0, 1.0).toFloat() * shift
 				val cy = (nodeBox[1] + nodeBox[3]) / 2 + random.nextDouble(-1.0, 1.0).toFloat() * shift
@@ -193,7 +202,8 @@ class NodeDatasetTool {
 				samples.append("""{"key":"$key","model":"${file.relativeTo(root).path.replace("\\", "/")}","node":"${node.id}","tag":"${node.tag}",""" +
 					""""side":"${node.side}","piece":${node.piece},"pieces":${node.pieces},"variant":$v,"pixels":$px,"meshes":${node.meshes.size},""" +
 					""""windows":${dropped.size},"visible":${coverage(hint, white = true)},"area":${coverage(alone)}""" +
-					(node.prompt?.let { ""","prompt":${Json.encodeToString(String.serializer(), it)}""" } ?: "") + "}").append('\n')
+					(node.prompt?.let { ""","prompt":${Json.encodeToString(String.serializer(), it)}""" } ?: "") +
+					(if (described) ""","described":true""" else "") + "}").append('\n')
 				written++
 			}
 		}
