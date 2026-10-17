@@ -163,8 +163,8 @@ def main():
             if v is not None and not v["keep"]:
                 dropped += 1
                 continue
-            if v is None and a.reviewed_only:
-                continue
+            if v is None and a.reviewed_only and not s.get("prompt"):
+                continue  # a finer node carries a reviewer's own name for it, which is its review
             tag = v["tag"] if v else s["tag"]
             if tag not in PHRASES:
                 continue
