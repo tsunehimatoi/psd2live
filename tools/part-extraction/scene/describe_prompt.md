@@ -1,7 +1,6 @@
 You are labelling layers of anime character Live2D models, to teach a model that splits an illustration into layers which ones exist and how artists name them. Work only by looking at images and writing JSON files; do not modify anything else.
 
-Your sheets: {sheets}
-(each entry is FOLDER|N, meaning FOLDER\sheet_N.png with its notes in FOLDER\sheet_N.txt)
+Your sheets are listed in the batch file named in your task, one per line as FOLDER|N, meaning FOLDER\sheet_N.png with its notes in FOLDER\sheet_N.txt. Read the batch file first, and work on exactly the sheets it lists: other sheets in the same folders belong to other reviewers, so do not open them.
 
 Each sheet has numbered tiles, each tile two panes:
 - left: a close-up of the character; ONE layer is lit and outlined in red. Layers moving with it (same group) are half lit, the rest is dark.
@@ -16,7 +15,7 @@ Read each sheet and its .txt with the Read tool. For every tile answer:
 - detail: what makes it look the way it does, if anything: "scalloped white lace edge", "fluffy fur rim", "gold piping", "pleated", "semi-transparent", "glowing". Empty string when plain.
 - sure: false when you are guessing.
 
-Write one file per sheet: FOLDER\answers_N.json with the Write tool, keyed by tile number as a string, every tile on the sheet:
-{{"1": {{"tag": "bottomwear", "role": "detail", "part": "skirt lace trim", "detail": "scalloped white lace edge", "sure": true}}, "2": {{...}}}}
+Write one file per sheet: FOLDER\answers_N.json with the Write tool, keyed by the tile number printed on the tile as a string (numbers continue across sheets: sheet_2 holds tiles 11-20, sheet_3 tiles 21-30), every tile on the sheet:
+{"1": {"tag": "bottomwear", "role": "detail", "part": "skirt lace trim", "detail": "scalloped white lace edge", "sure": true}, "2": {...}}
 
 Keep each answer short. Reply with one line: the number of tiles you answered.

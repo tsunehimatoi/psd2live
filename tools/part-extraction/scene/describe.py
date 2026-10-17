@@ -3,8 +3,11 @@ and what fine detail it carries (a skirt's lace trim, a fluffy fur rim), so the 
 
   python describe.py make SCENE_ROOT OUT [MIN_SOLID]   one folder per family representative under OUT, with
                                                         sheet_<n>.png, sheet_<n>.txt (names and rule guesses per tile)
-                                                        and tiles.json; writes OUT/batches.json (about 160 tiles each)
-  python describe.py collect OUT                        fold every answers_*.json into OUT/describe.jsonl
+                                                        and tiles.json; writes OUT/batches.json and OUT/batch_<n>.txt
+                                                        (about 160 tiles each)
+  python describe.py batch OUT [--final]               batch_<n>.txt for finished models not handed out yet
+  python describe.py collect OUT [SKIP,...]             fold every answers_*.json into OUT/describe.jsonl, but
+                                                        those of the scene dirs listed
 
 A tile is two panes: the mesh lit and outlined in red among its deformer group (half lit) and its surroundings
 (dimmed), and the mesh drawn alone and enlarged, so its edge (lace, frills, fur) can be seen.
@@ -206,13 +209,47 @@ def make(root: Path, out: Path, min_solid: float = 300) -> None:
     if current:
         batches.append(current)
     (out / "batches.json").write_text(json.dumps(batches, ensure_ascii=False, indent=0), encoding="utf-8")
+    for i, b in enumerate(batches):
+        (out / f"batch_{i:03d}.txt").write_text("\n".join(b) + "\n", encoding="utf-8")
     print(sum(n for _, n in done), "tiles in", len(done), "models,", len(batches), "batches")
 
 
-def collect(out: Path) -> None:
+def batch(out: Path, final: bool = False) -> None:
+    """Batches of the finished models not yet handed out (OUT/assigned.txt), so reviewing can start while sheets are
+    still being made; the last part-full batch waits unless final."""
+    assigned_path = out / "assigned.txt"
+    assigned = set(assigned_path.read_text(encoding="utf-8").split()) if assigned_path.exists() else set()
+    numbers = [int(p.stem.split("_")[1]) for p in out.glob("batch_*.txt")]
+    n = max(numbers) + 1 if numbers else 0
+    per = COLUMNS * ROWS
+    current, count, made = [], 0, []
+    for tiles_path in sorted(out.glob("*/tiles.json")):
+        for s in range(1, (len(json.loads(tiles_path.read_text(encoding="utf-8"))["tiles"]) + per - 1) // per + 1):
+            entry = f"{tiles_path.parent.resolve()}|{s}"
+            if entry in assigned:
+                continue
+            current.append(entry)
+            count += per
+            if count >= PER_BATCH:
+                made.append(current)
+                current, count = [], 0
+    if current and final:
+        made.append(current)
+    for b in made:
+        (out / f"batch_{n:03d}.txt").write_text("\n".join(b) + "\n", encoding="utf-8")
+        n += 1
+        assigned.update(b)
+    assigned_path.write_text("\n".join(sorted(assigned)) + "\n", encoding="utf-8")
+    print(len(made), "new batches, up to", n - 1)
+
+
+def collect(out: Path, skip: set[str] = frozenset()) -> None:
+    """skip: scene dirs left out whole (a source withdrawn from the data)."""
     rows = []
     for tiles_path in sorted(out.glob("*/tiles.json")):
         info = json.loads(tiles_path.read_text(encoding="utf-8"))
+        if info["scene"] in skip:
+            continue
         by_tile = {str(t["tile"]): t for t in info["tiles"]}
         for answers in sorted(tiles_path.parent.glob("answers_*.json")):
             try:
@@ -220,8 +257,12 @@ def collect(out: Path) -> None:
             except json.JSONDecodeError:
                 print("unreadable", answers)
                 continue
+            sheet = int(answers.stem.split("_")[1])
+            keys = [int(k) for k in got if str(k).isdigit()]
+            # Some reviewers number each sheet from 1 instead of using the printed tile numbers.
+            offset = (sheet - 1) * COLUMNS * ROWS if sheet > 1 and keys and max(keys) <= COLUMNS * ROWS else 0
             for k, a in got.items():
-                t = by_tile.get(str(k))
+                t = by_tile.get(str(int(k) + offset)) if str(k).isdigit() else None
                 if t and isinstance(a, dict):
                     rows.append({"scene": info["scene"], "key": info["key"], "mesh": t["mesh"], "rules": t["rules"],
                                  **{f: a.get(f) for f in ("tag", "role", "part", "detail", "sure")}})
@@ -232,7 +273,9 @@ def collect(out: Path) -> None:
 
 
 if __name__ == "__main__":
-    if sys.argv[1] == "make":
+    if sys.argv[1] == "batch":
+        batch(Path(sys.argv[2]), "--final" in sys.argv)
+    elif sys.argv[1] == "make":
         make(Path(sys.argv[2]), Path(sys.argv[3]), *(float(a) for a in sys.argv[4:5]))
     else:
-        collect(Path(sys.argv[2]))
+        collect(Path(sys.argv[2]), set(sys.argv[3].split(",")) if len(sys.argv) > 3 else set())
