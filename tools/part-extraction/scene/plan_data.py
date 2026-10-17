@@ -29,69 +29,94 @@ PAIRED = {"irides", "eyewhite", "eyelash", "eyebrow", "ears", "earwear", "arm", 
 SCENE_OF = {"nodes": "scene", "nodes_eik": "scene_eik", "nodes_kis": "scene_kis", "nodes_col": "scene_col"}
 
 
-def main(root: Path, index_dir: Path, verdict_paths: list[Path], out: Path, size: int = 1024, describe: list[Path] = (),
-         skip: frozenset = frozenset()) -> None:
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "classes.json").write_text(json.dumps(CLASSES), encoding="utf-8")
-    # Server node keys -> model paths -> local scene keys.
-    model_of = {}
-    for tsv in index_dir.glob("*.tsv"):
-        for line in tsv.read_text(encoding="utf-8").splitlines()[1:]:
-            k, model = line.split("\t")[:2]
-            model_of[(tsv.stem, k)] = model
-    local = {}
-    for scene_dir in root.glob("scene*"):
-        idx = scene_dir / "index.tsv"
-        if idx.exists():
-            for line in idx.read_text(encoding="utf-8").splitlines()[1:]:
-                k, model = line.split("\t")[:2]
-                local[(scene_dir.name, model)] = k
-    reviews = defaultdict(dict)  # (scene dir, local key) -> node id -> verdict
-    lines = [l for p in verdict_paths for l in p.read_text(encoding="utf-8").splitlines()]  # later files win
-    for line in lines:
-        if not line.strip():
-            continue
-        v = json.loads(line)
-        if "_p" in v["node"]:
-            continue  # pieces: the whole-tag node speaks for its meshes
-        model = model_of.get((v["dir"], v["key"]))
-        scene = SCENE_OF.get(v["dir"])
-        if model and scene and (scene, model) in local:
-            reviews[(scene, local[(scene, model)])][v["node"]] = v
-    described = defaultdict(dict)  # (scene dir, key) -> mesh -> tag, or None where the reviewer guessed against the rules
-    for line in (l for path in describe for l in path.read_text(encoding="utf-8").splitlines()):
-        if line.strip():
-            d = json.loads(line)
-            guess = d.get("sure") is False and d.get("tag") != d.get("rules") or d.get("fragment")
-            described[(d["scene"], d["key"])][d["mesh"]] = None if guess or d.get("tag") not in PHRASES else d["tag"]
-    rng = random.Random(0)
-    n = 0
-    for folder in sorted(root.glob("scene*/*/")):
-        if folder.parent.name == "trial" or folder.parent.name in skip or not (folder / "labels.json").exists():
-            continue
-        scene = json.loads((folder / "scene.json").read_text(encoding="utf-8"))
+class Labels:
+    """Each mesh's tag in a scene folder: rules, then the node review, then the per-mesh descriptions (None: unknown)."""
+
+    def __init__(self, root: Path, index_dir: Path, verdict_paths: list[Path], describe: list[Path] = ()):
+        # Server node keys -> model paths -> local scene keys.
+        model_of = {}
+        for tsv in index_dir.glob("*.tsv"):
+            for line in tsv.read_text(encoding="utf-8").splitlines()[1:]:
+                k, model = line.split("	")[:2]
+                model_of[(tsv.stem, k)] = model
+        local = {}
+        for scene_dir in root.glob("scene*"):
+            idx = scene_dir / "index.tsv"
+            if idx.exists():
+                for line in idx.read_text(encoding="utf-8").splitlines()[1:]:
+                    k, model = line.split("	")[:2]
+                    local[(scene_dir.name, model)] = k
+        self.reviews = defaultdict(dict)  # (scene dir, local key) -> node id -> verdict
+        lines = [l for p in verdict_paths for l in p.read_text(encoding="utf-8").splitlines()]  # later files win
+        for line in lines:
+            if not line.strip():
+                continue
+            v = json.loads(line)
+            if "_p" in v["node"]:
+                continue  # pieces: the whole-tag node speaks for its meshes
+            model = model_of.get((v["dir"], v["key"]))
+            scene = SCENE_OF.get(v["dir"])
+            if model and scene and (scene, model) in local:
+                self.reviews[(scene, local[(scene, model)])][v["node"]] = v
+        self.described = defaultdict(dict)  # (scene dir, key) -> mesh -> tag, or None where the reviewer guessed against the rules
+        self.rows = defaultdict(dict)  # (scene dir, key) -> mesh -> the reviewer's row
+        for line in (l for path in describe for l in path.read_text(encoding="utf-8").splitlines()):
+            if line.strip():
+                d = json.loads(line)
+                guess = d.get("sure") is False and d.get("tag") != d.get("rules") or d.get("fragment")
+                self.described[(d["scene"], d["key"])][d["mesh"]] = None if guess or d.get("tag") not in PHRASES else d["tag"]
+                self.rows[(d["scene"], d["key"])][d["mesh"]] = d
+
+    def tags(self, folder: Path, scene: dict) -> dict:
+        """mesh -> tag (None or absent: unknown) for the model in folder."""
         labels = json.loads((folder / "labels.json").read_text(encoding="utf-8"))["labels"]
-        review = reviews.get((folder.parent.name, folder.name), {})
+        review = self.reviews.get((folder.parent.name, folder.name), {})
         tag = {}
         for m in scene["meshes"]:
             lab = labels[m["id"]]
             if lab["confidence"] >= 0.3 and lab["tag"] in PHRASES and m.get("opacity", 1) >= 0.05:
                 tag[m["id"]] = lab["tag"]
-        faces = [m for m in scene["meshes"] if tag.get(m["id"]) == "face" and m.get("box")]
-        centre = (min(m["box"][0] for m in faces) + max(m["box"][2] for m in faces)) / 2 if faces else scene["canvas"][0] / 2
+        centre = face_centre(scene, tag)
         for m in scene["meshes"]:
             t = tag.get(m["id"])
             if t is None or not m.get("box"):
                 continue
-            side = ("l" if (m["box"][0] + m["box"][2]) / 2 < centre else "r") if t in PAIRED else "c"
-            v = review.get(f"{t}_{side}")
+            v = review.get(f"{t}_{side_of(m, t, centre)}")
             if v is not None:
                 # Per pixel, a node that was not clean as a whole is still mostly right mesh by mesh: the reviewer's tag
                 # counts when it was kept or agrees with the rules; a disputed one is left out.
                 agreed = v["keep"] or v["tag"] == v["rules"]
                 tag[m["id"]] = v["tag"] if agreed and v["tag"] in PHRASES else None
-        for mesh, t in described.get((folder.parent.name, folder.name), {}).items():
+        for mesh, t in self.described.get((folder.parent.name, folder.name), {}).items():
             tag[mesh] = t
+        return tag
+
+
+def face_centre(scene: dict, tag: dict) -> float:
+    faces = [m for m in scene["meshes"] if tag.get(m["id"]) == "face" and m.get("box")]
+    return (min(m["box"][0] for m in faces) + max(m["box"][2] for m in faces)) / 2 if faces else scene["canvas"][0] / 2
+
+
+def side_of(mesh: dict, tag: str, centre: float) -> str:
+    return ("l" if (mesh["box"][0] + mesh["box"][2]) / 2 < centre else "r") if tag in PAIRED else "c"
+
+
+def scene_folders(root: Path, skip: frozenset = frozenset()):
+    for folder in sorted(root.glob("scene*/*/")):
+        if folder.parent.name != "trial" and folder.parent.name not in skip and (folder / "labels.json").exists():
+            yield folder
+
+
+def main(root: Path, index_dir: Path, verdict_paths: list[Path], out: Path, size: int = 1024, describe: list[Path] = (),
+         skip: frozenset = frozenset()) -> None:
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "classes.json").write_text(json.dumps(CLASSES), encoding="utf-8")
+    labels = Labels(root, index_dir, verdict_paths, describe)
+    rng = random.Random(0)
+    n = 0
+    for folder in scene_folders(root, skip):
+        scene = json.loads((folder / "scene.json").read_text(encoding="utf-8"))
+        tag = labels.tags(folder, scene)
         full = Image.open(folder / "full.png").convert("RGBA")
         classes = np.full((full.height, full.width), 255, np.uint8)
         for m in sorted(scene["meshes"], key=lambda m: m["render"]):

@@ -1,9 +1,11 @@
 """The planner: per-pixel part tags of a character illustration, a DINOv2 (Depth Anything V2 Base) backbone and DPT
 neck with a new classification head, trained on plan_data.py's partial labels (255 is ignored).
 
-  python train_planner.py DATA OUT [--epochs 40] [--batch 4] [--held a,b,...]
+  python train_planner.py DATA OUT [--epochs 40] [--batch 4] [--held a,b,...] [--eval CHECKPOINT]
 
-Held-out characters (by model path) are the validation set; OUT gets planner.pt, log.txt and per-class IoU.
+Held-out characters (by model path) are the validation set; OUT gets planner.pt, log.txt and per-class IoU. With
+--eval, a trained checkpoint is scored on DATA's validation set instead (OUT/eval.jsonl), so two planners trained on
+different labels can be compared on the same ones.
 """
 import argparse
 import json
@@ -86,6 +88,7 @@ def main():
     ap.add_argument("out")
     ap.add_argument("--epochs", type=int, default=40)
     ap.add_argument("--batch", type=int, default=4)
+    ap.add_argument("--eval", default="")
     ap.add_argument("--held", default="caracal,mint,Ergosum/kiharu,灵魂潮汐国际服-倒闭二游/asuna,booth-6687553-weather-girl,booth-4499251-same-sister")
     a = ap.parse_args()
     data, out = Path(a.data), Path(a.out)
@@ -96,6 +99,17 @@ def main():
     stems = sorted(str(p.with_suffix("")) for p in data.glob("*.jpg"))
     val = [s for s in stems if any(h in Path(s + ".txt").read_text(encoding="utf-8") for h in held)]
     train = [s for s in stems if s not in set(val)]
+    if a.eval:
+        state = torch.load(a.eval, map_location="cuda")
+        assert state["classes"] == classes, "the checkpoint was trained on other classes"
+        model = Planner(len(classes)).cuda()
+        model.load_state_dict(state["state"])
+        ious = evaluate(model, val, len(classes))
+        line = {"checkpoint": a.eval, "data": a.data, "models": len(val), "miou": float(np.nanmean(ious)),
+                "per_class": {c: (None if np.isnan(v) else round(float(v), 3)) for c, v in zip(classes, ious)}}
+        with open(out / "eval.jsonl", "a", encoding="utf-8") as f:
+            print(json.dumps(line), file=f)
+        return
     # Class weights: inverse square root of pixel frequency, so small parts count.
     counts = np.zeros(len(classes))
     for s in train[::3]:
