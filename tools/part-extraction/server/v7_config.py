@@ -1,6 +1,6 @@
 """Write an ai-toolkit config for a general-split LoRA: two controls (close-up, hint), samples from held-out nodes.
 
-  python v7_config.py NAME DATA OUT.yaml [--rank 64] [--lr 5e-5] [--steps 12000] [--samples 12] [--resume LORA]
+  python v7_config.py NAME DATA OUT.yaml [--rank 64] [--lr 5e-5] [--steps 12000] [--samples 12] [--resume LORA] [--res "256, 512"]
 """
 import argparse
 import json
@@ -34,7 +34,7 @@ config:
           caption_dropout_rate: 0.0
           shuffle_tokens: false
           cache_latents_to_disk: true
-          resolution: [256, 512, 768]
+          resolution: [{res}]
       train:
         batch_size: 1
         steps: {steps}
@@ -79,6 +79,7 @@ def main():
     ap.add_argument("--steps", type=int, default=12000)
     ap.add_argument("--samples", type=int, default=12)
     ap.add_argument("--resume")
+    ap.add_argument("--res", default="256, 512, 768", help="training buckets")
     a = ap.parse_args()
     test = Path(a.data) / "test"
     rows = [json.loads(l) for l in (test / "prompts.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
@@ -93,14 +94,14 @@ def main():
     lines = []
     for r in chosen:
         side = Image.open(test / f"{r['name']}_input.png").width
-        side = max(256, min(768, side // 16 * 16))
+        side = max(256, min(int(a.res.split(",")[-1]), side // 16 * 16))
         lines.append(f'          - prompt: "{r["prompt"]}"\n'
                      f'            ctrl_img_1: "{test / (r["name"] + "_input.png")}"\n'
                      f'            ctrl_img_2: "{test / (r["name"] + "_hint.png")}"\n'
                      f'            width: {side}\n            height: {side}\n')
     resume = f'        pretrained_lora_path: "{a.resume}"\n' if a.resume else ""
     Path(a.out).write_text(TEMPLATE.format(name=a.name, data=a.data, rank=a.rank, lr=a.lr, steps=a.steps,
-                                           samples="".join(lines), resume=resume), encoding="utf-8")
+                                           samples="".join(lines), resume=resume, res=a.res), encoding="utf-8")
     print("samples:", [r["name"] for r in chosen])
 
 
