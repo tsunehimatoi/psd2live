@@ -8,7 +8,8 @@ OUT/train_in (close-up, JPEG), OUT/train_hint (visible area), OUT/train_tgt (+ .
 target}.png and OUT/test/prompts.jsonl. Verdicts (review_nodes.py) relabel or drop nodes; with --reviewed-only
 nodes nobody reviewed are left out. A model whose family holds a held-out model goes to the test set whole.
 With --subnodes (subnodes.py's files, which say what kind each finer node is) a single piece of a group (one strand,
-one finger) needs a close-up of --piece-min and makes at most --piece-share of the training pairs, drawn at random,
+one finger) needs --piece-min pixels on a side (the side of a square of its area at native size; the close-up's own
+size says little, as small parts are framed to at least 256) and makes at most --piece-share of the training pairs, drawn at random,
 so the whole tag and the named groups keep their weight. --dry counts the pairs by kind and size without writing.
 """
 import argparse
@@ -141,7 +142,7 @@ def main():
     ap.add_argument("--styles", help="styles.tsv from styles.py: authoring conventions by model")
     ap.add_argument("--wear", help="jsonl of base body nodes and what is painted on them (bare, tight, underwear)")
     ap.add_argument("--subnodes", action="append", default=[], help="subnodes.py output, for each finer node's kind")
-    ap.add_argument("--piece-min", type=int, default=0, help="smallest close-up of a single piece of a group")
+    ap.add_argument("--piece-min", type=int, default=0, help="smallest single piece of a group: side of a square of its area at native size")
     ap.add_argument("--piece-share", type=float, default=1.0, help="largest share of training pairs from single pieces")
     ap.add_argument("--dry", action="store_true", help="count the pairs by kind and size, write nothing")
     a = ap.parse_args()
@@ -189,7 +190,7 @@ def main():
                 continue
             s = json.loads(line)
             kind = kinds.get((s["model"], s["node"]), "group") if s.get("prompt") else "tag"
-            if s["pixels"] < (max(a.min, a.piece_min) if kind == "piece" else a.min):
+            if s["pixels"] < a.min or kind == "piece" and s["pixels"] * s.get("area", 1) ** 0.5 < a.piece_min:
                 small += 1
                 continue
             if a.pieces_once and s["piece"] and s["variant"]:
