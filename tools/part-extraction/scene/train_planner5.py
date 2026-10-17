@@ -16,7 +16,8 @@ each layer only where the previous one placed its query's mask (masked attention
 Training matches queries to the close-up's layers (Hungarian, on POINTS points sampled per close-up), every decoder
 layer's predictions included. A layer whose tag is unsure is only kept from being none; a layer the close-up does not
 show (covered) is matched and learnt by its whole shape. The pixel tag and role heads keep their v4 losses.
-OUT gets planner5.pt and log.txt (losses every 50 steps, an evaluation every --eval-every steps).
+OUT gets log.txt (losses every 50 steps, an evaluation every --eval-every steps), planner5_<step>.pt at each evaluation
+and planner5.pt, the last of them.
 """
 import argparse
 import json
@@ -443,9 +444,12 @@ def main():
             sched.step()
             step += 1
             if step % 50 == 0:
-                print(f"step {step}/{a.steps} loss {loss.item():.4f} " + " ".join(f"{k} {float(v):.4f}" for k, v in parts.items()), file=log, flush=True)
+                print(f"step {step}/{a.steps} loss {loss.item():.4f} " + " ".join(f"{k} {float(v.detach()):.4f}" for k, v in parts.items()), file=log, flush=True)
             if step % a.eval_every == 0 or step == a.steps:
-                torch.save({"state": model.state_dict(), "classes": classes}, out / "planner5.pt")
+                # Every evaluation's checkpoint is kept (planner5_<step>.pt, about 0.4 GB each); planner5.pt is the last.
+                torch.save({"state": model.state_dict(), "classes": classes}, out / f"planner5_{step}.pt")
+                (out / "planner5.pt").unlink(missing_ok=True)
+                (out / "planner5.pt").hardlink_to(out / f"planner5_{step}.pt")
                 print(json.dumps({"step": step, **evaluate(model, val, classes)}), file=log, flush=True)
             if step >= a.steps:
                 break
