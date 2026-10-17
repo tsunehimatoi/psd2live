@@ -1,11 +1,15 @@
 """Training pairs from NodeDatasetTool renders: (close-up, hint) -> the node alone, with a prompt from its tag.
 
   python make_node_pairs.py OUT NODES_DIR [NODES_DIR...] [--verdicts V.jsonl] [--families F.json] [--held H,...]
-      [--size 768] [--min 128] [--reviewed-only] [--styles styles.tsv]
+      [--size 768] [--min 128] [--reviewed-only] [--styles styles.tsv] [--subnodes S.jsonl --piece-min 256 --piece-share 0.4]
+      [--dry]
 
 OUT/train_in (close-up, JPEG), OUT/train_hint (visible area), OUT/train_tgt (+ .txt prompt), OUT/test/<name>_{input,hint,
 target}.png and OUT/test/prompts.jsonl. Verdicts (review_nodes.py) relabel or drop nodes; with --reviewed-only
 nodes nobody reviewed are left out. A model whose family holds a held-out model goes to the test set whole.
+With --subnodes (subnodes.py's files, which say what kind each finer node is) a single piece of a group (one strand,
+one finger) needs a close-up of --piece-min and makes at most --piece-share of the training pairs, drawn at random,
+so the whole tag and the named groups keep their weight. --dry counts the pairs by kind and size without writing.
 """
 import argparse
 import io
@@ -136,6 +140,10 @@ def main():
     ap.add_argument("--soften", type=float, default=0, help="share of training close-ups of 256 and up read from a 2-4 times smaller, at times JPEG-compressed picture")
     ap.add_argument("--styles", help="styles.tsv from styles.py: authoring conventions by model")
     ap.add_argument("--wear", help="jsonl of base body nodes and what is painted on them (bare, tight, underwear)")
+    ap.add_argument("--subnodes", action="append", default=[], help="subnodes.py output, for each finer node's kind")
+    ap.add_argument("--piece-min", type=int, default=0, help="smallest close-up of a single piece of a group")
+    ap.add_argument("--piece-share", type=float, default=1.0, help="largest share of training pairs from single pieces")
+    ap.add_argument("--dry", action="store_true", help="count the pairs by kind and size, write nothing")
     a = ap.parse_args()
     out = Path(a.out)
     verdicts = {}
@@ -165,15 +173,23 @@ def main():
         for f in json.loads(Path(a.families).read_text(encoding="utf-8")):
             if any(any(h in m for h in held) for m in f["models"]):
                 held_models.update(f["models"])
+    kinds = {}
+    for path in a.subnodes:
+        for line in Path(path).read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                j = json.loads(line)
+                kinds[(j["model"], j["node"])] = j.get("kind", "group")
     for d in ("train_in", "train_hint", "train_tgt", "test"):
-        (out / d).mkdir(parents=True, exist_ok=True)
+        if not a.dry:
+            (out / d).mkdir(parents=True, exist_ok=True)
     jobs, dropped, small, bare = [], 0, 0, 0
     for nodes_dir in map(Path, a.nodes):
         for line in (nodes_dir / "samples.jsonl").read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             s = json.loads(line)
-            if s["pixels"] < a.min:
+            kind = kinds.get((s["model"], s["node"]), "group") if s.get("prompt") else "tag"
+            if s["pixels"] < (max(a.min, a.piece_min) if kind == "piece" else a.min):
                 small += 1
                 continue
             if a.pieces_once and s["piece"] and s["variant"]:
@@ -201,7 +217,24 @@ def main():
             jobs.append({"stem": str(nodes_dir / s["key"] / f"{s['node']}_{s['variant']}"), "side": min(a.size, max(256, s["pixels"] // 64 * 64)),
                          "test": test, "tag": tag, "prompt": words,
                          "test_name": f"{nodes_dir.name}_{s['key']}_{s['node']}_{s['variant']}", "rough": a.rough_hints,
-                         "soften": a.soften})
+                         "soften": a.soften, "kind": kind, "pixels": s["pixels"]})
+    # Single pieces are many; a random share of them keeps the whole tags and named groups weighted.
+    train = [j for j in jobs if not j["test"]]
+    pieces = [j for j in train if j["kind"] == "piece"]
+    room = int(a.piece_share / (1 - a.piece_share) * (len(train) - len(pieces))) if a.piece_share < 1 else len(pieces)
+    if len(pieces) > room:
+        keep = set(map(id, random.Random(0).sample(pieces, room)))
+        jobs = [j for j in jobs if j["test"] or j["kind"] != "piece" or id(j) in keep]
+    count = {}
+    for j in jobs:
+        if not j["test"]:
+            band = "<256" if j["pixels"] < 256 else "<512" if j["pixels"] < 512 else "<768" if j["pixels"] < 768 else "768+"
+            count.setdefault(j["kind"], {}).setdefault(band, 0)
+            count[j["kind"]][band] += 1
+    print("training pairs by kind and close-up size:", json.dumps(count), f"({len(pieces)} single pieces before sampling)")
+    if a.dry:
+        print(f"{small} too small, {dropped} dropped by review, {bare} bare torsos")
+        return
     train_index = 0
     for j in jobs:  # numbering fixed before the workers run, so the output does not depend on their order
         if not j["test"]:

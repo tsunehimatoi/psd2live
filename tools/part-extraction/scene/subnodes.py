@@ -15,7 +15,7 @@ picture laid in front of and behind something (a sleeve around a hand) gives thr
 front of what lies between and its part behind it; with LAYERED_REVIEW (layered_review.py collect) only the pairs a
 reviewer kept, in the reviewer's names.
 Guesses (sure false) are kept: they are mostly about which tag a piece falls under, and the prompt is the name. Writes one line per node for NodeDatasetTool
-(SUBNODES): {"model", "node", "tag", "role", "prompt", "meshes"}, each model's nodes in a fixed shuffled order, the
+(SUBNODES): {"model", "node", "tag", "role", "prompt", "meshes", "kind"} (group, piece or layered), each model's nodes in a fixed shuffled order, the
 front-and-back ones first.
 """
 import json
@@ -124,7 +124,7 @@ def main(root: Path, describe: list[Path], out: Path, per_group: int = 3, units_
                 if pixels < WHOLE * tag_pixels[(tag, s)]:
                     words = f"the {plural(name) if len(ids) > 1 else name}" + (f", {detail}" if detail else "")
                     nodes.append({"model": model, "node": f"d_{tag}_{s}_{role}_{slug}", "tag": tag, "role": role,
-                                  "prompt": words, "meshes": ids})
+                                  "prompt": words, "meshes": ids, "kind": "group"})
                 by_piece = {}
                 for m in members:  # one row per piece: its largest described mesh speaks for it
                     k = unit_of.get(m["mesh"], m["mesh"])
@@ -136,7 +136,7 @@ def main(root: Path, describe: list[Path], out: Path, per_group: int = 3, units_
                         own = (m.get("detail") or "").strip()
                         nodes.append({"model": model, "node": f"d_{tag}_{s}_{role}_{slug}_{unit_of.get(m['mesh'], m['mesh'])}",
                                       "tag": tag, "role": role, "prompt": f"the {clean(m['part'])}" + (f", {own}" if own else ""),
-                                      "meshes": sorted(pieces(m["mesh"]))})
+                                      "meshes": sorted(pieces(m["mesh"])), "kind": "piece"})
             # One picture in front of and behind something: the whole of it, and each side by where it lies.
             said = {r["mesh"]: r for r in rows}
             for n, pair in enumerate(info["layered"]):
@@ -163,7 +163,7 @@ def main(root: Path, describe: list[Path], out: Path, per_group: int = 3, units_
                                          ("front", front, f"the part of the {name} in front of {other}"),
                                          ("back", back, f"the part of the {name} behind {other}")):
                     nodes.append({"model": model, "node": f"d_{tag}_layered{n}_{kind}", "tag": tag, "role": "base",
-                                  "prompt": words, "meshes": sorted(i for i in ids if i in meshes)})
+                                  "prompt": words, "meshes": sorted(i for i in ids if i in meshes), "kind": "layered"})
             random.Random(model).shuffle(nodes)
             nodes.sort(key=lambda n: "_layered" not in n["node"])  # few and reviewed: never cut by SUBNODES_PER_MODEL
             for n in nodes:
