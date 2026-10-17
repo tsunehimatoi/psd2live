@@ -7,8 +7,9 @@ DESCRIBE.jsonl is describe.py's collect output. Within a model, meshes whose nam
 (lock, tuft and strand; bangs and front hair; shade and shadow) make a group per tag, role and side:
 - the group as a whole is a node ("the skirt frills"), unless it holds most of its tag's pixels, which the tag's own
   node already covers;
-- a group of three or more base pieces (strands, fingers, panels) also gives its PER_GROUP (3) largest meshes as
+- a group of three or more base pieces (strands, fingers, panels) also gives its PER_GROUP (3) largest pieces as
   nodes of their own ("the front hair strand"); the hint, the node's visible area, tells them apart.
+A piece is a mesh, or every segment of a layer Cubism's skinning cut up (skin_units), so a strand is never a segment.
 Guesses (sure false) are kept: they are mostly about which tag a piece falls under, and the prompt is the name. Writes one line per node for NodeDatasetTool
 (SUBNODES): {"model", "node", "tag", "role", "prompt", "meshes"}, each model's nodes in a fixed shuffled order.
 """
@@ -22,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from make_node_pairs import PHRASES
 from plan_data import PAIRED
+from describe_labels import skin_units
 
 SIDE = re.compile(r"\b(left|right|l|r)\b")
 ROLES = {"base", "shadow", "highlight", "line", "detail"}
@@ -73,10 +75,16 @@ def main(root: Path, describe: Path, out: Path, per_group: int = 3) -> None:
             model = models.get((scene, key_))
             if model is None:
                 continue
-            meshes = {m["id"]: m for m in json.loads((root / scene / key_ / "scene.json").read_text(encoding="utf-8"))["meshes"]
-                      if m.get("box")}
+            scene_doc = json.loads((root / scene / key_ / "scene.json").read_text(encoding="utf-8"))
+            meshes = {m["id"]: m for m in scene_doc["meshes"] if m.get("box")}
+            unit_of = skin_units(scene_doc)
+            segments = defaultdict(list)
+            for mesh, unit in unit_of.items():
+                if mesh in meshes:
+                    segments[unit].append(mesh)
+            pieces = lambda mesh: segments[unit_of[mesh]] if mesh in unit_of else [mesh]
             rows = [r for r in rows if r["mesh"] in meshes]
-            solid = {r["mesh"]: meshes[r["mesh"]].get("look", {}).get("solid", 0) for r in rows}
+            solid = {i: m.get("look", {}).get("solid", 0) for i, m in meshes.items()}
             faces = [meshes[r["mesh"]]["box"] for r in rows if r["tag"] == "face"]
             centre = (min(b[0] for b in faces) + max(b[2] for b in faces)) / 2 if faces else None
 
@@ -100,17 +108,24 @@ def main(root: Path, describe: Path, out: Path, per_group: int = 3) -> None:
                 details = Counter(m["detail"].strip() for m in members if (m.get("detail") or "").strip())
                 detail = details.most_common(1)[0][0] if details else ""
                 slug = re.sub(r"[^a-z0-9]+", "_", k)[:40].strip("_")
-                ids = sorted(m["mesh"] for m in members)
-                pixels = sum(solid[i] for i in ids)
+                ids = sorted({p for m in members for p in pieces(m["mesh"])})
+                pixels = sum(solid.get(i, 0) for i in ids)
                 if pixels < WHOLE * tag_pixels[(tag, s)]:
                     words = f"the {plural(name) if len(ids) > 1 else name}" + (f", {detail}" if detail else "")
                     nodes.append({"model": model, "node": f"d_{tag}_{s}_{role}_{slug}", "tag": tag, "role": role,
                                   "prompt": words, "meshes": ids})
-                if role == "base" and len(ids) >= 3:
-                    for m in sorted(members, key=lambda m: (-solid[m["mesh"]], m["mesh"]))[:per_group]:
+                by_piece = {}
+                for m in members:  # one row per piece: its largest described mesh speaks for it
+                    k = unit_of.get(m["mesh"], m["mesh"])
+                    if k not in by_piece or solid[m["mesh"]] > solid[by_piece[k]["mesh"]]:
+                        by_piece[k] = m
+                if role == "base" and len(by_piece) >= 3:
+                    size = lambda m: sum(meshes[p].get("look", {}).get("solid", 0) for p in pieces(m["mesh"]))
+                    for m in sorted(by_piece.values(), key=lambda m: (-size(m), m["mesh"]))[:per_group]:
                         own = (m.get("detail") or "").strip()
-                        nodes.append({"model": model, "node": f"d_{tag}_{s}_{role}_{slug}_{m['mesh']}", "tag": tag, "role": role,
-                                      "prompt": f"the {clean(m['part'])}" + (f", {own}" if own else ""), "meshes": [m["mesh"]]})
+                        nodes.append({"model": model, "node": f"d_{tag}_{s}_{role}_{slug}_{unit_of.get(m['mesh'], m['mesh'])}",
+                                      "tag": tag, "role": role, "prompt": f"the {clean(m['part'])}" + (f", {own}" if own else ""),
+                                      "meshes": sorted(pieces(m["mesh"]))})
             random.Random(model).shuffle(nodes)
             for n in nodes:
                 f.write(json.dumps(n, ensure_ascii=False) + "\n")

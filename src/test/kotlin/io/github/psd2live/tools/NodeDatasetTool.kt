@@ -113,6 +113,11 @@ class NodeDatasetTool {
 		val base = session.evaluate(emptyMap())
 		val visible = base.opacity.filter { it.value > 0.05f }.keys
 		val meshes = ir.meshes.associateBy { it.id }
+		// Cubism's skinning cuts one drawn layer into segments, one per bone, under a part named "<layer>_Skinning":
+		// the segments of one such part are one piece.
+		val skinOf = HashMap<String, String>()
+		for (part in ir.parts) if (part.name.endsWith("_Skinning", ignoreCase = true))
+			for (child in part.children) if (child is ChildRef.MeshRef) skinOf[child.id] = part.id
 		fun box(ids: Collection<String>): FloatArray {
 			var x0 = Float.MAX_VALUE; var y0 = Float.MAX_VALUE; var x1 = -Float.MAX_VALUE; var y1 = -Float.MAX_VALUE
 			for (id in ids) base.positions[id]?.let { p -> for (i in 0 until p.size / 2) { x0 = min(x0, p[i * 2]); x1 = max(x1, p[i * 2]); y0 = min(y0, p[i * 2 + 1]); y1 = max(y1, p[i * 2 + 1]) } }
@@ -130,7 +135,7 @@ class NodeDatasetTool {
 			for ((side, sideIds) in sides) {
 				nodes += Node("${tag}_$side", tag, side, 0, 1, sideIds.toSet())
 				if (tag in pieced) {
-					val pieces = sideIds.groupBy { meshes[it]?.parent ?: it }.values.filter { piece ->
+					val pieces = sideIds.groupBy { skinOf[it] ?: meshes[it]?.parent ?: it }.values.filter { piece ->
 						box(piece).let { b -> (b[2] - b[0]) * (b[3] - b[1]) > 0 } }
 					if (pieces.size >= 2) pieces.sortedBy { box(it)[0] }.forEachIndexed { i, piece ->
 						nodes += Node("${tag}_${side}_p$i", tag, side, i + 1, pieces.size, piece.toSet())
