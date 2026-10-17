@@ -20,8 +20,8 @@ PHRASES = {
     "irides": "the iris with its pupil and highlights", "eyewhite": "the eye white",
     "eyelash": "the eyelid layers (eyelashes, lid lines and eyelid skin)", "eyebrow": "the eyebrow", "ears": "the ear",
     "earwear": "the earring", "nose": "the nose", "mouth": "the mouth", "mouth_inside": "the inside of the mouth (teeth and tongue)",
-    "eyewear": "the glasses", "neck": "the base neck layer", "neckwear": "the collar or neckwear", "body": "the base body layer (torso), with whatever is painted onto it",
-    "arm": "the base arm layer", "hand": "the base hand layer", "leg": "the base leg layer, with whatever is painted onto it", "topwear": "the top clothing", "bottomwear": "the skirt or pants",
+    "eyewear": "the glasses", "neck": "the base neck layer", "neckwear": "the collar or neckwear", "body": "the base body layer (torso)",
+    "arm": "the base arm layer", "hand": "the base hand layer", "leg": "the base leg layer", "topwear": "the top clothing", "bottomwear": "the skirt or pants",
     "handwear": "the glove", "legwear": "the stocking or sock", "footwear": "the shoe", "tail": "the tail",
     "wings": "the wings", "objects": "the held object or accessory",
 }
@@ -42,7 +42,15 @@ def skin_cover(sample: dict) -> str | None:
     return "complete" if hidden >= 0.5 else "visible" if hidden < 0.15 else "edges"
 
 
-def prompt(tag: str, piece: int, style: dict | None = None, cover: str | None = None) -> str:
+WEAR = {
+    "bare": ", bare skin",
+    "tight": {"leg": ", with the stockings or tights painted on it", "arm": ", with the glove or sleeve painted on it",
+              "hand": ", with the glove painted on it", "body": ", with the bodysuit painted on it"},
+    "underwear": ", with the underwear painted on it",
+}
+
+
+def prompt(tag: str, piece: int, style: dict | None = None, cover: str | None = None, wear: str | None = None) -> str:
     """The node in words; where authors build the part in different ways, the way this model's author did."""
     what = PHRASES[tag] + (", one piece of it" if piece else "")
     style = style or {}
@@ -51,6 +59,9 @@ def prompt(tag: str, piece: int, style: dict | None = None, cover: str | None = 
     if tag in SKIN and cover:
         what += {"complete": ", drawn complete under the clothes", "edges": ", drawn a little past the clothing edges",
                  "visible": ", only where it shows"}[cover]
+    # Tight wear and underwear are often painted on the base part rather than split off: which one this is.
+    if tag in SKIN | {"hand"} and wear in WEAR:
+        what += WEAR[wear][tag] if isinstance(WEAR[wear], dict) else WEAR[wear] if (wear != "tight" or tag in WEAR["tight"]) else ""
     return (f"Live2D layer split: keep only {what}, the part marked in the second image, drawn complete including "
             f"any part hidden behind other layers, exactly in place, on a flat gray background.")
 
@@ -105,6 +116,7 @@ def main():
     ap.add_argument("--pieces-once", action="store_true", help="only the rest-pose close-up of each piece")
     ap.add_argument("--rough-hints", action="store_true", help="grow or shrink half the training hints")
     ap.add_argument("--styles", help="styles.tsv from styles.py: authoring conventions by model")
+    ap.add_argument("--wear", help="jsonl of base body nodes and what is painted on them (bare, tight, underwear)")
     a = ap.parse_args()
     out = Path(a.out)
     verdicts = {}
@@ -113,6 +125,13 @@ def main():
             if line.strip():
                 v = json.loads(line)
                 verdicts[(v["dir"], v["key"], v["node"])] = v
+    wear = {}
+    if a.wear:
+        for line in Path(a.wear).read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                w = json.loads(line)
+                if w.get("wear") in WEAR:
+                    wear[(w["dir"], w["key"], w["node"])] = w["wear"]
     styles = {}
     if a.styles:
         rows = Path(a.styles).read_text(encoding="utf-8").splitlines()
@@ -151,7 +170,8 @@ def main():
                 continue
             test = s["model"] in held_models or any(h in s["model"] for h in held)
             jobs.append({"stem": str(nodes_dir / s["key"] / f"{s['node']}_{s['variant']}"), "side": min(a.size, max(256, s["pixels"] // 64 * 64)),
-                         "test": test, "tag": tag, "prompt": prompt(tag, s["piece"], styles.get(s["model"]), skin_cover(dict(s, tag=tag))),
+                         "test": test, "tag": tag, "prompt": prompt(tag, s["piece"], styles.get(s["model"]), skin_cover(dict(s, tag=tag)),
+                                                       wear.get((nodes_dir.name, s["key"], s["node"]))),
                          "test_name": f"{nodes_dir.name}_{s['key']}_{s['node']}_{s['variant']}", "rough": a.rough_hints})
     train_index = 0
     for j in jobs:  # numbering fixed before the workers run, so the output does not depend on their order

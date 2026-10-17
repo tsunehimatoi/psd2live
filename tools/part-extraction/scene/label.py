@@ -85,6 +85,27 @@ def matches(text: str, table) -> list[str]:
     return [tag for tag, pattern in table if re.search(pattern, t)]
 
 
+def own_parameters(m: dict, reach: dict, total: int) -> set[str]:
+    """The parameters that are this mesh's own: of those moving it, the ones that move the fewest meshes. A
+    parameter moving it through a parent deformer (head angle, body, shoulder) moves many more."""
+    moving = [(reach[p], p) for p, a in m.get("answers", {}).items()
+              if (max(a[1], a[4]) > 0.03 or max(abs(a[2]), abs(a[5])) > 0.3) and reach[p] < total * 0.5]
+    if not moving:
+        return set()
+    least = min(r for r, _ in moving)
+    return {p for r, p in moving if r <= least * 2 + 2}
+
+
+def reaches(meshes) -> dict:
+    """How many meshes each parameter moves noticeably."""
+    reach = defaultdict(int)
+    for m in meshes:
+        for p, a in m.get("answers", {}).items():
+            if max(a[1], a[4]) > 0.02 or max(abs(a[2]), abs(a[5])) > 0.3:
+                reach[p] += 1
+    return reach
+
+
 def label_model(folder: Path) -> dict:
     scene = json.loads((folder / "scene.json").read_text(encoding="utf-8"))
     parts = {p["id"]: p for p in scene["parts"]}
@@ -239,8 +260,10 @@ def refine(scene, labels, by_id, folder):
         labels[face].update(tag="face", confidence=0.5, by="under the eyes")
 
     # A base body part is drawn under its clothing: a mesh of the same body tag drawn over another one, lying mostly
-    # on it and not clipped to it (shading is), is a garment on that part (a sleeve over an arm, a stocking over a
-    # leg); the lowest stays the base.
+    # on it, not clipped to it (shading is) and moving by other parameters than it (a body part's own overlapping
+    # pieces, fingers over a palm, move together) is a garment on that part; the lowest stays the base.
+    reach = reaches(meshes)
+    own = {m["id"]: own_parameters(m, reach, max(1, len(meshes))) for m in meshes}
     feet_line = None
     boxes = [m["box"] for m in meshes if m.get("box") and m.get("at")]
     if boxes:
@@ -252,8 +275,11 @@ def refine(scene, labels, by_id, folder):
         t = lab["tag"]
         if t not in clothing and t != "leg" or lab["role"] != "base" or not cover["area"].get(m["id"]):
             continue
+        if not own[m["id"]]:
+            continue
         on_same = sum(n for u, n in cover["covers"].get(m["id"], {}).items()
-                      if labels[u]["tag"] == t and u not in m.get("masks", []) and labels[u]["role"] == "base")
+                      if labels[u]["tag"] == t and u not in m.get("masks", []) and labels[u]["role"] == "base"
+                      and not (own[m["id"]] & own[u]))
         if on_same < 0.3 * cover["area"][m["id"]]:
             continue
         if t == "leg":

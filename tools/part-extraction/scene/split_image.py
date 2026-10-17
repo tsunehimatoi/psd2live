@@ -25,10 +25,12 @@ sys.path.insert(0, str(HERE.parent / "comfy"))
 from make_node_pairs import prompt  # noqa: E402
 from train_planner import MEAN, STD, Planner  # noqa: E402
 
-# Back to front, the order Live2D models usually draw their parts in.
-ORDER = ["back_hair", "tail", "wings", "body", "leg", "legwear", "footwear", "bottomwear", "arm", "hand", "handwear",
-         "topwear", "neck", "neckwear", "objects", "ears", "earwear", "face", "facedetail", "nose", "mouth_inside", "mouth",
-         "eyewhite", "irides", "eyelash", "eyebrow", "eyewear", "side_hair", "front_hair", "headwear"]
+# Back to front, the order the collected models draw their parts in (split_practices.py); a fixed guess without it.
+_PRACTICES = HERE.parent / "SPLIT_PRACTICES.json"
+ORDER = json.loads(_PRACTICES.read_text(encoding="utf-8"))["order"] if _PRACTICES.exists() else [
+    "back_hair", "tail", "wings", "body", "leg", "legwear", "footwear", "bottomwear", "arm", "hand", "handwear",
+    "topwear", "neck", "neckwear", "objects", "ears", "earwear", "face", "facedetail", "nose", "mouth_inside", "mouth",
+    "eyewhite", "irides", "eyelash", "eyebrow", "eyewear", "side_hair", "front_hair", "headwear"]
 PAIRED = {"irides", "eyewhite", "eyelash", "eyebrow", "ears", "earwear", "arm", "hand", "leg", "handwear", "legwear", "footwear"}
 GRAY = 128
 
