@@ -96,7 +96,7 @@ def extract(client, image: Image.Image, tag: str, mask: np.ndarray, lora: str, s
     span = int(max(x1 - x0, y1 - y0) * 1.3) + 16
     cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
     box = (cx - span // 2, cy - span // 2, cx - span // 2 + span, cy - span // 2 + span)
-    side = max(512, min(size, span // 16 * 16))
+    side = max(256, min(size, span // 16 * 16))  # the native size, as the pairs were trained
     crop = image.convert("RGB").crop(box).resize((side, side), Image.LANCZOS)
     hint = Image.fromarray((mask * 255).astype(np.uint8)).crop(box).resize((side, side), Image.NEAREST).convert("RGB")
     crop.save(work / f"{n}_input.png")
