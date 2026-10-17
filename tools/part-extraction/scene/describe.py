@@ -6,6 +6,7 @@ and what fine detail it carries (a skirt's lace trim, a fluffy fur rim), so the 
                                                         and tiles.json; writes OUT/batches.json and OUT/batch_<n>.txt
                                                         (about 160 tiles each)
   python describe.py batch OUT [--final]               batch_<n>.txt for finished models not handed out yet
+  python describe.py missing OUT [SKIP,...]             redo_<n>.txt batches of the sheets still short of answers
   python describe.py collect OUT [SKIP,...]             fold every answers_*.json into OUT/describe.jsonl, but
                                                         those of the scene dirs listed
 
@@ -243,6 +244,43 @@ def batch(out: Path, final: bool = False) -> None:
     print(len(made), "new batches, up to", n - 1)
 
 
+def missing(out: Path, skip: set[str] = frozenset()) -> None:
+    """Batches (OUT/redo_<n>.txt) of the sheets whose answers are absent, unreadable or short of a tile; skip: scene dirs
+    left out whole. Run once every batch has come back."""
+    per = COLUMNS * ROWS
+    redo = []
+    for tiles_path in sorted(out.glob("*/tiles.json")):
+        info = json.loads(tiles_path.read_text(encoding="utf-8"))
+        if info["scene"] in skip:
+            continue
+        numbers = sorted(t["tile"] for t in info["tiles"])
+        for s in range(1, (len(numbers) + per - 1) // per + 1):
+            want = {n for n in numbers if (s - 1) * per < n <= s * per}
+            try:
+                got = json.loads((tiles_path.parent / f"answers_{s}.json").read_text(encoding="utf-8"))
+                keys = {int(k) for k, a in got.items() if str(k).isdigit() and isinstance(a, dict)}
+            except (OSError, json.JSONDecodeError, AttributeError):
+                keys = set()
+            if keys and s > 1 and max(keys) <= per:
+                keys = {k + (s - 1) * per for k in keys}
+            if not want <= keys:
+                redo.append((f"{tiles_path.parent.resolve()}|{s}", len(want - keys)))
+    for old in out.glob("redo_*.txt"):
+        old.unlink()
+    batches, current, count = [], [], 0
+    for entry, n in redo:
+        current.append(entry)
+        count += per
+        if count >= PER_BATCH:
+            batches.append(current)
+            current, count = [], 0
+    if current:
+        batches.append(current)
+    for i, b in enumerate(batches):
+        (out / f"redo_{i:03d}.txt").write_text("\n".join(b) + "\n", encoding="utf-8")
+    print(len(redo), "sheets short of", sum(n for _, n in redo), "tiles, in", len(batches), "redo batches")
+
+
 def collect(out: Path, skip: set[str] = frozenset()) -> None:
     """skip: scene dirs left out whole (a source withdrawn from the data)."""
     rows = []
@@ -275,6 +313,8 @@ def collect(out: Path, skip: set[str] = frozenset()) -> None:
 if __name__ == "__main__":
     if sys.argv[1] == "batch":
         batch(Path(sys.argv[2]), "--final" in sys.argv)
+    elif sys.argv[1] == "missing":
+        missing(Path(sys.argv[2]), set(sys.argv[3].split(",")) if len(sys.argv) > 3 else set())
     elif sys.argv[1] == "make":
         make(Path(sys.argv[2]), Path(sys.argv[3]), *(float(a) for a in sys.argv[4:5]))
     else:

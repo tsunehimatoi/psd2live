@@ -139,6 +139,13 @@ def main():
     flat = Image.new("RGBA", image.size, (255, 255, 255, 255))
     flat.alpha_composite(image)
     tags, classes = plan(flat, Path(a.planner))
+    # Nothing is planned where the illustration is empty, and a part's hidden rest lies under something drawn, so
+    # inside the silhouette; the planner's own background class is no part either.
+    silhouette = np.asarray(image)[..., 3] >= 128
+    tags = tags.copy()
+    tags[~silhouette] = 255
+    if "background" in classes:
+        tags[tags == classes.index("background")] = 255
     rng = np.random.RandomState(1)
     palette = rng.randint(40, 255, (256, 3)).astype(np.uint8)
     palette[255] = 0
@@ -149,6 +156,7 @@ def main():
     layers = []
     for n, (tag, side, mask) in enumerate(found):
         layer = extract(c, flat, tag, mask, a.lora, a.size, out / "work", n)
+        layer[~silhouette, 3] = 0
         name = f"{n:02d}_{tag}_{side}"
         Image.fromarray(layer).save(out / "layers" / f"{name}.png")
         layers.append((name, layer))

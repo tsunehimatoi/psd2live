@@ -40,8 +40,8 @@ class Planner(nn.Module):
 
 
 class Pictures(torch.utils.data.Dataset):
-    def __init__(self, stems, train: bool):
-        self.stems, self.train = stems, train
+    def __init__(self, stems, train: bool, parts: int = 255):
+        self.stems, self.train, self.parts = stems, train, parts  # labels below parts are parts, not background
 
     def __len__(self):
         return len(self.stems) * (8 if self.train else 1)
@@ -51,12 +51,12 @@ class Pictures(torch.utils.data.Dataset):
         image = Image.open(f"{stem}.jpg").convert("RGB")
         label = Image.open(f"{stem}.png")
         if self.train:
-            # A random scale, then a crop that lands on labelled pixels most of the time.
+            # A random scale, then a crop that lands on a part most of the time.
             s = random.uniform(CROP / max(image.size), 1.6 * CROP / min(image.size))
             size = (max(CROP, int(image.width * s)), max(CROP, int(image.height * s)))
             image, label = image.resize(size, Image.BILINEAR), label.resize(size, Image.NEAREST)
             lab = np.asarray(label)
-            ys, xs = np.nonzero(lab != 255)
+            ys, xs = np.nonzero(lab < self.parts)
             for _ in range(10):
                 if len(xs) and random.random() < 0.8:
                     j = random.randrange(len(xs))
@@ -91,6 +91,7 @@ def main():
     data, out = Path(a.data), Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     classes = json.loads((data / "classes.json").read_text(encoding="utf-8"))
+    parts = classes.index("background") if "background" in classes else 255  # labels below are parts
     held = [h for h in a.held.split(",") if h]
     stems = sorted(str(p.with_suffix("")) for p in data.glob("*.jpg"))
     val = [s for s in stems if any(h in Path(s + ".txt").read_text(encoding="utf-8") for h in held)]
@@ -106,7 +107,7 @@ def main():
     params = [{"params": model.backbone.parameters(), "lr": 2e-5},
               {"params": list(model.neck.parameters()) + list(model.head.parameters()), "lr": 2e-4}]
     opt = torch.optim.AdamW(params, weight_decay=0.01)
-    loader = torch.utils.data.DataLoader(Pictures(train, True), batch_size=a.batch, shuffle=True, num_workers=6, drop_last=True,
+    loader = torch.utils.data.DataLoader(Pictures(train, True, parts), batch_size=a.batch, shuffle=True, num_workers=6, drop_last=True,
                                          persistent_workers=True)
     total = a.epochs * len(loader)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda step: min(1, step / 300) * 0.5 * (1 + math.cos(math.pi * step / total)))

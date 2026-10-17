@@ -1,6 +1,6 @@
 """Planner training data: each model at rest and its per-pixel tag map, labels corrected by the node review.
 
-  python plan_data.py SCENE_ROOT NODES_INDEX VERDICTS[,VERDICTS...] OUT [SIZE]
+  python plan_data.py SCENE_ROOT NODES_INDEX VERDICTS[,VERDICTS...] OUT [SIZE] [--describe D.jsonl] [--skip DIR,...]
 
 SCENE_ROOT holds scene*/<key>/{scene.json,labels.json,full.png,meshes/} (SceneGraphTool, label.py); NODES_INDEX holds
 <nodes dir>.tsv (NodeDatasetTool's index.tsv from the machine that made the nodes, mapping its keys to models);
@@ -8,7 +8,9 @@ VERDICTS is review_nodes.py's jsonl. Writes OUT/<scene dir>_<key>.jpg (the model
 longer side SIZE, 1024) and .png (tag index per pixel, 255 where unknown or rejected) plus OUT/classes.json.
 
 A mesh takes its rules tag (confidence 0.3 and up, as the nodes did); a reviewed whole-tag node relabels or rejects
-the meshes it holds, found as NodeDatasetTool found them (tag, and side of the face for paired tags).
+the meshes it holds, found as NodeDatasetTool found them (tag, and side of the face for paired tags). A mesh a reviewer
+described one by one (describe.py collect) takes that tag instead, unless the reviewer was guessing against the rules,
+which leaves it out. --skip leaves whole scene dirs out.
 """
 import json
 import random
@@ -22,12 +24,13 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).parent))
 from make_node_pairs import PHRASES
 
-CLASSES = sorted(PHRASES)
+CLASSES = sorted(PHRASES) + ["background"]  # background: where the model leaves the canvas empty
 PAIRED = {"irides", "eyewhite", "eyelash", "eyebrow", "ears", "earwear", "arm", "hand", "leg", "handwear", "legwear", "footwear"}
 SCENE_OF = {"nodes": "scene", "nodes_eik": "scene_eik", "nodes_kis": "scene_kis", "nodes_col": "scene_col"}
 
 
-def main(root: Path, index_dir: Path, verdict_paths: list[Path], out: Path, size: int = 1024) -> None:
+def main(root: Path, index_dir: Path, verdict_paths: list[Path], out: Path, size: int = 1024, describe: Path | None = None,
+         skip: frozenset = frozenset()) -> None:
     out.mkdir(parents=True, exist_ok=True)
     (out / "classes.json").write_text(json.dumps(CLASSES), encoding="utf-8")
     # Server node keys -> model paths -> local scene keys.
@@ -55,10 +58,17 @@ def main(root: Path, index_dir: Path, verdict_paths: list[Path], out: Path, size
         scene = SCENE_OF.get(v["dir"])
         if model and scene and (scene, model) in local:
             reviews[(scene, local[(scene, model)])][v["node"]] = v
+    described = defaultdict(dict)  # (scene dir, key) -> mesh -> tag, or None where the reviewer guessed against the rules
+    if describe:
+        for line in describe.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                d = json.loads(line)
+                guess = d.get("sure") is False and d.get("tag") != d.get("rules")
+                described[(d["scene"], d["key"])][d["mesh"]] = None if guess or d.get("tag") not in PHRASES else d["tag"]
     rng = random.Random(0)
     n = 0
     for folder in sorted(root.glob("scene*/*/")):
-        if folder.parent.name == "trial" or not (folder / "labels.json").exists():
+        if folder.parent.name == "trial" or folder.parent.name in skip or not (folder / "labels.json").exists():
             continue
         scene = json.loads((folder / "scene.json").read_text(encoding="utf-8"))
         labels = json.loads((folder / "labels.json").read_text(encoding="utf-8"))["labels"]
@@ -81,6 +91,8 @@ def main(root: Path, index_dir: Path, verdict_paths: list[Path], out: Path, size
                 # counts when it was kept or agrees with the rules; a disputed one is left out.
                 agreed = v["keep"] or v["tag"] == v["rules"]
                 tag[m["id"]] = v["tag"] if agreed and v["tag"] in PHRASES else None
+        for mesh, t in described.get((folder.parent.name, folder.name), {}).items():
+            tag[mesh] = t
         full = Image.open(folder / "full.png").convert("RGBA")
         classes = np.full((full.height, full.width), 255, np.uint8)
         for m in sorted(scene["meshes"], key=lambda m: m["render"]):
@@ -95,6 +107,7 @@ def main(root: Path, index_dir: Path, verdict_paths: list[Path], out: Path, size
             region[a] = CLASSES.index(t) if t else 255
         if (classes != 255).mean() < 0.02:
             continue
+        classes[np.asarray(full)[..., 3] < 16] = CLASSES.index("background")
         scale = size / max(full.size)
         w, h = int(full.width * scale), int(full.height * scale)
         bg = Image.new("RGBA", full.size, tuple(rng.randint(200, 250) for _ in range(3)) + (255,))
@@ -108,4 +121,14 @@ def main(root: Path, index_dir: Path, verdict_paths: list[Path], out: Path, size
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]), Path(sys.argv[2]), [Path(p) for p in sys.argv[3].split(",")], Path(sys.argv[4]), *(int(a) for a in sys.argv[5:6]))
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("root", type=Path)
+    ap.add_argument("index_dir", type=Path)
+    ap.add_argument("verdicts")
+    ap.add_argument("out", type=Path)
+    ap.add_argument("size", type=int, nargs="?", default=1024)
+    ap.add_argument("--describe", type=Path)
+    ap.add_argument("--skip", default="")
+    a = ap.parse_args()
+    main(a.root, a.index_dir, [Path(p) for p in a.verdicts.split(",")], a.out, a.size, a.describe, frozenset(filter(None, a.skip.split(","))))
