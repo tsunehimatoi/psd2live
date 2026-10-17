@@ -1,7 +1,7 @@
 """Finer nodes from the reviewer's names: a skirt's lace trim, the jacket's shadow, a sleeve cuff, one strand of the
 front hair, each prompted in the reviewer's words.
 
-  python subnodes.py SCENE_ROOT DESCRIBE.jsonl OUT.jsonl [PER_GROUP] [GLUE_DIR]
+  python subnodes.py SCENE_ROOT DESCRIBE.jsonl OUT.jsonl [PER_GROUP] [LAYER_UNITS.jsonl]
 
 DESCRIBE.jsonl is describe.py's collect output. Within a model, meshes whose names agree once synonyms are folded
 (lock, tuft and strand; bangs and front hair; shade and shadow) make a group per tag, role and side:
@@ -9,8 +9,9 @@ DESCRIBE.jsonl is describe.py's collect output. Within a model, meshes whose nam
   node already covers;
 - a group of three or more base pieces (strands, fingers, panels) also gives its PER_GROUP (3) largest pieces as
   nodes of their own ("the front hair strand"); the hint, the node's visible area, tells them apart.
-A piece is a mesh, or every mesh of a layer cut apart (layer_units: glued within a part, or skinning), so a strand is
-never a segment of it.
+A piece is a mesh, or every mesh of a layer cut apart (layer_units.py), so a strand is never a segment of it. A
+picture laid in front of and behind something (a sleeve around a hand) gives three nodes: the whole thing, its part in
+front of what lies between and its part behind it.
 Guesses (sure false) are kept: they are mostly about which tag a piece falls under, and the prompt is the name. Writes one line per node for NodeDatasetTool
 (SUBNODES): {"model", "node", "tag", "role", "prompt", "meshes"}, each model's nodes in a fixed shuffled order.
 """
@@ -24,7 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from make_node_pairs import PHRASES
 from plan_data import PAIRED
-from describe_labels import glue_pairs, layer_units
+from layer_units import read as read_units
 
 SIDE = re.compile(r"\b(left|right|l|r)\b")
 ROLES = {"base", "shadow", "highlight", "line", "detail"}
@@ -54,8 +55,8 @@ def plural(phrase: str) -> str:
     return phrase if phrase.endswith("s") else phrase + "s"
 
 
-def main(root: Path, describe: Path, out: Path, per_group: int = 3, glue_dir: Path | None = None) -> None:
-    glued = glue_pairs(glue_dir)
+def main(root: Path, describe: Path, out: Path, per_group: int = 3, units_path: Path | None = None) -> None:
+    layers = read_units(units_path)
     models = {}
     for scene_dir in root.glob("scene*"):
         idx = scene_dir / "index.tsv"
@@ -79,12 +80,9 @@ def main(root: Path, describe: Path, out: Path, per_group: int = 3, glue_dir: Pa
                 continue
             scene_doc = json.loads((root / scene / key_ / "scene.json").read_text(encoding="utf-8"))
             meshes = {m["id"]: m for m in scene_doc["meshes"] if m.get("box")}
-            unit_of = layer_units(scene_doc, glued.get(model, []))
-            segments = defaultdict(list)
-            for mesh, unit in unit_of.items():
-                if mesh in meshes:
-                    segments[unit].append(mesh)
-            pieces = lambda mesh: segments[unit_of[mesh]] if mesh in unit_of else [mesh]
+            info = layers.get(model, {"unit": {}, "members": {}, "layered": []})
+            unit_of = info["unit"]
+            pieces = lambda mesh: [m for m in info["members"][unit_of[mesh]] if m in meshes] if mesh in unit_of else [mesh]
             rows = [r for r in rows if r["mesh"] in meshes]
             solid = {i: m.get("look", {}).get("solid", 0) for i, m in meshes.items()}
             faces = [meshes[r["mesh"]]["box"] for r in rows if r["tag"] == "face"]
@@ -128,6 +126,27 @@ def main(root: Path, describe: Path, out: Path, per_group: int = 3, glue_dir: Pa
                         nodes.append({"model": model, "node": f"d_{tag}_{s}_{role}_{slug}_{unit_of.get(m['mesh'], m['mesh'])}",
                                       "tag": tag, "role": role, "prompt": f"the {clean(m['part'])}" + (f", {own}" if own else ""),
                                       "meshes": sorted(pieces(m["mesh"]))})
+            # One picture in front of and behind something: the whole of it, and each side by where it lies.
+            said = {r["mesh"]: r for r in rows}
+            for n, pair in enumerate(info["layered"]):
+                front, back, between = pair["front"], pair["back"], pair["between"]
+                named = [said[i] for i in front + back if i in said]
+                over = [said[i] for i in between if i in said]
+                if not named or not over:
+                    continue
+                name = Counter(clean(r["part"]) for r in named).most_common(1)[0][0]
+                tag = Counter(r["tag"] for r in named).most_common(1)[0][0]
+                # What lies between, in the reviewer's words; a thing passing in front of and behind more of itself
+                # has no clear front.
+                other_name = Counter(clean(r["part"]) for r in over).most_common(1)[0][0]
+                if key(tag, other_name) == key(tag, name):
+                    continue
+                other = f"the {other_name}"
+                for kind, ids, words in (("whole", front + back, f"the {name}"),
+                                         ("front", front, f"the part of the {name} in front of {other}"),
+                                         ("back", back, f"the part of the {name} behind {other}")):
+                    nodes.append({"model": model, "node": f"d_{tag}_layered{n}_{kind}", "tag": tag, "role": "base",
+                                  "prompt": words, "meshes": sorted(i for i in ids if i in meshes)})
             random.Random(model).shuffle(nodes)
             for n in nodes:
                 f.write(json.dumps(n, ensure_ascii=False) + "\n")

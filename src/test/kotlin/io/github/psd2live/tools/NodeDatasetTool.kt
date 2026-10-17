@@ -36,7 +36,8 @@ import kotlin.random.Random
  *
  * SUBNODES, when set, is a jsonl of finer nodes named by a reviewer ({"model", "node", "tag", "prompt", "meshes"}: a
  * skirt's lace trim, a sleeve cuff); up to SUBNODES_PER_MODEL of them are drawn like the others, their prompt carried
- * into samples.jsonl.
+ * into samples.jsonl. LAYER_UNITS, when set, is layer_units.py's jsonl: the meshes one drawn layer was cut into
+ * make one piece.
  *
  * Writes build/tools/nodes/<PARTS_NAME, nodes>/<key>/<node>_<variant>_{input,hint,target}.png and samples.jsonl.
  */
@@ -72,6 +73,15 @@ class NodeDatasetTool {
 			line.split('\t').takeIf { it.size >= 2 }?.let { it[1] to it[0] } }?.toMap().orEmpty()
 		val subnodes = System.getenv("SUBNODES")?.let { File(it) }?.takeIf { it.isFile }?.readLines()?.filter { it.isNotBlank() }
 			?.map { Json.parseToJsonElement(it).jsonObject }?.groupBy { it["model"]!!.jsonPrimitive.content }.orEmpty()
+		// mesh -> its layer (layer_units.py): the meshes one drawn layer was cut into, one piece of a node.
+		val layerUnits = System.getenv("LAYER_UNITS")?.let { File(it) }?.takeIf { it.isFile }?.readLines()?.filter { it.isNotBlank() }
+			?.associate { line ->
+				val j = Json.parseToJsonElement(line).jsonObject
+				j["model"]!!.jsonPrimitive.content to j["units"]!!.jsonArray.flatMap { u ->
+					val ids = u.jsonArray.map { it.jsonPrimitive.content }
+					ids.map { it to ids.first() }
+				}.toMap()
+			}.orEmpty()
 		val models = root.walkTopDown().filter { it.isFile && (it.name.endsWith(".model3.json") || it.name.endsWith(".cmo3", true)) }
 			.sortedBy { it.path }.take(limit).toList()
 		val pool = Executors.newFixedThreadPool(threads)
@@ -83,7 +93,7 @@ class NodeDatasetTool {
 				val folder = File(scenes, keyOf[model] ?: key)
 				val labels = File(folder, labelsName).takeIf { it.isFile } ?: File(folder, "labels.json")
 				val status = if (!labels.isFile) "no labels" else
-					runCatching { render(file, labels, File(out, key), key, samples, subnodes[model].orEmpty()) }.getOrElse { "error: ${it.javaClass.simpleName}: ${it.message?.take(160)}" }
+					runCatching { render(file, labels, File(out, key), key, samples, subnodes[model].orEmpty(), layerUnits[model].orEmpty()) }.getOrElse { "error: ${it.javaClass.simpleName}: ${it.message?.take(160)}" }
 				println("$key $status")
 				"$key\t${file.relativeTo(root).path.replace('\\', '/')}\t$status\n" to samples.toString()
 			}
@@ -96,7 +106,8 @@ class NodeDatasetTool {
 	private class Node(val id: String, val tag: String, val side: String, val piece: Int, val pieces: Int, val meshes: Set<String>,
 		val prompt: String? = null)
 
-	private fun render(file: File, labelFile: File, dir: File, key: String, samples: StringBuilder, subnodes: List<JsonObject>): String {
+	private fun render(file: File, labelFile: File, dir: File, key: String, samples: StringBuilder, subnodes: List<JsonObject>,
+		units: Map<String, String>): String {
 		val (ir, pixels) = loadRig(file).let { it.ir to it.pixels }
 		val labelDoc = Json.parseToJsonElement(labelFile.readText()).jsonObject
 		val labels = labelDoc["labels"]!!.jsonObject
@@ -113,23 +124,9 @@ class NodeDatasetTool {
 		val base = session.evaluate(emptyMap())
 		val visible = base.opacity.filter { it.value > 0.05f }.keys
 		val meshes = ir.meshes.associateBy { it.id }
-		// One drawn layer cut into meshes is one piece: meshes glued together within one part (Cubism's skinning glues
-		// the segments it cuts a layer into, one per bone, and authors glue a layer they cut by hand), and the meshes of
-		// a skinning part ("<layer>_Skinning", "<layer>(蒙皮)", "<layer>_スキニング"). Glue across parts joins layers at a
-		// seam and does not count.
-		val partOf = HashMap<String, Part>()
-		for (part in ir.parts) for (child in part.children) if (child is ChildRef.MeshRef) partOf[child.id] = part
-		val joinedTo = HashMap<String, String>()
-		fun find(id: String): String { var r = id; while (joinedTo[r] != null && joinedTo[r] != r) r = joinedTo[r]!!; return r }
-		fun join(a: String, b: String) { val ra = find(a); val rb = find(b); if (ra != rb) joinedTo[ra] = rb }
-		for (g in ir.glues) if (partOf[g.meshA] != null && partOf[g.meshA] === partOf[g.meshB]) join(g.meshA, g.meshB)
-		val skinning = Regex("""(?i)(_skinning|蒙皮|スキニング)\)?$""")
-		for (part in ir.parts) if (skinning.containsMatchIn(part.name.trim())) {
-			val ids = part.children.filterIsInstance<ChildRef.MeshRef>().map { it.id }
-			for (id in ids.drop(1)) join(ids.first(), id)
-		}
-		val skinOf = HashMap<String, String>()
-		for (id in joinedTo.keys + joinedTo.values) skinOf[id] = find(id)
+		// One drawn layer cut into meshes is one piece (LAYER_UNITS, from layer_units.py: glued meshes cut from one
+		// picture with nothing drawn between them, and Cubism's skinning segments).
+		val skinOf = units
 		fun box(ids: Collection<String>): FloatArray {
 			var x0 = Float.MAX_VALUE; var y0 = Float.MAX_VALUE; var x1 = -Float.MAX_VALUE; var y1 = -Float.MAX_VALUE
 			for (id in ids) base.positions[id]?.let { p -> for (i in 0 until p.size / 2) { x0 = min(x0, p[i * 2]); x1 = max(x1, p[i * 2]); y0 = min(y0, p[i * 2 + 1]); y1 = max(y1, p[i * 2 + 1]) } }
