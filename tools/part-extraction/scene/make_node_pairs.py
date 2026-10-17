@@ -2,7 +2,7 @@
 
   python make_node_pairs.py OUT NODES_DIR [NODES_DIR...] [--verdicts V.jsonl] [--families F.json] [--held H,...]
       [--size 768] [--min 128] [--reviewed-only] [--styles styles.tsv] [--subnodes S.jsonl --piece-min 256 --piece-share 0.4]
-      [--dry]
+      [--dry] [--test-meta]
 
 OUT/train_in (close-up, JPEG), OUT/train_hint (visible area), OUT/train_tgt (+ .txt prompt), OUT/test/<name>_{input,hint,
 target}.png and OUT/test/prompts.jsonl. Verdicts (review_nodes.py) relabel or drop nodes; with --reviewed-only
@@ -13,7 +13,8 @@ size says little, as small parts are framed to at least 256) and makes at most -
 so the whole tag and the named groups keep their weight. --low-face/--high-face sort models by how wide their face is
 drawn: a low resolution model keeps --low-keep of its training pairs and is never softened (its target is no sharper
 than its close-up), a sharp one is softened at --soften-high. A finer node of kind "dropped" (piece_kinds.py: a piece that is
-only a cut-off segment of one thing, or too small for its character) is left out. --dry counts the pairs by kind and size without writing.
+only a cut-off segment of one thing, or too small for its character) is left out. --dry counts the pairs by kind and size without writing;
+--test-meta writes only test/meta.jsonl (each test node's kind, sharpness tier and size; prompts.jsonl carries them too).
 """
 import argparse
 import io
@@ -114,6 +115,11 @@ def write_pair(j: dict, out: str, index: int) -> None:
     (out / "train_tgt" / f"{name}.txt").write_text(j["prompt"], encoding="utf-8")
 
 
+def test_meta(j: dict) -> dict:
+    """What node_metrics.py groups a test node's scores by."""
+    return {"name": j["test_name"], "kind": j["kind"], "tier": j["tier"], "pixels": j["pixels"]}
+
+
 def soft(img: Image.Image, factor: float, rng: random.Random) -> Image.Image:
     """[img] as if read from a picture [factor] times smaller, as such pictures come: JPEG-compressed at times."""
     small = img.resize((max(16, round(img.width / factor)), max(16, round(img.height / factor))), Image.LANCZOS)
@@ -154,6 +160,7 @@ def main():
     ap.add_argument("--soften-high", type=float, default=None, help="--soften for sharp models (low resolution ones get none)")
     ap.add_argument("--soften-max", type=float, default=4, help="largest factor a softened close-up is shrunk by")
     ap.add_argument("--dry", action="store_true", help="count the pairs by kind and size, write nothing")
+    ap.add_argument("--test-meta", action="store_true", help="write only OUT/test/meta.jsonl: each test node's kind, sharpness tier and size")
     a = ap.parse_args()
     out = Path(a.out)
     verdicts = {}
@@ -264,6 +271,10 @@ def main():
         if not j["test"]:
             tiers[j["tier"]] = tiers.get(j["tier"], 0) + 1
     print("training pairs by model sharpness:", json.dumps(tiers), {k: v for k, v in soften.items()})
+    if a.test_meta:
+        (out / "test" / "meta.jsonl").write_text("".join(json.dumps(test_meta(j)) + "\n" for j in jobs if j["test"]), encoding="utf-8")
+        print(sum(j["test"] for j in jobs), "test nodes described")
+        return
     if a.dry:
         print(f"{small} too small, {dropped} dropped by review, {bare} bare torsos")
         return
@@ -275,7 +286,7 @@ def main():
     from multiprocessing import Pool
     with Pool(32) as pool:
         pool.starmap(write_pair, [(j, str(out), i) for i, j in enumerate(jobs)])
-    tests = [{"name": j["test_name"], "tag": j["tag"], "prompt": j["prompt"]} for j in jobs if j["test"]]
+    tests = [dict(test_meta(j), tag=j["tag"], prompt=j["prompt"]) for j in jobs if j["test"]]
     stats = {}
     for j in jobs:
         if not j["test"]:
