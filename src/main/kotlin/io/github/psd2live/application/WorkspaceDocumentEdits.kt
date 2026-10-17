@@ -26,7 +26,7 @@ internal object WorkspaceDocumentEdits {
         setOf("put", "delete", "seed_builtin", "set_key", "delete_key", "remove_curve", "pose", "move_keys", "delete_keys", "paste_keys", "replace_keys", "preset", "create", "duplicate", "rename", "properties").map { "motion_$it" } +
         setOf("warp", "rotation", "glue", "topology").map { "canvas_$it" } +
         setOf("put", "delete", "deform").map { "path_$it" } +
-        setOf("swing_put", "swing_delete", "interior_put") + WorkspacePhysicsEdits.batchable + WorkspaceSimulationEdits.supported + WorkspaceCanvasWeightEdits.supported + WorkspaceCanvasDeformEdits.supported + WorkspaceTextureEdits.supported +
+        setOf("swing_put", "swing_delete", "interior_put", "interior_delete") + WorkspacePhysicsEdits.batchable + WorkspaceSimulationEdits.supported + WorkspaceCanvasWeightEdits.supported + WorkspaceCanvasDeformEdits.supported + WorkspaceTextureEdits.supported +
         WorkspaceLayoutEdits.supported + WorkspaceMaterialEdits.supported
 
     /**
@@ -133,6 +133,7 @@ internal object WorkspaceDocumentEdits {
                 journal(document, model, JsonArray(listOf(command)))
             }
             "interior_put" -> document.copy(rigEdits=io.github.psd2live.core.interior.NativeInteriorAuthoring.put(model,document.rigEdits,request))
+            "interior_delete" -> document.copy(rigEdits=io.github.psd2live.core.interior.InteriorLifecycle.delete(model, document.rigEdits, request.text("target")))
             "swing_put" -> SwingAuthoring.request(request).let { swing(document, model.rig.puppet, it.edit, it.estimatePhysics) }
             "swing_delete" -> removeSwing(document, model.rig.puppet, request.text("id"), request["bake"]?.jsonPrimitive?.boolean ?: false,
                 model.authored.rig.puppet)
@@ -308,7 +309,7 @@ internal object WorkspaceDocumentEdits {
             else SwingAuthoring.remove(document.rigEdits, id))
 
     fun physicsCatalog(document: WorkspaceDocument, model: RigPreviewModel): List<PhysicsGroup> =
-        PhysicsCatalog.groups(model.analysis, document.config(), model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw })
+        PhysicsCatalog.groups(model.analysis, document.config(), model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }, model.rig.puppet)
 
     fun physics(document: WorkspaceDocument, model: RigPreviewModel, arguments: JsonObject): WorkspaceDocument {
         val id = arguments.text("id")

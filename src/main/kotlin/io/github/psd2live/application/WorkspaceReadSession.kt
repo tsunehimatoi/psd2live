@@ -154,6 +154,7 @@ internal class WorkspaceReadSession(
         val document = capture().document
         return WorkspaceSettingsCodec.encode(WorkspaceSettingsCodec.decode(document.settings).copy(meshOverrides = document.meshOverrides))
     }
+    override fun listInteriorEffects() = capture().document.rigEdits.interiorEffects
     override fun listSwings(): List<RigSwingEdit> = capture().document.rigEdits.swingEdits
     override fun layoutState(): WorkspaceLayoutState? = read.runtime.capture?.document?.let { document ->
         WorkspaceLayoutState(document.layout, document.source.layers, WorkspaceLayoutPreview.pendingIds(document), document.deletedLayerIds,

@@ -35,18 +35,14 @@ internal object WorkspaceRevisions {
 		return "revision-${sha256(canonical.encodeToByteArray())}"
 	}
 
-    // A new optional overlay field must not change the identity of pre-feature documents.
-    private fun rigText(rig: RigEditOverlay): String {
-        var text = rig.toString()
-        for ((field,empty) in listOf("interiorEffects" to rig.interiorEffects.isEmpty(),"interiorEdits" to rig.interiorEdits.isEmpty())) {
-            if(empty) {
-                val token=", $field=[]"
-                val index=text.lastIndexOf(token)
-                if(index>=0)text=text.removeRange(index,index+token.length)
-            }
-        }
-        return text
-    }
+	// An empty optional field must not change the identity of pre-feature documents.
+	private fun rigText(rig: RigEditOverlay): String {
+		val text = rig.toString()
+		if (rig.interiorEffects.isNotEmpty()) return text
+		val token = ", interiorEffects=[]"
+		val index = text.lastIndexOf(token)
+		return if (index < 0) text else text.removeRange(index, index + token.length)
+	}
 
 	/** Everything after the rig overlay in the canonical text. */
 	private fun tail(document: WorkspaceDocument): String = buildString {

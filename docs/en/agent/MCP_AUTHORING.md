@@ -593,3 +593,5 @@ This page documents the interface and is not grounds for raising the ratings in 
 ### Interior surface authoring
 
 `interior_put` is a background, batchable operation shared with the native dock. Require `state` and `target` (mesh id or `mesh:<id>`); optional `enabled`, `settings`, `motion`, two `parameters` ids, and `guides`. An enabled-only update retains the recipe without rebaking. Omitted bindings prefer body X/Y; an explicit empty id creates a private source. The stored native fields and physics use standard export paths. See the interior specification for ranges and safety/recovery behavior.
+
+`interior_delete` removes the effect and owned physics while retaining externally referenced parameters. `workspace_inspect` with `scope=interiors` returns full settings/guides, input/output IDs and issue status without shape arrays. Nested settings/motion schemas allow partial updates and describe ranges/units.

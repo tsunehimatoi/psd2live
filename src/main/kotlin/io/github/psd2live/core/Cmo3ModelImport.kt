@@ -145,7 +145,7 @@ internal object Cmo3ModelImport {
             override val groups = if (replace) current!!.analysis.source.groups else emptyList()
         }
         val oldPhysics = if (replace) PhysicsCatalog.groups(current!!.analysis, config,
-            current.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }) else emptyList()
+            current.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }, current.rig.puppet) else emptyList()
         val physics = mergeById(oldPhysics.map { it.setting }, incoming.physics) { it.id }
         val overlay = RigEditOverlay(
             importedCmo3 = baseline, importedLayerIds = layerIds,

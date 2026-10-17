@@ -26,12 +26,14 @@ internal object RigIrCompiler {
 	 */
 	fun compile(analysis: PipelineAnalysis, atlas: PackedAtlas, rig: BuiltRig, config: PipelineConfig, tileArt: Boolean = false,
 				simulations: Boolean = false): RigIR {
-		val parameterIds = rig.puppet.parameters.mapTo(linkedSetOf()) { it.id.raw }
-		val physicsGroups = PhysicsCatalog.active(analysis, config, parameterIds)
+		val physicsGroups = PhysicsCatalog.active(analysis, config, rig.puppet.parameters.mapTo(linkedSetOf()) { it.id.raw }, rig.puppet)
+		val puppet = io.github.psd2live.core.interior.InteriorLifecycle.exportModel(rig.puppet, config.rigEdits, physicsGroups)
+		val exportedRig = rig.copy(puppet = puppet)
+		val parameterIds = puppet.parameters.mapTo(linkedSetOf()) { it.id.raw }
 		val base = PuppetIr.toIr(
-			rig.puppet,
+			puppet,
 			physics = Physics(physicsGroups.map(Physics3Json::group), config.rigEdits.physicsFps.toFloat()),
-			clips = clips(rig, config, physicsGroups, parameterIds),
+			clips = clips(exportedRig, config, physicsGroups, parameterIds),
 			parameterRoles = buildList {
 				if (config.motionBasic && config.motionBlink && !config.meshOnly) add(ParameterRole("EyeBlink", listOf("ParamEyeLOpen", "ParamEyeROpen")))
 				add(ParameterRole("LipSync", listOf("ParamMouthOpenY")))
@@ -52,9 +54,9 @@ internal object RigIrCompiler {
 			}),
 			// The open mouth keeps its texture coordinates over the whole artwork in a canvas-space base mesh.
 			restPose = if (config.rigEdits.importedCmo3 != null) emptyMap() else mapOf(StandardParameters.MOUTH_OPEN.raw to 1f),
-			advanced = advanced(rig, config, base, simulations).copy(
-				expressions = RuntimeExtras.expressions(rig.puppet),
-				hitAreas = RuntimeExtras.hitAreas(rig.puppet, analysis, rig.layerIdByDrawableId),
+			advanced = advanced(exportedRig, config, base, simulations).copy(
+				expressions = RuntimeExtras.expressions(puppet),
+				hitAreas = RuntimeExtras.hitAreas(puppet, analysis, rig.layerIdByDrawableId),
 			),
 		)
 	}

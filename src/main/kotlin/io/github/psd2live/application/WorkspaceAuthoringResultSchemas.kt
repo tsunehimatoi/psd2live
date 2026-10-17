@@ -27,7 +27,7 @@ internal object WorkspaceAuthoringResultSchemas {
         "motion_create", "motion_duplicate", "motion_rename", "motion_properties",
     )
     private val normalizedOperations = setOf(
-        "parameter_create", "parameter_update", "parameter_delete", "swing_put", "swing_delete", "interior_put",
+        "parameter_create", "parameter_update", "parameter_delete", "swing_put", "swing_delete", "interior_put", "interior_delete",
         "physics_put", "physics_delete", "physics_fit", "physics_config",
         "history_checkpoint", "history_checkout", "layer_add_from_asset", "layer_set_placement", "layer_finalize_placement", "layer_delete", "layer_restore", "layer_import_images",
     )

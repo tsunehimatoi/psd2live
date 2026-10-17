@@ -97,7 +97,7 @@ internal class WorkspaceSettingsIntent private constructor(
                 if (before.motionBlink && !after.motionBlink) addAll(blink)
                 if (before.generatePhysics && !after.generatePhysics) {
                     val available = model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }
-                    PhysicsCatalog.groups(model.analysis, document.config(), available)
+                    PhysicsCatalog.groups(model.analysis, document.config(), available, model.rig.puppet)
                         .flatMap { it.setting.outputParameters }.forEach { add(ParameterId(it)) }
                 }
             }

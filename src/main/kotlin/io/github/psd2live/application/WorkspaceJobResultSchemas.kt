@@ -42,6 +42,7 @@ internal object WorkspaceJobResultSchemas {
         put(WorkspaceLayoutOperations.EXPORT_PNG, WorkspaceLayoutOperations.pngSchema)
         put("project_create", lifecycle)
         put("interior_put", requireNotNull(WorkspaceAuthoringResultSchemas.forOperation("interior_put")))
+        put("interior_delete", requireNotNull(WorkspaceAuthoringResultSchemas.forOperation("interior_delete")))
         put("preview_pose", requireNotNull(WorkspaceAuthoringResultSchemas.forOperation("preview_pose")))
         put("paint_session_commit", WorkspacePaintSessionSchemas.commit)
         put("swing_preview", WorkspaceSwingSessionSchemas.result)

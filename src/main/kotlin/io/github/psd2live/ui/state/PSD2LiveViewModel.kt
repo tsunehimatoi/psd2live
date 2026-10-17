@@ -133,126 +133,16 @@ import io.github.psd2live.ui.theme.ThemeCodec
 import kotlin.math.sin
 
 class PSD2LiveViewModel : AutoCloseable {
-    private data class InteriorAddress(val generation: Long,val workspace: String,val canvas: String)
-    private fun interiorAddress(s: PSD2LiveState)=InteriorAddress(s.projectOpenGeneration,s.activeWorkspace.id,s.activeCanvas.id)
-    private var interiorTrialAddress: InteriorAddress?=null
-    private data class InteriorProjection(val original: PuppetModel,val effect: io.github.psd2live.core.interior.NativeInteriorEffect,val puppet: PuppetModel,val address: InteriorAddress)
-    private var interiorDraftProjection: InteriorProjection?=null
-    internal suspend fun previewInteriorDraft(request: kotlinx.serialization.json.JsonObject,draft: InteriorDraft,version: Long) {
-        val captured=_state.value;val preview=captured.previewModel?:return;val address=interiorAddress(captured)
-        if(interiorTarget==null || captured.activeCanvas.mode!=CanvasMode.EDIT)return
-        val overlay=withContext(Dispatchers.Default) { runInterruptible {
-            io.github.psd2live.core.interior.NativeInteriorAuthoring.put(preview,preview.config.rigEdits,request)
-        } }
-        val target=request.getValue("target").jsonPrimitive.content
-        val effect=overlay.interiorEffects.single { it.target==target }
-        val puppet=withContext(Dispatchers.Default) { preview.baseRig.withRigEdits(overlay,preview.config.layerVisibility,preview.config.drawOrderOverrides).puppet }
-        val current=_state.value
-        if(draft.version!=version || interiorTarget==null || current.previewModel!==preview || interiorAddress(current)!=address)return
-        interiorDraftProjection=InteriorProjection(preview.rig.puppet,effect,puppet,address)
-        startInteriorTrial(effect)
-    }
-    private val interiorDrafts=mutableMapOf<String,InteriorDraft>()
-    private fun interiorDraftKey(target: String)="${_state.value.projectOpenGeneration}:${_state.value.activeWorkspace.id}:$target"
-    internal fun interiorDraft(target: String,effect: io.github.psd2live.core.interior.NativeInteriorEffect?): InteriorDraft {
-        val draft=interiorDrafts.getOrPut(interiorDraftKey(target)) { InteriorDraft(effect) };draft.sync(effect);return draft
-    }
-    internal var interiorStatusTarget: String? by mutableStateOf(null)
-    internal var interiorStatusGeneration= -1L
-    internal var interiorBusy by mutableStateOf(false)
-    internal var interiorError by mutableStateOf<String?>(null)
-    internal var interiorFrameRequest by mutableStateOf(0)
-    internal var interiorMouse by mutableStateOf(false)
-    internal var interiorNeutralBounds: FloatArray?=null
-    internal var interiorTarget by mutableStateOf<Pair<Float,Float>?>(null)
-    internal var interiorTrialValues by mutableStateOf(emptyMap<ParameterId,Float>())
-    private var interiorJob: Job? = null
-    private var interiorRevision=0L
-    private var interiorTrialPuppet: PuppetModel?=null
-    private var interiorTrialBase: PuppetModel?=null
-    private var interiorTrialEditor: CanvasEditor?=null
-    private var interiorPhysics: io.github.psd2live.core.PhysicsEngine?=null
-    private var interiorAliases=emptyList<org.umamo.runtime.model.Parameter>()
-    private var interiorEffect: io.github.psd2live.core.interior.NativeInteriorEffect?=null
-    private data class InteriorSoloView(val generation: Long,val workspace: String,val canvas: String,val mode: CanvasMode,val camera: TabCamera,val visibility: io.github.psd2live.application.CanvasVisibility)
-    private val interiorSoloViews=mutableStateMapOf<InteriorAddress,InteriorSoloView>()
-    internal fun interiorSoloActiveFor(state: PSD2LiveState)=interiorAddress(state) in interiorSoloViews
-
-    internal fun putInterior(request: kotlinx.serialization.json.JsonObject) {
-        val revision=++interiorRevision
-        val target=request.getValue("target").jsonPrimitive.content
-        val workspace=workspaceBackend?:return
-        val expected=workspace.snapshot()
-        interiorStatusTarget=target;interiorStatusGeneration=_state.value.projectOpenGeneration
-        val draft=interiorDrafts[interiorDraftKey(target)];val version=draft?.version
-        interiorJob?.cancel();interiorError=null;interiorBusy=true
-        interiorJob=scope.launch {
-            try {
-                delay(180)
-                withContext(Dispatchers.Default + io.github.psd2live.application.WorkspaceExecution(expected.projectId,expected.state,io.github.psd2live.project.MutationAuthor.USER)) {
-                    workspace.applyDocumentEdits(expected.state,"Interior surface",listOf(io.github.psd2live.application.WorkspaceDocumentOperation("interior_put",request)),io.github.psd2live.project.MutationAuthor.USER)
-                }
-                if(draft?.version==version)draft?.dirty=false
-            } catch(e: kotlinx.coroutines.CancellationException) { throw e }
-              catch(e: Exception) { if(revision==interiorRevision)interiorError=e.message?:e.toString() }
-            finally { if(revision==interiorRevision)interiorBusy=false }
-        }
-    }
-    internal fun startInteriorTrial(requested: io.github.psd2live.core.interior.NativeInteriorEffect) {
-        val current=_state.value;val original=current.previewModel?.rig?.puppet?:return
-        if(current.activeCanvas.mode!=CanvasMode.EDIT)return
-        val address=interiorAddress(current)
-        val proposed=interiorDraftProjection?.takeIf { it.original===original && it.address==address && it.effect.target==requested.target }
-        val effect=proposed?.effect?:requested
-        val puppet=proposed?.puppet?:original
-        val editor=canvasEditorFor(current.activeCanvas.id)
-        if(interiorTrialAddress==address && interiorTrialBase===puppet && interiorEffect===effect)return
-        if(effect.issue(puppet)!=null)return
-        val previous=interiorPhysics;val previousAliases=interiorAliases;val previousValues=interiorTrialValues;val previousEffect=interiorEffect;val previousAddress=interiorTrialAddress
-        stopInteriorTrial(clearTarget=false)
-        val aliases=effect.sources.mapIndexed { i,p -> p.copy(id=ParameterId("${effect.id}Trial$i")) }
-        val names=effect.sources.mapIndexed { i,p -> p.id to aliases[i].id }.toMap()
-        val projected=puppet.copy(parameters=puppet.parameters+aliases,drawables=puppet.drawables.map { d ->
-            if(d.id.raw!=effect.target)d else d.copy(blendShapes=d.blendShapes.mapIndexed { index,b ->
-                if(index<d.blendShapes.size-effect.bindings.size)b else b.copy(parameterId=names[b.parameterId]?:b.parameterId,limits=b.limits.map { it.copy(parameterId=names[it.parameterId]?:it.parameterId) })
-            })
-        })
-        val groups=effect.groups.map { g -> g.copy(inputs=g.inputs.map { it.copy(parameter=names[ParameterId(it.parameter)]?.raw?:it.parameter) }) }
-        interiorTrialAddress=address;interiorAliases=aliases;interiorEffect=effect;interiorTrialBase=puppet;interiorTrialPuppet=projected;interiorTrialEditor=editor
-        interiorPhysics=io.github.psd2live.core.PhysicsEngine(groups,io.github.psd2live.core.PhysicsEngine.ranges(projected.parameters),current.rigEdits.physicsFps.toFloat())
-        val world=org.umamo.render.eval.CpuDeformationEvaluator().evaluate(puppet,emptyMap()).worldPositions[org.umamo.runtime.model.DrawableId(effect.target)]
-        interiorNeutralBounds=world?.let { q -> floatArrayOf((q.indices step 2).minOf { q[it] },(1 until q.size step 2).minOf { q[it] },(q.indices step 2).maxOf { q[it] },(1 until q.size step 2).maxOf { q[it] }) }
-        editor.preview=projected
-        val carry=previousAddress==address && previous!=null && previousEffect?.id==effect.id && aliases==previousAliases
-        if(carry) { interiorPhysics!!.carryOver(previous!!);interiorTrialValues=previousValues }
-        stepInteriorTrial(0f,reset=!carry)
-    }
-    internal fun stepInteriorTrial(dt: Float,reset: Boolean=false) {
-        val target=interiorTarget?:return;val effect=interiorEffect?:return;val engine=interiorPhysics?:return
-        val values=interiorAliases.mapIndexed { i,p -> val v=if(i==0)target.first else target.second
-            p.id.raw to (p.default+v*(if(v<0)p.default-p.min else p.max-p.default)) }.toMap()
-        val out=if(reset)engine.settle(values, maxOf(1f,(effect.motion.responseSeconds+effect.motion.transmissionSeconds)*12)) else engine.step(values,dt.coerceIn(0f,.1f))
-        interiorTrialValues=(values+if(out.isEmpty())interiorTrialValues.mapKeys { it.key.raw }else out).mapKeys { ParameterId(it.key) }
-    }
-    internal fun stopInteriorTrial(clearTarget: Boolean=true) {
-        interiorTrialEditor?.let { if(it.preview===interiorTrialPuppet)it.preview=null }
-        interiorTrialAddress=null;interiorTrialEditor=null;interiorTrialPuppet=null;interiorTrialBase=null;interiorEffect=null;interiorPhysics=null;interiorTrialValues=emptyMap()
-        if(clearTarget) { interiorTarget=null;interiorMouse=false;interiorDraftProjection=null }
-    }
-    internal fun toggleInteriorSolo() {
-        val current=_state.value;val layer=current.selectedLayerId?:return
-        val address=interiorAddress(current)
-        val saved=interiorSoloViews[address]
-        if(saved!=null && saved.generation==current.projectOpenGeneration && saved.workspace==current.activeWorkspace.id && saved.canvas==current.activeCanvas.id && saved.mode==current.activeCanvas.mode) {
-            editCanvasVisibility(io.github.psd2live.application.CanvasVisibilityIntent.Restore(saved.visibility))
-            setCanvasView(saved.camera.zoom,saved.camera.panX,saved.camera.panY,saved.canvas,saved.mode)
-            interiorSoloViews.remove(address);interiorFrameRequest=0
-        } else {
-            interiorSoloViews[address]=InteriorSoloView(current.projectOpenGeneration,current.activeWorkspace.id,current.activeCanvas.id,current.activeCanvas.mode,TabCamera(current.canvasZoom,current.canvasPanX,current.canvasPanY),io.github.psd2live.application.CanvasVisibility(current.layerVisibility,current.deformerVisibility,current.isolatedLayerId,current.isolationSnapshot))
-            editCanvasVisibility(io.github.psd2live.application.CanvasVisibilityIntent.Solo(layer))
-            interiorFrameRequest++
-        }
-    }
+	internal val interior by lazy {
+		InteriorController(
+			state = { _state.value },
+			backend = { workspaceBackend },
+			scope = scope,
+			editorFor = ::canvasEditorFor,
+			editVisibility = { editCanvasVisibility(it) },
+			setView = { zoom, x, y, canvas, mode -> setCanvasView(zoom, x, y, canvas, mode) },
+		)
+	}
     /** Transient hover input; changing it invalidates the canvas without writing document state. */
     private var parameterSnapshotHover by mutableStateOf<ParameterSnapshotPreview?>(null)
 
@@ -467,13 +357,19 @@ class PSD2LiveViewModel : AutoCloseable {
      * Playback, swing and stale panel values can name parameters the model no longer has or sit past a range, and the
      * shared geometry commands reject both, so the pose is kept to the model.
      */
-    internal fun canvasPose(current: PSD2LiveState, live: Map<ParameterId, Float> = livePose.value): Map<ParameterId, Float> {
-        val trial=if(current.activeCanvas.mode==CanvasMode.EDIT && interiorTrialAddress==interiorAddress(current))interiorTrialValues else emptyMap()
-        val pose = shownPose(current, live) + swingPreviewValues + trial
-        val parameters = (if(trial.isNotEmpty())interiorTrialPuppet else null)?.parameters ?: current.previewModel?.rig?.puppet?.parameters ?: return pose
-        val known = parameters.mapTo(HashSet()) { it.id }
-        return io.github.psd2live.core.boundedPreviewPose(pose.filterKeys { it in known }, parameters)
-    }
+	internal fun canvasPose(
+		current: PSD2LiveState,
+		live: Map<ParameterId, Float> = livePose.value,
+	): Map<ParameterId, Float> {
+		val trial = interior.poseFor(current)
+		val pose = shownPose(current, live) + swingPreviewValues + trial
+		val parameters =
+			interior.modelFor(current)?.parameters
+				?: current.previewModel?.rig?.puppet?.parameters
+				?: return pose
+		val known = parameters.mapTo(HashSet()) { it.id }
+		return io.github.psd2live.core.boundedPreviewPose(pose.filterKeys { it in known }, parameters)
+	}
 
     internal fun applySwingPreview(preview: io.github.psd2live.application.WorkspaceSwingPreview) {
         val current = _state.value
@@ -3662,14 +3558,14 @@ class PSD2LiveViewModel : AutoCloseable {
 	/** Every physics group of the current model, as export sees it; see [PhysicsCatalog.groups]. */
 	fun physicsGroups(state: PSD2LiveState = _state.value): List<PhysicsGroup> {
 		val model = state.previewModel ?: return emptyList()
-		val key = listOf(model.analysis, model.rig.puppet.parameters, state.rigEdits.physicsEdits, state.rigEdits.disabledPhysicsIds, state.rigEdits.physicsOrder,
+		val key = listOf(model.analysis, model.rig.puppet, state.rigEdits.interiorEffects, state.rigEdits.physicsEdits, state.rigEdits.disabledPhysicsIds, state.rigEdits.physicsOrder,
 			state.rigEdits.skeleton, state.rigEdits.swingEdits, state.physicsFrontHair, state.physicsBackHair, state.physicsEyeJelly,
 			state.hairSimulationFront, state.hairSimulationBack, state.rigEdits.importedCmo3)
 		physicsCatalogCache?.let { (k, groups) -> if (k == key) return groups }
 		val groups = PhysicsCatalog.groups(if (state.rigEdits.importedCmo3 != null) PhysicsGenerator.Presets(false, false, false)
 			else PhysicsGenerator.Presets.present(model.analysis, state.hairSimulationFront, state.hairSimulationBack),
 			PhysicsGenerator.Presets(state.physicsFrontHair, state.physicsBackHair, state.physicsEyeJelly),
-			state.rigEdits, model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw })
+			state.rigEdits, model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }, model.rig.puppet)
 		physicsCatalogCache = key to groups
 		return groups
 	}
@@ -7745,6 +7641,7 @@ class PSD2LiveViewModel : AutoCloseable {
 
 	override fun close() {
 		if (!isClosed.compareAndSet(false, true)) return
+        interior.close()
         meshSplitCheck.cancel()
 		motionJob?.cancel()
 		previewRebuildJob?.cancel()

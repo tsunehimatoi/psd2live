@@ -419,4 +419,4 @@
 
 ## 内部造型生成器
 
-可选 `interiorEffect:<id>` 节点在作者日志后、生成结果覆盖前运行。`NativeInteriorEffect` 在 `rigEdits.interiorEffects` 中保存配方、紧凑原生 blend 字段和物理组。现有输入参数只读，生成参数和目标 Mesh 轴有单一所有者；配方修改、增删与开关均参与失效传播。网格、素材或绑定不匹配时保留配方但跳过过期顶点。原生 UI/MCP 共用 `interior_put`，临时试动不进入文档。早期实验 `interiorSurfaces` 仅保留兼容。参见[内部造型](INTERIOR_SURFACE.md)。
+可选 `interiorEffect:<id>` 节点在作者日志后、生成结果覆盖前运行。`NativeInteriorEffect` 在 `rigEdits.interiorEffects` 中保存配方、紧凑原生 blend 字段和物理组。现有输入参数只读，生成参数和目标 Mesh 轴有单一所有者；配方修改、增删与开关均参与失效传播。网格、素材或绑定不匹配时保留配方但跳过过期顶点。原生 UI/MCP 共用 `interior_put`，临时试动不进入文档。停用和失效效果的闲置自有参数仅在导出副本中清理。未发布的密集实验不保留兼容；删除通过 `interior_delete` 进入同一重放链路。参见[内部造型](INTERIOR_SURFACE.md)。

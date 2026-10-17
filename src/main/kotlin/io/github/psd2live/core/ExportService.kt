@@ -74,12 +74,13 @@ internal object ExportService {
 	internal fun writeStaged(preview: RigPreviewModel, target: ExportTarget, options: ExportOptions, stage: Path): ExportReport {
 		val ir = RigIrCompiler.compile(preview, tileArt = target.id == "cmo3", simulations = target.id == "p2lrt" || target.id == "web")
 		val root = stage.toAbsolutePath().normalize()
-		return Compiler.export(target, ir, options) { path, bytes ->
+		val report = Compiler.export(target, ir, options) { path, bytes ->
 			val file = root.resolve(path).normalize()
 			require(file.startsWith(root)) { "Export path escapes the output: $path" }
 			Files.createDirectories(file.parent)
 			Files.write(file, bytes)
 		}
+		return report.copy(losses = report.losses + io.github.psd2live.core.interior.InteriorLifecycle.losses(preview.rig.puppet, preview.config.rigEdits))
 	}
 
 	internal fun reportName(options: ExportOptions, target: ExportTarget) = "${options.baseName}.${target.id}.report.json"

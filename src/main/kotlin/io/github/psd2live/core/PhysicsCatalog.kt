@@ -14,12 +14,16 @@ object PhysicsCatalog {
 		enabledPresets: PhysicsGenerator.Presets,
 		overlay: RigEditOverlay,
 		available: Set<String>,
+		model: org.umamo.runtime.model.PuppetModel? = null,
 	): List<PhysicsGroup> {
+		val inactiveInteriorGroups = overlay.interiorEffects.filter { effect ->
+			!effect.enabled || (model != null && effect.issue(model) != null) || effect.parameterIds.any { it !in available }
+		}.flatMapTo(HashSet()) { effect -> effect.groups.map { it.id } }
 		val generated = PhysicsGenerator.presetRules(present, available).map { it to PhysicsOrigin.PRESET } +
 			PhysicsGenerator.skeletonRules(overlay.skeleton, available).map { it to PhysicsOrigin.SKELETON } +
 			PhysicsGenerator.swingRules(overlay.swingEdits, available).map { it to PhysicsOrigin.SWING } +
 			io.github.psd2live.core.sim.SimGenerator.physicsRules(overlay.simEdits, available).map { it to PhysicsOrigin.SIMULATION } +
-            overlay.interiorEffects.filter { it.enabled }.flatMap { it.groups }.map { it to PhysicsOrigin.INTERIOR }
+            overlay.interiorEffects.filter { it.enabled }.flatMap { it.groups }.filterNot { it.id in inactiveInteriorGroups }.map { it to PhysicsOrigin.INTERIOR }
 		val generatedIds = generated.mapTo(HashSet()) { it.first.id }
 		val authored = overlay.physicsEdits.associateBy { it.id }
 		fun enabled(id: String, origin: PhysicsOrigin) =
@@ -27,7 +31,7 @@ object PhysicsCatalog {
 		val rows = ordered(generated.map { (rule, origin) ->
 			val setting = authored[rule.id] ?: rule
 			PhysicsGroup(setting, origin, rule, enabled(rule.id, origin), issueOf(setting, available))
-		} + overlay.physicsEdits.filter { it.id !in generatedIds }.map { edit ->
+		} + overlay.physicsEdits.filter { it.id !in generatedIds && it.id !in inactiveInteriorGroups }.map { edit ->
 			PhysicsGroup(edit, PhysicsOrigin.CUSTOM, null, enabled(edit.id, PhysicsOrigin.CUSTOM), issueOf(edit, available))
 		}, overlay.physicsOrder)
 		// The user's groups claim outputs in the order they were authored, then generated ones in order.
@@ -47,14 +51,14 @@ object PhysicsCatalog {
 		return rows.map { resolved.getValue(it.id) }
 	}
 
-	fun groups(analysis: PipelineAnalysis?, config: PipelineConfig, available: Set<String>): List<PhysicsGroup> =
+	fun groups(analysis: PipelineAnalysis?, config: PipelineConfig, available: Set<String>, model: org.umamo.runtime.model.PuppetModel? = null): List<PhysicsGroup> =
 		groups(if (config.rigEdits.importedCmo3 != null) PhysicsGenerator.Presets(false, false, false)
-			else PhysicsGenerator.Presets.present(analysis, config.hairSimulationFront, config.hairSimulationBack), PhysicsGenerator.Presets.enabled(config), config.rigEdits, available)
+			else PhysicsGenerator.Presets.present(analysis, config.hairSimulationFront, config.hairSimulationBack), PhysicsGenerator.Presets.enabled(config), config.rigEdits, available, model)
 
 	/** What exports, in evaluation order: nothing when physics is off or the model is mesh-only. */
-	fun active(analysis: PipelineAnalysis?, config: PipelineConfig, available: Set<String>): List<RigPhysicsEdit> =
+	fun active(analysis: PipelineAnalysis?, config: PipelineConfig, available: Set<String>, model: org.umamo.runtime.model.PuppetModel? = null): List<RigPhysicsEdit> =
 		if (!config.generatePhysics || config.meshOnly) emptyList()
-		else groups(analysis, config, available).filter { it.active }.map { it.setting }
+		else groups(analysis, config, available, model).filter { it.active }.map { it.setting }
 
 	/** [rows] with the IDs in [order] first, in that order, and the rest after them as they came. */
 	internal fun <T : Any> ordered(rows: List<T>, order: List<String>, id: (T) -> String): List<T> {

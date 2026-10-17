@@ -541,11 +541,11 @@ fun CanvasViewportComposable(
         panY=-((minY+maxY)/2.0-viewSize.height/2.0-panY)*actual
 		zoom=next;cameraDirty=false;viewModel.setCanvasView(zoom.toFloat(),panX.toFloat(),panY.toFloat(), canvasId, mode)
     }
-    LaunchedEffect(viewModel.interiorFrameRequest) {
-        if(viewModel.interiorFrameRequest>0 && canvasId==viewModel.state.value.activeCanvas.id) {
+    LaunchedEffect(viewModel.interior.frameRequest) {
+        if(viewModel.interior.frameRequest>0 && canvasId==viewModel.state.value.activeCanvas.id) {
             val previous=editor.objects
             try { editor.objects=setOfNotNull(viewModel.state.value.selectedLayerId);frameSelection() } finally { editor.objects=previous }
-            viewModel.interiorFrameRequest=0
+            viewModel.interior.frameRequest=0
         }
     }
 
@@ -932,9 +932,16 @@ fun CanvasViewportComposable(
                 else -> Cursor.getDefaultCursor()
             }))
 			.onPointerEvent(PointerEventType.Press) { event ->
-                if(mode==CanvasMode.EDIT && viewModel.interiorTarget!=null && !viewModel.interiorMouse) {
-                    viewModel.stopInteriorTrial();event.changes.forEach { it.consume() };return@onPointerEvent
-                }
+				if (
+					mode == CanvasMode.EDIT &&
+						viewModel.interior.poseTarget != null &&
+						!viewModel.interior.mouse
+				) {
+					viewModel.interior.stopTrial()
+					event.changes.forEach { it.consume() }
+					return@onPointerEvent
+				}
+
 
 				if (viewModel.state.value.activeCanvas.id != canvasId) {
 					viewModel.focusCanvas(canvasId)
@@ -1074,24 +1081,38 @@ fun CanvasViewportComposable(
 				}
 			}
 			.onPointerEvent(PointerEventType.Move) { event ->
-                if(mode==CanvasMode.EDIT && viewModel.interiorMouse && !editor.inGesture && previewModel!=null) {
-                    val effect=canvasState.rigEdits.interiorEffects.singleOrNull { it.target==previewModel.rig.layerIdByDrawableId.entries.firstOrNull { e -> e.value==canvasState.selectedLayerId }?.key || it.target==canvasState.selectedLayerId }
-                    val pointer=event.changes.firstOrNull()?.position
-                    if(effect!=null && pointer!=null && !event.changes.any { it.isConsumed }) {
-                        val q=viewModel.interiorNeutralBounds
-                        if(q!=null) {
-                            val v=currentViewportFor(viewSize)
-                            val local=canvasState.isolatedLayerId==canvasState.selectedLayerId
-                            val cx=if(local)v.x((q[0]+q[2])/2).toFloat()else viewSize.width*.5f
-                            val cy=if(local)v.yFromWorld((q[1]+q[3])/2).toFloat()else viewSize.height*.5f
-                            val w=if(local)((q[2]-q[0])*v.scale/2).toFloat()else viewSize.width*.5f
-                            val h=if(local)((q[3]-q[1])*v.scale/2).toFloat()else viewSize.height*.5f
-                            val rawX=((pointer.x-cx)/maxOf(w,1f)).coerceIn(-1f,1f)
-                            val rawY=((pointer.y-cy)/maxOf(h,1f)).coerceIn(-1f,1f)
-                            viewModel.interiorTarget=effect.motion.pointer(rawX,rawY);viewModel.startInteriorTrial(effect)
-                        }
-                    }
-                }
+				if (
+					mode == CanvasMode.EDIT &&
+						viewModel.interior.acceptsMouse(canvasState) &&
+						!editor.inGesture &&
+						previewModel != null
+				) {
+					val effect =
+						canvasState.rigEdits.interiorEffects.singleOrNull {
+							it.target ==
+								previewModel.rig.layerIdByDrawableId.entries
+									.firstOrNull { e -> e.value == canvasState.selectedLayerId }
+									?.key || it.target == canvasState.selectedLayerId
+						}
+					val pointer = event.changes.firstOrNull()?.position
+					if (effect != null && pointer != null && !event.changes.any { it.isConsumed }) {
+						val q = viewModel.interior.neutralBounds
+						if (q != null) {
+							val v = currentViewportFor(viewSize)
+							val local = canvasState.isolatedLayerId == canvasState.selectedLayerId
+							val cx = if (local) v.x((q[0] + q[2]) / 2).toFloat() else viewSize.width * .5f
+							val cy =
+								if (local) v.yFromWorld((q[1] + q[3]) / 2).toFloat() else viewSize.height * .5f
+							val w = if (local) ((q[2] - q[0]) * v.scale / 2).toFloat() else viewSize.width * .5f
+							val h =
+								if (local) ((q[3] - q[1]) * v.scale / 2).toFloat() else viewSize.height * .5f
+							val rawX = ((pointer.x - cx) / maxOf(w, 1f)).coerceIn(-1f, 1f)
+							val rawY = ((pointer.y - cy) / maxOf(h, 1f)).coerceIn(-1f, 1f)
+							viewModel.interior.pointer(canvasState, effect, rawX, rawY)
+						}
+					}
+				}
+
 
 				val change = event.changes.firstOrNull() ?: return@onPointerEvent
                 // The key latch misses a release that lands elsewhere (Alt+Tab, a swallowed key-up) and
@@ -1837,16 +1858,36 @@ fun CanvasViewportComposable(
 				},
 			)
 		}
-        if(mode==CanvasMode.EDIT && viewModel.interiorMouse && viewModel.interiorNeutralBounds!=null) {
-            val bounds=viewModel.interiorNeutralBounds!!
-            val vp=currentViewportFor(viewSize)
-            val local=canvasState.isolatedLayerId==canvasState.selectedLayerId
-            val center=if(local)Offset(vp.x((bounds[0]+bounds[2])/2).toFloat(),vp.yFromWorld((bounds[1]+bounds[3])/2).toFloat())else Offset(viewSize.width*.5f,viewSize.height*.5f)
-            androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
-                drawLine(colors.accent,center-Offset(7.dp.toPx(),0f),center+Offset(7.dp.toPx(),0f),1.dp.toPx())
-                drawLine(colors.accent,center-Offset(0f,7.dp.toPx()),center+Offset(0f,7.dp.toPx()),1.dp.toPx())
-            }
-        }
+		if (
+			mode == CanvasMode.EDIT &&
+				viewModel.interior.acceptsMouse(canvasState) &&
+				viewModel.interior.neutralBounds != null
+		) {
+			val bounds = viewModel.interior.neutralBounds!!
+			val vp = currentViewportFor(viewSize)
+			val local = canvasState.isolatedLayerId == canvasState.selectedLayerId
+			val center =
+				if (local)
+					Offset(
+						vp.x((bounds[0] + bounds[2]) / 2).toFloat(),
+						vp.yFromWorld((bounds[1] + bounds[3]) / 2).toFloat(),
+					)
+				else Offset(viewSize.width * .5f, viewSize.height * .5f)
+			androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+				drawLine(
+					colors.accent,
+					center - Offset(7.dp.toPx(), 0f),
+					center + Offset(7.dp.toPx(), 0f),
+					1.dp.toPx(),
+				)
+				drawLine(
+					colors.accent,
+					center - Offset(0f, 7.dp.toPx()),
+					center + Offset(0f, 7.dp.toPx()),
+					1.dp.toPx(),
+				)
+			}
+		}
         // Overlay: Empty hint or Stats Badge
 		if (previewModel == null) {
 			EmptyCanvasHint(

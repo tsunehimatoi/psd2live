@@ -1144,8 +1144,7 @@ internal object AdaptiveMeshGenerator {
 		return true
 	}
 
-	/** Also used after interior-guide cuts; callers must protect every authored guide and boundary edge. */
-	internal fun relaxToConstrainedDelaunay(
+	private fun relaxToConstrainedDelaunay(
 		points: List<Point>,
 		triangles: MutableList<Triangle>,
 		protectedEdges: Set<Edge>,

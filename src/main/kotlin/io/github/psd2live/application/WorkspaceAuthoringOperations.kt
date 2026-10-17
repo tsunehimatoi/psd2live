@@ -36,7 +36,7 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
         val asset = id in WorkspaceAssetSessions.supported
         val pose = id == "preview_pose"
         val swing = id in setOf("swing_preview", "swing_preview_commit")
-        val background = id in WorkspaceSimulationEdits.supported || physics || raster || layer || generation || partition || regeneration || warp || asset || sampling || motionObservation || pose || swing || id == "interior_put"
+        val background = id in WorkspaceSimulationEdits.supported || physics || raster || layer || generation || partition || regeneration || warp || asset || sampling || motionObservation || pose || swing || id in setOf("interior_put", "interior_delete")
         registry.register(WorkspaceOperationDefinition(id,
             description + if (background) " Returns a process-owned job handle; use job_wait/job_get for the result, state and diagnostics. Disconnecting does not cancel execution." else "",
             schema, kind, jobBacked = background, workspaceBound = background || kind != WorkspaceOperationKind.QUERY,
@@ -129,7 +129,7 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
     }
 
     registerJsonOperation("inspect", "Read project context, find objects/layers/parameters, or inspect one kind:id's direct axes, channels and parent (also its organizational part and the static fields rig_edit_structure writes: opacity, colors, draw order, blend mode, clipping masks, culling, selectable, user data, quad). scope=generation lists what waits for rig_generate. No point arrays. Query and page before expanding.",
-        buildJsonObject { put("scope", choices("project", "settings", "preview", "generation", "objects", "layers", "parameters", "physics", "swings", "paths", "simulations", "vertex_groups")); put("query", string()); put("target", string()); put("offset", integer(0)); put("limit", integer(1, 64)) }) { a ->
+        buildJsonObject { put("scope", choices("project", "settings", "preview", "generation", "objects", "layers", "parameters", "physics", "swings", "paths", "simulations", "interiors", "vertex_groups")); put("query", string()); put("target", string()); put("offset", integer(0)); put("limit", integer(1, 64)) }) { a ->
         workspace.captureQueries().inspect(a)
     }
 
@@ -399,7 +399,7 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
         mapOf("split" to "asset_split_artwork", "components" to "asset_split_components", "depth" to "asset_split_depth", "reference" to "asset_prepare_reference", "import" to "asset_import_png", "register" to "asset_register", "preview" to "asset_preview_composite", "add" to "layer_add_from_asset", "place" to "layer_set_placement", "finalize" to "layer_finalize_placement", "inspect" to "asset_inspect", "reprocess" to "asset_reprocess", "remove" to "layer_delete", "restore" to "layer_restore"), true)
     registerCommandOperations("swing", "Generate regenerating sway on Warps or meshes (wrapped in a tight Warp): kind=lateral swings the tip left/right, kind=vertical up/down (or motions=[...] for both), each on -1/0/1 keys per segment parameter, with a matching pendulum unless physics_enabled=false. parallel keeps the tip edge level so hair with several strands in one Warp sways side by side. Changing a swing recomputes its forms; delete with bake=true to keep them as ordinary keys. Verify with view poses at the parameter endpoints.",
         mapOf("put" to "swing_put", "delete" to "swing_delete"), true)
-    registerCommandOperations("interior", "Generate and edit an interior surface on one mesh; compact keyforms and optional native propagation persist with the project.", mapOf("put" to "interior_put"), true)
+    registerCommandOperations("interior", "Generate and edit an interior surface on one mesh; compact keyforms and optional native propagation persist with the project.", mapOf("put" to "interior_put", "delete" to "interior_delete"), true)
     register("swing_preview", "Create or edit an isolated swing audition on a captured workspace state. begin resolves existing swings or neutral defaults; update/kinds/segments/preset/physics/select/handle use the same candidates as GUI handles. play runs a transient clock, cancel retains a queryable terminal session. Draft rigs and playback values never enter save/query baselines. Use swing_preview_get/render to inspect; swing_preview_commit persists the captured draft once.",
         WorkspaceSwingSessionSchemas.control(), WorkspaceOperationKind.SESSION) { WorkspaceOperationOutput(workspace.controlSwingPreview(it).report) }
     register("swing_preview_commit", "Commit an audition draft with its captured state; stale drafts fail without overwriting another edit. Retains the committed session and terminal result for job queries and retries.",

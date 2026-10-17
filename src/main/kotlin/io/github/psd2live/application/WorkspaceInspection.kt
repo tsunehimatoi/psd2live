@@ -79,6 +79,9 @@ internal fun WorkspaceQueries.inspect(a: JsonObject): JsonObject {
             }
             "physics" -> { put("fps", queries.physicsFps()); put("groups", JsonArray(queries.listPhysics().map { it.toJson() })) }
             "swings" -> put("swings", JsonArray(queries.listSwings().map { it.toJson() }))
+            "interiors" -> put("effects", JsonArray(queries.listInteriorEffects().map { effect ->
+                JsonObject(effect.configuration() + ("issue" to (queries.currentPuppet()?.let(effect::issue)?.let(::JsonPrimitive) ?: JsonNull)))
+            }))
             "simulations" -> {
                 val puppet = queries.currentPuppet()
                 // The bake's arrays stay out; its summary and whether it is stale are what a caller acts on.

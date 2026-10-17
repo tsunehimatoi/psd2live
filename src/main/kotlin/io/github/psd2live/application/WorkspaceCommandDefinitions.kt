@@ -38,14 +38,7 @@ internal fun registerWorkspaceCommands(catalog: WorkspaceCommands, workspace: Wo
     registerCatalogPoseCommands(catalog, workspace)
     registerCatalogPhysicsCommands(catalog, workspace)
     registerCatalogSwingCommands(catalog, workspace)
-    catalog.register("interior_put", "Create/update the selected mesh's interior surface, compact native keyforms and optional physics. Settings and generated data persist; existing meshes, UVs, skin and unrelated keyforms are preserved. Omitting parameters prefers existing body X/Y and otherwise creates private source axes; explicit empty IDs create new axes. A request with only target/enabled toggles the retained effect.",
-        WorkspaceCommandSchema(properties=buildJsonObject {
-            putJsonObject("target") { put("type","string") };putJsonObject("state") { put("type","string") }
-            putJsonObject("enabled") { put("type","boolean") };putJsonObject("settings") { put("type","object") }
-            putJsonObject("guides") { put("type","array");putJsonObject("items") { put("type","object") } };putJsonObject("motion") { put("type","object") };putJsonObject("parameters") { put("type","array");putJsonObject("items") { put("type","string") } }
-        },required=listOf("target","state")),hints=MUTATING) { request -> mutationResult {
-            workspace.applyDocumentEdits(request.requiredString("state"),"Interior surface",listOf(WorkspaceDocumentOperation("interior_put",request.arguments)),MutationAuthor.AGENT).toJson()
-        } }
+    registerInteriorCommands(catalog, workspace)
 
     registerCatalogAssetCommands(catalog, workspace)
     registerCatalogSourceCommands(catalog, workspace)

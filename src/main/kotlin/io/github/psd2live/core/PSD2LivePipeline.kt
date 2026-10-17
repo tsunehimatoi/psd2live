@@ -603,11 +603,14 @@ class PSD2LivePipeline {
 		// Umamo's conversion preserves that mixed-space invariant exactly.
 		// Evaluating the mouth at MOUTH_OPEN=1.0f keeps the base mesh in its initial open state matching
 		// the authored PSD layer artwork and atlas UV coordinates, avoiding singular affine transforms in CMO3.
-		val exportPuppet = restMeshesToCanvasSpace(rig.puppet, if (imported) emptyMap() else mapOf(StandardParameters.MOUTH_OPEN to 1.0f))
+		val cleaned = io.github.psd2live.core.interior.InteriorLifecycle.exportModel(rig.puppet, config.rigEdits,
+			PhysicsCatalog.active(analysis, config, rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }, rig.puppet))
+		val exportPuppet = restMeshesToCanvasSpace(cleaned, if (imported) emptyMap() else mapOf(StandardParameters.MOUTH_OPEN to 1.0f))
 		val outputRoot = outputDirectory.toAbsolutePath().normalize()
 		Files.createDirectories(outputRoot)
 		val files = mutableListOf<ExportedFile>()
-		val warnings = (analysis.warnings + rig.warnings + neutralRig.warnings + generatedAngleWarnings + generatedWarpWarnings).toMutableList()
+		val warnings = (analysis.warnings + rig.warnings + neutralRig.warnings + generatedAngleWarnings + generatedWarpWarnings +
+			io.github.psd2live.core.interior.InteriorLifecycle.warnings(rig.puppet, config.rigEdits)).toMutableList()
 		val (runtimeBundle, runtimeReport) = buildRuntimeBundle(baseName, analysis, atlas, rig, config, validate = true, preview = false)
 
 		if (config.exportMoc3) {
@@ -648,7 +651,7 @@ class PSD2LivePipeline {
 		progress.update(tr("progress.exportCmo3"), 0.91)
 
 		if (config.exportJson) {
-			val report = projectReport(baseName, analysis, rig, atlas, config, warnings)
+			val report = projectReport(baseName, analysis, rig.copy(puppet = cleaned), atlas, config, warnings)
 			Json.parseToJsonElement(report)
 			files += writeContained(outputRoot, "$baseName.psd2live.json", report.encodeToByteArray())
 		}
@@ -777,7 +780,7 @@ class PSD2LivePipeline {
 		val layers = analysis.layers.joinToString(",\n") { layer ->
 			"    {\"source\":${quote(layer.source.name)},\"type\":${quote(layer.semantic.type.name.lowercase())},\"tag\":${quote(layer.semantic.tag.canonicalName)},\"side\":${quote(layer.semantic.side.name)},\"parameter\":${quote(layer.semantic.parameter)},\"switchId\":${layer.semantic.switchId},\"drawable\":${quote(rig.puppet.drawables.firstOrNull { it.name == layer.source.name }?.id?.raw ?: "")}}"
 		}
-		val physicsIds = PhysicsCatalog.active(analysis, config, rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }).map { it.id }
+		val physicsIds = PhysicsCatalog.active(analysis, config, rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }, rig.puppet).map { it.id }
 		val useFrontHair = PhysicsGenerator.FRONT_HAIR_ID in physicsIds
 		val useBackHair = PhysicsGenerator.BACK_HAIR_ID in physicsIds
 		val useEyeJelly = PhysicsGenerator.EYE_JELLY_ID in physicsIds

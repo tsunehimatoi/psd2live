@@ -6,7 +6,7 @@
 
 An optional Mesh keyform generator reshapes existing interior texture through a virtual curved surface. It does not synthesize textures/shadows, simulate physical cloth or require a depth model. Projects without this feature keep the existing path.
 
-Select a generated layer and enable **Interior surface** in the right dock. Releasing a slider commits one history edit. Failed generation retains the draft and previous valid result. Disabling retains settings without rebaking. **Solo and center** temporarily fits the selected layer; a second click restores that canvas's visibility and camera without moving model objects.
+Select a generated layer and enable **Interior surface** in the right dock. Releasing a slider commits one history edit. Failed generation retains the draft and previous valid result. Disabling retains settings without rebaking. Delete removes the recipe and owned physics and is undoable; private inputs referenced by other authored content are adopted and retained. **Solo and center** temporarily fits the selected layer; a second click restores that canvas's visibility and camera without moving model objects.
 
 The native 2D parameter pad uses actual source ranges and defaults; right/down are positive. Releasing holds the target while physics continues. Optional mouse following is off by default and mutually exclusive with the pad. Its neutral is the isolated layer's rest center, or the main canvas center in the full view. Mouse gains affect audition only. Explicit parameter poses and exported ranges are unchanged.
 
@@ -39,7 +39,7 @@ Guides store source-pixel points, positive radius, amount and an optional pitch-
 
 Existing NORMAL/BLEND inputs may be read, provided they do not repeat and their defaults lie inside their ranges. Omitted bindings prefer standard body X/Y, falling back to private sources; an explicit empty ID creates a source. Nonzero defaults are represented with F(0) constants and gated residuals while retaining Cubism blend neutral VALUE 0. Applied fields include current grid default offsets and scalar references to match native subtraction semantics and avoid neutral drift.
 
-`InteriorStructureAnalysis` suggests color/contrast edges using alpha-normalized smoothing and a structure tensor. `InteriorStructureMesh` offers constrained interior refinement while preserving original boundaries. These are core utilities; the current production entry retains existing meshes and has no automatic remeshing workflow. Printed artwork edges cannot automatically be classified as physical folds.
+Image-guided remeshing, manual mesh tools and on-canvas surface/guide handles are future-PR work. This entry retains original meshes; unintegrated structure-analysis/refinement code is excluded.
 
 ## Optional timing
 
@@ -47,7 +47,7 @@ Existing NORMAL/BLEND inputs may be read, provided they do not repeat and their 
 
 The existing PhysicsEngine, PhysicsCatalog and project physics FPS are reused; export uses standard physics3. Playback runs no image analysis, surface evaluator or sampler. Mouse mapping is `clamp(input,-1,1)*gain`; explicit poses bypass it. A further 600-frame rapid-reversal area check rejects unsafe configurations without silently reducing amplitude.
 
-Optional timing exceeds the maintainer's initially suggested static first-release scope. Its inclusion is explicitly open for draft-PR review, not presented as previously approved maintainer scope.
+The maintainer approved retaining optional easing and propagation in PR #45 review.
 
 ## Persistence, replay and ownership
 
@@ -55,17 +55,23 @@ Optional timing exceeds the maintainer's initially suggested static first-releas
 
 Each `interiorEffect:<id>` graph node owns its generated parameters and target Mesh axes, while reading existing sources. Addition/removal, toggles and recipe changes invalidate downstream overrides, physics and motions. Generation follows the authoring journal; manual edits retain the existing GeneratedOverrides path.
 
-Mesh, source-content or input-range mismatch retains the recipe but skips stale vertex data and asks for regeneration/rebinding. Disabling retains parameter definitions but removes shape application and active groups. Earlier experimental dense `interiorSurfaces` recipes retain replay compatibility; the new UI does not create them.
+Mesh, source-content or input-range mismatch retains the recipe but skips stale vertex data and asks for regeneration/rebinding. Disabling retains definitions in the editor but removes shape application and active groups. Every export shares the IR cleanup: owned inactive parameters are omitted only when geometry, other physics, motions and links do not reference them. Invalid effects explicitly skip their physics and report the omission in model warnings or target loss reports. Generator cache reads include sources and atlas; new recipes record initially missing hashes too. The unpublished RigInteriorEdit/interiorSurfaces experiment is removed, with no migration route.
 
-UI and MCP share the `interior_put` document command. The target is a mesh ID or `mesh:<ID>`; optional fields are enabled/settings/motion/parameters/guides, with native transaction-state checks. A target/enabled-only request with context fields is a lightweight toggle. Draft version and project-address checks reject late asynchronous results. Temporary audition is neither saved nor exported.
+UI and MCP share `interior_put` and `interior_delete`. `workspace_inspect scope=interiors` returns settings, guides, parameter IDs and issue status without shape buffers. Nested schemas describe units and ranges; settings/motion accept partial updates. `InteriorController` owns drafts, trial physics and view isolation; the main ViewModel delegates to it. The target is a mesh ID or `mesh:<ID>`; optional fields are enabled/settings/motion/parameters/guides, with native transaction-state checks. A target/enabled-only request with context fields is a lightweight toggle. Draft version and project-address checks reject late asynchronous results. Temporary audition is neither saved nor exported.
 
 ## Validation and limits
 
 ```bash
-./gradlew test --tests '*InteriorSurfaceTest' --tests '*InteriorReferenceParityTest' --tests '*InteriorKeyformTest' --tests '*InteriorBasisKeyformTest' --tests '*InteriorMotionTest' --tests '*NativeInteriorEffectTest'
+./gradlew test --tests '*InteriorSurfaceTest' --tests '*InteriorReferenceParityTest' --tests '*InteriorBasisKeyformTest' --tests '*InteriorMotionTest' --tests '*NativeInteriorEffectTest'
 ./gradlew test
 ```
 
 Coverage includes synthetic alpha/holes/edges, independent numeric surface fixtures, native Mesh/MOC3 trajectories, nonzero asymmetric sources, toggles, real archive/history roundtrips and invalidation. Public fixtures are synthetic; reference videos, artwork and private models are excluded.
 
 Local checks include native GUI/MCP, save/reopen, export generation and CPU/MOC3 trajectory comparison. Full official-SDK animated visual review, broader material coverage and all editing combinations remain open. Human feedback and finite numerical checks are separate evidence. Extreme settings can be rejected by area checks; mesh or texture quality is not reduced to pass.
+
+### Retained-parameter panel replay
+
+Deletion checks references on the completed model with the removed effect disabled, including deferred panel edits, rather than only running generators. Retained private definitions become authored parameters. The internal `panel_after_generation` ID list in their structure record preserves the original phase/order of pairing and moves. Later unlinking, checkpoints and archive reopen follow that same order. Explicit parameter deletion ends the phase hint, so recreating an ID cannot resurrect an old pairing. Documents without this metadata retain their existing replay behavior.
+
+Async draft cleanup uses the originating project/workspace/target key and checks both draft identity and version. Late replies cannot erase new-scope or newer drafts. Mouse audition and its crosshair share project-generation/workspace/active-canvas/edit-mode routing; hovering an inactive pane cannot drive the active one.

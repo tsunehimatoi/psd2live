@@ -25,7 +25,7 @@ internal class WorkspacePreviewPhysics {
             if (config.rigEdits.importedCmo3 != null) PhysicsGenerator.Presets(false, false, false)
             else PhysicsGenerator.Presets.present(model.analysis, config.hairSimulationFront, config.hairSimulationBack),
             PhysicsGenerator.Presets(config.physicsFrontHair, config.physicsBackHair, config.physicsEyeJelly), config.rigEdits,
-            model.rig.puppet.parameters.mapTo(hashSetOf()) { it.id.raw }).filter { it.active }.map { it.setting }
+            model.rig.puppet.parameters.mapTo(hashSetOf()) { it.id.raw }, model.rig.puppet).filter { it.active }.map { it.setting }
         val parameters = model.rig.puppet.parameters
         val nextKey = listOf(groups, parameters, config.rigEdits.physicsFps)
         if (nextKey != key) {

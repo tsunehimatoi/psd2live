@@ -72,6 +72,7 @@ interface WorkspaceQueries : WorkspaceStatePort {
     /** Plays [motions] through baked simulation [id] and its reference and reports how the bake follows; read-only. */
     fun compareSimulation(id: String, motions: List<String>, progress: (Float) -> Unit = noSamplingProgress,
                           cancelled: () -> Boolean = noSamplingCancellation): JsonObject
+    fun listInteriorEffects(): List<io.github.psd2live.core.interior.NativeInteriorEffect> = emptyList()
     fun listSwings(): List<RigSwingEdit>
     /** Generated overrides of the captured model that did not apply as recorded, in journal order. */
     fun generatedOverrideIssues(): List<io.github.psd2live.core.GeneratedOverrideIssue>
