@@ -8,6 +8,7 @@ target}.png and OUT/test/prompts.jsonl. Verdicts (review_nodes.py) relabel or dr
 nodes nobody reviewed are left out. A model whose family holds a held-out model goes to the test set whole.
 """
 import argparse
+import io
 import json
 import random
 from pathlib import Path
@@ -81,8 +82,8 @@ def write_pair(j: dict, out: str, index: int) -> None:
         over(inp, bg).resize((side, side), Image.LANCZOS).save(out / "test" / f"{name}_input.png")
         hint.resize((side, side), Image.NEAREST).save(out / "test" / f"{name}_hint.png")
         over(tgt, GRAY).resize((side, side), Image.LANCZOS).save(out / "test" / f"{name}_target.png")
-        if side >= 512:  # the same close-up at a third of its size, for scoring how well the LoRA restores detail
-            soft(over(inp, bg).resize((side, side), Image.LANCZOS), 3).save(out / "test" / f"{name}_input_soft.png")
+        if side >= 256:  # the same close-up at a third of its size, for scoring how well the LoRA restores detail
+            soft(over(inp, bg).resize((side, side), Image.LANCZOS), 3, random.Random(index)).save(out / "test" / f"{name}_input_soft.png")
         return
     if j.get("rough") and rng.random() < 0.5:
         # A rougher hint, as a planner would draw it: grown or shrunk by a few percent of the frame.
@@ -94,19 +95,23 @@ def write_pair(j: dict, out: str, index: int) -> None:
         images = [i.transpose(Image.FLIP_LEFT_RIGHT) for i in images]
     name = j["name"]
     close_up = over(images[0], bg).resize((side, side), Image.LANCZOS)
-    if side >= 512 and rng.random() < j.get("soften", 0):
+    if side >= 256 and rng.random() < j.get("soften", 0):
         # A blurrier close-up than the target: the LoRA learns to paint the part at the art's own sharpness whatever
         # the size of the illustration it reads.
-        close_up = soft(close_up, rng.uniform(2, 4))
+        close_up = soft(close_up, rng.uniform(2, 4), rng)
     close_up.save(out / "train_in" / f"{name}.jpg", quality=95)
     images[1].resize((side, side), Image.NEAREST).save(out / "train_hint" / f"{name}.png")
     over(images[2], GRAY).resize((side, side), Image.LANCZOS).save(out / "train_tgt" / f"{name}.png")
     (out / "train_tgt" / f"{name}.txt").write_text(j["prompt"], encoding="utf-8")
 
 
-def soft(img: Image.Image, factor: float) -> Image.Image:
-    """[img] as if read from a picture [factor] times smaller."""
+def soft(img: Image.Image, factor: float, rng: random.Random) -> Image.Image:
+    """[img] as if read from a picture [factor] times smaller, as such pictures come: JPEG-compressed at times."""
     small = img.resize((max(16, round(img.width / factor)), max(16, round(img.height / factor))), Image.LANCZOS)
+    if rng.random() < 0.5:
+        buf = io.BytesIO()
+        small.convert("RGB").save(buf, "JPEG", quality=rng.randint(60, 95))
+        small = Image.open(io.BytesIO(buf.getvalue())).convert(img.mode)
     return small.resize(img.size, Image.BICUBIC)
 
 
@@ -128,7 +133,7 @@ def main():
     ap.add_argument("--reviewed-only", action="store_true")
     ap.add_argument("--pieces-once", action="store_true", help="only the rest-pose close-up of each piece")
     ap.add_argument("--rough-hints", action="store_true", help="grow or shrink half the training hints")
-    ap.add_argument("--soften", type=float, default=0, help="share of training close-ups of 512 and up read from a 2-4 times smaller picture")
+    ap.add_argument("--soften", type=float, default=0, help="share of training close-ups of 256 and up read from a 2-4 times smaller, at times JPEG-compressed picture")
     ap.add_argument("--styles", help="styles.tsv from styles.py: authoring conventions by model")
     ap.add_argument("--wear", help="jsonl of base body nodes and what is painted on them (bare, tight, underwear)")
     a = ap.parse_args()
