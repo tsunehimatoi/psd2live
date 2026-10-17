@@ -7,6 +7,7 @@ import io.github.psd2live.format.compile.RasterImage
 import io.github.psd2live.format.compile.render.IrColors
 import io.github.psd2live.format.compile.render.SoftwareRasterizer
 import io.github.psd2live.format.model.*
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.float
@@ -33,6 +34,10 @@ import kotlin.random.Random
  * with them (shading on its part); a clip that moves against them (an eye white round an iris) is a window, and
  * the node is drawn whole without it.
  *
+ * SUBNODES, when set, is a jsonl of finer nodes named by a reviewer ({"model", "node", "tag", "prompt", "meshes"}: a
+ * skirt's lace trim, a sleeve cuff); up to SUBNODES_PER_MODEL of them are drawn like the others, their prompt carried
+ * into samples.jsonl.
+ *
  * Writes build/tools/nodes/<PARTS_NAME, nodes>/<key>/<node>_<variant>_{input,hint,target}.png and samples.jsonl.
  */
 class NodeDatasetTool {
@@ -46,6 +51,7 @@ class NodeDatasetTool {
 	private val variants = setting("PARTS_VARIANTS", "2").toInt()
 	/** Nodes per model at most, rare tags first, so a model with forty strands does not drown the rest. */
 	private val perModel = setting("NODES_PER_MODEL", "40").toInt()
+	private val subPerModel = setting("SUBNODES_PER_MODEL", "20").toInt()
 
 	private val paired = setOf("irides", "eyewhite", "eyelash", "eyebrow", "ears", "earwear", "arm", "hand", "leg",
 		"handwear", "legwear", "footwear")
@@ -60,6 +66,8 @@ class NodeDatasetTool {
 		// order, still matches.
 		val keyOf = File(scenes, "index.tsv").takeIf { it.isFile }?.readLines()?.drop(1)?.mapNotNull { line ->
 			line.split('\t').takeIf { it.size >= 2 }?.let { it[1] to it[0] } }?.toMap().orEmpty()
+		val subnodes = System.getenv("SUBNODES")?.let { File(it) }?.takeIf { it.isFile }?.readLines()?.filter { it.isNotBlank() }
+			?.map { Json.parseToJsonElement(it).jsonObject }?.groupBy { it["model"]!!.jsonPrimitive.content }.orEmpty()
 		val models = root.walkTopDown().filter { it.isFile && (it.name.endsWith(".model3.json") || it.name.endsWith(".cmo3", true)) }
 			.sortedBy { it.path }.take(limit).toList()
 		val pool = Executors.newFixedThreadPool(threads)
@@ -70,7 +78,7 @@ class NodeDatasetTool {
 				val model = file.relativeTo(root).path.replace('\\', '/')
 				val labels = File(scenes, "${keyOf[model] ?: key}/labels.json")
 				val status = if (!labels.isFile) "no labels" else
-					runCatching { render(file, labels, File(out, key), key, samples) }.getOrElse { "error: ${it.javaClass.simpleName}: ${it.message?.take(160)}" }
+					runCatching { render(file, labels, File(out, key), key, samples, subnodes[model].orEmpty()) }.getOrElse { "error: ${it.javaClass.simpleName}: ${it.message?.take(160)}" }
 				println("$key $status")
 				"$key\t${file.relativeTo(root).path.replace('\\', '/')}\t$status\n" to samples.toString()
 			}
@@ -80,9 +88,10 @@ class NodeDatasetTool {
 		File(out, "samples.jsonl").writeText(results.joinToString("") { it.second })
 	}
 
-	private class Node(val id: String, val tag: String, val side: String, val piece: Int, val pieces: Int, val meshes: Set<String>)
+	private class Node(val id: String, val tag: String, val side: String, val piece: Int, val pieces: Int, val meshes: Set<String>,
+		val prompt: String? = null)
 
-	private fun render(file: File, labelFile: File, dir: File, key: String, samples: StringBuilder): String {
+	private fun render(file: File, labelFile: File, dir: File, key: String, samples: StringBuilder, subnodes: List<JsonObject>): String {
 		val (ir, pixels) = loadRig(file).let { it.ir to it.pixels }
 		val labels = Json.parseToJsonElement(labelFile.readText()).jsonObject["labels"]!!.jsonObject
 		val tagOf = HashMap<String, String>()
@@ -123,7 +132,13 @@ class NodeDatasetTool {
 		}
 		// Rare tags first; within a tag, whole nodes before pieces.
 		val tagCount = nodes.groupingBy { it.tag }.eachCount()
-		val chosen = nodes.sortedWith(compareBy({ it.piece > 0 }, { tagCount[it.tag] ?: 0 })).take(perModel)
+		val taken = nodes.map { it.meshes }.toSet()
+		val finer = subnodes.mapNotNull { j ->
+			val ids = j["meshes"]!!.jsonArray.map { it.jsonPrimitive.content }.filter { it in visible }.toSet()
+			if (ids.isEmpty() || ids in taken) null
+			else Node(j["node"]!!.jsonPrimitive.content, j["tag"]!!.jsonPrimitive.content, "c", 0, 1, ids, j["prompt"]!!.jsonPrimitive.content)
+		}.take(subPerModel)
+		val chosen = nodes.sortedWith(compareBy({ it.piece > 0 }, { tagCount[it.tag] ?: 0 })).take(perModel) + finer
 
 		// A clip is a window when some parameter moves the clipped mesh and its mask apart.
 		val windows = HashSet<Pair<String, String>>()
@@ -177,7 +192,8 @@ class NodeDatasetTool {
 				save(alone, File(dir, "${stem}_target.png"))
 				samples.append("""{"key":"$key","model":"${file.relativeTo(root).path.replace("\\", "/")}","node":"${node.id}","tag":"${node.tag}",""" +
 					""""side":"${node.side}","piece":${node.piece},"pieces":${node.pieces},"variant":$v,"pixels":$px,"meshes":${node.meshes.size},""" +
-					""""windows":${dropped.size},"visible":${coverage(hint, white = true)},"area":${coverage(alone)}}""").append('\n')
+					""""windows":${dropped.size},"visible":${coverage(hint, white = true)},"area":${coverage(alone)}""" +
+					(node.prompt?.let { ""","prompt":${Json.encodeToString(String.serializer(), it)}""" } ?: "") + "}").append('\n')
 				written++
 			}
 		}

@@ -169,9 +169,11 @@ def main():
             if tag not in PHRASES:
                 continue
             test = s["model"] in held_models or any(h in s["model"] for h in held)
+            # A finer node named by a reviewer carries its own words.
+            words = s.get("prompt") or prompt(tag, s["piece"], styles.get(s["model"]), skin_cover(dict(s, tag=tag)),
+                                              wear.get((nodes_dir.name, s["key"], s["node"])))
             jobs.append({"stem": str(nodes_dir / s["key"] / f"{s['node']}_{s['variant']}"), "side": min(a.size, max(256, s["pixels"] // 64 * 64)),
-                         "test": test, "tag": tag, "prompt": prompt(tag, s["piece"], styles.get(s["model"]), skin_cover(dict(s, tag=tag)),
-                                                       wear.get((nodes_dir.name, s["key"], s["node"]))),
+                         "test": test, "tag": tag, "prompt": words,
                          "test_name": f"{nodes_dir.name}_{s['key']}_{s['node']}_{s['variant']}", "rough": a.rough_hints})
     train_index = 0
     for j in jobs:  # numbering fixed before the workers run, so the output does not depend on their order

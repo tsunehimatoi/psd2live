@@ -1,6 +1,6 @@
 """Planner training data: each model at rest and its per-pixel tag map, labels corrected by the node review.
 
-  python plan_data.py SCENE_ROOT NODES_INDEX VERDICTS OUT [SIZE]
+  python plan_data.py SCENE_ROOT NODES_INDEX VERDICTS[,VERDICTS...] OUT [SIZE]
 
 SCENE_ROOT holds scene*/<key>/{scene.json,labels.json,full.png,meshes/} (SceneGraphTool, label.py); NODES_INDEX holds
 <nodes dir>.tsv (NodeDatasetTool's index.tsv from the machine that made the nodes, mapping its keys to models);
@@ -27,7 +27,7 @@ PAIRED = {"irides", "eyewhite", "eyelash", "eyebrow", "ears", "earwear", "arm", 
 SCENE_OF = {"nodes": "scene", "nodes_eik": "scene_eik", "nodes_kis": "scene_kis", "nodes_col": "scene_col"}
 
 
-def main(root: Path, index_dir: Path, verdicts_path: Path, out: Path, size: int = 1024) -> None:
+def main(root: Path, index_dir: Path, verdict_paths: list[Path], out: Path, size: int = 1024) -> None:
     out.mkdir(parents=True, exist_ok=True)
     (out / "classes.json").write_text(json.dumps(CLASSES), encoding="utf-8")
     # Server node keys -> model paths -> local scene keys.
@@ -44,7 +44,8 @@ def main(root: Path, index_dir: Path, verdicts_path: Path, out: Path, size: int 
                 k, model = line.split("\t")[:2]
                 local[(scene_dir.name, model)] = k
     reviews = defaultdict(dict)  # (scene dir, local key) -> node id -> verdict
-    for line in verdicts_path.read_text(encoding="utf-8").splitlines():
+    lines = [l for p in verdict_paths for l in p.read_text(encoding="utf-8").splitlines()]  # later files win
+    for line in lines:
         if not line.strip():
             continue
         v = json.loads(line)
@@ -76,7 +77,10 @@ def main(root: Path, index_dir: Path, verdicts_path: Path, out: Path, size: int 
             side = ("l" if (m["box"][0] + m["box"][2]) / 2 < centre else "r") if t in PAIRED else "c"
             v = review.get(f"{t}_{side}")
             if v is not None:
-                tag[m["id"]] = v["tag"] if v["keep"] and v["tag"] in PHRASES else None
+                # Per pixel, a node that was not clean as a whole is still mostly right mesh by mesh: the reviewer's tag
+                # counts when it was kept or agrees with the rules; a disputed one is left out.
+                agreed = v["keep"] or v["tag"] == v["rules"]
+                tag[m["id"]] = v["tag"] if agreed and v["tag"] in PHRASES else None
         full = Image.open(folder / "full.png").convert("RGBA")
         classes = np.full((full.height, full.width), 255, np.uint8)
         for m in sorted(scene["meshes"], key=lambda m: m["render"]):
@@ -104,4 +108,4 @@ def main(root: Path, index_dir: Path, verdicts_path: Path, out: Path, size: int 
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4]), *(int(a) for a in sys.argv[5:6]))
+    main(Path(sys.argv[1]), Path(sys.argv[2]), [Path(p) for p in sys.argv[3].split(",")], Path(sys.argv[4]), *(int(a) for a in sys.argv[5:6]))
