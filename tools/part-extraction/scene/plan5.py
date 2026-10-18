@@ -7,7 +7,8 @@ layers are its kept queries (train_planner5.layers_of). Layers of two overlappin
 tiles' overlap, their shown pixels match (IoU over JOIN); covered layers (no shown pixels) when their whole shapes do.
 Matches are taken best first, and none that would put two layers of one tile into one.
 Each pixel goes to the layer the finest tile over it gives it, unless the pixel is near that tile's edge (the likelier
-and further inside its tile where tiles of one zoom disagree). Draw
+and further inside its tile where tiles of one zoom disagree); a weak layer's pixels (KEEP_SCORE, KEEP_PIXELS) go to the
+nearest kept layer. Draw
 order, named groups and parts are only known within a tile: every tile votes on its pairs of layers (which is drawn
 later, whether two share a group or part), and the votes order and group the joined layers.
 """
@@ -19,6 +20,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image
+from scipy import ndimage
 
 sys.path.insert(0, str(Path(__file__).parent))
 import train_planner4 as p4  # noqa: E402
@@ -26,6 +28,10 @@ import train_planner5 as p5  # noqa: E402
 
 GRID = 2048
 JOIN = 0.5
+KEEP_SCORE = 0.0  # a shown layer whose likeliest piece is less likely than this is no layer of its own
+KEEP_PIXELS = 0  # nor one with fewer shown pixels (on the picture)
+OVERLAP = 0.8  # a tile drops a query winning less than this share of its own shown mask (train_planner5.layers_of)
+HIDDEN = 0.0  # unless it shows less than this share of its whole shape: a covered layer
 FACE = {"face", "ears", "eyewear", "irides", "eyewhite", "eyelash", "eyebrow", "mouth", "mouth_inside", "nose", "facedetail", "earwear"}
 PAIRED = {"irides", "eyewhite", "eyelash", "eyebrow", "ears", "earwear", "arm", "hand", "leg", "handwear", "legwear", "footwear"}
 ROLE_NAMES = ("shadow", "highlight", "line", "detail")
@@ -37,7 +43,7 @@ class Planner5Run:
     def __init__(self, checkpoint: Path):
         state = torch.load(checkpoint, map_location="cpu")
         self.classes = state["classes"]
-        self.model = p5.Planner5(len(self.classes))
+        self.model = p5.Planner5(len(self.classes), visible=p5.has_visible(state["state"]))
         self.model.load_state_dict(p4.fit_state(self.model, state["state"]))
         self.model = self.model.cuda().eval()
 
@@ -46,7 +52,7 @@ class Planner5Run:
         x = torch.from_numpy(np.asarray(crop.convert("RGB").resize((p5.SIZE, p5.SIZE), Image.BILINEAR)).copy()).permute(2, 0, 1).float() / 255
         with torch.autocast("cuda", dtype=torch.bfloat16):
             out = self.model(((x - p4.MEAN) / p4.STD)[None].cuda())
-        labels, q = p5.layers_of(out, 0, p5.SHOWN, len(self.classes))
+        labels, q = p5.layers_of(out, 0, p5.SHOWN, len(self.classes), overlap=OVERLAP, hidden=HIDDEN)
         small = lambda t: F.interpolate(t.float(), size=(p5.SHOWN, p5.SHOWN), mode="bilinear", align_corners=False)[0]
         return {"labels": labels.cpu().numpy(), "tag": q["tag"].cpu().numpy(), "score": q["score"].float().cpu().numpy(),
                 "whole": q["whole"].cpu().numpy(), "order": q["order"].cpu().numpy(), "group": q["group"].cpu().numpy(),
@@ -259,6 +265,17 @@ def plan_layers(image: Image.Image, silhouette: np.ndarray, run: Planner5Run, gr
     members = defaultdict(list)
     for i in range(len(pieces)):
         members[find(i)].append(i)
+    # Weak layers (unlikely or small: mostly a query that took a bit of a bigger layer) give their pixels to the
+    # nearest kept layer.
+    counts = np.bincount(label.ravel(), minlength=len(pieces) + 1)
+    weak = np.zeros(len(pieces) + 1, bool)
+    for r, ms in members.items():
+        n = counts[r + 1]
+        weak[r + 1] = n > 0 and (max(pieces[i].score for i in ms) < KEEP_SCORE or n < KEEP_PIXELS * scale * scale)
+    if weak.any():
+        bad = weak[label]
+        _, (iy, ix) = ndimage.distance_transform_edt(bad | (label == 0), return_indices=True)
+        label = np.where(bad, label[iy, ix], label)
     layers = []
     for r, ms in members.items():
         shown = label == r + 1

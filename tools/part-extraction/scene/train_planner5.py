@@ -43,7 +43,7 @@ SHOWN = SIZE // 2  # the shown layers' map, as v4's instance map
 WHOLE = SIZE // 4  # the whole shapes' grid
 QUERIES, DIM, LAYERS, HEADS, MASK_DIM, VEC = 200, 256, 6, 8, 128, 16
 POINTS = 6144
-W_CLASS, W_BCE, W_DICE, W_WHOLE, W_NONE, W_ORDER, W_VEC = 2.0, 5.0, 5.0, 2.0, 0.1, 0.5, 0.5
+W_CLASS, W_BCE, W_DICE, W_WHOLE, W_NONE, W_ORDER, W_VEC, W_VISIBLE = 2.0, 5.0, 5.0, 2.0, 0.1, 0.5, 0.5, 1.0
 ROLES, IGNORE = p4.ROLES, p4.IGNORE
 
 
@@ -138,7 +138,8 @@ class Layer(nn.Module):
 
 
 class Planner5(nn.Module):
-    def __init__(self, classes: int):
+    def __init__(self, classes: int, visible: bool = True):
+        """visible: a head telling a query's layer shown in the close-up from covered (v5.1; v5 has none)."""
         super().__init__()
         base = DepthAnythingForDepthEstimation.from_pretrained(p4.BACKBONE, local_files_only=True)
         self.backbone, self.neck, self.patch = base.backbone, base.neck, base.config.patch_size
@@ -161,11 +162,15 @@ class Planner5(nn.Module):
         self.order = nn.Linear(DIM, 1)
         self.group = nn.Linear(DIM, VEC)
         self.part = nn.Linear(DIM, VEC)
+        self.visible = nn.Linear(DIM, 1) if visible else None
 
     def predict(self, q: torch.Tensor) -> dict:
         q = self.norm(q)
-        return {"tag": self.tag(q), "shown": self.shown(q), "whole": self.whole(q), "order": self.order(q)[..., 0],
-                "group": F.normalize(self.group(q), dim=-1), "part": F.normalize(self.part(q), dim=-1)}
+        out = {"tag": self.tag(q), "shown": self.shown(q), "whole": self.whole(q), "order": self.order(q)[..., 0],
+               "group": F.normalize(self.group(q), dim=-1), "part": F.normalize(self.part(q), dim=-1)}
+        if self.visible is not None:
+            out["visible"] = self.visible(q)[..., 0]
+        return out
 
     def forward(self, pixels: torch.Tensor) -> dict:
         B, _, h, w = pixels.shape
@@ -199,6 +204,11 @@ class Planner5(nn.Module):
         return out
 
 
+def has_visible(state: dict) -> bool:
+    """Whether a checkpoint's state is a v5.1 one, with the visible head."""
+    return any(k.startswith("visible.") for k in state)
+
+
 def at_points(feats: torch.Tensor, grid: torch.Tensor) -> torch.Tensor:
     """feats (C, H, W) at grid (P, 2) in [-1, 1]: (C, P)."""
     return F.grid_sample(feats[None].float(), grid[None, None], mode="bilinear", align_corners=False)[0, :, 0]
@@ -225,7 +235,7 @@ def bce(logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     return (pos @ target.T + neg @ (1 - target).T) / max(logits.shape[-1], 1)
 
 
-def stage_loss(st: dict, b: int, feats_p, shown_t, whole_t, valid, tag, render, group, part, classes: int) -> dict:
+def stage_loss(st: dict, b: int, feats_p, shown_t, whole_t, valid, tag, render, group, part, classes: int, seen=None) -> dict:
     """One decoder stage's losses on close-up b: queries matched to its layers at the sampled points."""
     shown_q = st["shown"][b].float() @ feats_p  # (Q, P)
     whole_q = st["whole"][b].float() @ feats_p
@@ -246,6 +256,8 @@ def stage_loss(st: dict, b: int, feats_p, shown_t, whole_t, valid, tag, render, 
         sv, wv = shown_q[qi][:, valid], shown_t[ki][:, valid]
         out["shown"] = W_BCE * F.binary_cross_entropy_with_logits(sv, wv) + W_DICE * torch.diagonal(dice(sv, wv)).mean()
         out["whole"] = W_WHOLE * (F.binary_cross_entropy_with_logits(whole_q[qi], whole_t[ki]) + torch.diagonal(dice(whole_q[qi], whole_t[ki])).mean())
+        if "visible" in st:  # shown anywhere in the close-up, or covered
+            out["visible"] = W_VISIBLE * F.binary_cross_entropy_with_logits(st["visible"][b].float()[qi], seen[ki].float())
         # Order: every pair of matched layers ranked as drawn.
         o, r = st["order"][b].float()[qi], render[ki].float()
         sign = torch.sign(r[None] - r[:, None])
@@ -285,9 +297,11 @@ def losses(out: dict, batch: dict, weights: torch.Tensor, classes: int) -> dict:
         K = len(batch["tag"][b])
         shown_t = (ids[None] == torch.arange(1, K + 1, device=ids.device)[:, None]).float()
         whole_t = nearest(batch["whole"][b], grid).float() if K else torch.zeros(0, POINTS, device=feats.device)
+        inst = batch["inst"][b]
+        seen = torch.bincount(inst[inst > 0].flatten(), minlength=K + 1)[1:K + 1] > 0
         args = (b, feats_p, shown_t, whole_t, ids >= 0, batch["tag"][b], batch["render"][b], batch["group"][b], batch["part"][b], classes)
         for st in out["stages"]:
-            for k, v in stage_loss(st, *args).items():
+            for k, v in stage_loss(st, *args, seen=seen).items():
                 total[k] = total.get(k, 0) + v / (len(out["stages"]) * feats.shape[0])
     return total
 
@@ -298,9 +312,13 @@ def to_device(batch: dict, device) -> dict:
 
 
 @torch.no_grad()
-def layers_of(out: dict, b: int, size: int, classes: int, score: float = 0.5):
+def layers_of(out: dict, b: int, size: int, classes: int, score: float = 0.5, overlap: float = 0.0, hidden: float = 0.0):
     """The planned layers of close-up b on a size grid: the shown map (0 none, j + 1 kept query j), and per kept
-    query its tag, score, whole shape (size grid, bool), order score, group and part vectors."""
+    query its tag, score, whole shape (size grid, bool), order score, group and part vectors. A v5.1 query its visible head
+    calls covered takes no pixels. With overlap, a query
+    that wins less than that share of its own shown mask is dropped (as Mask2Former's panoptic inference does) and the
+    pixels go to the others; a query showing next to nothing, or (hidden) less than that share of its whole shape, is
+    kept: a covered layer, not a copy of a shown one."""
     st = out["stages"][-1]
     prob = st["tag"][b].float().softmax(-1)
     s, t = prob[:, :classes].max(-1)
@@ -308,11 +326,26 @@ def layers_of(out: dict, b: int, size: int, classes: int, score: float = 0.5):
     feats = F.interpolate(out["features"][b:b + 1].float(), size=(size, size), mode="bilinear", align_corners=False)[0]
     shown = torch.einsum("qc,chw->qhw", st["shown"][b].float()[keep], feats).sigmoid()
     whole = torch.einsum("qc,chw->qhw", st["whole"][b].float()[keep], feats).sigmoid() > 0.5
-    if len(keep):
+    covered = st["visible"][b].float()[keep] < 0 if "visible" in st else None
+    if covered is not None:  # a covered layer takes no pixels
+        shown = torch.where(covered[:, None, None], torch.zeros_like(shown), shown)
+
+    def assign(shown, keep):
+        if not len(keep):
+            return torch.zeros(size, size, dtype=torch.long, device=feats.device)
         best, arg = (shown * s[keep][:, None, None]).max(0)
-        labels = torch.where(shown.max(0).values > 0.5, arg + 1, torch.zeros_like(arg))
-    else:
-        labels = torch.zeros(size, size, dtype=torch.long, device=feats.device)
+        return torch.where(shown.max(0).values > 0.5, arg + 1, torch.zeros_like(arg))
+    labels = assign(shown, keep)
+    if overlap > 0 and len(keep):
+        area = (shown > 0.5).flatten(1).sum(1)
+        won = torch.bincount(labels.flatten(), minlength=len(keep) + 1)[1:]
+        if covered is not None:
+            ok = covered | (won >= overlap * area)
+        else:
+            ok = (area < 16) | (area < hidden * whole.flatten(1).sum(1)) | (won >= overlap * area)
+        if not ok.all():
+            keep, shown, whole = keep[ok], shown[ok], whole[ok]
+            labels = assign(shown, keep)
     return labels, {"tag": t[keep], "score": s[keep], "whole": whole, "order": st["order"][b].float()[keep],
                     "group": st["group"][b].float()[keep], "part": st["part"][b].float()[keep]}
 
@@ -324,6 +357,7 @@ def evaluate(model, stems, classes: list[str]) -> dict:
     C = len(classes)
     counts = np.zeros(3)  # matched, planned, true (shown layers)
     hidden = np.zeros(2)  # found, true (layers the close-up does not show)
+    covered_q = np.zeros(2)  # kept queries taking no pixels: those fitting a covered layer, all
     whole_iou, pairs, tag_ok = [], np.zeros(2), np.zeros(2)
     for i in range(len(data)):
         item = data[i]
@@ -339,6 +373,8 @@ def evaluate(model, stems, classes: list[str]) -> dict:
         whole_t = batch["whole"][0]
         whole_q = F.interpolate(q["whole"][None].float(), size=(WHOLE, WHOLE), mode="nearest")[0] > 0.5 if len(q["whole"]) else q["whole"]
         used, matched = set(), []
+        bare = set(range(len(q["tag"]))) - {c - 1 for c in labels.unique().tolist()}
+        covered_q[1] += len(bare)
         for k in range(len(whole_t)):
             tm = truth == k + 1
             j = None
@@ -355,6 +391,7 @@ def evaluate(model, stems, classes: list[str]) -> dict:
                         if jj not in used and ious[jj] > 0.5:
                             j = jj
                             hidden[0] += 1
+                            covered_q[0] += jj in bare
                         break
             if j is None or j in used:
                 continue
@@ -372,7 +409,8 @@ def evaluate(model, stems, classes: list[str]) -> dict:
     model.train()
     m, p, t = counts
     return {"shown": {"precision": round(m / max(p, 1), 3), "recall": round(m / max(t, 1), 3), "planned": int(p), "true": int(t)},
-            "hidden": {"recall": round(hidden[0] / max(hidden[1], 1), 3), "true": int(hidden[1])},
+            "hidden": {"recall": round(hidden[0] / max(hidden[1], 1), 3), "true": int(hidden[1]),
+                       "planned": int(covered_q[1]), "precision": round(covered_q[0] / max(covered_q[1], 1), 3)},
             "whole_iou": round(float(np.mean(whole_iou)) if whole_iou else 0.0, 3),
             "tag": round(tag_ok[0] / max(tag_ok[1], 1), 3), "order": round(pairs[0] / max(pairs[1], 1), 3)}
 
@@ -390,6 +428,7 @@ def main():
     ap.add_argument("--val-limit", type=int, default=300)
     ap.add_argument("--eval", default="", help="score this checkpoint on the validation set instead of training")
     ap.add_argument("--workers", type=int, default=6)
+    ap.add_argument("--none", type=float, default=W_NONE, help="weight of the none tag for queries matching no layer")
     a = ap.parse_args()
     data, out = Path(a.data), Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -400,7 +439,8 @@ def main():
     # Validation: the held-out close-ups as framed (not the random variants) and their tiles, at most val-limit.
     val = sorted(s for s in held if s.endswith("_0") or "_tile_" in s)
     val = val[::max(1, len(val) // a.val_limit)][:a.val_limit]
-    model = Planner5(len(classes)).cuda()
+    globals()["W_NONE"] = a.none
+    model = Planner5(len(classes), visible=not a.eval or has_visible(torch.load(a.eval, map_location="cpu")["state"])).cuda()
     if a.eval:
         model.load_state_dict(p4.fit_state(model, torch.load(a.eval, map_location="cuda")["state"]))
         with open(out / "eval.jsonl", "a", encoding="utf-8") as f:
