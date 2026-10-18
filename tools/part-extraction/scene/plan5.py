@@ -7,8 +7,8 @@ its side, overlapping by half, over the figure (level 1); squares of a quarter, 
 of its own mask). Layers of two overlapping tiles are one layer when, inside the
 tiles' overlap, their shown pixels match (IoU over JOIN); covered layers (no shown pixels) when their whole shapes do.
 Matches are taken best first, and none that would put two layers of one tile into one.
-Each pixel goes to the layer the finest tile over it gives it, unless the pixel is near that tile's edge (the likelier
-and further inside its tile where tiles of one zoom disagree); a weak layer's pixels (KEEP_SCORE, KEEP_PIXELS) go to the
+Each pixel goes to the layer whose pieces' probabilities, summed over the tiles that see it (finer tiles and pixels
+further inside a tile weigh more), are highest (SOFT; else the finest tile over it decides); a weak layer's pixels (KEEP_SCORE, KEEP_PIXELS) go to the
 nearest kept layer. Draw
 order, named groups and parts are only known within a tile: every tile votes on its pairs of layers (which is drawn
 later, whether two share a group or part), and the votes order and group the joined layers.
@@ -35,6 +35,7 @@ OVERLAP = 0.8  # a tile drops a query winning less than this share of its own sh
 HIDDEN = 0.0  # unless it shows less than this share of its whole shape: a covered layer
 FINE_ALL = True  # level 2 (quarter tiles) over the whole figure, not just the head
 FINEST = False  # level 3 too: eighth tiles over the whole figure
+SOFT = True  # pixels by tiles' summed probabilities (soft_owner), not the finest tile's hard decision
 SPLIT_TAGS = 0.0  # a layer whose pixels the pixel tags give two tags each this share of is split along them (0: never)
 SCORE = 0.5  # a tile keeps a query whose likeliest tag is likelier than this
 COVERED_SCORE = 0.95  # v5.1: a query its visible head calls covered is kept only if likelier than this
@@ -64,7 +65,7 @@ class Planner5Run:
         return {"labels": labels.cpu().numpy(), "tag": q["tag"].cpu().numpy(), "score": q["score"].float().cpu().numpy(),
                 "whole": q["whole"].cpu().numpy(), "order": q["order"].cpu().numpy(), "group": q["group"].cpu().numpy(),
                 "part": q["part"].cpu().numpy(), "classes": small(out["classes"]).argmax(0).cpu().numpy(),
-                "roles": (small(out["roles"]).sigmoid() > 0.5).cpu().numpy()}
+                "roles": (small(out["roles"]).sigmoid() > 0.5).cpu().numpy(), "prob": q["prob"].half().cpu().numpy()}
 
 
 def crop_padded(picture: Image.Image, x0: float, y0: float, side: float, fill=(225, 225, 225)) -> Image.Image:
@@ -136,6 +137,50 @@ def iou_in(a: Piece, b: Piece, region, attr: str) -> float:
 
 
 WEAR = {"footwear", "legwear", "handwear", "headwear", "neckwear", "earwear", "eyewear"}  # what split_by_tags parts off
+
+
+def soft_probability(r: dict, j: int, tile, box) -> np.ndarray:
+    """Tile r's query j shown probability (times its score) over box (x0, y0, x1, y1) of the grid, bilinear."""
+    x, y, s, _ = tile
+    n = r["prob"].shape[-1]
+    x0, y0, x1, y1 = box
+    src = tuple(min(n, max(0.0, v)) for v in ((x0 - x) / s * n, (y0 - y) / s * n, (x1 - x) / s * n, (y1 - y) / s * n))
+    im = Image.fromarray(r["prob"][j].astype(np.float32), mode="F")
+    return np.asarray(im.resize((x1 - x0, y1 - y0), Image.BILINEAR, box=src))
+
+
+def soft_owner(pieces, results, find, covered: np.ndarray, inside_tile, H: int, W: int) -> np.ndarray:
+    """Each pixel of covered to the joined layer whose pieces' probabilities, summed over the tiles that see it, are
+    highest: weighted 2 ** level (finer tiles see more) and by how far inside its tile the pixel is. Boundaries follow
+    the predictions, not the tiles' edges. Gives the owning piece + 1 per pixel, as the hard rule does."""
+    members = defaultdict(list)
+    for i, p in enumerate(pieces):
+        if p.shown.any():
+            members[find(i)].append(i)
+    best = np.zeros((H, W), np.float32)
+    owner = np.zeros((H, W), np.int64)
+    for root, ms in members.items():
+        boxes = []
+        for i in ms:
+            (x, y, s, _), r = results[pieces[i].tile]
+            m = s / 16  # a little past the piece's own pixels, inside its tile
+            bx0, by0, bx1, by1 = pieces[i].box
+            boxes.append((max(0, round(x), int(bx0 - m)), max(0, round(y), int(by0 - m)),
+                          min(W, round(x + s), int(bx1 + m)), min(H, round(y + s), int(by1 + m))))
+        ux0, uy0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
+        ux1, uy1 = max(b[2] for b in boxes), max(b[3] for b in boxes)
+        vote = np.zeros((uy1 - uy0, ux1 - ux0), np.float32)
+        for i, (x0, y0, x1, y1) in zip(ms, boxes):
+            if x1 <= x0 or y1 <= y0:
+                continue
+            p = pieces[i]
+            tile, r = results[p.tile]
+            vote[y0 - uy0:y1 - uy0, x0 - ux0:x1 - ux0] += soft_probability(r, p.j, tile, (x0, y0, x1, y1))                 * inside_tile(p.tile, (x0, y0, x1, y1)) * 2.0 ** p.level
+        region = best[uy0:uy1, ux0:ux1]
+        win = vote > region
+        region[win] = vote[win]
+        owner[uy0:uy1, ux0:ux1][win] = ms[0] + 1
+    return np.where(covered, owner, 0)
 
 
 def split_by_tags(entry, pixel_tag: np.ndarray, classes: list[str], share: float, least: float) -> list:
@@ -316,6 +361,8 @@ def plan_layers(image: Image.Image, silhouette: np.ndarray, run: Planner5Run, gr
             claim[y0:y1, x0:x1][win] = i + 1
             firm[y0:y1, x0:x1][win] = keep[win] >= 0.5
         owner = np.where((claim > 0) & (firm | (owner == 0)), claim, owner)
+    if SOFT:
+        owner = soft_owner(pieces, results, find, owner > 0, inside_tile, H, W)
     # Pixel tags from the tile that decided each pixel.
     tile_of = np.array([-1] + [p.tile for p in pieces])[owner]
     pixel_tag = np.full((H, W), -1, np.int64)

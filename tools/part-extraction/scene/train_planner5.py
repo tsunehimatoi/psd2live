@@ -391,7 +391,8 @@ def layers_of(out: dict, b: int, size: int, classes: int, score: float = 0.5, ov
                 covered = covered[ok]
             labels = assign(shown, keep)
     return labels, {"tag": t[keep], "score": s[keep], "whole": whole, "order": st["order"][b].float()[keep],
-                    "group": st["group"][b].float()[keep], "part": st["part"][b].float()[keep]}
+                    "group": st["group"][b].float()[keep], "part": st["part"][b].float()[keep],
+                    "prob": shown * s[keep][:, None, None]}  # each kept query's shown probability times its score
 
 
 @torch.no_grad()
