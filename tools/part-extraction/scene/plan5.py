@@ -5,7 +5,9 @@ Tiles (on a grid of the picture at most GRID pixels on its longer side): the who
 its side, overlapping by half, over the figure (level 1); squares of a quarter, over the head (level 2). A tile's
 layers are its kept queries (train_planner5.layers_of). Layers of two overlapping tiles are one layer when, inside the
 tiles' overlap, their shown pixels match (IoU over JOIN); covered layers (no shown pixels) when their whole shapes do.
-Each pixel goes to the layer the finest tile over it gives it (the likelier where tiles of one zoom disagree). Draw
+Matches are taken best first, and none that would put two layers of one tile into one.
+Each pixel goes to the layer the finest tile over it gives it, unless the pixel is near that tile's edge (the likelier
+and further inside its tile where tiles of one zoom disagree). Draw
 order, named groups and parts are only known within a tile: every tile votes on its pairs of layers (which is drawn
 later, whether two share a group or part), and the votes order and group the joined layers.
 """
@@ -198,6 +200,7 @@ def plan_layers(image: Image.Image, silhouette: np.ndarray, run: Planner5Run, gr
     by_tile = defaultdict(list)
     for i, p in enumerate(pieces):
         by_tile[p.tile].append(i)
+    pairs = []
     for t in range(len(results)):
         for u in range(t + 1, len(results)):
             region = (max(tbox[t][0], tbox[u][0], 0), max(tbox[t][1], tbox[u][1], 0), min(tbox[t][2], tbox[u][2], W), min(tbox[t][3], tbox[u][3], H))
@@ -210,22 +213,47 @@ def plan_layers(image: Image.Image, silhouette: np.ndarray, run: Planner5Run, gr
                     if a.box[0] >= b.box[2] or b.box[0] >= a.box[2] or a.box[1] >= b.box[3] or b.box[1] >= a.box[3]:
                         continue
                     covered = not a.shown.any() or not b.shown.any()
-                    if iou_in(a, b, region, "whole" if covered else "shown") > JOIN:
-                        parent[find(k)] = find(i)
-    # Pixels: the finest tile over a pixel decides it; within a zoom the likelier piece.
+                    iou = iou_in(a, b, region, "whole" if covered else "shown")
+                    if iou > JOIN:
+                        pairs.append((not covered, iou, i, k))
+    # Shown matches before whole-shape ones, best first; two layers of one tile are never one layer, so neither are
+    # the joins holding them.
+    tiles_of = [{p.tile} for p in pieces]
+    for _, _, i, k in sorted(pairs, reverse=True):
+        a, b = find(i), find(k)
+        if a != b and not tiles_of[a] & tiles_of[b]:
+            parent[b] = a
+            tiles_of[a] |= tiles_of[b]
+    # Pixels: within a zoom the piece likeliest and furthest inside its tile (a tile's edge cuts what crosses it, the
+    # picture's does not); a finer tile takes a pixel from a coarser one only away from its own cut edges.
+    def inside_tile(t, box):
+        """Per pixel of box (x0, y0, x1, y1): distance to tile t's nearest cut edge over a quarter of its side, at most 1."""
+        x, y, s, _ = results[t][0]
+        x0, y0, x1, y1 = box
+        xs, ys = np.arange(x0, x1) + 0.5, np.arange(y0, y1) + 0.5
+        big = np.full_like(xs, np.inf)
+        dx = np.minimum(xs - x if x > 0 else big, x + s - xs if x + s < W else big)
+        big = np.full_like(ys, np.inf)
+        dy = np.minimum(ys - y if y > 0 else big, y + s - ys if y + s < H else big)
+        return np.minimum(1.0, np.minimum(dy[:, None], dx[None, :]) / (s / 4))
+
     owner = np.zeros((H, W), np.int64)  # piece index + 1
     for lv in (0, 1, 2):
         best = np.zeros((H, W), np.float32)
         claim = np.zeros((H, W), np.int64)
+        firm = np.zeros((H, W), bool)
         for i, p in enumerate(pieces):
             if p.level != lv or not p.shown.any():
                 continue
             x0, y0, x1, y1 = p.box
+            keep = inside_tile(p.tile, p.box)
+            weight = (p.score * keep).astype(np.float32)
             region = best[y0:y1, x0:x1]
-            win = p.shown & (p.score > region)
-            region[win] = p.score
+            win = p.shown & (weight > region)
+            region[win] = weight[win]
             claim[y0:y1, x0:x1][win] = i + 1
-        owner = np.where(claim > 0, claim, owner)
+            firm[y0:y1, x0:x1][win] = keep[win] >= 0.5
+        owner = np.where((claim > 0) & (firm | (owner == 0)), claim, owner)
     root_of = np.array([0] + [find(i) + 1 for i in range(len(pieces))])
     label = root_of[owner]  # joined layer (root piece + 1) per pixel
     members = defaultdict(list)
