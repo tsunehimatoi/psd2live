@@ -44,6 +44,7 @@ WHOLE = SIZE // 4  # the whole shapes' grid
 QUERIES, DIM, LAYERS, HEADS, MASK_DIM, VEC = 200, 256, 6, 8, 128, 16
 POINTS = 6144
 W_CLASS, W_BCE, W_DICE, W_WHOLE, W_NONE, W_ORDER, W_VEC, W_VISIBLE = 2.0, 5.0, 5.0, 2.0, 0.1, 0.5, 0.5, 1.0
+FOCUS = 0.0  # share of the loss points on layer borders and small layers (sample_points); v5 and v5.1 sample evenly
 ROLES, IGNORE = p4.ROLES, p4.IGNORE
 
 
@@ -214,6 +215,28 @@ def at_points(feats: torch.Tensor, grid: torch.Tensor) -> torch.Tensor:
     return F.grid_sample(feats[None].float(), grid[None, None], mode="bilinear", align_corners=False)[0, :, 0]
 
 
+def sample_points(inst: torch.Tensor, n: int, focus: float) -> torch.Tensor:
+    """n points (n, 2) in [-1, 1] on close-up inst's grid: share 1 - focus uniform, the rest half on the borders between
+    layers and half spread evenly over the layers whatever their size, so small layers and borders get points too."""
+    if focus <= 0:
+        return torch.rand(n, 2, device=inst.device) * 2 - 1
+    H, W = inst.shape
+    lab = inst.clamp(min=0)
+    edge = torch.zeros_like(lab, dtype=torch.bool)
+    edge[:, 1:] |= lab[:, 1:] != lab[:, :-1]
+    edge[:, :-1] |= lab[:, 1:] != lab[:, :-1]
+    edge[1:] |= lab[1:] != lab[:-1]
+    edge[:-1] |= lab[1:] != lab[:-1]
+    area = torch.bincount(lab.flatten(), minlength=int(lab.max()) + 1).float()
+    small = torch.where(lab > 0, 1 / area[lab].clamp(min=1), torch.zeros_like(area[lab]))
+    prob = torch.full((H * W,), (1 - focus) / (H * W), device=inst.device)
+    for w, m in ((focus / 2, edge.flatten().float()), (focus / 2, small.flatten())):
+        prob += w * m / m.sum() if m.sum() > 0 else w / (H * W)
+    idx = torch.multinomial(prob, n, replacement=True)
+    xy = torch.stack([idx % W, idx // W], 1).float() + torch.rand(n, 2, device=inst.device)
+    return xy / torch.tensor([W, H], device=inst.device) * 2 - 1
+
+
 def nearest(labels: torch.Tensor, grid: torch.Tensor) -> torch.Tensor:
     """Integer or boolean maps (..., H, W) at grid (P, 2): (..., P)."""
     H, W = labels.shape[-2:]
@@ -291,7 +314,7 @@ def losses(out: dict, batch: dict, weights: torch.Tensor, classes: int) -> dict:
     total = {"cls": l_cls, "role": l_role}
     feats = out["features"]
     for b in range(feats.shape[0]):
-        grid = torch.rand(POINTS, 2, device=feats.device) * 2 - 1
+        grid = sample_points(batch["inst"][b], POINTS, FOCUS)
         feats_p = at_points(feats[b], grid)
         ids = nearest(batch["inst"][b], grid)
         K = len(batch["tag"][b])
@@ -432,6 +455,7 @@ def main():
     ap.add_argument("--eval", default="", help="score this checkpoint on the validation set instead of training")
     ap.add_argument("--workers", type=int, default=6)
     ap.add_argument("--none", type=float, default=W_NONE, help="weight of the none tag for queries matching no layer")
+    ap.add_argument("--focus", type=float, default=FOCUS, help="share of loss points on layer borders and small layers")
     a = ap.parse_args()
     data, out = Path(a.data), Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -443,6 +467,7 @@ def main():
     val = sorted(s for s in held if s.endswith("_0") or "_tile_" in s)
     val = val[::max(1, len(val) // a.val_limit)][:a.val_limit]
     globals()["W_NONE"] = a.none
+    globals()["FOCUS"] = a.focus
     model = Planner5(len(classes), visible=not a.eval or has_visible(torch.load(a.eval, map_location="cpu")["state"])).cuda()
     if a.eval:
         model.load_state_dict(p4.fit_state(model, torch.load(a.eval, map_location="cuda")["state"]))
