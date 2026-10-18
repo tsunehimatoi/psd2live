@@ -2,7 +2,7 @@
 
   python make_node_pairs.py OUT NODES_DIR [NODES_DIR...] [--verdicts V.jsonl] [--families F.json] [--held H,...]
       [--size 768] [--min 128] [--reviewed-only] [--styles styles.tsv] [--subnodes S.jsonl --piece-min 256 --piece-share 0.4]
-      [--dry] [--test-meta]
+      [--dry] [--test-meta] [--rough-hints] [--loose-hints]
 
 OUT/train_in (close-up, JPEG), OUT/train_hint (visible area), OUT/train_tgt (+ .txt prompt), OUT/test/<name>_{input,hint,
 target}.png and OUT/test/prompts.jsonl. Verdicts (review_nodes.py) relabel or drop nodes; with --reviewed-only
@@ -15,14 +15,20 @@ drawn: a low resolution model keeps --low-keep of its training pairs and is neve
 than its close-up), a sharp one is softened at --soften-high. A finer node of kind "dropped" (piece_kinds.py: a piece that is
 only a cut-off segment of one thing, or too small for its character) is left out. --dry counts the pairs by kind and size without writing;
 --test-meta writes only test/meta.jsonl (each test node's kind, sharpness tier and size; prompts.jsonl carries them too).
+--loose-hints draws training hints as a planner would (hints.py: holes closed, a rounded blob, a box), so the hint
+points at the part and the target, always the whole part, does not follow its outline.
 """
 import argparse
 import io
 import json
 import random
+import sys
 from pathlib import Path
 
 from PIL import Image, ImageFilter
+
+sys.path.insert(0, str(Path(__file__).parent))
+from hints import loosen, pick as hint_style
 
 PHRASES = {
     "back_hair": "the back hair", "front_hair": "the front hair (bangs)", "side_hair": "the side locks of hair",
@@ -99,6 +105,8 @@ def write_pair(j: dict, out: str, index: int) -> None:
         r = max(1, int(hint.width * rng.uniform(0.005, 0.03)))
         grow = rng.random() < 0.6
         hint = hint.filter(ImageFilter.MaxFilter(2 * r + 1) if grow else ImageFilter.MinFilter(2 * r + 1))
+    if j.get("loose"):
+        hint = loosen(hint, hint_style(rng, j["prompt"].startswith("Live2D layer split")), rng)
     images = [inp, hint, tgt]
     if rng.random() < 0.5:
         images = [i.transpose(Image.FLIP_LEFT_RIGHT) for i in images]
@@ -148,6 +156,7 @@ def main():
     ap.add_argument("--reviewed-only", action="store_true")
     ap.add_argument("--pieces-once", action="store_true", help="only the rest-pose close-up of each piece")
     ap.add_argument("--rough-hints", action="store_true", help="grow or shrink half the training hints")
+    ap.add_argument("--loose-hints", action="store_true", help="close, round off or box the training hints (hints.py)")
     ap.add_argument("--soften", type=float, default=0, help="share of training close-ups of 256 and up read from a 2-4 times smaller, at times JPEG-compressed picture")
     ap.add_argument("--styles", help="styles.tsv from styles.py: authoring conventions by model")
     ap.add_argument("--wear", help="jsonl of base body nodes and what is painted on them (bare, tight, underwear)")
@@ -245,7 +254,7 @@ def main():
             words = s.get("prompt") or prompt(tag, s["piece"], styles.get(s["model"]), cover, worn)
             jobs.append({"stem": str(nodes_dir / s["key"] / f"{s['node']}_{s['variant']}"), "side": min(a.size, max(256, s["pixels"] // 64 * 64)),
                          "test": test, "tag": tag, "prompt": words,
-                         "test_name": f"{nodes_dir.name}_{s['key']}_{s['node']}_{s['variant']}", "rough": a.rough_hints,
+                         "test_name": f"{nodes_dir.name}_{s['key']}_{s['node']}_{s['variant']}", "rough": a.rough_hints, "loose": a.loose_hints,
                          "soften": soften[tier(s["model"])], "kind": kind, "pixels": s["pixels"], "tier": tier(s["model"]),
                          "soften_max": a.soften_max})
     # Low resolution models teach less: a share of their training pairs, drawn at random.

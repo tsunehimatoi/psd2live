@@ -2,7 +2,7 @@
 per tag.
 
 usage: python node_metrics.py LORA OUT_DIR TEST_DIR [PER_TAG] [--sheet] [--soft | --soften F] [--layered] [--by kind|tier]
-                              [--rescore]
+                              [--hint filled|blob|box] [--rescore]
   LORA is relative to ComfyUI's loras folder ("none" runs the bare model). PER_TAG rest-pose nodes per tag (6).
   Runs the distilled model, 4 steps, with the close-up and the hint as references; writes metrics.jsonl, a summary
   per tag and, with --sheet, sheet.png (input, hint, prediction, truth per row). --soft reads each close-up from a
@@ -12,11 +12,13 @@ usage: python node_metrics.py LORA OUT_DIR TEST_DIR [PER_TAG] [--sheet] [--soft 
   --soften F reads each close-up from an F times smaller picture made here (JPEG-compressed for half of them), for any
   close-up still 64 pixels a side at that size. --by kind sums up by node kind (a whole tag, a named group, a single
   piece, a layered picture), --by tier by how sharp the model is drawn (low, mid, high), choosing PER_TAG nodes per tag
-  of each; both read make_node_pairs.py's test/meta.jsonl or the fields in prompts.jsonl. --rescore scores the
+  of each; both read make_node_pairs.py's test/meta.jsonl or the fields in prompts.jsonl. --hint loosens each test hint
+  as a planner would draw it (scene/hints.py), to see whether the LoRA follows the hint's outline. --rescore scores the
   predictions an earlier run with the same options left in OUT_DIR again, without ComfyUI.
 """
 import io
 import json
+import random
 import sys
 import zlib
 from collections import defaultdict
@@ -26,8 +28,10 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(1, str(Path(__file__).parent.parent / "scene"))
 import l2d
 from env import client
+from hints import loosen
 from metrics import score, visible_part
 
 
@@ -47,7 +51,7 @@ def softened(path: Path, factor: float, out: Path) -> Path:
 
 def main():
     argv, opts = sys.argv[1:], {}
-    for key in ("--soften", "--by"):
+    for key in ("--soften", "--by", "--hint"):
         if key in argv:
             i = argv.index(key)
             opts[key] = argv[i + 1]
@@ -86,6 +90,12 @@ def main():
     for r in chosen:
         inp_path, hint_path, truth_path = (test / f"{r['name']}_{k}.png" for k in
                                            ("input_soft" if "--soft" in sys.argv else "input", "hint", "target"))
+        if opts.get("--hint"):
+            loose = out / "hints" / hint_path.name
+            if not rescore:
+                loose.parent.mkdir(parents=True, exist_ok=True)
+                loosen(Image.open(hint_path), opts["--hint"], random.Random(zlib.crc32(r["name"].encode()))).save(loose)
+            hint_path = loose
         if factor and rescore:
             inp_path = out / "inputs" / inp_path.name.replace("_input", f"_input_x{factor:g}")
         elif factor:
