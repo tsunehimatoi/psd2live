@@ -330,11 +330,12 @@ def layers_of(out: dict, b: int, size: int, classes: int, score: float = 0.5, ov
     if covered is not None:  # a covered layer takes no pixels
         shown = torch.where(covered[:, None, None], torch.zeros_like(shown), shown)
 
-    def assign(shown, keep):
+    def assign(shown, keep, where=None):
+        """Each pixel to the likeliest query: where some query shows it (over 0.5), or everywhere in where."""
         if not len(keep):
             return torch.zeros(size, size, dtype=torch.long, device=feats.device)
         best, arg = (shown * s[keep][:, None, None]).max(0)
-        return torch.where(shown.max(0).values > 0.5, arg + 1, torch.zeros_like(arg))
+        return torch.where((shown.max(0).values > 0.5) if where is None else where, arg + 1, torch.zeros_like(arg))
     labels = assign(shown, keep)
     if overlap > 0 and len(keep):
         area = (shown > 0.5).flatten(1).sum(1)
@@ -345,6 +346,8 @@ def layers_of(out: dict, b: int, size: int, classes: int, score: float = 0.5, ov
             ok = (area < 16) | (area < hidden * whole.flatten(1).sum(1)) | (won >= overlap * area)
         if not ok.all():
             keep, shown, whole = keep[ok], shown[ok], whole[ok]
+            if covered is not None:
+                covered = covered[ok]
             labels = assign(shown, keep)
     return labels, {"tag": t[keep], "score": s[keep], "whole": whole, "order": st["order"][b].float()[keep],
                     "group": st["group"][b].float()[keep], "part": st["part"][b].float()[keep]}

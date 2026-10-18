@@ -32,6 +32,7 @@ KEEP_SCORE = 0.0  # a shown layer whose likeliest piece is less likely than this
 KEEP_PIXELS = 0  # nor one with fewer shown pixels (on the picture)
 OVERLAP = 0.8  # a tile drops a query winning less than this share of its own shown mask (train_planner5.layers_of)
 HIDDEN = 0.0  # unless it shows less than this share of its whole shape: a covered layer
+FINE_ALL = True  # level 2 (quarter tiles) over the whole figure, not just the head
 FACE = {"face", "ears", "eyewear", "irides", "eyewhite", "eyelash", "eyebrow", "mouth", "mouth_inside", "nose", "facedetail", "earwear"}
 PAIRED = {"irides", "eyewhite", "eyelash", "eyebrow", "ears", "earwear", "arm", "hand", "leg", "handwear", "legwear", "footwear"}
 ROLE_NAMES = ("shadow", "highlight", "line", "detail")
@@ -160,7 +161,10 @@ def plan_layers(image: Image.Image, silhouette: np.ndarray, run: Planner5Run, gr
     tag_full[b:d, a:c] = m
     head = np.isin(tag_full, face_ids) & sil
     centre = float(np.nonzero(tag_full == classes.index("face"))[1].mean()) if (tag_full == classes.index("face")).any() else W / 2
-    if head.sum() > least:
+    if FINE_ALL:
+        for t in tiles(box, max(side0 / 4, 16), 2, sil):
+            run_tile(t)
+    elif head.sum() > least:
         hy, hx = np.nonzero(head)
         hbox = (int(hx.min()), int(hy.min()), int(hx.max()) + 1, int(hy.max()) + 1)
         hs = max(side0 / 4, 16)
@@ -230,17 +234,28 @@ def plan_layers(image: Image.Image, silhouette: np.ndarray, run: Planner5Run, gr
         if a != b and not tiles_of[a] & tiles_of[b]:
             parent[b] = a
             tiles_of[a] |= tiles_of[b]
-    # Pixels: within a zoom the piece likeliest and furthest inside its tile (a tile's edge cuts what crosses it, the
-    # picture's does not); a finer tile takes a pixel from a coarser one only away from its own cut edges.
-    def inside_tile(t, box):
-        """Per pixel of box (x0, y0, x1, y1): distance to tile t's nearest cut edge over a quarter of its side, at most 1."""
+    # Pixels: within a zoom the piece likeliest and furthest inside its tile (a tile's edge cuts the figure where the figure
+    # goes on past it); a finer tile takes a pixel from a coarser one only away from its own cut edges.
+    def cuts(t):
+        """Which of tile t's edges (left, top, right, bottom) cut the figure: it goes on past them."""
         x, y, s, _ = results[t][0]
+        a, b, c, d = max(0, round(x)), max(0, round(y)), min(W, round(x + s)), min(H, round(y + s))
+        band = max(2, round(s / 16))
+        return (a > 0 and sil[b:d, max(0, a - band):a].any(), b > 0 and sil[max(0, b - band):b, a:c].any(),
+                c < W and sil[b:d, c:c + band].any(), d < H and sil[d:d + band, a:c].any())
+    cut = [cuts(t) for t in range(len(results))]
+
+    def inside_tile(t, box):
+        """Per pixel of box (x0, y0, x1, y1): distance to tile t's nearest edge cutting the figure over a quarter of its
+        side, at most 1."""
+        x, y, s, _ = results[t][0]
+        left, top, right, bottom = cut[t]
         x0, y0, x1, y1 = box
         xs, ys = np.arange(x0, x1) + 0.5, np.arange(y0, y1) + 0.5
         big = np.full_like(xs, np.inf)
-        dx = np.minimum(xs - x if x > 0 else big, x + s - xs if x + s < W else big)
+        dx = np.minimum(xs - x if left else big, x + s - xs if right else big)
         big = np.full_like(ys, np.inf)
-        dy = np.minimum(ys - y if y > 0 else big, y + s - ys if y + s < H else big)
+        dy = np.minimum(ys - y if top else big, y + s - ys if bottom else big)
         return np.minimum(1.0, np.minimum(dy[:, None], dx[None, :]) / (s / 4))
 
     owner = np.zeros((H, W), np.int64)  # piece index + 1
