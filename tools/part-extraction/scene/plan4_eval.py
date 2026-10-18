@@ -40,6 +40,7 @@ def main():
     ap.add_argument("--overlap", type=float, default=None, help="v5: plan5.OVERLAP")
     ap.add_argument("--hidden", type=float, default=None, help="v5: plan5.HIDDEN")
     ap.add_argument("--fine-all", action="store_true", help="v5: plan5.FINE_ALL")
+    ap.add_argument("--covered-score", type=float, default=None, help="v5.1: plan5.COVERED_SCORE")
     ap.add_argument("--v5", action="store_true", help="CHECKPOINT is a planner v5 (train_planner5.py), planned by plan5.py")
     a = ap.parse_args()
     data = Path(a.data)
@@ -60,6 +61,8 @@ def main():
         if a.hidden is not None:
             plan5.HIDDEN = a.hidden
         plan5.FINE_ALL = plan5.FINE_ALL or a.fine_all
+        if a.covered_score is not None:
+            plan5.COVERED_SCORE = a.covered_score
         run = plan5.Planner5Run(Path(a.checkpoint))
     else:
         run = si.Planner4Run(Path(a.checkpoint))
@@ -140,7 +143,7 @@ def main():
             ids, counts = np.unique(inst[m & (inst > 0) & ~ignored], return_counts=True)
             kinds["piece" if len(ids) and counts.max() * 4 >= 3 * counts.sum() else "across"] += 1
         print(Path(stem).name, len(masks), "planned,", sum(1 for k in range(1, len(meta["instances"]) + 1) if (inst == k).any()), "true", file=sys.stderr)
-    line = {"checkpoint": a.checkpoint, "grain": a.grain, "v5": a.v5, **({"keep_score": plan5.KEEP_SCORE, "keep_pixels": plan5.KEEP_PIXELS, "overlap": plan5.OVERLAP, "hidden": plan5.HIDDEN, "fine_all": plan5.FINE_ALL} if a.v5 else {}), "absorb": si.p4.ABSORB, "merge": si.p4.MERGE, "eyes": not a.no_eyes, "join": not a.no_join, "whole": a.whole, "pictures": len(stems), "layers": everything, "planned": planned, "true": true,
+    line = {"checkpoint": a.checkpoint, "grain": a.grain, "v5": a.v5, **({"keep_score": plan5.KEEP_SCORE, "keep_pixels": plan5.KEEP_PIXELS, "overlap": plan5.OVERLAP, "hidden": plan5.HIDDEN, "fine_all": plan5.FINE_ALL, "covered_score": plan5.COVERED_SCORE} if a.v5 else {}), "absorb": si.p4.ABSORB, "merge": si.p4.MERGE, "eyes": not a.no_eyes, "join": not a.no_join, "whole": a.whole, "pictures": len(stems), "layers": everything, "planned": planned, "true": true,
             "precision": round(matched / max(planned, 1), 3), "recall": round(found / max(true, 1), 3), "unmatched": dict(kinds),
             "covered_recall": [covered[1], round(covered[0] / max(covered[1], 1), 3)], "covered_planned": dict(hidden_kinds), "whole_iou": round(float(np.mean(fits)), 3) if fits else None,
             "recall_by_size": {k: [v[0], round(v[1] / v[0], 3)] for k, v in sorted(by_size.items(), key=lambda kv: int(kv[0].split("-")[0]))},

@@ -335,10 +335,11 @@ def to_device(batch: dict, device) -> dict:
 
 
 @torch.no_grad()
-def layers_of(out: dict, b: int, size: int, classes: int, score: float = 0.5, overlap: float = 0.0, hidden: float = 0.0):
+def layers_of(out: dict, b: int, size: int, classes: int, score: float = 0.5, overlap: float = 0.0, hidden: float = 0.0,
+              covered_score: float = 0.0):
     """The planned layers of close-up b on a size grid: the shown map (0 none, j + 1 kept query j), and per kept
     query its tag, score, whole shape (size grid, bool), order score, group and part vectors. A v5.1 query its visible head
-    calls covered takes no pixels. With overlap, a query
+    calls covered takes no pixels, and is kept only above covered_score too. With overlap, a query
     that wins less than that share of its own shown mask is dropped (as Mask2Former's panoptic inference does) and the
     pixels go to the others; a query showing next to nothing, or (hidden) less than that share of its whole shape, is
     kept: a covered layer, not a copy of a shown one."""
@@ -350,6 +351,9 @@ def layers_of(out: dict, b: int, size: int, classes: int, score: float = 0.5, ov
     shown = torch.einsum("qc,chw->qhw", st["shown"][b].float()[keep], feats).sigmoid()
     whole = torch.einsum("qc,chw->qhw", st["whole"][b].float()[keep], feats).sigmoid() > 0.5
     covered = st["visible"][b].float()[keep] < 0 if "visible" in st else None
+    if covered is not None and covered_score > 0:
+        ok = ~covered | (s[keep] > covered_score)
+        keep, shown, whole, covered = keep[ok], shown[ok], whole[ok], covered[ok]
     if covered is not None:  # a covered layer takes no pixels
         shown = torch.where(covered[:, None, None], torch.zeros_like(shown), shown)
 
