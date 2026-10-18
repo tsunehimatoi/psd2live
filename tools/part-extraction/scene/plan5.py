@@ -34,6 +34,8 @@ KEEP_PIXELS = 0  # nor one with fewer shown pixels (on the picture)
 OVERLAP = 0.8  # a tile drops a query winning less than this share of its own shown mask (train_planner5.layers_of)
 HIDDEN = 0.0  # unless it shows less than this share of its whole shape: a covered layer
 FINE_ALL = True  # level 2 (quarter tiles) over the whole figure, not just the head
+FINEST = False  # level 3 too: eighth tiles over the whole figure
+SCORE = 0.5  # a tile keeps a query whose likeliest tag is likelier than this
 COVERED_SCORE = 0.95  # v5.1: a query its visible head calls covered is kept only if likelier than this
 FACE = {"face", "ears", "eyewear", "irides", "eyewhite", "eyelash", "eyebrow", "mouth", "mouth_inside", "nose", "facedetail", "earwear"}
 PAIRED = {"irides", "eyewhite", "eyelash", "eyebrow", "ears", "earwear", "arm", "hand", "leg", "handwear", "legwear", "footwear"}
@@ -55,7 +57,7 @@ class Planner5Run:
         x = torch.from_numpy(np.asarray(crop.convert("RGB").resize((p5.SIZE, p5.SIZE), Image.BILINEAR)).copy()).permute(2, 0, 1).float() / 255
         with torch.autocast("cuda", dtype=torch.bfloat16):
             out = self.model(((x - p4.MEAN) / p4.STD)[None].cuda())
-        labels, q = p5.layers_of(out, 0, p5.SHOWN, len(self.classes), overlap=OVERLAP, hidden=HIDDEN, covered_score=COVERED_SCORE)
+        labels, q = p5.layers_of(out, 0, p5.SHOWN, len(self.classes), score=SCORE, overlap=OVERLAP, hidden=HIDDEN, covered_score=COVERED_SCORE)
         small = lambda t: F.interpolate(t.float(), size=(p5.SHOWN, p5.SHOWN), mode="bilinear", align_corners=False)[0]
         return {"labels": labels.cpu().numpy(), "tag": q["tag"].cpu().numpy(), "score": q["score"].float().cpu().numpy(),
                 "whole": q["whole"].cpu().numpy(), "order": q["order"].cpu().numpy(), "group": q["group"].cpu().numpy(),
@@ -166,6 +168,9 @@ def plan_layers(image: Image.Image, silhouette: np.ndarray, run: Planner5Run, gr
     if FINE_ALL:
         for t in tiles(box, max(side0 / 4, 16), 2, sil):
             run_tile(t)
+        if FINEST:
+            for t in tiles(box, max(side0 / 8, 16), 3, sil):
+                run_tile(t)
     elif head.sum() > least:
         hy, hx = np.nonzero(head)
         hbox = (int(hx.min()), int(hy.min()), int(hx.max()) + 1, int(hy.max()) + 1)
@@ -261,7 +266,7 @@ def plan_layers(image: Image.Image, silhouette: np.ndarray, run: Planner5Run, gr
         return np.minimum(1.0, np.minimum(dy[:, None], dx[None, :]) / (s / 4))
 
     owner = np.zeros((H, W), np.int64)  # piece index + 1
-    for lv in (0, 1, 2):
+    for lv in (0, 1, 2, 3):
         best = np.zeros((H, W), np.float32)
         claim = np.zeros((H, W), np.int64)
         firm = np.zeros((H, W), bool)

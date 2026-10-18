@@ -20,6 +20,7 @@ OUT gets log.txt (losses every 50 steps, an evaluation every --eval-every steps)
 and planner5.pt, the last of them.
 """
 import argparse
+from collections import Counter
 import json
 import math
 import random
@@ -101,6 +102,18 @@ class Closeups(torch.utils.data.Dataset):
                 "group": torch.tensor([groups.setdefault(d["group"], len(groups)) for d in info], dtype=torch.long),
                 "part": torch.tensor([parts.setdefault(d["part"], len(parts)) for d in info], dtype=torch.long),
                 "level": meta["level"]}
+
+
+def rarity_weights(stems: list[str]) -> list[float]:
+    """Per close-up, how rare its rarest shown tag is: (median tag count / that tag's count) ** 0.5, from 1 to 4. Sampling
+    by it shows the model the lower body, accessories and other parts few models draw more often."""
+    tags = []
+    for stem in stems:
+        meta = json.loads(Path(stem + ".json").read_text(encoding="utf-8"))
+        tags.append({d["tag"] for d in meta["instances"] if d.get("shown", True) and d["tag"]})
+    count = Counter(t for ts in tags for t in ts)
+    median = float(np.median(list(count.values())))
+    return [min(4.0, max([1.0] + [(median / count[t]) ** 0.5 for t in ts])) for ts in tags]
 
 
 def collate(items: list[dict]) -> dict:
@@ -460,6 +473,7 @@ def main():
     ap.add_argument("--workers", type=int, default=6)
     ap.add_argument("--none", type=float, default=W_NONE, help="weight of the none tag for queries matching no layer")
     ap.add_argument("--focus", type=float, default=FOCUS, help="share of loss points on layer borders and small layers")
+    ap.add_argument("--balance", action="store_true", help="sample close-ups by their rarest tag (rarity_weights)")
     a = ap.parse_args()
     data, out = Path(a.data), Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -494,8 +508,9 @@ def main():
               {"params": [p for n, p in model.named_parameters() if n.split(".")[0] in old - {"backbone"}], "lr": 5e-5},
               {"params": [p for n, p in model.named_parameters() if n.split(".")[0] not in old], "lr": 1e-4}]
     opt = torch.optim.AdamW(groups, weight_decay=0.05)
-    loader = torch.utils.data.DataLoader(Closeups(train, True, classes), batch_size=a.batch, shuffle=True, num_workers=a.workers,
-                                         drop_last=True, persistent_workers=True, collate_fn=collate)
+    sampler = torch.utils.data.WeightedRandomSampler(rarity_weights(train), len(train)) if a.balance else None
+    loader = torch.utils.data.DataLoader(Closeups(train, True, classes), batch_size=a.batch, shuffle=sampler is None, sampler=sampler,
+                                         num_workers=a.workers, drop_last=True, persistent_workers=True, collate_fn=collate)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1, s / 500) * 0.5 * (1 + math.cos(math.pi * (a.start + s) / a.steps)))
     print(f"{len(train)} training close-ups, {len(val)} validation", file=log, flush=True)
     step, n = a.start, 0
