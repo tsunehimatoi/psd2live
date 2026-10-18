@@ -2,8 +2,9 @@
 plan. split_image.py --planner5 and plan4_eval.py --v5 use plan_layers().
 
 Tiles (on a grid of the picture at most GRID pixels on its longer side): the whole figure (level 0); squares of half
-its side, overlapping by half, over the figure (level 1); squares of a quarter, over the head (level 2). A tile's
-layers are its kept queries (train_planner5.layers_of). Layers of two overlapping tiles are one layer when, inside the
+its side, overlapping by half, over the figure (level 1); squares of a quarter, over the figure (FINE_ALL) or the head
+(level 2). A tile's layers are its kept queries (train_planner5.layers_of: OVERLAP drops a query that wins too little
+of its own mask). Layers of two overlapping tiles are one layer when, inside the
 tiles' overlap, their shown pixels match (IoU over JOIN); covered layers (no shown pixels) when their whole shapes do.
 Matches are taken best first, and none that would put two layers of one tile into one.
 Each pixel goes to the layer the finest tile over it gives it, unless the pixel is near that tile's edge (the likelier
