@@ -35,6 +35,7 @@ OVERLAP = 0.8  # a tile drops a query winning less than this share of its own sh
 HIDDEN = 0.0  # unless it shows less than this share of its whole shape: a covered layer
 FINE_ALL = True  # level 2 (quarter tiles) over the whole figure, not just the head
 FINEST = False  # level 3 too: eighth tiles over the whole figure
+SPLIT_TAGS = 0.0  # a layer whose pixels the pixel tags give two tags each this share of is split along them (0: never)
 SCORE = 0.5  # a tile keeps a query whose likeliest tag is likelier than this
 COVERED_SCORE = 0.95  # v5.1: a query its visible head calls covered is kept only if likelier than this
 FACE = {"face", "ears", "eyewear", "irides", "eyewhite", "eyelash", "eyebrow", "mouth", "mouth_inside", "nose", "facedetail", "earwear"}
@@ -68,7 +69,11 @@ class Planner5Run:
 def crop_padded(picture: Image.Image, x0: float, y0: float, side: float, fill=(225, 225, 225)) -> Image.Image:
     """The square x0, y0, side of picture, light grey past its edges."""
     canvas = Image.new("RGB", (max(1, round(side)), max(1, round(side))), fill)
-    canvas.paste(picture.crop((round(x0), round(y0), round(x0 + side), round(y0 + side))), (0, 0))
+    # Only the part inside the picture: PIL crops past its edges as black.
+    a, b = max(0, round(x0)), max(0, round(y0))
+    c, d = min(picture.width, round(x0 + side)), min(picture.height, round(y0 + side))
+    if c > a and d > b:
+        canvas.paste(picture.crop((a, b, c, d)), (a - round(x0), b - round(y0)))
     return canvas
 
 
@@ -127,6 +132,34 @@ def iou_in(a: Piece, b: Piece, region, attr: str) -> float:
     ma, mb = cut(a), cut(b)
     union = (ma | mb).sum()
     return (ma & mb).sum() / union if union else 0.0
+
+
+WEAR = {"footwear", "legwear", "handwear", "headwear", "neckwear", "earwear", "eyewear"}  # what split_by_tags parts off
+
+
+def split_by_tags(entry, pixel_tag: np.ndarray, classes: list[str], share: float, least: float) -> list:
+    """A shown layer whose pixels the pixel tags give two or more tags, each at least share of it and least pixels, one
+    of them something worn (WEAR) and another not: one layer per such tag (the other pixels to the nearest of them), else
+    the layer itself. The pieces keep the layer's order, part and group."""
+    l, r, part, group = entry
+    if l["covered"]:
+        return [entry]
+    tags = pixel_tag[l["shown"]]
+    n = len(tags)
+    ids, counts = np.unique(tags[tags >= 0], return_counts=True)
+    big = [int(t) for t, c in zip(ids, counts) if c >= share * n and c >= least and classes[t] != "background"]
+    if len(big) < 2 or not any(classes[t] in WEAR for t in big) or all(classes[t] in WEAR for t in big):
+        return [entry]
+    sub = np.where(l["shown"] & np.isin(pixel_tag, big), pixel_tag, -1)
+    rest = l["shown"] & (sub < 0)
+    if rest.any():
+        _, (iy, ix) = ndimage.distance_transform_edt(sub < 0, return_indices=True)
+        sub = np.where(rest, sub[iy, ix], sub)
+    out = []
+    for k, t in enumerate(big):
+        m = l["shown"] & (sub == t)
+        out.append((dict(l, tag=classes[t], shown=m, whole=l["whole"] & ~(l["shown"] & ~m)), r + k * 1e-3, part, group))
+    return out
 
 
 @torch.no_grad()
@@ -282,6 +315,13 @@ def plan_layers(image: Image.Image, silhouette: np.ndarray, run: Planner5Run, gr
             claim[y0:y1, x0:x1][win] = i + 1
             firm[y0:y1, x0:x1][win] = keep[win] >= 0.5
         owner = np.where((claim > 0) & (firm | (owner == 0)), claim, owner)
+    # Pixel tags from the tile that decided each pixel.
+    tile_of = np.array([-1] + [p.tile for p in pieces])[owner]
+    pixel_tag = np.full((H, W), -1, np.int64)
+    for t, ((x, y, s, _), r) in enumerate(results):
+        m, (a, b, c, d) = place(r["classes"], x, y, s, H, W)
+        mine = tile_of[b:d, a:c] == t
+        pixel_tag[b:d, a:c][mine] = m[mine]
     root_of = np.array([0] + [find(i) + 1 for i in range(len(pieces))])
     label = root_of[owner]  # joined layer (root piece + 1) per pixel
     members = defaultdict(list)
@@ -366,6 +406,8 @@ def plan_layers(image: Image.Image, silhouette: np.ndarray, run: Planner5Run, gr
         entries = new
     else:
         entries = [(l, rank[k], ids["part"][k], ids["group"][k]) for k, l in enumerate(layers)]
+        if SPLIT_TAGS > 0:
+            entries = [e for entry in entries for e in split_by_tags(entry, pixel_tag, classes, SPLIT_TAGS, 4 * least)]
     up = lambda m: np.asarray(Image.fromarray(m.astype(np.uint8) * 255).resize((W0, H0), Image.NEAREST)) > 127 if scale < 1 else m
     leaves = []
     for n, (l, r, part, group) in enumerate(entries):
