@@ -50,16 +50,17 @@ class Planner5Run:
         state = torch.load(checkpoint, map_location="cpu")
         self.classes = state["classes"]
         self.model = p5.Planner5(len(self.classes), visible=p5.has_visible(state["state"]))
+        self.size = state.get("size", p5.SIZE)  # network input side
         self.model.load_state_dict(p4.fit_state(self.model, state["state"]))
         self.model = self.model.cuda().eval()
 
     @torch.no_grad()
     def __call__(self, crop: Image.Image) -> dict:
-        x = torch.from_numpy(np.asarray(crop.convert("RGB").resize((p5.SIZE, p5.SIZE), Image.BILINEAR)).copy()).permute(2, 0, 1).float() / 255
+        x = torch.from_numpy(np.asarray(crop.convert("RGB").resize((self.size, self.size), Image.BILINEAR)).copy()).permute(2, 0, 1).float() / 255
         with torch.autocast("cuda", dtype=torch.bfloat16):
             out = self.model(((x - p4.MEAN) / p4.STD)[None].cuda())
-        labels, q = p5.layers_of(out, 0, p5.SHOWN, len(self.classes), score=SCORE, overlap=OVERLAP, hidden=HIDDEN, covered_score=COVERED_SCORE)
-        small = lambda t: F.interpolate(t.float(), size=(p5.SHOWN, p5.SHOWN), mode="bilinear", align_corners=False)[0]
+        labels, q = p5.layers_of(out, 0, self.size // 2, len(self.classes), score=SCORE, overlap=OVERLAP, hidden=HIDDEN, covered_score=COVERED_SCORE)
+        small = lambda t: F.interpolate(t.float(), size=(self.size // 2, self.size // 2), mode="bilinear", align_corners=False)[0]
         return {"labels": labels.cpu().numpy(), "tag": q["tag"].cpu().numpy(), "score": q["score"].float().cpu().numpy(),
                 "whole": q["whole"].cpu().numpy(), "order": q["order"].cpu().numpy(), "group": q["group"].cpu().numpy(),
                 "part": q["part"].cpu().numpy(), "classes": small(out["classes"]).argmax(0).cpu().numpy(),

@@ -53,8 +53,9 @@ class Closeups(torch.utils.data.Dataset):
     """A close-up: picture, pixel tags and roles (SIZE), shown layers (SHOWN; -1 left out, 0 none, k layer k) and per
     layer its whole shape (WHOLE), tag (-1 unsure), draw order, group and part."""
 
-    def __init__(self, stems, train: bool, classes: list[str]):
+    def __init__(self, stems, train: bool, classes: list[str], size: int = SIZE):
         self.stems, self.train, self.classes = stems, train, classes
+        self.size, self.shown, self.whole = size, size // 2, size // 4  # kept here: loader workers start afresh
 
     def __len__(self):
         return len(self.stems)
@@ -75,11 +76,11 @@ class Closeups(torch.utils.data.Dataset):
         whole = whole[:, box[1] // 2:box[3] // 2, box[0] // 2:box[2] // 2]
         if flip:
             image, maps, whole = image.transpose(Image.FLIP_LEFT_RIGHT), [m.transpose(Image.FLIP_LEFT_RIGHT) for m in maps], whole.flip(-1)
-        image = image.resize((SIZE, SIZE), Image.BILINEAR)
-        cls, role = (np.asarray(m.resize((SIZE, SIZE), Image.NEAREST)) for m in maps[:2])
-        inst = np.asarray(maps[2].resize((SHOWN, SHOWN), Image.NEAREST)).astype(np.int64)
-        whole = F.interpolate(whole[None], size=(WHOLE, WHOLE), mode="bilinear", align_corners=False)[0] > 0.5 \
-            if len(whole) else torch.zeros(0, WHOLE, WHOLE, dtype=torch.bool)
+        image = image.resize((self.size, self.size), Image.BILINEAR)
+        cls, role = (np.asarray(m.resize((self.size, self.size), Image.NEAREST)) for m in maps[:2])
+        inst = np.asarray(maps[2].resize((self.shown, self.shown), Image.NEAREST)).astype(np.int64)
+        whole = F.interpolate(whole[None], size=(self.whole, self.whole), mode="bilinear", align_corners=False)[0] > 0.5 \
+            if len(whole) else torch.zeros(0, self.whole, self.whole, dtype=torch.bool)
         # Layers the crop left: shown here, or with some whole shape here.
         instances = meta["instances"]
         shown = np.bincount(inst[(inst > 0) & (inst != IGNORE)].ravel(), minlength=len(instances) + 1)[1:]
@@ -96,7 +97,7 @@ class Closeups(torch.utils.data.Dataset):
             x = (x * random.uniform(0.8, 1.2) + random.uniform(-0.08, 0.08)).clamp(0, 1)
             x = x[torch.randperm(3)] if random.random() < 0.2 else x
         return {"x": (x - p4.MEAN) / p4.STD, "cls": torch.from_numpy(cls.astype(np.int64)), "role": torch.from_numpy(role.astype(np.int64)),
-                "inst": torch.from_numpy(inst), "whole": whole[keep] if len(keep) else torch.zeros(0, WHOLE, WHOLE, dtype=torch.bool),
+                "inst": torch.from_numpy(inst), "whole": whole[keep] if len(keep) else torch.zeros(0, self.whole, self.whole, dtype=torch.bool),
                 "tag": torch.tensor([self.classes.index(d["tag"]) if d["tag"] in self.classes else -1 for d in info], dtype=torch.long),
                 "render": torch.tensor([d["render"] for d in info], dtype=torch.long),
                 "group": torch.tensor([groups.setdefault(d["group"], len(groups)) for d in info], dtype=torch.long),
@@ -396,7 +397,7 @@ def layers_of(out: dict, b: int, size: int, classes: int, score: float = 0.5, ov
 @torch.no_grad()
 def evaluate(model, stems, classes: list[str]) -> dict:
     model.eval()
-    data = Closeups(stems, False, classes)
+    data = Closeups(stems, False, classes, SIZE)
     C = len(classes)
     counts = np.zeros(3)  # matched, planned, true (shown layers)
     hidden = np.zeros(2)  # found, true (layers the close-up does not show)
@@ -474,6 +475,7 @@ def main():
     ap.add_argument("--none", type=float, default=W_NONE, help="weight of the none tag for queries matching no layer")
     ap.add_argument("--focus", type=float, default=FOCUS, help="share of loss points on layer borders and small layers")
     ap.add_argument("--balance", action="store_true", help="sample close-ups by their rarest tag (rarity_weights)")
+    ap.add_argument("--size", type=int, default=SIZE, help="network input side (a multiple of 14); v5 to v5.3 use 728")
     a = ap.parse_args()
     data, out = Path(a.data), Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -486,6 +488,8 @@ def main():
     val = val[::max(1, len(val) // a.val_limit)][:a.val_limit]
     globals()["W_NONE"] = a.none
     globals()["FOCUS"] = a.focus
+    size = torch.load(a.eval, map_location="cpu").get("size", SIZE) if a.eval else a.size
+    globals().update(SIZE=size, SHOWN=size // 2, WHOLE=size // 4)
     model = Planner5(len(classes), visible=not a.eval or has_visible(torch.load(a.eval, map_location="cpu")["state"])).cuda()
     if a.eval:
         model.load_state_dict(p4.fit_state(model, torch.load(a.eval, map_location="cuda")["state"]))
@@ -509,7 +513,7 @@ def main():
               {"params": [p for n, p in model.named_parameters() if n.split(".")[0] not in old], "lr": 1e-4}]
     opt = torch.optim.AdamW(groups, weight_decay=0.05)
     sampler = torch.utils.data.WeightedRandomSampler(rarity_weights(train), len(train)) if a.balance else None
-    loader = torch.utils.data.DataLoader(Closeups(train, True, classes), batch_size=a.batch, shuffle=sampler is None, sampler=sampler,
+    loader = torch.utils.data.DataLoader(Closeups(train, True, classes, SIZE), batch_size=a.batch, shuffle=sampler is None, sampler=sampler,
                                          num_workers=a.workers, drop_last=True, persistent_workers=True, collate_fn=collate)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1, s / 500) * 0.5 * (1 + math.cos(math.pi * (a.start + s) / a.steps)))
     print(f"{len(train)} training close-ups, {len(val)} validation", file=log, flush=True)
@@ -534,7 +538,7 @@ def main():
                 print(f"step {step}/{a.steps} loss {loss.item():.4f} " + " ".join(f"{k} {float(v.detach()):.4f}" for k, v in parts.items()), file=log, flush=True)
             if step % a.eval_every == 0 or step == a.steps:
                 # Every evaluation's checkpoint is kept (planner5_<step>.pt, about 0.4 GB each); planner5.pt is the last.
-                torch.save({"state": model.state_dict(), "classes": classes}, out / f"planner5_{step}.pt")
+                torch.save({"state": model.state_dict(), "classes": classes, "size": SIZE}, out / f"planner5_{step}.pt")
                 (out / "planner5.pt").unlink(missing_ok=True)
                 (out / "planner5.pt").hardlink_to(out / f"planner5_{step}.pt")
                 print(json.dumps({"step": step, **evaluate(model, val, classes)}), file=log, flush=True)
