@@ -398,6 +398,7 @@ def main():
         classes = run.classes
     layered = bool(a.planner4 or a.planner5)
     if "background" in classes:
+        tags = tags.copy()  # plan5 may hand back a read-only view
         tags[tags == classes.index("background")] = 255
     rng = np.random.RandomState(1)
     palette = rng.randint(40, 255, (256, 3)).astype(np.uint8)
