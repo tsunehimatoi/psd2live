@@ -1,0 +1,1745 @@
+{
+ "image": "art/star_lan.png",
+ "plan": "plan/star_lan",
+ "loras": [
+  "aitk/split_v7e2.safetensors"
+ ],
+ "seeds": [
+  1,
+  2,
+  3,
+  4
+ ],
+ "layers": [
+  {
+   "id": "hair_back_inner",
+   "prompt": "the back hair behind the head and neck, the inner side of the hair curtain, light blue hair with lavender shading, darker",
+   "tags": [
+    "hair",
+    "back"
+   ],
+   "group": "hair/back",
+   "regions": [],
+   "mask": "hints/star_fine/hair_back_inner.png",
+   "name": "hair back inner",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "hair_long_r1",
+   "prompt": "one long strand of the back hair, light blue hair with lavender shading, hanging from behind the shoulder down past the hip, without the arm and the other strands",
+   "tags": [
+    "hair",
+    "back",
+    "right"
+   ],
+   "group": "hair/back/right",
+   "regions": [],
+   "mask": "hints/star_fine/hair_long_r1.png",
+   "name": "hair long r1",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "hair_long_r2",
+   "prompt": "one long strand of the back hair, light blue hair with lavender shading, hanging from behind the shoulder down past the hip, without the arm and the other strands",
+   "tags": [
+    "hair",
+    "back",
+    "right"
+   ],
+   "group": "hair/back/right",
+   "regions": [],
+   "mask": "hints/star_fine/hair_long_r2.png",
+   "name": "hair long r2",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "hair_long_r3",
+   "prompt": "one long strand of the back hair, light blue hair with lavender shading, hanging from behind the shoulder down past the hip, without the arm and the other strands",
+   "tags": [
+    "hair",
+    "back",
+    "right"
+   ],
+   "group": "hair/back/right",
+   "regions": [],
+   "mask": "hints/star_fine/hair_long_r3.png",
+   "name": "hair long r3",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "hair_long_r4",
+   "prompt": "one long strand of the back hair, light blue hair with lavender shading, hanging from behind the shoulder down past the hip, without the arm and the other strands",
+   "tags": [
+    "hair",
+    "back",
+    "right"
+   ],
+   "group": "hair/back/right",
+   "regions": [],
+   "mask": "hints/star_fine/hair_long_r4.png",
+   "name": "hair long r4",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "hair_long_r5",
+   "prompt": "one long strand of the back hair, light blue hair with lavender shading, hanging from behind the shoulder down past the hip, without the arm and the other strands",
+   "tags": [
+    "hair",
+    "back",
+    "right"
+   ],
+   "group": "hair/back/right",
+   "regions": [],
+   "mask": "hints/star_fine/hair_long_r5.png",
+   "name": "hair long r5",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "hair_long_r6",
+   "prompt": "one long strand of the back hair, light blue hair with lavender shading, hanging from behind the shoulder down past the hip, without the arm and the other strands",
+   "tags": [
+    "hair",
+    "back",
+    "right"
+   ],
+   "group": "hair/back/right",
+   "regions": [],
+   "mask": "hints/star_fine/hair_long_r6.png",
+   "name": "hair long r6",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "hair_long_l1",
+   "prompt": "one long strand of the back hair, light blue hair with lavender shading, hanging from behind the shoulder down past the hip, without the arm and the other strands",
+   "tags": [
+    "hair",
+    "back",
+    "left"
+   ],
+   "group": "hair/back/left",
+   "regions": [],
+   "mask": "hints/star_fine/hair_long_l1.png",
+   "name": "hair long l1",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "hair_long_l2",
+   "prompt": "one long strand of the back hair, light blue hair with lavender shading, hanging from behind the shoulder down past the hip, without the arm and the other strands",
+   "tags": [
+    "hair",
+    "back",
+    "left"
+   ],
+   "group": "hair/back/left",
+   "regions": [],
+   "mask": "hints/star_fine/hair_long_l2.png",
+   "name": "hair long l2",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "hair_long_l3",
+   "prompt": "one long strand of the back hair, light blue hair with lavender shading, hanging from behind the shoulder down past the hip, without the arm and the other strands",
+   "tags": [
+    "hair",
+    "back",
+    "left"
+   ],
+   "group": "hair/back/left",
+   "regions": [],
+   "mask": "hints/star_fine/hair_long_l3.png",
+   "name": "hair long l3",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "hair_long_l4",
+   "prompt": "one long strand of the back hair, light blue hair with lavender shading, hanging from behind the shoulder down past the hip, without the arm and the other strands",
+   "tags": [
+    "hair",
+    "back",
+    "left"
+   ],
+   "group": "hair/back/left",
+   "regions": [],
+   "mask": "hints/star_fine/hair_long_l4.png",
+   "name": "hair long l4",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "hair_long_l5",
+   "prompt": "one long strand of the back hair, light blue hair with lavender shading, hanging from behind the shoulder down past the hip, without the arm and the other strands",
+   "tags": [
+    "hair",
+    "back",
+    "left"
+   ],
+   "group": "hair/back/left",
+   "regions": [],
+   "mask": "hints/star_fine/hair_long_l5.png",
+   "name": "hair long l5",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "thigh_r",
+   "prompt": "the base leg layer, the thigh, bare skin, drawn complete up under the skirt",
+   "tags": [
+    "leg",
+    "right"
+   ],
+   "group": "legs",
+   "regions": [],
+   "mask": "hints/star_fine/thigh_r.png",
+   "name": "thigh r",
+   "loras": [
+    "aitk/split_v7e3.safetensors"
+   ]
+  },
+  {
+   "id": "thigh_l",
+   "prompt": "the base leg layer, the thigh, bare skin, drawn complete up under the skirt",
+   "tags": [
+    "leg",
+    "left"
+   ],
+   "group": "legs",
+   "regions": [],
+   "mask": "hints/star_fine/thigh_l.png",
+   "name": "thigh l",
+   "loras": [
+    "aitk/split_v7e3.safetensors"
+   ]
+  },
+  {
+   "id": "calf_r",
+   "prompt": "the base leg layer, the lower leg from the knee to the ankle, bare skin, drawn complete inside the boot",
+   "tags": [
+    "leg",
+    "right"
+   ],
+   "group": "legs",
+   "regions": [],
+   "mask": "hints/star_fine/calf_r.png",
+   "name": "calf r",
+   "loras": [
+    "aitk/split_v7e3.safetensors"
+   ]
+  },
+  {
+   "id": "calf_l",
+   "prompt": "the base leg layer, the lower leg from the knee to the ankle, bare skin, drawn complete inside the boot",
+   "tags": [
+    "leg",
+    "left"
+   ],
+   "group": "legs",
+   "regions": [],
+   "mask": "hints/star_fine/calf_l.png",
+   "name": "calf l",
+   "loras": [
+    "aitk/split_v7e3.safetensors"
+   ]
+  },
+  {
+   "id": "boot_r",
+   "prompt": "the navy boot, the shaft and foot only, without the silver straps, the silver star, the silver toe cap and the dangling charm",
+   "tags": [
+    "foot",
+    "right"
+   ],
+   "group": "legs",
+   "regions": [],
+   "mask": "hints/star_fine/boot_r.png",
+   "name": "boot r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "boot_l",
+   "prompt": "the navy boot, the shaft and foot only, without the silver straps, the silver star, the silver toe cap and the dangling charm",
+   "tags": [
+    "foot",
+    "left"
+   ],
+   "group": "legs",
+   "regions": [],
+   "mask": "hints/star_fine/boot_l.png",
+   "name": "boot l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "boot_toe_r",
+   "prompt": "the silver toe cap and heel trim of the boot",
+   "tags": [
+    "foot",
+    "right"
+   ],
+   "group": "legs",
+   "regions": [],
+   "mask": "hints/star_fine/boot_toe_r.png",
+   "name": "boot toe r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "boot_toe_l",
+   "prompt": "the silver toe cap and heel trim of the boot",
+   "tags": [
+    "foot",
+    "left"
+   ],
+   "group": "legs",
+   "regions": [],
+   "mask": "hints/star_fine/boot_toe_l.png",
+   "name": "boot toe l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "boot_straps_r",
+   "prompt": "the silver X-shaped straps crossing over the boot",
+   "tags": [
+    "foot",
+    "right"
+   ],
+   "group": "legs",
+   "regions": [],
+   "mask": "hints/star_fine/boot_straps_r.png",
+   "name": "boot straps r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "boot_straps_l",
+   "prompt": "the silver X-shaped straps crossing over the boot",
+   "tags": [
+    "foot",
+    "left"
+   ],
+   "group": "legs",
+   "regions": [],
+   "mask": "hints/star_fine/boot_straps_l.png",
+   "name": "boot straps l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "boot_star_r",
+   "prompt": "the silver four-pointed star on the front of the boot",
+   "tags": [
+    "foot",
+    "right"
+   ],
+   "group": "legs",
+   "min_side": 96,
+   "regions": [],
+   "mask": "hints/star_fine/boot_star_r.png",
+   "name": "boot star r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "boot_star_l",
+   "prompt": "the silver four-pointed star on the front of the boot",
+   "tags": [
+    "foot",
+    "left"
+   ],
+   "group": "legs",
+   "min_side": 96,
+   "regions": [],
+   "mask": "hints/star_fine/boot_star_l.png",
+   "name": "boot star l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "boot_charm_r",
+   "prompt": "the dangling charm on the side of the boot, a short silver chain with two silver diamond stars",
+   "tags": [
+    "foot",
+    "right"
+   ],
+   "group": "legs",
+   "min_side": 96,
+   "regions": [],
+   "mask": "hints/star_fine/boot_charm_r.png",
+   "name": "boot charm r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "boot_charm_l",
+   "prompt": "the dangling charm on the side of the boot, a short silver chain with two silver diamond stars",
+   "tags": [
+    "foot",
+    "left"
+   ],
+   "group": "legs",
+   "min_side": 96,
+   "regions": [],
+   "mask": "hints/star_fine/boot_charm_l.png",
+   "name": "boot charm l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "torso",
+   "prompt": "the base body layer (torso) from the collarbones to the hips, drawn complete under the clothes, with the white underwear painted on it",
+   "tags": [
+    "body"
+   ],
+   "group": "body",
+   "regions": [],
+   "mask": "hints/star_fine/torso.png",
+   "name": "torso",
+   "loras": [
+    "aitk/split_v7e3.safetensors"
+   ]
+  },
+  {
+   "id": "neck",
+   "prompt": "the base neck layer, drawn complete under the collar and reaching down to the collarbones",
+   "tags": [
+    "neck"
+   ],
+   "group": "body",
+   "regions": [],
+   "mask": "hints/star_fine/neck.png",
+   "name": "neck",
+   "loras": [
+    "aitk/split_v7e3.safetensors"
+   ]
+  },
+  {
+   "id": "skirt_under",
+   "prompt": "the lower layer of the navy skirt showing under the hem, a second pleated layer",
+   "tags": [
+    "bottom"
+   ],
+   "group": "skirt",
+   "regions": [],
+   "mask": "hints/star_fine/skirt_under.png",
+   "name": "skirt under",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "skirt",
+   "prompt": "the navy pleated skirt with its two gold hem stripes, from the waistband down to the hem, without the waistband, the chain belt, the bow, the ribbons and the pendants",
+   "tags": [
+    "bottom"
+   ],
+   "group": "skirt",
+   "regions": [],
+   "mask": "hints/star_fine/skirt.png",
+   "name": "skirt",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "blouse",
+   "prompt": "the white sleeveless blouse from the halter neck to the waist, without the collar, the bow, the gold trims, the star buttons, the hair, the arms and the waistband",
+   "tags": [
+    "top"
+   ],
+   "group": "top",
+   "regions": [],
+   "mask": "hints/star_fine/blouse.png",
+   "name": "blouse",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "trim_halter",
+   "prompt": "the gold piping along the halter straps and under the bust",
+   "tags": [
+    "top"
+   ],
+   "group": "top",
+   "regions": [],
+   "mask": "hints/star_fine/trim_halter.png",
+   "name": "trim halter",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "trim_waist",
+   "prompt": "the two vertical gold bands on the waist of the blouse",
+   "tags": [
+    "top"
+   ],
+   "group": "top",
+   "regions": [],
+   "mask": "hints/star_fine/trim_waist.png",
+   "name": "trim waist",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "button_1",
+   "prompt": "the gold four-pointed star button with a blue gem on the front of the blouse",
+   "tags": [
+    "top"
+   ],
+   "group": "top",
+   "min_side": 96,
+   "regions": [],
+   "mask": "hints/star_fine/button_1.png",
+   "name": "button 1",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "button_2",
+   "prompt": "the gold four-pointed star button with a blue gem on the front of the blouse",
+   "tags": [
+    "top"
+   ],
+   "group": "top",
+   "min_side": 96,
+   "regions": [],
+   "mask": "hints/star_fine/button_2.png",
+   "name": "button 2",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "button_3",
+   "prompt": "the gold four-pointed star button with a blue gem on the front of the blouse",
+   "tags": [
+    "top"
+   ],
+   "group": "top",
+   "min_side": 96,
+   "regions": [],
+   "mask": "hints/star_fine/button_3.png",
+   "name": "button 3",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "collar",
+   "prompt": "the high navy collar around the neck with its white folded collar wings",
+   "tags": [
+    "neck",
+    "accessory"
+   ],
+   "group": "top",
+   "regions": [],
+   "mask": "hints/star_fine/collar.png",
+   "name": "collar",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "bow_tails",
+   "prompt": "the two navy tails of the collar bow hanging down to the chest",
+   "tags": [
+    "neck",
+    "accessory"
+   ],
+   "group": "top",
+   "regions": [],
+   "mask": "hints/star_fine/bow_tails.png",
+   "name": "bow tails",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "bow_loops",
+   "prompt": "the two navy loops of the collar bow",
+   "tags": [
+    "neck",
+    "accessory"
+   ],
+   "group": "top",
+   "regions": [],
+   "mask": "hints/star_fine/bow_loops.png",
+   "name": "bow loops",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "brooch_neck",
+   "prompt": "the gold four-pointed star brooch with a blue gem at the collar",
+   "tags": [
+    "neck",
+    "accessory"
+   ],
+   "group": "top",
+   "min_side": 128,
+   "regions": [],
+   "mask": "hints/star_fine/brooch_neck.png",
+   "name": "brooch neck",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "pendant_neck",
+   "prompt": "the small gold pendant chain hanging below the collar brooch",
+   "tags": [
+    "neck",
+    "accessory"
+   ],
+   "group": "top",
+   "min_side": 128,
+   "regions": [],
+   "mask": "hints/star_fine/pendant_neck.png",
+   "name": "pendant neck",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "waistband",
+   "prompt": "the dark navy waistband of the skirt, a wide band around the waist",
+   "tags": [
+    "bottom"
+   ],
+   "group": "skirt",
+   "regions": [],
+   "mask": "hints/star_fine/waistband.png",
+   "name": "waistband",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "chain_belt",
+   "prompt": "the gold chain belt slung diagonally across the skirt",
+   "tags": [
+    "bottom"
+   ],
+   "group": "skirt",
+   "regions": [],
+   "mask": "hints/star_fine/chain_belt.png",
+   "name": "chain belt",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "pendant_belt",
+   "prompt": "the gold pendant hanging from the chain belt, three gold diamond stars on a short chain",
+   "tags": [
+    "bottom"
+   ],
+   "group": "skirt",
+   "min_side": 128,
+   "regions": [],
+   "mask": "hints/star_fine/pendant_belt.png",
+   "name": "pendant belt",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "ribbon_white",
+   "prompt": "the white ribbon tail hanging from the hip bow",
+   "tags": [
+    "bottom"
+   ],
+   "group": "skirt",
+   "regions": [],
+   "mask": "hints/star_fine/ribbon_white.png",
+   "name": "ribbon white",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "ribbon_navy",
+   "prompt": "the long navy ribbon tail with gold stripes hanging from the hip bow down past the hem",
+   "tags": [
+    "bottom"
+   ],
+   "group": "skirt",
+   "regions": [],
+   "mask": "hints/star_fine/ribbon_navy.png",
+   "name": "ribbon navy",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "bow_hip",
+   "prompt": "the navy bow at the hip with its two loops and knot",
+   "tags": [
+    "bottom"
+   ],
+   "group": "skirt",
+   "regions": [],
+   "mask": "hints/star_fine/bow_hip.png",
+   "name": "bow hip",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "pendant_bow",
+   "prompt": "the gold pendant hanging below the hip bow, a chain with two gold diamond stars",
+   "tags": [
+    "bottom"
+   ],
+   "group": "skirt",
+   "min_side": 128,
+   "regions": [],
+   "mask": "hints/star_fine/pendant_bow.png",
+   "name": "pendant bow",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "brooch_hip",
+   "prompt": "the gold four-pointed star brooch with a blue gem on the hip bow",
+   "tags": [
+    "bottom"
+   ],
+   "group": "skirt",
+   "min_side": 128,
+   "regions": [],
+   "mask": "hints/star_fine/brooch_hip.png",
+   "name": "brooch hip",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "skirt_emblem",
+   "prompt": "the small gold emblem on the skirt",
+   "tags": [
+    "bottom"
+   ],
+   "group": "skirt",
+   "min_side": 96,
+   "regions": [],
+   "mask": "hints/star_fine/skirt_emblem.png",
+   "name": "skirt emblem",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "sidelock_r",
+   "prompt": "the long side lock of hair falling from beside the face down over the chest, light blue hair with lavender shading",
+   "tags": [
+    "hair",
+    "front",
+    "right"
+   ],
+   "group": "hair/side",
+   "regions": [],
+   "mask": "hints/star_fine/sidelock_r.png",
+   "name": "sidelock r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "sidelock_l",
+   "prompt": "the long side lock of hair falling from beside the face down over the chest, light blue hair with lavender shading",
+   "tags": [
+    "hair",
+    "front",
+    "left"
+   ],
+   "group": "hair/side",
+   "regions": [],
+   "mask": "hints/star_fine/sidelock_l.png",
+   "name": "sidelock l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "upperarm_r",
+   "prompt": "the base arm layer, the upper arm from the shoulder to the elbow, bare skin, drawn complete under the puffed sleeve",
+   "tags": [
+    "arm",
+    "right"
+   ],
+   "group": "arm/right",
+   "regions": [],
+   "mask": "hints/star_fine/upperarm_r.png",
+   "name": "upperarm r",
+   "loras": [
+    "aitk/split_v7e3.safetensors"
+   ]
+  },
+  {
+   "id": "forearm_r",
+   "prompt": "the base arm layer, the forearm from the elbow to the wrist, bare skin, drawn complete under the wrist cuff",
+   "tags": [
+    "arm",
+    "right"
+   ],
+   "group": "arm/right",
+   "regions": [],
+   "mask": "hints/star_fine/forearm_r.png",
+   "name": "forearm r",
+   "loras": [
+    "aitk/split_v7e3.safetensors"
+   ]
+  },
+  {
+   "id": "hand_r",
+   "prompt": "the base hand layer, the open relaxed hand with its fingers, bare skin",
+   "tags": [
+    "arm",
+    "right"
+   ],
+   "group": "arm/right",
+   "regions": [],
+   "mask": "hints/star_fine/hand_r.png",
+   "name": "hand r",
+   "loras": [
+    "aitk/split_v7e3.safetensors"
+   ]
+  },
+  {
+   "id": "sleeve_r",
+   "prompt": "the white puffed detached sleeve around the upper arm, without the navy arm band and its star",
+   "tags": [
+    "arm",
+    "right"
+   ],
+   "group": "arm/right",
+   "regions": [],
+   "mask": "hints/star_fine/sleeve_r.png",
+   "name": "sleeve r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "sleeve_frill_r",
+   "prompt": "the white frill with a thin navy band at the bottom of the puffed sleeve",
+   "tags": [
+    "arm",
+    "right"
+   ],
+   "group": "arm/right",
+   "regions": [],
+   "mask": "hints/star_fine/sleeve_frill_r.png",
+   "name": "sleeve frill r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "armband_r",
+   "prompt": "the dark navy arm band around the top of the puffed sleeve",
+   "tags": [
+    "arm",
+    "right"
+   ],
+   "group": "arm/right",
+   "regions": [],
+   "mask": "hints/star_fine/armband_r.png",
+   "name": "armband r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "armband_ribbon_r",
+   "prompt": "the navy ribbon tail hanging from the arm band",
+   "tags": [
+    "arm",
+    "right"
+   ],
+   "group": "arm/right",
+   "min_side": 128,
+   "regions": [],
+   "mask": "hints/star_fine/armband_ribbon_r.png",
+   "name": "armband ribbon r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "armband_star_r",
+   "prompt": "the gold four-pointed star ornament with a blue gem on the arm band",
+   "tags": [
+    "arm",
+    "right"
+   ],
+   "group": "arm/right",
+   "min_side": 96,
+   "regions": [],
+   "mask": "hints/star_fine/armband_star_r.png",
+   "name": "armband star r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "cuff_ribbon_r",
+   "prompt": "the navy ribbon tail hanging from the wrist cuff",
+   "tags": [
+    "arm",
+    "right"
+   ],
+   "group": "arm/right",
+   "min_side": 128,
+   "regions": [],
+   "mask": "hints/star_fine/cuff_ribbon_r.png",
+   "name": "cuff ribbon r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "cuff_frill_r",
+   "prompt": "the white frill of the wrist cuff",
+   "tags": [
+    "arm",
+    "right"
+   ],
+   "group": "arm/right",
+   "min_side": 128,
+   "regions": [],
+   "mask": "hints/star_fine/cuff_frill_r.png",
+   "name": "cuff frill r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "cuff_r",
+   "prompt": "the dark navy wrist cuff around the wrist",
+   "tags": [
+    "arm",
+    "right"
+   ],
+   "group": "arm/right",
+   "min_side": 128,
+   "regions": [],
+   "mask": "hints/star_fine/cuff_r.png",
+   "name": "cuff r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "cuff_star_r",
+   "prompt": "the gold four-pointed star ornament with a blue gem on the wrist cuff",
+   "tags": [
+    "arm",
+    "right"
+   ],
+   "group": "arm/right",
+   "min_side": 96,
+   "regions": [],
+   "mask": "hints/star_fine/cuff_star_r.png",
+   "name": "cuff star r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "upperarm_l",
+   "prompt": "the base arm layer, the upper arm from the shoulder to the elbow, bare skin, drawn complete under the puffed sleeve",
+   "tags": [
+    "arm",
+    "left"
+   ],
+   "group": "arm/left",
+   "regions": [],
+   "mask": "hints/star_fine/upperarm_l.png",
+   "name": "upperarm l",
+   "loras": [
+    "aitk/split_v7e3.safetensors"
+   ]
+  },
+  {
+   "id": "forearm_l",
+   "prompt": "the base arm layer, the forearm from the elbow to the wrist, bare skin, drawn complete under the wrist cuff",
+   "tags": [
+    "arm",
+    "left"
+   ],
+   "group": "arm/left",
+   "regions": [],
+   "mask": "hints/star_fine/forearm_l.png",
+   "name": "forearm l",
+   "loras": [
+    "aitk/split_v7e3.safetensors"
+   ]
+  },
+  {
+   "id": "hand_l",
+   "prompt": "the base hand layer, the open relaxed hand with its fingers, bare skin",
+   "tags": [
+    "arm",
+    "left"
+   ],
+   "group": "arm/left",
+   "regions": [],
+   "mask": "hints/star_fine/hand_l.png",
+   "name": "hand l",
+   "loras": [
+    "aitk/split_v7e3.safetensors"
+   ]
+  },
+  {
+   "id": "sleeve_l",
+   "prompt": "the white puffed detached sleeve around the upper arm, without the navy arm band and its star",
+   "tags": [
+    "arm",
+    "left"
+   ],
+   "group": "arm/left",
+   "regions": [],
+   "mask": "hints/star_fine/sleeve_l.png",
+   "name": "sleeve l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "sleeve_frill_l",
+   "prompt": "the white frill with a thin navy band at the bottom of the puffed sleeve",
+   "tags": [
+    "arm",
+    "left"
+   ],
+   "group": "arm/left",
+   "regions": [],
+   "mask": "hints/star_fine/sleeve_frill_l.png",
+   "name": "sleeve frill l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "armband_l",
+   "prompt": "the dark navy arm band around the top of the puffed sleeve",
+   "tags": [
+    "arm",
+    "left"
+   ],
+   "group": "arm/left",
+   "regions": [],
+   "mask": "hints/star_fine/armband_l.png",
+   "name": "armband l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "armband_ribbon_l",
+   "prompt": "the navy ribbon tail hanging from the arm band",
+   "tags": [
+    "arm",
+    "left"
+   ],
+   "group": "arm/left",
+   "min_side": 128,
+   "regions": [],
+   "mask": "hints/star_fine/armband_ribbon_l.png",
+   "name": "armband ribbon l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "armband_star_l",
+   "prompt": "the gold four-pointed star ornament with a blue gem on the arm band",
+   "tags": [
+    "arm",
+    "left"
+   ],
+   "group": "arm/left",
+   "min_side": 96,
+   "regions": [],
+   "mask": "hints/star_fine/armband_star_l.png",
+   "name": "armband star l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "cuff_ribbon_l",
+   "prompt": "the navy ribbon tail hanging from the wrist cuff",
+   "tags": [
+    "arm",
+    "left"
+   ],
+   "group": "arm/left",
+   "min_side": 128,
+   "regions": [],
+   "mask": "hints/star_fine/cuff_ribbon_l.png",
+   "name": "cuff ribbon l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "cuff_frill_l",
+   "prompt": "the white frill of the wrist cuff",
+   "tags": [
+    "arm",
+    "left"
+   ],
+   "group": "arm/left",
+   "min_side": 128,
+   "regions": [],
+   "mask": "hints/star_fine/cuff_frill_l.png",
+   "name": "cuff frill l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "cuff_l",
+   "prompt": "the dark navy wrist cuff around the wrist",
+   "tags": [
+    "arm",
+    "left"
+   ],
+   "group": "arm/left",
+   "min_side": 128,
+   "regions": [],
+   "mask": "hints/star_fine/cuff_l.png",
+   "name": "cuff l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "cuff_star_l",
+   "prompt": "the gold four-pointed star ornament with a blue gem on the wrist cuff",
+   "tags": [
+    "arm",
+    "left"
+   ],
+   "group": "arm/left",
+   "min_side": 96,
+   "regions": [],
+   "mask": "hints/star_fine/cuff_star_l.png",
+   "name": "cuff star l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "ear_r",
+   "prompt": "the ear",
+   "tags": [
+    "ear",
+    "right"
+   ],
+   "group": "head",
+   "min_side": 96,
+   "regions": [],
+   "mask": "hints/star_fine/ear_r.png",
+   "name": "ear r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "ear_l",
+   "prompt": "the ear",
+   "tags": [
+    "ear",
+    "left"
+   ],
+   "group": "head",
+   "min_side": 96,
+   "regions": [],
+   "mask": "hints/star_fine/ear_l.png",
+   "name": "ear l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "face",
+   "prompt": "the base face layer, bare skin with the blush only, no eyes, eyebrows, nose or mouth drawn on it",
+   "tags": [
+    "face"
+   ],
+   "group": "head",
+   "regions": [],
+   "mask": "hints/star_fine/face.png",
+   "name": "face",
+   "loras": [
+    "aitk/split_v7e3.safetensors"
+   ]
+  },
+  {
+   "id": "nose",
+   "prompt": "the nose, a tiny soft shading line",
+   "tags": [
+    "nose"
+   ],
+   "group": "head",
+   "min_side": 96,
+   "regions": [],
+   "mask": "hints/star_fine/nose.png",
+   "name": "nose",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "eyewhite_r",
+   "prompt": "the eye white, plain white almond shape",
+   "tags": [
+    "eye",
+    "white",
+    "right"
+   ],
+   "group": "head",
+   "box": [
+    439,
+    135,
+    80
+   ],
+   "regions": [],
+   "mask": "hints/star_fine/eyewhite_r.png",
+   "name": "eyewhite r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "iris_r",
+   "prompt": "the iris with its pupil, blue",
+   "tags": [
+    "eye",
+    "iris",
+    "right"
+   ],
+   "group": "head",
+   "box": [
+    439,
+    135,
+    80
+   ],
+   "regions": [],
+   "mask": "hints/star_fine/iris_r.png",
+   "name": "iris r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "highlight_r",
+   "prompt": "the white highlights of the iris",
+   "tags": [
+    "eye",
+    "highlight",
+    "right"
+   ],
+   "group": "head",
+   "box": [
+    439,
+    135,
+    80
+   ],
+   "regions": [],
+   "mask": "hints/star_fine/highlight_r.png",
+   "name": "highlight r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "lash_r",
+   "prompt": "the upper eyelash and eyelid line, dark brown",
+   "tags": [
+    "eye",
+    "lash",
+    "right"
+   ],
+   "group": "head",
+   "box": [
+    439,
+    135,
+    80
+   ],
+   "regions": [],
+   "mask": "hints/star_fine/lash_r.png",
+   "name": "lash r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "lash_lower_r",
+   "prompt": "the thin lower eyelash line",
+   "tags": [
+    "eye",
+    "lash",
+    "lower",
+    "right"
+   ],
+   "group": "head",
+   "box": [
+    439,
+    135,
+    80
+   ],
+   "regions": [],
+   "mask": "hints/star_fine/lash_lower_r.png",
+   "name": "lash lower r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "eyewhite_l",
+   "prompt": "the eye white, plain white almond shape",
+   "tags": [
+    "eye",
+    "white",
+    "left"
+   ],
+   "group": "head",
+   "box": [
+    512,
+    133,
+    80
+   ],
+   "regions": [],
+   "mask": "hints/star_fine/eyewhite_l.png",
+   "name": "eyewhite l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "iris_l",
+   "prompt": "the iris with its pupil, blue",
+   "tags": [
+    "eye",
+    "iris",
+    "left"
+   ],
+   "group": "head",
+   "box": [
+    512,
+    133,
+    80
+   ],
+   "regions": [],
+   "mask": "hints/star_fine/iris_l.png",
+   "name": "iris l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "highlight_l",
+   "prompt": "the white highlights of the iris",
+   "tags": [
+    "eye",
+    "highlight",
+    "left"
+   ],
+   "group": "head",
+   "box": [
+    512,
+    133,
+    80
+   ],
+   "regions": [],
+   "mask": "hints/star_fine/highlight_l.png",
+   "name": "highlight l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "lash_l",
+   "prompt": "the upper eyelash and eyelid line, dark brown",
+   "tags": [
+    "eye",
+    "lash",
+    "left"
+   ],
+   "group": "head",
+   "box": [
+    512,
+    133,
+    80
+   ],
+   "regions": [],
+   "mask": "hints/star_fine/lash_l.png",
+   "name": "lash l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "lash_lower_l",
+   "prompt": "the thin lower eyelash line",
+   "tags": [
+    "eye",
+    "lash",
+    "lower",
+    "left"
+   ],
+   "group": "head",
+   "box": [
+    512,
+    133,
+    80
+   ],
+   "regions": [],
+   "mask": "hints/star_fine/lash_lower_l.png",
+   "name": "lash lower l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "brow_r",
+   "prompt": "the eyebrow, a thin light blue arc",
+   "tags": [
+    "brow",
+    "right"
+   ],
+   "group": "head",
+   "min_side": 96,
+   "regions": [],
+   "mask": "hints/star_fine/brow_r.png",
+   "name": "brow r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "brow_l",
+   "prompt": "the eyebrow, a thin light blue arc",
+   "tags": [
+    "brow",
+    "left"
+   ],
+   "group": "head",
+   "min_side": 96,
+   "regions": [],
+   "mask": "hints/star_fine/brow_l.png",
+   "name": "brow l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "mouth",
+   "prompt": "the open mouth with its lips, teeth and tongue",
+   "tags": [
+    "mouth"
+   ],
+   "group": "head",
+   "min_side": 128,
+   "grow_hint": 0.04,
+   "source": "art/star_lan_open_s4.png",
+   "regions": [],
+   "mask": "hints/star_fine/mouth.png",
+   "name": "mouth",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "earring_r",
+   "prompt": "the dangling gold earring with a small star",
+   "tags": [
+    "ear",
+    "accessory",
+    "right"
+   ],
+   "group": "head",
+   "min_side": 96,
+   "regions": [],
+   "mask": "hints/star_fine/earring_r.png",
+   "name": "earring r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "earring_l",
+   "prompt": "the dangling gold earring with a small star",
+   "tags": [
+    "ear",
+    "accessory",
+    "left"
+   ],
+   "group": "head",
+   "min_side": 96,
+   "regions": [],
+   "mask": "hints/star_fine/earring_l.png",
+   "name": "earring l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "braid_r",
+   "prompt": "the braid on the side of the head, light blue hair with lavender shading",
+   "tags": [
+    "hair",
+    "back",
+    "right"
+   ],
+   "group": "hair/front",
+   "regions": [],
+   "mask": "hints/star_fine/braid_r.png",
+   "name": "braid r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "braid_l",
+   "prompt": "the braid on the side of the head behind the hair ornament, light blue hair with lavender shading",
+   "tags": [
+    "hair",
+    "back",
+    "left"
+   ],
+   "group": "hair/front",
+   "regions": [],
+   "mask": "hints/star_fine/braid_l.png",
+   "name": "braid l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "crown_top",
+   "prompt": "the hair on the crown of the head, light blue hair with lavender shading",
+   "tags": [
+    "hair",
+    "front"
+   ],
+   "group": "hair/front",
+   "regions": [],
+   "mask": "hints/star_fine/crown_top.png",
+   "name": "crown top",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "crown_r",
+   "prompt": "the strand sweeping from the crown down the side of the head, light blue hair with lavender shading",
+   "tags": [
+    "hair",
+    "front",
+    "right"
+   ],
+   "group": "hair/front",
+   "regions": [],
+   "mask": "hints/star_fine/crown_r.png",
+   "name": "crown r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "crown_l",
+   "prompt": "the strand sweeping from the crown down the side of the head, light blue hair with lavender shading",
+   "tags": [
+    "hair",
+    "front",
+    "left"
+   ],
+   "group": "hair/front",
+   "regions": [],
+   "mask": "hints/star_fine/crown_l.png",
+   "name": "crown l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "bang_r",
+   "prompt": "the front hair strand over the eye, light blue hair with lavender shading",
+   "tags": [
+    "hair",
+    "front",
+    "right"
+   ],
+   "group": "hair/front",
+   "regions": [],
+   "mask": "hints/star_fine/bang_r.png",
+   "name": "bang r",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "bang_l",
+   "prompt": "the front hair strand over the eye, light blue hair with lavender shading",
+   "tags": [
+    "hair",
+    "front",
+    "left"
+   ],
+   "group": "hair/front",
+   "regions": [],
+   "mask": "hints/star_fine/bang_l.png",
+   "name": "bang l",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "bang_mid_thin",
+   "prompt": "the thin front hair strand beside the middle strand, light blue hair with lavender shading",
+   "tags": [
+    "hair",
+    "front"
+   ],
+   "group": "hair/front",
+   "regions": [],
+   "mask": "hints/star_fine/bang_mid_thin.png",
+   "name": "bang mid thin",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "bang_mid",
+   "prompt": "the middle front hair strand falling between the eyes, light blue hair with lavender shading",
+   "tags": [
+    "hair",
+    "front"
+   ],
+   "group": "hair/front",
+   "regions": [],
+   "mask": "hints/star_fine/bang_mid.png",
+   "name": "bang mid",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "ahoge",
+   "prompt": "the long thin ahoge, a loop of hair rising from the crown and arching over to the side, light blue hair with lavender shading",
+   "tags": [
+    "hair",
+    "front"
+   ],
+   "group": "hair/front",
+   "regions": [],
+   "mask": "hints/star_fine/ahoge.png",
+   "name": "ahoge",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "hair_ribbon",
+   "prompt": "the long dark navy ribbon with a gold chain hanging from the hair ornament",
+   "tags": [
+    "headwear"
+   ],
+   "group": "headwear",
+   "regions": [],
+   "mask": "hints/star_fine/hair_ribbon.png",
+   "name": "hair ribbon",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "crescent",
+   "prompt": "the gold crescent moon hair ornament",
+   "tags": [
+    "headwear"
+   ],
+   "group": "headwear",
+   "min_side": 128,
+   "regions": [],
+   "mask": "hints/star_fine/crescent.png",
+   "name": "crescent",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "crescent_star",
+   "prompt": "the small gold star on the crescent hair ornament",
+   "tags": [
+    "headwear"
+   ],
+   "group": "headwear",
+   "min_side": 96,
+   "regions": [],
+   "mask": "hints/star_fine/crescent_star.png",
+   "name": "crescent star",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  },
+  {
+   "id": "hair_pins",
+   "prompt": "the small gold star hair pins beside the crescent ornament",
+   "tags": [
+    "headwear"
+   ],
+   "group": "headwear",
+   "min_side": 96,
+   "regions": [],
+   "mask": "hints/star_fine/hair_pins.png",
+   "name": "hair pins",
+   "loras": [
+    "aitk/split_v7e2.safetensors"
+   ]
+  }
+ ]
+}

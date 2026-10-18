@@ -64,7 +64,7 @@ def edit_graph(image: str, prompt: str, width: int, height: int, lora: str | Non
     vae = g("VAELoader", vae_name=VAE)
     positive = g("CLIPTextEncode", clip=clip, text=prompt)
     negative = g("ConditioningZeroOut", conditioning=positive)
-    for picture in (image, *refs):
+    for picture in (p for p in (image, *refs) if p is not None):  # no image: text to picture
         reference = g("VAEEncode", pixels=g.load(picture), vae=vae)
         positive = g("ReferenceLatent", conditioning=positive, latent=reference)
         if cfg != 1.0:

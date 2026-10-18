@@ -1,0 +1,35 @@
+{
+ "image": "art/tml.png",
+ "plan": "plan/tml",
+ "loras": [
+  "aitk/split_v7e2.safetensors",
+  "aitk/split_v7e3.safetensors"
+ ],
+ "seeds": [
+  1,
+  2,
+  3,
+  4,
+  5,
+  6
+ ],
+ "layers": [
+  {
+   "id": "top3",
+   "name": "top",
+   "tags": [
+    "top"
+   ],
+   "regions": [
+    "25",
+    "48",
+    "40",
+    "81",
+    "57",
+    "49"
+   ],
+   "whole": false,
+   "prompt": "the black dress bodice with the white apron bib and its shoulder frills, without the sleeves"
+  }
+ ]
+}

@@ -1,0 +1,165 @@
+{
+ "image": "art/tml.png",
+ "plan": "plan/tml",
+ "loras": [
+  "aitk/split_v7e2.safetensors",
+  "aitk/split_v7e3.safetensors"
+ ],
+ "seeds": [
+  1,
+  2,
+  3,
+  4,
+  5,
+  6
+ ],
+ "layers": [
+  {
+   "id": "eyewhite_r2",
+   "name": "eyewhite right",
+   "tags": [
+    "eye",
+    "white",
+    "right"
+   ],
+   "regions": [
+    "66"
+   ],
+   "whole": true,
+   "prompt": "the eye white, plain white almond shape"
+  },
+  {
+   "id": "eyewhite_l2",
+   "name": "eyewhite left",
+   "tags": [
+    "eye",
+    "white",
+    "left"
+   ],
+   "regions": [
+    "71"
+   ],
+   "whole": true,
+   "prompt": "the eye white, plain white almond shape"
+  },
+  {
+   "id": "lash_r2",
+   "name": "eyelash right",
+   "tags": [
+    "eye",
+    "lash",
+    "right"
+   ],
+   "regions": [
+    "70"
+   ],
+   "prompt": "the upper eyelash, dark reddish brown"
+  },
+  {
+   "id": "lash_l2",
+   "name": "eyelash left",
+   "tags": [
+    "eye",
+    "lash",
+    "left"
+   ],
+   "regions": [
+    "75"
+   ],
+   "prompt": "the upper eyelash, dark reddish brown"
+  },
+  {
+   "id": "brow_r2",
+   "name": "eyebrow right",
+   "tags": [
+    "brow",
+    "right"
+   ],
+   "regions": [],
+   "prompt": "the eyebrow, thin white arc with a grey outline",
+   "poly": [
+    [
+     [
+      914,
+      295
+     ],
+     [
+      989,
+      295
+     ],
+     [
+      989,
+      317
+     ],
+     [
+      914,
+      317
+     ]
+    ]
+   ]
+  },
+  {
+   "id": "brow_l2",
+   "name": "eyebrow left",
+   "tags": [
+    "brow",
+    "left"
+   ],
+   "regions": [],
+   "prompt": "the eyebrow, thin white arc with a grey outline",
+   "poly": [
+    [
+     [
+      1055,
+      293
+     ],
+     [
+      1130,
+      293
+     ],
+     [
+      1130,
+      317
+     ],
+     [
+      1055,
+      317
+     ]
+    ]
+   ]
+  },
+  {
+   "id": "top2",
+   "name": "top",
+   "tags": [
+    "top"
+   ],
+   "regions": [
+    "10",
+    "15",
+    "16",
+    "25",
+    "40",
+    "48",
+    "49",
+    "57",
+    "81"
+   ],
+   "whole": true,
+   "prompt": "the black dress bodice with the white apron bib and its shoulder frills, without the sleeves"
+  },
+  {
+   "id": "skirt2",
+   "name": "skirt",
+   "tags": [
+    "bottom"
+   ],
+   "regions": [
+    "63",
+    "59"
+   ],
+   "whole": true,
+   "prompt": "the black skirt with its iridescent hem band, without the apron"
+  }
+ ]
+}

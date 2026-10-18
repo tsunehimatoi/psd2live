@@ -1,0 +1,40 @@
+{
+ "image": "art/tml.png",
+ "plan": "plan/tml",
+ "loras": [
+  "aitk/split_v7e2.safetensors",
+  "aitk/split_v7e3.safetensors"
+ ],
+ "seeds": [
+  1,
+  2,
+  3,
+  4,
+  5,
+  6
+ ],
+ "layers": [
+  {
+   "id": "front_hair2",
+   "name": "front hair",
+   "tags": [
+    "hair",
+    "front"
+   ],
+   "regions": [
+    "31",
+    "89",
+    "90",
+    "92",
+    "95",
+    "91",
+    "94",
+    "50",
+    "65",
+    "74"
+   ],
+   "whole": false,
+   "prompt": "the front hair, white locks parted in the middle and swept to both sides, the forehead left bare"
+  }
+ ]
+}

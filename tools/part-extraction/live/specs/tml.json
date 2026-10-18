@@ -1,0 +1,423 @@
+{
+ "image": "art/tml.png",
+ "plan": "plan/tml",
+ "loras": [
+  "aitk/split_v7e2.safetensors",
+  "aitk/split_v7e3.safetensors"
+ ],
+ "seeds": [
+  1,
+  2,
+  3,
+  4,
+  5,
+  6
+ ],
+ "layers": [
+  {
+   "id": "back_hair",
+   "name": "back hair",
+   "tags": [
+    "hair",
+    "back"
+   ],
+   "regions": [
+    "tag:back_hair",
+    "19",
+    "43",
+    "33"
+   ],
+   "whole": true,
+   "prompt": "the back hair"
+  },
+  {
+   "id": "leg_r",
+   "name": "leg right",
+   "tags": [
+    "leg",
+    "right"
+   ],
+   "regions": [
+    "06"
+   ],
+   "whole": true,
+   "prompt": "the base leg layer, with the stockings or tights painted on it"
+  },
+  {
+   "id": "leg_l",
+   "name": "leg left",
+   "tags": [
+    "leg",
+    "left"
+   ],
+   "regions": [
+    "05"
+   ],
+   "whole": true,
+   "prompt": "the base leg layer, with the stockings or tights painted on it"
+  },
+  {
+   "id": "shoe_r",
+   "name": "shoe right",
+   "tags": [
+    "foot",
+    "right"
+   ],
+   "regions": [
+    "52"
+   ],
+   "prompt": "the shoe"
+  },
+  {
+   "id": "shoe_l",
+   "name": "shoe left",
+   "tags": [
+    "foot",
+    "left"
+   ],
+   "regions": [
+    "53"
+   ],
+   "prompt": "the shoe"
+  },
+  {
+   "id": "neck",
+   "name": "neck",
+   "tags": [
+    "neck"
+   ],
+   "regions": [
+    "11",
+    "30"
+   ],
+   "whole": true,
+   "prompt": "the base neck layer, drawn complete under the clothes"
+  },
+  {
+   "id": "skirt",
+   "name": "skirt",
+   "tags": [
+    "bottom"
+   ],
+   "regions": [
+    "63",
+    "59"
+   ],
+   "whole": true,
+   "prompt": "the blue skirt, drawn complete under the apron"
+  },
+  {
+   "id": "top",
+   "name": "top",
+   "tags": [
+    "top"
+   ],
+   "regions": [
+    "10",
+    "15",
+    "16",
+    "25",
+    "40",
+    "48",
+    "49",
+    "57",
+    "81"
+   ],
+   "whole": true,
+   "prompt": "the top clothing"
+  },
+  {
+   "id": "apron",
+   "name": "apron",
+   "tags": [
+    "bottom",
+    "apron"
+   ],
+   "regions": [
+    "61",
+    "73",
+    "72",
+    "86"
+   ],
+   "prompt": "the white apron with its waistband"
+  },
+  {
+   "id": "arm_r",
+   "name": "arm right",
+   "tags": [
+    "arm",
+    "right"
+   ],
+   "regions": [
+    "56",
+    "64",
+    "68",
+    "62",
+    "79",
+    "29",
+    "37",
+    "tag:hand:l"
+   ],
+   "whole": true,
+   "prompt": "the arm in its sleeve, with the hand"
+  },
+  {
+   "id": "arm_l",
+   "name": "arm left",
+   "tags": [
+    "arm",
+    "left"
+   ],
+   "regions": [
+    "60",
+    "69",
+    "55",
+    "67",
+    "76",
+    "17",
+    "22",
+    "tag:hand:r"
+   ],
+   "whole": true,
+   "prompt": "the arm in its sleeve, with the hand"
+  },
+  {
+   "id": "neckwear",
+   "name": "neckwear",
+   "tags": [
+    "neck",
+    "accessory"
+   ],
+   "regions": [
+    "35",
+    "39",
+    "51"
+   ],
+   "prompt": "the collar or neckwear"
+  },
+  {
+   "id": "ear_r",
+   "name": "ear right",
+   "tags": [
+    "ear",
+    "right"
+   ],
+   "regions": [
+    "44"
+   ],
+   "whole": true,
+   "prompt": "the ear"
+  },
+  {
+   "id": "ear_l",
+   "name": "ear left",
+   "tags": [
+    "ear",
+    "left"
+   ],
+   "regions": [
+    "45"
+   ],
+   "whole": true,
+   "prompt": "the ear"
+  },
+  {
+   "id": "face",
+   "name": "face",
+   "tags": [
+    "face"
+   ],
+   "regions": [
+    "46"
+   ],
+   "whole": true,
+   "prompt": "the base face layer"
+  },
+  {
+   "id": "eyewhite_r",
+   "name": "eyewhite right",
+   "tags": [
+    "eye",
+    "white",
+    "right"
+   ],
+   "regions": [
+    "66"
+   ],
+   "whole": true,
+   "prompt": "the eye white"
+  },
+  {
+   "id": "eyewhite_l",
+   "name": "eyewhite left",
+   "tags": [
+    "eye",
+    "white",
+    "left"
+   ],
+   "regions": [
+    "71"
+   ],
+   "whole": true,
+   "prompt": "the eye white"
+  },
+  {
+   "id": "iris_r",
+   "name": "iris right",
+   "tags": [
+    "eye",
+    "iris",
+    "right"
+   ],
+   "regions": [
+    "78",
+    "85"
+   ],
+   "whole": true,
+   "prompt": "the iris with its pupil and highlights"
+  },
+  {
+   "id": "iris_l",
+   "name": "iris left",
+   "tags": [
+    "eye",
+    "iris",
+    "left"
+   ],
+   "regions": [
+    "77",
+    "82"
+   ],
+   "whole": true,
+   "prompt": "the iris with its pupil and highlights"
+  },
+  {
+   "id": "lash_r",
+   "name": "eyelash right",
+   "tags": [
+    "eye",
+    "lash",
+    "right"
+   ],
+   "regions": [
+    "70"
+   ],
+   "prompt": "the eyelid layers (eyelashes, lid lines and eyelid skin)"
+  },
+  {
+   "id": "lash_l",
+   "name": "eyelash left",
+   "tags": [
+    "eye",
+    "lash",
+    "left"
+   ],
+   "regions": [
+    "75"
+   ],
+   "prompt": "the eyelid layers (eyelashes, lid lines and eyelid skin)"
+  },
+  {
+   "id": "brow_r",
+   "name": "eyebrow right",
+   "tags": [
+    "brow",
+    "right"
+   ],
+   "regions": [
+    "80"
+   ],
+   "prompt": "the eyebrow"
+  },
+  {
+   "id": "brow_l",
+   "name": "eyebrow left",
+   "tags": [
+    "brow",
+    "left"
+   ],
+   "regions": [
+    "88"
+   ],
+   "prompt": "the eyebrow"
+  },
+  {
+   "id": "mouth",
+   "name": "mouth",
+   "tags": [
+    "mouth"
+   ],
+   "regions": [
+    "54",
+    "47"
+   ],
+   "prompt": "the open mouth with its lips, teeth and tongue"
+  },
+  {
+   "id": "side_hair_r",
+   "name": "side hair right",
+   "tags": [
+    "hair",
+    "front",
+    "right",
+    "side"
+   ],
+   "regions": [
+    "83"
+   ],
+   "whole": true,
+   "prompt": "the side locks of hair"
+  },
+  {
+   "id": "side_hair_l",
+   "name": "side hair left",
+   "tags": [
+    "hair",
+    "front",
+    "left",
+    "side"
+   ],
+   "regions": [
+    "84"
+   ],
+   "whole": true,
+   "prompt": "the side locks of hair"
+  },
+  {
+   "id": "front_hair",
+   "name": "front hair",
+   "tags": [
+    "hair",
+    "front"
+   ],
+   "regions": [
+    "31",
+    "89",
+    "90",
+    "92",
+    "95",
+    "91",
+    "94",
+    "50",
+    "65",
+    "74"
+   ],
+   "whole": true,
+   "prompt": "the front hair (bangs)"
+  },
+  {
+   "id": "headwear",
+   "name": "headwear",
+   "tags": [
+    "headwear"
+   ],
+   "regions": [
+    "96",
+    "97",
+    "87",
+    "93"
+   ],
+   "prompt": "the headwear or hair ornament"
+  }
+ ]
+}

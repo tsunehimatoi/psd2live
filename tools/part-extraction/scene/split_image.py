@@ -366,6 +366,7 @@ def main():
     ap.add_argument("--planner4", help="planner v4 (train_planner4.py): every part's layers, planned in close-ups")
     ap.add_argument("--planner5", help="planner v5 (train_planner5.py): every layer, shown or covered, planned in tiles")
     ap.add_argument("--grain", choices=("part", "group", "unit"), default="unit", help="how finely planner v4 splits")
+    ap.add_argument("--finest", action="store_true", help="planner v5: eighth tiles over the whole figure too (finer pieces)")
     ap.add_argument("--plan-only", action="store_true", help="write the plan (plan.png, regions/, plan.json) and stop")
     ap.add_argument("--lora")
     ap.add_argument("--min", type=int, default=400)
@@ -393,6 +394,7 @@ def main():
         classes = run.classes
     if a.planner5:
         import plan5
+        plan5.FINEST = a.finest
         run = plan5.Planner5Run(Path(a.planner5))
         leaves, tags = plan5.plan_layers(image, silhouette, run, a.grain, a.min)
         classes = run.classes
