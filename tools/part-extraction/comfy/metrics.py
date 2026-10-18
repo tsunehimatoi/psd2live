@@ -6,9 +6,10 @@ usage: python metrics.py LORA OUT_DIR TEST_DIR [MODE ...]
 
 Masks come from the flat gray background (pixels away from it belong to the part); they only score, nothing here
 touches the images a pipeline would use. Per part and mode: IoU of the masks, the offset between their centroids
-(pixels and fraction of the frame), mean colour error inside the true part, the IoU over the true part's hidden
-area (where the input does not show it), which is the completion the model had to invent, and the residue: the share
-of the true part the prediction draws much darker, left over from layers drawn over it.
+(pixels and fraction of the frame), mean colour error inside the true part, the completion the model had to invent
+where the input does not show the part as the truth draws it: the IoU of the masks there (hidden_iou, which also counts
+paint spilt onto what covered the part) and the share of the true hidden part drawn at all (hidden_recall), and the
+residue: the share of the true part the prediction draws but much darker, left over from layers drawn over it.
 """
 import json
 import os
@@ -38,7 +39,8 @@ def score(pred: np.ndarray, truth: np.ndarray, visible: np.ndarray) -> dict:
     union = (p | t).sum()
     iou = float((p & t).sum() / union) if union else 1.0
     hidden = t & ~visible
-    hidden_iou = float((p & hidden).sum() / (p & hidden | hidden).sum()) if hidden.sum() > 20 else None
+    hidden_iou = float((p & hidden).sum() / ((p | t) & ~visible).sum()) if hidden.sum() > 20 else None
+    hidden_recall = float((p & hidden).sum() / hidden.sum()) if hidden.sum() > 20 else None
     if p.sum() and t.sum():
         py, px = np.argwhere(p).mean(axis=0)
         ty, tx = np.argwhere(t).mean(axis=0)
@@ -46,11 +48,11 @@ def score(pred: np.ndarray, truth: np.ndarray, visible: np.ndarray) -> dict:
     else:
         offset = None
     colour = float(np.abs(pred[t].astype(np.int16) - truth[t].astype(np.int16)).mean()) if t.sum() else None
-    # Residue: share of the true part where the prediction is much darker than the truth, which is what is left of
-    # other layers drawn over it (eyes, brows and a mouth on a bare face, a strap's line on a sleeve).
+    # Residue: share of the true part the prediction draws much darker than the truth, which is what is left of other
+    # layers drawn over it (eyes, brows and a mouth on a bare face, a strap's line on a sleeve); parts left out are not.
     lum = lambda a: a.astype(np.float32) @ np.array([0.299, 0.587, 0.114], np.float32)
-    residue = float(((lum(truth) - lum(pred)) > 60)[t].mean()) if t.sum() else None
-    return {"iou": iou, "hidden_iou": hidden_iou, "offset_px": offset,
+    residue = float((((lum(truth) - lum(pred)) > 60) & p)[t].mean()) if t.sum() else None
+    return {"iou": iou, "hidden_iou": hidden_iou, "hidden_recall": hidden_recall, "offset_px": offset,
             "offset_frac": offset / pred.shape[0] if offset is not None else None, "colour_err": colour,
             "residue": residue}
 

@@ -2,6 +2,7 @@
 per tag.
 
 usage: python node_metrics.py LORA OUT_DIR TEST_DIR [PER_TAG] [--sheet] [--soft | --soften F] [--layered] [--by kind|tier]
+                              [--rescore]
   LORA is relative to ComfyUI's loras folder ("none" runs the bare model). PER_TAG rest-pose nodes per tag (6).
   Runs the distilled model, 4 steps, with the close-up and the hint as references; writes metrics.jsonl, a summary
   per tag and, with --sheet, sheet.png (input, hint, prediction, truth per row). --soft reads each close-up from a
@@ -11,7 +12,8 @@ usage: python node_metrics.py LORA OUT_DIR TEST_DIR [PER_TAG] [--sheet] [--soft 
   --soften F reads each close-up from an F times smaller picture made here (JPEG-compressed for half of them), for any
   close-up still 64 pixels a side at that size. --by kind sums up by node kind (a whole tag, a named group, a single
   piece, a layered picture), --by tier by how sharp the model is drawn (low, mid, high), choosing PER_TAG nodes per tag
-  of each; both read make_node_pairs.py's test/meta.jsonl or the fields in prompts.jsonl.
+  of each; both read make_node_pairs.py's test/meta.jsonl or the fields in prompts.jsonl. --rescore scores the
+  predictions an earlier run with the same options left in OUT_DIR again, without ComfyUI.
 """
 import io
 import json
@@ -78,19 +80,25 @@ def main():
         if r["name"].endswith("_0") and soft_ok and count[key] < per_tag:
             chosen.append(r)
             count[key] += 1
-    c = client(timeout=900)
+    rescore = "--rescore" in sys.argv
+    c = None if rescore else client(timeout=900)
     rows, cells = [], []
     for r in chosen:
         inp_path, hint_path, truth_path = (test / f"{r['name']}_{k}.png" for k in
                                            ("input_soft" if "--soft" in sys.argv else "input", "hint", "target"))
-        if factor:
+        if factor and rescore:
+            inp_path = out / "inputs" / inp_path.name.replace("_input", f"_input_x{factor:g}")
+        elif factor:
             inp_path = softened(inp_path, factor, out)
         inp = np.asarray(Image.open(inp_path).convert("RGB"))
         h, w = inp.shape[:2]
-        a = c.upload(inp_path, f"l2d_node_{inp_path.name}")
-        b = c.upload(hint_path, f"l2d_node_{hint_path.name}")
-        files = c.run(l2d.edit_graph(a, r["prompt"], w, h, lora=None if lora == "none" else lora, refs=(b,),
-                                     name=f"node_{r['name']}"), out, f"pred_{r['name']}")
+        if rescore:
+            files = sorted(out.glob(f"pred_{r['name']}_node_*.png"))[-1:]
+        else:
+            a = c.upload(inp_path, f"l2d_node_{inp_path.name}")
+            b = c.upload(hint_path, f"l2d_node_{hint_path.name}")
+            files = c.run(l2d.edit_graph(a, r["prompt"], w, h, lora=None if lora == "none" else lora, refs=(b,),
+                                         name=f"node_{r['name']}"), out, f"pred_{r['name']}")
         pred = np.asarray(Image.open(files[0]).convert("RGB").resize((w, h)))
         truth = np.asarray(Image.open(truth_path).convert("RGB"))
         sharp = np.asarray(Image.open(test / f"{r['name']}_input.png").convert("RGB"))  # what shows, from the sharp close-up
@@ -103,9 +111,9 @@ def main():
     for r in rows:
         by_tag[r["group"]].append(r)
     avg = lambda rs, k: np.mean([r[k] for r in rs if r[k] is not None]) if any(r[k] is not None for r in rs) else float("nan")
-    lines = [f"{by if not layered else 'asked for':14}{'n':>4}{'IoU':>7}{'hidden':>8}{'colour':>8}{'residue':>9}"]
+    lines = [f"{by if not layered else 'asked for':14}{'n':>4}{'IoU':>7}{'hidden':>8}{'drawn':>7}{'colour':>8}{'residue':>9}"]
     line = lambda name, rs: (f"{name:14}{len(rs):4}{avg(rs, 'iou'):7.3f}{avg(rs, 'hidden_iou'):8.3f}"
-                             f"{avg(rs, 'colour_err'):8.1f}{avg(rs, 'residue'):9.3f}")
+                             f"{avg(rs, 'hidden_recall'):7.3f}{avg(rs, 'colour_err'):8.1f}{avg(rs, 'residue'):9.3f}")
     for tag, rs in sorted(by_tag.items()):
         lines.append(line(tag, rs))
     lines.append(line("all", rows))
