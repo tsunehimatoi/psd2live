@@ -24,12 +24,18 @@ class UserMeshVersusSkeletonScenario {
 
 	@Test fun skeletonThenRebuild() = scenario(rebuildFirst = false)
 
-	private fun scenario(rebuildFirst: Boolean) = Studio.run(temp, Characters.figure()) {
+	/**
+	 * On a large canvas the bones' blend shapes are large too; sampling them onto the user's vertices must not read as
+	 * the user's own change and conflict when a bone moves. 3990², about a full-body Live2D PSD.
+	 */
+	@Test fun skeletonThenRebuildOnALargeCanvas() = scenario(rebuildFirst = false, scale = 9.5f)
+
+	private fun scenario(rebuildFirst: Boolean, scale: Float = 1f) = Studio.run(temp, Characters.figure(scale = scale)) {
 		val generated = puppet.drawables.single { it.id.raw == mesh("sleeve_l") }.mesh!!.vertexCount
-		if (rebuildFirst) { rebuildSleeve(); skeleton() } else { skeleton(); rebuildSleeve() }
+		if (rebuildFirst) { rebuildSleeve(); skeleton(scale = scale) } else { skeleton(scale = scale); rebuildSleeve() }
 		expect("user topology", puppet.drawables.single { it.id.raw == mesh("sleeve_l") }.mesh!!.vertexCount > generated) { "the sleeve lost the user's topology" }
 		assertSkinned("both applied")
-		skeleton(elbow = 310f, name = "move the elbow")
+		skeleton(elbow = 310f, scale = scale, name = "move the elbow")
 		assertSkinned("elbow moved")
 		expect("update generated rig", !updateGenerated()) { "a settled rig still had something to update" }
 		reopen()
@@ -64,15 +70,16 @@ class UserMeshVersusSkeletonScenario {
 		expect("second update", !updateGenerated("update again")) { "a repaired rig still had something to update" }
 	}
 
-	private fun Studio.spec(elbow: Float) = SkeletonSpec(bones = listOf(
-		SkeletonBone("upper", "Upper body", null, BoneRole.UPPER_BODY, Side.NONE, 210f, 240f, 210f, 115f, listOf(mesh("top"))),
-		SkeletonBone("lower", "Lower body", null, BoneRole.LOWER_BODY, Side.NONE, 210f, 240f, 210f, 290f, listOf(mesh("skirt"))),
-		SkeletonBone("armL", "Upper arm", "upper", BoneRole.UPPER_ARM, Side.LEFT, 262f, 134f, elbow, 134f, listOf(mesh("sleeve_l"))),
-		SkeletonBone("foreL", "Forearm", "armL", BoneRole.FOREARM, Side.LEFT, elbow, 134f, 340f, 134f),
+	/** The figure's bones, at [scale] as [Characters.figure] scales the art. */
+	private fun Studio.spec(elbow: Float, scale: Float) = SkeletonSpec(bones = listOf(
+		SkeletonBone("upper", "Upper body", null, BoneRole.UPPER_BODY, Side.NONE, 210f * scale, 240f * scale, 210f * scale, 115f * scale, listOf(mesh("top"))),
+		SkeletonBone("lower", "Lower body", null, BoneRole.LOWER_BODY, Side.NONE, 210f * scale, 240f * scale, 210f * scale, 290f * scale, listOf(mesh("skirt"))),
+		SkeletonBone("armL", "Upper arm", "upper", BoneRole.UPPER_ARM, Side.LEFT, 262f * scale, 134f * scale, elbow * scale, 134f * scale, listOf(mesh("sleeve_l"))),
+		SkeletonBone("foreL", "Forearm", "armL", BoneRole.FOREARM, Side.LEFT, elbow * scale, 134f * scale, 340f * scale, 134f * scale),
 	))
 
-	private fun Studio.skeleton(elbow: Float = 300f, name: String = "put the skeleton on") =
-		edit(name, "skeleton_put", req("spec" to spec(elbow).toJson()))
+	private fun Studio.skeleton(elbow: Float = 300f, scale: Float = 1f, name: String = "put the skeleton on") =
+		edit(name, "skeleton_put", req("spec" to spec(elbow, scale).toJson()))
 
 	/** The user's own topology for the sleeve: every triangle split in four, committed as a mesh rebuild records it. */
 	private fun Studio.rebuildSleeve() {

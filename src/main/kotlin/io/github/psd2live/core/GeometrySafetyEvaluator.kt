@@ -556,7 +556,10 @@ internal object GeometrySafetyEvaluator {
         val pu = (after[b]-after[a]).toDouble(); val qu = (after[b+1]-after[a+1]).toDouble()
         val pv = (after[c]-after[a]).toDouble(); val qv = (after[c+1]-after[a+1]).toDouble()
         if (kotlin.math.abs(pu*qv-qu*pv) < 1e-12) return false
-        val tolerance = 1e-6 * maxOf(1.0, kotlin.math.abs(pu), kotlin.math.abs(qu), kotlin.math.abs(pv), kotlin.math.abs(qv))
+        // Float points round in proportion to their distance from the origin: canvas pixels on a large canvas are
+        // thousands, a Warp's 0..1 square is not.
+        val magnitude = maxOf(before.maxOf { kotlin.math.abs(it) }, after.maxOf { kotlin.math.abs(it) }).toDouble()
+        val tolerance = maxOf(1e-6 * maxOf(1.0, kotlin.math.abs(pu), kotlin.math.abs(qu), kotlin.math.abs(pv), kotlin.math.abs(qv)), 1e-5 * magnitude)
         for (i in before.indices step 2) {
             checkpoint()
             val x = (before[i]-before[a]).toDouble(); val y = (before[i+1]-before[a+1]).toDouble()

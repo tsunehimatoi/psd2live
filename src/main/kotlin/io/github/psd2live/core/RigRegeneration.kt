@@ -693,7 +693,9 @@ object RigRegeneration {
 				return mine.forms.zip(theirs.forms).all { (a, b) ->
 					if (a == null || b == null) a == b else {
 						val sampled = previous(b.positionDeltas)
-						a.positionDeltas.size == sampled.size && a.positionDeltas.indices.all { kotlin.math.abs(a.positionDeltas[it] - sampled[it]) < 1e-3f } &&
+						// Sampling onto the user's vertices rounds in proportion to the deltas, which grow with the canvas.
+						val tolerance = 1e-3f + 1e-4f * (b.positionDeltas.maxOfOrNull { kotlin.math.abs(it) } ?: 0f)
+						a.positionDeltas.size == sampled.size && a.positionDeltas.indices.all { kotlin.math.abs(a.positionDeltas[it] - sampled[it]) < tolerance } &&
 							a.drawOrder == b.drawOrder && a.opacity == b.opacity && a.multiplyColor == b.multiplyColor && a.screenColor == b.screenColor
 					}
 				}
