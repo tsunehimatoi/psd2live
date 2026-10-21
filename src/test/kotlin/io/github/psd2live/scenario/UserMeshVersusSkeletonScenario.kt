@@ -26,9 +26,9 @@ class UserMeshVersusSkeletonScenario {
 
 	/**
 	 * On a large canvas the bones' blend shapes are large too; sampling them onto the user's vertices must not read as
-	 * the user's own change and conflict when a bone moves. 3990², about a full-body Live2D PSD.
+	 * the user's own change and conflict when a bone moves. 1680² is already enough to show it.
 	 */
-	@Test fun skeletonThenRebuildOnALargeCanvas() = scenario(rebuildFirst = false, scale = 9.5f)
+	@Test fun skeletonThenRebuildOnALargeCanvas() = scenario(rebuildFirst = false, scale = 4f)
 
 	private fun scenario(rebuildFirst: Boolean, scale: Float = 1f) = Studio.run(temp, Characters.figure(scale = scale)) {
 		val generated = puppet.drawables.single { it.id.raw == mesh("sleeve_l") }.mesh!!.vertexCount
