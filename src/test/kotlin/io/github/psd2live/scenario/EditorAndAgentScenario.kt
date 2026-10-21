@@ -178,6 +178,36 @@ class EditorAndAgentScenario {
 		assertEquals(shown, Oracles.hash(vm.state.value.previewModel!!.rig.puppet))
 	}
 
+	@Test fun aLipOutlineRefusesPaintWithAHintAndAParameterUnbindsFromTheSelection() = editor {
+		workspace.importPsd(Characters.mouthPsd(temp).toString(), true)
+		consistent("imported mouth")
+		val model = vm.state.value.previewModel!!
+		val (lip, lipLayer) = model.rig.layerIdByDrawableId.entries.first { it.value.contains("mouth-lip") }
+		// The outline is drawn from the mouth layer on every build: no pixels of its own to paint.
+		val refused = assertFailsWith<IllegalArgumentException> { workspace.beginPaintSession(state(), lipLayer) }
+		assertEquals(GENERATED_LIP_PAINT, refused.message)
+		withContext(Dispatchers.Main) {
+			assertNull(vm.beginPaintSession(lip))
+			assertEquals(io.github.psd2live.i18n.tr("editor.paint.generatedLip"), vm.state.value.errorMessage)
+			vm.clearErrorMessage()
+		}
+		val drawable = model.rig.puppet.drawables.first { mesh -> mesh.geometryGrid?.axes.orEmpty().isNotEmpty() }
+		val parameter = drawable.geometryGrid!!.axes.first().parameterId
+		fun bound() = vm.state.value.previewModel!!.rig.puppet.drawables.single { it.id == drawable.id }.let { mesh ->
+			mesh.geometryGrid?.axes.orEmpty().any { it.parameterId == parameter } ||
+				mesh.channelGrids.gridsByChannel.values.any { grid -> grid.axes.any { it.parameterId == parameter } }
+		}
+		withContext(Dispatchers.Main) {
+			vm.selectLayer(model.rig.layerIdByDrawableId[drawable.id.raw] ?: drawable.id.raw)
+			vm.unbindParameterFromSelection(parameter)
+		}
+		consistent("unbound ${parameter.raw}")
+		assertFalse(bound(), "the selected mesh must no longer follow ${parameter.raw}")
+		withContext(Dispatchers.Main) { vm.undoHistory() }
+		consistent("undo unbind")
+		assertTrue(bound(), "undo must bind the mesh again")
+	}
+
 	@Test fun mouthPresetAndThicknessChangePreviewAndSurviveReopening() = editor {
 		workspace.importPsd(Characters.mouthPsd(temp).toString(), true)
 		consistent("imported mouth")

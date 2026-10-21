@@ -2463,7 +2463,7 @@ private fun EditableParameterName(
     }
     }
     PressMenu(expanded = menuOpen, press = menuAt, onDismissRequest = { menuOpen = false }) {
-        ParameterNameMenu(param, locked, menuEnabled, viewModel, value, close = { menuOpen = false }) { action ->
+        ParameterNameMenu(param, locked, menuEnabled, related, viewModel, value, close = { menuOpen = false }) { action ->
             menuOpen = false
             dialogFromMenu = true
             dialogAction = action
@@ -2494,6 +2494,8 @@ private fun ParameterNameMenu(
     param: Parameter,
     locked: Boolean,
     enabled: Boolean,
+    /** Whether the selected mesh or deformer is keyed on [param]: only then can it be unbound. */
+    related: Boolean,
     viewModel: PSD2LiveViewModel,
     currentValue: () -> Float,
     close: () -> Unit,
@@ -2515,6 +2517,10 @@ private fun ParameterNameMenu(
     }
     add(enabled) { FloatingMenuRow(tr("parameters.menu.duplicate"), { showDialog(ParameterDefinitionInitialAction.COPY) }, enabled = enabled) }
     add(enabled) { FloatingMenuRow(tr("parameters.menu.copyId"), { act { DesktopUtils.copyToClipboard(param.id.raw) } }, enabled = enabled) }
+    if (related) add(enabled) {
+        FloatingMenuRow(tr("parameters.menu.unbind"), { act { viewModel.unbindParameterFromSelection(param.id) } },
+            enabled = enabled, hint = tr("parameters.menu.unbindHint"))
+    }
     add(false) { FloatingMenuDivider() }
     add(enabled, danger = true) {
         FloatingMenuRow(tr("parameters.delete"), { showDialog(ParameterDefinitionInitialAction.DELETE) }, enabled = enabled, danger = true)

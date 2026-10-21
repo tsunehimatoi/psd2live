@@ -180,7 +180,8 @@ private fun runGui() {
 			val windowState = rememberWindowState(
 				placement = if (AppSettings.windowMaximized) WindowPlacement.Maximized else WindowPlacement.Floating,
 				position = WindowPosition(Alignment.Center),
-				size = DpSize(AppSettings.windowWidth.dp, AppSettings.windowHeight.dp),
+				size = fitWindowSize(AppSettings.windowWidth, AppSettings.windowHeight,
+					runCatching { java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().maximumWindowBounds }.getOrNull()),
 			)
 			val closeApp: () -> Unit = {
 				viewModel.withSavedChanges {
@@ -275,6 +276,16 @@ private class ExitWatchdog {
 		// Above the longest clean exit: MCP stop, the recovery-write flush and the Cubism shutdown.
 		const val EXIT_TIMEOUT_MILLIS = 15_000L
 	}
+}
+
+/**
+ * The window's saved size, no larger than the screen's usable area [usable] (logical pixels, the taskbar left out).
+ * The window draws its own title bar: one taller than the screen would be centred with that bar above the top edge,
+ * leaving no way to move, maximize or close it - a size saved on a larger screen or at a smaller display scale.
+ */
+internal fun fitWindowSize(width: Float, height: Float, usable: java.awt.Rectangle?): DpSize {
+	if (usable == null || usable.width <= 0 || usable.height <= 0) return DpSize(width.dp, height.dp)
+	return DpSize(minOf(width, usable.width.toFloat()).dp, minOf(height, usable.height.toFloat()).dp)
 }
 
 /** Arguments with every `--lang <tag>` pair removed. [configureLanguage] already applied the tag. */

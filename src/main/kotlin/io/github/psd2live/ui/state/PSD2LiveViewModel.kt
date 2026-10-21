@@ -65,6 +65,7 @@ import io.github.psd2live.core.SwingKind
 import io.github.psd2live.core.SwingPreset
 import io.github.psd2live.core.SwingPresets
 import org.umamo.runtime.model.Deformer
+import io.github.psd2live.ui.selectedParameterOwner
 import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.Side
 import io.github.psd2live.core.StandardParameters
@@ -1273,6 +1274,11 @@ class PSD2LiveViewModel : AutoCloseable {
         val backend = workspaceBackend ?: return null
         val expected = backend.snapshot().takeIf { it.loaded } ?: return null
         val material = layerId.removePrefix(io.github.psd2live.application.WorkspacePaintSession.MATERIAL_PREFIX).takeIf { it != layerId }
+        // A lip outline has no pixels of its own: the mouth layer and the mouth settings draw it on every build.
+        val layer = _state.value.previewModel?.rig?.layerIdByDrawableId?.get(layerId) ?: layerId
+        if (material == null && io.github.psd2live.core.MouthLipLayer.isLipId(layer)) {
+            setErrorMessage(tr("editor.paint.generatedLip")); return null
+        }
         return try { if (material != null) backend.beginMaterialPaintSession(material) else backend.beginPaintSession(expected.state, layerId) }
         catch (failure: Exception) { setErrorMessage(failure.message ?: "Could not begin paint session"); null }
     }
@@ -2128,8 +2134,8 @@ class PSD2LiveViewModel : AutoCloseable {
         val edits = idsInnermostFirst.mapNotNull { id ->
             val d = byId[id] ?: return@mapNotNull null
             val kind = when (d) {
-                is org.umamo.runtime.model.Deformer.Warp -> "warp"
-                is org.umamo.runtime.model.Deformer.Rotation -> "rotation"
+                is Deformer.Warp -> "warp"
+                is Deformer.Rotation -> "rotation"
             }
             structureEdit("delete", kind, id, kotlinx.serialization.json.JsonObject(emptyMap()))
         }
@@ -6745,6 +6751,36 @@ class PSD2LiveViewModel : AutoCloseable {
 			check(committed.await()) { "Could not snap pose" }
 		} finally {
 			if (!submitted) discardPendingPose(pending)
+		}
+	}
+
+	/**
+	 * Removes [id]'s keyforms from the selected mesh or deformer, every track of it, collapsed at the parameter's
+	 * default: the object no longer follows the parameter. One history step; undo binds it again.
+	 */
+	fun unbindParameterFromSelection(id: ParameterId) {
+		val current = _state.value
+		val model = current.previewModel ?: return
+		val puppet = model.rig.puppet
+		val owner = puppet.selectedParameterOwner(current.selectedLayerId, current.selectedDeformerId, model.rig.layerIdByDrawableId) ?: return
+		val target = when (owner.kind) {
+			"mesh" -> "mesh:${owner.id}"
+			else -> when (puppet.deformers.firstOrNull { it.id.raw == owner.id }) {
+				is Deformer.Warp -> "warp:${owner.id}"
+				is Deformer.Rotation -> "rotation:${owner.id}"
+				null -> return
+			}
+		}
+		val name = puppet.drawables.firstOrNull { it.id.raw == owner.id }?.name
+			?: puppet.deformers.firstOrNull { it.id.raw == owner.id }?.name ?: owner.id
+		val parameter = puppet.parameters.firstOrNull { it.id == id }?.name ?: id.raw
+		val expected = currentWorkspaceState() ?: return
+		val command = kotlinx.serialization.json.buildJsonObject {
+			put("op", "delete"); put("target", target); put("parameter", id.raw)
+		}
+		saveAuthoringEdits(expected, kotlinx.serialization.json.JsonArray(listOf(command))) { failure ->
+			if (failure != null) setErrorMessage(failure)
+			else updateState { it.withLog(tr("parameters.unbound", parameter, name), level = LogLevel.INFO, tag = "Parameters") }
 		}
 	}
 

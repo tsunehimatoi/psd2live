@@ -5,6 +5,7 @@ import io.github.psd2live.project.WorkspaceSourceLayer
 import io.github.psd2live.project.WorkspaceDocument
 
 import io.github.psd2live.core.LayerSpace
+import io.github.psd2live.core.MouthLipLayer
 import io.github.psd2live.core.PaintSpace
 import io.github.psd2live.core.RasterPaintEngine
 import io.github.psd2live.core.RasterPaintShape
@@ -71,11 +72,15 @@ internal fun WorkspaceDocument.paintSourceImage(arguments: JsonObject,
  */
 internal class LayerPaintImage(val space: PaintSpace, val image: BufferedImage)
 
+/** A lip outline ([MouthLipLayer]) is drawn again from its mouth layer and the mouth settings on every build: no pixels to paint. */
+internal const val GENERATED_LIP_PAINT = "Lip outlines are generated from the mouth layer and cannot be painted: change them with " +
+    "the settings mouthColor, mouthThickness and mouthShape, or turn mouthOutlineEnabled off and paint the mouth layer"
+
 /** Seeds a paint image of layer [id] in its own raster space ([PaintSpace.of]). */
 internal fun WorkspaceDocument.layerPaintImage(id: String, checkpoint: () -> Unit = {}): LayerPaintImage {
     checkpoint()
     val layer = source.layers.singleOrNull { it.id.raw == id && id !in deletedLayerIds }
-        ?: throw IllegalArgumentException("Source layer not found: $id")
+        ?: throw IllegalArgumentException(if (MouthLipLayer.isLipId(id)) GENERATED_LIP_PAINT else "Source layer not found: $id")
     val space = PaintSpace.of(layer, source.widthPx, source.heightPx)
     return LayerPaintImage(space, space.image(layer, checkpoint))
 }

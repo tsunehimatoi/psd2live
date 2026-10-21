@@ -1,6 +1,7 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.commandArguments
+import io.github.psd2live.fitWindowSize
 import io.github.psd2live.format.compile.ClipSampler
 import io.github.psd2live.format.model.Clip
 import io.github.psd2live.format.model.Curve
@@ -20,6 +21,16 @@ class BugListRegressionTest {
 			commandArguments(arrayOf("--lang", "zh", "export", "model.psd2live", "--target", "gif")))
 		assertEquals(listOf("export", "model.psd", "--target", "png-sequence"),
 			commandArguments(arrayOf("export", "model.psd", "--lang", "en", "--target", "png-sequence")))
+	}
+
+	@Test
+	fun aSavedWindowLargerThanTheScreenOpensWithinIt() {
+		val usable = java.awt.Rectangle(0, 0, 1707, 1019)
+		val fitted = fitWindowSize(2560f, 1500f, usable)
+		assertEquals(1707f, fitted.width.value); assertEquals(1019f, fitted.height.value)
+		val small = fitWindowSize(1280f, 820f, usable)
+		assertEquals(1280f, small.width.value); assertEquals(820f, small.height.value)
+		assertEquals(2560f, fitWindowSize(2560f, 1500f, null).width.value)
 	}
 
 	@Test
