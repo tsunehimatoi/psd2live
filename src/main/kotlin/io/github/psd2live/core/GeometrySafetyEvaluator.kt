@@ -209,6 +209,10 @@ internal object GeometrySafetyEvaluator {
             }
             coordinateEvidence[ref] = next.coordinates
             val comparable = old?.takeIf { it.pointCount == next.pointCount && it.triangles.contentEquals(next.triangles) }
+            // A new parent gives the points another space (canvas pixels, a Warp's 0..1 square, a Rotation's
+            // frame), so the old points only tell which triangles were already bad, each in its own space; the
+            // candidate is measured against its own rest form.
+            val reparented = comparable != null && old.parent != next.parent
             // The reference and triangles are the same at every coordinate: their validity and areas once per target.
             val inspections = HashMap<FloatArray, Inspection>(2)
             for (coordinate in next.coordinates) {
@@ -230,16 +234,17 @@ internal object GeometrySafetyEvaluator {
                 }
 
                 val oldComparable = comparable?.let { beforeSampler.points(it, coordinate.filterKeys { id -> id in beforeParameters }) }
-                val reference = if (oldComparable != null) old.reference else next.reference
+                val reference = if (oldComparable != null && !reparented) old.reference else next.reference
                 val inspection = inspections.getOrPut(reference) { Inspection(reference, next.triangles) }
                 val candidateStatus = inspection.inspect(candidatePoints)
-                if (!inspection.valid || candidateStatus == null) {
+                val oldInspection = if (reparented) inspections.getOrPut(old.reference) { Inspection(old.reference, old.triangles) } else inspection
+                if (!inspection.valid || !oldInspection.valid || candidateStatus == null) {
                     invalid++
                     violations += GeometrySafetyViolation(GeometrySafetyReason.GEOMETRY_INVALID_TOPOLOGY, ref, coordinate, detail = "Geometry scalar count or triangle indices are malformed")
                     continue
                 }
                 val oldStatus = oldComparable?.takeIf { it.all(Float::isFinite) }?.let {
-                    if (it.contentEquals(candidatePoints)) candidateStatus else inspection.inspect(it)
+                    if (oldInspection === inspection && it.contentEquals(candidatePoints)) candidateStatus else oldInspection.inspect(it)
                 }
                 if (oldComparable != null && oldStatus == null) {
                     invalid++
@@ -253,7 +258,7 @@ internal object GeometrySafetyEvaluator {
 
                 // A whole-surface invertible affine mirror or compression is a valid authoring edit.
                 // Local foldovers, zero-area geometry and non-affine collapses still fail the gate.
-                val affine = oldComparable != null && invertibleAffine(oldComparable, candidatePoints, next.triangles)
+                val affine = oldComparable != null && !reparented && invertibleAffine(oldComparable, candidatePoints, next.triangles)
                 val newlyFlipped = candidateStatus.flippedTriangles.filter { !affine && it !in oldStatus?.flippedTriangles.orEmpty() }
                 val oldDegenerateTriangles = oldStatus?.let { it.degenerateTriangles + it.degenerateReferenceTriangles }.orEmpty()
                 val candidateDegenerateTriangles = candidateStatus.degenerateTriangles + candidateStatus.degenerateReferenceTriangles

@@ -85,6 +85,11 @@ internal object Characters {
 		Part("face", 1, SemanticTag.FACE, Side.NONE, box(20, 12, 44, 36)),
 	), PipelineConfig(atlasSize = 256, generatePhysics = physics, exportMoc3 = false))
 
+	/** A 1200² canvas holding one 1100×1000 top: a part larger than a million square pixels (issue #56). */
+	fun largePart(): WorkspaceDocument = document(1200, 1200, listOf(
+		Part("top", 0, SemanticTag.TOPWEAR, Side.NONE, box(50, 100, 1150, 1100)),
+	), PipelineConfig(atlasSize = 512, generatePhysics = false, exportMoc3 = false))
+
 	/** Writes [figure]'s art as a PSD, as an artist hands it over; generation then classifies it by override. */
 	fun figurePsd(directory: Path): Path {
 		val source = figure().source
