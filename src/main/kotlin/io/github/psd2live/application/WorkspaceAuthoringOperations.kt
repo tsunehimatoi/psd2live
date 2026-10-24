@@ -163,7 +163,7 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
     }
 
     registerJsonOperation("inspect", "Read project context, find objects/layers/parameters, or inspect one kind:id's direct axes, channels and parent (also its organizational part and the static fields rig_edit_structure writes: opacity, colors, draw order, blend mode, clipping masks, culling, selectable, user data, quad). scope=generation lists what waits for rig_generate. No point arrays. Query and page before expanding.",
-        buildJsonObject { put("scope", choices("project", "settings", "preview", "generation", "objects", "layers", "parameters", "physics", "swings", "paths", "simulations", "interiors", "vertex_groups")); put("query", string()); put("target", string()); put("offset", integer(0)); put("limit", integer(1, 64)) }) { a ->
+        buildJsonObject { put("scope", choices("project", "settings", "preview", "generation", "objects", "layers", "parameters", "physics", "swings", "paths", "simulations", "interiors", "modifiers", "vertex_groups")); put("query", string()); put("target", string()); put("offset", integer(0)); put("limit", integer(1, 64)) }) { a ->
         workspace.captureQueries().inspect(a)
     }
 
@@ -210,6 +210,18 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
             put(f.id, buildJsonObject { put("type", "number"); put("minimum", f.range.start); put("maximum", f.range.endInclusive)
                 put("description", "${f.group.name.lowercase()} group${if (f.advanced) " (advanced)" else ""}, in ${f.unit.name.lowercase().replace('_', ' ')}, default ${f.default}") })
         }
+        // A side's own values for what the eye and brow layers read one at a time; null clears one.
+        for (side in listOf("left", "right")) put(side, buildJsonObject {
+            put("type", "object"); put("additionalProperties", false)
+            put("description", "Values the $side side's eye and brow layers take instead of the shared ones; null returns one to the shared value.")
+            putJsonObject("properties") {
+                for (id in io.github.psd2live.core.RigTuning.SIDED) {
+                    val f = io.github.psd2live.core.RigTuning.fieldById.getValue(id)
+                    put(id, buildJsonObject { put("oneOf", JsonArray(listOf(buildJsonObject { put("type", "number"); put("minimum", f.range.start); put("maximum", f.range.endInclusive) },
+                        buildJsonObject { put("type", "null") }))) })
+                }
+            }
+        })
     })
     val projectSettingFields = objectSchema(buildJsonObject {
         listOf("atlasSize", "meshSpacing", "texturePadding", "alphaThreshold").forEach { put(it, integer(0)) }
@@ -223,6 +235,11 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
             "exportCmo3", "exportMoc3", "exportJson", "exportCan3", "exportHiddenParts", "exportHiddenDrawables",
             "exportGuideImageParts", "exportIncludePhysics", "exportIncludeUserData", "exportIncludeDisplayInfo").forEach { put(it, boolean()) }
         put("mouthShape", choices("flat", "smile", "w", "custom"))
+        put("disabledComponents", buildJsonObject {
+            put("type", "array"); put("uniqueItems", true)
+            put("items", choices(*io.github.psd2live.core.RigComponents.switchable.map { it.id }.toTypedArray()))
+            put("description", "Role components switched off: their parameters move nothing the base rig made; the deformers and edits stay.")
+        })
         put("mouthColor", oneOf(listOf(integer(0, 0xFFFFFF), buildJsonObject { put("type", "null") })))
         put("mouthCurve", arraySchema(objectSchema(buildJsonObject {
             put("x", buildJsonObject { put("type", "number"); put("minimum", 0); put("maximum", 1) })
@@ -500,7 +517,14 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
         mapOf("split" to "asset_split_artwork", "components" to "asset_split_components", "depth" to "asset_split_depth", "reference" to "asset_prepare_reference", "import" to "asset_import_png", "register" to "asset_register", "preview" to "asset_preview_composite", "add" to "layer_add_from_asset", "place" to "layer_set_placement", "finalize" to "layer_finalize_placement", "inspect" to "asset_inspect", "reprocess" to "asset_reprocess", "remove" to "layer_delete", "restore" to "layer_restore"), true)
     registerCommandOperations("swing", "Generate regenerating sway on Warps or meshes (wrapped in a tight Warp): kind=lateral swings the tip left/right, kind=vertical up/down (or motions=[...] for both), each on -1/0/1 keys per segment parameter, with a matching pendulum unless physics_enabled=false. parallel keeps the tip edge level so hair with several strands in one Warp sways side by side. Changing a swing recomputes its forms; delete with bake=true to keep them as ordinary keys. Verify with view poses at the parameter endpoints.",
         mapOf("put" to "swing_put", "delete" to "swing_delete"), true)
+    registerCommandOperations("modifier", "Non-destructive modifiers on meshes, chained in stack order and sampled into ordinary keyforms on the parameters their settings are keyed on; apply writes one into the journal.",
+        mapOf("put" to "modifier_put", "delete" to "modifier_delete", "move" to "modifier_move", "apply" to "modifier_apply",
+            "split" to "modifier_split", "copy" to "modifier_copy", "apply_simulation" to "simulation_apply"), true)
     registerCommandOperations("interior", "Generate and edit an interior surface on one mesh; compact keyforms and optional native propagation persist with the project.", mapOf("put" to "interior_put", "delete" to "interior_delete"), true)
+    registerCommandOperations("contribution", "Any entry of the modifier stack - a modifier, swing, simulation or interior effect - by its type or ID (swing:<id>, simulation:<id>, interiorEffect:<id>, else a modifier's): put (type + value, the arguments of that type's own command), move in the order the stack runs, apply as ordinary keyforms, delete. The type-specific commands stay as aliases.",
+        mapOf("put" to "contribution_put", "move" to "contribution_move", "apply" to "contribution_apply", "delete" to "contribution_delete"), true)
+    registerCommandOperations("component", "Role components of the generated rig (head, eyes, brows, mouth, body, breath, hair): switch one off - its parameters move nothing it made, its deformers and edits stay - and set its rig values, shared or per side.",
+        mapOf("put" to "component_put"), true)
     register("swing_preview", "Create or edit an isolated swing audition on a captured workspace state. begin resolves existing swings or neutral defaults; update/kinds/segments/preset/physics/select/handle use the same candidates as GUI handles. play runs a transient clock, cancel retains a queryable terminal session. Draft rigs and playback values never enter save/query baselines. Use swing_preview_get/render to inspect; swing_preview_commit persists the captured draft once.",
         WorkspaceSwingSessionSchemas.control(), WorkspaceOperationKind.SESSION) { WorkspaceOperationOutput(workspace.controlSwingPreview(it).report) }
     register("swing_preview_commit", "Commit an audition draft with its captured state; stale drafts fail without overwriting another edit. Retains the committed session and terminal result for job queries and retries.",

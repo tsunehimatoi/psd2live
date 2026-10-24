@@ -1,5 +1,7 @@
 package io.github.psd2live.core.sim
 
+import io.github.psd2live.core.DocumentGenerators
+
 import io.github.psd2live.core.PhysicsSourceType
 import io.github.psd2live.core.PrimitiveSkins
 import io.github.psd2live.core.RigEditOverlay
@@ -224,7 +226,9 @@ object SimAuthoring {
      * keys would count them twice.
      */
     fun unbakedModel(overlay: RigEditOverlay, authored: AuthoredRigs, id: String): PuppetModel {
-        val unbaked = overlay.copy(simEdits = overlay.simEdits.map { if (it.id == id) it.copy(bake = null) else it })
+        // Only what runs before it in the stack: what runs after writes over its result.
+        val before = io.github.psd2live.core.modifier.ModifierStack.before(overlay, DocumentGenerators.simulationId(overlay.simEdits.first { it.id == id }))
+        val unbaked = before.copy(simEdits = before.simEdits.map { if (it.id == id) it.copy(bake = null) else it })
         return unbaked.finish(authored.of(unbaked)).model
     }
 
@@ -256,7 +260,8 @@ object SimAuthoring {
         val edit = requireNotNull(overlay.simEdits.firstOrNull { it.id == id }) { "Simulation not found: $id" }
         val model = unbakedModel(overlay, authored, id)
         return SimBaker.bake(model, edit,
-            SimBaker.Options(physicsFps = overlay.physicsFps, progress = progress, cancelled = cancelled, trainingMotions = trainingMotions(overlay, edit, model)))
+            SimBaker.Options(physicsFps = overlay.physicsFps, progress = progress, cancelled = cancelled, trainingMotions = trainingMotions(overlay, edit, model),
+                preceding = SimBake.preceding(overlay, edit, model)))
     }
 
     /**
@@ -298,10 +303,11 @@ object SimAuthoring {
         val edit = overlay.simEdits.firstOrNull { it.id == id } ?: return overlay to null
         if (!(autoBake ?: edit.autoBake) || !edit.enabled) return overlay to null
         val model = unbakedModel(overlay, authored, id)
-        if (edit.bake != null && edit.bake.fingerprint == SimBake.fingerprint(model, edit)) return overlay to null
+        val preceding = SimBake.preceding(overlay, edit, model)
+        if (edit.bake != null && edit.bake.fingerprint == SimBake.fingerprint(model, edit, preceding)) return overlay to null
         return try {
             withBake(overlay, id, SimBaker.bake(model, edit, SimBaker.Options(physicsFps = overlay.physicsFps, previous = edit.bake?.physics, previousExtra = edit.bake?.extraPhysics.orEmpty(),
-                progress = progress, cancelled = cancelled, trainingMotions = trainingMotions(overlay, edit, model)))) to null
+                progress = progress, cancelled = cancelled, trainingMotions = trainingMotions(overlay, edit, model), preceding = preceding))) to null
         } catch (failure: java.util.concurrent.CancellationException) {
             overlay to "Bake cancelled"
         } catch (failure: IllegalArgumentException) {

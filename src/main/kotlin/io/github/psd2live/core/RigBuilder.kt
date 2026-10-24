@@ -893,6 +893,12 @@ object RigBuilder {
 	)
 
 	fun build(inputAnalysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig, meshCache: PreviewMeshCache? = null): BuiltRig =
+		built(inputAnalysis, atlas, config, meshCache).let { rig ->
+			// Components switched off keep their structure; their parameters move nothing ([RigComponents.gate]).
+			if (config.disabledComponents.isEmpty()) rig else rig.copy(puppet = RigComponents.gate(rig.puppet, config.disabledComponents))
+		}
+
+	private fun built(inputAnalysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig, meshCache: PreviewMeshCache?): BuiltRig =
 		RigBuildProfile.stage("build: total") {
 			if (config.deferRig || config.rigPendingLayerIds.isNotEmpty())
 				return@stage buildWithPendingMeshes(inputAnalysis, atlas, config, meshCache)
@@ -2913,11 +2919,11 @@ object RigBuilder {
 		val tag = layer.semantic.tag
 		return when (tag) {
 			SemanticTag.EYEWHITE, SemanticTag.EYELASH ->
-				eyeClosureGrid(layer, data, parentFrame, faceRig, eyeWhiteBounds, config.rigTuning)
+				eyeClosureGrid(layer, data, parentFrame, faceRig, eyeWhiteBounds, config.rigTuning.forSide(layer.semantic.side))
 			// Blink does not key the iris directly. The independent physics output supplies a small,
 			// delayed squash/stretch while eye-white clipping removes it as the lid closes.
 			SemanticTag.IRIDES -> irisJellyGrid(layer, data, parentFrame, config.rigTuning)
-			SemanticTag.EYEBROW -> eyebrowGrid(layer, data, parentFrame, config.rigTuning)
+			SemanticTag.EYEBROW -> eyebrowGrid(layer, data, parentFrame, config.rigTuning.forSide(layer.semantic.side))
 			SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN -> mouthWholeGrid(data, parentFrame, mouthAperture ?: layer.bounds, config, mouthPaths)
 			SemanticTag.MOUTH_CLOSE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE ->
 				zeroMeshGrid(data.mesh.positions.size)

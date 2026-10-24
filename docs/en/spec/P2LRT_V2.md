@@ -284,6 +284,7 @@ The chunk's own content follows. When a dependency chunk is missing or not enabl
 | 2 | Arcs in `BONE` | Exact links (pivots interpolated along arcs) |
 | 4 | `SIMS` | Real-time vertex-level simulation |
 | 8 | `COLL` (needs `SIMS`; enabled with simulation) | Collision |
+| 16 | reserved, not assigned (the chunk tag `MODS` likewise) | once used during development for exact modifier evaluation, now removed; modifiers export as baked keyforms only |
 
 - `p2l_advanced_available()` returns the bits the file carries and the runtime supports; `p2l_set_advanced(bits)` returns the bits actually enabled, with 0 being Cubism mode (the default). Switching resets the simulation state.
 - `p2l_bone_count / p2l_bone_id / p2l_bone_transform` output the H3 bone frames.

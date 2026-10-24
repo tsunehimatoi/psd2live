@@ -127,8 +127,10 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
         val context = currentCoroutineContext()
         val batch = context[WorkspaceBatchJobExecution]
         val prepared = runtime.prepareDraft(projectId, state,
-            edits.mapIndexed { index, operation -> WorkspaceDraftEdit { draft, model ->
+            edits.mapIndexed { index, requested -> WorkspaceDraftEdit { draft, model ->
                 batch?.preparing(index)
+                // A stack or component command is the command of the entry it names, settings included.
+                val operation = if (requested.operation in WorkspaceStackCommands.supported) WorkspaceStackCommands.route(requested, draft.document) else requested
                 if (operation.operation == "settings_update") {
                     // Settings also release authored poses; both stay in this member's private candidate.
                     val next = runInterruptible(Dispatchers.Default) {

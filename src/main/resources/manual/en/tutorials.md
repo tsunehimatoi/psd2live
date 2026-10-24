@@ -11,7 +11,7 @@ Make a character blink. In PSD2Live, blinking is generated at import time from t
 2. Leave **Quick setup** on the start screen at **Default**; after generation you land in the editing workspace.
 3. In the **Layers** panel, check the **Tags** (part and side) of the eye layers, and if one is wrong, open the tag and change it.
 4. In the **Parameters** panel, drag **Left Eye Open** / **Right Eye Open**: 0 is closed and 1 is open.
-5. If the arc of the closed eye or the eye corner position is not right, adjust **Blink sag**, **Blink corners** and **Closed lash thickness** under **Model presets → Rig Values → Eyes**, which is much quicker than correcting by hand.
+5. If the arc of the closed eye or the eye corner position is not right, adjust **Blink sag**, **Blink corners** and **Closed lash thickness** in the **Values** of the **Eyes** component card in the **Modifiers** panel (tick **Left and right apart** to set each side separately), which is much quicker than correcting by hand.
 {tutorial=BASIC}
 ## Fix the closed eye by hand
 Do it by hand when the values cannot get it right. Your corrections are layered on top of the generated result and are kept after regeneration.
@@ -36,8 +36,8 @@ Combine the two parameters Mouth Open and Mouth Form to make the five vowel shap
 ## Check and adjust
 1. After importing the PSD ({key:OPEN_PSD}), confirm the **Tags** of the mouth, teeth and tongue in the **Layers** panel.
 2. In the **Parameters** panel, set **Mouth Open** and **Mouth Form** together and check the five shapes one by one against the table above.
-3. The closed-mouth line shape is tuned under **Model presets → Rigging & Facial**: turn on **Generate lip outlines**, click **Mouth settings** and choose the **Initial mouth shape** (**Flat**, **Smile**, **W shape** or a custom curve), then set the **Thickness** and **Sample edge color**.
-4. The mouth shape amplitude is tuned under **Model presets → Rig Values → Mouth**, with items such as **Smile corners**, **Smile widen**, **Closed narrow** and **Lip seam**.
+3. The closed-mouth line shape is tuned on the **Mouth** component card: turn on **Generate lip outlines**, click **Mouth settings** and choose the **Initial mouth shape** (**Flat**, **Smile**, **W shape** or a custom curve), then set the **Thickness** and **Sample edge color**.
+4. The mouth shape amplitude is tuned in the **Values** of the **Mouth** component card, with items such as **Smile corners**, **Smile widen**, **Closed narrow** and **Lip seam**.
 {tutorial=PARAMETERS}
 ## Fix the mouth shapes by hand
 1. In the Hierarchy, select the mouth ArtMesh and move the two parameters to the key to fix (right-click on the key marker to snap).
@@ -98,7 +98,7 @@ Make the eyes, brows and mouth move. The standard parameters of the facial featu
 ## Confirm the facial feature parameters
 1. Open the **Parameters** panel and drag in turn **Left Eye Open** / **Right Eye Open**, **EyeBall X** / **EyeBall Y**, **Left Brow Y** / **Right Brow Y**, **Mouth Open** and **Mouth Form**.
 2. A parameter that does nothing? The analysis warns that it is not bound to any ArtMesh, most likely because the eye or mouth tag is missing; go back to the **Layers** panel and add it.
-3. If the overall amplitude is wrong, adjust it in the **Eyes**, **Brows** and **Mouth** groups of **Model presets → Rig Values**, for example **Blink sag** and **Gaze across**.
+3. If the overall amplitude is wrong, adjust it in the **Values** of the **Eyes**, **Brows** and **Mouth** component cards, for example **Blink sag** and **Gaze across**.
 ## Edit keyforms
 1. In the Hierarchy, select the ArtMesh or deformer to change.
 2. In the Parameters panel, move the parameter to the key to edit (right-click on the key marker to snap).
@@ -113,7 +113,7 @@ For on/off parts such as blushes and tears, set **Toggle Variant** in the **Laye
 Make the body turn, lean and breathe. The body deformers and body parameters are already generated, so check them first; add deformers yourself only when you need extra control.
 ## Check the body parameters
 1. Drag **Body Angle X**, **Body Angle Y**, **Body Angle Z**, **Body lean** and **Breath** in the Parameters panel.
-2. If the overall amplitude is too large or too small, adjust **Body range** in **Model presets**; details are changed in the **Body X (turn)**, **Body Y (up and down)**, **Body lean** and **Body Z and breath** groups of **Rig Values**.
+2. If the overall amplitude is too large or too small, adjust **Body range** on the **Body pose** component card; details are in its **Values** (body X, body Y, lean, size change, depth and perspective), and body Z and breathing are on the **Breath** component card.
 ## Add a deformer yourself
 1. In the Hierarchy, select the ArtMesh or deformer to wrap.
 2. In **Object** mode ({key:MODE_SELECT}), press {key:TOOL_CREATE_WARP} to create a warp deformer or {key:TOOL_CREATE_ROTATION} to create a rotation deformer; you can also right-click in the Hierarchy to add a parent / child deformer.
@@ -129,8 +129,8 @@ Limbs are better done with the skeleton: build the bone chain, bind the meshes, 
 Make the face turn left and right (Angle X) and nod up and down (Angle Y). PSD2Live generates nine poses for the head from combinations of end and middle points, and your work is mostly to check the diagonals and fix whatever looks unnatural.
 ## Check the head turn
 1. In the Parameters panel, drag **Angle X** (-45 to 45) and **Angle Y** (-30 to 30), and also pull both to their end points at once to see the diagonal poses.
-2. The overall head amplitude is tuned with **Head range** in **Model presets**.
-3. Details are tuned in groups such as **Rig Values → Head turn**, for example **Face turn**, **Face tilt**, **Corner fix** and **Shell turn**; how the eyes change with the head turn is in the **Eyes** group (**Far eye narrow**, **Near eye widen**).
+2. The overall head amplitude is tuned with **Head range** on the **Head turn** component card.
+3. Details are tuned in the **Values** of the **Head turn** component card, for example **Face turn**, **Face tilt**, **Corner fix** and **Shell turn**; how the eyes change with the head turn is in the **Eyes** group (**Far eye narrow**, **Near eye widen**).
 ## Fix the keyforms
 1. In the Hierarchy, select the object to fix and move **Angle X** / **Angle Y** to the key to edit.
 2. Switch to **Deform** mode ({key:MODE_DEFORM}) to adjust. When the target is a warp deformer, use {key:PICK_OPTION_1} / {key:PICK_OPTION_2} to switch between the **Vertices** and **Bezier** levels: Bezier suits overall bending, and Vertices suits local fine touch-ups.

@@ -100,7 +100,6 @@ internal val WINDOW_MODULES = listOf(
 	"history",
 	"log",
 	"animationEditor",
-	"settings",
 	"layers",
 	"parameters",
 	"tools",
@@ -108,7 +107,7 @@ internal val WINDOW_MODULES = listOf(
 	"inspector",
 	"animation",
 	"physics",
-	"simulation",
+	"modifiers",
 	"atlas",
 	"texture",
 	"materials",
@@ -653,7 +652,6 @@ internal fun moduleTitle(id: String): String = when {
 		"history" -> "dock.history"
 		"log" -> "dock.log"
 		"animationEditor" -> "dock.animationEditor"
-		"settings" -> "dock.settings"
 		"layers" -> "tab.layers"
 		"parameters" -> "tab.parameters"
 		"tools" -> "tab.toolDetails"
@@ -661,8 +659,7 @@ internal fun moduleTitle(id: String): String = when {
 		"inspector" -> "tab.inspector"
 		"animation" -> "tab.animation"
 		"physics" -> "tab.physics"
-		"simulation" -> "tab.simulation"
-		"interior" -> "interior.title"
+		"modifiers" -> "modifiers.title"
 		"atlas" -> "dock.atlas"
 		"texture" -> "dock.texture"
 		"materials" -> "dock.materials"

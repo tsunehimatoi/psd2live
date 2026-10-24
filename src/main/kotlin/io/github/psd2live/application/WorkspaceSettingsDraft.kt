@@ -5,7 +5,7 @@ import kotlinx.serialization.json.JsonObject
 /** A settings gesture carries patches, never a copy of the authored rig or its journal. */
 internal object WorkspaceSettingsDraft {
     fun presetDefaults(): JsonObject {
-        val keys = setOf("headStrength", "bodyStrength", "rigTuning", "featureDisplacementEnabled",
+        val keys = setOf("headStrength", "bodyStrength", "rigTuning", "disabledComponents", "featureDisplacementEnabled",
             "mouthOutlineEnabled", "mouthShape", "mouthCurve", "mouthColor", "mouthThickness",
             "seeThroughBrows", "seeThroughEyes", "seeThroughOpacity", "exportMotions",
             "motionBasic", "motionIdle", "motionBlink", "motionNod", "motionShake", "motionSkeleton",

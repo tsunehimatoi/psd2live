@@ -8,7 +8,7 @@ import org.umamo.runtime.model.PuppetModel
 internal object RigGenerationBaseline {
     const val OP = "rig_generation_baseline"
     private val fields = setOf("meshOnly", "generateDeformers", "featureDisplacementEnabled", "mouthOutlineEnabled",
-        "mouthShape", "mouthCurve", "mouthColor", "mouthThickness", "headStrength", "bodyStrength", "rigTuning")
+        "mouthShape", "mouthCurve", "mouthColor", "mouthThickness", "headStrength", "bodyStrength", "rigTuning", "disabledComponents")
 
     fun present(overlay: RigEditOverlay) = overlay.authoringJournal.any { it["op"]?.jsonPrimitive?.contentOrNull == OP }
 

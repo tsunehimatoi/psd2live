@@ -20,7 +20,7 @@ The approach: **check the pins → change the pinned range with the weight brush
 
 ## 1. Turn on simulation in the model presets
 
-Open **Model presets → Physics & Simulation**. Front hair and back hair each have a dropdown, so their motion can be set separately.
+Open **Model presets → Physics & Simulation** on the **World** page of the **Modifiers** panel. Front hair and back hair each have a dropdown, so their motion can be set separately.
 
 ![The Physics & Simulation group of the model presets, and the hair motion dropdown](../../imgs/simulation-tutorial/model-presets.webp)
 
@@ -52,7 +52,7 @@ Open the **Simulation** panel and select **Front hair (preset)** in the **Bodies
 
 While tuning, turn on the preview switch at the top of the panel so the label reads **Reference sim**. The editor's live simulation then runs, and you can turn the head and tilt the body in the Parameters panel to watch how the strands follow.
 
-To change the pins, select the front hair mesh, switch the mode at the top left of the canvas to **Simulate**, and choose **Weight paint → Pin** in the left toolbar. You can also expand **Vertex groups** in the Simulation panel and click **Paint** on the Pin row to enter the tool.
+To change the pins, select the front hair mesh, switch the mode at the top left of the canvas to **Simulate**, and choose **Weight paint → Pin** in the left toolbar. You can also open the simulation card in the front hair mesh's stack in the **Modifiers** panel, and click **Paint** on the Pin row under **Vertex groups** to enter the tool.
 
 ![Simulate mode with the pin group selected: the front hair roots are red, the tips blue](../../imgs/simulation-tutorial/pin-weights.webp)
 
@@ -95,7 +95,7 @@ Below is one adjusted distribution: the top still holds a high pin weight, which
 
 Go back to **Preview** mode and keep **Reference sim** on. Turn the head slowly, then quickly and stop, watching the follow-through, the fling and the swing back. If the hair barely moves as a whole, check whether it is pinned too much; if the roots drift, check whether the joins have enough pin weight.
 
-You can also adjust the **Material** in the Simulation panel:
+You can also adjust the **Material** in the simulation card (in the front hair mesh's stack in the **Modifiers** panel, or by clicking its row in the **Simulations** section of the **World** page):
 
 | Item | Purpose |
 | --- | --- |
@@ -106,13 +106,13 @@ You can also adjust the **Material** in the Simulation panel:
 
 Start from the **Hair** material preset and change one item at a time. The other material items, weight groups and glue roles are described in [Simulation and baking](SIMULATION.md).
 
-**Auto pin weights** in the model presets recomputes the weights and bakes again. Once you have fixed the pins by hand and want to keep that distribution, keep using the Simulation panel's bake buttons.
+**Auto pin weights** in the model presets recomputes the weights and bakes again. Once you have fixed the pins by hand and want to keep that distribution, keep using the simulation card's bake buttons.
 
 ## 5. Bake again after the changes
 
-After weights or material change, the existing bake becomes **Stale**. In the Simulation panel, select the body you just changed, expand **Bake** and click **Bake again**; when there is no result yet, the button reads **Bake**.
+After weights or material change, the existing bake becomes **Stale**. In the front hair mesh's simulation card, expand **Bake** and click **Bake again**; when there is no result yet, the button reads **Bake**.
 
-![The front hair body in the Simulation panel is stale; the red box marks the Bake again button](../../imgs/simulation-tutorial/rebake.webp)
+![The front hair body is stale; the red box marks the Bake again button (earlier interface)](../../imgs/simulation-tutorial/rebake.webp)
 
 *The button in the red box bakes only the current body. When several bodies need updating, use **Bake all** at the top of the panel.*
 
@@ -132,7 +132,7 @@ To stop, use the cancel button beside the progress. **Bake automatically** is of
 
 ## 7. Switch back to Export and save
 
-Turn off the preview switch at the top of the Simulation panel so the label reads **Export**. The canvas now plays the baked keyforms and pendulum, to check how the exported model behaves.
+Turn off **Reference sim** in the simulation card's **Compare** fold to go back to **Export**. The canvas now plays the baked keyforms and pendulum, to check how the exported model behaves.
 
 Check head turns, tilts, stopping after fast motion, and the body moving up and down. Watch whether the roots stay stable, the tips swing back naturally and the clothing keeps its original shape. To compare, switch between **Reference sim** and **Export** with the same motion; or expand the body's **Compare** section to draw the reference simulation over the export (**Overlay**) or play the two on two canvases **Side by side**, pick a motion and **Play** it so both start from rest together, or **Check** it to compare swing, lag and settling on that motion.
 
@@ -142,7 +142,7 @@ Once you are happy with the result, save the `.psd2live` project, then export th
 
 | Symptom | Check first |
 | --- | --- |
-| No front hair body in the Simulation panel | Whether the front hair dropdown is set to **Simulate** and whether the artwork is recognized as front hair; you can also select the target meshes and create one by hand with **New → Hair** in the Simulation panel |
+| No front hair body in the World page's simulation list | Whether the front hair dropdown is set to **Simulate** and whether the artwork is recognized as front hair; you can also select the target meshes and create one by hand with **Simulation · Hair** in the Modifiers panel's **Add** menu |
 | Weight colours do not show | Whether the target mesh is selected and the canvas is in **Simulate** mode with the **Pin** group |
 | Hair roots come loose, or it barely swings | Whether there are too few or too many pins; hold the joins first, then free the tips gradually |
 | The reference simulation moves but the export does not update | Whether it is unbaked or stale; bake or bake again |

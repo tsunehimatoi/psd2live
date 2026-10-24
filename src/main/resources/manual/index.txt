@@ -98,6 +98,7 @@
     - hittest different cubism=hittest
     - blend-mode different cubism=blend-mode
     - interior-shape exclusive
+    - modifiers exclusive
   + artpath-folder
     - artpath missing cubism=artpath
     - artpath-auto-edit missing cubism=artpath-auto-edit

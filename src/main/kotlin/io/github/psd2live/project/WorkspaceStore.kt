@@ -604,15 +604,25 @@ internal class WorkspaceStore(
             if (document.rigEdits.disabledPhysicsIds.isNotEmpty()) putJsonArray("physicsDisabled") { document.rigEdits.disabledPhysicsIds.sorted().forEach { add(JsonPrimitive(it)) } }
             if (document.rigEdits.physicsOrder.isNotEmpty()) putJsonArray("physicsOrder") { document.rigEdits.physicsOrder.forEach { add(JsonPrimitive(it)) } }
             if (document.rigEdits.physicsFps != io.github.psd2live.core.RigEditOverlay.DEFAULT_PHYSICS_FPS) put("physicsFps", document.rigEdits.physicsFps)
-            if (document.rigEdits.interiorEffects.isNotEmpty()) putJsonArray("interiorEffects") { document.rigEdits.interiorEffects.forEach { add(it.toJson()) } }
-            putJsonArray("swings") { document.rigEdits.swingEdits.forEach { add(it.toJson()) } }
+            // A document using the stack (modifiers or an order) keeps every entry in one list ([STACK]); one that does not keeps
+            // the fields older versions read.
+            val unified = document.rigEdits.modifiers.isNotEmpty() || document.rigEdits.stackOrder.isNotEmpty()
+            if (unified) putJsonArray(STACK) {
+                document.rigEdits.swingEdits.forEach { add(stackEntry("swing", it.toJson())) }
+                document.rigEdits.simEdits.forEach { add(stackEntry("simulation", encodeSimulation(it))) }
+                document.rigEdits.interiorEffects.forEach { add(stackEntry("interior", it.toJson())) }
+                document.rigEdits.modifiers.forEach { add(stackEntry("modifier", it.toJson())) }
+            }
+            if (!unified && document.rigEdits.interiorEffects.isNotEmpty()) putJsonArray("interiorEffects") { document.rigEdits.interiorEffects.forEach { add(it.toJson()) } }
+            if (!unified) putJsonArray("swings") { document.rigEdits.swingEdits.forEach { add(it.toJson()) } }
             putJsonArray("motions") { document.rigEdits.motionClips.forEach { add(io.github.psd2live.core.MotionClips.toJson(it)) } }
             if (document.rigEdits.motionPresets.isNotEmpty()) put("motionPresets", io.github.psd2live.core.MotionPresets.toJson(document.rigEdits.motionPresets))
             // Only a document that took its expressions in or has a pose writes them, so others keep their stored form.
             document.rigEdits.expressions?.let { expressions -> putJsonArray("expressions") { expressions.forEach { add(io.github.psd2live.core.ModelExpressions.toJson(it)) } } }
             document.rigEdits.pose?.let { put("pose", io.github.psd2live.core.ModelPoses.toJson(it)) }
-            if (document.rigEdits.simEdits.isNotEmpty()) putJsonArray("simulations") { document.rigEdits.simEdits.forEach { add(encodeSimulation(it)) } }
+            if (!unified && document.rigEdits.simEdits.isNotEmpty()) putJsonArray("simulations") { document.rigEdits.simEdits.forEach { add(encodeSimulation(it)) } }
             if (document.rigEdits.hitAreas.isNotEmpty()) putJsonArray("hitAreas") { document.rigEdits.hitAreas.forEach { add(io.github.psd2live.core.RigHitAreas.toJson(it)) } }
+            if (document.rigEdits.stackOrder.isNotEmpty()) putJsonArray("stackOrder") { document.rigEdits.stackOrder.forEach { add(JsonPrimitive(it)) } }
 			putJsonArray("parameters") {
 				document.rigEdits.parameterEdits.forEach { edit ->
 					add(buildJsonObject {
@@ -750,14 +760,16 @@ internal class WorkspaceStore(
             disabledPhysicsIds = rigEditObject.optionalArray("physicsDisabled").map { it.jsonPrimitive.content }.toSet(),
             physicsOrder = rigEditObject.optionalArray("physicsOrder").map { it.jsonPrimitive.content },
             physicsFps = rigEditObject["physicsFps"]?.jsonPrimitive?.intOrNull ?: io.github.psd2live.core.RigEditOverlay.DEFAULT_PHYSICS_FPS,
-            interiorEffects = rigEditObject.optionalArray("interiorEffects").map { io.github.psd2live.core.interior.NativeInteriorEffect.fromJson(it.jsonObject) },
-            swingEdits = rigEditObject.optionalArray("swings").map { io.github.psd2live.core.RigSwingEdit.fromJson(it.jsonObject) },
+            interiorEffects = (stacked(rigEditObject, "interior") ?: rigEditObject.optionalArray("interiorEffects")).map { io.github.psd2live.core.interior.NativeInteriorEffect.fromJson(it.jsonObject) },
+            swingEdits = (stacked(rigEditObject, "swing") ?: rigEditObject.optionalArray("swings")).map { io.github.psd2live.core.RigSwingEdit.fromJson(it.jsonObject) },
             motionClips = rigEditObject.optionalArray("motions").map { io.github.psd2live.core.MotionClips.fromJson(it.jsonObject) },
             motionPresets = io.github.psd2live.core.MotionPresets.fromJson(rigEditObject["motionPresets"]?.jsonObject),
             expressions = rigEditObject["expressions"]?.jsonArray?.map { io.github.psd2live.core.ModelExpressions.fromJson(it.jsonObject) },
             pose = rigEditObject["pose"]?.jsonObject?.let(io.github.psd2live.core.ModelPoses::fromJson),
-            simEdits = rigEditObject.optionalArray("simulations").map { decodeSimulation(it.jsonObject, bakes) },
+            simEdits = (stacked(rigEditObject, "simulation") ?: rigEditObject.optionalArray("simulations")).map { decodeSimulation(it.jsonObject, bakes) },
             hitAreas = rigEditObject.optionalArray("hitAreas").map { io.github.psd2live.core.RigHitAreas.fromJson(it.jsonObject) },
+            modifiers = (stacked(rigEditObject, "modifier") ?: rigEditObject.optionalArray("modifiers")).map { io.github.psd2live.core.modifier.RigModifier.fromJson(it.jsonObject) },
+            stackOrder = rigEditObject.optionalArray("stackOrder").map { it.jsonPrimitive.content },
 			parameterEdits = rigEditObject.optionalArray("parameters").map { element ->
 				val edit = element.jsonObject
 				RigParameterEdit(
@@ -1350,6 +1362,38 @@ internal class WorkspaceStore(
 		private const val JOURNAL = "authoringJournal"
 		private const val IMPORTED_CMO3 = "importedCmo3"
 		private const val SIMULATIONS = "simulations"
+
+		/** The rig's one list of stack entries, each `{type, value}`: swings, simulations, interior effects and modifiers. */
+		internal const val STACK = "stack"
+
+		private fun stackEntry(type: String, value: JsonObject) = buildJsonObject { put("type", type); put("value", value) }
+
+		/** The [type] entries' values of [rig]'s stack, in order; null when it keeps the fields of older versions. */
+		internal fun stacked(rig: JsonObject, type: String): List<JsonElement>? =
+			(rig[STACK] as? JsonArray)?.filter { it.jsonObject["type"]?.jsonPrimitive?.contentOrNull == type }?.map { it.jsonObject.getValue("value") }
+
+		/** Every stored simulation of [rig], from either layout. */
+		internal fun storedSimulations(rig: JsonObject): List<JsonElement> = stacked(rig, "simulation") ?: (rig[SIMULATIONS] as? JsonArray).orEmpty()
+
+		/**
+		 * The rig fields that change when [transform] (which may return its argument) maps [rig]'s stored simulations: the
+		 * `simulations` array, or the simulation entries of the stack in place; empty when nothing changes.
+		 */
+		internal fun withSimulations(rig: JsonObject, transform: (JsonArray) -> JsonArray): Map<String, JsonElement> {
+			(rig[SIMULATIONS] as? JsonArray)?.let { simulations ->
+				val mapped = transform(simulations)
+				if (mapped !== simulations) return mapOf(SIMULATIONS to mapped)
+			}
+			val stack = rig[STACK] as? JsonArray ?: return emptyMap()
+			val indices = stack.indices.filter { stack[it].jsonObject["type"]?.jsonPrimitive?.contentOrNull == "simulation" }
+			if (indices.isEmpty()) return emptyMap()
+			val simulations = JsonArray(indices.map { stack[it].jsonObject.getValue("value") })
+			val mapped = transform(simulations)
+			if (mapped === simulations) return emptyMap()
+			val next = stack.toMutableList()
+			indices.forEachIndexed { k, i -> next[i] = JsonObject(stack[i].jsonObject + ("value" to mapped[k])) }
+			return mapOf(STACK to JsonArray(next))
+		}
 		/** Key of a simulation's bake stored as a shared file: `{"$BAKE_REF": "<sha256>"}`. */
 		internal const val BAKE_REF = "\$bake"
 		private const val TEXTURE_OVERRIDES = "textureOverrides"
@@ -1497,10 +1541,7 @@ internal class WorkspaceStore(
 				write("history/payloads/$hash.txt") { text.encodeToByteArray() }
 				changes[IMPORTED_CMO3] = buildJsonObject { put("payload", hash) }
 			}
-			(rig[SIMULATIONS] as? JsonArray)?.let { simulations ->
-				val shared = shareBakes(simulations) { hash, bytes -> write("history/bakes/$hash.bin") { bytes } }
-				if (shared !== simulations) changes[SIMULATIONS] = shared
-			}
+			changes += withSimulations(rig) { simulations -> shareBakes(simulations) { hash, bytes -> write("history/bakes/$hash.bin") { bytes } } }
 			if (changes.isEmpty()) return value
 			return JsonObject(value + ("rigEdits" to JsonObject(rig + changes)))
 		}
@@ -1535,15 +1576,14 @@ internal class WorkspaceStore(
 					bytes.decodeToString()
 				})
 			}
-			(rig[SIMULATIONS] as? JsonArray)?.let { simulations ->
-				val resolved = resolveBakes(simulations, shared.inlineBakes) { hash ->
+			changes += withSimulations(rig) { simulations ->
+				resolveBakes(simulations, shared.inlineBakes) { hash ->
 					shared.bakes.getOrPut(hash) {
 						val file = project.resolve("history/bakes/$hash.bin")
 						require(Files.isRegularFile(file)) { "Bake is missing: $hash" }
 						unpackBake(hash, Files.readAllBytes(file))
 					}
 				}
-				if (resolved !== simulations) changes[SIMULATIONS] = resolved
 			}
 			if (changes.isEmpty()) return snapshot
 			return JsonObject(snapshot + ("rigEdits" to JsonObject(rig + changes)))

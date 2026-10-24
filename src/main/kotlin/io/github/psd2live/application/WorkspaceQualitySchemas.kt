@@ -66,6 +66,20 @@ internal object WorkspaceQualitySchemas {
         ))),
     ))
 
+    /** [io.github.psd2live.core.quality.ModifierQuality.report]. */
+    val modifiers = s.obj(mapOf(
+        "version" to s.integer(io.github.psd2live.core.quality.ModifierQuality.VERSION, io.github.psd2live.core.quality.ModifierQuality.VERSION),
+        "domain" to s.constant(io.github.psd2live.core.quality.ModifierQuality.DOMAIN), "fence" to s.constant("observation"),
+        "decision" to s.choices("accept", "accept_with_diagnostics"), "can_proceed" to s.constant(true),
+        "complete" to s.boolean(), "scope" to s.string(), "checks" to s.array(check, 1, 1),
+        "findings" to s.array(s.obj(mapOf(
+            "code" to s.choices(*io.github.psd2live.core.quality.ModifierRule.entries.map { it.name }.toTypedArray()),
+            "severity" to s.choices("info", "warning", "error"), "category" to s.choices("quality", "validity", "coverage"),
+            "domain" to s.constant(io.github.psd2live.core.quality.ModifierQuality.DOMAIN), "target" to s.handle(),
+            "evidence" to s.obj(mapOf("modifier" to s.handle(), "detail" to s.string(), "error" to s.number(0)), setOf("modifier")),
+        ))),
+    ))
+
     /** [GeneratedOverrideQuality.report]. */
     val generatedOverrides = s.obj(mapOf(
         "version" to s.integer(GeneratedOverrideQuality.VERSION, GeneratedOverrideQuality.VERSION),

@@ -75,6 +75,7 @@ internal fun WorkspaceQueries.inspect(a: JsonObject): JsonObject {
                     put("overrides", io.github.psd2live.core.quality.GeneratedOverrideQuality.report(queries.generatedOverrideIssues(), queries.supersededEntryNotes(), queries.seeThroughNotes()))
                     put("regeneration", io.github.psd2live.core.quality.RegenerationQuality.report(queries.regenerationIssues(), queries.staleRegenerations()))
                     put("skeleton", io.github.psd2live.core.quality.SkeletonBindingQuality.report(queries.skeletonBindingIssues()))
+                    put("modifiers", io.github.psd2live.core.quality.ModifierQuality.report(queries.modifierIssues()))
                 }
             }
             "physics" -> { put("fps", queries.physicsFps()); put("groups", JsonArray(queries.listPhysics().map { it.toJson() })) }
@@ -82,13 +83,19 @@ internal fun WorkspaceQueries.inspect(a: JsonObject): JsonObject {
             "interiors" -> put("effects", JsonArray(queries.listInteriorEffects().map { effect ->
                 JsonObject(effect.configuration() + ("issue" to (queries.currentPuppet()?.let(effect::issue)?.let(::JsonPrimitive) ?: JsonNull)))
             }))
+            "modifiers" -> {
+                val issues = queries.modifierIssues()
+                put("modifiers", JsonArray(queries.listModifiers().map { WorkspaceModifierSchemas.inspect(it, issues) }))
+                // The whole stack in the order it runs: modifiers, and swings, simulations and interior effects by graph node.
+                putJsonArray("stack") { queries.currentRigEdits()?.let(io.github.psd2live.core.modifier.ModifierStack::entries).orEmpty().forEach { add(it.id) } }
+            }
             "simulations" -> {
                 val puppet = queries.currentPuppet()
                 // The bake's arrays stay out; its summary and whether it is stale are what a caller acts on.
                 put("simulations", JsonArray(queries.listSimulations().map { sim -> JsonObject(sim.toJson() - "bake" + buildJsonObject {
                     sim.bake?.let { bake ->
                         put("bake", bake.summary())
-                        if (puppet != null) put("bake_stale", io.github.psd2live.core.sim.SimBake.stale(puppet, sim))
+                        if (puppet != null) put("bake_stale", io.github.psd2live.core.sim.SimBake.stale(puppet, sim, queries.currentRigEdits()))
                     }
                 }) }))
                 // Glue keys are what glue_roles take.

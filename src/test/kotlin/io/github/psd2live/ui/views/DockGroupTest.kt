@@ -28,4 +28,13 @@ class DockGroupTest {
 		assertEquals("other", split.second!!.id)
 	}
 
+	@Test fun aSavedLayoutsRetiredPanelsGiveWayToTheModifiersTab() {
+		// The simulation, interior and model presets panels became the modifiers panel: it takes their place.
+		val saved = DockNode(id = "root", first = DockNode(id = "left", modules = listOf("physics", "simulation", "interior", "layers")),
+			second = DockNode(id = "right", modules = listOf("settings", "z")))
+		assertEquals(listOf("physics", "layers", "modifiers", "z"), retireDockModules(ensureModifiersDockTab(saved)).allModules())
+		val kept = DockNode(id = "root", first = DockNode(id = "left", modules = listOf("physics", "modifiers")), second = other)
+		assertEquals(kept.allModules(), retireDockModules(ensureModifiersDockTab(kept)).allModules())
+	}
+
 }

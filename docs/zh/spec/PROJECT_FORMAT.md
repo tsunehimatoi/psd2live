@@ -100,12 +100,14 @@ GUI 放弃并打开会先等待此前正在执行的编辑与字段提交完成�
 | 节点 4 | `layout` / `materials` 节点含 Layout 节点引入后新增的字段 | 参考图、参考图层与钉点、绘图、素材的画布与参考标记 |
 | 节点 5 | `clips` 节点含 `expressions`、`pose`，或有动作片段带 `events` | 表情 `{id, name, fade_in, fade_out, entries:[{parameter, blend, value}]}`（`blend` 为 `ADD` / `MULTIPLY` / `OVERWRITE`）；姿势 `{fade_in, groups:[[{part, links?}]]}`；事件 `[{time, value}]` |
 | 节点 5 | `rig` 节点含 `hitAreas` | 点击区域 `{id, name, meshes}`，按判定顺序，见[导出目标](EXPORT_TARGETS.md#点击区域) |
+| 节点 6 | `rig` 节点含 `modifiers` 或 `stackOrder`（此前保存的工程） | 修改器与栈顺序，见[文档层](DOCUMENT_LAYER.md#修改器) |
+| 节点 7 | `rig` 节点含 `stack` | 栈条目的一个列表：每项 `{type, value}`，`type` 为 `swing` / `simulation` / `interior` / `modifier`，`value` 是该条目原来的 JSON（模拟的烘焙照修订 4 引用）。用到修改器或栈顺序的文档这样保存，代替 `swings`、`simulations`、`interiorEffects`、`modifiers`；栈顺序仍在 `stackOrder`。没有用到的文档照旧写这些字段，旧版仍能打开 |
 | 修订 1 | 日志不引用载荷节点 | — |
 | 修订 2 | 日志引用载荷节点，索引列出 `payloads` | `{"$payload": "<sha256>"}` 日志条目 |
 | 修订 3 | 日志含固化点记录 `rig_checkpoint` | 索引的 `rig` 列出记录引用的 Rig 对象，归档在 `rig/objects/` 中保存它们；可同时列出 `payloads` |
 | 修订 4 | 有模拟带烘焙结果 | `rig` 节点中每个烘焙写成 `{"$bake": "<sha256>"}`，索引的 `bakes` 列出它们，内容在 `document/bakes/`；可同时列出 `payloads` 与 `rig` |
 
-只读取 schema 1 的程序遇到 schema 2 的节点或修订会拒绝打开，不会丢弃新字段；当前程序读取节点 schema 1–4（`clips` 与 `rig` 节点 1–5）、修订 schema 1–4，更高 schema 仍拒绝；不认识 schema 5 的程序遇到带表情、姿势或动作事件的 `clips` 节点拒绝打开，而不是丢掉它们。修订 schema 4 的 `rig` 节点只能引用索引列出的烘焙，打开时按哈希核对每个烘焙文件；此前的程序遇到修订 schema 4 拒绝打开，因此带烘焙的工程保存后不能再用它们打开。修订 schema 3 的索引必须列出 `rig`，打开时逐个核对 `rig/objects/` 中有这些对象，缺少任何一个都拒绝打开；不支持 schema 3 的程序无法从这类修订构建模型，因此拒绝打开。修订 schema 2 必须列出至少一个载荷，日志只能引用自己列出的载荷。保存时，已含 schema 2 节点的修订把 512 字符以上的作者日志条目外置为载荷节点（日志节点中的引用不到 80 字符），每个载荷只写一次，修订索引为 schema 2；只读 schema 1 的程序本就打不开这类修订。不含新字段的文档仍全部写 schema 1，节点与索引逐字节不变。这样长历史的每个修订不再各存一份完整日志，归档体积与保存耗时不再随修订数平方增长。
+只读取 schema 1 的程序遇到 schema 2 的节点或修订会拒绝打开，不会丢弃新字段；当前程序读取节点 schema 1–4（`clips` 节点 1–5，`rig` 节点 1–7）、修订 schema 1–4，更高 schema 仍拒绝；不认识 schema 5 的程序遇到带表情、姿势或动作事件的 `clips` 节点拒绝打开，而不是丢掉它们。修订 schema 4 的 `rig` 节点只能引用索引列出的烘焙，打开时按哈希核对每个烘焙文件；此前的程序遇到修订 schema 4 拒绝打开，因此带烘焙的工程保存后不能再用它们打开。修订 schema 3 的索引必须列出 `rig`，打开时逐个核对 `rig/objects/` 中有这些对象，缺少任何一个都拒绝打开；不支持 schema 3 的程序无法从这类修订构建模型，因此拒绝打开。修订 schema 2 必须列出至少一个载荷，日志只能引用自己列出的载荷。保存时，已含 schema 2 节点的修订把 512 字符以上的作者日志条目外置为载荷节点（日志节点中的引用不到 80 字符），每个载荷只写一次，修订索引为 schema 2；只读 schema 1 的程序本就打不开这类修订。不含新字段的文档仍全部写 schema 1，节点与索引逐字节不变。这样长历史的每个修订不再各存一份完整日志，归档体积与保存耗时不再随修订数平方增长。
 
 ### 烘焙文件
 

@@ -55,6 +55,11 @@ internal object ProjectFormatV2 {
 	const val NODE_SCHEMA_SIDECARS = 5
 	/** A rig node holding hit areas (`rigEdits.hitAreas`), which older readers would drop. */
 	const val NODE_SCHEMA_HIT_AREAS = 5
+	/** A rig node holding modifiers or a stack order (`rigEdits.modifiers`, `rigEdits.stackOrder`), which older readers would drop. */
+	const val NODE_SCHEMA_MODIFIERS = 6
+
+	/** A rig node keeping its stack entries in one list (`rigEdits.stack`), which older readers do not know. */
+	const val NODE_SCHEMA_STACK = 7
 	/** Schema of a revision index whose journal names no payload node. */
 	const val REVISION_SCHEMA = 1
 	/** Schema of a revision index whose journal names payload nodes (listed under `payloads`). */
@@ -150,7 +155,7 @@ internal object ProjectFormatV2 {
 	 */
 	private fun isCurrent(index: JsonObject, snapshot: JsonObject): Boolean {
 		val rig = snapshot["rigEdits"] as? JsonObject ?: return true
-		val baked = (rig[SIMULATIONS] as? JsonArray).orEmpty().any { (it as? JsonObject)?.get("bake") is JsonObject }
+		val baked = WorkspaceStore.storedSimulations(rig).any { (it as? JsonObject)?.get("bake") is JsonObject }
 		if (baked && index["bakes"] == null) return false
 		if (!needsNewerSchema(snapshot) || index["payloads"] != null) return true
 		return (rig[JOURNAL] as? JsonArray).orEmpty().none { command ->
@@ -211,8 +216,8 @@ internal object ProjectFormatV2 {
 		val bakes = LinkedHashSet<String>()
 		snapshot["rigEdits"]?.jsonObject?.let { rig ->
 			val definitions = LinkedHashMap(rig.filterKeys { it != JOURNAL && it !in clipKeys })
-			(definitions[SIMULATIONS] as? JsonArray)?.let { simulations ->
-				definitions[SIMULATIONS] = WorkspaceStore.shareBakes(simulations) { hash, bytes ->
+			definitions += WorkspaceStore.withSimulations(JsonObject(definitions)) { simulations ->
+				WorkspaceStore.shareBakes(simulations) { hash, bytes ->
 					if (bakes.add(hash)) root.resolve(BAKES).resolve("$hash.bin").let { if (!Files.exists(it)) write(it, bytes) }
 				}
 			}
@@ -304,6 +309,8 @@ internal object ProjectFormatV2 {
 			else -> false
 		}
 		if (transformed) return NODE_SCHEMA_TRANSFORMS
+		if (kind == "rig" && (value["rigEdits"] as? JsonObject)?.containsKey(WorkspaceStore.STACK) == true) return NODE_SCHEMA_STACK
+		if (kind == "rig" && (value["rigEdits"] as? JsonObject)?.let { "modifiers" in it || "stackOrder" in it } == true) return NODE_SCHEMA_MODIFIERS
 		if (kind == "rig" && (value["rigEdits"] as? JsonObject)?.containsKey("hitAreas") == true) return NODE_SCHEMA_HIT_AREAS
 		// Layout nodes hold their state under one key ([layoutParts]), as source parts do.
 		val layoutValue = value[kind] as? JsonObject
@@ -359,7 +366,11 @@ internal object ProjectFormatV2 {
 		}
 		fun load(folder: String, kind: String, hash: String): JsonObject {
 			val value = cache.getOrPut("$folder/$hash") { read(root, folder, hash) }
-			val newest = if (kind == "clips" || kind == "rig") NODE_SCHEMA_SIDECARS else NODE_SCHEMA_LAYOUT
+			val newest = when (kind) {
+				"rig" -> NODE_SCHEMA_STACK
+				"clips" -> NODE_SCHEMA_SIDECARS
+				else -> NODE_SCHEMA_LAYOUT
+			}
 			require(value["schema"]?.jsonPrimitive?.intOrNull in NODE_SCHEMA..newest && value["kind"]?.jsonPrimitive?.contentOrNull == kind) {
 				"Unsupported document node: $kind $hash"
 			}
@@ -386,8 +397,8 @@ internal object ProjectFormatV2 {
 		val rig = value("rig")?.getValue("rigEdits")?.jsonObject
 		if (rig != null) {
 			val edits = LinkedHashMap<String, JsonElement>(rig)
-			(rig[SIMULATIONS] as? JsonArray)?.let { simulations ->
-				edits[SIMULATIONS] = WorkspaceStore.resolveBakes(simulations) { hash ->
+			edits += WorkspaceStore.withSimulations(rig) { simulations ->
+				WorkspaceStore.resolveBakes(simulations) { hash ->
 					require(hash in bakes) { "Rig names a bake its revision does not list: $hash" }
 					cache.getOrPut("$BAKES/$hash") {
 						val path = root.resolve(BAKES).resolve("$hash.bin")

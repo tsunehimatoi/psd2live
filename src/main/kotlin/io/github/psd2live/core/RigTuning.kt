@@ -211,7 +211,21 @@ data class RigTuning(
 	val turnCameraDistance: Float = 3f,
 	/** How far in front of the torso the lean is seen from, in torso lengths: nearer draws a lean in larger. */
 	val leanCameraDistance: Float = 9f,
+	/** Values the left side's eye and brow layers take in place of the shared ones ([SIDED] only); empty for none. */
+	val left: Map<String, Float> = emptyMap(),
+	/** As [left], for the right side. */
+	val right: Map<String, Float> = emptyMap(),
 ) {
+	init {
+		require((left.keys + right.keys).all { it in SIDED }) { "Only ${SIDED.joinToString()} take a value per side" }
+	}
+
+	/** This tuning as [side]'s layers read it: its own value where it has one, the shared one elsewhere. */
+	fun forSide(side: Side): RigTuning {
+		val own = when (side) { Side.LEFT -> left; Side.RIGHT -> right; Side.NONE -> emptyMap() }
+		return if (own.isEmpty()) this else fromMap(own, this)
+	}
+
 	/** The panel's groups, in order. */
 	enum class Group { HEAD, EYES, BROWS, MOUTH, NOSE_EARS, HAIR, TURN, OPEN, LEAN, PROPORTION, BREATH, DEPTH }
 
@@ -356,6 +370,9 @@ data class RigTuning(
 		val fieldById: Map<String, Field> = fields.associateBy { it.id }
 
 		/** [values] by id over [base]: unknown ids are skipped and every value is clamped to its range. */
+		/** The values a side can take for itself: those the eye and brow layers read one layer at a time. */
+		val SIDED: Set<String> = setOf("blinkDepth", "blinkCorner", "eyelashSquash", "browLift")
+
 		fun fromMap(values: Map<String, Float>, base: RigTuning = RigTuning()): RigTuning =
 			values.entries.fold(base) { tuning, (id, value) ->
 				val field = fieldById[id]

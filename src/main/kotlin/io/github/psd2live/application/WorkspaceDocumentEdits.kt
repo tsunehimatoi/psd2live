@@ -26,8 +26,9 @@ internal object WorkspaceDocumentEdits {
         setOf("put", "delete", "seed_builtin", "set_key", "delete_key", "remove_curve", "pose", "move_keys", "delete_keys", "paste_keys", "replace_keys", "preset", "create", "duplicate", "rename", "properties", "close_loop", "set_event", "delete_event").map { "motion_$it" } +
         setOf("warp", "rotation", "glue", "topology").map { "canvas_$it" } +
         setOf("put", "delete", "deform").map { "path_$it" } +
-        setOf("swing_put", "swing_delete", "interior_put", "interior_delete") + WorkspacePhysicsEdits.batchable + WorkspaceSimulationEdits.supported + WorkspaceCanvasWeightEdits.supported + WorkspaceCanvasDeformEdits.supported + WorkspaceTextureEdits.supported +
-        WorkspaceLayoutEdits.supported + WorkspaceMaterialEdits.supported + WorkspaceHitAreaEdits.supported + WorkspaceSidecarEdits.supported + WorkspaceObjectEdits.supported
+        setOf("swing_put", "swing_delete", "interior_put", "interior_delete") + io.github.psd2live.core.modifier.ModifierAuthoring.supported + io.github.psd2live.core.sim.SimApply.OP + WorkspacePhysicsEdits.batchable + WorkspaceSimulationEdits.supported + WorkspaceCanvasWeightEdits.supported + WorkspaceCanvasDeformEdits.supported + WorkspaceTextureEdits.supported +
+        WorkspaceLayoutEdits.supported + WorkspaceMaterialEdits.supported + WorkspaceHitAreaEdits.supported + WorkspaceSidecarEdits.supported + WorkspaceObjectEdits.supported +
+        WorkspaceStackCommands.supported
 
     /**
      * [operation] on the complete editing document. Layout generation state only gates automatic semantic rigging;
@@ -55,6 +56,9 @@ internal object WorkspaceDocumentEdits {
         // Every document operation, not only journal edits: a copy over the bangs is made anew on each build.
         refuseCopies(model, request)
         return when (operation.operation) {
+            // One command for every stack entry and component, routed to the entry's own.
+            in WorkspaceStackCommands.supported ->
+                applyGenerated(WorkspaceStackCommands.route(operation, document), document, model, simulationWork, physicsWork, rasterWork, assetResources)
             WorkspaceDrawOrderEdits.OP -> WorkspaceDrawOrderEdits.apply(document, model, request)
             WorkspaceLayerTransform.OP -> WorkspaceLayerTransform.apply(document, model, request)
             WorkspaceRasterEdits.REBUILD_MESH -> WorkspaceRasterEdits.rebuildMesh(document, model, request.text("layer_id"), rasterWork)
@@ -112,6 +116,10 @@ internal object WorkspaceDocumentEdits {
             }
             "interior_put" -> document.copy(rigEdits=io.github.psd2live.core.interior.NativeInteriorAuthoring.put(model,document.rigEdits,request))
             "interior_delete" -> document.copy(rigEdits=io.github.psd2live.core.interior.InteriorLifecycle.delete(model, document.rigEdits, request.text("target")))
+            io.github.psd2live.core.sim.SimApply.OP ->
+                document.copy(rigEdits = io.github.psd2live.core.sim.SimApply.apply(document.rigEdits, model.authoredPuppet(document.rigEdits), request.text("id")))
+            in io.github.psd2live.core.modifier.ModifierAuthoring.supported ->
+                document.copy(rigEdits = io.github.psd2live.core.modifier.ModifierAuthoring.apply(operation.operation, model, document.rigEdits, request))
             "swing_put" -> SwingAuthoring.request(request).let { swing(document, model.rig.puppet, it.edit, it.estimatePhysics) }
             "swing_delete" -> removeSwing(document, model.rig.puppet, request.text("id"), request["bake"]?.jsonPrimitive?.boolean ?: false,
                 model.authored.rig.puppet)

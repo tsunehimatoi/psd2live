@@ -284,6 +284,7 @@ u32 n × u8[4] depends_on  依赖的其他扩展块标签
 | 2 | `BONE` 的圆弧 | 精确链接（沿圆弧插值的枢轴） |
 | 4 | `SIMS` | 顶点级实时模拟 |
 | 8 | `COLL`（需 `SIMS`；随模拟开启） | 碰撞 |
+| 16 | 保留，不分配（块标签 `MODS` 同样保留） | 开发期间曾用于修改器的精确求值，已移除；修改器只以烘焙的关键形导出 |
 
 - `p2l_advanced_available()` 返回文件携带且运行时支持的位；`p2l_set_advanced(bits)` 返回实际开启的位，0 为 Cubism 模式（默认）。切换时重置模拟状态。
 - `p2l_bone_count / p2l_bone_id / p2l_bone_transform` 输出 H3 的骨骼帧。

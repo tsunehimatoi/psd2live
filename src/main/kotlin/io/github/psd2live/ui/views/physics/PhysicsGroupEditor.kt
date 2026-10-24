@@ -203,6 +203,23 @@ internal fun PhysicsSection(
 	if (open) SectionBody(content)
 }
 
+/**
+ * A fold inside a card's body, as Blender's subpanels: a lighter header and its fields indented under it. [open] is
+ * kept by the caller, so it survives switching between the things the card shows.
+ */
+@Composable
+internal fun CardSubsection(
+	title: String,
+	open: Boolean,
+	onToggle: () -> Unit,
+	count: Int? = null,
+	trailing: (@Composable RowScope.() -> Unit)? = null,
+	content: @Composable ColumnScope.() -> Unit,
+) {
+	PanelSectionRow(title, open, onToggle, count = count, icon = null, trailing = trailing?.let { t -> { Spacer(Modifier.width(6.dp)); t() } })
+	if (open) Column(Modifier.fillMaxWidth().padding(start = 10.dp, top = 2.dp, bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp), content = content)
+}
+
 @Composable
 private fun SectionBody(content: @Composable ColumnScope.() -> Unit) {
 	Column(

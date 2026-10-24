@@ -125,7 +125,7 @@ internal fun reconcileDockModules(
 
 /** Repair the exact root-level split produced by the old module-ID auto-placement bug. */
 internal fun repairLegacyCanvasDocking(saved: DockNode): DockNode {
-    val withMesh = ensureInteriorDockTab(ensureSimulationDockTab(ensureAnimationEditorDockTab(ensureSkeletonDockTab(ensureMeshDockTab(saved)))))
+    val withMesh = retireDockModules(ensureModifiersDockTab(ensureAnimationEditorDockTab(ensureSkeletonDockTab(ensureMeshDockTab(saved)))))
     val defaultShape = defaultDockLayout()
     fun sameDefaultShape(node: DockNode, expected: DockNode): Boolean =
         node.modules == expected.modules && node.horizontal == expected.horizontal && node.ratio == expected.ratio &&
@@ -192,22 +192,19 @@ internal fun ensureAnimationEditorDockTab(root: DockNode): DockNode {
     }
 }
 
-internal fun ensureInteriorDockTab(root: DockNode): DockNode {
-    if ("interior" in root.allModules()) return root
-    val host=root.containing("simulation")?:root.containing("physics")?:return root
-    return root.update(host.id) { it.copy(modules=it.modules+"interior") }
+internal fun ensureModifiersDockTab(root: DockNode): DockNode {
+    if ("modifiers" in root.allModules()) return root
+    val host = RETIRED_DOCK_MODULES.firstNotNullOfOrNull { root.containing(it) } ?: root.containing("physics") ?: return root
+    return root.update(host.id) { node -> node.copy(modules = node.modules + "modifiers") }
 }
 
-/** Insert the simulation tab after physics if an older saved layout is missing it. */
-internal fun ensureSimulationDockTab(root: DockNode): DockNode {
-    if (root.allModules().contains("simulation")) return root
-    val host = root.containing("physics") ?: return root
-    return root.update(host.id) { node ->
-        val modules = node.modules.toMutableList()
-        modules.add((modules.indexOf("physics") + 1).coerceIn(0, modules.size), "simulation")
-        node.copy(modules = modules)
-    }
-}
+/**
+ * The panels the modifiers panel took over: the simulation and interior panels became cards of the stack, the model
+ * presets its world page. Saved layouts lose them; [ensureModifiersDockTab] puts the modifiers panel where they were.
+ */
+internal val RETIRED_DOCK_MODULES = listOf("simulation", "interior", "settings")
+
+internal fun retireDockModules(root: DockNode): DockNode = RETIRED_DOCK_MODULES.fold(root) { node, module -> node.remove(module) ?: node }
 
 internal fun defaultDockLayout(canvas: String = PRIMARY_CANVAS_ID): DockNode {
     val canvasAndLog = DockNode(horizontal = false, ratio = .72f,
@@ -215,9 +212,7 @@ internal fun defaultDockLayout(canvas: String = PRIMARY_CANVAS_ID): DockNode {
         second = DockNode(modules = listOf("log", "animationEditor")))
     val workspace = DockNode(ratio = .28f, first = DockNode(modules = listOf("hierarchy", "skeleton")), second = canvasAndLog)
     return DockNode(ratio = .60f, first = workspace,
-        second = DockNode(horizontal = false, ratio = .32f,
-            first = DockNode(modules = listOf("settings")),
-            second = DockNode(modules = listOf("layers", "parameters", "tools", "mesh", "inspector", "animation", "physics", "simulation", "interior"))))
+        second = DockNode(modules = listOf("layers", "parameters", "tools", "mesh", "inspector", "animation", "physics", "modifiers")))
 }
 
 private fun leaf(vararg modules: String) = DockNode(modules = modules.toList())
@@ -244,26 +239,26 @@ internal fun presetDockLayout(workspace: EditorWorkspace): DockNode {
         WorkspacePreset.EDIT, WorkspacePreset.BLANK -> defaultDockLayout(names[0])
         WorkspacePreset.MESH -> row(.22f, leaf("hierarchy", "layers", "skeleton"),
             row(.72f, column(.78f, leaf(names[0]), leaf("log", "animationEditor")),
-                column(.55f, leaf("mesh", "tools"), leaf("inspector", "parameters", "settings", "animation", "physics", "simulation", "interior"))))
+                column(.55f, leaf("mesh", "tools"), leaf("inspector", "parameters", "animation", "physics", "modifiers"))))
         WorkspacePreset.RIG -> row(.20f, leaf("hierarchy", "skeleton"),
             row(.75f, column(.76f, row(.5f, leaf(names[0]), leaf(names[1])), leaf("log", "animationEditor")),
-                column(.45f, leaf("parameters"), leaf("inspector", "tools", "mesh", "layers", "settings", "animation", "physics", "simulation", "interior"))))
+                column(.45f, leaf("parameters"), leaf("inspector", "tools", "mesh", "layers", "animation", "physics", "modifiers"))))
         WorkspacePreset.ANIMATION -> row(.78f,
-            column(.62f, row(.26f, leaf("animation", "physics", "simulation", "interior", "hierarchy", "skeleton"), leaf(names[0])),
+            column(.62f, row(.26f, leaf("animation", "physics", "modifiers", "hierarchy", "skeleton"), leaf(names[0])),
                 leaf("animationEditor", "log")),
-            leaf("parameters", "settings", "layers", "tools", "mesh", "inspector"))
+            leaf("parameters", "layers", "tools", "mesh", "inspector"))
         WorkspacePreset.PREVIEW -> row(.16f, leaf("hierarchy", "skeleton"),
             row(.78f, column(.80f, leaf(names[0]), leaf("log", "animationEditor")),
-                column(.50f, leaf("animation", "physics", "simulation", "interior", "settings", "layers", "tools", "mesh", "inspector"), leaf("parameters"))))
+                column(.50f, leaf("animation", "physics", "modifiers", "layers", "tools", "mesh", "inspector"), leaf("parameters"))))
         WorkspacePreset.PHYSICS -> row(.5f, column(.82f, leaf(names[0]), leaf("log", "animationEditor")),
             row(.5f, leaf("parameters", "hierarchy", "skeleton"),
-                leaf("physics", "simulation", "interior", "animation", "settings", "layers", "tools", "mesh", "inspector")))
+                leaf("physics", "modifiers", "animation", "layers", "tools", "mesh", "inspector")))
         WorkspacePreset.TEXTURE -> row(.40f, leaf("atlas", "hierarchy", "skeleton"),
             row(.64f, column(.80f, leaf(names[0]), leaf("log", "animationEditor")),
-                column(.60f, leaf("texture"), leaf("layers", "inspector", "tools", "mesh", "parameters", "settings", "animation", "physics", "simulation", "interior"))))
+                column(.60f, leaf("texture"), leaf("layers", "inspector", "tools", "mesh", "parameters", "animation", "physics", "modifiers"))))
         WorkspacePreset.LAYOUT -> row(.24f, leaf("materials"),
             row(.70f, column(.82f, leaf(names[0]), leaf("log", "animationEditor")),
-                column(.45f, leaf("hierarchy", "skeleton"), leaf("layers", "inspector", "tools", "mesh", "parameters", "settings", "animation", "physics", "simulation", "interior"))))
+                column(.45f, leaf("hierarchy", "skeleton"), leaf("layers", "inspector", "tools", "mesh", "parameters", "animation", "physics", "modifiers"))))
         WorkspacePreset.HISTORY -> row(.5f, leaf("history"), defaultDockLayout(names[0]))
     }
     return names.filterIndexed { index, _ -> slots[index] == null }

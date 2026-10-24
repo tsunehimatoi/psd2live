@@ -37,7 +37,7 @@ internal object WorkspaceInspectionResultSchemas {
     private val projectFields = mapOf("loaded" to s.boolean(), "busy" to s.boolean(), "canvas" to s.array(s.integer(1), 0, 2),
         "selection" to s.handle(), "layers" to s.integer(0), "parameters" to s.integer(0), "persistenceError" to s.string(),
         "quality" to s.obj(mapOf("overrides" to WorkspaceQualitySchemas.generatedOverrides, "regeneration" to WorkspaceQualitySchemas.regeneration,
-            "skeleton" to WorkspaceQualitySchemas.skeleton)))
+            "skeleton" to WorkspaceQualitySchemas.skeleton, "modifiers" to WorkspaceQualitySchemas.modifiers)))
     private val objectRowFields = mapOf("target" to s.handle(), "name" to s.string(), "parentId" to s.nullable(s.handle()), "layerId" to s.handle())
     private val layer = s.obj(mapOf("id" to s.handle(), "name" to s.string(), "visible" to s.boolean(),
         "role" to s.choices(*SemanticTag.entries.map { it.name.lowercase() }.toTypedArray()),
@@ -57,6 +57,7 @@ internal object WorkspaceInspectionResultSchemas {
         scoped("physics", mapOf("fps" to s.integer(), "groups" to s.array(WorkspacePhysicsResultTypes.group))),
         scoped("swings", mapOf("swings" to s.array(swing))),
         scoped("interiors", mapOf("effects" to s.array(WorkspaceInteriorSchemas.inspected))),
+        scoped("modifiers", mapOf("modifiers" to s.array(WorkspaceModifierSchemas.inspected), "stack" to s.array(s.handle()))),
         scoped("simulations", mapOf("simulations" to s.array(WorkspaceSimulationResultSchemas.inspectedSimulation),
             "glues" to s.array(s.obj(mapOf("key" to s.handle(), "pairs" to s.integer(0)))))),
         scoped("settings", mapOf("settings" to WorkspaceSettingsResultTypes.settings)),
@@ -102,7 +103,8 @@ internal object WorkspaceSettingsResultTypes {
         mapOf("textureUpscale" to upscale, "meshEdgeMode" to meshFields.getValue("edgeMode"), "meshFillAlgorithm" to meshFields.getValue("fillAlgorithm"),
             "meshUnits" to s.choices(*io.github.psd2live.core.MeshUnits.entries.map { it.name }.toTypedArray()),
             "meshFillParameters" to fill, "meshOverrides" to s.dictionary(storedMesh), "drawOrderOverrides" to s.dictionary(s.number()),
-            "rigTuning" to s.obj(RigTuning.fields.associate { it.id to s.number() }), "mouthShape" to s.choices("flat", "smile", "w", "custom"),
+            "rigTuning" to s.obj(RigTuning.fields.associate { it.id to s.number() } + listOf("left", "right").associateWith { s.dictionary(s.number()) },
+                RigTuning.fields.map { it.id }.toSet()), "mouthShape" to s.choices("flat", "smile", "w", "custom"), "disabledComponents" to s.array(s.handle()),
             "mouthCurve" to s.array(s.obj(mapOf("x" to s.number(), "y" to s.number()))), "mouthColor" to s.nullable(s.integer(0, 0xFFFFFF)),
             "runtimeTarget" to s.choices(*RuntimeTarget.entries.map { it.name }.toTypedArray()), "exportPixelsPerUnit" to s.nullable(s.number()),
             "meshTrace" to s.choices(*io.github.psd2live.core.MeshTrace.entries.map { it.name }.toTypedArray()),

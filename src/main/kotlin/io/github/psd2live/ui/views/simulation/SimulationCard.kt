@@ -83,6 +83,7 @@ import io.github.psd2live.ui.views.physics.FieldLabel
 import io.github.psd2live.ui.views.physics.Hint
 import io.github.psd2live.ui.views.physics.PhysicsRowDivider
 import io.github.psd2live.ui.views.physics.PhysicsSection
+import io.github.psd2live.ui.views.physics.CardSubsection
 import io.github.psd2live.ui.views.physics.RowBadge
 import io.github.psd2live.ui.views.physics.StatusDot
 import io.github.psd2live.ui.views.vertexGroupKindColor
@@ -101,82 +102,19 @@ import androidx.compose.ui.input.pointer.pointerHoverIcon
 import io.github.psd2live.ui.components.CompactTextField
 import java.awt.Cursor
 
-/** The panel's foldable sections: the body list and the selected body's editor sections. */
-private val SECTIONS = setOf("bodies", "bake", "compare", "material", "inputs", "outputs", "glue", "groups")
-
 /** Whether a simulation exports, and as its current setup. */
-private enum class BakeState { BAKED, STALE, UNBAKED, DISABLED }
+internal enum class BakeState { BAKED, STALE, UNBAKED, DISABLED }
 
-/**
- * Simulation, laid out like the physics panel beside it: a toolbar with the bake status of every body and
- * Bake all, the bodies in a list, and the selected body's sections with its bake first. Edits commit one
- * history node each, baked again in the same node while the toolbar's auto-bake is on; sliders commit on release.
- * The preview plays either the export (the bake, as Cubism plays it) or the reference simulation, which
- * never exports.
- */
-@Composable
-internal fun SimulationPanelView(
-	viewModel: PSD2LiveViewModel,
-	state: PSD2LiveState,
-	modifier: Modifier = Modifier,
-) {
-	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-	val sims = state.rigEdits.simEdits
-	var selectedId by remember { mutableStateOf<String?>(null) }
-	val selected = sims.firstOrNull { it.id == selectedId } ?: sims.firstOrNull()
-	val status by viewModel.simulationStatus.collectAsState()
-	val puppet = state.previewModel?.rig?.puppet
-	// Which sections are open survives switching bodies; the toolbar opens or closes them all.
-	var open by remember { mutableStateOf(SECTIONS - "groups" - "compare") }
-	val listOpen = "bodies" in open
-	// Staleness hashes the targets' keyforms: once per rig and edit, not per frame.
-	val bakeStates = remember(puppet, sims) {
-		sims.associate { sim ->
-			sim.id to when {
-				!sim.enabled -> BakeState.DISABLED
-				sim.bake == null -> BakeState.UNBAKED
-				puppet != null && SimBake.stale(puppet, sim) -> BakeState.STALE
-				else -> BakeState.BAKED
-			}
-		}
-	}
-
-	Column(modifier.fillMaxSize().background(colors.panelBackground)) {
-		SimulationToolbar(viewModel, state, sims, selected, bakeStates, { open = it }) { selectedId = it }
-		if (puppet == null) {
-			Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-				Text(tr("sim.noModel"), style = typography.caption.copy(fontSize = 11.sp), color = colors.textMuted, modifier = Modifier.padding(12.dp))
-			}
-			return@Column
-		}
-		val scroll = rememberScrollState()
-		Box(Modifier.fillMaxSize()) {
-			Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(end = 6.dp)) {
-				PanelSectionRow(tr("sim.bodies"), listOpen, { open = if (listOpen) open - "bodies" else open + "bodies" }, count = sims.size)
-				PhysicsRowDivider()
-				if (listOpen) {
-					if (sims.isEmpty()) {
-						Text(tr("sim.empty"), style = typography.caption.copy(fontSize = 10.5.sp), color = colors.textMuted,
-							modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp))
-						PhysicsRowDivider()
-					}
-					for (sim in sims) {
-						SimulationRow(viewModel, state, sim, bakeStates[sim.id] ?: BakeState.UNBAKED, sim.id == selected?.id) { selectedId = sim.id }
-						PhysicsRowDivider()
-					}
-				}
-				StatusLine(status)
-				if (selected != null) SimulationEditor(viewModel, state, puppet, selected, bakeStates[selected.id] ?: BakeState.UNBAKED, open) { open = it }
-				Spacer(Modifier.height(8.dp))
-			}
-			VerticalScrollbar(rememberScrollbarAdapter(scroll), Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(6.dp))
-		}
-	}
+/** [sim]'s bake state on [puppet] as [overlay] stands; staleness hashes the targets' keyforms, so callers remember it. */
+internal fun bakeState(puppet: PuppetModel?, overlay: io.github.psd2live.core.RigEditOverlay, sim: RigSimEdit): BakeState = when {
+	!sim.enabled -> BakeState.DISABLED
+	sim.bake == null -> BakeState.UNBAKED
+	puppet != null && SimBake.stale(puppet, sim, overlay) -> BakeState.STALE
+	else -> BakeState.BAKED
 }
 
 @Composable
-private fun BakeState.color(): Color {
+internal fun BakeState.color(): Color {
 	val colors = LocalToolColors.current
 	return when (this) {
 		BakeState.BAKED -> colors.success
@@ -186,71 +124,48 @@ private fun BakeState.color(): Color {
 	}
 }
 
-private fun BakeState.label() = tr("sim.state.${name.lowercase()}")
+internal fun BakeState.label() = tr("sim.state.${name.lowercase()}")
 
-/** New body, Bake all with how many bodies export as set up, the auto-bake switch and the preview switch, in one row. */
+/**
+ * Every simulation of the model, for the world page of the modifiers panel: Bake all with how many bodies export as
+ * set up, the auto-bake switch, each body with its state (a click shows it in its mesh's stack, where it is edited) and
+ * the last run's status. Bodies are made from the stack's add menu.
+ */
 @Composable
-private fun SimulationToolbar(
-	viewModel: PSD2LiveViewModel,
-	state: PSD2LiveState,
-	sims: List<RigSimEdit>,
-	selected: RigSimEdit?,
-	states: Map<String, BakeState>,
-	onOpenSections: (Set<String>) -> Unit,
-	onCreated: (String) -> Unit,
-) {
+internal fun SimulationOverview(viewModel: PSD2LiveViewModel, state: PSD2LiveState) {
 	val colors = LocalToolColors.current
-	var newMenuOpen by remember { mutableStateOf(false) }
-	val ready = state.previewModel != null
-	val baking by viewModel.simulationBaking.collectAsState()
-	val outdated = states.values.any { it == BakeState.UNBAKED || it == BakeState.STALE }
+	val typography = LocalToolTypography.current
+	val sims = state.rigEdits.simEdits
+	val status by viewModel.simulationStatus.collectAsState()
+	val puppet = state.previewModel?.rig?.puppet
+	val overlay = state.rigEdits
+	val states = remember(puppet, sims, overlay) { sims.associate { it.id to bakeState(puppet, overlay, it) } }
 	val autoBake by viewModel.simulationAutoBake.collectAsState()
-	val live = selected != null && state.simulationPreviewId == selected.id
-	val labels = listOf(tr("sim.new"), tr("sim.bakeAll"), tr("sim.autoBake"), tr(if (live) "sim.previewReference" else "sim.previewExport"))
-	PanelToolbar(
-		labels = labels,
-		iconCount = if (live) 8 else 7,
-		secondary = {
-			Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-				BakeAllStatus(viewModel, sims, states, Modifier.weight(1f))
-			}
-		},
-	) { labelsShown ->
-		Box {
-			PanelToolButton(labels[0], showLabel = labelsShown > 0, onClick = { newMenuOpen = true }, enabled = ready && !state.canvasEditBusy,
-				tooltip = tr("sim.newTip")) {
-				IconAdd(modifier = Modifier.size(10.dp), tint = colors.textPrimary)
-			}
-			TreeContextMenu(expanded = newMenuOpen, onDismissRequest = { newMenuOpen = false }, minWidth = 140.dp) {
-				for (kind in SimKind.entries) CompactMenuItem(tr("sim.kind.${kind.jsonName}"), {
-					newMenuOpen = false
-					viewModel.createSimulationFromSelection(kind)?.let(onCreated)
-				})
-			}
-		}
-		PanelToolButton(labels[1], showLabel = labelsShown > 1, onClick = viewModel::bakeAllSimulations,
-			enabled = sims.any { it.enabled } && !state.canvasEditBusy,
-			tooltip = tr(if (outdated) "sim.bakeAllTip" else "sim.rebakeAllTip")) {
-			SimSectionIconView(SimSectionIcon.BAKE, if (outdated) colors.warning else colors.textPrimary, size = 11.dp)
-		}
-		PanelToolSwitch(labels[2], showLabel = labelsShown > 2, checked = autoBake, onCheckedChange = viewModel::setSimulationAutoBake,
-			enabled = true, tooltip = tr("sim.autoBakeTip"))
-		PanelToolbarSeparator()
-		// On plays the reference simulation, off the export; the label names the one playing.
-		PanelToolSwitch(labels[3], showLabel = labelsShown > 3, checked = live,
-			onCheckedChange = { viewModel.setSimulationPreview(if (it) selected?.id else null) },
-			enabled = selected != null, tooltip = tr(if (live) "sim.previewReferenceTip" else "sim.previewExportTip"))
+	val outdated = states.values.any { it == BakeState.UNBAKED || it == BakeState.STALE }
+	Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically,
+		horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+		CompactButton(tr("sim.bakeAll"), viewModel::bakeAllSimulations, enabled = sims.any { it.enabled } && !state.canvasEditBusy,
+			isPrimary = outdated, height = 22.dp)
+		CompactCheckbox(autoBake, viewModel::setSimulationAutoBake, label = tr("sim.autoBake"))
 		Spacer(Modifier.weight(1f))
-		PanelExpandCollapseButtons(onExpandAll = { onOpenSections(SECTIONS) }, onCollapseAll = { onOpenSections(emptySet()) })
-		if (live) PanelResetButton(onClick = viewModel::restartSimulationPreview, tooltip = tr("sim.restart"))
+		BakeAllStatus(viewModel, sims, states, Modifier)
 	}
+	PhysicsRowDivider()
+	if (sims.isEmpty()) Text(tr("sim.emptyStack"), style = typography.caption.copy(fontSize = 10.5.sp), color = colors.textMuted,
+		modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp))
+	for (sim in sims) {
+		SimulationRow(viewModel, state, sim, states[sim.id] ?: BakeState.UNBAKED, false) { sim.targets.firstOrNull()?.let(viewModel::showStackOf) }
+		PhysicsRowDivider()
+	}
+	StatusLine(status)
 }
+
 
 /**
  * How many bodies export as set up; task progress is displayed in the status bar.
  */
 @Composable
-private fun RowScope.BakeAllStatus(
+private fun BakeAllStatus(
 	viewModel: PSD2LiveViewModel,
 	sims: List<RigSimEdit>,
 	states: Map<String, BakeState>,
@@ -359,7 +274,7 @@ private fun SimulationMenuItems(viewModel: PSD2LiveViewModel, state: PSD2LiveSta
 }
 
 @Composable
-private fun StatusLine(status: PSD2LiveViewModel.SimulationStatus) {
+internal fun StatusLine(status: PSD2LiveViewModel.SimulationStatus) {
 	val colors = LocalToolColors.current
 	val style = LocalToolTypography.current.caption.copy(fontSize = 9.5.sp)
 	val modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
@@ -371,39 +286,32 @@ private fun StatusLine(status: PSD2LiveViewModel.SimulationStatus) {
 	}
 }
 
+/**
+ * A simulation, as its card in the modifier stack shows it: its kind, then folds for the bake (its state, checks and
+ * settings), the material, the inputs, the outputs, the glue, the painted groups and the comparison with the reference
+ * simulation. Edits commit one history node each, baked again in the same node while auto-bake is on; sliders commit
+ * on release.
+ */
 @Composable
-private fun SimulationEditor(
-	viewModel: PSD2LiveViewModel,
-	state: PSD2LiveState,
-	puppet: PuppetModel,
-	sim: RigSimEdit,
-	bakeState: BakeState,
-	open: Set<String>,
-	onOpen: (Set<String>) -> Unit,
-) {
+internal fun SimulationSettings(viewModel: PSD2LiveViewModel, state: PSD2LiveState, puppet: PuppetModel, sim: RigSimEdit) {
 	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-	val caption = typography.caption.copy(fontSize = 9.5.sp)
+	val caption = LocalToolTypography.current.caption.copy(fontSize = 9.5.sp)
 	fun commit(next: RigSimEdit) { if (next != sim) viewModel.putSimulation(next) }
+	var open by remember(sim.id) { mutableStateOf(setOf("bake", "material")) }
+	val overlay = state.rigEdits
+	val bakeState = remember(puppet, sim, overlay) { bakeState(puppet, overlay, sim) }
 	fun section(key: String) = key in open
-	fun toggle(key: String) = onOpen(if (key in open) open - key else open + key)
+	fun toggle(key: String) { open = if (key in open) open - key else open + key }
 
-	Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-		Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-			Text(sim.name, style = typography.body.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold), color = colors.textPrimary,
-				maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-			CompactDropdown(SimKind.entries, sim.kind, { commit(sim.copy(kind = it, material = SimMaterial.preset(it))) },
-				Modifier.width(88.dp), itemLabel = { tr("sim.kind.${it.jsonName}") }, height = 22.dp)
-		}
+	Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+		FieldLabel(tr("sim.kindLabel"))
+		CompactDropdown(SimKind.entries, sim.kind, { commit(sim.copy(kind = it, material = SimMaterial.preset(it))) },
+			Modifier.weight(1f), itemLabel = { tr("sim.kind.${it.jsonName}") }, height = 22.dp)
 	}
-	PhysicsRowDivider()
 
-	@Composable fun icon(icon: SimSectionIcon): @Composable () -> Unit = { SimSectionIconView(icon, colors.accent) }
-	PhysicsSection(tr("sim.bake"), section("bake"), { toggle("bake") }, icon = icon(SimSectionIcon.BAKE)) {
-		BakeEditor(viewModel, state, puppet, sim, bakeState, ::commit)
-	}
-	PhysicsSection(tr("sim.compare"), section("compare"), { toggle("compare") }, icon = icon(SimSectionIcon.BAKE)) {
-		CompareEditor(viewModel, state, sim)
+	CardSubsection(tr("sim.bake"), section("bake"), { toggle("bake") }) {
+		BakeStatus(viewModel, state, puppet, sim, bakeState)
+		BakeSettings(state, puppet, sim, ::commit)
 	}
 
 	val preset = SimMaterial.preset(sim.kind)
@@ -412,7 +320,7 @@ private fun SimulationEditor(
 			IconReset(modifier = Modifier.size(11.dp), tint = colors.textMuted)
 		}
 	}
-	PhysicsSection(tr("sim.material"), section("material"), { toggle("material") }, icon = icon(SimSectionIcon.MATERIAL), trailing = resetMaterial.takeIf { sim.material != preset }) {
+	CardSubsection(tr("sim.material"), section("material"), { toggle("material") }, trailing = resetMaterial.takeIf { sim.material != preset }) {
 		MaterialEditor(sim.kind, sim.material) { commit(sim.copy(material = it)) }
 	}
 
@@ -424,7 +332,7 @@ private fun SimulationEditor(
 			IconReset(modifier = Modifier.size(11.dp), tint = colors.textMuted)
 		}
 	}
-	PhysicsSection(tr("sim.inputs"), section("inputs"), { toggle("inputs") }, count = sim.inputs.size, icon = icon(SimSectionIcon.INPUTS),
+	CardSubsection(tr("sim.inputs"), section("inputs"), { toggle("inputs") }, count = sim.inputs.size,
 		trailing = resetInputs.takeIf { sim.inputs != defaultInputs && defaultInputs.isNotEmpty() }) {
 		if (sim.inputs.isEmpty()) Text(tr("sim.inputsNone"), style = caption, color = colors.warning)
 		for (input in sim.inputs) {
@@ -461,14 +369,13 @@ private fun SimulationEditor(
 	}
 
 	val bake = sim.bake
-	PhysicsSection(tr("sim.outputs"), section("outputs"), { toggle("outputs") }, count = bake?.let { it.parameters.size + it.pendulums.size } ?: 0,
-		icon = icon(SimSectionIcon.OUTPUTS)) {
+	CardSubsection(tr("sim.outputs"), section("outputs"), { toggle("outputs") }, count = bake?.let { it.parameters.size + it.pendulums.size } ?: 0) {
 		if (bake == null) Text(tr("sim.outputsNone"), style = caption, color = colors.textMuted)
 		else OutputsEditor(viewModel, sim, bake)
 	}
 
 	val glues = puppet.glues.filter { it.meshA.raw in sim.targets || it.meshB.raw in sim.targets }
-	PhysicsSection(tr("sim.glue"), section("glue"), { toggle("glue") }, count = glues.size, icon = icon(SimSectionIcon.GLUE)) {
+	CardSubsection(tr("sim.glue"), section("glue"), { toggle("glue") }, count = glues.size) {
 		if (glues.isEmpty()) Text(tr("sim.noGlue"), style = caption, color = colors.textMuted)
 		for (glue in glues) {
 			val key = glueKey(glue)
@@ -482,8 +389,21 @@ private fun SimulationEditor(
 		}
 	}
 
-	PhysicsSection(tr("sim.groups"), section("groups"), { toggle("groups") }, icon = icon(SimSectionIcon.GROUPS)) {
+	CardSubsection(tr("sim.groups"), section("groups"), { toggle("groups") }) {
 		GroupsEditor(viewModel, puppet, sim)
+	}
+
+	// On plays the reference simulation, off the export; the label names the one playing.
+	val live = state.simulationPreviewId == sim.id
+	val restart: @Composable RowScope.() -> Unit = {
+		CompactIconButton(onClick = viewModel::restartSimulationPreview, tooltip = tr("sim.restart"), size = 18.dp) {
+			IconReset(modifier = Modifier.size(11.dp), tint = colors.textMuted)
+		}
+	}
+	CardSubsection(tr("sim.compare"), section("compare"), { toggle("compare") }, trailing = restart.takeIf { live }) {
+		CompactCheckbox(live, { viewModel.setSimulationPreview(if (it) sim.id else null) }, label = tr(if (live) "sim.previewReference" else "sim.previewExport"))
+		Text(tr(if (live) "sim.previewReferenceTip" else "sim.previewExportTip"), style = caption, color = colors.textMuted)
+		CompareEditor(viewModel, state, sim)
 	}
 }
 
@@ -618,23 +538,20 @@ private fun RemovableRow(text: String, onRemove: () -> Unit) {
 }
 
 /**
- * The bake: how well it matches the simulation, Bake / Clear, then the settings used most (auto bake, modes,
- * keys, exaggeration) with the rest folded under Advanced. Only a baked simulation exports.
+ * The bake: how well it matches the simulation, then Bake / Clear and the modes it wrote. Only a baked
+ * simulation exports; what it bakes with is set in its card in the modifier stack.
  */
 @Composable
-private fun BakeEditor(
+private fun BakeStatus(
 	viewModel: PSD2LiveViewModel,
 	state: PSD2LiveState,
 	puppet: PuppetModel,
 	sim: RigSimEdit,
 	bakeState: BakeState,
-	commit: (RigSimEdit) -> Unit,
 ) {
 	val colors = LocalToolColors.current
-	val typography = LocalToolTypography.current
-	val caption = typography.caption.copy(fontSize = 9.5.sp)
+	val caption = LocalToolTypography.current.caption.copy(fontSize = 9.5.sp)
 	val baking by viewModel.simulationBaking.collectAsState()
-	var advanced by remember { mutableStateOf(false) }
 	val bake = sim.bake
 	val running = baking?.takeIf { it.id == sim.id }
 
@@ -661,6 +578,24 @@ private fun BakeEditor(
 		CompactButton(tr("sim.clearBake"), { viewModel.clearSimulationBake(sim.id) }, Modifier.weight(1f),
 			enabled = bake != null && running == null && !state.canvasEditBusy, height = 22.dp)
 	}
+	if (bake != null) {
+		for (mode in bake.modes) Text(tr("sim.bakedMode", mode.axis.parameter, String.format(Locale.US, "%.1f", mode.amplitude)), style = caption, color = colors.textMuted)
+		if (bake.statics.isNotEmpty()) Text(tr("sim.bakedStatics", bake.statics.joinToString { it.parameter }), style = caption, color = colors.textMuted)
+	}
+}
+
+/** What the bake is made with: the settings used most (modes, keys, exaggeration), the rest folded under Advanced. */
+@Composable
+private fun BakeSettings(
+	state: PSD2LiveState,
+	puppet: PuppetModel,
+	sim: RigSimEdit,
+	commit: (RigSimEdit) -> Unit,
+) {
+	val colors = LocalToolColors.current
+	val caption = LocalToolTypography.current.caption.copy(fontSize = 9.5.sp)
+	var advanced by remember { mutableStateOf(false) }
+	val bake = sim.bake
 
 	Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
 		FieldLabel(tr("sim.modes"), tooltip = tr("sim.modesTip"))
@@ -712,10 +647,6 @@ private fun BakeEditor(
 	if (statics.size < RigSimEdit.MAX_STATIC_INPUTS && available.isNotEmpty()) CompactDropdown(listOf<String?>(null) + available, null, { id ->
 		if (id != null) commit(sim.copy(staticInputs = statics + id))
 	}, Modifier.fillMaxWidth(), itemLabel = { it ?: tr("sim.addStaticInput") }, height = 22.dp)
-	if (bake != null) {
-		for (mode in bake.modes) Text(tr("sim.bakedMode", mode.axis.parameter, String.format(Locale.US, "%.1f", mode.amplitude)), style = caption, color = colors.textMuted)
-		if (bake.statics.isNotEmpty()) Text(tr("sim.bakedStatics", bake.statics.joinToString { it.parameter }), style = caption, color = colors.textMuted)
-	}
 }
 
 /**

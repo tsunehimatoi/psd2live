@@ -75,7 +75,8 @@ internal object DocumentGenerators {
 	 * (`rig.meshes` when no layers are named, `rig` when its layer is not among them) owns its feature axes and
 	 * the skeleton its bone axes, so an edit of one is recorded as an override.
 	 */
-	fun graph(overlay: RigEditOverlay, layers: List<String> = emptyList(), primitives: PrimitiveSkins = PrimitiveSkins.None): GeneratorGraph {
+	fun graph(overlay: RigEditOverlay, layers: List<String> = emptyList(), primitives: PrimitiveSkins = PrimitiveSkins.None,
+			  model: PuppetModel? = null): GeneratorGraph {
 		val owned = HashSet<String>()
 		fun claim(ids: Collection<String>) = ids.filterTo(LinkedHashSet()) { owned.add(it) }
 		val pinned = if (overlay.authoringJournal.any(ArtPrimitiveV2::isV2)) setOf(PRIMITIVES) else emptySet()
@@ -151,6 +152,14 @@ internal object DocumentGenerators {
 			keyforms += writes.filter { it.startsWith("keyform:") }
 			parameters += writes.filter { it.startsWith("parameter:") }
 		}
+		// The modifiers come last and as one node: a mesh's stack is sampled as a whole, its modifiers chained.
+		if (overlay.modifiers.isNotEmpty()) {
+			// A part's meshes come from [model]: callers asking who owns a cell pass the rig they look at.
+			val writes = claim(io.github.psd2live.core.modifier.ModifierSampler.claims(overlay.modifiers, model))
+			nodes += GeneratorNode(io.github.psd2live.core.modifier.ModifierSampler.NODE, setOf("rig:authored", "document:modifiers"), writes)
+			keyforms += writes.filter { it.startsWith("keyform:") }
+			parameters += writes.filter { it.startsWith("parameter:") }
+		}
 		nodes += GeneratorNode(OVERRIDES, keyforms + "rig:authored" + "document:overrides" + "document:generators", claim(listOf("rig:final")))
 		// The copies over the bangs are made from their originals on the finished rig.
 		nodes += GeneratorNode(SEE_THROUGH, setOf("rig:final", "document:settings"), claim(listOf("rig:seeThrough")))
@@ -167,40 +176,48 @@ internal object DocumentGenerators {
 	 * simulations - in the graph's order. Each is a pure function of its settings and the rig before it.
 	 */
 	fun generate(model: PuppetModel, overlay: RigEditOverlay, graph: GeneratorGraph = graph(overlay)): PuppetModel {
-		val swings = overlay.swingEdits.associateBy(::swingId)
-		val sims = overlay.simEdits.associateBy(::simulationId)
 		var current = model
-		for (node in graph.order) {
-			if (node.id == SKIN) {
-				val spec = overlay.skeleton ?: continue
+		// The skeleton's skin of the meshes the journal placed comes first; the stack runs after it, in its own order.
+		graph.order.firstOrNull { it.id == SKIN }?.let { node ->
+			val spec = overlay.skeleton
+			if (spec != null) {
 				val placed = SkeletonCanvasSkin.placed(overlay)
 				current = GeneratorReuse.run(node.id, spec to placed, current, SkeletonCanvasSkin.reads(current, placed)) {
 					RigBuildProfile.stage("skeleton: canvas skin") { SkeletonCanvasSkin.apply(it, spec, placed) }
 				}
 			}
-			swings[node.id]?.let { swing ->
-				current = GeneratorReuse.run(node.id, swing, current, swingReads(current, swing)) { SwingGenerator.apply(it, listOf(swing)) }
-			}
-			overlay.interiorEffects
-				.firstOrNull { node.id == "interiorEffect:" + it.id }
-				?.let { effect ->
-					val drawable = current.drawables.singleOrNull { it.id.raw == effect.target }
-					val reads =
-						GeneratorReuse.Reads(
-							current.parameters,
-							current.parameterTree,
-							listOf(current.sources, current.atlas),
-							emptySet(),
-							emptyList(),
-							setOf(effect.target),
-							listOf(drawable),
-						)
-					current = GeneratorReuse.run(node.id, effect, current, reads) { effect.apply(it) }
-				}
-			sims[node.id]?.let { sim ->
-				current = GeneratorReuse.run(node.id, sim, current, simulationReads(current, sim)) { SimGenerator.apply(it, listOf(sim)) }
+		}
+		val nodes = graph.order.mapTo(HashSet()) { it.id }
+		// Consecutive modifiers sample together; each run reads what the entries before it made.
+		val run = ArrayList<io.github.psd2live.core.modifier.RigModifier>()
+		var runs = 0
+		fun flush() {
+			if (run.isEmpty()) return
+			val modifiers = run.toList()
+			run.clear()
+			if (io.github.psd2live.core.modifier.ModifierSampler.NODE !in nodes) return
+			current = GeneratorReuse.run("${io.github.psd2live.core.modifier.ModifierSampler.NODE}#${runs++}", modifiers, current, modifierReads(current, modifiers)) {
+				io.github.psd2live.core.modifier.ModifierSampler.apply(it, modifiers)
 			}
 		}
+		for (entry in io.github.psd2live.core.modifier.ModifierStack.entries(overlay)) {
+			if (entry is io.github.psd2live.core.modifier.ModifierStack.Entry.Modifier) { run += entry.modifier; continue }
+			flush()
+			if (entry.id !in nodes) continue
+			when (entry) {
+				is io.github.psd2live.core.modifier.ModifierStack.Entry.Swing -> { val swing = entry.swing
+					current = GeneratorReuse.run(entry.id, swing, current, swingReads(current, swing)) { SwingGenerator.apply(it, listOf(swing)) } }
+				is io.github.psd2live.core.modifier.ModifierStack.Entry.Simulation -> { val sim = entry.simulation
+					current = GeneratorReuse.run(entry.id, sim, current, simulationReads(current, sim)) { SimGenerator.apply(it, listOf(sim)) } }
+				is io.github.psd2live.core.modifier.ModifierStack.Entry.Interior -> { val effect = entry.effect
+					val drawable = current.drawables.singleOrNull { it.id.raw == effect.target }
+					val reads = GeneratorReuse.Reads(current.parameters, current.parameterTree, listOf(current.sources, current.atlas), emptySet(), emptyList(),
+						setOf(effect.target), listOf(drawable))
+					current = GeneratorReuse.run(entry.id, effect, current, reads) { effect.apply(it) } }
+				else -> Unit
+			}
+		}
+		flush()
 		return current
 	}
 
@@ -232,6 +249,28 @@ internal object DocumentGenerators {
 		return GeneratorReuse.Reads(model.parameters, model.parameterTree, listOf(model.runtimeTarget), emptySet(), emptyList(), ids, ids.map { byId[it] })
 	}
 
+	/**
+	 * What the modifiers read from the rig: each target mesh with its parent chain (the space they are taken back into),
+	 * the parameters and their tree, and the vertex groups. They write their parameters, the tree and those meshes.
+	 */
+	fun modifierReads(model: PuppetModel, modifiers: List<io.github.psd2live.core.modifier.RigModifier>): GeneratorReuse.Reads {
+		val meshes = modifiers.filter { it.enabled }.flatMap { it.target.resolve(model) }.toSortedSet()
+		val parts = if (modifiers.any { it.target.part != null }) listOf(model.parts) else emptyList()
+		val drawables = HashMap<String, org.umamo.runtime.model.Drawable>().apply { model.drawables.forEach { putIfAbsent(it.id.raw, it) } }
+		val byId = HashMap<String, org.umamo.runtime.model.Deformer>().apply { model.deformers.forEach { putIfAbsent(it.id.raw, it) } }
+		val chain = LinkedHashMap<String, Any?>()
+		for (mesh in meshes) {
+			var id: String? = drawables[mesh]?.parentDeformerId?.raw
+			while (id != null && id !in chain) { val deformer = byId[id]; chain[id] = deformer; id = deformer?.parent?.raw }
+		}
+		// A warp target is written itself, and read with its parents.
+		for (warp in modifiers.filter { it.enabled }.flatMap { it.target.warps }) {
+			var id: String? = warp
+			while (id != null && id !in chain) { val deformer = byId[id]; chain[id] = deformer; id = deformer?.parent?.raw }
+		}
+		return GeneratorReuse.Reads(model.parameters, model.parameterTree, listOf(model.vertexGroups) + parts, chain.keys, chain.values.toList(), meshes, meshes.map { drawables[it] })
+	}
+
 	/** The document parts that differ between [before] and [after], as the graph's `document:` ids. */
 	fun changed(before: RigEditOverlay, after: RigEditOverlay): Set<String> = buildSet {
 		if (before.skeleton != after.skeleton) add("document:skeleton")
@@ -239,6 +278,12 @@ internal object DocumentGenerators {
 		if (before.swingEdits.map(::swingId) + before.simEdits.map(::simulationId) + before.interiorEffects.map { it.id } !=
 			after.swingEdits.map(::swingId) + after.simEdits.map(::simulationId) + after.interiorEffects.map { it.id })
 			add("document:generators")
+		if (before.modifiers != after.modifiers) {
+			add("document:modifiers")
+			if (before.modifiers.isEmpty() != after.modifiers.isEmpty()) add("document:generators")
+		}
+		// Reordered, every entry reads what now runs before it.
+		if (before.stackOrder != after.stackOrder) { add("document:modifiers"); add("document:generators") }
 		val journal = { overlay: RigEditOverlay -> overlay.authoringJournal.filterNot { GeneratedOverrides.isOverride(it) } }
 		if (journal(before) != journal(after) || before.parameterEdits != after.parameterEdits || before.structureEdits != after.structureEdits ||
 			before.keyformSetEdits != after.keyformSetEdits || before.keyformCopyEdits != after.keyformCopyEdits ||

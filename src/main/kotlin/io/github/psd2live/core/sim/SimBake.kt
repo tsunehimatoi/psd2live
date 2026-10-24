@@ -207,8 +207,10 @@ object SimBake {
      * groups and the glues touching them. A bake's own keys change none of these,
      * so the model with or without them gives the same answer.
      */
-    fun fingerprint(model: PuppetModel, edit: RigSimEdit): String {
+    fun fingerprint(model: PuppetModel, edit: RigSimEdit, preceding: String = ""): String {
         val text = StringBuilder("solver:").append(SOLVER_VERSION).append('|')
+        // What the stack before it does to its meshes; nothing for every bake from before the stack, which stays current.
+        if (preceding.isNotEmpty()) text.append("stack:").append(sha1(preceding)).append('|')
         // The default inputs hash as no inputs did when that meant them, so a bake from then stays current.
         val available = model.parameters.mapTo(HashSet()) { it.id.raw }
         val defaults = edit.inputs.filter { it.parameter in available } == RigSimEdit.defaultInputs(available)
@@ -233,7 +235,13 @@ object SimBake {
     }
 
     /** Whether [edit]'s bake no longer matches its setup in [model]. */
-    fun stale(model: PuppetModel, edit: RigSimEdit): Boolean = edit.bake != null && edit.bake.fingerprint != fingerprint(model, edit)
+    fun stale(model: PuppetModel, edit: RigSimEdit, overlay: io.github.psd2live.core.RigEditOverlay? = null): Boolean =
+        edit.bake != null && edit.bake.fingerprint != fingerprint(model, edit, overlay?.let { preceding(it, edit, model) }.orEmpty())
+
+    /** What the stack of [overlay] before [edit] does to its meshes on [model], for its fingerprint ([io.github.psd2live.core.modifier.ModifierStack.precedingOn]). */
+    fun preceding(overlay: io.github.psd2live.core.RigEditOverlay, edit: RigSimEdit, model: PuppetModel): String =
+        io.github.psd2live.core.modifier.ModifierStack.precedingOn(overlay, io.github.psd2live.core.DocumentGenerators.simulationId(edit),
+            edit.targets.toSet() + edit.bake?.vertexCounts?.keys.orEmpty()) { it.target.resolve(model) }
 
     internal fun sha1(text: String): String =
         MessageDigest.getInstance("SHA-1").digest(text.toByteArray()).joinToString("") { "%02x".format(it) }.take(16)

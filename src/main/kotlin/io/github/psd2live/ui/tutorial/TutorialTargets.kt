@@ -45,7 +45,10 @@ enum class TutorialTargetId {
 	ANIMATION_DOCK,
 	ANIMATION_EDITOR_DOCK,
 	PHYSICS_DOCK,
+	/** The simulations on the modifiers panel's world page. */
 	SIMULATION_DOCK,
+	/** The modifiers panel: the selection's stages and their cards. */
+	MODIFIERS_DOCK,
 	WORKSPACE_STRIP,
 	DOCK_AREA,
 	MATERIALS_DOCK,

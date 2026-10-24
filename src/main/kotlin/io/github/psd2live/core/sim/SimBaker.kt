@@ -58,6 +58,8 @@ object SimBaker {
         val method: Method = Method.DOF,
         /** The model's own motions to train on as well ([RigSimEdit.trainingClips]), sampled at [fps]; [Method.DOF] only. */
         val trainingMotions: List<TrainingMotion> = emptyList(),
+        /** What the stack before the simulation does to its meshes, for the fingerprint ([SimBake.preceding]). */
+        val preceding: String = "",
     )
 
     /** A motion of the model's to train on: per parameter its value each frame, and how much it counts. */
@@ -132,7 +134,7 @@ object SimBaker {
         require(sideways.isNotEmpty() || vertical.isNotEmpty() || statics.isNotEmpty()) {
             "Only vertical inputs move ${edit.id} and its up-and-down parameter is off; turn it on or add inputs"
         }
-        val fingerprint = SimBake.fingerprint(model, edit)
+        val fingerprint = SimBake.fingerprint(model, edit, options.preceding)
         val bounceId = SimGenerator.verticalPhysicsId(edit)
         val split = sideways.isNotEmpty() && vertical.isNotEmpty()
         // The two groups share nothing until their results are put together, so they bake side by side; the

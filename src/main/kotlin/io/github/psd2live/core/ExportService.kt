@@ -86,7 +86,8 @@ internal object ExportService {
 			Files.createDirectories(file.parent)
 			Files.write(file, bytes)
 		}
-		return report.copy(losses = report.losses + io.github.psd2live.core.interior.InteriorLifecycle.losses(preview.rig.puppet, preview.config.rigEdits))
+		return report.copy(losses = report.losses + io.github.psd2live.core.interior.InteriorLifecycle.losses(preview.rig.puppet, preview.config.rigEdits) +
+			io.github.psd2live.core.modifier.ModifierSampler.losses(preview.config.rigEdits.modifiers, preview.rig.puppet))
 	}
 
 	internal fun reportName(options: ExportOptions, target: ExportTarget) = "${options.baseName}.${target.id}.report.json"

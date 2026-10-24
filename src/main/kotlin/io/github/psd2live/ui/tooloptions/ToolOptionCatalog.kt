@@ -360,6 +360,13 @@ private fun MutableList<ToolOption>.addObjectMode(editor: CanvasEditor) {
         }
         add(ActionOption("object.swing", "swing.menu", { it.editable }, { it.viewModel.beginSwing(it.swingTargets()) },
             OptionIcon.SWING, place = OptionPlace.MENU))
+        if (target.kind == "mesh" || target.kind == "warp") {
+            // The kinds that suit the layer's role first, as the modifiers panel's add menu; a warp takes them all alike.
+            add(SectionOption("object.modifier", "modifiers.addMenu", OptionPlace.MENU, submenu = true, icon = OptionIcon.CREATE, alwaysFolds = true))
+            val role = if (target.kind != "mesh") null else editor.state.previewModel?.analysis?.layers?.firstOrNull { it.source.id.raw == editor.targetLayerId(target) }?.semantic?.tag
+            for (kind in io.github.psd2live.core.modifier.ModifierKinds.forRole(role)) add(ActionOption("object.modifier.${kind.id}", "modifiers.kind.${kind.id}",
+                { it.editable }, { e -> e.viewModel.modifiers.add(kind.id, listOf(if (target.kind == "warp") "warp:${target.id}" else target.id)) }, place = OptionPlace.MENU))
+        }
     }
     addSelectionActions(objectMode = true)
 }

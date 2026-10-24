@@ -127,7 +127,7 @@ A swing is a "generator": every time the model is rebuilt, it is recomputed from
 
 - The target's existing key axes (for example Angle X) are all kept. Each existing keyform expands into each of the swing's forms.
 - The swing axes belong to the swing; keyforms edited by hand on them are overwritten on rebuild.
-- To fine-tune by hand, click **Bake to Keys** on the panel:
+- To fine-tune by hand, click **Apply as Keyforms** on the panel:
   - the current forms are written as ordinary keyforms, freely editable afterward;
   - the pendulum is kept, and only the physics part of the swing remains.
 - **Delete** removes the swing together with its generated axes and automatically created parameters.
@@ -140,7 +140,7 @@ Over MCP, `swing_put` creates or replaces a swing and `swing_delete` deletes one
 - To combine both directions use `motions: [{kind: "lateral", ...}, {kind: "vertical", ...}]`, each item with its own fields, parameters and `physics`.
 - The top-level `fulcrum` picks the pivot edge, `tilt` is the swing rectangle's turn about the pivot midpoint (degrees, ±75), and `offset_along` / `offset_across` are the rectangle's offset (by length / width, ±1), shared by both directions. `preset` (`hair` / `accessory` / `cloth`) corresponds to the panel's Estimate.
 - With `physics` omitted, the pendulum is estimated from the target's size; `physics_enabled=false` generates no pendulum.
-- `swing_delete` with `bake=true` is the same as **Bake to Keys**.
+- `swing_delete` with `bake=true` is the same as **Apply as Keyforms**.
 
 Swing editing on the canvas corresponds to a preview session, which stays out of the document and history until committed: `swing_preview` starts with `mode=begin` and `targets`, then `update`, `kinds`, `segments`, `preset`, `physics`, `select`, `handle` (the same as the canvas handles), `play` and `cancel` modify it; `swing_preview_get` reads the draft, handle positions and playback pose, `swing_preview_render` renders the current pose, and `swing_preview_commit` commits once. `swing_preview` and `swing_preview_commit` return background job handles; use `job_wait` for the result.
 

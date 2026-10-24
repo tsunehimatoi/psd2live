@@ -115,296 +115,6 @@ internal fun ModelPresetsSection(
 			PanelResetButton(onClick = { viewModel.resetModelPresetsToDefault() }, enabled = !isBusy, tooltip = tr("settings.resetHint"))
 		}
 
-		val mouthSummary = if (state.mouthOutlineEnabled) " · ${tr("mouth.outline")}" else ""
-		PresetFolderRow(
-			title = tr("settings.group.rigging"),
-			summary = if (state.meshOnly) tr("export.disabled")
-			else "头: ${"%.2f".format(state.headStrength)} · 身: ${"%.2f".format(state.bodyStrength)}$mouthSummary",
-			expanded = state.strengthSubExpanded,
-			enabled = !isBusy && !state.meshOnly,
-		) { viewModel.setStrengthSubExpanded(!state.strengthSubExpanded) }
-
-		if (state.strengthSubExpanded && !state.meshOnly) {
-			Column(
-				modifier = Modifier
-					.fillMaxWidth()
-					.padding(start = 18.dp, end = 8.dp, top = 2.dp, bottom = 3.dp),
-				verticalArrangement = Arrangement.spacedBy(2.dp),
-			) {
-				CompactCheckbox(
-					checked = state.featureDisplacementEnabled,
-					onCheckedChange = viewModel::setFeatureDisplacementEnabled,
-					label = tr("model.deformer.featureDisplacement"),
-					enabled = !isBusy && !state.meshOnly,
-				)
-
-				Row(
-					modifier = Modifier.fillMaxWidth(),
-					verticalAlignment = Alignment.CenterVertically,
-				) {
-					Text(
-						text = tr("settings.headStrength"),
-						style = typography.body.copy(fontSize = 10.5.sp),
-						color = colors.textPrimary,
-						modifier = Modifier.width(76.dp),
-						textAlign = TextAlign.Right,
-					)
-					Spacer(Modifier.width(5.dp))
-					CompactSlider(
-						value = state.headStrength,
-						onValueChange = { viewModel.setHeadStrength(it) },
-						onValueChangeStarted = viewModel::beginEditorGesture,
-						onValueChangeFinished = viewModel::endEditorGesture,
-						valueRange = 0.0f..4.0f,
-						enabled = !isBusy,
-						height = 14.dp,
-						modifier = Modifier.weight(1f),
-					)
-					Spacer(Modifier.width(4.dp))
-					CompactNumberSpinner(
-						onEditStart = { viewModel.beginEditorField("setHeadStrength") },
-						onEditEnd = { viewModel.endEditorField("setHeadStrength") },
-						value = state.headStrength.toDouble(),
-						onValueChange = { viewModel.setHeadStrength(it.toFloat()) },
-						min = 0.0,
-						max = 4.0,
-						step = 0.05,
-						decimals = 2,
-						unit = tr("settings.unit.x"),
-						enabled = !isBusy,
-						modifier = Modifier.width(60.dp),
-						height = 20.dp,
-					)
-				}
-
-				Row(
-					modifier = Modifier.fillMaxWidth(),
-					verticalAlignment = Alignment.CenterVertically,
-				) {
-					Text(
-						text = tr("settings.bodyStrength"),
-						style = typography.body.copy(fontSize = 10.5.sp),
-						color = colors.textPrimary,
-						modifier = Modifier.width(76.dp),
-						textAlign = TextAlign.Right,
-					)
-					Spacer(Modifier.width(5.dp))
-					CompactSlider(
-						value = state.bodyStrength,
-						onValueChange = { viewModel.setBodyStrength(it) },
-						onValueChangeStarted = viewModel::beginEditorGesture,
-						onValueChangeFinished = viewModel::endEditorGesture,
-						valueRange = 0.0f..4.0f,
-						enabled = !isBusy,
-						height = 14.dp,
-						modifier = Modifier.weight(1f),
-					)
-					Spacer(Modifier.width(4.dp))
-					CompactNumberSpinner(
-						onEditStart = { viewModel.beginEditorField("setBodyStrength") },
-						onEditEnd = { viewModel.endEditorField("setBodyStrength") },
-						value = state.bodyStrength.toDouble(),
-						onValueChange = { viewModel.setBodyStrength(it.toFloat()) },
-						min = 0.0,
-						max = 4.0,
-						step = 0.05,
-						decimals = 2,
-						unit = tr("settings.unit.x"),
-						enabled = !isBusy,
-						modifier = Modifier.width(60.dp),
-						height = 20.dp,
-					)
-				}
-
-				Row(
-					modifier = Modifier
-						.fillMaxWidth()
-						.padding(top = 2.dp),
-					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.spacedBy(8.dp),
-				) {
-					CompactCheckbox(
-						checked = state.mouthOutlineEnabled,
-						onCheckedChange = { viewModel.setMouthOutlineEnabled(it) },
-						label = tr("mouth.outline"),
-						enabled = !isBusy && !state.meshOnly,
-						modifier = Modifier.weight(1f),
-					)
-					Box(modifier = Modifier.weight(1f)) {
-						io.github.psd2live.ui.components.MouthSettingsPopupButton(
-							state = state,
-							enabled = !isBusy && !state.meshOnly,
-							onApply = viewModel::setMouthShapeCurve,
-						)
-					}
-				}
-
-				if (state.mouthOutlineEnabled) {
-					Row(
-						modifier = Modifier.fillMaxWidth(),
-						verticalAlignment = Alignment.CenterVertically,
-					) {
-						Text(
-							text = tr("mouth.thickness"),
-							style = typography.body.copy(fontSize = 10.5.sp),
-							color = colors.textPrimary,
-							modifier = Modifier.width(76.dp),
-							textAlign = TextAlign.Right,
-						)
-						Spacer(Modifier.width(5.dp))
-						CompactSlider(
-							value = state.mouthThickness,
-							onValueChange = { viewModel.setMouthThickness(it) },
-							onValueChangeStarted = viewModel::beginEditorGesture,
-							onValueChangeFinished = viewModel::endEditorGesture,
-							valueRange = 0.5f..8.0f,
-							enabled = !isBusy && !state.meshOnly,
-							height = 14.dp,
-							modifier = Modifier.weight(1f),
-						)
-						Spacer(Modifier.width(4.dp))
-						CompactNumberSpinner(
-							onEditStart = { viewModel.beginEditorField("setMouthThickness") },
-							onEditEnd = { viewModel.endEditorField("setMouthThickness") },
-							value = state.mouthThickness.toDouble(),
-							onValueChange = { viewModel.setMouthThickness(it.toFloat()) },
-							min = 0.5,
-							max = 8.0,
-							step = 0.1,
-							decimals = 1,
-							unit = "px",
-							enabled = !isBusy && !state.meshOnly,
-							modifier = Modifier.width(60.dp),
-							height = 20.dp,
-						)
-					}
-
-					val sampledColor = remember(state.analysis, state.alphaThreshold) {
-						state.analysis?.layers?.firstOrNull {
-							it.source !is MouthLipLayer &&
-							it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) &&
-							it.opaquePixels > 0
-						}?.let { MouthLipLayers.perimeterColor(it.source.raster, state.alphaThreshold) } ?: 0x482C32
-					}
-					val autoColor = state.mouthColor == null
-					val rgb = state.mouthColor ?: sampledColor
-
-					Row(
-						modifier = Modifier.fillMaxWidth().padding(top = 1.dp),
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.spacedBy(6.dp),
-					) {
-						CompactCheckbox(
-							checked = autoColor,
-							onCheckedChange = { auto ->
-								viewModel.setMouthColor(if (auto) null else (state.mouthColor ?: sampledColor))
-							},
-							label = tr("mouth.autoColor"),
-							enabled = !isBusy && !state.meshOnly,
-							modifier = Modifier.weight(1f),
-						)
-						ColorPickerSwatch(
-							onEditStart = { viewModel.beginEditorField("mouthColor") },
-							onEditEnd = { viewModel.endEditorField("mouthColor") },
-							color = rgb,
-							enabled = !isBusy && !state.meshOnly,
-							onColorChanged = { chosenRgb ->
-								viewModel.setMouthColor(chosenRgb)
-							},
-							sampledColor = sampledColor,
-						)
-						var hexInput by remember(state.mouthColor, autoColor) {
-							mutableStateOf("%06X".format(state.mouthColor ?: sampledColor))
-						}
-						CompactTextField(
-							value = if (autoColor) "%06X".format(sampledColor) else hexInput,
-							onValueChange = { newHex ->
-								hexInput = newHex
-								val cleaned = newHex.trim().removePrefix("#")
-								if (cleaned.length == 6) {
-									cleaned.toIntOrNull(16)?.let { c ->
-										viewModel.setMouthColor(c)
-									}
-								}
-							},
-							enabled = !isBusy && !state.meshOnly && !autoColor,
-							isMono = true,
-							placeholder = "#RRGGBB",
-							modifier = Modifier.width(68.dp),
-							height = 20.dp,
-						)
-					}
-				}
-
-				// Features shown through the bangs: copies over the front hair, clipped to it.
-				Row(
-					modifier = Modifier
-						.fillMaxWidth()
-						.padding(top = 2.dp),
-					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.spacedBy(8.dp),
-				) {
-					CompactCheckbox(
-						checked = state.seeThroughBrows,
-						onCheckedChange = { viewModel.setSeeThroughBrows(it) },
-						label = tr("seeThrough.brows"),
-						enabled = !isBusy && !state.meshOnly,
-						modifier = Modifier.weight(1f),
-					)
-					CompactCheckbox(
-						checked = state.seeThroughEyes,
-						onCheckedChange = { viewModel.setSeeThroughEyes(it) },
-						label = tr("seeThrough.eyes"),
-						enabled = !isBusy && !state.meshOnly,
-						modifier = Modifier.weight(1f),
-					)
-				}
-
-				if (state.seeThroughBrows || state.seeThroughEyes) {
-					Row(
-						modifier = Modifier.fillMaxWidth(),
-						verticalAlignment = Alignment.CenterVertically,
-					) {
-						Text(
-							text = tr("seeThrough.opacity"),
-							style = typography.body.copy(fontSize = 10.5.sp),
-							color = colors.textPrimary,
-							modifier = Modifier.width(76.dp),
-							textAlign = TextAlign.Right,
-						)
-						Spacer(Modifier.width(5.dp))
-						CompactSlider(
-							value = state.seeThroughOpacity,
-							onValueChange = { viewModel.setSeeThroughOpacity(it) },
-							onValueChangeStarted = viewModel::beginEditorGesture,
-							onValueChangeFinished = viewModel::endEditorGesture,
-							valueRange = 0f..1f,
-							enabled = !isBusy && !state.meshOnly,
-							height = 14.dp,
-							modifier = Modifier.weight(1f),
-						)
-						Spacer(Modifier.width(4.dp))
-						CompactNumberSpinner(
-							onEditStart = { viewModel.beginEditorField("setSeeThroughOpacity") },
-							onEditEnd = { viewModel.endEditorField("setSeeThroughOpacity") },
-							value = (state.seeThroughOpacity * 100f).toDouble(),
-							onValueChange = { viewModel.setSeeThroughOpacity(it.toFloat() / 100f) },
-							min = 0.0,
-							max = 100.0,
-							step = 5.0,
-							decimals = 0,
-							unit = "%",
-							enabled = !isBusy && !state.meshOnly,
-							modifier = Modifier.width(60.dp),
-							height = 20.dp,
-						)
-					}
-				}
-			}
-		}
-
-
-		RigTuningPresets(state, viewModel, isBusy)
 
 
 		// Which generated motions the model has, by group; the animation panel lists, tunes and switches each one.
@@ -880,6 +590,134 @@ internal fun LayersTableView(
 					}
 					Divider(color = colors.divider.copy(alpha = 0.4f), thickness = 0.5.dp)
 				}
+			}
+		}
+	}
+}
+
+/** The mouth's outline: on or off, its shape, line width and colour (sampled from the mouth, or set). */
+@Composable
+internal fun MouthOutlineControls(state: PSD2LiveState, viewModel: PSD2LiveViewModel, isBusy: Boolean) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+		Row(
+			modifier = Modifier
+				.fillMaxWidth()
+				.padding(top = 2.dp),
+			verticalAlignment = Alignment.CenterVertically,
+			horizontalArrangement = Arrangement.spacedBy(8.dp),
+		) {
+			CompactCheckbox(
+				checked = state.mouthOutlineEnabled,
+				onCheckedChange = { viewModel.setMouthOutlineEnabled(it) },
+				label = tr("mouth.outline"),
+				enabled = !isBusy && !state.meshOnly,
+				modifier = Modifier.weight(1f),
+			)
+			Box(modifier = Modifier.weight(1f)) {
+				io.github.psd2live.ui.components.MouthSettingsPopupButton(
+					state = state,
+					enabled = !isBusy && !state.meshOnly,
+					onApply = viewModel::setMouthShapeCurve,
+				)
+			}
+		}
+
+		if (state.mouthOutlineEnabled) {
+			Row(
+				modifier = Modifier.fillMaxWidth(),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				Text(
+					text = tr("mouth.thickness"),
+					style = typography.body.copy(fontSize = 10.5.sp),
+					color = colors.textPrimary,
+					modifier = Modifier.width(76.dp),
+					textAlign = TextAlign.Right,
+				)
+				Spacer(Modifier.width(5.dp))
+				CompactSlider(
+					value = state.mouthThickness,
+					onValueChange = { viewModel.setMouthThickness(it) },
+					onValueChangeStarted = viewModel::beginEditorGesture,
+					onValueChangeFinished = viewModel::endEditorGesture,
+					valueRange = 0.5f..8.0f,
+					enabled = !isBusy && !state.meshOnly,
+					height = 14.dp,
+					modifier = Modifier.weight(1f),
+				)
+				Spacer(Modifier.width(4.dp))
+				CompactNumberSpinner(
+					onEditStart = { viewModel.beginEditorField("setMouthThickness") },
+					onEditEnd = { viewModel.endEditorField("setMouthThickness") },
+					value = state.mouthThickness.toDouble(),
+					onValueChange = { viewModel.setMouthThickness(it.toFloat()) },
+					min = 0.5,
+					max = 8.0,
+					step = 0.1,
+					decimals = 1,
+					unit = "px",
+					enabled = !isBusy && !state.meshOnly,
+					modifier = Modifier.width(60.dp),
+					height = 20.dp,
+				)
+			}
+
+			val sampledColor = remember(state.analysis, state.alphaThreshold) {
+				state.analysis?.layers?.firstOrNull {
+					it.source !is MouthLipLayer &&
+					it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) &&
+					it.opaquePixels > 0
+				}?.let { MouthLipLayers.perimeterColor(it.source.raster, state.alphaThreshold) } ?: 0x482C32
+			}
+			val autoColor = state.mouthColor == null
+			val rgb = state.mouthColor ?: sampledColor
+
+			Row(
+				modifier = Modifier.fillMaxWidth().padding(top = 1.dp),
+				verticalAlignment = Alignment.CenterVertically,
+				horizontalArrangement = Arrangement.spacedBy(6.dp),
+			) {
+				CompactCheckbox(
+					checked = autoColor,
+					onCheckedChange = { auto ->
+						viewModel.setMouthColor(if (auto) null else (state.mouthColor ?: sampledColor))
+					},
+					label = tr("mouth.autoColor"),
+					enabled = !isBusy && !state.meshOnly,
+					modifier = Modifier.weight(1f),
+				)
+				ColorPickerSwatch(
+					onEditStart = { viewModel.beginEditorField("mouthColor") },
+					onEditEnd = { viewModel.endEditorField("mouthColor") },
+					color = rgb,
+					enabled = !isBusy && !state.meshOnly,
+					onColorChanged = { chosenRgb ->
+						viewModel.setMouthColor(chosenRgb)
+					},
+					sampledColor = sampledColor,
+				)
+				var hexInput by remember(state.mouthColor, autoColor) {
+					mutableStateOf("%06X".format(state.mouthColor ?: sampledColor))
+				}
+				CompactTextField(
+					value = if (autoColor) "%06X".format(sampledColor) else hexInput,
+					onValueChange = { newHex ->
+						hexInput = newHex
+						val cleaned = newHex.trim().removePrefix("#")
+						if (cleaned.length == 6) {
+							cleaned.toIntOrNull(16)?.let { c ->
+								viewModel.setMouthColor(c)
+							}
+						}
+					},
+					enabled = !isBusy && !state.meshOnly && !autoColor,
+					isMono = true,
+					placeholder = "#RRGGBB",
+					modifier = Modifier.width(68.dp),
+					height = 20.dp,
+				)
 			}
 		}
 	}

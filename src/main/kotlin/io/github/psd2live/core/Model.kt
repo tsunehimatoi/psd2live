@@ -209,6 +209,8 @@ data class PipelineConfig(
 	val bodyStrength: Float = 1f,
 	/** How far the body parameters move the body at their full values (see [RigTuning]). */
 	val rigTuning: RigTuning = RigTuning(),
+	/** Role components switched off ([RigComponents]): their parameters move nothing the base rig made. */
+	val disabledComponents: Set<String> = emptySet(),
 	val meshOnly: Boolean = false,
 	val generateDeformers: Boolean = true,
 	val featureDisplacementEnabled: Boolean = false,

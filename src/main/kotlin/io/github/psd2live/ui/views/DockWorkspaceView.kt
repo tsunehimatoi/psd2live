@@ -408,6 +408,7 @@ internal fun DockWorkspaceView(
                 onConfirm = viewModel::confirmDepthSplit, onDismiss = viewModel::dismissDepthSplit)
         }
         io.github.psd2live.ui.components.KeyformDialogHost()
+        if (state.activeWorkspace.id == workspace.id) ModifierPresetDialog(viewModel, state)
         if (state.activeWorkspace.id == workspace.id) when (viewModel.objectDialog) {
             PSD2LiveViewModel.ObjectDialog.FIND_REPLACE -> io.github.psd2live.ui.components.FindReplaceDialog(state, viewModel)
             PSD2LiveViewModel.ObjectDialog.CONVERT_IDS -> io.github.psd2live.ui.components.ConvertIdsDialog(state, viewModel)
@@ -591,7 +592,6 @@ private fun DockTree(node: DockNode, session: DockSession, modifier: Modifier, w
 		.then(
 			when (node.selected) {
 				"layers" -> Modifier.tutorialTarget(TutorialTargetId.LAYERS_DOCK)
-				"settings" -> Modifier.tutorialTarget(TutorialTargetId.MODEL_SETTINGS)
 				"parameters" -> Modifier.tutorialTarget(TutorialTargetId.PARAMETERS_DOCK)
 				"inspector" -> Modifier.tutorialTarget(TutorialTargetId.INSPECTOR_DOCK)
 				"tools" -> Modifier.tutorialTarget(TutorialTargetId.TOOLS_DOCK)
@@ -600,7 +600,7 @@ private fun DockTree(node: DockNode, session: DockSession, modifier: Modifier, w
 				"animation" -> Modifier.tutorialTarget(TutorialTargetId.ANIMATION_DOCK)
 				"animationEditor" -> Modifier.tutorialTarget(TutorialTargetId.ANIMATION_EDITOR_DOCK)
 				"physics" -> Modifier.tutorialTarget(TutorialTargetId.PHYSICS_DOCK)
-				"simulation" -> Modifier.tutorialTarget(TutorialTargetId.SIMULATION_DOCK)
+				"modifiers" -> Modifier.tutorialTarget(TutorialTargetId.MODIFIERS_DOCK)
 				"materials" -> Modifier.tutorialTarget(TutorialTargetId.MATERIALS_DOCK)
 				else -> Modifier
 			},
@@ -1176,7 +1176,7 @@ private fun floatingTitle(id: String, state: PSD2LiveState, viewModel: PSD2LiveV
 }
 
 /** Modules that read neither the authored nor the published pose; see [withoutPose]. */
-private val POSELESS_MODULES = setOf("hierarchy", "skeleton", "history", "log", "settings", "layers")
+private val POSELESS_MODULES = setOf("hierarchy", "skeleton", "history", "log", "layers")
 
 /**
  * [state], or the instance given last time when the two differ only in pose values (the preview publishing its
@@ -1264,11 +1264,6 @@ private fun DockModuleContent(
 		"history" -> HistoryTreeView(poseless, vm, Modifier.fillMaxSize())
 		"log" -> BottomLogDock(poseless, vm, Modifier.fillMaxSize(), fillDock = true)
 		"animationEditor" -> AnimationEditorView(state, vm)
-		"settings" -> {
-			Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-				ModelPresetsSection(poseless, vm)
-			}
-		}
 		"layers" -> LayersTableView(poseless, vm)
 		"parameters" -> ParametersListView(state, vm)
 		"tools" -> ToolDetailsView(vm.canvasEditorFor(state.activeCanvas.id), vm, state)
@@ -1276,8 +1271,7 @@ private fun DockModuleContent(
 		"inspector" -> InspectorPanelView(vm.canvasEditorFor(state.activeCanvas.id), vm, state)
 		"animation" -> AnimationPanelView(vm, state)
 		"physics" -> PhysicsPanelView(vm, state)
-		"simulation" -> io.github.psd2live.ui.views.simulation.SimulationPanelView(vm, state)
-        "interior" -> InteriorPanelView(vm,state)
+		"modifiers" -> ModifierPanelView(vm, state)
 		"atlas" -> io.github.psd2live.ui.views.texture.AtlasPageView(state, vm)
 		"texture" -> io.github.psd2live.ui.views.texture.TextureInspectorPanel(state, vm)
 		"materials" -> MaterialsPanel(state, vm)

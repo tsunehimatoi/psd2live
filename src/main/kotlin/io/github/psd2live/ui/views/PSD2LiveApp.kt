@@ -389,6 +389,9 @@ private fun FrameWindowScope.PSD2LiveAppContent(
 			step.selectDock?.let { dock ->
 				viewModel.setInspectorCollapsed(false)
 				viewModel.requestSelectDockModule(dock)
+				// The modifiers panel's world page holds the generation settings and the simulations; the object page the cards.
+				if (dock == "modifiers") viewModel.modifiers.page = if (step.targetId == TutorialTargetId.MODEL_SETTINGS || step.targetId == TutorialTargetId.SIMULATION_DOCK)
+					io.github.psd2live.ui.state.ModifierController.WORLD else io.github.psd2live.ui.state.ModifierController.OBJECT
 			}
 			if (step.expandModelSettings) {
 				viewModel.setInspectorCollapsed(false)

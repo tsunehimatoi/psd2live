@@ -98,6 +98,12 @@ interface WorkspaceQueries : WorkspaceStatePort {
     fun compareSimulation(id: String, motions: List<String>, progress: (Float) -> Unit = noSamplingProgress,
                           cancelled: () -> Boolean = noSamplingCancellation): JsonObject
     fun listInteriorEffects(): List<io.github.psd2live.core.interior.NativeInteriorEffect> = emptyList()
+    /** The captured document's rig edits; null when nothing is loaded. */
+    fun currentRigEdits(): io.github.psd2live.core.RigEditOverlay?
+    /** The captured document's modifiers, in stack order. */
+    fun listModifiers(): List<io.github.psd2live.core.modifier.RigModifier>
+    /** What keeps the captured document's modifiers from their meshes as recorded, or how far their sampling stays from them. */
+    fun modifierIssues(): List<io.github.psd2live.core.modifier.ModifierSampler.Issue>
     fun listSwings(): List<RigSwingEdit>
     /** The captured document's hit areas, in test order. */
     fun hitAreas(): List<io.github.psd2live.core.RigHitArea>

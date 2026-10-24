@@ -90,7 +90,7 @@ internal object GeneratedOverrides {
 	 * channel: the generators owning each version 2 part's keyforms ([PrimitiveSkins.owner]).
 	 */
 	fun capture(model: PuppetModel, overlay: RigEditOverlay, commands: JsonArray, skins: PrimitiveSkins = PrimitiveSkins.None): JsonArray {
-		val graph by lazy { DocumentGenerators.graph(overlay, primitives = skins) }
+		val graph by lazy { DocumentGenerators.graph(overlay, primitives = skins, model = model) }
 		return JsonArray(commands.map { element ->
 			val command = element.jsonObject
 			if (command["op"]?.jsonPrimitive?.contentOrNull != "canvas_geometry" || command["preserve_children"]?.jsonPrimitive?.booleanOrNull == true)
@@ -165,7 +165,7 @@ internal object GeneratedOverrides {
 	 */
 	fun ownedWrites(shown: PuppetModel, overlay: RigEditOverlay, journal: List<JsonObject>, skins: PrimitiveSkins = PrimitiveSkins.None,
 					authored: PuppetModel? = null): List<JsonObject> {
-		val graph by lazy { DocumentGenerators.graph(overlay, primitives = skins) }
+		val graph by lazy { DocumentGenerators.graph(overlay, primitives = skins, model = shown) }
 		/** The generator owning [channel]'s axis [parameter] on [kind] [id]: the track gains it after the journal ([authored] lacks it). */
 		fun channelAxisOwner(kind: String, id: String, channel: FormChannel, parameter: String): String? {
 			val before = authored ?: return null

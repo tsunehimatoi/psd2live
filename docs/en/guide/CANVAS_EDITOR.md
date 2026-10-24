@@ -159,7 +159,7 @@ Topology updates also handle UVs, keyforms, blend shapes and Glue vertex referen
 
 ## Interior handles
 
-The Object-mode **Interior handles** tool (Shift+I, or **Edit on canvas** in the Interior panel toolbar; from another mode either switches to Object mode) adjusts the [interior surface](../spec/INTERIOR_SURFACE.md) of the selected mesh on the canvas. Object mode draws no mesh vertices, so the handles do not crowd among them. When the mesh has no effect yet or it is off, the options bar says so and can turn it on; clicking another object selects it and the handles move to it.
+The Object-mode **Interior handles** tool (Shift+I, or **Edit on canvas** in the interior card's menu; from another mode either switches to Object mode) adjusts the [interior surface](../spec/INTERIOR_SURFACE.md) of the selected mesh on the canvas. Object mode draws no mesh vertices, so the handles do not crowd among them. When the mesh has no effect yet or it is off, the options bar says so and can turn it on; clicking another object selects it and the handles move to it.
 
 | Handle | Effect |
 | --- | --- |

@@ -49,7 +49,8 @@ private val booleans = setOf(
     "exportGuideImageParts", "exportIncludePhysics", "exportIncludeUserData", "exportIncludeDisplayInfo",
 )
 internal val workspaceProjectSettingKeys = ranges.keys + booleans +
-    setOf("textureUpscale", "mouthShape", "runtimeTarget", "meshEdgeMode", "meshUnits", "meshTrace", "meshFillParameters", "rigTuning", "meshFillAlgorithm", "mouthCurve", "mouthColor")
+    setOf("textureUpscale", "mouthShape", "runtimeTarget", "meshEdgeMode", "meshUnits", "meshTrace", "meshFillParameters", "rigTuning", "meshFillAlgorithm", "mouthCurve", "mouthColor",
+        "disabledComponents")
 
 internal fun validateProjectSettings(merged: JsonObject, changes: JsonObject) {
     require(changes.keys.all { it in workspaceProjectSettingKeys }) {
@@ -71,6 +72,8 @@ internal fun validateProjectSettings(merged: JsonObject, changes: JsonObject) {
             key == "meshEdgeMode" -> require(io.github.psd2live.core.MeshEdgeMode.entries.any { it.name == value.jsonPrimitive.content }) { "Unknown mesh edge mode" }
             key == "meshUnits" -> require(io.github.psd2live.core.MeshUnits.entries.any { it.name == value.jsonPrimitive.content }) { "Unknown mesh units" }
             key == "meshTrace" -> require(io.github.psd2live.core.MeshTrace.entries.any { it.name == value.jsonPrimitive.content }) { "Unknown mesh trace" }
+            key == "disabledComponents" -> require(value.jsonArray.all { c ->
+                io.github.psd2live.core.RigComponents.switchable.any { it.id == c.jsonPrimitive.content } }) { "Unknown component" }
             key == "runtimeTarget" -> require(org.umamo.runtime.model.RuntimeTarget.entries.any { it.name == value.jsonPrimitive.content }) { "Unknown runtime target" }
         }
     }

@@ -177,6 +177,17 @@ internal class WorkspaceReadSession(
         return WorkspaceSettingsCodec.encode(WorkspaceSettingsCodec.decode(document.settings).copy(meshOverrides = document.meshOverrides))
     }
     override fun listInteriorEffects() = capture().document.rigEdits.interiorEffects
+    override fun listModifiers() = capture().document.rigEdits.modifiers
+    override fun currentRigEdits() = read.runtime.capture?.document?.rigEdits
+    override fun modifierIssues(): List<io.github.psd2live.core.modifier.ModifierSampler.Issue> {
+        val captured = capture()
+        val overlay = captured.document.rigEdits
+        val model = captured.model ?: return emptyList()
+        if (overlay.modifiers.isEmpty()) return emptyList()
+        // The rig the modifiers act on: the journal and every other generator.
+        val before = io.github.psd2live.core.DocumentGenerators.generate(model.authoredPuppet(overlay), overlay.copy(modifiers = emptyList()))
+        return io.github.psd2live.core.modifier.ModifierSampler.issues(before, overlay.modifiers)
+    }
     override fun listSwings(): List<RigSwingEdit> = capture().document.rigEdits.swingEdits
     override fun hitAreas() = capture().document.rigEdits.hitAreas
     override fun hitAreaModel() = read.runtime.capture?.model

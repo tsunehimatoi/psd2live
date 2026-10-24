@@ -50,6 +50,9 @@ internal object WorkspaceSettingsCodec {
 
     fun encodeRigTuning(value: io.github.psd2live.core.RigTuning): JsonObject = buildJsonObject {
         value.toMap().forEach { (id, v) -> put(id, v) }
+        // Only a side that has values of its own is written, so documents without keep their settings.
+        if (value.left.isNotEmpty()) putJsonObject("left") { value.left.toSortedMap().forEach { (id, v) -> put(id, v) } }
+        if (value.right.isNotEmpty()) putJsonObject("right") { value.right.toSortedMap().forEach { (id, v) -> put(id, v) } }
     }
 
     /** Missing or unknown values keep [fallback]'s; every value is clamped to its range. */
@@ -57,14 +60,34 @@ internal object WorkspaceSettingsCodec {
         value: JsonElement?, fallback: io.github.psd2live.core.RigTuning = io.github.psd2live.core.RigTuning(),
     ): io.github.psd2live.core.RigTuning {
         val obj = (value as? JsonObject) ?: return fallback
+        fun side(key: String): Map<String, Float> = (obj[key] as? JsonObject)?.mapNotNull { (k, v) ->
+            val field = io.github.psd2live.core.RigTuning.fieldById[k]?.takeIf { k in io.github.psd2live.core.RigTuning.SIDED } ?: return@mapNotNull null
+            (v as? JsonPrimitive)?.floatOrNull?.takeIf { it.isFinite() }?.let { k to it.coerceIn(field.range) }
+        }?.toMap().orEmpty()
         return io.github.psd2live.core.RigTuning.fromMap(
             obj.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.floatOrNull?.let { k to it } }.toMap(), fallback)
+            .copy(left = side("left").ifEmpty { if ("left" in obj) emptyMap() else fallback.left },
+                right = side("right").ifEmpty { if ("right" in obj) emptyMap() else fallback.right })
     }
 
     /** Applies [changes] onto [base]; omitted values keep theirs. Rejects unknown, non-numeric or out-of-range values. */
     fun mergeRigTuning(
         base: io.github.psd2live.core.RigTuning, changes: JsonObject,
     ): io.github.psd2live.core.RigTuning = changes.entries.fold(base) { tuning, (id, value) ->
+        if (id == "left" || id == "right") {
+            // A side's own values: a number sets one, null clears it and the side takes the shared value again.
+            val own = (if (id == "left") tuning.left else tuning.right).toMutableMap()
+            for ((key, v) in (value as? JsonObject) ?: error("rigTuning.$id is an object of values")) {
+                val field = requireNotNull(io.github.psd2live.core.RigTuning.fieldById[key]?.takeIf { key in io.github.psd2live.core.RigTuning.SIDED }) {
+                    "rigTuning.$id.$key does not take a value per side"
+                }
+                if (v is JsonNull) { own -= key; continue }
+                val number = (v as? JsonPrimitive)?.floatOrNull?.takeIf { it.isFinite() } ?: error("rigTuning.$id.$key must be a number")
+                require(number in field.range) { "rigTuning.$id.$key is outside its UI range ${field.range}" }
+                own[key] = number
+            }
+            return@fold if (id == "left") tuning.copy(left = own) else tuning.copy(right = own)
+        }
         val field = requireNotNull(io.github.psd2live.core.RigTuning.fieldById[id]) { "Unknown rigTuning value: $id" }
         val number = (value as? JsonPrimitive)?.floatOrNull?.takeIf { it.isFinite() } ?: error("rigTuning.$id must be a number")
         require(number in field.range) { "rigTuning.$id is outside its UI range ${field.range}" }
@@ -143,6 +166,8 @@ internal object WorkspaceSettingsCodec {
         put("headStrength", config.headTurnStrength)
         put("bodyStrength", config.bodyStrength)
         put("rigTuning", encodeRigTuning(config.rigTuning))
+        // Written only when a component is off, so documents without keep their settings.
+        if (config.disabledComponents.isNotEmpty()) putJsonArray("disabledComponents") { config.disabledComponents.sorted().forEach { add(it) } }
         put("meshOnly", config.meshOnly)
         put("generateDeformers", config.generateDeformers)
         put("featureDisplacementEnabled", config.featureDisplacementEnabled)
@@ -218,6 +243,7 @@ internal object WorkspaceSettingsCodec {
         headTurnStrength = value["headStrength"]?.jsonPrimitive?.floatOrNull ?: base.headTurnStrength,
         bodyStrength = value["bodyStrength"]?.jsonPrimitive?.floatOrNull ?: base.bodyStrength,
         rigTuning = decodeRigTuning(value["rigTuning"] ?: value["bodyTuning"], base.rigTuning),
+        disabledComponents = value["disabledComponents"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }?.toSet() ?: base.disabledComponents,
         meshOnly = value["meshOnly"]?.jsonPrimitive?.booleanOrNull ?: base.meshOnly,
         generateDeformers = value["generateDeformers"]?.jsonPrimitive?.booleanOrNull ?: base.generateDeformers,
         featureDisplacementEnabled = value["featureDisplacementEnabled"]?.jsonPrimitive?.booleanOrNull ?: base.featureDisplacementEnabled,

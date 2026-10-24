@@ -90,6 +90,23 @@ internal object SwingAuthoring {
         return sized(wrapped, edit.copy(targets = targets)).copy(targets = edit.targets)
     }
 
+    /** The `swing_put` arguments that give [edit] back as it is: every direction with its parameters, shape and pendulum. */
+    fun arguments(edit: RigSwingEdit): JsonObject = buildJsonObject {
+        put("id", edit.id); put("name", edit.name)
+        putJsonArray("targets") { edit.targets.forEach { add(it) } }
+        put("preset", edit.preset.name); put("fulcrum", edit.fulcrum.name)
+        put("tilt", edit.tilt); put("offset_along", edit.offsetAlong); put("offset_across", edit.offsetAcross)
+        put("physics_enabled", edit.hasPhysics)
+        putJsonArray("motions") {
+            for (m in edit.motions) addJsonObject {
+                put("kind", m.kind.name)
+                putJsonArray("parameters") { m.parameterIds.forEach { add(it) } }
+                m.shape.write(this)
+                m.physics?.let { put("physics", it.toJson()) }
+            }
+        }
+    }
+
     /** A swing request from the agent tools; [estimatePhysics] when no pendulum was given. */
     data class Request(val edit: RigSwingEdit, val estimatePhysics: Boolean)
 

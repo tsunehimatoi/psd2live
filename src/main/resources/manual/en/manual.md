@@ -21,7 +21,7 @@ If you have used Cubism, this path first maps ArtMesh, deformers and parameters 
 2. **Generate**: on the Start page, pick a preset under **Generate from PSD** (Minimal / Default / Complete), then drop the PSD into the window or press {key:OPEN_PSD}. When generation finishes you land in the editing workspace (see [[psd-import]], [[model-presets]]).
 3. **Check the recognition**: in the **Layers** panel look at each layer's tags (part, side) and variants, and fix anything misrecognized right there (see [[layers-palette]]).
 4. **Preview**: choose **Preview** in the canvas mode menu and check that idle, blinking, mouse tracking and physics look natural (see [[preview-canvas]]).
-5. **Edit as needed**: on the editing canvas use the Deform, Edit, Skeleton, Paint and other modes to fix keyforms, meshes and pixels; adjust sway in the Physics and Simulation panels (see [[canvas-modes]]).
+5. **Edit as needed**: on the editing canvas use the Deform, Edit, Skeleton, Paint and other modes to fix keyforms, meshes and pixels; adjust sway and simulation in the Physics and Modifiers panels (see [[canvas-modes]], [[modifiers]]).
 6. **Save**: {key:SAVE_PROJECT} saves a `.psd2live` file, which holds the source images, all edits and the branching history.
 7. **Export**: {key:GENERATE} opens **Export Live2D model…**, which exports `.moc3` runtime files or a `.cmo3` project; other formats are under **File → Export as**.
 You do not have to start from a PSD: a **Layout project** lets you place images, PSDs or SVGs on an empty canvas first and then generate (see [[layout-project]]), and **Import CMO3** lets you carry on editing an existing Cubism model (see [[cmo3-import]]).
@@ -106,7 +106,7 @@ PSD2Live mostly uses Live2D's common terms; a few are named differently in the i
 ## Concepts that come with automatic generation
 | Term | Meaning |
 |---|---|
-| Model presets | Control the deformation amounts, mouth shapes, motions, physics and simulation that are generated (see [[model-presets]]) |
+| Model presets | Control the motions, physics and simulation that are generated; deformation amounts and mouth shapes are on the role component cards (see [[model-presets]], [[modifiers]]) |
 | Tags | A layer's part, side and so on; the generator uses them to recognize parts |
 | Variants | None, Toggle Variant (one parameter shows or hides a layer), Switch Variant (one parameter picks one of several) (see [[variants]]) |
 | Generated rig | The model generated automatically from the source images and presets; your edits are replayed on top of it |
@@ -225,7 +225,7 @@ Panels that were closed, or an extra canvas you want, are handled in the **Windo
 ## Menu items
 | Item | Purpose |
 |---|---|
-| Panel list | Hierarchy, Skeleton, History, Log, Animation Editor, Model presets, Layers, Parameters, Tool Details, Mesh, Inspector, Animation, Physics, Simulation, Atlas, Texture, Materials; a tick means shown in the current workspace |
+| Panel list | Hierarchy, Skeleton, History, Log, Animation Editor, Layers, Parameters, Tool Details, Mesh, Inspector, Animation, Physics, Modifiers, Atlas, Texture, Materials; a tick means shown in the current workspace |
 | Canvas | This workspace's canvases, which can be shown or hidden one by one |
 | Add Edit Canvas / Add Preview Canvas | Adds a canvas to this workspace (see [[multiview]]) |
 | Reset layout | Restores the current workspace's preset layout without affecting the model |
@@ -341,7 +341,7 @@ The preview canvas plays the exported model so you can check motions, physics an
 | Advanced mode | PSD2Live runtime only: arc skinning, exact links, live cloth and hair simulation |
 | Frame rate cap | Follow the monitor or a fixed FPS |
 The bottom of the canvas shows the current runtime, physics state and zoom ratio; a hint appears when a simulation has not been baked yet.
-!> The reference simulation runs only in the editor and is not exported; to carry it into the exported files, bake it in the Simulation panel.
+!> The reference simulation runs only in the editor and is not exported; to carry it into the exported files, bake it in the simulation's card or on the **World** page of the Modifiers panel.
 
 @@ guide-function | Guide line function
 Guides are horizontal or vertical reference lines dragged out of the rulers, for lining parts up, checking left-right symmetry or marking where a keyform should reach. Guides are saved with the project, stay out of the history and are never exported.
@@ -735,15 +735,13 @@ A single layer can also be replaced in the **Texture** panel with **Replace imag
 When you want to start over completely from a modified PSD, use **Model → Reanalyze PSD** ({key:REANALYZE}): it re-reads the current PSD and generates a new project with the current preset. Edits in the original project are not carried over; if there are unsaved changes it asks first whether to save.
 
 @@ model-presets | Model presets
-The **Model presets** panel decides in one place what is generated automatically and how large the motion amounts are: deformation and mouth shapes, Rig values, motions, physics and simulation. After a change the model is regenerated with the new settings and your existing edits are replayed as usual, so feel free to try repeatedly.
+**Model presets** is the section on the **World** page of the Modifiers panel. It decides in one place which motions, physics and simulation are generated automatically. Deformation amounts, mouth shapes and the Rig values of each part are adjusted on the role component cards (see [[modifiers]]). After a change the model is regenerated with the new settings and your existing edits are replayed as usual, so feel free to try repeatedly.
 ## Where to set them
 - Before import: the details panel of **Generate from PSD** on the Start page; first choose **Minimal** / **Default** / **Complete**, then adjust item by item; the generate button's menu can switch presets or **Apply to Current Model**.
-- After import: the **Model presets** panel (reopen it from the **Windows** menu if it was closed). The toolbar at the top can expand or collapse everything, and **Reset Defaults** restores all presets.
+- After import: the **Model presets** section on the **World** page of the Modifiers panel (reopen the panel from the **Windows** menu if it was closed). The section's toolbar can expand or collapse everything, and **Reset Defaults** restores all presets.
 ## Contents of each group
 | Group | Contents |
 |---|---|
-| Deformation and mouth shapes | Facial-feature offset deformer switches, head and body amounts (0–4×), upper and lower lip strokes with their line width and color, mouth shape settings, brows and eyes through the bangs with their opacity |
-| Rig values | Body X (turning left and right), body Y, body lean forward and back, size change (head-to-body ratio), body Z and breathing, depth and perspective; **Advanced** holds head turning, eyes, eyebrows and mouth |
 | Motions | Two groups, **Basic motions** and **Skeleton motions**; when turned off, that group's motions are removed from the Animation panel, preview and export |
 | Physics and simulation | Front hair and back hair each choose **Simulation** / **Classic sway** / **Off**; **Clothing** simulation (acts only on loose parts); jelly eyes; auto Pin physics weights |
 With **Selected only** ticked, the physics and simulation presets act only on the selected layers.
@@ -1057,11 +1055,11 @@ A PSD layer's blend mode is converted automatically on import: additive modes su
 @@ interior-shape | Interior shape
 On a large garment or head of hair, only the outline moves when turning, so it looks like a sheet of paper. Interior shape makes the texture inside a layer contract, expand and lean along a virtual curved surface, giving a sense of volume as it turns; it generates the keyforms it needs automatically and exports as standard blend shapes and physics settings. It does not generate new textures or shadows, and it is not cloth simulation.
 ## Usage
-1. Select a generated layer and open the **Interior shape** panel.
-2. Tick **Enable**; the program generates the interior shape and starts the audition.
+1. Select a generated layer and choose **Interior shape** in the **Add** menu of the Modifiers panel. It becomes a card in that mesh's stack.
+2. The switch on the card's title enables or disables it; once enabled, the program generates the interior shape.
 3. Under **Shape** adjust the horizontal / vertical amounts, surface bulge, bias, fold strength and outline preservation; for a local fold, click + add under **Local folds**.
 4. When the motion needs easing, expand **Easing / propagation** and set the easing time, propagation time, propagation strength and **Direction**.
-5. In **Audition** drag the 2D parameter pad or turn on **Mouse follow** to check the effect; **Solo / frame** shows only this layer and centers it on the canvas.
+5. In the card's **Audition** drag the 2D parameter pad or turn on **Mouse follow** to check the effect; the card menu's **Solo / frame** shows only this layer and centers it on the canvas, and **Edit on canvas** enters the interior shape handles.
 Each drag commits one history entry when it ends; if generation fails, the draft and the previous valid result are kept.
 ## Settings
 | Setting | Range | Meaning |
@@ -1075,9 +1073,43 @@ Each drag commits one history entry when it ends; if generation fails, the draft
 | Propagation strength | 0–1 | The weight of the rear area; 0 means no zoning |
 The horizontal / vertical mouse multipliers under **More settings** affect only the mouse audition and do not change keyform amounts or the exported parameter range; **Source parameters** can pick an existing parameter or **New parameter**.
 ## Notes
-- Unticking **Enable** keeps the settings but does not apply the deformation; **Delete effect** removes the recipe and its physics, and can be undone.
-- After the mesh, material or driving parameter changes, the panel prompts you to regenerate or rebind; effects that have become invalid are skipped on export and listed in the warnings.
+- Turning the card's switch off keeps the settings but does not apply the deformation; **Delete** in the card menu removes the recipe and its physics, and can be undone.
+- After the mesh, material or driving parameter changes, the card prompts you to regenerate or rebind; effects that have become invalid are skipped on export and listed in the warnings.
 - Easing uses the project's physics group and exports as standard physics settings.
+
+@@ modifiers | Modifiers
+The **Modifiers** panel shows the selected object in the order Live2D actually computes it: first its own keyforms, then each parent deformer in turn (innermost first). Each level is a **stage**, and the order of the stages is the nesting order in the hierarchy tree; to change it, change the parent-child relations in the hierarchy tree.
+## Object page
+- One row per stage: its name, what generated it (head turn, eyes, swing..., or **By hand**) and the number of cards acting on it. The selected object's own stage is expanded by default and the others are collapsed; **Contributed only** on the toolbar hides the stages nothing else acts on.
+- Expand a stage to see first which generators and hand edits its keyforms come from (the parameter list), then the cards acting on it: modifiers, simulations, interior effects and swings. The cards are in execution order, and each reads the result of the ones before it; a card can be expanded for its settings, switched, moved up or down, applied as keyforms or deleted.
+- The arrow button on a stage row selects that deformer, and **+** adds to that stage; **Add** on the toolbar adds to the selected object's own stage. A mesh's own stage can also add **Simulation · Cloth / Hair** and **Interior shape**.
+- A simulation card holds the bake, material, inputs, outputs, glue, vertex weight groups and the comparison (the reference sim switch); an interior shape card holds the audition and all the shape settings; a swing card holds the directions, preset, fulcrum, and each direction's shape and pendulum.
+## Mirror
+- Key one side of a parameter and get the other as its mirror image: for example key only the positive side of Angle X, and the negative side follows; change the positive side and the negative side changes with it.
+- Options: **Parameter** picks the parameter to mirror (by default a two-sided parameter the target is keyed on, Angle X first), **Kept side** positive or negative, **From** another mesh or warp (a left eye for the right), whose displacement is then taken over the whole range.
+- **Mirror line x** is where the vertical mirror line stands (canvas x); a new mirror takes its target's centre.
+- The displacement field is mirrored, not the vertices: asymmetric meshes, and eyes with different vertices, work too.
+- **Output**: **Into the mesh's keyforms**, or **A warp of their own** (a warp between the mesh and its parent keyed on the modifiers' parameters only, so the mesh's keyforms are not multiplied); **Automatic** uses the warp when the keyforms would multiply.
+
+## Follow surface, corner correction, turn in depth
+- **Follow surface**: line art, shading, highlights and accessories move with the mesh they are drawn over (the **Host**, by default the closest layer under them): whatever keyforms the host has, they follow without being keyed again. **Amount** 1 follows fully.
+- **Corner correction**: when shapes were made on X and Y one at a time, the corner poses (both at once) often collapse. It makes a corner the sum of what each axis does alone; an **Amount** above 1 pushes further.
+- **Turn in depth**: treats the targets as a solid at a **Depth** in front of the centre, turned by the parameters (Angle X / Y by default) and seen in perspective: what is in front moves further and the far side narrows. **Bulge** rounds the middle forward, **Angle** is the turn at the parameters' ends, and a nearer **View distance** gives more perspective.
+
+## Role components
+The generated head turn, eyes, brows, mouth, body pose, breath and hair are each a role component. With a mesh selected, the components that generated something in its stages are listed as cards before the stages; the **Role components** section of the **World** page lists all of the model's components.
+- The switch on a card's title turns the component off: its parameters no longer drive anything it generated, while the deformers and existing edits stay. With Head turn off, the eyes and others also stop reacting to Angle X.
+- **Values**: the items of the former "Rig Values" that belong to the component, common ones first, the rest under **Advanced**. The eyes and brows can tick **Left and right apart**, which gives **Blink sag**, **Blink corners**, **Closed lash thickness** and the brow lift a value per side.
+- The component's own settings: for the head, **Head range** and the **Facial Feature Displacement Deformer**; for the body, **Body range**; for the mouth, the lip outlines, mouth shape, line width and color; for the eyes, the idle blink motion, see-through over the bangs and jelly eyes; for the brows, see-through over the bangs; for the hair, the pendulums.
+- **Members**: the layers the component recognised, with their role and side; changing a role changes that layer's semantic tag. Click a name to select the layer.
+- **Parameters**: the parameters the component generated.
+
+## World page
+- **Role components**: the cards of all the model's components.
+- **Simulations**: all physics bodies and their bake state, with **Bake all** and **Bake automatically**; click a row to select its mesh and switch to the Object page.
+- **Problems**: the problems of all cards (missing parameters, too many keyforms, out of tolerance, an interior shape that needs regenerating); click a row to jump to the object.
+- **Model presets**: see [[model-presets]].
+!> A simulation reads only what comes before it in the stack; after the cards before it change, its bake shows **Stale**.
 
 @@ artpath-folder | ArtPath
 @@ artpath | About ArtPaths
@@ -1184,7 +1216,7 @@ When a PSD is imported, PSD2Live generates the whole set of deformers, parameter
 - Skeleton (when enabled): torso bend and limb rotation deformers; see [[skeleton]].
 The exact objects vary with the model presets; the Hierarchy is authoritative.
 ## Adjust the result
-1. In the **Model presets** panel, adjust the deformation range, Rig Values and so on; the model regenerates accordingly.
+1. In the **Role components** section on the **World** page of the Modifiers panel, adjust each component's range and values, or in the **Model presets** section adjust motions and physics; the model regenerates accordingly.
 2. The edits you made on the generated result are merged onto the new result and kept.
 3. To benefit from improvements in a newer generator, use **Model → Update Generated Rig**; see [[update-generated-rig]].
 *> When you create a warp deformer by hand, **Create from selection** and the size strategy in the placement panel also size it automatically from the selected objects.
@@ -1353,7 +1385,7 @@ When Angle X turns the head, the head deformer handles the turn of the whole hea
 - Mirror keyform handles only the object's own deformation, using the parent in the default pose as the coordinate system; the parent's keyforms must be mirrored separately.
 
 @@ keyform-xydirection | Keyforms (Make X, Y Movements)
-When an object is bound to two parameters at once (such as Angle X and Angle Y), the keyforms are arranged in a grid: each combination of an X key and a Y key has its own shape, and diagonal poses are interpolated from the surrounding keys. The generated head already has nine poses made from combinations of the end and middle points of Angle X / Y, with extra correction for the diagonals; the strength is tuned under **Rig Values** in the model presets.
+When an object is bound to two parameters at once (such as Angle X and Angle Y), the keyforms are arranged in a grid: each combination of an X key and a Y key has its own shape, and diagonal poses are interpolated from the surrounding keys. The generated head already has nine poses made from combinations of the end and middle points of Angle X / Y, with extra correction for the diagonals; the strength is tuned in the **Values** of the **Head turn** component card.
 ## Make a set of XY shapes yourself
 1. In the Parameters panel, link the two parameters into a 2D controller with the link button on the row, and right-click on the pad to snap to the intersection of both parameters' keys.
 2. In Deform mode, make shapes at each intersection in turn: first the end and middle points, then the four diagonals.
@@ -1410,8 +1442,8 @@ Head turns, blinks, eyeballs, eyebrows, mouth shapes and lip sync are all genera
 - Brows through the bangs: each brow the front hair covers gets a copy drawn just above the bangs at partial opacity and clipped to them, so it shows through the hair as in anime. The copy follows its brow through every deformer, form and edit; edit the brow, not the copy. Eyes through the bangs: the bangs fade over every part of the eyes - whites, irides and highlights, lashes - so the whole eye shows through the hair; closed-eye lines are copied over the bangs like the brows. New models have both on; models made before keep what they had (eyes off) until you turn them on.
 - Front and back hair are separated from strong face deformation and each outputs its own sway parameter.
 ## Adjust the range
-1. Open the **Rigging & Facial** group in the **Model presets** panel and adjust the **Facial Feature Displacement Deformer** switch and **Head range** and **Body range**.
-2. In the **Rig Values** group, fine-tune head turn, eyes, brows, mouth, nose and ears, and hair; less common items are under **Advanced**.
+1. In the **Role components** section on the **World** page of the Modifiers panel, open the **Head turn** card and adjust the **Facial Feature Displacement Deformer** switch and **Head range**; the **Body pose** card holds **Body range**.
+2. In the **Values** of each component card, fine-tune head turn, eyes, brows, mouth and hair (nose and ears are in Head turn); less common items are under **Advanced**.
 3. After a change the model regenerates, and the manual edits you already made are merged and kept.
 ## Correct by hand
 The generated facial keyforms can be edited further directly in Deform mode; for the method see [[how-to-edit]].
@@ -1431,7 +1463,7 @@ When a mesh is selected, a fitting warp deformer is wrapped around it automatica
 4. **Preview Sway** to see the effect; **Generate** / **Apply** or Enter writes it, **Cancel** or Esc abandons it.
 *> Compared with Cubism's feature of the same name, this one can also target a mesh, make up-down swings and segments, and use bottom parallel to make several bundles of hair sway together. If the parameter does not exist it is created automatically as `ParamSwing<id>`, and the pendulum is exported to physics3.json and cmo3.
 ## Regeneration and baking
-The keyforms on the swing axis belong to the swing and are recomputed from the target's current shape on every rebuild; your manual changes on these keyforms are recorded as generated overrides (see [[generated-overrides]]). To take over completely by hand, click **Bake to Keys** to write the current form as ordinary keyforms and keep only the physics pendulum; **Delete** removes it together with the generated axis and the automatically created parameter.
+The keyforms on the swing axis belong to the swing and are recomputed from the target's current shape on every rebuild; your manual changes on these keyforms are recorded as generated overrides (see [[generated-overrides]]). To take over completely by hand, click **Apply as Keyforms** to write the current form as ordinary keyforms and keep only the physics pendulum; **Delete** removes it together with the generated axis and the automatically created parameter.
 
 @@ edit-vertices | Edit Vertices in Canvas Coordinates
 In PSD2Live, dragging, the transform box and brushes always act on the position where a point is shown on the canvas; whichever deformer the object hangs under, the program converts it to the parent's local coordinates automatically. This is default behavior and needs no separate switch. When you need exact values, use **Precise Transform**.
@@ -1538,7 +1570,7 @@ Editing at the default value of a generated parameter is still an ordinary edit 
 When there are problems, the Inspector toolbar shows an **n override issue(s)** badge; the problems of the selected object are listed in **Generated overrides** at the top of the Inspector, and clicking the badge lists all of them.
 - Conflict: some points were changed by both the generator and your edit, and your edit was kept.
 - Not applied: the generated keyform no longer exists, the number of points of the generated shape changed, or the mesh was split and replaced.
-!> Copying to or from a generated keyform, and adding or deleting keys on a generator's axis, cannot be recorded as overrides and are rejected. To edit a swing completely by hand, first click **Bake to Keys** in the swing panel.
+!> Copying to or from a generated keyform, and adding or deleting keys on a generator's axis, cannot be recorded as overrides and are rejected. To edit a swing completely by hand, first click **Apply as Keyforms** in the swing panel.
 Related: [[auto-generation-of-sway-motion]] · [[simulation]] · [[update-generated-rig]]
 
 @@ multi-key | Multiple Keys Editing Function
@@ -1962,14 +1994,14 @@ A generated group can be edited directly; after editing it is marked **Modified*
 @@ simulation | Cloth and Hair Simulation
 Skirt hems, coat hems and long hair are hard to make feel like cloth with just a few pendulums. Simulation runs a real 2D cloth and hair simulation on the mesh in the editor and then **bakes** the result into parameters, keyforms and pendulums that Cubism can play, so the exported model moves in any Cubism runtime.
 ## Start with the model presets
-The **Physics & Simulation** group of the model presets can generate simulation for common parts in one step: change the dropdowns for front and back hair to **Simulate**, or tick **Clothing**, and the program builds the physics bodies, writes the weights and bakes in the background. Afterwards you can keep adjusting everything in the **Simulate** panel; see [[model-presets]].
+The **Physics & Simulation** group of the model presets can generate simulation for common parts in one step: change the dropdowns for front and back hair to **Simulate**, or tick **Clothing**, and the program builds the physics bodies, writes the weights and bakes in the background. Afterwards you can keep adjusting everything in the simulation card of the target mesh in the Modifiers panel; see [[model-presets]].
 {tutorial=SIMULATION}
 ## Build a physics body by hand
-1. Select the mesh of the skirt or hair on the canvas, click **New** in the **Simulate** panel, and choose cloth or hair. Several meshes in one physics body are simulated together.
+1. Select the mesh of the skirt or hair on the canvas, choose **Simulation · Cloth** or **Simulation · Hair** in the **Add** menu of the Modifiers panel. Several meshes in one physics body are simulated together, and it becomes a simulation card in the stacks of those meshes.
 2. Specify the pins: switch to the canvas's Simulate mode ({key:MODE_SIMULATE}) and paint pins with the **Weight brush** or **Weight gradient**; glue connected to the waist can also be set to **Pin** in the **Glue** section, see [[glue]].
-3. Switch the toolbar's preview switch to **Reference sim**, turn the head and shake the body, and change the preset or fine-tune the values in the **Material** section until the sway looks natural.
-4. Click **Bake** on the physics body, or **Bake all** on the toolbar. Baking runs in the background, usually takes a few seconds, and is committed as one undo step when done.
-5. Switch back to **Export**: what the canvas plays is the exported model's motion, which you can compare with the reference sim.
+3. Turn on **Reference sim** in the card's **Compare** section, turn the head and shake the body, and change the preset or fine-tune the values in the **Material** section until the sway looks natural.
+4. Click **Bake** in the card's **Bake** section, or **Bake all** in the **Simulations** section on the **World** page. Baking runs in the background, usually takes a few seconds, and is committed as one undo step when done.
+5. Turn off **Reference sim** and go back to **Export**: what the canvas plays is the exported model's motion, which you can compare with the reference sim.
 ## Vertex weight groups
 A weight group tells the simulation where to fix, and where to be stiffer or heavier. It exists only in this program and is not written into the exported files.
 | Kind | Effect |
@@ -1984,7 +2016,7 @@ A weight group tells the simulation where to fix, and where to be stiffer or hea
 - **Inputs**: the parameters that make the object sway, filled in automatically with the head and body angles and so on when created; baking is impossible while the list is empty.
 - **Bake**: **Modes** (1–3, default 2) decides how many parameters are generated, **Key points** decides the number of keyforms per parameter, and **Exaggeration** enlarges the sway without needing to bake again. After baking, R² and the error are shown.
 - The baked pendulums appear in the **Physics** panel with the source "Simulation"; the parameters appear in the Parameters panel, named `ParamSim…`.
-!> After changing settings, the mesh or weights, the bake shows **Stale**, and the export keeps using the old result until you bake again. The reference sim itself is never exported.
+!> After changing settings, the mesh, the weights or what comes before it in the stack, the bake shows **Stale**, and the export keeps using the old result until you bake again. The reference sim itself is never exported.
 @@ about-playlists | About Playlist
 @@ playlist-settings | How to set up a playlist
 @@ external | External Application Integration feature

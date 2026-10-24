@@ -37,6 +37,17 @@ class CatalogContractsTest {
 			SettingsTopic.entries.map { it.labelKey } + graphicsChoices.flatMap { listOfNotNull(it.labelKey, it.descriptionKey) }))
 	}
 
+	/** A message taking arguments is a MessageFormat pattern: shortcut markup in it must be quoted ('{key:…}'). */
+	@Test fun everyMessageTakingArgumentsFormats() {
+		val argument = Regex("""\{\d""")
+		for (name in MESSAGE_BUNDLES) {
+			val props = messageBundle(name)
+			val broken = props.stringPropertyNames().filter { argument.containsMatchIn(props.getProperty(it)) }
+				.filter { runCatching { java.text.MessageFormat(props.getProperty(it)) }.isFailure }
+			assertEquals(emptyList(), broken.sorted(), "$name has messages MessageFormat cannot parse")
+		}
+	}
+
 	/** The point tool's two faces (the old point tool and knife) each keep a name, a hint and their old key in every preset that had it. */
 	@Test fun everyFaceOfThePointToolIsNamedAndKeepsItsKey() {
 		assertEquals(emptyList(), missingMessages(MeshPointMode.entries.flatMap { listOf(it.labelKey, it.hintKey) }))

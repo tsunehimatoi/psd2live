@@ -39,7 +39,7 @@ internal const val DEFAULT_WORKSPACE_ID = "workspace"
 
 /** Right-hand dock modules the title-bar inspector toggle shows and hides together. */
 internal val INSPECTOR_DOCK_MODULES = setOf(
-	"settings", "layers", "parameters", "tools", "mesh", "inspector", "animation", "physics", "simulation", "interior",
+	"layers", "parameters", "tools", "mesh", "inspector", "animation", "physics", "modifiers",
 )
 
 /** Modules a fresh workspace layout already contains. History is added from the window menu. */
@@ -240,31 +240,31 @@ enum class WorkspacePreset(
 	/** Mesh topology: the hierarchy beside the edit canvas, the mesh panel on the right. */
 	MESH(
 		listOf(CanvasMode.EDIT),
-		setOf("layers", "skeleton", "log", "animationEditor", "tools", "inspector", "settings", "parameters", "animation", "physics", "simulation"),
+		setOf("layers", "skeleton", "log", "animationEditor", "tools", "inspector", "parameters", "animation", "physics"),
 	),
 
 	/** Binding parameters: the edit canvas and a live preview side by side, parameters always visible. */
 	RIG(
 		listOf(CanvasMode.EDIT, CanvasMode.PREVIEW),
-		setOf("animationEditor", "settings", "layers", "mesh", "animation", "physics", "simulation"),
+		setOf("animationEditor", "layers", "mesh", "animation", "physics"),
 	),
 
 	/** Authoring motions: motions left of the preview canvas, the animation editor below both, parameters on the right. */
 	ANIMATION(
 		listOf(CanvasMode.PREVIEW),
-		setOf("hierarchy", "skeleton", "log", "settings", "layers", "tools", "mesh", "inspector", "physics", "simulation"),
+		setOf("hierarchy", "skeleton", "log", "layers", "tools", "mesh", "inspector", "physics"),
 	),
 
 	/** Checking the finished model: a large preview with the motion list only. */
 	PREVIEW(
 		listOf(CanvasMode.PREVIEW),
-		setOf("hierarchy", "skeleton", "log", "animationEditor", "settings", "layers", "tools", "mesh", "inspector", "parameters", "physics", "simulation"),
+		setOf("hierarchy", "skeleton", "log", "animationEditor", "layers", "tools", "mesh", "inspector", "parameters", "physics"),
 	),
 
 	/** Tuning physics: the preview and parameters beside a wide physics panel, to shake the model while editing. */
 	PHYSICS(
 		listOf(CanvasMode.PREVIEW),
-		setOf("hierarchy", "skeleton", "log", "animationEditor", "settings", "layers", "tools", "mesh", "inspector", "animation"),
+		setOf("hierarchy", "skeleton", "log", "animationEditor", "layers", "tools", "mesh", "inspector", "animation"),
 	),
 
 	/**
@@ -274,7 +274,7 @@ enum class WorkspacePreset(
 	 */
 	TEXTURE(
 		listOf(CanvasMode.EDIT),
-		setOf("hierarchy", "skeleton", "log", "animationEditor", "settings", "tools", "mesh", "inspector", "parameters", "animation", "physics", "simulation"),
+		setOf("hierarchy", "skeleton", "log", "animationEditor", "tools", "mesh", "inspector", "parameters", "animation", "physics"),
 	),
 
 	/**
@@ -283,7 +283,7 @@ enum class WorkspacePreset(
 	 */
 	LAYOUT(
 		listOf(CanvasMode.EDIT),
-		setOf("skeleton", "log", "animationEditor", "settings", "tools", "mesh", "parameters", "animation", "physics", "simulation"),
+		setOf("skeleton", "log", "animationEditor", "tools", "mesh", "parameters", "animation", "physics"),
 	),
 
 	/**
@@ -510,6 +510,8 @@ data class PSD2LiveState(
 	val headStrength: Float = 1.0f,
 	val bodyStrength: Float = 1.0f,
 	val rigTuning: io.github.psd2live.core.RigTuning = io.github.psd2live.core.RigTuning(),
+	/** Role components switched off ([io.github.psd2live.core.RigComponents]). */
+	val disabledComponents: Set<String> = emptySet(),
 	val meshOnly: Boolean = false,
 	val generateDeformers: Boolean = true,
 	val featureDisplacementEnabled: Boolean = false,
@@ -763,6 +765,7 @@ data class PSD2LiveState(
 			headTurnStrength = headStrength,
 			bodyStrength = bodyStrength,
 			rigTuning = rigTuning,
+			disabledComponents = disabledComponents,
 			meshOnly = meshOnly,
 			generateDeformers = generateDeformers,
 			featureDisplacementEnabled = featureDisplacementEnabled,

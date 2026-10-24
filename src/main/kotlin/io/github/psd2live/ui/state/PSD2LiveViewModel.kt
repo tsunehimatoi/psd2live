@@ -157,6 +157,27 @@ class PSD2LiveViewModel : AutoCloseable {
 			},
 		)
 	}
+	internal val modifiers by lazy {
+		ModifierController(
+			state = { _state.value },
+			backend = { workspaceBackend },
+			scope = scope,
+			editorFor = ::canvasEditorFor,
+			progress = { busy ->
+				val working = tr("modifiers.busy")
+				updateState {
+					it.copy(
+						canvasEditBusy = busy,
+						statusText = if (busy) working else if (it.statusText == working) tr("status.ready") else it.statusText,
+					)
+				}
+			},
+			failed = { message ->
+				addLog(message, level = LogLevel.WARNING, tag = "Modifier")
+				updateState { it.copy(statusText = message) }
+			},
+		)
+	}
 	internal val structureMesh by lazy {
 		StructureMeshController(
 			backend = { workspaceBackend },
@@ -607,7 +628,7 @@ class PSD2LiveViewModel : AutoCloseable {
         val ids = withContext(Dispatchers.Default) {
             round.keys.filter { id ->
                 val edit = start.rigEdits.simEdits.firstOrNull { it.id == id && it.enabled } ?: return@filter false
-                round.getValue(id) || edit.bake == null || io.github.psd2live.core.sim.SimBake.stale(model.rig.puppet, edit)
+                round.getValue(id) || edit.bake == null || io.github.psd2live.core.sim.SimBake.stale(model.rig.puppet, edit, start.rigEdits)
             }
         }
         if (ids.isEmpty()) return
@@ -694,7 +715,7 @@ class PSD2LiveViewModel : AutoCloseable {
     internal fun simulationsToBake(current: PSD2LiveState = _state.value): List<String> {
         val puppet = current.previewModel?.rig?.puppet ?: return emptyList()
         val enabled = current.rigEdits.simEdits.filter { it.enabled }
-        val outdated = enabled.filter { it.bake == null || io.github.psd2live.core.sim.SimBake.stale(puppet, it) }
+        val outdated = enabled.filter { it.bake == null || io.github.psd2live.core.sim.SimBake.stale(puppet, it, current.rigEdits) }
         return (outdated.ifEmpty { enabled }).map { it.id }
     }
 
@@ -881,6 +902,12 @@ class PSD2LiveViewModel : AutoCloseable {
     internal fun setSimulationAutoBake(on: Boolean) {
         AppSettings.simulationAutoBake = on
         _simulationAutoBake.value = on
+    }
+
+    /** Shows the modifier stack [mesh] is in, where its generators' settings are edited: selects its layer, brings the panel forward. */
+    internal fun showStackOf(mesh: String) {
+        selectLayer(_state.value.previewModel?.rig?.layerIdByDrawableId?.get(mesh) ?: mesh)
+        requestSelectDockModule("modifiers")
     }
 
     /**
@@ -3707,6 +3734,26 @@ class PSD2LiveViewModel : AutoCloseable {
 
     fun setRigTuning(id: String, value: Float) = editPresetSettings(buildJsonObject {
         put("rigTuning", io.github.psd2live.project.WorkspaceSettingsCodec.encodeRigTuning(_state.value.rigTuning.with(id, value)))
+    })
+
+    /** [side]'s own value of a rig value that takes one per side, or null to give the side the shared value again. */
+    fun setRigTuningSide(side: String, id: String, value: Float?) = editPresetSettings(buildJsonObject {
+        putJsonObject("rigTuning") { putJsonObject(side) { put(id, value?.let(::JsonPrimitive) ?: kotlinx.serialization.json.JsonNull) } }
+    })
+
+    /** Gives the left and right sides of [ids] their own values (both the shared one), or the shared value again. */
+    fun setRigTuningSplit(ids: Collection<String>, split: Boolean) = editPresetSettings(buildJsonObject {
+        putJsonObject("rigTuning") {
+            for (side in listOf("left", "right")) putJsonObject(side) {
+                for (id in ids) put(id, if (split) JsonPrimitive(io.github.psd2live.core.RigTuning.fieldById.getValue(id).get(_state.value.rigTuning)) else kotlinx.serialization.json.JsonNull)
+            }
+        }
+    })
+
+    /** Switches role component [id] on or off ([io.github.psd2live.core.RigComponents.gate]). */
+    fun setComponentEnabled(id: String, enabled: Boolean) = editPresetSettings(buildJsonObject {
+        val next = if (enabled) _state.value.disabledComponents - id else _state.value.disabledComponents + id
+        putJsonArray("disabledComponents") { next.sorted().forEach { add(JsonPrimitive(it)) } }
     })
 
     fun resetRigTuning() = editPresetSettings(buildJsonObject {
@@ -8547,6 +8594,7 @@ class PSD2LiveViewModel : AutoCloseable {
 	override fun close() {
 		if (!isClosed.compareAndSet(false, true)) return
         interior.close()
+        modifiers.close()
         structureMesh.close()
         meshSplitCheck.cancel()
 		motionJob?.cancel()
