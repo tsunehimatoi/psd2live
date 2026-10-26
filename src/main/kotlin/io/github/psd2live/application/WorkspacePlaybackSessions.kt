@@ -208,7 +208,7 @@ internal class WorkspacePlaybackSessions(private val runtime: WorkspaceRuntime<R
             ?: id.takeIf { it.startsWith("preset:") }?.removePrefix("preset:")?.let { name ->
                 if (name !in MotionClips.BUILTIN_NAMES || !enabled(capture, name)) null
                 else MotionClips.overrideOf(document.rigEdits.motionClips, name) ?: MotionPresets.clip(id, name,
-                    document.rigEdits.skeleton, document.rigEdits.motionPresets[name] ?: MotionPresetSettings(), document.rigEdits.idRenames.parameters)
+                    document.rigEdits.skeleton, MotionPresetSettings.of(capture.model.config, name), document.rigEdits.idRenames.parameters)
             }
     }
 

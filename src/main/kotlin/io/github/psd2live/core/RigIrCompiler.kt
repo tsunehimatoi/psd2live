@@ -129,7 +129,7 @@ internal object RigIrCompiler {
 		fun authored(group: String, file: String, clip: MotionClip) = Clip(clip.id, clip.name, group, file, clip.duration, clip.fps, clip.loop,
 			clip.fadeIn, clip.fadeOut, clip.curves.map(MotionGenerator::curve), clip.events.map { ClipEvent(it.time, it.value) })
 		fun builtin(group: String, name: String, exclude: Set<String> = emptySet()) {
-			val settings = config.rigEdits.motionPresets[name] ?: MotionPresetSettings()
+			val settings = MotionPresetSettings.of(config, name)
 			if (settings.deleted) return
 			val file = name.replaceFirstChar(Char::lowercase)
 			val override = MotionClips.overrideOf(clips, name)

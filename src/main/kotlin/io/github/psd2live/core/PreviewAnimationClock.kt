@@ -47,7 +47,7 @@ internal data class PreviewAnimationClock(val elapsed: Double = 0.0, val followX
     fun sample(model: RigPreviewModel, animate: Boolean, tracking: Boolean, motion: Map<ParameterId, Float>): Map<ParameterId, Float> {
         val config = model.config
         if (config.meshOnly) return model.rig.puppet.parameters.associate { it.id to it.default }
-        val settings = config.rigEdits.motionPresets["Idle"] ?: MotionPresetSettings()
+        val settings = MotionPresetSettings.of(config, "Idle")
         val hasIdle = animate && config.motionBasic && config.motionIdle && !settings.deleted && !settings.disabled
         val idle = when {
             !hasIdle || settings.deleted -> emptyMap()
@@ -56,8 +56,9 @@ internal data class PreviewAnimationClock(val elapsed: Double = 0.0, val followX
         }
         fun value(id: ParameterId) = motion[id] ?: idle[id] ?: 0f
         val phase = elapsed % 4.6
-        val blink = if (animate && config.motionBasic && config.motionBlink && config.rigEdits.motionPresets["Blink"]?.let { !it.deleted && !it.disabled } != false && phase in 4.18..4.46)
-            (1.0 - sin((phase - 4.18) / 0.28 * PI)).toFloat().coerceIn(0f, 1f) else 1f
+        val blinking = animate && config.motionBasic && config.motionBlink && config.rigEdits.motionPresets["Blink"]?.let { !it.deleted && !it.disabled } != false
+        val blink = if (settings.natural) (if (blinking) MotionClips.sample(MotionGenerator.naturalBlinkTracks[0], (elapsed % SkeletonMotions.IDLE_DURATION.toDouble()).toFloat()) else 1f)
+            else if (blinking && phase in 4.18..4.46) (1.0 - sin((phase - 4.18) / 0.28 * PI)).toFloat().coerceIn(0f, 1f) else 1f
         val mouthPhase = elapsed % 5.8
         val follow = hasIdle || tracking
         val base = mapOf(

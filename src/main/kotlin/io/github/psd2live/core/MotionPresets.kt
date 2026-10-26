@@ -32,6 +32,8 @@ data class MotionPresetSettings(
 	val values: Map<String, Float> = emptyMap(),
 	val deleted: Boolean = false,
 	val disabled: Boolean = false,
+	/** Whether the presets move the `motion/natural` way; from the rig recipe, never saved with the settings. */
+	val natural: Boolean = false,
 ) {
 	init {
 		require(values.values.all(Float::isFinite)) { "Motion preset settings must be finite" }
@@ -43,6 +45,19 @@ data class MotionPresetSettings(
 	}
 
 	val isDefault: Boolean get() = values.isEmpty() && !deleted && !disabled
+
+	/** The saved settings' text, as before [natural] existed: revision identities are made from it. */
+	override fun toString(): String = "MotionPresetSettings(values=$values, deleted=$deleted, disabled=$disabled)"
+
+	companion object {
+		/** [name]'s settings in [config], moving the way its recipe asks. */
+		fun of(config: PipelineConfig, name: String): MotionPresetSettings =
+			(config.rigEdits.motionPresets[name] ?: MotionPresetSettings()).copy(natural = natural(config))
+
+		/** Whether [config]'s recipe moves the `motion/natural` way. */
+		fun natural(config: PipelineConfig): Boolean =
+			config.recipe.base("motion") === io.github.psd2live.core.recipe.RigModules.MOTION_NATURAL
+	}
 }
 
 /**
@@ -110,7 +125,7 @@ object MotionPresets {
 		settings: MotionPresetSettings = MotionPresetSettings(),
 		exclude: Set<String> = emptySet(),
 	): List<MotionTrack> = generated.getOrPut(io.github.psd2live.format.compile.document.ContentHash.of("motion", name.lowercase(),
-		skeleton?.toJson(), settings.values.toSortedMap(), settings.deleted, settings.disabled, exclude.sorted())) {
+		skeleton?.toJson(), settings.values.toSortedMap(), settings.deleted, settings.disabled, exclude.sorted(), settings.natural)) {
 		generate(name, skeleton, settings, exclude)
 	}
 
@@ -130,9 +145,11 @@ object MotionPresets {
 				else SkeletonMotions.idleCute(skeleton, exclude, settings.of(name, TUCK))
 				if (body.isEmpty()) return emptyList()
 				val tuned = idleTuned(body, settings.of(name, AMPLITUDE), settings.of(name, BREATH), settings.of(name, HEAD))
-				if (settings.of(name, BLINK) > 0.5f) tuned + MotionGenerator.idleBlinkTracks else tuned
+				val blinks = if (settings.natural) MotionGenerator.naturalBlinkTracks + MotionGenerator.glanceTracks else MotionGenerator.idleBlinkTracks
+				if (settings.of(name, BLINK) > 0.5f) tuned + blinks else tuned
 			}
-			"blink" -> MotionGenerator.blinkTracks(settings.of(name, CLOSURE), settings.of(name, DOUBLE) > 0.5f)
+			"blink" -> if (settings.natural) MotionGenerator.naturalBlink(settings.of(name, CLOSURE), settings.of(name, DOUBLE) > 0.5f)
+				else MotionGenerator.blinkTracks(settings.of(name, CLOSURE), settings.of(name, DOUBLE) > 0.5f)
 			"nod" -> scaledOneShot(MotionGenerator.nodTracks(settings.of(name, COUNT).roundToInt()), settings.of(name, AMPLITUDE))
 			"shake" -> scaledOneShot(MotionGenerator.shakeTracks(settings.of(name, COUNT).roundToInt()), settings.of(name, AMPLITUDE))
 			"tailswing" -> SkeletonMotions.tailSwing(skeleton, settings.of(name, AMPLITUDE), settings.of(name, COUNT).roundToInt())

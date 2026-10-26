@@ -204,6 +204,13 @@ object RigModules {
 		knobs = listOf(RecipeKnob("strength", P, 0f..200f, 100f)),
 		defines = listOf(ModuleParameter("ParamGloom", "model.parameter.gloom", 0f, 1f, 0f, "ParamGroupFace")))
 
+	/**
+	 * Motions that move like a person ([io.github.psd2live.core.MotionGenerator.naturalBlinkTracks]): blinks that shut
+	 * fast and open slowly at uneven gaps, now and then twice, one eye a frame behind the other; the idle's eyes
+	 * glancing away and back now and then.
+	 */
+	val MOTION_NATURAL = RigBase("motion/natural")
+
 	val areas: List<RigArea> = listOf(
 		RigArea("face", listOf(legacy("face")), listOf(FACE_DEPTH_TURN, FACE_SKIN_CLIP)),
 		RigArea("eye", listOf(legacy("eye"), EYE_FITTED), listOf(EYE_SEE_THROUGH, EYE_SMILE, EYE_WIDE, EYE_GAZE_LID, EYE_EMOTION, EYE_LID_FADE,
@@ -214,7 +221,7 @@ object RigModules {
 		RigArea("body", listOf(legacy("body")), listOf(BODY_BUST)),
 		RigArea("outfit", listOf(legacy("outfit")), listOf(OUTFIT_SKIRT, OUTFIT_RIBBONS)),
 		RigArea("expression", listOf(legacy("expression")), listOf(EXPRESSION_CHEEK, EXPRESSION_GLOOM)),
-		RigArea("motion", listOf(legacy("motion")), emptyList()),
+		RigArea("motion", listOf(legacy("motion"), MOTION_NATURAL), emptyList()),
 	)
 
 	private val areaById = areas.associateBy { it.id }

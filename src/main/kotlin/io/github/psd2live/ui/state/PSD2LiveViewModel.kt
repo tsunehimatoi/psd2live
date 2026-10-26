@@ -4010,7 +4010,8 @@ class PSD2LiveViewModel : AutoCloseable {
 
 	/** [name] as the editor and the playback see it; null once deleted or when the rig cannot play it. */
 	internal fun presetMotionClip(state: PSD2LiveState, name: String): MotionClip? {
-		val settings = state.rigEdits.motionPresets[name] ?: MotionPresetSettings()
+		val settings = (state.rigEdits.motionPresets[name] ?: MotionPresetSettings())
+			.copy(natural = state.previewModel?.config?.let(MotionPresetSettings::natural) == true)
 		if (settings.deleted || !state.motionPresetGroupOn(name)) return null
 		MotionClips.overrideOf(state.rigEdits.motionClips, name)?.let { return it }
 		val skeleton = state.rigEdits.skeleton

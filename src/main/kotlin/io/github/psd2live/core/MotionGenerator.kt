@@ -48,6 +48,41 @@ object MotionGenerator {
 	}
 
 	/**
+	 * The idle's blinks the `motion/natural` way, over its 12 seconds: shutting in about two frames, a breath shut,
+	 * opening over about five frames with an easing out, at uneven gaps of two to five seconds, one of them doubled;
+	 * the right eye a frame behind the left.
+	 */
+	val naturalBlinkTracks: List<MotionTrack> = listOf("ParamEyeLOpen" to 0f, "ParamEyeROpen" to 1f / 60f).map { (id, lag) ->
+		val points = mutableListOf(0f to 1f)
+		for ((start, depth) in listOf(1.9f to 1f, 5.4f to 1f, 5.78f to 0.8f, 9.1f to 1f)) {
+			val s = start + lag
+			points += listOf(s to 1f, s + 0.07f to 1f - depth, s + 0.11f to 1f - depth, s + 0.2f to 1f - 0.8f * depth * 0.25f, s + 0.3f to 1f)
+		}
+		MotionCurveMath.linear(id, points + (SkeletonMotions.IDLE_DURATION to 1f))
+	}
+
+	/** One blink the `motion/natural` way: shut fast, open slowly, the right eye a frame late; twice when [double]. */
+	fun naturalBlink(closure: Float = 1f, double: Boolean = false): List<MotionTrack> {
+		val depth = closure.coerceIn(0f, 1f)
+		return listOf("ParamEyeLOpen" to 0f, "ParamEyeROpen" to 1f / 60f).map { (id, lag) ->
+			fun blink(s: Float, d: Float) = listOf(s to 1f, s + 0.07f to 1f - d, s + 0.11f to 1f - d, s + 0.2f to 1f - 0.2f * d, s + 0.3f to 1f)
+			val points = listOf(0f to 1f) + blink(0.35f + lag, depth) + (if (double) blink(0.73f + lag, depth * 0.8f) else emptyList()) +
+				((if (double) 1.4f else 1.2f) to 1f)
+			MotionCurveMath.linear(id, points)
+		}
+	}
+
+	/**
+	 * The idle's glances: twice in its 12 seconds the eyes slip aside - once to one side, once down and to the other -
+	 * hold a moment and come back, eased.
+	 */
+	val glanceTracks: List<MotionTrack> = listOf(
+		MotionCurveMath.eased("ParamEyeBallX", listOf(0f to 0f, 3.2f to 0f, 3.45f to 0.45f, 4.3f to 0.45f, 4.6f to 0f,
+			7.4f to 0f, 7.65f to -0.35f, 8.4f to -0.35f, 8.75f to 0f, SkeletonMotions.IDLE_DURATION to 0f)),
+		MotionCurveMath.eased("ParamEyeBallY", listOf(0f to 0f, 7.4f to 0f, 7.65f to -0.3f, 8.4f to -0.3f, 8.75f to 0f, SkeletonMotions.IDLE_DURATION to 0f)),
+	)
+
+	/**
 	 * An authored clip as motion3 JSON, each key's interpolation written as its segment type. A curve that
 	 * starts after zero holds its first value from zero, as the preview samples it.
 	 */
