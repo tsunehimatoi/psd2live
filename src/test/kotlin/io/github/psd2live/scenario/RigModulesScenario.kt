@@ -70,7 +70,7 @@ class RigModulesScenario {
 		val fitted = listOf(0f, io.github.psd2live.core.fit.EyeRig.SWAP)
 		fun isFitted(label: String) = expect(label, keys("lash_l").take(2) == fitted && keys("lash_l").takeLast(3) == listOf(1f, 1.5f, 2f) && keys("white_l") == keys("lash_l") &&
 			puppet.parameters.single { it.id == StandardParameters.EYE_L_OPEN }.max == 2f &&
-			drawable("lash_l").blendShapes.any { it.parameterId.raw == "ParamEyeBallY" } && puppet.parameters.any { it.id.raw == "ParamEyeLSmile" } &&
+			rides(puppet, mesh("lash_l"), "ParamEyeBallY") && puppet.parameters.any { it.id.raw == "ParamEyeLSmile" } &&
 			swap("lash_l") == listOf(0f, io.github.psd2live.core.fit.EyeRig.SWAP, 1f) && swap("close_l") == listOf(0f, io.github.psd2live.core.fit.EyeRig.SWAP, 1f)) {
 			"the fitted eye keys its lids at closed, the swap to the drawn closed line, the crease and on: ${keys("lash_l")} / ${keys("white_l")}, " +
 				"swaps ${swap("lash_l")} / ${swap("close_l")}" }
@@ -93,7 +93,7 @@ class RigModulesScenario {
 		allow("REGENERATION_CONFLICT")
 		fun drawable(layer: String) = puppet.drawables.single { it.id.raw == mesh(layer) }
 		fun axes(layer: String) = drawable(layer).geometryGrid!!.axes.map { it.parameterId.raw to it.keys.toList() }
-		fun isFitted(label: String) = expect(label, axes("brow_l") == listOf("ParamBrowLY" to listOf(-1f, 0f, 1f), "ParamBrowLAngle" to listOf(-1f, -0.5f, 0f, 0.5f, 1f)) &&
+		fun isFitted(label: String) = expect(label, axes("brow_l").take(2) == listOf("ParamBrowLY" to listOf(-1f, 0f, 1f), "ParamBrowLAngle" to listOf(-1f, -0.5f, 0f, 0.5f, 1f)) &&
 			drawable("brow_l").blendShapes.map { it.parameterId.raw }.containsAll(listOf("ParamBrowLX", "ParamBrowLForm")) &&
 			puppet.parameters.any { it.id.raw == "ParamBrowRAngle" }) { "the fitted brow keys its height by its angle: ${axes("brow_l")}" }
 		isFitted("new project")
@@ -112,7 +112,7 @@ class RigModulesScenario {
 		fun isFitted(label: String) = expect(label, axes("mouth") == listOf("ParamMouthForm" to io.github.psd2live.core.fit.MouthRig.FORM_KEYS.toList(),
 			"ParamMouthOpenY" to io.github.psd2live.core.fit.MouthRig.OPEN_KEYS.toList()) &&
 			drawable("mouth").blendShapes.map { it.parameterId.raw }.containsAll(listOf("ParamA", "ParamO", "ParamMouthX")) &&
-			drawable("face").blendShapes.any { it.parameterId.raw == "ParamMouthOpenY" } && puppet.parameters.any { it.id.raw == "ParamCheekPuff" }) {
+			rides(puppet, mesh("face"), "ParamMouthOpenY") && puppet.parameters.any { it.id.raw == "ParamCheekPuff" }) {
 			"the fitted mouth keys its form by its staged opening, with vowels and the jaw: ${axes("mouth")}" }
 		isFitted("new project")
 		settings("legacy mouth", buildJsonObject {
@@ -126,7 +126,7 @@ class RigModulesScenario {
 
 	@Test fun theHeadTurnsInDepthUntilTheModuleGoesOff() = Studio.run(temp, Characters.mouthed()) {
 		allow("REGENERATION_CONFLICT")
-		fun turns(layer: String) = puppet.drawables.single { it.id.raw == mesh(layer) }.blendShapes.any { it.parameterId.raw == "ParamAngleX" }
+		fun turns(layer: String) = rides(puppet, mesh(layer), "ParamAngleX")
 		expect("new project", turns("face") && turns("mouth") && turns("back_hair")) { "every layer of the head turns on its shell" }
 		settings("no depth turn", buildJsonObject {
 			putJsonObject(WorkspaceSettingsCodec.RIG) { putJsonObject("modules") { putJsonObject("face.depth-turn") { put("on", false) } } }
@@ -167,6 +167,59 @@ class RigModulesScenario {
 			putJsonObject(WorkspaceSettingsCodec.RIG) { putJsonObject("moves") { put("eye.L", kotlinx.serialization.json.JsonNull) } }
 		})
 		expect("back", closed() == drawn) { "clearing the move returns the drawn fit" }
+	}
+
+	@Test fun generatedShapesAreOnesCubismTakes() = Studio.run(temp, Characters.mouthed()) {
+		val kinds = puppet.parameters.associate { it.id to it.kind }
+		val shapes = puppet.drawables.flatMap { it.blendShapes } + puppet.deformers.flatMap { (it as? org.umamo.runtime.model.Deformer.Warp)?.blendShapes.orEmpty() }
+		expect("blend shape parameters", shapes.isNotEmpty() && shapes.all { kinds[it.parameterId] == org.umamo.runtime.model.ParameterKind.BLEND_SHAPE }) {
+			"a blend shape on an ordinary parameter: ${shapes.filter { kinds[it.parameterId] != org.umamo.runtime.model.ParameterKind.BLEND_SHAPE }.map { it.parameterId.raw }.distinct()}" }
+		// Shapes on an axis fold into the mesh's keyforms exactly; past the mesh's budget a warp of its own carries them closely:
+		// a warp interpolates between its points as its parent carries them, so a bent parent costs a little.
+		val face = puppet.drawables.single { it.id.raw == mesh("face") }
+		val size = face.mesh!!.positions.size
+		val random = java.util.Random(7)
+		fun shape(parameter: String, keys: FloatArray, neutral: Int, limit: String? = null) = org.umamo.runtime.model.BlendShapeBinding(
+			org.umamo.runtime.model.ParameterId(parameter), keys, neutral,
+			keys.indices.map { k -> if (k == neutral) null else org.umamo.runtime.model.MeshForm(random.nextFloat().let { phase -> FloatArray(size) { i ->
+				// A smooth move over the mesh, as a shape is, a fiftieth of its size.
+				val p = face.mesh!!.positions
+				val xs = p.filterIndexed { k, _ -> k % 2 == 0 }; val ys = p.filterIndexed { k, _ -> k % 2 == 1 }
+				val x = (p[i - i % 2] - xs.min()) / (xs.max() - xs.min()); val y = (p[i - i % 2 + 1] - ys.min()) / (ys.max() - ys.min())
+				(if (i % 2 == 0) xs.max() - xs.min() else ys.max() - ys.min()) / 50f * kotlin.math.sin(3f * x + 2f * y + 6f * phase + i % 2) } }, face.drawOrder, face.opacity) },
+			limit?.let { listOf(org.umamo.runtime.model.BlendWeightLimit(org.umamo.runtime.model.ParameterId(it), listOf(
+				org.umamo.runtime.model.BlendWeightLimitPoint(0f, 0f), org.umamo.runtime.model.BlendWeightLimitPoint(1f, 1f)))) }.orEmpty())
+		fun check(label: String, shapes: List<org.umamo.runtime.model.BlendShapeBinding<org.umamo.runtime.model.MeshForm>>, tolerance: Float) {
+			val raw = puppet.copy(drawables = puppet.drawables.map { if (it.id == face.id) it.copy(blendShapes = shapes) else it })
+			val lawful = CubismBlendShapes.lawful(raw)
+			val evaluator = org.umamo.render.eval.CpuDeformationEvaluator()
+			val poses = listOf(emptyMap(), mapOf("ParamAngleY" to 20f, "ParamMouthOpenY" to 0.6f), mapOf("ParamAngleY" to -30f, "ParamEyeBallX" to 0.4f,
+				"ParamBrowLY" to -0.7f, "ParamMouthForm" to 0.3f, "ParamMouthOpenY" to 1f))
+			val error = poses.maxOf { pose ->
+				val p = pose.mapKeys { org.umamo.runtime.model.ParameterId(it.key) }
+				val a = evaluator.evaluate(raw, p).worldPositions.getValue(face.id); val b = evaluator.evaluate(lawful, p).worldPositions.getValue(face.id)
+				a.indices.maxOf { kotlin.math.abs(a[it] - b[it]) }
+			}
+			val moved = lawful.drawables.single { it.id == face.id }
+			expect(label, moved.blendShapes.none { it.parameterId.raw in setOf("ParamAngleX", "ParamAngleY", "ParamMouthForm") } && error <= tolerance) {
+				"shapes on axes kept as blend shapes, or moved the mesh elsewhere: error $error, ${moved.blendShapes.map { it.parameterId.raw }}" }
+		}
+		check("folded", listOf(shape("ParamAngleY", floatArrayOf(-30f, 0f, 30f), 1, "ParamMouthOpenY")), 1e-3f)
+		check("carried", listOf(shape("ParamAngleY", floatArrayOf(-30f, -15f, 0f, 15f, 30f), 2), shape("ParamAngleX", floatArrayOf(-30f, -15f, 0f, 15f, 30f), 2),
+			shape("ParamMouthForm", floatArrayOf(-1f, -0.5f, 0f, 0.5f, 1f), 2, "ParamMouthOpenY")), 0.75f)
+		fun carriers(model: org.umamo.runtime.model.PuppetModel) = model.deformers.count { it.id.raw.startsWith(face.id.raw + "_") }
+		expect("a warp of its own", carriers(puppet) < carriers(CubismBlendShapes.lawful(puppet.copy(drawables = puppet.drawables.map { if (it.id == face.id) it.copy(blendShapes = listOf(
+				shape("ParamAngleY", floatArrayOf(-30f, -15f, 0f, 15f, 30f), 2), shape("ParamAngleX", floatArrayOf(-30f, -15f, 0f, 15f, 30f), 2),
+				shape("ParamMouthForm", floatArrayOf(-1f, -0.5f, 0f, 0.5f, 1f), 2, "ParamMouthOpenY"))) else it })))) {
+			"past the mesh's budget the shapes did not go to a warp of the mesh's own" }
+	}
+
+	/** Whether [drawable] moves with [parameter] of its own: a shape, its keyforms or a warp made for it. */
+	private fun rides(puppet: org.umamo.runtime.model.PuppetModel, drawable: String, parameter: String): Boolean {
+		val d = puppet.drawables.single { it.id.raw == drawable }
+		val carriers = puppet.deformers.filterIsInstance<org.umamo.runtime.model.Deformer.Warp>().filter { it.id.raw.startsWith(drawable + "_") }
+		return d.blendShapes.any { it.parameterId.raw == parameter } || d.geometryGrid?.axes.orEmpty().any { it.parameterId.raw == parameter } ||
+			carriers.any { w -> w.geometryGrid?.axes.orEmpty().any { it.parameterId.raw == parameter } }
 	}
 
 	@Test fun switchedVariantsCrossFadeWithoutAHole() = Studio.run(temp, Characters.mouthed()) {

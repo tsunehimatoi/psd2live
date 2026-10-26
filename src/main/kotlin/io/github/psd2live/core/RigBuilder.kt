@@ -3,6 +3,7 @@ package io.github.psd2live.core
 import io.github.psd2live.core.fit.handles
 import io.github.psd2live.core.fit.moved
 import org.umamo.runtime.eval.scalarAt
+import org.umamo.runtime.eval.colorAt
 import io.github.psd2live.i18n.tr
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -1666,7 +1667,8 @@ object RigBuilder {
 			classifiedByDrawable[id]?.takeIf { inferredGroup(it, analysis.anchors) == LayerGroup.HEAD }
 		}
 		fun finish(): BuiltRig {
-			val unbound = assembled.withDerivedRenderRoot().let { withoutLegacyHairSway(it, config) }
+			// Blend shapes only where Cubism takes them, so the editor shows what the moc3 does (see [CubismBlendShapes]).
+			val unbound = assembled.withDerivedRenderRoot().let { withoutLegacyHairSway(it, config) }.let(CubismBlendShapes::lawful)
 			// Version 2 parts join the rig after this: they leave the legacy sway warp the same way.
 			val v2Parts = if (maskedParts.isEmpty()) maskedParts else withoutLegacyHairSway(assembled.copy(drawables = maskedParts), config).drawables
 			// The skeleton bakes the unbound rig: the joint rows it inserts interpolate layer offsets, which the
@@ -3311,7 +3313,7 @@ object RigBuilder {
 		val tag = layer.semantic.tag
 		mouth?.rig?.takeIf { mouth.covers(layer) }?.let { rig ->
 			return if (tag == SemanticTag.MOUTH_CLOSE) rig.closedGrid(data.rigPositions, parentFrame, StandardParameters.MOUTH_FORM)
-				else rig.grid(data.rigPositions, parentFrame, StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN)
+				else rig.grid(data.rigPositions, parentFrame, StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN, mouth.tight(layer))
 		}
 		return when (tag) {
 			SemanticTag.EYEWHITE, SemanticTag.EYELASH ->
@@ -3349,11 +3351,14 @@ object RigBuilder {
 	private fun neutralized(shapes: List<org.umamo.runtime.model.BlendShapeBinding<org.umamo.runtime.model.MeshForm>>, drawable: Drawable): List<org.umamo.runtime.model.BlendShapeBinding<org.umamo.runtime.model.MeshForm>> {
 		// A form whose opacity is not a number keeps the drawable's opacity at rest, its channel's included; a mouth
 		// shape that opens the mouth names the share of the drawable's opacity it shows at.
+		val restPose = { id: ParameterId -> if (id == StandardParameters.EYE_L_OPEN || id == StandardParameters.EYE_R_OPEN) 1f else 0f }
 		val rest by lazy {
-			drawable.channelGrids.scalarAt(FormChannel.OPACITY, drawable.opacity, { id: ParameterId ->
-				if (id == StandardParameters.EYE_L_OPEN || id == StandardParameters.EYE_R_OPEN) 1f else 0f
-			})
+			drawable.channelGrids.scalarAt(FormChannel.OPACITY, drawable.opacity, restPose)
 		}
+		// The draw order and colors at rest too: a shape that leaves them adds nothing to them.
+		val restOrder by lazy { drawable.channelGrids.scalarAt(FormChannel.DRAW_ORDER, drawable.drawOrder, restPose) }
+		val restMultiply by lazy { drawable.channelGrids.colorAt(FormChannel.MULTIPLY_COLOR, drawable.multiplyColor, restPose) }
+		val restScreen by lazy { drawable.channelGrids.colorAt(FormChannel.SCREEN_COLOR, drawable.screenColor, restPose) }
 		// The head's turn shapes move the mesh from wherever its own keys hold it at rest (a mouth shut, say): a blend shape
 		// adds the difference from the rest pose, so they carry the rest pose's deltas.
 		val restDeltas by lazy {
@@ -3370,11 +3375,11 @@ object RigBuilder {
 					val opacity = when {
 						it.opacity.isNaN() -> rest
 						opening -> it.opacity * drawable.opacity
-						else -> drawable.opacity
+						else -> rest
 					}
 					val base = if (relative) restDeltas?.takeIf { r -> r.size == it.positionDeltas.size } else null
 					val deltas = if (base == null) it.positionDeltas else FloatArray(it.positionDeltas.size) { i -> it.positionDeltas[i] + base[i] }
-					org.umamo.runtime.model.MeshForm(deltas, drawable.drawOrder, opacity, drawable.multiplyColor, drawable.screenColor)
+					org.umamo.runtime.model.MeshForm(deltas, restOrder, opacity, restMultiply, restScreen)
 				}
 			})
 		}
@@ -3494,7 +3499,8 @@ object RigBuilder {
 				SemanticTag.MOUTH_OPEN -> if (mouth.result.layers.any { it.semantic.tag == SemanticTag.MOUTH }) 0.12f else 0f
 				else -> 0f
 			}
-			return rig.shapes(data.rigPositions, frame, closedLayer, { opens -> if (!opens) Float.NaN else if (closedLayer) 0f else 1f }, tag == SemanticTag.TONGUE) +
+			return rig.shapes(data.rigPositions, frame, closedLayer, { opens -> if (!opens) Float.NaN else if (closedLayer) 0f else 1f }, tag == SemanticTag.TONGUE,
+				mouth.tight(layer)) +
 				(if (depth > 0f) rig.depthShapes(data.rigPositions, frame, depth, StandardParameters.ANGLE_X, StandardParameters.ANGLE_Y) else emptyList())
 		}
 		if (layer.semantic.role != null && layer.semantic.role != PartRole.SHADOW) return emptyList()

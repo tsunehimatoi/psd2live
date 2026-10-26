@@ -145,6 +145,7 @@ PSD2LIVE_TOOLS=1 PSD2LIVE_SAMPLE=ds ./gradlew test --tests "io.github.psd2live.t
 | `ArtPrimitiveV2VisualTool` | 在 `tml` 上把腿按侧连通块拆分、左眼睫多边形拆分、嘴部多边形拆分分别写成版本 1 与版本 2 记录，渲染未拆分、v1、v2 与 v1/v2 差异（×4）在睁眼/半闭/闭眼、闭嘴/张嘴/张嘴笑等姿态下的对照，检查接缝、错位与缺失像素 | `art-primitive-v2/{legs,eye,mouth}.png` |
 | `SafetyGoldenTool` | 自动骨架 Rig 上 24 组带种子的随机几何编辑的完整几何安全报告（不含 `coverage`），用于逐字节对比检查器改动前后的分类；`PSD2LIVE_GOLDEN_LABEL` 指定输出名 | `safety-golden/<名称>.txt` |
 | `BundleProfileTool` | moc3 预览包的分项耗时（IR 编译、IR 转回、静止网格换到画布空间、physics3/motion3、moc 降级与写出、cdi3）及几何安全检查耗时；`PSD2LIVE_SAMPLER=1` 另打印栈采样的热点 | 仅标准输出 |
+| `CubismParityTool` | 示例（`PSD2LIVE_SAMPLE`）的预览包用应用自带的 Cubism 运行时（`live2d_renderer`，离屏）渲染，与编辑器自己的渲染并排对照：全身、脸部和嘴部特写，涵盖静止、转头、张嘴、口型、闭眼等姿态；`PSD2LIVE_PARITY_RECIPE=legacy` 改用引入模块之前的生成方式。仅 Windows | `cubism-parity/<示例>[-legacy]-<视图>.png` |
 | `CubismCoreCheckTool` | 把 `tml`、`ds` 预览包中的 moc3 交给官方 Cubism Core 的一致性检查（`csmHasMocConsistency`）；需用 `PSD2LIVE_TEST_CUBISM_CORE` 指定 Core 动态库，否则跳过。小型新建模型的同样检查在 `:umamo` 的 `MocDefaultColorsTest` 中 | 仅标准输出 |
 | `TextureWorkspaceTool` | 用 `tml` 设置几种密度与锁定并按网格形状排布一次后，渲染纹理集页面与纹理面板（中英文、单选/多选/未选、热力图开关、密度滑块预览），以及编辑画布的纹理集像素与原始像素对比 | `texture-workspace/*.png` |
 | `AtlasFramePerfTool` | 无窗口、软件渲染下测量 `tml` 纹理集页面与纹理面板的帧耗时：向 `ImageComposeScene` 发送空闲、悬停、拖动角点（密度）、滚轮缩放、拖动图块与关闭线框后悬停的指针输入，记录每次渲染耗时（中位数、p90、最大），并保存角点拖动中、编辑会话、静止页面与放大近景四帧。GPU 渲染需要窗口的 Skia 上下文，由 `AtlasWindowPerfTool` 与 `PreviewWindowTool` 测量 | `atlas-frame-perf/report.txt`、`{corner-drag,session,frame,zoomed}.png` |

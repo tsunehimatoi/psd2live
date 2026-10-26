@@ -35,9 +35,12 @@ class AuthoringStackScenario {
 		edit("glue the sleeve to the top", "canvas_glue", req("id" to "ShoulderGlue", "mesh_a" to sleeve, "mesh_b" to top, "distance" to 8))
 		expect("glue", puppet.glues.isNotEmpty()) { "no glue was made" }
 
+		// A blend key names the mesh's own axes too, at their rest (the generated head turn and jaw key the face itself).
+		val faceAxes = puppet.drawables.single { it.id.raw == face }.geometryGrid?.axes.orEmpty()
+			.associate { axis -> axis.parameterId.raw to puppet.parameters.single { it.id == axis.parameterId }.default }
 		edits("puff the face with a blend shape",
 			"parameter_create" to req("parameter_id" to "ParamPuff", "name" to "Puff", "min" to 0, "max" to 1, "kind" to "blend_shape"),
-			"rig_deform" to req("changes" to listOf(mapOf("target" to "mesh:$face", "key" to mapOf("ParamPuff" to 1),
+			"rig_deform" to req("changes" to listOf(mapOf("target" to "mesh:$face", "key" to faceAxes + ("ParamPuff" to 1f),
 				"operations" to listOf(mapOf("type" to "scale", "factors" to listOf(1.15, 1.15)))))))
 		expect("blend shape", motion(face, "ParamPuff", 1f) > 1.0) { "the blend shape does not move the face" }
 

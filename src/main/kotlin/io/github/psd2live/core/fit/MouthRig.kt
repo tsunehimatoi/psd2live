@@ -80,12 +80,17 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions) {
 		return top to bottom
 	}
 
-	/** Where a point of the mouth at ([u], [v]) in the mouth's frame goes in [pose], as a change in the frame. */
-	fun move(u: Float, v: Float, pose: Pose): Pair<Float, Float> {
+	/**
+	 * Where a point of the mouth at ([u], [v]) in the mouth's frame goes in [pose], as a change in the frame. A [tight]
+	 * point keeps no lip line's band: a ribbon, which is the line itself, and a fill the ribbons outline, which closes
+	 * whole under them into the one line they meet in.
+	 */
+	fun move(u: Float, v: Float, pose: Pose, tight: Boolean = false): Pair<Float, Float> {
 		val uc = u.coerceIn(0f, 1f)
 		val r = v - fit.baseline(u)
 		val u0 = drawnUpper(uc); val l0 = drawnLower(uc)
 		val (u1, l1) = edges(pose, uc)
+		val band = if (tight) 0f else band
 		val tb = min(band, max(0f, l0 - u0) * 0.3f)
 		// Past an edge a lip line's thickness stays as drawn; more than that - a round mouth's side bending away near a
 		// corner - closes with the mouth, or a shut mouth keeps hooks at its corners.
@@ -134,7 +139,8 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions) {
 		else -> staged(0.75f).let { (u, l) -> Pose(u, l, 0.78f, round = 0.8f) }
 	}
 
-	private fun form(positions: FloatArray, frame: Bounds, pose: Pose): MeshDeltaForm = form(positions, frame) { u, v -> move(u, v, pose) }
+	private fun form(positions: FloatArray, frame: Bounds, pose: Pose, tight: Boolean = false): MeshDeltaForm =
+		form(positions, frame) { u, v -> move(u, v, pose, tight) }
 
 	private fun form(positions: FloatArray, frame: Bounds, change: (Float, Float) -> Pair<Float, Float>): MeshDeltaForm {
 		val out = FloatArray(positions.size)
@@ -147,9 +153,9 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions) {
 		return MeshDeltaForm(out)
 	}
 
-	/** A mouth layer's grid: its form by its openness. Deltas are over the parent [frame]. */
-	fun grid(positions: FloatArray, frame: Bounds, mouthForm: ParameterId, mouthOpen: ParameterId): KeyformGrid<MeshDeltaForm> =
-		keyed(mouthForm, mouthOpen) { pose -> form(positions, frame, pose) }
+	/** A mouth layer's grid: its form by its openness. Deltas are over the parent [frame]; [tight] as in [move]. */
+	fun grid(positions: FloatArray, frame: Bounds, mouthForm: ParameterId, mouthOpen: ParameterId, tight: Boolean = false): KeyformGrid<MeshDeltaForm> =
+		keyed(mouthForm, mouthOpen) { pose -> form(positions, frame, pose, tight) }
 
 	/** A grid over the form and the openness whose every key is [form] of that key's pose. */
 	fun keyed(mouthForm: ParameterId, mouthOpen: ParameterId, form: (Pose) -> MeshDeltaForm): KeyformGrid<MeshDeltaForm> {
@@ -163,7 +169,7 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions) {
 	/** Where the point ([x], [y]) of the mouth (in the rig's space) goes in [pose]. */
 	fun point(x: Float, y: Float, pose: Pose): Pair<Float, Float> {
 		val (u, v) = fit.toMouth(x, y)
-		val (du, dv) = move(u, v, pose)
+		val (du, dv) = move(u, v, pose, tight = true)
 		val (dx, dy) = fit.canvasDelta(du, dv)
 		return (x + dx) to (y + dy)
 	}
@@ -191,19 +197,21 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions) {
 	 * [visible] gives a form's opacity: a drawn closed mouth hides and the open mouth's parts show while a vowel opens
 	 * the mouth.
 	 */
-	fun shapes(positions: FloatArray, frame: Bounds, closedLayer: Boolean, visible: (Boolean) -> Float, tongue: Boolean = false): List<BlendShapeBinding<MeshForm>> =
-		shapes({ pose -> (if (closedLayer) form(positions, frame) { u, v -> closedMove(u, v, pose) } else form(positions, frame, pose)).positionDeltas }, visible) +
-			tongueShapes(positions, frame, closedLayer, tongue, visible)
+	fun shapes(positions: FloatArray, frame: Bounds, closedLayer: Boolean, visible: (Boolean) -> Float, tongue: Boolean = false,
+	           tight: Boolean = false): List<BlendShapeBinding<MeshForm>> =
+		shapes({ pose -> (if (closedLayer) form(positions, frame) { u, v -> closedMove(u, v, pose) } else form(positions, frame, pose, tight)).positionDeltas }, visible) +
+			tongueShapes(positions, frame, closedLayer, tongue, visible, tight)
 
 	/**
 	 * The tongue put out (`mouth.capture` with a tongue layer): the mouth opens to about half and the tongue slides down
 	 * past where the lower lip was, inside the opened mouth.
 	 */
-	private fun tongueShapes(positions: FloatArray, frame: Bounds, closedLayer: Boolean, tongue: Boolean, visible: (Boolean) -> Float): List<BlendShapeBinding<MeshForm>> {
+	private fun tongueShapes(positions: FloatArray, frame: Bounds, closedLayer: Boolean, tongue: Boolean, visible: (Boolean) -> Float,
+	                         tight: Boolean): List<BlendShapeBinding<MeshForm>> {
 		if (!options.capture || !options.tongue) return emptyList()
 		val open = staged(0.5f).let { (u, l) -> Pose(u, l, 0.95f) }
 		val deltas = if (closedLayer) form(positions, frame) { u, v -> closedMove(u, v, open) }.positionDeltas
-			else form(positions, frame) { u, v -> move(u, v, open).let { (du, dv) -> du to dv + if (tongue) 0.3f * h * EyeRig.hump(u.coerceIn(0f, 1f)).coerceAtLeast(0.4f) else 0f } }.positionDeltas
+			else form(positions, frame) { u, v -> move(u, v, open, tight).let { (du, dv) -> du to dv + if (tongue) 0.3f * h * EyeRig.hump(u.coerceIn(0f, 1f)).coerceAtLeast(0.4f) else 0f } }.positionDeltas
 		return listOf(BlendShapeBinding(TONGUE_OUT, floatArrayOf(0f, 1f), 0, listOf(null, MeshForm(deltas, opacity = visible(true)))))
 	}
 
@@ -313,6 +321,13 @@ class FittedMouth(val result: MouthFitting.Result, val rig: MouthRig?, val chin:
 	/** Whether [layer] is a part of the fitted mouth: the mouth itself, its closed line, teeth, tongue or inside. */
 	fun covers(layer: io.github.psd2live.core.ClassifiedLayer): Boolean = rig != null && layer.semantic.role == null &&
 		layer.semantic.variant == variant && layer.semantic.tag in TAGS
+
+	/**
+	 * Whether [layer] closes whole, keeping no lip line's band ([MouthRig.move]): the mouth and its inside when ribbons
+	 * outline the lips ([MouthOptions.exactClose]), so the shut mouth is the ribbons' one line with nothing showing past it.
+	 */
+	fun tight(layer: io.github.psd2live.core.ClassifiedLayer): Boolean = rig?.options?.exactClose == true &&
+		layer.semantic.tag in setOf(io.github.psd2live.core.SemanticTag.MOUTH, io.github.psd2live.core.SemanticTag.MOUTH_OPEN)
 
 	companion object {
 		val TAGS = setOf(io.github.psd2live.core.SemanticTag.MOUTH, io.github.psd2live.core.SemanticTag.MOUTH_OPEN,
