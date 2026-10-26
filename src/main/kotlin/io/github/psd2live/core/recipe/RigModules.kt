@@ -162,8 +162,12 @@ object RigModules {
 	val FACE_DEPTH_TURN = RigModule("face.depth-turn", ModuleTier.CORE, applies = { it.has(SemanticTag.FACE) },
 		knobs = listOf(RecipeKnob("turn", P, 0f..100f, 45f), RecipeKnob("depth", P, 0f..200f, 100f)))
 
+	/** The skin's overlays - blush, shading, the bangs' shadow on the face - clipped to the face, so a turn never carries them off it. */
+	val FACE_SKIN_CLIP = RigModule("face.skin-clip", ModuleTier.MAJOR,
+		applies = { it.has(SemanticTag.FACE) && (it.has(SemanticTag.FACE_DETAIL) || it.has(SemanticTag.FRONT_HAIR, io.github.psd2live.core.PartRole.SHADOW)) })
+
 	val areas: List<RigArea> = listOf(
-		RigArea("face", listOf(legacy("face")), listOf(FACE_DEPTH_TURN)),
+		RigArea("face", listOf(legacy("face")), listOf(FACE_DEPTH_TURN, FACE_SKIN_CLIP)),
 		RigArea("eye", listOf(legacy("eye"), EYE_FITTED), listOf(EYE_SEE_THROUGH, EYE_SMILE, EYE_WIDE, EYE_GAZE_LID, EYE_EMOTION, EYE_LID_FADE,
 			EYE_HIGHLIGHT, EYE_JELLY, EYE_AFTERSHOCK, EYE_SQUASH)),
 		RigArea("brow", listOf(legacy("brow"), BROW_FITTED), listOf(BROW_SEE_THROUGH, BROW_SHAPE, BROW_LID, BROW_BLINK)),

@@ -1458,9 +1458,23 @@ object RigBuilder {
             drawable.id !in lipOwnerById &&
 			classifiedByDrawable.getValue(drawable.id).semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)
 		}
+		val skinClip = io.github.psd2live.core.recipe.RigModules.let { it.builds(it.FACE_SKIN_CLIP, config, io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis)) }
+		val faceMasks = if (!skinClip) emptyList() else maskSources.filter { classifiedByDrawable.getValue(it.id).semantic.tag == SemanticTag.FACE }
+		val faceBounds = faceMasks.map { classifiedByDrawable.getValue(it.id).bounds }.reduceOrNull(Bounds::union)
+		// A skin overlay mostly on the face: blush, shading, the bangs' shadow. One reaching well past it is something else.
+		fun onSkin(layer: ClassifiedLayer): Boolean {
+			val face = faceBounds ?: return false
+			val b = layer.bounds
+			val w = (minOf(b.right, face.right) - maxOf(b.left, face.left)).coerceAtLeast(0f)
+			val h = (minOf(b.bottom, face.bottom) - maxOf(b.top, face.top)).coerceAtLeast(0f)
+			return w * h >= 0.85f * b.width * b.height
+		}
 		val maskedAll = maskTargets.map { drawable ->
 			val semantic = classifiedByDrawable.getValue(drawable.id).semantic
 			when {
+				faceMasks.isNotEmpty() && drawable.maskedBy.isEmpty() && drawable.id !in lipOwnerById &&
+					(semantic.tag == SemanticTag.FACE_DETAIL || semantic.tag == SemanticTag.FRONT_HAIR && semantic.role == PartRole.SHADOW) &&
+					onSkin(classifiedByDrawable.getValue(drawable.id)) -> drawable.copy(maskedBy = faceMasks.map { it.id })
 				semantic.tag == SemanticTag.IRIDES -> {
 					val exact = drawableByTagSide[SemanticTag.EYEWHITE to semantic.side].orEmpty()
 					val fallback = drawableByTagSide[SemanticTag.EYEWHITE to Side.NONE].orEmpty()
