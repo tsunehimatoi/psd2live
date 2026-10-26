@@ -376,6 +376,14 @@ object RigBuilder {
 			if (seen == 0) 0f else hidden.toFloat() / seen
 		}
 
+		/** The head turning in depth under [config] (`face.depth-turn`), or null when the recipe leaves it out. */
+		fun headTurn(config: PipelineConfig): io.github.psd2live.core.fit.HeadTurn? {
+			val m = io.github.psd2live.core.recipe.RigModules
+			if (!m.builds(m.FACE_DEPTH_TURN, config, io.github.psd2live.core.recipe.RecipeSubject.of(analysis))) return null
+			return io.github.psd2live.core.fit.HeadTurn(faceRig.centerX, faceRig.centerY, faceRig.radiusX, faceRig.radiusY,
+				config.recipe.value(m.FACE_DEPTH_TURN.id, "turn") / 100f * config.headTurnStrength, config.recipe.value(m.FACE_DEPTH_TURN.id, "depth") / 100f, faceRig.chinY)
+		}
+
 		private val fittedMouths = java.util.concurrent.ConcurrentHashMap<List<Any?>, io.github.psd2live.core.fit.FittedMouth>()
 
 		/** The mouth of the `mouth/fitted` base under [config]; null when the recipe builds the mouth another way. */
@@ -929,6 +937,7 @@ object RigBuilder {
 		generatedLips: Map<String, ClassifiedLayer>,
 		config: PipelineConfig,
 		rig: io.github.psd2live.core.fit.MouthRig? = null,
+		turn: io.github.psd2live.core.fit.HeadTurn? = null,
 	): List<MouthLip> {
 		if (!config.mouthOutlineEnabled || config.meshOnly || aperture == null) return emptyList()
 		return (0..1).mapNotNull { side ->
@@ -945,6 +954,7 @@ object RigBuilder {
 				lipLayer,
 				headSpace,
 				rig,
+				turn,
 			)
 			MouthLip(lip, owner.id, lipLayer, path, neutralLipBounds(data, aperture, config, side, headSpace, lipLayer.bounds))
 		}
@@ -1392,7 +1402,7 @@ object RigBuilder {
 			pageByDrawable[id.raw] = placement.page
 			sourceBoundsByDrawable[id.raw] = parts.neutralBounds
 			for (lip in lipsStage(drawable, layer, parts, parentFrame, atlas, generatedLips, config, meshConfig, stages,
-				context.fittedMouth(config)?.takeIf { it.covers(layer) }?.rig)) {
+				context.fittedMouth(config)?.takeIf { it.covers(layer) }?.rig, context.headTurn(config))) {
 				drawables += lip.drawable
 				lip.path?.let { builtDeformPaths += it }
 				classifiedByDrawable[lip.drawable.id] = lip.layer
@@ -1730,9 +1740,10 @@ object RigBuilder {
 		owner: Drawable, layer: ClassifiedLayer, parts: LayerMeshParts, parentFrame: Bounds, atlas: PackedAtlas,
 		generatedLips: Map<String, ClassifiedLayer>, config: PipelineConfig, meshConfig: PipelineConfig, stages: RigStageCache?,
 		rig: io.github.psd2live.core.fit.MouthRig? = null,
+		turn: io.github.psd2live.core.fit.HeadTurn? = null,
 	): List<MouthLip> {
 		val build = { RigBuildProfile.stage("mesh: mouth lips (built)") {
-			mouthLips(owner, layer, parts.data, parentFrame, parts.mouthAperture, parts.headSpace, atlas, generatedLips, config, rig)
+			mouthLips(owner, layer, parts.data, parentFrame, parts.mouthAperture, parts.headSpace, atlas, generatedLips, config, rig, turn)
 		} }
 		if (stages == null) return build()
 		val lips = (0..1).map { side -> generatedLips[MouthLipLayer.idFor(layer.source.id.raw, side)]?.let { lip ->
@@ -1740,7 +1751,8 @@ object RigBuilder {
 				lip.source.id.raw in atlas.placementByLayerId, config.drawOrderOverrides[lip.source.id.raw],
 				layerVisibility(config, lip.source.id.raw, lip.source.visible))
 		} }
-		val key = listOf(owner, layer.source.id.raw, Identity(parts), parentFrame, lips, meshConfig, io.github.psd2live.i18n.I18n.currentLanguage.tag, rig?.fit, rig?.options)
+		val key = listOf(owner, layer.source.id.raw, Identity(parts), parentFrame, lips, meshConfig, io.github.psd2live.i18n.I18n.currentLanguage.tag, rig?.fit, rig?.options,
+			turn?.let { config.recipe.value(io.github.psd2live.core.recipe.RigModules.FACE_DEPTH_TURN.id, "turn") to config.recipe.value(io.github.psd2live.core.recipe.RigModules.FACE_DEPTH_TURN.id, "depth") })
 		// A kept lip carries the layer of the build that made it; hand out this build's layer of the same content.
 		return stages.get(RigStageCache.LIPS, 64, key, build).map { lip ->
 			val current = generatedLips[lip.layer.source.id.raw] ?: lip.layer
@@ -2057,9 +2069,12 @@ object RigBuilder {
 		val key = MeshKey(layer.meta(), layer.source.raster.width, layer.source.raster.height,
 			MeshResolution.input(layer.source, config.meshTrace, MeshResolution.unitScale(config, context.analysis.source)).key,
 			rigLayer.bounds, rigLayer.centroidX, rigLayer.centroidY, parentId, parentFrame, headSpace,
-			if (eyes) listOf(faceSignature(context.faceRig), context.fittedEyes(config)?.let { it.rigs[rigLayer.semantic.side]?.fit to it.options },
+			listOf(if (eyes) listOf(faceSignature(context.faceRig), context.fittedEyes(config)?.let { it.rigs[rigLayer.semantic.side]?.fit to it.options },
 				rigLayer.semantic.role, context.fittedBrows(config)[rigLayer.semantic.side]?.let { it.fit to it.hashCode() },
-				context.fittedMouth(config)?.let { listOf(it.rig?.fit, it.rig?.options, it.chin, it.covers(rigLayer)) }) else null,
+				context.fittedMouth(config)?.let { listOf(it.rig?.fit, it.rig?.options, it.chin, it.covers(rigLayer)) }) else null, context.headTurn(config)?.let {
+				listOf(faceSignature(context.faceRig), headShell(rigLayer), config.recipe.value(io.github.psd2live.core.recipe.RigModules.FACE_DEPTH_TURN.id, "turn"),
+					config.recipe.value(io.github.psd2live.core.recipe.RigModules.FACE_DEPTH_TURN.id, "depth"), config.headTurnStrength)
+			}),
 			matchingEyeWhiteBounds(rigLayer, context.eyeWhiteLayers),
 			MeshResolution.unitScale(config, context.analysis.source), meshConfig, config.meshOverrides[layer.source.id.raw],
 			io.github.psd2live.i18n.I18n.currentLanguage.tag)
@@ -3152,8 +3167,16 @@ object RigBuilder {
 				if (id == StandardParameters.EYE_L_OPEN || id == StandardParameters.EYE_R_OPEN) 1f else 0f
 			})
 		}
+		// The head's turn shapes move the mesh from wherever its own keys hold it at rest (a mouth shut, say): a blend shape
+		// adds the difference from the rest pose, so they carry the rest pose's deltas.
+		val restDeltas by lazy {
+			org.umamo.runtime.eval.meshGridDefaultDeltas(drawable) { id ->
+				if (id == StandardParameters.EYE_L_OPEN || id == StandardParameters.EYE_R_OPEN) 1f else 0f
+			}
+		}
 		return shapes.map { binding ->
 			val opening = binding.parameterId in io.github.psd2live.core.fit.MouthRig.OPENING
+			val relative = binding.parameterId == StandardParameters.ANGLE_X || binding.parameterId == StandardParameters.ANGLE_Y
 			binding.copy(forms = binding.forms.map { form ->
 				form?.let {
 					val opacity = when {
@@ -3161,7 +3184,9 @@ object RigBuilder {
 						opening -> it.opacity * drawable.opacity
 						else -> drawable.opacity
 					}
-					org.umamo.runtime.model.MeshForm(it.positionDeltas, drawable.drawOrder, opacity, drawable.multiplyColor, drawable.screenColor)
+					val base = if (relative) restDeltas?.takeIf { r -> r.size == it.positionDeltas.size } else null
+					val deltas = if (base == null) it.positionDeltas else FloatArray(it.positionDeltas.size) { i -> it.positionDeltas[i] + base[i] }
+					org.umamo.runtime.model.MeshForm(deltas, drawable.drawOrder, opacity, drawable.multiplyColor, drawable.screenColor)
 				}
 			})
 		}
@@ -3170,7 +3195,34 @@ object RigBuilder {
 	/** The additive shapes the rig modules give [layer]'s mesh: the eyes' and brows' ([eyeBlendShapes]) and the mouth's. */
 	private fun moduleBlendShapes(layer: ClassifiedLayer, data: MeshData, frame: Bounds, context: RigContext, config: PipelineConfig):
 		List<org.umamo.runtime.model.BlendShapeBinding<org.umamo.runtime.model.MeshForm>> =
-		eyeBlendShapes(layer, data, frame, context.fittedEyes(config), context.fittedBrows(config)) + mouthBlendShapes(layer, data, frame, context.fittedMouth(config))
+		eyeBlendShapes(layer, data, frame, context.fittedEyes(config), context.fittedBrows(config)) + mouthBlendShapes(layer, data, frame, context.fittedMouth(config)) +
+			headTurnShapes(layer, data.rigPositions, frame, context.headTurn(config))
+
+	/** [layer]'s shapes turning the head in depth, on the shell of the head it lies on ([headShell]). */
+	private fun headTurnShapes(layer: ClassifiedLayer, positions: FloatArray, frame: Bounds, turn: io.github.psd2live.core.fit.HeadTurn?):
+		List<org.umamo.runtime.model.BlendShapeBinding<org.umamo.runtime.model.MeshForm>> {
+		val shell = headShell(layer) ?: return emptyList()
+		return turn?.shapes(positions, frame, shell, StandardParameters.ANGLE_X, StandardParameters.ANGLE_Y).orEmpty()
+	}
+
+	/** The shell of the head [layer] lies on as the head turns, or null for a layer the head does not carry. */
+	private fun headShell(layer: ClassifiedLayer): io.github.psd2live.core.fit.HeadShell? {
+		val shells = io.github.psd2live.core.fit.HeadShell
+		val role = layer.semantic.role
+		if (layer.semantic.tag == SemanticTag.FACE_DETAIL && role == PartRole.SHADOW) return shells.SHADE
+		return when (layer.semantic.tag) {
+			SemanticTag.FACE, SemanticTag.FACE_DETAIL, SemanticTag.IRIDES, SemanticTag.EYEBROW, SemanticTag.EYEWHITE, SemanticTag.EYELASH,
+			SemanticTag.EYE_CLOSE, SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN, SemanticTag.MOUTH_CLOSE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B,
+			SemanticTag.TONGUE -> shells.SKIN
+			SemanticTag.NOSE -> shells.NOSE
+			SemanticTag.EYEWEAR -> shells.RIGID
+			SemanticTag.FRONT_HAIR -> if (role == PartRole.SIDE) shells.SIDE_HAIR else shells.FRONT_HAIR
+			SemanticTag.BACK_HAIR -> if (role == PartRole.SIDE) shells.SIDE_HAIR else shells.BACK_HAIR
+			SemanticTag.HEADWEAR -> if (role == PartRole.RIBBON || role == PartRole.PENDANT || role == PartRole.ANIMAL) shells.FRONT_HAIR else shells.RIGID
+			SemanticTag.EARS, SemanticTag.EARWEAR -> shells.EAR
+			else -> null
+		}
+	}
 
 	/**
 	 * The mouth modules' shapes on [layer]: the vowels and face capture on the mouth's own layers, the inside's depth on
@@ -3542,6 +3594,7 @@ object RigBuilder {
         layer: ClassifiedLayer,
         space: HeadCoordinateSpace?,
         rig: io.github.psd2live.core.fit.MouthRig? = null,
+        turn: io.github.psd2live.core.fit.HeadTurn? = null,
     ): Pair<Drawable, DeformPath?> {
         val columns = MouthContour.uniformColumns(data, MouthContour.DEFAULT_SEGMENTS)
         val path = MouthContour.crossedPath(columns, side)
@@ -3591,10 +3644,11 @@ object RigBuilder {
             blendShapes = emptyList(),
         )
         // The mouth's shapes, laid along the ribbon's own path; the owner's are for its own mesh.
-        val lipDrawable = if (rig == null) ribbon else ribbon.copy(blendShapes = neutralized(rig.shapes({ pose ->
+        val mouthShapes = rig?.shapes({ pose ->
             val target = normalized(MouthStrokeMesh.positions(path.map { p -> rig.point(p.first, p.second, pose) }, radius, joins))
             FloatArray(positions.size) { target[it] - positions[it] }
-        }) { opens -> if (opens) 1f else Float.NaN }, ribbon))
+        }) { opens -> if (opens) 1f else Float.NaN }.orEmpty()
+        val lipDrawable = ribbon.copy(blendShapes = neutralized(mouthShapes + headTurnShapes(layer, rawPositions, frame, turn), ribbon))
         val deformPath = if (columns.size >= 5) {
             val startIdx = overlap
             val endIdx = overlap + columns.lastIndex

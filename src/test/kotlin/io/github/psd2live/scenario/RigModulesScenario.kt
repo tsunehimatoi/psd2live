@@ -123,4 +123,14 @@ class RigModulesScenario {
 		undo("back to the fitted mouth")
 		isFitted("undone")
 	}
+
+	@Test fun theHeadTurnsInDepthUntilTheModuleGoesOff() = Studio.run(temp, Characters.mouthed()) {
+		allow("REGENERATION_CONFLICT")
+		fun turns(layer: String) = puppet.drawables.single { it.id.raw == mesh(layer) }.blendShapes.any { it.parameterId.raw == "ParamAngleX" }
+		expect("new project", turns("face") && turns("mouth") && turns("back_hair")) { "every layer of the head turns on its shell" }
+		settings("no depth turn", buildJsonObject {
+			putJsonObject(WorkspaceSettingsCodec.RIG) { putJsonObject("modules") { putJsonObject("face.depth-turn") { put("on", false) } } }
+		})
+		expect("off", !turns("face") && !turns("mouth")) { "switched off, the head turns as it did" }
+	}
 }

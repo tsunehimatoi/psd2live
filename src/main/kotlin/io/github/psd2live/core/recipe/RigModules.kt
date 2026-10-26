@@ -154,8 +154,16 @@ object RigModules {
 		defines = listOf(mouth("ParamMouthSpring", "mouthSpring", -1f, 1f, "ParamGroupPhysics")),
 		physicsGroups = listOf(PhysicsGenerator.MOUTH_SPRING_ID))
 
+	/**
+	 * The head turning in depth ([io.github.psd2live.core.fit.HeadTurn]): every layer of the head moves round its own
+	 * shell of the head - the features slide across the face and gather on the far side, the front hair runs ahead of
+	 * the face and the back hair goes the other way, the far ear tucks away.
+	 */
+	val FACE_DEPTH_TURN = RigModule("face.depth-turn", ModuleTier.CORE, applies = { it.has(SemanticTag.FACE) },
+		knobs = listOf(RecipeKnob("turn", P, 0f..100f, 45f), RecipeKnob("depth", P, 0f..200f, 100f)))
+
 	val areas: List<RigArea> = listOf(
-		RigArea("face", listOf(legacy("face")), emptyList()),
+		RigArea("face", listOf(legacy("face")), listOf(FACE_DEPTH_TURN)),
 		RigArea("eye", listOf(legacy("eye"), EYE_FITTED), listOf(EYE_SEE_THROUGH, EYE_SMILE, EYE_WIDE, EYE_GAZE_LID, EYE_EMOTION, EYE_LID_FADE,
 			EYE_HIGHLIGHT, EYE_JELLY, EYE_AFTERSHOCK, EYE_SQUASH)),
 		RigArea("brow", listOf(legacy("brow"), BROW_FITTED), listOf(BROW_SEE_THROUGH, BROW_SHAPE, BROW_LID, BROW_BLINK)),
