@@ -81,7 +81,7 @@ A complete head and face rig on import: face warp, feature planes, hair and body
 
 ![Head parameter space: both examples at nine combinations of AngleX ±45 and AngleY ±30, generated without hand edits](../imgs/readme/rig-head.webp)
 
-![Facial parameters: neutral, blink, half-closed with gaze, mouth open, smile, frown](../imgs/readme/rig-face.webp)
+![Facial parameters: neutral, blink, smiling eyes, surprised, angry, sad](../imgs/readme/rig-face.webp)
 
 ### Automatic mesh topology
 

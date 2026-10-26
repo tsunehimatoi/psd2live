@@ -81,7 +81,7 @@ PSD2Live 是一套完整的 2D 角色绑定工具链：从分层 PSD 自动生�
 
 ![头部参数空间：两个示例角色在 AngleX ±45、AngleY ±30 九个组合下的姿态，均为自动生成、未经手工修改](docs/imgs/readme/rig-head.webp)
 
-![五官参数：中性、眨眼、半睁加视线、张嘴、微笑、皱眉六种状态](docs/imgs/readme/rig-face.webp)
+![五官参数：中性、眨眼、笑眼、惊讶、生气、难过六种状态](docs/imgs/readme/rig-face.webp)
 
 ### 自动 Mesh 拓扑
 

@@ -350,14 +350,17 @@ class ReadmeShowcaseTool {
 		val poses = listOf(
 			"Neutral" to emptyMap(),
 			"Blink" to mapOf("ParamEyeLOpen" to 0f, "ParamEyeROpen" to 0f),
-			"Half lid + gaze" to mapOf("ParamEyeLOpen" to 0.55f, "ParamEyeROpen" to 0.55f, "ParamEyeBallX" to 0.8f, "ParamEyeBallY" to 0.4f),
-			"Mouth open" to mapOf("ParamMouthOpenY" to 1f),
-			"Smile" to mapOf("ParamMouthForm" to 1f, "ParamMouthOpenY" to 0.6f, "ParamEyeLOpen" to 0.75f, "ParamEyeROpen" to 0.75f),
-			"Frown" to mapOf("ParamMouthForm" to -1f, "ParamBrowLY" to -1f, "ParamBrowRY" to -1f),
+			"Smile" to mapOf("ParamMouthForm" to 1f, "ParamMouthOpenY" to 0.45f, "ParamEyeLOpen" to 0.15f, "ParamEyeROpen" to 0.15f,
+				"ParamEyeLSmile" to 1f, "ParamEyeRSmile" to 1f, "ParamCheek" to 0.6f),
+			"Surprised" to mapOf("ParamEyeLOpen" to 1.6f, "ParamEyeROpen" to 1.6f, "ParamBrowLY" to 1f, "ParamBrowRY" to 1f, "ParamO" to 1f),
+			"Angry" to mapOf("ParamEyeLForm" to 0.7f, "ParamEyeRForm" to 0.7f, "ParamBrowLAngle" to -1f, "ParamBrowRAngle" to -1f,
+				"ParamBrowLY" to -0.5f, "ParamBrowRY" to -0.5f, "ParamMouthForm" to -0.6f),
+			"Sad" to mapOf("ParamEyeLForm" to -1f, "ParamEyeRForm" to -1f, "ParamBrowLAngle" to 1f, "ParamBrowRAngle" to 1f,
+				"ParamMouthForm" to -0.8f, "ParamEyeBallY" to -0.5f),
 		)
 		val cell = 230; val gap = 14
 		val (image, g) = canvas(40 + poses.size * (cell + gap) + 26, 120 + 2 * (cell + 54 + gap) + 20)
-		header(g, 40, 30, "Generated facial parameters", "Eyelids, gaze, mouth and brows as generated: lids close over the iris, the mouth opens on its own inner layers")
+		header(g, 40, 30, "Generated facial parameters", "Fitted lids, brows and mouth as generated: the lids close along the head's own level, brows move the lids, the mouth opens in stages")
 		for ((m, model) in models.withIndex()) {
 			val head = headRect(model)
 			val rect = io.github.psd2live.core.Bounds(head.left + head.width * 0.18f, head.top + head.height * 0.22f, head.right - head.width * 0.18f, head.bottom - head.height * 0.14f)

@@ -13,17 +13,17 @@ import kotlin.math.sin
  * Which shell of the head a layer lies on for [HeadTurn]: how far out from the head's axis ([scale] of the face's
  * radius), whether it is on the front or the back of the head, and whether it turns as one rigid piece. An ear sits a
  * little behind the axis ([behind], radians), so the far one tucks away and the near one comes forward. Hair hanging
- * from the head ([hang]) follows less below it, and the back hair nods only by half ([nod]): what it would show
- * nodding is the crown's underside, which the art does not draw.
+ * from the head ([hang]) follows less below it, and the back hair turns and nods only by half ([sway], [nod]): what
+ * it would bare going the other way is the head's hidden side, which the art does not draw.
  */
 data class HeadShell(val scale: Float, val back: Boolean = false, val rigid: Boolean = false, val behind: Float = 0f, val hang: Boolean = false,
-                     val nod: Float = 1f) {
+                     val nod: Float = 1f, val sway: Float = 1f) {
 	companion object {
 		val SKIN = HeadShell(1f)
 		val NOSE = HeadShell(1.12f)
 		val FRONT_HAIR = HeadShell(1.1f)
 		val SIDE_HAIR = HeadShell(1.04f)
-		val BACK_HAIR = HeadShell(1.05f, back = true, hang = true, nod = 0.5f)
+		val BACK_HAIR = HeadShell(1.05f, back = true, hang = true, nod = 0.5f, sway = 0.35f)
 		/** Shading on the skin, lagging a little behind it so the light seems to stay. */
 		val SHADE = HeadShell(0.96f)
 		val EAR = HeadShell(1f, behind = 0.3f)
@@ -67,7 +67,9 @@ class HeadTurn(
 		val yawRad = yaw * PI.toFloat() / 180f; val pitchRad = pitch * PI.toFloat() / 180f
 		// Hair hanging below the head turns less the further it hangs.
 		val follow = if (!shell.hang || y <= chinY) 1f else (1f - (y - chinY) / (radiusY * 3f)).coerceIn(0.3f, 1f)
-		val dx = turn * rx * around(u, yawRad, shell.behind) * follow
+		// The back hair round the crown hugs the skull and barely shows going the other way; lower down it swings out more.
+		val crown = if (!shell.back) 1f else ((v + 1f) / 2f).coerceIn(0.3f, 1f)
+		val dx = turn * rx * around(u, yawRad, shell.behind) * follow * shell.sway * crown
 		// Looking up turns the front of the head upward: Angle Y up moves it up the canvas.
 		val dy = -turn * 0.8f * ry * around(-v, pitchRad, 0f) * follow * shell.nod
 		// A head turning sideways leans a little into the turn, about the chin.
