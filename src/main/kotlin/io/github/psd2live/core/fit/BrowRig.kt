@@ -120,7 +120,8 @@ class BrowRig(val fit: BrowFit, private val lift: Float, private val options: Br
 	}
 
 	/** The brow's additive shapes: sideways and form (`brow.shape`), the blink's dip and a widened eye's lift (`brow.blink`). */
-	fun shapes(positions: FloatArray, frame: Bounds, browX: ParameterId, browForm: ParameterId, eyeOpen: ParameterId, wide: Boolean): List<BlendShapeBinding<MeshForm>> = buildList {
+	fun shapes(positions: FloatArray, frame: Bounds, browX: ParameterId, browForm: ParameterId, eyeOpen: ParameterId, wide: Boolean,
+	           eyeSmile: ParameterId? = null): List<BlendShapeBinding<MeshForm>> = buildList {
 		fun shape(f: (Float, Float) -> Pair<Float, Float>) = MeshForm(form(positions, frame, f).positionDeltas)
 		if (options.shape) {
 			add(BlendShapeBinding(browX, floatArrayOf(-1f, 0f, 1f), 1, listOf(shape { x, y -> delta(x, y, x = -1f) }, null, shape { x, y -> delta(x, y, x = 1f) })))
@@ -132,6 +133,8 @@ class BrowRig(val fit: BrowFit, private val lift: Float, private val options: Br
 			val forms = listOf(shape { x, y -> delta(x, y, dip = 0.25f * options.blinkDip) }, null) +
 				(if (wide) listOf(shape { x, y -> delta(x, y, y = 0.6f) }) else emptyList())
 			add(BlendShapeBinding(eyeOpen, keys, 1, forms))
+			// A smile closing the eye lifts the brow back, past the blink's dip, so the smile does not read as sorrow.
+			if (eyeSmile != null) add(BlendShapeBinding(eyeSmile, floatArrayOf(0f, 1f), 0, listOf(null, shape { x, y -> delta(x, y, y = 0.35f) })))
 		}
 	}
 

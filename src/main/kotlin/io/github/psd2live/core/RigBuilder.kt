@@ -344,8 +344,34 @@ object RigBuilder {
 				aftershock = on(m.EYE_AFTERSHOCK), softness = value(m.EYE_AFTERSHOCK, "softness"),
 				highlight = on(m.EYE_HIGHLIGHT), parallax = value(m.EYE_HIGHLIGHT, "parallax"),
 				squash = on(m.EYE_SQUASH),
-				browCoupling = on(m.BROW_LID), browStrength = value(m.BROW_LID, "strength"),
+				browCoupling = on(m.BROW_LID), browStrength = value(m.BROW_LID, "strength") * (1f + 0.6f * browCover),
 			)
+		}
+
+		/**
+		 * How much of the brows the bangs in front of them hide, 0 … 1: a hidden brow can show little of a mood, so the lids
+		 * coupled to it carry more of it.
+		 */
+		private val browCover: Float by lazy {
+			val brows = analysis.layers.filter { it.semantic.tag == SemanticTag.EYEBROW && it.semantic.role == null && it.opaquePixels > 0 }
+			val bangs = analysis.layers.filter { it.semantic.tag == SemanticTag.FRONT_HAIR && it.opaquePixels > 0 }
+			var seen = 0; var hidden = 0
+			for (brow in brows) {
+				val raster = brow.source.raster; val bounds = brow.source.bounds
+				for (y in 0 until raster.height step 2) for (x in 0 until raster.width step 2) {
+					if ((raster.rgba[(y * raster.width + x) * 4 + 3].toInt() and 0xff) < 96) continue
+					seen++
+					val cx = bounds.left + x * bounds.width / raster.width.toFloat(); val cy = bounds.top + y * bounds.height / raster.height.toFloat()
+					// Lower source orders lie in front.
+					if (bangs.any { hair ->
+							val b = hair.source.bounds; val r = hair.source.raster
+							val hx = ((cx - b.left) * r.width / b.width.coerceAtLeast(1)).toInt(); val hy = ((cy - b.top) * r.height / b.height.coerceAtLeast(1)).toInt()
+							hair.source.order < brow.source.order && hx in 0 until r.width && hy in 0 until r.height &&
+								(r.rgba[(hy * r.width + hx) * 4 + 3].toInt() and 0xff) >= 160
+						}) hidden++
+				}
+			}
+			if (seen == 0) 0f else hidden.toFloat() / seen
 		}
 
 		private val fittedBrows = java.util.concurrent.ConcurrentHashMap<List<Any?>, Map<Side, io.github.psd2live.core.fit.BrowRig>>()
@@ -3073,7 +3099,8 @@ object RigBuilder {
 			val left = layer.semantic.side == Side.LEFT
 			return brow.shapes(data.rigPositions, frame, ParameterId(if (left) "ParamBrowLX" else "ParamBrowRX"),
 				ParameterId(if (left) "ParamBrowLForm" else "ParamBrowRForm"), if (left) StandardParameters.EYE_L_OPEN else StandardParameters.EYE_R_OPEN,
-				eyes?.options?.wide == true && eyes.rigs.isNotEmpty())
+				eyes?.options?.wide == true && eyes.rigs.isNotEmpty(),
+				if (eyes?.options?.smile == true && eyes.rigs[layer.semantic.side] != null) io.github.psd2live.core.fit.EyeModules.smile(layer.semantic.side) else null)
 		}
 		val eye = eyes?.rigs?.get(layer.semantic.side) ?: return emptyList()
 		return when {

@@ -56,7 +56,7 @@ object EyeModules {
 	private val ANGLE_Y = ParameterId("ParamAngleY")
 
 	fun open(side: Side) = if (side == Side.LEFT) EYE_L_OPEN else EYE_R_OPEN
-	private fun smile(side: Side) = if (side == Side.LEFT) EYE_L_SMILE else EYE_R_SMILE
+	fun smile(side: Side) = if (side == Side.LEFT) EYE_L_SMILE else EYE_R_SMILE
 	private fun form(side: Side) = if (side == Side.LEFT) EYE_L_FORM else EYE_R_FORM
 	private fun squint(side: Side) = if (side == Side.LEFT) EYE_L_SQUINT else EYE_R_SQUINT
 	private fun bounce(side: Side) = if (side == Side.LEFT) EYE_L_BOUNCE else EYE_R_BOUNCE
