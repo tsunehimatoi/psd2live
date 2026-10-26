@@ -174,6 +174,26 @@ object RigModules {
 	 */
 	val HAIR_CHAINS = RigBase("hair/chains", knobs = listOf(RecipeKnob("swing", P, 30f..200f, 100f), RecipeKnob("softness", P, 0f..100f, 50f)))
 
+	/** A skirt swaying from the waist in three panels out of step, its hem flaring out and drawing in. */
+	val OUTFIT_SKIRT = RigModule("outfit.skirt", ModuleTier.CORE, applies = { it.has(SemanticTag.BOTTOMWEAR, io.github.psd2live.core.PartRole.SKIRT) ||
+		it.has(SemanticTag.TOPWEAR, io.github.psd2live.core.PartRole.SKIRT) }, knobs = listOf(RecipeKnob("swing", P, 30f..200f, 100f)))
+
+	/** Ribbons trailing and pendants swinging from where they hang, each on its own pendulum. */
+	val OUTFIT_RIBBONS = RigModule("outfit.ribbons", ModuleTier.MAJOR, applies = { subject ->
+		io.github.psd2live.core.PartRole.RIBBON.tags.any { subject.has(it, io.github.psd2live.core.PartRole.RIBBON) } ||
+			io.github.psd2live.core.PartRole.PENDANT.tags.any { subject.has(it, io.github.psd2live.core.PartRole.PENDANT) }
+	}, knobs = listOf(RecipeKnob("swing", P, 30f..200f, 100f)))
+
+	/**
+	 * The chest rising and settling with the breath and the body's moves ([io.github.psd2live.core.fit.BustRig]), on
+	 * pendulums of its own.
+	 */
+	val BODY_BUST = RigModule("body.bust", ModuleTier.MAJOR, applies = { it.has(SemanticTag.TOPWEAR) && it.has(SemanticTag.FACE) },
+		knobs = listOf(RecipeKnob("bounce", P, 0f..200f, 100f)),
+		defines = listOf(ModuleParameter("ParamBustY", "model.parameter.bustY", -1f, 1f, 0f, "ParamGroupPhysics"),
+			ModuleParameter("ParamBustX", "model.parameter.bustX", -1f, 1f, 0f, "ParamGroupPhysics")),
+		physicsGroups = listOf("PhysicsBustY", "PhysicsBustX"))
+
 	val areas: List<RigArea> = listOf(
 		RigArea("face", listOf(legacy("face")), listOf(FACE_DEPTH_TURN, FACE_SKIN_CLIP)),
 		RigArea("eye", listOf(legacy("eye"), EYE_FITTED), listOf(EYE_SEE_THROUGH, EYE_SMILE, EYE_WIDE, EYE_GAZE_LID, EYE_EMOTION, EYE_LID_FADE,
@@ -181,8 +201,8 @@ object RigModules {
 		RigArea("brow", listOf(legacy("brow"), BROW_FITTED), listOf(BROW_SEE_THROUGH, BROW_SHAPE, BROW_LID, BROW_BLINK)),
 		RigArea("mouth", listOf(legacy("mouth"), MOUTH_FITTED), listOf(MOUTH_OUTLINE, MOUTH_VOWEL, MOUTH_CAPTURE, MOUTH_JAW, MOUTH_CHEEK_LID, MOUTH_DEPTH, MOUTH_SPRING)),
 		RigArea("hair", listOf(legacy("hair"), HAIR_CHAINS), emptyList()),
-		RigArea("body", listOf(legacy("body")), emptyList()),
-		RigArea("outfit", listOf(legacy("outfit")), emptyList()),
+		RigArea("body", listOf(legacy("body")), listOf(BODY_BUST)),
+		RigArea("outfit", listOf(legacy("outfit")), listOf(OUTFIT_SKIRT, OUTFIT_RIBBONS)),
 		RigArea("expression", listOf(legacy("expression")), emptyList()),
 		RigArea("motion", listOf(legacy("motion")), emptyList()),
 	)

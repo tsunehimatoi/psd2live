@@ -12,19 +12,34 @@ import kotlin.math.max
 import kotlin.math.sin
 
 /**
- * The kinds of hair a chain is made for, each with how it moves: how far its segments swing, how many it has, how
- * much it bounces up and down, and its pendulum - the bangs short and light, side locks longer, the back hair long and
- * heavy and slow, an ahoge springy, a ponytail or braid a long whip. [word] names its parameters.
+ * The kinds of hanging part a chain is made for, each with how it moves: how far its segments swing, how many it has,
+ * how much it bounces up and down, and its pendulum - the bangs short and light, side locks longer, the back hair long
+ * and heavy and slow, an ahoge springy, a ponytail or braid a long whip; a skirt sways from the waist and its hem
+ * flares out instead of bouncing, a ribbon trails, a pendant swings from its top. [prefix] and [word] name its
+ * parameters.
  */
 enum class HairKind(val word: String, val swing: Float, val segments: Int, val bounce: Float,
-                    val length: Float, val mobility: Float, val delay: Float, val acceleration: Float) {
+                    val length: Float, val mobility: Float, val delay: Float, val acceleration: Float, val prefix: String = "ParamHair") {
 	FRONT("Front", 0.22f, 2, 0.05f, 7f, 0.9f, 0.85f, 1.4f),
 	SIDE("Side", 0.3f, 3, 0.06f, 10f, 0.92f, 0.9f, 1.3f),
 	BACK("Back", 0.2f, 3, 0.05f, 14f, 0.88f, 1.1f, 1.1f),
 	AHOGE("Ahoge", 0.45f, 2, 0.1f, 5f, 0.96f, 0.6f, 1.8f),
-	TAIL("Tail", 0.35f, 4, 0.08f, 16f, 0.9f, 1.0f, 1.2f);
+	TAIL("Tail", 0.35f, 4, 0.08f, 16f, 0.9f, 1.0f, 1.2f),
+	SKIRT("Skirt", 0.12f, 2, 0.12f, 12f, 0.85f, 1.2f, 0.9f, "ParamCloth"),
+	RIBBON("Ribbon", 0.35f, 3, 0.06f, 8f, 0.94f, 0.8f, 1.5f, "ParamCloth"),
+	PENDANT("Pendant", 0.3f, 1, 0.05f, 6f, 0.96f, 0.6f, 1.8f, "ParamCloth");
+
+	val hair: Boolean get() = prefix == "ParamHair"
 
 	companion object {
+		/** The kind of clothing chain [layer] hangs in, or null: a skirt, a ribbon or a pendant. */
+		fun clothOf(layer: ClassifiedLayer): HairKind? = when (layer.semantic.role) {
+			PartRole.SKIRT -> SKIRT
+			PartRole.RIBBON -> if (layer.semantic.tag == SemanticTag.BACK_HAIR) null else RIBBON
+			PartRole.PENDANT -> PENDANT
+			else -> null
+		}
+
 		fun of(layer: ClassifiedLayer): HairKind? = when {
 			layer.semantic.tag != SemanticTag.FRONT_HAIR && layer.semantic.tag != SemanticTag.BACK_HAIR -> null
 			layer.semantic.role == PartRole.AHOGE -> AHOGE
@@ -47,8 +62,8 @@ data class HairChain(
 	val layerId: String, val kind: HairKind, val index: Int, val frame: Bounds, val freeFrom: Float, val regions: Int,
 	val strength: Float = 1f, val softness: Float = 0.5f,
 ) {
-	val warpId: String get() = "DeformHairChain$index"
-	private val stem: String get() = "ParamHair${kind.word}$index"
+	val warpId: String get() = (if (kind.hair) "DeformHairChain" else "DeformClothChain") + index
+	private val stem: String get() = "${kind.prefix}${kind.word}$index"
 	private fun region(j: Int) = if (regions == 1) "" else REGION_NAMES[j]
 
 	/** The parameter of segment [k] of region [j], root first. */
@@ -106,6 +121,19 @@ data class HairChain(
 		return out
 	}
 
+	/** A skirt's hem spread out ([amount] > 0, lifting a little as it does) or drawn in, growing toward the hem. */
+	private fun flared(rest: FloatArray, rows: Int, columns: Int, amount: Float): FloatArray {
+		val out = rest.copyOf()
+		val cx = frame.centerX
+		for (r in 0..rows) for (c in 0..columns) {
+			val i = (r * (columns + 1) + c) * 2
+			val t = along(rest[i + 1])
+			out[i] = rest[i] + (rest[i] - cx) * amount * t * t
+			out[i + 1] = rest[i + 1] - kotlin.math.abs(rest[i] - cx) * amount * 0.3f * t * t
+		}
+		return out
+	}
+
 	/** The chain's additive shapes on its warp: each segment of each region at ±1, the bounce at ±1. [toParent] maps rig points to the warp's parent space. */
 	fun shapes(rest: FloatArray, rows: Int, columns: Int, toParent: (FloatArray) -> FloatArray): List<BlendShapeBinding<WarpForm>> = buildList {
 		val n = kind.segments
@@ -122,7 +150,8 @@ data class HairChain(
 			add(BlendShapeBinding(segment(j, k), floatArrayOf(-1f, 0f, 1f), 1, forms))
 		}
 		add(BlendShapeBinding(bounce, floatArrayOf(-1f, 0f, 1f), 1, listOf(-1f, 0f, 1f).map { value ->
-			if (value == 0f) null else WarpForm(toParent(bent(rest, rows, columns, { _, _ -> 0f }, value * kind.bounce * strength)))
+			if (value == 0f) null else WarpForm(toParent(if (kind == HairKind.SKIRT) flared(rest, rows, columns, value * kind.bounce * strength)
+				else bent(rest, rows, columns, { _, _ -> 0f }, value * kind.bounce * strength)))
 		}))
 	}
 
@@ -131,22 +160,24 @@ data class HairChain(
 		const val COLUMNS = 6
 		private val REGION_NAMES = listOf("L", "C", "R")
 
-		private val PARAMETER = Regex("ParamHair(Front|Side|Back|Ahoge|Tail)(\\d+)([LCR]?)(\\d)")
-		private val BOUNCE = Regex("ParamHair(Front|Side|Back|Ahoge|Tail)(\\d+)Y")
+		private val KINDS = HairKind.entries.joinToString("|") { it.word }
+		private val PARAMETER = Regex("(?:ParamHair|ParamCloth)($KINDS)(\\d+)([LCR]?)(\\d)")
+		private val BOUNCE = Regex("(?:ParamHair|ParamCloth)($KINDS)(\\d+)Y")
 
 		/**
 		 * The chains of [layers]: one per hair layer with pixels, in layer order. A layer wider than the face holds
 		 * several locks and gets three regions. [freeY] gives where a kind of hair hangs free from the head (rig y).
 		 */
-		fun plan(layers: List<ClassifiedLayer>, faceWidth: Float, freeY: (HairKind, Bounds) -> Float, strength: Float, softness: Float): List<HairChain> {
-			var index = 0
+		fun plan(layers: List<ClassifiedLayer>, faceWidth: Float, freeY: (HairKind, Bounds) -> Float, strength: Float, softness: Float,
+		         kindOf: (ClassifiedLayer) -> HairKind? = HairKind::of, first: Int = 0): List<HairChain> {
+			var index = first
 			return layers.mapNotNull { layer ->
-				val kind = HairKind.of(layer) ?: return@mapNotNull null
+				val kind = kindOf(layer) ?: return@mapNotNull null
 				if (layer.opaquePixels <= 0) return@mapNotNull null
 				val b = layer.bounds
 				val padX = max(b.width * 0.06f, 4f); val padY = max(b.height * 0.04f, 4f)
 				val frame = Bounds(b.left - padX, b.top - padY, b.right + padX, b.bottom + padY)
-				val regions = if (kind != HairKind.AHOGE && kind != HairKind.TAIL && b.width > faceWidth * 0.8f) 3 else 1
+				val regions = if (kind.hair && kind != HairKind.AHOGE && kind != HairKind.TAIL && b.width > faceWidth * 0.8f || kind == HairKind.SKIRT) 3 else 1
 				HairChain(layer.source.id.raw, kind, ++index, frame, freeY(kind, frame), regions, strength, softness)
 			}
 		}
@@ -168,7 +199,8 @@ data class HairChain(
 				val spread = 1f + 0.12f * ((index * 7 + "LCR".indexOf(region.ifEmpty { "C" }) * 3) % 5 - 2) / 2f
 				val segment = io.github.psd2live.core.PhysicsSegment(kind.length * spread / outputs.size, kind.mobility, kind.delay * spread, kind.acceleration)
 				io.github.psd2live.core.RigPhysicsEdit(
-					id = "PhysicsHair$word$index$region", name = io.github.psd2live.i18n.tr("model.physics.hairChain", "$word $index $region".trim()),
+					id = "Physics${if (kind.hair) "Hair" else "Cloth"}$word$index$region",
+					name = io.github.psd2live.i18n.tr(if (kind.hair) "model.physics.hairChain" else "model.physics.clothChain", "$word $index $region".trim()),
 					inputs = head, outputs = outputs.mapIndexed { k, p -> io.github.psd2live.core.PhysicsOutput(p, k + 1, 1.4f) },
 					segments = List(outputs.size) { segment },
 					normalization = io.github.psd2live.core.PhysicsNormalization(angleMin = -30f, angleMax = 30f))
@@ -182,8 +214,8 @@ data class HairChain(
 				).filter { it.parameter in available }
 				if (inputs.isEmpty()) return@mapNotNull null
 				io.github.psd2live.core.RigPhysicsEdit(
-					id = "PhysicsHair${match.groupValues[1]}${match.groupValues[2]}Y",
-					name = io.github.psd2live.i18n.tr("model.physics.hairBounce", "${match.groupValues[1]} ${match.groupValues[2]}"),
+					id = "Physics${if (kind.hair) "Hair" else "Cloth"}${match.groupValues[1]}${match.groupValues[2]}Y",
+					name = io.github.psd2live.i18n.tr(if (kind.hair) "model.physics.hairBounce" else "model.physics.clothBounce", "${match.groupValues[1]} ${match.groupValues[2]}"),
 					inputs = inputs, outputs = listOf(io.github.psd2live.core.PhysicsOutput(match.value, 1, 1.2f)),
 					segments = listOf(io.github.psd2live.core.PhysicsSegment(kind.length * 0.6f, kind.mobility, kind.delay, kind.acceleration)),
 					normalization = io.github.psd2live.core.PhysicsNormalization(angleMin = -30f, angleMax = 30f))

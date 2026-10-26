@@ -3887,10 +3887,10 @@ class PSD2LiveViewModel : AutoCloseable {
 		val model = state.previewModel ?: return emptyList()
 		val key = listOf(model.analysis, model.rig.puppet, state.rigEdits.interiorEffects, state.rigEdits.physicsEdits, state.rigEdits.disabledPhysicsIds, state.rigEdits.physicsOrder,
 			state.rigEdits.skeleton, state.rigEdits.swingEdits, state.physicsFrontHair, state.physicsBackHair, state.physicsEyeJelly,
-			state.hairSimulationFront, state.hairSimulationBack, state.rigEdits.importedCmo3)
+			state.hairSimulationFront, state.hairSimulationBack, state.rigEdits.importedCmo3, model.config.recipe)
 		physicsCatalogCache?.let { (k, groups) -> if (k == key) return groups }
 		val groups = PhysicsCatalog.groups(if (state.rigEdits.importedCmo3 != null) PhysicsGenerator.Presets(false, false, false)
-			else PhysicsGenerator.Presets.present(model.analysis, state.hairSimulationFront, state.hairSimulationBack),
+			else PhysicsGenerator.Presets.present(model.analysis, model.config),
 			PhysicsGenerator.Presets(state.physicsFrontHair, state.physicsBackHair, state.physicsEyeJelly),
 			state.rigEdits, model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }, model.rig.puppet)
 		physicsCatalogCache = key to groups

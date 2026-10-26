@@ -36,6 +36,15 @@ object PhysicsGenerator {
 
 			fun enabled(config: PipelineConfig) = Presets(config.physicsFrontHair, config.physicsBackHair, config.physicsEyeJelly)
 
+			/**
+			 * What [config] generates for the art of [analysis]: the legacy hair pendulums unless a simulation or the hair
+			 * chains move that hair.
+			 */
+			fun present(analysis: PipelineAnalysis?, config: PipelineConfig): Presets {
+				val chains = config.recipe.base("hair") === io.github.psd2live.core.recipe.RigModules.HAIR_CHAINS
+				return present(analysis, config.hairSimulationFront || chains, config.hairSimulationBack || chains)
+			}
+
 			/** [present] without the hair the model preset simulates: that hair has no legacy pendulum. */
 			fun present(analysis: PipelineAnalysis?, simulatedFront: Boolean, simulatedBack: Boolean) = present(analysis).let {
 				it.copy(frontHair = it.frontHair && !simulatedFront, backHair = it.backHair && !simulatedBack)
@@ -58,6 +67,20 @@ object PhysicsGenerator {
 				normalization = PhysicsNormalization(-1f, 0f, 1f, -10f, 0f, 10f)))
 		}
 		addAll(io.github.psd2live.core.fit.HairChain.physics(available))
+		// The chest settling after the body moves and lifting with the breath: up and down on the nod, the lean and the
+		// breath, side to side on the body's turn and sway.
+		if ("ParamBustY" in available) add(RigPhysicsEdit(id = "PhysicsBustY", name = tr("model.physics.bust", "Y"),
+			inputs = listOf(PhysicsInput("ParamBodyAngleY", 50f, PhysicsSourceType.X), PhysicsInput("ParamAngleY", 20f, PhysicsSourceType.X),
+				PhysicsInput("ParamBreath", 30f, PhysicsSourceType.X)).filter { it.parameter in available },
+			outputs = listOf(PhysicsOutput("ParamBustY", 2, 1.2f)),
+			segments = listOf(PhysicsSegment(1f, 0.9f, 0.5f, 1.4f), PhysicsSegment(1.2f, 0.85f, 0.45f, 1.6f)),
+			normalization = PhysicsNormalization(-1f, 0f, 1f, -10f, 0f, 10f)))
+		if ("ParamBustX" in available) add(RigPhysicsEdit(id = "PhysicsBustX", name = tr("model.physics.bust", "X"),
+			inputs = listOf(PhysicsInput("ParamBodyAngleX", 60f, PhysicsSourceType.X), PhysicsInput("ParamBodyAngleZ", 40f, PhysicsSourceType.ANGLE))
+				.filter { it.parameter in available },
+			outputs = listOf(PhysicsOutput("ParamBustX", 2, 1.1f)),
+			segments = listOf(PhysicsSegment(1f, 0.9f, 0.5f, 1.4f), PhysicsSegment(1.2f, 0.85f, 0.45f, 1.6f)),
+			normalization = PhysicsNormalization(-1f, 0f, 1f, -10f, 0f, 10f)))
 		// The jaw's soft tissue settling after the mouth moves, mostly on the opening and a little on the form.
 		if ("ParamMouthOpenY" in available && "ParamMouthSpring" in available) add(RigPhysicsEdit(id = MOUTH_SPRING_ID, name = tr("model.physics.mouthSpring"),
 			inputs = listOf(PhysicsInput("ParamMouthOpenY", 80f, PhysicsSourceType.X), PhysicsInput("ParamMouthForm", 20f, PhysicsSourceType.X)),

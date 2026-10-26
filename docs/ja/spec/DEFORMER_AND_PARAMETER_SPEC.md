@@ -47,7 +47,8 @@ StandardParameters に対応します。メッシュ専用、デフォーマ無�
 | `ParamA`, `ParamI`, `ParamU`, `ParamE`, `ParamO`（`mouth.vowel`） | 0…1 | 0 |
 | `ParamMouthX`, `ParamMouthPuckerWiden`, `ParamMouthPressLipOpen`（`mouth.capture`） | -1…1 | 0 |
 | `ParamMouthShrug`, `ParamCheekPuff`（`mouth.capture`） | 0…1 | 0 |
-| `ParamHair<Kind><n>[L/C/R]<segment>`, `ParamHair<Kind><n>Y`（`hair/chains`、種類 Front / Side / Back / Ahoge / Tail、番号、房 L / C / R、節番号。`Y` は上下の弾み。物理出力） | -1…1 | 0 |
+| `ParamHair<Kind><n>[L/C/R]<segment>`, `ParamHair<Kind><n>Y`, `ParamCloth<Kind><n>…`（`hair/chains`、種類 Front / Side / Back / Ahoge / Tail / Skirt / Ribbon / Pendant、番号、房 L / C / R、節番号。`Y` は上下の弾み。物理出力） | -1…1 | 0 |
+| `ParamBustY`, `ParamBustX`（`body.bust`、物理出力） | -1…1 | 0 |
 | `ParamMouthSpring`（`mouth.spring`、物理出力） | -1…1 | 0 |
 | `ParamHairFront`, `ParamHairBack` | -1…1 | 0 |
 

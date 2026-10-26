@@ -94,8 +94,8 @@ internal object ReviewClips {
 	/** Every hair chain parameter a generated rig may have ([io.github.psd2live.core.fit.HairChain]), set by [value] of region and segment. */
 	private fun chains(value: (region: String, segment: Int) -> Float, bounce: Float = 0f): Map<String, Float> = buildMap {
 		for (kind in io.github.psd2live.core.fit.HairKind.entries) for (n in 1..12) {
-			for (region in listOf("", "L", "C", "R")) for (k in 1..4) put("ParamHair${kind.word}$n$region$k", value(region, k))
-			put("ParamHair${kind.word}${n}Y", bounce)
+			for (region in listOf("", "L", "C", "R")) for (k in 1..4) put("${kind.prefix}${kind.word}$n$region$k", value(region, k))
+			put("${kind.prefix}${kind.word}${n}Y", bounce)
 		}
 	}
 
@@ -122,7 +122,10 @@ internal object ReviewClips {
 				"shrug" to mapOf("ParamMouthShrug" to 1f), "press" to mapOf("ParamMouthPressLipOpen" to -1f), "parted" to mapOf("ParamMouthPressLipOpen" to 1f),
 				"cheek puff" to mapOf("ParamCheekPuff" to 1f), "turned open" to mapOf("ParamMouthOpenY" to 1f, "ParamAngleX" to 30f)),
 		"head" to listOf(-30f, -15f, 0f, 15f, 30f).flatMap { x -> listOf(-30f, 0f, 30f).map { y -> "x $x y $y" to mapOf("ParamAngleX" to x, "ParamAngleY" to y) } },
-		"body" to listOf(-10f, 0f, 10f).flatMap { x -> listOf(-10f, 0f, 10f).map { z -> "body x $x z $z" to mapOf("ParamBodyAngleX" to x, "ParamBodyAngleZ" to z) } },
+		"body" to listOf(-10f, 0f, 10f).flatMap { x -> listOf(-10f, 0f, 10f).map { z -> "body x $x z $z" to mapOf("ParamBodyAngleX" to x, "ParamBodyAngleZ" to z) } } +
+			listOf("bust up" to mapOf("ParamBustY" to 1f), "bust down" to mapOf("ParamBustY" to -1f), "bust side" to mapOf("ParamBustX" to 1f),
+				"cloth swing" to chains({ _, _ -> 1f }), "cloth swing -" to chains({ _, _ -> -1f }), "hem flare" to chains({ _, _ -> 0f }, 1f),
+				"hem in" to chains({ _, _ -> 0f }, -1f)),
 	)
 
 	/** [frames] written as a looping GIF at [fps] into [file]. */

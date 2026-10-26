@@ -23,7 +23,7 @@ internal class WorkspacePreviewPhysics {
         val config = model.config
         val groups = if (!config.generatePhysics || config.meshOnly) emptyList() else PhysicsCatalog.groups(
             if (config.rigEdits.importedCmo3 != null) PhysicsGenerator.Presets(false, false, false)
-            else PhysicsGenerator.Presets.present(model.analysis, config.hairSimulationFront, config.hairSimulationBack),
+            else PhysicsGenerator.Presets.present(model.analysis, config),
             PhysicsGenerator.Presets(config.physicsFrontHair, config.physicsBackHair, config.physicsEyeJelly), config.rigEdits,
             model.rig.puppet.parameters.mapTo(hashSetOf()) { it.id.raw }, model.rig.puppet).filter { it.active }.map { it.setting }
         val parameters = model.rig.puppet.parameters

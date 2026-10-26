@@ -163,9 +163,35 @@ object PartRoles {
 				}
 				else -> null
 			}
-			SemanticTag.NECK, SemanticTag.TOPWEAR, SemanticTag.BOTTOMWEAR -> if (darkening) PartRole.SHADOW else null
+			SemanticTag.BOTTOMWEAR -> if (darkening) PartRole.SHADOW else if (layer.semantic.side == io.github.psd2live.core.Side.NONE && skirtShaped(layer)) PartRole.SKIRT else null
+			SemanticTag.NECK, SemanticTag.TOPWEAR -> if (darkening) PartRole.SHADOW else null
 			else -> null
 		}
+	}
+
+	/**
+	 * Whether a bottom is a skirt: its hem at least about as wide as its waist and whole across its middle, where
+	 * trousers part between the legs.
+	 */
+	private fun skirtShaped(layer: ClassifiedLayer): Boolean {
+		val raster = layer.source.raster
+		if (raster.width < 8 || raster.height < 8) return false
+		fun opaque(x: Int, y: Int) = (raster.rgba[(y * raster.width + x) * 4 + 3].toInt() and 0xff) >= 128
+		fun band(from: Float, to: Float): Pair<Float, Float> {
+			var widths = 0f; var rows = 0; var middle = 0; var middleRows = 0
+			for (y in (raster.height * from).toInt() until (raster.height * to).toInt()) {
+				val xs = (0 until raster.width).filter { opaque(it, y) }
+				if (xs.isEmpty()) continue
+				widths += (xs.last() - xs.first()).toFloat(); rows++
+				val mid = (xs.first() + xs.last()) / 2
+				val reach = ((xs.last() - xs.first()) / 6).coerceAtLeast(1)
+				middle += (mid - reach..mid + reach).count { opaque(it.coerceIn(0, raster.width - 1), y) }; middleRows += 2 * reach + 1
+			}
+			return (if (rows == 0) 0f else widths / rows) to (if (middleRows == 0) 0f else middle.toFloat() / middleRows)
+		}
+		val (waist, _) = band(0.05f, 0.15f)
+		val (hem, whole) = band(0.8f, 0.9f)
+		return waist > 0f && hem >= waist * 0.9f && whole > 0.7f
 	}
 
 	/** The mean luminance 0..1 of a layer's opaque pixels, sampled on a coarse grid. */

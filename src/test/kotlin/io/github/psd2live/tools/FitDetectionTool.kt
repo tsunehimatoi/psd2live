@@ -56,6 +56,8 @@ class FitDetectionTool {
 			g.dispose()
 			"$side width ${"%.0f".format(fit.width)}px" to image
 		}
+		for (layer in model.analysis.layers.filter { it.semantic.tag.group == io.github.psd2live.core.LayerGroup.BODY || it.semantic.role != null })
+			println("ROLE ${sample.name} ${layer.source.name} ${layer.semantic.tag} role ${layer.semantic.role} bounds ${layer.bounds}")
 		for (layer in model.analysis.layers.filter { it.semantic.tag.name.endsWith("HAIR") || it.semantic.tag.name == "HEADWEAR" })
 			println("HAIR ${sample.name} ${layer.source.name} ${layer.semantic.tag} role ${layer.semantic.role} bounds ${layer.bounds} opaque ${layer.opaquePixels}")
 		for (layer in model.analysis.layers.filter { it.semantic.tag in io.github.psd2live.core.fit.FittedMouth.TAGS })

@@ -61,7 +61,7 @@ object PhysicsCatalog {
 
 	fun groups(analysis: PipelineAnalysis?, config: PipelineConfig, available: Set<String>, model: org.umamo.runtime.model.PuppetModel? = null): List<PhysicsGroup> =
 		groups(if (config.rigEdits.importedCmo3 != null) PhysicsGenerator.Presets(false, false, false)
-			else PhysicsGenerator.Presets.present(analysis, config.hairSimulationFront, config.hairSimulationBack), PhysicsGenerator.Presets.enabled(config), config.rigEdits, available, model)
+			else PhysicsGenerator.Presets.present(analysis, config), PhysicsGenerator.Presets.enabled(config), config.rigEdits, available, model)
 
 	/** What exports, in evaluation order: nothing when physics is off or the model is mesh-only. */
 	fun active(analysis: PipelineAnalysis?, config: PipelineConfig, available: Set<String>, model: org.umamo.runtime.model.PuppetModel? = null): List<RigPhysicsEdit> =

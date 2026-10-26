@@ -1784,7 +1784,33 @@ object RigBuilder {
 	 * The hair chains [config] builds (`hair/chains`): one per hair layer of [analysis] in the rig's space, the bangs
 	 * free below the brows, side locks and the back hair below the eyes. Hair a cloth simulation moves keeps it.
 	 */
-	internal fun hairChains(analysis: PipelineAnalysis, faceRig: NinePoseFaceRig, config: PipelineConfig): List<io.github.psd2live.core.fit.HairChain> {
+	internal fun hairChains(analysis: PipelineAnalysis, faceRig: NinePoseFaceRig, config: PipelineConfig): List<io.github.psd2live.core.fit.HairChain> =
+		hairOnlyChains(analysis, faceRig, config) + clothChains(analysis, config)
+
+	/**
+	 * The clothing chains [config] builds: a skirt (`outfit.skirt`) free a little below its waistband, ribbons and
+	 * pendants (`outfit.ribbons`) from near their top.
+	 */
+	private fun clothChains(analysis: PipelineAnalysis, config: PipelineConfig): List<io.github.psd2live.core.fit.HairChain> {
+		if (config.meshOnly) return emptyList()
+		val m = io.github.psd2live.core.recipe.RigModules
+		val subject = io.github.psd2live.core.recipe.RecipeSubject.of(analysis)
+		val skirt = m.builds(m.OUTFIT_SKIRT, config, subject); val ribbons = m.builds(m.OUTFIT_RIBBONS, config, subject)
+		if (!skirt && !ribbons) return emptyList()
+		return io.github.psd2live.core.fit.HairChain.plan(analysis.layers, Float.MAX_VALUE, { kind, frame ->
+			when (kind) {
+				io.github.psd2live.core.fit.HairKind.SKIRT -> frame.top + frame.height * 0.12f
+				io.github.psd2live.core.fit.HairKind.RIBBON -> frame.top + frame.height * 0.1f
+				else -> frame.top
+			}
+		}, 1f, 0.5f, kindOf = { layer ->
+			io.github.psd2live.core.fit.HairKind.clothOf(layer)?.takeIf { if (it == io.github.psd2live.core.fit.HairKind.SKIRT) skirt else ribbons }
+		}).map { chain ->
+			chain.copy(strength = config.recipe.value((if (chain.kind == io.github.psd2live.core.fit.HairKind.SKIRT) m.OUTFIT_SKIRT else m.OUTFIT_RIBBONS).id, "swing") / 100f)
+		}
+	}
+
+	private fun hairOnlyChains(analysis: PipelineAnalysis, faceRig: NinePoseFaceRig, config: PipelineConfig): List<io.github.psd2live.core.fit.HairChain> {
 		if (config.recipe.base("hair") !== io.github.psd2live.core.recipe.RigModules.HAIR_CHAINS || config.meshOnly) return emptyList()
 		val layers = analysis.layers.filter { layer ->
 			!(layer.semantic.tag == SemanticTag.FRONT_HAIR && config.hairSimulationFront) && !(layer.semantic.tag == SemanticTag.BACK_HAIR && config.hairSimulationBack)
@@ -1797,6 +1823,7 @@ object RigBuilder {
 				io.github.psd2live.core.fit.HairKind.BACK -> eye.coerceIn(frame.top, frame.bottom)
 				io.github.psd2live.core.fit.HairKind.TAIL -> frame.top + frame.height * 0.08f
 				io.github.psd2live.core.fit.HairKind.AHOGE -> frame.bottom - frame.height * 0.1f
+				else -> frame.top
 			}
 		}, config.recipe.baseValue("hair", "swing") / 100f, config.recipe.baseValue("hair", "softness") / 100f)
 	}
@@ -2712,8 +2739,14 @@ object RigBuilder {
 				config.rigEdits.skeleton?.enabled == true, stance.legsFrame, bodyFrame)
 			val id = DeformerId(chain.warpId)
 			val rows = io.github.psd2live.core.fit.HairChain.ROWS; val columns = io.github.psd2live.core.fit.HairChain.COLUMNS
-			val warp = identityWarp(id, tr("model.deformer.hairChain", layer.source.name), parentId, chain.frame, parentFrame,
-				if (layer.semantic.tag == SemanticTag.FRONT_HAIR) frontHairPartId else backHairPartId, rows = rows, columns = columns)
+			val part = when {
+				layer.semantic.tag == SemanticTag.FRONT_HAIR -> frontHairPartId
+				layer.semantic.tag == SemanticTag.BACK_HAIR -> backHairPartId
+				inferredGroup(layer, analysis.anchors) == LayerGroup.HEAD -> headAccessoryPartId
+				else -> bodyPartId
+			}
+			val warp = identityWarp(id, tr(if (chain.kind.hair) "model.deformer.hairChain" else "model.deformer.clothChain", layer.source.name),
+				parentId, chain.frame, parentFrame, part, rows = rows, columns = columns)
 			val rest = FloatArray((rows + 1) * (columns + 1) * 2).also { points ->
 				var i = 0
 				for (row in 0..rows) for (column in 0..columns) {
@@ -3256,7 +3289,19 @@ object RigBuilder {
 	private fun moduleBlendShapes(layer: ClassifiedLayer, data: MeshData, frame: Bounds, context: RigContext, config: PipelineConfig):
 		List<org.umamo.runtime.model.BlendShapeBinding<org.umamo.runtime.model.MeshForm>> =
 		eyeBlendShapes(layer, data, frame, context.fittedEyes(config), context.fittedBrows(config)) + mouthBlendShapes(layer, data, frame, context.fittedMouth(config)) +
-			headTurnShapes(layer, data.rigPositions, frame, context.headTurn(config))
+			headTurnShapes(layer, data.rigPositions, frame, context.headTurn(config)) + bustShapes(layer, data.rigPositions, frame, context, config)
+
+	/** The chest's bounce on the clothes over it (`body.bust`): tops that are not sleeves or skirts, and what hangs on them. */
+	private fun bustShapes(layer: ClassifiedLayer, positions: FloatArray, frame: Bounds, context: RigContext, config: PipelineConfig):
+		List<org.umamo.runtime.model.BlendShapeBinding<org.umamo.runtime.model.MeshForm>> {
+		if (layer.semantic.tag != SemanticTag.TOPWEAR && layer.semantic.tag != SemanticTag.NECKWEAR) return emptyList()
+		if (layer.semantic.role == PartRole.SLEEVE || layer.semantic.role == PartRole.SKIRT) return emptyList()
+		val m = io.github.psd2live.core.recipe.RigModules
+		if (!m.builds(m.BODY_BUST, config, io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis))) return emptyList()
+		val torso = context.stance.torso
+		return io.github.psd2live.core.fit.BustRig(torso.centerX, torso.shoulderY, torso.waistY, torso.halfWidth, config.recipe.value(m.BODY_BUST.id, "bounce") / 100f)
+			.shapes(positions, frame, ParameterId("ParamBustY"), ParameterId("ParamBustX"))
+	}
 
 	/** [layer]'s shapes turning the head in depth, on the shell of the head it lies on ([headShell]). */
 	private fun headTurnShapes(layer: ClassifiedLayer, positions: FloatArray, frame: Bounds, turn: io.github.psd2live.core.fit.HeadTurn?):
@@ -3860,7 +3905,7 @@ object RigBuilder {
 			.map { Parameter(ParameterId(it.id), tr(it.nameKey), it.min, it.max, it.default) } +
 			hairChains(context.analysis, context.faceRig, config).filter { chain -> context.deformers.any { it.id.raw == chain.warpId } }.flatMap { chain ->
 				val name = context.analysis.layers.firstOrNull { it.source.id.raw == chain.layerId }?.source?.name ?: chain.layerId
-				chain.parameters.map { p -> Parameter(p, tr("model.parameter.hairChain", name, p.raw.removePrefix("ParamHair")), -1f, 1f, 0f) }
+				chain.parameters.map { p -> Parameter(p, tr("model.parameter.hairChain", name, p.raw.removePrefix(chain.kind.prefix)), -1f, 1f, 0f) }
 			}
 	}
 
@@ -3876,7 +3921,8 @@ object RigBuilder {
 			group("ParamGroupMouth", tr("model.group.mouth"), listOf(StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN)),
 			group("ParamGroupBody", tr("model.group.body"), listOf(StandardParameters.BODY_X, StandardParameters.BODY_Y, StandardParameters.BODY_Z, StandardParameters.BODY_LEAN, StandardParameters.PROPORTION, StandardParameters.BREATH)),
 			group("ParamGroupPhysics", tr("model.group.physics"), listOf(StandardParameters.HAIR_FRONT, StandardParameters.HAIR_BACK) +
-				moduleParameters.map { it.id }.filter { it.raw.startsWith("ParamHair") && it != StandardParameters.HAIR_FRONT && it != StandardParameters.HAIR_BACK }),
+				moduleParameters.map { it.id }.filter { (it.raw.startsWith("ParamHair") || it.raw.startsWith("ParamCloth")) &&
+					it != StandardParameters.HAIR_FRONT && it != StandardParameters.HAIR_BACK }),
 		)
 		return if (customParameters.isNotEmpty()) {
 			base + group("ParamGroupCustom", tr("model.group.custom"), customParameters.map { it.id })
