@@ -26,6 +26,7 @@ object PhysicsCatalog {
 			available.mapTo(HashSet()) { original[it] ?: it }
 		}
 		val generated = (PhysicsGenerator.presetRules(present, standard).map { it to PhysicsOrigin.PRESET } +
+			PhysicsGenerator.moduleRules(standard).map { it to PhysicsOrigin.PRESET } +
 			PhysicsGenerator.skeletonRules(overlay.skeleton, standard).map { it to PhysicsOrigin.SKELETON } +
 			PhysicsGenerator.swingRules(overlay.swingEdits, standard).map { it to PhysicsOrigin.SWING } +
 			io.github.psd2live.core.sim.SimGenerator.physicsRules(overlay.simEdits, standard).map { it to PhysicsOrigin.SIMULATION } +
@@ -34,7 +35,7 @@ object PhysicsCatalog {
 		val generatedIds = generated.mapTo(HashSet()) { it.first.id }
 		val authored = overlay.physicsEdits.associateBy { it.id }
 		fun enabled(id: String, origin: PhysicsOrigin) =
-			if (origin == PhysicsOrigin.PRESET) enabledPresets[id] else id !in overlay.disabledPhysicsIds
+			if (origin == PhysicsOrigin.PRESET && id in PhysicsGenerator.presetIds) enabledPresets[id] else id !in overlay.disabledPhysicsIds
 		val rows = ordered(generated.map { (rule, origin) ->
 			val setting = authored[rule.id] ?: rule
 			PhysicsGroup(setting, origin, rule, enabled(rule.id, origin), issueOf(setting, available))

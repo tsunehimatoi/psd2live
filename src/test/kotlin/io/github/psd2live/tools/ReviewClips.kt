@@ -94,7 +94,9 @@ internal object ReviewClips {
 	val poses: Map<String, List<Pair<String, Map<String, Float>>>> = mapOf(
 		"eye" to listOf(1f, 0.75f, 0.5f, 0.25f, 0.1f, 0f).map { "open $it" to eyes(it) } +
 			listOf(0.5f, 0f).map { "open $it smile" to eyes(it, 1f) } +
-			listOf(-1f to 0f, 1f to 0f, 0f to 1f, 0f to -1f).map { (x, y) -> "gaze $x,$y" to mapOf("ParamEyeBallX" to x, "ParamEyeBallY" to y) },
+			listOf(-1f to 0f, 1f to 0f, 0f to 1f, 0f to -1f).map { (x, y) -> "gaze $x,$y" to mapOf("ParamEyeBallX" to x, "ParamEyeBallY" to y) } +
+			listOf("wide" to eyes(2f), "angry" to mapOf("ParamEyeLForm" to 1f, "ParamEyeRForm" to 1f), "sad" to mapOf("ParamEyeLForm" to -1f, "ParamEyeRForm" to -1f),
+				"squint" to mapOf("ParamEyeLSquint" to 1f, "ParamEyeRSquint" to 1f), "angry half" to eyes(0.5f) + mapOf("ParamEyeLForm" to 1f, "ParamEyeRForm" to 1f)),
 		"brow" to listOf(-1f, 0f, 1f).flatMap { y -> listOf(1f, 0f).map { open -> "brow $y open $open" to eyes(open) + mapOf("ParamBrowLY" to y, "ParamBrowRY" to y) } },
 		"mouth" to listOf(-1f, 0f, 1f).flatMap { form -> listOf(0f, 0.25f, 0.5f, 0.75f, 1f).map { open -> "form $form open $open" to mapOf("ParamMouthForm" to form, "ParamMouthOpenY" to open) } },
 		"head" to listOf(-30f, -15f, 0f, 15f, 30f).flatMap { x -> listOf(-30f, 0f, 30f).map { y -> "x $x y $y" to mapOf("ParamAngleX" to x, "ParamAngleY" to y) } },

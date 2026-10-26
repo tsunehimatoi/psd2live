@@ -33,8 +33,12 @@ StandardParameters に対応します。メッシュ専用、デフォーマ無�
 | `ParamAngleX` | -45…45 | 0 |
 | `ParamAngleY`, `ParamAngleZ` | -30…30 | 0 |
 | `ParamBodyAngleX`, `ParamBodyAngleY`, `ParamBodyAngleZ`, `ParamBodyLean`, `ParamProportion` | -10…10 | 0 |
-| `ParamEyeLOpen`, `ParamEyeROpen` | 0…1 | 1 |
+| `ParamEyeLOpen`, `ParamEyeROpen` | 0…1（`eye.wide` のとき 0…2） | 1 |
 | `ParamEyeBallX`, `ParamEyeBallY`, `ParamEyeBallForm` | -1…1 | 0 |
+| `ParamEyeLSmile`, `ParamEyeRSmile`（`eye.smile`） | 0…1 | 0 |
+| `ParamEyeLForm`, `ParamEyeRForm`（`eye.emotion`、−1 哀しみ … +1 怒り） | -1…1 | 0 |
+| `ParamEyeLSquint`, `ParamEyeRSquint`（`eye.emotion`） | 0…1 | 0 |
+| `ParamEyeLBounce`, `ParamEyeRBounce`（`eye.aftershock`、物理出力） | -1…1 | 0 |
 | `ParamBrowLY`, `ParamBrowRY` | -1…1 | 0 |
 | `ParamMouthForm` | -1…1 | 0 |
 | `ParamMouthOpenY`, `ParamBreath` | 0…1 | 0 |

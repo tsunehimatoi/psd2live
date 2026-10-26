@@ -31,8 +31,12 @@ The table follows StandardParameters. Mesh-only mode, disabled deformers or miss
 | `ParamAngleX` | -45…45 | 0 |
 | `ParamAngleY`, `ParamAngleZ` | -30…30 | 0 |
 | `ParamBodyAngleX`, `ParamBodyAngleY`, `ParamBodyAngleZ`, `ParamBodyLean`, `ParamProportion` | -10…10 | 0 |
-| `ParamEyeLOpen`, `ParamEyeROpen` | 0…1 | 1 |
+| `ParamEyeLOpen`, `ParamEyeROpen` | 0…1 (0…2 with `eye.wide`) | 1 |
 | `ParamEyeBallX`, `ParamEyeBallY`, `ParamEyeBallForm` | -1…1 | 0 |
+| `ParamEyeLSmile`, `ParamEyeRSmile` (`eye.smile`) | 0…1 | 0 |
+| `ParamEyeLForm`, `ParamEyeRForm` (`eye.emotion`, −1 sad … +1 angry) | -1…1 | 0 |
+| `ParamEyeLSquint`, `ParamEyeRSquint` (`eye.emotion`) | 0…1 | 0 |
+| `ParamEyeLBounce`, `ParamEyeRBounce` (`eye.aftershock`, physics output) | -1…1 | 0 |
 | `ParamBrowLY`, `ParamBrowRY` | -1…1 | 0 |
 | `ParamMouthForm` | -1…1 | 0 |
 | `ParamMouthOpenY`, `ParamBreath` | 0…1 | 0 |

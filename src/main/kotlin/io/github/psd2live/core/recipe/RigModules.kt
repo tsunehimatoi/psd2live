@@ -40,14 +40,58 @@ object RigModules {
 	 * eyeball, keeping their arc, the white, lashes and lid skin each following them their own way.
 	 */
 	val EYE_FITTED = RigBase("eye/fitted", knobs = listOf(
-		RecipeKnob("lowerShare", P, 0f..50f, 25f),
+		RecipeKnob("lowerShare", P, 0f..50f, 5f),
 		RecipeKnob("roundness", P, 40f..160f, 100f),
 		RecipeKnob("lashSquash", P, 20f..100f, 60f, advanced = true),
 	))
 
+	private const val FITTED_EYE = "eye/fitted"
+	private fun fittedEye(subject: RecipeSubject) = subject.has(SemanticTag.EYEWHITE) && subject.has(SemanticTag.EYELASH)
+	private fun pair(name: String, min: Float, max: Float, default: Float, group: String = "ParamGroupEyes") = listOf(
+		ModuleParameter("ParamEyeL$name", "model.parameter.eyeL$name", min, max, default, group),
+		ModuleParameter("ParamEyeR$name", "model.parameter.eyeR$name", min, max, default, group),
+	)
+
+	/** The smile of the eyes: closing, the lids meet in an upward arch and the lower lid pushes up; open, the eye is as drawn. */
+	val EYE_SMILE = RigModule("eye.smile", ModuleTier.CORE, base = FITTED_EYE, applies = ::fittedEye,
+		knobs = listOf(RecipeKnob("arch", P, 0f..200f, 100f), RecipeKnob("push", P, 0f..100f, 50f)),
+		defines = pair("Smile", 0f, 1f, 0f))
+
+	/** The eye widening past its drawn opening (openness up to 2), surprised, the iris narrowing. */
+	val EYE_WIDE = RigModule("eye.wide", ModuleTier.MAJOR, base = FITTED_EYE, applies = ::fittedEye,
+		knobs = listOf(RecipeKnob("lift", P, 10f..80f, 35f)))
+
+	/** The lids following the gaze: looking up lifts the upper lid, looking down drops it, and its peak leans with the eye. */
+	val EYE_GAZE_LID = RigModule("eye.gaze-lid", ModuleTier.MAJOR, base = FITTED_EYE, applies = ::fittedEye,
+		knobs = listOf(RecipeKnob("follow", P, 0f..200f, 100f)))
+
+	/** The emotions of the eye: angry (the inner lid presses down) and sad (the inner lid lifts, the outer droops), and the squint. */
+	val EYE_EMOTION = RigModule("eye.emotion", ModuleTier.MAJOR, base = FITTED_EYE, applies = ::fittedEye,
+		knobs = listOf(RecipeKnob("strength", P, 0f..200f, 100f)),
+		defines = pair("Form", -1f, 1f, 0f) + pair("Squint", 0f, 1f, 0f))
+
+	/** Lid lines and lid shadows sinking into the closing lid before it shuts. */
+	val EYE_LID_FADE = RigModule("eye.lid-fade", ModuleTier.MAJOR, base = FITTED_EYE,
+		applies = { it.has(SemanticTag.EYELASH, io.github.psd2live.core.PartRole.LID) || it.has(SemanticTag.EYELASH, io.github.psd2live.core.PartRole.SHADOW) })
+
+	/** The aftershock of a blink: the lid overshoots and settles, the lashes flick, driven by a pendulum on the openness. */
+	val EYE_AFTERSHOCK = RigModule("eye.aftershock", ModuleTier.MINOR, base = FITTED_EYE, applies = ::fittedEye,
+		knobs = listOf(RecipeKnob("softness", P, 0f..200f, 100f)),
+		defines = pair("Bounce", -1f, 1f, 0f, "ParamGroupPhysics"),
+		physicsGroups = listOf(PhysicsGenerator.EYE_L_BOUNCE_ID, PhysicsGenerator.EYE_R_BOUNCE_ID))
+
+	/** The highlights drifting against the turn of the head, as a light that stays put, and going out before the lid covers them. */
+	val EYE_HIGHLIGHT = RigModule("eye.highlight", ModuleTier.MAJOR, base = FITTED_EYE,
+		applies = { it.has(SemanticTag.IRIDES, io.github.psd2live.core.PartRole.HIGHLIGHT) },
+		knobs = listOf(RecipeKnob("parallax", P, 0f..200f, 100f)))
+
+	/** The iris squashing toward its bottom as the lid closes over it. */
+	val EYE_SQUASH = RigModule("eye.squash", ModuleTier.MINOR, base = FITTED_EYE, applies = { it.has(SemanticTag.IRIDES) && fittedEye(it) })
+
 	val areas: List<RigArea> = listOf(
 		RigArea("face", listOf(legacy("face")), emptyList()),
-		RigArea("eye", listOf(legacy("eye"), EYE_FITTED), listOf(EYE_SEE_THROUGH, EYE_JELLY)),
+		RigArea("eye", listOf(legacy("eye"), EYE_FITTED), listOf(EYE_SEE_THROUGH, EYE_SMILE, EYE_WIDE, EYE_GAZE_LID, EYE_EMOTION, EYE_LID_FADE,
+			EYE_HIGHLIGHT, EYE_JELLY, EYE_AFTERSHOCK, EYE_SQUASH)),
 		RigArea("brow", listOf(legacy("brow")), listOf(BROW_SEE_THROUGH)),
 		RigArea("mouth", listOf(legacy("mouth")), listOf(MOUTH_OUTLINE)),
 		RigArea("hair", listOf(legacy("hair")), emptyList()),
@@ -78,7 +122,12 @@ object RigModules {
 
 	/** Whether [config] builds [module] for the art [subject] shows: switched on, its prerequisites too, and applying. */
 	fun builds(module: RigModule, config: io.github.psd2live.core.PipelineConfig, subject: RecipeSubject): Boolean =
-		module.applies(subject) && config.recipe.switchedOn(module) { setting(config, it) }
+		module.applies(subject) && config.recipe.switchedOn(module) { setting(config, it) } &&
+			(module.base == null || config.recipe.base(module.area).id == module.base)
+
+	/** The parameters the modules [config] builds for [subject] add, in registry order. */
+	fun parameters(config: io.github.psd2live.core.PipelineConfig, subject: RecipeSubject): List<ModuleParameter> =
+		modules.filter { builds(it, config, subject) }.flatMap { it.defines }
 
 	fun area(id: String): RigArea? = areaById[id]
 	fun module(id: String): RigModule? = moduleById[id]

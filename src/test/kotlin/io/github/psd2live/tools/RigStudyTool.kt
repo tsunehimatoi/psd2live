@@ -175,6 +175,7 @@ private class Study(private val manifestFile: File, private val out: File) {
 	private val frameSide = setting("PSD2LIVE_STUDY_FRAME", "200").toInt()
 
 	fun run() {
+		if (setting("PSD2LIVE_STUDY_REVIEW", "") == "1") { review(); return }
 		File(out, "profile.txt").writeText(profile())
 		val effects = model.parameters.parallelStream().map(::measure).toList()
 		File(out, "effects.txt").writeText(describe(effects))
@@ -577,6 +578,33 @@ private class Study(private val manifestFile: File, private val out: File) {
 		grid("body", bodyX, bodyY, figure.expanded(0.03f), 520)
 		grid("eyes", eyeOpen, eyeSmile, eyeOpen?.let { byId[it.id.raw]?.crop?.expanded(0.25f) }, 360)
 		grid("mouth", mouthForm, mouthOpen, (mouthOpen ?: mouthForm)?.let { byId[it.id.raw]?.crop?.expanded(0.6f) }, 300)
+	}
+
+	/**
+	 * PSD2LIVE_STUDY_REVIEW=1: only the eyes in the poses the generated rig is reviewed in (`RigReviewTool`), both
+	 * eyes together, closing in steps, widened past 1 where the model can, and looking up and down: `review-eye.png`.
+	 */
+	private fun review() {
+		val left = eyeOpen ?: return
+		val byId = listOfNotNull(left, eyeOpenRight).associate { it.id.raw to measure(it) }
+		val crops = byId.values.mapNotNull { it.crop }
+		if (crops.isEmpty()) return
+		val box = floatArrayOf(crops.minOf { it[0] }, crops.minOf { it[1] }, crops.maxOf { it[2] }, crops.maxOf { it[3] }).let { b ->
+			val cx = (b[0] + b[2]) / 2; val cy = (b[1] + b[3]) / 2; val w = (b[2] - b[0]) * 1.3f; val h = max((b[3] - b[1]) * 2.2f, w * 0.4f)
+			floatArrayOf(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
+		}
+		fun eyes(value: Float) = listOfNotNull(left, eyeOpenRight).associate { it.id.raw to value }
+		val ballY = model.parameters.firstOrNull { it.id.raw == "ParamEyeBallY" }
+		val poses = listOf(1f, 0.75f, 0.5f, 0.25f, 0.1f, 0f).map { "open ${f(it)}" to eyes(it) } +
+			(if (left.max > 1f) listOf("open ${f(left.max)}" to eyes(left.max)) else emptyList()) +
+			(if (ballY != null) listOf("look up" to mapOf(ballY.id.raw to ballY.max), "look down" to mapOf(ballY.id.raw to ballY.min)) else emptyList())
+		val frames = poses.map { (name, values) -> render(defaults + values, box, 420).also { caption(it, name, 13f) } }
+		val sheet = BufferedImage(frames.sumOf { it.width }, frames.maxOf { it.height }, BufferedImage.TYPE_INT_RGB)
+		val g = sheet.createGraphics()
+		var x = 0
+		for (frame in frames) { g.drawImage(frame, x, 0, null); x += frame.width }
+		g.dispose()
+		ImageIO.write(sheet, "png", File(out, "review-eye.png"))
 	}
 
 	private fun wireframes(effects: List<Effect>) {

@@ -19,6 +19,12 @@ class RecipeKnob(
 }
 
 /**
+ * A parameter a module adds to the rig: its [id] (a Cubism standard name where there is one), the message key of its
+ * name, its range and default, and the parameter group ([group], a `ParamGroup…` id) it is listed in.
+ */
+class ModuleParameter(val id: String, val nameKey: String, val min: Float, val max: Float, val default: Float, val group: String)
+
+/**
  * How much a module matters to the look: [CORE] modules are what a part needs to look finished, [MAJOR] ones add a
  * visible quality, [MINOR] ones a finish. The presets and the parameter budget turn the least important off first.
  */
@@ -45,11 +51,12 @@ class RigBase(val id: String, val version: Int = 1, val knobs: List<RecipeKnob> 
  * One capability of an area that adds to the rest - the eye smile, gaze moving the lids, the lids' aftershock - each
  * switched on or off on its own. Its [id] is `<area>.<name>`.
  *
- * [requires] lists modules it builds on: switching one of those off switches this one off with it. [setting] names
+ * [requires] lists modules it builds on: switching one of those off switches this one off with it. [base] is the base
+ * of its area it works on (the eye modules on the fitted lids): under another base it is not built. [setting] names
  * the project setting that already switches a capability older than the registry (eye jelly, eyes through the bangs):
  * such a module's state is that setting's, in legacy projects too. [applies] says whether the art has what the module
- * works on, [parameters] the parameters it adds for that art, and [estimate] what it costs when it is off and nothing
- * built shows it ([ModuleCost.measure] reads the built rig when it is on).
+ * works on, [defines] the parameters it adds, and [estimate] what it costs when it is off and nothing built shows it
+ * ([ModuleCost.measure] reads the built rig when it is on).
  */
 class RigModule(
 	val id: String,
@@ -57,12 +64,16 @@ class RigModule(
 	val version: Int = 1,
 	val knobs: List<RecipeKnob> = emptyList(),
 	val requires: List<String> = emptyList(),
+	val base: String? = null,
 	val setting: String? = null,
 	val physicsGroups: List<String> = emptyList(),
 	val applies: (RecipeSubject) -> Boolean = { true },
-	val parameters: (RecipeSubject) -> List<String> = { emptyList() },
-	val estimate: (RecipeSubject) -> ModuleCost = { ModuleCost(it.let { subject -> parameters(subject) }) },
+	val defines: List<ModuleParameter> = emptyList(),
+	val estimate: (RecipeSubject) -> ModuleCost = { ModuleCost(defines.map { it.id }, physicsGroups = physicsGroups.size) },
 ) {
+	/** The ids of the parameters it adds for the art [subject]. */
+	val parameters: (RecipeSubject) -> List<String> = { defines.map { it.id } }
+
 	val area: String get() = id.substringBefore('.')
 	private val knobById = knobs.associateBy { it.id }
 

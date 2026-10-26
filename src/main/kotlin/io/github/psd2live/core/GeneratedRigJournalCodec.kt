@@ -9,7 +9,6 @@ internal object GeneratedRigJournalCodec {
         put("parameters", parameters(model))
         put("deformers", JsonArray(model.deformers.map(::deformer)))
         put("drawables", JsonArray(model.drawables.map { drawable -> buildJsonObject {
-            require(drawable.blendShapes.isEmpty()) { "Generated scaffold must not carry author blend shapes" }
             put("id", drawable.id.raw); put("name", drawable.name); put("parent", drawable.parentDeformerId?.raw?.let(::JsonPrimitive) ?: JsonNull)
             put("positions", drawable.mesh?.let { floats(it.positions) } ?: JsonNull)
             put("uvs", drawable.mesh?.let { floats(it.uvs) } ?: JsonNull)
@@ -19,6 +18,9 @@ internal object GeneratedRigJournalCodec {
             put("multiply", color(drawable.multiplyColor)); put("screen", color(drawable.screenColor))
             put("order", drawable.drawOrder); put("visible", drawable.isVisible)
             put("masks", JsonArray(drawable.maskedBy.map { JsonPrimitive(it.raw) })); put("invert_mask", drawable.invertMask)
+            // A rig module's additive shapes (gaze on the lids, an emotion's eye shape); left out when there are none, so
+            // scaffolds stored before them keep their text.
+            if (drawable.blendShapes.isNotEmpty()) put("blends", JsonArray(drawable.blendShapes.map(::blend)))
         } }))
         put("width", model.canvasWidth); put("height", model.canvasHeight)
     }
@@ -54,7 +56,8 @@ internal object GeneratedRigJournalCodec {
                 channelGrids = channels(d.getValue("channels").jsonObject, model), opacity = d.number("opacity"),
                 multiplyColor = color(d.getValue("multiply")), screenColor = color(d.getValue("screen")),
                 drawOrder = d.number("order"), isVisible = d.getValue("visible").jsonPrimitive.boolean,
-                invertMask = d.getValue("invert_mask").jsonPrimitive.boolean)
+                invertMask = d.getValue("invert_mask").jsonPrimitive.boolean,
+                blendShapes = d["blends"]?.jsonArray?.map { blend(it.jsonObject, mesh?.positions?.size ?: 0, model) }.orEmpty())
         }
         require(drawables.map { it.id }.distinct().size == drawables.size) { "Duplicate generated mesh IDs" }
         require(drawables.all { it.parentDeformerId == null || parentExists(it.parentDeformerId, deformers) }) { "Generated mesh parent is missing" }
@@ -62,6 +65,39 @@ internal object GeneratedRigJournalCodec {
     }
 
     private fun parentExists(parent: DeformerId?, deformers: List<Deformer>) = deformers.any { it.id == parent }
+
+    private fun blend(binding: BlendShapeBinding<MeshForm>) = buildJsonObject {
+        put("parameter", binding.parameterId.raw); put("keys", floats(binding.keys)); put("neutral", binding.neutralIndex)
+        put("forms", JsonArray(binding.forms.map { form -> form?.let { buildJsonObject {
+            put("deltas", floats(it.positionDeltas)); put("order", it.drawOrder); put("opacity", it.opacity)
+            put("multiply", color(it.multiplyColor)); put("screen", color(it.screenColor))
+        } } ?: JsonNull }))
+        if (binding.limits.isNotEmpty()) put("limits", JsonArray(binding.limits.map { limit -> buildJsonObject {
+            put("parameter", limit.parameterId.raw)
+            put("points", JsonArray(limit.points.map { floats(floatArrayOf(it.value, it.weight)) }))
+        } }))
+    }
+
+    private fun blend(value: JsonObject, size: Int, model: PuppetModel): BlendShapeBinding<MeshForm> {
+        val parameter = ParameterId(value.text("parameter"))
+        require(model.parameters.any { it.id == parameter }) { "Generated blend shape names an unknown parameter" }
+        val keys = value.getValue("keys").jsonArray.map { it.jsonPrimitive.float }.toFloatArray()
+        val forms = value.getValue("forms").jsonArray.map { element ->
+            if (element == JsonNull) null else element.jsonObject.let { f ->
+                MeshForm(f.getValue("deltas").jsonArray.map { it.jsonPrimitive.float }.toFloatArray().also {
+                    require(it.size == size && it.all(Float::isFinite)) { "Invalid generated blend shape" }
+                }, f.number("order"), f.number("opacity"), color(f.getValue("multiply")), color(f.getValue("screen")))
+            }
+        }
+        val neutral = value.getValue("neutral").jsonPrimitive.int
+        require(keys.size == forms.size && neutral in keys.indices) { "Invalid generated blend shape keys" }
+        val limits = value["limits"]?.jsonArray?.map { element -> element.jsonObject.let { l ->
+            BlendWeightLimit(ParameterId(l.text("parameter")), l.getValue("points").jsonArray.map { point ->
+                point.jsonArray.map { it.jsonPrimitive.float }.let { BlendWeightLimitPoint(it[0], it[1]) }
+            })
+        } }.orEmpty()
+        return BlendShapeBinding(parameter, keys, neutral, forms, limits)
+    }
     fun parameters(model: PuppetModel) = JsonArray(model.parameters.map { parameter -> buildJsonObject {
         put("id", parameter.id.raw); put("name", parameter.name); put("min", parameter.min); put("max", parameter.max)
         put("default", parameter.default); put("kind", parameter.kind.name); put("repeat", parameter.repeat)

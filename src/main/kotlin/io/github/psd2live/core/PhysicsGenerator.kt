@@ -10,6 +10,8 @@ object PhysicsGenerator {
 	const val FRONT_HAIR_ID = "PhysicsHairFront"
 	const val BACK_HAIR_ID = "PhysicsHairBack"
 	const val EYE_JELLY_ID = "PhysicsEyeJelly"
+	const val EYE_L_BOUNCE_ID = "PhysicsEyeLBounce"
+	const val EYE_R_BOUNCE_ID = "PhysicsEyeRBounce"
 	val presetIds = listOf(BACK_HAIR_ID, FRONT_HAIR_ID, EYE_JELLY_ID)
 
 	/** One flag per preset: whether the art has the part, or whether the user left the preset on. */
@@ -37,6 +39,22 @@ object PhysicsGenerator {
 			fun present(analysis: PipelineAnalysis?, simulatedFront: Boolean, simulatedBack: Boolean) = present(analysis).let {
 				it.copy(frontHair = it.frontHair && !simulatedFront, backHair = it.backHair && !simulatedBack)
 			}
+		}
+	}
+
+	/**
+	 * The pendulums of the rig modules that the model's parameters ([available]) call for: the aftershock of each eye's
+	 * blink (`eye.aftershock`), a short springy pendulum the openness swings, its angle the eye's bounce.
+	 */
+	internal fun moduleRules(available: Set<String>): List<RigPhysicsEdit> = buildList {
+		for ((side, id) in listOf("L" to EYE_L_BOUNCE_ID, "R" to EYE_R_BOUNCE_ID)) {
+			val open = "ParamEye${side}Open"; val bounce = "ParamEye${side}Bounce"
+			if (open !in available || bounce !in available) continue
+			add(RigPhysicsEdit(id = id, name = tr("model.physics.eyeBounce", side),
+				inputs = listOf(PhysicsInput(open, 100f, PhysicsSourceType.X)),
+				outputs = listOf(PhysicsOutput(bounce, 2, 1.4f)),
+				segments = listOf(PhysicsSegment(1f, 0.9f, 0.6f, 1.6f), PhysicsSegment(1.2f, 0.85f, 0.45f, 1.8f)),
+				normalization = PhysicsNormalization(-1f, 0f, 1f, -10f, 0f, 10f)))
 		}
 	}
 

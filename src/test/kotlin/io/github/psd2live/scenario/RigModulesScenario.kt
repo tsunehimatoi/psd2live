@@ -68,7 +68,9 @@ class RigModulesScenario {
 		fun keys(layer: String) = drawable(layer).geometryGrid!!.axes.single { it.parameterId == StandardParameters.EYE_L_OPEN }.keys.toList()
 		fun swap(layer: String) = drawable(layer).channelGrids[org.umamo.runtime.model.FormChannel.OPACITY]?.axes?.single()?.keys?.toList()
 		val fitted = listOf(0f, io.github.psd2live.core.fit.EyeRig.SWAP)
-		fun isFitted(label: String) = expect(label, keys("lash_l").take(2) == fitted && keys("lash_l").size == 6 && keys("white_l") == keys("lash_l") &&
+		fun isFitted(label: String) = expect(label, keys("lash_l").take(2) == fitted && keys("lash_l").takeLast(3) == listOf(1f, 1.5f, 2f) && keys("white_l") == keys("lash_l") &&
+			puppet.parameters.single { it.id == StandardParameters.EYE_L_OPEN }.max == 2f &&
+			drawable("lash_l").blendShapes.any { it.parameterId.raw == "ParamEyeBallY" } && puppet.parameters.any { it.id.raw == "ParamEyeLSmile" } &&
 			swap("lash_l") == listOf(0f, io.github.psd2live.core.fit.EyeRig.SWAP, 1f) && swap("close_l") == listOf(0f, io.github.psd2live.core.fit.EyeRig.SWAP, 1f)) {
 			"the fitted eye keys its lids at closed, the swap to the drawn closed line, the crease and on: ${keys("lash_l")} / ${keys("white_l")}, " +
 				"swaps ${swap("lash_l")} / ${swap("close_l")}" }

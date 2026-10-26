@@ -84,6 +84,10 @@ class EyeFitTest {
 		assertTrue(rig.upper(0.4f).let { it[mid / 2] > it[mid] }, "a lowered lid keeps its upward arc")
 		val closed = rig.upper(0f)
 		val shut = rig.lower(0f)
-		assertTrue((0 until EyeFit.SAMPLES).all { shut[it] - closed[it] < 1e-4f }, "the lower lid does not meet the closed lid")
+		assertTrue((1 until EyeFit.SAMPLES - 1).all { closed[it] < shut[it] && shut[it] - closed[it] < 0.2f * rig.opening },
+			"the closed lid lies just above the lower lid, which barely moves")
+		val top = 68f + rig.delta(EyeRig.EyeMesh.WHITE, 140f, 68f, 0f).second
+		val bottom = 92f + rig.delta(EyeRig.EyeMesh.WHITE, 140f, 92f, 0f).second
+		assertTrue(abs(top - bottom) < 0.5f, "the white folds into the closed lid: its top at $top, its bottom at $bottom")
 	}
 }
