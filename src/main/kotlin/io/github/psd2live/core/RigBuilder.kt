@@ -1,5 +1,7 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.core.fit.handles
+import io.github.psd2live.core.fit.moved
 import org.umamo.runtime.eval.scalarAt
 import io.github.psd2live.i18n.tr
 import kotlinx.serialization.json.contentOrNull
@@ -319,14 +321,25 @@ object RigBuilder {
 			if (config.recipe.base("eye") !== io.github.psd2live.core.recipe.RigModules.EYE_FITTED) return null
 			val values = io.github.psd2live.core.recipe.RigModules.EYE_FITTED.knobs.map { config.recipe.baseValue("eye", it.id) }
 			val options = eyeOptions(config)
-			return fittedEyes.getOrPut(listOf(values, options, config.parentOverrides, deformersEnabled)) {
+			val moved = listOf(config.recipe.moves("eye.L"), config.recipe.moves("eye.R"))
+			return fittedEyes.getOrPut(listOf(values, options, config.parentOverrides, deformersEnabled, moved)) {
 				val space = analysis.layers.firstOrNull { it.semantic.tag == SemanticTag.EYEWHITE && it.opaquePixels > 0 }?.let { headSpaceFor(it, config) }
-				val result = io.github.psd2live.core.fit.EyeFitting.fit(analysis.layers, faceRig.centerX) { x, y -> space?.toAligned(x, y) ?: (x to y) }
-				io.github.psd2live.core.fit.FittedEyes(result, result.fits.mapValues { (_, fit) ->
+				val toRig = { x: Float, y: Float -> space?.toAligned(x, y) ?: (x to y) }
+				val result = io.github.psd2live.core.fit.EyeFitting.fit(analysis.layers, faceRig.centerX, toRig)
+				io.github.psd2live.core.fit.FittedEyes(result, result.fits.mapValues { (side, drawn) ->
+					val fit = drawn.moved(rigMoves(config, if (side == Side.LEFT) "eye.L" else "eye.R", toRig))
 					io.github.psd2live.core.fit.EyeRig(fit, values[0] / 100f, values[1] / 100f, values[2] / 100f,
 						smileArc = options.smileArc, smilePush = options.smilePush, wideLift = options.wideLift)
 				}, options)
 			}
+		}
+
+		/** [feature]'s handle moves in [config], carried from canvas pixels into the rig's space by [toRig]. */
+		fun rigMoves(config: PipelineConfig, feature: String, toRig: (Float, Float) -> Pair<Float, Float>): Map<String, io.github.psd2live.core.fit.RigMove> {
+			val moves = config.recipe.moves(feature)
+			if (moves.isEmpty()) return emptyMap()
+			val (ox, oy) = toRig(0f, 0f)
+			return moves.mapValues { (_, move) -> toRig(move.dx, move.dy).let { (x, y) -> (x - ox) to (y - oy) } }
 		}
 
 		/** Which eye modules [config] builds on this art, with their values. */
@@ -401,12 +414,13 @@ object RigBuilder {
 				jaw = on(m.MOUTH_JAW), jawShare = value(m.MOUTH_JAW, "share"),
 				depth = on(m.MOUTH_DEPTH), depthAmount = value(m.MOUTH_DEPTH, "depth"),
 				spring = on(m.MOUTH_SPRING))
-			return fittedMouths.getOrPut(listOf(options, config.parentOverrides, deformersEnabled, config.recipe.base("eye"))) {
+			return fittedMouths.getOrPut(listOf(options, config.parentOverrides, deformersEnabled, config.recipe.base("eye"), config.recipe.moves("mouth"))) {
 				val mouth = analysis.layers.firstOrNull { it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && it.opaquePixels > 0 }
 				val space = mouth?.let { headSpaceFor(it, config) }
 				val toRig = { x: Float, y: Float -> space?.toAligned(x, y) ?: (x to y) }
 				val level = fittedEyes(config)?.fitting?.level ?: io.github.psd2live.core.fit.EyeFitting.fit(analysis.layers, faceRig.centerX, toRig).level
-				val result = io.github.psd2live.core.fit.MouthFitting.fit(analysis.layers, level, toRig)
+				val drawn = io.github.psd2live.core.fit.MouthFitting.fit(analysis.layers, level, toRig)
+				val result = io.github.psd2live.core.fit.MouthFitting.Result(drawn.fit?.moved(rigMoves(config, "mouth", toRig)), drawn.reason, drawn.layers)
 				val rig = result.fit?.let { io.github.psd2live.core.fit.MouthRig(it, options) }
 				io.github.psd2live.core.fit.FittedMouth(result, rig, rig?.let { chinDepth(it, config) } ?: 0.6f, analysis.layers)
 			}
@@ -443,7 +457,8 @@ object RigBuilder {
 				shape = m.builds(m.BROW_SHAPE, config, subject), shapeStrength = config.recipe.value(m.BROW_SHAPE.id, "strength") / 100f,
 				blink = m.builds(m.BROW_BLINK, config, subject), blinkDip = config.recipe.value(m.BROW_BLINK.id, "dip") / 100f)
 			val lift = config.recipe.baseValue("brow", "lift") / 100f
-			return fittedBrows.getOrPut(listOf(options, lift, config.parentOverrides, deformersEnabled, config.recipe.base("eye"))) {
+			return fittedBrows.getOrPut(listOf(options, lift, config.parentOverrides, deformersEnabled, config.recipe.base("eye"),
+				config.recipe.moves("brow.L"), config.recipe.moves("brow.R"), config.recipe.moves("eye.L"), config.recipe.moves("eye.R"))) {
 				val brows = analysis.layers.filter { it.semantic.tag == SemanticTag.EYEBROW && it.opaquePixels > 0 && it.semantic.role == null && it.semantic.side != Side.NONE }
 				val space = brows.firstOrNull()?.let { headSpaceFor(it, config) }
 				val toRig = { x: Float, y: Float -> space?.toAligned(x, y) ?: (x to y) }
@@ -451,7 +466,8 @@ object RigBuilder {
 				val level = eyes?.fitting?.level ?: io.github.psd2live.core.fit.EyeFitting.fit(analysis.layers, faceRig.centerX, toRig).level
 				brows.groupBy { it.semantic.side }.mapNotNull { (side, layers) ->
 					val layer = layers.maxBy { it.opaquePixels }
-					val fit = io.github.psd2live.core.fit.BrowFit.of(layer, level, faceRig.centerX, toRig) ?: return@mapNotNull null
+					val fit = io.github.psd2live.core.fit.BrowFit.of(layer, level, faceRig.centerX, toRig)
+						?.moved(rigMoves(config, if (side == Side.LEFT) "brow.L" else "brow.R", toRig)) ?: return@mapNotNull null
 					// The brow travels about half the height of the eye below it; without a fitted eye, a quarter of its length.
 					val travel = eyes?.rigs?.get(side)?.let { it.opening * it.fit.width * lift } ?: (fit.length * 0.25f * lift / 0.45f)
 					side to io.github.psd2live.core.fit.BrowRig(fit, travel, options)
@@ -559,6 +575,30 @@ object RigBuilder {
 	 * Call it once per rig build and keep the result: two contexts derived from different analyses
 	 * describe the same deformers' frames only while every layer bound that feeds them is unchanged.
 	 */
+	/** One feature handle where it sits on the canvas ([io.github.psd2live.core.fit.FeatureHandles]). */
+	data class FeatureHandle(val feature: String, val handle: String, val x: Float, val y: Float)
+
+	/**
+	 * The feature handles of [analysis] under [config], on the canvas: the fitted eyes', brows' and mouth's, moved as the
+	 * recipe moves them. Empty for features the recipe does not fit.
+	 */
+	fun featureHandles(analysis: PipelineAnalysis, config: PipelineConfig): List<FeatureHandle> {
+		val context = rigContext(analysis, config)
+		fun canvas(layer: ClassifiedLayer?, point: Pair<Float, Float>): Pair<Float, Float> =
+			layer?.let { context.headSpaceFor(it, config) }?.toCanvas(point.first, point.second) ?: point
+		val eyeLayer = analysis.layers.firstOrNull { it.semantic.tag == SemanticTag.EYEWHITE && it.opaquePixels > 0 }
+		val mouthLayer = analysis.layers.firstOrNull { it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && it.opaquePixels > 0 }
+		val browLayer = analysis.layers.firstOrNull { it.semantic.tag == SemanticTag.EYEBROW && it.opaquePixels > 0 }
+		fun handles(feature: String, layer: ClassifiedLayer?, points: Map<String, Pair<Float, Float>>) = points.map { (handle, p) ->
+			val (x, y) = canvas(layer, p); FeatureHandle(feature, handle, x, y)
+		}
+		return context.fittedEyes(config)?.rigs.orEmpty().flatMap { (side, rig) ->
+			handles(if (side == Side.LEFT) "eye.L" else "eye.R", eyeLayer, rig.fit.handles())
+		} + context.fittedBrows(config).flatMap { (side, rig) ->
+			handles(if (side == Side.LEFT) "brow.L" else "brow.R", browLayer, rig.fit.handles())
+		} + context.fittedMouth(config)?.rig?.let { handles("mouth", mouthLayer, it.fit.handles()) }.orEmpty()
+	}
+
 	internal fun rigContext(inputAnalysis: PipelineAnalysis, config: PipelineConfig, meshCache: PreviewMeshCache? = null): RigContext {
 		val splitBaselineIds = config.rigEdits.splitBaselineLayerIds
 		// Version 2 records: the aggregates read the resolved set - no superseded layer, parts on their pinned meshes.

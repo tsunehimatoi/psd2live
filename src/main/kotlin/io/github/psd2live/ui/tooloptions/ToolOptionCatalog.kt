@@ -196,6 +196,10 @@ internal fun toolOptions(editor: CanvasEditor): List<ToolOption> = buildList {
             addInterior(editor)
             return@buildList
         }
+        CanvasTool.FEATURE -> {
+            addFeature(editor)
+            return@buildList
+        }
         else -> Unit
     }
     when (editor.hierarchyMode) {
@@ -738,6 +742,16 @@ private fun MutableList<ToolOption>.addPaint(editor: CanvasEditor) {
 // ─── Interior ───────────────────────────────────────────────────────────────
 
 /** The interior tool: what is missing to edit, the line being drawn, and the selected guide's purpose. */
+/** The feature tool: what to drag, and putting the last feature handled - or every one - back to the art's fit. */
+private fun MutableList<ToolOption>.addFeature(editor: CanvasEditor) {
+    val tool = editor.featureTool
+    add(NoteOption("feature.hint", { tool.hint() }, warning = { tool.handles.isEmpty() }, place = OptionPlace.BAR))
+    add(ActionOption("feature.reset", "editor.tool.feature.reset", { e -> e.editable && tool.last?.let { e.state.recipe.moves(it).isNotEmpty() } == true },
+        { e -> tool.last?.let { e.viewModel.resetFeatureMoves(listOf(it)) } }, OptionIcon.RESET))
+    add(ActionOption("feature.resetAll", "editor.tool.feature.resetAll", { e -> e.editable && e.state.recipe.moves.isNotEmpty() },
+        { e -> e.viewModel.resetFeatureMoves(e.state.recipe.moves.keys) }, OptionIcon.RESET, danger = true))
+}
+
 private fun MutableList<ToolOption>.addInterior(editor: CanvasEditor) {
     val tool = editor.interiorTool
     add(NoteOption("interior.missing", { tool.missing() }, warning = { true }, place = OptionPlace.BAR))

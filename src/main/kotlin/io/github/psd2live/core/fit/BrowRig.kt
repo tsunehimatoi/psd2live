@@ -36,6 +36,9 @@ data class BrowFit(
 
 	fun canvasDelta(du: Float, dv: Float): Pair<Float, Float> = ((du * axisX + dv * downX) * length) to ((du * axisY + dv * downY) * length)
 
+	/** The rig point at ([u], [v]) in the brow's frame. */
+	fun toRig(u: Float, v: Float): Pair<Float, Float> = canvasDelta(u, v).let { (dx, dy) -> (originX + dx) to (originY + dy) }
+
 	companion object {
 		/**
 		 * The fit of [brow] in the head's [level] (in the rig's space; [toRig] carries canvas points there); [faceCenterX]

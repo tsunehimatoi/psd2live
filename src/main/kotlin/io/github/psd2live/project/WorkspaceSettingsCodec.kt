@@ -94,6 +94,16 @@ internal object WorkspaceSettingsCodec {
                 }
             }
         }
+        if (recipe.moves.isNotEmpty()) putJsonObject("moves") {
+            recipe.moves.forEach { (feature, handles) ->
+                putJsonObject(feature) { handles.forEach { (handle, move) -> put(handle, buildJsonArray { add(move.dx); add(move.dy) }) } }
+            }
+        }
+    }
+
+    private fun move(value: JsonElement?): io.github.psd2live.core.recipe.FeatureMove? = (value as? JsonArray)?.takeIf { it.size == 2 }?.let { pair ->
+        val dx = (pair[0] as? JsonPrimitive)?.floatOrNull; val dy = (pair[1] as? JsonPrimitive)?.floatOrNull
+        if (dx == null || dy == null || !dx.isFinite() || !dy.isFinite()) null else io.github.psd2live.core.recipe.FeatureMove(dx, dy)
     }
 
     private fun numbers(value: JsonElement?): Map<String, Float> =
@@ -112,7 +122,10 @@ internal object WorkspaceSettingsCodec {
             id to io.github.psd2live.core.recipe.ModuleChoice((choice["on"] as? JsonPrimitive)?.booleanOrNull,
                 (choice["version"] as? JsonPrimitive)?.intOrNull ?: 1, numbers(choice["values"]))
         }.toMap()
-        return io.github.psd2live.core.recipe.RigRecipe(true, bases, modules).normalized()
+        val moves = (obj["moves"] as? JsonObject).orEmpty().mapValues { (_, handles) ->
+            (handles as? JsonObject).orEmpty().mapNotNull { (handle, v) -> move(v)?.let { handle to it } }.toMap()
+        }
+        return io.github.psd2live.core.recipe.RigRecipe(true, bases, modules, moves).normalized()
     }
 
     private fun JsonElement?.objectOrEmpty(what: String): JsonObject = when (this) {
@@ -134,7 +147,7 @@ internal object WorkspaceSettingsCodec {
     ): Pair<io.github.psd2live.core.recipe.RigRecipe, Map<String, Boolean>> {
         if (changes == JsonNull) return io.github.psd2live.core.recipe.RigRecipe.Legacy to emptyMap()
         val obj = changes as? JsonObject ?: error("rig must be an object or null")
-        require(obj.keys.all { it == "bases" || it == "modules" }) { "rig takes bases and modules" }
+        require(obj.keys.all { it == "bases" || it == "modules" || it == "moves" }) { "rig takes bases, modules and moves" }
         val start = if (base.modern) base else io.github.psd2live.core.recipe.RigRecipe.Modern
         val bases = start.bases.toMutableMap()
         val modules = start.modules.toMutableMap()
@@ -176,7 +189,19 @@ internal object WorkspaceSettingsCodec {
             modules[id] = io.github.psd2live.core.recipe.ModuleChoice(on ?: kept?.on, module.version,
                 kept?.values.orEmpty() + values("rig.modules.$id", choice, module::knob))
         }
-        return io.github.psd2live.core.recipe.RigRecipe(true, bases, modules).normalized() to settings
+        // Moved feature handles: [dx, dy] canvas pixels replaces a handle's move, null returns it (or a whole feature) to the fit.
+        val moves = start.moves.mapValues { it.value.toMutableMap() }.toMutableMap()
+        obj["moves"].objectOrEmpty("rig.moves").forEach { (feature, entry) ->
+            require(feature in io.github.psd2live.core.fit.FeatureHandles.features) { "Unknown feature: $feature" }
+            if (entry == JsonNull) { moves -= feature; return@forEach }
+            val handles = entry as? JsonObject ?: error("rig.moves.$feature must be an object or null")
+            val current = moves.getOrPut(feature) { mutableMapOf() }
+            handles.forEach { (handle, v) ->
+                require(io.github.psd2live.core.fit.FeatureHandles.known(feature, handle)) { "Unknown handle of $feature: $handle" }
+                if (v == JsonNull) current -= handle else current[handle] = move(v) ?: error("rig.moves.$feature.$handle must be [dx, dy] or null")
+            }
+        }
+        return io.github.psd2live.core.recipe.RigRecipe(true, bases, modules, moves).normalized() to settings
     }
 
     fun decodeMouthCurve(value: JsonElement?): io.github.psd2live.core.MouthCurve? = runCatching {

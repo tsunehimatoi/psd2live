@@ -170,6 +170,10 @@ The Object-mode **Interior handles** tool (Shift+I, or **Edit on canvas** in the
 
 Hovered handles and lines light up and the status bar shows the name and value. Each drag records one history step on release and Esc cancels it; panel values and handles stay in step. With audition on, the shape updates while you drag.
 
+## Feature points
+
+The Object-mode **Feature points** tool (`Shift+Y` by default) shows the handles of the fitted features: each eye's inner and outer corners and the middles of its upper and lower lids, each brow's ends and arch, the mouth's two corners and the middles of its lips (only where those areas use a fitted base). Drag a handle and let go: the feature is refitted from the new place and every pose built from it - opening, the smiling eyes, emotions, mouth shapes - follows; a lid or lip edge follows most at its middle and follows the corners at its ends. The change goes into the rig recipe, one drag is one history step, and it stays through regeneration; a moved handle is drawn square, and `Alt` + click returns it to where the art put it; **Reset this feature** and **Reset all features** in the options bar take back a whole feature's moves, or every feature's, at once. MCP changes the same data with `settings_update` `changes.rig.moves`.
+
 ## Creating and placing materials
 
 1. Select the target and pick Warp, Rotation or deform path in the last group of the Object mode toolbar, or press `C` / `R` / `P`; you can also right-click in the hierarchy and add a parent / child Warp or Rotation, or pick from **Create** in the Object mode canvas context menu.

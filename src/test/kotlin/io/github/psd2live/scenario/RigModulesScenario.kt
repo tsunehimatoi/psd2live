@@ -147,4 +147,25 @@ class RigModulesScenario {
 		})
 		expect("legacy", chain() == null && puppet.parameters.any { it.id.raw == "ParamHairBack" }) { "the legacy base sways the hair as one" }
 	}
+
+	@Test fun aMovedFeatureHandleRefitsEveryPoseAndComesBack() = Studio.run(temp, Characters.eyed()) {
+		allow("REGENERATION_CONFLICT")
+		fun closed() = puppet.drawables.single { it.id.raw == mesh("lash_l") }.geometryGrid!!.cells.first().form.positionDeltas.toList()
+		val drawn = closed()
+		val handles = io.github.psd2live.core.RigBuilder.featureHandles(now.model.analysis, now.model.config)
+		expect("handles", handles.count { it.feature == "eye.L" } == 4) { "the fitted eye shows its four handles: $handles" }
+		settings("lift the lid", buildJsonObject {
+			putJsonObject(WorkspaceSettingsCodec.RIG) { putJsonObject("moves") { putJsonObject("eye.L") {
+				put("upper", kotlinx.serialization.json.buildJsonArray { add(kotlinx.serialization.json.JsonPrimitive(0)); add(kotlinx.serialization.json.JsonPrimitive(-3)) })
+			} } }
+		})
+		expect("moved", closed() != drawn && WorkspaceSettingsCodec.decode(now.document.settings).recipe.moves("eye.L").getValue("upper").dy == -3f) {
+			"moving the lid's handle refits the closing lid" }
+		reopen()
+		expect("reopened", closed() != drawn) { "the move survives a reopen" }
+		settings("back to the fit", buildJsonObject {
+			putJsonObject(WorkspaceSettingsCodec.RIG) { putJsonObject("moves") { put("eye.L", kotlinx.serialization.json.JsonNull) } }
+		})
+		expect("back", closed() == drawn) { "clearing the move returns the drawn fit" }
+	}
 }

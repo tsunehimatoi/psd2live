@@ -979,6 +979,7 @@ fun CanvasViewportComposable(
 			ShortcutAction.TOOL_WEIGHT_PAINT -> { editor.activateTool(CanvasTool.WEIGHT_PAINT); true }
 			ShortcutAction.TOOL_WEIGHT_GRADIENT -> { editor.activateTool(CanvasTool.WEIGHT_GRADIENT); true }
 			ShortcutAction.TOOL_INTERIOR -> { editor.activateTool(CanvasTool.INTERIOR); true }
+			ShortcutAction.TOOL_FEATURE -> { editor.activateTool(CanvasTool.FEATURE); true }
 			ShortcutAction.SELECTION_STYLE_BOX -> { editor.selectionStyle = SelectionStyle.BOX; true }
 			ShortcutAction.SELECTION_STYLE_LASSO -> { editor.selectionStyle = SelectionStyle.LASSO; true }
 			ShortcutAction.SELECT_LINKED -> { editor.selectLinked(); true }
@@ -1016,6 +1017,7 @@ fun CanvasViewportComposable(
 					else if (viewModel.swingSession != null) viewModel.endSwing()
 					// The interior tool steps back its own gesture first, leaving the audition running.
 					else if (editor.tool == CanvasTool.INTERIOR && editor.cancelInterior()) Unit
+					else if (editor.tool == CanvasTool.FEATURE && editor.cancelFeature()) Unit
 					else if (editor.placement != null) editor.cancelPlacement() else editor.cancel()
 					true
 				}

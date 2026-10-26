@@ -3749,6 +3749,26 @@ class PSD2LiveViewModel : AutoCloseable {
         }
     }
 
+    /**
+     * Moves [feature]'s [handle] to ([move] canvas pixels from where the fit put it), or returns it there when null: one
+     * change of the rig recipe, one history step ([io.github.psd2live.core.fit.FeatureHandles]).
+     */
+    fun moveFeatureHandle(feature: String, handle: String, move: Pair<Float, Float>?) = editRig {
+        putJsonObject("moves") {
+            putJsonObject(feature) {
+                if (move == null) put(handle, kotlinx.serialization.json.JsonNull)
+                else put(handle, kotlinx.serialization.json.buildJsonArray {
+                    add(kotlinx.serialization.json.JsonPrimitive(move.first)); add(kotlinx.serialization.json.JsonPrimitive(move.second))
+                })
+            }
+        }
+    }
+
+    /** Puts every handle of [features] back where the art's fit put it, as one history step. */
+    fun resetFeatureMoves(features: Collection<String>) = editRig {
+        putJsonObject("moves") { for (feature in features) put(feature, kotlinx.serialization.json.JsonNull) }
+    }
+
     /** A project saved before rig modules builds with the newest bases and every module from now on. */
     fun upgradeRig() = editRig {}
 

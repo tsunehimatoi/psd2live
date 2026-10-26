@@ -119,11 +119,21 @@ data class ModuleChoice(val on: Boolean? = null, val version: Int = 1, val value
  * the setting switches - so the project generates exactly what it did. A legacy project becomes modern only when
  * the user upgrades it.
  */
+/** A feature handle moved on the canvas by ([dx], [dy]) pixels ([io.github.psd2live.core.fit.FeatureHandles]). */
+data class FeatureMove(val dx: Float, val dy: Float) {
+	init { require(dx.isFinite() && dy.isFinite()) { "A feature move must be finite" } }
+}
+
 data class RigRecipe(
 	val modern: Boolean,
 	val bases: Map<String, BaseChoice> = emptyMap(),
 	val modules: Map<String, ModuleChoice> = emptyMap(),
+	/** The feature handles the user moved on the canvas, by feature (`eye.L`, `mouth`...) and handle. */
+	val moves: Map<String, Map<String, FeatureMove>> = emptyMap(),
 ) {
+	/** The handles of [feature] the user moved. */
+	fun moves(feature: String): Map<String, FeatureMove> = if (modern) moves[feature].orEmpty() else emptyMap()
+
 	/** The base [area] builds with. */
 	fun base(area: String): RigBase {
 		val known = RigModules.area(area) ?: error("Unknown rig area: $area")
@@ -179,7 +189,11 @@ data class RigRecipe(
 			val on = choice.on?.takeIf { !it }
 			if (on == null && values.isEmpty()) null else id to ModuleChoice(on, module.version, values.toSortedMap())
 		}.toMap().toSortedMap()
-		return RigRecipe(true, baseChoices, moduleChoices)
+		val moved = moves.mapNotNull { (feature, handles) ->
+			val kept = handles.filter { (handle, move) -> io.github.psd2live.core.fit.FeatureHandles.known(feature, handle) && (move.dx != 0f || move.dy != 0f) }
+			if (kept.isEmpty()) null else feature to kept.toSortedMap()
+		}.toMap().toSortedMap()
+		return RigRecipe(true, baseChoices, moduleChoices, moved)
 	}
 
 	companion object {

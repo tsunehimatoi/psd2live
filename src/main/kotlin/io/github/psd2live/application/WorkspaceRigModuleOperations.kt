@@ -23,8 +23,9 @@ internal fun registerRigModuleOperations(registry: WorkspaceOperationRegistry, q
 			"(false for a project saved before modules, which generates as it did until upgraded with settings changes.rig {}), the " +
 			"base each area builds with, and per module whether it applies to the art, is on, and its cost - the parameters it adds, " +
 			"the keyforms and blend-shape forms, its physics groups; measured on the rig when on, estimated when off. Change with " +
-			"settings changes.rig {bases: {area: {base, values}}, modules: {id: {on, values}}}, null entries back to the default, " +
-			"rig null back to legacy.",
+			"settings changes.rig {bases: {area: {base, values}}, modules: {id: {on, values}}, moves: {feature: {handle: [dx, dy]}}}, " +
+			"null entries back to the default, rig null back to legacy. moves shifts a fitted feature's handle by canvas pixels " +
+			"(eye.L/eye.R inner, outer, upper, lower; brow.L/brow.R inner, outer, arch; mouth left, right, upper, lower).",
 		schema(emptyMap()), WorkspaceOperationKind.QUERY, workspaceBound = false, resultSchema = RigModuleSchemas.catalog)) { _, _ ->
 		WorkspaceOperationOutput(queries.rigModules())
 	}
@@ -136,6 +137,12 @@ internal object RigModuleSchemas {
 		"modules" to schema(RigModules.modules.filter { it.setting == null }.associate { module ->
 			module.id to schema(mapOf("on" to type("boolean"), "version" to type("integer"),
 				"values" to buildJsonObject { put("type", "object"); put("additionalProperties", type("number")) }), listOf("version"))
+		}, emptyList()),
+		// Moved feature handles: [dx, dy] canvas pixels by feature and handle.
+		"moves" to schema(io.github.psd2live.core.fit.FeatureHandles.features.mapValues { (_, handles) ->
+			schema(handles.associateWith {
+				buildJsonObject { put("type", "array"); put("items", type("number")); put("minItems", 2); put("maxItems", 2) }
+			}, emptyList())
 		}, emptyList()),
 	), emptyList())
 }

@@ -138,6 +138,7 @@ enum class ShortcutAction(
     TOOL_PAINT_RECT(ShortcutCategory.CANVAS_TOOLS, "editor.tool.paint_rect"),
     TOOL_PAINT_ELLIPSE(ShortcutCategory.CANVAS_TOOLS, "editor.tool.paint_ellipse"),
     TOOL_INTERIOR(ShortcutCategory.CANVAS_TOOLS, "editor.tool.interior"),
+    TOOL_FEATURE(ShortcutCategory.CANVAS_TOOLS, "editor.tool.feature"),
     TOOL_PAINT_SELECT(ShortcutCategory.CANVAS_TOOLS, "editor.tool.paint_select"),
     TOOL_PAINT_GRADIENT(ShortcutCategory.CANVAS_TOOLS, "editor.tool.paint_gradient"),
     TOOL_PAINT_BLUR(ShortcutCategory.CANVAS_TOOLS, "editor.tool.paint_blur"),
@@ -359,6 +360,7 @@ private val PS_DEFAULTS: Map<ShortcutAction, List<KeyBinding>> = mapOf(
     ShortcutAction.TOOL_PAINT_RECT to keys("Shift+R"),
     ShortcutAction.TOOL_PAINT_ELLIPSE to keys("Shift+O"),
     ShortcutAction.TOOL_INTERIOR to keys("Shift+I"),
+    ShortcutAction.TOOL_FEATURE to keys("Shift+Y"),
     // Photoshop's M, G and R belong to tools of the other modes here, so the paint tools take Alt chords instead -
     // the selection Alt+L, after the lasso it starts as.
     ShortcutAction.TOOL_PAINT_SELECT to keys("Alt+L"),
