@@ -93,8 +93,12 @@ object ModelExpressions {
 	/** Below this a parameter is at its default: a pose captured into an expression leaves it out. */
 	private const val EPSILON = 1e-4f
 
+	private fun both(name: String, blend: ExpressionBlend, value: Float) =
+		listOf(ExpressionEntry(name.replace("*", "L"), blend, value), ExpressionEntry(name.replace("*", "R"), blend, value))
+
 	/**
-	 * What every generated rig gets: the standard face moved into four moods, each where the rig has its parameters.
+	 * What every generated rig gets: the standard face moved into its moods, each where the rig has its parameters, the
+	 * rig modules' parameters (eye forms, brow angles, the cheek) carrying each further where the rig has them.
 	 * Named in the interface language, as the runtime export has always named them; the first edit keeps those names.
 	 */
 	val standard: List<ModelExpression> get() = listOf(
@@ -104,35 +108,60 @@ object ModelExpressions {
 			ExpressionEntry(StandardParameters.EYE_R_OPEN.raw, ExpressionBlend.MULTIPLY, 0.75f),
 			ExpressionEntry(StandardParameters.BROW_L_Y.raw, ExpressionBlend.ADD, 0.3f),
 			ExpressionEntry(StandardParameters.BROW_R_Y.raw, ExpressionBlend.ADD, 0.3f),
-		)),
+		) + both("ParamEye*Smile", ExpressionBlend.OVERWRITE, 1f) + both("ParamBrow*Angle", ExpressionBlend.ADD, 0.2f) +
+			ExpressionEntry("ParamCheek", ExpressionBlend.ADD, 0.4f)),
 		ModelExpression("sad", tr("model.expression.sad"), entries = listOf(
 			ExpressionEntry(StandardParameters.MOUTH_FORM.raw, ExpressionBlend.OVERWRITE, -0.8f),
 			ExpressionEntry(StandardParameters.EYE_L_OPEN.raw, ExpressionBlend.MULTIPLY, 0.85f),
 			ExpressionEntry(StandardParameters.EYE_R_OPEN.raw, ExpressionBlend.MULTIPLY, 0.85f),
 			ExpressionEntry(StandardParameters.BROW_L_Y.raw, ExpressionBlend.ADD, -0.5f),
 			ExpressionEntry(StandardParameters.BROW_R_Y.raw, ExpressionBlend.ADD, -0.5f),
-		)),
+		) + both("ParamEye*Form", ExpressionBlend.OVERWRITE, -0.8f) + both("ParamBrow*Angle", ExpressionBlend.OVERWRITE, 0.9f) +
+			both("ParamBrow*Form", ExpressionBlend.OVERWRITE, 0.4f)),
 		ModelExpression("angry", tr("model.expression.angry"), entries = listOf(
 			ExpressionEntry(StandardParameters.MOUTH_FORM.raw, ExpressionBlend.OVERWRITE, -0.5f),
 			ExpressionEntry(StandardParameters.EYE_L_OPEN.raw, ExpressionBlend.MULTIPLY, 0.9f),
 			ExpressionEntry(StandardParameters.EYE_R_OPEN.raw, ExpressionBlend.MULTIPLY, 0.9f),
 			ExpressionEntry(StandardParameters.BROW_L_Y.raw, ExpressionBlend.ADD, -0.8f),
 			ExpressionEntry(StandardParameters.BROW_R_Y.raw, ExpressionBlend.ADD, -0.8f),
-		)),
+		) + both("ParamEye*Form", ExpressionBlend.OVERWRITE, 0.6f) + both("ParamBrow*Angle", ExpressionBlend.OVERWRITE, -0.8f) +
+			both("ParamEye*Squint", ExpressionBlend.OVERWRITE, 0.1f)),
 		ModelExpression("surprised", tr("model.expression.surprised"), entries = listOf(
 			ExpressionEntry(StandardParameters.EYE_L_OPEN.raw, ExpressionBlend.OVERWRITE, 1f),
 			ExpressionEntry(StandardParameters.EYE_R_OPEN.raw, ExpressionBlend.OVERWRITE, 1f),
 			ExpressionEntry(StandardParameters.BROW_L_Y.raw, ExpressionBlend.ADD, 0.8f),
 			ExpressionEntry(StandardParameters.BROW_R_Y.raw, ExpressionBlend.ADD, 0.8f),
 			ExpressionEntry(StandardParameters.MOUTH_OPEN.raw, ExpressionBlend.OVERWRITE, 0.6f),
-		)),
+		) + both("ParamBrow*Angle", ExpressionBlend.OVERWRITE, 0.3f) + ExpressionEntry("ParamO", ExpressionBlend.OVERWRITE, 0.5f)),
+		// The moods only the rig modules can show: shy needs the cheek, sleepy the fitted eyes' squint, gloom its shade.
+		ModelExpression("shy", tr("model.expression.shy"), entries = listOf(
+			ExpressionEntry("ParamCheek", ExpressionBlend.OVERWRITE, 1f),
+			ExpressionEntry(StandardParameters.MOUTH_FORM.raw, ExpressionBlend.OVERWRITE, 0.4f),
+			ExpressionEntry(StandardParameters.EYE_BALL_Y.raw, ExpressionBlend.OVERWRITE, -0.4f),
+		) + both("ParamEye*Squint", ExpressionBlend.OVERWRITE, 0.35f) + both("ParamBrow*Angle", ExpressionBlend.OVERWRITE, 0.5f)),
+		ModelExpression("sleepy", tr("model.expression.sleepy"), entries = listOf(
+			ExpressionEntry(StandardParameters.EYE_L_OPEN.raw, ExpressionBlend.MULTIPLY, 0.3f),
+			ExpressionEntry(StandardParameters.EYE_R_OPEN.raw, ExpressionBlend.MULTIPLY, 0.3f),
+			ExpressionEntry(StandardParameters.BROW_L_Y.raw, ExpressionBlend.ADD, -0.3f),
+			ExpressionEntry(StandardParameters.BROW_R_Y.raw, ExpressionBlend.ADD, -0.3f),
+		) + both("ParamEye*Squint", ExpressionBlend.OVERWRITE, 0.2f) + both("ParamBrow*Angle", ExpressionBlend.OVERWRITE, 0.3f)),
+		ModelExpression("gloom", tr("model.expression.gloom"), entries = listOf(
+			ExpressionEntry("ParamGloom", ExpressionBlend.OVERWRITE, 1f),
+			ExpressionEntry(StandardParameters.MOUTH_FORM.raw, ExpressionBlend.OVERWRITE, -0.5f),
+			ExpressionEntry(StandardParameters.EYE_L_OPEN.raw, ExpressionBlend.MULTIPLY, 0.8f),
+			ExpressionEntry(StandardParameters.EYE_R_OPEN.raw, ExpressionBlend.MULTIPLY, 0.8f),
+		) + both("ParamBrow*Angle", ExpressionBlend.OVERWRITE, 0.6f)),
 	)
+
+	/** The parameter a standard expression shows only with: without it the mood is not the rig's to show. */
+	private val requires = mapOf("shy" to "ParamCheek", "sleepy" to "ParamEyeLSquint", "gloom" to "ParamGloom")
 
 	/**
 	 * The standard expressions on the parameters [parameterIds] holds; one with none of them is left out. [renames] are
 	 * the journal's ID conversions of parameters ([RigEditOverlay.idRenames]): a standard parameter is found under its new ID.
 	 */
 	fun standardFor(parameterIds: Set<String>, renames: Map<String, String> = emptyMap()): List<ModelExpression> = standard.mapNotNull { expression ->
+		requires[expression.id]?.let { required -> if ((renames[required] ?: required) !in parameterIds) return@mapNotNull null }
 		expression.entries.map { entry -> renames[entry.parameterId]?.let { entry.copy(parameterId = it) } ?: entry }
 			.filter { it.parameterId in parameterIds }.takeIf { it.isNotEmpty() }?.let { expression.copy(entries = it) }
 	}

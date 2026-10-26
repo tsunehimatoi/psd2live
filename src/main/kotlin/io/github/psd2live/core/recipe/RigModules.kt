@@ -194,6 +194,16 @@ object RigModules {
 			ModuleParameter("ParamBustX", "model.parameter.bustX", -1f, 1f, 0f, "ParamGroupPhysics")),
 		physicsGroups = listOf("PhysicsBustY", "PhysicsBustX"))
 
+	/** The face flushing: blush layers deepen and the skin warms on Cheek; without a blush layer the skin's color alone changes. */
+	val EXPRESSION_CHEEK = RigModule("expression.cheek", ModuleTier.MAJOR, applies = { it.has(SemanticTag.FACE) },
+		knobs = listOf(RecipeKnob("strength", P, 0f..200f, 100f)),
+		defines = listOf(ModuleParameter("ParamCheek", "model.parameter.cheek", 0f, 1f, 0f, "ParamGroupFace")))
+
+	/** A gloomy face: the skin darkens and cools, the highlights go out. */
+	val EXPRESSION_GLOOM = RigModule("expression.gloom", ModuleTier.MINOR, applies = { it.has(SemanticTag.FACE) },
+		knobs = listOf(RecipeKnob("strength", P, 0f..200f, 100f)),
+		defines = listOf(ModuleParameter("ParamGloom", "model.parameter.gloom", 0f, 1f, 0f, "ParamGroupFace")))
+
 	val areas: List<RigArea> = listOf(
 		RigArea("face", listOf(legacy("face")), listOf(FACE_DEPTH_TURN, FACE_SKIN_CLIP)),
 		RigArea("eye", listOf(legacy("eye"), EYE_FITTED), listOf(EYE_SEE_THROUGH, EYE_SMILE, EYE_WIDE, EYE_GAZE_LID, EYE_EMOTION, EYE_LID_FADE,
@@ -203,7 +213,7 @@ object RigModules {
 		RigArea("hair", listOf(legacy("hair"), HAIR_CHAINS), emptyList()),
 		RigArea("body", listOf(legacy("body")), listOf(BODY_BUST)),
 		RigArea("outfit", listOf(legacy("outfit")), listOf(OUTFIT_SKIRT, OUTFIT_RIBBONS)),
-		RigArea("expression", listOf(legacy("expression")), emptyList()),
+		RigArea("expression", listOf(legacy("expression")), listOf(EXPRESSION_CHEEK, EXPRESSION_GLOOM)),
 		RigArea("motion", listOf(legacy("motion")), emptyList()),
 	)
 

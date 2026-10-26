@@ -101,6 +101,17 @@ internal object ReviewClips {
 
 	/** The static poses of each area: a label and the values, swept at the parameter's quarter points and combined. */
 	val poses: Map<String, List<Pair<String, Map<String, Float>>>> = mapOf(
+		"expression" to io.github.psd2live.core.ModelExpressions.standard.map { e ->
+			// Each mood over the rest pose, as a host applies it: overwritten, added to the default, or multiplying it.
+			e.name to e.entries.associate { entry ->
+				val rest = if (entry.parameterId == "ParamEyeLOpen" || entry.parameterId == "ParamEyeROpen") 1f else 0f
+				entry.parameterId to when (entry.blend) {
+					io.github.psd2live.core.ExpressionBlend.OVERWRITE -> entry.value
+					io.github.psd2live.core.ExpressionBlend.ADD -> rest + entry.value
+					io.github.psd2live.core.ExpressionBlend.MULTIPLY -> rest * entry.value
+				}
+			}
+		},
 		"hair" to listOf("rest" to emptyMap(), "swing +" to chains({ _, _ -> 1f }), "swing -" to chains({ _, _ -> -1f }),
 			"root only" to chains({ _, k -> if (k == 1) 1f else 0f }), "tip only" to chains({ _, k -> if (k >= 2) 1f else 0f }),
 			"left lock" to chains({ r, _ -> if (r == "L") 1f else 0f }), "locks apart" to chains({ r, _ -> when (r) { "L" -> -1f; "R" -> 1f; else -> 0f } }),

@@ -1371,7 +1371,7 @@ object RigBuilder {
 			val channelGrids = if (config.meshOnly && classification == LayerType.PRESET) ChannelGrids.Empty
 				else withEyeOpacity(channelStage(layer, override, switchParamKeys, config.rigTuning, context.hasClosedMouth, stages, eyeSwap(context, config, layer), mouthSwap(context, config, layer)),
 				context, config, layer)
-					.let { withEyeOpacity(it, context, config, layer) }.let { grids ->
+					.let { withMoodChannels(it, context, config, layer) }.let { grids ->
 					if (v2 && resolution.isStubLayer(layer.source.id.raw) &&
 						grids.gridsByChannel.values.any { grid -> grid.axes.any { it.parameterId !in knownParameters } }) ChannelGrids.Empty else grids
 				}
@@ -3385,6 +3385,40 @@ object RigBuilder {
 				io.github.psd2live.core.fit.EyeModules.highlightShapes(data.rigPositions, frame, eye.fit.iris ?: layer.bounds, eyes.options)
 			else -> emptyList()
 		}
+	}
+
+	/**
+	 * [grids] with the face's moods (`expression.cheek`, `expression.gloom`) where [layer] has no channel of its own for
+	 * them: the skin warms with the cheek - blush layers most, ears a little - and darkens and cools with gloom, its
+	 * highlights going out.
+	 */
+	private fun withMoodChannels(grids: ChannelGrids, context: RigContext, config: PipelineConfig, layer: ClassifiedLayer): ChannelGrids {
+		val m = io.github.psd2live.core.recipe.RigModules
+		val subject = io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis)
+		val cheek = m.builds(m.EXPRESSION_CHEEK, config, subject); val gloom = m.builds(m.EXPRESSION_GLOOM, config, subject)
+		if (!cheek && !gloom) return grids
+		val tag = layer.semantic.tag; val role = layer.semantic.role
+		val skin = tag == SemanticTag.FACE || tag == SemanticTag.NOSE || tag == SemanticTag.EARS || tag == SemanticTag.FACE_DETAIL && role != PartRole.HIGHLIGHT
+		val warmth = when {
+			tag == SemanticTag.FACE_DETAIL && role == PartRole.BLUSH -> 0.3f
+			tag == SemanticTag.FACE || tag == SemanticTag.NOSE -> 0.06f
+			tag == SemanticTag.EARS -> 0.05f
+			else -> 0f
+		} * config.recipe.value(m.EXPRESSION_CHEEK.id, "strength") / 100f
+		val dark = (if (skin) 1f else 0f) * config.recipe.value(m.EXPRESSION_GLOOM.id, "strength") / 100f
+		var out = grids.gridsByChannel
+		val axes = listOfNotNull(axis(ParameterId("ParamCheek"), 0f, 1f).takeIf { cheek && warmth > 0f }, axis(ParameterId("ParamGloom"), 0f, 1f).takeIf { gloom && dark > 0f })
+		if (axes.isNotEmpty() && FormChannel.MULTIPLY_COLOR !in out) {
+			out = out + (FormChannel.MULTIPLY_COLOR to grid(axes) { values ->
+				val c = if (axes[0].parameterId.raw == "ParamCheek") values[0] * warmth else 0f
+				val g = (if (axes.last().parameterId.raw == "ParamGloom") values.last() else 0f) * dark * 0.13f
+				ChannelValue.Color(org.umamo.runtime.model.ColorRgb((1f - g).coerceIn(0f, 1f), (1f - c - g).coerceIn(0f, 1f), (1f - c - 0.6f * g).coerceIn(0f, 1f)))
+			})
+		}
+		if (gloom && role == PartRole.HIGHLIGHT && FormChannel.OPACITY !in out) {
+			out = out + (FormChannel.OPACITY to scalarGrid(ParameterId("ParamGloom"), floatArrayOf(0f, 1f)) { 1f - 0.85f * it })
+		}
+		return if (out === grids.gridsByChannel) grids else ChannelGrids(out)
 	}
 
 	/** [grids] with the opacity the eye modules give [layer] ([io.github.psd2live.core.fit.EyeModules.opacity]) where it has none of its own. */

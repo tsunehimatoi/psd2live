@@ -46,6 +46,7 @@ The table follows StandardParameters. Mesh-only mode, disabled deformers or miss
 | `ParamMouthX`, `ParamMouthPuckerWiden`, `ParamMouthPressLipOpen` (`mouth.capture`) | -1…1 | 0 |
 | `ParamMouthShrug`, `ParamCheekPuff` (`mouth.capture`) | 0…1 | 0 |
 | `ParamHair<Kind><n>[L/C/R]<segment>`, `ParamHair<Kind><n>Y`, `ParamCloth<Kind><n>…` (`hair/chains`: kind Front / Side / Back / Ahoge / Tail / Skirt / Ribbon / Pendant, number, lock L / C / R, segment; `Y` is the bounce; physics outputs) | -1…1 | 0 |
+| `ParamCheek`, `ParamGloom` (`expression.cheek`, `expression.gloom`) | 0…1 | 0 |
 | `ParamBustY`, `ParamBustX` (`body.bust`, physics outputs) | -1…1 | 0 |
 | `ParamMouthSpring` (`mouth.spring`, physics output) | -1…1 | 0 |
 | `ParamHairFront`, `ParamHairBack` | -1…1 | 0 |

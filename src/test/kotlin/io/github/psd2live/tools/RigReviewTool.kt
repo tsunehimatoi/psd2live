@@ -24,7 +24,7 @@ class RigReviewTool {
 	@Test fun review() {
 		requireTools()
 		val sample = Sample.fromEnvironment()
-		val areas = setting("PSD2LIVE_REVIEW", "eye,brow,mouth,head,hair,body,motion").split(',').map(String::trim).toSet()
+		val areas = setting("PSD2LIVE_REVIEW", "eye,brow,mouth,head,expression,hair,body,motion").split(',').map(String::trim).toSet()
 		val size = setting("PSD2LIVE_REVIEW_SIZE", "320").toInt()
 		// Both from one analysis: a build from the file and one from its analysis do not mesh alike.
 		val read = PSD2LivePipeline().buildPreview(sample.path)
@@ -78,7 +78,7 @@ class RigReviewTool {
 			"eye" -> around(eyes, 0.25f)
 			"brow" -> around(eyes + SemanticTag.EYEBROW, 0.25f)
 			"mouth" -> around(CharacterAnalyzer.MOUTH_TAGS, 1.2f)
-			"head" -> framed(model.analysis.anchors.face.expanded(0.35f), 1f)
+			"head", "expression" -> framed(model.analysis.anchors.face.expanded(0.35f), 1f)
 			"hair" -> layers.filter { it.semantic.tag == SemanticTag.FRONT_HAIR || it.semantic.tag == SemanticTag.BACK_HAIR }.map { it.bounds }
 				.reduceOrNull(Bounds::union)?.let { framed(it.expanded(0.06f), 0.8f) }
 			else -> null
