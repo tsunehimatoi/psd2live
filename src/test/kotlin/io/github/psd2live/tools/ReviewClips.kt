@@ -91,8 +91,20 @@ internal object ReviewClips {
 		},
 	)
 
+	/** Every hair chain parameter a generated rig may have ([io.github.psd2live.core.fit.HairChain]), set by [value] of region and segment. */
+	private fun chains(value: (region: String, segment: Int) -> Float, bounce: Float = 0f): Map<String, Float> = buildMap {
+		for (kind in io.github.psd2live.core.fit.HairKind.entries) for (n in 1..12) {
+			for (region in listOf("", "L", "C", "R")) for (k in 1..4) put("ParamHair${kind.word}$n$region$k", value(region, k))
+			put("ParamHair${kind.word}${n}Y", bounce)
+		}
+	}
+
 	/** The static poses of each area: a label and the values, swept at the parameter's quarter points and combined. */
 	val poses: Map<String, List<Pair<String, Map<String, Float>>>> = mapOf(
+		"hair" to listOf("rest" to emptyMap(), "swing +" to chains({ _, _ -> 1f }), "swing -" to chains({ _, _ -> -1f }),
+			"root only" to chains({ _, k -> if (k == 1) 1f else 0f }), "tip only" to chains({ _, k -> if (k >= 2) 1f else 0f }),
+			"left lock" to chains({ r, _ -> if (r == "L") 1f else 0f }), "locks apart" to chains({ r, _ -> when (r) { "L" -> -1f; "R" -> 1f; else -> 0f } }),
+			"bounce +" to chains({ _, _ -> 0f }, 1f), "bounce -" to chains({ _, _ -> 0f }, -1f)),
 		"eye" to listOf(1f, 0.75f, 0.5f, 0.25f, 0.1f, 0f).map { "open $it" to eyes(it) } +
 			listOf(0.5f, 0f).map { "open $it smile" to eyes(it, 1f) } +
 			listOf(-1f to 0f, 1f to 0f, 0f to 1f, 0f to -1f).map { (x, y) -> "gaze $x,$y" to mapOf("ParamEyeBallX" to x, "ParamEyeBallY" to y) } +

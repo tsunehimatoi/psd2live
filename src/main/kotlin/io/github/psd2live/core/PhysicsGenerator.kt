@@ -57,6 +57,7 @@ object PhysicsGenerator {
 				segments = listOf(PhysicsSegment(1f, 0.9f, 0.6f, 1.6f), PhysicsSegment(1.2f, 0.85f, 0.45f, 1.8f)),
 				normalization = PhysicsNormalization(-1f, 0f, 1f, -10f, 0f, 10f)))
 		}
+		addAll(io.github.psd2live.core.fit.HairChain.physics(available))
 		// The jaw's soft tissue settling after the mouth moves, mostly on the opening and a little on the form.
 		if ("ParamMouthOpenY" in available && "ParamMouthSpring" in available) add(RigPhysicsEdit(id = MOUTH_SPRING_ID, name = tr("model.physics.mouthSpring"),
 			inputs = listOf(PhysicsInput("ParamMouthOpenY", 80f, PhysicsSourceType.X), PhysicsInput("ParamMouthForm", 20f, PhysicsSourceType.X)),

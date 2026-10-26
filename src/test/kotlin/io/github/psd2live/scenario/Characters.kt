@@ -99,11 +99,15 @@ internal object Characters {
 	} + Part("mouth", 8, SemanticTag.MOUTH, Side.NONE, ellipse(210, 100, 14, 7)),
 		PipelineConfig(atlasSize = 512, generatePhysics = false, exportMoc3 = false, recipe = RigRecipe.Modern))
 
-	/** A 64² head: back hair and a face. The smallest document the hair generators and simulation presets act on. */
-	fun head(physics: Boolean = true): WorkspaceDocument = document(64, 64, listOf(
+	/**
+	 * A 64² head: back hair and a face. The smallest document the hair generators and simulation presets act on; its
+	 * hair keeps the one sway warp of the front and back hair ([hairChains] gives it chains instead).
+	 */
+	fun head(physics: Boolean = true, hairChains: Boolean = false): WorkspaceDocument = document(64, 64, listOf(
 		Part("hair", 0, SemanticTag.BACK_HAIR, Side.NONE, box(16, 8, 48, 56)),
 		Part("face", 1, SemanticTag.FACE, Side.NONE, box(20, 12, 44, 36)),
-	), PipelineConfig(atlasSize = 256, generatePhysics = physics, exportMoc3 = false))
+	), PipelineConfig(atlasSize = 256, generatePhysics = physics, exportMoc3 = false,
+		recipe = if (hairChains) RigRecipe.Modern else RigRecipe(true, bases = mapOf("hair" to BaseChoice("hair/legacy")))))
 
 	/** A 1200² canvas holding one 1100×1000 top: a part larger than a million square pixels (issue #56). */
 	fun largePart(): WorkspaceDocument = document(1200, 1200, listOf(

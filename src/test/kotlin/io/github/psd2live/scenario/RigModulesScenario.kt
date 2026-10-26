@@ -133,4 +133,18 @@ class RigModulesScenario {
 		})
 		expect("off", !turns("face") && !turns("mouth")) { "switched off, the head turns as it did" }
 	}
+
+	@Test fun hairHangsInChainsOnPendulumsOfItsOwn() = Studio.run(temp, Characters.head(hairChains = true)) {
+		allow("REGENERATION_CONFLICT")
+		fun chain() = puppet.deformers.singleOrNull { it.id.raw == "DeformHairChain1" } as? org.umamo.runtime.model.Deformer.Warp
+		val groups = io.github.psd2live.core.PhysicsCatalog.active(now.model.analysis, now.model.config, puppet.parameters.mapTo(HashSet()) { it.id.raw }, puppet)
+		expect("chains", chain()?.blendShapes?.any { it.parameterId.raw == "ParamHairBack1Y" } == true &&
+			puppet.parameters.none { it.id.raw == "ParamHairBack" } && groups.any { it.id.startsWith("PhysicsHairBack1") } &&
+			puppet.deformers.none { it.id.raw == "DeformHairBackPhysics" }) {
+			"the back hair hangs in a chain with its own pendulums instead of the one sway: ${chain()?.blendShapes?.map { it.parameterId.raw }}, ${groups.map { it.id }}" }
+		settings("legacy hair", buildJsonObject {
+			putJsonObject(WorkspaceSettingsCodec.RIG) { putJsonObject("bases") { putJsonObject("hair") { put("base", "hair/legacy") } } }
+		})
+		expect("legacy", chain() == null && puppet.parameters.any { it.id.raw == "ParamHairBack" }) { "the legacy base sways the hair as one" }
+	}
 }

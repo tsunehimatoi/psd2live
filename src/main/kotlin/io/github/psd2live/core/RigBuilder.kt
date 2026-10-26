@@ -1780,12 +1780,34 @@ object RigBuilder {
 	 * warp, which has the same frame, and its parameter goes, so the simulation bake is the only motion. The
 	 * parameter goes first: that collapses the warp to its rest lattice, which the unwrap then maps through.
 	 */
+	/**
+	 * The hair chains [config] builds (`hair/chains`): one per hair layer of [analysis] in the rig's space, the bangs
+	 * free below the brows, side locks and the back hair below the eyes. Hair a cloth simulation moves keeps it.
+	 */
+	internal fun hairChains(analysis: PipelineAnalysis, faceRig: NinePoseFaceRig, config: PipelineConfig): List<io.github.psd2live.core.fit.HairChain> {
+		if (config.recipe.base("hair") !== io.github.psd2live.core.recipe.RigModules.HAIR_CHAINS || config.meshOnly) return emptyList()
+		val layers = analysis.layers.filter { layer ->
+			!(layer.semantic.tag == SemanticTag.FRONT_HAIR && config.hairSimulationFront) && !(layer.semantic.tag == SemanticTag.BACK_HAIR && config.hairSimulationBack)
+		}.map { it.riggedIn(analysis.anchors, faceRig.coordinateSpace) }
+		val eye = faceRig.eyeLineY; val r = faceRig.radiusY
+		return io.github.psd2live.core.fit.HairChain.plan(layers, faceRig.radiusX * 2f, { kind, frame ->
+			when (kind) {
+				io.github.psd2live.core.fit.HairKind.FRONT -> (eye - 0.45f * r).coerceIn(frame.top, frame.bottom)
+				io.github.psd2live.core.fit.HairKind.SIDE -> (eye - 0.2f * r).coerceIn(frame.top, frame.bottom)
+				io.github.psd2live.core.fit.HairKind.BACK -> eye.coerceIn(frame.top, frame.bottom)
+				io.github.psd2live.core.fit.HairKind.TAIL -> frame.top + frame.height * 0.08f
+				io.github.psd2live.core.fit.HairKind.AHOGE -> frame.bottom - frame.height * 0.1f
+			}
+		}, config.recipe.baseValue("hair", "swing") / 100f, config.recipe.baseValue("hair", "softness") / 100f)
+	}
+
 	private fun withoutLegacyHairSway(puppet: PuppetModel, config: PipelineConfig): PuppetModel {
 		var model = puppet
-		if (config.hairSimulationFront) {
+		val chains = config.recipe.base("hair") === io.github.psd2live.core.recipe.RigModules.HAIR_CHAINS && !config.meshOnly
+		if (config.hairSimulationFront || chains && model.deformers.any { it.id == frontHairPhysicsWarpId }) {
 			model = model.withParameterDeleted(StandardParameters.HAIR_FRONT).withDeformerDeleted(frontHairPhysicsWarpId)
 		}
-		if (config.hairSimulationBack) {
+		if (config.hairSimulationBack || chains && model.deformers.any { it.id == backHairPhysicsWarpId }) {
 			model = model.withParameterDeleted(StandardParameters.HAIR_BACK).withDeformerDeleted(backHairPhysicsWarpId)
 		}
 		return model
@@ -2680,6 +2702,30 @@ object RigBuilder {
 			for (layer in pairLayers) {
 				pairedParentByLayerId[layer.source.id.raw] = pairId to pairBounds
 			}
+		}
+
+		// Each hair layer hangs in a chain of its own under the hair's follow and sway.
+		for (chain in hairChains(analysis, faceRig, config)) {
+			if (chain.layerId in pairedParentByLayerId) continue
+			val layer = analysis.layers.firstOrNull { it.source.id.raw == chain.layerId } ?: continue
+			val (parentId, parentFrame) = defaultParentAndFrame(layer, faceRig, analysis.anchors, character, head, faceFrame, frontHair, backHair,
+				config.rigEdits.skeleton?.enabled == true, stance.legsFrame, bodyFrame)
+			val id = DeformerId(chain.warpId)
+			val rows = io.github.psd2live.core.fit.HairChain.ROWS; val columns = io.github.psd2live.core.fit.HairChain.COLUMNS
+			val warp = identityWarp(id, tr("model.deformer.hairChain", layer.source.name), parentId, chain.frame, parentFrame,
+				if (layer.semantic.tag == SemanticTag.FRONT_HAIR) frontHairPartId else backHairPartId, rows = rows, columns = columns)
+			val rest = FloatArray((rows + 1) * (columns + 1) * 2).also { points ->
+				var i = 0
+				for (row in 0..rows) for (column in 0..columns) {
+					points[i++] = chain.frame.left + chain.frame.width * column / columns
+					points[i++] = chain.frame.top + chain.frame.height * row / rows
+				}
+			}
+			deformers += warp.copy(blendShapes = chain.shapes(rest, rows, columns) { points ->
+				FloatArray(points.size) { k -> if (k % 2 == 0) normalizeX(points[k], parentFrame) else normalizeY(points[k], parentFrame) }
+			})
+			pairFrames[id.raw] = chain.frame
+			pairedParentByLayerId[chain.layerId] = id to chain.frame
 		}
 
 		if (config.rigEdits.skeleton?.enabled != true) {
@@ -3811,7 +3857,11 @@ object RigBuilder {
 		val eyesFitted = context.fittedEyes(config)?.rigs?.isNotEmpty() == true
 		return io.github.psd2live.core.recipe.RigModules.parameters(config, io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis))
 			.filter { eyesFitted || !it.id.startsWith("ParamEye") }
-			.map { Parameter(ParameterId(it.id), tr(it.nameKey), it.min, it.max, it.default) }
+			.map { Parameter(ParameterId(it.id), tr(it.nameKey), it.min, it.max, it.default) } +
+			hairChains(context.analysis, context.faceRig, config).filter { chain -> context.deformers.any { it.id.raw == chain.warpId } }.flatMap { chain ->
+				val name = context.analysis.layers.firstOrNull { it.source.id.raw == chain.layerId }?.source?.name ?: chain.layerId
+				chain.parameters.map { p -> Parameter(p, tr("model.parameter.hairChain", name, p.raw.removePrefix("ParamHair")), -1f, 1f, 0f) }
+			}
 	}
 
 	private fun parameterTree(customParameters: List<Parameter> = emptyList(), moduleParameters: List<Parameter> = emptyList()): List<ParameterNode> {
@@ -3825,7 +3875,8 @@ object RigBuilder {
 			group("ParamGroupBrows", tr("model.group.brows"), listOf(StandardParameters.BROW_L_Y, StandardParameters.BROW_R_Y)),
 			group("ParamGroupMouth", tr("model.group.mouth"), listOf(StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN)),
 			group("ParamGroupBody", tr("model.group.body"), listOf(StandardParameters.BODY_X, StandardParameters.BODY_Y, StandardParameters.BODY_Z, StandardParameters.BODY_LEAN, StandardParameters.PROPORTION, StandardParameters.BREATH)),
-			group("ParamGroupPhysics", tr("model.group.physics"), listOf(StandardParameters.HAIR_FRONT, StandardParameters.HAIR_BACK)),
+			group("ParamGroupPhysics", tr("model.group.physics"), listOf(StandardParameters.HAIR_FRONT, StandardParameters.HAIR_BACK) +
+				moduleParameters.map { it.id }.filter { it.raw.startsWith("ParamHair") && it != StandardParameters.HAIR_FRONT && it != StandardParameters.HAIR_BACK }),
 		)
 		return if (customParameters.isNotEmpty()) {
 			base + group("ParamGroupCustom", tr("model.group.custom"), customParameters.map { it.id })

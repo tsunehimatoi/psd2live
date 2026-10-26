@@ -16,7 +16,7 @@ class PosedStrokeScenario {
 	@TempDir lateinit var temp: Path
 
 	@Test fun strokesAtAPoseSurviveGeneratorsComingAndGoing() = Studio.run(temp, Characters.figure(physics = true)) {
-		edit("add hair swing", "swing_put", req("id" to "sway", "kind" to "lateral", "targets" to listOf("DeformHairBackPhysics")))
+		edit("add hair swing", "swing_put", req("id" to "sway", "kind" to "lateral", "targets" to listOf("DeformHairChain1")))
 		val swing = puppet.parameters.single { it.id.raw.startsWith("ParamSwing") }.id.raw
 		val face = mesh("face")
 		val before = CpuDeformationEvaluator().evaluate(puppet, emptyMap()).worldPositions.getValue(DrawableId(face))

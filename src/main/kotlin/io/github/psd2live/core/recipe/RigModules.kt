@@ -166,13 +166,21 @@ object RigModules {
 	val FACE_SKIN_CLIP = RigModule("face.skin-clip", ModuleTier.MAJOR,
 		applies = { it.has(SemanticTag.FACE) && (it.has(SemanticTag.FACE_DETAIL) || it.has(SemanticTag.FRONT_HAIR, io.github.psd2live.core.PartRole.SHADOW)) })
 
+	/**
+	 * Hair in chains ([io.github.psd2live.core.fit.HairChain]): every hair layer bends in segments on pendulums of its
+	 * own kind - bangs short and light, side locks longer, back hair long and slow, an ahoge springy, a ponytail a whip -
+	 * a wide layer in three locks that fall out of step, and it bounces as the head nods. It replaces the one sway of the
+	 * front and the back hair.
+	 */
+	val HAIR_CHAINS = RigBase("hair/chains", knobs = listOf(RecipeKnob("swing", P, 30f..200f, 100f), RecipeKnob("softness", P, 0f..100f, 50f)))
+
 	val areas: List<RigArea> = listOf(
 		RigArea("face", listOf(legacy("face")), listOf(FACE_DEPTH_TURN, FACE_SKIN_CLIP)),
 		RigArea("eye", listOf(legacy("eye"), EYE_FITTED), listOf(EYE_SEE_THROUGH, EYE_SMILE, EYE_WIDE, EYE_GAZE_LID, EYE_EMOTION, EYE_LID_FADE,
 			EYE_HIGHLIGHT, EYE_JELLY, EYE_AFTERSHOCK, EYE_SQUASH)),
 		RigArea("brow", listOf(legacy("brow"), BROW_FITTED), listOf(BROW_SEE_THROUGH, BROW_SHAPE, BROW_LID, BROW_BLINK)),
 		RigArea("mouth", listOf(legacy("mouth"), MOUTH_FITTED), listOf(MOUTH_OUTLINE, MOUTH_VOWEL, MOUTH_CAPTURE, MOUTH_JAW, MOUTH_CHEEK_LID, MOUTH_DEPTH, MOUTH_SPRING)),
-		RigArea("hair", listOf(legacy("hair")), emptyList()),
+		RigArea("hair", listOf(legacy("hair"), HAIR_CHAINS), emptyList()),
 		RigArea("body", listOf(legacy("body")), emptyList()),
 		RigArea("outfit", listOf(legacy("outfit")), emptyList()),
 		RigArea("expression", listOf(legacy("expression")), emptyList()),
