@@ -9,6 +9,7 @@ import org.umamo.runtime.model.ParameterId
 import org.umamo.runtime.model.WarpForm
 import kotlin.math.cos
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sin
 
 /**
@@ -53,6 +54,8 @@ enum class HairKind(val word: String, val swing: Float, val segments: Int, val b
 
 		fun of(layer: ClassifiedLayer): HairKind? = when {
 			layer.semantic.tag != SemanticTag.FRONT_HAIR && layer.semantic.tag != SemanticTag.BACK_HAIR -> null
+			// A hair's shadow or highlight rides the chain of the hair it lies on ([HairChain.owner]).
+			layer.semantic.role == PartRole.SHADOW || layer.semantic.role == PartRole.HIGHLIGHT -> null
 			layer.semantic.role == PartRole.AHOGE -> AHOGE
 			layer.semantic.role == PartRole.TAIL || layer.semantic.role == PartRole.BRAID -> TAIL
 			layer.semantic.role == PartRole.SIDE -> SIDE
@@ -171,6 +174,17 @@ data class HairChain(
 		const val COLUMNS = 6
 		private val REGION_NAMES = listOf("L", "C", "R")
 
+		/**
+		 * The chain among [chains] that a hair's shadow or highlight [layer] rides: the one over the hair of its own
+		 * kind it overlaps most, so the shading bends with that hair rather than on a pendulum of its own.
+		 */
+		fun owner(layer: ClassifiedLayer, chains: List<HairChain>, layers: Map<String, ClassifiedLayer>): HairChain? {
+			fun overlap(a: Bounds, b: Bounds) = (min(a.right, b.right) - max(a.left, b.left)).coerceAtLeast(0f) *
+				(min(a.bottom, b.bottom) - max(a.top, b.top)).coerceAtLeast(0f)
+			return chains.filter { layers[it.layerId]?.semantic?.tag == layer.semantic.tag }
+				.maxByOrNull { overlap(it.frame, layer.bounds) }?.takeIf { overlap(it.frame, layer.bounds) > 0f }
+		}
+
 		private val KINDS = HairKind.entries.joinToString("|") { it.word }
 		private val PARAMETER = Regex("(ParamHair|ParamCloth|ParamPart)($KINDS)(\\d+)([LCR]?)(\\d)")
 		private val BOUNCE = Regex("(ParamHair|ParamCloth|ParamPart)($KINDS)(\\d+)Y")
@@ -200,7 +214,7 @@ data class HairChain(
 		 * regions' and chains' lengths set apart a little so neighbouring locks fall out of step; and one for each
 		 * chain's bounce, driven by the head's and body's nod and the breath.
 		 */
-		fun physics(available: Set<String>, softness: Float = 0.5f): List<io.github.psd2live.core.RigPhysicsEdit> {
+		fun physics(available: Set<String>, softness: Float = 0.5f, impulses: List<String> = emptyList()): List<io.github.psd2live.core.RigPhysicsEdit> {
 			// The hair's material: stiff hair swings on short quick pendulums, soft and floaty hair on long slow ones.
 			val soft = (softness - 0.5f).coerceIn(-0.5f, 0.5f)
 			val swings = available.mapNotNull { PARAMETER.matchEntire(it) }.groupBy { listOf(it.groupValues[1], it.groupValues[2], it.groupValues[3], it.groupValues[4]) }
@@ -218,8 +232,10 @@ data class HairChain(
 					(kind.mobility + 0.08f * material).coerceIn(0.5f, 0.99f), kind.delay * spread * (1f + 0.6f * material), kind.acceleration * (1f - 0.3f * material))
 				// An animal ear twitches with the blink, as ears do; the bangs quiver a hair's breadth with it.
 				val blink = when (kind) { HairKind.EAR -> 15f; HairKind.FRONT -> 5f; else -> 0f }
-				val inputs = head + if (blink > 0f) listOf("ParamEyeLOpen", "ParamEyeROpen").filter { it in available }
-					.map { io.github.psd2live.core.PhysicsInput(it, blink, io.github.psd2live.core.PhysicsSourceType.X) } else emptyList()
+				val inputs = head + (if (blink > 0f) listOf("ParamEyeLOpen", "ParamEyeROpen").filter { it in available }
+					.map { io.github.psd2live.core.PhysicsInput(it, blink, io.github.psd2live.core.PhysicsSourceType.X) } else emptyList()) +
+					// A toggle or switch flipping nudges the chains, as a change of clothes or a prop would.
+					impulses.filter { it in available }.map { io.github.psd2live.core.PhysicsInput(it, 6f, io.github.psd2live.core.PhysicsSourceType.X) }
 				io.github.psd2live.core.RigPhysicsEdit(
 					id = "Physics${family(kind)}$word$index$region",
 					name = io.github.psd2live.i18n.tr(when (family(kind)) { "Hair" -> "model.physics.hairChain"; "Cloth" -> "model.physics.clothChain"; else -> "model.physics.partChain" },

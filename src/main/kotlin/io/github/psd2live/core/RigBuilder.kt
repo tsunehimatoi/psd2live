@@ -413,7 +413,7 @@ object RigBuilder {
 				vowels = on(m.MOUTH_VOWEL), capture = on(m.MOUTH_CAPTURE),
 				jaw = on(m.MOUTH_JAW), jawShare = value(m.MOUTH_JAW, "share"),
 				depth = on(m.MOUTH_DEPTH), depthAmount = value(m.MOUTH_DEPTH, "depth"),
-				spring = on(m.MOUTH_SPRING))
+				spring = on(m.MOUTH_SPRING), tongue = on(m.MOUTH_TONGUE))
 			return fittedMouths.getOrPut(listOf(options, config.parentOverrides, deformersEnabled, config.recipe.base("eye"), config.recipe.moves("mouth"))) {
 				val mouth = analysis.layers.firstOrNull { it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && it.opaquePixels > 0 }
 				val space = mouth?.let { headSpaceFor(it, config) }
@@ -1342,11 +1342,14 @@ object RigBuilder {
 
 			val minId = ids.minOrNull() ?: 0
 			val maxId = ids.maxOrNull() ?: 0
-			val keys = if (minId == maxId) {
+			val whole = if (minId == maxId) {
 				floatArrayOf(minId.toFloat(), (minId + 1).toFloat())
 			} else {
 				(minId..maxId).map { it.toFloat() }.toFloatArray()
 			}
+			// Choreographed (`expression.toggles`): a key halfway between two variants, where both show.
+			val staggered = io.github.psd2live.core.recipe.RigModules.let { it.builds(it.EXPRESSION_TOGGLES, config, io.github.psd2live.core.recipe.RecipeSubject.of(analysis)) }
+			val keys = if (!staggered) whole else (0 until whole.size * 2 - 1).map { whole.first() + it * 0.5f }.toFloatArray()
 			switchParamKeys[paramName] = keys
 			customParams += Parameter(
 				id = ParameterId(paramName),
@@ -2790,7 +2793,8 @@ object RigBuilder {
 		}
 
 		// Each hair layer hangs in a chain of its own under the hair's follow and sway.
-		for (chain in hairChains(analysis, faceRig, config)) {
+		val chains = hairChains(analysis, faceRig, config)
+		for (chain in chains) {
 			if (chain.layerId in pairedParentByLayerId) continue
 			val layer = analysis.layers.firstOrNull { it.source.id.raw == chain.layerId } ?: continue
 			val (parentId, parentFrame) = defaultParentAndFrame(layer, faceRig, analysis.anchors, character, head, faceFrame, frontHair, backHair,
@@ -2819,9 +2823,22 @@ object RigBuilder {
 			pairFrames[id.raw] = chain.frame
 			pairedParentByLayerId[chain.layerId] = id to chain.frame
 		}
+		// A hair's shadows and highlights ride the chain of the hair they lie on.
+		if (chains.isNotEmpty()) {
+			val rigLayers = analysis.layers.associate { it.source.id.raw to (rigLayerById[it.source.id.raw] ?: it) }
+			for (layer in analysis.layers) {
+				if (layer.semantic.tag != SemanticTag.FRONT_HAIR && layer.semantic.tag != SemanticTag.BACK_HAIR) continue
+				if (layer.semantic.role != PartRole.SHADOW && layer.semantic.role != PartRole.HIGHLIGHT) continue
+				if (layer.source.id.raw in pairedParentByLayerId) continue
+				val owner = io.github.psd2live.core.fit.HairChain.owner(rigLayers.getValue(layer.source.id.raw), chains, rigLayers) ?: continue
+				if (deformers.none { it.id.raw == owner.warpId }) continue
+				pairedParentByLayerId[layer.source.id.raw] = DeformerId(owner.warpId) to owner.frame
+			}
+		}
 
 		if (config.rigEdits.skeleton?.enabled != true) {
-			deformers += armHangWarps(analysis, stance, rigLayerById, deformers, pairedParentByLayerId, pairFrames, bodyPartId) { layer ->
+			val armSwing = io.github.psd2live.core.recipe.RigModules.let { it.builds(it.BODY_ARMS, config, io.github.psd2live.core.recipe.RecipeSubject.of(analysis)) }
+			deformers += armHangWarps(analysis, stance, rigLayerById, deformers, pairedParentByLayerId, pairFrames, bodyPartId, armSwing) { layer ->
 				defaultParentAndFrame(layer, faceRig, analysis.anchors, character, head, faceFrame, frontHair, backHair, false, stance.legsFrame, bodyFrame)
 			}
 		}
@@ -2845,6 +2862,7 @@ object RigBuilder {
 		parents: MutableMap<String, Pair<DeformerId, Bounds>>,
 		frames: MutableMap<String, Bounds>,
 		partId: PartId,
+		swing: Boolean = false,
 		defaultParent: (ClassifiedLayer) -> Pair<DeformerId, Bounds>,
 	): List<Deformer.Warp> {
 		val axes = listOf(axis(StandardParameters.BODY_X, -10f, 0f, 10f)) + leanAxes()
@@ -2888,8 +2906,24 @@ object RigBuilder {
 				KeyformCell(c, WarpLatticeForm(points))
 			}
 			val id = DeformerId("DeformArmHang_" + (if (side == Side.LEFT) "L" else "R"))
+			// The arm's swing (`body.arms`): turned about the shoulder, more toward the hand, as a hanging arm lags.
+			val shapes = if (!swing) emptyList() else {
+				fun turned(degrees: Float) = org.umamo.runtime.model.WarpForm(FloatArray((ARM_HANG_COLUMNS + 1) * (ARM_HANG_ROWS + 1) * 2).also { points ->
+					for (row in 0..ARM_HANG_ROWS) for (column in 0..ARM_HANG_COLUMNS) {
+						val i = (row * (ARM_HANG_COLUMNS + 1) + column) * 2
+						val v = row.toFloat() / ARM_HANG_ROWS
+						val x = frame.left + column.toFloat() / ARM_HANG_COLUMNS * frame.width; val y = frame.top + v * frame.height
+						val a = Math.toRadians(degrees * (0.6f + 0.4f * v).toDouble()).toFloat()
+						val dx = x - shoulderX; val dy = y - frame.top
+						val rx = shoulderX + dx * kotlin.math.cos(a) - dy * kotlin.math.sin(a); val ry = frame.top + dx * kotlin.math.sin(a) + dy * kotlin.math.cos(a)
+						points[i] = normalizeX(rx, parentFrame); points[i + 1] = normalizeY(ry, parentFrame)
+					}
+				})
+				listOf(org.umamo.runtime.model.BlendShapeBinding(ParameterId(if (side == Side.LEFT) "ParamArmLSwing" else "ParamArmRSwing"),
+					floatArrayOf(-1f, 0f, 1f), 1, listOf(turned(-7f), null, turned(7f))))
+			}
 			warps += Deformer.Warp(id, tr("model.deformer.armHang", arms.first().source.name),
-				parentId, partId, ARM_HANG_ROWS, ARM_HANG_COLUMNS, true, KeyformGrid(axes, cells))
+				parentId, partId, ARM_HANG_ROWS, ARM_HANG_COLUMNS, true, KeyformGrid(axes, cells), blendShapes = shapes)
 			frames[id.raw] = frame
 			for (layer in arms) parents[layer.source.id.raw] = id to frame
 		}
@@ -3438,7 +3472,7 @@ object RigBuilder {
 				SemanticTag.MOUTH_OPEN -> if (mouth.result.layers.any { it.semantic.tag == SemanticTag.MOUTH }) 0.12f else 0f
 				else -> 0f
 			}
-			return rig.shapes(data.rigPositions, frame, closedLayer) { opens -> if (!opens) Float.NaN else if (closedLayer) 0f else 1f } +
+			return rig.shapes(data.rigPositions, frame, closedLayer, { opens -> if (!opens) Float.NaN else if (closedLayer) 0f else 1f }, tag == SemanticTag.TONGUE) +
 				(if (depth > 0f) rig.depthShapes(data.rigPositions, frame, depth, StandardParameters.ANGLE_X, StandardParameters.ANGLE_Y) else emptyList())
 		}
 		if (layer.semantic.role != null && layer.semantic.role != PartRole.SHADOW) return emptyList()
@@ -3475,6 +3509,8 @@ object RigBuilder {
 				io.github.psd2live.core.fit.EyeModules.meshOf(tag, layer.semantic.role)!!, layer.semantic.side, data.rigPositions, frame, eye, eyes.options)
 			tag == SemanticTag.IRIDES && layer.semantic.role == PartRole.HIGHLIGHT ->
 				io.github.psd2live.core.fit.EyeModules.highlightShapes(data.rigPositions, frame, eye.fit.iris ?: layer.bounds, eyes.options)
+			tag == SemanticTag.IRIDES -> io.github.psd2live.core.fit.EyeModules.pupilShapes(layer.semantic.side, data.rigPositions, frame,
+				eye.fit.iris ?: layer.bounds, eyes.options)
 			else -> emptyList()
 		}
 	}
@@ -3990,8 +4026,10 @@ object RigBuilder {
 				val keys = switchParamKeys[paramName]
 				if (paramName.isNotBlank() && keys != null && keys.isNotEmpty()) {
 					val parameter = ParameterId(paramName)
+					// A variant shows from halfway before its key to halfway after: the incoming one is whole before the
+					// outgoing one fades. On whole keys alone this is the plain step it always was.
 					scalarGrid(parameter, keys) { key ->
-						if (key.toInt() == switchId) 1f else 0f
+						if (abs(key - switchId) <= 0.5f) 1f else 0f
 					}
 				} else null
 			}

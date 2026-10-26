@@ -233,6 +233,21 @@ object EyeModules {
 	 * A highlight's shapes (`eye.highlight`): it drifts against the head's turn, as a reflection of a light that stays
 	 * put, by up to a fifth of its iris's width at full turn.
 	 */
+	/**
+	 * The pupil's share of the mood (`brow.lid-coupling`): raised brows - surprise - draw the iris in a little, lowered
+	 * brows let it open, about the iris's middle ([iris]).
+	 */
+	fun pupilShapes(side: Side, positions: FloatArray, frame: Bounds, iris: Bounds, options: EyeOptions): List<BlendShapeBinding<MeshForm>> {
+		if (!options.browCoupling) return emptyList()
+		fun scaled(k: Float) = MeshForm(FloatArray(positions.size) { i ->
+			if (i % 2 == 0) (positions[i] - iris.centerX) * (k - 1f) / frame.width.coerceAtLeast(1e-4f)
+			else (positions[i] - iris.centerY) * (k - 1f) / frame.height.coerceAtLeast(1e-4f)
+		})
+		val y = ParameterId(if (side == Side.LEFT) "ParamBrowLY" else "ParamBrowRY")
+		val k = 0.08f * options.browStrength
+		return listOf(BlendShapeBinding(y, floatArrayOf(-1f, 0f, 1f), 1, listOf(scaled(1f + k * 0.5f), null, scaled(1f - k))))
+	}
+
 	fun highlightShapes(positions: FloatArray, frame: Bounds, iris: Bounds, options: EyeOptions): List<BlendShapeBinding<MeshForm>> {
 		if (!options.highlight) return emptyList()
 		fun shift(dx: Float, dy: Float) = MeshForm(FloatArray(positions.size) { i ->

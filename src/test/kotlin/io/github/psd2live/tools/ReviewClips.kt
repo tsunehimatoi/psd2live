@@ -148,7 +148,8 @@ internal object ReviewClips {
 		"body" to listOf(-10f, 0f, 10f).flatMap { x -> listOf(-10f, 0f, 10f).map { z -> "body x $x z $z" to mapOf("ParamBodyAngleX" to x, "ParamBodyAngleZ" to z) } } +
 			listOf("bust up" to mapOf("ParamBustY" to 1f), "bust down" to mapOf("ParamBustY" to -1f), "bust side" to mapOf("ParamBustX" to 1f),
 				"cloth swing" to chains({ _, _ -> 1f }), "cloth swing -" to chains({ _, _ -> -1f }), "hem flare" to chains({ _, _ -> 0f }, 1f),
-				"hem in" to chains({ _, _ -> 0f }, -1f)),
+				"hem in" to chains({ _, _ -> 0f }, -1f), "arms swing" to mapOf("ParamArmLSwing" to 1f, "ParamArmRSwing" to 1f),
+				"arms swing -" to mapOf("ParamArmLSwing" to -1f, "ParamArmRSwing" to -1f)),
 	)
 
 	/** [frames] written as a looping GIF at [fps] into [file]. */

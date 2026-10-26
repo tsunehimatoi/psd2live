@@ -248,6 +248,7 @@
 | --- | --- | --- | --- | --- |
 | `expression.cheek` | 重要 | `ParamCheek` | 脸红：腮红图层（部件角色 `blush`）加深，脸、鼻、耳的肤色变暖；没有腮红图层时只改肤色（乘色关键形） | 幅度 |
 | `expression.gloom` | 锦上添花 | `ParamGloom` | 阴沉：皮肤变暗变冷，高光层淡出 | 幅度 |
+| `expression.toggles` | 重要 | — | 差分（switch）在相邻两个取值的中点各自完整显示，新的先淡入、旧的后淡出，切换中不露空也不出现两个半透明层；开关与差分参数以小权重进入各条链的摆锤，切换时给摆动一个冲量 | — |
 
 标准表情随这些参数一起变丰富（见导出说明）。
 
@@ -256,9 +257,12 @@
 | 模块 | 重要程度 | 新增参数 | 做什么 | 旋钮 |
 | --- | --- | --- | --- | --- |
 | `body.bust` | 重要 | `ParamBustY`、`ParamBustX`（物理输出） | 上身胸部区域（肩到腰的三分之一处、躯干宽的大部分）随呼吸与身体动作起伏、左右晃动，边缘渐弱，周围衣物不动；作用于非袖、非裙的上衣与颈饰；硬质饰物（部件角色 `rigid`，如纽扣、徽章）按其中心整体平移，不被拉弯；需要有脸的人物 | 弹动幅度 |
+| `body.arms` | 重要 | `ParamArmLSwing` / `R`（物理输出） | 下垂手臂从肩部开始略晚于身体摆动，越往手部摆得越多（手臂下垂网格上的混合形状，物理组 `PhysicsArmLSwing` / `R`）；启用骨架时由骨架负责 | — |
 | `outfit.skirt` | 核心 | `ParamClothSkirt<n>[L/C/R]<段>`、`ParamClothSkirt<n>Y`（物理输出） | 裙子（部件角色 `skirt`）用 `HairChain` 的链从腰下开始分左中右三片错开摆动，`Y` 为下摆外张与收拢 | 摆幅 |
 | `outfit.creature` | 重要 | `ParamPartEar…`、`ParamPartAnimalTail…`、`ParamPartWing…`（物理输出） | 兽耳（部件角色 `animal`）、尾巴、翅膀用 `HairChain` 的链摆动；兽耳根在下方向上立起，并随眨眼抖动；已启用骨架时尾巴与翅膀由骨架负责 | 摆幅 |
 | `outfit.ribbons` | 重要 | `ParamClothRibbon…`、`ParamClothPendant…`（物理输出） | 缎带（`ribbon`）拖曳、吊坠（`pendant`）从挂点摆动，各有摆锤 | 摆幅 |
+
+生成的动作靠固定链根与渐弱的权重保持接缝：链的根部钉在连接线上（腰带、发际、挂点），胸部弹动在区域边缘降为零，所以相邻部件不会分开，生成时不另加 Glue；需要时仍可用 Glue 工具。头发的阴影与高光（部件角色 `shadow` / `highlight`）挂在它们所覆盖的同类头发的链上，随那束头发弯曲。
 
 身体随头转动不在物理里做：摆锤静止后归零，而且物理输出会覆盖宿主追踪的身体角度，留给宿主映射。
 
@@ -276,6 +280,7 @@
 | --- | --- | --- | --- | --- |
 | `mouth.vowel` | 重要 | `ParamA` / `ParamI` / `ParamU` / `ParamE` / `ParamO` | 五个元音口型（A 大开，I 横宽，U 收圆，E 中开横宽，O 圆），叠加在开合与嘴形上；打开时闭口图层隐去、口内显示 | — |
 | `mouth.capture` | 重要 | `ParamMouthX`、`ParamMouthPuckerWiden`、`ParamMouthShrug`、`ParamMouthPressLipOpen`、`ParamCheekPuff`、`ParamJawOpen` | 面捕常用的歪嘴、嘟嘴与咧嘴、耸嘴、抿嘴或唇分开、鼓腮、闭唇张颌（下巴下移、闭着的嘴下移变窄）；参数名沿用 VBridger 惯用名，面捕插件可直接驱动 | — |
+| `mouth.tongue` | 锦上添花 | `ParamTongueOut` | 有舌头图层时：嘴张到一半，舌头向下滑出下唇原来的位置；需要 `mouth.capture` | — |
 | `mouth.jaw` | 核心 | — | 张嘴时嘴角线以下的脸皮随下颌下移（下巴处为原画开口的 15%），两颊略收，鼻子微动 | 下颌下移 |
 | `mouth.cheek-lid` | 锦上添花 | — | 嘴形上扬时脸颊把下睑往上推；需要拟合眼 | 幅度 |
 | `mouth.interior-depth` | 重要 | — | 转头时上牙、下牙、舌与口腔按各自深度落后于唇线；舌、下牙与口腔在小开口时较暗，张满时恢复原画明度（乘色关键形） | 深度 |
@@ -286,7 +291,7 @@
 | 模块 | 重要程度 | 新增参数 | 做什么 | 旋钮 |
 | --- | --- | --- | --- | --- |
 | `brow.shape` | 核心 | `ParamBrowLAngle` / `R`（−1 内端压低 … +1 抬起）、`ParamBrowLX` / `R`、`ParamBrowLForm` / `R`（−1 平直 … +1 弯拱） | 眉毛角度、左右移动与眉形 | 幅度 |
-| `brow.lid-coupling` | 重要 | — | 上睑与眉毛如同一层皮肤：眉毛压低或皱起时上睑下压、变平（瞪视），抬起时上睑上提；需要拟合眼 | 幅度 |
+| `brow.lid-coupling` | 重要 | — | 上睑与眉毛如同一层皮肤：眉毛压低或皱起时上睑下压、变平（瞪视），抬起时上睑上提；情绪也扇出到瞳孔：抬眉（惊讶）时虹膜略缩、压眉时略放；需要拟合眼 | 幅度 |
 | `brow.blink` | 重要 | — | 闭眼时眉毛略微下沉（内端多些），`eye.wide` 睁大时上扬，笑眼闭合时回升 | 下沉 |
 | `brow.spring` | 锦上添花 | `ParamBrowLSpring` / `R`（物理输出） | 眉停下时略微过冲再回落，摆锤以眉高与角度为输入（物理组 `PhysicsBrowLSpring` / `R`） | — |
 

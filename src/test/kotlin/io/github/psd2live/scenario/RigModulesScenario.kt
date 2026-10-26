@@ -168,4 +168,15 @@ class RigModulesScenario {
 		})
 		expect("back", closed() == drawn) { "clearing the move returns the drawn fit" }
 	}
+
+	@Test fun switchedVariantsCrossFadeWithoutAHole() = Studio.run(temp, Characters.mouthed()) {
+		allow("REGENERATION_CONFLICT")
+		edits("two variants", "layer_classify" to req("layer_id" to "back_hair", "type" to "switch", "parameter" to "ParamOutfit", "switch_id" to 0),
+			"layer_classify" to req("layer_id" to "mouth", "type" to "switch", "parameter" to "ParamOutfit", "switch_id" to 1), "rig_generate" to req())
+		fun opacity(layer: String) = puppet.drawables.single { it.id.raw == mesh(layer) }.channelGrids.gridsByChannel.getValue(org.umamo.runtime.model.FormChannel.OPACITY)
+		fun at(layer: String, key: Float) = opacity(layer).let { grid ->
+			(grid.cells.single { cell -> grid.axes.single().keys[cell.coordinate[0]] == key }.form as org.umamo.runtime.model.ChannelValue.Scalar).value }
+		expect("staggered", opacity("back_hair").axes.single().keys.toList() == listOf(0f, 0.5f, 1f) && at("back_hair", 0.5f) == 1f && at("mouth", 0.5f) == 1f &&
+			at("back_hair", 1f) == 0f && at("mouth", 0f) == 0f) { "halfway between two variants both show, so the change has no hole" }
+	}
 }

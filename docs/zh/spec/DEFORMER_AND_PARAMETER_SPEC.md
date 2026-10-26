@@ -50,6 +50,8 @@
 | `ParamBrowLSpring`, `ParamBrowRSpring`（`brow.spring`，物理输出） | -1…1 | 0 |
 | `ParamJawOpen`（`mouth.capture`） | 0…1 | 0 |
 | `ParamPartEar<n>…`, `ParamPartAnimalTail<n>…`, `ParamPartWing<n>…`（`outfit.creature`，物理输出） | -1…1 | 0 |
+| `ParamArmLSwing`, `ParamArmRSwing`（`body.arms`，物理输出） | -1…1 | 0 |
+| `ParamTongueOut`（`mouth.tongue`） | 0…1 | 0 |
 | `ParamBustY`, `ParamBustX`（`body.bust`，物理输出） | -1…1 | 0 |
 | `ParamMouthSpring`（`mouth.spring`，物理输出） | -1…1 | 0 |
 | `ParamHairFront`, `ParamHairBack` | -1…1 | 0 |

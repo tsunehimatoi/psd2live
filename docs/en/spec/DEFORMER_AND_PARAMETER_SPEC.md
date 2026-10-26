@@ -50,6 +50,8 @@ The table follows StandardParameters. Mesh-only mode, disabled deformers or miss
 | `ParamBrowLSpring`, `ParamBrowRSpring` (`brow.spring`, physics outputs) | -1…1 | 0 |
 | `ParamJawOpen` (`mouth.capture`) | 0…1 | 0 |
 | `ParamPartEar<n>…`, `ParamPartAnimalTail<n>…`, `ParamPartWing<n>…` (`outfit.creature`, physics outputs) | -1…1 | 0 |
+| `ParamArmLSwing`, `ParamArmRSwing` (`body.arms`, physics outputs) | -1…1 | 0 |
+| `ParamTongueOut` (`mouth.tongue`) | 0…1 | 0 |
 | `ParamBustY`, `ParamBustX` (`body.bust`, physics outputs) | -1…1 | 0 |
 | `ParamMouthSpring` (`mouth.spring`, physics output) | -1…1 | 0 |
 | `ParamHairFront`, `ParamHairBack` | -1…1 | 0 |

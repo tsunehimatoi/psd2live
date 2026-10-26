@@ -135,6 +135,10 @@ object RigModules {
 			mouth("ParamMouthShrug", "mouthShrug", 0f, 1f), mouth("ParamMouthPressLipOpen", "mouthPressLipOpen", -1f, 1f),
 			mouth("ParamCheekPuff", "cheekPuff", 0f, 1f), mouth("ParamJawOpen", "jawOpen", 0f, 1f)))
 
+	/** The tongue put out, on art with a tongue layer: the mouth opens and the tongue slides down past the lower lip's place. */
+	val MOUTH_TONGUE = RigModule("mouth.tongue", ModuleTier.MINOR, requires = listOf("mouth.capture"), base = FITTED_MOUTH,
+		applies = { it.has(SemanticTag.TONGUE) }, defines = listOf(mouth("ParamTongueOut", "tongueOut", 0f, 1f)))
+
 	/** The jaw: the chin and the lower face drop with the opening, the cheeks narrowing a little and the nose nudged. */
 	val MOUTH_JAW = RigModule("mouth.jaw", ModuleTier.CORE, base = FITTED_MOUTH, applies = { mouthOpen(it) && it.has(SemanticTag.FACE) },
 		knobs = listOf(RecipeKnob("share", P, 5f..30f, 15f)))
@@ -229,16 +233,32 @@ object RigModules {
 	 */
 	val FACE_NECK = RigModule("face.neck", ModuleTier.MAJOR, applies = { it.has(SemanticTag.NECK) && it.has(SemanticTag.FACE) })
 
+	/**
+	 * The hanging arms swinging a little behind the body, from the shoulder, more at the hand than at the elbow, on a
+	 * pendulum of each arm. A posed skeleton moves the arms itself.
+	 */
+	val BODY_ARMS = RigModule("body.arms", ModuleTier.MAJOR, applies = { it.has(SemanticTag.HANDWEAR) },
+		defines = listOf(ModuleParameter("ParamArmLSwing", "model.parameter.armLSwing", -1f, 1f, 0f, "ParamGroupPhysics"),
+			ModuleParameter("ParamArmRSwing", "model.parameter.armRSwing", -1f, 1f, 0f, "ParamGroupPhysics")),
+		physicsGroups = listOf("PhysicsArmLSwing", "PhysicsArmRSwing"))
+
+	/**
+	 * Toggles and switches choreographed: a switch between variants fades the incoming one in before the outgoing one
+	 * fades out, so the change never shows a hole or two half-seen layers, and every toggle or switch gives the hanging
+	 * chains a small nudge as it flips.
+	 */
+	val EXPRESSION_TOGGLES = RigModule("expression.toggles", ModuleTier.MAJOR, applies = { true })
+
 	val areas: List<RigArea> = listOf(
 		RigArea("face", listOf(legacy("face")), listOf(FACE_DEPTH_TURN, FACE_SKIN_CLIP, FACE_NECK)),
 		RigArea("eye", listOf(legacy("eye"), EYE_FITTED), listOf(EYE_SEE_THROUGH, EYE_SMILE, EYE_WIDE, EYE_GAZE_LID, EYE_EMOTION, EYE_LID_FADE,
 			EYE_HIGHLIGHT, EYE_JELLY, EYE_AFTERSHOCK, EYE_SQUASH)),
 		RigArea("brow", listOf(legacy("brow"), BROW_FITTED), listOf(BROW_SEE_THROUGH, BROW_SHAPE, BROW_LID, BROW_BLINK, BROW_SPRING)),
-		RigArea("mouth", listOf(legacy("mouth"), MOUTH_FITTED), listOf(MOUTH_OUTLINE, MOUTH_VOWEL, MOUTH_CAPTURE, MOUTH_JAW, MOUTH_CHEEK_LID, MOUTH_DEPTH, MOUTH_SPRING)),
+		RigArea("mouth", listOf(legacy("mouth"), MOUTH_FITTED), listOf(MOUTH_OUTLINE, MOUTH_VOWEL, MOUTH_CAPTURE, MOUTH_TONGUE, MOUTH_JAW, MOUTH_CHEEK_LID, MOUTH_DEPTH, MOUTH_SPRING)),
 		RigArea("hair", listOf(legacy("hair"), HAIR_CHAINS), emptyList()),
-		RigArea("body", listOf(legacy("body")), listOf(BODY_BUST)),
+		RigArea("body", listOf(legacy("body")), listOf(BODY_BUST, BODY_ARMS)),
 		RigArea("outfit", listOf(legacy("outfit")), listOf(OUTFIT_SKIRT, OUTFIT_RIBBONS, OUTFIT_CREATURE)),
-		RigArea("expression", listOf(legacy("expression")), listOf(EXPRESSION_CHEEK, EXPRESSION_GLOOM)),
+		RigArea("expression", listOf(legacy("expression")), listOf(EXPRESSION_CHEEK, EXPRESSION_GLOOM, EXPRESSION_TOGGLES)),
 		RigArea("motion", listOf(legacy("motion"), MOTION_NATURAL), emptyList()),
 	)
 

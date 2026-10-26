@@ -23,6 +23,8 @@ data class MouthOptions(
 	val jaw: Boolean = false, val jawShare: Float = 0.15f,
 	val depth: Boolean = false, val depthAmount: Float = 1f,
 	val spring: Boolean = false,
+	/** Whether the art has a tongue to put out. */
+	val tongue: Boolean = false,
 )
 
 /**
@@ -189,8 +191,21 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions) {
 	 * [visible] gives a form's opacity: a drawn closed mouth hides and the open mouth's parts show while a vowel opens
 	 * the mouth.
 	 */
-	fun shapes(positions: FloatArray, frame: Bounds, closedLayer: Boolean, visible: (Boolean) -> Float): List<BlendShapeBinding<MeshForm>> =
-		shapes({ pose -> (if (closedLayer) form(positions, frame) { u, v -> closedMove(u, v, pose) } else form(positions, frame, pose)).positionDeltas }, visible)
+	fun shapes(positions: FloatArray, frame: Bounds, closedLayer: Boolean, visible: (Boolean) -> Float, tongue: Boolean = false): List<BlendShapeBinding<MeshForm>> =
+		shapes({ pose -> (if (closedLayer) form(positions, frame) { u, v -> closedMove(u, v, pose) } else form(positions, frame, pose)).positionDeltas }, visible) +
+			tongueShapes(positions, frame, closedLayer, tongue, visible)
+
+	/**
+	 * The tongue put out (`mouth.capture` with a tongue layer): the mouth opens to about half and the tongue slides down
+	 * past where the lower lip was, inside the opened mouth.
+	 */
+	private fun tongueShapes(positions: FloatArray, frame: Bounds, closedLayer: Boolean, tongue: Boolean, visible: (Boolean) -> Float): List<BlendShapeBinding<MeshForm>> {
+		if (!options.capture || !options.tongue) return emptyList()
+		val open = staged(0.5f).let { (u, l) -> Pose(u, l, 0.95f) }
+		val deltas = if (closedLayer) form(positions, frame) { u, v -> closedMove(u, v, open) }.positionDeltas
+			else form(positions, frame) { u, v -> move(u, v, open).let { (du, dv) -> du to dv + if (tongue) 0.3f * h * EyeRig.hump(u.coerceIn(0f, 1f)).coerceAtLeast(0.4f) else 0f } }.positionDeltas
+		return listOf(BlendShapeBinding(TONGUE_OUT, floatArrayOf(0f, 1f), 0, listOf(null, MeshForm(deltas, opacity = visible(true)))))
+	}
 
 	/** The same shapes for a mesh whose deltas at a pose [deltas] gives - a lip ribbon laid along the posed lips. */
 	fun shapes(deltas: (Pose) -> FloatArray, visible: (Boolean) -> Float): List<BlendShapeBinding<MeshForm>> = buildList {
@@ -269,9 +284,10 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions) {
 		val PRESS_OPEN = ParameterId("ParamMouthPressLipOpen")
 		val CHEEK_PUFF = ParameterId("ParamCheekPuff")
 		val JAW_OPEN = ParameterId("ParamJawOpen")
+		val TONGUE_OUT = ParameterId("ParamTongueOut")
 		val SPRING = ParameterId("ParamMouthSpring")
 		/** The shapes that open the mouth: they show its open parts and hide a drawn closed mouth. */
-		val OPENING = VOWELS.map { it.second }.toSet() + PRESS_OPEN
+		val OPENING = VOWELS.map { it.second }.toSet() + PRESS_OPEN + TONGUE_OUT
 
 		private fun interpolate(keys: FloatArray, values: FloatArray, x: Float): Float {
 			if (x <= keys.first()) return values.first()
