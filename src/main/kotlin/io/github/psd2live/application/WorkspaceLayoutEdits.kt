@@ -58,7 +58,11 @@ internal object WorkspaceLayoutEdits {
     fun pending(document: WorkspaceDocument, generated: LayerSemantic, id: String): LayerSemantic {
         val pending = document.layout.generation.pendingClassifications[id] ?: return generated
         return generated.copy(tag = pending.tag, side = pending.side, type = pending.type, parameter = pending.parameter,
-            switchId = pending.switchId, confidence = 1f)
+            switchId = pending.switchId, confidence = 1f, role = when (val role = pending.role) {
+                null -> generated.role?.takeIf { it.fits(pending.tag) }
+                PartRole.PLAIN -> null
+                else -> role
+            })
     }
 
     /** Whether [id] waits for the next generation: placed since, or reclassified or reparented since. */
@@ -85,7 +89,8 @@ internal object WorkspaceLayoutEdits {
             val tags = replacing ?: (tags(next, semantic, id) - removing + adding)
             require(!(LayerTags.LEFT in tags && LayerTags.RIGHT in tags)) { "A layer is left or right, not both: $id" }
             val resolution = LayerTags.resolve(tags)
-            next = classify(next, model, id, LayerClassificationOverride.of(tags, semantic.layerVariant))
+            // A role the layer had, that its part could keep and the tags no longer hold, was taken away; keep the analysis from guessing it again.
+            next = classify(next, model, id, LayerClassificationOverride.of(tags, semantic.layerVariant, cleared = semantic.role?.fits(resolution.tag) == true && resolution.role == null))
             next = withUserTags(next, id, resolution.user)
         }
         return next
@@ -96,7 +101,8 @@ internal object WorkspaceLayoutEdits {
         require(variant.type == LayerType.PRESET || variant.parameter.isNotEmpty()) { "A toggle or switch names its parameter" }
         require(variant.type != LayerType.PRESET || (variant.parameter.isEmpty() && variant.switchId == 0)) { "variant none takes no parameter or switch_id" }
         val semantic = classification(document, model, id)
-        return classify(document, model, id, LayerClassificationOverride(variant.type, semantic.tag, semantic.side, variant.parameter, variant.switchId))
+        return classify(document, model, id, LayerClassificationOverride(variant.type, semantic.tag, semantic.side, variant.parameter, variant.switchId,
+            document.layerOverrides[id]?.role))
     }
 
     /** [document] with [id] classified as [value]: the same edit `layer_classify` makes. */

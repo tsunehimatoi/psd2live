@@ -41,7 +41,15 @@ import androidx.compose.ui.unit.sp
 import io.github.psd2live.core.RigTuning
 import io.github.psd2live.core.PhysicsGenerator
 import io.github.psd2live.core.sim.ModelPresets
+import io.github.psd2live.core.recipe.ModuleCost
+import io.github.psd2live.core.recipe.ModuleTier
+import io.github.psd2live.core.recipe.RecipeKnob
+import io.github.psd2live.core.recipe.RecipeSubject
+import io.github.psd2live.core.recipe.RigModule
+import io.github.psd2live.core.recipe.RigModules
+import io.github.psd2live.core.recipe.RigRecipe
 import io.github.psd2live.i18n.tr
+import io.github.psd2live.ui.components.CompactButton
 import io.github.psd2live.ui.components.CompactCheckbox
 import io.github.psd2live.ui.components.CompactDropdown
 import io.github.psd2live.ui.components.CompactNumberSpinner
@@ -518,5 +526,251 @@ internal fun RigTuningPresets(state: PSD2LiveState, viewModel: PSD2LiveViewModel
 				}
 			}
 		}
+	}
+}
+
+/** The model presets' rig module presets: everything on, the standard set (core and major) or the minimal one (core). */
+private enum class RigPreset(val key: String, val tiers: Set<ModuleTier>) {
+	FULL("settings.rig.preset.full", ModuleTier.entries.toSet()),
+	STANDARD("settings.rig.preset.standard", setOf(ModuleTier.CORE, ModuleTier.MAJOR)),
+	MINIMAL("settings.rig.preset.minimal", setOf(ModuleTier.CORE)),
+}
+
+/** A module's cost in a few words: what it adds, `≈` when estimated because it is off. */
+private fun costText(cost: ModuleCost?): String {
+	if (cost == null) return tr("settings.rig.notApplicable")
+	val parts = listOfNotNull(
+		tr("settings.rig.cost.parameters", cost.parameters.size).takeIf { cost.parameters.isNotEmpty() },
+		tr("settings.rig.cost.keyforms", cost.keyforms).takeIf { cost.keyforms > 0 },
+		tr("settings.rig.cost.blendShapes", cost.blendShapes).takeIf { cost.blendShapes > 0 },
+		tr("settings.rig.cost.physics", cost.physicsGroups).takeIf { cost.physicsGroups > 0 },
+	)
+	val text = parts.joinToString(" · ").ifEmpty { tr("settings.rig.cost.none") }
+	return if (cost.estimated && parts.isNotEmpty()) "≈ $text" else text
+}
+
+/**
+ * The model presets' rig modules: one card per area of the rig (eyes, brows, mouth...) holding the base the area builds
+ * with and the modules it adds, each switched on or off on its own with what it costs - the parameters, keyforms and
+ * physics groups it adds - and its few values. The presets on top turn modules off by how much they matter; the
+ * parameter budget turns off the least important until the rig adds no more parameters than it says. A project saved
+ * before modules offers its upgrade; until then it generates as it did and only the modules older settings switch
+ * show as on.
+ */
+@Composable
+internal fun RigModulePresets(state: PSD2LiveState, viewModel: PSD2LiveViewModel, isBusy: Boolean) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	val recipe = state.recipe
+	val config = state.rawConfig()
+	val model = state.previewModel
+	val subject = RecipeSubject.of(model?.analysis)
+	val physics = viewModel.physicsGroups(state).mapTo(HashSet()) { it.id }
+	fun on(module: RigModule) = recipe.switchedOn(module) { RigModules.setting(config, it) }
+	fun cost(module: RigModule): ModuleCost? = when {
+		!module.applies(subject) -> null
+		on(module) && model != null -> ModuleCost.measure(module, subject, model.rig.puppet, physics)
+		else -> module.estimate(subject)
+	}
+	val applying = RigModules.modules.filter { it.applies(subject) }
+	val costs = applying.associateWith { cost(it) }
+	val active = applying.filter { on(it) }
+	val parameters = active.sumOf { costs[it]?.parameters?.size ?: 0 }
+	PresetFolderRow(
+		title = tr("settings.group.rig"),
+		summary = when {
+			state.meshOnly -> tr("export.disabled")
+			!recipe.modern -> tr("settings.rig.legacy")
+			else -> tr("settings.rig.summary", active.size, applying.size, parameters)
+		},
+		expanded = state.rigModulesExpanded,
+		enabled = !isBusy && !state.meshOnly,
+	) { viewModel.setRigModulesExpanded(!state.rigModulesExpanded) }
+	if (!state.rigModulesExpanded || state.meshOnly) return
+
+	val small = typography.caption.copy(fontSize = 10.sp)
+	Column(
+		modifier = Modifier.fillMaxWidth().padding(start = 18.dp, end = 8.dp, top = 2.dp, bottom = 3.dp),
+		verticalArrangement = Arrangement.spacedBy(2.dp),
+	) {
+		if (!recipe.modern) {
+			Row(
+				modifier = Modifier.fillMaxWidth().background(colors.accent.copy(alpha = 0.08f), RoundedCornerShape(2.dp)).padding(horizontal = 6.dp, vertical = 3.dp),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				Text(tr("settings.rig.legacyHint"), style = small, color = colors.textPrimary, modifier = Modifier.weight(1f))
+				Spacer(Modifier.width(6.dp))
+				CompactButton(tr("settings.rig.upgrade"), onClick = viewModel::upgradeRig, enabled = !isBusy, isPrimary = true, height = 20.dp)
+			}
+		}
+
+		// Presets and budget: which modules stay on, by importance or by how many parameters the rig may add.
+		Row(Modifier.fillMaxWidth().height(24.dp), verticalAlignment = Alignment.CenterVertically) {
+			val modules = if (recipe.modern) applying else applying.filter { it.setting != null }
+			val preset = RigPreset.entries.firstOrNull { preset -> modules.all { on(it) == RigModules.presetOn(it, preset.tiers) } }
+			Hint(tr("settings.rig.preset.hint"), modifier = Modifier.width(76.dp)) {
+				Text(tr("settings.rig.preset"), style = typography.body.copy(fontSize = 11.sp), color = colors.textPrimary, textAlign = TextAlign.Right,
+					maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth())
+			}
+			Spacer(Modifier.width(5.dp))
+			CompactDropdown(
+				items = RigPreset.entries.toList() + listOf(null),
+				selectedItem = preset,
+				onItemSelected = { next -> if (next != null && next != preset) viewModel.setRigModules(modules.filter { RigModules.presetOn(it, next.tiers) }.mapTo(HashSet()) { it.id } +
+					RigModules.modules.filter { it !in modules && on(it) }.map { it.id }) },
+				itemLabel = { tr(it?.key ?: "settings.rig.preset.custom") },
+				itemEnabled = { it != null },
+				enabled = !isBusy && modules.isNotEmpty(),
+				height = 20.dp,
+				modifier = Modifier.weight(1f),
+			)
+			Spacer(Modifier.width(4.dp))
+			Hint(tr("settings.rig.budget.hint")) {
+				CompactNumberSpinner(
+					onEditStart = { viewModel.beginEditorField("rigBudget") },
+					onEditEnd = { viewModel.endEditorField("rigBudget") },
+					value = parameters.toDouble(),
+					onValueChange = { budget ->
+						val off = RigModules.withinBudget(active.filter { it in modules }, budget.toInt()) { costs[it]?.parameters?.size ?: 0 }
+						viewModel.setRigModules(RigModules.modules.filter { on(it) && it.id !in off }.mapTo(HashSet()) { it.id })
+					},
+					min = 0.0,
+					max = applying.sumOf { costs[it]?.parameters?.size ?: 0 }.toDouble(),
+					step = 1.0,
+					decimals = 0,
+					unit = tr("settings.rig.budget.unit"),
+					enabled = !isBusy && modules.isNotEmpty(),
+					modifier = Modifier.width(84.dp),
+					height = 20.dp,
+				)
+			}
+			Spacer(Modifier.width(4.dp))
+			PanelResetButton(onClick = viewModel::resetRig, enabled = !isBusy && recipe.modern && recipe.normalized() != RigRecipe.Modern,
+				tooltip = tr("settings.rig.reset"))
+		}
+
+		for (area in RigModules.areas) {
+			val modules = area.modules.filter { it.applies(subject) }
+			if (modules.isEmpty() && area.bases.size < 2) continue
+			val open = area.id in state.rigAreasExpanded
+			val areaOn = modules.count { on(it) }
+			val areaParameters = modules.filter { on(it) }.sumOf { costs[it]?.parameters?.size ?: 0 }
+			val interaction = remember(area.id) { MutableInteractionSource() }
+			val hovered by interaction.collectIsHoveredAsState()
+			Row(
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(top = 2.dp)
+					.height(20.dp)
+					.background(if (hovered && !isBusy) colors.controlHover.copy(alpha = 0.55f) else colors.panelElevated.copy(alpha = 0.35f))
+					.hoverable(interaction)
+					.handCursor(!isBusy)
+					.clickable(enabled = !isBusy, interactionSource = interaction, indication = null) { viewModel.toggleRigArea(area.id) }
+					.padding(start = 4.dp, end = 6.dp),
+				verticalAlignment = Alignment.CenterVertically,
+			) {
+				IconChevron(expanded = open, tint = colors.textMuted, modifier = Modifier.size(9.dp))
+				Spacer(Modifier.width(4.dp))
+				Text(tr("settings.rig.area.${area.id}"), style = typography.body.copy(fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold),
+					color = colors.textPrimary, modifier = Modifier.weight(1f))
+				Text(tr("settings.rig.areaSummary", areaOn, modules.size, areaParameters), style = small, color = colors.textMuted, maxLines = 1)
+			}
+			if (!open) continue
+			Column(
+				modifier = Modifier.fillMaxWidth().padding(start = 10.dp),
+				verticalArrangement = Arrangement.spacedBy(1.dp),
+			) {
+				if (area.bases.size > 1) {
+					val base = recipe.base(area.id)
+					Row(Modifier.fillMaxWidth().height(22.dp), verticalAlignment = Alignment.CenterVertically) {
+						Text(tr("settings.rig.base"), style = typography.body.copy(fontSize = 10.5.sp), color = colors.textPrimary,
+							modifier = Modifier.width(66.dp))
+						CompactDropdown(
+							items = area.bases,
+							selectedItem = base,
+							onItemSelected = { next -> if (next !== base) viewModel.setRigBase(area.id, next.id) },
+							itemLabel = { tr("settings.rig.base.${it.id.replace('/', '.')}") },
+							enabled = !isBusy && recipe.modern,
+							height = 20.dp,
+							modifier = Modifier.weight(1f),
+						)
+					}
+					for (knob in base.knobs.filter { !it.advanced }) KnobRow(
+						label = tr("settings.rig.knob.${base.id.replace('/', '.')}.${knob.id}"),
+						hint = tr("settings.rig.knob.${base.id.replace('/', '.')}.${knob.id}.hint", "%.0f".format(knob.default)),
+						knob = knob, value = recipe.baseValue(area.id, knob.id), token = "rigBase.${area.id}.${knob.id}", enabled = !isBusy && recipe.modern,
+						viewModel = viewModel,
+					) { viewModel.setRigBaseValue(area.id, knob.id, it) }
+				}
+				for (module in modules) {
+					val moduleOn = on(module)
+					val usable = !isBusy && (recipe.modern || module.setting != null)
+					Row(Modifier.fillMaxWidth().height(22.dp), verticalAlignment = Alignment.CenterVertically) {
+						Hint(tr("settings.rig.module.${module.id}.hint")) {
+							CompactCheckbox(checked = moduleOn, onCheckedChange = { viewModel.setRigModule(module.id, it) }, enabled = usable,
+								label = tr("settings.rig.module.${module.id}"))
+						}
+						RowDetail(costText(costs[module]), moduleOn && recipe.modern || module.setting != null && moduleOn)
+					}
+					if (moduleOn) for (knob in module.knobs.filter { !it.advanced }) KnobRow(
+						label = tr("settings.rig.knob.${module.id}.${knob.id}"),
+						hint = tr("settings.rig.knob.${module.id}.${knob.id}.hint", "%.0f".format(knob.default)),
+						knob = knob, value = recipe.value(module.id, knob.id), token = "rigModule.${module.id}.${knob.id}", enabled = usable,
+						viewModel = viewModel,
+					) { viewModel.setRigModuleValue(module.id, knob.id, it) }
+				}
+			}
+		}
+	}
+}
+
+/** One value of a rig base or module: its name (hover for what it does), a slider and a number in its unit. */
+@Composable
+private fun KnobRow(label: String, hint: String, knob: RecipeKnob, value: Float, token: String, enabled: Boolean,
+                    viewModel: PSD2LiveViewModel, onChange: (Float) -> Unit) {
+	val colors = LocalToolColors.current
+	val typography = LocalToolTypography.current
+	Row(modifier = Modifier.fillMaxWidth().padding(start = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+		Hint(hint, modifier = Modifier.width(66.dp)) {
+			Text(
+				text = label,
+				style = typography.body.copy(fontSize = 10.5.sp),
+				color = if (value != knob.default) colors.accent else colors.textPrimary,
+				textAlign = TextAlign.Right,
+				maxLines = 1,
+				overflow = TextOverflow.Ellipsis,
+				modifier = Modifier.fillMaxWidth(),
+			)
+		}
+		Spacer(Modifier.width(5.dp))
+		CompactSlider(
+			value = value,
+			onValueChange = onChange,
+			onValueChangeStarted = viewModel::beginEditorGesture,
+			onValueChangeFinished = viewModel::endEditorGesture,
+			valueRange = knob.range,
+			enabled = enabled,
+			height = 14.dp,
+			modifier = Modifier.weight(1f),
+		)
+		Spacer(Modifier.width(4.dp))
+		CompactNumberSpinner(
+			onEditStart = { viewModel.beginEditorField(token) },
+			onEditEnd = { viewModel.endEditorField(token) },
+			value = value.toDouble(),
+			onValueChange = { onChange(it.toFloat()) },
+			min = knob.range.start.toDouble(),
+			max = knob.range.endInclusive.toDouble(),
+			step = 1.0,
+			decimals = 0,
+			unit = when (knob.unit) {
+				RigTuning.Unit.DEGREES -> "°"
+				RigTuning.Unit.PERCENT -> "%"
+				RigTuning.Unit.TORSO_LENGTHS -> tr("settings.unit.x")
+			},
+			enabled = enabled,
+			modifier = Modifier.width(60.dp),
+			height = 20.dp,
+		)
 	}
 }

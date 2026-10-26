@@ -184,6 +184,7 @@ internal class WorkspaceReadSession(
         WorkspaceLayoutState(document.layout, document.source.layers, WorkspaceLayoutPreview.pendingIds(document), document.deletedLayerIds,
             document.source.widthPx, document.source.heightPx)
     }
+    override fun rigModules(): JsonObject = read.runtime.capture.let { RigModuleCatalog.describe(it?.document, it?.model) }
     override fun generatedOverrideIssues(): List<GeneratedOverrideIssue> = read.runtime.capture?.model?.rig?.overrideIssues.orEmpty()
     override fun supersededEntryNotes(): List<SupersededEntryNote> = read.runtime.capture?.model?.rig?.supersededEntryNotes.orEmpty()
     override fun seeThroughNotes(): List<Pair<String, String>> =

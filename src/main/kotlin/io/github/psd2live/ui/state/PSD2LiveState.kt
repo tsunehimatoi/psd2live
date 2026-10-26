@@ -510,6 +510,8 @@ data class PSD2LiveState(
 	val headStrength: Float = 1.0f,
 	val bodyStrength: Float = 1.0f,
 	val rigTuning: io.github.psd2live.core.RigTuning = io.github.psd2live.core.RigTuning(),
+	/** How the rig is built area by area ([io.github.psd2live.core.recipe.RigModules]); a project saved before modules reads as legacy. */
+	val recipe: io.github.psd2live.core.recipe.RigRecipe = io.github.psd2live.core.recipe.RigRecipe.Modern,
 	val meshOnly: Boolean = false,
 	val generateDeformers: Boolean = true,
 	val featureDisplacementEnabled: Boolean = false,
@@ -556,6 +558,9 @@ data class PSD2LiveState(
 	val simulationPresetsExpanded: Boolean = true,
 	val strengthSubExpanded: Boolean = false,
 	val rigTuningExpanded: Boolean = false,
+	/** Whether the model presets' rig modules folder is open, and which of its area cards. */
+	val rigModulesExpanded: Boolean = false,
+	val rigAreasExpanded: Set<String> = emptySet(),
 	/** The rig values' Advanced folder is open. */
 	val rigTuningAdvancedExpanded: Boolean = false,
 	val advancedExpanded: Boolean = false,
@@ -763,6 +768,7 @@ data class PSD2LiveState(
 			headTurnStrength = headStrength,
 			bodyStrength = bodyStrength,
 			rigTuning = rigTuning,
+			recipe = recipe,
 			meshOnly = meshOnly,
 			generateDeformers = generateDeformers,
 			featureDisplacementEnabled = featureDisplacementEnabled,

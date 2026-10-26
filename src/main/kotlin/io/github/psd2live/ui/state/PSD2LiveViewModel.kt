@@ -3713,6 +3713,58 @@ class PSD2LiveViewModel : AutoCloseable {
         put("rigTuning", io.github.psd2live.project.WorkspaceSettingsCodec.encodeRigTuning(io.github.psd2live.core.RigTuning()))
     })
 
+    private fun editRig(change: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit) = editPresetSettings(buildJsonObject {
+        putJsonObject(io.github.psd2live.project.WorkspaceSettingsCodec.RIG, change)
+    })
+
+    /** Switches the rig module [id] on or off; the modules that build on it go with it ([io.github.psd2live.core.recipe.RigModules.dependents]). */
+    fun setRigModule(id: String, on: Boolean) = editRig {
+        putJsonObject("modules") {
+            putJsonObject(id) { put("on", on) }
+            if (!on) io.github.psd2live.core.recipe.RigModules.dependents(id).forEach { putJsonObject(it.id) { put("on", false) } }
+        }
+    }
+
+    fun setRigModuleValue(id: String, knob: String, value: Float) = editRig {
+        val range = requireNotNull(io.github.psd2live.core.recipe.RigModules.module(id)?.knob(knob)).range
+        putJsonObject("modules") { putJsonObject(id) { putJsonObject("values") { put(knob, value.coerceIn(range)) } } }
+    }
+
+    /** Builds [area] with the base [id], at the values it had if it already did. */
+    fun setRigBase(area: String, id: String) = editRig { putJsonObject("bases") { putJsonObject(area) { put("base", id) } } }
+
+    fun setRigBaseValue(area: String, knob: String, value: Float) = editRig {
+        val base = _state.value.recipe.base(area)
+        val range = requireNotNull(base.knob(knob)).range
+        putJsonObject("bases") { putJsonObject(area) { put("base", base.id); putJsonObject("values") { put(knob, value.coerceIn(range)) } } }
+    }
+
+    /**
+     * Switches every module on or off at once, as one history step: [on] lists those to keep on. A module's values stay
+     * as they were.
+     */
+    fun setRigModules(on: Set<String>) = editRig {
+        putJsonObject("modules") {
+            for (module in io.github.psd2live.core.recipe.RigModules.modules) putJsonObject(module.id) { put("on", module.id in on) }
+        }
+    }
+
+    /** A project saved before rig modules builds with the newest bases and every module from now on. */
+    fun upgradeRig() = editRig {}
+
+    /** Every area back on its default base and every module on at its defaults. */
+    fun resetRig() = editRig {
+        putJsonObject("bases") { io.github.psd2live.core.recipe.RigModules.areas.forEach { put(it.id, kotlinx.serialization.json.JsonNull) } }
+        putJsonObject("modules") { io.github.psd2live.core.recipe.RigModules.modules.forEach { put(it.id, kotlinx.serialization.json.JsonNull) } }
+    }
+
+    fun setRigModulesExpanded(expanded: Boolean) = updateState { it.copy(rigModulesExpanded = expanded) }
+
+    /** Opens or folds one area's card in the rig modules folder. */
+    fun toggleRigArea(area: String) = updateState {
+        it.copy(rigAreasExpanded = if (area in it.rigAreasExpanded) it.rigAreasExpanded - area else it.rigAreasExpanded + area)
+    }
+
 	fun setTexturePadding(padding: Int) {
 		updateState { it.copy(texturePadding = padding.coerceIn(0, 32)) }
 		schedulePreviewRebuild()

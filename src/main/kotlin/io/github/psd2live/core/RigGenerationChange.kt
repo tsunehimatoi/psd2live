@@ -26,5 +26,5 @@ internal object RigGenerationChange {
             before.mouthShape != after.mouthShape || before.mouthCurve != after.mouthCurve || before.mouthColor != after.mouthColor ||
             before.mouthThickness != after.mouthThickness ||
             ((!before.meshOnly || !after.meshOnly) && (before.headTurnStrength != after.headTurnStrength || before.bodyStrength != after.bodyStrength)) ||
-            before.rigTuning != after.rigTuning
+            before.rigTuning != after.rigTuning || before.recipe != after.recipe
 }

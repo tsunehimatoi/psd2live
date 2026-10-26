@@ -38,6 +38,7 @@ internal class WorkspaceOperations(private val workspace: WorkspaceBackend,
         registerTimelineAidsOperations(registry, workspace)
         registerCanvasVisibilityOperations(registry, workspace)
         registerPhysicsPresetLibraryOperations(registry, presetLibrary)
+        registerRigModuleOperations(registry, workspace)
         for ((id, commandId) in mapOf("project_import_psd" to "asset_import_psd", "project_create_artwork" to "asset_create_artwork")) {
             val command = commands.get(commandId)
             register(id, "Create a new source project from ${if (id == "project_import_psd") "an absolute PSD path" else "placed local raster layers"}. Unsaved changes are rejected unless discard_unsaved=true. Source reading, isolated rebuilding and installation run in a process-owned job; use job_wait/job_get for the committed project and state.",

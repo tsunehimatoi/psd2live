@@ -2,6 +2,7 @@ package io.github.psd2live.project
 
 import io.github.psd2live.core.LayerClassificationOverride
 import io.github.psd2live.core.LayerType
+import io.github.psd2live.core.PartRole
 import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.Side
 import kotlinx.serialization.json.*
@@ -403,12 +404,14 @@ internal object WorkspaceLayoutCodec {
 	fun encodeClassification(value: LayerClassificationOverride) = buildJsonObject {
 		put("type", value.type.name); put("tag", value.tag.name); put("side", value.side.name)
 		put("parameter", value.parameter); put("switchId", value.switchId)
+		value.role?.let { put("part", it.name) }
 	}
 
 	fun decodeClassification(value: JsonObject) = LayerClassificationOverride(
 		LayerType.valueOf(value.getValue("type").jsonPrimitive.content), SemanticTag.valueOf(value.getValue("tag").jsonPrimitive.content),
 		Side.valueOf(value.getValue("side").jsonPrimitive.content), value.getValue("parameter").jsonPrimitive.content,
-		value.getValue("switchId").jsonPrimitive.int)
+		value.getValue("switchId").jsonPrimitive.int,
+		value["part"]?.jsonPrimitive?.contentOrNull?.let { name -> PartRole.entries.firstOrNull { it.name == name } })
 
 	/** The text a revision identity hashes for [layout]: its two JSON parts, with rasters as their digests. Empty for an empty layout. */
 	fun canonical(layout: WorkspaceLayout): String = buildString {

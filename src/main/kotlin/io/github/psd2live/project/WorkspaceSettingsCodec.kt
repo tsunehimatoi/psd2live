@@ -71,6 +71,114 @@ internal object WorkspaceSettingsCodec {
         field.set(tuning, number)
     }
 
+    /** Settings key of the rig recipe ([io.github.psd2live.core.recipe.RigRecipe]); absent in a project saved before it, which reads as legacy. */
+    const val RIG = "rig"
+
+    /** The stored form of a modern [value]: the bases and modules it changed. A legacy recipe has none ([encode] leaves the key out). */
+    fun encodeRecipe(value: io.github.psd2live.core.recipe.RigRecipe): JsonObject = buildJsonObject {
+        val recipe = value.normalized()
+        if (recipe.bases.isNotEmpty()) putJsonObject("bases") {
+            recipe.bases.forEach { (area, choice) ->
+                putJsonObject(area) {
+                    put("base", choice.base); put("version", choice.version)
+                    if (choice.values.isNotEmpty()) putJsonObject("values") { choice.values.forEach { (id, v) -> put(id, v) } }
+                }
+            }
+        }
+        if (recipe.modules.isNotEmpty()) putJsonObject("modules") {
+            recipe.modules.forEach { (id, choice) ->
+                putJsonObject(id) {
+                    choice.on?.let { put("on", it) }
+                    put("version", choice.version)
+                    if (choice.values.isNotEmpty()) putJsonObject("values") { choice.values.forEach { (knob, v) -> put(knob, v) } }
+                }
+            }
+        }
+    }
+
+    private fun numbers(value: JsonElement?): Map<String, Float> =
+        (value as? JsonObject).orEmpty().mapNotNull { (k, v) -> (v as? JsonPrimitive)?.floatOrNull?.let { k to it } }.toMap()
+
+    /** A stored recipe; areas, bases, modules and values this version does not know are skipped, so a later project still opens. */
+    fun decodeRecipe(value: JsonElement?): io.github.psd2live.core.recipe.RigRecipe {
+        val obj = value as? JsonObject ?: return io.github.psd2live.core.recipe.RigRecipe.Legacy
+        val bases = (obj["bases"] as? JsonObject).orEmpty().mapNotNull { (area, entry) ->
+            val choice = entry as? JsonObject ?: return@mapNotNull null
+            val base = (choice["base"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
+            area to io.github.psd2live.core.recipe.BaseChoice(base, (choice["version"] as? JsonPrimitive)?.intOrNull ?: 1, numbers(choice["values"]))
+        }.toMap()
+        val modules = (obj["modules"] as? JsonObject).orEmpty().mapNotNull { (id, entry) ->
+            val choice = entry as? JsonObject ?: return@mapNotNull null
+            id to io.github.psd2live.core.recipe.ModuleChoice((choice["on"] as? JsonPrimitive)?.booleanOrNull,
+                (choice["version"] as? JsonPrimitive)?.intOrNull ?: 1, numbers(choice["values"]))
+        }.toMap()
+        return io.github.psd2live.core.recipe.RigRecipe(true, bases, modules).normalized()
+    }
+
+    private fun JsonElement?.objectOrEmpty(what: String): JsonObject = when (this) {
+        null, JsonNull -> JsonObject(emptyMap())
+        is JsonObject -> this
+        else -> error("$what must be an object")
+    }
+
+    /**
+     * Applies a `rig` change onto [base]: null returns the project to the legacy recipe; an object upgrades a legacy
+     * project and then sets, per area of `bases`, its base and values (null back to the default), and per module of
+     * `modules` whether it is `on` and its values (null back to on at the defaults). Values of a kept base or module
+     * merge with the ones it had. A module standing for an older setting ([io.github.psd2live.core.recipe.RigModule.setting])
+     * is switched through that setting: its `on` comes back in the second value, keyed by the setting. Rejects unknown
+     * areas, bases, modules and values, values outside their ranges, and values for a setting's module.
+     */
+    fun mergeRecipe(
+        base: io.github.psd2live.core.recipe.RigRecipe, changes: JsonElement,
+    ): Pair<io.github.psd2live.core.recipe.RigRecipe, Map<String, Boolean>> {
+        if (changes == JsonNull) return io.github.psd2live.core.recipe.RigRecipe.Legacy to emptyMap()
+        val obj = changes as? JsonObject ?: error("rig must be an object or null")
+        require(obj.keys.all { it == "bases" || it == "modules" }) { "rig takes bases and modules" }
+        val start = if (base.modern) base else io.github.psd2live.core.recipe.RigRecipe.Modern
+        val bases = start.bases.toMutableMap()
+        val modules = start.modules.toMutableMap()
+        val settings = LinkedHashMap<String, Boolean>()
+        fun values(where: String, entry: JsonObject, knob: (String) -> io.github.psd2live.core.recipe.RecipeKnob?) =
+            (entry["values"] as? JsonObject).orEmpty().mapValues { (knobId, v) ->
+                val descriptor = requireNotNull(knob(knobId)) { "Unknown value of $where: $knobId" }
+                val number = (v as? JsonPrimitive)?.floatOrNull?.takeIf { it.isFinite() } ?: error("$where.values.$knobId must be a number")
+                require(number in descriptor.range) { "$where.values.$knobId is outside its UI range ${descriptor.range}" }
+                number
+            }
+        obj["bases"].objectOrEmpty("rig.bases").forEach { (areaId, entry) ->
+            val area = requireNotNull(io.github.psd2live.core.recipe.RigModules.area(areaId)) { "Unknown rig area: $areaId" }
+            if (entry == JsonNull) { bases -= areaId; return@forEach }
+            val choice = entry as? JsonObject ?: error("rig.bases.$areaId must be an object or null")
+            require(choice.keys.all { it == "base" || it == "version" || it == "values" }) { "rig.bases.$areaId takes base, version and values" }
+            val id = (choice["base"] as? JsonPrimitive)?.contentOrNull ?: start.base(areaId).id
+            val chosen = requireNotNull(area.bases.firstOrNull { it.id == id }) { "Unknown base for $areaId: $id" }
+            val kept = bases[areaId]?.takeIf { it.base == id }?.values.orEmpty()
+            bases[areaId] = io.github.psd2live.core.recipe.BaseChoice(id, chosen.version, kept + values("rig.bases.$areaId", choice, chosen::knob))
+        }
+        obj["modules"].objectOrEmpty("rig.modules").forEach { (id, entry) ->
+            val module = requireNotNull(io.github.psd2live.core.recipe.RigModules.module(id)) { "Unknown rig module: $id" }
+            if (entry == JsonNull) {
+                val setting = module.setting
+                if (setting != null) settings[setting] = true else modules.remove(id)
+                return@forEach
+            }
+            val choice = entry as? JsonObject ?: error("rig.modules.$id must be an object or null")
+            require(choice.keys.all { it == "on" || it == "version" || it == "values" }) { "rig.modules.$id takes on, version and values" }
+            val on = choice["on"]?.let { (it as? JsonPrimitive)?.booleanOrNull ?: error("rig.modules.$id.on must be a boolean") }
+            val setting = module.setting
+            if (setting != null) {
+                require("values" !in choice) { "$id has no values" }
+                if (on != null) settings[setting] = on
+                return@forEach
+            }
+            val kept = modules[id]
+            modules[id] = io.github.psd2live.core.recipe.ModuleChoice(on ?: kept?.on, module.version,
+                kept?.values.orEmpty() + values("rig.modules.$id", choice, module::knob))
+        }
+        return io.github.psd2live.core.recipe.RigRecipe(true, bases, modules).normalized() to settings
+    }
+
     fun decodeMouthCurve(value: JsonElement?): io.github.psd2live.core.MouthCurve? = runCatching {
         io.github.psd2live.core.MouthCurve(value!!.jsonArray.map { p ->
             io.github.psd2live.core.MouthCurvePoint(p.jsonObject.getValue("x").jsonPrimitive.float,
@@ -143,6 +251,8 @@ internal object WorkspaceSettingsCodec {
         put("headStrength", config.headTurnStrength)
         put("bodyStrength", config.bodyStrength)
         put("rigTuning", encodeRigTuning(config.rigTuning))
+        // Absent means the legacy recipe, so the settings of projects saved before it keep their exact text.
+        if (config.recipe.modern) put(RIG, encodeRecipe(config.recipe))
         put("meshOnly", config.meshOnly)
         put("generateDeformers", config.generateDeformers)
         put("featureDisplacementEnabled", config.featureDisplacementEnabled)
@@ -218,6 +328,9 @@ internal object WorkspaceSettingsCodec {
         headTurnStrength = value["headStrength"]?.jsonPrimitive?.floatOrNull ?: base.headTurnStrength,
         bodyStrength = value["bodyStrength"]?.jsonPrimitive?.floatOrNull ?: base.bodyStrength,
         rigTuning = decodeRigTuning(value["rigTuning"] ?: value["bodyTuning"], base.rigTuning),
+        // Complete settings without a recipe were saved before it: they generate as they did.
+        recipe = if (RIG in value) decodeRecipe(value[RIG])
+            else if ("atlasSize" in value) io.github.psd2live.core.recipe.RigRecipe.Legacy else base.recipe,
         meshOnly = value["meshOnly"]?.jsonPrimitive?.booleanOrNull ?: base.meshOnly,
         generateDeformers = value["generateDeformers"]?.jsonPrimitive?.booleanOrNull ?: base.generateDeformers,
         featureDisplacementEnabled = value["featureDisplacementEnabled"]?.jsonPrimitive?.booleanOrNull ?: base.featureDisplacementEnabled,

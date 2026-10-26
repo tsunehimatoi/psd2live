@@ -63,6 +63,8 @@ For hands-on learning, open the **Tutorials** on the Help page (`F1`). Chinese i
 | 文档 | 内容 |
 | --- | --- |
 | [文档层](zh/spec/DOCUMENT_LAYER.md) | 生成器依赖图、生成结果覆盖、缓存、逐层尺寸与拆分物化 |
+| [Rig 预设架构](zh/spec/RIG_PRESETS.md) | 部位、基础算法、模块与配方，部件角色：注册、成本、保存、升级、重放与扩展 |
+| 模块与算法目录：[面部](zh/spec/RIG_TEMPLATES_FACE.md) · [头发与身体](zh/spec/RIG_TEMPLATES_HAIR_BODY.md) · [物理与动作](zh/spec/RIG_TEMPLATES_PHYSICS_MOTION.md) · [结构与表现](zh/spec/RIG_TEMPLATES_STRUCTURE.md) | 各插槽可注册的生成算法的设计：适用条件、产出结构、分步算法、可调数值与优先级 |
 | [固化 Rig](zh/spec/MATERIALIZED_RIG.md) | 按修订保存的固化 Rig、检查点、再生成合并与实现进度 |
 | [素材与 Layout 实现](zh/spec/MATERIAL_LAYOUT_WORKSPACE.md) | 生成视图与待生成图层、素材库存储、语义标签映射、操作表 |
 | [Layout 的 AI 辅助（设计中）](zh/spec/LAYOUT_AI_ASSIST.md) | 对齐、抠图、补全 |

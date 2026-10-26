@@ -42,8 +42,8 @@ object CharacterAnalyzer {
 		// reference generated :r/:l IDs, so retain those identities when they carry edits.
 		val unitScale = MeshResolution.unitScale(config, source)
 		val references = LegacySplitReferences(config)
-		val layers = initiallyClassified.flatMap { expandLayer(it, config, unitScale, references) }
-			.filter { it.source.id.raw !in config.deletedLayerIds }
+		val layers = PartRoles.infer(initiallyClassified.flatMap { expandLayer(it, config, unitScale, references) }
+			.filter { it.source.id.raw !in config.deletedLayerIds }, config.layerOverrides)
 		if (RigBuildProfile.recording) RigBuildProfile.add("analyze: classify layers", System.nanoTime() - classifyStart)
 		val warnings = source.warnings.toMutableList()
 		val nonEmpty = layers.filter { it.opaquePixels > 0 }

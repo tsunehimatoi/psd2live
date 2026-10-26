@@ -10,6 +10,7 @@ import io.github.psd2live.project.WorkspaceMutationResult
 import io.github.psd2live.core.LayerType
 import io.github.psd2live.core.SemanticTag
 import io.github.psd2live.core.Side
+import io.github.psd2live.core.PartRole
 import io.github.psd2live.core.MotionClips
 import io.github.psd2live.core.MotionEvent
 import io.github.psd2live.core.sim.SimMaterialPreset
@@ -172,15 +173,16 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
         WorkspaceOperationOutput(workspace.captureQueries().sourceMeshComponents(request.text("layer_id")))
     }
 
-    registerJsonOperation("layer", "Classify an existing source layer using the same fields as the UI Layers table. Omitted fields retain their current values. A generated layer keeps the rig it has until rig_generate: the classification waits (pending: true); put rig_generate after it in one workspace_apply_edits batch to see it at once. A layer not generated yet takes it at once. Commits a recoverable history edit.",
+    registerJsonOperation("layer", "Classify an existing source layer using the same fields as the UI Layers table. Omitted fields retain their current values. part says what the layer is within its role (highlight, lower lash, shadow...; none for nothing, auto to let the analysis guess) - the rig modules read it. A generated layer keeps the rig it has until rig_generate: the classification waits (pending: true); put rig_generate after it in one workspace_apply_edits batch to see it at once. A layer not generated yet takes it at once. Commits a recoverable history edit.",
         buildJsonObject {
             put("state", string()); put("layer_id", string())
             put("type", choices(*LayerType.entries.map { it.name.lowercase() }.toTypedArray()))
             put("role", choices(*SemanticTag.entries.map { it.name.lowercase() }.toTypedArray()))
             put("side", choices(*Side.entries.map { it.name.lowercase() }.toTypedArray()))
             put("parameter", string()); put("switch_id", integer(0))
+            put("part", choices(*(PartRole.worded.map { it.word } + listOf("none", "auto")).toTypedArray()))
         }, listOf("state", "layer_id"), true) { a ->
-        require(listOf("type", "role", "side", "parameter", "switch_id").any { it in a }) { "Provide at least one classification field" }
+        require(listOf("type", "role", "side", "parameter", "switch_id", "part").any { it in a }) { "Provide at least one classification field" }
         val id = a.text("layer_id")
         val result = workspace.classifyLayer(id, JsonObject(a - setOf("state", "layer_id")), a.text("state"))
         buildJsonObject {
@@ -250,8 +252,9 @@ internal fun registerAuthoringOperations(registry: WorkspaceOperationRegistry, w
         put("runtimeTarget", string()); put("textureUpscale", upscaleSettings)
         put("meshFillParameters", fillParameterFields)
         put("rigTuning", rigTuningFields)
+        put("rig", RigModuleSchemas.change)
     })
-    registerJsonOperation("settings", "Update the project generation/export configuration used by the UI. Inspect scope=settings first. Rebuilds the model and commits history; textureUpscale, meshFillParameters and rigTuning fields are merged with the existing configuration; rigTuning sets how far the rig moves each part at the parameters' full values (head turn and face, eyes, brows, mouth, nose and ears, hair, body turn, open, lean, proportion, breath, depth).",
+    registerJsonOperation("settings", "Update the project generation/export configuration used by the UI. Inspect scope=settings first. Rebuilds the model and commits history; textureUpscale, meshFillParameters, rigTuning and rig fields are merged with the existing configuration; rigTuning sets how far the rig moves each part at the parameters' full values (head turn and face, eyes, brows, mouth, nose and ears, hair, body turn, open, lean, proportion, breath, depth); rig sets how the rig is built area by area (module_catalog lists areas, bases and modules): bases {area: {base, values}} and modules {id: {on, values}}, null entries returning to the default; rig {} upgrades a project saved before modules, rig null returns it to the legacy rig.",
         buildJsonObject { put("state", string()); put("changes", projectSettingFields) }, listOf("state", "changes"), true) { a ->
         workspace.updateProjectSettings(a.text("state"), a.getValue("changes").jsonObject).compact()
     }

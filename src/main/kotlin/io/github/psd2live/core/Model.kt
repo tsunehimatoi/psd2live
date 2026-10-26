@@ -54,6 +54,8 @@ data class LayerSemantic(
 	val type: LayerType = LayerType.PRESET,
 	val parameter: String = "",
 	val switchId: Int = 0,
+	/** What the layer is within its part - a highlight, a shadow, a lower lash ([PartRole]); null when it is the part itself. */
+	val role: PartRole? = null,
 )
 
 data class ClassifiedLayer(
@@ -209,6 +211,12 @@ data class PipelineConfig(
 	val bodyStrength: Float = 1f,
 	/** How far the body parameters move the body at their full values (see [RigTuning]). */
 	val rigTuning: RigTuning = RigTuning(),
+	/**
+	 * How the rig is built area by area: each area's base and the modules switched off or adjusted
+	 * ([io.github.psd2live.core.recipe.RigModules]). A new project is modern; one saved before the registry reads as
+	 * legacy and generates as it did.
+	 */
+	val recipe: io.github.psd2live.core.recipe.RigRecipe = io.github.psd2live.core.recipe.RigRecipe.Modern,
 	val meshOnly: Boolean = false,
 	val generateDeformers: Boolean = true,
 	val featureDisplacementEnabled: Boolean = false,
@@ -343,6 +351,11 @@ data class LayerClassificationOverride(
 	val side: Side = Side.NONE,
 	val parameter: String = "",
 	val switchId: Int = 0,
+	/**
+	 * The layer's [PartRole] as the user set it: null leaves it to the analysis ([PartRoles]), [PartRole.PLAIN] says it
+	 * has none.
+	 */
+	val role: PartRole? = null,
 ) {
 	constructor(tag: SemanticTag, side: Side) : this(
 		type = LayerType.PRESET,
@@ -351,6 +364,10 @@ data class LayerClassificationOverride(
 		parameter = "",
 		switchId = 0,
 	)
+
+	/** Written into revision identities: an override without a role reads as it did before roles existed. */
+	override fun toString(): String = "LayerClassificationOverride(type=$type, tag=$tag, side=$side, parameter=$parameter, switchId=$switchId" +
+		(role?.let { ", role=$it" } ?: "") + ")"
 
 	/** Factories over semantic tags live beside [LayerTags]. */
 	companion object

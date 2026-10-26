@@ -21,14 +21,22 @@ internal fun mergeProjectSettings(current: JsonObject, changes: JsonObject): Jso
         nested["rigTuning"] = WorkspaceSettingsCodec.encodeRigTuning(
             WorkspaceSettingsCodec.mergeRigTuning(WorkspaceSettingsCodec.decodeRigTuning(current["rigTuning"] ?: current["bodyTuning"]), update.jsonObject))
     }
-    val merged = JsonObject(current + changes + nested)
+    // A module standing for an older setting switches that setting; the recipe holds the rest.
+    var switched = emptyMap<String, Boolean>()
+    changes[WorkspaceSettingsCodec.RIG]?.let { update ->
+        val (recipe, settings) = WorkspaceSettingsCodec.mergeRecipe(WorkspaceSettingsCodec.decode(current).recipe, update)
+        switched = settings
+        if (recipe.modern) nested[WorkspaceSettingsCodec.RIG] = WorkspaceSettingsCodec.encodeRecipe(recipe)
+    }
+    val merged = JsonObject(current + changes + nested + switched.mapValues { JsonPrimitive(it.value) } -
+        (if (changes[WorkspaceSettingsCodec.RIG] == JsonNull) setOf(WorkspaceSettingsCodec.RIG) else emptySet()))
     validateProjectSettings(merged, changes)
     // A settings value has a domain type. Integer spelling of a float (2 vs 2.0) must not
     // create another edit when a desktop projection or save serializes that same value.
     val canonical = WorkspaceSettingsCodec.encode(WorkspaceSettingsCodec.decode(merged))
-    // No wrap is stored as an absent key, so turning it off restores the settings text of before.
-    val absent = if ("meshWrap" in changes && "meshWrap" !in canonical) setOf("meshWrap") else emptySet()
-    return JsonObject(merged + canonical.filterKeys { it in changes } - absent)
+    // No wrap and the legacy recipe are stored as absent keys, so returning to them restores the settings text of before.
+    val absent = listOf("meshWrap", WorkspaceSettingsCodec.RIG).filter { it in changes && it !in canonical }.toSet()
+    return JsonObject(merged + canonical.filterKeys { it in changes || it in switched } - absent)
 }
 
 private val ranges = mapOf(
@@ -49,7 +57,8 @@ private val booleans = setOf(
     "exportGuideImageParts", "exportIncludePhysics", "exportIncludeUserData", "exportIncludeDisplayInfo",
 )
 internal val workspaceProjectSettingKeys = ranges.keys + booleans +
-    setOf("textureUpscale", "mouthShape", "runtimeTarget", "meshEdgeMode", "meshUnits", "meshTrace", "meshFillParameters", "rigTuning", "meshFillAlgorithm", "mouthCurve", "mouthColor")
+    setOf("textureUpscale", "mouthShape", "runtimeTarget", "meshEdgeMode", "meshUnits", "meshTrace", "meshFillParameters", "rigTuning", "meshFillAlgorithm", "mouthCurve", "mouthColor",
+        WorkspaceSettingsCodec.RIG)
 
 internal fun validateProjectSettings(merged: JsonObject, changes: JsonObject) {
     require(changes.keys.all { it in workspaceProjectSettingKeys }) {

@@ -454,6 +454,7 @@ internal object WorkspaceStateCodec {
         put("headStrength", state.headStrength)
         put("bodyStrength", state.bodyStrength)
         put("rigTuning", encodeRigTuning(state.rigTuning))
+        if (state.recipe.modern) put(io.github.psd2live.project.WorkspaceSettingsCodec.RIG, io.github.psd2live.project.WorkspaceSettingsCodec.encodeRecipe(state.recipe))
         put("meshOnly", state.meshOnly)
         put("generateDeformers", state.generateDeformers)
         put("featureDisplacementEnabled", state.featureDisplacementEnabled)
@@ -596,6 +597,9 @@ internal object WorkspaceStateCodec {
         headStrength = value["headStrength"]?.jsonPrimitive?.float ?: base.headStrength,
         bodyStrength = value["bodyStrength"]?.jsonPrimitive?.float ?: base.bodyStrength,
         rigTuning = decodeRigTuning(value["rigTuning"] ?: value["bodyTuning"], base.rigTuning),
+        recipe = if (io.github.psd2live.project.WorkspaceSettingsCodec.RIG in value)
+            io.github.psd2live.project.WorkspaceSettingsCodec.decodeRecipe(value[io.github.psd2live.project.WorkspaceSettingsCodec.RIG])
+            else if ("atlasSize" in value) io.github.psd2live.core.recipe.RigRecipe.Legacy else base.recipe,
         meshOnly = value["meshOnly"]?.jsonPrimitive?.boolean ?: base.meshOnly,
         generateDeformers = value["generateDeformers"]?.jsonPrimitive?.boolean ?: base.generateDeformers,
         mouthOutlineEnabled = value["mouthOutlineEnabled"]?.jsonPrimitive?.boolean ?: base.mouthOutlineEnabled,

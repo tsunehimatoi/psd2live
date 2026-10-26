@@ -79,14 +79,22 @@ internal object WorkspaceDocumentEdits {
             "layer_mesh_update" -> mesh(document, model, request.text("layer_id"), request["changes"]?.jsonObject,
                 request["reset"]?.jsonPrimitive?.boolean ?: false)
             "layer_classify" -> {
-                require(listOf("type", "role", "side", "parameter", "switch_id").any { it in request }) { "Provide at least one classification field" }
-                val current = WorkspaceLayoutEdits.classification(document, model, request.text("layer_id"))
-                classify(document, model, request.text("layer_id"), LayerClassificationOverride(
+                require(listOf("type", "role", "side", "parameter", "switch_id", "part").any { it in request }) { "Provide at least one classification field" }
+                val id = request.text("layer_id")
+                val current = WorkspaceLayoutEdits.classification(document, model, id)
+                classify(document, model, id, LayerClassificationOverride(
                     request["type"]?.jsonPrimitive?.content?.uppercase()?.let(LayerType::valueOf) ?: current.type,
                     request["role"]?.jsonPrimitive?.content?.uppercase()?.let(SemanticTag::valueOf) ?: current.tag,
                     request["side"]?.jsonPrimitive?.content?.uppercase()?.let(Side::valueOf) ?: current.side,
                     request["parameter"]?.jsonPrimitive?.content ?: current.parameter,
-                    request["switch_id"]?.jsonPrimitive?.int ?: current.switchId))
+                    request["switch_id"]?.jsonPrimitive?.int ?: current.switchId,
+                    // part: a role word, none for no role, auto to let the analysis guess again.
+                    when (val part = request["part"]?.jsonPrimitive?.content) {
+                        null -> document.layerOverrides[id]?.role
+                        "auto" -> null
+                        "none" -> PartRole.PLAIN
+                        else -> requireNotNull(PartRole.ofWord(part)) { "Unknown part: $part" }
+                    }))
             }
             "parameter_create", "parameter_update", "parameter_delete" -> parameter(document, model,
                 operation.operation.removePrefix("parameter_"), request)
@@ -157,8 +165,10 @@ internal object WorkspaceDocumentEdits {
         require(classification.switchId >= 0) { "switch_id must be nonnegative" }
         val layer = model.analysis.layers.firstOrNull { it.source.id.raw == id } ?: throw IllegalArgumentException("Layer not found: $id")
         require(id !in document.deletedLayerIds) { "Layer is deleted: $id" }
+        // A role the user names must be the layer's; one left to the analysis matches whatever it guessed.
         fun matches(current: LayerSemantic) = current.type == classification.type && current.tag == classification.tag &&
-            current.side == classification.side && current.parameter == classification.parameter && current.switchId == classification.switchId
+            current.side == classification.side && current.parameter == classification.parameter && current.switchId == classification.switchId &&
+            when (val role = classification.role) { null -> document.layerOverrides[id]?.role == null; PartRole.PLAIN -> current.role == null; else -> current.role == role }
         val generation = document.layout.generation
         if (!generation.generated || id in WorkspaceLayoutPreview.pendingIds(document)) {
             return if (matches(layer.semantic) && id !in generation.pendingClassifications) document

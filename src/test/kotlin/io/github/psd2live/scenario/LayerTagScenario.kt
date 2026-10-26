@@ -38,7 +38,8 @@ class LayerTagScenario {
 		expect("marked", now.document.layerOverrides == classified) { "a user's tag changed a classification" }
 		val row = inspect("layers").getValue("items").jsonArray.map { it.jsonObject }.single { it.getValue("id").jsonPrimitive.content == "sleeve_l" }
 		val tags = row.getValue("tags").jsonArray.map { it.jsonPrimitive.content }.toSet()
-		expect("inspected", tags == setOf("arm", "left", "可换色")) { "inspect shows tags $tags" }
+		// The analysis reads the layer's name as its role within the arm.
+		expect("inspected", tags == setOf("arm", "left", "sleeve", "可换色")) { "inspect shows tags $tags" }
 
 		edit("make the left leg a toggle", "layer_set_variant", req("layer_id" to "leg_l", "variant" to "toggle", "parameter" to "ParamLegs"))
 		expect("variant", now.document.layout.generation.pendingClassifications["leg_l"] == LayerClassificationOverride(LayerType.TOGGLE, SemanticTag.LEGWEAR, Side.LEFT, "ParamLegs", 0)) {

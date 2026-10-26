@@ -106,7 +106,10 @@ internal object WorkspaceSettingsResultTypes {
             "mouthCurve" to s.array(s.obj(mapOf("x" to s.number(), "y" to s.number()))), "mouthColor" to s.nullable(s.integer(0, 0xFFFFFF)),
             "runtimeTarget" to s.choices(*RuntimeTarget.entries.map { it.name }.toTypedArray()), "exportPixelsPerUnit" to s.nullable(s.number()),
             "meshTrace" to s.choices(*io.github.psd2live.core.MeshTrace.entries.map { it.name }.toTypedArray()),
-            "meshWrap" to s.number())
-    /** A canvas-traced project leaves the trace out, and one without wrap the wrap, as projects saved before them did. */
-    val settings = s.obj(settingFields, settingFields.keys - "meshTrace" - "meshWrap")
+            "meshWrap" to s.number(), "rig" to RigModuleSchemas.stored)
+    /**
+     * A canvas-traced project leaves the trace out, one without wrap the wrap, as projects saved before them did, and one
+     * saved before rig modules the rig.
+     */
+    val settings = s.obj(settingFields, settingFields.keys - "meshTrace" - "meshWrap" - "rig")
 }

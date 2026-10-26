@@ -33,6 +33,7 @@ internal class WorkspaceGenerationCommands(private val runtime: WorkspaceRuntime
                 add(WorkspaceDocumentOperation("layer_classify", buildJsonObject {
                     put("layer_id", id); put("type", value.type.name); put("role", value.tag.name); put("side", value.side.name)
                     put("parameter", value.parameter); put("switch_id", value.switchId)
+                    put("part", when (val role = value.role) { null -> "auto"; io.github.psd2live.core.PartRole.PLAIN -> "none"; else -> role.word })
                 }))
             }
             (before.meshOverrides.keys + draft.meshOverrides.keys).filter { before.meshOverrides[it] != draft.meshOverrides[it] }.forEach { id ->

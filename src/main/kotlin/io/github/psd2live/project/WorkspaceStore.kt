@@ -2,6 +2,7 @@ package io.github.psd2live.project
 
 import io.github.psd2live.core.LayerClassificationOverride
 import io.github.psd2live.core.LayerType
+import io.github.psd2live.core.PartRole
 import io.github.psd2live.core.RigEditOverlay
 import io.github.psd2live.core.RigKeyformChannelsEdit
 import io.github.psd2live.core.RigKeyformCopyEdit
@@ -560,6 +561,7 @@ internal class WorkspaceStore(
 					put("side", override.side.name)
 					put("parameter", override.parameter)
 					put("switchId", override.switchId)
+					override.role?.let { put("part", it.name) }
 				})
 			}
 		}
@@ -726,6 +728,8 @@ internal class WorkspaceStore(
 				side = enumValue(override.requiredString("side")),
 				parameter = override.requiredString("parameter"),
 				switchId = override.requiredInt("switchId"),
+				// A role a later version knows and this one does not reads as left to the analysis.
+				role = override["part"]?.jsonPrimitive?.contentOrNull?.let { name -> PartRole.entries.firstOrNull { it.name == name } },
 			)
 		}
 		val rigEditObject = value.optionalObject("rigEdits")

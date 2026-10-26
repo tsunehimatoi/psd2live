@@ -405,6 +405,7 @@ internal fun ModelPresetsSection(
 
 
 		RigTuningPresets(state, viewModel, isBusy)
+		RigModulePresets(state, viewModel, isBusy)
 
 
 		// Which generated motions the model has, by group; the animation panel lists, tunes and switches each one.
@@ -671,6 +672,9 @@ internal fun LayersTableView(
 					val currentSide = override?.side ?: layer.semantic.side
 					val currentParam = override?.parameter ?: layer.semantic.parameter
 					val currentSwitchId = override?.switchId ?: layer.semantic.switchId
+					// The role the user set (null leaves it to the analysis); what the rig reads is the analysed layer's.
+					val currentRole = override?.role
+					val shownRole = when (currentRole) { null -> layer.semantic.role; io.github.psd2live.core.PartRole.PLAIN -> null; else -> currentRole }
 
 					val rowBg = when {
 						isSelected -> colors.selection
@@ -749,7 +753,7 @@ internal fun LayersTableView(
 						}
 
 						// 1. Semantic tags: the part and side words the generators read and the user's own (`layer_tag`).
-						val currentTags = io.github.psd2live.core.LayerTags.of(currentTag, currentSide) + state.layout.layerTags[layerId].orEmpty()
+						val currentTags = io.github.psd2live.core.LayerTags.of(currentTag, currentSide, shownRole) + state.layout.layerTags[layerId].orEmpty()
 						LayerTagCell(
 							tags = currentTags,
 							pending = layerId in state.layout.generation.pendingClassifications,
@@ -770,6 +774,7 @@ internal fun LayersTableView(
 										side = currentSide,
 										parameter = currentParam,
 										switchId = currentSwitchId,
+										role = currentRole,
 									),
 								)
 							},
@@ -807,6 +812,7 @@ internal fun LayersTableView(
 												side = currentSide,
 												parameter = nextParam,
 												switchId = currentSwitchId,
+												role = currentRole,
 											),
 										)
 									},
@@ -829,6 +835,7 @@ internal fun LayersTableView(
 												side = currentSide,
 												parameter = nextParam,
 												switchId = currentSwitchId,
+												role = currentRole,
 											),
 										)
 									},
@@ -852,6 +859,7 @@ internal fun LayersTableView(
 												side = currentSide,
 												parameter = currentParam,
 												switchId = parsed,
+												role = currentRole,
 											),
 										)
 									},

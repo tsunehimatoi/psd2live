@@ -121,6 +121,8 @@ interface WorkspaceQueries : WorkspaceStatePort {
     fun skeletonBindingIssues(): List<io.github.psd2live.core.quality.SkeletonBindingIssue>
     /** The captured document's Layout state with its source layers and those waiting for generation; null when nothing is loaded. */
     fun layoutState(): WorkspaceLayoutState?
+    /** `module_catalog`: the rig's areas and modules, and with a project open how its recipe uses them ([RigModuleCatalog]). */
+    fun rigModules(): kotlinx.serialization.json.JsonObject
 }
 
 /** A captured document's Layout state ([io.github.psd2live.project.WorkspaceLayout]) and the layers it applies to. */

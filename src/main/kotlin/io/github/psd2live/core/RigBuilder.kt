@@ -558,7 +558,7 @@ object RigBuilder {
 		semantic, bounds, centroidX, centroidY, opaquePixels)
 
 	/**
-	 * The settings a generation stage may read, and only those: the mesh, mouth, rig strength and tuning settings,
+	 * The settings a generation stage may read, and only those: the mesh, mouth, rig strength, tuning and recipe settings,
 	 * the generation mode and the runtime target. Everything else - the skeleton (the deformers key the part they
 	 * read of it themselves, [deformerSkeleton]), the journal and static edits, per-layer maps (a stage that reads one layer's entry keys it itself),
 	 * the generation inputs, visibility, draw orders, texture, physics, motion and export settings - is left at
@@ -570,6 +570,7 @@ object RigBuilder {
 		meshFillAlgorithm = config.meshFillAlgorithm, meshSuppressBoundaryDiagonals = config.meshSuppressBoundaryDiagonals,
 		meshFillParameters = config.meshFillParameters, meshUnits = config.meshUnits, meshTrace = config.meshTrace, meshWrap = config.meshWrap,
 		alphaThreshold = config.alphaThreshold, headTurnStrength = config.headTurnStrength, bodyStrength = config.bodyStrength, rigTuning = config.rigTuning,
+		recipe = config.recipe,
 		meshOnly = config.meshOnly, generateDeformers = config.generateDeformers, featureDisplacementEnabled = config.featureDisplacementEnabled,
 		mouthOutlineEnabled = config.mouthOutlineEnabled, mouthShape = config.mouthShape, mouthCurve = config.mouthCurve,
 		mouthColor = config.mouthColor, mouthThickness = config.mouthThickness,
