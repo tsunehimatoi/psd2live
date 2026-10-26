@@ -88,11 +88,35 @@ object RigModules {
 	/** The iris squashing toward its bottom as the lid closes over it. */
 	val EYE_SQUASH = RigModule("eye.squash", ModuleTier.MINOR, base = FITTED_EYE, applies = { it.has(SemanticTag.IRIDES) && fittedEye(it) })
 
+	/**
+	 * The brows read from their stroke in the head's frame ([io.github.psd2live.core.fit.BrowRig]): raised and lowered as a
+	 * whole, the base the brow modules build on.
+	 */
+	val BROW_FITTED = RigBase("brow/fitted", knobs = listOf(RecipeKnob("lift", P, 20f..100f, 45f)))
+	private const val FITTED_BROW = "brow/fitted"
+	private fun brow(name: String, min: Float, max: Float) = listOf(
+		ModuleParameter("ParamBrowL$name", "model.parameter.browL$name", min, max, 0f, "ParamGroupBrows"),
+		ModuleParameter("ParamBrowR$name", "model.parameter.browR$name", min, max, 0f, "ParamGroupBrows"),
+	)
+
+	/** The brow's own shapes: sideways, its angle swept along an arc (inner end down angry … up worried), and its form (arched … flat). */
+	val BROW_SHAPE = RigModule("brow.shape", ModuleTier.CORE, base = FITTED_BROW, applies = { it.has(SemanticTag.EYEBROW) },
+		knobs = listOf(RecipeKnob("strength", P, 0f..200f, 100f)),
+		defines = brow("X", -1f, 1f) + brow("Angle", -1f, 1f) + brow("Form", -1f, 1f))
+
+	/** The brow and the upper lid as one skin: a raised brow lifts the lid, a lowered or knitted brow presses it into a glare. */
+	val BROW_LID = RigModule("brow.lid-coupling", ModuleTier.MAJOR, base = FITTED_BROW,
+		applies = { it.has(SemanticTag.EYEBROW) && fittedEye(it) }, knobs = listOf(RecipeKnob("strength", P, 0f..200f, 100f)))
+
+	/** The brow settling a little with the blink and lifting with a widened eye. */
+	val BROW_BLINK = RigModule("brow.blink", ModuleTier.MAJOR, base = FITTED_BROW, applies = { it.has(SemanticTag.EYEBROW) },
+		knobs = listOf(RecipeKnob("dip", P, 0f..200f, 100f)))
+
 	val areas: List<RigArea> = listOf(
 		RigArea("face", listOf(legacy("face")), emptyList()),
 		RigArea("eye", listOf(legacy("eye"), EYE_FITTED), listOf(EYE_SEE_THROUGH, EYE_SMILE, EYE_WIDE, EYE_GAZE_LID, EYE_EMOTION, EYE_LID_FADE,
 			EYE_HIGHLIGHT, EYE_JELLY, EYE_AFTERSHOCK, EYE_SQUASH)),
-		RigArea("brow", listOf(legacy("brow")), listOf(BROW_SEE_THROUGH)),
+		RigArea("brow", listOf(legacy("brow"), BROW_FITTED), listOf(BROW_SEE_THROUGH, BROW_SHAPE, BROW_LID, BROW_BLINK)),
 		RigArea("mouth", listOf(legacy("mouth")), listOf(MOUTH_OUTLINE)),
 		RigArea("hair", listOf(legacy("hair")), emptyList()),
 		RigArea("body", listOf(legacy("body")), emptyList()),

@@ -38,6 +38,8 @@
 | `ParamEyeLSquint`, `ParamEyeRSquint`（`eye.emotion`） | 0…1 | 0 |
 | `ParamEyeLBounce`, `ParamEyeRBounce`（`eye.aftershock`，物理输出） | -1…1 | 0 |
 | `ParamBrowLY`, `ParamBrowRY` | -1…1 | 0 |
+| `ParamBrowLAngle`, `ParamBrowRAngle`（`brow.shape`，−1 内端压低 … +1 抬起） | -1…1 | 0 |
+| `ParamBrowLX`, `ParamBrowRX`, `ParamBrowLForm`, `ParamBrowRForm`（`brow.shape`） | -1…1 | 0 |
 | `ParamMouthForm` | -1…1 | 0 |
 | `ParamMouthOpenY`, `ParamBreath` | 0…1 | 0 |
 | `ParamHairFront`, `ParamHairBack` | -1…1 | 0 |

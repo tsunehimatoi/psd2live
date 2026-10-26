@@ -31,6 +31,7 @@ internal object ReviewClips {
 
 	private fun smooth(x: Float): Float { val c = x.coerceIn(0f, 1f); return c * c * (3f - 2f * c) }
 
+	private fun brows(name: String, value: Float) = mapOf("ParamBrowL$name" to value, "ParamBrowR$name" to value)
 	private fun eyes(open: Float, smile: Float = 0f) = mapOf("ParamEyeLOpen" to open, "ParamEyeROpen" to open, "ParamEyeLSmile" to smile, "ParamEyeRSmile" to smile)
 
 	/** Mouth openness of speech at [t]: syllables of varying size, mostly small, as talking opens the mouth. */
@@ -97,7 +98,12 @@ internal object ReviewClips {
 			listOf(-1f to 0f, 1f to 0f, 0f to 1f, 0f to -1f).map { (x, y) -> "gaze $x,$y" to mapOf("ParamEyeBallX" to x, "ParamEyeBallY" to y) } +
 			listOf("wide" to eyes(2f), "angry" to mapOf("ParamEyeLForm" to 1f, "ParamEyeRForm" to 1f), "sad" to mapOf("ParamEyeLForm" to -1f, "ParamEyeRForm" to -1f),
 				"squint" to mapOf("ParamEyeLSquint" to 1f, "ParamEyeRSquint" to 1f), "angry half" to eyes(0.5f) + mapOf("ParamEyeLForm" to 1f, "ParamEyeRForm" to 1f)),
-		"brow" to listOf(-1f, 0f, 1f).flatMap { y -> listOf(1f, 0f).map { open -> "brow $y open $open" to eyes(open) + mapOf("ParamBrowLY" to y, "ParamBrowRY" to y) } },
+		"brow" to listOf(-1f, 0f, 1f).flatMap { y -> listOf(1f, 0f).map { open -> "brow $y open $open" to eyes(open) + mapOf("ParamBrowLY" to y, "ParamBrowRY" to y) } } +
+			listOf(-1f, -0.5f, 0.5f, 1f).map { "angle $it" to brows("Angle", it) } + listOf(-1f, 1f).map { "form $it" to brows("Form", it) } +
+			listOf(-1f, 1f).map { "x $it" to brows("X", it) } + listOf("wide" to eyes(2f),
+				"angry" to brows("Angle", -1f) + brows("Y", -0.6f) + mapOf("ParamEyeLForm" to 1f, "ParamEyeRForm" to 1f),
+				"sad" to brows("Angle", 1f) + brows("Form", 0.5f) + mapOf("ParamEyeLForm" to -1f, "ParamEyeRForm" to -1f),
+				"surprised" to brows("Y", 1f) + eyes(1.6f)),
 		"mouth" to listOf(-1f, 0f, 1f).flatMap { form -> listOf(0f, 0.25f, 0.5f, 0.75f, 1f).map { open -> "form $form open $open" to mapOf("ParamMouthForm" to form, "ParamMouthOpenY" to open) } },
 		"head" to listOf(-30f, -15f, 0f, 15f, 30f).flatMap { x -> listOf(-30f, 0f, 30f).map { y -> "x $x y $y" to mapOf("ParamAngleX" to x, "ParamAngleY" to y) } },
 		"body" to listOf(-10f, 0f, 10f).flatMap { x -> listOf(-10f, 0f, 10f).map { z -> "body x $x z $z" to mapOf("ParamBodyAngleX" to x, "ParamBodyAngleZ" to z) } },

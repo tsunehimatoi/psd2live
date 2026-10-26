@@ -83,7 +83,11 @@ data class EyeFit(
 object EyeFitting {
 	private const val ALPHA = 96
 
-	class Result(val fits: Map<Side, EyeFit>, val reasons: Map<Side, String>)
+	/**
+	 * The fits, the reasons an eye was left out, and the head's level in the rig's space ([level], a unit vector from
+	 * the character's right toward its left): the frame the brows and the mouth are read in too.
+	 */
+	class Result(val fits: Map<Side, EyeFit>, val reasons: Map<Side, String>, val level: Pair<Float, Float> = 1f to 0f)
 
 	/** A layer's alpha at canvas ([x], [y]), 0 outside it. */
 	private fun alpha(layer: ClassifiedLayer, x: Float, y: Float): Int {
@@ -141,7 +145,7 @@ object EyeFitting {
 			val problem = fit?.let(::check) ?: "the eye white has no clear outline"
 			if (fit != null && check(fit) == null) fits[side] = fit else reasons[side] = problem
 		}
-		return Result(fits, reasons)
+		return Result(fits, reasons, rigLevel)
 	}
 
 	private fun normalized(v: Pair<Float, Float>): Pair<Float, Float>? {

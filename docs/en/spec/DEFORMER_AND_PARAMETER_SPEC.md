@@ -38,6 +38,8 @@ The table follows StandardParameters. Mesh-only mode, disabled deformers or miss
 | `ParamEyeLSquint`, `ParamEyeRSquint` (`eye.emotion`) | 0…1 | 0 |
 | `ParamEyeLBounce`, `ParamEyeRBounce` (`eye.aftershock`, physics output) | -1…1 | 0 |
 | `ParamBrowLY`, `ParamBrowRY` | -1…1 | 0 |
+| `ParamBrowLAngle`, `ParamBrowRAngle` (`brow.shape`, −1 inner end down … +1 up) | -1…1 | 0 |
+| `ParamBrowLX`, `ParamBrowRX`, `ParamBrowLForm`, `ParamBrowRForm` (`brow.shape`) | -1…1 | 0 |
 | `ParamMouthForm` | -1…1 | 0 |
 | `ParamMouthOpenY`, `ParamBreath` | 0…1 | 0 |
 | `ParamHairFront`, `ParamHairBack` | -1…1 | 0 |

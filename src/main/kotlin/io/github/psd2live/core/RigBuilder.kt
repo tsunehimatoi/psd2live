@@ -344,7 +344,35 @@ object RigBuilder {
 				aftershock = on(m.EYE_AFTERSHOCK), softness = value(m.EYE_AFTERSHOCK, "softness"),
 				highlight = on(m.EYE_HIGHLIGHT), parallax = value(m.EYE_HIGHLIGHT, "parallax"),
 				squash = on(m.EYE_SQUASH),
+				browCoupling = on(m.BROW_LID), browStrength = value(m.BROW_LID, "strength"),
 			)
+		}
+
+		private val fittedBrows = java.util.concurrent.ConcurrentHashMap<List<Any?>, Map<Side, io.github.psd2live.core.fit.BrowRig>>()
+
+		/** The brows of the `brow/fitted` base under [config], by side; empty when the recipe builds the brows another way. */
+		fun fittedBrows(config: PipelineConfig): Map<Side, io.github.psd2live.core.fit.BrowRig> {
+			if (config.recipe.base("brow") !== io.github.psd2live.core.recipe.RigModules.BROW_FITTED) return emptyMap()
+			val subject = io.github.psd2live.core.recipe.RecipeSubject.of(analysis)
+			val m = io.github.psd2live.core.recipe.RigModules
+			val options = io.github.psd2live.core.fit.BrowOptions(
+				shape = m.builds(m.BROW_SHAPE, config, subject), shapeStrength = config.recipe.value(m.BROW_SHAPE.id, "strength") / 100f,
+				blink = m.builds(m.BROW_BLINK, config, subject), blinkDip = config.recipe.value(m.BROW_BLINK.id, "dip") / 100f)
+			val lift = config.recipe.baseValue("brow", "lift") / 100f
+			return fittedBrows.getOrPut(listOf(options, lift, config.parentOverrides, deformersEnabled, config.recipe.base("eye"))) {
+				val brows = analysis.layers.filter { it.semantic.tag == SemanticTag.EYEBROW && it.opaquePixels > 0 && it.semantic.role == null && it.semantic.side != Side.NONE }
+				val space = brows.firstOrNull()?.let { headSpaceFor(it, config) }
+				val toRig = { x: Float, y: Float -> space?.toAligned(x, y) ?: (x to y) }
+				val eyes = fittedEyes(config)
+				val level = eyes?.fitting?.level ?: io.github.psd2live.core.fit.EyeFitting.fit(analysis.layers, faceRig.centerX, toRig).level
+				brows.groupBy { it.semantic.side }.mapNotNull { (side, layers) ->
+					val layer = layers.maxBy { it.opaquePixels }
+					val fit = io.github.psd2live.core.fit.BrowFit.of(layer, level, faceRig.centerX, toRig) ?: return@mapNotNull null
+					// The brow travels about half the height of the eye below it; without a fitted eye, a quarter of its length.
+					val travel = eyes?.rigs?.get(side)?.let { it.opening * it.fit.width * lift } ?: (fit.length * 0.25f * lift / 0.45f)
+					side to io.github.psd2live.core.fit.BrowRig(fit, travel, options)
+				}.toMap()
+			}
 		}
 
 		/** Replace only artwork while keeping every existing deformer and normalization frame. */
@@ -1939,12 +1967,12 @@ object RigBuilder {
 		}
 		val stages = stagesOf(meshCache) ?: return build()
 		val eyes = rigLayer.semantic.tag == SemanticTag.EYEWHITE || rigLayer.semantic.tag == SemanticTag.EYELASH ||
-			rigLayer.semantic.tag == SemanticTag.EYE_CLOSE || rigLayer.semantic.tag == SemanticTag.IRIDES
+			rigLayer.semantic.tag == SemanticTag.EYE_CLOSE || rigLayer.semantic.tag == SemanticTag.IRIDES || rigLayer.semantic.tag == SemanticTag.EYEBROW
 		val key = MeshKey(layer.meta(), layer.source.raster.width, layer.source.raster.height,
 			MeshResolution.input(layer.source, config.meshTrace, MeshResolution.unitScale(config, context.analysis.source)).key,
 			rigLayer.bounds, rigLayer.centroidX, rigLayer.centroidY, parentId, parentFrame, headSpace,
 			if (eyes) listOf(faceSignature(context.faceRig), context.fittedEyes(config)?.let { it.rigs[rigLayer.semantic.side]?.fit to it.options },
-				rigLayer.semantic.role) else null,
+				rigLayer.semantic.role, context.fittedBrows(config)[rigLayer.semantic.side]?.let { it.fit to it.hashCode() }) else null,
 			matchingEyeWhiteBounds(rigLayer, context.eyeWhiteLayers),
 			MeshResolution.unitScale(config, context.analysis.source), meshConfig, config.meshOverrides[layer.source.id.raw],
 			io.github.psd2live.i18n.I18n.currentLanguage.tag)
@@ -1988,7 +2016,7 @@ object RigBuilder {
 		// A part of a lip ribbon keeps a zero grid: its record carries the ribbon's motion as residual.
 		val generated = if (config.meshOnly || deferred || ribbon) zeroMeshGrid(canvas.size)
 			else buildDrawableGeometry(rigLayer, data, parentFrame, context.faceRig, matchingEyeWhiteBounds(rigLayer, context.eyeWhiteLayers),
-				aperture, config, emptyList(), context.fittedEyes(config))
+				aperture, config, emptyList(), context.fittedEyes(config), context.fittedBrows(config))
 		val geometry = if (generated.axes.any { it.parameterId in part.frozenAxes }) zeroMeshGrid(canvas.size) else generated
 		val override = config.layerOverrides[layer.source.id.raw]
 		val classification = override?.type ?: layer.semantic.type
@@ -2009,7 +2037,7 @@ object RigBuilder {
 			texturePage = page,
 			atlasTileId = PuppetSourceAtlas.tileIdFor(part.layerId, part.sourceId),
 		)
-		val shapes = if (config.meshOnly || deferred || ribbon) emptyList() else eyeBlendShapes(rigLayer, data, parentFrame, context.fittedEyes(config))
+		val shapes = if (config.meshOnly || deferred || ribbon) emptyList() else eyeBlendShapes(rigLayer, data, parentFrame, context.fittedEyes(config), context.fittedBrows(config))
 		return drawable.copy(blendShapes = neutralized(shapes, drawable)) to neutralValidationBounds(layer, data, aperture, headSpace, config.meshOnly, config)
 	}
 
@@ -2078,6 +2106,7 @@ object RigBuilder {
 				config,
 				mouthPaths,
 				context.fittedEyes(config),
+				context.fittedBrows(config),
 			)
 		}
 		return LayerMeshParts(
@@ -2088,7 +2117,7 @@ object RigBuilder {
 			geometryGrid,
 			headSpace,
 			neutralValidationBounds(layer, meshData, mouthAperture, headSpace, config.meshOnly, config),
-			if (config.meshOnly) emptyList() else eyeBlendShapes(rigLayer, meshData, parentFrame, context.fittedEyes(config)),
+			if (config.meshOnly) emptyList() else eyeBlendShapes(rigLayer, meshData, parentFrame, context.fittedEyes(config), context.fittedBrows(config)),
 		)
 	}
 
@@ -2908,7 +2937,8 @@ object RigBuilder {
 		// Fitted lids bend the lashes, white and closed line along their length into arcs: a mesh a few vertices long
 		// shows its polygon edges, so these layers are meshed about four times as finely.
 		val fittedLid = config.recipe.base("eye") === io.github.psd2live.core.recipe.RigModules.EYE_FITTED &&
-			layer.semantic.tag in setOf(SemanticTag.EYELASH, SemanticTag.EYEWHITE, SemanticTag.EYE_CLOSE)
+			layer.semantic.tag in setOf(SemanticTag.EYELASH, SemanticTag.EYEWHITE, SemanticTag.EYE_CLOSE) ||
+			config.recipe.base("brow") === io.github.psd2live.core.recipe.RigModules.BROW_FITTED && layer.semantic.tag == SemanticTag.EYEBROW
 		if (fittedLid) {
 			val fine = MeshSettings(outerMargin, edgeMode, edgeWidth, override?.maxEdgeDistance ?: max(4f, config.meshMaxEdgeDistance * 0.12f),
 				override?.interiorDensity ?: max(4f, config.meshInteriorDensity * 0.12f), override?.fillAlgorithm ?: config.meshFillAlgorithm,
@@ -2983,6 +3013,7 @@ object RigBuilder {
         config: PipelineConfig,
         mouthPaths: List<DeformPath> = emptyList(),
 		eyes: io.github.psd2live.core.fit.FittedEyes? = null,
+		brows: Map<Side, io.github.psd2live.core.fit.BrowRig> = emptyMap(),
 	): KeyformGrid<MeshDeltaForm> {
 		val tag = layer.semantic.tag
 		return when (tag) {
@@ -3001,7 +3032,11 @@ object RigBuilder {
 					irisJellyPoint(x, y, layer.centroidX, layer.centroidY, v, config.rigTuning)
 				}
 			} ?: irisJellyGrid(layer, data, parentFrame, config.rigTuning)
-			SemanticTag.EYEBROW -> eyebrowGrid(layer, data, parentFrame, config.rigTuning)
+			SemanticTag.EYEBROW -> brows[layer.semantic.side]?.takeIf { layer.semantic.role == null }?.let { brow ->
+				val left = layer.semantic.side == Side.LEFT
+				brow.grid(data.rigPositions, parentFrame, if (left) StandardParameters.BROW_L_Y else StandardParameters.BROW_R_Y,
+					ParameterId(if (left) "ParamBrowLAngle" else "ParamBrowRAngle"))
+			} ?: eyebrowGrid(layer, data, parentFrame, config.rigTuning)
 			SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN -> mouthWholeGrid(data, parentFrame, mouthAperture ?: layer.bounds, config, mouthPaths)
 			SemanticTag.MOUTH_CLOSE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE ->
 				zeroMeshGrid(data.mesh.positions.size)
@@ -3029,10 +3064,18 @@ object RigBuilder {
 	}
 
 	/** The additive shapes the eye modules give [layer]'s mesh: the lids' gaze, emotions and aftershock, a highlight's drift. */
-	private fun eyeBlendShapes(layer: ClassifiedLayer, data: MeshData, frame: Bounds, eyes: io.github.psd2live.core.fit.FittedEyes?):
+	private fun eyeBlendShapes(layer: ClassifiedLayer, data: MeshData, frame: Bounds, eyes: io.github.psd2live.core.fit.FittedEyes?,
+	                           brows: Map<Side, io.github.psd2live.core.fit.BrowRig> = emptyMap()):
 		List<org.umamo.runtime.model.BlendShapeBinding<org.umamo.runtime.model.MeshForm>> {
-		val eye = eyes?.rigs?.get(layer.semantic.side) ?: return emptyList()
 		val tag = layer.semantic.tag
+		if (tag == SemanticTag.EYEBROW && layer.semantic.role == null) {
+			val brow = brows[layer.semantic.side] ?: return emptyList()
+			val left = layer.semantic.side == Side.LEFT
+			return brow.shapes(data.rigPositions, frame, ParameterId(if (left) "ParamBrowLX" else "ParamBrowRX"),
+				ParameterId(if (left) "ParamBrowLForm" else "ParamBrowRForm"), if (left) StandardParameters.EYE_L_OPEN else StandardParameters.EYE_R_OPEN,
+				eyes?.options?.wide == true && eyes.rigs.isNotEmpty())
+		}
+		val eye = eyes?.rigs?.get(layer.semantic.side) ?: return emptyList()
 		return when {
 			tag == SemanticTag.EYEWHITE || tag == SemanticTag.EYELASH -> io.github.psd2live.core.fit.EyeModules.lidShapes(
 				io.github.psd2live.core.fit.EyeModules.meshOf(tag, layer.semantic.role)!!, layer.semantic.side, data.rigPositions, frame, eye, eyes.options)

@@ -89,4 +89,20 @@ class RigModulesScenario {
 		isFitted("reopened")
 		expect("value", WorkspaceSettingsCodec.decode(now.document.settings).recipe.baseValue("eye", "roundness") == 150f) { "the value did not survive a reopen" }
 	}
+	@Test fun fittedBrowsTurnAlongTheirAngleAndTheLegacyBaseKeepsTheOldOnes() = Studio.run(temp, Characters.browed()) {
+		allow("REGENERATION_CONFLICT")
+		fun drawable(layer: String) = puppet.drawables.single { it.id.raw == mesh(layer) }
+		fun axes(layer: String) = drawable(layer).geometryGrid!!.axes.map { it.parameterId.raw to it.keys.toList() }
+		fun isFitted(label: String) = expect(label, axes("brow_l") == listOf("ParamBrowLY" to listOf(-1f, 0f, 1f), "ParamBrowLAngle" to listOf(-1f, -0.5f, 0f, 0.5f, 1f)) &&
+			drawable("brow_l").blendShapes.map { it.parameterId.raw }.containsAll(listOf("ParamBrowLX", "ParamBrowLForm")) &&
+			puppet.parameters.any { it.id.raw == "ParamBrowRAngle" }) { "the fitted brow keys its height by its angle: ${axes("brow_l")}" }
+		isFitted("new project")
+		settings("legacy brows", buildJsonObject {
+			putJsonObject(WorkspaceSettingsCodec.RIG) { putJsonObject("bases") { putJsonObject("brow") { put("base", "brow/legacy") } } }
+		})
+		expect("legacy", axes("brow_l").none { it.first == "ParamBrowLAngle" } && puppet.parameters.none { it.id.raw == "ParamBrowLAngle" }) {
+			"the legacy base keys ${axes("brow_l")}" }
+		undo("back to the fitted brows")
+		isFitted("undone")
+	}
 }

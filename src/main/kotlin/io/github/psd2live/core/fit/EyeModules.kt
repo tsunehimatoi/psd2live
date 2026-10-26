@@ -28,6 +28,7 @@ data class EyeOptions(
 	val aftershock: Boolean = false, val softness: Float = 1f,
 	val highlight: Boolean = false, val parallax: Float = 1f,
 	val squash: Boolean = false,
+	val browCoupling: Boolean = false, val browStrength: Float = 1f,
 )
 
 /**
@@ -141,6 +142,20 @@ object EyeModules {
 				add(shape(squint(side), floatArrayOf(0f, 1f), 0, mesh, positions, frame, eye, fade) {
 					// Squinting: the lower lid pushes up, the upper one comes down a little.
 					eye.shape({ u -> 0.1f * k * h * hump(u) }, { u -> -0.32f * k * h * hump(u) })
+				})
+			}
+			if (options.browCoupling) {
+				val k = options.browStrength
+				val y = ParameterId(if (side == Side.LEFT) "ParamBrowLY" else "ParamBrowRY")
+				val angle = ParameterId(if (side == Side.LEFT) "ParamBrowLAngle" else "ParamBrowRAngle")
+				add(shape(y, floatArrayOf(-1f, 0f, 1f), 1, mesh, positions, frame, eye, fade) { b ->
+					// The brow and the upper lid are one skin: lowered, the brow presses the lid down and flat; raised, it lifts it.
+					if (b < 0f) eye.shape({ u -> 0.16f * k * h * hump(u) * (1.1f - 0.4f * u) }, { 0f })
+					else eye.shape({ u -> -0.1f * k * h * hump(u) }, { 0f })
+				})
+				add(shape(angle, floatArrayOf(-1f, 0f, 1f), 1, mesh, positions, frame, eye, fade) { a ->
+					// Knitted (inner end down), the inner lid follows into a glare; worried (inner end up), it lifts.
+					eye.shape({ u -> -0.14f * k * a * h * hump(u) * (1f - u) * 1.6f }, { 0f })
 				})
 			}
 			if (options.aftershock) {
