@@ -101,6 +101,17 @@ internal object ReviewClips {
 
 	/** The static poses of each area: a label and the values, swept at the parameter's quarter points and combined. */
 	val poses: Map<String, List<Pair<String, Map<String, Float>>>> = mapOf(
+		// Everything at once, as a live model is driven: what the modules add must not stack into too much.
+		"combined" to listOf(
+			"angry, gaze up" to mapOf("ParamEyeLForm" to 1f, "ParamEyeRForm" to 1f, "ParamBrowLAngle" to -1f, "ParamBrowRAngle" to -1f, "ParamEyeBallY" to 1f),
+			"smile, talk, turn" to mapOf("ParamMouthForm" to 1f, "ParamMouthOpenY" to 0.5f, "ParamAngleX" to 20f, "ParamEyeLSmile" to 0.6f, "ParamEyeRSmile" to 0.6f,
+				"ParamCheek" to 0.4f),
+			"sad, look down, tilt" to mapOf("ParamEyeLForm" to -1f, "ParamEyeRForm" to -1f, "ParamBrowLAngle" to 1f, "ParamBrowRAngle" to 1f,
+				"ParamEyeBallY" to -1f, "ParamAngleZ" to 15f, "ParamAngleY" to -15f),
+			"surprised, turn up" to eyes(1.6f) + mapOf("ParamBrowLY" to 1f, "ParamBrowRY" to 1f, "ParamO" to 1f, "ParamAngleX" to -20f, "ParamAngleY" to 20f),
+			"half blink, gaze side" to eyes(0.4f) + mapOf("ParamEyeBallX" to 1f, "ParamAngleX" to 15f, "ParamMouthForm" to -0.5f),
+			"squint smile, cheek" to mapOf("ParamEyeLSquint" to 1f, "ParamEyeRSquint" to 1f, "ParamMouthForm" to 1f, "ParamCheek" to 1f, "ParamMouthOpenY" to 0.2f),
+		),
 		"expression" to io.github.psd2live.core.ModelExpressions.standard.map { e ->
 			// Each mood over the rest pose, as a host applies it: overwritten, added to the default, or multiplying it.
 			e.name to e.entries.associate { entry ->

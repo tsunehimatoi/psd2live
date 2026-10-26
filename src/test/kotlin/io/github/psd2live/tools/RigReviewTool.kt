@@ -78,7 +78,7 @@ class RigReviewTool {
 			"eye" -> around(eyes, 0.25f)
 			"brow" -> around(eyes + SemanticTag.EYEBROW, 0.25f)
 			"mouth" -> around(CharacterAnalyzer.MOUTH_TAGS, 1.2f)
-			"head", "expression" -> framed(model.analysis.anchors.face.expanded(0.35f), 1f)
+			"head", "expression", "combined" -> framed(model.analysis.anchors.face.expanded(0.35f), 1f)
 			"hair" -> layers.filter { it.semantic.tag == SemanticTag.FRONT_HAIR || it.semantic.tag == SemanticTag.BACK_HAIR }.map { it.bounds }
 				.reduceOrNull(Bounds::union)?.let { framed(it.expanded(0.06f), 0.8f) }
 			else -> null
