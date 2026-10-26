@@ -306,6 +306,24 @@ object RigBuilder {
 		/** A closed mouth draws the mouth at rest, so an open mouth beside it fades out there; see [buildChannels]. */
 		val hasClosedMouth: Boolean = analysis.layers.any { it.semantic.tag == SemanticTag.MOUTH && it.opaquePixels > 0 }
 
+		private val fittedEyes = java.util.concurrent.ConcurrentHashMap<List<Any?>, io.github.psd2live.core.fit.FittedEyes>()
+
+		/**
+		 * The eyes of the `eye/fitted` base under [config], fitted once per set of its values; null when the recipe
+		 * builds the eyes another way. An eye the fit could not read is left out, and its layers fall back to the legacy rig.
+		 */
+		fun fittedEyes(config: PipelineConfig): io.github.psd2live.core.fit.FittedEyes? {
+			if (config.recipe.base("eye") !== io.github.psd2live.core.recipe.RigModules.EYE_FITTED) return null
+			val values = io.github.psd2live.core.recipe.RigModules.EYE_FITTED.knobs.map { config.recipe.baseValue("eye", it.id) }
+			return fittedEyes.getOrPut(listOf(values, config.parentOverrides, deformersEnabled)) {
+				val space = analysis.layers.firstOrNull { it.semantic.tag == SemanticTag.EYEWHITE && it.opaquePixels > 0 }?.let { headSpaceFor(it, config) }
+				val result = io.github.psd2live.core.fit.EyeFitting.fit(analysis.layers, faceRig.centerX) { x, y -> space?.toAligned(x, y) ?: (x to y) }
+				io.github.psd2live.core.fit.FittedEyes(result, result.fits.mapValues { (_, fit) ->
+					io.github.psd2live.core.fit.EyeRig(fit, values[0] / 100f, values[1] / 100f, values[2] / 100f)
+				})
+			}
+		}
+
 		/** Replace only artwork while keeping every existing deformer and normalization frame. */
 		fun withArtwork(input: PipelineAnalysis): RigContext = RigContext(
 			analysis = input.copy(
@@ -1211,7 +1229,7 @@ object RigBuilder {
 			val override = config.layerOverrides[layer.source.id.raw]
 			val classification = override?.type ?: layer.semantic.type
 			val channelGrids = if (config.meshOnly && classification == LayerType.PRESET) ChannelGrids.Empty
-				else channelStage(layer, override, switchParamKeys, config.rigTuning, context.hasClosedMouth, stages).let { grids ->
+				else channelStage(layer, override, switchParamKeys, config.rigTuning, context.hasClosedMouth, stages, eyeSwap(context, config, layer)).let { grids ->
 					if (v2 && resolution.isStubLayer(layer.source.id.raw) &&
 						grids.gridsByChannel.values.any { grid -> grid.axes.any { it.parameterId !in knownParameters } }) ChannelGrids.Empty else grids
 				}
@@ -1546,14 +1564,25 @@ object RigBuilder {
 		override fun hashCode() = System.identityHashCode(value) * 31 + (extra?.hashCode() ?: 0)
 	}
 
+	/**
+	 * Whether [layer] swaps with a drawn closed-eye line at the fitted eye's swap key: the closed line itself, and the
+	 * lashes and lower lash of an eye whose closed line the fit lies the closed lid on ([io.github.psd2live.core.fit.EyeRig.SWAP]).
+	 */
+	private fun eyeSwap(context: RigContext, config: PipelineConfig, layer: ClassifiedLayer): Boolean {
+		val tag = layer.semantic.tag
+		if (tag != SemanticTag.EYE_CLOSE && tag != SemanticTag.EYELASH) return false
+		if (tag == SemanticTag.EYELASH && layer.semantic.role != null && layer.semantic.role != PartRole.LOWER) return false
+		return context.fittedEyes(config)?.rigs?.get(layer.semantic.side)?.fit?.closed != null
+	}
+
 	/** [buildChannels] under a key of what it reads. */
 	private fun channelStage(layer: ClassifiedLayer, override: LayerClassificationOverride?, switchParamKeys: Map<String, FloatArray>,
-	                         tuning: RigTuning, closedMouth: Boolean, stages: RigStageCache?): ChannelGrids {
-		if (stages == null) return buildChannels(layer, override, switchParamKeys, tuning, closedMouth)
+	                         tuning: RigTuning, closedMouth: Boolean, stages: RigStageCache?, eyeSwap: Boolean = false): ChannelGrids {
+		if (stages == null) return buildChannels(layer, override, switchParamKeys, tuning, closedMouth, eyeSwap)
 		val parameter = (override?.parameter ?: layer.semantic.parameter).trim()
 		val key = listOf(override?.type ?: layer.semantic.type, parameter, override?.switchId ?: layer.semantic.switchId,
-			switchParamKeys[parameter]?.toList(), layer.semantic.tag, layer.semantic.side, tuning.teethFade, closedMouth)
-		return stages.get(RigStageCache.CHANNELS, 256, key) { buildChannels(layer, override, switchParamKeys, tuning, closedMouth) }
+			switchParamKeys[parameter]?.toList(), layer.semantic.tag, layer.semantic.side, tuning.teethFade, closedMouth, eyeSwap)
+		return stages.get(RigStageCache.CHANNELS, 256, key) { buildChannels(layer, override, switchParamKeys, tuning, closedMouth, eyeSwap) }
 	}
 
 	/**
@@ -1887,7 +1916,8 @@ object RigBuilder {
 		val key = MeshKey(layer.meta(), layer.source.raster.width, layer.source.raster.height,
 			MeshResolution.input(layer.source, config.meshTrace, MeshResolution.unitScale(config, context.analysis.source)).key,
 			rigLayer.bounds, rigLayer.centroidX, rigLayer.centroidY, parentId, parentFrame, headSpace,
-			if (eyes) faceSignature(context.faceRig) else null, matchingEyeWhiteBounds(rigLayer, context.eyeWhiteLayers),
+			if (eyes) listOf(faceSignature(context.faceRig), context.fittedEyes(config)?.rigs?.get(rigLayer.semantic.side)?.fit, rigLayer.semantic.role) else null,
+			matchingEyeWhiteBounds(rigLayer, context.eyeWhiteLayers),
 			MeshResolution.unitScale(config, context.analysis.source), meshConfig, config.meshOverrides[layer.source.id.raw],
 			io.github.psd2live.i18n.I18n.currentLanguage.tag)
 		return stages.get(RigStageCache.MESH, 1024, key, build)
@@ -1930,12 +1960,12 @@ object RigBuilder {
 		// A part of a lip ribbon keeps a zero grid: its record carries the ribbon's motion as residual.
 		val generated = if (config.meshOnly || deferred || ribbon) zeroMeshGrid(canvas.size)
 			else buildDrawableGeometry(rigLayer, data, parentFrame, context.faceRig, matchingEyeWhiteBounds(rigLayer, context.eyeWhiteLayers),
-				aperture, config, emptyList())
+				aperture, config, emptyList(), context.fittedEyes(config))
 		val geometry = if (generated.axes.any { it.parameterId in part.frozenAxes }) zeroMeshGrid(canvas.size) else generated
 		val override = config.layerOverrides[layer.source.id.raw]
 		val classification = override?.type ?: layer.semantic.type
 		val channels = if (deferred || config.meshOnly && classification == LayerType.PRESET) ChannelGrids.Empty
-			else channelStage(layer, override, switchParamKeys, config.rigTuning, context.hasClosedMouth, stages)
+			else channelStage(layer, override, switchParamKeys, config.rigTuning, context.hasClosedMouth, stages, eyeSwap(context, config, layer))
 		val drawable = Drawable(
 			id = part.drawableId,
 			name = part.name,
@@ -2018,6 +2048,7 @@ object RigBuilder {
 				mouthAperture,
 				config,
 				mouthPaths,
+				context.fittedEyes(config),
 			)
 		}
 		return LayerMeshParts(
@@ -2910,11 +2941,13 @@ object RigBuilder {
 		mouthAperture: Bounds?,
         config: PipelineConfig,
         mouthPaths: List<DeformPath> = emptyList(),
+		eyes: io.github.psd2live.core.fit.FittedEyes? = null,
 	): KeyformGrid<MeshDeltaForm> {
 		val tag = layer.semantic.tag
 		return when (tag) {
 			SemanticTag.EYEWHITE, SemanticTag.EYELASH ->
-				eyeClosureGrid(layer, data, parentFrame, faceRig, eyeWhiteBounds, config.rigTuning)
+				eyes?.rigs?.get(layer.semantic.side)?.let { fittedEyeGrid(layer, data, parentFrame, it) }
+					?: eyeClosureGrid(layer, data, parentFrame, faceRig, eyeWhiteBounds, config.rigTuning)
 			// Blink does not key the iris directly. The independent physics output supplies a small,
 			// delayed squash/stretch while eye-white clipping removes it as the lid closes.
 			SemanticTag.IRIDES -> irisJellyGrid(layer, data, parentFrame, config.rigTuning)
@@ -2923,6 +2956,26 @@ object RigBuilder {
 			SemanticTag.MOUTH_CLOSE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B, SemanticTag.TONGUE ->
 				zeroMeshGrid(data.mesh.positions.size)
 			else -> zeroMeshGrid(data.mesh.positions.size)
+		}
+	}
+
+	/** An eye mesh posed by its fitted eye ([io.github.psd2live.core.fit.EyeRig]) at each of the eye's openness keys. */
+	private fun fittedEyeGrid(layer: ClassifiedLayer, data: MeshData, frame: Bounds, eye: io.github.psd2live.core.fit.EyeRig): KeyformGrid<MeshDeltaForm> {
+		val parameter = if (layer.semantic.side == Side.LEFT) StandardParameters.EYE_L_OPEN else StandardParameters.EYE_R_OPEN
+		val mesh = when {
+			layer.semantic.tag == SemanticTag.EYEWHITE -> io.github.psd2live.core.fit.EyeRig.EyeMesh.WHITE
+			layer.semantic.role == PartRole.LOWER -> io.github.psd2live.core.fit.EyeRig.EyeMesh.LOWER_LASH
+			layer.semantic.role == PartRole.LID || layer.semantic.role == PartRole.SHADOW -> io.github.psd2live.core.fit.EyeRig.EyeMesh.SKIN
+			else -> io.github.psd2live.core.fit.EyeRig.EyeMesh.UPPER_LASH
+		}
+		return oneDimGrid(parameter, eye.keys) { open ->
+			val delta = FloatArray(data.mesh.positions.size)
+			for (vertex in data.rigPositions.indices step 2) {
+				val (dx, dy) = eye.delta(mesh, data.rigPositions[vertex], data.rigPositions[vertex + 1], open)
+				delta[vertex] = dx / frame.width.coerceAtLeast(1e-4f)
+				delta[vertex + 1] = dy / frame.height.coerceAtLeast(1e-4f)
+			}
+			MeshDeltaForm(delta)
 		}
 	}
 
@@ -3342,6 +3395,8 @@ object RigBuilder {
 		tuning: RigTuning,
 		/** Whether a closed mouth layer draws the mouth at rest; see [RigContext.hasClosedMouth]. */
 		closedMouth: Boolean,
+		/** Whether the layer swaps with the drawn closed-eye line at the fitted eye's swap key; see [eyeSwap]. */
+		eyeSwap: Boolean = false,
 	): ChannelGrids {
 		val type = override?.type ?: layer.semantic.type
 		// Teeth, tongue and an open mouth fade in over the first teethFade percent of the opening.
@@ -3369,8 +3424,13 @@ object RigBuilder {
 				when (layer.semantic.tag) {
 					SemanticTag.EYE_CLOSE -> {
 						val parameter = if (layer.semantic.side == Side.LEFT) StandardParameters.EYE_L_OPEN else StandardParameters.EYE_R_OPEN
-						scalarGrid(parameter, floatArrayOf(0f, 1f)) { open -> 1f - open }
+						// A fitted eye closes its lid onto the line, which then takes over at once: never half of each.
+						if (eyeSwap) scalarGrid(parameter, floatArrayOf(0f, io.github.psd2live.core.fit.EyeRig.SWAP, 1f)) { open -> if (open == 0f) 1f else 0f }
+						else scalarGrid(parameter, floatArrayOf(0f, 1f)) { open -> 1f - open }
 					}
+					SemanticTag.EYELASH -> if (!eyeSwap) null else
+						scalarGrid(if (layer.semantic.side == Side.LEFT) StandardParameters.EYE_L_OPEN else StandardParameters.EYE_R_OPEN,
+							floatArrayOf(0f, io.github.psd2live.core.fit.EyeRig.SWAP, 1f)) { open -> if (open == 0f) 0f else 1f }
 					SemanticTag.MOUTH_CLOSE -> scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, 1f)) { 1f - it }
 					SemanticTag.TONGUE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B ->
 						scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, fadeIn, 1f)) { open -> (open / fadeIn).coerceIn(0f, 1f) }

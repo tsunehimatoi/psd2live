@@ -5,6 +5,7 @@ import io.github.psd2live.core.MotionCurve
 import io.github.psd2live.core.MotionInterpolation
 import io.github.psd2live.core.MotionKey
 import io.github.psd2live.core.PSD2LivePipeline
+import io.github.psd2live.core.PipelineConfig
 import io.github.psd2live.core.SkeletonAutoBuilder
 import java.io.File
 import kotlin.test.Test
@@ -15,7 +16,8 @@ import kotlin.test.Test
  * checked byte for byte against the previous commit.
  *
  * PSD2LIVE_TOOLS=1 ./gradlew test --tests '*ExportGoldenTool'
- * PSD2LIVE_GOLDEN_LABEL names the output (current by default). Writes build/tools/export-golden/<label>.txt and the
+ * PSD2LIVE_GOLDEN_LABEL names the output (current by default); PSD2LIVE_GOLDEN_RECIPE=legacy builds the samples with the
+ * legacy rig recipe of a project saved before rig modules. Writes build/tools/export-golden/<label>.txt and the
  * exports under <label>/<sample>-<variant>/. A cmo3 holds random editor GUIDs, so it is listed by [cmo3Readback].
  */
 class ExportGoldenTool {
@@ -23,10 +25,12 @@ class ExportGoldenTool {
 		requireTools()
 		val out = output("export-golden")
 		val label = setting("PSD2LIVE_GOLDEN_LABEL", "current")
+		// The recipe of a project saved before rig modules, which must export as it did.
+		val legacy = setting("PSD2LIVE_GOLDEN_RECIPE", "new") == "legacy"
 		val report = StringBuilder()
 		for (sample in listOf("tml", "ds")) {
 			val psd = File("examples/$sample/psd-input/$sample.psd").toPath()
-			val plain = PSD2LivePipeline().buildPreview(psd)
+			val plain = PSD2LivePipeline().buildPreview(psd, if (legacy) PipelineConfig(recipe = io.github.psd2live.core.recipe.RigRecipe.Legacy) else PipelineConfig())
 			val skeletal = PSD2LivePipeline().buildPreview(plain.analysis, plain.config.copy(
 				rigEdits = plain.config.rigEdits.copy(skeleton = SkeletonAutoBuilder.build(plain.analysis, plain.rig))))
 			val wave = MotionClip("wave", "Wave", duration = 1.5f, curves = listOf(MotionCurve("ParamAngleX", listOf(MotionKey(0.2f, 0f),

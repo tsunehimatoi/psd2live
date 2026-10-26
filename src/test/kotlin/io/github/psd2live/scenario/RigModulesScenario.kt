@@ -61,4 +61,30 @@ class RigModulesScenario {
 		edits("guess again", "layer_classify" to req("layer_id" to "iris_r", "part" to "auto"), "rig_generate" to req())
 		expect("auto", now.document.layerOverrides["iris_r"]?.role == null) { "part auto did not hand the role back to the analysis" }
 	}
+
+	@Test fun newProjectsCloseTheEyesWithTheFittedLidsAndTheLegacyBaseKeepsTheOldOnes() = Studio.run(temp, Characters.eyed()) {
+		allow("REGENERATION_CONFLICT")
+		fun drawable(layer: String) = puppet.drawables.single { it.id.raw == mesh(layer) }
+		fun keys(layer: String) = drawable(layer).geometryGrid!!.axes.single { it.parameterId == StandardParameters.EYE_L_OPEN }.keys.toList()
+		fun swap(layer: String) = drawable(layer).channelGrids[org.umamo.runtime.model.FormChannel.OPACITY]?.axes?.single()?.keys?.toList()
+		val fitted = listOf(0f, io.github.psd2live.core.fit.EyeRig.SWAP)
+		fun isFitted(label: String) = expect(label, keys("lash_l").take(2) == fitted && keys("lash_l").size == 6 && keys("white_l") == keys("lash_l") &&
+			swap("lash_l") == listOf(0f, io.github.psd2live.core.fit.EyeRig.SWAP, 1f) && swap("close_l") == listOf(0f, io.github.psd2live.core.fit.EyeRig.SWAP, 1f)) {
+			"the fitted eye keys its lids at closed, the swap to the drawn closed line, the crease and on: ${keys("lash_l")} / ${keys("white_l")}, " +
+				"swaps ${swap("lash_l")} / ${swap("close_l")}" }
+		isFitted("new project")
+
+		settings("legacy eyes", buildJsonObject {
+			putJsonObject(WorkspaceSettingsCodec.RIG) { putJsonObject("bases") { putJsonObject("eye") { put("base", "eye/legacy") } } }
+		})
+		expect("legacy", keys("lash_l") == listOf(0f, 1f) && swap("lash_l") == null) { "the legacy base keys ${keys("lash_l")}" }
+		undo("back to the fitted eyes")
+		isFitted("undone")
+		settings("rounder", buildJsonObject {
+			putJsonObject(WorkspaceSettingsCodec.RIG) { putJsonObject("bases") { putJsonObject("eye") { putJsonObject("values") { put("roundness", 150) } } } }
+		})
+		reopen()
+		isFitted("reopened")
+		expect("value", WorkspaceSettingsCodec.decode(now.document.settings).recipe.baseValue("eye", "roundness") == 150f) { "the value did not survive a reopen" }
+	}
 }

@@ -120,6 +120,7 @@ PSD2LIVE_TOOLS=1 PSD2LIVE_SAMPLE=ds ./gradlew test --tests "io.github.psd2live.t
 | `MotionSheetTool.idle` | 待机 12 秒的逐帧图 | `motion-frames/<示例>-idle/` |
 | `ModelProfileTool.cmo3` | `.cmo3` 的参数、变形器树（网格轴与范围）、图形网格、分段运动剖面、身体参数下各网格的位移，身体 X × 身体 Y 的剪影，以及物理组 | `model-profile/<名称>.txt`、`.png`、`-physics.txt` |
 | `RigStudyTool` | 研究成品 Cubism 模型（`PSD2LIVE_MOC3`：`.model3.json` 或其所在目录，可含多个模型）：参数与分组及用途、部件树、变形器树与各对象的关键形轴、网格密度、蒙版、Glue、物理、表情、动作与 VTube Studio 映射；逐参数的形变量、不透明度 / 绘制顺序 / 颜色变化与半段非线性度；默认姿态、每个参数五帧扫描（裁剪到其影响范围）、头部角度、眼、嘴、身体网格图与网格线框；`PSD2LIVE_STUDY_ONLY` 按路径筛选，大模型需 `-Ppsd2live.testHeap=16g` | `rig-study/<目录>/profile.txt`、`effects.txt`、`*.png` |
+| `FitDetectionTool` | 示例（`PSD2LIVE_SAMPLE`）的特征点拟合叠画在原图上：每只眼的内外眼角、上下睑缘、原画闭眼线，以及拟合眼睑在各开度键的上睑缘（从黄到蓝）；输出未能拟合、退回原有算法的原因 | `fit-detection/<示例>.png` |
 | `RigReviewTool` | 示例（`PSD2LIVE_SAMPLE`）以新工程的配方和引入模块之前的原有生成方式各生成一次，在审阅姿态与动作片段下对照：每个部位一张姿态板（上下两行），每个片段一张并排播放、带物理的 GIF（眨眼、慢眨、笑眼眨眼、视线、说话、元音、眉、转头、点头歪头、甩头、身体、待机）；`PSD2LIVE_REVIEW` 选部位（eye、brow、mouth、head、hair、body、motion，默认全部），`PSD2LIVE_REVIEW_SIZE` 为单帧边长 | `rig-review/<示例>/<部位>-poses.png`、`<片段>.gif` |
 | `ModelProfileTool.sample` | 生成模型（无骨架和自动骨架）的分段运动剖面、身体图层与自动骨骼 | `model-profile/<示例>.txt` |
 | `SkeletonAutoViewTool.view` | 把自动骨架叠画在示例上并打印每根骨骼，检查关节位置与分叉；`PSD2LIVE_SAMPLES` 逗号分隔多个示例或 PSD 路径，`PSD2LIVE_ZOOM=左,上,右,下`（画布像素）裁出局部 | `skeleton-auto/<示例>.png` |
@@ -134,7 +135,7 @@ PSD2LIVE_TOOLS=1 PSD2LIVE_SAMPLE=ds ./gradlew test --tests "io.github.psd2live.t
 | `RuntimeSamplesTool` | 供目视检查播放器的合成模型：渐变上的每种颜色混合模式、乘色与屏幕色、遮罩与反向遮罩，并用软件光栅器渲染参考图 | `runtime-samples/features.p2lrt`、`features.png`、`layout.txt` |
 | `WarpProbeTool` | 编辑器求值器的黑盒探测：Warp 映射（格子内外）、Warp 下的旋转框架、翻转、混合形、稀疏网格，供运行时独立实现对照 | `warp-probe/*.tsv` |
 | `GeneratorCostTool` | 各生成器（Rig 生成有无骨架、骨架烘焙缓存前后、物理组目录、生成动作缓存前后、Rig IR 编译、两个摆动的生成与重放、模拟烘焙与写回）的耗时，及对其输入做内容哈希的耗时，用于判断生成器是否值得接入生成缓存；`PSD2LIVE_SAMPLE` 指定样例（需有前发与后发） | `generator-cost/report.txt` |
-| `ExportGoldenTool` | `tml`、`ds` 的无骨架、自动骨架、自定义动作三种变体，以及无骨架 cmo3 作为新工程导入后的全部导出文件与预览包摘要（cmo3 取读回后降级为 moc3 的摘要与物理组数），用于逐字节对比重构前后的导出；`PSD2LIVE_GOLDEN_LABEL` 指定输出名 | `export-golden/<名称>.txt`、`<名称>/<示例>-<变体>/` |
+| `ExportGoldenTool` | `tml`、`ds` 的无骨架、自动骨架、自定义动作三种变体，以及无骨架 cmo3 作为新工程导入后的全部导出文件与预览包摘要（cmo3 取读回后降级为 moc3 的摘要与物理组数），用于逐字节对比重构前后的导出；`PSD2LIVE_GOLDEN_LABEL` 指定输出名，`PSD2LIVE_GOLDEN_RECIPE=legacy` 按引入模块之前的工程（旧配方）生成，用于确认旧工程的导出不变 | `export-golden/<名称>.txt`、`<名称>/<示例>-<变体>/` |
 | `LayoutGoldenTool` | 与 `ExportGoldenTool` 相同的摘要，但用测试用的合成角色（全身角色、嘴部）生成 PSD，不需下载示例：流水线导出三种变体，以及导入 PSD 后经导出会话的 moc3 / cmo3 导出；用于逐字节对比改动前后的导出（CAN3 含随机 GUID，每次都不同）；`PSD2LIVE_GOLDEN_LABEL` 指定输出名 | `layout-golden/<名称>.txt` |
 | `LayoutPanelsTool` | 无窗口渲染素材面板、图层表标签格与生成栏：导入合成 PSD、放置一个素材使其待生成、双击打开文件夹、选中条目、把条目拖到画布落点放置（落点由测试注册，检查以落点为中心）、悬停生成按钮、打开与关闭标签菜单后再次拖放 | `layout-panels/*.png` |
 | `LayoutWindowTool` | 打开真实编辑器窗口（OpenGL），导入合成 PSD、切到 Layout 工作区，用 AWT 鼠标事件把素材文件夹从素材面板拖到画布并检查落点、点击生成栏按钮并检查生成完成；截图取自窗口自身的 Skia 帧 | `layout-window/report.txt`、`{layout,dragging,placed,generated}.png` |

@@ -29,10 +29,12 @@ import kotlin.test.assertTrue
  * clip show as they are; closed-eye lines, which fade, are copied over the bangs as brows are. The window can be turned
  * off, survives a reopen, reaches the moc3, cmo3 and p2lrt exports, and never reaches the document's own masks.
  */
+// The eyes keep the legacy lids here: a fitted eye's lashes swap with its closed line, and a part that fades shows
+// through as a copy rather than a window, which is what this scenario does not test.
 class EyeSeeThroughScenario {
 	@TempDir lateinit var temp: Path
 
-	@Test fun eyesShowThroughAWindowInTheBangsByDefault() = Studio.run(temp, Characters.eyed()) {
+	@Test fun eyesShowThroughAWindowInTheBangsByDefault() = Studio.run(temp, Characters.eyed(legacyEyes = true)) {
 		val hair = mesh("front_hair")
 		val whites = listOf(mesh("white_r"), mesh("white_l")); val lashes = listOf(mesh("lash_r"), mesh("lash_l"))
 		val irides = listOf(mesh("iris_r"), mesh("iris_l")); val closes = listOf(mesh("close_r"), mesh("close_l"))
@@ -114,7 +116,7 @@ class EyeSeeThroughScenario {
 	 * target without inverted masks opens none, a preview moving the bangs re-places the window's copy, and the
 	 * candidates of a stored rig recorded by the 3.6.5 rules are read as unknown, so the preview generates.
 	 */
-	@Test fun windowsOpenOnlyWhereTheyCan() = Studio.run(temp, Characters.eyed(), checks = emptySet()) {
+	@Test fun windowsOpenOnlyWhereTheyCan() = Studio.run(temp, Characters.eyed(legacyEyes = true), checks = emptySet()) {
 		val hair = mesh("front_hair"); val white = mesh("white_r")
 		val window = SeeThroughLayers.copyId(DrawableId(hair))
 		val authored = now.model.authored.rig.puppet

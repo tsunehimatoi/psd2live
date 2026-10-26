@@ -1,6 +1,8 @@
 package io.github.psd2live.scenario
 
 import io.github.psd2live.core.*
+import io.github.psd2live.core.recipe.BaseChoice
+import io.github.psd2live.core.recipe.RigRecipe
 import io.github.psd2live.project.*
 import org.umamo.format.art.*
 import org.umamo.format.png.PngCodec
@@ -68,7 +70,7 @@ internal object Characters {
 	 * the white (which clips it), a lash line over the white's top and a closed-eye line, as anime art draws them - what
 	 * the eyes' window in the bangs is made for ([SeeThroughLayers]).
 	 */
-	fun eyed(): WorkspaceDocument = document(420, 420, figureParts(1f).map {
+	fun eyed(legacyEyes: Boolean = false): WorkspaceDocument = document(420, 420, figureParts(1f).map {
 		// Lower orders list first, in front: the bangs over the lashes, closed lines, irides and whites, over the face.
 		when (it.tag) {
 			SemanticTag.FACE -> Part(it.id, 17, it.tag, it.side, it.inside)
@@ -84,7 +86,8 @@ internal object Characters {
 		Part("iris_l", 14, SemanticTag.IRIDES, Side.LEFT, box(221, 56, 231, 76)),
 		Part("white_r", 15, SemanticTag.EYEWHITE, Side.RIGHT, box(184, 59, 204, 72)),
 		Part("white_l", 16, SemanticTag.EYEWHITE, Side.LEFT, box(216, 59, 236, 72)),
-	), PipelineConfig(atlasSize = 512, generatePhysics = false, exportMoc3 = false))
+	), PipelineConfig(atlasSize = 512, generatePhysics = false, exportMoc3 = false, recipe = if (!legacyEyes) RigRecipe.Modern
+		else RigRecipe(true, bases = mapOf("eye" to BaseChoice("eye/legacy")))))
 
 	/** A 64² head: back hair and a face. The smallest document the hair generators and simulation presets act on. */
 	fun head(physics: Boolean = true): WorkspaceDocument = document(64, 64, listOf(

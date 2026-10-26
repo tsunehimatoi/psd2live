@@ -33,9 +33,21 @@ object RigModules {
 	val MOUTH_OUTLINE = RigModule("mouth.outline", ModuleTier.CORE, setting = "mouthOutlineEnabled",
 		applies = { it.has(SemanticTag.MOUTH) || it.has(SemanticTag.MOUTH_OPEN) })
 
+	private val P = io.github.psd2live.core.RigTuning.Unit.PERCENT
+
+	/**
+	 * The eyes fitted from their drawn outline ([io.github.psd2live.core.fit.EyeRig]): the lids close over a pseudo-3D
+	 * eyeball, keeping their arc, the white, lashes and lid skin each following them their own way.
+	 */
+	val EYE_FITTED = RigBase("eye/fitted", knobs = listOf(
+		RecipeKnob("lowerShare", P, 0f..50f, 25f),
+		RecipeKnob("roundness", P, 40f..160f, 100f),
+		RecipeKnob("lashSquash", P, 20f..100f, 60f, advanced = true),
+	))
+
 	val areas: List<RigArea> = listOf(
 		RigArea("face", listOf(legacy("face")), emptyList()),
-		RigArea("eye", listOf(legacy("eye")), listOf(EYE_SEE_THROUGH, EYE_JELLY)),
+		RigArea("eye", listOf(legacy("eye"), EYE_FITTED), listOf(EYE_SEE_THROUGH, EYE_JELLY)),
 		RigArea("brow", listOf(legacy("brow")), listOf(BROW_SEE_THROUGH)),
 		RigArea("mouth", listOf(legacy("mouth")), listOf(MOUTH_OUTLINE)),
 		RigArea("hair", listOf(legacy("hair")), emptyList()),
