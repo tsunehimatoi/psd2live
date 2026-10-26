@@ -105,4 +105,22 @@ class RigModulesScenario {
 		undo("back to the fitted brows")
 		isFitted("undone")
 	}
+	@Test fun fittedMouthOpensInStagesAndTheLegacyBaseKeepsTheOldOne() = Studio.run(temp, Characters.mouthed()) {
+		allow("REGENERATION_CONFLICT")
+		fun drawable(layer: String) = puppet.drawables.single { it.id.raw == mesh(layer) }
+		fun axes(layer: String) = drawable(layer).geometryGrid!!.axes.map { it.parameterId.raw to it.keys.toList() }
+		fun isFitted(label: String) = expect(label, axes("mouth") == listOf("ParamMouthForm" to io.github.psd2live.core.fit.MouthRig.FORM_KEYS.toList(),
+			"ParamMouthOpenY" to io.github.psd2live.core.fit.MouthRig.OPEN_KEYS.toList()) &&
+			drawable("mouth").blendShapes.map { it.parameterId.raw }.containsAll(listOf("ParamA", "ParamO", "ParamMouthX")) &&
+			drawable("face").blendShapes.any { it.parameterId.raw == "ParamMouthOpenY" } && puppet.parameters.any { it.id.raw == "ParamCheekPuff" }) {
+			"the fitted mouth keys its form by its staged opening, with vowels and the jaw: ${axes("mouth")}" }
+		isFitted("new project")
+		settings("legacy mouth", buildJsonObject {
+			putJsonObject(WorkspaceSettingsCodec.RIG) { putJsonObject("bases") { putJsonObject("mouth") { put("base", "mouth/legacy") } } }
+		})
+		expect("legacy", axes("mouth").last().second == listOf(0f, 0.5f, 1f) && puppet.parameters.none { it.id.raw == "ParamA" }) {
+			"the legacy base keys ${axes("mouth")}" }
+		undo("back to the fitted mouth")
+		isFitted("undone")
+	}
 }

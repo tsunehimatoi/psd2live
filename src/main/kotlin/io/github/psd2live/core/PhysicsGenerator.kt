@@ -12,6 +12,7 @@ object PhysicsGenerator {
 	const val EYE_JELLY_ID = "PhysicsEyeJelly"
 	const val EYE_L_BOUNCE_ID = "PhysicsEyeLBounce"
 	const val EYE_R_BOUNCE_ID = "PhysicsEyeRBounce"
+	const val MOUTH_SPRING_ID = "PhysicsMouthSpring"
 	val presetIds = listOf(BACK_HAIR_ID, FRONT_HAIR_ID, EYE_JELLY_ID)
 
 	/** One flag per preset: whether the art has the part, or whether the user left the preset on. */
@@ -56,6 +57,12 @@ object PhysicsGenerator {
 				segments = listOf(PhysicsSegment(1f, 0.9f, 0.6f, 1.6f), PhysicsSegment(1.2f, 0.85f, 0.45f, 1.8f)),
 				normalization = PhysicsNormalization(-1f, 0f, 1f, -10f, 0f, 10f)))
 		}
+		// The jaw's soft tissue settling after the mouth moves, mostly on the opening and a little on the form.
+		if ("ParamMouthOpenY" in available && "ParamMouthSpring" in available) add(RigPhysicsEdit(id = MOUTH_SPRING_ID, name = tr("model.physics.mouthSpring"),
+			inputs = listOf(PhysicsInput("ParamMouthOpenY", 80f, PhysicsSourceType.X), PhysicsInput("ParamMouthForm", 20f, PhysicsSourceType.X)),
+			outputs = listOf(PhysicsOutput("ParamMouthSpring", 2, 1.2f)),
+			segments = listOf(PhysicsSegment(1f, 0.9f, 0.5f, 1.6f), PhysicsSegment(1.1f, 0.85f, 0.4f, 1.8f)),
+			normalization = PhysicsNormalization(-1f, 0f, 1f, -10f, 0f, 10f)))
 	}
 
 	/** The head and body sway every hanging part follows. */

@@ -120,7 +120,7 @@ PSD2LIVE_TOOLS=1 PSD2LIVE_SAMPLE=ds ./gradlew test --tests "io.github.psd2live.t
 | `MotionSheetTool.idle` | 待机 12 秒的逐帧图 | `motion-frames/<示例>-idle/` |
 | `ModelProfileTool.cmo3` | `.cmo3` 的参数、变形器树（网格轴与范围）、图形网格、分段运动剖面、身体参数下各网格的位移，身体 X × 身体 Y 的剪影，以及物理组 | `model-profile/<名称>.txt`、`.png`、`-physics.txt` |
 | `RigStudyTool` | 研究成品 Cubism 模型（`PSD2LIVE_MOC3`：`.model3.json` 或其所在目录，可含多个模型）：参数与分组及用途、部件树、变形器树与各对象的关键形轴、网格密度、蒙版、Glue、物理、表情、动作与 VTube Studio 映射；逐参数的形变量、不透明度 / 绘制顺序 / 颜色变化与半段非线性度；默认姿态、每个参数五帧扫描（裁剪到其影响范围）、头部角度、眼、嘴、身体网格图与网格线框；`PSD2LIVE_STUDY_ONLY` 按路径筛选，`PSD2LIVE_STUDY_REVIEW=1` 只按审阅工具的姿态出眼部开合、睁大与视线序列（`review-eye.png`），大模型需 `-Ppsd2live.testHeap=16g` | `rig-study/<目录>/profile.txt`、`effects.txt`、`*.png` |
-| `FitDetectionTool` | 示例（`PSD2LIVE_SAMPLE`）的特征点拟合叠画在原图上：每只眼的内外眼角、上下睑缘、原画闭眼线，以及拟合眼睑在各开度键的上睑缘（从黄到蓝）；输出未能拟合、退回原有算法的原因 | `fit-detection/<示例>.png` |
+| `FitDetectionTool` | 示例（`PSD2LIVE_SAMPLE`）的特征点拟合叠画在原图上：每只眼的内外眼角、上下睑缘、原画闭眼线，以及拟合眼睑在各开度键的上睑缘（从黄到蓝）；张嘴姿态下的上唇上缘（白）与下唇下缘（青）；列出嘴部图层，输出未能拟合、退回原有算法的原因 | `fit-detection/<示例>.png` |
 | `RigReviewTool` | 示例（`PSD2LIVE_SAMPLE`）以新工程的配方和引入模块之前的原有生成方式各生成一次，在审阅姿态与动作片段下对照：每个部位一张姿态板（上下两行），每个片段一张并排播放、带物理的 GIF（眨眼、慢眨、笑眼眨眼、视线、说话、元音、眉、转头、点头歪头、甩头、身体、待机）；`PSD2LIVE_REVIEW` 选部位（eye、brow、mouth、head、hair、body、motion，默认全部），`PSD2LIVE_REVIEW_SIZE` 为单帧边长 | `rig-review/<示例>/<部位>-poses.png`、`<片段>.gif` |
 | `ModelProfileTool.sample` | 生成模型（无骨架和自动骨架）的分段运动剖面、身体图层与自动骨骼 | `model-profile/<示例>.txt` |
 | `SkeletonAutoViewTool.view` | 把自动骨架叠画在示例上并打印每根骨骼，检查关节位置与分叉；`PSD2LIVE_SAMPLES` 逗号分隔多个示例或 PSD 路径，`PSD2LIVE_ZOOM=左,上,右,下`（画布像素）裁出局部 | `skeleton-auto/<示例>.png` |

@@ -104,7 +104,11 @@ internal object ReviewClips {
 				"angry" to brows("Angle", -1f) + brows("Y", -0.6f) + mapOf("ParamEyeLForm" to 1f, "ParamEyeRForm" to 1f),
 				"sad" to brows("Angle", 1f) + brows("Form", 0.5f) + mapOf("ParamEyeLForm" to -1f, "ParamEyeRForm" to -1f),
 				"surprised" to brows("Y", 1f) + eyes(1.6f), "smile closed" to eyes(0f, 1f)),
-		"mouth" to listOf(-1f, 0f, 1f).flatMap { form -> listOf(0f, 0.25f, 0.5f, 0.75f, 1f).map { open -> "form $form open $open" to mapOf("ParamMouthForm" to form, "ParamMouthOpenY" to open) } },
+		"mouth" to listOf(-1f, 0f, 1f).flatMap { form -> listOf(0f, 0.25f, 0.5f, 0.75f, 1f).map { open -> "form $form open $open" to mapOf("ParamMouthForm" to form, "ParamMouthOpenY" to open) } } +
+			listOf('A', 'I', 'U', 'E', 'O').map { "vowel $it" to mapOf("Param$it" to 1f) } +
+			listOf("mouth x" to mapOf("ParamMouthX" to 1f), "pucker" to mapOf("ParamMouthPuckerWiden" to -1f), "widen" to mapOf("ParamMouthPuckerWiden" to 1f),
+				"shrug" to mapOf("ParamMouthShrug" to 1f), "press" to mapOf("ParamMouthPressLipOpen" to -1f), "parted" to mapOf("ParamMouthPressLipOpen" to 1f),
+				"cheek puff" to mapOf("ParamCheekPuff" to 1f), "turned open" to mapOf("ParamMouthOpenY" to 1f, "ParamAngleX" to 30f)),
 		"head" to listOf(-30f, -15f, 0f, 15f, 30f).flatMap { x -> listOf(-30f, 0f, 30f).map { y -> "x $x y $y" to mapOf("ParamAngleX" to x, "ParamAngleY" to y) } },
 		"body" to listOf(-10f, 0f, 10f).flatMap { x -> listOf(-10f, 0f, 10f).map { z -> "body x $x z $z" to mapOf("ParamBodyAngleX" to x, "ParamBodyAngleZ" to z) } },
 	)

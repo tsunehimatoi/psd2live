@@ -29,6 +29,7 @@ data class EyeOptions(
 	val highlight: Boolean = false, val parallax: Float = 1f,
 	val squash: Boolean = false,
 	val browCoupling: Boolean = false, val browStrength: Float = 1f,
+	val cheekPush: Boolean = false, val cheekStrength: Float = 1f,
 )
 
 /**
@@ -53,6 +54,7 @@ object EyeModules {
 	private val EYE_BALL_Y = ParameterId("ParamEyeBallY")
 	private val EYE_BALL_FORM = ParameterId("ParamEyeBallForm")
 	private val ANGLE_X = ParameterId("ParamAngleX")
+	private val MOUTH_FORM = ParameterId("ParamMouthForm")
 	private val ANGLE_Y = ParameterId("ParamAngleY")
 
 	fun open(side: Side) = if (side == Side.LEFT) EYE_L_OPEN else EYE_R_OPEN
@@ -142,6 +144,14 @@ object EyeModules {
 				add(shape(squint(side), floatArrayOf(0f, 1f), 0, mesh, positions, frame, eye, fade) {
 					// Squinting: the lower lid pushes up, the upper one comes down a little.
 					eye.shape({ u -> 0.1f * k * h * hump(u) }, { u -> -0.32f * k * h * hump(u) })
+				})
+			}
+			if (options.cheekPush) {
+				val k = options.cheekStrength
+				add(shape(MOUTH_FORM, floatArrayOf(-1f, 0f, 1f), 1, mesh, positions, frame, eye, fade) { f ->
+					// A smile lifts the cheeks, which push the lower lid up and lean on the upper one a little.
+					val s = f.coerceAtLeast(0f)
+					eye.shape({ u -> 0.04f * k * s * h * hump(u) }, { u -> -0.16f * k * s * h * hump(u) })
 				})
 			}
 			if (options.browCoupling) {

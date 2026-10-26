@@ -89,6 +89,16 @@ internal object Characters {
 	), PipelineConfig(atlasSize = 512, generatePhysics = false, exportMoc3 = false, recipe = if (!legacyEyes) RigRecipe.Modern
 		else RigRecipe(true, bases = mapOf("eye" to BaseChoice("eye/legacy")))))
 
+	/** [figure] with an open mouth drawn on the face: what the fitted mouth reads. */
+	fun mouthed(): WorkspaceDocument = document(420, 420, figureParts(1f).map {
+		when (it.tag) {
+			SemanticTag.FACE -> Part(it.id, 17, it.tag, it.side, it.inside)
+			SemanticTag.BACK_HAIR -> Part(it.id, 18, it.tag, it.side, it.inside)
+			else -> it
+		}
+	} + Part("mouth", 8, SemanticTag.MOUTH, Side.NONE, ellipse(210, 100, 14, 7)),
+		PipelineConfig(atlasSize = 512, generatePhysics = false, exportMoc3 = false, recipe = RigRecipe.Modern))
+
 	/** A 64² head: back hair and a face. The smallest document the hair generators and simulation presets act on. */
 	fun head(physics: Boolean = true): WorkspaceDocument = document(64, 64, listOf(
 		Part("hair", 0, SemanticTag.BACK_HAIR, Side.NONE, box(16, 8, 48, 56)),

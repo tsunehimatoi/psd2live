@@ -56,6 +56,30 @@ class FitDetectionTool {
 			g.dispose()
 			"$side width ${"%.0f".format(fit.width)}px" to image
 		}
-		if (frames.isNotEmpty()) sheet(frames, output("fit-detection").resolve("${sample.name}.png"), columns = frames.size)
+		for (layer in model.analysis.layers.filter { it.semantic.tag in io.github.psd2live.core.fit.FittedMouth.TAGS })
+			println("MOUTH ${sample.name} ${layer.source.name} ${layer.semantic.tag} variant ${layer.semantic.variant} role ${layer.semantic.role} " +
+				"bounds ${layer.bounds} opaque ${layer.opaquePixels} order ${layer.source.order}")
+		val mouth = io.github.psd2live.core.fit.MouthFitting.fit(model.analysis.layers, result.level) { x, y -> x to y }
+		mouth.reason?.let { println("FIT ${sample.name} mouth left to the legacy rig: $it") }
+		val mouthFrames = listOfNotNull(mouth.fit?.let { fit ->
+			val a = fit.toCanvas(-0.3f, -0.6f); val b = fit.toCanvas(1.3f, 0.9f)
+			val rect = Bounds(minOf(a.first, b.first), minOf(a.second, b.second), maxOf(a.first, b.first), maxOf(a.second, b.second))
+			val image = Renderer(model, 640).render(mapOf("ParamMouthOpenY" to 1f), rect)
+			val g = image.createGraphics()
+			g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+			fun px(u: Float, v: Float): Pair<Double, Double> {
+				val (x, y) = fit.toCanvas(u, v)
+				return ((x - rect.left) / rect.width * image.width).toDouble() to ((y - rect.top) / rect.height * image.height).toDouble()
+			}
+			fun curve(values: List<Float>, color: Color) {
+				val path = Path2D.Double()
+				values.forEachIndexed { k, v -> val (x, y) = px(io.github.psd2live.core.fit.MouthFit.u(k), v); if (k == 0) path.moveTo(x, y) else path.lineTo(x, y) }
+				g.color = color; g.stroke = BasicStroke(2f); g.draw(path)
+			}
+			curve(fit.upper, Color.WHITE); curve(fit.lower, Color.CYAN)
+			g.dispose()
+			"mouth width ${"%.0f".format(fit.width)}px opening ${"%.2f".format(fit.opening)}" to image
+		})
+		if (frames.isNotEmpty() || mouthFrames.isNotEmpty()) sheet(frames + mouthFrames, output("fit-detection").resolve("${sample.name}.png"), columns = frames.size + mouthFrames.size)
 	}
 }

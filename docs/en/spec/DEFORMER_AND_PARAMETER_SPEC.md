@@ -42,6 +42,10 @@ The table follows StandardParameters. Mesh-only mode, disabled deformers or miss
 | `ParamBrowLX`, `ParamBrowRX`, `ParamBrowLForm`, `ParamBrowRForm` (`brow.shape`) | -1…1 | 0 |
 | `ParamMouthForm` | -1…1 | 0 |
 | `ParamMouthOpenY`, `ParamBreath` | 0…1 | 0 |
+| `ParamA`, `ParamI`, `ParamU`, `ParamE`, `ParamO` (`mouth.vowel`) | 0…1 | 0 |
+| `ParamMouthX`, `ParamMouthPuckerWiden`, `ParamMouthPressLipOpen` (`mouth.capture`) | -1…1 | 0 |
+| `ParamMouthShrug`, `ParamCheekPuff` (`mouth.capture`) | 0…1 | 0 |
+| `ParamMouthSpring` (`mouth.spring`, physics output) | -1…1 | 0 |
 | `ParamHairFront`, `ParamHairBack` | -1…1 | 0 |
 
 ## Tool comparison and gaps

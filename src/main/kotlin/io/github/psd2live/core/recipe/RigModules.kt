@@ -112,12 +112,54 @@ object RigModules {
 	val BROW_BLINK = RigModule("brow.blink", ModuleTier.MAJOR, base = FITTED_BROW, applies = { it.has(SemanticTag.EYEBROW) },
 		knobs = listOf(RecipeKnob("dip", P, 0f..200f, 100f)))
 
+	/**
+	 * The mouth fitted from its drawn open outline ([io.github.psd2live.core.fit.MouthRig]): it opens in stages, the
+	 * lower lip first into a crescent, then an oval, then the drawing, and its form runs from a pout (closed a frown, open
+	 * a round "o") to a smile (corners up, open a wide D), with keys between the ends.
+	 */
+	val MOUTH_FITTED = RigBase("mouth/fitted", knobs = listOf(
+		RecipeKnob("early", P, 20f..60f, 35f),
+		RecipeKnob("form", P, 50f..150f, 100f),
+	))
+	private const val FITTED_MOUTH = "mouth/fitted"
+	private fun mouthOpen(subject: RecipeSubject) = subject.has(SemanticTag.MOUTH) || subject.has(SemanticTag.MOUTH_OPEN)
+	private fun mouth(id: String, name: String, min: Float, max: Float, group: String = "ParamGroupMouth") = ModuleParameter(id, "model.parameter.$name", min, max, 0f, group)
+
+	/** The five vowels lip sync drives, each a mouth shape of its own adding to the opening and the form. */
+	val MOUTH_VOWEL = RigModule("mouth.vowel", ModuleTier.MAJOR, base = FITTED_MOUTH, applies = ::mouthOpen,
+		defines = listOf('A', 'I', 'U', 'E', 'O').map { mouth("Param$it", "vowel$it", 0f, 1f) })
+
+	/** The face capture's mouth movements: sideways, pucker and widen, shrug, lips pressed or parted, and the cheeks puffing. */
+	val MOUTH_CAPTURE = RigModule("mouth.capture", ModuleTier.MAJOR, base = FITTED_MOUTH, applies = ::mouthOpen,
+		defines = listOf(mouth("ParamMouthX", "mouthX", -1f, 1f), mouth("ParamMouthPuckerWiden", "mouthPuckerWiden", -1f, 1f),
+			mouth("ParamMouthShrug", "mouthShrug", 0f, 1f), mouth("ParamMouthPressLipOpen", "mouthPressLipOpen", -1f, 1f),
+			mouth("ParamCheekPuff", "cheekPuff", 0f, 1f)))
+
+	/** The jaw: the chin and the lower face drop with the opening, the cheeks narrowing a little and the nose nudged. */
+	val MOUTH_JAW = RigModule("mouth.jaw", ModuleTier.CORE, base = FITTED_MOUTH, applies = { mouthOpen(it) && it.has(SemanticTag.FACE) },
+		knobs = listOf(RecipeKnob("share", P, 5f..30f, 15f)))
+
+	/** The smiling mouth's cheeks pushing the lower lids up. */
+	val MOUTH_CHEEK_LID = RigModule("mouth.cheek-lid", ModuleTier.MINOR, base = FITTED_MOUTH, applies = { mouthOpen(it) && fittedEye(it) },
+		knobs = listOf(RecipeKnob("strength", P, 0f..200f, 100f)))
+
+	/** The mouth's inside - teeth, tongue, the dark of the mouth - lagging behind the lips as the head turns. */
+	val MOUTH_DEPTH = RigModule("mouth.interior-depth", ModuleTier.MAJOR, base = FITTED_MOUTH,
+		applies = { it.has(SemanticTag.TOOTH_T) || it.has(SemanticTag.TOOTH_B) || it.has(SemanticTag.TONGUE) || it.has(SemanticTag.MOUTH_OPEN) },
+		knobs = listOf(RecipeKnob("depth", P, 0f..200f, 100f)))
+
+	/** The soft tissue settling after the mouth moves: a pendulum on the opening sways the jaw. */
+	val MOUTH_SPRING = RigModule("mouth.spring", ModuleTier.MINOR, requires = listOf("mouth.jaw"), base = FITTED_MOUTH,
+		applies = { mouthOpen(it) && it.has(SemanticTag.FACE) },
+		defines = listOf(mouth("ParamMouthSpring", "mouthSpring", -1f, 1f, "ParamGroupPhysics")),
+		physicsGroups = listOf(PhysicsGenerator.MOUTH_SPRING_ID))
+
 	val areas: List<RigArea> = listOf(
 		RigArea("face", listOf(legacy("face")), emptyList()),
 		RigArea("eye", listOf(legacy("eye"), EYE_FITTED), listOf(EYE_SEE_THROUGH, EYE_SMILE, EYE_WIDE, EYE_GAZE_LID, EYE_EMOTION, EYE_LID_FADE,
 			EYE_HIGHLIGHT, EYE_JELLY, EYE_AFTERSHOCK, EYE_SQUASH)),
 		RigArea("brow", listOf(legacy("brow"), BROW_FITTED), listOf(BROW_SEE_THROUGH, BROW_SHAPE, BROW_LID, BROW_BLINK)),
-		RigArea("mouth", listOf(legacy("mouth")), listOf(MOUTH_OUTLINE)),
+		RigArea("mouth", listOf(legacy("mouth"), MOUTH_FITTED), listOf(MOUTH_OUTLINE, MOUTH_VOWEL, MOUTH_CAPTURE, MOUTH_JAW, MOUTH_CHEEK_LID, MOUTH_DEPTH, MOUTH_SPRING)),
 		RigArea("hair", listOf(legacy("hair")), emptyList()),
 		RigArea("body", listOf(legacy("body")), emptyList()),
 		RigArea("outfit", listOf(legacy("outfit")), emptyList()),
