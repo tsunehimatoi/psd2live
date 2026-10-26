@@ -1515,7 +1515,7 @@ object RigBuilder {
 			val h = (minOf(b.bottom, face.bottom) - maxOf(b.top, face.top)).coerceAtLeast(0f)
 			return w * h >= 0.85f * b.width * b.height
 		}
-		val maskedAll = maskTargets.map { drawable ->
+		val maskedAllUnswapped = maskTargets.map { drawable ->
 			val semantic = classifiedByDrawable.getValue(drawable.id).semantic
 			when {
 				neckMasks.isNotEmpty() && drawable.maskedBy.isEmpty() && semantic.tag == SemanticTag.NECK && semantic.role == PartRole.SHADOW ->
@@ -1564,6 +1564,7 @@ object RigBuilder {
 		// the generated list goes to the side channel for the record to restore.
 		val generatedMasks = LinkedHashMap<DrawableId, List<DrawableId>>()
 		val baseDrawableIds = if (!v2) emptySet() else drawables.mapTo(HashSet()) { it.id }
+		val maskedAll = sideLocksBehind(maskedAllUnswapped, classifiedByDrawable, context, config)
 		val maskedDrawables = if (!v2) maskedAll else maskedAll.filter { it.id in baseDrawableIds }.map { drawable ->
 			val rewritten = drawable.maskedBy.map { resolution.baseStandIn(it, baseDrawableIds) }.distinct()
 			if (rewritten == drawable.maskedBy) drawable else {
@@ -3412,6 +3413,27 @@ object RigBuilder {
 			}
 		}, opacity = Float.NaN)
 		return listOf(org.umamo.runtime.model.BlendShapeBinding(StandardParameters.ANGLE_Z, floatArrayOf(-30f, 0f, 30f), 1, listOf(form(-30f), null, form(30f))))
+	}
+
+	/**
+	 * Side locks passing behind the face at the turn's end (`face.depth-turn`): a lock beside the face on the side the
+	 * head turns away from drops behind the face as the turn passes 40 degrees, as it would go round the cheek.
+	 */
+	private fun sideLocksBehind(drawables: List<Drawable>, classified: Map<DrawableId, ClassifiedLayer>, context: RigContext,
+	                            config: PipelineConfig): List<Drawable> {
+		if (context.headTurn(config) == null) return drawables
+		val face = drawables.filter { classified[it.id]?.semantic?.tag == SemanticTag.FACE }.minOfOrNull { it.drawOrder } ?: return drawables
+		return drawables.map { drawable ->
+			val layer = classified[drawable.id] ?: return@map drawable
+			if (layer.semantic.role != PartRole.SIDE || layer.semantic.tag != SemanticTag.FRONT_HAIR) return@map drawable
+			if (drawable.drawOrder <= face || FormChannel.DRAW_ORDER in drawable.channelGrids.gridsByChannel) return@map drawable
+			// Turning toward +x carries the face's middle that way: the lock on the +x side is the far one.
+			val far = if (layer.centroidX >= context.faceRig.coordinateSpace.toCanvas(context.faceRig.centerX, context.faceRig.centerY).first) 1f else -1f
+			val behind = (face - 1f).coerceAtLeast(0f)
+			val keys = if (far > 0f) floatArrayOf(0f, 40f, 45f) else floatArrayOf(-45f, -40f, 0f)
+			drawable.copy(channelGrids = ChannelGrids(drawable.channelGrids.gridsByChannel + (FormChannel.DRAW_ORDER to
+				scalarGrid(StandardParameters.ANGLE_X, keys) { angle -> if (kotlin.math.abs(angle) >= 45f) behind else drawable.drawOrder })))
+		}
 	}
 
 	/** The chest's bounce on the clothes over it (`body.bust`): tops that are not sleeves or skirts, and what hangs on them. */
