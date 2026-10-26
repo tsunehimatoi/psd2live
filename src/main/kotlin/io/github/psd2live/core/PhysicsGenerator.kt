@@ -16,7 +16,7 @@ object PhysicsGenerator {
 	val presetIds = listOf(BACK_HAIR_ID, FRONT_HAIR_ID, EYE_JELLY_ID)
 
 	/** One flag per preset: whether the art has the part, or whether the user left the preset on. */
-	data class Presets(val frontHair: Boolean, val backHair: Boolean, val eyeJelly: Boolean) {
+	data class Presets(val frontHair: Boolean, val backHair: Boolean, val eyeJelly: Boolean, val hairSoftness: Float = 0.5f) {
 		operator fun get(id: String) = when (id) {
 			FRONT_HAIR_ID -> frontHair
 			BACK_HAIR_ID -> backHair
@@ -43,6 +43,7 @@ object PhysicsGenerator {
 			fun present(analysis: PipelineAnalysis?, config: PipelineConfig): Presets {
 				val chains = config.recipe.base("hair") === io.github.psd2live.core.recipe.RigModules.HAIR_CHAINS
 				return present(analysis, config.hairSimulationFront || chains, config.hairSimulationBack || chains)
+					.copy(hairSoftness = if (chains) config.recipe.baseValue("hair", "softness") / 100f else 0.5f)
 			}
 
 			/** [present] without the hair the model preset simulates: that hair has no legacy pendulum. */
@@ -56,7 +57,7 @@ object PhysicsGenerator {
 	 * The pendulums of the rig modules that the model's parameters ([available]) call for: the aftershock of each eye's
 	 * blink (`eye.aftershock`), a short springy pendulum the openness swings, its angle the eye's bounce.
 	 */
-	internal fun moduleRules(available: Set<String>): List<RigPhysicsEdit> = buildList {
+	internal fun moduleRules(available: Set<String>, hairSoftness: Float = 0.5f): List<RigPhysicsEdit> = buildList {
 		for ((side, id) in listOf("L" to EYE_L_BOUNCE_ID, "R" to EYE_R_BOUNCE_ID)) {
 			val open = "ParamEye${side}Open"; val bounce = "ParamEye${side}Bounce"
 			if (open !in available || bounce !in available) continue
@@ -66,7 +67,19 @@ object PhysicsGenerator {
 				segments = listOf(PhysicsSegment(1f, 0.9f, 0.6f, 1.6f), PhysicsSegment(1.2f, 0.85f, 0.45f, 1.8f)),
 				normalization = PhysicsNormalization(-1f, 0f, 1f, -10f, 0f, 10f)))
 		}
-		addAll(io.github.psd2live.core.fit.HairChain.physics(available))
+		addAll(io.github.psd2live.core.fit.HairChain.physics(available, hairSoftness))
+		// Each brow's overshoot as it stops: a short springy pendulum on its height and angle.
+		for (side in listOf("L", "R")) {
+			val spring = "ParamBrow${side}Spring"
+			if (spring !in available) continue
+			val inputs = listOf(PhysicsInput("ParamBrow${side}Y", 70f, PhysicsSourceType.X), PhysicsInput("ParamBrow${side}Angle", 30f, PhysicsSourceType.X))
+				.filter { it.parameter in available }
+			if (inputs.isEmpty()) continue
+			add(RigPhysicsEdit(id = "PhysicsBrow${side}Spring", name = tr("model.physics.browSpring", side), inputs = inputs,
+				outputs = listOf(PhysicsOutput(spring, 2, 1.2f)),
+				segments = listOf(PhysicsSegment(1f, 0.92f, 0.55f, 1.6f), PhysicsSegment(1f, 0.85f, 0.45f, 1.8f)),
+				normalization = PhysicsNormalization(-1f, 0f, 1f, -10f, 0f, 10f)))
+		}
 		// The chest settling after the body moves and lifting with the breath: up and down on the nod, the lean and the
 		// breath, side to side on the body's turn and sway.
 		if ("ParamBustY" in available) add(RigPhysicsEdit(id = "PhysicsBustY", name = tr("model.physics.bust", "Y"),

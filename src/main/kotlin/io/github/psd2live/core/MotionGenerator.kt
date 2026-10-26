@@ -61,6 +61,36 @@ object MotionGenerator {
 		MotionCurveMath.linear(id, points + (SkeletonMotions.IDLE_DURATION to 1f))
 	}
 
+	/**
+	 * Speech the `motion/natural` way, over about six seconds: syllables mostly small - lip sync spends most of its
+	 * time at a small opening - now and then a wide one, short pauses between phrases; each syllable leans on a vowel
+	 * (A I U E O) as the opening suggests, the mouth's form wanders a little, and the head nods with the stresses.
+	 */
+	val talkTracks: List<MotionTrack> = run {
+		// Opening, vowel and length of each syllable; zeros are pauses.
+		val syllables = listOf(0.35f to 'A', 0.2f to 'I', 0.45f to 'O', 0f to ' ', 0.25f to 'E', 0.3f to 'A', 0.15f to 'U', 0.75f to 'A', 0f to ' ',
+			0.2f to 'I', 0.4f to 'E', 0.25f to 'O', 0.35f to 'A', 0.15f to 'U', 0f to ' ', 0.3f to 'E', 0.55f to 'A', 0.2f to 'I', 0f to ' ')
+		val open = mutableListOf(0f to 0f)
+		val vowels = "AIUEO".associateWith { mutableListOf(0f to 0f) }
+		var t = 0.2f
+		for ((k, entry) in syllables.withIndex()) {
+			val (amount, vowel) = entry
+			val length = if (amount == 0f) 0.45f else 0.2f + 0.06f * (k % 3)
+			val peak = t + length * 0.45f
+			open += listOf(t to 0f, peak to amount, t + length to 0.02f)
+			vowels[vowel]?.let { it += listOf(t to 0f, peak to (0.4f + amount).coerceAtMost(1f), t + length to 0f) }
+			t += length
+		}
+		open += (t + 0.2f) to 0f
+		val end = t + 0.2f
+		listOf(MotionCurveMath.linear("ParamMouthOpenY", open)) +
+			vowels.map { (v, points) -> MotionCurveMath.linear("Param$v", points + (end to 0f)) } +
+			MotionCurveMath.eased("ParamMouthForm", listOf(0f to 0.1f, end * 0.3f to 0.3f, end * 0.6f to 0f, end to 0.1f)) +
+			MotionCurveMath.eased("ParamAngleY", listOf(0f to 0f, 1.3f to -2.5f, 1.8f to 0.5f, 3.4f to -2f, 4.0f to 0.5f, end to 0f)) +
+			MotionCurveMath.eased("ParamBrowLY", listOf(0f to 0f, 1.3f to 0.25f, 2f to 0f, 3.4f to 0.2f, 4.2f to 0f, end to 0f)) +
+			MotionCurveMath.eased("ParamBrowRY", listOf(0f to 0f, 1.3f to 0.25f, 2f to 0f, 3.4f to 0.2f, 4.2f to 0f, end to 0f))
+	}
+
 	/** One blink the `motion/natural` way: shut fast, open slowly, the right eye a frame late; twice when [double]. */
 	fun naturalBlink(closure: Float = 1f, double: Boolean = false): List<MotionTrack> {
 		val depth = closure.coerceIn(0f, 1f)

@@ -131,7 +131,7 @@ object MotionClips {
 	})
 
 	/** The basic generated motions, which every rig can play; the model presets switch them as one group. */
-	val BASIC_NAMES: List<String> = listOf("Idle", "Blink", "Nod", "Shake")
+	val BASIC_NAMES: List<String> = listOf("Idle", "Blink", "Nod", "Shake", "Talk")
 
 	/** The generated motions, in the order the panel lists them. */
 	val BUILTIN_NAMES: List<String> = BASIC_NAMES + SkeletonMotions.presets.map { it.name }

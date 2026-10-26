@@ -133,7 +133,7 @@ object RigModules {
 	val MOUTH_CAPTURE = RigModule("mouth.capture", ModuleTier.MAJOR, base = FITTED_MOUTH, applies = ::mouthOpen,
 		defines = listOf(mouth("ParamMouthX", "mouthX", -1f, 1f), mouth("ParamMouthPuckerWiden", "mouthPuckerWiden", -1f, 1f),
 			mouth("ParamMouthShrug", "mouthShrug", 0f, 1f), mouth("ParamMouthPressLipOpen", "mouthPressLipOpen", -1f, 1f),
-			mouth("ParamCheekPuff", "cheekPuff", 0f, 1f)))
+			mouth("ParamCheekPuff", "cheekPuff", 0f, 1f), mouth("ParamJawOpen", "jawOpen", 0f, 1f)))
 
 	/** The jaw: the chin and the lower face drop with the opening, the cheeks narrowing a little and the nose nudged. */
 	val MOUTH_JAW = RigModule("mouth.jaw", ModuleTier.CORE, base = FITTED_MOUTH, applies = { mouthOpen(it) && it.has(SemanticTag.FACE) },
@@ -211,15 +211,33 @@ object RigModules {
 	 */
 	val MOTION_NATURAL = RigBase("motion/natural")
 
+	/** The brow overshooting a little and settling as it stops, on a pendulum of its height and angle. */
+	val BROW_SPRING = RigModule("brow.spring", ModuleTier.MINOR, base = FITTED_BROW, applies = { it.has(SemanticTag.EYEBROW) },
+		defines = listOf(ModuleParameter("ParamBrowLSpring", "model.parameter.browLSpring", -1f, 1f, 0f, "ParamGroupPhysics"),
+			ModuleParameter("ParamBrowRSpring", "model.parameter.browRSpring", -1f, 1f, 0f, "ParamGroupPhysics")),
+		physicsGroups = listOf("PhysicsBrowLSpring", "PhysicsBrowRSpring"))
+
+	/** Animal ears, tails and wings swinging in chains of their own; the ears twitch with the blink. */
+	val OUTFIT_CREATURE = RigModule("outfit.creature", ModuleTier.MAJOR, applies = { subject ->
+		subject.has(SemanticTag.EARS, io.github.psd2live.core.PartRole.ANIMAL) || subject.has(SemanticTag.HEADWEAR, io.github.psd2live.core.PartRole.ANIMAL) ||
+			subject.has(SemanticTag.TAIL) || subject.has(SemanticTag.WINGS)
+	}, knobs = listOf(RecipeKnob("swing", P, 30f..200f, 100f)))
+
+	/**
+	 * The neck sharing the head's tilt: its top follows the head as it leans, its base stays on the shoulders; a shadow
+	 * the chin casts on the neck goes with the head and is clipped to the neck.
+	 */
+	val FACE_NECK = RigModule("face.neck", ModuleTier.MAJOR, applies = { it.has(SemanticTag.NECK) && it.has(SemanticTag.FACE) })
+
 	val areas: List<RigArea> = listOf(
-		RigArea("face", listOf(legacy("face")), listOf(FACE_DEPTH_TURN, FACE_SKIN_CLIP)),
+		RigArea("face", listOf(legacy("face")), listOf(FACE_DEPTH_TURN, FACE_SKIN_CLIP, FACE_NECK)),
 		RigArea("eye", listOf(legacy("eye"), EYE_FITTED), listOf(EYE_SEE_THROUGH, EYE_SMILE, EYE_WIDE, EYE_GAZE_LID, EYE_EMOTION, EYE_LID_FADE,
 			EYE_HIGHLIGHT, EYE_JELLY, EYE_AFTERSHOCK, EYE_SQUASH)),
-		RigArea("brow", listOf(legacy("brow"), BROW_FITTED), listOf(BROW_SEE_THROUGH, BROW_SHAPE, BROW_LID, BROW_BLINK)),
+		RigArea("brow", listOf(legacy("brow"), BROW_FITTED), listOf(BROW_SEE_THROUGH, BROW_SHAPE, BROW_LID, BROW_BLINK, BROW_SPRING)),
 		RigArea("mouth", listOf(legacy("mouth"), MOUTH_FITTED), listOf(MOUTH_OUTLINE, MOUTH_VOWEL, MOUTH_CAPTURE, MOUTH_JAW, MOUTH_CHEEK_LID, MOUTH_DEPTH, MOUTH_SPRING)),
 		RigArea("hair", listOf(legacy("hair"), HAIR_CHAINS), emptyList()),
 		RigArea("body", listOf(legacy("body")), listOf(BODY_BUST)),
-		RigArea("outfit", listOf(legacy("outfit")), listOf(OUTFIT_SKIRT, OUTFIT_RIBBONS)),
+		RigArea("outfit", listOf(legacy("outfit")), listOf(OUTFIT_SKIRT, OUTFIT_RIBBONS, OUTFIT_CREATURE)),
 		RigArea("expression", listOf(legacy("expression")), listOf(EXPRESSION_CHEEK, EXPRESSION_GLOOM)),
 		RigArea("motion", listOf(legacy("motion"), MOTION_NATURAL), emptyList()),
 	)

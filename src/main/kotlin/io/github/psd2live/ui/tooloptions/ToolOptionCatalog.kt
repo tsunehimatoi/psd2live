@@ -746,6 +746,16 @@ private fun MutableList<ToolOption>.addPaint(editor: CanvasEditor) {
 private fun MutableList<ToolOption>.addFeature(editor: CanvasEditor) {
     val tool = editor.featureTool
     add(NoteOption("feature.hint", { tool.hint() }, warning = { tool.handles.isEmpty() }, place = OptionPlace.BAR))
+    // The last feature's base values beside its handles: a drag on one is one history step.
+    val area = tool.last?.substringBefore('.')
+    val base = area?.let { a -> editor.state.recipe.base(a).takeIf { it.id.endsWith("/fitted") } }
+    if (area != null && base != null) for (knob in base.knobs.filter { it.unit == io.github.psd2live.core.RigTuning.Unit.PERCENT && !it.advanced }) {
+        add(SliderOption("feature.knob.${knob.id}", "settings.rig.knob.${base.id.replace('/', '.')}.${knob.id}", OptionUnit.PERCENT,
+            { knob.range.start / 100f..knob.range.endInclusive / 100f },
+            { e -> e.state.recipe.baseValue(area, knob.id) / 100f },
+            { e, v -> tool.beginKnob(); e.viewModel.setRigBaseValue(area, knob.id, v * 100f) },
+            step = 0.05f, place = OptionPlace.BAR, finish = { tool.endKnob() }))
+    }
     add(ActionOption("feature.reset", "editor.tool.feature.reset", { e -> e.editable && tool.last?.let { e.state.recipe.moves(it).isNotEmpty() } == true },
         { e -> tool.last?.let { e.viewModel.resetFeatureMoves(listOf(it)) } }, OptionIcon.RESET))
     add(ActionOption("feature.resetAll", "editor.tool.feature.resetAll", { e -> e.editable && e.state.recipe.moves.isNotEmpty() },

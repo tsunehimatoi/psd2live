@@ -203,6 +203,8 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions) {
 			add(BlendShapeBinding(PUCKER_WIDEN, floatArrayOf(-1f, 0f, 1f), 1, listOf(shapeOf(rest.copy(width = rest.width * 0.7f, corner = -0.015f, lift = 0.01f), false), null,
 				shapeOf(rest.copy(width = rest.width * 1.16f, corner = 0.01f), false))))
 			add(BlendShapeBinding(SHRUG, floatArrayOf(0f, 1f), 0, listOf(null, shapeOf(rest.copy(corner = -0.025f, lift = 0.05f), false))))
+			// The jaw opened behind closed lips ("mmm"): the shut mouth drops and narrows a little with the chin.
+			add(BlendShapeBinding(JAW_OPEN, floatArrayOf(0f, 1f), 0, listOf(null, shapeOf(rest.copy(lift = -0.06f, width = rest.width * 0.94f), false))))
 			val parted = staged(0.2f).let { (u, l) -> rest.copy(upper = u + 0.08f, lower = l * 0.7f) }
 			add(BlendShapeBinding(PRESS_OPEN, floatArrayOf(-1f, 0f, 1f), 1, listOf(shapeOf(rest.copy(press = 0.7f, width = rest.width * 0.96f), false), null,
 				shapeOf(parted, true))))
@@ -225,6 +227,7 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions) {
 			add(BlendShapeBinding(mouthOpen, floatArrayOf(0f, 1f), 0, listOf(null, jaw(1f))))
 			if (spring != null) add(BlendShapeBinding(spring, floatArrayOf(-1f, 0f, 1f), 1, listOf(jaw(-0.35f), null, jaw(0.35f))))
 		}
+		if (options.capture) add(BlendShapeBinding(JAW_OPEN, floatArrayOf(0f, 1f), 0, listOf(null, jaw(1.4f))))
 		if (options.capture && !nose) add(BlendShapeBinding(CHEEK_PUFF, floatArrayOf(0f, 1f), 0, listOf(null, MeshForm(form(positions, frame) { u, v ->
 			// The cheeks swell beside the mouth, most level with it and a little below.
 			val side = u - 0.5f
@@ -265,6 +268,7 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions) {
 		val SHRUG = ParameterId("ParamMouthShrug")
 		val PRESS_OPEN = ParameterId("ParamMouthPressLipOpen")
 		val CHEEK_PUFF = ParameterId("ParamCheekPuff")
+		val JAW_OPEN = ParameterId("ParamJawOpen")
 		val SPRING = ParameterId("ParamMouthSpring")
 		/** The shapes that open the mouth: they show its open parts and hide a drawn closed mouth. */
 		val OPENING = VOWELS.map { it.second }.toSet() + PRESS_OPEN

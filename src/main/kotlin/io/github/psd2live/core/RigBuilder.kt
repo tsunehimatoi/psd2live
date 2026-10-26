@@ -455,7 +455,8 @@ object RigBuilder {
 			val m = io.github.psd2live.core.recipe.RigModules
 			val options = io.github.psd2live.core.fit.BrowOptions(
 				shape = m.builds(m.BROW_SHAPE, config, subject), shapeStrength = config.recipe.value(m.BROW_SHAPE.id, "strength") / 100f,
-				blink = m.builds(m.BROW_BLINK, config, subject), blinkDip = config.recipe.value(m.BROW_BLINK.id, "dip") / 100f)
+				blink = m.builds(m.BROW_BLINK, config, subject), blinkDip = config.recipe.value(m.BROW_BLINK.id, "dip") / 100f,
+				spring = m.builds(m.BROW_SPRING, config, subject))
 			val lift = config.recipe.baseValue("brow", "lift") / 100f
 			return fittedBrows.getOrPut(listOf(options, lift, config.parentOverrides, deformersEnabled, config.recipe.base("eye"),
 				config.recipe.moves("brow.L"), config.recipe.moves("brow.R"), config.recipe.moves("eye.L"), config.recipe.moves("eye.R"))) {
@@ -1411,7 +1412,7 @@ object RigBuilder {
 			val channelGrids = if (config.meshOnly && classification == LayerType.PRESET) ChannelGrids.Empty
 				else withEyeOpacity(channelStage(layer, override, switchParamKeys, config.rigTuning, context.hasClosedMouth, stages, eyeSwap(context, config, layer), mouthSwap(context, config, layer)),
 				context, config, layer)
-					.let { withMoodChannels(it, context, config, layer) }.let { grids ->
+					.let { withMoodChannels(it, context, config, layer) }.let { withMouthShading(it, context, config, layer) }.let { grids ->
 					if (v2 && resolution.isStubLayer(layer.source.id.raw) &&
 						grids.gridsByChannel.values.any { grid -> grid.axes.any { it.parameterId !in knownParameters } }) ChannelGrids.Empty else grids
 				}
@@ -1500,6 +1501,8 @@ object RigBuilder {
 		}
 		val skinClip = io.github.psd2live.core.recipe.RigModules.let { it.builds(it.FACE_SKIN_CLIP, config, io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis)) }
 		val faceMasks = if (!skinClip) emptyList() else maskSources.filter { classifiedByDrawable.getValue(it.id).semantic.tag == SemanticTag.FACE }
+		val neckClip = io.github.psd2live.core.recipe.RigModules.let { it.builds(it.FACE_NECK, config, io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis)) }
+		val neckMasks = if (!neckClip) emptyList() else maskSources.filter { classifiedByDrawable.getValue(it.id).semantic.let { s -> s.tag == SemanticTag.NECK && s.role == null } }
 		val faceBounds = faceMasks.map { classifiedByDrawable.getValue(it.id).bounds }.reduceOrNull(Bounds::union)
 		// A skin overlay mostly on the face: blush, shading, the bangs' shadow. One reaching well past it is something else.
 		fun onSkin(layer: ClassifiedLayer): Boolean {
@@ -1512,6 +1515,8 @@ object RigBuilder {
 		val maskedAll = maskTargets.map { drawable ->
 			val semantic = classifiedByDrawable.getValue(drawable.id).semantic
 			when {
+				neckMasks.isNotEmpty() && drawable.maskedBy.isEmpty() && semantic.tag == SemanticTag.NECK && semantic.role == PartRole.SHADOW ->
+					drawable.copy(maskedBy = neckMasks.map { it.id })
 				faceMasks.isNotEmpty() && drawable.maskedBy.isEmpty() && drawable.id !in lipOwnerById &&
 					(semantic.tag == SemanticTag.FACE_DETAIL || semantic.tag == SemanticTag.FRONT_HAIR && semantic.role == PartRole.SHADOW) &&
 					onSkin(classifiedByDrawable.getValue(drawable.id)) -> drawable.copy(maskedBy = faceMasks.map { it.id })
@@ -1825,7 +1830,20 @@ object RigBuilder {
 	 * free below the brows, side locks and the back hair below the eyes. Hair a cloth simulation moves keeps it.
 	 */
 	internal fun hairChains(analysis: PipelineAnalysis, faceRig: NinePoseFaceRig, config: PipelineConfig): List<io.github.psd2live.core.fit.HairChain> =
-		hairOnlyChains(analysis, faceRig, config) + clothChains(analysis, config)
+		hairOnlyChains(analysis, faceRig, config) + clothChains(analysis, config) + creatureChains(analysis, config)
+
+	/** Animal ears, tails and wings (`outfit.creature`); a skeleton moving tails and wings keeps them. */
+	private fun creatureChains(analysis: PipelineAnalysis, config: PipelineConfig): List<io.github.psd2live.core.fit.HairChain> {
+		val m = io.github.psd2live.core.recipe.RigModules
+		if (config.meshOnly || !m.builds(m.OUTFIT_CREATURE, config, io.github.psd2live.core.recipe.RecipeSubject.of(analysis))) return emptyList()
+		val skeleton = config.rigEdits.skeleton?.enabled == true
+		val swing = config.recipe.value(m.OUTFIT_CREATURE.id, "swing") / 100f
+		return io.github.psd2live.core.fit.HairChain.plan(analysis.layers, Float.MAX_VALUE, { kind, frame ->
+			if (kind == io.github.psd2live.core.fit.HairKind.EAR) frame.bottom - frame.height * 0.15f else frame.top + frame.height * 0.1f
+		}, swing, 0.5f, kindOf = { layer ->
+			io.github.psd2live.core.fit.HairKind.partOf(layer)?.takeIf { !(skeleton && layer.semantic.tag in SkeletonAutoBuilder.limbTags) }
+		})
+	}
 
 	/**
 	 * The clothing chains [config] builds: a skirt (`outfit.skirt`) free a little below its waistband, ribbons and
@@ -2785,7 +2803,8 @@ object RigBuilder {
 				inferredGroup(layer, analysis.anchors) == LayerGroup.HEAD -> headAccessoryPartId
 				else -> bodyPartId
 			}
-			val warp = identityWarp(id, tr(if (chain.kind.hair) "model.deformer.hairChain" else "model.deformer.clothChain", layer.source.name),
+			val warp = identityWarp(id, tr(when (chain.kind.prefix) { "ParamHair" -> "model.deformer.hairChain"; "ParamCloth" -> "model.deformer.clothChain"; else -> "model.deformer.partChain" },
+				layer.source.name),
 				parentId, chain.frame, parentFrame, part, rows = rows, columns = columns)
 			val rest = FloatArray((rows + 1) * (columns + 1) * 2).also { points ->
 				var i = 0
@@ -3309,7 +3328,8 @@ object RigBuilder {
 		}
 		return shapes.map { binding ->
 			val opening = binding.parameterId in io.github.psd2live.core.fit.MouthRig.OPENING
-			val relative = binding.parameterId == StandardParameters.ANGLE_X || binding.parameterId == StandardParameters.ANGLE_Y
+			val relative = binding.parameterId == StandardParameters.ANGLE_X || binding.parameterId == StandardParameters.ANGLE_Y ||
+				binding.parameterId == StandardParameters.ANGLE_Z
 			binding.copy(forms = binding.forms.map { form ->
 				form?.let {
 					val opacity = when {
@@ -3329,18 +3349,48 @@ object RigBuilder {
 	private fun moduleBlendShapes(layer: ClassifiedLayer, data: MeshData, frame: Bounds, context: RigContext, config: PipelineConfig):
 		List<org.umamo.runtime.model.BlendShapeBinding<org.umamo.runtime.model.MeshForm>> =
 		eyeBlendShapes(layer, data, frame, context.fittedEyes(config), context.fittedBrows(config)) + mouthBlendShapes(layer, data, frame, context.fittedMouth(config)) +
-			headTurnShapes(layer, data.rigPositions, frame, context.headTurn(config)) + bustShapes(layer, data.rigPositions, frame, context, config)
+			headTurnShapes(layer, data.rigPositions, frame, context.headTurn(config)) + bustShapes(layer, data.rigPositions, frame, context, config) +
+			neckShapes(layer, data.rigPositions, frame, context, config)
+
+	/**
+	 * The neck sharing the head's tilt (`face.neck`): Angle Z turns the head about its pivot, and each point of the neck
+	 * goes the same way by how near the head it is - all of it at the neck's top, none at its base. A shadow on the
+	 * neck goes wholly with the head.
+	 */
+	private fun neckShapes(layer: ClassifiedLayer, positions: FloatArray, frame: Bounds, context: RigContext, config: PipelineConfig):
+		List<org.umamo.runtime.model.BlendShapeBinding<org.umamo.runtime.model.MeshForm>> {
+		if (layer.semantic.tag != SemanticTag.NECK) return emptyList()
+		val m = io.github.psd2live.core.recipe.RigModules
+		if (!m.builds(m.FACE_NECK, config, io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis))) return emptyList()
+		val (px, py) = context.faceRig.coordinateSpace.toCanvas(context.faceRig.centerX, context.faceRig.mouthLineY)
+		val neck = context.analysis.layers.filter { it.semantic.tag == SemanticTag.NECK && it.semantic.role == null && it.opaquePixels > 0 }
+			.map { it.bounds }.reduceOrNull(Bounds::union) ?: layer.bounds
+		val shadow = layer.semantic.role == PartRole.SHADOW
+		fun form(degrees: Float) = org.umamo.runtime.model.MeshForm(FloatArray(positions.size).also { out ->
+			// A positive angle turns the head counter-clockwise on the canvas.
+			val a = Math.toRadians(degrees.toDouble()).toFloat()
+			for (i in 0 until positions.size / 2) {
+				val x = positions[i * 2]; val y = positions[i * 2 + 1]
+				val w = if (shadow) 1f else ((neck.bottom - y) / neck.height.coerceAtLeast(1f)).coerceIn(0f, 1f).let { it * it * (3f - 2f * it) }
+				val dx = x - px; val dy = y - py
+				val rx = dx * kotlin.math.cos(a) + dy * kotlin.math.sin(a); val ry = -dx * kotlin.math.sin(a) + dy * kotlin.math.cos(a)
+				out[i * 2] = (rx - dx) * w / frame.width.coerceAtLeast(1e-4f); out[i * 2 + 1] = (ry - dy) * w / frame.height.coerceAtLeast(1e-4f)
+			}
+		}, opacity = Float.NaN)
+		return listOf(org.umamo.runtime.model.BlendShapeBinding(StandardParameters.ANGLE_Z, floatArrayOf(-30f, 0f, 30f), 1, listOf(form(-30f), null, form(30f))))
+	}
 
 	/** The chest's bounce on the clothes over it (`body.bust`): tops that are not sleeves or skirts, and what hangs on them. */
 	private fun bustShapes(layer: ClassifiedLayer, positions: FloatArray, frame: Bounds, context: RigContext, config: PipelineConfig):
 		List<org.umamo.runtime.model.BlendShapeBinding<org.umamo.runtime.model.MeshForm>> {
 		if (layer.semantic.tag != SemanticTag.TOPWEAR && layer.semantic.tag != SemanticTag.NECKWEAR) return emptyList()
-		if (layer.semantic.role == PartRole.SLEEVE || layer.semantic.role == PartRole.SKIRT) return emptyList()
+		if (layer.semantic.role == PartRole.SLEEVE || layer.semantic.role == PartRole.SKIRT || layer.semantic.role == PartRole.RIBBON ||
+			layer.semantic.role == PartRole.PENDANT) return emptyList()
 		val m = io.github.psd2live.core.recipe.RigModules
 		if (!m.builds(m.BODY_BUST, config, io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis))) return emptyList()
 		val torso = context.stance.torso
 		return io.github.psd2live.core.fit.BustRig(torso.centerX, torso.shoulderY, torso.waistY, torso.halfWidth, config.recipe.value(m.BODY_BUST.id, "bounce") / 100f)
-			.shapes(positions, frame, ParameterId("ParamBustY"), ParameterId("ParamBustX"))
+			.shapes(positions, frame, ParameterId("ParamBustY"), ParameterId("ParamBustX"), rigid = layer.semantic.role == PartRole.RIGID)
 	}
 
 	/** [layer]'s shapes turning the head in depth, on the shell of the head it lies on ([headShell]). */
@@ -3355,6 +3405,7 @@ object RigBuilder {
 		val shells = io.github.psd2live.core.fit.HeadShell
 		val role = layer.semantic.role
 		if (layer.semantic.tag == SemanticTag.FACE_DETAIL && role == PartRole.SHADOW) return shells.SHADE
+		if (layer.semantic.tag == SemanticTag.NECK && role == PartRole.SHADOW) return shells.RIGID.copy(scale = 1f)
 		return when (layer.semantic.tag) {
 			SemanticTag.FACE, SemanticTag.FACE_DETAIL, SemanticTag.IRIDES, SemanticTag.EYEBROW, SemanticTag.EYEWHITE, SemanticTag.EYELASH,
 			SemanticTag.EYE_CLOSE, SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN, SemanticTag.MOUTH_CLOSE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B,
@@ -3415,7 +3466,8 @@ object RigBuilder {
 			return brow.shapes(data.rigPositions, frame, ParameterId(if (left) "ParamBrowLX" else "ParamBrowRX"),
 				ParameterId(if (left) "ParamBrowLForm" else "ParamBrowRForm"), if (left) StandardParameters.EYE_L_OPEN else StandardParameters.EYE_R_OPEN,
 				eyes?.options?.wide == true && eyes.rigs.isNotEmpty(),
-				if (eyes?.options?.smile == true && eyes.rigs[layer.semantic.side] != null) io.github.psd2live.core.fit.EyeModules.smile(layer.semantic.side) else null)
+				if (eyes?.options?.smile == true && eyes.rigs[layer.semantic.side] != null) io.github.psd2live.core.fit.EyeModules.smile(layer.semantic.side) else null,
+				ParameterId(if (left) "ParamBrowLSpring" else "ParamBrowRSpring"))
 		}
 		val eye = eyes?.rigs?.get(layer.semantic.side) ?: return emptyList()
 		return when {
@@ -3425,6 +3477,23 @@ object RigBuilder {
 				io.github.psd2live.core.fit.EyeModules.highlightShapes(data.rigPositions, frame, eye.fit.iris ?: layer.bounds, eyes.options)
 			else -> emptyList()
 		}
+	}
+
+	/**
+	 * [grids] with the mouth's inside shading with the opening (`mouth.interior-depth`): the tongue, the lower teeth and
+	 * a separate dark of the mouth darker while the mouth is barely open, brightening to as drawn at full opening.
+	 */
+	private fun withMouthShading(grids: ChannelGrids, context: RigContext, config: PipelineConfig, layer: ClassifiedLayer): ChannelGrids {
+		val mouth = context.fittedMouth(config) ?: return grids
+		val rig = mouth.rig ?: return grids
+		if (!rig.options.depth || !mouth.covers(layer) || FormChannel.MULTIPLY_COLOR in grids.gridsByChannel) return grids
+		val inside = layer.semantic.tag == SemanticTag.TONGUE || layer.semantic.tag == SemanticTag.TOOTH_B ||
+			layer.semantic.tag == SemanticTag.MOUTH_OPEN && mouth.result.layers.any { it.semantic.tag == SemanticTag.MOUTH }
+		if (!inside) return grids
+		return ChannelGrids(grids.gridsByChannel + (FormChannel.MULTIPLY_COLOR to grid(listOf(axis(StandardParameters.MOUTH_OPEN, 0f, 0.25f, 1f))) { v ->
+			val k = when { v[0] <= 0f -> 0.72f; v[0] < 1f -> 0.82f; else -> 1f }
+			ChannelValue.Color(org.umamo.runtime.model.ColorRgb(k, k * 0.97f, k * 0.97f))
+		}))
 	}
 
 	/**
@@ -3995,7 +4064,7 @@ object RigBuilder {
 			group("ParamGroupMouth", tr("model.group.mouth"), listOf(StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN)),
 			group("ParamGroupBody", tr("model.group.body"), listOf(StandardParameters.BODY_X, StandardParameters.BODY_Y, StandardParameters.BODY_Z, StandardParameters.BODY_LEAN, StandardParameters.PROPORTION, StandardParameters.BREATH)),
 			group("ParamGroupPhysics", tr("model.group.physics"), listOf(StandardParameters.HAIR_FRONT, StandardParameters.HAIR_BACK) +
-				moduleParameters.map { it.id }.filter { (it.raw.startsWith("ParamHair") || it.raw.startsWith("ParamCloth")) &&
+				moduleParameters.map { it.id }.filter { (it.raw.startsWith("ParamHair") || it.raw.startsWith("ParamCloth") || it.raw.startsWith("ParamPart")) &&
 					it != StandardParameters.HAIR_FRONT && it != StandardParameters.HAIR_BACK }),
 		)
 		return if (customParameters.isNotEmpty()) {

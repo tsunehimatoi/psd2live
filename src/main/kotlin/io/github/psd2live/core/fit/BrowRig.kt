@@ -83,6 +83,7 @@ data class BrowFit(
 data class BrowOptions(
 	val shape: Boolean = false, val shapeStrength: Float = 1f,
 	val blink: Boolean = false, val blinkDip: Float = 1f,
+	val spring: Boolean = false,
 )
 
 /**
@@ -124,8 +125,11 @@ class BrowRig(val fit: BrowFit, private val lift: Float, private val options: Br
 
 	/** The brow's additive shapes: sideways and form (`brow.shape`), the blink's dip and a widened eye's lift (`brow.blink`). */
 	fun shapes(positions: FloatArray, frame: Bounds, browX: ParameterId, browForm: ParameterId, eyeOpen: ParameterId, wide: Boolean,
-	           eyeSmile: ParameterId? = null): List<BlendShapeBinding<MeshForm>> = buildList {
+	           eyeSmile: ParameterId? = null, spring: ParameterId? = null): List<BlendShapeBinding<MeshForm>> = buildList {
 		fun shape(f: (Float, Float) -> Pair<Float, Float>) = MeshForm(form(positions, frame, f).positionDeltas)
+		// The brow's overshoot as it stops (`brow.spring`): a pendulum on its height and angle bobs it a little.
+		if (options.spring && spring != null) add(BlendShapeBinding(spring, floatArrayOf(-1f, 0f, 1f), 1,
+			listOf(shape { x, y -> delta(x, y, y = -0.18f) }, null, shape { x, y -> delta(x, y, y = 0.18f) })))
 		if (options.shape) {
 			add(BlendShapeBinding(browX, floatArrayOf(-1f, 0f, 1f), 1, listOf(shape { x, y -> delta(x, y, x = -1f) }, null, shape { x, y -> delta(x, y, x = 1f) })))
 			add(BlendShapeBinding(browForm, floatArrayOf(-1f, 0f, 1f), 1, listOf(shape { x, y -> delta(x, y, form = -1f) }, null, shape { x, y -> delta(x, y, form = 1f) })))

@@ -49,6 +49,9 @@ StandardParameters に対応します。メッシュ専用、デフォーマ無�
 | `ParamMouthShrug`, `ParamCheekPuff`（`mouth.capture`） | 0…1 | 0 |
 | `ParamHair<Kind><n>[L/C/R]<segment>`, `ParamHair<Kind><n>Y`, `ParamCloth<Kind><n>…`（`hair/chains`、種類 Front / Side / Back / Ahoge / Tail / Skirt / Ribbon / Pendant、番号、房 L / C / R、節番号。`Y` は上下の弾み。物理出力） | -1…1 | 0 |
 | `ParamCheek`, `ParamGloom`（`expression.cheek`、`expression.gloom`） | 0…1 | 0 |
+| `ParamBrowLSpring`, `ParamBrowRSpring`（`brow.spring`、物理出力） | -1…1 | 0 |
+| `ParamJawOpen`（`mouth.capture`） | 0…1 | 0 |
+| `ParamPartEar<n>…`, `ParamPartAnimalTail<n>…`, `ParamPartWing<n>…`（`outfit.creature`、物理出力） | -1…1 | 0 |
 | `ParamBustY`, `ParamBustX`（`body.bust`、物理出力） | -1…1 | 0 |
 | `ParamMouthSpring`（`mouth.spring`、物理出力） | -1…1 | 0 |
 | `ParamHairFront`, `ParamHairBack` | -1…1 | 0 |

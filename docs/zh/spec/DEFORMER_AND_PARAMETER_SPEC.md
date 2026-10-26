@@ -47,6 +47,9 @@
 | `ParamMouthShrug`, `ParamCheekPuff`（`mouth.capture`） | 0…1 | 0 |
 | `ParamHair<Kind><n>[L/C/R]<segment>`, `ParamHair<Kind><n>Y`, `ParamCloth<Kind><n>…`（`hair/chains`，类别 Front / Side / Back / Ahoge / Tail / Skirt / Ribbon / Pendant，编号，左中右束 L / C / R，段号；`Y` 为上下弹跳；物理输出） | -1…1 | 0 |
 | `ParamCheek`, `ParamGloom`（`expression.cheek`、`expression.gloom`） | 0…1 | 0 |
+| `ParamBrowLSpring`, `ParamBrowRSpring`（`brow.spring`，物理输出） | -1…1 | 0 |
+| `ParamJawOpen`（`mouth.capture`） | 0…1 | 0 |
+| `ParamPartEar<n>…`, `ParamPartAnimalTail<n>…`, `ParamPartWing<n>…`（`outfit.creature`，物理输出） | -1…1 | 0 |
 | `ParamBustY`, `ParamBustX`（`body.bust`，物理输出） | -1…1 | 0 |
 | `ParamMouthSpring`（`mouth.spring`，物理输出） | -1…1 | 0 |
 | `ParamHairFront`, `ParamHairBack` | -1…1 | 0 |

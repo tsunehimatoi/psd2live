@@ -54,7 +54,14 @@ internal data class PreviewAnimationClock(val elapsed: Double = 0.0, val followX
             MotionClips.overrideOf(config.rigEdits.motionClips, "Idle") != null -> MotionClips.sampleAll(MotionClips.overrideOf(config.rigEdits.motionClips, "Idle")!!, elapsed, true)
             else -> SkeletonMotions.liveIdle(config.rigEdits.skeleton, elapsed, settings)
         }
-        fun value(id: ParameterId) = motion[id] ?: idle[id] ?: 0f
+        // Played the natural way, a clip layers over the idle rather than stopping it: where both move a parameter the
+        // idle keeps a third of its own motion about the default, so the figure never freezes into the clip.
+        val defaults = if (settings.natural) model.rig.puppet.parameters.associate { it.id to it.default } else emptyMap()
+        fun value(id: ParameterId): Float {
+            val played = motion[id] ?: return idle[id] ?: 0f
+            val kept = idle[id]?.takeIf { settings.natural }?.let { (it - (defaults[id] ?: 0f)) * 0.35f } ?: 0f
+            return played + kept
+        }
         val phase = elapsed % 4.6
         val blinking = animate && config.motionBasic && config.motionBlink && config.rigEdits.motionPresets["Blink"]?.let { !it.deleted && !it.disabled } != false
         val blink = if (settings.natural) (if (blinking) MotionClips.sample(MotionGenerator.naturalBlinkTracks[0], (elapsed % SkeletonMotions.IDLE_DURATION.toDouble()).toFloat()) else 1f)

@@ -27,11 +27,22 @@ enum class HairKind(val word: String, val swing: Float, val segments: Int, val b
 	TAIL("Tail", 0.35f, 4, 0.08f, 16f, 0.9f, 1.0f, 1.2f),
 	SKIRT("Skirt", 0.12f, 2, 0.12f, 12f, 0.85f, 1.2f, 0.9f, "ParamCloth"),
 	RIBBON("Ribbon", 0.35f, 3, 0.06f, 8f, 0.94f, 0.8f, 1.5f, "ParamCloth"),
-	PENDANT("Pendant", 0.3f, 1, 0.05f, 6f, 0.96f, 0.6f, 1.8f, "ParamCloth");
+	PENDANT("Pendant", 0.3f, 1, 0.05f, 6f, 0.96f, 0.6f, 1.8f, "ParamCloth"),
+	EAR("Ear", 0.3f, 2, 0.06f, 5f, 0.95f, 0.6f, 1.7f, "ParamPart"),
+	ANIMAL_TAIL("AnimalTail", 0.4f, 3, 0.05f, 14f, 0.9f, 1.0f, 1.2f, "ParamPart"),
+	WING("Wing", 0.15f, 2, 0.08f, 12f, 0.88f, 1.1f, 1.0f, "ParamPart");
 
 	val hair: Boolean get() = prefix == "ParamHair"
 
 	companion object {
+		/** The kind of creature part [layer] is, or null: an animal ear, a tail, a wing. */
+		fun partOf(layer: ClassifiedLayer): HairKind? = when {
+			layer.semantic.role == PartRole.ANIMAL -> EAR
+			layer.semantic.tag == SemanticTag.TAIL -> ANIMAL_TAIL
+			layer.semantic.tag == SemanticTag.WINGS -> WING
+			else -> null
+		}
+
 		/** The kind of clothing chain [layer] hangs in, or null: a skirt, a ribbon or a pendant. */
 		fun clothOf(layer: ClassifiedLayer): HairKind? = when (layer.semantic.role) {
 			PartRole.SKIRT -> SKIRT
@@ -62,7 +73,7 @@ data class HairChain(
 	val layerId: String, val kind: HairKind, val index: Int, val frame: Bounds, val freeFrom: Float, val regions: Int,
 	val strength: Float = 1f, val softness: Float = 0.5f,
 ) {
-	val warpId: String get() = (if (kind.hair) "DeformHairChain" else "DeformClothChain") + index
+	val warpId: String get() = when (kind.prefix) { "ParamHair" -> "DeformHairChain"; "ParamCloth" -> "DeformClothChain"; else -> "DeformPartChain" } + index
 	private val stem: String get() = "${kind.prefix}${kind.word}$index"
 	private fun region(j: Int) = if (regions == 1) "" else REGION_NAMES[j]
 
@@ -71,7 +82,7 @@ data class HairChain(
 	val bounce: ParameterId get() = ParameterId("${stem}Y")
 	val parameters: List<ParameterId> get() = (0 until regions).flatMap { j -> (0 until kind.segments).map { segment(j, it) } } + bounce
 
-	private val upward: Boolean get() = kind == HairKind.AHOGE
+	private val upward: Boolean get() = kind == HairKind.AHOGE || kind == HairKind.EAR
 
 	/** How far along the free part a point at [y] lies, 0 at its root and 1 at the layer's far edge. */
 	private fun along(y: Float): Float {
@@ -161,8 +172,10 @@ data class HairChain(
 		private val REGION_NAMES = listOf("L", "C", "R")
 
 		private val KINDS = HairKind.entries.joinToString("|") { it.word }
-		private val PARAMETER = Regex("(?:ParamHair|ParamCloth)($KINDS)(\\d+)([LCR]?)(\\d)")
-		private val BOUNCE = Regex("(?:ParamHair|ParamCloth)($KINDS)(\\d+)Y")
+		private val PARAMETER = Regex("(ParamHair|ParamCloth|ParamPart)($KINDS)(\\d+)([LCR]?)(\\d)")
+		private val BOUNCE = Regex("(ParamHair|ParamCloth|ParamPart)($KINDS)(\\d+)Y")
+		private fun kindOf(prefix: String, word: String) = HairKind.entries.first { it.prefix == prefix && it.word == word }
+		private fun family(kind: HairKind) = when (kind.prefix) { "ParamHair" -> "Hair"; "ParamCloth" -> "Cloth"; else -> "Part" }
 
 		/**
 		 * The chains of [layers]: one per hair layer with pixels, in layer order. A layer wider than the face holds
@@ -187,26 +200,36 @@ data class HairChain(
 		 * regions' and chains' lengths set apart a little so neighbouring locks fall out of step; and one for each
 		 * chain's bounce, driven by the head's and body's nod and the breath.
 		 */
-		fun physics(available: Set<String>): List<io.github.psd2live.core.RigPhysicsEdit> {
-			val swings = available.mapNotNull { PARAMETER.matchEntire(it) }.groupBy { Triple(it.groupValues[1], it.groupValues[2].toInt(), it.groupValues[3]) }
+		fun physics(available: Set<String>, softness: Float = 0.5f): List<io.github.psd2live.core.RigPhysicsEdit> {
+			// The hair's material: stiff hair swings on short quick pendulums, soft and floaty hair on long slow ones.
+			val soft = (softness - 0.5f).coerceIn(-0.5f, 0.5f)
+			val swings = available.mapNotNull { PARAMETER.matchEntire(it) }.groupBy { listOf(it.groupValues[1], it.groupValues[2], it.groupValues[3], it.groupValues[4]) }
 			val head = io.github.psd2live.core.PhysicsGenerator.headAndBodyInputs(available) +
 				listOfNotNull(io.github.psd2live.core.PhysicsInput("ParamBreath", 8f, io.github.psd2live.core.PhysicsSourceType.X).takeIf { "ParamBreath" in available })
-			val rules = swings.entries.sortedWith(compareBy({ it.key.second }, { it.key.third })).mapNotNull { (key, matches) ->
-				val (word, index, region) = key
-				val kind = HairKind.entries.first { it.word == word }
-				val outputs = matches.sortedBy { it.groupValues[4].toInt() }.map { it.value }
+			val rules = swings.entries.sortedWith(compareBy({ it.key[0] }, { it.key[2].toInt() }, { it.key[3] })).mapNotNull { (key, matches) ->
+				val (prefix, word, number, region) = key
+				val index = number.toInt()
+				val kind = kindOf(prefix, word)
+				val outputs = matches.sortedBy { it.groupValues[5].toInt() }.map { it.value }
 				if (head.isEmpty()) return@mapNotNull null
 				val spread = 1f + 0.12f * ((index * 7 + "LCR".indexOf(region.ifEmpty { "C" }) * 3) % 5 - 2) / 2f
-				val segment = io.github.psd2live.core.PhysicsSegment(kind.length * spread / outputs.size, kind.mobility, kind.delay * spread, kind.acceleration)
+				val material = if (kind.hair) soft else 0f
+				val segment = io.github.psd2live.core.PhysicsSegment(kind.length * spread * (1f + 0.4f * material) / outputs.size,
+					(kind.mobility + 0.08f * material).coerceIn(0.5f, 0.99f), kind.delay * spread * (1f + 0.6f * material), kind.acceleration * (1f - 0.3f * material))
+				// An animal ear twitches with the blink, as ears do; the bangs quiver a hair's breadth with it.
+				val blink = when (kind) { HairKind.EAR -> 15f; HairKind.FRONT -> 5f; else -> 0f }
+				val inputs = head + if (blink > 0f) listOf("ParamEyeLOpen", "ParamEyeROpen").filter { it in available }
+					.map { io.github.psd2live.core.PhysicsInput(it, blink, io.github.psd2live.core.PhysicsSourceType.X) } else emptyList()
 				io.github.psd2live.core.RigPhysicsEdit(
-					id = "Physics${if (kind.hair) "Hair" else "Cloth"}$word$index$region",
-					name = io.github.psd2live.i18n.tr(if (kind.hair) "model.physics.hairChain" else "model.physics.clothChain", "$word $index $region".trim()),
-					inputs = head, outputs = outputs.mapIndexed { k, p -> io.github.psd2live.core.PhysicsOutput(p, k + 1, 1.4f) },
+					id = "Physics${family(kind)}$word$index$region",
+					name = io.github.psd2live.i18n.tr(when (family(kind)) { "Hair" -> "model.physics.hairChain"; "Cloth" -> "model.physics.clothChain"; else -> "model.physics.partChain" },
+						"$word $index $region".trim()),
+					inputs = inputs, outputs = outputs.mapIndexed { k, p -> io.github.psd2live.core.PhysicsOutput(p, k + 1, 1.4f) },
 					segments = List(outputs.size) { segment },
 					normalization = io.github.psd2live.core.PhysicsNormalization(angleMin = -30f, angleMax = 30f))
 			}
-			val bounces = available.mapNotNull { BOUNCE.matchEntire(it) }.sortedBy { it.groupValues[2].toInt() }.mapNotNull { match ->
-				val kind = HairKind.entries.first { it.word == match.groupValues[1] }
+			val bounces = available.mapNotNull { BOUNCE.matchEntire(it) }.sortedWith(compareBy({ it.groupValues[1] }, { it.groupValues[3].toInt() })).mapNotNull { match ->
+				val kind = kindOf(match.groupValues[1], match.groupValues[2])
 				val inputs = listOf(
 					io.github.psd2live.core.PhysicsInput("ParamAngleY", 60f, io.github.psd2live.core.PhysicsSourceType.X),
 					io.github.psd2live.core.PhysicsInput("ParamBodyAngleY", 30f, io.github.psd2live.core.PhysicsSourceType.X),
@@ -214,8 +237,9 @@ data class HairChain(
 				).filter { it.parameter in available }
 				if (inputs.isEmpty()) return@mapNotNull null
 				io.github.psd2live.core.RigPhysicsEdit(
-					id = "Physics${if (kind.hair) "Hair" else "Cloth"}${match.groupValues[1]}${match.groupValues[2]}Y",
-					name = io.github.psd2live.i18n.tr(if (kind.hair) "model.physics.hairBounce" else "model.physics.clothBounce", "${match.groupValues[1]} ${match.groupValues[2]}"),
+					id = "Physics${family(kind)}${match.groupValues[2]}${match.groupValues[3]}Y",
+					name = io.github.psd2live.i18n.tr(when (family(kind)) { "Hair" -> "model.physics.hairBounce"; "Cloth" -> "model.physics.clothBounce"; else -> "model.physics.partBounce" },
+						"${match.groupValues[2]} ${match.groupValues[3]}"),
 					inputs = inputs, outputs = listOf(io.github.psd2live.core.PhysicsOutput(match.value, 1, 1.2f)),
 					segments = listOf(io.github.psd2live.core.PhysicsSegment(kind.length * 0.6f, kind.mobility, kind.delay, kind.acceleration)),
 					normalization = io.github.psd2live.core.PhysicsNormalization(angleMin = -30f, angleMax = 30f))

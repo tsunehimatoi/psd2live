@@ -146,6 +146,8 @@ internal object RigIrCompiler {
 			if (config.motionBlink) builtin("Blink", "Blink")
 			if (config.motionNod) builtin("Nod", "Nod")
 			if (config.motionShake) builtin("Shake", "Shake")
+			// Speech, for hosts and players without lip sync; only the `motion/natural` way makes it.
+			if (MotionPresetSettings.natural(config)) builtin("Talk", "Talk")
 		}
 		if (config.motionSkeleton) {
 			for (preset in SkeletonMotions.presets) {

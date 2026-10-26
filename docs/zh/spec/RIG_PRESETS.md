@@ -238,7 +238,9 @@
 | `eye.aftershock` | 锦上添花 | `ParamEyeLBounce` / `R` | 眨眼后睑过冲回弹、睫毛轻颤，由以开合为输入的摆锤驱动（物理组 `PhysicsEyeLBounce` / `R`） | 柔软度 |
 | `eye.squash` | 锦上添花 | — | 闭合时虹膜向下压扁 | — |
 
-动作基础算法 `motion/natural`：眨眼闭合约两帧、停顿、约五帧缓出睁开，间隔两到五秒不等，其中一次连眨，右眼比左眼晚一帧；待机里视线两次扫向一侧再回来。旧配方的动作不变。预览与导出用同一套曲线。
+动作基础算法 `motion/natural`：眨眼闭合约两帧、停顿、约五帧缓出睁开，间隔两到五秒不等，其中一次连眨，右眼比左眼晚一帧；待机里视线两次扫向一侧再回来；新增 **说话** 动作（约六秒，开口多在小开度、偶尔大开，短停顿，每个音节配一个元音，嘴形微变，点头跟随重音）；预览中播放动作时待机层不停止，两者同时驱动的参数保留待机运动的三分之一；VTube Studio 配置在追踪丢失时播放待机。旧配方的动作不变。预览与导出用同一套曲线。
+
+发束链的物理：刘海随眨眼有极小的颤动；发质柔软度同时调整摆锤：硬发摆锤短、灵动低、迟滞小，软发与飘发摆锤长、迟滞大。
 
 表情模块：
 
@@ -253,8 +255,9 @@
 
 | 模块 | 重要程度 | 新增参数 | 做什么 | 旋钮 |
 | --- | --- | --- | --- | --- |
-| `body.bust` | 重要 | `ParamBustY`、`ParamBustX`（物理输出） | 上身胸部区域（肩到腰的三分之一处、躯干宽的大部分）随呼吸与身体动作起伏、左右晃动，边缘渐弱，周围衣物不动；作用于非袖、非裙的上衣与颈饰；需要有脸的人物 | 弹动幅度 |
+| `body.bust` | 重要 | `ParamBustY`、`ParamBustX`（物理输出） | 上身胸部区域（肩到腰的三分之一处、躯干宽的大部分）随呼吸与身体动作起伏、左右晃动，边缘渐弱，周围衣物不动；作用于非袖、非裙的上衣与颈饰；硬质饰物（部件角色 `rigid`，如纽扣、徽章）按其中心整体平移，不被拉弯；需要有脸的人物 | 弹动幅度 |
 | `outfit.skirt` | 核心 | `ParamClothSkirt<n>[L/C/R]<段>`、`ParamClothSkirt<n>Y`（物理输出） | 裙子（部件角色 `skirt`）用 `HairChain` 的链从腰下开始分左中右三片错开摆动，`Y` 为下摆外张与收拢 | 摆幅 |
+| `outfit.creature` | 重要 | `ParamPartEar…`、`ParamPartAnimalTail…`、`ParamPartWing…`（物理输出） | 兽耳（部件角色 `animal`）、尾巴、翅膀用 `HairChain` 的链摆动；兽耳根在下方向上立起，并随眨眼抖动；已启用骨架时尾巴与翅膀由骨架负责 | 摆幅 |
 | `outfit.ribbons` | 重要 | `ParamClothRibbon…`、`ParamClothPendant…`（物理输出） | 缎带（`ribbon`）拖曳、吊坠（`pendant`）从挂点摆动，各有摆锤 | 摆幅 |
 
 身体随头转动不在物理里做：摆锤静止后归零，而且物理输出会覆盖宿主追踪的身体角度，留给宿主映射。
@@ -264,6 +267,7 @@
 | 模块 | 重要程度 | 新增参数 | 做什么 | 旋钮 |
 | --- | --- | --- | --- | --- |
 | `face.depth-turn` | 核心 | — | 按深度分层的立体转头（见上表 `HeadTurn`） | 转头幅度、立体感 |
+| `face.neck` | 重要 | — | 颈部分担歪头：AngleZ 下脖子上端随头绕头部支点转动、底部留在肩上；脖子上的阴影（部件角色 `shadow`）整体随头转动与转头，并裁剪到脖子 | — |
 | `face.skin-clip` | 重要 | — | 大部分落在脸内的脸部细节层（腮红、阴影等）与前发投在脸上的影子（部件角色 `shadow`）裁剪到脸，转头时不会移出脸外 | — |
 
 嘴部模块（均建立在 `mouth/fitted` 上；原有的 `mouth.outline` 描边唇线随拟合嘴的唇缘重铺）：
@@ -271,10 +275,10 @@
 | 模块 | 重要程度 | 新增参数 | 做什么 | 旋钮 |
 | --- | --- | --- | --- | --- |
 | `mouth.vowel` | 重要 | `ParamA` / `ParamI` / `ParamU` / `ParamE` / `ParamO` | 五个元音口型（A 大开，I 横宽，U 收圆，E 中开横宽，O 圆），叠加在开合与嘴形上；打开时闭口图层隐去、口内显示 | — |
-| `mouth.capture` | 重要 | `ParamMouthX`、`ParamMouthPuckerWiden`、`ParamMouthShrug`、`ParamMouthPressLipOpen`、`ParamCheekPuff` | 面捕常用的歪嘴、嘟嘴与咧嘴、耸嘴、抿嘴或唇分开、鼓腮 | — |
+| `mouth.capture` | 重要 | `ParamMouthX`、`ParamMouthPuckerWiden`、`ParamMouthShrug`、`ParamMouthPressLipOpen`、`ParamCheekPuff`、`ParamJawOpen` | 面捕常用的歪嘴、嘟嘴与咧嘴、耸嘴、抿嘴或唇分开、鼓腮、闭唇张颌（下巴下移、闭着的嘴下移变窄）；参数名沿用 VBridger 惯用名，面捕插件可直接驱动 | — |
 | `mouth.jaw` | 核心 | — | 张嘴时嘴角线以下的脸皮随下颌下移（下巴处为原画开口的 15%），两颊略收，鼻子微动 | 下颌下移 |
 | `mouth.cheek-lid` | 锦上添花 | — | 嘴形上扬时脸颊把下睑往上推；需要拟合眼 | 幅度 |
-| `mouth.interior-depth` | 重要 | — | 转头时上牙、下牙、舌与口腔按各自深度落后于唇线 | 深度 |
+| `mouth.interior-depth` | 重要 | — | 转头时上牙、下牙、舌与口腔按各自深度落后于唇线；舌、下牙与口腔在小开口时较暗，张满时恢复原画明度（乘色关键形） | 深度 |
 | `mouth.spring` | 锦上添花 | `ParamMouthSpring` | 以开合（与少量嘴形）为输入的摆锤带动下颌轻微回弹（物理组 `PhysicsMouthSpring`）；需要 `mouth.jaw` | — |
 
 眉毛模块（均建立在 `brow/fitted` 上）：
@@ -283,7 +287,8 @@
 | --- | --- | --- | --- | --- |
 | `brow.shape` | 核心 | `ParamBrowLAngle` / `R`（−1 内端压低 … +1 抬起）、`ParamBrowLX` / `R`、`ParamBrowLForm` / `R`（−1 平直 … +1 弯拱） | 眉毛角度、左右移动与眉形 | 幅度 |
 | `brow.lid-coupling` | 重要 | — | 上睑与眉毛如同一层皮肤：眉毛压低或皱起时上睑下压、变平（瞪视），抬起时上睑上提；需要拟合眼 | 幅度 |
-| `brow.blink` | 重要 | — | 闭眼时眉毛略微下沉（内端多些），`eye.wide` 睁大时上扬 | 下沉 |
+| `brow.blink` | 重要 | — | 闭眼时眉毛略微下沉（内端多些），`eye.wide` 睁大时上扬，笑眼闭合时回升 | 下沉 |
+| `brow.spring` | 锦上添花 | `ParamBrowLSpring` / `R`（物理输出） | 眉停下时略微过冲再回落，摆锤以眉高与角度为输入（物理组 `PhysicsBrowLSpring` / `R`） | — |
 
 ## 实现约定
 

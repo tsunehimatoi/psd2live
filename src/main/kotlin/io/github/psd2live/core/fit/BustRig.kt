@@ -25,8 +25,16 @@ class BustRig(private val centerX: Float, private val shoulderY: Float, private 
 	}
 
 	/** A mesh's bounce shapes; [positions] in the rig's space, deltas over the parent [frame]. */
-	fun shapes(positions: FloatArray, frame: Bounds, bustY: ParameterId, bustX: ParameterId): List<BlendShapeBinding<MeshForm>> {
+	fun shapes(positions: FloatArray, frame: Bounds, bustY: ParameterId, bustX: ParameterId, rigid: Boolean = false): List<BlendShapeBinding<MeshForm>> {
 		if ((0 until positions.size / 2).none { weight(positions[it * 2], positions[it * 2 + 1]) > 0f }) return emptyList()
+		// A rigid ornament - a button, a badge - is pinned on the cloth: it rides where its middle goes, unbent.
+		if (rigid) {
+			val n = positions.size / 2
+			val cx = (0 until n).sumOf { positions[it * 2].toDouble() }.toFloat() / n
+			val cy = (0 until n).sumOf { positions[it * 2 + 1].toDouble() }.toFloat() / n
+			val pinned = FloatArray(positions.size) { if (it % 2 == 0) cx else cy }
+			return shapes(pinned, frame, bustY, bustX)
+		}
 		fun form(change: (Float, Float, Float) -> Pair<Float, Float>) = MeshForm(FloatArray(positions.size).also { out ->
 			for (i in 0 until positions.size / 2) {
 				val x = positions[i * 2]; val y = positions[i * 2 + 1]

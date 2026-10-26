@@ -70,6 +70,8 @@ internal class FeatureCanvasTool(private val editor: CanvasEditor) {
 	// ── The gesture ──────────────────────────────────────────────────────────────
 
 	fun hover(pos: Offset, viewport: CanvasViewport) {
+		// A knob stepped by the keys has no drag to end it; going back to the canvas ends its step.
+		endKnob()
 		refresh()
 		hover = at(pos, viewport)?.let { Key(it.feature, it.handle) }
 	}
@@ -80,6 +82,7 @@ internal class FeatureCanvasTool(private val editor: CanvasEditor) {
 
 	/** A press on a handle starts dragging it; with Alt it returns the handle to the fit. False off every handle. */
 	fun press(pos: Offset, viewport: CanvasViewport, alt: Boolean): Boolean {
+		endKnob()
 		refresh()
 		val handle = at(pos, viewport) ?: return false
 		val key = Key(handle.feature, handle.handle)
@@ -101,6 +104,21 @@ internal class FeatureCanvasTool(private val editor: CanvasEditor) {
 		drag = null
 		if (offset.getDistance() < 0.05f) return
 		editor.viewModel.moveFeatureHandle(d.key.feature, d.key.handle, (d.baseX + offset.x) to (d.baseY + offset.y))
+	}
+
+	private var knobGesture = false
+
+	/** A knob on the options bar starts moving: its samples gather into one history step until [endKnob]. */
+	fun beginKnob() {
+		if (knobGesture) return
+		knobGesture = true
+		editor.viewModel.beginEditorGesture()
+	}
+
+	fun endKnob() {
+		if (!knobGesture) return
+		knobGesture = false
+		editor.viewModel.endEditorGesture()
 	}
 
 	fun cancel(): Boolean {

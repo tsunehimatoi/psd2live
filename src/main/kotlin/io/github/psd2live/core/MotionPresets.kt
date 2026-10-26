@@ -148,6 +148,7 @@ object MotionPresets {
 				val blinks = if (settings.natural) MotionGenerator.naturalBlinkTracks + MotionGenerator.glanceTracks else MotionGenerator.idleBlinkTracks
 				if (settings.of(name, BLINK) > 0.5f) tuned + blinks else tuned
 			}
+			"talk" -> if (settings.natural) MotionGenerator.talkTracks else emptyList()
 			"blink" -> if (settings.natural) MotionGenerator.naturalBlink(settings.of(name, CLOSURE), settings.of(name, DOUBLE) > 0.5f)
 				else MotionGenerator.blinkTracks(settings.of(name, CLOSURE), settings.of(name, DOUBLE) > 0.5f)
 			"nod" -> scaledOneShot(MotionGenerator.nodTracks(settings.of(name, COUNT).roundToInt()), settings.of(name, AMPLITUDE))

@@ -175,7 +175,7 @@ private fun BarOption(editor: CanvasEditor, option: ToolOption, focus: () -> Uni
             valueRange = option.range(editor),
             scrub = { start, dx -> option.scrubbed(start, dx, editor.brushSizeLimit) },
             logarithmic = option.logarithmic,
-            onCommit = focus,
+            onCommit = { option.finish?.invoke(editor); focus() },
             rise = true,
         )
         is ChoiceOption<*> -> BarChoice(editor, option, focus)

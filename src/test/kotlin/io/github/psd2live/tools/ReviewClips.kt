@@ -143,7 +143,8 @@ internal object ReviewClips {
 			listOf("mouth x" to mapOf("ParamMouthX" to 1f), "pucker" to mapOf("ParamMouthPuckerWiden" to -1f), "widen" to mapOf("ParamMouthPuckerWiden" to 1f),
 				"shrug" to mapOf("ParamMouthShrug" to 1f), "press" to mapOf("ParamMouthPressLipOpen" to -1f), "parted" to mapOf("ParamMouthPressLipOpen" to 1f),
 				"cheek puff" to mapOf("ParamCheekPuff" to 1f), "turned open" to mapOf("ParamMouthOpenY" to 1f, "ParamAngleX" to 30f)),
-		"head" to listOf(-30f, -15f, 0f, 15f, 30f).flatMap { x -> listOf(-30f, 0f, 30f).map { y -> "x $x y $y" to mapOf("ParamAngleX" to x, "ParamAngleY" to y) } },
+		"head" to listOf(-30f, -15f, 0f, 15f, 30f).flatMap { x -> listOf(-30f, 0f, 30f).map { y -> "x $x y $y" to mapOf("ParamAngleX" to x, "ParamAngleY" to y) } } +
+			listOf(-25f, 25f).map { z -> "tilt $z" to mapOf("ParamAngleZ" to z) },
 		"body" to listOf(-10f, 0f, 10f).flatMap { x -> listOf(-10f, 0f, 10f).map { z -> "body x $x z $z" to mapOf("ParamBodyAngleX" to x, "ParamBodyAngleZ" to z) } } +
 			listOf("bust up" to mapOf("ParamBustY" to 1f), "bust down" to mapOf("ParamBustY" to -1f), "bust side" to mapOf("ParamBustX" to 1f),
 				"cloth swing" to chains({ _, _ -> 1f }), "cloth swing -" to chains({ _, _ -> -1f }), "hem flare" to chains({ _, _ -> 0f }, 1f),

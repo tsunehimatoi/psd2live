@@ -108,7 +108,9 @@ public object VTubeStudioTarget : ExportTarget {
 			put("Name", baseName)
 			put("ModelID", id("$baseName/${ir.canvas.width}x${ir.canvas.height}/${ir.parameters.joinToString(",") { it.id }}"))
 			putJsonObject("FileReferences") {
-				put("Icon", ""); put("Model", "$baseName.model3.json"); put("IdleAnimation", ""); put("IdleAnimationWhenTrackingLost", "")
+				// A module rig's idle carries on when the tracker loses the face, so the model never freezes.
+				val lost = if (parameters.keys.any { it in moduleMarkers }) motionFiles.firstOrNull { it == "$baseName.idle.motion3.json" }.orEmpty() else ""
+				put("Icon", ""); put("Model", "$baseName.model3.json"); put("IdleAnimation", ""); put("IdleAnimationWhenTrackingLost", lost)
 			}
 			put("ParameterSettings", JsonArray(settings))
 			put("Hotkeys", JsonArray(hotkeys))
