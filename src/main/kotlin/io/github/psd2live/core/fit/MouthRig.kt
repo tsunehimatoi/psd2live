@@ -259,13 +259,35 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 	fun grid(positions: FloatArray, frame: Bounds, mouthForm: ParameterId, mouthOpen: ParameterId, follow: Follow = Follow.WHOLE): KeyformGrid<MeshDeltaForm> =
 		keyed(mouthForm, mouthOpen) { pose -> form(positions, frame, pose, follow) }
 
-	/** A grid over the form and the openness whose every key is [form] of that key's pose. */
+	/**
+	 * A grid over the form and the openness - and with the face capture, the lips pressed or parted ([pressed]) - whose
+	 * every key is [form] of that key's pose. Pressing and parting are keyed with the opening and the form, not added to
+	 * them, so a smile bares its teeth and a half-open mouth presses its lips each its own way.
+	 */
 	fun keyed(mouthForm: ParameterId, mouthOpen: ParameterId, form: (Pose) -> MeshDeltaForm): KeyformGrid<MeshDeltaForm> {
 		val cells = ArrayList<KeyformCell<MeshDeltaForm>>()
-		for ((o, open) in OPEN_KEYS.withIndex()) for ((f, value) in FORM_KEYS.withIndex()) {
-			cells += KeyformCell(intArrayOf(f, o), form(pose(value, open)))
+		val presses = if (options.capture) PRESS_KEYS else floatArrayOf(0f)
+		for ((p, press) in presses.withIndex()) for ((o, open) in OPEN_KEYS.withIndex()) for ((f, value) in FORM_KEYS.withIndex()) {
+			val pose = pressed(pose(value, open), press, open)
+			cells += KeyformCell(if (options.capture) intArrayOf(f, o, p) else intArrayOf(f, o), form(pose))
 		}
-		return KeyformGrid(listOf(KeyformAxis(mouthForm, FORM_KEYS), KeyformAxis(mouthOpen, OPEN_KEYS)), cells)
+		val axes = listOf(KeyformAxis(mouthForm, FORM_KEYS), KeyformAxis(mouthOpen, OPEN_KEYS)) +
+			if (options.capture) listOf(KeyformAxis(PRESS_OPEN, PRESS_KEYS)) else emptyList()
+		return KeyformGrid(axes, cells)
+	}
+
+	/**
+	 * [pose] (at [open]) with the lips pressed ([press] < 0: rolled in on each other, the mouth a little narrower) or
+	 * parted ([press] > 0: open at least to a slit that bares the teeth, the corners still shut).
+	 */
+	fun pressed(pose: Pose, press: Float, open: Float): Pose = when {
+		press < 0f -> pose.copy(press = 0.7f * -press, width = pose.width * (1f + 0.04f * press))
+		press > 0f -> {
+			val (u, l) = staged(0.2f)
+			val k = press * (1f - open.coerceIn(0f, 1f))
+			pose.copy(upper = pose.upper + (max(pose.upper, u + 0.08f) - pose.upper) * k, lower = pose.lower + (max(pose.lower, l * 0.7f) - pose.lower) * k)
+		}
+		else -> pose
 	}
 
 	/** Where the point ([x], [y]) of the mouth (in the rig's space) goes in [pose]. */
@@ -301,7 +323,7 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 	 */
 	fun shapes(positions: FloatArray, frame: Bounds, closedLayer: Boolean, visible: (Boolean) -> Float, tongue: Boolean = false,
 	           follow: Follow = Follow.WHOLE): List<BlendShapeBinding<MeshForm>> =
-		shapes({ pose -> (if (closedLayer) form(positions, frame) { u, v -> closedMove(u, v, pose) } else form(positions, frame, pose, follow)).positionDeltas }, visible) +
+		shapes({ pose -> (if (closedLayer) form(positions, frame) { u, v -> closedMove(u, v, pose) } else form(positions, frame, pose, follow)).positionDeltas }, pressKeyed = !closedLayer, visible = visible) +
 			tongueShapes(positions, frame, closedLayer, tongue, visible, follow)
 
 	/**
@@ -317,8 +339,12 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		return listOf(BlendShapeBinding(TONGUE_OUT, floatArrayOf(0f, 1f), 0, listOf(null, MeshForm(deltas, opacity = visible(true)))))
 	}
 
-	/** The same shapes for a mesh whose deltas at a pose [deltas] gives - a lip ribbon laid along the posed lips. */
-	fun shapes(deltas: (Pose) -> FloatArray, visible: (Boolean) -> Float): List<BlendShapeBinding<MeshForm>> = buildList {
+	/**
+	 * The same shapes for a mesh whose deltas at a pose [deltas] gives - a lip ribbon laid along the posed lips. A mesh
+	 * whose grid keys the lips pressed and parted ([keyed]; [pressKeyed]) takes from that shape only what the parting
+	 * shows, its geometry being in its keys.
+	 */
+	fun shapes(deltas: (Pose) -> FloatArray, pressKeyed: Boolean = true, visible: (Boolean) -> Float): List<BlendShapeBinding<MeshForm>> = buildList {
 		fun shapeOf(pose: Pose, opens: Boolean): MeshForm = MeshForm(deltas(pose), opacity = visible(opens))
 		if (options.vowels) for ((name, id) in VOWELS) add(BlendShapeBinding(id, floatArrayOf(0f, 1f), 0, listOf(null, shapeOf(vowel(name), true))))
 		if (options.capture) {
@@ -333,9 +359,13 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 			add(BlendShapeBinding(FUNNEL, floatArrayOf(0f, 1f), 0, listOf(null, shapeOf(funnel, true))))
 			// The jaw opened behind closed lips ("mmm"): the shut mouth drops and narrows a little with the chin.
 			add(BlendShapeBinding(JAW_OPEN, floatArrayOf(0f, 1f), 0, listOf(null, shapeOf(rest.copy(lift = -0.06f, width = rest.width * 0.94f), false))))
-			val parted = staged(0.2f).let { (u, l) -> rest.copy(upper = u + 0.08f, lower = l * 0.7f) }
-			add(BlendShapeBinding(PRESS_OPEN, floatArrayOf(-1f, 0f, 1f), 1, listOf(shapeOf(rest.copy(press = 0.7f, width = rest.width * 0.96f), false), null,
-				shapeOf(parted, true))))
+			if (pressKeyed) {
+				// Only the parting's opacity - the open mouth's parts show and a drawn closed mouth hides - at the shut mouth's place,
+				// which the grid holds at rest, so it moves nothing.
+				val shows = visible(true)
+				if (!shows.isNaN()) add(BlendShapeBinding(PRESS_OPEN, floatArrayOf(0f, 1f), 0, listOf(null, MeshForm(deltas(rest), opacity = shows))))
+			} else add(BlendShapeBinding(PRESS_OPEN, floatArrayOf(-1f, 0f, 1f), 1, listOf(shapeOf(pressed(rest, -1f, 0f), false), null,
+				shapeOf(pressed(rest, 1f, 0f), true))))
 		}
 	}
 
@@ -388,6 +418,7 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		/** Samples of a drawn edge searched for the point nearest a point past it. */
 		private const val NEAREST_STEPS = 96
 		val OPEN_KEYS = floatArrayOf(0f, SWAP, 0.25f, 0.5f, 1f)
+		val PRESS_KEYS = floatArrayOf(-1f, 0f, 1f)
 		val FORM_KEYS = floatArrayOf(-1f, -0.5f, 0f, 0.5f, 1f)
 		private val UPPERS = floatArrayOf(0f, 0.03f, 0.1f, 0.38f, 1f)
 		private val WIDTHS = floatArrayOf(1.04f, 1.04f, 1.08f, 1.06f, 1f)

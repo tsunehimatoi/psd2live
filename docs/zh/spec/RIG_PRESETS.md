@@ -279,7 +279,7 @@
 | 模块 | 重要程度 | 新增参数 | 做什么 | 旋钮 |
 | --- | --- | --- | --- | --- |
 | `mouth.vowel` | 重要 | `ParamA` / `ParamI` / `ParamU` / `ParamE` / `ParamO` | 五个元音口型（A 大开，I 横宽，U 收圆，E 中开横宽，O 圆），叠加在开合与嘴形上；打开时闭口图层隐去、口内显示 | — |
-| `mouth.capture` | 重要 | `ParamMouthX`、`ParamMouthPuckerWiden`、`ParamMouthShrug`、`ParamMouthPressLipOpen`、`ParamMouthFunnel`、`ParamCheekPuff`、`ParamJawOpen` | 面捕常用的歪嘴、嘟嘴与咧嘴、耸嘴、抿嘴或唇分开、漏斗口（ch、sh、u：嘴角向中间收拢，中间开小圆口）、鼓腮、闭唇张颌（下巴下移、闭着的嘴下移变窄）；分层嘴上每个口型都按各层的跟随方式作用；参数名沿用 VBridger 惯用名，面捕插件可直接驱动 | — |
+| `mouth.capture` | 重要 | `ParamMouthX`、`ParamMouthPuckerWiden`、`ParamMouthShrug`、`ParamMouthPressLipOpen`、`ParamMouthFunnel`、`ParamCheekPuff`、`ParamJawOpen` | 面捕常用的歪嘴、嘟嘴与咧嘴、耸嘴、抿嘴或唇分开、漏斗口（ch、sh、u：嘴角向中间收拢，中间开小圆口）、鼓腮、闭唇张颌（下巴下移、闭着的嘴下移变窄）；分层嘴上每个口型都按各层的跟随方式作用；抿嘴与唇分开（`ParamMouthPressLipOpen`）和开合、嘴形一起打成三维关键形（−1 双唇压紧内卷、唇色变少，+1 露出一道唇缝和牙、嘴角仍闭合，嘴张得越开分开的作用越小），所以笑着龇牙、半张嘴抿唇各有自己的形状；参数名沿用 VBridger 惯用名，面捕插件可直接驱动 | — |
 | `mouth.tongue` | 锦上添花 | `ParamTongueOut` | 有舌头图层时：嘴张到一半，舌头向下滑出下唇原来的位置；需要 `mouth.capture` | — |
 | `mouth.jaw` | 核心 | — | 张嘴时嘴角线以下的脸皮随下颌下移（下巴处为原画开口的 15%），两颊略收，鼻子微动 | 下颌下移 |
 | `mouth.cheek-lid` | 锦上添花 | — | 嘴形上扬时脸颊把下睑往上推；需要拟合眼 | 幅度 |
