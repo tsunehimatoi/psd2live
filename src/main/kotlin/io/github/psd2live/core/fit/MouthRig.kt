@@ -66,12 +66,19 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions) {
 	/** The lip edges of [pose] at [u] (of the drawing), below the corners' line. */
 	fun edges(pose: Pose, u: Float): Pair<Float, Float> {
 		val hump = EyeRig.hump(u).coerceAtLeast(0f)
-		val e = sqrt(hump)
 		var ur = drawnUpper(u); var lr = drawnLower(u)
-		ur += (drawnUpper(0.5f) * e - ur) * pose.round
-		lr += (drawnLower(0.5f) * e - lr) * pose.round
+		// A round mouth is an oval about the middle of its opening, its corners come to that middle line: upright there,
+		// so the lips meet without a point, and as deep above as below, so it does not taper to a point at the bottom.
+		// Toward the corners the edges go wholly to the oval whatever the drawing keeps at its middle, or a drawn corner's
+		// wall stays as a spike; and it closes toward that middle line, not the drawn closed shape.
+		val oval = 2f * sqrt((u * (1f - u)).coerceAtLeast(0f))
+		val middle = (drawnUpper(0.5f) + drawnLower(0.5f)) / 2f
+		val half = (drawnLower(0.5f) - drawnUpper(0.5f)) / 2f
+		val round = if (pose.round <= 0f) 0f else pose.round + (1f - pose.round) * (pose.round / 0.3f).coerceAtMost(1f) * (1f - oval)
+		ur += (middle - half * oval - ur) * round
+		lr += (middle + half * oval - lr) * round
 		ur *= 1f - 0.6f * pose.flatTop
-		val c = closed(u) * (1f - pose.press) - pose.lift * hump
+		val c = closed(u) * (1f - pose.press) * (1f - round) + middle * round - pose.lift * hump
 		var top = c + (ur - c) * pose.upper - gap * 0.5f * hump
 		var bottom = c + (lr - c) * pose.lower + gap * 0.5f * hump
 		val rise = pose.corner * (1f - hump)
@@ -99,6 +106,17 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions) {
 			val keep = d.coerceIn(-band, band)
 			return keep + (d - keep) * ratio
 		}
+		// Past an edge a point keeps to the point of the drawn edge nearest it, not the one straight above or below: by a
+		// mouth's end the edge runs steep, and a drawn corner measured upright stands off a rounded mouth as a spike.
+		if (r < u0 || r > l0) {
+			val upper = r < u0
+			val (at, dx, dy) = nearest(if (upper) ::drawnUpper else ::drawnLower, u, r)
+			val length = sqrt(dx * dx + dy * dy)
+			val k = if (length < 1e-6f) 1f else beyond(length) / length
+			val edge = edges(pose, at).let { if (upper) it.first else it.second }
+			val un = 0.5f + (at + dx * k - 0.5f) * pose.width + pose.shift
+			return (un - u) to (fit.baseline(un) + edge + dy * k - v)
+		}
 		val r1 = when {
 			r <= u0 + tb -> u1 + beyond(r - u0)
 			r >= l0 - tb -> l1 + beyond(r - l0)
@@ -111,6 +129,18 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions) {
 		val un = 0.5f + (u - 0.5f) * pose.width + pose.shift
 		val vn = fit.baseline(un) + r1
 		return (un - u) to (vn - v)
+	}
+
+	/** The point of the drawn [edge] nearest ([u], [r]): where along the mouth it is, and the offset from it. */
+	private fun nearest(edge: (Float) -> Float, u: Float, r: Float): Triple<Float, Float, Float> {
+		var best = 0f; var bestDistance = Float.MAX_VALUE
+		for (k in 0..NEAREST_STEPS) {
+			val at = k.toFloat() / NEAREST_STEPS
+			val dx = u - at; val dy = r - edge(at)
+			val distance = dx * dx + dy * dy
+			if (distance < bestDistance) { bestDistance = distance; best = at }
+		}
+		return Triple(best, u - best, r - edge(best))
 	}
 
 	/** The mouth at [form] (−1 pout … 1 smile) and [open] (0 … 1). */
@@ -280,6 +310,8 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions) {
 	companion object {
 		/** The openness where the lips part and a drawn closed mouth hands over to the open one. */
 		const val SWAP = 0.05f
+		/** Samples of a drawn edge searched for the point nearest a point past it. */
+		private const val NEAREST_STEPS = 96
 		val OPEN_KEYS = floatArrayOf(0f, SWAP, 0.25f, 0.5f, 1f)
 		val FORM_KEYS = floatArrayOf(-1f, -0.5f, 0f, 0.5f, 1f)
 		private val UPPERS = floatArrayOf(0f, 0.03f, 0.1f, 0.38f, 1f)
