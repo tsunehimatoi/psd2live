@@ -18,7 +18,9 @@ Parts split by a program, such as AI layer decomposition, can reach PSD2Live wit
 
 Separate eye whites, irises and upper lashes. Preserve the hidden part of each iris. The upper-lash rig is not intended for combined lower eyelid lines, even if a lower-lash name is recognized; inspect or classify such details separately.
 
-Supply the mouth fully open, either as one image or with separate upper teeth, lower teeth and tongue. Geometry cannot reconstruct an unseen mouth interior from closed-mouth pixels. Separate front and back hair and preserve overlap behind occluding parts.
+Supply the mouth fully open, either as one image or with separate upper teeth, lower teeth and tongue. Geometry cannot reconstruct an unseen mouth interior from closed-mouth pixels.
+
+For painted lips, or a cleaner open and close, split the mouth into two groups as hand riggers do. The inside: `mouth inside` (`口腔`; the opening at its widest, one filled shape drawn a little larger than the lips' inner edge, which also clips the teeth and tongue), `upper teeth`, `lower teeth` and `tongue`, with any dark inside the mouth as a layer named as a shadow. The lips: `upper lip` and `lower lip` (each lip with a band of face-coloured skin about it, its colour, gloss and shading painted in), and, where the art has line work, `upper lip line` and `lower lip line`. A lip rides its edge whole without squashing and covers the inside when the mouth shuts, so a mouth with lip layers closes its inside only by the "Inside behind the lips" setting. A line follows its edge at its own thickness, and the two meet in one line when shut. A mouth with its own lips or lines gets no generated outline. Separate front and back hair and preserve overlap behind occluding parts.
 
 ## Name reference
 
@@ -40,7 +42,7 @@ The table lists known classifier tags and selected aliases, excluding UNKNOWN. T
 | `EARS` | `ears`, `耳朵`, `耳`, `みみ`, `귀` |
 | `EARWEAR` | `earwear`, `耳环`, `耳環`, `耳饰`, `귀걸이` |
 | `NOSE` | `nose`, `鼻子`, `鼻`, `はな`, `코` |
-| `MOUTH` | `mouth`, `口`, `嘴`, `嘴巴`, `입` |
+| `MOUTH` | `mouth`, `口`, `嘴`, `嘴巴`, `입`, `上唇`, `下唇`, `上唇线`, `下唇线`, `upper lip`, `lower lip line` |
 | `MOUTH_OPEN` | `mouth open`, `张嘴`, `張嘴`, `开口`, `벌린 입` |
 | `MOUTH_CLOSE` | `mouth close`, `闭嘴`, `閉嘴`, `闭口`, `다문 입` |
 | `TOOTH_T` | `tooth-t`, `上牙`, `上歯`, `上齿`, `윗니` |

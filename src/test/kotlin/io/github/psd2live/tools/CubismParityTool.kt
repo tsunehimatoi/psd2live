@@ -59,7 +59,12 @@ class CubismParityTool {
 			"mouth half, smile" to mapOf("ParamMouthForm" to 1f, "ParamMouthOpenY" to 0.5f), "A turned" to mapOf("ParamA" to 1f, "ParamAngleX" to 20f),
 			"O" to mapOf("ParamO" to 1f), "E" to mapOf("ParamE" to 1f), "open turned" to mapOf("ParamMouthOpenY" to 1f, "ParamAngleX" to 30f),
 			"quarter, Y" to mapOf("ParamMouthOpenY" to 0.25f, "ParamAngleY" to 20f), "pout" to mapOf("ParamMouthForm" to -1f, "ParamMouthOpenY" to 0.3f),
-			"eyes shut" to mapOf("ParamEyeLOpen" to 0f, "ParamEyeROpen" to 0f), "glare" to mapOf("ParamBrowLY" to -1f, "ParamBrowRY" to -1f, "ParamEyeBallX" to 1f))
+			"eyes shut" to mapOf("ParamEyeLOpen" to 0f, "ParamEyeROpen" to 0f), "glare" to mapOf("ParamBrowLY" to -1f, "ParamBrowRY" to -1f, "ParamEyeBallX" to 1f),
+			// The face capture's mouth (VBridger's names), where the rig has it.
+			"funnel" to mapOf("ParamMouthFunnel" to 1f), "lips pressed" to mapOf("ParamMouthPressLipOpen" to -1f),
+			"teeth bared" to mapOf("ParamMouthPressLipOpen" to 1f), "smile, teeth bared" to mapOf("ParamMouthPressLipOpen" to 1f, "ParamMouthForm" to 1f),
+			"jaw, lips shut" to mapOf("ParamJawOpen" to 1f), "shrug" to mapOf("ParamMouthShrug" to 1f), "pucker" to mapOf("ParamMouthPuckerWiden" to -1f),
+			"mouth X" to mapOf("ParamMouthX" to 1f))
 		// Cubism draws the whole canvas; a close view is cut from a large frame.
 		val width = 4096
 		val height = (width * canvas.height / canvas.width).toInt()

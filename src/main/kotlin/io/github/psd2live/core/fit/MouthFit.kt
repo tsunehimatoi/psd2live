@@ -4,6 +4,8 @@ import io.github.psd2live.core.ClassifiedLayer
 import io.github.psd2live.core.SemanticTag
 import kotlin.math.abs
 import kotlin.math.hypot
+import kotlin.math.max
+import kotlin.math.min
 
 /**
  * The open mouth read off the art in the head's frame, as the eyes are ([EyeFit]): the first axis runs along the head's
@@ -56,16 +58,44 @@ object MouthFitting {
 	class Result(val fit: MouthFit?, val reason: String?, val layers: List<ClassifiedLayer>)
 
 	/**
+	 * How thick a layered mouth's lip lines are drawn, in units of [fit]'s width: across the middle fifth of the mouth,
+	 * the typical height of each line layer's column of opaque pixels, the two lines averaged; null without line layers.
+	 */
+	fun lineWidth(fit: MouthFit, layers: List<ClassifiedLayer>, toRig: (Float, Float) -> Pair<Float, Float>): Float? {
+		val lines = layers.filter { it.opaquePixels > 0 && it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) &&
+			(it.semantic.role == io.github.psd2live.core.PartRole.UPPER_LINE || it.semantic.role == io.github.psd2live.core.PartRole.LOWER_LINE) }
+		val widths = lines.mapNotNull { layer ->
+			val raster = layer.source.raster; val bounds = layer.source.bounds
+			val sx = bounds.width / raster.width.coerceAtLeast(1).toFloat(); val sy = bounds.height / raster.height.coerceAtLeast(1).toFloat()
+			val bins = 12
+			val tops = FloatArray(bins) { Float.MAX_VALUE }; val bottoms = FloatArray(bins) { -Float.MAX_VALUE }
+			for (y in 0 until raster.height) for (x in 0 until raster.width) {
+				if ((raster.rgba[(y * raster.width + x) * 4 + 3].toInt() and 0xff) < 96) continue
+				val (rx, ry) = toRig(bounds.left + (x + 0.5f) * sx, bounds.top + (y + 0.5f) * sy)
+				val (u, v) = fit.toMouth(rx, ry)
+				if (u < 0.4f || u >= 0.6f) continue
+				val k = ((u - 0.4f) / 0.2f * bins).toInt().coerceIn(0, bins - 1)
+				tops[k] = min(tops[k], v); bottoms[k] = max(bottoms[k], v)
+			}
+			val columns = (0 until bins).filter { bottoms[it] >= tops[it] }.map { bottoms[it] - tops[it] + sy / fit.width }.sorted()
+			columns.getOrNull(columns.size / 2)
+		}
+		return if (widths.isEmpty()) null else widths.average().toFloat()
+	}
+
+	/**
 	 * The mouth drawn open: the largest mouth layer with the mouth layers beside it that belong to it (an open-mouth
 	 * interior), in the head's [level] (in the rig's space; [toRig] carries canvas points there). A mouth drawn closed
 	 * - a line - has nothing to open from and is left to the legacy rig.
 	 */
 	fun fit(layers: List<ClassifiedLayer>, level: Pair<Float, Float>, toRig: (Float, Float) -> Pair<Float, Float>): Result {
-		// Generated lip ribbons outline the mouth; they are not its drawing.
-		val mouths = layers.filter { it.opaquePixels > 0 && it.semantic.role == null && it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) &&
-			!io.github.psd2live.core.MouthLipLayer.isLipId(it.source.id.raw) }
-		val main = mouths.filter { it.semantic.tag == SemanticTag.MOUTH }.maxByOrNull { it.opaquePixels }
-			?: mouths.maxByOrNull { it.opaquePixels } ?: return Result(null, "no mouth", emptyList())
+		// Generated lip ribbons outline the mouth; they are not its drawing. A layered mouth's lip lines bound its opening
+		// as a whole mouth's lines do, but its lips reach out over the skin and are left out.
+		val lines = setOf(io.github.psd2live.core.PartRole.UPPER_LINE, io.github.psd2live.core.PartRole.LOWER_LINE)
+		val mouths = layers.filter { it.opaquePixels > 0 && (it.semantic.role == null || it.semantic.role in lines) &&
+			it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && !io.github.psd2live.core.MouthLipLayer.isLipId(it.source.id.raw) }
+		val main = mouths.filter { it.semantic.tag == SemanticTag.MOUTH && it.semantic.role == null }.maxByOrNull { it.opaquePixels }
+			?: mouths.filter { it.semantic.role == null }.maxByOrNull { it.opaquePixels } ?: return Result(null, "no mouth", emptyList())
 		val own = mouths.filter { it === main || it.semantic.variant == main.semantic.variant && it.semantic.side == main.semantic.side &&
 			it.bounds.left < main.bounds.right && main.bounds.left < it.bounds.right && it.bounds.top < main.bounds.bottom && main.bounds.top < it.bounds.bottom }
 		val points = ArrayList<Pair<Float, Float>>()

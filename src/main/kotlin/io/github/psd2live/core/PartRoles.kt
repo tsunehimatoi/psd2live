@@ -14,12 +14,20 @@ import java.util.Locale
  * so the analysis no longer guesses one; it has no tag word.
  */
 enum class PartRole(val word: String, val tags: Set<SemanticTag>) {
-	HIGHLIGHT("highlight", setOf(SemanticTag.IRIDES, SemanticTag.FRONT_HAIR, SemanticTag.BACK_HAIR, SemanticTag.FACE_DETAIL)),
+	HIGHLIGHT("highlight", setOf(SemanticTag.IRIDES, SemanticTag.FRONT_HAIR, SemanticTag.BACK_HAIR, SemanticTag.FACE_DETAIL, SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)),
 	PUPIL("pupil", setOf(SemanticTag.IRIDES)),
 	LOWER("lower", setOf(SemanticTag.EYELASH)),
 	LID("lid", setOf(SemanticTag.EYELASH)),
 	SHADOW("shadow", setOf(SemanticTag.EYELASH, SemanticTag.FACE_DETAIL, SemanticTag.FRONT_HAIR, SemanticTag.BACK_HAIR, SemanticTag.NECK,
-		SemanticTag.TOPWEAR, SemanticTag.BOTTOMWEAR)),
+		SemanticTag.TOPWEAR, SemanticTag.BOTTOMWEAR, SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)),
+	/** A mouth's upper lip with the skin about it, its colour and gloss painted in: it rides the upper lip whole. */
+	UPPER_LIP("upperlip", setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)),
+	/** The lower lip with the skin about it. */
+	LOWER_LIP("lowerlip", setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)),
+	/** The upper lip's edge line, drawn apart from the lip. */
+	UPPER_LINE("upperline", setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)),
+	/** The lower lip's edge line. */
+	LOWER_LINE("lowerline", setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)),
 	BLUSH("blush", setOf(SemanticTag.FACE_DETAIL)),
 	SIDE("side", setOf(SemanticTag.FRONT_HAIR, SemanticTag.BACK_HAIR)),
 	AHOGE("ahoge", setOf(SemanticTag.FRONT_HAIR, SemanticTag.BACK_HAIR)),
@@ -54,6 +62,11 @@ enum class PartRole(val word: String, val tags: Set<SemanticTag>) {
 object PartRoles {
 	private val names: List<Pair<PartRole, List<String>>> = listOf(
 		PartRole.PUPIL to listOf("瞳孔", "pupil", "동공"),
+		// Before the lips: a lip's line names the lip too.
+		PartRole.UPPER_LINE to listOf("上唇线", "上唇線", "上嘴唇线", "上嘴唇線", "上唇ライン", "上唇の線", "upper lip line", "upper lipline", "upperline", "윗입술 선", "윗입술선"),
+		PartRole.LOWER_LINE to listOf("下唇线", "下唇線", "下嘴唇线", "下嘴唇線", "下唇ライン", "下唇の線", "lower lip line", "lower lipline", "lowerline", "아랫입술 선", "아랫입술선"),
+		PartRole.UPPER_LIP to listOf("上唇", "上嘴唇", "上くちびる", "上嘴皮", "upper lip", "upperlip", "윗입술"),
+		PartRole.LOWER_LIP to listOf("下唇", "下嘴唇", "下くちびる", "下嘴皮", "lower lip", "lowerlip", "아랫입술"),
 		PartRole.HIGHLIGHT to listOf("高光", "高亮", "反光", "光点", "ハイライト", "ﾊｲﾗｲﾄ", "highlight", "shine", "gloss", "sparkle", "glint", "하이라이트", "반사광"),
 		PartRole.LOWER to listOf("下睫毛", "下まつ毛", "下まつげ", "下睫", "下眼线", "下まぶた", "lower lash", "lowerlash", "under lash", "bottom lash", "lower eyelash",
 			"아랫속눈썹", "아래 속눈썹", "하안검"),

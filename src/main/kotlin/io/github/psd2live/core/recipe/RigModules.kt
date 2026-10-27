@@ -120,6 +120,7 @@ object RigModules {
 	val MOUTH_FITTED = RigBase("mouth/fitted", knobs = listOf(
 		RecipeKnob("early", P, 20f..60f, 35f),
 		RecipeKnob("form", P, 50f..150f, 100f),
+		RecipeKnob("inside", P, 0f..100f, 50f),
 	))
 	private const val FITTED_MOUTH = "mouth/fitted"
 	private fun mouthOpen(subject: RecipeSubject) = subject.has(SemanticTag.MOUTH) || subject.has(SemanticTag.MOUTH_OPEN)
@@ -129,10 +130,11 @@ object RigModules {
 	val MOUTH_VOWEL = RigModule("mouth.vowel", ModuleTier.MAJOR, base = FITTED_MOUTH, applies = ::mouthOpen,
 		defines = listOf('A', 'I', 'U', 'E', 'O').map { mouth("Param$it", "vowel$it", 0f, 1f) })
 
-	/** The face capture's mouth movements: sideways, pucker and widen, shrug, lips pressed or parted, and the cheeks puffing. */
+	/** The face capture's mouth movements: sideways, pucker and widen, shrug, lips pressed or parted, the funnel, and the cheeks puffing. */
 	val MOUTH_CAPTURE = RigModule("mouth.capture", ModuleTier.MAJOR, base = FITTED_MOUTH, applies = ::mouthOpen,
 		defines = listOf(mouth("ParamMouthX", "mouthX", -1f, 1f), mouth("ParamMouthPuckerWiden", "mouthPuckerWiden", -1f, 1f),
 			mouth("ParamMouthShrug", "mouthShrug", 0f, 1f), mouth("ParamMouthPressLipOpen", "mouthPressLipOpen", -1f, 1f),
+			mouth("ParamMouthFunnel", "mouthFunnel", 0f, 1f),
 			mouth("ParamCheekPuff", "cheekPuff", 0f, 1f), mouth("ParamJawOpen", "jawOpen", 0f, 1f)))
 
 	/** The tongue put out, on art with a tongue layer: the mouth opens and the tongue slides down past the lower lip's place. */

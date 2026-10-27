@@ -414,15 +414,15 @@ object RigBuilder {
 				vowels = on(m.MOUTH_VOWEL), capture = on(m.MOUTH_CAPTURE),
 				jaw = on(m.MOUTH_JAW), jawShare = value(m.MOUTH_JAW, "share"),
 				depth = on(m.MOUTH_DEPTH), depthAmount = value(m.MOUTH_DEPTH, "depth"),
-				spring = on(m.MOUTH_SPRING), tongue = on(m.MOUTH_TONGUE))
+				spring = on(m.MOUTH_SPRING), tongue = on(m.MOUTH_TONGUE), inside = config.recipe.baseValue("mouth", "inside") / 100f)
 			return fittedMouths.getOrPut(listOf(options, config.parentOverrides, deformersEnabled, config.recipe.base("eye"), config.recipe.moves("mouth"))) {
-				val mouth = analysis.layers.firstOrNull { it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && it.opaquePixels > 0 }
+				val mouth = analysis.layers.firstOrNull { it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && it.semantic.role == null && it.opaquePixels > 0 }
 				val space = mouth?.let { headSpaceFor(it, config) }
 				val toRig = { x: Float, y: Float -> space?.toAligned(x, y) ?: (x to y) }
 				val level = fittedEyes(config)?.fitting?.level ?: io.github.psd2live.core.fit.EyeFitting.fit(analysis.layers, faceRig.centerX, toRig).level
 				val drawn = io.github.psd2live.core.fit.MouthFitting.fit(analysis.layers, level, toRig)
 				val result = io.github.psd2live.core.fit.MouthFitting.Result(drawn.fit?.moved(rigMoves(config, "mouth", toRig)), drawn.reason, drawn.layers)
-				val rig = result.fit?.let { io.github.psd2live.core.fit.MouthRig(it, options) }
+				val rig = result.fit?.let { io.github.psd2live.core.fit.MouthRig(it, options, io.github.psd2live.core.fit.MouthFitting.lineWidth(it, analysis.layers, toRig)) }
 				io.github.psd2live.core.fit.FittedMouth(result, rig, rig?.let { chinDepth(it, config) } ?: 0.6f, analysis.layers)
 			}
 		}
@@ -589,7 +589,7 @@ object RigBuilder {
 		fun canvas(layer: ClassifiedLayer?, point: Pair<Float, Float>): Pair<Float, Float> =
 			layer?.let { context.headSpaceFor(it, config) }?.toCanvas(point.first, point.second) ?: point
 		val eyeLayer = analysis.layers.firstOrNull { it.semantic.tag == SemanticTag.EYEWHITE && it.opaquePixels > 0 }
-		val mouthLayer = analysis.layers.firstOrNull { it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && it.opaquePixels > 0 }
+		val mouthLayer = analysis.layers.firstOrNull { it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && it.semantic.role == null && it.opaquePixels > 0 }
 		val browLayer = analysis.layers.firstOrNull { it.semantic.tag == SemanticTag.EYEBROW && it.opaquePixels > 0 }
 		fun handles(feature: String, layer: ClassifiedLayer?, points: Map<String, Pair<Float, Float>>) = points.map { (handle, p) ->
 			val (x, y) = canvas(layer, p); FeatureHandle(feature, handle, x, y)
@@ -1499,10 +1499,16 @@ object RigBuilder {
 			val semantic = classifiedByDrawable.getValue(drawable.id).semantic
 			semantic.tag to semantic.side
 		}
+		// The mouth's inside clips what is in the mouth; a layered mouth's lips and lines lie over it and clip nothing.
 		val mouthMasks = maskSources.filter { drawable ->
             drawable.id !in lipOwnerById &&
-			classifiedByDrawable.getValue(drawable.id).semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)
+			classifiedByDrawable.getValue(drawable.id).semantic.let { it.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && it.role == null }
 		}
+		val fittedMouth = context.fittedMouth(config)
+		// A highlight or shadow lying inside the opening is in the mouth too.
+		fun inMouth(layer: ClassifiedLayer) = layer.semantic.tag in CharacterAnalyzer.MOUTH_COMPONENT_TAGS ||
+			fittedMouth != null && layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && layer.semantic.role != null && fittedMouth.covers(layer) &&
+			fittedMouth.follow(layer).let { it == io.github.psd2live.core.fit.MouthRig.Follow.DEEP || it == io.github.psd2live.core.fit.MouthRig.Follow.INSIDE }
 		val skinClip = io.github.psd2live.core.recipe.RigModules.let { it.builds(it.FACE_SKIN_CLIP, config, io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis)) }
 		val faceMasks = if (!skinClip) emptyList() else maskSources.filter { classifiedByDrawable.getValue(it.id).semantic.tag == SemanticTag.FACE }
 		val neckClip = io.github.psd2live.core.recipe.RigModules.let { it.builds(it.FACE_NECK, config, io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis)) }
@@ -1529,7 +1535,7 @@ object RigBuilder {
 					val fallback = drawableByTagSide[SemanticTag.EYEWHITE to Side.NONE].orEmpty()
 					drawable.copy(maskedBy = (exact.ifEmpty { fallback }).map { it.id })
 				}
-				semantic.tag in CharacterAnalyzer.MOUTH_COMPONENT_TAGS -> {
+				inMouth(classifiedByDrawable.getValue(drawable.id)) -> {
 					val layer = classifiedByDrawable.getValue(drawable.id)
 					val exact = mouthMasks.filter { mask ->
 						val maskSemantic = classifiedByDrawable.getValue(mask.id).semantic
@@ -3213,14 +3219,14 @@ object RigBuilder {
 		}
 		val override = config.meshOverrides[layer.source.id.raw]
 		val outerMargin = if (config.mouthOutlineEnabled && !config.meshOnly &&
-            layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)) 0f
+            layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && layer.semantic.role == null) 0f
             else override?.outerMargin ?: config.meshOuterMargin
 		// Face defaults to a dual edge band (legacy inner-margin envelope); other parts use the global mode.
 		val edgeMode = override?.edgeMode
 			?: if (layer.semantic.tag == SemanticTag.FACE) MeshEdgeMode.DOUBLE else config.meshEdgeMode
 		val edgeWidth = override?.edgeWidth ?: config.meshEdgeWidth
 		val effectiveSpacing = if (config.mouthOutlineEnabled && !config.meshOnly &&
-            layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)) {
+            layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && layer.semantic.role == null) {
             override?.maxEdgeDistance ?: max(6f, config.meshMaxEdgeDistance * semanticDensity)
         } else {
             override?.maxEdgeDistance ?: max(12f, config.meshMaxEdgeDistance * semanticDensity)
@@ -3313,7 +3319,7 @@ object RigBuilder {
 		val tag = layer.semantic.tag
 		mouth?.rig?.takeIf { mouth.covers(layer) }?.let { rig ->
 			return if (tag == SemanticTag.MOUTH_CLOSE) rig.closedGrid(data.rigPositions, parentFrame, StandardParameters.MOUTH_FORM)
-				else rig.grid(data.rigPositions, parentFrame, StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN, mouth.tight(layer))
+				else rig.grid(data.rigPositions, parentFrame, StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN, mouth.follow(layer))
 		}
 		return when (tag) {
 			SemanticTag.EYEWHITE, SemanticTag.EYELASH ->
@@ -3491,16 +3497,18 @@ object RigBuilder {
 		val tag = layer.semantic.tag
 		if (mouth.covers(layer)) {
 			val closedLayer = tag == SemanticTag.MOUTH_CLOSE
-			val depth = when (tag) {
-				SemanticTag.TOOTH_T -> 0.06f
-				SemanticTag.TOOTH_B -> 0.1f
-				SemanticTag.TONGUE -> 0.16f
+			val depth = when (mouth.follow(layer)) {
+				io.github.psd2live.core.fit.MouthRig.Follow.UPPER_TEETH -> 0.06f
+				io.github.psd2live.core.fit.MouthRig.Follow.LOWER_TEETH -> 0.1f
+				io.github.psd2live.core.fit.MouthRig.Follow.TONGUE -> 0.16f
+				io.github.psd2live.core.fit.MouthRig.Follow.DEEP -> 0.2f
+				// A layered mouth's inside, behind its lips.
+				io.github.psd2live.core.fit.MouthRig.Follow.INSIDE -> 0.12f
 				// A separate inside behind the drawn mouth.
-				SemanticTag.MOUTH_OPEN -> if (mouth.result.layers.any { it.semantic.tag == SemanticTag.MOUTH }) 0.12f else 0f
-				else -> 0f
+				else -> if (tag == SemanticTag.MOUTH_OPEN && mouth.result.layers.any { it.semantic.tag == SemanticTag.MOUTH }) 0.12f else 0f
 			}
 			return rig.shapes(data.rigPositions, frame, closedLayer, { opens -> if (!opens) Float.NaN else if (closedLayer) 0f else 1f }, tag == SemanticTag.TONGUE,
-				mouth.tight(layer)) +
+				mouth.follow(layer)) +
 				(if (depth > 0f) rig.depthShapes(data.rigPositions, frame, depth, StandardParameters.ANGLE_X, StandardParameters.ANGLE_Y) else emptyList())
 		}
 		if (layer.semantic.role != null && layer.semantic.role != PartRole.SHADOW) return emptyList()
@@ -3551,8 +3559,10 @@ object RigBuilder {
 		val mouth = context.fittedMouth(config) ?: return grids
 		val rig = mouth.rig ?: return grids
 		if (!rig.options.depth || !mouth.covers(layer) || FormChannel.MULTIPLY_COLOR in grids.gridsByChannel) return grids
-		val inside = layer.semantic.tag == SemanticTag.TONGUE || layer.semantic.tag == SemanticTag.TOOTH_B ||
-			layer.semantic.tag == SemanticTag.MOUTH_OPEN && mouth.result.layers.any { it.semantic.tag == SemanticTag.MOUTH }
+		val follow = mouth.follow(layer)
+		val inside = follow == io.github.psd2live.core.fit.MouthRig.Follow.TONGUE || follow == io.github.psd2live.core.fit.MouthRig.Follow.LOWER_TEETH ||
+			follow == io.github.psd2live.core.fit.MouthRig.Follow.DEEP || follow == io.github.psd2live.core.fit.MouthRig.Follow.INSIDE ||
+			layer.semantic.tag == SemanticTag.MOUTH_OPEN && layer.semantic.role == null && mouth.result.layers.any { it.semantic.tag == SemanticTag.MOUTH }
 		if (!inside) return grids
 		return ChannelGrids(grids.gridsByChannel + (FormChannel.MULTIPLY_COLOR to grid(listOf(axis(StandardParameters.MOUTH_OPEN, 0f, 0.25f, 1f))) { v ->
 			val k = when { v[0] <= 0f -> 0.72f; v[0] < 1f -> 0.82f; else -> 1f }
@@ -4247,7 +4257,7 @@ object RigBuilder {
 	}
 
 	private fun mouthApertureFor(layer: ClassifiedLayer): Bounds? {
-		if (layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)) return layer.bounds
+		if (layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && layer.semantic.role == null) return layer.bounds
 		return null
 	}
 
@@ -4331,7 +4341,8 @@ object RigBuilder {
 
 	/** Places explicitly named mouth internals directly above their nearest mouth, independent of PSD order. */
 	private fun orderMouthLayers(layers: List<ClassifiedLayer>): List<ClassifiedLayer> {
-		val mouths = layers.filter { it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) }
+		// The teeth and tongue go just behind the mouth's inside they belong to, not a layered mouth's lips or lines.
+		val mouths = layers.filter { it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && it.semantic.role == null }
 		if (mouths.isEmpty()) return layers
 		val assigned = linkedMapOf<String, MutableList<ClassifiedLayer>>()
 		val assignedInternalIds = mutableSetOf<String>()

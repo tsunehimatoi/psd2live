@@ -37,6 +37,9 @@ internal object MouthLipLayers {
     fun prepare(input: PipelineAnalysis, config: PipelineConfig): PipelineAnalysis {
         val originals = input.layers.filter { it.source !is MouthLipLayer && it.source.id.raw !in config.deletedLayerIds }
         if (!config.mouthOutlineEnabled || config.meshOnly || config.deferRig) return input.copy(layers = originals)
+        // A mouth drawn in layers has its own lips and lines: no outline is drawn over them.
+        if (originals.any { it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && it.semantic.role in io.github.psd2live.core.fit.FittedMouth.LIPS })
+            return input.copy(layers = originals)
         // Version 2 records: superseded layers never feed the face rig, and parts own no ribbons (their meshes are pinned).
         val resolution = PrimitiveResolution.of(config.rigEdits)
         val layout = (input.calibration ?: input).let { if (resolution.active) it.copy(layers = resolution.aggregates(it.layers)) else it }
