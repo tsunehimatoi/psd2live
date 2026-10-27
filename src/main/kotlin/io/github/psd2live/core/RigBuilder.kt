@@ -395,6 +395,15 @@ object RigBuilder {
 
 		private val faceTurns = java.util.concurrent.ConcurrentHashMap<List<Any?>, java.util.Optional<io.github.psd2live.core.fit.FaceTurn>>()
 
+		/** The deformers under the face's warp: what the face's turn ([faceTurn]) carries, and nothing else turns. */
+		val underFace: Set<DeformerId> by lazy {
+			val byParent = deformers.groupBy { it.parent }
+			val out = HashSet<DeformerId>()
+			fun walk(id: DeformerId) { for (c in byParent[id].orEmpty()) if (out.add(c.id)) walk(c.id) }
+			walk(faceWarpId)
+			out
+		}
+
 		/**
 		 * The face's turn as a field of its own feature points ([io.github.psd2live.core.fit.FaceTurn]) when the depth turn is
 		 * built and the face has what the field needs; null otherwise, and the face then turns as it did.
@@ -1465,7 +1474,8 @@ object RigBuilder {
 			pageByDrawable[id.raw] = placement.page
 			sourceBoundsByDrawable[id.raw] = parts.neutralBounds
 			for (lip in lipsStage(drawable, layer, parts, parentFrame, atlas, generatedLips, config, meshConfig, stages,
-				context.fittedMouth(config)?.takeIf { it.covers(layer) }?.rig, context.headTurn(config))) {
+				context.fittedMouth(config)?.takeIf { it.covers(layer) }?.rig, context.headTurn(config).takeUnless {
+					context.faceTurn(config) != null && drawable.parentDeformerId.let { p -> p == faceWarpId || p in context.underFace } })) {
 				drawables += lip.drawable
 				lip.path?.let { builtDeformPaths += it }
 				classifiedByDrawable[lip.drawable.id] = lip.layer
@@ -3457,7 +3467,7 @@ object RigBuilder {
 		List<org.umamo.runtime.model.BlendShapeBinding<org.umamo.runtime.model.MeshForm>> =
 		eyeBlendShapes(layer, data, frame, context.fittedEyes(config), context.fittedBrows(config)) + mouthBlendShapes(layer, data, frame, context.fittedMouth(config)) +
 			headTurnShapes(layer, turnPositions(layer, data.rigPositions, context.fittedMouth(config)), frame, context.headTurn(config).takeUnless { turnsWithMouth(parent) ||
-				parent == faceContourId && context.faceTurn(config) != null }) +
+				parent != null && (parent == faceContourId || parent in context.underFace) && context.faceTurn(config) != null }) +
 			bustShapes(layer, data.rigPositions, frame, context, config) +
 			neckShapes(layer, data.rigPositions, frame, context, config)
 
@@ -4531,13 +4541,31 @@ object RigBuilder {
 			}
 			contourCells += KeyformCell(intArrayOf(xi, yi), WarpLatticeForm(cl))
 		}
+		// Everything else under the face rides the field alone: its own turn keys are held at rest, or it would turn twice.
 		return deformers.map { d ->
-			when (d.id) {
-				faceWarpId -> face.copy(geometryGrid = KeyformGrid(axes, faceCells))
-				faceContourId -> contour?.copy(rows = contourRows, columns = contourCols, geometryGrid = KeyformGrid(axes, contourCells)) ?: d
+			when {
+				d.id == faceWarpId -> face.copy(geometryGrid = KeyformGrid(axes, faceCells))
+				d.id == faceContourId -> contour?.copy(rows = contourRows, columns = contourCols, geometryGrid = KeyformGrid(axes, contourCells)) ?: d
+				d.id in context.underFace -> when (d) {
+					is Deformer.Warp -> d.copy(geometryGrid = d.geometryGrid?.let(::heldTurn))
+					is Deformer.Rotation -> d.copy(geometryGrid = d.geometryGrid?.let(::heldTurn))
+					else -> d
+				}
 				else -> d
 			}
 		}
+	}
+
+	/** [grid] with every key on Angle X and Angle Y holding the form at their rest key. */
+	private fun <T> heldTurn(grid: KeyformGrid<T>): KeyformGrid<T> {
+		val turned = grid.axes.withIndex().filter { it.value.parameterId == StandardParameters.ANGLE_X || it.value.parameterId == StandardParameters.ANGLE_Y }
+		if (turned.isEmpty()) return grid
+		val rest = turned.map { (i, a) -> i to a.keys.withIndex().minBy { kotlin.math.abs(it.value) }.index }
+		val byIndex = grid.cellsByLinearIndex
+		return KeyformGrid(grid.axes, grid.cells.map { cell ->
+			val at = cell.coordinate.copyOf(); for ((i, k) in rest) at[i] = k
+			KeyformCell(cell.coordinate, (byIndex[grid.linearIndexOf(at)] ?: cell).form)
+		})
 	}
 
 	/**
