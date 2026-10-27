@@ -1,3 +1,24 @@
+## v3.7.0 · 2026-10-27
+
+### New
+
+- **Rig modules by area**: the generated rig is organised into areas (eyes, brows, mouth, head, hair, body, outfit, expressions, motions), each with a choice of base and modules that add up; new projects use the modern recipe with every applicable module on, with presets and a cost budget.
+- **Eyes and brows fitted to the art**: lids come from the eye white's outline and the closed-eye line and close down the face when the head tilts or turns; brows turn along an arc and move the upper lids, which carry the mood when bangs hide the brows.
+- **A mouth that opens in stages**: the mouth opens by its lip edges in stages, with vowels, face capture, the jaw and pressed / parted lips; mouths drawn in layers (lips, lip lines, teeth, inside) are supported, teeth and tongue move whole with their lips, and the mouth can open past its drawing into a shout.
+- **Head turns in depth**: the head turns as a cylinder with features, front hair, back hair and ears at their own depths; far side locks go behind the face at the end of a turn.
+- **Hair, outfit and body in chains**: hair bends in segments like a pendulum chain; skirts, ribbons, pendants, animal ears, tails and wings swing in chains; the chest bounces, arms swing and the neck shares the head's tilt.
+- **Expressions and natural motion**: Cheek and Gloom moods, richer standard expressions (shy, sleepy and gloomy added), natural blinks and glances, and a VTube Studio mapping tuned for module rigs.
+- **Feature points**: `Shift+Y` shows the eyes', brows' and mouth's handles on the canvas; drag to refit, every pose following, Alt-click to return to the art.
+
+### Improved
+
+- Blush, shading and the bangs' shadow are clipped to the face, so a turn never carries them off it.
+- Workspace tabs drag smoothly, all the way to either end.
+
+### Compatibility
+
+- Older projects generate with the legacy recipe, byte for byte as before, and are offered an upgrade to the module rig.
+
 ## v3.6.7 · 2026-10-24
 
 ### New
