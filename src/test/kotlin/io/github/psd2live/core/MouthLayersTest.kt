@@ -1,13 +1,23 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.core.fit.FittedMouth
 import io.github.psd2live.core.fit.MouthFit
+import io.github.psd2live.core.fit.MouthFitting
 import io.github.psd2live.core.fit.MouthOptions
 import io.github.psd2live.core.fit.MouthRig
 import io.github.psd2live.core.fit.MouthRig.Follow
+import io.github.psd2live.project.WorkspaceSourceLayer
+import org.umamo.format.art.ChannelMask
+import org.umamo.format.art.LayerBlend
+import org.umamo.format.art.LayerBounds
+import org.umamo.format.art.LayerId
+import org.umamo.format.art.LayerRaster
+import org.umamo.format.art.SourceLayerKind
 import kotlin.math.abs
 import kotlin.math.sqrt
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /** A mouth drawn in layers: each layer follows the lips its own way, and the names that say which layer is which. */
@@ -131,5 +141,30 @@ class MouthLayersTest {
 			assertEquals(role, PartRoles.fromName(name, "", SemanticTag.MOUTH), name)
 		}
 		assertEquals(null, PartRoles.fromName("口腔", "", SemanticTag.MOUTH))
+	}
+
+	private fun drawn(id: String, x0: Int, y0: Int, x1: Int, y1: Int, role: PartRole? = null, clipped: Boolean = false): ClassifiedLayer {
+		val width = 64; val height = 64
+		val rgba = ByteArray(width * height * 4)
+		for (y in y0 until y1) for (x in x0 until x1) { val o = (y * width + x) * 4; rgba[o] = 90; rgba[o + 3] = -1 }
+		val source = WorkspaceSourceLayer(LayerId(id), id, "", SourceLayerKind.Raster, true, 0, LayerBounds(0, 0, width, height), 1f,
+			clipped, LayerBlend.Normal, ChannelMask.ALL, LayerRaster(width, height, rgba), null, null, false)
+		val bounds = Bounds(x0.toFloat(), y0.toFloat(), x1.toFloat(), y1.toFloat())
+		return ClassifiedLayer(source, LayerSemantic(SemanticTag.MOUTH, normalizedName = id, confidence = 1f, role = role), bounds,
+			bounds.centerX, bounds.centerY, (x1 - x0) * (y1 - y0))
+	}
+
+	@Test fun aBaseClippedOntoTheOpeningIsNotItsShapeAndHardlyMoves() {
+		val opening = drawn("opening", 10, 20, 54, 40)
+		val upper = drawn("upper line", 10, 19, 54, 21, PartRole.UPPER_LINE); val lower = drawn("lower line", 10, 39, 54, 41, PartRole.LOWER_LINE)
+		// Drawn larger than any opening, clipped onto it: the largest mouth layer, but not the mouth's shape.
+		val base = drawn("base", 2, 8, 62, 60, clipped = true)
+		val layers = listOf(opening, upper, lower, base)
+		val result = MouthFitting.fit(layers, 1f to 0f) { x, y -> x to y }
+		val fit = assertNotNull(result.fit, result.reason)
+		assertTrue(abs(fit.width - 44f) < 3f, "the opening's width is read, not the base's: ${fit.width}")
+		val mouth = FittedMouth(result, MouthRig(fit, MouthOptions()), layers = layers)
+		assertEquals(Follow.DEEP, mouth.follow(base))
+		assertEquals(Follow.OPENING, mouth.follow(opening))
 	}
 }

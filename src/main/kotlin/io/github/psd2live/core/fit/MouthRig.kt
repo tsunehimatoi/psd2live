@@ -626,7 +626,8 @@ class FittedMouth(val result: MouthFitting.Result, val rig: MouthRig?, val chin:
 				io.github.psd2live.core.PartRole.UPPER_LIP -> MouthRig.Follow.UPPER_LIP
 				io.github.psd2live.core.PartRole.LOWER_LIP -> MouthRig.Follow.LOWER_LIP
 				io.github.psd2live.core.PartRole.HIGHLIGHT, io.github.psd2live.core.PartRole.SHADOW -> lying(layer)
-				else -> if (!layered) whole else if (lipped) MouthRig.Follow.INSIDE else MouthRig.Follow.OPENING
+				// Clipped onto the opening, the inside's base is drawn larger than any opening and hardly moves; the opening shows it.
+				else -> if (layer.source.clipped && layered) MouthRig.Follow.DEEP else if (!layered) whole else if (lipped) MouthRig.Follow.INSIDE else MouthRig.Follow.OPENING
 			}
 		}
 	}

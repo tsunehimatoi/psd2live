@@ -1503,12 +1503,13 @@ object RigBuilder {
 		// The mouth's inside clips what is in the mouth; a layered mouth's lips and lines lie over it and clip nothing.
 		val mouthMasks = maskSources.filter { drawable ->
             drawable.id !in lipOwnerById &&
-			classifiedByDrawable.getValue(drawable.id).semantic.let { it.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && it.role == null }
+			classifiedByDrawable.getValue(drawable.id).let { layer -> layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) &&
+				layer.semantic.role == null && !layer.source.clipped }
 		}
 		val fittedMouth = context.fittedMouth(config)
-		// A highlight or shadow lying inside the opening is in the mouth too.
+		// A highlight or shadow lying inside the opening is in the mouth too, and so is what is clipped onto it: the inside's base.
 		fun inMouth(layer: ClassifiedLayer) = layer.semantic.tag in CharacterAnalyzer.MOUTH_COMPONENT_TAGS ||
-			fittedMouth != null && layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && layer.semantic.role != null && fittedMouth.covers(layer) &&
+			fittedMouth != null && layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && (layer.semantic.role != null || layer.source.clipped) && fittedMouth.covers(layer) &&
 			fittedMouth.follow(layer).let { it == io.github.psd2live.core.fit.MouthRig.Follow.DEEP || it == io.github.psd2live.core.fit.MouthRig.Follow.INSIDE ||
 				it == io.github.psd2live.core.fit.MouthRig.Follow.OPENING }
 		val skinClip = io.github.psd2live.core.recipe.RigModules.let { it.builds(it.FACE_SKIN_CLIP, config, io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis)) }
@@ -2316,8 +2317,10 @@ object RigBuilder {
 			meshCache,
 			MeshResolution.unitScale(config, context.analysis.source),
 		)
+		// A mouth drawn in layers has its own lines and no generated outline: each of its layers keeps the mesh traced
+		// round its art, so the opening's mesh covers all of it and nothing behind shows past its edge.
 		val outlineMouth = config.mouthOutlineEnabled && !config.meshOnly &&
-			layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)
+			layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && context.fittedMouth(config)?.layered != true
 		val meshData = if (outlineMouth) {
 			mouthContourMesh(originalMeshData, layer, parentFrame, headSpace)
 		} else originalMeshData
@@ -4360,12 +4363,15 @@ object RigBuilder {
 
 	/** Places explicitly named mouth internals directly above their nearest mouth, independent of PSD order. */
 	private fun orderMouthLayers(layers: List<ClassifiedLayer>): List<ClassifiedLayer> {
-		// The teeth and tongue go just behind the mouth's inside they belong to, not a layered mouth's lips or lines.
-		val mouths = layers.filter { it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && it.semantic.role == null }
+		// The teeth and tongue go just behind the mouth's inside they belong to, not a layered mouth's lips or lines; a base
+		// clipped onto the inside goes behind them.
+		fun clippedBase(layer: ClassifiedLayer) = layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) &&
+			layer.semantic.role == null && layer.source.clipped
+		val mouths = layers.filter { it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && it.semantic.role == null && !clippedBase(it) }
 		if (mouths.isEmpty()) return layers
 		val assigned = linkedMapOf<String, MutableList<ClassifiedLayer>>()
 		val assignedInternalIds = mutableSetOf<String>()
-		for (internal in layers.filter { it.semantic.tag in CharacterAnalyzer.MOUTH_COMPONENT_TAGS }) {
+		for (internal in layers.filter { it.semantic.tag in CharacterAnalyzer.MOUTH_COMPONENT_TAGS || clippedBase(it) }) {
 			val exact = mouths.filter { mouth ->
 				mouth.semantic.side == internal.semantic.side && mouth.semantic.variant == internal.semantic.variant
 			}
@@ -4397,6 +4403,7 @@ object RigBuilder {
 	private fun mouthInternalPriority(tag: SemanticTag): Int = when (tag) {
 		SemanticTag.TOOTH_T, SemanticTag.TOOTH_B -> 0
 		SemanticTag.TONGUE -> 1
+		SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN -> 3
 		else -> 2
 	}
 

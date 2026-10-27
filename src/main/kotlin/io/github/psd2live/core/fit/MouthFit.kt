@@ -92,7 +92,8 @@ object MouthFitting {
 		// Generated lip ribbons outline the mouth; they are not its drawing. A layered mouth's lip lines bound its opening
 		// as a whole mouth's lines do, but its lips reach out over the skin and are left out.
 		val lines = setOf(io.github.psd2live.core.PartRole.UPPER_LINE, io.github.psd2live.core.PartRole.LOWER_LINE)
-		val mouths = layers.filter { it.opaquePixels > 0 && (it.semantic.role == null || it.semantic.role in lines) &&
+		// A layer clipped onto the opening (the inside's base, drawn larger than any opening) is not its shape.
+		val mouths = layers.filter { it.opaquePixels > 0 && !it.source.clipped && (it.semantic.role == null || it.semantic.role in lines) &&
 			it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && !io.github.psd2live.core.MouthLipLayer.isLipId(it.source.id.raw) }
 		val main = mouths.filter { it.semantic.tag == SemanticTag.MOUTH && it.semantic.role == null }.maxByOrNull { it.opaquePixels }
 			?: mouths.filter { it.semantic.role == null }.maxByOrNull { it.opaquePixels } ?: return Result(null, "no mouth", emptyList())
