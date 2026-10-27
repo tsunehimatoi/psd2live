@@ -190,8 +190,8 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		// Each line lies inside its edge: shut, the upper one rises and the lower one drops half a line onto the other.
 		val toward = (if (upper) -1f else 1f) * line * 0.5f * closing
 		// Pressed, the lips roll in: each pushes on past the other at the middle, the skin further out following less, so less of
-		// the lips' colour shows.
-		val roll = if (!meet) 0f else (if (upper) 1f else -1f) * pose.press * PRESS_ROLL * EyeRig.hump(at).coerceAtLeast(0f)
+		// the lips' colour shows; their lines stay met in one.
+		val roll = if (!falloff) 0f else (if (upper) 1f else -1f) * pose.press * PRESS_ROLL * EyeRig.hump(at).coerceAtLeast(0f)
 		val un = 0.5f + (at + dx - 0.5f) * pose.width + pose.shift
 		val du = un - u
 		val dv = fit.baseline(un) + edge + dy + toward + roll - v

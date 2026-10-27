@@ -98,8 +98,11 @@ object MouthFitting {
 			?: mouths.filter { it.semantic.role == null }.maxByOrNull { it.opaquePixels } ?: return Result(null, "no mouth", emptyList())
 		val own = mouths.filter { it === main || it.semantic.variant == main.semantic.variant && it.semantic.side == main.semantic.side &&
 			it.bounds.left < main.bounds.right && main.bounds.left < it.bounds.right && it.bounds.top < main.bounds.bottom && main.bounds.top < it.bounds.bottom }
+		// Lip lines, where drawn, are the lips' edges: the inside behind them is often drawn past them, to be clipped.
+		val edges = own.filter { it.semantic.role in lines }.takeIf { drawn -> drawn.any { it.semantic.role == io.github.psd2live.core.PartRole.UPPER_LINE } &&
+			drawn.any { it.semantic.role == io.github.psd2live.core.PartRole.LOWER_LINE } } ?: own
 		val points = ArrayList<Pair<Float, Float>>()
-		for (layer in own) {
+		for (layer in edges) {
 			val raster = layer.source.raster; val bounds = layer.source.bounds
 			val sx = bounds.width / raster.width.coerceAtLeast(1).toFloat(); val sy = bounds.height / raster.height.coerceAtLeast(1).toFloat()
 			for (y in 0 until raster.height) for (x in 0 until raster.width) {
