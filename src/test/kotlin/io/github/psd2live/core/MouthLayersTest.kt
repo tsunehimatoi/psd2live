@@ -90,6 +90,20 @@ class MouthLayersTest {
 		assertTrue(l < 0f && abs(l + r) < 1e-5f, "a widening smile spreads the teeth evenly: $l, $r")
 	}
 
+	@Test fun aSmileShowsTheUpperTeethAtMostDownToTheMiddleOfItsOpening() {
+		val rig = rig()
+		// A row reaching 0.25 below the drawn upper edge at the middle, more than half of most smiles' opening.
+		val depth = 0.25f
+		for (open in listOf(0.1f, 0.3f, 0.5f, 0.8f)) {
+			val smile = rig.pose(1f, open)
+			val (top, bottom) = rig.edges(smile, 0.5f)
+			val teethBottom = MouthFit.sample(rig.fit.upper, 0.5f) + depth + rig.teeth(0.5f, smile, upper = true, depth = depth).second
+			assertTrue(teethBottom <= top + 0.5f * (bottom - top) + 1e-4f, "at $open the teeth reach $teethBottom in an opening $top..$bottom")
+		}
+		// The drawn pose keeps its teeth.
+		assertEquals(0f, rig.teeth(0.5f, rig.pose(0f, 1f), upper = true, depth = depth).second, 1e-5f)
+	}
+
 	@Test fun theOpeningsEdgeStaysUnderItsLineInEveryPose() {
 		val rig = rig()
 		for (pose in listOf(shut, rig.pose(1f, 0.5f), rig.pose(-1f, 1f), rig.pose(0f, 0.25f), rig.pose(1f, 1f)))

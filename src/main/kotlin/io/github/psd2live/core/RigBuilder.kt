@@ -3568,7 +3568,7 @@ object RigBuilder {
 	}
 
 	/**
-	 * [grids] with the mouth's inside shading with the opening (`mouth.interior-depth`): the tongue, the lower teeth and
+	 * [grids] with the mouth's inside shading with the opening (`mouth.interior-depth`): the tongue and
 	 * a separate dark of the mouth darker while the mouth is barely open, brightening to as drawn at full opening.
 	 */
 	private fun withMouthShading(grids: ChannelGrids, context: RigContext, config: PipelineConfig, layer: ClassifiedLayer): ChannelGrids {
@@ -3576,7 +3576,8 @@ object RigBuilder {
 		val rig = mouth.rig ?: return grids
 		if (!rig.options.depth || !mouth.covers(layer) || FormChannel.MULTIPLY_COLOR in grids.gridsByChannel) return grids
 		val follow = mouth.follow(layer)
-		val inside = follow == io.github.psd2live.core.fit.MouthRig.Follow.TONGUE || follow == io.github.psd2live.core.fit.MouthRig.Follow.LOWER_TEETH ||
+		// The teeth stay white; the tongue and the dark of the mouth shade.
+		val inside = follow == io.github.psd2live.core.fit.MouthRig.Follow.TONGUE ||
 			follow == io.github.psd2live.core.fit.MouthRig.Follow.DEEP || follow == io.github.psd2live.core.fit.MouthRig.Follow.INSIDE ||
 			follow == io.github.psd2live.core.fit.MouthRig.Follow.OPENING ||
 			layer.semantic.tag == SemanticTag.MOUTH_OPEN && layer.semantic.role == null && mouth.result.layers.any { it.semantic.tag == SemanticTag.MOUTH }

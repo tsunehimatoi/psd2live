@@ -286,9 +286,10 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 	 * it. Each follows its lip only part
 	 * way - the upper row [UPPER_TEETH_SHARE] of the upper lip's middle, the lower [LOWER_TEETH_SHARE] of the lower's - and a
 	 * rounding mouth draws it in hardly at all, so the opening hides it behind the lips of a small, round or pouting
-	 * mouth. A smile widens it evenly by [MouthOptions.teethWiden], none by default.
+	 * mouth. In a smile the upper row fills at most the upper half of the opening ([SMILE_TEETH_SHOW]), rising behind the
+	 * upper lip as far as that needs. A smile widens it evenly by [MouthOptions.teethWiden], none by default.
 	 */
-	private fun teeth(u: Float, pose: Pose, upper: Boolean): Pair<Float, Float> {
+	internal fun teeth(u: Float, pose: Pose, upper: Boolean, depth: Float = 0f): Pair<Float, Float> {
 		val smile = (pose.corner / 0.06f).coerceIn(0f, 1.5f)
 		val un = 0.5f + (u - 0.5f) * (1f + options.teethWiden * smile) + pose.shift
 		// The lower row is the jaw's: it goes with the lower lip all the way.
@@ -302,6 +303,14 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		// The upper row never sits lower under its lip than drawn: where the lip rises off it - a smile flattening the upper
 		// lip - it rises with it, so no gap opens above the teeth.
 		if (upper) drop = min(drop, middleDrop(pose, true))
+		// A smile shows the upper teeth at most down to the middle of its opening - often not at all, the lip still over
+		// them - not an opening full of teeth: given how far the row reaches below the lip ([depth], from its mesh), it
+		// rises behind the upper lip as far as that needs.
+		if (upper && depth > 0f && smile > 0f) {
+			val (top, bottom) = edges(pose, 0.5f)
+			val cap = top - drawnUpper(0.5f) + SMILE_TEETH_SHOW * (bottom - top).coerceAtLeast(0f) - depth
+			if (cap < drop) drop += (cap - drop) * smile.coerceAtMost(1f)
+		}
 		return (un - u) to drop + fit.baseline(un) - fit.baseline(u)
 	}
 
@@ -357,7 +366,19 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 	}
 
 	private fun form(positions: FloatArray, frame: Bounds, pose: Pose, follow: Follow = Follow.WHOLE): MeshDeltaForm =
-		form(positions, frame) { u, v -> moveAs(follow, u, v, pose) }
+		if (follow == Follow.UPPER_TEETH) teethDepth(positions).let { depth -> form(positions, frame) { u, _ -> teeth(u, pose, upper = true, depth = depth) } }
+		else form(positions, frame) { u, v -> moveAs(follow, u, v, pose) }
+
+	/** How far below the drawn upper edge a row of upper teeth reaches at the mouth's middle, from its mesh [positions]. */
+	private fun teethDepth(positions: FloatArray): Float {
+		var depth = 0f
+		for (i in positions.indices step 2) {
+			val (u, v) = fit.toMouth(positions[i], positions[i + 1])
+			if (abs(u - 0.5f) > 0.2f) continue
+			depth = max(depth, v - fit.baseline(u) - drawnUpper(u.coerceIn(0f, 1f)))
+		}
+		return depth
+	}
 
 	private fun form(positions: FloatArray, frame: Bounds, change: (Float, Float) -> Pair<Float, Float>): MeshDeltaForm {
 		val out = FloatArray(positions.size)
@@ -553,6 +574,8 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		private val WIDTHS = floatArrayOf(1.04f, 1.04f, 1.08f, 1.06f, 1f)
 		/** How far from a corner, of the width, the two lip lines' ends start going together. */
 		private const val CORNER_ZONE = 0.08f
+		/** How much of a smile's opening the upper teeth fill at most, from its top. */
+		private const val SMILE_TEETH_SHOW = 0.5f
 		private const val UPPER_TEETH_SHARE = 0.65f
 		private const val LOWER_TEETH_SHARE = 0.88f
 		private const val TONGUE_SHARE = 0.3f
