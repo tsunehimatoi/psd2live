@@ -122,6 +122,8 @@ object RigModules {
 		RecipeKnob("form", P, 50f..150f, 100f),
 		RecipeKnob("inside", P, 0f..100f, 50f),
 		RecipeKnob("reach", P, 100f..200f, 100f),
+		RecipeKnob("teeth", P, 0f..40f, 0f),
+		RecipeKnob("narrow", P, 0f..40f, 0f),
 	))
 	private const val FITTED_MOUTH = "mouth/fitted"
 	private fun mouthOpen(subject: RecipeSubject) = subject.has(SemanticTag.MOUTH) || subject.has(SemanticTag.MOUTH_OPEN)

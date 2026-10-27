@@ -34,6 +34,10 @@ data class MouthOptions(
 	val inside: Float = 0.5f,
 	/** How far the opening goes, of the drawing: past 1 the mouth opens on beyond it, a shout. */
 	val reach: Float = 1f,
+	/** How much wider a full smile spreads the teeth, for rigs that widen them; none by default. */
+	val teethWiden: Float = 0f,
+	/** How much a mouth half open narrows before widening to the drawing, for mouths that open as a small o first. */
+	val narrow: Float = 0f,
 )
 
 /**
@@ -75,8 +79,9 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 	 * - [UPPER_TEETH], [LOWER_TEETH]: a row of teeth moves whole with its lip's middle, lagging where the lip closes over
 	 *   it ([teeth]); drawn running on under the lips, the opening clips it, so it meets the lines without a gap and a
 	 *   small, round or pouting mouth hides it.
-	 * - [TONGUE]: the tongue moves whole with the jaw, about half the lower lip's drop.
-	 * - [DEEP]: the dark at the back of the mouth hardly moves; the opening uncovers it.
+	 * - [TONGUE]: the tongue moves whole with the jaw, a little of the lower lip's drop.
+	 * - [DEEP]: the dark at the back of the mouth, and a base drawn larger than any opening, stay still; the opening
+	 *   uncovers them.
 	 */
 	enum class Follow { WHOLE, WHOLE_TIGHT, OPENING, INSIDE, UPPER_LINE, LOWER_LINE, UPPER_LIP, LOWER_LIP, UPPER_TEETH, LOWER_TEETH, TONGUE, DEEP }
 
@@ -172,13 +177,14 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		Follow.OPENING -> between(u, v, pose)
 		// Toward the corners, where the lips are thin, the inside closes whole.
 		Follow.INSIDE -> between(u, v, pose).let { (du, dv) -> du to dv * (1f - options.inside.coerceIn(0f, 1f) * EyeRig.hump(u.coerceIn(0f, 1f)).coerceAtLeast(0f)) }
-		Follow.UPPER_LINE, Follow.LOWER_LINE -> rides(nearerUpper(u, v), u, v, pose, share = 1f, falloff = false, meet = true)
+		Follow.UPPER_LINE -> rides(true, u, v, pose, share = 1f, falloff = false, meet = true)
+		Follow.LOWER_LINE -> rides(false, u, v, pose, share = 1f, falloff = false, meet = true)
 		Follow.UPPER_LIP -> rides(true, u, v, pose, share = 1f, falloff = true, meet = true)
 		Follow.LOWER_LIP -> rides(false, u, v, pose, share = 1f, falloff = true, meet = true)
 		Follow.UPPER_TEETH -> teeth(u, pose, upper = true)
 		Follow.LOWER_TEETH -> teeth(u, pose, upper = false)
 		Follow.TONGUE -> pose.shift to middleDrop(pose, upper = false) * TONGUE_SHARE
-		Follow.DEEP -> pose.shift to (middleDrop(pose, upper = true) + middleDrop(pose, upper = false)) * 0.5f * DEEP_SHARE
+		Follow.DEEP -> pose.shift to 0f
 	}
 
 	/**
@@ -212,17 +218,7 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 			val drawn = if (upper) ::drawnUpper else ::drawnLower
 			val posed = { a: Float -> edges(pose, a).let { if (upper) it.first else it.second } }
 			val turn = atan2(fit.cornerV * pose.width + slope(posed, at), pose.width) - atan2(fit.cornerV + slope(drawn, at), 1f)
-			var gx = dx; var gy = dy + fit.cornerV * dx
-			// Past its end at a corner a line runs on over the other line; turned upright there, that run would stand off
-			// beside the other as a second stroke, so it draws back as the corner turns.
-			if (at <= 0f || at >= 1f) {
-				val tx = 1f; val ty = fit.cornerV + slope(drawn, at); val tl = sqrt(tx * tx + ty * ty)
-				val along = (gx * tx + gy * ty) / tl
-				if (if (at <= 0f) along < 0f else along > 0f) {
-					val cut = along * (1f - cos(turn).coerceAtLeast(0f))
-					gx -= cut * tx / tl; gy -= cut * ty / tl
-				}
-			}
+			val gx = dx; val gy = dy + fit.cornerV * dx
 			// Only the stroke's own thickness turns; what lies further off - the opening's inside - keeps its direction.
 			val reach = sqrt(gx * gx + gy * gy); val keep = if (line > 0f) line else band
 			val near = if (reach <= keep) 1f else keep / reach
@@ -240,16 +236,6 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 			1f - SKIN_FAR_LOSS * t * t * (3f - 2f * t)
 		}
 		return du * w to dv * w * share
-	}
-
-	/**
-	 * Whether a point of a lip line lies nearer the upper drawn edge than the lower. The two lines make one outline: at a
-	 * corner, where one line's end runs on over the other's, that end is the other line there and goes with its edge.
-	 */
-	private fun nearerUpper(u: Float, v: Float): Boolean {
-		val r = v - fit.baseline(u)
-		val (_, ux, uy) = nearest(::drawnUpper, u, r); val (_, lx, ly) = nearest(::drawnLower, u, r)
-		return ux * ux + uy * uy <= lx * lx + ly * ly
 	}
 
 	/**
@@ -277,28 +263,31 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 	}
 
 	/**
-	 * A row of teeth, as hand-made rigs move it: with the middle of its lip - the upper row with the upper lip, the lower
-	 * with the lower - and bending [TEETH_BEND] of the way the lip bends from its middle, so a smile's teeth curve with it
-	 * part way, each column at its own height, never squashed. Drawn running on under the lips, the opening clips it, so it
-	 * meets the lines without a gap however the lips curve. It keeps its width when the mouth pouts and widens evenly with
-	 * a wide or smiling mouth. Going behind its lip it lags - the upper row follows [UPPER_TEETH_SHARE] of its lip's coming
-	 * down, the lower row [LOWER_TEETH_SHARE] of its lip's rise, and a rounding mouth draws either row in hardly at all - so
-	 * the opening hides the teeth of a small, round or pouting mouth rather than squeezing them into it.
+	 * A row of teeth, as hand-made rigs move it: whole - neither bent along its lip nor squashed, its width as drawn, so
+	 * the opening shows as much of it as the drawing gives it, a full row running past the corners or a short one between
+	 * them. While the mouth opens its first half the upper row stays where it sits shut and the opening, growing, uncovers
+	 * it - the lips part off the teeth - and over the second half it goes on to its drawn place; the lower row, the jaw's,
+	 * goes with the lower lip all the way. The upper row never sits lower under its lip than drawn, so no gap opens above
+	 * it. Each follows its lip only part
+	 * way - the upper row [UPPER_TEETH_SHARE] of the upper lip's middle, the lower [LOWER_TEETH_SHARE] of the lower's - and a
+	 * rounding mouth draws it in hardly at all, so the opening hides it behind the lips of a small, round or pouting
+	 * mouth. A smile widens it evenly by [MouthOptions.teethWiden], none by default.
 	 */
 	private fun teeth(u: Float, pose: Pose, upper: Boolean): Pair<Float, Float> {
 		val smile = (pose.corner / 0.06f).coerceIn(0f, 1.5f)
-		val widen = (pose.width - 1f).coerceAtLeast(0f) + TEETH_SMILE_WIDEN * smile
-		val un = 0.5f + (u - 0.5f) * (1f + widen) + pose.shift
-		val middle = middleDrop(pose, upper)
-		var drop = middle
-		// Where its lip closes over it - the upper lip coming down, the lower one up - a row lags, the lip covering it.
-		val inward = if (upper) drop > 0f else drop < 0f
-		if (inward) drop *= (if (upper) UPPER_TEETH_SHARE else LOWER_TEETH_SHARE) * (1f - pose.round.coerceIn(0f, 1f))
-		// The lip's bend at this column: how much further it has moved here than at its middle.
-		val at = un.coerceIn(0f, 1f)
-		val drawn = if (upper) drawnUpper(at) else drawnLower(at)
-		val bend = edges(pose, at).let { if (upper) it.first else it.second } - drawn - middle
-		return (un - u) to drop + fit.baseline(un) - fit.baseline(u) + TEETH_BEND * bend
+		val un = 0.5f + (u - 0.5f) * (1f + options.teethWiden * smile) + pose.shift
+		// The lower row is the jaw's: it goes with the lower lip all the way.
+		val on = if (!upper) 1f else {
+			val half = staged(0.5f).second
+			((pose.lower - half) / (1f - half)).coerceIn(0f, 1f).let { it * it * (3f - 2f * it) }
+		}
+		val shut = middleDrop(pose.copy(upper = 0f, lower = 0f), upper)
+		var drop = (shut + (middleDrop(pose, upper) - shut) * on) * (if (upper) UPPER_TEETH_SHARE else LOWER_TEETH_SHARE) *
+			(1f - pose.round.coerceIn(0f, 1f))
+		// The upper row never sits lower under its lip than drawn: where the lip rises off it - a smile flattening the upper
+		// lip - it rises with it, so no gap opens above the teeth.
+		if (upper) drop = min(drop, middleDrop(pose, true))
+		return (un - u) to drop + fit.baseline(un) - fit.baseline(u)
 	}
 
 	/** The slope of [edge] at [a], one-sided at the corners. */
@@ -325,7 +314,9 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 	/** The mouth at [form] (−1 pout … 1 smile) and [open] (0 … 1). */
 	fun pose(form: Float, open: Float): Pose {
 		val (up, lo) = staged(open)
-		val width = interpolate(OPEN_KEYS, WIDTHS, open) * (1f - 0.06f * (open - 1f).coerceAtLeast(0f))
+		// Some mouths open as a small o first, narrowest a third of the way, before widening to the drawing.
+		val o = sin(Math.PI.toFloat() * (open / 0.7f).coerceIn(0f, 1f))
+		val width = interpolate(OPEN_KEYS, WIDTHS, open) * (1f - 0.06f * (open - 1f).coerceAtLeast(0f)) * (1f - options.narrow * o)
 		val f = (form * options.formStrength).coerceIn(-1.5f, 1.5f)
 		val opened = (open / 0.25f).coerceIn(0f, 1f)
 		return if (f >= 0f) Pose(up, lo, width * (1f + 0.08f * f), corner = 0.06f * f, flatTop = f * opened)
@@ -545,14 +536,9 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		val FORM_KEYS = floatArrayOf(-1f, -0.5f, 0f, 0.5f, 1f)
 		private val UPPERS = floatArrayOf(0f, 0.03f, 0.1f, 0.38f, 1f)
 		private val WIDTHS = floatArrayOf(1.04f, 1.04f, 1.08f, 1.06f, 1f)
-		private const val UPPER_TEETH_SHARE = 0.85f
-		private const val LOWER_TEETH_SHARE = 0.7f
-		/** How much wider a full smile's teeth spread, toward its raised corners. */
-		private const val TEETH_SMILE_WIDEN = 0.25f
-		/** How much of its lip's bend a row of teeth follows, as hand-made rigs bend them part way or not at all. */
-		private const val TEETH_BEND = 0.6f
-		private const val TONGUE_SHARE = 0.55f
-		private const val DEEP_SHARE = 0.2f
+		private const val UPPER_TEETH_SHARE = 0.65f
+		private const val LOWER_TEETH_SHARE = 0.88f
+		private const val TONGUE_SHARE = 0.3f
 		/** How far pressed lips roll in past each other at the middle, of the mouth's width. */
 		private const val PRESS_ROLL = 0.05f
 		/** A lip's skin margin rides whole within [SKIN_NEAR] of its edge and loses [SKIN_FAR_LOSS] of the ride over [SKIN_REACH] further out. */

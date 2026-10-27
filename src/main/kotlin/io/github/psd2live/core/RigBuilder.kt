@@ -415,7 +415,8 @@ object RigBuilder {
 				jaw = on(m.MOUTH_JAW), jawShare = value(m.MOUTH_JAW, "share"),
 				depth = on(m.MOUTH_DEPTH), depthAmount = value(m.MOUTH_DEPTH, "depth"),
 				spring = on(m.MOUTH_SPRING), tongue = on(m.MOUTH_TONGUE), inside = config.recipe.baseValue("mouth", "inside") / 100f,
-				reach = config.recipe.baseValue("mouth", "reach") / 100f)
+				reach = config.recipe.baseValue("mouth", "reach") / 100f, teethWiden = config.recipe.baseValue("mouth", "teeth") / 100f,
+				narrow = config.recipe.baseValue("mouth", "narrow") / 100f)
 			return fittedMouths.getOrPut(listOf(options, config.parentOverrides, deformersEnabled, config.recipe.base("eye"), config.recipe.moves("mouth"))) {
 				val mouth = analysis.layers.firstOrNull { it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && it.semantic.role == null && it.opaquePixels > 0 }
 				val space = mouth?.let { headSpaceFor(it, config) }
