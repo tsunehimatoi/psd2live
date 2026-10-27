@@ -177,8 +177,8 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		Follow.OPENING -> between(u, v, pose)
 		// Toward the corners, where the lips are thin, the inside closes whole.
 		Follow.INSIDE -> between(u, v, pose).let { (du, dv) -> du to dv * (1f - options.inside.coerceIn(0f, 1f) * EyeRig.hump(u.coerceIn(0f, 1f)).coerceAtLeast(0f)) }
-		Follow.UPPER_LINE -> rides(true, u, v, pose, share = 1f, falloff = false, meet = true)
-		Follow.LOWER_LINE -> rides(false, u, v, pose, share = 1f, falloff = false, meet = true)
+		Follow.UPPER_LINE -> line(true, u, v, pose)
+		Follow.LOWER_LINE -> line(false, u, v, pose)
 		Follow.UPPER_LIP -> rides(true, u, v, pose, share = 1f, falloff = true, meet = true)
 		Follow.LOWER_LIP -> rides(false, u, v, pose, share = 1f, falloff = true, meet = true)
 		Follow.UPPER_TEETH -> teeth(u, pose, upper = true)
@@ -239,6 +239,21 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 	}
 
 	/**
+	 * A point of a lip line: it rides its own edge, and toward a corner more and more as the other line does too - half
+	 * and half at the corner - so where the two lines' ends lie over each other they stay over each other, the corner one
+	 * overlap of both ends rather than two strokes stepped apart as a round mouth turns its corners upright.
+	 */
+	private fun line(upper: Boolean, u: Float, v: Float, pose: Pose): Pair<Float, Float> {
+		val own = rides(upper, u, v, pose, share = 1f, falloff = false, meet = true)
+		val at = nearest(if (upper) ::drawnUpper else ::drawnLower, u, v - fit.baseline(u)).first
+		val s = (1f - min(at, 1f - at) / CORNER_ZONE).coerceIn(0f, 1f)
+		if (s <= 0f) return own
+		val other = rides(!upper, u, v, pose, share = 1f, falloff = false, meet = true)
+		val w = 0.5f * s * s * (3f - 2f * s)
+		return (own.first + (other.first - own.first) * w) to (own.second + (other.second - own.second) * w)
+	}
+
+	/**
 	 * A point of the opening between the lips: it keeps its place between the two lines as they move, at the upper
 	 * line's motion along the upper edge and the lower line's along the lower one, so the opening's edge stays under its
 	 * line in every pose - at the corners too - and shut, closes into the lines' one line. Past an edge it rides that line.
@@ -252,9 +267,9 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		val lined = min(line, (drawnLower(uc) - drawnUpper(uc)).coerceAtLeast(0f) / 2f)
 		val (_, ux, uy) = nearest(::drawnUpper, u, r); val (_, lx, ly) = nearest(::drawnLower, u, r)
 		val toUpper = sqrt(ux * ux + uy * uy); val toLower = sqrt(lx * lx + ly * ly)
-		val upper = rides(true, u, v, pose, share = 1f, falloff = false, meet = true)
+		val upper = line(true, u, v, pose)
 		if (r <= drawnUpper(uc) || toUpper <= lined) return upper
-		val lower = rides(false, u, v, pose, share = 1f, falloff = false, meet = true)
+		val lower = line(false, u, v, pose)
 		if (r >= drawnLower(uc) || toLower <= lined) return lower
 		// Squared, so a point close by one line - a round mouth's side wall - goes with that line, not half with the other.
 		val a = (toUpper - lined).let { it * it }; val b = (toLower - lined).let { it * it }
@@ -536,6 +551,8 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		val FORM_KEYS = floatArrayOf(-1f, -0.5f, 0f, 0.5f, 1f)
 		private val UPPERS = floatArrayOf(0f, 0.03f, 0.1f, 0.38f, 1f)
 		private val WIDTHS = floatArrayOf(1.04f, 1.04f, 1.08f, 1.06f, 1f)
+		/** How far from a corner, of the width, the two lip lines' ends start going together. */
+		private const val CORNER_ZONE = 0.08f
 		private const val UPPER_TEETH_SHARE = 0.65f
 		private const val LOWER_TEETH_SHARE = 0.88f
 		private const val TONGUE_SHARE = 0.3f

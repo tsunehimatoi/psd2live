@@ -104,6 +104,14 @@ class MouthLayersTest {
 			}
 	}
 
+	@Test fun theLinesEndsAtACornerMoveTogetherInARoundMouth() {
+		val rig = rig()
+		// A point where the two ends overlap, just inside a corner: both lines carry it to the same place.
+		val round = rig.pose(-1f, 1f)
+		val upper = rig.moveAs(Follow.UPPER_LINE, 0.01f, -0.005f, round); val lower = rig.moveAs(Follow.LOWER_LINE, 0.01f, -0.005f, round)
+		assertTrue(abs(upper.first - lower.first) < 0.004f && abs(upper.second - lower.second) < 0.004f, "the ends part: $upper against $lower")
+	}
+
 	@Test fun linesDrawnAsOneAtTheCornersStayOneShut() {
 		val rig = rig()
 		val upper = rig.moveAs(Follow.UPPER_LINE, 0f, 0f, shut); val lower = rig.moveAs(Follow.LOWER_LINE, 0f, 0f, shut)
