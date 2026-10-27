@@ -393,6 +393,11 @@ object RigBuilder {
 		/** The head turning in depth under [config] (`face.depth-turn`), or null when the recipe leaves it out. */
 		fun headTurn(config: PipelineConfig): io.github.psd2live.core.fit.HeadTurn? = headTurnOf(analysis, faceRig, config)
 
+		/** The head's feature points read off the art ([io.github.psd2live.core.fit.FaceLandmarking]), in the rig's space. */
+		fun faceLandmarks(config: PipelineConfig): io.github.psd2live.core.fit.FaceLandmarks =
+			io.github.psd2live.core.fit.FaceLandmarking.read(analysis.layers, fittedEyes(config)?.fitting, fittedBrows(config).mapValues { it.value.fit },
+				fittedMouth(config)?.rig?.fit, faceRig.centerX) { x, y -> faceRig.coordinateSpace.toAligned(x, y) }
+
 		private val fittedMouths = java.util.concurrent.ConcurrentHashMap<List<Any?>, io.github.psd2live.core.fit.FittedMouth>()
 
 		/** The mouth of the `mouth/fitted` base under [config]; null when the recipe builds the mouth another way. */
