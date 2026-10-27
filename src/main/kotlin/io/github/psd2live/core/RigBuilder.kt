@@ -1509,7 +1509,8 @@ object RigBuilder {
 		// A highlight or shadow lying inside the opening is in the mouth too.
 		fun inMouth(layer: ClassifiedLayer) = layer.semantic.tag in CharacterAnalyzer.MOUTH_COMPONENT_TAGS ||
 			fittedMouth != null && layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && layer.semantic.role != null && fittedMouth.covers(layer) &&
-			fittedMouth.follow(layer).let { it == io.github.psd2live.core.fit.MouthRig.Follow.DEEP || it == io.github.psd2live.core.fit.MouthRig.Follow.INSIDE }
+			fittedMouth.follow(layer).let { it == io.github.psd2live.core.fit.MouthRig.Follow.DEEP || it == io.github.psd2live.core.fit.MouthRig.Follow.INSIDE ||
+				it == io.github.psd2live.core.fit.MouthRig.Follow.OPENING }
 		val skinClip = io.github.psd2live.core.recipe.RigModules.let { it.builds(it.FACE_SKIN_CLIP, config, io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis)) }
 		val faceMasks = if (!skinClip) emptyList() else maskSources.filter { classifiedByDrawable.getValue(it.id).semantic.tag == SemanticTag.FACE }
 		val neckClip = io.github.psd2live.core.recipe.RigModules.let { it.builds(it.FACE_NECK, config, io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis)) }
@@ -3513,8 +3514,8 @@ object RigBuilder {
 				io.github.psd2live.core.fit.MouthRig.Follow.LOWER_TEETH -> 0.1f
 				io.github.psd2live.core.fit.MouthRig.Follow.TONGUE -> 0.16f
 				io.github.psd2live.core.fit.MouthRig.Follow.DEEP -> 0.2f
-				// A layered mouth's inside, behind its lips.
-				io.github.psd2live.core.fit.MouthRig.Follow.INSIDE -> 0.12f
+				// A layered mouth's opening clips the rest and keeps to its lines: turned it would show past them.
+				io.github.psd2live.core.fit.MouthRig.Follow.INSIDE, io.github.psd2live.core.fit.MouthRig.Follow.OPENING -> 0f
 				// A separate inside behind the drawn mouth.
 				else -> if (tag == SemanticTag.MOUTH_OPEN && mouth.result.layers.any { it.semantic.tag == SemanticTag.MOUTH }) 0.12f else 0f
 			}
@@ -3573,6 +3574,7 @@ object RigBuilder {
 		val follow = mouth.follow(layer)
 		val inside = follow == io.github.psd2live.core.fit.MouthRig.Follow.TONGUE || follow == io.github.psd2live.core.fit.MouthRig.Follow.LOWER_TEETH ||
 			follow == io.github.psd2live.core.fit.MouthRig.Follow.DEEP || follow == io.github.psd2live.core.fit.MouthRig.Follow.INSIDE ||
+			follow == io.github.psd2live.core.fit.MouthRig.Follow.OPENING ||
 			layer.semantic.tag == SemanticTag.MOUTH_OPEN && layer.semantic.role == null && mouth.result.layers.any { it.semantic.tag == SemanticTag.MOUTH }
 		if (!inside) return grids
 		return ChannelGrids(grids.gridsByChannel + (FormChannel.MULTIPLY_COLOR to grid(listOf(axis(StandardParameters.MOUTH_OPEN, 0f, 0.25f, 1f))) { v ->

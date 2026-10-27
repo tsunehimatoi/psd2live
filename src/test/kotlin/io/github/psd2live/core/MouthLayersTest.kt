@@ -53,25 +53,48 @@ class MouthLayersTest {
 		assertEquals(0.02f, upper[1] - lower[1], 0.01f, "rest lines: upper ends ${upper[1]}, lower starts ${lower[1]}")
 	}
 
-	@Test fun teethHangFromTheirLipUnsquashedLeavingTheOpeningToHideThem() {
+	@Test fun teethBendPartWayWithTheirLipLeavingTheOpeningToHideThem() {
 		val rig = rig()
-		// A smile flattens and curves the upper lip: each column of the upper teeth keeps to it, at its own height.
+		// A smile curves the lips; the teeth curve part way with them, each column at its own height.
 		val smile = rig.pose(1f, 0.5f)
-		for (u in listOf(0.2f, 0.5f, 0.8f)) {
-			val top = rig.moveAs(Follow.UPPER_TEETH, u, -0.14f, smile).second; val bottom = rig.moveAs(Follow.UPPER_TEETH, u, -0.06f, smile).second
-			assertEquals(top, bottom, 1e-5f, "the upper teeth are squashed at $u")
-			val lip = rig.moveAs(Follow.UPPER_LINE, u, MouthFit.sample(rig.fit.upper, u), smile).second
-			assertTrue(top <= lip + 1e-5f, "a gap opens between the upper lip and its teeth at $u: teeth $top, lip $lip")
-		}
+		for (u in listOf(0.2f, 0.5f, 0.8f)) assertEquals(rig.moveAs(Follow.UPPER_TEETH, u, -0.14f, smile).second,
+			rig.moveAs(Follow.UPPER_TEETH, u, -0.06f, smile).second, 1e-5f, "the upper teeth are squashed at $u")
+		// The lip's own move at a column of the drawing, against the teeth's that have spread to it.
+		fun lip(u: Float) = rig.edges(smile, u).first - MouthFit.sample(rig.fit.upper, u)
+		fun teeth(u: Float) = rig.moveAs(Follow.UPPER_TEETH, u, -0.1f, smile).second
+		val spread = 0.25f + rig.moveAs(Follow.UPPER_TEETH, 0.25f, -0.1f, smile).first
+		val lipBend = lip(0.5f) - lip(spread); val teethBend = teeth(0.5f) - teeth(0.25f)
+		assertTrue(lipBend > 0f && teethBend > lipBend * 0.2f && teethBend < lipBend * 0.9f, "the teeth bend $teethBend against the lip's $lipBend")
 		val smileLeft = rig.moveAs(Follow.UPPER_TEETH, 0.2f, -0.1f, smile).first; val smileRight = rig.moveAs(Follow.UPPER_TEETH, 0.8f, -0.1f, smile).first
 		assertTrue(smileLeft < 0f && smileRight > 0f, "a smile's teeth spread toward its corners: $smileLeft, $smileRight")
-		val lip = rig.moveAs(Follow.LOWER_LINE, 0.5f, 0.24f, shut).second
-		val teeth = rig.moveAs(Follow.LOWER_TEETH, 0.5f, 0.2f, shut).second
-		assertTrue(teeth < 0f && abs(teeth) < abs(lip), "the lower teeth rise less than the lower lip, which covers them: $teeth against $lip")
+		assertEquals(-smileLeft, smileRight, 1e-5f, "the teeth widen evenly")
+		val lowerLip = rig.moveAs(Follow.LOWER_LINE, 0.5f, 0.24f, shut).second
+		val lowerTeeth = rig.moveAs(Follow.LOWER_TEETH, 0.5f, 0.2f, shut).second
+		assertTrue(lowerTeeth < 0f && abs(lowerTeeth) < abs(lowerLip), "the lower teeth rise less than the lower lip, which covers them: $lowerTeeth against $lowerLip")
 		// A pout keeps the teeth's width: the opening narrows over them instead.
 		val pout = rig.pose(-1f, 1f)
 		val left = rig.moveAs(Follow.UPPER_TEETH, 0.2f, -0.1f, pout).first; val right = rig.moveAs(Follow.UPPER_TEETH, 0.8f, -0.1f, pout).first
 		assertEquals(left, right, 1e-5f, "a pout squeezes the teeth: $left against $right")
+	}
+
+	@Test fun theOpeningsEdgeStaysUnderItsLineInEveryPose() {
+		val rig = rig()
+		for (pose in listOf(shut, rig.pose(1f, 0.5f), rig.pose(-1f, 1f), rig.pose(0f, 0.25f), rig.pose(1f, 1f)))
+			for (u in listOf(0.05f, 0.15f, 0.3f, 0.5f, 0.7f, 0.85f, 0.95f)) {
+				// Half a line inside each drawn edge: the line's middle, where the opening's edge is drawn.
+				val top = MouthFit.sample(rig.fit.upper, u) + 0.01f; val bottom = MouthFit.sample(rig.fit.lower, u) - 0.01f
+				for ((v, line) in listOf(top to Follow.UPPER_LINE, bottom to Follow.LOWER_LINE)) {
+					val opening = rig.moveAs(Follow.OPENING, u, v, pose); val lip = rig.moveAs(line, u, v, pose)
+					assertTrue(abs(opening.first - lip.first) < 0.004f && abs(opening.second - lip.second) < 0.004f,
+						"at $u in $pose the opening's edge moves $opening, its line $lip")
+				}
+			}
+	}
+
+	@Test fun linesDrawnAsOneAtTheCornersStayOneShut() {
+		val rig = rig()
+		val upper = rig.moveAs(Follow.UPPER_LINE, 0f, 0f, shut); val lower = rig.moveAs(Follow.LOWER_LINE, 0f, 0f, shut)
+		assertEquals(upper.second, lower.second, 1e-5f, "the corner's one stroke parts into two")
 	}
 
 	@Test fun aLipsSkinMarginRidesLessTheFurtherOutItLies() {

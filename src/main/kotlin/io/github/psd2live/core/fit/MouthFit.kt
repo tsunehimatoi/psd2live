@@ -102,12 +102,20 @@ object MouthFitting {
 		val edges = own.filter { it.semantic.role in lines }.takeIf { drawn -> drawn.any { it.semantic.role == io.github.psd2live.core.PartRole.UPPER_LINE } &&
 			drawn.any { it.semantic.role == io.github.psd2live.core.PartRole.LOWER_LINE } } ?: own
 		val points = ArrayList<Pair<Float, Float>>()
+		// Each line's own points, where the mouth is read off its lines: its corners are where the two meet.
+		val upperLine = ArrayList<Pair<Float, Float>>(); val lowerLine = ArrayList<Pair<Float, Float>>()
 		for (layer in edges) {
 			val raster = layer.source.raster; val bounds = layer.source.bounds
 			val sx = bounds.width / raster.width.coerceAtLeast(1).toFloat(); val sy = bounds.height / raster.height.coerceAtLeast(1).toFloat()
+			val own = when (layer.semantic.role) {
+				io.github.psd2live.core.PartRole.UPPER_LINE -> upperLine
+				io.github.psd2live.core.PartRole.LOWER_LINE -> lowerLine
+				else -> null
+			}
 			for (y in 0 until raster.height) for (x in 0 until raster.width) {
 				if ((raster.rgba[(y * raster.width + x) * 4 + 3].toInt() and 0xff) < 96) continue
-				points += toRig(bounds.left + (x + 0.5f) * sx, bounds.top + (y + 0.5f) * sy)
+				val p = toRig(bounds.left + (x + 0.5f) * sx, bounds.top + (y + 0.5f) * sy)
+				points += p; own?.add(p)
 			}
 		}
 		if (points.size < 24) return Result(null, "the mouth is too small", own)
@@ -115,8 +123,17 @@ object MouthFitting {
 		fun along(p: Pair<Float, Float>) = p.first * lx + p.second * ly
 		val lo = points.minOf(::along); val hi = points.maxOf(::along)
 		if (hi - lo < 6f) return Result(null, "the mouth is too narrow", own)
-		fun corner(near: Float) = points.filter { abs(along(it) - near) <= (hi - lo) * 0.03f }.let { band ->
-			band.map { it.first }.average().toFloat() to band.map { it.second }.average().toFloat()
+		fun corner(near: Float): Pair<Float, Float> {
+			val band = points.filter { abs(along(it) - near) <= (hi - lo) * 0.03f }
+			// Drawn lines meet at a corner, one often running on past it - a round mouth's side standing up to the other line.
+			// The corner is where both are, not the middle of that side.
+			val reach = (hi - lo) * 0.06f; val touch = max(2f, (hi - lo) * 0.015f)
+			val ups = upperLine.filter { abs(along(it) - near) <= reach }; val lows = lowerLine.filter { abs(along(it) - near) <= reach }
+			val met = if (ups.isEmpty() || lows.isEmpty()) emptyList() else (ups + lows).filter { p ->
+				(if (p in ups) lows else ups).any { q -> hypot(p.first - q.first, p.second - q.second) <= touch }
+			}.let { both -> val end = both.minOfOrNull { abs(along(it) - near) } ?: 0f; both.filter { abs(along(it) - near) <= end + touch } }
+			val at = met.ifEmpty { band }
+			return at.map { it.first }.average().toFloat() to at.map { it.second }.average().toFloat()
 		}
 		val left = corner(lo); val right = corner(hi)
 		val length = hypot(right.first - left.first, right.second - left.second)
