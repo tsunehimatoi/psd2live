@@ -36,8 +36,17 @@ class CubismParityTool {
 		val built = PSD2LivePipeline().buildPreview(sample.path)
 		// PSD2LIVE_PARITY_RECIPE=legacy: the rig a project saved before rig modules generates.
 		val legacy = setting("PSD2LIVE_PARITY_RECIPE", "modern") == "legacy"
-		val preview = if (!legacy) built
-			else PSD2LivePipeline().buildPreview(built.analysis, built.config.copy(recipe = io.github.psd2live.core.recipe.RigRecipe.Legacy))
+		// PSD2LIVE_PARITY_REACH=160: the mouth opening on past its drawing to 160% (the mouth/fitted reach).
+		val reach = setting("PSD2LIVE_PARITY_REACH", "").toFloatOrNull()
+		val preview = when {
+			legacy -> PSD2LivePipeline().buildPreview(built.analysis, built.config.copy(recipe = io.github.psd2live.core.recipe.RigRecipe.Legacy))
+			reach != null -> built.config.recipe.let { recipe ->
+				val mouth = recipe.bases["mouth"] ?: io.github.psd2live.core.recipe.BaseChoice(recipe.base("mouth").id)
+				PSD2LivePipeline().buildPreview(built.analysis, built.config.copy(recipe = recipe.copy(bases = recipe.bases +
+					("mouth" to mouth.copy(values = mouth.values + ("reach" to reach))))))
+			}
+			else -> built
+		}
 		val dll = File("src/main/resources/cubism/windows-x86_64/live2d_renderer.dll").absoluteFile
 		val native = Native.load(dll.path, Renderer::class.java)
 		fun failure(what: String) = native.Live2D_GetLastError()?.getString(0) ?: what
@@ -64,7 +73,8 @@ class CubismParityTool {
 			"funnel" to mapOf("ParamMouthFunnel" to 1f), "lips pressed" to mapOf("ParamMouthPressLipOpen" to -1f),
 			"teeth bared" to mapOf("ParamMouthPressLipOpen" to 1f), "smile, teeth bared" to mapOf("ParamMouthPressLipOpen" to 1f, "ParamMouthForm" to 1f),
 			"jaw, lips shut" to mapOf("ParamJawOpen" to 1f), "shrug" to mapOf("ParamMouthShrug" to 1f), "pucker" to mapOf("ParamMouthPuckerWiden" to -1f),
-			"mouth X" to mapOf("ParamMouthX" to 1f))
+			"mouth X" to mapOf("ParamMouthX" to 1f)) +
+			listOfNotNull(reach?.let { "shout" to mapOf("ParamMouthOpenY" to it / 100f) })
 		// Cubism draws the whole canvas; a close view is cut from a large frame.
 		val width = 4096
 		val height = (width * canvas.height / canvas.width).toInt()

@@ -414,7 +414,8 @@ object RigBuilder {
 				vowels = on(m.MOUTH_VOWEL), capture = on(m.MOUTH_CAPTURE),
 				jaw = on(m.MOUTH_JAW), jawShare = value(m.MOUTH_JAW, "share"),
 				depth = on(m.MOUTH_DEPTH), depthAmount = value(m.MOUTH_DEPTH, "depth"),
-				spring = on(m.MOUTH_SPRING), tongue = on(m.MOUTH_TONGUE), inside = config.recipe.baseValue("mouth", "inside") / 100f)
+				spring = on(m.MOUTH_SPRING), tongue = on(m.MOUTH_TONGUE), inside = config.recipe.baseValue("mouth", "inside") / 100f,
+				reach = config.recipe.baseValue("mouth", "reach") / 100f)
 			return fittedMouths.getOrPut(listOf(options, config.parentOverrides, deformersEnabled, config.recipe.base("eye"), config.recipe.moves("mouth"))) {
 				val mouth = analysis.layers.firstOrNull { it.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) && it.semantic.role == null && it.opaquePixels > 0 }
 				val space = mouth?.let { headSpaceFor(it, config) }
@@ -4111,8 +4112,14 @@ object RigBuilder {
 	 */
 	private fun standardParameters(context: RigContext, config: PipelineConfig): List<Parameter> {
 		val wide = context.fittedEyes(config)?.let { it.options.wide && it.rigs.isNotEmpty() } == true
-		return if (!wide) StandardParameters.all else StandardParameters.all.map {
-			if (it.id == StandardParameters.EYE_L_OPEN || it.id == StandardParameters.EYE_R_OPEN) it.copy(max = 2f) else it
+		// A fitted mouth opening on past its drawing opens as far as it reaches.
+		val reach = context.fittedMouth(config)?.rig?.openKeys?.last()?.takeIf { it > 1f }
+		return StandardParameters.all.map {
+			when {
+				wide && (it.id == StandardParameters.EYE_L_OPEN || it.id == StandardParameters.EYE_R_OPEN) -> it.copy(max = 2f)
+				reach != null && it.id == StandardParameters.MOUTH_OPEN -> it.copy(max = reach)
+				else -> it
+			}
 		}
 	}
 

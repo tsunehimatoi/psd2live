@@ -30,6 +30,8 @@ data class MouthOptions(
 	 * closes it into the lips' line, 1 leaves it as drawn behind the lips.
 	 */
 	val inside: Float = 0.5f,
+	/** How far the opening goes, of the drawing: past 1 the mouth opens on beyond it, a shout. */
+	val reach: Float = 1f,
 )
 
 /**
@@ -74,6 +76,9 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 	enum class Follow { WHOLE, WHOLE_TIGHT, INSIDE, UPPER_LINE, LOWER_LINE, UPPER_LIP, LOWER_LIP, UPPER_TEETH, LOWER_TEETH, TONGUE, DEEP }
 
 	private val h = fit.opening
+
+	/** The opening's keys: [OPEN_KEYS], and the [MouthOptions.reach] past the drawing where it goes on. */
+	val openKeys: FloatArray = if (options.reach > 1.001f) OPEN_KEYS + options.reach else OPEN_KEYS
 	/** A lip line's band along each edge, which moves with its edge as drawn. */
 	private val band = min(0.045f, h * 0.18f)
 	/** How thick a layered mouth's lip lines are drawn ([MouthFitting.lineWidth]); none without line layers, whose lips meet as drawn. */
@@ -218,7 +223,7 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 	/** The mouth at [form] (−1 pout … 1 smile) and [open] (0 … 1). */
 	fun pose(form: Float, open: Float): Pose {
 		val (up, lo) = staged(open)
-		val width = interpolate(OPEN_KEYS, WIDTHS, open)
+		val width = interpolate(OPEN_KEYS, WIDTHS, open) * (1f - 0.06f * (open - 1f).coerceAtLeast(0f))
 		val f = (form * options.formStrength).coerceIn(-1.5f, 1.5f)
 		val opened = (open / 0.25f).coerceIn(0f, 1f)
 		return if (f >= 0f) Pose(up, lo, width * (1f + 0.08f * f), corner = 0.06f * f, flatTop = f * opened)
@@ -228,6 +233,8 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 
 	/** How far the upper and the lower lip have gone at [open]: the lower lip first, the upper one late. */
 	private fun staged(open: Float): Pair<Float, Float> {
+		// Past the drawing the jaw goes on dropping: the lower lip twice as far as the upper one rises.
+		if (open > 1f) return (1f + 0.45f * (open - 1f)) to (1f + 0.9f * (open - 1f))
 		val lower = floatArrayOf(0f, 0.08f, options.early, (options.early + 1f) / 2f + 0.05f, 1f)
 		return interpolate(OPEN_KEYS, UPPERS, open) to interpolate(OPEN_KEYS, lower, open)
 	}
@@ -267,11 +274,11 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 	fun keyed(mouthForm: ParameterId, mouthOpen: ParameterId, form: (Pose) -> MeshDeltaForm): KeyformGrid<MeshDeltaForm> {
 		val cells = ArrayList<KeyformCell<MeshDeltaForm>>()
 		val presses = if (options.capture) PRESS_KEYS else floatArrayOf(0f)
-		for ((p, press) in presses.withIndex()) for ((o, open) in OPEN_KEYS.withIndex()) for ((f, value) in FORM_KEYS.withIndex()) {
+		for ((p, press) in presses.withIndex()) for ((o, open) in openKeys.withIndex()) for ((f, value) in FORM_KEYS.withIndex()) {
 			val pose = pressed(pose(value, open), press, open)
 			cells += KeyformCell(if (options.capture) intArrayOf(f, o, p) else intArrayOf(f, o), form(pose))
 		}
-		val axes = listOf(KeyformAxis(mouthForm, FORM_KEYS), KeyformAxis(mouthOpen, OPEN_KEYS)) +
+		val axes = listOf(KeyformAxis(mouthForm, FORM_KEYS), KeyformAxis(mouthOpen, openKeys)) +
 			if (options.capture) listOf(KeyformAxis(PRESS_OPEN, PRESS_KEYS)) else emptyList()
 		return KeyformGrid(axes, cells)
 	}
@@ -382,7 +389,8 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 			else weight(v).let { w -> -(u - 0.5f) * 0.25f * amount * drop * w to amount * drop * w }
 		}.positionDeltas, opacity = Float.NaN)
 		if (options.jaw) {
-			add(BlendShapeBinding(mouthOpen, floatArrayOf(0f, 1f), 0, listOf(null, jaw(1f))))
+			add(if (options.reach > 1.001f) BlendShapeBinding(mouthOpen, floatArrayOf(0f, 1f, options.reach), 0, listOf(null, jaw(1f), jaw(options.reach)))
+				else BlendShapeBinding(mouthOpen, floatArrayOf(0f, 1f), 0, listOf(null, jaw(1f))))
 			if (spring != null) add(BlendShapeBinding(spring, floatArrayOf(-1f, 0f, 1f), 1, listOf(jaw(-0.35f), null, jaw(0.35f))))
 		}
 		if (options.capture) add(BlendShapeBinding(JAW_OPEN, floatArrayOf(0f, 1f), 0, listOf(null, jaw(1.4f))))

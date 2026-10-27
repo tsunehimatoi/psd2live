@@ -71,6 +71,15 @@ class MouthLayersTest {
 		assertEquals(rig(inside = 0f).moveAs(Follow.INSIDE, 0f, 0.01f, shut).second, corner, 1e-5f)
 	}
 
+	@Test fun aMouthReachingPastItsDrawingOpensOnIntoAShout() {
+		val shout = MouthRig(rig().fit, MouthOptions(reach = 1.6f))
+		assertEquals(1.6f, shout.openKeys.last())
+		val drawn = shout.edges(shout.pose(0f, 1f), 0.5f); val wide = shout.edges(shout.pose(0f, 1.6f), 0.5f)
+		assertTrue(wide.first < drawn.first && wide.second - drawn.second > drawn.first - wide.first,
+			"past the drawing the lower lip drops further than the upper one rises: $drawn to $wide")
+		assertEquals(MouthRig.OPEN_KEYS.toList(), rig().openKeys.toList(), "without reach the keys stay")
+	}
+
 	@Test fun lipLayersAreNamedApartFromTheMouthTheyBelongTo() {
 		for ((name, role) in listOf("上唇" to PartRole.UPPER_LIP, "下唇" to PartRole.LOWER_LIP, "上唇线" to PartRole.UPPER_LINE, "下唇線" to PartRole.LOWER_LINE,
 			"upper lip" to PartRole.UPPER_LIP, "lower lip line" to PartRole.LOWER_LINE, "윗입술" to PartRole.UPPER_LIP)) {
