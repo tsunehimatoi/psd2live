@@ -62,9 +62,9 @@ class CubismParityTool {
 			Bounds(b.centerX - side / 2, b.centerY - side / 2, b.centerX + side / 2, b.centerY + side / 2)
 		}
 		val views = listOfNotNull("figure" to canvas, around("ArtMeshFace", 1.3f)?.let { "face" to it },
-			around("ArtMeshMouth", 1.6f)?.let { "mouth" to it })
+			around("ArtMeshMouth", 1.6f)?.let { "mouth" to it }, around("ArtMeshMouth", 4f)?.let { "mouth-wide" to it })
 		val poses = listOf("rest" to emptyMap(), "AngleX 30" to mapOf("ParamAngleX" to 30f), "AngleY 30" to mapOf("ParamAngleY" to 30f),
-			"AngleX -30 Y -30" to mapOf("ParamAngleX" to -30f, "ParamAngleY" to -30f), "mouth open" to mapOf("ParamMouthOpenY" to 1f),
+			"AngleX -30 Y -30" to mapOf("ParamAngleX" to -30f, "ParamAngleY" to -30f), "AngleX 30 Y -30" to mapOf("ParamAngleX" to 30f, "ParamAngleY" to -30f), "AngleY -30" to mapOf("ParamAngleY" to -30f), "mouth open" to mapOf("ParamMouthOpenY" to 1f),
 			"mouth half, smile" to mapOf("ParamMouthForm" to 1f, "ParamMouthOpenY" to 0.5f), "A turned" to mapOf("ParamA" to 1f, "ParamAngleX" to 20f),
 			"O" to mapOf("ParamO" to 1f), "E" to mapOf("ParamE" to 1f), "open turned" to mapOf("ParamMouthOpenY" to 1f, "ParamAngleX" to 30f),
 			"quarter, Y" to mapOf("ParamMouthOpenY" to 0.25f, "ParamAngleY" to 20f), "pout" to mapOf("ParamMouthForm" to -1f, "ParamMouthOpenY" to 0.3f),

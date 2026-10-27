@@ -127,11 +127,17 @@ class RigModulesScenario {
 	@Test fun theHeadTurnsInDepthUntilTheModuleGoesOff() = Studio.run(temp, Characters.mouthed()) {
 		allow("REGENERATION_CONFLICT")
 		fun turns(layer: String) = rides(puppet, mesh(layer), "ParamAngleX")
-		expect("new project", turns("face") && turns("mouth") && turns("back_hair")) { "every layer of the head turns on its shell" }
+		// The mouth turns as one in its warp, keyed at the turn's own angles, its layers taking no turn of their own.
+		fun mouthTurns(): Boolean {
+			val parent = puppet.drawables.single { it.id.raw == mesh("mouth") }.parentDeformerId
+			val warp = puppet.deformers.single { it.id == parent } as org.umamo.runtime.model.Deformer.Warp
+			return warp.geometryGrid!!.axes.any { it.parameterId.raw == "ParamAngleX" && it.keys.toList() == io.github.psd2live.core.fit.HeadTurn.YAW_KEYS.toList() }
+		}
+		expect("new project", turns("face") && mouthTurns() && !turns("mouth") && turns("back_hair")) { "every layer of the head turns on its shell, the mouth in its warp" }
 		settings("no depth turn", buildJsonObject {
 			putJsonObject(WorkspaceSettingsCodec.RIG) { putJsonObject("modules") { putJsonObject("face.depth-turn") { put("on", false) } } }
 		})
-		expect("off", !turns("face") && !turns("mouth")) { "switched off, the head turns as it did" }
+		expect("off", !turns("face") && !mouthTurns()) { "switched off, the head turns as it did" }
 	}
 
 	@Test fun hairHangsInChainsOnPendulumsOfItsOwn() = Studio.run(temp, Characters.head(hairChains = true)) {

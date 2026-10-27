@@ -391,12 +391,7 @@ object RigBuilder {
 		}
 
 		/** The head turning in depth under [config] (`face.depth-turn`), or null when the recipe leaves it out. */
-		fun headTurn(config: PipelineConfig): io.github.psd2live.core.fit.HeadTurn? {
-			val m = io.github.psd2live.core.recipe.RigModules
-			if (!m.builds(m.FACE_DEPTH_TURN, config, io.github.psd2live.core.recipe.RecipeSubject.of(analysis))) return null
-			return io.github.psd2live.core.fit.HeadTurn(faceRig.centerX, faceRig.centerY, faceRig.radiusX, faceRig.radiusY,
-				config.recipe.value(m.FACE_DEPTH_TURN.id, "turn") / 100f * config.headTurnStrength, config.recipe.value(m.FACE_DEPTH_TURN.id, "depth") / 100f, faceRig.chinY)
-		}
+		fun headTurn(config: PipelineConfig): io.github.psd2live.core.fit.HeadTurn? = headTurnOf(analysis, faceRig, config)
 
 		private val fittedMouths = java.util.concurrent.ConcurrentHashMap<List<Any?>, io.github.psd2live.core.fit.FittedMouth>()
 
@@ -2276,7 +2271,7 @@ object RigBuilder {
 			texturePage = page,
 			atlasTileId = PuppetSourceAtlas.tileIdFor(part.layerId, part.sourceId),
 		)
-		val shapes = if (config.meshOnly || deferred || ribbon) emptyList() else moduleBlendShapes(rigLayer, data, parentFrame, context, config)
+		val shapes = if (config.meshOnly || deferred || ribbon) emptyList() else moduleBlendShapes(rigLayer, data, parentFrame, context, config, parentId)
 		return drawable.copy(blendShapes = neutralized(shapes, drawable)) to neutralValidationBounds(layer, data, aperture, headSpace, config.meshOnly, config)
 	}
 
@@ -2359,7 +2354,7 @@ object RigBuilder {
 			geometryGrid,
 			headSpace,
 			neutralValidationBounds(layer, meshData, mouthAperture, headSpace, config.meshOnly, config),
-			if (config.meshOnly) emptyList() else moduleBlendShapes(rigLayer, meshData, parentFrame, context, config),
+			if (config.meshOnly) emptyList() else moduleBlendShapes(rigLayer, meshData, parentFrame, context, config, parentId),
 		)
 	}
 
@@ -2694,7 +2689,7 @@ object RigBuilder {
 					p to faceFrame
 				}
 			}
-			deformers += featureWarp(faceRig, region, parent, parentFrame, facePartId, config)
+			deformers += featureWarp(faceRig, region, parent, parentFrame, facePartId, config, headTurnOf(analysis, faceRig, config))
 		}
 		for (irisRegion in faceRig.regions.filter { it.feature == FaceFeature.IRIS }) {
 			val eyeRegion = faceRig.regionFor(FaceFeature.EYE, irisRegion.side) ?: continue
@@ -3068,6 +3063,20 @@ object RigBuilder {
 			(centerY + dx * sine + dy * cosine)
 	}
 
+	/** The head turning in depth under [config] (`face.depth-turn`), or null when the recipe leaves it out. */
+	private fun headTurnOf(analysis: PipelineAnalysis, faceRig: NinePoseFaceRig, config: PipelineConfig): io.github.psd2live.core.fit.HeadTurn? {
+		val m = io.github.psd2live.core.recipe.RigModules
+		if (!m.builds(m.FACE_DEPTH_TURN, config, io.github.psd2live.core.recipe.RecipeSubject.of(analysis))) return null
+		return io.github.psd2live.core.fit.HeadTurn(faceRig.centerX, faceRig.centerY, faceRig.radiusX, faceRig.radiusY,
+			config.recipe.value(m.FACE_DEPTH_TURN.id, "turn") / 100f * config.headTurnStrength, config.recipe.value(m.FACE_DEPTH_TURN.id, "depth") / 100f, faceRig.chinY)
+	}
+
+	/**
+	 * Whether [parent] is the mouth's warp, which turns the whole mouth with the head ([featureWarp]): the layers under
+	 * it take no turn of their own, so lips met at rest stay met however the head turns.
+	 */
+	private fun turnsWithMouth(parent: DeformerId?): Boolean = parent != null && parent.raw.startsWith("DeformMouthShape")
+
 	private fun featureWarp(
 		faceRig: NinePoseFaceRig,
 		region: FaceRegion,
@@ -3075,6 +3084,7 @@ object RigBuilder {
 		parentFrame: Bounds,
 		part: PartId,
 		config: PipelineConfig,
+		turn: io.github.psd2live.core.fit.HeadTurn? = null,
 	): Deformer.Warp {
 		val inParent = mapBounds(region.bounds, parentFrame)
 		val (columns, rows) = when (region.feature) {
@@ -3082,8 +3092,32 @@ object RigBuilder {
 			FaceFeature.NOSE -> 3 to 4
 			else -> 3 to 3
 		}
-		val geometry = warpGrid(ninePoseAxes(), columns, rows) { u, v, values ->
-			val offset = faceRig.featureOffset(region.feature, region.bounds, u, v, values[0], values[1], config.headTurnStrength)
+		// The mouth turns in depth as one, in its warp: each of its layers turned apart would go its own way, and lips met
+		// at rest would part. The nine poses' offset stays linear between their keys, as their own keys would give it.
+		val mouthTurn = turn?.takeIf { region.feature == FaceFeature.MOUTH }
+		val axes = if (mouthTurn == null) ninePoseAxes() else listOf(axis(StandardParameters.ANGLE_X, *io.github.psd2live.core.fit.HeadTurn.YAW_KEYS),
+			axis(StandardParameters.ANGLE_Y, *io.github.psd2live.core.fit.HeadTurn.PITCH_KEYS))
+		fun ninePose(u: Float, v: Float, yaw: Float, pitch: Float): Pair<Float, Float> {
+			fun bracket(keys: FloatArray, value: Float): Pair<Int, Float> {
+				val i = (0 until keys.size - 1).firstOrNull { value <= keys[it + 1] } ?: (keys.size - 2)
+				return i to ((value - keys[i]) / (keys[i + 1] - keys[i])).coerceIn(0f, 1f)
+			}
+			val (i, s) = bracket(NinePoseFaceRig.angleXKeys, yaw); val (j, t) = bracket(NinePoseFaceRig.angleYKeys, pitch)
+			var x = 0f; var y = 0f
+			for ((a, wa) in listOf(i to 1f - s, i + 1 to s)) for ((b, wb) in listOf(j to 1f - t, j + 1 to t)) {
+				if (wa * wb == 0f) continue
+				val o = faceRig.featureOffset(region.feature, region.bounds, u, v, NinePoseFaceRig.angleXKeys[a], NinePoseFaceRig.angleYKeys[b], config.headTurnStrength)
+				x += wa * wb * o.first; y += wa * wb * o.second
+			}
+			return x to y
+		}
+		val geometry = warpGrid(axes, columns, rows) { u, v, values ->
+			val offset = if (mouthTurn == null) faceRig.featureOffset(region.feature, region.bounds, u, v, values[0], values[1], config.headTurnStrength)
+				else ninePose(u, v, values[0], values[1]).let { (x, y) ->
+					val (dx, dy) = mouthTurn.delta(region.bounds.left + u * region.bounds.width, region.bounds.top + v * region.bounds.height,
+						io.github.psd2live.core.fit.HeadShell.SKIN, values[0], values[1])
+					(x + dx) to (y + dy)
+				}
 			(inParent.left + u * inParent.width + offset.first / parentFrame.width.coerceAtLeast(1e-4f)) to
 				(inParent.top + v * inParent.height + offset.second / parentFrame.height.coerceAtLeast(1e-4f))
 		}
@@ -3398,10 +3432,11 @@ object RigBuilder {
 	}
 
 	/** The additive shapes the rig modules give [layer]'s mesh: the eyes' and brows' ([eyeBlendShapes]) and the mouth's. */
-	private fun moduleBlendShapes(layer: ClassifiedLayer, data: MeshData, frame: Bounds, context: RigContext, config: PipelineConfig):
+	private fun moduleBlendShapes(layer: ClassifiedLayer, data: MeshData, frame: Bounds, context: RigContext, config: PipelineConfig, parent: DeformerId?):
 		List<org.umamo.runtime.model.BlendShapeBinding<org.umamo.runtime.model.MeshForm>> =
 		eyeBlendShapes(layer, data, frame, context.fittedEyes(config), context.fittedBrows(config)) + mouthBlendShapes(layer, data, frame, context.fittedMouth(config)) +
-			headTurnShapes(layer, turnPositions(layer, data.rigPositions, context.fittedMouth(config)), frame, context.headTurn(config)) + bustShapes(layer, data.rigPositions, frame, context, config) +
+			headTurnShapes(layer, turnPositions(layer, data.rigPositions, context.fittedMouth(config)), frame, context.headTurn(config).takeUnless { turnsWithMouth(parent) }) +
+			bustShapes(layer, data.rigPositions, frame, context, config) +
 			neckShapes(layer, data.rigPositions, frame, context, config)
 
 	/**
@@ -3988,7 +4023,7 @@ object RigBuilder {
             val target = normalized(MouthStrokeMesh.positions(path.map { p -> rig.point(p.first, p.second, pose) }, radius, joins))
             FloatArray(positions.size) { target[it] - positions[it] }
         }) { opens -> if (opens) 1f else Float.NaN }.orEmpty()
-        val lipDrawable = ribbon.copy(blendShapes = neutralized(mouthShapes + headTurnShapes(layer, rawPositions, frame, turn), ribbon))
+        val lipDrawable = ribbon.copy(blendShapes = neutralized(mouthShapes + headTurnShapes(layer, rawPositions, frame, turn.takeUnless { turnsWithMouth(owner.parentDeformerId) }), ribbon))
         val deformPath = if (columns.size >= 5) {
             val startIdx = overlap
             val endIdx = overlap + columns.lastIndex
