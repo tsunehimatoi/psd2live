@@ -3466,8 +3466,9 @@ object RigBuilder {
 	private fun moduleBlendShapes(layer: ClassifiedLayer, data: MeshData, frame: Bounds, context: RigContext, config: PipelineConfig, parent: DeformerId?):
 		List<org.umamo.runtime.model.BlendShapeBinding<org.umamo.runtime.model.MeshForm>> =
 		eyeBlendShapes(layer, data, frame, context.fittedEyes(config), context.fittedBrows(config)) + mouthBlendShapes(layer, data, frame, context.fittedMouth(config)) +
-			headTurnShapes(layer, turnPositions(layer, data.rigPositions, context.fittedMouth(config)), frame, context.headTurn(config).takeUnless { turnsWithMouth(parent) ||
-				parent != null && (parent == faceContourId || parent in context.underFace) && context.faceTurn(config) != null }) +
+			(if (layer.semantic.tag == SemanticTag.FRONT_HAIR && context.faceTurn(config) != null) fieldTurnShapes(data.rigPositions, frame, context, config)
+			else headTurnShapes(layer, turnPositions(layer, data.rigPositions, context.fittedMouth(config)), frame, context.headTurn(config).takeUnless { turnsWithMouth(parent) ||
+				parent != null && (parent == faceContourId || parent in context.underFace) && context.faceTurn(config) != null })) +
 			bustShapes(layer, data.rigPositions, frame, context, config) +
 			neckShapes(layer, data.rigPositions, frame, context, config)
 
@@ -3541,6 +3542,37 @@ object RigBuilder {
 		val rig = mouth?.rig ?: return positions
 		if (!mouth.covers(layer) || layer.semantic.tag == SemanticTag.MOUTH_CLOSE) return positions
 		return rig.atRest(positions, mouth.follow(layer))
+	}
+
+	/**
+	 * A mesh's turn taken from the face's field ([RigContext.faceTurn]) over Angle X and Angle Y, less the head
+	 * container's own move: for the front hair, whose top is held along the head while its tips go with the face under
+	 * them - the field above the forehead already moves less toward the crown - so the fringe shears with the face
+	 * instead of running ahead of it on a shell of its own.
+	 */
+	private fun fieldTurnShapes(positions: FloatArray, frame: Bounds, context: RigContext, config: PipelineConfig):
+		List<org.umamo.runtime.model.BlendShapeBinding<org.umamo.runtime.model.MeshForm>> {
+		val turn = context.faceTurn(config) ?: return emptyList()
+		val head = context.head; val pivotX = context.faceRig.centerX; val pivotY = context.faceRig.mouthLineY
+		fun form(yaw: Float, pitch: Float): org.umamo.runtime.model.MeshForm {
+			val field = turn.map(yaw, pitch)
+			val out = FloatArray(positions.size)
+			for (i in 0 until positions.size / 2) {
+				val x = positions[i * 2]; val y = positions[i * 2 + 1]
+				val (tx, ty) = field(x, y)
+				val u = (x - head.left) / head.width; val v = (y - head.top) / head.height
+				val (hx, hy) = headContainerPoint(head, pivotX, pivotY, u, v, yaw, pitch, config.headTurnStrength, config.rigTuning)
+				val (rx, ry) = headContainerPoint(head, pivotX, pivotY, u, v, 0f, 0f, config.headTurnStrength, config.rigTuning)
+				out[i * 2] = (tx - x - (hx - rx)) / frame.width.coerceAtLeast(1e-4f)
+				out[i * 2 + 1] = (ty - y - (hy - ry)) / frame.height.coerceAtLeast(1e-4f)
+			}
+			return org.umamo.runtime.model.MeshForm(out, opacity = Float.NaN)
+		}
+		val yaws = floatArrayOf(-45f, -22.5f, 0f, 22.5f, 45f); val pitches = floatArrayOf(-30f, 0f, 30f)
+		return listOf(
+			org.umamo.runtime.model.BlendShapeBinding(StandardParameters.ANGLE_X, yaws, 2, yaws.map { if (it == 0f) null else form(it, 0f) }),
+			org.umamo.runtime.model.BlendShapeBinding(StandardParameters.ANGLE_Y, pitches, 1, pitches.map { if (it == 0f) null else form(0f, it) }),
+		)
 	}
 
 	/** [layer]'s shapes turning the head in depth, on the shell of the head it lies on ([headShell]). */
@@ -4546,7 +4578,7 @@ object RigBuilder {
 			when {
 				d.id == faceWarpId -> face.copy(geometryGrid = KeyformGrid(axes, faceCells))
 				d.id == faceContourId -> contour?.copy(rows = contourRows, columns = contourCols, geometryGrid = KeyformGrid(axes, contourCells)) ?: d
-				d.id in context.underFace -> when (d) {
+				d.id in context.underFace || d.id == frontHairFollowWarpId -> when (d) {
 					is Deformer.Warp -> d.copy(geometryGrid = d.geometryGrid?.let(::heldTurn))
 					is Deformer.Rotation -> d.copy(geometryGrid = d.geometryGrid?.let(::heldTurn))
 					else -> d
