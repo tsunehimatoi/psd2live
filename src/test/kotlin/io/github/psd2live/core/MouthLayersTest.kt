@@ -43,12 +43,18 @@ class MouthLayersTest {
 			"the lines meet: upper $upperTop..$upperBottom, lower $lowerTop..$lowerBottom")
 	}
 
-	@Test fun teethMoveWholeAndLittleLeavingTheOpeningToHideThem() {
+	@Test fun teethHangFromTheirLipUnsquashedLeavingTheOpeningToHideThem() {
 		val rig = rig()
-		val wide = rig.pose(0f, 0.5f)
-		// Whole: every point of a row moves alike, at the middle or by a corner, high or low.
-		val moves = listOf(0.5f to -0.14f, 0.5f to -0.08f, 0.15f to -0.1f).map { (u, v) -> rig.moveAs(Follow.UPPER_TEETH, u, v, wide) }
-		assertTrue(moves.all { abs(it.first - moves[0].first) < 1e-5f && abs(it.second - moves[0].second) < 1e-5f }, "the upper teeth bend or stretch: $moves")
+		// A smile flattens and curves the upper lip: each column of the upper teeth keeps to it, at its own height.
+		val smile = rig.pose(1f, 0.5f)
+		for (u in listOf(0.2f, 0.5f, 0.8f)) {
+			val top = rig.moveAs(Follow.UPPER_TEETH, u, -0.14f, smile).second; val bottom = rig.moveAs(Follow.UPPER_TEETH, u, -0.06f, smile).second
+			assertEquals(top, bottom, 1e-5f, "the upper teeth are squashed at $u")
+			val lip = rig.moveAs(Follow.UPPER_LINE, u, MouthFit.sample(rig.fit.upper, u), smile).second
+			assertTrue(top <= lip + 1e-5f, "a gap opens between the upper lip and its teeth at $u: teeth $top, lip $lip")
+		}
+		val smileLeft = rig.moveAs(Follow.UPPER_TEETH, 0.2f, -0.1f, smile).first; val smileRight = rig.moveAs(Follow.UPPER_TEETH, 0.8f, -0.1f, smile).first
+		assertTrue(smileLeft < 0f && smileRight > 0f, "a smile's teeth spread toward its corners: $smileLeft, $smileRight")
 		val lip = rig.moveAs(Follow.LOWER_LINE, 0.5f, 0.24f, shut).second
 		val teeth = rig.moveAs(Follow.LOWER_TEETH, 0.5f, 0.2f, shut).second
 		assertTrue(teeth < 0f && abs(teeth) < abs(lip), "the lower teeth rise less than the lower lip, which covers them: $teeth against $lip")

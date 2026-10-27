@@ -68,8 +68,8 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 	 *   in one.
 	 * - [UPPER_LIP], [LOWER_LIP]: a lip with the skin about it rides its edge whole near the lips and less further out,
 	 *   so the lip's paint bends with it without squashing and its skin margin blends into the face.
-	 * - [UPPER_TEETH], [LOWER_TEETH]: a row of teeth moves whole and little after its lip ([teeth]); the opening clips it,
-	 *   so a small, round or pouting mouth hides it.
+	 * - [UPPER_TEETH], [LOWER_TEETH]: a row of teeth hangs from its lip without squashing and lags where the lip closes
+	 *   over it ([teeth]); the opening clips it, so a small, round or pouting mouth hides it.
 	 * - [TONGUE]: the tongue moves whole with the jaw, about half the lower lip's drop.
 	 * - [DEEP]: the dark at the back of the mouth hardly moves; the opening uncovers it.
 	 */
@@ -203,15 +203,26 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 	}
 
 	/**
-	 * A row of teeth moves whole and little, as drawn teeth do in hand-made rigs: it follows [TEETH_SHARE] of its lip's
-	 * middle, less as the mouth rounds, keeps its width but for a little widening in a smile, and is never bent along the
-	 * lip. The opening clips it, so a small, round or pouting mouth hides the teeth behind its lips rather than squeezing
-	 * them into the opening.
+	 * A row of teeth, as hand-made rigs move it: each column of it hangs from its lip's edge - the upper row from the
+	 * upper lip, so no gap opens between them as the lip flattens or a smile curves it - and keeps its own height, so
+	 * the row bends with the lip but is never squashed. It keeps its width when the mouth pouts and widens with a wide
+	 * or smiling mouth, so a smile's teeth reach toward its corners. Going behind its lip it lags - the upper row follows
+	 * [UPPER_TEETH_SHARE] of its lip's coming down, the lower row [LOWER_TEETH_SHARE] of its lip's rise, and a rounding
+	 * mouth draws either row in hardly at all - so the lips and the
+	 * opening's clip hide the teeth of a small, round or pouting mouth rather than squeezing them into it.
 	 */
 	private fun teeth(u: Float, pose: Pose, upper: Boolean): Pair<Float, Float> {
-		// A smile raises the corners (0.06 at full) and widens the mouth by 8%; the teeth take half of that.
-		val widen = (pose.corner / 0.06f * 0.08f * TEETH_WIDEN).coerceAtLeast(0f)
-		return ((u - 0.5f) * widen + pose.shift) to middleDrop(pose, upper) * TEETH_SHARE * (1f - pose.round.coerceIn(0f, 1f))
+		val smile = (pose.corner / 0.06f).coerceIn(0f, 1.5f)
+		val widen = (pose.width - 1f).coerceAtLeast(0f) + TEETH_SMILE_WIDEN * smile
+		val un = 0.5f + (u - 0.5f) * (1f + widen) + pose.shift
+		val at = un.coerceIn(0f, 1f)
+		val drawn = if (upper) drawnUpper(u.coerceIn(0f, 1f)) else drawnLower(u.coerceIn(0f, 1f))
+		val edge = edges(pose, at).let { if (upper) it.first else it.second }
+		var drop = fit.baseline(un) + edge - fit.baseline(u) - drawn
+		// Where its lip closes over it - the upper lip coming down, the lower one up - a row lags, the lip covering it.
+		val inward = if (upper) drop > 0f else drop < 0f
+		if (inward) drop *= (if (upper) UPPER_TEETH_SHARE else LOWER_TEETH_SHARE) * (1f - pose.round.coerceIn(0f, 1f))
+		return (un - u) to drop
 	}
 
 	/** How far the upper or lower lip's middle has moved down from the drawing in [pose]. */
@@ -439,9 +450,10 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		val FORM_KEYS = floatArrayOf(-1f, -0.5f, 0f, 0.5f, 1f)
 		private val UPPERS = floatArrayOf(0f, 0.03f, 0.1f, 0.38f, 1f)
 		private val WIDTHS = floatArrayOf(1.04f, 1.04f, 1.08f, 1.06f, 1f)
-		private const val TEETH_SHARE = 0.6f
-		/** How much of a smile's widening the teeth take. */
-		private const val TEETH_WIDEN = 0.5f
+		private const val UPPER_TEETH_SHARE = 0.85f
+		private const val LOWER_TEETH_SHARE = 0.7f
+		/** How much wider a full smile's teeth spread, toward its raised corners. */
+		private const val TEETH_SMILE_WIDEN = 0.25f
 		private const val TONGUE_SHARE = 0.55f
 		private const val DEEP_SHARE = 0.2f
 		/** How far pressed lips roll in past each other at the middle, of the mouth's width. */
