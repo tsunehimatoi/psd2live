@@ -51,6 +51,45 @@ class FaceLandmarkTool {
 			frames += "eye $side" to draw(renderer, rect, marks.points.filter { it.part == "eye.$side" || it.part == "brow.$side" }, emptyList(), ::canvas, 900, 13f)
 		}
 		if (frames.isNotEmpty()) sheet(frames, File(out, "${sample.name}-eyes.png"), columns = 2)
+		// The face turn's field alone: the outline and the points carried to each pose (bright) over rest (faint).
+		val turn = io.github.psd2live.core.fit.FaceTurn(marks)
+		if (turn.usable) {
+			val poses = listOf(15f to 0f, 30f to 0f, -30f to 0f, 0f to 30f, 0f to -30f, 30f to 30f, 30f to -30f, 45f to 0f)
+			val cb = marks.contour.map { canvas(it.first, it.second) }
+			val fb = Bounds(cb.minOf { it.first }, cb.minOf { it.second }, cb.maxOf { it.first }, cb.maxOf { it.second })
+			val rect = square(Bounds(fb.left - fb.width * 0.15f, fb.top - fb.height * 0.1f, fb.right + fb.width * 0.15f, fb.bottom + fb.height * 0.1f))
+			val turned = poses.map { (yaw, pitch) ->
+				val f = turn.map(yaw, pitch)
+				val moved = marks.points.map { p -> f(p.x, p.y).let { (x, y) -> p.copy(x = x, y = y) } }
+				val outline = marks.contour.map { f(it.first, it.second) }.map { canvas(it.first, it.second) }
+				"X$yaw Y$pitch" to drawTurn(renderer, rect, cb, outline, marks.points, moved, ::canvas, 600)
+			}
+			sheet(turned, File(out, "${sample.name}-turn.png"), columns = 4)
+		}
+	}
+
+	private fun drawTurn(renderer: Renderer, rect: Bounds, rest: List<Pair<Float, Float>>, outline: List<Pair<Float, Float>>, before: List<Landmark>,
+	                     after: List<Landmark>, canvas: (Float, Float) -> Pair<Float, Float>, size: Int): BufferedImage {
+		val img = BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB)
+		val g = img.createGraphics()
+		g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+		g.drawImage(renderer.render(emptyMap(), rect), 0, 0, size, size, null)
+		g.color = Color(0, 0, 0, 170); g.fillRect(0, 0, size, size)
+		val k = size / rect.width
+		fun px(x: Float) = ((x - rect.left) * k).toDouble()
+		fun py(y: Float) = ((y - rect.top) * k).toDouble()
+		for ((line, colour) in listOf(rest to Color(120, 160, 255, 140), outline to Color(255, 230, 60))) {
+			g.color = colour; g.stroke = BasicStroke(if (colour.alpha == 255) 2f else 1.2f)
+			for (i in line.indices) { val a = line[i]; val b = line[(i + 1) % line.size]; g.draw(Line2D.Double(px(a.first), py(a.second), px(b.first), py(b.second))) }
+		}
+		for ((p, q) in before.zip(after)) {
+			if (p.later || !(p.part.startsWith("face") || p.part.startsWith("eye") || p.part.startsWith("nose") || p.part.startsWith("mouth") || p.part.startsWith("brow"))) continue
+			val (x0, y0) = canvas(p.x, p.y); val (x1, y1) = canvas(q.x, q.y)
+			g.color = Color(255, 255, 255, 90); g.draw(Line2D.Double(px(x0), py(y0), px(x1), py(y1)))
+			g.color = colour(p.part); g.fill(Ellipse2D.Double(px(x1) - 3, py(y1) - 3, 6.0, 6.0))
+		}
+		g.dispose()
+		return img
 	}
 
 	private fun square(b: Bounds): Bounds {

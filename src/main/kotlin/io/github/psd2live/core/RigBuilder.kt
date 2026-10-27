@@ -393,6 +393,21 @@ object RigBuilder {
 		/** The head turning in depth under [config] (`face.depth-turn`), or null when the recipe leaves it out. */
 		fun headTurn(config: PipelineConfig): io.github.psd2live.core.fit.HeadTurn? = headTurnOf(analysis, faceRig, config)
 
+		private val faceTurns = java.util.concurrent.ConcurrentHashMap<List<Any?>, java.util.Optional<io.github.psd2live.core.fit.FaceTurn>>()
+
+		/**
+		 * The face's turn as a field of its own feature points ([io.github.psd2live.core.fit.FaceTurn]) when the depth turn is
+		 * built and the face has what the field needs; null otherwise, and the face then turns as it did.
+		 */
+		fun faceTurn(config: PipelineConfig): io.github.psd2live.core.fit.FaceTurn? {
+			val m = io.github.psd2live.core.recipe.RigModules
+			if (!m.builds(m.FACE_DEPTH_TURN, config, io.github.psd2live.core.recipe.RecipeSubject.of(analysis))) return null
+			val strength = config.headTurnStrength * config.recipe.value(m.FACE_DEPTH_TURN.id, "turn") / 45f
+			return faceTurns.getOrPut(listOf(strength, config.recipe, config.parentOverrides)) {
+				java.util.Optional.ofNullable(io.github.psd2live.core.fit.FaceTurn(faceLandmarks(config), strength).takeIf { it.usable })
+			}.orElse(null)
+		}
+
 		/** The head's feature points read off the art ([io.github.psd2live.core.fit.FaceLandmarking]), in the rig's space. */
 		fun faceLandmarks(config: PipelineConfig): io.github.psd2live.core.fit.FaceLandmarks =
 			io.github.psd2live.core.fit.FaceLandmarking.read(analysis.layers, fittedEyes(config)?.fitting, fittedBrows(config).mapValues { it.value.fit },
@@ -1278,8 +1293,9 @@ object RigBuilder {
 		val baseLayers = if (!v2) analysis.layers
 			else analysis.layers.filterNot { resolution.isPartLayer(it.source.id.raw) } + passengers.filterNot { resolution.isPartLayer(it.source.id.raw) }
 		// The face lean rewrites each warp's own grid and nothing else, so it commutes with the re-parenting below.
-		val leaned = stages?.get(RigStageCache.LEAN, 8, Identity(rawDeformers, config.rigTuning)) { withFaceLean(rawDeformers, config.rigTuning) }
-			?: withFaceLean(rawDeformers, config.rigTuning)
+		val turned = withFaceTurn(rawDeformers, context, config)
+		val leaned = stages?.get(RigStageCache.LEAN, 8, Identity(turned, config.rigTuning)) { withFaceLean(turned, config.rigTuning) }
+			?: withFaceLean(turned, config.rigTuning)
 
 		val deformers = if (config.parentOverrides.isEmpty()) leaned else {
 			val deformerById = rawDeformers.associateBy { it.id.raw }
@@ -3440,7 +3456,8 @@ object RigBuilder {
 	private fun moduleBlendShapes(layer: ClassifiedLayer, data: MeshData, frame: Bounds, context: RigContext, config: PipelineConfig, parent: DeformerId?):
 		List<org.umamo.runtime.model.BlendShapeBinding<org.umamo.runtime.model.MeshForm>> =
 		eyeBlendShapes(layer, data, frame, context.fittedEyes(config), context.fittedBrows(config)) + mouthBlendShapes(layer, data, frame, context.fittedMouth(config)) +
-			headTurnShapes(layer, turnPositions(layer, data.rigPositions, context.fittedMouth(config)), frame, context.headTurn(config).takeUnless { turnsWithMouth(parent) }) +
+			headTurnShapes(layer, turnPositions(layer, data.rigPositions, context.fittedMouth(config)), frame, context.headTurn(config).takeUnless { turnsWithMouth(parent) ||
+				parent == faceContourId && context.faceTurn(config) != null }) +
 			bustShapes(layer, data.rigPositions, frame, context, config) +
 			neckShapes(layer, data.rigPositions, frame, context, config)
 
@@ -4458,6 +4475,97 @@ object RigBuilder {
 	private fun normalizeY(y: Float, frame: Bounds): Float = (y - frame.top) / frame.height.coerceAtLeast(1e-4f)
 
 	private fun axis(parameter: ParameterId, vararg keys: Float) = KeyformAxis(parameter, keys)
+
+	/**
+	 * The face's warp and its skin's warp keyed on the face's turn ([RigContext.faceTurn]) instead of the nine poses: at
+	 * every key the face's warp holds the field's moves at its lattice, and the skin's warp under it, finer, what the
+	 * face's lattice is too coarse for - the outline straightening, folding and swinging. Each lattice point is put where,
+	 * through the warps above it at that key, it lands where the field sends it. Without a field, [deformers] as they are.
+	 */
+	private fun withFaceTurn(deformers: List<Deformer>, context: RigContext, config: PipelineConfig): List<Deformer> {
+		val turn = context.faceTurn(config) ?: return deformers
+		val face = deformers.firstOrNull { it.id == faceWarpId } as? Deformer.Warp ?: return deformers
+		val contour = deformers.firstOrNull { it.id == faceContourId } as? Deformer.Warp
+		val head = context.head; val faceFrame = context.face; val faceRig = context.faceRig
+		val pivotX = faceRig.centerX; val pivotY = faceRig.mouthLineY
+		val xKeys = floatArrayOf(-45f, -22.5f, 0f, 22.5f, 45f)
+		val yKeys = floatArrayOf(-30f, 0f, 30f)
+		val axes = listOf(axis(StandardParameters.ANGLE_X, *xKeys), axis(StandardParameters.ANGLE_Y, *yKeys))
+		// The head container's lattice at a pose, as it is built.
+		val headCols = 4; val headRows = 5
+		fun headLattice(yaw: Float, pitch: Float) = FloatArray((headCols + 1) * (headRows + 1) * 2).also { out ->
+			var i = 0
+			for (r in 0..headRows) for (c in 0..headCols) {
+				val (x, y) = headContainerPoint(head, pivotX, pivotY, c.toFloat() / headCols, r.toFloat() / headRows, yaw, pitch, config.headTurnStrength, config.rigTuning)
+				out[i++] = x; out[i++] = y
+			}
+		}
+		val restFace = face.geometryGrid?.let { org.umamo.runtime.eval.warpControlPointsAt(it) { 0f } } ?: return deformers
+		val faceCount = (face.columns + 1) * (face.rows + 1)
+		val contourCols = 16; val contourRows = 16
+		val faceCells = ArrayList<KeyformCell<WarpLatticeForm>>()
+		val contourCells = ArrayList<KeyformCell<WarpLatticeForm>>()
+		for ((xi, yaw) in xKeys.withIndex()) for ((yi, pitch) in yKeys.withIndex()) {
+			val field = turn.map(yaw, pitch)
+			val hl = headLattice(yaw, pitch)
+			// The face's lattice: each point in the head's space where the head container takes it to the field's place.
+			val fl = FloatArray(faceCount * 2)
+			for (k in 0 until faceCount) {
+				val u = restFace[k * 2]; val v = restFace[k * 2 + 1]
+				val (tx, ty) = field(head.left + u * head.width, head.top + v * head.height)
+				val (iu, iv) = invertLattice(hl, headCols, headRows, tx - pivotX, ty - pivotY, u, v)
+				fl[k * 2] = iu; fl[k * 2 + 1] = iv
+			}
+			faceCells += KeyformCell(intArrayOf(xi, yi), WarpLatticeForm(fl))
+			// The skin's lattice in the face's space: through the face's lattice, then the head's, to the field's place.
+			val cl = FloatArray((contourCols + 1) * (contourRows + 1) * 2)
+			var j = 0
+			for (r in 0..contourRows) for (c in 0..contourCols) {
+				val s0 = c.toFloat() / contourCols; val t0 = r.toFloat() / contourRows
+				val (tx, ty) = field(faceFrame.left + s0 * faceFrame.width, faceFrame.top + t0 * faceFrame.height)
+				val hu0 = (faceFrame.left + s0 * faceFrame.width - head.left) / head.width
+				val hv0 = (faceFrame.top + t0 * faceFrame.height - head.top) / head.height
+				val (hu, hv) = invertLattice(hl, headCols, headRows, tx - pivotX, ty - pivotY, hu0, hv0)
+				val (fs, ft) = invertLattice(fl, face.columns, face.rows, hu, hv, s0, t0)
+				cl[j++] = fs; cl[j++] = ft
+			}
+			contourCells += KeyformCell(intArrayOf(xi, yi), WarpLatticeForm(cl))
+		}
+		return deformers.map { d ->
+			when (d.id) {
+				faceWarpId -> face.copy(geometryGrid = KeyformGrid(axes, faceCells))
+				faceContourId -> contour?.copy(rows = contourRows, columns = contourCols, geometryGrid = KeyformGrid(axes, contourCells)) ?: d
+				else -> d
+			}
+		}
+	}
+
+	/**
+	 * Where in a warp's own space ([cols] x [rows] cells over 0..1, its [lattice] of control points) the warp puts a point
+	 * at ([x], [y]): Newton's method on its bilinear map from ([u0], [v0]), outside 0..1 by its border cells.
+	 */
+	private fun invertLattice(lattice: FloatArray, cols: Int, rows: Int, x: Float, y: Float, u0: Float, v0: Float): Pair<Float, Float> {
+		fun at(u: Float, v: Float): Pair<Float, Float> {
+			val c = (u * cols).coerceIn(0f, cols - 1e-4f).toInt(); val r = (v * rows).coerceIn(0f, rows - 1e-4f).toInt()
+			val fu = u * cols - c; val fv = v * rows - r
+			fun p(cc: Int, rr: Int, k: Int) = lattice[(rr * (cols + 1) + cc) * 2 + k]
+			fun lerp(k: Int) = (p(c, r, k) * (1 - fu) + p(c + 1, r, k) * fu) * (1 - fv) + (p(c, r + 1, k) * (1 - fu) + p(c + 1, r + 1, k) * fu) * fv
+			return lerp(0) to lerp(1)
+		}
+		var u = u0; var v = v0
+		val h = 1e-3f
+		repeat(12) {
+			val (fx, fy) = at(u, v)
+			val ex = fx - x; val ey = fy - y
+			if (ex * ex + ey * ey < 1e-10f) return u to v
+			val (ax, ay) = at(u + h, v); val (bx, by) = at(u, v + h)
+			val j11 = (ax - fx) / h; val j21 = (ay - fy) / h; val j12 = (bx - fx) / h; val j22 = (by - fy) / h
+			val det = j11 * j22 - j12 * j21
+			if (kotlin.math.abs(det) < 1e-12f) return u to v
+			u -= (j22 * ex - j12 * ey) / det; v -= (-j21 * ex + j11 * ey) / det
+		}
+		return u to v
+	}
 
 	/**
 	 * The head's warps keyed on Angle Y with the lean joining their axes, so the face bows with the body:
