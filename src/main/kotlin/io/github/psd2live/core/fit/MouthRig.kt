@@ -68,9 +68,9 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 	 *   in one.
 	 * - [UPPER_LIP], [LOWER_LIP]: a lip with the skin about it rides its edge whole near the lips and less further out,
 	 *   so the lip's paint bends with it without squashing and its skin margin blends into the face.
-	 * - [UPPER_TEETH]: the upper teeth ride the upper lip whole; [LOWER_TEETH] ride the lower lip less, falling back behind
-	 *   it as the mouth opens wide.
-	 * - [TONGUE]: the tongue rides the jaw, about half the lower lip's drop, unsquashed.
+	 * - [UPPER_TEETH], [LOWER_TEETH]: a row of teeth moves whole and little after its lip ([teeth]); the opening clips it,
+	 *   so a small, round or pouting mouth hides it.
+	 * - [TONGUE]: the tongue moves whole with the jaw, about half the lower lip's drop.
 	 * - [DEEP]: the dark at the back of the mouth hardly moves; the opening uncovers it.
 	 */
 	enum class Follow { WHOLE, WHOLE_TIGHT, INSIDE, UPPER_LINE, LOWER_LINE, UPPER_LIP, LOWER_LIP, UPPER_TEETH, LOWER_TEETH, TONGUE, DEEP }
@@ -170,10 +170,10 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		Follow.LOWER_LINE -> rides(false, u, v, pose, share = 1f, falloff = false, meet = true)
 		Follow.UPPER_LIP -> rides(true, u, v, pose, share = 1f, falloff = true, meet = true)
 		Follow.LOWER_LIP -> rides(false, u, v, pose, share = 1f, falloff = true, meet = true)
-		Follow.UPPER_TEETH -> rides(true, u, v, pose, share = 1f, falloff = false, meet = false)
-		Follow.LOWER_TEETH -> rides(false, u, v, pose, share = LOWER_TEETH_SHARE, falloff = false, meet = false)
-		Follow.TONGUE -> sideways(u, pose) to middleDrop(pose, upper = false) * TONGUE_SHARE
-		Follow.DEEP -> sideways(u, pose) to (middleDrop(pose, upper = true) + middleDrop(pose, upper = false)) * 0.5f * DEEP_SHARE
+		Follow.UPPER_TEETH -> teeth(u, pose, upper = true)
+		Follow.LOWER_TEETH -> teeth(u, pose, upper = false)
+		Follow.TONGUE -> pose.shift to middleDrop(pose, upper = false) * TONGUE_SHARE
+		Follow.DEEP -> pose.shift to (middleDrop(pose, upper = true) + middleDrop(pose, upper = false)) * 0.5f * DEEP_SHARE
 	}
 
 	/**
@@ -202,8 +202,17 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		return du * w to dv * w * share
 	}
 
-	/** The sideways change of a point at [u] the mouth's width and shift make, its height left. */
-	private fun sideways(u: Float, pose: Pose): Float = 0.5f + (u - 0.5f) * pose.width + pose.shift - u
+	/**
+	 * A row of teeth moves whole and little, as drawn teeth do in hand-made rigs: it follows [TEETH_SHARE] of its lip's
+	 * middle, less as the mouth rounds, keeps its width but for a little widening in a smile, and is never bent along the
+	 * lip. The opening clips it, so a small, round or pouting mouth hides the teeth behind its lips rather than squeezing
+	 * them into the opening.
+	 */
+	private fun teeth(u: Float, pose: Pose, upper: Boolean): Pair<Float, Float> {
+		// A smile raises the corners (0.06 at full) and widens the mouth by 8%; the teeth take half of that.
+		val widen = (pose.corner / 0.06f * 0.08f * TEETH_WIDEN).coerceAtLeast(0f)
+		return ((u - 0.5f) * widen + pose.shift) to middleDrop(pose, upper) * TEETH_SHARE * (1f - pose.round.coerceIn(0f, 1f))
+	}
 
 	/** How far the upper or lower lip's middle has moved down from the drawing in [pose]. */
 	private fun middleDrop(pose: Pose, upper: Boolean): Float = edges(pose, 0.5f).let { if (upper) it.first - drawnUpper(0.5f) else it.second - drawnLower(0.5f) }
@@ -430,7 +439,9 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		val FORM_KEYS = floatArrayOf(-1f, -0.5f, 0f, 0.5f, 1f)
 		private val UPPERS = floatArrayOf(0f, 0.03f, 0.1f, 0.38f, 1f)
 		private val WIDTHS = floatArrayOf(1.04f, 1.04f, 1.08f, 1.06f, 1f)
-		private const val LOWER_TEETH_SHARE = 0.7f
+		private const val TEETH_SHARE = 0.6f
+		/** How much of a smile's widening the teeth take. */
+		private const val TEETH_WIDEN = 0.5f
 		private const val TONGUE_SHARE = 0.55f
 		private const val DEEP_SHARE = 0.2f
 		/** How far pressed lips roll in past each other at the middle, of the mouth's width. */

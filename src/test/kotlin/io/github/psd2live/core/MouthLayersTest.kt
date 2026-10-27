@@ -43,14 +43,19 @@ class MouthLayersTest {
 			"the lines meet: upper $upperTop..$upperBottom, lower $lowerTop..$lowerBottom")
 	}
 
-	@Test fun theUpperTeethRideTheUpperLipWholeAndTheLowerOnesLess() {
+	@Test fun teethMoveWholeAndLittleLeavingTheOpeningToHideThem() {
 		val rig = rig()
 		val wide = rig.pose(0f, 0.5f)
-		val top = rig.moveAs(Follow.UPPER_TEETH, 0.5f, -0.14f, wide).second; val bottom = rig.moveAs(Follow.UPPER_TEETH, 0.5f, -0.08f, wide).second
-		assertEquals(top, bottom, 1e-5f, "the upper teeth are not squashed")
+		// Whole: every point of a row moves alike, at the middle or by a corner, high or low.
+		val moves = listOf(0.5f to -0.14f, 0.5f to -0.08f, 0.15f to -0.1f).map { (u, v) -> rig.moveAs(Follow.UPPER_TEETH, u, v, wide) }
+		assertTrue(moves.all { abs(it.first - moves[0].first) < 1e-5f && abs(it.second - moves[0].second) < 1e-5f }, "the upper teeth bend or stretch: $moves")
 		val lip = rig.moveAs(Follow.LOWER_LINE, 0.5f, 0.24f, shut).second
 		val teeth = rig.moveAs(Follow.LOWER_TEETH, 0.5f, 0.2f, shut).second
-		assertTrue(teeth < 0f && abs(teeth) < abs(lip), "the lower teeth rise less than the lower lip: $teeth against $lip")
+		assertTrue(teeth < 0f && abs(teeth) < abs(lip), "the lower teeth rise less than the lower lip, which covers them: $teeth against $lip")
+		// A pout keeps the teeth's width: the opening narrows over them instead.
+		val pout = rig.pose(-1f, 1f)
+		val left = rig.moveAs(Follow.UPPER_TEETH, 0.2f, -0.1f, pout).first; val right = rig.moveAs(Follow.UPPER_TEETH, 0.8f, -0.1f, pout).first
+		assertEquals(left, right, 1e-5f, "a pout squeezes the teeth: $left against $right")
 	}
 
 	@Test fun aLipsSkinMarginRidesLessTheFurtherOutItLies() {
