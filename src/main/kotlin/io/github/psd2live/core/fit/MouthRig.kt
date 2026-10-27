@@ -282,6 +282,19 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		return MeshDeltaForm(out)
 	}
 
+	/** [positions] (x, y pairs) where the mouth at rest - shut - holds them, a layer moving as [follow]. */
+	fun atRest(positions: FloatArray, follow: Follow): FloatArray {
+		val rest = pressed(pose(0f, 0f), 0f, 0f)
+		return FloatArray(positions.size).also { out ->
+			for (i in positions.indices step 2) {
+				val (u, v) = fit.toMouth(positions[i], positions[i + 1])
+				val (du, dv) = moveAs(follow, u, v, rest)
+				val (dx, dy) = fit.canvasDelta(du, dv)
+				out[i] = positions[i] + dx; out[i + 1] = positions[i + 1] + dy
+			}
+		}
+	}
+
 	/** A mouth layer's grid: its form by its openness. Deltas are over the parent [frame]; the layer moves as [follow]. */
 	fun grid(positions: FloatArray, frame: Bounds, mouthForm: ParameterId, mouthOpen: ParameterId, follow: Follow = Follow.WHOLE): KeyformGrid<MeshDeltaForm> =
 		keyed(mouthForm, mouthOpen) { pose -> form(positions, frame, pose, follow) }

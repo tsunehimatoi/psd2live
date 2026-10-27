@@ -3396,7 +3396,7 @@ object RigBuilder {
 	private fun moduleBlendShapes(layer: ClassifiedLayer, data: MeshData, frame: Bounds, context: RigContext, config: PipelineConfig):
 		List<org.umamo.runtime.model.BlendShapeBinding<org.umamo.runtime.model.MeshForm>> =
 		eyeBlendShapes(layer, data, frame, context.fittedEyes(config), context.fittedBrows(config)) + mouthBlendShapes(layer, data, frame, context.fittedMouth(config)) +
-			headTurnShapes(layer, data.rigPositions, frame, context.headTurn(config)) + bustShapes(layer, data.rigPositions, frame, context, config) +
+			headTurnShapes(layer, turnPositions(layer, data.rigPositions, context.fittedMouth(config)), frame, context.headTurn(config)) + bustShapes(layer, data.rigPositions, frame, context, config) +
 			neckShapes(layer, data.rigPositions, frame, context, config)
 
 	/**
@@ -3459,6 +3459,16 @@ object RigBuilder {
 		val torso = context.stance.torso
 		return io.github.psd2live.core.fit.BustRig(torso.centerX, torso.shoulderY, torso.waistY, torso.halfWidth, config.recipe.value(m.BODY_BUST.id, "bounce") / 100f)
 			.shapes(positions, frame, ParameterId("ParamBustY"), ParameterId("ParamBustX"), rigid = layer.semantic.role == PartRole.RIGID)
+	}
+
+	/**
+	 * Where the head turns [layer]'s points from: where they rest. A fitted mouth rests shut, its lips drawn apart and
+	 * met; turned from where they were drawn, the shut lips would part again as the head turned.
+	 */
+	private fun turnPositions(layer: ClassifiedLayer, positions: FloatArray, mouth: io.github.psd2live.core.fit.FittedMouth?): FloatArray {
+		val rig = mouth?.rig ?: return positions
+		if (!mouth.covers(layer) || layer.semantic.tag == SemanticTag.MOUTH_CLOSE) return positions
+		return rig.atRest(positions, mouth.follow(layer))
 	}
 
 	/** [layer]'s shapes turning the head in depth, on the shell of the head it lies on ([headShell]). */

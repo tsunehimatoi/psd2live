@@ -43,6 +43,16 @@ class MouthLayersTest {
 			"the lines meet: upper $upperTop..$upperBottom, lower $lowerTop..$lowerBottom")
 	}
 
+	@Test fun atRestTheLinesLieWhereTheyMeetSoTheHeadTurnsThemAsOne() {
+		val rig = rig()
+		// The bottom of the upper line and the top of the lower one, drawn apart, rest together.
+		val upper = rig.atRest(floatArrayOf(0.5f, -0.13f), Follow.UPPER_LINE)
+		val lower = rig.atRest(floatArrayOf(0.5f, 0.23f), Follow.LOWER_LINE)
+		assertEquals(0.5f, upper[0], 1e-4f)
+		// Met, the upper line's bottom lies a line's width below the lower line's top.
+		assertEquals(0.02f, upper[1] - lower[1], 0.01f, "rest lines: upper ends ${upper[1]}, lower starts ${lower[1]}")
+	}
+
 	@Test fun teethHangFromTheirLipUnsquashedLeavingTheOpeningToHideThem() {
 		val rig = rig()
 		// A smile flattens and curves the upper lip: each column of the upper teeth keeps to it, at its own height.
