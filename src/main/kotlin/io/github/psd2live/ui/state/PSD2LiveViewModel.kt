@@ -3733,6 +3733,17 @@ class PSD2LiveViewModel : AutoCloseable {
         putJsonObject("modules") { putJsonObject(id) { putJsonObject("values") { put(knob, value.coerceIn(range)) } } }
     }
 
+    /**
+     * Starts the head turn from the style [index] (0 the default, then [io.github.psd2live.core.fit.TurnStyle.PRESETS]):
+     * every other value of `face.depth-turn` goes back to its default, so the style shows as it is.
+     */
+    fun applyTurnStyle(index: Int) = editRig {
+        val module = io.github.psd2live.core.recipe.RigModules.FACE_DEPTH_TURN
+        putJsonObject("modules") { putJsonObject(module.id) { putJsonObject("values") {
+            for (knob in module.knobs) put(knob.id, if (knob.id == "style") index.toFloat().coerceIn(knob.range) else knob.default)
+        } } }
+    }
+
     /** Builds [area] with the base [id], at the values it had if it already did. */
     fun setRigBase(area: String, id: String) = editRig { putJsonObject("bases") { putJsonObject(area) { put("base", id) } } }
 

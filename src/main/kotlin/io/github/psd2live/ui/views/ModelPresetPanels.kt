@@ -695,6 +695,7 @@ internal fun RigModulePresets(state: PSD2LiveState, viewModel: PSD2LiveViewModel
 						}
 						RowDetail(costText(costs[module]), moduleOn && recipe.modern || module.setting != null && moduleOn)
 					}
+					if (moduleOn && module === RigModules.FACE_DEPTH_TURN) TurnStyleRow(recipe.value(module.id, "style"), usable, viewModel)
 					if (moduleOn) for (knob in module.knobs.filter { !it.advanced }) KnobRow(
 						label = tr("settings.rig.knob.${module.id}.${knob.id}"),
 						hint = tr("settings.rig.knob.${module.id}.${knob.id}.hint", "%.0f".format(knob.default)),
@@ -705,6 +706,35 @@ internal fun RigModulePresets(state: PSD2LiveState, viewModel: PSD2LiveViewModel
 				if (tuning.isNotEmpty()) AreaTuning(area.id, tuning, state, viewModel, isBusy)
 			}
 		}
+	}
+}
+
+/**
+ * The head turn's style to start from: the default or one of [io.github.psd2live.core.fit.TurnStyle.PRESETS], each a
+ * whole turn; choosing one puts the module's other values back to their defaults, which then adjust it.
+ */
+@Composable
+private fun TurnStyleRow(value: Float, enabled: Boolean, viewModel: PSD2LiveViewModel) {
+	val typography = LocalToolTypography.current
+	val colors = LocalToolColors.current
+	val styles = listOf("default") + io.github.psd2live.core.fit.TurnStyle.PRESETS
+	val selected = kotlin.math.round(value).toInt().coerceIn(0, styles.size - 1)
+	Row(modifier = Modifier.fillMaxWidth().padding(start = 18.dp).height(22.dp), verticalAlignment = Alignment.CenterVertically) {
+		Hint(tr("settings.rig.turnStyle.hint"), modifier = Modifier.width(66.dp)) {
+			Text(tr("settings.rig.turnStyle"), style = typography.body.copy(fontSize = 10.5.sp),
+				color = if (selected != 0) colors.accent else colors.textPrimary, textAlign = TextAlign.Right, maxLines = 1,
+				overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth())
+		}
+		Spacer(Modifier.width(5.dp))
+		CompactDropdown(
+			items = styles.indices.toList(),
+			selectedItem = selected,
+			onItemSelected = { if (it != selected) viewModel.applyTurnStyle(it) },
+			itemLabel = { tr("settings.rig.turnStyle." + styles[it]) },
+			enabled = enabled,
+			height = 20.dp,
+			modifier = Modifier.weight(1f),
+		)
 	}
 }
 

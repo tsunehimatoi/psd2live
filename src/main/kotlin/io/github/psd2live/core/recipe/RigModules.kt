@@ -170,7 +170,8 @@ object RigModules {
 	 * far it turns and looks, its artistic sliders (one spread of a style either way at 100) and the hair's ([turnStyle]).
 	 */
 	val FACE_DEPTH_TURN = RigModule("face.depth-turn", ModuleTier.CORE, applies = { it.has(SemanticTag.FACE) },
-		knobs = listOf(RecipeKnob("turn", P, 0f..100f, 45f), RecipeKnob("look", P, 0f..200f, 100f), RecipeKnob("depth", P, 0f..200f, 100f)) +
+		knobs = listOf(RecipeKnob("style", P, 0f..io.github.psd2live.core.fit.TurnStyle.PRESETS.size.toFloat(), 0f, advanced = true),
+			RecipeKnob("turn", P, 0f..100f, 45f), RecipeKnob("look", P, 0f..200f, 100f), RecipeKnob("depth", P, 0f..200f, 100f)) +
 			STYLE_KNOBS.map { RecipeKnob(it, P, -200f..200f, 0f) } + HAIR_KNOBS.map { RecipeKnob(it, P, -100f..100f, 0f) })
 
 	/** The skin's overlays - blush, shading, the bangs' shadow on the face - clipped to the face, so a turn never carries them off it. */
@@ -293,13 +294,16 @@ object RigModules {
 	private val HAIR_KNOBS get() = listOf("hairFollow", "hairLead", "backParallax")
 
 	/**
-	 * The turn's style under [config]: the turn's amount (its knob at 45 is the style's own, scaled by the head-turn
-	 * strength) and the look's, `depth` about 100 as the depth slider, the other sliders and the hair's in hundredths.
+	 * The turn's style under [config]: the style it starts from (`style`: 0 the default, then one of
+	 * [io.github.psd2live.core.fit.TurnStyle.PRESETS] by its place, from 1), the turn's amount (its knob at 45 is the
+	 * style's own, scaled by the head-turn strength) and the look's, `depth` about 100 as the depth slider, the other
+	 * sliders and the hair's in hundredths.
 	 */
 	fun turnStyle(config: io.github.psd2live.core.PipelineConfig): io.github.psd2live.core.fit.TurnStyle.Setting {
 		val id = FACE_DEPTH_TURN.id; val r = config.recipe
 		val names = io.github.psd2live.core.fit.TurnStyle.SLIDERS
 		return io.github.psd2live.core.fit.TurnStyle.Setting(
+			preset = io.github.psd2live.core.fit.TurnStyle.PRESETS.getOrNull(kotlin.math.round(r.value(id, "style")).toInt() - 1),
 			turn = config.headTurnStrength * r.value(id, "turn") / 45f,
 			look = config.headTurnStrength * r.value(id, "look") / 100f,
 			sliders = mapOf(names[0] to (r.value(id, "depth") - 100f) / 100f) + STYLE_KNOBS.withIndex().associate { (i, k) -> names[i + 1] to r.value(id, k) / 100f },

@@ -29,16 +29,18 @@ class TurnStyle private constructor(
 	private val hairPoses: List<String>,
 	private val hairBase: Map<String, FloatArray>,
 	private val hairSliders: Map<String, List<String>>,
+	private val presets: Map<String, Pair<Map<String, FloatArray>, Map<String, FloatArray>?>>,
 ) {
 	private val index = names.withIndex().associate { it.value to it.index }
 	private val hairIndex = hairNames.withIndex().associate { it.value to it.index }
 
 	/**
-	 * A setting of the style: how far it turns ([turn]) and looks up and down ([look]) against the style's own ends,
-	 * the artistic sliders ([SLIDERS], one unit is one spread of what it moves) and the hair's ([HAIR_SLIDERS], a share
-	 * more or less of what it scales).
+	 * A setting of the style: the style it starts from ([preset], one of [PRESETS]; the default when null), how far it
+	 * turns ([turn]) and looks up and down ([look]) against that style's own ends, the artistic sliders ([SLIDERS], one
+	 * unit is one spread of what it moves) and the hair's ([HAIR_SLIDERS], a share more or less of what it scales).
 	 */
-	data class Setting(val turn: Float = 1f, val look: Float = 1f, val sliders: Map<String, Float> = emptyMap(), val hair: Map<String, Float> = emptyMap())
+	data class Setting(val turn: Float = 1f, val look: Float = 1f, val sliders: Map<String, Float> = emptyMap(), val hair: Map<String, Float> = emptyMap(),
+	                   val preset: String? = null)
 
 	/** The moves' values at the end poses (`X`, `up`, `down`, `Xup`, `Xdown`) and the hair's (those and their `X-` mirrors) under a setting. */
 	class Ends internal constructor(internal val face: Map<String, FloatArray>, internal val hair: Map<String, FloatArray>)
@@ -49,9 +51,11 @@ class TurnStyle private constructor(
 	}
 
 	fun ends(setting: Setting): Ends {
+		val preset = setting.preset?.let { presets[it] }
+		val faceBase = preset?.first ?: base; val hairBase = preset?.second ?: this.hairBase
 		val face = poses.associateWith { pose ->
 			val k = when (pose) { "X" -> setting.turn; "up", "down" -> setting.look; else -> setting.turn * setting.look }
-			val v = base.getValue(pose).copyOf()
+			val v = faceBase.getValue(pose).copyOf()
 			for ((name, amount) in setting.sliders) {
 				val add = sliders[name]?.get(pose) ?: continue
 				for (i in v.indices) v[i] += amount * add[i]
@@ -105,6 +109,12 @@ class TurnStyle private constructor(
 		/** The artistic sliders, in the table's names. */
 		val SLIDERS = listOf("depth", "perspective", "gaze_hold", "cheek_swing", "corner_roll", "nod_depth", "accessory")
 		val HAIR_SLIDERS = listOf("hair_follow", "hair_lead", "back_parallax")
+		/**
+		 * The styles a setting can start from besides the default, each a whole turn on the style's axes: bold (deep, the
+		 * gaze held, features and headwear leading), dramatic (a wide turn and look, a strong perspective), wide (a wide
+		 * turn, the cheeks swinging), nod (a flat turn, a wide look up and down), soft (flat and small).
+		 */
+		val PRESETS = listOf("bold", "dramatic", "wide", "nod", "soft")
 		/** The roles a front hair piece's points take by where they lie, and a back piece's. */
 		val FRONT_ROLES = listOf("bangs", "side", "crown", "tail")
 		val BACK_ROLES = listOf("back", "back_tail")
@@ -131,6 +141,10 @@ class TurnStyle private constructor(
 				timing.getValue("x").jsonObject.mapValues { floats(it.value) }, timing.getValue("y").jsonObject.mapValues { floats(it.value) },
 				strings(hair.getValue("names")), strings(hair.getValue("poses")), byPose(hair.getValue("base").jsonObject),
 				hair.getValue("sliders").jsonObject.mapValues { strings(it.value) },
+				root["presets"]?.jsonObject.orEmpty().mapValues { (_, v) ->
+					val o = v.jsonObject
+					byPose(o.getValue("face").jsonObject) to o["hair"]?.let { byPose(it.jsonObject) }
+				},
 			)
 		}
 	}

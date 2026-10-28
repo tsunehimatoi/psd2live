@@ -101,6 +101,25 @@ class FaceTurnTest {
 		assertTrue(held != loose, "the gaze slider moves the iris in its opening")
 	}
 
+	@Test fun everyPresetIsAWholeStyleOfItsOwn() {
+		val style = TurnStyle.DEFAULT
+		val base = style.at(style.ends(TurnStyle.Setting()), 1f, 0f)
+		val seen = HashSet<List<Float>>()
+		for (preset in TurnStyle.PRESETS) {
+			val ends = style.ends(TurnStyle.Setting(preset = preset))
+			val m = style.at(ends, 1f, 0f)
+			val key = listOf(m["slide_x"], m["eye_gap"], m["far_eA00"], m["far_iris_u"])
+			assertTrue(key != listOf(base["slide_x"], base["eye_gap"], base["far_eA00"], base["far_iris_u"]), "$preset differs from the default")
+			assertTrue(seen.add(key), "$preset differs from the others")
+			assertTrue(m["slide_x"] > 0f, "$preset turns toward the turn")
+			assertTrue(style.hairAt(ends, 1f, 0f)["hair_bangs_a0"] != 0f, "$preset has hair fields")
+		}
+		val gaze = io.github.psd2live.core.recipe.RigModules.turnStyle(PipelineConfig(recipe = io.github.psd2live.core.recipe.RigRecipe(true,
+			modules = mapOf("face.depth-turn" to io.github.psd2live.core.recipe.ModuleChoice(values = mapOf("style" to 4f))))))
+		assertEquals("nod", gaze.preset)
+		assertEquals(null, io.github.psd2live.core.recipe.RigModules.turnStyle(PipelineConfig()).preset)
+	}
+
 	@Test fun hairBeforeTheFaceGoesWithTheTurnAndHangsLessBelowTheChin() {
 		val turn = FaceTurn(face()); val pose = turn.pose(45f, 0f)
 		// A fringe over the forehead and a lock hanging from beside the face to well below the chin.
