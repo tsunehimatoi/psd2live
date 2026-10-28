@@ -4547,6 +4547,31 @@ object RigBuilder {
 		val contourCols = 16; val contourRows = 16
 		val faceCells = ArrayList<KeyformCell<WarpLatticeForm>>()
 		val contourCells = ArrayList<KeyformCell<WarpLatticeForm>>()
+		// The eyes', their irises' and the brows' own warps, reshaped on top of the field ([io.github.psd2live.core.fit.FeatureTurn]).
+		val byId = deformers.associateBy { it.id }
+		val eyeFits = context.fittedEyes(config)?.fitting?.fits.orEmpty()
+		val browFits = context.fittedBrows(config).mapValues { it.value.fit }
+		class Feature(val warp: Deformer.Warp, val parentFrame: Bounds, val rest: FloatArray, val inside: DeformerId?,
+			val rule: (Float, Float, Float, Float, Float, (Float, Float) -> Pair<Float, Float>) -> Pair<Float, Float>)
+		val features = buildList {
+			for (side in listOf(Side.LEFT, Side.RIGHT)) {
+				val token = sideToken(side)
+				fun feature(id: String, inside: DeformerId?, rule: (Float, Float, Float, Float, Float, (Float, Float) -> Pair<Float, Float>) -> Pair<Float, Float>) {
+					val warp = byId[DeformerId(id)] as? Deformer.Warp ?: return
+					val frame = warp.parent?.let { context.resolveFrame(it, config) } ?: return
+					val rest = warp.geometryGrid?.let { org.umamo.runtime.eval.warpControlPointsAt(it) { 0f } } ?: return
+					add(Feature(warp, frame, rest, inside, rule))
+				}
+				eyeFits[side]?.let { fit ->
+					feature("DeformEyeShape$token", null) { x, y, sv, tv, rv, f -> io.github.psd2live.core.fit.FeatureTurn.eye(fit, f, sv, tv, rv, x, y) }
+					feature("DeformIrisPreserve$token", DeformerId("DeformEyeShape$token")) { x, y, sv, tv, rv, f -> io.github.psd2live.core.fit.FeatureTurn.iris(fit, f, sv, tv, rv, x, y) }
+				}
+				browFits[side]?.let { fit ->
+					feature("DeformBrowShape$token", null) { x, y, sv, tv, rv, f -> io.github.psd2live.core.fit.FeatureTurn.brow(fit, f, sv, tv, rv, x, y) }
+				}
+			}
+		}
+		val featureCells = features.associate { it.warp.id to ArrayList<KeyformCell<WarpLatticeForm>>() }
 		for ((xi, yaw) in xKeys.withIndex()) for ((yi, pitch) in yKeys.withIndex()) {
 			val field = turn.map(yaw, pitch)
 			val hl = headLattice(yaw, pitch)
@@ -4559,6 +4584,37 @@ object RigBuilder {
 				fl[k * 2] = iu; fl[k * 2 + 1] = iv
 			}
 			faceCells += KeyformCell(intArrayOf(xi, yi), WarpLatticeForm(fl))
+			// A rig point's place, at this pose, in a frame under the face's warp - through the head's lattice and the
+			// face's - the warps between them resting as they are drawn.
+			fun underFace(x: Float, y: Float, frame: Bounds): Pair<Float, Float> {
+				val (hu, hv) = invertLattice(hl, headCols, headRows, x - pivotX, y - pivotY, (x - head.left) / head.width, (y - head.top) / head.height)
+				val (fs, ft) = invertLattice(fl, face.columns, face.rows, hu, hv, (x - faceFrame.left) / faceFrame.width, (y - faceFrame.top) / faceFrame.height)
+				return (faceFrame.left + fs * faceFrame.width - frame.left) / frame.width to (faceFrame.top + ft * faceFrame.height - frame.top) / frame.height
+			}
+			val (sv, tv) = turn.shares(yaw, pitch)
+			val rv = turn.roll(yaw, pitch)
+			val placed = HashMap<DeformerId, FloatArray>()
+			for (f in features.sortedBy { if (it.inside == null) 0 else 1 }) {
+				val count = f.rest.size / 2
+				val out = FloatArray(f.rest.size)
+				val outer = f.inside?.let { id -> features.firstOrNull { it.warp.id == id } }
+				for (k in 0 until count) {
+					val x = f.parentFrame.left + f.rest[k * 2] * f.parentFrame.width
+					val y = f.parentFrame.top + f.rest[k * 2 + 1] * f.parentFrame.height
+					val (tx, ty) = f.rule(x, y, sv, tv, rv, field)
+					if (outer == null) {
+						val (a, b) = underFace(tx, ty, f.parentFrame); out[k * 2] = a; out[k * 2 + 1] = b
+					} else {
+						// Inside another feature's warp: through that warp's lattice at this pose too.
+						val (ga, gb) = underFace(tx, ty, outer.parentFrame)
+						val lattice = placed[outer.warp.id] ?: outer.rest
+						val (a, b) = invertLattice(lattice, outer.warp.columns, outer.warp.rows, ga, gb, f.rest[k * 2], f.rest[k * 2 + 1])
+						out[k * 2] = a; out[k * 2 + 1] = b
+					}
+				}
+				placed[f.warp.id] = out
+				featureCells.getValue(f.warp.id) += KeyformCell(intArrayOf(xi, yi), WarpLatticeForm(out))
+			}
 			// The skin's lattice in the face's space: through the face's lattice, then the head's, to the field's place.
 			val cl = FloatArray((contourCols + 1) * (contourRows + 1) * 2)
 			var j = 0
@@ -4578,6 +4634,7 @@ object RigBuilder {
 			when {
 				d.id == faceWarpId -> face.copy(geometryGrid = KeyformGrid(axes, faceCells))
 				d.id == faceContourId -> contour?.copy(rows = contourRows, columns = contourCols, geometryGrid = KeyformGrid(axes, contourCells)) ?: d
+				d.id in featureCells -> (d as Deformer.Warp).copy(geometryGrid = KeyformGrid(axes, featureCells.getValue(d.id)), channelGrids = d.channelGrids)
 				d.id in context.underFace || d.id == frontHairFollowWarpId -> when (d) {
 					is Deformer.Warp -> d.copy(geometryGrid = d.geometryGrid?.let(::heldTurn))
 					is Deformer.Rotation -> d.copy(geometryGrid = d.geometryGrid?.let(::heldTurn))

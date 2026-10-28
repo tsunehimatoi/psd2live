@@ -219,6 +219,16 @@ class FaceTurn(private val marks: FaceLandmarks, private val strength: Float = 1
 	 * Where the face's points go at [yaw] and [pitch] degrees: a map of rig points. Sideways the moves follow the sine of
 	 * the turn; a corner pose adds the two looks, a little short looking down, and rolls about the eyes' middle.
 	 */
+	/** The turn's share at [yaw] (+ toward the canvas's right, by the sine of 30 degrees) and the look's at [pitch] (+ up), with the strength. */
+	fun shares(yaw: Float, pitch: Float): Pair<Float, Float> =
+		strength * sin(yaw * PI.toFloat() / 180f) / sin(PI.toFloat() / 6f) to strength * pitch / 30f
+
+	/** The face's roll at [yaw] and [pitch], in radians: none but on a corner pose. */
+	fun roll(yaw: Float, pitch: Float): Float {
+		val (s, t) = shares(yaw, pitch)
+		return if (s != 0f && t != 0f) ROLL * (s / strength.coerceAtLeast(1e-3f)) * (t / strength.coerceAtLeast(1e-3f)) * PI.toFloat() / 180f else 0f
+	}
+
 	fun map(yaw: Float, pitch: Float): (Float, Float) -> Pair<Float, Float> {
 		if (!usable || yaw == 0f && pitch == 0f) return { x, y -> x to y }
 		val s = strength * sin(yaw * PI.toFloat() / 180f) / sin(PI.toFloat() / 6f)
@@ -226,7 +236,7 @@ class FaceTurn(private val marks: FaceLandmarks, private val strength: Float = 1
 		val pairs = rules(s, t)
 		val tps = ThinPlateSpline(pairs.map { it.first }, pairs.map { it.second }, 1e-3)
 		val scale = if (s != 0f && t < 0f) CORNER_DOWN else 1f
-		val roll = if (s != 0f && t != 0f) ROLL * (s / strength.coerceAtLeast(1e-3f)) * (t / strength.coerceAtLeast(1e-3f)) * PI.toFloat() / 180f else 0f
+		val roll = roll(yaw, pitch)
 		return { x, y ->
 			val (mx, my) = tps.map(x, y)
 			var px = x + (mx - x) * scale; var py = y + (my - y) * scale
