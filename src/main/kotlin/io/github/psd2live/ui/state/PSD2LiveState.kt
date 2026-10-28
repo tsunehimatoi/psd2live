@@ -557,12 +557,9 @@ data class PSD2LiveState(
 	val projectOutputsExpanded: Boolean = false,
 	val simulationPresetsExpanded: Boolean = true,
 	val strengthSubExpanded: Boolean = false,
-	val rigTuningExpanded: Boolean = false,
 	/** Whether the model presets' rig modules folder is open, and which of its area cards. */
 	val rigModulesExpanded: Boolean = false,
 	val rigAreasExpanded: Set<String> = emptySet(),
-	/** The rig values' Advanced folder is open. */
-	val rigTuningAdvancedExpanded: Boolean = false,
 	val advancedExpanded: Boolean = false,
 	val isAnalyzing: Boolean = false,
 	val isGenerating: Boolean = false,

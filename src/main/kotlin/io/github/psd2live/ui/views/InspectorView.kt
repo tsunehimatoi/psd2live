@@ -101,8 +101,7 @@ internal fun ModelPresetsSection(
 
 	fun expandAll(expanded: Boolean) {
 		viewModel.setStrengthSubExpanded(expanded)
-		viewModel.setRigTuningExpanded(expanded)
-		viewModel.setRigTuningAdvancedExpanded(expanded)
+		viewModel.setRigModulesExpanded(expanded)
 		viewModel.setDynamicsSubExpanded(expanded)
 		viewModel.setSimulationPresetsExpanded(expanded)
 	}
@@ -404,7 +403,6 @@ internal fun ModelPresetsSection(
 		}
 
 
-		RigTuningPresets(state, viewModel, isBusy)
 		RigModulePresets(state, viewModel, isBusy)
 
 

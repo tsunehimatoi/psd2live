@@ -212,8 +212,11 @@ data class RigTuning(
 	/** How far in front of the torso the lean is seen from, in torso lengths: nearer draws a lean in larger. */
 	val leanCameraDistance: Float = 9f,
 ) {
-	/** The panel's groups, in order. */
-	enum class Group { HEAD, EYES, BROWS, MOUTH, NOSE_EARS, HAIR, TURN, OPEN, LEAN, PROPORTION, BREATH, DEPTH }
+	/** The panel's groups, in order, each in the rig area ([io.github.psd2live.core.recipe.RigArea]) whose card shows it. */
+	enum class Group(val area: String) {
+		HEAD("face"), EYES("eye"), BROWS("brow"), MOUTH("mouth"), NOSE_EARS("face"), HAIR("hair"),
+		TURN("body"), OPEN("body"), LEAN("body"), PROPORTION("body"), BREATH("body"), DEPTH("body"),
+	}
 
 	/** The unit a value is shown in. */
 	enum class Unit { DEGREES, PERCENT, TORSO_LENGTHS }
@@ -246,6 +249,27 @@ data class RigTuning(
 	fun toMap(): Map<String, Float> = fields.associateTo(LinkedHashMap()) { it.id to it.get(this) }
 
 	companion object {
+		/**
+		 * The values a rig module or base ([io.github.psd2live.core.recipe.RigModules]) draws its own way, by the module's
+		 * or base's id: while it is built they move nothing. The nine-pose turn of the face, its features and the hair
+		 * gives way to the turn's style (`face.depth-turn`); the drawn blink, brow lift and mouth shapes to the fitted
+		 * eyes, brows and mouth; the one sway of the front and back hair to the hair's chains. A rig without them (a
+		 * project saved before the modules, or with them off) still reads them.
+		 */
+		val replacedBy: Map<String, String> = listOf(
+			"faceTurn", "faceTilt", "faceTurnBase", "faceLift", "faceArch", "faceCorner", "faceOutsideFollow", "yawEase", "pitchEase",
+			"featurePlane", "faceContour", "displacementShift", "displacementNarrow", "displacementTilt", "displacementTwist",
+			"eyeFarShrink", "eyeNearGrow", "eyeShift", "eyeTilt", "eyeLidCurve", "eyeTiltStretch", "irisShift", "irisKeepWidth", "irisTilt",
+			"browFarShrink", "browNearGrow", "browShift", "browTilt",
+			"mouthShift", "mouthCornerLag", "mouthNearLag", "mouthTurnArch", "mouthTilt",
+			"noseShift", "noseTilt", "earFarShrink", "earShift",
+			"frontHairTurn", "frontHairTilt", "frontHairPerspective", "backHairTurn", "backHairTilt",
+		).associateWith { "face.depth-turn" } +
+			listOf("blinkDepth", "blinkCorner", "eyelashSquash").associateWith { "eye/fitted" } +
+			mapOf("browLift" to "brow/fitted") +
+			listOf("mouthSmile", "mouthFormWiden", "mouthClosedNarrow", "mouthSmileBase", "mouthSeam").associateWith { "mouth/fitted" } +
+			listOf("frontHairSway", "backHairSway", "frontHairCurl", "backHairCurl").associateWith { "hair/chains" }
+
 		private const val COMMON = false
 		private const val ADVANCED = true
 		private val D = Unit.DEGREES

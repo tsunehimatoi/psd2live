@@ -307,6 +307,16 @@ object RigModules {
 		)
 	}
 
+	/**
+	 * Whether the rig value [field] ([io.github.psd2live.core.RigTuning.fields]) moves anything under [config] for
+	 * [subject]: not while the module or base it gives way to ([io.github.psd2live.core.RigTuning.replacedBy]) is built.
+	 */
+	fun tuningInEffect(field: String, config: io.github.psd2live.core.PipelineConfig, subject: RecipeSubject): Boolean {
+		val by = io.github.psd2live.core.RigTuning.replacedBy[field] ?: return true
+		module(by)?.let { return !builds(it, config, subject) }
+		return config.recipe.base(by.substringBefore('/')).id != by
+	}
+
 	/** Whether [config] builds [module] for the art [subject] shows: switched on, its prerequisites too, and applying. */
 	fun builds(module: RigModule, config: io.github.psd2live.core.PipelineConfig, subject: RecipeSubject): Boolean =
 		module.applies(subject) && config.recipe.switchedOn(module) { setting(config, it) } &&

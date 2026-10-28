@@ -31,6 +31,20 @@ class RigRecipeTest {
 		assertEquals(saved, WorkspaceSettingsCodec.encode(WorkspaceSettingsCodec.decode(saved)), "a legacy project's settings text does not change")
 	}
 
+	@Test fun aRigValueShowsOnlyWhileItMovesSomething() {
+		val face = io.github.psd2live.core.recipe.RecipeSubject(listOf(io.github.psd2live.core.recipe.RecipeSubject.Piece(SemanticTag.FACE, Side.NONE, null)))
+		val modern = PipelineConfig()
+		assertFalse(RigModules.tuningInEffect("faceTurn", modern, face), "the turn's style draws the face's turn")
+		assertTrue(RigModules.tuningInEffect("headShellTurn", modern, face), "the head container still turns")
+		assertTrue(RigModules.tuningInEffect("faceTurn", modern.copy(recipe = RigRecipe(true, modules = mapOf("face.depth-turn" to ModuleChoice(on = false)))), face))
+		assertTrue(RigModules.tuningInEffect("faceTurn", modern.copy(recipe = RigRecipe.Legacy), face), "a project saved before the modules reads every value")
+		assertTrue(RigModules.tuningInEffect("blinkDepth", modern.copy(recipe = RigRecipe.Legacy), face))
+		for ((id, by) in RigTuning.replacedBy) {
+			assertTrue(RigTuning.fields.any { it.id == id }, "$id is a rig value")
+			assertTrue(RigModules.module(by) != null || RigModules.base(by) != null, "$by is a module or a base")
+		}
+	}
+
 	@Test fun legacyRecipesBuildOnlyWhatOlderSettingsSwitch() {
 		val module = RigModule("eye.test", ModuleTier.MAJOR)
 		assertFalse(RigRecipe.Legacy.switchedOn(module) { true })

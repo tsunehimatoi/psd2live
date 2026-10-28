@@ -3709,8 +3709,11 @@ class PSD2LiveViewModel : AutoCloseable {
         put("rigTuning", io.github.psd2live.project.WorkspaceSettingsCodec.encodeRigTuning(_state.value.rigTuning.with(id, value)))
     })
 
-    fun resetRigTuning() = editPresetSettings(buildJsonObject {
-        put("rigTuning", io.github.psd2live.project.WorkspaceSettingsCodec.encodeRigTuning(io.github.psd2live.core.RigTuning()))
+    /** Puts the rig values [ids] back to their defaults. */
+    fun resetRigTuning(ids: List<String>) = editPresetSettings(buildJsonObject {
+        val defaults = io.github.psd2live.core.RigTuning()
+        val reset = ids.fold(_state.value.rigTuning) { t, id -> t.with(id, defaults.toMap().getValue(id)) }
+        put("rigTuning", io.github.psd2live.project.WorkspaceSettingsCodec.encodeRigTuning(reset))
     })
 
     private fun editRig(change: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit) = editPresetSettings(buildJsonObject {
@@ -4778,18 +4781,9 @@ class PSD2LiveViewModel : AutoCloseable {
 		updateState { it.copy(strengthSubExpanded = expanded) }
 	}
 
-	fun setRigTuningExpanded(expanded: Boolean) {
-		updateState { it.copy(rigTuningExpanded = expanded) }
-	}
-
-	fun setRigTuningAdvancedExpanded(expanded: Boolean) {
-		updateState { it.copy(rigTuningAdvancedExpanded = expanded) }
-	}
-
 	/** Back to the default presets; hair simulations stay until their classic sway is restored. */
     fun resetModelPresetsToDefault() {
-        updateState { it.copy(strengthSubExpanded = false, rigTuningExpanded = false,
-            rigTuningAdvancedExpanded = false, dynamicsSubExpanded = false) }
+        updateState { it.copy(strengthSubExpanded = false, dynamicsSubExpanded = false) }
         editPresetSettings(io.github.psd2live.application.WorkspaceSettingsDraft.presetDefaults())
     }
 
