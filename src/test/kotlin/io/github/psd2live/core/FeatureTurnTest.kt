@@ -38,6 +38,31 @@ class FeatureTurnTest {
 		assertTrue(iris > opening + 0.1f, "the far iris narrows less than its opening: $iris against $opening")
 	}
 
+	@Test fun aTurnedMouthHingesAtItsMiddle() {
+		fun at(s: Float, x: Float) = FeatureTurn.mouth(-30f to 100f, 30f to 100f, still, s, 0f, 0f, x, 100f)
+		val far = at(1f, 30f).first - at(1f, 0f).first; val near = at(1f, 0f).first - at(1f, -30f).first
+		assertTrue(far < 25f && near > 29f, "only the far half narrows: far $far, near $near of 30")
+		assertTrue(abs(at(1f, 30f).second - at(1f, -30f).second) < 0.5f, "a pure turn does not tilt the mouth")
+		val up = FeatureTurn.mouth(-30f to 100f, 30f to 100f, still, 0f, 1f, 0f, 0f, 100f).second
+		assertTrue(up < 100f - 2f, "looking up its middle rises against its corners: $up")
+	}
+
+	@Test fun aDrawnNoseFoldsItsFarSideAndLeads() {
+		fun at(s: Float, t: Float, x: Float, y: Float) = FeatureTurn.nose(-6f to 50f, 6f to 50f, 40f, 60f, 40f, still, s, t, 0f, x, y)
+		val far = at(1f, 0f, 6f, 50f).first - at(1f, 0f, 0f, 50f).first; val near = at(1f, 0f, 0f, 50f).first - at(1f, 0f, -6f, 50f).first
+		assertTrue(far < near * 0.5f, "the far side folds into the bridge: $far against $near")
+		assertTrue(at(1f, 0f, 0f, 50f).first > 5f, "the nose leads past the field")
+		val height = at(0f, 1f, 0f, 60f).second - at(0f, 1f, 0f, 40f).second; val width = at(0f, 1f, 6f, 50f).first - at(0f, 1f, -6f, 50f).first
+		assertTrue(height < 20f * 0.8f && width > 12f, "looking up it shows its underside, flatter and wider: $height x $width")
+	}
+
+	@Test fun theFarEarFoldsTowardItsRootAndTheNearOneOpens() {
+		// An ear on the canvas's right, root at (100, 0), outer edge at (130, 0).
+		fun outer(s: Float) = FeatureTurn.ear(100f to 0f, 130f to 0f, 40f, 1f, still, s, 0f, 0f, 130f, 0f).first - 100f
+		assertTrue(outer(1f) < 30f * 0.8f, "turned toward its side the ear folds toward its root: ${outer(1f)}")
+		assertTrue(outer(-1f) > 30f * 1.1f, "turned away it opens: ${outer(-1f)}")
+	}
+
 	@Test fun lookingUpBendsTheEyesLineAndLookingDownClosesItFromTheTop() {
 		fun tilt(t: Float): Double { val a = FeatureTurn.eye(left, still, 0f, t, 0f, 20f, 0f); val b = FeatureTurn.eye(left, still, 0f, t, 0f, 80f, 0f)
 			return Math.toDegrees(atan2((b.second - a.second).toDouble(), (b.first - a.first).toDouble())) }

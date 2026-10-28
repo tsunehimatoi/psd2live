@@ -39,6 +39,8 @@ class FaceTurn(private val marks: FaceLandmarks, private val strength: Float = 1
 	 * The unit of the moves: the face's width at the eye line over [FACE_PER_UNIT], so a face drawn with eyes set wide or
 	 * close turns by its own size, not its eyes' spacing.
 	 */
+	val unit: Float get() = w
+
 	private val w: Float = run {
 		if (eyeL == null || eyeR == null || contour.size < 40) return@run 0f
 		val l = marks["face.eyeLine.L"]; val r = marks["face.eyeLine.R"]
@@ -276,8 +278,8 @@ class FaceTurn(private val marks: FaceLandmarks, private val strength: Float = 1
 		const val BAND = 0.12f
 		/** Looking up 30 degrees, how far each point rises, in W. */
 		const val LIFT_MIDDLE = 0.30f
-		const val LIFT_EYE = 0.33f
-		const val LIFT_BROW = 0.33f
+		const val LIFT_EYE = 0.40f
+		const val LIFT_BROW = 0.40f
 		const val LIFT_NOSE = 0.26f
 		const val LIFT_MOUTH = 0.34f
 		const val LIFT_CHIN = 0.34f

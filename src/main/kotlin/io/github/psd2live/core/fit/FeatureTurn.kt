@@ -132,6 +132,81 @@ object FeatureTurn {
 		return place(bx to by, cx, cy, field, roll)
 	}
 
+	/**
+	 * Where a point ([x], [y]) of the nose goes. The nose is the face's most forward point - the field already sends it
+	 * furthest - and it is a small wedge with two sides: turned, the side facing the viewer opens and the far side folds
+	 * into the bridge's line, the whole leaning a little into the turn; looking up it shows its underside, flatter and
+	 * wider; looking down it lengthens. [left], [right], [top] and [bottom] are the drawn nose's extremes.
+	 */
+	fun nose(left: Pair<Float, Float>, right: Pair<Float, Float>, top: Float, bottom: Float, unit: Float, field: (Float, Float) -> Pair<Float, Float>,
+	         s: Float, t: Float, roll: Float, x: Float, y: Float): Pair<Float, Float> {
+		val turn = min(abs(s), 1.5f)
+		val cx = (left.first + right.first) / 2f; val cy = (top + bottom) / 2f
+		var dx = x - cx; var dy = y - cy
+		dx *= if (dx * s > 0f) 1f - NOSE_FOLD * turn else 1f + NOSE_OPEN * turn
+		dx += (if (s > 0f) 1f else -1f) * NOSE_LEAN * turn * -dy
+		if (t > 0f) { dy *= 1f - NOSE_FLATTEN * t; dx *= 1f + NOSE_WIDEN * t } else dy *= 1f + NOSE_LENGTHEN * -t
+		// A drawn nose stands before everything else on the face: it leads past the field (which keeps a nose drawn as skin
+		// behind the eyes) sideways and up and down, [unit] being the face's.
+		val (px, py) = place((cx + dx) to (cy + dy), cx, cy, field, roll)
+		return (px + NOSE_LEAD * unit * s) to (py - (if (t >= 0f) NOSE_LIFT else NOSE_DROP) * unit * t)
+	}
+
+	/**
+	 * Where a point ([x], [y]) of the mouth goes, as a whole (its own shapes ride on top). Turned it hinges at its middle:
+	 * only the far half narrows, the near half keeps its width, and it does not tilt; looking up its middle rises against
+	 * its corners, looking down its corners rise. [a] and [b] are its corners.
+	 */
+	fun mouth(a: Pair<Float, Float>, b: Pair<Float, Float>, field: (Float, Float) -> Pair<Float, Float>, s: Float, t: Float, roll: Float,
+	          x: Float, y: Float): Pair<Float, Float> {
+		val turn = min(abs(s), 1.5f)
+		val cx = (a.first + b.first) / 2f; val cy = (a.second + b.second) / 2f
+		val half = (abs(b.first - a.first) / 2f).coerceAtLeast(1e-3f)
+		var dx = x - cx
+		val u = (dx / half).coerceIn(-1.5f, 1.5f)
+		dx *= if (dx * s > 0f) 1f - MOUTH_FOLD * turn else 1f + MOUTH_OPEN * turn
+		val uc = u.coerceIn(-1f, 1f)
+		val dy = (y - cy) - t * MOUTH_ARC * half * (1f - uc * uc)
+		return place((cx + dx) to (cy + dy), cx, cy, field, roll)
+	}
+
+	/**
+	 * Where a point ([x], [y]) of an ear goes. Its root, on the face's outline, goes with the outline; its free edge
+	 * follows behind: the near ear opens out, the far one folds toward its root and so falls back behind the face's
+	 * side. Looking up the ears sink against the features, looking down they rise. [root] and [outer] are its root and
+	 * its outermost point, [height] its height; [side] is +1 on the canvas's right, -1 on its left.
+	 */
+	fun ear(root: Pair<Float, Float>, outer: Pair<Float, Float>, height: Float, side: Float, field: (Float, Float) -> Pair<Float, Float>,
+	        s: Float, t: Float, roll: Float, x: Float, y: Float): Pair<Float, Float> {
+		val turn = min(abs(s), 1.5f)
+		val ex = outer.first - root.first; val ey = outer.second - root.second
+		val len = kotlin.math.hypot(ex, ey).coerceAtLeast(1e-3f)
+		val nx = ex / len; val ny = ey / len
+		// How far out from the root along the ear.
+		val d = ((x - root.first) * nx + (y - root.second) * ny).coerceAtLeast(0f)
+		val k = if (s * side > 0f) -EAR_FOLD * turn else EAR_OPEN * turn
+		val px = x + nx * d * k; val py = y + ny * d * k + EAR_SINK * height * t
+		return place(px to py, root.first, root.second, field, roll)
+	}
+
+	private const val NOSE_FOLD = 0.70f
+	private const val NOSE_OPEN = 0.10f
+	private const val NOSE_LEAN = 0.20f
+	private const val NOSE_FLATTEN = 0.40f
+	private const val NOSE_WIDEN = 0.25f
+	private const val NOSE_LENGTHEN = 0.15f
+	/** A drawn nose's lead past the field at 30 degrees, and its extra rise and drop looking up and down, in the face's unit. */
+	private const val NOSE_LEAD = 0.20f
+	private const val NOSE_LIFT = 0.12f
+	private const val NOSE_DROP = 0.06f
+	private const val MOUTH_FOLD = 0.35f
+	private const val MOUTH_OPEN = 0.04f
+	/** Looking up 30 degrees, how far the mouth's middle rises against its corners, in its half width. */
+	private const val MOUTH_ARC = 0.12f
+	private const val EAR_FOLD = 0.30f
+	private const val EAR_OPEN = 0.20f
+	private const val EAR_SINK = 0.15f
+
 	/** The middle line of an eye's opening at its middle, in its own frame. */
 	private fun middle(fit: EyeFit): Float = (EyeFit.sample(fit.upper, 0.5f) + EyeFit.sample(fit.lower, 0.5f)) / 2f
 
