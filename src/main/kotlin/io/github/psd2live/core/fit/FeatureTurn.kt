@@ -10,8 +10,8 @@ import kotlin.math.sin
  * - **An eye changes as one linear map** - its squeeze and its lean together, the far eye narrowing more toward its
  *   outer end reading as that, not as a turn - about its middle, which leads or lags the face's middle. Its lash's tail,
  *   past the white's outer end, moves on its own; the iris keeps its place in the opening, by its own share of it, and
- *   its own width. An eye keeps its room to the outline at its height: never less than the style gives it, nor than four
- *   tenths of its room at rest.
+ *   its own width. An eye keeps its room to the outline at its height, from its white's outer end: never less than the
+ *   style gives it, and an eye inside the outline at rest never crosses it.
  * - **A brow** leads or lags, narrows, tilts and arches. **The mouth** changes as one linear map too and bends its line.
  * - **The ears** and **headwear** move whole against the face's middle, less where they hang below the chin; the nose
  *   goes with the face.
@@ -65,15 +65,15 @@ object FeatureTurn {
 			val (lx, ly) = linear(x, y); val k = tail(x)
 			return (lx + m["${lab}_tail_x"] * e.outward * f * k) to (ly + m["${lab}_tail_y"] * f * k)
 		}
-		// Its room to the outline at its height: the style's, never under four tenths of its room at rest.
+		// Its room to the outline at its height, from its white's outer end as the style measures it (the lash's tail moves
+		// on its own): the style's, and never across the outline it was inside at rest.
 		val shift = run {
 			val edge0 = pose.outlineAt(c0y, e.outward, moved = false) ?: return@run 0f
 			val edge1 = pose.outlineAt(c0y, e.outward, moved = true) ?: return@run 0f
-			val points = e.white + e.lash
-			val reach0 = points.maxOf { it.first * e.outward } * e.outward
-			val reach1 = points.maxOf { shaped(it.first, it.second).first * e.outward } * e.outward
+			val reach0 = e.white.maxOf { it.first * e.outward } * e.outward
+			val reach1 = e.white.maxOf { linear(it.first, it.second).first * e.outward } * e.outward
 			val room0 = (edge0 - reach0) * e.outward
-			val want = max(room0 + m["${lab}_room"] * f, if (room0 > 0f) 0.4f * room0 else room0)
+			val want = max(room0 + m["${lab}_room"] * f, if (room0 > 0f) 0f else room0)
 			val short = want - (edge1 - reach1) * e.outward
 			if (short > 0f) -short * e.outward else 0f
 		}
