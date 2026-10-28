@@ -227,7 +227,7 @@ class FaceTurn(private val marks: FaceLandmarks, private val strength: Float = 1
 			val far = s * sign > 0f
 			val ex = (if (far) LEAD_FAR_EYE else LEAD_NEAR_EYE) * w * s
 			val ey = -(if (t >= 0f) LIFT_EYE else DROP_EYE) * w * t
-			val reachNow = reach * FeatureTurn.outerReach(far, abs(s))
+			val reachNow = reach * FeatureTurn.outerReach(far, abs(s), FeatureTurn.EyeStyle.of(marks, side))
 			val outerNow = cx + ex + sign * reachNow
 			val height = (bottom - top).coerceAtLeast(1f)
 			val margin = height * 0.8f

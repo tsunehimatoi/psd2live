@@ -3119,7 +3119,10 @@ object RigBuilder {
 	): Deformer.Warp {
 		val inParent = mapBounds(region.bounds, parentFrame)
 		val (columns, rows) = when (region.feature) {
-			FaceFeature.EYE, FaceFeature.MOUTH -> 4 to 3
+			// An eye's turn squeezes it unevenly across - most at one end - and its iris's warp inside it has to stay
+			// within it: columns enough to draw that.
+			FaceFeature.EYE -> 8 to 4
+			FaceFeature.MOUTH -> 4 to 3
 			FaceFeature.NOSE -> 3 to 4
 			else -> 3 to 3
 		}
@@ -4567,8 +4570,9 @@ object RigBuilder {
 			for (side in listOf(Side.LEFT, Side.RIGHT)) {
 				val token = sideToken(side)
 				eyeFits[side]?.let { fit ->
-					feature("DeformEyeShape$token", null) { x, y, sv, tv, rv, f -> io.github.psd2live.core.fit.FeatureTurn.eye(fit, f, sv, tv, rv, x, y) }
-					feature("DeformIrisPreserve$token", DeformerId("DeformEyeShape$token")) { x, y, sv, tv, rv, f -> io.github.psd2live.core.fit.FeatureTurn.iris(fit, f, sv, tv, rv, x, y) }
+					val style = io.github.psd2live.core.fit.FeatureTurn.EyeStyle.of(marks, if (side == Side.LEFT) "L" else "R")
+					feature("DeformEyeShape$token", null) { x, y, sv, tv, rv, f -> io.github.psd2live.core.fit.FeatureTurn.eye(fit, f, sv, tv, rv, x, y, style) }
+					feature("DeformIrisPreserve$token", DeformerId("DeformEyeShape$token")) { x, y, sv, tv, rv, f -> io.github.psd2live.core.fit.FeatureTurn.iris(fit, f, sv, tv, rv, x, y, style) }
 				}
 				browFits[side]?.let { fit ->
 					feature("DeformBrowShape$token", null) { x, y, sv, tv, rv, f -> io.github.psd2live.core.fit.FeatureTurn.brow(fit, f, sv, tv, rv, x, y) }

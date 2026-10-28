@@ -2,6 +2,7 @@ package io.github.psd2live.core.fit
 
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
@@ -10,14 +11,19 @@ import kotlin.math.sin
  * How the eyes and the brows change shape as the head turns, on top of where the face's field ([FaceTurn]) carries
  * them. Hand-made 2D heads do not scale a turned eye; they reshape it:
  *
- * - **A gradient across the eyes, not a scale.** Turned, the near eye's outer end opens a little and its inner end
- *   tightens; the far eye tightens most at its outer end, which folds into a steep round edge, and less at its inner
- *   end. Read across both eyes the squeeze grows steadily toward the far side of the face, and it is that direction the
- *   viewer reads, not one eye's size: a far eye merely narrowed reads as a smaller eye, not a turned one.
+ * - **A gradient across the eyes, not a scale.** Turned, the near eye keeps its width, its inner end tightening a
+ *   little and its outer opening as much; the far eye narrows by about a third, more toward its outer end. Read across
+ *   both eyes the squeeze grows toward the far side of the face, and it is that direction the viewer reads, not one
+ *   eye's size: a far eye merely narrowed reads as a smaller eye, not a turned one.
+ * - **How much and where follow the drawing ([EyeStyle]).** A flat, straight lid (a sharp eye) narrows more than a round
+ *   arched one, whose roundness has to survive the turn. On a short round face the eyes sit on what reads as a ball and
+ *   the far eye's squeeze gathers at its outer end; on a long face they sit in the face's front plane and narrow evenly,
+ *   keeping an almond an almond.
  * - **The top leans into the turn.** An eye's top goes further toward the turn than its bottom, so the lid's peak - where
  *   2D reads an eye's facing - moves toward the turn: inward on the near eye, outward on the far one, more so there.
- * - **The iris holds its shape.** The opening reshapes about the eyeball, the iris only follows the eye's middle and
- *   narrows a little on the far eye, so it sits toward the turn inside its opening: an eyeball in a socket, not a print.
+ * - **The iris keeps its place in the opening and most of its width.** It stays where it sits between the opening's
+ *   ends as they go (following the opening's middle point instead, with the outer end squeezing more, slides it
+ *   outward and reads as a squint) and narrows less than the opening, so it reads as round and solid.
  * - **Looking up or down bends the eye's line.** Looking up the outer corners drop and the inner rise, most at the lash's
  *   tail; looking down the line bends the other way and the opening closes from its top. Squeezing it alone reads as
  *   squinting.
@@ -28,11 +34,65 @@ import kotlin.math.sin
  * [s] and [t] are the turn's and the look's shares ([FaceTurn.shares]), [roll] the face's roll; [field] is the face's field at that pose.
  */
 object FeatureTurn {
-	/** The near eye's inner and outer ends' widths at a full turn, and the far eye's. */
-	private const val NEAR_INNER = 0.12f
-	private const val NEAR_OUTER = 0.18f
-	private const val FAR_INNER = 0.28f
-	private const val FAR_OUTER = 0.55f
+	/**
+	 * How an eye reshapes turned, from its drawing and its face's: [farWidth] is the far eye's width at a full turn,
+	 * [farGradient] how much more of its width its inner quarter keeps than its outer one.
+	 */
+	class EyeStyle(val farWidth: Float, val farGradient: Float) {
+		companion object {
+			val TYPICAL = EyeStyle(0.67f, 0.23f)
+
+			/**
+			 * Read from the face's points: the eye's ([side] "L" or "R") corners, the three points along its upper lid, its
+			 * lid's peak and its lower lid's lowest point, and the face's length (eye line to chin over its width at the eye
+			 * line). Without them, [TYPICAL].
+			 */
+			fun of(marks: FaceLandmarks, side: String): EyeStyle {
+				val inner = marks["eye.$side.inner"] ?: return TYPICAL; val outer = marks["eye.$side.outer"] ?: return TYPICAL
+				val ax = outer.x - inner.x; val ay = outer.y - inner.y
+				val width = hypot(ax, ay).takeIf { it > 1e-3f } ?: return TYPICAL
+				// Across the eye from its inner corner, in its widths; down positive (the canvas's y runs down).
+				fun down(p: Landmark) = ((p.y - inner.y) * ax - (p.x - inner.x) * ay) / (width * width) * (if (ax >= 0f) 1f else -1f)
+				val q = listOf(25, 50, 75).map { marks["eye.$side.upper$it"] ?: return TYPICAL }.map(::down)
+				val height = ((marks["eye.$side.lowLid"] ?: return TYPICAL).let(::down) - (marks["eye.$side.apex"] ?: return TYPICAL).let(::down))
+				// The lid's arch: the second-order term of the parabola through its three points, in the opening's heights.
+				val curve = (q[0] - 2f * q[1] + q[2]) / (2f * 0.25f * 0.25f)
+				val arch = (curve / height.coerceAtLeast(1e-3f)).coerceIn(ARCH_LOW, ARCH_HIGH)
+				val far = (FAR_WIDTH + FAR_WIDTH_PER_ARCH * arch).coerceIn(0.55f, 0.8f)
+				val l = marks["face.eyeLine.L"]; val r = marks["face.eyeLine.R"]; val chin = marks["face.chin"]
+				val length = if (l != null && r != null && chin != null && abs(l.x - r.x) > 1e-3f) (chin.y - (l.y + r.y) / 2f) / abs(l.x - r.x) else null
+				val gradient = length?.let { (FAR_GRADIENT - FAR_GRADIENT_PER_LENGTH * (it - FACE_LENGTH)).coerceIn(0.05f, 0.45f) } ?: FAR_GRADIENT
+				return EyeStyle(far, gradient)
+			}
+		}
+	}
+
+	/**
+	 * The far eye's width at a full turn: this plus this much per unit of its lid's arch (in its opening's heights, held
+	 * to [ARCH_LOW]..[ARCH_HIGH]). Its inner quarter's lead over its outer: this, less this much per unit of the face's
+	 * length past [FACE_LENGTH].
+	 */
+	private const val FAR_WIDTH = 0.526f
+	private const val FAR_WIDTH_PER_ARCH = 0.119f
+	private const val ARCH_LOW = 0.64f
+	private const val ARCH_HIGH = 2.14f
+	private const val FAR_GRADIENT = 0.234f
+	private const val FAR_GRADIENT_PER_LENGTH = 1.485f
+	private const val FACE_LENGTH = 0.537f
+	/** The near eye's width at a full turn, and how much more of its width its outer quarter keeps than its inner one. */
+	private const val NEAR_WIDTH = 1.02f
+	private const val NEAR_GRADIENT = 0.15f
+	/** Of the opening's narrowing, how much the iris takes. */
+	private const val IRIS_SQUEEZE = 0.75f
+
+	/** An eye's widths at its inner and outer ends at a turn of [turn] (0..1.5): a line across it with its mean width and its quarters' gradient. */
+	private fun ends(far: Boolean, turn: Float, style: EyeStyle): Pair<Float, Float> {
+		val mean = if (far) 1f - (1f - style.farWidth) * turn else 1f + (NEAR_WIDTH - 1f) * turn
+		val gradient = if (far) style.farGradient * turn else -NEAR_GRADIENT * turn
+		// The quarters' widths over the mean differ by the slope times 0.75.
+		val slope = -gradient * mean / 0.75f
+		return max(mean - slope / 2f, 0.2f) to max(mean + slope / 2f, 0.15f)
+	}
 	/** How far an eye's top leans into the turn per unit of its height, near and far. */
 	private const val LEAN_NEAR = 0.12f
 	private const val LEAN_FAR = 0.30f
@@ -43,8 +103,6 @@ object FeatureTurn {
 	private const val CLOSE_TOP = 0.30f
 	private const val CLOSE_BOTTOM = 0.06f
 	private const val SQUEEZE_UP = 0.05f
-	/** The far iris narrows this much more than its opening's middle does: 1 holds it, 0 narrows it as the opening. */
-	private const val IRIS_HOLD = 0.55f
 	/** The brows: the near head and tail, the far head and tail, their lean and their bend. */
 	private const val BROW_NEAR_HEAD = 0.05f
 	private const val BROW_NEAR_TAIL = 0.12f
@@ -56,11 +114,9 @@ object FeatureTurn {
 	private const val BROW_BEND_INNER = 0.04f
 
 	/** How far an eye's outer end reaches from its middle at a turn of share [s], of its reach at rest: [far] from the turn or near it. */
-	fun outerReach(far: Boolean, s: Float): Float {
-		val turn = min(abs(s), 1.5f)
-		val inner = if (far) 1f - FAR_INNER * turn else 1f - NEAR_INNER * turn
-		val outer = if (far) 1f - FAR_OUTER * turn else 1f + NEAR_OUTER * turn
-		return (across(1f, max(inner, 0.2f), max(outer, 0.15f)) - 0.5f) / 0.5f
+	fun outerReach(far: Boolean, s: Float, style: EyeStyle = EyeStyle.TYPICAL): Float {
+		val (inner, outer) = ends(far, min(abs(s), 1.5f), style)
+		return (across(1f, inner, outer) - 0.5f) / 0.5f
 	}
 
 	/** A width that goes from [inner] to [outer] across 0..1, integrated from the middle: where [u] ends up. */
@@ -76,19 +132,34 @@ object FeatureTurn {
 	}
 
 	/** Where the point ([x], [y]) of an eye ([fit]) goes, its eye [far] from the turn or near it. */
-	fun eye(fit: EyeFit, field: (Float, Float) -> Pair<Float, Float>, s: Float, t: Float, roll: Float, x: Float, y: Float): Pair<Float, Float> {
-		val turn = min(abs(s), 1.5f)
+	fun eye(fit: EyeFit, field: (Float, Float) -> Pair<Float, Float>, s: Float, t: Float, roll: Float, x: Float, y: Float,
+	        style: EyeStyle = EyeStyle.TYPICAL): Pair<Float, Float> {
 		val (cx, cy) = fit.toCanvas(0.5f, middle(fit))
+		val (u, v) = fit.toEye(x, y)
+		val (nu, nv) = reshape(fit, s, t, u, v, style)
+		return place(fit.toCanvas(nu, nv), cx, cy, field, roll)
+	}
+
+	/**
+	 * How far an eye's point at [v] goes along its axis as its top leans into the turn: within the opening, so the margin
+	 * above and below it goes as the lids do rather than sheared further.
+	 */
+	private fun lean(fit: EyeFit, far: Boolean, toward: Float, turn: Float, v: Float): Float {
+		val half = (EyeFit.sample(fit.lower, 0.5f) - EyeFit.sample(fit.upper, 0.5f)) / 2f
+		return toward * (if (far) LEAN_FAR else LEAN_NEAR) * turn * -(v - middle(fit)).coerceIn(-half, half)
+	}
+
+	/** An eye's point ([u], [v]) in its own frame, reshaped. */
+	private fun reshape(fit: EyeFit, s: Float, t: Float, u: Float, v: Float, style: EyeStyle): Pair<Float, Float> {
+		val turn = min(abs(s), 1.5f)
 		// The far eye is the one on the side the face turns toward: its inner-to-outer axis points with the turn.
 		val far = s * fit.axisX > 0f
-		val (u, v) = fit.toEye(x, y)
 		val v0 = middle(fit)
-		val inner = if (far) 1f - FAR_INNER * turn else 1f - NEAR_INNER * turn
-		val outer = if (far) 1f - FAR_OUTER * turn else 1f + NEAR_OUTER * turn
-		var nu = across(u, max(inner, 0.2f), max(outer, 0.15f))
+		val (inner, outer) = ends(far, turn, style)
+		var nu = across(u, inner, outer)
 		// The top leans into the turn: along the eye's axis, toward the turn's side.
 		val toward = if (s * fit.axisX > 0f) 1f else -1f
-		nu += toward * (if (far) LEAN_FAR else LEAN_NEAR) * turn * -(v - v0)
+		nu += lean(fit, far, toward, turn, v)
 		var nv = v
 		val dv = v - v0
 		nv = v0 + dv * when {
@@ -97,26 +168,31 @@ object FeatureTurn {
 		}
 		val uc = u.coerceIn(0f, 1f)
 		nv += t * (BEND_OUTER * uc * uc - BEND_INNER * (1f - uc) * (1f - uc))
-		return place(fit.toCanvas(nu, nv), cx, cy, field, roll)
+		return nu to nv
 	}
 
 	/**
-	 * Where a point ([x], [y]) of an eye's iris goes: with the eye's middle, holding its shape but for a little narrowing
-	 * on the far eye, so the opening moves about it.
+	 * Where a point ([x], [y]) of an eye's iris goes: kept at its share of the way between the opening's ends as they go,
+	 * up and down and leaning as the opening there does, and narrowing by [IRIS_SQUEEZE] of the opening's narrowing.
 	 */
-	fun iris(fit: EyeFit, field: (Float, Float) -> Pair<Float, Float>, s: Float, t: Float, roll: Float, x: Float, y: Float): Pair<Float, Float> {
+	fun iris(fit: EyeFit, field: (Float, Float) -> Pair<Float, Float>, s: Float, t: Float, roll: Float, x: Float, y: Float,
+	         style: EyeStyle = EyeStyle.TYPICAL): Pair<Float, Float> {
 		val turn = min(abs(s), 1.5f)
 		val (cx, cy) = fit.iris?.let { it.centerX to it.centerY } ?: fit.toCanvas(0.5f, middle(fit))
 		val far = s * fit.axisX > 0f
 		val (u, v) = fit.toEye(x, y)
 		val (uc, vc) = fit.toEye(cx, cy)
-		// The opening's own narrowing at its middle, held back.
-		val opening = if (far) 1f - (FAR_INNER + FAR_OUTER) / 2f * turn else 1f + (NEAR_OUTER - NEAR_INNER) / 2f * turn
-		val k = 1f + (opening - 1f) * (1f - IRIS_HOLD)
-		val nu = uc + (u - uc) * min(k, 1f)
-		// It goes where the opening's middle goes.
-		val (mx, my) = eye(fit, field, s, t, roll, cx, cy)
-		val (px, py) = fit.toCanvas(nu, v)
+		val (inner, outer) = ends(far, turn, style)
+		val a = across(0f, inner, outer); val b = across(1f, inner, outer)
+		val (lu, nvc) = reshape(fit, s, t, uc, vc, style)
+		// The opening's own place for it, plus the lean the opening gives it there.
+		val nuc = a + (b - a) * uc + (lu - across(uc, inner, outer))
+		val k = 1f + ((b - a) - 1f) * (if (b - a < 1f) IRIS_SQUEEZE else 1f)
+		val (ex, ey) = fit.toCanvas(0.5f, middle(fit))
+		val (mx, my) = place(fit.toCanvas(nuc, nvc), ex, ey, field, roll)
+		// It leans with the opening about it, or its warp, inside the opening's, would have to undo the opening's lean.
+		val toward = if (s * fit.axisX > 0f) 1f else -1f
+		val (px, py) = fit.toCanvas(uc + (u - uc) * k + lean(fit, far, toward, turn, v) - lean(fit, far, toward, turn, vc), v)
 		val (ox, oy) = fit.toCanvas(uc, vc)
 		val dx = px - ox; val dy = py - oy
 		return (mx + dx * cos(roll) - dy * sin(roll)) to (my + dx * sin(roll) + dy * cos(roll))

@@ -35,7 +35,29 @@ class FeatureTurnTest {
 		fun irisWidth(s: Float) = FeatureTurn.iris(left, still, s, 0f, 0f, 62f, 0f).first - FeatureTurn.iris(left, still, s, 0f, 0f, 38f, 0f).first
 		val opening = width(1f, 0f, 1f) / 60f
 		val iris = irisWidth(1f) / 24f
-		assertTrue(iris > opening + 0.1f, "the far iris narrows less than its opening: $iris against $opening")
+		assertTrue(iris > opening * 1.08f && iris < 0.95f, "the far iris narrows, less than its opening: $iris against $opening")
+		// It keeps its place between the opening's ends, though the outer end squeezes more.
+		val a = FeatureTurn.eye(left, still, 1f, 0f, 0f, 20f, 0f).first; val b = FeatureTurn.eye(left, still, 1f, 0f, 0f, 80f, 0f).first
+		val mid = (FeatureTurn.iris(left, still, 1f, 0f, 0f, 62f, 0f).first + FeatureTurn.iris(left, still, 1f, 0f, 0f, 38f, 0f).first) / 2f
+		assertTrue(abs((mid - a) / (b - a) - 0.5f) < 0.03f, "the iris stays in the middle of its opening: ${(mid - a) / (b - a)}")
+	}
+
+	@Test fun theEyesDrawingSetsHowMuchAndWhereItSqueezes() {
+		fun style(arch: Float, length: Float): FeatureTurn.EyeStyle {
+			// An eye 60 wide, its lid's three points on a parabola of [arch] opening heights (24 high), and a face of [length].
+			val h = 24f; val c = arch * h
+			fun lid(u: Float) = -h / 2f + c * (u - 0.5f) * (u - 0.5f) - c * 0.25f
+			val points = listOf(
+				io.github.psd2live.core.fit.Landmark("eye.L.inner", "eye.L", 20f, 0f), io.github.psd2live.core.fit.Landmark("eye.L.outer", "eye.L", 80f, 0f),
+				io.github.psd2live.core.fit.Landmark("eye.L.upper25", "eye.L", 35f, lid(0.25f)), io.github.psd2live.core.fit.Landmark("eye.L.upper50", "eye.L", 50f, lid(0.5f)),
+				io.github.psd2live.core.fit.Landmark("eye.L.upper75", "eye.L", 65f, lid(0.75f)),
+				io.github.psd2live.core.fit.Landmark("eye.L.apex", "eye.L", 50f, lid(0.5f)), io.github.psd2live.core.fit.Landmark("eye.L.lowLid", "eye.L", 50f, lid(0.5f) + h),
+				io.github.psd2live.core.fit.Landmark("face.eyeLine.L", "face", 120f, 0f), io.github.psd2live.core.fit.Landmark("face.eyeLine.R", "face", -120f, 0f),
+				io.github.psd2live.core.fit.Landmark("face.chin", "face", 0f, 240f * length))
+			return FeatureTurn.EyeStyle.of(io.github.psd2live.core.fit.FaceLandmarks(points, emptyList(), emptyMap()), "L")
+		}
+		assertTrue(style(0.6f, 0.54f).farWidth < style(2f, 0.54f).farWidth - 0.1f, "a flat lid narrows more than a round arched one")
+		assertTrue(style(1f, 0.45f).farGradient > style(1f, 0.6f).farGradient + 0.1f, "a short face gathers the far eye's squeeze at its outer end")
 	}
 
 	@Test fun aTurnedMouthHingesAtItsMiddle() {
