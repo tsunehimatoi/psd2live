@@ -41,7 +41,7 @@ class FaceTurnTest {
 	@Test fun theStyleTableHoldsEveryMoveAtEveryEnd() {
 		val style = TurnStyle.DEFAULT
 		assertTrue(style.names.size > 100 && "slide_x" in style.names && "far_eA00" in style.names && "c23_y" in style.names)
-		assertEquals(TurnStyle.FRONT_ROLES.size * TurnStyle.HAIR_PARAMS.size + TurnStyle.BACK_ROLES.size * TurnStyle.HAIR_PARAMS.size, style.hairNames.size)
+		assertEquals(TurnStyle.HAIR_FIELDS.size * style.hairKnots.size * TurnStyle.HAIR_TERMS, style.hairNames.size)
 		val ends = style.ends(TurnStyle.Setting())
 		assertEquals(0f, style.at(ends, 0f, 0f)["slide_x"])
 	}
@@ -112,12 +112,23 @@ class FaceTurnTest {
 			assertTrue(key != listOf(base["slide_x"], base["eye_gap"], base["far_eA00"], base["far_iris_u"]), "$preset differs from the default")
 			assertTrue(seen.add(key), "$preset differs from the others")
 			assertTrue(m["slide_x"] > 0f, "$preset turns toward the turn")
-			assertTrue(style.hairAt(ends, 1f, 0f)["hair_bangs_a0"] != 0f, "$preset has hair fields")
+			assertTrue(style.hairAt(ends, 1f, 0f)["front_x_0"] != 0f, "$preset has hair fields")
 		}
 		val gaze = io.github.psd2live.core.recipe.RigModules.turnStyle(PipelineConfig(recipe = io.github.psd2live.core.recipe.RigRecipe(true,
 			modules = mapOf("face.depth-turn" to io.github.psd2live.core.recipe.ModuleChoice(values = mapOf("style" to 4f))))))
 		assertEquals("nod", gaze.preset)
 		assertEquals(null, io.github.psd2live.core.recipe.RigModules.turnStyle(PipelineConfig()).preset)
+	}
+
+	@Test fun aFringeOverTheForeheadMovesSmoothlyDownTheHead() {
+		val turn = FaceTurn(face()); val pose = turn.pose(45f, 0f)
+		// A column of fringe from the top of the head down past the eyes: its move changes little from row to row.
+		val ys = (0..30).map { -260f + it * 10f }
+		val column = FloatArray(ys.size * 2) { if (it % 2 == 0) 0f else ys[it / 2] }
+		val moved = HairTurn.place(column, true, turn, pose)
+		val dx = ys.indices.map { moved[it * 2] }
+		for (i in 1 until dx.size) assertTrue(abs(dx[i] - dx[i - 1]) < 0.02f * turn.unit, "row $i: ${dx[i - 1]} -> ${dx[i]}")
+		assertTrue(dx.last() > dx.first(), "it goes further over the face than over the crown")
 	}
 
 	@Test fun hairBeforeTheFaceGoesWithTheTurnAndHangsLessBelowTheChin() {

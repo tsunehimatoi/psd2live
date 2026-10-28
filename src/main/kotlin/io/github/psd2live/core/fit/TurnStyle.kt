@@ -29,6 +29,9 @@ class TurnStyle private constructor(
 	private val hairPoses: List<String>,
 	private val hairBase: Map<String, FloatArray>,
 	private val hairSliders: Map<String, List<String>>,
+	/** The hair sheet's heights down the head and its reach across ([HairTurn]). */
+	val hairKnots: FloatArray,
+	val hairReach: Float,
 	private val presets: Map<String, Pair<Map<String, FloatArray>, Map<String, FloatArray>?>>,
 ) {
 	private val index = names.withIndex().associate { it.value to it.index }
@@ -115,11 +118,10 @@ class TurnStyle private constructor(
 		 * turn, the cheeks swinging), nod (a flat turn, a wide look up and down), soft (flat and small).
 		 */
 		val PRESETS = listOf("bold", "dramatic", "wide", "nod", "soft")
-		/** The roles a front hair piece's points take by where they lie, and a back piece's. */
-		val FRONT_ROLES = listOf("bangs", "side", "crown", "tail")
-		val BACK_ROLES = listOf("back", "back_tail")
-		/** Each role field's eleven values, in the table's order. */
-		val HAIR_PARAMS = listOf("a0", "a1", "a2", "s", "s2", "sv", "c0", "c1", "c2", "t", "tv")
+		/** The hair sheet's fields - the hair before the face and behind it, across and down - in the table's names (`front_x_0`, ...). */
+		val HAIR_FIELDS = listOf("front_x", "front_y", "back_x", "back_y")
+		/** Its terms at each height: 1, across, across squared, down the lock. */
+		const val HAIR_TERMS = 4
 		/** The face's outline's points the style moves, evenly along it from the chin. */
 		const val OUTLINE_POINTS = 24
 
@@ -141,6 +143,7 @@ class TurnStyle private constructor(
 				timing.getValue("x").jsonObject.mapValues { floats(it.value) }, timing.getValue("y").jsonObject.mapValues { floats(it.value) },
 				strings(hair.getValue("names")), strings(hair.getValue("poses")), byPose(hair.getValue("base").jsonObject),
 				hair.getValue("sliders").jsonObject.mapValues { strings(it.value) },
+				floats(hair.getValue("knots")), hair.getValue("reach").jsonPrimitive.float,
 				root["presets"]?.jsonObject.orEmpty().mapValues { (_, v) ->
 					val o = v.jsonObject
 					byPose(o.getValue("face").jsonObject) to o["hair"]?.let { byPose(it.jsonObject) }
