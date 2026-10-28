@@ -84,6 +84,32 @@ class FaceTurnTest {
 		assertTrue(tilt(FaceTurn(marks).map(30f, -30f)) < -2f, "turned and looking down, the far side rises")
 	}
 
+	@Test fun aBigEyeKeepsItsRoomToTheOutlineTurned() {
+		val base = face(square = false)
+		// Big eyes: the character's left eye reaches to 10 from the outline at the eye line (130 there).
+		val points = base.points.map { p ->
+			when (p.id) {
+				"eye.L.inner" -> p.copy(x = 25f, y = -10f); "eye.L.outer" -> p.copy(x = 120f, y = -12f)
+				"eye.R.inner" -> p.copy(x = -25f, y = -10f); "eye.R.outer" -> p.copy(x = -120f, y = -12f)
+				else -> p
+			}
+		} + listOf(Landmark("eye.L.apex", "eye.L", 72f, -45f), Landmark("eye.L.lowLid", "eye.L", 72f, 25f))
+		val marks = FaceLandmarks(points, base.contour, emptyMap())
+		val turn = FaceTurn(marks)
+		val reach = 120f - 72.5f
+		for ((yaw, pitch) in listOf(30f to 0f, 30f to -30f)) {
+			val map = turn.map(yaw, pitch)
+			val (s, t) = turn.shares(yaw, pitch)
+			// The far eye's outer end as its warp puts it: its middle where the field sends it, its reach squeezed.
+			val (mx, _) = map(72.5f, -11f)
+			val outer = mx + reach * io.github.psd2live.core.fit.FeatureTurn.outerReach(true, s)
+			// The outline beside it, at the eye's height as it sits then.
+			val (_, eyeY) = map(72.5f, -11f)
+			val edge = base.contour.filter { it.first > 0f }.map { map(it.first, it.second) }.minBy { abs(it.second - eyeY) }
+			assertTrue(edge.first - outer >= 10f * 0.4f - 1.5f, "turned ($yaw, $pitch) the far eye keeps room to the outline: ${edge.first - outer} of 10")
+		}
+	}
+
 	@Test fun aSquareJawKeepsItsCornerTurned() {
 		val marks = face(square = true)
 		val map = FaceTurn(marks).map(30f, 0f)

@@ -55,6 +55,14 @@ object FeatureTurn {
 	private const val BROW_BEND_OUTER = 0.16f
 	private const val BROW_BEND_INNER = 0.04f
 
+	/** How far an eye's outer end reaches from its middle at a turn of share [s], of its reach at rest: [far] from the turn or near it. */
+	fun outerReach(far: Boolean, s: Float): Float {
+		val turn = min(abs(s), 1.5f)
+		val inner = if (far) 1f - FAR_INNER * turn else 1f - NEAR_INNER * turn
+		val outer = if (far) 1f - FAR_OUTER * turn else 1f + NEAR_OUTER * turn
+		return (across(1f, max(inner, 0.2f), max(outer, 0.15f)) - 0.5f) / 0.5f
+	}
+
 	/** A width that goes from [inner] to [outer] across 0..1, integrated from the middle: where [u] ends up. */
 	private fun across(u: Float, inner: Float, outer: Float): Float {
 		val b = outer - inner

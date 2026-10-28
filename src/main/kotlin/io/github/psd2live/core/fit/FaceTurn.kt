@@ -36,8 +36,8 @@ class FaceTurn(private val marks: FaceLandmarks, private val strength: Float = 1
 	private val centre = if (eyeL != null && eyeR != null) ((eyeL.first + eyeR.first) / 2) to ((eyeL.second + eyeR.second) / 2) else 0f to 0f
 	private val contour = marks.contour
 	/**
-	 * The unit of the moves: the face's width at the eye line over [FACE_PER_UNIT], so a face drawn with eyes set wide or
-	 * close turns by its own size, not its eyes' spacing.
+	 * The unit of the moves, from the face's own proportions: its width at the eye line and how wide its eyes are set in
+	 * it ([TURN_BASE], [TURN_PER_SPACING]).
 	 */
 	val unit: Float get() = w
 
@@ -45,7 +45,10 @@ class FaceTurn(private val marks: FaceLandmarks, private val strength: Float = 1
 		if (eyeL == null || eyeR == null || contour.size < 40) return@run 0f
 		val l = marks["face.eyeLine.L"]; val r = marks["face.eyeLine.R"]
 		val across = if (l != null && r != null) abs(l.x - r.x) else contour.maxOf { it.first } - contour.minOf { it.first }
-		across / FACE_PER_UNIT
+		// How far the face's middle goes, in its width, from how wide its eyes are set in it: wide-set eyes (a big-eyed,
+		// childlike face) turn further. The middle's lead (LEAD_MIDDLE units) is made that.
+		val spacing = (hypot(eyeL.first - eyeR.first, eyeL.second - eyeR.second) / across.coerceAtLeast(1e-3f)).coerceIn(0.25f, 0.75f)
+		across * (TURN_BASE + TURN_PER_SPACING * spacing) / LEAD_MIDDLE
 	}
 
 	/** Whether the face has what the field needs: both eyes, an outline and the outline's points. */
@@ -162,6 +165,7 @@ class FaceTurn(private val marks: FaceLandmarks, private val strength: Float = 1
 				}
 			}
 		}
+		keepEyeRoom(s, t, dx, dy)
 		// Every fourth outline point, and a band inside the far outline moving with it so the side keeps its width.
 		for (i in contour.indices step 3) out += contour[i] to (contour[i].first + dx[i] to contour[i].second + dy[i])
 		if (s != 0f) {
@@ -199,6 +203,47 @@ class FaceTurn(private val marks: FaceLandmarks, private val strength: Float = 1
 			marks["face.cheekTop.$side"]?.let { p -> out += (p.x to p.y) to (p.x + (if (toward) LEAD_FAR_EYE else LEAD_NEAR_EYE) * 0.8f * w * s to p.y - (if (t >= 0f) LIFT_SIDE else DROP_SIDE) * w * t) }
 		}
 		return out
+	}
+
+	/**
+	 * Keeps each eye in the face: where the outline is at the height of an eye, as the eye sits at this pose, it comes no
+	 * nearer the eye's outer edge (its lash's tail with it) than the eye's room at rest less a share of it ([ROOM_USE]);
+	 * an eye that already reaches past the outline at rest reaches no further. Hand-made heads keep a big eye, which has
+	 * little room, from running into the side of the face by letting that side go with it, and let a small eye, with
+	 * room to spare, use most of it. It goes over the outline's other rules, and eases out above and below the eye.
+	 */
+	private fun keepEyeRoom(s: Float, t: Float, dx: FloatArray, dy: FloatArray) {
+		val turn = min(abs(s), 1f)
+		for (side in listOf("L", "R")) {
+			val sign = sideSign(side)
+			val inner = marks["eye.$side.inner"] ?: continue; val outer = marks["eye.$side.outer"] ?: continue
+			val apex = marks["eye.$side.apex"]; val low = marks["eye.$side.lowLid"]
+			val tail = marks["eye.$side.lashTail"]
+			val cx = (inner.x + outer.x) / 2f; val cy = (inner.y + outer.y) / 2f
+			// The eye's outer reach at rest: its corner or its lash's tail, whichever is further out.
+			val reach = listOfNotNull(outer, tail).maxOf { (it.x - cx) * sign }
+			val top = apex?.y ?: (cy - abs(outer.x - inner.x) * 0.3f); val bottom = low?.y ?: (cy + abs(outer.x - inner.x) * 0.3f)
+			// Where the eye's middle goes and how far its outer end reaches then, as the eye's own warp squeezes it.
+			val far = s * sign > 0f
+			val ex = (if (far) LEAD_FAR_EYE else LEAD_NEAR_EYE) * w * s
+			val ey = -(if (t >= 0f) LIFT_EYE else DROP_EYE) * w * t
+			val reachNow = reach * FeatureTurn.outerReach(far, abs(s))
+			val outerNow = cx + ex + sign * reachNow
+			val height = (bottom - top).coerceAtLeast(1f)
+			val margin = height * 0.8f
+			for (i in contour.indices) {
+				val p = contour[i]
+				if ((p.first - cx) * sign <= 0f) continue
+				val y = p.second + dy[i]
+				val dyEye = when { y < top + ey -> top + ey - y; y > bottom + ey -> y - bottom - ey; else -> 0f }
+				if (dyEye > margin) continue
+				val weight = 1f - (dyEye / margin).let { it * it * (3f - 2f * it) }
+				val room0 = (p.first - (cx + sign * reach)) * sign
+				val keep = if (room0 > 0f) room0 * (1f - ROOM_USE * turn) else room0
+				val now = (p.first + dx[i] - outerNow) * sign
+				if (now < keep) dx[i] += sign * (keep - now) * weight
+			}
+		}
 	}
 
 	/** The arc length along [path] from its index [from] to each index up to [to]. */
@@ -301,7 +346,13 @@ class FaceTurn(private val marks: FaceLandmarks, private val strength: Float = 1
 		/** A corner pose looking down is this share of the two looks added; and it rolls this many degrees at full turn and look. */
 		const val CORNER_DOWN = 0.92f
 		const val ROLL = 4f
-		/** The face's width at the eye line in units: a typical face is this many eye-distances across there. */
-		const val FACE_PER_UNIT = 2.6f
+		/**
+		 * The middle's sideways move at 30 degrees in the face's width: this, plus this much per eye spacing over the
+		 * face's width - a face with its eyes set wide turns further.
+		 */
+		const val TURN_BASE = 0.05f
+		const val TURN_PER_SPACING = 0.29f
+		/** Of an eye's room to the outline beside it, how much a full turn may use up; an eye with none keeps what it has. */
+		const val ROOM_USE = 0.6f
 	}
 }
