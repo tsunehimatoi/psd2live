@@ -164,12 +164,14 @@ object RigModules {
 		physicsGroups = listOf(PhysicsGenerator.MOUTH_SPRING_ID))
 
 	/**
-	 * The head turning in depth ([io.github.psd2live.core.fit.HeadTurn]): every layer of the head moves round its own
-	 * shell of the head - the features slide across the face and gather on the far side, the front hair runs ahead of
-	 * the face and the back hair goes the other way, the far ear tucks away.
+	 * The head turning in depth: the face, its parts and the hair drawn by the turn's style
+	 * ([io.github.psd2live.core.fit.FaceTurn], [io.github.psd2live.core.fit.TurnStyle]); what the style does not draw moves
+	 * round its own shell of the head ([io.github.psd2live.core.fit.HeadTurn]). Its knobs are the style's controls: how
+	 * far it turns and looks, its artistic sliders (one spread of a style either way at 100) and the hair's ([turnStyle]).
 	 */
 	val FACE_DEPTH_TURN = RigModule("face.depth-turn", ModuleTier.CORE, applies = { it.has(SemanticTag.FACE) },
-		knobs = listOf(RecipeKnob("turn", P, 0f..100f, 45f), RecipeKnob("depth", P, 0f..200f, 100f)))
+		knobs = listOf(RecipeKnob("turn", P, 0f..100f, 45f), RecipeKnob("look", P, 0f..200f, 100f), RecipeKnob("depth", P, 0f..200f, 100f)) +
+			STYLE_KNOBS.map { RecipeKnob(it, P, -200f..200f, 0f) } + HAIR_KNOBS.map { RecipeKnob(it, P, -100f..100f, 0f) })
 
 	/** The skin's overlays - blush, shading, the bangs' shadow on the face - clipped to the face, so a turn never carries them off it. */
 	val FACE_SKIN_CLIP = RigModule("face.skin-clip", ModuleTier.MAJOR,
@@ -284,6 +286,25 @@ object RigModules {
 		"seeThroughBrows" -> config.seeThroughBrows
 		"mouthOutlineEnabled" -> config.mouthOutlineEnabled
 		else -> error("Unknown module setting: $setting")
+	}
+
+	/** The turn's style's sliders past `depth`, and the hair's, as `face.depth-turn` knobs in the table's order ([io.github.psd2live.core.fit.TurnStyle.SLIDERS]). */
+	private val STYLE_KNOBS get() = listOf("perspective", "gazeHold", "cheekSwing", "cornerRoll", "nodDepth", "accessory")
+	private val HAIR_KNOBS get() = listOf("hairFollow", "hairLead", "backParallax")
+
+	/**
+	 * The turn's style under [config]: the turn's amount (its knob at 45 is the style's own, scaled by the head-turn
+	 * strength) and the look's, `depth` about 100 as the depth slider, the other sliders and the hair's in hundredths.
+	 */
+	fun turnStyle(config: io.github.psd2live.core.PipelineConfig): io.github.psd2live.core.fit.TurnStyle.Setting {
+		val id = FACE_DEPTH_TURN.id; val r = config.recipe
+		val names = io.github.psd2live.core.fit.TurnStyle.SLIDERS
+		return io.github.psd2live.core.fit.TurnStyle.Setting(
+			turn = config.headTurnStrength * r.value(id, "turn") / 45f,
+			look = config.headTurnStrength * r.value(id, "look") / 100f,
+			sliders = mapOf(names[0] to (r.value(id, "depth") - 100f) / 100f) + STYLE_KNOBS.withIndex().associate { (i, k) -> names[i + 1] to r.value(id, k) / 100f },
+			hair = HAIR_KNOBS.withIndex().associate { (i, k) -> io.github.psd2live.core.fit.TurnStyle.HAIR_SLIDERS[i] to r.value(id, k) / 100f },
+		)
 	}
 
 	/** Whether [config] builds [module] for the art [subject] shows: switched on, its prerequisites too, and applying. */

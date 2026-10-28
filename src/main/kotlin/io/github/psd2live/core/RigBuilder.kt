@@ -405,15 +405,15 @@ object RigBuilder {
 		}
 
 		/**
-		 * The face's turn as a field of its own feature points ([io.github.psd2live.core.fit.FaceTurn]) when the depth turn is
-		 * built and the face has what the field needs; null otherwise, and the face then turns as it did.
+		 * The face's turn drawn by the turn's style ([io.github.psd2live.core.fit.FaceTurn]) when the depth turn is built and
+		 * the face has what the style needs; null otherwise, and the face then turns as it did.
 		 */
 		fun faceTurn(config: PipelineConfig): io.github.psd2live.core.fit.FaceTurn? {
 			val m = io.github.psd2live.core.recipe.RigModules
 			if (!m.builds(m.FACE_DEPTH_TURN, config, io.github.psd2live.core.recipe.RecipeSubject.of(analysis))) return null
-			val strength = config.headTurnStrength * config.recipe.value(m.FACE_DEPTH_TURN.id, "turn") / 45f
-			return faceTurns.getOrPut(listOf(strength, config.recipe, config.parentOverrides)) {
-				java.util.Optional.ofNullable(io.github.psd2live.core.fit.FaceTurn(faceLandmarks(config), strength).takeIf { it.usable })
+			val setting = m.turnStyle(config)
+			return faceTurns.getOrPut(listOf(setting, config.recipe, config.parentOverrides)) {
+				java.util.Optional.ofNullable(io.github.psd2live.core.fit.FaceTurn(faceLandmarks(config), setting).takeIf { it.usable })
 			}.orElse(null)
 		}
 
@@ -2235,8 +2235,8 @@ object RigBuilder {
 			listOf(if (eyes) listOf(faceSignature(context.faceRig), context.fittedEyes(config)?.let { it.rigs[rigLayer.semantic.side]?.fit to it.options },
 				rigLayer.semantic.role, context.fittedBrows(config)[rigLayer.semantic.side]?.let { it.fit to it.hashCode() },
 				context.fittedMouth(config)?.let { listOf(it.rig?.fit, it.rig?.options, it.chin, it.covers(rigLayer)) }) else null, context.headTurn(config)?.let {
-				listOf(faceSignature(context.faceRig), headShell(rigLayer), config.recipe.value(io.github.psd2live.core.recipe.RigModules.FACE_DEPTH_TURN.id, "turn"),
-					config.recipe.value(io.github.psd2live.core.recipe.RigModules.FACE_DEPTH_TURN.id, "depth"), config.headTurnStrength)
+				listOf(faceSignature(context.faceRig), headShell(rigLayer), io.github.psd2live.core.recipe.RigModules.FACE_DEPTH_TURN.let { m ->
+					m.knobs.map { config.recipe.value(m.id, it.id) } }, config.headTurnStrength, context.faceTurn(config) != null && styled(rigLayer))
 			}),
 			matchingEyeWhiteBounds(rigLayer, context.eyeWhiteLayers),
 			MeshResolution.unitScale(config, context.analysis.source), meshConfig, config.meshOverrides[layer.source.id.raw],
@@ -3469,8 +3469,7 @@ object RigBuilder {
 	private fun moduleBlendShapes(layer: ClassifiedLayer, data: MeshData, frame: Bounds, context: RigContext, config: PipelineConfig, parent: DeformerId?):
 		List<org.umamo.runtime.model.BlendShapeBinding<org.umamo.runtime.model.MeshForm>> =
 		eyeBlendShapes(layer, data, frame, context.fittedEyes(config), context.fittedBrows(config)) + mouthBlendShapes(layer, data, frame, context.fittedMouth(config)) +
-			(if (layer.semantic.tag == SemanticTag.FRONT_HAIR && context.faceTurn(config) != null)
-				fieldTurnShapes(data.rigPositions, frame, context, config, ease = layer.semantic.role == PartRole.SIDE)
+			(if (context.faceTurn(config) != null && styled(layer)) styleTurnShapes(layer, data.rigPositions, frame, context, config)
 			else headTurnShapes(layer, turnPositions(layer, data.rigPositions, context.fittedMouth(config)), frame, context.headTurn(config).takeUnless { turnsWithMouth(parent) ||
 				parent != null && (parent == faceContourId || parent in context.underFace) && context.faceTurn(config) != null })) +
 			bustShapes(layer, data.rigPositions, frame, context, config) +
@@ -3548,56 +3547,48 @@ object RigBuilder {
 		return rig.atRest(positions, mouth.follow(layer))
 	}
 
+	/** Whether the turn's style draws [layer] outside the face's warp: the hair, and headwear and earwear worn whole. */
+	private fun styled(layer: ClassifiedLayer): Boolean = when (layer.semantic.tag) {
+		SemanticTag.FRONT_HAIR, SemanticTag.BACK_HAIR, SemanticTag.EARWEAR -> true
+		SemanticTag.HEADWEAR -> layer.semantic.role != PartRole.RIBBON && layer.semantic.role != PartRole.PENDANT && layer.semantic.role != PartRole.ANIMAL
+		else -> false
+	}
+
 	/**
-	 * A mesh's turn taken from the face's field ([RigContext.faceTurn]) over Angle X and Angle Y, less the head
-	 * container's own move, [ease]d for a side lock that starts slower than the face: for the front hair, whose top is held along the head while its tips go with the face under
-	 * them - the field above the forehead already moves less toward the crown - so the fringe shears with the face
-	 * instead of running ahead of it on a shell of its own.
+	 * A [styled] mesh's turn by the turn's style ([RigContext.faceTurn]) over Angle X and Angle Y, less the head
+	 * container's own move: the hair by its role fields ([io.github.psd2live.core.fit.HairTurn]), headwear and earwear
+	 * whole ([io.github.psd2live.core.fit.FeatureTurn.whole]). The turn and the look add; a corner's own change is the face's alone.
 	 */
-	private fun fieldTurnShapes(positions: FloatArray, frame: Bounds, context: RigContext, config: PipelineConfig, ease: Boolean = false):
+	private fun styleTurnShapes(layer: ClassifiedLayer, positions: FloatArray, frame: Bounds, context: RigContext, config: PipelineConfig):
 		List<org.umamo.runtime.model.BlendShapeBinding<org.umamo.runtime.model.MeshForm>> {
 		val turn = context.faceTurn(config) ?: return emptyList()
 		val head = context.head; val pivotX = context.faceRig.centerX; val pivotY = context.faceRig.mouthLineY
+		val tag = layer.semantic.tag
 		fun form(yaw: Float, pitch: Float): org.umamo.runtime.model.MeshForm {
-			val field = turn.map(yaw, pitch)
-			// A side lock starts slower than the face: about four tenths of its full move at half the turn.
-			val share = if (ease && pitch == 0f) Math.pow((kotlin.math.abs(yaw) / 45f).toDouble(), 0.36).toFloat() else 1f
-			// The hair before the face is the head's frame: it goes with the face's middle, not with the outline beside it
-			// (which holds back on the side turning toward) - a frame held still while the face turns inside it reads as a
-			// mask sliding. Over the forehead, which goes slower than the middle, it slides a little: it stands before it.
-			// Looking down it goes a little further than the face, coming down over the brows and eyes; looking up a
-			// little less.
-			// Below the chin it hangs toward the shoulders and goes less, down to [HAIR_TIPS] of it a face's length lower.
-			val (mx, my) = turn.centre
-			val (fx, fy) = field(mx, my)
-			val followX = fx - mx; val followY = (fy - my) * (if (pitch < 0f) HAIR_DOWN else HAIR_UP)
-			val chin = context.faceLandmarks(config)["face.chin"]?.y
-			val length = chin?.let { (it - my).coerceAtLeast(1f) }
+			val pose = turn.pose(yaw, pitch)
+			val moved = when (tag) {
+				SemanticTag.FRONT_HAIR, SemanticTag.BACK_HAIR -> io.github.psd2live.core.fit.HairTurn.place(positions, tag == SemanticTag.FRONT_HAIR, turn, pose)
+				else -> io.github.psd2live.core.fit.FeatureTurn.whole("headwear", turn, pose).let { f ->
+					FloatArray(positions.size).also { out -> for (i in 0 until positions.size / 2) f(positions[i * 2], positions[i * 2 + 1]).let { out[i * 2] = it.first; out[i * 2 + 1] = it.second } }
+				}
+			}
 			val out = FloatArray(positions.size)
 			for (i in 0 until positions.size / 2) {
 				val x = positions[i * 2]; val y = positions[i * 2 + 1]
-				val below = if (chin != null && length != null) ((y - chin) / length).coerceIn(0f, 1f) else 0f
-				val k = 1f - (1f - HAIR_TIPS) * below * below * (3f - 2f * below)
-				val tx = x + followX * k; val ty = y + followY * k
 				val u = (x - head.left) / head.width; val v = (y - head.top) / head.height
 				val (hx, hy) = headContainerPoint(head, pivotX, pivotY, u, v, yaw, pitch, config.headTurnStrength, config.rigTuning)
 				val (rx, ry) = headContainerPoint(head, pivotX, pivotY, u, v, 0f, 0f, config.headTurnStrength, config.rigTuning)
-				out[i * 2] = (tx - x - (hx - rx)) * share / frame.width.coerceAtLeast(1e-4f)
-				out[i * 2 + 1] = (ty - y - (hy - ry)) * share / frame.height.coerceAtLeast(1e-4f)
+				out[i * 2] = (moved[i * 2] - x - (hx - rx)) / frame.width.coerceAtLeast(1e-4f)
+				out[i * 2 + 1] = (moved[i * 2 + 1] - y - (hy - ry)) / frame.height.coerceAtLeast(1e-4f)
 			}
 			return org.umamo.runtime.model.MeshForm(out, opacity = Float.NaN)
 		}
-		val yaws = floatArrayOf(-45f, -22.5f, 0f, 22.5f, 45f); val pitches = floatArrayOf(-30f, 0f, 30f)
+		val yaws = io.github.psd2live.core.fit.FaceTurn.YAW_KEYS; val pitches = io.github.psd2live.core.fit.FaceTurn.PITCH_KEYS
 		return listOf(
-			org.umamo.runtime.model.BlendShapeBinding(StandardParameters.ANGLE_X, yaws, 2, yaws.map { if (it == 0f) null else form(it, 0f) }),
-			org.umamo.runtime.model.BlendShapeBinding(StandardParameters.ANGLE_Y, pitches, 1, pitches.map { if (it == 0f) null else form(0f, it) }),
+			org.umamo.runtime.model.BlendShapeBinding(StandardParameters.ANGLE_X, yaws, yaws.indexOfFirst { it == 0f }, yaws.map { if (it == 0f) null else form(it, 0f) }),
+			org.umamo.runtime.model.BlendShapeBinding(StandardParameters.ANGLE_Y, pitches, pitches.indexOfFirst { it == 0f }, pitches.map { if (it == 0f) null else form(0f, it) }),
 		)
 	}
-
-	/** How far the hair before the face goes up and down against the face's middle, looking down and looking up. */
-	private const val HAIR_DOWN = 1.2f
-	private const val HAIR_UP = 0.9f
-	private const val HAIR_TIPS = 0.4f
 
 	/** [layer]'s shapes turning the head in depth, on the shell of the head it lies on ([headShell]). */
 	private fun headTurnShapes(layer: ClassifiedLayer, positions: FloatArray, frame: Bounds, turn: io.github.psd2live.core.fit.HeadTurn?):
@@ -4554,8 +4545,8 @@ object RigBuilder {
 		val contour = deformers.firstOrNull { it.id == faceContourId } as? Deformer.Warp
 		val head = context.head; val faceFrame = context.face; val faceRig = context.faceRig
 		val pivotX = faceRig.centerX; val pivotY = faceRig.mouthLineY
-		val xKeys = floatArrayOf(-45f, -22.5f, 0f, 22.5f, 45f)
-		val yKeys = floatArrayOf(-30f, 0f, 30f)
+		val xKeys = io.github.psd2live.core.fit.FaceTurn.YAW_KEYS
+		val yKeys = io.github.psd2live.core.fit.FaceTurn.PITCH_KEYS
 		val axes = listOf(axis(StandardParameters.ANGLE_X, *xKeys), axis(StandardParameters.ANGLE_Y, *yKeys))
 		// The head container's lattice at a pose, as it is built.
 		val headCols = 4; val headRows = 5
@@ -4571,15 +4562,17 @@ object RigBuilder {
 		val contourCols = 16; val contourRows = 16
 		val faceCells = ArrayList<KeyformCell<WarpLatticeForm>>()
 		val contourCells = ArrayList<KeyformCell<WarpLatticeForm>>()
-		// The eyes', their irises' and the brows' own warps, reshaped on top of the field ([io.github.psd2live.core.fit.FeatureTurn]).
+		// The parts' own warps - the eyes, their irises, the brows, the ears, the nose, the mouth - placed by the style's
+		// moves for each ([io.github.psd2live.core.fit.FeatureTurn]): a rule per pose giving where a rest point goes.
 		val byId = deformers.associateBy { it.id }
 		val eyeFits = context.fittedEyes(config)?.fitting?.fits.orEmpty()
-		val browFits = context.fittedBrows(config).mapValues { it.value.fit }
-		class Feature(val warp: Deformer.Warp, val parentFrame: Bounds, val rest: FloatArray, val inside: DeformerId?,
-			val rule: (Float, Float, Float, Float, Float, (Float, Float) -> Pair<Float, Float>) -> Pair<Float, Float>)
+		val browFits = context.fittedBrows(config)
 		val marks = context.faceLandmarks(config)
+		val turns = io.github.psd2live.core.fit.FeatureTurn
+		class Feature(val warp: Deformer.Warp, val parentFrame: Bounds, val rest: FloatArray, val inside: DeformerId?,
+			val rule: (io.github.psd2live.core.fit.FaceTurn.Pose) -> ((Float, Float) -> Pair<Float, Float>)?)
 		val features = buildList {
-			fun feature(id: String, inside: DeformerId?, rule: (Float, Float, Float, Float, Float, (Float, Float) -> Pair<Float, Float>) -> Pair<Float, Float>) {
+			fun feature(id: String, inside: DeformerId?, rule: (io.github.psd2live.core.fit.FaceTurn.Pose) -> ((Float, Float) -> Pair<Float, Float>)?) {
 				val warp = byId[DeformerId(id)] as? Deformer.Warp ?: return
 				val frame = warp.parent?.let { context.resolveFrame(it, config) } ?: return
 				val rest = warp.geometryGrid?.let { org.umamo.runtime.eval.warpControlPointsAt(it) { 0f } } ?: return
@@ -4587,32 +4580,23 @@ object RigBuilder {
 			}
 			for (side in listOf(Side.LEFT, Side.RIGHT)) {
 				val token = sideToken(side)
-				eyeFits[side]?.let { fit ->
-					val style = io.github.psd2live.core.fit.FeatureTurn.EyeStyle.of(marks, if (side == Side.LEFT) "L" else "R")
-					feature("DeformEyeShape$token", null) { x, y, sv, tv, rv, f -> io.github.psd2live.core.fit.FeatureTurn.eye(fit, f, sv, tv, rv, x, y, style) }
-					feature("DeformIrisPreserve$token", DeformerId("DeformEyeShape$token")) { x, y, sv, tv, rv, f -> io.github.psd2live.core.fit.FeatureTurn.iris(fit, f, sv, tv, rv, x, y, style) }
+				val name = if (side == Side.LEFT) "L" else "R"
+				// The character's left is on the canvas's right (+x).
+				val sign = if (side == Side.LEFT) 1f else -1f
+				if (eyeFits[side] != null) io.github.psd2live.core.fit.FeatureTurn.Eye.of(marks, name)?.let { eye ->
+					feature("DeformEyeShape$token", null) { pose -> turns.eye(eye, turn, pose).eye }
+					feature("DeformIrisPreserve$token", DeformerId("DeformEyeShape$token")) { pose -> turns.eye(eye, turn, pose).iris }
 				}
-				browFits[side]?.let { fit ->
-					feature("DeformBrowShape$token", null) { x, y, sv, tv, rv, f -> io.github.psd2live.core.fit.FeatureTurn.brow(fit, f, sv, tv, rv, x, y) }
-				}
-				val ear = if (side == Side.LEFT) "L" else "R"
-				val root = marks["ear.$ear.root"]; val outer = marks["ear.$ear.outer"]; val top = marks["ear.$ear.top"]; val lobe = marks["ear.$ear.lobe"]
-				if (root != null && outer != null && top != null && lobe != null) {
-					val sign = if (side == Side.LEFT) 1f else -1f
-					feature("DeformEarOcclusion$token", null) { x, y, sv, tv, rv, f ->
-						io.github.psd2live.core.fit.FeatureTurn.ear(root.x to root.y, outer.x to outer.y, lobe.y - top.y, sign, f, sv, tv, rv, x, y) }
-				}
+				if (browFits[side] != null) feature("DeformBrowShape$token", null) { pose -> turns.brow(marks, name, sign, turn, pose) }
+				if (marks["ear.$name.root"] != null) feature("DeformEarOcclusion$token", null) { pose -> turns.ear(sign, turn, pose) }
 			}
-			val noseA = marks["nose.sideA"]; val noseB = marks["nose.sideB"]; val noseTop = marks["nose.top"]; val noseBottom = marks["nose.bottom"]
-			if (noseA != null && noseB != null && noseTop != null && noseBottom != null) feature("DeformNoseShapeBoth", null) { x, y, sv, tv, rv, f ->
-				io.github.psd2live.core.fit.FeatureTurn.nose(noseA.x to noseA.y, noseB.x to noseB.y, noseTop.y, noseBottom.y, turn.unit, f, sv, tv, rv, x, y) }
-			val cornerA = marks["mouth.cornerA"]; val cornerB = marks["mouth.cornerB"]
-			if (cornerA != null && cornerB != null) feature("DeformMouthShapeBoth", null) { x, y, sv, tv, rv, f ->
-				io.github.psd2live.core.fit.FeatureTurn.mouth(cornerA.x to cornerA.y, cornerB.x to cornerB.y, f, sv, tv, rv, x, y) }
+			feature("DeformNoseShapeBoth", null) { pose -> pose.field }
+			feature("DeformMouthShapeBoth", null) { pose -> turns.mouth(marks, turn, pose) }
 		}
 		val featureCells = features.associate { it.warp.id to ArrayList<KeyformCell<WarpLatticeForm>>() }
 		for ((xi, yaw) in xKeys.withIndex()) for ((yi, pitch) in yKeys.withIndex()) {
-			val field = turn.map(yaw, pitch)
+			val pose = turn.pose(yaw, pitch)
+			val field = if (yaw == 0f && pitch == 0f) { x: Float, y: Float -> x to y } else pose.field
 			val hl = headLattice(yaw, pitch)
 			// The face's lattice: each point in the head's space where the head container takes it to the field's place.
 			val fl = FloatArray(faceCount * 2)
@@ -4630,17 +4614,16 @@ object RigBuilder {
 				val (fs, ft) = invertLattice(fl, face.columns, face.rows, hu, hv, (x - faceFrame.left) / faceFrame.width, (y - faceFrame.top) / faceFrame.height)
 				return (faceFrame.left + fs * faceFrame.width - frame.left) / frame.width to (faceFrame.top + ft * faceFrame.height - frame.top) / frame.height
 			}
-			val (sv, tv) = turn.shares(yaw, pitch)
-			val rv = turn.roll(yaw, pitch)
 			val placed = HashMap<DeformerId, FloatArray>()
 			for (f in features.sortedBy { if (it.inside == null) 0 else 1 }) {
+				val rule = (if (yaw == 0f && pitch == 0f) null else f.rule(pose)) ?: { x: Float, y: Float -> x to y }
 				val count = f.rest.size / 2
 				val out = FloatArray(f.rest.size)
 				val outer = f.inside?.let { id -> features.firstOrNull { it.warp.id == id } }
 				for (k in 0 until count) {
 					val x = f.parentFrame.left + f.rest[k * 2] * f.parentFrame.width
 					val y = f.parentFrame.top + f.rest[k * 2 + 1] * f.parentFrame.height
-					val (tx, ty) = f.rule(x, y, sv, tv, rv, field)
+					val (tx, ty) = rule(x, y)
 					if (outer == null) {
 						val (a, b) = underFace(tx, ty, f.parentFrame); out[k * 2] = a; out[k * 2 + 1] = b
 					} else {
@@ -4674,7 +4657,7 @@ object RigBuilder {
 				d.id == faceWarpId -> face.copy(geometryGrid = KeyformGrid(axes, faceCells))
 				d.id == faceContourId -> contour?.copy(rows = contourRows, columns = contourCols, geometryGrid = KeyformGrid(axes, contourCells)) ?: d
 				d.id in featureCells -> (d as Deformer.Warp).copy(geometryGrid = KeyformGrid(axes, featureCells.getValue(d.id)), channelGrids = d.channelGrids)
-				d.id in context.underFace || d.id == frontHairFollowWarpId -> when (d) {
+				d.id in context.underFace || d.id == frontHairFollowWarpId || d.id == backHairFollowWarpId -> when (d) {
 					is Deformer.Warp -> d.copy(geometryGrid = d.geometryGrid?.let(::heldTurn))
 					is Deformer.Rotation -> d.copy(geometryGrid = d.geometryGrid?.let(::heldTurn))
 					else -> d

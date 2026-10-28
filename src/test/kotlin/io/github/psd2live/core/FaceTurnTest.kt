@@ -2,127 +2,113 @@ package io.github.psd2live.core
 
 import io.github.psd2live.core.fit.FaceLandmarks
 import io.github.psd2live.core.fit.FaceTurn
+import io.github.psd2live.core.fit.FeatureTurn
+import io.github.psd2live.core.fit.HairTurn
 import io.github.psd2live.core.fit.Landmark
+import io.github.psd2live.core.fit.TurnStyle
 import kotlin.math.PI
 import kotlin.math.abs
-import kotlin.math.atan2
 import kotlin.math.cos
-import kotlin.math.hypot
 import kotlin.math.sin
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class FaceTurnTest {
-	/**
-	 * A face 260 wide and 300 tall about (0, 0), y down, its outline in 240 points clockwise from the right: round, or
-	 * [square] with flat sides and a flat chin meeting in corners. Its points sit on the outline where the reading would put them.
-	 */
-	private fun face(square: Boolean): FaceLandmarks {
+	/** A round face 260 wide and 330 tall about (0, 0), y down, symmetric, with its eyes, brows and mouth. */
+	private fun face(): FaceLandmarks {
 		val n = 240
 		val contour = (0 until n).map { k ->
 			val a = 2 * PI * k / n
 			val c = cos(a); val s = sin(a)
-			if (!square) (130 * c).toFloat() to (150 * s + if (s > 0) 30 * s * s else 0.0).toFloat()
-			else {
-				// A superellipse: flat sides and bottom, round corners.
-				val e = 0.35
-				(130 * Math.signum(c) * Math.pow(abs(c), e)).toFloat() to (150 * Math.signum(s) * Math.pow(abs(s), e)).toFloat()
-			}
+			(130 * c).toFloat() to (150 * s + if (s > 0) 30 * s * s else 0.0).toFloat()
 		}
-		fun on(angle: Double) = contour[((angle / 360.0 * n).toInt() % n + n) % n]
 		val points = ArrayList<Landmark>()
-		fun add(id: String, p: Pair<Float, Float>) { points += Landmark(id, id.substringBeforeLast('.').substringBeforeLast('.'), p.first, p.second) }
-		add("face.chin", on(90.0)); add("face.top", on(270.0))
-		// The canvas's right is the character's left.
-		add("face.jaw.L", on(if (square) 45.0 else 50.0)); add("face.jaw.R", on(if (square) 135.0 else 130.0))
-		add("face.cheekJaw.L", on(25.0)); add("face.cheekJaw.R", on(155.0))
-		add("face.cheekbone.L", on(5.0)); add("face.cheekbone.R", on(175.0))
-		add("face.eyeLine.L", on(355.0)); add("face.eyeLine.R", on(185.0))
-		add("face.temple.L", on(320.0)); add("face.temple.R", on(220.0))
-		add("eye.L.inner", 20f to -10f); add("eye.L.outer", 80f to -12f)
-		add("eye.R.inner", -20f to -10f); add("eye.R.outer", -80f to -12f)
-		add("face.browCentre", 0f to -50f); add("nose.tip", 0f to 40f); add("mouth.upperMid", 0f to 85f); add("face.chinCentre", 0f to 120f)
+		fun add(id: String, x: Float, y: Float) { points += Landmark(id, id.substringBeforeLast('.'), x, y) }
+		for ((side, sign) in listOf("L" to 1f, "R" to -1f)) {
+			add("eye.$side.inner", 20f * sign, -10f); add("eye.$side.outer", 80f * sign, -12f)
+			add("eye.$side.apex", 45f * sign, -40f); add("eye.$side.lowLid", 50f * sign, 15f); add("eye.$side.lashTail", 88f * sign, -30f)
+			add("eye.$side.irisTop", 50f * sign, -35f); add("eye.$side.irisBottom", 50f * sign, 12f)
+			add("eye.$side.irisInner", 35f * sign, -12f); add("eye.$side.irisOuter", 65f * sign, -12f)
+			add("brow.$side.head", 22f * sign, -62f); add("brow.$side.peak", 55f * sign, -72f); add("brow.$side.tail", 85f * sign, -64f)
+		}
+		add("mouth.cornerA", -20f, 100f); add("mouth.cornerB", 20f, 100f); add("mouth.upperMid", 0f, 96f); add("mouth.lowerMid", 0f, 106f)
 		return FaceLandmarks(points, contour, emptyMap())
 	}
 
-	private fun FaceLandmarks.at(id: String) = this[id]!!.let { it.x to it.y }
+	private fun mirror(f: (Float, Float) -> Pair<Float, Float>): (Float, Float) -> Pair<Float, Float> = { x, y -> f(-x, y).let { -it.first to it.second } }
 
-	@Test fun turnedTheSideTurningAwaySweepsInStraightAndTheOtherHolds() {
-		val marks = face(square = false)
-		val map = FaceTurn(marks).map(30f, 0f)
-		// Turning toward the canvas's right: the character's right side (R, canvas left) turns away.
-		fun dx(id: String) = map(marks.at(id).first, marks.at(id).second).first - marks.at(id).first
-		assertTrue(dx("face.cheekbone.R") > dx("face.cheekbone.L") * 1.8f, "the side turning away goes further: ${dx("face.cheekbone.R")} / ${dx("face.cheekbone.L")}")
-		assertTrue(dx("face.chin") > dx("face.jaw.R") && dx("face.chin") > dx("face.jaw.L"), "the chin swings past both jaw angles")
-		assertTrue(dx("nose.tip") > dx("face.browCentre"), "the nose leads")
-		// From the jaw angle to the temple the side turning away is one straight line.
-		val jaw = map(marks.at("face.jaw.R").first, marks.at("face.jaw.R").second); val temple = map(marks.at("face.temple.R").first, marks.at("face.temple.R").second)
-		val cheek = map(marks.at("face.cheekbone.R").first, marks.at("face.cheekbone.R").second)
-		val off = abs((temple.first - jaw.first) * (cheek.second - jaw.second) - (temple.second - jaw.second) * (cheek.first - jaw.first)) /
-			hypot(temple.first - jaw.first, temple.second - jaw.second)
-		assertTrue(off < 4f, "the cheek lies on the line from the jaw angle to the temple: $off off it")
-		// A pure turn does not roll: the eye line stays level.
-		val l = map(80f, -12f); val r = map(-80f, -12f)
-		assertTrue(abs(l.second - r.second) < 1.5f, "the eyes stay level: ${l.second} / ${r.second}")
+	@Test fun theStyleTableHoldsEveryMoveAtEveryEnd() {
+		val style = TurnStyle.DEFAULT
+		assertTrue(style.names.size > 100 && "slide_x" in style.names && "far_eA00" in style.names && "c23_y" in style.names)
+		assertEquals(TurnStyle.FRONT_ROLES.size * TurnStyle.HAIR_PARAMS.size + TurnStyle.BACK_ROLES.size * TurnStyle.HAIR_PARAMS.size, style.hairNames.size)
+		val ends = style.ends(TurnStyle.Setting())
+		assertEquals(0f, style.at(ends, 0f, 0f)["slide_x"])
 	}
 
-	@Test fun lookingUpTheChinFlattensAndLookingDownTheForeheadDoes() {
-		val marks = face(square = false)
-		val up = FaceTurn(marks).map(0f, 30f); val down = FaceTurn(marks).map(0f, -30f)
-		fun dy(m: (Float, Float) -> Pair<Float, Float>, id: String) = m(marks.at(id).first, marks.at(id).second).second - marks.at(id).second
-		assertTrue(dy(up, "face.chin") < dy(up, "face.jaw.L") - 5f, "looking up the chin rises past the jaw angles")
-		assertTrue(dy(down, "face.top") > dy(down, "face.temple.L") + 5f, "looking down the forehead's top drops past its temples")
-		assertTrue(dy(down, "face.chin") > dy(down, "face.jaw.L"), "looking down the jaw's sides rise past the chin")
-		assertTrue(dy(down, "mouth.upperMid") < dy(down, "face.browCentre"), "looking down the lower face drops less: it shortens")
+	@Test fun atRestNothingMoves() {
+		val turn = FaceTurn(face())
+		assertTrue(turn.usable)
+		val (x, y) = turn.map(0f, 0f)(37f, 51f)
+		assertEquals(37f, x); assertEquals(51f, y)
 	}
 
-	@Test fun aCornerPoseRollsTheFarSideDownLookingUpAndUpLookingDown() {
-		val marks = face(square = false)
-		fun tilt(m: (Float, Float) -> Pair<Float, Float>): Float { val l = m(80f, -12f); val r = m(-80f, -12f); return l.second - r.second }
-		// Turned toward the canvas's right the far side is the character's left (canvas right): y grows downward.
-		assertTrue(tilt(FaceTurn(marks).map(30f, 30f)) > 2f, "turned and looking up, the far side drops")
-		assertTrue(tilt(FaceTurn(marks).map(30f, -30f)) < -2f, "turned and looking down, the far side rises")
-	}
-
-	@Test fun aBigEyeKeepsItsRoomToTheOutlineTurned() {
-		val base = face(square = false)
-		// Big eyes: the character's left eye reaches to 10 from the outline at the eye line (130 there).
-		val points = base.points.map { p ->
-			when (p.id) {
-				"eye.L.inner" -> p.copy(x = 25f, y = -10f); "eye.L.outer" -> p.copy(x = 120f, y = -12f)
-				"eye.R.inner" -> p.copy(x = -25f, y = -10f); "eye.R.outer" -> p.copy(x = -120f, y = -12f)
-				else -> p
-			}
-		} + listOf(Landmark("eye.L.apex", "eye.L", 72f, -45f), Landmark("eye.L.lowLid", "eye.L", 72f, 25f))
-		val marks = FaceLandmarks(points, base.contour, emptyMap())
-		val turn = FaceTurn(marks)
-		val reach = 120f - 72.5f
-		for ((yaw, pitch) in listOf(30f to 0f, 30f to -30f)) {
-			val map = turn.map(yaw, pitch)
-			val (s, t) = turn.shares(yaw, pitch)
-			// The far eye's outer end as its warp puts it: its middle where the field sends it, its reach squeezed.
-			val (mx, _) = map(72.5f, -11f)
-			val outer = mx + reach * io.github.psd2live.core.fit.FeatureTurn.outerReach(true, s)
-			// The outline beside it, at the eye's height as it sits then.
-			val (_, eyeY) = map(72.5f, -11f)
-			val edge = base.contour.filter { it.first > 0f }.map { map(it.first, it.second) }.minBy { abs(it.second - eyeY) }
-			assertTrue(edge.first - outer >= 10f * 0.4f - 1.5f, "turned ($yaw, $pitch) the far eye keeps room to the outline: ${edge.first - outer} of 10")
+	@Test fun turnedTheMiddleSlidesTowardTheTurnAndTheFarEyeNarrows() {
+		val marks = face(); val turn = FaceTurn(marks)
+		val pose = turn.pose(45f, 0f)
+		assertTrue(pose.slide.first > 0f, "the middle goes toward the turn: ${pose.slide}")
+		val (nx, _) = pose.field(0f, 40f)
+		assertTrue(nx > 0f, "the nose goes with it")
+		fun width(side: String): Float {
+			val eye = FeatureTurn.Eye.of(marks, side)!!
+			val f = FeatureTurn.eye(eye, turn, pose).eye
+			val sign = if (side == "L") 1f else -1f
+			return abs(f(80f * sign, -12f).first - f(20f * sign, -10f).first)
 		}
+		// Turning toward +x, the character's left eye (on +x) is the far one.
+		assertTrue(width("L") < width("R") * 0.85f, "the far eye narrows more than the near: ${width("L")} / ${width("R")}")
 	}
 
-	@Test fun aSquareJawKeepsItsCornerTurned() {
-		val marks = face(square = true)
-		val map = FaceTurn(marks).map(30f, 0f)
-		// The far jaw (the character's left) stays a corner: the outline still bends sharply there.
-		val n = marks.contour.size
-		val i = marks.contour.indices.minBy { hypot(marks.contour[it].first - marks["face.jaw.L"]!!.x, marks.contour[it].second - marks["face.jaw.L"]!!.y) }
-		fun bend(points: List<Pair<Float, Float>>): Double {
-			val a = points[(i - 8 + n) % n]; val b = points[i]; val c = points[(i + 8) % n]
-			var d = abs(atan2((c.second - b.second).toDouble(), (c.first - b.first).toDouble()) - atan2((b.second - a.second).toDouble(), (b.first - a.first).toDouble()))
-			if (d > PI) d = 2 * PI - d
-			return d
+	@Test fun aTurnEitherWayIsTheOtherMirrored() {
+		val marks = face(); val turn = FaceTurn(marks)
+		val right = turn.map(30f, 15f); val left = mirror(turn.map(-30f, 15f))
+		for ((x, y) in listOf(0f to 0f, 60f to -20f, -90f to 80f, 100f to -100f)) {
+			val a = right(x, y); val b = left(x, y)
+			assertTrue(abs(a.first - b.first) < 2f && abs(a.second - b.second) < 2f, "($x, $y): $a / $b")
 		}
-		val turned = marks.contour.map { map(it.first, it.second) }
-		assertTrue(bend(turned) > bend(marks.contour) * 0.7, "the far jaw keeps its corner: ${bend(turned)} of ${bend(marks.contour)}")
+		val eyeA = FeatureTurn.eye(FeatureTurn.Eye.of(marks, "L")!!, turn, turn.pose(30f, 0f)).eye
+		val eyeB = mirror(FeatureTurn.eye(FeatureTurn.Eye.of(marks, "R")!!, turn, turn.pose(-30f, 0f)).eye)
+		val a = eyeA(80f, -12f); val b = eyeB(80f, -12f)
+		assertTrue(abs(a.first - b.first) < 1f && abs(a.second - b.second) < 1f, "the far eye either way: $a / $b")
+	}
+
+	@Test fun eachMoveKeepsItsOwnTiming() {
+		val style = TurnStyle.DEFAULT; val ends = style.ends(TurnStyle.Setting())
+		val end = style.at(ends, 1f, 0f); val half = style.at(ends, 0.5f, 0f)
+		// The eyes close up late in the turn; the middle goes about evenly.
+		assertTrue(abs(half["eye_gap"]) < abs(end["eye_gap"]) * 0.4f, "${half["eye_gap"]} / ${end["eye_gap"]}")
+		assertTrue(abs(half["slide_x"] / end["slide_x"] - 0.5f) < 0.15f, "${half["slide_x"]} / ${end["slide_x"]}")
+	}
+
+	@Test fun theSettingScalesAndShapesTheTurn() {
+		val marks = face()
+		val base = FaceTurn(marks).pose(45f, 0f).slide.first
+		val half = FaceTurn(marks, TurnStyle.Setting(turn = 0.5f)).pose(45f, 0f).slide.first
+		assertTrue(abs(half - base / 2f) < 1e-3f)
+		val style = TurnStyle.DEFAULT
+		val held = style.at(style.ends(TurnStyle.Setting(sliders = mapOf("gaze_hold" to 1f))), 1f, 0f)["far_iris_u"]
+		val loose = style.at(style.ends(TurnStyle.Setting(sliders = mapOf("gaze_hold" to -1f))), 1f, 0f)["far_iris_u"]
+		assertTrue(held != loose, "the gaze slider moves the iris in its opening")
+	}
+
+	@Test fun hairBeforeTheFaceGoesWithTheTurnAndHangsLessBelowTheChin() {
+		val turn = FaceTurn(face()); val pose = turn.pose(45f, 0f)
+		// A fringe over the forehead and a lock hanging from beside the face to well below the chin.
+		val fringe = floatArrayOf(-60f, -150f, 0f, -150f, 60f, -150f, -60f, -80f, 0f, -80f, 60f, -80f)
+		val moved = HairTurn.place(fringe, true, turn, pose)
+		for (i in 0 until 6) assertTrue(moved[i * 2] > fringe[i * 2], "the fringe goes with the face: $i")
+		val lock = floatArrayOf(-150f, 0f, -140f, 0f, -150f, 400f, -140f, 400f)
+		val hung = HairTurn.place(lock, true, turn, pose)
+		assertTrue(abs(hung[4] - lock[4]) < abs(hung[0] - lock[0]) + 1f, "what hangs low goes less")
 	}
 }
