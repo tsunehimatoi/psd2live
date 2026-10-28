@@ -100,9 +100,9 @@ object FeatureTurn {
 	private const val BEND_OUTER = 0.16f
 	private const val BEND_INNER = 0.04f
 	/** Looking down, how much the opening above and below its middle line closes; looking up, how much it squeezes. */
-	private const val CLOSE_TOP = 0.30f
+	private const val CLOSE_TOP = 0.16f
 	private const val CLOSE_BOTTOM = 0.06f
-	private const val SQUEEZE_UP = 0.05f
+	private const val SQUEEZE_UP = 0.0f
 	/** The brows: the near head and tail, the far head and tail, their lean and their bend. */
 	private const val BROW_NEAR_HEAD = 0.05f
 	private const val BROW_NEAR_TAIL = 0.12f
@@ -118,6 +118,12 @@ object FeatureTurn {
 		val (inner, outer) = ends(far, min(abs(s), 1.5f), style)
 		return (across(1f, inner, outer) - 0.5f) / 0.5f
 	}
+
+	/** How far an eye's top (its lash's tail with it) leans outward at a turn of share [s], in its opening's half heights. */
+	fun topLean(far: Boolean, s: Float): Float = (if (far) LEAN_FAR else LEAN_NEAR) * min(abs(s), 1.5f) * (if (far) 1f else -1f)
+
+	/** How far an eye's outer corner goes down (in its widths) at a look of share [t]: down looking up, up looking down. */
+	fun outerBend(t: Float): Float = t * BEND_OUTER
 
 	/** A width that goes from [inner] to [outer] across 0..1, integrated from the middle: where [u] ends up. */
 	private fun across(u: Float, inner: Float, outer: Float): Float {
@@ -283,7 +289,7 @@ object FeatureTurn {
 	private const val NOSE_LEAD = 0.20f
 	private const val NOSE_LIFT = 0.12f
 	private const val NOSE_DROP = 0.06f
-	private const val MOUTH_FOLD = 0.35f
+	private const val MOUTH_FOLD = 0.22f
 	private const val MOUTH_OPEN = 0.04f
 	/** Looking up 30 degrees, how far the mouth's middle rises against its corners, in its half width. */
 	private const val MOUTH_ARC = 0.12f

@@ -94,7 +94,7 @@ class FaceTurn(private val marks: FaceLandmarks, private val strength: Float = 1
 				mx["face.cheekJaw.$side"] = lead * SWEEP; mx["face.jaw.$side"] = lead * HOLD_NEAR_JAW
 			} else {
 				mx["face.temple.$side"] = lead * PIN; mx["face.cheekbone.$side"] = lead * PIN
-				mx["face.cheekJaw.$side"] = lead * PIN; mx["face.jaw.$side"] = lead * PIN_FAR_JAW
+				mx["face.cheekJaw.$side"] = lead * PIN_CHEEK; mx["face.jaw.$side"] = lead * PIN_FAR_JAW
 			}
 			// Up and down (canvas y; + down): looking up the bottom rises past the sides, looking down the top drops past them.
 			val my = HashMap<String, Float>()
@@ -227,15 +227,20 @@ class FaceTurn(private val marks: FaceLandmarks, private val strength: Float = 1
 			val far = s * sign > 0f
 			val ex = (if (far) LEAD_FAR_EYE else LEAD_NEAR_EYE) * w * s
 			val ey = -(if (t >= 0f) LIFT_EYE else DROP_EYE) * w * t
-			val reachNow = reach * FeatureTurn.outerReach(far, abs(s), FeatureTurn.EyeStyle.of(marks, side))
+			val reachNow = reach * FeatureTurn.outerReach(far, abs(s), FeatureTurn.EyeStyle.of(marks, side)) +
+				// The lash's tail sits about halfway up the opening's upper half: it leans out half as far as the top.
+				FeatureTurn.topLean(far, abs(s)) * (bottom - top).coerceAtLeast(0f) / 4f
 			val outerNow = cx + ex + sign * reachNow
 			val height = (bottom - top).coerceAtLeast(1f)
 			val margin = height * 0.8f
+			// Its outer end bends down looking up and up looking down: the band it needs reaches that far.
+			val bend = FeatureTurn.outerBend(t) * abs(outer.x - inner.x)
 			for (i in contour.indices) {
 				val p = contour[i]
 				if ((p.first - cx) * sign <= 0f) continue
 				val y = p.second + dy[i]
-				val dyEye = when { y < top + ey -> top + ey - y; y > bottom + ey -> y - bottom - ey; else -> 0f }
+				val hi = top + ey + min(bend, 0f); val lo = bottom + ey + max(bend, 0f)
+				val dyEye = when { y < hi -> hi - y; y > lo -> y - lo; else -> 0f }
 				if (dyEye > margin) continue
 				val weight = 1f - (dyEye / margin).let { it * it * (3f - 2f * it) }
 				val room0 = (p.first - (cx + sign * reach)) * sign
@@ -299,19 +304,23 @@ class FaceTurn(private val marks: FaceLandmarks, private val strength: Float = 1
 		/** The face's middle's sideways lead at 30 degrees, in W. */
 		const val LEAD_MIDDLE = 0.40f
 		const val LEAD_NOSE = 0.46f
-		const val LEAD_MOUTH = 0.42f
+		const val LEAD_MOUTH = 0.5f
 		const val LEAD_CHIN = 0.48f
 		const val LEAD_TOP = 0.22f
 		const val LEAD_NEAR_EYE = 0.52f
-		const val LEAD_FAR_EYE = 0.30f
+		const val LEAD_FAR_EYE = 0.37f
 		const val LEAD_NEAR_BROW = 0.56f
 		const val LEAD_FAR_BROW = 0.34f
 		/** The side turning away: its temple and cheek go this share of the middle's lead, its jaw angle this much. */
 		const val SWEEP = 0.6f
-		const val HOLD_NEAR_JAW = 0.35f
-		/** The side turning toward: its cheek this share of the middle's lead, its jaw angle this much. */
+		const val HOLD_NEAR_JAW = 0.7f
+		/**
+		 * The side turning toward: its temple and cheekbone this share of the middle's lead, the cheek below them
+		 * (between the cheekbone and the jaw angle) this much, its jaw angle this much.
+		 */
 		const val PIN = 0.25f
-		const val PIN_FAR_JAW = 0.45f
+		const val PIN_CHEEK = 0.6f
+		const val PIN_FAR_JAW = 0.6f
 		/** How fast the side turning away straightens with the turn (1 at 30 degrees when 1). */
 		const val STRAIGHTEN = 1f
 		/** The fold at the far cheek-to-jaw turn at 30 degrees for a sharp jaw, and the dip by a far eye's corner, in W. */
@@ -322,24 +331,24 @@ class FaceTurn(private val marks: FaceLandmarks, private val strength: Float = 1
 		/** The band along the far outline that keeps its width, of the face's width. */
 		const val BAND = 0.12f
 		/** Looking up 30 degrees, how far each point rises, in W. */
-		const val LIFT_MIDDLE = 0.30f
-		const val LIFT_EYE = 0.40f
-		const val LIFT_BROW = 0.40f
-		const val LIFT_NOSE = 0.26f
-		const val LIFT_MOUTH = 0.34f
-		const val LIFT_CHIN = 0.34f
-		const val LIFT_JAW = 0.18f
-		const val LIFT_SIDE = 0.06f
-		const val LIFT_TEMPLE = 0.08f
-		const val LIFT_TOP = 0.14f
+		const val LIFT_MIDDLE = 0.2f
+		const val LIFT_EYE = 0.27f
+		const val LIFT_BROW = 0.27f
+		const val LIFT_NOSE = 0.18f
+		const val LIFT_MOUTH = 0.23f
+		const val LIFT_CHIN = 0.23f
+		const val LIFT_JAW = 0.12f
+		const val LIFT_SIDE = 0.04f
+		const val LIFT_TEMPLE = 0.055f
+		const val LIFT_TOP = 0.095f
 		/** Looking down 30 degrees, how far each point drops, in W. */
 		const val DROP_MIDDLE = 0.24f
 		const val DROP_EYE = 0.28f
 		const val DROP_BROW = 0.32f
 		const val DROP_NOSE = 0.22f
-		const val DROP_MOUTH = 0.16f
-		const val DROP_CHIN = 0.10f
-		const val DROP_JAW = 0.04f
+		const val DROP_MOUTH = 0.24f
+		const val DROP_CHIN = 0.2f
+		const val DROP_JAW = 0.08f
 		const val DROP_SIDE = 0.05f
 		const val DROP_TEMPLE = 0.10f
 		const val DROP_TOP = 0.24f
