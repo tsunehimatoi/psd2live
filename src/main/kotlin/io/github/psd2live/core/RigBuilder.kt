@@ -3562,10 +3562,23 @@ object RigBuilder {
 			val field = turn.map(yaw, pitch)
 			// A side lock starts slower than the face: about four tenths of its full move at half the turn.
 			val share = if (ease && pitch == 0f) Math.pow((kotlin.math.abs(yaw) / 45f).toDouble(), 0.36).toFloat() else 1f
+			// The hair before the face is the head's frame: it goes with the face's middle, not with the outline beside it
+			// (which holds back on the side turning toward) - a frame held still while the face turns inside it reads as a
+			// mask sliding. Over the forehead, which goes slower than the middle, it slides a little: it stands before it.
+			// Looking down it goes a little further than the face, coming down over the brows and eyes; looking up a
+			// little less.
+			// Below the chin it hangs toward the shoulders and goes less, down to [HAIR_TIPS] of it a face's length lower.
+			val (mx, my) = turn.centre
+			val (fx, fy) = field(mx, my)
+			val followX = fx - mx; val followY = (fy - my) * (if (pitch < 0f) HAIR_DOWN else HAIR_UP)
+			val chin = context.faceLandmarks(config)["face.chin"]?.y
+			val length = chin?.let { (it - my).coerceAtLeast(1f) }
 			val out = FloatArray(positions.size)
 			for (i in 0 until positions.size / 2) {
 				val x = positions[i * 2]; val y = positions[i * 2 + 1]
-				val (tx, ty) = field(x, y)
+				val below = if (chin != null && length != null) ((y - chin) / length).coerceIn(0f, 1f) else 0f
+				val k = 1f - (1f - HAIR_TIPS) * below * below * (3f - 2f * below)
+				val tx = x + followX * k; val ty = y + followY * k
 				val u = (x - head.left) / head.width; val v = (y - head.top) / head.height
 				val (hx, hy) = headContainerPoint(head, pivotX, pivotY, u, v, yaw, pitch, config.headTurnStrength, config.rigTuning)
 				val (rx, ry) = headContainerPoint(head, pivotX, pivotY, u, v, 0f, 0f, config.headTurnStrength, config.rigTuning)
@@ -3580,6 +3593,11 @@ object RigBuilder {
 			org.umamo.runtime.model.BlendShapeBinding(StandardParameters.ANGLE_Y, pitches, 1, pitches.map { if (it == 0f) null else form(0f, it) }),
 		)
 	}
+
+	/** How far the hair before the face goes up and down against the face's middle, looking down and looking up. */
+	private const val HAIR_DOWN = 1.2f
+	private const val HAIR_UP = 0.9f
+	private const val HAIR_TIPS = 0.4f
 
 	/** [layer]'s shapes turning the head in depth, on the shell of the head it lies on ([headShell]). */
 	private fun headTurnShapes(layer: ClassifiedLayer, positions: FloatArray, frame: Bounds, turn: io.github.psd2live.core.fit.HeadTurn?):

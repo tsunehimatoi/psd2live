@@ -33,7 +33,8 @@ import kotlin.math.sin
 class FaceTurn(private val marks: FaceLandmarks, private val strength: Float = 1f) {
 	private val eyeL = marks["eye.L.inner"]?.let { i -> marks["eye.L.outer"]?.let { o -> ((i.x + o.x) / 2) to ((i.y + o.y) / 2) } }
 	private val eyeR = marks["eye.R.inner"]?.let { i -> marks["eye.R.outer"]?.let { o -> ((i.x + o.x) / 2) to ((i.y + o.y) / 2) } }
-	private val centre = if (eyeL != null && eyeR != null) ((eyeL.first + eyeR.first) / 2) to ((eyeL.second + eyeR.second) / 2) else 0f to 0f
+	/** The face's middle: halfway between its eyes. */
+	val centre = if (eyeL != null && eyeR != null) ((eyeL.first + eyeR.first) / 2) to ((eyeL.second + eyeR.second) / 2) else 0f to 0f
 	private val contour = marks.contour
 	/**
 	 * The unit of the moves, from the face's own proportions: its width at the eye line and how wide its eyes are set in
