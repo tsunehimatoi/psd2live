@@ -78,14 +78,18 @@ class FaceTurn(private val marks: FaceLandmarks, private val setting: TurnStyle.
 			return@run { x: Float, y: Float -> tps.map(x, y) }
 		}
 
-		/** The outline's furthest point toward [outward] (+1 or -1) in a band about [y], at this pose ([moved]) or at rest. */
+		/**
+		 * The outline's furthest point toward [outward] (+1 or -1) among its points lying, at rest, in a band about [y]:
+		 * where they are at this pose ([moved]) or at rest. The same points either way, as the style measures an eye's room
+		 * to the outline: where the outline beside the eye has gone, not the outline at wherever the eye has gone.
+		 */
 		fun outlineAt(y: Float, outward: Float, moved: Boolean): Float? {
 			val band = 0.05f * (chin - eyeLine)
 			var best: Float? = null
 			for (p in contour) {
-				val q = if (moved) field(p.first, p.second) else p
-				if (abs(q.second - y) >= band) continue
-				if (best == null || q.first * outward > best * outward) best = q.first
+				if (abs(p.second - y) >= band) continue
+				val x = if (moved) field(p.first, p.second).first else p.first
+				if (best == null || x * outward > best * outward) best = x
 			}
 			return best
 		}

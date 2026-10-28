@@ -68,7 +68,7 @@ object FeatureTurn {
 		// Its room to the outline at its height: the style's, never under four tenths of its room at rest.
 		val shift = run {
 			val edge0 = pose.outlineAt(c0y, e.outward, moved = false) ?: return@run 0f
-			val edge1 = pose.outlineAt(c1y, e.outward, moved = true) ?: return@run 0f
+			val edge1 = pose.outlineAt(c0y, e.outward, moved = true) ?: return@run 0f
 			val points = e.white + e.lash
 			val reach0 = points.maxOf { it.first * e.outward } * e.outward
 			val reach1 = points.maxOf { shaped(it.first, it.second).first * e.outward } * e.outward
