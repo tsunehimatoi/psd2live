@@ -4,6 +4,12 @@
 
 只记录使用者能感知到的变化。v1.4.2 及更早的版本见 [Releases](https://github.com/tsunehimatoi/psd2live/releases)。
 
+## 未发布
+
+### 新功能
+
+- **macOS 应用**：macOS 13 及以上可用 `./gradlew packageDmg` 打成 DMG。应用是 Swift 外壳，里面是现有编辑器，并带上 Java 运行时。菜单在屏幕顶部，窗口按钮是系统的。包的架构与构建它的 Mac 相同（Apple 芯片或 Intel）。没有公证，从网络下载后在访达里右键打开，再拖进“应用程序”。
+
 ## v3.7.0 · 2026-10-27
 
 ### 新功能

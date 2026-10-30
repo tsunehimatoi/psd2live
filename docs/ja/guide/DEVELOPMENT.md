@@ -6,7 +6,7 @@
 
 ## 必要環境
 
-- JDK 21。JetBrains Runtime（JBR）21 を推奨します。リリースパッケージは JBR を同梱し、その上ではメインウィンドウがシステムのウィンドウ枠を保ったまま（最大化・スナップ・端でのサイズ変更はシステムが処理）、タイトルバーをアプリが描画します。他の JDK でもビルド・テスト・実行はでき、その場合はメインウィンドウが枠なしになり、タイトルバー全体をアプリが描画します。パッケージ作成（`createDistributable`、`packageExe` など）には JBR 21 SDK（jpackage 付き）が必要で、他の JDK で作成するには `-Ppsd2live.allowNonJbr=true` を付けます。Gradle は同梱の Wrapper で実行するため、別途インストールは不要です。
+- JDK 21。JetBrains Runtime（JBR）21 を推奨します。Windows のリリースパッケージは JBR を同梱し、その上ではメインウィンドウがシステムのウィンドウ枠を保ったまま（最大化・スナップ・端でのサイズ変更はシステムが処理）、タイトルバーをアプリが描画します。他の JDK でもビルド・テスト・実行はでき、その場合はメインウィンドウが枠なしになり、タイトルバー全体をアプリが描画します。Windows のパッケージ作成（`createDistributable`、`packageExe`）には JBR 21 SDK（jpackage 付き）が必要で、他の JDK で作成するには `-Ppsd2live.allowNonJbr=true` を付けます。macOS の DMG（`packageDmg`）は Gradle を実行している JDK で作り、JBR は不要です。Swift のシェルがシステムのウィンドウ枠を保つためです。Gradle は同梱の Wrapper で実行するため、別途インストールは不要です。
 - Windows では `.\gradlew.bat`、Linux / macOS では `./gradlew` を使います。以下の例は `./gradlew` で表記します。
 - 公式 Cubism SDK は必須ではありません。ソースビルドは内蔵レンダラーを使います。ネイティブブリッジは [Cubism ネイティブプレビュー](CUBISM_SDK_SETUP.md)を参照してください。
 
@@ -85,8 +85,10 @@ Windows ではリポジトリ直下の `run-gui.bat` でも GUI を起動でき�
 ./gradlew test --tests "io.github.psd2live.scenario.CatalogContractsTest"   # 単一のテストクラス
 ./gradlew createDistributable                    # ランタイム付きのアプリディレクトリ
 ./gradlew packageDistributionForCurrentOS        # 現在のプラットフォーム向けインストーラー
+./gradlew packageDmg                             # macOS のみ: Swift シェル入り DMG
 ```
 
+- `packageDmg` は macOS 専用です。`createDistributable` が同梱したランタイムを使い、起動プログラムを `packaging/macos` の Swift シェルに置き換えます。Dock 名、書類タイプ、ウィンドウボタンはシステムのものです。メニューは画面上部のメニューバーに出ます。ウィンドウ内のメニューも残します。そちらにすべてのコマンドがあります。DMG はビルドした Mac のアーキテクチャ（Apple シリコンまたは Intel）向けで、macOS 13 以降が必要です。公証はしていません。インターネットから受け取ったものは、Finder で副ボタンクリックして開きます。`PSD2Live` を「アプリケーション」へドラッグします。
 - どちらもビルドしたプラットフォームのネイティブライブラリのみを含み、アプリのリソースに `LICENSE`、`THIRD_PARTY_NOTICES.md`、`licenses/` を同梱します。
 - 公式 SDK のリソース（`src/main/resources/cubism/`）は、`-Ppsd2live.includeCubism=true` または `PSD2LIVE_INCLUDE_CUBISM=true` を指定したときだけ含まれます。SDK を含むパッケージは公開配布できません。[CI とリリース](../../en/guide/CUBISM_CI_RELEASE.md)（英語）を参照してください。
 - Linux では `./native/package_linux.sh` で、システムの JDK 21 を使うローカル起動パッケージを作成できます（`dist/linux-<タイムスタンプ>/` に出力）。詳しくは [native/README.md](../../../native/README.md) を参照してください。

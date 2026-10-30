@@ -11,7 +11,7 @@ Cubism、VTube Studio、独自ランタイム、Web、ゲームエンジン、�
 
 [![Release](https://img.shields.io/github/v/release/tsunehimatoi/psd2live?label=download)](https://github.com/tsunehimatoi/psd2live/releases/latest)
 [![License](https://img.shields.io/badge/license-GPL--3.0%20%2F%20MIT-blue)](#ライセンス)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)](#ダウンロード)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)](#ダウンロード)
 [![Cubism](https://img.shields.io/badge/Cubism-3.0%20%E2%80%93%205.3-ff6b9d)](#書き出しと再生)
 [![MCP](https://img.shields.io/badge/MCP-180%2B%20ops-8a63d2)](#agent-との連携mcp)
 
@@ -137,7 +137,7 @@ PSD2Live は Cubism Editor や SDK なしで動作し、Cubism の形式とは�
 | Windows 10 / 11 x64 | ポータブル ZIP、EXE | Java ランタイム同梱。展開またはインストールしてそのまま起動。それぞれ ffmpeg 同梱の `-ffmpeg` 版あり |
 | Windows 11 ARM64 | ポータブル ZIP、EXE | Java ランタイム同梱。Cubism ネイティブプレビューなし（Live2D がこのプラットフォーム向けの Cubism Core を提供していないため）、プレビューは PSD2Live ランタイムを使用 |
 | Linux x86_64 / arm64 | Deb、tar.gz | ランタイムと Cubism ネイティブプレビュー同梱（arm64 は Live2D の実験版）。X11 / GLX が必要（XWayland で可）。tar.gz は Deb のないディストリビューション向けで、展開して `PSD2Live/bin/PSD2Live` を実行 |
-| macOS ほか | パッケージなし | JDK 21 をインストールして[ソースから実行](#ソースからのビルド) |
+| macOS 13 以降 | DMG | Java ランタイム同梱。開いて PSD2Live を「アプリケーション」へドラッグします。メニューは画面上部、ウィンドウボタンはシステム側です。パッケージのアーキテクチャはビルドした Mac と同じです。作り方は[ソースからのビルド](#ソースからのビルド)を参照。公証していないものは、Finder で副ボタンクリックして開きます |
 
 <details>
 <summary>アップグレード、アンインストール、Linux について</summary>
@@ -225,7 +225,7 @@ PSD2Live は Cubism Editor や SDK なしで動作し、Cubism の形式とは�
 
 ## ソースからのビルド
 
-JDK 21 が必要で、Gradle はリポジトリ同梱のラッパーを使います。Rust（cargo、rustc 1.87 以降）があれば Rust ランタイムも同時にビルドします。cargo がない場合や rustc が古い場合はLinux ではまず、同じ `runtime/` のソースから CI がビルドしたライブラリをダウンロードします（`-Ppsd2live.prebuiltRuntime=false` で無効化）。入手できなければ通知を出してスキップし、エディタは内蔵の評価器を使います（`rustup update` でビルドできるようになります）。
+JDK 21 が必要で、Gradle はリポジトリ同梱のラッパーを使います。Rust（cargo、rustc 1.87 以降）があれば Rust ランタイムも同時にビルドします。cargo がない場合や rustc が古い場合はLinux ではまず、同じ `runtime/` のソースから CI がビルドしたライブラリをダウンロードします（`-Ppsd2live.prebuiltRuntime=false` で無効化）。入手できなければ通知を出してスキップし、エディタは内蔵の評価器を使います（`rustup update` でビルドできるようになります）。macOS 13 以降では `./gradlew packageDmg` でランタイム同梱の DMG を作れ、JBR を別途入れる必要はありません。詳しくは[開発ガイド](guide/DEVELOPMENT.md#テストとパッケージ作成)を参照してください。
 
 ```bash
 # GUI を起動（Windows：.\gradlew.bat run または run-gui.bat）

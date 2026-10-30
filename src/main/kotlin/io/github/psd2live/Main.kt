@@ -50,13 +50,19 @@ fun main(arguments: Array<String>) {
 	System.setProperty("sun.java2d.uiScale.enabled", "true")
 	// The name macOS shows in the menu bar and Dock instead of the main class; read when AWT starts.
 	System.setProperty("apple.awt.application.name", "PSD2Live")
+	if (io.github.psd2live.ui.utils.MacShell.active) {
+		System.setProperty("apple.laf.useScreenMenuBar", "true")
+		System.setProperty("apple.awt.application.appearance", "system")
+	}
 	configureLanguage(arguments)
 	val command = commandArguments(arguments)
+	val filesToOpen = io.github.psd2live.ui.utils.MacShell.guiFiles(command)
 	// Canvases draw on the GPU in Skia's own OpenGL context, so Skia must draw the window with OpenGL; the editor
 	// starts with the user's graphics settings (render path, card, vsync, driver threading), before its first window.
 	io.github.psd2live.render.GraphicsSettings.applyAtStartup(
-		if (command.isEmpty()) AppSettings.graphics else io.github.psd2live.render.GraphicsOptions())
-	if (command.isEmpty()) {
+		if (filesToOpen != null) AppSettings.graphics else io.github.psd2live.render.GraphicsOptions())
+	if (filesToOpen != null) {
+		filesToOpen.forEach { io.github.psd2live.ui.utils.MacShell.enqueue(it) }
 		runGui()
 		return
 	}
@@ -219,6 +225,20 @@ private fun runGui() {
 					response.cancelQuit()
 					javax.swing.SwingUtilities.invokeLater { currentCloseApp() }
 				}
+				if (io.github.psd2live.ui.utils.MacShell.active) {
+					desktop?.takeIf { it.isSupported(java.awt.Desktop.Action.APP_ABOUT) }?.setAboutHandler {
+						javax.swing.SwingUtilities.invokeLater {
+							javax.swing.JOptionPane.showMessageDialog(null, "PSD2Live 3.7.0", tr("app.title"),
+								javax.swing.JOptionPane.INFORMATION_MESSAGE)
+						}
+					}
+					desktop?.takeIf { it.isSupported(java.awt.Desktop.Action.APP_PREFERENCES) }?.setPreferencesHandler {
+						javax.swing.SwingUtilities.invokeLater { io.github.psd2live.ui.utils.MacShell.actions.onShowSettings() }
+					}
+					desktop?.takeIf { it.isSupported(java.awt.Desktop.Action.APP_OPEN_FILE) }?.setOpenFileHandler { event ->
+						event.files.forEach { io.github.psd2live.ui.utils.MacShell.enqueue(it.absolutePath) }
+					}
+				}
 				onDispose { desktop?.setQuitHandler(null) }
 			}
 			val transparent by remember {
@@ -240,7 +260,7 @@ private fun runGui() {
 						title = tr("app.title"),
 						icon = painterResource("icons/psd2live.png"),
 						state = windowState,
-						undecorated = transparent || !NativeTitleBar.supported,
+						undecorated = transparent || (!NativeTitleBar.supported && !io.github.psd2live.ui.utils.MacShell.active),
 						transparent = transparent,
 					) {
 						val titleBar = remember(window) { if (window.isUndecorated) null else NativeTitleBar.install(window) }

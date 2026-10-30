@@ -11,7 +11,7 @@ Cubism, VTube Studio, 자체 런타임, 웹, 게임 엔진, 동영상으로 내�
 
 [![Release](https://img.shields.io/github/v/release/tsunehimatoi/psd2live?label=download)](https://github.com/tsunehimatoi/psd2live/releases/latest)
 [![License](https://img.shields.io/badge/license-GPL--3.0%20%2F%20MIT-blue)](#라이선스)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)](#다운로드)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)](#다운로드)
 [![Cubism](https://img.shields.io/badge/Cubism-3.0%20%E2%80%93%205.3-ff6b9d)](#내보내기와-재생)
 [![MCP](https://img.shields.io/badge/MCP-180%2B%20ops-8a63d2)](#에이전트-연결mcp)
 
@@ -137,7 +137,7 @@ PSD2Live는 Cubism Editor나 SDK 없이 동작하면서 Cubism 형식과의 호�
 | Windows 10 / 11 x64 | 포터블 ZIP, EXE | Java 런타임 포함. 압축을 풀거나 설치한 뒤 바로 실행. 각각 ffmpeg가 포함된 `-ffmpeg` 버전도 있음 |
 | Windows 11 ARM64 | 포터블 ZIP, EXE | Java 런타임 포함. Cubism 네이티브 미리보기 없음(Live2D가 이 플랫폼용 Cubism Core를 제공하지 않음), 미리보기는 PSD2Live 런타임 사용 |
 | Linux x86_64 / arm64 | Deb, tar.gz | 런타임과 Cubism 네이티브 미리보기 포함(arm64는 Live2D의 실험 버전). X11 / GLX 필요(XWayland 사용 가능). tar.gz는 Deb이 없는 배포판용으로, 압축을 풀고 `PSD2Live/bin/PSD2Live` 실행 |
-| macOS 및 기타 | 패키지 없음 | JDK 21 설치 후 [소스에서 실행](#소스에서-빌드) |
+| macOS 13 이상 | DMG | Java 런타임을 포함합니다. 연 다음 PSD2Live를 응용 프로그램 폴더로 끌어 놓습니다. 메뉴는 화면 맨 위 메뉴 막대에 있고, 창 단추는 시스템 단추입니다. 패키지 아키텍처는 빌드한 Mac과 같습니다. 만드는 방법은 [소스에서 빌드](#소스에서-빌드)를 봅니다. 공증되지 않은 파일은 Finder에서 보조 클릭으로 엽니다 |
 
 <details>
 <summary>업그레이드, 제거, Linux 안내</summary>
@@ -225,7 +225,7 @@ PSD2Live는 Cubism Editor나 SDK 없이 동작하면서 Cubism 형식과의 호�
 
 ## 소스에서 빌드
 
-JDK 21이 필요하며 Gradle은 저장소에 포함된 Wrapper를 사용합니다. Rust(cargo, rustc 1.87 이상)가 설치되어 있으면 Rust 런타임도 함께 빌드합니다. cargo가 없거나 rustc가 오래되었으면 Linux에서는 먼저 같은 `runtime/` 소스로 CI가 빌드한 라이브러리를 내려받습니다(`-Ppsd2live.prebuiltRuntime=false`로 끌 수 있음). 받을 수 없으면 알림을 표시하고 건너뛰며 편집기는 내장 평가기를 사용합니다(`rustup update` 후 빌드할 수 있습니다).
+JDK 21이 필요하며 Gradle은 저장소에 포함된 Wrapper를 사용합니다. Rust(cargo, rustc 1.87 이상)가 설치되어 있으면 Rust 런타임도 함께 빌드합니다. cargo가 없거나 rustc가 오래되었으면 Linux에서는 먼저 같은 `runtime/` 소스로 CI가 빌드한 라이브러리를 내려받습니다(`-Ppsd2live.prebuiltRuntime=false`로 끌 수 있음). 받을 수 없으면 알림을 표시하고 건너뛰며 편집기는 내장 평가기를 사용합니다(`rustup update` 후 빌드할 수 있습니다). macOS 13 이상에서는 `./gradlew packageDmg`로 런타임이 들어 있는 DMG를 만들 수 있으며, JBR을 따로 설치하지 않아도 됩니다. 설명은 [개발 가이드](../en/guide/DEVELOPMENT.md#tests-and-packaging)(영어)에 있습니다.
 
 ```bash
 # GUI 실행(Windows: .\gradlew.bat run 또는 run-gui.bat)

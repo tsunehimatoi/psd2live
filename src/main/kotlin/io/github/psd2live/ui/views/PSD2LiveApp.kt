@@ -567,6 +567,34 @@ private fun FrameWindowScope.PSD2LiveAppContent(
 							hostsHierarchy = "hierarchy" in modules,
 						)
 					}
+					if (io.github.psd2live.ui.utils.MacShell.active && window != null) {
+						io.github.psd2live.ui.utils.MacShell.Host(
+							window = window,
+							isBusy = isBusy,
+							hasInput = hasInput,
+							recentFiles = state.recentFiles,
+							darkTheme = state.darkTheme,
+							onStartScreen = { viewModel.showStartPage(StartSection.GENERATE) },
+							onOpenProject = onOpenProjectAction,
+							onOpenPsd = onOpenPsdAction,
+							onOpenRecent = viewModel::openRecentFile,
+							onClearRecent = viewModel::clearRecentFiles,
+							onSave = { viewModel.requestProjectSave() },
+							onSaveAs = { viewModel.requestProjectSave(true) },
+							onExport = { if (hasInput && !isBusy) viewModel.openExportDialog() },
+							onExportUnity = { if (hasInput && !isBusy) viewModel.openOtherExport("unity") },
+							onNewLayout = { viewModel.showStartPage(StartSection.LAYOUT) },
+							onUndo = viewModel::undoHistory,
+							onRedo = viewModel::redoHistory,
+							onZoomIn = { viewModel.zoomIn() },
+							onZoomOut = { viewModel.zoomOut() },
+							onResetZoom = { viewModel.resetZoom() },
+							onToggleTheme = { viewModel.toggleDarkTheme() },
+							onShowSettings = { viewModel.togglePage(AppPage.SETTINGS) },
+							onOpenHelp = { viewModel.showPage(AppPage.HELP, HELP_CONTENT) },
+							onShowHistory = { viewModel.showHistoryModule() },
+						)
+					}
 					AppTitleBar(
 						window = window,
 						windowState = windowState,

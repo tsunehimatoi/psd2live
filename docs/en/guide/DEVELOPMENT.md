@@ -6,7 +6,7 @@ This page is for running from source, using the command line or contributing cod
 
 ## Requirements
 
-- JDK 21, preferably the JetBrains Runtime (JBR) 21: release packages ship it, and on it the main window keeps its native frame (the system maximizes, snaps and resizes it) under the title bar the app draws. Other JDKs build, test and run the app too, with an undecorated main window and the whole title bar drawn by the app. Packaging (`createDistributable`, `packageExe` and the like) requires a JBR 21 SDK (with jpackage); `-Ppsd2live.allowNonJbr=true` packages with another JDK. Gradle runs through the bundled wrapper; no separate install is needed.
+- JDK 21, preferably the JetBrains Runtime (JBR) 21: Windows release packages ship it, and on it the main window keeps its native frame (the system maximizes, snaps and resizes it) under the title bar the app draws. Other JDKs build, test and run the app too, with an undecorated main window and the whole title bar drawn by the app. Windows packaging (`createDistributable`, `packageExe`) requires a JBR 21 SDK (with jpackage); `-Ppsd2live.allowNonJbr=true` packages with another JDK. The macOS DMG (`packageDmg`) is built with the JDK that runs Gradle and does not need JBR, because its Swift shell keeps the system window frame. Gradle runs through the bundled wrapper; no separate install is needed.
 - Use `.\gradlew.bat` on Windows and `./gradlew` on Linux / macOS. Examples below use `./gradlew`.
 - The official Cubism SDK is not required. Source builds use the built-in renderer; see [Cubism native preview](CUBISM_SDK_SETUP.md) for the native bridge.
 
@@ -85,8 +85,10 @@ The `export` command exports a `.psd2live` project (its current history state) o
 ./gradlew test --tests "io.github.psd2live.scenario.CatalogContractsTest"   # one test class
 ./gradlew createDistributable                    # application directory with runtime
 ./gradlew packageDistributionForCurrentOS        # installer for this platform
+./gradlew packageDmg                             # macOS only: DMG with the Swift app shell
 ```
 
+- `packageDmg` is macOS only. It bundles the runtime from `createDistributable` and replaces the launcher with the Swift shell in `packaging/macos`, so the Dock name, document types and window buttons are the system's. The menu bar is the screen menu bar; the in-window menus stay, because they list every command. The DMG matches the Mac that builds it (Apple silicon or Intel) and needs macOS 13 or newer. It is not notarized: a copy downloaded from the internet has to be opened from Finder with the secondary click. Drag `PSD2Live` onto Applications.
 - Both packaging tasks include only the build host's native libraries and ship `LICENSE`, `THIRD_PARTY_NOTICES.md` and `licenses/` in the application resources.
 - Official SDK resources (`src/main/resources/cubism/`) are excluded unless you pass `-Ppsd2live.includeCubism=true` or set `PSD2LIVE_INCLUDE_CUBISM=true`. Packages with the SDK must not be distributed publicly; see [CI and releases](CUBISM_CI_RELEASE.md).
 - On Linux, `./native/package_linux.sh` builds a local launcher package that needs a system JDK 21 (written to `dist/linux-<timestamp>/`); see [native/README.md](../../../native/README.md).

@@ -11,7 +11,7 @@ and export to Cubism, VTube Studio, its own runtime, the web, game engines or vi
 
 [![Release](https://img.shields.io/github/v/release/tsunehimatoi/psd2live?label=download)](https://github.com/tsunehimatoi/psd2live/releases/latest)
 [![License](https://img.shields.io/badge/license-GPL--3.0%20%2F%20MIT-blue)](#license)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)](#download)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)](#download)
 [![Cubism](https://img.shields.io/badge/Cubism-3.0%20%E2%80%93%205.3-ff6b9d)](#export-and-playback)
 [![MCP](https://img.shields.io/badge/MCP-180%2B%20ops-8a63d2)](#connecting-an-agent-mcp)
 
@@ -137,7 +137,7 @@ Get the latest version from [Releases](https://github.com/tsunehimatoi/psd2live/
 | Windows 10 / 11 x64 | Portable ZIP, EXE | Bundles a Java runtime; unzip or install and run. Each also comes as a `-ffmpeg` build with ffmpeg included |
 | Windows 11 ARM64 | Portable ZIP, EXE | Bundles a Java runtime; no Cubism native preview (Live2D ships no Cubism Core for it), the preview uses the PSD2Live runtime |
 | Linux x86_64 / arm64 | Deb, tar.gz | Bundles the runtime and Cubism native preview (experimental from Live2D on arm64); needs X11 / GLX (XWayland works); the tar.gz is for distributions without Deb: extract and run `PSD2Live/bin/PSD2Live` |
-| macOS and others | No package yet | Install JDK 21 and [run from source](#building-from-source) |
+| macOS 13 or newer | DMG | Bundles its own Java runtime. Open it and drag PSD2Live to Applications. The menu is the screen menu bar and the window buttons are the system's. The package matches the Mac that built it; see [Building from source](#building-from-source). A copy that is not notarized has to be opened from Finder with a secondary click |
 
 <details>
 <summary>Upgrading, uninstalling and Linux notes</summary>
@@ -225,7 +225,7 @@ Format and evaluation rules: [runtime](spec/RUNTIME.md) and [`.p2lrt` 2.0 format
 
 ## Building from source
 
-Requires JDK 21 (release packages use the JetBrains Runtime 21, which packaging needs as well; see the [development guide](guide/DEVELOPMENT.md#requirements)); Gradle runs through the bundled wrapper. With Rust (cargo, rustc 1.87 or later) installed, the Rust runtime is built as well; without cargo, or with an older rustc, Linux first downloads the library CI built from the same `runtime/` sources (`-Ppsd2live.prebuiltRuntime=false` turns this off); if none is available the build skips it with a notice and the editor uses its built-in evaluator (`rustup update` lets it build).
+Requires JDK 21 (Windows release packages use the JetBrains Runtime 21; see the [development guide](guide/DEVELOPMENT.md#requirements)); Gradle runs through the bundled wrapper. With Rust (cargo, rustc 1.87 or later) installed, the Rust runtime is built as well; without cargo, or with an older rustc, Linux first downloads the library CI built from the same `runtime/` sources (`-Ppsd2live.prebuiltRuntime=false` turns this off); if none is available the build skips it with a notice and the editor uses its built-in evaluator (`rustup update` lets it build). On macOS 13 or newer, `./gradlew packageDmg` builds a DMG with its own runtime and does not need a separate JBR; see the [development guide](guide/DEVELOPMENT.md#tests-and-packaging).
 
 ```bash
 # Start the GUI (Windows: .\gradlew.bat run or run-gui.bat)
