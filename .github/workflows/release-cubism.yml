@@ -462,9 +462,44 @@ jobs:
           path: dist-artifacts/*
           if-no-files-found: error
 
+  # Public macOS builds use the built-in preview and do not download the proprietary SDK.
+  build-macos:
+    name: Build macOS (${{ matrix.arch }})
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/package-macos
+        id: package
+        with:
+          architecture: ${{ matrix.arch }}
+          run-tests: 'false'
+      - name: Collect macOS artifact
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+          DMG: ${{ steps.package.outputs.dmg }}
+        run: |
+          mkdir -p dist-artifacts
+          cp "$DMG" "dist-artifacts/PSD2Live-${VERSION}-macos-${ARCH}.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: dist-artifacts/*.dmg
+          if-no-files-found: error
+
   release:
     name: GitHub Release
-    needs: [prepare, build-windows, build-windows-arm64, build-linux]
+    needs: [prepare, build-windows, build-windows-arm64, build-linux, build-macos]
     if: needs.prepare.outputs.create_release == 'true'
     runs-on: ubuntu-latest
     environment: release-cubism
@@ -495,6 +530,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: linux-cubism-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: macos-*
           merge-multiple: true
           path: release-assets
 
@@ -537,4 +579,6 @@ jobs:
             release-assets/PSD2Live-${{ env.VERSION }}-linux-x64.tar.gz
             release-assets/PSD2Live-${{ env.VERSION }}-linux-arm64.deb
             release-assets/PSD2Live-${{ env.VERSION }}-linux-arm64.tar.gz
+            release-assets/PSD2Live-${{ env.VERSION }}-macos-arm64.dmg
+            release-assets/PSD2Live-${{ env.VERSION }}-macos-x86_64.dmg
             release-assets/SHA256SUMS.txt

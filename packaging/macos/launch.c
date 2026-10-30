@@ -13,6 +13,9 @@
 
 static char log_path[1024];
 
+/* Implemented by the Swift host. Error text is data, never shell or AppleScript source. */
+extern void psd2live_show_error(const char *message);
+
 static void note(const char *text) {
 	fprintf(stderr, "psd2live: %s\n", text);
 	if (log_path[0] == 0) return;
@@ -23,13 +26,14 @@ static void note(const char *text) {
 }
 
 static void note_error(const char *text) {
+	if (text == NULL) text = "Could not start PSD2Live.";
 	note(text);
-	const char *home = getenv("HOME");
-	if (home == NULL) return;
-	char script[2048];
-	snprintf(script, sizeof(script),
-		"osascript -e 'display dialog \"%s\" with title \"PSD2Live\" buttons {\"OK\"} default button 1'", text);
-	system(script);
+	psd2live_show_error(text);
+}
+
+static void report_dlerror(const char *fallback) {
+	const char *error = dlerror();
+	note_error(error != NULL ? error : fallback);
 }
 
 static char *unquote(const char *input) {
@@ -211,7 +215,7 @@ int psd2live_launch(const char *resources, int argc, char **argv) {
 	snprintf(libjvm, sizeof(libjvm), "%s/lib/server/libjvm.dylib", java_home);
 	void *library = dlopen(libjvm, RTLD_NOW | RTLD_GLOBAL);
 	if (library == NULL) {
-		note_error(dlerror() != NULL ? dlerror() : "Could not load libjvm.");
+		report_dlerror("Could not load libjvm.");
 		return 1;
 	}
 	typedef jint (*CreateJavaVM)(JavaVM **, void **, void *);

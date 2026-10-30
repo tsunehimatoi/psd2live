@@ -446,7 +446,7 @@ if (hostOs == "windows") afterEvaluate {
 if (hostOs == "macos") afterEvaluate {
 	val distributions = compose.desktop.application.nativeDistributions
 	val createDistributable = tasks.named<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask>("createDistributable")
-	tasks.register<Exec>("packageDmg") {
+	val packageDmg = tasks.register<Exec>("packageDmg") {
 		group = "compose desktop"
 		description = "Builds a macOS .dmg whose app is the Swift shell around the bundled runtime."
 		dependsOn(createDistributable)
@@ -455,10 +455,12 @@ if (hostOs == "macos") afterEvaluate {
 		val arch = if (hostArm) "arm64" else "x86_64"
 		val dmg = layout.buildDirectory.file("PSD2Live-${project.version}-macos-$arch.dmg")
 		inputs.file(script)
+		inputs.files("packaging/macos/launch.c", "packaging/macos/main.swift", "src/main/resources/icons/psd2live.png")
 		inputs.dir(image)
 		outputs.file(dmg)
 		commandLine("bash", script.absolutePath, "--image", image.get().asFile.absolutePath, "--version", project.version.toString())
 	}
+	tasks.named("packageDistributionForCurrentOS") { dependsOn(packageDmg) }
 }
 
 afterEvaluate {

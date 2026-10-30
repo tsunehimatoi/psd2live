@@ -2429,20 +2429,33 @@ class PSD2LiveViewModel : AutoCloseable {
 	private val preferences by lazy { Preferences.userNodeForPackage(PSD2LiveViewModel::class.java) }
 	private var workspaceBackend: WorkspaceBackend? = null
     private var pendingDestructiveAction: (() -> Unit)? = null
+    private var pendingDestructiveCancellation: (() -> Unit)? = null
     var confirmUnsavedChanges: (() -> Int)? = null
     private var queuedCanvasSave: Boolean? = null
 
-    fun withSavedChanges(action: () -> Unit) {
-        if (_state.value.projectSaving) return
+    fun withSavedChanges(action: () -> Unit) = withSavedChangesOrCancel({}, action)
+
+    private fun cancelPendingDestructiveAction() {
+        pendingDestructiveAction = null
+        pendingDestructiveCancellation?.also { pendingDestructiveCancellation = null; it() }
+    }
+
+    private fun withSavedChangesOrCancel(onCancel: () -> Unit, action: () -> Unit) {
+        if (_state.value.projectSaving) { onCancel(); return }
         // Anything half-typed is closed first, so the dirty check and the confirm dialog below see the
         // value the user actually ended on rather than the last committed one.
         flushEditorFields()
         if (!_state.value.projectDirty && workspaceBackend?.hasUnsavedChanges() != true &&
             !_state.value.workspaceEditBusy && !_state.value.editorDraftBusy) { action(); return }
         when (confirmUnsavedChanges?.invoke() ?: 2) {
-            0 -> { pendingDestructiveAction = action; requestProjectSave() }
-            1 -> { pendingDestructiveAction = null; queuedCanvasSave = null; action() }
-            else -> pendingDestructiveAction = null
+            0 -> {
+                cancelPendingDestructiveAction()
+                pendingDestructiveAction = action
+                pendingDestructiveCancellation = onCancel
+                requestProjectSave()
+            }
+            1 -> { cancelPendingDestructiveAction(); queuedCanvasSave = null; action() }
+            else -> { cancelPendingDestructiveAction(); onCancel() }
         }
     }
     /**
@@ -2475,7 +2488,7 @@ class PSD2LiveViewModel : AutoCloseable {
     }
     fun clearProjectSaveError() { updateState { it.copy(projectSaveError = null) } }
     fun cancelProjectLocation() {
-        pendingDestructiveAction = null
+        cancelPendingDestructiveAction()
         updateState { it.copy(showProjectLocationDialog = false) }
     }
     fun saveProjectTo(path: Path) {
@@ -2485,8 +2498,12 @@ class PSD2LiveViewModel : AutoCloseable {
                 updateState { it.copy(showProjectLocationDialog = false) }
                 if (!_state.value.projectDirty && workspaceBackend?.hasUnsavedChanges() != true &&
                     !_state.value.workspaceEditBusy && !_state.value.editorDraftBusy)
-                    pendingDestructiveAction?.also { pendingDestructiveAction = null; it() }
-            } catch (_: Throwable) { pendingDestructiveAction = null }
+                    pendingDestructiveAction?.also {
+                        pendingDestructiveAction = null
+                        pendingDestructiveCancellation = null
+                        it()
+                    }
+            } catch (_: Throwable) { cancelPendingDestructiveAction() }
         }
     }
     internal suspend fun saveProjectNow(path: Path? = null): String {
@@ -3440,6 +3457,35 @@ class PSD2LiveViewModel : AutoCloseable {
 				}
 			} else currentOutput
 			current.copy(inputPath = normalized, outputPath = nextOutput, recentFiles = AppSettings.recentFiles())
+		}
+	}
+
+	/** Finder and startup requests wait for saves/imports and finish before the next request begins. */
+	internal suspend fun openExternalFile(path: String) {
+		_state.first { !it.isBusy && !it.projectSaving && !it.workspaceEditBusy && !it.editorDraftBusy &&
+			!it.showProjectLocationDialog }
+		val target = runCatching { Path.of(path).toAbsolutePath().normalize() }.getOrNull()
+		val kind = target?.takeIf(Files::isRegularFile)?.let { classifyRecentPath(it.toString()) }
+		if (target == null || kind == null) { openRecentFile(path); return }
+		val permission = kotlinx.coroutines.CompletableDeferred<Boolean>()
+		withSavedChangesOrCancel({ permission.complete(false) }) { permission.complete(true) }
+		if (!permission.await()) return
+		try {
+			when (kind) {
+				RecentFileKind.PROJECT -> {
+					val generation = _state.value.projectOpenGeneration
+					openProjectNow(target, discardUnsaved = true)
+					if (_state.value.projectOpenGeneration != generation) leaveStartPage()
+				}
+				RecentFileKind.PSD -> {
+					setInputPath(target.toString())
+					analyze(discardUnsaved = true)
+					activeWorkJob?.join()
+				}
+			}
+		} catch (failure: Exception) {
+			if (failure is kotlinx.coroutines.CancellationException) throw failure
+			updateState { it.copy(errorMessage = failure.message) }
 		}
 	}
 

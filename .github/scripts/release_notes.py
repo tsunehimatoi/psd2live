@@ -21,8 +21,8 @@ WINDOWS_LOGO = "data:image/svg+xml;base64," + base64.b64encode(
 	b'<rect x="2" y="12.5" width="9.5" height="9.5" rx="1"/><rect x="12.5" y="12.5" width="9.5" height="9.5" rx="1"/></svg>'
 ).decode()
 
-COLORS = {"exe": "0078D4", "msi": "0078D4", "zip": "6F42C1", "ffmpeg": "2E7D32", "deb": "D70A53", "tarball": "E95420"}
-BADGE_LABEL = {"exe": "EXE", "msi": "MSI", "zip": "ZIP", "deb": "DEB", "tarball": "TAR.GZ"}
+COLORS = {"exe": "0078D4", "msi": "0078D4", "zip": "6F42C1", "ffmpeg": "2E7D32", "deb": "D70A53", "tarball": "E95420", "dmg": "555555"}
+BADGE_LABEL = {"exe": "EXE", "msi": "MSI", "zip": "ZIP", "deb": "DEB", "tarball": "TAR.GZ", "dmg": "DMG"}
 
 
 def esc(text):
@@ -52,6 +52,8 @@ def kind(name):
 		return "exe"
 	if lower.endswith(".msi"):
 		return "msi"
+	if lower.endswith(".dmg"):
+		return "dmg"
 	return None
 
 
@@ -70,6 +72,7 @@ def downloads(tag, repo, assets):
 	ffmpeg = [a for a in win if "-ffmpeg" in a[0]]
 	debs = [a for a in assets if kind(a[0]) == "deb"]
 	tarballs = [a for a in assets if kind(a[0]) == "tarball"]
+	dmgs = [a for a in assets if kind(a[0]) == "dmg"]
 
 	def tag(name):
 		k = kind(name)
@@ -79,7 +82,7 @@ def downloads(tag, repo, assets):
 		if "-ffmpeg" in name:
 			logo = "ffmpeg"
 		else:
-			logo = {"deb": "debian", "tarball": "linux"}.get(k, WINDOWS_LOGO)
+			logo = {"deb": "debian", "tarball": "linux", "dmg": "apple"}.get(k, WINDOWS_LOGO)
 		return text, ("ffmpeg" if "-ffmpeg" in name else k), logo
 
 	groups = [
@@ -88,6 +91,8 @@ def downloads(tag, repo, assets):
 		("Windows arm64", [a for a in win if is_arm64(a[0])]),
 		("Linux x64", [a for a in debs + tarballs if not is_arm64(a[0])]),
 		("Linux arm64", [a for a in debs + tarballs if is_arm64(a[0])]),
+		("macOS Intel", [a for a in dmgs if not is_arm64(a[0])]),
+		("macOS Apple Silicon", [a for a in dmgs if is_arm64(a[0])]),
 	]
 	lines = ["## 下载 · Downloads", "", "| 平台 · Platform | 安装 · Setup | 免安装 · Portable |", "| :-- | :-- | :-- |"]
 	for title, group in groups:

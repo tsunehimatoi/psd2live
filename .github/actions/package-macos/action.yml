@@ -1,0 +1,53 @@
+name: Package macOS
+description: Build and verify a public DMG with its bundled runtime and no Cubism SDK.
+inputs:
+  architecture:
+    description: Expected build architecture (arm64 or x86_64).
+    required: true
+  run-tests:
+    description: Run the JVM test suite before packaging.
+    default: 'true'
+outputs:
+  dmg:
+    description: Path to the built DMG.
+    value: ${{ steps.package.outputs.dmg }}
+runs:
+  using: composite
+  steps:
+    - name: Check build architecture
+      shell: bash
+      env:
+        EXPECTED_ARCH: ${{ inputs.architecture }}
+      run: test "$(uname -m)" = "$EXPECTED_ARCH"
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '21'
+        cache: gradle
+    - uses: dtolnay/rust-toolchain@stable
+    - name: Build and test the runtime
+      if: inputs.run-tests == 'true'
+      shell: bash
+      run: |
+        cargo test --manifest-path runtime/Cargo.toml --release
+        cargo build --manifest-path runtime/Cargo.toml --release
+    - name: Test launcher error handling
+      shell: bash
+      run: bash packaging/macos/test-launcher.sh
+    - name: Test JVM application
+      if: inputs.run-tests == 'true'
+      shell: bash
+      run: ./gradlew test --no-daemon
+    - name: Package DMG
+      id: package
+      shell: bash
+      run: |
+        ./gradlew packageDistributionForCurrentOS --no-daemon
+        images=(build/PSD2Live-*-macos-*.dmg)
+        [[ ${#images[@]} -eq 1 && -s "${images[0]}" ]]
+        echo "dmg=${images[0]}" >> "$GITHUB_OUTPUT"
+    - name: Verify mounted package and bundled runtime
+      shell: bash
+      env:
+        DMG: ${{ steps.package.outputs.dmg }}
+      run: python3 packaging/macos/smoke-test.py "$DMG"
