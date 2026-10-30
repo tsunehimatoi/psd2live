@@ -181,6 +181,10 @@ private fun runGui() {
 		// Exit from main rather than letting Compose call System.exit on the EDT, which would block
 		// the EDT while the shutdown hooks run.
 		application(exitProcessOnExit = false) {
+			// Application lifetime: replacing a window for language/transparency must not cancel an open.
+			LaunchedEffect(viewModel) {
+				io.github.psd2live.ui.utils.MacShell.consumeFiles(viewModel::openExternalFile)
+			}
 			val defaultExceptionHandlers = LocalWindowExceptionHandlerFactory.current
 			val exceptionHandlers = remember(defaultExceptionHandlers) {
 				WindowExceptionHandlerFactory { window ->

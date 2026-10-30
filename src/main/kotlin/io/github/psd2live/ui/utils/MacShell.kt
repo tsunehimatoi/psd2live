@@ -2,16 +2,13 @@ package io.github.psd2live.ui.utils
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.ui.awt.ComposeWindow
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.state.AppSettings
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.concurrent.ConcurrentLinkedQueue
+import kotlinx.coroutines.channels.Channel
 import javax.swing.JMenu
 import javax.swing.JMenuBar
 import javax.swing.JMenuItem
@@ -25,22 +22,22 @@ internal object MacShell {
 	val active: Boolean = System.getProperty("psd2live.macShell") == "true"
 
 	val actions = Actions()
-	private val pending = ConcurrentLinkedQueue<String>()
-	var onFilesArrived: (() -> Unit)? = null
+	private val pending = FileOpenRequests()
 
 	fun enqueue(path: String) {
-		pending.add(path)
-		onFilesArrived?.invoke()
+		pending.enqueue(path)
 	}
 
-	fun poll(): String? = pending.poll()
+	suspend fun consumeFiles(open: suspend (String) -> Unit) = pending.consume(open)
 
 	/** Existing paths to open in the GUI, an empty list for a normal launch, or null when [command] is a CLI invocation. */
 	fun guiFiles(command: List<String>): List<String>? {
 		if (command.isEmpty()) return emptyList()
+		if (command.first() in setOf("targets", "export", "mcp")) return null
 		if (command.any { it.startsWith("-") }) return null
 		val paths = command.map { runCatching { Path.of(it) }.getOrNull() ?: return null }
-		if (paths.any { !Files.exists(it) }) return null
+		if (paths.any { !Files.isRegularFile(it) ||
+			!(it.fileName.toString().endsWith(".psd", true) || it.fileName.toString().endsWith(".psd2live", true)) }) return null
 		return paths.map { it.toAbsolutePath().normalize().toString() }
 	}
 
@@ -93,15 +90,12 @@ internal object MacShell {
 		onOpenHelp: () -> Unit,
 		onShowHistory: () -> Unit,
 	) {
-		val arrived = remember { mutableIntStateOf(0) }
 		DisposableEffect(window) {
 			val menu = ScreenMenu(window)
 			menu.install()
-			val previous = onFilesArrived
-			onFilesArrived = { arrived.intValue++ }
 			onDispose {
-				if (onFilesArrived != null) onFilesArrived = previous
 				window.jMenuBar = null
+				if (ScreenMenu.current === menu) ScreenMenu.current = null
 			}
 		}
 		SideEffect {
@@ -125,13 +119,6 @@ internal object MacShell {
 			actions.onOpenHelp = onOpenHelp
 			actions.onShowHistory = onShowHistory
 			ScreenMenu.current?.update(isBusy, hasInput, recentFiles, darkTheme)
-		}
-		LaunchedEffect(arrived.intValue, isBusy) {
-			if (isBusy) return@LaunchedEffect
-			while (true) {
-				val path = poll() ?: break
-				onOpenRecent(path)
-			}
 		}
 	}
 
@@ -229,5 +216,14 @@ internal object MacShell {
 		companion object {
 			var current: ScreenMenu? = null
 		}
+	}
+}
+
+/** One consumer awaits each open (including save prompts) before accepting the next file. */
+internal class FileOpenRequests {
+	private val pending = Channel<String>(Channel.UNLIMITED)
+	fun enqueue(path: String) { check(pending.trySend(path).isSuccess) }
+	suspend fun consume(open: suspend (String) -> Unit) {
+		for (path in pending) open(path)
 	}
 }

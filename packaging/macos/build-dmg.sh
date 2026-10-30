@@ -36,12 +36,12 @@ mkdir -p "$(dirname "$app")"
 cp -R "$image" "$app"
 
 java_home="$app/Contents/runtime/Contents/Home"
-clang -c packaging/macos/launch.c \
+clang -mmacosx-version-min=13.0 -c packaging/macos/launch.c \
 	-I"$JAVA_HOME/include" -I"$JAVA_HOME/include/darwin" \
 	-o build/mac-launch.o
-swiftc -O -o "$app/Contents/MacOS/PSD2Live" \
+swiftc -target "$(uname -m)-apple-macosx13.0" -O -o "$app/Contents/MacOS/PSD2Live" \
 	packaging/macos/main.swift build/mac-launch.o \
-	-framework Foundation -framework CoreFoundation
+	-framework Foundation -framework AppKit -framework CoreFoundation
 chmod +x "$app/Contents/MacOS/PSD2Live"
 
 iconset="build/AppIcon.iconset"
@@ -62,15 +62,15 @@ iconutil -c icns "$iconset" -o "$app/Contents/Resources/PSD2Live.icns"
 
 plist="$app/Contents/Info.plist"
 set_plist() {
-	/usr/libexec/PlistBuddy -c "Set :$1 $2" "$plist" 2>/dev/null \
-		|| /usr/libexec/PlistBuddy -c "Add :$1 $2" "$plist"
+	/usr/libexec/PlistBuddy -c "Set :$1 $3" "$plist" 2>/dev/null \
+		|| /usr/libexec/PlistBuddy -c "Add :$1 $2 $3" "$plist"
 }
-set_plist LSMinimumSystemVersion 13.0
-set_plist LSApplicationCategoryType public.app-category.graphics-design
+set_plist LSMinimumSystemVersion string 13.0
+set_plist LSApplicationCategoryType string public.app-category.graphics-design
 /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string PSD2Live" "$plist" 2>/dev/null \
 	|| /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName PSD2Live" "$plist"
-set_plist NSSupportsAutomaticTermination "bool false"
-set_plist NSSupportsSuddenTermination "bool false"
+set_plist NSSupportsAutomaticTermination bool false
+set_plist NSSupportsSuddenTermination bool false
 /usr/libexec/PlistBuddy -c "Delete :CFBundleDocumentTypes" "$plist" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes array" "$plist"
 /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0 dict" "$plist"

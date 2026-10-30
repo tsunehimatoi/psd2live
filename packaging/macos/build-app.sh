@@ -15,12 +15,12 @@ app="build/PSD2Live.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 
-clang -c packaging/macos/launch.c \
+clang -mmacosx-version-min=13.0 -c packaging/macos/launch.c \
 	-I"$java_home/include" -I"$java_home/include/darwin" \
 	-o build/mac-launch.o
-swiftc -O -o "$app/Contents/MacOS/PSD2Live" \
+swiftc -target "$(uname -m)-apple-macosx13.0" -O -o "$app/Contents/MacOS/PSD2Live" \
 	packaging/macos/main.swift build/mac-launch.o \
-	-framework Foundation
+	-framework Foundation -framework AppKit -framework CoreFoundation
 chmod +x "$app/Contents/MacOS/PSD2Live"
 
 cp packaging/macos/Info.plist "$app/Contents/Info.plist"
