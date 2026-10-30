@@ -1,6 +1,9 @@
 name: Package macOS
 description: Build and verify a public DMG with its bundled runtime and no Cubism SDK.
 inputs:
+  architecture:
+    description: Expected build architecture (arm64 or x86_64).
+    required: true
   run-tests:
     description: Run the JVM test suite before packaging.
     default: 'true'
@@ -11,12 +14,23 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Check build architecture
+      shell: bash
+      env:
+        EXPECTED_ARCH: ${{ inputs.architecture }}
+      run: test "$(uname -m)" = "$EXPECTED_ARCH"
     - uses: actions/setup-java@v4
       with:
         distribution: temurin
         java-version: '21'
         cache: gradle
     - uses: dtolnay/rust-toolchain@stable
+    - name: Build and test the runtime
+      if: inputs.run-tests == 'true'
+      shell: bash
+      run: |
+        cargo test --manifest-path runtime/Cargo.toml --release
+        cargo build --manifest-path runtime/Cargo.toml --release
     - name: Test launcher error handling
       shell: bash
       run: bash packaging/macos/test-launcher.sh

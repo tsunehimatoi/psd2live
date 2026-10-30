@@ -31,6 +31,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/package-macos
         id: package
+        with:
+          architecture: ${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.arch }}

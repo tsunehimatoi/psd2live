@@ -480,6 +480,7 @@ jobs:
       - uses: ./.github/actions/package-macos
         id: package
         with:
+          architecture: ${{ matrix.arch }}
           run-tests: 'false'
       - name: Collect macOS artifact
         shell: bash
