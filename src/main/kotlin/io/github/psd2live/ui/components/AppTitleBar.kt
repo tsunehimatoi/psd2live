@@ -878,7 +878,7 @@ fun AppTitleBar(
 
 			Spacer(modifier = Modifier.width(4.dp))
 
-			if (nativeTitleBar != null) {
+			if (nativeTitleBar != null || (io.github.psd2live.ui.utils.MacShell.active && window?.isUndecorated == false)) {
 				Spacer(Modifier.width(nativeInsets.second))
 				return@Row
 			}

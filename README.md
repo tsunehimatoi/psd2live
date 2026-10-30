@@ -11,7 +11,7 @@
 
 [![Release](https://img.shields.io/github/v/release/tsunehimatoi/psd2live?label=%E4%B8%8B%E8%BD%BD)](https://github.com/tsunehimatoi/psd2live/releases/latest)
 [![License](https://img.shields.io/badge/license-GPL--3.0%20%2F%20MIT-blue)](#许可)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)](#下载)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)](#下载)
 [![Cubism](https://img.shields.io/badge/Cubism-3.0%20%E2%80%93%205.3-ff6b9d)](#导出与播放)
 [![MCP](https://img.shields.io/badge/MCP-180%2B%20ops-8a63d2)](#连接-agentmcp)
 
@@ -137,7 +137,7 @@ PSD2Live 不依赖 Cubism Editor 或 SDK 运行，但与 Cubism 格式保持兼�
 | Windows 10 / 11 x64 | 便携版 ZIP、EXE | 自带 Java 运行时，解压或安装后直接运行；每种都另有内置 ffmpeg 的 `-ffmpeg` 版本 |
 | Windows 11 ARM64 | 便携版 ZIP、EXE | 自带 Java 运行时；不含 Cubism 原生预览（Live2D 未提供该平台的 Cubism Core），预览使用 PSD2Live 运行时 |
 | Linux x86_64 / arm64 | Deb、tar.gz | 自带运行时与 Cubism 原生预览（arm64 为 Live2D 的实验性版本），需要 X11 / GLX（XWayland 可用）；tar.gz 供没有 Deb 的发行版，解压后运行 `PSD2Live/bin/PSD2Live` |
-| macOS 及其他 | 暂无安装包 | 安装 JDK 21 后[从源码运行](#从源码构建) |
+| macOS 13 及以上 | DMG | 自带 Java 运行时。打开后把 PSD2Live 拖进“应用程序”。菜单在屏幕顶部，窗口按钮是系统的。包的架构与制作它的 Mac 相同，制作方法见[从源码构建](#从源码构建)。未公证时，从网络下载后在访达中右键打开 |
 
 <details>
 <summary>升级、卸载与 Linux 说明</summary>
@@ -225,7 +225,7 @@ PSD2Live 不依赖 Cubism Editor 或 SDK 运行，但与 Cubism 格式保持兼�
 
 ## 从源码构建
 
-需要 JDK 21（发布包使用 JetBrains Runtime 21，打包也需要它，见[开发指南](docs/zh/guide/DEVELOPMENT.md#环境)），Gradle 使用仓库自带的 Wrapper。安装了 Rust（cargo，rustc 1.87 及以上）时会同时构建 Rust 运行时；没有 cargo 或 rustc 版本过旧时，Linux 会先下载 CI 按同一份 `runtime/` 源码构建的预编译库（`-Ppsd2live.prebuiltRuntime=false` 可关闭），下载不到则跳过并给出提示，编辑器改用内置求值器（`rustup update` 后即可构建）。
+需要 JDK 21（Windows 发布包使用 JetBrains Runtime 21，见[开发指南](docs/zh/guide/DEVELOPMENT.md#环境)），Gradle 使用仓库自带的 Wrapper。安装了 Rust（cargo，rustc 1.87 及以上）时会同时构建 Rust 运行时；没有 cargo 或 rustc 版本过旧时，Linux 会先下载 CI 按同一份 `runtime/` 源码构建的预编译库（`-Ppsd2live.prebuiltRuntime=false` 可关闭），下载不到则跳过并给出提示，编辑器改用内置求值器（`rustup update` 后即可构建）。macOS 13 及以上用 `./gradlew packageDmg` 打出带运行时的 DMG，不需要单独安装 JBR，说明见[开发指南](docs/zh/guide/DEVELOPMENT.md#测试与打包)。
 
 ```bash
 # 启动 GUI（Windows：.\gradlew.bat run 或 run-gui.bat）

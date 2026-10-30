@@ -6,7 +6,7 @@
 
 ## 环境
 
-- JDK 21，推荐 JetBrains Runtime（JBR）21：发布包用它，主窗口在它上面保留系统窗口框架（最大化、贴靠、拖边调整大小由系统处理），标题栏由程序绘制；其他 JDK 也能构建、测试和运行，主窗口改为无边框、整条标题栏由程序绘制。打包（`createDistributable`、`packageExe` 等）要求 JBR 21 SDK（带 jpackage），用其他 JDK 打包需加 `-Ppsd2live.allowNonJbr=true`。Gradle 使用仓库自带的 Wrapper，无需单独安装。
+- JDK 21，推荐 JetBrains Runtime（JBR）21：Windows 发布包用它，主窗口在它上面保留系统窗口框架（最大化、贴靠、拖边调整大小由系统处理），标题栏由程序绘制；其他 JDK 也能构建、测试和运行，主窗口改为无边框、整条标题栏由程序绘制。Windows 打包（`createDistributable`、`packageExe`）要求 JBR 21 SDK（带 jpackage），用其他 JDK 打包需加 `-Ppsd2live.allowNonJbr=true`。macOS 的 DMG（`packageDmg`）用运行 Gradle 的 JDK 构建，不需要 JBR，因为 Swift 外壳保留系统窗口框架。Gradle 使用仓库自带的 Wrapper，无需单独安装。
 - Windows 用 `.\gradlew.bat`，Linux / macOS 用 `./gradlew`。下文示例统一写作 `./gradlew`。
 - 官方 Cubism SDK 不是构建前提。源码构建默认使用内置渲染；原生预览见 [Cubism Native 预览](CUBISM_SDK_SETUP.md)。
 
@@ -85,8 +85,10 @@ Windows 也可以直接运行根目录的 `run-gui.bat`。不带参数启动 GUI
 ./gradlew test --tests "io.github.psd2live.scenario.CatalogContractsTest"   # 单个测试类
 ./gradlew createDistributable                    # 带运行时的应用目录
 ./gradlew packageDistributionForCurrentOS        # 当前平台的安装包
+./gradlew packageDmg                             # 仅 macOS：带 Swift 外壳的 DMG
 ```
 
+- `packageDmg` 只在 macOS 上可用。它使用 `createDistributable` 打进包里的运行时，并把启动程序换成 `packaging/macos` 里的 Swift 外壳，因此 Dock 名称、文档类型和窗口按钮都是系统的。菜单出现在屏幕顶部菜单栏；窗口里的菜单仍保留，因为那里列出了全部命令。DMG 的架构与构建它的 Mac 相同（Apple 芯片或 Intel），需要 macOS 13 或更新。包没有公证：从网络下载后，在访达里用辅助点按打开，再把 `PSD2Live` 拖进“应用程序”。
 - 两种打包都只包含当前构建平台的原生库，并在应用资源目录附带 `LICENSE`、`THIRD_PARTY_NOTICES.md` 与 `licenses/`。
 - 官方 SDK 资源（`src/main/resources/cubism/`）默认不打包，只有传入 `-Ppsd2live.includeCubism=true` 或设置 `PSD2LIVE_INCLUDE_CUBISM=true` 时才包含。含 SDK 的包不得公开分发，发行流程见 [CI 与发行](CUBISM_CI_RELEASE.md)。
 - Linux 也可用 `./native/package_linux.sh` 生成需要系统 JDK 21 的本地启动包（输出到 `dist/linux-<时间戳>/`），详见 [native/README.md](../../../native/README.md)。

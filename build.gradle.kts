@@ -44,6 +44,13 @@ val hostOs = System.getProperty("os.name").lowercase().let { os ->
 }
 val hostArm = System.getProperty("os.arch").lowercase().let { it.startsWith("aarch64") || it.startsWith("arm") }
 
+// Compose refuses to package on Homebrew's JDK unless this is set. The macOS app does not use the jpackage
+// launcher (packaging/macos launches the bundled runtime itself), so that check does not apply here.
+if (hostOs == "macos") {
+	System.setProperty("compose.desktop.packaging.checkJdkVendor", "false")
+	extensions.extraProperties.set("compose.desktop.packaging.checkJdkVendor", "false")
+}
+
 kotlin {
 	jvmToolchain(21)
 	// Kotlin's redundant-null-check bytecode pass can spend minutes in FastAnalyzer on the large
@@ -384,9 +391,11 @@ compose.desktop {
 	}
 }
 
-// The released app runs on the JetBrains Runtime: its custom title bar keeps the main window's native frame (maximize,
-// Snap, resize edges) under the app's own title bar. Other JDKs still build, test and run it, with the bar drawn whole
-// on an undecorated window, but a package made on one would ship that. -Ppsd2live.allowNonJbr=true packages anyway.
+// The released Windows app runs on the JetBrains Runtime: its custom title bar keeps the main window's native frame
+// (maximize, Snap, resize edges) under the app's own title bar. Other JDKs still build, test and run it, with the bar
+// drawn whole on an undecorated window, but a Windows package made on one would ship that.
+// -Ppsd2live.allowNonJbr=true packages anyway. macOS packageDmg uses whatever JDK runs Gradle: the Swift shell keeps
+// the system window frame, so the runtime does not have to be JBR.
 afterEvaluate {
 	tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask>().configureEach {
 		val home = javaHome
@@ -394,7 +403,7 @@ afterEvaluate {
 		doFirst {
 			val release = File(home.get(), "release")
 			val implementor = if (release.isFile) release.readLines().firstOrNull { it.startsWith("IMPLEMENTOR=") }.orEmpty() else ""
-			if ("JetBrains" !in implementor && !allowed.get()) throw GradleException(
+			if ("JetBrains" !in implementor && !allowed.get() && hostOs != "macos") throw GradleException(
 				"Packaging needs the JetBrains Runtime 21 SDK (JBR with jpackage), not ${home.get()} ($implementor). " +
 					"Point JAVA_HOME at one, or pass -Ppsd2live.allowNonJbr=true to package with this JDK.")
 		}
@@ -430,6 +439,26 @@ if (hostOs == "windows") afterEvaluate {
 		doFirst { dest.get().asFile.deleteRecursively() }
 	}
 	tasks.named("packageDistributionForCurrentOS") { dependsOn(packageExe) }
+}
+
+// macOS disk image (packageDmg): the Swift shell in packaging/macos replaces the jpackage launcher and keeps the
+// runtime that createDistributable bundled. The image matches the machine that builds it (Apple silicon or Intel).
+if (hostOs == "macos") afterEvaluate {
+	val distributions = compose.desktop.application.nativeDistributions
+	val createDistributable = tasks.named<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask>("createDistributable")
+	tasks.register<Exec>("packageDmg") {
+		group = "compose desktop"
+		description = "Builds a macOS .dmg whose app is the Swift shell around the bundled runtime."
+		dependsOn(createDistributable)
+		val script = file("packaging/macos/build-dmg.sh")
+		val image = createDistributable.get().destinationDir.dir("${distributions.packageName}.app")
+		val arch = if (hostArm) "arm64" else "x86_64"
+		val dmg = layout.buildDirectory.file("PSD2Live-${project.version}-macos-$arch.dmg")
+		inputs.file(script)
+		inputs.dir(image)
+		outputs.file(dmg)
+		commandLine("bash", script.absolutePath, "--image", image.get().asFile.absolutePath, "--version", project.version.toString())
+	}
 }
 
 afterEvaluate {
