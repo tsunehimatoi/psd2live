@@ -56,6 +56,8 @@ The table follows StandardParameters. Mesh-only mode, disabled deformers or miss
 | `ParamMouthSpring` (`mouth.spring`, physics output) | -1…1 | 0 |
 | `ParamHairFront`, `ParamHairBack` | -1…1 | 0 |
 
+From 1 to 2, `eye.wide` preserves the drawn eye shape while lifting the whole upper lid, moving the corners and lower lid together, and adjusting the local curve. At 1 the drawing is unchanged. White and lashes share the opening boundary; the closed-eye drawing stays hidden throughout the widened range, and the default expansion is modest. The iris keeps its drawn size and position; pupil expression is controlled separately. The closing segment remains separate.
+
 ## Tool comparison and gaps
 
 The table compares the deformation and keyform editing tools with the public features of Cubism Editor, item by item (the Cubism column uses the generic names of its manual). Status: **Existing** was implemented before; **New** was added in this round; **Later** is tracked in the [roadmap](../../zh/ROADMAP.md). Mesh topology editing (adding and removing points, connecting) and the canvas handles of interior shaping are tracked separately and left out here.

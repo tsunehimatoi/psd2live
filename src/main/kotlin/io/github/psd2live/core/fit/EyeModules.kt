@@ -21,7 +21,7 @@ import org.umamo.runtime.model.ParameterId
  */
 data class EyeOptions(
 	val smile: Boolean = false, val smileArc: Float = 0.12f, val smilePush: Float = 0.5f,
-	val wide: Boolean = false, val wideLift: Float = 0.35f,
+	val wide: Boolean = false, val wideLift: Float = 0.1f,
 	val gaze: Boolean = false, val gazeFollow: Float = 1f,
 	val emotion: Boolean = false, val emotionStrength: Float = 1f,
 	val lidFade: Boolean = false,
@@ -36,7 +36,7 @@ data class EyeOptions(
  * The geometry and channels the eye modules give the meshes of a fitted eye ([EyeRig]): the openness axis (widened to 2
  * by `eye.wide`) and the smile axis (`eye.smile`) of the lids, the additive shapes of the gaze (`eye.gaze-lid`), the
  * emotions (`eye.emotion`) and the blink's aftershock (`eye.aftershock`), the closed line bending into a smile, the
- * iris squashing as the lid closes (`eye.squash`) and narrowing as the eye widens, the highlights drifting against the
+ * iris squashing as the lid closes (`eye.squash`), the highlights drifting against the
  * head's turn (`eye.highlight`) and the lid lines fading before the lid closes (`eye.lid-fade`).
  */
 object EyeModules {
@@ -74,6 +74,18 @@ object EyeModules {
 
 	/** The openness keys of [eye], with the widened eye's beyond 1. */
 	fun openKeys(eye: EyeRig, options: EyeOptions): FloatArray = if (options.wide) eye.keys + floatArrayOf(1.5f, 2f) else eye.keys
+
+	/** The closed drawing and liner handover, held explicitly through the entire openness range. */
+	internal fun drawingOpacity(side: Side, closedLine: Boolean, swap: Boolean, maxOpen: Float): KeyformGrid<ChannelValue> {
+		val basic = if (swap) floatArrayOf(0f, EyeRig.SWAP, 1f) else floatArrayOf(0f, 1f)
+		val keys = if (maxOpen > 1f) basic + maxOpen else basic
+		return KeyformGrid(listOf(KeyformAxis(open(side), keys)), keys.mapIndexed { i, value ->
+			val alpha = if (!closedLine) { if (value == 0f) 0f else 1f }
+				else if (swap) { if (value == 0f) 1f else 0f }
+				else (1f - value).coerceIn(0f, 1f)
+			KeyformCell(intArrayOf(i), ChannelValue.Scalar(alpha))
+		})
+	}
 
 	/**
 	 * A lid mesh's grid: the openness keys, by the smile when the eye smiles. [positions] are the mesh's canvas points
@@ -197,12 +209,12 @@ object EyeModules {
 
 	/**
 	 * An iris's grid: its jelly ([jelly] gives a point's place at a jelly value) by the openness - squashed toward its
-	 * bottom as the lid closes (`eye.squash`), narrowed a little as the eye widens (`eye.wide`, the pupil tightening with
-	 * surprise); null when neither module is on.
+	 * bottom as the lid closes (`eye.squash`). Widening the lids keeps the drawn iris size and position: pupil changes
+	 * belong to the separate expression shapes. Null when squashing is off.
 	 */
 	fun irisGrid(side: Side, positions: FloatArray, frame: Bounds, iris: Bounds, eye: EyeRig, options: EyeOptions,
 	             jelly: (Float, Float, Float) -> Pair<Float, Float>): KeyformGrid<MeshDeltaForm>? {
-		if (!options.squash && !options.wide) return null
+		if (!options.squash) return null
 		val opens = buildList {
 			if (options.squash) { add(0f); add(eye.crease) }
 			add(1f)
@@ -213,14 +225,12 @@ object EyeModules {
 		for ((o, open) in opens.withIndex()) for ((j, value) in jellies.withIndex()) {
 			val scaleY = when {
 				open < 1f -> 0.82f + 0.18f * (open / eye.crease).coerceIn(0f, 1f)
-				open > 1f -> 0.9f
 				else -> 1f
 			}
-			val scaleX = if (open > 1f) 0.9f else 1f
 			val delta = FloatArray(positions.size)
 			for (i in positions.indices step 2) {
 				val (jx, jy) = jelly(positions[i], positions[i + 1], value)
-				val x = iris.centerX + (jx - iris.centerX) * scaleX
+				val x = jx
 				val y = iris.bottom + (jy - iris.bottom) * scaleY
 				delta[i] = (x - positions[i]) / frame.width.coerceAtLeast(1e-4f); delta[i + 1] = (y - positions[i + 1]) / frame.height.coerceAtLeast(1e-4f)
 			}
@@ -273,7 +283,9 @@ object EyeModules {
 				floatArrayOf(0f, eye.crease, (eye.crease + 1f) / 2f, 1f) to floatArrayOf(0f, 0f, 1f, 1f)
 			else -> return null
 		}
-		return KeyformGrid(listOf(KeyformAxis(open(side), keys.first)),
-			keys.first.indices.map { KeyformCell(intArrayOf(it), ChannelValue.Scalar(keys.second[it])) })
+		val opens = if (options.wide) keys.first + 2f else keys.first
+		val values = if (options.wide) keys.second + keys.second.last() else keys.second
+		return KeyformGrid(listOf(KeyformAxis(open(side), opens)),
+			opens.indices.map { KeyformCell(intArrayOf(it), ChannelValue.Scalar(values[it])) })
 	}
 }

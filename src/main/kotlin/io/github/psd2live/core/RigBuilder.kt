@@ -1441,7 +1441,7 @@ object RigBuilder {
 			val override = config.layerOverrides[layer.source.id.raw]
 			val classification = override?.type ?: layer.semantic.type
 			val channelGrids = if (config.meshOnly && classification == LayerType.PRESET) ChannelGrids.Empty
-				else withEyeOpacity(channelStage(layer, override, switchParamKeys, config.rigTuning, context.hasClosedMouth, stages, eyeSwap(context, config, layer), mouthSwap(context, config, layer)),
+				else withEyeOpacity(channelStage(layer, override, switchParamKeys, config.rigTuning, context.hasClosedMouth, stages, eyeSwap(context, config, layer), mouthSwap(context, config, layer), eyeOpenMax(context, config)),
 				context, config, layer)
 					.let { withMoodChannels(it, context, config, layer) }.let { withMouthShading(it, context, config, layer) }.let { grids ->
 					if (v2 && resolution.isStubLayer(layer.source.id.raw) &&
@@ -1825,12 +1825,12 @@ object RigBuilder {
 
 	/** [buildChannels] under a key of what it reads. */
 	private fun channelStage(layer: ClassifiedLayer, override: LayerClassificationOverride?, switchParamKeys: Map<String, FloatArray>,
-	                         tuning: RigTuning, closedMouth: Boolean, stages: RigStageCache?, eyeSwap: Boolean = false, mouthSwap: Boolean = false): ChannelGrids {
-		if (stages == null) return buildChannels(layer, override, switchParamKeys, tuning, closedMouth, eyeSwap, mouthSwap)
+	                         tuning: RigTuning, closedMouth: Boolean, stages: RigStageCache?, eyeSwap: Boolean = false, mouthSwap: Boolean = false, eyeOpenMax: Float = 1f): ChannelGrids {
+		if (stages == null) return buildChannels(layer, override, switchParamKeys, tuning, closedMouth, eyeSwap, mouthSwap, eyeOpenMax)
 		val parameter = (override?.parameter ?: layer.semantic.parameter).trim()
 		val key = listOf(override?.type ?: layer.semantic.type, parameter, override?.switchId ?: layer.semantic.switchId,
-			switchParamKeys[parameter]?.toList(), layer.semantic.tag, layer.semantic.side, tuning.teethFade, closedMouth, eyeSwap, mouthSwap)
-		return stages.get(RigStageCache.CHANNELS, 256, key) { buildChannels(layer, override, switchParamKeys, tuning, closedMouth, eyeSwap, mouthSwap) }
+			switchParamKeys[parameter]?.toList(), layer.semantic.tag, layer.semantic.side, tuning.teethFade, closedMouth, eyeSwap, mouthSwap, eyeOpenMax)
+		return stages.get(RigStageCache.CHANNELS, 256, key) { buildChannels(layer, override, switchParamKeys, tuning, closedMouth, eyeSwap, mouthSwap, eyeOpenMax) }
 	}
 
 	/**
@@ -2286,7 +2286,7 @@ object RigBuilder {
 		val override = config.layerOverrides[layer.source.id.raw]
 		val classification = override?.type ?: layer.semantic.type
 		val channels = if (deferred || config.meshOnly && classification == LayerType.PRESET) ChannelGrids.Empty
-			else channelStage(layer, override, switchParamKeys, config.rigTuning, context.hasClosedMouth, stages, eyeSwap(context, config, layer), mouthSwap(context, config, layer))
+			else channelStage(layer, override, switchParamKeys, config.rigTuning, context.hasClosedMouth, stages, eyeSwap(context, config, layer), mouthSwap(context, config, layer), eyeOpenMax(context, config))
 		val drawable = Drawable(
 			id = part.drawableId,
 			name = part.name,
@@ -4178,6 +4178,7 @@ object RigBuilder {
 		eyeSwap: Boolean = false,
 		/** Whether the layer belongs to the fitted mouth, whose closed and open parts hand over at its swap key; see [mouthSwap]. */
 		mouthSwap: Boolean = false,
+		eyeOpenMax: Float = 1f,
 	): ChannelGrids {
 		val type = override?.type ?: layer.semantic.type
 		// Teeth, tongue and an open mouth fade in over the first teethFade percent of the opening.
@@ -4205,15 +4206,9 @@ object RigBuilder {
 			}
 			LayerType.PRESET -> {
 				when (layer.semantic.tag) {
-					SemanticTag.EYE_CLOSE -> {
-						val parameter = if (layer.semantic.side == Side.LEFT) StandardParameters.EYE_L_OPEN else StandardParameters.EYE_R_OPEN
-						// A fitted eye closes its lid onto the line, which then takes over at once: never half of each.
-						if (eyeSwap) scalarGrid(parameter, floatArrayOf(0f, io.github.psd2live.core.fit.EyeRig.SWAP, 1f)) { open -> if (open == 0f) 1f else 0f }
-						else scalarGrid(parameter, floatArrayOf(0f, 1f)) { open -> 1f - open }
-					}
+					SemanticTag.EYE_CLOSE -> io.github.psd2live.core.fit.EyeModules.drawingOpacity(layer.semantic.side, true, eyeSwap, eyeOpenMax)
 					SemanticTag.EYELASH -> if (!eyeSwap) null else
-						scalarGrid(if (layer.semantic.side == Side.LEFT) StandardParameters.EYE_L_OPEN else StandardParameters.EYE_R_OPEN,
-							floatArrayOf(0f, io.github.psd2live.core.fit.EyeRig.SWAP, 1f)) { open -> if (open == 0f) 0f else 1f }
+						io.github.psd2live.core.fit.EyeModules.drawingOpacity(layer.semantic.side, false, true, eyeOpenMax)
 					SemanticTag.MOUTH_CLOSE -> if (mouthSwap) scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, io.github.psd2live.core.fit.MouthRig.SWAP, 1f)) { open -> if (open == 0f) 1f else 0f }
 						else scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, 1f)) { 1f - it }
 					// A fitted mouth beside a drawn closed one shuts into it: the open drawing hands over as the lips part.
@@ -4237,12 +4232,13 @@ object RigBuilder {
 	private fun scalarGrid(parameter: ParameterId, keys: FloatArray, value: (Float) -> Float): KeyformGrid<ChannelValue> =
 		oneDimGrid(parameter, keys) { key -> ChannelValue.Scalar(value(key)) }
 
-	/**
-	 * The standard parameters as [config] builds them: a fitted eye that widens (`eye.wide`) opens up to 2. Other
-	 * projects keep the standard set as it was.
-	 */
+	/** The range shared by a fitted eye's geometry and drawing visibility tracks. */
+	private fun eyeOpenMax(context: RigContext, config: PipelineConfig): Float =
+		if (context.fittedEyes(config)?.let { it.options.wide && it.rigs.isNotEmpty() } == true) 2f else 1f
+
+	/** A widening fitted eye opens up to 2; other projects retain the standard ranges. */
 	private fun standardParameters(context: RigContext, config: PipelineConfig): List<Parameter> {
-		val wide = context.fittedEyes(config)?.let { it.options.wide && it.rigs.isNotEmpty() } == true
+		val wide = eyeOpenMax(context, config) > 1f
 		// A fitted mouth opening on past its drawing opens as far as it reaches.
 		val reach = context.fittedMouth(config)?.rig?.openKeys?.last()?.takeIf { it > 1f }
 		return StandardParameters.all.map {

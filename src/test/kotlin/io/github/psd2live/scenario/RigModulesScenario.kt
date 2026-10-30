@@ -11,6 +11,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
+import org.umamo.runtime.eval.scalarAt
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import kotlin.test.Test
@@ -71,10 +72,22 @@ class RigModulesScenario {
 		fun isFitted(label: String) = expect(label, keys("lash_l").take(2) == fitted && keys("lash_l").takeLast(3) == listOf(1f, 1.5f, 2f) && keys("white_l") == keys("lash_l") &&
 			puppet.parameters.single { it.id == StandardParameters.EYE_L_OPEN }.max == 2f &&
 			rides(puppet, mesh("lash_l"), "ParamEyeBallY") && puppet.parameters.any { it.id.raw == "ParamEyeLSmile" } &&
-			swap("lash_l") == listOf(0f, io.github.psd2live.core.fit.EyeRig.SWAP, 1f) && swap("close_l") == listOf(0f, io.github.psd2live.core.fit.EyeRig.SWAP, 1f)) {
+			swap("lash_l") == listOf(0f, io.github.psd2live.core.fit.EyeRig.SWAP, 1f, 2f) && swap("close_l") == listOf(0f, io.github.psd2live.core.fit.EyeRig.SWAP, 1f, 2f)) {
 			"the fitted eye keys its lids at closed, the swap to the drawn closed line, the crease and on: ${keys("lash_l")} / ${keys("white_l")}, " +
 				"swaps ${swap("lash_l")} / ${swap("close_l")}" }
 		isFitted("new project")
+		fun closedStaysHidden(label: String) = expect(label,
+			listOf(1f, 1.01f, 1.5f, 2f).all { open -> drawable("close_l").channelGrids.scalarAt(
+				org.umamo.runtime.model.FormChannel.OPACITY, 1f, { open }) == 0f }) { "the closed drawing reappeared while widening" }
+		closedStaysHidden("wide visibility")
+		settings("ordinary opening range", buildJsonObject {
+			putJsonObject(WorkspaceSettingsCodec.RIG) { putJsonObject("modules") { putJsonObject("eye.wide") { put("on", false) } } }
+		})
+		expect("ordinary range", keys("lash_l").last() == 1f && swap("close_l")?.last() == 1f &&
+			puppet.parameters.single { it.id == StandardParameters.EYE_L_OPEN }.max == 1f) { "geometry and visibility did not shrink with the parameter" }
+		undo("restore widening")
+		isFitted("wide restored")
+		closedStaysHidden("restored wide visibility")
 
 		settings("legacy eyes", buildJsonObject {
 			putJsonObject(WorkspaceSettingsCodec.RIG) { putJsonObject("bases") { putJsonObject("eye") { put("base", "eye/legacy") } } }
@@ -87,6 +100,7 @@ class RigModulesScenario {
 		})
 		reopen()
 		isFitted("reopened")
+		closedStaysHidden("reopened wide visibility")
 		expect("value", WorkspaceSettingsCodec.decode(now.document.settings).recipe.baseValue("eye", "roundness") == 150f) { "the value did not survive a reopen" }
 	}
 	@Test fun fittedBrowsTurnAlongTheirAngleAndTheLegacyBaseKeepsTheOldOnes() = Studio.run(temp, Characters.browed()) {

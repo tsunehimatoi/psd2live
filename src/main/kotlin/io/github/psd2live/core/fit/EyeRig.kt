@@ -21,18 +21,19 @@ import kotlin.math.sqrt
  *   shadows ([EyeMesh.SKIN]) move with the skin: a field set along both lid edges and spread smoothly to nothing
  *   ([BiharmonicField]).
  *
- * Every other change of the eye's shape - smiling ([smileUpper]), widening ([upper] above 1), an emotion, the lids
- * following the gaze ([shape]) - is a [Pose] of the two lid edges, and the meshes follow it the same way.
+ * Widening above 1 adds two-dimensional polynomial displacements to the drawn edges, with shared corner movement
+ * and no change to the lash's column thickness. Smiling ([smileClosed]), an emotion and the lids following the gaze
+ * ([shape]) are also [Pose]s; the widened pose carries its horizontal displacements alongside the edge heights.
  *
  * [roundness] scales how far the eyeball bulges toward the viewer: higher keeps more of the arc while the lid is half
  * closed.
  */
 class EyeRig(
 	val fit: EyeFit, lowerShare: Float, roundness: Float, lashSquash: Float,
-	/** How high the smiling closed lid arches, in eye widths, and how far the lower lid pushes up into it ([smileUpper]). */
+	/** How high the smiling closed lid arches, in eye widths, and how far the lower lid pushes up into it ([smileClosed]). */
 	private val smileArc: Float = 0.12f, private val smilePush: Float = 0.5f,
 	/** How far the lids open at the widest ([upper] at 2), as a share of the drawn opening. */
-	private val wideLift: Float = 0.35f,
+	private val wideLift: Float = 0.1f,
 ) {
 	enum class EyeMesh { WHITE, UPPER_LASH, LOWER_LASH, SKIN }
 
@@ -40,7 +41,8 @@ class EyeRig(
 	 * Where both lid edges are, sampled like [EyeFit.upper]; how far the white has folded up under the upper lid (1 shut);
 	 * how thick the lashes are, as a share of their drawn thickness.
 	 */
-	class Pose(val upper: List<Float>, val lower: List<Float>, val fold: Float = 0f, val lashes: Float = 1f)
+	class Pose(val upper: List<Float>, val lower: List<Float>, val fold: Float = 0f, val lashes: Float = 1f,
+	           val upperDx: List<Float>? = null, val lowerDx: List<Float>? = null)
 
 	private val model = EyelidModel(radius = 0.5f + 0.18f * roundness, centreY = -0.18f * roundness)
 	private val mid = EyeFit.SAMPLES / 2
@@ -74,13 +76,24 @@ class EyeRig(
 	// Meshes are posed in parallel, so the poses are shared through concurrent maps.
 	private val upperByKey = java.util.concurrent.ConcurrentHashMap<Float, List<Float>>()
 	private val lowerByKey = java.util.concurrent.ConcurrentHashMap<Float, List<Float>>()
+	private val expandedByKey = java.util.concurrent.ConcurrentHashMap<Float, Pose>()
+
+	/** The widening line, with its corners and lower rim moving with it, relative to the eye as drawn. */
+	private fun expanded(open: Float): Pose = expandedByKey.getOrPut(open) {
+		val moves = (0 until EyeFit.SAMPLES).map { EyeOpeningModel.DEFAULT.at(EyeFit.u(it), wideLift * (open - 1f)) }
+		Pose(
+			moves.indices.map { fit.upper[it] + moves[it][1] * opening },
+			moves.indices.map { fit.lower[it] + moves[it][3] * opening },
+			upperDx = moves.map { it[0] }, lowerDx = moves.map { it[2] },
+		)
+	}
 
 	/**
 	 * The upper lid edge at [open]: the drawn closed line when closed, the model's sinking arc between, and above 1 the
 	 * drawn edge lifted by up to [wideLift] of the opening (a widened, surprised eye at 2).
 	 */
 	fun upper(open: Float): List<Float> = upperByKey.getOrPut(open) {
-		if (open > 1f) return@getOrPut (0 until EyeFit.SAMPLES).map { k -> fit.upper[k] - wideLift * (open - 1f) * opening * hump(EyeFit.u(k)) }
+		if (open > 1f) return@getOrPut expanded(open).upper
 		if (open == 1f) return@getOrPut fit.upper
 		if (open <= 0f && fit.closed != null) return@getOrPut fit.closed
 		val height = if (open >= crease) openRise * (open - crease) / (1f - crease) else closedRise * (1f - open / crease)
@@ -98,14 +111,14 @@ class EyeRig(
 
 	/** The lower lid edge at [open]: risen [share] of the way to the closed lid, and above 1 lowered a little. */
 	fun lower(open: Float): List<Float> = lowerByKey.getOrPut(open) {
-		if (open > 1f) return@getOrPut (0 until EyeFit.SAMPLES).map { k -> fit.lower[k] + 0.25f * wideLift * (open - 1f) * opening * hump(EyeFit.u(k)) }
+		if (open > 1f) return@getOrPut expanded(open).lower
 		// The lower lid barely moves in a blink; the white folds away under the upper one instead.
 		val closed = upper(0f)
 		(0 until EyeFit.SAMPLES).map { k -> fit.lower[k] - share * (1f - open) * (fit.lower[k] - closed[k]).coerceAtLeast(0f) }
 	}
 
 	/** The lids at [open], closing as this eye closes. */
-	fun pose(open: Float): Pose = Pose(upper(open), lower(open), sqrt(((crease - open) / crease).coerceIn(0f, 1f)),
+	fun pose(open: Float): Pose = if (open > 1f) expanded(open) else Pose(upper(open), lower(open), sqrt(((crease - open) / crease).coerceIn(0f, 1f)),
 		squash + (1f - squash) * open.coerceAtMost(1f))
 
 	/** The closed lid of a smile: an upward arch [smileArc] high from corner to corner, onto which the lower lid pushes. */
@@ -136,8 +149,8 @@ class EyeRig(
 		val fixed = HashMap<Int, Pair<Float, Float>>()
 		for (k in 0 until EyeFit.SAMPLES) {
 			val u = EyeFit.u(k)
-			fixed[LATTICE.nearest(u, fit.upper[k])] = 0f to pose.upper[k] - fit.upper[k]
-			fixed.putIfAbsent(LATTICE.nearest(u, fit.lower[k]), 0f to pose.lower[k] - fit.lower[k])
+			fixed[LATTICE.nearest(u, fit.upper[k])] = (pose.upperDx?.get(k) ?: 0f) to pose.upper[k] - fit.upper[k]
+			fixed.putIfAbsent(LATTICE.nearest(u, fit.lower[k]), (pose.lowerDx?.get(k) ?: 0f) to pose.lower[k] - fit.lower[k])
 		}
 		BiharmonicField(LATTICE.columns, LATTICE.rows, LATTICE.left, LATTICE.top, LATTICE.right, LATTICE.bottom, fixed)
 	}
@@ -151,6 +164,7 @@ class EyeRig(
 	/** How far a [mesh] vertex at canvas ([x], [y]) moves into [pose], in canvas units. */
 	fun move(mesh: EyeMesh, x: Float, y: Float, pose: Pose): Pair<Float, Float> {
 		val (u, v) = fit.toEye(x, y)
+		if (pose.upperDx != null) return widenedMove(mesh, u, v, pose)
 		val restUpper = EyeFit.sample(fit.upper, u); val restLower = EyeFit.sample(fit.lower, u)
 		val dUpper = EyeFit.sample(pose.upper, u) - restUpper
 		val dLower = EyeFit.sample(pose.lower, u) - restLower
@@ -197,6 +211,49 @@ class EyeRig(
 			}
 		}
 		return fit.canvasDelta(0f, dv)
+	}
+
+	/**
+	 * One continuous widening field for white and liner. The ends use the same displaced corner, including on a liner
+	 * that also draws the lower rim; a wing outside the opening keeps its drawn offset from that corner. There is no
+	 * separate tail branch inside the eye. The upper line keeps its column thickness; a lower stroke follows its
+	 * closest rim point, so a thick wing below a steep corner is not sheared by the vertical column above it.
+	 */
+	private fun widenedMove(mesh: EyeMesh, u: Float, v: Float, pose: Pose): Pair<Float, Float> {
+		val top = EyeFit.sample(fit.upper, u); val bottom = EyeFit.sample(fit.lower, u)
+		val span = (bottom - top).coerceAtLeast(1e-3f)
+		val t = ((v - top) / span).coerceIn(0f, 1f)
+		val dxUpper = EyeFit.sample(checkNotNull(pose.upperDx), u)
+		val dyUpper = EyeFit.sample(pose.upper, u) - top
+		if (mesh == EyeMesh.SKIN) {
+			val moved = field(pose).at(u, v)
+			val dy = if (v < top) minOf(moved.second, EyeFit.sample(pose.upper, u) - v) else moved.second
+			return fit.canvasDelta(moved.first, dy)
+		}
+		val lowerWeight = when (mesh) {
+			EyeMesh.WHITE -> t
+			EyeMesh.LOWER_LASH -> 1f
+			EyeMesh.UPPER_LASH -> ((t - 0.35f) / 0.3f).coerceIn(0f, 1f).let { it * it * (3f - 2f * it) }
+			EyeMesh.SKIN -> error("Skin is handled above")
+		}
+		val lowerU = if (mesh != EyeMesh.WHITE && lowerWeight > 0f) nearestRimU(fit.lower, u, v) else u
+		val dxLower = EyeFit.sample(checkNotNull(pose.lowerDx), lowerU)
+		val dyLower = EyeFit.sample(pose.lower, lowerU) - EyeFit.sample(fit.lower, lowerU)
+		return fit.canvasDelta(dxUpper + (dxLower - dxUpper) * lowerWeight, dyUpper + (dyLower - dyUpper) * lowerWeight)
+	}
+
+	/** Closest point on the drawn rim; line thickness and wing offsets stay attached to that point. */
+	private fun nearestRimU(rim: List<Float>, u: Float, v: Float): Float {
+		var best = Float.POSITIVE_INFINITY
+		var at = u.coerceIn(0f, 1f)
+		for (k in 0 until EyeFit.SAMPLES - 1) {
+			val x = EyeFit.u(k); val dx = EyeFit.u(k + 1) - x; val dy = rim[k + 1] - rim[k]
+			val t = (((u - x) * dx + (v - rim[k]) * dy) / (dx * dx + dy * dy)).coerceIn(0f, 1f)
+			val px = x + t * dx; val py = rim[k] + t * dy
+			val distance = (u - px) * (u - px) + (v - py) * (v - py)
+			if (distance < best) { best = distance; at = px }
+		}
+		return at
 	}
 
 	companion object {

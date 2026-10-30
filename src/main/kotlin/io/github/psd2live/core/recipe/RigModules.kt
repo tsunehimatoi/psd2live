@@ -57,9 +57,9 @@ object RigModules {
 		knobs = listOf(RecipeKnob("arch", P, 0f..200f, 100f), RecipeKnob("push", P, 0f..100f, 50f)),
 		defines = pair("Smile", 0f, 1f, 0f))
 
-	/** The eye widening past its drawn opening (openness up to 2), surprised, the iris narrowing. */
+	/** The lids widening gently past the drawn opening (openness up to 2), independently of pupil expression. */
 	val EYE_WIDE = RigModule("eye.wide", ModuleTier.MAJOR, base = FITTED_EYE, applies = ::fittedEye,
-		knobs = listOf(RecipeKnob("lift", P, 10f..80f, 35f)))
+		knobs = listOf(RecipeKnob("lift", P, 0f..80f, 10f)))
 
 	/** The lids following the gaze: looking up lifts the upper lid, looking down drops it, and its peak leans with the eye. */
 	val EYE_GAZE_LID = RigModule("eye.gaze-lid", ModuleTier.MAJOR, base = FITTED_EYE, applies = ::fittedEye,
