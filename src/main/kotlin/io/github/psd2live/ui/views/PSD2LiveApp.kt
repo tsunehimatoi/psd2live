@@ -230,7 +230,10 @@ private fun FrameWindowScope.PSD2LiveAppContent(
             else -> viewModel.recoveryOffer.value = null
         }
     }
-    LaunchedEffect(state.projectFile, state.projectDirty) { window?.title = "PSD2Live — " + (state.projectFile ?: tr("project.untitled")) + if (state.projectDirty) " *" else "" }
+    LaunchedEffect(state.projectFile, state.projectDirty) {
+        window?.title = "PSD2Live — " + (state.projectFile ?: tr("project.untitled")) + if (state.projectDirty) " *" else ""
+        window?.let { io.github.psd2live.ui.utils.MacShell.setDocumentEdited(it, state.projectDirty) }
+    }
     // Language key tracking for recomposition
 	val currentLanguage = state.currentLanguage
 
