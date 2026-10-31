@@ -6,12 +6,14 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.awt.ComposeWindow
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.state.AppSettings
+import java.awt.Window
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlinx.coroutines.channels.Channel
 import javax.swing.JMenu
 import javax.swing.JMenuBar
 import javax.swing.JMenuItem
+import javax.swing.RootPaneContainer
 
 /**
  * The Swift app bundle hosts this process and sets `psd2live.macShell`. The JVM owns the AppKit
@@ -29,6 +31,25 @@ internal object MacShell {
 	}
 
 	suspend fun consumeFiles(open: suspend (String) -> Unit) = pending.consume(open)
+
+	/**
+	 * Draws the app bar in the system title-bar area: traffic lights stay, the extra title strip goes.
+	 * Homebrew's JDK has no JetBrains custom title bar, so this is the AppKit fallback.
+	 */
+	fun installChrome(window: Window) {
+		val pane = (window as? RootPaneContainer)?.rootPane ?: return
+		pane.putClientProperty("apple.awt.fullWindowContent", true)
+		pane.putClientProperty("apple.awt.transparentTitleBar", true)
+		pane.putClientProperty("apple.awt.windowTitleVisible", false)
+	}
+
+	/** The close button's dot: macOS shows unsaved work there, the way other document windows do. */
+	fun setDocumentEdited(window: Window, edited: Boolean) {
+		if (!active) return
+		val pane = (window as? RootPaneContainer)?.rootPane ?: return
+		if (pane.getClientProperty("Window.documentModified") == edited) return
+		pane.putClientProperty("Window.documentModified", edited)
+	}
 
 	/** Existing paths to open in the GUI, an empty list for a normal launch, or null when [command] is a CLI invocation. */
 	fun guiFiles(command: List<String>): List<String>? {

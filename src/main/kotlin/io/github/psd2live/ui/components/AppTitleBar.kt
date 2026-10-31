@@ -14,6 +14,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
@@ -69,6 +70,9 @@ import io.github.psd2live.ui.tutorial.TutorialStep
 import io.github.psd2live.ui.tutorial.TutorialTargetId
 import io.github.psd2live.ui.tutorial.tutorialTarget
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.zIndex
 import androidx.compose.foundation.layout.offset
@@ -85,6 +89,7 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -265,6 +270,13 @@ fun AppTitleBar(
 			onDispose { window?.removeComponentListener(resized) }
 		}
 	}
+	// Homebrew JDK cannot report the traffic-light inset. The buttons overlay this bar, so leave their width.
+	val macChrome = io.github.psd2live.ui.utils.MacShell.active && window?.isUndecorated == false && nativeTitleBar == null
+	val trafficInset = if (macChrome && windowMode != WindowMode.FULLSCREEN) 78.dp else 0.dp
+	// The title is centered on the window, not in the gap between the menus and the toolbar buttons.
+	var macBarWidth by remember { mutableStateOf(0) }
+	var macSlotStart by remember { mutableStateOf(0) }
+	var macSlotWidth by remember { mutableStateOf(0) }
 
 	Row(
 		modifier = modifier
@@ -272,6 +284,11 @@ fun AppTitleBar(
 			.height(32.dp)
 			// The bar is the window's backdrop, like the gaps between the panels below it.
 			.background(colors.windowBackground)
+			.then(if (!macChrome) Modifier else Modifier.drawBehind {
+				val y = size.height - 0.5f
+				drawLine(colors.divider, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
+			})
+			.onGloballyPositioned { if (macChrome) macBarWidth = it.size.width }
 			.then(if (nativeTitleBar == null) Modifier else Modifier
 				.onGloballyPositioned { bar ->
 					// The runtime takes the height in the window's units: pixels over the display scale.
@@ -287,7 +304,7 @@ fun AppTitleBar(
 			modifier = Modifier.fillMaxHeight(),
 			verticalAlignment = Alignment.CenterVertically,
 		) {
-			Spacer(modifier = Modifier.width(6.dp + nativeInsets.first))
+			Spacer(modifier = Modifier.width(6.dp + nativeInsets.first + trafficInset))
 
 			// 1. File Menu
 			TitleBarMenuItem(
@@ -773,6 +790,12 @@ fun AppTitleBar(
 			modifier = Modifier
 				.weight(1f)
 				.fillMaxHeight()
+				.onGloballyPositioned {
+					if (macChrome) {
+						macSlotStart = it.positionInParent().x.toInt()
+						macSlotWidth = it.size.width
+					}
+				}
 				.then(if (nativeTitleBar != null) Modifier.titleBarHitTest(nativeTitleBar, client = false) else Modifier
 				.pointerInput(window) {
 					detectTapGestures(onDoubleTap = { AppSettings.toggleMaximized() })
@@ -814,12 +837,20 @@ fun AppTitleBar(
 				}),
 			contentAlignment = Alignment.Center,
 		) {
+			val macTitleShift = if (macChrome && macBarWidth > 0 && macSlotWidth > 0) {
+				macBarWidth / 2 - (macSlotStart + macSlotWidth / 2)
+			} else 0
 			Text(
-				text = "PSD2Live — $projectTitle",
-				style = typography.caption.copy(fontSize = 11.5.sp),
-				color = colors.textMuted,
+				text = if (macChrome) projectTitle.substringAfterLast('/').substringAfterLast('\\') else "PSD2Live — $projectTitle",
+				style = if (macChrome) typography.body.copy(fontFamily = FontFamily.Default, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+					else typography.caption.copy(fontSize = 11.5.sp),
+				color = if (macChrome) colors.textPrimary else colors.textMuted,
 				maxLines = 1,
 				overflow = TextOverflow.Ellipsis,
+				modifier = Modifier
+					.widthIn(max = 360.dp)
+					.offset { IntOffset(macTitleShift, 0) }
+					.padding(horizontal = 8.dp),
 			)
 		}
 
@@ -934,12 +965,13 @@ private fun TitleBarMenuItem(
 		isOpen -> colors.controlHover
 		isHovered -> colors.controlHover.copy(alpha = 0.6f)
 		else -> Color.Transparent
-	}, tween(Motion.Instant))
+	}, tween(Motion.Instant, easing = LinearOutSlowInEasing))
 
 	// The whole height of the bar answers the pointer; the fill sits inside it, as a control's does.
 	Box(
 		modifier = modifier
 			.fillMaxHeight()
+			.pressScale()
 			.handCursor()
 			.onPointerEvent(PointerEventType.Enter) {
 				isHovered = true
@@ -964,6 +996,29 @@ private fun TitleBarMenuItem(
 		}
 		content()
 	}
+}
+
+/**
+ * A control shrinks the moment it is pressed and settles as the pointer comes up. Ease-out, so the first frames
+ * move immediately. Dragging off the control cancels it.
+ */
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun Modifier.pressScale(): Modifier {
+	var pressed by remember { mutableStateOf(false) }
+	val scale by animateFloatAsState(
+		if (pressed) 0.96f else 1f,
+		tween(120, easing = LinearOutSlowInEasing),
+		label = "press",
+	)
+	return this
+		.onPointerEvent(PointerEventType.Press) { pressed = true }
+		.onPointerEvent(PointerEventType.Release) { pressed = false }
+		.onPointerEvent(PointerEventType.Exit) { pressed = false }
+		.graphicsLayer {
+			scaleX = scale
+			scaleY = scale
+		}
 }
 
 /** How far a title bar menu's name sits in from its button's edge; its menu's labels line up with it. */
@@ -1397,6 +1452,7 @@ private fun TitleBarLayoutToggle(
 			modifier = modifier
 				.width(30.dp)
 				.fillMaxHeight()
+				.pressScale()
 				.handCursor()
 				.onPointerEvent(PointerEventType.Enter) { isHovered = true }
 				.onPointerEvent(PointerEventType.Exit) { isHovered = false }
@@ -1467,6 +1523,7 @@ private fun TitleBarLanguageButton(
 			modifier = Modifier
 				.width(30.dp)
 				.fillMaxHeight()
+				.pressScale()
 				.background(if (expanded) colors.selection else Color.Transparent)
 				.handCursor()
 				.onPointerEvent(PointerEventType.Enter) { isHovered = true }
@@ -1536,6 +1593,7 @@ private fun TitleBarThemeToggle(
 			modifier = Modifier
 				.width(30.dp)
 				.fillMaxHeight()
+				.pressScale()
 				.handCursor()
 				.onPointerEvent(PointerEventType.Enter) { isHovered = true }
 				.onPointerEvent(PointerEventType.Exit) { isHovered = false }
@@ -1594,6 +1652,7 @@ private fun WindowControlButton(
 		modifier = Modifier
 			.width(44.dp)
 			.fillMaxHeight()
+			.pressScale()
 			.handCursor()
 			.onPointerEvent(PointerEventType.Enter) { isHovered = true }
 			.onPointerEvent(PointerEventType.Exit) { isHovered = false }
@@ -1640,6 +1699,7 @@ private fun TitleBarSettingsButton(shown: Boolean, onClick: () -> Unit) {
 			modifier = Modifier
 				.width(30.dp)
 				.fillMaxHeight()
+				.pressScale()
 				.background(if (shown) colors.selection else Color.Transparent)
 				.handCursor()
 				.onPointerEvent(PointerEventType.Enter) { isHovered = true }
