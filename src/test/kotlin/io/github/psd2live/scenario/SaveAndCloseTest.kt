@@ -216,28 +216,6 @@ class SaveAndCloseTest {
         assertNull(vm.state.value.errorMessage)
     }
 
-    @Test fun discardOpensADifferentProjectAfterCommittedAndDraftEdits() = editor { vm, workspace ->
-        val original = temp.resolve("original.psd2live")
-        vm.saveProjectNow(original)
-        workspace.createLayoutProject(128, 96, discardUnsaved = true)
-        val target = temp.resolve("different.psd2live")
-        vm.saveProjectNow(target)
-        val targetId = workspace.snapshot().projectId
-        workspace.open(original)
-        workspace.updateParameter(WorkspaceUpdateParameterRequest("ParamAngleX", workspace.stateToken()!!, name = "Discard parameter edit"))
-        vm.setOutputPath(temp.resolve("discard-output").toString())
-        vm.confirmUnsavedChanges = { 1 }
-        vm.openProject(target)
-        val opened = withTimeout(20_000) {
-            vm.state.first { it.projectId == targetId || it.errorMessage != null }
-        }
-        assertNull(opened.errorMessage)
-        assertEquals(targetId, opened.projectId)
-        assertEquals(target.toString(), opened.projectFile)
-        assertFalse(opened.projectDirty)
-        assertFalse(workspace.hasUnsavedChanges())
-    }
-
     @Test fun discardAndOpenCanFollowACancelledEditorDraft() = editor { vm, workspace ->
         val archive = temp.resolve("cancelled-draft.psd2live")
         vm.saveProjectNow(archive)

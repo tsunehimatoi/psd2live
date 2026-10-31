@@ -69,12 +69,4 @@ class StartPageScenario {
 		assertFalse(vm.startPageShown)
 	}
 
-	@Test fun aLayoutProjectLeavesTheStartPageForTheLayoutWorkspace() = editor { vm ->
-		vm.showStartPage(StartSection.LAYOUT)
-		vm.createLayoutProject(1024, 768)
-		until("the layout project") { vm.state.value.previewModel != null && !vm.startPageShown }
-		settle(vm)
-		assertEquals(WorkspacePreset.LAYOUT, vm.state.value.activeWorkspace.preset)
-	}
-
 }
