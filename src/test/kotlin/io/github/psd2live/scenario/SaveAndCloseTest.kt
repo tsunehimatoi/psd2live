@@ -216,6 +216,83 @@ class SaveAndCloseTest {
         assertNull(vm.state.value.errorMessage)
     }
 
+    @Test fun discardOpensADifferentProjectAfterCommittedAndDraftEdits() = editor { vm, workspace ->
+        val original = temp.resolve("original.psd2live")
+        vm.saveProjectNow(original)
+        workspace.createLayoutProject(128, 96, discardUnsaved = true)
+        val target = temp.resolve("different.psd2live")
+        vm.saveProjectNow(target)
+        val targetId = workspace.snapshot().projectId
+        workspace.open(original)
+        workspace.updateParameter(WorkspaceUpdateParameterRequest("ParamAngleX", workspace.stateToken()!!, name = "Discard parameter edit"))
+        vm.setOutputPath(temp.resolve("discard-output").toString())
+        vm.confirmUnsavedChanges = { 1 }
+        vm.openProject(target)
+        val opened = withTimeout(20_000) {
+            vm.state.first { it.projectId == targetId || it.errorMessage != null }
+        }
+        assertNull(opened.errorMessage)
+        assertEquals(targetId, opened.projectId)
+        assertEquals(target.toString(), opened.projectFile)
+        assertFalse(opened.projectDirty)
+        assertFalse(workspace.hasUnsavedChanges())
+    }
+
+    @Test fun discardAndOpenCanFollowACancelledEditorDraft() = editor { vm, workspace ->
+        val archive = temp.resolve("cancelled-draft.psd2live")
+        vm.saveProjectNow(archive)
+        val generation = vm.state.value.projectOpenGeneration
+        val cancelledDraft = CompletableDeferred<Unit>().apply { cancel(CancellationException("Editor draft cancelled")) }
+        vm.attachWorkspace(object : WorkspaceBackend by workspace {
+            override suspend fun awaitEditorDrafts() { cancelledDraft.await() }
+        })
+        assertFailsWith<CancellationException> { vm.openProjectNow(archive) }
+        vm.setOutputPath(temp.resolve("discard-output").toString())
+        vm.confirmUnsavedChanges = { 1 }
+        vm.openProject(archive)
+        val opened = withTimeout(20_000) {
+            vm.state.first { it.projectOpenGeneration > generation || it.errorMessage != null }
+        }
+        assertNull(opened.errorMessage)
+        assertTrue(opened.projectOpenGeneration > generation)
+        assertFalse(opened.projectDirty)
+        assertFalse(workspace.hasUnsavedChanges())
+    }
+
+    @Test fun discardAndImportCanFollowACancelledEditorDraft() = editor { vm, workspace ->
+        val generation = vm.state.value.projectOpenGeneration
+        val cancelledDraft = CompletableDeferred<Unit>().apply { cancel(CancellationException("Editor draft cancelled")) }
+        vm.attachWorkspace(object : WorkspaceBackend by workspace {
+            override suspend fun awaitEditorDrafts() { cancelledDraft.await() }
+        })
+        vm.confirmUnsavedChanges = { 1 }
+        vm.withSavedChanges { vm.analyze(discardUnsaved = true) }
+        val imported = withTimeout(20_000) {
+            vm.state.first { it.projectOpenGeneration > generation && !it.isAnalyzing || it.errorMessage != null }
+        }
+        assertNull(imported.errorMessage)
+        assertTrue(imported.projectOpenGeneration > generation)
+        assertTrue(imported.projectDirty)
+    }
+
+    @Test fun cancellingTheOpenItselfStillKeepsTheCurrentProject() = editor { vm, workspace ->
+        val archive = temp.resolve("cancel-open.psd2live")
+        vm.saveProjectNow(archive)
+        val before = workspace.snapshot()
+        val entered = CompletableDeferred<Unit>()
+        vm.attachWorkspace(object : WorkspaceBackend by workspace {
+            override suspend fun awaitEditorDrafts() { entered.complete(Unit); awaitCancellation() }
+        })
+        coroutineScope {
+            val opening = async { vm.openProjectNow(archive, discardUnsaved = true) }
+            withTimeout(20_000) { entered.await() }
+            opening.cancelAndJoin()
+            assertTrue(opening.isCancelled)
+        }
+        assertEquals(before.projectId, workspace.snapshot().projectId)
+        assertEquals(before.state, workspace.snapshot().state)
+    }
+
     @Test fun discardAndOpenWaitsForAnEarlierEditAndThenReplacesTheProject() = editor { vm, workspace ->
         val archive = temp.resolve("discard-pending.psd2live")
         vm.saveProjectNow(archive)

@@ -2524,16 +2524,23 @@ class PSD2LiveViewModel : AutoCloseable {
         discardRejectedDraft: Boolean = false,
     ): WorkspaceMutationResult {
         val workspace = requireNotNull(workspaceBackend) { "Project workspace unavailable" }
-        try { workspace.awaitEditorDrafts() }
-        catch (failure: Exception) {
-            if (failure is kotlinx.coroutines.CancellationException || !discardRejectedDraft) throw failure
-        }
+        awaitProjectDrafts(workspace, discardRejectedDraft)
         // Discard follows the edit already in flight, just like source imports. Freeze the open
         // boundary after that edit, instead of racing its eventual commit with archive loading.
         if (discardRejectedDraft) _state.first { !it.workspaceEditBusy && !it.editorDraftBusy }
         val expected = workspace.snapshot()
         return withContext(io.github.psd2live.application.WorkspaceExecution(
             expected.projectId, expected.state, MutationAuthor.USER)) { action(workspace) }
+    }
+
+    private suspend fun awaitProjectDrafts(workspace: WorkspaceBackend, discardRejectedDraft: Boolean) {
+        try { workspace.awaitEditorDrafts() }
+        catch (failure: Exception) {
+            // Awaiting a cancelled draft also throws CancellationException while this caller is
+            // still active. Discard may leave that draft behind; cancelling this operation must stop it.
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if (!discardRejectedDraft) throw failure
+        }
     }
     internal suspend fun openProjectNow(path: Path, discardUnsaved: Boolean = false) =
         executeUserProject({ it.openProjectAt(path.toAbsolutePath().normalize(), discardUnsaved) },
@@ -7738,10 +7745,7 @@ class PSD2LiveViewModel : AutoCloseable {
         activeWorkJob = scope.launch {
             try {
                 val workspace = requireNotNull(workspaceBackend) { "Project workspace unavailable" }
-                try { workspace.awaitEditorDrafts() }
-                catch (failure: Exception) {
-                    if (failure is kotlinx.coroutines.CancellationException || !discardUnsaved) throw failure
-                }
+                awaitProjectDrafts(workspace, discardUnsaved)
                 _state.first { !it.workspaceEditBusy }
                 val expected = workspace.snapshot()
                 updateState { it.copy(isAnalyzing = true, isIndeterminateProgress = true, errorMessage = null, statusText = status) }
