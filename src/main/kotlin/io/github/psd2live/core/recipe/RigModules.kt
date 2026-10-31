@@ -63,7 +63,9 @@ object RigModules {
 
 	/** The lids following the gaze: looking up lifts the upper lid, looking down drops it, and its peak leans with the eye. */
 	val EYE_GAZE_LID = RigModule("eye.gaze-lid", ModuleTier.MAJOR, base = FITTED_EYE, applies = ::fittedEye,
-		knobs = listOf(RecipeKnob("follow", P, 0f..200f, 100f)))
+		knobs = listOf(RecipeKnob("follow", P, 0f..200f, 100f)),
+		defines = listOf("LX", "LY", "RX", "RY").map {
+			ModuleParameter("ParamEyeBall$it", "model.parameter.eyeBall$it", -1f, 1f, 0f, "ParamGroupEyes") })
 
 	/** The emotions of the eye: angry (the inner lid presses down) and sad (the inner lid lifts, the outer droops), and the squint. */
 	val EYE_EMOTION = RigModule("eye.emotion", ModuleTier.MAJOR, base = FITTED_EYE, applies = ::fittedEye,
@@ -138,6 +140,8 @@ object RigModules {
 		defines = listOf(mouth("ParamMouthX", "mouthX", -1f, 1f), mouth("ParamMouthPuckerWiden", "mouthPuckerWiden", -1f, 1f),
 			mouth("ParamMouthShrug", "mouthShrug", 0f, 1f), mouth("ParamMouthPressLipOpen", "mouthPressLipOpen", -1f, 1f),
 			mouth("ParamMouthFunnel", "mouthFunnel", 0f, 1f),
+			mouth("ParamMouthCornerL", "mouthCornerL", -1f, 1f), mouth("ParamMouthCornerR", "mouthCornerR", -1f, 1f),
+			mouth("ParamMouthPuckerWidenL", "mouthPuckerWidenL", -1f, 1f), mouth("ParamMouthPuckerWidenR", "mouthPuckerWidenR", -1f, 1f),
 			mouth("ParamCheekPuff", "cheekPuff", 0f, 1f), mouth("ParamJawOpen", "jawOpen", 0f, 1f)))
 
 	/** The tongue put out, on art with a tongue layer: the mouth opens and the tongue slides down past the lower lip's place. */

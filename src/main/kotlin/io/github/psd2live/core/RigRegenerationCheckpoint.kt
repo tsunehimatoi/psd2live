@@ -180,7 +180,7 @@ internal object RigRegenerationCheckpoint {
 			pageByDrawableId = model.drawables.filter { it.id.raw in base.pageByDrawableId || it.id.raw in authored.rig.pageByDrawableId }
 				.associate { it.id.raw to it.texturePage },
 			supersededEntryNotes = authored.rig.supersededEntryNotes, overrideIssues = emptyList(),
-			copiedDrawableIds = authored.rig.copiedDrawableIds.filterTo(HashSet()) { it in ids })
+			copiedDrawableIds = (base.copiedDrawableIds.map { renamed[it] ?: it } + authored.rig.copiedDrawableIds).filterTo(HashSet()) { it in ids })
 		val record = RigCheckpoint.encode(AuthoredRig(rig, authored.visibilityTargets.filter { it.first in ids }), bindingKey, issues,
 			generated = AuthoredRig(base.copy(puppet = generated), emptyList()))
 		return Merged(record, issues)

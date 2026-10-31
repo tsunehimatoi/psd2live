@@ -22,7 +22,12 @@ public object VTubeStudioTarget : ExportTarget {
 	override val family: TargetFamily = TargetFamily.RIG
 	override val description: String = "VTube Studio model (moc3 + vtube.json)"
 	override val capabilities: CapabilityProfile = Moc3Target.capabilities
-	override val settings: List<TargetSetting> get() = Moc3Target.settings
+	override val settings: List<TargetSetting> get() = Moc3Target.settings + listOf(
+		TargetSetting.Choice("vts_mouth", "standard", listOf("standard", "voice", "voice_hybrid", "vbridger")),
+		TargetSetting.Choice("vts_gaze", "independent", listOf("independent", "shared", "mouse")),
+		TargetSetting.Choice("vts_brows", "independent", listOf("independent", "shared")),
+		TargetSetting.Flag("vts_position", false), TargetSetting.Flag("vts_angry", false),
+	)
 
 	/** One tracking input driving a parameter over its whole range. */
 	private class Mapping(
@@ -75,14 +80,73 @@ public object VTubeStudioTarget : ExportTarget {
 		Mapping("Breath", "", "ParamBreath", 0f, 1f, breathing = true),
 	)
 
+	/** Official head, eye, mouth, mouse and voice inputs; alternatives are selected rather than summed. */
+	public val officialInputs: Set<String> = linkedSetOf(
+		"FacePositionX", "FacePositionY", "FacePositionZ", "FaceAngleX", "FaceAngleY", "FaceAngleZ",
+		"MouthSmile", "MouthOpen", "Brows", "MousePositionX", "MousePositionY", "TongueOut",
+		"EyeOpenLeft", "EyeOpenRight", "EyeLeftX", "EyeLeftY", "EyeRightX", "EyeRightY", "CheekPuff",
+		"BrowLeftY", "BrowRightY", "VoiceFrequency", "VoiceVolume", "VoiceVolumePlusMouthOpen",
+		"VoiceFrequencyPlusMouthSmile", "VoiceA", "VoiceI", "VoiceU", "VoiceE", "VoiceO", "VoiceSilence", "MouthX", "FaceAngry",
+	)
+
+	private fun selected(ir: RigIR, options: ExportOptions): List<Mapping> {
+		val ids = ir.parameters.mapTo(HashSet()) { it.id }
+		fun choice(key: String) = (settings.first { it.key == key } as TargetSetting.Choice).let { options.choice(key, it.default, it.values) }
+		val mouth = choice("vts_mouth"); val gaze = choice("vts_gaze"); val brows = choice("vts_brows")
+		val base = if (ids.any { it in moduleMarkers }) tuned else mappings
+		val result = base.filterNot { it.parameter in setOf("ParamEyeBallX", "ParamEyeBallY", "ParamBrowLY", "ParamBrowRY", "ParamMouthOpenY", "ParamMouthForm") }.toMutableList()
+		fun add(input: String, parameter: String, low: Float = 0f, high: Float = 1f, output: ClosedFloatingPointRange<Float>? = null) {
+			result += Mapping(input, input, parameter, low, high, output = output, clamp = true)
+		}
+		if (gaze == "independent" && listOf("LX", "LY", "RX", "RY").all { "ParamEyeBall$it" in ids }) {
+			for (side in listOf("Left" to "L", "Right" to "R")) for (axis in listOf("X", "Y"))
+				add("Eye${side.first}$axis", "ParamEyeBall${side.second}$axis", -1f)
+		} else for (axis in listOf("X", "Y")) add(if (gaze == "mouse") "MousePosition$axis" else "EyeRight$axis", "ParamEyeBall$axis", -1f)
+		for (side in listOf("L" to "Left", "R" to "Right")) add(if (brows == "shared") "Brows" else "Brow${side.second}Y", "ParamBrow${side.first}Y")
+		when (mouth) {
+			"standard", "vbridger" -> result += base.filter { it.parameter == "ParamMouthOpenY" || it.parameter == "ParamMouthForm" }
+			"voice", "voice_hybrid" -> {
+				val vowels = listOf("A", "I", "U", "E", "O").any { "Param$it" in ids }
+				if (mouth == "voice_hybrid" || !vowels) add(if (mouth == "voice_hybrid") "VoiceVolumePlusMouthOpen" else "VoiceVolume", "ParamMouthOpenY", output = 0f..1f)
+				add(if (mouth == "voice_hybrid") "VoiceFrequencyPlusMouthSmile" else "VoiceFrequency", "ParamMouthForm")
+				for (vowel in listOf("A", "I", "U", "E", "O")) add("Voice$vowel", "Param$vowel")
+				add("VoiceSilence", "ParamVoiceSilence")
+			}
+		}
+		add("TongueOut", "ParamTongueOut")
+		if (mouth == "vbridger") {
+			add("MouthPucker", "ParamMouthPuckerWiden", -1f)
+			add("MouthFunnel", "ParamMouthFunnel"); add("MouthShrug", "ParamMouthShrug")
+			add("MouthPressLipOpen", "ParamMouthPressLipOpen", -1.3f, 1.3f)
+			add("JawOpen", "ParamJawOpen")
+		}
+		if (options.flag("vts_position", false)) for (axis in listOf("X", "Y", "Z")) add("FacePosition$axis", "ParamFacePosition$axis", -10f, 10f)
+		if (options.flag("vts_angry", false)) {
+			add("FaceAngry", "ParamEyeLForm"); add("FaceAngry", "ParamEyeRForm")
+		}
+		// Directly named optional inputs preserve custom rigs without creating an unbound parameter.
+		for (input in officialInputs) {
+			if (input.startsWith("FacePosition") && !options.flag("vts_position", false)) continue
+			if (input == "FaceAngry" && !options.flag("vts_angry", false)) continue
+			val range = when {
+				input.startsWith("FaceAngle") -> -30f..30f
+				input.startsWith("FacePosition") -> -10f..10f
+				input.startsWith("MousePosition") || input in setOf("EyeLeftX", "EyeLeftY", "EyeRightX", "EyeRightY", "MouthX") -> -1f..1f
+				else -> 0f..1f
+			}
+			if ("Param$input" in ids) add(input, "Param$input", range.start, range.endInclusive)
+		}
+		return result.filter { it.parameter in ids }.distinctBy { it.parameter }
+	}
+
 	/** A stable 32-digit hex id derived from [seed], so exports stay byte for byte reproducible. */
 	private fun id(seed: String): String = MessageDigest.getInstance("SHA-256").digest(seed.encodeToByteArray())
 		.take(16).joinToString("") { "%02x".format(it) }
 
 	/** [expressionFiles] are each expression's name and exp3 file, in the manifest's order. */
-	public fun config(ir: RigIR, baseName: String, motionFiles: List<String>, expressionFiles: List<Pair<String, String>> = emptyList()): String {
+	public fun config(ir: RigIR, baseName: String, motionFiles: List<String>, expressionFiles: List<Pair<String, String>> = emptyList(), options: ExportOptions = ExportOptions(baseName)): String {
 		val parameters = ir.parameters.associateBy { it.id }
-		val chosen = if (parameters.keys.any { it in moduleMarkers }) tuned else mappings
+		val chosen = selected(ir, options)
 		val settings = chosen.mapNotNull { m ->
 			val p = parameters[m.parameter] ?: return@mapNotNull null
 			buildJsonObject {
@@ -123,12 +187,12 @@ public object VTubeStudioTarget : ExportTarget {
 		val motions = bundle.files.map { it.name }.filter { it.endsWith(".motion3.json") }
 		val written = bundle.files.mapTo(HashSet()) { it.name }
 		val expressions = ir.advanced.expressions.map { it.name to "${options.baseName}.${it.id}.exp3.json" }.filter { it.second in written }
-		val config = config(ir, options.baseName, motions, expressions)
-		val mapped = mappings.map { it.parameter }.toSet()
+		val config = config(ir, options.baseName, motions, expressions, options)
+		val mapped = selected(ir, options).map { it.parameter }.toSet()
 		val losses = CapabilityScan.scan(ir, capabilities, options) + Moc3Target.losses(ir, options, bundle.report.notices) + Moc3Target.hitAreaLosses(ir) +
 			Moc3Target.clampedMotions(ir, bundle.report.notices) +
 			listOf(LossEntry("*", Feature.STRUCTURE, Handling.APPROXIMATED,
-				note = "Face tracking drives the standard parameters only: ${ir.parameters.count { it.id in mapped }} of ${ir.parameters.size}"))
+				note = "Face tracking mapping covers: ${ir.parameters.count { it.id in mapped }} of ${ir.parameters.size}"))
 		return object : LoweredExport {
 			override val losses: List<LossEntry> = losses
 			override fun write(sink: OutputSink) {

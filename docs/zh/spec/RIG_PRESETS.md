@@ -236,7 +236,7 @@
 | --- | --- | --- | --- | --- |
 | `eye.smile` | 核心 | `ParamEyeLSmile` / `ParamEyeRSmile` | 闭合时两睑合成上拱弧、下睑上推，睁眼不变 | 拱起、下睑上推 |
 | `eye.wide` | 重要 | （开合参数延伸到 2） | 保留原画眼形，上睑整体抬起、眼角协同移动并调整局部弧度，温和扩大开口，虹膜保持原画尺寸与位置 | 睁大幅度 |
-| `eye.gaze-lid` | 重要 | — | 上看抬睑、下看压睑、左右看睑弧顶点偏移 | 跟随量 |
+| `eye.gaze-lid` | 重要 | `ParamEyeBallLX/LY/RX/RY` | 上看抬睑、下看压睑、左右看睑弧顶点偏移 | 跟随量 |
 | `eye.emotion` | 重要 | `ParamEyeLForm` / `R`（−1 哀 … +1 怒）、`ParamEyeLSquint` / `R` | 怒：内眼角压低、眼形变平；哀：内侧抬起、外侧下垂；眯眼：下睑上推 | 幅度 |
 | `eye.lid-fade` | 重要 | — | 双眼皮线、眼睑阴影在闭合前沉入淡出（需要 `lid` / `shadow` 角色的图层） | — |
 | `eye.highlight` | 重要 | — | 高光随转头反向漂移，闭合前淡出（需要 `highlight` 角色的图层） | 漂移量 |
@@ -285,8 +285,8 @@
 | 模块 | 重要程度 | 新增参数 | 做什么 | 旋钮 |
 | --- | --- | --- | --- | --- |
 | `mouth.vowel` | 重要 | `ParamA` / `ParamI` / `ParamU` / `ParamE` / `ParamO` | 五个元音口型（A 大开，I 横宽，U 收圆，E 中开横宽，O 圆），叠加在开合与嘴形上；打开时闭口图层隐去、口内显示 | — |
-| `mouth.capture` | 重要 | `ParamMouthX`、`ParamMouthPuckerWiden`、`ParamMouthShrug`、`ParamMouthPressLipOpen`、`ParamMouthFunnel`、`ParamCheekPuff`、`ParamJawOpen` | 面捕常用的歪嘴、嘟嘴与咧嘴、耸嘴、抿嘴或唇分开、漏斗口（ch、sh、u：嘴角向中间收拢，中间开小圆口）、鼓腮、闭唇张颌（下巴下移、闭着的嘴下移变窄）；分层嘴上每个口型都按各层的跟随方式作用；抿嘴与唇分开（`ParamMouthPressLipOpen`）和开合、嘴形一起打成三维关键形（−1 双唇压紧内卷、唇色变少，+1 露出一道唇缝和牙、嘴角仍闭合，嘴张得越开分开的作用越小），所以笑着龇牙、半张嘴抿唇各有自己的形状；参数名沿用 VBridger 惯用名，面捕插件可直接驱动 | — |
-| `mouth.tongue` | 锦上添花 | `ParamTongueOut` | 有舌头图层时：嘴张到一半，舌头向下滑出下唇原来的位置；需要 `mouth.capture` | — |
+| `mouth.capture` | 重要 | `ParamMouthX`、`ParamMouthCornerL/R`、`ParamMouthPuckerWidenL/R`、`ParamMouthPuckerWiden`、`ParamMouthShrug`、`ParamMouthPressLipOpen`、`ParamMouthFunnel`、`ParamCheekPuff`、`ParamJawOpen` | 面捕常用的歪嘴、嘟嘴与咧嘴、耸嘴、抿嘴或唇分开、漏斗口（ch、sh、u：嘴角向中间收拢，中间开小圆口）、鼓腮、闭唇张颌（下巴下移、闭着的嘴下移变窄）；分层嘴上每个口型都按各层的跟随方式作用；抿嘴与唇分开（`ParamMouthPressLipOpen`）和开合、嘴形一起打成三维关键形（−1 双唇压紧内卷、唇色变少，+1 露出一道唇缝和牙、嘴角仍闭合，嘴张得越开分开的作用越小），所以笑着龇牙、半张嘴抿唇各有自己的形状；参数名沿用 VBridger 惯用名，面捕插件可直接驱动 | — |
+| `mouth.tongue` | 锦上添花 | `ParamTongueOut` | 有舌头图层时：嘴部张开，原舌保留口腔裁剪，透明伴生舌层向下伸出下唇；需要 `mouth.capture` | — |
 | `mouth.jaw` | 核心 | — | 张嘴时嘴角线以下的脸皮随下颌下移（下巴处为原画开口的 15%），两颊略收，鼻子微动 | 下颌下移 |
 | `mouth.cheek-lid` | 锦上添花 | — | 嘴形上扬时脸颊把下睑往上推；需要拟合眼 | 幅度 |
 | `mouth.interior-depth` | 重要 | — | 转头时上牙、下牙、舌与口腔按各自深度落后于唇线；舌、下牙与口腔在小开口时较暗，张满时恢复原画明度（乘色关键形） | 深度 |
@@ -329,3 +329,27 @@
    - 用 `RigReviewTool` 出姿态板与动作片段，对照好看的标准检查；
    - 用 `ExportGoldenTool` 确认旧配方的工程逐字节不变；
    - 加回归测试（`RigRecipeTest`、`RigModulesScenario`）。
+
+## 三层嘴型与追踪导出
+
+拟合嘴使用归一化轮廓、形变子空间与用户参数三层求值。原画张口中性姿态保持原位，闭口时上下唇缘相接；赛璐璐唇线按局部切线与法线保持粗细，厚涂唇皮的外缘与主脸共享口周形变。上下牙分别跟随上颌和下颌，歪嘴时牙列整体倾斜并在挤压侧收拢。单侧口角及单侧鼓抿以独立参数叠加。
+
+分层嘴的牙齿、舌头由口腔蒙版裁剪，不随开口淡入；不透明度为零的口腔层仍可作为蒙版。吐舌生成确定 ID 的伴生网格 `<舌网格 ID>_Out`：静止透明、不受口腔裁剪，位于下唇上方与上唇下方。元音口型可以单独驱动，随开口参数增大衰减，避免语音与面捕叠加时重复张嘴。
+
+`eye.gaze-lid` 增加 `ParamEyeBallLX/LY/RX/RY`；共享视线参数继续保留。独立视线同时作用于对应虹膜和眼睑，可与二维参数镜像及工程重建兼容。
+
+VTube Studio 导出提供以下选择，每个输出参数只映射一次；不存在的模型参数不生成映射：
+
+| 设置 | 可选值与行为 |
+| --- | --- |
+| `vts_mouth` | `standard` 面捕；`voice` 语音元音（无元音参数时用音量驱动开口）；`voice_hybrid` 语音与面捕混合；`vbridger` 增加插件的 JawOpen、MouthPucker、MouthFunnel、MouthShrug、MouthPressLipOpen 输入 |
+| `vts_gaze` | `independent` 左右独立，旧模型回退共享视线；`shared` 共用右眼视线；`mouse` 鼠标位置 |
+| `vts_brows` | `independent` 左右眉高；`shared` 共用 Brows |
+| `vts_position` | 默认关闭，映射已有的 `ParamFacePositionX/Y/Z` |
+| `vts_angry` | 默认关闭，将实验性 FaceAngry 输入映射到已有的眼部情绪参数 |
+
+覆盖官方的 33 项头部、视线、嘴部、鼠标与语音输入；互斥输入按模式选择。自定义模型可用 `Param<输入名>` 接入相应官方输入（例如 `ParamVoiceSilence`），导出器不会为其创建空参数。VBridger 模式需要用户运行插件并提供对应输入。
+
+输入名依据 [VTS 官方参数表](https://github.com/DenchiSoft/VTubeStudio/wiki/VTS-Model-Settings#supported-input-parameters-face-tracking-etc)，插件参数依据 [VBridger 官方文档](https://github.com/PiPuProductions/VBridger-Documentation/wiki)。
+
+当前视觉限制：厚涂唇皮在最大歪嘴与开口叠加时，口周皮肤的逐点位移混合可能使局部网格翻折。该组合尚未通过视觉验收，需要进一步修正共享皮肤场。

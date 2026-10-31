@@ -22,6 +22,7 @@ import kotlin.test.assertTrue
 
 /** A mouth drawn in layers: each layer follows the lips its own way, and the names that say which layer is which. */
 class MouthLayersTest {
+	@org.junit.jupiter.api.io.TempDir lateinit var temp: java.nio.file.Path
 	/** A drawn open mouth a unit wide on the canvas's level, opening 0.4 at its middle as an oval, its lip lines 0.02 thick. */
 	private fun rig(inside: Float = 0.5f): MouthRig {
 		val n = MouthFit.SAMPLES
@@ -192,4 +193,47 @@ class MouthLayersTest {
 		assertEquals(Follow.DEEP, mouth.follow(base))
 		assertEquals(Follow.OPENING, mouth.follow(opening))
 	}
+
+	@Test fun layeredTongueGetsATransparentUnclippedCompanionAndKeepsItsMask() {
+		val layers = listOf(
+			(drawn("upper", 10, 19, 54, 21).source as WorkspaceSourceLayer).copy(name = "上唇线", order = 0),
+			(drawn("lower", 10, 39, 54, 41).source as WorkspaceSourceLayer).copy(name = "下唇线", order = 1),
+			(drawn("tongue", 18, 31, 46, 47).source as WorkspaceSourceLayer).copy(name = "舌", order = 2),
+			(drawn("teeth", 14, 20, 50, 25).source as WorkspaceSourceLayer).copy(name = "上牙", order = 3),
+			(drawn("opening", 10, 20, 54, 40).source as WorkspaceSourceLayer).copy(name = "口腔", order = 4, opacity = 0f),
+		)
+		val source = io.github.psd2live.project.WorkspaceSourceArt(64, 64, layers, emptyList())
+		val preview = PSD2LivePipeline().buildPreview(source, PipelineConfig(atlasSize = 256, generatePhysics = false, exportMoc3 = false))
+		val rig = preview.rig
+		val tongueId = rig.layerIdByDrawableId.entries.single { it.value == "tongue" && it.key !in rig.copiedDrawableIds }.key
+		val companionId = "${tongueId}_Out"
+		assertTrue(companionId in rig.copiedDrawableIds)
+		val companion = rig.puppet.drawables.single { it.id.raw == companionId }
+		val tongue = rig.puppet.drawables.single { it.id.raw == tongueId }
+		assertEquals(0f, companion.opacity)
+		assertTrue(companion.maskedBy.isEmpty())
+		assertTrue(tongue.maskedBy.isNotEmpty())
+		val binding = companion.blendShapes.single { it.parameterId == MouthRig.TONGUE_OUT }
+		assertTrue(binding.forms.filterNotNull().all { it.opacity > 0f })
+		assertTrue(tongue.channelGrids.gridsByChannel[org.umamo.runtime.model.FormChannel.OPACITY]?.axes?.none { it.parameterId == StandardParameters.MOUTH_OPEN } != false)
+		val rebuilt = PSD2LivePipeline().buildPreview(source, preview.config)
+		assertEquals(rig.copiedDrawableIds, rebuilt.rig.copiedDrawableIds)
+		val files = linkedMapOf<String, ByteArray>()
+		io.github.psd2live.format.compile.Compiler.export(io.github.psd2live.targets.cubism.Cmo3Target(),
+			RigIrCompiler.compile(preview, tileArt = true), io.github.psd2live.format.compile.ExportOptions("mouth")) { path, bytes -> files[path] = bytes }
+		val (imported, importedConfig) = Cmo3ModelImport.prepare(files.getValue("mouth.cmo3"), Cmo3ImportMode.NEW, null, preview.config)
+		val readback = PSD2LivePipeline().buildPreview(imported, importedConfig).rig.puppet.drawables.single { it.id.raw == companionId }
+		assertTrue(readback.maskedBy.isEmpty())
+		assertEquals(0f, readback.opacity)
+		val document = io.github.psd2live.project.WorkspaceDocument(source, emptyMap(), emptySet(), emptyMap(), emptyMap(), RigEditOverlay(),
+			settings = io.github.psd2live.project.WorkspaceSettingsCodec.encode(preview.config))
+		io.github.psd2live.scenario.Studio.run(temp, checks = emptySet()) {
+			open(document)
+			val savedCopies = now.model.rig.copiedDrawableIds
+			reopen()
+			assertEquals(savedCopies, now.model.rig.copiedDrawableIds)
+			assertTrue(companionId in savedCopies)
+		}
+	}
+
 }

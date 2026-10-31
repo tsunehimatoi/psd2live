@@ -40,6 +40,10 @@ data class EyeOptions(
  * head's turn (`eye.highlight`) and the lid lines fading before the lid closes (`eye.lid-fade`).
  */
 object EyeModules {
+	val EYE_BALL_L_X = ParameterId("ParamEyeBallLX")
+	val EYE_BALL_L_Y = ParameterId("ParamEyeBallLY")
+	val EYE_BALL_R_X = ParameterId("ParamEyeBallRX")
+	val EYE_BALL_R_Y = ParameterId("ParamEyeBallRY")
 	val EYE_L_SMILE = ParameterId("ParamEyeLSmile")
 	val EYE_R_SMILE = ParameterId("ParamEyeRSmile")
 	val EYE_L_FORM = ParameterId("ParamEyeLForm")
@@ -142,6 +146,12 @@ object EyeModules {
 					val toward = x * (if (eye.fit.axisX >= 0f) 1f else -1f)
 					eye.shape({ u -> -0.06f * k * h * hump(u) * (u - 0.5f) * 2f * toward }, { 0f })
 				})
+			}
+			if (options.gaze && side != Side.NONE) {
+				val x = if (side == Side.LEFT) EYE_BALL_L_X else EYE_BALL_R_X
+				val y = if (side == Side.LEFT) EYE_BALL_L_Y else EYE_BALL_R_Y
+				addAll(toList().filter { it.parameterId == EYE_BALL_X || it.parameterId == EYE_BALL_Y }
+					.map { it.copy(parameterId = if (it.parameterId == EYE_BALL_X) x else y) })
 			}
 			if (options.emotion) {
 				val k = options.emotionStrength

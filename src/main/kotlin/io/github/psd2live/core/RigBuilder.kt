@@ -1323,6 +1323,7 @@ object RigBuilder {
 
 		val idCounts = mutableMapOf<String, Int>()
 		val drawables = mutableListOf<Drawable>()
+		val generatedCopies = linkedSetOf<String>()
 		val pageByDrawable = linkedMapOf<String, Int>()
 		val sourceBoundsByDrawable = linkedMapOf<String, Bounds>()
 		val layerIdByDrawable = linkedMapOf<String, String>()
@@ -1441,7 +1442,7 @@ object RigBuilder {
 			val override = config.layerOverrides[layer.source.id.raw]
 			val classification = override?.type ?: layer.semantic.type
 			val channelGrids = if (config.meshOnly && classification == LayerType.PRESET) ChannelGrids.Empty
-				else withEyeOpacity(channelStage(layer, override, switchParamKeys, config.rigTuning, context.hasClosedMouth, stages, eyeSwap(context, config, layer), mouthSwap(context, config, layer), eyeOpenMax(context, config)),
+				else withEyeOpacity(channelStage(layer, override, switchParamKeys, config.rigTuning, context.hasClosedMouth, stages, eyeSwap(context, config, layer), mouthSwap(context, config, layer), eyeOpenMax(context, config), context.fittedMouth(config)?.let { it.rig?.fit?.layered != null && it.covers(layer) } == true),
 				context, config, layer)
 					.let { withMoodChannels(it, context, config, layer) }.let { withMouthShading(it, context, config, layer) }.let { grids ->
 					if (v2 && resolution.isStubLayer(layer.source.id.raw) &&
@@ -1601,8 +1602,46 @@ object RigBuilder {
 		// the generated list goes to the side channel for the record to restore.
 		val generatedMasks = LinkedHashMap<DrawableId, List<DrawableId>>()
 		val baseDrawableIds = if (!v2) emptySet() else drawables.mapTo(HashSet()) { it.id }
-		val maskedAll = sideLocksBehind(maskedAllUnswapped, classifiedByDrawable, context, config)
-		val maskedDrawables = if (!v2) maskedAll else maskedAll.filter { it.id in baseDrawableIds }.map { drawable ->
+		val tongueCopies = mutableListOf<Drawable>()
+		val mouthRig = fittedMouth?.rig
+		if (mouthRig?.fit?.layered != null && mouthRig.options.capture && mouthRig.options.tongue) {
+			val lowerOrder = maskedAllUnswapped.filter { classifiedByDrawable[it.id]?.semantic?.role in setOf(PartRole.LOWER_LIP, PartRole.LOWER_LINE) }
+				.maxOfOrNull { it.drawOrder }
+			if (lowerOrder != null) for (tongue in maskedAllUnswapped.filter { classifiedByDrawable[it.id]?.semantic?.tag == SemanticTag.TONGUE && fittedMouth.covers(classifiedByDrawable.getValue(it.id)) }) {
+				val layer = classifiedByDrawable.getValue(tongue.id)
+				val copyId = DrawableId("${tongue.id.raw}_Out")
+				require(maskedAllUnswapped.none { it.id == copyId }) { "Generated tongue ID already exists: ${copyId.raw}" }
+				val frame = if (tongue.parentDeformerId == null) Bounds(0f, 0f, 1f, 1f) else requireNotNull(context.resolveFrame(requireNotNull(tongue.parentDeformerId), config))
+				val raw = sourceBoundsByDrawable.getValue(tongue.id.raw)
+				val positions = requireNotNull(tongue.mesh).positions
+				val rigPositions = FloatArray(positions.size) { i -> if (i % 2 == 0) frame.left + positions[i] * frame.width else frame.top + positions[i] * frame.height }
+				val base = tongue.copy(id = copyId, maskedBy = emptyList(), channelGrids = ChannelGrids.Empty, opacity = 0f, drawOrder = lowerOrder + 1f,
+					geometryGrid = mouthRig.grid(rigPositions, frame, StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN, io.github.psd2live.core.fit.MouthRig.Follow.PROTRUDING_TONGUE, fittedMouth.chin))
+				val shapes = mouthRig.protrudingTongueShapes(rigPositions, frame, layer.source.opacity, chin = fittedMouth.chin)
+				// Tongue-out reveals a statically transparent copy; preserve its authored opacity instead of multiplying by zero.
+				val normalized = neutralized(shapes, base).map { binding ->
+					if (binding.parameterId != io.github.psd2live.core.fit.MouthRig.TONGUE_OUT) binding else
+						binding.copy(forms = binding.forms.mapIndexed { i, form -> form?.let { f ->
+							org.umamo.runtime.model.MeshForm(f.positionDeltas, f.drawOrder, shapes.first { it.parameterId == binding.parameterId }.forms[i]!!.opacity, f.multiplyColor, f.screenColor)
+						} })
+				}
+				tongueCopies += base.copy(blendShapes = normalized)
+				generatedCopies += copyId.raw; classifiedByDrawable[copyId] = layer
+				layerIdByDrawable[copyId.raw] = layer.source.id.raw
+				pageByDrawable[copyId.raw] = pageByDrawable.getValue(tongue.id.raw)
+				sourceBoundsByDrawable[copyId.raw] = raw
+			}
+		}
+		val tongueOrderThreshold = tongueCopies.minOfOrNull { it.drawOrder }?.minus(1f)
+		val needsTongueOrderGap = tongueOrderThreshold != null && maskedAllUnswapped.any { it.drawOrder > tongueOrderThreshold && it.drawOrder < tongueOrderThreshold + 2f }
+		val orderedMouth = if (!needsTongueOrderGap) maskedAllUnswapped else maskedAllUnswapped.map { drawable ->
+			val layer = classifiedByDrawable.getValue(drawable.id)
+			if (drawable.drawOrder > requireNotNull(tongueOrderThreshold) &&
+				config.drawOrderOverrides[layer.source.id.raw] == null && config.drawOrderOverrides[drawable.id.raw] == null)
+				drawable.copy(drawOrder = drawable.drawOrder + 1f) else drawable
+		}
+		val maskedAll = sideLocksBehind(orderedMouth + tongueCopies, classifiedByDrawable, context, config)
+		val maskedDrawables = if (!v2) maskedAll else maskedAll.filter { it.id in baseDrawableIds || it.id.raw in generatedCopies }.map { drawable ->
 			val rewritten = drawable.maskedBy.map { resolution.baseStandIn(it, baseDrawableIds) }.distinct()
 			if (rewritten == drawable.maskedBy) drawable else {
 				generatedMasks[drawable.id] = drawable.maskedBy
@@ -1680,7 +1719,9 @@ object RigBuilder {
 				ParameterLink(StandardParameters.ANGLE_X, StandardParameters.ANGLE_Y),
 				ParameterLink(StandardParameters.BODY_X, StandardParameters.BODY_Y),
 				ParameterLink(StandardParameters.EYE_BALL_X, StandardParameters.EYE_BALL_Y),
-			),
+				ParameterLink(io.github.psd2live.core.fit.EyeModules.EYE_BALL_L_X, io.github.psd2live.core.fit.EyeModules.EYE_BALL_L_Y),
+				ParameterLink(io.github.psd2live.core.fit.EyeModules.EYE_BALL_R_X, io.github.psd2live.core.fit.EyeModules.EYE_BALL_R_Y),
+			).filter { it.horizontal in standardIds && it.vertical in standardIds },
 			parameterTree = parameterTree,
 			canvasWidth = analysis.source.widthPx.toFloat(),
 			canvasHeight = analysis.source.heightPx.toFloat(),
@@ -1731,7 +1772,7 @@ object RigBuilder {
 				}
 				return BuiltRig(skeletonPuppet, pageByDrawable, sourceBoundsByDrawable, layerIdByDrawable, faceCenterCanvas.first,
 					faceCenterCanvas.second, faceRig.radiusX, faceRig.radiusY, warnings, faceRig.initialAngleZ, unbound, primitiveSkins = skins,
-					seeThrough = seeThrough(skeletonPuppet))
+					seeThrough = seeThrough(skeletonPuppet), copiedDrawableIds = generatedCopies.toSet())
 			}
 			val skeletal = skeleton
 				?.let { RigBuildProfile.stage("skeleton") {
@@ -1758,7 +1799,7 @@ object RigBuilder {
 				faceRig.initialAngleZ,
 				unbound,
 				primitiveSkins = skins,
-				seeThrough = seeThrough(skeletonPuppet),
+				seeThrough = seeThrough(skeletonPuppet), copiedDrawableIds = generatedCopies.toSet(),
 			)
 		}
 		if (stages == null) return finish()
@@ -1769,7 +1810,7 @@ object RigBuilder {
 			classifiedByDrawable.entries.associate { it.key.raw to it.value.source.id.raw },
 			skeleton?.let { listOf(it, context.bodyFrame, context.stance.contentKey, SkeletonRig.clears, skeletonJournalInputs(config)) },
 			listOf(pageByDrawable, sourceBoundsByDrawable, layerIdByDrawable, warnings.toList(), faceCenterCanvas,
-				faceRig.radiusX, faceRig.radiusY, faceRig.initialAngleZ),
+				faceRig.radiusX, faceRig.radiusY, faceRig.initialAngleZ, generatedCopies.toSet()),
 			io.github.psd2live.i18n.I18n.currentLanguage.tag,
 			if (!v2) null else listOf(resolution.resolved.contentKey, maskedParts, deferredParts, generatedMasks, partSlots,
 				partNeutralBounds, ghostIds))
@@ -1825,12 +1866,12 @@ object RigBuilder {
 
 	/** [buildChannels] under a key of what it reads. */
 	private fun channelStage(layer: ClassifiedLayer, override: LayerClassificationOverride?, switchParamKeys: Map<String, FloatArray>,
-	                         tuning: RigTuning, closedMouth: Boolean, stages: RigStageCache?, eyeSwap: Boolean = false, mouthSwap: Boolean = false, eyeOpenMax: Float = 1f): ChannelGrids {
-		if (stages == null) return buildChannels(layer, override, switchParamKeys, tuning, closedMouth, eyeSwap, mouthSwap, eyeOpenMax)
+	                         tuning: RigTuning, closedMouth: Boolean, stages: RigStageCache?, eyeSwap: Boolean = false, mouthSwap: Boolean = false, eyeOpenMax: Float = 1f, layeredMouth: Boolean = false): ChannelGrids {
+		if (stages == null) return buildChannels(layer, override, switchParamKeys, tuning, closedMouth, eyeSwap, mouthSwap, eyeOpenMax, layeredMouth)
 		val parameter = (override?.parameter ?: layer.semantic.parameter).trim()
 		val key = listOf(override?.type ?: layer.semantic.type, parameter, override?.switchId ?: layer.semantic.switchId,
-			switchParamKeys[parameter]?.toList(), layer.semantic.tag, layer.semantic.side, tuning.teethFade, closedMouth, eyeSwap, mouthSwap, eyeOpenMax)
-		return stages.get(RigStageCache.CHANNELS, 256, key) { buildChannels(layer, override, switchParamKeys, tuning, closedMouth, eyeSwap, mouthSwap, eyeOpenMax) }
+			switchParamKeys[parameter]?.toList(), layer.semantic.tag, layer.semantic.side, tuning.teethFade, closedMouth, eyeSwap, mouthSwap, eyeOpenMax, layeredMouth)
+		return stages.get(RigStageCache.CHANNELS, 256, key) { buildChannels(layer, override, switchParamKeys, tuning, closedMouth, eyeSwap, mouthSwap, eyeOpenMax, layeredMouth) }
 	}
 
 	/**
@@ -2286,7 +2327,7 @@ object RigBuilder {
 		val override = config.layerOverrides[layer.source.id.raw]
 		val classification = override?.type ?: layer.semantic.type
 		val channels = if (deferred || config.meshOnly && classification == LayerType.PRESET) ChannelGrids.Empty
-			else channelStage(layer, override, switchParamKeys, config.rigTuning, context.hasClosedMouth, stages, eyeSwap(context, config, layer), mouthSwap(context, config, layer), eyeOpenMax(context, config))
+			else channelStage(layer, override, switchParamKeys, config.rigTuning, context.hasClosedMouth, stages, eyeSwap(context, config, layer), mouthSwap(context, config, layer), eyeOpenMax(context, config), context.fittedMouth(config)?.let { it.rig?.fit?.layered != null && it.covers(layer) } == true)
 		val drawable = Drawable(
 			id = part.drawableId,
 			name = part.name,
@@ -2733,7 +2774,7 @@ object RigBuilder {
 				config,
 			)
 			deformers += irisShape
-			deformers += gazeWarp(irisRegion, irisShape.id, facePartId, config.rigTuning)
+			deformers += gazeWarp(irisRegion, irisShape.id, facePartId, config.rigTuning, io.github.psd2live.core.recipe.RigModules.let { it.builds(it.EYE_GAZE_LID, config, io.github.psd2live.core.recipe.RecipeSubject.of(analysis)) })
 		}
 		frontHair?.let { frame ->
 			deformers += hairFollowWarp(
@@ -3177,7 +3218,7 @@ object RigBuilder {
 		)
 	}
 
-	private fun gazeWarp(region: FaceRegion, parent: DeformerId, part: PartId, tuning: RigTuning): Deformer.Warp {
+	private fun gazeWarp(region: FaceRegion, parent: DeformerId, part: PartId, tuning: RigTuning, independentGaze: Boolean): Deformer.Warp {
 		val geometry = warpGrid(
 			listOf(axis(StandardParameters.EYE_BALL_X, -1f, 0f, 1f), axis(StandardParameters.EYE_BALL_Y, -1f, 0f, 1f)),
 			2,
@@ -3185,7 +3226,25 @@ object RigBuilder {
 		) { u, v, values ->
 			gazePoint(u, v, values[0], values[1], tuning)
 		}
-		return Deformer.Warp(gazeWarpId(region), tr("model.deformer.gaze", sideDisplay(region.side)), parent, part, 2, 2, true, geometry)
+		val independent = if (!independentGaze || region.side == Side.NONE) emptyList() else {
+			val left = region.side == Side.LEFT
+			val x = ParameterId(if (left) "ParamEyeBallLX" else "ParamEyeBallRX")
+			val y = ParameterId(if (left) "ParamEyeBallLY" else "ParamEyeBallRY")
+			listOf(x, y).mapIndexed { axis, parameter ->
+				org.umamo.runtime.model.BlendShapeBinding(parameter, floatArrayOf(-1f, 0f, 1f), 1,
+					listOf(-1f, 0f, 1f).map { value ->
+						if (value == 0f) null else org.umamo.runtime.model.WarpForm(FloatArray(18).also { points ->
+							for (row in 0..2) for (column in 0..2) {
+								val point = gazePoint(column / 2f, row / 2f, if (axis == 0) value else 0f, if (axis == 1) value else 0f, tuning)
+								val i = (row * 3 + column) * 2
+								points[i] = point.first; points[i + 1] = point.second
+							}
+						})
+					})
+			}
+		}
+		return Deformer.Warp(gazeWarpId(region), tr("model.deformer.gaze", sideDisplay(region.side)), parent, part, 2, 2, true, geometry,
+			blendShapes = independent)
 	}
 
 	/** Head-angle following for one hair depth plane; deliberately independent of the face warp. */
@@ -3312,7 +3371,7 @@ object RigBuilder {
 			layer.semantic.tag in setOf(SemanticTag.EYELASH, SemanticTag.EYEWHITE, SemanticTag.EYE_CLOSE) ||
 			config.recipe.base("brow") === io.github.psd2live.core.recipe.RigModules.BROW_FITTED && layer.semantic.tag == SemanticTag.EYEBROW ||
 			config.recipe.base("mouth") === io.github.psd2live.core.recipe.RigModules.MOUTH_FITTED &&
-				layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN, SemanticTag.MOUTH_CLOSE, SemanticTag.TONGUE)
+				layer.semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN, SemanticTag.MOUTH_CLOSE, SemanticTag.TONGUE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B)
 		if (fittedLid) {
 			val fine = MeshSettings(outerMargin, edgeMode, edgeWidth, override?.maxEdgeDistance ?: max(4f, config.meshMaxEdgeDistance * 0.12f),
 				override?.interiorDensity ?: max(4f, config.meshInteriorDensity * 0.12f), override?.fillAlgorithm ?: config.meshFillAlgorithm,
@@ -3393,8 +3452,10 @@ object RigBuilder {
 		val tag = layer.semantic.tag
 		mouth?.rig?.takeIf { mouth.covers(layer) }?.let { rig ->
 			return if (tag == SemanticTag.MOUTH_CLOSE) rig.closedGrid(data.rigPositions, parentFrame, StandardParameters.MOUTH_FORM)
-				else rig.grid(data.rigPositions, parentFrame, StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN, mouth.follow(layer))
+				else rig.grid(data.rigPositions, parentFrame, StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN, mouth.follow(layer), mouth.chin)
 		}
+		if (tag == SemanticTag.FACE && layer.semantic.role == null && mouth?.lipped == true && mouth.rig != null && !mouth.rig.fit.hasLines)
+			return mouth.rig.faceGrid(data.rigPositions, parentFrame, StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN, mouth.chin)
 		return when (tag) {
 			SemanticTag.EYEWHITE, SemanticTag.EYELASH ->
 				eyes?.rigs?.get(layer.semantic.side)?.let { eye ->
@@ -3543,8 +3604,10 @@ object RigBuilder {
 	 */
 	private fun turnPositions(layer: ClassifiedLayer, positions: FloatArray, mouth: io.github.psd2live.core.fit.FittedMouth?): FloatArray {
 		val rig = mouth?.rig ?: return positions
+		if (layer.semantic.tag == SemanticTag.FACE && layer.semantic.role == null && mouth.lipped && !rig.fit.hasLines)
+			return rig.atRestFace(positions, mouth.chin)
 		if (!mouth.covers(layer) || layer.semantic.tag == SemanticTag.MOUTH_CLOSE) return positions
-		return rig.atRest(positions, mouth.follow(layer))
+		return rig.atRest(positions, mouth.follow(layer), mouth.chin)
 	}
 
 	/** Whether the turn's style draws [layer] outside the face's warp: the hair, and headwear and earwear worn whole. */
@@ -3638,14 +3701,15 @@ object RigBuilder {
 				else -> if (tag == SemanticTag.MOUTH_OPEN && mouth.result.layers.any { it.semantic.tag == SemanticTag.MOUTH }) 0.12f else 0f
 			}
 			return rig.shapes(data.rigPositions, frame, closedLayer, { opens -> if (!opens) Float.NaN else if (closedLayer) 0f else 1f }, tag == SemanticTag.TONGUE,
-				mouth.follow(layer)) +
+				mouth.follow(layer), chin = mouth.chin) +
 				(if (depth > 0f) rig.depthShapes(data.rigPositions, frame, depth, StandardParameters.ANGLE_X, StandardParameters.ANGLE_Y) else emptyList())
 		}
 		if (layer.semantic.role != null && layer.semantic.role != PartRole.SHADOW) return emptyList()
 		val below = tag == SemanticTag.FACE_DETAIL && rig.fit.toMouth(layer.centroidX, layer.centroidY).second > 0f
 		if (tag != SemanticTag.FACE && tag != SemanticTag.NOSE && !below) return emptyList()
 		return rig.faceShapes(data.rigPositions, frame, mouth.chin, tag == SemanticTag.NOSE, StandardParameters.MOUTH_OPEN,
-			if (rig.options.spring) io.github.psd2live.core.fit.MouthRig.SPRING else null)
+			if (rig.options.spring) io.github.psd2live.core.fit.MouthRig.SPRING else null,
+			lippedSkin = tag == SemanticTag.FACE && layer.semantic.role == null && mouth.lipped && !rig.fit.hasLines)
 	}
 
 	/** The bounds of a mesh's canvas points (x, y pairs). */
@@ -4101,7 +4165,7 @@ object RigBuilder {
         val mouthShapes = rig?.shapes({ pose ->
             val target = normalized(MouthStrokeMesh.positions(path.map { p -> rig.point(p.first, p.second, pose) }, radius, joins))
             FloatArray(positions.size) { target[it] - positions[it] }
-        }) { opens -> if (opens) 1f else Float.NaN }.orEmpty()
+        }, visible = { opens -> if (opens) 1f else Float.NaN }).orEmpty()
         val lipDrawable = ribbon.copy(blendShapes = neutralized(mouthShapes + headTurnShapes(layer, rawPositions, frame, turn.takeUnless { turnsWithMouth(owner.parentDeformerId) }), ribbon))
         val deformPath = if (columns.size >= 5) {
             val startIdx = overlap
@@ -4179,6 +4243,7 @@ object RigBuilder {
 		/** Whether the layer belongs to the fitted mouth, whose closed and open parts hand over at its swap key; see [mouthSwap]. */
 		mouthSwap: Boolean = false,
 		eyeOpenMax: Float = 1f,
+		layeredMouth: Boolean = false,
 	): ChannelGrids {
 		val type = override?.type ?: layer.semantic.type
 		// Teeth, tongue and an open mouth fade in over the first teethFade percent of the opening.
@@ -4215,7 +4280,7 @@ object RigBuilder {
 					SemanticTag.MOUTH -> if (!mouthSwap) null
 						else scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, io.github.psd2live.core.fit.MouthRig.SWAP, 1f)) { open -> if (open == 0f) 0f else 1f }
 					SemanticTag.TONGUE, SemanticTag.TOOTH_T, SemanticTag.TOOTH_B ->
-						scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, fadeIn, 1f)) { open -> (open / fadeIn).coerceIn(0f, 1f) }
+						if (layeredMouth && !mouthSwap) null else scalarGrid(StandardParameters.MOUTH_OPEN, floatArrayOf(0f, fadeIn, 1f)) { open -> (open / fadeIn).coerceIn(0f, 1f) }
 					// Beside a closed mouth the open one only flattens at rest, and it and its lip ribbons (which copy
 					// its channels) showed as a second, differently coloured line under the closed mouth. Alone it
 					// is the only mouth there is and stays.

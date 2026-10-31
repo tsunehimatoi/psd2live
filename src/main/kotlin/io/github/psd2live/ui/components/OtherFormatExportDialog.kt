@@ -129,6 +129,9 @@ private fun TargetSettingRow(
 					itemLabel = { it?.second ?: tr(if (setting.rest) "export.other.restPose" else "export.other.firstClip") },
 					modifier = Modifier.weight(1f), enabled = enabled, height = 22.dp)
 			}
+			is TargetSetting.Choice -> CompactDropdown(items = setting.values, selectedItem = value?.takeIf { it in setting.values } ?: setting.default,
+				onItemSelected = { onChange(it) }, itemLabel = { tr("export.setting.${setting.key}.$it") },
+				modifier = Modifier.weight(1f), enabled = enabled, height = 22.dp)
 			is TargetSetting.Flag -> CompactCheckbox(
 				checked = value?.toBooleanStrictOrNull() ?: setting.default, onCheckedChange = { onChange(it.toString()) }, enabled = enabled,
 			)

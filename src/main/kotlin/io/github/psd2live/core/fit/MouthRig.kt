@@ -3,15 +3,20 @@ package io.github.psd2live.core.fit
 import io.github.psd2live.core.Bounds
 import io.github.psd2live.core.MouthCurve
 import org.umamo.runtime.model.BlendShapeBinding
+import org.umamo.runtime.model.BlendWeightLimit
+import org.umamo.runtime.model.BlendWeightLimitPoint
 import org.umamo.runtime.model.KeyformAxis
 import org.umamo.runtime.model.KeyformCell
 import org.umamo.runtime.model.KeyformGrid
 import org.umamo.runtime.model.MeshDeltaForm
 import org.umamo.runtime.model.MeshForm
 import org.umamo.runtime.model.ParameterId
+import kotlin.math.PI
 import kotlin.math.abs
-import kotlin.math.atan2
+import kotlin.math.atan
 import kotlin.math.cos
+import kotlin.math.exp
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
@@ -41,290 +46,1116 @@ data class MouthOptions(
 )
 
 /**
- * The `mouth/fitted` base and the mouth modules for the drawn open mouth ([fit]). Every mouth the rig makes is a pose
- * of the two lip edges ([Pose]): the drawn upper and lower edge carried toward a closed line, rounded, flattened,
- * narrowed or shifted, and each vertex of the mouth's layers keeps its place between the edges - a lip line's band
- * along each edge stays as drawn and the inside closes between them - so the lips meet in one line with their own
- * thickness, the teeth ride the lip they belong to and the interior shuts with them.
+ * Three-layer mouth deformation rig for [fit] (layered cel-line mouths, layered lip-skin mouths, invisible-clip mouths,
+ * and single-layer whole mouths).
  *
- * Opening goes in stages, as hand-made mouths do: at a hair the lips part ([SWAP], where a drawn closed mouth hands
- * over), at a quarter the lower lip has dropped into a crescent while the upper lip and the corners stay, at a half
- * the mouth is an oval, at 1 the drawing. The form runs from a pout - closed a small frown, open a round "o" - to a
- * smile - corners up, open a wide D under a flat upper lip - with keys between the ends.
+ * Layer 1 transfers normalized 65-station lip contours onto the character's rest lip strokes or inner mouth rims with
+ * exact neutral restoration (`open = 1, form = 0` -> zero delta), concentric seam closure when shut, maxilla-anchored
+ * jaw rise on wide-open lip-skin artwork, Frenet stroke thickness preservation, seamless perioral skin coupling, and
+ * anatomical maxilla/mandible teeth plus wry-mouth orthogonal tooth-row tilt.
+ * Layer 2 spans a 25-axis principal deformation subspace (`MouthThreeLayerModel`).
+ * Layer 3 drives `(Form × OpenY [× PressLipOpen])` plus vowels and bilateral/unilateral facial capture bindings.
  */
 class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? = null) {
 	/**
-	 * A mouth's shape: how far the upper and lower lip have gone from the closed line toward the drawing ([upper],
-	 * [lower]), its width and sideways shift (of the corners' distance), how far the corners rise ([corner], of the
-	 * width), how round it opens ([round]) and how flat the upper lip stays ([flatTop]), the closed line lifted at its
-	 * middle ([lift]) and the lips pressed together ([press]).
+	 * User-space pose controls evaluated through the three-layer lip model onto [fit]'s target frame.
 	 */
 	data class Pose(
-		val upper: Float, val lower: Float, val width: Float = 1f, val shift: Float = 0f, val corner: Float = 0f,
-		val round: Float = 0f, val flatTop: Float = 0f, val lift: Float = 0f, val press: Float = 0f,
+		val open: Float,
+		val form: Float = 0f,
+		val press: Float = 0f,
+		val mouthX: Float = 0f,
+		val width: Float = 0f,
+		val funnel: Float = 0f,
+		val shrug: Float = 0f,
+		val jaw: Float = 0f,
+		val cheek: Float = 0f,
+		val tongueOut: Float = 0f,
+		val cornerLUp: Float = 0f,
+		val cornerLDown: Float = 0f,
+		val cornerRUp: Float = 0f,
+		val cornerRDown: Float = 0f,
+		val cornerLOut: Float = 0f,
+		val cornerROut: Float = 0f,
+		val puckerL: Float = 0f,
+		val puckerR: Float = 0f,
 	)
 
 	/**
-	 * How a layer of the mouth follows the lips. A mouth drawn whole ([WHOLE], [WHOLE_TIGHT]) keeps each point between the
-	 * lip edges ([move]); a mouth drawn in layers moves each the way its kind does in a hand-made rig:
-	 *
-	 * - [OPENING]: the opening's colour, which clips the teeth and tongue, kept between the two lip lines ([between]): its
-	 *   edge stays under its line in every pose, so it never shows past the lines, and shut it closes into their one line.
-	 * - [INSIDE]: the opening of a mouth with lip skin over it: kept between the lines, but closing by [MouthOptions.inside]
-	 *   of its height less, the rest hidden behind the lips.
-	 * - [UPPER_LINE], [LOWER_LINE]: a lip's edge line rides its edge whole, keeping its thickness; shut, the two lines meet
-	 *   in one, and where they are drawn as one - at the corners - they stay one.
-	 * - [UPPER_LIP], [LOWER_LIP]: a lip with the skin about it rides its edge whole near the lips and less further out,
-	 *   so the lip's paint bends with it without squashing and its skin margin blends into the face.
-	 * - [UPPER_TEETH], [LOWER_TEETH]: a row of teeth moves whole with its lip's middle, lagging where the lip closes over
-	 *   it ([teeth]); drawn running on under the lips, the opening clips it, so it meets the lines without a gap and a
-	 *   small, round or pouting mouth hides it.
-	 * - [TONGUE]: the tongue moves whole with the jaw, a little of the lower lip's drop.
-	 * - [DEEP]: the dark at the back of the mouth, and a base drawn larger than any opening, stay still; the opening
-	 *   uncovers them.
+	 * How each part of a mouth follows the posed lip contours:
+	 * - [WHOLE], [WHOLE_TIGHT]: a single-layer whole mouth (with or without generated lip ribbons).
+	 * - [OPENING]: the inner-mouth opening and clipping mask, mapped cleanly onto `[u1, l1]`.
+	 * - [INSIDE]: an interior highlight/fill that retains [MouthOptions.inside] of its height behind lip skin.
+	 * - [UPPER_LINE], [LOWER_LINE]: cel-shaded lip strokes preserving Frenet thickness and joined corner tips.
+	 * - [UPPER_LIP], [LOWER_LIP]: painted lip-skin patches with 1D rim parameter and seamless outer blend into the face.
+	 * - [UPPER_TEETH], [LOWER_TEETH]: maxillary/mandibular teeth with symmetric rigid hold plus wry orthogonal tilt.
+	 * - [TONGUE], [PROTRUDING_TONGUE]: clipped inner tongue and unclipped protruding tongue mesh for `ParamTongueOut`.
+	 * - [DEEP]: deep back-of-mouth fill clipped to the opening.
 	 */
-	enum class Follow { WHOLE, WHOLE_TIGHT, OPENING, INSIDE, UPPER_LINE, LOWER_LINE, UPPER_LIP, LOWER_LIP, UPPER_TEETH, LOWER_TEETH, TONGUE, DEEP }
+	enum class Follow {
+		WHOLE, WHOLE_TIGHT, OPENING, INSIDE,
+		UPPER_LINE, LOWER_LINE, UPPER_LIP, LOWER_LIP,
+		UPPER_TEETH, LOWER_TEETH, TONGUE, PROTRUDING_TONGUE, DEEP,
+	}
 
+	private val model = MouthThreeLayerModel.DEFAULT
+	private val stations = model.stations
+	private val uDense = model.uDense
+	private val midIdx = stations / 2
 	private val h = fit.opening
 
 	/** The opening's keys: [OPEN_KEYS], and the [MouthOptions.reach] past the drawing where it goes on. */
 	val openKeys: FloatArray = if (options.reach > 1.001f) OPEN_KEYS + options.reach else OPEN_KEYS
-	/** A lip line's band along each edge, which moves with its edge as drawn. */
 	private val band = min(0.045f, h * 0.18f)
-	/** How thick a layered mouth's lip lines are drawn ([MouthFitting.lineWidth]); none without line layers, whose lips meet as drawn. */
 	private val line = lineWidth ?: 0f
-	/** The gap left between the lips when they close over nothing else ([MouthOptions.exactClose] off). */
 	private val gap = if (options.exactClose) 0f else (1.2f / fit.width).coerceIn(0.004f, 0.04f)
+
+	private val customCurveDelta: FloatArray? = run {
+		val defSmile = MouthCurve.preset("smile")
+		if (options.curve == defSmile) null
+		else FloatArray(stations) { i ->
+			val u = uDense[i]
+			(options.curve.yAt(u) - defSmile.yAt(u)) * h * 0.6f
+		}
+	}
+
+	private class TargetGeom(
+		val isLayeredArt: Boolean,
+		val hasLines: Boolean,
+		val centerX: Float,
+		val centerY: Float,
+		val exX: Float,
+		val exY: Float,
+		val widthPx: Float,
+		val u0World: FloatArray,
+		val l0World: FloatArray,
+		val u0LocalNorm: FloatArray,
+		val l0LocalNorm: FloatArray,
+		val u0LocPx: FloatArray,
+		val l0LocPx: FloatArray,
+		val uxMono0: FloatArray,
+		val lxMono0: FloatArray,
+		val xiU0: FloatArray,
+		val xiL0: FloatArray,
+		val tU0: FloatArray,
+		val nU0: FloatArray,
+		val tL0: FloatArray,
+		val nL0: FloatArray,
+		val linePx: Float,
+		val h0Px: Float,
+		val ap0MidPx: Float,
+		val openColsXLoc: FloatArray,
+		val openTopYLoc: FloatArray,
+		val openBotYLoc: FloatArray,
+		val upperLipBoundsLocal: Bounds?,
+		val lowerLipBoundsLocal: Bounds?,
+		val tongueBoundsLocal: Bounds?,
+		val hUtVis0: Float,
+		val utSideReserve: Float,
+		val hLtVis0: Float,
+		val u0MouthU: FloatArray,
+		val u0MouthV: FloatArray,
+		val l0MouthU: FloatArray,
+		val l0MouthV: FloatArray,
+	) {
+		val eyX: Float get() = -exY
+		val eyY: Float get() = exX
+
+		fun toLocalPx(rigX: Float, rigY: Float): Pair<Float, Float> {
+			val dx = rigX - centerX
+			val dy = rigY - centerY
+			return (dx * exX + dy * exY) to (dx * eyX + dy * eyY)
+		}
+
+		fun localDeltaToRig(dxLoc: Float, dyLoc: Float): Pair<Float, Float> =
+			(dxLoc * exX + dyLoc * eyX) to (dxLoc * exY + dyLoc * eyY)
+
+		fun localPxToRig(xLoc: Float, yLoc: Float): Pair<Float, Float> =
+			(centerX + xLoc * exX + yLoc * eyX) to (centerY + xLoc * exY + yLoc * eyY)
+	}
 
 	private fun drawnUpper(u: Float) = MouthFit.sample(fit.upper, u) - fit.baseline(u)
 	private fun drawnLower(u: Float) = MouthFit.sample(fit.lower, u) - fit.baseline(u)
 
-	/** The closed line below the corners' line, from the mouth's closed shape (positive down). */
-	private fun closed(u: Float) = options.curve.yAt(u) * h * 0.6f
+	private val target: TargetGeom = buildTargetGeom()
+
+	private fun buildTargetGeom(): TargetGeom {
+		val lf = fit.layered
+		if (lf != null) {
+			val w = lf.frameWidth
+			val u0LocPx = FloatArray(stations * 2) { lf.upperLocal65[it] * w }
+			val l0LocPx = FloatArray(stations * 2) { lf.lowerLocal65[it] * w }
+			val uxMono = FloatArray(stations)
+			val lxMono = FloatArray(stations)
+			val xiU0 = FloatArray(stations)
+			val xiL0 = FloatArray(stations)
+			val u0MU = FloatArray(stations)
+			val u0MV = FloatArray(stations)
+			val l0MU = FloatArray(stations)
+			val l0MV = FloatArray(stations)
+			for (i in 0 until stations) {
+				val ux = u0LocPx[i * 2]
+				val lx = l0LocPx[i * 2]
+				uxMono[i] = if (i == 0) ux else max(uxMono[i - 1], ux)
+				lxMono[i] = if (i == 0) lx else max(lxMono[i - 1], lx)
+				xiU0[i] = ux / max(w, 1e-4f)
+				xiL0[i] = lx / max(w, 1e-4f)
+				val (umu, umv) = fit.toMouth(lf.upperWorld65[i * 2], lf.upperWorld65[i * 2 + 1])
+				val (lmu, lmv) = fit.toMouth(lf.lowerWorld65[i * 2], lf.lowerWorld65[i * 2 + 1])
+				u0MU[i] = umu; u0MV[i] = umv - fit.baseline(umu)
+				l0MU[i] = lmu; l0MV[i] = lmv - fit.baseline(lmu)
+			}
+			val (tU0, nU0) = MouthThreeLayerModel.computeFrenet(lf.upperWorld65, stations)
+			val (tL0, nL0) = MouthThreeLayerModel.computeFrenet(lf.lowerWorld65, stations)
+			val ap0Mid = max(l0LocPx[midIdx * 2 + 1] - u0LocPx[midIdx * 2 + 1], 1e-4f)
+			return TargetGeom(
+				isLayeredArt = true,
+				hasLines = lf.hasLines,
+				centerX = lf.centerX,
+				centerY = lf.centerY,
+				exX = lf.exX,
+				exY = lf.exY,
+				widthPx = w,
+				u0World = lf.upperWorld65,
+				l0World = lf.lowerWorld65,
+				u0LocalNorm = lf.upperLocal65,
+				l0LocalNorm = lf.lowerLocal65,
+				u0LocPx = u0LocPx,
+				l0LocPx = l0LocPx,
+				uxMono0 = uxMono,
+				lxMono0 = lxMono,
+				xiU0 = xiU0,
+				xiL0 = xiL0,
+				tU0 = tU0,
+				nU0 = nU0,
+				tL0 = tL0,
+				nL0 = nL0,
+				linePx = lf.lineNorm * w,
+				h0Px = ap0Mid,
+				ap0MidPx = ap0Mid,
+				openColsXLoc = lf.openColsX,
+				openTopYLoc = lf.openTopY,
+				openBotYLoc = lf.openBotY,
+				upperLipBoundsLocal = lf.upperLipBoundsLocal,
+				lowerLipBoundsLocal = lf.lowerLipBoundsLocal,
+				tongueBoundsLocal = lf.tongueBoundsLocal,
+				hUtVis0 = lf.hUtVis0,
+				utSideReserve = lf.utSideReserve,
+				hLtVis0 = lf.hLtVis0,
+				u0MouthU = u0MU,
+				u0MouthV = u0MV,
+				l0MouthU = l0MU,
+				l0MouthV = l0MV,
+			)
+		}
+
+		// Synthetic or whole-mouth fallback constructed directly from MouthFit + lineWidth.
+		val leftPt = fit.toCanvas(0f, 0f)
+		val rightPt = fit.toCanvas(1f, fit.cornerV)
+		val w = hypot(rightPt.first - leftPt.first, rightPt.second - leftPt.second).coerceAtLeast(1e-4f)
+		val exX = (rightPt.first - leftPt.first) / w
+		val exY = (rightPt.second - leftPt.second) / w
+		val eyX = -exY
+		val eyY = exX
+		val centerX = 0.5f * (leftPt.first + rightPt.first)
+		val centerY = 0.5f * (leftPt.second + rightPt.second)
+		val hasLines = line > 0f
+
+		val u0World = FloatArray(stations * 2)
+		val l0World = FloatArray(stations * 2)
+		val u0LocalNorm = FloatArray(stations * 2)
+		val l0LocalNorm = FloatArray(stations * 2)
+		val u0LocPx = FloatArray(stations * 2)
+		val l0LocPx = FloatArray(stations * 2)
+		val uxMono = FloatArray(stations)
+		val lxMono = FloatArray(stations)
+		val xiU0 = FloatArray(stations)
+		val xiL0 = FloatArray(stations)
+		val u0MU = FloatArray(stations)
+		val u0MV = FloatArray(stations)
+		val l0MU = FloatArray(stations)
+		val l0MV = FloatArray(stations)
+		val openColsX = FloatArray(stations)
+		val openTopY = FloatArray(stations)
+		val openBotY = FloatArray(stations)
+
+		for (i in 0 until stations) {
+			val u = uDense[i]
+			val baseV = fit.baseline(u)
+			val uOuter = drawnUpper(u)
+			val lOuter = drawnLower(u)
+			val span = max(0f, lOuter - uOuter)
+			val inset = if (hasLines) min(0.5f * line, 0.5f * span) else 0f
+			val uv = uOuter + inset
+			val lv = lOuter - inset
+			val uw = fit.toCanvas(u, baseV + uv)
+			val lw = fit.toCanvas(u, baseV + lv)
+			u0World[i * 2] = uw.first; u0World[i * 2 + 1] = uw.second
+			l0World[i * 2] = lw.first; l0World[i * 2 + 1] = lw.second
+
+			val udx = uw.first - centerX; val udy = uw.second - centerY
+			val ulx = udx * exX + udy * exY; val uly = udx * eyX + udy * eyY
+			val ldx = lw.first - centerX; val ldy = lw.second - centerY
+			val llx = ldx * exX + ldy * exY; val lly = ldx * eyX + ldy * eyY
+
+			u0LocPx[i * 2] = ulx; u0LocPx[i * 2 + 1] = uly
+			l0LocPx[i * 2] = llx; l0LocPx[i * 2 + 1] = lly
+			u0LocalNorm[i * 2] = ulx / w; u0LocalNorm[i * 2 + 1] = uly / w
+			l0LocalNorm[i * 2] = llx / w; l0LocalNorm[i * 2 + 1] = lly / w
+
+			uxMono[i] = if (i == 0) ulx else max(uxMono[i - 1], ulx)
+			lxMono[i] = if (i == 0) llx else max(lxMono[i - 1], llx)
+			xiU0[i] = ulx / w
+			xiL0[i] = llx / w
+			u0MU[i] = u; u0MV[i] = uv
+			l0MU[i] = u; l0MV[i] = lv
+			openColsX[i] = 0.5f * (ulx + llx)
+			openTopY[i] = uly
+			openBotY[i] = lly
+		}
+		val (tU0, nU0) = MouthThreeLayerModel.computeFrenet(u0World, stations)
+		val (tL0, nL0) = MouthThreeLayerModel.computeFrenet(l0World, stations)
+		val ap0Mid = max(l0LocPx[midIdx * 2 + 1] - u0LocPx[midIdx * 2 + 1], 1e-4f)
+		val linePx = line * fit.width
+		return TargetGeom(
+			isLayeredArt = false,
+			hasLines = hasLines,
+			centerX = centerX,
+			centerY = centerY,
+			exX = exX,
+			exY = exY,
+			widthPx = w,
+			u0World = u0World,
+			l0World = l0World,
+			u0LocalNorm = u0LocalNorm,
+			l0LocalNorm = l0LocalNorm,
+			u0LocPx = u0LocPx,
+			l0LocPx = l0LocPx,
+			uxMono0 = uxMono,
+			lxMono0 = lxMono,
+			xiU0 = xiU0,
+			xiL0 = xiL0,
+			tU0 = tU0,
+			nU0 = nU0,
+			tL0 = tL0,
+			nL0 = nL0,
+			linePx = linePx,
+			h0Px = ap0Mid,
+			ap0MidPx = ap0Mid,
+			openColsXLoc = openColsX,
+			openTopYLoc = openTopY,
+			openBotYLoc = openBotY,
+			upperLipBoundsLocal = null,
+			lowerLipBoundsLocal = null,
+			tongueBoundsLocal = null,
+			hUtVis0 = 0.20f * ap0Mid,
+			utSideReserve = 0.12f * w,
+			hLtVis0 = 0.10f * ap0Mid,
+			u0MouthU = u0MU,
+			u0MouthV = u0MV,
+			l0MouthU = l0MU,
+			l0MouthV = l0MV,
+		)
+	}
+
+	private class EvaluatedPose(
+		val pose: Pose,
+		val u1World: FloatArray,
+		val l1World: FloatArray,
+		val u1LocPx: FloatArray,
+		val l1LocPx: FloatArray,
+		val usLocPx: FloatArray,
+		val lsLocPx: FloatArray,
+		val u1MouthU: FloatArray,
+		val u1MouthV: FloatArray,
+		val l1MouthU: FloatArray,
+		val l1MouthV: FloatArray,
+		val tU1: FloatArray,
+		val nU1: FloatArray,
+		val tL1: FloatArray,
+		val nL1: FloatArray,
+		val closing: FloatArray,
+		val shiftXPx: Float,
+		val openRatio: Float,
+		val openSym: Float,
+		val duSymMid: Float,
+		val dlSymMid: Float,
+		val hasAsym: Boolean,
+		val dyUtSymMid: Float,
+		val dyLtSymMid: Float,
+		val utCubic: FloatArray,
+		val ltCubic: FloatArray,
+		val tngAsymCubic: FloatArray,
+		val axU: Float,
+		val kxUt: Float,
+		val sinThetaUt: Float,
+		val cosThetaUt: Float,
+		val yUtPivot: Float,
+		val axL: Float,
+		val kxLt: Float,
+		val sinThetaLt: Float,
+		val cosThetaLt: Float,
+		val yLtPivot: Float,
+		val tongueDx: Float,
+		val dxxMean: Float,
+	)
+
+	// Reference maxillary shut hold computed once from neutral shut & neutral half-open
+	private val maxillaShutHoldPx: Float by lazy {
+		val shutCurve = model.transferToTargetLocal(
+			model.evaluateNormalized(openY = 0f, form = 0f),
+			target.u0LocalNorm, target.l0LocalNorm, target.hasLines,
+			closedGap = gap * fit.width / target.widthPx,
+			customCurveDelta = customCurveDelta,
+		)
+		val midCurve = model.transferToTargetLocal(
+			model.evaluateNormalized(openY = 0.48f, form = 0f),
+			target.u0LocalNorm, target.l0LocalNorm, target.hasLines,
+			closedGap = gap * fit.width / target.widthPx,
+			customCurveDelta = customCurveDelta,
+		)
+		val w = target.widthPx
+		val u0MidY = target.u0LocPx[midIdx * 2 + 1]
+		val duShut = shutCurve.upperLocal[midIdx * 2 + 1] * w - u0MidY
+		val duAt048 = midCurve.upperLocal[midIdx * 2 + 1] * w - u0MidY
+		min(duAt048, max(0f, duShut - 0.48f * target.hUtVis0))
+	}
+
+	private val poseCache = java.util.concurrent.ConcurrentHashMap<Pose, EvaluatedPose>()
+
+	private fun eval(pose: Pose): EvaluatedPose = poseCache.computeIfAbsent(pose, ::computePose)
+
+	private val shutEval: EvaluatedPose by lazy { eval(pose(0f, 0f)) }
+
+	private fun effectiveOpen(open: Float): Float {
+		if (open <= 0f || open >= 1f || abs(options.early - 0.35f) < 1e-4f) return open
+		val k = (options.early / 0.35f).coerceIn(0.3f, 2.2f)
+		return if (open <= 0.25f) (open * k).coerceAtMost(0.85f)
+		else {
+			val start = (0.25f * k).coerceAtMost(0.85f)
+			start + (1f - start) * ((open - 0.25f) / 0.75f)
+		}
+	}
+
+	private fun computePose(pose: Pose): EvaluatedPose {
+		val openEff = effectiveOpen(pose.open)
+		val extraOpen = max(0f, pose.open - 1f)
+		val narrowAdd = if (options.narrow > 1e-5f) {
+			-options.narrow * sin(PI.toFloat() * (pose.open / 0.7f).coerceIn(0f, 1f))
+		} else 0f
+		val widthEff = pose.width + narrowAdd
+		val formEff = (pose.form * options.formStrength).coerceIn(-1.5f, 1.5f)
+		val closedGapNorm = gap * fit.width / target.widthPx
+
+		val srcPose = model.evaluateNormalized(
+			openY = openEff,
+			form = formEff,
+			press = pose.press,
+			mouthX = pose.mouthX,
+			width = widthEff,
+			funnel = pose.funnel,
+			shrug = pose.shrug,
+			jaw = pose.jaw,
+			cornerLUp = pose.cornerLUp,
+			cornerLDown = pose.cornerLDown,
+			cornerRUp = pose.cornerRUp,
+			cornerRDown = pose.cornerRDown,
+			cornerLOut = pose.cornerLOut,
+			cornerROut = pose.cornerROut,
+			puckerL = pose.puckerL,
+			puckerR = pose.puckerR,
+		)
+		val hasAsym = abs(pose.mouthX) > 1e-6f ||
+			abs(pose.cornerLUp) > 1e-6f || abs(pose.cornerLDown) > 1e-6f ||
+			abs(pose.cornerRUp) > 1e-6f || abs(pose.cornerRDown) > 1e-6f ||
+			abs(pose.cornerLOut) > 1e-6f || abs(pose.cornerROut) > 1e-6f ||
+			abs(pose.puckerL) > 1e-6f || abs(pose.puckerR) > 1e-6f
+
+		val tr = model.transferToTargetLocal(
+			srcPose, target.u0LocalNorm, target.l0LocalNorm, target.hasLines,
+			extraOpen = extraOpen, closedGap = closedGapNorm, customCurveDelta = customCurveDelta,
+		)
+		val trSym = if (hasAsym) {
+			val srcSym = model.evaluateNormalized(
+				openY = openEff,
+				form = formEff,
+				press = pose.press,
+				mouthX = 0f,
+				width = widthEff,
+				funnel = pose.funnel,
+				shrug = pose.shrug,
+				jaw = pose.jaw,
+			)
+			model.transferToTargetLocal(
+				srcSym, target.u0LocalNorm, target.l0LocalNorm, target.hasLines,
+				extraOpen = extraOpen, closedGap = closedGapNorm, customCurveDelta = customCurveDelta,
+			)
+		} else tr
+
+		val w = target.widthPx
+		val u1LocPx = FloatArray(stations * 2) { tr.upperLocal[it] * w }
+		val l1LocPx = FloatArray(stations * 2) { tr.lowerLocal[it] * w }
+		val usLocPx = if (hasAsym) FloatArray(stations * 2) { trSym.upperLocal[it] * w } else u1LocPx
+		val lsLocPx = if (hasAsym) FloatArray(stations * 2) { trSym.lowerLocal[it] * w } else l1LocPx
+
+		val u1World = FloatArray(stations * 2)
+		val l1World = FloatArray(stations * 2)
+		val u1MU = FloatArray(stations)
+		val u1MV = FloatArray(stations)
+		val l1MU = FloatArray(stations)
+		val l1MV = FloatArray(stations)
+		val closing = FloatArray(stations)
+		for (i in 0 until stations) {
+			val uw = target.localPxToRig(u1LocPx[i * 2], u1LocPx[i * 2 + 1])
+			val lw = target.localPxToRig(l1LocPx[i * 2], l1LocPx[i * 2 + 1])
+			u1World[i * 2] = uw.first; u1World[i * 2 + 1] = uw.second
+			l1World[i * 2] = lw.first; l1World[i * 2 + 1] = lw.second
+			val (umu, umv) = fit.toMouth(uw.first, uw.second)
+			val (lmu, lmv) = fit.toMouth(lw.first, lw.second)
+			u1MU[i] = umu; u1MV[i] = umv - fit.baseline(umu)
+			l1MU[i] = lmu; l1MV[i] = lmv - fit.baseline(lmu)
+			val ap1 = max(0f, l1LocPx[i * 2 + 1] - u1LocPx[i * 2 + 1])
+			closing[i] = 1f - (ap1 / target.ap0MidPx).coerceIn(0f, 1f)
+		}
+		val (tU1, nU1) = MouthThreeLayerModel.computeFrenet(u1World, stations)
+		val (tL1, nL1) = MouthThreeLayerModel.computeFrenet(l1World, stations)
+
+		val ap1Mid = max(0f, l1LocPx[midIdx * 2 + 1] - u1LocPx[midIdx * 2 + 1])
+		val openRatio = (ap1Mid / target.ap0MidPx).coerceIn(0f, 1.6f)
+
+		val u0MidY = target.u0LocPx[midIdx * 2 + 1]
+		val l0MidY = target.l0LocPx[midIdx * 2 + 1]
+		val duSymMid = usLocPx[midIdx * 2 + 1] - u0MidY
+		val dlSymMid = lsLocPx[midIdx * 2 + 1] - l0MidY
+		val apSymMid = max(0f, lsLocPx[midIdx * 2 + 1] - usLocPx[midIdx * 2 + 1])
+		val h0 = target.h0Px
+		val openSym = (apSymMid / h0).coerceIn(0f, 1.6f)
+
+		// 1. Symmetric maxillary & mandibular tooth placement:
+		//    Stationary maxilla over open in 0..0.48 at form = 0, smooth settle to 0 at open = 1,
+		//    bared-teeth reveal on PressLipOpen > 0, tuck in pucker/funnel, and zero gap above teeth.
+		val onUt = smoothstep(0.48f, 1.0f, openEff.coerceIn(0f, 1f))
+		var dyUtSymMid = maxillaShutHoldPx * (1f - onUt)
+		val baredAmt = max(0f, max(pose.press, 0.7f * pose.shrug)) * (1f - openEff.coerceIn(0f, 1f))
+		val baredVis = max(0f, max(pose.press, 0.7f * pose.shrug)) * 0.78f * apSymMid
+		if (baredAmt > 1e-4f) {
+			val targetBared = min(target.hUtVis0, baredVis)
+			val dyBared = duSymMid - (target.hUtVis0 - targetBared)
+			dyUtSymMid += (dyBared - dyUtSymMid) * baredAmt.coerceAtMost(1f)
+		}
+		val narrowSym = max(0.82f * max(0f, pose.funnel), max(0f, -widthEff))
+		dyUtSymMid -= 0.12f * h0 * narrowSym
+		if (formEff > 0f) {
+			dyUtSymMid -= 0.04f * h0 * formEff * (1f - openEff.coerceIn(0f, 1f))
+		} else if (formEff < 0f) {
+			dyUtSymMid -= 0.05f * h0 * (-formEff) * (1f - 0.5f * openEff.coerceIn(0f, 1f))
+		}
+		dyUtSymMid = min(dyUtSymMid, duSymMid)
+
+		val visGate = smoothstep(0.06f, 0.16f, openSym)
+		val ltGate = smoothstep(0.12f, 0.45f, openSym) *
+			(1f - 0.75f * max(0f, -formEff).coerceAtMost(1f)) *
+			(1f - 0.70f * max(0f, pose.funnel).coerceAtMost(1f))
+		val targetLtVis = min(target.hLtVis0, min(target.hLtVis0 * (0.20f + 0.80f * ltGate), 0.26f * apSymMid * visGate))
+		val rawLt = dlSymMid + (target.hLtVis0 - targetLtVis)
+		val dyLtSymMid = if (dlSymMid < -1e-5f) {
+			rawLt.coerceIn(0.92f * dlSymMid, 0.45f * dlSymMid)
+		} else rawLt
+
+		// Top-bleed reserve guard active only when painted upper teeth have tight side margin (< 0.035 * W),
+		// keeping symmetric upper teeth strictly rigid otherwise.
+		val tightSideReserve = target.utSideReserve < 0.035f * w
+
+		// 2. Shared Asymmetric / Wry Mouth Warp with orthogonal rigid tooth-row tilt
+		var axU = 0f; var dxxU = 0f; var slopeULin = 0f
+		var axL = 0f; var dxxL = 0f; var slopeLLin = 0f
+		val dyUtCurve = FloatArray(stations)
+		val dyLtCurve = FloatArray(stations)
+		val dmAsymY = FloatArray(stations)
+
+		if (hasAsym) {
+			val u0X = FloatArray(stations) { target.u0LocPx[it * 2] }
+			val l0X = FloatArray(stations) { target.l0LocPx[it * 2] }
+			val duAsymX = FloatArray(stations) { u1LocPx[it * 2] - usLocPx[it * 2] }
+			val duAsymY = FloatArray(stations) { u1LocPx[it * 2 + 1] - usLocPx[it * 2 + 1] }
+			val dlAsymX = FloatArray(stations) { l1LocPx[it * 2] - lsLocPx[it * 2] }
+			val dlAsymY = FloatArray(stations) { l1LocPx[it * 2 + 1] - lsLocPx[it * 2 + 1] }
+
+			val linUx = fitLine(u0X, duAsymX); axU = linUx.first; dxxU = linUx.second
+			slopeULin = fitLine(u0X, duAsymY).second
+			val linLx = fitLine(l0X, dlAsymX); axL = linLx.first; dxxL = linLx.second
+			slopeLLin = fitLine(l0X, dlAsymY).second
+
+			val symUtVis = (target.hUtVis0 + dyUtSymMid - duSymMid).coerceAtLeast(0f)
+			val symLtVis = (target.hLtVis0 - (dyLtSymMid - dlSymMid)).coerceAtLeast(0f)
+
+			for (i in 0 until stations) {
+				val ap1C = max(0f, l1LocPx[i * 2 + 1] - u1LocPx[i * 2 + 1])
+				val apsC = max(0f, lsLocPx[i * 2 + 1] - usLocPx[i * 2 + 1])
+				val locGate = smoothstep(0.05f * h0, 0.15f * h0, ap1C)
+				val locBudgetUt = max(baredVis, 0.45f * ap1C * locGate)
+				val pinchedTuckUt = if (ap1C < apsC) max(0f, symUtVis - locBudgetUt) else 0f
+				val openedRevealUt = if (ap1C > apsC + 1f && openSym < 0.25f) {
+					max(0f, min(0.32f * ap1C * locGate, 0.42f * target.hUtVis0) - symUtVis)
+				} else 0f
+
+				val duArch = (usLocPx[i * 2 + 1] - target.u0LocPx[i * 2 + 1]) - duSymMid
+				val symArchU = if (tightSideReserve && duArch < 0f) 0.82f * duArch else 0f
+				dyUtCurve[i] = dyUtSymMid + symArchU + duAsymY[i] - pinchedTuckUt + openedRevealUt
+
+				val locBudgetLt = 0.22f * ap1C * smoothstep(0.10f * h0, 0.25f * h0, ap1C)
+				val pinchedTuckLt = if (ap1C < apsC) max(0f, symLtVis - locBudgetLt) else 0f
+				val dlArch = (lsLocPx[i * 2 + 1] - target.l0LocPx[i * 2 + 1]) - dlSymMid
+				val symArchL = if (target.isLayeredArt) 0.22f * dlArch else 0f
+				dyLtCurve[i] = dyLtSymMid + symArchL + dlAsymY[i] + pinchedTuckLt
+				dmAsymY[i] = 0.5f * (duAsymY[i] + dlAsymY[i])
+			}
+		} else {
+			for (i in 0 until stations) {
+				val duArch = (usLocPx[i * 2 + 1] - target.u0LocPx[i * 2 + 1]) - duSymMid
+				val symArchU = if (tightSideReserve && duArch < 0f) 0.82f * duArch else 0f
+				dyUtCurve[i] = dyUtSymMid + symArchU
+
+				val dlArch = (lsLocPx[i * 2 + 1] - target.l0LocPx[i * 2 + 1]) - dlSymMid
+				val symArchL = if (target.isLayeredArt) 0.20f * dlArch else 0f
+				dyLtCurve[i] = dyLtSymMid + symArchL
+			}
+		}
+
+		val utCubic = if (hasAsym || tightSideReserve) fitCubicCoeffs(target.xiU0, dyUtCurve, 2e-3f) else floatArrayOf(dyUtSymMid, 0f, 0f, 0f)
+		val ltCubic = if (hasAsym || target.isLayeredArt) fitCubicCoeffs(target.xiL0, dyLtCurve, 2e-3f) else floatArrayOf(dyLtSymMid, 0f, 0f, 0f)
+		val tngCubic = if (hasAsym) fitCubicCoeffs(target.xiU0, dmAsymY, 3e-3f) else floatArrayOf(0f, 0f, 0f, 0f)
+
+		val thetaUt = atan(slopeULin).coerceIn(-0.55f, 0.55f)
+		val thetaLt = atan(slopeLLin).coerceIn(-0.55f, 0.55f)
+		val kxUt = if (dxxU >= 0f) 0.72f * dxxU else 0.20f * dxxU
+		val kxLt = if (dxxL >= 0f) 0.72f * dxxL else 0.20f * dxxL
+
+		return EvaluatedPose(
+			pose = pose,
+			u1World = u1World,
+			l1World = l1World,
+			u1LocPx = u1LocPx,
+			l1LocPx = l1LocPx,
+			usLocPx = usLocPx,
+			lsLocPx = lsLocPx,
+			u1MouthU = u1MU,
+			u1MouthV = u1MV,
+			l1MouthU = l1MU,
+			l1MouthV = l1MV,
+			tU1 = tU1,
+			nU1 = nU1,
+			tL1 = tL1,
+			nL1 = nL1,
+			closing = closing,
+			shiftXPx = tr.shiftXNorm * w,
+			openRatio = openRatio,
+			openSym = openSym,
+			duSymMid = duSymMid,
+			dlSymMid = dlSymMid,
+			hasAsym = hasAsym,
+			dyUtSymMid = dyUtSymMid,
+			dyLtSymMid = dyLtSymMid,
+			utCubic = utCubic,
+			ltCubic = ltCubic,
+			tngAsymCubic = tngCubic,
+			axU = axU,
+			kxUt = kxUt,
+			sinThetaUt = sin(thetaUt),
+			cosThetaUt = cos(thetaUt),
+			yUtPivot = u0MidY + 0.35f * target.hUtVis0,
+			axL = axL,
+			kxLt = kxLt,
+			sinThetaLt = sin(thetaLt),
+			cosThetaLt = cos(thetaLt),
+			yLtPivot = l0MidY - 0.35f * target.hLtVis0,
+			tongueDx = if (hasAsym) 0.5f * (axU + axL) else 0f,
+			dxxMean = 0.5f * (dxxU + dxxL),
+		)
+	}
+
+	private fun rigDeltaToMouth(dxRig: Float, dyRig: Float): Pair<Float, Float> {
+		val invW = 1f / fit.width.coerceAtLeast(1e-4f)
+		val du = (dxRig * fit.axisX + dyRig * fit.axisY) * invW
+		val dv = (dxRig * (-fit.axisY) + dyRig * fit.axisX) * invW
+		return du to dv
+	}
 
 	/** The lip edges of [pose] at [u] (of the drawing), below the corners' line. */
 	fun edges(pose: Pose, u: Float): Pair<Float, Float> {
-		val hump = EyeRig.hump(u).coerceAtLeast(0f)
-		var ur = drawnUpper(u); var lr = drawnLower(u)
-		// A round mouth is an oval about the middle of its opening, its corners come to that middle line: upright there,
-		// so the lips meet without a point, and as deep above as below, so it does not taper to a point at the bottom.
-		// Toward the corners the edges go wholly to the oval whatever the drawing keeps at its middle, or a drawn corner's
-		// wall stays as a spike; and it closes toward that middle line, not the drawn closed shape.
-		val oval = 2f * sqrt((u * (1f - u)).coerceAtLeast(0f))
-		val middle = (drawnUpper(0.5f) + drawnLower(0.5f)) / 2f
-		val half = (drawnLower(0.5f) - drawnUpper(0.5f)) / 2f
-		val round = if (pose.round <= 0f) 0f else pose.round + (1f - pose.round) * (pose.round / 0.3f).coerceAtMost(1f) * (1f - oval)
-		ur += (middle - half * oval - ur) * round
-		lr += (middle + half * oval - lr) * round
-		ur *= 1f - 0.6f * pose.flatTop
-		val c = closed(u) * (1f - pose.press) * (1f - round) + middle * round - pose.lift * hump
-		var top = c + (ur - c) * pose.upper - gap * 0.5f * hump
-		var bottom = c + (lr - c) * pose.lower + gap * 0.5f * hump
-		val rise = pose.corner * (1f - hump)
-		top -= rise; bottom -= rise
-		if (bottom < top) { val m = (top + bottom) / 2f; top = m; bottom = m }
+		val ep = eval(pose)
+		val uc = u.coerceIn(0f, 1f)
+		val f = uc * (stations - 1)
+		val i = f.toInt().coerceAtMost(stations - 2)
+		val t = f - i
+		val duV = (ep.u1MouthV[i] - target.u0MouthV[i]) * (1f - t) + (ep.u1MouthV[i + 1] - target.u0MouthV[i + 1]) * t
+		val dlV = (ep.l1MouthV[i] - target.l0MouthV[i]) * (1f - t) + (ep.l1MouthV[i + 1] - target.l0MouthV[i + 1]) * t
+		var top = drawnUpper(uc) + duV
+		var bottom = drawnLower(uc) + dlV
+		if (bottom < top) {
+			val m = 0.5f * (top + bottom)
+			top = m; bottom = m
+		}
 		return top to bottom
 	}
 
 	/**
-	 * Where a point of the mouth at ([u], [v]) in the mouth's frame goes in [pose], as a change in the frame. A [tight]
-	 * point keeps no lip line's band: a ribbon, which is the line itself, and a fill the ribbons outline, which closes
-	 * whole under them into the one line they meet in.
+	 * Whole-mouth point displacement in `(u, v)` frame for single-layer mouths and generated lip ribbons.
 	 */
 	fun move(u: Float, v: Float, pose: Pose, tight: Boolean = false): Pair<Float, Float> {
+		val ep = eval(pose)
 		val uc = u.coerceIn(0f, 1f)
 		val r = v - fit.baseline(u)
-		val u0 = drawnUpper(uc); val l0 = drawnLower(uc)
+		val u0 = drawnUpper(uc)
+		val l0 = drawnLower(uc)
 		val (u1, l1) = edges(pose, uc)
-		val band = if (tight) 0f else band
-		val tb = min(band, max(0f, l0 - u0) * 0.3f)
-		// Past an edge a lip line's thickness stays as drawn; more than that - a round mouth's side bending away near a
-		// corner - closes with the mouth, or a shut mouth keeps hooks at its corners.
+		val bandEff = if (tight) 0f else band
+		val tb = min(bandEff, max(0f, l0 - u0) * 0.3f)
 		val ratio = ((edges(pose, 0.5f).let { it.second - it.first }) / h.coerceAtLeast(1e-4f)).coerceIn(0f, 1.5f)
 		fun beyond(d: Float): Float {
-			val keep = d.coerceIn(-band, band)
+			val keep = d.coerceIn(-bandEff, bandEff)
 			return keep + (d - keep) * ratio
 		}
-		// Past an edge a point keeps to the point of the drawn edge nearest it, not the one straight above or below: by a
-		// mouth's end the edge runs steep, and a drawn corner measured upright stands off a rounded mouth as a spike.
+		fun posedUAt(at: Float, upper: Boolean): Float {
+			val f = at.coerceIn(0f, 1f) * (stations - 1)
+			val idx = f.toInt().coerceAtMost(stations - 2)
+			val frac = f - idx
+			val arr = if (upper) ep.u1MouthU else ep.l1MouthU
+			return arr[idx] * (1f - frac) + arr[idx + 1] * frac
+		}
+		val uLeft = 0.5f * (ep.u1MouthU.first() + ep.l1MouthU.first())
+		val uRight = 0.5f * (ep.u1MouthU.last() + ep.l1MouthU.last())
+		val widthScale = (uRight - uLeft).coerceAtLeast(0.2f)
+
 		if (r < u0 || r > l0) {
 			val upper = r < u0
-			val (at, dx, dy) = nearest(if (upper) ::drawnUpper else ::drawnLower, u, r)
-			val length = sqrt(dx * dx + dy * dy)
+			val (at, dx, dy) = nearestEdge(if (upper) ::drawnUpper else ::drawnLower, u, r)
+			val length = hypot(dx, dy)
 			val k = if (length < 1e-6f) 1f else beyond(length) / length
 			val edge = edges(pose, at).let { if (upper) it.first else it.second }
-			val un = 0.5f + (at + dx * k - 0.5f) * pose.width + pose.shift
+			val un = posedUAt(at, upper) + dx * k * widthScale
 			return (un - u) to (fit.baseline(un) + edge + dy * k - v)
 		}
-		val r1 = when {
-			r <= u0 + tb -> u1 + beyond(r - u0)
-			r >= l0 - tb -> l1 + beyond(r - l0)
+		val (r1, sBlend) = when {
+			r <= u0 + tb -> (u1 + beyond(r - u0)) to 0f
+			r >= l0 - tb -> (l1 + beyond(r - l0)) to 1f
 			else -> {
-				val inTop = u1 + tb; val inBottom = max(l1 - tb, inTop)
-				val t = (r - (u0 + tb)) / ((l0 - tb) - (u0 + tb)).coerceAtLeast(1e-5f)
-				inTop + (inBottom - inTop) * t
+				val inTop = u1 + tb
+				val inBottom = max(l1 - tb, inTop)
+				val t = ((r - (u0 + tb)) / ((l0 - tb) - (u0 + tb)).coerceAtLeast(1e-5f)).coerceIn(0f, 1f)
+				(inTop + (inBottom - inTop) * t) to t
 			}
 		}
-		val un = 0.5f + (u - 0.5f) * pose.width + pose.shift
+		val uTop = posedUAt(uc, true)
+		val uBot = posedUAt(uc, false)
+		val un = uTop * (1f - sBlend) + uBot * sBlend + (u - uc) * widthScale
 		val vn = fit.baseline(un) + r1
 		return (un - u) to (vn - v)
 	}
 
 	/** Where a point at ([u], [v]) of a layer that follows the lips as [follow] goes in [pose], as a change in the frame. */
-	fun moveAs(follow: Follow, u: Float, v: Float, pose: Pose): Pair<Float, Float> = when (follow) {
+	fun moveAs(follow: Follow, u: Float, v: Float, pose: Pose): Pair<Float, Float> = moveAsInternal(follow, u, v, pose, chin = 0.6f)
+
+	private fun moveAsInternal(follow: Follow, u: Float, v: Float, pose: Pose, chin: Float, teethDepthVal: Float = 0f): Pair<Float, Float> = if (pose == Pose(open = 1f)) 0f to 0f else when (follow) {
 		Follow.WHOLE -> move(u, v, pose)
 		Follow.WHOLE_TIGHT -> move(u, v, pose, tight = true)
-		Follow.OPENING -> between(u, v, pose)
-		// Toward the corners, where the lips are thin, the inside closes whole.
-		Follow.INSIDE -> between(u, v, pose).let { (du, dv) -> du to dv * (1f - options.inside.coerceIn(0f, 1f) * EyeRig.hump(u.coerceIn(0f, 1f)).coerceAtLeast(0f)) }
-		Follow.UPPER_LINE -> line(true, u, v, pose)
-		Follow.LOWER_LINE -> line(false, u, v, pose)
-		Follow.UPPER_LIP -> rides(true, u, v, pose, share = 1f, falloff = true, meet = true)
-		Follow.LOWER_LIP -> rides(false, u, v, pose, share = 1f, falloff = true, meet = true)
-		Follow.UPPER_TEETH -> teeth(u, pose, upper = true)
-		Follow.LOWER_TEETH -> teeth(u, pose, upper = false)
-		Follow.TONGUE -> pose.shift to middleDrop(pose, upper = false) * TONGUE_SHARE
-		Follow.DEEP -> pose.shift to 0f
+		Follow.OPENING -> openingMove(u, v, pose)
+		Follow.INSIDE -> openingMove(u, v, pose).let { (du, dv) ->
+			du to dv * (1f - options.inside.coerceIn(0f, 1f) * EyeRig.hump(u.coerceIn(0f, 1f)).coerceAtLeast(0f))
+		}
+		Follow.UPPER_LINE -> strokeMove(true, u, v, pose)
+		Follow.LOWER_LINE -> strokeMove(false, u, v, pose)
+		Follow.UPPER_LIP -> lipSkinMove(true, u, v, pose, chin)
+		Follow.LOWER_LIP -> lipSkinMove(false, u, v, pose, chin)
+		Follow.UPPER_TEETH -> teethAt(u, v, pose, upper = true, depth = teethDepthVal)
+		Follow.LOWER_TEETH -> teethAt(u, v, pose, upper = false, depth = 0f)
+		Follow.TONGUE -> tongueMove(u, v, pose, protruding = false)
+		Follow.PROTRUDING_TONGUE -> tongueMove(u, v, pose, protruding = true)
+		Follow.DEEP -> deepMove(pose)
 	}
 
-	/**
-	 * A point riding the upper or lower lip whole: it keeps its offset from the drawn edge's nearest point while that
-	 * point moves to the posed edge, [share] of the way down the face. With [falloff] it rides less the further out it
-	 * lies - a lip's skin margin. With [meet] the edge's band closes half its thickness toward the other lip as the mouth
-	 * shuts, so two lines - and the lips beyond them - meet in one line rather than stacking.
-	 */
-	private fun rides(upper: Boolean, u: Float, v: Float, pose: Pose, share: Float, falloff: Boolean, meet: Boolean): Pair<Float, Float> {
-		val r = v - fit.baseline(u)
-		val (at, ox, oy) = nearest(if (upper) ::drawnUpper else ::drawnLower, u, r)
-		val edge = edges(pose, at).let { if (upper) it.first else it.second }
-		val ratio = (edges(pose, 0.5f).let { it.second - it.first } / h.coerceAtLeast(1e-4f)).coerceIn(0f, 1f)
-		val closing = if (!meet) 0f else 1f - ratio
-		// A line keeps its thickness from its edge; more than that - a round mouth's side running up past its corner - closes
-		// with the mouth, or a shut mouth keeps ticks standing at its corners. A lip's skin margin keeps its reach.
-		val (dx, dy) = if (falloff) ox to oy else {
-			val reach = sqrt(ox * ox + oy * oy); val keep = if (line > 0f) line else band
-			if (reach <= keep) ox to oy else ((keep + (reach - keep) * ratio) / reach).let { k -> ox * k to oy * k }
+	private fun strokeRaw(upper: Boolean, xRig: Float, yRig: Float, ep: EvaluatedPose): Triple<Float, Float, Float> {
+		val c0 = if (upper) target.u0World else target.l0World
+		val c1 = if (upper) ep.u1World else ep.l1World
+		val t0 = if (upper) target.tU0 else target.tL0
+		val n0 = if (upper) target.nU0 else target.nL0
+		val t1 = if (upper) ep.tU1 else ep.tL1
+		val n1 = if (upper) ep.nU1 else ep.nL1
+
+		var bestSeg = 0
+		var bestT = 0f
+		var bestDist2 = Float.POSITIVE_INFINITY
+		for (i in 0 until stations - 1) {
+			val ax = c0[i * 2]; val ay = c0[i * 2 + 1]
+			val bx = c0[(i + 1) * 2]; val by = c0[(i + 1) * 2 + 1]
+			val vx = bx - ax; val vy = by - ay
+			val segLen2 = vx * vx + vy * vy
+			val tSeg = if (segLen2 > 1e-10f) (((xRig - ax) * vx + (yRig - ay) * vy) / segLen2).coerceIn(0f, 1f) else 0f
+			val px = ax + tSeg * vx; val py = ay + tSeg * vy
+			val dx = xRig - px; val dy = yRig - py
+			val d2 = dx * dx + dy * dy
+			if (d2 < bestDist2) {
+				bestDist2 = d2
+				bestSeg = i
+				bestT = tSeg
+			}
 		}
-		// Each line lies inside its edge: shut, the upper one rises and the lower one drops half a line onto the other. Where
-		// they are drawn as one stroke - toward the corners, the edges less than two lines apart - they already are one.
-		val apart = if (line <= 0f) 0f else ((drawnLower(at) - drawnUpper(at) - line) / line).coerceIn(0f, 1f)
-		val toward = (if (upper) -1f else 1f) * line * 0.5f * closing * apart
-		// Pressed, the lips roll in: each pushes on past the other at the middle, the skin further out following less, so less of
-		// the lips' colour shows; their lines stay met in one.
-		val roll = if (!falloff) 0f else (if (upper) 1f else -1f) * pose.press * PRESS_ROLL * EyeRig.hump(at).coerceAtLeast(0f)
-		if (!falloff) {
-			// A line is a stroke along its edge: its offset from the edge turns as the edge turns, so where a round mouth's edge
-			// stands upright at its corner the stroke's end bends with it, not standing off as a spur.
-			val drawn = if (upper) ::drawnUpper else ::drawnLower
-			val posed = { a: Float -> edges(pose, a).let { if (upper) it.first else it.second } }
-			val turn = atan2(fit.cornerV * pose.width + slope(posed, at), pose.width) - atan2(fit.cornerV + slope(drawn, at), 1f)
-			val gx = dx; val gy = dy + fit.cornerV * dx
-			// Only the stroke's own thickness turns; what lies further off - the opening's inside - keeps its direction.
-			val reach = sqrt(gx * gx + gy * gy); val keep = if (line > 0f) line else band
-			val near = if (reach <= keep) 1f else keep / reach
-			val nx = gx * near; val ny = gy * near; val fx = gx - nx; val fy = gy - ny
-			val x = 0.5f + (at - 0.5f) * pose.width + pose.shift
-			val px = x + nx * cos(turn) - ny * sin(turn) + fx * pose.width
-			val py = fit.baseline(x) + edge + nx * sin(turn) + ny * cos(turn) + fy + toward
-			return (px - u) to (py - v) * share
+
+		val i0 = bestSeg; val i1 = bestSeg + 1; val s = bestT; val oms = 1f - s
+		val c0x = c0[i0 * 2] * oms + c0[i1 * 2] * s
+		val c0y = c0[i0 * 2 + 1] * oms + c0[i1 * 2 + 1] * s
+		val c1x = c1[i0 * 2] * oms + c1[i1 * 2] * s
+		val c1y = c1[i0 * 2 + 1] * oms + c1[i1 * 2 + 1] * s
+
+		var t0x = t0[i0 * 2] * oms + t0[i1 * 2] * s
+		var t0y = t0[i0 * 2 + 1] * oms + t0[i1 * 2 + 1] * s
+		val l0Len = hypot(t0x, t0y).coerceAtLeast(1e-8f)
+		t0x /= l0Len; t0y /= l0Len
+		val n0x = -t0y; val n0y = t0x
+
+		var t1x = t1[i0 * 2] * oms + t1[i1 * 2] * s
+		var t1y = t1[i0 * 2 + 1] * oms + t1[i1 * 2 + 1] * s
+		val l1Len = hypot(t1x, t1y).coerceAtLeast(1e-8f)
+		t1x /= l1Len; t1y /= l1Len
+		val n1x = -t1y; val n1y = t1x
+
+		val closeVal = ep.closing[i0] * oms + ep.closing[i1] * s
+		val relX = xRig - c0x; val relY = yRig - c0y
+		val tau = relX * t0x + relY * t0y
+		val nu = relX * n0x + relY * n0y
+
+		var nuScale = 1f - 0.22f * max(0f, -ep.pose.press) * closeVal
+		if (!upper && target.isLayeredArt) {
+			nuScale *= (1f - 0.30f * closeVal)
 		}
-		val un = 0.5f + (at + dx - 0.5f) * pose.width + pose.shift
-		val du = un - u
-		val dv = fit.baseline(un) + edge + dy + toward + roll - v
-		val w = if (!falloff) 1f else {
-			val t = ((sqrt(dx * dx + dy * dy) - SKIN_NEAR) / SKIN_REACH).coerceIn(0f, 1f)
-			1f - SKIN_FAR_LOSS * t * t * (3f - 2f * t)
-		}
-		return du * w to dv * w * share
+		val keepPx = max(1.6f * target.linePx, 0.045f * target.widthPx)
+		val nuClamped = nu.coerceIn(-keepPx, keepPx)
+		val nuEff = nuClamped * nuScale + (nu - nuClamped) * (1f - closeVal)
+
+		val posedX = c1x + tau * t1x + nuEff * n1x
+		val posedY = c1y + tau * t1y + nuEff * n1y
+		val uAt = (i0 + s) / (stations - 1).toFloat()
+		return Triple(posedX - xRig, posedY - yRig, uAt)
 	}
 
-	/**
-	 * A point of a lip line: it rides its own edge, and toward a corner more and more as the other line does too - half
-	 * and half at the corner - so where the two lines' ends lie over each other they stay over each other, the corner one
-	 * overlap of both ends rather than two strokes stepped apart as a round mouth turns its corners upright.
-	 */
-	private fun line(upper: Boolean, u: Float, v: Float, pose: Pose): Pair<Float, Float> {
-		val own = rides(upper, u, v, pose, share = 1f, falloff = false, meet = true)
-		val at = nearest(if (upper) ::drawnUpper else ::drawnLower, u, v - fit.baseline(u)).first
-		val s = (1f - min(at, 1f - at) / CORNER_ZONE).coerceIn(0f, 1f)
-		if (s <= 0f) return own
-		val other = rides(!upper, u, v, pose, share = 1f, falloff = false, meet = true)
+	private fun strokeMove(upper: Boolean, u: Float, v: Float, pose: Pose): Pair<Float, Float> {
+		val ep = eval(pose)
+		val (xRig, yRig) = fit.toCanvas(u, v)
+		val (ownDx, ownDy, uAt) = strokeRaw(upper, xRig, yRig, ep)
+		val s = (1f - min(uAt, 1f - uAt) / CORNER_ZONE).coerceIn(0f, 1f)
+		if (s <= 0f) return rigDeltaToMouth(ownDx, ownDy)
+		val (otherDx, otherDy, _) = strokeRaw(!upper, xRig, yRig, ep)
 		val w = 0.5f * s * s * (3f - 2f * s)
-		return (own.first + (other.first - own.first) * w) to (own.second + (other.second - own.second) * w)
+		return rigDeltaToMouth(ownDx + (otherDx - ownDx) * w, ownDy + (otherDy - ownDy) * w)
 	}
 
-	/**
-	 * A point of the opening between the lips: it keeps its place between the two lines as they move, at the upper
-	 * line's motion along the upper edge and the lower line's along the lower one, so the opening's edge stays under its
-	 * line in every pose - at the corners too - and shut, closes into the lines' one line. Past an edge it rides that line.
-	 */
-	private fun between(u: Float, v: Float, pose: Pose): Pair<Float, Float> {
-		val uc = u.coerceIn(0f, 1f)
-		val r = v - fit.baseline(u)
-		// Under each line's band - measured to the nearest point of its edge, as the line itself rides, so a round mouth's
-		// steep sides agree too - the opening rides that line, its edge keeping its place in the band. Between the bands it
-		// goes with both lines by how near each is: as the lips close each draws its side in, and the two meet between them.
-		val lined = min(line, (drawnLower(uc) - drawnUpper(uc)).coerceAtLeast(0f) / 2f)
-		val (_, ux, uy) = nearest(::drawnUpper, u, r); val (_, lx, ly) = nearest(::drawnLower, u, r)
-		val toUpper = sqrt(ux * ux + uy * uy); val toLower = sqrt(lx * lx + ly * ly)
-		val upper = line(true, u, v, pose)
-		if (r <= drawnUpper(uc) || toUpper <= lined) return upper
-		val lower = line(false, u, v, pose)
-		if (r >= drawnLower(uc) || toLower <= lined) return lower
-		// Squared, so a point close by one line - a round mouth's side wall - goes with that line, not half with the other.
-		val a = (toUpper - lined).let { it * it }; val b = (toLower - lined).let { it * it }
-		val t = (a / (a + b).coerceAtLeast(1e-10f)).coerceIn(0f, 1f)
-		return (upper.first + (lower.first - upper.first) * t) to (upper.second + (lower.second - upper.second) * t)
-	}
-
-	/**
-	 * A row of teeth, as hand-made rigs move it: whole - neither bent along its lip nor squashed, its width as drawn, so
-	 * the opening shows as much of it as the drawing gives it, a full row running past the corners or a short one between
-	 * them. While the mouth opens its first half the upper row stays where it sits shut and the opening, growing, uncovers
-	 * it - the lips part off the teeth - and over the second half it goes on to its drawn place; the lower row, the jaw's,
-	 * goes with the lower lip all the way. The upper row never sits lower under its lip than drawn, so no gap opens above
-	 * it. Each follows its lip only part
-	 * way - the upper row [UPPER_TEETH_SHARE] of the upper lip's middle, the lower [LOWER_TEETH_SHARE] of the lower's - and a
-	 * rounding mouth draws it in hardly at all, so the opening hides it behind the lips of a small, round or pouting
-	 * mouth. In a smile the upper row fills at most the upper half of the opening ([SMILE_TEETH_SHOW]), rising behind the
-	 * upper lip as far as that needs. A smile widens it evenly by [MouthOptions.teethWiden], none by default.
-	 */
-	internal fun teeth(u: Float, pose: Pose, upper: Boolean, depth: Float = 0f): Pair<Float, Float> {
-		val smile = (pose.corner / 0.06f).coerceIn(0f, 1.5f)
-		val un = 0.5f + (u - 0.5f) * (1f + options.teethWiden * smile) + pose.shift
-		// The lower row is the jaw's: it goes with the lower lip all the way.
-		val on = if (!upper) 1f else {
-			val half = staged(0.5f).second
-			((pose.lower - half) / (1f - half)).coerceIn(0f, 1f).let { it * it * (3f - 2f * it) }
+	private fun openingMove(u: Float, v: Float, pose: Pose): Pair<Float, Float> {
+		if (!target.isLayeredArt && target.hasLines) {
+			val uc = u.coerceIn(0f, 1f)
+			val r = v - fit.baseline(u)
+			val lined = min(line, (drawnLower(uc) - drawnUpper(uc)).coerceAtLeast(0f) / 2f)
+			val (_, ux, uy) = nearestEdge(::drawnUpper, u, r)
+			val (_, lx, ly) = nearestEdge(::drawnLower, u, r)
+			val toUpper = hypot(ux, uy); val toLower = hypot(lx, ly)
+			val upper = strokeMove(true, u, v, pose)
+			if (r <= drawnUpper(uc) || toUpper <= lined) return upper
+			val lower = strokeMove(false, u, v, pose)
+			if (r >= drawnLower(uc) || toLower <= lined) return lower
+			val a = (toUpper - lined).let { it * it }
+			val b = (toLower - lined).let { it * it }
+			val t = (a / (a + b).coerceAtLeast(1e-10f)).coerceIn(0f, 1f)
+			return (upper.first + (lower.first - upper.first) * t) to (upper.second + (lower.second - upper.second) * t)
 		}
-		val shut = middleDrop(pose.copy(upper = 0f, lower = 0f), upper)
-		var drop = (shut + (middleDrop(pose, upper) - shut) * on) * (if (upper) UPPER_TEETH_SHARE else LOWER_TEETH_SHARE) *
-			(1f - pose.round.coerceIn(0f, 1f))
-		// The upper row never sits lower under its lip than drawn: where the lip rises off it - a smile flattening the upper
-		// lip - it rises with it, so no gap opens above the teeth.
-		if (upper) drop = min(drop, middleDrop(pose, true))
-		// A smile shows the upper teeth at most down to the middle of its opening - often not at all, the lip still over
-		// them - not an opening full of teeth: given how far the row reaches below the lip ([depth], from its mesh), it
-		// rises behind the upper lip as far as that needs.
+
+		val ep = eval(pose)
+		val (xRig, yRig) = fit.toCanvas(u, v)
+		val (xLoc, yLoc) = target.toLocalPx(xRig, yRig)
+		val ox = target.openColsXLoc
+		val xFirst = ox.first(); val xLast = ox.last()
+		val uMap = ((xLoc - xFirst) / (xLast - xFirst).coerceAtLeast(1e-4f)).coerceIn(0f, 1f)
+		val extraX = when {
+			xLoc < xFirst -> xLoc - xFirst
+			xLoc > xLast -> xLoc - xLast
+			else -> 0f
+		}
+		val top0 = interp1D(xLoc, ox, target.openTopYLoc)
+		val bot0 = interp1D(xLoc, ox, target.openBotYLoc)
+		val span0 = max(bot0 - top0, max(1.2f, 0.015f * target.widthPx))
+		val frac = (yLoc - top0) / span0
+		val fracCl = frac.coerceIn(0f, 1f)
+
+		val f = uMap * (stations - 1)
+		val idx = f.toInt().coerceAtMost(stations - 2)
+		val s = f - idx; val oms = 1f - s
+		val ux = ep.u1LocPx[idx * 2] * oms + ep.u1LocPx[(idx + 1) * 2] * s
+		val uy = ep.u1LocPx[idx * 2 + 1] * oms + ep.u1LocPx[(idx + 1) * 2 + 1] * s
+		val lx = ep.l1LocPx[idx * 2] * oms + ep.l1LocPx[(idx + 1) * 2] * s
+		val ly = ep.l1LocPx[idx * 2 + 1] * oms + ep.l1LocPx[(idx + 1) * 2 + 1] * s
+
+		val newXLoc = (1f - fracCl) * ux + fracCl * lx + extraX
+		val newYLoc = (1f - frac) * uy + frac * ly
+		val (dxRig, dyRig) = target.localDeltaToRig(newXLoc - xLoc, newYLoc - yLoc)
+		return rigDeltaToMouth(dxRig, dyRig)
+	}
+
+	private fun perioralRimFollowLocal(xLoc: Float, yLoc: Float, ep: EvaluatedPose): Pair<Float, Float> {
+		val w = target.widthPx
+		val uxMin = target.uxMono0.first(); val uxMax = target.uxMono0.last()
+		val lxMin = target.lxMono0.first(); val lxMax = target.lxMono0.last()
+
+		val uu = interp1D(xLoc.coerceIn(uxMin, uxMax), target.uxMono0, uDense)
+		val lu = interp1D(xLoc.coerceIn(lxMin, lxMax), target.lxMono0, uDense)
+
+		val fu = uu * (stations - 1); val iu = fu.toInt().coerceAtMost(stations - 2); val su = fu - iu; val omu = 1f - su
+		val fl = lu * (stations - 1); val il = fl.toInt().coerceAtMost(stations - 2); val sl = fl - il; val oml = 1f - sl
+
+		val uy0 = target.u0LocPx[iu * 2 + 1] * omu + target.u0LocPx[(iu + 1) * 2 + 1] * su
+		val ly0 = target.l0LocPx[il * 2 + 1] * oml + target.l0LocPx[(il + 1) * 2 + 1] * sl
+
+		val duX = (ep.u1LocPx[iu * 2] - target.u0LocPx[iu * 2]) * omu + (ep.u1LocPx[(iu + 1) * 2] - target.u0LocPx[(iu + 1) * 2]) * su
+		val duY = (ep.u1LocPx[iu * 2 + 1] - target.u0LocPx[iu * 2 + 1]) * omu + (ep.u1LocPx[(iu + 1) * 2 + 1] - target.u0LocPx[(iu + 1) * 2 + 1]) * su
+		val dlX = (ep.l1LocPx[il * 2] - target.l0LocPx[il * 2]) * oml + (ep.l1LocPx[(il + 1) * 2] - target.l0LocPx[(il + 1) * 2]) * sl
+		val dlY = (ep.l1LocPx[il * 2 + 1] - target.l0LocPx[il * 2 + 1]) * oml + (ep.l1LocPx[(il + 1) * 2 + 1] - target.l0LocPx[(il + 1) * 2 + 1]) * sl
+
+		val midY = 0.5f * (uy0 + ly0)
+		val sUlRaw = ((yLoc - (midY - 0.12f * w)) / (0.24f * w)).coerceIn(0f, 1f)
+		val sUl = sUlRaw * sUlRaw * (3f - 2f * sUlRaw)
+		val dRimX = (1f - sUl) * duX + sUl * dlX
+		val dRimY = (1f - sUl) * duY + sUl * dlY
+
+		val dxOut = max(0f, max(uxMin - xLoc, xLoc - uxMax))
+		val dyUp = max(0f, uy0 - yLoc)
+		val dyDn = max(0f, yLoc - ly0)
+		val tx = ((dxOut - 0.20f * w) / (0.68f * w)).coerceIn(0f, 1f)
+
+		val vxN = xLoc / max(w, 1e-4f)
+		val noseCol = exp(-((vxN / 0.26f) * (vxN / 0.26f)))
+		val nearUp = (0.14f * noseCol + 0.22f * (1f - noseCol)) * w
+		val spanUp = (0.13f * noseCol + 0.36f * (1f - noseCol)) * w
+		val tyU = ((dyUp - nearUp) / spanUp.coerceAtLeast(1e-4f)).coerceIn(0f, 1f)
+		val tyD = ((dyDn - 0.20f * w) / (0.58f * w)).coerceIn(0f, 1f)
+		val t = hypot(tx, max(tyU, tyD)).coerceIn(0f, 1f)
+		val wP = 1f - t * t * (3f - 2f * t)
+		return (wP * dRimX) to (wP * dRimY)
+	}
+
+	private fun lippedFaceMoveLocal(xLoc: Float, yLoc: Float, ep: EvaluatedPose, chin: Float): Pair<Float, Float> {
+		val w = target.widthPx
+		val vx = xLoc / max(w, 1e-4f)
+		val vy = yLoc / max(w, 1e-4f)
+		var dx = 0f
+		var dy = 0f
+		if (options.jaw || abs(ep.pose.jaw) > 1e-6f) {
+			val chinSpan = max(0.35f, chin * 2.2f)
+			val tJaw = ((vy - 0.22f) / chinSpan).coerceIn(0f, 1f)
+			val wJaw = tJaw * tJaw * (3f - 2f * tJaw) * exp(-0.32f * vx * vx)
+			val openJawTerm = if (options.jaw && target.isLayeredArt) 0.14f * (max(0f, ep.openRatio - 0.2f) - 0.8f) else 0f
+			val jawAmt = (openJawTerm + 0.24f * ep.pose.jaw) * target.h0Px
+			dy += wJaw * jawAmt
+			dx += -vx * 0.10f * wJaw * jawAmt
+		}
+		if (ep.pose.cheek > 1e-5f) {
+			val across = ((abs(vx) - 0.32f) / 0.85f).coerceIn(0f, 1f)
+			val down = (1f - abs(vy - 0.18f) / 0.95f).coerceIn(0f, 1f)
+			val wc = sin(0.5f * PI.toFloat() * across) * down * down
+			dx += (if (vx >= 0f) 1f else -1f) * 0.11f * w * ep.pose.cheek * wc
+			dy += 0.02f * w * ep.pose.cheek * wc
+		}
+		val (rimX, rimY) = perioralRimFollowLocal(xLoc, yLoc, ep)
+		return (dx + rimX) to (dy + rimY)
+	}
+
+	private fun lipSkinMove(upper: Boolean, u: Float, v: Float, pose: Pose, chin: Float): Pair<Float, Float> {
+		val ep = eval(pose)
+		val (xRig, yRig) = fit.toCanvas(u, v)
+		val (xLoc, yLoc) = target.toLocalPx(xRig, yRig)
+		val w = target.widthPx
+
+		val cxMono = if (upper) target.uxMono0 else target.lxMono0
+		val c0Loc = if (upper) target.u0LocPx else target.l0LocPx
+		val c1Loc = if (upper) ep.u1LocPx else ep.l1LocPx
+		val xMin = cxMono.first(); val xMax = cxMono.last()
+
+		val uParam = interp1D(xLoc.coerceIn(xMin, xMax), cxMono, uDense)
+		val f = uParam * (stations - 1); val idx = f.toInt().coerceAtMost(stations - 2); val s = f - idx; val oms = 1f - s
+
+		val y0Loc = c0Loc[idx * 2 + 1] * oms + c0Loc[(idx + 1) * 2 + 1] * s
+		val dxLeft = max(0f, xMin - xLoc)
+		val dxRight = max(0f, xLoc - xMax)
+		val dyOut = if (upper) max(0f, y0Loc - yLoc) else max(0f, yLoc - y0Loc)
+
+		val vxN = xLoc / max(w, 1e-4f)
+		val noseCol = exp(-((vxN / 0.26f) * (vxN / 0.26f)))
+		val pb = if (upper) target.upperLipBoundsLocal else target.lowerLipBoundsLocal
+		val farL: Float; val farR: Float; val farY: Float
+		if (pb != null) {
+			farL = max(0.22f * w, 0.88f * (xMin - pb.left))
+			farR = max(0.22f * w, 0.88f * (pb.right - xMax))
+			if (upper) {
+				var c0MinY = Float.POSITIVE_INFINITY
+				for (i in 0 until stations) c0MinY = min(c0MinY, c0Loc[i * 2 + 1])
+				val farYBase = max(0.26f * w, 0.88f * (c0MinY - pb.top))
+				farY = noseCol * min(0.27f * w, farYBase) + (1f - noseCol) * (0.42f * w)
+			} else {
+				var c0MaxY = Float.NEGATIVE_INFINITY
+				for (i in 0 until stations) c0MaxY = max(c0MaxY, c0Loc[i * 2 + 1])
+				farY = max(0.28f * w, 0.88f * (pb.bottom - c0MaxY))
+			}
+		} else {
+			farL = 0.45f * w; farR = 0.45f * w; farY = 0.45f * w
+		}
+
+		val nearX = 0.14f * w
+		val nearY = if (upper) (0.14f * noseCol + 0.22f * (1f - noseCol)) * w else 0.18f * w
+		val tx = max(
+			((dxLeft - nearX) / (farL - nearX).coerceAtLeast(1e-4f)).coerceIn(0f, 1f),
+			((dxRight - nearX) / (farR - nearX).coerceAtLeast(1e-4f)).coerceIn(0f, 1f),
+		)
+		val ty = ((dyOut - nearY) / (farY - nearY).coerceAtLeast(1e-4f)).coerceIn(0f, 1f)
+		val t = hypot(tx, ty).coerceIn(0f, 1f)
+		val wLip = 1f - t * t * (3f - 2f * t)
+
+		val dRimX = (c1Loc[idx * 2] - c0Loc[idx * 2]) * oms + (c1Loc[(idx + 1) * 2] - c0Loc[(idx + 1) * 2]) * s
+		var dRimY = (c1Loc[idx * 2 + 1] - c0Loc[idx * 2 + 1]) * oms + (c1Loc[(idx + 1) * 2 + 1] - c0Loc[(idx + 1) * 2 + 1]) * s
+		val closeU = ep.closing[idx] * oms + ep.closing[idx + 1] * s
+		dRimY += (if (upper) 1f else -1f) * 0.008f * w * closeU
+		if (pose.press < -1e-5f) {
+			val rollBand = sin(PI.toFloat() * (dyOut / (0.22f * w)).coerceIn(0f, 1f))
+			val rollPx = (if (upper) 1f else -1f) * (-pose.press) * 0.045f * w * rollBand * sin(PI.toFloat() * uParam)
+			dRimY += rollPx * (1f - t)
+		}
+
+		val (faceX, faceY) = lippedFaceMoveLocal(xLoc, yLoc, ep, chin)
+		val dxLoc = wLip * dRimX + (1f - wLip) * faceX
+		val dyLoc = wLip * dRimY + (1f - wLip) * faceY
+		val (dxRig, dyRig) = target.localDeltaToRig(dxLoc, dyLoc)
+		return rigDeltaToMouth(dxRig, dyRig)
+	}
+
+	internal fun teeth(u: Float, pose: Pose, upper: Boolean, depth: Float = 0f): Pair<Float, Float> {
+		val uc = u.coerceIn(0f, 1f)
+		val vDefault = fit.baseline(u) + if (upper) drawnUpper(uc) + 0.04f else drawnLower(uc) - 0.04f
+		return teethAt(u, vDefault, pose, upper, depth)
+	}
+
+	private fun teethAt(u: Float, v: Float, pose: Pose, upper: Boolean, depth: Float = 0f): Pair<Float, Float> {
+		val ep = eval(pose)
+		val (xRig, yRig) = fit.toCanvas(u, v)
+		val (xLoc, yLoc) = target.toLocalPx(xRig, yRig)
+		val w = target.widthPx
+		val xi = xLoc / max(w, 1e-4f)
+
+		var dyBase = evalCubic(if (upper) ep.utCubic else ep.ltCubic, xi).first
+		val formEff = (pose.form * options.formStrength).coerceIn(-1.5f, 1.5f)
+		val smile = max(0f, formEff).coerceAtMost(1.5f)
+
 		if (upper && depth > 0f && smile > 0f) {
 			val (top, bottom) = edges(pose, 0.5f)
-			val cap = top - drawnUpper(0.5f) + SMILE_TEETH_SHOW * (bottom - top).coerceAtLeast(0f) - depth
-			if (cap < drop) drop += (cap - drop) * smile.coerceAtMost(1f)
+			val capMouth = top - drawnUpper(0.5f) + SMILE_TEETH_SHOW * (bottom - top).coerceAtLeast(0f) - depth
+			val capPx = capMouth * fit.width
+			if (capPx < dyBase) {
+				dyBase += (capPx - dyBase) * smile.coerceAtMost(1f)
+			}
 		}
-		return (un - u) to drop + fit.baseline(un) - fit.baseline(u)
+
+		val widenScale = if (options.teethWiden != 0f && smile > 0f) options.teethWiden * smile else 0f
+		val dxLoc: Float
+		val dyLoc: Float
+		if (ep.hasAsym) {
+			if (upper) {
+				val relY = yLoc - ep.yUtPivot
+				dxLoc = ep.axU + (ep.kxUt + widenScale) * xLoc - ep.sinThetaUt * relY
+				dyLoc = dyBase + (ep.cosThetaUt - 1f) * relY
+			} else {
+				val relY = yLoc - ep.yLtPivot
+				dxLoc = ep.axL + (ep.kxLt + widenScale) * xLoc - ep.sinThetaLt * relY
+				dyLoc = dyBase + (ep.cosThetaLt - 1f) * relY
+			}
+		} else {
+			dxLoc = widenScale * xLoc
+			dyLoc = dyBase
+		}
+		val (dxRig, dyRig) = target.localDeltaToRig(dxLoc, dyLoc)
+		return rigDeltaToMouth(dxRig, dyRig)
 	}
 
-	/** The slope of [edge] at [a], one-sided at the corners. */
-	private fun slope(edge: (Float) -> Float, a: Float): Float {
-		val a0 = (a - 0.01f).coerceAtLeast(0f); val a1 = (a + 0.01f).coerceAtMost(1f)
-		return (edge(a1) - edge(a0)) / (a1 - a0)
+	private fun tongueMove(u: Float, v: Float, pose: Pose, protruding: Boolean): Pair<Float, Float> {
+		val ep = eval(pose)
+		val (xRig, yRig) = fit.toCanvas(u, v)
+		val (xLoc, yLoc) = target.toLocalPx(xRig, yRig)
+		val w = target.widthPx
+
+		if (pose.tongueOut <= 0.02f) {
+			val dxLoc: Float
+			val dyLoc: Float
+			if (!ep.hasAsym) {
+				dxLoc = ep.tongueDx
+				dyLoc = TONGUE_SHARE * ep.dlSymMid
+			} else {
+				val xi = xLoc / max(w, 1e-4f)
+				val (dyAsym, dAsymDxi) = evalCubic(ep.tngAsymCubic, xi)
+				val slope = dAsymDxi / max(w, 1e-4f)
+				val theta = atan(slope).coerceIn(-0.50f, 0.50f)
+				dxLoc = ep.tongueDx + 0.25f * ep.dxxMean * xLoc - 0.70f * sin(theta) * yLoc
+				dyLoc = TONGUE_SHARE * ep.dlSymMid + dyAsym + (cos(theta) - 1f) * yLoc
+			}
+			val (dxRig, dyRig) = target.localDeltaToRig(dxLoc, dyLoc)
+			return rigDeltaToMouth(dxRig, dyRig)
+		}
+
+		// Anatomical TongueOut: anchor root inside open mouth, extend tip downward, taper tip width inside corners.
+		val tb = target.tongueBoundsLocal ?: Bounds(-0.28f * w, target.u0LocPx[midIdx * 2 + 1], 0.28f * w, target.l0LocPx[midIdx * 2 + 1])
+		val dlMid = ep.l1LocPx[midIdx * 2 + 1] - target.l0LocPx[midIdx * 2 + 1]
+		val u1MidY = ep.u1LocPx[midIdx * 2 + 1]
+		val l1MidY = ep.l1LocPx[midIdx * 2 + 1]
+		var yTopNew = tb.top + 0.45f * dlMid
+		if (protruding) {
+			yTopNew = max(yTopNew, u1MidY + 0.35f * target.linePx)
+		}
+		var yBotNew = l1MidY + (-0.02f + 0.62f * pose.tongueOut) * target.h0Px
+		yBotNew = max(yBotNew, yTopNew + 0.35f * tb.height.coerceAtLeast(1f))
+
+		val s = (yLoc - tb.top) / tb.height.coerceAtLeast(1f)
+		val sCl = s.coerceIn(0f, 1f)
+		var yNew = yTopNew + s * (yBotNew - yTopNew)
+
+		var uMinX = Float.POSITIVE_INFINITY
+		var uMaxX = Float.NEGATIVE_INFINITY
+		for (i in 0 until stations) {
+			val ux = ep.u1LocPx[i * 2]
+			if (ux < uMinX) uMinX = ux
+			if (ux > uMaxX) uMaxX = ux
+		}
+		val openSpan = max(uMaxX - uMinX, 1f)
+		val targetTngW = 0.78f * openSpan
+		val baseTngW = tb.width.coerceAtLeast(1f)
+		val sxTip = min(1f, targetTngW / baseTngW)
+		val sxRow = 1f - (1f - sxTip) * (0.25f + 0.75f * sCl) * min(1f, pose.tongueOut * 1.3f)
+		val txMid = tb.centerX
+		val openMidX = 0.5f * (ep.u1LocPx[midIdx * 2] + ep.l1LocPx[midIdx * 2])
+		val xCenter = (1f - sCl) * (txMid + ep.tongueDx) + sCl * openMidX
+		val xNew = xCenter + (xLoc - txMid) * sxRow
+
+		if (protruding) {
+			// Guarantee unclipped protruding tongue never pokes above the posed upper lip contour.
+			val uAtX = ((xNew - uMinX) / openSpan).coerceIn(0f, 1f)
+			val f = uAtX * (stations - 1); val idx = f.toInt().coerceAtMost(stations - 2); val frac = f - idx
+			val uYAtX = ep.u1LocPx[idx * 2 + 1] * (1f - frac) + ep.u1LocPx[(idx + 1) * 2 + 1] * frac
+			yNew = max(yNew, uYAtX + 0.35f * target.linePx)
+		}
+
+		val (dxRig, dyRig) = target.localDeltaToRig(xNew - xLoc, yNew - yLoc)
+		return rigDeltaToMouth(dxRig, dyRig)
 	}
 
-	/** How far the upper or lower lip's middle has moved down from the drawing in [pose]. */
-	private fun middleDrop(pose: Pose, upper: Boolean): Float = edges(pose, 0.5f).let { if (upper) it.first - drawnUpper(0.5f) else it.second - drawnLower(0.5f) }
+	private fun deepMove(pose: Pose): Pair<Float, Float> {
+		val ep = eval(pose)
+		if (abs(ep.shiftXPx) <= 1e-6f) return 0f to 0f
+		val (dxRig, dyRig) = target.localDeltaToRig(0.75f * ep.shiftXPx, 0f)
+		return rigDeltaToMouth(dxRig, dyRig)
+	}
 
-	/** The point of the drawn [edge] nearest ([u], [r]): where along the mouth it is, and the offset from it. */
-	private fun nearest(edge: (Float) -> Float, u: Float, r: Float): Triple<Float, Float, Float> {
+	private fun nearestEdge(edge: (Float) -> Float, u: Float, r: Float): Triple<Float, Float, Float> {
 		var best = 0f; var bestDistance = Float.MAX_VALUE
 		for (k in 0..NEAREST_STEPS) {
 			val at = k.toFloat() / NEAREST_STEPS
@@ -336,40 +1167,22 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 	}
 
 	/** The mouth at [form] (−1 pout … 1 smile) and [open] (0 … 1). */
-	fun pose(form: Float, open: Float): Pose {
-		val (up, lo) = staged(open)
-		// Some mouths open as a small o first, narrowest a third of the way, before widening to the drawing.
-		val o = sin(Math.PI.toFloat() * (open / 0.7f).coerceIn(0f, 1f))
-		val width = interpolate(OPEN_KEYS, WIDTHS, open) * (1f - 0.06f * (open - 1f).coerceAtLeast(0f)) * (1f - options.narrow * o)
-		val f = (form * options.formStrength).coerceIn(-1.5f, 1.5f)
-		val opened = (open / 0.25f).coerceIn(0f, 1f)
-		return if (f >= 0f) Pose(up, lo, width * (1f + 0.08f * f), corner = 0.06f * f, flatTop = f * opened)
-		else Pose(up, lo, width * (1f + f * (0.22f + 0.3f * (open / 0.5f).coerceIn(0f, 1f))), corner = 0.05f * f * (1f - 0.6f * open.coerceIn(0f, 1f)),
-			round = -f * 0.9f * opened)
-	}
+	fun pose(form: Float, open: Float): Pose = Pose(open = open, form = form)
 
-	/** How far the upper and the lower lip have gone at [open]: the lower lip first, the upper one late. */
-	private fun staged(open: Float): Pair<Float, Float> {
-		// Past the drawing the jaw goes on dropping: the lower lip twice as far as the upper one rises.
-		if (open > 1f) return (1f + 0.45f * (open - 1f)) to (1f + 0.9f * (open - 1f))
-		val lower = floatArrayOf(0f, 0.08f, options.early, (options.early + 1f) / 2f + 0.05f, 1f)
-		return interpolate(OPEN_KEYS, UPPERS, open) to interpolate(OPEN_KEYS, lower, open)
-	}
-
-	/** The vowel poses lip sync drives, each over the closed mouth. */
+	/** The vowel poses lip sync drives, each over the closed mouth (and openness-limited when combined with `ParamMouthOpenY`). */
 	fun vowel(name: Char): Pose = when (name) {
-		'A' -> pose(0f, 1f)
-		'I' -> staged(0.3f).let { (u, l) -> Pose(u, l, 1.18f, corner = 0.03f, flatTop = 0.5f) }
-		'U' -> staged(0.3f).let { (u, l) -> Pose(u, l, 0.62f, round = 1f) }
-		'E' -> staged(0.55f).let { (u, l) -> Pose(u, l, 1.1f, corner = 0.01f) }
-		else -> staged(0.75f).let { (u, l) -> Pose(u, l, 0.78f, round = 0.8f) }
+		'A' -> Pose(open = 0.92f, form = 0.06f, shrug = 0.10f)
+		'I' -> Pose(open = 0.32f, form = 0.75f, width = 0.55f)
+		'U' -> Pose(open = 0.34f, form = -0.35f, funnel = 0.95f, width = -0.65f)
+		'E' -> Pose(open = 0.54f, form = 0.35f, width = 0.30f)
+		else -> Pose(open = 0.72f, form = -0.45f, funnel = 0.85f, width = -0.45f)
 	}
 
-	private fun form(positions: FloatArray, frame: Bounds, pose: Pose, follow: Follow = Follow.WHOLE): MeshDeltaForm =
-		if (follow == Follow.UPPER_TEETH) teethDepth(positions).let { depth -> form(positions, frame) { u, _ -> teeth(u, pose, upper = true, depth = depth) } }
-		else form(positions, frame) { u, v -> moveAs(follow, u, v, pose) }
+	/**
+	 * [pose] (at [open]) with the lips pressed ([press] < 0) or parted ([press] > 0).
+	 */
+	fun pressed(pose: Pose, press: Float, open: Float): Pose = pose.copy(open = open, press = press)
 
-	/** How far below the drawn upper edge a row of upper teeth reaches at the mouth's middle, from its mesh [positions]. */
 	private fun teethDepth(positions: FloatArray): Float {
 		var depth = 0f
 		for (i in positions.indices step 2) {
@@ -380,38 +1193,78 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		return depth
 	}
 
+	private fun form(positions: FloatArray, frame: Bounds, pose: Pose, follow: Follow = Follow.WHOLE, chin: Float = 0.6f): MeshDeltaForm {
+		val depth = if (follow == Follow.UPPER_TEETH) teethDepth(positions) else 0f
+		return form(positions, frame) { u, v -> moveAsInternal(follow, u, v, pose, chin, depth) }
+	}
+
 	private fun form(positions: FloatArray, frame: Bounds, change: (Float, Float) -> Pair<Float, Float>): MeshDeltaForm {
 		val out = FloatArray(positions.size)
+		val invW = 1f / frame.width.coerceAtLeast(1e-4f)
+		val invH = 1f / frame.height.coerceAtLeast(1e-4f)
 		for (i in positions.indices step 2) {
 			val (u, v) = fit.toMouth(positions[i], positions[i + 1])
 			val (du, dv) = change(u, v)
 			val (dx, dy) = fit.canvasDelta(du, dv)
-			out[i] = dx / frame.width.coerceAtLeast(1e-4f); out[i + 1] = dy / frame.height.coerceAtLeast(1e-4f)
+			out[i] = dx * invW
+			out[i + 1] = dy * invH
+		}
+		return MeshDeltaForm(out)
+	}
+
+	private fun faceForm(positions: FloatArray, frame: Bounds, pose: Pose, chin: Float): MeshDeltaForm {
+		val ep = eval(pose)
+		val out = FloatArray(positions.size)
+		val invW = 1f / frame.width.coerceAtLeast(1e-4f)
+		val invH = 1f / frame.height.coerceAtLeast(1e-4f)
+		for (i in positions.indices step 2) {
+			val (xLoc, yLoc) = target.toLocalPx(positions[i], positions[i + 1])
+			val (dxLoc, dyLoc) = lippedFaceMoveLocal(xLoc, yLoc, ep, chin)
+			val (dxRig, dyRig) = target.localDeltaToRig(dxLoc, dyLoc)
+			out[i] = dxRig * invW
+			out[i + 1] = dyRig * invH
 		}
 		return MeshDeltaForm(out)
 	}
 
 	/** [positions] (x, y pairs) where the mouth at rest - shut - holds them, a layer moving as [follow]. */
-	fun atRest(positions: FloatArray, follow: Follow): FloatArray {
+	fun atRest(positions: FloatArray, follow: Follow, chin: Float = 0.6f): FloatArray {
 		val rest = pressed(pose(0f, 0f), 0f, 0f)
+		val depth = if (follow == Follow.UPPER_TEETH) teethDepth(positions) else 0f
 		return FloatArray(positions.size).also { out ->
 			for (i in positions.indices step 2) {
 				val (u, v) = fit.toMouth(positions[i], positions[i + 1])
-				val (du, dv) = moveAs(follow, u, v, rest)
+				val (du, dv) = moveAsInternal(follow, u, v, rest, chin, depth)
 				val (dx, dy) = fit.canvasDelta(du, dv)
 				out[i] = positions[i] + dx; out[i + 1] = positions[i + 1] + dy
 			}
 		}
 	}
 
+	/** [positions] of a lip-skin mouth's underlying `FACE` mesh at shut rest, matching [faceGrid] seamlessly. */
+	fun atRestFace(positions: FloatArray, chin: Float): FloatArray {
+		val ep = shutEval
+		return FloatArray(positions.size).also { out ->
+			for (i in positions.indices step 2) {
+				val (xLoc, yLoc) = target.toLocalPx(positions[i], positions[i + 1])
+				val (dxLoc, dyLoc) = lippedFaceMoveLocal(xLoc, yLoc, ep, chin)
+				val (dxRig, dyRig) = target.localDeltaToRig(dxLoc, dyLoc)
+				out[i] = positions[i] + dxRig
+				out[i + 1] = positions[i + 1] + dyRig
+			}
+		}
+	}
+
 	/** A mouth layer's grid: its form by its openness. Deltas are over the parent [frame]; the layer moves as [follow]. */
-	fun grid(positions: FloatArray, frame: Bounds, mouthForm: ParameterId, mouthOpen: ParameterId, follow: Follow = Follow.WHOLE): KeyformGrid<MeshDeltaForm> =
-		keyed(mouthForm, mouthOpen) { pose -> form(positions, frame, pose, follow) }
+	fun grid(positions: FloatArray, frame: Bounds, mouthForm: ParameterId, mouthOpen: ParameterId, follow: Follow = Follow.WHOLE, chin: Float = 0.6f): KeyformGrid<MeshDeltaForm> =
+		keyed(mouthForm, mouthOpen) { pose -> form(positions, frame, pose, follow, chin) }
+
+	/** A lip-skin mouth's shared perioral + jaw grid on `FACE`, matching `UPPER_LIP`/`LOWER_LIP` outer borders with zero seam. */
+	fun faceGrid(positions: FloatArray, frame: Bounds, mouthForm: ParameterId, mouthOpen: ParameterId, chin: Float): KeyformGrid<MeshDeltaForm> =
+		keyed(mouthForm, mouthOpen) { pose -> faceForm(positions, frame, pose, chin) }
 
 	/**
-	 * A grid over the form and the openness - and with the face capture, the lips pressed or parted ([pressed]) - whose
-	 * every key is [form] of that key's pose. Pressing and parting are keyed with the opening and the form, not added to
-	 * them, so a smile bares its teeth and a half-open mouth presses its lips each its own way.
+	 * A grid over the form and the openness - and with the face capture, the lips pressed or parted ([pressed]).
 	 */
 	fun keyed(mouthForm: ParameterId, mouthOpen: ParameterId, form: (Pose) -> MeshDeltaForm): KeyformGrid<MeshDeltaForm> {
 		val cells = ArrayList<KeyformCell<MeshDeltaForm>>()
@@ -423,20 +1276,6 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		val axes = listOf(KeyformAxis(mouthForm, FORM_KEYS), KeyformAxis(mouthOpen, openKeys)) +
 			if (options.capture) listOf(KeyformAxis(PRESS_OPEN, PRESS_KEYS)) else emptyList()
 		return KeyformGrid(axes, cells)
-	}
-
-	/**
-	 * [pose] (at [open]) with the lips pressed ([press] < 0: rolled in on each other, the mouth a little narrower) or
-	 * parted ([press] > 0: open at least to a slit that bares the teeth, the corners still shut).
-	 */
-	fun pressed(pose: Pose, press: Float, open: Float): Pose = when {
-		press < 0f -> pose.copy(press = 0.7f * -press, width = pose.width * (1f + 0.04f * press))
-		press > 0f -> {
-			val (u, l) = staged(0.2f)
-			val k = press * (1f - open.coerceIn(0f, 1f))
-			pose.copy(upper = pose.upper + (max(pose.upper, u + 0.08f) - pose.upper) * k, lower = pose.lower + (max(pose.lower, l * 0.7f) - pose.lower) * k)
-		}
-		else -> pose
 	}
 
 	/** Where the point ([x], [y]) of the mouth (in the rig's space) goes in [pose]. */
@@ -452,103 +1291,268 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 	 * widening about its middle. It shows only while the mouth is shut.
 	 */
 	fun closedGrid(positions: FloatArray, frame: Bounds, mouthForm: ParameterId): KeyformGrid<MeshDeltaForm> =
-		KeyformGrid(listOf(KeyformAxis(mouthForm, FORM_KEYS)), FORM_KEYS.mapIndexed { f, form ->
-			KeyformCell(intArrayOf(f), form(positions, frame) { u, v -> closedMove(u, v, pose(form, 0f)) })
+		KeyformGrid(listOf(KeyformAxis(mouthForm, FORM_KEYS)), FORM_KEYS.mapIndexed { f, formVal ->
+			KeyformCell(intArrayOf(f), form(positions, frame) { u, v -> closedMove(u, v, pose(formVal, 0f)) })
 		})
 
 	private fun closedMove(u: Float, v: Float, pose: Pose): Pair<Float, Float> {
+		val ep = eval(pose.copy(open = 0f))
+		val ref = shutEval
 		val uc = u.coerceIn(0f, 1f)
-		val un = 0.5f + (u - 0.5f) * pose.width / WIDTHS[0] + pose.shift
-		val rest = closed(uc)
-		val (top, _) = edges(pose.copy(upper = 0f, lower = 0f), uc)
-		return (un - u) to (fit.baseline(un) - fit.baseline(u) + (top - rest) + gap * 0.5f * EyeRig.hump(uc))
+		val f = uc * (stations - 1)
+		val idx = f.toInt().coerceAtMost(stations - 2)
+		val s = f - idx; val oms = 1f - s
+
+		val refMidU = 0.5f * ((ref.u1MouthU[idx] + ref.l1MouthU[idx]) * oms + (ref.u1MouthU[idx + 1] + ref.l1MouthU[idx + 1]) * s)
+		val refMidV = 0.5f * ((ref.u1MouthV[idx] + ref.l1MouthV[idx]) * oms + (ref.u1MouthV[idx + 1] + ref.l1MouthV[idx + 1]) * s)
+		val curMidU = 0.5f * ((ep.u1MouthU[idx] + ep.l1MouthU[idx]) * oms + (ep.u1MouthU[idx + 1] + ep.l1MouthU[idx + 1]) * s)
+		val curMidV = 0.5f * ((ep.u1MouthV[idx] + ep.l1MouthV[idx]) * oms + (ep.u1MouthV[idx + 1] + ep.l1MouthV[idx + 1]) * s)
+
+		val widthRatio = ((ep.u1MouthU.last() - ep.u1MouthU.first()) / (ref.u1MouthU.last() - ref.u1MouthU.first()).coerceAtLeast(0.2f))
+		val un = curMidU + (u - refMidU) * widthRatio
+		val vn = v + (fit.baseline(un) - fit.baseline(u)) + (curMidV - refMidV)
+		return (un - u) to (vn - v)
 	}
 
 	/**
-	 * The mouth's additive shapes (each over the closed mouth): the vowels lip sync drives (`mouth.vowel`) and the face
-	 * capture's mouth movements (`mouth.capture`) - sideways, pucker and widen, shrug, the lips pressed or parted.
-	 * [visible] gives a form's opacity: a drawn closed mouth hides and the open mouth's parts show while a vowel opens
-	 * the mouth.
+	 * The mouth's additive shapes (vowels + bilateral & unilateral facial capture + tongue-out).
 	 */
-	fun shapes(positions: FloatArray, frame: Bounds, closedLayer: Boolean, visible: (Boolean) -> Float, tongue: Boolean = false,
-	           follow: Follow = Follow.WHOLE): List<BlendShapeBinding<MeshForm>> =
-		shapes({ pose -> (if (closedLayer) form(positions, frame) { u, v -> closedMove(u, v, pose) } else form(positions, frame, pose, follow)).positionDeltas }, pressKeyed = !closedLayer, visible = visible) +
-			tongueShapes(positions, frame, closedLayer, tongue, visible, follow)
+	fun shapes(
+		positions: FloatArray,
+		frame: Bounds,
+		closedLayer: Boolean,
+		visible: (Boolean) -> Float,
+		tongue: Boolean = false,
+		follow: Follow = Follow.WHOLE,
+		mouthOpen: ParameterId = ParameterId("ParamMouthOpenY"),
+		chin: Float = 0.6f,
+	): List<BlendShapeBinding<MeshForm>> {
+		val innerCaptureAtOpen = !closedLayer && (follow == Follow.UPPER_TEETH || follow == Follow.LOWER_TEETH ||
+			follow == Follow.TONGUE || follow == Follow.PROTRUDING_TONGUE)
+		val baseFn: (Pose) -> FloatArray = { pose ->
+			(if (closedLayer) form(positions, frame) { u, v -> closedMove(u, v, pose) }
+			else form(positions, frame, pose, follow, chin)).positionDeltas
+		}
+		return buildShapeBindings(baseFn, innerCaptureAtOpen, pressKeyed = !closedLayer, visible = visible, mouthOpen = mouthOpen) +
+			tongueShapes(positions, frame, closedLayer, follow, visible, mouthOpen, chin) +
+			if (options.capture && follow in setOf(Follow.UPPER_LIP, Follow.LOWER_LIP)) listOf(
+				BlendShapeBinding(CHEEK_PUFF, floatArrayOf(0f, 1f), 0, listOf(null,
+					MeshForm(baseFn(pose(0f, 0f).copy(cheek = 1f)), opacity = Float.NaN)))) else emptyList()
+	}
 
 	/**
-	 * The tongue put out (`mouth.capture` with a tongue layer): the mouth opens to about half and the tongue slides down
-	 * past where the lower lip was, inside the opened mouth.
+	 * Companion unclipped protruding tongue bindings (`<tongueId>_Out`): completely transparent (`0f`) at rest and on all
+	 * non-tongue bindings, ramping to [sourceOpacity] on `ParamTongueOut > 0` while keeping `ParamTongueOut` a pure
+	 * `ParameterKind.BLEND_SHAPE`.
 	 */
-	private fun tongueShapes(positions: FloatArray, frame: Bounds, closedLayer: Boolean, tongue: Boolean, visible: (Boolean) -> Float,
-	                         follow: Follow): List<BlendShapeBinding<MeshForm>> {
+	fun protrudingTongueShapes(
+		positions: FloatArray,
+		frame: Bounds,
+		sourceOpacity: Float,
+		mouthOpen: ParameterId = ParameterId("ParamMouthOpenY"),
+		chin: Float = 0.6f,
+	): List<BlendShapeBinding<MeshForm>> {
+		val baseFn: (Pose) -> FloatArray = { pose -> form(positions, frame, pose, Follow.PROTRUDING_TONGUE, chin).positionDeltas }
+		val nonTongue = buildShapeBindings(baseFn, innerCaptureAtOpen = true, pressKeyed = true, visible = { Float.NaN }, mouthOpen = mouthOpen)
+		if (!options.capture || !options.tongue) return nonTongue
+		val poseEarly = Pose(open = 0.48f, width = -0.05f, tongueOut = 0.12f)
+		val poseFull = Pose(open = 0.56f, width = -0.05f, tongueOut = 1f)
+		val tngBinding = BlendShapeBinding(
+			TONGUE_OUT,
+			floatArrayOf(0f, 0.12f, 1f),
+			0,
+			listOf(
+				null,
+				MeshForm(baseFn(poseEarly), opacity = sourceOpacity),
+				MeshForm(baseFn(poseFull), opacity = sourceOpacity),
+			),
+		)
+		return nonTongue + tngBinding
+	}
+
+	private fun tongueShapes(
+		positions: FloatArray,
+		frame: Bounds,
+		closedLayer: Boolean,
+		follow: Follow,
+		visible: (Boolean) -> Float,
+		mouthOpen: ParameterId,
+		chin: Float,
+	): List<BlendShapeBinding<MeshForm>> {
 		if (!options.capture || !options.tongue) return emptyList()
-		val open = staged(0.5f).let { (u, l) -> Pose(u, l, 0.95f) }
-		val deltas = if (closedLayer) form(positions, frame) { u, v -> closedMove(u, v, open) }.positionDeltas
-			else form(positions, frame) { u, v -> moveAs(follow, u, v, open).let { (du, dv) -> du to dv + if (tongue) 0.3f * h * EyeRig.hump(u.coerceIn(0f, 1f)).coerceAtLeast(0.4f) else 0f } }.positionDeltas
-		return listOf(BlendShapeBinding(TONGUE_OUT, floatArrayOf(0f, 1f), 0, listOf(null, MeshForm(deltas, opacity = visible(true)))))
+		val openPose = Pose(open = 0.56f, width = -0.05f, tongueOut = 1f)
+		val deltas = if (closedLayer) form(positions, frame) { u, v -> closedMove(u, v, openPose) }.positionDeltas
+			else form(positions, frame, openPose, follow, chin).positionDeltas
+		val isTongueMesh = follow == Follow.TONGUE || follow == Follow.PROTRUDING_TONGUE
+		val limits = if (isTongueMesh || closedLayer) emptyList() else listOf(
+			BlendWeightLimit(mouthOpen, listOf(
+				BlendWeightLimitPoint(0f, 1f),
+				BlendWeightLimitPoint(0.55f, 0.25f),
+				BlendWeightLimitPoint(1f, 0.08f),
+			)),
+		)
+		return listOf(BlendShapeBinding(TONGUE_OUT, floatArrayOf(0f, 1f), 0, listOf(null, MeshForm(deltas, opacity = visible(true))), limits = limits))
 	}
 
 	/**
-	 * The same shapes for a mesh whose deltas at a pose [deltas] gives - a lip ribbon laid along the posed lips. A mesh
-	 * whose grid keys the lips pressed and parted ([keyed]; [pressKeyed]) takes from that shape only what the parting
-	 * shows, its geometry being in its keys.
+	 * The same shapes for a mesh whose deltas at a pose [deltas] gives (such as a generated lip ribbon).
 	 */
-	fun shapes(deltas: (Pose) -> FloatArray, pressKeyed: Boolean = true, visible: (Boolean) -> Float): List<BlendShapeBinding<MeshForm>> = buildList {
+	fun shapes(
+		deltas: (Pose) -> FloatArray,
+		pressKeyed: Boolean = true,
+		visible: (Boolean) -> Float,
+		mouthOpen: ParameterId = ParameterId("ParamMouthOpenY"),
+	): List<BlendShapeBinding<MeshForm>> = buildShapeBindings(deltas, innerCaptureAtOpen = false, pressKeyed = pressKeyed, visible = visible, mouthOpen = mouthOpen)
+
+	private fun buildShapeBindings(
+		deltas: (Pose) -> FloatArray,
+		innerCaptureAtOpen: Boolean,
+		pressKeyed: Boolean,
+		visible: (Boolean) -> Float,
+		mouthOpen: ParameterId,
+	): List<BlendShapeBinding<MeshForm>> = buildList {
 		fun shapeOf(pose: Pose, opens: Boolean): MeshForm = MeshForm(deltas(pose), opacity = visible(opens))
-		if (options.vowels) for ((name, id) in VOWELS) add(BlendShapeBinding(id, floatArrayOf(0f, 1f), 0, listOf(null, shapeOf(vowel(name), true))))
+		val rest = pose(0f, 0f)
+		val restDeltas by lazy { deltas(rest) }
+		val openRef = Pose(open = 0.30f)
+		val openRefDeltas by lazy { deltas(openRef) }
+
+		fun captureForm(poseAtZero: Pose): MeshForm {
+			if (!innerCaptureAtOpen) return shapeOf(poseAtZero, false)
+			val posedAtOpen = deltas(poseAtZero.copy(open = 0.30f))
+			val combined = FloatArray(restDeltas.size) { i -> restDeltas[i] + (posedAtOpen[i] - openRefDeltas[i]) }
+			return MeshForm(combined, opacity = visible(false))
+		}
+
+		if (options.vowels) {
+			for ((name, id) in VOWELS) {
+				val vLimits = listOf(BlendWeightLimit(mouthOpen, vowelLimitPoints(name)))
+				add(BlendShapeBinding(id, floatArrayOf(0f, 1f), 0, listOf(null, shapeOf(vowel(name), true)), limits = vLimits))
+			}
+		}
 		if (options.capture) {
-			val rest = pose(0f, 0f)
-			add(BlendShapeBinding(MOUTH_X, floatArrayOf(-1f, 0f, 1f), 1, listOf(shapeOf(rest.copy(shift = -0.18f, corner = 0.01f), false), null,
-				shapeOf(rest.copy(shift = 0.18f, corner = 0.01f), false))))
-			add(BlendShapeBinding(PUCKER_WIDEN, floatArrayOf(-1f, 0f, 1f), 1, listOf(shapeOf(rest.copy(width = rest.width * 0.7f, corner = -0.015f, lift = 0.01f), false), null,
-				shapeOf(rest.copy(width = rest.width * 1.16f, corner = 0.01f), false))))
-			add(BlendShapeBinding(SHRUG, floatArrayOf(0f, 1f), 0, listOf(null, shapeOf(rest.copy(corner = -0.025f, lift = 0.05f), false))))
-			// The funnel of "ch", "sh" and "u": the corners drawn in and the lips pushed forward round a small round opening.
-			val funnel = staged(0.22f).let { (u, l) -> rest.copy(upper = u, lower = l, width = rest.width * 0.62f, round = 1f) }
-			add(BlendShapeBinding(FUNNEL, floatArrayOf(0f, 1f), 0, listOf(null, shapeOf(funnel, true))))
-			// The jaw opened behind closed lips ("mmm"): the shut mouth drops and narrows a little with the chin.
-			add(BlendShapeBinding(JAW_OPEN, floatArrayOf(0f, 1f), 0, listOf(null, shapeOf(rest.copy(lift = -0.06f, width = rest.width * 0.94f), false))))
+			add(BlendShapeBinding(MOUTH_X, floatArrayOf(-1f, 0f, 1f), 1, listOf(
+				captureForm(rest.copy(mouthX = -1f)), null, captureForm(rest.copy(mouthX = 1f)),
+			)))
+			add(BlendShapeBinding(CORNER_L, floatArrayOf(-1f, 0f, 1f), 1, listOf(
+				captureForm(rest.copy(cornerLDown = 1f)), null, captureForm(rest.copy(cornerLUp = 1f)),
+			)))
+			add(BlendShapeBinding(CORNER_R, floatArrayOf(-1f, 0f, 1f), 1, listOf(
+				captureForm(rest.copy(cornerRDown = 1f)), null, captureForm(rest.copy(cornerRUp = 1f)),
+			)))
+			add(BlendShapeBinding(PUCKER_WIDEN, floatArrayOf(-1f, 0f, 1f), 1, listOf(
+				captureForm(rest.copy(width = -1f)), null, captureForm(rest.copy(width = 1f)),
+			)))
+			add(BlendShapeBinding(PUCKER_WIDEN_L, floatArrayOf(-1f, 0f, 1f), 1, listOf(
+				captureForm(rest.copy(puckerL = 1f)), null, captureForm(rest.copy(cornerLOut = 1f)),
+			)))
+			add(BlendShapeBinding(PUCKER_WIDEN_R, floatArrayOf(-1f, 0f, 1f), 1, listOf(
+				captureForm(rest.copy(puckerR = 1f)), null, captureForm(rest.copy(cornerROut = 1f)),
+			)))
+			add(BlendShapeBinding(SHRUG, floatArrayOf(0f, 1f), 0, listOf(
+				null, captureForm(rest.copy(shrug = 1f)),
+			)))
+			val funnelLimits = listOf(BlendWeightLimit(mouthOpen, listOf(
+				BlendWeightLimitPoint(0f, 1f),
+				BlendWeightLimitPoint(0.45f, 0.65f),
+				BlendWeightLimitPoint(0.95f, 0.35f),
+			)))
+			add(BlendShapeBinding(FUNNEL, floatArrayOf(0f, 1f), 0, listOf(
+				null, shapeOf(Pose(open = 0.34f, funnel = 1f, width = -0.35f), true),
+			), limits = funnelLimits))
+			val jawLimits = listOf(BlendWeightLimit(mouthOpen, listOf(
+				BlendWeightLimitPoint(0f, 1f),
+				BlendWeightLimitPoint(0.25f, 0.17f),
+				BlendWeightLimitPoint(0.55f, 0f),
+			)))
+			add(BlendShapeBinding(JAW_OPEN, floatArrayOf(0f, 1f), 0, listOf(
+				null, shapeOf(rest.copy(jaw = 1f), false),
+			), limits = jawLimits))
 			if (pressKeyed) {
-				// Only the parting's opacity - the open mouth's parts show and a drawn closed mouth hides - at the shut mouth's place,
-				// which the grid holds at rest, so it moves nothing.
 				val shows = visible(true)
-				if (!shows.isNaN()) add(BlendShapeBinding(PRESS_OPEN, floatArrayOf(0f, 1f), 0, listOf(null, MeshForm(deltas(rest), opacity = shows))))
-			} else add(BlendShapeBinding(PRESS_OPEN, floatArrayOf(-1f, 0f, 1f), 1, listOf(shapeOf(pressed(rest, -1f, 0f), false), null,
-				shapeOf(pressed(rest, 1f, 0f), true))))
+				if (!shows.isNaN()) add(BlendShapeBinding(PRESS_OPEN, floatArrayOf(0f, 1f), 0, listOf(null, MeshForm(restDeltas, opacity = shows))))
+			} else {
+				add(BlendShapeBinding(PRESS_OPEN, floatArrayOf(-1f, 0f, 1f), 1, listOf(
+					shapeOf(pressed(rest, -1f, 0f), false), null, shapeOf(pressed(rest, 1f, 0f), true),
+				)))
+			}
 		}
 	}
 
 	/**
-	 * The lower face following the jaw (`mouth.jaw`): below the mouth the skin drops with the opening, from nothing at
-	 * the corners' line to [MouthOptions.jawShare] of the mouth's drawn opening at [chin], the cheeks narrowing a
-	 * little; [nose] only nudges down. Over the closed mouth on the openness, and on the face capture's cheek puff.
+	 * Lower-face jaw, cheek-puff, and (when [lippedSkin] is true) shared perioral rim-follow shapes on `FACE`.
 	 */
-	fun faceShapes(positions: FloatArray, frame: Bounds, chin: Float, nose: Boolean, mouthOpen: ParameterId, spring: ParameterId?): List<BlendShapeBinding<MeshForm>> = buildList {
-		val drop = options.jawShare * h
-		fun weight(v: Float) = ((v - 0.02f) / (chin - 0.02f).coerceAtLeast(0.05f)).coerceIn(0f, 1f).let { it * it * (3f - 2f * it) }
-		fun jaw(amount: Float) = MeshForm(form(positions, frame) { u, v ->
-			if (nose) 0f to amount * drop * 0.08f
-			else weight(v).let { w -> -(u - 0.5f) * 0.25f * amount * drop * w to amount * drop * w }
-		}.positionDeltas, opacity = Float.NaN)
-		if (options.jaw) {
-			add(if (options.reach > 1.001f) BlendShapeBinding(mouthOpen, floatArrayOf(0f, 1f, options.reach), 0, listOf(null, jaw(1f), jaw(options.reach)))
-				else BlendShapeBinding(mouthOpen, floatArrayOf(0f, 1f), 0, listOf(null, jaw(1f))))
-			if (spring != null) add(BlendShapeBinding(spring, floatArrayOf(-1f, 0f, 1f), 1, listOf(jaw(-0.35f), null, jaw(0.35f))))
+	fun faceShapes(
+		positions: FloatArray,
+		frame: Bounds,
+		chin: Float,
+		nose: Boolean,
+		mouthOpen: ParameterId,
+		spring: ParameterId?,
+		lippedSkin: Boolean = false,
+	): List<BlendShapeBinding<MeshForm>> {
+		if (lippedSkin && !nose) {
+			val baseFn: (Pose) -> FloatArray = { pose -> faceForm(positions, frame, pose, chin).positionDeltas }
+			return buildList {
+				addAll(buildShapeBindings(baseFn, innerCaptureAtOpen = false, pressKeyed = true, visible = { Float.NaN }, mouthOpen = mouthOpen))
+				if (options.capture && options.tongue) {
+					val openPose = Pose(open = 0.56f, width = -0.05f, tongueOut = 1f)
+					val limits = listOf(BlendWeightLimit(mouthOpen, listOf(
+						BlendWeightLimitPoint(0f, 1f),
+						BlendWeightLimitPoint(0.55f, 0.25f),
+						BlendWeightLimitPoint(1f, 0.08f),
+					)))
+					add(BlendShapeBinding(TONGUE_OUT, floatArrayOf(0f, 1f), 0, listOf(null, MeshForm(baseFn(openPose), opacity = Float.NaN)), limits = limits))
+				}
+				if (options.capture) {
+					add(BlendShapeBinding(CHEEK_PUFF, floatArrayOf(0f, 1f), 0, listOf(
+						null, MeshForm(baseFn(pose(0f, 0f).copy(cheek = 1f)), opacity = Float.NaN),
+					)))
+				}
+				if (options.jaw && spring != null) {
+					val restD = baseFn(pose(0f, 0f))
+					val openD = baseFn(pose(0f, 1f))
+					fun springForm(scale: Float) = MeshForm(
+						FloatArray(restD.size) { i -> restD[i] + scale * (openD[i] - restD[i]) },
+						opacity = Float.NaN,
+					)
+					add(BlendShapeBinding(spring, floatArrayOf(-1f, 0f, 1f), 1, listOf(springForm(-0.35f), null, springForm(0.35f))))
+				}
+			}
 		}
-		if (options.capture) add(BlendShapeBinding(JAW_OPEN, floatArrayOf(0f, 1f), 0, listOf(null, jaw(1.4f))))
-		if (options.capture && !nose) add(BlendShapeBinding(CHEEK_PUFF, floatArrayOf(0f, 1f), 0, listOf(null, MeshForm(form(positions, frame) { u, v ->
-			// The cheeks swell beside the mouth, most level with it and a little below.
-			val side = u - 0.5f
-			val across = ((abs(side) - 0.35f) / 0.6f).coerceIn(0f, 1f)
-			val down = (1f - abs(v - 0.15f) / 0.75f).coerceIn(0f, 1f)
-			val w = sin(across * Math.PI.toFloat() / 2f) * down * down
-			(if (side >= 0f) 1f else -1f) * 0.1f * w to 0.02f * w
-		}.positionDeltas, opacity = Float.NaN))))
+
+		return buildList {
+			val drop = options.jawShare * h
+			fun weight(v: Float) = ((v - 0.02f) / (chin - 0.02f).coerceAtLeast(0.05f)).coerceIn(0f, 1f).let { it * it * (3f - 2f * it) }
+			fun jaw(amount: Float) = MeshForm(form(positions, frame) { u, v ->
+				if (nose) 0f to amount * drop * 0.08f
+				else weight(v).let { w -> -(u - 0.5f) * 0.25f * amount * drop * w to amount * drop * w }
+			}.positionDeltas, opacity = Float.NaN)
+			if (options.jaw) {
+				add(if (options.reach > 1.001f) BlendShapeBinding(mouthOpen, floatArrayOf(0f, 1f, options.reach), 0, listOf(null, jaw(1f), jaw(options.reach)))
+					else BlendShapeBinding(mouthOpen, floatArrayOf(0f, 1f), 0, listOf(null, jaw(1f))))
+				if (spring != null) add(BlendShapeBinding(spring, floatArrayOf(-1f, 0f, 1f), 1, listOf(jaw(-0.35f), null, jaw(0.35f))))
+			}
+			if (options.capture) {
+				val jawLimits = listOf(BlendWeightLimit(mouthOpen, listOf(
+					BlendWeightLimitPoint(0f, 1f),
+					BlendWeightLimitPoint(0.25f, 0.17f),
+					BlendWeightLimitPoint(0.55f, 0f),
+				)))
+				add(BlendShapeBinding(JAW_OPEN, floatArrayOf(0f, 1f), 0, listOf(null, jaw(1.2f)), limits = jawLimits))
+			}
+			if (options.capture && !nose) add(BlendShapeBinding(CHEEK_PUFF, floatArrayOf(0f, 1f), 0, listOf(null, MeshForm(form(positions, frame) { u, v ->
+				val side = u - 0.5f
+				val across = ((abs(side) - 0.35f) / 0.6f).coerceIn(0f, 1f)
+				val down = (1f - abs(v - 0.15f) / 0.75f).coerceIn(0f, 1f)
+				val w = sin(across * PI.toFloat() / 2f) * down * down
+				(if (side >= 0f) 1f else -1f) * 0.1f * w to 0.02f * w
+			}.positionDeltas, opacity = Float.NaN))))
+		}
 	}
 
 	/**
-	 * The mouth's inside lagging behind its lips as the head turns (`mouth.interior-depth`): [depth] of the mouth's
-	 * width against the turn, deeper parts more.
+	 * The mouth's inside lagging behind its lips as the head turns (`mouth.interior-depth`).
 	 */
 	fun depthShapes(positions: FloatArray, frame: Bounds, depth: Float, angleX: ParameterId, angleY: ParameterId): List<BlendShapeBinding<MeshForm>> {
 		if (!options.depth) return emptyList()
@@ -565,30 +1569,23 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 	companion object {
 		/** The openness where the lips part and a drawn closed mouth hands over to the open one. */
 		const val SWAP = 0.05f
-		/** Samples of a drawn edge searched for the point nearest a point past it. */
 		private const val NEAREST_STEPS = 96
 		val OPEN_KEYS = floatArrayOf(0f, SWAP, 0.25f, 0.5f, 1f)
 		val PRESS_KEYS = floatArrayOf(-1f, 0f, 1f)
 		val FORM_KEYS = floatArrayOf(-1f, -0.5f, 0f, 0.5f, 1f)
-		private val UPPERS = floatArrayOf(0f, 0.03f, 0.1f, 0.38f, 1f)
-		private val WIDTHS = floatArrayOf(1.04f, 1.04f, 1.08f, 1.06f, 1f)
-		/** How far from a corner, of the width, the two lip lines' ends start going together. */
-		private const val CORNER_ZONE = 0.08f
+		/** How far from a corner, of the width, the two lip lines' ends blend together. */
+		private const val CORNER_ZONE = 0.10f
 		/** How much of a smile's opening the upper teeth fill at most, from its top. */
 		private const val SMILE_TEETH_SHOW = 0.5f
-		private const val UPPER_TEETH_SHARE = 0.65f
-		private const val LOWER_TEETH_SHARE = 0.88f
-		private const val TONGUE_SHARE = 0.3f
-		/** How far pressed lips roll in past each other at the middle, of the mouth's width. */
-		private const val PRESS_ROLL = 0.05f
-		/** A lip's skin margin rides whole within [SKIN_NEAR] of its edge and loses [SKIN_FAR_LOSS] of the ride over [SKIN_REACH] further out. */
-		private const val SKIN_NEAR = 0.06f
-		private const val SKIN_REACH = 0.45f
-		private const val SKIN_FAR_LOSS = 0.65f
+		private const val TONGUE_SHARE = 0.35f
 
 		val VOWELS = listOf('A', 'I', 'U', 'E', 'O').map { it to ParameterId("Param$it") }
 		val MOUTH_X = ParameterId("ParamMouthX")
+		val CORNER_L = ParameterId("ParamMouthCornerL")
+		val CORNER_R = ParameterId("ParamMouthCornerR")
 		val PUCKER_WIDEN = ParameterId("ParamMouthPuckerWiden")
+		val PUCKER_WIDEN_L = ParameterId("ParamMouthPuckerWidenL")
+		val PUCKER_WIDEN_R = ParameterId("ParamMouthPuckerWidenR")
 		val SHRUG = ParameterId("ParamMouthShrug")
 		val FUNNEL = ParameterId("ParamMouthFunnel")
 		val PRESS_OPEN = ParameterId("ParamMouthPressLipOpen")
@@ -599,13 +1596,120 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		/** The shapes that open the mouth: they show its open parts and hide a drawn closed mouth. */
 		val OPENING = VOWELS.map { it.second }.toSet() + PRESS_OPEN + TONGUE_OUT + FUNNEL
 
-		private fun interpolate(keys: FloatArray, values: FloatArray, x: Float): Float {
-			if (x <= keys.first()) return values.first()
-			for (i in 1 until keys.size) if (x <= keys[i]) {
-				val t = (x - keys[i - 1]) / (keys[i] - keys[i - 1])
-				return values[i - 1] + (values[i] - values[i - 1]) * t
+		private fun vowelLimitPoints(name: Char): List<BlendWeightLimitPoint> = when (name) {
+			'A' -> listOf(
+				BlendWeightLimitPoint(0f, 1f),
+				BlendWeightLimitPoint(0.55f, 0.45f),
+				BlendWeightLimitPoint(0.95f, 0.08f),
+			)
+			'I' -> listOf(
+				BlendWeightLimitPoint(0f, 1f),
+				BlendWeightLimitPoint(0.35f, 0.55f),
+				BlendWeightLimitPoint(0.85f, 0.30f),
+			)
+			'U' -> listOf(
+				BlendWeightLimitPoint(0f, 1f),
+				BlendWeightLimitPoint(0.35f, 0.60f),
+				BlendWeightLimitPoint(0.85f, 0.30f),
+			)
+			'E' -> listOf(
+				BlendWeightLimitPoint(0f, 1f),
+				BlendWeightLimitPoint(0.45f, 0.50f),
+				BlendWeightLimitPoint(0.85f, 0.22f),
+			)
+			else -> listOf(
+				BlendWeightLimitPoint(0f, 1f),
+				BlendWeightLimitPoint(0.45f, 0.55f),
+				BlendWeightLimitPoint(0.85f, 0.28f),
+			)
+		}
+
+		private fun smoothstep(edge0: Float, edge1: Float, x: Float): Float {
+			val t = ((x - edge0) / (edge1 - edge0).coerceAtLeast(1e-6f)).coerceIn(0f, 1f)
+			return t * t * (3f - 2f * t)
+		}
+
+		private fun interp1D(x: Float, xs: FloatArray, ys: FloatArray): Float {
+			if (xs.isEmpty()) return 0f
+			if (x <= xs.first()) return ys.first()
+			if (x >= xs.last()) return ys.last()
+			var lo = 0
+			var hi = xs.size - 1
+			while (lo + 1 < hi) {
+				val mid = (lo + hi) ushr 1
+				if (xs[mid] <= x) lo = mid else hi = mid
 			}
-			return values.last()
+			val span = xs[hi] - xs[lo]
+			val t = if (span > 1e-8f) ((x - xs[lo]) / span).coerceIn(0f, 1f) else 0f
+			return ys[lo] + t * (ys[hi] - ys[lo])
+		}
+
+		private fun fitLine(xs: FloatArray, ys: FloatArray): Pair<Float, Float> {
+			val n = xs.size
+			if (n == 0) return 0f to 0f
+			var mx = 0.0; var my = 0.0
+			for (i in 0 until n) { mx += xs[i]; my += ys[i] }
+			mx /= n; my /= n
+			var num = 0.0; var den = 0.0
+			for (i in 0 until n) {
+				val dx = xs[i] - mx
+				num += dx * (ys[i] - my)
+				den += dx * dx
+			}
+			val slope = if (den > 1e-12) (num / den).toFloat() else 0f
+			val intercept = (my - slope * mx).toFloat()
+			return intercept to slope
+		}
+
+		private fun fitCubicCoeffs(xi: FloatArray, ys: FloatArray, ridge: Float): FloatArray {
+			val a = Array(4) { DoubleArray(4) }
+			val b = DoubleArray(4)
+			for (i in xi.indices) {
+				val x1 = xi[i].toDouble()
+				val x2 = x1 * x1
+				val x3 = x2 * x1
+				val row = doubleArrayOf(1.0, x1, x2, x3)
+				val y = ys[i].toDouble()
+				for (r in 0..3) {
+					b[r] += row[r] * y
+					for (c in 0..3) a[r][c] += row[r] * row[c]
+				}
+			}
+			a[1][1] += ridge.toDouble()
+			a[2][2] += 2.0 * ridge
+			a[3][3] += 4.0 * ridge
+
+			for (p in 0..3) {
+				var maxRow = p
+				for (r in p + 1..3) if (abs(a[r][p]) > abs(a[maxRow][p])) maxRow = r
+				if (maxRow != p) {
+					val tmpA = a[p]; a[p] = a[maxRow]; a[maxRow] = tmpA
+					val tmpB = b[p]; b[p] = b[maxRow]; b[maxRow] = tmpB
+				}
+				val piv = a[p][p]
+				if (abs(piv) < 1e-14) continue
+				for (r in p + 1..3) {
+					val f = a[r][p] / piv
+					b[r] -= f * b[p]
+					for (c in p..3) a[r][c] -= f * a[p][c]
+				}
+			}
+			val sol = DoubleArray(4)
+			for (r in 3 downTo 0) {
+				var sum = b[r]
+				for (c in r + 1..3) sum -= a[r][c] * sol[c]
+				sol[r] = if (abs(a[r][r]) > 1e-14) sum / a[r][r] else 0.0
+			}
+			return FloatArray(4) { sol[it].toFloat() }
+		}
+
+		private fun evalCubic(c: FloatArray, xi: Float): Pair<Float, Float> {
+			val xc = xi.coerceIn(-0.5f, 0.5f)
+			val xc2 = xc * xc
+			val valC = c[0] + c[1] * xc + c[2] * xc2 + c[3] * xc2 * xc
+			val dC = c[1] + 2f * c[2] * xc + 3f * c[3] * xc2
+			val extra = xi - xc
+			return (valC + dC * extra) to dC
 		}
 	}
 }
@@ -629,14 +1733,11 @@ class FittedMouth(val result: MouthFitting.Result, val rig: MouthRig?, val chin:
 	/** Whether the mouth is drawn in layers - its lips or lip lines apart from its inside - rather than whole. */
 	val layered: Boolean = own.any { it.semantic.role in LIPS }
 
-	/** Whether lip layers with their skin cover the mouth's inside, so it need not close whole. */
+	/** Whether lip layers with their skin cover the mouth's inside. */
 	val lipped: Boolean = own.any { it.semantic.role == io.github.psd2live.core.PartRole.UPPER_LIP || it.semantic.role == io.github.psd2live.core.PartRole.LOWER_LIP }
 
 	/**
-	 * How [layer] follows the lips ([MouthRig.Follow]). A mouth drawn whole moves as one, closing whole when ribbons
-	 * outline it ([MouthOptions.exactClose]); a layered mouth's inside closes as far as lips cover it, and its lips, lines,
-	 * teeth, tongue and the dark each move their own way. A highlight or shadow on the mouth follows what it lies on: the
-	 * lip above or below the opening, or the dark inside it.
+	 * How [layer] follows the lips ([MouthRig.Follow]).
 	 */
 	fun follow(layer: io.github.psd2live.core.ClassifiedLayer): MouthRig.Follow {
 		val tag = layer.semantic.tag
@@ -652,8 +1753,9 @@ class FittedMouth(val result: MouthFitting.Result, val rig: MouthRig?, val chin:
 				io.github.psd2live.core.PartRole.UPPER_LIP -> MouthRig.Follow.UPPER_LIP
 				io.github.psd2live.core.PartRole.LOWER_LIP -> MouthRig.Follow.LOWER_LIP
 				io.github.psd2live.core.PartRole.HIGHLIGHT, io.github.psd2live.core.PartRole.SHADOW -> lying(layer)
-				// Clipped onto the opening, the inside's base is drawn larger than any opening and hardly moves; the opening shows it.
-				else -> if (layer.source.clipped && layered) MouthRig.Follow.DEEP else if (!layered) whole else if (lipped) MouthRig.Follow.INSIDE else MouthRig.Follow.OPENING
+				// Clipped onto the opening, the inside's base is drawn larger than any opening and stays deep;
+				// the unclipped opening itself maps onto [u1, l1] so it clips teeth and tongue cleanly on both cel-line and lip-skin rigs.
+				else -> if (layer.source.clipped && layered) MouthRig.Follow.DEEP else if (!layered) whole else MouthRig.Follow.OPENING
 			}
 		}
 	}

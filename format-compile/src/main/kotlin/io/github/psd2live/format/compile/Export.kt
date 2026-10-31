@@ -72,6 +72,11 @@ public data class ExportOptions(
 	public fun setting(key: String): String? = settings[key]
 	public fun int(key: String, default: Int): Int = settings[key]?.toIntOrNull() ?: default
 	public fun float(key: String, default: Float): Float = settings[key]?.toFloatOrNull() ?: default
+	public fun choice(key: String, default: String, values: List<String>): String {
+		val value = settings[key] ?: default
+		require(value in values) { "Invalid $key: $value (expected ${values.joinToString()})" }
+		return value
+	}
 	public fun flag(key: String, default: Boolean): Boolean = settings[key]?.toBooleanStrictOrNull() ?: default
 }
 
@@ -81,6 +86,10 @@ public sealed interface TargetSetting {
 
 	/** A clip id. With [rest], leaving it out poses the rig at rest; otherwise it falls back to the first clip. */
 	public data class ClipChoice(override val key: String, val rest: Boolean) : TargetSetting
+
+	public data class Choice(override val key: String, val default: String, val values: List<String>) : TargetSetting {
+		init { require(values.isNotEmpty() && values.distinct().size == values.size && default in values) }
+	}
 
 	public data class Flag(override val key: String, val default: Boolean) : TargetSetting
 

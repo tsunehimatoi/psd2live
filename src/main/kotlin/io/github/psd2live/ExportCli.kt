@@ -87,6 +87,7 @@ Writes the target's files and <base>.<target>.report.json, which lists what the 
 	/** One setting as `key=<values> (default)`. */
 	internal fun usage(setting: TargetSetting): String = when (setting) {
 		is TargetSetting.ClipChoice -> "${setting.key}=<clip id or name>" + if (setting.rest) "" else " (first clip)"
+		is TargetSetting.Choice -> "${setting.key}=${setting.values.joinToString("|")} (${setting.default})"
 		is TargetSetting.Flag -> "${setting.key}=true|false (${setting.default})"
 		is TargetSetting.Number -> "${setting.key}=${number(setting.min)}..${number(setting.max)} (${setting.default?.let(::number) ?: "auto"})"
 		is TargetSetting.Text -> "${setting.key}=<${setting.hint}>"
