@@ -39,6 +39,31 @@ class MouthThreeLayerTest {
         assertContentEquals(model.evaluateNormalized(openY = 1f), model.evaluateNormalized(openY = 1f, jaw = 1f))
     }
 
+    @Test fun transferredContoursApproachTheDrawingContinuously() {
+        val rest = model.evaluateNormalized()
+        val upper = rest.copyOfRange(0, model.stations * 2)
+        val lower = rest.copyOfRange(model.stations * 2, rest.size)
+        // Overlapping strokes can have different endpoints in the authored drawing.
+        for (i in 0 until model.stations) {
+            upper[i * 2 + 1] -= 0.02f
+            lower[i * 2 + 1] += 0.03f
+        }
+        val poses = listOf(
+            model.evaluateNormalized(openY = 0.99999f),
+            model.evaluateNormalized(form = -0.00001f),
+            model.evaluateNormalized(form = 0.00001f),
+            model.evaluateNormalized(mouthX = -0.00001f),
+            model.evaluateNormalized(mouthX = 0.00001f),
+        )
+        for (lines in listOf(false, true)) for ((index, pose) in poses.withIndex()) {
+            val nearby = model.transferToTargetLocal(pose, upper, lower, lines)
+            for (i in upper.indices) {
+                assertEquals(upper[i], nearby.upperLocal[i], 2e-4f, "upper coordinate $i, lines=$lines, pose=$index")
+                assertEquals(lower[i], nearby.lowerLocal[i], 2e-4f, "lower coordinate $i, lines=$lines, pose=$index")
+            }
+        }
+    }
+
     @Test fun unilateralControlsReflectAcrossTheMouth() {
         for (open in listOf(0f, 0.3f, 1f)) {
             val l = model.evaluateNormalized(openY = open, cornerLUp = 1f)

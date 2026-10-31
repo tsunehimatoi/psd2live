@@ -913,6 +913,65 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		return rigDeltaToMouth(dxRig, dyRig)
 	}
 
+	private fun faceBaseMoveLocal(xLoc: Float, yLoc: Float, ep: EvaluatedPose, chin: Float): Pair<Float, Float> {
+		val w = target.widthPx
+		val vx = xLoc / max(w, 1e-4f)
+		val vy = yLoc / max(w, 1e-4f)
+		var dx = 0f
+		var dy = 0f
+		if (options.jaw || abs(ep.pose.jaw) > 1e-6f) {
+			val chinSpan = max(0.35f, chin * 2.2f)
+			val tJaw = ((vy - 0.22f) / chinSpan).coerceIn(0f, 1f)
+			val wJaw = tJaw * tJaw * (3f - 2f * tJaw) * exp(-0.32f * vx * vx)
+			val openJawTerm = if (options.jaw && target.isLayeredArt) 0.14f * (max(0f, ep.openRatio - 0.2f) - 0.8f) else 0f
+			val jawAmt = (openJawTerm + 0.24f * ep.pose.jaw) * target.h0Px
+			dy += wJaw * jawAmt
+			dx += -vx * 0.10f * wJaw * jawAmt
+		}
+		if (ep.pose.cheek > 1e-5f) {
+			val across = ((abs(vx) - 0.32f) / 0.85f).coerceIn(0f, 1f)
+			val down = (1f - abs(vy - 0.18f) / 0.95f).coerceIn(0f, 1f)
+			val wc = sin(0.5f * PI.toFloat() * across) * down * down
+			dx += (if (vx >= 0f) 1f else -1f) * 0.11f * w * ep.pose.cheek * wc
+			dy += 0.02f * w * ep.pose.cheek * wc
+		}
+
+		return dx to dy
+	}
+
+    private val skinField by lazy {
+        val upper = target.upperLipBoundsLocal
+        val lower = target.lowerLipBoundsLocal
+        if (!target.isLayeredArt || upper == null || lower == null) null
+        else MouthSkinField(target.u0LocPx, target.l0LocPx, upper.union(lower))
+    }
+    private val skinPoses = java.util.concurrent.ConcurrentHashMap<Pair<Pose, Float>, MouthSkinField.Posed>()
+
+    private fun lippedFaceMoveLocal(xLoc: Float, yLoc: Float, ep: EvaluatedPose, chin: Float): Pair<Float, Float> {
+        val field = skinField ?: return faceBaseMoveLocal(xLoc, yLoc, ep, chin).let { base ->
+            val rim = perioralRimFollowLocal(xLoc, yLoc, ep)
+            (base.first + rim.first) to (base.second + rim.second)
+        }
+        val posed = skinPoses.computeIfAbsent(ep.pose to chin) {
+            field.pose(ep.u1LocPx, ep.l1LocPx) { x, y -> faceBaseMoveLocal(x, y, ep, chin) }
+        }
+        return posed.displacement(xLoc, yLoc) ?: faceBaseMoveLocal(xLoc, yLoc, ep, chin)
+    }
+
+    private fun lipSkinMove(upper: Boolean, u: Float, v: Float, pose: Pose, chin: Float): Pair<Float, Float> {
+        if (skinField == null) return legacyLipSkinMove(upper, u, v, pose, chin)
+        val ep = eval(pose)
+        val (xRig, yRig) = fit.toCanvas(u, v)
+        val (xLoc, yLoc) = target.toLocalPx(xRig, yRig)
+        val field = requireNotNull(skinField)
+        val posed = skinPoses.computeIfAbsent(ep.pose to chin) {
+            field.pose(ep.u1LocPx, ep.l1LocPx) { x, y -> faceBaseMoveLocal(x, y, ep, chin) }
+        }
+        val (dxLoc, dyLoc) = posed.displacement(xLoc, yLoc, upper) ?: faceBaseMoveLocal(xLoc, yLoc, ep, chin)
+        val (dxRig, dyRig) = target.localDeltaToRig(dxLoc, dyLoc)
+        return rigDeltaToMouth(dxRig, dyRig)
+    }
+
 	private fun perioralRimFollowLocal(xLoc: Float, yLoc: Float, ep: EvaluatedPose): Pair<Float, Float> {
 		val w = target.widthPx
 		val uxMin = target.uxMono0.first(); val uxMax = target.uxMono0.last()
@@ -954,33 +1013,7 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		return (wP * dRimX) to (wP * dRimY)
 	}
 
-	private fun lippedFaceMoveLocal(xLoc: Float, yLoc: Float, ep: EvaluatedPose, chin: Float): Pair<Float, Float> {
-		val w = target.widthPx
-		val vx = xLoc / max(w, 1e-4f)
-		val vy = yLoc / max(w, 1e-4f)
-		var dx = 0f
-		var dy = 0f
-		if (options.jaw || abs(ep.pose.jaw) > 1e-6f) {
-			val chinSpan = max(0.35f, chin * 2.2f)
-			val tJaw = ((vy - 0.22f) / chinSpan).coerceIn(0f, 1f)
-			val wJaw = tJaw * tJaw * (3f - 2f * tJaw) * exp(-0.32f * vx * vx)
-			val openJawTerm = if (options.jaw && target.isLayeredArt) 0.14f * (max(0f, ep.openRatio - 0.2f) - 0.8f) else 0f
-			val jawAmt = (openJawTerm + 0.24f * ep.pose.jaw) * target.h0Px
-			dy += wJaw * jawAmt
-			dx += -vx * 0.10f * wJaw * jawAmt
-		}
-		if (ep.pose.cheek > 1e-5f) {
-			val across = ((abs(vx) - 0.32f) / 0.85f).coerceIn(0f, 1f)
-			val down = (1f - abs(vy - 0.18f) / 0.95f).coerceIn(0f, 1f)
-			val wc = sin(0.5f * PI.toFloat() * across) * down * down
-			dx += (if (vx >= 0f) 1f else -1f) * 0.11f * w * ep.pose.cheek * wc
-			dy += 0.02f * w * ep.pose.cheek * wc
-		}
-		val (rimX, rimY) = perioralRimFollowLocal(xLoc, yLoc, ep)
-		return (dx + rimX) to (dy + rimY)
-	}
-
-	private fun lipSkinMove(upper: Boolean, u: Float, v: Float, pose: Pose, chin: Float): Pair<Float, Float> {
+	private fun legacyLipSkinMove(upper: Boolean, u: Float, v: Float, pose: Pose, chin: Float): Pair<Float, Float> {
 		val ep = eval(pose)
 		val (xRig, yRig) = fit.toCanvas(u, v)
 		val (xLoc, yLoc) = target.toLocalPx(xRig, yRig)

@@ -211,8 +211,12 @@ internal class MouthThreeLayerModel private constructor(
 			val ds = sSrcEff1[i] - c0 * sSrcBase0[i]
 			val sTgt1 = max(0f, c0 * sTgt0[i] + openGate * ds)
 			val gapHalf = if (closedGap > 0f && cClose > 0f) 0.5f * closedGap * cClose * sin(PI.toFloat() * uDense[i]) else 0f
-			val aTgt1X = (c0 * aTgt0X + openGate * (aSrc1X - aSrc0X)) * shoutScaleX
-			val aTgt1Y = hTgt * sTgt1 + gapHalf
+			val cornerJoint = (min(i, n - 1 - i) / 3f).coerceIn(0f, 1f).let { it * it * (3f - 2f * it) }
+			val aTgt1X = (c0 * aTgt0X + cornerJoint * openGate * (aSrc1X - aSrc0X)) * shoutScaleX
+			// Preserve the authored aperture at the drawn key; only expression changes taper at the joints.
+			val restAperture = c0 * aTgt0Y
+			val apertureChange = hTgt * sTgt1 + c0 * min(0f, aTgt0Y) - restAperture
+			val aTgt1Y = restAperture + cornerJoint * (apertureChange + gapHalf)
 
 			val shoutUp = if (extra > 0f) 0.45f * extra * max(0f, aTgt0Y) else 0f
 			val shoutLo = if (extra > 0f) 0.90f * extra * max(0f, aTgt0Y) else 0f

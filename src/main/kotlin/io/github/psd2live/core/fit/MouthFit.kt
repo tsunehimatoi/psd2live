@@ -304,6 +304,25 @@ object MouthFitting {
 		val ay = 0.5f * (upperWorld65[1] + lowerWorld65[1])
 		val bx = 0.5f * (upperWorld65[lastIdx] + lowerWorld65[lastIdx])
 		val by = 0.5f * (upperWorld65[lastIdx + 1] + lowerWorld65[lastIdx + 1])
+
+		val jointSpan = 4
+		for (i in 0..jointSpan) {
+			val t = i.toFloat() / jointSpan
+			val w = t * t * (3f - 2f * t)
+			val leftW = 1f - w
+			upperWorld65[i * 2] = leftW * ax + w * upperWorld65[i * 2]
+			upperWorld65[i * 2 + 1] = leftW * ay + w * upperWorld65[i * 2 + 1]
+			lowerWorld65[i * 2] = leftW * ax + w * lowerWorld65[i * 2]
+			lowerWorld65[i * 2 + 1] = leftW * ay + w * lowerWorld65[i * 2 + 1]
+
+			val ri = stations - 1 - i
+			val rLast = ri * 2
+			upperWorld65[rLast] = leftW * bx + w * upperWorld65[rLast]
+			upperWorld65[rLast + 1] = leftW * by + w * upperWorld65[rLast + 1]
+			lowerWorld65[rLast] = leftW * bx + w * lowerWorld65[rLast]
+			lowerWorld65[rLast + 1] = leftW * by + w * lowerWorld65[rLast + 1]
+		}
+
 		val frameWidth = hypot(bx - ax, by - ay).coerceAtLeast(1f)
 		val exX = (bx - ax) / frameWidth
 		val exY = (by - ay) / frameWidth
@@ -739,9 +758,26 @@ object MouthFitting {
 
 		val cxArr = centersX.toFloatArray()
 		val cyArr = centersY.toFloatArray()
+		val smCx = gaussianSmooth1D(cxArr, 3.5f)
+		val smCy = gaussianSmooth1D(cyArr, 3.5f)
+		val count = cxArr.size
+		for (m in 0 until count) {
+			val taper = (min(m, count - 1 - m) / 8f).coerceIn(0f, 1f)
+			cxArr[m] = cxArr[m] * (1f - taper) + smCx[m] * taper
+			cyArr[m] = cyArr[m] * (1f - taper) + smCy[m] * taper
+		}
 		val sampled = resampleArcLength(cxArr, cyArr, uDense)
+		val stations = uDense.size
+		val smSampledX = gaussianSmooth1D(FloatArray(stations) { sampled[it * 2] }, 2.0f)
+		val smSampledY = gaussianSmooth1D(FloatArray(stations) { sampled[it * 2 + 1] }, 2.0f)
+		val smoothedSampled = FloatArray(stations * 2)
+		for (i in 0 until stations) {
+			val taper = (min(i, stations - 1 - i) / 5f).coerceIn(0f, 1f)
+			smoothedSampled[i * 2] = sampled[i * 2] * (1f - taper) + smSampledX[i] * taper
+			smoothedSampled[i * 2 + 1] = sampled[i * 2 + 1] * (1f - taper) + smSampledY[i] * taper
+		}
 		val medianTh = if (thicknesses.isEmpty()) 2f else percentile(thicknesses, 0.5f)
-		return sampled to medianTh
+		return smoothedSampled to medianTh
 	}
 
 	private fun extractOpeningRims(
