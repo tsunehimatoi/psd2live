@@ -179,6 +179,11 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 
 	private val target: TargetGeom = buildTargetGeom()
 
+	// A whole mouth has no authored closed lip line. Its open contour's midpoint is not a closed-mouth drawing.
+	private val closedMidlineLocal: FloatArray? = if (target.isLayeredArt) null else FloatArray(stations) { i ->
+		MouthCurve.preset("smile").yAt(uDense[i]) * fit.opening * 0.6f * fit.width / target.widthPx
+	}
+
 	private fun buildTargetGeom(): TargetGeom {
 		val lf = fit.layered
 		if (lf != null) {
@@ -375,6 +380,7 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		val tL1: FloatArray,
 		val nL1: FloatArray,
 		val closing: FloatArray,
+		val restContourWeight: Float,
 		val shiftXPx: Float,
 		val openRatio: Float,
 		val openSym: Float,
@@ -407,12 +413,14 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 			target.u0LocalNorm, target.l0LocalNorm, target.hasLines,
 			closedGap = gap * fit.width / target.widthPx,
 			customCurveDelta = customCurveDelta,
+			closedMidlineLocal = closedMidlineLocal,
 		)
 		val midCurve = model.transferToTargetLocal(
 			model.evaluateNormalized(openY = 0.48f, form = 0f),
 			target.u0LocalNorm, target.l0LocalNorm, target.hasLines,
 			closedGap = gap * fit.width / target.widthPx,
 			customCurveDelta = customCurveDelta,
+			closedMidlineLocal = closedMidlineLocal,
 		)
 		val w = target.widthPx
 		val u0MidY = target.u0LocPx[midIdx * 2 + 1]
@@ -474,6 +482,7 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		val tr = model.transferToTargetLocal(
 			srcPose, target.u0LocalNorm, target.l0LocalNorm, target.hasLines,
 			extraOpen = extraOpen, closedGap = closedGapNorm, customCurveDelta = customCurveDelta,
+			closedMidlineLocal = closedMidlineLocal,
 		)
 		val trSym = if (hasAsym) {
 			val srcSym = model.evaluateNormalized(
@@ -489,6 +498,7 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 			model.transferToTargetLocal(
 				srcSym, target.u0LocalNorm, target.l0LocalNorm, target.hasLines,
 				extraOpen = extraOpen, closedGap = closedGapNorm, customCurveDelta = customCurveDelta,
+				closedMidlineLocal = closedMidlineLocal,
 			)
 		} else tr
 
@@ -648,6 +658,7 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 			tL1 = tL1,
 			nL1 = nL1,
 			closing = closing,
+			restContourWeight = openEff.coerceIn(0f, 1f),
 			shiftXPx = tr.shiftXNorm * w,
 			openRatio = openRatio,
 			openSym = openSym,
@@ -690,8 +701,12 @@ class MouthRig(val fit: MouthFit, val options: MouthOptions, lineWidth: Float? =
 		val t = f - i
 		val duV = (ep.u1MouthV[i] - target.u0MouthV[i]) * (1f - t) + (ep.u1MouthV[i + 1] - target.u0MouthV[i + 1]) * t
 		val dlV = (ep.l1MouthV[i] - target.l0MouthV[i]) * (1f - t) + (ep.l1MouthV[i + 1] - target.l0MouthV[i + 1]) * t
-		var top = drawnUpper(uc) + duV
-		var bottom = drawnLower(uc) + dlV
+		val weight = if (target.isLayeredArt) 1f else ep.restContourWeight
+		val upperRest = target.u0MouthV[i] * (1f - t) + target.u0MouthV[i + 1] * t
+		val lowerRest = target.l0MouthV[i] * (1f - t) + target.l0MouthV[i + 1] * t
+		// Carry the source sampling residual only while open; otherwise it reopens a closed target at steep corners.
+		var top = if (target.isLayeredArt) drawnUpper(uc) + duV else upperRest + duV + (drawnUpper(uc) - upperRest) * weight
+		var bottom = if (target.isLayeredArt) drawnLower(uc) + dlV else lowerRest + dlV + (drawnLower(uc) - lowerRest) * weight
 		if (bottom < top) {
 			val m = 0.5f * (top + bottom)
 			top = m; bottom = m

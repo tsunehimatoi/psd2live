@@ -120,6 +120,8 @@ internal class MouthThreeLayerModel private constructor(
 	/**
 	 * Transfers a normalized 65-station contour onto target local rest curves (`upperLocal`, `lowerLocal`, each `65 * 2`
 	 * in mouth-center width-normalized coordinates), returning `(upperTransferred, lowerTransferred, c0)`.
+	 * [closedMidlineLocal] supplies the closed drawing for whole-mouth art without independently authored lips;
+	 * otherwise closure retains the rest midline and transfers the template's closing displacement.
 	 */
 	fun transferToTargetLocal(
 		srcPose: FloatArray,
@@ -129,6 +131,7 @@ internal class MouthThreeLayerModel private constructor(
 		extraOpen: Float = 0f,
 		closedGap: Float = 0f,
 		customCurveDelta: FloatArray? = null,
+		closedMidlineLocal: FloatArray? = null,
 	): TransferredCurves {
 		// The authored neutral drawing is an exact key, including overlapping corner strokes.
 		if (extraOpen <= 0f && srcPose.contentEquals(orig65))
@@ -197,7 +200,8 @@ internal class MouthThreeLayerModel private constructor(
 			shiftXSum += dmX
 			val dmShutY = mShutY - mSrc0Y
 			val dmExprY = (mSrc1Y - mSrc0Y) - cClose * dmShutY
-			val closeDy = if (wideOpenSkin) -0.36f * aTgt0Y else dmShutY * ky
+			val closeDy = closedMidlineLocal?.let { it[i] - mTgt0Y }
+				?: if (wideOpenSkin) -0.36f * aTgt0Y else dmShutY * ky
 			val curveOff = if (customCurveDelta != null) customCurveDelta[i] * cClose else 0f
 			val dmYTgt = cClose * closeDy + dmExprY * kyExpr + curveOff
 
