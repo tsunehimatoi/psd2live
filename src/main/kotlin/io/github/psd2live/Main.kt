@@ -253,8 +253,9 @@ private fun runGui() {
 			}
 			// A window's transparency cannot change once it is shown, so switching the canvas
 			// background to or from transparent replaces the window; windowState keeps its bounds. The system only
-			// lets an undecorated window be transparent, so that one draws its whole title bar; otherwise the window
-			// keeps its native frame under the app's title bar where the runtime allows it.
+			// lets an undecorated window be transparent, so that one draws its whole title bar. Otherwise the window
+			// keeps its native frame: the JetBrains runtime draws under a custom title bar, and the Mac shell draws
+			// the app bar in the system title-bar area.
 			// A language switch replaces it too: text is read through tr() wherever it is composed,
 			// remembered, or handed to Swing, so only a fresh composition shows none of the old language.
 			CompositionLocalProvider(LocalWindowExceptionHandlerFactory provides exceptionHandlers) {
@@ -267,6 +268,9 @@ private fun runGui() {
 						undecorated = transparent || (!NativeTitleBar.supported && !io.github.psd2live.ui.utils.MacShell.active),
 						transparent = transparent,
 					) {
+						if (io.github.psd2live.ui.utils.MacShell.active && !window.isUndecorated && !NativeTitleBar.supported) {
+							io.github.psd2live.ui.utils.MacShell.installChrome(window)
+						}
 						val titleBar = remember(window) { if (window.isUndecorated) null else NativeTitleBar.install(window) }
 						DisposableEffect(window) {
 							mainFrame.set(window)
