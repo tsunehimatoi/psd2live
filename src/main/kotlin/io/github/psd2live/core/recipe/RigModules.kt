@@ -223,7 +223,8 @@ object RigModules {
 	/**
 	 * Motions that move like a person ([io.github.psd2live.core.MotionGenerator.naturalBlinkTracks]): blinks that shut
 	 * fast and open slowly at uneven gaps, now and then twice, one eye a frame behind the other; the idle's eyes
-	 * glancing away and back now and then.
+	 * glancing away and drifting back, the brows stirring with the breath. A nod and a shake ease into each
+	 * extreme, the dip quicker than the rise, and the body follows the head.
 	 */
 	val MOTION_NATURAL = RigBase("motion/natural")
 

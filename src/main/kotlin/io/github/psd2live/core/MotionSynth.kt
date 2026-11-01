@@ -528,10 +528,16 @@ internal object MotionSynth {
 	 */
 	private object IdleClock {
 		private val breathCurve = MotionCurveMath.eased("breath", listOf(
-			0f to 0f, 1.6f to 0.9f, 4.2f to 0f, 5.7f to 0.72f, 8f to 0f, 9.6f to 0.95f, IDLE_DURATION to 0f,
+			0f to 0f, 1.15f to 1f, 3.45f to 0f, 3.9f to 0f, 5.4f to 0.62f, 7.35f to 0f, 8.65f to 0.95f, IDLE_DURATION to 0f,
 		), loop = true)
 
 		fun breath(time: Float): Float = MotionCurveMath.looped(breathCurve, time.toDouble(), IDLE_DURATION)
+
+		/** Where the breath sits on average, so a part that nods with it rocks about its rest. */
+		val breathMean: Float = run {
+			val samples = 240
+			(0 until samples).sumOf { breath(IDLE_DURATION * it / samples).toDouble() }.toFloat() / samples
+		}
 
 		private fun rawWeight(time: Float) = wave(time, 2, 0.4f) + 0.4f * wave(time, 3, 2.2f)
 		private val weightPeak = (0 until 1200).maxOf { abs(rawWeight(IDLE_DURATION * it / 1200f)) }
@@ -550,8 +556,9 @@ internal object MotionSynth {
 	 * shifting its weight, every part following the one that carries it a little late, the way weight
 	 * travels up a standing body.
 	 *
-	 * - The breath lifts the shoulders and the chest (the body's breath warp), the body nods with it and
-	 *   the head after that.
+	 * - The breath lifts the shoulders and the chest (the body's breath warp): a quick draw in, a slower
+	 *   let out, and a beat empty before the next. The body nods with it and the head after that, with a
+	 *   second quicker cycle so the head does not trace the same path on every breath.
 	 * - The hips lead the weight cycle from one foot to the other, the knees giving in turn. The body
 	 *   turns after them and leans back over them, the head tilts against the lean and turns last, drifting
 	 *   a little on its own as well.
@@ -569,15 +576,21 @@ internal object MotionSynth {
 		val breath = IdleClock::breath
 		val weight = IdleClock::weight
 		// The breath's mean, so the parts that nod with it rock about their rest pose.
-		val breathMean = 0.45f
+		val breathMean = IdleClock.breathMean
 		val body = listOf(
 			loopCurve(StandardParameters.BREATH.raw, breath),
-			follow(StandardParameters.BODY_Y.raw, 2.4f, 0.15f, -2.4f * breathMean, breath),
-			loopCurve(StandardParameters.ANGLE_Y.raw) { 3.4f * (breath(it - 0.4f) - breathMean) + 2f * IdleClock.wave(it, 1, 2f) },
-			follow(StandardParameters.BODY_X.raw, 3.5f, 0.45f, signal = weight),
-			follow(StandardParameters.BODY_Z.raw, -2.5f, 0.7f, signal = weight),
-			follow(StandardParameters.ANGLE_Z.raw, 4f, 1.2f, signal = weight),
-			loopCurve(StandardParameters.ANGLE_X.raw) { 4.5f * weight(it - 1.5f) + 3.5f * IdleClock.drift(it) },
+			follow(StandardParameters.BODY_Y.raw, 3.1f, 0.15f, -3.1f * breathMean, breath),
+			// The head nods with the breath, drifts once around the loop, and adds a quicker second
+			// cycle so two breaths never move it the same way.
+			loopCurve(StandardParameters.ANGLE_Y.raw) {
+				5.2f * (breath(it - 0.4f) - breathMean) + 3.2f * IdleClock.wave(it, 1, 2f) + 1.3f * IdleClock.wave(it, 2, 0.7f)
+			},
+			follow(StandardParameters.BODY_X.raw, 4.2f, 0.45f, signal = weight),
+			follow(StandardParameters.BODY_Z.raw, -3f, 0.7f, signal = weight),
+			follow(StandardParameters.ANGLE_Z.raw, 5f, 1.2f, signal = weight),
+			loopCurve(StandardParameters.ANGLE_X.raw) {
+				5.5f * weight(it - 1.5f) + 4.2f * IdleClock.drift(it) + 1.1f * IdleClock.wave(it, 3, 0.4f)
+			},
 		)
 		if (spec?.enabled != true) return body
 		val available = SkeletonPoses.available(spec).filterNot { pose ->
