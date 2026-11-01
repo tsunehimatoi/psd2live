@@ -145,7 +145,9 @@ object MotionPresets {
 				else SkeletonMotions.idleCute(skeleton, exclude, settings.of(name, TUCK))
 				if (body.isEmpty()) return emptyList()
 				val tuned = idleTuned(body, settings.of(name, AMPLITUDE), settings.of(name, BREATH), settings.of(name, HEAD))
-				val blinks = if (settings.natural) MotionGenerator.naturalBlinkTracks + MotionGenerator.glanceTracks else MotionGenerator.idleBlinkTracks
+				val blinks = if (settings.natural) {
+					MotionGenerator.naturalBlinkTracks + MotionGenerator.glanceTracks + MotionGenerator.idleFaceTracks
+				} else MotionGenerator.idleBlinkTracks
 				if (settings.of(name, BLINK) > 0.5f) tuned + blinks else tuned
 			}
 			"talk" -> if (settings.natural) MotionGenerator.talkTracks else emptyList()
