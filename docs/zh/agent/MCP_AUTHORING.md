@@ -673,3 +673,7 @@ View 从模型数据渲染 PNG，不依赖桌面截图。`canvas_rect` 给出画
 - [工程存储](../../../src/main/kotlin/io/github/psd2live/project/WorkspaceStore.kt)
 
 本页记录接口，不据此升级[能力实测](../STATUS.md)的评价。完整效果仍需实际模型、宿主与任务样本验证。
+
+### 眼部结构纠正
+
+`module_catalog` 的 `eye_structure` 返回眼部组件及 `sourceStamp`。通过 `settings` 的 `changes.rig.eyeParts`，按图层 ID 和组件 ID 设置 `side`（left/right）、`region`（upper/lower）、`primitive`（line/tuft/side/skin/auto）、`contacts` 或 `path`。首次设置组件时需要 `sourceStamp`；坐标为以眼宽归一、向脸下方为正的眼局部坐标。组件或图层为 null 时重置；不匹配原画摘要的覆盖保留但不生效。该编辑进入正常设置历史并随工程保存。

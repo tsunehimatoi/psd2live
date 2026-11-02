@@ -39,7 +39,7 @@ object RigModules {
 	 * The eyes fitted from their drawn outline ([io.github.psd2live.core.fit.EyeRig]): the lids close over a pseudo-3D
 	 * eyeball, keeping their arc, the white, lashes and lid skin each following them their own way.
 	 */
-	val EYE_FITTED = RigBase("eye/fitted", knobs = listOf(
+	val EYE_FITTED = RigBase("eye/fitted", version = 2, knobs = listOf(
 		RecipeKnob("lowerShare", P, 0f..50f, 5f),
 		RecipeKnob("roundness", P, 40f..160f, 100f),
 		RecipeKnob("lashSquash", P, 20f..100f, 60f, advanced = true),

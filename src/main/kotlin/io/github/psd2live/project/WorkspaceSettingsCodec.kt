@@ -99,6 +99,11 @@ internal object WorkspaceSettingsCodec {
                 putJsonObject(feature) { handles.forEach { (handle, move) -> put(handle, buildJsonArray { add(move.dx); add(move.dy) }) } }
             }
         }
+        if (recipe.eyeParts.isNotEmpty()) putJsonObject("eyeParts") {
+            recipe.eyeParts.forEach { (layer, parts) -> putJsonObject(layer) {
+                parts.forEach { (id, part) -> put(id, EyePartOverrideCodec.encode(part)) }
+            } }
+        }
     }
 
     private fun move(value: JsonElement?): io.github.psd2live.core.recipe.FeatureMove? = (value as? JsonArray)?.takeIf { it.size == 2 }?.let { pair ->
@@ -125,7 +130,12 @@ internal object WorkspaceSettingsCodec {
         val moves = (obj["moves"] as? JsonObject).orEmpty().mapValues { (_, handles) ->
             (handles as? JsonObject).orEmpty().mapNotNull { (handle, v) -> move(v)?.let { handle to it } }.toMap()
         }
-        return io.github.psd2live.core.recipe.RigRecipe(true, bases, modules, moves).normalized()
+        val eyeParts = (obj["eyeParts"] as? JsonObject).orEmpty().mapValues { (_, parts) ->
+            (parts as? JsonObject).orEmpty().mapNotNull { (id, entry) ->
+                runCatching { EyePartOverrideCodec.decode(entry.jsonObject) }.getOrNull()?.let { id to it }
+            }.toMap()
+        }
+        return io.github.psd2live.core.recipe.RigRecipe(true, bases, modules, moves, eyeParts).normalized()
     }
 
     private fun JsonElement?.objectOrEmpty(what: String): JsonObject = when (this) {
@@ -147,7 +157,7 @@ internal object WorkspaceSettingsCodec {
     ): Pair<io.github.psd2live.core.recipe.RigRecipe, Map<String, Boolean>> {
         if (changes == JsonNull) return io.github.psd2live.core.recipe.RigRecipe.Legacy to emptyMap()
         val obj = changes as? JsonObject ?: error("rig must be an object or null")
-        require(obj.keys.all { it == "bases" || it == "modules" || it == "moves" }) { "rig takes bases, modules and moves" }
+        require(obj.keys.all { it in setOf("bases", "modules", "moves", "eyeParts") }) { "rig takes bases, modules, moves and eyeParts" }
         val start = if (base.modern) base else io.github.psd2live.core.recipe.RigRecipe.Modern
         val bases = start.bases.toMutableMap()
         val modules = start.modules.toMutableMap()
@@ -201,7 +211,8 @@ internal object WorkspaceSettingsCodec {
                 if (v == JsonNull) current -= handle else current[handle] = move(v) ?: error("rig.moves.$feature.$handle must be [dx, dy] or null")
             }
         }
-        return io.github.psd2live.core.recipe.RigRecipe(true, bases, modules, moves).normalized() to settings
+        val eyeParts = obj["eyeParts"]?.let { EyePartOverrideCodec.merge(start.eyeParts, it) } ?: start.eyeParts
+        return io.github.psd2live.core.recipe.RigRecipe(true, bases, modules, moves, eyeParts).normalized() to settings
     }
 
     fun decodeMouthCurve(value: JsonElement?): io.github.psd2live.core.MouthCurve? = runCatching {

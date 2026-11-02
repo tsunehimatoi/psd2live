@@ -1,6 +1,7 @@
 package io.github.psd2live.application
 
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonNull
 
 /** A settings gesture carries patches, never a copy of the authored rig or its journal. */
 internal object WorkspaceSettingsDraft {
@@ -22,7 +23,8 @@ internal object WorkspaceSettingsDraft {
         var pending = JsonObject(emptyMap())
         fun flush() { if (pending.isNotEmpty()) add(pending); pending = JsonObject(emptyMap()) }
         for (change in changes) {
-            if (change.keys.any { it in switches }) { flush(); add(change) }
+            val structural = change["rig"] == JsonNull || (change["rig"] as? JsonObject)?.containsKey("eyeParts") == true
+            if (change.keys.any { it in switches } || structural) { flush(); add(change) }
             else pending = merge(pending, change)
         }
         flush()

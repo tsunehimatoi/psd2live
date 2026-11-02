@@ -130,6 +130,8 @@ data class RigRecipe(
 	val modules: Map<String, ModuleChoice> = emptyMap(),
 	/** The feature handles the user moved on the canvas, by feature (`eye.L`, `mouth`...) and handle. */
 	val moves: Map<String, Map<String, FeatureMove>> = emptyMap(),
+	/** Structural corrections by source layer and material component. */
+	val eyeParts: Map<String, Map<String, EyePartOverride>> = emptyMap(),
 ) {
 	/** The handles of [feature] the user moved. */
 	fun moves(feature: String): Map<String, FeatureMove> = if (modern) moves[feature].orEmpty() else emptyMap()
@@ -193,7 +195,8 @@ data class RigRecipe(
 			val kept = handles.filter { (handle, move) -> io.github.psd2live.core.fit.FeatureHandles.known(feature, handle) && (move.dx != 0f || move.dy != 0f) }
 			if (kept.isEmpty()) null else feature to kept.toSortedMap()
 		}.toMap().toSortedMap()
-		return RigRecipe(true, baseChoices, moduleChoices, moved)
+		return RigRecipe(true, baseChoices, moduleChoices, moved,
+			eyeParts.filterValues { it.isNotEmpty() }.toSortedMap().mapValues { it.value.toSortedMap() })
 	}
 
 	companion object {

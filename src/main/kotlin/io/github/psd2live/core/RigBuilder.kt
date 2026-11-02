@@ -323,12 +323,14 @@ object RigBuilder {
 			val values = io.github.psd2live.core.recipe.RigModules.EYE_FITTED.knobs.map { config.recipe.baseValue("eye", it.id) }
 			val options = eyeOptions(config)
 			val moved = listOf(config.recipe.moves("eye.L"), config.recipe.moves("eye.R"))
-			return fittedEyes.getOrPut(listOf(values, options, config.parentOverrides, deformersEnabled, moved)) {
+			return fittedEyes.getOrPut(listOf(values, options, config.parentOverrides, deformersEnabled, moved, config.recipe.eyeParts)) {
 				val space = analysis.layers.firstOrNull { it.semantic.tag == SemanticTag.EYEWHITE && it.opaquePixels > 0 }?.let { headSpaceFor(it, config) }
 				val toRig = { x: Float, y: Float -> space?.toAligned(x, y) ?: (x to y) }
 				val result = io.github.psd2live.core.fit.EyeFitting.fit(analysis.layers, faceRig.centerX, toRig)
-				io.github.psd2live.core.fit.FittedEyes(result, result.fits.mapValues { (side, drawn) ->
-					val fit = drawn.moved(rigMoves(config, if (side == Side.LEFT) "eye.L" else "eye.R", toRig))
+				val fits = result.fits.mapValues { (side, drawn) -> drawn.moved(rigMoves(config, if (side == Side.LEFT) "eye.L" else "eye.R", toRig)) }
+				val artwork = io.github.psd2live.core.fit.EyeArtworkFitting.fit(analysis.layers, fits, config.recipe.eyeParts, toRig)
+				io.github.psd2live.core.fit.FittedEyes(result, fits.mapValues { (side, drawn) ->
+					val fit = drawn.copy(artwork = artwork[side])
 					io.github.psd2live.core.fit.EyeRig(fit, values[0] / 100f, values[1] / 100f, values[2] / 100f,
 						smileArc = options.smileArc, smilePush = options.smilePush, wideLift = options.wideLift)
 				}, options)
@@ -1561,10 +1563,11 @@ object RigBuilder {
 				faceMasks.isNotEmpty() && drawable.maskedBy.isEmpty() && drawable.id !in lipOwnerById &&
 					(semantic.tag == SemanticTag.FACE_DETAIL || semantic.tag == SemanticTag.FRONT_HAIR && semantic.role == PartRole.SHADOW) &&
 					onSkin(classifiedByDrawable.getValue(drawable.id)) -> drawable.copy(maskedBy = faceMasks.map { it.id })
-				semantic.tag == SemanticTag.IRIDES -> {
-					val exact = drawableByTagSide[SemanticTag.EYEWHITE to semantic.side].orEmpty()
-					val fallback = drawableByTagSide[SemanticTag.EYEWHITE to Side.NONE].orEmpty()
-					drawable.copy(maskedBy = (exact.ifEmpty { fallback }).map { it.id })
+				semantic.tag == SemanticTag.IRIDES && drawable.maskedBy.isEmpty() -> {
+					val whites = maskSources.filter { classifiedByDrawable.getValue(it.id).semantic.tag == SemanticTag.EYEWHITE }
+					val selected = io.github.psd2live.core.fit.EyeOpeningAssociation.select(classifiedByDrawable.getValue(drawable.id),
+						whites.map { classifiedByDrawable.getValue(it.id) }).mapTo(HashSet()) { it.source.id }
+					drawable.copy(maskedBy = whites.filter { classifiedByDrawable.getValue(it.id).source.id in selected }.map { it.id })
 				}
 				inMouth(classifiedByDrawable.getValue(drawable.id)) -> {
 					val layer = classifiedByDrawable.getValue(drawable.id)
@@ -3458,9 +3461,11 @@ object RigBuilder {
 			return mouth.rig.faceGrid(data.rigPositions, parentFrame, StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN, mouth.chin)
 		return when (tag) {
 			SemanticTag.EYEWHITE, SemanticTag.EYELASH ->
-				eyes?.rigs?.get(layer.semantic.side)?.let { eye ->
+				(if (layer.semantic.side == Side.NONE && eyes != null) io.github.psd2live.core.fit.EyeModules.pairedLidGrid(
+					io.github.psd2live.core.fit.EyeModules.meshOf(tag, layer.semantic.role)!!, layer.source.id.raw, data.rigPositions, parentFrame, eyes) else null)
+				?: eyes?.rigs?.get(layer.semantic.side)?.let { eye ->
 					io.github.psd2live.core.fit.EyeModules.lidGrid(io.github.psd2live.core.fit.EyeModules.meshOf(tag, layer.semantic.role)!!,
-						layer.semantic.side, data.rigPositions, parentFrame, eye, eyes.options)
+						layer.semantic.side, data.rigPositions, parentFrame, eye, eyes.options, layer.source.id.raw)
 				} ?: eyeClosureGrid(layer, data, parentFrame, faceRig, eyeWhiteBounds, config.rigTuning)
 			SemanticTag.EYE_CLOSE -> eyes?.rigs?.get(layer.semantic.side)?.let { eye ->
 				io.github.psd2live.core.fit.EyeModules.closedLineGrid(layer.semantic.side, data.rigPositions, parentFrame, eye, eyes.options)
@@ -3733,10 +3738,18 @@ object RigBuilder {
 				if (eyes?.options?.smile == true && eyes.rigs[layer.semantic.side] != null) io.github.psd2live.core.fit.EyeModules.smile(layer.semantic.side) else null,
 				ParameterId(if (left) "ParamBrowLSpring" else "ParamBrowRSpring"))
 		}
+		if (layer.semantic.side == Side.NONE && eyes != null && (tag == SemanticTag.EYEWHITE || tag == SemanticTag.EYELASH)) {
+			val owner = List(data.rigPositions.size / 2) { i -> eyes.sideAt(layer.source.id.raw, data.rigPositions[i * 2], data.rigPositions[i * 2 + 1]) }
+			return eyes.rigs.flatMap { (side, eye) -> io.github.psd2live.core.fit.EyeModules.lidShapes(
+				io.github.psd2live.core.fit.EyeModules.meshOf(tag, layer.semantic.role)!!, side, data.rigPositions, frame, eye, eyes.options, layer.source.id.raw)
+				.map { shape -> shape.copy(forms = shape.forms.map { form -> form?.let { org.umamo.runtime.model.MeshForm(it.positionDeltas.mapIndexed { i, delta ->
+					if (owner[i / 2] == side) delta else 0f }.toFloatArray()) } }) }
+			}
+		}
 		val eye = eyes?.rigs?.get(layer.semantic.side) ?: return emptyList()
 		return when {
 			tag == SemanticTag.EYEWHITE || tag == SemanticTag.EYELASH -> io.github.psd2live.core.fit.EyeModules.lidShapes(
-				io.github.psd2live.core.fit.EyeModules.meshOf(tag, layer.semantic.role)!!, layer.semantic.side, data.rigPositions, frame, eye, eyes.options)
+				io.github.psd2live.core.fit.EyeModules.meshOf(tag, layer.semantic.role)!!, layer.semantic.side, data.rigPositions, frame, eye, eyes.options, layer.source.id.raw)
 			tag == SemanticTag.IRIDES && layer.semantic.role == PartRole.HIGHLIGHT ->
 				io.github.psd2live.core.fit.EyeModules.highlightShapes(data.rigPositions, frame, eye.fit.iris ?: layer.bounds, eyes.options)
 			tag == SemanticTag.IRIDES -> io.github.psd2live.core.fit.EyeModules.pupilShapes(layer.semantic.side, data.rigPositions, frame,

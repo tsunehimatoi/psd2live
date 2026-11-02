@@ -6,27 +6,9 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * The `eye/fitted` base for one eye: how its lids close, posed from the eye's [fit] by the pseudo-3D [EyelidModel],
- * and how each kind of eye mesh follows them.
- *
- * - The upper lid sinks over the eyeball as the model's plane turns: its edge at an openness is the model's arc plus
- *   what the drawn edge has beyond it, scaled with the arc's height, so the drawn shape - an outer corner that droops, a
- *   peak off centre - carries into every lowered lid. The edge's middle comes down evenly to the corners' line by the
- *   [crease] openness, keeping the lid's upward arc - a lowered, sleepy lid - and only then turns into the closed lid's
- *   downward arc. When the art draws a closed line, the closed lid lies on it.
- * - The lower lid rises only [lowerShare] of the way to the closed lid, which lies just above it: closing, the white
- *   folds away under the upper lid, so nothing of the white or iris shows once the eye is shut.
- * - The white fills between the lids. The upper lash rides the upper edge and thins to [lashSquash]; the part of a lash
- *   layer that reaches down to the lower lid rides that instead. The lower lash rides the lower edge, and lid lines and
- *   shadows ([EyeMesh.SKIN]) move with the skin: a field set along both lid edges and spread smoothly to nothing
- *   ([BiharmonicField]).
- *
- * Widening above 1 adds two-dimensional polynomial displacements to the drawn edges, with shared corner movement
- * and no change to the lash's column thickness. Smiling ([smileClosed]), an emotion and the lids following the gaze
- * ([shape]) are also [Pose]s; the widened pose carries its horizontal displacements alongside the edge heights.
- *
- * [roundness] scales how far the eyeball bulges toward the viewer: higher keeps more of the arc while the lid is half
- * closed.
+ * Poses one fitted eye. Observed artwork uses a continuous material band, with separate ordinary and smiling
+ * closed drawings and local tuft motion. The white and skin follow the shared lid pose; the existing parent
+ * hierarchy supplies whole-eye motion. Geometry-only fits retain the eyelid model as a fallback.
  */
 class EyeRig(
 	val fit: EyeFit, lowerShare: Float, roundness: Float, lashSquash: Float,
@@ -42,7 +24,12 @@ class EyeRig(
 	 * how thick the lashes are, as a share of their drawn thickness.
 	 */
 	class Pose(val upper: List<Float>, val lower: List<Float>, val fold: Float = 0f, val lashes: Float = 1f,
-	           val upperDx: List<Float>? = null, val lowerDx: List<Float>? = null)
+	           val upperDx: List<Float>? = null, val lowerDx: List<Float>? = null,
+	           val open: Float? = null, val smiling: Boolean = false)
+	private val upperBand by lazy { fit.artwork?.upper?.takeIf { it.observed.count { yes -> yes } >= it.points.size/3 }?.let { EyeBand(fit, it, roundness, smileArc) } }
+	private val lowerBand by lazy { fit.artwork?.lower?.takeIf { it.observed.any { yes -> yes } }?.let { stroke ->
+		EyeBand(fit, stroke, roundness, smileArc) { u,s -> upperBand?.closed(u,s) ?: EyeFit.sample(upper(0f),u) }
+	} }
 
 	private val model = EyelidModel(radius = 0.5f + 0.18f * roundness, centreY = -0.18f * roundness)
 	private val mid = EyeFit.SAMPLES / 2
@@ -96,6 +83,10 @@ class EyeRig(
 		if (open > 1f) return@getOrPut expanded(open).upper
 		if (open == 1f) return@getOrPut fit.upper
 		if (open <= 0f && fit.closed != null) return@getOrPut fit.closed
+		upperBand?.let { band -> return@getOrPut fit.upper.indices.map { k ->
+			val target = fit.closed?.get(k) ?: (band.closed(EyeFit.u(k), false) + band.halfWidth)
+			target + (fit.upper[k] - target) * open.coerceIn(0f, 1f)
+		} }
 		val height = if (open >= crease) openRise * (open - crease) / (1f - crease) else closedRise * (1f - open / crease)
 		val angle = model.angleFor(height)
 		// What the drawn edge has beyond the model's arc shrinks with the arc, and is gone once the lid passes the corners;
@@ -119,10 +110,15 @@ class EyeRig(
 
 	/** The lids at [open], closing as this eye closes. */
 	fun pose(open: Float): Pose = if (open > 1f) expanded(open) else Pose(upper(open), lower(open), sqrt(((crease - open) / crease).coerceIn(0f, 1f)),
-		squash + (1f - squash) * open.coerceAtMost(1f))
+		squash + (1f - squash) * open.coerceAtMost(1f), open = open)
 
 	/** The closed lid of a smile: an upward arch [smileArc] high from corner to corner, onto which the lower lid pushes. */
-	val smileClosed: List<Float> = (0 until EyeFit.SAMPLES).map { k -> fit.baseline(EyeFit.u(k)) - smileArc * 4f * EyeFit.u(k) * (1f - EyeFit.u(k)) }
+	val smileClosed: List<Float> by lazy { (0 until EyeFit.SAMPLES).map { k -> upperBand?.let {
+		it.closed(EyeFit.u(k), true) + it.halfWidth
+	} ?: (fit.baseline(EyeFit.u(k)) - smileArc * 4f * EyeFit.u(k) * (1f - EyeFit.u(k))) } }
+	val smileStrokeClosed: List<Float> by lazy { upperBand?.let { band ->
+		List(EyeFit.SAMPLES) { band.closed(EyeFit.u(it),true) }
+	} ?: smileClosed }
 
 	/**
 	 * The lids of a smiling eye at [open]: open, the eye is as drawn; closing, both lids meet on [smileClosed] rather than
@@ -134,7 +130,7 @@ class EyeRig(
 		val up = (0 until EyeFit.SAMPLES).map { k -> smileClosed[k] + (fit.upper[k] - smileClosed[k]) * o }
 		val push = smilePush * (1f - o) + (1f - smilePush) * (1f - o) * (1f - o)
 		val low = (0 until EyeFit.SAMPLES).map { k -> fit.lower[k] - push * (fit.lower[k] - smileClosed[k]) }
-		return Pose(up, low, sqrt(((0.3f - o) / 0.3f).coerceIn(0f, 1f)), squash + (1f - squash) * o)
+		return Pose(up, low, sqrt(((0.3f - o) / 0.3f).coerceIn(0f, 1f)), squash + (1f - squash) * o, open = open, smiling = true)
 	}
 
 	/** The open eye with its lid edges moved by [dUpper] and [dLower] (eye widths, down positive) at each place u. */
@@ -156,14 +152,54 @@ class EyeRig(
 	}
 
 	private val poses = java.util.concurrent.ConcurrentHashMap<Float, Pose>()
+	private val sourceComponents = java.util.concurrent.ConcurrentHashMap<Triple<String, Float, Float>, EyeComponent>()
 
 	/** How far a [mesh] vertex at canvas ([x], [y]) moves at [open], in canvas units. */
 	fun delta(mesh: EyeMesh, x: Float, y: Float, open: Float): Pair<Float, Float> =
 		if (open == 1f) 0f to 0f else move(mesh, x, y, poses.getOrPut(open) { pose(open) })
 
 	/** How far a [mesh] vertex at canvas ([x], [y]) moves into [pose], in canvas units. */
-	fun move(mesh: EyeMesh, x: Float, y: Float, pose: Pose): Pair<Float, Float> {
+	fun move(mesh: EyeMesh, x: Float, y: Float, pose: Pose, layerId: String? = null): Pair<Float, Float> {
 		val (u, v) = fit.toEye(x, y)
+		if (layerId != null && mesh in setOf(EyeMesh.UPPER_LASH, EyeMesh.LOWER_LASH) && (pose.open == null || pose.open <= 1f)) {
+			val components = fit.artwork?.components(layerId).orEmpty()
+			val component = if (components.isEmpty()) null else sourceComponents.getOrPut(Triple(layerId,u,v)) {
+				components.minBy { c -> c.samples.filterIndexed { i, _ ->
+					i % (c.samples.size / 256).coerceAtLeast(1) == 0 }.minOfOrNull { it.distance(EyePoint(u, v)) } ?: Float.POSITIVE_INFINITY }
+			}
+			if (component != null) {
+				if (component.primitive == EyePrimitive.SKIN || component.primitive == EyePrimitive.AUTO && component.contacts.isEmpty())
+					return move(EyeMesh.SKIN, x, y, pose)
+				val band = if (component.region == EyeRegion.LOWER) lowerBand else upperBand
+				band?.let {
+					if (pose.open == null) {
+						val lower=component.region == EyeRegion.LOWER
+						val rest=if(lower) fit.lower else fit.upper; val target=if(lower) pose.lower else pose.upper
+						val dx=(if(lower) pose.lowerDx else pose.upperDx)?.let { curve -> EyeBand.sample(curve,u) } ?: 0f
+						return fit.canvasDelta(dx,EyeBand.sample(target.indices.map { k -> target[k]-rest[k] },u))
+					}
+					val weight = if (component.primitive == EyePrimitive.TUFT) 1f else component.branches
+						.filter { branch -> branch.tip.y < branch.root.y - it.halfWidth &&
+							kotlin.math.abs(branch.root.y-it.centre(branch.root.x)) <= it.halfWidth*2f }
+						.maxOfOrNull { branch ->
+							val distance = branch.points.zipWithNext().minOfOrNull { (a,b) ->
+								val d=b-a; val t=((u-a.x)*d.x+(v-a.y)*d.y)/(d.x*d.x+d.y*d.y).coerceAtLeast(1e-8f)
+								EyePoint(u,v).distance(a+d*t.coerceIn(0f,1f))
+							} ?: Float.POSITIVE_INFINITY
+							kotlin.math.exp(-distance*distance/(it.halfWidth*it.halfWidth*4f))
+						} ?: 0f
+					var p = it.move(u, v, pose.open, pose.smiling, component.region == EyeRegion.UPPER, weight)
+					if (component.parts.map { part -> part.region }.distinct().size > 1 && upperBand != null && lowerBand != null) {
+						val top=upperBand!!; val low=lowerBand!!
+						val w=((v-top.centre(u))/(low.centre(u)-top.centre(u)).coerceAtLeast(1e-5f)).coerceIn(0f,1f)
+						val smooth=w*w*(3f-2f*w)
+						val a=top.move(u,v,pose.open,pose.smiling,true,weight); val b=low.move(u,v,pose.open,pose.smiling,false)
+						p=a+(b-a)*smooth
+					}
+					return fit.canvasDelta(p.x-u, p.y-v)
+				}
+			}
+		}
 		if (pose.upperDx != null) return widenedMove(mesh, u, v, pose)
 		val restUpper = EyeFit.sample(fit.upper, u); val restLower = EyeFit.sample(fit.lower, u)
 		val dUpper = EyeFit.sample(pose.upper, u) - restUpper

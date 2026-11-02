@@ -27,7 +27,8 @@ object FeatureHandles {
 			val u = k.toFloat() / (n - 1)
 			val i = framed.indexOfFirst { it.first >= u }
 			when {
-				i <= 0 -> framed.first().second
+				i < 0 -> framed.last().second
+				i == 0 -> framed.first().second
 				else -> {
 					val a = framed[i - 1]; val b = framed[i]
 					val t = ((u - a.first) / max(b.first - a.first, 1e-5f)).coerceIn(0f, 1f)
@@ -64,9 +65,12 @@ fun EyeFit.moved(moves: Map<String, RigMove>): EyeFit {
 	val (ox, oy) = upperPoints.first(); val (ex, ey) = upperPoints.last()
 	val width = ((ex - ox) * axisX + (ey - oy) * axisY).coerceAtLeast(1f)
 	val frame = copy(originX = ox, originY = oy, width = width)
-	return frame.copy(upper = FeatureHandles.resample(upperPoints, frame::toEye, EyeFit.SAMPLES),
+	val movedUpper = FeatureHandles.resample(upperPoints, frame::toEye, EyeFit.SAMPLES)
+	val sourceUpper = FeatureHandles.resample(upper.indices.map { toCanvas(EyeFit.u(it),upper[it]) }, frame::toEye, EyeFit.SAMPLES)
+	return frame.copy(upper = movedUpper,
 		lower = FeatureHandles.resample(lowerPoints, frame::toEye, EyeFit.SAMPLES),
-		closed = closedPoints?.let { FeatureHandles.resample(it, frame::toEye, EyeFit.SAMPLES) })
+		closed = closedPoints?.let { FeatureHandles.resample(it, frame::toEye, EyeFit.SAMPLES) },
+		artwork = null, upperCorrection = movedUpper.indices.map { movedUpper[it]-sourceUpper[it] })
 }
 
 /** The eye's handles where they sit, in the rig's space. */

@@ -95,7 +95,7 @@ object EyeModules {
 	 * A lid mesh's grid: the openness keys, by the smile when the eye smiles. [positions] are the mesh's canvas points
 	 * in the rig's space, [frame] the parent frame the deltas are normalized by.
 	 */
-	fun lidGrid(mesh: EyeRig.EyeMesh, side: Side, positions: FloatArray, frame: Bounds, eye: EyeRig, options: EyeOptions): KeyformGrid<MeshDeltaForm> {
+	fun lidGrid(mesh: EyeRig.EyeMesh, side: Side, positions: FloatArray, frame: Bounds, eye: EyeRig, options: EyeOptions, layerId: String? = null): KeyformGrid<MeshDeltaForm> {
 		val keys = openKeys(eye, options)
 		val axes = listOfNotNull(KeyformAxis(open(side), keys), if (options.smile) KeyformAxis(smile(side), floatArrayOf(0f, 1f)) else null)
 		val smiles = if (options.smile) floatArrayOf(0f, 1f) else floatArrayOf(0f)
@@ -103,15 +103,31 @@ object EyeModules {
 		for ((s, smileValue) in smiles.withIndex()) for ((o, open) in keys.withIndex()) {
 			val pose = if (smileValue == 0f || open > 1f) eye.pose(open) else eye.smilePose(open)
 			cells += KeyformCell(if (options.smile) intArrayOf(o, s) else intArrayOf(o),
-				if (open == 1f && smileValue == 0f) MeshDeltaForm(FloatArray(positions.size)) else form(mesh, positions, frame, eye, pose))
+				if (open == 1f && smileValue == 0f) MeshDeltaForm(FloatArray(positions.size)) else form(mesh, positions, frame, eye, pose, layerId))
 		}
 		return KeyformGrid(axes, cells)
 	}
 
-	private fun form(mesh: EyeRig.EyeMesh, positions: FloatArray, frame: Bounds, eye: EyeRig, pose: EyeRig.Pose): MeshDeltaForm {
+	/** A dual-eye source mesh retains its vertices and independently keyed left and right material. */
+	fun pairedLidGrid(mesh: EyeRig.EyeMesh, layerId: String, positions: FloatArray, frame: Bounds, eyes: FittedEyes): KeyformGrid<MeshDeltaForm>? {
+		if (eyes.rigs.isEmpty()) return null
+		val owner = IntArray(positions.size / 2) { i ->
+			eyes.rigs.keys.indexOf(eyes.sideAt(layerId, positions[i * 2], positions[i * 2 + 1]))
+		}
+		val grids = eyes.rigs.map { (side, eye) -> lidGrid(mesh, side, positions, frame, eye, eyes.options, layerId) }
+		var cells = listOf(KeyformCell(intArrayOf(), MeshDeltaForm(FloatArray(positions.size))))
+		for ((index, grid) in grids.withIndex()) cells = cells.flatMap { prefix -> grid.cells.map { cell ->
+			val delta = prefix.form.positionDeltas.copyOf()
+			for (i in delta.indices) if (owner[i / 2] == index) delta[i] = cell.form.positionDeltas[i]
+			KeyformCell(prefix.coordinate + cell.coordinate, MeshDeltaForm(delta))
+		} }
+		return KeyformGrid(grids.flatMap { it.axes }, cells)
+	}
+
+	private fun form(mesh: EyeRig.EyeMesh, positions: FloatArray, frame: Bounds, eye: EyeRig, pose: EyeRig.Pose, layerId: String? = null): MeshDeltaForm {
 		val delta = FloatArray(positions.size)
 		for (i in positions.indices step 2) {
-			val (dx, dy) = eye.move(mesh, positions[i], positions[i + 1], pose)
+			val (dx, dy) = eye.move(mesh, positions[i], positions[i + 1], pose, layerId)
 			delta[i] = dx / frame.width.coerceAtLeast(1e-4f); delta[i + 1] = dy / frame.height.coerceAtLeast(1e-4f)
 		}
 		return MeshDeltaForm(delta)
@@ -119,16 +135,16 @@ object EyeModules {
 
 	/** An additive shape keyed on [parameter] at [keys], its forms at each key from [poseAt] (null at the neutral key). */
 	private fun shape(parameter: ParameterId, keys: FloatArray, neutral: Int, mesh: EyeRig.EyeMesh, positions: FloatArray, frame: Bounds,
-	                  eye: EyeRig, limit: BlendWeightLimit?, poseAt: (Float) -> EyeRig.Pose): BlendShapeBinding<MeshForm> =
+	                  eye: EyeRig, limit: BlendWeightLimit?, layerId: String? = null, poseAt: (Float) -> EyeRig.Pose): BlendShapeBinding<MeshForm> =
 		BlendShapeBinding(parameter, keys, neutral, keys.mapIndexed { i, key ->
-			if (i == neutral) null else MeshForm(form(mesh, positions, frame, eye, poseAt(key)).positionDeltas)
+			if (i == neutral) null else MeshForm(form(mesh, positions, frame, eye, poseAt(key), layerId).positionDeltas)
 		}, listOfNotNull(limit))
 
 	/**
 	 * A lid mesh's additive shapes: the lids following the gaze, the emotion and squint, and the blink's aftershock.
 	 * Each fades out as the eye closes ([BlendWeightLimit] on the openness), so a shut eye keeps its closed line.
 	 */
-	fun lidShapes(mesh: EyeRig.EyeMesh, side: Side, positions: FloatArray, frame: Bounds, eye: EyeRig, options: EyeOptions): List<BlendShapeBinding<MeshForm>> {
+	fun lidShapes(mesh: EyeRig.EyeMesh, side: Side, positions: FloatArray, frame: Bounds, eye: EyeRig, options: EyeOptions, layerId: String? = null): List<BlendShapeBinding<MeshForm>> {
 		val h = eye.opening
 		val hump = EyeRig::hump
 		val fade = BlendWeightLimit(open(side), listOf(BlendWeightLimitPoint(eye.crease, 0f), BlendWeightLimitPoint((eye.crease + 1f) / 2f, 1f)))
@@ -136,12 +152,12 @@ object EyeModules {
 		return buildList {
 			if (options.gaze) {
 				val k = options.gazeFollow
-				add(shape(EYE_BALL_Y, floatArrayOf(-1f, 0f, 1f), 1, mesh, positions, frame, eye, fade) { y ->
+				add(shape(EYE_BALL_Y, floatArrayOf(-1f, 0f, 1f), 1, mesh, positions, frame, eye, fade, layerId) { y ->
 					// Looking up the upper lid lifts with the eye; looking down it drops further and the lower lid follows a little.
 					if (y > 0f) eye.shape({ u -> -0.14f * k * h * hump(u) }, { u -> -0.05f * k * h * hump(u) })
 					else eye.shape({ u -> 0.22f * k * h * hump(u) }, { u -> 0.06f * k * h * hump(u) })
 				})
-				add(shape(EYE_BALL_X, floatArrayOf(-1f, 0f, 1f), 1, mesh, positions, frame, eye, fade) { x ->
+				add(shape(EYE_BALL_X, floatArrayOf(-1f, 0f, 1f), 1, mesh, positions, frame, eye, fade, layerId) { x ->
 					// The lid's peak leans toward where the eye looks. The canvas's x runs one way, the eye frame's u the other on one side.
 					val toward = x * (if (eye.fit.axisX >= 0f) 1f else -1f)
 					eye.shape({ u -> -0.06f * k * h * hump(u) * (u - 0.5f) * 2f * toward }, { 0f })
@@ -155,7 +171,7 @@ object EyeModules {
 			}
 			if (options.emotion) {
 				val k = options.emotionStrength
-				add(shape(form(side), floatArrayOf(-1f, 0f, 1f), 1, mesh, positions, frame, eye, fade) { f ->
+				add(shape(form(side), floatArrayOf(-1f, 0f, 1f), 1, mesh, positions, frame, eye, fade, layerId) { f ->
 					if (f > 0f) eye.shape(
 						// Angry: the inner half of the upper lid presses down and the lid flattens; the lower lid tightens.
 						{ u -> 0.32f * k * h * hump(u) * (1.15f - u) }, { u -> -0.08f * k * h * hump(u) })
@@ -163,14 +179,14 @@ object EyeModules {
 						// Sad: the inner end of the upper lid lifts while the outer end droops.
 						{ u -> k * h * hump(u) * (-0.18f * (1f - u) + 0.22f * u) }, { u -> -0.04f * k * h * hump(u) })
 				})
-				add(shape(squint(side), floatArrayOf(0f, 1f), 0, mesh, positions, frame, eye, fade) {
+				add(shape(squint(side), floatArrayOf(0f, 1f), 0, mesh, positions, frame, eye, fade, layerId) {
 					// Squinting: the lower lid pushes up, the upper one comes down a little.
 					eye.shape({ u -> 0.1f * k * h * hump(u) }, { u -> -0.32f * k * h * hump(u) })
 				})
 			}
 			if (options.cheekPush) {
 				val k = options.cheekStrength
-				add(shape(MOUTH_FORM, floatArrayOf(-1f, 0f, 1f), 1, mesh, positions, frame, eye, fade) { f ->
+				add(shape(MOUTH_FORM, floatArrayOf(-1f, 0f, 1f), 1, mesh, positions, frame, eye, fade, layerId) { f ->
 					// A smile lifts the cheeks, which push the lower lid up and lean on the upper one a little.
 					val s = f.coerceAtLeast(0f)
 					eye.shape({ u -> 0.04f * k * s * h * hump(u) }, { u -> -0.16f * k * s * h * hump(u) })
@@ -180,19 +196,19 @@ object EyeModules {
 				val k = options.browStrength
 				val y = ParameterId(if (side == Side.LEFT) "ParamBrowLY" else "ParamBrowRY")
 				val angle = ParameterId(if (side == Side.LEFT) "ParamBrowLAngle" else "ParamBrowRAngle")
-				add(shape(y, floatArrayOf(-1f, 0f, 1f), 1, mesh, positions, frame, eye, fade) { b ->
+				add(shape(y, floatArrayOf(-1f, 0f, 1f), 1, mesh, positions, frame, eye, fade, layerId) { b ->
 					// The brow and the upper lid are one skin: lowered, the brow presses the lid down and flat; raised, it lifts it.
 					if (b < 0f) eye.shape({ u -> 0.16f * k * h * hump(u) * (1.1f - 0.4f * u) }, { 0f })
 					else eye.shape({ u -> -0.1f * k * h * hump(u) }, { 0f })
 				})
-				add(shape(angle, floatArrayOf(-1f, 0f, 1f), 1, mesh, positions, frame, eye, fade) { a ->
+				add(shape(angle, floatArrayOf(-1f, 0f, 1f), 1, mesh, positions, frame, eye, fade, layerId) { a ->
 					// Knitted (inner end down), the inner lid follows into a glare; worried (inner end up), it lifts.
 					eye.shape({ u -> -0.14f * k * a * h * hump(u) * (1f - u) * 1.6f }, { 0f })
 				})
 			}
 			if (options.aftershock) {
 				val k = options.softness
-				add(shape(bounce(side), floatArrayOf(-1f, 0f, 1f), 1, mesh, positions, frame, eye, null) { b ->
+				add(shape(bounce(side), floatArrayOf(-1f, 0f, 1f), 1, mesh, positions, frame, eye, null, layerId) { b ->
 					// The lid overshoots and settles after a blink; the lashes flick with it.
 					eye.shape({ u -> -0.09f * k * b * h * hump(u) }, { u -> 0.02f * k * b * h * hump(u) })
 				})
@@ -210,7 +226,7 @@ object EyeModules {
 		val bent = FloatArray(positions.size)
 		for (i in positions.indices step 2) {
 			val (u, _) = eye.fit.toEye(positions[i], positions[i + 1])
-			val (dx, dy) = eye.fit.canvasDelta(0f, EyeFit.sample(eye.smileClosed, u) - EyeFit.sample(drawn, u))
+			val (dx, dy) = eye.fit.canvasDelta(0f, EyeFit.sample(eye.smileStrokeClosed, u) - EyeFit.sample(drawn, u))
 			bent[i] = dx / frame.width.coerceAtLeast(1e-4f); bent[i + 1] = dy / frame.height.coerceAtLeast(1e-4f)
 		}
 		return KeyformGrid(listOf(KeyformAxis(smile(side), floatArrayOf(0f, 1f))),

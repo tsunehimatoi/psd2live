@@ -16,7 +16,7 @@ Parts split by a program, such as AI layer decomposition, can reach PSD2Live wit
 
 ## Separate parts
 
-Separate eye whites, irises and upper lashes. Preserve the hidden part of each iris. The upper-lash rig is not intended for combined lower eyelid lines, even if a lower-lash name is recognized; inspect or classify such details separately.
+Separate eye whites, irises and lashes. Preserve the hidden part of each iris. Lashes may contain several band layers, unequal numbers of tufts and side pieces. Numeric suffixes denote coexisting layers by default. Use lower for separate lower lashes, lid for eyelid lines and shadow for shading. Combined layers are observed as local structures; separate layers provide more independent shaping and overlap control. Inspect root coverage and intermediate closing poses.
 
 Supply the mouth fully open, either as one image or with separate upper teeth, lower teeth and tongue. Geometry cannot reconstruct an unseen mouth interior from closed-mouth pixels.
 

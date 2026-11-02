@@ -677,3 +677,7 @@ This page documents the interface and is not grounds for raising the ratings in 
 `interior_put` is a background, batchable operation shared with the native dock. Require `state` and `target` (mesh id or `mesh:<id>`); optional `enabled`, `settings`, `motion`, two `parameters` ids, and `guides` (at most 64). An enabled-only update retains the recipe without rebaking. Omitted bindings prefer body X/Y; an explicit empty id creates a private source. The stored native fields and physics use standard export paths. See the interior specification for ranges and safety/recovery behavior.
 
 `interior_delete` removes the effect and owned physics while retaining externally referenced parameters. `workspace_inspect` with `scope=interiors` returns full settings/guides, input/output IDs and issue status without shape arrays. Nested settings/motion schemas allow partial updates and describe ranges/units.
+
+### Eye structure corrections
+
+`module_catalog.eye_structure` reports eye components and their `sourceStamp`. Use `settings` with `changes.rig.eyeParts`, keyed by layer ID then component ID, to correct `side` (left/right), `region` (upper/lower), `primitive` (line/tuft/side/skin/auto), `contacts` or `path`. The first patch for a component requires its `sourceStamp`. Coordinates are eye-local, normalized by eye width, with the second axis pointing down the face. Null resets a component or layer. Corrections with a mismatched source stamp remain stored but are not applied. These edits use normal settings history and project persistence.

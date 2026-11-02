@@ -34,6 +34,12 @@ data class EyeFit(
 	val lower: List<Float>,
 	val closed: List<Float>?,
 	val iris: Bounds?,
+	/** Observed material components and stroke paths; absent on a geometry-only fit. */
+	val artwork: EyeArtwork? = null,
+	/** Opening material selected for this fit; other drawings retain their own association. */
+	val openingLayers: Set<String> = emptySet(),
+	/** Authored displacement of the upper feature path, expressed in this eye frame. */
+	val upperCorrection: List<Float>? = null,
 ) {
 	/** The frame's second axis, perpendicular to the head's level and pointing down the face. */
 	private val downX: Float get() = if (axisX >= 0f) -axisY else axisY
@@ -121,9 +127,10 @@ object EyeFitting {
 		}
 		// Side.LEFT is the character's left, on the canvas's right.
 		val whites = listOf(Side.LEFT, Side.RIGHT).associateWith { side ->
-			candidates(side, SemanticTag.EYEWHITE).maxByOrNull { it.bounds.width * it.bounds.height }?.let { white ->
+			layers.filter { it.opaquePixels > 0 && it.semantic.tag == SemanticTag.EYEWHITE && it.semantic.role == null &&
+				(it.semantic.side == side || it.semantic.side == Side.NONE) }.map { white ->
 				white to pixels(white) { x -> white.semantic.side != Side.NONE || onSide(side, x) }
-			}
+			}.filter { it.second.isNotEmpty() }.maxByOrNull { it.second.size }
 		}
 		fun centre(points: List<Pair<Float, Float>>) = points.map { it.first }.average().toFloat() to points.map { it.second }.average().toFloat()
 		val centres = whites.mapValues { (_, w) -> w?.second?.takeIf { it.isNotEmpty() }?.let(::centre) }
@@ -143,7 +150,7 @@ object EyeFitting {
 			val fit = read(side, white.first, white.second, canvasLevel, rigLevel, faceCenterX, toRig,
 				candidates(side, SemanticTag.EYE_CLOSE).maxByOrNull { it.opaquePixels }, candidates(side, SemanticTag.IRIDES).maxByOrNull { it.opaquePixels })
 			val problem = fit?.let(::check) ?: "the eye white has no clear outline"
-			if (fit != null && check(fit) == null) fits[side] = fit else reasons[side] = problem
+			if (fit != null && check(fit) == null) fits[side] = fit.copy(openingLayers = setOf(white.first.source.id.raw)) else reasons[side] = problem
 		}
 		return Result(fits, reasons, rigLevel)
 	}

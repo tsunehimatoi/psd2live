@@ -25,7 +25,10 @@ internal fun registerRigModuleOperations(registry: WorkspaceOperationRegistry, q
 			"the keyforms and blend-shape forms, its physics groups; measured on the rig when on, estimated when off. Change with " +
 			"settings changes.rig {bases: {area: {base, values}}, modules: {id: {on, values}}, moves: {feature: {handle: [dx, dy]}}}, " +
 			"null entries back to the default, rig null back to legacy. moves shifts a fitted feature's handle by canvas pixels " +
-			"(eye.L/eye.R inner, outer, upper, lower; brow.L/brow.R inner, outer, arch; mouth left, right, upper, lower).",
+			"(eye.L/eye.R inner, outer, upper, lower; brow.L/brow.R inner, outer, arch; mouth left, right, upper, lower). " +
+			"eye_structure reports eye-local paths, material components, contact intervals and sourceStamp. Correct with " +
+			"settings changes.rig.eyeParts[layerId][componentId] {sourceStamp, side, region, primitive, contacts, path}; " +
+			"source mismatches remain stored but are not applied. Null resets a component or a layer.",
 		schema(emptyMap()), WorkspaceOperationKind.QUERY, workspaceBound = false, resultSchema = RigModuleSchemas.catalog)) { _, _ ->
 		WorkspaceOperationOutput(queries.rigModules())
 	}
@@ -38,6 +41,7 @@ internal object RigModuleCatalog {
 		val subject = RecipeSubject.of(model?.analysis)
 		val physics = if (document != null && model != null) WorkspaceDocumentEdits.physicsCatalog(document, model).map { it.id }.toSet() else emptySet()
 		config?.let { put("modern", it.recipe.modern) }
+		model?.let { put("eye_structure", EyeStructureCatalog.describe(it)) }
 		put("areas", JsonArray(RigModules.areas.map { area ->
 			buildJsonObject {
 				put("id", area.id)
@@ -94,6 +98,19 @@ internal object RigModuleSchemas {
 	private fun array(items: JsonObject) = buildJsonObject { put("type", "array"); put("items", items) }
 	private fun choice(values: List<String>) = buildJsonObject { put("type", "string"); put("enum", JsonArray(values.map(::JsonPrimitive))) }
 	private fun nullable(value: JsonObject) = buildJsonObject { put("oneOf", JsonArray(listOf(value, type("null")))) }
+	private fun dictionary(value: JsonObject) = buildJsonObject { put("type", "object"); put("additionalProperties", value) }
+	private val eyePoint = buildJsonObject { put("type", "array"); put("items", type("number")); put("minItems", 2); put("maxItems", 2) }
+	private val eyeContact = schema(mapOf("region" to choice(listOf("upper", "lower")), "from" to type("number"),
+		"to" to type("number"), "centre" to eyePoint))
+	private fun eyePart(stored: Boolean) = schema(mapOf(
+		"sourceStamp" to type("string"), "side" to nullable(choice(listOf("left", "right"))),
+		"region" to nullable(choice(listOf("upper", "lower"))),
+		"primitive" to nullable(choice(listOf("line", "tuft", "side", "skin", "auto"))),
+		"contacts" to nullable(buildJsonObject { put("type", "array"); put("items", eyeContact); put("maxItems", 64) }),
+		"path" to nullable(buildJsonObject { put("type", "array"); put("items", eyePoint); put("minItems", 2); put("maxItems", 1024) }),
+	), if (stored) listOf("sourceStamp") else emptyList())
+	private val eyePartsChange = nullable(dictionary(nullable(dictionary(nullable(eyePart(false))))))
+	private val eyePartsStored = dictionary(dictionary(eyePart(true)))
 
 	private val knob = schema(mapOf("id" to type("string"), "unit" to type("string"), "minimum" to type("number"),
 		"maximum" to type("number"), "default" to type("number"), "advanced" to type("boolean")))
@@ -105,7 +122,14 @@ internal object RigModuleSchemas {
 		listOf("id", "tier", "version", "requires", "values"))
 	private val area = schema(mapOf("id" to type("string"), "base" to type("string"), "bases" to array(base), "modules" to array(module)),
 		listOf("id", "bases", "modules"))
-	val catalog: JsonObject = schema(mapOf("modern" to type("boolean"), "areas" to array(area)), listOf("areas"))
+	private val eyeBranch = schema(mapOf("root" to eyePoint, "tip" to eyePoint, "path" to array(eyePoint)))
+	private val eyeComponent = schema(mapOf("id" to type("string"), "layerId" to type("string"), "sourceStamp" to type("string"),
+		"region" to choice(listOf("upper", "lower")), "primitive" to choice(listOf("line", "tuft", "side", "skin", "auto")),
+		"confidence" to type("number"), "contacts" to array(eyeContact), "branches" to array(eyeBranch)))
+	private val eyeStructure = schema(mapOf("side" to choice(listOf("left", "right")), "width" to type("number"),
+		"origin" to eyePoint, "axis" to eyePoint, "upper" to array(eyePoint), "lower" to array(eyePoint),
+		"openingLayers" to array(type("string")), "components" to array(eyeComponent)))
+	val catalog: JsonObject = schema(mapOf("modern" to type("boolean"), "areas" to array(area), "eye_structure" to array(eyeStructure)), listOf("areas"))
 
 	private fun values(knobs: List<RecipeKnob>, owner: String) = schema(knobs.associate { knob ->
 		knob.id to buildJsonObject {
@@ -116,6 +140,10 @@ internal object RigModuleSchemas {
 
 	/** What `settings` accepts under `changes.rig`: the bases and modules to change, null entries for their defaults; null for legacy. */
 	val change: JsonObject = nullable(schema(mapOf(
+		"eyeParts" to eyePartsChange,
+		"moves" to schema(io.github.psd2live.core.fit.FeatureHandles.features.mapValues { (_, handles) ->
+			nullable(schema(handles.associateWith { nullable(eyePoint) }, emptyList()))
+		}, emptyList()),
 		"bases" to schema(RigModules.areas.associate { area ->
 			area.id to nullable(schema(mapOf("base" to choice(area.bases.map { it.id }), "version" to type("integer"),
 				"values" to values(area.bases.flatMap { it.knobs }.distinctBy { it.id }, area.id)), emptyList()))
@@ -130,6 +158,7 @@ internal object RigModuleSchemas {
 
 	/** A project's stored recipe, as inspect scope=settings reports it: present for a modern project. */
 	val stored: JsonObject = schema(mapOf(
+		"eyeParts" to eyePartsStored,
 		"bases" to schema(RigModules.areas.associate { area ->
 			area.id to schema(mapOf("base" to choice(area.bases.map { it.id }), "version" to type("integer"),
 				"values" to buildJsonObject { put("type", "object"); put("additionalProperties", type("number")) }), listOf("base", "version"))
