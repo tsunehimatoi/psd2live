@@ -145,7 +145,7 @@ internal class WorkspaceSourceImporter(
             val simulationWork = WorkspaceSimulationWork.Direct.cancellable(context)
             for (selectedPreset in selected) {
                 document = runInterruptible(Dispatchers.Default) {
-                    WorkspaceSimulationEdits.preset(document, built, selectedPreset, emptySet(), simulationWork).document
+                    WorkspaceSimulationEdits.preset(document, built, selectedPreset, emptySet(), simulationWork, allowNoLooseClothing = true).document
                 }
                 built = build(document)
             }

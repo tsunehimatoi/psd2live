@@ -276,6 +276,7 @@ object ModelPresets {
         preset: Preset,
         layers: Set<String> = emptySet(),
         alphaThreshold: Int = 8,
+        allowNoLooseClothing: Boolean = false,
     ): Applied {
         val layerById = analysis.layers.associateBy { it.source.id.raw }
         val canvas = restCanvas(model)
@@ -334,7 +335,7 @@ object ModelPresets {
                 // A garment now read as tight leaves the clothing simulation it was in; one read as another
                 // kind moves over as its simulation is put.
                 val released = writer.release(tight, CLOTHING_SIMS.values.toSet())
-                require(loose.isNotEmpty() || released) { "Every garment is worn tight; nothing hangs loose enough to simulate" }
+                require(allowNoLooseClothing || loose.isNotEmpty() || released) { "Every garment is worn tight; nothing hangs loose enough to simulate" }
                 for ((wear, members) in loose) {
                     writer.simulation(CLOTHING_SIMS.getValue(wear), tr("presets.sim.${wear.jsonName}"), SimKind.CLOTH,
                         members.map { it.id.raw }, clothMaterial(wear), keepOthers = layers.isNotEmpty())

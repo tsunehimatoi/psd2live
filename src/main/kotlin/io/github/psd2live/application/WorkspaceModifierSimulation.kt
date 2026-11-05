@@ -39,29 +39,30 @@ internal object WorkspaceModifierSimulation {
             val parameters = model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }
             if (instance.parameterProviders.any { (parameter, provider) -> provider !in activeProviders || parameter !in parameters }) continue
             val fingerprint = RigModifierInput.fingerprint(requireNotNull(model.rig.modifierOutput))
+            val weighted = RigSimulationWeights.apply(model.rig.puppet, instance.config)
             val availableMotions = requireNotNull(model.rig.modifierOutput).clips.mapTo(HashSet()) { it.id }
             if (source.trainingClips.keys.any { it !in availableMotions }) continue
-            if (source.bake != null && !SimBake.stale(model.rig.puppet, source) &&
+            if (source.bake != null && !SimBake.stale(weighted, source) &&
                 (instance.inputFingerprint == null || instance.inputFingerprint == fingerprint)) {
                 if (instance.inputFingerprint == null) next = next.update(instance.id) { it.copy(inputFingerprint = fingerprint) }
                 continue
             }
             require(allowRebake) { "${instance.id}: conversion cannot preserve the existing simulation bake on the rebuilt inputs" }
             require(source.autoBake) { "${instance.id}: simulation needs a valid bake; enable automatic baking before updating it" }
-            SimAuthoring.validate(model.rig.puppet, source)
+            SimAuthoring.validate(weighted, source)
             require(source.inputs.isNotEmpty()) { "${instance.id}: simulation needs existing input parameters before baking" }
             val motions = prefix.instances.filter { it.enabled && it.type == "motion" }.map {
                 MotionClips.fromJson(it.config).copy(id = it.outputId("motion"), builtin = null)
             }
             val trainingOverlay = overlay.copy(motionClips = overlay.motionClips + motions)
-            val bake = SimBaker.bake(model.rig.puppet, source.copy(bake = null), SimBaker.Options(
+            val bake = SimBaker.bake(weighted, source.copy(bake = null), SimBaker.Options(
                 physicsFps = overlay.physicsFps,
                 trainingMotions = SimAuthoring.trainingMotions(trainingOverlay, source, model.rig.puppet),
                 progress = { work.progress(it, "Baking simulation: ${instance.id}") },
                 cancelled = { work.checkpoint(); false },
             ))
             work.checkpoint()
-            next = next.update(instance.id) { it.copy(config = source.copy(bake = bake).toJson(), inputFingerprint = fingerprint) }
+            next = next.update(instance.id) { it.copy(config = JsonObject(instance.config + source.copy(bake = bake).toJson()), inputFingerprint = fingerprint) }
         }
         return next
     }

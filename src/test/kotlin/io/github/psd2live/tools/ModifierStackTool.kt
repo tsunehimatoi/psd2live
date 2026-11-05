@@ -27,7 +27,6 @@ import io.github.psd2live.ui.state.DesktopWorkspace
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.theme.*
 import io.github.psd2live.ui.views.ModelPresetsSection
-import io.github.psd2live.ui.views.ModifierAdditionDialog
 import io.github.psd2live.ui.views.ModifierNativeValues
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
@@ -95,7 +94,6 @@ class ModifierStackTool {
                                     val type = inspection
                                     if (type == null) {
                                         Column(Modifier.fillMaxSize().padding(Spacing.Margin).verticalScroll(rememberScrollState())) { ModelPresetsSection(state, vm) }
-                                        if (vm.modifierAddition != null) ModifierAdditionDialog(state, vm)
                                     } else key(type) {
                                         Column(Modifier.fillMaxSize().padding(Spacing.Margin).verticalScroll(rememberScrollState())) {
                                             ModifierNativeValues(type, nativeConfigurations.getValue(type), state, true, vm) { _, _, done -> done(null) }

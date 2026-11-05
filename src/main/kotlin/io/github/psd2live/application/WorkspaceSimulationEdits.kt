@@ -87,7 +87,8 @@ internal object WorkspaceSimulationEdits {
     }
 
     fun preset(document: WorkspaceDocument, preview: RigPreviewModel, preset: ModelPresets.Preset, layers: Set<String>,
-               work: WorkspaceSimulationWork = WorkspaceSimulationWork.Direct, autoBake: Boolean? = null): WorkspaceSimulationCandidate {
+               work: WorkspaceSimulationWork = WorkspaceSimulationWork.Direct, autoBake: Boolean? = null,
+               allowNoLooseClothing: Boolean = false): WorkspaceSimulationCandidate {
         require(layers.all { id -> preview.analysis.layers.any { it.source.id.raw == id } }) { "Unknown layer in preset selection" }
         val flag = when (preset) { ModelPresets.Preset.FRONT_HAIR -> "hairSimulationFront"; ModelPresets.Preset.BACK_HAIR -> "hairSimulationBack"; else -> null }
         var next = document
@@ -108,7 +109,7 @@ internal object WorkspaceSimulationEdits {
         val authored = SimAuthoring.AuthoredRigs(model::authoredPuppet)
         // Parts of a materialized split exist only after the journal: address meshes by the replayed layer map.
         val applied = ModelPresets.apply(next.rigEdits, model.rig.puppet, model.analysis, model.rig.layerIdByDrawableId, preset, layers,
-            next.config().alphaThreshold)
+            next.config().alphaThreshold, allowNoLooseClothing)
         var overlay = applied.overlay
         val failures = LinkedHashMap<String, String>()
         for (id in applied.simulationIds) {

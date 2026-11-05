@@ -52,12 +52,13 @@ internal object RigModifierAlgorithms {
         val source = RigSimEdit.fromJson(instance.config)
         require(source.enabled && source.bake != null) { "A simulation modifier needs an enabled, valid bake" }
         require(source.targets == instance.targets.map { it.id }) { "Simulation targets changed; bake again before adding the modifier" }
-        require(!io.github.psd2live.core.sim.SimBake.stale(PuppetIr.toPuppet(rig), source)) { "Simulation inputs changed; bake again before adding the modifier" }
+        val weighted = RigSimulationWeights.apply(PuppetIr.toPuppet(rig), instance.config)
+        require(!io.github.psd2live.core.sim.SimBake.stale(weighted, source)) { "Simulation inputs changed; bake again before adding the modifier" }
         require(instance.inputFingerprint == null || instance.inputFingerprint == RigModifierInput.fingerprint(rig)) {
             "${instance.id}: upstream modifier input changed; bake the simulation again"
         }
         val edit = simulationOutputs(instance, source)
-        val (model, issues) = SimGenerator.applyOne(PuppetIr.toPuppet(rig), edit)
+        val (model, issues) = SimGenerator.applyOne(weighted, edit)
         require(issues.isEmpty()) { issues.joinToString("; ") }
         checkpoint()
         val groups = simulationPhysics(instance, edit, model.parameters.mapTo(HashSet()) { it.id.raw })

@@ -5,7 +5,7 @@ import io.github.psd2live.core.sim.*
 import io.github.psd2live.format.model.*
 import io.github.psd2live.format.model.Parameter as IrParameter
 import io.github.psd2live.targets.cubism.PuppetIr
-import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.*
 import kotlin.test.*
 
 class RigModifierAlgorithmsTest {
@@ -23,6 +23,24 @@ class RigModifierAlgorithmsTest {
         RigModifierInstance(id, type, 1, listOf(target), config = config)
     private fun physics(output: String = "ParamOutput") = RigPhysicsEdit("old", "Pendulum",
         inputs = listOf(PhysicsInput("ParamAngleX")), outputs = listOf(PhysicsOutput(output)))
+
+    @Test fun automaticSimulationWeightsPreserveAuthoredWeightsAndReplayWithoutMutatingInput() {
+        val model = PuppetIr.toPuppet(rig)
+        val command = buildJsonObject {
+            put("op", "vertex_group_put"); put("target", "mesh:mesh"); put("name", "preset_pin"); put("kind", "pin")
+            putJsonArray("weights") { add(1f); add(0.5f); add(0f) }
+        }
+        val config = buildJsonObject {
+            putJsonArray("targets") { add("mesh") }
+            put("automatic_weights", JsonArray(listOf(command)))
+        }
+        val generated = RigSimulationWeights.apply(model, config)
+        assertTrue(model.vertexGroups.isEmpty())
+        assertContentEquals(floatArrayOf(1f, 0.5f, 0f), generated.vertexGroups.single().weights)
+        val edited = RigAuthoringJournal.apply(generated, JsonObject(command + ("weights" to JsonArray(List(3) { JsonPrimitive(0.7f) }))))
+        assertContentEquals(FloatArray(3) { 0.7f }, RigSimulationWeights.apply(edited, config).vertexGroups.single().weights)
+        assertEquals(generated, RigSimulationWeights.apply(generated, config))
+    }
 
     @Test fun simulationInputIdentityIncludesFormsAndSidecarsBeyondTheLegacyMeshFingerprint() {
         val edit = RigSimEdit("template", "Simulation", SimKind.CLOTH, listOf("mesh"))
