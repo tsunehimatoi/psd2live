@@ -18,10 +18,10 @@ internal object WorkspaceModifierSimulation {
     }
 
     fun prepare(document: WorkspaceDocument, stack: RigModifierStack, work: WorkspaceRasterWork,
-                allowRebake: Boolean = true, validatedPrefix: Int = 0): RigModifierStack {
+                allowRebake: Boolean = true, validatedPrefix: Int = 0,
+                pipeline: PSD2LivePipeline = PSD2LivePipeline()): RigModifierStack {
         require(validatedPrefix in 0..stack.instances.size)
         var next = stack
-        val pipeline = PSD2LivePipeline()
         for (index in stack.instances.indices) {
             work.checkpoint()
             val instance = next.instances[index]

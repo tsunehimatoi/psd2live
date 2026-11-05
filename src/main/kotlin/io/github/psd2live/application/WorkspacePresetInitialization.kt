@@ -10,7 +10,10 @@ import kotlinx.serialization.json.*
 /** A preset is a recipe for explicit instances, never a second model-generation pipeline. */
 internal object WorkspacePresetInitialization {
     fun create(document: WorkspaceDocument, work: WorkspaceRasterWork,
-               choices: WorkspaceInitialPreset = WorkspaceInitialPreset()): WorkspaceDocument {
+               choices: WorkspaceInitialPreset = WorkspaceInitialPreset()): WorkspaceDocument = prepare(document, work, choices).first
+
+    fun prepare(document: WorkspaceDocument, work: WorkspaceRasterWork,
+                choices: WorkspaceInitialPreset = WorkspaceInitialPreset()): Pair<WorkspaceDocument, RigPreviewModel> {
         val config = document.config()
         var stack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack))
         require(stack.instances.isEmpty()) { "Initialize presets only into an empty stack" }
@@ -24,7 +27,7 @@ internal object WorkspacePresetInitialization {
         var model = build()
         val targets = model.rig.puppet.drawables.filter { it.mesh != null && it.id.raw in model.rig.ownLayerIdByDrawableId }
             .map { ModifierTarget("mesh", it.id.raw) }
-        if (targets.isEmpty()) return document
+        if (targets.isEmpty()) return document to model
         val subject = RecipeSubject.of(model.analysis)
         val fittedFace = RigModules.builds(RigModules.FACE_DEPTH_TURN, config, subject)
         val types = buildList {
@@ -103,10 +106,11 @@ internal object WorkspacePresetInitialization {
             stack = WorkspaceModifierPlan.simulationPreset(model, stack, targets, preset, allowNoLooseClothing = true).first
         }
         stack = stack.copy(instances = stack.instances.map { it.copy(presetGroup = group) })
-        stack = WorkspaceModifierSimulation.prepare(current(), stack, work)
+        stack = WorkspaceModifierSimulation.prepare(current(), stack, work, pipeline = pipeline)
         model = build()
         stack = stack.copy(instances = stack.instances.map { WorkspaceModifierEdits.captureParameterProviders(it, model, stopAtConsumer = true) })
         RigModifierAlgorithms.evaluator().validateOrder(stack)
-        return current()
+        // Provider metadata is validated against the same cached prefix before publishing the candidate.
+        return current() to build()
     }
 }

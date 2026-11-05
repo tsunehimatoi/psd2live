@@ -34,6 +34,7 @@ import java.nio.file.StandardOpenOption
 import io.github.psd2live.core.legacy.RigGenerationMigration
 
 class PSD2LivePipeline {
+	internal val modifierCache = io.github.psd2live.core.modifier.RigModifierEvaluationCache()
 	internal val meshCache = PreviewMeshCache()
 	private val generatedGeometry = GeneratedGeometryCache()
 	fun inspect(psd: Path, config: PipelineConfig = PipelineConfig()): PipelineAnalysis {

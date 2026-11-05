@@ -133,12 +133,14 @@ internal class WorkspaceSourceImporter(
             }
         }
         progress(0.6f, "Rebuilding new source project")
-        var built = RigBuildProfile.stage("source import: preview build (wall time)") { build(document) }
-        if (choices != null) {
-            document = runInterruptible(Dispatchers.Default) {
-                WorkspacePresetInitialization.create(document, WorkspaceRasterWork.Direct.cancellable(context), choices)
+        var built = RigBuildProfile.stage("source import: preview build (wall time)") {
+            if (choices == null) build(document) else {
+                val prepared = runInterruptible(Dispatchers.Default) {
+                    WorkspacePresetInitialization.prepare(document, WorkspaceRasterWork.Direct.cancellable(context), choices)
+                }
+                document = prepared.first
+                prepared.second
             }
-            built = build(document)
         }
         if (input.references.isNotEmpty()) {
             document = runInterruptible(Dispatchers.Default) { WorkspaceReferenceMeshes.ensure(document, built, context::ensureActive) }

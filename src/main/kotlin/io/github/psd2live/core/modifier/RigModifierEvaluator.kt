@@ -79,6 +79,13 @@ internal data class ModifierEvaluation(
 internal data class RigModifierResult(val rig: RigIR, val entries: List<ModifierEvaluation>)
 internal data class AppliedModifierPrefix(val authored: RigIR, val stack: RigModifierStack, val result: RigModifierResult)
 
+/** One successful evaluation per pipeline. Failed/cancelled candidates never replace the snapshot. */
+internal class RigModifierEvaluationCache {
+    data class Snapshot(val context: Any, val authored: RigIR, val stack: RigModifierStack,
+                        val entries: List<ModifierEvaluation>, val outputs: List<RigIR>)
+    @Volatile var snapshot: Snapshot? = null
+}
+
 /**
  * Ordered, side-effect-free evaluation. The host owns cancellation, persistence, CAS and history. No adapter result
  * escapes until all adapters and overrides have succeeded. An override replayer must likewise be a pure function.
@@ -91,18 +98,42 @@ internal class RigModifierEvaluator(
         require(edits.isEmpty()) { "This evaluator has no override replayer" }; ModifierOverrideResult(rig)
     },
 ) {
-    fun evaluate(authored: RigIR, stack: RigModifierStack, checkpoint: () -> Unit = {}): RigModifierResult {
+    fun evaluate(authored: RigIR, stack: RigModifierStack,
+                 cache: RigModifierEvaluationCache? = null, context: Any = Unit,
+                 checkpoint: () -> Unit = {}): RigModifierResult {
         validateOrder(stack)
         var current = authored
         val available = stack.appliedCapabilities.toMutableList()
         val entries = ArrayList<ModifierEvaluation>()
         val exclusive = HashMap<Pair<String, ModifierTarget>, String>()
         val writers = HashMap<Pair<String, String>, Pair<String, RigModifierDefinition>>()
-        for (instance in stack.instances) {
+        val saved = cache?.snapshot?.takeIf { it.context == context && it.authored == authored &&
+            it.stack.appliedCapabilities == stack.appliedCapabilities }
+        val reuse = saved?.stack?.instances?.zip(stack.instances)?.takeWhile { (a, b) ->
+            a == b && saved.stack.overrides[a.id].orEmpty() == stack.overrides[b.id].orEmpty()
+        }?.size ?: 0
+        val outputs = ArrayList<RigIR>()
+        for ((index, instance) in stack.instances.withIndex()) {
             checkpoint()
             val definition = registry.definition(instance)
+            if (index < reuse) {
+                val entry = saved!!.entries[index]
+                current = saved.outputs[index]
+                entries += entry
+                outputs += current
+                if (entry.status == ModifierStatus.ACTIVE) {
+                    definition.exclusiveFamily?.let { family -> instance.targets.forEach { exclusive[family to it] = instance.id } }
+                    entry.contributions.filter { it.change != ModifierChange.REUSED }.forEach {
+                        writers[it.kind to it.id] = instance.id to definition
+                    }
+                    available += ModifierCapability(instance.type, instance.version, instance.targets, instance.id,
+                        definition.appliedConfig(instance), instance.outputAliases)
+                }
+                continue
+            }
             if (!instance.enabled) {
                 entries += ModifierEvaluation(instance, ModifierStatus.DISABLED)
+                outputs += current
                 continue
             }
             val missing = definition.requires.filterTo(linkedSetOf()) { type ->
@@ -118,6 +149,7 @@ internal class RigModifierEvaluator(
                 .forEach { missing += "motion:$it" }
             if (missing.isNotEmpty()) {
                 entries += ModifierEvaluation(instance, ModifierStatus.MISSING_DEPENDENCY, missing)
+                outputs += current
                 continue
             }
             definition.exclusiveFamily?.let { family -> instance.targets.forEach { target ->
@@ -126,7 +158,7 @@ internal class RigModifierEvaluator(
             } }
             validateTargets(current, instance)
             definition.validate(current, instance)
-            val declared = definition.parameters(instance)
+            val declared = io.github.psd2live.core.RigBuildProfile.stage("modifier parameters: ${instance.type}") { definition.parameters(instance) }
             require(declared.map { it.id }.distinct().size == declared.size) { "${instance.id} declares duplicate parameters" }
             val existing = current.parameters.associateBy { it.id }
             val resolved = declared.associate { parameter ->
@@ -137,7 +169,7 @@ internal class RigModifierEvaluator(
                 parameter.id to desired
             }
             val before = current
-            val generated = definition.evaluate(before, instance, checkpoint)
+            val generated = io.github.psd2live.core.RigBuildProfile.stage("modifier evaluate: ${instance.type}") { definition.evaluate(before, instance, checkpoint) }
             checkpoint()
             validateParameters(before, generated, instance, resolved)
             declared.forEach { parameter ->
@@ -167,8 +199,10 @@ internal class RigModifierEvaluator(
             entries += ModifierEvaluation(instance, ModifierStatus.ACTIVE, contributions = contributions,
                 ownedKeyforms = ownedKeyforms(before, generated), overrideIssues = overridden.issues)
             available += ModifierCapability(instance.type, instance.version, instance.targets, instance.id, definition.appliedConfig(instance), instance.outputAliases)
+            outputs += current
         }
         checkpoint()
+        cache?.snapshot = RigModifierEvaluationCache.Snapshot(context, authored, stack, entries, outputs)
         return RigModifierResult(current, entries)
     }
 
@@ -212,9 +246,9 @@ internal class RigModifierEvaluator(
      */
     fun applyThrough(authored: RigIR, stack: RigModifierStack, id: String, checkpoint: () -> Unit = {}): AppliedModifierPrefix {
         val end = stack.index(id) + 1
-        val complete = evaluate(authored, stack, checkpoint)
+        val complete = evaluate(authored, stack, checkpoint = checkpoint)
         val prefix = evaluate(authored, stack.copy(instances = stack.instances.take(end),
-            overrides = stack.overrides.filterKeys { owner -> owner in stack.retiredIds || stack.instances.take(end).any { it.id == owner } }), checkpoint)
+            overrides = stack.overrides.filterKeys { owner -> owner in stack.retiredIds || stack.instances.take(end).any { it.id == owner } }), checkpoint = checkpoint)
         require(prefix.entries.none { it.status == ModifierStatus.MISSING_DEPENDENCY }) { "Cannot apply a prefix with missing dependencies" }
         require(prefix.entries.none { it.overrideIssues.any { issue -> issue.kind == io.github.psd2live.core.GeneratedOverrideIssueKind.ORPHANED } }) {
             "Cannot apply a prefix with overrides that no longer match their generated content"
@@ -227,7 +261,7 @@ internal class RigModifierEvaluator(
         val baked = prefix.entries.filter { it.status == ModifierStatus.ACTIVE }.mapTo(HashSet()) { it.instance.id }
         val remaining = stack.copy(instances = stack.instances.drop(end), overrides = stack.overrides - baked,
             retiredIds = stack.retiredIds + consumed, appliedCapabilities = (stack.appliedCapabilities + capabilities).distinct())
-        val result = evaluate(prefix.rig, remaining, checkpoint)
+        val result = evaluate(prefix.rig, remaining, checkpoint = checkpoint)
         require(complete.rig == result.rig) { "Applying this prefix would change the remaining modifiers' result" }
         return AppliedModifierPrefix(prefix.rig, remaining, result)
     }

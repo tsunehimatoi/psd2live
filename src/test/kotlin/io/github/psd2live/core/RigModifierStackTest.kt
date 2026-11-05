@@ -24,6 +24,36 @@ class RigModifierStackTest {
     private val registry = RigModifierRegistry(listOf(add, multiply))
     private val evaluator = RigModifierEvaluator(registry)
 
+    @Test fun cachedPrefixesMatchColdEvaluationAndDoNotPublishFailures() {
+        val calls = ArrayList<String>()
+        val counted = RigModifierDefinition("counted", 1, composableKinds = setOf("part"), evaluate = { rig, instance, _ ->
+            calls += instance.id
+            require(instance.config["fail"]?.jsonPrimitive?.boolean != true)
+            rig.copy(parts = rig.parts.map { it.copy(drawOrder = it.drawOrder + 1) })
+        })
+        val engine = RigModifierEvaluator(RigModifierRegistry(listOf(counted)))
+        val cache = RigModifierEvaluationCache()
+        val prefix = RigModifierStack(listOf(entry("a", "counted")))
+        val complete = prefix.copy(instances = prefix.instances + entry("b", "counted"))
+        engine.evaluate(authored, prefix, cache)
+        val warm = engine.evaluate(authored, complete, cache)
+        assertEquals(listOf("a", "b"), calls)
+        assertEquals(engine.evaluate(authored, complete), warm)
+        val snapshot = cache.snapshot
+        assertFailsWith<IllegalArgumentException> {
+            engine.evaluate(authored, complete.update("b") { it.copy(config = buildJsonObject { put("fail", true) }) }, cache)
+        }
+        assertSame(snapshot, cache.snapshot)
+        for (next in listOf(complete.move("b", 0), complete.update("a") { it.copy(enabled = false) }, complete.remove("a"))) {
+            assertEquals(engine.evaluate(authored, next), engine.evaluate(authored, next, cache))
+        }
+        calls.clear()
+        engine.evaluate(authored, complete, cache, "different source")
+        assertEquals(listOf("a", "b"), calls)
+        val edited = authored.copy(parts = authored.parts.map { it.copy(drawOrder = 70) })
+        assertEquals(engine.evaluate(edited, complete), engine.evaluate(edited, complete, cache, "different source"))
+    }
+
     @Test fun sequenceChangesTheEvaluatedResultAndLeavesAuthoredStateUntouched() {
         val stack = RigModifierStack(listOf(entry("a", "add"), entry("b", "multiply")))
         assertEquals(1020, evaluator.evaluate(authored, stack).rig.parts.first().drawOrder)

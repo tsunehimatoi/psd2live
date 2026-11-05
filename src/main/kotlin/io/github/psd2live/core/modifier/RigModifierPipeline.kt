@@ -62,7 +62,9 @@ internal object RigModifierPipeline {
             ProgressListener { message, fraction -> progress.update(message, fraction * .8) }, previousAtlas)
         val input = compileOrdinary(base.analysis, base.atlas, base.rig, config)
         val source = RigModifierSource(base.analysis, base.atlas, config, base.rig.layerIdByDrawableId, base.rig.copiedDrawableIds, base.baseRig.puppet, pipeline.meshCache)
-        val result = RigModifierAlgorithms.evaluator(source).evaluate(input, stack) {
+        val context = listOf(analysis.source, config.copy(rigEdits = config.rigEdits.copy(modifierStack = null)),
+            io.github.psd2live.i18n.I18n.currentLanguage)
+        val result = RigModifierAlgorithms.evaluator(source).evaluate(input, stack, pipeline.modifierCache, context) {
             if (Thread.currentThread().isInterrupted) throw CancellationException("Modifier evaluation cancelled")
             progress.update("Evaluating modifier stack", .85)
         }
