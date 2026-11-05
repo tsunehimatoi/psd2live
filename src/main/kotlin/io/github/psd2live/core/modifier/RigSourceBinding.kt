@@ -57,7 +57,6 @@ internal object RigSourceBinding {
                 require(branch.add(parent)) { "Cyclic binding hierarchy" }
                 parent = previousById.getValue(parent).parent
             }
-            val mapped = source.deformerIds(instance, target, checkpoint)
             val desiredBranch = ArrayList<DeformerId>()
             var nextParent = desired.drawables.single { it.id == id }.parentDeformerId
             while (nextParent != null) {
@@ -65,6 +64,13 @@ internal object RigSourceBinding {
                 desiredBranch += nextParent
                 nextParent = desiredById.getValue(nextParent).parent
             }
+            if (desiredBranch == branch.toList() && source.onlyMasksChange(previous, desired, target, branch)) {
+                val masks = masks(sample, previous.drawables.single { it.id == id }, desired.drawables.single { it.id == id }, instance)
+                if (sample.maskedBy != masks.first || sample.invertMask != masks.second)
+                    current = current.copy(drawables = current.drawables.map { if (it.id == id) it.copy(maskedBy = masks.first, invertMask = masks.second) else it })
+                continue
+            }
+            val mapped = source.deformerIds(instance, target, checkpoint)
             val nativeGeometry = sameMeshGeometry(sample, previous.drawables.single { it.id == id }) &&
                 sample.parentDeformerId == previous.drawables.single { it.id == id }.parentDeformerId?.let(mapped::getValue) &&
                 branch.all { canonical ->
@@ -77,12 +83,6 @@ internal object RigSourceBinding {
                         }
                     }
                 }
-            if (desiredBranch == branch.toList() && source.onlyMasksChange(previous, desired, target, branch)) {
-                val masks = masks(sample, previous.drawables.single { it.id == id }, desired.drawables.single { it.id == id }, instance)
-                if (sample.maskedBy != masks.first || sample.invertMask != masks.second)
-                    current = current.copy(drawables = current.drawables.map { if (it.id == id) it.copy(maskedBy = masks.first, invertMask = masks.second) else it })
-                continue
-            }
             val common = branch.toList().asReversed().zip(desiredBranch.asReversed()).takeWhile { it.first == it.second }.map { it.first }.asReversed()
             val added = desiredBranch.dropLast(common.size)
             val removed = branch - common.toSet()

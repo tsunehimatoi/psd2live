@@ -179,14 +179,18 @@ internal class RigModifierSource(
     private val staticModels = java.util.IdentityHashMap<PuppetModel, PuppetModel>()
     fun static(model: PuppetModel) = staticModels.getOrPut(model) { restricted(model, emptySet()) }
 
-    private fun template(instances: List<RigModifierInstance>, scaffold: JsonObject): Template {
+    private fun templateKey(instances: List<RigModifierInstance>, scaffold: JsonObject): Map<String, JsonObject> {
         val state = instances.associateBy { it.type }
         val key = state.mapValues { (_, instance) -> buildJsonObject {
             // This is an intermediate geometry template, not a modifier-result cache. Pendulums are evaluated separately.
             put("version", instance.version); put("config", JsonObject(instance.config - "scaffold" - "base" - "physics"))
         } }
-        val templateKey = key + ("rig.scaffold" to scaffold)
-        return templates.getOrPut(templateKey) {
+        return key + ("rig.scaffold" to scaffold)
+    }
+
+    private fun template(instances: List<RigModifierInstance>, scaffold: JsonObject): Template {
+        val state = instances.associateBy { it.type }
+        return templates.getOrPut(templateKey(instances, scaffold)) {
             var tuning = RigTuning()
             for (spec in RigLegacyBindings.specs) state[spec.type]?.let { tuning = RigLegacyBindings.tuning(it, tuning) }
             val bodyStrength = state["body/legacy"]?.let(RigLegacyBindings::strength) ?: 1f
@@ -304,15 +308,18 @@ internal class RigModifierSource(
     fun deformerIds(instance: RigModifierInstance, target: ModifierTarget, checkpoint: () -> Unit): Map<DeformerId, DeformerId> =
         deformerOrigins.getOrPut(instance.id to target.id) {
             val provider = provider(instance)
-            val ids = scaffoldFor(provider, target, checkpoint).deformers.associateTo(LinkedHashMap()) {
-                it.id to DeformerId(RigSourceModifiers.deformerId(provider, target.id, it.id.raw))
-            }
-            val relevant = (activeBefore(instance) + instance).filter { previous -> RigLegacyBindings.find(previous.type) != null &&
+            val relevant = (activeBefore(instance) + instance).filter { previous ->
+                RigLegacyBindings.find(previous.type)?.let { !it.expressionToggles && !it.seeThrough } == true &&
                 target in previous.targets && previous.config["scaffold"]?.jsonPrimitive?.content == provider.id }
-            val prefix = ArrayList<RigModifierInstance>()
-            for (item in relevant) {
-                checkpoint(); prefix += item
-                for (deformer in template(prefix, provider.config).model.deformers) ids.putIfAbsent(deformer.id,
+            val preceding = relevant.dropLast(1).lastOrNull()?.takeIf { entry -> stack.instances.any { it.id == entry.id } }
+            val ids = preceding?.let { LinkedHashMap(deformerIds(it, target, checkpoint)) }
+                ?: scaffoldFor(provider, target, checkpoint).deformers.associateTo(LinkedHashMap()) {
+                    it.id to DeformerId(RigSourceModifiers.deformerId(provider, target.id, it.id.raw))
+                }
+            checkpoint()
+            for (end in (if (preceding == null) 1 else relevant.size)..relevant.size) {
+                val item = relevant[end - 1]
+                for (deformer in template(relevant.take(end), provider.config).model.deformers) ids.putIfAbsent(deformer.id,
                     DeformerId(RigSourceModifiers.deformerId(item, target.id, deformer.id.raw, shared = provider.version >= 2)))
             }
             ids
@@ -344,15 +351,18 @@ internal class RigModifierSource(
     fun partIds(instance: RigModifierInstance, target: ModifierTarget, checkpoint: () -> Unit): Map<PartId, PartId> =
         partOrigins.getOrPut(instance.id to target.id) {
             val provider = provider(instance)
-            val ids = requiredParts(scaffoldFor(provider, target, checkpoint), target).associateTo(LinkedHashMap()) {
-                it to PartId(RigSourceModifiers.partId(provider, target.id, it.raw))
-            }
-            val relevant = (activeBefore(instance) + instance).filter { previous -> RigLegacyBindings.find(previous.type) != null &&
+            val relevant = (activeBefore(instance) + instance).filter { previous ->
+                RigLegacyBindings.find(previous.type)?.let { !it.expressionToggles && !it.seeThrough } == true &&
                 target in previous.targets && previous.config["scaffold"]?.jsonPrimitive?.content == provider.id }
-            val prefix = ArrayList<RigModifierInstance>()
-            for (item in relevant) {
-                checkpoint(); prefix += item
-                for (part in requiredParts(forTarget(template(prefix, provider.config).model, target), target)) ids.putIfAbsent(part,
+            val preceding = relevant.dropLast(1).lastOrNull()?.takeIf { entry -> stack.instances.any { it.id == entry.id } }
+            val ids = preceding?.let { LinkedHashMap(partIds(it, target, checkpoint)) }
+                ?: requiredParts(scaffoldFor(provider, target, checkpoint), target).associateTo(LinkedHashMap()) {
+                    it to PartId(RigSourceModifiers.partId(provider, target.id, it.raw))
+                }
+            checkpoint()
+            for (end in (if (preceding == null) 1 else relevant.size)..relevant.size) {
+                val item = relevant[end - 1]
+                for (part in requiredParts(forTarget(template(relevant.take(end), provider.config).model, target), target)) ids.putIfAbsent(part,
                     PartId(RigSourceModifiers.partId(item, target.id, part.raw, shared = provider.version >= 2)))
             }
             ids
