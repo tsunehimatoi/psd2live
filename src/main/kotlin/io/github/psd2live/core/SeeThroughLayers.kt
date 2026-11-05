@@ -141,7 +141,10 @@ object SeeThroughLayers {
 	 * (below any feature copy over it) and lists just in front of it in its part. A bang with masks of its own keeps
 	 * them and opens none.
 	 */
-	fun apply(model: PuppetModel, candidates: List<Candidate>, settings: Settings): Result {
+	fun apply(
+		model: PuppetModel, candidates: List<Candidate>, settings: Settings,
+		idFor: (DrawableId) -> DrawableId = ::copyId, earlierCopies: Set<String> = emptySet(),
+	): Result {
 		if (!settings.enabled || candidates.isEmpty()) return Result(model, emptyMap(), emptyList())
 		val byId = model.drawables.associateBy { it.id.raw }
 		val shown by lazy { model.visibleDrawableIds() }
@@ -162,17 +165,17 @@ object SeeThroughLayers {
 					windows.getOrPut(bang.id.raw) { LinkedHashSet() } += original.id
 				continue
 			}
-			val id = copyId(original.id)
+			val id = idFor(original.id)
 			if (id.raw in byId) { notes += Note(candidate.original, DropReason.ID_TAKEN); continue }
 			if (candidate.bangs.none { it in byId }) { notes += Note(candidate.original, DropReason.MASKS_MISSING); continue }
-			val (masks, order) = place(model, byId, shown, original, candidate.bangs, halfStep) ?: continue
+			val (masks, order) = place(model, byId, shown, original, candidate.bangs, halfStep, earlierCopies) ?: continue
 			made += copyOf(original, id, masks, order, settings.opacity) to original
 		}
 		val windowed = LinkedHashMap<String, Drawable>()
 		val refused = LinkedHashMap<DrawableId, DropReason>()
 		for ((bangId, parts) in windows) {
 			val bang = byId.getValue(bangId)
-			val id = copyId(bang.id)
+			val id = idFor(bang.id)
 			val reason = when {
 				bang.maskedBy.isNotEmpty() || bang.invertMask -> DropReason.BANGS_CLIPPED
 				id.raw in byId -> DropReason.ID_TAKEN
@@ -181,7 +184,7 @@ object SeeThroughLayers {
 			if (reason != null) { parts.forEach { refused.putIfAbsent(it, reason) }; continue }
 			val masks = parts.toList()
 			windowed[bangId] = bang.copy(maskedBy = masks, invertMask = true)
-			made += copyOf(bang, id, masks, windowOrder(model, bang, halfStep), 1f - settings.opacity) to bang
+			made += copyOf(bang, id, masks, windowOrder(model, bang, halfStep, earlierCopies), 1f - settings.opacity) to bang
 		}
 		// An eye part is reported only when no bang over it opened.
 		val opened = windowed.values.flatMapTo(HashSet()) { it.maskedBy }

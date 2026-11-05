@@ -27,6 +27,19 @@ object Physics3Json {
 
 	private fun source(type: PhysicsSourceType) = if (type == PhysicsSourceType.ANGLE) PhysicsSource.ANGLE else PhysicsSource.X
 
+    /** Exact inverse for materializing generated groups as ordinary editable physics. */
+    fun setting(group: IrPhysicsGroup): RigPhysicsEdit {
+        fun type(source: PhysicsSource): PhysicsSourceType {
+            require(source != PhysicsSource.Y) { "Vertical physics cannot be represented as an authored pendulum" }
+            return if (source == PhysicsSource.ANGLE) PhysicsSourceType.ANGLE else PhysicsSourceType.X
+        }
+        return RigPhysicsEdit(group.id, group.name,
+            group.inputs.map { PhysicsInput(it.parameter, it.weight, type(it.source), it.reflect) },
+            group.outputs.map { PhysicsOutput(it.parameter, it.vertex, it.scale, it.weight, type(it.source), it.reflect) },
+            group.segments.map { PhysicsSegment(it.length, it.mobility, it.delay, it.acceleration) },
+            group.normalization.let { PhysicsNormalization(it.positionMin, it.positionDefault, it.positionMax, it.angleMin, it.angleDefault, it.angleMax) })
+    }
+
 	/** Reads vertex radii as segment lengths, as Cubism does; positions are ignored. */
 	fun read(text: String): Physics3 {
 		val file = org.umamo.format.moc3.Moc3.readPhysics3(text)

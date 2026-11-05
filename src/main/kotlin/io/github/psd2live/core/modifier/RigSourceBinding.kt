@@ -1,0 +1,283 @@
+package io.github.psd2live.core.modifier
+
+import io.github.psd2live.core.*
+import io.github.psd2live.core.legacy.RigGenerationResidual
+import io.github.psd2live.format.model.RigIR
+import io.github.psd2live.targets.cubism.PuppetIr
+import kotlinx.serialization.json.*
+import org.umamo.render.eval.drawableSpaceMapping
+import org.umamo.runtime.eval.rotationFormAt
+import org.umamo.runtime.eval.warpControlPointsAt
+import org.umamo.runtime.model.*
+import org.umamo.edit.withParameterRange
+
+/** Applies a source algorithm transition onto the actual preceding rig, preserving authored residuals. */
+internal object RigSourceBinding {
+    fun apply(rig: RigIR, instance: RigModifierInstance, source: RigModifierSource, checkpoint: () -> Unit): RigIR {
+        source.provider(instance)
+        var current = PuppetIr.toPuppet(rig)
+        for (target in instance.targets) {
+            checkpoint()
+            val (previous, desired) = source.transition(instance, target, checkpoint)
+            val existingDefinitions = PuppetIr.toIr(current).parameters.associateBy { it.id }
+            for (definition in PuppetIr.toIr(desired).parameters) {
+                val before = existingDefinitions[definition.id] ?: continue
+                val resolved = source.resolveParameter(instance, before, definition) ?: continue
+                current = current.withParameterRange(ParameterId(resolved.id), resolved.min, resolved.default, resolved.max)
+            }
+            val additions = desired.parameters.filter { parameter -> current.parameters.none { it.id == parameter.id } }
+            val folders = LinkedHashSet<ParameterGroupId>()
+            fun collect(nodes: List<ParameterNode>) { nodes.filterIsInstance<ParameterNode.Group>().forEach { folders += it.id; collect(it.children) } }
+            collect(desired.parameterTree)
+            val treeIds = RigIdRemap(groups = folders.associateWith { ParameterGroupId(instance.outputId("parameter-folder:${it.raw}")) })
+            current = current.copy(parameters = current.parameters + additions,
+                parameterTree = appendTree(current, desired.parameterTree.map(treeIds::node), additions.mapTo(HashSet()) { it.id }))
+            val links = desired.parameterLinks.filter { it !in previous.parameterLinks && it !in current.parameterLinks }
+            for (link in links) require(current.parameterLinks.none { existing ->
+                existing.horizontal == link.horizontal || existing.vertical == link.horizontal ||
+                    existing.horizontal == link.vertical || existing.vertical == link.vertical
+            }) { "${instance.id}: incompatible parameter link for ${link.horizontal.raw} and ${link.vertical.raw}" }
+            current = current.copy(parameterLinks = current.parameterLinks + links)
+            val defaults = current.parameters.associate { it.id to it.default }
+            val oldProjection = previous.copy(parameters = desired.parameters, deformers = source.static(previous).deformers)
+            val nextProjection = desired.copy(deformers = source.static(desired).deformers)
+            val previousById = previous.deformers.associateBy { it.id }
+            val desiredById = desired.deformers.associateBy { it.id }
+            val id = DrawableId(target.id)
+            val sample = current.drawables.single { it.id == id }
+            val branch = LinkedHashSet<DeformerId>()
+            var parent = previous.drawables.single { it.id == id }.parentDeformerId
+            while (parent != null) {
+                require(branch.add(parent)) { "Cyclic binding hierarchy" }
+                parent = previousById.getValue(parent).parent
+            }
+            val mapped = source.deformerIds(instance, target, checkpoint)
+            val desiredBranch = ArrayList<DeformerId>()
+            var nextParent = desired.drawables.single { it.id == id }.parentDeformerId
+            while (nextParent != null) {
+                require(nextParent !in desiredBranch) { "Cyclic generated binding hierarchy" }
+                desiredBranch += nextParent
+                nextParent = desiredById.getValue(nextParent).parent
+            }
+            if (desiredBranch == branch.toList() && source.onlyMasksChange(previous, desired, target, branch)) {
+                val masks = masks(sample, previous.drawables.single { it.id == id }, desired.drawables.single { it.id == id }, instance)
+                if (sample.maskedBy != masks.first || sample.invertMask != masks.second)
+                    current = current.copy(drawables = current.drawables.map { if (it.id == id) it.copy(maskedBy = masks.first, invertMask = masks.second) else it })
+                continue
+            }
+            val common = branch.toList().asReversed().zip(desiredBranch.asReversed()).takeWhile { it.first == it.second }.map { it.first }.asReversed()
+            val added = desiredBranch.dropLast(common.size)
+            val removed = branch - common.toSet()
+            require(added.none { it in branch }) { "${instance.id}: incompatible binding branch order" }
+            val anchor = common.firstOrNull()?.let(mapped::getValue)
+            val partIds = if (removed.isNotEmpty() || added.isNotEmpty()) source.partIds(instance, target, checkpoint) else emptyMap()
+            val remap = RigIdRemap(deformers = mapped, parts = partIds)
+            // Bypass an unchanged obsolete native carrier. Keeping it in the evaluation path can distort the
+            // new lattice at non-neutral poses. An authored residual, including a wrapper, stays in the path.
+            val bypass = removed.isNotEmpty() && sample.parentDeformerId == branch.firstOrNull()?.let(mapped::getValue) && removed.all { canonical ->
+                val expected = remap.deformer(previousById.getValue(canonical))
+                val actual = current.deformers.singleOrNull { it.id == expected.id }
+                actual != null && PuppetIr.deformerToIr(actual) == PuppetIr.deformerToIr(expected)
+            }
+            if (added.isNotEmpty() || bypass) {
+                val beforeInsertion = current
+                val actualParent = if (bypass) anchor else sample.parentDeformerId
+                val requiredParts = source.requiredParts(desired, target)
+                for (part in requiredParts) {
+                    val generated = PartId(RigSourceModifiers.partId(instance, target.id, part.raw))
+                    require(remap.part(part) != generated || current.parts.none { it.id == generated }) {
+                        "${instance.id}: generated part ID collision ${generated.raw}"
+                    }
+                }
+                val missingParts = desired.parts.filter { it.id in requiredParts && current.parts.none { actual -> actual.id == remap.part(it.id) } }
+                val partParents = desired.parts.flatMap { part -> part.children.filterIsInstance<OrgChild.Part>().map { it.id to part.id } }.toMap()
+                current = current.copy(parts = current.parts + missingParts.map { remap.part(it.copy(children = emptyList())) })
+                for (part in missingParts) {
+                    val child = OrgChild.Part(remap.part(part.id))
+                    val parent = partParents[part.id]?.let(remap::part)
+                    current = if (parent == null) current.copy(rootChildren = current.rootChildren + child)
+                    else current.copy(parts = current.parts.map { if (it.id == parent && child !in it.children) it.copy(children = it.children + child) else it })
+                }
+                for (canonical in added.asReversed()) {
+                    checkpoint()
+                    val original = desiredById.getValue(canonical)
+                    var cloned = remap.deformer(original)
+                    require(current.deformers.none { it.id == cloned.id }) { "${instance.id}: generated carrier ID collision ${cloned.id.raw}" }
+                    require(cloned.partId == null || current.parts.any { it.id == cloned.partId }) { "${instance.id}: missing generated carrier part" }
+                    if (original.parent?.let(mapped::getValue) == anchor && actualParent != anchor) {
+                        require(cloned is Deformer.Warp) { "A generated carrier under an authored frame must be a Warp" }
+                        cloned = reparent(current, sample, cloned, anchor, actualParent, instance.outputId("${target.id}/carrier-frame"), checkpoint)
+                    }
+                    current = current.copy(deformers = current.deformers + cloned)
+                }
+                val destination = desiredBranch.firstOrNull()?.let(mapped::getValue)
+                current = current.copy(drawables = current.drawables.map { if (it.id == id) it.copy(parentDeformerId = destination) else it })
+                current = RigStructureEdits.carriedToParent(beforeInsertion, current, id)
+            }
+            val previousFrame = current
+            for (canonical in branch) {
+                checkpoint()
+                if (bypass && canonical in removed) continue
+                val liveId = mapped.getValue(canonical)
+                val actual = requireNotNull(current.deformers.singleOrNull { it.id == liveId }) { "${instance.id}: scaffold object ${liveId.raw} is missing" }
+                var before = previousById.getValue(canonical)
+                var after = desiredById[canonical] ?: source.static(previous).deformers.single { it.id == canonical }
+                val originalParent = before.parent
+                val anchor = originalParent?.let(mapped::getValue)
+                val carriedParent = actual.parent != anchor
+                if (carriedParent) {
+                    require(before is Deformer.Warp && after is Deformer.Warp) { "A binding in an authored frame must be a Warp" }
+                    before = reparent(current, sample, before, anchor, actual.parent, instance.outputId("${target.id}/frame"), checkpoint)
+                    after = reparent(current, sample, after, anchor, actual.parent, instance.outputId("${target.id}/frame"), checkpoint)
+                }
+                fun channels(value: Deformer) = sample.copy(channelGrids = value.channelGrids,
+                    opacity = value.opacity, multiplyColor = value.multiplyColor, screenColor = value.screenColor)
+                val tracks = RigGenerationResidual.channels(current, channels(actual), channels(before), channels(after), checkpoint)
+                var replacement = when {
+                    actual is Deformer.Warp && before is Deformer.Warp && after is Deformer.Warp -> actual.copy(
+                        geometryGrid = warpDelta(actual.geometryGrid, before.geometryGrid, after.geometryGrid, defaults, checkpoint), channelGrids = tracks)
+                    actual is Deformer.Rotation && before is Deformer.Rotation && after is Deformer.Rotation -> actual.copy(
+                        geometryGrid = rotationDelta(actual.geometryGrid, before.geometryGrid, after.geometryGrid, defaults, checkpoint), channelGrids = tracks)
+                    else -> error("${instance.id}: scaffold kind changed on ${actual.id.raw}")
+                }
+                if (actual is Deformer.Warp && before is Deformer.Warp && after is Deformer.Warp && replacement is Deformer.Warp) {
+                    val merged = RigModifierDeformerBlends.warp(current,
+                        if (carriedParent) current else oldProjection,
+                        if (carriedParent) current else if (canonical in removed) oldProjection else nextProjection,
+                        actual, before, after, replacement, DrawableId(instance.outputId("${target.id}/warp-morph:${canonical.raw}")), checkpoint)
+                    replacement = replacement.copy(blendShapes = merged)
+                }
+                current = current.copy(deformers = current.deformers.map { if (it.id == liveId) replacement else it })
+            }
+            // Fitting may change a neutral parent frame even when its ID stays. Re-express the authored geometry
+            // in that new frame before adding the local algorithm correction, as ordinary canvas-space rebinding does.
+            current = RigStructureEdits.carriedToParent(previousFrame, current, id)
+            // Parent motion remains in deformers. Only local mesh corrections are transferred through the native
+            // residual mapper, against static projections, so no ancestor's motion is counted a second time.
+            val oldMesh = previous.drawables.single { it.id == id }
+            val nextMesh = desired.drawables.single { it.id == id }
+            val actual = current.drawables.single { it.id == id }
+            val oldSources = sources(oldProjection, oldMesh, current, actual, checkpoint)
+            val nextSources = sources(nextProjection, nextMesh, current, actual, checkpoint)
+            val geometry = RigGenerationResidual.geometry(current, oldProjection, nextProjection, id, oldSources, nextSources, checkpoint)
+            val channels = RigGenerationResidual.channels(current, actual, oldMesh, nextMesh, checkpoint)
+            val masks = masks(actual, oldMesh, nextMesh, instance)
+            val updated = current.copy(drawables = current.drawables.map { if (it.id == id) it.copy(geometryGrid = geometry, channelGrids = channels,
+                maskedBy = masks.first, invertMask = masks.second) else it })
+            val blends = RigModifierMeshBlends.merge(current, updated, oldProjection, nextProjection, id, oldSources, nextSources, checkpoint)
+            current = updated.copy(drawables = updated.drawables.map { if (it.id == id) it.copy(blendShapes = blends) else it })
+        }
+        checkpoint()
+        val chains = if (RigModifierChains.kinds(instance.type).isEmpty()) emptyList() else source.chains(instance, checkpoint)
+        val output = RigModifierPhysics.add(rig.withPuppet(current.withDerivedRenderRoot()), instance, chains)
+        return if (chains.isEmpty()) output else source.addUpstreamExpressionInputs(output, instance)
+    }
+
+    private fun masks(actual: Drawable, before: Drawable, after: Drawable, instance: RigModifierInstance): Pair<List<DrawableId>, Boolean> {
+        val old = before.maskedBy to before.invertMask
+        val next = after.maskedBy to after.invertMask
+        val authored = actual.maskedBy to actual.invertMask
+        if (old == next) return authored
+        require(authored == old || authored == next) { "${instance.id}: incompatible authored masks on ${actual.id.raw}" }
+        return next
+    }
+
+    /** Only invert the authored path below a shared anchor, avoiding ambiguous inverses outside fitted ancestors. */
+    private fun reparent(model: PuppetModel, sample: Drawable, warp: Deformer.Warp, anchor: DeformerId?, destination: DeformerId?,
+                         scratch: String, checkpoint: () -> Unit): Deformer.Warp {
+        var top = destination
+        val visited = HashSet<DeformerId>()
+        var relative: PuppetModel? = null
+        while (top != null) {
+            require(visited.add(top)) { "Cyclic authored carrier parent" }
+            val node = model.deformers.single { it.id == top }
+            if (node.parent == anchor) {
+                val detached = when (node) {
+                    is Deformer.Warp -> node.copy(parent = null)
+                    is Deformer.Rotation -> node.copy(parent = null)
+                }
+                relative = model.copy(deformers = model.deformers.map { if (it.id == node.id) detached else it })
+                break
+            }
+            top = node.parent
+        }
+        val frame = model.copy(drawables = model.drawables.map { if (it.id == sample.id) it.copy(parentDeformerId = anchor) else it })
+        val mapping = if (relative == null) requireNotNull(drawableSpaceMapping(frame, emptyMap(), sample.id)) else null
+        fun points(values: FloatArray): FloatArray {
+            checkpoint()
+            val canvas = mapping?.localToWorld(values) ?: values
+            return if (destination == null) canvas else RigSourceModifiers.pointsInParent(relative ?: model, sample, canvas, destination, scratch)
+        }
+        return warp.copy(parent = destination, geometryGrid = warp.geometryGrid?.let { grid -> KeyformGrid(grid.axes, grid.cells.map {
+            KeyformCell(it.coordinate, WarpLatticeForm(points(it.form.controlPoints)))
+        }) }, blendShapes = warp.blendShapes.map { binding -> binding.copy(forms = binding.forms.map { form -> form?.let {
+            WarpForm(points(it.controlPoints), it.opacity, it.multiplyColor, it.screenColor)
+        } }) })
+    }
+
+    private fun sources(from: PuppetModel, original: Drawable, to: PuppetModel, target: Drawable, checkpoint: () -> Unit) =
+        RasterMeshJournal.prepare(canvasMesh(from, original), canvasMesh(to, target), checkpoint).sources
+
+    private fun canvasMesh(model: PuppetModel, drawable: Drawable): DrawableMesh {
+        val mesh = requireNotNull(drawable.mesh)
+        val uv = RasterMeshJournal.TextureCoordinates(model, drawable).toCanvas(mesh.uvs)
+        return DrawableMesh(uv, uv, mesh.indices)
+    }
+
+    private fun value(grid: KeyformGrid<*>, pose: Map<ParameterId, Float>, defaults: Map<ParameterId, Float>, id: ParameterId): Float {
+        val axis = grid.axes.single { it.parameterId == id }
+        return (pose[id] ?: defaults[id] ?: 0f).coerceIn(axis.keys.first(), axis.keys.last())
+    }
+
+    private fun delta(actual: Float, before: Float, after: Float) = when {
+        before == after -> actual
+        actual == before -> after
+        else -> actual + (after - before)
+    }
+
+    private fun warpDelta(actual: KeyformGrid<WarpLatticeForm>?, before: KeyformGrid<WarpLatticeForm>?, after: KeyformGrid<WarpLatticeForm>?,
+                          defaults: Map<ParameterId, Float>, checkpoint: () -> Unit): KeyformGrid<WarpLatticeForm> {
+        require(actual != null && before != null && after != null) { "Binding needs complete Warp lattices" }
+        val axes = PrimitiveResidual.unionAxes(actual.axes + before.axes + after.axes)
+        return KeyformGrid(axes, PrimitiveResidual.coordinates(axes).map { coordinate ->
+            checkpoint()
+            val pose = PrimitiveResidual.key(axes, coordinate)
+            fun sample(grid: KeyformGrid<WarpLatticeForm>) = requireNotNull(warpControlPointsAt(grid) { value(grid, pose, defaults, it) })
+            val a = sample(actual); val b = sample(before); val c = sample(after)
+            require(a.size == b.size && b.size == c.size) { "Binding cannot combine different lattice dimensions" }
+            KeyformCell(coordinate, WarpLatticeForm(FloatArray(a.size) { delta(a[it], b[it], c[it]) }))
+        })
+    }
+
+    private fun rotationDelta(actual: KeyformGrid<RotationPivotForm>?, before: KeyformGrid<RotationPivotForm>?, after: KeyformGrid<RotationPivotForm>?,
+                              defaults: Map<ParameterId, Float>, checkpoint: () -> Unit): KeyformGrid<RotationPivotForm> {
+        require(actual != null && before != null && after != null) { "Binding needs complete rotation pivots" }
+        val axes = PrimitiveResidual.unionAxes(actual.axes + before.axes + after.axes)
+        return KeyformGrid(axes, PrimitiveResidual.coordinates(axes).map { coordinate ->
+            checkpoint()
+            val pose = PrimitiveResidual.key(axes, coordinate)
+            fun sample(grid: KeyformGrid<RotationPivotForm>) = requireNotNull(rotationFormAt(grid) { value(grid, pose, defaults, it) })
+            val a = sample(actual); val b = sample(before); val c = sample(after)
+            KeyformCell(coordinate, RotationPivotForm(delta(a.originX, b.originX, c.originX), delta(a.originY, b.originY, c.originY),
+                delta(a.angle, b.angle, c.angle), delta(a.scale, b.scale, c.scale)))
+        })
+    }
+
+    private fun appendTree(model: PuppetModel, desired: List<ParameterNode>, added: Set<ParameterId>): List<ParameterNode> {
+        val existing = model.parameterTree.ifEmpty { model.parameters.filter { it.id !in added }.map { ParameterNode.Param(it.id) } }
+        fun groups(nodes: List<ParameterNode>): Set<ParameterGroupId> = nodes.filterIsInstance<ParameterNode.Group>().flatMapTo(HashSet()) { listOf(it.id) + groups(it.children) }
+        val present = groups(existing)
+        val templates = HashMap<ParameterGroupId, ParameterNode.Group>()
+        fun collect(nodes: List<ParameterNode>) { nodes.filterIsInstance<ParameterNode.Group>().forEach { templates[it.id] = it; collect(it.children) } }
+        collect(desired)
+        fun extra(nodes: List<ParameterNode>): List<ParameterNode> = nodes.mapNotNull { node -> when (node) {
+            is ParameterNode.Param -> node.takeIf { it.id in added }
+            is ParameterNode.Group -> if (node.id in present) null else node.copy(children = extra(node.children)).takeIf { it.children.isNotEmpty() }
+        } }
+        fun update(nodes: List<ParameterNode>): List<ParameterNode> = nodes.map { node -> when (node) {
+            is ParameterNode.Param -> node
+            is ParameterNode.Group -> node.copy(children = update(node.children) + extra(templates[node.id]?.children.orEmpty()))
+        } }
+        return update(existing) + extra(desired)
+    }
+}

@@ -592,6 +592,7 @@ internal class WorkspaceStore(
 		WorkspaceLayoutCodec.encodeMaterials(document.layout.materials) { persistRaster(project, it.rgba, it.width, it.height) }
 			?.let { put(WorkspaceLayoutCodec.MATERIALS, it) }
 		putJsonObject("rigEdits") {
+			document.rigEdits.modifierStack?.let { put("modifierStack", it) }
 			document.rigEdits.importedCmo3?.let { put("importedCmo3", it) }
 			put("importedLayerIds", JsonObject(document.rigEdits.importedLayerIds.mapValues { JsonPrimitive(it.value) }))
 			put("skeleton", document.rigEdits.skeleton?.toJson() ?: JsonNull)
@@ -760,6 +761,7 @@ internal class WorkspaceStore(
             motionPresets = io.github.psd2live.core.MotionPresets.fromJson(rigEditObject["motionPresets"]?.jsonObject),
             expressions = rigEditObject["expressions"]?.jsonArray?.map { io.github.psd2live.core.ModelExpressions.fromJson(it.jsonObject) },
             pose = rigEditObject["pose"]?.jsonObject?.let(io.github.psd2live.core.ModelPoses::fromJson),
+            modifierStack = rigEditObject["modifierStack"]?.jsonObject,
             simEdits = rigEditObject.optionalArray("simulations").map { decodeSimulation(it.jsonObject, bakes) },
             hitAreas = rigEditObject.optionalArray("hitAreas").map { io.github.psd2live.core.RigHitAreas.fromJson(it.jsonObject) },
 			parameterEdits = rigEditObject.optionalArray("parameters").map { element ->

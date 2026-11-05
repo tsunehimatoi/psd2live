@@ -1,6 +1,7 @@
 package io.github.psd2live.project
 
 import io.github.psd2live.core.RigEditOverlay
+import io.github.psd2live.core.MotionClip
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import org.umamo.format.art.SourceArt
@@ -38,6 +39,21 @@ internal object WorkspaceRevisions {
 	// An empty optional field must not change the identity of pre-feature documents.
 	private fun rigText(rig: RigEditOverlay): String {
 		var text = rig.toString()
+		if (rig.motionClips.isNotEmpty()) {
+			// Splice the list at its field boundary: names and event values may themselves contain field-like text.
+			var marker: MotionClip
+			do {
+				val id = "psd2live-motion-${UUID.randomUUID()}"
+				marker = MotionClip(id, id)
+			} while (marker.toString() in text)
+			val template = rig.copy(motionClips = listOf(marker)).toString()
+			val token = "[$marker]"
+			val at = template.indexOf(token)
+			val clips = rig.motionClips.joinToString(prefix = "[", postfix = "]") { clip ->
+				if (clip.fileStem == null) clip.toString().removeSuffix(", fileStem=null)") + ")" else clip.toString()
+			}
+			text = template.replaceRange(at, at + token.length, clips)
+		}
 		fun strip(token: String) {
 			val index = text.lastIndexOf(token)
 			if (index >= 0) text = text.removeRange(index, index + token.length)
@@ -45,6 +61,7 @@ internal object WorkspaceRevisions {
 		if (rig.hitAreas.isEmpty()) strip(", hitAreas=[]")
 		if (rig.interiorEffects.isEmpty()) strip(", interiorEffects=[]")
 		if (rig.pose == null) strip(", pose=null")
+		if (rig.modifierStack == null) strip(", modifierStack=null")
 		if (rig.expressions == null) strip(", expressions=null")
 		// A motion clip without events reads as clips did before they had them.
 		if (rig.motionClips.any { it.events.isEmpty() }) text = text.replace(", events=[])", ")")

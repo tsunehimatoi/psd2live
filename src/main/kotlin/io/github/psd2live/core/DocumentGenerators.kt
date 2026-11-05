@@ -4,6 +4,7 @@ import io.github.psd2live.core.sim.SimGenerator
 import io.github.psd2live.format.compile.document.GeneratorGraph
 import io.github.psd2live.format.compile.document.GeneratorNode
 import org.umamo.runtime.model.PuppetModel
+import kotlinx.serialization.json.*
 
 /**
  * The generators of a document as a dependency graph: what each reads and owns, by stable id.
@@ -56,6 +57,9 @@ internal object DocumentGenerators {
 	private const val SIMULATION = "simulation:"
 
 	fun keyform(kind: String, target: String, parameter: String) = "keyform:$kind:$target@$parameter"
+    fun keyformCell(kind: String, target: String, key: Map<String, Float>, channel: String? = null) =
+        "keyform-cell:$kind:$target:${channel.orEmpty()}:" + JsonObject(key.toSortedMap().mapValues { JsonPrimitive(it.value) })
+    fun channelKeyform(kind: String, target: String, parameter: String, channel: String) = "channel-keyform:$kind:$target@$channel:$parameter"
 	fun swingId(swing: RigSwingEdit) = SWING + swing.id
 	fun simulationId(sim: io.github.psd2live.core.sim.RigSimEdit) = SIMULATION + sim.id
 
@@ -75,7 +79,8 @@ internal object DocumentGenerators {
 	 * (`rig.meshes` when no layers are named, `rig` when its layer is not among them) owns its feature axes and
 	 * the skeleton its bone axes, so an edit of one is recorded as an override.
 	 */
-	fun graph(overlay: RigEditOverlay, layers: List<String> = emptyList(), primitives: PrimitiveSkins = PrimitiveSkins.None): GeneratorGraph {
+	fun graph(overlay: RigEditOverlay, layers: List<String> = emptyList(), primitives: PrimitiveSkins = PrimitiveSkins.None,
+              modifierReport: JsonObject? = null): GeneratorGraph {
 		val owned = HashSet<String>()
 		fun claim(ids: Collection<String>) = ids.filterTo(LinkedHashSet()) { owned.add(it) }
 		val pinned = if (overlay.authoringJournal.any(ArtPrimitiveV2::isV2)) setOf(PRIMITIVES) else emptySet()
@@ -151,7 +156,36 @@ internal object DocumentGenerators {
 			keyforms += writes.filter { it.startsWith("keyform:") }
 			parameters += writes.filter { it.startsWith("parameter:") }
 		}
-		nodes += GeneratorNode(OVERRIDES, keyforms + "rig:authored" + "document:overrides" + "document:generators", claim(listOf("rig:final")))
+        // Actual axes come from the captured evaluation, including mesh wrappers and paused dependencies.
+        var preceding = "rig:authored"
+        for (element in modifierReport?.get("entries")?.jsonArray.orEmpty()) {
+            val entry = element.jsonObject
+            if (entry.getValue("status").jsonPrimitive.content != "active") continue
+            val id = "modifier:" + entry.getValue("id").jsonPrimitive.content
+            val forms = entry.getValue("owned_keyforms").jsonArray.map { form -> form.jsonObject.let {
+                val kind = it.getValue("kind").jsonPrimitive.content
+                val target = it.getValue("id").jsonPrimitive.content
+                val parameter = it.getValue("parameter").jsonPrimitive.content
+                val key = it["key"]?.jsonObject?.mapValues { field -> field.value.jsonPrimitive.float }
+                if (key != null) return@let keyformCell(kind, target, key, it["channel"]?.jsonPrimitive?.content)
+                it["channel"]?.jsonPrimitive?.content?.let { channel -> channelKeyform(kind, target, parameter, channel) }
+                    ?: keyform(kind, target, parameter)
+            } }
+            val objects = entry.getValue("contributions").jsonArray.mapNotNull { contribution -> contribution.jsonObject.let {
+                if (it.getValue("change").jsonPrimitive.content != "added") return@let null
+                val kind = when (it.getValue("kind").jsonPrimitive.content) {
+                    "deformer" -> "warp"
+                    "mesh" -> "mesh"
+                    else -> return@let null
+                }
+                "object:$kind:" + it.getValue("id").jsonPrimitive.content
+            } }
+            val writes = claim(forms + objects + "rig:$id")
+            nodes += GeneratorNode(id, setOf(preceding, "document:$id"), writes)
+            preceding = "rig:$id"
+            keyforms += writes.filter { it.startsWith("keyform:") }
+        }
+		nodes += GeneratorNode(OVERRIDES, keyforms + preceding + "document:overrides" + "document:generators", claim(listOf("rig:final")))
 		// The copies over the bangs are made from their originals on the finished rig.
 		nodes += GeneratorNode(SEE_THROUGH, setOf("rig:final", "document:settings"), claim(listOf("rig:seeThrough")))
 		nodes += GeneratorNode(PHYSICS, parameters + "rig:final" + "rig:seeThrough" + "document:physics" + "document:skeleton", claim(listOf("physics")))

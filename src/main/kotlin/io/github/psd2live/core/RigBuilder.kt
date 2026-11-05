@@ -151,6 +151,11 @@ data class BuiltRig(
 	 * maps any mesh, but the layer is not theirs: what looks a layer's mesh up ([ownLayerIdByDrawableId]) never finds one.
 	 */
 	val copiedDrawableIds: Set<String> = emptySet(),
+    /** Derived modifier sidecars and contributions; the document stores instances, never this result. */
+    val modifierOutput: io.github.psd2live.format.model.RigIR? = null,
+    val modifierReport: kotlinx.serialization.json.JsonObject? = null,
+    /** Native chain inventory for adapters that must keep the public identity independent of temporary numbering. */
+    internal val generatedChains: List<io.github.psd2live.core.fit.HairChain> = emptyList(),
 ) {
 	/** The source layer whose art [drawableId] shows: its own, or for a copy over the bangs its original's. */
 	fun layerOf(drawableId: String): String? =
@@ -1398,7 +1403,9 @@ object RigBuilder {
 		val orderedLayers = orderMouthLayers(baseLayers.sortedBy { it.source.order })
 		val orderStep = generatedOrderStep(config.drawOrderStep, orderedLayers.size)
 		// A passenger keys a toggle or switch only while the resolved layers still need its parameter.
-		val moduleParams = moduleParameters(context, config)
+		val generatedChains = hairChains(context.analysis, context.faceRig, config)
+			.filter { chain -> context.deformers.any { it.id.raw == chain.warpId } }
+		val moduleParams = moduleParameters(context, config, generatedChains)
 		val knownParameters = if (!v2) emptySet() else (standardParameters(context, config) + moduleParams + customParams).mapTo(HashSet()) { it.id }
 		val ghostIds = LinkedHashSet<DrawableId>()
 		for ((drawIndex, layer) in orderedLayers.withIndex()) {
@@ -1775,7 +1782,7 @@ object RigBuilder {
 				}
 				return BuiltRig(skeletonPuppet, pageByDrawable, sourceBoundsByDrawable, layerIdByDrawable, faceCenterCanvas.first,
 					faceCenterCanvas.second, faceRig.radiusX, faceRig.radiusY, warnings, faceRig.initialAngleZ, unbound, primitiveSkins = skins,
-					seeThrough = seeThrough(skeletonPuppet), copiedDrawableIds = generatedCopies.toSet())
+					seeThrough = seeThrough(skeletonPuppet), copiedDrawableIds = generatedCopies.toSet(), generatedChains = generatedChains)
 			}
 			val skeletal = skeleton
 				?.let { RigBuildProfile.stage("skeleton") {
@@ -1802,7 +1809,7 @@ object RigBuilder {
 				faceRig.initialAngleZ,
 				unbound,
 				primitiveSkins = skins,
-				seeThrough = seeThrough(skeletonPuppet), copiedDrawableIds = generatedCopies.toSet(),
+				seeThrough = seeThrough(skeletonPuppet), copiedDrawableIds = generatedCopies.toSet(), generatedChains = generatedChains,
 			)
 		}
 		if (stages == null) return finish()
@@ -3584,9 +3591,11 @@ object RigBuilder {
 			// Turning toward +x carries the face's middle that way: the lock on the +x side is the far one.
 			val far = if (layer.centroidX >= context.faceRig.coordinateSpace.toCanvas(context.faceRig.centerX, context.faceRig.centerY).first) 1f else -1f
 			val behind = (face - 1f).coerceAtLeast(0f)
-			val keys = if (far > 0f) floatArrayOf(0f, 40f, 45f) else floatArrayOf(-45f, -40f, 0f)
+			// The editor format bundles this channel with geometry on the same angle axis.
+			// Extend the unchanged side across the full span so the mesh can be exported.
+			val keys = if (far > 0f) floatArrayOf(-45f, 0f, 40f, 45f) else floatArrayOf(-45f, -40f, 0f, 45f)
 			drawable.copy(channelGrids = ChannelGrids(drawable.channelGrids.gridsByChannel + (FormChannel.DRAW_ORDER to
-				scalarGrid(StandardParameters.ANGLE_X, keys) { angle -> if (kotlin.math.abs(angle) >= 45f) behind else drawable.drawOrder })))
+				scalarGrid(StandardParameters.ANGLE_X, keys) { angle -> if (angle * far >= 45f) behind else drawable.drawOrder })))
 		}
 	}
 
@@ -4329,12 +4338,12 @@ object RigBuilder {
 	}
 
 	/** The parameters the rig modules [config] builds add ([io.github.psd2live.core.recipe.RigModules.parameters]). */
-	private fun moduleParameters(context: RigContext, config: PipelineConfig): List<Parameter> {
+	private fun moduleParameters(context: RigContext, config: PipelineConfig, chains: List<io.github.psd2live.core.fit.HairChain>): List<Parameter> {
 		val eyesFitted = context.fittedEyes(config)?.rigs?.isNotEmpty() == true
 		return io.github.psd2live.core.recipe.RigModules.parameters(config, io.github.psd2live.core.recipe.RecipeSubject.of(context.analysis))
 			.filter { eyesFitted || !it.id.startsWith("ParamEye") }
 			.map { Parameter(ParameterId(it.id), tr(it.nameKey), it.min, it.max, it.default) } +
-			hairChains(context.analysis, context.faceRig, config).filter { chain -> context.deformers.any { it.id.raw == chain.warpId } }.flatMap { chain ->
+			chains.flatMap { chain ->
 				val name = context.analysis.layers.firstOrNull { it.source.id.raw == chain.layerId }?.source?.name ?: chain.layerId
 				chain.parameters.map { p -> Parameter(p, tr("model.parameter.hairChain", name, p.raw.removePrefix(chain.kind.prefix)), -1f, 1f, 0f) }
 			}

@@ -16,9 +16,10 @@ import org.umamo.runtime.model.PuppetModel
  */
 internal object JournalRecording {
 	fun record(shown: PuppetModel, authored: PuppetModel, overlay: RigEditOverlay, edits: JsonArray,
-			   skins: PrimitiveSkins = PrimitiveSkins.None): List<JsonObject> {
-		val (_, compiled) = RigAuthoringJournal.compile(shown, GeneratedOverrides.capture(shown, overlay, edits, skins))
-		val owned = GeneratedOverrides.ownedWrites(shown, overlay, GeneratedOverrides.journalOnly(shown, authored, compiled), skins, authored)
+			   skins: PrimitiveSkins = PrimitiveSkins.None, modifierReport: JsonObject? = null): List<JsonObject> {
+        val graph = DocumentGenerators.graph(overlay, primitives = skins, modifierReport = modifierReport)
+		val (_, compiled) = RigAuthoringJournal.compile(shown, GeneratedOverrides.capture(shown, overlay, edits, skins, graph))
+		val owned = GeneratedOverrides.ownedWrites(shown, overlay, GeneratedOverrides.journalOnly(shown, authored, compiled), skins, authored, graph)
 		return GeneratedParameterAdoption.adopted(shown, authored, owned)
 	}
 }

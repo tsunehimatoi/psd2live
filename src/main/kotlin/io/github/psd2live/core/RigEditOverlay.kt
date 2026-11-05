@@ -250,8 +250,11 @@ data class RigEditOverlay(
     val expressions: List<ModelExpression>? = null,
     /** The part groups of which one shows at a time; like the motions and expressions, they do not touch the rig. */
     val pose: ModelPose? = null,
+    /** Explicit ordered preset instances; absent on projects that still use the legacy generation settings. */
+    val modifierStack: JsonObject? = null,
 ) {
 	init {
+        modifierStack?.let(io.github.psd2live.core.modifier.RigModifierStack::fromJson)
         RigHitAreas.problem(hitAreas)?.let { throw IllegalArgumentException(it) }
         expressions?.let(ModelExpressions::validated)
         require(motionClips.map { it.id }.distinct().size == motionClips.size) { "Duplicate motion IDs" }

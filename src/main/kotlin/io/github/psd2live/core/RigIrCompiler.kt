@@ -27,6 +27,12 @@ internal object RigIrCompiler {
 	 */
 	fun compile(analysis: PipelineAnalysis, atlas: PackedAtlas, rig: BuiltRig, config: PipelineConfig, tileArt: Boolean = false,
 				simulations: Boolean = false): RigIR {
+        rig.modifierOutput?.let { output ->
+            val ordinary = io.github.psd2live.core.modifier.RigModifierPipeline.compileOrdinary(
+                analysis, atlas, rig, config, tileArt, simulations)
+            return ordinary.copy(physics = output.physics, clips = output.clips, restPose = output.restPose,
+                parameterRoles = (ordinary.parameterRoles + output.parameterRoles).distinct())
+        }
 		val physicsGroups = PhysicsCatalog.active(analysis, config, rig.puppet.parameters.mapTo(linkedSetOf()) { it.id.raw }, rig.puppet)
 		val puppet = io.github.psd2live.core.interior.InteriorLifecycle.exportModel(rig.puppet, config.rigEdits, physicsGroups)
 		val exportedRig = rig.copy(puppet = puppet)

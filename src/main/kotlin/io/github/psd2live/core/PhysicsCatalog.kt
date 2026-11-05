@@ -5,6 +5,25 @@ package io.github.psd2live.core
  * (see [PhysicsGenerator]) with the user's replacements, then the user's own, in evaluation order.
  */
 object PhysicsCatalog {
+    /** Explicit stacks expose their evaluated groups; legacy generator inference is never rerun on their parameters. */
+    fun groups(model: RigPreviewModel, config: PipelineConfig = model.config): List<PhysicsGroup> {
+        if (config.rigEdits.modifierStack == null) return groups(model.analysis, config,
+            model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }, model.rig.puppet)
+        val output = requireNotNull(model.rig.modifierOutput) { "Explicit stack has no evaluated physics" }.physics.groups
+        val available = model.authored.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }
+        val ordinary = ordered(config.rigEdits.physicsEdits, config.rigEdits.physicsOrder) { it.id }.associate { setting ->
+            setting.id to PhysicsGroup(setting, PhysicsOrigin.CUSTOM, null, setting.id !in config.rigEdits.disabledPhysicsIds,
+                issueOf(setting, available))
+        }
+        return output.map { group -> ordinary[group.id] ?: Physics3Json.setting(group).let {
+            PhysicsGroup(it, PhysicsOrigin.MODIFIER, it, true)
+        } } + ordinary.values.filter { row -> output.none { it.id == row.id } }
+    }
+
+    fun active(model: RigPreviewModel): List<RigPhysicsEdit> = if (model.config.rigEdits.modifierStack != null)
+        requireNotNull(model.rig.modifierOutput).physics.groups.map(Physics3Json::setting)
+        else if (!model.config.generatePhysics || model.config.meshOnly) emptyList() else groups(model).filter { it.active }.map { it.setting }
+
 	/**
 	 * The groups in evaluation order, each with what it exports and why it would not. A user group claims
 	 * its outputs first; a generated group on a claimed output steps aside.

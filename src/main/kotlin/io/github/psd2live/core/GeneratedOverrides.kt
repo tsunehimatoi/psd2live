@@ -68,14 +68,29 @@ internal object GeneratedOverrides {
 	fun isOverride(command: JsonObject) = command["op"]?.jsonPrimitive?.contentOrNull == OP
 
 	/** The generator that owns the cell at [key] of [kind] [id]: one of its parameters is keyed away from its default. */
-	private fun owner(graph: io.github.psd2live.format.compile.document.GeneratorGraph, model: PuppetModel, kind: String, id: String,
-					  key: Map<String, Float>, skins: PrimitiveSkins = PrimitiveSkins.None): String? = key.entries.firstNotNullOfOrNull { (parameterId, value) ->
-		val parameter = model.parameters.firstOrNull { it.id.raw == parameterId } ?: return@firstNotNullOfOrNull null
-		if (abs(value - parameter.default) <= org.umamo.runtime.eval.EPS_KEY) return@firstNotNullOfOrNull null
-		// A version 2 part's generated keyforms belong to the generators the base names in its side channel.
-		(if (kind == "mesh") skins.owner(DrawableId(id), parameter.id) else null)
-			?: DocumentGenerators.owner(graph, DocumentGenerators.keyform(kind, id, parameterId))?.id
-	}
+    private fun latest(graph: io.github.psd2live.format.compile.document.GeneratorGraph, owners: List<String>): String? =
+        graph.order.lastOrNull { it.id in owners }?.id
+
+    private fun cellKey(model: PuppetModel, kind: String, id: String, key: Map<String, Float>, channel: FormChannel? = null): Map<String, Float> {
+        val axes = if (channel != null) channelGrid(model, kind, id, channel)?.axes.orEmpty() else when (kind) {
+            "warp" -> (model.deformers.firstOrNull { it.id.raw == id } as? Deformer.Warp)?.geometryGrid?.axes.orEmpty()
+            else -> model.drawables.firstOrNull { it.id.raw == id }?.geometryGrid?.axes.orEmpty()
+        }
+        val defaults = model.parameters.associate { it.id.raw to it.default }
+        return axes.associate { axis -> axis.parameterId.raw.let { it to (key[it] ?: defaults[it] ?: 0f) } }
+    }
+
+    private fun owner(graph: io.github.psd2live.format.compile.document.GeneratorGraph, model: PuppetModel, kind: String, id: String,
+                      key: Map<String, Float>, skins: PrimitiveSkins = PrimitiveSkins.None): String? {
+        DocumentGenerators.owner(graph, DocumentGenerators.keyformCell(kind, id, cellKey(model, kind, id, key)))?.let { return it.id }
+        val owners = key.mapNotNull { (parameterId, value) ->
+            val parameter = model.parameters.firstOrNull { it.id.raw == parameterId } ?: return@mapNotNull null
+            val candidate = (if (kind == "mesh") skins.owner(DrawableId(id), parameter.id) else null)
+                ?: DocumentGenerators.owner(graph, DocumentGenerators.keyform(kind, id, parameterId))?.id
+            candidate?.takeIf { it.startsWith("modifier:") || abs(value - parameter.default) > org.umamo.runtime.eval.EPS_KEY }
+        }
+        return latest(graph, owners) ?: DocumentGenerators.owner(graph, "object:$kind:$id")?.id
+    }
 
 	/** The edited target's kind as the graph names it: `warp` or `mesh`; null for anything else. */
 	private fun kindOf(command: JsonObject): String? = when (val raw = command["kind"]?.jsonPrimitive?.contentOrNull) {
@@ -89,8 +104,8 @@ internal object GeneratedOverrides {
 	 * [model] (the generated rig) holds there now. Other commands pass through unchanged. [skins] is the base's side
 	 * channel: the generators owning each version 2 part's keyforms ([PrimitiveSkins.owner]).
 	 */
-	fun capture(model: PuppetModel, overlay: RigEditOverlay, commands: JsonArray, skins: PrimitiveSkins = PrimitiveSkins.None): JsonArray {
-		val graph by lazy { DocumentGenerators.graph(overlay, primitives = skins) }
+	fun capture(model: PuppetModel, overlay: RigEditOverlay, commands: JsonArray, skins: PrimitiveSkins = PrimitiveSkins.None,
+                graph: io.github.psd2live.format.compile.document.GeneratorGraph = DocumentGenerators.graph(overlay, primitives = skins)): JsonArray {
 		return JsonArray(commands.map { element ->
 			val command = element.jsonObject
 			if (command["op"]?.jsonPrimitive?.contentOrNull != "canvas_geometry" || command["preserve_children"]?.jsonPrimitive?.booleanOrNull == true)
@@ -98,7 +113,6 @@ internal object GeneratedOverrides {
 			val kind = kindOf(command) ?: return@map command
 			val id = command.getValue("id").jsonPrimitive.content
 			val key = command.getValue("key").jsonObject.mapValues { it.value.jsonPrimitive.float }
-			if (key.isEmpty()) return@map command
 			val generator = owner(graph, model, kind, id, key, skins) ?: return@map command
 			val (base, points) = when (kind) {
 				"warp" -> {
@@ -143,6 +157,9 @@ internal object GeneratedOverrides {
 			if (!bezier && command["op"]?.jsonPrimitive?.contentOrNull != "canvas_geometry") return@map command
 			val kind = if (bezier) "warp" else kindOf(command) ?: return@map command
 			val id = command.getValue("id").jsonPrimitive.content
+            // An entirely generated object has no ordinary rest cell on which to replay a default-pose edit.
+            if (if (kind == "warp") authored.deformers.none { it.id.raw == id } else authored.drawables.none { it.id.raw == id })
+                return@map command
 			val added by lazy { axes(shown, kind, id) - axes(authored, kind, id) }
 			fun cleaned(edit: JsonObject): JsonObject {
 				val key = edit["key"]?.jsonObject ?: return edit
@@ -164,25 +181,29 @@ internal object GeneratedOverrides {
 	 * the generator to change instead. [shown] is the generated rig the entries were made on.
 	 */
 	fun ownedWrites(shown: PuppetModel, overlay: RigEditOverlay, journal: List<JsonObject>, skins: PrimitiveSkins = PrimitiveSkins.None,
-					authored: PuppetModel? = null): List<JsonObject> {
-		val graph by lazy { DocumentGenerators.graph(overlay, primitives = skins) }
+					authored: PuppetModel? = null,
+                    graph: io.github.psd2live.format.compile.document.GeneratorGraph = DocumentGenerators.graph(overlay, primitives = skins)): List<JsonObject> {
 		/** The generator owning [channel]'s axis [parameter] on [kind] [id]: the track gains it after the journal ([authored] lacks it). */
 		fun channelAxisOwner(kind: String, id: String, channel: FormChannel, parameter: String): String? {
 			val before = authored ?: return null
 			if (channelGrid(shown, kind, id, channel)?.axes?.any { it.parameterId.raw == parameter } != true) return null
 			if (channelGrid(before, kind, id, channel)?.axes?.any { it.parameterId.raw == parameter } == true) return null
-			return (if (kind == "mesh") skins.owner(DrawableId(id), ParameterId(parameter)) else null)
-				?: DocumentGenerators.owner(graph, DocumentGenerators.keyform(kind, id, parameter))?.id
+            return DocumentGenerators.owner(graph, DocumentGenerators.channelKeyform(kind, id, parameter, channel.name.lowercase()))?.id
+                ?: (if (kind == "mesh") skins.owner(DrawableId(id), ParameterId(parameter)) else null)
+                ?: DocumentGenerators.owner(graph, DocumentGenerators.keyform(kind, id, parameter))?.id
 		}
 		/** The generator owning [channel]'s cell of [kind] [id] at [key]: one of the key's parameters, away from its default, is such an axis. */
-		fun channelOwner(kind: String, id: String, channel: FormChannel, key: Map<String, Float>): String? {
-			if (channelCell(shown, kind, id, channel, key) == null) return null
-			val defaults = shown.parameters.associate { it.id.raw to it.default }
-			return key.entries.firstNotNullOfOrNull { (parameter, value) ->
-				if (abs(value - (defaults[parameter] ?: return@firstNotNullOfOrNull null)) <= org.umamo.runtime.eval.EPS_KEY) null
-				else channelAxisOwner(kind, id, channel, parameter)
-			}
-		}
+        fun channelOwner(kind: String, id: String, channel: FormChannel, key: Map<String, Float>): String? {
+            if (channelCell(shown, kind, id, channel, key) == null) return null
+            DocumentGenerators.owner(graph, DocumentGenerators.keyformCell(kind, id, cellKey(shown, kind, id, key, channel), channel.name.lowercase()))?.let { return it.id }
+            val defaults = shown.parameters.associate { it.id.raw to it.default }
+            val owners = key.mapNotNull { (parameter, value) ->
+                val candidate = channelAxisOwner(kind, id, channel, parameter)
+                candidate?.takeIf { it.startsWith("modifier:") || abs(value - (defaults[parameter] ?: return@mapNotNull null)) > org.umamo.runtime.eval.EPS_KEY }
+            }
+            return latest(graph, owners)
+        }
+
 		fun targetKind(target: String): String? = runCatching { RigAuthoringJournal.target(target).kind }.getOrNull()?.let {
 			when (it) { RigTargetKind.WARP_DEFORMER -> "warp"; RigTargetKind.ART_MESH -> "mesh"; else -> null }
 		}

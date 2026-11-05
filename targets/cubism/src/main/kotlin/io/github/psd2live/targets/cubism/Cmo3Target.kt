@@ -12,6 +12,9 @@ import org.umamo.interop.cmo3.Cmo3Import
 import org.umamo.render.restMeshesToCanvasSpace
 import org.umamo.runtime.model.AtlasTileId
 import org.umamo.runtime.model.ParameterId
+import org.umamo.runtime.model.KeyformGrid
+import org.umamo.runtime.model.KeyformCell
+import org.umamo.runtime.model.MeshDeltaForm
 
 /**
  * A Cubism Editor project (`.cmo3`): the baked rig with editable source layers and physics. Generator
@@ -78,7 +81,14 @@ public class Cmo3Target(
 
 	private fun convertLowered(ir: RigIR, options: ExportOptions, decorate: (CModelSource) -> Unit): Cmo3Conversion.Result {
 		val puppet = PuppetIr.toPuppet(ir)
-		val exportPuppet = restMeshesToCanvasSpace(puppet, ir.restPose.mapKeys { ParameterId(it.key) })
+		// CMO3 stores rest meshes in canvas space, but evaluates mesh forms in their parent's space.
+		// Keep an explicit static form for unkeyed children before rebasing their rest mesh for export.
+		val withStaticChildren = puppet.copy(drawables = puppet.drawables.map { drawable ->
+			val mesh = drawable.mesh
+			if (drawable.parentDeformerId == null || mesh == null || drawable.geometryGrid != null) drawable
+			else drawable.copy(geometryGrid = KeyformGrid(emptyList(), listOf(KeyformCell(IntArray(0), MeshDeltaForm(FloatArray(mesh.positions.size))))))
+		})
+		val exportPuppet = restMeshesToCanvasSpace(withStaticChildren, ir.restPose.mapKeys { ParameterId(it.key) })
 		val pages = ir.textures.pages.mapIndexed { index, page ->
 			require(page.png.size > 0) { "Texture page $index has no pixels" }
 			Cmo3Conversion.AtlasPage(page.png.shared(), page.width, page.height)

@@ -209,6 +209,9 @@ data class HairChain(
 			}
 		}
 
+		internal fun expressionInputs(parameters: List<String>) =
+			parameters.map { io.github.psd2live.core.PhysicsInput(it, 6f, io.github.psd2live.core.PhysicsSourceType.X) }
+
 		/**
 		 * The pendulums of the chains whose parameters [available] holds: one per region, a vertex per segment, the
 		 * regions' and chains' lengths set apart a little so neighbouring locks fall out of step; and one for each
@@ -235,7 +238,7 @@ data class HairChain(
 				val inputs = head + (if (blink > 0f) listOf("ParamEyeLOpen", "ParamEyeROpen").filter { it in available }
 					.map { io.github.psd2live.core.PhysicsInput(it, blink, io.github.psd2live.core.PhysicsSourceType.X) } else emptyList()) +
 					// A toggle or switch flipping nudges the chains, as a change of clothes or a prop would.
-					impulses.filter { it in available }.map { io.github.psd2live.core.PhysicsInput(it, 6f, io.github.psd2live.core.PhysicsSourceType.X) }
+					expressionInputs(impulses.filter { it in available })
 				io.github.psd2live.core.RigPhysicsEdit(
 					id = "Physics${family(kind)}$word$index$region",
 					name = io.github.psd2live.i18n.tr(when (family(kind)) { "Hair" -> "model.physics.hairChain"; "Cloth" -> "model.physics.clothChain"; else -> "model.physics.partChain" },

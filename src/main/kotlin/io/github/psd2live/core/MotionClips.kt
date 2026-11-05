@@ -77,8 +77,11 @@ data class MotionClip(
 	val curves: List<MotionCurve> = emptyList(),
 	/** Events in time order, one per time. */
 	val events: List<MotionEvent> = emptyList(),
+    /** Stable asset name retained when a generated clip becomes ordinary authored content. */
+    val fileStem: String? = null,
 ) {
 	init {
+        require(fileStem == null || fileStem.matches(Regex("[A-Za-z0-9_-]+"))) { "Invalid motion file stem" }
 		require(id.isNotBlank() && name.isNotBlank() && name.none(Char::isISOControl)) { "Motion needs an id and a name" }
 		require(duration.isFinite() && duration > 0f) { "Motion duration must be positive" }
 		require(fps.isFinite() && fps in 1f..120f) { "Motion FPS must be within 1..120" }
@@ -275,7 +278,10 @@ object MotionClips {
 	 */
 	fun exportStems(clips: List<MotionClip>): Map<String, String> {
 		val used = BUILTIN_NAMES.mapTo(HashSet()) { it.lowercase() }
+        val fixed = clips.filter { it.builtin == null }.mapNotNull { it.fileStem }
+        require(fixed.all { used.add(it.lowercase()) }) { "Motion file stems must be unique and must not replace built-in files" }
 		return clips.filter { it.builtin == null }.associate { clip ->
+			if (clip.fileStem != null) return@associate clip.id to clip.fileStem
 			val slug = slug(clip.name)
 			var stem = slug
 			var index = 2
@@ -287,6 +293,7 @@ object MotionClips {
 
 	fun toJson(clip: MotionClip): JsonObject = buildJsonObject {
 		put("id", clip.id)
+        clip.fileStem?.let { put("file", it) }
 		put("name", clip.name)
 		clip.builtin?.let { put("builtin", it) }
 		put("loop", clip.loop)
@@ -329,6 +336,7 @@ object MotionClips {
 		id = o.getValue("id").jsonPrimitive.content,
 		name = o.getValue("name").jsonPrimitive.content,
 		builtin = o["builtin"]?.jsonPrimitive?.contentOrNull,
+        fileStem = o["file"]?.jsonPrimitive?.contentOrNull,
 		loop = o["loop"]?.jsonPrimitive?.booleanOrNull ?: false,
 		duration = o["duration"]?.jsonPrimitive?.floatOrNull ?: 2f,
 		fps = o["fps"]?.jsonPrimitive?.floatOrNull ?: 30f,

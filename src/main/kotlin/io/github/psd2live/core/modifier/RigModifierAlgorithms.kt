@@ -1,0 +1,124 @@
+package io.github.psd2live.core.modifier
+
+import io.github.psd2live.core.*
+import io.github.psd2live.core.sim.RigSimEdit
+import io.github.psd2live.core.sim.SimGenerator
+import io.github.psd2live.format.model.Clip
+import io.github.psd2live.format.model.ClipEvent
+import io.github.psd2live.format.model.PhysicsGroup
+import io.github.psd2live.format.model.RigIR
+import io.github.psd2live.targets.cubism.PuppetIr
+import org.umamo.runtime.model.PuppetModel
+import org.umamo.edit.withParametersSyncedFromTree
+import kotlinx.serialization.json.jsonPrimitive
+
+/** Adapters for generators that already accept an authored model. Binding recipes need source-aware adapters. */
+internal object RigModifierAlgorithms {
+    val swing = RigModifierDefinition("swing", 1, validate = { _, instance ->
+        require(instance.targets.all { it.kind == "deformer" || it.kind == "mesh" }) { "A swing modifier targets Warps or meshes" }
+        val source = RigSwingEdit.fromJson(instance.config)
+        require(!source.baked) { "A baked swing is ordinary content" }
+        require(source.targets == instance.targets.map { it.id }) { "Swing targets must match the captured modifier targets" }
+    }, composableKinds = setOf("deformer", "mesh", "hierarchy"), evaluate = { rig, instance, checkpoint ->
+        checkpoint()
+        val source = RigSwingEdit.fromJson(instance.config)
+        val requested = source.copy(id = instance.outputId("swing"), targets = instance.targets.map { it.id },
+            motions = source.motions.map { motion -> motion.copy(parameterIds = motion.parameterIds.indices.map {
+                instance.outputId("swing:${motion.kind.name.lowercase()}:$it")
+            }) })
+        val wrapped = SwingAuthoring.wrap(PuppetIr.toPuppet(rig), requested)
+        // The native wrapper can allocate a free suffix for ordinary authoring. Modifier identities must be fixed.
+        wrapped.commands.forEachIndexed { index, command ->
+            checkpoint()
+            val expected = "Warp_Swing_${requested.id}" + if (index == 0) "" else "_${index + 1}"
+            require(command["id"]?.jsonPrimitive?.content == expected) { "Swing wrapper ID collides with existing content: $expected" }
+        }
+        val edit = requested.copy(targets = wrapped.targets)
+        val (model, issues) = SwingGenerator.applyOne(wrapped.model, edit)
+        require(issues.isEmpty()) { issues.joinToString("; ") }
+        checkpoint()
+        val result = rig.withPuppet(model)
+        val available = model.parameters.mapTo(HashSet()) { it.id.raw }
+        addPhysics(result, PhysicsGenerator.swingRules(listOf(edit), available).map(Physics3Json::group))
+    })
+
+    val simulation = RigModifierDefinition("simulation", 1, validate = { _, instance ->
+        require(instance.targets.all { it.kind == "mesh" }) { "A simulation modifier targets meshes" }
+    }, composableKinds = setOf("mesh", "hierarchy"), evaluate = { rig, instance, checkpoint ->
+        checkpoint()
+        val source = RigSimEdit.fromJson(instance.config)
+        require(source.enabled && source.bake != null) { "A simulation modifier needs an enabled, valid bake" }
+        require(source.targets == instance.targets.map { it.id }) { "Simulation targets changed; bake again before adding the modifier" }
+        require(!io.github.psd2live.core.sim.SimBake.stale(PuppetIr.toPuppet(rig), source)) { "Simulation inputs changed; bake again before adding the modifier" }
+        require(instance.inputFingerprint == null || instance.inputFingerprint == RigModifierInput.fingerprint(rig)) {
+            "${instance.id}: upstream modifier input changed; bake the simulation again"
+        }
+        val edit = source.copy(outputs = source.bake.parameters.associateWith { parameter ->
+            val previous = source.outputs[parameter]
+            (previous ?: io.github.psd2live.core.sim.SimOutput()).copy(id = instance.outputId("simulation:$parameter"))
+        })
+        val (model, issues) = SimGenerator.applyOne(PuppetIr.toPuppet(rig), edit)
+        require(issues.isEmpty()) { issues.joinToString("; ") }
+        checkpoint()
+        val groups = SimGenerator.physicsRules(listOf(edit), model.parameters.mapTo(HashSet()) { it.id.raw }).map(Physics3Json::group)
+        addPhysics(rig.withPuppet(model), groups.mapIndexed { index, group -> group.copy(id = instance.outputId("physics:$index")) })
+    })
+
+    val physics = RigModifierDefinition("physics", 1, evaluate = { rig, instance, checkpoint ->
+        checkpoint()
+        val edit = RigPhysicsEdit.fromJson(instance.config).copy(id = instance.outputId("physics"))
+        val available = rig.parameters.mapTo(HashSet()) { it.id }
+        require(edit.inputs.isNotEmpty() && edit.outputs.isNotEmpty() && edit.parameters.all { it in available }) {
+            "${instance.id}: physics inputs and outputs must reference existing parameters"
+        }
+        addPhysics(rig, listOf(Physics3Json.group(edit)))
+    })
+
+    val motion = RigModifierDefinition("motion", 1, evaluate = { rig, instance, checkpoint ->
+        checkpoint()
+        val source = MotionClips.fromJson(instance.config)
+        require(source.enabled) { "Disable the modifier to disable its motion" }
+        val available = rig.parameters.mapTo(HashSet()) { it.id }
+        require(source.curves.isNotEmpty() && source.curves.all { it.parameterId in available }) { "Motion parameters are missing" }
+        val file = "modifier_" + instance.id.encodeToByteArray().joinToString("") { "%02x".format(it.toInt() and 255) }
+        val clip = Clip(instance.outputId("motion"), source.name, if (source.loop) "Idle" else source.name,
+            file, source.duration, source.fps, source.loop, source.fadeIn, source.fadeOut,
+            source.curves.map(MotionGenerator::curve), source.events.map { ClipEvent(it.time, it.value) })
+        require(rig.clips.none { it.id == clip.id }) { "Motion ID collision: ${clip.id}" }
+        rig.copy(clips = rig.clips + clip)
+    })
+
+    private val native = listOf(swing, simulation, physics, motion)
+    val registry = RigModifierRegistry(native + RigSourceModifiers.definitions(null))
+
+    fun evaluator(source: RigModifierSource? = null) = RigModifierEvaluator(
+        if (source == null) registry else RigModifierRegistry(native + RigSourceModifiers.definitions(source))) { rig, _, commands ->
+        var model = PuppetIr.toPuppet(rig)
+        val issues = ArrayList<GeneratedOverrideIssue>()
+        for (command in commands) {
+            if (GeneratedOverrides.isOverride(command)) {
+                val result = GeneratedOverrides.apply(model, command)
+                model = result.model
+                issues += result.issues
+            } else model = RigAuthoringJournal.apply(model, command)
+        }
+        ModifierOverrideResult(rig.withPuppet(model), issues)
+    }
+
+    private fun addPhysics(rig: RigIR, groups: List<PhysicsGroup>): RigIR {
+        val ids = rig.physics.groups.mapTo(HashSet()) { it.id }
+        require(groups.map { it.id }.distinct().size == groups.size && groups.none { it.id in ids }) { "Physics group ID collision" }
+        val claimed = rig.physics.groups.flatMapTo(HashSet()) { group -> group.outputs.map { it.parameter } }
+        for (group in groups) for (output in group.outputs) require(claimed.add(output.parameter)) {
+            "Multiple physics groups drive ${output.parameter}"
+        }
+        return rig.copy(physics = rig.physics.copy(groups = rig.physics.groups + groups))
+    }
+
+}
+
+/** Keep sidecars and export-only fields while replacing all fields owned by the editable puppet. */
+internal fun RigIR.withPuppet(model: PuppetModel): RigIR = PuppetIr.toIr(model.withParametersSyncedFromTree()).copy(
+    textures = textures, physics = physics, clips = clips, parameterRoles = parameterRoles,
+    restPose = restPose, advanced = advanced, hitAreas = hitAreas,
+)
