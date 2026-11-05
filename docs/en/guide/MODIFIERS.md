@@ -23,7 +23,7 @@ New structures use version 2 and share parents within the captured target group,
 
 ## Adjust and locate
 
-Select a compact list row to edit all its values directly below the list. Adjustment forms use the shared inspector layout. Physics edits the selected input, output, or segment; motion edits the selected track and key.
+Select a compact list row to edit all its values to the right of the list. Drag the center divider to resize the independently scrolling list and inspector. Adjustment forms use the shared inspector layout. Physics edits the selected input, output, or segment; motion edits the selected track and key.
 
 Targets and Generated Content provide object location and actual contributions. Apply Through Here stays available for the selected item.
 

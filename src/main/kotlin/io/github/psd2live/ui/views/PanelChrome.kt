@@ -12,6 +12,10 @@ import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.TooltipArea
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -533,4 +537,30 @@ internal fun PanelSectionRow(
 @Composable
 internal fun IconArrowVertical(up: Boolean, tint: Color, modifier: Modifier = Modifier.size(11.dp)) {
 	IconChevron(expanded = true, tint = tint, modifier = if (up) modifier.rotate(180f) else modifier)
+}
+
+/** The dock divider, shared by panel interiors. Dragging changes layout immediately, without animation. */
+@Composable
+internal fun Modifier.panelDivider(horizontal: Boolean, highlighted: Boolean = false, onResize: (Float) -> Unit): Modifier {
+    val colors = LocalToolColors.current
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    var resizing by remember { mutableStateOf(false) }
+    val resize by androidx.compose.runtime.rememberUpdatedState(onResize)
+    return background(colors.windowBackground).hoverable(interaction)
+        .pointerHoverIcon(androidx.compose.ui.input.pointer.PointerIcon(java.awt.Cursor.getPredefinedCursor(
+            if (horizontal) java.awt.Cursor.E_RESIZE_CURSOR else java.awt.Cursor.N_RESIZE_CURSOR)))
+        .drawBehind {
+            val color = if (hovered || resizing || highlighted) colors.accent else colors.windowBackground
+            if (horizontal) drawLine(color, androidx.compose.ui.geometry.Offset(size.width / 2, 0f),
+                androidx.compose.ui.geometry.Offset(size.width / 2, size.height), 1.dp.toPx())
+            else drawLine(color, androidx.compose.ui.geometry.Offset(0f, size.height / 2),
+                androidx.compose.ui.geometry.Offset(size.width, size.height / 2), 1.dp.toPx())
+        }.pointerInput(horizontal) {
+            detectDragGestures(onDragStart = { resizing = true }, onDragEnd = { resizing = false },
+                onDragCancel = { resizing = false }) { change, delta ->
+                change.consume()
+                resize(if (horizontal) delta.x else delta.y)
+            }
+        }
 }
