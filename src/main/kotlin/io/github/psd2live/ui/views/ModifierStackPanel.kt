@@ -85,8 +85,14 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
     Column(Modifier.fillMaxWidth()) {
         val labels = listOf(tr("modifier.add"), tr("modifier.addGroup"))
         PanelToolbar(labels = labels, iconCount = 2) { labelsShown ->
-            PanelToolButton(labels[0], labelsShown > 0, { vm.openModifierAddition() }, enabled, labels[0]) { IconAdd() }
-            PanelToolButton(labels[1], labelsShown > 1, { vm.openModifierAddition(group = true) }, enabled, labels[1]) { IconFolder() }
+            Box {
+                PanelToolButton(labels[0], labelsShown > 0, { vm.openModifierAddition() }, enabled, labels[0]) { IconAdd() }
+                if (vm.modifierAddition?.group == null && vm.modifierAddition != null) ModifierAdditionMenu(state, vm)
+            }
+            Box {
+                PanelToolButton(labels[1], labelsShown > 1, { vm.openModifierAddition(group = true) }, enabled, labels[1]) { IconFolder() }
+                if (vm.modifierAddition?.group != null) ModifierAdditionMenu(state, vm)
+            }
         }
         if (stack.instances.isEmpty()) Text(tr("modifier.empty"), color = colors.textMuted, style = LocalToolTypography.current.caption,
             modifier = Modifier.padding(Spacing.Margin))
@@ -423,119 +429,81 @@ internal fun ModifierContributions(report: JsonObject, state: PSD2LiveState, vm:
     }
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
-internal fun ModifierAdditionDialog(state: PSD2LiveState, vm: PSD2LiveViewModel) {
+private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
     val dialog = vm.modifierAddition ?: return
     val colors = LocalToolColors.current
-    val plan = dialog.plan
-    val ready = !dialog.loading && dialog.error == null && dialog.preview != null
-    var advanced by remember(dialog.type, dialog.group) { mutableStateOf(false) }
-    var showContributions by remember(dialog.type, dialog.group) { mutableStateOf(false) }
-    ModalDialogFrame(title = tr(if (dialog.group == null) "modifier.add" else "modifier.addGroup"), onDismiss = vm::dismissModifierAddition,
-        width = if (dialog.group == null) 680.dp else 560.dp, dismissible = !dialog.committing, onConfirm = if (ready) vm::confirmModifierAddition else null,
-        footer = { CompactButton(tr("action.cancel"), vm::dismissModifierAddition, enabled = !dialog.committing)
-            CompactButton(tr("modifier.add"), vm::confirmModifierAddition, enabled = ready, isPrimary = true) }) {
-        Text(tr("modifier.targetCount", dialog.targets.size), color = colors.textMuted, style = LocalToolTypography.current.caption)
-        if (dialog.group == null) {
-            val available = if (dialog.targets.all { it.kind == "mesh" }) WorkspaceModifierPlan.types else listOf("swing")
-            fun category(type: String): String = when {
-                type.endsWith("/legacy") && type != "body/legacy" -> "legacy"
-                type == RigSourceModifiers.SCAFFOLD -> "structure"
-                type in WorkspaceModifierPlan.nativeTypes -> type
-                else -> RigLegacyBindings.spec(type).area
+    val groups = dialog.group != null
+    val available = if (groups) WorkspaceModifierPlan.groupCatalog.map { it.id }
+        else if (dialog.targets.all { it.kind == "mesh" }) WorkspaceModifierPlan.types else listOf("swing")
+    fun category(type: String): String = when {
+        groups -> type.substringBefore('-')
+        type.endsWith("/legacy") && type != "body/legacy" -> "legacy"
+        type == RigSourceModifiers.SCAFFOLD -> "structure"
+        type in WorkspaceModifierPlan.nativeTypes -> type
+        else -> RigLegacyBindings.spec(type).area
+    }
+    fun categoryName(id: String): String = when {
+        id == "legacy" || groups -> tr("modifier.algorithm.$id")
+        id == "structure" -> tr("modifier.scaffold")
+        id in WorkspaceModifierPlan.nativeTypes -> tr("modifier.type.$id")
+        else -> tr("settings.rig.area.$id")
+    }
+    val categories = available.map(::category).distinct().sortedBy { it == "legacy" }
+    var selectedCategory by remember { mutableStateOf(category(dialog.group ?: dialog.type ?: available.first())) }
+    io.github.psd2live.ui.views.texture.FloatingMenu(true,
+        onDismiss = { if (!dialog.committing) vm.dismissModifierAddition() }, width = 440.dp) {
+        Row(Modifier.fillMaxWidth().heightIn(max = 340.dp)) {
+            Column(Modifier.width(132.dp).verticalScroll(rememberScrollState())) {
+                categories.forEach { id -> key(id) {
+                    CompactMenuItem(categoryName(id), { selectedCategory = id }, active = selectedCategory == id,
+                        enabled = !dialog.committing,
+                        modifier = Modifier.onPointerEvent(PointerEventType.Enter) { if (!dialog.committing) selectedCategory = id })
+                } }
             }
-            fun categoryName(id: String): String = when (id) {
-                "legacy" -> tr("modifier.algorithm.legacy")
-                "structure" -> tr("modifier.scaffold")
-                in WorkspaceModifierPlan.nativeTypes -> tr("modifier.type.$id")
-                else -> tr("settings.rig.area.$id")
-            }
-            val categories = available.map(::category).distinct().sortedBy { it == "legacy" }
-            var selectedCategory by remember { mutableStateOf(category(dialog.type ?: available.first())) }
-            Row(Modifier.fillMaxWidth().height(238.dp), horizontalArrangement = Arrangement.spacedBy(Spacing.Margin)) {
-                MenuGlide(Modifier.width(124.dp).fillMaxHeight().verticalScroll(rememberScrollState())) {
+            Divider(Modifier.height(288.dp).width(1.dp), color = colors.divider)
+            // Reset row arrival indices with the category; a persistent host accumulates delays on every switch.
+            key(selectedCategory) {
+                MenuGlide(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                     Column {
-                        categories.forEach { id -> key(id) {
-                            CompactMenuItem(categoryName(id), { selectedCategory = id }, active = selectedCategory == id,
-                                enabled = !dialog.committing, animateArrival = false)
+                        if (!groups && selectedCategory == "physics") {
+                            WorkspaceModifierPlan.physicsPresets().forEach { preset -> key(preset.id) {
+                                CompactMenuItem(preset.name, { vm.previewModifierAddition("physics", null, preset = preset.id) },
+                                    enabled = !dialog.committing)
+                            } }
+                        }
+                        if (!groups && selectedCategory == "motion") {
+                            val presets = remember(state.previewModel) { state.previewModel?.let(WorkspaceModifierPlan::selectableMotionPresets).orEmpty() }
+                            presets.forEach { preset -> key(preset) {
+                                val name = preset.removePrefix(WorkspaceModifierPlan.NATURAL_MOTION_PREFIX)
+                                CompactMenuItem(if (name == preset) builtinMotionTitle(name) else "${tr("settings.rig.base.motion.natural")} · ${builtinMotionTitle(name)}",
+                                    { vm.previewModifierAddition("motion", null, preset = preset) }, enabled = !dialog.committing)
+                            } }
+                        }
+                        available.filter { category(it) == selectedCategory }.forEach { type -> key(type) {
+                            CompactMenuItem(if (groups) tr("modifier.richness.${type.substringAfter('-')}") else modifierName(type),
+                                { vm.previewModifierAddition(if (groups) null else type, if (groups) type else null) },
+                                enabled = !dialog.committing, active = dialog.plan != null && (dialog.group ?: dialog.type) == type)
                         } }
                     }
                 }
-                Divider(Modifier.fillMaxHeight().width(1.dp), color = colors.divider)
-                val listScroll = key(selectedCategory) { rememberScrollState() }
-                Box(Modifier.weight(1f).fillMaxHeight()) {
-                    MenuGlide(Modifier.fillMaxWidth().verticalScroll(listScroll).padding(end = Spacing.Margin)) {
-                        Column {
-                            available.filter { category(it) == selectedCategory }.forEach { type -> key(type) {
-                                CompactMenuItem(modifierName(type), { if (type != dialog.type) vm.previewModifierAddition(type, null) },
-                                    active = dialog.type == type, enabled = !dialog.committing, animateArrival = false)
-                            } }
-                        }
-                    }
-                    VerticalScrollbar(rememberScrollbarAdapter(listScroll), Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(6.dp))
+            }
+        }
+        if (dialog.loading) InspectorHint(tr(if (dialog.committing) "modifier.adding" else "modifier.previewing"))
+        dialog.error?.let { InspectorHint(it, warning = true) }
+        val planned = dialog.plan?.get("plan")?.jsonArray.orEmpty()
+        if (planned.isNotEmpty()) {
+            Divider(color = colors.divider)
+            Column(Modifier.fillMaxWidth().heightIn(max = 120.dp).verticalScroll(rememberScrollState()).padding(Spacing.Gap)) {
+                planned.forEach { raw -> val item = raw.jsonObject
+                    Text("${tr("modifier.plan.${item.getValue("disposition").jsonPrimitive.content}")} · ${modifierName(item.getValue("type").jsonPrimitive.content)}",
+                        color = colors.textMuted, style = LocalToolTypography.current.caption)
                 }
             }
-            Divider(color = colors.divider)
-            dialog.type?.let { Text(modifierName(it), style = LocalToolTypography.current.body, color = colors.textPrimary) }
-        }
-        else {
-            val selectedGroup = WorkspaceModifierPlan.groupCatalog.firstOrNull { it.id == dialog.group }
-                ?: WorkspaceModifierPlan.groupCatalog.first { it.id == WorkspaceModifierPlan.RECOMMENDED_GROUP }
-            InspectorFormRow(tr("modifier.algorithm")) {
-                CompactDropdown(listOf("legacy", "modern"), selectedGroup.algorithm,
-                    { algorithm -> vm.previewModifierAddition(null, "$algorithm-${selectedGroup.richness}") },
-                    itemLabel = { tr("modifier.algorithm.$it") }, enabled = !dialog.committing, modifier = Modifier.fillMaxWidth())
-            }
-            InspectorFormRow(tr("modifier.richness")) {
-                CompactDropdown(listOf("minimal", "standard", "full"), selectedGroup.richness,
-                    { richness -> vm.previewModifierAddition(null, "${selectedGroup.algorithm}-$richness") },
-                    itemLabel = { tr("modifier.richness.$it") }, enabled = !dialog.committing, modifier = Modifier.fillMaxWidth())
-            }
-        }
-        if (dialog.loading) Text(tr(if (dialog.committing) "modifier.adding" else "modifier.previewing"), color = colors.textMuted, style = LocalToolTypography.current.caption)
-        dialog.error?.let { Text(it, color = colors.warning, style = LocalToolTypography.current.caption) }
-        val configuration = dialog.configuration ?: plan?.get("entries")?.jsonArray?.lastOrNull()?.jsonObject?.get("config")?.jsonObject
-        if (dialog.type == "motion") {
-            val available = remember(state.previewModel) { state.previewModel?.let(WorkspaceModifierPlan::selectableMotionPresets).orEmpty() }
-            val selected = configuration?.get("id")?.jsonPrimitive?.content?.takeIf { it in available }
-                ?: configuration?.get("name")?.jsonPrimitive?.content
-            if (available.isNotEmpty()) CompactDropdown(available, selected ?: available.first(),
-                { vm.previewModifierAddition("motion", null, preset = it) }, itemLabel = { preset ->
-                    val name = preset.removePrefix(WorkspaceModifierPlan.NATURAL_MOTION_PREFIX)
-                    if (name == preset) builtinMotionTitle(name)
-                    else "${tr("settings.rig.base.motion.natural")} · ${builtinMotionTitle(name)}"
-                }, enabled = !dialog.loading && !dialog.committing, modifier = Modifier.fillMaxWidth())
-        }
-        if (dialog.type == "physics") {
-            val presets = WorkspaceModifierPlan.physicsPresets().associateBy { it.id }
-            if (presets.isNotEmpty()) {
-                val selected = configuration?.get("id")?.jsonPrimitive?.content?.takeIf { it in presets } ?: "custom"
-                CompactDropdown(listOf("custom") + presets.keys, selected,
-                    { vm.previewModifierAddition("physics", null, preset = it.takeUnless { id -> id == "custom" }) },
-                    itemLabel = { presets[it]?.name ?: tr("modifier.group.custom") },
-                    enabled = !dialog.loading && !dialog.committing, modifier = Modifier.fillMaxWidth())
-            }
-        }
-        if (configuration != null && dialog.type in WorkspaceModifierPlan.nativeTypes) {
-            ModifierNativeValues(dialog.type!!, configuration, state, !dialog.loading && !dialog.committing, vm, quickOnly = !advanced) { next, _, done ->
-                vm.previewModifierAddition(dialog.type, null, next)
-                done(null)
-            }
-        }
-        if (configuration != null && dialog.type in WorkspaceModifierPlan.nativeTypes)
-            CompactButton(tr(if (advanced) "modifier.less" else "modifier.more"), { advanced = !advanced }, height = 20.dp)
-        plan?.get("plan")?.jsonArray?.forEach { raw -> val item = raw.jsonObject
-            Text("${tr("modifier.plan.${item.getValue("disposition").jsonPrimitive.content}")} · ${modifierName(item.getValue("type").jsonPrimitive.content)}",
-                color = colors.textPrimary, style = LocalToolTypography.current.body)
-        }
-        if (plan?.get("entries")?.jsonArray?.isEmpty() == true) Text(tr("modifier.noAdditions"), color = colors.textMuted, style = LocalToolTypography.current.caption)
-        CompactButton(tr("modifier.details"), { showContributions = !showContributions }, height = 20.dp)
-        if (showContributions) dialog.preview?.get("modifiers")?.jsonArray?.filter { raw -> plan?.get("entries")?.jsonArray.orEmpty().any {
-            it.jsonObject.getValue("id") == raw.jsonObject.getValue("id")
-        } }?.forEach { report ->
-            Divider(color = colors.border)
-            Text(modifierName(report.jsonObject.getValue("type").jsonPrimitive.content), style = LocalToolTypography.current.body, color = colors.textPrimary)
-            ModifierContributions(report.jsonObject, state, vm)
+            CompactButton(tr("modifier.add"), vm::confirmModifierAddition,
+                enabled = !dialog.loading && dialog.error == null && dialog.preview != null,
+                isPrimary = true, modifier = Modifier.fillMaxWidth())
         }
     }
 }

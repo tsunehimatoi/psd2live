@@ -408,7 +408,6 @@ internal fun DockWorkspaceView(
                 onConfirm = viewModel::confirmDepthSplit, onDismiss = viewModel::dismissDepthSplit)
         }
         io.github.psd2live.ui.components.KeyformDialogHost()
-        if (state.activeWorkspace.id == workspace.id && viewModel.modifierAddition != null) ModifierAdditionDialog(state, viewModel)
 
         if (state.activeWorkspace.id == workspace.id) when (viewModel.objectDialog) {
             PSD2LiveViewModel.ObjectDialog.FIND_REPLACE -> io.github.psd2live.ui.components.FindReplaceDialog(state, viewModel)

@@ -1755,7 +1755,8 @@ class PSD2LiveViewModel : AutoCloseable {
                     types.none { '/' in it && it.substringBefore('/') == area && !io.github.psd2live.core.modifier.RigModifierAlgorithms.registry.provides(it, required) }
                 })
         }?.type ?: "body/legacy"
-        previewModifierAddition(if (group) null else if (warp != null) "swing" else first, if (group) io.github.psd2live.application.WorkspaceModifierPlan.RECOMMENDED_GROUP else null)
+        modifierAddition = modifierAddition?.copy(type = if (group) null else if (warp != null) "swing" else first,
+            group = if (group) io.github.psd2live.application.WorkspaceModifierPlan.RECOMMENDED_GROUP else null)
     }
 
     internal fun dismissModifierAddition() { modifierPreviewSequence++; modifierPreviewJob?.cancel(); modifierAddition = null }
