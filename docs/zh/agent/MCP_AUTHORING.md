@@ -22,7 +22,7 @@
 
 - **精简（默认）**：27 个工具，直接覆盖 123 项操作（输入 schema 与说明约 8.5 万字符；完整工具集约 76 万字符，另有约 426 万字符的输出 schema）。
   - 单项工具：`workspace_overview`、`workspace_inspect`、`workspace_list_operations`、`workspace_get_operation`、`workspace_apply_edits`、`workspace_preview_edits`、`rig_deform`、`keyform_apply`，以及意图工具 `author_axis`、`author_physics`、`author_compile`（见[意图工具](#意图工具)）。
-  - 族工具：`view`、`parameter`、`motion`、`expression`、`hit_area`、`pose`、`skeleton`、`path`、`physics`、`simulation`、`swing`、`source_paint`、`snapshot`、`history`、`project`、`job`。调用 `{"op":"set_key","request":{...},"wait_ms":20000}` 执行 `<族>_<op>`（此例为 `motion_set_key`），结果的 `operation` 为该操作 ID，`request` 按该操作的完整 schema 校验。成员取注册表中带该前缀的全部操作，私有草稿、试听与实时预览会话（`skeleton_draft_*`、`physics_audition*`、`*_preview*`）、历史注释和全局物理预设库除外。族工具发布各成员字段的扁平并集（不含 `oneOf`、`const`、`$ref`，形状因成员而异的字段只给说明），各 op 的必填字段列在工具说明中。
+  - 族工具：`view`、`parameter`、`motion`、`expression`、`hit_area`、`pose`、`skeleton`、`path`、`physics`、`simulation`、`swing`、`modifier`、`source_paint`、`snapshot`、`history`、`project`、`job`。调用 `{"op":"set_key","request":{...},"wait_ms":20000}` 执行 `<族>_<op>`（此例为 `motion_set_key`），结果的 `operation` 为该操作 ID，`request` 按该操作的完整 schema 校验。成员取注册表中带该前缀的全部操作，私有草稿、试听与实时预览会话（`skeleton_draft_*`、`physics_audition*`、`*_preview*`）、历史注释和全局物理预设库除外。族工具发布各成员字段的扁平并集（不含 `oneOf`、`const`、`$ref`，形状因成员而异的字段只给说明），各 op 的必填字段列在工具说明中。
   - 其他操作经 `workspace_call` 调用：`{"operation":"layer_classify","request":{...}}`。操作 ID 同时是 `workspace_apply_edits` 成员名。
   - 不发布 `outputSchema`（结果仍以 `structuredContent` 返回，契约见 `workspace_get_operation`）；原子批量的 `edits` 成员只发布操作名枚举与 `request` 对象，成员字段执行时按单项 schema 严格校验。
   - `request_id` 与 `project_id` 可省略。`project_id` 取当前加载的工程；`state` 仍为必填，属于其他加载的 `state` 照常报 `state_conflict`。`request_id` 由操作与参数（含 `state`）派生，相同参数的重试取回原结果；上次相同调用已失败（含任务 `failed/cancelled`）时，再次调用作为新尝试执行。
@@ -50,7 +50,7 @@
 | `workspace_get_operation` | `id` | 读取单项 schema、字段说明与执行元数据 |
 | `workspace_apply_edits` | `state`、`edits`（1–128 项），可选 `summary` | 后台有序编辑同一候选文档，全部成功后提交一个历史节点；返回任务句柄，成员支持情况见 `batchable` |
 | `workspace_preview_edits` | `state`、`edits`（1–128 项），共用请求上下文 | 后台试运行几何作者编辑，返回候选 revision 与诊断；不发布文档、姿态、历史或资源 |
-| `workspace_preview_regeneration` | `state`、`edits`（1–128 项，资源图层操作除外），共用请求上下文 | 后台试运行会再生成 Rig 的编辑（设置、分类、拆分、`rig_update_generation` 等），返回候选 revision、将写入的固化点及其合并问题、增删的对象；不发布任何东西 |
+| `workspace_preview_regeneration` | `state`、`edits`（1–128 项，资源图层操作除外），共用请求上下文 | 后台试运行会再生成 Rig 的编辑（设置、分类、拆分、`rig_update_generation` 等），返回候选 revision、将写入的固化点及其合并问题、增删的对象；不发布任何东西；显式栈工程另返回 `modifiers`，包含候选各项的依赖状态、实际贡献和覆盖冲突，可在添加单项／整组前查看预计内容。使用同一 `state` 和请求提交时，候选修订及自动分配的实例身份保持一致 |
 | `workspace_inspect` | `request` 内 `scope` / `target` | scope 为 `project/settings/preview/generation/objects/layers/parameters/physics/swings/paths/simulations/interiors/vertex_groups`；图层摘要包含有效网格配置、语义标签 `tags`，生成后放置或分类等待生成的图层带 `pending:true`，来自素材的带 `material_id`；`generation` 返回是否已生成、待生成图层、等待的分类与可刷新几何的图层；工程已加载时 `project` 带 `quality.overrides`：观察报告（版本 4），三项检查——未按记录生效的生成结果覆盖（冲突 / 孤立，均为 warning；颜色、透明度等通道的覆盖在 `evidence.channel` 给出通道），因只引用后续版本 2 拆分所取代的网格而按空操作重放的日志条目（`SUPERSEDED_ENTRY_SKIPPED`，info，`target` 为 `journal:<序号>`），以及设置要求却没能生成的透过刘海复制件（`SEE_THROUGH_DROPPED`，info，`target` 为原件 `mesh:<ID>`，`evidence.reason` 为 `original_missing` / `masks_missing` / `id_taken`，眼部图层在刘海上开窗时还有 `bangs_clipped`（刘海已有自己的蒙版）/ `target_unsupported`（运行时目标没有反向蒙版））；另带 `quality.regeneration`：观察报告（版本 2，两项检查），先列出日志最后一个固化点的再生成合并未能干净迁移的内容（`REGENERATION_CONFLICT`、`REGENERATION_TOPOLOGY_KEPT` 为 warning，`REGENERATION_DROPPED` 为 warning / validity，改挂、随生成器的接替改挂（`REGENERATION_FOLLOWED`）、保留退役对象、改父级、顶点迁移、用户拓扑跟随生成（`REGENERATION_TOPOLOGY_FOLLOWED`）与按本程序重新合并的固化点（`REGENERATION_REMERGED`）为 info），再列出较早版本合并、本程序会合并成不同结构且影响到 Rig 的再生成固化点（`REGENERATION_REPAIR_AVAILABLE`，warning，`target` 为 `journal:<序号>`，`evidence.detail` 列出结构不同的对象；执行 `rig_update_generation` 即可修复；每个模型第一次检查要重新合并，可能需要数秒），`can_proceed` 恒为 true；另带 `quality.skeleton`：观察报告（版本 1），列出骨骼绑定却不受其肢体骨骼带动的网格（`SKELETON_BINDING_INEFFECTIVE`）、挂在呼吸 Warp 下却绕过骨架躯干 Warp 的网格（`SKELETON_TORSO_BYPASSED`），均为 warning，以及绑定了 Rig 中没有的网格（`SKELETON_BINDING_MISSING`，info / validity）；`target` 为 `mesh:<ID>`，`evidence.bone` 为绑定它的骨骼，`can_proceed` 恒为 true |
 | `layer_classify` | `request` 内 `state`、`layer_id` 及分类字段 | 后台更新既有源图层的类型、部件、侧别、参数关联和切换 ID；`part` 设图层在其部件内的角色（`highlight`、`pupil`、`lower`、`lid`、`shadow`、`blush`、`side`、`ahoge`、`ponytail`、`braid`、`animal`、`ribbon`、`pendant`、`rigid`、`sleeve`、`skirt`、`upperlip`、`lowerlip`、`upperline`、`lowerline`；`none` 为无角色，`auto` 交给分析推断），只有 Rig 模块读它；省略的字段保持捕获时的原值。已生成的图层不立即重新生成：结果带 `pending:true`，在下一次 `rig_generate` 时生效；需要立刻看到效果时在同一 `workspace_apply_edits` 批量末尾加 `rig_generate`。未生成的图层立即采用 |
 | `interior_put` | `state`、`target`，可选 `enabled/settings/motion/parameters/guides`（最多 64 条引导线） | 后台生成/更新单网格内部造型；target为网格ID或mesh:ID。只给enabled时保留配方并开关效果，不重采样。参数省略时优先身体X/Y，显式空ID新建。写原生紧凑关键形和物理组；可进workspace_apply_edits，与UI共用作者链路 |
@@ -66,6 +66,13 @@
 | `timeline_aids_get` | 可给 `clip_id` | 读取书签与各动作的掩盖、冻结值和标记 |
 | `canvas_guides_get / canvas_guides_set` | `set` 需 `state`、`guides` | 读取或整体替换编辑画布的标尺辅助线：每条 `{axis: x / y, position, id?}`（画布像素，`x` 为竖线），无 `id` 时取下一个 `guide_<n>`，最多 256 条，空数组清除；与画布标尺共用辅助 CAS，随工程保存，不进历史、不导出 |
 | `module_catalog` | 无 | 只读，不需要打开工程：列出 Rig 的部位（眼、眉、嘴与下半脸、头与脸、头发、身体、服饰与挂件、表情、动作）、每个部位的基础算法（互斥的做法，第一个为引入模块之前的 `legacy`）与模块（可叠加的能力，各自开关；`tier` 为 core / major / minor 重要程度，`requires` 为依赖），以及可调数值（单位、范围、默认值）。打开工程时另给出 `modern`（引入模块之前保存的工程为 false，照旧生成，`settings_update` 的 `changes.rig: {}` 升级）、各部位当前的基础算法，以及每个模块是否适用于素材、是否开启和成本（新增参数、关键形、混合形状、物理组；开启时实测，关闭时为估计 `estimated:true`）。见 [Rig 预设架构](../spec/RIG_PRESETS.md) |
+| `modifier_catalog` | 无 | 开发中的修改器目录：列出已注册类型、算法版本、依赖和互斥族。现有摆动、可后台烘焙的模拟、物理组、动作、静止结构（`rig.scaffold`）及身体、头脸、眼、眉、嘴、头发的 `/legacy` 绑定。绑定配置的 `scaffold` 固定引用结构实例；身体和头脸可设 0–2 的 `strength`，各部位的 `tuning` 沿用原数值范围。身体还包含 `faceLeanDown` / `faceLeanUp`。也已接入拟合眼（`eye/fitted`，版本 2）、拟合眉、拟合嘴、笑眼（`eye.smile`）及虹膜压缩（`eye.squash`）；`values` 使用原目录的数值范围，模块的 `base` 固定引用对应部位的拟合实例。睁大模块明确扩展开眼参数范围到 2，高光模块以 `dependencies: {"face/legacy": "头脸实例 ID"}` 固定头部轴提供者。另已接入 `eye.wide`、`eye.lid-fade`、`eye.highlight`、`eye.aftershock`、`eye.gaze-lid`、`eye.emotion`、`brow.shape`、`brow.spring`、`brow.blink`、`brow.lid-coupling`、`mouth.vowel`、`mouth.cheek-lid`、`mouth.capture`、`mouth.tongue`、`mouth.jaw`、`mouth.interior-depth`、`mouth.spring`、`expression.cheek`、`expression.gloom`、`face.skin-clip`、`face.neck`、`face.depth-turn`、`hair/chains`、`body.bust`、`body.arms`、`outfit.skirt`、`outfit.ribbons` 和 `outfit.creature`；两个跨部位耦合模块须用 `dependencies: {"eye/fitted": "眼部实例 ID"}` 固定眼部提供者。独立混合形、权重限制和新增承载变形器参与顺序求值及前缀固化。其余算法、模块及旧工程转换仍在开发 |
+| `modifier_plan` | `type` 或 `group: "fitted"`，固定的 `targets`；原生摆动／物理／模拟／动作可给 `config`，动作和物理也可单独给 `preset` | 只读规划源图绑定或原生生成器。摆动可定位 Warp；其余规划目标为网格。省略原生配置时使用已有参数与原算法构造默认值；无可用参数时拒绝。返回完整新增 `entries`（已分配稳定 ID）及前置项 `plan`，区分新增、复用与已固化。`fitted` 组组合六类基础绑定；不是全部快捷预设。可将返回的 `group` 与 `entries` 传入 `workspace_preview_regeneration`，再以同一 `state` 提交 `modifier_add_group`；计划本身不改变文档 |
+| `modifier_stack` | 无 | 读取捕获版本的栈、固定目标、配置、来源组、实际贡献与状态，并返回可用于下一次修改的 `state`。`owned_keyforms` 列出生成关键形的对象与参数引用，可选 `key` 指明已有轴上新增单元的完整参数坐标；`override_issues` 报告覆盖冲突或无法匹配的覆盖。模拟烘焙只返回摘要，不返回顶点数组 |
+| `modifier_add` / `modifier_add_group` | `state`；单项的 `type`、`targets`、`config`，或组的 `group`、`entries` | 只对已有显式栈生效。可用 `id` 预先固定实例身份，供后续批量成员引用；省略时从文档分配。省略 `version` 选择该类型当前已注册的最高版本，保存后保持版本；可用 `index` 显式指定插入位置（从 0 开始，省略为追加），不自动重排已有项。配置按类型严格校验；组只记录共同来源，各项仍独立。一次调用或整个批量只提交一个历史节点 |
+| `modifier_update` / `modifier_enable` | `state`、`id`；`type` 与完整 `config`，或 `enabled` | 调整实例配置或启停，不改变实例身份、算法版本和捕获目标。禁用保留其覆盖记录 |
+| `modifier_move` / `modifier_remove` | `state`、`id`；移动另带从 0 开始的 `index` | 移动改变实际求值顺序，违反依赖时拒绝；移除保留休眠覆盖并退休该身份，新实例不继承它 |
+| `modifier_apply` | `state`、`id` | 固化截至该项的完整前缀，移除前缀实例并保留后续项。物理成为普通物理配置，动作成为保留文件名的普通片段；重建结果必须与应用前相等才提交。以上修改均返回进程任务，可由 `job_wait` / `job_get` 读取终态 |
 | `settings_update` | `request` 内 `state`、`changes` | 后台修改自动 Rig、网格、贴图、高清化、物理预设、动作和导出配置；`rigTuning` 按字段合并 Rig 数值（头部转向、眼睛、眉毛、嘴巴、鼻子与耳朵、头发，以及身体的转身、上下、前后倾、大小变、身体 Z 与呼吸、立体与透视；单位与模型预设各部位卡片的「数值」一致，超出范围或未知的字段会被拒绝）；`rig` 修改 Rig 配方：`bases: {部位: {base, values}}` 选基础算法，`modules: {模块: {on, values}}` 开关模块并调数值，同一基础算法或模块的 `values` 与原有数值合并，条目为 `null` 回到默认（模块回到开启），`rig: {}` 升级引入模块之前的工程，`rig: null` 退回原有生成方式；沿用原有开关的模块（`eye.see-through`、`eye.jelly`、`brow.see-through`、`mouth.outline`）的 `on` 写到对应设置；`moves: {特征: {手柄: [dx, dy] 或 null}}` 移动拟合五官的手柄（特征 `eye.L` / `eye.R` / `brow.L` / `brow.R` / `mouth`，手柄依次为眼的 `inner` / `outer` / `upper` / `lower`、眉的 `inner` / `outer` / `arch`、嘴的 `left` / `right` / `upper` / `lower`，单位为画布像素，相对原画拟合的位置；`null` 使手柄或整个特征回到拟合位置）；未知部位 / 基础算法 / 模块 / 数值 / 特征 / 手柄与超出范围的值被拒绝（部位与模块见 `module_catalog`）；`meshOnly` 变化而未显式给出 `generateDeformers` 时联动为 `!meshOnly`（导入 CMO3 除外），生成动作子项变化而未显式给出 `exportMotions` 时联动为子项是否全开，显式字段优先；关闭来源时把其驱动的作者姿态逐工作区释放到参数默认值（跳过锁定参数），与设置同次提交；文档保存原始设置；先用 `workspace_inspect scope=settings` 读取 |
 | `project_import_psd` | `path`，可选 `discard_unsaved` | 从绝对 PSD 路径后台创建新工程；已加载时可切换，默认拒绝未保存修改 |
 | `project_create_artwork` | `width`、`height`、`layers`，可选 `discard_unsaved` | 从本地 PNG/WebP/TIFF/BMP 按位置创建新工程，图层自底向顶；后台任务，切换须保存或显式放弃 |
@@ -103,6 +110,8 @@
 | `path_get / path_list / path_preview / path_put / path_delete / path_deform` | `request` | `get/list/preview/put/delete/deform` |
 | `history_checkpoint / history_list / history_checkout` | `request` | 创建检查点、读取历史或切换节点 |
 
+物理规划可用 `preset: "PhysicsHairFront"`、`"PhysicsHairBack"` 或 `"PhysicsEyeJelly"` 捕获旧规则。动作规划可用 `natural:Idle`、`natural:Blink`、`natural:Nod`、`natural:Shake` 和 `natural:Talk` 捕获自然动作。物理预设和显式选择的自然动作会把缺失的基础绑定列入计划。两者都返回可编辑配置。 当参数由当前已求值的修改器创建时，消费者可固定该提供者。查询的 `parameter_providers` 返回参数 ID 到提供者实例 ID 的映射。
+
 表中列出业务字段；所有修改还须携带 `request_id`，工作区修改须携带 `project_id` 和 `state`（精简工具集可省略前两者，见[工具集](#工具集)）。只读后台采样 `physics_simulate/simulation_simulate/simulation_compare/view_sample_motion` 同样要求这三个字段，用于去重并固定采样版本。各项操作字段不同，调用前读取当前服务提供的 JSON Schema。所有公开工具统一使用 `{"request": {...}}` 包装。发布与校验保留同一份 `oneOf`、`const`、字段约束及说明，外层和业务对象都拒绝未知字段。结果统一为 `{"ok":true,"operation":"...","data":{...}}`；错误包含 `ok:false` 和 `error.code/message`，字段校验错误还带 `field`。PNG 以 MCP 图片内容返回。
 
 全部 195 项公开操作（其中 70 项后台、91 项可批量）都必须声明完整 `outputSchema`，完整工具集发布它，能力详情中的 `output_schema` 与其一致；成功 data 和失败 error 严格互斥。注册表在执行及去重边界校验业务结果，MCP 校验完整返回包装，遗漏结果契约不能注册。后台操作必须另有终态 `job_result_schema`，非后台操作不允许该字段。能力详情通过本地 `$defs/$ref` 描述嵌套 schema，查询自己的 schema 也可校验；实际 HTTP 保留所有根约束。`output_contract` 表示服务实现的结果与声明不符，不能作为修改已回滚的证据。
@@ -114,6 +123,24 @@
 网格重建使用 `layer_mesh_rebuild`（必需 `state/layer_id`）：按图层当前像素和网格设置重新生成它的网格，关键形、路径、权重与 Glue 迁移到新拓扑，整体移动过的图层保持位置。网格只在这些时候重新生成：导入、本命令、绘画与换图的 `rebuild_mesh` 选项、网格设置变更、再生成；没有网格的图层首次绘画出可见像素时为它建网格。绘画到网格外的像素不显示，界面的网格面板会给出比例并提供“按当前像素重建”。
 
 按纹理结构重布点使用 `layer_mesh_structure`（必需 `state/target`，target 为网格 ID 或 `mesh:<ID>`；可选 `settings`：`sensitivity` 0–1、`min_length` 源像素、`near_density` 为线上点距相对保留边缘行点距的倍数（默认 1）、`fill` 是否在线间加点（默认否：只有边缘行与线上有顶点）、`far_density` 为填充时相对原内侧边长的边长、`bands` 是否在画出的褶皱线两侧加行与横档（默认否）、`kinds` 为 `FOLD`/`SHADE`/`PATTERN` 子集、`max_lines` ≤64、`max_vertices` ≤16000）：外轮廓行与边缘带不动，内侧沿纹理中的褶皱、明暗分界与图案线条重建；关键形、路径、权重与 Glue 照常迁移，写一条 `canvas_mesh_rebuild`。目标有内部造型时替换其检测出的 TOPOLOGY 引导线（手绘及已标为 FOLD 的保留），并在同一历史节点中重新烘焙（`interior_rebaked`）。无法成网或超过 `max_vertices` 时报错且不做任何修改。`layer_mesh_structure_preview`（只读，参数同上，无 `state`）返回识别线（类型、是否被采用 `followed`、是否加带 `banded`，源像素与画布坐标）及新网格的画布点与三角形。细节见[按纹理结构重布点](../spec/TEXTURE_STRUCTURE_MESH.md)。
+
+模拟修改器的配置可省略 `bake`；候选准备会在后台对该实例之前的实际栈进行烘焙，并把结果与输入身份一起提交。`auto_bake: false` 时必须提供有效结果，过期输入拒绝整次修改。预览同样不发布烘焙；取消和 CAS 失败不保留候选前缀。
+
+`expression.toggles` 为目标中的开关和差分图层生成参数与透明度关键形。差分使用旧算法的半档重叠，参数定义兼容时复用。开关和差分参数会成为生成链条的物理输入。
+
+眼部透视（`eye.see-through`）和眉部透视（`brow.see-through`）使用目标网格及原刘海算法。`values.opacity` 为 0–100，默认 50。查询会报告副本网格及蒙版关系；眼部开窗与已有蒙版冲突时拒绝添加。
+
+眨眼余震（`eye.aftershock`）和眉毛回弹（`brow.spring`）附带原算法物理组；配置可给 `physics: {"原生组 ID": 完整物理配置}`，只允许模块目录声明的组。兼容的标准输出物理组复用并报告 `reused`；不兼容输出拒绝整次事务。物理组随前缀应用成为普通配置，保持修改后的值。
+
+物理配置键为：`eye.aftershock` 的 `PhysicsEyeLBounce`／`PhysicsEyeRBounce`，以及 `brow.spring` 的 `PhysicsBrowLSpring`／`PhysicsBrowRSpring`。这些是配置槽名称，实际输出对象 ID 由持久实例确定。
+
+伸舌（`mouth.tongue`）依赖口型捕捉（`mouth.capture`），嘴部回弹（`mouth.spring`）依赖下颌（`mouth.jaw`）；其 `dependencies` 固定相应实例。口腔纵深（`mouth.interior-depth`）固定 `face/legacy` 提供者。脸红／阴沉（`expression.cheek`／`expression.gloom`）包含颜色通道；查询提供实际颜色轴贡献。嘴部回弹的物理配置槽是 `PhysicsMouthSpring`。
+
+皮肤裁切（`face.skin-clip`）添加脸部叠层与刘海阴影的蒙版关系；颈部联动（`face.neck`）添加头部倾斜绑定和颈部阴影蒙版，并通过 `dependencies` 固定 `face/legacy` 提供者。两项都复用已有素材，不生成新像素。 蒙版贡献的可选 `mask` 对象包含 `target`、`before`／`after` 来源 ID 列表、`before_inverted`／`after_inverted`；这些是该项执行时的实际变更，不从最终结果反推。
+
+`hair/chains`、`body.bust`、`body.arms`、`outfit.skirt`、`outfit.ribbons` 和 `outfit.creature` 的添加计划包含 `body/legacy` 和 `face/legacy` 运动提供者。链条参数、承载变形器和物理组的 ID 由捕获素材及实例身份确定，临时链编号变化不会改写 ID。物理贡献的 `physics_slot` 是修改器 `config.physics` 中对应的配置键；请查询实际贡献以获取可用键。
+
+显式栈的物理查询、模拟与播放读取实际求值组，来源为 `modifier`，旧全局生成字段不再决定是否生效。未固化的生成组通过所属修改器配置，`physics_put`、`physics_delete`、`physics_fit` 和旧重排接口会拒绝控制这些组并提示使用修改器操作；固化为普通配置后继续使用普通物理接口。旧设置字段保留作兼容值，实际状态以栈和物理查询为准。
 
 ### 网格拓扑
 
@@ -254,7 +281,7 @@ CMO3 导入共用独立应用层导入器，GUI 入口确认后携带可信用�
 
 检查覆盖受影响对象的父级局部几何，包含普通关键点、混合形关键点与权重限制点的组合。非有限坐标、非法拓扑及新增零面积退化会阻止提交，返回 `geometry_unsafe` 和结构化 `diagnostics.violations`。新增局部翻面及面积不足参考三角形 1% 的局部塌缩保存在 `diagnostics.warnings`，默认不阻断：现有作者流程允许有意折叠，不能把翻面数直接当成制作失败。已有翻面、退化和塌缩单独计数，不阻止未新增缺陷的编辑。整张表面的可逆仿射镜像与压缩允许通过，零面积变换仍拒绝。拓扑变更无法沿用旧三角形身份时，使用新网格的参考几何。混合坐标的笛卡尔积超过 16384 时，改用确定性的分散采样，保留两端组合，不再以 GEOMETRY_SAMPLING_LIMIT 拒绝候选。报告 scope 明确注明大组合域使用采样，这不是对全部组合的证明。
 
-透过刘海的复制件（`<原件 ID>_SeeThrough`）由每次构建按设置重新生成，不能直接编辑：在引用字段（`target`、`id`、`layer_id`、`meshes` 等）点名复制件的任何文档操作返回 `generated_copy`，名称等自由文本不算（`details.target` 为复制件，`details.original` 为应编辑的原件）；改原件或设置 `seeThroughBrows` / `seeThroughEyes` / `seeThroughOpacity`。`objects` 查看复制件时 `topologyInfo.layerId` 为原件的图层，`topologyInfo.seeThroughOf` 为原件。眼睛改为在刘海上开窗透过：成品 Rig 以眼部图层反向剪切盖住它们的刘海，并画一份以它们剪切的刘海复制件（`<刘海 ID>_SeeThrough`，`seeThroughOf` 为刘海）；这些蒙版只在成品 Rig 中，刘海的 `topologyInfo.seeThroughWindow` 列出它们，文档中刘海自己的蒙版仍为空——不要把它们写回刘海的 `masked_by`。
+在旧工程中，透过刘海的复制件（`<原件 ID>_SeeThrough`）由每次构建按设置重新生成，不能直接编辑：在引用字段（`target`、`id`、`layer_id`、`meshes` 等）点名复制件的任何文档操作返回 `generated_copy`，名称等自由文本不算（`details.target` 为复制件，`details.original` 为应编辑的原件）；改原件或设置 `seeThroughBrows` / `seeThroughEyes` / `seeThroughOpacity`。`objects` 查看复制件时 `topologyInfo.layerId` 为原件的图层，`topologyInfo.seeThroughOf` 为原件。眼睛改为在刘海上开窗透过：成品 Rig 以眼部图层反向剪切盖住它们的刘海，并画一份以它们剪切的刘海复制件（`<刘海 ID>_SeeThrough`，`seeThroughOf` 为刘海）；这些蒙版只在成品 Rig 中，刘海的 `topologyInfo.seeThroughWindow` 列出它们，文档中刘海自己的蒙版仍为空——不要把它们写回刘海的 `masked_by`。
 
 候选相对起始文档只追加了作者日志时，检查范围由新增命令推导：命令直接指向的网格、Warp 和 Rotation，它们的全部子对象，所涉网格的 Glue 伙伴，以及未烘焙摆动和已烘焙模拟的目标（这两类生成器每次重放都会重算目标）。创建或改挂对象、网格重建等不能逐项列出受影响对象的命令，以及同时改变日志以外文档内容的候选，回退为比较全部对象。范围内的分类与完整比较相同。报告 `coverage` 给出 `mode`（`full` 或 `scoped`）、实际比较的对象数 `checkedTargets` 和两侧模型的对象总数 `totalTargets`；缩小范围时 `scope` 文本注明其余对象未比较。
 

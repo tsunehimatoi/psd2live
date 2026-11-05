@@ -218,7 +218,7 @@ Format and evaluation rules: [runtime](spec/RUNTIME.md) and [`.p2lrt` 2.0 format
 2. Copy the command or configuration for your host (Claude Code, Codex, generic JSON). Stdio-only hosts use [`mcp_proxy.py`](../../mcp_proxy.py) at the repository root.
 3. Have the agent read the project with `workspace_overview` and single objects with `workspace_inspect`; operations not listed as tools are found with `workspace_list_operations` and called through `workspace_call`.
 
-`workspace_apply_edits` commits several edits atomically (all or nothing), and `workspace_preview_edits` dry-runs them first. Requests and examples are in the [MCP reference](agent/MCP_AUTHORING.md).
+`workspace_apply_edits` commits several edits atomically (all or nothing), and `workspace_preview_edits` dry-runs them first. Requests and examples are in the [MCP reference](agent/MCP_AUTHORING.md). For projects with an explicit stack, the [modifier guide](guide/MODIFIERS.md) describes the current interface and its remaining gaps.
 
 > [!NOTE]
 > The MCP server does not generate images; new artwork requires image generation in the host. A callable tool does not make a complex modeling task reliable; [recorded evaluations](../zh/STATUS.md) keep both successes and failures.
