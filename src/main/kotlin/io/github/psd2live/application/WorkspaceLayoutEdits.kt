@@ -21,7 +21,8 @@ internal object WorkspaceLayoutEdits {
     val reorderTargets = listOf("front", "back", "forward", "backward", "above", "below")
     val supported = setOf(TAG, VARIANT, REORDER, MARK_REFERENCE, PIN_REFERENCE, WorkspaceReferenceGrid.PLACE, WorkspaceGenerationEdits.GENERATE)
 
-    fun apply(operation: WorkspaceDocumentOperation, document: WorkspaceDocument, model: RigPreviewModel): WorkspaceDocument {
+    fun apply(operation: WorkspaceDocumentOperation, document: WorkspaceDocument, model: RigPreviewModel,
+              work: WorkspaceRasterWork = WorkspaceRasterWork.Direct): WorkspaceDocument {
         val request = operation.request
         return when (operation.operation) {
             TAG -> tag(document, model, request.strings("layer_ids").also { require(it.size in 1..128) { "Give 1..128 layer_ids" } },
@@ -42,7 +43,7 @@ internal object WorkspaceLayoutEdits {
             WorkspaceReferenceGrid.PLACE -> WorkspaceReferenceGrid.apply(document, model, request)
             WorkspaceGenerationEdits.GENERATE -> WorkspaceGenerationEdits.generate(document, model,
                 request["refresh_geometry"]?.jsonArray?.mapTo(LinkedHashSet()) { it.jsonPrimitive.content },
-                request["preset_group"]?.jsonPrimitive?.content ?: WorkspaceModifierPlan.RECOMMENDED_GROUP)
+                request["preset_group"]?.jsonPrimitive?.content ?: WorkspaceModifierPlan.RECOMMENDED_GROUP, work)
             else -> throw IllegalArgumentException("Not a layout edit: ${operation.operation}")
         }
     }

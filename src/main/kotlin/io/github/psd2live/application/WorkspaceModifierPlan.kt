@@ -187,7 +187,7 @@ internal object WorkspaceModifierPlan {
     private fun simulationPreset(model: RigPreviewModel, stack: RigModifierStack, targets: List<ModifierTarget>, preset: String): Pair<RigModifierStack, JsonObject> {
         require(targets.all { it.kind == "mesh" }) { "Simulation presets need mesh targets" }
         val layers = targets.map { requireNotNull(model.rig.layerIdByDrawableId[it.id]) { "Target has no source layer: ${it.id}" } }.toSet()
-        val existing = stack.instances.filter { it.type == "simulation" }.map { RigSimEdit.fromJson(it.config) }
+        val existing = stack.instances.filter { it.type == "simulation" }.map { RigSimEdit.fromJson(it.config).copy(id = it.id) }
         val applied = ModelPresets.apply(RigEditOverlay(simEdits = existing), model.rig.puppet,
             model.analysis, model.rig.layerIdByDrawableId, ModelPresets.Preset.parse(preset), layers, model.config.alphaThreshold)
         var next = stack

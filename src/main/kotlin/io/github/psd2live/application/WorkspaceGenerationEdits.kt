@@ -10,9 +10,10 @@ import org.umamo.format.art.SourceArt
 internal object WorkspaceGenerationEdits {
     const val GENERATE = "rig_generate"
 
-    fun generate(document: WorkspaceDocument, model: RigPreviewModel, refresh: Set<String>?, presetGroup: String = WorkspaceModifierPlan.RECOMMENDED_GROUP): WorkspaceDocument {
+    fun generate(document: WorkspaceDocument, model: RigPreviewModel, refresh: Set<String>?, presetGroup: String = WorkspaceModifierPlan.RECOMMENDED_GROUP,
+                 work: WorkspaceRasterWork = WorkspaceRasterWork.Direct): WorkspaceDocument {
         require(presetGroup == "none" || presetGroup in WorkspaceModifierPlan.groups) { "Unknown preset group: $presetGroup" }
-        if (document.rigEdits.modifierStack != null) return generatePresets(document, model, refresh, presetGroup)
+        if (document.rigEdits.modifierStack != null) return generatePresets(document, model, refresh, presetGroup, work)
         val layout = document.layout
         val generation = layout.generation
         if (!generation.generated) {
@@ -42,7 +43,8 @@ internal object WorkspaceGenerationEdits {
     }
 
     /** Explicit stacks keep authored meshes and add bindings only for targets not already captured by a structure. */
-    private fun generatePresets(document: WorkspaceDocument, model: RigPreviewModel, refresh: Set<String>?, group: String): WorkspaceDocument {
+    private fun generatePresets(document: WorkspaceDocument, model: RigPreviewModel, refresh: Set<String>?, group: String,
+                                work: WorkspaceRasterWork): WorkspaceDocument {
         val generation = document.layout.generation
         val pending = WorkspaceLayoutPreview.pendingIds(document) - document.layout.referenceLayerIds
         val refreshed = (refresh ?: generation.refreshLayerIds).toSet()
@@ -64,6 +66,8 @@ internal object WorkspaceGenerationEdits {
         )
         if (group == "none") return candidate
         val stack = RigModifierStack.fromJson(requireNotNull(candidate.rigEdits.modifierStack))
+        if (group == WorkspaceModifierPlan.RECOMMENDED_GROUP && stack.instances.isEmpty() && stack.appliedCapabilities.isEmpty())
+            return WorkspacePresetSwitch.apply(candidate, "modern", work)
         val covered = (stack.instances.filter { it.type == RigSourceModifiers.SCAFFOLD }.flatMap { it.targets } +
             stack.appliedCapabilities.filter { it.type == RigSourceModifiers.SCAFFOLD }.flatMap { it.targets }).mapTo(HashSet()) { it.id }
         // Use the candidate's classifications and mesh seeds, not the stale pre-generation preview.
