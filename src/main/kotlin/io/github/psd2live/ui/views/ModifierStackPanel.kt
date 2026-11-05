@@ -50,6 +50,7 @@ private fun contentName(state: PSD2LiveState, kind: String, id: String): String 
     } ?: when {
         kind == "hierarchy" && id in setOf("root", "parameters") -> tr("modifier.hierarchy.$id")
         kind == "relations" && id == "parameter-links" -> tr("modifier.relation.parameters")
+        kind == "relations" && id == "parameter-roles" -> tr("modifier.relation.roles")
         else -> id
     }
 }
@@ -124,7 +125,7 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                             ModifierDependencies(instance, stack, enabled, vm)
                             ModifierSourceValues(instance, enabled, vm)
                             ModifierModulePhysicsValues(instance, report, state, enabled, vm)
-                            ModifierNativeValues(instance.type, instance.config, state, enabled, vm) { config, expected, done ->
+                            ModifierNativeValues(instance.type, instance.config, state, enabled, vm, instanceId = instance.id) { config, expected, done ->
                                 vm.editModifier("modifier_update", buildJsonObject { put("id", instance.id); put("type", instance.type); put("config", config) }, expected, done)
                             }
                             report?.let { ModifierContributions(it, state, vm) }
@@ -274,7 +275,7 @@ private fun unit(unit: RigTuning.Unit): String = when (unit) {
 /** Keep each continuous field local; submit its final value once against the state captured on press/focus. */
 @Composable
 internal fun ModifierNumber(label: String, value: Float, range: ClosedFloatingPointRange<Float>, unit: String, enabled: Boolean,
-                           vm: PSD2LiveViewModel, commit: (Float, String?, (String?) -> Unit) -> Unit) {
+                           vm: PSD2LiveViewModel, integer: Boolean = false, commit: (Float, String?, (String?) -> Unit) -> Unit) {
     var draft by remember { mutableFloatStateOf(value) }
     var editing by remember { mutableStateOf(false) }
     val actualValue by rememberUpdatedState(value)
@@ -284,9 +285,9 @@ internal fun ModifierNumber(label: String, value: Float, range: ClosedFloatingPo
     val finish = { if (editing) { editing = false; if (draft != value) commit(draft, expected) { failure -> if (failure != null) draft = actualValue } } }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
         Text(label, modifier = Modifier.weight(1f), style = LocalToolTypography.current.caption, color = LocalToolColors.current.textPrimary, maxLines = 2)
-        CompactSlider(draft, { draft = it }, start, finish, valueRange = range, enabled = enabled, modifier = Modifier.weight(1f))
-        CompactNumberSpinner(draft.toDouble(), { draft = it.toFloat() }, min = range.start.toDouble(), max = range.endInclusive.toDouble(),
-            decimals = if (unit == "%") 0 else 2, unit = unit, enabled = enabled, height = 20.dp, modifier = Modifier.width(68.dp), onEditStart = start, onEditEnd = finish)
+        CompactSlider(draft, { draft = if (integer) kotlin.math.round(it) else it }, start, finish, valueRange = range, enabled = enabled, modifier = Modifier.weight(1f))
+        CompactNumberSpinner(draft.toDouble(), { draft = if (integer) kotlin.math.round(it).toFloat() else it.toFloat() }, min = range.start.toDouble(), max = range.endInclusive.toDouble(),
+            decimals = if (integer || unit == "%") 0 else 2, unit = unit, enabled = enabled, height = 20.dp, modifier = Modifier.width(68.dp), onEditStart = start, onEditEnd = finish)
     }
 }
 

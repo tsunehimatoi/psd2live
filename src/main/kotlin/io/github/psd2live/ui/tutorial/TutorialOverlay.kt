@@ -199,7 +199,8 @@ fun TutorialCoachCard(
 	val actionStyle = typography.caption.copy(lineHeight = 17.sp)
     val stackStep = modifierStack && when (tutorialId) {
         TutorialId.BASIC -> step.key == "settings"
-        TutorialId.SIMULATION -> step.key in setOf("presets", "generate", "hairModes", "clothing")
+        TutorialId.SIMULATION -> step.key in setOf("presets", "generate", "hairModes", "clothing",
+            "bodies", "weightKinds", "glue", "material", "materialValues", "inputs", "bakeSettings", "bake", "preview", "done")
         else -> false
     }
     fun textKey(original: String) = if (stackStep) "$original.stack" else original

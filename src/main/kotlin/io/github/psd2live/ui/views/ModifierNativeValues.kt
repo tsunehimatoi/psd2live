@@ -13,11 +13,13 @@ import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
 import io.github.psd2live.ui.theme.*
 import kotlinx.serialization.json.*
+import org.umamo.runtime.model.VertexGroupKind
 
 /** The same native configuration controls are used before insertion and inside a persisted instance. */
 @Composable
 internal fun ModifierNativeValues(type: String, config: JsonObject, state: PSD2LiveState, enabled: Boolean,
-                                  vm: PSD2LiveViewModel, editName: Boolean = true, commit: (JsonObject, String?, (String?) -> Unit) -> Unit) {
+                                  vm: PSD2LiveViewModel, editName: Boolean = true, instanceId: String? = null,
+                                  commit: (JsonObject, String?, (String?) -> Unit) -> Unit) {
     fun change(next: JsonObject) = commit(next, vm.modifierEditState()) {}
     @Composable fun number(label: String, value: Float, range: ClosedFloatingPointRange<Float>, update: (Float) -> JsonObject) {
         ModifierNumber(tr(label), value, range, "", enabled, vm) { next, expected, done -> commit(update(next), expected, done) }
@@ -136,6 +138,73 @@ internal fun ModifierNativeValues(type: String, config: JsonObject, state: PSD2L
         }
         "simulation" -> {
             val edit = RigSimEdit.fromJson(config)
+            val stack = state.rigEdits.modifierStack?.let(io.github.psd2live.core.modifier.RigModifierStack::fromJson)
+            val preceding = stack?.instances.orEmpty().takeWhile { it.id != instanceId }
+            val motionIds = state.rigEdits.motionClips.filter { it.enabled }.map { it.id } +
+                preceding.filter { it.enabled && it.type == "motion" }.map { it.outputId("motion") }
+            val motions = state.previewModel?.rig?.modifierOutput?.clips.orEmpty()
+                .filter { it.id in motionIds }.associate { it.id to it.name }
+            for ((motion, weight) in edit.trainingClips) {
+                Text(motions[motion] ?: motion, color = if (motion in motions) LocalToolColors.current.textPrimary else LocalToolColors.current.warning,
+                    style = LocalToolTypography.current.caption)
+                number("sim.trainingClips", weight, RigSimEdit.TRAINING_WEIGHTS) {
+                    edit.copy(trainingClips = edit.trainingClips + (motion to it)).toJson()
+                }
+                CompactButton(tr("physics.remove"), {
+                    change(edit.copy(trainingClips = edit.trainingClips - motion).toJson())
+                }, enabled = enabled, height = 20.dp)
+            }
+            val trainable = motions.keys.filter { it !in edit.trainingClips }
+            if (trainable.isNotEmpty()) {
+                choice("sim.trainingClips", listOf<String?>(null) + trainable, null,
+                    { it?.let { id -> motions.getValue(id) } ?: tr("sim.addTrainingClip") }) { motion ->
+                    if (motion == null) config else edit.copy(trainingClips = edit.trainingClips + (motion to .5f)).toJson()
+                }
+            }
+            val obstacleMeshes = state.previewModel?.rig?.puppet?.drawables.orEmpty()
+                .filter { it.id.raw !in edit.targets && (it.mesh?.vertexCount ?: 0) > 0 }
+            val obstacleIds = obstacleMeshes.map { it.id.raw }
+            fun obstacleName(id: String) = obstacleMeshes.firstOrNull { it.id.raw == id }?.name ?: id
+            edit.colliders.forEachIndexed { index, collider ->
+                fun updated(next: SimCollider) = edit.copy(colliders = edit.colliders.mapIndexed { i, old ->
+                    if (i == index) next else old
+                }).toJson()
+                choice("modifier.simulation.collider", (obstacleIds + collider.mesh).distinct(), collider.mesh, ::obstacleName) { mesh ->
+                    if (mesh == collider.mesh) config else updated(collider.copy(mesh = mesh, a = 0, b = 0))
+                }
+                val vertices = obstacleMeshes.firstOrNull { it.id.raw == collider.mesh }?.mesh?.vertexCount ?: 0
+                if (vertices > 0) {
+                    ModifierNumber(tr("modifier.simulation.vertexA"), collider.a.toFloat(), 0f..(vertices - 1).toFloat(), "", enabled, vm, integer = true) { value, expected, done ->
+                        commit(updated(collider.copy(a = value.toInt())), expected, done)
+                    }
+                    ModifierNumber(tr("modifier.simulation.vertexB"), collider.b.toFloat(), 0f..(vertices - 1).toFloat(), "", enabled, vm, integer = true) { value, expected, done ->
+                        commit(updated(collider.copy(b = value.toInt())), expected, done)
+                    }
+                }
+                number("modifier.simulation.radiusA", collider.radius, .01f..maxOf(1000f, collider.radius)) { updated(collider.copy(radius = it)) }
+                number("modifier.simulation.radiusB", collider.radiusB, .01f..maxOf(1000f, collider.radiusB)) { updated(collider.copy(radiusB = it)) }
+                number("modifier.simulation.friction", collider.friction, 0f..1f) { updated(collider.copy(friction = it)) }
+                CompactButton(tr("physics.remove"), {
+                    change(edit.copy(colliders = edit.colliders.filterIndexed { i, _ -> i != index }).toJson())
+                }, enabled = enabled, height = 20.dp)
+            }
+            if (obstacleIds.isNotEmpty()) {
+                choice("modifier.simulation.addCollider", listOf<String?>(null) + obstacleIds, null,
+                    { it?.let(::obstacleName) ?: tr("modifier.simulation.addCollider") }) { mesh ->
+                    if (mesh == null) config else edit.copy(colliders = edit.colliders + SimCollider(mesh, 0, radius = 1f)).toJson()
+                }
+            }
+            val vertexGroups = state.previewModel?.rig?.puppet?.vertexGroups.orEmpty()
+            for (kind in listOf(VertexGroupKind.PIN, VertexGroupKind.STIFFNESS, VertexGroupKind.GOAL,
+                VertexGroupKind.MASS, VertexGroupKind.DAMPING, VertexGroupKind.WIND)) {
+                val selected = edit.groups[kind]
+                val names = vertexGroups.filter { it.drawableId.raw in edit.targets && it.kind == kind }
+                    .map { it.name }.plus(listOfNotNull(selected)).distinct()
+                choice("sim.group.${kind.jsonName}", listOf<String?>(null) + names, selected,
+                    { it ?: tr("modifier.simulation.firstGroup") }) { name ->
+                    edit.copy(groups = if (name == null) edit.groups - kind else edit.groups + (kind to name)).toJson()
+                }
+            }
             choice("modifier.simulation.kind", SimKind.entries, edit.kind, { tr("sim.kind.${it.jsonName}") }) {
                 edit.copy(kind = it, material = SimMaterial.preset(it)).toJson()
             }
@@ -157,6 +226,30 @@ internal fun ModifierNativeValues(type: String, config: JsonObject, state: PSD2L
             choice("sim.keys", RigSimEdit.KEY_COUNTS.filter { it % 2 == 1 }, edit.keys, Int::toString) { edit.copy(keys = it).toJson() }
             number("sim.exaggeration", edit.exaggeration, RigSimEdit.EXAGGERATIONS) { edit.copy(exaggeration = it).toJson() }
             toggle("sim.autoBake", edit.autoBake) { edit.copy(autoBake = it).toJson() }
+            choice("sim.blendShapes", listOf(null, true, false), edit.blendShapes, {
+                tr(when (it) {
+                    null -> "sim.blendShapesAuto"
+                    true -> "sim.blendShapesOn"
+                    false -> "sim.blendShapesOff"
+                })
+            }) { edit.copy(blendShapes = it).toJson() }
+            val staticInputs = edit.staticInputs.orEmpty()
+            for (parameter in staticInputs) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
+                    Text(parameterName(parameter), color = LocalToolColors.current.textPrimary,
+                        style = LocalToolTypography.current.caption, modifier = Modifier.weight(1f))
+                    CompactButton(tr("physics.remove"), {
+                        change(edit.copy(staticInputs = (staticInputs - parameter).ifEmpty { null }).toJson())
+                    }, enabled = enabled, height = 20.dp)
+                }
+            }
+            val availableStatics = parameterIds.filter { it !in staticInputs && it !in edit.bake?.parameters.orEmpty() }
+            if (staticInputs.size < RigSimEdit.MAX_STATIC_INPUTS && availableStatics.isNotEmpty()) {
+                choice("sim.staticInputs", listOf<String?>(null) + availableStatics, null,
+                    { it?.let(::parameterName) ?: tr("sim.addStaticInput") }) { parameter ->
+                    if (parameter == null) config else edit.copy(staticInputs = staticInputs + parameter).toJson()
+                }
+            }
             edit.inputs.forEachIndexed { index, input ->
                 fun updated(next: PhysicsInput): JsonObject {
                     val changed = edit.withInputs(edit.inputs.mapIndexed { i, old -> if (i == index) next else old })

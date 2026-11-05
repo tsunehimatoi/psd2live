@@ -141,6 +141,12 @@ data class TutorialStep(
 	val openWorkspace: io.github.psd2live.ui.state.WorkspacePreset? = null,
 ) {
 	fun titleKey(tutorialId: TutorialId): String = "tutorial.${i18nScope ?: tutorialId.i18nKey}.step.$key.title"
+
+    fun forModifierStack(tutorialId: TutorialId, enabled: Boolean): TutorialStep {
+        if (!enabled || tutorialId != TutorialId.SIMULATION || targetId != TutorialTargetId.SIMULATION_DOCK) return this
+        return if (key == "preview") copy(targetId = TutorialTargetId.PREVIEW_TAB, selectDock = null)
+        else copy(targetId = TutorialTargetId.MODEL_SETTINGS, selectDock = "settings", expandModelSettings = true)
+    }
 	fun bodyKey(tutorialId: TutorialId): String = "tutorial.${i18nScope ?: tutorialId.i18nKey}.step.$key.body"
 	fun actionKey(tutorialId: TutorialId): String = "tutorial.${i18nScope ?: tutorialId.i18nKey}.step.$key.action"
 

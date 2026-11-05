@@ -368,6 +368,7 @@ private fun FrameWindowScope.PSD2LiveAppContent(
 		// the tour steps aside until it is answered so neither covers the other.
 		val tutorialPaused = viewModel.pendingMeshSplit != null || viewModel.pendingMeshSplitBatch != null
 		val tutorialShown = tutorial.active && !tutorialPaused
+		val workspaceTutorialStep = tutorial.step.forModifierStack(tutorial.tutorialId, state.rigEdits.modifierStack != null)
 
 		// Tutorial step side-effects and auto-advance
 		LaunchedEffect(
@@ -377,9 +378,10 @@ private fun FrameWindowScope.PSD2LiveAppContent(
 			state.selectedLayerId,
 			state.selectedDeformerId,
 			state.hierarchyCollapsed,
+			state.rigEdits.modifierStack != null,
 		) {
 			if (!tutorial.active) return@LaunchedEffect
-			val step = tutorial.step
+			val step = workspaceTutorialStep
 			step.openWorkspace?.let { preset -> if (state.activeWorkspace.preset != preset) viewModel.openWorkspacePreset(preset) }
 			if (step.ensureEditTab) viewModel.ensureEditCanvas()
 			if (step.ensureHistoryTab) viewModel.showHistoryModule()
@@ -408,7 +410,7 @@ private fun FrameWindowScope.PSD2LiveAppContent(
 		}
 		LaunchedEffect(tutorial.active, tutorial.tutorialId, tutorial.stepIndex, state.previewModel, state.activeCanvas.mode, state.historyPanelShown, state.showExportDialog, tutorial.titleBarMenuOpen, tutorial.reviewing) {
 			if (!tutorial.active) return@LaunchedEffect
-			val step = tutorial.step
+			val step = workspaceTutorialStep
 			if (step.isDone) return@LaunchedEffect
 			if (step.isComplete(state, tutorial)) {
 				advanceTutorial()
@@ -649,12 +651,12 @@ private fun FrameWindowScope.PSD2LiveAppContent(
 						onNextTab = { viewModel.cycleWorkspace(1) },
 						onPrevTab = { viewModel.cycleWorkspace(-1) },
 						onOpenHelp = { viewModel.showPage(AppPage.HELP, HELP_CONTENT) },
-						tutorialMenuForce = if (tutorialShown) tutorial.step.forcesMenu else null,
+						tutorialMenuForce = if (tutorialShown) workspaceTutorialStep.forcesMenu else null,
 						tutorialHighlightTarget = if (tutorialShown) {
-							tutorial.step.effectiveTargetId(state)
+							workspaceTutorialStep.effectiveTargetId(state)
 						} else null,
 						tutorialId = if (tutorialShown) tutorial.tutorialId else null,
-						tutorialStep = if (tutorialShown) tutorial.step else null,
+						tutorialStep = if (tutorialShown) workspaceTutorialStep else null,
 						tutorialStepIndex = tutorial.stepIndex,
 						tutorialReviewing = tutorial.reviewing,
 						tutorialIsFirstStep = tutorial.isFirstStep,
@@ -707,9 +709,9 @@ private fun FrameWindowScope.PSD2LiveAppContent(
 			// The material window: a material to look at and paint, in a window of its own.
 			MaterialEditorWindow(state, viewModel)
 
-			if (tutorialShown && !tutorial.step.coachBesideMenu) {
+			if (tutorialShown && !workspaceTutorialStep.coachBesideMenu) {
 				// Menu steps render their overlay inside the menu popup.
-				val step = tutorial.step
+				val step = workspaceTutorialStep
 				val prereqOk = step.prerequisiteMet(state)
 				TutorialOverlay(
 					tutorialId = tutorial.tutorialId,
