@@ -151,6 +151,8 @@ data class BuiltRig(
 	 * maps any mesh, but the layer is not theirs: what looks a layer's mesh up ([ownLayerIdByDrawableId]) never finds one.
 	 */
 	val copiedDrawableIds: Set<String> = emptySet(),
+    /** Independent source pixels materialized with an applied modifier. Tile metadata lives in the puppet. */
+    internal val modifierRasterAssets: List<io.github.psd2live.format.model.TileArt> = emptyList(),
     /** Derived modifier sidecars and contributions; the document stores instances, never this result. */
     val modifierOutput: io.github.psd2live.format.model.RigIR? = null,
     val modifierReport: kotlinx.serialization.json.JsonObject? = null,

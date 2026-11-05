@@ -1,6 +1,12 @@
 package io.github.psd2live.project
 
 import io.github.psd2live.core.*
+import io.github.psd2live.application.WorkspacePreviewBuilder
+import io.github.psd2live.format.model.Bytes
+import io.github.psd2live.format.model.TileArt
+import org.umamo.format.art.*
+import org.umamo.runtime.model.DrawableId
+import org.umamo.runtime.model.OrgChild
 import io.github.psd2live.core.modifier.*
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
@@ -41,6 +47,48 @@ class RigModifierPersistenceTest {
             assertEquals(revision, WorkspaceRevisions.of(opened.history.head().snapshot))
             assertEquals(stack(), RigModifierStack.fromJson(opened.history.head().snapshot.rigEdits.modifierStack!!))
             assertEquals(WorkspaceRevisions.of(before), WorkspaceRevisions.of(opened.history.selections().first().snapshot))
+        }
+    }
+
+    @Test fun independentRasterInAnAppliedCheckpointSurvivesColdProjectReopen() = runBlocking<Unit> {
+        val project = SyntheticProject(temp.resolve("raster-project"), 1, 8, 1)
+        val config = PipelineConfig(atlasSize = 64, rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val document = project.tree.head().snapshot.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val builder = WorkspacePreviewBuilder()
+        val initial = builder.build(document)
+        val layer = document.source.layers.single()
+        val raster = layer.raster
+        val assetId = "modifier-raster:lip"
+        val asset = WorkspaceSourceLayer(LayerId(assetId), "Lip", "", SourceLayerKind.Raster, true, 1,
+            layer.bounds, 1f, false, LayerBlend.Normal, ChannelMask.ALL, raster, null, null, true)
+        val classified = CharacterAnalyzer.classify(asset, config)
+        val combined = RigModifierRasterAssets.append(initial.atlas, listOf(classified), config)
+        val (atlas, sources) = PuppetSourceAtlas.build(initial.analysis.copy(layers = initial.analysis.layers + classified), combined)
+        val page = combined.placementByLayerId.getValue(assetId).page
+        val tile = PuppetSourceAtlas.tileIdFor(assetId)
+        val author = initial.authored
+        val original = author.rig.puppet.drawables.single()
+        val mesh = original.copy(id = DrawableId("generated-lip"), texturePage = page, atlasTileId = tile)
+        val puppet = author.rig.puppet.copy(atlas = atlas, sources = sources,
+            drawables = author.rig.puppet.drawables + mesh, rootChildren = author.rig.puppet.rootChildren + OrgChild.Drawable(mesh.id))
+        val art = TileArt(tile.raw, raster.width, raster.height, Bytes.wrap(raster.rgba))
+        val checkpoint = RigCheckpoint.encode(author.copy(rig = author.rig.copy(puppet = puppet,
+            layerIdByDrawableId = author.rig.layerIdByDrawableId + (mesh.id.raw to assetId),
+            pageByDrawableId = author.rig.pageByDrawableId + (mesh.id.raw to page),
+            modifierRasterAssets = listOf(art))), initial.sources.bindingKey!!)
+        val edited = document.copy(rigEdits = document.rigEdits.copy(authoringJournal = listOf(checkpoint)))
+        val revision = WorkspaceRevisions.of(edited)
+        project.tree.commit(project.tree.head().node.id, edited, revision, revision, "Apply raster", "user")
+        project.store.persistHistory(SyntheticProject.PROJECT, project.tree.state())
+        val file = temp.resolve("modifier-raster.psd2live")
+        ProjectRepository(writeHeadCache = false).save(project.capture(), file)
+        ProjectRepository().open(file).use { opened ->
+            val loaded = WorkspacePreviewBuilder().build(opened.history.head().snapshot)
+            assertEquals(listOf(art), loaded.authored.rig.modifierRasterAssets)
+            assertEquals(combined.placementByLayerId, loaded.atlas.placementByLayerId)
+            assertContentEquals(combined.pages[page].png, loaded.atlas.pages[page].png)
+            assertEquals(page, loaded.rig.pageByDrawableId[mesh.id.raw])
+            assertEquals(art, RigIrCompiler.compile(loaded, tileArt = true).textures.tileArt.single { it.tile == tile.raw })
         }
     }
 

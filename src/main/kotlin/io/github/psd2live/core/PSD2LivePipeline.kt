@@ -176,9 +176,14 @@ class PSD2LivePipeline {
 	private fun generationInputs(input: PipelineAnalysis, config: PipelineConfig, progress: ProgressListener,
 	                             previousAtlas: PackedAtlas? = null): GenerationInputs {
 		val baselineConfig = RigGenerationBaseline.restore(MeshGenerationBaseline.restore(config))
-		val analyses = RigBuildProfile.stage("pipeline: analysis prepare") { RigGenerationSource.prepare(input, baselineConfig, config) }
+		val base = RigBuildProfile.stage("pipeline: analysis prepare") { RigGenerationSource.prepare(input, baselineConfig, config) }
 		val generationConfig = baselineConfig.copy(parentOverrides = generatedParentOverrides(config))
-		val atlas = RigBuildProfile.stage("pipeline: atlas layout") { AtlasLayout.pack(analyses.textures.layers, config, progress, previousAtlas) }
+		val assets = io.github.psd2live.core.modifier.RigModifierRasterAssets.restored(config)
+		val analyses = if (assets.isEmpty()) base else base.copy(textures = base.textures.copy(layers = base.textures.layers + assets))
+		val atlas = RigBuildProfile.stage("pipeline: atlas layout") {
+			val packed = AtlasLayout.pack(base.textures.layers, config, progress, previousAtlas)
+			io.github.psd2live.core.modifier.RigModifierRasterAssets.append(packed, assets, config)
+		}
 		val visible = ArtPrimitiveJournal.visibleAnalysis(analyses.textures, config.rigEdits)
 		return GenerationInputs(baselineConfig, analyses, generationConfig, atlas, visible)
 	}

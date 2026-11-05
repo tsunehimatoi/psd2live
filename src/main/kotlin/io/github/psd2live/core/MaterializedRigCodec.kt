@@ -27,6 +27,7 @@ internal object MaterializedRigCodec {
 		val rig = authored.rig
 		val header = buildJsonObject {
 			put("format", FORMAT); put("version", VERSION); put("build", Compiler.version); put("binding_key", bindingKey)
+			if (rig.modifierRasterAssets.isNotEmpty()) put("modifier_rasters", true)
 			putJsonObject("pages") { rig.pageByDrawableId.toSortedMap().forEach { (id, page) -> put(id, page) } }
 			putJsonObject("layers") { rig.layerIdByDrawableId.toSortedMap().forEach { (id, layer) -> put(id, layer) } }
 			if (rig.copiedDrawableIds.isNotEmpty()) put("copied", JsonArray(rig.copiedDrawableIds.sorted().map(::JsonPrimitive)))
@@ -44,18 +45,21 @@ internal object MaterializedRigCodec {
 				put("original", candidate.original); put("eyes", candidate.eyes); put("bangs", JsonArray(candidate.bangs.map(::JsonPrimitive)))
 			} })); put("see_through_rules", SeeThroughLayers.CANDIDATE_RULES) }
 		}
-		return Encoded(header, RigIrObjects.split(PuppetIr.toIr(rig.puppet)))
+		val ir = PuppetIr.toIr(rig.puppet)
+		return Encoded(header, RigIrObjects.split(ir.copy(textures = ir.textures.copy(tileArt = rig.modifierRasterAssets))))
 	}
 
 	/** The rig [header] and [objects] describe; [IllegalArgumentException] or [java.io.IOException] when they are not one. */
 	fun decode(header: JsonObject, objects: RigIrObjects.Objects): Decoded {
 		require(header["format"]?.jsonPrimitive?.contentOrNull == FORMAT) { "Not a stored authored rig" }
 		require(header["version"]?.jsonPrimitive?.intOrNull == VERSION) { "Unsupported stored authored rig version" }
-		val puppet = PuppetIr.toPuppet(RigIrObjects.join(objects))
+		val ir = RigIrObjects.join(objects)
+		val puppet = PuppetIr.toPuppet(ir)
 		fun strings(name: String) = header.getValue(name).jsonObject.mapValues { it.value.jsonPrimitive.content }
 		val face = numbers(header.getValue("face"), 5)
 		val rig = BuiltRig(
 			puppet = puppet,
+			modifierRasterAssets = ir.textures.tileArt,
 			pageByDrawableId = header.getValue("pages").jsonObject.mapValues { it.value.jsonPrimitive.int },
 			sourceBoundsByDrawableId = header.getValue("bounds").jsonObject.mapValues { (_, value) ->
 				numbers(value, 4).let { Bounds(it[0], it[1], it[2], it[3]) }
