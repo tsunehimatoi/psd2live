@@ -34,6 +34,7 @@ import java.nio.file.StandardOpenOption
 import io.github.psd2live.core.legacy.RigGenerationMigration
 
 class PSD2LivePipeline {
+	internal var deferRuntimeBundles = false
 	internal val modifierCache = io.github.psd2live.core.modifier.RigModifierEvaluationCache()
 	internal val meshCache = PreviewMeshCache()
 	private val generatedGeometry = GeneratedGeometryCache()
@@ -88,7 +89,7 @@ class PSD2LivePipeline {
             val importedAnalysis = Cmo3ModelImport.analysis(analysis.source, config)
             val (atlas, baseRig) = Cmo3ModelImport.baseRig(analysis.source, config)
             val rig = baseRig.withRigEdits(config.rigEdits, config.layerVisibility, config.drawOrderOverrides, SeeThroughLayers.Settings.of(config))
-            val bundle = buildRuntimeBundle("psd2live-preview", importedAnalysis, atlas, rig, config).first
+            val bundle = previewBundle(importedAnalysis, atlas, rig, config, ordinaryMaterials || deferRuntimeBundles)
             return RigPreviewModel(importedAnalysis, atlas, rig, config, bundle, PreviewRigSources.of(baseRig))
         }
         val inputs = generationInputs(analysis, config, progress, previousAtlas)
@@ -98,7 +99,7 @@ class PSD2LivePipeline {
 		// packs only the layers it shows, as exports do.
 		val (atlas, rig) = RigLayerDeletion.compact(fullAtlas, effectiveAnalysis, effectiveAnalysis,
 			baseRig.withRigEdits(config.rigEdits, config.layerVisibility, config.drawOrderOverrides, SeeThroughLayers.Settings.of(config)), config, previousAtlas)
-		val runtimeBundle = buildRuntimeBundle("psd2live-preview", effectiveAnalysis, atlas, rig, config).first
+		val runtimeBundle = previewBundle(effectiveAnalysis, atlas, rig, config, ordinaryMaterials || deferRuntimeBundles)
 		return RigPreviewModel(effectiveAnalysis, atlas, rig, config, runtimeBundle, PreviewRigSources.of(baseRig, inputs.bindingKey),
 			generationAtlas = fullAtlas.takeIf { it !== atlas })
 	}
@@ -709,6 +710,12 @@ class PSD2LivePipeline {
 	 * strip-encoded PNGs ([AtlasPage.previewPng]), which re-encode only changed rows; files written for the user
 	 * carry the canonical encoding, and no pose3.
 	 */
+	internal fun previewBundle(analysis: PipelineAnalysis, atlas: PackedAtlas, rig: BuiltRig, config: PipelineConfig,
+	                           defer: Boolean = deferRuntimeBundles): CubismRuntimeBundle {
+		val build = { RigBuildProfile.stage("pipeline: runtime bundle") { buildRuntimeBundle("psd2live-preview", analysis, atlas, rig, config).first } }
+		return if (defer) CubismRuntimeBundle.deferred(build) else build()
+	}
+
 	internal fun buildRuntimeBundle(
 		baseName: String,
 		analysis: PipelineAnalysis,

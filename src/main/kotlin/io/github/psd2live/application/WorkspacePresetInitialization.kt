@@ -17,7 +17,7 @@ internal object WorkspacePresetInitialization {
         val config = document.config()
         var stack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack))
         require(stack.instances.isEmpty()) { "Initialize presets only into an empty stack" }
-        val pipeline = PSD2LivePipeline()
+        val pipeline = PSD2LivePipeline().apply { deferRuntimeBundles = true }
         fun current() = document.copy(rigEdits = document.rigEdits.copy(modifierStack = stack.toJson()))
         fun build(): RigPreviewModel {
             work.checkpoint()
@@ -27,7 +27,10 @@ internal object WorkspacePresetInitialization {
         var model = build()
         val targets = model.rig.puppet.drawables.filter { it.mesh != null && it.id.raw in model.rig.ownLayerIdByDrawableId }
             .map { ModifierTarget("mesh", it.id.raw) }
-        if (targets.isEmpty()) return document to model
+        if (targets.isEmpty()) {
+            model.runtimeBundle.materialize()
+            return document to model
+        }
         val subject = RecipeSubject.of(model.analysis)
         val fittedFace = RigModules.builds(RigModules.FACE_DEPTH_TURN, config, subject)
         val types = buildList {
@@ -111,6 +114,6 @@ internal object WorkspacePresetInitialization {
         stack = stack.copy(instances = stack.instances.map { WorkspaceModifierEdits.captureParameterProviders(it, model, stopAtConsumer = true) })
         RigModifierAlgorithms.evaluator().validateOrder(stack)
         // Provider metadata is validated against the same cached prefix before publishing the candidate.
-        return current() to build()
+        return current() to build().also { work.checkpoint(); it.runtimeBundle.materialize(); work.checkpoint() }
     }
 }

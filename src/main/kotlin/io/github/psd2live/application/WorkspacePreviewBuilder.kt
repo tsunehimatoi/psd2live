@@ -250,8 +250,10 @@ internal class WorkspacePreviewBuilder {
             // documents and node IDs immutable; new documents carry this generation input explicitly.
             val config = if ("drawOrderOverrides" in document.settings) decoded
                 else decoded.copy(drawOrderOverrides = legacyDrawOrders)
-            if (config.rigEdits.modifierStack != null || current?.config?.rigEdits?.modifierStack != null)
+            if (config.rigEdits.modifierStack != null || current?.config?.rigEdits?.modifierStack != null) {
+                if (pipeline.modifierCache.snapshot == null) current?.modifierEvaluation?.let { pipeline.modifierCache.snapshot = it }
                 return@runInterruptible pipeline.buildPreview(document.source, config, progress, current?.atlas)
+            }
             val materializable = pipeline.materializable(config)
             val revision = if (materializable) WorkspaceRevisions.of(document) else null
             val fast = current != null && pipeline.canFastUpdateRig(current, document.source, config, document.layout.referenceLayerIds)

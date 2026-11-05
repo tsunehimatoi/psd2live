@@ -334,15 +334,27 @@ data class CubismRuntimeAsset(val path: String, val bytes: ByteArray)
  * The exact runtime family prepared for export.  [encodePreviewBundle] only adds a small transport
  * envelope; every embedded byte is the same byte later written to the output directory.
  */
-data class CubismRuntimeBundle(
-	val manifestPath: String,
-	val assets: List<CubismRuntimeAsset>,
-) {
-	init {
-		require(manifestPath.isNotBlank()) { "Cubism preview manifest path is blank" }
-		require(assets.any { it.path == manifestPath }) { "Cubism preview manifest is missing: $manifestPath" }
+class CubismRuntimeBundle private constructor(private val content: Lazy<Content>) {
+	private data class Content(val manifestPath: String, val assets: List<CubismRuntimeAsset>) {
+		init {
+			require(manifestPath.isNotBlank()) { "Cubism preview manifest path is blank" }
+			require(assets.any { it.path == manifestPath }) { "Cubism preview manifest is missing: $manifestPath" }
+		}
 	}
-
+	constructor(manifestPath: String, assets: List<CubismRuntimeAsset>) : this(lazyOf(Content(manifestPath, assets)))
+	val manifestPath: String get() = content.value.manifestPath
+	val assets: List<CubismRuntimeAsset> get() = content.value.assets
+	fun copy(manifestPath: String = this.manifestPath, assets: List<CubismRuntimeAsset> = this.assets) = CubismRuntimeBundle(manifestPath, assets)
+	operator fun component1() = manifestPath
+	operator fun component2() = assets
+	override fun equals(other: Any?) = this === other || other is CubismRuntimeBundle && content.value == other.content.value
+	override fun hashCode() = content.value.hashCode()
+	override fun toString() = "CubismRuntimeBundle(manifestPath=$manifestPath, assets=$assets)"
+	internal fun materialize() { content.value }
+	companion object {
+		/** Intermediate candidates need geometry, not exported bytes. Materialize the final candidate on its worker. */
+		internal fun deferred(build: () -> CubismRuntimeBundle) = CubismRuntimeBundle(lazy { build().content.value })
+	}
 }
 
 data class LayerClassificationOverride(
@@ -546,6 +558,8 @@ data class RigPreviewModel(
     internal val modifierAuthorAtlas: PackedAtlas? = null,
     internal val modifierAuthorAnalysis: PipelineAnalysis? = null,
 ) {
+    /** Transient, immutable evaluation snapshot installed before publication; never document state. */
+    internal var modifierEvaluation: io.github.psd2live.core.modifier.RigModifierEvaluationCache.Snapshot? = null
 	/**
 	 * The generated rig the document's edits replay onto. A model built from a stored authored rig generates it only
 	 * when something asks for it.

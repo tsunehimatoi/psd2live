@@ -19,8 +19,9 @@ internal object WorkspaceModifierSimulation {
 
     fun prepare(document: WorkspaceDocument, stack: RigModifierStack, work: WorkspaceRasterWork,
                 allowRebake: Boolean = true, validatedPrefix: Int = 0,
-                pipeline: PSD2LivePipeline = PSD2LivePipeline()): RigModifierStack {
+                pipeline: PSD2LivePipeline = PSD2LivePipeline().apply { deferRuntimeBundles = true }, evaluated: RigPreviewModel? = null): RigModifierStack {
         require(validatedPrefix in 0..stack.instances.size)
+        evaluated?.modifierEvaluation?.let { pipeline.modifierCache.snapshot = it }
         var next = stack
         for (index in stack.instances.indices) {
             work.checkpoint()
@@ -59,12 +60,12 @@ internal object WorkspaceModifierSimulation {
                 MotionClips.fromJson(it.config).copy(id = it.outputId("motion"), builtin = null)
             }
             val trainingOverlay = overlay.copy(motionClips = overlay.motionClips + motions)
-            val bake = SimBaker.bake(weighted, source.copy(bake = null), SimBaker.Options(
+            val bake = RigBuildProfile.stage("modifier simulation: bake") { SimBaker.bake(weighted, source.copy(bake = null), SimBaker.Options(
                 physicsFps = overlay.physicsFps,
                 trainingMotions = SimAuthoring.trainingMotions(trainingOverlay, source, model.rig.puppet),
                 progress = { work.progress(it, "Baking simulation: ${instance.id}") },
                 cancelled = { work.checkpoint(); false },
-            ))
+            )) }
             work.checkpoint()
             next = next.update(instance.id) { it.copy(config = JsonObject(instance.config + source.copy(bake = bake).toJson()), inputFingerprint = fingerprint) }
         }

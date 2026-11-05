@@ -74,9 +74,9 @@ internal object RigModifierPipeline {
         val atlas = RigModifierRasterAssets.append(base.atlas, extra, config)
         val composed = if (extra.isEmpty()) base.analysis else base.analysis.copy(layers = base.analysis.layers + extra)
         progress.update("Compiling modifier result", .95)
-        val bundle = pipeline.buildRuntimeBundle("psd2live-preview", composed, atlas, rig, config).first
+        val bundle = pipeline.previewBundle(composed, atlas, rig, config)
         return base.copy(analysis = composed, atlas = atlas, rig = rig, config = config, runtimeBundle = bundle,
-            modifierAuthorAtlas = base.atlas, modifierAuthorAnalysis = base.analysis)
+            modifierAuthorAtlas = base.atlas, modifierAuthorAnalysis = base.analysis).also { it.modifierEvaluation = pipeline.modifierCache.snapshot }
     }
 }
 
