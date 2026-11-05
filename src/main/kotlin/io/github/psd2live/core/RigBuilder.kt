@@ -429,9 +429,11 @@ object RigBuilder {
 		}
 
 		/** The head's feature points read off the art ([io.github.psd2live.core.fit.FaceLandmarking]), in the rig's space. */
-		fun faceLandmarks(config: PipelineConfig): io.github.psd2live.core.fit.FaceLandmarks =
+		private val landmarks = java.util.concurrent.ConcurrentHashMap<PipelineConfig, io.github.psd2live.core.fit.FaceLandmarks>()
+		fun faceLandmarks(config: PipelineConfig): io.github.psd2live.core.fit.FaceLandmarks = landmarks.getOrPut(config) {
 			io.github.psd2live.core.fit.FaceLandmarking.read(analysis.layers, fittedEyes(config)?.fitting, fittedBrows(config).mapValues { it.value.fit },
 				fittedMouth(config)?.rig?.fit, faceRig.centerX) { x, y -> faceRig.coordinateSpace.toAligned(x, y) }
+		}
 
 		private val fittedMouths = java.util.concurrent.ConcurrentHashMap<List<Any?>, io.github.psd2live.core.fit.FittedMouth>()
 
@@ -1313,7 +1315,7 @@ object RigBuilder {
 		val baseLayers = if (!v2) analysis.layers
 			else analysis.layers.filterNot { resolution.isPartLayer(it.source.id.raw) } + passengers.filterNot { resolution.isPartLayer(it.source.id.raw) }
 		// The face lean rewrites each warp's own grid and nothing else, so it commutes with the re-parenting below.
-		val turned = withFaceTurn(rawDeformers, context, config)
+		val turned = faceTurnStage(rawDeformers, context, config, stages)
 		val leaned = stages?.get(RigStageCache.LEAN, 8, Identity(turned, config.rigTuning)) { withFaceLean(turned, config.rigTuning) }
 			?: withFaceLean(turned, config.rigTuning)
 
@@ -2288,7 +2290,7 @@ object RigBuilder {
 			MeshResolution.input(layer.source, config.meshTrace, MeshResolution.unitScale(config, context.analysis.source)).key,
 			rigLayer.bounds, rigLayer.centroidX, rigLayer.centroidY, parentId, parentFrame, headSpace,
 			listOf(if (eyes) listOf(faceSignature(context.faceRig), context.fittedEyes(config)?.let { it.rigs[rigLayer.semantic.side]?.fit to it.options },
-				rigLayer.semantic.role, context.fittedBrows(config)[rigLayer.semantic.side]?.let { it.fit to it.hashCode() },
+				rigLayer.semantic.role, context.fittedBrows(config)[rigLayer.semantic.side]?.cacheKey,
 				context.fittedMouth(config)?.let { listOf(it.rig?.fit, it.rig?.options, it.chin, it.covers(rigLayer)) }) else null, context.headTurn(config)?.let {
 				listOf(faceSignature(context.faceRig), headShell(rigLayer), io.github.psd2live.core.recipe.RigModules.FACE_DEPTH_TURN.let { m ->
 					m.knobs.map { config.recipe.value(m.id, it.id) } }, config.headTurnStrength, context.faceTurn(config) != null && styled(rigLayer))
@@ -4626,6 +4628,21 @@ object RigBuilder {
 	 * face's lattice is too coarse for - the outline straightening, folding and swinging. Each lattice point is put where,
 	 * through the warps above it at that key, it lands where the field sends it. Without a field, [deformers] as they are.
 	 */
+	private fun faceTurnStage(deformers: List<Deformer>, context: RigContext, config: PipelineConfig, stages: RigStageCache?): List<Deformer> {
+		if (stages == null) return withFaceTurn(deformers, context, config)
+		if (context.faceTurn(config) == null) return deformers
+		val marks = context.faceLandmarks(config)
+		// Content keys: unrelated recipe modules must not solve the same facial lattices again.
+		val key = listOf(deformers.map(io.github.psd2live.targets.cubism.PuppetIr::deformerToIr),
+			context.head, context.face, faceSignature(context.faceRig), config.rigTuning, config.headTurnStrength,
+			io.github.psd2live.core.recipe.RigModules.turnStyle(config), marks.points, marks.contour, marks.measures,
+			context.fittedEyes(config)?.fitting?.fits.orEmpty().keys, context.fittedBrows(config).keys,
+			deformers.map { it.parent?.let { parent -> context.resolveFrame(parent, config) } }, context.underFace)
+		return stages.get("face-turn", 64, key) {
+			RigBuildProfile.stage("scaffold: face turn (built)") { withFaceTurn(deformers, context, config) }
+		}
+	}
+
 	private fun withFaceTurn(deformers: List<Deformer>, context: RigContext, config: PipelineConfig): List<Deformer> {
 		val turn = context.faceTurn(config) ?: return deformers
 		val face = deformers.firstOrNull { it.id == faceWarpId } as? Deformer.Warp ?: return deformers

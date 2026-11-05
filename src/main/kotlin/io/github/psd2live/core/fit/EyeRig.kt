@@ -148,7 +148,9 @@ class EyeRig(
 			fixed[LATTICE.nearest(u, fit.upper[k])] = (pose.upperDx?.get(k) ?: 0f) to pose.upper[k] - fit.upper[k]
 			fixed.putIfAbsent(LATTICE.nearest(u, fit.lower[k]), (pose.lowerDx?.get(k) ?: 0f) to pose.lower[k] - fit.lower[k])
 		}
-		BiharmonicField(LATTICE.columns, LATTICE.rows, LATTICE.left, LATTICE.top, LATTICE.right, LATTICE.bottom, fixed)
+		synchronized(solvedFields) { solvedFields[fixed] } ?: BiharmonicField(
+			LATTICE.columns, LATTICE.rows, LATTICE.left, LATTICE.top, LATTICE.right, LATTICE.bottom, fixed
+		).also { synchronized(solvedFields) { solvedFields[fixed] = it } }
 	}
 
 	private val poses = java.util.concurrent.ConcurrentHashMap<Float, Pose>()
@@ -293,6 +295,11 @@ class EyeRig(
 	}
 
 	companion object {
+		// The lattice and its boundary values fully determine the solve. Different recipe prefixes
+		// often request the same lid field; keep a bounded set without retaining source artwork.
+		private val solvedFields = object : LinkedHashMap<Map<Int, Pair<Float, Float>>, BiharmonicField>(16, 0.75f, true) {
+			override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Map<Int, Pair<Float, Float>>, BiharmonicField>?) = size > 256
+		}
 		/** The openness below which a drawn closed line replaces the lashes. */
 		const val SWAP = 0.06f
 

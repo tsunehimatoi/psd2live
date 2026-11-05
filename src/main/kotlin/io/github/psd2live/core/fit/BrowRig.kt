@@ -93,6 +93,7 @@ data class BrowOptions(
  * [lift] is how far the brow travels up or down at full height, in canvas units: about half the eye's height below it.
  */
 class BrowRig(val fit: BrowFit, private val lift: Float, private val options: BrowOptions) {
+	internal val cacheKey: List<Any> get() = listOf(fit, lift, options)
 	private val unit = lift / fit.length
 
 	/** A vertex's place after the brow is raised by [y] (−1 down … 1 up), turned by [angle] (−1 inner end down … 1 up), moved by [x] and bent by [form]. */
