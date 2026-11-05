@@ -1,10 +1,10 @@
 # Modifier stack
 
-This entry point is still in development. Projects with an explicit stack display the Modifier Stack panel; legacy projects retain their preset panel when opened. Use **Convert to Modifier Stack** to request conversion. Conversion has been verified for ordinary mesh projects, basic legacy bindings, and a modern fixture with multiple body areas and add-on modules. Other projects can still fail the result comparison. Disabled legacy simulations stay disabled after conversion. An enabled simulation needs an existing bake that matches the candidate inputs. Source bindings can be added, adjusted, reordered, and applied. Swing, physics groups, simulation, and generated motion share this addition flow and have in-stack controls. Legacy shortcut migration and tutorial updates remain unfinished. The new advanced controls still need visual verification.
+Projects with an explicit stack display the Modifier Stack panel; legacy projects retain their preset panel when opened. Use **Convert to Modifier Stack** to request conversion. Conversion has been verified for ordinary mesh projects, basic legacy bindings, and a modern fixture with multiple body areas and add-on modules. Other projects can still fail the result comparison. Disabled legacy simulations stay disabled after conversion. An enabled simulation needs an existing bake that matches the candidate inputs. Source bindings can be added, adjusted, reordered, and applied. Swing, physics groups, simulation, and generated motion share this addition flow and have in-stack controls. Start-page shortcuts also add explicit modifiers through isolated conversion. Panel captures cover four languages, eight themes, and two scales; motion handles, events, and simulation controls have been visually checked.
 
 ## Create a PSD project
 
-The start page initially selects **Recommended modifiers**. The first revision includes the shared structure and body, face, eye, brow, mouth, and hair bindings. Choose **Empty modifier stack** to start with editable source meshes. The existing shortcuts still use the legacy import flow.
+The start page initially selects **Recommended modifiers**. The first revision includes the shared structure and body, face, eye, brow, mouth, and hair bindings. Choose **Empty modifier stack** to start with editable source meshes. Minimal, Default, Full, and custom choices generate their bindings, physics, simulations, and motions in an isolated import candidate. The complete output is compared before installing one initial revision. Entries remain independently editable; the group only records their source. Failure or cancellation installs no partial project.
 
 ## Add content
 
@@ -72,3 +72,5 @@ When adding physics, choose front hair sway, back hair sway, or eye jelly. If re
 Blink motion modifiers also contribute the EyeBlink runtime parameter role. The contribution appears under relations and survives applying the modifier as ordinary model metadata.
 
 Applying a motion modifier preserves its file name and exact curve controls. Later parameter-range edits constrain the ordinary clip to the new range; saving, reopening or rebuilding alone does not alter the curve.
+
+Expand a motion track to edit key times, values, interpolation, and incoming/outgoing Bézier handles. The Events section supports adding, retiming, editing, and deleting events. Applying the modifier retains an ordinary editable motion clip.
