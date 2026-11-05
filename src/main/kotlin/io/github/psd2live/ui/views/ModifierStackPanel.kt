@@ -82,19 +82,12 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                 Text(detail.config["name"]?.jsonPrimitive?.contentOrNull ?: modifierName(detail.type),
                     modifier = Modifier.weight(1f), style = LocalToolTypography.current.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            CompactTabBar(listOf(tr("modifier.adjust"), tr("modifier.targetList"), tr("modifier.details")), detailPage, { detailPage = it })
+            CompactTabBar(listOf(tr("modifier.targetList"), tr("modifier.details")), detailPage, { detailPage = it })
             when (detailPage) {
-                0 -> {
-                    ModifierSourceValues(detail, enabled, vm)
-                    ModifierModulePhysicsValues(detail, reports[detail.id], state, enabled, vm)
-                    ModifierNativeValues(detail.type, detail.config, state, enabled, vm, instanceId = detail.id) { config, captured, done ->
-                        vm.editModifier("modifier_update", buildJsonObject { put("id", detail.id); put("type", detail.type); put("config", config) }, captured, done)
-                    }
-                }
-                1 -> detail.targets.forEach { target ->
+                0 -> detail.targets.forEach { target ->
                     CompactButton(contentName(state, target.kind, target.id), { vm.locateModifierContent(target.kind, target.id) }, height = 20.dp)
                 }
-                2 -> {
+                1 -> {
                     ModifierDependencies(detail, stack, enabled, vm)
                     reports[detail.id]?.let { ModifierContributions(it, state, vm) }
                     CompactButton(tr("modifier.apply"), { vm.editModifier("modifier_apply", buildJsonObject { put("id", detail.id) }) }, enabled = enabled, height = 22.dp)
@@ -175,13 +168,13 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                                 Text(if (instance.targets.size == 1) contentName(state, instance.targets.single().kind, instance.targets.single().id)
                                     else tr("modifier.targetCount", instance.targets.size),
                                     style = LocalToolTypography.current.caption, color = colors.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                ModifierSourceValues(instance, enabled, vm, quickOnly = true)
-                                ModifierNativeValues(instance.type, instance.config, state, enabled, vm, instanceId = instance.id, quickOnly = true) { config, captured, done ->
+                                ModifierSourceValues(instance, enabled, vm)
+                                ModifierModulePhysicsValues(instance, report, state, enabled, vm)
+                                ModifierNativeValues(instance.type, instance.config, state, enabled, vm, instanceId = instance.id) { config, captured, done ->
                                     vm.editModifier("modifier_update", buildJsonObject { put("id", instance.id); put("type", instance.type); put("config", config) }, captured, done)
                                 }
                                 Row(horizontalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
-                                    CompactButton(tr("modifier.more"), { detailId = instance.id; detailPage = 0 }, height = 20.dp)
-                                    CompactButton(tr("modifier.inspect"), { detailId = instance.id; detailPage = 1 }, height = 20.dp)
+                                    CompactButton(tr("modifier.inspect"), { detailId = instance.id; detailPage = 0 }, height = 20.dp)
                                 }
                             }
                         }
@@ -246,9 +239,8 @@ private fun ModifierModulePhysicsValues(instance: RigModifierInstance, report: J
 }
 
 @Composable
-private fun ModifierSourceValues(instance: RigModifierInstance, enabled: Boolean, vm: PSD2LiveViewModel, quickOnly: Boolean = false) {
+private fun ModifierSourceValues(instance: RigModifierInstance, enabled: Boolean, vm: PSD2LiveViewModel) {
     if (instance.type == RigSourceModifiers.SCAFFOLD) {
-        if (quickOnly) return
         Row(verticalAlignment = Alignment.CenterVertically) {
             CompactCheckbox(instance.config["featureDisplacement"]?.jsonPrimitive?.booleanOrNull == true, { value ->
                 vm.editModifier("modifier_update", buildJsonObject {
@@ -272,7 +264,7 @@ private fun ModifierSourceValues(instance: RigModifierInstance, enabled: Boolean
         return
     }
     val spec = RigLegacyBindings.find(instance.type) ?: return
-    if (!quickOnly && spec.hasPhysics) Row(verticalAlignment = Alignment.CenterVertically) {
+    if (spec.hasPhysics) Row(verticalAlignment = Alignment.CenterVertically) {
         CompactCheckbox(instance.config["physicsEnabled"]?.jsonPrimitive?.booleanOrNull != false, { value ->
             vm.editModifier("modifier_update", buildJsonObject {
                 put("id", instance.id); put("type", instance.type)
@@ -281,7 +273,7 @@ private fun ModifierSourceValues(instance: RigModifierInstance, enabled: Boolean
         }, enabled = enabled)
         Text(tr("swing.physics"), style = LocalToolTypography.current.caption)
     }
-    if (!quickOnly && spec.mouthOutline) {
+    if (spec.mouthOutline) {
         val color = RigLegacyBindings.outlineColor(instance)
         var hex by remember(instance.id, color) { mutableStateOf(color?.let { "%06X".format(it) }.orEmpty()) }
         fun setColor(rgb: Int?) {
@@ -299,7 +291,6 @@ private fun ModifierSourceValues(instance: RigModifierInstance, enabled: Boolean
             CompactButton(tr("mouth.autoColor"), { setColor(null) }, enabled = enabled && color != null, height = 20.dp)
         }
     }
-    val advanced = !quickOnly
     fun config(field: String, key: String?, value: Float): JsonObject = if (key == null) JsonObject(instance.config + (field to JsonPrimitive(value)))
         else JsonObject(instance.config + (field to JsonObject(instance.config[field]?.jsonObject.orEmpty() + (key to JsonPrimitive(value)))))
     @Composable fun value(label: String, field: String, key: String?, default: Float, range: ClosedFloatingPointRange<Float>, unit: String) {
@@ -312,7 +303,7 @@ private fun ModifierSourceValues(instance: RigModifierInstance, enabled: Boolean
     if (spec.knobs.isNotEmpty() || spec.fields.isNotEmpty()) {
         run {
             val hasTurnStyle = spec.type == "face.depth-turn"
-            if (hasTurnStyle && !quickOnly) {
+            if (hasTurnStyle) {
                 val style = instance.config["values"]?.jsonObject?.get("style")?.jsonPrimitive?.float ?: 0f
                 TurnStyleRow(style, enabled) { index ->
                     val values = buildJsonObject {
@@ -325,7 +316,7 @@ private fun ModifierSourceValues(instance: RigModifierInstance, enabled: Boolean
                     })
                 }
             }
-            spec.knobs.filter { (advanced || !it.advanced) && !(hasTurnStyle && it.id == "style") }.let { if (quickOnly) it.take(if (spec.strength) 2 else 3) else it }.forEach { knob ->
+            spec.knobs.filterNot { hasTurnStyle && it.id == "style" }.forEach { knob ->
                 val label = when {
                     spec.seeThrough -> tr("seeThrough.opacity")
                     spec.mouthOutline -> tr("mouth.thickness")
@@ -335,9 +326,9 @@ private fun ModifierSourceValues(instance: RigModifierInstance, enabled: Boolean
             }
             val groups = spec.fields.map { it.group }.distinct()
             var selectedGroup by remember(instance.id) { mutableStateOf(groups.firstOrNull()) }
-            if (!quickOnly && groups.size > 1) CompactDropdown(groups, selectedGroup ?: groups.first(), { selectedGroup = it },
+            if (groups.size > 1) CompactDropdown(groups, selectedGroup ?: groups.first(), { selectedGroup = it },
                 itemLabel = { tr("settings.rigTuning.group." + it.name.lowercase()) }, modifier = Modifier.fillMaxWidth(), height = 22.dp)
-            if (!quickOnly) spec.fields.filter { it.group == selectedGroup }.forEach { field ->
+            spec.fields.filter { it.group == selectedGroup }.forEach { field ->
                 value(tr("settings.rigTuning.${field.id}"), "tuning", field.id, field.default, field.range, unit(field.unit))
             }
         }
