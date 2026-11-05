@@ -1749,13 +1749,13 @@ class PSD2LiveViewModel : AutoCloseable {
             .mapTo(HashSet()) { it.jsonObject.getValue("id").jsonPrimitive.content }
         val types = existing?.instances.orEmpty().filter { it.id in active && it.targets.any { target -> target.id in ids } }.mapTo(HashSet()) { it.type }
         val first = io.github.psd2live.core.modifier.RigLegacyBindings.specs.firstOrNull { spec ->
-            spec.type !in types && (if (spec.isBase) types.none { it.substringBefore('/') == spec.area } else
+            spec.type != "face.depth-turn" && spec.type !in types && (if (spec.isBase) types.none { it.substringBefore('/') == spec.area } else
                 (listOfNotNull(spec.module?.base) + spec.related).all { required ->
                     val area = required.substringBefore('/')
                     types.none { '/' in it && it.substringBefore('/') == area && it != required }
                 })
         }?.type ?: "body/legacy"
-        previewModifierAddition(if (group) null else if (warp != null) "swing" else first, if (group) "fitted" else null)
+        previewModifierAddition(if (group) null else if (warp != null) "swing" else first, if (group) io.github.psd2live.application.WorkspaceModifierPlan.RECOMMENDED_GROUP else null)
     }
 
     internal fun dismissModifierAddition() { modifierPreviewSequence++; modifierPreviewJob?.cancel(); modifierAddition = null }

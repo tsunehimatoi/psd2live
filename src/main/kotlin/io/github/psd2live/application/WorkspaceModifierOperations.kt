@@ -23,10 +23,15 @@ internal fun registerModifierOperations(registry: WorkspaceOperationRegistry, wo
             putJsonArray("types") { RigModifierAlgorithms.registry.definitions.forEach { definition -> addJsonObject {
                 put("type", definition.type); put("version", definition.version)
                 put("requires", JsonArray(definition.requires.sorted().map(::JsonPrimitive)))
+                put("provides", JsonArray(definition.provides.sorted().map(::JsonPrimitive)))
                 put("exclusive_family", definition.exclusiveFamily?.let(::JsonPrimitive) ?: JsonNull)
             } } }
+            putJsonArray("groups") { WorkspaceModifierPlan.groupCatalog.forEach { group -> addJsonObject {
+                put("id", group.id); put("algorithm", group.algorithm); put("richness", group.richness)
+                put("types", JsonArray(group.types.map(::JsonPrimitive)))
+            } } }
         }) }
-    registry.register(WorkspaceOperationDefinition("modifier_plan", "Plan source bindings, a fitted binding group, or native swing/physics/simulation/motion at captured targets. " +
+    registry.register(WorkspaceOperationDefinition("modifier_plan", "Plan source bindings, a legacy or modern preset group at minimal/standard/full richness, or native swing/physics/simulation/motion at captured targets. " +
         "Optional physics presets capture the original front hair, back hair or eye jelly rules. Returns the complete additions with fixed IDs and reused or applied providers; publishes nothing. Dry-run its entries before adding the group.",
         WorkspaceModifierSchemas.planRequest, WorkspaceOperationKind.QUERY, workspaceBound = true, resultSchema = WorkspaceModifierSchemas.plan)) { request, _ ->
         WorkspaceOperationOutput(workspace.captureQueries().modifierPlan(request))

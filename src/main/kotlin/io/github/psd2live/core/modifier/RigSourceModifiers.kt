@@ -187,16 +187,16 @@ internal class RigModifierSource(
             var tuning = RigTuning()
             for (spec in RigLegacyBindings.specs) state[spec.type]?.let { tuning = RigLegacyBindings.tuning(it, tuning) }
             val bodyStrength = state["body/legacy"]?.let(RigLegacyBindings::strength) ?: 1f
-            val headStrength = state["face/legacy"]?.let(RigLegacyBindings::strength) ?: 1f
+            val headStrength = (state[RigLegacyBindings.FITTED_FACE] ?: state["face/legacy"])?.let(RigLegacyBindings::strength) ?: 1f
             val kept = state.keys.flatMapTo(HashSet()) { RigLegacyBindings.spec(it).parameters }
             val byArea = instances.filter { RigLegacyBindings.spec(it.type).isBase }.associateBy { RigLegacyBindings.spec(it.type).area }
             val recipe = if (instances.none { !it.type.endsWith("/legacy") }) RigRecipe.Legacy else RigRecipe(true,
                 bases = RigModules.areas.associate { area ->
                     val chosen = byArea[area.id]
-                    val base = chosen?.type ?: area.legacy.id
+                    val base = chosen?.type?.takeUnless { it == RigLegacyBindings.FITTED_FACE } ?: area.legacy.id
                     area.id to BaseChoice(base, chosen?.version ?: area.legacy.version, chosen?.let(RigLegacyBindings::values).orEmpty())
                 }, modules = RigModules.modules.associate { module ->
-                    val chosen = state[module.id]
+                    val chosen = state[module.id] ?: state[RigLegacyBindings.FITTED_FACE]?.takeIf { module.id == RigModules.FACE_DEPTH_TURN.id }
                     module.id to ModuleChoice(chosen != null, chosen?.version ?: module.version, chosen?.let(RigLegacyBindings::values).orEmpty())
                 })
             val outline = state[RigModules.MOUTH_OUTLINE.id]
@@ -272,7 +272,7 @@ internal class RigModifierSource(
             val spec = RigLegacyBindings.find(previous.type)
             val providers = if (spec == null) emptyMap() else RigLegacyBindings.providers(previous)
             val missing = spec?.requires.orEmpty().any { type -> previous.targets.any { target ->
-                available.none { it.type == type && target in it.targets && (providers[type] == null || it.id == providers[type]) }
+                available.none { RigModifierAlgorithms.registry.provides(it.type, type) && target in it.targets && (providers[type] == null || it.id == providers[type]) }
             } }
             if (missing) continue
             active += previous

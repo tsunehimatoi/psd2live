@@ -7,12 +7,34 @@ import kotlinx.serialization.json.*
 
 /** Captured insertion: resolve dependencies without changing or silently sorting existing entries. */
 internal object WorkspaceModifierPlan {
-    val sourceTypes get() = listOf(RigSourceModifiers.SCAFFOLD) + RigLegacyBindings.specs.map { it.type }
+    val sourceTypes get() = listOf(RigSourceModifiers.SCAFFOLD) + RigLegacyBindings.specs.map { it.type }.filterNot { it == "face.depth-turn" }
     const val NATURAL_MOTION_PREFIX = "natural:"
     val motionPresetIds = MotionClips.BUILTIN_NAMES + MotionClips.BASIC_NAMES.map { NATURAL_MOTION_PREFIX + it }
     val nativeTypes = listOf("swing", "physics", "motion", "simulation")
     val types get() = sourceTypes + nativeTypes
-    val groups = mapOf("fitted" to listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/legacy", "face.depth-turn"))
+    const val RECOMMENDED_GROUP = "modern-standard"
+    data class Group(val id: String, val algorithm: String, val richness: String, val types: List<String>)
+    val groupCatalog: List<Group> = listOf("legacy", "modern").flatMap { algorithm ->
+        listOf("minimal", "standard", "full").map { richness ->
+            val bases = if (algorithm == "legacy") listOf("body/legacy", "face/legacy", "eye/legacy", "brow/legacy", "mouth/legacy", "hair/legacy")
+                else listOf("body/legacy", RigLegacyBindings.FITTED_FACE, "eye/fitted", "brow/fitted", "mouth/fitted", "hair/chains")
+            val tiers = when (richness) {
+                "minimal" -> setOf(io.github.psd2live.core.recipe.ModuleTier.CORE)
+                "standard" -> setOf(io.github.psd2live.core.recipe.ModuleTier.CORE, io.github.psd2live.core.recipe.ModuleTier.MAJOR)
+                else -> io.github.psd2live.core.recipe.ModuleTier.entries.toSet()
+            }
+            val modules = RigLegacyBindings.specs.mapNotNull { it.module }.filter { module ->
+                module.id != "face.depth-turn" && module.tier in tiers &&
+                    (richness == "full" || module.setting == null) &&
+                    (module.base == null || module.base in bases) &&
+                    (algorithm == "modern" || RigLegacyBindings.spec(module.id).related.none { '/' in it && it !in bases })
+            }.map { it.id }
+            Group("$algorithm-$richness", algorithm, richness, bases + modules)
+        }
+    }
+    // Keep the old plan identifier readable; new interfaces expose the explicit algorithm/richness choices.
+    val groups = groupCatalog.associate { it.id to it.types } + ("fitted" to groupCatalog.single { it.id == RECOMMENDED_GROUP }.types)
+
 
     fun prepare(capture: WorkspaceCapture<RigPreviewModel>, request: JsonObject): JsonObject {
         val stack = RigModifierStack.fromJson(requireNotNull(capture.document.rigEdits.modifierStack) { "Convert legacy presets before adding modifiers" })
@@ -32,7 +54,7 @@ internal object WorkspaceModifierPlan {
         }).first
     }
 
-    private fun plan(model: RigPreviewModel, stack: RigModifierStack, request: JsonObject): Pair<RigModifierStack, JsonObject> {
+    internal fun plan(model: RigPreviewModel, stack: RigModifierStack, request: JsonObject): Pair<RigModifierStack, JsonObject> {
         val targets = request.getValue("targets").jsonArray.map { raw -> raw.jsonObject.let {
             ModifierTarget(it.getValue("kind").jsonPrimitive.content, it.getValue("id").jsonPrimitive.content)
         } }
@@ -63,8 +85,10 @@ internal object WorkspaceModifierPlan {
             put("id", requireNotNull(capability.id)); put("type", capability.type); put("version", capability.version); put("disposition", disposition)
             put("targets", JsonArray(capability.targets.map { buildJsonObject { put("kind", it.kind); put("id", it.id) } }))
         }
-        fun ensure(wanted: String, reuse: Boolean = true, scaffold: String? = null): ModifierCapability {
-            if (reuse) available.firstOrNull { cap -> cap.type == wanted && cap.id != null && targets.all { it in cap.targets } &&
+        fun ensure(requestedType: String, reuse: Boolean = true, scaffold: String? = null, equivalent: Boolean = true): ModifierCapability {
+            val wanted = if ((group?.startsWith("modern-") == true || group == "fitted") && requestedType == "face/legacy")
+                RigLegacyBindings.FITTED_FACE else requestedType
+            if (reuse) available.firstOrNull { cap -> (cap.type == wanted || equivalent && RigModifierAlgorithms.registry.provides(cap.type, wanted)) && cap.id != null && targets.all { it in cap.targets } &&
                 (scaffold == null || cap.config["scaffold"]?.jsonPrimitive?.content == scaffold) }?.let { cap ->
                 planned.putIfAbsent(cap.id!!, describe(cap, if (stack.instances.any { it.id == cap.id }) "reused" else if (cap.id in stack.retiredIds) "applied" else "added"))
                 return cap
@@ -144,7 +168,7 @@ internal object WorkspaceModifierPlan {
         }
         val subject = io.github.psd2live.core.recipe.RecipeSubject.of(model.analysis)
         requested.filter { group == null || RigLegacyBindings.find(it)?.module?.applies?.invoke(subject) != false }
-            .forEach { ensure(it, reuse = group != null) }
+            .forEach { ensure(it, reuse = group != null, equivalent = false) }
         RigModifierAlgorithms.evaluator().validateOrder(candidate)
         return candidate to buildJsonObject {
             put("entries", JsonArray(entries)); put("plan", JsonArray(planned.values.toList()))

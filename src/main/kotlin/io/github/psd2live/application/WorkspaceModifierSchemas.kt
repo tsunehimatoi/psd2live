@@ -45,7 +45,7 @@ internal object WorkspaceModifierSchemas {
     private val simRequired = setOf("id", "name", "kind", "targets", "material", "inputs")
     private val simulation = s.obj(simFields + ("bake" to bake), simRequired)
     private fun configuration(type: String, summary: Boolean = false): JsonObject = when (type) {
-        "rig.scaffold" -> s.obj(mapOf("featureDisplacement" to s.boolean(), "corrections" to
+        "rig.scaffold" -> s.obj(mapOf("featureDisplacement" to s.boolean(), "frontHairSway" to s.boolean(), "backHairSway" to s.boolean(), "corrections" to
             s.obj(RigModuleSchemas.stored.getValue("properties").jsonObject.filterKeys { it in setOf("moves", "eyeParts") }
                 .mapValues { it.value.jsonObject }, emptySet())), emptySet())
         "physics" -> physics
@@ -56,9 +56,9 @@ internal object WorkspaceModifierSchemas {
             "tuning" to s.obj(spec.fields.associate { it.id to s.number(it.range.start, it.range.endInclusive) }, emptySet())) +
             (if (spec.module?.base != null) mapOf("base" to s.handle()) else emptyMap()) +
             (if (spec.related.isNotEmpty()) mapOf("dependencies" to s.obj(spec.related.associateWith { s.handle() })) else emptyMap()) +
-            (if (spec.hasPhysics) mapOf("physics" to if (spec.chainKinds.isNotEmpty()) s.dictionary(physics)
+            (if (spec.hasPhysics) mapOf("physicsEnabled" to s.boolean(), "physics" to if (spec.chainKinds.isNotEmpty()) s.dictionary(physics)
                 else s.obj(spec.module!!.physicsGroups.associateWith { physics }, emptySet())) else emptyMap()) +
-            (if (spec.strength) mapOf("strength" to s.number(0, 2)) else emptyMap()) +
+            (if (spec.strength) mapOf("strength" to s.number(0, 4)) else emptyMap()) +
             (if (spec.mouthOutline) mapOf("color" to s.integer(0, 0xffffff)) else emptyMap()) +
             (if (spec.knobs.isNotEmpty()) mapOf("values" to s.obj(spec.knobs.associate { it.id to s.number(it.range.start, it.range.endInclusive) }, emptySet())) else emptyMap()), setOf("scaffold") + (if (spec.module?.base != null) setOf("base") else emptySet()) + (if (spec.related.isNotEmpty()) setOf("dependencies") else emptySet())) }
             ?: error("No modifier configuration schema: $type")
@@ -121,5 +121,7 @@ internal object WorkspaceModifierSchemas {
         "plan" to s.array(s.obj(mapOf("id" to s.handle(), "type" to s.handle(), "version" to s.integer(1),
             "targets" to s.array(target, 1, 4096), "disposition" to s.choices("added", "reused", "applied"))))))
     val catalog = s.obj(mapOf("types" to s.array(s.obj(mapOf("type" to s.handle(), "version" to s.integer(1),
-        "requires" to s.array(s.handle()), "exclusive_family" to s.nullable(s.handle()))))))
+        "requires" to s.array(s.handle()), "provides" to s.array(s.handle()), "exclusive_family" to s.nullable(s.handle())))),
+        "groups" to s.array(s.obj(mapOf("id" to s.handle(), "algorithm" to s.choices("legacy", "modern"),
+            "richness" to s.choices("minimal", "standard", "full"), "types" to s.array(s.handle()))))))
 }

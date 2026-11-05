@@ -24,6 +24,7 @@ internal class RigModifierDefinition(
     val references: (RigIR, RigIR, RigModifierInstance) -> List<ModifierContribution> = { _, _, _ -> emptyList() },
     val motionInputs: (RigModifierInstance) -> Set<String> = { emptySet() },
     val motionOutputs: (RigModifierInstance) -> Set<String> = { emptySet() },
+    val provides: Set<String> = emptySet(),
     val evaluate: (RigIR, RigModifierInstance, () -> Unit) -> RigIR,
 )
 
@@ -50,6 +51,8 @@ internal class RigModifierRegistry(definitions: List<RigModifierDefinition>) {
     fun definition(instance: RigModifierInstance): RigModifierDefinition = requireNotNull(entries[instance.type to instance.version]) {
         "Unsupported modifier algorithm: ${instance.type}@${instance.version}"
     }
+
+    fun provides(actual: String, required: String): Boolean = actual == required || entries.values.any { it.type == actual && required in it.provides }
 
     val definitions: List<RigModifierDefinition> get() = entries.values.toList()
 }
@@ -104,7 +107,7 @@ internal class RigModifierEvaluator(
             }
             val missing = definition.requires.filterTo(linkedSetOf()) { type ->
                 val provider = definition.providers(instance)[type]
-                instance.targets.any { target -> available.none { it.type == type && target in it.targets && (provider == null || it.id == provider) } }
+                instance.targets.any { target -> available.none { registry.provides(it.type, type) && target in it.targets && (provider == null || it.id == provider) } }
             }
             for ((parameter, provider) in instance.parameterProviders) {
                 if (available.none { it.id == provider } || current.parameters.none { it.id == parameter }) {
@@ -194,9 +197,9 @@ internal class RigModifierEvaluator(
             }
             for (type in definition.requires) for (target in instance.targets) {
                 val provider = definition.providers(instance)[type]
-                val earlier = stack.appliedCapabilities.any { it.type == type && target in it.targets && (provider == null || it.id == provider) } ||
-                    stack.instances.take(index).any { it.enabled && it.type == type && target in it.targets && (provider == null || it.id == provider) }
-                val later = stack.instances.drop(index + 1).any { it.enabled && it.type == type && target in it.targets && (provider == null || it.id == provider) }
+                val earlier = stack.appliedCapabilities.any { registry.provides(it.type, type) && target in it.targets && (provider == null || it.id == provider) } ||
+                    stack.instances.take(index).any { it.enabled && registry.provides(it.type, type) && target in it.targets && (provider == null || it.id == provider) }
+                val later = stack.instances.drop(index + 1).any { it.enabled && registry.provides(it.type, type) && target in it.targets && (provider == null || it.id == provider) }
                 require(earlier || !later) { "${instance.id} must follow ${provider ?: type} ($type) on ${target.id}" }
             }
         }

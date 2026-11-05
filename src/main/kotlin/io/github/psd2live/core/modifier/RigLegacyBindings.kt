@@ -36,7 +36,10 @@ internal object RigLegacyBindings {
         Spec("mouth/legacy", setOf(StandardParameters.MOUTH_FORM, StandardParameters.MOUTH_OPEN), fields("mouth")),
         Spec("hair/legacy", setOf(StandardParameters.HAIR_FRONT, StandardParameters.HAIR_BACK), fields("hair")),
     )
-    val specs = legacy + listOf(RigModules.EYE_FITTED, RigModules.BROW_FITTED, RigModules.MOUTH_FITTED, RigModules.HAIR_CHAINS).map { base ->
+    const val FITTED_FACE = "face/fitted"
+    val specs = legacy + Spec(FITTED_FACE, legacy.single { it.area == "face" }.parameters,
+        fields("face").filter { RigTuning.replacedBy[it.id] != RigModules.FACE_DEPTH_TURN.id }, strength = true,
+        knobs = RigModules.FACE_DEPTH_TURN.knobs) + listOf(RigModules.EYE_FITTED, RigModules.BROW_FITTED, RigModules.MOUTH_FITTED, RigModules.HAIR_CHAINS).map { base ->
         val original = legacy.single { it.area == base.area }
         Spec(base.id, original.parameters, original.fields.filter { RigTuning.replacedBy[it.id] != base.id },
             version = base.version, knobs = base.knobs, prerequisites = if (base == RigModules.HAIR_CHAINS) setOf("body/legacy", "face/legacy") else emptySet())
@@ -92,7 +95,7 @@ internal object RigLegacyBindings {
     }
 
     fun definition(spec: Spec, source: RigModifierSource?) = RigModifierDefinition(spec.type, spec.version,
-        requires = spec.requires, exclusiveFamily = if (spec.isBase) "base:${spec.area}" else if (spec.chainKinds.isNotEmpty()) "chain:${spec.type}" else if (spec.expressionToggles || spec.mouthOutline) spec.type else null,
+        requires = spec.requires, provides = if (spec.type == FITTED_FACE) setOf("face/legacy") else emptySet(), exclusiveFamily = if (spec.isBase) "base:${spec.area}" else if (spec.chainKinds.isNotEmpty()) "chain:${spec.type}" else if (spec.expressionToggles || spec.mouthOutline) spec.type else null,
         providers = { instance -> providers(instance) },
         appliedConfig = { it.config }, resolveParameter = { instance, before, declared -> requireNotNull(source).resolveParameter(instance, before, declared) },
         references = RigModifierPhysics::references, parameters = { instance -> when {

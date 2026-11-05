@@ -94,6 +94,7 @@ internal object WorkspaceModifierEdits {
             ModifierTarget(it.getValue("kind").jsonPrimitive.content, it.getValue("id").jsonPrimitive.content)
         } }
         val type = request.getValue("type").jsonPrimitive.content
+        require(type != "face.depth-turn") { "Add face/fitted instead: legacy face binding and fitted turning are alternative algorithms" }
         val version = request["version"]?.jsonPrimitive?.int ?: RigModifierAlgorithms.registry.definitions.filter { it.type == type }
             .maxOfOrNull { it.version } ?: error("Unknown modifier algorithm: $type")
         val candidate = stack.add(type, version, targets, request.getValue("config").jsonObject,

@@ -111,7 +111,7 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                     stack.instances.forEach { instance -> key(instance.id) {
                         val name = instance.config["name"]?.jsonPrimitive?.contentOrNull ?: modifierName(instance.type)
                         val layout = ParamItemLayout(instance.id, instance.id, "modifier", name, null, false, emptySet(), 0f, 0f)
-                        var coords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+                        DisposableEffect(instance.id) { onDispose { bounds.remove(instance.id) } }
                         var labelCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
                         val status = reports[instance.id]?.get("status")?.jsonPrimitive?.content ?: "loading"
                         val interaction = remember { MutableInteractionSource() }
@@ -119,7 +119,6 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                         Row(Modifier.fillMaxWidth().height(24.dp)
                             .parameterDragRow(layout, drag, bounds.values, preview)
                             .onGloballyPositioned { row ->
-                                coords = row
                                 val parent = container
                                 if (parent != null && parent.isAttached && row.isAttached) {
                                     val top = parent.localPositionOf(row, Offset.Zero).y
@@ -195,7 +194,7 @@ private fun ModifierDependencies(instance: RigModifierInstance, stack: RigModifi
     }
     val providers = RigLegacyBindings.providers(instance)
     for ((type, selected) in providers) {
-        val candidates = capabilities.filter { cap -> cap.type == type && cap.id != null && instance.targets.all { it in cap.targets } &&
+        val candidates = capabilities.filter { cap -> RigModifierAlgorithms.registry.provides(cap.type, type) && cap.id != null && instance.targets.all { it in cap.targets } &&
             (type == RigSourceModifiers.SCAFFOLD || cap.config["scaffold"] == instance.config["scaffold"]) }
         val ids = (listOf(selected) + candidates.mapNotNull { it.id }).distinct()
           Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
@@ -208,7 +207,7 @@ private fun ModifierDependencies(instance: RigModifierInstance, stack: RigModifi
                 }
             }, itemLabel = { id ->
                 if (candidates.none { it.id == id }) tr("modifier.provider.missing", id) else stack.instances.firstOrNull { it.id == id }?.let { provider ->
-                    provider.config["name"]?.jsonPrimitive?.contentOrNull ?: "${modifierName(type)} · ${stack.index(id) + 1}"
+                    provider.config["name"]?.jsonPrimitive?.contentOrNull ?: "${modifierName(provider.type)} · ${stack.index(id) + 1}"
                 } ?: modifierName(type)
             }, itemEnabled = { id -> candidates.any { it.id == id } }, enabled = enabled, height = 20.dp, modifier = Modifier.weight(1.5f))
         }
@@ -303,7 +302,7 @@ private fun ModifierSourceValues(instance: RigModifierInstance, enabled: Boolean
     if (spec.strength) value(tr("modifier.strength"), "strength", null, 1f, 0f..4f, "")
     if (spec.knobs.isNotEmpty() || spec.fields.isNotEmpty()) {
         run {
-            val hasTurnStyle = spec.type == "face.depth-turn"
+            val hasTurnStyle = spec.type == "face.depth-turn" || spec.type == RigLegacyBindings.FITTED_FACE
             if (hasTurnStyle) {
                 val style = instance.config["values"]?.jsonObject?.get("style")?.jsonPrimitive?.float ?: 0f
                 TurnStyleRow(style, enabled) { index ->
@@ -321,7 +320,7 @@ private fun ModifierSourceValues(instance: RigModifierInstance, enabled: Boolean
                 val label = when {
                     spec.seeThrough -> tr("seeThrough.opacity")
                     spec.mouthOutline -> tr("mouth.thickness")
-                    else -> tr("settings.rig.knob.${instance.type.replace('/', '.')}.${knob.id}")
+                    else -> tr("settings.rig.knob.${if (instance.type == RigLegacyBindings.FITTED_FACE) "face.depth-turn" else instance.type.replace('/', '.')}.${knob.id}")
                 }
                 value(label, "values", knob.id, knob.default, knob.range, unit(knob.unit))
             }
@@ -439,7 +438,20 @@ internal fun ModifierAdditionDialog(state: PSD2LiveState, vm: PSD2LiveViewModel)
         Text(tr("modifier.targetCount", dialog.targets.size), color = colors.textMuted, style = LocalToolTypography.current.caption)
         if (dialog.group == null) CompactDropdown(if (dialog.targets.all { it.kind == "mesh" }) WorkspaceModifierPlan.types else listOf("swing"), dialog.type ?: "body/legacy",
             { vm.previewModifierAddition(it, null) }, itemLabel = ::modifierName, enabled = !dialog.committing, modifier = Modifier.fillMaxWidth())
-        else Text(tr("modifier.group.fitted"), style = LocalToolTypography.current.body, color = colors.textPrimary)
+        else {
+            val selectedGroup = WorkspaceModifierPlan.groupCatalog.firstOrNull { it.id == dialog.group }
+                ?: WorkspaceModifierPlan.groupCatalog.first { it.id == WorkspaceModifierPlan.RECOMMENDED_GROUP }
+            InspectorFormRow(tr("modifier.algorithm")) {
+                CompactDropdown(listOf("legacy", "modern"), selectedGroup.algorithm,
+                    { algorithm -> vm.previewModifierAddition(null, "$algorithm-${selectedGroup.richness}") },
+                    itemLabel = { tr("modifier.algorithm.$it") }, enabled = !dialog.committing, modifier = Modifier.fillMaxWidth())
+            }
+            InspectorFormRow(tr("modifier.richness")) {
+                CompactDropdown(listOf("minimal", "standard", "full"), selectedGroup.richness,
+                    { richness -> vm.previewModifierAddition(null, "${selectedGroup.algorithm}-$richness") },
+                    itemLabel = { tr("modifier.richness.$it") }, enabled = !dialog.committing, modifier = Modifier.fillMaxWidth())
+            }
+        }
         if (dialog.loading) Text(tr(if (dialog.committing) "modifier.adding" else "modifier.previewing"), color = colors.textMuted, style = LocalToolTypography.current.caption)
         dialog.error?.let { Text(it, color = colors.warning, style = LocalToolTypography.current.caption) }
         val configuration = dialog.configuration ?: plan?.get("entries")?.jsonArray?.lastOrNull()?.jsonObject?.get("config")?.jsonObject
