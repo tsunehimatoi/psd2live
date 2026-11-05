@@ -378,7 +378,7 @@ object AppSettings {
 	/** The presets a PSD import applies, as last set on the start page; the default set the first time. */
 	internal var startChoices: StartPresetChoices
 		get() = StartPresetChoices.decode(runCatching { preferences.get(KEY_START_CHOICES, null) }.getOrNull())
-			?: StartQuickPreset.DEFAULT.choices
+			?: StartQuickPreset.RECOMMENDED.choices
 		set(value) {
 			runCatching { preferences.put(KEY_START_CHOICES, value.encode()) }
 		}

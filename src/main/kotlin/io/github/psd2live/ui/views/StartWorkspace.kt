@@ -972,6 +972,11 @@ private fun formatBytes(bytes: Long): String = when {
 @Composable
 private fun PresetInspector(choices: StartPresetChoices, selection: StartSelection, enabled: Boolean, onChange: (StartPresetChoices) -> Unit) {
 	PresetPicker(choices, enabled, onChange)
+    choices.modifiers?.let { mode ->
+        InspectorNote(tr(if (mode == io.github.psd2live.application.WorkspaceInitialModifiers.EMPTY)
+            "modifier.start.empty.detail" else "modifier.start.recommended.detail"))
+        return
+    }
 	fun group(key: String, title: String, summary: String, content: @Composable ColumnScope.() -> Unit): @Composable () -> Unit = {
 		val open = selection.open[key] ?: true
 		PanelSectionRow(title, open, { selection.open[key] = !open }, icon = null, trailing = {

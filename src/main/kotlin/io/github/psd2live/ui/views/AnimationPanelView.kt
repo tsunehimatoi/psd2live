@@ -547,10 +547,10 @@ private fun PresetSettings(viewModel: PSD2LiveViewModel, name: String, settings:
 private fun ClipSettings(viewModel: PSD2LiveViewModel, clip: MotionClip) {
 	Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
 		SettingField(tr("animation.fadeInTime"), clip.fadeIn, 0f, 5f, 0.1, 1, "", true, Modifier.weight(1f), viewModel) { value ->
-			viewModel.updateMotionClipProperties(clip.id) { it.copy(fadeIn = value) }
+			viewModel.updateMotionClipProperties(clip.id) { it.copy(fadeIn = value, runtimeDefaultFades = false) }
 		}
 		SettingField(tr("animation.fadeOutTime"), clip.fadeOut, 0f, 5f, 0.1, 1, "", true, Modifier.weight(1f), viewModel) { value ->
-			viewModel.updateMotionClipProperties(clip.id) { it.copy(fadeOut = value) }
+			viewModel.updateMotionClipProperties(clip.id) { it.copy(fadeOut = value, runtimeDefaultFades = false) }
 		}
 	}
 	MotionEventSettings(viewModel, clip)

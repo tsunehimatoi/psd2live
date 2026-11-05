@@ -19,6 +19,31 @@ import kotlin.test.*
 class WorkspaceSourceImporterTest {
     @TempDir lateinit var directory: Path
 
+    @Test fun aPsdInstallsTheSelectedStackInItsInitialHistoryNode() = runBlocking<Unit> {
+        val original = Characters.head(physics = false)
+        val path = Files.createFile(directory.resolve("modifier-input.psd")).toAbsolutePath()
+        val builder = WorkspacePreviewBuilder()
+        for (mode in WorkspaceInitialModifiers.entries) {
+            val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) })
+            val importer = WorkspaceSourceImporter(runtime, readPsd = { original.source })
+            val result = importer.importPsd(path, null, runtime.state.value.state, initialConfig = original.rawConfig(), modifiers = mode)
+            val installed = result.capture
+            val stack = io.github.psd2live.core.modifier.RigModifierStack.fromJson(installed.document.rigEdits.modifierStack!!)
+            assertEquals(1, runtime.history().selections.size)
+            if (mode == WorkspaceInitialModifiers.EMPTY) {
+                assertTrue(stack.instances.isEmpty())
+                assertTrue(installed.model.rig.puppet.deformers.isEmpty())
+            } else {
+                assertTrue(stack.instances.all { it.presetGroup == "fitted" })
+                assertEquals(listOf("rig.scaffold") + WorkspaceModifierPlan.groups.getValue("fitted"), stack.instances.map { it.type })
+                assertTrue(installed.model.rig.puppet.deformers.isNotEmpty())
+            }
+            val rebuilt = builder.build(installed.document)
+            assertEquals(io.github.psd2live.core.RigIrCompiler.compile(installed.model),
+                io.github.psd2live.core.RigIrCompiler.compile(rebuilt))
+        }
+    }
+
     @Test fun materialAndRevisionPreparationLeaveTheCallerThreadButProjectionReturnsToIt() = runBlocking {
         val original = Characters.head(physics = false)
         val model = WorkspacePreviewBuilder().build(original)

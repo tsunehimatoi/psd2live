@@ -3,6 +3,7 @@ package io.github.psd2live.ui.tutorial
 import io.github.psd2live.ui.EditHierarchyMode
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.CanvasMode
+import kotlinx.serialization.json.*
 
 enum class TutorialId {
 	BASIC,
@@ -238,7 +239,11 @@ fun TutorialStep.isComplete(
 	TutorialCompletion.EDIT_TAB -> appState.activeCanvas.mode == CanvasMode.EDIT
 	TutorialCompletion.HISTORY_TAB -> appState.historyPanelShown
 	TutorialCompletion.EXPORT_DIALOG -> appState.showExportDialog
-	TutorialCompletion.HAS_SIMULATION -> appState.rigEdits.simEdits.isNotEmpty()
+	TutorialCompletion.HAS_SIMULATION -> appState.rigEdits.simEdits.isNotEmpty() ||
+        appState.previewModel?.rig?.modifierReport?.get("entries")?.jsonArray.orEmpty().any {
+            val entry = it.jsonObject
+            entry["type"]?.jsonPrimitive?.content == "simulation" && entry["status"]?.jsonPrimitive?.content == "active"
+        }
 }
 
 fun TutorialStep.prerequisiteMet(appState: PSD2LiveState): Boolean = when {

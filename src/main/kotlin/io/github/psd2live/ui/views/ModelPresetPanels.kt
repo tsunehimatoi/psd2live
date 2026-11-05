@@ -503,6 +503,7 @@ private fun TuningRow(field: RigTuning.Field, tuning: RigTuning, viewModel: PSD2
 				RigTuning.Unit.DEGREES -> "°"
 				RigTuning.Unit.PERCENT -> "%"
 				RigTuning.Unit.TORSO_LENGTHS -> tr("settings.unit.x")
+				RigTuning.Unit.PIXELS -> tr("settings.unit.px")
 			},
 			enabled = !isBusy,
 			modifier = Modifier.width(60.dp),
@@ -781,6 +782,7 @@ private fun KnobRow(label: String, hint: String, knob: RecipeKnob, value: Float,
 				RigTuning.Unit.DEGREES -> "°"
 				RigTuning.Unit.PERCENT -> "%"
 				RigTuning.Unit.TORSO_LENGTHS -> tr("settings.unit.x")
+				RigTuning.Unit.PIXELS -> tr("settings.unit.px")
 			},
 			enabled = enabled,
 			modifier = Modifier.width(60.dp),

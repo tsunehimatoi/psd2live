@@ -1537,7 +1537,8 @@ class PSD2LiveViewModel : AutoCloseable {
 
     /** Whether the start page's presets can apply to the model open now: one generated from a PSD. */
     internal fun startPresetsApplyToCurrent(state: PSD2LiveState = _state.value): Boolean =
-        state.previewModel != null && !state.meshOnly && state.rigEdits.importedCmo3 == null
+        startChoices.modifiers == null && state.rigEdits.modifierStack == null &&
+            state.previewModel != null && !state.meshOnly && state.rigEdits.importedCmo3 == null
 
     /** Brings the open model to the start page's presets, then shows the edit workspace. */
     fun applyStartChoicesToCurrent() {
@@ -1815,11 +1816,13 @@ class PSD2LiveViewModel : AutoCloseable {
 
     /** Reject a field captured from a projection that has not caught up with the authoritative stack. */
     internal fun modifierEditState(): String? {
-        val shown = _state.value.rigEdits.modifierStack?.let(io.github.psd2live.core.modifier.RigModifierStack::fromJson) ?: return null
+        val shown = _state.value.rigEdits.modifierStack?.let(io.github.psd2live.core.modifier.RigModifierStack::fromJson)
         val observed = workspaceBackend?.captureQueries()?.modifierStack() ?: return null
         val rows = observed.getValue("entries").jsonArray
+        val entries = shown?.instances.orEmpty()
         val matches = _state.value.historySnapshot?.headNodeId == observed.getValue("history_node_id").jsonPrimitive.content &&
-            rows.size == shown.instances.size && shown.instances.zip(rows).all { (instance, raw) ->
+            observed.getValue("legacy").jsonPrimitive.boolean == (shown == null) &&
+            rows.size == entries.size && entries.zip(rows).all { (instance, raw) ->
             val row = raw.jsonObject
             row.getValue("id").jsonPrimitive.content == instance.id && row.getValue("config") ==
                 (if (instance.type == "simulation") kotlinx.serialization.json.JsonObject(instance.config - "bake") else instance.config) &&
@@ -7850,11 +7853,12 @@ class PSD2LiveViewModel : AutoCloseable {
             updateState { it.copy(errorMessage = tr("dialog.inputInvalid", input)) }; return
         }
         val path = input.toAbsolutePath().normalize().toString()
+        val choices = startChoices
         startWorkspaceImport(discardUnsaved, tr("status.analyzing"), afterImport = {
-            if (!layout) applyStartPresets(startChoices)
+            if (!layout && choices.modifiers == null) applyStartPresets(choices)
             leaveStartPage()
             openWorkspacePreset(if (layout) WorkspacePreset.LAYOUT else WorkspacePreset.EDIT)
-        }) { if (layout) it.importLayout(path, discardUnsaved) else it.importPsd(path, discardUnsaved) }
+        }) { if (layout) it.importLayout(path, discardUnsaved) else it.importPsd(path, discardUnsaved, choices.modifiers) }
     }
 
     /** Both adapters invoke the same application source capability; only this entry owns GUI confirmation. */

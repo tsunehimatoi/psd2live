@@ -179,8 +179,8 @@ internal fun ModifierNativeValues(type: String, config: JsonObject, state: PSD2L
             val clip = MotionClips.fromJson(config)
             number("animation.duration", clip.duration, .01f..120f) { MotionClips.toJson(MotionKeyEdits.withDuration(clip, it)) }
             number("export.setting.clip_fps", clip.fps, 1f..120f) { MotionClips.toJson(clip.copy(fps = it)) }
-            number("animation.fadeInTime", clip.fadeIn, 0f..10f) { MotionClips.toJson(clip.copy(fadeIn = it)) }
-            number("animation.fadeOutTime", clip.fadeOut, 0f..10f) { MotionClips.toJson(clip.copy(fadeOut = it)) }
+            number("animation.fadeInTime", clip.fadeIn, 0f..10f) { MotionClips.toJson(clip.copy(fadeIn = it, runtimeDefaultFades = false)) }
+            number("animation.fadeOutTime", clip.fadeOut, 0f..10f) { MotionClips.toJson(clip.copy(fadeOut = it, runtimeDefaultFades = false)) }
             toggle("animation.loop", clip.loop) { MotionClips.toJson(clip.copy(loop = it)) }
             val expanded = remember(clip.id) { mutableStateMapOf<String, Boolean>() }
             clip.curves.forEachIndexed { index, curve ->

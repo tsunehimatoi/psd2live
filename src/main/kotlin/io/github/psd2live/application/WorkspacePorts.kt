@@ -158,7 +158,7 @@ data class ImageLayerInsertion(
 interface WorkspaceSourcePort {
     /** Import a complete file batch as editable artwork in one history node, where [insertion] puts it. */
     suspend fun importImages(state: String, paths: List<java.nio.file.Path>, insertion: ImageLayerInsertion): WorkspaceMutationResult
-    suspend fun importPsd(path: String, discardUnsaved: Boolean = false): WorkspaceMutationResult
+    suspend fun importPsd(path: String, discardUnsaved: Boolean = false, modifiers: WorkspaceInitialModifiers? = null): WorkspaceMutationResult
     /** A new Layout project, not generated yet, from a layout manifest or a zip holding one ([LayoutManifest]). */
     suspend fun importLayout(path: String, discardUnsaved: Boolean = false): WorkspaceMutationResult
     suspend fun importCmo3(path: java.nio.file.Path, mode: Cmo3ImportMode,

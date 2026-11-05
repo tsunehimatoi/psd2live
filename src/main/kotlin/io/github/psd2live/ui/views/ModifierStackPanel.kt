@@ -189,7 +189,37 @@ private fun ModifierModulePhysicsValues(instance: RigModifierInstance, report: J
 
 @Composable
 private fun ModifierSourceValues(instance: RigModifierInstance, enabled: Boolean, vm: PSD2LiveViewModel) {
+    if (instance.type == RigSourceModifiers.SCAFFOLD) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CompactCheckbox(instance.config["featureDisplacement"]?.jsonPrimitive?.booleanOrNull == true, { value ->
+                vm.editModifier("modifier_update", buildJsonObject {
+                    put("id", instance.id); put("type", instance.type)
+                    put("config", JsonObject(instance.config + ("featureDisplacement" to JsonPrimitive(value))))
+                })
+            }, enabled = enabled)
+            Text(tr("model.deformer.featureDisplacement"), style = LocalToolTypography.current.caption)
+        }
+        return
+    }
     val spec = RigLegacyBindings.find(instance.type) ?: return
+    if (spec.mouthOutline) {
+        val color = RigLegacyBindings.outlineColor(instance)
+        var hex by remember(instance.id, color) { mutableStateOf(color?.let { "%06X".format(it) }.orEmpty()) }
+        fun setColor(rgb: Int?) {
+            vm.editModifier("modifier_update", buildJsonObject {
+                put("id", instance.id); put("type", instance.type)
+                put("config", JsonObject(if (rgb == null) instance.config - "color" else instance.config + ("color" to JsonPrimitive(rgb))))
+            }) { failure -> if (failure != null) hex = color?.let { "%06X".format(it) }.orEmpty() }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            CompactTextField(hex, { value ->
+                hex = value
+                val digits = value.trim().removePrefix("#")
+                if (digits.length == 6) digits.toIntOrNull(16)?.takeIf { it >= 0 && it != color }?.let(::setColor)
+            }, enabled = enabled, placeholder = "#RRGGBB", isMono = true, modifier = Modifier.width(80.dp), height = 20.dp)
+            CompactButton(tr("mouth.autoColor"), { setColor(null) }, enabled = enabled && color != null, height = 20.dp)
+        }
+    }
     var advanced by remember(instance.id) { mutableStateOf(false) }
     fun config(field: String, key: String?, value: Float): JsonObject = if (key == null) JsonObject(instance.config + (field to JsonPrimitive(value)))
         else JsonObject(instance.config + (field to JsonObject(instance.config[field]?.jsonObject.orEmpty() + (key to JsonPrimitive(value)))))
@@ -219,7 +249,11 @@ private fun ModifierSourceValues(instance: RigModifierInstance, enabled: Boolean
                 }
             }
             spec.knobs.filter { (advanced || !it.advanced) && !(hasTurnStyle && it.id == "style") }.forEach { knob ->
-                val label = if (spec.seeThrough) tr("seeThrough.opacity") else tr("settings.rig.knob.${instance.type.replace('/', '.')}.${knob.id}")
+                val label = when {
+                    spec.seeThrough -> tr("seeThrough.opacity")
+                    spec.mouthOutline -> tr("mouth.thickness")
+                    else -> tr("settings.rig.knob.${instance.type.replace('/', '.')}.${knob.id}")
+                }
                 value(label, "values", knob.id, knob.default, knob.range, unit(knob.unit))
             }
             spec.fields.filter { advanced || !it.advanced }.forEach { field ->
@@ -234,6 +268,7 @@ private fun unit(unit: RigTuning.Unit): String = when (unit) {
     RigTuning.Unit.DEGREES -> "°"
     RigTuning.Unit.PERCENT -> "%"
     RigTuning.Unit.TORSO_LENGTHS -> tr("settings.unit.x")
+    RigTuning.Unit.PIXELS -> tr("settings.unit.px")
 }
 
 /** Keep each continuous field local; submit its final value once against the state captured on press/focus. */

@@ -60,6 +60,7 @@ fun TutorialOverlay(
 	onFinish: () -> Unit,
 	onContinueNext: (() -> Unit)? = null,
 	onOpenCatalog: (() -> Unit)? = null,
+    modifierStack: Boolean = false,
 ) {
 	val colors = LocalToolColors.current
 	val density = LocalDensity.current
@@ -110,6 +111,7 @@ fun TutorialOverlay(
 					onFinish = onFinish,
 					onContinueNext = onContinueNext,
 					onOpenCatalog = onOpenCatalog,
+                    modifierStack = modifierStack,
 					nextTutorialId = nextTutorialId,
 					targetMissing = target == null && !step.isDone,
 					reviewing = reviewing,
@@ -177,6 +179,7 @@ fun TutorialCoachCard(
 	targetMissing: Boolean = false,
 	reviewing: Boolean = false,
 	modifier: Modifier = Modifier,
+    modifierStack: Boolean = false,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -194,6 +197,12 @@ fun TutorialCoachCard(
 	val nextId = nextTutorialId
 	val bodyStyle = typography.caption.copy(fontSize = 11.5.sp, lineHeight = 16.sp)
 	val actionStyle = typography.caption.copy(lineHeight = 17.sp)
+    val stackStep = modifierStack && when (tutorialId) {
+        TutorialId.BASIC -> step.key == "settings"
+        TutorialId.SIMULATION -> step.key in setOf("presets", "generate", "hairModes", "clothing")
+        else -> false
+    }
+    fun textKey(original: String) = if (stackStep) "$original.stack" else original
 
 	Column(
 		modifier = modifier
@@ -217,12 +226,12 @@ fun TutorialCoachCard(
 		)
 		Text(text = progressLabel, style = typography.caption.copy(fontSize = 10.sp), color = colors.accent)
 		Text(
-			text = tr(step.titleKey(tutorialId)),
+			text = tr(textKey(step.titleKey(tutorialId))),
 			style = typography.body.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
 			color = colors.textPrimary,
 		)
 		TutorialRichText(
-			text = tr(step.bodyKey(tutorialId)),
+			text = tr(textKey(step.bodyKey(tutorialId))),
 			keymap = keymap,
 			style = bodyStyle,
 			color = colors.textMuted,
@@ -245,7 +254,7 @@ fun TutorialCoachCard(
 					.background(colors.accent.copy(alpha = 0.08f), RoundedCornerShape(6.dp)).padding(10.dp),
 			) {
 				TutorialRichText(
-					text = tr(step.actionKey(tutorialId)),
+					text = tr(textKey(step.actionKey(tutorialId))),
 					keymap = keymap,
 					style = actionStyle,
 					color = colors.textPrimary,

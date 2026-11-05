@@ -290,7 +290,7 @@ internal class WorkspaceHost<V>(
         playbackSessions.restart(projectId, state, current.facts().activeWorkspaceId, initialTracking = current.facts().mouseTracking, initialSmoothTracking = current.facts().smoothTracking)
 
     override fun layerMeshSettings(layerId: String): kotlinx.serialization.json.JsonObject = captureQueries().layerMeshSettings(layerId)
-    override suspend fun importPsd(path: String, discardUnsaved: Boolean): WorkspaceMutationResult = editMutex.withLock {
+    override suspend fun importPsd(path: String, discardUnsaved: Boolean, modifiers: WorkspaceInitialModifiers?): WorkspaceMutationResult = editMutex.withLock {
         val (state, current) = captureSourceImport(discardUnsaved)
         val input = Path.of(path)
         val owned = runInterruptible(Dispatchers.IO) {
@@ -300,7 +300,7 @@ internal class WorkspaceHost<V>(
         }
         val result = sourceImporter.importPsd(owned.path, state.capture?.projectId, state.state, discardUnsaved,
             sourceConfig(state, current), sourceAuxiliary = owned.auxiliary,
-            displayName = input.fileName.toString()) { document, preview, id ->
+            displayName = input.fileName.toString(), modifiers = modifiers) { document, preview, id ->
             presentation.sourceInstalled(current, document, preview, input, id)
         }
         finishSourceImport(result)

@@ -721,6 +721,7 @@ private fun FrameWindowScope.PSD2LiveAppContent(
 					isFirstStep = tutorial.isFirstStep,
 					prerequisiteMet = prereqOk,
 					spotlightTargetId = step.effectiveTargetId(state),
+                    modifierStack = state.rigEdits.modifierStack != null,
 					nextTutorialId = tutorial.nextTutorialId,
 					onNext = { if (prereqOk) advanceTutorial() },
 					onPrevious = { retreatTutorial() },
