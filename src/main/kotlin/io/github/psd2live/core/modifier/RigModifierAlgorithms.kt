@@ -96,10 +96,15 @@ internal object RigModifierAlgorithms {
     })
 
     private val native = listOf(swing, simulation, physics, motion)
-    val registry = RigModifierRegistry(native + RigSourceModifiers.definitions(null))
+    @Volatile private var catalog: Pair<Long, RigModifierRegistry>? = null
+    val registry: RigModifierRegistry get() {
+        val revision = ModifierPluginStore.shared.revision.value
+        return catalog?.takeIf { it.first == revision }?.second ?: RigModifierRegistry(
+            native + RigSourceModifiers.definitions(null) + ModifierPluginCatalog.definitions()).also { catalog = revision to it }
+    }
 
     fun evaluator(source: RigModifierSource? = null) = RigModifierEvaluator(
-        if (source == null) registry else RigModifierRegistry(native + RigSourceModifiers.definitions(source)),
+        if (source == null) registry else RigModifierRegistry(native + RigSourceModifiers.definitions(source) + ModifierPluginCatalog.definitions()),
         physicsOrder = source?.physicsOrder.orEmpty()) { rig, instance, commands ->
         var model = PuppetIr.toPuppet(rig)
         val issues = ArrayList<GeneratedOverrideIssue>()

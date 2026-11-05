@@ -28,8 +28,10 @@ internal object RigIrCompiler {
         return roles.distinct().sortedBy { order.indexOf(it.role).takeIf { index -> index >= 0 } ?: order.size }
     }
 
-	fun compile(preview: RigPreviewModel, tileArt: Boolean = false, simulations: Boolean = false): RigIR =
-		compile(preview.analysis, preview.atlas, preview.rig, preview.config, tileArt, simulations)
+	fun compile(preview: RigPreviewModel, tileArt: Boolean = false, simulations: Boolean = false): RigIR {
+        preview.config.rigEdits.modifierStack?.let { io.github.psd2live.core.modifier.ModifierPluginCatalog.requireAvailable(io.github.psd2live.core.modifier.RigModifierStack.fromJson(it)) }
+        return compile(preview.analysis, preview.atlas, preview.rig, preview.config, tileArt, simulations)
+    }
 
 	/**
 	 * [tileArt] adds every tile's unpacked source pixels, which only formats with editable source layers need;

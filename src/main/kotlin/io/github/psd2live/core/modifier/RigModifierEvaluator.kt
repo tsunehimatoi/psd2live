@@ -26,38 +26,42 @@ internal class RigModifierDefinition(
     val motionOutputs: (RigModifierInstance) -> Set<String> = { emptySet() },
     val provides: Set<String> = emptySet(),
     val evaluate: (RigIR, RigModifierInstance, () -> Unit) -> RigIR,
+    val pluginReference: ModifierPluginReference? = null,
+    val plugin: ModifierAlgorithmPlugin = ModifierAlgorithmPlugin(evaluate),
+    /** Null keeps source-aware algorithms on the conservative ordered-prefix cache. */
+    val cacheReads: Set<String>? = null,
 )
 
 internal class RigModifierRegistry(definitions: List<RigModifierDefinition>) {
-    private val entries = definitions.associateBy { it.type to it.version }
+    private val entries = definitions.associateBy { Triple(it.type, it.version, it.pluginReference) }
 
     init {
         require(entries.size == definitions.size) { "Duplicate modifier algorithm version" }
         require(definitions.all { it.type.isNotBlank() && it.version > 0 }) { "Invalid modifier definition" }
         val known = definitions.mapTo(HashSet()) { it.type }
-        require(definitions.all { it.requires.all(known::contains) }) { "Unknown modifier dependency" }
+        require(definitions.filter { it.pluginReference == null }.all { it.requires.all(known::contains) }) { "Unknown modifier dependency" }
         val visiting = HashSet<String>()
         val visited = HashSet<String>()
         fun visit(type: String) {
             if (type in visited) return
             require(visiting.add(type)) { "Cyclic modifier dependency: $type" }
-            definitions.filter { it.type == type }.flatMap { it.requires }.distinct().forEach(::visit)
+            definitions.filter { it.type == type }.flatMap { it.requires }.distinct().filter { it in known }.forEach(::visit)
             visiting.remove(type)
             visited.add(type)
         }
         known.forEach(::visit)
     }
 
-    fun definition(instance: RigModifierInstance): RigModifierDefinition = requireNotNull(entries[instance.type to instance.version]) {
+    fun definition(instance: RigModifierInstance): RigModifierDefinition = requireNotNull(entries[Triple(instance.type, instance.version, instance.plugin)]) {
         "Unsupported modifier algorithm: ${instance.type}@${instance.version}"
-    }
+    }.also { require(it.pluginReference == instance.plugin) { "Missing pinned plugin for ${instance.type}: ${instance.plugin}" } }
 
     fun provides(actual: String, required: String): Boolean = actual == required || entries.values.any { it.type == actual && required in it.provides }
 
     val definitions: List<RigModifierDefinition> get() = entries.values.toList()
 }
 
-internal enum class ModifierStatus { ACTIVE, DISABLED, MISSING_DEPENDENCY }
+internal enum class ModifierStatus { ACTIVE, DISABLED, MISSING_DEPENDENCY, MISSING_PLUGIN }
 internal enum class ModifierChange { ADDED, MODIFIED, REMOVED, REUSED }
 internal data class ModifierMaskRelation(val target: String, val before: List<String>, val after: List<String>,
     val beforeInverted: Boolean, val afterInverted: Boolean)
@@ -82,7 +86,8 @@ internal data class AppliedModifierPrefix(val authored: RigIR, val stack: RigMod
 /** One successful evaluation per pipeline. Failed/cancelled candidates never replace the snapshot. */
 internal class RigModifierEvaluationCache {
     data class Snapshot(val context: Any, val authored: RigIR, val stack: RigModifierStack,
-                        val entries: List<ModifierEvaluation>, val outputs: List<RigIR>)
+                        val entries: List<ModifierEvaluation>, val outputs: List<RigIR>, val plugins: Long = ModifierPluginStore.shared.revision.value,
+                        val algorithms: Map<String, ModifierInputCache.Entry> = emptyMap())
     @Volatile var snapshot: Snapshot? = null
 }
 
@@ -101,22 +106,30 @@ internal class RigModifierEvaluator(
     fun evaluate(authored: RigIR, stack: RigModifierStack,
                  cache: RigModifierEvaluationCache? = null, context: Any = Unit,
                  checkpoint: () -> Unit = {}): RigModifierResult {
+        val pluginRevision = ModifierPluginStore.shared.revision.value
         validateOrder(stack)
         var current = authored
         val available = stack.appliedCapabilities.toMutableList()
         val entries = ArrayList<ModifierEvaluation>()
         val exclusive = HashMap<Pair<String, ModifierTarget>, String>()
         val writers = HashMap<Pair<String, String>, Pair<String, RigModifierDefinition>>()
-        val saved = cache?.snapshot?.takeIf { it.context == context && it.authored == authored &&
+        val saved = cache?.snapshot?.takeIf { it.plugins == pluginRevision && it.context == context && it.authored == authored &&
             it.stack.appliedCapabilities == stack.appliedCapabilities }
         val reuse = saved?.stack?.instances?.zip(stack.instances)?.takeWhile { (a, b) ->
             a == b && saved.stack.overrides[a.id].orEmpty() == stack.overrides[b.id].orEmpty()
         }?.size ?: 0
         val outputs = ArrayList<RigIR>()
+        val algorithmCache = saved?.algorithms.orEmpty().filterKeys { id -> stack.instances.any { it.id == id } }.toMutableMap()
         for ((index, instance) in stack.instances.withIndex()) {
             checkpoint()
+            if (!ModifierPluginCatalog.available(instance)) {
+                entries += ModifierEvaluation(instance, if (instance.enabled) ModifierStatus.MISSING_PLUGIN else ModifierStatus.DISABLED)
+                outputs += current
+                continue
+            }
             val definition = registry.definition(instance)
             if (index < reuse) {
+                io.github.psd2live.core.RigBuildProfile.count("modifier cache hits")
                 val entry = saved!!.entries[index]
                 current = saved.outputs[index]
                 entries += entry
@@ -168,15 +181,24 @@ internal class RigModifierEvaluator(
                 require(desired != null && desired.id == parameter.id) { "${instance.id}: incompatible parameter ${parameter.id}" }
                 parameter.id to desired
             }
+            io.github.psd2live.core.RigBuildProfile.count("modifier cache misses")
             val before = current
-            val generated = io.github.psd2live.core.RigBuildProfile.stage("modifier evaluate: ${instance.type}") { definition.evaluate(before, instance, checkpoint) }
+            val inputKey = definition.cacheReads?.let { ModifierInputCache.input(before, it) }
+            val cached = algorithmCache[instance.id]?.takeIf { it.instance == instance && it.input == inputKey }
+            val generated = if (cached != null) {
+                io.github.psd2live.core.RigBuildProfile.count("modifier dependency cache hits")
+                cached.patch.apply(before)
+            } else io.github.psd2live.core.RigBuildProfile.stage("modifier evaluate: ${instance.type}") { definition.plugin.evaluate(before, instance, checkpoint) }
+            if (inputKey != null && cached == null) algorithmCache[instance.id] = ModifierInputCache.Entry(instance, inputKey, ModifierInputCache.Patch(before, generated))
             checkpoint()
             validateParameters(before, generated, instance, resolved)
             declared.forEach { parameter ->
                 val actual = generated.parameters.singleOrNull { it.id == parameter.id }
                 require(actual != null && compatible(actual, resolved.getValue(parameter.id))) { "${instance.id} did not produce parameter ${parameter.id}" }
             }
-            val overridden = applyOverrides(generated, instance, stack.overrides[instance.id].orEmpty())
+            val overrides = stack.overrides[instance.id].orEmpty()
+            val overridden = if (overrides.isEmpty()) ModifierOverrideResult(generated) else
+                io.github.psd2live.core.RigBuildProfile.stage("modifier overrides") { applyOverrides(generated, instance, overrides) }
             current = overridden.rig.let { output ->
                 if (physicsOrder.isEmpty()) output else output.copy(physics = output.physics.copy(
                     groups = io.github.psd2live.core.PhysicsCatalog.ordered(output.physics.groups, physicsOrder) { it.id }))
@@ -202,17 +224,19 @@ internal class RigModifierEvaluator(
             outputs += current
         }
         checkpoint()
-        cache?.snapshot = RigModifierEvaluationCache.Snapshot(context, authored, stack, entries, outputs)
+        require(pluginRevision == ModifierPluginStore.shared.revision.value) { "Algorithm plugins changed during evaluation; retry the edit" }
+        cache?.snapshot = RigModifierEvaluationCache.Snapshot(context, authored, stack, entries, outputs, pluginRevision, algorithmCache)
         return RigModifierResult(current, entries)
     }
 
     /** A dependency supplied only below its consumer is an invalid order, never an invitation to sort silently. */
     fun validateOrder(stack: RigModifierStack) {
         stack.instances.forEachIndexed { index, instance ->
+            if (!ModifierPluginCatalog.available(instance)) return@forEachIndexed
             val definition = registry.definition(instance)
             if (!instance.enabled) return@forEachIndexed
             val motionInputs = definition.motionInputs(instance)
-            for (later in stack.instances.drop(index + 1).filter { it.enabled }) {
+            for (later in stack.instances.drop(index + 1).filter { it.enabled && ModifierPluginCatalog.available(it) }) {
                 val conflicts = motionInputs.intersect(registry.definition(later).motionOutputs(later))
                 require(conflicts.isEmpty()) { "${instance.id} must follow ${later.id} for motions ${conflicts.joinToString()}" }
             }
@@ -249,7 +273,7 @@ internal class RigModifierEvaluator(
         val complete = evaluate(authored, stack, checkpoint = checkpoint)
         val prefix = evaluate(authored, stack.copy(instances = stack.instances.take(end),
             overrides = stack.overrides.filterKeys { owner -> owner in stack.retiredIds || stack.instances.take(end).any { it.id == owner } }), checkpoint = checkpoint)
-        require(prefix.entries.none { it.status == ModifierStatus.MISSING_DEPENDENCY }) { "Cannot apply a prefix with missing dependencies" }
+        require(prefix.entries.none { it.status == ModifierStatus.MISSING_DEPENDENCY || it.status == ModifierStatus.MISSING_PLUGIN }) { "Cannot apply a prefix with missing dependencies or plugins" }
         require(prefix.entries.none { it.overrideIssues.any { issue -> issue.kind == io.github.psd2live.core.GeneratedOverrideIssueKind.ORPHANED } }) {
             "Cannot apply a prefix with overrides that no longer match their generated content"
         }
@@ -329,8 +353,10 @@ internal class RigModifierEvaluator(
         }
     }
 
-    private fun contributions(before: RigIR, after: RigIR): List<ModifierContribution> = buildList {
+    companion object {
+    internal fun contributions(before: RigIR, after: RigIR): List<ModifierContribution> = buildList {
         fun <T> compare(kind: String, left: List<T>, right: List<T>, key: (T) -> String) {
+            if (left === right) return
             val a = left.associateBy(key); val b = right.associateBy(key)
             require(a.size == left.size && b.size == right.size) { "Duplicate $kind IDs in modifier output" }
             for ((id, value) in b) when {
@@ -364,5 +390,6 @@ internal class RigModifierEvaluator(
         if (before.parameterRoles != after.parameterRoles) add(ModifierContribution("relations", "parameter-roles", ModifierChange.MODIFIED))
         if (before.rootChildren != after.rootChildren) add(ModifierContribution("hierarchy", "root", ModifierChange.MODIFIED))
         if (before.parameterTree != after.parameterTree) add(ModifierContribution("hierarchy", "parameters", ModifierChange.MODIFIED))
+    }
     }
 }

@@ -31,6 +31,9 @@ internal data class RigModifierInstance(
     @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
     @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
     val outputAliases: Map<String, String> = emptyMap(),
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val plugin: ModifierPluginReference? = null,
 ) {
     init {
         require(id.matches(Regex("[A-Za-z0-9_.:-]+"))) { "Invalid modifier instance ID" }
@@ -92,14 +95,14 @@ internal data class RigModifierStack(
     }
 
     fun add(type: String, version: Int, targets: List<ModifierTarget>, config: JsonObject = JsonObject(emptyMap()),
-            presetGroup: String? = null, id: String? = null, outputAliases: Map<String, String> = emptyMap()): RigModifierStack {
+            presetGroup: String? = null, id: String? = null, outputAliases: Map<String, String> = emptyMap(), plugin: ModifierPluginReference? = null): RigModifierStack {
         var sequence = nextId
         val reserved = instances.mapTo(HashSet()) { it.id } + retiredIds
         while ("m$sequence" in reserved) sequence = Math.addExact(sequence, 1)
         val chosen = id ?: "m$sequence"
         require(chosen !in reserved) { "Modifier ID is already used or retired: $chosen" }
         val entry = RigModifierInstance(chosen, type, version, targets.toList(), config = config, presetGroup = presetGroup,
-            outputAliases = outputAliases.toMap())
+            outputAliases = outputAliases.toMap(), plugin = plugin)
         return copy(instances = instances + entry, nextId = Math.addExact(sequence, 1))
     }
 
@@ -107,7 +110,7 @@ internal data class RigModifierStack(
         val index = index(id)
         val updated = change(instances[index])
         require(updated.id == id && updated.type == instances[index].type && updated.version == instances[index].version &&
-            updated.outputAliases == instances[index].outputAliases) {
+            updated.outputAliases == instances[index].outputAliases && updated.plugin == instances[index].plugin) {
             "Updating a modifier cannot change its identity or algorithm version"
         }
         return copy(instances = instances.toMutableList().apply { set(index, updated) })
