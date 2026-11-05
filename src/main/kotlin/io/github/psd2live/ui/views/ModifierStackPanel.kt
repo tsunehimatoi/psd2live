@@ -6,6 +6,8 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -17,8 +19,6 @@ import io.github.psd2live.ui.views.texture.FloatingMenuRow
 import io.github.psd2live.ui.views.texture.FloatingMenuSection
 import io.github.psd2live.ui.views.texture.FloatingMenuDivider
 import io.github.psd2live.ui.views.tooloptions.GlidingColumn
-import io.github.psd2live.ui.views.texture.MenuGlide
-import io.github.psd2live.ui.views.texture.glideItem
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.Divider
@@ -126,7 +126,7 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                                     vm.editModifier("modifier_move", buildJsonObject { put("id", item.id); put("index", destination) }, expected)
                             }
                         }) {
-                        MenuGlide(Modifier.fillMaxWidth().verticalScroll(scroll).padding(end = Spacing.Margin)) {
+                        Box(Modifier.fillMaxWidth().verticalScroll(scroll).padding(end = Spacing.Margin)) {
                             Column(Modifier.fillMaxWidth()) {
                                 stack.instances.forEach { instance -> key(instance.id) {
                                     val name = instance.config["name"]?.jsonPrimitive?.contentOrNull ?: modifierName(instance.type)
@@ -134,6 +134,7 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                                     var labelCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
                                     val status = reports[instance.id]?.get("status")?.jsonPrimitive?.content ?: "loading"
                                     val interaction = remember { MutableInteractionSource() }
+                                    val hovered by interaction.collectIsHoveredAsState()
                                     DisposableEffect(instance.id) { onDispose { bounds.remove(instance.id) } }
                                     Row(Modifier.fillMaxWidth().height(24.dp)
                                         .parameterDragRow(layout, drag, bounds.values, preview)
@@ -144,8 +145,8 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                                                 bounds[instance.id] = layout.copy(top = top, bottom = top + row.size.height)
                                             }
                                         }
-                                        .background(if (selected?.id == instance.id) colors.selection else Color.Transparent)
-                                        .glideItem(enabled = !drag.isDragging)
+                                        .background(when { selected?.id == instance.id -> colors.selection; hovered && !drag.isDragging -> colors.controlHover; else -> Color.Transparent })
+                                        .hoverable(interaction)
                                         .clickable(interactionSource = interaction, indication = null) {
                                             if (drag.suppressClick) drag.suppressClick = false
                                             else { selectedId = instance.id; page = 0 }
@@ -153,6 +154,7 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                                         CompactCheckbox(instance.enabled, { value ->
                                             vm.editModifier("modifier_enable", buildJsonObject { put("id", instance.id); put("enabled", value) })
                                         }, enabled = enabled)
+                                        Spacer(Modifier.width(Spacing.Gap))
                                         Text(name, style = LocalToolTypography.current.body.copy(fontSize = 11.sp),
                                             color = if (instance.enabled) colors.textPrimary else colors.textMuted,
                                             maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -478,7 +480,7 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                 highlights = { !dialog.committing },
                 onHover = { if (!dialog.committing) selectedCategory = categories[it] }) { index ->
                 val id = categories[index]
-                FloatingMenuRow(categoryName(id), { selectedCategory = id }, selected = selectedCategory == id,
+                FloatingMenuRow(categoryName(id), { selectedCategory = id }, selected = selectedCategory == id, bar = false,
                     enabled = !dialog.committing)
             }
             key(selectedCategory) {
@@ -504,7 +506,7 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                 GlidingColumn(Modifier.weight(1f).verticalScroll(rememberScrollState()), rows.size,
                     highlights = { !dialog.committing }) { index ->
                     val (label, action, selected) = rows[index]
-                    FloatingMenuRow(label, action, selected = selected, enabled = !dialog.committing)
+                    FloatingMenuRow(label, action, selected = selected, bar = false, enabled = !dialog.committing)
                 }
             }
         }
