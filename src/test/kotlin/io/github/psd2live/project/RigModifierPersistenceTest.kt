@@ -22,7 +22,8 @@ class RigModifierPersistenceTest {
         .add("motion", 1, listOf(ModifierTarget("mesh", "mesh")), presetGroup = "recommended")
         .withOverrides("m1", listOf(buildJsonObject { put("op", "structure"); putJsonArray("edits") {} }))
         .remove("m1")
-        .add("physics", 1, listOf(ModifierTarget("part", "body")), buildJsonObject { put("input", "ParamX") })
+        .add("physics", 1, listOf(ModifierTarget("part", "body")), buildJsonObject { put("input", "ParamX") },
+            outputAliases = mapOf("physics" to "existing-physics"))
         .update("m2") { it.copy(enabled = false) }
         .add("motion", 1, listOf(ModifierTarget("mesh", "mesh")))
         .update("m3") { it.copy(enabled = false, inputFingerprint = "a".repeat(64)) }

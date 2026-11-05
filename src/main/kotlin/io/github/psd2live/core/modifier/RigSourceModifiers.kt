@@ -261,7 +261,7 @@ internal class RigModifierSource(
     private fun activeBefore(instance: RigModifierInstance): List<RigModifierInstance> = activePrefixes.getOrPut(instance.id) {
         val available = stack.appliedCapabilities.toMutableList()
         val active = stack.appliedCapabilities.filter { it.id != null }.mapTo(ArrayList()) {
-            RigModifierInstance(requireNotNull(it.id), it.type, it.version, it.targets, config = it.config)
+            RigModifierInstance(requireNotNull(it.id), it.type, it.version, it.targets, config = it.config, outputAliases = it.outputAliases)
         }
         for (previous in stack.instances.take(stack.index(instance.id))) {
             if (!previous.enabled) continue
@@ -426,7 +426,12 @@ internal class RigModifierSource(
         val applied = stack.appliedCapabilities.singleOrNull { it.id == id && it.type == RigSourceModifiers.SCAFFOLD }
         val targets = preceding?.targets ?: requireNotNull(applied) { "${instance.id}: binding scaffold $id must precede this modifier" }.targets
         require(instance.targets.all { it in targets }) { "${instance.id}: scaffold $id does not cover all captured targets" }
-        return preceding ?: RigModifierInstance(id, RigSourceModifiers.SCAFFOLD, requireNotNull(applied).version, targets, config = applied.config)
+        val aliases = preceding?.outputAliases ?: requireNotNull(applied).outputAliases
+        require(aliases.keys.none { it.startsWith("shared/deformer:") } || instance.targets.toSet() == targets.toSet()) {
+            "${instance.id}: shared scaffold $id requires its complete target scope"
+        }
+        return preceding ?: RigModifierInstance(id, RigSourceModifiers.SCAFFOLD, requireNotNull(applied).version, targets,
+            config = applied.config, outputAliases = applied.outputAliases)
     }
 
     private fun <F> restrict(grid: KeyformGrid<F>?, kept: Set<ParameterId>, defaults: Map<ParameterId, Float>, interpolator: FormInterpolator<F>): KeyformGrid<F>? {
@@ -472,11 +477,17 @@ internal object RigSourceModifiers {
     ) + RigLegacyBindings.specs.map { RigLegacyBindings.definition(it, source) }
 
     /** Each captured mesh gets a stable branch, so regrouping by the current parent never renames outputs. */
-    fun deformerId(instance: RigModifierInstance, mesh: String, canonical: String) = instance.outputId("$mesh/deformer:$canonical")
-    fun partId(instance: RigModifierInstance, mesh: String, canonical: String) = instance.outputId("$mesh/part:$canonical")
+    fun deformerId(instance: RigModifierInstance, mesh: String, canonical: String) =
+        instance.outputAliases["shared/deformer:$canonical"] ?: instance.outputId("$mesh/deformer:$canonical")
+    fun partId(instance: RigModifierInstance, mesh: String, canonical: String) =
+        instance.outputAliases["shared/part:$canonical"] ?: instance.outputId("$mesh/part:$canonical")
 
     private fun scaffold(rig: RigIR, instance: RigModifierInstance, source: RigModifierSource, checkpoint: () -> Unit): RigIR {
         var current = PuppetIr.toPuppet(rig)
+        val emittedDeformers = HashSet<DeformerId>()
+        val emittedParts = HashSet<PartId>()
+        val sharedTemplate = if (instance.outputAliases.keys.any { it.startsWith("shared/deformer:") })
+            source.scaffoldFor(instance, instance.targets.first(), checkpoint) else null
         for (target in instance.targets) {
             checkpoint()
             val template = source.scaffoldFor(instance, target, checkpoint)
@@ -504,6 +515,9 @@ internal object RigSourceModifiers {
                     part = partParents[part]
                 }
             }
+            if (sharedTemplate != null) partBranch += template.parts.filter {
+                "shared/part:${it.id.raw}" in instance.outputAliases
+            }.map { it.id }
             val remap = RigIdRemap(
                 deformers = branch.associateWith { DeformerId(deformerId(instance, target.id, it.raw)) },
                 parts = partBranch.associateWith { PartId(partId(instance, target.id, it.raw)) })
@@ -522,10 +536,18 @@ internal object RigSourceModifiers {
             val clonedParts = template.parts.filter { it.id in partBranch }.map { original ->
                 remap.part(original.copy(children = original.children.filter { it is OrgChild.Part && it.id in partBranch }))
             }
-            require(clonedDeformers.none { added -> current.deformers.any { it.id == added.id } }) { "Binding scaffold output ID collision: ${instance.id}" }
-            require(clonedParts.none { added -> current.parts.any { it.id == added.id } }) { "Binding scaffold part ID collision: ${instance.id}" }
-            current = current.copy(deformers = current.deformers + clonedDeformers, parts = current.parts + clonedParts,
-                rootChildren = current.rootChildren + partBranch.filter { partParents[it] !in partBranch }.map { OrgChild.Part(remap.part(it)) })
+            require(clonedDeformers.all { added -> current.deformers.none { it.id == added.id } ||
+                added.id in emittedDeformers && current.deformers.single { it.id == added.id } == added }) { "Binding scaffold output ID collision: ${instance.id}" }
+            require(clonedParts.all { added -> current.parts.none { it.id == added.id } || added.id in emittedParts &&
+                current.parts.single { it.id == added.id }.copy(children = emptyList()) == added.copy(children = emptyList()) }) { "Binding scaffold part ID collision: ${instance.id}" }
+            val newDeformers = clonedDeformers.filter { emittedDeformers.add(it.id) }
+            val newParts = clonedParts.filter { emittedParts.add(it.id) }
+            val sharedParts = clonedParts.associateBy { it.id }
+            val parts = current.parts.map { part -> sharedParts[part.id]?.let { next ->
+                part.copy(children = (part.children + next.children).distinct())
+            } ?: part }
+            current = current.copy(deformers = current.deformers + newDeformers, parts = parts + newParts,
+                rootChildren = (current.rootChildren + partBranch.filter { partParents[it] !in partBranch }.map { OrgChild.Part(remap.part(it)) }).distinct())
                 .withDerivedRenderRoot()
             val destination = remap.deformer(requireNotNull(desired.parentDeformerId))
             current = RigStructureEdits.apply(current, listOf(buildJsonObject {
@@ -534,6 +556,26 @@ internal object RigSourceModifiers {
             if (orgParent != null) current = RigStructureEdits.apply(current, listOf(buildJsonObject {
                 put("action", "move"); put("kind", "mesh"); put("id", target.id); put("parent_id", remap.part(orgParent).raw)
             }))
+        }
+        if (sharedTemplate != null) {
+            val mesh = instance.targets.first().id
+            val remap = RigIdRemap(parts = sharedTemplate.parts.associate {
+                it.id to PartId(partId(instance, mesh, it.id.raw))
+            })
+            val desiredParts = sharedTemplate.parts.map(remap::part).associateBy { it.id }
+            val deformerOrder = sharedTemplate.deformers.mapIndexed { index, value ->
+                DeformerId(deformerId(instance, mesh, value.id.raw)) to index
+            }.toMap()
+            fun ordered(children: List<OrgChild>, desired: List<OrgChild>) =
+                children.filter { it !in desired } + desired.filter { it in children }
+            current = current.copy(
+                deformers = current.deformers.filter { it.id !in emittedDeformers } +
+                    current.deformers.filter { it.id in emittedDeformers }.sortedBy { deformerOrder.getValue(it.id) },
+                parts = current.parts.map { part -> desiredParts[part.id]?.let {
+                    part.copy(children = ordered(part.children, it.children))
+                } ?: part },
+                rootChildren = ordered(current.rootChildren, sharedTemplate.rootChildren.map(remap::child)),
+            )
         }
         checkpoint()
         return rig.withPuppet(current.withDerivedRenderRoot())

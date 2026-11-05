@@ -22,6 +22,12 @@ import kotlinx.serialization.json.*
  * their presets into curves.
  */
 internal object RigIrCompiler {
+    /** Keep standard runtime groups in the same order before and after materializing a stack prefix. */
+    internal fun orderedParameterRoles(roles: List<ParameterRole>): List<ParameterRole> {
+        val order = listOf("EyeBlink", "LipSync", "Breath", "AngleX", "AngleY", "AngleZ", "BodyAngleX", "EyeBallX", "EyeBallY")
+        return roles.distinct().sortedBy { order.indexOf(it.role).takeIf { index -> index >= 0 } ?: order.size }
+    }
+
 	fun compile(preview: RigPreviewModel, tileArt: Boolean = false, simulations: Boolean = false): RigIR =
 		compile(preview.analysis, preview.atlas, preview.rig, preview.config, tileArt, simulations)
 
@@ -36,7 +42,7 @@ internal object RigIrCompiler {
             val ordinary = io.github.psd2live.core.modifier.RigModifierPipeline.compileOrdinary(
                 analysis, atlas, rig, config, tileArt, simulations = false)
             return ordinary.copy(physics = output.physics, clips = output.clips, restPose = output.restPose,
-                parameterRoles = (ordinary.parameterRoles + output.parameterRoles).distinct(),
+                parameterRoles = orderedParameterRoles(ordinary.parameterRoles + output.parameterRoles),
                 advanced = if (simulations) modifierSimulations(rig, config, output, ordinary.advanced) else ordinary.advanced)
         }
 		val physicsGroups = PhysicsCatalog.active(analysis, config, rig.puppet.parameters.mapTo(linkedSetOf()) { it.id.raw }, rig.puppet)

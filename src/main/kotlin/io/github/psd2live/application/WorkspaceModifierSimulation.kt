@@ -33,6 +33,8 @@ internal object WorkspaceModifierSimulation {
             val model = PSD2LivePipeline().buildPreview(document.source, document.config().copy(rigEdits = overlay))
             work.checkpoint()
             val fingerprint = RigModifierInput.fingerprint(requireNotNull(model.rig.modifierOutput))
+            val availableMotions = requireNotNull(model.rig.modifierOutput).clips.mapTo(HashSet()) { it.id }
+            if (source.trainingClips.keys.any { it !in availableMotions }) continue
             if (source.bake != null && !SimBake.stale(model.rig.puppet, source) &&
                 (instance.inputFingerprint == null || instance.inputFingerprint == fingerprint)) {
                 if (instance.inputFingerprint == null) next = next.update(instance.id) { it.copy(inputFingerprint = fingerprint) }

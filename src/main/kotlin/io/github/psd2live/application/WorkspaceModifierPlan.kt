@@ -179,7 +179,8 @@ internal object WorkspaceModifierPlan {
         val duration = MotionClips.builtinDuration(name, tracks, MotionPresetSettings(natural = natural))
         val clip = MotionClips.fromTracks(if (natural) NATURAL_MOTION_PREFIX + name else "template", name, null,
             MotionClips.isLoopBuiltin(name), tracks, duration)
-        return MotionClips.toJson(MotionClips.reconcileParameters(listOf(clip), parameters).single())
+        val roles = if (name == "Blink") mapOf("EyeBlink" to listOf("ParamEyeLOpen", "ParamEyeROpen").filter { it in available }) else emptyMap()
+        return MotionClips.toJson(MotionClips.reconcileParameters(listOf(clip.copy(parameterRoles = roles.filterValues { it.isNotEmpty() })), parameters).single())
     }
 
     private fun nativeConfiguration(model: RigPreviewModel, type: String, targets: List<ModifierTarget>, preset: String?): JsonObject {

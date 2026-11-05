@@ -35,8 +35,8 @@ internal object RigModifierPipeline {
             }
         val textures = if (tileArt) compiled.textures else compiled.textures.copy(tileArt = rig.modifierRasterAssets)
         return compiled.copy(textures = textures, physics = Physics(groups, config.rigEdits.physicsFps.toFloat()),
-            restPose = if (meshOnly) compiled.restPose else emptyMap(),
-            parameterRoles = compiled.parameterRoles.filter { role -> role.parameters.all { it in available } })
+            restPose = (if (meshOnly) compiled.restPose else emptyMap()) + rig.authoredRestPose.filterKeys { it in available },
+            parameterRoles = RigIrCompiler.orderedParameterRoles(rig.authoredParameterRoles + compiled.parameterRoles).filter { role -> role.parameters.all { it in available } })
     }
 
     /** Ordinary content may contain custom motions and physics, but no legacy preset runs implicitly. */

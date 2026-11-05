@@ -84,7 +84,7 @@ class RigModifierAlgorithmsTest {
 
     @Test fun motionsBecomeOrdinaryClipsWithCurvesAndEvents() {
         val source = MotionClip("old", "Motion", curves = listOf(MotionCurve("ParamAngleX",
-            listOf(MotionKey(0f, 0f), MotionKey(1f, 20f)))), events = listOf(MotionEvent(.5f, "event")))
+            listOf(MotionKey(0f, 0f), MotionKey(1f, 20f)))), events = listOf(MotionEvent(.5f, "event")), parameterRoles = mapOf("AngleX" to listOf("ParamAngleX")))
         val instance = entry("motion", MotionClips.toJson(source))
         val stack = RigModifierStack(listOf(instance))
         val applied = evaluator.applyThrough(rig, stack, instance.id)
@@ -93,7 +93,23 @@ class RigModifierAlgorithmsTest {
         assertTrue(clip.file.matches(Regex("[A-Za-z0-9_]+")))
         assertEquals(listOf(ClipEvent(.5f, "event")), clip.events)
         assertEquals("ParamAngleX", clip.curves.single().parameter)
+        assertEquals(source.parameterRoles, applied.authored.parameterRoles.associate { it.role to it.parameters })
+        assertEquals(source, MotionClips.fromJson(MotionClips.toJson(source)))
         assertEquals(evaluator.evaluate(rig, stack).rig, applied.authored)
+    }
+
+    @Test fun motionRolesValidateReferencesAndReportTheirContribution() {
+        val source = MotionClip("old", "Renamed motion", curves = listOf(MotionCurve("ParamAngleX", listOf(MotionKey(0f, 0f)))),
+            parameterRoles = mapOf("AngleX" to listOf("ParamAngleX")))
+        val instance = entry("motion", MotionClips.toJson(source))
+        val result = evaluator.evaluate(rig, RigModifierStack(listOf(instance)))
+        assertTrue(result.entries.single().contributions.any { it.kind == "relations" && it.id == "parameter-roles" })
+        val missing = instance.copy(config = MotionClips.toJson(source.copy(parameterRoles = mapOf("AngleX" to listOf("missing")))))
+        assertFailsWith<IllegalArgumentException> { evaluator.evaluate(rig, RigModifierStack(listOf(missing))) }
+        val renamed = ModelSidecars.withIdRenamed(RigEditOverlay.Empty.copy(motionClips = listOf(source)),
+            "parameter", "ParamAngleX", "CustomAngle").motionClips.single()
+        assertEquals(listOf("CustomAngle"), renamed.parameterRoles.getValue("AngleX"))
+        assertTrue(MotionClips.withoutParameter(listOf(renamed), "CustomAngle").single().parameterRoles.isEmpty())
     }
 
     @Test fun puppetGeneratorsPreservePreviouslyAddedMotionAndPhysicsSidecars() {
@@ -105,6 +121,19 @@ class RigModifierAlgorithmsTest {
         assertEquals(1, result.rig.clips.size)
         assertEquals(2, result.rig.physics.groups.size)
         assertEquals(rig.textures, result.rig.textures)
+    }
+
+    @Test fun migratedMotionAndPhysicsKeepTheirObjectIdsThroughEvaluationAndApply() {
+        val source = MotionClip("old-motion", "Motion", curves = listOf(MotionCurve("ParamAngleX",
+            listOf(MotionKey(0f, 0f), MotionKey(1f, 10f)))))
+        val motion = entry("motion", MotionClips.toJson(source)).copy(outputAliases = mapOf("motion" to source.id))
+        val physics = physics()
+        val pendulum = entry("physics", physics.toJson(), id = "m2").copy(outputAliases = mapOf("physics" to physics.id))
+        val stack = RigModifierStack(listOf(motion, pendulum))
+        val result = evaluator.evaluate(rig, stack).rig
+        assertEquals(source.id, result.clips.single().id)
+        assertEquals(physics.id, result.physics.groups.single().id)
+        assertEquals(result, evaluator.applyThrough(rig, stack, pendulum.id).authored)
     }
 
     @Test fun twoSwingsComposeOnTheSameWarpWithoutSharingTheirGeneratedAxes() {

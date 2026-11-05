@@ -22,6 +22,8 @@ internal class RigModifierDefinition(
     /** Explicit composable transformations, distinct from reusing an unchanged standard definition. */
     val resolveParameter: (RigModifierInstance, Parameter, Parameter) -> Parameter? = { _, _, _ -> null },
     val references: (RigIR, RigIR, RigModifierInstance) -> List<ModifierContribution> = { _, _, _ -> emptyList() },
+    val motionInputs: (RigModifierInstance) -> Set<String> = { emptySet() },
+    val motionOutputs: (RigModifierInstance) -> Set<String> = { emptySet() },
     val evaluate: (RigIR, RigModifierInstance, () -> Unit) -> RigIR,
 )
 
@@ -108,6 +110,8 @@ internal class RigModifierEvaluator(
                     missing += "parameter:$parameter@$provider"
                 }
             }
+            definition.motionInputs(instance).filter { id -> current.clips.none { it.id == id } }
+                .forEach { missing += "motion:$it" }
             if (missing.isNotEmpty()) {
                 entries += ModifierEvaluation(instance, ModifierStatus.MISSING_DEPENDENCY, missing)
                 continue
@@ -155,7 +159,7 @@ internal class RigModifierEvaluator(
             }
             entries += ModifierEvaluation(instance, ModifierStatus.ACTIVE, contributions = contributions,
                 ownedKeyforms = ownedKeyforms(before, generated), overrideIssues = overridden.issues)
-            available += ModifierCapability(instance.type, instance.version, instance.targets, instance.id, definition.appliedConfig(instance))
+            available += ModifierCapability(instance.type, instance.version, instance.targets, instance.id, definition.appliedConfig(instance), instance.outputAliases)
         }
         checkpoint()
         return RigModifierResult(current, entries)
@@ -166,6 +170,11 @@ internal class RigModifierEvaluator(
         stack.instances.forEachIndexed { index, instance ->
             val definition = registry.definition(instance)
             if (!instance.enabled) return@forEachIndexed
+            val motionInputs = definition.motionInputs(instance)
+            for (later in stack.instances.drop(index + 1).filter { it.enabled }) {
+                val conflicts = motionInputs.intersect(registry.definition(later).motionOutputs(later))
+                require(conflicts.isEmpty()) { "${instance.id} must follow ${later.id} for motions ${conflicts.joinToString()}" }
+            }
             for ((parameter, provider) in instance.parameterProviders) {
                 require(provider != instance.id && stack.instances.drop(index + 1).none { it.id == provider && it.enabled }) {
                     "${instance.id} must follow $provider for parameter $parameter"
@@ -206,7 +215,7 @@ internal class RigModifierEvaluator(
         val consumed = stack.instances.take(end).mapTo(HashSet()) { it.id }
         val capabilities = prefix.entries.filter { it.status == ModifierStatus.ACTIVE }.map {
             ModifierCapability(it.instance.type, it.instance.version, it.instance.targets, it.instance.id,
-                registry.definition(it.instance).appliedConfig(it.instance))
+                registry.definition(it.instance).appliedConfig(it.instance), it.instance.outputAliases)
         }
         val baked = prefix.entries.filter { it.status == ModifierStatus.ACTIVE }.mapTo(HashSet()) { it.instance.id }
         val remaining = stack.copy(instances = stack.instances.drop(end), overrides = stack.overrides - baked,
@@ -311,6 +320,7 @@ internal class RigModifierEvaluator(
         compare("physics", before.physics.groups, after.physics.groups) { it.id }
         compare("motion", before.clips, after.clips) { it.id }
         if (before.parameterLinks != after.parameterLinks) add(ModifierContribution("relations", "parameter-links", ModifierChange.MODIFIED))
+        if (before.parameterRoles != after.parameterRoles) add(ModifierContribution("relations", "parameter-roles", ModifierChange.MODIFIED))
         if (before.rootChildren != after.rootChildren) add(ModifierContribution("hierarchy", "root", ModifierChange.MODIFIED))
         if (before.parameterTree != after.parameterTree) add(ModifierContribution("hierarchy", "parameters", ModifierChange.MODIFIED))
     }

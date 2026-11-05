@@ -221,6 +221,7 @@ class WorkspaceLegacyBindingTest {
         assertEquals(setOf("mouth"), stack.overrides.keys)
         assertEquals(journal, f.now.document.rigEdits.authoringJournal)
         val expected = RigIrCompiler.compile(f.now.model)
+        assertEquals(1f, expected.restPose[StandardParameters.MOUTH_OPEN.raw])
         f.edit("modifier_enable", buildJsonObject { put("id", "mouth"); put("enabled", false) })
         assertNotEquals(expected, RigIrCompiler.compile(f.now.model))
         f.edit("modifier_enable", buildJsonObject { put("id", "mouth"); put("enabled", true) })
@@ -228,6 +229,7 @@ class WorkspaceLegacyBindingTest {
         f.edit("modifier_apply", buildJsonObject { put("id", "mouth") })
         stack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
         assertTrue(stack.instances.isEmpty() && stack.overrides.isEmpty())
+        assertEquals(expected.restPose, f.now.model.authored.rig.authoredRestPose)
         assertEquals(expected, RigIrCompiler.compile(f.now.model))
         assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
     }
@@ -1022,6 +1024,9 @@ class WorkspaceLegacyBindingTest {
             .map { MotionClips.fromJson(it.config) }
         assertTrue(motions.isNotEmpty())
         val oldClips = RigIrCompiler.compile(before.model).clips
+        val convertedInstances = WorkspaceModifierConversion.bindings(before.model).instances
+        assertEquals(captured.map { it.id }, convertedInstances.filter { it.type == "physics" }.map { it.outputId("physics") })
+        assertEquals(oldClips.map { it.id }, convertedInstances.filter { it.type == "motion" }.map { it.outputId("motion") })
         assertEquals(oldClips.size, motions.size)
         for ((old, next) in oldClips.zip(motions)) {
             assertEquals(old.curves, next.curves.map(MotionGenerator::curve))
@@ -1034,12 +1039,31 @@ class WorkspaceLegacyBindingTest {
         val diagnostic = WorkspaceFailure.from(failure).toJson()
         validateOperationSchema(diagnostic, WorkspaceResultSchema.failure, "error")
         assertEquals("modifier_conversion_mismatch", diagnostic.getValue("code").jsonPrimitive.content)
-        val deformers = diagnostic.getValue("objects").jsonObject.getValue("deformer").jsonObject
-        assertTrue(deformers.getValue("added").jsonObject.getValue("count").jsonPrimitive.int > 0)
-        assertTrue(deformers.getValue("removed").jsonObject.getValue("count").jsonPrimitive.int > 0)
+        assertFalse("deformer" in diagnostic.getValue("objects").jsonObject, diagnostic.toString())
+        assertFalse("part" in diagnostic.getValue("objects").jsonObject, diagnostic.toString())
+        val changedFields = diagnostic.getValue("fields").jsonArray.map { it.jsonPrimitive.content }
+        for (field in listOf("restPose", "parameterTree", "parameterLinks", "parameterRoles"))
+            assertFalse(field in changedFields, diagnostic.toString())
         assertEquals(before.state, f.now.state)
         assertEquals(before.historyHead, f.now.historyHead)
         assertNull(f.now.document.rigEdits.modifierStack)
+    }
+
+    @Test fun applyingASharedScaffoldPreservesAliasesForRemainingBindings(): Unit = runBlocking<Unit> {
+        val art = document()
+        val config = art.config().copy(meshOnly = false, generateDeformers = true, generatePhysics = false,
+            exportMotions = false, rigEdits = RigEditOverlay.Empty)
+        val legacy = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val model = WorkspacePreviewBuilder().build(legacy)
+        val stack = WorkspaceModifierConversion.bindings(model)
+        val f = Fixture(legacy.copy(rigEdits = config.rigEdits.copy(modifierStack = stack.toJson())))
+        f.install()
+        val expected = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_apply", buildJsonObject { put("id", stack.instances.first().id) })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+        val applied = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).appliedCapabilities.first()
+        assertEquals(stack.instances.first().outputAliases, applied.outputAliases)
     }
 
     @Test fun anOwnedParameterRangeIsDormantWithItsProviderAndMaterializesOnApply(): Unit = runBlocking<Unit> {

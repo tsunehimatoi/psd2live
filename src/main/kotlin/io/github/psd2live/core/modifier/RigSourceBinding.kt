@@ -16,6 +16,10 @@ internal object RigSourceBinding {
     fun apply(rig: RigIR, instance: RigModifierInstance, source: RigModifierSource, checkpoint: () -> Unit): RigIR {
         source.provider(instance)
         var current = PuppetIr.toPuppet(rig)
+        val updatedDeformers = LinkedHashMap<DeformerId, Deformer>()
+        val addedDeformers = HashSet<DeformerId>()
+        val addedParts = HashSet<PartId>()
+        val preserveSourceOrder = instance.outputAliases.keys.any { it.startsWith("parameter-folder:") }
         for (target in instance.targets) {
             checkpoint()
             val (previous, desired) = source.transition(instance, target, checkpoint)
@@ -31,13 +35,14 @@ internal object RigSourceBinding {
             collect(desired.parameterTree)
             val treeIds = RigIdRemap(groups = folders.associateWith { ParameterGroupId(instance.outputId("parameter-folder:${it.raw}")) })
             current = current.copy(parameters = current.parameters + additions,
-                parameterTree = appendTree(current, desired.parameterTree.map(treeIds::node), additions.mapTo(HashSet()) { it.id }))
+                parameterTree = appendTree(current, desired.parameterTree.map(treeIds::node), additions.mapTo(HashSet()) { it.id }, preserveSourceOrder))
             val links = desired.parameterLinks.filter { it !in previous.parameterLinks && it !in current.parameterLinks }
             for (link in links) require(current.parameterLinks.none { existing ->
                 existing.horizontal == link.horizontal || existing.vertical == link.horizontal ||
                     existing.horizontal == link.vertical || existing.vertical == link.vertical
             }) { "${instance.id}: incompatible parameter link for ${link.horizontal.raw} and ${link.vertical.raw}" }
-            current = current.copy(parameterLinks = current.parameterLinks + links)
+            val combinedLinks = current.parameterLinks + links
+            current = current.copy(parameterLinks = if (preserveSourceOrder) sourceOrder(combinedLinks, desired.parameterLinks) { it } else combinedLinks)
             val defaults = current.parameters.associate { it.id to it.default }
             val oldProjection = previous.copy(parameters = desired.parameters, deformers = source.static(previous).deformers)
             val nextProjection = desired.copy(deformers = source.static(desired).deformers)
@@ -85,11 +90,12 @@ internal object RigSourceBinding {
                 val requiredParts = source.requiredParts(desired, target)
                 for (part in requiredParts) {
                     val generated = PartId(RigSourceModifiers.partId(instance, target.id, part.raw))
-                    require(remap.part(part) != generated || current.parts.none { it.id == generated }) {
+                    require(remap.part(part) != generated || current.parts.none { it.id == generated } || generated in addedParts) {
                         "${instance.id}: generated part ID collision ${generated.raw}"
                     }
                 }
                 val missingParts = desired.parts.filter { it.id in requiredParts && current.parts.none { actual -> actual.id == remap.part(it.id) } }
+                addedParts += missingParts.map { remap.part(it.id) }
                 val partParents = desired.parts.flatMap { part -> part.children.filterIsInstance<OrgChild.Part>().map { it.id to part.id } }.toMap()
                 current = current.copy(parts = current.parts + missingParts.map { remap.part(it.copy(children = emptyList())) })
                 for (part in missingParts) {
@@ -102,6 +108,10 @@ internal object RigSourceBinding {
                     checkpoint()
                     val original = desiredById.getValue(canonical)
                     var cloned = remap.deformer(original)
+                    if (cloned.id in addedDeformers) {
+                        require(current.deformers.single { it.id == cloned.id } == cloned) { "${instance.id}: incompatible shared carrier ${cloned.id.raw}" }
+                        continue
+                    }
                     require(current.deformers.none { it.id == cloned.id }) { "${instance.id}: generated carrier ID collision ${cloned.id.raw}" }
                     require(cloned.partId == null || current.parts.any { it.id == cloned.partId }) { "${instance.id}: missing generated carrier part" }
                     if (original.parent?.let(mapped::getValue) == anchor && actualParent != anchor) {
@@ -109,17 +119,20 @@ internal object RigSourceBinding {
                         cloned = reparent(current, sample, cloned, anchor, actualParent, instance.outputId("${target.id}/carrier-frame"), checkpoint)
                     }
                     current = current.copy(deformers = current.deformers + cloned)
+                    addedDeformers += cloned.id
                 }
                 val destination = desiredBranch.firstOrNull()?.let(mapped::getValue)
                 current = current.copy(drawables = current.drawables.map { if (it.id == id) it.copy(parentDeformerId = destination) else it })
                 current = RigStructureEdits.carriedToParent(beforeInsertion, current, id)
             }
-            val previousFrame = current
+            val previousFrame = current.copy(deformers = current.deformers.map { updatedDeformers[it.id] ?: it })
             for (canonical in branch) {
                 checkpoint()
                 if (bypass && canonical in removed) continue
                 val liveId = mapped.getValue(canonical)
+                if (liveId in updatedDeformers) continue
                 val actual = requireNotNull(current.deformers.singleOrNull { it.id == liveId }) { "${instance.id}: scaffold object ${liveId.raw} is missing" }
+                updatedDeformers[liveId] = actual
                 var before = previousById.getValue(canonical)
                 var after = desiredById[canonical] ?: source.static(previous).deformers.single { it.id == canonical }
                 val originalParent = before.parent
@@ -169,7 +182,11 @@ internal object RigSourceBinding {
         }
         checkpoint()
         val chains = if (RigModifierChains.kinds(instance.type).isEmpty()) emptyList() else source.chains(instance, checkpoint)
-        val output = RigModifierPhysics.add(rig.withPuppet(current.withDerivedRenderRoot()), instance, chains)
+        val spec = RigLegacyBindings.spec(instance.type)
+        val bound = rig.withPuppet(current.withDerivedRenderRoot())
+        val posed = if (spec.isBase && spec.area == "mouth" && bound.parameters.any { it.id == StandardParameters.MOUTH_OPEN.raw })
+            bound.copy(restPose = bound.restPose + (StandardParameters.MOUTH_OPEN.raw to 1f)) else bound
+        val output = RigModifierPhysics.add(posed, instance, chains)
         return if (chains.isEmpty()) output else source.addUpstreamExpressionInputs(output, instance)
     }
 
@@ -235,9 +252,20 @@ internal object RigSourceBinding {
         else -> actual + (after - before)
     }
 
+    private fun <T> sameGrid(a: KeyformGrid<T>, b: KeyformGrid<T>, sameForm: (T, T) -> Boolean): Boolean {
+        if (a === b) return true
+        return a.axes.size == b.axes.size && a.cells.size == b.cells.size &&
+            a.axes.zip(b.axes).all { (left, right) -> left.parameterId == right.parameterId && left.keys.contentEquals(right.keys) } &&
+            a.cells.zip(b.cells).all { (left, right) -> left.coordinate.contentEquals(right.coordinate) && sameForm(left.form, right.form) }
+    }
+
     private fun warpDelta(actual: KeyformGrid<WarpLatticeForm>?, before: KeyformGrid<WarpLatticeForm>?, after: KeyformGrid<WarpLatticeForm>?,
                           defaults: Map<ParameterId, Float>, checkpoint: () -> Unit): KeyformGrid<WarpLatticeForm> {
         require(actual != null && before != null && after != null) { "Binding needs complete Warp lattices" }
+        fun same(a: KeyformGrid<WarpLatticeForm>, b: KeyformGrid<WarpLatticeForm>) =
+            sameGrid(a, b) { left, right -> left.controlPoints.contentEquals(right.controlPoints) }
+        if (same(actual, before)) return after
+        if (same(before, after)) return actual
         val axes = PrimitiveResidual.unionAxes(actual.axes + before.axes + after.axes)
         return KeyformGrid(axes, PrimitiveResidual.coordinates(axes).map { coordinate ->
             checkpoint()
@@ -252,6 +280,11 @@ internal object RigSourceBinding {
     private fun rotationDelta(actual: KeyformGrid<RotationPivotForm>?, before: KeyformGrid<RotationPivotForm>?, after: KeyformGrid<RotationPivotForm>?,
                               defaults: Map<ParameterId, Float>, checkpoint: () -> Unit): KeyformGrid<RotationPivotForm> {
         require(actual != null && before != null && after != null) { "Binding needs complete rotation pivots" }
+        fun same(a: KeyformGrid<RotationPivotForm>, b: KeyformGrid<RotationPivotForm>) = sameGrid(a, b) { left, right ->
+            left.originX == right.originX && left.originY == right.originY && left.angle == right.angle && left.scale == right.scale
+        }
+        if (same(actual, before)) return after
+        if (same(before, after)) return actual
         val axes = PrimitiveResidual.unionAxes(actual.axes + before.axes + after.axes)
         return KeyformGrid(axes, PrimitiveResidual.coordinates(axes).map { coordinate ->
             checkpoint()
@@ -263,7 +296,14 @@ internal object RigSourceBinding {
         })
     }
 
-    private fun appendTree(model: PuppetModel, desired: List<ParameterNode>, added: Set<ParameterId>): List<ParameterNode> {
+    /** Reorder source-owned entries in their existing slots, leaving authored entries in place. */
+    private fun <T, K> sourceOrder(actual: List<T>, desired: List<T>, key: (T) -> K): List<T> {
+        val ranks = desired.mapIndexed { index, entry -> key(entry) to index }.toMap()
+        val ordered = actual.filter { key(it) in ranks }.sortedBy { ranks.getValue(key(it)) }.iterator()
+        return actual.map { if (key(it) in ranks) ordered.next() else it }
+    }
+
+    private fun appendTree(model: PuppetModel, desired: List<ParameterNode>, added: Set<ParameterId>, preserveSourceOrder: Boolean): List<ParameterNode> {
         val existing = model.parameterTree.ifEmpty { model.parameters.filter { it.id !in added }.map { ParameterNode.Param(it.id) } }
         fun groups(nodes: List<ParameterNode>): Set<ParameterGroupId> = nodes.filterIsInstance<ParameterNode.Group>().flatMapTo(HashSet()) { listOf(it.id) + groups(it.children) }
         val present = groups(existing)
@@ -274,10 +314,15 @@ internal object RigSourceBinding {
             is ParameterNode.Param -> node.takeIf { it.id in added }
             is ParameterNode.Group -> if (node.id in present) null else node.copy(children = extra(node.children)).takeIf { it.children.isNotEmpty() }
         } }
+        fun ordered(nodes: List<ParameterNode>, template: List<ParameterNode>) =
+            if (!preserveSourceOrder) nodes else sourceOrder(nodes, template) { node -> when (node) {
+                is ParameterNode.Param -> "parameter:${node.id.raw}"
+                is ParameterNode.Group -> "group:${node.id.raw}"
+            } }
         fun update(nodes: List<ParameterNode>): List<ParameterNode> = nodes.map { node -> when (node) {
             is ParameterNode.Param -> node
-            is ParameterNode.Group -> node.copy(children = update(node.children) + extra(templates[node.id]?.children.orEmpty()))
+            is ParameterNode.Group -> node.copy(children = ordered(update(node.children) + extra(templates[node.id]?.children.orEmpty()), templates[node.id]?.children.orEmpty()))
         } }
-        return update(existing) + extra(desired)
+        return ordered(update(existing) + extra(desired), desired)
     }
 }

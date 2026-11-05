@@ -107,9 +107,16 @@ internal object WorkspaceModifierConversion {
             .map { ModifierTarget("mesh", it.id.raw) }
         if (targets.isEmpty()) return RigModifierStack()
         val providers = LinkedHashMap<String, String>()
+        fun parameterFolders(nodes: List<org.umamo.runtime.model.ParameterNode>): Map<String, String> = nodes
+            .filterIsInstance<org.umamo.runtime.model.ParameterNode.Group>().flatMap { group ->
+                listOf("parameter-folder:${group.id.raw}" to group.id.raw) + parameterFolders(group.children).toList()
+            }.toMap()
+        val hierarchyAliases = model.baseRig.puppet.deformers.associate { "shared/deformer:${it.id.raw}" to it.id.raw } +
+            model.baseRig.puppet.parts.associate { "shared/part:${it.id.raw}" to it.id.raw } +
+            parameterFolders(model.baseRig.puppet.parameterTree)
         var stack = RigModifierStack()
-        fun add(type: String, version: Int, config: JsonObject) {
-            stack = stack.add(type, version, targets, config, presetGroup = "converted")
+        fun add(type: String, version: Int, config: JsonObject, outputAliases: Map<String, String> = emptyMap()) {
+            stack = stack.add(type, version, targets, config, presetGroup = "converted", outputAliases = outputAliases)
             providers[type] = stack.instances.last().id
         }
         add(RigSourceModifiers.SCAFFOLD, 1, buildJsonObject {
@@ -117,7 +124,7 @@ internal object WorkspaceModifierConversion {
             val corrections = io.github.psd2live.project.WorkspaceSettingsCodec.encodeRecipe(config.recipe)
                 .filterKeys { it in setOf("moves", "eyeParts") }
             if (corrections.isNotEmpty()) put("corrections", JsonObject(corrections))
-        })
+        }, hierarchyAliases)
         fun capture(spec: RigLegacyBindings.Spec, version: Int, values: Map<String, Float>) {
             val missing = spec.requires - providers.keys
             require(missing.isEmpty()) { "Conversion cannot resolve ${spec.type} prerequisites: $missing" }
@@ -133,7 +140,7 @@ internal object WorkspaceModifierConversion {
                     spec.fields.forEach { put(it.id, it.get(config.rigTuning)) }
                 }
                 if (values.isNotEmpty()) putJsonObject("values") { values.forEach { (key, value) -> put(key, value) } }
-            })
+            }, hierarchyAliases)
         }
         if (config.generateDeformers) for (area in listOf("body", "face", "eye", "brow", "mouth", "hair")) {
             val base = config.recipe.base(area)
@@ -158,7 +165,7 @@ internal object WorkspaceModifierConversion {
         val authoredPhysics = config.rigEdits.physicsEdits.mapTo(HashSet()) { it.id }
         for (group in PhysicsCatalog.active(model)) {
             if (group.id !in PhysicsGenerator.presetIds || group.id in authoredPhysics) continue
-            add("physics", 1, group.toJson())
+            add("physics", 1, group.toJson(), mapOf("physics" to group.id))
         }
         val output = RigIrCompiler.compile(model)
         val authored = MotionClips.reconcileParameters(config.rigEdits.motionClips, model.rig.puppet.parameters)
@@ -175,8 +182,9 @@ internal object WorkspaceModifierConversion {
             val captured = MotionClip(clip.id, clip.name, loop = clip.loop, duration = clip.duration, fps = clip.fps,
                 fadeIn = clip.fadeIn ?: 1f, fadeOut = clip.fadeOut ?: 1f, curves = activeTracks,
                 events = clip.events.map { MotionEvent(it.time, it.value) }, fileStem = clip.file,
-                exportGroup = clip.group, runtimeDefaultFades = clip.fadeIn == null && clip.fadeOut == null)
-            add("motion", 1, MotionClips.toJson(captured))
+                exportGroup = clip.group, runtimeDefaultFades = clip.fadeIn == null && clip.fadeOut == null,
+                parameterRoles = if (clip.id == "Blink") output.parameterRoles.filter { it.role == "EyeBlink" }.associate { it.role to it.parameters } else emptyMap())
+            add("motion", 1, MotionClips.toJson(captured), mapOf("motion" to clip.id))
         }
         return stack
     }

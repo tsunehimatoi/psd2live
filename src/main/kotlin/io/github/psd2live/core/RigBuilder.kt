@@ -153,6 +153,8 @@ data class BuiltRig(
 	val copiedDrawableIds: Set<String> = emptySet(),
     /** Independent source pixels materialized with an applied modifier. Tile metadata lives in the puppet. */
     internal val modifierRasterAssets: List<io.github.psd2live.format.model.TileArt> = emptyList(),
+    internal val authoredRestPose: Map<String, Float> = emptyMap(),
+    internal val authoredParameterRoles: List<io.github.psd2live.format.model.ParameterRole> = emptyList(),
     /** Derived modifier sidecars and contributions; the document stores instances, never this result. */
     val modifierOutput: io.github.psd2live.format.model.RigIR? = null,
     val modifierReport: kotlinx.serialization.json.JsonObject? = null,

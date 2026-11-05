@@ -46,7 +46,8 @@ internal object MaterializedRigCodec {
 			} })); put("see_through_rules", SeeThroughLayers.CANDIDATE_RULES) }
 		}
 		val ir = PuppetIr.toIr(rig.puppet)
-		return Encoded(header, RigIrObjects.split(ir.copy(textures = ir.textures.copy(tileArt = rig.modifierRasterAssets))))
+        return Encoded(header, RigIrObjects.split(ir.copy(textures = ir.textures.copy(tileArt = rig.modifierRasterAssets),
+            restPose = rig.authoredRestPose, parameterRoles = rig.authoredParameterRoles)))
 	}
 
 	/** The rig [header] and [objects] describe; [IllegalArgumentException] or [java.io.IOException] when they are not one. */
@@ -60,6 +61,8 @@ internal object MaterializedRigCodec {
 		val rig = BuiltRig(
 			puppet = puppet,
 			modifierRasterAssets = ir.textures.tileArt,
+            authoredRestPose = ir.restPose,
+            authoredParameterRoles = ir.parameterRoles,
 			pageByDrawableId = header.getValue("pages").jsonObject.mapValues { it.value.jsonPrimitive.int },
 			sourceBoundsByDrawableId = header.getValue("bounds").jsonObject.mapValues { (_, value) ->
 				numbers(value, 4).let { Bounds(it[0], it[1], it[2], it[3]) }

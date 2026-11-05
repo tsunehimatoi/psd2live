@@ -132,7 +132,8 @@ internal object WorkspaceModifierEdits {
         }
         val authored = model.authored.copy(rig = model.authored.rig.withModifierMeshes(
             PuppetIr.toPuppet(applied.authored), applied.authored.textures.tileArt).copy(
-            modifierOutput = null, modifierReport = null))
+            modifierOutput = null, modifierReport = null, authoredRestPose = applied.authored.restPose,
+            authoredParameterRoles = applied.authored.parameterRoles))
         val binding = model.sources.bindingKey ?: if (model.config.rigEdits.importedCmo3 != null) "cmo3-import"
             else PSD2LivePipeline().bindingKey(document.source, RigModifierPipeline.ordinaryConfig(model.config).copy(meshOnly = true))
         val checkpoint = RigCheckpoint.encode(authored, binding)

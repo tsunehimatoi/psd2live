@@ -27,15 +27,24 @@ internal data class RigModifierInstance(
     @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
     @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
     val parameterProviders: Map<String, String> = emptyMap(),
+    /** Migration preserves existing object references with immutable, persisted local-output aliases. */
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val outputAliases: Map<String, String> = emptyMap(),
 ) {
     init {
         require(id.matches(Regex("[A-Za-z0-9_.:-]+"))) { "Invalid modifier instance ID" }
         require(type.isNotBlank() && version > 0) { "A modifier needs a type and positive algorithm version" }
         require(targets.isNotEmpty() && targets.distinct().size == targets.size) { "A modifier needs distinct targets" }
+        require(outputAliases.all { (local, id) -> local.isNotBlank() && id.isNotBlank() && id.none(Char::isISOControl) }) {
+            "Output aliases need valid local names and object IDs"
+        }
+        require(outputAliases.values.distinct().size == outputAliases.size) { "Output aliases must be distinct" }
     }
 
     /** A generated local token is reversible for adapters that call native name-based algorithms. */
     fun localOutputName(output: String): String? {
+        outputAliases.entries.firstOrNull { it.value == output }?.let { return it.key }
         val prefix = "modifier:$id:"
         if (!output.startsWith(prefix)) return null
         val hex = output.removePrefix(prefix)
@@ -47,6 +56,7 @@ internal data class RigModifierInstance(
     /** Encode every byte, including separators, so distinct local names cannot alias one another. */
     fun outputId(localName: String): String {
         require(localName.isNotBlank()) { "An output needs a local name" }
+        outputAliases[localName]?.let { return it }
         val encoded = localName.encodeToByteArray().joinToString("") { "%02x".format(it.toInt() and 255) }
         return "modifier:$id:$encoded"
     }
@@ -55,7 +65,10 @@ internal data class RigModifierInstance(
 /** An applied provider remains available to downstream modifiers at the same captured targets. */
 @Serializable
 internal data class ModifierCapability(val type: String, val version: Int, val targets: List<ModifierTarget>, val id: String? = null,
-    val config: JsonObject = JsonObject(emptyMap()))
+    val config: JsonObject = JsonObject(emptyMap()),
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val outputAliases: Map<String, String> = emptyMap())
 
 /**
  * Immutable stack state. Retired IDs and overrides survive removal: adding a new instance must never adopt an old
@@ -77,20 +90,22 @@ internal data class RigModifierStack(
     }
 
     fun add(type: String, version: Int, targets: List<ModifierTarget>, config: JsonObject = JsonObject(emptyMap()),
-            presetGroup: String? = null, id: String? = null): RigModifierStack {
+            presetGroup: String? = null, id: String? = null, outputAliases: Map<String, String> = emptyMap()): RigModifierStack {
         var sequence = nextId
         val reserved = instances.mapTo(HashSet()) { it.id } + retiredIds
         while ("m$sequence" in reserved) sequence = Math.addExact(sequence, 1)
         val chosen = id ?: "m$sequence"
         require(chosen !in reserved) { "Modifier ID is already used or retired: $chosen" }
-        val entry = RigModifierInstance(chosen, type, version, targets.toList(), config = config, presetGroup = presetGroup)
+        val entry = RigModifierInstance(chosen, type, version, targets.toList(), config = config, presetGroup = presetGroup,
+            outputAliases = outputAliases.toMap())
         return copy(instances = instances + entry, nextId = Math.addExact(sequence, 1))
     }
 
     fun update(id: String, change: (RigModifierInstance) -> RigModifierInstance): RigModifierStack {
         val index = index(id)
         val updated = change(instances[index])
-        require(updated.id == id && updated.type == instances[index].type && updated.version == instances[index].version) {
+        require(updated.id == id && updated.type == instances[index].type && updated.version == instances[index].version &&
+            updated.outputAliases == instances[index].outputAliases) {
             "Updating a modifier cannot change its identity or algorithm version"
         }
         return copy(instances = instances.toMutableList().apply { set(index, updated) })

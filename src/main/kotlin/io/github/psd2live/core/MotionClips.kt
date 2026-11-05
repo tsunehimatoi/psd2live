@@ -81,8 +81,12 @@ data class MotionClip(
     val fileStem: String? = null,
     val exportGroup: String? = null,
     val runtimeDefaultFades: Boolean = false,
+    /** Runtime parameter groups contributed by this clip, independent of its display name. */
+    val parameterRoles: Map<String, List<String>> = emptyMap(),
 ) {
 	init {
+        require(parameterRoles.all { (role, parameters) -> role.isNotBlank() && parameters.isNotEmpty() &&
+            parameters.all { it.isNotBlank() } && parameters.distinct().size == parameters.size }) { "Invalid motion parameter role" }
         require(fileStem == null || fileStem.matches(Regex("[A-Za-z0-9_-]+"))) { "Invalid motion file stem" }
 		require(id.isNotBlank() && name.isNotBlank() && name.none(Char::isISOControl)) { "Motion needs an id and a name" }
 		require(duration.isFinite() && duration > 0f) { "Motion duration must be positive" }
@@ -107,7 +111,7 @@ object MotionClips {
 			val parameter = definitions[curve.parameterId] ?: return@mapNotNull null
 			val limits = MotionLoops.keyLimits(parameter)
 			clamped(curve, limits.start, limits.endInclusive)
-		}) }
+		}, parameterRoles = clip.parameterRoles.mapValues { (_, ids) -> ids.filter { it in definitions } }.filterValues { it.isNotEmpty() }) }
 	}
 
 	/**
@@ -123,7 +127,8 @@ object MotionClips {
 
 	/** [clips] without the curves of parameter [parameterId], once it is deleted. */
 	fun withoutParameter(clips: List<MotionClip>, parameterId: String): List<MotionClip> =
-		clips.map { clip -> clip.copy(curves = clip.curves.filterNot { it.parameterId == parameterId }) }
+		clips.map { clip -> clip.copy(curves = clip.curves.filterNot { it.parameterId == parameterId },
+            parameterRoles = clip.parameterRoles.mapValues { (_, ids) -> ids.filterNot { it == parameterId } }.filterValues { it.isNotEmpty() }) }
 
 	private fun clamped(curve: MotionCurve, min: Float, max: Float): MotionCurve = curve.copy(keys = curve.keys.map { key ->
 		val value = key.value.coerceIn(min, max)
@@ -298,6 +303,9 @@ object MotionClips {
         clip.fileStem?.let { put("file", it) }
         clip.exportGroup?.let { put("export_group", it) }
         if (clip.runtimeDefaultFades) put("runtime_default_fades", true)
+        if (clip.parameterRoles.isNotEmpty()) putJsonObject("parameter_roles") {
+            clip.parameterRoles.forEach { (role, parameters) -> put(role, JsonArray(parameters.map(::JsonPrimitive))) }
+        }
 		put("name", clip.name)
 		clip.builtin?.let { put("builtin", it) }
 		put("loop", clip.loop)
@@ -343,6 +351,7 @@ object MotionClips {
         fileStem = o["file"]?.jsonPrimitive?.contentOrNull,
         exportGroup = o["export_group"]?.jsonPrimitive?.contentOrNull,
         runtimeDefaultFades = o["runtime_default_fades"]?.jsonPrimitive?.booleanOrNull ?: false,
+        parameterRoles = o["parameter_roles"]?.jsonObject?.mapValues { (_, ids) -> ids.jsonArray.map { it.jsonPrimitive.content } }.orEmpty(),
 		loop = o["loop"]?.jsonPrimitive?.booleanOrNull ?: false,
 		duration = o["duration"]?.jsonPrimitive?.floatOrNull ?: 2f,
 		fps = o["fps"]?.jsonPrimitive?.floatOrNull ?: 30f,

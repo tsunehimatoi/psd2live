@@ -192,7 +192,8 @@ class WorkspaceModifierCommandsTest {
             val tracks = MotionClips.builtinTracks(name, null, settings = settings).filter { it.parameterId in available }
             val generated = MotionClips.fromTracks(preset, name, null, MotionClips.isLoopBuiltin(name), tracks,
                 MotionClips.builtinDuration(name, tracks, settings))
-            val expected = MotionClips.reconcileParameters(listOf(generated), before.model.rig.puppet.parameters).single()
+            val expected = MotionClips.reconcileParameters(listOf(generated), before.model.rig.puppet.parameters).single().copy(
+                parameterRoles = if (name == "Blink") mapOf("EyeBlink" to listOf("ParamEyeLOpen", "ParamEyeROpen")) else emptyMap())
             val entry = plan.getValue("entries").jsonArray.single().jsonObject
             assertEquals(expected, MotionClips.fromJson(entry.getValue("config").jsonObject))
             assertEquals(before, f.now)
@@ -254,6 +255,7 @@ class WorkspaceModifierCommandsTest {
         assertEquals(mapOf("ParamEyeLOpen" to eye.id, "ParamEyeROpen" to eye.id), instance.parameterProviders)
         val ir = RigIrCompiler.compile(f.now.model)
         assertEquals(setOf("ParamEyeLOpen", "ParamEyeROpen"), ir.clips.single().curves.map { it.parameter }.toSet())
+        assertEquals(listOf("ParamEyeLOpen", "ParamEyeROpen"), ir.parameterRoles.single { it.role == "EyeBlink" }.parameters)
         f.edit("modifier_apply", id(instance.id))
         assertEquals(ir, RigIrCompiler.compile(f.builder.build(f.now.document)))
     }
@@ -742,6 +744,20 @@ class WorkspaceModifierCommandsTest {
         }
         assertTrue(baking, "cancellation must happen inside the expensive bake, after upstream preparation")
         assertEquals(before, f.now)
+    }
+
+    @Test fun missingTrainingClipsKeepSimulationDormantWithoutStartingABake(): Unit = runBlocking<Unit> {
+        val f = fixture()
+        val before = RigIrCompiler.compile(f.now.model)
+        val source = RigSimEdit("template", "Simulation", SimKind.CLOTH, listOf(f.target.id),
+            trainingClips = mapOf("missing-clip" to .5f))
+        f.edit("modifier_add", add(f, "simulation", source.toJson(), "cloth"))
+        val row = WorkspaceModifierQueries.describe(f.now).getValue("entries").jsonArray.single().jsonObject
+        assertEquals("missing_dependency", row.getValue("status").jsonPrimitive.content)
+        assertEquals(listOf("motion:missing-clip"), row.getValue("missing_dependencies").jsonArray.map { it.jsonPrimitive.content })
+        assertNull(RigSimEdit.fromJson(stack(f).instances.single().config).bake)
+        assertEquals(before, RigIrCompiler.compile(f.now.model))
+        assertEquals(before, RigIrCompiler.compile(f.builder.build(f.now.document)))
     }
 
     @Test fun simulationBakesAreSummarizedAndApplyingKeepsTheirBindingsRatherThanASinglePose(): Unit = runBlocking<Unit> {

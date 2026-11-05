@@ -44,7 +44,8 @@ internal object RigModifierAlgorithms {
         addPhysics(result, PhysicsGenerator.swingRules(listOf(edit), available).map(Physics3Json::group))
     })
 
-    val simulation = RigModifierDefinition("simulation", 1, validate = { _, instance ->
+    val simulation = RigModifierDefinition("simulation", 1,
+        motionInputs = { RigSimEdit.fromJson(it.config).trainingClips.keys }, validate = { _, instance ->
         require(instance.targets.all { it.kind == "mesh" }) { "A simulation modifier targets meshes" }
     }, composableKinds = setOf("mesh", "hierarchy"), evaluate = { rig, instance, checkpoint ->
         checkpoint()
@@ -73,7 +74,7 @@ internal object RigModifierAlgorithms {
         addPhysics(rig, listOf(Physics3Json.group(edit)))
     })
 
-    val motion = RigModifierDefinition("motion", 1, evaluate = { rig, instance, checkpoint ->
+    val motion = RigModifierDefinition("motion", 1, motionOutputs = { setOf(it.outputId("motion")) }, evaluate = { rig, instance, checkpoint ->
         checkpoint()
         val source = MotionClips.fromJson(instance.config)
         require(source.enabled) { "Disable the modifier to disable its motion" }
@@ -85,7 +86,12 @@ internal object RigModifierAlgorithms {
             source.fadeOut.takeUnless { source.runtimeDefaultFades },
             source.curves.map(MotionGenerator::curve), source.events.map { ClipEvent(it.time, it.value) })
         require(rig.clips.none { it.id == clip.id || it.file.equals(clip.file, ignoreCase = true) }) { "Motion ID or file collision: ${clip.id} / ${clip.file}" }
-        rig.copy(clips = rig.clips + clip)
+        val roles = source.parameterRoles.map { (role, parameters) ->
+            require(parameters.all { it in available }) { "Motion role $role references missing parameters" }
+            require(rig.parameterRoles.none { it.role == role && it.parameters != parameters }) { "Conflicting motion parameter role $role" }
+            io.github.psd2live.format.model.ParameterRole(role, parameters)
+        }
+        rig.copy(clips = rig.clips + clip, parameterRoles = (roles + rig.parameterRoles).distinct())
     })
 
     private val native = listOf(swing, simulation, physics, motion)

@@ -31,6 +31,30 @@ class RigModifierStackTest {
         assertEquals(500, authored.parts.first().drawOrder)
     }
 
+    @Test fun motionDependenciesSuspendConsumersRejectMovesAndSurviveApplication() {
+        val provider = entry("motion", "clip").copy(outputAliases = mapOf("motion" to "existing-motion"))
+        val motionId = provider.outputId("motion")
+        val clip = io.github.psd2live.format.model.Clip(motionId, "Training", "Idle", "training", 1f, 30f, true, curves = emptyList())
+        val producer = RigModifierDefinition("clip", 1, motionOutputs = { setOf(it.outputId("motion")) },
+            evaluate = { rig, _, _ -> rig.copy(clips = rig.clips + clip) })
+        val consumer = RigModifierDefinition("train", 1, motionInputs = { setOf(motionId) },
+            evaluate = { rig, _, _ -> rig.copy(parts = rig.parts.map { it.copy(drawOrder = it.drawOrder + 1) }) })
+        val engine = RigModifierEvaluator(RigModifierRegistry(listOf(producer, consumer)))
+        val stack = RigModifierStack(listOf(provider, entry("simulation", "train")))
+        val expected = engine.evaluate(authored, stack)
+        assertTrue(expected.entries.all { it.status == ModifierStatus.ACTIVE })
+        assertFailsWith<IllegalArgumentException> { engine.evaluate(authored, stack.move("simulation", 0)) }
+        for (missing in listOf(stack.update("motion") { it.copy(enabled = false) }, stack.remove("motion"))) {
+            val result = engine.evaluate(authored, missing)
+            assertEquals(ModifierStatus.MISSING_DEPENDENCY, result.entries.last().status)
+            assertEquals(setOf("motion:$motionId"), result.entries.last().missingDependencies)
+            assertEquals(authored, result.rig)
+        }
+        val applied = engine.applyThrough(authored, stack, "motion")
+        assertEquals(expected.rig, engine.evaluate(applied.authored, applied.stack).rig)
+        assertEquals(expected.rig, engine.evaluate(authored, stack).rig)
+    }
+
     @Test fun anObjectOverrideCannotMoveAheadOfItsReferencedGenerator() {
         val stack = RigModifierStack(listOf(entry("a", "add"), entry("b", "multiply"))).withOverrides("b", listOf(buildJsonObject {
             put("op", "structure")
@@ -40,6 +64,20 @@ class RigModifierStackTest {
         val failure = assertFailsWith<IllegalArgumentException> { evaluator.validateOrder(stack.move("b", 0)) }
         assertContains(failure.message.orEmpty(), "b must follow a")
         evaluator.validateOrder(stack.remove("a"))
+    }
+
+    @Test fun migratedOutputAliasesRoundTripAndCannotBeChangedOrInherited() {
+        val stack = RigModifierStack().add("motion", 1, listOf(target), outputAliases = mapOf("motion" to "Idle"))
+        val restored = RigModifierStack.fromJson(stack.toJson())
+        val entry = restored.instances.single()
+        assertEquals("Idle", entry.outputId("motion"))
+        assertEquals("motion", entry.localOutputName("Idle"))
+        assertEquals("another", entry.localOutputName(entry.outputId("another")))
+        assertFailsWith<IllegalArgumentException> { restored.update(entry.id) { it.copy(outputAliases = emptyMap()) } }
+        assertEquals("Idle", restored.update(entry.id) { it.copy(enabled = false) }.instances.single().outputId("motion"))
+        val added = restored.remove(entry.id).add("motion", 1, listOf(target)).instances.single()
+        assertNotEquals("Idle", added.outputId("motion"))
+        assertTrue(added.outputAliases.isEmpty())
     }
 
     @Test fun multipleInstancesKeepTheirCapturedTargets() {
