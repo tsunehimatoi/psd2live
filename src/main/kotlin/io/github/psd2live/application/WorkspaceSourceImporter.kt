@@ -115,7 +115,7 @@ internal class WorkspaceSourceImporter(
             rigEdits = RigEditOverlay.Empty, generationSource = null, meshSource = null,
             hairSimulationFront = choices?.frontHair == WorkspaceInitialHair.SIMULATION,
             hairSimulationBack = choices?.backHair == WorkspaceInitialHair.SIMULATION)
-        val overlay = if (modifiers == null || choices != null) RigEditOverlay.Empty else RigEditOverlay(
+        val overlay = if (modifiers == null) RigEditOverlay.Empty else RigEditOverlay(
             modifierStack = io.github.psd2live.core.modifier.RigModifierStack().toJson())
         val created = WorkspaceDocument(source, emptyMap(), emptySet(), overrides, emptyMap(), overlay,
             WorkspaceSettingsCodec.encode(config),
@@ -135,27 +135,8 @@ internal class WorkspaceSourceImporter(
         progress(0.6f, "Rebuilding new source project")
         var built = RigBuildProfile.stage("source import: preview build (wall time)") { build(document) }
         if (choices != null) {
-            val present = PhysicsGenerator.Presets.present(built.analysis)
-            val selected = buildList {
-                if (present.frontHair && choices.frontHair == WorkspaceInitialHair.SIMULATION) add(io.github.psd2live.core.sim.ModelPresets.Preset.FRONT_HAIR)
-                if (present.backHair && choices.backHair == WorkspaceInitialHair.SIMULATION) add(io.github.psd2live.core.sim.ModelPresets.Preset.BACK_HAIR)
-                if (choices.clothing && built.analysis.layers.any { it.semantic.tag in io.github.psd2live.core.sim.ModelPresets.CLOTHING_TAGS && it.opaquePixels > 0 })
-                    add(io.github.psd2live.core.sim.ModelPresets.Preset.CLOTHING)
-            }
-            val simulationWork = WorkspaceSimulationWork.Direct.cancellable(context)
-            for (selectedPreset in selected) {
-                document = runInterruptible(Dispatchers.Default) {
-                    WorkspaceSimulationEdits.preset(document, built, selectedPreset, emptySet(), simulationWork, allowNoLooseClothing = true).document
-                }
-                built = build(document)
-            }
             document = runInterruptible(Dispatchers.Default) {
-                WorkspaceModifierConversion.convert(document, built, WorkspaceRasterWork.Direct.cancellable(context)).let { converted ->
-                    val stack = io.github.psd2live.core.modifier.RigModifierStack.fromJson(requireNotNull(converted.rigEdits.modifierStack))
-                    converted.copy(rigEdits = converted.rigEdits.copy(modifierStack = stack.copy(instances = stack.instances.map {
-                        it.copy(presetGroup = modifiers!!.name.lowercase())
-                    }).toJson()))
-                }
+                WorkspacePresetInitialization.create(document, WorkspaceRasterWork.Direct.cancellable(context), choices)
             }
             built = build(document)
         }

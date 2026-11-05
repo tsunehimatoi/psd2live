@@ -54,7 +54,8 @@ internal object WorkspaceModifierPlan {
         }).first
     }
 
-    internal fun plan(model: RigPreviewModel, stack: RigModifierStack, request: JsonObject): Pair<RigModifierStack, JsonObject> {
+    internal fun plan(model: RigPreviewModel, stack: RigModifierStack, request: JsonObject,
+                      requestedTypes: List<String>? = null): Pair<RigModifierStack, JsonObject> {
         val targets = request.getValue("targets").jsonArray.map { raw -> raw.jsonObject.let {
             ModifierTarget(it.getValue("kind").jsonPrimitive.content, it.getValue("id").jsonPrimitive.content)
         } }
@@ -70,7 +71,7 @@ internal object WorkspaceModifierPlan {
         if (type == "simulation" && request["preset"] != null)
             return simulationPreset(model, stack, targets, request.getValue("preset").jsonPrimitive.content)
         require((type == null) != (group == null)) { "Choose a modifier or a preset group" }
-        val requested = if (type != null) listOf(type) else requireNotNull(groups[group]) { "Unknown source preset group: $group" }
+        val requested = requestedTypes ?: if (type != null) listOf(type) else requireNotNull(groups[group]) { "Unknown source preset group: $group" }
         require(requested.all { it in types }) { "Unknown modifier" }
         require(request["preset"] == null || type in setOf("motion", "physics") && request["config"] == null) { "A preset and an explicit configuration are alternative inputs" }
         require(type in nativeTypes || request["config"] == null) { "Source binding configuration is resolved from its captured dependencies" }
@@ -184,12 +185,13 @@ internal object WorkspaceModifierPlan {
 
     fun physicsPresets(): List<RigPhysicsEdit> = PhysicsGenerator.presetRules(PhysicsGenerator.Presets.All)
 
-    private fun simulationPreset(model: RigPreviewModel, stack: RigModifierStack, targets: List<ModifierTarget>, preset: String): Pair<RigModifierStack, JsonObject> {
+    internal fun simulationPreset(model: RigPreviewModel, stack: RigModifierStack, targets: List<ModifierTarget>, preset: String,
+                                  allowNoLooseClothing: Boolean = false): Pair<RigModifierStack, JsonObject> {
         require(targets.all { it.kind == "mesh" }) { "Simulation presets need mesh targets" }
         val layers = targets.map { requireNotNull(model.rig.layerIdByDrawableId[it.id]) { "Target has no source layer: ${it.id}" } }.toSet()
         val existing = stack.instances.filter { it.type == "simulation" }.map { RigSimEdit.fromJson(it.config).copy(id = it.id) }
         val applied = ModelPresets.apply(RigEditOverlay(simEdits = existing), model.rig.puppet,
-            model.analysis, model.rig.layerIdByDrawableId, ModelPresets.Preset.parse(preset), layers, model.config.alphaThreshold)
+            model.analysis, model.rig.layerIdByDrawableId, ModelPresets.Preset.parse(preset), layers, model.config.alphaThreshold, allowNoLooseClothing)
         var next = stack
         val entries = applied.overlay.simEdits.filter { it.id in applied.simulationIds }.map { simulation ->
             require(simulation.inputs.isNotEmpty()) { "Add body or head movement before adding a simulation" }

@@ -1108,6 +1108,26 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun newPresetInitializationIncludesOutlineAndSeeThroughWithoutLegacyMigration(): Unit = runBlocking<Unit> {
+        val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true,
+            skinDetails = true, outfitDetails = true, sideLock = true, bangOverlay = true)
+        val config = WorkspacePresetBaseline.configure(art.config(), "modern").copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        val source = art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
+        val builder = WorkspacePreviewBuilder()
+        val initialized = WorkspacePresetInitialization.create(source, WorkspaceRasterWork.Direct, WorkspaceInitialPreset(clothing = false))
+        val stack = RigModifierStack.fromJson(initialized.rigEdits.modifierStack!!)
+        assertTrue(stack.instances.all { it.outputAliases.isEmpty() })
+        assertTrue(stack.instances.any { it.type == "mouth.outline" })
+        assertTrue(stack.instances.any { it.type == "eye.see-through" })
+        assertTrue(stack.instances.any { it.type == "brow.see-through" })
+        val built = builder.build(initialized)
+        val report = built.rig.modifierReport!!.getValue("entries").jsonArray
+        assertTrue(report.all { it.jsonObject.getValue("status").jsonPrimitive.content == "active" })
+        assertTrue(built.rig.modifierRasterAssets.isNotEmpty())
+        val output = RigIrCompiler.compile(built, tileArt = true)
+        assertEquals(output, RigIrCompiler.compile(WorkspacePreviewBuilder().build(initialized), tileArt = true))
+    }
+
     @Test fun modernPresetConversionPreservesTheCompleteGeneratedModel(): Unit = runBlocking<Unit> {
         val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, skinDetails = true,
             outfitDetails = true, sideLock = true, bangOverlay = true)
