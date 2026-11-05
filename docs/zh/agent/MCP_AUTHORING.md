@@ -719,6 +719,8 @@ View 从模型数据渲染 PNG，不依赖桌面截图。`canvas_rect` 给出画
 
 ### 完整预设切换与衣物模拟
 
-`modifier_catalog.baselines` 返回 `legacy`、`modern`、`empty`。`modifier_switch` 接收 `state` 和 `group`，整体替换当前预设并保留普通作者内容；走隔离候选、CAS 和单历史节点。旧版／新版是修改器组配置，直接创建实例并由同一栈求值，不执行旧工程生成和转换。生成内容覆盖或已固化能力不能安全迁移时拒绝切换。
+`modifier_catalog.baselines` 返回偏好库中的可切换预设 ID，包含内置与用户预设。`modifier_switch` 接收 `state` 和 `group`，整体替换当前预设并保留普通作者内容；走隔离候选、CAS 和单历史节点。旧版／新版是修改器组配置，直接创建实例并由同一栈求值，不执行旧工程生成和转换。生成内容覆盖或已固化能力不能安全迁移时拒绝切换。
 
 `modifier_plan` 的 `type: "simulation"` 可配合 `preset: "clothing" | "front_hair" | "back_hair"`，调用原识别和自动权重流程。返回的模拟配置含 `automatic_weights`，权重随实例求值，作者已有同名权重优先。确认添加时后台烘焙并产生绑定及物理；计划本身不烘焙。旧 `groups` 和 `modifier_add_group` 保留追加语义以兼容已有客户端。
+
+预设库的可切换条目由 `modifier_catalog.presets` 返回（`id`、`name`、可空的 `name_key`），`modifier_switch.group` 使用其中的 ID，包含用户保存和导入的 JSON 预设。`modifier_organize` 接收 `state` 和完整 `nodes` 数组；每个节点有 `id`、可空的 `parent`、可空的 `name`，有名称即文件夹，无名称即引用修改器实例。组织布局随文档事务保存，不改变执行顺序；实际重排仍使用 `modifier_move`。`modifier_stack.organization` 返回布局。

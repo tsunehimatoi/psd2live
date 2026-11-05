@@ -90,7 +90,7 @@ internal class WorkspaceSourceImporter(
                                 modifiers: WorkspaceInitialModifiers? = null, preset: WorkspaceInitialPreset? = null): WorkspaceCommit<RigPreviewModel> {
         require(preset == null || modifiers == WorkspaceInitialModifiers.CUSTOM) { "Custom choices require the custom modifier mode" }
         val choices = when (modifiers) {
-            WorkspaceInitialModifiers.RECOMMENDED -> WorkspaceInitialPreset()
+            WorkspaceInitialModifiers.RECOMMENDED -> WorkspaceModelPresetLibrary.shared.get("modern").choices
             WorkspaceInitialModifiers.CUSTOM -> requireNotNull(preset) { "Custom modifier choices are required" }
             WorkspaceInitialModifiers.MINIMAL, WorkspaceInitialModifiers.DEFAULT, WorkspaceInitialModifiers.FULL -> WorkspaceInitialPreset.forMode(modifiers)
             else -> null

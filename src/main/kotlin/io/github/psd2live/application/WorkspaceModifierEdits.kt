@@ -15,7 +15,7 @@ internal object WorkspaceModifierEdits {
               work: WorkspaceRasterWork = WorkspaceRasterWork.Direct): WorkspaceDocument {
         if (operation.operation == "modifier_convert") return WorkspaceModifierConversion.convert(document, model, work)
         if (operation.operation == "modifier_switch") return WorkspacePresetSwitch.apply(document,
-            operation.request.getValue("group").jsonPrimitive.content, work)
+            operation.request.getValue("group").jsonPrimitive.content, work, model)
         val stack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack) {
             "Convert legacy presets before editing a modifier stack"
         })

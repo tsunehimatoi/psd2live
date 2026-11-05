@@ -10,13 +10,15 @@ The start page initially selects **Recommended modifiers**. The first revision i
 
 Legacy and Modern are two modifier group presets in the same project model, not project format versions. New projects directly instantiate the selected bindings, modules, dynamics, motions and clothing simulations. The stack evaluates them; no intermediate legacy model is generated or migrated.
 
-Choose meshes, then **Add Preset**. Algorithms are grouped by body area, with legacy and fitted choices together. Clothing and hair simulations appear in their respective areas and use the original automatic material and weight setup. Generic generators are under Advanced. Selection previews a dependency list; expensive evaluation runs on confirmation. Existing active instances of the same type and target scope are reused.
+Choose meshes, then **Add Preset**. Algorithms are grouped by body area, with legacy and fitted choices together. Clothing and hair simulations appear in their respective areas and use the original automatic material and weight setup. Generic generators are under Advanced. Selection previews a dependency list; expensive evaluation runs on confirmation. Non-stackable items already present on all selected targets are hidden, including disabled instances. Partially covered selections show the existing count and add only to uncovered targets. Stackable items such as swings and motions remain available.
 
 **Switch Preset** replaces the whole preset with **Legacy**, **Modern**, or **Empty**, preserving ordinary authored content. It commits once and can be undone. Tight clothing is skipped when it needs no simulation. Automatically generated weights belong to individually added simulation instances; existing authored groups with the same name take precedence.
 
 Switching currently rejects generated-content overrides or applied preset capabilities instead of discarding edits. Handle those contents before switching. Tiered MCP groups remain available for compatibility but are no longer the primary UI choice.
 
-Enable **Advanced: edit execution order** to drag entries using the parameter list interaction. Dependencies are added before new consumers; existing entries are not silently reordered.
+**Settings** organizes entries into folders, grouped by purpose by default. Create, rename, delete and drag folders or entries without changing execution order or rebuilding the model. **Order** displays a flat list and uses the parameter list drag interaction to change execution order; invalid dependency orders are rejected. Folder layout is saved with the project and supports undo and redo. Dependencies are added before new consumers; existing entries are not silently reordered.
+
+The library also includes Modern Light, Modern Dynamic and Legacy Light presets. **Manage presets** saves the current configuration, imports or exports JSON, and deletes the selected library preset. Saved presets include modifier configuration and folders, excluding generated-content overrides and bake caches; simulations bake again on application. Both bundled and user presets are JSON stored in application preferences. Missing bundled entries are restored from the shipped JSON and then read through the same path. Targets resolve by stable reference or a unique name and type; an ambiguous or missing target fails without widening the scope.
 
 The shared structure modifier can enable the original feature displacement hierarchy. Later face bindings continue to use it after the structure is applied.
 

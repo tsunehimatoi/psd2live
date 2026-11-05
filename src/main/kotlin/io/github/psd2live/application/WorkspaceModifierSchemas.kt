@@ -82,7 +82,7 @@ internal object WorkspaceModifierSchemas {
             "modifier_organize" -> s.obj(mapOf("nodes" to organization))
             "modifier_move" -> s.obj(mapOf("id" to s.handle(), "index" to s.integer(0)))
             "modifier_convert" -> s.obj(emptyMap())
-            "modifier_switch" -> s.obj(mapOf("group" to s.choices(*WorkspacePresetBaseline.ids.toTypedArray())))
+            "modifier_switch" -> s.obj(mapOf("group" to s.handle()))
             "modifier_remove", "modifier_apply" -> s.obj(mapOf("id" to s.handle()))
             else -> error("Unknown modifier operation $id")
         }
@@ -128,7 +128,8 @@ internal object WorkspaceModifierSchemas {
     val plan: JsonObject get() = s.obj(s.identity + mapOf("revision" to s.handle(), "group" to s.handle(), "entries" to s.array(addition, 0, 128),
         "plan" to s.array(s.obj(mapOf("id" to s.handle(), "type" to s.handle(), "version" to s.integer(1),
             "targets" to s.array(target, 1, 4096), "disposition" to s.choices("added", "reused", "applied"))))))
-    val catalog = s.obj(mapOf("baselines" to s.array(s.choices("legacy", "modern", "empty")),
+    val catalog = s.obj(mapOf("baselines" to s.array(s.handle()),
+        "presets" to s.array(s.obj(mapOf("id" to s.handle(), "name" to s.handle(), "name_key" to s.nullable(s.handle())))),
         "types" to s.array(s.obj(mapOf("type" to s.handle(), "version" to s.integer(1),
         "requires" to s.array(s.handle()), "provides" to s.array(s.handle()), "exclusive_family" to s.nullable(s.handle())))),
         "groups" to s.array(s.obj(mapOf("id" to s.handle(), "algorithm" to s.choices("legacy", "modern"),

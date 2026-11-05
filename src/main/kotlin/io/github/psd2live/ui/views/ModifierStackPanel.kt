@@ -84,6 +84,7 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                 PanelToolButton(labels[1], labelsShown > 1, { vm.openModifierAddition(group = true) }, enabled, labels[1]) { IconFolder() }
                 if (vm.modifierAddition?.group != null) ModifierAdditionMenu(state, vm)
             }
+            PresetLibraryControls(state, null, enabled)
         }
         CompactTabBar(listOf(tr("modifier.mode.settings"), tr("modifier.mode.ordering")), if (editOrder) 1 else 0, { editOrder = it == 1 })
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
@@ -374,10 +375,10 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
     if (groups) {
         PressMenu(expanded = true, press = Offset.Zero, onDismissRequest = { if (!dialog.committing) vm.dismissModifierAddition() }, width = 260.dp) {
             FloatingMenuSection(tr("modifier.switch.description"))
-            val baselines = io.github.psd2live.application.WorkspacePresetBaseline.ids
+            val baselines by io.github.psd2live.application.WorkspaceModelPresetLibrary.shared.state.collectAsState()
             GlidingColumn(Modifier.fillMaxWidth(), baselines.size, highlights = { !dialog.committing }) { index ->
-                val id = baselines[index]
-                FloatingMenuRow(tr("modifier.baseline.$id"), { vm.switchModifierPreset(id) }, enabled = !dialog.committing, bar = false)
+                val entry = baselines[index]
+                FloatingMenuRow(entry.nameKey?.let { tr(it) } ?: entry.name, { vm.switchModifierPreset(entry.id) }, enabled = !dialog.committing, bar = false)
             }
             if (dialog.committing) FloatingMenuSection(tr("modifier.adding"))
             dialog.error?.let { FloatingMenuRow(tr("modifier.switch"), {}, enabled = false, hint = it) }

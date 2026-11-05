@@ -6,17 +6,19 @@ import io.github.psd2live.core.recipe.RigRecipe
 
 /** Complete pre-stack defaults, independent of the previous project's recipe or preset tier. */
 internal object WorkspacePresetBaseline {
-    val ids = listOf("legacy", "modern", "empty")
+    val ids get() = WorkspaceModelPresetLibrary.shared.snapshot().map { it.id }
 
     fun configure(config: PipelineConfig, id: String): PipelineConfig {
-        require(id == "legacy" || id == "modern") { "Unknown preset baseline: $id" }
-        return WorkspaceInitialPreset().configure(config).copy(
-            recipe = if (id == "legacy") RigRecipe.Legacy else RigRecipe.Modern,
+        val entry = WorkspaceModelPresetLibrary.shared.get(id)
+        require(entry.baseline == "legacy" || entry.baseline == "modern") { "Preset has no binding baseline: $id" }
+        return entry.choices.configure(config).copy(
+            recipe = if (entry.baseline == "legacy") RigRecipe.Legacy else RigRecipe.Modern,
             rigTuning = RigTuning(), meshOnly = false, generateDeformers = true,
             seeThroughBrows = true, seeThroughEyes = true,
             generatePhysics = true, exportMotions = true,
             motionIdle = true, motionBlink = true, motionNod = true, motionShake = true,
-            hairSimulationFront = false, hairSimulationBack = false,
+            hairSimulationFront = entry.choices.frontHair == WorkspaceInitialHair.SIMULATION,
+            hairSimulationBack = entry.choices.backHair == WorkspaceInitialHair.SIMULATION,
         )
     }
 }

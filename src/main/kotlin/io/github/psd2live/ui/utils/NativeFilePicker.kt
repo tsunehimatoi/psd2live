@@ -68,6 +68,12 @@ object NativeFilePicker {
 	fun choosePsdFile(window: Window? = null, initialPath: String? = null): String? =
 		chooseSourceFile(window, initialPath, listOf("psd", "json", "zip"), tr("dialog.choosePsd"), tr("dialog.psdFilter"))
 
+	fun chooseJsonFile(window: Window? = null, title: String): String? =
+        chooseSourceFile(window, null, listOf("json"), title, "JSON (*.json)")
+
+	fun chooseSaveJsonFile(window: Window? = null, title: String, defaultName: String? = null): String? =
+        chooseSaveFile(window, title, defaultName, "json", "JSON (*.json)")
+
 	fun chooseCmo3File(window: Window? = null, initialPath: String? = null): String? =
 		chooseSourceFile(window, initialPath, listOf("cmo3"), tr("cmo3.chooseFile"), "Cubism model (*.cmo3)")
 
@@ -330,18 +336,21 @@ object NativeFilePicker {
 	/**
 	 * Opens the native OS file picker for saving a PNG image; the name gets ".png" when it lacks it.
 	 */
-	fun chooseSavePngFile(window: Window? = null, title: String, defaultName: String? = null): String? {
+	fun chooseSavePngFile(window: Window? = null, title: String, defaultName: String? = null): String? =
+        chooseSaveFile(window, title, defaultName ?: "image.png", "png", "PNG (*.png)")
+
+    private fun chooseSaveFile(window: Window?, title: String, defaultName: String?, extension: String, filter: String): String? {
 		if (!isPicking.compareAndSet(false, true)) {
 			focusOpenPicker()
 			return null
 		}
 		try {
-			val defaultFileName = if (defaultName.isNullOrBlank()) "image.png" else if (defaultName.endsWith(".png", ignoreCase = true)) defaultName else "$defaultName.png"
-			fun named(name: String) = if (name.endsWith(".png", ignoreCase = true)) name else "$name.png"
+			val defaultFileName = if (defaultName.isNullOrBlank()) "${if (extension == "png") "image" else "preset"}.$extension" else if (defaultName.endsWith(".$extension", ignoreCase = true)) defaultName else "$defaultName.$extension"
+			fun named(name: String) = if (name.endsWith(".$extension", ignoreCase = true)) name else "$name.$extension"
 
 			try {
 				val dialog = createFileDialog(window, title, FileDialog.SAVE).apply {
-					setFilenameFilter { _, name -> name.endsWith(".png", ignoreCase = true) }
+					setFilenameFilter { _, name -> name.endsWith(".$extension", ignoreCase = true) }
 					file = defaultFileName
 					openPicker = this
 					isVisible = true
@@ -359,7 +368,7 @@ object NativeFilePicker {
 				UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
 				val chooser = chooser().apply {
 					dialogTitle = title
-					fileFilter = javax.swing.filechooser.FileNameExtensionFilter("PNG (*.png)", "png")
+					fileFilter = javax.swing.filechooser.FileNameExtensionFilter(filter, extension)
 					selectedFile = File(defaultFileName)
 				}
 				if (chooser.showSaveDialog(owner(window)) == JFileChooser.APPROVE_OPTION) {

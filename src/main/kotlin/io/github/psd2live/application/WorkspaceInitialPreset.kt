@@ -32,14 +32,11 @@ data class WorkspaceInitialPreset(
         physicsEyeJelly = eyeJelly,
     )
     companion object {
-        fun forMode(mode: WorkspaceInitialModifiers) = when (mode) {
-            WorkspaceInitialModifiers.MINIMAL -> WorkspaceInitialPreset(mouthOutline = false, motionBasic = false,
-                motionSkeleton = false, frontHair = WorkspaceInitialHair.OFF, backHair = WorkspaceInitialHair.OFF,
-                clothing = false, eyeJelly = false)
-            WorkspaceInitialModifiers.DEFAULT -> WorkspaceInitialPreset()
-            WorkspaceInitialModifiers.FULL -> WorkspaceInitialPreset(featureDisplacement = true,
-                frontHair = WorkspaceInitialHair.SIMULATION, backHair = WorkspaceInitialHair.SIMULATION)
+        fun forMode(mode: WorkspaceInitialModifiers) = WorkspaceModelPresetLibrary.shared.get(when (mode) {
+            WorkspaceInitialModifiers.MINIMAL -> "modern-light"
+            WorkspaceInitialModifiers.DEFAULT -> "modern"
+            WorkspaceInitialModifiers.FULL -> "modern-dynamic"
             else -> error("This mode does not describe a shortcut: $mode")
-        }
+        }).choices
     }
 }

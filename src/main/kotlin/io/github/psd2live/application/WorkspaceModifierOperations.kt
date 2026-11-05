@@ -12,7 +12,7 @@ internal fun registerModifierOperations(registry: WorkspaceOperationRegistry, wo
             "modifier_organize changes presentation folders and sibling order only; evaluation order is unchanged. " +
             "Apply materializes the complete prefix, preserves the suffix and verifies the final result before committing. " +
             "Convert explicitly migrates a legacy project and commits only if the complete result matches. Other operations require an explicit stack. " +
-            "modifier_switch replaces the entire preset with legacy, modern or empty while preserving ordinary authored content; incompatible authored overrides block replacement. " +
+            "modifier_switch replaces the entire preset using an ID from the preference preset library while preserving ordinary authored content; incompatible authored overrides block replacement. " +
             "Returns a process job; use job_wait/job_get for its committed state.",
         WorkspaceModifierSchemas.request(id), WorkspaceOperationKind.DOCUMENT, jobBacked = true, batchable = true,
         resultSchema = requireNotNull(WorkspaceJobResultSchemas.operationOutput(id)), jobResultSchema = WorkspaceJobResultSchemas.result(id))) { request, context ->
@@ -33,6 +33,9 @@ internal fun registerModifierOperations(registry: WorkspaceOperationRegistry, wo
                 put("types", JsonArray(group.types.map(::JsonPrimitive)))
             } } }
             put("baselines", JsonArray(WorkspacePresetBaseline.ids.map(::JsonPrimitive)))
+            putJsonArray("presets") { WorkspaceModelPresetLibrary.shared.snapshot().forEach { preset -> addJsonObject {
+                put("id", preset.id); put("name", preset.name); put("name_key", preset.nameKey?.let(::JsonPrimitive) ?: JsonNull)
+            } } }
         }) }
     registry.register(WorkspaceOperationDefinition("modifier_plan", "Plan source bindings, a legacy or modern preset group at minimal/standard/full richness, or native swing/physics/simulation/motion at captured targets. " +
         "Optional physics presets capture the original front hair, back hair or eye jelly rules. Returns the complete additions with fixed IDs and reused or applied providers; publishes nothing. Dry-run its entries before adding the group.",
