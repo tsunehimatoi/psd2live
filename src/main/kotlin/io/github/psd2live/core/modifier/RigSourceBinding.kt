@@ -138,7 +138,7 @@ internal object RigSourceBinding {
                 }
                 val destination = desiredBranch.firstOrNull()?.let(mapped::getValue)
                 current = current.copy(drawables = current.drawables.map { if (it.id == id) it.copy(parentDeformerId = destination) else it })
-                if (!nativeGeometry) current = RigStructureEdits.carriedToParent(beforeInsertion, current, id)
+                if (!nativeGeometry) current = carry(beforeInsertion, current, id, instance)
             }
             val previousFrame = current.copy(deformers = current.deformers.map { updatedDeformers[it.id] ?: it })
             for (canonical in branch) {
@@ -175,13 +175,20 @@ internal object RigSourceBinding {
                         if (carriedParent) current else oldProjection,
                         if (carriedParent) current else if (canonical in removed) oldProjection else nextProjection,
                         actual, before, after, replacement, DrawableId(instance.outputId("${target.id}/warp-morph:${canonical.raw}")), checkpoint)
-                    replacement = replacement.copy(blendShapes = merged)
+                    val dimensionsChanged = before.rows != after.rows || before.columns != after.columns || before.isQuadTransform != after.isQuadTransform
+                    require(!dimensionsChanged || actual.rows == before.rows && actual.columns == before.columns && actual.isQuadTransform == before.isQuadTransform) {
+                        "${instance.id}: incompatible authored lattice dimensions on ${actual.id.raw}"
+                    }
+                    replacement = replacement.copy(blendShapes = merged,
+                        rows = if (dimensionsChanged) after.rows else actual.rows,
+                        columns = if (dimensionsChanged) after.columns else actual.columns,
+                        isQuadTransform = if (dimensionsChanged) after.isQuadTransform else actual.isQuadTransform)
                 }
                 current = current.copy(deformers = current.deformers.map { if (it.id == liveId) replacement else it })
             }
             // Fitting may change a neutral parent frame even when its ID stays. Re-express the authored geometry
             // in that new frame before adding the local algorithm correction, as ordinary canvas-space rebinding does.
-            if (!nativeGeometry) current = RigStructureEdits.carriedToParent(previousFrame, current, id)
+            if (!nativeGeometry) current = carry(previousFrame, current, id, instance)
             // Parent motion remains in deformers. Only local mesh corrections are transferred through the native
             // residual mapper, against static projections, so no ancestor's motion is counted a second time.
             val oldMesh = previous.drawables.single { it.id == id }
@@ -253,6 +260,28 @@ internal object RigSourceBinding {
         return if (chains.isEmpty()) output else source.addUpstreamExpressionInputs(output, instance)
     }
 
+    private fun carry(before: PuppetModel, after: PuppetModel, id: DrawableId, instance: RigModifierInstance): PuppetModel {
+        fun frame(model: PuppetModel): List<Deformer> {
+            val nodes = model.deformers.associateBy { it.id }
+            val path = ArrayList<Deformer>()
+            var parent = model.drawables.single { it.id == id }.parentDeformerId
+            while (parent != null) {
+                val node = nodes.getValue(parent)
+                require(path.none { it.id == node.id }) { "Cyclic binding hierarchy" }
+                path += node
+                parent = node.parent
+            }
+            return path
+        }
+        // An unchanged frame needs no inverse. Fitted lattices can have ambiguous inverses outside their bounds.
+        if (frame(before).map(PuppetIr::deformerToIr) == frame(after).map(PuppetIr::deformerToIr) &&
+            before.parameters == after.parameters) return after
+        return try { RigStructureEdits.carriedToParent(before, after, id) }
+        catch (failure: IllegalArgumentException) {
+            throw IllegalArgumentException("${instance.type} (${instance.id}), ${id.raw}: ${failure.message}", failure)
+        }
+    }
+
     private fun masks(actual: Drawable, before: Drawable, after: Drawable, instance: RigModifierInstance): Pair<List<DrawableId>, Boolean> {
         val old = before.maskedBy to before.invertMask
         val next = after.maskedBy to after.invertMask
@@ -318,8 +347,7 @@ internal object RigSourceBinding {
     private fun sameMeshGeometry(actual: Drawable, expected: Drawable): Boolean {
         val a = PuppetIr.meshToIr(actual)
         val b = PuppetIr.meshToIr(expected)
-        return a.geometry != null && a.geometry == b.geometry && a.offsets == b.offsets && a.shapes == b.shapes &&
-            a.channels == b.channels && a.drawOrder == b.drawOrder && a.opacity == b.opacity && a.multiply == b.multiply && a.screen == b.screen
+        return a.geometry != null && a.geometry == b.geometry && a.offsets == b.offsets && a.shapes == b.shapes
     }
 
     private fun channelDelta(model: PuppetModel, actual: Drawable, before: Drawable, after: Drawable, checkpoint: () -> Unit): ChannelGrids {
