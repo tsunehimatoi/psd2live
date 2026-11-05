@@ -13,6 +13,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.rememberScrollbarAdapter
+import io.github.psd2live.ui.views.texture.FloatingMenuRow
+import io.github.psd2live.ui.views.texture.FloatingMenuSection
+import io.github.psd2live.ui.views.texture.FloatingMenuDivider
+import io.github.psd2live.ui.views.tooloptions.GlidingColumn
 import io.github.psd2live.ui.views.texture.MenuGlide
 import io.github.psd2live.ui.views.texture.glideItem
 import androidx.compose.ui.graphics.Color
@@ -31,6 +35,7 @@ import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import io.github.psd2live.application.WorkspaceModifierPlan
 import io.github.psd2live.core.RigTuning
 import io.github.psd2live.core.modifier.*
@@ -140,7 +145,7 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                             CompactCheckbox(instance.enabled, { value ->
                                 vm.editModifier("modifier_enable", buildJsonObject { put("id", instance.id); put("enabled", value) })
                             }, enabled = enabled)
-                            Text(name, style = LocalToolTypography.current.body,
+                            Text(name, style = LocalToolTypography.current.body.copy(fontSize = 11.sp),
                                 color = if (instance.enabled) colors.textPrimary else colors.textMuted,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f).handCursor().onGloballyPositioned { labelCoords = it }.onPointerEvent(PointerEventType.Press) { event ->
@@ -433,7 +438,6 @@ internal fun ModifierContributions(report: JsonObject, state: PSD2LiveState, vm:
 @Composable
 private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
     val dialog = vm.modifierAddition ?: return
-    val colors = LocalToolColors.current
     val groups = dialog.group != null
     val available = if (groups) WorkspaceModifierPlan.groupCatalog.map { it.id }
         else if (dialog.targets.all { it.kind == "mesh" }) WorkspaceModifierPlan.types else listOf("swing")
@@ -452,58 +456,56 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
     }
     val categories = available.map(::category).distinct().sortedBy { it == "legacy" }
     var selectedCategory by remember { mutableStateOf(category(dialog.group ?: dialog.type ?: available.first())) }
-    io.github.psd2live.ui.views.texture.FloatingMenu(true,
-        onDismiss = { if (!dialog.committing) vm.dismissModifierAddition() }, width = 440.dp) {
+    PressMenu(expanded = true, press = Offset.Zero,
+        onDismissRequest = { if (!dialog.committing) vm.dismissModifierAddition() }, width = 440.dp) {
         Row(Modifier.fillMaxWidth().heightIn(max = 340.dp)) {
-            Column(Modifier.width(132.dp).verticalScroll(rememberScrollState())) {
-                categories.forEach { id -> key(id) {
-                    CompactMenuItem(categoryName(id), { selectedCategory = id }, active = selectedCategory == id,
-                        enabled = !dialog.committing,
-                        modifier = Modifier.onPointerEvent(PointerEventType.Enter) { if (!dialog.committing) selectedCategory = id })
-                } }
+            GlidingColumn(Modifier.width(132.dp).verticalScroll(rememberScrollState()), categories.size,
+                highlights = { !dialog.committing },
+                onHover = { if (!dialog.committing) selectedCategory = categories[it] }) { index ->
+                val id = categories[index]
+                FloatingMenuRow(categoryName(id), { selectedCategory = id }, selected = selectedCategory == id,
+                    enabled = !dialog.committing)
             }
-            Divider(Modifier.height(288.dp).width(1.dp), color = colors.divider)
-            // Reset row arrival indices with the category; a persistent host accumulates delays on every switch.
             key(selectedCategory) {
-                MenuGlide(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                    Column {
-                        if (!groups && selectedCategory == "physics") {
-                            WorkspaceModifierPlan.physicsPresets().forEach { preset -> key(preset.id) {
-                                CompactMenuItem(preset.name, { vm.previewModifierAddition("physics", null, preset = preset.id) },
-                                    enabled = !dialog.committing)
-                            } }
-                        }
-                        if (!groups && selectedCategory == "motion") {
-                            val presets = remember(state.previewModel) { state.previewModel?.let(WorkspaceModifierPlan::selectableMotionPresets).orEmpty() }
-                            presets.forEach { preset -> key(preset) {
-                                val name = preset.removePrefix(WorkspaceModifierPlan.NATURAL_MOTION_PREFIX)
-                                CompactMenuItem(if (name == preset) builtinMotionTitle(name) else "${tr("settings.rig.base.motion.natural")} · ${builtinMotionTitle(name)}",
-                                    { vm.previewModifierAddition("motion", null, preset = preset) }, enabled = !dialog.committing)
-                            } }
-                        }
-                        available.filter { category(it) == selectedCategory }.forEach { type -> key(type) {
-                            CompactMenuItem(if (groups) tr("modifier.richness.${type.substringAfter('-')}") else modifierName(type),
-                                { vm.previewModifierAddition(if (groups) null else type, if (groups) type else null) },
-                                enabled = !dialog.committing, active = dialog.plan != null && (dialog.group ?: dialog.type) == type)
-                        } }
+                val rows = mutableListOf<Triple<String, () -> Unit, Boolean>>()
+                if (!groups && selectedCategory == "physics") {
+                    WorkspaceModifierPlan.physicsPresets().forEach { preset ->
+                        rows += Triple(preset.name, { vm.previewModifierAddition("physics", null, preset = preset.id) }, false)
                     }
+                }
+                if (!groups && selectedCategory == "motion") {
+                    val presets = remember(state.previewModel) { state.previewModel?.let(WorkspaceModifierPlan::selectableMotionPresets).orEmpty() }
+                    presets.forEach { preset ->
+                        val name = preset.removePrefix(WorkspaceModifierPlan.NATURAL_MOTION_PREFIX)
+                        rows += Triple(if (name == preset) builtinMotionTitle(name) else "${tr("settings.rig.base.motion.natural")} · ${builtinMotionTitle(name)}",
+                            { vm.previewModifierAddition("motion", null, preset = preset) }, false)
+                    }
+                }
+                available.filter { category(it) == selectedCategory }.forEach { type ->
+                    rows += Triple(if (groups) tr("modifier.richness.${type.substringAfter('-')}") else modifierName(type),
+                        { vm.previewModifierAddition(if (groups) null else type, if (groups) type else null) },
+                        dialog.plan != null && (dialog.group ?: dialog.type) == type)
+                }
+                GlidingColumn(Modifier.weight(1f).verticalScroll(rememberScrollState()), rows.size,
+                    highlights = { !dialog.committing }) { index ->
+                    val (label, action, selected) = rows[index]
+                    FloatingMenuRow(label, action, selected = selected, enabled = !dialog.committing)
                 }
             }
         }
-        if (dialog.loading) InspectorHint(tr(if (dialog.committing) "modifier.adding" else "modifier.previewing"))
-        dialog.error?.let { InspectorHint(it, warning = true) }
+        if (dialog.loading) FloatingMenuSection(tr(if (dialog.committing) "modifier.adding" else "modifier.previewing"))
+        dialog.error?.let { FloatingMenuRow(tr("modifier.add"), {}, enabled = false, hint = it) }
         val planned = dialog.plan?.get("plan")?.jsonArray.orEmpty()
         if (planned.isNotEmpty()) {
-            Divider(color = colors.divider)
-            Column(Modifier.fillMaxWidth().heightIn(max = 120.dp).verticalScroll(rememberScrollState()).padding(Spacing.Gap)) {
+            FloatingMenuDivider()
+            Column(Modifier.fillMaxWidth().heightIn(max = 120.dp).verticalScroll(rememberScrollState())) {
                 planned.forEach { raw -> val item = raw.jsonObject
-                    Text("${tr("modifier.plan.${item.getValue("disposition").jsonPrimitive.content}")} · ${modifierName(item.getValue("type").jsonPrimitive.content)}",
-                        color = colors.textMuted, style = LocalToolTypography.current.caption)
+                    FloatingMenuRow(modifierName(item.getValue("type").jsonPrimitive.content), {}, enabled = false,
+                        trailing = tr("modifier.plan.${item.getValue("disposition").jsonPrimitive.content}"))
                 }
             }
-            CompactButton(tr("modifier.add"), vm::confirmModifierAddition,
-                enabled = !dialog.loading && dialog.error == null && dialog.preview != null,
-                isPrimary = true, modifier = Modifier.fillMaxWidth())
+            FloatingMenuRow(tr("modifier.add"), vm::confirmModifierAddition,
+                enabled = !dialog.loading && dialog.error == null && dialog.preview != null)
         }
     }
 }
