@@ -1,6 +1,6 @@
 # Presets
 
-Projects with an explicit stack display the Modifier Stack panel; legacy projects retain their preset panel when opened. Use **Convert to Modifier Stack** to request conversion. Conversion has been verified for ordinary mesh projects, basic legacy bindings, and a modern fixture with multiple body areas and add-on modules. Other projects can still fail the result comparison. Disabled legacy simulations stay disabled after conversion. An enabled simulation needs an existing bake that matches the candidate inputs. Source bindings can be added, adjusted, reordered, and applied. Swing, physics groups, simulation, and generated motion share this addition flow and have in-stack controls. Start-page shortcuts also add explicit modifiers through isolated conversion. Panel captures cover four languages, eight themes, and two scales; motion handles, events, and simulation controls have been visually checked.
+Projects with an explicit stack display the Presets panel; legacy projects retain their preset panel when opened. Use **Convert to Editable Presets** to request conversion. Conversion has been verified for ordinary mesh projects, basic legacy bindings, and a modern fixture with multiple body areas and add-on modules. Other projects can still fail the result comparison. Disabled legacy simulations stay disabled after conversion. An enabled simulation needs an existing bake that matches the candidate inputs. Source bindings can be added, adjusted, reordered, and applied. Swing, physics groups, simulation, and generated motion share this addition flow and have in-stack controls. Start-page shortcuts also add explicit modifiers through isolated conversion. Earlier panel revisions were captured across languages and themes; those captures do not verify the redesigned list and inspector.
 
 ## Create a PSD project
 
@@ -9,9 +9,11 @@ The start page initially selects **Recommended modifiers**. The first revision i
 ## Add content
 
 1. Select the meshes to affect. Selecting only a Warp allows swing insertion on that Warp. With no meshes or Warp selected, the flow captures all current meshes.
-2. Choose **Add Preset** and a binding, swing, physics group, simulation, or generated motion, or **Add Preset Group** for the fitted binding group. This group contains body, face, eye, brow, mouth, and hair bases; it does not replace every existing shortcut preset.
+2. Choose **Add Preset** for one item, or **Add Preset Group** and select Legacy/Modern algorithms and Minimal/Standard/Full richness. Modern bases include fitted face, eyes, brows, mouth, and hair chains. Richness selects compatible add-ons, filtered for the artwork. Review the complete list before adding.
 3. Review captured targets, the full prerequisites, and expected contributions. The plan distinguishes additions, reused providers, and applied content. Expand parameters, meshes, deformers, relations, and hierarchy separately.
 4. Confirm. New entries are added in one history transaction and can then be adjusted independently. Later selection changes do not alter their scope.
+
+Richness changes which binding add-ons are included, not the precision of the base algorithm: Minimal includes core add-ons, Standard adds common modules, and Full includes all compatible modules, including applicable outlines and see-through layers. Binding modules include their associated physics; standalone simulations and generated motions remain separate additions.
 
 A group records provenance without locking entries together. Adding never silently disables an exclusive base or reorders existing items; incompatible candidates are rejected.
 
@@ -21,11 +23,11 @@ New structures use version 2 and share parents within the captured target group,
 
 ## Adjust and locate
 
-Expand a preset to adjust its complete controls directly, including turn style and detailed values. There is no three-control limit or separate adjustment page. Binding controls are grouped by area; physics edits the selected input, output, or segment, and motion edits the selected track and key.
+Select a compact list row to edit all its values directly below the list. Adjustment forms use the shared inspector layout. Physics edits the selected input, output, or segment; motion edits the selected track and key.
 
-**Inspect** only contains affected objects and generated content, including object location, provider connections, and **Apply Through Here**. The addition dialog still offers optional detailed configuration.
+Targets and Generated Content provide object location and actual contributions. Apply Through Here stays available for the selected item.
 
-The face base retains the `face/legacy` identity. Landmark-fitted turning is supplied by `face.depth-turn`, with the existing algorithm fallback when the artwork does not support fitting. The fitted group now includes this module for artwork with a face. Saved stacks are not changed automatically; add Depth Turn or the fitted group again to supply it. This group is still not every optional preset: model parameters are generated only by the active presets actually present.
+`face/legacy` and `face/fitted` are mutually exclusive bases on the same targets. The fitted base reuses the existing fitting algorithm and provides the head parameters required downstream without inserting a separate legacy face entry. Stored `face.depth-turn` entries still replay; new additions use `face/fitted`.
 
 Drag the modifier name to change actual evaluation order. The drag image and displaced sibling rows share the parameter panel implementation. Invalid dependency order is rejected, leaving the original stack intact. A continuous slider or number edit commits one history node when it ends.
 
@@ -61,13 +63,13 @@ Blink aftershock and brow spring add pendulums together with their bindings. Exp
 
 Mouth modifiers include capture axes, tongue, jaw, interior depth, and spring. Addition plans list their prerequisites. Cheek and gloom add color channels that combine with mouth movement. Color-key edits belong to an instance, sleep while disabled, and resume with that original instance.
 
-The Physics panel shows evaluated stack groups with a Modifier badge. Edit generated groups in their owning modifiers; Open Modifier Stack returns to that panel. Their order follows the stack. After application, they are ordinary custom configurations that can be edited, disabled, and reordered normally.
+The Physics panel shows evaluated stack groups with a Modifier badge. Edit generated groups in their owning modifiers; Open Presets returns to that panel. Their order follows the stack. After application, they are ordinary custom configurations that can be edited, disabled, and reordered normally.
 
 Skin clipping adds face masks for blush, skin overlays and bangs shadows. Neck follow binds the neck to head tilt and clips its shadow; its addition plan includes a pinned face-binding prerequisite. Both use existing artwork. Contributions show the mask sources and inversion before and after the modifier; click the target or a source to locate it.
 
 Segmented hair chains are an alternative to the legacy hair base on the same target. Skirts, ribbons and pendants, ears, tails and wings, chest follow and arm lag can also be added separately. The addition plan lists the required body and face bindings. Adjust swing, hair softness and the actual physics groups inside their modifier; moving other entries keeps the chain references intact.
 
-Depth turn requires a face binding. Adjust turn, depth, and style inside the modifier. Choosing a new style resets the other values in that modifier to their defaults. Eligible side locks move behind the face at extreme turns.
+Fitted face turning is a face base, mutually exclusive with the legacy face base. Adjust turn, depth, and style inside the modifier. Choosing a new style resets the other values in that modifier to their defaults. Eligible side locks move behind the face at extreme turns.
 
 When adding physics, choose front hair sway, back hair sway, or eye jelly. If required parameters are missing, the plan lists the base bindings to add with the preset. When adding a motion, choose the original or natural idle, blink, nod, or shake, or choose natural speech. Choosing a natural motion plans any missing base bindings. Editing its values before confirmation keeps the planned prerequisites. Edit the resulting rule or tracks inside the instance.
 
@@ -80,3 +82,9 @@ Blink motion modifiers also contribute the EyeBlink runtime parameter role. The 
 Applying a motion modifier preserves its file name and exact curve controls. Later parameter-range edits constrain the ordinary clip to the new range; saving, reopening or rebuilding alone does not alter the curve.
 
 Expand a motion track to edit key times, values, interpolation, and incoming/outgoing Bézier handles. The Events section supports adding, retiming, editing, and deleting events. Applying the modifier retains an ordinary editable motion clip.
+
+## Non-PSD creation
+
+Blank Layout projects and imported Layout manifests start with an explicit empty stack and editable meshes. Generate adds Modern Standard presets to targets not already covered by a binding structure. MCP `rig_generate.preset_group` selects any of the six groups or `none` for plain meshes. Source-art creation uses the recommended group. Legacy documents retain their existing generation path.
+
+New CMO3 imports use an empty preset stack, retaining the imported model and physics as ordinary authored content.
