@@ -18,6 +18,7 @@ internal class RigModifierSource(
     copiedMeshes: Set<String> = emptySet(),
     private val materialBase: PuppetModel,
 ) {
+    val physicsOrder: List<String> get() = config.rigEdits.physicsOrder
     private val stack by lazy { RigModifierStack.fromJson(requireNotNull(config.rigEdits.modifierStack)) }
     private val parameterDefinitions = java.util.IdentityHashMap<PuppetModel, List<io.github.psd2live.format.model.Parameter>>()
     private val primaryByLayer = layersByMesh.entries.sortedBy { it.key in copiedMeshes }.groupBy { it.value }.mapValues { it.value.first().key }
@@ -577,9 +578,9 @@ internal object RigSourceModifiers {
                 it.id to PartId(partId(instance, mesh, it.id.raw))
             })
             val desiredParts = sharedTemplate.parts.map(remap::part).associateBy { it.id }
-            val deformerOrder = sharedTemplate.deformers.mapIndexed { index, value ->
-                DeformerId(deformerId(instance, mesh, value.id.raw)) to index
-            }.toMap()
+            val deformerOrder = instance.targets.flatMap { target -> sharedTemplate.deformers.mapIndexed { index, value ->
+                DeformerId(deformerId(instance, target.id, value.id.raw)) to index
+            } }.toMap()
             fun ordered(children: List<OrgChild>, desired: List<OrgChild>) =
                 children.filter { it !in desired } + desired.filter { it in children }
             current = current.copy(

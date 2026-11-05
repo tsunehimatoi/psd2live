@@ -23,7 +23,8 @@ internal object WorkspaceModifierConversion {
             journal + RigCheckpoint.encode(model.authored, binding)
         } else journal
         val prepared = document.copy(rigEdits = document.rigEdits.copy(
-            modifierStack = stack.toJson(), authoringJournal = candidateJournal, swingEdits = emptyList(), simEdits = emptyList()))
+            modifierStack = stack.toJson(), authoringJournal = candidateJournal, swingEdits = emptyList(), simEdits = emptyList(),
+            physicsOrder = (PhysicsCatalog.active(model).map { it.id } + document.rigEdits.physicsOrder).distinct()))
         val verifiedBakes = WorkspaceModifierSimulation.prepare(prepared, stack, work, allowRebake = false)
         val candidate = prepared.copy(rigEdits = prepared.rigEdits.copy(modifierStack = verifiedBakes.toJson()))
         work.progress(.5f, "Verifying converted model presets")
@@ -111,7 +112,12 @@ internal object WorkspaceModifierConversion {
             .filterIsInstance<org.umamo.runtime.model.ParameterNode.Group>().flatMap { group ->
                 listOf("parameter-folder:${group.id.raw}" to group.id.raw) + parameterFolders(group.children).toList()
             }.toMap()
-        val hierarchyAliases = model.baseRig.puppet.deformers.associate { "shared/deformer:${it.id.raw}" to it.id.raw } +
+        val chains = model.baseRig.generatedChains.map(RigModifierChains::Binding)
+        val chainWarps = chains.mapTo(HashSet()) { it.native.warpId }
+        val nativePhysics = PhysicsCatalog.active(model)
+        val hierarchyAliases = model.baseRig.puppet.deformers.filter { it.id.raw !in chainWarps }
+            .associate { "shared/deformer:${it.id.raw}" to it.id.raw } +
+            chains.associate { "shared/deformer:${it.warp.raw}" to it.native.warpId } +
             model.baseRig.puppet.parts.associate { "shared/part:${it.id.raw}" to it.id.raw } +
             parameterFolders(model.baseRig.puppet.parameterTree)
         var stack = RigModifierStack()
@@ -140,7 +146,15 @@ internal object WorkspaceModifierConversion {
                     spec.fields.forEach { put(it.id, it.get(config.rigTuning)) }
                 }
                 if (values.isNotEmpty()) putJsonObject("values") { values.forEach { (key, value) -> put(key, value) } }
-            }, hierarchyAliases)
+            }, hierarchyAliases + buildMap {
+                nativePhysics.filter { it.id in spec.module?.physicsGroups.orEmpty() }.forEach { put("physics:${it.id}", it.id) }
+                for (chain in chains.filter { it.native.kind in RigModifierChains.kinds(spec.type) }) {
+                    chain.parameters.forEach { (native, normalized) -> put("chain-parameter:${normalized.raw.removePrefix("SourceChain:")}", native) }
+                    nativePhysics.filter { group -> group.outputs.isNotEmpty() && group.outputs.all { it.parameter in chain.parameters } }.forEach { group ->
+                        put("physics:chain:${chain.key}:${chain.suffix(group.outputs.first().parameter)}", group.id)
+                    }
+                }
+            })
         }
         if (config.generateDeformers) for (area in listOf("body", "face", "eye", "brow", "mouth", "hair")) {
             val base = config.recipe.base(area)

@@ -98,7 +98,8 @@ internal object RigModifierAlgorithms {
     val registry = RigModifierRegistry(native + RigSourceModifiers.definitions(null))
 
     fun evaluator(source: RigModifierSource? = null) = RigModifierEvaluator(
-        if (source == null) registry else RigModifierRegistry(native + RigSourceModifiers.definitions(source))) { rig, instance, commands ->
+        if (source == null) registry else RigModifierRegistry(native + RigSourceModifiers.definitions(source)),
+        physicsOrder = source?.physicsOrder.orEmpty()) { rig, instance, commands ->
         var model = PuppetIr.toPuppet(rig)
         val issues = ArrayList<GeneratedOverrideIssue>()
         val parameterOverrides = HashSet<String>()

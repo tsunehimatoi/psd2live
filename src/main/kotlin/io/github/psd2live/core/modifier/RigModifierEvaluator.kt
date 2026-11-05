@@ -83,6 +83,7 @@ internal data class AppliedModifierPrefix(val authored: RigIR, val stack: RigMod
 internal class RigModifierEvaluator(
     private val registry: RigModifierRegistry,
     private val sourceTargetExists: (ModifierTarget) -> Boolean = { false },
+    private val physicsOrder: List<String> = emptyList(),
     private val applyOverrides: (RigIR, RigModifierInstance, List<JsonObject>) -> ModifierOverrideResult = { rig, _, edits ->
         require(edits.isEmpty()) { "This evaluator has no override replayer" }; ModifierOverrideResult(rig)
     },
@@ -141,7 +142,10 @@ internal class RigModifierEvaluator(
                 require(actual != null && compatible(actual, resolved.getValue(parameter.id))) { "${instance.id} did not produce parameter ${parameter.id}" }
             }
             val overridden = applyOverrides(generated, instance, stack.overrides[instance.id].orEmpty())
-            current = overridden.rig
+            current = overridden.rig.let { output ->
+                if (physicsOrder.isEmpty()) output else output.copy(physics = output.physics.copy(
+                    groups = io.github.psd2live.core.PhysicsCatalog.ordered(output.physics.groups, physicsOrder) { it.id }))
+            }
             require(overridden.parameterOverrides.keys.none { it in existing }) {
                 "${instance.id} cannot override the range of a parameter provided upstream"
             }

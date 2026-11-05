@@ -46,7 +46,7 @@ public object PuppetIr {
 		rootChildren = model.rootChildren.map(::child),
 		rootPart = model.rootPartId?.raw,
 		deformers = model.deformers.map(::deformer),
-		meshes = model.drawables.map(::mesh),
+		meshes = model.drawables.map(::meshToIr),
 		glues = model.glues.map { glue -> IrGlue(glue.id, glue.meshA.raw, glue.meshB.raw,
 			glue.pairs.map { IrGluePair(it.indexA, it.indexB, it.weightA, it.weightB) }, channels(glue.channelGrids), glue.intensity) },
 		renderRoot = renderGroup(model.renderRoot),
@@ -203,7 +203,7 @@ public object PuppetIr {
 			deformer.handleLength)
 	}
 
-	private fun mesh(drawable: Drawable) = Mesh(
+	fun meshToIr(drawable: Drawable) = Mesh(
 		id = drawable.id.raw, name = drawable.name, parent = drawable.parentDeformerId?.raw,
 		blend = colorBlend(drawable.blendMode), alphaBlend = alphaBlend(drawable.alphaBlendMode),
 		maskedBy = drawable.maskedBy.map { it.raw }, invertMask = drawable.invertMask,

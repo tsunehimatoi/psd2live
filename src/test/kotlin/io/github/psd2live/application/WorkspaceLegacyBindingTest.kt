@@ -1053,6 +1053,56 @@ class WorkspaceLegacyBindingTest {
         assertEquals(expected, normalized(f.builder.build(f.now.document)))
     }
 
+    @Test fun fittedBindingConversionPreservesItsBasesAndAdditionalModules(): Unit = runBlocking<Unit> {
+        val art = document()
+        val base = fittedRecipe(mapOf("eye" to BaseChoice("eye/fitted", 2), "brow" to BaseChoice("brow/fitted"), "mouth" to BaseChoice("mouth/fitted")))
+        for (modules in listOf(emptyList(), listOf("eye.smile", "eye.squash"))) {
+            val config = art.config().copy(meshOnly = false, generateDeformers = true, generatePhysics = false, exportMotions = false,
+                recipe = base.copy(modules = base.modules + modules.associateWith { ModuleChoice(true) }), rigEdits = RigEditOverlay.Empty)
+            val f = Fixture(art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits))
+            f.install()
+            fun normalized(model: RigPreviewModel) = RigIrCompiler.compile(model).let {
+                it.copy(parameters = it.parameters.sortedBy { parameter -> parameter.id },
+                    restPose = it.restPose.filterKeys { id -> it.parameters.any { p -> p.id == id } },
+                    parameterRoles = it.parameterRoles.filter { role -> role.parameters.all { id -> it.parameters.any { p -> p.id == id } } })
+            }
+            val expected = normalized(f.now.model)
+            try { f.edit("modifier_convert", JsonObject(emptyMap())) }
+            catch (failure: Exception) { throw AssertionError("$modules: ${WorkspaceFailure.from(failure).toJson()}", failure) }
+            val stack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
+            assertTrue(stack.instances.any { it.type == "eye/fitted" && it.version == 2 })
+            assertTrue(modules.all { type -> stack.instances.any { it.type == type } })
+            assertEquals(expected, normalized(f.now.model))
+            assertEquals(expected, normalized(f.builder.build(f.now.document)))
+            f.edit("modifier_apply", buildJsonObject { put("id", stack.instances.last().id) })
+            assertEquals(expected, normalized(f.builder.build(f.now.document)))
+        }
+    }
+
+    @Test fun modernPresetConversionPreservesTheCompleteGeneratedModel(): Unit = runBlocking<Unit> {
+        val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true, skinDetails = true,
+            outfitDetails = true, sideLock = true, bangOverlay = true)
+        val config = art.config().copy(meshOnly = false, generateDeformers = true, generatePhysics = true,
+            recipe = RigRecipe.Modern, exportMotions = false, rigEdits = RigEditOverlay.Empty)
+        val f = Fixture(art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits))
+        f.install()
+        val expected = RigIrCompiler.compile(f.now.model).let { it.copy(parameters = it.parameters.sortedBy { p -> p.id }) }
+        try { f.edit("modifier_convert", JsonObject(emptyMap())) }
+        catch (failure: Exception) { throw AssertionError(WorkspaceFailure.from(failure).toJson().toString(), failure) }
+        fun normalized(model: RigPreviewModel) = RigIrCompiler.compile(model).let { it.copy(parameters = it.parameters.sortedBy { p -> p.id }) }
+        assertEquals(expected, normalized(f.builder.build(f.now.document)))
+        val converted = f.now
+        val instances = RigModifierStack.fromJson(converted.document.rigEdits.modifierStack!!).instances
+        f.edit("modifier_apply", buildJsonObject { put("id", instances.first().id) })
+        assertEquals(expected, normalized(f.builder.build(f.now.document)))
+        f.edit("modifier_apply", buildJsonObject { put("id", instances.last().id) })
+        assertEquals(expected, normalized(f.builder.build(f.now.document)))
+        assertTrue(RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.isEmpty())
+        f.runtime.checkout(f.now.projectId, f.now.state, converted.historyHead)
+        assertEquals(instances, RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances)
+        assertEquals(expected, normalized(f.now.model))
+    }
+
     @Test fun applyingASharedScaffoldPreservesAliasesForRemainingBindings(): Unit = runBlocking<Unit> {
         val art = document()
         val config = art.config().copy(meshOnly = false, generateDeformers = true, generatePhysics = false,

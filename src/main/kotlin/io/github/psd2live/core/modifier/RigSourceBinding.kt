@@ -14,10 +14,11 @@ import org.umamo.edit.withParameterRange
 /** Applies a source algorithm transition onto the actual preceding rig, preserving authored residuals. */
 internal object RigSourceBinding {
     fun apply(rig: RigIR, instance: RigModifierInstance, source: RigModifierSource, checkpoint: () -> Unit): RigIR {
-        source.provider(instance)
+        val provider = source.provider(instance)
         var current = PuppetIr.toPuppet(rig)
         val updatedDeformers = LinkedHashMap<DeformerId, Deformer>()
         val addedDeformers = HashSet<DeformerId>()
+        val obsoleteCarriers = LinkedHashSet<DeformerId>()
         val addedParts = HashSet<PartId>()
         val preserveSourceOrder = instance.outputAliases.keys.any { it.startsWith("parameter-folder:") }
         for (target in instance.targets) {
@@ -64,7 +65,7 @@ internal object RigSourceBinding {
                 desiredBranch += nextParent
                 nextParent = desiredById.getValue(nextParent).parent
             }
-            val nativeGeometry = desiredBranch == branch.toList() && desired.drawables.single { it.id == id }.blendShapes.isEmpty() && sameMeshGeometry(sample, previous.drawables.single { it.id == id }) &&
+            val nativeGeometry = sameMeshGeometry(sample, previous.drawables.single { it.id == id }) &&
                 sample.parentDeformerId == previous.drawables.single { it.id == id }.parentDeformerId?.let(mapped::getValue) &&
                 branch.all { canonical ->
                     val actual = updatedDeformers[mapped.getValue(canonical)] ?: current.deformers.singleOrNull { it.id == mapped.getValue(canonical) }
@@ -96,13 +97,15 @@ internal object RigSourceBinding {
                 val actual = current.deformers.singleOrNull { it.id == expected.id }
                 actual != null && PuppetIr.deformerToIr(actual) == PuppetIr.deformerToIr(expected)
             }
+            if (bypass) obsoleteCarriers += removed.map(mapped::getValue)
             if (added.isNotEmpty() || bypass) {
                 val beforeInsertion = current
                 val actualParent = if (bypass) anchor else sample.parentDeformerId
                 val requiredParts = source.requiredParts(desired, target)
                 for (part in requiredParts) {
                     val generated = PartId(RigSourceModifiers.partId(instance, target.id, part.raw))
-                    require(remap.part(part) != generated || current.parts.none { it.id == generated } || generated in addedParts) {
+                    require(remap.part(part) != generated || current.parts.none { it.id == generated } || generated in addedParts ||
+                        provider.outputAliases["shared/part:${part.raw}"] == generated.raw) {
                         "${instance.id}: generated part ID collision ${generated.raw}"
                     }
                 }
@@ -135,7 +138,7 @@ internal object RigSourceBinding {
                 }
                 val destination = desiredBranch.firstOrNull()?.let(mapped::getValue)
                 current = current.copy(drawables = current.drawables.map { if (it.id == id) it.copy(parentDeformerId = destination) else it })
-                current = RigStructureEdits.carriedToParent(beforeInsertion, current, id)
+                if (!nativeGeometry) current = RigStructureEdits.carriedToParent(beforeInsertion, current, id)
             }
             val previousFrame = current.copy(deformers = current.deformers.map { updatedDeformers[it.id] ?: it })
             for (canonical in branch) {
@@ -157,7 +160,7 @@ internal object RigSourceBinding {
                 }
                 fun channels(value: Deformer) = sample.copy(channelGrids = value.channelGrids,
                     opacity = value.opacity, multiplyColor = value.multiplyColor, screenColor = value.screenColor)
-                val tracks = RigGenerationResidual.channels(current, channels(actual), channels(before), channels(after), checkpoint)
+                val tracks = channelDelta(current, channels(actual), channels(before), channels(after), checkpoint)
                 var replacement = when {
                     actual is Deformer.Warp && before is Deformer.Warp && after is Deformer.Warp -> actual.copy(
                         geometryGrid = warpDelta(actual.geometryGrid, before.geometryGrid, after.geometryGrid, defaults, checkpoint), channelGrids = tracks)
@@ -166,7 +169,9 @@ internal object RigSourceBinding {
                     else -> error("${instance.id}: scaffold kind changed on ${actual.id.raw}")
                 }
                 if (actual is Deformer.Warp && before is Deformer.Warp && after is Deformer.Warp && replacement is Deformer.Warp) {
-                    val merged = RigModifierDeformerBlends.warp(current,
+                    val expected = remap.deformer(before) as Deformer.Warp
+                    val untouched = !carriedParent && PuppetIr.deformerToIr(actual.copy(partId = expected.partId)) == PuppetIr.deformerToIr(expected)
+                    val merged = if (untouched) after.blendShapes else RigModifierDeformerBlends.warp(current,
                         if (carriedParent) current else oldProjection,
                         if (carriedParent) current else if (canonical in removed) oldProjection else nextProjection,
                         actual, before, after, replacement, DrawableId(instance.outputId("${target.id}/warp-morph:${canonical.raw}")), checkpoint)
@@ -182,11 +187,11 @@ internal object RigSourceBinding {
             val oldMesh = previous.drawables.single { it.id == id }
             val nextMesh = desired.drawables.single { it.id == id }
             val actual = current.drawables.single { it.id == id }
-            if (nativeGeometry && nextMesh.blendShapes.isEmpty()) {
-                val channels = RigGenerationResidual.channels(current, actual, oldMesh, nextMesh, checkpoint)
+            if (nativeGeometry) {
+                val channels = channelDelta(current, actual, oldMesh, nextMesh, checkpoint)
                 val masks = masks(actual, oldMesh, nextMesh, instance)
                 current = current.copy(drawables = current.drawables.map {
-                    if (it.id == id) it.copy(mesh = nextMesh.mesh, geometryGrid = nextMesh.geometryGrid, channelGrids = channels,
+                    if (it.id == id) it.copy(mesh = nextMesh.mesh, geometryGrid = nextMesh.geometryGrid, blendShapes = nextMesh.blendShapes, channelGrids = channels,
                         maskedBy = masks.first, invertMask = masks.second) else it
                 })
                 continue
@@ -194,12 +199,30 @@ internal object RigSourceBinding {
             val oldSources = sources(oldProjection, oldMesh, current, actual, checkpoint)
             val nextSources = sources(nextProjection, nextMesh, current, actual, checkpoint)
             val geometry = RigGenerationResidual.geometry(current, oldProjection, nextProjection, id, oldSources, nextSources, checkpoint)
-            val channels = RigGenerationResidual.channels(current, actual, oldMesh, nextMesh, checkpoint)
+            val channels = channelDelta(current, actual, oldMesh, nextMesh, checkpoint)
             val masks = masks(actual, oldMesh, nextMesh, instance)
             val updated = current.copy(drawables = current.drawables.map { if (it.id == id) it.copy(geometryGrid = geometry, channelGrids = channels,
                 maskedBy = masks.first, invertMask = masks.second) else it })
             val blends = RigModifierMeshBlends.merge(current, updated, oldProjection, nextProjection, id, oldSources, nextSources, checkpoint)
             current = updated.copy(drawables = updated.drawables.map { if (it.id == id) it.copy(blendShapes = blends) else it })
+        }
+        // A replaced, unchanged carrier has no contribution once its last child has moved.
+        // Keep it when another drawable or deformer still uses it.
+        do {
+            val unused = obsoleteCarriers.filterTo(HashSet()) { candidate ->
+                current.drawables.none { it.parentDeformerId == candidate } && current.deformers.none { it.parent == candidate }
+            }
+            if (unused.isEmpty()) break
+            current = current.copy(deformers = current.deformers.filterNot { it.id in unused })
+            obsoleteCarriers.removeAll(unused)
+        } while (obsoleteCarriers.isNotEmpty())
+        if (preserveSourceOrder) {
+            val target = instance.targets.first()
+            val native = source.transition(instance, target, checkpoint).second
+            val ids = source.deformerIds(instance, target, checkpoint)
+            val actual = current.deformers.associateBy { it.id }
+            val order = native.deformers.mapNotNull { actual[ids[it.id]] }
+            current = current.copy(deformers = sourceOrder(current.deformers, order) { it.id })
         }
         checkpoint()
         val chains = if (RigModifierChains.kinds(instance.type).isEmpty()) emptyList() else source.chains(instance, checkpoint)
@@ -274,14 +297,18 @@ internal object RigSourceBinding {
     }
 
     private fun sameMeshGeometry(actual: Drawable, expected: Drawable): Boolean {
-        val a = actual.mesh ?: return false
-        val b = expected.mesh ?: return false
-        if (!a.positions.contentEquals(b.positions) || !a.uvs.contentEquals(b.uvs) || !a.indices.contentEquals(b.indices) ||
-            actual.blendShapes.isNotEmpty() || expected.blendShapes.isNotEmpty()) return false
-        val left = actual.geometryGrid
-        val right = expected.geometryGrid
-        return if (left == null || right == null) left == null && right == null
-            else sameGrid(left, right) { x, y -> x.positionDeltas.contentEquals(y.positionDeltas) }
+        val a = PuppetIr.meshToIr(actual)
+        val b = PuppetIr.meshToIr(expected)
+        return a.geometry != null && a.geometry == b.geometry && a.offsets == b.offsets && a.shapes == b.shapes &&
+            a.channels == b.channels && a.drawOrder == b.drawOrder && a.opacity == b.opacity && a.multiply == b.multiply && a.screen == b.screen
+    }
+
+    private fun channelDelta(model: PuppetModel, actual: Drawable, before: Drawable, after: Drawable, checkpoint: () -> Unit): ChannelGrids {
+        fun same(a: Drawable, b: Drawable): Boolean = a.drawOrder == b.drawOrder && a.opacity == b.opacity &&
+            a.multiplyColor == b.multiplyColor && a.screenColor == b.screenColor && PuppetIr.meshToIr(a).channels == PuppetIr.meshToIr(b).channels
+        if (same(actual, before)) return after.channelGrids
+        if (same(before, after)) return actual.channelGrids
+        return RigGenerationResidual.channels(model, actual, before, after, checkpoint)
     }
 
     private fun <T> sameGrid(a: KeyformGrid<T>, b: KeyformGrid<T>, sameForm: (T, T) -> Boolean): Boolean {
