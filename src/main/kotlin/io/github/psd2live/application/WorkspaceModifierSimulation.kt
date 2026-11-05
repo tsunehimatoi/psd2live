@@ -18,8 +18,10 @@ internal object WorkspaceModifierSimulation {
     }
 
     fun prepare(document: WorkspaceDocument, stack: RigModifierStack, work: WorkspaceRasterWork,
-                allowRebake: Boolean = true): RigModifierStack {
+                allowRebake: Boolean = true, validatedPrefix: Int = 0): RigModifierStack {
+        require(validatedPrefix in 0..stack.instances.size)
         var next = stack
+        val pipeline = PSD2LivePipeline()
         for (index in stack.instances.indices) {
             work.checkpoint()
             val instance = next.instances[index]
@@ -28,10 +30,12 @@ internal object WorkspaceModifierSimulation {
             require(source.enabled && source.targets == instance.targets.map { it.id } && instance.targets.all { it.kind == "mesh" }) {
                 "${instance.id}: simulation configuration must match its captured mesh targets"
             }
+            // Only a captured, already evaluated prefix may skip rebuilding its simulation inputs.
+            if (index < validatedPrefix && source.bake != null && instance.inputFingerprint != null) continue
             val prefix = next.copy(instances = next.instances.take(index))
             val overlay = document.rigEdits.copy(modifierStack = prefix.toJson())
             work.progress(0f, "Evaluating simulation inputs: ${instance.id}")
-            val model = PSD2LivePipeline().buildPreview(document.source, document.config().copy(rigEdits = overlay))
+            val model = pipeline.buildPreview(document.source, document.config().copy(rigEdits = overlay))
             work.checkpoint()
             val activeProviders = model.rig.modifierReport?.get("entries")?.jsonArray.orEmpty().map { it.jsonObject }
                 .filter { it.getValue("status").jsonPrimitive.content == "active" }.mapTo(HashSet()) { it.getValue("id").jsonPrimitive.content }
@@ -65,5 +69,12 @@ internal object WorkspaceModifierSimulation {
             next = next.update(instance.id) { it.copy(config = JsonObject(instance.config + source.copy(bake = bake).toJson()), inputFingerprint = fingerprint) }
         }
         return next
+    }
+
+    fun unchangedPrefix(before: RigModifierStack, after: RigModifierStack): Int {
+        if (before.appliedCapabilities != after.appliedCapabilities) return 0
+        return before.instances.zip(after.instances).takeWhile { (a, b) ->
+            a == b && before.overrides[a.id].orEmpty() == after.overrides[b.id].orEmpty()
+        }.size
     }
 }

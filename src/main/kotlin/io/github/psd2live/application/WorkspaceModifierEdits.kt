@@ -47,9 +47,11 @@ internal object WorkspaceModifierEdits {
         }
         // Rebuilding every candidate also validates batches. Order checks are cheap enough to fail before rebuilding.
         RigModifierAlgorithms.evaluator().validateOrder(next)
+        if (next == stack) return document
         val candidate = if (operation.operation == "modifier_move" && next != stack)
             movePhysicsOrder(document, model, next, requireNotNull(id)) else document
-        var prepared = WorkspaceModifierSimulation.prepare(candidate, next, work)
+        var prepared = WorkspaceModifierSimulation.prepare(candidate, next, work,
+            validatedPrefix = if (candidate == document) WorkspaceModifierSimulation.unchangedPrefix(stack, next) else 0)
         if (operation.operation == "modifier_add_group") {
             val added = prepared.instances.filter { entry -> stack.instances.none { it.id == entry.id } }
             val consumers = added.filter { it.type in setOf("physics", "motion", "simulation") }

@@ -69,6 +69,19 @@ class WorkspaceModifierCommandsTest {
     private fun id(id: String) = buildJsonObject { put("id", id) }
     private fun stack(f: Fixture) = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
 
+    @Test fun simulationPrefixReuseStopsAtChangedInputsAndOverrides() {
+        val target = ModifierTarget("mesh", "mesh")
+        val before = RigModifierStack().add("body/legacy", 1, listOf(target))
+            .add("simulation", 1, listOf(target)).add("motion", 1, listOf(target))
+        val tail = before.update(before.instances.last().id) { it.copy(enabled = false) }
+        assertEquals(2, WorkspaceModifierSimulation.unchangedPrefix(before, tail))
+        val first = before.update(before.instances.first().id) { it.copy(enabled = false) }
+        assertEquals(0, WorkspaceModifierSimulation.unchangedPrefix(before, first))
+        val overridden = before.copy(overrides = mapOf(before.instances.first().id to listOf(buildJsonObject { put("op", "edit") })))
+        assertEquals(0, WorkspaceModifierSimulation.unchangedPrefix(before, overridden))
+        assertEquals(0, WorkspaceModifierSimulation.unchangedPrefix(before, before.move(before.instances.last().id, 0)))
+    }
+
     @Test fun wholePresetSwitchReplacesInstancesAndKeepsOrdinaryParameters(): Unit = runBlocking<Unit> {
         val f = fixture()
         f.edit("modifier_add", add(f, "motion", MotionClips.toJson(motion())))
