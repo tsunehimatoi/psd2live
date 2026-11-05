@@ -1748,11 +1748,11 @@ class PSD2LiveViewModel : AutoCloseable {
         val active = model.rig.modifierReport?.get("entries")?.jsonArray.orEmpty().filter { it.jsonObject.getValue("status").jsonPrimitive.content == "active" }
             .mapTo(HashSet()) { it.jsonObject.getValue("id").jsonPrimitive.content }
         val types = existing?.instances.orEmpty().filter { it.id in active && it.targets.any { target -> target.id in ids } }.mapTo(HashSet()) { it.type }
-        val first = io.github.psd2live.core.modifier.RigLegacyBindings.specs.firstOrNull { spec ->
+        val first = io.github.psd2live.core.modifier.RigLegacyBindings.specs.sortedBy { it.type.endsWith("/legacy") && it.type != "body/legacy" }.firstOrNull { spec ->
             spec.type != "face.depth-turn" && spec.type !in types && (if (spec.isBase) types.none { it.substringBefore('/') == spec.area } else
                 (listOfNotNull(spec.module?.base) + spec.related).all { required ->
                     val area = required.substringBefore('/')
-                    types.none { '/' in it && it.substringBefore('/') == area && it != required }
+                    types.none { '/' in it && it.substringBefore('/') == area && !io.github.psd2live.core.modifier.RigModifierAlgorithms.registry.provides(it, required) }
                 })
         }?.type ?: "body/legacy"
         previewModifierAddition(if (group) null else if (warp != null) "swing" else first, if (group) io.github.psd2live.application.WorkspaceModifierPlan.RECOMMENDED_GROUP else null)

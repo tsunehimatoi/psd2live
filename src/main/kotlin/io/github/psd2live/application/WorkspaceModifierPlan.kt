@@ -86,7 +86,11 @@ internal object WorkspaceModifierPlan {
             put("targets", JsonArray(capability.targets.map { buildJsonObject { put("kind", it.kind); put("id", it.id) } }))
         }
         fun ensure(requestedType: String, reuse: Boolean = true, scaffold: String? = null, equivalent: Boolean = true): ModifierCapability {
-            val wanted = if ((group?.startsWith("modern-") == true || group == "fitted") && requestedType == "face/legacy")
+            val wantsModernFace = group?.startsWith("modern-") == true || group == "fitted" ||
+                group == null && type != "face/legacy" && available.none { cap ->
+                    cap.type == "face/legacy" && targets.all { it in cap.targets }
+                }
+            val wanted = if (wantsModernFace && requestedType == "face/legacy")
                 RigLegacyBindings.FITTED_FACE else requestedType
             if (reuse) available.firstOrNull { cap -> (cap.type == wanted || equivalent && RigModifierAlgorithms.registry.provides(cap.type, wanted)) && cap.id != null && targets.all { it in cap.targets } &&
                 (scaffold == null || cap.config["scaffold"]?.jsonPrimitive?.content == scaffold) }?.let { cap ->
