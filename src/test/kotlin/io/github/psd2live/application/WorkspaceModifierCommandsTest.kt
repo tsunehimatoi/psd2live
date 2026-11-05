@@ -64,6 +64,25 @@ class WorkspaceModifierCommandsTest {
         assertEquals("new-body", RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.single().id)
     }
 
+    @Test fun reopeningSwingAuditionEditsTheExistingModifier(): Unit = runBlocking {
+        val f = fixture(withWarp = true)
+        val source = RigSwingEdit.single("swing-owner", "Swing", SwingKind.LATERAL, listOf("warp"), listOf("SwingMode"))
+        f.edit("swing_put", source.toJson())
+        assertTrue(f.now.document.rigEdits.swingEdits.isEmpty())
+        val sessions = WorkspaceSwingSessions(f.runtime)
+        val draft = sessions.execute(f.now.projectId, f.now.state, "main", buildJsonObject {
+            put("mode", "begin"); putJsonArray("targets") { add("warp") }
+        })
+        assertEquals("swing-owner", draft.existingId)
+        assertTrue(draft.prepared.parameterIds.all { id -> draft.model.rig.puppet.parameters.any { it.id.raw == id } })
+        sessions.execute(f.now.projectId, f.now.state, "main", buildJsonObject {
+            put("mode", "commit"); put("session_id", draft.report.getValue("session_id"))
+        })
+        assertEquals(1, RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.size)
+        f.edit("swing_delete", buildJsonObject { put("id", "swing-owner") })
+        assertTrue(SwingCatalog.entries(f.now.document.rigEdits).isEmpty())
+    }
+
     private suspend fun fixture(withWarp: Boolean = false, layerCount: Int = 1,
                                 additionalParameters: List<RigParameterEdit> = emptyList(), physicsOrder: List<String> = emptyList()): Fixture {
         val source = SyntheticProject(temp.resolve("source"), layerCount, 12, 1).tree.head().snapshot

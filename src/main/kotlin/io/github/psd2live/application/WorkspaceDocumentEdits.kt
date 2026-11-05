@@ -122,8 +122,7 @@ internal object WorkspaceDocumentEdits {
             "interior_put" -> document.copy(rigEdits=io.github.psd2live.core.interior.NativeInteriorAuthoring.put(model,document.rigEdits,request))
             "interior_delete" -> document.copy(rigEdits=io.github.psd2live.core.interior.InteriorLifecycle.delete(model, document.rigEdits, request.text("target")))
             "swing_put" -> SwingAuthoring.request(request).let { swing(document, model.rig.puppet, it.edit, it.estimatePhysics) }
-            "swing_delete" -> removeSwing(document, model.rig.puppet, request.text("id"), request["bake"]?.jsonPrimitive?.boolean ?: false,
-                model.authored.rig.puppet)
+            "swing_delete" -> removeSwing(document, model, request.text("id"), request["bake"]?.jsonPrimitive?.boolean ?: false)
             in WorkspacePhysicsEdits.batchable -> WorkspacePhysicsEdits.apply(operation, document, model, physicsWork)
             "path_put", "path_delete", "path_deform" -> {
                 val command = when (operation.operation) {
@@ -421,16 +420,31 @@ internal object WorkspaceDocumentEdits {
     }
 
     fun swing(document: WorkspaceDocument, puppet: org.umamo.runtime.model.PuppetModel, edit: RigSwingEdit, estimatePhysics: Boolean): WorkspaceDocument {
+        document.rigEdits.modifierStack?.let { raw ->
+            val stack = io.github.psd2live.core.modifier.RigModifierStack.fromJson(raw)
+            val owner = SwingCatalog.owner(document.rigEdits, edit.id)
+            val source = if (estimatePhysics) SwingAuthoring.resized(puppet, edit) else edit
+            val next = if (owner == null) stack.add("swing", 1, source.targets.map { target ->
+                io.github.psd2live.core.modifier.ModifierTarget(if (puppet.deformers.any { it.id.raw == target }) "deformer" else "mesh", target)
+            }, source.toJson(), id = source.id)
+            else stack.update(owner.id) { it.copy(config = JsonObject(it.config + source.toJson())) }
+            return document.copy(rigEdits = document.rigEdits.copy(modifierStack = next.toJson()))
+        }
         val overlay = SwingAuthoring.put(document.rigEdits, puppet, edit, estimatePhysics)
         val physics = overlay.swingEdits.single { it.id == edit.id }.hasPhysics
         return document.copy(rigEdits = overlay, settings = if (!physics) document.settings else
             JsonObject(document.settings + ("generatePhysics" to JsonPrimitive(true))))
     }
 
-    fun removeSwing(document: WorkspaceDocument, puppet: org.umamo.runtime.model.PuppetModel, id: String, bake: Boolean,
-                    authored: org.umamo.runtime.model.PuppetModel? = null): WorkspaceDocument =
-        document.copy(rigEdits = if (bake) SwingAuthoring.bake(document.rigEdits, puppet, id, authored)
+    fun removeSwing(document: WorkspaceDocument, model: RigPreviewModel, id: String, bake: Boolean): WorkspaceDocument {
+        SwingCatalog.owner(document.rigEdits, id)?.let { owner ->
+            require(!bake) { "Use modifier_apply to apply the prefix through this swing" }
+            return WorkspaceModifierEdits.apply(WorkspaceDocumentOperation("modifier_remove",
+                buildJsonObject { put("id", owner.id) }), document, model)
+        }
+        return document.copy(rigEdits = if (bake) SwingAuthoring.bake(document.rigEdits, model.rig.puppet, id, model.authored.rig.puppet)
             else SwingAuthoring.remove(document.rigEdits, id))
+    }
 
     fun physicsCatalog(document: WorkspaceDocument, model: RigPreviewModel): List<PhysicsGroup> =
         PhysicsCatalog.groups(model, document.config())

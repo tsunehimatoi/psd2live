@@ -59,7 +59,7 @@ internal fun ArtMeshMenu(
             { close(); onRequestCreate?.invoke(CreatePlacementKind.ROTATION, CreateRelation.AS_PARENT, false, drawable.id.raw) },
             enabled = editable, icon = { IconRotationDeformer(Modifier.size(12.dp), it) }) }
         if (drawable.mesh != null) {
-            val swung = state.rigEdits.swingEdits.any { swing -> swing.targets.any { it == drawable.id.raw || it == drawable.parentDeformerId?.raw } }
+            val swung = io.github.psd2live.core.SwingCatalog.entries(state.rigEdits).any { swing -> swing.targets.any { it == drawable.id.raw || it == drawable.parentDeformerId?.raw } }
             add(highlight = editable) { FloatingMenuRow(tr(if (swung) "swing.menuEdit" else "swing.menu"),
                 { close(); viewModel.beginSwing(listOf(drawable.id.raw)) }, enabled = editable,
                 icon = { IconWarpDeformer(it, Modifier.size(12.dp)) }) }

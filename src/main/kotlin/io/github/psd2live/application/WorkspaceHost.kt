@@ -1502,7 +1502,7 @@ internal class WorkspaceHost<V>(
 
     override suspend fun deleteSwing(id: String, bake: Boolean, expectedState: String, author: MutationAuthor) =
         mutateModel(expectedState, null, if (bake) "Baked swing $id" else "Deleted swing $id", id, author) { document, model ->
-            WorkspaceDocumentEdits.removeSwing(document, model.rig.puppet, id, bake, model.authored.rig.puppet)
+            WorkspaceDocumentEdits.removeSwing(document, model, id, bake)
         }
 
     override suspend fun createIndependentWarp(request: JsonObject, expectedState: String) = independentWarp(request, expectedState)

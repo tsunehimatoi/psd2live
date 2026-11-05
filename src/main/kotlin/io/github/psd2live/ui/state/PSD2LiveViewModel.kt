@@ -452,6 +452,12 @@ class PSD2LiveViewModel : AutoCloseable {
     internal fun deleteSwing(bake: Boolean) {
         val session = swingSession ?: return
         val id = session.existingId ?: return
+        if (bake && io.github.psd2live.core.SwingCatalog.owner(_state.value.rigEdits, id) != null) {
+            val expected = modifierEditState() ?: return
+            endSwing()
+            editModifier("modifier_apply", kotlinx.serialization.json.buildJsonObject { put("id", id) }, expected)
+            return
+        }
         runSwingMutation(session) { workspace, state -> workspace.deleteSwing(id, bake, state, io.github.psd2live.project.MutationAuthor.USER) }
     }
 

@@ -183,7 +183,7 @@ internal fun SwingSessionPanel(
         }
         if (existing) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-                if (!draft.baked) CompactButton(tr("swing.bake"), { viewModel.deleteSwing(bake = true) }, enabled = !session.busy,
+                if (!draft.baked) CompactButton(tr(if (io.github.psd2live.core.SwingCatalog.owner(viewModel.state.value.rigEdits, draft.id) != null) "modifier.apply" else "swing.bake"), { viewModel.deleteSwing(bake = true) }, enabled = !session.busy,
                     height = 20.dp, modifier = Modifier.weight(1f))
                 CompactButton(tr("swing.delete"), { viewModel.deleteSwing(bake = false) }, enabled = !session.busy, danger = true,
                     height = 20.dp, modifier = Modifier.weight(1f))

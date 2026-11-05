@@ -41,8 +41,7 @@ internal class WorkspaceSwingSessions(private val runtime: WorkspaceRuntime<RigP
             val targets = request.getValue("targets").jsonArray.map { it.jsonPrimitive.content }
             require(targets.size in 1..128 && targets.distinct().size == targets.size) { "Give distinct swing targets" }
             val puppet = capture.model.rig.puppet
-            val parents = targets.mapNotNull { id -> puppet.drawables.firstOrNull { it.id.raw == id }?.parentDeformerId?.raw }
-            val existing = capture.document.rigEdits.swingEdits.firstOrNull { swing -> swing.targets.any { it in targets || it in parents } }
+            val existing = SwingCatalog.find(capture.document.rigEdits, puppet, targets)
             val preset = request["preset"]?.jsonPrimitive?.content?.let { SwingPreset.valueOf(it.uppercase()) } ?: SwingPreset.HAIR
             val draft = existing ?: defaults(capture, targets, preset, request["name"]?.jsonPrimitive?.content)
             val (model, prepared) = prepare(capture, draft)
@@ -140,7 +139,7 @@ internal class WorkspaceSwingSessions(private val runtime: WorkspaceRuntime<RigP
     private fun values(session: Session, time: Float? = null): Map<ParameterId, Float> {
         val pose = PreviewSessions.read(session.model.rig.puppet.parameters, session.capture.auxiliary, session.workspace)
         val elapsed = time ?: if (session.playing) (System.nanoTime() - session.started) / 1e9f else 0f
-        val motion = session.draft.motions.withIndex().flatMap { (m, entry) -> entry.parameterIds.withIndex().map { (k, id) ->
+        val motion = session.prepared.motions.withIndex().flatMap { (m, entry) -> entry.parameterIds.withIndex().map { (k, id) ->
             ParameterId(id) to if (session.playing || time != null) sin(2f * PI.toFloat() * elapsed / (if (m == 0) 1.6f else 1.3f) - k * 0.7f - m * 1.3f) else 0f
         } }.toMap().filterKeys { it !in pose.locked }
         return boundedPreviewPose(pose.values + motion, session.model.rig.puppet.parameters)
@@ -160,8 +159,22 @@ internal class WorkspaceSwingSessions(private val runtime: WorkspaceRuntime<RigP
         return WorkspaceSwingPreview(report, session.draft, session.existingId, session.model, session.prepared, session.motion, session.playing, values)
     }
 
-    private suspend fun prepare(capture: WorkspaceCapture<RigPreviewModel>, edit: RigSwingEdit): Pair<RigPreviewModel, RigSwingEdit> = runInterruptible(Dispatchers.Default) {
+    private suspend fun prepare(capture: WorkspaceCapture<RigPreviewModel>, edit: RigSwingEdit): Pair<RigPreviewModel, RigSwingEdit> = withContext(Dispatchers.Default) {
         val before = capture.document.rigEdits
+        if (before.modifierStack != null) {
+            var document = WorkspaceDocumentEdits.swing(capture.document, capture.model.rig.puppet, edit, false)
+            val stack = io.github.psd2live.core.modifier.RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack))
+            document = document.copy(rigEdits = document.rigEdits.copy(modifierStack = stack.update(edit.id) { it.copy(enabled = true) }.toJson()))
+            document = WorkspaceModifierSimulation.prepare(document, WorkspaceRasterWork.Direct.cancellable(currentCoroutineContext()))
+            val model = WorkspacePreviewBuilder().build(document, capture.model)
+            val owner = requireNotNull(SwingCatalog.owner(document.rigEdits, edit.id))
+            val resolved = SwingCatalog.resolved(owner)
+            val targets = resolved.targets.map { target ->
+                model.rig.puppet.deformers.firstOrNull { it.id.raw == target }?.id?.raw
+                    ?: requireNotNull(model.rig.puppet.drawables.firstOrNull { it.id.raw == target }?.parentDeformerId?.raw)
+            }.distinct()
+            return@withContext model to resolved.copy(targets = targets)
+        }
         val puppet = before.swingEdits.firstOrNull { it.id == edit.id }?.let { SwingGenerator.strip(capture.model.rig.puppet, it) } ?: capture.model.rig.puppet
         val overlay = SwingAuthoring.put(before, puppet, edit)
         val prepared = overlay.swingEdits.single { it.id == edit.id }

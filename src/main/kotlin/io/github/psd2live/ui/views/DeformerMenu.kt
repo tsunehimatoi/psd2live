@@ -46,7 +46,7 @@ internal fun DeformerMenu(
         { close(); onRequestCreate?.invoke(CreatePlacementKind.ROTATION, CreateRelation.AS_PARENT, true, deformer.id.raw) },
         enabled = editable, icon = { IconRotationDeformer(Modifier.size(12.dp), it) }) }
     if (deformer is Deformer.Warp) {
-        val swung = state.rigEdits.swingEdits.any { deformer.id.raw in it.targets }
+        val swung = state.previewModel?.let { io.github.psd2live.core.SwingCatalog.find(state.rigEdits, it.rig.puppet, listOf(deformer.id.raw)) } != null
         add(highlight = editable) { FloatingMenuRow(tr(if (swung) "swing.menuEdit" else "swing.menu"),
             { close(); viewModel.beginSwing(listOf(deformer.id.raw)) }, enabled = editable,
             icon = { IconWarpDeformer(it, Modifier.size(12.dp)) }) }

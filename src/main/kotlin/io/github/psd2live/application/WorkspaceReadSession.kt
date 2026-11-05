@@ -179,7 +179,7 @@ internal class WorkspaceReadSession(
         return WorkspaceSettingsCodec.encode(WorkspaceSettingsCodec.decode(document.settings).copy(meshOverrides = document.meshOverrides))
     }
     override fun listInteriorEffects() = capture().document.rigEdits.interiorEffects
-    override fun listSwings(): List<RigSwingEdit> = capture().document.rigEdits.swingEdits
+    override fun listSwings(): List<RigSwingEdit> = SwingCatalog.entries(capture().document.rigEdits)
     override fun hitAreas() = capture().document.rigEdits.hitAreas
     override fun hitAreaModel() = read.runtime.capture?.model
     override fun layoutState(): WorkspaceLayoutState? = read.runtime.capture?.document?.let { document ->
