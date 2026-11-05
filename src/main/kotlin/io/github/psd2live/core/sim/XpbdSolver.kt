@@ -232,6 +232,7 @@ class XpbdSolver(
     var settings: SimSettings = SimSettings(),
 ) {
     private val n = state.count
+    private val effectiveMass = FloatArray(n)
     private val stretchLambda = FloatArray(stretch.size)
     private val areaLambda = FloatArray(triangles.size)
     private val flipLambda = FloatArray(triangles.size)
@@ -248,6 +249,10 @@ class XpbdSolver(
     private val bendIndex = IntArray(6)
     private val bendGx = FloatArray(6)
     private val bendGy = FloatArray(6)
+    private val bendCorners = IntArray(bends.size * 6)
+    private val bendSlots = IntArray(bends.size * 6)
+    private val bendFirst = BooleanArray(bends.size * 6)
+    private val bendCounts = IntArray(bends.size)
     private val turnGrad = FloatArray(6)
     /** The last [turn]'s rotation as an unnormalized (cos, sin): a bend takes one angle between two of them. */
     private var turnCos = 0f
@@ -255,12 +260,24 @@ class XpbdSolver(
 
     init {
         require(pinWeight.size == n && goalCompliance.size == n) { "Per-particle arrays must match the particle count" }
+        // Triangle connectivity is immutable; merge their shared corners once, not at every substep.
+        for (k in 0 until bends.size) {
+            val t1 = bends.t1[k]; val t2 = bends.t2[k]
+            val corners = intArrayOf(triangles.a[t1], triangles.b[t1], triangles.c[t1], triangles.a[t2], triangles.b[t2], triangles.c[t2])
+            val unique = corners.distinct()
+            bendCounts[k] = unique.size
+            unique.forEachIndexed { j, vertex -> bendCorners[k * 6 + j] = vertex }
+            corners.forEachIndexed { j, vertex ->
+                bendSlots[k * 6 + j] = unique.indexOf(vertex)
+                bendFirst[k * 6 + j] = corners.indexOf(vertex) == j
+            }
+        }
     }
 
     /** Pinned particles are those with a full pin; they move only with their anchor. */
-    private fun kinematic(i: Int) = pinWeight[i] >= 0.999f || state.invMass[i] == 0f
+    private fun kinematic(i: Int) = effectiveMass[i] == 0f
 
-    private fun mobility(i: Int) = if (kinematic(i)) 0f else state.invMass[i]
+    private fun mobility(i: Int) = effectiveMass[i]
 
     /** Advances one frame of [dt] seconds. */
     fun step(dt: Float, checkpoint: () -> Unit = {}) {
@@ -268,6 +285,9 @@ class XpbdSolver(
         val s = state
         val substeps = settings.substeps
         val h = dt / substeps
+        // Pin weights and masses stay fixed during a solve. Refresh for every frame so interactive
+        // weight edits and restored training snapshots are observed without per-constraint branches.
+        for (i in 0 until n) effectiveMass[i] = if (pinWeight[i] >= 0.999f) 0f else s.invMass[i]
         for (sub in 1..substeps) {
             checkpoint()
             val t = sub.toFloat() / substeps
@@ -445,16 +465,13 @@ class XpbdSolver(
         for (step in 0 until bends.size) {
             val k = if (reverse) bends.size - 1 - step else step
             val t1 = bends.t1[k]; val t2 = bends.t2[k]
-            var count = 0
-            fun add(i: Int, gx: Float, gy: Float) {
-                for (j in 0 until count) if (bendIndex[j] == i) { bendGx[j] += gx; bendGy[j] += gy; return }
-                bendIndex[count] = i; bendGx[count] = gx; bendGy[count] = gy; count++
-            }
+            val count = bendCounts[k]
+            for (j in 0 until count) bendIndex[j] = bendCorners[k * 6 + j]
             if (!turn(t1)) continue
-            add(triangles.a[t1], turnGrad[0], turnGrad[1]); add(triangles.b[t1], turnGrad[2], turnGrad[3]); add(triangles.c[t1], turnGrad[4], turnGrad[5])
+            accumulateBend(k, 0, 1f)
             val c1 = turnCos; val s1 = turnSin
             if (!turn(t2)) continue
-            add(triangles.a[t2], -turnGrad[0], -turnGrad[1]); add(triangles.b[t2], -turnGrad[2], -turnGrad[3]); add(triangles.c[t2], -turnGrad[4], -turnGrad[5])
+            accumulateBend(k, 3, -1f)
             // The first rotation less the second, within ±π: one atan2 of the two (cos, sin) pairs' product
             // instead of one per triangle; the library's atan2 was most of a step's time.
             val constraint = fastAtan2(s1 * turnCos - c1 * turnSin, c1 * turnCos + s1 * turnSin)
@@ -469,6 +486,16 @@ class XpbdSolver(
                 val wi = mobility(i)
                 s.x[i] += wi * delta * bendGx[j]; s.y[i] += wi * delta * bendGy[j]
             }
+        }
+    }
+
+    private fun accumulateBend(k: Int, offset: Int, sign: Float) {
+        for (j in 0..2) {
+            val at = k * 6 + offset + j
+            val slot = bendSlots[at]
+            val gx = turnGrad[j * 2] * sign; val gy = turnGrad[j * 2 + 1] * sign
+            if (bendFirst[at]) { bendGx[slot] = gx; bendGy[slot] = gy }
+            else { bendGx[slot] += gx; bendGy[slot] += gy }
         }
     }
 

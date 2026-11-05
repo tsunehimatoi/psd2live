@@ -37,6 +37,18 @@ class SimScene private constructor(
     internal val edgeAlong: FloatArray,
 ) {
     private val evaluator = CpuDeformationEvaluator()
+    private var posedModel: PuppetModel? = null
+    private var posedParameters: Map<ParameterId, Float> = emptyMap()
+    private var posedWorld: Map<DrawableId, FloatArray>? = null
+
+    private fun world(model: PuppetModel, pose: Map<ParameterId, Float>): Map<DrawableId, FloatArray> {
+        if (posedModel === model && posedParameters == pose) posedWorld?.let { return it }
+        return evaluator.evaluate(model, pose).worldPositions.also {
+            posedModel = model
+            posedParameters = pose.toMap()
+            posedWorld = it
+        }
+    }
     /** Pinned particles that define the body's frame, and where their anchors sit at rest. */
     private val frameParticles = (0 until solver.state.count).filter { solver.pinWeight[it] >= 0.5f }.toIntArray()
     private var frameRest = FloatArray(0)
@@ -52,7 +64,7 @@ class SimScene private constructor(
      */
     fun drive(model: PuppetModel, pose: Map<ParameterId, Float>, dt: Float, checkpoint: () -> Unit = {}): Boolean {
         checkpoint()
-        val world = evaluator.evaluate(model, pose).worldPositions
+        val world = world(model, pose)
         if (!place(world)) return false
         solver.step(dt, checkpoint)
         return true
@@ -60,7 +72,7 @@ class SimScene private constructor(
 
     /** Puts every particle at rest at [pose], with no motion. */
     fun reset(model: PuppetModel, pose: Map<ParameterId, Float>) {
-        val world = evaluator.evaluate(model, pose).worldPositions
+        val world = world(model, pose)
         val rest = FloatArray(state.count * 2)
         for ((id, offset) in offsets) {
             val positions = world[id] ?: continue
