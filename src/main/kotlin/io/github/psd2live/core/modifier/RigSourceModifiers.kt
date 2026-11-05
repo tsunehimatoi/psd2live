@@ -308,7 +308,7 @@ internal class RigModifierSource(
             for (item in relevant) {
                 checkpoint(); prefix += item
                 for (deformer in template(prefix, provider.config).model.deformers) ids.putIfAbsent(deformer.id,
-                    DeformerId(RigSourceModifiers.deformerId(item, target.id, deformer.id.raw)))
+                    DeformerId(RigSourceModifiers.deformerId(item, target.id, deformer.id.raw, shared = provider.version >= 2)))
             }
             ids
         }
@@ -348,7 +348,7 @@ internal class RigModifierSource(
             for (item in relevant) {
                 checkpoint(); prefix += item
                 for (part in requiredParts(forTarget(template(prefix, provider.config).model, target), target)) ids.putIfAbsent(part,
-                    PartId(RigSourceModifiers.partId(item, target.id, part.raw)))
+                    PartId(RigSourceModifiers.partId(item, target.id, part.raw, shared = provider.version >= 2)))
             }
             ids
         }
@@ -442,7 +442,7 @@ internal class RigModifierSource(
         val targets = preceding?.targets ?: requireNotNull(applied) { "${instance.id}: binding scaffold $id must precede this modifier" }.targets
         require(instance.targets.all { it in targets }) { "${instance.id}: scaffold $id does not cover all captured targets" }
         val aliases = preceding?.outputAliases ?: requireNotNull(applied).outputAliases
-        require(aliases.keys.none { it.startsWith("shared/deformer:") } || instance.targets.toSet() == targets.toSet()) {
+        require((preceding?.version ?: applied?.version ?: 1) < 2 && aliases.keys.none { it.startsWith("shared/deformer:") } || instance.targets.toSet() == targets.toSet()) {
             "${instance.id}: shared scaffold $id requires its complete target scope"
         }
         return preceding ?: RigModifierInstance(id, RigSourceModifiers.SCAFFOLD, requireNotNull(applied).version, targets,
@@ -475,8 +475,8 @@ internal class RigModifierSource(
 internal object RigSourceModifiers {
     const val SCAFFOLD = "rig.scaffold"
 
-    fun definitions(source: RigModifierSource?): List<RigModifierDefinition> = listOf(
-        RigModifierDefinition(SCAFFOLD, 1, exclusiveFamily = SCAFFOLD, appliedConfig = { it.config },
+    fun definitions(source: RigModifierSource?): List<RigModifierDefinition> = listOf(1, 2).map { version ->
+        RigModifierDefinition(SCAFFOLD, version, exclusiveFamily = SCAFFOLD, appliedConfig = { it.config },
             validate = { _, instance ->
                 require(instance.config.keys.all { it in setOf("featureDisplacement", "corrections", "frontHairSway", "backHairSway") }) { "Unknown binding scaffold configuration" }
                 instance.config["corrections"]?.jsonObject?.let { corrections ->
@@ -488,17 +488,21 @@ internal object RigSourceModifiers {
                 val input = requireNotNull(source) { "Binding modifiers require the captured source artwork" }
                 require(instance.targets.all { input.hasMesh(it.id) }) { "A binding scaffold target has no source layer" }
             }, composableKinds = setOf("mesh", "part", "deformer", "hierarchy"),
-            evaluate = { rig, instance, checkpoint -> scaffold(rig, instance, requireNotNull(source), checkpoint) }),
-    ) + RigLegacyBindings.specs.map { RigLegacyBindings.definition(it, source) }
+            evaluate = { rig, instance, checkpoint -> scaffold(rig, instance, requireNotNull(source), checkpoint) })
+    } + RigLegacyBindings.specs.map { RigLegacyBindings.definition(it, source) }
 
-    /** Each captured mesh gets a stable branch, so regrouping by the current parent never renames outputs. */
-    fun deformerId(instance: RigModifierInstance, mesh: String, canonical: String) =
-        instance.outputAliases["shared/deformer:$canonical"] ?: instance.outputId("$mesh/deformer:$canonical")
-    fun partId(instance: RigModifierInstance, mesh: String, canonical: String) =
-        instance.outputAliases["shared/part:$canonical"] ?: instance.outputId("$mesh/part:$canonical")
+    /** Version 2 retains the source hierarchy; version 1 keeps persisted per-mesh identities replayable. */
+    fun deformerId(instance: RigModifierInstance, mesh: String, canonical: String, shared: Boolean = instance.type == SCAFFOLD && instance.version >= 2) =
+        instance.outputAliases["shared/deformer:$canonical"] ?: instance.outputId(if (shared) "shared/deformer:$canonical" else "$mesh/deformer:$canonical")
+    fun partId(instance: RigModifierInstance, mesh: String, canonical: String, shared: Boolean = instance.type == SCAFFOLD && instance.version >= 2) =
+        instance.outputAliases["shared/part:$canonical"] ?: instance.outputId(if (shared) "shared/part:$canonical" else "$mesh/part:$canonical")
 
     private fun scaffold(rig: RigIR, instance: RigModifierInstance, source: RigModifierSource, checkpoint: () -> Unit): RigIR {
         var current = PuppetIr.toPuppet(rig)
+        if (instance.version >= 2) {
+            val parents = instance.targets.map { target -> current.drawables.single { it.id.raw == target.id }.parentDeformerId }.distinct()
+            require(parents.size == 1) { "A shared binding hierarchy requires targets in the same authored frame" }
+        }
         val emittedDeformers = HashSet<DeformerId>()
         val emittedParts = HashSet<PartId>()
         val sharedTemplate = if (instance.outputAliases.keys.any { it.startsWith("shared/deformer:") })
