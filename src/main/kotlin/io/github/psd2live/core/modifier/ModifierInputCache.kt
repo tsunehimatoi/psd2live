@@ -4,6 +4,25 @@ import io.github.psd2live.format.model.RigIR
 
 /** A conservative component dependency key. Writes are reads too, so replay cannot erase another writer. */
 internal object ModifierInputCache {
+    fun project(rig: RigIR, kinds: Set<String>): RigIR {
+        if ("*" in kinds || kinds.any { it !in known }) return rig
+        return rig.copy(
+            parameters = if ("parameter" in kinds) rig.parameters else emptyList(),
+            meshes = if ("mesh" in kinds || "relations" in kinds) rig.meshes else emptyList(),
+            deformers = if ("deformer" in kinds) rig.deformers else emptyList(),
+            parts = if ("part" in kinds) rig.parts else emptyList(),
+            glues = if ("glue" in kinds) rig.glues else emptyList(),
+            clips = if ("motion" in kinds) rig.clips else emptyList(),
+            physics = if ("physics" in kinds) rig.physics else io.github.psd2live.format.model.Physics(),
+            textures = if ("textures" in kinds) rig.textures else io.github.psd2live.format.model.Textures(),
+            parameterLinks = if ("relations" in kinds) rig.parameterLinks else emptyList(),
+            parameterRoles = if ("relations" in kinds) rig.parameterRoles else emptyList(),
+            parameterTree = if ("hierarchy" in kinds) rig.parameterTree else emptyList(),
+            rootPart = if ("hierarchy" in kinds) rig.rootPart else null,
+            rootChildren = if ("hierarchy" in kinds) rig.rootChildren else emptyList(),
+            renderRoot = if ("hierarchy" in kinds) rig.renderRoot else io.github.psd2live.format.model.RenderGroup(null, RigIR.DEFAULT_DRAW_ORDER, emptyList()),
+        )
+    }
     fun input(rig: RigIR, kinds: Set<String>): Any {
         if ("*" in kinds || kinds.any { it !in known }) return rig
         return kinds.sorted().map { kind -> when (kind) {

@@ -105,6 +105,7 @@ internal object RigModifierAlgorithms {
 
     fun evaluator(source: RigModifierSource? = null) = RigModifierEvaluator(
         if (source == null) registry else RigModifierRegistry(native + RigSourceModifiers.definitions(source) + ModifierPluginCatalog.definitions()),
+        sourceTargetExists = { it.kind == "layer" && source?.hasLayer(it.id) == true },
         physicsOrder = source?.physicsOrder.orEmpty()) { rig, instance, commands ->
         var model = PuppetIr.toPuppet(rig)
         val issues = ArrayList<GeneratedOverrideIssue>()

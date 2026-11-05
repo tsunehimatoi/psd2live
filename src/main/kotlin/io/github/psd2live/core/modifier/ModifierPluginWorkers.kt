@@ -25,6 +25,7 @@ internal object ModifierPluginWorkers {
     fun evaluate(entry: InstalledModifierPlugin, algorithm: ModifierPluginAlgorithm, rig: RigIR,
                  instance: RigModifierInstance, checkpoint: () -> Unit, store: ModifierPluginStore = ModifierPluginStore.shared): RigIR {
         store.requireAvailable(entry.reference)
+        if (!workers.containsKey(entry.reference)) store.verify(entry.reference)
         val worker = workers.computeIfAbsent(entry.reference) { Worker(entry) }
         try {
             val result = worker.evaluate(algorithm, rig, instance, checkpoint)
@@ -45,9 +46,9 @@ internal object ModifierPluginWorkers {
                 else -> value
             }
         }
-        private val process = ProcessBuilder(command).directory(entry.directory.toFile()).apply {
+        private val process = try { ProcessBuilder(command).directory(entry.directory.toFile()).apply {
             environment()["PSD2LIVE_PLUGIN_RESOURCES"] = resources.toString()
-        }.start()
+        }.start() } catch (failure: Exception) { ModifierPluginStore.deleteTree(resources); throw failure }
         private val errors = StringBuilder()
         private val stderr = executor.submit {
             process.errorStream.bufferedReader().use { input ->
@@ -67,10 +68,11 @@ internal object ModifierPluginWorkers {
         @Synchronized fun evaluate(algorithm: ModifierPluginAlgorithm, rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR {
             check(!closed) { "Algorithm plugin was stopped" }
             checkpoint()
-            val objects = RigBuildProfile.stage("plugin input serialization") { RigIrObjects.split(rig) }
+            val input = ModifierInputCache.project(rig, algorithm.reads + algorithm.writes)
+            val objects = RigBuildProfile.stage("plugin input serialization") { RigIrObjects.split(input) }
             val current = linkedMapOf<String, JsonElement>("frame" to blob(objects.frame))
-            objects.deformers.forEachIndexed { index, bytes -> current["deformer:${rig.deformers[index].id}"] = blob(bytes) }
-            objects.meshes.forEachIndexed { index, bytes -> current["mesh:${rig.meshes[index].id}"] = blob(bytes) }
+            objects.deformers.forEachIndexed { index, bytes -> current["deformer:${input.deformers[index].id}"] = blob(bytes) }
+            objects.meshes.forEachIndexed { index, bytes -> current["mesh:${input.meshes[index].id}"] = blob(bytes) }
             val requestId = ++sequence
             val request = buildJsonObject {
                 put("protocol", 1); put("id", requestId); put("method", "evaluate")
@@ -79,14 +81,14 @@ internal object ModifierPluginWorkers {
                 put("reset", requestId == 1L)
                 put("changed", JsonObject(current.filter { (key, value) -> previous[key] != value }))
                 put("removed", JsonArray((previous.keys - current.keys).map(::JsonPrimitive)))
-                put("mesh_order", JsonArray(rig.meshes.map { JsonPrimitive(it.id) }))
-                put("deformer_order", JsonArray(rig.deformers.map { JsonPrimitive(it.id) }))
+                put("mesh_order", JsonArray(input.meshes.map { JsonPrimitive(it.id) }))
+                put("deformer_order", JsonArray(input.deformers.map { JsonPrimitive(it.id) }))
                 putJsonArray("targets") { instance.targets.forEach { addJsonObject { put("kind", it.kind); put("id", it.id) } } }
-                putJsonArray("parameters") { rig.parameters.forEach { addJsonObject {
+                putJsonArray("parameters") { input.parameters.forEach { addJsonObject {
                     put("id", it.id); put("min", it.min); put("max", it.max); put("default", it.default)
                 } } }
                 // Portable geometry views avoid requiring a language-specific full model decoder.
-                putJsonArray("meshes") { rig.meshes.filter { mesh -> instance.targets.any { it.kind == "mesh" && it.id == mesh.id } }.forEach { mesh -> addJsonObject {
+                putJsonArray("meshes") { input.meshes.filter { mesh -> instance.targets.any { it.kind == "mesh" && it.id == mesh.id } }.forEach { mesh -> addJsonObject {
                     put("id", mesh.id); put("opacity", mesh.opacity)
                     mesh.geometry?.let { geometry ->
                         put("positions", floatBlob(geometry.positions.toArray()))
@@ -96,7 +98,7 @@ internal object ModifierPluginWorkers {
             }
             val task = executor.submit<JsonObject> {
                 val text = request.toString()
-                RigBuildProfile.add("plugin sent bytes", text.toByteArray().size.toLong())
+                RigBuildProfile.count("plugin sent bytes", text.toByteArray().size.toLong())
                 writer.write(text); writer.newLine(); writer.flush()
                 val response = StringBuilder()
                 while (true) {
@@ -121,6 +123,10 @@ internal object ModifierPluginWorkers {
                 checkpoint()
                 val command = expand(raw).jsonObject
                 when (command["op"]?.jsonPrimitive?.content) {
+                    "physics", "motion" -> {
+                        val definition = if (command.getValue("op").jsonPrimitive.content == "physics") RigModifierAlgorithms.physics else RigModifierAlgorithms.motion
+                        output = definition.plugin.evaluate(output, instance.copy(config = command.getValue("config").jsonObject), checkpoint)
+                    }
                     "mesh_opacity" -> {
                         val id = command.getValue("id").jsonPrimitive.content
                         require(instance.targets.any { it.kind == "mesh" && it.id == id } && "mesh" in algorithm.writes) { "Plugin write is outside declared targets" }
@@ -136,7 +142,9 @@ internal object ModifierPluginWorkers {
             }
             val changes = RigModifierEvaluator.contributions(rig, output)
             require(changes.all { it.kind in algorithm.writes || "*" in algorithm.writes }) { "Plugin wrote undeclared object kinds" }
-            require(changes.filter { it.change == ModifierChange.ADDED && it.kind !in setOf("relations", "hierarchy") }.all { instance.localOutputName(it.id) != null }) { "Plugin outputs must use instance-owned deterministic IDs" }
+            require(changes.filter { it.change == ModifierChange.ADDED && it.kind !in setOf("relations", "hierarchy") }.all {
+                instance.localOutputName(it.id) != null || it.kind == "parameter" && algorithm.parameters.any { p -> p.id == it.id }
+            }) { "Plugin outputs must use instance-owned deterministic IDs or declared shared parameters" }
             previous = current
             return output
         }
@@ -144,7 +152,10 @@ internal object ModifierPluginWorkers {
         private fun blob(bytes: ByteArray): JsonObject {
             val hash = ModifierPluginStore.hash(bytes)
             val path = resources.resolve(hash)
-            if (!Files.exists(path)) Files.write(path, bytes)
+            if (!Files.exists(path)) {
+                Files.write(path, bytes)
+                RigBuildProfile.count("plugin resource bytes", bytes.size.toLong())
+            }
             return buildJsonObject { put("sha256", hash); put("bytes", bytes.size) }
         }
         private fun floatBlob(values: FloatArray): JsonObject {
@@ -160,6 +171,7 @@ internal object ModifierPluginWorkers {
                 require(!Files.isSymbolicLink(path) && Files.size(path) <= 64 * 1024 * 1024) { "Invalid plugin buffer" }
                 val bytes = Files.readAllBytes(path)
                 require(ModifierPluginStore.hash(bytes) == hash && bytes.size % 4 == 0) { "Plugin buffer checksum mismatch" }
+                require(value["bytes"]?.jsonPrimitive?.int == bytes.size && value["count"]?.jsonPrimitive?.int == bytes.size / 4) { "Plugin buffer size mismatch" }
                 val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
                 JsonArray(List(bytes.size / 4) { JsonPrimitive(buffer.float.also { require(it.isFinite()) }) })
             } else JsonObject(value.mapValues { expand(it.value) })
@@ -168,10 +180,17 @@ internal object ModifierPluginWorkers {
         }
         override fun close() {
             closed = true
-            process.descendants().forEach { it.destroyForcibly() }
-            process.destroyForcibly()
-            stderr.cancel(true)
-            runCatching { ModifierPluginStore.deleteTree(resources) }
+            val interrupted = Thread.interrupted()
+            try {
+                val descendants = process.descendants().toList()
+                descendants.forEach { it.destroyForcibly() }
+                process.destroyForcibly()
+                // On Windows executable/JAR handles remain locked until the process actually exits.
+                process.waitFor(5, TimeUnit.SECONDS)
+                descendants.forEach { runCatching { it.onExit().get(5, TimeUnit.SECONDS) } }
+                stderr.cancel(true)
+                runCatching { ModifierPluginStore.deleteTree(resources) }
+            } finally { if (interrupted) Thread.currentThread().interrupt() }
         }
     }
 }

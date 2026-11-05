@@ -46,24 +46,39 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
     }
 
     private val lock = Any()
+    @Volatile private var builtinEnabled = preferences.getBoolean("builtins", true)
     private val changes = MutableStateFlow(0L)
     val revision = changes.asStateFlow()
+    private val loadProblems = ArrayList<String>()
     private var installed: List<InstalledModifierPlugin> = load()
 
     fun snapshot(): List<InstalledModifierPlugin> = synchronized(lock) { installed.toList() }
-    fun builtinsEnabled() = preferences.getBoolean("builtins", true)
+    fun problems(): List<String> = synchronized(lock) { loadProblems.toList() }
+    fun <T> withRevision(expected: Long, action: () -> T): T = synchronized(lock) {
+        require(changes.value == expected) { "Algorithm plugins changed while preparing the model; retry the operation" }
+        action()
+    }
+    fun verify(reference: ModifierPluginReference) = synchronized(lock) {
+        val entry = installed.single { it.reference == reference && it.enabled }
+        require(inspectDirectory(entry.directory, entry.gitCommit).reference == reference) { "Plugin contents changed after installation" }
+    }
+    fun builtinsEnabled() = builtinEnabled
     fun setBuiltinsEnabled(enabled: Boolean) = synchronized(lock) {
-        preferences.putBoolean("builtins", enabled); preferences.flush(); changes.value++
+        try { preferences.putBoolean("builtins", enabled); preferences.flush() }
+        catch (failure: Exception) { preferences.putBoolean("builtins", builtinEnabled); throw failure }
+        builtinEnabled = enabled
+        changes.value++
     }
 
     fun inspect(source: String, ref: String? = null): InstalledModifierPlugin = stage(source, ref) { directory, commit ->
-        inspectDirectory(directory, commit)
+        inspectDirectory(directory, commit).also { checkDependencies(snapshot() + it) }
     }
 
     fun install(source: String, ref: String? = null): InstalledModifierPlugin = stage(source, ref) { directory, commit ->
         val checked = inspectDirectory(directory, commit)
         synchronized(lock) {
             checkCancelled()
+            checkDependencies(installed + checked)
             installed.firstOrNull { it.reference == checked.reference }?.let { return@synchronized it }
             require(installed.none { it.reference.id == checked.reference.id && it.reference.version == checked.reference.version }) {
                 "This plugin version is already installed with different contents; use a new package version"
@@ -72,10 +87,16 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
                 "Another plugin owns this algorithm type"
             }
             val destination = root.resolve(checked.reference.digest)
-            require(!Files.exists(destination)) { "Plugin destination already exists" }
+            if (Files.exists(destination)) {
+                // A damaged installation is not active. Retain it outside the catalog until cleanup succeeds.
+                val damaged = root.resolve(".damaged-${checked.reference.digest}-${System.nanoTime()}")
+                Files.move(destination, damaged, ATOMIC_MOVE)
+                runCatching { deleteTree(damaged) }
+            }
             Files.move(directory, destination, ATOMIC_MOVE)
             val result = checked.copy(directory = destination)
             installed = installed + result
+            loadProblems.removeAll { it.startsWith(checked.reference.digest + ":") }
             changes.value++
             result
         }
@@ -104,16 +125,37 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
         require(installed.any { it.reference == reference && it.enabled }) { "Missing or disabled algorithm plugin: ${reference.id}@${reference.version}" }
     }
 
+    private fun checkDependencies(packages: List<InstalledModifierPlugin>) {
+        val dependencies = packages.flatMap { it.manifest.algorithms }.groupBy { it.type }
+            .mapValues { (_, versions) -> versions.flatMapTo(HashSet()) { it.requires } }
+        val visited = HashSet<String>()
+        val visiting = HashSet<String>()
+        fun visit(type: String) {
+            if (type in visited || type !in dependencies) return
+            require(visiting.add(type)) { "Plugin dependency cycle: $type" }
+            dependencies.getValue(type).forEach(::visit)
+            visiting.remove(type); visited += type
+        }
+        dependencies.keys.forEach(::visit)
+    }
+
     private fun load(): List<InstalledModifierPlugin> {
         if (!Files.isDirectory(root)) return emptyList()
-        return Files.list(root).use { paths -> paths.filter { digest.matches(it.fileName.toString()) }.map { path ->
-            inspectDirectory(path, path.resolve(".origin").takeIf(Files::exists)?.let(Files::readString)).also {
-                require(it.reference.digest == path.fileName.toString()) { "Installed plugin contents changed: ${it.reference.id}" }
+        return Files.list(root).use { paths -> paths.filter { digest.matches(it.fileName.toString()) }.toList().mapNotNull { path ->
+            try {
+                inspectDirectory(path, path.resolve(".origin").takeIf(Files::exists)?.let(Files::readString)).also {
+                    require(it.reference.digest == path.fileName.toString()) { "Installed plugin contents changed: ${it.reference.id}" }
+                }
+            } catch (failure: Exception) {
+                if (failure is java.util.concurrent.CancellationException) throw failure
+                loadProblems += "${path.fileName}: ${failure.message}"
+                null
             }
-        }.toList() }
+        } }
     }
 
     private fun inspectDirectory(directory: Path, commit: String?): InstalledModifierPlugin {
+        require(Files.size(directory.resolve("plugin.json")) <= 1024 * 1024) { "Plugin manifest is too large" }
         val bytes = Files.readAllBytes(directory.resolve("plugin.json"))
         require(bytes.size <= 1024 * 1024) { "Plugin manifest is too large" }
         val manifest = codec.decodeFromString(ModifierPluginManifest.serializer(), bytes.decodeToString())
@@ -125,6 +167,9 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
             require(it.targets.isNotEmpty() && it.targets.all { kind -> kind in setOf("mesh", "deformer", "part", "layer") }) { "Invalid algorithm targets" }
             ModifierPluginSchema.check(it.configSchema)
             ModifierPluginSchema.validate(it.defaults, it.configSchema)
+            require(it.parameters.map { p -> p.id }.distinct().size == it.parameters.size && it.parameters.all { p ->
+                p.id.isNotBlank() && p.name.isNotBlank() && p.min.isFinite() && p.max.isFinite() && p.default.isFinite() && p.min < p.max && p.default in p.min..p.max
+            }) { "Invalid plugin parameter definitions" }
         }
         val command = requireNotNull(manifest.commands[platform] ?: manifest.commands["jvm"]) { "Plugin has no runtime for $platform" }
         require(command.isNotEmpty() && command.size <= 64) { "Invalid plugin command" }
@@ -157,9 +202,11 @@ internal class ModifierPluginStore(val root: Path, private val preferences: Pref
             var commit: String? = null
             if (source.startsWith("https://") || source.startsWith("ssh://")) {
                 require(ref == null || ref.matches(Regex("[a-zA-Z0-9][a-zA-Z0-9/._-]{0,200}"))) { "Invalid Git ref" }
-                val repository = temporary.resolve("repository")
-                git(listOf("clone", "--depth", "1", "--no-checkout") + (ref?.let { listOf("--branch", it) } ?: emptyList()) + listOf("--", source, repository.toString()), temporary)
-                git(listOf("-c", "core.hooksPath=", "checkout", "--detach", "HEAD"), repository)
+                val repository = Files.createDirectory(temporary.resolve("repository"))
+                git(listOf("init"), repository)
+                git(listOf("remote", "add", "origin", source), repository)
+                git(listOf("fetch", "--depth", "1", "origin", ref ?: "HEAD"), repository)
+                git(listOf("checkout", "--detach", "FETCH_HEAD"), repository)
                 commit = git(listOf("rev-parse", "HEAD"), repository).trim()
                 copyPackage(repository, packageDir, skipGit = true)
             } else {

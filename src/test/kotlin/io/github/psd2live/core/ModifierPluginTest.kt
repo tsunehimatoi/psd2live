@@ -92,6 +92,19 @@ class ModifierPluginTest {
         assertTrue(store.snapshot().isEmpty())
     }
 
+    @Test fun corruptedInstallationDoesNotPreventOpeningAndCanBeReinstalled() = fixture { root, store, preferences ->
+        val source = packageAt(root.resolve("package"))
+        val installed = store.install(source.toString())
+        Files.write(installed.directory.resolve("example.jar"), byteArrayOf(1))
+        assertFailsWith<IllegalArgumentException> { store.verify(installed.reference) }
+        val reopened = ModifierPluginStore(store.root, preferences)
+        assertTrue(reopened.snapshot().isEmpty())
+        assertTrue(reopened.problems().isNotEmpty())
+        val restored = reopened.install(source.toString())
+        assertEquals(installed.reference, restored.reference)
+        reopened.verify(restored.reference)
+    }
+
     @Test fun pinnedPackageCannotResolveToAnotherBuild() {
         val reference = ModifierPluginReference("test-plugin", "1", "a".repeat(64))
         val definition = RigModifierDefinition("test-plugin/fade", 1, evaluate = { rig, _, _ -> rig }, pluginReference = reference)

@@ -5,6 +5,7 @@ internal object ModifierPluginCatalog {
     fun definitions(): List<RigModifierDefinition> = ModifierPluginStore.shared.snapshot().flatMap { entry ->
         entry.manifest.algorithms.map { algorithm ->
             RigModifierDefinition(algorithm.type, algorithm.version, requires = algorithm.requires,
+                parameters = { algorithm.parameters.map { it.definition() } },
                 exclusiveFamily = algorithm.exclusiveFamily, composableKinds = algorithm.composableKinds,
                 validate = { _, instance ->
                     require(instance.targets.all { it.kind in algorithm.targets }) { "Unsupported plugin target" }

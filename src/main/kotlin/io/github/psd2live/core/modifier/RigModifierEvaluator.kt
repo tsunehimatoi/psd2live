@@ -120,10 +120,18 @@ internal class RigModifierEvaluator(
         }?.size ?: 0
         val outputs = ArrayList<RigIR>()
         val algorithmCache = saved?.algorithms.orEmpty().filterKeys { id -> stack.instances.any { it.id == id } }.toMutableMap()
+        var unavailableUpstream: String? = null
         for ((index, instance) in stack.instances.withIndex()) {
             checkpoint()
             if (!ModifierPluginCatalog.available(instance)) {
                 entries += ModifierEvaluation(instance, if (instance.enabled) ModifierStatus.MISSING_PLUGIN else ModifierStatus.DISABLED)
+                if (instance.enabled) unavailableUpstream = instance.id
+                outputs += current
+                continue
+            }
+            if (unavailableUpstream != null) {
+                entries += ModifierEvaluation(instance, if (instance.enabled) ModifierStatus.MISSING_DEPENDENCY else ModifierStatus.DISABLED,
+                    missingDependencies = if (instance.enabled) setOf("plugin:$unavailableUpstream") else emptySet())
                 outputs += current
                 continue
             }

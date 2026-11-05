@@ -29,7 +29,7 @@ internal object RigBuildProfile {
 		calls.computeIfAbsent(name) { AtomicLong() }.incrementAndGet()
 	}
 
-	fun count(name: String) = calls.computeIfAbsent(name) { AtomicLong() }.incrementAndGet()
+	fun count(name: String, amount: Long = 1) = if (recording) calls.computeIfAbsent(name) { AtomicLong() }.addAndGet(amount) else 0L
 
 	fun reset() { nanos.clear(); calls.clear() }
 

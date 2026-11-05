@@ -14,6 +14,11 @@ internal fun interface ModifierAlgorithmPlugin {
 }
 
 @Serializable
+internal data class ModifierPluginParameter(val id: String, val name: String, val min: Float, val max: Float, val default: Float) {
+    fun definition() = io.github.psd2live.format.model.Parameter(id, name, min, max, default)
+}
+
+@Serializable
 internal data class ModifierPluginAlgorithm(
     val type: String,
     val version: Int = 1,
@@ -27,6 +32,7 @@ internal data class ModifierPluginAlgorithm(
     val composableKinds: Set<String> = emptySet(),
     val configSchema: JsonObject,
     val defaults: JsonObject,
+    val parameters: List<ModifierPluginParameter> = emptyList(),
 )
 
 @Serializable
