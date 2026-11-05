@@ -43,7 +43,9 @@ internal object WorkspaceModifierEdits {
         }
         // Rebuilding every candidate also validates batches. Order checks are cheap enough to fail before rebuilding.
         RigModifierAlgorithms.evaluator().validateOrder(next)
-        var prepared = WorkspaceModifierSimulation.prepare(document, next, work)
+        val candidate = if (operation.operation == "modifier_move" && next != stack)
+            movePhysicsOrder(document, model, next, requireNotNull(id)) else document
+        var prepared = WorkspaceModifierSimulation.prepare(candidate, next, work)
         if (operation.operation == "modifier_add_group") {
             val added = prepared.instances.filter { entry -> stack.instances.none { it.id == entry.id } }
             val consumers = added.filter { it.type in setOf("physics", "motion") }
@@ -60,7 +62,31 @@ internal object WorkspaceModifierEdits {
                 RigModifierAlgorithms.evaluator().validateOrder(prepared)
             }
         }
-        return if (prepared == stack) document else document.copy(rigEdits = document.rigEdits.copy(modifierStack = prepared.toJson()))
+        return if (prepared == stack) document else candidate.copy(rigEdits = candidate.rigEdits.copy(modifierStack = prepared.toJson()))
+    }
+
+    /** Moving a producer supersedes its captured group order while keeping ordinary groups in their slots. */
+    private fun movePhysicsOrder(document: WorkspaceDocument, model: RigPreviewModel, stack: RigModifierStack, moved: String): WorkspaceDocument {
+        if (document.rigEdits.physicsOrder.isEmpty()) return document
+        val reported = HashMap<String, String>()
+        for (row in model.rig.modifierReport?.get("entries")?.jsonArray.orEmpty()) {
+            val entry = row.jsonObject
+            for (item in entry.getValue("contributions").jsonArray.map { it.jsonObject }) {
+                if (item.getValue("kind").jsonPrimitive.content == "physics" && item.getValue("change").jsonPrimitive.content == "added")
+                    reported[item.getValue("id").jsonPrimitive.content] = entry.getValue("id").jsonPrimitive.content
+            }
+        }
+        val order = (document.rigEdits.physicsOrder + model.rig.modifierOutput?.physics?.groups.orEmpty().map { it.id }).distinct()
+        val owners = order.mapNotNull { group ->
+            val owner = stack.instances.firstOrNull { entry -> entry.localOutputName(group)?.let { it == "physics" || it.startsWith("physics:") } == true }?.id
+                ?: reported[group]?.takeIf { id -> stack.instances.any { it.id == id } }
+            owner?.let { group to it }
+        }.toMap()
+        if (moved !in owners.values) return document
+        val positions = stack.instances.mapIndexed { index, instance -> instance.id to index }.toMap()
+        val sorted = order.filter { it in owners }.sortedBy { positions.getValue(owners.getValue(it)) }.iterator()
+        val reordered = order.map { if (it in owners) sorted.next() else it }
+        return document.copy(rigEdits = document.rigEdits.copy(physicsOrder = reordered))
     }
 
     private fun add(stack: RigModifierStack, request: JsonObject, model: RigPreviewModel?): RigModifierStack {

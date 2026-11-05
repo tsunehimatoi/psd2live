@@ -27,10 +27,10 @@ class WorkspaceModifierCommandsTest {
     }
 
     private suspend fun fixture(withWarp: Boolean = false, layerCount: Int = 1,
-                                additionalParameters: List<RigParameterEdit> = emptyList()): Fixture {
+                                additionalParameters: List<RigParameterEdit> = emptyList(), physicsOrder: List<String> = emptyList()): Fixture {
         val source = SyntheticProject(temp.resolve("source"), layerCount, 12, 1).tree.head().snapshot
         val config = PipelineConfig(atlasSize = 64, meshSpacing = 8, rigEdits = RigEditOverlay(
-            parameterEdits = listOf(RigParameterEdit("ParamInput", "Input", -1f, 1f, 0f, created = true),
+            physicsOrder = physicsOrder, parameterEdits = listOf(RigParameterEdit("ParamInput", "Input", -1f, 1f, 0f, created = true),
                 RigParameterEdit("ParamOutput", "Output", -1f, 1f, 0f, created = true)) + additionalParameters, modifierStack = RigModifierStack().toJson()))
         var document = source.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits)
         val builder = WorkspacePreviewBuilder()
@@ -481,6 +481,24 @@ class WorkspaceModifierCommandsTest {
         f.runtime.checkout(f.now.projectId, f.now.state, paused.historyHead)
         assertEquals(listOf("body"), stack(f).instances.map { it.id })
         assertEquals(paused.revision, f.now.revision)
+    }
+
+    @Test fun movingPhysicsModifiersChangesCapturedOrderAndSurvivesReplayAndUndo(): Unit = runBlocking<Unit> {
+        fun output(id: String) = RigModifierInstance(id, "physics", 1, listOf(ModifierTarget("mesh", "placeholder"))).outputId("physics")
+        val first = output("first")
+        val second = output("second")
+        val f = fixture(additionalParameters = listOf(RigParameterEdit("ParamFinal", "Final", -1f, 1f, 0f, created = true)),
+            physicsOrder = listOf(first, second))
+        f.edit("modifier_add", add(f, "physics", physics().toJson(), "first"))
+        f.edit("modifier_add", add(f, "physics", physics().copy(inputs = listOf(PhysicsInput("ParamOutput")),
+            outputs = listOf(PhysicsOutput("ParamFinal"))).toJson(), "second"))
+        val before = f.now
+        assertEquals(listOf(first, second), RigIrCompiler.compile(before.model).physics.groups.map { it.id })
+        f.edit("modifier_move", buildJsonObject { put("id", "second"); put("index", 0) })
+        assertEquals(listOf(second, first), RigIrCompiler.compile(f.now.model).physics.groups.map { it.id })
+        assertEquals(listOf(second, first), RigIrCompiler.compile(f.builder.build(f.now.document)).physics.groups.map { it.id })
+        f.runtime.checkout(f.now.projectId, f.now.state, before.historyHead)
+        assertEquals(listOf(first, second), RigIrCompiler.compile(f.now.model).physics.groups.map { it.id })
     }
 
     @Test fun groupsCommitOnceAndLaterBatchMembersCanReferenceChosenInstanceIds(): Unit = runBlocking<Unit> {
