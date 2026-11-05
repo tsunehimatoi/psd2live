@@ -29,6 +29,7 @@ import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.key
 import io.github.psd2live.core.MeshSettings
 import io.github.psd2live.core.MotionClip
+import io.github.psd2live.core.MotionCatalog
 import io.github.psd2live.core.MotionClips
 import io.github.psd2live.core.MotionHandle
 import io.github.psd2live.core.MotionKey
@@ -4244,7 +4245,7 @@ class PSD2LiveViewModel : AutoCloseable {
 
 	// region Authored motions
 
-	val motionClips: List<MotionClip> get() = _state.value.rigEdits.motionClips
+	val motionClips: List<MotionClip> get() = MotionCatalog.entries(_state.value.rigEdits)
 
 	/**
 	 * The clip the editor has open, if it still exists (an undo can remove it). A generated motion opens as
@@ -4253,7 +4254,7 @@ class PSD2LiveViewModel : AutoCloseable {
 	fun editingMotionClip(state: PSD2LiveState = _state.value): MotionClip? {
 		val id = motionEditor.clipId ?: return null
 		MotionEditorState.presetOf(id)?.let { return presetMotionClip(state, it) }
-		return state.rigEdits.motionClips.firstOrNull { it.id == id }
+		return MotionCatalog.entries(state.rigEdits).firstOrNull { it.id == id }
 	}
 
 	private class PresetClip(val name: String, val skeleton: io.github.psd2live.core.SkeletonSpec?, val settings: MotionPresetSettings, val clip: MotionClip,
@@ -4328,10 +4329,10 @@ class PSD2LiveViewModel : AutoCloseable {
 	/** A transient drag projection; completed edits use the application timeline commands. */
 	private fun previewMotionClips(transform: (List<MotionClip>) -> List<MotionClip>) {
 		val current = _state.value
-		val before = current.rigEdits.motionClips
+		val before = MotionCatalog.entries(current.rigEdits)
 		val next = transform(before)
 		if (next == before) return
-		updateState { it.copy(rigEdits = it.rigEdits.copy(motionClips = next)) }
+		updateState { it.copy(rigEdits = MotionCatalog.replacing(it.rigEdits, next)) }
 	}
 
 	/**
@@ -4614,7 +4615,7 @@ class PSD2LiveViewModel : AutoCloseable {
 		motionEditor.dragOrigin = editingMotionClip() ?: return
 		motionEditor.dragSelection = motionEditor.selection
 		motionEditor.dragState = currentWorkspaceState()
-		motionEditor.dragClips = _state.value.rigEdits.motionClips
+		motionEditor.dragClips = MotionCatalog.entries(_state.value.rigEdits)
 		motionEditor.dragRequest = null
 	}
 
@@ -4651,8 +4652,8 @@ class PSD2LiveViewModel : AutoCloseable {
 		motionEditor.dragClips = emptyList()
 		// The drag only previewed; the committed clips come back whatever landed meanwhile.
 		updateState { state ->
-			val committed = shownDocument?.takeIf { it.first == state.projectOpenGeneration }?.second?.rigEdits?.motionClips ?: before
-			state.copy(rigEdits = state.rigEdits.copy(motionClips = committed))
+			val committed = shownDocument?.takeIf { it.first == state.projectOpenGeneration }?.second?.rigEdits?.let(MotionCatalog::entries) ?: before
+			state.copy(rigEdits = MotionCatalog.replacing(state.rigEdits, committed))
 		}
 		// Whether the preview still shows the drag does not matter: a commit shown meanwhile may have replaced it.
 		if (expected == null || request == null) return

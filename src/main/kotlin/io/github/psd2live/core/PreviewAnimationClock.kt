@@ -47,6 +47,14 @@ internal data class PreviewAnimationClock(val elapsed: Double = 0.0, val followX
     fun sample(model: RigPreviewModel, animate: Boolean, tracking: Boolean, motion: Map<ParameterId, Float>): Map<ParameterId, Float> {
         val config = model.config
         if (config.meshOnly) return model.rig.puppet.parameters.associate { it.id to it.default }
+        if (config.rigEdits.modifierStack != null) {
+            val active = model.rig.modifierOutput?.clips.orEmpty().mapTo(HashSet()) { it.id }
+            val idle = if (!animate) emptyMap() else MotionCatalog.entries(config.rigEdits)
+                .filter { it.enabled && it.id in active && (it.exportGroup ?: it.name) in setOf("Idle", "Blink") }
+                .fold(emptyMap<ParameterId, Float>()) { pose, clip -> pose + MotionClips.sampleAll(clip, elapsed, true) }
+            val defaults = model.rig.puppet.parameters.associate { it.id to it.default }
+            return pointerPreviewPose(defaults + idle + motion, followX, followY, model.rig.puppet.parameters, tracking, emptySet())
+        }
         val settings = MotionPresetSettings.of(config, "Idle")
         val hasIdle = animate && config.motionBasic && config.motionIdle && !settings.deleted && !settings.disabled
         val idle = when {

@@ -404,9 +404,20 @@ internal object WorkspaceDocumentEdits {
     fun motion(document: WorkspaceDocument, model: RigPreviewModel, request: JsonObject): WorkspaceDocument {
         val parameters = model.rig.puppet.parameters
         val ranges = parameters.associate { it.id.raw to (it.min..it.max) }
-        return document.copy(rigEdits = document.rigEdits.copy(motionClips = WorkspaceSkeletonMotionEdits.motion(
-            document.rigEdits.motionClips, request, ranges, document.rigEdits.skeleton, document.rigEdits.motionPresets,
-            MotionLoops.keyLimits(parameters), parameters, document.rigEdits.idRenames.parameters)))
+        val clips = WorkspaceSkeletonMotionEdits.motion(
+            MotionCatalog.entries(document.rigEdits), request, ranges, document.rigEdits.skeleton, document.rigEdits.motionPresets,
+            MotionLoops.keyLimits(parameters), parameters, document.rigEdits.idRenames.parameters)
+        if (request["mode"]?.jsonPrimitive?.content == "duplicate") {
+            val stack = document.rigEdits.modifierStack?.let(io.github.psd2live.core.modifier.RigModifierStack::fromJson)
+            val owner = stack?.instances?.firstOrNull { it.type == "motion" && it.outputId("motion") == request["id"]?.jsonPrimitive?.content }
+            if (owner != null) {
+                val copy = clips.last()
+                val next = stack.add("motion", owner.version, owner.targets, MotionClips.toJson(copy),
+                    outputAliases = mapOf("motion" to copy.id))
+                return document.copy(rigEdits = document.rigEdits.copy(modifierStack = next.toJson()))
+            }
+        }
+        return document.copy(rigEdits = MotionCatalog.replacing(document.rigEdits, clips))
     }
 
     fun swing(document: WorkspaceDocument, puppet: org.umamo.runtime.model.PuppetModel, edit: RigSwingEdit, estimatePhysics: Boolean): WorkspaceDocument {

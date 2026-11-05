@@ -204,16 +204,20 @@ internal class WorkspacePlaybackSessions(private val runtime: WorkspaceRuntime<R
 
     private fun clip(capture: WorkspaceCapture<RigPreviewModel>, id: String): MotionClip? {
         val document = capture.document
-        return document.rigEdits.motionClips.firstOrNull { it.id == id && (it.builtin == null || enabled(capture, it.builtin)) }
+        val active = capture.model.rig.modifierOutput?.clips?.mapTo(HashSet()) { it.id }
+        return MotionCatalog.entries(document.rigEdits).firstOrNull { it.id == id && it.enabled &&
+            (document.rigEdits.motionClips.any { clip -> clip.id == id } || active == null || id in active) &&
+            (it.builtin == null || enabled(capture, it.builtin)) }
             ?: id.takeIf { it.startsWith("preset:") }?.removePrefix("preset:")?.let { name ->
                 if (name !in MotionClips.BUILTIN_NAMES || !enabled(capture, name)) null
-                else MotionClips.overrideOf(document.rigEdits.motionClips, name) ?: MotionPresets.clip(id, name,
+                else MotionClips.overrideOf(MotionCatalog.entries(document.rigEdits), name) ?: MotionPresets.clip(id, name,
                     document.rigEdits.skeleton, MotionPresetSettings.of(capture.model.config, name), document.rigEdits.idRenames.parameters)
             }
     }
 
     private fun enabled(capture: WorkspaceCapture<RigPreviewModel>, name: String): Boolean {
         val config = capture.model.config
+        if (config.rigEdits.modifierStack != null) return false
         val enabled = if (MotionClips.isSkeletonPreset(name)) config.motionSkeleton else config.motionBasic && when (name) {
             "Idle" -> config.motionIdle; "Blink" -> config.motionBlink; "Nod" -> config.motionNod; "Shake" -> config.motionShake; else -> true
         }
@@ -221,8 +225,8 @@ internal class WorkspacePlaybackSessions(private val runtime: WorkspaceRuntime<R
     }
 
     private fun motionId(capture: WorkspaceCapture<RigPreviewModel>, name: String): String {
-        val clips = capture.document.rigEdits.motionClips
-        return OneShotMotionPlayer.clipOf(name, capture.document.rigEdits.skeleton, clips, capture.document.rigEdits.motionPresets,
+        val clips = MotionCatalog.entries(capture.document.rigEdits)
+        return clips.firstOrNull { it.enabled && (it.id == name || it.name.equals(name, true) || it.exportGroup?.equals(name, true) == true) }?.id ?: OneShotMotionPlayer.clipOf(name, capture.document.rigEdits.skeleton, clips, capture.document.rigEdits.motionPresets,
             capture.document.rigEdits.idRenames.parameters)
             ?.takeIf { resolved -> clips.any { it.id == resolved.id } }?.id
             ?: clips.firstOrNull { it.id == name }?.id

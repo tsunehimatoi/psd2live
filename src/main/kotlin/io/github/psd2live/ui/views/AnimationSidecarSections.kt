@@ -111,7 +111,7 @@ private fun blendLabel(blend: ExpressionBlend) = tr("expression.blend.${blend.na
 /** Whether [needle] finds an expression, a pose part or an event, so a search that finds no motion still lists them. */
 internal fun sidecarsMatch(state: PSD2LiveState, needle: String): Boolean =
 	state.modelExpressions().any { it.name.contains(needle, ignoreCase = true) } ||
-		state.rigEdits.motionClips.any { clip -> clip.events.any { it.value.contains(needle, ignoreCase = true) } }
+		io.github.psd2live.core.MotionCatalog.entries(state.rigEdits).any { clip -> clip.events.any { it.value.contains(needle, ignoreCase = true) } }
 
 /** The new menu's expression items: from the pose shown now, empty, or from a saved snapshot. */
 @Composable
@@ -189,7 +189,7 @@ internal fun LazyListScope.sidecarSections(
 		item(key = "p:add") { PoseFooter(viewModel, pose, free) }
 	}
 
-	val events = state.rigEdits.motionClips.flatMap { clip -> clip.events.map { clip to it } }
+	val events = io.github.psd2live.core.MotionCatalog.entries(state.rigEdits).flatMap { clip -> clip.events.map { clip to it } }
 	val userData = puppet.drawables.filter { it.userData.isNotEmpty() }
 	if (header(EVENT_SECTION, tr("sidecar.eventsSection"), events.size + userData.size)) {
 		items(events, key = { (clip, event) -> "v:${clip.id}:${event.time}" }) { (clip, event) ->

@@ -26,6 +26,31 @@ class WorkspaceModifierCommandsTest {
         }
     }
 
+    @Test fun presetMotionEditsAndPlaybackUseTheOwningInstance(): Unit = runBlocking {
+        val f = fixture()
+        val clip = MotionClip("source", "Preset motion", duration = 1f, curves = listOf(MotionCurve("ParamInput", listOf(MotionKey(0f, 0f), MotionKey(1f, 1f)))))
+        val stack = RigModifierStack().add("motion", 1, listOf(f.target), MotionClips.toJson(clip), id = "motion-owner")
+        val doc = f.now.document.copy(rigEdits = f.now.document.rigEdits.copy(modifierStack = stack.toJson()))
+        f.runtime.install(f.now.state, "motion", doc, f.builder.build(doc))
+        val id = MotionCatalog.entries(f.now.document.rigEdits).single().id
+        f.edit("motion_rename", buildJsonObject { put("id", id); put("name", "Renamed") })
+        assertTrue(f.now.document.rigEdits.motionClips.isEmpty())
+        assertEquals("Renamed", MotionCatalog.entries(f.now.document.rigEdits).single().name)
+        val playback = WorkspacePlaybackSessions(f.runtime)
+        val frame = playback.configure(f.now.projectId, f.now.state, "main", buildJsonObject {
+            put("mode", "seek"); put("clip_id", id); put("time", 0.5f)
+        })
+        assertEquals(0.5f, frame.getValue("values").jsonObject.getValue("ParamInput").jsonPrimitive.float, 0.001f)
+        f.edit("motion_duplicate", buildJsonObject { put("id", id); put("new_id", "motion-copy") })
+        assertTrue(f.now.document.rigEdits.motionClips.isEmpty())
+        val copied = MotionCatalog.entries(f.now.document.rigEdits).last()
+        assertEquals("motion-copy", copied.id)
+        assertEquals(MotionCatalog.entries(f.now.document.rigEdits).first().curves, copied.curves)
+        f.edit("motion_delete", buildJsonObject { put("id", copied.id) })
+        f.edit("motion_delete", buildJsonObject { put("id", id) })
+        assertTrue(MotionCatalog.entries(f.now.document.rigEdits).isEmpty())
+    }
+
     @Test fun newSimulationFromThePanelCreatesAModifier(): Unit = runBlocking {
         val f = fixture()
         val mesh = f.now.model.rig.puppet.drawables.single()

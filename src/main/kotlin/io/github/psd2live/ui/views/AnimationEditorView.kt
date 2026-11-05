@@ -202,11 +202,11 @@ private fun EditorToolbar(state: PSD2LiveState, viewModel: PSD2LiveViewModel, cl
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 	val editor = viewModel.motionEditor
-	val clips = state.rigEdits.motionClips
+	val clips = io.github.psd2live.core.MotionCatalog.entries(state.rigEdits)
 	val skeleton = state.rigEdits.skeleton
 	val presets = state.rigEdits.motionPresets
-	val basic = state.motionBasic
-	val skeletonPresets = state.motionSkeleton
+	val basic = state.rigEdits.modifierStack == null && state.motionBasic
+	val skeletonPresets = state.rigEdits.modifierStack == null && state.motionSkeleton
 	val choices = remember(clips, skeleton, presets, basic, skeletonPresets) {
 		val builtins = MotionClips.BUILTIN_NAMES.filter { name ->
 			presets[name]?.deleted != true && (if (MotionClips.isSkeletonPreset(name)) skeletonPresets else basic) &&

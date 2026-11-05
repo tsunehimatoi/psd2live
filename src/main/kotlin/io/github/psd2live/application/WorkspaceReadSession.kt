@@ -172,7 +172,7 @@ internal class WorkspaceReadSession(
 
     override fun currentPuppet(): PuppetModel? = read.runtime.capture?.model?.rig?.puppet
     override fun skeletonSpec(): SkeletonSpec? = read.runtime.capture?.document?.rigEdits?.skeleton
-    override fun motionClips(): List<MotionClip> = read.runtime.capture?.document?.rigEdits?.motionClips.orEmpty()
+    override fun motionClips(): List<MotionClip> = read.runtime.capture?.document?.rigEdits?.let(MotionCatalog::entries).orEmpty()
     override fun modelSidecars(): WorkspaceSidecars = capture().let { WorkspaceSidecarEdits.sidecars(it.document, it.model?.rig?.puppet) }
     override fun projectSettings(): JsonObject {
         val document = capture().document
