@@ -36,6 +36,7 @@ import io.github.psd2live.core.legacy.RigGenerationMigration
 class PSD2LivePipeline {
 	internal var deferRuntimeBundles = false
 	internal val modifierCache = io.github.psd2live.core.modifier.RigModifierEvaluationCache()
+    internal var modifierBase: io.github.psd2live.core.modifier.ModifierBaseSnapshot? = null
 	internal val meshCache = PreviewMeshCache()
 	private val generatedGeometry = GeneratedGeometryCache()
 	fun inspect(psd: Path, config: PipelineConfig = PipelineConfig()): PipelineAnalysis {
@@ -632,6 +633,7 @@ class PSD2LivePipeline {
 	 */
 	fun export(model: RigPreviewModel, sourceName: String, outputDirectory: Path,
 	           progress: ProgressListener = ProgressListener { _, _ -> }): PipelineResult {
+		model.config.rigEdits.modifierStack?.let { io.github.psd2live.core.modifier.ModifierPluginCatalog.requireAvailable(io.github.psd2live.core.modifier.RigModifierStack.fromJson(it)) }
 		val (analysis, atlas, rig, config) = model
 		val baseName = safeBaseName(sourceName.substringBeforeLast('.'))
 		val imported = config.rigEdits.importedCmo3 != null

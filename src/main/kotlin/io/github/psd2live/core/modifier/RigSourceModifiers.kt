@@ -190,7 +190,16 @@ internal class RigModifierSource(
 
     private fun template(instances: List<RigModifierInstance>, scaffold: JsonObject): Template {
         val state = instances.associateBy { it.type }
-        return templates.getOrPut(templateKey(instances, scaffold)) {
+        val key = templateKey(instances, scaffold)
+        return templates.getOrPut(key) {
+            val sharedKey = listOf(analysis, atlas, RigModifierPipeline.ordinaryConfig(config), primaryByLayer, key, io.github.psd2live.i18n.I18n.currentLanguage)
+            val build = { buildTemplate(instances, scaffold, state) }
+            if (RigStageCache.enabled) meshCache.stages.get("modifier geometry template", 64, sharedKey, build) else build()
+        }
+    }
+
+    private fun buildTemplate(instances: List<RigModifierInstance>, scaffold: JsonObject, state: Map<String, RigModifierInstance>): Template {
+
             var tuning = RigTuning()
             for (spec in RigLegacyBindings.specs) state[spec.type]?.let { tuning = RigLegacyBindings.tuning(it, tuning) }
             val bodyStrength = state["body/legacy"]?.let(RigLegacyBindings::strength) ?: 1f
@@ -219,7 +228,7 @@ internal class RigModifierSource(
             val clips = RigOrdinaryMaterials.clipping(analysis.source, primaryByLayer.entries.associate { it.value to it.key })
             val tags = analysis.layers.associate { it.source.id.raw to it.semantic.tag }
             val opacity = analysis.layers.associate { it.source.id.raw to it.source.opacity }
-            Template(model.copy(drawables = model.drawables.map { mesh ->
+            return Template(model.copy(drawables = model.drawables.map { mesh ->
                 val layer = layersByMesh[mesh.id.raw]
                 val eye = tags[layer] in setOf(SemanticTag.IRIDES, SemanticTag.EYEWHITE, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE)
                 val mouth = tags[layer] in CharacterAnalyzer.MOUTH_COMPONENT_TAGS + setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN)
@@ -228,7 +237,6 @@ internal class RigModifierSource(
                     channelGrids = if ((eye || mouth) && !active) ChannelGrids.Empty else mesh.channelGrids,
                     opacity = if ((eye || mouth) && !active) opacity[layer] ?: mesh.opacity else mesh.opacity)
             }), chains)
-        }
     }
 
     fun transition(instance: RigModifierInstance, target: ModifierTarget, checkpoint: () -> Unit): Pair<PuppetModel, PuppetModel> {
@@ -449,6 +457,7 @@ internal class RigModifierSource(
     }
 
     fun hasMesh(id: String) = id in layersByMesh
+    fun hasLayer(id: String) = analysis.layers.any { it.source.id.raw == id }
 
     fun provider(instance: RigModifierInstance): RigModifierInstance {
         val id = instance.config.getValue("scaffold").jsonPrimitive.content

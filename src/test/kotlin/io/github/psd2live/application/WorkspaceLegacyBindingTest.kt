@@ -1121,17 +1121,17 @@ class WorkspaceLegacyBindingTest {
         val start = System.nanoTime()
         pipeline.buildPreview(art.source, config)
         val coldMs = (System.nanoTime() - start) / 1_000_000
-        val hits = pipeline.meshCache.stages.hits(RigStageCache.MESH)
+        val authorInput = pipeline.modifierBase
         val eye = stack.instances.single { it.type == "eye/fitted" }
         val changed = stack.update(eye.id) { it.copy(config = JsonObject(it.config + ("values" to buildJsonObject { put("roundness", 80f) }))) }
         val updatedConfig = config.copy(rigEdits = config.rigEdits.copy(modifierStack = changed.toJson()))
         val editStart = System.nanoTime()
         val warm = pipeline.buildPreview(art.source, updatedConfig)
         val warmMs = (System.nanoTime() - editStart) / 1_000_000
-        assertTrue(pipeline.meshCache.stages.hits(RigStageCache.MESH) > hits)
+        assertSame(requireNotNull(authorInput).model, requireNotNull(pipeline.modifierBase).model)
         val fresh = PSD2LivePipeline().buildPreview(art.source, updatedConfig)
         assertEquals(RigIrCompiler.compile(fresh), RigIrCompiler.compile(warm))
-        println("modifier stages: initial=${coldMs}ms edit=${warmMs}ms reused=" + (pipeline.meshCache.stages.hits(RigStageCache.MESH) - hits))
+        println("modifier stages: initial=${coldMs}ms edit=${warmMs}ms author input reused")
     }
 
     @Test fun simulationPanelEditsStayOwnedByTheirPresetInstance(): Unit = runBlocking<Unit> {

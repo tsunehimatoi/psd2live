@@ -9,6 +9,8 @@ import io.github.psd2live.targets.cubism.PuppetIr
 import java.util.concurrent.CancellationException
 import org.umamo.runtime.model.PuppetModel
 
+internal data class ModifierBaseSnapshot(val key: List<Any>, val model: RigPreviewModel, val input: RigIR)
+
 /** The single preview/export boundary for documents whose presets are explicit instances. */
 internal object RigModifierPipeline {
     /** Reconstruct the ordinary input from the captured author state, never from an already evaluated stack. */
@@ -58,9 +60,14 @@ internal object RigModifierPipeline {
         }
         val ordinary = ordinaryConfig(config)
         // Mesh-only is a construction input here, not an export gate on the ordinary authored content.
-        val base = pipeline.buildOrdinaryPreview(analysis.source, ordinary.copy(meshOnly = true),
-            ProgressListener { message, fraction -> progress.update(message, fraction * .8) }, previousAtlas)
-        val input = compileOrdinary(base.analysis, base.atlas, base.rig, config)
+        val baseKey = listOf(analysis.source, ordinary, config.meshOnly && stack.instances.none { it.enabled } && stack.appliedCapabilities.isEmpty(), pipeline.deferRuntimeBundles, io.github.psd2live.i18n.I18n.currentLanguage)
+        val retained = pipeline.modifierBase?.takeIf { it.key == baseKey }
+        val base = retained?.model ?: RigBuildProfile.stage("modifier author input") {
+            pipeline.buildOrdinaryPreview(analysis.source, ordinary.copy(meshOnly = true),
+                ProgressListener { message, fraction -> progress.update(message, fraction * .8) }, previousAtlas)
+        }
+        if (retained != null) RigBuildProfile.count("modifier author input cache hits")
+        val input = retained?.input ?: compileOrdinary(base.analysis, base.atlas, base.rig, config)
         val source = RigModifierSource(base.analysis, base.atlas, config, base.rig.layerIdByDrawableId, base.rig.copiedDrawableIds, base.baseRig.puppet, pipeline.meshCache)
         val context = listOf(analysis.source, config.copy(rigEdits = config.rigEdits.copy(modifierStack = null)),
             io.github.psd2live.i18n.I18n.currentLanguage)
@@ -76,7 +83,10 @@ internal object RigModifierPipeline {
         progress.update("Compiling modifier result", .95)
         val bundle = pipeline.previewBundle(composed, atlas, rig, config)
         return base.copy(analysis = composed, atlas = atlas, rig = rig, config = config, runtimeBundle = bundle,
-            modifierAuthorAtlas = base.atlas, modifierAuthorAnalysis = base.analysis).also { it.modifierEvaluation = pipeline.modifierCache.snapshot }
+            modifierAuthorAtlas = base.atlas, modifierAuthorAnalysis = base.analysis).also {
+                it.modifierEvaluation = pipeline.modifierCache.snapshot
+                pipeline.modifierBase = ModifierBaseSnapshot(baseKey, base, input)
+            }
     }
 }
 
