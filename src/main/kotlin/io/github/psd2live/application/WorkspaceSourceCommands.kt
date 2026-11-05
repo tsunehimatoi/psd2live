@@ -32,7 +32,18 @@ internal fun registerSourceCommands(catalog: WorkspaceCommands, workspace: Works
         "asset_import_psd" to WorkspaceCommandSchema(properties = buildJsonObject {
             put("path", text)
             putJsonObject("discard_unsaved") { put("type", "boolean") }
-            put("modifiers", WorkspaceResultSchema.choices("recommended", "empty"))
+            put("modifiers", WorkspaceResultSchema.choices(*WorkspaceInitialModifiers.entries.map { it.name.lowercase() }.toTypedArray()))
+            putJsonObject("preset") {
+                put("type", "object"); put("additionalProperties", false)
+                putJsonObject("properties") {
+                    for (name in listOf("headStrength", "bodyStrength")) putJsonObject(name) {
+                        put("type", "number"); put("minimum", 0); put("maximum", 4)
+                    }
+                    for (name in listOf("featureDisplacement", "mouthOutline", "motionBasic", "motionSkeleton", "clothing", "eyeJelly"))
+                        putJsonObject(name) { put("type", "boolean") }
+                    for (name in listOf("frontHair", "backHair")) put(name, WorkspaceResultSchema.choices("CLASSIC", "SIMULATION", "OFF"))
+                }
+            }
         }, required = listOf("path")),
         "asset_create_artwork" to WorkspaceCommandSchema(properties = buildJsonObject {
             putJsonObject("discard_unsaved") { put("type", "boolean") }
@@ -74,11 +85,9 @@ internal fun registerSourceCommands(catalog: WorkspaceCommands, workspace: Works
         val arguments = request.arguments
         val result = when (name) {
             "asset_import_psd" -> workspace.importPsd(arguments.text("path"), arguments["discard_unsaved"]?.jsonPrimitive?.boolean ?: false,
-                when (arguments["modifiers"]?.jsonPrimitive?.content) {
-                    null, "recommended" -> WorkspaceInitialModifiers.RECOMMENDED
-                    "empty" -> WorkspaceInitialModifiers.EMPTY
-                    else -> error("Unknown initial modifier group")
-                })
+                arguments["modifiers"]?.jsonPrimitive?.content?.let { WorkspaceInitialModifiers.valueOf(it.uppercase()) }
+                    ?: WorkspaceInitialModifiers.RECOMMENDED,
+                arguments["preset"]?.let { Json.decodeFromJsonElement(WorkspaceInitialPreset.serializer(), it) })
             "asset_create_artwork" -> workspace.createArtwork(arguments)
             "asset_split_components" -> workspace.splitMeshComponents(arguments.text("state"), listOf(JsonObject(arguments - "state")))
             "asset_split_depth" -> workspace.splitDepth(arguments.text("state"), JsonObject(arguments - "state"))

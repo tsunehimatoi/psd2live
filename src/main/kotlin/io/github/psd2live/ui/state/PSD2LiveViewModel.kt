@@ -7855,10 +7855,10 @@ class PSD2LiveViewModel : AutoCloseable {
         val path = input.toAbsolutePath().normalize().toString()
         val choices = startChoices
         startWorkspaceImport(discardUnsaved, tr("status.analyzing"), afterImport = {
-            if (!layout && choices.modifiers == null) applyStartPresets(choices)
             leaveStartPage()
             openWorkspacePreset(if (layout) WorkspacePreset.LAYOUT else WorkspacePreset.EDIT)
-        }) { if (layout) it.importLayout(path, discardUnsaved) else it.importPsd(path, discardUnsaved, choices.modifiers) }
+        }) { if (layout) it.importLayout(path, discardUnsaved) else it.importPsd(path, discardUnsaved, choices.initialMode(),
+            if (choices.initialMode() == io.github.psd2live.application.WorkspaceInitialModifiers.CUSTOM) choices.initialPreset() else null) }
     }
 
     /** Both adapters invoke the same application source capability; only this entry owns GUI confirmation. */

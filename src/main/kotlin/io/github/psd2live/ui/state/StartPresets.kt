@@ -51,6 +51,19 @@ internal data class StartPresetChoices(
 		eyeJelly = eyeJelly && parts.eyeJelly,
 	)
 
+    fun initialMode(): io.github.psd2live.application.WorkspaceInitialModifiers = modifiers ?: when (this) {
+        StartQuickPreset.MINIMAL.choices -> io.github.psd2live.application.WorkspaceInitialModifiers.MINIMAL
+        StartQuickPreset.DEFAULT.choices -> io.github.psd2live.application.WorkspaceInitialModifiers.DEFAULT
+        StartQuickPreset.FULL.choices -> io.github.psd2live.application.WorkspaceInitialModifiers.FULL
+        else -> io.github.psd2live.application.WorkspaceInitialModifiers.CUSTOM
+    }
+
+    fun initialPreset() = io.github.psd2live.application.WorkspaceInitialPreset(
+        headStrength, bodyStrength, featureDisplacement, mouthOutline, motionBasic, motionSkeleton,
+        io.github.psd2live.application.WorkspaceInitialHair.valueOf(frontHair.name),
+        io.github.psd2live.application.WorkspaceInitialHair.valueOf(backHair.name), clothing, eyeJelly,
+    )
+
 	fun encode(): String = choicesJson.encodeToString(serializer(), this)
 
 	companion object {

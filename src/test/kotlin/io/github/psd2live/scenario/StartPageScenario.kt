@@ -40,9 +40,11 @@ class StartPageScenario {
 		vm.setStartChoices(choices)
 		vm.setInputPath(Characters.figurePsd(temp).toString())
 		vm.analyze(discardUnsaved = true)
-		until("the import") { vm.state.value.previewModel != null && !vm.startPageShown }
-		val parts = PresetParts.of(vm.state.value.analysis)
-		until("the presets") { StartPresetChoices.of(vm.state.value).within(parts) == choices.within(parts) }
+		until("the import") { vm.state.value.errorMessage != null || vm.state.value.previewModel != null && !vm.startPageShown }
+        assertNull(vm.state.value.errorMessage, "Import failed")
+        val stack = io.github.psd2live.core.modifier.RigModifierStack.fromJson(assertNotNull(vm.state.value.rigEdits.modifierStack))
+        assertTrue(stack.instances.isNotEmpty())
+        assertTrue(stack.instances.none { it.type == "motion" || it.type == "mouth.outline" || it.type == "simulation" })
 		settle(vm)
 	}
 

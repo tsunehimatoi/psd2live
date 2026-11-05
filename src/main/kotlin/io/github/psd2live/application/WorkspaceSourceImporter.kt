@@ -10,7 +10,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 
-enum class WorkspaceInitialModifiers { RECOMMENDED, EMPTY }
+enum class WorkspaceInitialModifiers { RECOMMENDED, EMPTY, MINIMAL, DEFAULT, FULL, CUSTOM }
 
 /** New source projects use one isolated read/rebuild/install boundary in both adapters. */
 internal class WorkspaceSourceImporter(
@@ -36,12 +36,13 @@ internal class WorkspaceSourceImporter(
                          /** The file name the user chose, when [path] is a captured copy under another name. */
                          displayName: String = path.fileName.toString(),
                          modifiers: WorkspaceInitialModifiers? = null,
+                         preset: WorkspaceInitialPreset? = null,
                          project: (WorkspaceDocument, RigPreviewModel, String) -> Unit = { _, _, _ -> }): WorkspaceCommit<RigPreviewModel> {
         return install(projectId, state, discardUnsaved, initialConfig, "Imported PSD $displayName",
             prepare = {
                 require(path.isAbsolute && Files.isRegularFile(path) && path.fileName.toString().endsWith(".psd", true)) { "Provide an absolute local PSD path" }
                 Prepared(readPsd(path), emptyMap(), materials = displayName)
-            }, project = project, sourceAuxiliary = sourceAuxiliary, modifiers = modifiers)
+            }, project = project, sourceAuxiliary = sourceAuxiliary, modifiers = modifiers, preset = preset)
     }
 
     /**
@@ -86,7 +87,13 @@ internal class WorkspaceSourceImporter(
                                 summary: String, prepare: suspend () -> Prepared,
                                 project: (WorkspaceDocument, RigPreviewModel, String) -> Unit,
                                 sourceAuxiliary: JsonObject = JsonObject(emptyMap()), layout: Boolean = false,
-                                modifiers: WorkspaceInitialModifiers? = null): WorkspaceCommit<RigPreviewModel> {
+                                modifiers: WorkspaceInitialModifiers? = null, preset: WorkspaceInitialPreset? = null): WorkspaceCommit<RigPreviewModel> {
+        require(preset == null || modifiers == WorkspaceInitialModifiers.CUSTOM) { "Custom choices require the custom modifier mode" }
+        val choices = when (modifiers) {
+            WorkspaceInitialModifiers.CUSTOM -> requireNotNull(preset) { "Custom modifier choices are required" }
+            WorkspaceInitialModifiers.MINIMAL, WorkspaceInitialModifiers.DEFAULT, WorkspaceInitialModifiers.FULL -> WorkspaceInitialPreset.forMode(modifiers)
+            else -> null
+        }
         val before = runtime.state.value
         currentCoroutineContext().ensureActive()
         // Capture before source I/O. Another edit or reload cannot be hidden by taking a newer token.
@@ -100,10 +107,12 @@ internal class WorkspaceSourceImporter(
         val input = prepare()
         val source = input.source; val overrides = input.overrides
         progress(0.4f, "Preparing new source document")
-        val config = initialConfig.copy(layerVisibility = emptyMap(), deletedLayerIds = emptySet(),
+        val config = (choices?.configure(initialConfig) ?: initialConfig).copy(layerVisibility = emptyMap(), deletedLayerIds = emptySet(),
             layerOverrides = overrides, parentOverrides = emptyMap(), drawOrderOverrides = emptyMap(), meshOverrides = emptyMap(),
-            rigEdits = RigEditOverlay.Empty, generationSource = null, meshSource = null, hairSimulationFront = false, hairSimulationBack = false)
-        val overlay = if (modifiers == null) RigEditOverlay.Empty else RigEditOverlay(
+            rigEdits = RigEditOverlay.Empty, generationSource = null, meshSource = null,
+            hairSimulationFront = choices?.frontHair == WorkspaceInitialHair.SIMULATION,
+            hairSimulationBack = choices?.backHair == WorkspaceInitialHair.SIMULATION)
+        val overlay = if (modifiers == null || choices != null) RigEditOverlay.Empty else RigEditOverlay(
             modifierStack = io.github.psd2live.core.modifier.RigModifierStack().toJson())
         val created = WorkspaceDocument(source, emptyMap(), emptySet(), overrides, emptyMap(), overlay,
             WorkspaceSettingsCodec.encode(config),
@@ -125,6 +134,31 @@ internal class WorkspaceSourceImporter(
         if (modifiers == WorkspaceInitialModifiers.RECOMMENDED) {
             val stack = WorkspaceModifierPlan.initial(built, "fitted")
             document = document.copy(rigEdits = document.rigEdits.copy(modifierStack = stack.toJson()))
+            built = build(document)
+        }
+        if (choices != null) {
+            val present = PhysicsGenerator.Presets.present(built.analysis)
+            val selected = buildList {
+                if (present.frontHair && choices.frontHair == WorkspaceInitialHair.SIMULATION) add(io.github.psd2live.core.sim.ModelPresets.Preset.FRONT_HAIR)
+                if (present.backHair && choices.backHair == WorkspaceInitialHair.SIMULATION) add(io.github.psd2live.core.sim.ModelPresets.Preset.BACK_HAIR)
+                if (choices.clothing && built.analysis.layers.any { it.semantic.tag in io.github.psd2live.core.sim.ModelPresets.CLOTHING_TAGS && it.opaquePixels > 0 })
+                    add(io.github.psd2live.core.sim.ModelPresets.Preset.CLOTHING)
+            }
+            val simulationWork = WorkspaceSimulationWork.Direct.cancellable(context)
+            for (selectedPreset in selected) {
+                document = runInterruptible(Dispatchers.Default) {
+                    WorkspaceSimulationEdits.preset(document, built, selectedPreset, emptySet(), simulationWork).document
+                }
+                built = build(document)
+            }
+            document = runInterruptible(Dispatchers.Default) {
+                WorkspaceModifierConversion.convert(document, built, WorkspaceRasterWork.Direct.cancellable(context)).let { converted ->
+                    val stack = io.github.psd2live.core.modifier.RigModifierStack.fromJson(requireNotNull(converted.rigEdits.modifierStack))
+                    converted.copy(rigEdits = converted.rigEdits.copy(modifierStack = stack.copy(instances = stack.instances.map {
+                        it.copy(presetGroup = modifiers!!.name.lowercase())
+                    }).toJson()))
+                }
+            }
             built = build(document)
         }
         if (input.references.isNotEmpty()) {
