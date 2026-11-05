@@ -2,6 +2,8 @@ package io.github.psd2live.ui.components
 
 import io.github.psd2live.ui.views.texture.glideRow
 import io.github.psd2live.ui.theme.Corners
+import io.github.psd2live.ui.views.texture.glideItem
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -625,6 +627,7 @@ fun CompactMenuItem(
 	trailingText: String? = null,
 	trailingBadge: (@Composable () -> Unit)? = null,
 	icon: (@Composable () -> Unit)? = null,
+	animateArrival: Boolean = true,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -649,7 +652,7 @@ fun CompactMenuItem(
 
 	Row(
 		modifier = modifier
-			.glideRow(enabled, danger)
+			.then(if (animateArrival) Modifier.glideRow(enabled, danger) else Modifier.glideItem(enabled, danger = danger))
 			.fillMaxWidth()
 			.height(26.dp)
 			.clip(RoundedCornerShape(4.dp))

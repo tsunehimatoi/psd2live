@@ -432,12 +432,52 @@ internal fun ModifierAdditionDialog(state: PSD2LiveState, vm: PSD2LiveViewModel)
     var advanced by remember(dialog.type, dialog.group) { mutableStateOf(false) }
     var showContributions by remember(dialog.type, dialog.group) { mutableStateOf(false) }
     ModalDialogFrame(title = tr(if (dialog.group == null) "modifier.add" else "modifier.addGroup"), onDismiss = vm::dismissModifierAddition,
-        width = 560.dp, dismissible = !dialog.committing, onConfirm = if (ready) vm::confirmModifierAddition else null,
+        width = if (dialog.group == null) 680.dp else 560.dp, dismissible = !dialog.committing, onConfirm = if (ready) vm::confirmModifierAddition else null,
         footer = { CompactButton(tr("action.cancel"), vm::dismissModifierAddition, enabled = !dialog.committing)
             CompactButton(tr("modifier.add"), vm::confirmModifierAddition, enabled = ready, isPrimary = true) }) {
         Text(tr("modifier.targetCount", dialog.targets.size), color = colors.textMuted, style = LocalToolTypography.current.caption)
-        if (dialog.group == null) CompactDropdown(if (dialog.targets.all { it.kind == "mesh" }) WorkspaceModifierPlan.types else listOf("swing"), dialog.type ?: "body/legacy",
-            { vm.previewModifierAddition(it, null) }, itemLabel = ::modifierName, enabled = !dialog.committing, modifier = Modifier.fillMaxWidth())
+        if (dialog.group == null) {
+            val available = if (dialog.targets.all { it.kind == "mesh" }) WorkspaceModifierPlan.types else listOf("swing")
+            fun category(type: String): String = when {
+                type.endsWith("/legacy") && type != "body/legacy" -> "legacy"
+                type == RigSourceModifiers.SCAFFOLD -> "structure"
+                type in WorkspaceModifierPlan.nativeTypes -> type
+                else -> RigLegacyBindings.spec(type).area
+            }
+            fun categoryName(id: String): String = when (id) {
+                "legacy" -> tr("modifier.algorithm.legacy")
+                "structure" -> tr("modifier.scaffold")
+                in WorkspaceModifierPlan.nativeTypes -> tr("modifier.type.$id")
+                else -> tr("settings.rig.area.$id")
+            }
+            val categories = available.map(::category).distinct().sortedBy { it == "legacy" }
+            var selectedCategory by remember { mutableStateOf(category(dialog.type ?: available.first())) }
+            Row(Modifier.fillMaxWidth().height(238.dp), horizontalArrangement = Arrangement.spacedBy(Spacing.Margin)) {
+                MenuGlide(Modifier.width(124.dp).fillMaxHeight().verticalScroll(rememberScrollState())) {
+                    Column {
+                        categories.forEach { id -> key(id) {
+                            CompactMenuItem(categoryName(id), { selectedCategory = id }, active = selectedCategory == id,
+                                enabled = !dialog.committing, animateArrival = false)
+                        } }
+                    }
+                }
+                Divider(Modifier.fillMaxHeight().width(1.dp), color = colors.divider)
+                val listScroll = key(selectedCategory) { rememberScrollState() }
+                Box(Modifier.weight(1f).fillMaxHeight()) {
+                    MenuGlide(Modifier.fillMaxWidth().verticalScroll(listScroll).padding(end = Spacing.Margin)) {
+                        Column {
+                            available.filter { category(it) == selectedCategory }.forEach { type -> key(type) {
+                                CompactMenuItem(modifierName(type), { if (type != dialog.type) vm.previewModifierAddition(type, null) },
+                                    active = dialog.type == type, enabled = !dialog.committing, animateArrival = false)
+                            } }
+                        }
+                    }
+                    VerticalScrollbar(rememberScrollbarAdapter(listScroll), Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(6.dp))
+                }
+            }
+            Divider(color = colors.divider)
+            dialog.type?.let { Text(modifierName(it), style = LocalToolTypography.current.body, color = colors.textPrimary) }
+        }
         else {
             val selectedGroup = WorkspaceModifierPlan.groupCatalog.firstOrNull { it.id == dialog.group }
                 ?: WorkspaceModifierPlan.groupCatalog.first { it.id == WorkspaceModifierPlan.RECOMMENDED_GROUP }

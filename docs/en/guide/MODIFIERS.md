@@ -9,7 +9,7 @@ The start page initially selects **Recommended modifiers**. The first revision i
 ## Add content
 
 1. Select the meshes to affect. Selecting only a Warp allows swing insertion on that Warp. With no meshes or Warp selected, the flow captures all current meshes.
-2. Choose **Add Preset** for one item, or **Add Preset Group** and select Legacy/Modern algorithms and Minimal/Standard/Full richness. Modern bases include fitted face, eyes, brows, mouth, and hair chains. Richness selects compatible add-ons, filtered for the artwork. Review the complete list before adding.
+2. Choose **Add Preset**, select an area or generator category on the left, then an item on the right. Old bases are collected under Legacy Algorithms. Choose **Add Preset Group** and select Legacy/Modern algorithms and Minimal/Standard/Full richness. Modern bases include fitted face, eyes, brows, mouth, and hair chains. Richness selects compatible add-ons, filtered for the artwork. Review the complete list before adding.
 3. Review captured targets, the full prerequisites, and expected contributions. The plan distinguishes additions, reused providers, and applied content. Expand parameters, meshes, deformers, relations, and hierarchy separately.
 4. Confirm. New entries are added in one history transaction and can then be adjusted independently. Later selection changes do not alter their scope.
 
@@ -27,7 +27,7 @@ Select a compact list row to edit all its values directly below the list. Adjust
 
 Targets and Generated Content provide object location and actual contributions. Apply Through Here stays available for the selected item.
 
-`face/legacy` and `face/fitted` are mutually exclusive bases on the same targets. The fitted base reuses the existing fitting algorithm and provides the head parameters required downstream without inserting a separate legacy face entry. Stored `face.depth-turn` entries still replay; new additions use `face/fitted`.
+`face/legacy` and `face/fitted` are mutually exclusive bases on the same targets. The fitted base reuses the existing fitting algorithm and provides the head parameters required downstream without inserting a separate legacy face entry. Stored `face.depth-turn` entries still replay; new additions use `face/fitted`. A single-item plan reuses an existing legacy face provider on its targets, or defaults to fitted face when no provider exists. Explicit legacy face and legacy group choices retain the legacy algorithm. Existing stacks are not rewritten.
 
 Drag the modifier name to change actual evaluation order. The drag image and displaced sibling rows share the parameter panel implementation. Invalid dependency order is rejected, leaving the original stack intact. A continuous slider or number edit commits one history node when it ends.
 
