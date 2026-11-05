@@ -9,11 +9,13 @@ import kotlinx.serialization.json.*
 /** Pure candidates shared by GUI commands, MCP jobs and atomic document batches. */
 internal object WorkspaceModifierEdits {
     val supported = setOf("modifier_add", "modifier_add_group", "modifier_update", "modifier_enable",
-        "modifier_remove", "modifier_move", "modifier_apply", "modifier_convert")
+        "modifier_remove", "modifier_move", "modifier_apply", "modifier_convert", "modifier_switch")
 
     fun apply(operation: WorkspaceDocumentOperation, document: WorkspaceDocument, model: RigPreviewModel,
               work: WorkspaceRasterWork = WorkspaceRasterWork.Direct): WorkspaceDocument {
         if (operation.operation == "modifier_convert") return WorkspaceModifierConversion.convert(document, model, work)
+        if (operation.operation == "modifier_switch") return WorkspacePresetSwitch.apply(document,
+            operation.request.getValue("group").jsonPrimitive.content, work)
         val stack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack) {
             "Convert legacy presets before editing a modifier stack"
         })
@@ -33,7 +35,9 @@ internal object WorkspaceModifierEdits {
             }
             "modifier_update" -> stack.update(requireNotNull(id)) { instance ->
                 request["type"]?.let { require(it.jsonPrimitive.content == instance.type) { "Modifier type does not match" } }
-                captureParameterProviders(instance.copy(config = request.getValue("config").jsonObject), model)
+                val config = request.getValue("config").jsonObject
+                captureParameterProviders(instance.copy(config = JsonObject(
+                    instance.config.filterKeys { it == "automatic_weights" } + config)), model)
             }
             "modifier_enable" -> stack.update(requireNotNull(id)) { it.copy(enabled = request.getValue("enabled").jsonPrimitive.boolean) }
             "modifier_remove" -> stack.remove(requireNotNull(id))

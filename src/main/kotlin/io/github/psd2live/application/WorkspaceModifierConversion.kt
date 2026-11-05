@@ -118,6 +118,7 @@ internal object WorkspaceModifierConversion {
 
     internal fun bindings(model: RigPreviewModel): RigModifierStack {
         val config = model.config
+        val fittedFace = RigModules.builds(RigModules.FACE_DEPTH_TURN, config, RecipeSubject.of(model.analysis))
         val targets = model.baseRig.puppet.drawables.filter { it.mesh != null && it.id.raw in model.baseRig.ownLayerIdByDrawableId }
             .filterNot { mesh -> model.baseRig.layerIdByDrawableId[mesh.id.raw]?.let(MouthLipLayer::isLipId) == true }
             .map { ModifierTarget("mesh", it.id.raw) }
@@ -177,10 +178,16 @@ internal object WorkspaceModifierConversion {
         if (config.generateDeformers) for (area in listOf("body", "face", "eye", "brow", "mouth", "hair")) {
             val base = config.recipe.base(area)
             val version = config.recipe.bases[area]?.takeIf { it.base == base.id }?.version ?: base.version
-            capture(RigLegacyBindings.spec(base.id), version, base.knobs.associate { it.id to config.recipe.baseValue(area, it.id) })
+            if (area == "face" && fittedFace) {
+                capture(RigLegacyBindings.spec(RigLegacyBindings.FITTED_FACE), 1,
+                    RigModules.FACE_DEPTH_TURN.knobs.associate { it.id to config.recipe.value(RigModules.FACE_DEPTH_TURN.id, it.id) })
+                providers[base.id] = providers.getValue(RigLegacyBindings.FITTED_FACE)
+                providers[RigModules.FACE_DEPTH_TURN.id] = providers.getValue(RigLegacyBindings.FITTED_FACE)
+            } else capture(RigLegacyBindings.spec(base.id), version, base.knobs.associate { it.id to config.recipe.baseValue(area, it.id) })
         }
         val subject = RecipeSubject.of(model.analysis)
-        val modules = RigModules.modules.filter { RigModules.builds(it, config, subject) }.mapNotNull { RigLegacyBindings.find(it.id) }.toMutableList()
+        val modules = RigModules.modules.filter { RigModules.builds(it, config, subject) && !(fittedFace && it == RigModules.FACE_DEPTH_TURN) }
+            .mapNotNull { RigLegacyBindings.find(it.id) }.toMutableList()
         while (modules.isNotEmpty()) {
             val spec = requireNotNull(modules.firstOrNull { providers.keys.containsAll(it.requires) }) {
                 "Conversion cannot resolve legacy module prerequisites: ${modules.map { it.type }}"

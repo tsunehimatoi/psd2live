@@ -132,7 +132,7 @@ internal object RigIrCompiler {
 		val physicsDriven = if (config.exportIncludePhysics) physicsGroups.flatMapTo(HashSet()) { it.outputParameters } else emptySet()
 		val key = ClipsKey(config.rigEdits.motionClips, rig.puppet.parameters, config.rigEdits.skeleton, config.rigEdits.motionPresets,
 			listOf(config.motionBasic, config.motionIdle, config.motionBlink, config.motionNod, config.motionShake, config.motionSkeleton), physicsDriven,
-			config.rigEdits.idRenames.parameters)
+			config.rigEdits.idRenames.parameters, MotionPresetSettings.natural(config))
 		synchronized(clipCache) { clipCache[key] }?.let { return it }
 		return compileClips(rig, config, physicsDriven, parameterIds).also { synchronized(clipCache) { clipCache[key] = it } }
 	}
@@ -141,7 +141,7 @@ internal object RigIrCompiler {
 	private data class ClipsKey(
 		val clips: List<MotionClip>, val parameters: List<org.umamo.runtime.model.Parameter>, val skeleton: SkeletonSpec?,
 		val presets: Map<String, MotionPresetSettings>, val switches: List<Boolean>, val physicsDriven: Set<String>,
-		val renames: Map<String, String>,
+		val renames: Map<String, String>, val natural: Boolean,
 	)
 
 	/**

@@ -69,6 +69,22 @@ class WorkspaceModifierCommandsTest {
     private fun id(id: String) = buildJsonObject { put("id", id) }
     private fun stack(f: Fixture) = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
 
+    @Test fun wholePresetSwitchReplacesInstancesAndKeepsOrdinaryParameters(): Unit = runBlocking<Unit> {
+        val f = fixture()
+        f.edit("modifier_add", add(f, "motion", MotionClips.toJson(motion())))
+        val original = stack(f).instances.map { it.id }.toSet()
+        f.edit("modifier_switch", buildJsonObject { put("group", "legacy") })
+        assertTrue(stack(f).instances.isNotEmpty())
+        assertTrue(stack(f).instances.all { it.presetGroup == "legacy" && it.id !in original })
+        assertTrue(f.now.model.rig.puppet.parameters.any { it.id.raw == "ParamInput" })
+        val legacy = stack(f).instances.map { it.id }.toSet()
+        f.edit("modifier_switch", buildJsonObject { put("group", "modern") })
+        assertTrue(stack(f).instances.all { it.presetGroup == "modern" && it.id !in legacy })
+        f.edit("modifier_switch", buildJsonObject { put("group", "empty") })
+        assertTrue(stack(f).instances.isEmpty())
+        assertTrue(f.now.model.rig.puppet.parameters.any { it.id.raw == "ParamInput" })
+    }
+
     @Test fun addUpdateEnableMoveAndRemoveAreOrdinaryUndoableDocumentTransactions(): Unit = runBlocking<Unit> {
         val f = fixture()
         val initial = f.now

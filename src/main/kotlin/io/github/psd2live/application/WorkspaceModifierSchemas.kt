@@ -31,7 +31,10 @@ internal object WorkspaceModifierSchemas {
         "visual" to s.array(WorkspaceSimulationChecks.motion), "method" to s.handle()) +
         listOf("fit", "max_error_px", "peak", "clipped", "jerk").associateWith { s.number() }
     private val bake = s.obj(bakeFields, setOf("fingerprint", "vertex_counts", "modes", "fit", "max_error_px", "peak", "clipped", "jerk"))
-    private val simFields = mapOf("id" to s.handle(), "name" to s.handle(), "kind" to s.choices("cloth", "hair"),
+    private val simFields = mapOf("automatic_weights" to s.array(s.obj(mapOf(
+        "op" to s.constant("vertex_group_put"), "target" to s.handle(), "name" to s.handle(),
+        "kind" to s.choices("pin", "mass", "wind"), "weights" to s.array(s.number(0, 1))))),
+        "id" to s.handle(), "name" to s.handle(), "kind" to s.choices("cloth", "hair"),
         "targets" to s.array(s.handle(), 1, 4096),
         "material" to s.obj(listOf("mass", "stretch", "bend", "damping", "goal", "slack", "area", "anisotropy").associateWith { s.number() }),
         "groups" to s.dictionary(s.handle()), "glue_roles" to s.dictionary(s.choices(*GlueRole.entries.map { it.jsonName }.toTypedArray())),
@@ -77,6 +80,7 @@ internal object WorkspaceModifierSchemas {
             "modifier_enable" -> s.obj(mapOf("id" to s.handle(), "enabled" to s.boolean()))
             "modifier_move" -> s.obj(mapOf("id" to s.handle(), "index" to s.integer(0)))
             "modifier_convert" -> s.obj(emptyMap())
+            "modifier_switch" -> s.obj(mapOf("group" to s.choices(*WorkspacePresetBaseline.ids.toTypedArray())))
             "modifier_remove", "modifier_apply" -> s.obj(mapOf("id" to s.handle()))
             else -> error("Unknown modifier operation $id")
         }
@@ -115,12 +119,15 @@ internal object WorkspaceModifierSchemas {
             "config" to configuration(type)), setOf("type", "targets")) } + listOf(
             s.obj(mapOf("type" to s.constant("motion"), "targets" to s.array(target, 1, 4096),
                 "preset" to s.choices(*WorkspaceModifierPlan.motionPresetIds.toTypedArray()))),
+            s.obj(mapOf("type" to s.constant("simulation"), "targets" to s.array(target, 1, 4096),
+                "preset" to s.choices("clothing", "front_hair", "back_hair"))),
             s.obj(mapOf("type" to s.constant("physics"), "targets" to s.array(target, 1, 4096),
                 "preset" to s.choices(*io.github.psd2live.core.PhysicsGenerator.presetIds.toTypedArray())))))
     val plan: JsonObject get() = s.obj(s.identity + mapOf("revision" to s.handle(), "group" to s.handle(), "entries" to s.array(addition, 0, 128),
         "plan" to s.array(s.obj(mapOf("id" to s.handle(), "type" to s.handle(), "version" to s.integer(1),
             "targets" to s.array(target, 1, 4096), "disposition" to s.choices("added", "reused", "applied"))))))
-    val catalog = s.obj(mapOf("types" to s.array(s.obj(mapOf("type" to s.handle(), "version" to s.integer(1),
+    val catalog = s.obj(mapOf("baselines" to s.array(s.choices("legacy", "modern", "empty")),
+        "types" to s.array(s.obj(mapOf("type" to s.handle(), "version" to s.integer(1),
         "requires" to s.array(s.handle()), "provides" to s.array(s.handle()), "exclusive_family" to s.nullable(s.handle())))),
         "groups" to s.array(s.obj(mapOf("id" to s.handle(), "algorithm" to s.choices("legacy", "modern"),
             "richness" to s.choices("minimal", "standard", "full"), "types" to s.array(s.handle()))))))

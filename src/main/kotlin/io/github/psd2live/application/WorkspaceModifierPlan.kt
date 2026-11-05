@@ -67,6 +67,8 @@ internal object WorkspaceModifierPlan {
         } }) { "An insertion target no longer exists" }
         val type = request["type"]?.jsonPrimitive?.content
         val group = request["group"]?.jsonPrimitive?.content
+        if (type == "simulation" && request["preset"] != null)
+            return simulationPreset(model, stack, targets, request.getValue("preset").jsonPrimitive.content)
         require((type == null) != (group == null)) { "Choose a modifier or a preset group" }
         val requested = if (type != null) listOf(type) else requireNotNull(groups[group]) { "Unknown source preset group: $group" }
         require(requested.all { it in types }) { "Unknown modifier" }
@@ -172,7 +174,7 @@ internal object WorkspaceModifierPlan {
         }
         val subject = io.github.psd2live.core.recipe.RecipeSubject.of(model.analysis)
         requested.filter { group == null || RigLegacyBindings.find(it)?.module?.applies?.invoke(subject) != false }
-            .forEach { ensure(it, reuse = group != null, equivalent = false) }
+            .forEach { ensure(it, reuse = true, equivalent = false) }
         RigModifierAlgorithms.evaluator().validateOrder(candidate)
         return candidate to buildJsonObject {
             put("entries", JsonArray(entries)); put("plan", JsonArray(planned.values.toList()))
@@ -181,6 +183,32 @@ internal object WorkspaceModifierPlan {
     }
 
     fun physicsPresets(): List<RigPhysicsEdit> = PhysicsGenerator.presetRules(PhysicsGenerator.Presets.All)
+
+    private fun simulationPreset(model: RigPreviewModel, stack: RigModifierStack, targets: List<ModifierTarget>, preset: String): Pair<RigModifierStack, JsonObject> {
+        require(targets.all { it.kind == "mesh" }) { "Simulation presets need mesh targets" }
+        val layers = targets.map { requireNotNull(model.rig.layerIdByDrawableId[it.id]) { "Target has no source layer: ${it.id}" } }.toSet()
+        val existing = stack.instances.filter { it.type == "simulation" }.map { RigSimEdit.fromJson(it.config) }
+        val applied = ModelPresets.apply(RigEditOverlay(simEdits = existing), model.rig.puppet,
+            model.analysis, model.rig.layerIdByDrawableId, ModelPresets.Preset.parse(preset), layers, model.config.alphaThreshold)
+        var next = stack
+        val entries = applied.overlay.simEdits.filter { it.id in applied.simulationIds }.map { simulation ->
+            require(simulation.inputs.isNotEmpty()) { "Add body or head movement before adding a simulation" }
+            val weights = applied.overlay.authoringJournal.filter { command ->
+                command["target"]?.jsonPrimitive?.content?.removePrefix("mesh:") in simulation.targets
+            }
+            val config = JsonObject(simulation.toJson() + mapOf("automatic_weights" to JsonArray(weights)))
+            next = next.add("simulation", 1, simulation.targets.map { ModifierTarget("mesh", it) }, config)
+            val instance = next.instances.last()
+            buildJsonObject {
+                put("id", instance.id); put("type", instance.type); put("version", instance.version); put("config", config)
+                put("targets", JsonArray(instance.targets.map { buildJsonObject { put("kind", it.kind); put("id", it.id) } }))
+            }
+        }
+        return next to buildJsonObject {
+            put("group", "custom"); put("entries", JsonArray(entries))
+            put("plan", JsonArray(entries.map { JsonObject((it - "config") + ("disposition" to JsonPrimitive("added"))) }))
+        }
+    }
 
     private fun isNaturalMotion(preset: String) = preset.startsWith(NATURAL_MOTION_PREFIX) || preset == "Talk"
 

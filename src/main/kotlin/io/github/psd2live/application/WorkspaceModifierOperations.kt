@@ -11,6 +11,7 @@ internal fun registerModifierOperations(registry: WorkspaceOperationRegistry, wo
             "Groups add independent instances with a common origin. Optional index inserts an item explicitly; omission appends. Omitted version selects the highest registered version. Moving changes evaluation order and invalid dependencies fail. " +
             "Apply materializes the complete prefix, preserves the suffix and verifies the final result before committing. " +
             "Convert explicitly migrates a legacy project and commits only if the complete result matches. Other operations require an explicit stack. " +
+            "modifier_switch replaces the entire preset with legacy, modern or empty while preserving ordinary authored content; incompatible authored overrides block replacement. " +
             "Returns a process job; use job_wait/job_get for its committed state.",
         WorkspaceModifierSchemas.request(id), WorkspaceOperationKind.DOCUMENT, jobBacked = true, batchable = true,
         resultSchema = requireNotNull(WorkspaceJobResultSchemas.operationOutput(id)), jobResultSchema = WorkspaceJobResultSchemas.result(id))) { request, context ->
@@ -30,6 +31,7 @@ internal fun registerModifierOperations(registry: WorkspaceOperationRegistry, wo
                 put("id", group.id); put("algorithm", group.algorithm); put("richness", group.richness)
                 put("types", JsonArray(group.types.map(::JsonPrimitive)))
             } } }
+            put("baselines", JsonArray(WorkspacePresetBaseline.ids.map(::JsonPrimitive)))
         }) }
     registry.register(WorkspaceOperationDefinition("modifier_plan", "Plan source bindings, a legacy or modern preset group at minimal/standard/full richness, or native swing/physics/simulation/motion at captured targets. " +
         "Optional physics presets capture the original front hair, back hair or eye jelly rules. Returns the complete additions with fixed IDs and reused or applied providers; publishes nothing. Dry-run its entries before adding the group.",
