@@ -21,7 +21,7 @@ internal object RigModifierPhysics {
 
     private fun requested(instance: RigModifierInstance, rig: RigIR, chains: List<RigModifierChains.Owned>): Map<String, PhysicsGroup> {
         val spec = RigLegacyBindings.spec(instance.type)
-        if (!spec.hasPhysics) return emptyMap()
+        if (!spec.hasPhysics || instance.config["physicsEnabled"]?.jsonPrimitive?.booleanOrNull == false) return emptyMap()
         val fixed = spec.module?.physicsGroups.orEmpty().toSet()
         val available = rig.parameters.mapTo(HashSet()) { it.id }
         val softness = if (instance.type == "hair/chains") (RigLegacyBindings.values(instance)["softness"] ?: 50f) / 100f else .5f

@@ -5,6 +5,7 @@ import io.github.psd2live.core.modifier.*
 import io.github.psd2live.core.sim.*
 import io.github.psd2live.project.WorkspaceDocument
 import io.github.psd2live.project.config
+import kotlinx.serialization.json.*
 
 /** Resolve each simulation against its actual upstream prefix, inside the isolated document candidate. */
 internal object WorkspaceModifierSimulation {
@@ -32,6 +33,11 @@ internal object WorkspaceModifierSimulation {
             work.progress(0f, "Evaluating simulation inputs: ${instance.id}")
             val model = PSD2LivePipeline().buildPreview(document.source, document.config().copy(rigEdits = overlay))
             work.checkpoint()
+            val activeProviders = model.rig.modifierReport?.get("entries")?.jsonArray.orEmpty().map { it.jsonObject }
+                .filter { it.getValue("status").jsonPrimitive.content == "active" }.mapTo(HashSet()) { it.getValue("id").jsonPrimitive.content }
+            activeProviders += prefix.appliedCapabilities.mapNotNull { it.id }
+            val parameters = model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }
+            if (instance.parameterProviders.any { (parameter, provider) -> provider !in activeProviders || parameter !in parameters }) continue
             val fingerprint = RigModifierInput.fingerprint(requireNotNull(model.rig.modifierOutput))
             val availableMotions = requireNotNull(model.rig.modifierOutput).clips.mapTo(HashSet()) { it.id }
             if (source.trainingClips.keys.any { it !in availableMotions }) continue

@@ -34,7 +34,11 @@ internal object WorkspaceModifierConversion {
         val next = meaningful(RigIrCompiler.compile(converted, tileArt = true, simulations = true))
         if (previous != next) throw mismatch(previous, next)
         work.checkpoint()
-        return candidate
+        val captured = verifiedBakes.copy(instances = verifiedBakes.instances.map {
+            WorkspaceModifierEdits.captureParameterProviders(it, converted, stopAtConsumer = true)
+        })
+        RigModifierAlgorithms.evaluator().validateOrder(captured)
+        return candidate.copy(rigEdits = candidate.rigEdits.copy(modifierStack = captured.toJson()))
     }
 
     private fun mismatch(previous: RigIR, next: RigIR): WorkspaceModifierConversionMismatch {
@@ -90,10 +94,21 @@ internal object WorkspaceModifierConversion {
             when {
                 swing != null -> next = next.add("swing", 1, swing.targets.map {
                     ModifierTarget(if (it in warpIds) "deformer" else "mesh", it)
-                }, swing.toJson(), presetGroup = "converted")
+                }, swing.toJson(), presetGroup = "converted", outputAliases = buildMap {
+                    put("swing", swing.id)
+                    swing.motions.forEach { motion -> motion.parameterIds.forEachIndexed { index, parameter ->
+                        put("swing:${motion.kind.name.lowercase()}:$index", parameter)
+                    } }
+                })
                 simulation != null -> {
                     next = next.add("simulation", 1, simulation.targets.map { ModifierTarget("mesh", it) },
-                        simulation.copy(enabled = true).toJson(), presetGroup = "converted")
+                        simulation.copy(enabled = true).toJson(), presetGroup = "converted", outputAliases = buildMap {
+                            put("simulation", simulation.id)
+                            simulation.bake?.parameters.orEmpty().forEach { put("simulation:$it", simulation.outputId(it)) }
+                            io.github.psd2live.core.sim.SimGenerator.writtenPendulums(simulation).forEachIndexed { index, group ->
+                                put("physics:$index", group.id)
+                            }
+                        })
                     if (!simulation.enabled) next = next.update(next.instances.last().id) { it.copy(enabled = false) }
                 }
             }
@@ -127,6 +142,8 @@ internal object WorkspaceModifierConversion {
         }
         add(RigSourceModifiers.SCAFFOLD, 1, buildJsonObject {
             if (config.featureDisplacementEnabled) put("featureDisplacement", true)
+            if (config.hairSimulationFront) put("frontHairSway", false)
+            if (config.hairSimulationBack) put("backHairSway", false)
             val corrections = io.github.psd2live.project.WorkspaceSettingsCodec.encodeRecipe(config.recipe)
                 .filterKeys { it in setOf("moves", "eyeParts") }
             if (corrections.isNotEmpty()) put("corrections", JsonObject(corrections))
@@ -140,6 +157,7 @@ internal object WorkspaceModifierConversion {
                 if (spec.related.isNotEmpty()) putJsonObject("dependencies") {
                     spec.related.sorted().forEach { put(it, providers.getValue(it)) }
                 }
+                if (spec.hasPhysics && !config.generatePhysics) put("physicsEnabled", false)
                 if (spec.strength) put("strength", if (spec.area == "body") config.bodyStrength else config.headTurnStrength)
                 if (spec.mouthOutline) config.mouthColor?.let { put("color", it and 0xffffff) }
                 if (spec.fields.isNotEmpty()) putJsonObject("tuning") {
@@ -196,6 +214,9 @@ internal object WorkspaceModifierConversion {
             val captured = MotionClip(clip.id, clip.name, loop = clip.loop, duration = clip.duration, fps = clip.fps,
                 fadeIn = clip.fadeIn ?: 1f, fadeOut = clip.fadeOut ?: 1f, curves = activeTracks,
                 events = clip.events.map { MotionEvent(it.time, it.value) }, fileStem = clip.file,
+                capturedRanges = model.rig.puppet.parameters.filter { it.id.raw in parameters }.associate {
+                    it.id.raw to MotionParameterRange(it.min, it.max, it.repeat)
+                },
                 exportGroup = clip.group, runtimeDefaultFades = clip.fadeIn == null && clip.fadeOut == null,
                 parameterRoles = if (clip.id == "Blink") output.parameterRoles.filter { it.role == "EyeBlink" }.associate { it.role to it.parameters } else emptyMap())
             add("motion", 1, MotionClips.toJson(captured), mapOf("motion" to clip.id))

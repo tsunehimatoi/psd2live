@@ -25,12 +25,13 @@ internal class RigModifierSource(
     private val projections = java.util.IdentityHashMap<PuppetModel, MutableMap<String, PuppetModel>>()
     private fun generated(strength: Float = 1f, tuning: RigTuning = RigTuning(), headStrength: Float = 1f,
                           recipe: RigRecipe = RigRecipe.Legacy, outline: RigModifierInstance? = null,
-                          featureDisplacement: Boolean = false): BuiltRig {
+                          featureDisplacement: Boolean = false, frontHairSway: Boolean = true, backHairSway: Boolean = true): BuiltRig {
         val clean = RigModifierPipeline.ordinaryConfig(config).copy(meshOnly = false, generateDeformers = true,
             deferRig = false, rigPendingLayerIds = emptySet(), parentOverrides = emptyMap(),
             rigEdits = RigEditOverlay(splitDrawableIds = primaryByLayer))
         val native = clean.copy(bodyStrength = strength, headTurnStrength = headStrength, rigTuning = tuning, recipe = recipe,
             featureDisplacementEnabled = featureDisplacement, mouthOutlineEnabled = outline != null,
+            hairSimulationFront = !frontHairSway, hairSimulationBack = !backHairSway,
             mouthThickness = outline?.let { RigLegacyBindings.values(it)["thickness"] } ?: 1.5f,
             mouthColor = outline?.let(RigLegacyBindings::outlineColor))
         if (outline == null) return RigBuilder.build(analysis, atlas, native)
@@ -202,7 +203,8 @@ internal class RigModifierSource(
             val corrections = io.github.psd2live.project.WorkspaceSettingsCodec.decodeRecipe(scaffold["corrections"])
             val native = generated(bodyStrength, tuning, headStrength,
                 recipe.copy(moves = corrections.moves, eyeParts = corrections.eyeParts), outline,
-                scaffold["featureDisplacement"]?.jsonPrimitive?.boolean ?: false)
+                scaffold["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
+                scaffold["frontHairSway"]?.jsonPrimitive?.boolean ?: true, scaffold["backHairSway"]?.jsonPrimitive?.boolean ?: true)
             val chains = native.generatedChains.filter { chain -> instances.any { chain.kind in RigModifierChains.kinds(it.type) } }
                 .map { RigModifierChains.Binding(it) }
             val dynamic = chains.flatMap { it.native.parameters }
@@ -476,12 +478,12 @@ internal object RigSourceModifiers {
     fun definitions(source: RigModifierSource?): List<RigModifierDefinition> = listOf(
         RigModifierDefinition(SCAFFOLD, 1, exclusiveFamily = SCAFFOLD, appliedConfig = { it.config },
             validate = { _, instance ->
-                require(instance.config.keys.all { it in setOf("featureDisplacement", "corrections") }) { "Unknown binding scaffold configuration" }
+                require(instance.config.keys.all { it in setOf("featureDisplacement", "corrections", "frontHairSway", "backHairSway") }) { "Unknown binding scaffold configuration" }
                 instance.config["corrections"]?.jsonObject?.let { corrections ->
                     require(corrections.keys.all { it in setOf("moves", "eyeParts") }) { "Invalid binding scaffold corrections" }
                     io.github.psd2live.project.WorkspaceSettingsCodec.mergeRecipe(RigRecipe.Modern, corrections)
                 }
-                instance.config["featureDisplacement"]?.jsonPrimitive?.boolean
+                for (key in listOf("featureDisplacement", "frontHairSway", "backHairSway")) instance.config[key]?.jsonPrimitive?.boolean
                 require(instance.targets.all { it.kind == "mesh" }) { "A binding scaffold targets source meshes" }
                 val input = requireNotNull(source) { "Binding modifiers require the captured source artwork" }
                 require(instance.targets.all { input.hasMesh(it.id) }) { "A binding scaffold target has no source layer" }

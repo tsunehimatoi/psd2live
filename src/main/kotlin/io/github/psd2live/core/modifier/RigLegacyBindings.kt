@@ -38,7 +38,7 @@ internal object RigLegacyBindings {
     )
     val specs = legacy + listOf(RigModules.EYE_FITTED, RigModules.BROW_FITTED, RigModules.MOUTH_FITTED, RigModules.HAIR_CHAINS).map { base ->
         val original = legacy.single { it.area == base.area }
-        Spec(base.id, if (base == RigModules.HAIR_CHAINS) emptySet() else original.parameters, original.fields.filter { RigTuning.replacedBy[it.id] != base.id },
+        Spec(base.id, original.parameters, original.fields.filter { RigTuning.replacedBy[it.id] != base.id },
             version = base.version, knobs = base.knobs, prerequisites = if (base == RigModules.HAIR_CHAINS) setOf("body/legacy", "face/legacy") else emptySet())
     } + listOf(RigModules.EYE_SMILE, RigModules.EYE_SQUASH, RigModules.EYE_WIDE, RigModules.EYE_LID_FADE, RigModules.EYE_HIGHLIGHT, RigModules.EYE_AFTERSHOCK, RigModules.BROW_SHAPE, RigModules.BROW_SPRING, RigModules.EYE_EMOTION, RigModules.MOUTH_VOWEL, RigModules.EYE_GAZE_LID, RigModules.BROW_BLINK, RigModules.BROW_LID, RigModules.MOUTH_CHEEK_LID, RigModules.MOUTH_CAPTURE, RigModules.MOUTH_TONGUE, RigModules.MOUTH_JAW,
         RigModules.MOUTH_DEPTH, RigModules.MOUTH_SPRING, RigModules.MOUTH_OUTLINE, RigModules.EXPRESSION_CHEEK, RigModules.EXPRESSION_GLOOM, RigModules.EXPRESSION_TOGGLES, RigModules.FACE_SKIN_CLIP, RigModules.FACE_NECK, RigModules.FACE_DEPTH_TURN, RigModules.BODY_BUST, RigModules.BODY_ARMS, RigModules.OUTFIT_SKIRT, RigModules.OUTFIT_RIBBONS, RigModules.OUTFIT_CREATURE, RigModules.EYE_SEE_THROUGH, RigModules.BROW_SEE_THROUGH).map { module ->
@@ -59,7 +59,7 @@ internal object RigLegacyBindings {
     fun spec(type: String) = requireNotNull(find(type)) { "Unknown source binding: $type" }
 
     fun strength(instance: RigModifierInstance): Float = (instance.config["strength"]?.jsonPrimitive?.float ?: 1f).also {
-        require(it.isFinite() && it in 0f..2f) { "Binding strength must be within 0..2" }
+        require(it.isFinite() && it in 0f..4f) { "Binding strength must be within 0..4" }
     }
 
     fun tuning(instance: RigModifierInstance, base: RigTuning): RigTuning {
@@ -101,9 +101,10 @@ internal object RigLegacyBindings {
             else -> requireNotNull(source).parameters(instance)
         } },
         validate = { _, instance ->
-            val allowed = setOf("scaffold", "tuning") + (if (spec.hasPhysics) setOf("physics") else emptySet()) + (if (spec.related.isNotEmpty()) setOf("dependencies") else emptySet()) + (if (spec.module?.base != null) setOf("base") else emptySet()) + (if (spec.strength) setOf("strength") else emptySet()) +
+            val allowed = setOf("scaffold", "tuning") + (if (spec.hasPhysics) setOf("physics", "physicsEnabled") else emptySet()) + (if (spec.related.isNotEmpty()) setOf("dependencies") else emptySet()) + (if (spec.module?.base != null) setOf("base") else emptySet()) + (if (spec.strength) setOf("strength") else emptySet()) +
                 (if (spec.knobs.isNotEmpty()) setOf("values") else emptySet()) + (if (spec.mouthOutline) setOf("color") else emptySet())
             require(instance.config.keys.all { it in allowed } && "scaffold" in instance.config) { "Specify ${spec.type}'s scaffold and editable values" }
+            instance.config["physicsEnabled"]?.jsonPrimitive?.boolean
             providers(instance); strength(instance); tuning(instance, RigTuning()); values(instance); outlineColor(instance)
             require(instance.targets.all { it.kind == "mesh" && source?.hasMesh(it.id) == true }) { "Binding targets must have captured source layers" }
             requireNotNull(source).provider(instance)

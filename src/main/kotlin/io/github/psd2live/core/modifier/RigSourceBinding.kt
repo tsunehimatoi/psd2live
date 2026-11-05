@@ -220,6 +220,25 @@ internal object RigSourceBinding {
             val target = instance.targets.first()
             val native = source.transition(instance, target, checkpoint).second
             val ids = source.deformerIds(instance, target, checkpoint)
+            val previous = source.transition(instance, target, checkpoint).first
+            val remap = RigIdRemap(deformers = ids, parts = native.parts.associate {
+                it.id to PartId(RigSourceModifiers.partId(provider, target.id, it.id.raw))
+            })
+            val used = HashSet<DeformerId>()
+            val parents = native.deformers.associate { it.id to it.parent }
+            for (mesh in native.drawables) {
+                var parent = mesh.parentDeformerId
+                while (parent != null && used.add(parent)) parent = parents[parent]
+            }
+            // Native templates also contain editable empty carriers. Keep their transitions without inventing children.
+            for (deformer in native.deformers.filter { it.id !in used }) {
+                val desired = remap.deformer(deformer)
+                val existing = current.deformers.singleOrNull { it.id == desired.id }
+                val before = previous.deformers.singleOrNull { it.id == deformer.id }?.let(remap::deformer)
+                if (existing == null) current = current.copy(deformers = current.deformers + desired)
+                else if (before != null && PuppetIr.deformerToIr(existing) == PuppetIr.deformerToIr(before))
+                    current = current.copy(deformers = current.deformers.map { if (it.id == desired.id) desired else it })
+            }
             val actual = current.deformers.associateBy { it.id }
             val order = native.deformers.mapNotNull { actual[ids[it.id]] }
             current = current.copy(deformers = sourceOrder(current.deformers, order) { it.id })
@@ -371,7 +390,7 @@ internal object RigSourceBinding {
         collect(desired)
         fun extra(nodes: List<ParameterNode>): List<ParameterNode> = nodes.mapNotNull { node -> when (node) {
             is ParameterNode.Param -> node.takeIf { it.id in added }
-            is ParameterNode.Group -> if (node.id in present) null else node.copy(children = extra(node.children)).takeIf { it.children.isNotEmpty() }
+            is ParameterNode.Group -> if (node.id in present) null else node.copy(children = extra(node.children)).takeIf { preserveSourceOrder || it.children.isNotEmpty() }
         } }
         fun ordered(nodes: List<ParameterNode>, template: List<ParameterNode>) =
             if (!preserveSourceOrder) nodes else sourceOrder(nodes, template) { node -> when (node) {

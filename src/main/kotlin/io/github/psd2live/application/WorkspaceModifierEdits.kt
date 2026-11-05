@@ -48,7 +48,7 @@ internal object WorkspaceModifierEdits {
         var prepared = WorkspaceModifierSimulation.prepare(candidate, next, work)
         if (operation.operation == "modifier_add_group") {
             val added = prepared.instances.filter { entry -> stack.instances.none { it.id == entry.id } }
-            val consumers = added.filter { it.type in setOf("physics", "motion") }
+            val consumers = added.filter { it.type in setOf("physics", "motion", "simulation") }
             if (consumers.isNotEmpty()) {
                 val addsProvider = added.any { it.type !in setOf("physics", "motion") }
                 val evaluated = if (addsProvider) {
@@ -104,11 +104,14 @@ internal object WorkspaceModifierEdits {
         return request["index"]?.let { captured.move(instance.id, it.jsonPrimitive.int) } ?: captured
     }
 
-    private fun captureParameterProviders(instance: RigModifierInstance, model: RigPreviewModel,
+    internal fun captureParameterProviders(instance: RigModifierInstance, model: RigPreviewModel,
                                           stopAtConsumer: Boolean = false): RigModifierInstance {
         val parameters = when (instance.type) {
             "physics" -> RigPhysicsEdit.fromJson(instance.config).parameters.toSet()
             "motion" -> MotionClips.fromJson(instance.config).curves.mapTo(HashSet()) { it.parameterId }
+            "simulation" -> io.github.psd2live.core.sim.RigSimEdit.fromJson(instance.config).let {
+                it.inputs.mapTo(HashSet()) { input -> input.parameter } + it.staticInputs.orEmpty()
+            }
             else -> return instance
         }
         val providers = instance.parameterProviders.filterKeys { it in parameters }.toMutableMap()

@@ -982,6 +982,35 @@ class WorkspaceLegacyBindingTest {
         assertEquals(after.document, redone.document)
     }
 
+    @Test fun conversionPreservesAnAuthoredSwingAndItsStableOutputIds(): Unit = runBlocking<Unit> {
+        val art = document()
+        val config = art.config().copy(meshOnly = false, generateDeformers = true, generatePhysics = true, rigEdits = RigEditOverlay.Empty)
+        val f = Fixture(art.copy(settings = WorkspaceSettingsCodec.encode(config), rigEdits = config.rigEdits))
+        f.install()
+        val mesh = f.now.model.rig.puppet.deformers.filterIsInstance<Deformer.Warp>().first().id.raw
+        val swing = RigSwingEdit.single("authored-swing", "Authored swing", SwingKind.LATERAL, listOf(mesh), listOf("AuthoredSway"))
+        f.edit("swing_put", swing.toJson())
+        fun output(model: RigPreviewModel) = RigIrCompiler.compile(model).let { rig ->
+            val parameters = rig.parameters.mapTo(HashSet()) { it.id }
+            rig.copy(parameters = rig.parameters.sortedBy { it.id }, restPose = rig.restPose.filterKeys { it in parameters },
+                parameterRoles = rig.parameterRoles.filter { role -> role.parameters.all { it in parameters } })
+        }
+        val expected = output(f.now.model)
+        val before = f.now
+        f.edit("modifier_convert", JsonObject(emptyMap()))
+        val converted = f.now
+        val entry = RigModifierStack.fromJson(converted.document.rigEdits.modifierStack!!).instances.single { it.type == "swing" }
+        assertEquals("authored-swing", entry.outputId("swing"))
+        assertEquals("AuthoredSway", entry.outputId("swing:lateral:0"))
+        assertEquals(expected, output(converted.model))
+        assertEquals(expected, output(f.builder.build(converted.document)))
+        f.edit("modifier_apply", buildJsonObject { put("id", entry.id) })
+        assertEquals(expected, output(f.now.model))
+        f.runtime.checkout(f.now.projectId, f.now.state, before.historyHead)
+        assertNull(f.now.document.rigEdits.modifierStack)
+        assertEquals(expected, output(f.now.model))
+    }
+
     @Test fun conversionKeepsADisabledLegacySimulationAsADormantInstance(): Unit = runBlocking<Unit> {
         val art = document()
         val config = art.config().copy(meshOnly = true, generateDeformers = false, rigEdits = RigEditOverlay.Empty)
