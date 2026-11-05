@@ -219,7 +219,7 @@ data class RigTuning(
 	}
 
 	/** The unit a value is shown in. */
-	enum class Unit { DEGREES, PERCENT, TORSO_LENGTHS }
+	enum class Unit { DEGREES, PERCENT, TORSO_LENGTHS, PIXELS }
 
 	/**
 	 * One value: its [id] in the project file and the MCP tool, its [group], [unit] and [range], its [step]

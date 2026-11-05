@@ -543,6 +543,8 @@ data class RigPreviewModel(
 	 * pixels on their own, under or over the model.
 	 */
 	val referenceLayerIds: Set<String> = emptySet(),
+    internal val modifierAuthorAtlas: PackedAtlas? = null,
+    internal val modifierAuthorAnalysis: PipelineAnalysis? = null,
 ) {
 	/**
 	 * The generated rig the document's edits replay onto. A model built from a stored authored rig generates it only

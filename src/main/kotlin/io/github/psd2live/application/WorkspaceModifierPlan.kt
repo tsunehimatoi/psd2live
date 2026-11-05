@@ -16,11 +16,28 @@ internal object WorkspaceModifierPlan {
 
     fun prepare(capture: WorkspaceCapture<RigPreviewModel>, request: JsonObject): JsonObject {
         val stack = RigModifierStack.fromJson(requireNotNull(capture.document.rigEdits.modifierStack) { "Convert legacy presets before adding modifiers" })
+        val (_, plan) = plan(capture.model, stack, request)
+        return JsonObject(plan + buildJsonObject {
+            put("state", capture.state); put("project_id", capture.projectId)
+            put("history_node_id", capture.historyHead); put("revision", capture.revision)
+        })
+    }
+
+    fun initial(model: RigPreviewModel, group: String): RigModifierStack {
+        val targets = model.rig.puppet.drawables.filter { it.mesh != null && it.id.raw in model.rig.ownLayerIdByDrawableId }
+        if (targets.isEmpty()) return RigModifierStack()
+        return plan(model, RigModifierStack(), buildJsonObject {
+            put("group", group)
+            putJsonArray("targets") { targets.forEach { addJsonObject { put("kind", "mesh"); put("id", it.id.raw) } } }
+        }).first
+    }
+
+    private fun plan(model: RigPreviewModel, stack: RigModifierStack, request: JsonObject): Pair<RigModifierStack, JsonObject> {
         val targets = request.getValue("targets").jsonArray.map { raw -> raw.jsonObject.let {
             ModifierTarget(it.getValue("kind").jsonPrimitive.content, it.getValue("id").jsonPrimitive.content)
         } }
         require(targets.isNotEmpty() && targets.distinct().size == targets.size) { "Insertion needs distinct captured targets" }
-        val puppet = capture.model.rig.puppet
+        val puppet = model.rig.puppet
         require(targets.all { target -> when (target.kind) {
             "mesh" -> puppet.drawables.any { it.id.raw == target.id && it.mesh != null }
             "deformer" -> puppet.deformers.any { it.id.raw == target.id && it is org.umamo.runtime.model.Deformer.Warp }
@@ -34,7 +51,7 @@ internal object WorkspaceModifierPlan {
         require(request["preset"] == null || type in setOf("motion", "physics") && request["config"] == null) { "A preset and an explicit configuration are alternative inputs" }
         require(type in nativeTypes || request["config"] == null) { "Source binding configuration is resolved from its captured dependencies" }
         require(type == "swing" || targets.all { it.kind == "mesh" }) { "This modifier needs captured mesh targets" }
-        val active = capture.model.rig.modifierReport!!.getValue("entries").jsonArray.filter {
+        val active = model.rig.modifierReport!!.getValue("entries").jsonArray.filter {
             it.jsonObject.getValue("status").jsonPrimitive.content == "active"
         }.mapTo(HashSet()) { it.jsonObject.getValue("id").jsonPrimitive.content }
         val available = stack.appliedCapabilities.toMutableList()
@@ -57,7 +74,7 @@ internal object WorkspaceModifierPlan {
             val configuration = if (wanted == "physics" && preset != null) {
                 val fullRule = requireNotNull(physicsPresets().firstOrNull { it.id == preset }) { "Unknown physics preset: $preset" }
                 val parameters = puppet.parameters.mapTo(HashSet()) { it.id.raw }
-                val claimed = capture.model.rig.modifierOutput?.physics?.groups.orEmpty().flatMap { it.outputs }.mapTo(HashSet()) { it.parameter }
+                val claimed = model.rig.modifierOutput?.physics?.groups.orEmpty().flatMap { it.outputs }.mapTo(HashSet()) { it.parameter }
                 require(fullRule.outputs.none { it.parameter in claimed }) { "Physics preset $preset has an already driven output" }
                 val missingOutput = fullRule.outputs.any { it.parameter !in parameters }
                 val missingInput = fullRule.inputs.none { it.parameter in parameters }
@@ -80,7 +97,7 @@ internal object WorkspaceModifierPlan {
             } else if (wanted == "motion" && preset != null && isNaturalMotion(preset)) {
                 require(preset in motionPresetIds) { "Unknown generated motion preset: $preset" }
                 val parameters = puppet.parameters.toMutableList()
-                val missing = motionTracks(capture.model, preset, includeMissing = true).mapTo(HashSet()) { it.parameterId }
+                val missing = motionTracks(model, preset, includeMissing = true).mapTo(HashSet()) { it.parameterId }
                 missing.removeAll(parameters.map { it.id.raw }.toSet())
                 for (type in listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/legacy")) {
                     val provided = RigLegacyBindings.spec(type).parameters
@@ -93,7 +110,7 @@ internal object WorkspaceModifierPlan {
                 val vowel = RigLegacyBindings.spec("mouth.vowel")
                 val hasLegacyMouth = available.any { it.type == "mouth/legacy" && it.targets.any(targets::contains) }
                 if (!hasLegacyMouth && vowel.parameters.any { it.raw in missing } &&
-                    requireNotNull(vowel.module).applies(io.github.psd2live.core.recipe.RecipeSubject.of(capture.model.analysis))) {
+                    requireNotNull(vowel.module).applies(io.github.psd2live.core.recipe.RecipeSubject.of(model.analysis))) {
                     ensure(vowel.type)
                     for (definition in vowel.module.defines) {
                         if (parameters.any { it.id.raw == definition.id }) continue
@@ -101,8 +118,8 @@ internal object WorkspaceModifierPlan {
                             definition.id, definition.min, definition.max, definition.default)
                     }
                 }
-                motionConfiguration(capture.model, preset, parameters)
-            } else if (wanted in nativeTypes) request["config"]?.jsonObject ?: nativeConfiguration(capture, wanted, targets, preset)
+                motionConfiguration(model, preset, parameters)
+            } else if (wanted in nativeTypes) request["config"]?.jsonObject ?: nativeConfiguration(model, wanted, targets, preset)
             else if (spec == null) JsonObject(emptyMap()) else {
                 val structure = scaffold ?: requireNotNull(ensure(RigSourceModifiers.SCAFFOLD).id)
                 val base = spec.module?.base?.let { ensure(it, scaffold = structure) }
@@ -127,8 +144,7 @@ internal object WorkspaceModifierPlan {
         }
         requested.forEach { ensure(it, reuse = group != null) }
         RigModifierAlgorithms.evaluator().validateOrder(candidate)
-        return buildJsonObject {
-            put("state", capture.state); put("project_id", capture.projectId); put("history_node_id", capture.historyHead); put("revision", capture.revision)
+        return candidate to buildJsonObject {
             put("entries", JsonArray(entries)); put("plan", JsonArray(planned.values.toList()))
             put("group", group ?: "custom")
         }
@@ -166,8 +182,7 @@ internal object WorkspaceModifierPlan {
         return MotionClips.toJson(MotionClips.reconcileParameters(listOf(clip), parameters).single())
     }
 
-    private fun nativeConfiguration(capture: WorkspaceCapture<RigPreviewModel>, type: String, targets: List<ModifierTarget>, preset: String?): JsonObject {
-        val model = capture.model
+    private fun nativeConfiguration(model: RigPreviewModel, type: String, targets: List<ModifierTarget>, preset: String?): JsonObject {
         return when (type) {
             "swing" -> RigSwingEdit.single("template", "Swing", SwingKind.LATERAL, targets.map { it.id }, listOf("output")).toJson()
             "simulation" -> RigSimEdit("template", "Simulation", SimKind.HAIR, targets.map { it.id },

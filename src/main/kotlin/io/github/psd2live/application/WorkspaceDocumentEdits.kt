@@ -229,8 +229,33 @@ internal object WorkspaceDocumentEdits {
             request["default"]?.jsonPrimitive?.float ?: current?.default ?: 0f, kind,
             request["repeat"]?.jsonPrimitive?.boolean ?: current?.repeat ?: false,
             created = mode == "create" || document.rigEdits.parameterEdits.any { it.id == id && it.created })
-        if (mode == "update" && current != null && current.name == edit.name && current.min == edit.min &&
-            current.max == edit.max && current.default == edit.default && current.kind == edit.kind && current.repeat == edit.repeat) return document
+        if (mode == "update" && current != null && current.min == edit.min &&
+            current.max == edit.max && current.default == edit.default && current.kind == edit.kind && current.repeat == edit.repeat) {
+            if (current.name == edit.name) return document
+            if (document.rigEdits.modifierStack != null) return journal(document, model, buildJsonArray {
+                addJsonObject {
+                    put("op", "structure")
+                    putJsonArray("edits") { addJsonObject {
+                        put("action", "rename"); put("kind", "parameter"); put("id", id); put("name", edit.name)
+                    } }
+                }
+            })
+        }
+        if (mode == "update" && current != null && document.rigEdits.modifierStack != null &&
+            model.authored.rig.puppet.parameters.none { it.id.raw == id }) {
+            require(edit.kind == current.kind && edit.repeat == current.repeat) {
+                "A generated parameter keeps its kind and repeat mode"
+            }
+            return journal(document, model, buildJsonArray {
+                addJsonObject {
+                    put("op", "structure")
+                    putJsonArray("edits") { addJsonObject {
+                        put("action", "update"); put("kind", "parameter"); put("id", id); put("name", edit.name)
+                        put("min", edit.min); put("max", edit.max); put("default", edit.default)
+                    } }
+                }
+            })
+        }
         return appendParameterCommand(document, model, mode, id, edit).withMotionClips { MotionClips.withParameterRange(it, id, edit.min, edit.max, edit.repeat) }
             .let { it.copy(rigEdits = ModelSidecars.withParameterRange(it.rigEdits, id, edit.min, edit.max)) }
     }
@@ -275,7 +300,8 @@ internal object WorkspaceDocumentEdits {
             val ordinary = ArrayList<JsonObject>()
             for (command in recorded) {
                 val owner = command["generator"]?.jsonPrimitive?.contentOrNull
-                if (GeneratedOverrides.isOverride(command) && owner?.startsWith("modifier:") == true) {
+                if (owner?.startsWith("modifier:") == true &&
+                    (GeneratedOverrides.isOverride(command) || command["op"]?.jsonPrimitive?.content in setOf("structure", "parameter_keys", "delete"))) {
                     val instance = owner.removePrefix("modifier:")
                     stack = stack.withOverrides(instance, stack.overrides[instance].orEmpty() + command)
                 } else ordinary += command

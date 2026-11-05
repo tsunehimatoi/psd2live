@@ -79,6 +79,8 @@ data class MotionClip(
 	val events: List<MotionEvent> = emptyList(),
     /** Stable asset name retained when a generated clip becomes ordinary authored content. */
     val fileStem: String? = null,
+    val exportGroup: String? = null,
+    val runtimeDefaultFades: Boolean = false,
 ) {
 	init {
         require(fileStem == null || fileStem.matches(Regex("[A-Za-z0-9_-]+"))) { "Invalid motion file stem" }
@@ -294,6 +296,8 @@ object MotionClips {
 	fun toJson(clip: MotionClip): JsonObject = buildJsonObject {
 		put("id", clip.id)
         clip.fileStem?.let { put("file", it) }
+        clip.exportGroup?.let { put("export_group", it) }
+        if (clip.runtimeDefaultFades) put("runtime_default_fades", true)
 		put("name", clip.name)
 		clip.builtin?.let { put("builtin", it) }
 		put("loop", clip.loop)
@@ -337,6 +341,8 @@ object MotionClips {
 		name = o.getValue("name").jsonPrimitive.content,
 		builtin = o["builtin"]?.jsonPrimitive?.contentOrNull,
         fileStem = o["file"]?.jsonPrimitive?.contentOrNull,
+        exportGroup = o["export_group"]?.jsonPrimitive?.contentOrNull,
+        runtimeDefaultFades = o["runtime_default_fades"]?.jsonPrimitive?.booleanOrNull ?: false,
 		loop = o["loop"]?.jsonPrimitive?.booleanOrNull ?: false,
 		duration = o["duration"]?.jsonPrimitive?.floatOrNull ?: 2f,
 		fps = o["fps"]?.jsonPrimitive?.floatOrNull ?: 30f,

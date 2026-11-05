@@ -286,18 +286,43 @@ internal object GeneratedOverrides {
 					listOf(command)
 				}
 				"delete", "parameter_keys" -> {
-					val target = command["target"]?.jsonPrimitive?.contentOrNull ?: return@flatMap listOf(command)
+                    val parameter = command["parameter"]?.jsonPrimitive?.contentOrNull ?: return@flatMap listOf(command)
+                    val target = command["target"]?.jsonPrimitive?.contentOrNull
+                    if (target == null) {
+                        val provider = DocumentGenerators.owner(graph, "object:parameter:$parameter")
+                            ?.takeIf { it.id.startsWith("modifier:") } ?: return@flatMap listOf(command)
+                        if (command["action"]?.jsonPrimitive?.content != "add") {
+                            val later = graph.order.drop(graph.order.indexOf(provider) + 1)
+                                .firstOrNull { node -> node.id.startsWith("modifier:") &&
+                                    node.writes.any { DocumentGenerators.writesParameterKey(it, parameter) } }
+                            require(later == null) { "$parameter has tracks in ${later?.id}; edit those tracks individually" }
+                        }
+                        return@flatMap listOf(JsonObject(command + ("generator" to JsonPrimitive(provider.id))))
+                    }
 					val kind = targetKind(target) ?: return@flatMap listOf(command)
-					val parameter = command["parameter"]?.jsonPrimitive?.contentOrNull ?: return@flatMap listOf(command)
 					// A delete without a channel removes the key from geometry and every channel track; one naming a track only that.
 					val named = command["channel"]?.jsonPrimitive?.contentOrNull ?: command["track"]?.jsonPrimitive?.contentOrNull
 					val id = target.substringAfter(':')
 					val geometry = named == null || named.equals("geometry", ignoreCase = true)
 					val channels = if (named == null) OVERRIDABLE else listOfNotNull(overridable(named))
-					val generator = (if (geometry) axisOwner(kind, id, parameter) else null)
-						?: channels.firstNotNullOfOrNull { channelAxisOwner(kind, id, it, parameter) }
-					require(generator == null) { "$generator makes the keys of $parameter on ${target.substringAfter(':')}; change it there instead" }
-					listOf(command)
+                    val generators = (listOfNotNull(if (geometry) axisOwner(kind, id, parameter) else null) +
+                        channels.mapNotNull { channelAxisOwner(kind, id, it, parameter) }).distinct()
+                    require(generators.size <= 1) { "Choose a single track on $id; these tracks belong to $generators" }
+                    val generator = generators.singleOrNull()
+                        ?: DocumentGenerators.owner(graph, "object:$kind:$id")?.id?.takeIf { it.startsWith("modifier:") }
+                    require(generator == null || generator.startsWith("modifier:")) {
+                        "$generator makes the keys of $parameter on $id; change it there instead"
+                    }
+                    if (generator == null) return@flatMap listOf(command)
+                    val stage = graph.order.indexOfFirst { it.id == generator }
+                    val providers = listOfNotNull(DocumentGenerators.owner(graph, "object:parameter:$parameter"),
+                        DocumentGenerators.owner(graph, "object:$kind:$id"))
+                        .filter { it.id != generator && it.id.startsWith("modifier:") }.distinct()
+                    require(providers.all { graph.order.indexOf(it) < stage }) {
+                        "$generator cannot edit $target before its object and parameter providers"
+                    }
+                    listOf(JsonObject(command + mapOf("generator" to JsonPrimitive(generator),
+                        "providers" to JsonArray(providers.map { JsonPrimitive(it.id.removePrefix("modifier:")) }))))
 				}
 				else -> listOf(command)
 			}

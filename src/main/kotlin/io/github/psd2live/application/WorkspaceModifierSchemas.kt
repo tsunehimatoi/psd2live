@@ -45,7 +45,9 @@ internal object WorkspaceModifierSchemas {
     private val simRequired = setOf("id", "name", "kind", "targets", "material", "inputs")
     private val simulation = s.obj(simFields + ("bake" to bake), simRequired)
     private fun configuration(type: String, summary: Boolean = false): JsonObject = when (type) {
-        "rig.scaffold" -> s.obj(emptyMap())
+        "rig.scaffold" -> s.obj(mapOf("featureDisplacement" to s.boolean(), "corrections" to
+            s.obj(RigModuleSchemas.stored.getValue("properties").jsonObject.filterKeys { it in setOf("moves", "eyeParts") }
+                .mapValues { it.value.jsonObject }, emptySet())), emptySet())
         "physics" -> physics
         "motion" -> WorkspaceAnimationResultSchemas.motion
         "swing" -> WorkspaceInspectionResultSchemas.swing
@@ -57,6 +59,7 @@ internal object WorkspaceModifierSchemas {
             (if (spec.hasPhysics) mapOf("physics" to if (spec.chainKinds.isNotEmpty()) s.dictionary(physics)
                 else s.obj(spec.module!!.physicsGroups.associateWith { physics }, emptySet())) else emptyMap()) +
             (if (spec.strength) mapOf("strength" to s.number(0, 2)) else emptyMap()) +
+            (if (spec.mouthOutline) mapOf("color" to s.integer(0, 0xffffff)) else emptyMap()) +
             (if (spec.knobs.isNotEmpty()) mapOf("values" to s.obj(spec.knobs.associate { it.id to s.number(it.range.start, it.range.endInclusive) }, emptySet())) else emptyMap()), setOf("scaffold") + (if (spec.module?.base != null) setOf("base") else emptySet()) + (if (spec.related.isNotEmpty()) setOf("dependencies") else emptySet())) }
             ?: error("No modifier configuration schema: $type")
     }
@@ -73,6 +76,7 @@ internal object WorkspaceModifierSchemas {
             "modifier_update" -> s.union(types.map { type -> s.obj(fields(type) + ("id" to s.handle())) })
             "modifier_enable" -> s.obj(mapOf("id" to s.handle(), "enabled" to s.boolean()))
             "modifier_move" -> s.obj(mapOf("id" to s.handle(), "index" to s.integer(0)))
+            "modifier_convert" -> s.obj(emptyMap())
             "modifier_remove", "modifier_apply" -> s.obj(mapOf("id" to s.handle()))
             else -> error("Unknown modifier operation $id")
         }

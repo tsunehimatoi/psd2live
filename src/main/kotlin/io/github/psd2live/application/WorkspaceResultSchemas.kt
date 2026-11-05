@@ -38,7 +38,12 @@ internal object WorkspaceResultSchema {
     val failure: JsonObject by lazy {
         fun branch(code: JsonObject, details: Map<String, JsonObject> = emptyMap()) =
             obj(linkedMapOf("code" to code, "message" to string()) + details)
+        val objectIds = obj(mapOf("count" to integer(0), "ids" to array(handle(), 0, 8)))
+        val conversion = mapOf("code" to constant("modifier_conversion_mismatch"), "message" to string(),
+            "fields" to array(handle()), "objects" to dictionary(obj(mapOf(
+                "added" to objectIds, "removed" to objectIds, "changed" to objectIds, "order_changed" to boolean()))))
         union(listOf(
+            obj(conversion + mapOf("edit_index" to integer(0), "edit_operation" to handle()), conversion.keys),
             branch(constant("geometry_unsafe"), mapOf("diagnostics" to WorkspaceGeometrySafetySchemas.report)),
             branch(constant("invalid_request"), mapOf("field" to string())),
             branch(constant("output_contract"), mapOf("field" to string(), "operation" to handle())),

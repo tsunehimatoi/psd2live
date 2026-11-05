@@ -9,10 +9,11 @@ import kotlinx.serialization.json.*
 /** Pure candidates shared by GUI commands, MCP jobs and atomic document batches. */
 internal object WorkspaceModifierEdits {
     val supported = setOf("modifier_add", "modifier_add_group", "modifier_update", "modifier_enable",
-        "modifier_remove", "modifier_move", "modifier_apply")
+        "modifier_remove", "modifier_move", "modifier_apply", "modifier_convert")
 
     fun apply(operation: WorkspaceDocumentOperation, document: WorkspaceDocument, model: RigPreviewModel,
               work: WorkspaceRasterWork = WorkspaceRasterWork.Direct): WorkspaceDocument {
+        if (operation.operation == "modifier_convert") return WorkspaceModifierConversion.convert(document, model, work)
         val stack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack) {
             "Convert legacy presets before editing a modifier stack"
         })
@@ -129,7 +130,8 @@ internal object WorkspaceModifierEdits {
             }
             clip
         }
-        val authored = model.authored.copy(rig = model.authored.rig.withModifierMeshes(PuppetIr.toPuppet(applied.authored)).copy(
+        val authored = model.authored.copy(rig = model.authored.rig.withModifierMeshes(
+            PuppetIr.toPuppet(applied.authored), applied.authored.textures.tileArt).copy(
             modifierOutput = null, modifierReport = null))
         val binding = model.sources.bindingKey ?: if (model.config.rigEdits.importedCmo3 != null) "cmo3-import"
             else PSD2LivePipeline().bindingKey(document.source, RigModifierPipeline.ordinaryConfig(model.config).copy(meshOnly = true))

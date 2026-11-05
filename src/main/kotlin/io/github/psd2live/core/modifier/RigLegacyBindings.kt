@@ -12,6 +12,7 @@ internal object RigLegacyBindings {
     data class Spec(val type: String, val parameters: Set<ParameterId>, val fields: List<RigTuning.Field>, val strength: Boolean = false,
                     val version: Int = 1, val knobs: List<RecipeKnob> = emptyList(), val module: RigModule? = null, val prerequisites: Set<String> = emptySet()) {
         val area get() = type.substringBefore('/').substringBefore('.')
+        val mouthOutline get() = module == RigModules.MOUTH_OUTLINE
         val expressionToggles get() = module == RigModules.EXPRESSION_TOGGLES
         val seeThrough get() = module == RigModules.EYE_SEE_THROUGH || module == RigModules.BROW_SEE_THROUGH
         val chainKinds get() = RigModifierChains.kinds(type)
@@ -40,10 +41,12 @@ internal object RigLegacyBindings {
         Spec(base.id, if (base == RigModules.HAIR_CHAINS) emptySet() else original.parameters, original.fields.filter { RigTuning.replacedBy[it.id] != base.id },
             version = base.version, knobs = base.knobs, prerequisites = if (base == RigModules.HAIR_CHAINS) setOf("body/legacy", "face/legacy") else emptySet())
     } + listOf(RigModules.EYE_SMILE, RigModules.EYE_SQUASH, RigModules.EYE_WIDE, RigModules.EYE_LID_FADE, RigModules.EYE_HIGHLIGHT, RigModules.EYE_AFTERSHOCK, RigModules.BROW_SHAPE, RigModules.BROW_SPRING, RigModules.EYE_EMOTION, RigModules.MOUTH_VOWEL, RigModules.EYE_GAZE_LID, RigModules.BROW_BLINK, RigModules.BROW_LID, RigModules.MOUTH_CHEEK_LID, RigModules.MOUTH_CAPTURE, RigModules.MOUTH_TONGUE, RigModules.MOUTH_JAW,
-        RigModules.MOUTH_DEPTH, RigModules.MOUTH_SPRING, RigModules.EXPRESSION_CHEEK, RigModules.EXPRESSION_GLOOM, RigModules.EXPRESSION_TOGGLES, RigModules.FACE_SKIN_CLIP, RigModules.FACE_NECK, RigModules.FACE_DEPTH_TURN, RigModules.BODY_BUST, RigModules.BODY_ARMS, RigModules.OUTFIT_SKIRT, RigModules.OUTFIT_RIBBONS, RigModules.OUTFIT_CREATURE, RigModules.EYE_SEE_THROUGH, RigModules.BROW_SEE_THROUGH).map { module ->
+        RigModules.MOUTH_DEPTH, RigModules.MOUTH_SPRING, RigModules.MOUTH_OUTLINE, RigModules.EXPRESSION_CHEEK, RigModules.EXPRESSION_GLOOM, RigModules.EXPRESSION_TOGGLES, RigModules.FACE_SKIN_CLIP, RigModules.FACE_NECK, RigModules.FACE_DEPTH_TURN, RigModules.BODY_BUST, RigModules.BODY_ARMS, RigModules.OUTFIT_SKIRT, RigModules.OUTFIT_RIBBONS, RigModules.OUTFIT_CREATURE, RigModules.EYE_SEE_THROUGH, RigModules.BROW_SEE_THROUGH).map { module ->
         Spec(module.id, module.defines.mapTo(linkedSetOf()) { ParameterId(it.id) }, emptyList(),
             version = module.version, knobs = if (module == RigModules.EYE_SEE_THROUGH || module == RigModules.BROW_SEE_THROUGH)
-                listOf(RecipeKnob("opacity", RigTuning.Unit.PERCENT, 0f..100f, 50f)) else module.knobs, module = module,
+                listOf(RecipeKnob("opacity", RigTuning.Unit.PERCENT, 0f..100f, 50f))
+            else if (module == RigModules.MOUTH_OUTLINE) listOf(RecipeKnob("thickness", RigTuning.Unit.PIXELS, .5f..8f, 1.5f))
+            else module.knobs, module = module,
             prerequisites = when (module) {
                 RigModules.BROW_LID, RigModules.MOUTH_CHEEK_LID -> setOf("eye/fitted")
                 RigModules.EYE_HIGHLIGHT, RigModules.MOUTH_DEPTH, RigModules.FACE_NECK, RigModules.FACE_DEPTH_TURN -> setOf("face/legacy")
@@ -75,6 +78,10 @@ internal object RigLegacyBindings {
         encoded.jsonPrimitive.float.also { require(it.isFinite() && it in knob.range) { "Binding value $id must be within ${knob.range}" } }
     }
 
+    fun outlineColor(instance: RigModifierInstance): Int? = instance.config["color"]?.jsonPrimitive?.int?.also {
+        require(it in 0..0xffffff) { "Lip color must be a 24-bit RGB value" }
+    }
+
     fun providers(instance: RigModifierInstance): Map<String, String> = buildMap {
         put(RigSourceModifiers.SCAFFOLD, instance.config.getValue("scaffold").jsonPrimitive.content)
         val spec = spec(instance.type)
@@ -85,7 +92,7 @@ internal object RigLegacyBindings {
     }
 
     fun definition(spec: Spec, source: RigModifierSource?) = RigModifierDefinition(spec.type, spec.version,
-        requires = spec.requires, exclusiveFamily = if (spec.isBase) "base:${spec.area}" else if (spec.chainKinds.isNotEmpty()) "chain:${spec.type}" else if (spec.expressionToggles) spec.type else null,
+        requires = spec.requires, exclusiveFamily = if (spec.isBase) "base:${spec.area}" else if (spec.chainKinds.isNotEmpty()) "chain:${spec.type}" else if (spec.expressionToggles || spec.mouthOutline) spec.type else null,
         providers = { instance -> providers(instance) },
         appliedConfig = { it.config }, resolveParameter = { instance, before, declared -> requireNotNull(source).resolveParameter(instance, before, declared) },
         references = RigModifierPhysics::references, parameters = { instance -> when {
@@ -95,9 +102,9 @@ internal object RigLegacyBindings {
         } },
         validate = { _, instance ->
             val allowed = setOf("scaffold", "tuning") + (if (spec.hasPhysics) setOf("physics") else emptySet()) + (if (spec.related.isNotEmpty()) setOf("dependencies") else emptySet()) + (if (spec.module?.base != null) setOf("base") else emptySet()) + (if (spec.strength) setOf("strength") else emptySet()) +
-                (if (spec.knobs.isNotEmpty()) setOf("values") else emptySet())
+                (if (spec.knobs.isNotEmpty()) setOf("values") else emptySet()) + (if (spec.mouthOutline) setOf("color") else emptySet())
             require(instance.config.keys.all { it in allowed } && "scaffold" in instance.config) { "Specify ${spec.type}'s scaffold and editable values" }
-            providers(instance); strength(instance); tuning(instance, RigTuning()); values(instance)
+            providers(instance); strength(instance); tuning(instance, RigTuning()); values(instance); outlineColor(instance)
             require(instance.targets.all { it.kind == "mesh" && source?.hasMesh(it.id) == true }) { "Binding targets must have captured source layers" }
             requireNotNull(source).provider(instance)
         }, composableKinds = setOf("mesh", "part", "deformer", "hierarchy", "relations", "parameter") +
@@ -105,6 +112,9 @@ internal object RigLegacyBindings {
         evaluate = { rig, instance, checkpoint ->
             if (spec.seeThrough) requireNotNull(source).seeThrough(rig, instance, checkpoint)
             else if (spec.expressionToggles) requireNotNull(source).expression(rig, instance, checkpoint)
-            else RigSourceBinding.apply(rig, instance, requireNotNull(source), checkpoint)
+            else {
+                val bindings = RigSourceBinding.apply(rig, instance, requireNotNull(source), checkpoint)
+                if (spec.mouthOutline) source.outline(bindings, instance, checkpoint) else bindings
+            }
         })
 }

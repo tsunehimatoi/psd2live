@@ -527,7 +527,8 @@ class WorkspaceModifierCommandsTest {
     @Test fun applyingAPrefixKeepsTheSuffixAndMakesPhysicsAndMotionOrdinaryEditableContent(): Unit = runBlocking<Unit> {
         val f = fixture()
         f.edit("modifier_add", add(f, "physics", physics().toJson(), "pendulum"))
-        f.edit("modifier_add", add(f, "motion", MotionClips.toJson(motion()), "first"))
+        val original = motion().copy(fileStem = "legacy_sway", exportGroup = "Legacy", runtimeDefaultFades = true)
+        f.edit("modifier_add", add(f, "motion", MotionClips.toJson(original), "first"))
         f.edit("modifier_add", add(f, "motion", MotionClips.toJson(motion("Later")), "later"))
         val before = f.now
         val expected = RigIrCompiler.compile(before.model)
@@ -537,6 +538,10 @@ class WorkspaceModifierCommandsTest {
         assertEquals(1, f.now.document.rigEdits.physicsEdits.size)
         val clip = f.now.document.rigEdits.motionClips.single()
         assertEquals(expected.clips.first().file, clip.fileStem)
+        assertEquals("legacy_sway", expected.clips.first().file)
+        assertEquals("Legacy", expected.clips.first().group)
+        assertNull(expected.clips.first().fadeIn)
+        assertNull(expected.clips.first().fadeOut)
         assertNull(clip.builtin)
         assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
         val applied = f.now
@@ -748,7 +753,7 @@ class WorkspaceModifierCommandsTest {
             FloatArray(count * 2) { if (it % 2 == 0) -.25f else 0f }, FloatArray(count * 2),
             FloatArray(count * 2) { if (it % 2 == 0) .25f else 0f })))
         val baked = source.copy(bake = SimBakeResult(SimBake.fingerprint(PuppetIr.toPuppet(input), source), mapOf(f.target.id to count),
-            emptyList(), listOf(SimBakedMode(axis, .25f, 1f))))
+            emptyList(), listOf(SimBakedMode(axis, .25f, 1f)), physics = physics().copy(outputs = listOf(PhysicsOutput("Mode")))))
         f.edit("modifier_add", add(f, "simulation", baked.toJson(), "cloth"))
         val observation = WorkspaceModifierQueries.describe(f.now)
         validateOperationSchema(observation, WorkspaceModifierSchemas.stack, "result")
@@ -764,6 +769,12 @@ class WorkspaceModifierCommandsTest {
         f.edit("modifier_update", buildJsonObject { put("id", "cloth"); put("type", "simulation"); put("config", baked.toJson()) })
         assertEquals(unchanged.document.rigEdits.modifierStack, f.now.document.rigEdits.modifierStack)
         val expected = RigIrCompiler.compile(f.now.model)
+        val live = RigIrCompiler.compile(f.now.model, simulations = true).advanced.simulations.single()
+        val instance = stack(f).instances.single()
+        assertEquals(instance.outputId("simulation"), live.id)
+        assertEquals(listOf(instance.outputId("simulation:Mode")), live.parameters)
+        assertEquals(listOf(instance.outputId("physics:0")), live.physicsGroups)
+        assertEquals(listOf(f.target.id), live.targets.map { it.mesh })
         assertEquals(3, expected.meshes.single().offsets!!.axes.single().keys.size)
         f.edit("modifier_apply", id("cloth"))
         assertTrue(stack(f).instances.isEmpty())

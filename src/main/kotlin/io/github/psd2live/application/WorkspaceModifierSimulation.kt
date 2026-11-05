@@ -16,7 +16,8 @@ internal object WorkspaceModifierSimulation {
         return if (next == stack) document else document.copy(rigEdits = document.rigEdits.copy(modifierStack = next.toJson()))
     }
 
-    fun prepare(document: WorkspaceDocument, stack: RigModifierStack, work: WorkspaceRasterWork): RigModifierStack {
+    fun prepare(document: WorkspaceDocument, stack: RigModifierStack, work: WorkspaceRasterWork,
+                allowRebake: Boolean = true): RigModifierStack {
         var next = stack
         for (index in stack.instances.indices) {
             work.checkpoint()
@@ -37,6 +38,7 @@ internal object WorkspaceModifierSimulation {
                 if (instance.inputFingerprint == null) next = next.update(instance.id) { it.copy(inputFingerprint = fingerprint) }
                 continue
             }
+            require(allowRebake) { "${instance.id}: conversion cannot preserve the existing simulation bake on the rebuilt inputs" }
             require(source.autoBake) { "${instance.id}: simulation needs a valid bake; enable automatic baking before updating it" }
             SimAuthoring.validate(model.rig.puppet, source)
             require(source.inputs.isNotEmpty()) { "${instance.id}: simulation needs existing input parameters before baking" }

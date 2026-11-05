@@ -48,6 +48,16 @@ internal data class WorkspaceFailure private constructor(
                 else "The operation exceeded the stack limit. Reduce the model hierarchy depth, then retry.",
                 buildJsonObject { put("exception_type", resourceFailure.javaClass.name) },
             )
+            val conversion = generateSequence(failure) { it.cause }.take(8)
+                .filterIsInstance<WorkspaceModifierConversionMismatch>().firstOrNull()
+            if (conversion != null) return WorkspaceFailure("modifier_conversion_mismatch", conversion.message.orEmpty(), buildJsonObject {
+                put("fields", JsonArray(conversion.fields.map(::JsonPrimitive)))
+                put("objects", conversion.objects)
+                if (failure is WorkspaceBatchEditException) {
+                    put("edit_index", failure.index)
+                    put("edit_operation", failure.editOperation)
+                }
+            })
             // A batch member's refusal keeps its own category.
             val notGenerated = generateSequence(failure) { it.cause }.take(8).firstOrNull { it is WorkspaceNotGenerated }
             if (notGenerated != null) return WorkspaceFailure("not_generated", notGenerated.message ?: "Not generated",

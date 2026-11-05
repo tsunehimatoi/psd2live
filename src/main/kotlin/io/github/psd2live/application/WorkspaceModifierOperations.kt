@@ -10,11 +10,12 @@ internal fun registerModifierOperations(registry: WorkspaceOperationRegistry, wo
         "Edit explicit modifier content in one atomic history transaction. Add captures stable targets; optional IDs may be fixed before a batch. " +
             "Groups add independent instances with a common origin. Optional index inserts an item explicitly; omission appends. Omitted version selects the highest registered version. Moving changes evaluation order and invalid dependencies fail. " +
             "Apply materializes the complete prefix, preserves the suffix and verifies the final result before committing. " +
-            "Legacy projects must first be converted. Returns a process job; use job_wait/job_get for its committed state.",
+            "Convert explicitly migrates a legacy project and commits only if the complete result matches. Other operations require an explicit stack. " +
+            "Returns a process job; use job_wait/job_get for its committed state.",
         WorkspaceModifierSchemas.request(id), WorkspaceOperationKind.DOCUMENT, jobBacked = true, batchable = true,
         resultSchema = requireNotNull(WorkspaceJobResultSchemas.operationOutput(id)), jobResultSchema = WorkspaceJobResultSchemas.result(id))) { request, context ->
         startDocumentBatch(workspace, workspace, jobs, id, request.getValue("state").jsonPrimitive.content,
-            "Edited modifier stack", listOf(WorkspaceDocumentOperation(id, JsonObject(request - "state"))), context.author)
+            if (id == "modifier_convert") "Converted model presets" else "Edited modifier stack", listOf(WorkspaceDocumentOperation(id, JsonObject(request - "state"))), context.author)
     }
     registry.register(WorkspaceOperationDefinition("modifier_catalog", "List registered modifier algorithms, versions and dependencies.",
         WorkspaceResultSchema.obj(emptyMap()), WorkspaceOperationKind.QUERY, workspaceBound = false,

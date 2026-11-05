@@ -52,7 +52,7 @@ class WorkspaceModifierSchemasTest {
             }
         }
         assertEquals(setOf("swing", "simulation", "physics", "motion", "rig.scaffold", "body/legacy", "face/legacy",
-            "eye/legacy", "brow/legacy", "mouth/legacy", "hair/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "eye.smile", "eye.squash", "eye.wide", "eye.lid-fade", "eye.highlight", "eye.aftershock", "brow.shape", "brow.spring", "eye.emotion", "mouth.vowel", "eye.gaze-lid", "brow.blink", "brow.lid-coupling", "mouth.cheek-lid", "mouth.capture", "mouth.tongue", "mouth.jaw", "mouth.interior-depth", "mouth.spring", "expression.cheek", "expression.gloom", "expression.toggles", "face.skin-clip", "face.neck", "face.depth-turn", "eye.see-through", "brow.see-through", "hair/chains", "body.bust", "body.arms", "outfit.skirt", "outfit.ribbons", "outfit.creature"), WorkspaceModifierSchemas.types.toSet())
+            "eye/legacy", "brow/legacy", "mouth/legacy", "hair/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "eye.smile", "eye.squash", "eye.wide", "eye.lid-fade", "eye.highlight", "eye.aftershock", "brow.shape", "brow.spring", "eye.emotion", "mouth.vowel", "eye.gaze-lid", "brow.blink", "brow.lid-coupling", "mouth.cheek-lid", "mouth.capture", "mouth.tongue", "mouth.jaw", "mouth.interior-depth", "mouth.spring", "mouth.outline", "expression.cheek", "expression.gloom", "expression.toggles", "face.skin-clip", "face.neck", "face.depth-turn", "eye.see-through", "brow.see-through", "hair/chains", "body.bust", "body.arms", "outfit.skirt", "outfit.ribbons", "outfit.creature"), WorkspaceModifierSchemas.types.toSet())
     }
 
     @Test fun modifierJobsAndDiscriminatedSchemasParticipateInTheOrdinaryAtomicBatchContract() {

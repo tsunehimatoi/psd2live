@@ -60,6 +60,13 @@ internal object DocumentGenerators {
     fun keyformCell(kind: String, target: String, key: Map<String, Float>, channel: String? = null) =
         "keyform-cell:$kind:$target:${channel.orEmpty()}:" + JsonObject(key.toSortedMap().mapValues { JsonPrimitive(it.value) })
     fun channelKeyform(kind: String, target: String, parameter: String, channel: String) = "channel-keyform:$kind:$target@$channel:$parameter"
+    fun writesParameterKey(write: String, parameter: String): Boolean = when {
+        write.startsWith("keyform:") -> write.substringAfterLast('@') == parameter
+        write.startsWith("channel-keyform:") -> write.endsWith(":$parameter")
+        write.startsWith("keyform-cell:") -> write.substringAfter(":{").contains(JsonPrimitive(parameter).toString() + ":")
+        else -> false
+    }
+
 	fun swingId(swing: RigSwingEdit) = SWING + swing.id
 	fun simulationId(sim: io.github.psd2live.core.sim.RigSimEdit) = SIMULATION + sim.id
 
@@ -173,13 +180,15 @@ internal object DocumentGenerators {
             } }
             val objects = entry.getValue("contributions").jsonArray.mapNotNull { contribution -> contribution.jsonObject.let {
                 if (it.getValue("change").jsonPrimitive.content != "added") return@let null
-                val kind = when (it.getValue("kind").jsonPrimitive.content) {
-                    "deformer" -> "warp"
-                    "mesh" -> "mesh"
-                    else -> return@let null
+                val kinds = when (it.getValue("kind").jsonPrimitive.content) {
+                    "deformer" -> listOf("warp", "rotation")
+                    "mesh" -> listOf("mesh")
+                    "part" -> listOf("part")
+                    "parameter" -> listOf("parameter")
+                    else -> emptyList()
                 }
-                "object:$kind:" + it.getValue("id").jsonPrimitive.content
-            } }
+                kinds.map { kind -> "object:$kind:" + it.getValue("id").jsonPrimitive.content }
+            } }.flatten()
             val writes = claim(forms + objects + "rig:$id")
             nodes += GeneratorNode(id, setOf(preceding, "document:$id"), writes)
             preceding = "rig:$id"

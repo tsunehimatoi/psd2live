@@ -22,16 +22,23 @@ internal class RigModifierSource(
     private val primaryByLayer = layersByMesh.entries.sortedBy { it.key in copiedMeshes }.groupBy { it.value }.mapValues { it.value.first().key }
     private val projections = java.util.IdentityHashMap<PuppetModel, MutableMap<String, PuppetModel>>()
     private fun generated(strength: Float = 1f, tuning: RigTuning = RigTuning(), headStrength: Float = 1f,
-                          recipe: RigRecipe = RigRecipe.Legacy): BuiltRig {
+                          recipe: RigRecipe = RigRecipe.Legacy, outline: RigModifierInstance? = null,
+                          featureDisplacement: Boolean = false): BuiltRig {
         val clean = RigModifierPipeline.ordinaryConfig(config).copy(meshOnly = false, generateDeformers = true,
             deferRig = false, rigPendingLayerIds = emptySet(), parentOverrides = emptyMap(),
             rigEdits = RigEditOverlay(splitDrawableIds = primaryByLayer))
-        return RigBuilder.build(analysis, atlas, clean.copy(bodyStrength = strength, headTurnStrength = headStrength, rigTuning = tuning, recipe = recipe))
+        val native = clean.copy(bodyStrength = strength, headTurnStrength = headStrength, rigTuning = tuning, recipe = recipe,
+            featureDisplacementEnabled = featureDisplacement, mouthOutlineEnabled = outline != null,
+            mouthThickness = outline?.let { RigLegacyBindings.values(it)["thickness"] } ?: 1.5f,
+            mouthColor = outline?.let(RigLegacyBindings::outlineColor))
+        if (outline == null) return RigBuilder.build(analysis, atlas, native)
+        val prepared = MouthLipLayers.prepare(analysis, native)
+        val lips = prepared.layers.filter { it.source is MouthLipLayer }
+        return RigBuilder.build(prepared, RigModifierRasterAssets.append(atlas, lips, native), native)
     }
 
     private data class Template(val model: PuppetModel, val chains: List<RigModifierChains.Binding>)
     private val templates = HashMap<Map<String, JsonObject>, Template>()
-    private val neutral by lazy { template(emptyList()).model }
     private val transitions = HashMap<Pair<String, ModifierTarget>, Pair<RigModifierChains.Projection, RigModifierChains.Projection>>()
 
     fun seeThrough(rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR {
@@ -123,6 +130,42 @@ internal class RigModifierSource(
         return RigModifierPhysics.addExpressionInputs(rig, listOf(instance), preceding.flatMap { expressionIds(it).map(ParameterId::raw) })
     }
 
+    fun outline(rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR {
+        val thickness = RigLegacyBindings.values(instance)["thickness"] ?: 1.5f
+        val outlineConfig = RigModifierPipeline.ordinaryConfig(config).copy(
+            meshOnly = false, deferRig = false, mouthOutlineEnabled = true, mouthThickness = thickness,
+            mouthColor = RigLegacyBindings.outlineColor(instance))
+        val lipLayers = MouthLipLayers.prepare(analysis, outlineConfig).layers.mapNotNull {
+            (it.source as? MouthLipLayer)?.let { lip -> (lip.ownerId to lip.side) to it }
+        }.toMap()
+        val model = PuppetIr.toPuppet(rig)
+        val ribbons = instance.targets.flatMap { target ->
+            checkpoint()
+            val layer = layersByMesh.getValue(target.id)
+            if (lipLayers.keys.none { it.first == layer }) return@flatMap emptyList()
+            val native = template(relevantBefore(instance, target) + instance, provider(instance).config).model
+            val canonical = primaryByLayer.getValue(layer)
+            val owner = model.drawables.single { it.id.raw == target.id }
+            (0..1).mapNotNull { side ->
+                val lip = native.drawables.singleOrNull { it.id.raw == "${canonical}_lip_$side" } ?: return@mapNotNull null
+                val source = lipLayers.getValue(layer to side)
+                val id = DrawableId(instance.outputId("mouth-lip:${target.id}:$side"))
+                val assetId = instance.outputId("mouth-art:${target.id}:$side")
+                val asset = source.copy(source = object : org.umamo.format.art.SourceLayer by source.source {
+                    override val id = org.umamo.format.art.LayerId(assetId)
+                })
+                val drawable = lip.copy(id = id, parentDeformerId = owner.parentDeformerId, maskedBy = owner.maskedBy,
+                    invertMask = owner.invertMask, isVisible = owner.isVisible, textureSourceId = null,
+                    drawOrder = (owner.drawOrder + 1f).coerceAtMost(1000f), atlasTileId = PuppetSourceAtlas.tileIdFor(assetId))
+                val paths = native.deformPaths.filter { it.drawableId == lip.id }.map { path ->
+                    path.copy(id = instance.outputId("mouth-path:${target.id}:$side:${path.id}"), drawableId = id)
+                }
+                RigModifierRasterAssets.Ribbon(owner.id, drawable, asset, paths)
+            }
+        }
+        return RigModifierRasterAssets.attach(rig, model, ribbons, analysis, config)
+    }
+
     fun body(strength: Float, tuning: RigTuning = RigTuning(), checkpoint: () -> Unit): PuppetModel {
         checkpoint()
         return restricted(generated(strength, tuning).puppet, RigBodyModifier.parameters).also { checkpoint() }
@@ -130,13 +173,14 @@ internal class RigModifierSource(
 
     fun static(model: PuppetModel) = restricted(model, emptySet())
 
-    private fun template(instances: List<RigModifierInstance>): Template {
+    private fun template(instances: List<RigModifierInstance>, scaffold: JsonObject): Template {
         val state = instances.associateBy { it.type }
         val key = state.mapValues { (_, instance) -> buildJsonObject {
             // This is an intermediate geometry template, not a modifier-result cache. Pendulums are evaluated separately.
             put("version", instance.version); put("config", JsonObject(instance.config - "scaffold" - "base" - "physics"))
         } }
-        return templates.getOrPut(key) {
+        val templateKey = key + ("rig.scaffold" to scaffold)
+        return templates.getOrPut(templateKey) {
             var tuning = RigTuning()
             for (spec in RigLegacyBindings.specs) state[spec.type]?.let { tuning = RigLegacyBindings.tuning(it, tuning) }
             val bodyStrength = state["body/legacy"]?.let(RigLegacyBindings::strength) ?: 1f
@@ -152,7 +196,11 @@ internal class RigModifierSource(
                     val chosen = state[module.id]
                     module.id to ModuleChoice(chosen != null, chosen?.version ?: module.version, chosen?.let(RigLegacyBindings::values).orEmpty())
                 })
-            val native = generated(bodyStrength, tuning, headStrength, recipe)
+            val outline = state[RigModules.MOUTH_OUTLINE.id]
+            val corrections = io.github.psd2live.project.WorkspaceSettingsCodec.decodeRecipe(scaffold["corrections"])
+            val native = generated(bodyStrength, tuning, headStrength,
+                recipe.copy(moves = corrections.moves, eyeParts = corrections.eyeParts), outline,
+                scaffold["featureDisplacement"]?.jsonPrimitive?.boolean ?: false)
             val chains = native.generatedChains.filter { chain -> instances.any { chain.kind in RigModifierChains.kinds(it.type) } }
                 .map { RigModifierChains.Binding(it) }
             val dynamic = chains.flatMap { it.native.parameters }
@@ -185,7 +233,7 @@ internal class RigModifierSource(
             transitions.getValue(instance.id to target).second.chains.filter { it.owner == instance.id }
         }.distinctBy { it.binding.key }
 
-    private fun transitionProjections(instance: RigModifierInstance, target: ModifierTarget): Pair<RigModifierChains.Projection, RigModifierChains.Projection> {
+    private fun relevantBefore(instance: RigModifierInstance, target: ModifierTarget): List<RigModifierInstance> {
         val provider = provider(instance)
         val spec = RigLegacyBindings.spec(instance.type)
         val appliedIds = stack.appliedCapabilities.mapNotNullTo(HashSet()) { it.id }
@@ -194,10 +242,14 @@ internal class RigModifierSource(
             !(spec.isBase && previous.id in appliedIds &&
                 RigLegacyBindings.find(previous.type)?.let { it.isBase && it.area == spec.area } == true)
         }
-        val relevant = preceding.filter { previous -> RigLegacyBindings.find(previous.type)?.let { !it.expressionToggles && !it.seeThrough } == true && target in previous.targets &&
+        return preceding.filter { previous -> RigLegacyBindings.find(previous.type)?.let { !it.expressionToggles && !it.seeThrough } == true && target in previous.targets &&
             previous.config["scaffold"]?.jsonPrimitive?.content == provider.id }
+    }
+
+    private fun transitionProjections(instance: RigModifierInstance, target: ModifierTarget): Pair<RigModifierChains.Projection, RigModifierChains.Projection> {
+        val relevant = relevantBefore(instance, target)
         fun projected(items: List<RigModifierInstance>): RigModifierChains.Projection {
-            val template = template(items)
+            val template = template(items, provider(instance).config)
             return RigModifierChains.projection(forTarget(template.model, target), target, items, template.chains, ::restricted)
         }
         return projected(relevant) to projected(relevant + instance)
@@ -243,7 +295,7 @@ internal class RigModifierSource(
     fun deformerIds(instance: RigModifierInstance, target: ModifierTarget, checkpoint: () -> Unit): Map<DeformerId, DeformerId> =
         deformerOrigins.getOrPut(instance.id to target.id) {
             val provider = provider(instance)
-            val ids = scaffoldFor(target, checkpoint).deformers.associateTo(LinkedHashMap()) {
+            val ids = scaffoldFor(provider, target, checkpoint).deformers.associateTo(LinkedHashMap()) {
                 it.id to DeformerId(RigSourceModifiers.deformerId(provider, target.id, it.id.raw))
             }
             val relevant = (activeBefore(instance) + instance).filter { previous -> RigLegacyBindings.find(previous.type) != null &&
@@ -251,7 +303,7 @@ internal class RigModifierSource(
             val prefix = ArrayList<RigModifierInstance>()
             for (item in relevant) {
                 checkpoint(); prefix += item
-                for (deformer in template(prefix).model.deformers) ids.putIfAbsent(deformer.id,
+                for (deformer in template(prefix, provider.config).model.deformers) ids.putIfAbsent(deformer.id,
                     DeformerId(RigSourceModifiers.deformerId(item, target.id, deformer.id.raw)))
             }
             ids
@@ -283,7 +335,7 @@ internal class RigModifierSource(
     fun partIds(instance: RigModifierInstance, target: ModifierTarget, checkpoint: () -> Unit): Map<PartId, PartId> =
         partOrigins.getOrPut(instance.id to target.id) {
             val provider = provider(instance)
-            val ids = requiredParts(scaffoldFor(target, checkpoint), target).associateTo(LinkedHashMap()) {
+            val ids = requiredParts(scaffoldFor(provider, target, checkpoint), target).associateTo(LinkedHashMap()) {
                 it to PartId(RigSourceModifiers.partId(provider, target.id, it.raw))
             }
             val relevant = (activeBefore(instance) + instance).filter { previous -> RigLegacyBindings.find(previous.type) != null &&
@@ -291,7 +343,7 @@ internal class RigModifierSource(
             val prefix = ArrayList<RigModifierInstance>()
             for (item in relevant) {
                 checkpoint(); prefix += item
-                for (part in requiredParts(forTarget(template(prefix).model, target), target)) ids.putIfAbsent(part,
+                for (part in requiredParts(forTarget(template(prefix, provider.config).model, target), target)) ids.putIfAbsent(part,
                     PartId(RigSourceModifiers.partId(item, target.id, part.raw)))
             }
             ids
@@ -349,14 +401,14 @@ internal class RigModifierSource(
         } })
     }
 
-    fun scaffold(checkpoint: () -> Unit): PuppetModel {
+    private fun scaffold(instance: RigModifierInstance, checkpoint: () -> Unit): PuppetModel {
         checkpoint()
-        val result = neutral
+        val result = template(emptyList(), instance.config).model
         checkpoint()
         return result
     }
 
-    fun scaffoldFor(target: ModifierTarget, checkpoint: () -> Unit) = forTarget(scaffold(checkpoint), target)
+    fun scaffoldFor(instance: RigModifierInstance, target: ModifierTarget, checkpoint: () -> Unit) = forTarget(scaffold(instance, checkpoint), target)
 
     private fun forTarget(model: PuppetModel, target: ModifierTarget): PuppetModel {
         val canonical = primaryByLayer.getValue(layersByMesh.getValue(target.id))
@@ -374,7 +426,7 @@ internal class RigModifierSource(
         val applied = stack.appliedCapabilities.singleOrNull { it.id == id && it.type == RigSourceModifiers.SCAFFOLD }
         val targets = preceding?.targets ?: requireNotNull(applied) { "${instance.id}: binding scaffold $id must precede this modifier" }.targets
         require(instance.targets.all { it in targets }) { "${instance.id}: scaffold $id does not cover all captured targets" }
-        return preceding ?: RigModifierInstance(id, RigSourceModifiers.SCAFFOLD, requireNotNull(applied).version, targets)
+        return preceding ?: RigModifierInstance(id, RigSourceModifiers.SCAFFOLD, requireNotNull(applied).version, targets, config = applied.config)
     }
 
     private fun <F> restrict(grid: KeyformGrid<F>?, kept: Set<ParameterId>, defaults: Map<ParameterId, Float>, interpolator: FormInterpolator<F>): KeyformGrid<F>? {
@@ -394,7 +446,8 @@ internal class RigModifierSource(
     }
 
     companion object {
-        fun of(model: RigPreviewModel) = RigModifierSource(model.analysis, model.atlas, model.config, model.rig.layerIdByDrawableId, model.rig.copiedDrawableIds)
+        fun of(model: RigPreviewModel) = RigModifierSource(model.modifierAuthorAnalysis ?: model.analysis, model.modifierAuthorAtlas ?: model.atlas,
+            model.config, model.authored.rig.layerIdByDrawableId, model.authored.rig.copiedDrawableIds)
     }
 }
 
@@ -403,9 +456,14 @@ internal object RigSourceModifiers {
     const val SCAFFOLD = "rig.scaffold"
 
     fun definitions(source: RigModifierSource?): List<RigModifierDefinition> = listOf(
-        RigModifierDefinition(SCAFFOLD, 1, exclusiveFamily = SCAFFOLD,
+        RigModifierDefinition(SCAFFOLD, 1, exclusiveFamily = SCAFFOLD, appliedConfig = { it.config },
             validate = { _, instance ->
-                require(instance.config.isEmpty()) { "A binding scaffold has no motion settings" }
+                require(instance.config.keys.all { it in setOf("featureDisplacement", "corrections") }) { "Unknown binding scaffold configuration" }
+                instance.config["corrections"]?.jsonObject?.let { corrections ->
+                    require(corrections.keys.all { it in setOf("moves", "eyeParts") }) { "Invalid binding scaffold corrections" }
+                    io.github.psd2live.project.WorkspaceSettingsCodec.mergeRecipe(RigRecipe.Modern, corrections)
+                }
+                instance.config["featureDisplacement"]?.jsonPrimitive?.boolean
                 require(instance.targets.all { it.kind == "mesh" }) { "A binding scaffold targets source meshes" }
                 val input = requireNotNull(source) { "Binding modifiers require the captured source artwork" }
                 require(instance.targets.all { input.hasMesh(it.id) }) { "A binding scaffold target has no source layer" }
@@ -421,7 +479,7 @@ internal object RigSourceModifiers {
         var current = PuppetIr.toPuppet(rig)
         for (target in instance.targets) {
             checkpoint()
-            val template = source.scaffoldFor(target, checkpoint)
+            val template = source.scaffoldFor(instance, target, checkpoint)
             val deformers = template.deformers.associateBy { it.id }
             val partParents = template.parts.flatMap { part -> part.children.filterIsInstance<OrgChild.Part>().map { it.id to part.id } }.toMap()
             val meshId = DrawableId(target.id)

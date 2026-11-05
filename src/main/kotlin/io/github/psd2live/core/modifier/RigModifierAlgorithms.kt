@@ -10,6 +10,8 @@ import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.targets.cubism.PuppetIr
 import org.umamo.runtime.model.PuppetModel
 import org.umamo.edit.withParametersSyncedFromTree
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 /** Adapters for generators that already accept an authored model. Binding recipes need source-aware adapters. */
@@ -53,15 +55,12 @@ internal object RigModifierAlgorithms {
         require(instance.inputFingerprint == null || instance.inputFingerprint == RigModifierInput.fingerprint(rig)) {
             "${instance.id}: upstream modifier input changed; bake the simulation again"
         }
-        val edit = source.copy(outputs = source.bake.parameters.associateWith { parameter ->
-            val previous = source.outputs[parameter]
-            (previous ?: io.github.psd2live.core.sim.SimOutput()).copy(id = instance.outputId("simulation:$parameter"))
-        })
+        val edit = simulationOutputs(instance, source)
         val (model, issues) = SimGenerator.applyOne(PuppetIr.toPuppet(rig), edit)
         require(issues.isEmpty()) { issues.joinToString("; ") }
         checkpoint()
-        val groups = SimGenerator.physicsRules(listOf(edit), model.parameters.mapTo(HashSet()) { it.id.raw }).map(Physics3Json::group)
-        addPhysics(rig.withPuppet(model), groups.mapIndexed { index, group -> group.copy(id = instance.outputId("physics:$index")) })
+        val groups = simulationPhysics(instance, edit, model.parameters.mapTo(HashSet()) { it.id.raw })
+        addPhysics(rig.withPuppet(model), groups.values.map(Physics3Json::group))
     })
 
     val physics = RigModifierDefinition("physics", 1, evaluate = { rig, instance, checkpoint ->
@@ -80,11 +79,12 @@ internal object RigModifierAlgorithms {
         require(source.enabled) { "Disable the modifier to disable its motion" }
         val available = rig.parameters.mapTo(HashSet()) { it.id }
         require(source.curves.isNotEmpty() && source.curves.all { it.parameterId in available }) { "Motion parameters are missing" }
-        val file = "modifier_" + instance.id.encodeToByteArray().joinToString("") { "%02x".format(it.toInt() and 255) }
-        val clip = Clip(instance.outputId("motion"), source.name, if (source.loop) "Idle" else source.name,
-            file, source.duration, source.fps, source.loop, source.fadeIn, source.fadeOut,
+        val file = source.fileStem ?: ("modifier_" + instance.id.encodeToByteArray().joinToString("") { "%02x".format(it.toInt() and 255) })
+        val clip = Clip(instance.outputId("motion"), source.name, source.exportGroup ?: if (source.loop) "Idle" else source.name,
+            file, source.duration, source.fps, source.loop, source.fadeIn.takeUnless { source.runtimeDefaultFades },
+            source.fadeOut.takeUnless { source.runtimeDefaultFades },
             source.curves.map(MotionGenerator::curve), source.events.map { ClipEvent(it.time, it.value) })
-        require(rig.clips.none { it.id == clip.id }) { "Motion ID collision: ${clip.id}" }
+        require(rig.clips.none { it.id == clip.id || it.file.equals(clip.file, ignoreCase = true) }) { "Motion ID or file collision: ${clip.id} / ${clip.file}" }
         rig.copy(clips = rig.clips + clip)
     })
 
@@ -92,17 +92,59 @@ internal object RigModifierAlgorithms {
     val registry = RigModifierRegistry(native + RigSourceModifiers.definitions(null))
 
     fun evaluator(source: RigModifierSource? = null) = RigModifierEvaluator(
-        if (source == null) registry else RigModifierRegistry(native + RigSourceModifiers.definitions(source))) { rig, _, commands ->
+        if (source == null) registry else RigModifierRegistry(native + RigSourceModifiers.definitions(source))) { rig, instance, commands ->
         var model = PuppetIr.toPuppet(rig)
         val issues = ArrayList<GeneratedOverrideIssue>()
+        val parameterOverrides = HashSet<String>()
         for (command in commands) {
             if (GeneratedOverrides.isOverride(command)) {
                 val result = GeneratedOverrides.apply(model, command)
                 model = result.model
                 issues += result.issues
+            } else if (command["op"]?.jsonPrimitive?.content == "structure" && command["generator"]?.jsonPrimitive?.content == "modifier:${instance.id}") {
+                val edit = command.getValue("edits").jsonArray.single().jsonObject
+                val kind = edit.getValue("kind").jsonPrimitive.content
+                val id = edit.getValue("id").jsonPrimitive.content
+                try {
+                    model = RigAuthoringJournal.apply(model, command)
+                    if (kind == "parameter" && edit.getValue("action").jsonPrimitive.content == "update") parameterOverrides += id
+                } catch (_: IllegalArgumentException) {
+                    issues += GeneratedOverrideIssue(GeneratedOverrideIssueKind.ORPHANED, "modifier:${instance.id}",
+                        "$kind:$id", emptyMap(), 1, 1, GeneratedOverrideOrphanReason.SUPERSEDED)
+                }
+            } else if (command["op"]?.jsonPrimitive?.content in setOf("parameter_keys", "delete") &&
+                command["generator"]?.jsonPrimitive?.content == "modifier:${instance.id}") {
+                val changed = try {
+                    RigAuthoringJournal.apply(model, command)
+                } catch (_: IllegalArgumentException) {
+                    model
+                } catch (_: NoSuchElementException) {
+                    model
+                }
+                val target = command["target"]?.jsonPrimitive?.content
+                val parameter = command.getValue("parameter").jsonPrimitive.content
+                if (changed === model) {
+                    issues += GeneratedOverrideIssue(GeneratedOverrideIssueKind.ORPHANED, "modifier:${instance.id}",
+                        target ?: "parameter:$parameter", emptyMap(), 1, 1, GeneratedOverrideOrphanReason.MISSING_KEYFORM)
+                } else if (target == null) parameterOverrides += parameter
+                model = changed
             } else model = RigAuthoringJournal.apply(model, command)
         }
-        ModifierOverrideResult(rig.withPuppet(model), issues)
+        val updated = rig.withPuppet(model)
+        ModifierOverrideResult(updated, issues, updated.parameters.filter { it.id in parameterOverrides }.associateBy { it.id })
+    }
+
+    internal fun simulationOutputs(instance: RigModifierInstance, source: RigSimEdit): RigSimEdit =
+        source.copy(outputs = requireNotNull(source.bake).parameters.associateWith { parameter ->
+            val previous = source.outputs[parameter]
+            (previous ?: io.github.psd2live.core.sim.SimOutput()).copy(id = instance.outputId("simulation:$parameter"))
+        })
+
+    internal fun simulationPhysics(instance: RigModifierInstance, edit: RigSimEdit, available: Set<String>): Map<String, RigPhysicsEdit> {
+        val valid = SimGenerator.physicsRules(listOf(edit), available).associateBy { it.id }
+        return SimGenerator.writtenPendulums(edit).mapIndexedNotNull { index, group ->
+            valid[group.id]?.let { group.id to it.copy(id = instance.outputId("physics:$index")) }
+        }.toMap()
     }
 
     private fun addPhysics(rig: RigIR, groups: List<PhysicsGroup>): RigIR {

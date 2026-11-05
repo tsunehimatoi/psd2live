@@ -31,6 +31,17 @@ class RigModifierStackTest {
         assertEquals(500, authored.parts.first().drawOrder)
     }
 
+    @Test fun anObjectOverrideCannotMoveAheadOfItsReferencedGenerator() {
+        val stack = RigModifierStack(listOf(entry("a", "add"), entry("b", "multiply"))).withOverrides("b", listOf(buildJsonObject {
+            put("op", "structure")
+            putJsonArray("providers") { add("a") }
+        }))
+        evaluator.validateOrder(stack)
+        val failure = assertFailsWith<IllegalArgumentException> { evaluator.validateOrder(stack.move("b", 0)) }
+        assertContains(failure.message.orEmpty(), "b must follow a")
+        evaluator.validateOrder(stack.remove("a"))
+    }
+
     @Test fun multipleInstancesKeepTheirCapturedTargets() {
         val stack = RigModifierStack(listOf(entry("a", "add"), entry("b", "add", targets = listOf(other))))
         val result = evaluator.evaluate(authored, stack)

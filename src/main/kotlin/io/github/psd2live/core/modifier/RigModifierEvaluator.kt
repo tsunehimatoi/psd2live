@@ -5,6 +5,8 @@ import io.github.psd2live.format.model.RigIR
 import io.github.psd2live.format.model.Deformer
 import io.github.psd2live.core.GeneratedOverrideIssue
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
 
 /** An adapter for a version of an existing algorithm; it receives the actual preceding result. */
 internal class RigModifierDefinition(
@@ -56,7 +58,11 @@ internal data class ModifierMaskRelation(val target: String, val before: List<St
     val beforeInverted: Boolean, val afterInverted: Boolean)
 internal data class ModifierContribution(val kind: String, val id: String, val change: ModifierChange, val mask: ModifierMaskRelation? = null, val physicsSlot: String? = null)
 internal data class ModifierKeyform(val kind: String, val id: String, val parameter: String, val channel: String? = null, val key: Map<String, Float>? = null)
-internal data class ModifierOverrideResult(val rig: RigIR, val issues: List<GeneratedOverrideIssue> = emptyList())
+internal data class ModifierOverrideResult(
+    val rig: RigIR,
+    val issues: List<GeneratedOverrideIssue> = emptyList(),
+    val parameterOverrides: Map<String, Parameter> = emptyMap(),
+)
 internal data class ModifierEvaluation(
     val instance: RigModifierInstance,
     val status: ModifierStatus,
@@ -132,7 +138,10 @@ internal class RigModifierEvaluator(
             }
             val overridden = applyOverrides(generated, instance, stack.overrides[instance.id].orEmpty())
             current = overridden.rig
-            validateParameters(generated, current, instance)
+            require(overridden.parameterOverrides.keys.none { it in existing }) {
+                "${instance.id} cannot override the range of a parameter provided upstream"
+            }
+            validateParameters(generated, current, instance, overridden.parameterOverrides)
             val contributions = contributions(before, current) + definition.references(before, current, instance) + declared.filter { it.id in existing && compatible(existing.getValue(it.id), current.parameters.single { actual -> actual.id == it.id }) }.map {
                 ModifierContribution("parameter", it.id, ModifierChange.REUSED)
             }
@@ -160,6 +169,14 @@ internal class RigModifierEvaluator(
             for ((parameter, provider) in instance.parameterProviders) {
                 require(provider != instance.id && stack.instances.drop(index + 1).none { it.id == provider && it.enabled }) {
                     "${instance.id} must follow $provider for parameter $parameter"
+                }
+            }
+            for (command in stack.overrides[instance.id].orEmpty()) {
+                for (provider in command["providers"]?.jsonArray.orEmpty()) {
+                    val id = provider.jsonPrimitive.content
+                    require(stack.instances.drop(index + 1).none { it.id == id && it.enabled }) {
+                        "${instance.id} must follow $id for its generated-content override"
+                    }
                 }
             }
             for (type in definition.requires) for (target in instance.targets) {
