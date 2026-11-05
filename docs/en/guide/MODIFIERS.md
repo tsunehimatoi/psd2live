@@ -4,11 +4,11 @@ Projects with an explicit stack display the Presets panel; legacy projects retai
 
 ## Create a PSD project
 
-The start page initially selects **Recommended modifiers**. The first revision includes the shared structure and body, face, eye, brow, mouth, and hair bindings. Choose **Empty modifier stack** to start with editable source meshes. Minimal, Default, Full, and custom choices generate their bindings, physics, simulations, and motions in an isolated import candidate. The complete output is compared before installing one initial revision. Entries remain independently editable; the group only records their source. Failure or cancellation installs no partial project.
+The start page initially selects **Recommended modifiers**. The first revision includes the shared structure and body, face, eye, brow, mouth, and hair bindings. Choose **Empty modifier stack** to start with editable source meshes. Minimal, Default, Full, and custom choices generate their bindings, physics, simulations, and motions in an isolated import candidate. Explicit instances are evaluated before installing one initial revision. Entries remain independently editable; the group only records their source. Failure or cancellation installs no partial project.
 
 ## Add and switch
 
-The recommended new-project preset uses the complete pre-stack modern defaults, including applicable modules, dynamics, motions and clothing simulation, then converts after an equivalence check.
+Legacy and Modern are two modifier group presets in the same project model, not project format versions. New projects directly instantiate the selected bindings, modules, dynamics, motions and clothing simulations. The stack evaluates them; no intermediate legacy model is generated or migrated.
 
 Choose meshes, then **Add Preset**. Algorithms are grouped by body area, with legacy and fitted choices together. Clothing and hair simulations appear in their respective areas and use the original automatic material and weight setup. Generic generators are under Advanced. Selection previews a dependency list; expensive evaluation runs on confirmation. Existing active instances of the same type and target scope are reused.
 

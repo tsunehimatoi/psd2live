@@ -719,6 +719,6 @@ View 从模型数据渲染 PNG，不依赖桌面截图。`canvas_rect` 给出画
 
 ### 完整预设切换与衣物模拟
 
-`modifier_catalog.baselines` 返回 `legacy`、`modern`、`empty`。`modifier_switch` 接收 `state` 和 `group`，整体替换当前预设并保留普通作者内容；走隔离候选、CAS 和单历史节点。旧／新基线使用原完整生成流程，转换前后比较完整结果。生成内容覆盖或已固化能力不能安全迁移时拒绝切换。
+`modifier_catalog.baselines` 返回 `legacy`、`modern`、`empty`。`modifier_switch` 接收 `state` 和 `group`，整体替换当前预设并保留普通作者内容；走隔离候选、CAS 和单历史节点。旧版／新版是修改器组配置，直接创建实例并由同一栈求值，不执行旧工程生成和转换。生成内容覆盖或已固化能力不能安全迁移时拒绝切换。
 
 `modifier_plan` 的 `type: "simulation"` 可配合 `preset: "clothing" | "front_hair" | "back_hair"`，调用原识别和自动权重流程。返回的模拟配置含 `automatic_weights`，权重随实例求值，作者已有同名权重优先。确认添加时后台烘焙并产生绑定及物理；计划本身不烘焙。旧 `groups` 和 `modifier_add_group` 保留追加语义以兼容已有客户端。
