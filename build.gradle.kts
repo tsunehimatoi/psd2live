@@ -500,3 +500,20 @@ afterEvaluate {
 	tasks.findByName("compileTestKotlin")?.enabled = true
 	tasks.findByName("test")?.enabled = true
 }
+
+// A standalone worker example; only the explicit task builds/distributes this source set.
+val pluginExample = sourceSets.create("pluginExample")
+kotlin.sourceSets.getByName("pluginExample").kotlin.srcDir("examples/plugins/kotlin")
+configurations[pluginExample.implementationConfigurationName].extendsFrom(configurations["implementation"])
+tasks.register<Jar>("buildPluginExample") {
+    dependsOn(tasks.named(pluginExample.classesTaskName))
+    archiveFileName.set("worker.jar")
+    destinationDirectory.set(layout.buildDirectory.dir("plugin-example"))
+    manifest { attributes["Main-Class"] = "examples.plugins.Worker" }
+    from(pluginExample.output)
+    from({ configurations[pluginExample.runtimeClasspathConfigurationName].filter {
+        it.name.startsWith("kotlin-stdlib") || it.name.startsWith("kotlinx-serialization-") || it.name.startsWith("annotations-")
+    }.map { zipTree(it) } })
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    exclude("META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA")
+}

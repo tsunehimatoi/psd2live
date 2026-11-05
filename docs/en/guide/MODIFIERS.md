@@ -91,3 +91,5 @@ Expand a motion track to edit key times, values, interpolation, and incoming/out
 Blank Layout projects and imported Layout manifests start with an explicit empty stack and editable meshes. The first generation from an empty stack uses the complete Modern baseline. Later generation adds the selected compatibility group to new targets without replacing existing bindings. MCP `rig_generate.preset_group` selects any of the six groups or `none` for plain meshes. Source-art creation uses the recommended group. Legacy documents retain their existing generation path.
 
 New CMO3 imports use an empty preset stack, retaining the imported model and physics as ordinary authored content.
+
+See [Algorithm plugins](ALGORITHM_PLUGINS.md) for installation, removal, and language integration.

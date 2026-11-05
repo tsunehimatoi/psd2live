@@ -728,3 +728,7 @@ This page documents the interface and is not grounds for raising the ratings in 
 For `modifier_plan`, `type: "simulation"` accepts `preset: "clothing" | "front_hair" | "back_hair"`. It uses the original recognition and weight setup. Returned configurations contain `automatic_weights`, evaluated with their simulation; existing authored groups take precedence. Confirmation bakes bindings and physics in the background; planning does not bake. Existing tiered `groups` and `modifier_add_group` retain additive semantics for compatibility.
 
 `modifier_catalog.presets` lists switchable preference presets (`id`, `name`, nullable `name_key`), including saved and imported JSON presets. Pass an ID as `modifier_switch.group`. `modifier_organize` accepts `state` and a complete `nodes` array: each node has `id`, nullable `parent` and nullable `name`; a named node is a folder, otherwise it references a modifier instance. Organization is a document transaction and does not change execution order; use `modifier_move` for execution order. `modifier_stack.organization` returns the layout.
+
+### Algorithm plugin management
+
+`plugin_list`, `plugin_inspect`, `plugin_install`, `plugin_enable`, `plugin_disable`, and `plugin_uninstall` do not require an open project. All except listing return process jobs. See [Algorithm plugins](../guide/ALGORITHM_PLUGINS.md) for sources, version pinning, and request formats.

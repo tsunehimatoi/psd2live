@@ -43,3 +43,8 @@ examples/star_lan/webp-output/
 
 # Everything kept only on this machine: notes, the archive of outdated docs and attempts, reference samples.
 /local/
+
+# Developer-built algorithm plugin examples
+/examples/plugins/csharp/bin/
+/examples/plugins/csharp/obj/
+/examples/plugins/rust/target/
