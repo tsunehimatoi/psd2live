@@ -42,6 +42,17 @@ class AppliedMotionFileTest {
         assertEquals("blink2", MotionClips.exportStems(listOf(clip, unnamed)).getValue(unnamed.id))
     }
 
+    @Test fun capturedJumpKeysSurviveSerializationWithoutNormalizingAwayTheJump() {
+        val keys = listOf(MotionKey(0f, 0f), MotionKey(.4f, .02f, MotionInterpolation.LINEAR),
+            MotionKey(.4f, 0f, MotionInterpolation.LINEAR), MotionKey(1f, 1f))
+        val clip = MotionClip("talk", "Talk", curves = listOf(MotionCurve("Mouth", keys)),
+            capturedRanges = mapOf("Mouth" to MotionParameterRange(0f, 1f)))
+        val restored = MotionClips.fromJson(MotionClips.toJson(clip))
+        assertEquals(clip, restored)
+        assertEquals(MotionGenerator.curve(clip.curves.single()), MotionGenerator.curve(restored.curves.single()))
+        assertEquals(3, MotionClips.fromJson(MotionClips.toJson(clip.copy(capturedRanges = emptyMap()))).curves.single().keys.size)
+    }
+
     @Test fun capturedRangesPreserveControlsUntilTheParameterActuallyChanges() {
         val parameter = org.umamo.runtime.model.Parameter(org.umamo.runtime.model.ParameterId("ParamBreath"), "Breath", 0f, 1f, 0f)
         val curve = MotionCurve("ParamBreath", listOf(MotionKey(0f, 0f, outHandle = MotionHandle(y = -0.000000167f)), MotionKey(1f, 1f)))

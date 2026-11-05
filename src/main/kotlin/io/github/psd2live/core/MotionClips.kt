@@ -386,7 +386,7 @@ object MotionClips {
 			val curve = element.jsonObject
 			MotionCurve(
 				parameterId = curve.getValue("parameter").jsonPrimitive.content,
-				keys = normalized(curve["keys"]?.jsonArray.orEmpty().map { keyElement ->
+				keys = curve["keys"]?.jsonArray.orEmpty().map { keyElement ->
 					val key = keyElement.jsonObject
 					fun handle(name: String) = key[name]?.jsonArray?.let {
 						MotionHandle(it[0].jsonPrimitive.float, it[1].jsonPrimitive.float)
@@ -400,7 +400,11 @@ object MotionClips {
 						outHandle = handle("out"),
 						inHandle = handle("in"),
 					)
-				}),
+                }.let { keys ->
+                    // Captured generated curves can contain an intentional jump at the same timestamp.
+                    if (curve.getValue("parameter").jsonPrimitive.content in o["captured_ranges"]?.jsonObject.orEmpty()) keys.sortedBy { it.time }
+                    else normalized(keys)
+                },
 			)
 		},
 		events = normalizedEvents(o["events"]?.jsonArray.orEmpty().map { element ->
