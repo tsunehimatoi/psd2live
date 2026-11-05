@@ -1,6 +1,7 @@
 package io.github.psd2live.application
 
 import io.github.psd2live.core.*
+import io.github.psd2live.core.modifier.*
 import io.github.psd2live.project.*
 import kotlinx.serialization.json.*
 import org.umamo.format.art.SourceArt
@@ -9,7 +10,9 @@ import org.umamo.format.art.SourceArt
 internal object WorkspaceGenerationEdits {
     const val GENERATE = "rig_generate"
 
-    fun generate(document: WorkspaceDocument, model: RigPreviewModel, refresh: Set<String>?): WorkspaceDocument {
+    fun generate(document: WorkspaceDocument, model: RigPreviewModel, refresh: Set<String>?, presetGroup: String = WorkspaceModifierPlan.RECOMMENDED_GROUP): WorkspaceDocument {
+        require(presetGroup == "none" || presetGroup in WorkspaceModifierPlan.groups) { "Unknown preset group: $presetGroup" }
+        if (document.rigEdits.modifierStack != null) return generatePresets(document, model, refresh, presetGroup)
         val layout = document.layout
         val generation = layout.generation
         if (!generation.generated) {
@@ -38,6 +41,43 @@ internal object WorkspaceGenerationEdits {
         )
     }
 
+    /** Explicit stacks keep authored meshes and add bindings only for targets not already captured by a structure. */
+    private fun generatePresets(document: WorkspaceDocument, model: RigPreviewModel, refresh: Set<String>?, group: String): WorkspaceDocument {
+        val generation = document.layout.generation
+        val pending = WorkspaceLayoutPreview.pendingIds(document) - document.layout.referenceLayerIds
+        val refreshed = (refresh ?: generation.refreshLayerIds).toSet()
+        refreshed.forEach { id ->
+            require(document.source.layers.any { it.id.raw == id } && id !in document.deletedLayerIds) { "Layer not found: $id" }
+            require(id !in pending && id !in document.layout.referenceLayerIds) { "Layer $id has not been generated yet" }
+        }
+        val seed = seeded(document, model)
+        val pins = model.stableLayerIdByDrawableId.entries.groupBy({ it.value }, { it.key })
+            .filterValues { it.size == 1 }.mapValues { it.value.single() }
+        val candidate = seed.copy(
+            rigEdits = seed.rigEdits.copy(splitDrawableIds = pins + seed.rigEdits.splitDrawableIds,
+                authoringJournal = seed.rigEdits.authoringJournal + RigMeshSeed.refresh(refreshed)),
+            layerOverrides = seed.layerOverrides + generation.pendingClassifications,
+            generationSource = seed.generationSource?.without(pending + refreshed),
+            meshSource = seed.meshSource?.without(pending + refreshed),
+            layout = seed.layout.copy(generation = WorkspaceGeneration.Generated.copy(
+                refreshLayerIds = generation.refreshLayerIds - refreshed)),
+        )
+        if (group == "none") return candidate
+        val stack = RigModifierStack.fromJson(requireNotNull(candidate.rigEdits.modifierStack))
+        val covered = (stack.instances.filter { it.type == RigSourceModifiers.SCAFFOLD }.flatMap { it.targets } +
+            stack.appliedCapabilities.filter { it.type == RigSourceModifiers.SCAFFOLD }.flatMap { it.targets }).mapTo(HashSet()) { it.id }
+        // Use the candidate's classifications and mesh seeds, not the stale pre-generation preview.
+        val built = PSD2LivePipeline().buildPreview(candidate.source, candidate.config())
+        val targets = built.rig.puppet.drawables.filter { it.mesh != null && it.id.raw !in covered &&
+            built.rig.ownLayerIdByDrawableId[it.id.raw]?.let { layer -> layer !in candidate.layout.referenceLayerIds } == true }
+        if (targets.isEmpty()) return candidate
+        val next = WorkspaceModifierPlan.plan(built, stack, buildJsonObject {
+            put("group", group)
+            putJsonArray("targets") { targets.forEach { addJsonObject { put("kind", "mesh"); put("id", it.id.raw) } } }
+        }).first
+        return candidate.copy(rigEdits = candidate.rigEdits.copy(modifierStack = next.toJson()))
+    }
+
     private fun seeded(document: WorkspaceDocument, model: RigPreviewModel): WorkspaceDocument {
         val pending = (WorkspaceLayoutPreview.pendingIds(document) + document.layout.generation.pendingClassifications.keys) - document.layout.referenceLayerIds
         val records = RigMeshSeed.capture(model, pending)
@@ -63,6 +103,10 @@ internal object WorkspaceGenerationEdits {
             put("type", "object"); put("additionalProperties", false)
             putJsonObject("properties") {
                 putJsonObject("state") { put("type", "string"); put("minLength", 1) }
+                putJsonObject("preset_group") {
+                    put("type", "string"); put("enum", JsonArray((WorkspaceModifierPlan.groups.keys + "none").map(::JsonPrimitive)))
+                    put("description", "Preset group for source meshes not yet captured by a binding structure. Default: modern-standard. none keeps editable meshes without adding presets.")
+                }
                 putJsonObject("refresh_geometry") {
                     put("type", "array"); put("maxItems", 1024); putJsonObject("items") { put("type", "string"); put("minLength", 1) }
                     put("description", "Generated layers to mesh again from their current pixels (their image was replaced since). Omitted: every layer whose image was replaced; [] keeps all geometry.")

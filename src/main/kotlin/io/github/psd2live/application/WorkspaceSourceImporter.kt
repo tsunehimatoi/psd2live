@@ -59,12 +59,12 @@ internal class WorkspaceSourceImporter(
             val source = LayoutManifest.source(layout)
             Prepared(source.art, source.overrides, source.userTags, materials = path.fileName.toString(), materialFolder = layout.name,
                 references = source.references)
-        }, project, layout = true)
+        }, project, layout = true, modifiers = WorkspaceInitialModifiers.EMPTY)
 
     suspend fun createArtwork(arguments: JsonObject, projectId: String?, state: String, discardUnsaved: Boolean = false,
                               initialConfig: PipelineConfig = PipelineConfig(),
                               project: (WorkspaceDocument, RigPreviewModel, String) -> Unit = { _, _, _ -> }): WorkspaceCommit<RigPreviewModel> =
-        install(projectId, state, discardUnsaved, initialConfig, "Created source artwork", { readArtwork(arguments).let { Prepared(it.first, it.second) } }, project)
+        install(projectId, state, discardUnsaved, initialConfig, "Created source artwork", { readArtwork(arguments).let { Prepared(it.first, it.second) } }, project, modifiers = WorkspaceInitialModifiers.RECOMMENDED)
 
     /** A new empty canvas of [width] x [height], not generated: materials are placed first and the rig generated later. */
     suspend fun createLayout(width: Int, height: Int, projectId: String?, state: String, discardUnsaved: Boolean = false,
@@ -72,7 +72,7 @@ internal class WorkspaceSourceImporter(
                              project: (WorkspaceDocument, RigPreviewModel, String) -> Unit = { _, _, _ -> }): WorkspaceCommit<RigPreviewModel> {
         require(width in 1..8192 && height in 1..8192 && width.toLong() * height <= 16_777_216) { "Canvas must be 1..8192 per side and at most 16 megapixels" }
         return install(projectId, state, discardUnsaved, initialConfig, "Created layout project",
-            { Prepared(WorkspaceSourceArt(width, height, emptyList(), emptyList()), emptyMap()) }, project, layout = true)
+            { Prepared(WorkspaceSourceArt(width, height, emptyList(), emptyList()), emptyMap()) }, project, layout = true, modifiers = WorkspaceInitialModifiers.EMPTY)
     }
 
     /**
@@ -132,7 +132,7 @@ internal class WorkspaceSourceImporter(
         progress(0.6f, "Rebuilding new source project")
         var built = RigBuildProfile.stage("source import: preview build (wall time)") { build(document) }
         if (modifiers == WorkspaceInitialModifiers.RECOMMENDED) {
-            val stack = WorkspaceModifierPlan.initial(built, "fitted")
+            val stack = WorkspaceModifierPlan.initial(built, WorkspaceModifierPlan.RECOMMENDED_GROUP)
             document = document.copy(rigEdits = document.rigEdits.copy(modifierStack = stack.toJson()))
             built = build(document)
         }

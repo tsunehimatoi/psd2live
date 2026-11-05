@@ -41,7 +41,8 @@ internal object WorkspaceLayoutEdits {
                 requireNotNull(requestedPoints(request)) { "Give points (keyform points) or pin (one point)" })
             WorkspaceReferenceGrid.PLACE -> WorkspaceReferenceGrid.apply(document, model, request)
             WorkspaceGenerationEdits.GENERATE -> WorkspaceGenerationEdits.generate(document, model,
-                request["refresh_geometry"]?.jsonArray?.mapTo(LinkedHashSet()) { it.jsonPrimitive.content })
+                request["refresh_geometry"]?.jsonArray?.mapTo(LinkedHashSet()) { it.jsonPrimitive.content },
+                request["preset_group"]?.jsonPrimitive?.content ?: WorkspaceModifierPlan.RECOMMENDED_GROUP)
             else -> throw IllegalArgumentException("Not a layout edit: ${operation.operation}")
         }
     }
