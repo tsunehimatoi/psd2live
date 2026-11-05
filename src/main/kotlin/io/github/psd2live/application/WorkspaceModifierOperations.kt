@@ -9,6 +9,7 @@ internal fun registerModifierOperations(registry: WorkspaceOperationRegistry, wo
     for (id in WorkspaceModifierEdits.supported) registry.register(WorkspaceOperationDefinition(id,
         "Edit explicit modifier content in one atomic history transaction. Add captures stable targets; optional IDs may be fixed before a batch. " +
             "Groups add independent instances with a common origin. Optional index inserts an item explicitly; omission appends. Omitted version selects the highest registered version. Moving changes evaluation order and invalid dependencies fail. " +
+            "modifier_organize changes presentation folders and sibling order only; evaluation order is unchanged. " +
             "Apply materializes the complete prefix, preserves the suffix and verifies the final result before committing. " +
             "Convert explicitly migrates a legacy project and commits only if the complete result matches. Other operations require an explicit stack. " +
             "modifier_switch replaces the entire preset with legacy, modern or empty while preserving ordinary authored content; incompatible authored overrides block replacement. " +
@@ -54,6 +55,7 @@ internal object WorkspaceModifierQueries {
         }
         put("state", capture.state); put("project_id", capture.projectId); put("history_node_id", capture.historyHead); put("revision", capture.revision)
         put("legacy", stack == null)
+        put("organization", RigModifierOrganization.encode(stack?.let(RigModifierOrganization::nodes).orEmpty()))
         put("next_id", stack?.nextId ?: 1L)
         put("retired_ids", JsonArray(stack?.retiredIds.orEmpty().sorted().map(::JsonPrimitive)))
         putJsonArray("entries") {

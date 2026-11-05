@@ -1130,7 +1130,7 @@ internal fun buildParameterPanelRows(
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
-private fun ParameterDragHandle(
+internal fun ParameterDragHandle(
 	onDragPress: (localPos: Offset, rowCoords: LayoutCoordinates) -> Unit,
 	rowCoords: LayoutCoordinates?,
 ) {
@@ -1161,7 +1161,7 @@ private fun ParameterDragHandle(
 }
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
-private fun ParameterFolderRow(
+internal fun ParameterFolderRow(
 	row: ParameterPanelRow.Folder,
 	renaming: Boolean,
 	renameDraft: String,
@@ -1179,6 +1179,7 @@ private fun ParameterFolderRow(
 	menuOffset: Offset,
 	onMenuOpenChange: (Boolean, Offset?) -> Unit,
 	onDragPress: (localPos: Offset, rowCoords: LayoutCoordinates) -> Unit,
+	showParameterTools: Boolean = true,
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
@@ -1276,7 +1277,7 @@ private fun ParameterFolderRow(
 			text = tr("parameters.renameFolder"),
 			onClick = { onMenuOpenChange(false, null); onStartRename() },
 		)
-		CompactMenuItem(
+		if (showParameterTools) CompactMenuItem(
 			text = tr("parameters.newChildParameter"),
 			onClick = { onMenuOpenChange(false, null); onNewChildParameter() },
 			enabled = canCreateParameter,
@@ -1285,6 +1286,7 @@ private fun ParameterFolderRow(
 			text = tr("parameters.newChildFolder"),
 			onClick = { onMenuOpenChange(false, null); onNewChildFolder() },
 		)
+		if (showParameterTools) {
 		CompactMenuSection(tr("parameters.labelColor"))
 		Row(
 			modifier = Modifier
@@ -1324,6 +1326,7 @@ private fun ParameterFolderRow(
 			},
 			active = row.group.labelColor is ParameterLabelColor.Custom,
 		)
+		}
 		CompactMenuItem(
 			text = tr("parameters.deleteFolder"),
 			onClick = { onMenuOpenChange(false, null); onDelete() },

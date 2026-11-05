@@ -72,12 +72,14 @@ internal object WorkspaceModifierSchemas {
     private fun addition(type: String) = s.obj(fields(type) + mapOf("id" to s.handle(), "version" to s.integer(1), "targets" to s.array(target, 1, 4096),
         "group" to s.handle(), "index" to s.integer(0)), setOf("type", "config", "targets"))
     val addition: JsonObject get() = s.union(types.map(::addition))
+    val organization = s.array(s.obj(mapOf("id" to s.handle(), "parent" to s.nullable(s.handle()), "name" to s.nullable(s.handle()))), 0, 8192)
     fun request(id: String): JsonObject {
         val business = when (id) {
             "modifier_add" -> addition
             "modifier_add_group" -> s.obj(mapOf("group" to s.handle(), "entries" to s.array(addition, 1, 128)))
             "modifier_update" -> s.union(types.map { type -> s.obj(fields(type) + ("id" to s.handle())) })
             "modifier_enable" -> s.obj(mapOf("id" to s.handle(), "enabled" to s.boolean()))
+            "modifier_organize" -> s.obj(mapOf("nodes" to organization))
             "modifier_move" -> s.obj(mapOf("id" to s.handle(), "index" to s.integer(0)))
             "modifier_convert" -> s.obj(emptyMap())
             "modifier_switch" -> s.obj(mapOf("group" to s.choices(*WorkspacePresetBaseline.ids.toTypedArray())))
@@ -111,7 +113,7 @@ internal object WorkspaceModifierSchemas {
         "entries" to s.array(s.union(types.map { type ->
             val fields = fields(type, summary = true) + observedFields + if (type == "simulation") mapOf("bake" to WorkspaceSimulationResultSchemas.bakeSummary) else emptyMap()
             s.obj(fields, fields.keys - "group" - "bake")
-        })), "retired_ids" to s.array(s.handle()), "next_id" to s.integer(1)))
+        })), "retired_ids" to s.array(s.handle()), "next_id" to s.integer(1), "organization" to organization))
     val planRequest: JsonObject get() = s.union(listOf(
         s.obj(mapOf("type" to s.choices(*WorkspaceModifierPlan.sourceTypes.toTypedArray()), "targets" to s.array(target, 1, 4096))),
         s.obj(mapOf("group" to s.choices(*WorkspaceModifierPlan.groups.keys.toTypedArray()), "targets" to s.array(target, 1, 4096)))) +

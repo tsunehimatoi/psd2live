@@ -9,7 +9,7 @@ import kotlinx.serialization.json.*
 /** Pure candidates shared by GUI commands, MCP jobs and atomic document batches. */
 internal object WorkspaceModifierEdits {
     val supported = setOf("modifier_add", "modifier_add_group", "modifier_update", "modifier_enable",
-        "modifier_remove", "modifier_move", "modifier_apply", "modifier_convert", "modifier_switch")
+        "modifier_remove", "modifier_move", "modifier_organize", "modifier_apply", "modifier_convert", "modifier_switch")
 
     fun apply(operation: WorkspaceDocumentOperation, document: WorkspaceDocument, model: RigPreviewModel,
               work: WorkspaceRasterWork = WorkspaceRasterWork.Direct): WorkspaceDocument {
@@ -20,6 +20,11 @@ internal object WorkspaceModifierEdits {
             "Convert legacy presets before editing a modifier stack"
         })
         val request = operation.request
+        if (operation.operation == "modifier_organize") {
+            val nodes = RigModifierOrganization.decode(request.getValue("nodes").jsonArray)
+            RigModifierOrganization.validate(stack, nodes)
+            return document.copy(rigEdits = document.rigEdits.copy(modifierStack = stack.copy(organization = nodes).toJson()))
+        }
         val id = request["id"]?.jsonPrimitive?.content
         val next = when (operation.operation) {
             "modifier_add" -> add(stack, request, model)

@@ -81,6 +81,8 @@ internal data class RigModifierStack(
     val retiredIds: Set<String> = emptySet(),
     val appliedCapabilities: List<ModifierCapability> = emptyList(),
     val nextId: Long = 1,
+    /** Presentation folders and sibling order never change evaluation order. */
+    val organization: List<ModifierPanelNode>? = null,
 ) {
     init {
         require(nextId > 0) { "Invalid modifier ID sequence" }

@@ -251,6 +251,13 @@ internal class WorkspacePreviewBuilder {
             val config = if ("drawOrderOverrides" in document.settings) decoded
                 else decoded.copy(drawOrderOverrides = legacyDrawOrders)
             if (config.rigEdits.modifierStack != null || current?.config?.rigEdits?.modifierStack != null) {
+                val before = current?.config?.rigEdits?.modifierStack
+                val after = config.rigEdits.modifierStack
+                // Folder placement is document content, but it does not change evaluation or generated geometry.
+                if (current != null && before != null && after != null &&
+                    current.analysis.source == document.source && before - "organization" == after - "organization" &&
+                    config.copy(rigEdits = config.rigEdits.copy(modifierStack = before)) == current.config)
+                    return@runInterruptible current.copy(config = config)
                 if (pipeline.modifierCache.snapshot == null) current?.modifierEvaluation?.let { pipeline.modifierCache.snapshot = it }
                 return@runInterruptible pipeline.buildPreview(document.source, config, progress, current?.atlas)
             }

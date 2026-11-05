@@ -112,6 +112,29 @@ class WorkspaceModifierCommandsTest {
         assertTrue(added.all { entry -> entry.getValue("targets").jsonArray.map { it.jsonObject.getValue("id").jsonPrimitive.content } == targets.drop(1).map { it.id } })
     }
 
+    @Test fun organizingPresetsPreservesEvaluationAndReplaysAsDocumentContent(): Unit = runBlocking {
+        val f = fixture()
+        val clip = MotionClip("source", "Motion", duration = 1f, curves = listOf(MotionCurve("ParamInput", listOf(MotionKey(0f, 0f)))))
+        val stack = RigModifierStack().add("motion", 1, listOf(f.target), MotionClips.toJson(clip), id = "first")
+            .add("motion", 1, listOf(f.target), MotionClips.toJson(clip.copy(id = "second")), id = "second")
+        val doc = f.now.document.copy(rigEdits = f.now.document.rigEdits.copy(modifierStack = stack.toJson()))
+        f.runtime.install(f.now.state, "motion", doc, f.builder.build(doc))
+        val before = f.now
+        val nodes = listOf(ModifierPanelNode("folder/custom", name = "Custom"),
+            ModifierPanelNode("second", "folder/custom"), ModifierPanelNode("first", "folder/custom"))
+        f.edit("modifier_organize", buildJsonObject { put("nodes", RigModifierOrganization.encode(nodes)) })
+        val organized = f.now
+        assertSame(before.model.rig, organized.model.rig, "Organization must not rebuild generated content")
+        assertEquals(stack.instances, RigModifierStack.fromJson(organized.document.rigEdits.modifierStack!!).instances)
+        assertEquals(nodes, RigModifierStack.fromJson(organized.document.rigEdits.modifierStack!!).organization)
+        val cold = f.builder.build(organized.document)
+        assertEquals(RigIrCompiler.compile(before.model), RigIrCompiler.compile(cold))
+        f.runtime.checkout(f.now.projectId, f.now.state, before.historyHead)
+        assertNull(RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).organization)
+        f.runtime.checkout(f.now.projectId, f.now.state, organized.historyHead)
+        assertEquals(nodes, RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).organization)
+    }
+
     private suspend fun fixture(withWarp: Boolean = false, layerCount: Int = 1,
                                 additionalParameters: List<RigParameterEdit> = emptyList(), physicsOrder: List<String> = emptyList()): Fixture {
         val source = SyntheticProject(temp.resolve("source"), layerCount, 12, 1).tree.head().snapshot

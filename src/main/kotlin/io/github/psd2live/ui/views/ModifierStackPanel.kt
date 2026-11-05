@@ -6,20 +6,12 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.foundation.hoverable
-import androidx.compose.foundation.interaction.collectIsHoveredAsState
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.VerticalScrollbar
-import androidx.compose.foundation.rememberScrollbarAdapter
 import io.github.psd2live.ui.views.texture.FloatingMenuRow
 import io.github.psd2live.ui.views.texture.FloatingMenuSection
 import io.github.psd2live.ui.views.texture.FloatingMenuDivider
 import io.github.psd2live.ui.views.tooloptions.GlidingColumn
-import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.Divider
 import androidx.compose.material.Text
@@ -29,11 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.ExperimentalComposeUiApi
-import androidx.compose.ui.graphics.rememberGraphicsLayer
-import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.input.pointer.*
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -44,6 +32,7 @@ import io.github.psd2live.i18n.tr
 import io.github.psd2live.ui.components.*
 import io.github.psd2live.ui.state.PSD2LiveState
 import io.github.psd2live.ui.state.PSD2LiveViewModel
+import io.github.psd2live.ui.state.availability
 import io.github.psd2live.ui.theme.*
 import kotlinx.serialization.json.*
 
@@ -81,19 +70,12 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
     var page by remember { mutableIntStateOf(0) }
     var editOrder by rememberSaveable { mutableStateOf(false) }
     val selected = stack.instances.firstOrNull { it.id == selectedId } ?: stack.instances.firstOrNull()
-    val bounds = remember { mutableStateMapOf<String, ParamItemLayout>() }
-    val drag = remember { ParameterDragState() }
-    val preview = rememberGraphicsLayer()
-    val scroll = rememberScrollState()
-    var container by remember { mutableStateOf<LayoutCoordinates?>(null) }
-    var expected by remember { mutableStateOf<String?>(null) }
     val enabled = !state.isBusy && !state.workspaceEditBusy && !state.editorDraftBusy
-    LaunchedEffect(stack, enabled) { drag.clear() }
     var listRatio by rememberSaveable { mutableFloatStateOf(0.38f) }
     val density = LocalDensity.current
     Column(Modifier.fillMaxSize()) {
         val labels = listOf(tr("modifier.add"), tr("modifier.switch"))
-        PanelToolbar(labels = labels, iconCount = 2) { labelsShown ->
+        PanelToolbar(labels = labels, iconCount = 3) { labelsShown ->
             Box {
                 PanelToolButton(labels[0], labelsShown > 0, { vm.openModifierAddition() }, enabled, labels[0]) { IconAdd() }
                 if (vm.modifierAddition?.group == null && vm.modifierAddition != null) ModifierAdditionMenu(state, vm)
@@ -103,87 +85,14 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                 if (vm.modifierAddition?.group != null) ModifierAdditionMenu(state, vm)
             }
         }
-        Row(Modifier.fillMaxWidth().padding(horizontal = Spacing.Margin), verticalAlignment = Alignment.CenterVertically) {
-            CompactCheckbox(editOrder, { editOrder = it; drag.clear() }, enabled = enabled)
-            Spacer(Modifier.width(Spacing.Gap))
-            Text(tr("modifier.executionOrder"), style = LocalToolTypography.current.caption, color = colors.textMuted)
-        }
+        CompactTabBar(listOf(tr("modifier.mode.settings"), tr("modifier.mode.ordering")), if (editOrder) 1 else 0, { editOrder = it == 1 })
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val extent = with(density) { maxWidth.toPx() }.coerceAtLeast(1f)
             val minimum = (with(density) { 120.dp.toPx() } / extent).coerceAtMost(0.4f)
             val maximum = 1f - (with(density) { 180.dp.toPx() } / extent).coerceAtMost(0.4f)
             Row(Modifier.fillMaxSize()) {
             Column(Modifier.weight(listRatio.coerceIn(minimum, maximum)).fillMaxHeight()) {
-                    if (stack.instances.isEmpty()) Text(tr("modifier.empty"), color = colors.textMuted, style = LocalToolTypography.current.caption,
-                        modifier = Modifier.padding(Spacing.Margin))
-                    Box(Modifier.fillMaxSize().onGloballyPositioned { container = it }
-                        .onPointerEvent(PointerEventType.Move) { event ->
-                            event.changes.firstOrNull()?.let { drag.onMove(it.position, bounds.values) }
-                        }
-                        .onPointerEvent(PointerEventType.Release) { event ->
-                            if (event.button == PointerButton.Primary && drag.isPressed) drag.onRelease { item, target ->
-                                val remaining = stack.instances.filterNot { it.id == item.id }
-                                val destination = when (target) {
-                                    is ParamDropTarget.Before -> remaining.indexOfFirst { it.id == target.id }.takeIf { it >= 0 }
-                                    is ParamDropTarget.Append -> remaining.size
-                                    else -> null
-                                }
-                                if (enabled && destination != null && destination != stack.index(item.id))
-                                    vm.editModifier("modifier_move", buildJsonObject { put("id", item.id); put("index", destination) }, expected)
-                            }
-                        }) {
-                        Box(Modifier.fillMaxWidth().verticalScroll(scroll).padding(end = Spacing.Margin)) {
-                            Column(Modifier.fillMaxWidth()) {
-                                stack.instances.forEach { instance -> key(instance.id) {
-                                    val name = instance.config["name"]?.jsonPrimitive?.contentOrNull ?: modifierName(instance.type)
-                                    val layout = ParamItemLayout(instance.id, instance.id, "modifier", name, null, false, emptySet(), 0f, 0f)
-                                    var labelCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
-                                    val status = reports[instance.id]?.get("status")?.jsonPrimitive?.content ?: "loading"
-                                    val interaction = remember { MutableInteractionSource() }
-                                    val hovered by interaction.collectIsHoveredAsState()
-                                    DisposableEffect(instance.id) { onDispose { bounds.remove(instance.id) } }
-                                    Row(Modifier.fillMaxWidth().height(24.dp)
-                                        .then(if (editOrder) Modifier.parameterDragRow(layout, drag, bounds.values, preview) else Modifier)
-                                        .onGloballyPositioned { row ->
-                                            val parent = container
-                                            if (parent != null && parent.isAttached && row.isAttached) {
-                                                val top = parent.localPositionOf(row, Offset.Zero).y
-                                                bounds[instance.id] = layout.copy(top = top, bottom = top + row.size.height)
-                                            }
-                                        }
-                                        .background(when { selected?.id == instance.id -> colors.selection; hovered && !drag.isDragging -> colors.controlHover; else -> Color.Transparent })
-                                        .hoverable(interaction)
-                                        .clickable(interactionSource = interaction, indication = null) {
-                                            if (drag.suppressClick) drag.suppressClick = false
-                                            else { selectedId = instance.id; page = 0 }
-                                        }.padding(horizontal = Spacing.Gap), verticalAlignment = Alignment.CenterVertically) {
-                                        CompactCheckbox(instance.enabled, { value ->
-                                            vm.editModifier("modifier_enable", buildJsonObject { put("id", instance.id); put("enabled", value) })
-                                        }, enabled = enabled)
-                                        Spacer(Modifier.width(Spacing.Gap))
-                                        Text(name, style = LocalToolTypography.current.body.copy(fontSize = 11.sp),
-                                            color = if (instance.enabled) colors.textPrimary else colors.textMuted,
-                                            maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f).handCursor().onGloballyPositioned { labelCoords = it }.onPointerEvent(PointerEventType.Press) { event ->
-                                                val row = labelCoords; val parent = container
-                                                if (enabled && event.button == PointerButton.Primary && row != null && parent != null && row.isAttached && parent.isAttached) {
-                                                    bounds[instance.id]?.let { item ->
-                                                        drag.onPress(item, parent.localPositionOf(row, event.changes.first().position))
-                                                        selectedId = instance.id; expected = vm.modifierEditState()
-                                                    }
-                                                }
-                                            })
-                                        if (status != "active") Text(tr("modifier.status.$status"), style = LocalToolTypography.current.caption,
-                                            color = if (status == "missing_dependency") colors.warning else colors.textMuted)
-                                        CompactIconButton({ vm.editModifier("modifier_remove", buildJsonObject { put("id", instance.id) }) },
-                                            enabled = enabled, tooltip = tr("modifier.remove"), size = 20.dp) { IconClose() }
-                                    }
-                                } }
-                            }
-                        }
-                        VerticalScrollbar(rememberScrollbarAdapter(scroll), Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(6.dp))
-                        ParameterDragPreview(drag, preview)
-                    }
+                ModifierStackList(stack, reports, vm, editOrder, enabled, selected?.id) { selectedId = it; page = 0 }
             }
             Box(Modifier.panelDivider(horizontal = true) { delta ->
                 listRatio = (listRatio.coerceIn(minimum, maximum) + delta / extent).coerceIn(minimum, maximum)
@@ -477,6 +386,7 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
     }
     val available = if (groups) WorkspaceModifierPlan.groupCatalog.map { it.id }
         else if (dialog.targets.all { it.kind == "mesh" }) WorkspaceModifierPlan.types.filterNot { it == RigSourceModifiers.SCAFFOLD } else listOf("swing")
+    val visibleAvailable = available.filter { type -> groups || state.previewModel?.let { !dialog.availability(it, type).hidden } != false }
     fun category(type: String): String = when {
         groups -> type.substringBefore('-')
         type == RigSourceModifiers.SCAFFOLD -> "structure"
@@ -491,8 +401,8 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
         id in WorkspaceModifierPlan.nativeTypes -> tr("modifier.type.$id")
         else -> tr("settings.rig.area.$id")
     }
-    val categories = (available.map(::category) + "outfit").distinct().sortedBy { it == "advanced" }
-    var selectedCategory by remember { mutableStateOf(category(dialog.group ?: dialog.type ?: available.first())) }
+    val categories = (visibleAvailable.map(::category) + listOf("hair", "eye", "expression", "outfit")).distinct().sortedBy { it == "advanced" }
+    var selectedCategory by remember { mutableStateOf(category(dialog.group ?: dialog.type ?: visibleAvailable.firstOrNull() ?: "simulation")) }
     PressMenu(expanded = true, press = Offset.Zero,
         onDismissRequest = { if (!dialog.committing) vm.dismissModifierAddition() }, width = 440.dp) {
         Row(Modifier.fillMaxWidth().heightIn(max = 340.dp)) {
@@ -504,37 +414,41 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                     enabled = !dialog.committing)
             }
             key(selectedCategory) {
-                val rows = mutableListOf<Triple<String, () -> Unit, Boolean>>()
-                if (selectedCategory == "outfit") rows += Triple(tr("modifier.clothing.simulation"),
-                    { vm.previewModifierAddition("simulation", null, preset = "clothing") }, false)
+                data class AddRow(val label: String, val action: () -> Unit, val selected: Boolean, val count: Int)
+                val rows = mutableListOf<AddRow>()
+                fun add(type: String, preset: String?, label: String, selected: Boolean = false, action: () -> Unit) {
+                    val availability = state.previewModel?.let { dialog.availability(it, type, preset) }
+                    if (availability?.hidden != true) rows += AddRow(label, action, selected, availability?.existingCount ?: 0)
+                }
+                if (selectedCategory == "outfit") add("simulation", "clothing", tr("modifier.clothing.simulation")) { vm.previewModifierAddition("simulation", null, preset = "clothing") }
                 if (selectedCategory == "hair") for (preset in listOf("front_hair", "back_hair")) {
-                    rows += Triple(tr("modifier.simulation.$preset"),
-                        { vm.previewModifierAddition("simulation", null, preset = preset) }, false)
+                    add("simulation", preset, tr("modifier.simulation.$preset")) { vm.previewModifierAddition("simulation", null, preset = preset) }
                 }
                 if (!groups && selectedCategory in setOf("hair", "eye")) {
                     WorkspaceModifierPlan.physicsPresets().filter { preset ->
                         (preset.id == io.github.psd2live.core.PhysicsGenerator.EYE_JELLY_ID) == (selectedCategory == "eye")
                     }.forEach { preset ->
-                        rows += Triple(preset.name, { vm.previewModifierAddition("physics", null, preset = preset.id) }, false)
+                        add("physics", preset.id, preset.name) { vm.previewModifierAddition("physics", null, preset = preset.id) }
                     }
                 }
                 if (!groups && selectedCategory == "expression") {
                     val presets = remember(state.previewModel) { state.previewModel?.let(WorkspaceModifierPlan::selectableMotionPresets).orEmpty() }
                     presets.forEach { preset ->
                         val name = preset.removePrefix(WorkspaceModifierPlan.NATURAL_MOTION_PREFIX)
-                        rows += Triple(if (name == preset) builtinMotionTitle(name) else "${tr("settings.rig.base.motion.natural")} · ${builtinMotionTitle(name)}",
-                            { vm.previewModifierAddition("motion", null, preset = preset) }, false)
+                        add("motion", preset, if (name == preset) builtinMotionTitle(name) else "${tr("settings.rig.base.motion.natural")} · ${builtinMotionTitle(name)}") { vm.previewModifierAddition("motion", null, preset = preset) }
                     }
                 }
-                available.filter { category(it) == selectedCategory }.forEach { type ->
-                    rows += Triple(if (groups) tr("modifier.richness.${type.substringAfter('-')}") else modifierName(type),
-                        { vm.previewModifierAddition(if (groups) null else type, if (groups) type else null) },
-                        dialog.plan != null && (dialog.group ?: dialog.type) == type)
+                visibleAvailable.filter { category(it) == selectedCategory }.forEach { type ->
+                    add(type, null, if (groups) tr("modifier.richness.${type.substringAfter('-')}") else modifierName(type),
+                        dialog.plan != null && (dialog.group ?: dialog.type) == type) {
+                        vm.previewModifierAddition(if (groups) null else type, if (groups) type else null)
+                    }
                 }
                 GlidingColumn(Modifier.weight(1f).verticalScroll(rememberScrollState()), rows.size,
                     highlights = { !dialog.committing }) { index ->
-                    val (label, action, selected) = rows[index]
-                    FloatingMenuRow(label, action, selected = selected, bar = false, enabled = !dialog.committing)
+                    val (label, action, selected, count) = rows[index]
+                    FloatingMenuRow(label, action, selected = selected, bar = false, enabled = !dialog.committing,
+                        trailing = if (count > 0) tr("modifier.add.existing", count) else null)
                 }
             }
         }
