@@ -113,6 +113,8 @@
 
 动作修改器的 `config` 支持可选 `parameter_roles`，将运行时角色名映射到参数 ID 数组。眨眼添加计划填写 `EyeBlink`。求值会检查参数引用，并拒绝同一角色的不兼容定义。查询在关系贡献中报告变化；应用前缀后角色作为普通模型元数据保存。
 
+固化后的动作查询可返回 `captured_ranges: {参数ID: {min, max, repeat}}`，用于保留固化时的曲线控制点。它随参数重命名、删除和范围编辑更新，并进入保存恢复。
+
 
 物理规划可用 `preset: "PhysicsHairFront"`、`"PhysicsHairBack"` 或 `"PhysicsEyeJelly"` 捕获旧规则。动作规划可用 `natural:Idle`、`natural:Blink`、`natural:Nod`、`natural:Shake` 和 `natural:Talk` 捕获自然动作。物理预设和显式选择的自然动作会把缺失的基础绑定列入计划。两者都返回可编辑配置。 当参数由当前已求值的修改器创建时，消费者可固定该提供者。查询的 `parameter_providers` 返回参数 ID 到提供者实例 ID 的映射。
 

@@ -1,6 +1,6 @@
 # Modifier stack
 
-This entry point is still in development. Projects with an explicit stack display the Modifier Stack panel; legacy projects retain their preset panel when opened. Use **Convert to Modifier Stack** to request conversion. Conversion has been verified for ordinary mesh projects. Auto-bound projects can still fail the result comparison. Disabled legacy simulations stay disabled after conversion. An enabled simulation needs an existing bake that matches the candidate inputs. Source bindings can be added, adjusted, reordered, and applied. Swing, physics groups, simulation, and generated motion share this addition flow and have in-stack controls. Legacy shortcut migration and tutorial updates remain unfinished. The new advanced controls still need visual verification.
+This entry point is still in development. Projects with an explicit stack display the Modifier Stack panel; legacy projects retain their preset panel when opened. Use **Convert to Modifier Stack** to request conversion. Conversion has been verified for ordinary mesh projects and a basic legacy-binding fixture. Other auto-bound projects can still fail the result comparison. Disabled legacy simulations stay disabled after conversion. An enabled simulation needs an existing bake that matches the candidate inputs. Source bindings can be added, adjusted, reordered, and applied. Swing, physics groups, simulation, and generated motion share this addition flow and have in-stack controls. Legacy shortcut migration and tutorial updates remain unfinished. The new advanced controls still need visual verification.
 
 ## Create a PSD project
 
@@ -70,3 +70,5 @@ When adding physics, choose front hair sway, back hair sway, or eye jelly. If re
 `modifier_catalog` lists algorithms; `modifier_stack` reports captured state and actual contributions. `modifier_plan` plans source bindings and prerequisites, and accepts native swing, physics, simulation, and motion configurations. Dry-run its `group` and `entries` with `workspace_preview_regeneration`, then submit `modifier_add_group` against the same `state` to reproduce the GUI addition flow. See the [MCP reference](../agent/MCP_AUTHORING.md).
 
 Blink motion modifiers also contribute the EyeBlink runtime parameter role. The contribution appears under relations and survives applying the modifier as ordinary model metadata.
+
+Applying a motion modifier preserves its file name and exact curve controls. Later parameter-range edits constrain the ordinary clip to the new range; saving, reopening or rebuilding alone does not alter the curve.

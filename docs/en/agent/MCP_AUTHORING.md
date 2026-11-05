@@ -111,6 +111,8 @@ Intent tools themselves have no dry run. `author_compile` compiles the same inte
 
 Motion modifier `config` accepts optional `parameter_roles`, a map from runtime role names to parameter ID arrays. Blink plans populate `EyeBlink`. Evaluation validates referenced parameters and rejects incompatible definitions of the same role. Queries report changes under relations; applying a prefix persists the roles as ordinary model metadata.
 
+Materialized motion queries may return `captured_ranges: {parameterId: {min, max, repeat}}`, preserving the curve controls captured at application. These references follow parameter renames, deletions and range edits and persist with the project.
+
 
 Physics planning accepts `preset: "PhysicsHairFront"`, `"PhysicsHairBack"`, or `"PhysicsEyeJelly"` for the original rules. Motion planning accepts `natural:Idle`, `natural:Blink`, `natural:Nod`, `natural:Shake`, and `natural:Talk`. Physics presets and explicitly selected natural motions include missing base bindings in the plan. Both return editable configurations. When an evaluated modifier created a parameter, the consumer can pin that provider. The query field `parameter_providers` maps parameter IDs to provider instance IDs.
 
