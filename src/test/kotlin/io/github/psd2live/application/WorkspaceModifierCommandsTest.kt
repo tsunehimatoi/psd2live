@@ -26,6 +26,19 @@ class WorkspaceModifierCommandsTest {
         }
     }
 
+    @Test fun newSimulationFromThePanelCreatesAModifier(): Unit = runBlocking {
+        val f = fixture()
+        val mesh = f.now.model.rig.puppet.drawables.single()
+        val count = mesh.mesh!!.vertexCount
+        val source = RigSimEdit("new-body", "Body", SimKind.CLOTH, listOf(mesh.id.raw))
+        val axis = SimBakedAxis("Mode", floatArrayOf(-1f, 0f, 1f), mapOf(mesh.id.raw to listOf(FloatArray(count * 2) { -1f }, FloatArray(count * 2), FloatArray(count * 2) { 1f })))
+        val edit = source.copy(bake = SimBakeResult(SimBake.fingerprint(f.now.model.rig.puppet, source), mapOf(mesh.id.raw to count), emptyList(), listOf(SimBakedMode(axis, 1f, 1f))))
+        f.edit("simulation_put", edit.toJson())
+        assertTrue(f.now.document.rigEdits.simEdits.isEmpty())
+        assertNotNull(SimulationCatalog.entries(f.now.document.rigEdits).single().bake)
+        assertEquals("new-body", RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.single().id)
+    }
+
     private suspend fun fixture(withWarp: Boolean = false, layerCount: Int = 1,
                                 additionalParameters: List<RigParameterEdit> = emptyList(), physicsOrder: List<String> = emptyList()): Fixture {
         val source = SyntheticProject(temp.resolve("source"), layerCount, 12, 1).tree.head().snapshot

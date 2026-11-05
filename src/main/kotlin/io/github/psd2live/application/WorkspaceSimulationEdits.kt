@@ -113,6 +113,14 @@ internal object WorkspaceSimulationEdits {
         SimulationCatalog.owner(document.rigEdits, id)?.let {
             return modifier(WorkspaceDocumentOperation("simulation_put", arguments), document, preview, it, work)
         }
+        if (document.rigEdits.modifierStack != null) {
+            val source = RigSimEdit.fromJson(arguments)
+            SimAuthoring.validate(preview.rig.puppet, source)
+            val stack = RigModifierStack.fromJson(document.rigEdits.modifierStack)
+            val added = stack.add("simulation", 1, source.targets.map { ModifierTarget("mesh", it) }, source.toJson(), id = id)
+            val candidate = document.copy(rigEdits = document.rigEdits.copy(modifierStack = added.toJson()))
+            return modifier(WorkspaceDocumentOperation("simulation_put", arguments), candidate, preview, added.instances.last(), work)
+        }
         val put = SimAuthoring.put(document.rigEdits, preview.rig.puppet, arguments)
         val (overlay, failure) = work.run(id) { progress, cancelled ->
             SimAuthoring.rebaked(put, SimAuthoring.AuthoredRigs(preview::authoredPuppet), id, progress, cancelled, autoBake)

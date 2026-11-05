@@ -900,7 +900,7 @@ class PSD2LiveViewModel : AutoCloseable {
      * bake then follows in the background as its own node.
      */
     internal fun putSimulation(edit: io.github.psd2live.core.sim.RigSimEdit) {
-        if (io.github.psd2live.core.sim.SimulationCatalog.owner(_state.value.rigEdits, edit.id) != null) {
+        if (_state.value.rigEdits.modifierStack != null) {
             editModifier("simulation_put", edit.toJson())
             return
         }
