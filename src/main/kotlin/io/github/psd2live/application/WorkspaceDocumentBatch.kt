@@ -15,9 +15,12 @@ internal fun batchMemberSchemas(registry: WorkspaceOperationRegistry): Map<Strin
     WorkspaceDocumentEdits.supported.sorted().associateWith { id ->
         val published = registry.definition(id).requestSchema
         val contextFields = setOf("state", "project_id", "request_id")
-        JsonObject(published + mapOf(
-            "properties" to JsonObject(published.getValue("properties").jsonObject - contextFields),
-            "required" to JsonArray(published["required"]?.jsonArray.orEmpty().filter { it.jsonPrimitive.content !in contextFields })))
+        fun business(schema: JsonObject): JsonObject = JsonObject(schema + buildMap {
+            put("properties", JsonObject(schema.getValue("properties").jsonObject - contextFields))
+            put("required", JsonArray(schema["required"]?.jsonArray.orEmpty().filter { it.jsonPrimitive.content !in contextFields }))
+            schema["oneOf"]?.jsonArray?.let { put("oneOf", JsonArray(it.map { branch -> business(branch.jsonObject) })) }
+        })
+        business(published)
     }
 
 /**
@@ -92,7 +95,7 @@ internal fun registerDocumentBatch(registry: WorkspaceOperationRegistry, port: W
         }
     }
     registry.register(WorkspaceOperationDefinition("workspace_preview_regeneration",
-        "Dry-run 1..128 document operations - typically ones that regenerate the rig: settings_update, layer_classify, source splits, rig_update_generation - with the same ordered candidate preparation and rebuild as workspace_apply_edits, without publishing state, history or resources. Reports the checkpoints the commit would add to the journal (kind regeneration: what the generators make now merged onto the user's rig, with the issues the merge could not carry over cleanly; kind materialized: the authored rig checkpointed before new entries) and the object handles the candidate adds and removes. Asset layer operations are excluded. Returns a read-only job.",
+        "Dry-run 1..128 document operations - typically ones that regenerate the rig: settings_update, layer_classify, source splits, rig_update_generation - with the same ordered candidate preparation and rebuild as workspace_apply_edits, without publishing state, history or resources. Reports the checkpoints the commit would add to the journal (kind regeneration: what the generators make now merged onto the user's rig, with the issues the merge could not carry over cleanly; kind materialized: the authored rig checkpointed before new entries) and the object handles the candidate adds and removes. For explicit stacks, modifiers reports the candidate entries, dependency status, actual contributions and override conflicts before committing. Asset layer operations are excluded. Returns a read-only job.",
         schema(variants.filter { it.getValue("properties").jsonObject.getValue("operation").jsonObject.getValue("const").jsonPrimitive.content !in WorkspaceAssetLayerEdits.supported }),
         WorkspaceOperationKind.QUERY, jobBacked = true, workspaceBound = true,
         resultSchema = requireNotNull(WorkspaceJobResultSchemas.operationOutput("workspace_preview_regeneration")),

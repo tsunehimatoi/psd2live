@@ -1,5 +1,7 @@
 package io.github.psd2live.application
 
+import io.github.psd2live.core.PhysicsCatalog
+
 import io.github.psd2live.core.*
 import io.github.psd2live.project.*
 import kotlinx.serialization.json.*
@@ -185,6 +187,8 @@ internal class WorkspaceReadSession(
             document.source.widthPx, document.source.heightPx)
     }
     override fun rigModules(): JsonObject = read.runtime.capture.let { RigModuleCatalog.describe(it?.document, it?.model) }
+    override fun modifierStack(): JsonObject = WorkspaceModifierQueries.describe(capture())
+    override fun modifierPlan(request: JsonObject): JsonObject = WorkspaceModifierPlan.prepare(capture(), request)
     override fun generatedOverrideIssues(): List<GeneratedOverrideIssue> = read.runtime.capture?.model?.rig?.overrideIssues.orEmpty()
     override fun supersededEntryNotes(): List<SupersededEntryNote> = read.runtime.capture?.model?.rig?.supersededEntryNotes.orEmpty()
     override fun seeThroughNotes(): List<Pair<String, String>> =
@@ -508,6 +512,6 @@ internal class WorkspaceReadSession(
         val captured = capture()
         val config = captured.document.config()
         return io.github.psd2live.core.PhysicsSimulation.run(WorkspaceDocumentEdits.physicsCatalog(captured.document, captured.model),
-            captured.model.rig.puppet.parameters, arguments, config.generatePhysics, captured.document.rigEdits.physicsFps, progress, cancelled)
+            captured.model.rig.puppet.parameters, arguments, if (config.rigEdits.modifierStack != null) PhysicsCatalog.active(captured.model).isNotEmpty() else config.generatePhysics, captured.document.rigEdits.physicsFps, progress, cancelled)
     }
 }

@@ -80,7 +80,7 @@ internal object WorkspaceSkeletonMotionEdits {
                 val source = builtin?.let { MotionClips.overrideOf(current, it) ?: MotionPresets.clip(id, it, skeleton,
                     (presets[it] ?: MotionPresetSettings()).copy(deleted = false), renames) }
                 val name = request["name"]?.jsonPrimitive?.content ?: builtin ?: "New motion"
-                val clip = source?.copy(id = id, name = MotionClips.uniqueName(current, name), builtin = null, enabled = true)
+                val clip = source?.copy(id = id, name = MotionClips.uniqueName(current, name), builtin = null, enabled = true, fileStem = null)
                     ?: MotionClip(id, MotionClips.uniqueName(current, name))
                 current + clip
             }
@@ -88,7 +88,7 @@ internal object WorkspaceSkeletonMotionEdits {
                 val source = requireClip(current, request.requiredText("id"))
                 val id = request["new_id"]?.jsonPrimitive?.content ?: MotionClips.newId(current)
                 require(current.none { it.id == id }) { "Motion ID already exists" }
-                current + source.copy(id = id, name = MotionClips.uniqueName(current, source.name), builtin = null)
+                current + source.copy(id = id, name = MotionClips.uniqueName(current, source.name), builtin = null, fileStem = null)
             }
             "rename" -> {
                 val source = requireClip(current, request.requiredText("id"))
@@ -110,7 +110,9 @@ internal object WorkspaceSkeletonMotionEdits {
                 current.map { if (it.id == source.id) updated else it }
             }
             "put" -> {
-                val clip = MotionClips.fromJson(request.getValue("clip").jsonObject)
+                val fields = request.getValue("clip").jsonObject
+                val parsed = MotionClips.fromJson(fields)
+                val clip = if ("file" in fields) parsed else parsed.copy(fileStem = current.singleOrNull { it.id == parsed.id }?.fileStem)
                 current.filterNot { it.id == clip.id } + clip
             }
             "delete" -> {

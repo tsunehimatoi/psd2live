@@ -60,6 +60,13 @@ internal class WorkspaceSettingsIntent private constructor(
         private val blink = setOf(StandardParameters.EYE_L_OPEN, StandardParameters.EYE_R_OPEN)
 
         fun parse(document: WorkspaceDocument, model: RigPreviewModel, changes: JsonObject): WorkspaceSettingsIntent {
+            if (document.rigEdits.modifierStack != null) {
+                val controlled = WorkspaceSettingsDraft.presetDefaults().keys +
+                    setOf("rig", "meshOnly", "generateDeformers", "hairSimulationFront", "hairSimulationBack")
+                require(changes.keys.none { it in controlled }) {
+                    "This project uses a modifier stack; edit preset content through modifier operations"
+                }
+            }
             val before = document.rawConfig()
             var settings = patchSettings(document.settings, changes, document.rigEdits.importedCmo3 != null)
             val after = WorkspaceSettingsCodec.decode(settings)

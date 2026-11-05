@@ -19,7 +19,9 @@ sealed interface WorkspacePhysicsIntent {
 
 internal object WorkspacePhysicsIntents {
     fun operation(document: WorkspaceDocument, model: RigPreviewModel, intent: WorkspacePhysicsIntent): WorkspaceDocumentOperation {
-        val groups = WorkspaceDocumentEdits.physicsCatalog(document, model)
+        val allGroups = WorkspaceDocumentEdits.physicsCatalog(document, model)
+        val groups = if (intent is WorkspacePhysicsIntent.Move && document.rigEdits.modifierStack != null)
+            allGroups.filter { it.origin != PhysicsOrigin.MODIFIER } else allGroups
         val available = model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }
         fun group(id: String) = groups.firstOrNull { it.id == id }
             ?: throw IllegalArgumentException("Physics group not found: $id")

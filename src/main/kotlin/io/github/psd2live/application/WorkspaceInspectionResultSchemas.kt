@@ -33,7 +33,7 @@ internal object WorkspaceInspectionResultSchemas {
         "fulcrum" to s.choices(*SwingFulcrum.entries.map { it.name }.toTypedArray()), "preset" to s.choices(*SwingPreset.entries.map { it.name }.toTypedArray()),
         "tilt" to s.number(), "offset_along" to s.number(), "offset_across" to s.number(), "baked" to s.constant(true),
         "motions" to s.array(s.obj(shapeFields, shapeFields.keys - "flip"), 1, 2))
-    private val swing = s.obj(swingFields, setOf("id", "name", "targets", "fulcrum", "preset", "motions"))
+    val swing = s.obj(swingFields, setOf("id", "name", "targets", "fulcrum", "preset", "motions"))
     private val projectFields = mapOf("loaded" to s.boolean(), "busy" to s.boolean(), "canvas" to s.array(s.integer(1), 0, 2),
         "selection" to s.handle(), "layers" to s.integer(0), "parameters" to s.integer(0), "persistenceError" to s.string(),
         "quality" to s.obj(mapOf("overrides" to WorkspaceQualitySchemas.generatedOverrides, "regeneration" to WorkspaceQualitySchemas.regeneration,

@@ -64,6 +64,7 @@ internal object WorkspacePhysicsEdits {
         require(target.isFinite() && target in 0.1f..3f) { "Target fraction must be in 0.1..3" }
         val group = WorkspaceDocumentEdits.physicsCatalog(document, model).firstOrNull { it.id == id }
             ?: throw IllegalArgumentException("Physics group not found: $id")
+        require(group.origin != PhysicsOrigin.MODIFIER) { "$id belongs to a modifier; update its physics configuration on the owner" }
         val ranges = PhysicsEngine.ranges(model.rig.puppet.parameters)
         val trace = work.run(id) { progress, cancelled ->
             PhysicsResponse.trace(group.setting, ranges, document.rigEdits.physicsFps, progress = progress, cancelled = cancelled)
@@ -76,8 +77,15 @@ internal object WorkspacePhysicsEdits {
     fun import(document: WorkspaceDocument, model: RigPreviewModel, text: String): WorkspacePhysicsCandidate {
         val imported = PhysicsAuthoring.import(document.rigEdits, WorkspaceDocumentEdits.physicsCatalog(document, model), text,
             model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw })
+        if (document.rigEdits.modifierStack != null) {
+            val generated = model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw } - model.authored.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }
+            val owned = WorkspaceDocumentEdits.physicsCatalog(document, model).filter { it.origin == PhysicsOrigin.MODIFIER }.mapTo(HashSet()) { it.id }
+            require(imported.overlay.physicsEdits.filter { it.id in imported.ids }.none { it.id in owned || it.parameters.any { parameter -> parameter in generated } }) {
+                "Generated physics and parameter references must be edited through modifier operations"
+            }
+        }
         return WorkspacePhysicsCandidate(document.copy(rigEdits = imported.overlay,
-            settings = JsonObject(document.settings + ("generatePhysics" to JsonPrimitive(true)))), buildJsonObject {
+            settings = if (document.rigEdits.modifierStack != null) document.settings else JsonObject(document.settings + ("generatePhysics" to JsonPrimitive(true)))), buildJsonObject {
             put("imported", JsonArray(imported.ids.map(::JsonPrimitive)))
             if (imported.disabled.isNotEmpty()) put("disabled", JsonArray(imported.disabled.map(::JsonPrimitive)))
             if (imported.missing.isNotEmpty()) put("missing_parameters", JsonObject(imported.missing.mapValues { (_, ids) -> JsonArray(ids.map(::JsonPrimitive)) }))

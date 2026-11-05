@@ -32,6 +32,7 @@ internal object WorkspaceGenerationUpdate {
 
     /** [document] regenerated and merged, or unchanged when the generators make what its last checkpoint stores. */
     fun update(document: WorkspaceDocument, model: RigPreviewModel, work: WorkspaceRasterWork = WorkspaceRasterWork.Direct): Result {
+        require(document.rigEdits.modifierStack == null) { "Update generated content through its modifier instead of legacy regeneration" }
         require(model.config.rigEdits.importedCmo3 == null) { "An imported model has no generated rig to update" }
         work.progress(0.1f, "Generating the rig")
         val update = RigRegenerationCheckpoint.updated(pipeline, model, document.source) {

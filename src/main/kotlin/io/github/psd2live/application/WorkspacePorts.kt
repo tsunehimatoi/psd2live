@@ -123,6 +123,8 @@ interface WorkspaceQueries : WorkspaceStatePort {
     fun layoutState(): WorkspaceLayoutState?
     /** `module_catalog`: the rig's areas and modules, and with a project open how its recipe uses them ([RigModuleCatalog]). */
     fun rigModules(): kotlinx.serialization.json.JsonObject
+    fun modifierStack(): kotlinx.serialization.json.JsonObject
+    fun modifierPlan(request: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject
 }
 
 /** A captured document's Layout state ([io.github.psd2live.project.WorkspaceLayout]) and the layers it applies to. */

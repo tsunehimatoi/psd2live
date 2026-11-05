@@ -122,8 +122,8 @@ internal object WorkspaceAnimationResultSchemas {
     private val motionFields = linkedMapOf("id" to s.handle(), "name" to s.string(), "builtin" to s.string(), "loop" to s.boolean(),
         "duration" to s.number(), "fps" to s.number(), "fade_in" to s.number(), "fade_out" to s.number(), "enabled" to s.boolean(),
         "curves" to s.array(s.obj(mapOf("parameter" to s.handle(), "keys" to s.array(motionKey)))),
-        "events" to s.array(s.obj(mapOf("time" to s.number(0), "value" to s.string()))))
-    private val motion = s.obj(motionFields, motionFields.keys - "builtin" - "events")
+        "events" to s.array(s.obj(mapOf("time" to s.number(0), "value" to s.string()))), "file" to s.handle())
+    val motion = s.obj(motionFields, motionFields.keys - "builtin" - "events" - "file")
     private val motionSummaryFields = mapOf("id" to s.handle(), "name" to s.string(), "builtin" to s.string(),
         "duration" to s.number(), "enabled" to s.boolean(), "curves" to s.integer(0), "events" to s.integer(0))
 

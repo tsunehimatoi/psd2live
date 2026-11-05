@@ -21,11 +21,7 @@ internal class WorkspacePreviewPhysics {
              isPlaying: Boolean): Map<ParameterId, Float> {
         require(dt.isFinite() && dt in 0f..1f) { "Physics delta must lie within 0..1 seconds" }
         val config = model.config
-        val groups = if (!config.generatePhysics || config.meshOnly) emptyList() else PhysicsCatalog.groups(
-            if (config.rigEdits.importedCmo3 != null) PhysicsGenerator.Presets(false, false, false)
-            else PhysicsGenerator.Presets.present(model.analysis, config),
-            PhysicsGenerator.Presets(config.physicsFrontHair, config.physicsBackHair, config.physicsEyeJelly), config.rigEdits,
-            model.rig.puppet.parameters.mapTo(hashSetOf()) { it.id.raw }, model.rig.puppet).filter { it.active }.map { it.setting }
+        val groups = PhysicsCatalog.active(model)
         val parameters = model.rig.puppet.parameters
         val nextKey = listOf(groups, parameters, config.rigEdits.physicsFps)
         if (nextKey != key) {

@@ -27,7 +27,7 @@ internal object WorkspaceDocumentEdits {
         setOf("warp", "rotation", "glue", "topology").map { "canvas_$it" } +
         setOf("put", "delete", "deform").map { "path_$it" } +
         setOf("swing_put", "swing_delete", "interior_put", "interior_delete") + WorkspacePhysicsEdits.batchable + WorkspaceSimulationEdits.supported + WorkspaceCanvasWeightEdits.supported + WorkspaceCanvasDeformEdits.supported + WorkspaceTextureEdits.supported +
-        WorkspaceLayoutEdits.supported + WorkspaceMaterialEdits.supported + WorkspaceHitAreaEdits.supported + WorkspaceSidecarEdits.supported + WorkspaceObjectEdits.supported
+        WorkspaceLayoutEdits.supported + WorkspaceMaterialEdits.supported + WorkspaceHitAreaEdits.supported + WorkspaceSidecarEdits.supported + WorkspaceObjectEdits.supported + WorkspaceModifierEdits.supported
 
     /**
      * [operation] on the complete editing document. Layout generation state only gates automatic semantic rigging;
@@ -55,6 +55,7 @@ internal object WorkspaceDocumentEdits {
         // Every document operation, not only journal edits: a copy over the bangs is made anew on each build.
         refuseCopies(model, request)
         return when (operation.operation) {
+            in WorkspaceModifierEdits.supported -> WorkspaceModifierEdits.apply(operation, document, model, rasterWork)
             WorkspaceDrawOrderEdits.OP -> WorkspaceDrawOrderEdits.apply(document, model, request)
             WorkspaceLayerTransform.OP -> WorkspaceLayerTransform.apply(document, model, request)
             WorkspaceRasterEdits.REBUILD_MESH -> WorkspaceRasterEdits.rebuildMesh(document, model, request.text("layer_id"), rasterWork)
@@ -266,9 +267,24 @@ internal object WorkspaceDocumentEdits {
     fun journal(document: WorkspaceDocument, model: RigPreviewModel, edits: JsonArray): WorkspaceDocument {
         refuseCopies(model, edits)
         // Recorded on the shown rig, they replay on the authored one, before the generators.
-        val journal = JournalRecording.record(model.rig.puppet, model.authored.rig.puppet, document.rigEdits, edits, model.primitiveSkins)
+        val recorded = JournalRecording.record(model.rig.puppet, model.authored.rig.puppet, document.rigEdits, edits, model.primitiveSkins,
+            model.rig.modifierReport)
+        var overlay = document.rigEdits
+        val journal = if (overlay.modifierStack == null) recorded else {
+            var stack = io.github.psd2live.core.modifier.RigModifierStack.fromJson(overlay.modifierStack)
+            val ordinary = ArrayList<JsonObject>()
+            for (command in recorded) {
+                val owner = command["generator"]?.jsonPrimitive?.contentOrNull
+                if (GeneratedOverrides.isOverride(command) && owner?.startsWith("modifier:") == true) {
+                    val instance = owner.removePrefix("modifier:")
+                    stack = stack.withOverrides(instance, stack.overrides[instance].orEmpty() + command)
+                } else ordinary += command
+            }
+            overlay = overlay.copy(modifierStack = stack.toJson())
+            ordinary
+        }
         // A deleted Warp leaves the swings that moved it in the same step.
-        val next = document.copy(rigEdits = SwingAuthoring.withoutTargets(document.rigEdits.copy(
+        val next = document.copy(rigEdits = SwingAuthoring.withoutTargets(overlay.copy(
             authoringJournal = document.rigEdits.authoringJournal + journal), SwingAuthoring.deletedDeformers(journal)))
         return rebakeInteriors(next, model, journal)
     }
@@ -380,12 +396,20 @@ internal object WorkspaceDocumentEdits {
             else SwingAuthoring.remove(document.rigEdits, id))
 
     fun physicsCatalog(document: WorkspaceDocument, model: RigPreviewModel): List<PhysicsGroup> =
-        PhysicsCatalog.groups(model.analysis, document.config(), model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }, model.rig.puppet)
+        PhysicsCatalog.groups(model, document.config())
 
     fun physics(document: WorkspaceDocument, model: RigPreviewModel, arguments: JsonObject): WorkspaceDocument {
         val id = arguments.text("id")
+        require(physicsCatalog(document, model).none { it.id == id && it.origin == PhysicsOrigin.MODIFIER }) {
+            "$id belongs to a modifier; use modifier_update or modifier_enable on its owner"
+        }
         val request = PhysicsAuthoring.request(physicsCatalog(document, model), arguments,
             model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw })
+        if (document.rigEdits.modifierStack != null && request.edit != null) {
+            val authored = model.authored.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }
+            val generated = model.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw } - authored
+            require(request.edit.parameters.none { it in generated }) { "Generated parameter references belong in a physics modifier; use modifier_add or modifier_update" }
+        }
         var overlay = document.rigEdits
         val settings = document.settings.toMutableMap()
         request.edit?.let { overlay = PhysicsAuthoring.put(overlay, it, request.generated) }
@@ -395,7 +419,7 @@ internal object WorkspaceDocumentEdits {
             if (flag != null) settings[flag] = JsonPrimitive(enabled)
             else overlay = PhysicsAuthoring.setEnabled(overlay, id, enabled)
         }
-        if (request.edit != null || request.enabled == true) settings["generatePhysics"] = JsonPrimitive(true)
+        if (document.rigEdits.modifierStack == null && (request.edit != null || request.enabled == true)) settings["generatePhysics"] = JsonPrimitive(true)
         return document.copy(rigEdits = overlay, settings = JsonObject(settings))
     }
 
@@ -403,6 +427,7 @@ internal object WorkspaceDocumentEdits {
         require(id.isNotBlank()) { "Physics group ID is required" }
         val group = physicsCatalog(document, model).firstOrNull { it.id == id }
             ?: throw IllegalArgumentException("Physics group not found: $id")
+        require(group.origin != PhysicsOrigin.MODIFIER) { "$id belongs to a modifier; use modifier_enable or modifier_remove on its owner" }
         require(document.rigEdits.physicsEdits.any { it.id == id }) {
             "$id is generated; physics_put enabled=false turns it off, or edit its source (swing, skeleton, preset setting)"
         }
@@ -411,6 +436,9 @@ internal object WorkspaceDocumentEdits {
 
     fun configurePhysics(document: WorkspaceDocument, model: RigPreviewModel, order: List<String>?, fps: Int?): WorkspaceDocument {
         require(order != null || fps != null) { "Give order or fps" }
+        if (order != null && document.rigEdits.modifierStack != null) require(order.all { id -> document.rigEdits.physicsEdits.any { it.id == id } }) {
+            "Generated physics order follows the modifier stack; use modifier_move"
+        }
         var overlay = document.rigEdits
         order?.let { overlay = PhysicsAuthoring.order(overlay, physicsCatalog(document, model), it) }
         fps?.let { overlay = PhysicsAuthoring.setFps(overlay, it) }

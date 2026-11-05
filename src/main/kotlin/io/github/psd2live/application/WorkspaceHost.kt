@@ -1333,6 +1333,8 @@ internal class WorkspaceHost<V>(
     override fun hitAreaModel() = captureQueries().hitAreaModel()
     override fun layoutState() = captureQueries().layoutState()
     override fun rigModules() = captureQueries().rigModules()
+    override fun modifierStack() = captureQueries().modifierStack()
+    override fun modifierPlan(request: JsonObject) = captureQueries().modifierPlan(request)
 
     override fun generatedOverrideIssues() = captureQueries().generatedOverrideIssues()
     override fun supersededEntryNotes() = captureQueries().supersededEntryNotes()

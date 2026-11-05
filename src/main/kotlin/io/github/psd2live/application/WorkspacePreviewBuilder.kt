@@ -71,6 +71,8 @@ internal class WorkspacePreviewBuilder {
     }
 
     private suspend fun normalizeGenerated(input: WorkspaceDocument, current: RigPreviewModel): WorkspaceDocument {
+        // Modifier edits own their generation boundary; never fold a reordered stack into a legacy regeneration.
+        if (input.rigEdits.modifierStack != null || current.config.rigEdits.modifierStack != null) return input
         val progress = progress(0.3f, 0.6f)
         return runInterruptible(Dispatchers.Default) {
             val document = pinnedIdentities(input, current, input.config())
@@ -248,6 +250,8 @@ internal class WorkspacePreviewBuilder {
             // documents and node IDs immutable; new documents carry this generation input explicitly.
             val config = if ("drawOrderOverrides" in document.settings) decoded
                 else decoded.copy(drawOrderOverrides = legacyDrawOrders)
+            if (config.rigEdits.modifierStack != null || current?.config?.rigEdits?.modifierStack != null)
+                return@runInterruptible pipeline.buildPreview(document.source, config, progress, current?.atlas)
             val materializable = pipeline.materializable(config)
             val revision = if (materializable) WorkspaceRevisions.of(document) else null
             val fast = current != null && pipeline.canFastUpdateRig(current, document.source, config, document.layout.referenceLayerIds)

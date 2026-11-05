@@ -1,0 +1,1027 @@
+package io.github.psd2live.application
+
+import io.github.psd2live.core.*
+import io.github.psd2live.core.modifier.*
+import io.github.psd2live.core.recipe.RigRecipe
+import io.github.psd2live.core.recipe.BaseChoice
+import io.github.psd2live.core.recipe.ModuleChoice
+import io.github.psd2live.core.recipe.RigModules
+import io.github.psd2live.project.*
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.*
+import org.umamo.format.art.*
+import org.umamo.render.eval.CpuDeformationEvaluator
+import org.umamo.runtime.model.*
+import kotlin.math.abs
+import kotlin.test.*
+
+class WorkspaceLegacyBindingTest {
+    private class Fixture(val document: WorkspaceDocument) {
+        val builder = WorkspacePreviewBuilder()
+        val runtime = WorkspaceRuntime<RigPreviewModel>({ builder.build(it) }, rebuildFrom = { doc, previous -> builder.build(doc, previous) })
+        val commands = WorkspaceDocumentCommands(runtime)
+        val now get() = runtime.capture()
+        suspend fun install() { runtime.install(runtime.state.value.state, "source", document, builder.build(document)) }
+        suspend fun edit(operation: String, request: JsonObject) = now.let {
+            commands.execute(it.projectId, it.state, operation, listOf(WorkspaceDocumentOperation(operation, request)), MutationAuthor.USER)
+        }
+        fun addition(type: String, id: String, targets: List<ModifierTarget> = now.model.rig.puppet.drawables.map { ModifierTarget("mesh", it.id.raw) },
+                     config: JsonObject = if (type == RigSourceModifiers.SCAFFOLD) JsonObject(emptyMap()) else buildJsonObject { put("scaffold", "structure") }) = buildJsonObject {
+            put("type", type); put("id", id); put("config", config)
+            put("targets", JsonArray(targets.map { buildJsonObject { put("kind", it.kind); put("id", it.id) } }))
+        }
+        suspend fun group(types: List<String>) = edit("modifier_add_group", buildJsonObject {
+            put("group", "legacy")
+            put("entries", JsonArray(listOf(addition(RigSourceModifiers.SCAFFOLD, "structure")) + types.map { type -> addition(type, type.substringBefore('/'), config = buildJsonObject {
+                put("scaffold", "structure")
+                val spec = RigLegacyBindings.spec(type)
+                spec.module?.base?.let { put("base", it.substringBefore('/')) }
+                if (spec.related.isNotEmpty()) putJsonObject("dependencies") { spec.related.forEach { put(it, it.substringBefore('/')) } }
+            }) }))
+        })
+    }
+
+    /** Small public procedural art with distinct eye, brow, mouth, hair and torso inputs. */
+    private fun document(eyeDetails: Boolean = false, mouthDetails: Boolean = false, expressionDetails: Boolean = false, skinDetails: Boolean = false, outfitDetails: Boolean = false, sideLock: Boolean = false, bangOverlay: Boolean = false): WorkspaceDocument {
+        data class Shape(val id: String, val tag: SemanticTag, val side: Side, val x: Int, val y: Int, val w: Int, val h: Int, val role: PartRole? = null)
+        val shapes = listOf(
+            Shape("iris", SemanticTag.IRIDES, Side.LEFT, 37, 19, 5, 10),
+            Shape("lash", SemanticTag.EYELASH, Side.LEFT, 34, 19, 12, 2),
+            Shape("close", SemanticTag.EYE_CLOSE, Side.LEFT, 34, 25, 12, 2),
+            Shape("white", SemanticTag.EYEWHITE, Side.LEFT, 34, 20, 12, 8),
+            Shape("brow", SemanticTag.EYEBROW, Side.LEFT, 34, 14, 12, 2),
+            Shape("mouth", SemanticTag.MOUTH, Side.NONE, 25, 35, 14, 6),
+            if (sideLock) Shape("front", SemanticTag.FRONT_HAIR, Side.LEFT, 39, 9, 12, 32, PartRole.SIDE)
+            else Shape("front", SemanticTag.FRONT_HAIR, Side.NONE, 14, 4, 36, 13),
+            Shape("face", SemanticTag.FACE, Side.NONE, 15, 8, 34, 40),
+            Shape("back", SemanticTag.BACK_HAIR, Side.NONE, 12, 5, 40, 50),
+            Shape("top", SemanticTag.TOPWEAR, Side.NONE, 12, 46, 40, 32),
+        )
+        val allShapes = shapes + (if (eyeDetails) listOf(
+            Shape("lid", SemanticTag.EYELASH, Side.LEFT, 34, 18, 12, 2, PartRole.LID),
+            Shape("lid-shadow", SemanticTag.EYELASH, Side.LEFT, 34, 20, 12, 2, PartRole.SHADOW),
+            Shape("highlight", SemanticTag.IRIDES, Side.LEFT, 39, 20, 2, 3, PartRole.HIGHLIGHT),
+        ) else emptyList()) + (if (mouthDetails) listOf(
+            Shape("teeth-top", SemanticTag.TOOTH_T, Side.NONE, 27, 35, 10, 2),
+            Shape("teeth-bottom", SemanticTag.TOOTH_B, Side.NONE, 28, 39, 8, 2),
+            Shape("tongue", SemanticTag.TONGUE, Side.NONE, 29, 38, 6, 3),
+            Shape("nose", SemanticTag.NOSE, Side.NONE, 29, 28, 5, 3),
+        ) else emptyList()) + (if (expressionDetails) listOf(
+            Shape("blush", SemanticTag.FACE_DETAIL, Side.LEFT, 18, 31, 8, 3, PartRole.BLUSH),
+            Shape("skin-highlight", SemanticTag.FACE_DETAIL, Side.NONE, 24, 11, 7, 2, PartRole.HIGHLIGHT),
+            Shape("ear", SemanticTag.EARS, Side.LEFT, 9, 21, 6, 13),
+        ) else emptyList())
+        val skinShapes = if (skinDetails) listOf(
+            Shape("neck", SemanticTag.NECK, Side.NONE, 25, 41, 14, 14),
+            Shape("neck-shadow", SemanticTag.NECK, Side.NONE, 25, 42, 14, 5, PartRole.SHADOW),
+            Shape("hair-shadow", SemanticTag.FRONT_HAIR, Side.NONE, 20, 10, 24, 5, PartRole.SHADOW),
+        ) else emptyList()
+        val outfitShapes = if (outfitDetails) listOf(
+            Shape("skirt", SemanticTag.BOTTOMWEAR, Side.NONE, 13, 62, 38, 17, PartRole.SKIRT),
+            Shape("ribbon", SemanticTag.NECKWEAR, Side.NONE, 23, 48, 5, 17, PartRole.RIBBON),
+            Shape("pendant", SemanticTag.NECKWEAR, Side.NONE, 33, 48, 4, 9, PartRole.PENDANT),
+            Shape("arm", SemanticTag.HANDWEAR, Side.LEFT, 5, 47, 6, 26),
+            Shape("animal-ear", SemanticTag.EARS, Side.LEFT, 17, 1, 8, 12, PartRole.ANIMAL),
+            Shape("tail", SemanticTag.TAIL, Side.NONE, 53, 51, 9, 24),
+            Shape("wing", SemanticTag.WINGS, Side.RIGHT, 48, 45, 13, 15),
+        ) else emptyList()
+        val classified = if (bangOverlay) listOf(allShapes.single { it.id == "front" }.copy(h = 24)) +
+            allShapes.filterNot { it.id == "front" } + skinShapes + outfitShapes
+        else allShapes + skinShapes + outfitShapes
+        val source = WorkspaceSourceArt(64, 80, classified.mapIndexed { index, shape ->
+            val color = if (!bangOverlay) 0xffffff else when (shape.tag) {
+                SemanticTag.FRONT_HAIR, SemanticTag.BACK_HAIR -> 0x725672
+                SemanticTag.EYEBROW, SemanticTag.EYELASH, SemanticTag.EYE_CLOSE -> 0x2d2439
+                SemanticTag.IRIDES -> 0x337d91
+                SemanticTag.FACE -> 0xf0cba8
+                else -> 0xffffff
+            }
+            val channels = byteArrayOf((color shr 16).toByte(), (color shr 8).toByte(), color.toByte(), 255.toByte())
+            WorkspaceSourceLayer(
+                LayerId(shape.id), shape.id, "", SourceLayerKind.Raster, true, index, LayerBounds(shape.x, shape.y, shape.w, shape.h),
+                1f, false, LayerBlend.Normal, ChannelMask.ALL, LayerRaster(shape.w, shape.h, ByteArray(shape.w * shape.h * 4) { channels[it % 4] }),
+                null, null, false)
+        }, emptyList())
+        val config = RigModifierPipeline.ordinaryConfig(PipelineConfig(atlasSize = 128, meshSpacing = 6, recipe = RigRecipe.Legacy,
+            generatePhysics = false, exportMoc3 = false)).copy(rigEdits = RigEditOverlay(modifierStack = RigModifierStack().toJson()))
+        return WorkspaceDocument(source, emptyMap(), emptySet(), classified.associate { it.id to LayerClassificationOverride(LayerType.PRESET, it.tag, it.side, role = it.role) },
+            emptyMap(), config.rigEdits, WorkspaceSettingsCodec.encode(config))
+    }
+
+    private fun native(document: WorkspaceDocument, recipe: RigRecipe = RigRecipe.Legacy): RigPreviewModel = PSD2LivePipeline().buildPreview(document.source,
+        RigModifierPipeline.ordinaryConfig(document.config()).copy(meshOnly = false, generateDeformers = true, recipe = recipe))
+
+    private fun fittedRecipe(choices: Map<String, BaseChoice>) = RigRecipe(true,
+        bases = RigModules.areas.associate { it.id to (choices[it.id] ?: BaseChoice(it.legacy.id, it.legacy.version)) },
+        modules = RigModules.modules.associate { it.id to ModuleChoice(false, it.version) })
+
+    private fun compare(native: RigPreviewModel, actual: RigPreviewModel, poses: List<Map<ParameterId, Float>>, aliases: Map<String, String> = emptyMap()) {
+        val evaluator = CpuDeformationEvaluator()
+        fun canvas(model: PuppetModel, mesh: Drawable): DrawableMesh {
+            val geometry = requireNotNull(mesh.mesh)
+            val uv = RasterMeshJournal.TextureCoordinates(model, mesh).toCanvas(geometry.uvs)
+            return DrawableMesh(uv, uv, geometry.indices)
+        }
+        var referenceRig = RigIdRemap(parameters = aliases.mapKeys { ParameterId(it.key) }.mapValues { ParameterId(it.value) }).model(native.rig.puppet)
+        for (mesh in actual.rig.puppet.drawables) {
+            val original = native.rig.puppet.drawables.single { it.id == mesh.id }
+            val plan = RasterMeshJournal.prepare(canvas(native.rig.puppet, original), canvas(actual.rig.puppet, mesh))
+            val texture = RasterMeshJournal.TextureCoordinates(native.rig.puppet, original)
+            val migrated = DrawableMesh(PrimitiveResidual.transfer(requireNotNull(original.mesh).positions, plan.sources),
+                texture.toUvs(canvas(actual.rig.puppet, mesh).uvs), requireNotNull(mesh.mesh).indices)
+            // Compare on the same material topology through the engine's normal migration primitive. Interpolating
+            // already-deformed world vertices would interpolate AFTER a nonlinear Warp instead of before it.
+            referenceRig = RasterMeshJournal.apply(referenceRig, mesh.id, plan.copy(mesh = migrated))
+        }
+        for (pose in poses) {
+            val expectedFrame = evaluator.evaluate(referenceRig, pose)
+            val shownFrame = evaluator.evaluate(actual.rig.puppet, pose)
+            val expected = expectedFrame.worldPositions
+            val shown = shownFrame.worldPositions
+            for ((id, points) in shown) {
+                val reference = expected.getValue(id)
+                val error = points.indices.maxOf { abs(points[it] - reference[it]) }
+                assertTrue(error < .03f, "${id.raw}: difference $error at $pose")
+                assertTrue(abs(shownFrame.opacity.getValue(id) - expectedFrame.opacity.getValue(id)) < .0001f, "${id.raw}: opacity differs at $pose")
+                assertTrue(abs(shownFrame.drawOrder.getValue(id) - expectedFrame.drawOrder.getValue(id)) < .001f, "${id.raw}: draw order differs at $pose")
+                val expectedColor = expectedFrame.multiplyColor[id] ?: ColorRgb.MultiplyIdentity
+                val shownColor = shownFrame.multiplyColor[id] ?: ColorRgb.MultiplyIdentity
+                assertTrue(abs(shownColor.red - expectedColor.red) < .0001f && abs(shownColor.green - expectedColor.green) < .0001f &&
+                    abs(shownColor.blue - expectedColor.blue) < .0001f, "${id.raw}: multiply color differs at $pose")
+                val expectedScreen = expectedFrame.screenColor[id] ?: ColorRgb.ScreenIdentity
+                val shownScreen = shownFrame.screenColor[id] ?: ColorRgb.ScreenIdentity
+                assertTrue(abs(shownScreen.red - expectedScreen.red) < .0001f && abs(shownScreen.green - expectedScreen.green) < .0001f &&
+                    abs(shownScreen.blue - expectedScreen.blue) < .0001f, "${id.raw}: screen color differs at $pose")
+            }
+        }
+    }
+
+    @Test fun legacyBasesKeepTheOriginalSingleAxisAndCombinedMotions(): Unit = runBlocking<Unit> {
+        val f = Fixture(document()); f.install()
+        val original = native(f.document)
+        f.group(RigLegacyBindings.specs.filter { it.type.endsWith("/legacy") }.map { it.type })
+        assertEquals(original.rig.puppet.parameterLinks.toSet(), f.now.model.rig.puppet.parameterLinks.toSet())
+        assertEquals(original.rig.puppet.drawables.associate { it.id to it.maskedBy }, f.now.model.rig.puppet.drawables.associate { it.id to it.maskedBy })
+        val poses = listOf(emptyMap(), mapOf(StandardParameters.ANGLE_X to 30f, StandardParameters.ANGLE_Y to -15f),
+            mapOf(StandardParameters.EYE_L_OPEN to 0f, StandardParameters.MOUTH_OPEN to .7f, StandardParameters.BROW_L_Y to .6f),
+            mapOf(StandardParameters.ANGLE_X to 18f, StandardParameters.ANGLE_Y to -12f, StandardParameters.ANGLE_Z to 10f,
+                StandardParameters.BODY_LEAN to 3f, StandardParameters.BODY_X to -6f, StandardParameters.BREATH to .6f,
+                StandardParameters.EYE_L_OPEN to .4f, StandardParameters.EYE_BALL_X to -.5f, StandardParameters.EYE_BALL_Y to .4f,
+                StandardParameters.MOUTH_OPEN to .7f, StandardParameters.MOUTH_FORM to -.5f, StandardParameters.HAIR_FRONT to .6f,
+                StandardParameters.HAIR_BACK to -.3f))
+        compare(original, f.now.model, poses)
+        val expected = RigIrCompiler.compile(f.now.model)
+        val before = f.now
+        f.edit("modifier_apply", buildJsonObject { put("id", "face") })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+        assertTrue(RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).appliedCapabilities.any {
+            it.id == "body" && it.config["scaffold"]?.jsonPrimitive?.content == "structure"
+        })
+        f.runtime.checkout(f.now.projectId, f.now.state, before.historyHead)
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+    }
+
+    @Test fun applyingAProviderKeepsTheActualScopeAndSubsequentFacialBindings(): Unit = runBlocking<Unit> {
+        val f = Fixture(document()); f.install()
+        f.group(listOf("eye/legacy", "face/legacy", "body/legacy", "mouth/legacy", "hair/legacy", "brow/legacy"))
+        val expected = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_apply", buildJsonObject { put("id", "eye") })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+        f.edit("modifier_apply", buildJsonObject { put("id", "brow") })
+        assertTrue(RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.isEmpty())
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    private fun mesh(f: Fixture, layer: String) = f.now.model.rig.puppet.drawables.single {
+        f.now.model.rig.layerIdByDrawableId[it.id.raw] == layer
+    }
+
+    private fun key(f: Fixture, axes: List<KeyformAxis>): JsonObject {
+        val defaults = f.now.model.rig.puppet.parameters.associate { it.id to it.default }
+        return JsonObject(axes.associate { it.parameterId.raw to JsonPrimitive(defaults.getValue(it.parameterId)) })
+    }
+
+    @Test fun editsOfTheGeneratedClosedMouthDefaultBelongToTheLatestBinding(): Unit = runBlocking<Unit> {
+        val f = Fixture(document()); f.install()
+        f.group(listOf("body/legacy", "face/legacy", "eye/legacy", "mouth/legacy"))
+        val target = mesh(f, "mouth")
+        val grid = requireNotNull(target.geometryGrid)
+        val pose = key(f, grid.axes)
+        val coordinate = grid.axes.map { axis -> axis.keys.indices.single { abs(axis.keys[it] - pose.getValue(axis.parameterId.raw).jsonPrimitive.float) < .00001f } }
+        val points = grid.cells.single { it.coordinate.toList() == coordinate }.form.positionDeltas
+        val journal = f.now.document.rigEdits.authoringJournal
+        f.edit("keyform_apply", buildJsonObject { putJsonArray("changes") { addJsonObject {
+            put("op", "set"); put("target", "mesh:${target.id.raw}"); put("key", pose)
+            putJsonObject("geometry") { put("positionDeltas", JsonArray(points.mapIndexed { index, value -> JsonPrimitive(if (index == 0) value + .05f else value) })) }
+        } } })
+        var stack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
+        assertEquals(setOf("mouth"), stack.overrides.keys)
+        assertEquals(journal, f.now.document.rigEdits.authoringJournal)
+        val expected = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_enable", buildJsonObject { put("id", "mouth"); put("enabled", false) })
+        assertNotEquals(expected, RigIrCompiler.compile(f.now.model))
+        f.edit("modifier_enable", buildJsonObject { put("id", "mouth"); put("enabled", true) })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        f.edit("modifier_apply", buildJsonObject { put("id", "mouth") })
+        stack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
+        assertTrue(stack.instances.isEmpty() && stack.overrides.isEmpty())
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun generatedOpacityAtTheOpenEyeDefaultIsAnInstanceOverrideRatherThanAnAuthorAxis(): Unit = runBlocking<Unit> {
+        val f = Fixture(document()); f.install()
+        f.group(listOf("eye/legacy"))
+        val target = mesh(f, "close")
+        val opacity = requireNotNull(target.channelGrids[FormChannel.OPACITY])
+        val pose = key(f, opacity.axes)
+        val journal = f.now.document.rigEdits.authoringJournal
+        f.edit("keyform_apply", buildJsonObject { putJsonArray("changes") { addJsonObject {
+            put("op", "set"); put("target", "mesh:${target.id.raw}"); put("key", pose)
+            putJsonObject("channels") { put("opacity", .3f) }
+        } } })
+        val stack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
+        assertEquals(setOf("eye"), stack.overrides.keys)
+        assertEquals("opacity", stack.overrides.getValue("eye").single().getValue("channel").jsonPrimitive.content)
+        assertEquals(journal, f.now.document.rigEdits.authoringJournal)
+        assertEquals(.3f, CpuDeformationEvaluator().evaluate(f.now.model.rig.puppet, emptyMap()).opacity.getValue(target.id), .0001f)
+        validateOperationSchema(WorkspaceModifierQueries.describe(f.now), WorkspaceModifierSchemas.stack, "result")
+        val expected = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_enable", buildJsonObject { put("id", "eye"); put("enabled", false) })
+        f.edit("modifier_enable", buildJsonObject { put("id", "eye"); put("enabled", true) })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        f.edit("modifier_apply", buildJsonObject { put("id", "eye") })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun twoObjectsSharingOneSourceLayerStillHaveIndependentBindingInstances(): Unit = runBlocking<Unit> {
+        val f = Fixture(document()); f.install()
+        val original = mesh(f, "face").id.raw
+        f.edit("object_paste", buildJsonObject {
+            putJsonArray("sources") { add("mesh:$original") }
+            putJsonObject("ids") { put("mesh:$original", "FaceCopy") }
+        })
+        val targets = listOf(ModifierTarget("mesh", original), ModifierTarget("mesh", "FaceCopy"))
+        f.edit("modifier_add", f.addition(RigSourceModifiers.SCAFFOLD, "structure", targets))
+        f.edit("modifier_add", f.addition("body/legacy", "first", targets.take(1), buildJsonObject { put("scaffold", "structure"); put("strength", .5f) }))
+        f.edit("modifier_add", f.addition("body/legacy", "second", targets.drop(1), buildJsonObject { put("scaffold", "structure"); put("strength", 1.5f) }))
+        val frame = CpuDeformationEvaluator().evaluate(f.now.model.rig.puppet, mapOf(StandardParameters.BODY_X to 8f, StandardParameters.BODY_LEAN to 4f))
+        val first = frame.worldPositions.getValue(DrawableId(original))
+        val second = frame.worldPositions.getValue(DrawableId("FaceCopy"))
+        assertTrue(first.indices.any { abs(first[it] - second[it]) > .001f })
+        val expected = RigIrCompiler.compile(f.now.model)
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+        f.edit("modifier_apply", buildJsonObject { put("id", "first") })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun fittedEyesBrowsAndMouthUseTheirNativeAlgorithmsAndPersistTheirVersions(): Unit = runBlocking<Unit> {
+        val f = Fixture(document()); f.install()
+        val recipe = fittedRecipe(mapOf("eye" to BaseChoice("eye/fitted", 2), "brow" to BaseChoice("brow/fitted"), "mouth" to BaseChoice("mouth/fitted")))
+        val original = native(f.document, recipe)
+        f.group(listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/legacy"))
+        val eye = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.single { it.type == "eye/fitted" }
+        assertEquals(2, eye.version, "an omitted version must select the registered current algorithm")
+        compare(original, f.now.model, listOf(emptyMap(),
+            mapOf(StandardParameters.EYE_L_OPEN to .4f, StandardParameters.MOUTH_OPEN to .6f, StandardParameters.MOUTH_FORM to -.5f, StandardParameters.BROW_L_Y to .7f),
+            mapOf(StandardParameters.ANGLE_X to 20f, StandardParameters.ANGLE_Y to -12f, StandardParameters.BODY_LEAN to 3f,
+                StandardParameters.EYE_L_OPEN to 0f, StandardParameters.MOUTH_OPEN to 1f, StandardParameters.BROW_L_Y to -.4f)))
+        val expected = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_apply", buildJsonObject { put("id", "brow") })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+        f.edit("modifier_apply", buildJsonObject { put("id", "hair") })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+    }
+
+    @Test fun fittedBaseValuesAreIndependentOfLegacySlidersAndMutuallyExclusiveWithOtherBases(): Unit = runBlocking<Unit> {
+        val f = Fixture(document()); f.install()
+        f.group(listOf("eye/fitted"))
+        val initial = f.now
+        val invalid = f.addition("eye/legacy", "another_eye")
+        assertFailsWith<WorkspaceBatchEditException> { f.edit("modifier_add", invalid) }
+        assertEquals(initial.state, f.now.state)
+        val config = buildJsonObject {
+            put("scaffold", "structure")
+            putJsonObject("values") { put("lowerShare", 25f); put("roundness", 80f); put("lashSquash", 40f) }
+        }
+        f.edit("modifier_update", buildJsonObject { put("id", "eye"); put("type", "eye/fitted"); put("config", config) })
+        assertNotEquals(RigIrCompiler.compile(initial.model), RigIrCompiler.compile(f.now.model))
+        val expected = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_enable", buildJsonObject { put("id", "eye"); put("enabled", false) })
+        f.edit("modifier_enable", buildJsonObject { put("id", "eye"); put("enabled", true) })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+    @Test fun dependentEyeModulesPauseWithoutTheirChosenBaseAndSurvivePrefixApplication(): Unit = runBlocking<Unit> {
+        val f = Fixture(document()); f.install()
+        f.group(listOf("body/legacy", "face/legacy", "eye/fitted", "mouth/fitted", "hair/legacy"))
+        f.edit("modifier_add", f.addition("eye.smile", "smile", config = buildJsonObject {
+            put("scaffold", "structure"); put("base", "eye")
+        }))
+        f.edit("modifier_add", f.addition("eye.squash", "squash", config = buildJsonObject {
+            put("scaffold", "structure"); put("base", "eye")
+        }))
+        f.edit("modifier_add", f.addition("brow/fitted", "brow"))
+        val recipe = fittedRecipe(mapOf("eye" to BaseChoice("eye/fitted", 2), "mouth" to BaseChoice("mouth/fitted"), "brow" to BaseChoice("brow/fitted"))).let {
+            it.copy(modules = it.modules + ("eye.smile" to ModuleChoice(true)) + ("eye.squash" to ModuleChoice(true)))
+        }
+        val smile = ParameterId("ParamEyeLSmile")
+        val poses = listOf(emptyMap(), mapOf(StandardParameters.EYE_L_OPEN to 0f, smile to 1f),
+            mapOf(StandardParameters.EYE_L_OPEN to .4f, smile to .7f, StandardParameters.EYE_BALL_FORM to -.6f, StandardParameters.ANGLE_X to 18f, StandardParameters.BROW_L_Y to .5f))
+        val active = f.now.model
+        compare(native(f.document, recipe), active, poses)
+        val config = buildJsonObject { put("scaffold", "structure"); put("base", "eye")
+            putJsonObject("values") { put("arch", 150f); put("push", 75f) } }
+        f.edit("modifier_update", buildJsonObject { put("id", "smile"); put("type", "eye.smile"); put("config", config) })
+        assertNotEquals(RigIrCompiler.compile(active), RigIrCompiler.compile(f.now.model))
+        val tunedRecipe = recipe.copy(modules = recipe.modules + ("eye.smile" to ModuleChoice(true, values = mapOf("arch" to 150f, "push" to 75f))))
+        compare(native(f.document, tunedRecipe), f.now.model, poses)
+        val expected = RigIrCompiler.compile(f.now.model)
+        val report = requireNotNull(active.rig.modifierReport)
+        assertTrue(report.getValue("entries").jsonArray.single { it.jsonObject.getValue("id").jsonPrimitive.content == "smile" }.jsonObject.getValue("contributions").jsonArray.isNotEmpty())
+        val before = f.now
+        assertFailsWith<WorkspaceBatchEditException> {
+            f.edit("modifier_move", buildJsonObject { put("id", "smile"); put("index", 1) })
+        }
+        assertEquals(before.state, f.now.state)
+        f.edit("modifier_enable", buildJsonObject { put("id", "eye"); put("enabled", false) })
+        assertEquals("missing_dependency", f.now.model.rig.modifierReport!!.getValue("entries").jsonArray.single { it.jsonObject.getValue("id").jsonPrimitive.content == "smile" }.jsonObject.getValue("status").jsonPrimitive.content)
+        assertEquals("missing_dependency", f.now.model.rig.modifierReport!!.getValue("entries").jsonArray.single {
+            it.jsonObject.getValue("id").jsonPrimitive.content == "squash"
+        }.jsonObject.getValue("status").jsonPrimitive.content)
+        assertTrue(f.now.model.rig.puppet.parameters.none { it.id == smile }, "a later brow modifier must not reactivate a paused eye module")
+        assertEquals(RigIrCompiler.compile(f.now.model), RigIrCompiler.compile(f.builder.build(f.now.document)))
+        f.edit("modifier_enable", buildJsonObject { put("id", "eye"); put("enabled", true) })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        f.edit("modifier_apply", buildJsonObject { put("id", "eye") })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        assertEquals("active", f.now.model.rig.modifierReport!!.getValue("entries").jsonArray.single { it.jsonObject.getValue("id").jsonPrimitive.content == "smile" }.jsonObject.getValue("status").jsonPrimitive.content)
+        f.edit("modifier_apply", buildJsonObject { put("id", "smile") })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun shapeModulesKeepIndependentMorphsAndCombinedPosesWhenApplied(): Unit = runBlocking<Unit> {
+        val f = Fixture(document()); f.install()
+        f.edit("modifier_add", f.addition(RigSourceModifiers.SCAFFOLD, "structure"))
+        f.edit("modifier_apply", buildJsonObject { put("id", "structure") })
+        val lash = mesh(f, "lash").id.raw
+        f.edit("rig_create_warp", buildJsonObject {
+            put("id", "authored_lash"); put("name", "Authored lash parent"); put("fit_local", false); put("rows", 4); put("columns", 4)
+            putJsonArray("targets") { add("mesh:$lash") }
+        })
+        f.edit("modifier_add_group", buildJsonObject { put("group", "fitted")
+            put("entries", JsonArray(listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/legacy").map {
+                f.addition(it, it.substringBefore('/'))
+            }))
+        })
+        val modules = listOf("brow.shape", "eye.emotion", "mouth.vowel", "eye.smile", "eye.gaze-lid", "brow.blink", "brow.lid-coupling", "mouth.cheek-lid")
+        val recipe = fittedRecipe(mapOf("eye" to BaseChoice("eye/fitted", 2), "brow" to BaseChoice("brow/fitted"), "mouth" to BaseChoice("mouth/fitted"))).let {
+            it.copy(modules = it.modules + modules.associateWith { ModuleChoice(true) })
+        }
+        val poses = listOf(emptyMap(),
+            mapOf(ParameterId("ParamEyeBallLX") to .7f, ParameterId("ParamEyeBallLY") to -.4f),
+            mapOf(ParameterId("ParamBrowLX") to .7f, ParameterId("ParamBrowLAngle") to -.5f, ParameterId("ParamBrowLForm") to .4f),
+            mapOf(StandardParameters.EYE_L_OPEN to .4f, ParameterId("ParamEyeLForm") to .7f, ParameterId("ParamEyeLSquint") to .5f),
+            mapOf(StandardParameters.MOUTH_OPEN to .6f, ParameterId("ParamA") to .4f, ParameterId("ParamU") to .6f),
+            mapOf(StandardParameters.ANGLE_X to 18f, StandardParameters.ANGLE_Y to -12f, StandardParameters.BODY_LEAN to 3f,
+                StandardParameters.EYE_L_OPEN to .3f, ParameterId("ParamEyeLForm") to -.6f, ParameterId("ParamEyeLSquint") to .3f,
+                ParameterId("ParamEyeLSmile") to .6f, ParameterId("ParamEyeBallLX") to .7f, ParameterId("ParamEyeBallLY") to -.4f,
+                ParameterId("ParamBrowLX") to -.6f, ParameterId("ParamBrowLAngle") to .7f, ParameterId("ParamBrowLForm") to -.5f,
+                StandardParameters.MOUTH_OPEN to .4f, StandardParameters.MOUTH_FORM to .7f, ParameterId("ParamO") to .8f))
+        for ((index, type) in modules.withIndex()) {
+            f.edit("modifier_add", f.addition(type, type, config = buildJsonObject {
+                put("scaffold", "structure"); put("base", type.substringBefore('.'))
+                if (RigLegacyBindings.spec(type).related.isNotEmpty()) putJsonObject("dependencies") { put("eye/fitted", "eye") }
+            }))
+            val prefixRecipe = recipe.copy(modules = recipe.modules.mapValues { (id, choice) -> choice.copy(on = id in modules.take(index + 1)) })
+            try { compare(native(f.document, prefixRecipe), f.now.model, poses) }
+            catch (error: Throwable) { throw AssertionError("Stage $type: ${error.message}", error) }
+        }
+        assertTrue(mesh(f, "brow").blendShapes.any { it.parameterId == ParameterId("ParamBrowLX") })
+        assertTrue(mesh(f, "mouth").blendShapes.any { it.parameterId == ParameterId("ParamA") })
+        assertTrue(f.now.model.rig.modifierReport!!.getValue("entries").jsonArray.any { entry ->
+            entry.jsonObject.getValue("contributions").jsonArray.any { raw ->
+                val change = raw.jsonObject
+                change.getValue("kind").jsonPrimitive.content == "deformer" && change.getValue("change").jsonPrimitive.content == "added"
+            }
+        }, "combined modules must exercise native carrier creation")
+        val byId = f.now.model.rig.puppet.deformers.associateBy { it.id }
+        var parent = mesh(f, "lash").parentDeformerId
+        val ancestors = linkedSetOf<String>()
+        while (parent != null) { ancestors += parent.raw; parent = byId.getValue(parent).parent }
+        assertTrue("authored_lash" in ancestors, "native carriers must retain the authored parent")
+        val exported = linkedMapOf<String, ByteArray>()
+        io.github.psd2live.format.compile.Compiler.export(io.github.psd2live.targets.cubism.Cmo3Target(),
+            RigIrCompiler.compile(f.now.model, tileArt = true), io.github.psd2live.format.compile.ExportOptions("modifiers")) { path, bytes -> exported[path] = bytes }
+        val imported = Cmo3ModelImport.read(exported.getValue("modifiers.cmo3")).puppet
+        val evaluator = CpuDeformationEvaluator()
+        for (pose in poses) {
+            val expectedFrame = evaluator.evaluate(f.now.model.rig.puppet, pose)
+            val readFrame = evaluator.evaluate(imported, pose)
+            for ((id, points) in expectedFrame.worldPositions) {
+                val read = readFrame.worldPositions.getValue(id)
+                assertEquals(points.size, read.size)
+                assertTrue(points.indices.all { abs(points[it] - read[it]) < .03f }, "exported morph geometry differs on ${id.raw} at $pose (maximum ${points.indices.maxOf { abs(points[it] - read[it]) }})")
+                assertEquals(expectedFrame.opacity.getValue(id), readFrame.opacity.getValue(id), .0001f)
+            }
+        }
+        val expected = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_apply", buildJsonObject { put("id", "brow.shape") })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+        f.edit("modifier_apply", buildJsonObject { put("id", "mouth.cheek-lid") })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun widenedLidsFadingLinesAndHighlightsComposeWithHeadTurnsAndApplyAsOrdinaryContent(): Unit = runBlocking<Unit> {
+        val f = Fixture(document(eyeDetails = true)); f.install()
+        f.group(listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/legacy"))
+        val modules = listOf("eye.wide", "eye.lid-fade", "eye.highlight")
+        val base = fittedRecipe(mapOf("eye" to BaseChoice("eye/fitted", 2), "brow" to BaseChoice("brow/fitted"), "mouth" to BaseChoice("mouth/fitted")))
+        val poses = listOf(emptyMap(), mapOf(StandardParameters.EYE_L_OPEN to 0f), mapOf(StandardParameters.EYE_L_OPEN to .35f),
+            mapOf(StandardParameters.EYE_L_OPEN to 1.7f),
+            mapOf(StandardParameters.EYE_L_OPEN to .6f, StandardParameters.ANGLE_X to 20f, StandardParameters.ANGLE_Y to -14f,
+                StandardParameters.EYE_BALL_X to .6f, StandardParameters.EYE_BALL_Y to -.5f),
+            mapOf(StandardParameters.EYE_L_OPEN to 2f, StandardParameters.ANGLE_X to -25f, StandardParameters.ANGLE_Y to 18f))
+        fun recipe(active: List<String>) = base.copy(modules = base.modules + active.associateWith { ModuleChoice(true) })
+        for ((index, type) in modules.withIndex()) {
+            f.edit("modifier_add", f.addition(type, type, config = buildJsonObject {
+                put("scaffold", "structure"); put("base", "eye")
+                if (type == "eye.highlight") putJsonObject("dependencies") { put("face/legacy", "face") }
+            }))
+            try { compare(native(f.document, recipe(modules.take(index + 1))), f.now.model, poses) }
+            catch (error: Throwable) { throw AssertionError("Stage $type: ${error.message}", error) }
+        }
+        validateOperationSchema(WorkspaceModifierQueries.describe(f.now), WorkspaceModifierSchemas.stack, "result")
+        assertEquals(2f, f.now.model.rig.puppet.parameters.single { it.id == StandardParameters.EYE_L_OPEN }.max)
+        val wide = f.now.model.rig.modifierReport!!.getValue("entries").jsonArray.single { it.jsonObject.getValue("id").jsonPrimitive.content == "eye.wide" }.jsonObject
+        assertTrue(wide.getValue("contributions").jsonArray.any { it.jsonObject["kind"]?.jsonPrimitive?.content == "parameter" &&
+            it.jsonObject["id"]?.jsonPrimitive?.content == StandardParameters.EYE_L_OPEN.raw && it.jsonObject["change"]?.jsonPrimitive?.content == "modified" })
+        val owned = wide.getValue("owned_keyforms").jsonArray.map { it.jsonObject }.first {
+            it["channel"] == null &&
+                it["key"]?.jsonObject?.get(StandardParameters.EYE_L_OPEN.raw)?.jsonPrimitive?.float == 1.5f
+        }
+        val target = owned.getValue("id").jsonPrimitive.content
+        val kind = owned.getValue("kind").jsonPrimitive.content
+        val key = owned.getValue("key").jsonObject.mapValues { it.value.jsonPrimitive.float }
+        fun <F> points(grid: KeyformGrid<F>, values: (F) -> FloatArray) = values(grid.cells.single { cell ->
+            grid.axes.indices.all { index -> grid.axes[index].keys[cell.coordinate[index]] == key.getValue(grid.axes[index].parameterId.raw) }
+        }.form)
+        val points = if (kind == "warp") points(f.now.model.rig.puppet.deformers.filterIsInstance<Deformer.Warp>().single { it.id.raw == target }.geometryGrid!!) { it.controlPoints }
+            else points(f.now.model.rig.puppet.drawables.single { it.id.raw == target }.geometryGrid!!) { it.positionDeltas }
+        f.edit("keyform_apply", buildJsonObject { putJsonArray("changes") { addJsonObject {
+            put("op", "set"); put("target", "$kind:$target"); put("key", owned.getValue("key"))
+            putJsonObject("geometry") { put(if (kind == "warp") "controlPoints" else "positionDeltas", JsonArray(points.mapIndexed { index, value -> JsonPrimitive(value + if (index % 2 == 0) .005f else 0f) })) }
+        } } })
+        val edits = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).overrides
+        assertTrue(edits.getValue("eye.wide").isNotEmpty(), "new stops must belong to the widening instance")
+        assertTrue(edits["eye"].isNullOrEmpty(), "the original fitted base must not inherit the new stop's override")
+        val withOverride = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_enable", buildJsonObject { put("id", "eye.wide"); put("enabled", false) })
+        compare(native(f.document, recipe(modules.drop(1))), f.now.model, poses)
+        assertEquals(1f, f.now.model.rig.puppet.parameters.single { it.id == StandardParameters.EYE_L_OPEN }.max)
+        f.edit("modifier_enable", buildJsonObject { put("id", "eye.wide"); put("enabled", true) })
+        assertEquals(withOverride, RigIrCompiler.compile(f.now.model))
+        val expected = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_apply", buildJsonObject { put("id", "eye.wide") })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+        f.edit("modifier_apply", buildJsonObject { put("id", "eye.highlight") })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun blinkAndBrowPendulumsReuseCompatibleSharedOutputsAndRemainLiveAfterPrefixApplication(): Unit = runBlocking<Unit> {
+        val originalDocument = document(eyeDetails = true)
+        val source = originalDocument.source as WorkspaceSourceArt
+        val ids = setOf("face", "iris", "lash", "close", "white", "brow", "lid", "lid-shadow", "highlight")
+        val f = Fixture(originalDocument.copy(source = source.copy(layers = source.layers.filter { it.id.raw in ids }))); f.install()
+        f.group(listOf("face/legacy", "eye/fitted", "brow/fitted"))
+        val targets = f.now.model.rig.puppet.drawables.map { ModifierTarget("mesh", it.id.raw) }
+        val iris = mesh(f, "iris").id.raw
+        fun addition(type: String, id: String, chosen: List<ModifierTarget> = targets) = f.addition(type, id, chosen,
+            buildJsonObject { put("scaffold", "structure"); put("base", type.substringBefore('.')) })
+        f.edit("modifier_add_group", buildJsonObject { put("group", "spring")
+            put("entries", JsonArray(listOf(addition("brow.shape", "brow.shape"),
+                addition("eye.aftershock", "iris-bounce", targets.filter { it.id == iris }),
+                addition("eye.aftershock", "lid-bounce", targets.filter { it.id != iris }), addition("brow.spring", "brow.spring"))))
+        })
+        validateOperationSchema(WorkspaceModifierQueries.describe(f.now), WorkspaceModifierSchemas.stack, "result")
+        val output = RigIrCompiler.compile(f.now.model)
+        assertEquals(4, output.physics.groups.size)
+        val available = output.parameters.mapTo(HashSet()) { it.id }
+        val original = PhysicsGenerator.moduleRules(available).filter { it.id in setOf(PhysicsGenerator.EYE_L_BOUNCE_ID, PhysicsGenerator.EYE_R_BOUNCE_ID, "PhysicsBrowLSpring", "PhysicsBrowRSpring") }.map(Physics3Json::group)
+        assertEquals(original.map { it.copy(id = "", name = "") }, output.physics.groups.map { it.copy(id = "", name = "") })
+        val reports = f.now.model.rig.modifierReport!!.getValue("entries").jsonArray.map { it.jsonObject }
+        val reused = reports.single { it.getValue("id").jsonPrimitive.content == "lid-bounce" }.getValue("contributions").jsonArray.map { it.jsonObject }
+        assertEquals(2, reused.count { it["kind"]?.jsonPrimitive?.content == "physics" && it["change"]?.jsonPrimitive?.content == "reused" })
+        val recipe = fittedRecipe(mapOf("eye" to BaseChoice("eye/fitted", 2), "brow" to BaseChoice("brow/fitted"), "mouth" to BaseChoice("mouth/fitted"))).let {
+            it.copy(modules = it.modules + listOf("brow.shape", "eye.aftershock", "brow.spring").associateWith { ModuleChoice(true) })
+        }
+        compare(native(f.document, recipe), f.now.model, listOf(emptyMap(),
+            mapOf(StandardParameters.EYE_L_OPEN to .35f, ParameterId("ParamEyeLBounce") to .8f, ParameterId("ParamBrowLSpring") to -.7f),
+            mapOf(StandardParameters.ANGLE_X to 20f, StandardParameters.ANGLE_Y to -10f, StandardParameters.EYE_L_OPEN to .6f,
+                ParameterId("ParamEyeLBounce") to -.6f, ParameterId("ParamBrowLAngle") to .4f, ParameterId("ParamBrowLSpring") to .7f)))
+        val ranges = output.parameters.associate { it.id to PhysicsEngine.Range(it.min, it.max, it.default) }
+        val expectedPhysics = PhysicsEngine(original.map(Physics3Json::setting), ranges)
+        val actualPhysics = PhysicsEngine(output.physics.groups.map(Physics3Json::setting), ranges)
+        var moved = false
+        repeat(90) { frame ->
+            val input = mapOf("ParamEyeLOpen" to if (frame in 10..15) 0f else 1f, "ParamBrowLY" to if (frame < 30) .7f else -.4f,
+                "ParamBrowLAngle" to if (frame < 50) .6f else -.6f)
+            val expected = expectedPhysics.step(input, 1f / 60)
+            val actual = actualPhysics.step(input, 1f / 60)
+            assertEquals(expected, actual)
+            if (actual.values.any { abs(it) > .01f }) moved = true
+        }
+        assertTrue(moved, "the preserved pendulums must actually move")
+        val baseConfig = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.single { it.id == "iris-bounce" }.config
+        val changedRule = Physics3Json.setting(output.physics.groups.first()).let { rule -> rule.copy(segments = rule.segments.mapIndexed { index, segment ->
+            if (index == 0) segment.copy(length = segment.length * 1.2f) else segment
+        }) }
+        val changedConfig = JsonObject(baseConfig + ("physics" to buildJsonObject { put(PhysicsGenerator.EYE_L_BOUNCE_ID, changedRule.toJson()) }))
+        val beforeConflict = f.now
+        assertFails { f.edit("modifier_update", buildJsonObject { put("id", "iris-bounce"); put("type", "eye.aftershock"); put("config", changedConfig) }) }
+        assertEquals(beforeConflict, f.now, "incompatible shared outputs must not publish any candidate")
+        f.edit("modifier_enable", buildJsonObject { put("id", "lid-bounce"); put("enabled", false) })
+        f.edit("modifier_update", buildJsonObject { put("id", "iris-bounce"); put("type", "eye.aftershock"); put("config", changedConfig) })
+        assertEquals(changedRule.segments.first().length, f.now.model.rig.modifierOutput!!.physics.groups.first().segments.first().length)
+        assertTrue(f.now.document.rigEdits.physicsEdits.isEmpty(), "module controls must edit their instance, not ordinary physics")
+        validateOperationSchema(WorkspaceModifierQueries.describe(f.now), WorkspaceModifierSchemas.stack, "result")
+        val secondConfig = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.single { it.id == "lid-bounce" }.config
+        f.edit("modifier_update", buildJsonObject { put("id", "lid-bounce"); put("type", "eye.aftershock")
+            put("config", JsonObject(secondConfig + ("physics" to buildJsonObject { put(PhysicsGenerator.EYE_L_BOUNCE_ID, changedRule.toJson()) }))) })
+        f.edit("modifier_enable", buildJsonObject { put("id", "lid-bounce"); put("enabled", true) })
+        val edited = RigIrCompiler.compile(f.now.model)
+        assertEquals(output.copy(physics = edited.physics), edited, "pendulum edits must preserve every other field")
+        assertNotEquals(output.physics, edited.physics)
+        f.edit("modifier_apply", buildJsonObject { put("id", "iris-bounce") })
+        assertEquals(edited, RigIrCompiler.compile(f.now.model))
+        assertEquals(edited, RigIrCompiler.compile(f.builder.build(f.now.document)))
+        assertEquals(2, f.now.document.rigEdits.physicsEdits.size)
+        assertEquals(changedRule.segments.first().length, f.now.document.rigEdits.physicsEdits.first().segments.first().length)
+        f.edit("modifier_apply", buildJsonObject { put("id", "brow.spring") })
+        assertEquals(edited, RigIrCompiler.compile(f.now.model))
+        assertEquals(4, f.now.document.rigEdits.physicsEdits.size)
+        assertEquals(edited, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun mouthCaptureJawTongueDepthAndMoodsComposeAndKeepTheirColorChannelsThroughApplication(): Unit = runBlocking<Unit> {
+        val f = Fixture(document(mouthDetails = true, expressionDetails = true)); f.install()
+        f.group(listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/legacy"))
+        val modules = listOf("mouth.capture", "mouth.tongue", "mouth.jaw", "mouth.interior-depth", "mouth.spring", "expression.cheek", "expression.gloom")
+        fun values(type: String): Map<String, Float> = when (type) {
+            "mouth.jaw" -> mapOf("share" to 22f)
+            "mouth.interior-depth" -> mapOf("depth" to 150f)
+            "expression.cheek" -> mapOf("strength" to 150f)
+            "expression.gloom" -> mapOf("strength" to 80f)
+            else -> emptyMap()
+        }
+        val base = fittedRecipe(mapOf("eye" to BaseChoice("eye/fitted", 2), "brow" to BaseChoice("brow/fitted"), "mouth" to BaseChoice("mouth/fitted")))
+        val poses = listOf(emptyMap(), mapOf(StandardParameters.MOUTH_OPEN to .7f, ParameterId("ParamJawOpen") to .8f),
+            mapOf(StandardParameters.MOUTH_OPEN to .55f, ParameterId("ParamMouthPuckerWiden") to -.6f, ParameterId("ParamCheekPuff") to .5f),
+            mapOf(StandardParameters.MOUTH_OPEN to .8f, ParameterId("ParamTongueOut") to .7f, ParameterId("ParamMouthX") to -.5f,
+                ParameterId("ParamMouthCornerL") to .6f, ParameterId("ParamMouthPuckerWidenR") to -.4f),
+            mapOf(StandardParameters.ANGLE_X to 22f, StandardParameters.ANGLE_Y to -14f, StandardParameters.MOUTH_OPEN to .6f,
+                ParameterId("ParamJawOpen") to .8f, ParameterId("ParamMouthSpring") to -.7f),
+            mapOf(ParameterId("ParamCheek") to .8f, ParameterId("ParamGloom") to .6f, StandardParameters.MOUTH_OPEN to .5f,
+                ParameterId("ParamTongueOut") to .5f, ParameterId("ParamMouthFunnel") to .7f))
+        for ((index, type) in modules.withIndex()) {
+            val spec = RigLegacyBindings.spec(type)
+            f.edit("modifier_add", f.addition(type, type, config = buildJsonObject {
+                put("scaffold", "structure")
+                spec.module?.base?.let { put("base", it.substringBefore('/')) }
+                if (values(type).isNotEmpty()) put("values", JsonObject(values(type).mapValues { JsonPrimitive(it.value) }))
+                if (spec.related.isNotEmpty()) putJsonObject("dependencies") { spec.related.forEach { required ->
+                    put(required, if ('/' in required) required.substringBefore('/') else required)
+                } }
+            }))
+            val recipe = base.copy(modules = base.modules + modules.take(index + 1).associateWith { ModuleChoice(true, values = values(it)) })
+            try { compare(native(f.document, recipe), f.now.model, poses) }
+            catch (error: Throwable) { throw AssertionError("Stage $type: ${error.message}", error) }
+        }
+        validateOperationSchema(WorkspaceModifierQueries.describe(f.now), WorkspaceModifierSchemas.stack, "result")
+        assertEquals(1, f.now.model.rig.modifierOutput!!.physics.groups.size)
+        val actualPhysics = WorkspaceDocumentEdits.physicsCatalog(f.now.document, f.now.model)
+        assertEquals(f.now.model.rig.modifierOutput!!.physics.groups.map { it.id }, actualPhysics.map { it.id })
+        assertTrue(actualPhysics.all { it.origin == PhysicsOrigin.MODIFIER && it.active })
+        val face = mesh(f, "face").id.raw
+        f.edit("keyform_apply", buildJsonObject { putJsonArray("changes") { addJsonObject {
+            put("op", "set"); put("target", "mesh:$face")
+            putJsonObject("key") { put("ParamCheek", 1f); put("ParamGloom", 1f) }
+            putJsonObject("channels") { put("multiplyColor", JsonArray(listOf(.65f, .45f, .55f).map(::JsonPrimitive))) }
+        } } })
+        val overrides = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).overrides
+        assertTrue(overrides.getValue("expression.gloom").any { it["channel"]?.jsonPrimitive?.content == "multiply_color" })
+        val colored = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_enable", buildJsonObject { put("id", "expression.gloom"); put("enabled", false) })
+        val withoutGloom = base.copy(modules = base.modules + modules.dropLast(1).associateWith { ModuleChoice(true, values = values(it)) })
+        compare(native(f.document, withoutGloom), f.now.model, poses)
+        f.edit("modifier_enable", buildJsonObject { put("id", "expression.gloom"); put("enabled", true) })
+        assertEquals(colored, RigIrCompiler.compile(f.now.model))
+        val expected = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_apply", buildJsonObject { put("id", "mouth.jaw") })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+        f.edit("modifier_apply", buildJsonObject { put("id", "expression.gloom") })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun skinClippingAndNeckFollowAreExplicitAndSurvivePrefixApplication(): Unit = runBlocking<Unit> {
+        val f = Fixture(document(expressionDetails = true, skinDetails = true)); f.install()
+        f.group(listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/legacy"))
+        val poses = listOf(emptyMap(), mapOf(StandardParameters.ANGLE_Z to 25f),
+            mapOf(StandardParameters.ANGLE_Z to -25f, StandardParameters.ANGLE_X to 20f,
+                StandardParameters.ANGLE_Y to -10f, StandardParameters.BODY_X to 5f))
+        val base = fittedRecipe(mapOf("eye" to BaseChoice("eye/fitted", 2), "brow" to BaseChoice("brow/fitted"), "mouth" to BaseChoice("mouth/fitted")))
+        val skin = listOf("blush", "skin-highlight", "hair-shadow")
+        assertTrue(skin.all { mesh(f, it).maskedBy.isEmpty() })
+        assertTrue(mesh(f, "neck-shadow").maskedBy.isEmpty())
+        val beforeSkin = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_add", f.addition("face.skin-clip", "skin"))
+        val afterSkin = RigIrCompiler.compile(f.now.model)
+        assertEquals(beforeSkin, afterSkin.copy(meshes = afterSkin.meshes.map { mesh ->
+            val original = beforeSkin.meshes.single { it.id == mesh.id }
+            mesh.copy(maskedBy = original.maskedBy, invertMask = original.invertMask)
+        }), "clipping must not rewrite authored geometry, channels, deformers or other sidecars")
+        val face = mesh(f, "face").id
+        skin.forEach { assertEquals(listOf(face), mesh(f, it).maskedBy, it) }
+        f.edit("modifier_add", f.addition("face.neck", "neck", config = buildJsonObject {
+            put("scaffold", "structure"); putJsonObject("dependencies") { put("face/legacy", "face") }
+        }))
+        assertEquals(listOf(mesh(f, "neck").id), mesh(f, "neck-shadow").maskedBy)
+        val recipe = base.copy(modules = base.modules + mapOf("face.skin-clip" to ModuleChoice(true), "face.neck" to ModuleChoice(true)))
+        val original = native(f.document, recipe)
+        compare(original, f.now.model, poses)
+        assertEquals(original.rig.puppet.drawables.associate { it.id to it.maskedBy }, f.now.model.rig.puppet.drawables.associate { it.id to it.maskedBy })
+        val observed = WorkspaceModifierQueries.describe(f.now)
+        validateOperationSchema(observed, WorkspaceModifierSchemas.stack, "result")
+        val skinReport = observed.getValue("entries").jsonArray.map { it.jsonObject }.single { it["id"]?.jsonPrimitive?.content == "skin" }
+        val masks = skinReport.getValue("contributions").jsonArray.map { it.jsonObject }.mapNotNull { it["mask"]?.jsonObject }
+        assertEquals(skin.map { mesh(f, it).id.raw }.toSet(), masks.map { it.getValue("target").jsonPrimitive.content }.toSet())
+        assertTrue(masks.all { it.getValue("before").jsonArray.isEmpty() && it.getValue("after").jsonArray.single().jsonPrimitive.content == face.raw })
+        val expected = RigIrCompiler.compile(f.now.model)
+        val before = f.now
+        assertFailsWith<WorkspaceBatchEditException> {
+            f.edit("modifier_move", buildJsonObject { put("id", "neck"); put("index", 1) })
+        }
+        assertEquals(before.state, f.now.state)
+        f.edit("modifier_enable", buildJsonObject { put("id", "face"); put("enabled", false) })
+        val row = WorkspaceModifierQueries.describe(f.now).getValue("entries").jsonArray.last().jsonObject
+        assertEquals("missing_dependency", row.getValue("status").jsonPrimitive.content)
+        assertTrue(mesh(f, "neck-shadow").maskedBy.isEmpty())
+        assertTrue(skin.all { mesh(f, it).maskedBy == listOf(face) }, "independent clipping keeps working")
+        f.edit("modifier_enable", buildJsonObject { put("id", "face"); put("enabled", true) })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        f.edit("modifier_apply", buildJsonObject { put("id", "skin") })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+        f.edit("modifier_apply", buildJsonObject { put("id", "neck") })
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+        f.edit("rig_edit_structure", buildJsonObject { putJsonArray("edits") { addJsonObject {
+            put("action", "static"); put("kind", "mesh"); put("id", mesh(f, "neck-shadow").id.raw)
+            putJsonArray("masked_by") {}; put("invert_mask", false)
+        } } })
+        assertTrue(mesh(f, "neck-shadow").maskedBy.isEmpty(), "applied masks are ordinary editable content")
+        assertTrue(f.builder.build(f.now.document).rig.puppet.drawables.single { it.id == mesh(f, "neck-shadow").id }.maskedBy.isEmpty())
+        f.runtime.checkout(f.now.projectId, f.now.state, before.historyHead)
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+    }
+
+    @Test fun clippingRejectsIncompatibleAuthoredInversionWithoutPublishingItsScaffold(): Unit = runBlocking<Unit> {
+        val f = Fixture(document(expressionDetails = true)); f.install()
+        f.edit("rig_edit_structure", buildJsonObject { putJsonArray("edits") { addJsonObject {
+            put("action", "static"); put("kind", "mesh"); put("id", mesh(f, "blush").id.raw); put("invert_mask", true)
+        } } })
+        val before = f.now
+        val error = assertFailsWith<WorkspaceBatchEditException> { f.group(listOf("face.skin-clip")) }
+        assertTrue(error.message.orEmpty().contains("face.skin-clip"))
+        assertEquals(before, f.now)
+        assertTrue(RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.isEmpty())
+    }
+
+    @Test fun bodyAndOutfitModulesKeepNativeGeometryPhysicsAndStableChainParameters(): Unit = runBlocking<Unit> {
+        val f = Fixture(document(outfitDetails = true)); f.install()
+        f.group(listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/legacy"))
+        val types = listOf("body.bust", "body.arms", "outfit.skirt", "outfit.ribbons", "outfit.creature")
+        fun values(type: String) = when (type) { "body.bust" -> mapOf("bounce" to 130f)
+            "outfit.skirt", "outfit.ribbons", "outfit.creature" -> mapOf("swing" to 140f)
+            else -> emptyMap() }
+        for (type in types) f.edit("modifier_add", f.addition(type, type, config = buildJsonObject {
+            put("scaffold", "structure"); putJsonObject("dependencies") { put("body/legacy", "body"); put("face/legacy", "face") }
+            if (values(type).isNotEmpty()) put("values", JsonObject(values(type).mapValues { JsonPrimitive(it.value) }))
+        }))
+        val stack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
+        val result = RigIrCompiler.compile(f.now.model)
+        val capturedSource = RigModifierSource.of(f.now.model)
+        val aliases = stack.instances.filter { RigModifierChains.kinds(it.type).isNotEmpty() }
+            .flatMap { capturedSource.chains(it).flatMap { chain -> chain.aliases.entries } }.associate { it.key to it.value }
+        assertTrue(aliases.isNotEmpty())
+        assertTrue(result.parameters.none { it.id in aliases }, "chain outputs must be named by persisted instances")
+        val base = fittedRecipe(mapOf("eye" to BaseChoice("eye/fitted", 2), "brow" to BaseChoice("brow/fitted"), "mouth" to BaseChoice("mouth/fitted")))
+        val recipe = base.copy(modules = base.modules + types.associateWith { ModuleChoice(true, values = values(it)) })
+        val original = native(f.document, recipe)
+        val swing = aliases.entries.mapIndexed { index, entry -> ParameterId(entry.value) to if (index % 2 == 0) .65f else -.45f }.toMap()
+        val poses = listOf(emptyMap(), swing, swing + mapOf(StandardParameters.ANGLE_X to 20f, StandardParameters.ANGLE_Y to -12f,
+            StandardParameters.ANGLE_Z to 15f, StandardParameters.BODY_X to -6f, StandardParameters.BREATH to .8f,
+            ParameterId("ParamBustX") to .5f, ParameterId("ParamBustY") to -.6f, ParameterId("ParamArmLSwing") to .7f))
+        compare(original, f.now.model, poses, aliases)
+        val expectedRules = PhysicsGenerator.moduleRules(original.rig.puppet.parameters.mapTo(HashSet()) { it.id.raw }).map { rule ->
+            rule.copy(inputs = rule.inputs.map { it.copy(parameter = aliases[it.parameter] ?: it.parameter) },
+                outputs = rule.outputs.map { it.copy(parameter = aliases[it.parameter] ?: it.parameter) })
+        }
+        val actualRules = result.physics.groups.map(Physics3Json::setting)
+        assertTrue(actualRules.size > 10)
+        assertEquals(expectedRules.associateBy { it.outputs.map { output -> output.parameter } }.keys,
+            actualRules.associateBy { it.outputs.map { output -> output.parameter } }.keys)
+        for (rule in expectedRules) {
+            val actual = actualRules.single { it.outputs.map { output -> output.parameter } == rule.outputs.map { output -> output.parameter } }
+            assertEquals(rule.copy(id = actual.id), actual)
+        }
+        val ranges = PhysicsEngine.ranges(f.now.model.rig.puppet.parameters)
+        val expectedEngine = PhysicsEngine(expectedRules, ranges); val actualEngine = PhysicsEngine(actualRules, ranges)
+        repeat(90) { frame ->
+            val input = mapOf("ParamAngleX" to if (frame < 30) 20f else -15f, "ParamBodyAngleY" to if (frame < 45) 4f else -3f,
+                "ParamBreath" to (frame % 30) / 30f, "ParamEyeLOpen" to if (frame % 30 < 3) 0f else 1f)
+            assertEquals(expectedEngine.step(input, 1f / 60), actualEngine.step(input, 1f / 60))
+        }
+        validateOperationSchema(WorkspaceModifierQueries.describe(f.now), WorkspaceModifierSchemas.stack, "result")
+        f.edit("modifier_apply", buildJsonObject { put("id", "body.arms") })
+        assertEquals(result, RigIrCompiler.compile(f.now.model))
+        assertEquals(result, RigIrCompiler.compile(f.builder.build(f.now.document)))
+        f.edit("modifier_apply", buildJsonObject { put("id", "outfit.creature") })
+        assertEquals(result, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun separateClothingInstancesOwnOnlyTheirTargetsAndTheirOwnPhysics(): Unit = runBlocking<Unit> {
+        val f = Fixture(document(outfitDetails = true)); f.install()
+        f.group(listOf("body/legacy", "face/legacy"))
+        val ribbon = ModifierTarget("mesh", mesh(f, "ribbon").id.raw)
+        val pendant = ModifierTarget("mesh", mesh(f, "pendant").id.raw)
+        val configuration = buildJsonObject {
+            put("scaffold", "structure"); putJsonObject("dependencies") { put("body/legacy", "body"); put("face/legacy", "face") }
+        }
+        f.edit("modifier_add", f.addition("outfit.ribbons", "ribbon-a", listOf(ribbon), configuration))
+        fun stack() = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
+        fun owned(id: String) = RigIrCompiler.compile(f.now.model).parameters.map { it.id }.filter { it.startsWith("modifier:$id:") }.toSet()
+        val first = owned("ribbon-a")
+        assertEquals(4, first.size)
+        assertTrue(RigModifierSource.of(f.now.model).chains(stack().instances.last()).all { it.binding.native.kind == io.github.psd2live.core.fit.HairKind.RIBBON })
+        f.edit("modifier_add", f.addition("outfit.ribbons", "pendant-b", listOf(pendant), configuration))
+        val second = owned("pendant-b")
+        assertEquals(2, second.size)
+        assertTrue(first.intersect(second).isEmpty())
+        val original = RigIrCompiler.compile(f.now.model)
+        val before = f.now
+        assertFailsWith<WorkspaceBatchEditException> {
+            f.edit("modifier_add", f.addition("outfit.ribbons", "overlap", listOf(ribbon), configuration))
+        }
+        assertEquals(before.state, f.now.state)
+        val evaluator = CpuDeformationEvaluator()
+        val pose = (first + second).associate { ParameterId(it) to .65f }
+        val pendantBefore = evaluator.evaluate(f.now.model.rig.puppet, pose).worldPositions.getValue(DrawableId(pendant.id))
+        f.edit("modifier_enable", buildJsonObject { put("id", "ribbon-a"); put("enabled", false) })
+        assertEquals(second, owned("pendant-b"))
+        assertTrue(evaluator.evaluate(f.now.model.rig.puppet, pose).worldPositions.getValue(DrawableId(pendant.id)).contentEquals(pendantBefore))
+        f.edit("modifier_enable", buildJsonObject { put("id", "ribbon-a"); put("enabled", true) })
+        assertEquals(original, RigIrCompiler.compile(f.now.model))
+        f.edit("modifier_remove", buildJsonObject { put("id", "ribbon-a") })
+        f.edit("modifier_add", f.addition("outfit.ribbons", "ribbon-new", listOf(ribbon), configuration))
+        val replacement = owned("ribbon-new")
+        assertEquals(first.size, replacement.size)
+        assertTrue(first.intersect(replacement).isEmpty(), "a new instance cannot adopt a retired chain's parameter identity")
+        val instance = stack().instances.single { it.id == "ribbon-new" }
+        val initial = RigIrCompiler.compile(f.now.model)
+        val (slot, group) = RigModifierPhysics.entries(instance, initial).entries.first()
+        val edited = Physics3Json.setting(group).let { it.copy(segments = it.segments.map { segment -> segment.copy(delay = segment.delay * 1.2f) }) }
+        val changed = JsonObject(configuration + ("physics" to buildJsonObject { put(slot, edited.toJson()) }))
+        f.edit("modifier_update", buildJsonObject { put("id", instance.id); put("type", instance.type); put("config", changed) })
+        val after = RigIrCompiler.compile(f.now.model)
+        assertEquals(initial, after.copy(physics = initial.physics), "physics edits do not rewrite geometry")
+        assertEquals(edited, Physics3Json.setting(after.physics.groups.single { it.id == group.id }))
+        val captured = f.now
+        assertFailsWith<WorkspaceBatchEditException> {
+            f.edit("modifier_update", buildJsonObject { put("id", instance.id); put("type", instance.type)
+                put("config", JsonObject(configuration + ("physics" to buildJsonObject { put("unknown-chain", edited.toJson()) }))) })
+        }
+        assertEquals(captured.state, f.now.state)
+        f.edit("modifier_apply", buildJsonObject { put("id", instance.id) })
+        assertEquals(after, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun hairChainsReplaceTheNativeSwayBranchAndKeepOutputsAfterApplication(): Unit = runBlocking<Unit> {
+        val f = Fixture(document()); f.install()
+        f.group(listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/chains"))
+        val stack = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!)
+        val instance = stack.instances.single { it.type == "hair/chains" }
+        val expected = RigIrCompiler.compile(f.now.model)
+        val aliases = RigModifierSource.of(f.now.model).chains(instance).flatMap { it.aliases.entries }.associate { it.key to it.value }
+        assertTrue(aliases.isNotEmpty())
+        assertTrue(expected.parameters.none { it.id in setOf("ParamHairFront", "ParamHairBack") || it.id in aliases })
+        val nativeRecipe = fittedRecipe(mapOf("eye" to BaseChoice("eye/fitted", 2), "brow" to BaseChoice("brow/fitted"),
+            "mouth" to BaseChoice("mouth/fitted"), "hair" to BaseChoice("hair/chains")))
+        val swing = aliases.values.mapIndexed { index, value -> ParameterId(value) to if (index % 2 == 0) .7f else -.6f }.toMap()
+        compare(native(f.document, nativeRecipe), f.now.model, listOf(emptyMap(), swing,
+            swing + mapOf(StandardParameters.ANGLE_X to 20f, StandardParameters.ANGLE_Z to -15f, StandardParameters.BODY_X to 5f)), aliases)
+        assertTrue(expected.physics.groups.isNotEmpty())
+        val capture = f.now
+        assertFailsWith<WorkspaceBatchEditException> { f.edit("modifier_add", f.addition("hair/legacy", "competing")) }
+        assertEquals(capture.state, f.now.state)
+        f.edit("modifier_apply", buildJsonObject { put("id", "mouth") })
+        assertEquals(expected, RigIrCompiler.compile(f.now.model))
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+        f.edit("modifier_apply", buildJsonObject { put("id", "hair") })
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun chainIdentitiesAndEditedPhysicsSurviveUnrelatedNativeRenumbering(): Unit = runBlocking<Unit> {
+        val f = Fixture(document(outfitDetails = true)); f.install()
+        f.group(listOf("body/legacy", "face/legacy"))
+        val config = buildJsonObject {
+            put("scaffold", "structure"); putJsonObject("dependencies") { put("body/legacy", "body"); put("face/legacy", "face") }
+        }
+        f.edit("modifier_add", f.addition("outfit.skirt", "skirt", config = config))
+        f.edit("modifier_add", f.addition("outfit.ribbons", "ribbons", config = config))
+        fun instance() = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.single { it.id == "ribbons" }
+        fun owned() = RigIrCompiler.compile(f.now.model).let { rig ->
+            Triple(rig.parameters.map { it.id }.filter { it.startsWith("modifier:ribbons:") }.toSet(),
+                rig.deformers.map { it.id }.filter { it.startsWith("modifier:ribbons:") }.toSet(),
+                RigModifierPhysics.entries(instance(), rig).mapValues { it.value.id })
+        }
+        val identities = owned()
+        assertEquals(6, identities.first.size)
+        assertEquals(2, identities.second.size)
+        assertEquals(4, identities.third.size)
+        val report = WorkspaceModifierQueries.describe(f.now)
+        validateOperationSchema(report, WorkspaceModifierSchemas.stack, "result")
+        val observed = report.getValue("entries").jsonArray.map { it.jsonObject }.single { it.getValue("id").jsonPrimitive.content == "ribbons" }
+        assertEquals(identities.third.keys, observed.getValue("contributions").jsonArray.mapNotNull { it.jsonObject["physics_slot"]?.jsonPrimitive?.content }.toSet())
+        val originalNumbers = RigModifierSource.of(f.now.model).chains(instance()).map { it.binding.native.index }
+        val (slot, group) = RigModifierPhysics.entries(instance(), RigIrCompiler.compile(f.now.model)).entries.first()
+        val setting = Physics3Json.setting(group).copy(name = "Edited ribbon pendulum")
+        f.edit("modifier_update", buildJsonObject { put("id", "ribbons"); put("type", "outfit.ribbons")
+            put("config", JsonObject(config + ("physics" to buildJsonObject { put(slot, setting.toJson()) }))) })
+        val edited = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_enable", buildJsonObject { put("id", "skirt"); put("enabled", false) })
+        assertNotEquals(originalNumbers, RigModifierSource.of(f.now.model).chains(instance()).map { it.binding.native.index },
+            "the fixture must actually renumber the original algorithm's chains")
+        assertEquals(identities, owned())
+        assertEquals(setting, Physics3Json.setting(RigModifierPhysics.entries(instance(), RigIrCompiler.compile(f.now.model)).getValue(slot)))
+        f.edit("modifier_enable", buildJsonObject { put("id", "skirt"); put("enabled", true) })
+        assertEquals(edited, RigIrCompiler.compile(f.now.model))
+        f.edit("modifier_move", buildJsonObject { put("id", "ribbons"); put("index", 3) })
+        assertEquals(identities, owned())
+        assertEquals(setting, Physics3Json.setting(RigModifierPhysics.entries(instance(), RigIrCompiler.compile(f.now.model)).getValue(slot)))
+        val moved = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_apply", buildJsonObject { put("id", "ribbons") })
+        assertEquals(moved, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun depthTurnMatchesNativeAcrossHeadAndBodyPoses(): Unit = runBlocking<Unit> {
+        val f = Fixture(document(sideLock = true)); f.install()
+        f.group(listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/legacy"))
+        val values = mapOf("turn" to 60f, "depth" to 125f)
+        f.edit("modifier_add", f.addition("face.depth-turn", "depth", config = buildJsonObject {
+            put("scaffold", "structure")
+            putJsonObject("dependencies") { put("face/legacy", "face") }
+            put("values", JsonObject(values.mapValues { JsonPrimitive(it.value) }))
+        }))
+        val base = fittedRecipe(mapOf("eye" to BaseChoice("eye/fitted", 2), "brow" to BaseChoice("brow/fitted"), "mouth" to BaseChoice("mouth/fitted")))
+        val recipe = base.copy(modules = base.modules + ("face.depth-turn" to ModuleChoice(true, values = values)))
+        compare(native(f.document, recipe), f.now.model, listOf(emptyMap(),
+            mapOf(StandardParameters.ANGLE_X to -45f),
+            mapOf(StandardParameters.ANGLE_X to 45f, StandardParameters.ANGLE_Y to -14f,
+                StandardParameters.ANGLE_Z to 12f, StandardParameters.BODY_X to 5f)))
+        assertTrue(FormChannel.DRAW_ORDER in mesh(f, "front").channelGrids.gridsByChannel)
+        val expected = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_apply", buildJsonObject { put("id", "depth") })
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+    }
+
+    @Test fun naturalSpeechIncludesVowelsWhenTheSourceHasAMouth(): Unit = runBlocking<Unit> {
+        val f = Fixture(document()); f.install()
+        val plan = WorkspaceModifierPlan.prepare(f.now, buildJsonObject {
+            put("type", "motion"); put("preset", "natural:Talk")
+            put("targets", JsonArray(f.now.model.rig.puppet.drawables.map { mesh ->
+                buildJsonObject { put("kind", "mesh"); put("id", mesh.id.raw) }
+            }))
+        })
+        assertTrue(plan.getValue("entries").jsonArray.any { it.jsonObject.getValue("type").jsonPrimitive.content == "mouth.vowel" })
+        f.edit("modifier_add_group", buildJsonObject { put("group", plan.getValue("group")); put("entries", plan.getValue("entries")) })
+        val rig = RigIrCompiler.compile(f.now.model)
+        assertEquals(MotionGenerator.talkTracks.map { it.parameterId }.toSet(), rig.clips.single().curves.map { it.parameter }.toSet())
+    }
+
+    @Test fun expressionModifierUsesNativeOpacityAndAddsInputsToChainsInEitherOrder(): Unit = runBlocking<Unit> {
+        val art = document()
+        val classified = art.layerOverrides + mapOf(
+            "iris" to LayerClassificationOverride(LayerType.SWITCH, parameter = "Variant", switchId = 0),
+            "lash" to LayerClassificationOverride(LayerType.SWITCH, parameter = "Variant", switchId = 1),
+            "close" to LayerClassificationOverride(LayerType.TOGGLE, parameter = "Accessory"),
+        )
+        val f = Fixture(art.copy(layerOverrides = classified))
+        f.install()
+        f.group(listOf("body/legacy", "face/legacy", "hair/chains"))
+        val initial = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_add", f.addition("expression.toggles", "expressions"))
+        val active = f.now.model
+        val output = RigIrCompiler.compile(active)
+        val sourceMeshes = active.rig.layerIdByDrawableId.filterValues { it in setOf("iris", "lash", "close") }
+        assertEquals(3, sourceMeshes.size)
+        val nativeRecipe = RigRecipe(true, modules = RigModules.modules.associate { it.id to ModuleChoice(it == RigModules.EXPRESSION_TOGGLES) })
+        val old = native(f.document, nativeRecipe)
+        val nativeMeshes = old.rig.layerIdByDrawableId.entries.associate { (mesh, layer) -> layer to DrawableId(mesh) }
+        val evaluator = CpuDeformationEvaluator()
+        for (value in listOf(0f, .25f, .5f, .75f, 1f)) {
+            val pose = mapOf(ParameterId("Variant") to value, ParameterId("Accessory") to value)
+            val before = evaluator.evaluate(old.rig.puppet, pose)
+            val after = evaluator.evaluate(active.rig.puppet, pose)
+            for ((mesh, layer) in sourceMeshes)
+                assertEquals(before.opacity.getValue(nativeMeshes.getValue(layer)), after.opacity.getValue(DrawableId(mesh)), .0001f)
+        }
+        val changed = output.physics.groups.filter { group -> group.inputs.any { it.parameter == "Variant" } }
+        assertTrue(changed.isNotEmpty())
+        assertTrue(changed.all { it.inputs.takeLast(2).map { input -> input.parameter } == listOf("Accessory", "Variant") })
+        assertTrue(initial.physics.groups.all { group -> group.inputs.none { it.parameter == "Variant" } })
+
+        f.edit("modifier_move", buildJsonObject { put("id", "expressions"); put("index", 3) })
+        assertEquals(output.physics, RigIrCompiler.compile(f.now.model).physics)
+        f.edit("modifier_move", buildJsonObject { put("id", "expressions"); put("index", 4) })
+        f.edit("modifier_apply", buildJsonObject { put("id", "hair") })
+        val afterChain = RigIrCompiler.compile(f.now.model)
+        assertEquals(output, afterChain)
+        f.edit("modifier_apply", buildJsonObject { put("id", "expressions") })
+        assertEquals(afterChain, RigIrCompiler.compile(f.builder.build(f.now.document)))
+        assertTrue(f.now.document.rigEdits.physicsEdits.any { group -> group.inputs.any { it.parameter == "Variant" } })
+    }
+
+    @Test fun seeThroughModifiersReuseTheNativeMasksAndKeepCopiesAfterApplication(): Unit = runBlocking<Unit> {
+        val f = Fixture(document(bangOverlay = true)); f.install()
+        f.group(listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/legacy"))
+        val recipe = fittedRecipe(mapOf("eye" to BaseChoice("eye/fitted", 2), "brow" to BaseChoice("brow/fitted"),
+            "mouth" to BaseChoice("mouth/fitted")))
+        val original = PSD2LivePipeline().buildPreview(f.document.source, RigModifierPipeline.ordinaryConfig(f.document.config()).copy(
+            meshOnly = false, generateDeformers = true, recipe = recipe, seeThroughEyes = true, seeThroughBrows = true))
+        val targets = f.now.model.rig.puppet.drawables.map { ModifierTarget("mesh", it.id.raw) }
+        f.edit("modifier_add", f.addition("eye.see-through", "eyes", targets))
+        f.edit("modifier_add", f.addition("brow.see-through", "brows", targets))
+        val instances = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.takeLast(2)
+        val aliases = f.now.model.rig.puppet.drawables.mapNotNull { mesh ->
+            val originalId = instances.firstNotNullOfOrNull { it.localOutputName(mesh.id.raw) }?.removePrefix("see-through:")
+                ?: return@mapNotNull null
+            mesh.id to SeeThroughLayers.copyId(DrawableId(originalId))
+        }.toMap()
+        assertTrue(aliases.isNotEmpty())
+        assertEquals(original.rig.seeThroughCopies.keys, aliases.values.map { it.raw }.toSet())
+        assertTrue(aliases.keys.all { f.now.model.rig.pageByDrawableId[it.raw] != null })
+        val aliased = RigIdRemap(drawables = aliases).model(f.now.model.rig.puppet)
+        assertEquals(original.rig.puppet.drawables.associate { it.id to (it.maskedBy to it.invertMask) },
+            aliased.drawables.associate { it.id to (it.maskedBy to it.invertMask) })
+        compare(original, f.now.model.copy(rig = f.now.model.rig.copy(puppet = aliased)), listOf(emptyMap(),
+            mapOf(StandardParameters.EYE_L_OPEN to .25f, StandardParameters.ANGLE_X to 18f)))
+        if (System.getenv("PSD2LIVE_TOOLS") == "1") {
+            val area = Bounds(24f, 8f, 53f, 31f)
+            val poses = listOf("rest" to emptyMap(), "blink + turn" to mapOf("ParamEyeLOpen" to .25f, "ParamAngleX" to 18f))
+            val frames = listOf("legacy" to original, "stack" to f.now.model).flatMap { (label, preview) ->
+                val renderer = io.github.psd2live.tools.Renderer(preview, 480)
+                poses.map { (pose, values) -> "$label · $pose" to renderer.render(values, area) }
+            }
+            io.github.psd2live.tools.sheet(frames,
+                io.github.psd2live.tools.output("modifier-see-through").resolve("comparison.png"), columns = poses.size)
+        }
+        val expected = RigIrCompiler.compile(f.now.model)
+        f.edit("modifier_apply", buildJsonObject { put("id", "eyes") })
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+        f.edit("modifier_apply", buildJsonObject { put("id", "brows") })
+        assertEquals(expected, RigIrCompiler.compile(f.builder.build(f.now.document)))
+
+        val files = mutableMapOf<String, ByteArray>()
+        io.github.psd2live.format.compile.Compiler.export(io.github.psd2live.targets.cubism.Cmo3Target(),
+            RigIrCompiler.compile(f.now.model, tileArt = true), io.github.psd2live.format.compile.ExportOptions("see-through")) { path, bytes -> files[path] = bytes }
+        val imported = Cmo3ModelImport.read(files.getValue("see-through.cmo3")).puppet
+        val finalModel = f.now.model.rig.puppet
+        val importedMeshes = imported.drawables.associateBy { it.id }
+        val affected = finalModel.drawables.filter { it.id in aliases || it.invertMask }
+        for (mesh in affected) {
+            val read = importedMeshes.getValue(mesh.id)
+            assertEquals(mesh.maskedBy, read.maskedBy)
+            assertEquals(mesh.invertMask, read.invertMask)
+        }
+        val evaluator = CpuDeformationEvaluator()
+        for (pose in listOf(emptyMap(), mapOf(StandardParameters.EYE_L_OPEN to .25f, StandardParameters.ANGLE_X to 18f))) {
+            val before = evaluator.evaluate(finalModel, pose)
+            val after = evaluator.evaluate(imported, pose)
+            for (mesh in affected) assertEquals(before.opacity.getValue(mesh.id), after.opacity.getValue(mesh.id), .0001f, mesh.id.raw)
+        }
+    }
+
+}

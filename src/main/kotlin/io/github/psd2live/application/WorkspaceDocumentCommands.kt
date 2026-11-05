@@ -118,6 +118,7 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
                 }))
                 put("added", JsonArray(createdObjectIds(before.model.rig.puppet, prepared.model.rig.puppet).map(::JsonPrimitive)))
                 put("removed", JsonArray(createdObjectIds(prepared.model.rig.puppet, before.model.rig.puppet).map(::JsonPrimitive)))
+                prepared.model.rig.modifierReport?.get("entries")?.let { put("modifiers", it) }
             }
         }
     }
@@ -134,7 +135,7 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
                     val next = runInterruptible(Dispatchers.Default) {
                         WorkspaceSettingsIntent.parse(draft.document, model, operation.request.getValue("changes").jsonObject).apply(draft, model)
                     }
-                    return@WorkspaceDraftEdit next.copy(document = previews.normalizeMeshEdits(next.document, model))
+                    return@WorkspaceDraftEdit next.copy(document = normalizeCandidate(next.document, model))
                 }
                 val document = draft.document
                 val candidate = runInterruptible(Dispatchers.Default) { WorkspaceDocumentEdits.apply(operation, document, model, simulationWork.cancellable(context) { id, value ->
@@ -144,7 +145,8 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
                 }, rasterWork.cancellable(context) { fraction, message ->
                     batch?.painting(index, fraction, message) ?: context[WorkspaceJobContext]?.progress(0.05f + 0.75f * fraction, message)
                 }, resources) }
-                draft.copy(document = previews.normalizeMeshEdits(candidate, model))
+                draft.copy(document = if (operation.operation in WorkspaceModifierEdits.supported) previews.normalizeMeshEdits(candidate, model)
+                    else normalizeCandidate(candidate, model))
             } },
             editFailure = { index, failure -> WorkspaceBatchEditException(index, edits[index].operation, failure) })
         runInterruptible(Dispatchers.Default) {
@@ -156,6 +158,14 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
                 WorkspaceTextureEdits.requireKept(prepared.before.document, prepared.before.model, prepared.draft.document, prepared.model)
         }
         return prepared
+    }
+
+    private suspend fun normalizeCandidate(document: WorkspaceDocument, model: RigPreviewModel): WorkspaceDocument {
+        val work = rasterWork.cancellable(currentCoroutineContext())
+        val normalized = previews.normalizeMeshEdits(document, model)
+        return runInterruptible(Dispatchers.Default) {
+            WorkspaceModifierSimulation.prepare(normalized, work)
+        }
     }
 
     private suspend fun checkGeometry(prepared: WorkspacePreparedDraft<RigPreviewModel>): GeometrySafetyReport =
@@ -181,7 +191,7 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
                                  validate: (WorkspaceDocument, RigPreviewModel, WorkspaceDocument, RigPreviewModel) -> Unit = { _, _, _, _ -> }): WorkspaceCommit<RigPreviewModel> {
         val prepared = runtime.prepareDraft(projectId, state, listOf(WorkspaceDraftEdit { draft, model ->
             val candidate = runInterruptible(Dispatchers.Default) { mutation(draft.document, model) }
-            draft.copy(document = previews.normalizeMeshEdits(candidate, model))
+            draft.copy(document = normalizeCandidate(candidate, model))
         }))
         // The candidate's own build, checked before anything is published.
         runInterruptible(Dispatchers.Default) { validate(prepared.before.document, prepared.before.model, prepared.draft.document, prepared.model) }
@@ -199,7 +209,7 @@ internal class WorkspaceDocumentCommands(private val runtime: WorkspaceRuntime<R
                                 beforeCommit: (WorkspaceCapture<RigPreviewModel>, WorkspaceDocument, RigPreviewModel) -> Unit = { _, _, _ -> }): WorkspaceCommit<RigPreviewModel> =
         runtime.executeDraft(projectId, state, summary, author, listOf(WorkspaceDraftEdit { draft, model ->
             val next = runInterruptible(Dispatchers.Default) { WorkspaceSettingsIntent.parse(draft.document, model, changes).apply(draft, model) }
-            next.copy(document = previews.normalizeMeshEdits(next.document, model))
+            next.copy(document = normalizeCandidate(next.document, model))
         })) { captured, draft, model ->
             beforeCommit(captured, draft.document, model)
             changedPoses(captured, draft, model).takeIf { it.isNotEmpty() }?.let(poses)

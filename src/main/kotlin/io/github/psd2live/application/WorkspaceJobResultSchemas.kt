@@ -15,11 +15,14 @@ internal object WorkspaceJobResultSchemas {
         "kind" to s.choices(*io.github.psd2live.core.RigRegeneration.IssueKind.entries.map { it.code }.toTypedArray()),
         "target" to s.string(), "detail" to s.string()), setOf("kind", "target")))))
     /** A dry run of document edits: the checkpoints a commit would add and the objects it would add and remove. */
-    val regenerationPreview = s.obj(s.identity + mapOf("revision" to s.handle(), "candidate_revision" to s.handle(),
-        "dry_run" to s.constant(true), "would_change" to s.boolean(),
-        "checkpoints" to s.array(s.obj(mapOf("index" to s.integer(0), "kind" to s.choices("regeneration", "materialized"),
-            "issues" to generationUpdate.getValue("properties").jsonObject.getValue("issues").jsonObject))),
-        "added" to s.array(s.handle()), "removed" to s.array(s.handle())))
+    val regenerationPreview: JsonObject get() {
+        val fields = s.identity + mapOf("revision" to s.handle(), "candidate_revision" to s.handle(),
+            "dry_run" to s.constant(true), "would_change" to s.boolean(),
+            "checkpoints" to s.array(s.obj(mapOf("index" to s.integer(0), "kind" to s.choices("regeneration", "materialized"),
+                "issues" to generationUpdate.getValue("properties").jsonObject.getValue("issues").jsonObject))),
+            "added" to s.array(s.handle()), "removed" to s.array(s.handle()), "modifiers" to WorkspaceModifierSchemas.reportEntries)
+        return s.obj(fields, fields.keys - "modifiers")
+    }
     private val batch = s.obj(lifecycleFields + mapOf("edit_count" to s.integer(1, 128), "changed" to s.array(s.handle()),
         "geometry_diagnostics" to WorkspaceGeometrySafetySchemas.report, "atlas_fit" to s.number(0, 1), "notices" to s.array(s.string())),
         lifecycleFields.keys + setOf("edit_count", "changed"))
@@ -37,6 +40,7 @@ internal object WorkspaceJobResultSchemas {
         "workspace_preview_edits" to WorkspaceGeometrySafetySchemas.preview,
         "workspace_preview_regeneration" to regenerationPreview,
     ).apply {
+        for (id in WorkspaceModifierEdits.supported) put(id, batch)
         for (id in WorkspaceIntentOperations.batches + WorkspaceLayoutOperations.batches) put(id, batch)
         put(WorkspaceLayoutOperations.EXPORT_PSD, psdExport)
         put(WorkspaceLayoutOperations.EXPORT_PNG, WorkspaceLayoutOperations.pngSchema)
