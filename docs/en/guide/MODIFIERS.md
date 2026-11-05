@@ -17,11 +17,13 @@ A group records provenance without locking entries together. Adding never silent
 
 The shared structure modifier can enable the original feature displacement hierarchy. Later face bindings continue to use it after the structure is applied.
 
+New structures use version 2 and share parents within the captured target group, instead of duplicating an entire parent chain per mesh. Downstream bindings must cover the shared structure’s complete target scope. Targets under different authored parents cannot share one structure. Saved version 1 stacks retain their original object IDs and replay behavior; existing branches are not automatically merged or upgraded.
+
 ## Adjust and locate
 
-Each entry shows its name, targets, and status. Expand it to adjust strength and **Values**, inspect actual contributions and keyforms, and locate existing objects or parameters. Provider fields pin particular instances. After a dependency is lost, reconnect to a preceding provider that covers the same targets.
+Each compact collapsible row shows its name and enable control, with inactive or exceptional status on the right. Expand it to adjust strength and **Values**; open **Targets** to locate objects or **Contributions** to inspect provenance, dependencies, and generated content. Provider fields pin particular instances. After a dependency is lost, reconnect to a preceding provider that covers the same targets.
 
-Drag the left handle to change actual evaluation order. The insertion line shows the destination. Invalid dependency order is rejected, leaving the original stack intact. A continuous slider or number edit commits one history node when it ends.
+Drag the modifier name to change actual evaluation order. The drag image and displaced sibling rows share the parameter panel implementation. Invalid dependency order is rejected, leaving the original stack intact. A continuous slider or number edit commits one history node when it ends.
 
 Disabling stops evaluation; dependent entries remain visible with **Missing dependency** status. Re-enabling the original instance restores its overrides. Removing retains dormant overrides, and undo restores the entry. A newly added instance does not inherit a removed instance’s edits.
 

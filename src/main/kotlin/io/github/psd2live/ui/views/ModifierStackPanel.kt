@@ -7,18 +7,18 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Divider
 import androidx.compose.material.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.boundsInParent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -55,19 +55,24 @@ private fun contentName(state: PSD2LiveState, kind: String, id: String): String 
     }
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
     val stack = remember(state.rigEdits.modifierStack) { RigModifierStack.fromJson(requireNotNull(state.rigEdits.modifierStack)) }
     val reports = state.previewModel?.rig?.modifierReport?.get("entries")?.jsonArray.orEmpty().associate { it.jsonObject.getValue("id").jsonPrimitive.content to it.jsonObject }
     val colors = LocalToolColors.current
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
-    val bounds = remember { mutableStateMapOf<String, Rect>() }
-    var dragging by remember { mutableStateOf<String?>(null) }
-    var destination by remember { mutableStateOf<Int?>(null) }
-    var dragY by remember { mutableFloatStateOf(0f) }
-    var dragState by remember { mutableStateOf<String?>(null) }
+    val bounds = remember { mutableStateMapOf<String, ParamItemLayout>() }
+    val drag = remember { ParameterDragState() }
+    val preview = rememberGraphicsLayer()
+    val density = LocalDensity.current
+    val dragStartX = with(density) { 48.dp.toPx() }
+    val dragEndInset = with(density) { 28.dp.toPx() }
+    var container by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var expected by remember { mutableStateOf<String?>(null) }
     val enabled = !state.isBusy && !state.workspaceEditBusy && !state.editorDraftBusy
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
+    LaunchedEffect(stack, enabled) { drag.clear() }
+    Column(Modifier.fillMaxWidth()) {
         val labels = listOf(tr("modifier.add"), tr("modifier.addGroup"))
         PanelToolbar(labels = labels, iconCount = 4) { labelsShown ->
             PanelToolButton(labels[0], labelsShown > 0, { vm.openModifierAddition() }, enabled, labels[0]) { IconAdd() }
@@ -77,67 +82,93 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
         }
         if (stack.instances.isEmpty()) Text(tr("modifier.empty"), color = colors.textMuted, style = LocalToolTypography.current.caption,
             modifier = Modifier.padding(Spacing.Margin))
-        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
-            stack.instances.forEachIndexed { index, instance -> key(instance.id) {
-                if (dragging != null && destination == index) Divider(color = colors.accent, thickness = 2.dp)
-                val dragHandle = Modifier.pointerInput(instance.id, enabled) {
-                    if (!enabled) return@pointerInput
-                    detectDragGestures(onDragStart = { offset ->
-                        dragging = instance.id; destination = index; dragState = vm.modifierEditState()
-                        dragY = (bounds[instance.id]?.top ?: 0f) + offset.y
-                    }, onDragCancel = { dragging = null; destination = null }, onDragEnd = {
-                        val to = destination
-                        if (to != null && to != index) vm.editModifier("modifier_move", buildJsonObject { put("id", instance.id); put("index", to) }, dragState)
-                        dragging = null; destination = null
-                    }, onDrag = { change, amount ->
-                        change.consume(); dragY += amount.y
-                        destination = stack.instances.indices.minByOrNull { row -> bounds[stack.instances[row].id]?.let { kotlin.math.abs(it.center.y - dragY) } ?: Float.MAX_VALUE }
-                    })
-                }
-                Column(Modifier.fillMaxWidth().onGloballyPositioned { bounds[instance.id] = it.boundsInParent() }
-                    .border(1.dp, if (dragging == instance.id) colors.accent else colors.border, RoundedCornerShape(Corners.Control))
-                    .background(colors.panelElevated, RoundedCornerShape(Corners.Control)).padding(Spacing.Gap)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
-                        CompactIconButton({}, modifier = dragHandle, enabled = enabled, tooltip = tr("modifier.reorder"), size = 20.dp) { IconDragHandle(tint = colors.textMuted) }
-                        CompactIconButton({ expanded[instance.id] = expanded[instance.id] != true }, tooltip = tr("modifier.contents"), size = 20.dp) {
-                            IconChevron(expanded[instance.id] == true)
-                        }
-                        CompactCheckbox(instance.enabled, { value -> vm.editModifier("modifier_enable", buildJsonObject { put("id", instance.id); put("enabled", value) }) }, enabled = enabled)
-                        Text(instance.config["name"]?.jsonPrimitive?.contentOrNull ?: modifierName(instance.type), modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            color = colors.textPrimary, style = LocalToolTypography.current.body)
-                        val status = reports[instance.id]?.get("status")?.jsonPrimitive?.content ?: "loading"
-                        Text(tr("modifier.status.$status"), color = if (status == "missing_dependency") colors.warning else colors.textMuted,
-                            style = LocalToolTypography.current.caption)
-                        CompactIconButton({ vm.editModifier("modifier_remove", buildJsonObject { put("id", instance.id) }) }, tooltip = tr("modifier.remove"), enabled = enabled, size = 20.dp) { IconClose() }
+        Box(Modifier.fillMaxWidth().onGloballyPositioned { container = it }
+            .onPointerEvent(PointerEventType.Move) { event ->
+                event.changes.firstOrNull()?.let { drag.onMove(it.position, bounds.values) }
+            }
+            .onPointerEvent(PointerEventType.Release) { event ->
+                if (event.button == PointerButton.Primary && drag.isPressed) drag.onRelease { item, target ->
+                    val remaining = stack.instances.filterNot { it.id == item.id }
+                    val destination = when (target) {
+                        is ParamDropTarget.Before -> remaining.indexOfFirst { it.id == target.id }.takeIf { it >= 0 }
+                        is ParamDropTarget.Append -> remaining.size
+                        else -> null
                     }
-                    Text(tr("modifier.targets", instance.targets.joinToString { contentName(state, it.kind, it.id) }),
-                        style = LocalToolTypography.current.caption, color = colors.textMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    AnimatedVisibility(expanded[instance.id] == true, enter = expandVertically(tween(Motion.Fold, easing = FastOutSlowInEasing)), exit = shrinkVertically(tween(Motion.Instant, easing = FastOutLinearInEasing))) {
-                        Column(verticalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
-                            instance.presetGroup?.let { Text(tr("modifier.origin", when (it) {
-                                "fitted", "custom", "converted" -> tr("modifier.group.$it")
-                                "minimal", "default", "full" -> tr("start.quick.$it")
-                                else -> it
-                            }), style = LocalToolTypography.current.caption, color = colors.textMuted) }
-                            val report = reports[instance.id]
-                            val missing = report?.get("missing_dependencies")?.jsonArray.orEmpty()
-                            if (missing.isNotEmpty()) Text(tr("modifier.dependencies", missing.joinToString { it.jsonPrimitive.content.let { dependency ->
-                                if (dependency.startsWith("parameter:")) dependency.removePrefix("parameter:") else modifierName(dependency)
-                            } }), color = colors.warning, style = LocalToolTypography.current.caption)
-                            instance.targets.forEach { target -> CompactButton(contentName(state, target.kind, target.id),
-                                { vm.locateModifierContent(target.kind, target.id) }, height = 20.dp) }
-                            ModifierDependencies(instance, stack, enabled, vm)
-                            ModifierSourceValues(instance, enabled, vm)
-                            ModifierModulePhysicsValues(instance, report, state, enabled, vm)
-                            ModifierNativeValues(instance.type, instance.config, state, enabled, vm, instanceId = instance.id) { config, expected, done ->
-                                vm.editModifier("modifier_update", buildJsonObject { put("id", instance.id); put("type", instance.type); put("config", config) }, expected, done)
+                    if (enabled && destination != null && destination != stack.index(item.id))
+                        vm.editModifier("modifier_move", buildJsonObject { put("id", item.id); put("index", destination) }, expected)
+                }
+            }) {
+            Column(Modifier.fillMaxWidth()) {
+                stack.instances.forEach { instance -> key(instance.id) {
+                    val name = instance.config["name"]?.jsonPrimitive?.contentOrNull ?: modifierName(instance.type)
+                    val layout = ParamItemLayout(instance.id, instance.id, "modifier", name, null, false, emptySet(), 0f, 0f)
+                    var header by remember { mutableStateOf<LayoutCoordinates?>(null) }
+                    var targetsOpen by remember { mutableStateOf(false) }
+                    var contentsOpen by remember { mutableStateOf(false) }
+                    val report = reports[instance.id]
+                    val status = report?.get("status")?.jsonPrimitive?.content ?: "loading"
+                    DisposableEffect(instance.id) { onDispose { bounds.remove(instance.id) } }
+                    Column(Modifier.fillMaxWidth().parameterDragRow(layout, drag, bounds.values, preview)
+                        .onGloballyPositioned { coords ->
+                            val parent = container
+                            if (parent != null && parent.isAttached && coords.isAttached) {
+                                val top = parent.localPositionOf(coords, Offset.Zero).y
+                                bounds[instance.id] = layout.copy(top = top, bottom = top + coords.size.height)
                             }
-                            report?.let { ModifierContributions(it, state, vm) }
-                            CompactButton(tr("modifier.apply"), { vm.editModifier("modifier_apply", buildJsonObject { put("id", instance.id) }) }, enabled = enabled, height = 22.dp)
+                        }) {
+                        PresetFolderRow(name, if (status == "active") "" else tr("modifier.status.$status"), expanded[instance.id] == true, true,
+                            modifier = Modifier.onGloballyPositioned { header = it }
+                                .onPointerEvent(PointerEventType.Press) { event ->
+                                    val coords = header; val parent = container
+                                    val pos = event.changes.firstOrNull()?.position
+                                    if (enabled && event.button == PointerButton.Primary && pos != null && coords != null && parent != null &&
+                                        coords.isAttached && parent.isAttached && pos.x > dragStartX && pos.x < coords.size.width - dragEndInset) {
+                                        bounds[instance.id]?.let { drag.onPress(it, parent.localPositionOf(coords, pos)); expected = vm.modifierEditState() }
+                                    }
+                                },
+                            leading = { CompactCheckbox(instance.enabled, { value ->
+                                vm.editModifier("modifier_enable", buildJsonObject { put("id", instance.id); put("enabled", value) })
+                            }, enabled = enabled) },
+                            trailing = { CompactIconButton({ vm.editModifier("modifier_remove", buildJsonObject { put("id", instance.id) }) },
+                                tooltip = tr("modifier.remove"), enabled = enabled, size = 20.dp) { IconClose() } }) {
+                            if (drag.suppressClick) drag.suppressClick = false else expanded[instance.id] = expanded[instance.id] != true
+                        }
+                        AnimatedVisibility(expanded[instance.id] == true,
+                            enter = expandVertically(tween(Motion.Fold, easing = FastOutSlowInEasing)),
+                            exit = shrinkVertically(tween(Motion.Instant, easing = FastOutLinearInEasing))) {
+                            Column(Modifier.fillMaxWidth().padding(start = Spacing.Margin, end = Spacing.Gap, bottom = Spacing.Gap),
+                                verticalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
+                                val missing = report?.get("missing_dependencies")?.jsonArray.orEmpty()
+                                if (missing.isNotEmpty()) Text(tr("modifier.dependencies", missing.joinToString { it.jsonPrimitive.content.let { dependency ->
+                                    if (dependency.startsWith("parameter:")) dependency.removePrefix("parameter:") else modifierName(dependency)
+                                } }), color = colors.warning, style = LocalToolTypography.current.caption)
+                                PresetFolderRow(tr("modifier.targetList"), tr("modifier.count", instance.targets.size), targetsOpen, true) { targetsOpen = !targetsOpen }
+                                if (targetsOpen) instance.targets.forEach { target ->
+                                    CompactButton(contentName(state, target.kind, target.id), { vm.locateModifierContent(target.kind, target.id) }, height = 20.dp,
+                                        modifier = Modifier.fillMaxWidth())
+                                }
+                                ModifierSourceValues(instance, enabled, vm)
+                                ModifierModulePhysicsValues(instance, report, state, enabled, vm)
+                                ModifierNativeValues(instance.type, instance.config, state, enabled, vm, instanceId = instance.id) { config, captured, done ->
+                                    vm.editModifier("modifier_update", buildJsonObject { put("id", instance.id); put("type", instance.type); put("config", config) }, captured, done)
+                                }
+                                PresetFolderRow(tr("modifier.details"), "", contentsOpen, true) { contentsOpen = !contentsOpen }
+                                if (contentsOpen) {
+                                    instance.presetGroup?.let { Text(tr("modifier.origin", when (it) {
+                                        "fitted", "custom", "converted" -> tr("modifier.group.$it")
+                                        "minimal", "default", "full" -> tr("start.quick.$it")
+                                        else -> it
+                                    }), style = LocalToolTypography.current.caption, color = colors.textMuted) }
+                                    ModifierDependencies(instance, stack, enabled, vm)
+                                    report?.let { ModifierContributions(it, state, vm) }
+                                }
+                                CompactButton(tr("modifier.apply"), { vm.editModifier("modifier_apply", buildJsonObject { put("id", instance.id) }) }, enabled = enabled, height = 22.dp)
+                            }
                         }
                     }
-                }
-            } }
+                } }
+            }
+            ParameterDragPreview(drag, preview)
         }
     }
 }
@@ -153,7 +184,7 @@ private fun ModifierDependencies(instance: RigModifierInstance, stack: RigModifi
         val candidates = capabilities.filter { cap -> cap.type == type && cap.id != null && instance.targets.all { it in cap.targets } &&
             (type == RigSourceModifiers.SCAFFOLD || cap.config["scaffold"] == instance.config["scaffold"]) }
         val ids = (listOf(selected) + candidates.mapNotNull { it.id }).distinct()
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
+          Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
             Text(modifierName(type), style = LocalToolTypography.current.caption, color = LocalToolColors.current.textMuted, modifier = Modifier.weight(1f))
             CompactDropdown(ids, selected, { next ->
                 if (next != selected) {
@@ -162,7 +193,9 @@ private fun ModifierDependencies(instance: RigModifierInstance, stack: RigModifi
                     vm.editModifier("modifier_update", buildJsonObject { put("id", instance.id); put("type", instance.type); put("config", JsonObject(instance.config + (field to value))) })
                 }
             }, itemLabel = { id ->
-                if (candidates.none { it.id == id }) tr("modifier.provider.missing", id) else "${modifierName(type)} · $id"
+                if (candidates.none { it.id == id }) tr("modifier.provider.missing", id) else stack.instances.firstOrNull { it.id == id }?.let { provider ->
+                    provider.config["name"]?.jsonPrimitive?.contentOrNull ?: "${modifierName(type)} · ${stack.index(id) + 1}"
+                } ?: modifierName(type)
             }, itemEnabled = { id -> candidates.any { it.id == id } }, enabled = enabled, height = 20.dp, modifier = Modifier.weight(1.5f))
         }
     }
@@ -307,11 +340,12 @@ internal fun ModifierNumber(label: String, value: Float, range: ClosedFloatingPo
     LaunchedEffect(value) { if (!editing) draft = value }
     val start = { if (!editing) { editing = true; expected = vm.modifierEditState() } }
     val finish = { if (editing) { editing = false; if (draft != value) commit(draft, expected) { failure -> if (failure != null) draft = actualValue } } }
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
-        Text(label, modifier = Modifier.weight(1f), style = LocalToolTypography.current.caption, color = LocalToolColors.current.textPrimary, maxLines = 2)
+    InspectorFormRow(label) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
         CompactSlider(draft, { draft = if (integer) kotlin.math.round(it) else it }, start, finish, valueRange = range, enabled = enabled, modifier = Modifier.weight(1f))
         CompactNumberSpinner(draft.toDouble(), { draft = if (integer) kotlin.math.round(it).toFloat() else it.toFloat() }, min = range.start.toDouble(), max = range.endInclusive.toDouble(),
             decimals = if (integer || unit == "%") 0 else 2, unit = unit, enabled = enabled, height = 20.dp, modifier = Modifier.width(68.dp), onEditStart = start, onEditEnd = finish)
+    }
     }
 }
 
@@ -321,7 +355,7 @@ internal fun ModifierContributions(report: JsonObject, state: PSD2LiveState, vm:
     val folded = remember(report.getValue("id")) { mutableStateMapOf<String, Boolean>() }
     val contributions = report.getValue("contributions").jsonArray.map { it.jsonObject }
     for ((kind, items) in contributions.groupBy { it.getValue("kind").jsonPrimitive.content }) {
-        val open = folded[kind] ?: (kind == "relations" || kind == "parameter" && items.any { it["change"]?.jsonPrimitive?.content != "reused" })
+        val open = folded[kind] == true
         PresetFolderRow(tr("modifier.kind.$kind"), tr("modifier.count", items.size), open, true) { folded[kind] = !open }
         if (open) items.forEach { item ->
             val id = item.getValue("id").jsonPrimitive.content
@@ -337,7 +371,7 @@ internal fun ModifierContributions(report: JsonObject, state: PSD2LiveState, vm:
                     "parameter" -> state.previewModel?.rig?.puppet?.parameters?.any { it.id.raw == id } == true
                     else -> false
                 }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
+              Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
                 Text(tr("modifier.change.${item.getValue("change").jsonPrimitive.content}"), color = colors.textMuted, style = LocalToolTypography.current.caption)
                 if (present) CompactButton(label, { vm.locateModifierContent(if (mask != null) "mesh" else kind, target ?: id) }, height = 20.dp, modifier = Modifier.weight(1f))
                 else Text(label, color = colors.textPrimary, style = LocalToolTypography.current.caption, modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)

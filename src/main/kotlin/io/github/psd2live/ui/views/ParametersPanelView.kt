@@ -26,6 +26,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -214,7 +215,7 @@ private val LocalParameterPhysicsStatus = compositionLocalOf { ParameterPhysicsS
 private val LocalParameterPanelFocus = compositionLocalOf<() -> Unit> { {} }
 
 /** Layout bounds of one parameter-panel row, in the drag container's local coordinates. */
-private data class ParamItemLayout(
+internal data class ParamItemLayout(
 	val key: String,
 	val id: String,
 	val kind: String,
@@ -230,7 +231,7 @@ private data class ParamItemLayout(
  * Drop destination resolved while dragging — mirrors hierarchy-tree press→threshold→hit-test→release,
  * extended with before/after destinations for live sibling reorder previews.
  */
-private sealed interface ParamDropTarget {
+internal sealed interface ParamDropTarget {
 	data object Root : ParamDropTarget
 	data class Nest(val folderId: String, val folderName: String) : ParamDropTarget
 	data class Before(
@@ -250,7 +251,7 @@ private data class ParameterKeyOwnersHover(
 )
 
 /** Hierarchy-tree-style drag state for the parameter panel. */
-private class ParameterDragState {
+internal class ParameterDragState {
 	var draggedItem by mutableStateOf<ParamItemLayout?>(null)
 	var dropTarget by mutableStateOf<ParamDropTarget?>(null)
 	var isDragging by mutableStateOf(false)
@@ -288,12 +289,14 @@ private class ParameterDragState {
 		dropTarget = resolveDropTarget(dragged, hit, ordered, pos.y, itemBounds)
 	}
 
-	fun onRelease(viewModel: PSD2LiveViewModel) {
+	fun onRelease(viewModel: PSD2LiveViewModel) = onRelease { item, target -> applyDrop(viewModel, item, target) }
+
+	fun onRelease(commit: (ParamItemLayout, ParamDropTarget) -> Unit) {
 		val item = draggedItem
 		val target = dropTarget
 		val wasDragging = isDragging
 		if (wasDragging && item != null && target != null) {
-			applyDrop(viewModel, item, target)
+			commit(item, target)
 		}
 		clear(keepSuppress = wasDragging)
 	}
@@ -310,7 +313,7 @@ private class ParameterDragState {
 }
 
 /** Shift sibling rows to expose the pending slot without changing hit-test coordinates. */
-private fun parameterDragShift(
+internal fun parameterDragShift(
 	row: ParamItemLayout,
 	drag: ParameterDragState,
 	bounds: Collection<ParamItemLayout>,
@@ -739,11 +742,7 @@ internal fun ParametersListView(
 							is ParameterPanelRow.Linked -> row.folderLabelColor.displayArgb()
 							is ParameterPanelRow.Folder -> null
 						}?.let { Color(it).copy(alpha = 0.10f) }
-						val isDragged = dragState.isDragging && dragState.draggedKey == key
-						val shift by animateFloatAsState(
-							targetValue = if (dragState.isDragging) parameterDragShift(layout, dragState, itemBoundsMap.values) else 0f,
-							animationSpec = tween(if (dragState.isDragging) Motion.Fade else 0),
-						)
+
 
 						Column(
 								modifier = Modifier
@@ -755,19 +754,7 @@ internal fun ParametersListView(
 											else -> Color.Transparent
 										},
 									)
-									.drawWithContent {
-										if (isDragged) {
-											dragPreview.record {
-												drawRect(colors.panelElevated)
-												this@drawWithContent.drawContent()
-											}
-										} else {
-											translate(top = shift) {
-                                                this@drawWithContent.drawContent()
-                                                if (related) drawRect(colors.accent, size = Size(2.dp.toPx(), size.height))
-                                            }
-										}
-									}
+									.parameterDragRow(layout, dragState, itemBoundsMap.values, dragPreview, related)
 
 									.onGloballyPositioned { coords ->
 										val parent = containerCoordinates
@@ -957,14 +944,7 @@ internal fun ParametersListView(
 					modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(6.dp),
 				)
 
-				if (dragState.isDragging && dragState.draggedItem != null) {
-					val dragged = dragState.draggedItem!!
-					// Draw the actual row, without adding a second interactive copy of its controls.
-					Canvas(Modifier.fillMaxSize()) {
-						val top = dragged.top + dragState.currentMousePos.y - dragState.pressPos.y
-						translate(top = top) { drawLayer(dragPreview) }
-					}
-				}
+				ParameterDragPreview(dragState, dragPreview)
 
 				val hover = shownKeyOwnersHover
 				if (hover != null) {
@@ -2706,4 +2686,42 @@ private fun RandomPoseButtons(state: PSD2LiveState, viewModel: PSD2LiveViewModel
 				apply, restore, keyLabel)
 		}
 	}
+}
+
+/** Shared by parameter and modifier rows: stable hit bounds, displaced siblings, and one recorded drag image. */
+@Composable
+internal fun Modifier.parameterDragRow(
+    layout: ParamItemLayout,
+    drag: ParameterDragState,
+    bounds: Collection<ParamItemLayout>,
+    preview: androidx.compose.ui.graphics.layer.GraphicsLayer,
+    related: Boolean = false,
+): Modifier {
+    val colors = LocalToolColors.current
+    val isDragged = drag.isDragging && drag.draggedKey == layout.key
+    val shift by animateFloatAsState(
+        targetValue = if (drag.isDragging) parameterDragShift(layout, drag, bounds) else 0f,
+        animationSpec = tween(if (drag.isDragging) Motion.Fade else 0),
+    )
+    return drawWithContent {
+        if (isDragged) {
+            preview.record {
+                drawRect(colors.panelElevated)
+                this@drawWithContent.drawContent()
+            }
+        } else {
+            translate(top = shift) {
+                this@drawWithContent.drawContent()
+                if (related) drawRect(colors.accent, size = Size(2.dp.toPx(), size.height))
+            }
+        }
+    }
+}
+
+@Composable
+internal fun BoxScope.ParameterDragPreview(drag: ParameterDragState, preview: androidx.compose.ui.graphics.layer.GraphicsLayer) {
+    val item = drag.draggedItem ?: return
+    if (drag.isDragging) Canvas(Modifier.matchParentSize()) {
+        translate(top = item.top + drag.currentMousePos.y - drag.pressPos.y) { drawLayer(preview) }
+    }
 }

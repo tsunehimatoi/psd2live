@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Divider
 import androidx.compose.material.Surface
@@ -75,13 +76,17 @@ import io.github.psd2live.ui.theme.handCursor
  * right a muted one-line [summary] of what it holds. Disabled, it neither opens nor shows its contents.
  */
 @Composable
-internal fun PresetFolderRow(title: String, summary: String, expanded: Boolean, enabled: Boolean, onToggle: () -> Unit) {
+internal fun PresetFolderRow(title: String, summary: String, expanded: Boolean, enabled: Boolean,
+    modifier: Modifier = Modifier,
+    leading: (@Composable () -> Unit)? = null,
+    trailing: (@Composable () -> Unit)? = null,
+    onToggle: () -> Unit) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 	val interaction = remember { MutableInteractionSource() }
 	val hovered by interaction.collectIsHoveredAsState()
 	Row(
-		modifier = Modifier
+		modifier = modifier
 			.fillMaxWidth()
 			.height(24.dp)
 			.background(if (hovered && enabled) colors.controlHover.copy(alpha = 0.55f) else colors.panelElevated.copy(alpha = 0.55f))
@@ -93,10 +98,12 @@ internal fun PresetFolderRow(title: String, summary: String, expanded: Boolean, 
 	) {
 		IconChevron(expanded = expanded && enabled, tint = if (enabled) colors.textMuted else colors.textDisabled, modifier = Modifier.size(10.dp))
 		Spacer(Modifier.width(4.dp))
-		IconFolder(tint = if (enabled) colors.accent else colors.textDisabled, modifier = Modifier.size(12.dp))
+		if (leading != null) leading() else IconFolder(tint = if (enabled) colors.accent else colors.textDisabled, modifier = Modifier.size(12.dp))
 		Spacer(Modifier.width(4.dp))
 		Text(
 			text = title,
+            modifier = Modifier.weight(1f),
+            overflow = TextOverflow.Ellipsis,
 			style = typography.body.copy(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
 			color = if (enabled) colors.textPrimary else colors.textDisabled,
 			maxLines = 1,
@@ -109,8 +116,9 @@ internal fun PresetFolderRow(title: String, summary: String, expanded: Boolean, 
 			textAlign = TextAlign.End,
 			maxLines = 1,
 			overflow = TextOverflow.Ellipsis,
-			modifier = Modifier.weight(1f).padding(start = 8.dp),
+			modifier = Modifier.widthIn(max = 140.dp).padding(start = 8.dp),
 		)
+        trailing?.invoke()
 	}
 	Divider(color = colors.divider.copy(alpha = 0.6f), thickness = 0.5.dp)
 }
