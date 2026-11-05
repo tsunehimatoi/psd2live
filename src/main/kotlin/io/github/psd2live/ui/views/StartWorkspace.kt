@@ -1000,7 +1000,7 @@ private fun PresetInspector(choices: StartPresetChoices, selection: StartSelecti
 		CheckRow(tr("presets.clothing"), choices.clothing, enabled) { onChange(choices.copy(clothing = it)) }
 		CheckRow(tr("export.physics.eyeJelly"), choices.eyeJelly, enabled) { onChange(choices.copy(eyeJelly = it)) }
 	}()
-	InspectorNote(tr("start.presets.note"))
+	InspectorNote(tr("modifier.start.shortcut.detail"))
 }
 
 /** The quick sets as a list to pick from, on the one the values match, or on "Custom" while none does. */

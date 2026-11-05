@@ -77,7 +77,13 @@ class ModifierStackTool {
                     val nativeConfigurations = WorkspaceModifierPlan.nativeTypes.associateWith { type ->
                         workspace.captureQueries().modifierPlan(buildJsonObject { put("type", type)
                             putJsonArray("targets") { addJsonObject { put("kind", target.kind); put("id", target.id) } }
-                        }).getValue("entries").jsonArray.single().jsonObject.getValue("config").jsonObject
+                        }).getValue("entries").jsonArray.single().jsonObject.getValue("config").jsonObject.let { config ->
+                            if (type != "motion") config else MotionClips.fromJson(config).let { clip ->
+                                val curve = clip.curves.first()
+                                MotionClips.toJson(clip.copy(curves = listOf(curve.copy(keys = listOf(curve.keys.first(), curve.keys.last()))),
+                                    events = listOf(MotionEvent(1f, "Marker"))))
+                            }
+                        }
                     }
                     for (language in AppLanguage.entries) for ((theme, colors) in ThemeCatalog.builtIns.map { it.id to it.colors }) for (scale in listOf(1f, 1.5f)) {
                         I18n.setLanguage(language, persist = false)
@@ -235,6 +241,10 @@ class ModifierStackTool {
                             }
                             for (type in nativeConfigurations.keys) {
                                 inspection = type; frames(); save("native-fields-$type")
+                                if (type == "motion") {
+                                    click(Offset(45f * scale, 165f * scale)); save("motion-events")
+                                    click(Offset(45f * scale, 140f * scale)); save("motion-handles")
+                                }
                             }
                         } finally { scene.close() }
                     }

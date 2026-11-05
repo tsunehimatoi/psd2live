@@ -294,6 +294,15 @@ internal fun ModifierNativeValues(type: String, config: JsonObject, state: PSD2L
                     val limits = parameter?.let(MotionLoops::keyLimits) ?: (-100f..100f)
                     number("animation.editor.value", key.value, limits) { keyed(key.copy(value = it)) }
                     choice("animation.editor.interpolation", MotionInterpolation.entries, key.interpolation, { tr("animation.interp.${it.name.lowercase()}") }) { keyed(key.copy(interpolation = it)) }
+                    val handleRange = maxOf(limits.endInclusive - limits.start, kotlin.math.abs(key.inHandle.y), kotlin.math.abs(key.outHandle.y), 1f)
+                    if (keyIndex > 0 && curve.keys[keyIndex - 1].interpolation == MotionInterpolation.BEZIER) {
+                        number("modifier.motion.inTime", key.inHandle.x, 0f..1f) { keyed(key.copy(inHandle = key.inHandle.copy(x = it))) }
+                        number("modifier.motion.inValue", key.inHandle.y, -handleRange..handleRange) { keyed(key.copy(inHandle = key.inHandle.copy(y = it))) }
+                    }
+                    if (keyIndex < curve.keys.lastIndex && key.interpolation == MotionInterpolation.BEZIER) {
+                        number("modifier.motion.outTime", key.outHandle.x, 0f..1f) { keyed(key.copy(outHandle = key.outHandle.copy(x = it))) }
+                        number("modifier.motion.outValue", key.outHandle.y, -handleRange..handleRange) { keyed(key.copy(outHandle = key.outHandle.copy(y = it))) }
+                    }
                     if (curve.keys.size > 1) CompactButton(tr("animation.editor.deleteKeys"), { change(updated(curve.copy(keys = curve.keys.filterIndexed { i, _ -> i != keyIndex }))) }, enabled = enabled, height = 20.dp)
                 }
                 val spans = (listOf(0f) + curve.keys.map { it.time } + clip.duration).distinct().sorted().zipWithNext()
@@ -304,6 +313,36 @@ internal fun ModifierNativeValues(type: String, config: JsonObject, state: PSD2L
                     }, enabled = enabled, height = 20.dp)
                 }
                 if (clip.curves.size > 1) CompactButton(tr("animation.editor.removeTrack"), { change(MotionClips.toJson(clip.copy(curves = clip.curves.filterIndexed { i, _ -> i != index }))) }, enabled = enabled, height = 20.dp)
+            }
+            var eventsOpen by remember(clip.id) { mutableStateOf(false) }
+            PresetFolderRow(tr("animation.events"), tr("modifier.count", clip.events.size), eventsOpen, true) { eventsOpen = !eventsOpen }
+            if (eventsOpen) {
+                clip.events.forEachIndexed { index, event ->
+                    fun updated(next: MotionEvent) = MotionClips.toJson(clip.copy(events = MotionClips.normalizedEvents(
+                        clip.events.mapIndexed { i, old -> if (i == index) next else old })))
+                    number("animation.editor.time", event.time, 0f..clip.duration) { updated(event.copy(time = it)) }
+                    var value by remember(clip.id, index, event.value) { mutableStateOf(event.value) }
+                    var expected by remember { mutableStateOf<String?>(null) }
+                    CompactTextField(value, { value = it.take(MotionEvent.MAX_VALUE_LENGTH) }, placeholder = tr("animation.eventValue"),
+                        enabled = enabled, modifier = Modifier.fillMaxWidth(), onEditStart = { expected = vm.modifierEditState() },
+                        onEditEnd = {
+                            if (value != event.value) commit(updated(event.copy(value = value)), expected) { failure ->
+                                if (failure != null) value = event.value
+                            }
+                        })
+                    CompactButton(tr("animation.eventDelete"), {
+                        change(MotionClips.toJson(clip.copy(events = clip.events.filterIndexed { i, _ -> i != index })))
+                    }, enabled = enabled, height = 20.dp)
+                }
+                if (clip.events.size < MotionEvent.MAX_PER_CLIP) {
+                    val free = if (clip.events.none { it.time < MotionClips.TIME_EPSILON }) 0f else
+                        (listOf(0f) + clip.events.map { it.time } + clip.duration).sorted().zipWithNext()
+                            .maxByOrNull { it.second - it.first }?.takeIf { it.second - it.first > MotionClips.TIME_EPSILON * 2 }
+                            ?.let { (it.first + it.second) / 2f }
+                    CompactButton(tr("modifier.motion.addEvent"), {
+                        free?.let { change(MotionClips.toJson(clip.copy(events = MotionClips.normalizedEvents(clip.events + MotionEvent(it, ""))))) }
+                    }, enabled = enabled && free != null, height = 20.dp)
+                }
             }
             parameterIds.firstOrNull { id -> clip.curves.none { it.parameterId == id } }?.let { id ->
                 CompactButton(tr("animation.editor.addTrack"), {

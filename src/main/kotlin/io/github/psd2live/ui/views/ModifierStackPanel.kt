@@ -114,7 +114,11 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                         style = LocalToolTypography.current.caption, color = colors.textMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     AnimatedVisibility(expanded[instance.id] == true, enter = expandVertically(tween(Motion.Fold, easing = FastOutSlowInEasing)), exit = shrinkVertically(tween(Motion.Instant, easing = FastOutLinearInEasing))) {
                         Column(verticalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
-                            instance.presetGroup?.let { Text(tr("modifier.origin", if (it in setOf("fitted", "custom")) tr("modifier.group.$it") else it), style = LocalToolTypography.current.caption, color = colors.textMuted) }
+                            instance.presetGroup?.let { Text(tr("modifier.origin", when (it) {
+                                "fitted", "custom", "converted" -> tr("modifier.group.$it")
+                                "minimal", "default", "full" -> tr("start.quick.$it")
+                                else -> it
+                            }), style = LocalToolTypography.current.caption, color = colors.textMuted) }
                             val report = reports[instance.id]
                             val missing = report?.get("missing_dependencies")?.jsonArray.orEmpty()
                             if (missing.isNotEmpty()) Text(tr("modifier.dependencies", missing.joinToString { it.jsonPrimitive.content.let { dependency ->
@@ -200,9 +204,29 @@ private fun ModifierSourceValues(instance: RigModifierInstance, enabled: Boolean
             }, enabled = enabled)
             Text(tr("model.deformer.featureDisplacement"), style = LocalToolTypography.current.caption)
         }
+        for ((key, label) in listOf("frontHairSway" to "modifier.frontHairSway", "backHairSway" to "modifier.backHairSway")) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CompactCheckbox(instance.config[key]?.jsonPrimitive?.booleanOrNull != false, { value ->
+                    vm.editModifier("modifier_update", buildJsonObject {
+                        put("id", instance.id); put("type", instance.type)
+                        put("config", JsonObject(instance.config + (key to JsonPrimitive(value))))
+                    })
+                }, enabled = enabled)
+                Text(tr(label), style = LocalToolTypography.current.caption)
+            }
+        }
         return
     }
     val spec = RigLegacyBindings.find(instance.type) ?: return
+    if (spec.hasPhysics) Row(verticalAlignment = Alignment.CenterVertically) {
+        CompactCheckbox(instance.config["physicsEnabled"]?.jsonPrimitive?.booleanOrNull != false, { value ->
+            vm.editModifier("modifier_update", buildJsonObject {
+                put("id", instance.id); put("type", instance.type)
+                put("config", JsonObject(instance.config + ("physicsEnabled" to JsonPrimitive(value))))
+            })
+        }, enabled = enabled)
+        Text(tr("swing.physics"), style = LocalToolTypography.current.caption)
+    }
     if (spec.mouthOutline) {
         val color = RigLegacyBindings.outlineColor(instance)
         var hex by remember(instance.id, color) { mutableStateOf(color?.let { "%06X".format(it) }.orEmpty()) }
@@ -230,7 +254,7 @@ private fun ModifierSourceValues(instance: RigModifierInstance, enabled: Boolean
             vm.editModifier("modifier_update", buildJsonObject { put("id", instance.id); put("type", instance.type); put("config", config(field, key, number)) }, expected, done)
         }
     }
-    if (spec.strength) value(tr("modifier.strength"), "strength", null, 1f, 0f..2f, "")
+    if (spec.strength) value(tr("modifier.strength"), "strength", null, 1f, 0f..4f, "")
     var valuesOpen by remember(instance.id) { mutableStateOf(false) }
     if (spec.knobs.isNotEmpty() || spec.fields.isNotEmpty()) {
         PresetFolderRow(tr("settings.rig.values"), tr("modifier.count", spec.knobs.size + spec.fields.size), valuesOpen, true) { valuesOpen = !valuesOpen }
