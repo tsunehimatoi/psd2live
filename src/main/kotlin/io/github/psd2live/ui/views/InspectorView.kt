@@ -95,6 +95,10 @@ internal fun ModelPresetsSection(
 	state: PSD2LiveState,
 	viewModel: PSD2LiveViewModel,
 ) {
+    if (state.rigEdits.modifierStack != null) {
+        ModifierStackPanel(state, viewModel)
+        return
+    }
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
 	val isBusy = state.isAnalyzing || state.isGenerating || state.workspaceEditBusy || state.editorDraftBusy

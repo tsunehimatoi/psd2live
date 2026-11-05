@@ -408,6 +408,8 @@ internal fun DockWorkspaceView(
                 onConfirm = viewModel::confirmDepthSplit, onDismiss = viewModel::dismissDepthSplit)
         }
         io.github.psd2live.ui.components.KeyformDialogHost()
+        if (state.activeWorkspace.id == workspace.id && viewModel.modifierAddition != null) ModifierAdditionDialog(state, viewModel)
+
         if (state.activeWorkspace.id == workspace.id) when (viewModel.objectDialog) {
             PSD2LiveViewModel.ObjectDialog.FIND_REPLACE -> io.github.psd2live.ui.components.FindReplaceDialog(state, viewModel)
             PSD2LiveViewModel.ObjectDialog.CONVERT_IDS -> io.github.psd2live.ui.components.ConvertIdsDialog(state, viewModel)
@@ -968,7 +970,7 @@ private fun DockHeader(id: String, session: DockSession, modifier: Modifier,
     var backgroundMenu by remember { mutableStateOf(false) }
     val workspace = state.activeWorkspace
     val canvas = session.canvases.firstOrNull { it.id == id }
-    val title = canvas?.let { canvasHeaderTitle(it, workspace) } ?: session.titleOf(id)
+    val title = canvas?.let { canvasHeaderTitle(it, workspace) } ?: if (id == "settings" && state.rigEdits.modifierStack != null) tr("modifier.title") else session.titleOf(id)
     val showCanvasTools = canvas != null && (standalone || floating || selected)
     // Closing (menu or middle-click) hides a panel, which the window menu brings back; it removes a
     // canvas, never the last.

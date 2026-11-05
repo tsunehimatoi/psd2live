@@ -109,7 +109,7 @@ internal fun PhysicsPanelView(
 				PanelSectionRow(tr("physics.groups"), listOpen || needle.isNotEmpty(), { listOpen = !listOpen }, count = groups.size)
 				PhysicsRowDivider()
 				if (listOpen || needle.isNotEmpty()) {
-					PhysicsGroupList(viewModel, state, groups, shown, selected?.id, previewState.generatePhysics && !previewState.meshOnly,
+					PhysicsGroupList(viewModel, state, groups, shown, selected?.id, if (state.rigEdits.modifierStack != null) groups.any { it.active } else previewState.generatePhysics && !previewState.meshOnly,
 						empty = if (needle.isEmpty()) tr("physics.empty") else tr("physics.noResults"),
 						onSelect = { selectedId = it })
 				}
@@ -143,7 +143,7 @@ private fun PhysicsToolbar(
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
-	val on = previewState.generatePhysics && !previewState.meshOnly
+	val on = if (state.rigEdits.modifierStack != null) groups.any { it.active } else previewState.generatePhysics && !previewState.meshOnly
 	var newMenuOpen by remember { mutableStateOf(false) }
 	val labels = listOf(tr("physics.new"))
 	PanelToolbar(
@@ -190,7 +190,8 @@ private fun PhysicsToolbar(
 			NewPhysicsMenu(viewModel, selected, newMenuOpen, { newMenuOpen = false }, onCreated)
 		}
 		// Cubism runs groups top to bottom; a later group reads an earlier one's outputs.
-		val index = groups.indexOfFirst { it.id == selected?.id }
+		val reorderable = groups.filter { it.origin != PhysicsOrigin.MODIFIER }
+        val index = reorderable.indexOfFirst { it.id == selected?.id }
 		PanelToolbarSeparator()
 		PanelIconButton(
 			onClick = { selected?.let { viewModel.movePhysicsGroup(it.id, -1) } },
@@ -199,7 +200,7 @@ private fun PhysicsToolbar(
 		) { IconArrowVertical(up = true, tint = colors.textMuted) }
 		PanelIconButton(
 			onClick = { selected?.let { viewModel.movePhysicsGroup(it.id, 1) } },
-			enabled = index in 0 until groups.size - 1,
+			enabled = index in 0 until reorderable.size - 1,
 			tooltip = tr("physics.moveDown"),
 		) { IconArrowVertical(up = false, tint = colors.textMuted) }
 		Spacer(Modifier.weight(1f))
@@ -225,7 +226,7 @@ private fun NewPhysicsMenu(
 			onDismiss()
 			viewModel.createPhysicsGroup(onCreated = onCreated)
 		})
-		CompactMenuItem(text = tr("physics.duplicate"), enabled = selected != null, onClick = {
+		CompactMenuItem(text = tr("physics.duplicate"), enabled = selected != null && selected.origin != PhysicsOrigin.MODIFIER, onClick = {
 			onDismiss()
 			selected?.let { viewModel.createPhysicsGroup(it.setting, onCreated) }
 		})
@@ -237,7 +238,9 @@ private fun NewPhysicsMenu(
 		val targets = viewModel.canvasEditor.swingTargets()
 		CompactMenuItem(text = tr("physics.newSwing"), enabled = targets.isNotEmpty(), onClick = {
 			onDismiss()
-			viewModel.beginSwing(targets)
+            if (viewModel.state.value.rigEdits.modifierStack != null) {
+                viewModel.openModifierAddition(); viewModel.previewModifierAddition("swing", null)
+            } else viewModel.beginSwing(targets)
 		})
 	}
 }
@@ -254,13 +257,14 @@ internal fun ColumnScope.PhysicsGroupMenuItems(
 	dismiss: () -> Unit,
 ) {
 	val swing = if (group.origin == PhysicsOrigin.SWING) PhysicsGenerator.swingOf(group.id, state.rigEdits.swingEdits) else null
-	val index = groups.indexOfFirst { it.id == group.id }
-	if (onRename != null) CompactMenuItem(tr("physics.rename"), { dismiss(); onRename() })
-	CompactMenuItem(tr("physics.duplicate"), { dismiss(); viewModel.createPhysicsGroup(group.setting, onSelect) })
+	val reorderable = groups.filter { it.origin != PhysicsOrigin.MODIFIER }
+    val index = reorderable.indexOfFirst { it.id == group.id }
+	if (onRename != null && group.origin != PhysicsOrigin.MODIFIER) CompactMenuItem(tr("physics.rename"), { dismiss(); onRename() })
+	CompactMenuItem(tr("physics.duplicate"), { dismiss(); viewModel.createPhysicsGroup(group.setting, onSelect) }, enabled = group.origin != PhysicsOrigin.MODIFIER)
 	if (swing != null) CompactMenuItem(tr("physics.openSwing"), { dismiss(); viewModel.beginSwing(swing.targets) })
 	CompactMenuDivider()
 	CompactMenuItem(tr("physics.moveUp"), { dismiss(); viewModel.movePhysicsGroup(group.id, -1) }, enabled = index > 0)
-	CompactMenuItem(tr("physics.moveDown"), { dismiss(); viewModel.movePhysicsGroup(group.id, 1) }, enabled = index in 0 until groups.size - 1)
+	CompactMenuItem(tr("physics.moveDown"), { dismiss(); viewModel.movePhysicsGroup(group.id, 1) }, enabled = index in 0 until reorderable.size - 1)
 	CompactMenuDivider()
 	CompactMenuItem(tr("physics.resetDefaults"), { dismiss(); viewModel.removePhysicsGroup(group.id) }, enabled = group.overridden)
 	CompactMenuItem(tr("physics.delete"), { dismiss(); viewModel.removePhysicsGroup(group.id) },
@@ -345,7 +349,7 @@ private fun PhysicsGroupRow(
 			verticalAlignment = Alignment.CenterVertically,
 			horizontalArrangement = Arrangement.spacedBy(6.dp),
 		) {
-			CompactCheckbox(group.enabled, { viewModel.setPhysicsGroupEnabled(group.id, it) })
+			CompactCheckbox(group.enabled, { viewModel.setPhysicsGroupEnabled(group.id, it) }, enabled = group.origin != PhysicsOrigin.MODIFIER)
 			Text("${index + 1}", style = typography.monoSmall, color = colors.textMuted, modifier = Modifier.width(14.dp))
 			Text(
 				group.setting.name,

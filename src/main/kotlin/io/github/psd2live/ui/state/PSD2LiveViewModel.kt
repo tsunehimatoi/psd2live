@@ -1727,6 +1727,140 @@ class PSD2LiveViewModel : AutoCloseable {
 
     internal enum class ObjectDialog { FIND_REPLACE, CONVERT_IDS }
 
+    internal var modifierAddition by mutableStateOf<ModifierAddition?>(null)
+        private set
+    private var modifierPreviewJob: kotlinx.coroutines.Job? = null
+    private var modifierPreviewSequence = 0
+
+    internal fun openModifierAddition(group: Boolean = false) {
+        val model = _state.value.previewModel ?: return
+        val expected = currentWorkspaceState() ?: return
+        val objects = selectedObjectTargets()
+        val selected = objects.filter { it.startsWith("mesh:") }.map { it.substringAfter(':') }
+        val warp = if (!group && selected.isEmpty()) objects.firstOrNull { it.startsWith("warp:") }?.substringAfter(':') else null
+        val authoredIds = model.authored.rig.puppet.drawables.mapTo(HashSet()) { it.id }
+        val ids = selected.ifEmpty { model.rig.puppet.drawables.filter { it.mesh != null && it.id in authoredIds }.map { it.id.raw } }
+        if (ids.isEmpty()) return
+        modifierAddition = ModifierAddition(expected, if (warp != null) listOf(io.github.psd2live.core.modifier.ModifierTarget("deformer", warp))
+            else ids.map { io.github.psd2live.core.modifier.ModifierTarget("mesh", it) })
+        val existing = model.config.rigEdits.modifierStack?.let(io.github.psd2live.core.modifier.RigModifierStack::fromJson)
+        val active = model.rig.modifierReport?.get("entries")?.jsonArray.orEmpty().filter { it.jsonObject.getValue("status").jsonPrimitive.content == "active" }
+            .mapTo(HashSet()) { it.jsonObject.getValue("id").jsonPrimitive.content }
+        val types = existing?.instances.orEmpty().filter { it.id in active && it.targets.any { target -> target.id in ids } }.mapTo(HashSet()) { it.type }
+        val first = io.github.psd2live.core.modifier.RigLegacyBindings.specs.firstOrNull { spec ->
+            spec.type !in types && (if (spec.isBase) types.none { it.substringBefore('/') == spec.area } else
+                (listOfNotNull(spec.module?.base) + spec.related).all { required ->
+                    val area = required.substringBefore('/')
+                    types.none { '/' in it && it.substringBefore('/') == area && it != required }
+                })
+        }?.type ?: "body/legacy"
+        previewModifierAddition(if (group) null else if (warp != null) "swing" else first, if (group) "fitted" else null)
+    }
+
+    internal fun dismissModifierAddition() { modifierPreviewSequence++; modifierPreviewJob?.cancel(); modifierAddition = null }
+
+    internal fun previewModifierAddition(type: String?, group: String?, configuration: kotlinx.serialization.json.JsonObject? = null, preset: String? = null) {
+        val dialog = modifierAddition ?: return
+        val workspace = workspaceBackend ?: return
+        modifierPreviewJob?.cancel()
+        val sequence = ++modifierPreviewSequence
+        modifierAddition = dialog.copy(type = type, group = group, configuration = configuration, plan = null, preview = null, loading = true, error = null)
+        modifierPreviewJob = scope.launch {
+            try {
+                val (plan, preview) = withContext(Dispatchers.Default) {
+                    val editedPlan = if (configuration != null && preset == null && group == null && type == dialog.type) {
+                        dialog.plan?.let { previous ->
+                            val entries = previous.getValue("entries").jsonArray
+                            val entry = entries.lastOrNull()?.jsonObject
+                            if (entry == null || entry["type"]?.jsonPrimitive?.content != type) null
+                            else kotlinx.serialization.json.JsonObject(previous + ("entries" to kotlinx.serialization.json.JsonArray(
+                                entries.dropLast(1) + kotlinx.serialization.json.JsonObject(entry + ("config" to configuration)))))
+                        }
+                    } else null
+                    val plan = editedPlan ?: workspace.captureQueries().modifierPlan(kotlinx.serialization.json.buildJsonObject {
+                        type?.let { put("type", it) }; group?.let { put("group", it) }; configuration?.let { put("config", it) }; preset?.let { put("preset", it) }
+                        put("targets", kotlinx.serialization.json.JsonArray(dialog.targets.map { target -> kotlinx.serialization.json.buildJsonObject {
+                            put("kind", target.kind); put("id", target.id)
+                        } }))
+                    })
+                    if (plan.getValue("state").jsonPrimitive.content != dialog.state) throw io.github.psd2live.application.WorkspaceConflict(dialog.state, plan.getValue("state").jsonPrimitive.content)
+                    withContext(Dispatchers.Main) {
+                        if (sequence == modifierPreviewSequence) modifierAddition = modifierAddition?.copy(plan = plan)
+                    }
+                    val entries = plan.getValue("entries").jsonArray
+                    val preview = if (entries.isEmpty()) null else workspace.previewRegeneration(dialog.state,
+                        listOf(io.github.psd2live.application.WorkspaceDocumentOperation("modifier_add_group", kotlinx.serialization.json.buildJsonObject {
+                            put("group", plan.getValue("group")); put("entries", entries)
+                        })))
+                    plan to preview
+                }
+                if (sequence == modifierPreviewSequence) modifierAddition = modifierAddition?.copy(plan = plan, preview = preview, loading = false)
+            } catch (failure: Exception) {
+                if (failure is kotlinx.coroutines.CancellationException) throw failure
+                if (sequence == modifierPreviewSequence) modifierAddition = modifierAddition?.copy(loading = false, error = failure.message)
+            }
+        }
+    }
+
+    internal fun confirmModifierAddition() {
+        val dialog = modifierAddition ?: return
+        val plan = dialog.plan ?: return
+        if (dialog.loading || dialog.preview == null) return
+        modifierAddition = dialog.copy(loading = true, committing = true)
+        saveDocumentEdits(dialog.state, tr("modifier.history.add"), listOf(io.github.psd2live.application.WorkspaceDocumentOperation("modifier_add_group",
+            kotlinx.serialization.json.buildJsonObject { put("group", plan.getValue("group")); put("entries", plan.getValue("entries")) }))) { failure ->
+            if (failure == null) dismissModifierAddition() else modifierAddition = modifierAddition?.copy(loading = false, committing = false, error = failure)
+        }
+    }
+
+    /** Reject a field captured from a projection that has not caught up with the authoritative stack. */
+    internal fun modifierEditState(): String? {
+        val shown = _state.value.rigEdits.modifierStack?.let(io.github.psd2live.core.modifier.RigModifierStack::fromJson) ?: return null
+        val observed = workspaceBackend?.captureQueries()?.modifierStack() ?: return null
+        val rows = observed.getValue("entries").jsonArray
+        val matches = _state.value.historySnapshot?.headNodeId == observed.getValue("history_node_id").jsonPrimitive.content &&
+            rows.size == shown.instances.size && shown.instances.zip(rows).all { (instance, raw) ->
+            val row = raw.jsonObject
+            row.getValue("id").jsonPrimitive.content == instance.id && row.getValue("config") ==
+                (if (instance.type == "simulation") kotlinx.serialization.json.JsonObject(instance.config - "bake") else instance.config) &&
+                row.getValue("enabled").jsonPrimitive.boolean == instance.enabled
+        }
+        if (!matches) { setErrorMessage(tr("modifier.stale")); return null }
+        return observed.getValue("state").jsonPrimitive.content
+    }
+
+    internal fun editModifier(operation: String, request: kotlinx.serialization.json.JsonObject, expectedState: String? = modifierEditState(),
+                              onComplete: (String?) -> Unit = {}) {
+        val expected = expectedState ?: run { onComplete(tr("modifier.stale")); return }
+        saveDocumentEdits(expected, tr("modifier.history.edit"), listOf(io.github.psd2live.application.WorkspaceDocumentOperation(operation, request))) { failure ->
+            if (failure != null) setErrorMessage(failure)
+            onComplete(failure)
+        }
+    }
+
+    internal fun locateModifierContent(kind: String, id: String) {
+        val model = _state.value.previewModel ?: return
+        when (kind) {
+            "mesh" -> selectLayer(model.rig.ownLayerIdByDrawableId[id] ?: model.rig.layerIdByDrawableId[id] ?: id)
+            "deformer", "warp" -> selectDeformer(id)
+            "layer" -> selectLayer(id)
+            "parameter" -> { setParameterSearchQuery(id); requestSelectDockModule("parameters") }
+            "part" -> {
+                val parts = model.rig.puppet.parts.associateBy { it.id.raw }
+                val meshes = linkedSetOf<String>()
+                val seen = hashSetOf<String>()
+                fun collect(part: String) {
+                    if (!seen.add(part)) return
+                    parts[part]?.children.orEmpty().forEach { child -> when (child) {
+                        is org.umamo.runtime.model.OrgChild.Part -> collect(child.id.raw)
+                        is org.umamo.runtime.model.OrgChild.Drawable -> meshes += model.rig.ownLayerIdByDrawableId[child.id.raw] ?: child.id.raw
+                    } }
+                }
+                collect(id); if (meshes.isNotEmpty()) selectLayers(meshes)
+            }
+        }
+    }
+
     internal var objectDialog by mutableStateOf<ObjectDialog?>(null)
         private set
 
@@ -3972,6 +4106,7 @@ class PSD2LiveViewModel : AutoCloseable {
 	/** Every physics group of the current model, as export sees it; see [PhysicsCatalog.groups]. */
 	fun physicsGroups(state: PSD2LiveState = _state.value): List<PhysicsGroup> {
 		val model = state.previewModel ?: return emptyList()
+		if (state.rigEdits.modifierStack != null) return PhysicsCatalog.groups(model, model.config.copy(rigEdits = state.rigEdits))
 		val key = listOf(model.analysis, model.rig.puppet, state.rigEdits.interiorEffects, state.rigEdits.physicsEdits, state.rigEdits.disabledPhysicsIds, state.rigEdits.physicsOrder,
 			state.rigEdits.skeleton, state.rigEdits.swingEdits, state.physicsFrontHair, state.physicsBackHair, state.physicsEyeJelly,
 			state.hairSimulationFront, state.hairSimulationBack, state.rigEdits.importedCmo3, model.config.recipe)

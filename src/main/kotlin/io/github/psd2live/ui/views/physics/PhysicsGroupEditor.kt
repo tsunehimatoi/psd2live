@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.Text
+import io.github.psd2live.ui.components.CompactButton
+import io.github.psd2live.ui.theme.Spacing
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
@@ -59,6 +61,14 @@ internal fun PhysicsGroupEditor(
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
+    if (group.origin == PhysicsOrigin.MODIFIER) {
+        Column(Modifier.fillMaxWidth().padding(Spacing.Margin), verticalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
+            Text(group.setting.name, style = typography.body, color = colors.textPrimary)
+            Text(tr("physics.originNote.modifier"), style = typography.caption, color = colors.textMuted)
+            CompactButton(tr("physics.openModifier"), { viewModel.requestSelectDockModule("settings") })
+        }
+        return
+    }
 	val setting = group.setting
 	// null edits every segment at once.
 	var segment by remember(group.id) { mutableStateOf<Int?>(null) }
@@ -260,6 +270,7 @@ internal fun GroupTitle(
 			io.github.psd2live.core.sim.SimGenerator.simulationOf(group.id, state.rigEdits.simEdits)?.name ?: "")
 		PhysicsOrigin.INTERIOR -> tr("interior.title")
 		PhysicsOrigin.CUSTOM -> tr("physics.originNote.custom")
+        PhysicsOrigin.MODIFIER -> tr("physics.originNote.modifier")
 	}
 	Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
 		Text(origin, style = typography.caption.copy(fontSize = 9.5.sp), color = colors.textMuted, modifier = Modifier.weight(1f))

@@ -695,7 +695,7 @@ internal fun RigModulePresets(state: PSD2LiveState, viewModel: PSD2LiveViewModel
 						}
 						RowDetail(costText(costs[module]), moduleOn && recipe.modern || module.setting != null && moduleOn)
 					}
-					if (moduleOn && module === RigModules.FACE_DEPTH_TURN) TurnStyleRow(recipe.value(module.id, "style"), usable, viewModel)
+					if (moduleOn && module === RigModules.FACE_DEPTH_TURN) TurnStyleRow(recipe.value(module.id, "style"), usable, viewModel::applyTurnStyle)
 					if (moduleOn) for (knob in module.knobs.filter { !it.advanced }) KnobRow(
 						label = tr("settings.rig.knob.${module.id}.${knob.id}"),
 						hint = tr("settings.rig.knob.${module.id}.${knob.id}.hint", "%.0f".format(knob.default)),
@@ -714,7 +714,7 @@ internal fun RigModulePresets(state: PSD2LiveState, viewModel: PSD2LiveViewModel
  * whole turn; choosing one puts the module's other values back to their defaults, which then adjust it.
  */
 @Composable
-private fun TurnStyleRow(value: Float, enabled: Boolean, viewModel: PSD2LiveViewModel) {
+internal fun TurnStyleRow(value: Float, enabled: Boolean, onStyleSelected: (Int) -> Unit) {
 	val typography = LocalToolTypography.current
 	val colors = LocalToolColors.current
 	val styles = listOf("default") + io.github.psd2live.core.fit.TurnStyle.PRESETS
@@ -729,7 +729,7 @@ private fun TurnStyleRow(value: Float, enabled: Boolean, viewModel: PSD2LiveView
 		CompactDropdown(
 			items = styles.indices.toList(),
 			selectedItem = selected,
-			onItemSelected = { if (it != selected) viewModel.applyTurnStyle(it) },
+			onItemSelected = { if (it != selected) onStyleSelected(it) },
 			itemLabel = { tr("settings.rig.turnStyle." + styles[it]) },
 			enabled = enabled,
 			height = 20.dp,
