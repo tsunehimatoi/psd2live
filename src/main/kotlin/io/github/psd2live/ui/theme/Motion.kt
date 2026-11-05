@@ -12,18 +12,18 @@ internal object Motion {
 	/** Small changes of state: a chevron turning, a menu growing from its anchor, a highlight appearing. */
 	const val Quick = 100
 
-	/** Fading in: menus, second levels, labels, switches. */
-	const val Fade = 120
+	/** Fades share the mode-switch duration, as do folds and expansions. */
+	const val Fade = Quick
 
 	/** Rows, labels and bars folding open or closed. */
-	const val Fold = 160
+	const val Fold = Quick
 
 	/** Sizes following the pointer: a rail widening, a floating bar lifting, a bar sliding into view. */
-	const val Expand = 200
+	const val Expand = Quick
 
 	/** One menu row arriving, and how long after the row above it it starts. */
-	const val RowArrival = 90
-	const val RowStagger = 5
+	const val RowArrival = Instant
+	const val RowStagger = 0
 
 	/** How long a widening rail waits before its labels follow. */
 	const val LabelDelay = 40

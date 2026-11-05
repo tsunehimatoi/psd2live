@@ -563,13 +563,13 @@ internal fun FloatingMenuRow(
 	val colors = LocalToolColors.current
 	val interactionSource = remember { MutableInteractionSource() }
 	val hovered by interactionSource.collectIsHoveredAsState()
-	val tint by animateColorAsState(when {
+	val tint = when {
 		!enabled -> colors.textMuted.copy(alpha = 0.5f)
 		danger -> colors.error
-		selected -> colors.accent
+		selected -> colors.textPrimary
 		hovered -> colors.textPrimary
 		else -> colors.textMuted
-	}, tween(Motion.Instant))
+	}
 	val glide = LocalMenuGlide.current
 	val background by animateColorAsState(if (hovered && enabled && !glide) {
 		if (danger) colors.error.copy(alpha = 0.14f) else colors.controlHover.copy(alpha = 0.75f)
