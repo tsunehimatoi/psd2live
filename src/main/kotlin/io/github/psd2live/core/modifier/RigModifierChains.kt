@@ -31,6 +31,7 @@ internal object RigModifierChains {
     ).model(model)
 
     fun projection(model: PuppetModel, target: ModifierTarget, instances: List<RigModifierInstance>, chains: List<Binding>,
+                   cache: MutableMap<List<Owned>, Projection>,
                    restrict: (PuppetModel, Set<ParameterId>) -> PuppetModel): Projection {
         if (chains.isEmpty()) return Projection(model, emptyList())
         val mesh = model.drawables.single { it.id.raw == target.id }
@@ -48,8 +49,10 @@ internal object RigModifierChains {
                 ParameterId(owner.outputId("chain-parameter:${parameter.raw.removePrefix("SourceChain:")}")).also { mappings[parameter] = it }.raw
             })
         }
-        val all = chains.flatMapTo(HashSet()) { it.parameters.values }
-        val kept = model.parameters.filter { it.id !in all || it.id in mappings }.mapTo(HashSet()) { it.id }
-        return Projection(RigIdRemap(parameters = mappings).model(restrict(model, kept)), owners)
+        return cache.getOrPut(owners) {
+            val all = chains.flatMapTo(HashSet()) { it.parameters.values }
+            val kept = model.parameters.filter { it.id !in all || it.id in mappings }.mapTo(HashSet()) { it.id }
+            Projection(RigIdRemap(parameters = mappings).model(restrict(model, kept)), owners)
+        }
     }
 }

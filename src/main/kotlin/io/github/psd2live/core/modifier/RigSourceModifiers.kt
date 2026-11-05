@@ -44,6 +44,7 @@ internal class RigModifierSource(
     private data class Template(val model: PuppetModel, val chains: List<RigModifierChains.Binding>)
     private val templates = HashMap<Map<String, JsonObject>, Template>()
     private val transitions = HashMap<Pair<String, ModifierTarget>, Pair<RigModifierChains.Projection, RigModifierChains.Projection>>()
+    private val chainProjections = java.util.IdentityHashMap<PuppetModel, MutableMap<List<RigModifierChains.Owned>, RigModifierChains.Projection>>()
 
     fun seeThrough(rig: RigIR, instance: RigModifierInstance, checkpoint: () -> Unit): RigIR {
         checkpoint()
@@ -96,7 +97,7 @@ internal class RigModifierSource(
     fun expressionParameters(instance: RigModifierInstance): List<io.github.psd2live.format.model.Parameter> {
         val ids = expressionIds(instance).mapTo(HashSet()) { it.raw }
         if (ids.isEmpty()) return emptyList()
-        return parameterDefinitions.getOrPut(expressionTemplate) { PuppetIr.toIr(expressionTemplate).parameters }
+        return parameterDefinitions.getOrPut(expressionTemplate) { PuppetIr.parametersToIr(expressionTemplate) }
             .filter { it.id in ids }
     }
 
@@ -175,7 +176,8 @@ internal class RigModifierSource(
         return restricted(generated(strength, tuning).puppet, RigBodyModifier.parameters).also { checkpoint() }
     }
 
-    fun static(model: PuppetModel) = restricted(model, emptySet())
+    private val staticModels = java.util.IdentityHashMap<PuppetModel, PuppetModel>()
+    fun static(model: PuppetModel) = staticModels.getOrPut(model) { restricted(model, emptySet()) }
 
     private fun template(instances: List<RigModifierInstance>, scaffold: JsonObject): Template {
         val state = instances.associateBy { it.type }
@@ -255,7 +257,9 @@ internal class RigModifierSource(
         val relevant = relevantBefore(instance, target)
         fun projected(items: List<RigModifierInstance>): RigModifierChains.Projection {
             val template = template(items, provider(instance).config)
-            return RigModifierChains.projection(forTarget(template.model, target), target, items, template.chains, ::restricted)
+            val model = forTarget(template.model, target)
+            return RigModifierChains.projection(model, target, items, template.chains,
+                chainProjections.getOrPut(model) { HashMap() }, ::restricted)
         }
         return projected(relevant) to projected(relevant + instance)
     }
@@ -370,7 +374,7 @@ internal class RigModifierSource(
         val found = LinkedHashMap<String, io.github.psd2live.format.model.Parameter>()
         val definitions = instance.targets.flatMap { target ->
             val desired = transition(instance, target) {}.second
-            parameterDefinitions.getOrPut(desired) { PuppetIr.toIr(desired).parameters }
+            parameterDefinitions.getOrPut(desired) { PuppetIr.parametersToIr(desired) }
         }
         for (parameter in definitions) {
             val previous = found[parameter.id]

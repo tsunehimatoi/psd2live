@@ -24,8 +24,8 @@ internal object RigSourceBinding {
         for (target in instance.targets) {
             checkpoint()
             val (previous, desired) = source.transition(instance, target, checkpoint)
-            val existingDefinitions = PuppetIr.toIr(current).parameters.associateBy { it.id }
-            for (definition in PuppetIr.toIr(desired).parameters) {
+            val existingDefinitions = PuppetIr.parametersToIr(current).associateBy { it.id }
+            for (definition in PuppetIr.parametersToIr(desired)) {
                 val before = existingDefinitions[definition.id] ?: continue
                 val resolved = source.resolveParameter(instance, before, definition) ?: continue
                 current = current.withParameterRange(ParameterId(resolved.id), resolved.min, resolved.default, resolved.max)
@@ -45,8 +45,8 @@ internal object RigSourceBinding {
             val combinedLinks = current.parameterLinks + links
             current = current.copy(parameterLinks = if (preserveSourceOrder) sourceOrder(combinedLinks, desired.parameterLinks) { it } else combinedLinks)
             val defaults = current.parameters.associate { it.id to it.default }
-            val oldProjection = previous.copy(parameters = desired.parameters, deformers = source.static(previous).deformers)
-            val nextProjection = desired.copy(deformers = source.static(desired).deformers)
+            val oldProjection by lazy(LazyThreadSafetyMode.NONE) { previous.copy(parameters = desired.parameters, deformers = source.static(previous).deformers) }
+            val nextProjection by lazy(LazyThreadSafetyMode.NONE) { desired.copy(deformers = source.static(desired).deformers) }
             val previousById = previous.deformers.associateBy { it.id }
             val desiredById = desired.deformers.associateBy { it.id }
             val id = DrawableId(target.id)

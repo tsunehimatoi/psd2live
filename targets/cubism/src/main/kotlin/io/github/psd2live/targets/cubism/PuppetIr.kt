@@ -26,6 +26,11 @@ import io.github.psd2live.format.model.ChannelValue as IrChannelValue
  * [toIr] separately.
  */
 public object PuppetIr {
+	/** Convert parameter declarations without traversing geometry, textures or keyforms. */
+	public fun parametersToIr(model: PuppetModel): List<IrParameter> = model.parameters.map {
+		IrParameter(it.id.raw, it.name, it.min, it.max, it.default,
+			it.kind == ParameterKind.BLEND_SHAPE, it.repeat, it.keys?.let { keys -> Floats.of(keys.toFloatArray()) })
+	}
 	public fun toIr(
 		model: PuppetModel,
 		pages: List<TexturePage> = emptyList(),
@@ -35,8 +40,7 @@ public object PuppetIr {
 		parameterRoles: List<ParameterRole> = emptyList(),
 	): RigIR = RigIR(
 		canvas = Canvas(model.canvasWidth, model.canvasHeight, model.worldOriginX, model.worldOriginY, model.pixelsPerUnit),
-		parameters = model.parameters.map { IrParameter(it.id.raw, it.name, it.min, it.max, it.default,
-			it.kind == ParameterKind.BLEND_SHAPE, it.repeat, it.keys?.let { keys -> Floats.of(keys.toFloatArray()) }) },
+		parameters = parametersToIr(model),
 		parameterLinks = model.parameterLinks.map { IrParameterLink(it.horizontal.raw, it.vertical.raw) },
 		parameterTree = model.parameterTree.map(::node),
 		parameterRoles = parameterRoles,
