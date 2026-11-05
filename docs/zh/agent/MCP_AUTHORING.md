@@ -111,6 +111,9 @@
 | `path_get / path_list / path_preview / path_put / path_delete / path_deform` | `request` | `get/list/preview/put/delete/deform` |
 | `history_checkpoint / history_list / history_checkout` | `request` | 创建检查点、读取历史或切换节点 |
 
+动作修改器的 `config` 支持可选 `parameter_roles`，将运行时角色名映射到参数 ID 数组。眨眼添加计划填写 `EyeBlink`。求值会检查参数引用，并拒绝同一角色的不兼容定义。查询在关系贡献中报告变化；应用前缀后角色作为普通模型元数据保存。
+
+
 物理规划可用 `preset: "PhysicsHairFront"`、`"PhysicsHairBack"` 或 `"PhysicsEyeJelly"` 捕获旧规则。动作规划可用 `natural:Idle`、`natural:Blink`、`natural:Nod`、`natural:Shake` 和 `natural:Talk` 捕获自然动作。物理预设和显式选择的自然动作会把缺失的基础绑定列入计划。两者都返回可编辑配置。 当参数由当前已求值的修改器创建时，消费者可固定该提供者。查询的 `parameter_providers` 返回参数 ID 到提供者实例 ID 的映射。
 
 表中列出业务字段；所有修改还须携带 `request_id`，工作区修改须携带 `project_id` 和 `state`（精简工具集可省略前两者，见[工具集](#工具集)）。只读后台采样 `physics_simulate/simulation_simulate/simulation_compare/view_sample_motion` 同样要求这三个字段，用于去重并固定采样版本。各项操作字段不同，调用前读取当前服务提供的 JSON Schema。所有公开工具统一使用 `{"request": {...}}` 包装。发布与校验保留同一份 `oneOf`、`const`、字段约束及说明，外层和业务对象都拒绝未知字段。结果统一为 `{"ok":true,"operation":"...","data":{...}}`；错误包含 `ok:false` 和 `error.code/message`，字段校验错误还带 `field`。PNG 以 MCP 图片内容返回。
