@@ -17,6 +17,7 @@ internal class RigModifierSource(
     private val layersByMesh: Map<String, String>,
     copiedMeshes: Set<String> = emptySet(),
     private val materialBase: PuppetModel,
+    private val meshCache: PreviewMeshCache = PreviewMeshCache(),
 ) {
     val physicsOrder: List<String> get() = config.rigEdits.physicsOrder
     private val stack by lazy { RigModifierStack.fromJson(requireNotNull(config.rigEdits.modifierStack)) }
@@ -34,10 +35,10 @@ internal class RigModifierSource(
             hairSimulationFront = !frontHairSway, hairSimulationBack = !backHairSway,
             mouthThickness = outline?.let { RigLegacyBindings.values(it)["thickness"] } ?: 1.5f,
             mouthColor = outline?.let(RigLegacyBindings::outlineColor))
-        if (outline == null) return RigBuilder.build(analysis, atlas, native)
+        if (outline == null) return RigBuilder.build(analysis, atlas, native, meshCache)
         val prepared = MouthLipLayers.prepare(analysis, native)
         val lips = prepared.layers.filter { it.source is MouthLipLayer }
-        return RigBuilder.build(prepared, RigModifierRasterAssets.append(atlas, lips, native), native)
+        return RigBuilder.build(prepared, RigModifierRasterAssets.append(atlas, lips, native), native, meshCache)
     }
 
     private data class Template(val model: PuppetModel, val chains: List<RigModifierChains.Binding>)

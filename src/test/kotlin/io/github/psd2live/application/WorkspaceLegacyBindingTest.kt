@@ -1108,6 +1108,32 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun modifierEditsReuseMeshStagesAndMatchColdEvaluation(): Unit = runBlocking<Unit> {
+        val art = document()
+        val pipeline = PSD2LivePipeline()
+        val base = pipeline.buildPreview(art.source, art.config())
+        val targets = base.rig.puppet.drawables.filter { it.mesh != null }.map { ModifierTarget("mesh", it.id.raw) }
+        val stack = WorkspaceModifierPlan.plan(base, RigModifierStack(), buildJsonObject {
+            put("group", "modern-minimal")
+            put("targets", JsonArray(targets.map { buildJsonObject { put("kind", it.kind); put("id", it.id) } }))
+        }, listOf("body/legacy", "face/fitted", "eye/fitted")).first
+        val config = art.config().copy(rigEdits = art.rigEdits.copy(modifierStack = stack.toJson()))
+        val start = System.nanoTime()
+        pipeline.buildPreview(art.source, config)
+        val coldMs = (System.nanoTime() - start) / 1_000_000
+        val hits = pipeline.meshCache.stages.hits(RigStageCache.MESH)
+        val eye = stack.instances.single { it.type == "eye/fitted" }
+        val changed = stack.update(eye.id) { it.copy(config = JsonObject(it.config + ("values" to buildJsonObject { put("roundness", 80f) }))) }
+        val updatedConfig = config.copy(rigEdits = config.rigEdits.copy(modifierStack = changed.toJson()))
+        val editStart = System.nanoTime()
+        val warm = pipeline.buildPreview(art.source, updatedConfig)
+        val warmMs = (System.nanoTime() - editStart) / 1_000_000
+        assertTrue(pipeline.meshCache.stages.hits(RigStageCache.MESH) > hits)
+        val fresh = PSD2LivePipeline().buildPreview(art.source, updatedConfig)
+        assertEquals(RigIrCompiler.compile(fresh), RigIrCompiler.compile(warm))
+        println("modifier stages: initial=${coldMs}ms edit=${warmMs}ms reused=" + (pipeline.meshCache.stages.hits(RigStageCache.MESH) - hits))
+    }
+
     @Test fun newPresetInitializationIncludesOutlineAndSeeThroughWithoutLegacyMigration(): Unit = runBlocking<Unit> {
         val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true,
             skinDetails = true, outfitDetails = true, sideLock = true, bangOverlay = true)
