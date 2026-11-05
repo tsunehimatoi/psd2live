@@ -52,7 +52,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
@@ -449,6 +448,7 @@ internal val LocalMenuGlideHost = androidx.compose.runtime.staticCompositionLoca
 @Composable
 internal fun MenuGlide(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
 	val colors = LocalToolColors.current
+	val density = LocalDensity.current
 	val host = remember { MenuGlideHost() }
 	val target = host.target
 	val glow by animateFloatAsState(if (target != null) 1f else 0f, tween(Motion.Quick, easing = FastOutSlowInEasing))
@@ -467,13 +467,14 @@ internal fun MenuGlide(modifier: Modifier = Modifier, content: @Composable () ->
 		}
 	}
 	Box(modifier.onGloballyPositioned { host.coordinates = it }.onPointerEvent(PointerEventType.Exit) { host.target = null }) {
-		Box(Modifier.matchParentSize().drawBehind {
-            // Read animated values only while drawing: hover does not recompose or remeasure the menu every frame.
-            drawRoundRect(highlightColor.copy(alpha = highlightColor.alpha * glow),
-                topLeft = androidx.compose.ui.geometry.Offset(left.value, top.value),
-                size = androidx.compose.ui.geometry.Size(width.value.coerceAtLeast(0f), height.value.coerceAtLeast(0f)),
-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(io.github.psd2live.ui.theme.Corners.Control.toPx()))
-        })
+		Box(
+			Modifier
+				.offset { IntOffset(left.value.roundToInt(), top.value.roundToInt()) }
+				.size(with(density) { width.value.toDp() }, with(density) { height.value.toDp() })
+				.alpha(glow)
+				.clip(RoundedCornerShape(5.dp))
+				.background(highlightColor),
+		)
 		CompositionLocalProvider(LocalMenuGlide provides true, LocalMenuGlideHost provides host) { content() }
 	}
 }
