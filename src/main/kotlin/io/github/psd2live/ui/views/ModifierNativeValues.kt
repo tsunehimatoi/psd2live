@@ -18,7 +18,7 @@ import org.umamo.runtime.model.VertexGroupKind
 /** The same native configuration controls are used before insertion and inside a persisted instance. */
 @Composable
 internal fun ModifierNativeValues(type: String, config: JsonObject, state: PSD2LiveState, enabled: Boolean,
-                                  vm: PSD2LiveViewModel, editName: Boolean = true, instanceId: String? = null,
+                                  vm: PSD2LiveViewModel, editName: Boolean = true, instanceId: String? = null, quickOnly: Boolean = false,
                                   commit: (JsonObject, String?, (String?) -> Unit) -> Unit) {
     fun change(next: JsonObject) = commit(next, vm.modifierEditState()) {}
     @Composable fun number(label: String, value: Float, range: ClosedFloatingPointRange<Float>, update: (Float) -> JsonObject) {
@@ -35,6 +35,40 @@ internal fun ModifierNativeValues(type: String, config: JsonObject, state: PSD2L
             CompactCheckbox(value, { change(update(it)) }, enabled = enabled)
             Text(tr(label), color = LocalToolColors.current.textPrimary, style = LocalToolTypography.current.caption)
         }
+    }
+    if (quickOnly) {
+        when (type) {
+            "swing" -> {
+                val edit = RigSwingEdit.fromJson(config)
+                choice("swing.preset", SwingPreset.entries, edit.preset, { tr("swing.preset.${it.name.lowercase()}") }) { preset ->
+                    edit.copy(preset = preset, motions = edit.motions.map { it.copy(shape = SwingPresets.shape(preset, it.kind)) }).toJson()
+                }
+                edit.motions.singleOrNull()?.let { motion ->
+                    number("modifier.swing.magnitude", motion.shape.magnitude, 0f..0.7f) { edit.copy(motions = listOf(motion.copy(shape = motion.shape.copy(magnitude = it)))).toJson() }
+                    number("modifier.swing.softness", motion.shape.softness, 0f..1f) { edit.copy(motions = listOf(motion.copy(shape = motion.shape.copy(softness = it)))).toJson() }
+                }
+            }
+            "simulation" -> {
+                val edit = RigSimEdit.fromJson(config)
+                choice("sim.material", listOf<SimMaterialPreset?>(null) + SimMaterialPreset.of(edit.kind), SimMaterialPreset.matching(edit.material),
+                    { if (it == null) tr("sim.preset.custom") else tr("sim.preset.${it.jsonName}") }) {
+                    edit.copy(material = it?.material ?: edit.material).toJson()
+                }
+                number("sim.exaggeration", edit.exaggeration, RigSimEdit.EXAGGERATIONS) { edit.copy(exaggeration = it).toJson() }
+            }
+            "motion" -> {
+                val clip = MotionClips.fromJson(config)
+                number("animation.duration", clip.duration, .01f..120f) { MotionClips.toJson(MotionKeyEdits.withDuration(clip, it)) }
+                toggle("animation.loop", clip.loop) { MotionClips.toJson(clip.copy(loop = it)) }
+            }
+            "physics" -> {
+                val edit = RigPhysicsEdit.fromJson(config)
+                edit.outputs.singleOrNull()?.let { output ->
+                    number("physics.outputScale", output.scale, -100f..100f) { edit.copy(outputs = listOf(output.copy(scale = it))).toJson() }
+                }
+            }
+        }
+        return
     }
     if (editName && type in setOf("swing", "physics", "motion", "simulation")) {
         val name = config.getValue("name").jsonPrimitive.content
@@ -95,7 +129,12 @@ internal fun ModifierNativeValues(type: String, config: JsonObject, state: PSD2L
         }
         "physics" -> {
             val edit = RigPhysicsEdit.fromJson(config)
+            var selectedInputs by remember(instanceId) { mutableIntStateOf(0) }
+            val activeInputs = selectedInputs.coerceIn(0, edit.inputs.lastIndex.coerceAtLeast(0))
+            if (edit.inputs.size > 1) CompactDropdown(edit.inputs.indices.toList(), activeInputs, { selectedInputs = it },
+                itemLabel = { tr("physics.inputs") + " ${it + 1}" }, modifier = Modifier.fillMaxWidth(), height = 22.dp)
             edit.inputs.forEachIndexed { index, input ->
+                if (index != activeInputs) return@forEachIndexed
                 fun updated(next: PhysicsInput) = edit.copy(inputs = edit.inputs.mapIndexed { i, old -> if (i == index) next else old }).toJson()
                 choice("physics.inputs", parameterIds.filter { id -> id == input.parameter || edit.inputs.none { it.parameter == id } }, input.parameter, ::parameterName) { updated(input.copy(parameter = it)) }
                 number("physics.weight", input.weight, 0f..100f) { updated(input.copy(weight = it)) }
@@ -106,7 +145,12 @@ internal fun ModifierNativeValues(type: String, config: JsonObject, state: PSD2L
             parameterIds.firstOrNull { id -> edit.inputs.none { it.parameter == id } }?.let { id ->
                 if (edit.inputs.size < RigPhysicsEdit.MAX_LINKS) CompactButton(tr("physics.addInput"), { change(edit.copy(inputs = edit.inputs + PhysicsInput(id)).toJson()) }, enabled = enabled, height = 20.dp)
             }
+            var selectedOutputs by remember(instanceId) { mutableIntStateOf(0) }
+            val activeOutputs = selectedOutputs.coerceIn(0, edit.outputs.lastIndex.coerceAtLeast(0))
+            if (edit.outputs.size > 1) CompactDropdown(edit.outputs.indices.toList(), activeOutputs, { selectedOutputs = it },
+                itemLabel = { tr("physics.outputs") + " ${it + 1}" }, modifier = Modifier.fillMaxWidth(), height = 22.dp)
             edit.outputs.forEachIndexed { index, output ->
+                if (index != activeOutputs) return@forEachIndexed
                 fun updated(next: PhysicsOutput) = edit.copy(outputs = edit.outputs.mapIndexed { i, old -> if (i == index) next else old }).toJson()
                 choice("physics.outputs", parameterIds.filter { id -> id == output.parameter || edit.outputs.none { it.parameter == id } }, output.parameter, ::parameterName) { updated(output.copy(parameter = it)) }
                 choice("physics.vertex", (1..edit.segments.size).toList(), output.vertex, Int::toString) { updated(output.copy(vertex = it)) }
@@ -120,7 +164,12 @@ internal fun ModifierNativeValues(type: String, config: JsonObject, state: PSD2L
                 if (edit.outputs.size < RigPhysicsEdit.MAX_LINKS) CompactButton(tr("physics.addOutput"), { change(edit.copy(outputs = edit.outputs + PhysicsOutput(id)).toJson()) }, enabled = enabled, height = 20.dp)
             }
             choice("swing.segments", (1..RigPhysicsEdit.MAX_SEGMENTS).toList(), edit.segments.size, Int::toString) { edit.withSegmentCount(it).toJson() }
+            var selectedSegments by remember(instanceId) { mutableIntStateOf(0) }
+            val activeSegments = selectedSegments.coerceIn(0, edit.segments.lastIndex.coerceAtLeast(0))
+            if (edit.segments.size > 1) CompactDropdown(edit.segments.indices.toList(), activeSegments, { selectedSegments = it },
+                itemLabel = { tr("physics.vertex") + " ${it + 1}" }, modifier = Modifier.fillMaxWidth(), height = 22.dp)
             edit.segments.forEachIndexed { index, segment ->
+                if (index != activeSegments) return@forEachIndexed
                 fun updated(next: PhysicsSegment) = edit.copy(segments = edit.segments.mapIndexed { i, old -> if (i == index) next else old }).toJson()
                 Text(tr("physics.vertex") + " ${index + 1}", color = LocalToolColors.current.textMuted, style = LocalToolTypography.current.caption)
                 number("physics.length", segment.length, .01f..100f) { updated(segment.copy(length = it)) }
@@ -275,16 +324,22 @@ internal fun ModifierNativeValues(type: String, config: JsonObject, state: PSD2L
             number("animation.fadeInTime", clip.fadeIn, 0f..10f) { MotionClips.toJson(clip.copy(fadeIn = it, runtimeDefaultFades = false)) }
             number("animation.fadeOutTime", clip.fadeOut, 0f..10f) { MotionClips.toJson(clip.copy(fadeOut = it, runtimeDefaultFades = false)) }
             toggle("animation.loop", clip.loop) { MotionClips.toJson(clip.copy(loop = it)) }
-            val expanded = remember(clip.id) { mutableStateMapOf<String, Boolean>() }
+            var selectedTrack by remember(clip.id) { mutableStateOf(clip.curves.firstOrNull()?.parameterId) }
+            val activeTrack = selectedTrack?.takeIf { selected -> clip.curves.any { it.parameterId == selected } } ?: clip.curves.firstOrNull()?.parameterId
+            if (activeTrack != null) CompactDropdown(clip.curves.map { it.parameterId }, activeTrack, { selectedTrack = it },
+                itemLabel = ::parameterName, modifier = Modifier.fillMaxWidth(), height = 22.dp)
             clip.curves.forEachIndexed { index, curve ->
-                val open = expanded[curve.parameterId] == true
-                PresetFolderRow(parameterName(curve.parameterId), tr("modifier.count", curve.keys.size), open, true) { expanded[curve.parameterId] = !open }
-                if (!open) return@forEachIndexed
+                if (curve.parameterId != activeTrack) return@forEachIndexed
                 fun updated(next: MotionCurve) = MotionClips.toJson(clip.copy(curves = clip.curves.mapIndexed { i, old -> if (i == index) next else old }))
                 choice("animation.editor.searchParameter", parameterIds.filter { id -> id == curve.parameterId || clip.curves.none { it.parameterId == id } }, curve.parameterId, ::parameterName) { parameter ->
                     updated(curve.copy(parameterId = parameter))
                 }
-                curve.keys.forEachIndexed { keyIndex, key ->
+                var selectedKey by remember(clip.id, curve.parameterId) { mutableIntStateOf(0) }
+                val activeKey = selectedKey.coerceIn(0, curve.keys.lastIndex.coerceAtLeast(0))
+                if (curve.keys.isNotEmpty()) CompactDropdown(curve.keys.indices.toList(), activeKey, { selectedKey = it },
+                    itemLabel = { "${it + 1} · ${curve.keys[it].time}" }, modifier = Modifier.fillMaxWidth(), height = 22.dp)
+                curve.keys.forEachIndexed keys@ { keyIndex, key ->
+                    if (keyIndex != activeKey) return@keys
                     fun keyed(next: MotionKey) = updated(curve.copy(keys = curve.keys.mapIndexed { i, old -> if (i == keyIndex) next else old }))
                     Text("${keyIndex + 1}", color = LocalToolColors.current.textMuted, style = LocalToolTypography.current.caption)
                     val lower = curve.keys.getOrNull(keyIndex - 1)?.time ?: 0f

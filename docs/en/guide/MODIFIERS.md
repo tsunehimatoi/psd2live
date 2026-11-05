@@ -1,4 +1,4 @@
-# Modifier stack
+# Presets
 
 Projects with an explicit stack display the Modifier Stack panel; legacy projects retain their preset panel when opened. Use **Convert to Modifier Stack** to request conversion. Conversion has been verified for ordinary mesh projects, basic legacy bindings, and a modern fixture with multiple body areas and add-on modules. Other projects can still fail the result comparison. Disabled legacy simulations stay disabled after conversion. An enabled simulation needs an existing bake that matches the candidate inputs. Source bindings can be added, adjusted, reordered, and applied. Swing, physics groups, simulation, and generated motion share this addition flow and have in-stack controls. Start-page shortcuts also add explicit modifiers through isolated conversion. Panel captures cover four languages, eight themes, and two scales; motion handles, events, and simulation controls have been visually checked.
 
@@ -9,7 +9,7 @@ The start page initially selects **Recommended modifiers**. The first revision i
 ## Add content
 
 1. Select the meshes to affect. Selecting only a Warp allows swing insertion on that Warp. With no meshes or Warp selected, the flow captures all current meshes.
-2. Choose **Add Modifier** and a binding, swing, physics group, simulation, or generated motion, or **Add Preset Group** for the fitted binding group. This group contains body, face, eye, brow, mouth, and hair bases; it does not replace every existing shortcut preset.
+2. Choose **Add Preset** and a binding, swing, physics group, simulation, or generated motion, or **Add Preset Group** for the fitted binding group. This group contains body, face, eye, brow, mouth, and hair bases; it does not replace every existing shortcut preset.
 3. Review captured targets, the full prerequisites, and expected contributions. The plan distinguishes additions, reused providers, and applied content. Expand parameters, meshes, deformers, relations, and hierarchy separately.
 4. Confirm. New entries are added in one history transaction and can then be adjusted independently. Later selection changes do not alter their scope.
 
@@ -21,7 +21,11 @@ New structures use version 2 and share parents within the captured target group,
 
 ## Adjust and locate
 
-Each compact collapsible row shows its name and enable control, with inactive or exceptional status on the right. Expand it to adjust strength and **Values**; open **Targets** to locate objects or **Contributions** to inspect provenance, dependencies, and generated content. Provider fields pin particular instances. After a dependency is lost, reconnect to a preceding provider that covers the same targets.
+For everyday use, add a preset, toggle it, and watch the canvas. Only one entry expands at a time, showing a few common controls such as strength, swing magnitude, softness, simulation material, motion duration, and looping.
+
+**More settings** opens a separate detail view. **Inspect** opens the target page for locating affected objects. **Generated content** retains provider connections, contribution reports, and **Apply Through Here**. These technical details no longer fill the main panel.
+
+Detailed binding controls are selected by area. Physics edits one selected input, output, or segment at a time. Motion edits one selected track and key instead of displaying every key form. The addition dialog starts with effect selection; complex settings and generated content are available on demand. This redesign has not yet received a new visual acceptance pass.
 
 Drag the modifier name to change actual evaluation order. The drag image and displaced sibling rows share the parameter panel implementation. Invalid dependency order is rejected, leaving the original stack intact. A continuous slider or number edit commits one history node when it ends.
 
