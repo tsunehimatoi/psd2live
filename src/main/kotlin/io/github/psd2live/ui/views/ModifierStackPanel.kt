@@ -7,6 +7,15 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.VerticalScrollbar
+import androidx.compose.foundation.rememberScrollbarAdapter
+import io.github.psd2live.ui.views.texture.MenuGlide
+import io.github.psd2live.ui.views.texture.glideItem
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.Divider
 import androidx.compose.material.Text
@@ -59,55 +68,29 @@ private fun contentName(state: PSD2LiveState, kind: String, id: String): String 
 @Composable
 internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
     val stack = remember(state.rigEdits.modifierStack) { RigModifierStack.fromJson(requireNotNull(state.rigEdits.modifierStack)) }
-    val reports = state.previewModel?.rig?.modifierReport?.get("entries")?.jsonArray.orEmpty().associate { it.jsonObject.getValue("id").jsonPrimitive.content to it.jsonObject }
+    val reports = state.previewModel?.rig?.modifierReport?.get("entries")?.jsonArray.orEmpty()
+        .associate { it.jsonObject.getValue("id").jsonPrimitive.content to it.jsonObject }
     val colors = LocalToolColors.current
-    var expandedId by remember { mutableStateOf<String?>(null) }
-    var detailId by remember { mutableStateOf<String?>(null) }
-    var detailPage by remember { mutableIntStateOf(0) }
+    var selectedId by remember { mutableStateOf<String?>(null) }
+    var page by remember { mutableIntStateOf(0) }
+    val selected = stack.instances.firstOrNull { it.id == selectedId } ?: stack.instances.firstOrNull()
     val bounds = remember { mutableStateMapOf<String, ParamItemLayout>() }
     val drag = remember { ParameterDragState() }
     val preview = rememberGraphicsLayer()
-    val density = LocalDensity.current
-    val dragStartX = with(density) { 48.dp.toPx() }
-    val dragEndInset = with(density) { 28.dp.toPx() }
+    val scroll = rememberScrollState()
     var container by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var expected by remember { mutableStateOf<String?>(null) }
     val enabled = !state.isBusy && !state.workspaceEditBusy && !state.editorDraftBusy
     LaunchedEffect(stack, enabled) { drag.clear() }
-    val detail = stack.instances.firstOrNull { it.id == detailId }
-    if (detail != null) {
-        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
-            PanelToolbar {
-                CompactButton(tr("modifier.back"), { detailId = null }, height = 22.dp)
-                Text(detail.config["name"]?.jsonPrimitive?.contentOrNull ?: modifierName(detail.type),
-                    modifier = Modifier.weight(1f), style = LocalToolTypography.current.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            CompactTabBar(listOf(tr("modifier.targetList"), tr("modifier.details")), detailPage, { detailPage = it })
-            when (detailPage) {
-                0 -> detail.targets.forEach { target ->
-                    CompactButton(contentName(state, target.kind, target.id), { vm.locateModifierContent(target.kind, target.id) }, height = 20.dp)
-                }
-                1 -> {
-                    ModifierDependencies(detail, stack, enabled, vm)
-                    reports[detail.id]?.let { ModifierContributions(it, state, vm) }
-                    CompactButton(tr("modifier.apply"), { vm.editModifier("modifier_apply", buildJsonObject { put("id", detail.id) }) }, enabled = enabled, height = 22.dp)
-                }
-            }
-        }
-        return
-    }
-
     Column(Modifier.fillMaxWidth()) {
         val labels = listOf(tr("modifier.add"), tr("modifier.addGroup"))
-        PanelToolbar(labels = labels, iconCount = 4) { labelsShown ->
+        PanelToolbar(labels = labels, iconCount = 2) { labelsShown ->
             PanelToolButton(labels[0], labelsShown > 0, { vm.openModifierAddition() }, enabled, labels[0]) { IconAdd() }
             PanelToolButton(labels[1], labelsShown > 1, { vm.openModifierAddition(group = true) }, enabled, labels[1]) { IconFolder() }
-            Spacer(Modifier.weight(1f))
-
         }
         if (stack.instances.isEmpty()) Text(tr("modifier.empty"), color = colors.textMuted, style = LocalToolTypography.current.caption,
             modifier = Modifier.padding(Spacing.Margin))
-        Box(Modifier.fillMaxWidth().onGloballyPositioned { container = it }
+        Box(Modifier.fillMaxWidth().heightIn(max = 216.dp).onGloballyPositioned { container = it }
             .onPointerEvent(PointerEventType.Move) { event ->
                 event.changes.firstOrNull()?.let { drag.onMove(it.position, bounds.values) }
             }
@@ -123,65 +106,83 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                         vm.editModifier("modifier_move", buildJsonObject { put("id", item.id); put("index", destination) }, expected)
                 }
             }) {
-            Column(Modifier.fillMaxWidth()) {
-                stack.instances.forEach { instance -> key(instance.id) {
-                    val name = instance.config["name"]?.jsonPrimitive?.contentOrNull ?: modifierName(instance.type)
-                    val layout = ParamItemLayout(instance.id, instance.id, "modifier", name, null, false, emptySet(), 0f, 0f)
-                    var header by remember { mutableStateOf<LayoutCoordinates?>(null) }
-                    val report = reports[instance.id]
-                    val status = report?.get("status")?.jsonPrimitive?.content ?: "loading"
-                    DisposableEffect(instance.id) { onDispose { bounds.remove(instance.id) } }
-                    Column(Modifier.fillMaxWidth().parameterDragRow(layout, drag, bounds.values, preview)
-                        .onGloballyPositioned { coords ->
-                            val parent = container
-                            if (parent != null && parent.isAttached && coords.isAttached) {
-                                val top = parent.localPositionOf(coords, Offset.Zero).y
-                                bounds[instance.id] = layout.copy(top = top, bottom = top + coords.size.height)
+            MenuGlide(Modifier.fillMaxWidth().verticalScroll(scroll).padding(end = Spacing.Margin)) {
+                Column(Modifier.fillMaxWidth()) {
+                    stack.instances.forEach { instance -> key(instance.id) {
+                        val name = instance.config["name"]?.jsonPrimitive?.contentOrNull ?: modifierName(instance.type)
+                        val layout = ParamItemLayout(instance.id, instance.id, "modifier", name, null, false, emptySet(), 0f, 0f)
+                        var coords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+                        var labelCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+                        val status = reports[instance.id]?.get("status")?.jsonPrimitive?.content ?: "loading"
+                        val interaction = remember { MutableInteractionSource() }
+                        DisposableEffect(instance.id) { onDispose { bounds.remove(instance.id) } }
+                        Row(Modifier.fillMaxWidth().height(24.dp)
+                            .parameterDragRow(layout, drag, bounds.values, preview)
+                            .onGloballyPositioned { row ->
+                                coords = row
+                                val parent = container
+                                if (parent != null && parent.isAttached && row.isAttached) {
+                                    val top = parent.localPositionOf(row, Offset.Zero).y
+                                    bounds[instance.id] = layout.copy(top = top, bottom = top + row.size.height)
+                                }
                             }
-                        }) {
-                        PresetFolderRow(name, if (status == "active") "" else tr("modifier.status.$status"), expandedId == instance.id, true,
-                            modifier = Modifier.onGloballyPositioned { header = it }
-                                .onPointerEvent(PointerEventType.Press) { event ->
-                                    val coords = header; val parent = container
-                                    val pos = event.changes.firstOrNull()?.position
-                                    if (enabled && event.button == PointerButton.Primary && pos != null && coords != null && parent != null &&
-                                        coords.isAttached && parent.isAttached && pos.x > dragStartX && pos.x < coords.size.width - dragEndInset) {
-                                        bounds[instance.id]?.let { drag.onPress(it, parent.localPositionOf(coords, pos)); expected = vm.modifierEditState() }
-                                    }
-                                },
-                            leading = { CompactCheckbox(instance.enabled, { value ->
+                            .background(if (selected?.id == instance.id) colors.selection else Color.Transparent)
+                            .glideItem(enabled = !drag.isDragging)
+                            .clickable(interactionSource = interaction, indication = null) {
+                                if (drag.suppressClick) drag.suppressClick = false
+                                else { selectedId = instance.id; page = 0 }
+                            }.padding(horizontal = Spacing.Gap), verticalAlignment = Alignment.CenterVertically) {
+                            CompactCheckbox(instance.enabled, { value ->
                                 vm.editModifier("modifier_enable", buildJsonObject { put("id", instance.id); put("enabled", value) })
-                            }, enabled = enabled) },
-                            trailing = { CompactIconButton({ vm.editModifier("modifier_remove", buildJsonObject { put("id", instance.id) }) },
-                                tooltip = tr("modifier.remove"), enabled = enabled, size = 20.dp) { IconClose() } }) {
-                            if (drag.suppressClick) drag.suppressClick = false else expandedId = instance.id.takeUnless { expandedId == it }
+                            }, enabled = enabled)
+                            Text(name, style = LocalToolTypography.current.body,
+                                color = if (instance.enabled) colors.textPrimary else colors.textMuted,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f).handCursor().onGloballyPositioned { labelCoords = it }.onPointerEvent(PointerEventType.Press) { event ->
+                                    val row = labelCoords; val parent = container
+                                    if (enabled && event.button == PointerButton.Primary && row != null && parent != null && row.isAttached && parent.isAttached) {
+                                        bounds[instance.id]?.let { item ->
+                                            drag.onPress(item, parent.localPositionOf(row, event.changes.first().position))
+                                            selectedId = instance.id; expected = vm.modifierEditState()
+                                        }
+                                    }
+                                })
+                            if (status != "active") Text(tr("modifier.status.$status"), style = LocalToolTypography.current.caption,
+                                color = if (status == "missing_dependency") colors.warning else colors.textMuted)
+                            CompactIconButton({ vm.editModifier("modifier_remove", buildJsonObject { put("id", instance.id) }) },
+                                enabled = enabled, tooltip = tr("modifier.remove"), size = 20.dp) { IconClose() }
                         }
-                        AnimatedVisibility(expandedId == instance.id,
-                            enter = expandVertically(tween(Motion.Fold, easing = FastOutSlowInEasing)),
-                            exit = shrinkVertically(tween(Motion.Instant, easing = FastOutLinearInEasing))) {
-                            Column(Modifier.fillMaxWidth().padding(start = Spacing.Margin, end = Spacing.Gap, bottom = Spacing.Gap),
-                                verticalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
-                                val missing = report?.get("missing_dependencies")?.jsonArray.orEmpty()
-                                if (missing.isNotEmpty()) Text(tr("modifier.dependencies", missing.joinToString { it.jsonPrimitive.content.let { dependency ->
-                                    if (dependency.startsWith("parameter:")) dependency.removePrefix("parameter:") else modifierName(dependency)
-                                } }), color = colors.warning, style = LocalToolTypography.current.caption)
-                                Text(if (instance.targets.size == 1) contentName(state, instance.targets.single().kind, instance.targets.single().id)
-                                    else tr("modifier.targetCount", instance.targets.size),
-                                    style = LocalToolTypography.current.caption, color = colors.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                ModifierSourceValues(instance, enabled, vm)
-                                ModifierModulePhysicsValues(instance, report, state, enabled, vm)
-                                ModifierNativeValues(instance.type, instance.config, state, enabled, vm, instanceId = instance.id) { config, captured, done ->
-                                    vm.editModifier("modifier_update", buildJsonObject { put("id", instance.id); put("type", instance.type); put("config", config) }, captured, done)
-                                }
-                                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
-                                    CompactButton(tr("modifier.inspect"), { detailId = instance.id; detailPage = 0 }, height = 20.dp)
-                                }
-                            }
+                    } }
+                }
+            }
+            VerticalScrollbar(rememberScrollbarAdapter(scroll), Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(6.dp))
+            ParameterDragPreview(drag, preview)
+        }
+        if (selected != null) key(selected.id) {
+            Divider(color = colors.divider)
+            CompactTabBar(listOf(tr("modifier.adjust"), tr("modifier.targetList"), tr("modifier.details")), page, { page = it })
+            Column(Modifier.fillMaxWidth().padding(Spacing.Margin), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                val report = reports[selected.id]
+                val missing = report?.get("missing_dependencies")?.jsonArray.orEmpty()
+                if (missing.isNotEmpty()) InspectorHint(tr("modifier.dependencies", missing.joinToString { it.jsonPrimitive.content }), warning = true)
+                when (page) {
+                    0 -> {
+                        ModifierSourceValues(selected, enabled, vm)
+                        ModifierModulePhysicsValues(selected, report, state, enabled, vm)
+                        ModifierNativeValues(selected.type, selected.config, state, enabled, vm, instanceId = selected.id) { config, captured, done ->
+                            vm.editModifier("modifier_update", buildJsonObject { put("id", selected.id); put("type", selected.type); put("config", config) }, captured, done)
                         }
                     }
-                } }
+                    1 -> selected.targets.forEach { target ->
+                        CompactButton(contentName(state, target.kind, target.id), { vm.locateModifierContent(target.kind, target.id) }, height = 20.dp)
+                    }
+                    2 -> {
+                        ModifierDependencies(selected, stack, enabled, vm)
+                        report?.let { ModifierContributions(it, state, vm) }
+                        CompactButton(tr("modifier.apply"), { vm.editModifier("modifier_apply", buildJsonObject { put("id", selected.id) }) }, enabled = enabled, height = 22.dp)
+                    }
+                }
             }
-            ParameterDragPreview(drag, preview)
         }
     }
 }

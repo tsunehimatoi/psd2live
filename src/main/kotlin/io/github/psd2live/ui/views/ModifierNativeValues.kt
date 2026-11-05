@@ -25,16 +25,12 @@ internal fun ModifierNativeValues(type: String, config: JsonObject, state: PSD2L
         ModifierNumber(tr(label), value, range, "", enabled, vm) { next, expected, done -> commit(update(next), expected, done) }
     }
     @Composable fun <T> choice(label: String, values: List<T>, selected: T, display: (T) -> String, update: (T) -> JsonObject) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
-            Text(tr(label), color = LocalToolColors.current.textMuted, style = LocalToolTypography.current.caption, modifier = Modifier.weight(1f))
-            CompactDropdown(values, selected, { change(update(it)) }, itemLabel = display, enabled = enabled, height = 20.dp, modifier = Modifier.weight(1.5f))
+        InspectorFormRow(tr(label)) {
+            CompactDropdown(values, selected, { change(update(it)) }, itemLabel = display, enabled = enabled, height = 20.dp, modifier = Modifier.fillMaxWidth())
         }
     }
     @Composable fun toggle(label: String, value: Boolean, update: (Boolean) -> JsonObject) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.Gap)) {
-            CompactCheckbox(value, { change(update(it)) }, enabled = enabled)
-            Text(tr(label), color = LocalToolColors.current.textPrimary, style = LocalToolTypography.current.caption)
-        }
+        InspectorFormRow(tr(label)) { CompactCheckbox(value, { change(update(it)) }, enabled = enabled) }
     }
     if (quickOnly) {
         when (type) {
