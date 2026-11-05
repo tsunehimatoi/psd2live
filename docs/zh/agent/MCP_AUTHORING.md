@@ -66,6 +66,7 @@
 | `timeline_aids_get` | 可给 `clip_id` | 读取书签与各动作的掩盖、冻结值和标记 |
 | `canvas_guides_get / canvas_guides_set` | `set` 需 `state`、`guides` | 读取或整体替换编辑画布的标尺辅助线：每条 `{axis: x / y, position, id?}`（画布像素，`x` 为竖线），无 `id` 时取下一个 `guide_<n>`，最多 256 条，空数组清除；与画布标尺共用辅助 CAS，随工程保存，不进历史、不导出 |
 | `module_catalog` | 无 | 只读，不需要打开工程：列出 Rig 的部位（眼、眉、嘴与下半脸、头与脸、头发、身体、服饰与挂件、表情、动作）、每个部位的基础算法（互斥的做法，第一个为引入模块之前的 `legacy`）与模块（可叠加的能力，各自开关；`tier` 为 core / major / minor 重要程度，`requires` 为依赖），以及可调数值（单位、范围、默认值）。打开工程时另给出 `modern`（引入模块之前保存的工程为 false，照旧生成，`settings_update` 的 `changes.rig: {}` 升级）、各部位当前的基础算法，以及每个模块是否适用于素材、是否开启和成本（新增参数、关键形、混合形状、物理组；开启时实测，关闭时为估计 `estimated:true`）。见 [Rig 预设架构](../spec/RIG_PRESETS.md) |
+| `modifier_convert` | `state` | 后台尝试将旧工程转换成显式修改器栈。通过模型和导出结果比对后才提交一个历史节点；若有差异则返回 `modifier_conversion_mismatch` 并保留原工程。错误包含差异字段、对象增删改数量及部分 ID |
 | `modifier_catalog` | 无 | 开发中的修改器目录：列出已注册类型、算法版本、依赖和互斥族。现有摆动、可后台烘焙的模拟、物理组、动作、静止结构（`rig.scaffold`）及身体、头脸、眼、眉、嘴、头发的 `/legacy` 绑定。绑定配置的 `scaffold` 固定引用结构实例；身体和头脸可设 0–2 的 `strength`，各部位的 `tuning` 沿用原数值范围。身体还包含 `faceLeanDown` / `faceLeanUp`。也已接入拟合眼（`eye/fitted`，版本 2）、拟合眉、拟合嘴、笑眼（`eye.smile`）及虹膜压缩（`eye.squash`）；`values` 使用原目录的数值范围，模块的 `base` 固定引用对应部位的拟合实例。睁大模块明确扩展开眼参数范围到 2，高光模块以 `dependencies: {"face/legacy": "头脸实例 ID"}` 固定头部轴提供者。另已接入 `eye.wide`、`eye.lid-fade`、`eye.highlight`、`eye.aftershock`、`eye.gaze-lid`、`eye.emotion`、`brow.shape`、`brow.spring`、`brow.blink`、`brow.lid-coupling`、`mouth.vowel`、`mouth.cheek-lid`、`mouth.capture`、`mouth.tongue`、`mouth.jaw`、`mouth.interior-depth`、`mouth.spring`、`expression.cheek`、`expression.gloom`、`face.skin-clip`、`face.neck`、`face.depth-turn`、`hair/chains`、`body.bust`、`body.arms`、`outfit.skirt`、`outfit.ribbons` 和 `outfit.creature`；两个跨部位耦合模块须用 `dependencies: {"eye/fitted": "眼部实例 ID"}` 固定眼部提供者。独立混合形、权重限制和新增承载变形器参与顺序求值及前缀固化。其余算法、模块及旧工程转换仍在开发 |
 | `modifier_plan` | `type` 或 `group: "fitted"`，固定的 `targets`；原生摆动／物理／模拟／动作可给 `config`，动作和物理也可单独给 `preset` | 只读规划源图绑定或原生生成器。摆动可定位 Warp；其余规划目标为网格。省略原生配置时使用已有参数与原算法构造默认值；无可用参数时拒绝。返回完整新增 `entries`（已分配稳定 ID）及前置项 `plan`，区分新增、复用与已固化。`fitted` 组组合六类基础绑定；不是全部快捷预设。可将返回的 `group` 与 `entries` 传入 `workspace_preview_regeneration`，再以同一 `state` 提交 `modifier_add_group`；计划本身不改变文档 |
 | `modifier_stack` | 无 | 读取捕获版本的栈、固定目标、配置、来源组、实际贡献与状态，并返回可用于下一次修改的 `state`。`owned_keyforms` 列出生成关键形的对象与参数引用，可选 `key` 指明已有轴上新增单元的完整参数坐标；`override_issues` 报告覆盖冲突或无法匹配的覆盖。模拟烘焙只返回摘要，不返回顶点数组 |
@@ -74,7 +75,7 @@
 | `modifier_move` / `modifier_remove` | `state`、`id`；移动另带从 0 开始的 `index` | 移动改变实际求值顺序，违反依赖时拒绝；移除保留休眠覆盖并退休该身份，新实例不继承它 |
 | `modifier_apply` | `state`、`id` | 固化截至该项的完整前缀，移除前缀实例并保留后续项。物理成为普通物理配置，动作成为保留文件名的普通片段；重建结果必须与应用前相等才提交。以上修改均返回进程任务，可由 `job_wait` / `job_get` 读取终态 |
 | `settings_update` | `request` 内 `state`、`changes` | 后台修改自动 Rig、网格、贴图、高清化、物理预设、动作和导出配置；`rigTuning` 按字段合并 Rig 数值（头部转向、眼睛、眉毛、嘴巴、鼻子与耳朵、头发，以及身体的转身、上下、前后倾、大小变、身体 Z 与呼吸、立体与透视；单位与模型预设各部位卡片的「数值」一致，超出范围或未知的字段会被拒绝）；`rig` 修改 Rig 配方：`bases: {部位: {base, values}}` 选基础算法，`modules: {模块: {on, values}}` 开关模块并调数值，同一基础算法或模块的 `values` 与原有数值合并，条目为 `null` 回到默认（模块回到开启），`rig: {}` 升级引入模块之前的工程，`rig: null` 退回原有生成方式；沿用原有开关的模块（`eye.see-through`、`eye.jelly`、`brow.see-through`、`mouth.outline`）的 `on` 写到对应设置；`moves: {特征: {手柄: [dx, dy] 或 null}}` 移动拟合五官的手柄（特征 `eye.L` / `eye.R` / `brow.L` / `brow.R` / `mouth`，手柄依次为眼的 `inner` / `outer` / `upper` / `lower`、眉的 `inner` / `outer` / `arch`、嘴的 `left` / `right` / `upper` / `lower`，单位为画布像素，相对原画拟合的位置；`null` 使手柄或整个特征回到拟合位置）；未知部位 / 基础算法 / 模块 / 数值 / 特征 / 手柄与超出范围的值被拒绝（部位与模块见 `module_catalog`）；`meshOnly` 变化而未显式给出 `generateDeformers` 时联动为 `!meshOnly`（导入 CMO3 除外），生成动作子项变化而未显式给出 `exportMotions` 时联动为子项是否全开，显式字段优先；关闭来源时把其驱动的作者姿态逐工作区释放到参数默认值（跳过锁定参数），与设置同次提交；文档保存原始设置；先用 `workspace_inspect scope=settings` 读取 |
-| `project_import_psd` | `path`，可选 `discard_unsaved` | 从绝对 PSD 路径后台创建新工程；已加载时可切换，默认拒绝未保存修改 |
+| `project_import_psd` | `path`，可选 `discard_unsaved`、`modifiers` | 从绝对 PSD 路径后台创建工程。初始修改器可选 `recommended`（默认）或 `empty`。已加载时可切换，默认拒绝未保存修改 |
 | `project_create_artwork` | `width`、`height`、`layers`，可选 `discard_unsaved` | 从本地 PNG/WebP/TIFF/BMP 按位置创建新工程，图层自底向顶；后台任务，切换须保存或显式放弃 |
 | `project_create` | `width`、`height`，可选 `discard_unsaved` | 后台新建未生成的空工程，用于先导入素材、摆放再生成，见[素材与 Layout](#素材与-layout) |
 | `project_import_layout` | `path`，可选 `discard_unsaved` | 从 [Layout 清单](../spec/LAYOUT_MANIFEST.md)（绝对路径的 `.json`，或根目录放着清单的 `.zip`）后台新建未生成的 Layout 工程 |
@@ -125,6 +126,12 @@
 按纹理结构重布点使用 `layer_mesh_structure`（必需 `state/target`，target 为网格 ID 或 `mesh:<ID>`；可选 `settings`：`sensitivity` 0–1、`min_length` 源像素、`near_density` 为线上点距相对保留边缘行点距的倍数（默认 1）、`fill` 是否在线间加点（默认否：只有边缘行与线上有顶点）、`far_density` 为填充时相对原内侧边长的边长、`bands` 是否在画出的褶皱线两侧加行与横档（默认否）、`kinds` 为 `FOLD`/`SHADE`/`PATTERN` 子集、`max_lines` ≤64、`max_vertices` ≤16000）：外轮廓行与边缘带不动，内侧沿纹理中的褶皱、明暗分界与图案线条重建；关键形、路径、权重与 Glue 照常迁移，写一条 `canvas_mesh_rebuild`。目标有内部造型时替换其检测出的 TOPOLOGY 引导线（手绘及已标为 FOLD 的保留），并在同一历史节点中重新烘焙（`interior_rebaked`）。无法成网或超过 `max_vertices` 时报错且不做任何修改。`layer_mesh_structure_preview`（只读，参数同上，无 `state`）返回识别线（类型、是否被采用 `followed`、是否加带 `banded`，源像素与画布坐标）及新网格的画布点与三角形。细节见[按纹理结构重布点](../spec/TEXTURE_STRUCTURE_MESH.md)。
 
 模拟修改器的配置可省略 `bake`；候选准备会在后台对该实例之前的实际栈进行烘焙，并把结果与输入身份一起提交。`auto_bake: false` 时必须提供有效结果，过期输入拒绝整次修改。预览同样不发布烘焙；取消和 CAS 失败不保留候选前缀。
+
+`object_edit_appearance` 对生成对象执行的改名、显隐、静态外观及层级编辑归属创建对象的修改器。`parameter_update` 对生成参数名称、范围和默认值的修改归属提供该参数的实例。查询栈可查看无法重放的覆盖。
+
+`rig.scaffold` 可选 `featureDisplacement: true`，用于保留旧面部特征位移的变形层级。默认关闭。可选的 `corrections` 使用旧配方的 `moves` 和 `eyeParts` 格式，保存拟合手柄及眼部结构修正。
+
+`mouth.outline` 为适用的嘴部网格生成上下唇与独立贴图。`values.thickness` 范围为 0.5–8 像素，默认 1.5。可选 `color` 接受 0–16777215 的 RGB 整数，省略时从原素材取色。应用时网格和贴图一起固化。
 
 `expression.toggles` 为目标中的开关和差分图层生成参数与透明度关键形。差分使用旧算法的半档重叠，参数定义兼容时复用。开关和差分参数会成为生成链条的物理输入。
 
