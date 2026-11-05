@@ -61,7 +61,7 @@ internal object RigModifierPipeline {
         val base = pipeline.buildOrdinaryPreview(analysis.source, ordinary.copy(meshOnly = true),
             ProgressListener { message, fraction -> progress.update(message, fraction * .8) }, previousAtlas)
         val input = compileOrdinary(base.analysis, base.atlas, base.rig, config)
-        val source = RigModifierSource(base.analysis, base.atlas, config, base.rig.layerIdByDrawableId, base.rig.copiedDrawableIds)
+        val source = RigModifierSource(base.analysis, base.atlas, config, base.rig.layerIdByDrawableId, base.rig.copiedDrawableIds, base.baseRig.puppet)
         val result = RigModifierAlgorithms.evaluator(source).evaluate(input, stack) {
             if (Thread.currentThread().isInterrupted) throw CancellationException("Modifier evaluation cancelled")
             progress.update("Evaluating modifier stack", .85)

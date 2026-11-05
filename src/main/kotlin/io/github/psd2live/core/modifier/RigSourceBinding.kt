@@ -64,6 +64,18 @@ internal object RigSourceBinding {
                 desiredBranch += nextParent
                 nextParent = desiredById.getValue(nextParent).parent
             }
+            val nativeGeometry = desiredBranch == branch.toList() && desired.drawables.single { it.id == id }.blendShapes.isEmpty() && sameMeshGeometry(sample, previous.drawables.single { it.id == id }) &&
+                sample.parentDeformerId == previous.drawables.single { it.id == id }.parentDeformerId?.let(mapped::getValue) &&
+                branch.all { canonical ->
+                    val actual = updatedDeformers[mapped.getValue(canonical)] ?: current.deformers.singleOrNull { it.id == mapped.getValue(canonical) }
+                    actual != null && PuppetIr.deformerToIr(actual) == PuppetIr.deformerToIr(RigIdRemap(deformers = mapped).deformer(previousById.getValue(canonical))).let {
+                        // Part ownership does not change the coordinate frame.
+                        when (it) {
+                            is io.github.psd2live.format.model.Deformer.Warp -> it.copy(part = actual.partId?.raw)
+                            is io.github.psd2live.format.model.Deformer.Rotation -> it.copy(part = actual.partId?.raw)
+                        }
+                    }
+                }
             if (desiredBranch == branch.toList() && source.onlyMasksChange(previous, desired, target, branch)) {
                 val masks = masks(sample, previous.drawables.single { it.id == id }, desired.drawables.single { it.id == id }, instance)
                 if (sample.maskedBy != masks.first || sample.invertMask != masks.second)
@@ -164,12 +176,21 @@ internal object RigSourceBinding {
             }
             // Fitting may change a neutral parent frame even when its ID stays. Re-express the authored geometry
             // in that new frame before adding the local algorithm correction, as ordinary canvas-space rebinding does.
-            current = RigStructureEdits.carriedToParent(previousFrame, current, id)
+            if (!nativeGeometry) current = RigStructureEdits.carriedToParent(previousFrame, current, id)
             // Parent motion remains in deformers. Only local mesh corrections are transferred through the native
             // residual mapper, against static projections, so no ancestor's motion is counted a second time.
             val oldMesh = previous.drawables.single { it.id == id }
             val nextMesh = desired.drawables.single { it.id == id }
             val actual = current.drawables.single { it.id == id }
+            if (nativeGeometry && nextMesh.blendShapes.isEmpty()) {
+                val channels = RigGenerationResidual.channels(current, actual, oldMesh, nextMesh, checkpoint)
+                val masks = masks(actual, oldMesh, nextMesh, instance)
+                current = current.copy(drawables = current.drawables.map {
+                    if (it.id == id) it.copy(mesh = nextMesh.mesh, geometryGrid = nextMesh.geometryGrid, channelGrids = channels,
+                        maskedBy = masks.first, invertMask = masks.second) else it
+                })
+                continue
+            }
             val oldSources = sources(oldProjection, oldMesh, current, actual, checkpoint)
             val nextSources = sources(nextProjection, nextMesh, current, actual, checkpoint)
             val geometry = RigGenerationResidual.geometry(current, oldProjection, nextProjection, id, oldSources, nextSources, checkpoint)
@@ -250,6 +271,17 @@ internal object RigSourceBinding {
         before == after -> actual
         actual == before -> after
         else -> actual + (after - before)
+    }
+
+    private fun sameMeshGeometry(actual: Drawable, expected: Drawable): Boolean {
+        val a = actual.mesh ?: return false
+        val b = expected.mesh ?: return false
+        if (!a.positions.contentEquals(b.positions) || !a.uvs.contentEquals(b.uvs) || !a.indices.contentEquals(b.indices) ||
+            actual.blendShapes.isNotEmpty() || expected.blendShapes.isNotEmpty()) return false
+        val left = actual.geometryGrid
+        val right = expected.geometryGrid
+        return if (left == null || right == null) left == null && right == null
+            else sameGrid(left, right) { x, y -> x.positionDeltas.contentEquals(y.positionDeltas) }
     }
 
     private fun <T> sameGrid(a: KeyformGrid<T>, b: KeyformGrid<T>, sameForm: (T, T) -> Boolean): Boolean {

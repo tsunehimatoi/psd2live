@@ -16,6 +16,7 @@ internal class RigModifierSource(
     private val config: PipelineConfig,
     private val layersByMesh: Map<String, String>,
     copiedMeshes: Set<String> = emptySet(),
+    private val materialBase: PuppetModel,
 ) {
     private val stack by lazy { RigModifierStack.fromJson(requireNotNull(config.rigEdits.modifierStack)) }
     private val parameterDefinitions = java.util.IdentityHashMap<PuppetModel, List<io.github.psd2live.format.model.Parameter>>()
@@ -408,6 +409,17 @@ internal class RigModifierSource(
         return result
     }
 
+    /** Only exact, unedited source geometry can bypass numerical inverse mapping. */
+    fun originalMaterial(actual: Drawable, desired: Drawable): Boolean {
+        val original = materialBase.drawables.singleOrNull { it.id == actual.id } ?: return false
+        val mesh = actual.mesh ?: return false
+        val base = original.mesh ?: return false
+        val native = desired.mesh ?: return false
+        return actual.parentDeformerId == null && actual.geometryGrid == null && actual.blendShapes.isEmpty() &&
+            mesh.positions.contentEquals(base.positions) && mesh.uvs.contentEquals(base.uvs) && mesh.indices.contentEquals(base.indices) &&
+            mesh.uvs.contentEquals(native.uvs) && mesh.indices.contentEquals(native.indices)
+    }
+
     fun scaffoldFor(instance: RigModifierInstance, target: ModifierTarget, checkpoint: () -> Unit) = forTarget(scaffold(instance, checkpoint), target)
 
     private fun forTarget(model: PuppetModel, target: ModifierTarget): PuppetModel {
@@ -452,7 +464,7 @@ internal class RigModifierSource(
 
     companion object {
         fun of(model: RigPreviewModel) = RigModifierSource(model.modifierAuthorAnalysis ?: model.analysis, model.modifierAuthorAtlas ?: model.atlas,
-            model.config, model.authored.rig.layerIdByDrawableId, model.authored.rig.copiedDrawableIds)
+            model.config, model.authored.rig.layerIdByDrawableId, model.authored.rig.copiedDrawableIds, model.baseRig.puppet)
     }
 }
 
@@ -550,7 +562,9 @@ internal object RigSourceModifiers {
                 rootChildren = (current.rootChildren + partBranch.filter { partParents[it] !in partBranch }.map { OrgChild.Part(remap.part(it)) }).distinct())
                 .withDerivedRenderRoot()
             val destination = remap.deformer(requireNotNull(desired.parentDeformerId))
-            current = RigStructureEdits.apply(current, listOf(buildJsonObject {
+            current = if (source.originalMaterial(actual, desired)) current.copy(drawables = current.drawables.map {
+                if (it.id == meshId) it.copy(parentDeformerId = destination, mesh = desired.mesh, geometryGrid = desired.geometryGrid) else it
+            }) else RigStructureEdits.apply(current, listOf(buildJsonObject {
                 put("action", "bind"); put("kind", "mesh"); put("id", target.id); put("parent_id", destination.raw); put("space", "canvas")
             }))
             if (orgParent != null) current = RigStructureEdits.apply(current, listOf(buildJsonObject {

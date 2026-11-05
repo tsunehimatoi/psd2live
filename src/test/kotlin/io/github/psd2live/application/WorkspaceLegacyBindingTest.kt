@@ -1008,7 +1008,7 @@ class WorkspaceLegacyBindingTest {
         assertEquals(old.document.rigEdits, pending.now.document.rigEdits)
     }
 
-    @Test fun conversionThatChangesLegacyOutputLeavesItsHistoryUntouched(): Unit = runBlocking<Unit> {
+    @Test fun legacyBindingConversionPreservesCompleteOutputAndHistory(): Unit = runBlocking<Unit> {
         val art = document()
         val config = art.config().copy(meshOnly = false, generateDeformers = true, generatePhysics = true,
             physicsFrontHair = true, physicsBackHair = true, physicsEyeJelly = true, exportMotions = true,
@@ -1034,19 +1034,23 @@ class WorkspaceLegacyBindingTest {
             assertEquals(old.group, next.exportGroup)
             assertEquals(old.fadeIn == null && old.fadeOut == null, next.runtimeDefaultFades)
         }
-        val failure = assertFails { f.edit("modifier_convert", JsonObject(emptyMap())) }
-        assertContains(failure.message.orEmpty(), "Converting presets would change the model")
-        val diagnostic = WorkspaceFailure.from(failure).toJson()
-        validateOperationSchema(diagnostic, WorkspaceResultSchema.failure, "error")
-        assertEquals("modifier_conversion_mismatch", diagnostic.getValue("code").jsonPrimitive.content)
-        assertFalse("deformer" in diagnostic.getValue("objects").jsonObject, diagnostic.toString())
-        assertFalse("part" in diagnostic.getValue("objects").jsonObject, diagnostic.toString())
-        val changedFields = diagnostic.getValue("fields").jsonArray.map { it.jsonPrimitive.content }
-        for (field in listOf("restPose", "parameterTree", "parameterLinks", "parameterRoles"))
-            assertFalse(field in changedFields, diagnostic.toString())
-        assertEquals(before.state, f.now.state)
-        assertEquals(before.historyHead, f.now.historyHead)
+        fun normalized(model: RigPreviewModel) = RigIrCompiler.compile(model, tileArt = true, simulations = true).let {
+            it.copy(parameters = it.parameters.sortedBy { parameter -> parameter.id })
+        }
+        val expected = normalized(before.model)
+        f.edit("modifier_convert", JsonObject(emptyMap()))
+        val converted = f.now
+        assertNotNull(converted.document.rigEdits.modifierStack)
+        assertEquals(expected, normalized(converted.model))
+        assertEquals(expected, normalized(f.builder.build(converted.document)))
+        f.runtime.checkout(converted.projectId, converted.state, before.historyHead)
         assertNull(f.now.document.rigEdits.modifierStack)
+        assertEquals(before.revision, f.now.revision)
+        f.runtime.checkout(f.now.projectId, f.now.state, converted.historyHead)
+        assertEquals(expected, normalized(f.now.model))
+        f.edit("modifier_apply", buildJsonObject { put("id", convertedInstances.last().id) })
+        assertTrue(RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.isEmpty())
+        assertEquals(expected, normalized(f.builder.build(f.now.document)))
     }
 
     @Test fun applyingASharedScaffoldPreservesAliasesForRemainingBindings(): Unit = runBlocking<Unit> {
