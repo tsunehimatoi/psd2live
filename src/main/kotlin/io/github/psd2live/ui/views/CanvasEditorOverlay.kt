@@ -2453,8 +2453,8 @@ private fun SimulateModeExtras(editor: CanvasEditor, focus: () -> Unit) {
     val viewModel = editor.viewModel
     val state = editor.state
     val meshes = editor.editMeshTargets().map { it.id }.toSet()
-    val simulation = state.rigEdits.simEdits.firstOrNull { edit -> edit.targets.any { it in meshes } }
-        ?: state.rigEdits.simEdits.firstOrNull()
+    val simulation = io.github.psd2live.core.sim.SimulationCatalog.entries(state.rigEdits).firstOrNull { edit -> edit.targets.any { it in meshes } }
+        ?: io.github.psd2live.core.sim.SimulationCatalog.entries(state.rigEdits).firstOrNull()
     val live = simulation != null && state.simulationPreviewId == simulation.id
     Row(
         verticalAlignment = Alignment.CenterVertically,

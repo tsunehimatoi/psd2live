@@ -122,7 +122,7 @@ internal fun SimulationPanelView(
 ) {
 	val colors = LocalToolColors.current
 	val typography = LocalToolTypography.current
-	val sims = state.rigEdits.simEdits
+	val sims = io.github.psd2live.core.sim.SimulationCatalog.entries(state.rigEdits)
 	var selectedId by remember { mutableStateOf<String?>(null) }
 	val selected = sims.firstOrNull { it.id == selectedId } ?: sims.firstOrNull()
 	val status by viewModel.simulationStatus.collectAsState()
@@ -136,7 +136,7 @@ internal fun SimulationPanelView(
 			sim.id to when {
 				!sim.enabled -> BakeState.DISABLED
 				sim.bake == null -> BakeState.UNBAKED
-				puppet != null && SimBake.stale(puppet, sim) -> BakeState.STALE
+				puppet != null && io.github.psd2live.core.sim.SimulationCatalog.stale(state.rigEdits, puppet, sim) -> BakeState.STALE
 				else -> BakeState.BAKED
 			}
 		}

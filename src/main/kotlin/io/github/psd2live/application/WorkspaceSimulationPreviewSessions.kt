@@ -28,7 +28,7 @@ internal class WorkspaceSimulationPreviewSessions(private val runtime: Workspace
         context.ensureActive()
         val mode = request.getValue("mode").jsonPrimitive.content
         var session = if (mode == "start") {
-            val edit = requireNotNull(capture.document.rigEdits.simEdits.firstOrNull { it.id == request.getValue("simulation_id").jsonPrimitive.content }) { "Simulation not found" }
+            val edit = requireNotNull(io.github.psd2live.core.sim.SimulationCatalog.entries(capture.document.rigEdits).firstOrNull { it.id == request.getValue("simulation_id").jsonPrimitive.content }) { "Simulation not found" }
             require(edit.enabled) { "Simulation is disabled" }
             val pose = pose(capture, workspace, edit, request)
             val engine = SimPreview()

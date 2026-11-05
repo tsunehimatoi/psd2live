@@ -202,7 +202,7 @@ internal class WorkspaceReadSession(
         val captured = read.runtime.capture ?: return emptyList()
         return io.github.psd2live.core.quality.SkeletonBindingQuality.issues(captured.model.rig.puppet, captured.document.rigEdits.skeleton)
     }
-    override fun listSimulations(): List<io.github.psd2live.core.sim.RigSimEdit> = capture().document.rigEdits.simEdits
+    override fun listSimulations(): List<io.github.psd2live.core.sim.RigSimEdit> = io.github.psd2live.core.sim.SimulationCatalog.entries(capture().document.rigEdits)
     override fun physicsFps(): Int = capture().document.rigEdits.physicsFps
     override fun previewSession(): JsonObject = PreviewSessions.encode(pose)
     override fun sampleSourceColor(layerId: String, x: Int, y: Int): List<Int> = capture().document.sampleSourceColor(layerId, x, y)
@@ -493,14 +493,13 @@ internal class WorkspaceReadSession(
     override fun reportSimulation(id: String, hold: Float, release: Float, wind: Pair<Float, Float>?,
                                   progress: (Float) -> Unit, cancelled: () -> Boolean): JsonObject {
         val captured = capture()
-        val edit = requireNotNull(captured.document.rigEdits.simEdits.firstOrNull { it.id == id }) { "Simulation not found: $id" }
+        val edit = requireNotNull(io.github.psd2live.core.sim.SimulationCatalog.entries(captured.document.rigEdits).firstOrNull { it.id == id }) { "Simulation not found: $id" }
         return io.github.psd2live.core.sim.SimAuthoring.report(captured.model.rig.puppet, edit, hold, release, wind, progress, cancelled)
     }
 
     override fun compareSimulation(id: String, motions: List<String>, progress: (Float) -> Unit, cancelled: () -> Boolean): JsonObject {
         val captured = capture()
-        val results = io.github.psd2live.core.sim.SimCompare.compare(captured.document.rigEdits,
-            io.github.psd2live.core.sim.SimAuthoring.AuthoredRigs(captured.model::authoredPuppet), id, motions,
+        val results = io.github.psd2live.core.sim.SimulationCatalog.compare(captured.model, captured.document.rigEdits, id, motions,
             progress = progress, cancelled = cancelled)
         return buildJsonObject {
             put("id", id)

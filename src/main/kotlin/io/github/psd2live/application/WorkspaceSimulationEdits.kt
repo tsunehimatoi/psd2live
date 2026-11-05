@@ -2,6 +2,7 @@ package io.github.psd2live.application
 
 import io.github.psd2live.core.*
 import io.github.psd2live.core.sim.*
+import io.github.psd2live.core.modifier.*
 import io.github.psd2live.project.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
@@ -51,6 +52,8 @@ internal object WorkspaceSimulationEdits {
     fun apply(operation: WorkspaceDocumentOperation, document: WorkspaceDocument, preview: RigPreviewModel,
               work: WorkspaceSimulationWork = WorkspaceSimulationWork.Direct, autoBake: Boolean? = null): WorkspaceSimulationCandidate {
         val request = operation.request
+        val owner = request["id"]?.jsonPrimitive?.content?.let { SimulationCatalog.owner(document.rigEdits, it) }
+        if (owner != null) return modifier(operation, document, preview, owner, work)
         return when (operation.operation) {
             "simulation_put" -> put(document, preview, request, autoBake, work)
             "simulation_delete" -> WorkspaceSimulationCandidate(remove(document, request.text("id")))
@@ -71,9 +74,45 @@ internal object WorkspaceSimulationEdits {
         }
     }
 
+    private fun modifier(operation: WorkspaceDocumentOperation, document: WorkspaceDocument, preview: RigPreviewModel,
+                         owner: RigModifierInstance, work: WorkspaceSimulationWork): WorkspaceSimulationCandidate {
+        val stack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack))
+        val source = RigSimEdit.fromJson(owner.config)
+        val next = when (operation.operation) {
+            "simulation_delete" -> stack.remove(owner.id)
+            "simulation_clear_bake" -> stack.update(owner.id) { it.copy(enabled = false,
+                config = JsonObject(it.config + source.copy(bake = null).toJson()), inputFingerprint = null) }
+            "simulation_bake" -> stack.update(owner.id) { it.copy(enabled = true,
+                config = JsonObject(it.config + source.copy(enabled = true, autoBake = true, bake = null).toJson()), inputFingerprint = null) }
+            "simulation_put" -> {
+                val requested = RigSimEdit.fromJson(JsonObject(source.toJson() + operation.request)).copy(id = source.id)
+                stack.update(owner.id) { it.copy(enabled = requested.enabled,
+                    targets = requested.targets.map { target -> ModifierTarget("mesh", target) },
+                    config = JsonObject(it.config + requested.copy(enabled = true, autoBake = true).toJson())) }
+            }
+            else -> error("Unsupported simulation modifier operation: ${operation.operation}")
+        }
+        RigModifierAlgorithms.evaluator().validateOrder(next)
+        val prepared = work.run(owner.id) { progress, cancelled ->
+            val observer = object : WorkspaceRasterWork {
+                override fun checkpoint() { if (cancelled()) throw CancellationException("Simulation bake cancelled") }
+                override fun progress(fraction: Float, message: String) { checkpoint(); progress(fraction) }
+            }
+            WorkspaceModifierSimulation.prepare(document, next, observer,
+                validatedPrefix = WorkspaceModifierSimulation.unchangedPrefix(stack, next), evaluated = preview)
+        }
+        val bake = prepared.instances.firstOrNull { it.id == owner.id }?.let { RigSimEdit.fromJson(it.config).bake }
+        return WorkspaceSimulationCandidate(document.copy(rigEdits = document.rigEdits.copy(modifierStack = prepared.toJson())),
+            if (operation.operation == "simulation_bake") bake?.summary() ?: JsonObject(emptyMap())
+            else buildJsonObject { bake?.let { put("bake", it.summary()) } })
+    }
+
     fun put(document: WorkspaceDocument, preview: RigPreviewModel, arguments: JsonObject, autoBake: Boolean? = null,
             work: WorkspaceSimulationWork = WorkspaceSimulationWork.Direct): WorkspaceSimulationCandidate {
         val id = arguments.text("id")
+        SimulationCatalog.owner(document.rigEdits, id)?.let {
+            return modifier(WorkspaceDocumentOperation("simulation_put", arguments), document, preview, it, work)
+        }
         val put = SimAuthoring.put(document.rigEdits, preview.rig.puppet, arguments)
         val (overlay, failure) = work.run(id) { progress, cancelled ->
             SimAuthoring.rebaked(put, SimAuthoring.AuthoredRigs(preview::authoredPuppet), id, progress, cancelled, autoBake)
@@ -140,7 +179,12 @@ internal object WorkspaceSimulationEdits {
         return WorkspaceSimulationCandidate(next.copy(rigEdits = overlay, settings = physicsSettings(next.settings, baked)), report)
     }
 
-    fun remove(document: WorkspaceDocument, id: String) = document.copy(rigEdits = SimAuthoring.remove(document.rigEdits, id))
+    fun remove(document: WorkspaceDocument, id: String): WorkspaceDocument {
+        val owner = SimulationCatalog.owner(document.rigEdits, id)
+        val overlay = if (owner == null) SimAuthoring.remove(document.rigEdits, id) else document.rigEdits.copy(
+            modifierStack = RigModifierStack.fromJson(requireNotNull(document.rigEdits.modifierStack)).remove(owner.id).toJson())
+        return document.copy(rigEdits = overlay)
+    }
 
     fun classicHair(document: WorkspaceDocument, front: Boolean, sway: Boolean = true): WorkspaceDocument {
         val id = if (front) ModelPresets.FRONT_HAIR_SIM else ModelPresets.BACK_HAIR_SIM
@@ -157,7 +201,16 @@ internal object WorkspaceSimulationEdits {
     }
 
     fun withBakes(document: WorkspaceDocument, bakes: Map<String, SimBakeResult?>): WorkspaceDocument {
-        val overlay = bakes.entries.fold(document.rigEdits) { edits, (id, bake) -> SimAuthoring.withBake(edits, id, bake) }
+        val overlay = bakes.entries.fold(document.rigEdits) { edits, (id, bake) ->
+            val owner = SimulationCatalog.owner(edits, id)
+            if (owner == null) SimAuthoring.withBake(edits, id, bake) else {
+                require(bake == null) { "Rebake a preset simulation through simulation_bake" }
+                val stack = RigModifierStack.fromJson(requireNotNull(edits.modifierStack)).update(owner.id) {
+                    it.copy(enabled = false, config = JsonObject(it.config + RigSimEdit.fromJson(it.config).copy(bake = null).toJson()), inputFingerprint = null)
+                }
+                edits.copy(modifierStack = stack.toJson())
+            }
+        }
         return document.copy(rigEdits = overlay, settings = physicsSettings(document.settings, bakes.values.any { it != null }))
     }
     private fun physicsSettings(settings: JsonObject, baked: Boolean) = if (!baked) settings else JsonObject(settings + ("generatePhysics" to JsonPrimitive(true)))

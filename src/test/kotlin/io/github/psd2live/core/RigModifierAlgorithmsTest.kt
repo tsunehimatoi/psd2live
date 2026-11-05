@@ -175,6 +175,22 @@ class RigModifierAlgorithmsTest {
             listOf(SimBakedMode(axis, 10f, 1f))))
     }
 
+    @Test fun simulationCatalogIncludesModifierBodiesWithTheirActualOutputIds() {
+        val source = simulation(true)
+        val first = entry("simulation", source.toJson(), meshTarget)
+        val second = first.copy(id = first.id + "-second", enabled = false)
+        val overlay = RigEditOverlay(modifierStack = RigModifierStack(listOf(first, second)).toJson())
+        val catalog = io.github.psd2live.core.sim.SimulationCatalog.entries(overlay)
+        assertEquals(listOf(first.id, second.id), catalog.map { it.id })
+        assertTrue(catalog.first().enabled)
+        assertFalse(catalog.last().enabled)
+        assertEquals(first.outputId("simulation:BakedMode"), catalog.first().outputId("BakedMode"))
+        assertFalse(io.github.psd2live.core.sim.SimulationCatalog.stale(overlay, PuppetIr.toPuppet(rig), catalog.first()))
+        assertTrue(overlay.simEdits.isEmpty())
+        val evaluated = evaluator.evaluate(rig, RigModifierStack(listOf(first)))
+        assertTrue(evaluated.rig.parameters.any { it.id == catalog.first().outputId("BakedMode") })
+    }
+
     @Test fun simulationRequiresAMatchingBakeAndAppliesGeneratedBindingsInsteadOfAPreviewFrame() {
         val source = simulation(true)
         val instance = entry("simulation", source.toJson(), meshTarget)

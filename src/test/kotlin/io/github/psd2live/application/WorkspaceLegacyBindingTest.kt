@@ -1134,6 +1134,38 @@ class WorkspaceLegacyBindingTest {
         println("modifier stages: initial=${coldMs}ms edit=${warmMs}ms reused=" + (pipeline.meshCache.stages.hits(RigStageCache.MESH) - hits))
     }
 
+    @Test fun simulationPanelEditsStayOwnedByTheirPresetInstance(): Unit = runBlocking<Unit> {
+        val f = Fixture(document())
+        f.install()
+        val mesh = f.now.model.rig.puppet.drawables.first { it.mesh != null }
+        val count = mesh.mesh!!.vertexCount
+        val body = io.github.psd2live.core.sim.RigSimEdit("preset-body", "Clothes", io.github.psd2live.core.sim.SimKind.CLOTH, listOf(mesh.id.raw))
+        val axis = io.github.psd2live.core.sim.SimBakedAxis("ClothMode", floatArrayOf(-1f, 0f, 1f), mapOf(mesh.id.raw to listOf(
+            FloatArray(count * 2) { -1f }, FloatArray(count * 2), FloatArray(count * 2) { 1f })))
+        val baked = body.copy(bake = io.github.psd2live.core.sim.SimBakeResult(
+            io.github.psd2live.core.sim.SimBake.fingerprint(f.now.model.rig.puppet, body), mapOf(mesh.id.raw to count), emptyList(),
+            listOf(io.github.psd2live.core.sim.SimBakedMode(axis, 1f, 1f))))
+        val weights = JsonArray(emptyList())
+        f.edit("modifier_add", f.addition("simulation", "clothes", listOf(ModifierTarget("mesh", mesh.id.raw)),
+            JsonObject(baked.toJson() + ("automatic_weights" to weights))))
+        val shown = io.github.psd2live.core.sim.SimulationCatalog.entries(f.now.document.rigEdits).single()
+        assertEquals("clothes", shown.id)
+        assertNotNull(shown.bake)
+        assertTrue(f.now.model.rig.puppet.parameters.any { it.id.raw == shown.outputId("ClothMode") })
+        f.edit("simulation_put", shown.copy(name = "Renamed clothes", enabled = false).toJson())
+        val renamed = RigModifierStack.fromJson(f.now.document.rigEdits.modifierStack!!).instances.single()
+        assertEquals("Renamed clothes", io.github.psd2live.core.sim.RigSimEdit.fromJson(renamed.config).name)
+        assertEquals(body.id, io.github.psd2live.core.sim.RigSimEdit.fromJson(renamed.config).id)
+        assertEquals(weights, renamed.config["automatic_weights"])
+        assertFalse(renamed.enabled)
+        assertTrue(f.now.document.rigEdits.simEdits.isEmpty())
+        f.edit("simulation_put", io.github.psd2live.core.sim.SimulationCatalog.entries(f.now.document.rigEdits).single().copy(enabled = true).toJson())
+        assertTrue(f.now.model.rig.puppet.parameters.any { it.id.raw == shown.outputId("ClothMode") })
+        f.edit("simulation_clear_bake", buildJsonObject { put("id", "clothes") })
+        f.edit("simulation_delete", buildJsonObject { put("id", "clothes") })
+        assertTrue(io.github.psd2live.core.sim.SimulationCatalog.entries(f.now.document.rigEdits).isEmpty())
+    }
+
     @Test fun newPresetInitializationIncludesOutlineAndSeeThroughWithoutLegacyMigration(): Unit = runBlocking<Unit> {
         val art = document(eyeDetails = true, mouthDetails = true, expressionDetails = true,
             skinDetails = true, outfitDetails = true, sideLock = true, bangOverlay = true)

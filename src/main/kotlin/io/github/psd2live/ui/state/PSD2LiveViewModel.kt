@@ -551,6 +551,10 @@ class PSD2LiveViewModel : AutoCloseable {
      * a failure in [simulationStatus].
      */
     internal fun bakeSimulation(id: String) {
+        if (io.github.psd2live.core.sim.SimulationCatalog.owner(_state.value.rigEdits, id) != null) {
+            editModifier("simulation_bake", kotlinx.serialization.json.buildJsonObject { put("id", id) })
+            return
+        }
         if (_state.value.rigEdits.simEdits.none { it.id == id }) return
         queueSimulationBakes(listOf(id), fresh = true)
     }
@@ -693,8 +697,8 @@ class PSD2LiveViewModel : AutoCloseable {
     /** The enabled simulations a bake would change: unbaked or stale ones, or every one when all are up to date. */
     internal fun simulationsToBake(current: PSD2LiveState = _state.value): List<String> {
         val puppet = current.previewModel?.rig?.puppet ?: return emptyList()
-        val enabled = current.rigEdits.simEdits.filter { it.enabled }
-        val outdated = enabled.filter { it.bake == null || io.github.psd2live.core.sim.SimBake.stale(puppet, it) }
+        val enabled = io.github.psd2live.core.sim.SimulationCatalog.entries(current.rigEdits).filter { it.enabled }
+        val outdated = enabled.filter { it.bake == null || io.github.psd2live.core.sim.SimulationCatalog.stale(current.rigEdits, puppet, it) }
         return (outdated.ifEmpty { enabled }).map { it.id }
     }
 
@@ -702,11 +706,20 @@ class PSD2LiveViewModel : AutoCloseable {
      * Bakes [simulationsToBake] in the background, one after another, each on the rig with the bakes before
      * it, and commits them together as one history node. A simulation that fails keeps its old bake and is reported.
      */
-    internal fun bakeAllSimulations() = queueSimulationBakes(simulationsToBake(), fresh = true)
+    internal fun bakeAllSimulations() {
+        val ids = simulationsToBake()
+        val (generated, ordinary) = ids.partition { io.github.psd2live.core.sim.SimulationCatalog.owner(_state.value.rigEdits, it) != null }
+        if (generated.isNotEmpty()) {
+            val expected = modifierEditState() ?: return
+            saveDocumentEdits(expected, "Bake simulations", generated.map { id ->
+                io.github.psd2live.application.WorkspaceDocumentOperation("simulation_bake", kotlinx.serialization.json.buildJsonObject { put("id", id) })
+            }) { failure -> if (failure != null) setErrorMessage(failure) else queueSimulationBakes(ordinary, fresh = true) }
+        } else queueSimulationBakes(ordinary, fresh = true)
+    }
 
     /** Removes every simulation's bake as one history node. */
     internal fun clearAllSimulationBakes() {
-        val ids = _state.value.rigEdits.simEdits.filter { it.bake != null }.map { it.id }
+        val ids = io.github.psd2live.core.sim.SimulationCatalog.entries(_state.value.rigEdits).filter { it.bake != null }.map { it.id }
         if (ids.isEmpty()) return
         runSimulationMutation("Cleared simulation bakes") { workspace, state -> workspace.putSimulationBakes(ids.associateWith { null }, state) }
     }
@@ -806,8 +819,7 @@ class PSD2LiveViewModel : AutoCloseable {
         simChecking = scope.launch(Dispatchers.Default) {
             val job = coroutineContext[kotlinx.coroutines.Job]
             val result = try {
-                val results = io.github.psd2live.core.sim.SimCompare.compare(overlay,
-                    io.github.psd2live.core.sim.SimAuthoring.AuthoredRigs(model::authoredPuppet), id, motions,
+                val results = io.github.psd2live.core.sim.SimulationCatalog.compare(model, overlay, id, motions,
                     cancelled = { job?.isCancelled == true })
                 SimulationCheck(motions, results.map { io.github.psd2live.core.sim.SimMotionCheck(it.motion, it.check) })
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
@@ -888,6 +900,10 @@ class PSD2LiveViewModel : AutoCloseable {
      * bake then follows in the background as its own node.
      */
     internal fun putSimulation(edit: io.github.psd2live.core.sim.RigSimEdit) {
+        if (io.github.psd2live.core.sim.SimulationCatalog.owner(_state.value.rigEdits, edit.id) != null) {
+            editModifier("simulation_put", edit.toJson())
+            return
+        }
         val autoBake = _simulationAutoBake.value
         runSimulationMutation("Set simulation ${edit.id}", then = { if (autoBake) queueSimulationBakes(listOf(edit.id), fresh = false) }) { workspace, state ->
             workspace.putSimulation(edit.toJson(), state, null, autoBake = false).first
@@ -899,9 +915,12 @@ class PSD2LiveViewModel : AutoCloseable {
      * [defaultName] goes back to the name after the body. One history node, nothing baked again.
      */
     internal fun renameSimulationOutput(simId: String, outputId: String, name: String, defaultName: String) {
-        val sim = _state.value.rigEdits.simEdits.firstOrNull { it.id == simId } ?: return
+        val sim = io.github.psd2live.core.sim.SimulationCatalog.entries(_state.value.rigEdits).firstOrNull { it.id == simId } ?: return
+        val owner = io.github.psd2live.core.sim.SimulationCatalog.owner(_state.value.rigEdits, simId)
+        val index = owner?.localOutputName(outputId)?.removePrefix("physics:")?.toIntOrNull()
+        val key = index?.let { sim.bake?.pendulums?.getOrNull(it)?.id } ?: outputId
         val trimmed = name.trim()
-        val names = if (trimmed.isEmpty() || trimmed == defaultName) sim.outputNames - outputId else sim.outputNames + (outputId to trimmed)
+        val names = if (trimmed.isEmpty() || trimmed == defaultName) sim.outputNames - key else sim.outputNames + (key to trimmed)
         if (names != sim.outputNames) putSimulation(sim.copy(outputNames = names))
     }
 
@@ -910,7 +929,7 @@ class PSD2LiveViewModel : AutoCloseable {
      * One history node, nothing baked again; the default setting clears it.
      */
     internal fun setSimulationOutput(simId: String, baked: String, output: io.github.psd2live.core.sim.SimOutput) {
-        val sim = _state.value.rigEdits.simEdits.firstOrNull { it.id == simId } ?: return
+        val sim = io.github.psd2live.core.sim.SimulationCatalog.entries(_state.value.rigEdits).firstOrNull { it.id == simId } ?: return
         val outputs = if (output.isDefault) sim.outputs - baked else sim.outputs + (baked to output)
         if (outputs != sim.outputs) putSimulation(sim.copy(outputs = outputs))
     }
@@ -1040,7 +1059,7 @@ class PSD2LiveViewModel : AutoCloseable {
     private fun stepSimulationPreview(current: PSD2LiveState, model: RigPreviewModel?, dt: Float) {
         if (_simulationStatus.value is SimulationStatus.Failed) return
         val id = current.simulationPreviewId ?: return
-        if (model == null || current.rigEdits.simEdits.none { it.id == id }) {
+        if (model == null || io.github.psd2live.core.sim.SimulationCatalog.entries(current.rigEdits).none { it.id == id }) {
             _simulationFrames.value = null
             return
         }
