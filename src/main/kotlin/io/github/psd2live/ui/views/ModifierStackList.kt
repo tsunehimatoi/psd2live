@@ -161,7 +161,7 @@ internal fun ModifierStackList(stack: RigModifierStack, reports: Map<String, Jso
                                     color = if (instance.enabled) colors.textPrimary else colors.textMuted,
                                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                                 if (status != "active") Text(tr("modifier.status.$status"), style = LocalToolTypography.current.caption,
-                                    color = if (status == "missing_dependency") colors.warning else colors.textMuted)
+                                    color = if (status == "missing_dependency" || status == "missing_plugin") colors.warning else colors.textMuted)
                                 ParameterDragHandle({ position, row -> startDrag(layout, position, row) }, rowCoords)
                                 CompactIconButton({ vm.editModifier("modifier_remove", buildJsonObject { put("id", instance.id) }) },
                                     enabled = enabled, tooltip = tr("modifier.remove"), size = 20.dp) { IconClose() }

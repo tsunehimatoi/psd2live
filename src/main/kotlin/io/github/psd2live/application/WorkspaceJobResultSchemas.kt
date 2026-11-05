@@ -40,6 +40,7 @@ internal object WorkspaceJobResultSchemas {
         "workspace_preview_edits" to WorkspaceGeometrySafetySchemas.preview,
         "workspace_preview_regeneration" to regenerationPreview,
     ).apply {
+        for (id in WorkspacePluginSchemas.jobs) put(id, WorkspacePluginSchemas.result)
         for (id in WorkspaceModifierEdits.supported) put(id, batch)
         for (id in WorkspaceIntentOperations.batches + WorkspaceLayoutOperations.batches) put(id, batch)
         put(WorkspaceLayoutOperations.EXPORT_PSD, psdExport)

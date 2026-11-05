@@ -21,6 +21,7 @@ internal object WorkspaceModifierSimulation {
                 allowRebake: Boolean = true, validatedPrefix: Int = 0,
                 pipeline: PSD2LivePipeline = PSD2LivePipeline().apply { deferRuntimeBundles = true }, evaluated: RigPreviewModel? = null): RigModifierStack {
         require(validatedPrefix in 0..stack.instances.size)
+        if (stack.instances.any { it.enabled && !ModifierPluginCatalog.available(it) }) return stack
         evaluated?.modifierEvaluation?.let { pipeline.modifierCache.snapshot = it }
         var next = stack
         for (index in stack.instances.indices) {

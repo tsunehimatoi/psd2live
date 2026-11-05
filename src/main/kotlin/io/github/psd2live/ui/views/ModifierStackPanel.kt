@@ -37,7 +37,9 @@ import io.github.psd2live.ui.theme.*
 import kotlinx.serialization.json.*
 
 internal fun modifierName(type: String): String = when {
+    ModifierPluginCatalog.algorithm(type) != null -> ModifierPluginCatalog.algorithm(type)!!.second.name
     type == RigSourceModifiers.SCAFFOLD -> tr("modifier.scaffold")
+    '/' in type && RigLegacyBindings.find(type) == null -> type
     '/' in type -> tr("settings.rig.area.${type.substringBefore('/')}") + " · " + tr("settings.rig.base.${type.replace('/', '.')}")
     '.' in type -> tr("settings.rig.module.$type")
     else -> tr("modifier.type.$type")
@@ -184,6 +186,10 @@ private fun ModifierModulePhysicsValues(instance: RigModifierInstance, report: J
 
 @Composable
 private fun ModifierSourceValues(instance: RigModifierInstance, enabled: Boolean, vm: PSD2LiveViewModel) {
+    if (instance.plugin != null) {
+        ModifierPluginValues(instance, enabled, vm)
+        return
+    }
     if (instance.type == RigSourceModifiers.SCAFFOLD) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             CompactCheckbox(instance.config["featureDisplacement"]?.jsonPrimitive?.booleanOrNull == true, { value ->
@@ -386,19 +392,21 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
         return
     }
     val available = if (groups) WorkspaceModifierPlan.groupCatalog.map { it.id }
-        else if (dialog.targets.all { it.kind == "mesh" }) WorkspaceModifierPlan.types.filterNot { it == RigSourceModifiers.SCAFFOLD } else listOf("swing")
+        else if (dialog.targets.all { it.kind == "mesh" }) WorkspaceModifierPlan.types.filterNot { it == RigSourceModifiers.SCAFFOLD } else listOf("swing") + ModifierPluginStore.shared.snapshot().filter { it.enabled }.flatMap { it.manifest.algorithms }.filter { algorithm -> dialog.targets.all { it.kind in algorithm.targets } }.map { it.type }
+    val pluginRevision by ModifierPluginStore.shared.revision.collectAsState()
     val visibleAvailable = available.filter { type -> groups || state.previewModel?.let { !dialog.availability(it, type).hidden } != false }
     fun category(type: String): String = when {
         groups -> type.substringBefore('-')
         type == RigSourceModifiers.SCAFFOLD -> "structure"
         type == "physics" || type == "simulation" || type == "swing" -> "advanced"
         type == "motion" -> "expression"
-        else -> RigLegacyBindings.spec(type).area
+        else -> RigLegacyBindings.find(type)?.area ?: "plugins"
     }
     fun categoryName(id: String): String = when {
         id == "legacy" || groups -> tr("modifier.algorithm.$id")
         id == "structure" -> tr("modifier.scaffold")
         id == "advanced" -> tr("modifier.advanced")
+        id == "plugins" -> tr("plugins.title")
         id in WorkspaceModifierPlan.nativeTypes -> tr("modifier.type.$id")
         else -> tr("settings.rig.area.$id")
     }

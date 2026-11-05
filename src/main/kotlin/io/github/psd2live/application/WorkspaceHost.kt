@@ -98,6 +98,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.runInterruptible
@@ -1876,6 +1878,25 @@ internal class WorkspaceHost<V>(
         closeReason = reason
     }
 
+    init {
+        val pluginRevisionAtStart = io.github.psd2live.core.modifier.ModifierPluginStore.shared.revision.value
+        draftScope.launch {
+            io.github.psd2live.core.modifier.ModifierPluginStore.shared.revision.collectLatest { revision ->
+                if (revision == pluginRevisionAtStart) return@collectLatest
+                try {
+                    editMutex.withLock {
+                        val before = runtime.state.value.capture ?: return@withLock
+                        if (before.document.rigEdits.modifierStack == null) return@withLock
+                        val refreshed = runtime.refreshModel(before.state, { previewBuilder.build(it) }) { capture, model ->
+                            showCommit(model, capture.document, "", base = capture.document)
+                        }
+                        presentation.modelPublished(refreshed.model)
+                    }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (failure: Exception) { System.err.println("Plugin preview refresh failed: ${failure.message}") }
+            }
+        }
+    }
 	override fun close() {
 		if (!isClosed.compareAndSet(false, true)) return
         discardEditorQueues()

@@ -11,7 +11,7 @@ internal object WorkspaceModifierPlan {
     const val NATURAL_MOTION_PREFIX = "natural:"
     val motionPresetIds = MotionClips.BUILTIN_NAMES + MotionClips.BASIC_NAMES.map { NATURAL_MOTION_PREFIX + it }
     val nativeTypes = listOf("swing", "physics", "motion", "simulation")
-    val types get() = sourceTypes + nativeTypes
+    val types get() = (sourceTypes + nativeTypes).filter { ModifierPluginStore.shared.builtinsEnabled() } + ModifierPluginStore.shared.snapshot().filter { it.enabled }.flatMap { it.manifest.algorithms.map { it.type } }.distinct()
     const val RECOMMENDED_GROUP = "modern-standard"
     data class Group(val id: String, val algorithm: String, val richness: String, val types: List<String>)
     val groupCatalog: List<Group> = listOf("legacy", "modern").flatMap { algorithm ->
@@ -68,7 +68,9 @@ internal object WorkspaceModifierPlan {
         val puppet = model.rig.puppet
         require(targets.all { target -> when (target.kind) {
             "mesh" -> puppet.drawables.any { it.id.raw == target.id && it.mesh != null }
-            "deformer" -> puppet.deformers.any { it.id.raw == target.id && it is org.umamo.runtime.model.Deformer.Warp }
+            "deformer" -> puppet.deformers.any { it.id.raw == target.id && (it is org.umamo.runtime.model.Deformer.Warp || ModifierPluginCatalog.algorithm(type.orEmpty()) != null) }
+            "part" -> ModifierPluginCatalog.algorithm(type.orEmpty()) != null && puppet.parts.any { it.id.raw == target.id }
+            "layer" -> ModifierPluginCatalog.algorithm(type.orEmpty()) != null && model.analysis.layers.any { it.source.id.raw == target.id }
             else -> false
         } }) { "An insertion target no longer exists" }
         val group = request["group"]?.jsonPrimitive?.content
@@ -78,8 +80,8 @@ internal object WorkspaceModifierPlan {
         val requested = requestedTypes ?: if (type != null) listOf(type) else requireNotNull(groups[group]) { "Unknown source preset group: $group" }
         require(requested.all { it in types }) { "Unknown modifier" }
         require(request["preset"] == null || type in setOf("motion", "physics") && request["config"] == null) { "A preset and an explicit configuration are alternative inputs" }
-        require(type in nativeTypes || request["config"] == null) { "Source binding configuration is resolved from its captured dependencies" }
-        require(type == "swing" || targets.all { it.kind == "mesh" }) { "This modifier needs captured mesh targets" }
+        require(type in nativeTypes || ModifierPluginCatalog.algorithm(type.orEmpty()) != null || request["config"] == null) { "Source binding configuration is resolved from its captured dependencies" }
+        require(type == "swing" || ModifierPluginCatalog.algorithm(type.orEmpty())?.second?.targets?.let { kinds -> targets.all { it.kind in kinds } } == true || targets.all { it.kind == "mesh" }) { "This modifier needs captured mesh targets" }
         val active = model.rig.modifierReport!!.getValue("entries").jsonArray.filter {
             it.jsonObject.getValue("status").jsonPrimitive.content == "active"
         }.mapTo(HashSet()) { it.jsonObject.getValue("id").jsonPrimitive.content }
@@ -155,7 +157,11 @@ internal object WorkspaceModifierPlan {
                 }
                 motionConfiguration(model, preset, parameters)
             } else if (wanted in nativeTypes) request["config"]?.jsonObject ?: nativeConfiguration(model, wanted, targets, preset)
-            else if (spec == null) JsonObject(emptyMap()) else {
+            else if (ModifierPluginCatalog.algorithm(wanted) != null) {
+                val algorithm = ModifierPluginCatalog.algorithm(wanted)!!.second
+                algorithm.requires.forEach { ensure(it) }
+                request["config"]?.jsonObject ?: algorithm.defaults
+            } else if (spec == null) JsonObject(emptyMap()) else {
                 val structure = scaffold ?: requireNotNull(ensure(RigSourceModifiers.SCAFFOLD).id)
                 val base = spec.module?.base?.let { ensure(it, scaffold = structure) }
                 val related = spec.related.associateWith { ensure(it, scaffold = structure) }
@@ -166,11 +172,12 @@ internal object WorkspaceModifierPlan {
                 }
             }
             val version = RigModifierAlgorithms.registry.definitions.filter { it.type == wanted }.maxOf { it.version }
-            candidate = candidate.add(wanted, version, targets, configuration, group)
+            candidate = candidate.add(wanted, version, targets, configuration, group, plugin = ModifierPluginCatalog.algorithm(wanted, version)?.first?.reference)
             val instance = candidate.instances.last()
             val cap = ModifierCapability(wanted, version, targets, instance.id, configuration)
             available += cap
             entries += buildJsonObject {
+                instance.plugin?.let { put("plugin", Json.encodeToJsonElement(ModifierPluginReference.serializer(), it)) }
                 put("id", instance.id); put("type", wanted); put("version", version); put("config", configuration)
                 put("targets", JsonArray(targets.map { buildJsonObject { put("kind", it.kind); put("id", it.id) } }))
             }
@@ -179,7 +186,7 @@ internal object WorkspaceModifierPlan {
         }
         val subject = io.github.psd2live.core.recipe.RecipeSubject.of(model.analysis)
         requested.filter { group == null || RigLegacyBindings.find(it)?.module?.applies?.invoke(subject) != false }
-            .forEach { ensure(it, reuse = it !in nativeTypes, equivalent = false) }
+            .forEach { ensure(it, reuse = it in sourceTypes, equivalent = false) }
         RigModifierAlgorithms.evaluator().validateOrder(candidate)
         return candidate to buildJsonObject {
             put("entries", JsonArray(entries)); put("plan", JsonArray(planned.values.toList()))

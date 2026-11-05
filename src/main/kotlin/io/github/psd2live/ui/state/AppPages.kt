@@ -46,6 +46,7 @@ internal enum class SettingsTopic(val labelKey: String) {
 	SHORTCUTS("dialog.settings.category.shortcuts"),
 	FILES("settings.files.title"),
 	MCP("dialog.agent.title"),
+    PLUGINS("plugins.title"),
 }
 
 /** The page whose dock holds [module], or null for an editor module. */

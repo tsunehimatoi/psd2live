@@ -131,6 +131,7 @@ internal fun SettingsPanel(topic: SettingsTopic, state: PSD2LiveState, viewModel
 			)
 			SettingsTopic.FILES -> SettingsFilesSection(state, viewModel)
 			SettingsTopic.MCP -> SettingsMcpSection()
+            SettingsTopic.PLUGINS -> SettingsPluginsSection()
 		}
 	} }
 }

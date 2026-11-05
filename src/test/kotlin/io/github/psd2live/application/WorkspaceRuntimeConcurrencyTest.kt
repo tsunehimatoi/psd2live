@@ -16,6 +16,22 @@ import kotlin.test.*
 class WorkspaceRuntimeConcurrencyTest {
     @TempDir lateinit var directory: Path
 
+    @Test fun dependencyRefreshPreservesDocumentHistoryAndDirtyState() = runBlocking {
+        val document = SyntheticProject(directory, 1, 8, 1).tree.head().snapshot
+        val runtime = WorkspaceRuntime<String>({ "model" })
+        val initial = runtime.install(runtime.state.value.state, "project", document, "before")
+        val history = runtime.history()
+        val refreshed = runtime.refreshModel(initial.state, { "after" })
+        assertEquals("after", refreshed.model)
+        assertSame(document, refreshed.document)
+        assertEquals(initial.revision, refreshed.revision)
+        assertEquals(initial.dirty, refreshed.dirty)
+        assertEquals(history, runtime.history())
+        assertNotEquals(initial.state, refreshed.state)
+        assertFailsWith<WorkspaceConflict> { runtime.refreshModel(initial.state, { "stale" }) }
+        assertEquals("after", runtime.capture().model)
+    }
+
     @Test fun readsDuringProjectionObserveThePreviousCompletePublicationWithoutWaitingForTheCommitLock() = runBlocking {
         val document = SyntheticProject(directory, 1, 8, 1).tree.head().snapshot
         val runtime = WorkspaceRuntime<String>({ "model" })

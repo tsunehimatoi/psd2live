@@ -136,7 +136,7 @@ internal class WorkspaceRuntime<M>(
         discardUnsaved: Boolean = false,
         dirty: Boolean = false,
         beforeInstall: () -> Unit = {},
-    ): WorkspaceCapture<M> = synchronized(lock) {
+    ): WorkspaceCapture<M> = commitModel(model) {
         checkState(expectedState)
         require(projectId.isNotBlank()) { "Project ID must not be blank" }
         if (mutableState.value.capture?.dirty == true && !discardUnsaved) throw WorkspaceUnsavedChanges()
@@ -168,7 +168,7 @@ internal class WorkspaceRuntime<M>(
         // Each installation owns its mutable tree, even if a prepared candidate is used twice.
         val replacement = WorkspaceHistoryTree.restore(installation.history.selections, installation.history.headNodeId)
         val head = replacement.head()
-        return synchronized(lock) {
+        return commitModel(model) {
             checkState(expectedState)
             require(projectId.isNotBlank()) { "Project ID must not be blank" }
             if (mutableState.value.capture?.dirty == true && !discardUnsaved) throw WorkspaceUnsavedChanges()
@@ -279,9 +279,9 @@ internal class WorkspaceRuntime<M>(
         val auxiliary = auxiliary ?: adoptedAuxiliary(before.model, model, before.auxiliary)
         val revision = WorkspaceRevisions.of(document)
         val documentChanged = checkpoint || revision != before.revision
-        return synchronized(lock) {
+        return commitModel(model) {
             checkState(expectedState)
-            if (!documentChanged && auxiliary == before.auxiliary) return@synchronized WorkspaceCommit(before, false)
+            if (!documentChanged && auxiliary == before.auxiliary) return@commitModel WorkspaceCommit(before, false)
             // Projection validation is atomic and must fail before touching the authoritative history.
             beforeCommit(before, document, model)
             beforePublish?.invoke()
@@ -304,7 +304,7 @@ internal class WorkspaceRuntime<M>(
         if (nodeId == before.historyHead) return before
         val model = rebuild(selection.snapshot)
         currentCoroutineContext().ensureActive()
-        return synchronized(lock) {
+        return commitModel(model) {
             checkState(expectedState)
             beforeCommit(before, selection.snapshot, model)
             requireNotNull(tree).checkout(nodeId)
@@ -316,6 +316,20 @@ internal class WorkspaceRuntime<M>(
     }
 
     /** Snapshots and history annotations are durable auxiliary data, not rig journal commands. */
+    /** Re-evaluate process dependencies without rewriting the document, dirty bit or history. */
+    suspend fun refreshModel(expectedState: String, build: suspend (WorkspaceDocument) -> M,
+                             beforeCommit: (WorkspaceCapture<M>, M) -> Unit = { _, _ -> }): WorkspaceCapture<M> {
+        val before = synchronized(lock) { checkState(expectedState); capture() }
+        val model = build(before.document)
+        currentCoroutineContext().ensureActive()
+        return commitModel(model) {
+            checkState(expectedState)
+            beforeCommit(before, model)
+            version++
+            publish(before.copy(state = token(), model = model))
+        }
+    }
+
     fun updateAuxiliary(projectId: String, expectedState: String, auxiliary: JsonObject,
                         projectUnchanged: Boolean = false,
                         beforeCommit: (WorkspaceCapture<M>, JsonObject) -> Unit = { _, _ -> }): WorkspaceCapture<M> = synchronized(lock) {
@@ -374,6 +388,11 @@ internal class WorkspaceRuntime<M>(
         val renamed = if (parameters.map { it.id } == after.rig.puppet.parameters.map { it.id }) emptyMap()
             else WorkspaceConvertedIds.parameters(before.config.rigEdits.authoringJournal, after.config.rigEdits.authoringJournal)
         return PreviewSessions.migrate(parameters, after.rig.puppet.parameters, WorkspaceConvertedIds.auxiliary(auxiliary, renamed), renamed)
+    }
+
+    private fun <T> commitModel(model: M, action: () -> T): T = synchronized(lock) {
+        val evaluation = (model as? io.github.psd2live.core.RigPreviewModel)?.modifierEvaluation
+        if (evaluation == null) action() else io.github.psd2live.core.modifier.ModifierPluginStore.shared.withRevision(evaluation.plugins, action)
     }
 
     private fun token(): String = "$instanceId:$generation:$version"

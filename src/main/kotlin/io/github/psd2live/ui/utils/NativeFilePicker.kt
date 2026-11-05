@@ -71,6 +71,9 @@ object NativeFilePicker {
 	fun chooseJsonFile(window: Window? = null, title: String): String? =
         chooseSourceFile(window, null, listOf("json"), title, "JSON (*.json)")
 
+    fun choosePluginFile(window: Window? = null, title: String): String? =
+        chooseSourceFile(window, null, listOf("zip"), title, "ZIP (*.zip)")
+
 	fun chooseSaveJsonFile(window: Window? = null, title: String, defaultName: String? = null): String? =
         chooseSaveFile(window, title, defaultName, "json", "JSON (*.json)")
 

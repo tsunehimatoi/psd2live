@@ -39,6 +39,7 @@ internal object WorkspaceModifierEdits {
                 }
             }
             "modifier_update" -> stack.update(requireNotNull(id)) { instance ->
+                request["plugin"]?.let { require(Json.decodeFromJsonElement(ModifierPluginReference.serializer(), it) == instance.plugin) { "Modifier plugin identity does not match" } }
                 request["type"]?.let { require(it.jsonPrimitive.content == instance.type) { "Modifier type does not match" } }
                 val config = request.getValue("config").jsonObject
                 captureParameterProviders(instance.copy(config = JsonObject(
@@ -110,7 +111,8 @@ internal object WorkspaceModifierEdits {
         val version = request["version"]?.jsonPrimitive?.int ?: RigModifierAlgorithms.registry.definitions.filter { it.type == type }
             .maxOfOrNull { it.version } ?: error("Unknown modifier algorithm: $type")
         val candidate = stack.add(type, version, targets, request.getValue("config").jsonObject,
-            request["group"]?.jsonPrimitive?.content, request["id"]?.jsonPrimitive?.content)
+            request["group"]?.jsonPrimitive?.content, request["id"]?.jsonPrimitive?.content,
+            plugin = request["plugin"]?.let { Json.decodeFromJsonElement(ModifierPluginReference.serializer(), it) } ?: ModifierPluginCatalog.algorithm(type, version)?.first?.reference)
         val instance = candidate.instances.last()
         RigModifierAlgorithms.registry.definition(instance)
         val captured = if (model == null) candidate else candidate.update(instance.id) { captureParameterProviders(it, model) }

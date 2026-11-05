@@ -67,6 +67,7 @@ internal object WorkspaceModifierQueries {
                 add(buildJsonObject {
                     report.forEach { (key, value) -> put(key, value) }
                     instance.presetGroup?.let { put("group", it) }
+                    instance.plugin?.let { put("plugin", Json.encodeToJsonElement(ModifierPluginReference.serializer(), it)) }
                     put("config", if (instance.type == "simulation") JsonObject(instance.config - "bake") else instance.config)
                     if (instance.type == "simulation") RigSimEdit.fromJson(instance.config).bake?.let { put("bake", it.summary()) }
                 })

@@ -8,6 +8,8 @@ internal object ModifierAddCatalog {
         val registry = RigModifierAlgorithms.registry
         val definition = registry.definitions.filter { it.type == type }.maxByOrNull { it.version }
             ?: return ModifierAddAvailability(true, 0)
+        if (definition.pluginReference == null && !ModifierPluginStore.shared.builtinsEnabled() || definition.pluginReference != null && ModifierPluginCatalog.algorithm(type) == null)
+            return ModifierAddAvailability(true, 0)
         val selected = targets.toSet()
         val existing = stack.instances.filter { entry -> entry.targets.any(selected::contains) }
         val applied = stack.appliedCapabilities.filter { entry -> entry.targets.any(selected::contains) }
@@ -16,7 +18,7 @@ internal object ModifierAddCatalog {
         // A disabled instance remains editable and should be re-enabled instead of duplicated.
         val covered = (existing.filter { it.type == type }.flatMap { it.targets } +
             applied.filter { it.type == type }.flatMap { it.targets }).toSet()
-        if (source && targets.all(covered::contains)) return ModifierAddAvailability(true, count)
+        if ((source || definition.exclusiveFamily != null) && targets.all(covered::contains)) return ModifierAddAvailability(true, count)
         val activeEntries = existing.filter { it.enabled }.map { it.type to it.targets } + applied.map { it.type to it.targets }
         val active = activeEntries.map { it.first }
         fun conflicts(wanted: String, target: ModifierTarget, visited: MutableSet<String>): Boolean {
