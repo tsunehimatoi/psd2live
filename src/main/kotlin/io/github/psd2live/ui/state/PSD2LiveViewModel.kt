@@ -1789,11 +1789,7 @@ class PSD2LiveViewModel : AutoCloseable {
                     withContext(Dispatchers.Main) {
                         if (sequence == modifierPreviewSequence) modifierAddition = modifierAddition?.copy(plan = plan)
                     }
-                    val entries = plan.getValue("entries").jsonArray
-                    val preview = if (entries.isEmpty()) null else workspace.previewRegeneration(dialog.state,
-                        listOf(io.github.psd2live.application.WorkspaceDocumentOperation("modifier_add_group", kotlinx.serialization.json.buildJsonObject {
-                            put("group", plan.getValue("group")); put("entries", entries)
-                        })))
+                    val preview: kotlinx.serialization.json.JsonObject? = null
                     plan to preview
                 }
                 if (sequence == modifierPreviewSequence) modifierAddition = modifierAddition?.copy(plan = plan, preview = preview, loading = false)
@@ -1804,10 +1800,21 @@ class PSD2LiveViewModel : AutoCloseable {
         }
     }
 
+    internal fun switchModifierPreset(group: String) {
+        val dialog = modifierAddition ?: return
+        if (dialog.committing) return
+        modifierAddition = dialog.copy(loading = true, committing = true)
+        saveDocumentEdits(dialog.state, tr("modifier.switch"), listOf(io.github.psd2live.application.WorkspaceDocumentOperation(
+            "modifier_switch", kotlinx.serialization.json.buildJsonObject { put("group", group) }))) { failure ->
+            if (failure == null) dismissModifierAddition()
+            else modifierAddition = modifierAddition?.copy(loading = false, committing = false, error = failure)
+        }
+    }
+
     internal fun confirmModifierAddition() {
         val dialog = modifierAddition ?: return
         val plan = dialog.plan ?: return
-        if (dialog.loading || dialog.preview == null) return
+        if (dialog.loading || plan.getValue("entries").jsonArray.isEmpty()) return
         modifierAddition = dialog.copy(loading = true, committing = true)
         saveDocumentEdits(dialog.state, tr("modifier.history.add"), listOf(io.github.psd2live.application.WorkspaceDocumentOperation("modifier_add_group",
             kotlinx.serialization.json.buildJsonObject { put("group", plan.getValue("group")); put("entries", plan.getValue("entries")) }))) { failure ->

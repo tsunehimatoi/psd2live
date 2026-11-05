@@ -6,16 +6,17 @@ Projects with an explicit stack display the Presets panel; legacy projects retai
 
 The start page initially selects **Recommended modifiers**. The first revision includes the shared structure and body, face, eye, brow, mouth, and hair bindings. Choose **Empty modifier stack** to start with editable source meshes. Minimal, Default, Full, and custom choices generate their bindings, physics, simulations, and motions in an isolated import candidate. The complete output is compared before installing one initial revision. Entries remain independently editable; the group only records their source. Failure or cancellation installs no partial project.
 
-## Add content
+## Add and switch
 
-1. Select the meshes to affect. Selecting only a Warp allows swing insertion on that Warp. With no meshes or Warp selected, the flow captures all current meshes.
-2. Choose **Add Preset**, open its anchored popup menu, hover an area or generator category on the left, then select an item on the right and confirm the compact addition list. Old bases are collected under Legacy Algorithms. Choose **Add Preset Group** and select Legacy/Modern algorithms and Minimal/Standard/Full richness. Modern bases include fitted face, eyes, brows, mouth, and hair chains. Richness selects compatible add-ons, filtered for the artwork. Review the complete list before adding.
-3. Review captured targets, the full prerequisites, and expected contributions. The plan distinguishes additions, reused providers, and applied content. Expand parameters, meshes, deformers, relations, and hierarchy separately.
-4. Confirm. New entries are added in one history transaction and can then be adjusted independently. Later selection changes do not alter their scope.
+The recommended new-project preset uses the complete pre-stack modern defaults, including applicable modules, dynamics, motions and clothing simulation, then converts after an equivalence check.
 
-Richness changes which binding add-ons are included, not the precision of the base algorithm: Minimal includes core add-ons, Standard adds common modules, and Full includes all compatible modules, including applicable outlines and see-through layers. Binding modules include their associated physics; standalone simulations and generated motions remain separate additions.
+Choose meshes, then **Add Preset**. Algorithms are grouped by body area, with legacy and fitted choices together. Clothing and hair simulations appear in their respective areas and use the original automatic material and weight setup. Generic generators are under Advanced. Selection previews a dependency list; expensive evaluation runs on confirmation. Existing active instances of the same type and target scope are reused.
 
-A group records provenance without locking entries together. Adding never silently disables an exclusive base or reorders existing items; incompatible candidates are rejected.
+**Switch Preset** replaces the whole preset with **Legacy**, **Modern**, or **Empty**, preserving ordinary authored content. It commits once and can be undone. Tight clothing is skipped when it needs no simulation. Automatically generated weights belong to individually added simulation instances; existing authored groups with the same name take precedence.
+
+Switching currently rejects generated-content overrides or applied preset capabilities instead of discarding edits. Handle those contents before switching. Tiered MCP groups remain available for compatibility but are no longer the primary UI choice.
+
+Enable **Advanced: edit execution order** to drag entries using the parameter list interaction. Dependencies are added before new consumers; existing entries are not silently reordered.
 
 The shared structure modifier can enable the original feature displacement hierarchy. Later face bindings continue to use it after the structure is applied.
 
@@ -85,6 +86,6 @@ Expand a motion track to edit key times, values, interpolation, and incoming/out
 
 ## Non-PSD creation
 
-Blank Layout projects and imported Layout manifests start with an explicit empty stack and editable meshes. Generate adds Modern Standard presets to targets not already covered by a binding structure. MCP `rig_generate.preset_group` selects any of the six groups or `none` for plain meshes. Source-art creation uses the recommended group. Legacy documents retain their existing generation path.
+Blank Layout projects and imported Layout manifests start with an explicit empty stack and editable meshes. The first generation from an empty stack uses the complete Modern baseline. Later generation adds the selected compatibility group to new targets without replacing existing bindings. MCP `rig_generate.preset_group` selects any of the six groups or `none` for plain meshes. Source-art creation uses the recommended group. Legacy documents retain their existing generation path.
 
 New CMO3 imports use an empty preset stack, retaining the imported model and physics as ordinary authored content.

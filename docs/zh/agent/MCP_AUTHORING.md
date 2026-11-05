@@ -716,3 +716,9 @@ View 从模型数据渲染 PNG，不依赖桌面截图。`canvas_rect` 给出画
 ### 眼部结构纠正
 
 `module_catalog` 的 `eye_structure` 返回眼部组件及 `sourceStamp`。通过 `settings` 的 `changes.rig.eyeParts`，按图层 ID 和组件 ID 设置 `side`（left/right）、`region`（upper/lower）、`primitive`（line/tuft/side/skin/auto）、`contacts` 或 `path`。首次设置组件时需要 `sourceStamp`；坐标为以眼宽归一、向脸下方为正的眼局部坐标。组件或图层为 null 时重置；不匹配原画摘要的覆盖保留但不生效。该编辑进入正常设置历史并随工程保存。
+
+### 完整预设切换与衣物模拟
+
+`modifier_catalog.baselines` 返回 `legacy`、`modern`、`empty`。`modifier_switch` 接收 `state` 和 `group`，整体替换当前预设并保留普通作者内容；走隔离候选、CAS 和单历史节点。旧／新基线使用原完整生成流程，转换前后比较完整结果。生成内容覆盖或已固化能力不能安全迁移时拒绝切换。
+
+`modifier_plan` 的 `type: "simulation"` 可配合 `preset: "clothing" | "front_hair" | "back_hair"`，调用原识别和自动权重流程。返回的模拟配置含 `automatic_weights`，权重随实例求值，作者已有同名权重优先。确认添加时后台烘焙并产生绑定及物理；计划本身不烘焙。旧 `groups` 和 `modifier_add_group` 保留追加语义以兼容已有客户端。

@@ -79,6 +79,7 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
     val colors = LocalToolColors.current
     var selectedId by remember { mutableStateOf<String?>(null) }
     var page by remember { mutableIntStateOf(0) }
+    var editOrder by rememberSaveable { mutableStateOf(false) }
     val selected = stack.instances.firstOrNull { it.id == selectedId } ?: stack.instances.firstOrNull()
     val bounds = remember { mutableStateMapOf<String, ParamItemLayout>() }
     val drag = remember { ParameterDragState() }
@@ -91,7 +92,7 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
     var listRatio by rememberSaveable { mutableFloatStateOf(0.38f) }
     val density = LocalDensity.current
     Column(Modifier.fillMaxSize()) {
-        val labels = listOf(tr("modifier.add"), tr("modifier.addGroup"))
+        val labels = listOf(tr("modifier.add"), tr("modifier.switch"))
         PanelToolbar(labels = labels, iconCount = 2) { labelsShown ->
             Box {
                 PanelToolButton(labels[0], labelsShown > 0, { vm.openModifierAddition() }, enabled, labels[0]) { IconAdd() }
@@ -101,6 +102,11 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                 PanelToolButton(labels[1], labelsShown > 1, { vm.openModifierAddition(group = true) }, enabled, labels[1]) { IconFolder() }
                 if (vm.modifierAddition?.group != null) ModifierAdditionMenu(state, vm)
             }
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = Spacing.Margin), verticalAlignment = Alignment.CenterVertically) {
+            CompactCheckbox(editOrder, { editOrder = it; drag.clear() }, enabled = enabled)
+            Spacer(Modifier.width(Spacing.Gap))
+            Text(tr("modifier.executionOrder"), style = LocalToolTypography.current.caption, color = colors.textMuted)
         }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val extent = with(density) { maxWidth.toPx() }.coerceAtLeast(1f)
@@ -137,7 +143,7 @@ internal fun ModifierStackPanel(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                                     val hovered by interaction.collectIsHoveredAsState()
                                     DisposableEffect(instance.id) { onDispose { bounds.remove(instance.id) } }
                                     Row(Modifier.fillMaxWidth().height(24.dp)
-                                        .parameterDragRow(layout, drag, bounds.values, preview)
+                                        .then(if (editOrder) Modifier.parameterDragRow(layout, drag, bounds.values, preview) else Modifier)
                                         .onGloballyPositioned { row ->
                                             val parent = container
                                             if (parent != null && parent.isAttached && row.isAttached) {
@@ -456,22 +462,36 @@ internal fun ModifierContributions(report: JsonObject, state: PSD2LiveState, vm:
 private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
     val dialog = vm.modifierAddition ?: return
     val groups = dialog.group != null
+    if (groups) {
+        PressMenu(expanded = true, press = Offset.Zero, onDismissRequest = { if (!dialog.committing) vm.dismissModifierAddition() }, width = 260.dp) {
+            FloatingMenuSection(tr("modifier.switch.description"))
+            val baselines = io.github.psd2live.application.WorkspacePresetBaseline.ids
+            GlidingColumn(Modifier.fillMaxWidth(), baselines.size, highlights = { !dialog.committing }) { index ->
+                val id = baselines[index]
+                FloatingMenuRow(tr("modifier.baseline.$id"), { vm.switchModifierPreset(id) }, enabled = !dialog.committing, bar = false)
+            }
+            if (dialog.committing) FloatingMenuSection(tr("modifier.adding"))
+            dialog.error?.let { FloatingMenuRow(tr("modifier.switch"), {}, enabled = false, hint = it) }
+        }
+        return
+    }
     val available = if (groups) WorkspaceModifierPlan.groupCatalog.map { it.id }
-        else if (dialog.targets.all { it.kind == "mesh" }) WorkspaceModifierPlan.types else listOf("swing")
+        else if (dialog.targets.all { it.kind == "mesh" }) WorkspaceModifierPlan.types.filterNot { it == RigSourceModifiers.SCAFFOLD } else listOf("swing")
     fun category(type: String): String = when {
         groups -> type.substringBefore('-')
-        type.endsWith("/legacy") && type != "body/legacy" -> "legacy"
         type == RigSourceModifiers.SCAFFOLD -> "structure"
-        type in WorkspaceModifierPlan.nativeTypes -> type
+        type == "physics" || type == "simulation" || type == "swing" -> "advanced"
+        type == "motion" -> "expression"
         else -> RigLegacyBindings.spec(type).area
     }
     fun categoryName(id: String): String = when {
         id == "legacy" || groups -> tr("modifier.algorithm.$id")
         id == "structure" -> tr("modifier.scaffold")
+        id == "advanced" -> tr("modifier.advanced")
         id in WorkspaceModifierPlan.nativeTypes -> tr("modifier.type.$id")
         else -> tr("settings.rig.area.$id")
     }
-    val categories = available.map(::category).distinct().sortedBy { it == "legacy" }
+    val categories = (available.map(::category) + "outfit").distinct().sortedBy { it == "advanced" }
     var selectedCategory by remember { mutableStateOf(category(dialog.group ?: dialog.type ?: available.first())) }
     PressMenu(expanded = true, press = Offset.Zero,
         onDismissRequest = { if (!dialog.committing) vm.dismissModifierAddition() }, width = 440.dp) {
@@ -485,12 +505,20 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
             }
             key(selectedCategory) {
                 val rows = mutableListOf<Triple<String, () -> Unit, Boolean>>()
-                if (!groups && selectedCategory == "physics") {
-                    WorkspaceModifierPlan.physicsPresets().forEach { preset ->
+                if (selectedCategory == "outfit") rows += Triple(tr("modifier.clothing.simulation"),
+                    { vm.previewModifierAddition("simulation", null, preset = "clothing") }, false)
+                if (selectedCategory == "hair") for (preset in listOf("front_hair", "back_hair")) {
+                    rows += Triple(tr("modifier.simulation.$preset"),
+                        { vm.previewModifierAddition("simulation", null, preset = preset) }, false)
+                }
+                if (!groups && selectedCategory in setOf("hair", "eye")) {
+                    WorkspaceModifierPlan.physicsPresets().filter { preset ->
+                        (preset.id == io.github.psd2live.core.PhysicsGenerator.EYE_JELLY_ID) == (selectedCategory == "eye")
+                    }.forEach { preset ->
                         rows += Triple(preset.name, { vm.previewModifierAddition("physics", null, preset = preset.id) }, false)
                     }
                 }
-                if (!groups && selectedCategory == "motion") {
+                if (!groups && selectedCategory == "expression") {
                     val presets = remember(state.previewModel) { state.previewModel?.let(WorkspaceModifierPlan::selectableMotionPresets).orEmpty() }
                     presets.forEach { preset ->
                         val name = preset.removePrefix(WorkspaceModifierPlan.NATURAL_MOTION_PREFIX)
@@ -522,7 +550,7 @@ private fun ModifierAdditionMenu(state: PSD2LiveState, vm: PSD2LiveViewModel) {
                 }
             }
             FloatingMenuRow(tr("modifier.add"), vm::confirmModifierAddition,
-                enabled = !dialog.loading && dialog.error == null && dialog.preview != null)
+                enabled = !dialog.loading && dialog.error == null && dialog.plan?.get("entries")?.jsonArray?.isNotEmpty() == true)
         }
     }
 }

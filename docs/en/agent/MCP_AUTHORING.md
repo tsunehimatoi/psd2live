@@ -720,3 +720,9 @@ This page documents the interface and is not grounds for raising the ratings in 
 ### Eye structure corrections
 
 `module_catalog.eye_structure` reports eye components and their `sourceStamp`. Use `settings` with `changes.rig.eyeParts`, keyed by layer ID then component ID, to correct `side` (left/right), `region` (upper/lower), `primitive` (line/tuft/side/skin/auto), `contacts` or `path`. The first patch for a component requires its `sourceStamp`. Coordinates are eye-local, normalized by eye width, with the second axis pointing down the face. Null resets a component or layer. Corrections with a mismatched source stamp remain stored but are not applied. These edits use normal settings history and project persistence.
+
+### Whole-preset switching and clothing simulation
+
+`modifier_catalog.baselines` lists `legacy`, `modern`, and `empty`. `modifier_switch` accepts `state` and `group`, replacing all preset instances while retaining ordinary authored content in one isolated candidate/CAS/history transaction. Baselines use the complete original pipeline and equivalence-checked conversion. Generated overrides or applied capabilities that cannot safely migrate block switching.
+
+For `modifier_plan`, `type: "simulation"` accepts `preset: "clothing" | "front_hair" | "back_hair"`. It uses the original recognition and weight setup. Returned configurations contain `automatic_weights`, evaluated with their simulation; existing authored groups take precedence. Confirmation bakes bindings and physics in the background; planning does not bake. Existing tiered `groups` and `modifier_add_group` retain additive semantics for compatibility.

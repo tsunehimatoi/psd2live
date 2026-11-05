@@ -142,13 +142,16 @@ class ModifierStackTool {
                                 workspace.applyDocumentEdits(workspace.snapshot().state, "Restore order", listOf(WorkspaceDocumentOperation("modifier_move", buildJsonObject { put("id", "sway"); put("index", 2) })), MutationAuthor.USER)
                                 frames()
                                 vm.openModifierAddition()
+                                vm.previewModifierAddition(vm.modifierAddition!!.type, null)
                                 val captured = vm.modifierAddition!!.targets
                                 vm.selectDeformer(root)
                                 withTimeout(10_000) { snapshotFlow { vm.modifierAddition }.first { it != null && !it.loading } }
                                 assertEquals(captured, vm.modifierAddition!!.targets)
                                 val addition = vm.modifierAddition!!
                                 assertEquals(null, addition.error)
-                                val candidateRevision = addition.preview!!.getValue("candidate_revision").jsonPrimitive.content
+                                val candidateRevision = workspace.previewRegeneration(addition.state, listOf(WorkspaceDocumentOperation("modifier_add_group", buildJsonObject {
+                                    put("group", addition.plan!!.getValue("group")); put("entries", addition.plan!!.getValue("entries"))
+                                }))).getValue("candidate_revision").jsonPrimitive.content
                                 frames(); save("addition")
                                 val plannedIds = addition.plan!!.getValue("entries").jsonArray.map { it.jsonObject.getValue("id").jsonPrimitive.content }
                                 vm.confirmModifierAddition()
@@ -207,7 +210,9 @@ class ModifierStackTool {
                                     val dialog = vm.modifierAddition!!
                                     assertEquals(null, dialog.error, type)
                                     assertEquals(listOf(target), dialog.targets)
-                                    val candidate = dialog.preview!!.getValue("candidate_revision").jsonPrimitive.content
+                                    val candidate = workspace.previewRegeneration(dialog.state, listOf(WorkspaceDocumentOperation("modifier_add_group", buildJsonObject {
+                                    put("group", dialog.plan!!.getValue("group")); put("entries", dialog.plan!!.getValue("entries"))
+                                }))).getValue("candidate_revision").jsonPrimitive.content
                                     val entry = dialog.plan!!.getValue("entries").jsonArray.single().jsonObject
                                     frames(); save("native-$type")
                                     vm.confirmModifierAddition()
