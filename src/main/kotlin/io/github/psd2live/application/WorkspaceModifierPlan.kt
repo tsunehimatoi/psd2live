@@ -12,7 +12,7 @@ internal object WorkspaceModifierPlan {
     val motionPresetIds = MotionClips.BUILTIN_NAMES + MotionClips.BASIC_NAMES.map { NATURAL_MOTION_PREFIX + it }
     val nativeTypes = listOf("swing", "physics", "motion", "simulation")
     val types get() = sourceTypes + nativeTypes
-    val groups = mapOf("fitted" to listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/legacy"))
+    val groups = mapOf("fitted" to listOf("body/legacy", "face/legacy", "eye/fitted", "brow/fitted", "mouth/fitted", "hair/legacy", "face.depth-turn"))
 
     fun prepare(capture: WorkspaceCapture<RigPreviewModel>, request: JsonObject): JsonObject {
         val stack = RigModifierStack.fromJson(requireNotNull(capture.document.rigEdits.modifierStack) { "Convert legacy presets before adding modifiers" })
@@ -142,7 +142,9 @@ internal object WorkspaceModifierPlan {
             planned[instance.id] = describe(cap, "added")
             return cap
         }
-        requested.forEach { ensure(it, reuse = group != null) }
+        val subject = io.github.psd2live.core.recipe.RecipeSubject.of(model.analysis)
+        requested.filter { group == null || RigLegacyBindings.find(it)?.module?.applies?.invoke(subject) != false }
+            .forEach { ensure(it, reuse = group != null) }
         RigModifierAlgorithms.evaluator().validateOrder(candidate)
         return candidate to buildJsonObject {
             put("entries", JsonArray(entries)); put("plan", JsonArray(planned.values.toList()))

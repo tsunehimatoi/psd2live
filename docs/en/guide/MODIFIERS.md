@@ -21,11 +21,11 @@ New structures use version 2 and share parents within the captured target group,
 
 ## Adjust and locate
 
-For everyday use, add a preset, toggle it, and watch the canvas. Only one entry expands at a time, showing a few common controls such as strength, swing magnitude, softness, simulation material, motion duration, and looping.
+Expand a preset to adjust its complete controls directly, including turn style and detailed values. There is no three-control limit or separate adjustment page. Binding controls are grouped by area; physics edits the selected input, output, or segment, and motion edits the selected track and key.
 
-**More settings** opens a separate detail view. **Inspect** opens the target page for locating affected objects. **Generated content** retains provider connections, contribution reports, and **Apply Through Here**. These technical details no longer fill the main panel.
+**Inspect** only contains affected objects and generated content, including object location, provider connections, and **Apply Through Here**. The addition dialog still offers optional detailed configuration.
 
-Detailed binding controls are selected by area. Physics edits one selected input, output, or segment at a time. Motion edits one selected track and key instead of displaying every key form. The addition dialog starts with effect selection; complex settings and generated content are available on demand. This redesign has not yet received a new visual acceptance pass.
+The face base retains the `face/legacy` identity. Landmark-fitted turning is supplied by `face.depth-turn`, with the existing algorithm fallback when the artwork does not support fitting. The fitted group now includes this module for artwork with a face. Saved stacks are not changed automatically; add Depth Turn or the fitted group again to supply it. This group is still not every optional preset: model parameters are generated only by the active presets actually present.
 
 Drag the modifier name to change actual evaluation order. The drag image and displaced sibling rows share the parameter panel implementation. Invalid dependency order is rejected, leaving the original stack intact. A continuous slider or number edit commits one history node when it ends.
 
