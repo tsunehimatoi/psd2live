@@ -90,6 +90,7 @@ internal class WorkspaceSourceImporter(
                                 modifiers: WorkspaceInitialModifiers? = null, preset: WorkspaceInitialPreset? = null): WorkspaceCommit<RigPreviewModel> {
         require(preset == null || modifiers == WorkspaceInitialModifiers.CUSTOM) { "Custom choices require the custom modifier mode" }
         val choices = when (modifiers) {
+            WorkspaceInitialModifiers.RECOMMENDED -> WorkspaceInitialPreset()
             WorkspaceInitialModifiers.CUSTOM -> requireNotNull(preset) { "Custom modifier choices are required" }
             WorkspaceInitialModifiers.MINIMAL, WorkspaceInitialModifiers.DEFAULT, WorkspaceInitialModifiers.FULL -> WorkspaceInitialPreset.forMode(modifiers)
             else -> null
@@ -107,7 +108,9 @@ internal class WorkspaceSourceImporter(
         val input = prepare()
         val source = input.source; val overrides = input.overrides
         progress(0.4f, "Preparing new source document")
-        val config = (choices?.configure(initialConfig) ?: initialConfig).copy(layerVisibility = emptyMap(), deletedLayerIds = emptySet(),
+        val baseline = if (modifiers == WorkspaceInitialModifiers.RECOMMENDED)
+            WorkspacePresetBaseline.configure(initialConfig, "modern") else initialConfig
+        val config = (choices?.configure(baseline) ?: baseline).copy(layerVisibility = emptyMap(), deletedLayerIds = emptySet(),
             layerOverrides = overrides, parentOverrides = emptyMap(), drawOrderOverrides = emptyMap(), meshOverrides = emptyMap(),
             rigEdits = RigEditOverlay.Empty, generationSource = null, meshSource = null,
             hairSimulationFront = choices?.frontHair == WorkspaceInitialHair.SIMULATION,
@@ -131,11 +134,6 @@ internal class WorkspaceSourceImporter(
         }
         progress(0.6f, "Rebuilding new source project")
         var built = RigBuildProfile.stage("source import: preview build (wall time)") { build(document) }
-        if (modifiers == WorkspaceInitialModifiers.RECOMMENDED) {
-            val stack = WorkspaceModifierPlan.initial(built, WorkspaceModifierPlan.RECOMMENDED_GROUP)
-            document = document.copy(rigEdits = document.rigEdits.copy(modifierStack = stack.toJson()))
-            built = build(document)
-        }
         if (choices != null) {
             val present = PhysicsGenerator.Presets.present(built.analysis)
             val selected = buildList {
