@@ -1770,17 +1770,10 @@ class PSD2LiveViewModel : AutoCloseable {
         if (ids.isEmpty()) return
         modifierAddition = ModifierAddition(expected, if (warp != null) listOf(io.github.psd2live.core.modifier.ModifierTarget("deformer", warp))
             else ids.map { io.github.psd2live.core.modifier.ModifierTarget("mesh", it) })
-        val existing = model.config.rigEdits.modifierStack?.let(io.github.psd2live.core.modifier.RigModifierStack::fromJson)
-        val active = model.rig.modifierReport?.get("entries")?.jsonArray.orEmpty().filter { it.jsonObject.getValue("status").jsonPrimitive.content == "active" }
-            .mapTo(HashSet()) { it.jsonObject.getValue("id").jsonPrimitive.content }
-        val types = existing?.instances.orEmpty().filter { it.id in active && it.targets.any { target -> target.id in ids } }.mapTo(HashSet()) { it.type }
-        val first = io.github.psd2live.core.modifier.RigLegacyBindings.specs.sortedBy { it.type.endsWith("/legacy") && it.type != "body/legacy" }.firstOrNull { spec ->
-            spec.type != "face.depth-turn" && spec.type !in types && (if (spec.isBase) types.none { it.substringBefore('/') == spec.area } else
-                (listOfNotNull(spec.module?.base) + spec.related).all { required ->
-                    val area = required.substringBefore('/')
-                    types.none { '/' in it && it.substringBefore('/') == area && !io.github.psd2live.core.modifier.RigModifierAlgorithms.registry.provides(it, required) }
-                })
-        }?.type ?: "body/legacy"
+        val dialog = requireNotNull(modifierAddition)
+        val first = io.github.psd2live.core.modifier.RigLegacyBindings.specs
+            .sortedBy { it.type.endsWith("/legacy") && it.type != "body/legacy" }
+            .firstOrNull { it.type != "face.depth-turn" && !dialog.availability(model, it.type).hidden }?.type
         modifierAddition = modifierAddition?.copy(type = if (group) null else if (warp != null) "swing" else first,
             group = if (group) io.github.psd2live.application.WorkspaceModifierPlan.RECOMMENDED_GROUP else null)
     }

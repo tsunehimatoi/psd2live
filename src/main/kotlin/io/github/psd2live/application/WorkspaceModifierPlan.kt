@@ -56,17 +56,21 @@ internal object WorkspaceModifierPlan {
 
     internal fun plan(model: RigPreviewModel, stack: RigModifierStack, request: JsonObject,
                       requestedTypes: List<String>? = null): Pair<RigModifierStack, JsonObject> {
-        val targets = request.getValue("targets").jsonArray.map { raw -> raw.jsonObject.let {
+        val requestedTargets = request.getValue("targets").jsonArray.map { raw -> raw.jsonObject.let {
             ModifierTarget(it.getValue("kind").jsonPrimitive.content, it.getValue("id").jsonPrimitive.content)
         } }
-        require(targets.isNotEmpty() && targets.distinct().size == targets.size) { "Insertion needs distinct captured targets" }
+        require(requestedTargets.isNotEmpty() && requestedTargets.distinct().size == requestedTargets.size) { "Insertion needs distinct captured targets" }
+        val type = request["type"]?.jsonPrimitive?.content
+        val covered = if (type in sourceTypes) (stack.instances.filter { it.type == type }.flatMap { it.targets } +
+            stack.appliedCapabilities.filter { it.type == type }.flatMap { it.targets }).toSet() else emptySet()
+        val targets = requestedTargets.filterNot(covered::contains)
+        require(targets.isNotEmpty()) { "This modifier already exists on every captured target; edit or enable the existing instance" }
         val puppet = model.rig.puppet
         require(targets.all { target -> when (target.kind) {
             "mesh" -> puppet.drawables.any { it.id.raw == target.id && it.mesh != null }
             "deformer" -> puppet.deformers.any { it.id.raw == target.id && it is org.umamo.runtime.model.Deformer.Warp }
             else -> false
         } }) { "An insertion target no longer exists" }
-        val type = request["type"]?.jsonPrimitive?.content
         val group = request["group"]?.jsonPrimitive?.content
         if (type == "simulation" && request["preset"] != null)
             return simulationPreset(model, stack, targets, request.getValue("preset").jsonPrimitive.content)
@@ -175,7 +179,7 @@ internal object WorkspaceModifierPlan {
         }
         val subject = io.github.psd2live.core.recipe.RecipeSubject.of(model.analysis)
         requested.filter { group == null || RigLegacyBindings.find(it)?.module?.applies?.invoke(subject) != false }
-            .forEach { ensure(it, reuse = true, equivalent = false) }
+            .forEach { ensure(it, reuse = it !in nativeTypes, equivalent = false) }
         RigModifierAlgorithms.evaluator().validateOrder(candidate)
         return candidate to buildJsonObject {
             put("entries", JsonArray(entries)); put("plan", JsonArray(planned.values.toList()))

@@ -83,6 +83,35 @@ class WorkspaceModifierCommandsTest {
         assertTrue(SwingCatalog.entries(f.now.document.rigEdits).isEmpty())
     }
 
+    @Test fun nativeAdditionPlanCreatesAnotherInstanceInsteadOfReusingTheFirst(): Unit = runBlocking<Unit> {
+        val f = fixture()
+        val swing = RigSwingEdit.single("template", "Swing", SwingKind.LATERAL, listOf(f.target.id), listOf("P"))
+        f.edit("modifier_add", add(f, "swing", swing.toJson(), "existing_swing"))
+        val plan = WorkspaceModifierPlan.prepare(f.now, buildJsonObject {
+            put("type", "swing")
+            putJsonArray("targets") { addJsonObject { put("kind", f.target.kind); put("id", f.target.id) } }
+        })
+        val entries = plan.getValue("entries").jsonArray
+        assertEquals(1, entries.size)
+        assertNotEquals("existing_swing", entries.single().jsonObject.getValue("id").jsonPrimitive.content)
+        f.edit("modifier_add_group", buildJsonObject { put("group", plan.getValue("group")); put("entries", entries) })
+        assertEquals(2, stack(f).instances.count { it.type == "swing" })
+    }
+
+    @Test fun partiallyCoveredSourceAdditionOnlyPlansTheUncoveredTargets(): Unit = runBlocking<Unit> {
+        val f = fixture(layerCount = 2)
+        val targets = f.now.model.rig.puppet.drawables.map { ModifierTarget("mesh", it.id.raw) }
+        fun request(selection: List<ModifierTarget>) = buildJsonObject {
+            put("type", "body/legacy")
+            putJsonArray("targets") { selection.forEach { target -> addJsonObject { put("kind", target.kind); put("id", target.id) } } }
+        }
+        val (first, _) = WorkspaceModifierPlan.plan(f.now.model, stack(f), request(targets.take(1)))
+        val (_, plan) = WorkspaceModifierPlan.plan(f.now.model, first, request(targets))
+        val added = plan.getValue("entries").jsonArray.map { it.jsonObject }
+        assertTrue(added.isNotEmpty())
+        assertTrue(added.all { entry -> entry.getValue("targets").jsonArray.map { it.jsonObject.getValue("id").jsonPrimitive.content } == targets.drop(1).map { it.id } })
+    }
+
     private suspend fun fixture(withWarp: Boolean = false, layerCount: Int = 1,
                                 additionalParameters: List<RigParameterEdit> = emptyList(), physicsOrder: List<String> = emptyList()): Fixture {
         val source = SyntheticProject(temp.resolve("source"), layerCount, 12, 1).tree.head().snapshot
