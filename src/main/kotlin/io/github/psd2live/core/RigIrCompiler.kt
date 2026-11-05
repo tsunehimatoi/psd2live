@@ -199,7 +199,7 @@ internal object RigIrCompiler {
 			}
 		}
 		// The user's own motions: a loop joins the idles, a one-shot is its own group under its name.
-		val stems = MotionClips.exportStems(clips)
+		val stems = MotionClips.exportStems(clips, result.mapTo(HashSet()) { it.file })
 		for (clip in clips.filter { it.builtin == null && it.enabled })
 			add(authored(clip.exportGroup ?: if (clip.loop) "Idle" else clip.name, stems.getValue(clip.id), clip))
 		return result

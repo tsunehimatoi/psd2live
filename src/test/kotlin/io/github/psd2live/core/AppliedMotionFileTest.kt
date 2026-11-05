@@ -12,7 +12,7 @@ class AppliedMotionFileTest {
     @Test fun oldRevisionIdentityPreservesFieldLikeTextInClipNamesAndEvents() {
         val clip = MotionClip("old", "Name, fileStem=null)", events = listOf(MotionEvent(0f, "Value, fileStem=null)")))
         val overlay = RigEditOverlay.Empty.copy(motionClips = listOf(clip))
-        val oldClip = clip.toString().removeSuffix(", fileStem=null)") + ")"
+        val oldClip = (clip.toString().removeSuffix(", capturedRanges={})") + ")").removeSuffix(", fileStem=null)") + ")"
         val oldOverlay = overlay.toString().replace("[${clip}]", "[$oldClip]")
             .replace(", hitAreas=[]", "").replace(", interiorEffects=[]", "")
             .replace(", pose=null", "").replace(", modifierStack=null", "").replace(", expressions=null", "")
@@ -33,11 +33,40 @@ class AppliedMotionFileTest {
         assertFailsWith<IllegalArgumentException> { MotionClips.exportStems(listOf(clip, clip.copy(id = "other"))) }
     }
 
+    @Test fun appliedLegacyNamesRemainPlayableAndOnlyConflictWithExistingGeneratedFiles() {
+        val clip = MotionClip("Blink", "Renamed", fileStem = "blink", curves = listOf(MotionCurve("ParamEyeLOpen", listOf(MotionKey(0f, 1f)))))
+        assertEquals("blink", MotionClips.exportStems(listOf(clip)).getValue(clip.id))
+        assertEquals(clip, OneShotMotionPlayer.clipOf("blink", null, listOf(clip)))
+        assertFailsWith<IllegalArgumentException> { MotionClips.exportStems(listOf(clip), setOf("BLINK")) }
+        val unnamed = MotionClip("custom", "Blink")
+        assertEquals("blink2", MotionClips.exportStems(listOf(clip, unnamed)).getValue(unnamed.id))
+    }
+
+    @Test fun capturedRangesPreserveControlsUntilTheParameterActuallyChanges() {
+        val parameter = org.umamo.runtime.model.Parameter(org.umamo.runtime.model.ParameterId("ParamBreath"), "Breath", 0f, 1f, 0f)
+        val curve = MotionCurve("ParamBreath", listOf(MotionKey(0f, 0f, outHandle = MotionHandle(y = -0.000000167f)), MotionKey(1f, 1f)))
+        val original = MotionClip("motion", "Motion", curves = listOf(curve),
+            capturedRanges = mapOf("ParamBreath" to MotionParameterRange(0f, 1f)))
+        val restored = MotionClips.fromJson(MotionClips.toJson(original))
+        assertEquals(original, restored)
+        assertEquals(curve, MotionClips.reconcileParameters(listOf(restored), listOf(parameter)).single().curves.single())
+        assertEquals(curve, MotionClips.withParameterRange(listOf(restored), "ParamBreath", 0f, 1f).single().curves.single())
+        val changed = MotionClips.reconcileParameters(listOf(restored), listOf(parameter.copy(max = .5f))).single()
+        assertEquals(.5f, changed.curves.single().keys.last().value)
+        assertEquals(0f, changed.curves.single().keys.first().outHandle.y)
+        assertEquals(changed, MotionClips.reconcileParameters(listOf(changed), listOf(parameter.copy(max = .5f))).single())
+        val renamed = ModelSidecars.withIdRenamed(RigEditOverlay.Empty.copy(motionClips = listOf(original)),
+            "parameter", "ParamBreath", "Breathing").motionClips.single()
+        assertEquals(setOf("Breathing"), renamed.capturedRanges.keys)
+        assertTrue(MotionClips.withoutParameter(listOf(renamed), "Breathing").single().capturedRanges.isEmpty())
+        assertTrue(MotionClips.reconcileParameters(listOf(restored), emptyList()).single().capturedRanges.isEmpty())
+    }
+
     @Test fun newFileMetadataUsesANewerClipsSchemaAndPersistsInTheWorkingStore() {
         val project = SyntheticProject(temp, 1, 8, 1)
         val before = project.tree.head().snapshot
         val ordinary = MotionClip("motion", "Original")
-        val clip = ordinary.copy(fileStem = "modifier_6d31")
+        val clip = ordinary.copy(fileStem = "modifier_6d31", capturedRanges = mapOf("ParamBreath" to MotionParameterRange(0f, 1f)))
         val document = before.copy(rigEdits = before.rigEdits.copy(motionClips = listOf(clip)))
         val revision = WorkspaceRevisions.of(document)
         assertNotEquals(WorkspaceRevisions.of(document.copy(rigEdits = document.rigEdits.copy(motionClips = listOf(ordinary)))), revision)
@@ -47,7 +76,7 @@ class AppliedMotionFileTest {
         assertEquals(clip, restored.rigEdits.motionClips.single())
         assertEquals(revision, WorkspaceRevisions.of(restored))
         val clips = buildJsonObject { put("motions", JsonArray(listOf(MotionClips.toJson(clip)))) }
-        assertEquals(ProjectFormatV2.NODE_SCHEMA_MOTION_FILES, ProjectFormatV2.clipsSchema(clips))
+        assertEquals(ProjectFormatV2.NODE_SCHEMA_MOTION_RANGES, ProjectFormatV2.clipsSchema(clips))
         val index = ProjectFormatV2.split(temp.resolve("split"), buildJsonObject { put("rigEdits", clips) })
         val joined = ProjectFormatV2.join(temp.resolve("split"), index).getValue("rigEdits").jsonObject
         assertEquals(clips.getValue("motions"), joined.getValue("motions"))

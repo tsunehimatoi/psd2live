@@ -50,7 +50,8 @@ internal object WorkspaceRevisions {
 			val token = "[$marker]"
 			val at = template.indexOf(token)
 			val clips = rig.motionClips.joinToString(prefix = "[", postfix = "]") { clip ->
-				if (clip.fileStem == null) clip.toString().removeSuffix(", fileStem=null)") + ")" else clip.toString()
+				val clipText = if (clip.capturedRanges.isEmpty()) clip.toString().removeSuffix(", capturedRanges={})") + ")" else clip.toString()
+                if (clip.fileStem == null) clipText.removeSuffix(", fileStem=null)") + ")" else clipText
 			}
 			text = template.replaceRange(at, at + token.length, clips)
 		}

@@ -128,7 +128,8 @@ internal object WorkspaceModifierEdits {
                 clip.events.map { io.github.psd2live.format.model.ClipEvent(it.time, it.value) } == generated.events) {
                 "Applying motion ${generated.id} would change its curves or events"
             }
-            clip
+            clip.copy(capturedRanges = applied.authored.parameters.filter { parameter -> clip.curves.any { it.parameterId == parameter.id } }
+                .associate { it.id to MotionParameterRange(it.min, it.max, it.repeat) })
         }
         val authored = model.authored.copy(rig = model.authored.rig.withModifierMeshes(
             PuppetIr.toPuppet(applied.authored), applied.authored.textures.tileArt).copy(

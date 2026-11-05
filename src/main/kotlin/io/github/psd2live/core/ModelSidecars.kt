@@ -331,9 +331,10 @@ object ModelSidecars {
 		return when (kind) {
 			"parameter" -> overlay.copy(
 				motionClips = overlay.motionClips.map { clip ->
-					if (clip.curves.none { it.parameterId == from } && clip.parameterRoles.values.none { from in it }) clip
+					if (clip.curves.none { it.parameterId == from } && clip.parameterRoles.values.none { from in it } && from !in clip.capturedRanges) clip
 					else clip.copy(curves = clip.curves.filterNot { it.parameterId == to }.map { if (it.parameterId == from) it.copy(parameterId = to) else it },
-                        parameterRoles = clip.parameterRoles.mapValues { (_, ids) -> ids.map { if (it == from) to else it }.distinct() })
+                        parameterRoles = clip.parameterRoles.mapValues { (_, ids) -> ids.map { if (it == from) to else it }.distinct() },
+                        capturedRanges = if (from in clip.capturedRanges) (clip.capturedRanges - from - to) + (to to clip.capturedRanges.getValue(from)) else clip.capturedRanges)
 				},
 				expressions = overlay.expressions?.map { expression ->
 					if (expression.entries.none { it.parameterId == from }) expression

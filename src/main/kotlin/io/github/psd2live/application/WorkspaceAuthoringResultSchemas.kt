@@ -124,8 +124,9 @@ internal object WorkspaceAnimationResultSchemas {
         "curves" to s.array(s.obj(mapOf("parameter" to s.handle(), "keys" to s.array(motionKey)))),
         "events" to s.array(s.obj(mapOf("time" to s.number(0), "value" to s.string()))), "file" to s.handle(),
         "export_group" to s.handle(), "runtime_default_fades" to s.boolean(),
-        "parameter_roles" to s.dictionary(s.array(s.handle())))
-    val motion = s.obj(motionFields, motionFields.keys - setOf("builtin", "events", "file", "export_group", "runtime_default_fades", "parameter_roles"))
+        "parameter_roles" to s.dictionary(s.array(s.handle())),
+        "captured_ranges" to s.dictionary(s.obj(mapOf("min" to s.number(), "max" to s.number(), "repeat" to s.boolean()))))
+    val motion = s.obj(motionFields, motionFields.keys - setOf("builtin", "events", "file", "export_group", "runtime_default_fades", "parameter_roles", "captured_ranges"))
     private val motionSummaryFields = mapOf("id" to s.handle(), "name" to s.string(), "builtin" to s.string(),
         "duration" to s.number(), "enabled" to s.boolean(), "curves" to s.integer(0), "events" to s.integer(0))
 

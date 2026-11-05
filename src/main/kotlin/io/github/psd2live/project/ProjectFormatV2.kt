@@ -60,6 +60,7 @@ internal object ProjectFormatV2 {
     /** Ordered modifier instances and their ownership records, which older readers must not discard. */
     const val NODE_SCHEMA_MODIFIERS = 6
     const val NODE_SCHEMA_MOTION_FILES = 6
+    const val NODE_SCHEMA_MOTION_RANGES = 7
 	/** Schema of a revision index whose journal names no payload node. */
 	const val REVISION_SCHEMA = 1
 	/** Schema of a revision index whose journal names payload nodes (listed under `payloads`). */
@@ -339,6 +340,7 @@ internal object ProjectFormatV2 {
 
 	/** The schema of a clips node holding [value]: [NODE_SCHEMA_SIDECARS] with expressions, a pose or motion events. */
 	internal fun clipsSchema(value: JsonObject): Int {
+        if ((value["motions"] as? JsonArray).orEmpty().any { (it as? JsonObject)?.containsKey("captured_ranges") == true }) return NODE_SCHEMA_MOTION_RANGES
         if ((value["motions"] as? JsonArray).orEmpty().any { (it as? JsonObject)?.containsKey("file") == true }) return NODE_SCHEMA_MOTION_FILES
 		val events = (value["motions"] as? JsonArray).orEmpty().any { (it as? JsonObject)?.containsKey("events") == true }
 		return if ("expressions" in value || "pose" in value || events) NODE_SCHEMA_SIDECARS else NODE_SCHEMA
@@ -368,7 +370,7 @@ internal object ProjectFormatV2 {
 		}
 		fun load(folder: String, kind: String, hash: String): JsonObject {
 			val value = cache.getOrPut("$folder/$hash") { read(root, folder, hash) }
-			val newest = if (kind == "rig") NODE_SCHEMA_MODIFIERS else if (kind == "settings") NODE_SCHEMA_EYE_PARTS else if (kind == "clips") NODE_SCHEMA_MOTION_FILES else NODE_SCHEMA_LAYOUT
+			val newest = if (kind == "rig") NODE_SCHEMA_MODIFIERS else if (kind == "settings") NODE_SCHEMA_EYE_PARTS else if (kind == "clips") NODE_SCHEMA_MOTION_RANGES else NODE_SCHEMA_LAYOUT
 			require(value["schema"]?.jsonPrimitive?.intOrNull in NODE_SCHEMA..newest && value["kind"]?.jsonPrimitive?.contentOrNull == kind) {
 				"Unsupported document node: $kind $hash"
 			}
