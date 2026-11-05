@@ -153,6 +153,7 @@ class CubismSdkPreviewSession internal constructor(
 		private set
 	private var model: Pointer? = null
 	private var parameterIds: List<ParameterId> = emptyList()
+	private var writtenParameterIds: Map<ParameterId, String> = emptyMap()
 	private var parameterMemory: Memory? = null
 	private var parameterMemoryCapacity = 0
 	private class NativeCanvas(var handle: Pointer) {
@@ -233,6 +234,7 @@ class CubismSdkPreviewSession internal constructor(
 				loadedFingerprint.takeIf { live && modelSource is ModelSource.InMemory },
 				fingerprint, current.memoryModels, current.textureReplace,
 			)
+			val nextParameterIds = cubismWrittenParameterIds(next.bundle, next.parameters)
 			val manifestText = next.bundle.assets.firstOrNull { it.path == next.bundle.manifestPath }?.bytes?.decodeToString()
 			var applied = plan
 			when (plan) {
@@ -241,13 +243,13 @@ class CubismSdkPreviewSession internal constructor(
 					stage = "replace texture pages"
 					if (!replaceTextures(native, next.bundle, fingerprint, plan.pages)) {
 						stage = "rebuild Cubism model in place"
-						recreateInPlace(native, next, manifestText)
+						recreateInPlace(native, next, manifestText, nextParameterIds)
 						applied = CubismPreviewReload.Recreate
 					}
 				}
 				CubismPreviewReload.Recreate -> {
 					stage = "rebuild Cubism model in place"
-					recreateInPlace(native, next, manifestText)
+					recreateInPlace(native, next, manifestText, nextParameterIds)
 				}
 				CubismPreviewReload.Full -> {
 					postStatus(null)
@@ -270,6 +272,7 @@ class CubismSdkPreviewSession internal constructor(
 			loadedFingerprint = fingerprint
 			lastAppliedReload = applied
 			parameterIds = next.parameters
+			writtenParameterIds = nextParameterIds
 			loadedGeneration = next.generation
 			if (plan != CubismPreviewReload.Full) requeueLastRequests()
 			postStatus(if (next.generation == generation) "ready" else null)
@@ -304,7 +307,7 @@ class CubismSdkPreviewSession internal constructor(
 	 * Rebuilds every live model from the new bundle without dropping its view: each keeps its clock and is
 	 * set to the pose its old model showed, so the preview does not jump before the next request arrives.
 	 */
-	private fun recreateInPlace(native: CubismNativeApi, next: PendingLoad, manifestText: String?) {
+	private fun recreateInPlace(native: CubismNativeApi, next: PendingLoad, manifestText: String?, nextParameterIds: Map<ParameterId, String>) {
 		val source = ModelSource.InMemory(encodeCubismPreviewBundle(next.bundle))
 		val known = next.parameters.toSet()
 		val poses = nativeCanvases.mapValues { (_, canvas) -> copyParameterValues(native, canvas.handle) }
@@ -326,7 +329,7 @@ class CubismSdkPreviewSession internal constructor(
 				canvas.lastPoseRequest = null
 				if (hasIdleMotion) native.Live2D_StartMotion(handle, "Idle", 0, 1)
 				val pose = poses.getValue(viewId)
-				for ((id, value) in pose) if (id in known) native.Live2D_SetParameterValue(handle, id.raw, value)
+				for ((id, value) in pose) if (id in known) native.Live2D_SetParameterValue(handle, nextParameterIds[id] ?: id.raw, value)
 				if (pose.isNotEmpty()) native.Live2D_RefreshModel(handle)
 			}
 		} finally {
@@ -530,7 +533,7 @@ class CubismSdkPreviewSession internal constructor(
 				val previous = canvas.lastPoseRequest?.takeUnless { it.nativeClock }?.parameterOverrides
 				for ((id, value) in request.parameterOverrides) {
 					if (previous == null || previous[id] != value) {
-						native.Live2D_SetParameterValue(handle, id.raw, value)
+						native.Live2D_SetParameterValue(handle, writtenParameterIds[id] ?: id.raw, value)
 					}
 				}
 				// Paused previews cannot advance Cubism's smoothed drag manager. Apply the static
@@ -549,7 +552,7 @@ class CubismSdkPreviewSession internal constructor(
 				val pose = copyParameterValues(native, handle)
 				val bounded = boundedPreviewPose(pose, request.parameterDefinitions)
 				if (bounded !== pose) {
-					for ((id, value) in bounded) if (value != pose[id]) native.Live2D_SetParameterValue(handle, id.raw, value)
+					for ((id, value) in bounded) if (value != pose[id]) native.Live2D_SetParameterValue(handle, writtenParameterIds[id] ?: id.raw, value)
 					needsRefresh = true
 				}
 			}
@@ -600,7 +603,7 @@ class CubismSdkPreviewSession internal constructor(
 	}
 
 	private fun applyParameterValues(native: CubismNativeApi, handle: Pointer, values: Map<ParameterId, Float>) {
-		for ((id, value) in values) native.Live2D_SetParameterValue(handle, id.raw, value)
+		for ((id, value) in values) native.Live2D_SetParameterValue(handle, writtenParameterIds[id] ?: id.raw, value)
 	}
 
 	private fun applyAnimatedVerticalTracking(native: CubismNativeApi, handle: Pointer, y: Float) {
@@ -734,6 +737,7 @@ class CubismSdkPreviewSession internal constructor(
 		loadedFingerprint = null
 		loadedGeneration = -1L
 		parameterIds = emptyList()
+		writtenParameterIds = emptyMap()
 		parameterMemory?.close()
 		parameterMemory = null
 		parameterMemoryCapacity = 0

@@ -122,3 +122,16 @@ internal fun encodeCubismPreviewBundle(bundle: CubismRuntimeBundle): ByteArray {
 	}
 	return buffer.array()
 }
+
+/** MOC3 preserves parameter order but may shorten and disambiguate their IDs to fit its 64-byte records. */
+internal fun cubismWrittenParameterIds(bundle: CubismRuntimeBundle,
+                                      parameters: List<org.umamo.runtime.model.ParameterId>): Map<org.umamo.runtime.model.ParameterId, String> {
+    if (parameters.isEmpty()) return emptyMap()
+    val manifest = org.umamo.format.moc3.Moc3.readModel3(bundle.assets.single { it.path == bundle.manifestPath }.bytes.decodeToString())
+    val directory = bundle.manifestPath.substringBeforeLast('/', "")
+    val path = listOf(directory, manifest.fileReferences.moc).filter { it.isNotEmpty() }.joinToString("/")
+    val bytes = bundle.assets.single { it.path == path }.bytes
+    val written = org.umamo.format.moc3.moc.MocCodec.read(bytes).parameters()
+    require(written.size == parameters.size) { "Cubism parameter layout differs from the preview model" }
+    return parameters.zip(written).associate { (id, parameter) -> id to parameter.id }
+}
