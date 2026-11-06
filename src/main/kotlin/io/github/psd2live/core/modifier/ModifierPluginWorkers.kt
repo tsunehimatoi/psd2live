@@ -18,6 +18,10 @@ import java.util.concurrent.TimeoutException
 
 /** One serialized request stream per package. Worker failures discard the candidate, never the source document. */
 internal object ModifierPluginWorkers {
+    // The manifest names the component separately from the structured IR field.
+    private fun typedWrites(writes: Set<String>): Set<String> =
+        if ("rest_pose" in writes) writes + "restPose" else writes
+
     private val workers = ConcurrentHashMap<ModifierPluginReference, Worker>()
     private val executor = Executors.newVirtualThreadPerTaskExecutor()
     private class QueuedFailure(val original: Throwable) : RuntimeException(original)
@@ -105,7 +109,7 @@ internal object ModifierPluginWorkers {
                 it.algorithm == algorithm && it.instance == instance && it.context == context && it.reads.matches(input, context)
             }
             if (cached != null) {
-                cached.changes.requireWrites(algorithm.writes)
+                cached.changes.requireWrites(typedWrites(algorithm.writes))
                 val output = try { cached.changes.applyWithResources(rig, checkpoint, resolveRasters) } catch (_: IllegalArgumentException) { null }
                 if (output != null) {
                     AlgorithmResultValidation.validate(output)
@@ -176,7 +180,7 @@ internal object ModifierPluginWorkers {
             var readResult: ReadResult? = null
             val output = response["changes"]?.let { value ->
                 val changes = io.github.psd2live.algorithm.worker.AlgorithmChanges.decode(value.jsonObject, resources)
-                changes.requireWrites(algorithm.writes)
+                changes.requireWrites(typedWrites(algorithm.writes))
                 val reads = response["reads"]?.let { encoded ->
                     ModifierReadSet.capture(input, context, Json.decodeFromJsonElement<List<ModifierReadKey>>(encoded))
                 }

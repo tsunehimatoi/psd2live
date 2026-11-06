@@ -4,8 +4,8 @@ package io.github.psd2live.core
  * How far the generated rig moves each part at the parameters' full values, before the head turn and body
  * strengths scale them: the head's turn on the face surface, the head shell, the face contour and the
  * feature displacement, each feature's redraw ([NinePoseFaceRig]), the gaze, blink, iris and brow keys,
- * the mouth, the hair, the face following the lean, and how far [BodyStance] turns, opens, leans and resizes
- * the body, with the Body Z lean and the breath ([RigBuilder.bodySecondaryWarpPoint]).
+ * the mouth, the hair, the face following the lean, and how far [io.github.psd2live.algorithms.binding.BodyStance] turns, opens, leans and resizes
+ * the body, with the Body Z lean and the breath ([io.github.psd2live.algorithms.binding.LegacyBodyMotion.secondaryPoint]).
  *
  * Every value is in the unit the model presets show it in - degrees, percent or a multiple of the torso's
  * length - so the panel, the MCP `settings` tool and the project file all read the same numbers. A percent

@@ -1,5 +1,8 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.algorithms.binding.BodyStance
+import io.github.psd2live.algorithms.binding.LegacyBodyMotion
+
 import org.umamo.render.eval.CpuDeformationEvaluator
 import org.umamo.render.eval.DeformerWorld
 import org.umamo.render.eval.RotationWorld
@@ -509,7 +512,7 @@ internal object SkeletonRig {
 
 		// 4. The preset poses, hips that move while the feet stay put among them.
 		val poses = SkeletonPoses.available(spec).filter { it.rig }
-		val standing = stance ?: BodyStance.of(spec, frame)
+		val standing = stance ?: BodyStanceSource.of(spec, frame)
 		model = RigBuildProfile.stage("skeleton: poses") { addPoses(model, spec, bones, poses, bends, standing) }
 
 		// 4b. A leg bone that skinned meshes hang under carries them through a warp of its own on Body X and
@@ -992,7 +995,7 @@ internal object SkeletonRig {
 					0.0, 0.0, -restOrientation(parentBone))
 				floatArrayOf(local[0].toFloat(), local[1].toFloat())
 			} else {
-				invertWorld(
+				LegacyBodyMotion.invertWorld(
 					restWorlds.getValue(parentId), bone.headX, bone.headY,
 					floatArrayOf((bone.headX - frame.left) / frame.width.coerceAtLeast(1f), (bone.headY - frame.top) / frame.height.coerceAtLeast(1f)),
 				)
@@ -2290,41 +2293,6 @@ internal object SkeletonRig {
 	private fun scaleOf(world: RotationWorld): Float = hypot(world.xform.c12, world.xform.c14)
 
 	/** Where ([x], [y]) in world space sits in [world]'s local space. */
-	internal fun inverse(world: DeformerWorld, x: Float, y: Float, guess: FloatArray? = null): FloatArray = when (world) {
-		is RotationWorld -> {
-			val m = world.xform
-			val det = m.c12 * m.c13 - m.c15 * m.c14
-			val dx = x - m.ox
-			val dy = y - m.oy
-			floatArrayOf((m.c13 * dx - m.c15 * dy) / det, (-m.c14 * dx + m.c12 * dy) / det)
-		}
-		else -> invertWorld(world, x, y, guess ?: floatArrayOf(0.5f, 0.5f))
-	}
-
-	/** Newton's method on a warp: the local point whose image is ([x], [y]). */
-	private fun invertWorld(world: DeformerWorld, x: Float, y: Float, guess: FloatArray): FloatArray {
-		var u = guess[0].toDouble()
-		var v = guess[1].toDouble()
-		val p = FloatArray(2)
-		val pu = FloatArray(2)
-		val pv = FloatArray(2)
-		repeat(40) {
-			world.apply(u.toFloat(), v.toFloat(), p, 0)
-			val ex = x - p[0].toDouble()
-			val ey = y - p[1].toDouble()
-			if (ex * ex + ey * ey < 1e-8) return floatArrayOf(u.toFloat(), v.toFloat())
-			val h = 1e-3
-			world.apply((u + h).toFloat(), v.toFloat(), pu, 0)
-			world.apply(u.toFloat(), (v + h).toFloat(), pv, 0)
-			val a = (pu[0] - p[0]) / h
-			val c = (pu[1] - p[1]) / h
-			val b = (pv[0] - p[0]) / h
-			val d = (pv[1] - p[1]) / h
-			val det = a * d - b * c
-			if (abs(det) < 1e-12) return floatArrayOf(u.toFloat(), v.toFloat())
-			u += (d * ex - b * ey) / det
-			v += (-c * ex + a * ey) / det
-		}
-		return floatArrayOf(u.toFloat(), v.toFloat())
-	}
+	internal fun inverse(world: DeformerWorld, x: Float, y: Float, guess: FloatArray? = null): FloatArray =
+		LegacyBodyMotion.inverse(world, x, y, guess)
 }

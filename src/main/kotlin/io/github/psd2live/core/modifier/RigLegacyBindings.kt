@@ -95,6 +95,28 @@ internal object RigLegacyBindings {
         spec.related.forEach { put(it, dependencies.getValue(it).jsonPrimitive.content) }
     }
 
+    fun legacyMouthDefinition(source: RigModifierSource?): RigModifierDefinition {
+        val algorithm = io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm()
+        val type = io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm.TYPE
+        return definition(spec(type), source).copy(
+            version = io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm.VERSION,
+            parameters = { io.github.psd2live.algorithms.binding.MouthLegacyAlgorithm.parameters(
+                io.github.psd2live.i18n.tr("model.parameter.mouthForm"), io.github.psd2live.i18n.tr("model.parameter.mouthOpen")) },
+            evaluate = { rig, instance, checkpoint ->
+                val capture = requireNotNull(source)
+                val provider = capture.provider(instance)
+                val context = capture.legacyMouthContext(instance).withUpstream(listOf(ModifierUpstreamCapability(
+                    provider.type, provider.type, provider.version, provider.targets, provider.id, provider.config,
+                    provider.outputAliases, provider.plugin)))
+                algorithm.evaluate(rig, instance, context, checkpoint)
+            },
+            plugin = algorithm,
+            authorContext = { requireNotNull(source).legacyMouthContext(it) },
+            changeWrites = setOf("mesh", "parameter", "hierarchy", "restPose"),
+            upstreamInputs = true,
+        )
+    }
+
     fun definition(spec: Spec, source: RigModifierSource?): RigModifierDefinition {
         val evaluate: (io.github.psd2live.format.model.RigIR, RigModifierInstance, () -> Unit) -> io.github.psd2live.format.model.RigIR = { rig, instance, checkpoint ->
             if (spec.skinClip) requireNotNull(source).skinClip(rig, instance, checkpoint)

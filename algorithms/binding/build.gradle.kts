@@ -4,7 +4,7 @@ import java.security.MessageDigest
 // Binding kernels use the GPL engine; they are separate from the MIT API/format modules.
 plugins { `java-library`; kotlin("jvm") }
 group = "io.github.psd2live.algorithms"
-version = "1.0.50"
+version = "1.0.51"
 kotlin { jvmToolchain(21) }
 dependencies {
     api(project(":umamo"))
@@ -40,7 +40,7 @@ tasks.register("pluginPackage") {
         jar.copyTo(payload, overwrite = true)
         val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
         directory.resolve("plugin.json").writeText("""
-            {"protocol":1,"id":"builtin.65787072657373696f6e2e746f67676c6573.v1","version":"1.0.50","name":"Expressions",
+            {"protocol":1,"id":"builtin.65787072657373696f6e2e746f67676c6573.v1","version":"1.0.51","name":"Expressions",
              "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
              "algorithms":[{"type":"builtin.65787072657373696f6e2e746f67676c6573.v1/toggles","aliases":["expression.toggles"],"version":1,"name":"Expressions","category":"expression",
                "targets":["mesh"],"requires":["rig.scaffold"],"exclusiveFamily":"expression.toggles",
@@ -104,5 +104,65 @@ for ((type, area, taskName) in listOf(
                    "configSchema":{"type":"object"},"defaults":{}}]}
             """.trimIndent())
         }
+    }
+}
+
+// Standalone body package. The application can bundle it once the head pitch provider is available.
+tasks.register("pluginBodyLegacy") {
+    dependsOn(workerJar)
+    val output = layout.buildDirectory.dir("plugin-body-legacy")
+    inputs.file(workerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        workerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin." + HexFormat.of().formatHex("body/legacy".encodeToByteArray()) + ".v1"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"${project.version}","name":"Legacy body",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/motion","aliases":["body/legacy"],"version":1,"name":"Legacy body","category":"body",
+               "targets":["mesh"],"requires":["rig.scaffold"],"exclusiveFamily":"base:body","contextVersion":2,
+               "reads":["*"],"writes":["mesh","deformer","hierarchy","relations","parameter"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
+    }
+}
+
+val mouthLegacyWorkerJar by tasks.registering(Jar::class) {
+    dependsOn(workerJar)
+    archiveClassifier.set("worker-mouth-legacy")
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest { attributes["Main-Class"] = "io.github.psd2live.algorithms.binding.MouthLegacyWorker" }
+    from(sourceSets.main.get().output) { include("**/MouthLegacy*.class") }
+    from(workerJar.flatMap { it.archiveFile }.map { zipTree(it) }) { exclude("META-INF/MANIFEST.MF") }
+}
+
+tasks.register("pluginMouthLegacy") {
+    dependsOn(mouthLegacyWorkerJar)
+    val output = layout.buildDirectory.dir("plugin-mouth-legacy")
+    inputs.file(mouthLegacyWorkerJar.flatMap { it.archiveFile })
+    inputs.property("packageVersion", project.version.toString())
+    outputs.dir(output)
+    doLast {
+        val directory = output.get().asFile.apply { mkdirs() }
+        val payload = directory.resolve("algorithm.jar")
+        mouthLegacyWorkerJar.get().archiveFile.get().asFile.copyTo(payload, overwrite = true)
+        val digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload.readBytes()))
+        val id = "builtin.6d6f7574682f6c6567616379.v2"
+        directory.resolve("plugin.json").writeText("""
+            {"protocol":1,"id":"$id","version":"${project.version}","name":"Legacy mouth",
+             "commands":{"jvm":["${'$'}JAVA","-jar","algorithm.jar"]},"files":{"algorithm.jar":"$digest"},
+             "algorithms":[{"type":"$id/binding","aliases":["mouth/legacy"],"version":2,"name":"Legacy mouth","category":"mouth",
+               "targets":["mesh"],"requires":["rig.scaffold"],"exclusiveFamily":"base:mouth","contextVersion":2,
+               "reads":["*"],"writes":["mesh","parameter","hierarchy","rest_pose","relations"],
+               "composableKinds":["mesh","part","deformer","hierarchy","relations","parameter"],
+               "configSchema":{"type":"object"},"defaults":{}}]}
+        """.trimIndent())
     }
 }

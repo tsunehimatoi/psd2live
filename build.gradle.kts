@@ -210,6 +210,10 @@ tasks.test {
 
 // Keep Cubism out of classpath resources unless explicitly opted in.
 tasks.processResources {
+    dependsOn(":algorithms:binding:pluginMouthLegacy")
+    from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-mouth-legacy")) {
+        into("algorithm-plugins/mouth-legacy")
+    }
     for (revision in 1..2) {
         dependsOn(":algorithms:binding:pluginScaffold$revision")
         from(project(":algorithms:binding").layout.buildDirectory.dir("plugin-scaffold-$revision")) {

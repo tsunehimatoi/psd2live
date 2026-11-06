@@ -1,5 +1,7 @@
 package io.github.psd2live.core.modifier
 
+import io.github.psd2live.algorithms.binding.MouthFittedInputs
+import io.github.psd2live.algorithms.binding.MouthLegacyInputs
 import io.github.psd2live.algorithms.binding.ScaffoldParts
 import io.github.psd2live.algorithms.binding.ScaffoldPartsContext
 import io.github.psd2live.core.*
@@ -228,9 +230,25 @@ internal class RigModifierSource(
         return restricted(generated(strength, tuning).puppet, RigBodyModifier.parameters).also { checkpoint() }
     }
 
+    /** Source adapter for the independent body candidate. Pitch grids must come from an independent head evaluator. */
+    fun bodyContext(instance: RigModifierInstance, headPitchGrids: ModifierAlgorithmResource?): ModifierAlgorithmContext {
+        val scaffold = provider(instance)
+        val tuning = RigLegacyBindings.tuning(instance, RigTuning()).bodyMotion()
+        val context = scaffoldContext(scaffold)
+        val torso = requireNotNull(scaffoldTorsos[scaffold]) { "Body requires captured scaffold measurements" }
+        val tr = { key: String -> io.github.psd2live.i18n.tr(key) }
+        return io.github.psd2live.algorithms.binding.LegacyBodyInputs.capture(context, torso, tuning,
+            StandardParameters.all.filter { it.id in RigBodyModifier.parameters }.associate { it.id.raw to it.name },
+            linkedMapOf("ParamGroupFace" to tr("model.group.face"), "ParamGroupEyes" to tr("model.group.eyes"),
+                "ParamGroupBrows" to tr("model.group.brows"), "ParamGroupMouth" to tr("model.group.mouth"),
+                "ParamGroupBody" to tr("model.group.body"), "ParamGroupPhysics" to tr("model.group.physics")),
+            headPitchGrids)
+    }
+
     private val staticModels = java.util.IdentityHashMap<PuppetModel, PuppetModel>()
     fun static(model: PuppetModel) = staticModels.getOrPut(model) { restricted(model, emptySet()) }
 
+    private val scaffoldTorsos = HashMap<RigModifierInstance, io.github.psd2live.algorithms.binding.TorsoFrame>()
     private val scaffoldContexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
     fun scaffoldContext(instance: RigModifierInstance): ModifierAlgorithmContext = scaffoldContexts.getOrPut(instance) {
         val pinned = instance.plugin?.takeIf { it.id.startsWith("builtin.") }
@@ -252,6 +270,7 @@ internal class RigModifierSource(
         )
         val structure = if (pinned != null && pinned < ModifierPluginVersion.parse("1.0.38")) null else
             RigBuilder.scaffoldSourceInputs(analysis, native, meshCache)
+        if (structure != null) scaffoldTorsos[instance] = structure.torso
         val canonical = instance.targets.associate { it.id to primaryByLayer.getValue(layersByMesh.getValue(it.id)) }
         if (pinned == null || pinned >= ModifierPluginVersion.parse("1.0.41")) {
             val sources = instance.targets.associate { layersByMesh.getValue(it.id) to canonical.getValue(it.id) }
@@ -261,6 +280,43 @@ internal class RigModifierSource(
         } else io.github.psd2live.algorithms.binding.ScaffoldAlgorithm.capture(scaffold(instance) {}, materialBase,
             canonical, organization, structure?.frames,
             structure?.branches?.takeUnless { pinned < ModifierPluginVersion.parse("1.0.40") })
+    }
+
+    fun legacyMouthContext(instance: RigModifierInstance): ModifierAlgorithmContext {
+        val structure = provider(instance)
+        val corrections = io.github.psd2live.project.WorkspaceSettingsCodec.decodeRecipe(structure.config["corrections"])
+        val native = sourceConfig().copy(recipe = RigRecipe.Legacy.copy(moves = corrections.moves, eyeParts = corrections.eyeParts),
+            featureDisplacementEnabled = structure.config["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
+            hairSimulationFront = !(structure.config["frontHairSway"]?.jsonPrimitive?.boolean ?: true),
+            hairSimulationBack = !(structure.config["backHairSway"]?.jsonPrimitive?.boolean ?: true))
+        val measured = RigBuilder.rigContext(analysis, native.copy(generateDeformers = false), meshCache)
+        val tuning = RigLegacyBindings.tuning(instance, RigTuning())
+        val targets = instance.targets.mapTo(hashSetOf()) { it.id }
+        val clips = RigOrdinaryMaterials.clipping(analysis.source, primaryByLayer.entries.associate { it.value to it.key })
+        val meshesByLayer = layersByMesh.entries.groupBy({ it.value }, { it.key })
+        val layers = buildMap {
+            for (layer in measured.analysis.layers.sortedBy { it.source.order }) {
+                val id = layer.source.id.raw
+                val semantic = layer.semantic
+                if (semantic.tag !in CharacterAnalyzer.MOUTH_TAGS) continue
+                val primary = primaryByLayer[id] ?: continue
+                val aligned = measured.rigLayer(layer)
+                val frame = measured.parentAndFrame(layer, native).second
+                val isMask = semantic.tag in setOf(SemanticTag.MOUTH, SemanticTag.MOUTH_OPEN) &&
+                    semantic.role == null && !layer.source.clipped && layer.opaquePixels > 0
+                for (mesh in meshesByLayer[id].orEmpty()) {
+                    if (mesh !in targets && !(mesh == primary && isMask)) continue
+                    put(mesh, MouthLegacyInputs.Layer(primary, semantic.tag.name, semantic.side, semantic.variant, frame,
+                        aligned.bounds, layer.bounds, (native.layerOverrides[id]?.type ?: semantic.type) == LayerType.PRESET,
+                        layer.source.opacity, clips[id]?.raw, mesh == primary && isMask))
+                }
+            }
+        }
+        return MouthLegacyInputs(layers,
+            MouthFittedInputs.Fallback(if (native.mouthShape == "custom") native.mouthCurve else MouthCurve.preset(native.mouthShape),
+                false, tuning.mouthClosedNarrow, tuning.mouthFormWiden, tuning.mouthSeam, tuning.mouthSmileBase, tuning.mouthSmile),
+            tuning.teethFade, measured.hasClosedMouth, io.github.psd2live.i18n.tr("model.parameter.mouthForm"), io.github.psd2live.i18n.tr("model.parameter.mouthOpen"),
+            io.github.psd2live.i18n.tr("model.group.mouth"), scaffoldContext(structure.copy(plugin = null))).encode()
     }
 
     private fun templateKey(instances: List<RigModifierInstance>, scaffold: JsonObject): Map<String, JsonObject> {
@@ -679,7 +735,7 @@ internal object RigSourceModifiers {
             plugin = io.github.psd2live.algorithms.binding.ScaffoldAlgorithm(),
             changeWrites = setOf("mesh", "part", "deformer", "hierarchy"),
             authorContext = { requireNotNull(source).scaffoldContext(it) })
-    } + RigLegacyBindings.specs.map { RigLegacyBindings.definition(it, source) }
+    } + RigLegacyBindings.specs.map { RigLegacyBindings.definition(it, source) } + RigLegacyBindings.legacyMouthDefinition(source)
 
     /** Version 2 retains the source hierarchy; version 1 keeps persisted per-mesh identities replayable. */
     fun deformerId(instance: RigModifierInstance, mesh: String, canonical: String, shared: Boolean = instance.type == SCAFFOLD && instance.version >= 2) =

@@ -1,4 +1,4 @@
-package io.github.psd2live.core
+package io.github.psd2live.algorithms.binding
 
 import org.umamo.runtime.model.DeformerId
 import kotlin.math.abs
@@ -33,18 +33,18 @@ import kotlin.math.sqrt
  *
  * Legs skinned to bones hang from rotation deformers in the legs warp, which pass on only a pivot and an
  * angle; each of their bones carries its meshes through a warp of its own that puts them where [legPoint]
- * has the legs (see [SkeletonRig]). The leg poses of a skeleton ([SkeletonPoses.legPoses]) are poses of
+ * has the legs (see SkeletonRig). The leg poses of a skeleton (SkeletonPoses.legPoses) are poses of
  * the same model.
  */
-internal class BodyStance private constructor(
+class BodyStance(
 	val character: Bounds,
-	val torso: RigBuilder.TorsoFrame,
+	val torso: TorsoFrame,
 	val legs: List<Leg>,
 	/** The frame the legs warp spans, from above the hip joints to below the soles; null without legs. */
 	val legsFrame: Bounds?,
 	strength: Float,
 	/** How far the body parameters move the body at their full values. */
-	val tuning: RigTuning,
+	val tuning: BodyMotionTuning,
 ) {
 	/** One leg as drawn, canvas pixels: the hip joint, the knee, the ankle and the floor under the sole. */
 	class Leg(
@@ -84,15 +84,19 @@ internal class BodyStance private constructor(
 	/** Rigid motion of the pelvis: a turn about ([cx], [cy]), then a shift. */
 	class Rigid(val cx: Double, val cy: Double, val degrees: Double, val dx: Double, val dy: Double) {
 		fun apply(x: Double, y: Double): DoubleArray {
-			val p = SkeletonIk.rotate(x, y, cx, cy, degrees)
-			return doubleArrayOf(p[0] + dx, p[1] + dy)
+			val radians = Math.toRadians(degrees)
+			val c = cos(radians)
+			val s = sin(radians)
+			val px = x - cx
+			val py = y - cy
+			return doubleArrayOf((cx + c * px - s * py) + dx, (cy + s * px + c * py) + dy)
 		}
 	}
 
 	private val strength = strength.coerceIn(0f, 4f).toDouble()
 
 	/** Every input of the stance, printed canonically, for content-hash cache keys of what it shapes. */
-	internal val contentKey: String = buildString {
+	val contentKey: String = buildString {
 		append(character).append('|').append(torso.centerX).append(',').append(torso.shoulderY).append(',')
 			.append(torso.waistY).append(',').append(torso.halfWidth).append('|')
 		for (leg in legs) append(leg.side).append(':').append(leg.hipX).append(',').append(leg.hipY).append(',').append(leg.kneeX).append(',')
@@ -281,7 +285,7 @@ internal class BodyStance private constructor(
 	 * [kneeIn] degrees toward the body's centre line, and is seen from the front. A leg asked to reach past
 	 * its length stretches both its bones alike.
 	 */
-	internal fun knee(leg: Leg, hipX: Double, hipY: Double, ankleX: Double, ankleY: Double, kneeIn: Double): DoubleArray {
+	fun knee(leg: Leg, hipX: Double, hipY: Double, ankleX: Double, ankleY: Double, kneeIn: Double): DoubleArray {
 		// The drawn bend, sideways off the hip-to-ankle line.
 		val restDx = leg.ankleX - leg.hipX
 		val restDy = leg.ankleY - leg.hipY
@@ -387,7 +391,7 @@ internal class BodyStance private constructor(
 	 *   toward the side it turns to, the side coming forward is drawn a little larger and lower and the one
 	 *   going back smaller, and the neck, near the axis, hardly moves. Everything above the waist turns
 	 *   alike, as artists turn the upper body, so the torso does not wring; the turn eases out over the hips
-	 *   below it ([RigTuning.turnFade]). Past the torso's sides points move with its silhouette, so an arm stays on
+	 *   below it ([BodyMotionTuning.turnFade]). Past the torso's sides points move with its silhouette, so an arm stays on
 	 *   its shoulder.
 	 * - **Open** (Body Y): going down the shoulders open a little and the back shortens; going up it
 	 *   stretches and the shoulders draw in, as when standing tall.
@@ -671,91 +675,6 @@ internal class BodyStance private constructor(
 
 		/** The two legs hand over across this share of the gap between their lines. */
 		private const val LEG_SEAM = 0.6
-
-		/**
-		 * The stance of [analysis]. A skeleton's legs place the joints; without one they are read off the
-		 * leg and foot layers. A figure with neither stands on nothing and has no legs warp.
-		 */
-		fun of(analysis: PipelineAnalysis, character: Bounds, skeleton: SkeletonSpec?, strength: Float = 1f,
-			tuning: RigTuning = RigTuning()): BodyStance {
-			val torso = RigBuilder.torsoFrame(analysis, character, skeleton)
-			val legLayers = analysis.layers.filter {
-				(it.semantic.tag == SemanticTag.LEGWEAR || it.semantic.tag == SemanticTag.FOOTWEAR) && it.opaquePixels > 0
-			}
-			val boneLegs = skeleton?.takeIf { it.enabled }?.let { SkeletonRig.legs(it) }.orEmpty()
-			return if (boneLegs.isNotEmpty()) of(character, torso, boneLegs, legLayers.map { it.bounds }, strength, tuning)
-			else onLegs(character, torso, drawnLegs(analysis, torso, legLayers), legLayers.map { it.bounds }, strength, tuning)
-		}
-
-		/** The stance of [spec] alone, its torso and legs placed by its bones. */
-		fun of(spec: SkeletonSpec, character: Bounds, strength: Float = 1f, tuning: RigTuning = RigTuning()): BodyStance {
-			val upper = spec.bones.firstOrNull { it.role == BoneRole.UPPER_BODY && it.length >= 1f }
-			val shoulderY = upper?.let { minOf(it.headY, it.tailY) } ?: (character.top + character.height * 0.25f)
-			val waistY = (upper?.let { maxOf(it.headY, it.tailY) } ?: character.centerY).coerceAtLeast(shoulderY + 1f)
-			val torso = RigBuilder.TorsoFrame(upper?.headX ?: character.centerX, shoulderY, waistY, character.width * 0.2f)
-			return of(character, torso, SkeletonRig.legs(spec), emptyList(), strength, tuning)
-		}
-
-		/** A stance on a skeleton's [boneLegs], the floor under the lowest of their feet and of the leg [layers]. */
-		private fun of(character: Bounds, torso: RigBuilder.TorsoFrame, boneLegs: List<SkeletonRig.Leg>, layers: List<Bounds>, strength: Float, tuning: RigTuning): BodyStance {
-			val floor = (layers.map { it.bottom.toDouble() } + boneLegs.map { leg ->
-				maxOf(leg.ankleY, leg.foot?.let { maxOf(it.headY, it.tailY).toDouble() } ?: leg.ankleY)
-			}).maxOrNull() ?: 0.0
-			val legs = boneLegs.map { leg ->
-				Leg(leg.thigh.side, leg.thigh.headX.toDouble(), leg.thigh.headY.toDouble(), leg.shin.headX.toDouble(),
-					leg.shin.headY.toDouble(), leg.ankleX, leg.ankleY, floor.coerceAtLeast(leg.ankleY + 1.0))
-			}
-			return onLegs(character, torso, legs, layers, strength, tuning)
-		}
-
-		/** The legs warp spans [legs] and the leg [layers], padded so the soles and the hips sit inside it. */
-		private fun onLegs(character: Bounds, torso: RigBuilder.TorsoFrame, legs: List<Leg>, layers: List<Bounds>, strength: Float, tuning: RigTuning): BodyStance {
-			if (legs.isEmpty()) return BodyStance(character, torso, emptyList(), null, strength, tuning)
-			val reach = legs.map { it.reach }.average()
-			val points = legs.flatMap { listOf(it.hipX to it.hipY, it.kneeX to it.kneeY, it.ankleX to it.floorY) }
-			val bounds = (layers + Bounds(
-				points.minOf { it.first }.toFloat(), points.minOf { it.second }.toFloat(),
-				points.maxOf { it.first }.toFloat(), points.maxOf { it.second }.toFloat(),
-			)).reduce(Bounds::union)
-			val padX = maxOf(bounds.width * 0.15f, (reach * 0.08).toFloat())
-			val padY = (reach * 0.06).toFloat()
-			val top = minOf(bounds.top, legs.minOf { it.hipY }.toFloat()) - padY
-			val frame = Bounds(bounds.left - padX, top, bounds.right + padX, bounds.bottom + padY)
-			return BodyStance(character, torso, legs, frame, strength, tuning)
-		}
-
-		/**
-		 * Legs read off the layers: a leg per side when they are drawn apart, else two legs a quarter of the
-		 * way in from either edge of a layer that draws both. The hip joints sit just under the hip line,
-		 * the ankles at the mouths of the shoes, the knees halfway.
-		 */
-		private fun drawnLegs(analysis: PipelineAnalysis, torso: RigBuilder.TorsoFrame, layers: List<ClassifiedLayer>): List<Leg> {
-			val legwear = layers.filter { it.semantic.tag == SemanticTag.LEGWEAR }
-			val footwear = layers.filter { it.semantic.tag == SemanticTag.FOOTWEAR }
-			val all = (legwear + footwear).map { it.bounds }.reduceOrNull(Bounds::union) ?: return emptyList()
-			// Legs must reach down well below the hips to stand on.
-			if (all.bottom < torso.waistY + torso.length) return emptyList()
-			val centerX = torso.centerX
-			val hipY = (analysis.anchors.hipY + torso.length * 0.12f).toDouble()
-			val floor = all.bottom.toDouble()
-			if (floor - 1.0 <= hipY + 10.0) return emptyList()
-			val shoes = footwear.map { it.bounds }.reduceOrNull(Bounds::union)
-			val ankleY = (shoes?.let { it.top + it.height * 0.3f }?.toDouble() ?: (floor - (floor - hipY) * 0.08))
-				.coerceIn(hipY + 10.0, floor - 1.0)
-			fun sided(side: Side) = (legwear + footwear).filter { it.semantic.side == side }.map { it.bounds }.reduceOrNull(Bounds::union)
-			val left = sided(Side.LEFT)
-			val right = sided(Side.RIGHT)
-			val xs: List<Pair<Side, Double>> = if (left != null && right != null) {
-				listOf(Side.LEFT to left.centerX.toDouble(), Side.RIGHT to right.centerX.toDouble())
-			} else {
-				// Cubism convention: the character's left faces the viewer's right.
-				listOf(Side.LEFT to (all.right - all.width * 0.25f).toDouble(), Side.RIGHT to (all.left + all.width * 0.25f).toDouble())
-			}
-			return xs.map { (side, x) ->
-				val hipX = x + (centerX - x) * 0.1
-				Leg(side, hipX, hipY, (hipX + x) / 2, (hipY + ankleY) / 2, x, ankleY, floor)
-			}
-		}
 
 		private fun smooth(t: Double): Double {
 			val c = t.coerceIn(0.0, 1.0)

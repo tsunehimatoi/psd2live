@@ -1,5 +1,7 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.algorithms.binding.BodyStance
+import io.github.psd2live.algorithms.binding.LegacyBodyMotion
 import io.github.psd2live.algorithms.binding.BindingProjection
 import io.github.psd2live.algorithms.binding.ScaffoldBody
 import io.github.psd2live.i18n.tr
@@ -20,8 +22,8 @@ class ScaffoldBodyParityTest {
             bone("right-shin", "right-thigh", BoneRole.SHIN, Side.RIGHT, 75f, 278f, 78f, 363f),
         )
         val spec = SkeletonSpec(bones = bones)
-        val unturned = compare(BodyStance.of(spec, canvas, tuning = RigTuning(kneesInRest = 0f)))
-        val inward = compare(BodyStance.of(spec, canvas, tuning = RigTuning(kneesInRest = 25f)))
+        val unturned = compare(BodyStanceSource.of(spec, canvas, tuning = RigTuning(kneesInRest = 0f)))
+        val inward = compare(BodyStanceSource.of(spec, canvas, tuning = RigTuning(kneesInRest = 25f)))
         assertEquals(listOf("DeformLegs", "DeformBodyXY", "DeformBodyLean"), inward.map { it.id.raw })
         assertNotEquals(PuppetIr.deformerToIr(unturned.first()), PuppetIr.deformerToIr(inward.first()),
             "Neutral knee tuning must change the standing leg grid")
@@ -29,7 +31,7 @@ class ScaffoldBodyParityTest {
     }
 
     @Test fun leglessBodyUsesCanvasPixelsAndNormalizedLeanWithoutALegWarp() {
-        val output = compare(BodyStance.of(SkeletonSpec(), canvas))
+        val output = compare(BodyStanceSource.of(SkeletonSpec(), canvas, strength = .72f, tuning = RigTuning(turnDegrees = 19f, leanDegrees = 37f)))
         assertEquals(listOf("DeformBodyXY", "DeformBodyLean"), output.map { it.id.raw })
     }
 
@@ -45,6 +47,8 @@ class ScaffoldBodyParityTest {
         }
         val actual = ScaffoldBody.build(body, standing, { tr(it) })
         assertEquals(expected, actual.map(PuppetIr::deformerToIr))
+        val moving = LegacyBodyMotion.deformers(actual, body, stance, 1f, 100f)
+        assertEquals(legacy.map(PuppetIr::deformerToIr), moving.map(PuppetIr::deformerToIr))
         return actual
     }
 

@@ -13,7 +13,8 @@ object ScaffoldBranchesContext {
         val id: String, val name: String, val tag: String, val side: Side, val bounds: Bounds, val slot: ScaffoldParts.Slot,
     )
 
-    data class Result(val deformers: List<Deformer.Warp>, val parents: Map<String, ScaffoldArms.Parent>)
+    data class Result(val deformers: List<Deformer.Warp>, val parents: Map<String, ScaffoldArms.Parent>,
+                      val armFrames: Map<DeformerId, Bounds>)
 
     fun capture(
         layers: List<Layer>, body: Bounds, legs: Bounds?, head: ScaffoldHead.Input,
@@ -134,12 +135,13 @@ object ScaffoldBranchesContext {
         val arms = layers.filter { it.tag == "HANDWEAR" && it.side != Side.NONE }.map {
             ScaffoldArms.Layer(it.id, it.name, it.side, it.bounds, parents.getValue(it.id))
         }
-        for (arm in ScaffoldArms.build(arms, available, ScaffoldParts.Slot.BODY.id, armLabel, checkpoint)) {
+        val hanging = ScaffoldArms.build(arms, available, ScaffoldParts.Slot.BODY.id, armLabel, checkpoint)
+        for (arm in hanging) {
             branches += arm.warp
             for (id in arm.layerIds) parents[id] = ScaffoldArms.Parent(arm.warp.id, arm.bounds)
         }
         checkpoint()
-        return Result(branches, parents)
+        return Result(branches, parents, hanging.associate { it.warp.id to it.bounds })
     }
 
     private data class Region(val feature: ScaffoldHead.Feature, val side: Side, val bounds: Bounds)

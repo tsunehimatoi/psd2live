@@ -23,7 +23,7 @@ internal object SkeletonPoseSolver {
 
 	private fun legJoints(model: PuppetModel, legs: List<SkeletonRig.Leg>, spec: SkeletonSpec): Map<String, SkeletonRig.LegJointPose> =
 		synchronized(legSolves) { legSolves.getOrPut(model) { SkeletonRig.solveLegPoses(model, legs,
-			BodyStance.of(spec, Bounds(0f, 0f, model.canvasWidth.coerceAtLeast(1f), model.canvasHeight.coerceAtLeast(1f)))) } }
+			BodyStanceSource.of(spec, Bounds(0f, 0f, model.canvasWidth.coerceAtLeast(1f), model.canvasHeight.coerceAtLeast(1f)))) } }
 
 	/** Most bones an IK drag moves: the grabbed bone and its two parents, like a Spine two/three-bone constraint. */
 	const val IK_CHAIN = 3

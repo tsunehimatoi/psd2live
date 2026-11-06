@@ -18,6 +18,8 @@ object ExpressionWorker {
             val id = "builtin." + java.util.HexFormat.of().formatHex("rig.scaffold".encodeToByteArray()) + ".v$version/structure"
             algorithms[id to version] = ScaffoldAlgorithm()
         }
+        val bodyId = "builtin." + java.util.HexFormat.of().formatHex("body/legacy".encodeToByteArray()) + ".v1/motion"
+        algorithms[bodyId to 1] = LegacyBodyAlgorithm()
         AlgorithmWorker.run(algorithms)
     }
 }

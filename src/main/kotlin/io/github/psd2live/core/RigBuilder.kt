@@ -1,5 +1,9 @@
 package io.github.psd2live.core
 
+import io.github.psd2live.algorithms.binding.BodyStance
+import io.github.psd2live.algorithms.binding.LegacyBodyMotion
+import io.github.psd2live.algorithms.binding.TorsoFrame
+
 import io.github.psd2live.algorithms.binding.ScaffoldArms
 import io.github.psd2live.algorithms.binding.ScaffoldBranchesContext
 import io.github.psd2live.algorithms.binding.ScaffoldFramesContext
@@ -783,7 +787,7 @@ object RigBuilder {
 		if (RigBuildProfile.recording) RigBuildProfile.add("scaffold: face rig + frames", System.nanoTime() - faceStart)
 		val bodyStart = System.nanoTime()
 		val deformersEnabled = !config.meshOnly && config.generateDeformers
-		val stance = BodyStance.of(analysis, character, config.rigEdits.skeleton, config.bodyStrength, config.rigTuning)
+		val stance = BodyStanceSource.of(analysis, character, config.rigEdits.skeleton, config.bodyStrength, config.rigTuning)
 		val bodyFrame = bodyFrame(analysis, stance, faceRig, character, head, face, frontHair, backHair, config.rigEdits.skeleton?.enabled == true)
 		if (RigBuildProfile.recording) RigBuildProfile.add("scaffold: stance + body frame", System.nanoTime() - bodyStart)
 		val deformerResult = if (deformersEnabled) stages?.get(RigStageCache.DEFORMERS, 8,
@@ -1212,7 +1216,8 @@ object RigBuilder {
 		}
 
     internal data class ScaffoldSourceInputs(val frames: kotlinx.serialization.json.JsonObject,
-                                              val branches: kotlinx.serialization.json.JsonObject)
+                                              val branches: kotlinx.serialization.json.JsonObject,
+                                              val torso: TorsoFrame)
 
     /** Captures source measurements only: no deformer stage or bound model is evaluated. */
     internal fun scaffoldSourceInputs(analysis: PipelineAnalysis, config: PipelineConfig, cache: PreviewMeshCache): ScaffoldSourceInputs {
@@ -1229,7 +1234,7 @@ object RigBuilder {
                 layer.riggedIn(context.analysis.anchors, context.headSpace).bounds, scaffoldSlot(layer, context.analysis.anchors))
         }, context.bodyFrame, context.stance.legsFrame, head,
             { tr("model.deformer.pair", it) }, { tr("model.deformer.armHang", it) })
-        return ScaffoldSourceInputs(frames, branches)
+        return ScaffoldSourceInputs(frames, branches, context.stance.torso)
     }
 
     internal fun scaffoldFrameInputs(analysis: PipelineAnalysis, config: PipelineConfig, cache: PreviewMeshCache) =
@@ -2588,14 +2593,6 @@ object RigBuilder {
 	}
 
 	/**
-	 * Where the torso is drawn, canvas pixels: its centre line, the shoulder and waist lines, and half its
-	 * width at the chest. The breath and the body's lean are placed by it.
-	 */
-	internal class TorsoFrame(val centerX: Float, val shoulderY: Float, val waistY: Float, val halfWidth: Float) {
-		val length: Float get() = waistY - shoulderY
-	}
-
-	/**
 	 * The torso of [analysis]: the skeleton's upper body bone when there is one - it runs from the waist up
 	 * to the shoulders - else the shoulder and hip lines the layers give, across the topwear.
 	 */
@@ -2613,45 +2610,6 @@ object RigBuilder {
 		return TorsoFrame(centerX, shoulderY, waistY, halfWidth)
 	}
 
-	/**
-	 * The body's second warp, in the lean warp's normalized space over [character], the body warps' frame.
-	 *
-	 * How far each goes is [tuning]'s Body Z and breath values.
-	 *
-	 * - Body Z leans the upper body about the waist: each row above it shifts sideways by its height over
-	 *   the waist, easing in across a band so the bend has no crease, and the hips and legs stay put. Rows
-	 *   only shift, so a lean either way keeps every row its width.
-	 * - Breath lifts the shoulders and everything they carry - the head, the arms - with the chest lifting
-	 *   less and the waist not at all, and widens the chest a little about the body's centre line. Past the
-	 *   torso's sides the widening stops growing, so an arm or a lock of hair beside it moves bodily.
-	 */
-	internal fun bodySecondaryWarpPoint(
-		character: Bounds,
-		torso: TorsoFrame,
-		u: Float,
-		v: Float,
-		bodyAngleZ: Float,
-		breathValue: Float,
-		strength: Float,
-		tuning: RigTuning = RigTuning(),
-	): Pair<Float, Float> {
-		val boundedStrength = strength.coerceIn(0f, 2f)
-		val x = character.left + u * character.width
-		val y = character.top + v * character.height
-		val torsoLength = torso.length
-		val lean = Math.toRadians(tuning.bodyZDegrees * bodyAngleZ / 10.0 * boundedStrength)
-		val band = torsoLength * 0.3f
-		val above = (torso.waistY - y).coerceAtLeast(0f)
-		val lever = if (above < band) above * above / (2f * band) else above - band / 2f
-		val shift = kotlin.math.tan(lean).toFloat() * lever
-		val breath = breathValue.coerceIn(0f, 1f) * boundedStrength
-		val rise = smoothstep(((torso.waistY - y) / torsoLength).coerceIn(0f, 1f))
-		val lift = breath * tuning.breathLift / 100f * torsoLength * rise
-		val chestY = torso.shoulderY + torsoLength * 0.3f
-		val chest = rise * kotlin.math.exp(-((y - chestY) / (torsoLength * 0.45f)).let { it * it })
-		val widen = (x - torso.centerX).coerceIn(-torso.halfWidth, torso.halfWidth) * breath * tuning.breathWiden / 100f * chest
-		return (x + shift + widen - character.left) / character.width to (y - lift - character.top) / character.height
-	}
 
 	private fun smoothstep(t: Float) = t * t * (3f - 2f * t)
 
@@ -2790,7 +2748,7 @@ object RigBuilder {
 				columns = 4,
 				rows = 6,
 			) { u, v, values ->
-				bodySecondaryWarpPoint(bodyFrame, torso, u, v, values[0], values[1], config.bodyStrength, config.rigTuning)
+				LegacyBodyMotion.secondaryPoint(bodyFrame, torso, u, v, values[0], values[1], config.bodyStrength, stance.tuning)
 			}
 			val breath = Deformer.Warp(breathWarpId, tr("model.deformer.breath"), BodyStance.leanWarpId, bodyPartId, 6, 4, true, breathGrid)
 
@@ -4884,33 +4842,8 @@ object RigBuilder {
 	 * At each lean key a cell holds the warp's own lattice at Angle Y moved so, read between its keys as
 	 * the runtime would and held at its ends; every such warp moves alike, so the face turns as one.
 	 */
-	internal fun withFaceLean(deformers: List<Deformer>, tuning: RigTuning = RigTuning()): List<Deformer> = deformers.map { deformer ->
-		if (deformer !is Deformer.Warp) return@map deformer
-		val grid = deformer.geometryGrid ?: return@map deformer
-		val yi = grid.axes.indexOfFirst { it.parameterId == StandardParameters.ANGLE_Y }
-		if (yi < 0 || grid.axes[yi].keys.size < 2 || grid.axes.any { it.parameterId == StandardParameters.BODY_LEAN }) return@map deformer
-		val keys = grid.axes[yi].keys
-		val byCoordinate = grid.cells.associateBy { it.coordinate.toList() }
-		val leans = floatArrayOf(-10f, 0f, 10f)
-		val shifts = floatArrayOf(tuning.faceLeanUp, 0f, -tuning.faceLeanDown)
-		fun at(cell: KeyformCell<WarpLatticeForm>, index: Int) =
-			byCoordinate[cell.coordinate.copyOf().also { it[yi] = index }.toList()]?.form ?: cell.form
-		val cells = grid.cells.flatMap { cell ->
-			leans.indices.map { l ->
-				val form = if (shifts[l] == 0f) cell.form else {
-					val target = (keys[cell.coordinate[yi]] + shifts[l]).coerceIn(keys.first(), keys.last())
-					var j = 0
-					while (j < keys.size - 2 && target > keys[j + 1]) j++
-					val t = ((target - keys[j]) / (keys[j + 1] - keys[j])).coerceIn(0f, 1f)
-					val a = at(cell, j).controlPoints
-					val b = at(cell, j + 1).controlPoints
-					WarpLatticeForm(FloatArray(a.size) { a[it] + (b[it] - a[it]) * t })
-				}
-				KeyformCell(cell.coordinate + l, form)
-			}
-		}
-		deformer.copy(geometryGrid = KeyformGrid(grid.axes + KeyformAxis(StandardParameters.BODY_LEAN, leans), cells))
-	}
+	internal fun withFaceLean(deformers: List<Deformer>, tuning: RigTuning = RigTuning()): List<Deformer> =
+		LegacyBodyMotion.withFaceLean(deformers, tuning.bodyMotion())
 
 	/** The lean warp's axes: the lean and the proportions, three keys each. */
 	internal fun leanAxes(): List<KeyformAxis> =

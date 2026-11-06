@@ -157,6 +157,41 @@ class WorkspaceLegacyBindingTest {
         }
     }
 
+    @Test fun independentLegacyMouthMatchesVersionOneGeometryFadeMasksAndParameterIdentity(): Unit = runBlocking<Unit> {
+        val document = document(mouthDetails = true)
+        suspend fun evaluate(version: Int): io.github.psd2live.format.model.RigIR {
+            val f = Fixture(document)
+            f.install()
+            f.edit("modifier_add_group", buildJsonObject {
+                put("group", "mouth-only")
+                val mouth = f.addition("mouth/legacy", "mouth", config = buildJsonObject {
+                    put("scaffold", "structure")
+                    putJsonObject("tuning") { put("teethFade", 28f); put("mouthSeam", 62f) }
+                })
+                put("entries", JsonArray(listOf(f.addition(RigSourceModifiers.SCAFFOLD, "structure"),
+                    JsonObject(mouth + ("version" to JsonPrimitive(version))))))
+            })
+            val result = requireNotNull(f.now.model.rig.modifierOutput)
+            if (version == 2) {
+                f.edit("modifier_enable", buildJsonObject { put("id", "structure"); put("enabled", false) })
+                val report = requireNotNull(f.now.model.rig.modifierReport)
+                val entry = report.getValue("entries").jsonArray.map { it.jsonObject }
+                    .single { it.getValue("id").jsonPrimitive.content == "mouth" }
+                assertEquals("missing_dependency", entry.getValue("status").jsonPrimitive.content)
+            }
+            return result
+        }
+        val legacy = evaluate(1)
+        val current = evaluate(2)
+        assertEquals(legacy.parameters, current.parameters)
+        assertEquals(legacy.parameterTree, current.parameterTree)
+        assertEquals(legacy.restPose, current.restPose)
+        assertEquals(legacy.meshes, current.meshes)
+        val tongue = current.meshes.single { it.name == "tongue" }
+        assertTrue(tongue.maskedBy.isNotEmpty())
+        assertTrue(tongue.channels.isNotEmpty())
+    }
+
     @Test fun legacyBasesKeepTheOriginalSingleAxisAndCombinedMotions(): Unit = runBlocking<Unit> {
         val f = Fixture(document()); f.install()
         val original = native(f.document)
