@@ -233,6 +233,11 @@ class XpbdSolver(
 ) {
     private val n = state.count
     private val effectiveMass = FloatArray(n)
+    private val dampingDecay = FloatArray(n)
+    private val activeBends = BooleanArray(bends.size)
+    private val bendAlpha = FloatArray(bends.size)
+    private val stretchAlpha = FloatArray(stretch.size)
+    private val compressionAlpha = FloatArray(stretch.size)
     private val stretchLambda = FloatArray(stretch.size)
     private val areaLambda = FloatArray(triangles.size)
     private val flipLambda = FloatArray(triangles.size)
@@ -287,7 +292,20 @@ class XpbdSolver(
         val h = dt / substeps
         // Pin weights and masses stay fixed during a solve. Refresh for every frame so interactive
         // weight edits and restored training snapshots are observed without per-constraint branches.
-        for (i in 0 until n) effectiveMass[i] = if (pinWeight[i] >= 0.999f) 0f else s.invMass[i]
+        for (i in 0 until n) {
+            effectiveMass[i] = if (pinWeight[i] >= 0.999f) 0f else s.invMass[i]
+            dampingDecay[i] = exp(-s.damping[i] * h)
+        }
+        // These coefficients read only frame settings, not positions changed by constraint sweeps.
+        val h2 = h * h
+        for (k in 0 until stretch.size) {
+            stretchAlpha[k] = stretch.compliance[k] / h2
+            compressionAlpha[k] = stretch.compressionCompliance[k] / h2
+        }
+        for (k in 0 until bends.size) {
+            activeBends[k] = (0 until bendCounts[k]).any { effectiveMass[bendCorners[k * 6 + it]] != 0f }
+            bendAlpha[k] = bends.compliance[k] / h2
+        }
         for (sub in 1..substeps) {
             checkpoint()
             val t = sub.toFloat() / substeps
@@ -357,7 +375,7 @@ class XpbdSolver(
                 s.x[i] = s.stepAnchorX[i]; s.y[i] = s.stepAnchorY[i]
                 continue
             }
-            val decay = exp(-s.damping[i] * h)
+            val decay = dampingDecay[i]
             s.vx[i] = (s.vx[i] + (g.gravityX + g.windX * s.windFactor[i]) * h) * decay
             s.vy[i] = (s.vy[i] + (g.gravityY + g.windY * s.windFactor[i]) * h) * decay
             s.x[i] += s.vx[i] * h
@@ -382,7 +400,7 @@ class XpbdSolver(
             val length = sqrt(dx * dx + dy * dy)
             if (length < 1e-9f) continue
             val constraint = length - restLength[k]
-            val alpha = (if (constraint < 0f) c.compressionCompliance[k] else c.compliance[k]) / h2
+            val alpha = if (constraint < 0f) compressionAlpha[k] else stretchAlpha[k]
             val delta = (-constraint - alpha * stretchLambda[k]) / (w + alpha)
             stretchLambda[k] += delta
             val nx = dx / length
@@ -464,6 +482,7 @@ class XpbdSolver(
         val h2 = h * h
         for (step in 0 until bends.size) {
             val k = if (reverse) bends.size - 1 - step else step
+            if (!activeBends[k]) continue
             val t1 = bends.t1[k]; val t2 = bends.t2[k]
             val count = bendCounts[k]
             for (j in 0 until count) bendIndex[j] = bendCorners[k * 6 + j]
@@ -478,7 +497,7 @@ class XpbdSolver(
             var w = 0f
             for (j in 0 until count) w += mobility(bendIndex[j]) * (bendGx[j] * bendGx[j] + bendGy[j] * bendGy[j])
             if (w < 1e-12f) continue
-            val alpha = bends.compliance[k] / h2
+            val alpha = bendAlpha[k]
             val delta = (-constraint - alpha * bendLambda[k]) / (w + alpha)
             bendLambda[k] += delta
             for (j in 0 until count) {

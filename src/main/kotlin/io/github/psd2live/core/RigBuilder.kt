@@ -317,6 +317,7 @@ object RigBuilder {
 		val stance: BodyStance,
 		/** The frame the body warps span: the body's own parts and the neck. */
 		val bodyFrame: Bounds,
+        private val sharedStages: RigStageCache? = null,
 	) {
 		/** A closed mouth draws the mouth at rest, so an open mouth beside it fades out there; see [buildChannels]. */
 		val hasClosedMouth: Boolean = analysis.layers.any { it.semantic.tag == SemanticTag.MOUTH && it.opaquePixels > 0 }
@@ -430,10 +431,16 @@ object RigBuilder {
 
 		/** The head's feature points read off the art ([io.github.psd2live.core.fit.FaceLandmarking]), in the rig's space. */
 		private val landmarks = java.util.concurrent.ConcurrentHashMap<PipelineConfig, io.github.psd2live.core.fit.FaceLandmarks>()
-		fun faceLandmarks(config: PipelineConfig): io.github.psd2live.core.fit.FaceLandmarks = landmarks.getOrPut(config) {
-			io.github.psd2live.core.fit.FaceLandmarking.read(analysis.layers, fittedEyes(config)?.fitting, fittedBrows(config).mapValues { it.value.fit },
-				fittedMouth(config)?.rig?.fit, faceRig.centerX) { x, y -> faceRig.coordinateSpace.toAligned(x, y) }
-		}
+        fun faceLandmarks(config: PipelineConfig): io.github.psd2live.core.fit.FaceLandmarks = landmarks.getOrPut(config) {
+            val eyes = fittedEyes(config)?.fitting
+            val brows = fittedBrows(config).mapValues { it.value.fit }
+            val mouth = fittedMouth(config)?.rig?.fit
+            val build = { io.github.psd2live.core.fit.FaceLandmarking.read(analysis.layers, eyes, brows, mouth, faceRig.centerX) {
+                x, y -> faceRig.coordinateSpace.toAligned(x, y)
+            } }
+            val key = listOf(analysis.layers, eyes?.fits, eyes?.reasons, eyes?.level, brows, mouth, faceSignature(faceRig))
+            if (RigStageCache.enabled && sharedStages != null) sharedStages.get("face landmarks", 32, key, build) else build()
+        }
 
 		private val fittedMouths = java.util.concurrent.ConcurrentHashMap<List<Any?>, io.github.psd2live.core.fit.FittedMouth>()
 
@@ -538,6 +545,7 @@ object RigBuilder {
 			deformers = deformers,
 			stance = stance,
 			bodyFrame = bodyFrame,
+            sharedStages = sharedStages,
 		)
 		/** The layer expressed in the coordinate system its mesh and its keyforms are authored in. */
 		fun rigLayer(layer: ClassifiedLayer): ClassifiedLayer =
@@ -695,6 +703,7 @@ object RigBuilder {
 			scaffold.deformers.deformers,
 			scaffold.stance,
 			scaffold.bodyFrame,
+            stagesOf(meshCache),
 		)
 	}
 
@@ -861,6 +870,22 @@ object RigBuilder {
 		meshCache: PreviewMeshCache?,
 		resolution: PrimitiveResolution = PrimitiveResolution.Inactive,
 	): PipelineAnalysis {
+        // Binding modules share the same source geometry. Key by the actual meshing inputs,
+        // rather than the complete recipe which also contains unrelated motion/physics choices.
+        val stages = stagesOf(meshCache)
+        if (stages != null && analysis.calibration == null) {
+            val key = listOf(analysis, config.meshTrace, MeshResolution.unitScale(config, analysis.source),
+                config.alphaThreshold, RigMeshSeed.layers(config.rigEdits), resolution.partByLayer,
+                analysis.layers.map { meshSettings(it, config).first })
+            return stages.get("framed analysis", 16, key) {
+                framedAnalysis(analysis, config, meshCache, resolution)
+            }
+        }
+        return framedAnalysis(analysis, config, meshCache, resolution)
+    }
+
+    private fun framedAnalysis(analysis: PipelineAnalysis, config: PipelineConfig, meshCache: PreviewMeshCache?,
+                               resolution: PrimitiveResolution): PipelineAnalysis {
 		val layers = framedLayers(analysis.layers, analysis, config, meshCache, resolution)
 		val calibration = analysis.calibration?.let { meshFramedAnalysis(it, config, meshCache) }
 		return analysis.copy(
