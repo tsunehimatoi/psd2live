@@ -124,13 +124,14 @@ internal class RigModifierEvaluator(
         val writers = HashMap<Pair<String, String>, Pair<String, RigModifierDefinition>>()
         val saved = cache?.snapshot?.takeIf { it.plugins == pluginRevision && it.context == context && it.authored == authored &&
             it.stack.appliedCapabilities == stack.appliedCapabilities }
-        val authorContexts = stack.instances.filter { it.enabled && ModifierPluginCatalog.available(it) }.associate { instance ->
+        val authorContexts = HashMap<String, ModifierAlgorithmContext>()
+        fun capture(instance: RigModifierInstance): ModifierAlgorithmContext = authorContexts.getOrPut(instance.id) {
             checkpoint()
-            instance.id to registry.definition(instance).authorContext(instance)
+            registry.definition(instance).authorContext(instance)
         }
         val reuse = saved?.stack?.instances?.zip(stack.instances)?.takeWhile { (a, b) ->
             a == b && saved.stack.overrides[a.id].orEmpty() == stack.overrides[b.id].orEmpty() &&
-                saved.authorContexts[a.id] == authorContexts[b.id]
+                (saved.authorContexts[a.id]?.let { it == capture(b) } ?: true)
         }?.size ?: 0
         val outputs = ArrayList<RigIR>()
         val algorithmCache = saved?.algorithms.orEmpty().filterKeys { id -> stack.instances.any { it.id == id } }.toMutableMap()
@@ -206,7 +207,7 @@ internal class RigModifierEvaluator(
             }
             io.github.psd2live.core.RigBuildProfile.count("modifier cache misses")
             val before = current
-            val capturedContext = authorContexts.getValue(instance.id)
+            val capturedContext = capture(instance)
             val authorContext = if (definition.upstreamInputs || definition.plugin is ReadingModifierAlgorithmPlugin) {
                 val providers = definition.providers(instance)
                 val capabilities = definition.requires.sorted().flatMap { required ->
