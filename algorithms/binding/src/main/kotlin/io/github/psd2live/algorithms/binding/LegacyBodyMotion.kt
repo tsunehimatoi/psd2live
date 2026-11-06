@@ -147,7 +147,10 @@ object LegacyBodyMotion {
 		return (x + shift + widen - character.left) / character.width to (y - lift - character.top) / character.height
 	}
 
-	fun withFaceLean(deformers: List<Deformer>, tuning: BodyMotionTuning): List<Deformer> = deformers.map { deformer ->
+	fun withFaceLean(deformers: List<Deformer>, tuning: BodyMotionTuning): List<Deformer> =
+		withFaceLean(deformers, tuning.faceLeanDown, tuning.faceLeanUp)
+
+	fun withFaceLean(deformers: List<Deformer>, leanDown: Float, leanUp: Float): List<Deformer> = deformers.map { deformer ->
 		if (deformer !is Deformer.Warp) return@map deformer
 		val grid = deformer.geometryGrid ?: return@map deformer
 		val yi = grid.axes.indexOfFirst { it.parameterId == ParameterId("ParamAngleY") }
@@ -155,7 +158,7 @@ object LegacyBodyMotion {
 		val keys = grid.axes[yi].keys
 		val byCoordinate = grid.cells.associateBy { it.coordinate.toList() }
 		val leans = floatArrayOf(-10f, 0f, 10f)
-		val shifts = floatArrayOf(tuning.faceLeanUp, 0f, -tuning.faceLeanDown)
+		val shifts = floatArrayOf(leanUp, 0f, -leanDown)
 		fun at(cell: KeyformCell<WarpLatticeForm>, index: Int) =
 			byCoordinate[cell.coordinate.copyOf().also { it[yi] = index }.toList()]?.form ?: cell.form
 		val cells = grid.cells.flatMap { cell ->

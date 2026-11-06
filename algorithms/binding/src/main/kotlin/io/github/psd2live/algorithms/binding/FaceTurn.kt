@@ -1,5 +1,7 @@
 package io.github.psd2live.core.fit
 
+import io.github.psd2live.algorithms.binding.ThinPlateSpline
+
 import kotlin.math.abs
 import kotlin.math.hypot
 

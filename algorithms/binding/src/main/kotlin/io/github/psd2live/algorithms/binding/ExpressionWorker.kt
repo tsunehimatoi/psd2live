@@ -20,6 +20,14 @@ object ExpressionWorker {
         }
         val bodyId = "builtin." + java.util.HexFormat.of().formatHex("body/legacy".encodeToByteArray()) + ".v1/motion"
         algorithms[bodyId to 1] = LegacyBodyAlgorithm()
+        val depthId = "builtin." + java.util.HexFormat.of().formatHex("face.depth-turn".encodeToByteArray()) + ".v1/turn"
+        algorithms[depthId to 1] = DepthTurnAlgorithm()
+        val browId = "builtin." + java.util.HexFormat.of().formatHex("brow/fitted".encodeToByteArray()) + ".v1/binding"
+        algorithms[browId to 1] = BrowFittedAlgorithm()
+        val cheekId = "builtin." + java.util.HexFormat.of().formatHex("expression.cheek".encodeToByteArray()) + ".v1/color"
+        algorithms[cheekId to 1] = CheekAlgorithm()
+        val gloomId = "builtin." + java.util.HexFormat.of().formatHex("expression.gloom".encodeToByteArray()) + ".v1/gloom"
+        algorithms[gloomId to 1] = GloomAlgorithm()
         AlgorithmWorker.run(algorithms)
     }
 }

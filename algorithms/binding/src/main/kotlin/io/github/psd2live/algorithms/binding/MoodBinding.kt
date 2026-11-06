@@ -40,12 +40,18 @@ class MoodBinding(
             val tracks = ChannelGrids(mesh.channelGrids.gridsByChannel.filterValues { grid ->
                 grid.axes.none { it.parameterId in MoodChannels.parameters }
             })
-            mesh.copy(channelGrids = MoodChannels.apply(tracks, influence.warmth, influence.darkness,
-                influence.highlight, cheek, gloom))
+            applyChannels(mesh.copy(channelGrids = tracks), influence, cheek, gloom)
         }
         val next = source.copy(parameters = parameters, parameterTree = tree, drawables = drawables)
         val lowered = BlendShapeLowering(carrierName, checkpoint).lawful(next)
         checkpoint()
         return Result(next, lowered)
+    }
+
+    companion object {
+        /** Applies generated mood to a neutral mesh while respecting channels owned by other bindings. */
+        fun applyChannels(mesh: Drawable, influence: Influence, cheek: Boolean, gloom: Boolean): Drawable =
+            mesh.copy(channelGrids = MoodChannels.apply(mesh.channelGrids, influence.warmth, influence.darkness,
+                influence.highlight, cheek, gloom))
     }
 }

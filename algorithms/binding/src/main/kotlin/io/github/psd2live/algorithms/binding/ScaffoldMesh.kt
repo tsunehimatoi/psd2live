@@ -93,7 +93,7 @@ object ScaffoldMesh {
         return mesh to KeyformGrid(emptyList(), listOf(KeyformCell(IntArray(0), MeshDeltaForm(deltas))))
     }
 
-    private fun eyePoint(x: Float, y: Float, eye: Geometry.Eye): Pair<Float, Float> {
+    internal fun eyePoint(x: Float, y: Float, eye: Geometry.Eye): Pair<Float, Float> {
         val white = eye.whiteBounds.minByOrNull { abs(it.centerX - x) } ?: eye.bounds
         val halfWidth = (white.width * 0.5f).coerceAtLeast(1e-4f)
         val normalizedX = ((x - white.centerX) / halfWidth).coerceIn(-1f, 1f)
@@ -111,8 +111,7 @@ object ScaffoldMesh {
         return x to curveY + (y - anchorY) * verticalScale
     }
 
-    private fun irisPoint(x: Float, y: Float, iris: Geometry.Iris): Pair<Float, Float> {
-        val amount = 0f
+    internal fun irisPoint(x: Float, y: Float, iris: Geometry.Iris, amount: Float = 0f): Pair<Float, Float> {
         val scaleX = 1f - amount * iris.jellySquash / 100f
         val scaleY = 1f + amount * iris.jellyStretch / 100f
         return iris.centroidX + (x - iris.centroidX) * scaleX to iris.centroidY + (y - iris.centroidY) * scaleY
