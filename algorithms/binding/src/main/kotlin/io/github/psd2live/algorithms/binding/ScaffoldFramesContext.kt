@@ -7,6 +7,12 @@ import org.umamo.runtime.model.DeformerId
 /** Captures source measurements for the default body and head branches. */
 object ScaffoldFramesContext {
     private const val SCHEMA = "scaffold_frames/1"
+    data class Input(
+        val body: Bounds,
+        val standing: ScaffoldBody.Standing?,
+        val head: ScaffoldHead.Input,
+        val labels: Map<String, String>,
+    )
     private val ownedIds = setOf(
         ScaffoldBody.bodyId, ScaffoldBody.leanId, ScaffoldBody.legsId,
         ScaffoldHead.breathId, ScaffoldHead.rotationId, ScaffoldHead.headId,
@@ -62,7 +68,7 @@ object ScaffoldFramesContext {
         })
     }
 
-    fun build(value: JsonObject, checkpoint: () -> Unit = {}): List<Deformer> {
+    fun decode(value: JsonObject, checkpoint: () -> Unit = {}): Input {
         checkpoint()
         val input = fields(value, "schema", "body", "standing", "head", "labels")
         require(string(input.getValue("schema")) == SCHEMA) { "Unknown scaffold frames schema" }
@@ -97,8 +103,15 @@ object ScaffoldFramesContext {
             readHair(source.getValue("front_hair")), readHair(source.getValue("back_hair")),
         )
         val labels = fields(input.getValue("labels"), *labelKeys(standing, head).toTypedArray()).mapValues { string(it.value) }
-        val label: (String) -> String = { labels.getValue(it) }
-        val deformers = ScaffoldBody.build(body, standing, label, checkpoint) + ScaffoldHead.build(head, label, checkpoint).deformers
+        checkpoint()
+        return Input(body, standing, head, labels)
+    }
+
+    fun build(value: JsonObject, checkpoint: () -> Unit = {}): List<Deformer> {
+        val input = decode(value, checkpoint)
+        val label: (String) -> String = { input.labels.getValue(it) }
+        val deformers = ScaffoldBody.build(input.body, input.standing, label, checkpoint) +
+            ScaffoldHead.build(input.head, label, checkpoint).deformers
         checkpoint()
         return deformers
     }

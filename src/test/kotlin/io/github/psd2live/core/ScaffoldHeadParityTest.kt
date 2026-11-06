@@ -3,6 +3,7 @@ package io.github.psd2live.core
 import io.github.psd2live.algorithms.binding.BindingProjection
 import io.github.psd2live.algorithms.binding.ScaffoldHead
 import io.github.psd2live.algorithms.binding.ScaffoldFramesContext
+import io.github.psd2live.algorithms.binding.ScaffoldBranchesContext
 import io.github.psd2live.core.modifier.RigModifierPipeline
 import io.github.psd2live.i18n.tr
 import io.github.psd2live.project.rawConfig
@@ -82,9 +83,13 @@ class ScaffoldHeadParityTest {
         val optimizedNeutral = BindingProjection.retain(optimized, emptySet(), mapOf(StandardParameters.MOUTH_OPEN to 1f))
         val before = PuppetIr.toIr(legacy)
         val after = PuppetIr.toIr(optimizedNeutral)
-        val pluginFrames = ScaffoldFramesContext.build(RigBuilder.scaffoldFrameInputs(analysis, config, cache))
+        val inputs = RigBuilder.scaffoldSourceInputs(analysis, config, cache)
+        val pluginFrames = ScaffoldFramesContext.build(inputs.frames)
         assertEquals(legacy.deformers.filter { ScaffoldFramesContext.owns(it.id) }.map(PuppetIr::deformerToIr),
             pluginFrames.map(PuppetIr::deformerToIr), "Frames computed from captured source measurements")
+        val pluginBranches = ScaffoldBranchesContext.build(inputs.branches, pluginFrames).deformers
+        assertEquals(legacy.deformers.map(PuppetIr::deformerToIr), (pluginFrames + pluginBranches).map(PuppetIr::deformerToIr),
+            "Complete structure computed from source measurements")
         assertEquals(before.deformers, after.deformers, "Complete static deformer scaffold")
         assertEquals(before.meshes.map { it.id }, after.meshes.map { it.id })
         before.meshes.zip(after.meshes).forEach { (old, fresh) -> assertEquals(old, fresh, "Static mesh ${old.id}") }

@@ -1,6 +1,7 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.algorithms.binding.ScaffoldArms
+import io.github.psd2live.algorithms.binding.ScaffoldBranchesContext
 import io.github.psd2live.algorithms.binding.ScaffoldFramesContext
 import io.github.psd2live.algorithms.binding.ScaffoldBody
 import io.github.psd2live.algorithms.binding.ScaffoldHead
@@ -1207,14 +1208,29 @@ object RigBuilder {
 			buildWithContext(inputAnalysis, atlas, config, meshCache, context, ids, onBindingInput)
 		}
 
+    internal data class ScaffoldSourceInputs(val frames: kotlinx.serialization.json.JsonObject,
+                                              val branches: kotlinx.serialization.json.JsonObject)
+
     /** Captures source measurements only: no deformer stage or bound model is evaluated. */
-    internal fun scaffoldFrameInputs(analysis: PipelineAnalysis, config: PipelineConfig, cache: PreviewMeshCache): kotlinx.serialization.json.JsonObject {
+    internal fun scaffoldSourceInputs(analysis: PipelineAnalysis, config: PipelineConfig, cache: PreviewMeshCache): ScaffoldSourceInputs {
+        require(!config.recipe.modern && config.rigEdits.skeleton?.enabled != true) {
+            "Source scaffold measurements require the legacy source recipe without a skeleton"
+        }
         val context = rigContext(analysis, config.copy(generateDeformers = false), cache)
-        return ScaffoldFramesContext.capture(context.bodyFrame, scaffoldStanding(context.stance),
-            scaffoldHeadInput(context.bodyFrame, context.head, context.face, context.faceRig,
-                context.frontHair, context.backHair, config.featureDisplacementEnabled,
-                !config.hairSimulationFront, !config.hairSimulationBack), { tr(it) })
+        val head = scaffoldHeadInput(context.bodyFrame, context.head, context.face, context.faceRig,
+            context.frontHair, context.backHair, config.featureDisplacementEnabled,
+            !config.hairSimulationFront, !config.hairSimulationBack)
+        val frames = ScaffoldFramesContext.capture(context.bodyFrame, scaffoldStanding(context.stance), head, { tr(it) })
+        val branches = ScaffoldBranchesContext.capture(context.analysis.layers.filter { it.opaquePixels > 0 }.map { layer ->
+            ScaffoldBranchesContext.Layer(layer.source.id.raw, layer.source.name, layer.semantic.tag.name, layer.semantic.side,
+                layer.riggedIn(context.analysis.anchors, context.headSpace).bounds, scaffoldSlot(layer, context.analysis.anchors))
+        }, context.bodyFrame, context.stance.legsFrame, head,
+            { tr("model.deformer.pair", it) }, { tr("model.deformer.armHang", it) })
+        return ScaffoldSourceInputs(frames, branches)
     }
+
+    internal fun scaffoldFrameInputs(analysis: PipelineAnalysis, config: PipelineConfig, cache: PreviewMeshCache) =
+        scaffoldSourceInputs(analysis, config, cache).frames
 
     private fun scaffoldStanding(stance: BodyStance): ScaffoldBody.Standing? = stance.legsFrame?.let { frame ->
         ScaffoldBody.Standing(frame, stance.legs.map { leg ->

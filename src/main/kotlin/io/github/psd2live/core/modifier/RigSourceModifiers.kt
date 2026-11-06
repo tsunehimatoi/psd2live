@@ -231,10 +231,10 @@ internal class RigModifierSource(
                     ScaffoldParts.Material(DrawableId(id), RigBuilder.scaffoldSlot(layer, analysis.anchors), layer.source.order)
                 }
             }, label = { io.github.psd2live.i18n.tr(it) })
-        val frames = if (pinned != null && pinned < ModifierPluginVersion.parse("1.0.38")) null else {
+        val structure = if (pinned != null && pinned < ModifierPluginVersion.parse("1.0.38")) null else {
             val options = instance.config
             val corrections = io.github.psd2live.project.WorkspaceSettingsCodec.decodeRecipe(options["corrections"])
-            RigBuilder.scaffoldFrameInputs(analysis, sourceConfig().copy(
+            RigBuilder.scaffoldSourceInputs(analysis, sourceConfig().copy(
                 bodyStrength = 1f, headTurnStrength = 1f, rigTuning = RigTuning(),
                 recipe = RigRecipe.Legacy.copy(moves = corrections.moves, eyeParts = corrections.eyeParts),
                 featureDisplacementEnabled = options["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
@@ -243,7 +243,8 @@ internal class RigModifierSource(
             ), meshCache)
         }
         io.github.psd2live.algorithms.binding.ScaffoldAlgorithm.capture(scaffold(instance) {}, materialBase,
-            instance.targets.associate { it.id to primaryByLayer.getValue(layersByMesh.getValue(it.id)) }, organization, frames)
+            instance.targets.associate { it.id to primaryByLayer.getValue(layersByMesh.getValue(it.id)) }, organization, structure?.frames,
+            structure?.branches?.takeUnless { pinned != null && pinned < ModifierPluginVersion.parse("1.0.40") })
     }
 
     private fun templateKey(instances: List<RigModifierInstance>, scaffold: JsonObject): Map<String, JsonObject> {
