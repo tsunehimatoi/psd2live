@@ -51,16 +51,7 @@ object ScaffoldMeshContext {
         val inputs = fields(requireNotNull(context.values[INPUTS]) { "Missing scaffold mesh measurements" }, "schema", "materials")
         require(string(inputs.getValue("schema")) == SCHEMA) { "Unknown scaffold mesh schema" }
         val resource = requireNotNull(context.resources[RESOURCE]) { "Missing scaffold source mesh resource" }
-        val captured = RigIrBinary.decode(resource.read())
-        checkpoint()
-        val byId = LinkedHashMap<String, MeshGeometry>()
-        val cleanMeshes = captured.meshes.map { source ->
-            checkpoint()
-            val geometry = requireNotNull(source.geometry) { "Missing source mesh geometry" }
-            require(source.id.isNotBlank() && byId.put(source.id, geometry) == null) { "Invalid scaffold mesh identity" }
-            mesh(source.id, geometry)
-        }
-        require(captured == model(cleanMeshes)) { "Scaffold mesh resource contains bound model data" }
+        val byId = decodeRawMeshes(resource, checkpoint).toMutableMap()
         val records = array(inputs.getValue("materials"))
         require(records.size == byId.size) { "Scaffold mesh measurements do not match source geometry" }
         val result = records.map { value ->
@@ -68,17 +59,33 @@ object ScaffoldMeshContext {
             val record = fields(value, "id", "source_id", "geometry")
             val id = string(record.getValue("id"))
             val sourceId = string(record.getValue("source_id"))
-            val source = requireNotNull(byId.remove(id)) { "Missing or duplicate source mesh: $id" }
+            val raw = requireNotNull(byId.remove(id)) { "Missing or duplicate source mesh: $id" }
             require(sourceId.isNotBlank()) { "Invalid scaffold source layer ID" }
             val parent = requireNotNull(parents[sourceId]) { "Missing scaffold parent for $sourceId" }
             validateBounds(parent.frame)
-            val raw = ScaffoldMesh.RawMesh(source.positions.shared(), source.uvs.shared(), source.indices.shared())
-            validateRaw(raw, checkpoint)
             val (geometry, grid) = ScaffoldMesh.build(raw, parent, decode(record.getValue("geometry")), checkpoint)
             Drawable(DrawableId(id), id, parent.id, BlendMode.Normal, emptyList(), geometry, grid)
         }
         checkpoint()
         return result
+    }
+
+    /** Reads the same original rig coordinates and topology used by the scaffold. */
+    fun decodeRawMeshes(resource: ModifierAlgorithmResource, checkpoint: () -> Unit = {}): Map<String, ScaffoldMesh.RawMesh> {
+        checkpoint()
+        val captured = RigIrBinary.decode(resource.read())
+        checkpoint()
+        val byId = LinkedHashMap<String, ScaffoldMesh.RawMesh>()
+        val cleanMeshes = captured.meshes.map { source ->
+            checkpoint()
+            val geometry = requireNotNull(source.geometry) { "Missing source mesh geometry" }
+            val raw = ScaffoldMesh.RawMesh(geometry.positions.shared(), geometry.uvs.shared(), geometry.indices.shared())
+            require(source.id.isNotBlank() && byId.put(source.id, raw) == null) { "Invalid scaffold mesh identity" }
+            validateRaw(raw, checkpoint)
+            mesh(source.id, geometry)
+        }
+        require(captured == model(cleanMeshes)) { "Scaffold mesh resource contains bound model data" }
+        return byId
     }
 
     private fun model(meshes: List<Mesh>) = RigIR(Canvas(0f, 0f), emptyList(), meshes = meshes)

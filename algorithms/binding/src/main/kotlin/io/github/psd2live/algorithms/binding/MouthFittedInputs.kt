@@ -1,6 +1,7 @@
 package io.github.psd2live.algorithms.binding
 
 import io.github.psd2live.core.modifier.ModifierAlgorithmContext
+import io.github.psd2live.core.modifier.ModifierAlgorithmResource
 import kotlinx.serialization.json.*
 import kotlin.math.abs
 import kotlin.math.pow
@@ -19,6 +20,7 @@ data class MouthFittedInputs(
     val shapeCarrierName: String = "{meshName} Shape",
     val turnCarrierName: String = "{meshName} Turn",
     val fallback: Fallback? = null,
+    val sourceVertices: SourceVertices? = null,
 ) {
     init {
         require(chin.isFinite() && teethFade.isFinite())
@@ -28,6 +30,16 @@ data class MouthFittedInputs(
             layer != null && layer.tag in setOf("MOUTH", "MOUTH_OPEN") && layer.role == null && !layer.clipped
         }) { "Invalid fitted mouth mask source" }
         require(shapeCarrierName.length in 1..512 && turnCarrierName.length in 1..512)
+        require(sourceVertices == null || sourceVertices.targets.keys.all { it in layers }) { "Unknown fitted mouth vertex target" }
+    }
+
+    /** References original scaffold coordinates using target and canonical mesh identities. */
+    data class SourceVertices(val resource: ModifierAlgorithmResource, val targets: Map<String, SourceVertexTarget>)
+
+    data class SourceVertexTarget(val canonical: String, val parent: String?) {
+        init {
+            require(canonical.validIdentity() && (parent == null || parent.validIdentity()))
+        }
     }
 
     data class Layer(
@@ -106,6 +118,7 @@ data class MouthFittedInputs(
 
     fun encode(): ModifierAlgorithmContext {
         val measurement = source?.encode()
+        val resources = measurement?.resources.orEmpty() + sourceVertices?.resource?.let { mapOf(it.digest to it) }.orEmpty()
         return ModifierAlgorithmContext(buildJsonObject {
             put("schema", SCHEMA)
             measurement?.let { put("mouth", it.values) }
@@ -117,6 +130,19 @@ data class MouthFittedInputs(
             put("shapeName", shapeCarrierName)
             put("turnName", turnCarrierName)
             put("masks", JsonArray(maskSources.map(::JsonPrimitive)))
+            sourceVertices?.let { source ->
+                putJsonObject("sourceVertices") {
+                    put("digest", source.resource.digest)
+                    putJsonObject("targets") {
+                        source.targets.forEach { (id, target) ->
+                            putJsonObject(id) {
+                                put("canonical", target.canonical)
+                                put("parent", target.parent?.let(::JsonPrimitive) ?: JsonNull)
+                            }
+                        }
+                    }
+                }
+            }
             fallback?.let { f ->
                 putJsonObject("fallback") {
                     put("curve", JsonArray(f.curve.points.map { floats(it.x, it.y) }))
@@ -149,7 +175,7 @@ data class MouthFittedInputs(
                     }
                 }
             }
-        }, measurement?.resources.orEmpty())
+        }, resources)
     }
 
     companion object {
@@ -168,7 +194,7 @@ data class MouthFittedInputs(
             val value = context.values
             require(value["schema"] == JsonPrimitive(SCHEMA)) { "Missing fitted mouth source inputs" }
             require(value.keys.all { it in setOf("schema", "mouth", "chin", "variant", "closed", "inside", "fade", "shapeName", "turnName",
-                "masks", "head", "fallback", "layers") })
+                "masks", "head", "fallback", "layers", "sourceVertices") })
             val source = value["mouth"]?.jsonObject?.let { measurement ->
                 val digest = measurement.string("measurement")
                 MouthSourceContext.decode(ModifierAlgorithmContext(measurement, mapOf(digest to context.resources.getValue(digest))))
@@ -187,6 +213,18 @@ data class MouthFittedInputs(
                 val v = f.getValue("values").finiteFloats(5)
                 Fallback(curve, f.flag("exact"), v[0], v[1], v[2], v[3], v[4])
             }
+            val vertices = value["sourceVertices"]?.jsonObject?.let { v ->
+                require(v.keys == setOf("digest", "targets"))
+                val digest = v.string("digest")
+                val resource = context.resources.getValue(digest)
+                require(resource.digest == digest) { "Invalid fitted mouth source vertex digest" }
+                val targets = v.getValue("targets").jsonObject.mapValues { (_, encoded) ->
+                    val target = encoded.jsonObject
+                    require(target.keys == setOf("canonical", "parent"))
+                    SourceVertexTarget(target.string("canonical"), target.getValue("parent").jsonPrimitive.contentOrNull)
+                }
+                SourceVertices(resource, targets)
+            }
             val layers = value.getValue("layers").jsonObject.mapValues { (_, encoded) ->
                 val layer = encoded.jsonObject
                 require(layer.keys.all { it in setOf("tag", "role", "side", "variant", "frame", "bounds", "center", "opaque",
@@ -200,7 +238,7 @@ data class MouthFittedInputs(
             }
             return MouthFittedInputs(source, value.number("chin"), value["variant"]?.jsonPrimitive?.int, value.flag("closed"),
                 value.flag("inside"), value.number("fade"), layers, value.getValue("masks").jsonArray.map { it.jsonPrimitive.content },
-                head, value.string("shapeName"), value.string("turnName"), fallback).also {
+                head, value.string("shapeName"), value.string("turnName"), fallback, vertices).also {
                 if (head != null && context.upstream.isNotEmpty()) require(context.upstream.any { capability ->
                     capability.instanceId == head.provider &&
                         (capability.capability in setOf("face/fitted", "face.depth-turn") ||

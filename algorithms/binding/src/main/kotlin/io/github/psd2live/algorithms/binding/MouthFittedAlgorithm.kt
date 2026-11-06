@@ -63,6 +63,7 @@ class MouthFittedAlgorithm : ChangingModifierAlgorithmPlugin {
         targets: Set<String>,
         inputs: MouthFittedInputs,
         checkpoint: () -> Unit = {},
+        onBindingInput: ((PuppetModel) -> Unit)? = null,
         tongueId: (DrawableId) -> String = { "${it.raw}_Out" },
     ): PuppetModel {
         val mouth = inputs.source?.rig()
@@ -72,6 +73,12 @@ class MouthFittedAlgorithm : ChangingModifierAlgorithmPlugin {
         val closedLine = own.any { it.tag == "MOUTH_CLOSE" }
         val byId = source.drawables.associateBy { it.id.raw }
         require(targets.all { it in byId } && inputs.layers.keys.all { it in byId }) { "Unknown fitted mouth mesh" }
+        val vertexInputs = inputs.sourceVertices
+        val rawMeshes = vertexInputs?.let {
+            ScaffoldMeshContext.decodeRawMeshes(it.resource, checkpoint).also { meshes ->
+                require(it.targets.values.all { target -> target.canonical in meshes }) { "Unknown fitted mouth canonical mesh" }
+            }
+        }.orEmpty()
         val head = inputs.head?.rig(checkpoint)
         val active = source.parameters.mapTo(hashSetOf()) { it.id }
         val drawables = source.drawables.map { original ->
@@ -84,7 +91,10 @@ class MouthFittedAlgorithm : ChangingModifierAlgorithmPlugin {
             val faceSkin = mouth != null && lipped && !mouth.fit.hasLines && layer.tag == "FACE" && layer.role == null
             val mouthFace = mouth != null && (layer.role == null || layer.role == "SHADOW") &&
                 (layer.tag in setOf("FACE", "NOSE") || layer.tag == "FACE_DETAIL" && mouth.fit.toMouth(layer.centroidX, layer.centroidY).second > 0f)
-            val positions = positions(geometry.positions, layer.frame)
+            val raw = vertexInputs?.targets?.get(original.id.raw)?.takeIf { it.parent == original.parentDeformerId?.raw }
+                ?.let { rawMeshes.getValue(it.canonical) }
+            val positions = if (raw != null && matchesSource(raw, geometry, layer.frame, checkpoint)) raw.rigPositions
+                else positions(geometry.positions, layer.frame)
             val grid = when {
                 mouth != null && follow != null -> if (layer.tag == "MOUTH_CLOSE") mouth.closedGrid(positions, layer.frame, mouthForm)
                     else mouth.grid(positions, layer.frame, mouthForm, mouthOpen, follow, inputs.chin)
@@ -150,6 +160,7 @@ class MouthFittedAlgorithm : ChangingModifierAlgorithmPlugin {
             if (it.id == mouthOpen && mouth != null && mouth.openKeys.last() > it.max) it.copy(max = mouth.openKeys.last()) else it
         }
         val posed = withTongues(source.copy(drawables = drawables, parameters = parameters), targets, inputs, mouth, tongueId)
+        onBindingInput?.invoke(posed)
         return BlendShapeLowering({ turn, name -> (if (turn) inputs.turnCarrierName else inputs.shapeCarrierName)
             .replace("{meshName}", name) }, checkpoint).lawful(posed)
     }
@@ -226,6 +237,20 @@ class MouthFittedAlgorithm : ChangingModifierAlgorithmPlugin {
 
     private fun positions(vertices: FloatArray, frame: Bounds): FloatArray = FloatArray(vertices.size) { i ->
         if (i % 2 == 0) frame.left + vertices[i] * frame.width else frame.top + vertices[i] * frame.height
+    }
+
+    /** Compare the exact source normalization, including same-topology edits to rest vertices. */
+    private fun matchesSource(raw: ScaffoldMesh.RawMesh, geometry: DrawableMesh, frame: Bounds, checkpoint: () -> Unit): Boolean {
+        if (raw.rigPositions.size != geometry.positions.size || !raw.triangles.contentEquals(geometry.indices)) return false
+        val width = frame.width.coerceAtLeast(1e-4f)
+        val height = frame.height.coerceAtLeast(1e-4f)
+        for (i in raw.rigPositions.indices step 2) {
+            if (i % 1024 == 0) checkpoint()
+            val x = (raw.rigPositions[i] - frame.left) / width
+            val y = (raw.rigPositions[i + 1] - frame.top) / height
+            if (x.toRawBits() != geometry.positions[i].toRawBits() || y.toRawBits() != geometry.positions[i + 1].toRawBits()) return false
+        }
+        return true
     }
 
     private fun fallbackGrid(positions: FloatArray, layer: MouthFittedInputs.Layer, fallback: MouthFittedInputs.Fallback): KeyformGrid<MeshDeltaForm> {

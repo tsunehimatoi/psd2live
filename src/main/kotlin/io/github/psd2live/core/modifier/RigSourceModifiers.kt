@@ -30,12 +30,8 @@ internal class RigModifierSource(
     private fun generated(strength: Float = 1f, tuning: RigTuning = RigTuning(), headStrength: Float = 1f,
                           recipe: RigRecipe = RigRecipe.Legacy, outline: RigModifierInstance? = null,
                           featureDisplacement: Boolean = false, frontHairSway: Boolean = true, backHairSway: Boolean = true, neutralScaffold: Boolean = false, capture: ((() -> PuppetModel) -> Unit)? = null): BuiltRig {
-        val clean = sourceConfig()
-        val native = clean.copy(bodyStrength = strength, headTurnStrength = headStrength, rigTuning = tuning, recipe = recipe,
-            featureDisplacementEnabled = featureDisplacement, mouthOutlineEnabled = outline != null,
-            hairSimulationFront = !frontHairSway, hairSimulationBack = !backHairSway,
-            mouthThickness = outline?.let { RigLegacyBindings.values(it)["thickness"] } ?: 1.5f,
-            mouthColor = outline?.let(RigLegacyBindings::outlineColor))
+        val native = generationConfig(strength, tuning, headStrength, recipe, outline,
+            featureDisplacement, frontHairSway, backHairSway)
         if (outline == null) return if (neutralScaffold) RigBuilder.buildNeutralScaffold(analysis, atlas, native, meshCache, capture)
             else RigBuilder.build(analysis, atlas, native, meshCache, capture)
         val prepared = MouthLipLayers.prepare(analysis, native, meshCache)
@@ -45,6 +41,15 @@ internal class RigModifierSource(
             listOf(atlas, lips, native.effectiveAtlasBudget()), pack) else pack()
         return RigBuilder.build(prepared, packed, native, meshCache, capture)
     }
+
+    private fun generationConfig(strength: Float, tuning: RigTuning, headStrength: Float, recipe: RigRecipe,
+                                 outline: RigModifierInstance?, featureDisplacement: Boolean,
+                                 frontHairSway: Boolean, backHairSway: Boolean) = sourceConfig().copy(
+        bodyStrength = strength, headTurnStrength = headStrength, rigTuning = tuning, recipe = recipe,
+        featureDisplacementEnabled = featureDisplacement, mouthOutlineEnabled = outline != null,
+        hairSimulationFront = !frontHairSway, hairSimulationBack = !backHairSway,
+        mouthThickness = outline?.let { RigLegacyBindings.values(it)["thickness"] } ?: 1.5f,
+        mouthColor = outline?.let(RigLegacyBindings::outlineColor))
 
     private fun sourceConfig() = RigModifierPipeline.ordinaryConfig(config).copy(meshOnly = false, generateDeformers = true,
         deferRig = false, rigPendingLayerIds = emptySet(), parentOverrides = emptyMap(),
@@ -304,15 +309,53 @@ internal class RigModifierSource(
                 })
             val outline = state[RigModules.MOUTH_OUTLINE.id]
             val corrections = io.github.psd2live.project.WorkspaceSettingsCodec.decodeRecipe(scaffold["corrections"])
+            val correctedRecipe = recipe.copy(moves = corrections.moves, eyeParts = corrections.eyeParts)
+            if (RigStageCache.enabled && instances.lastOrNull()?.type == "mouth/fitted") {
+                val nativeConfig = generationConfig(bodyStrength, tuning, headStrength, correctedRecipe, outline,
+                    scaffold["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
+                    scaffold["frontHairSway"]?.jsonPrimitive?.boolean ?: true, scaffold["backHairSway"]?.jsonPrimitive?.boolean ?: true)
+                return fittedMouthTemplate(instances, scaffold, nativeConfig, kept, byArea.keys)
+            }
             var bindingInput: (() -> PuppetModel)? = null
             val native = generated(bodyStrength, tuning, headStrength,
-                recipe.copy(moves = corrections.moves, eyeParts = corrections.eyeParts), outline,
+                correctedRecipe, outline,
                 scaffold["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
                 scaffold["frontHairSway"]?.jsonPrimitive?.boolean ?: true, scaffold["backHairSway"]?.jsonPrimitive?.boolean ?: true,
                 neutralScaffold = instances.isEmpty(), capture = { bindingInput = it })
             val chains = native.generatedChains.filter { chain -> instances.any { chain.kind in RigModifierChains.kinds(it.type) } }
                 .map { RigModifierChains.Binding(it) }
             return finishTemplate(native.puppet, chains, kept, byArea.keys, bindingInput)
+    }
+
+    private fun fittedMouthTemplate(instances: List<RigModifierInstance>, scaffold: JsonObject,
+                                    native: PipelineConfig, kept: Set<ParameterId>, areas: Set<String>): Template {
+        val previous = template(instances.dropLast(1), scaffold)
+        val input = requireNotNull(previous.bindingInput) { "Fitted mouth requires captured upstream source geometry" }.invoke()
+        val context = RigBuilder.rigContext(analysis, native, meshCache)
+        val sourceLayers = analysis.layers.associateBy { it.source.id.raw }
+        val layers = input.drawables.mapNotNull { mesh ->
+            sourceLayers[layersByMesh[mesh.id.raw]]?.let { mesh.id.raw to it }
+        }.toMap()
+        val byId = input.drawables.associateBy { it.id.raw }
+        val frames = layers.mapValues { (id, _) ->
+            byId.getValue(id).parentDeformerId?.let { requireNotNull(context.resolveFrame(it, native)) } ?: context.character
+        }
+        val headProvider = instances.lastOrNull { it.type in setOf("face/fitted", "face.depth-turn") }?.id
+        val captured = RigFittedMouthSource.capture(context, native, input, layers, frames,
+            input.drawables.map { it.id.raw }, headProvider)
+        val sourceMeshes = scaffoldContext(provider(instances.last())).resources["source_meshes"]
+        val inputs = if (sourceMeshes == null) captured else captured.copy(sourceVertices =
+            io.github.psd2live.algorithms.binding.MouthFittedInputs.SourceVertices(sourceMeshes,
+                layers.keys.associateWith { id ->
+                    io.github.psd2live.algorithms.binding.MouthFittedInputs.SourceVertexTarget(id, byId.getValue(id).parentDeformerId?.raw)
+                }))
+        var bindingInput: PuppetModel? = null
+        val result = io.github.psd2live.algorithms.binding.MouthFittedAlgorithm().project(input, layers.keys, inputs,
+            checkpoint = { if (Thread.currentThread().isInterrupted) throw java.util.concurrent.CancellationException() },
+            onBindingInput = { bindingInput = it })
+        RigBuildProfile.count("modifier direct fitted mouth")
+        val raw = requireNotNull(bindingInput)
+        return finishTemplate(result, previous.chains, kept, areas) { raw }
     }
 
     private fun finishTemplate(input: PuppetModel, chains: List<RigModifierChains.Binding>, kept: Set<ParameterId>,
@@ -436,7 +479,8 @@ internal class RigModifierSource(
     private fun activeBefore(instance: RigModifierInstance): List<RigModifierInstance> = activePrefixes.getOrPut(instance.id) {
         val available = stack.appliedCapabilities.toMutableList()
         val active = stack.appliedCapabilities.filter { it.id != null }.mapTo(ArrayList()) {
-            RigModifierInstance(requireNotNull(it.id), it.type, it.version, it.targets, config = it.config, outputAliases = it.outputAliases)
+            RigModifierInstance(requireNotNull(it.id), it.type, it.version, it.targets, config = it.config,
+                outputAliases = it.outputAliases, plugin = it.plugin)
         }
         for (previous in stack.instances.take(stack.index(instance.id))) {
             if (!previous.enabled) continue
@@ -586,7 +630,11 @@ internal class RigModifierSource(
 
     fun provider(instance: RigModifierInstance): RigModifierInstance {
         val id = instance.config.getValue("scaffold").jsonPrimitive.content
-        val preceding = stack.instances.take(stack.index(instance.id)).singleOrNull { it.id == id && it.enabled && it.type == RigSourceModifiers.SCAFFOLD }
+        val position = stack.instances.indexOfFirst { it.id == instance.id }
+        require(position >= 0 || stack.appliedCapabilities.any { it.id == instance.id && it.type == instance.type && it.version == instance.version }) {
+            "Unknown modifier: ${instance.id}"
+        }
+        val preceding = stack.instances.take(position.coerceAtLeast(0)).singleOrNull { it.id == id && it.enabled && it.type == RigSourceModifiers.SCAFFOLD }
         val applied = stack.appliedCapabilities.singleOrNull { it.id == id && it.type == RigSourceModifiers.SCAFFOLD }
         val targets = preceding?.targets ?: requireNotNull(applied) { "${instance.id}: binding scaffold $id must precede this modifier" }.targets
         require(instance.targets.all { it in targets }) { "${instance.id}: scaffold $id does not cover all captured targets" }
