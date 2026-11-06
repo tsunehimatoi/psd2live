@@ -1,6 +1,7 @@
 package io.github.psd2live.core
 
 import io.github.psd2live.algorithms.binding.ScaffoldArms
+import io.github.psd2live.algorithms.binding.ScaffoldFramesContext
 import io.github.psd2live.algorithms.binding.ScaffoldBody
 import io.github.psd2live.algorithms.binding.ScaffoldHead
 import io.github.psd2live.algorithms.binding.ScaffoldParts
@@ -1205,6 +1206,37 @@ object RigBuilder {
 			val ids = RigBuildProfile.stage("build: split ids") { splitStableDrawableIds(inputAnalysis, config) }
 			buildWithContext(inputAnalysis, atlas, config, meshCache, context, ids, onBindingInput)
 		}
+
+    /** Captures source measurements only: no deformer stage or bound model is evaluated. */
+    internal fun scaffoldFrameInputs(analysis: PipelineAnalysis, config: PipelineConfig, cache: PreviewMeshCache): kotlinx.serialization.json.JsonObject {
+        val context = rigContext(analysis, config.copy(generateDeformers = false), cache)
+        return ScaffoldFramesContext.capture(context.bodyFrame, scaffoldStanding(context.stance),
+            scaffoldHeadInput(context.bodyFrame, context.head, context.face, context.faceRig,
+                context.frontHair, context.backHair, config.featureDisplacementEnabled,
+                !config.hairSimulationFront, !config.hairSimulationBack), { tr(it) })
+    }
+
+    private fun scaffoldStanding(stance: BodyStance): ScaffoldBody.Standing? = stance.legsFrame?.let { frame ->
+        ScaffoldBody.Standing(frame, stance.legs.map { leg ->
+            ScaffoldBody.Leg(ScaffoldBody.Joint(leg.hipX, leg.hipY), ScaffoldBody.Joint(leg.kneeX, leg.kneeY),
+                ScaffoldBody.Joint(leg.ankleX, leg.ankleY), leg.floorY)
+        }, stance.tuning.kneesInRest.toDouble())
+    }
+
+    private fun scaffoldHeadInput(body: Bounds, head: Bounds, face: Bounds, rig: NinePoseFaceRig,
+                                  front: Bounds?, back: Bounds?, displacement: Boolean,
+                                  frontSway: Boolean, backSway: Boolean): ScaffoldHead.Input {
+        val pivot = rig.coordinateSpace.toCanvas(rig.centerX, rig.mouthLineY)
+        return ScaffoldHead.Input(body, head, face, ScaffoldHead.Point(rig.centerX, rig.mouthLineY),
+            ScaffoldHead.Point(pivot.first, pivot.second), rig.initialAngleZ, displacement,
+            rig.regions.map { region ->
+                val side = tr("side.${region.side.name.lowercase()}")
+                val feature = tr("model.feature.${region.feature.name.lowercase()}")
+                ScaffoldHead.Region(ScaffoldHead.Feature.valueOf(region.feature.name), region.side, region.bounds,
+                    if (region.side == Side.NONE) feature else tr("model.feature.name", side, feature),
+                    if (region.feature == FaceFeature.IRIS) tr("model.deformer.gaze", side) else null)
+            }, front?.let { ScaffoldHead.Hair(it, frontSway) }, back?.let { ScaffoldHead.Hair(it, backSway) })
+    }
 
     /** Transitional static scaffold path: body and head frames are calculated directly, never projected from motion grids. */
     internal fun buildNeutralScaffold(inputAnalysis: PipelineAnalysis, atlas: PackedAtlas, config: PipelineConfig,
@@ -2668,32 +2700,15 @@ object RigBuilder {
 		config: PipelineConfig,
 		neutralScaffold: Boolean,
 	): DeformerBuildResult {
-		val bodyWarps = if (!neutralScaffold) bodyWarps(stance, bodyFrame, bodyPartId) else {
-			val standing = stance.legsFrame?.let { frame ->
-				ScaffoldBody.Standing(frame, stance.legs.map { leg ->
-					ScaffoldBody.Leg(ScaffoldBody.Joint(leg.hipX, leg.hipY), ScaffoldBody.Joint(leg.kneeX, leg.kneeY),
-						ScaffoldBody.Joint(leg.ankleX, leg.ankleY), leg.floorY)
-				}, stance.tuning.kneesInRest.toDouble())
-			}
-			ScaffoldBody.build(bodyFrame, standing, { tr(it) })
-		}
+		val bodyWarps = if (!neutralScaffold) bodyWarps(stance, bodyFrame, bodyPartId)
+            else ScaffoldBody.build(bodyFrame, scaffoldStanding(stance), { tr(it) })
 
 		val deformers = bodyWarps.toMutableList<Deformer>()
 		val pairFrames = mutableMapOf<String, Bounds>()
 		val pairedParentByLayerId = mutableMapOf<String, Pair<DeformerId, Bounds>>()
 		if (neutralScaffold) {
-			val pivot = faceRig.coordinateSpace.toCanvas(faceRig.centerX, faceRig.mouthLineY)
-			val input = ScaffoldHead.Input(bodyFrame, head, faceFrame,
-				ScaffoldHead.Point(faceRig.centerX, faceRig.mouthLineY), ScaffoldHead.Point(pivot.first, pivot.second),
-				faceRig.initialAngleZ, config.featureDisplacementEnabled,
-				faceRig.regions.map { region ->
-					val side = tr("side.${region.side.name.lowercase()}")
-					val feature = tr("model.feature.${region.feature.name.lowercase()}")
-					ScaffoldHead.Region(ScaffoldHead.Feature.valueOf(region.feature.name), region.side, region.bounds,
-						if (region.side == Side.NONE) feature else tr("model.feature.name", side, feature),
-						if (region.feature == FaceFeature.IRIS) tr("model.deformer.gaze", side) else null)
-				}, frontHair?.let { ScaffoldHead.Hair(it, true) },
-				backHair?.let { ScaffoldHead.Hair(it, true) })
+			val input = scaffoldHeadInput(bodyFrame, head, faceFrame, faceRig, frontHair, backHair,
+                config.featureDisplacementEnabled, frontSway = true, backSway = true)
 			val generated = ScaffoldHead.build(input, { tr(it) })
 			deformers += generated.deformers.map { deformer ->
 				val removedParameter = when {

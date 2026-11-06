@@ -223,15 +223,27 @@ internal class RigModifierSource(
 
     private val scaffoldContexts = HashMap<RigModifierInstance, ModifierAlgorithmContext>()
     fun scaffoldContext(instance: RigModifierInstance): ModifierAlgorithmContext = scaffoldContexts.getOrPut(instance) {
-        io.github.psd2live.algorithms.binding.ScaffoldAlgorithm.capture(scaffold(instance) {}, materialBase,
-            instance.targets.associate { it.id to primaryByLayer.getValue(layersByMesh.getValue(it.id)) },
-            if (instance.plugin?.let { it.id.startsWith("builtin.") &&
-                ModifierPluginVersion.parse(it.version, legacy = true) < ModifierPluginVersion.parse("1.0.37") } == true) null
-            else ScaffoldPartsContext.capture(analysis.layers.mapNotNull { layer ->
+        val pinned = instance.plugin?.takeIf { it.id.startsWith("builtin.") }
+            ?.let { ModifierPluginVersion.parse(it.version, legacy = true) }
+        val organization = if (pinned != null && pinned < ModifierPluginVersion.parse("1.0.37")) null else
+            ScaffoldPartsContext.capture(analysis.layers.mapNotNull { layer ->
                 primaryByLayer[layer.source.id.raw]?.let { id ->
                     ScaffoldParts.Material(DrawableId(id), RigBuilder.scaffoldSlot(layer, analysis.anchors), layer.source.order)
                 }
-            }, label = { io.github.psd2live.i18n.tr(it) }))
+            }, label = { io.github.psd2live.i18n.tr(it) })
+        val frames = if (pinned != null && pinned < ModifierPluginVersion.parse("1.0.38")) null else {
+            val options = instance.config
+            val corrections = io.github.psd2live.project.WorkspaceSettingsCodec.decodeRecipe(options["corrections"])
+            RigBuilder.scaffoldFrameInputs(analysis, sourceConfig().copy(
+                bodyStrength = 1f, headTurnStrength = 1f, rigTuning = RigTuning(),
+                recipe = RigRecipe.Legacy.copy(moves = corrections.moves, eyeParts = corrections.eyeParts),
+                featureDisplacementEnabled = options["featureDisplacement"]?.jsonPrimitive?.boolean ?: false,
+                hairSimulationFront = !(options["frontHairSway"]?.jsonPrimitive?.boolean ?: true),
+                hairSimulationBack = !(options["backHairSway"]?.jsonPrimitive?.boolean ?: true),
+            ), meshCache)
+        }
+        io.github.psd2live.algorithms.binding.ScaffoldAlgorithm.capture(scaffold(instance) {}, materialBase,
+            instance.targets.associate { it.id to primaryByLayer.getValue(layersByMesh.getValue(it.id)) }, organization, frames)
     }
 
     private fun templateKey(instances: List<RigModifierInstance>, scaffold: JsonObject): Map<String, JsonObject> {
